@@ -25,12 +25,15 @@
 #include <assert.h>
 
 #ifndef INTSZ
-#warning *** INTSZ defaulting to 256 ***
-#define INTSZ 256 // MUST be 2^n where n is an integer
-#define PUBSIZE 64   // How much is shared by Alice, Bob (D, D2)
-#else
-#define PUBSIZE (INTSZ/4)
+  #define INTSZ 256 // MUST be 2^n where n is an integer
+  #warning *** INTSZ defaulting to 256  ***
 #endif
+
+#ifndef PUBSIZE
+  #define PUBSIZE 64   // How much is shared by Alice, Bob (D, D2)
+  #warning *** PUBSIZE defaulting to 64 ***
+#endif
+
 
 // At certain points we must mask out accumulators as bignums won't let bits just 'fall off'
 // the end when rotating or adding values

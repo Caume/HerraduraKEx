@@ -27,11 +27,13 @@ typedef unsigned long long int INT64;
 #undef VERBOSE
 
 #ifndef INTSZ
-#warning *** INTSZ defaulting to 64 ***
-#define INTSZ 64 // MUST be 2^n where n is an integer
-#define PUBSIZE 16   // How much is shared by Alice, Bob (D, D2)
-#else
-#define PUBSIZE (INTSZ/4)
+  #define INTSZ 64 // MUST be 2^n where n is an integer
+  #warning *** INTSZ defaulting to 64  ***
+#endif
+
+#ifndef PUBSIZE
+  #define PUBSIZE 16   // How much is shared by Alice, Bob (D, D2)
+  #warning *** PUBSIZE defaulting to 16 ***
 #endif
 
 #if INTSZ == 8
