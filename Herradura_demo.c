@@ -18,9 +18,20 @@
 #include <stdlib.h>
 #include <time.h>
 #include <limits.h>
+#include <assert.h>
 
 typedef unsigned long long int INT64;
 
+#undef VERBOSE
+
+#define INTSZ 64u   // MUST be 2^(2^n) and fit within uint64_t
+//#define INTSZMASK 0xffffffffffffffffLU  // Only really necessary for < 64 bits
+#define PUBSIZE 16u   // typically INTSZ / 4
+//#define INTSZ 16u
+//#define INTSZMASK 0x0ffffu
+//#define PUBSIZE 4u
+
+#ifdef VERBOSE /*rlm*/
 void print64b (INT64 x){
   int cont;
   unsigned long int y1,y2,tmp;
@@ -48,6 +59,7 @@ void print64b (INT64 x){
     y1 = y1<<1;
   }
 }
+#endif
 
 /*Generate pseudorandom 64bit numbers with rand()*/ 
 INT64 rnd64b (){
@@ -64,22 +76,41 @@ INT64 rnd64b (){
   return(rnd64);
 }
 
-/* Full Surroundings Cyclic XOR (FSCX) */
-INT64 FSCX (INT64 *Up, INT64 *Down){
-  INT64 result,tmp;
-  int cont;
-  result=0;
-  result=((*Up>>63)&1)^((*Up)&1)^((*Down)&1)^((*Down>>63)&1)^((*Down>>62)&1)^
-          ((*Up>>62)&1);      //First bit
-  for(cont=0;cont<62;cont++){
-    result= result<<1;
-    result+= ((*Up>>(62-cont))&1)^((*Up>>(63-cont))&1)^((*Down>>(63-cont))&1)^
-    ((*Down>>(62-cont))&1)^((*Down>>(61-cont))&1)^((*Up>>(61-cont))&1);
+unsigned int BITX(INT64 X, int pos) {
+  if( pos == 0 ) {
+    return ((X>>1)&1) ^ (X&1) ^ ((X>>(INTSZ-1))&1);
   }
-  result= result<<1;  //Last bit
-  result+=(*Up&1)^((*Up>>1)&1)^((*Down>>1)&1)^((*Down)&1)^((*Down>>63)&1)^
-          ((*Up>>63)&1);
-  return (result);
+  else if( pos == (int)INTSZ-1 ) {
+    return (X&1) ^ ((X>>(INTSZ-1))&1) ^ ((X>>(INTSZ-2))&1);
+  }
+  else {
+    return ((X>>((pos+1)%INTSZ))&1) ^ ((X>>pos)&1) ^ ((X>>((pos-1)%INTSZ))&1);
+  }
+}
+
+unsigned int BIT(INT64 U, INT64 D, int posU, int posD) {
+  unsigned int ret = BITX(U, posU) ^ BITX(D, posD);
+  return ret;
+}
+
+/* Full Surroundings Cyclic XOR (FSCX) */
+INT64 FSCX (const INT64 const *Up, INT64 *Down){
+  INT64 result = 0;
+  int count;
+
+  for(count = 0; count < (int)INTSZ; count++) {
+    result = result<<1;
+#if INTSZ < 64u
+    result &= INTSZMASK;
+#endif
+    // NOTE the algo appears to work even using mismatched counts for U,D here
+    result += (INT64)BIT(*Up, *Down, count, count);
+    //result += (INT64)BIT(*Up, *Down, count, (INTSZ-1u)-count);
+#if INTSZ < 64u
+    result &= INTSZMASK;
+#endif
+  }
+  return result;
 }
 
 /*FSCX iteration function using the result of the previous iteration as the first
@@ -91,9 +122,10 @@ INT64 FSCX_REVOLVE (INT64 *Up, INT64 *Down, unsigned long int pasos){
     for (cont=0; cont<pasos; cont++){
         result=FSCX(&result,Down);
     }
-    return (result);
+    return result;
 }
 
+#ifdef VERBOSE /*rlm*/
 /* FSCX iteration function that prints each step */
 INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
     INT64 result,first;
@@ -107,7 +139,7 @@ INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
     }
     return (result);
 }
-
+#endif
 
 int main (){
   INT64 A,A2,L,L2,B,B2,C,D,D2,FA,FA2,Q,R,G,K;
@@ -118,23 +150,35 @@ int main (){
   B=rnd64b();
   A2=rnd64b();
   B2=rnd64b();
+#if INTSZ < 64u
+  A &= INTSZMASK;
+  A2 &= INTSZMASK;
+  B &= INTSZMASK;
+  B2 &= INTSZMASK;
+#endif
+
   printf("ALICE:\n");
-  printf("%llu A [Secret 1]\n",A);
-  printf("%llu B [Secret 2]\n",B);
-  D=FSCX_REVOLVE(&A,&B,16);   //63 and 32 rounds are weak; 16 seems best.
-  printf("%llu D [FSCX_REVOLVE(A,B,16)] ->\n",D);
+  printf("%llx A [Secret 1]\n",A);
+  printf("%llx B [Secret 2]\n",B);
+  D=FSCX_REVOLVE(&A,&B,PUBSIZE);   //63 and 32 rounds are weak; 16 seems best.
+  printf("%llx D [FSCX_REVOLVE(A,B,%u)] ->\n",D, PUBSIZE);
 
   printf("\t\t\t\t   BOB:\n");
-  printf("\t\t\t\t   A2 %llu [Secret 3]\n",A2);
-  printf("\t\t\t\t   B2 %llu [Secret 4]\n",B2);
-  D2=FSCX_REVOLVE(&A2,&B2,16);  //63 and 32 rounds are weak; 16 seems best.
-  printf("\t\t\t\t<- D2 %llu [FSCX_REVOLVE(A2,B2,16)]\n",D2);
- 
-  FA=(FSCX_REVOLVE(&D2,&B,48))^A;
-  printf("%llu FA [FSCX_REVOLVE(D2,B,48) xor A] \n",FA);
-  FA2=(FSCX_REVOLVE(&D,&B2,48))^A2;
-  printf("\t\t\t\t FA = FA2 %llu [FSCX_REVOLVE(D,B2,48) xor A2] \n",FA2);
+  printf("\t\t\t\t   A2 %llx [Secret 3]\n",A2);
+  printf("\t\t\t\t   B2 %llx [Secret 4]\n",B2);
+  D2=FSCX_REVOLVE(&A2,&B2,PUBSIZE);  //63 and 32 rounds are weak; 16 seems best.
+  printf("\t\t\t\t<- D2 %llx [FSCX_REVOLVE(A2,B2,%u)]\n",D2, PUBSIZE);
 
+  FA=(FSCX_REVOLVE(&D2,&B,(INTSZ-PUBSIZE)))^A;
+  printf("%llx FA [FSCX_REVOLVE(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
+
+  FA2=(FSCX_REVOLVE(&D,&B2,(INTSZ-PUBSIZE)))^A2;
+
+  assert(FA == FA2);
+
+  printf("\t\t\t\t FA = FA2 %llx [FSCX_REVOLVE(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
+
+#ifdef VERBOSE /*rlm*/
 //NOTE: Only D and D2 (Exchanged by Alice and Bob) are known to EVE:  
   printf("\n--- EVE tests to determine one of the secrets of Alice or Bob:\n");
   printf("\n");
@@ -247,18 +291,21 @@ int main (){
 
 //Optional EVE´s slow brute force test
 /*
-    brk = 1;
-    while (brk){
-        Q=rnd64b();
-        for (R=0; R < ULLONG_MAX - 1; R++){
-            if ((FSCX_REVOLVE(&Q,&R,16))==D){
-                printf("Got it! FSCX_REVOLVE(%llu,%llu,16)==D(%llu)\n",Q,R,D);
-                brk=0;
-                break;
-            }
-        }            
-    }
+  printf("EVE brute force attack demo...\n");
+  brk = 1;
+  while (brk){
+      Q=rnd64b();
+      for (R=0; R < ULLONG_MAX - 1; R++){
+          if ((FSCX_REVOLVE(&Q,&R,16))==D){
+              printf("Got it! FSCX_REVOLVE(%llu,%llu,16)==D(%llu)\n",Q,R,D);
+              brk=0;
+              break;
+          }
+      }            
+  }
+  printf("--END EVE brute force attack demo...\n");
 */
+#endif /* VERBOSE */
 
   return (0);
 }
