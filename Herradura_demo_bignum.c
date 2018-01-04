@@ -15,7 +15,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 
 /* gmplib (GNU multi-precision) implementation - Russ Magee (rmagee_at_gmail.com) */
-/* gcc -o demo_bignum Herradura_demo_bignum.c -lgmp */
+/* Example build: gcc -DINTSZ=256 -o demo_bignum Herradura_demo_bignum.c -lgmp */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,12 +24,16 @@
 #include <limits.h>
 #include <assert.h>
 
-#define INTSZ (mp_bitcnt_t)256u // MUST be 2^(2^n) where n is an integer
-#define PUBSIZE 64u   // How much is shared by Alice, Bob (D, D2)
+#ifndef INTSZ
+#warning *** INTSZ defaulting to 256 ***
+#define INTSZ 256 // MUST be 2^n where n is an integer
+#define PUBSIZE 64   // How much is shared by Alice, Bob (D, D2)
+#else
+#define PUBSIZE (INTSZ/4)
+#endif
 
-//#define INTSZ 8u
-//#define PUBSIZE 3u
-
+// At certain points we must mask out accumulators as bignums won't let bits just 'fall off'
+// the end when rotating or adding values
 mpz_t intszmask;
 
 unsigned int BITX(mpz_t X, int pos) {
@@ -136,13 +140,13 @@ int main () {
   FSCX_REVOLVE(D2,B,INTSZ-PUBSIZE, FA);
   mpz_xor(FA, A, FA);
 
-  mpz_out_str(NULL, 16, FA); printf(" FA [FSCX_REVOLVE(D2,B,%lu) xor A]\n", INTSZ-PUBSIZE);
+  mpz_out_str(NULL, 16, FA); printf(" FA [FSCX_REVOLVE(D2,B,%u) xor A]\n", INTSZ-PUBSIZE);
 
   FSCX_REVOLVE(D,B2,INTSZ-PUBSIZE, FA2);
   mpz_xor(FA2, A2, FA2);
 
   printf("\t\t\t\t FA = FA2 ");
-  mpz_out_str(NULL, 16, FA2); printf(" [FSCX_REVOLVE(D,B2,%lu) xor A2]\n",INTSZ-PUBSIZE);
+  mpz_out_str(NULL, 16, FA2); printf(" [FSCX_REVOLVE(D,B2,%u) xor A2]\n",INTSZ-PUBSIZE);
 
   assert(mpz_cmp(FA,FA2) == 0);
 

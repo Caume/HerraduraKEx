@@ -14,6 +14,8 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 
+/* Example build: gcc -DINTSZ=64 -o demo_bignum Herradura_demo_bignum.c -lgmp */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -24,12 +26,26 @@ typedef unsigned long long int INT64;
 
 #undef VERBOSE
 
-#define INTSZ 64u   // MUST be 2^(2^n) and fit within uint64_t
-//#define INTSZMASK 0xffffffffffffffffLU  // Only really necessary for < 64 bits
-#define PUBSIZE 16u   // typically INTSZ / 4
-//#define INTSZ 16u
-//#define INTSZMASK 0x0ffffu
-//#define PUBSIZE 4u
+#ifndef INTSZ
+#warning *** INTSZ defaulting to 64 ***
+#define INTSZ 64 // MUST be 2^n where n is an integer
+#define PUBSIZE 16   // How much is shared by Alice, Bob (D, D2)
+#else
+#define PUBSIZE (INTSZ/4)
+#endif
+
+#if INTSZ == 8
+#define INTSZMASK 0x0FF
+#elif INTSZ == 16
+#define INTSZMASK 0x0FFFF
+#elif INTSZ == 32
+#define INTSZMASK 0x0FFFFFFFF
+#elif INTSZ == 64
+#define INTSZMASK 0xFFFFFFFFFFFFFFFF
+#else
+#define INTSZMASK 0
+#error *** UNSUPPORTED INTSZ ***
+#endif
 
 #ifdef VERBOSE /*rlm*/
 void print64b (INT64 x){
@@ -100,13 +116,13 @@ INT64 FSCX (const INT64 const *Up, INT64 *Down){
 
   for(count = 0; count < (int)INTSZ; count++) {
     result = result<<1;
-#if INTSZ < 64u
+#if INTSZ < 64
     result &= INTSZMASK;
 #endif
     // NOTE the algo appears to work even using mismatched counts for U,D here
     result += (INT64)BIT(*Up, *Down, count, count);
     //result += (INT64)BIT(*Up, *Down, count, (INTSZ-1u)-count);
-#if INTSZ < 64u
+#if INTSZ < 64
     result &= INTSZMASK;
 #endif
   }
