@@ -1,10 +1,12 @@
 /*  Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
-    Copyright (C) 2017 Omar Alejandro Herrera Reyna
+    Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+    it under the terms of the MIT License or the GNU General Public License 
+    as published by the Free Software Foundation, either version 3 of the License, 
+    or (at your option) any later version.
+
+    Under the terms of the GNU General Public License, please also consider that:
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
