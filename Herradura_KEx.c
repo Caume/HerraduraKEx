@@ -1,5 +1,7 @@
-/*  Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
-    Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
+/*  Herradura KEx (HKEX)- a Key exchange scheme in the style of Diffie-Hellman Key Exchange,
+    based on the FSCX function.
+    
+    Copyright (C) 2017-2019 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT License or the GNU General Public License 
@@ -16,7 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 
-/* Example build: gcc -DINTSZ=64 -o demo_bignum Herradura_demo_bignum.c -lgmp */
+/* Example build: gcc -DINTSZ=64 -o HKEX Herradura_KEx.c */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -114,7 +116,7 @@ unsigned int BIT(INT64 U, INT64 D, int posU, int posD) {
 }
 
 /* Full Surroundings Cyclic XOR (FSCX) */
-INT64 FSCX (const INT64 const *Up, INT64 *Down){
+INT64 FSCX (const INT64 *Up, INT64 *Down){
   INT64 result = 0;
   int count;
 
@@ -162,8 +164,7 @@ INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
 #endif
 
 int main (){
-  INT64 A,A2,L,L2,B,B2,C,D,D2,FA,FA2,Q,R,G,K;
-  unsigned long int tmp,cont,brk;
+  INT64 A,A2,B,B2,D,D2,FA,FA2;
   srand(time(0));
 
   A=rnd64b();
@@ -176,27 +177,28 @@ int main (){
   B &= INTSZMASK;
   B2 &= INTSZMASK;
 #endif
-
+  printf("--- Herradura Key Exchange (HKEX) ---\n\n");
+  
   printf("ALICE:\n");
   printf("%llx A [Secret 1]\n",A);
   printf("%llx B [Secret 2]\n",B);
   D=FSCX_REVOLVE(&A,&B,PUBSIZE);   //63 and 32 rounds are weak; 16 seems best.
   printf("%llx D [FSCX_REVOLVE(A,B,%u)] ->\n",D, PUBSIZE);
 
-  printf("\t\t\t\t   BOB:\n");
-  printf("\t\t\t\t   A2 %llx [Secret 3]\n",A2);
-  printf("\t\t\t\t   B2 %llx [Secret 4]\n",B2);
+  printf("    BOB:\n");
+  printf("    A2 %llx [Secret 3]\n",A2);
+  printf("    B2 %llx [Secret 4]\n",B2);
   D2=FSCX_REVOLVE(&A2,&B2,PUBSIZE);  //63 and 32 rounds are weak; 16 seems best.
-  printf("\t\t\t\t<- D2 %llx [FSCX_REVOLVE(A2,B2,%u)]\n",D2, PUBSIZE);
+  printf(" <- D2 %llx [FSCX_REVOLVE(A2,B2,%u)]\n",D2, PUBSIZE);
 
+  printf("ALICE:\n");
   FA=(FSCX_REVOLVE(&D2,&B,(INTSZ-PUBSIZE)))^A;
   printf("%llx FA [FSCX_REVOLVE(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
 
+  printf("    BOB:\n");
   FA2=(FSCX_REVOLVE(&D,&B2,(INTSZ-PUBSIZE)))^A2;
-
   assert(FA == FA2);
-
-  printf("\t\t\t\t FA = FA2 %llx [FSCX_REVOLVE(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
+  printf("    FA2 = FA %llx [FSCX_REVOLVE(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
 
 #ifdef VERBOSE /*rlm*/
 //NOTE: Only D and D2 (Exchanged by Alice and Bob) are known to EVE:  

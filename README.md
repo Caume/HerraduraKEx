@@ -1,5 +1,5 @@
-# HerraduraKEx
-Herradura is a Key Exchange scheme in the style of Diffie-Hellman Key Exchange, based on bitwise operations.
+# Herradura KEx (HKEX)
+HKEX is a Key Exchange scheme in the style of Diffie-Hellman Key Exchange, based on bitwise operations.
 
 This Key Exchange scheme is demonstrated through the exchange of values produced by the FSCX_REVOLVE function. This function implements an iterated process of XOR operations, where each bit at position An of the first input is XORed with its surrounding bits, positions An-1 mod P and An+1 mod P, as well as with bits of the second input in positions Bn-1 mod P, Bn and Bn+1 mod P,  where P is the size in bits of the input numbers (say 64 bits).
 
@@ -12,11 +12,65 @@ FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter 
 The result of several iterations with the exeption of iterations #32 and #64 (which yield as result the first input, depending on the inputs chosen) cannot be used to identify the unique inputs used at the first iteration, since there are multiple combinations of inputs that produce the same result at each iteration.
 
 The Herradura Key Exchange Scheme is as follows:
-1) Each party select 2 random numbers A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and applies several iterations i < P, with FSXC_REVOLVE with A and B as the inputs for the first iteration, and the result of each iteration with B as inputs for subsequent iterations (e.g. 16 iterations for P=64). Recommended value for i is P/4.
-2) Both parties exchange the result of the last iteration of FSCX_REVOLVE from step 1)
-3) Apply FSCX_REVOLVE with the remaining iterations r neded to complete the size in bit of the inputs, so that r+i=P (r=48 in our 64bit example), using as inputs the result obtained from the other party from step 2), and the same number, B, that each party have used during step 1). Recommended value for r is P/4 * 3.
-4) Finally, both parties XOR the result with the first input, A, that each used in step 1) - Both parties will get the same number (shared key/secret) 
+1) Alice and Bob select 2 random numbers each, A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and apply i < P FSCX, using the FSXC_REVOLVE function with A and B as the inputs for the first iteration, and the result of each iteration along with B as the inputs for subsequent iterations (e.g. i=16 iterations for P=64). Recommended value for i is P/4.
+	So, let D and D2 be the result of the FSCX_REVOLVE function for Alice and Bob respectively, using 64 bit numbers:
+		Alice:  D  = FSCX_REVOLVE(A,B,16)
+		Bob:    D2 = FSCX_REVOLVE(A2,B2,16)
+2) Both parties exchange the result of FSCX_REVOLVE from step 1)
+	Alice: sends D to Bob
+	Bob:   sends D2 to Alice
+3) Alice and Bob apply FSCX_REVOLVE with the remaining iterations r neded to complete the size in bit of the inputs, so that r+i=P (r=48 in our 64bit example), using as inputs the result obtained from the other party from step 2), and the same number, B, that each party have used during step 1), and then XOR the result with A and A2 respectively. Recommended value for r is P/4 * 3.
+	Alice: FA  = FSCX_REVOLVE(D2,B,48)
+	Bob:   FA2 = FSCX_REVOLVE(D,B2,48(
+	where  FA == FA2 (shared secret frome HKEX)
 
-An attacker in the middle can only see the exchanged numbers at step 2). The security of the Herradura scheme relies then on how difficult and process consuming it is to calculate all possible inputs through the iterations of the FSCX_REVOLVE funcions before the exchange (16 iterations in our 64bit example), until some of the original inputs/secrets can be discovered.
+An attacker in the middle can only see the exchanged numbers at step 2) (D, D2). It is estimated that the security of the Herradura scheme relies then on the difficulty to calculate (brute force) all possible inputs through the iterations (16 iterations in our 64bit example) of the FSCX_REVOLVE function, before the exchange, until some of the original inputs/secrets can be discovered.
+
+In addition to the Key Exchange (HKEX), the Herradura base function (FSCX_REVOLVE) can be used to implement efficient one-to-one assymetric key encryption (Herradura AEn), as well as as a fast digital signature scheme (Herradura DSi).
+
+
+
+# Herradura AEn (HAEN)
+HAEN is an efficient encryption scheme using assymetric keys for one-to-one communication (not suitable to be used directly for public key encryption).
+
+The Herradura Assymetric Encryption scheme is as follows (i = P/4, r = P-i):
+1) Alice and Bob obtain a shared value (PSV) with the HKEX protocol
+	Alice: PSV = FA  = HKEX_with_Bob (A,B,r,i)
+	Bob:   PSV = FA2 = HKEX_with_Alice (A2,B2,r,i)
+2) Alice encrypts plaintext Pl using FSCX_REVOLVE function with Pl XOR PSV XOR A as parameter 1, B as parameter 2 and i as parameter 3, and sends the encrypted result, E, to Bob.
+	Alice: sends to Bob E = FSCX_REVOLVE(Pl XOR PSV XOR A, B, 16)
+3) Bob decrypts E sith FSCX_REVOLVE, with E as parameter 1, B2 as parameter 2, and r as parameter 3, xoring the result with A2.
+	Bob: decrypts E so that Pl2 = FSCX_REVOLVE(E,B2,48) XOR A2
+	where pl == pl2
+	
+The security of the HAEN protocol relies on the security of HKEX. It should be noted that, as with other encryption protocols, repeated use of the key material for subsecuent encryptions might leak information. It is recomended to have a prearranged way to change PSV with each subsequent encryption (e.g. incrementing PSV with each subsequent encryption, similar to the CTR encryption mode with symmetric encryption algorithms).
+
+Also note that although keys are assymetric in HAEN, since you can decrypt with both keys (e.g. Alice can decrypt again E with Pl = FSCX_REVOLVE(E,B,48) XOR A XOR PSV). Therefore, it can't be used directly for public key encryption.
+
+
+
+# Herradura DSi (HDSI)
+HDSI is a fast public signature scheme based on HKEX and the FSCX_REVOLVE function
+
+The Herradura Digital Signature scheme is as follows:
+1) Alice performs HKEX on its own, and obtains its private key (PSV,A,A2,B,i), then publishes the entangled public key (B2,r)
+	Alice:  PSV = FA = HKEX_on_its_own (A,A2,B,B2,r,i)
+	Alice:  derives private_key_for_signing = (PSV,A,A2,B,i)
+	Alice:  publishes public_key_for_verifying = (B2,r)
+2) Alice signs the plaintext message Pl by applying FSCX_REVOLVE with Pl XOR PSV as parameter 1, B as parameter 2 and i as parameter 3, and obtains signed message S. Note that the message to be signed must be of at most P bits of length. Typically you would use a hash (fixed length) instead of the plaintext (variable length), as with other digital signature protocols.
+	Alice: S = FSCX_REVOLVE(P xor PSV, B ,16)
+	Alice: publishes S with Pl
+3) Bob or anyone can verify that the signature S with the public key, by applying FSCX_REVOLVE with S as parameter 1, B2 as parameter 2, and r as parameter3.
+	Bob: Pl2 = FSCX_REVOLVE(S,B2,48)
+	Bob: verifies that Pl2 == Pl
+	
+For the security of the HDSI scheme, in addition to the security considerations mentioned for the HAEN scheme, the bitlength (P) here is important to reduce the risks of a brute force attack to find collisions that allow signature forging (i.e. for a specific text T, find F such that FSCX_REVOLVE(F,B2,r) produces PL2 == T, without knowing the corresponding private key - PSV,A,A2,B,i ) 
+
+
+
+# Final note
+These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on fast bitwise operations. Until and unless their security is proven to be adequate with extensive analyses by expert cryptographers, their use is not recommended for production or mission critical systems.
+
+
 
 OAHR

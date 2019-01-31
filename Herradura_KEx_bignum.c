@@ -1,5 +1,7 @@
-/*  Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
-    Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
+/*  Herradura KEx (HKEX)- a Key exchange scheme in the style of Diffie-Hellman Key Exchange,
+    based on the FSCX function.
+    
+    Copyright (C) 2017-2019 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT License or the GNU General Public License 
@@ -17,7 +19,7 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>. */
 
 /* gmplib (GNU multi-precision) implementation - Russ Magee (rmagee_at_gmail.com) */
-/* Example build: gcc -DINTSZ=256 -o demo_bignum Herradura_demo_bignum.c -lgmp */
+/* Example build: gcc -DINTSZ=256 -o HKEX_bignum Herradura_KEx_bignum.c -lgmp */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,6 +131,7 @@ int main () {
   mpz_init2(D2, INTSZ);
   mpz_init2(FA, INTSZ);
   mpz_init2(FA2, INTSZ);
+  printf("--- Herradura Key Exchange (HKEX) ---\n\n");
 
   printf("ALICE:\n");
   mpz_out_str(NULL, 16, A); printf(" A [Secret 1]\n");
@@ -136,21 +139,21 @@ int main () {
   FSCX_REVOLVE(A, B, PUBSIZE, D);
   mpz_out_str(NULL, 16, D); printf(" D [FSCX_REVOLVE(A,B,%u)] ->\n", PUBSIZE);
 
-  printf("\t\t\t\t   BOB:\n");
-  printf("\t\t\t\t   A2 "); mpz_out_str(NULL, 16, A2); printf(" [Secret 3]\n");
-  printf("\t\t\t\t   B2 "); mpz_out_str(NULL, 16, B2); printf(" [Secret 4]\n");
+  printf("    BOB:\n");
+  printf("    A2 "); mpz_out_str(NULL, 16, A2); printf(" [Secret 3]\n");
+  printf("    B2 "); mpz_out_str(NULL, 16, B2); printf(" [Secret 4]\n");
   FSCX_REVOLVE(A2,B2, PUBSIZE, D2);
-  printf("\t\t\t\t<- D2 "); mpz_out_str(NULL, 16, D2); printf(" [FSCX_REVOLVE(A2,B2,%u)]\n", PUBSIZE);
+  printf(" <- D2 "); mpz_out_str(NULL, 16, D2); printf(" [FSCX_REVOLVE(A2,B2,%u)]\n", PUBSIZE);
 
+  printf("ALICE:\n");
   FSCX_REVOLVE(D2,B,INTSZ-PUBSIZE, FA);
   mpz_xor(FA, A, FA);
-
   mpz_out_str(NULL, 16, FA); printf(" FA [FSCX_REVOLVE(D2,B,%u) xor A]\n", INTSZ-PUBSIZE);
 
+  printf("    BOB:\n");
   FSCX_REVOLVE(D,B2,INTSZ-PUBSIZE, FA2);
   mpz_xor(FA2, A2, FA2);
-
-  printf("\t\t\t\t FA = FA2 ");
+  printf("    FA2 = FA ");
   mpz_out_str(NULL, 16, FA2); printf(" [FSCX_REVOLVE(D,B2,%u) xor A2]\n",INTSZ-PUBSIZE);
 
   assert(mpz_cmp(FA,FA2) == 0);
