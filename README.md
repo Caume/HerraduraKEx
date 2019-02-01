@@ -49,25 +49,6 @@ Also note that although keys are assymetric in HAEN, since you can decrypt with 
 
 
 
-# Herradura DSi (HDSI)
-HDSI is a fast public signature scheme based on HKEX and the FSCX_REVOLVE function
-
-The Herradura Digital Signature scheme is as follows:
-1) Alice performs HKEX on its own, and obtains its private key (PSV,A,A2,B,i), then publishes the entangled public key (B2,r)
-	Alice:  PSV = FA = HKEX_on_its_own (A,A2,B,B2,r,i)
-	Alice:  derives private_key_for_signing = (PSV,A,A2,B,i)
-	Alice:  publishes public_key_for_verifying = (B2,r)
-2) Alice signs the plaintext message Pl by applying FSCX_REVOLVE with Pl XOR PSV as parameter 1, B as parameter 2 and i as parameter 3, and obtains signed message S. Note that the message to be signed must be of at most P bits of length. Typically you would use a hash (fixed length) instead of the plaintext (variable length), as with other digital signature protocols.
-	Alice: S = FSCX_REVOLVE(P xor PSV, B ,16)
-	Alice: publishes S with Pl
-3) Bob or anyone can verify that the signature S with the public key, by applying FSCX_REVOLVE with S as parameter 1, B2 as parameter 2, and r as parameter3.
-	Bob: Pl2 = FSCX_REVOLVE(S,B2,48)
-	Bob: verifies that Pl2 == Pl
-	
-For the security of the HDSI scheme, in addition to the security considerations mentioned for the HAEN scheme, the bitlength (P) here is important to reduce the risks of a brute force attack to find collisions that allow signature forging (i.e. for a specific text T, find F such that FSCX_REVOLVE(F,B2,r) produces PL2 == T, without knowing the corresponding private key - PSV,A,A2,B,i ) 
-
-
-
 # Final note
 These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on fast bitwise operations. Until and unless their security is proven to be adequate with extensive analyses by expert cryptographers, their use is not recommended for production or mission critical systems.
 
