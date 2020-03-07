@@ -16,17 +16,21 @@ FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter 
 The result of several iterations with the exeption of iterations #32 and #64 (which yield as result the first input, depending on the inputs chosen) cannot be used to identify the unique inputs used at the first iteration, since there are multiple combinations of inputs that produce the same result at each iteration.
 
 The Herradura Key Exchange Scheme is as follows:
-1) Alice and Bob select 2 random numbers each, A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and apply i < P FSCX, using the FSXC_REVOLVE function with A and B as the inputs for the first iteration, and the result of each iteration along with B as the inputs for subsequent iterations (e.g. i=16 iterations for P=64). Recommended value for i is P/4.
-	So, let D and D2 be the result of the FSCX_REVOLVE function for Alice and Bob respectively, using 64 bit numbers:
+1) Alice and Bob select 2 random numbers each, A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and apply i < P FSCX, using the FSXC_REVOLVE function with A and B as the inputs for the first iteration, and the result of each iteration along with B as the inputs for subsequent iterations (e.g. i=16 iterations for P=64). Recommended value for i is P/4. So, let D and D2 be the result of the FSCX_REVOLVE function for Alice and Bob respectively, using 64 bit numbers:
+		
 		Alice:  D  = FSCX_REVOLVE(A,B,16)
 		Bob:    D2 = FSCX_REVOLVE(A2,B2,16)
+
 2) Both parties exchange the result of FSCX_REVOLVE from step 1)
-	Alice: sends D to Bob
-	Bob:   sends D2 to Alice
+		
+		Alice: sends D to Bob
+		Bob:   sends D2 to Alice
+		
 3) Alice and Bob apply FSCX_REVOLVE with the remaining iterations r neded to complete the size in bit of the inputs, so that r+i=P (r=48 in our 64bit example), using as inputs the result obtained from the other party from step 2), and the same number, B, that each party have used during step 1), and then XOR the result with A and A2 respectively. Recommended value for r is P/4 * 3.
-	Alice: FA  = FSCX_REVOLVE(D2,B,48)
-	Bob:   FA2 = FSCX_REVOLVE(D,B2,48(
-	where  FA == FA2 (shared secret frome HKEX)
+
+		Alice: FA  = FSCX_REVOLVE(D2,B,48)
+		Bob:   FA2 = FSCX_REVOLVE(D,B2,48(
+		where  FA == FA2 (shared secret frome HKEX)
 
 An attacker in the middle can only see the exchanged numbers at step 2) (D, D2). It is estimated that the security of the Herradura scheme relies then on the difficulty to calculate (brute force) all possible inputs through the iterations (16 iterations in our 64bit example) of the FSCX_REVOLVE function, before the exchange, until some of the original inputs/secrets can be discovered.
 
@@ -39,17 +43,21 @@ HAEN is an efficient encryption scheme using assymetric keys for one-to-one comm
 
 The Herradura Assymetric Encryption scheme is as follows (i = P/4, r = P-i):
 1) Alice and Bob obtain a shared value (PSV) with the HKEX protocol
-	Alice: PSV = FA  = HKEX_with_Bob (A,B,r,i)
-	Bob:   PSV = FA2 = HKEX_with_Alice (A2,B2,r,i)
-2) Alice encrypts plaintext Pl using FSCX_REVOLVE function with Pl XOR PSV XOR A as parameter 1, B as parameter 2 and i as parameter 3, and sends the encrypted result, E, to Bob.
-	Alice: sends to Bob E = FSCX_REVOLVE(Pl XOR PSV XOR A, B, 16)
-3) Bob decrypts E sith FSCX_REVOLVE, with E as parameter 1, B2 as parameter 2, and r as parameter 3, xoring the result with A2.
-	Bob: decrypts E so that Pl2 = FSCX_REVOLVE(E,B2,48) XOR A2
-	where pl == pl2
+
+		Alice: PSV = FA  = HKEX_with_Bob (A,B,r,i)
+		Bob:   PSV = FA2 = HKEX_with_Alice (A2,B2,r,i)
+
+2) Alice encrypts cleatext C using FSCX_REVOLVE function with C XOR PSV XOR A as parameter 1, B as parameter 2 and i as parameter 3, and sends the encrypted result, E, to Bob.
+	
+		Alice: sends to Bob E = FSCX_REVOLVE(C XOR PSV XOR A, B, 16)
+
+3) Bob decrypts E with FSCX_REVOLVE, with E as parameter 1, B2 as parameter 2, and r as parameter 3, xoring the result with A2.
+
+		Bob: decrypts E so that C2 = FSCX_REVOLVE(E,B2,48) XOR A2, where C == C2
 	
 The security of the HAEN protocol relies on the security of HKEX. It should be noted that, as with other encryption protocols, repeated use of the key material for subsecuent encryptions might leak information. It is recomended to have a prearranged way to change PSV with each subsequent encryption (e.g. incrementing PSV with each subsequent encryption, similar to the CTR encryption mode with symmetric encryption algorithms).
 
-Also note that although keys are assymetric in HAEN, since you can decrypt with both keys (e.g. Alice can decrypt again E with Pl = FSCX_REVOLVE(E,B,48) XOR A XOR PSV). Therefore, it can't be used directly for public key encryption.
+Also note that although keys are assymetric in HAEN, it can't be used directly for public key encryption since you can decrypt with both keys (e.g. Alice can decrypt again E with C = FSCX_REVOLVE(E,B,48) XOR A XOR PSV).
 
 
 
