@@ -62,8 +62,7 @@ Also note that although keys are assymetric in HAEN, it can't be used directly f
 
 
 # Final note
-These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on fast bitwise operations. Until and unless their security is proven to be adequate with extensive analyses by expert cryptographers, their use is not recommended for production or mission critical systems.
-
+These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on fast bitwise operations. 
 
 
 OAHR
