@@ -29,7 +29,7 @@ The Herradura Key Exchange Scheme is as follows:
 3) Alice and Bob apply FSCX_REVOLVE with the remaining iterations r neded to complete the size in bit of the inputs, so that r+i=P (r=48 in our 64bit example), using as inputs the result obtained from the other party from step 2), and the same number, B, that each party have used during step 1), and then XOR the result with A and A2 respectively. Recommended value for r is P/4 * 3.
 
 		Alice: FA  = FSCX_REVOLVE(D2,B,48)
-		Bob:   FA2 = FSCX_REVOLVE(D,B2,48(
+		Bob:   FA2 = FSCX_REVOLVE(D,B2,48)
 		where  FA == FA2 (shared secret frome HKEX)
 
 An attacker in the middle can only see the exchanged numbers at step 2) (D, D2). It is estimated that the security of the Herradura scheme relies then on the difficulty to calculate (brute force) all possible inputs through the iterations (16 iterations in our 64bit example) of the FSCX_REVOLVE function, before the exchange, until some of the original inputs/secrets can be discovered.
