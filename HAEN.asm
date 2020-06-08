@@ -22,17 +22,17 @@ len1	equ $-msg1		            ;("$" means "here")
 		align 4,db 0	            ;align to double words
 msg2  	db 10,"Encrypted:",10,0
 len2	equ $-msg2
-		align 4,db 0	; align to double words
+		align 4,db 0	
 msg3  	db 10,"Decrypted:",10,0
 len3	equ $-msg3
-		align 4,db 0	; align to double words
+		align 4,db 0	
 ctext  times (msg2 - msg1+1) db 0x0	;placeholder for encrypted string
-		align 4,db 0	; align to double words
+		align 4,db 0	
 ptext  times (msg2 - msg1+1) db 0x0	;placeholder for decrypted string
-		align 4,db 0	; align to double words
+		align 4,db 0	
 msg4  	db "HKEX executed correctly!",10,0
 len4	equ $-msg4
-		align 4,db 0	; align to double words
+		align 4,db 0	
 
 		;HKEX parameters and placeholders:
 keyA   	dd 0x01AB0234	
