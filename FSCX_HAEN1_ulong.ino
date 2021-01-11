@@ -79,7 +79,7 @@ void loop() {
   Serial.println(" B1 [Alice's secret 2]");
   d1=fscx_revolve_long(a1,b1,key_pubsize);
   Serial.print(d1,HEX);
-  Serial.println(" D1 [exchenge material = FSCX_REVOLVE_LONG(A1,B1,12)");
+  Serial.println(" D1 [exchenge material = FSCX_REVOLVE_LONG(A1,B1,24)");
   
   Serial.print("\t");
   Serial.println("BOB:");
@@ -92,20 +92,20 @@ void loop() {
   d2=fscx_revolve_long(a2,b2,key_pubsize);
   Serial.print("\t");
   Serial.print(d2,HEX);
-  Serial.println(" D2 [exchange material = FSCX_REVOLVE_LONG(A2,B2,12)");
+  Serial.println(" D2 [exchange material = FSCX_REVOLVE_LONG(A2,B2,24)");
   Serial.println("   D1-->  <--D2 [exchange]");
   
   Serial.println("ALICE:");
   f1=fscx_revolve_long(d2,b1,key_privsize) ^ a1;
   Serial.print(f1,HEX);
-  Serial.println(" F1 [shared secret = FSCX_REVOLVE_LONG(D2,B1,4)");
+  Serial.println(" F1 [shared secret = FSCX_REVOLVE_LONG(D2,B1,8)");
   
   Serial.print("\t");
   Serial.println("BOB:");
   f2=fscx_revolve_long(d1,b2,key_privsize) ^ a2;
   Serial.print("\t");
   Serial.print(f1,HEX);
-  Serial.println(" F2 [shared secret = FSCX_REVOLVE_LONG(D1,B2,4)");
+  Serial.println(" F2 [shared secret = FSCX_REVOLVE_LONG(D1,B2,8)");
   Serial.println("   F1 == F2 [exchange]");
   
   Serial.println(" -----------HAEN----------------");
@@ -115,14 +115,14 @@ void loop() {
   Serial.println(" m [secret message in plaintext]");
   e=fscx_revolve_long(m^f1^a1,b1,key_pubsize);
   Serial.print(e,HEX);
-  Serial.println(" e [encrypted message = FSCX_REVOLVE_LONG(M xor F1 xor A1,B1,12)]");
+  Serial.println(" e [encrypted message = FSCX_REVOLVE_LONG(M xor F1 xor A1,B1,24)]");
   
   Serial.print("\t");
   Serial.println("BOB:");
   p=fscx_revolve_long(e,b2,key_privsize) ^ a2;
   Serial.print("\t");
   Serial.print(p,HEX);
-  Serial.println(" p [decrypted message = FSCX_REVOLVE_LONG(E,B2,4)");
+  Serial.println(" p [decrypted message = FSCX_REVOLVE_LONG(E,B2,8)");
   Serial.println("   M == P [decryption successful]");
   
   Serial.println(" ------------------------------");
