@@ -1,7 +1,7 @@
 # Herradura KEx (HKEX)
 HKEX is a lightweight Key Exchange scheme in the style of Diffie-Hellman Key Exchange, based on bitwise operations.
 
-This Key Exchange scheme is demonstrated through the exchange of values produced by the FSCX_REVOLVE function. This function implements an sequence of XOR operations, where each bit at position An of the first input is XORed with its surrounding bits, positions An-1 mod P and An+1 mod P, as well as with bits of the second input in positions Bn-1 mod P, Bn and Bn+1 mod P,  where P is the size in bits of the input numbers (say 64 bits).
+This Key Exchange scheme is demonstrated through the exchange of values produced by the FSCX_REVOLVE function. This function implements a sequence of XOR operations, where each bit at position An of the first input is XORed with its surrounding bits, positions An-1 mod P and An+1 mod P, as well as with bits of the second input in positions Bn-1 mod P, Bn and Bn+1 mod P,  where P is the size in bits of the input numbers (say 64 bits).
 
 So, let A, B, C be bit strings of size P, where A_{n} is the nth bit in the string from left to right of bit string A, and n belongs to the set N={0..P-1}. Let XOR be the bitwise exclusive OR operator. Let MOD be the modulo operator.
 
