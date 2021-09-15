@@ -1,19 +1,34 @@
 # Herradura KEx (HKEX)
 HKEX is a lightweight Key Exchange scheme in the style of Diffie-Hellman Key Exchange, based on bitwise operations.
 
-This Key Exchange scheme is demonstrated through the exchange of values produced by the FSCX_REVOLVE function. This function implements a sequence of XOR operations, where each bit at position An of the first input is XORed with its surrounding bits, positions An-1 mod P and An+1 mod P, as well as with bits of the second input in positions Bn-1 mod P, Bn and Bn+1 mod P,  where P is the size in bits of the input numbers (say 64 bits).
+This Key Exchange scheme is demonstrated through the exchange of values produced by the FSCX_REVOLVE function. This function implements an iteration of XOR operations, where each bit at position An of the first input is XORed with its surrounding bits, positions An-1 mod P and An+1 mod P, as well as with bits of the second input in positions Bn-1 mod P, Bn and Bn+1 mod P,  where P is the size in bits of the input numbers (say 64 bits).
 
-So, let A, B, C be bit strings of size P, where A_{n} is the nth bit in the string from left to right of bit string A, and n belongs to the set N={0..P-1}. Let XOR be the bitwise exclusive OR operator. Let MOD be the modulo operator.
+So, let A, B, C be bitstrings of size P, where A_{i} is the ith bit in the string (from left to right) of bitstring A, and i belongs to the set N={0..P-1}. Let XOR be the bitwise exclusive OR operator. Let MOD be the modulo operator. We define the FSCX multivariate function as follows:
 
-	FSCX (A,B) = C = A_{n MOD P} XOR A_{(n+1) MOD P} XOR A_{(n-1) MOD P} XOR B_{n MOD P} XOR B_{(n+1) MOD P} XOR B_{(n-1) MOD P}, for each n in the set N.
+	FSCX (A,B) = (C,B), where C := A_{i MOD P} XOR A_{(i+1) MOD P} XOR A_{(i-1) MOD P} XOR B_{i MOD P} XOR B_{(i+1) MOD P} XOR B_{(i-1) MOD P}, for each i in the set N.
 
 An alternate definition using circular shifts (bitwise rotations) is as follows: Let XOR be the bitwise exclusive OR operator, and let ROR(x) and ROL(x) be the bitwise rotation (i.e. circular bit shift) functions by one bit of bit string x to the right and to the left respectively.
 
 	FSCX (A,B) = C = A XOR B XOR ROL(A) XOR ROL(B) XOR ROR(A) XOR ROR(B)
 
-FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter (bit string B) constant, that produces a ring of numbers of size P or P/2. That is, the FSCX_REVOLVE function takes the result of the previous iteration as the first input, and maintains the second input constant. For 64 bit long bit strings, iterations will produce a number field of 32 or 64 numbers, where the result of the last iteration will be equal to A.
+Using the following symbols for ROL, ROR and XOR respectively, 
+<img src="https://render.githubusercontent.com/render/math?math=\circlearrowleft, \circlearrowright, \otimes">, We can rewrite the FSCX definition as follows:
+
+<img src="https://render.githubusercontent.com/render/math?math=fscx (A,B) = (C,B) = [(A \otimes B \otimes ( \circlearrowleft A) \otimes (\circlearrowleft B)  \otimes (\circlearrowright A) \otimes (\circlearrowright B)), B]">
+
+FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter (bit string B) constant, that produces a ring of numbers of size P or P/2 . That is, the FSCX_REVOLVE function takes the result of the previous iteration as the first input, and maintains the second input constant. For 64 bit long bit strings, iterations will produce a number field of 32 or 64 numbers, where the result of the last iteration will be equal to A (i.e. the orbit of the iterated function will be 32 or 64 in this example).
 
 The result of several iterations with the exception of iterations equal to P or P/2 (e.g. 32 and 64 for P=64 bits) which produce as a result the first input, cannot be used to identify the unique inputs used at the first iteration, since there are several combinations of inputs that produce the same result at each iteration.
+
+Using formal notation the FSCX_REVOLVE function is defined as follows:
+
+<img src="https://render.githubusercontent.com/render/math?math=fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}">
+
+That is, the FSCX_REVOLVE function is the FSCX function over bitstrings A and B, iterated n times. We also denote the existance of a periodoc orbit as follows:
+
+<img src="https://render.githubusercontent.com/render/math?math=\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)">
+
+For all p in the natural number set, there exists a number of iterations n where the result of the iterated function is the identity (A,B); you can iterate indefinitely producing the identity (A,B) every n iterations (in the case of the FSCX_REVOLVE function, n is either the length of the longest bitstring from A or B, or half of that length). 
 
 The Herradura Key Exchange Scheme is as follows:
 1) Alice and Bob select 2 random numbers each, A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and apply i < P FSCX, using the FSXC_REVOLVE function with A and B as the inputs for the first iteration, and the result of each iteration along with B as the inputs for subsequent iterations (e.g. i=16 iterations for P=64). Recommended value for i is P/4. So, let D and D2 be the result of the FSCX_REVOLVE function for Alice and Bob respectively, using 64 bit numbers:
