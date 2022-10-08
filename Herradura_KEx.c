@@ -28,7 +28,7 @@
 
 typedef unsigned long long int INT64;
 
-#undef VERBOSE
+/* #undef VERBOSE */
 
 #ifndef INTSZ
   #define INTSZ 64 // MUST be 2^n where n is an integer
@@ -165,6 +165,10 @@ INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
 
 int main (){
   INT64 A,A2,B,B2,D,D2,FA,FA2;
+#ifdef VERBOSE
+  INT64 K,G,L,C;
+  long unsigned int cont;
+#endif
   srand(time(0));
 
   A=rnd64b();
