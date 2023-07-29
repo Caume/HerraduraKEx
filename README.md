@@ -23,7 +23,7 @@ Using formal notation the FSCX_REVOLVE function is defined as follows:
 
 $fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}$
 
-That is, the FSCX_REVOLVE function is the FSCX function over bitstrings A and B, iterated n times. We also denote the existance of a periodoc orbit as follows:
+That is, the FSCX_REVOLVE function is the FSCX function over bitstrings A and B, iterated n times. We also denote the existance of a periodic orbit as follows:
 
 $\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)$
 
