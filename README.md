@@ -13,7 +13,7 @@ An alternate definition using circular shifts (bitwise rotations) is as follows:
 
 Using the following symbols for ROL, ROR and XOR respectively,  $\circlearrowleft, \circlearrowright, \oplus$, we can rewrite the FSCX definition as follows:
 
-$fscx (A,B) = (C,B) = [(A \oplus B \oplus ( \circlearrowleft A) \oplus (\circlearrowleft B)  \oplus (\circlearrowright A) \oplus (\circlearrowright B)), B]$
+$fscx (A,B) = (C,B) = [(A \oplus B \oplus ( \circlearrowleft A) \oplus (\circlearrowleft B) \oplus (\circlearrowright A) \oplus (\circlearrowright B)), B]$
 
 FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter (bit string B) constant, that produces a ring of numbers of size P or P/2 . That is, the FSCX_REVOLVE function takes the result of the previous iteration as the first input, and maintains the second input constant. For 64 bit long bit strings, iterations will produce a number field of 32 or 64 numbers, where the result of the last iteration will be equal to A (i.e. the orbit of the iterated function will be 32 or 64 in this example).
 
@@ -21,11 +21,11 @@ The result of several iterations with the exception of iterations equal to P or 
 
 Using formal notation the FSCX_REVOLVE function is defined as follows:
 
-<img src="https://render.githubusercontent.com/render/math?math=fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}">
+$fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}$
 
 That is, the FSCX_REVOLVE function is the FSCX function over bitstrings A and B, iterated n times. We also denote the existance of a periodoc orbit as follows:
 
-<img src="https://render.githubusercontent.com/render/math?math=\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)">
+$\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)$
 
 For all p in the natural number set, there exists a number of iterations n where the result of the iterated function is the identity (A,B); you can iterate indefinitely producing the identity (A,B) every n iterations (in the case of the FSCX_REVOLVE function, n is either the length of the longest bitstring from A or B, or half of that length). 
 
