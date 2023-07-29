@@ -19,15 +19,15 @@ FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter 
 
 The result of several iterations with the exception of iterations equal to P or P/2 (e.g. 32 and 64 for P=64 bits) which produce as a result the first input, cannot be used to identify the unique inputs used at the first iteration, since there are several combinations of inputs that produce the same result at each iteration.
 
-The FSCX_REVOLVE function is defined as follows:
+The FSCX_REVOLVE function is defined as follows (where $\circ n$ means n iterations):
 
-$fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}$
+$fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (Z, B), \forall n\in \mathbb{N}$
 
-That is, the FSCX_REVOLVE function is the FSCX function applied to bitstrings A and B, iterated n times. We also denote the existance of a periodic orbit as follows:
+That is, the FSCX_REVOLVE function is the FSCX function applied to bitstrings A and B, iterated n times. We also denote the existance of a periodic orbit q where A = Z, as follows:
 
-$\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)$
+$\forall q\in \mathbb{N},\exists{n} \mid fscx^{\circ nq}(A,B) = (A, B)$
 
-For all p in the natural number set, there exists a number of iterations n where the result of the iterated function is the identity (A,B); you can iterate indefinitely producing the identity (A,B) every n iterations (in the case of the FSCX_REVOLVE function, n is either the length of the longest bitstring from A or B, or half of that length). 
+For bitstrings A and B of size P in bits, and where P is of the form 2^n it, it stands that for all q in the natural number set, there exists a number of iterations n where the result of the iterated function is the identity (A,B). That is: you can iterate indefinitely producing the identity (A,B) every P or P/2 iterations. 
 
 The Herradura Key Exchange Scheme is as follows:
 1) Alice and Bob select 2 random numbers each, A and B, of length P bits, such that P is 2^n (n=6 -> P= 64, for 64bit numbers), and apply i < P FSCX, using the FSXC_REVOLVE function with A and B as the inputs for the first iteration, and the result of each iteration along with B as the inputs for subsequent iterations (e.g. i=16 iterations for P=64). Recommended value for i is P/4. So, let D and D2 be the result of the FSCX_REVOLVE function for Alice and Bob respectively, using 64 bit numbers:
