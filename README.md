@@ -19,11 +19,11 @@ FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter 
 
 The result of several iterations with the exception of iterations equal to P or P/2 (e.g. 32 and 64 for P=64 bits) which produce as a result the first input, cannot be used to identify the unique inputs used at the first iteration, since there are several combinations of inputs that produce the same result at each iteration.
 
-Using formal notation the FSCX_REVOLVE function is defined as follows:
+The FSCX_REVOLVE function is defined as follows:
 
 $fscxRevolve (A,B,n) = fscx^{\circ n}(A,B) = (C, B), \forall n\in \mathbb{N}$
 
-That is, the FSCX_REVOLVE function is the FSCX function over bitstrings A and B, iterated n times. We also denote the existance of a periodic orbit as follows:
+That is, the FSCX_REVOLVE function is the FSCX function applied to bitstrings A and B, iterated n times. We also denote the existance of a periodic orbit as follows:
 
 $\forall p\in \mathbb{N},\exists{n} \mid fscx^{\circ np}(A,B) = (A, B)$
 
