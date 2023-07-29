@@ -48,12 +48,12 @@ The Herradura Key Exchange Scheme is as follows:
 
 An attacker in the middle can only see the exchanged numbers at step 2) (D, D2). The security of the Herradura scheme relies on the difficulty to trace back (brute force) all possible inputs through all the iterations (16 iterations in our 64bit example) of the FSCX_REVOLVE function.
 
-In addition to the Key Exchange (HKEX), the Herradura base function (FSCX_REVOLVE) can be used to implement efficient and lightweight one-to-one assymetric key encryption (Herradura AEn).
+In addition to the Key Exchange (HKEX), the Herradura base function (FSCX_REVOLVE) can be used to implement a lightweight one-to-one assymetric key encryption (Herradura AEn).
 
 
 
 # Herradura AEn (HAEN)
-HAEN is an efficient and lightweight encryption scheme using assymetric keys for one-to-one communication (not suitable to be used directly for public key encryption).
+HAEN is a lightweight encryption scheme using assymetric keys for one-to-one communication (not suitable to be used directly for public key encryption).
 
 The Herradura Assymetric Encryption scheme is as follows (i = P/4, r = P-i):
 1) Alice and Bob obtain a shared value (PSV) with the HKEX protocol
@@ -76,7 +76,7 @@ Also note that although keys are assymetric in HAEN, it can't be used directly f
 
 
 # Final note
-These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on fast bitwise operations. 
+These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
 
 
 OAHR
