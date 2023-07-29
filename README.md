@@ -12,7 +12,7 @@ An alternate definition using circular shifts (bitwise rotations) is as follows:
 	FSCX (A,B) = C = A XOR B XOR ROL(A) XOR ROL(B) XOR ROR(A) XOR ROR(B)
 
 Using the following symbols for ROL, ROR and XOR respectively, 
-<img src="https://latex.codecogs.com/pdf.download?{\color{Blue} \circlearrowleft, \circlearrowright, \oplus}">, We can rewrite the FSCX definition as follows:
+<img src="https://render.githubusercontent.com/render/math?math={\color{Blue} \circlearrowleft, \circlearrowright, \oplus}">, We can rewrite the FSCX definition as follows:
 <img src="https://render.githubusercontent.com/render/math?math=fscx (A,B) = (C,B) = [(A \oplus B \oplus ( \circlearrowleft A) \oplus (\circlearrowleft B)  \oplus (\circlearrowright A) \oplus (\circlearrowright B)), B]">
 
 FSCX_REVOLVE is an iterated version of the FSCX function with the 2nd parameter (bit string B) constant, that produces a ring of numbers of size P or P/2 . That is, the FSCX_REVOLVE function takes the result of the previous iteration as the first input, and maintains the second input constant. For 64 bit long bit strings, iterations will produce a number field of 32 or 64 numbers, where the result of the last iteration will be equal to A (i.e. the orbit of the iterated function will be 32 or 64 in this example).
