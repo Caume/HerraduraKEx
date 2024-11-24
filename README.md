@@ -73,7 +73,15 @@ The security of the HAEN protocol relies on the security of HKEX. It should be n
 
 Also note that although keys are assymetric in HAEN, it can't be used directly for public key encryption since you can decrypt with both keys (e.g. Alice can decrypt again E with C = FSCX_REVOLVE(E,B,48) XOR A XOR PSV).
 
+# Herradura Cryptographic Suite
+These source code files contain examples and battery tests for the following cryptographic protocols that use the Herradura Cryptographic primitives FSCX and FSCX_REVOLVE:
 
+1) HKEX (key exchange)
+2) HSKE (symmetric key encryption) --> replaces HAEN.
+3) HPKS (public key signature)  --> must be used with HSKE (i.e. HPKS+HSKE) to be secure (see the examples)!
+4) HPKE (public key encryption)
+
+Documentation for the new public key encryption and signature protocols is included in within the code.
 
 # Final note
 These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
