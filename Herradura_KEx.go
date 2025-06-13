@@ -1,22 +1,25 @@
-/*  Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
-    Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
+/*
+Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
 
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the MIT License or the GNU General Public License 
-    as published by the Free Software Foundation, either version 3 of the License, 
-    or (at your option) any later version.
+	Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
 
-    Under the terms of the GNU General Public License, please also consider that:
+	This program is free software: you can redistribute it and/or modify
+	it under the terms of the MIT License or the GNU General Public License
+	as published by the Free Software Foundation, either version 3 of the License,
+	or (at your option) any later version.
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+	Under the terms of the GNU General Public License, please also consider that:
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
 
-    golang implementation by Russ Magee (rmagee_at_gmail.com) */
+	You should have received a copy of the GNU General Public License
+	along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+	golang implementation by Russ Magee (rmagee_at_gmail.com)
+*/
 package main
 
 import (
@@ -105,12 +108,9 @@ func (h *HerraduraKEx) rand() (v *big.Int) {
 // Return max value for an n-bit big.Int
 func (h *HerraduraKEx) getMax() (v *big.Int) {
 	v = big.NewInt(0)
-	var max big.Int
-
 	for i := 0; i < h.intSz; i++ {
-		max.SetBit(v, i, 1)
+		v.SetBit(v, i, 1)
 	}
-	v = &max
 	return v
 }
 
@@ -141,12 +141,12 @@ func main() {
 	fmt.Printf("\t\t\t\t   B2 0x%s [Secret 4]\n", hkex.b2.Text(16))
 	d2 := hkex.FSCXRevolve(&hkex.a2, &hkex.b2, hkex.pubSz)
 	fmt.Printf("\t\t\t\t<- D2 0x%s [FSCXRevolve(A2,B2,%d)]\n", d2.Text(16), hkex.pubSz)
-	
-	hkex.fa = hkex.FSCXRevolve(&d2, &hkex.b, hkex.intSz - hkex.pubSz)
+
+	hkex.fa = hkex.FSCXRevolve(&d2, &hkex.b, hkex.intSz-hkex.pubSz)
 	hkex.fa.Xor(&hkex.fa, &hkex.a)
-	fmt.Printf("0x%s FA [FSCXRevolve(D2,B,%d) xor A]\n", hkex.fa.Text(16), hkex.intSz - hkex.pubSz)
-	
-	hkex.fa2 = hkex.FSCXRevolve(&d, &hkex.b2, hkex.intSz - hkex.pubSz)
+	fmt.Printf("0x%s FA [FSCXRevolve(D2,B,%d) xor A]\n", hkex.fa.Text(16), hkex.intSz-hkex.pubSz)
+
+	hkex.fa2 = hkex.FSCXRevolve(&d, &hkex.b2, hkex.intSz-hkex.pubSz)
 	hkex.fa2.Xor(&hkex.fa2, &hkex.a2)
-	fmt.Printf("\t\t\t\t FA = FA2 0x%s [FSCXRevolve(D,B2,%d) xor A2]\n", hkex.fa2.Text(16), hkex.intSz - hkex.pubSz)
+	fmt.Printf("\t\t\t\t FA = FA2 0x%s [FSCXRevolve(D,B2,%d) xor A2]\n", hkex.fa2.Text(16), hkex.intSz-hkex.pubSz)
 }
