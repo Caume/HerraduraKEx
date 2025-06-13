@@ -20,7 +20,6 @@
 '''
 
 from bitstring import BitArray
-import hashlib
 import os
 
 def new_rand_bitarray(bitlength):
