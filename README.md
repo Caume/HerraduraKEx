@@ -83,6 +83,10 @@ These source code files contain examples and battery tests for the following cry
 
 Documentation for the new public key encryption and signature protocols is included in within the code.
 
+Example implementations are provided in multiple languages, including C, Go, Python
+and assembler.  Assembly examples for both x86 and ARM Linux are available in the
+source tree.
+
 # Final note
 These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
 
