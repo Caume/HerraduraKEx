@@ -20,47 +20,59 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ###
 
+"""Minimal example of the Herradura Key Exchange algorithm."""
+
 from bitstring import BitArray
-from random import getrandbits
+from secrets import randbits
 import argparse
 
-DefaultKeybits = 64
+DEFAULT_KEYBITS = 64
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-b", "--bits", help = "size of message in bits")
-parser.add_argument("-v", "--verbose", help = "if set, the program will show each step in fscx_revolve", action='store_true')
+parser.add_argument(
+    "-b",
+    "--bits",
+    type=int,
+    default=DEFAULT_KEYBITS,
+    help="size of message in bits (must be a multiple of 8)",
+)
+parser.add_argument(
+    "-v",
+    "--verbose",
+    action="store_true",
+    help="show intermediate steps in fscx_revolve",
+)
 
 #Creates a random BitArray object of size bitlength
-def newRandBitarray (bitlength):
+def new_rand_bitarray(bitlength: int) -> BitArray:
+	"""Return a random `BitArray` of *bitlength* bits."""
 	result = BitArray(bitlength)
-	result.uint = getrandbits(bitlength)
+	result.uint = randbits(bitlength)
 	return result
 
 #fscx(a,b) = (a ^ b ^ rol(a) ^ rol(b) ^ ror(a) ^ ror(b))
-def fscx(A,B,keybits):
-	result = BitArray(keybits)
-	result = A ^ B
-	A.ror(1)
-	B.ror(1)
-	result = result ^ A ^ B
-	A.rol(2)
-	B.rol(2)
-	result = result ^ A ^ B
-	A.ror(1)	#we need to preserve A and B since BitArrays are mutable.
-	B.ror(1)
+def fscx(A: BitArray, B: BitArray, keybits: int) -> BitArray:
+	"""Perform one FSCX transformation."""
+	a = A.copy()
+	b = B.copy()
+	result = a ^ b
+	a.ror(1)
+	b.ror(1)
+	result ^= a ^ b
+	a.rol(2)
+	b.rol(2)
+	result ^= a ^ b
 	return result
 
 #Iterative version of fscx
-def fscx_revolve (A,B,keybits,steps,verbose):
-	result = BitArray(keybits)
-	prevresult = BitArray(keybits)
-	result = A
-	for n in range(0,steps):
-		prevresult = result
-		result = fscx(result,B,keybits)
-		if (verbose):
-			print(f"---FSCX_REVOLVE_PRINT UP:{prevresult} DOWN:{B} Step {n}: {result}")
-	return result
+def fscx_revolve(A: BitArray, B: BitArray, keybits: int, steps: int, verbose: bool = False) -> BitArray:
+    result = A
+    for n in range(steps):
+        prev = result
+        result = fscx(result, B, keybits)
+        if verbose:
+            print(f"---FSCX_REVOLVE_PRINT UP:{prev} DOWN:{B} Step {n + 1}: {result}")
+    return result
 
 def main ():
 	args = parser.parse_args()
@@ -70,7 +82,7 @@ def main ():
 		if int(args.bits) % 8 != 0:
 			raise TypeError("Key size in bits must be a multiple of 8!")
 	else:
-		keybits = int(DefaultKeybits)
+		keybits = int(DEFAULT_KEYBITS)
 		print (f"Default key size in bits: {keybits}")
 	if args.verbose:
 		verbose = True
@@ -84,10 +96,10 @@ def main ():
 	print (f"Pub key size in bits: {pubkeybits}")
 	print (f"Priv key size in bits: {privkeybits}")
 
-	A = newRandBitarray(keybits)
-	B = newRandBitarray(keybits)
-	A2 = newRandBitarray(keybits)
-	B2 = newRandBitarray(keybits)
+	A = new_rand_bitarray(keybits)
+	B = new_rand_bitarray(keybits)
+	A2 = new_rand_bitarray(keybits)
+	B2 = new_rand_bitarray(keybits)
 
 	print(f"--- Herradura Key Exchange (HKEX) ---\n")
 	print(f"ALICE:")
