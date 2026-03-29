@@ -2,7 +2,7 @@
     Herradura KEx (HKEX) example in ARM assembler for Linux
     Equivalent functionality to Herradura_KEx.py
 
-    Copyright (C) 2023 Omar Alejandro Herrera Reyna
+    Copyright (C) 2023-2026 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT License or the GNU General Public License

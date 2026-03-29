@@ -1,7 +1,7 @@
 /*  Herradura KEx (HKEX)- a Key exchange scheme in the style of Diffie-Hellman Key Exchange,
     based on the FSCX function.
     
-    Copyright (C) 2017-2019 Omar Alejandro Herrera Reyna
+    Copyright (C) 2017-2026 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT License or the GNU General Public License 

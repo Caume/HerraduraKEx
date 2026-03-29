@@ -1,7 +1,7 @@
 /*
 Herradura - a Key exchange scheme in the style of Diffie-Hellman Key Exchange.
 
-	Copyright (C) 2017-2018 Omar Alejandro Herrera Reyna
+	Copyright (C) 2017-2026 Omar Alejandro Herrera Reyna
 
 	This program is free software: you can redistribute it and/or modify
 	it under the terms of the MIT License or the GNU General Public License

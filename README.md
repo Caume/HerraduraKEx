@@ -87,6 +87,36 @@ Example implementations are provided in multiple languages, including C, Go, Pyt
 and assembler.  Assembly examples for both x86 and ARM Linux are available in the
 source tree.
 
+# FSCX_REVOLVE_N (v1.1)
+
+FSCX_REVOLVE_N is a nonce-augmented variant of FSCX_REVOLVE introduced in v1.1 of the Herradura Cryptographic Suite. Instead of iterating FSCX alone, each step applies:
+
+	result = FSCX(result, B) ⊕ N
+
+where N is a nonce derived from protocol context (no new secrets required):
+
+- **HKEX, HPKS, HPKE**: N = C ⊕ C2, computable from the public key (C is published; C2 = FSCX_REVOLVE(A2, B2, i) is derivable from the public parameters A2, B2 and the public round count i).
+- **HSKE**: N = key (the shared key is injected at every revolve step, not only at the input/output boundaries).
+
+Using the linear operator notation L = Id ⊕ ROL ⊕ ROR, the two variants compare as:
+
+	FSCX_REVOLVE  (A, B,    n) = L^n(A) ⊕ S_n(B)           [purely linear in A over GF(2)]
+	FSCX_REVOLVE_N(A, B, N, n) = L^n(A) ⊕ T_n(L(B) ⊕ N)    [affine in A over GF(2)]
+
+where S_n = L + L² + ... + L^n and T_n = I + L + ... + L^(n-1).
+
+The key security improvement is that the purely linear structure is broken: an attacker observing two public values C₁ and C₂ computed with the same B but different A values can no longer extract L^i(A₁ ⊕ A₂) from C₁ ⊕ C₂ across sessions, because the session-specific nonce N mixes into the affine constant at every step.
+
+**Proof that the HKEX equality is preserved under FSCX_REVOLVE_N:**
+
+The equality FSCX_REVOLVE_N(C2, B, N, r) ⊕ A = FSCX_REVOLVE_N(C, B2, N, r) ⊕ A2 holds because expanding both sides with C = FSCX_REVOLVE(A, B, i) and C2 = FSCX_REVOLVE(A2, B2, i), and applying L^(r+i) = I (since r+i = P), the condition reduces to:
+
+	L^r(T_i(Z)) = T_r(Z)   for all Z
+
+This is identical to the condition without the nonce — N cancels from both sides identically. The same condition guarantees correctness for HSKE, HPKS, and HPKE.
+
+**Orbit properties** are preserved: FSCX_REVOLVE_N(·, B, N, ·) is a bijection on GF(2)^P, so all orbits are finite. Empirical validation confirms orbit lengths remain ≤ 2P.
+
 # Final note
 These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
 
