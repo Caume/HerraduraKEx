@@ -22,9 +22,75 @@
 
 """Minimal example of the Herradura Key Exchange algorithm."""
 
-from bitstring import BitArray
 from secrets import randbits
 import argparse
+
+
+class BitArray:
+    """Fixed-width bit string backed by a Python int.
+    Supports XOR, in-place rotation, equality, and hex/bytes/uint I/O.
+    Size must be a positive multiple of 8.
+    """
+
+    __slots__ = ('_val', '_size', '_mask')
+
+    def __init__(self, size: int, value: int = 0):
+        self._size = size
+        self._mask = (1 << size) - 1
+        self._val = int(value) & self._mask
+
+    @property
+    def uint(self) -> int:
+        return self._val
+
+    @uint.setter
+    def uint(self, value: int):
+        self._val = int(value) & self._mask
+
+    @property
+    def bytes(self) -> bytes:
+        return self._val.to_bytes(self._size // 8, 'big')
+
+    @bytes.setter
+    def bytes(self, data: bytes):
+        self._val = int.from_bytes(data, 'big') & self._mask
+
+    @property
+    def hex(self) -> str:
+        return f'{self._val:0{self._size // 4}x}'
+
+    def copy(self) -> 'BitArray':
+        return BitArray(self._size, self._val)
+
+    def rol(self, n: int) -> None:
+        """Rotate left in-place by n bits."""
+        n %= self._size
+        if n:
+            self._val = ((self._val << n) | (self._val >> (self._size - n))) & self._mask
+
+    def ror(self, n: int) -> None:
+        """Rotate right in-place by n bits."""
+        n %= self._size
+        if n:
+            self._val = ((self._val >> n) | (self._val << (self._size - n))) & self._mask
+
+    def __xor__(self, other: 'BitArray') -> 'BitArray':
+        return BitArray(self._size, self._val ^ other._val)
+
+    def __ixor__(self, other: 'BitArray') -> 'BitArray':
+        self._val ^= other._val
+        return self
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, BitArray):
+            return self._size == other._size and self._val == other._val
+        return NotImplemented
+
+    def __str__(self) -> str:
+        return f'0x{self.hex}'
+
+    def __repr__(self) -> str:
+        return f'BitArray({self._size}, 0x{self.hex})'
 
 DEFAULT_KEYBITS = 64
 
@@ -74,6 +140,16 @@ def fscx_revolve(A: BitArray, B: BitArray, keybits: int, steps: int, verbose: bo
             print(f"---FSCX_REVOLVE_PRINT UP:{prev} DOWN:{B} Step {n + 1}: {result}")
     return result
 
+def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray, keybits: int, steps: int, verbose: bool = False) -> BitArray:
+    """Nonce-augmented FSCX_REVOLVE (v1.1). Each step: result = fscx(result,B) XOR nonce."""
+    result = A.copy()
+    for n in range(steps):
+        prev = result
+        result = fscx(result, B, keybits) ^ nonce
+        if verbose:
+            print(f"---FSCX_REVOLVE_N_PRINT UP:{prev} DOWN:{B} Step {n + 1}: {result}")
+    return result
+
 def main ():
 	args = parser.parse_args()
 	if args.bits:
@@ -112,13 +188,15 @@ def main ():
 	print(f"    B2 {B2} [Secret 4]")
 	D2=fscx_revolve(A2,B2,keybits,pubkeybits,verbose)
 	print(f" <- D2 {D2} [FSCX_REVOLVE(A2,B2,{pubkeybits})]")
+	hkex_nonce = D ^ D2
+	print(f"{hkex_nonce} hkex_nonce [D xor D2]")
 	print(f"ALICE:")
-	FA=fscx_revolve(D2,B,keybits,privkeybits,verbose)^A #---for 64 keybits, 1 and 33 pubkeybits are weak; 1 - pubkeybits seems best.
-	print(f"{FA} FA [FSCX_REVOLVE(D2,B,{privkeybits}) xor A]")
+	FA=fscx_revolve_n(D2,B,hkex_nonce,keybits,privkeybits,verbose)^A #---for 64 keybits, 1 and 33 pubkeybits are weak; 1 - pubkeybits seems best.
+	print(f"{FA} FA [FSCX_REVOLVE_N(D2,B,{privkeybits}) xor A]")
 	print(f"    BOB:")
-	FA2=fscx_revolve(D,B2,keybits,privkeybits,verbose)^A2
+	FA2=fscx_revolve_n(D,B2,hkex_nonce,keybits,privkeybits,verbose)^A2
 	if FA == FA2:
-		print(f"    FA2 == FA {FA2} [FSCX_REVOLVE(D,B2,{privkeybits}) xor A2]")
+		print(f"    FA2 == FA {FA2} [FSCX_REVOLVE_N(D,B2,{privkeybits}) xor A2]")
 	else:
 		print(f"    Error: FA2 != FA!")
 

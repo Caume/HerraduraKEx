@@ -48,21 +48,79 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
-
-	"github.com/tunabay/go-bitarray"
+	"math/big"
 )
 
-func New_rand_bitarray(bitlength int) *bitarray.BitArray {
+// BitArray is a fixed-width bit string backed by big.Int.
+// Supports XOR, rotation, equality, and hex formatting via %x.
+// Size must be a positive multiple of 8.
+type BitArray struct {
+	val  big.Int
+	size int
+}
+
+func bitArrayMask(size int) *big.Int {
+	mask := new(big.Int).Lsh(big.NewInt(1), uint(size))
+	return mask.Sub(mask, big.NewInt(1))
+}
+
+// NewFromBytes constructs a BitArray from raw bytes (big-endian). The offset
+// parameter is accepted for API compatibility but must be 0.
+func NewFromBytes(data []byte, _ int, size int) *BitArray {
+	ba := &BitArray{size: size}
+	ba.val.SetBytes(data[:size/8])
+	return ba
+}
+
+// Xor returns a new BitArray that is the bitwise XOR of ba and other.
+func (ba *BitArray) Xor(other *BitArray) *BitArray {
+	result := &BitArray{size: ba.size}
+	result.val.Xor(&ba.val, &other.val)
+	return result
+}
+
+// RotateLeft returns a new BitArray rotated left by n bits.
+// Negative n rotates right.
+func (ba *BitArray) RotateLeft(n int) *BitArray {
+	size := ba.size
+	n = ((n % size) + size) % size
+	result := &BitArray{size: size}
+	if n == 0 {
+		result.val.Set(&ba.val)
+		return result
+	}
+	left := new(big.Int).Lsh(&ba.val, uint(n))
+	right := new(big.Int).Rsh(&ba.val, uint(size-n))
+	result.val.Or(left, right)
+	result.val.And(&result.val, bitArrayMask(size))
+	return result
+}
+
+// Equal reports whether ba and other have the same size and value.
+func (ba *BitArray) Equal(other *BitArray) bool {
+	return ba.size == other.size && ba.val.Cmp(&other.val) == 0
+}
+
+// Format implements fmt.Formatter; supports the %x verb with zero-padded output.
+func (ba *BitArray) Format(f fmt.State, verb rune) {
+	hexDigits := ba.size / 4
+	s := ba.val.Text(16)
+	for i := len(s); i < hexDigits; i++ {
+		f.Write([]byte{'0'})
+	}
+	fmt.Fprint(f, s)
+}
+
+func New_rand_bitarray(bitlength int) *BitArray {
 	buf := make([]byte, bitlength/8)
 	_, err := rand.Read(buf)
 	if err != nil {
 		log.Fatalf("ERROR while generating random string: %s", err)
 	}
-	result := bitarray.NewFromBytes(buf, 0, bitlength)
-	return result
+	return NewFromBytes(buf, 0, bitlength)
 }
 
-func Fscx_revolve(ba *bitarray.BitArray, bb *bitarray.BitArray, steps int, verbose bool) *bitarray.BitArray {
+func Fscx_revolve(ba *BitArray, bb *BitArray, steps int, verbose bool) *BitArray {
 	result := ba
 	for i := 1; i <= steps; i++ {
 		result = Fscx(result, bb)
@@ -78,7 +136,7 @@ func Fscx_revolve(ba *bitarray.BitArray, bb *bitarray.BitArray, steps int, verbo
 // Breaks the pure GF(2)-linearity of FSCX_REVOLVE while preserving the HKEX equality
 // and orbit properties. The HKEX equality holds for any nonce value because N cancels
 // from both sides of the protocol equality condition.
-func Fscx_revolve_n(ba *bitarray.BitArray, bb *bitarray.BitArray, nonce *bitarray.BitArray, steps int, verbose bool) *bitarray.BitArray {
+func Fscx_revolve_n(ba *BitArray, bb *BitArray, nonce *BitArray, steps int, verbose bool) *BitArray {
 	result := ba
 	for i := 1; i <= steps; i++ {
 		result = Fscx(result, bb).Xor(nonce)
@@ -89,7 +147,7 @@ func Fscx_revolve_n(ba *bitarray.BitArray, bb *bitarray.BitArray, nonce *bitarra
 	return result
 }
 
-func Fscx(ba *bitarray.BitArray, bb *bitarray.BitArray) *bitarray.BitArray {
+func Fscx(ba *BitArray, bb *BitArray) *BitArray {
 	result := ba.Xor(bb)
 	ba = ba.RotateLeft(1)
 	bb = bb.RotateLeft(1)
@@ -319,7 +377,7 @@ func main() {
 	fmt.Printf("D (Eve)   : %x\n", D)
 	E2 := D.Xor(E)
 	D2 := Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(E2) // KK
-	fmt.Printf("D2 (Eve)  : %x\n", V2)
+	fmt.Printf("D2 (Eve)  : %x\n", D2)
 	if D.Equal(nonce) || D2.Equal(nonce) { // Assert equality
 		fmt.Printf("+ Eve could decrypt plaintext without Alice's private key!\n")
 	} else {

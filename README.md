@@ -117,8 +117,74 @@ This is identical to the condition without the nonce — N cancels from both sid
 
 **Orbit properties** are preserved: FSCX_REVOLVE_N(·, B, N, ·) is a bijection on GF(2)^P, so all orbits are finite. Empirical validation confirms orbit lengths remain ≤ 2P.
 
+# Build & Run Instructions
+
+## C
+
+```bash
+# Basic HKEX (64-bit)
+gcc -DINTSZ=64 -O2 -o HKEX Herradura_KEx.c
+./HKEX
+
+# Basic HKEX with verbose output (brute-force attack simulation)
+gcc -DINTSZ=64 -DVERBOSE -O2 -o HKEX_verbose Herradura_KEx.c
+./HKEX_verbose
+
+# Basic HKEX with GMP big numbers (requires libgmp-dev)
+gcc -DINTSZ=256 -O2 -o HKEX_bignum Herradura_KEx_bignum.c -lgmp
+./HKEX_bignum
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
+./"Herradura cryptographic suite"
+
+# Security & performance tests
+gcc -O2 -o Herradura_tests Herradura_tests.c
+./Herradura_tests
+```
+
+## Go
+
+```bash
+# Basic HKEX
+go run Herradura_KEx.go
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+go run "Herradura cryptographic suite.go"
+
+# Security & performance tests
+go run Herradura_tests.go
+```
+
+## Python
+
+```bash
+# Basic HKEX
+python3 Herradura_KEx.py -b 64 -v
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+python3 "Herradura cryptographic suite.py"
+
+# Security & performance tests
+python3 Herradura_tests.py
+```
+
+## Assembly
+
+```bash
+# ARM Linux (requires arm-linux-gnueabi-gcc; run with QEMU on non-ARM host)
+arm-linux-gnueabi-gcc -o HKEX_arm HKEX_arm_linux.s
+./HKEX_arm          # on ARM hardware
+qemu-arm ./HKEX_arm # on non-ARM host
+
+# x86 NASM assembly (requires NASM and asm_io.o library)
+nasm -f elf HAEN.asm
+gcc -m32 -o HAEN HAEN.o asm_io.o
+./HAEN
+```
+
 # Final note
-These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
+These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations.
 
 
 OAHR

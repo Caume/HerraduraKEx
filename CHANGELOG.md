@@ -4,6 +4,58 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.2] - 2026-03-29
+
+### Added
+- **`Herradura cryptographic suite.c`**: C equivalent of the Go/Python cryptographic
+  suites, implementing all four protocols (HKEX, HSKE, HPKS, HPKE) with
+  `FSCX_REVOLVE_N` and the full EVE bypass test suite. Uses 64-bit integers
+  (`uint64_t`) and `/dev/urandom` for randomness.
+  Build: `gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"`
+
+- **`Herradura_tests.c`**, **`Herradura_tests.py`**, **`Herradura_tests.go`**:
+  Security assumption tests and performance benchmarks, self-contained (no external
+  dependencies). Tests run across 64/128/256-bit operand sizes (Python and Go) and
+  64-bit (C), covering:
+  1. FSCX_REVOLVE non-commutativity (expected: 0 / 10000 commutative pairs)
+  2. FSCX single-step linear diffusion (expected: exactly 3 bits per flip —
+     consequence of FSCX being a GF(2) linear map; L = Id ⊕ ROL ⊕ ROR)
+  3. Orbit period (expected: period = P or P/2 for all random inputs)
+  4. Bit-frequency balance (expected: each output bit set 47–53% of the time)
+  5. HKEX session key XOR construction (expected: exactly 1-bit change per
+     single-bit A flip — algebraic nonce cancellation property)
+  Plus benchmarks for FSCX throughput, FSCX_REVOLVE throughput, full HKEX
+  handshake, and HSKE round-trip (encrypt + decrypt).
+
+### Changed
+- **`Herradura cryptographic suite.go`** and **`Herradura cryptographic suite.py`**:
+  replaced external `go-bitarray` / `bitstring` library dependencies with
+  self-contained `BitArray` implementations backed by `math/big.Int` (Go) and
+  Python `int` (Python), eliminating all third-party runtime dependencies.
+
+- **`go.mod`** / **`go.sum`**: removed `github.com/tunabay/go-bitarray` dependency.
+
+### Fixed
+- **`Herradura cryptographic suite.go`** line 380: `%x` format argument was `V2`
+  (a variable from the HSKE section) instead of `D2` (the HKEX public value for
+  the EVE HPKE test). This caused the wrong value to be printed in the Eve HPKE
+  output line.
+
+### Mathematical notes
+- FSCX(A,B) = FSCX(B,A) for all A, B (the formula is symmetric under swap).
+  Non-commutativity arises only in FSCX_REVOLVE, where B is held constant across
+  iterations.
+- For FSCX as a polynomial over GF(2): `L(x) = (1 + t + t⁻¹)x`. By the Frobenius
+  endomorphism, `L^(2^k) = 1 + t^(2^k) + t^(-2^k)`, so any power-of-2 step count
+  (including i_value = P/4 when P is a power of 2) always produces exactly 3-bit
+  single-step diffusion.
+- In the HKEX XOR construction `sk = FSCX_REVOLVE_N(C2, B, hn, r) ⊕ A`, flipping
+  one bit of A changes the session key by exactly 1 bit. The nonce term
+  `S_r · L^i(e_k)` cancels algebraically to zero, leaving only the direct XOR
+  contribution.
+
+---
+
 ## [1.1] - 2026
 
 ### Added

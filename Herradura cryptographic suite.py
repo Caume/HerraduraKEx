@@ -43,8 +43,74 @@
     the nonce. N cancels identically from both sides.
 '''
 
-from bitstring import BitArray
 import os
+
+
+class BitArray:
+    """Fixed-width bit string backed by a Python int.
+    Supports XOR, in-place rotation, equality, and hex/bytes/uint I/O.
+    Size must be a positive multiple of 8.
+    """
+
+    __slots__ = ('_val', '_size', '_mask')
+
+    def __init__(self, size: int, value: int = 0):
+        self._size = size
+        self._mask = (1 << size) - 1
+        self._val = int(value) & self._mask
+
+    @property
+    def uint(self) -> int:
+        return self._val
+
+    @uint.setter
+    def uint(self, value: int):
+        self._val = int(value) & self._mask
+
+    @property
+    def bytes(self) -> bytes:
+        return self._val.to_bytes(self._size // 8, 'big')
+
+    @bytes.setter
+    def bytes(self, data: bytes):
+        self._val = int.from_bytes(data, 'big') & self._mask
+
+    @property
+    def hex(self) -> str:
+        return f'{self._val:0{self._size // 4}x}'
+
+    def copy(self) -> 'BitArray':
+        return BitArray(self._size, self._val)
+
+    def rol(self, n: int) -> None:
+        """Rotate left in-place by n bits."""
+        n %= self._size
+        if n:
+            self._val = ((self._val << n) | (self._val >> (self._size - n))) & self._mask
+
+    def ror(self, n: int) -> None:
+        """Rotate right in-place by n bits."""
+        n %= self._size
+        if n:
+            self._val = ((self._val >> n) | (self._val << (self._size - n))) & self._mask
+
+    def __xor__(self, other: 'BitArray') -> 'BitArray':
+        return BitArray(self._size, self._val ^ other._val)
+
+    def __ixor__(self, other: 'BitArray') -> 'BitArray':
+        self._val ^= other._val
+        return self
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, BitArray):
+            return self._size == other._size and self._val == other._val
+        return NotImplemented
+
+    def __str__(self) -> str:
+        return f'0x{self.hex}'
+
+    def __repr__(self) -> str:
+        return f'BitArray({self._size}, 0x{self.hex})'
 
 def new_rand_bitarray(bitlength):
     result = BitArray(bitlength)
