@@ -134,7 +134,7 @@ gcc -DINTSZ=64 -DVERBOSE -O2 -o HKEX_verbose Herradura_KEx.c
 gcc -DINTSZ=256 -O2 -o HKEX_bignum Herradura_KEx_bignum.c -lgmp
 ./HKEX_bignum
 
-# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE) — 256-bit BitArray parameters
 gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
 ./"Herradura cryptographic suite"
 

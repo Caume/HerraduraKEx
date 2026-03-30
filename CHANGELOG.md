@@ -4,6 +4,30 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3] - 2026-03-29
+
+### Changed
+- **`Herradura cryptographic suite.c`**: replaced fixed 64-bit integers with a
+  `BitArray` type — a fixed-width bit string backed by a big-endian byte array —
+  matching the Python and Go implementations. Default key size is now **256 bits**
+  (`KEYBITS = 256`, `I_VALUE = 64`, `R_VALUE = 192`), controlled by a single
+  `#define KEYBITS` at the top of the file. All four protocols (HKEX, HSKE, HPKS,
+  HPKE) and the EVE bypass tests operate on `BitArray` operands.
+
+  `BitArray` API:
+  - `ba_rand`          — fill from `/dev/urandom`
+  - `ba_xor` / `ba_xor_into` — bitwise XOR (out-of-place / in-place)
+  - `ba_rol1` / `ba_ror1`    — rotate left/right by 1 bit (big-endian)
+  - `ba_equal`         — constant-time-style `memcmp` equality
+  - `ba_print_hex`     — zero-padded hex output
+  - `ba_fscx`          — Full Surroundings Cyclic XOR
+  - `ba_fscx_revolve`  — iterate FSCX n times
+  - `ba_fscx_revolve_n` — nonce-augmented FSCX_REVOLVE (v1.1)
+
+  Build: `gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"`
+
+---
+
 ## [1.2] - 2026-03-29
 
 ### Added
