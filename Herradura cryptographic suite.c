@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.1
+/*  Herradura Cryptographic Suite v1.2
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,23 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.2: BitArray (multi-byte parameter support) ---
+
+    The C implementation now uses a BitArray type: a fixed-width bit string
+    backed by a big-endian byte array, matching the Python and Go versions.
+    Default key size is 256 bits (i_value = 64, r_value = 192).
+
+    BitArray supports:
+      - XOR (ba_xor / ba_xor_into)
+      - Rotate-left / rotate-right by 1 bit (big-endian)
+      - Equality comparison (ba_equal)
+      - Hex printing (ba_print_hex)
+      - Secure random fill from /dev/urandom (ba_rand)
+
+    The key size is controlled by KEYBITS (must be a positive multiple of 8).
+    Change the #define to use a different bit width; all parameters and step
+    counts scale automatically.
 
     --- v1.1: FSCX_REVOLVE_N ---
 
@@ -49,240 +66,328 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define INTSZ    64
-#define I_VALUE  16   /* INTSZ / 4 */
-#define R_VALUE  48   /* 3 * INTSZ / 4 */
+/* Key size in bits -- must be a positive multiple of 8.
+   Change this to use a different parameter width; I_VALUE and R_VALUE scale
+   automatically. Equivalent to 256-bit parameters in the Go and Python versions. */
+#define KEYBITS  256
+#define KEYBYTES (KEYBITS / 8)
+#define I_VALUE  (KEYBITS / 4)       /* 64  for 256-bit */
+#define R_VALUE  (3 * KEYBITS / 4)   /* 192 for 256-bit */
 
-typedef uint64_t u64;
+/* Fixed-width bit array backed by a big-endian byte array.
+   b[0] holds the most-significant byte; size is always KEYBYTES. */
+typedef struct {
+    uint8_t b[KEYBYTES];
+} BitArray;
 
-/* Read exactly 8 bytes from /dev/urandom */
-static u64 rand64(FILE *urnd)
+/* Fill dst with KEYBYTES random bytes from /dev/urandom. */
+static void ba_rand(BitArray *dst, FILE *urnd)
 {
-	uint8_t buf[8];
-	if (fread(buf, 1, 8, urnd) != 8) {
-		fputs("ERROR: could not read from /dev/urandom\n", stderr);
-		exit(1);
-	}
-	return ((u64)buf[0] << 56) | ((u64)buf[1] << 48) |
-	       ((u64)buf[2] << 40) | ((u64)buf[3] << 32) |
-	       ((u64)buf[4] << 24) | ((u64)buf[5] << 16) |
-	       ((u64)buf[6] <<  8) | ((u64)buf[7]);
+    if (fread(dst->b, 1, KEYBYTES, urnd) != (size_t)KEYBYTES) {
+        fputs("ERROR: could not read from /dev/urandom\n", stderr);
+        exit(1);
+    }
 }
 
-/* Rotate left */
-static u64 rol64(u64 x, int n)
+/* dst = a XOR b */
+static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
 {
-	n &= 63;
-	if (n == 0) return x;
-	return (x << n) | (x >> (64 - n));
+    int i;
+    for (i = 0; i < KEYBYTES; i++)
+        dst->b[i] = a->b[i] ^ b->b[i];
 }
 
-/* Rotate right */
-static u64 ror64(u64 x, int n)
+/* dst ^= src  (in-place XOR) */
+static void ba_xor_into(BitArray *dst, const BitArray *src)
 {
-	n &= 63;
-	if (n == 0) return x;
-	return (x >> n) | (x << (64 - n));
+    int i;
+    for (i = 0; i < KEYBYTES; i++)
+        dst->b[i] ^= src->b[i];
 }
 
-/* Full Surroundings Cyclic XOR (rotation-based, 64-bit) */
-static u64 fscx(u64 a, u64 b)
+/* dst = src rotated left by 1 bit (big-endian: b[0] is MSB). */
+static void ba_rol1(BitArray *dst, const BitArray *src)
 {
-	u64 result;
-	result  = a ^ b;
-	result ^= rol64(a, 1) ^ rol64(b, 1);
-	result ^= ror64(a, 1) ^ ror64(b, 1);
-	return result;
+    int i;
+    uint8_t msbit = (src->b[0] >> 7) & 1;
+    for (i = 0; i < KEYBYTES - 1; i++)
+        dst->b[i] = (uint8_t)((src->b[i] << 1) | (src->b[i + 1] >> 7));
+    dst->b[KEYBYTES - 1] = (uint8_t)((src->b[KEYBYTES - 1] << 1) | msbit);
 }
 
-/* FSCX_REVOLVE: iterate fscx n times */
-static u64 fscx_revolve(u64 a, u64 b, int steps)
+/* dst = src rotated right by 1 bit (big-endian: b[0] is MSB). */
+static void ba_ror1(BitArray *dst, const BitArray *src)
 {
-	int i;
-	for (i = 0; i < steps; i++)
-		a = fscx(a, b);
-	return a;
+    int i;
+    uint8_t lsbit = src->b[KEYBYTES - 1] & 1;
+    for (i = KEYBYTES - 1; i > 0; i--)
+        dst->b[i] = (uint8_t)((src->b[i] >> 1) | (src->b[i - 1] << 7));
+    dst->b[0] = (uint8_t)((src->b[0] >> 1) | (lsbit << 7));
 }
 
-/* FSCX_REVOLVE_N (v1.1): nonce-augmented iteration */
-static u64 fscx_revolve_n(u64 a, u64 b, u64 nonce, int steps)
+/* Returns 1 if a == b, 0 otherwise. */
+static int ba_equal(const BitArray *a, const BitArray *b)
 {
-	int i;
-	for (i = 0; i < steps; i++)
-		a = fscx(a, b) ^ nonce;
-	return a;
+    return memcmp(a->b, b->b, KEYBYTES) == 0;
+}
+
+/* Print label + hex representation of a + newline. */
+static void ba_print_hex(const char *label, const BitArray *a)
+{
+    int i;
+    printf("%s", label);
+    for (i = 0; i < KEYBYTES; i++)
+        printf("%02x", a->b[i]);
+    putchar('\n');
+}
+
+/* Full Surroundings Cyclic XOR:
+   result = a XOR b XOR ROL(a) XOR ROL(b) XOR ROR(a) XOR ROR(b) */
+static void ba_fscx(BitArray *result, const BitArray *a, const BitArray *b)
+{
+    BitArray rol_a, rol_b, ror_a, ror_b;
+    int i;
+    ba_rol1(&rol_a, a);
+    ba_rol1(&rol_b, b);
+    ba_ror1(&ror_a, a);
+    ba_ror1(&ror_b, b);
+    for (i = 0; i < KEYBYTES; i++)
+        result->b[i] = a->b[i] ^ b->b[i]
+                     ^ rol_a.b[i] ^ rol_b.b[i]
+                     ^ ror_a.b[i] ^ ror_b.b[i];
+}
+
+/* FSCX_REVOLVE: iterate fscx(a, b) n times keeping b constant. */
+static void ba_fscx_revolve(BitArray *result, const BitArray *a,
+                             const BitArray *b, int steps)
+{
+    BitArray tmp;
+    int i;
+    *result = *a;
+    for (i = 0; i < steps; i++) {
+        ba_fscx(&tmp, result, b);
+        *result = tmp;
+    }
+}
+
+/* FSCX_REVOLVE_N (v1.1): nonce-augmented iteration.
+   Each step: result = FSCX(result, b) XOR nonce */
+static void ba_fscx_revolve_n(BitArray *result, const BitArray *a,
+                               const BitArray *b, const BitArray *nonce,
+                               int steps)
+{
+    BitArray tmp;
+    int i;
+    *result = *a;
+    for (i = 0; i < steps; i++) {
+        ba_fscx(&tmp, result, b);
+        ba_xor(result, &tmp, nonce);
+    }
 }
 
 int main(void)
 {
-	FILE *urnd;
-	u64 A, B, A2, B2, C, C2, hkex_nonce;
-	u64 nonce, preshared, plaintext;
-	u64 skeyA, skeyB;
-	u64 E, D, S, V, S2, V2, D2, E2;
+    FILE *urnd;
+    BitArray A, B, A2, B2, C, C2, hkex_nonce;
+    BitArray nonce, preshared, plaintext;
+    BitArray skeyA, skeyB;
+    BitArray E, D, S, V, S2, V2, D2, E2;
+    BitArray tmp;
 
-	urnd = fopen("/dev/urandom", "rb");
-	if (!urnd) {
-		fputs("ERROR: cannot open /dev/urandom\n", stderr);
-		return 1;
-	}
+    urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) {
+        fputs("ERROR: cannot open /dev/urandom\n", stderr);
+        return 1;
+    }
 
-	A         = rand64(urnd);
-	B         = rand64(urnd);
-	A2        = rand64(urnd);
-	B2        = rand64(urnd);
-	nonce     = rand64(urnd);
-	preshared = rand64(urnd);
-	plaintext = rand64(urnd);
+    ba_rand(&A,         urnd);
+    ba_rand(&B,         urnd);
+    ba_rand(&A2,        urnd);
+    ba_rand(&B2,        urnd);
+    ba_rand(&nonce,     urnd);
+    ba_rand(&preshared, urnd);
+    ba_rand(&plaintext, urnd);
 
-	C  = fscx_revolve(A,  B,  I_VALUE);
-	C2 = fscx_revolve(A2, B2, I_VALUE);
-	hkex_nonce = C ^ C2;
+    ba_fscx_revolve(&C,  &A,  &B,  I_VALUE);
+    ba_fscx_revolve(&C2, &A2, &B2, I_VALUE);
+    ba_xor(&hkex_nonce, &C, &C2);
 
-	printf("A         : %016llx\n", (unsigned long long)A);
-	printf("B         : %016llx\n", (unsigned long long)B);
-	printf("A2        : %016llx\n", (unsigned long long)A2);
-	printf("B2        : %016llx\n", (unsigned long long)B2);
-	printf("preshared : %016llx\n", (unsigned long long)preshared);
-	printf("plaintext : %016llx\n", (unsigned long long)plaintext);
-	printf("nonce     : %016llx\n", (unsigned long long)nonce);
-	printf("C         : %016llx\n", (unsigned long long)C);
-	printf("C2        : %016llx\n", (unsigned long long)C2);
-	printf("hkex_nonce: %016llx\n", (unsigned long long)hkex_nonce);
+    ba_print_hex("A         : ", &A);
+    ba_print_hex("B         : ", &B);
+    ba_print_hex("A2        : ", &A2);
+    ba_print_hex("B2        : ", &B2);
+    ba_print_hex("preshared : ", &preshared);
+    ba_print_hex("plaintext : ", &plaintext);
+    ba_print_hex("nonce     : ", &nonce);
+    ba_print_hex("C         : ", &C);
+    ba_print_hex("C2        : ", &C2);
+    ba_print_hex("hkex_nonce: ", &hkex_nonce);
 
-	/* --- HKEX (key exchange) --- */
-	printf("\n--- HKEX (key exchange)\n");
-	skeyA = fscx_revolve_n(C2, B,  hkex_nonce, R_VALUE) ^ A;
-	printf("skeyA (Alice): %016llx\n", (unsigned long long)skeyA);
-	skeyB = fscx_revolve_n(C,  B2, hkex_nonce, R_VALUE) ^ A2;
-	printf("skeyB (Bob)  : %016llx\n", (unsigned long long)skeyB);
-	if (skeyA == skeyB)
-		puts("+ session keys skeyA and skeyB are equal!");
-	else
-		puts("- session keys skeyA and skeyB are different!");
+    /* --- HKEX (key exchange) --- */
+    printf("\n--- HKEX (key exchange)\n");
+    ba_fscx_revolve_n(&tmp, &C2, &B,  &hkex_nonce, R_VALUE);
+    ba_xor(&skeyA, &tmp, &A);
+    ba_print_hex("skeyA (Alice): ", &skeyA);
+    ba_fscx_revolve_n(&tmp, &C,  &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&skeyB, &tmp, &A2);
+    ba_print_hex("skeyB (Bob)  : ", &skeyB);
+    if (ba_equal(&skeyA, &skeyB))
+        puts("+ session keys skeyA and skeyB are equal!");
+    else
+        puts("- session keys skeyA and skeyB are different!");
 
-	/* --- HSKE (symmetric key encryption) --- */
-	printf("\n--- HSKE (symmetric key encryption)\n");
-	E = fscx_revolve_n(plaintext, preshared, preshared, I_VALUE);
-	printf("E (Alice) : %016llx\n", (unsigned long long)E);
-	D = fscx_revolve_n(E, preshared, preshared, R_VALUE);
-	printf("D (Bob)   : %016llx\n", (unsigned long long)D);
-	if (D == plaintext)
-		puts("+ plaintext is correctly decrypted from E with preshared key");
-	else
-		puts("- plaintext is different from decrypted E with preshared key!");
+    /* --- HSKE (symmetric key encryption) --- */
+    printf("\n--- HSKE (symmetric key encryption)\n");
+    ba_fscx_revolve_n(&E, &plaintext, &preshared, &preshared, I_VALUE);
+    ba_print_hex("E (Alice) : ", &E);
+    ba_fscx_revolve_n(&D, &E, &preshared, &preshared, R_VALUE);
+    ba_print_hex("D (Bob)   : ", &D);
+    if (ba_equal(&D, &plaintext))
+        puts("+ plaintext is correctly decrypted from E with preshared key");
+    else
+        puts("- plaintext is different from decrypted E with preshared key!");
 
-	/* --- HPKS (public key signature) --- */
-	printf("\n--- HPKS (public key signature)\n");
-	S = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ plaintext;
-	printf("S (Alice) : %016llx\n", (unsigned long long)S);
-	V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S;
-	printf("V (Bob)   : %016llx\n", (unsigned long long)V);
-	if (V == plaintext)
-		puts("+ signature S from plaintext is correct!");
-	else
-		puts("- signature S from plaintext is incorrect!");
+    /* --- HPKS (public key signature) --- */
+    printf("\n--- HPKS (public key signature)\n");
+    ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
+    ba_xor(&S, &tmp, &A);
+    ba_xor_into(&S, &plaintext);
+    ba_print_hex("S (Alice) : ", &S);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V, &tmp, &A2);
+    ba_xor_into(&V, &S);
+    ba_print_hex("V (Bob)   : ", &V);
+    if (ba_equal(&V, &plaintext))
+        puts("+ signature S from plaintext is correct!");
+    else
+        puts("- signature S from plaintext is incorrect!");
 
-	/* --- HPKS + HSKE with preshared key made public --- */
-	printf("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n");
-	E = fscx_revolve_n(plaintext, preshared, preshared, I_VALUE);
-	printf("E (Alice) : %016llx\n", (unsigned long long)E);
-	S = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ E; /* A+B2+C is the trapdoor */
-	printf("S (Alice) : %016llx\n", (unsigned long long)S);
-	V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S; /* => E */
-	printf("V (Bob)   : %016llx\n", (unsigned long long)V);
-	D = fscx_revolve_n(V, preshared, preshared, R_VALUE); /* => plaintext */
-	printf("D (Bob)   : %016llx\n", (unsigned long long)D);
-	if (D == plaintext)
-		puts("+ signature S(E) from plaintext is correct!");
-	else
-		puts("- signature S(E) from plaintext is incorrect!");
+    /* --- HPKS + HSKE with preshared key made public --- */
+    printf("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n");
+    ba_fscx_revolve_n(&E, &plaintext, &preshared, &preshared, I_VALUE);
+    ba_print_hex("E (Alice) : ", &E);
+    ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
+    ba_xor(&S, &tmp, &A);
+    ba_xor_into(&S, &E);   /* A+B2+C is the trapdoor */
+    ba_print_hex("S (Alice) : ", &S);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V, &tmp, &A2);
+    ba_xor_into(&V, &S);   /* => E */
+    ba_print_hex("V (Bob)   : ", &V);
+    ba_fscx_revolve_n(&D, &V, &preshared, &preshared, R_VALUE);   /* => plaintext */
+    ba_print_hex("D (Bob)   : ", &D);
+    if (ba_equal(&D, &plaintext))
+        puts("+ signature S(E) from plaintext is correct!");
+    else
+        puts("- signature S(E) from plaintext is incorrect!");
 
-	/* --- HPKE (public key encryption) --- */
-	printf("\n--- HPKE (public key encryption)\n");
-	E = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ plaintext;
-	printf("E (Bob)   : %016llx\n", (unsigned long long)E);
-	D = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ E; /* => plaintext */
-	printf("D (Alice) : %016llx\n", (unsigned long long)D);
-	if (D == plaintext)
-		puts("+ plaintext is correctly decrypted from E with private key!");
-	else
-		puts("- plaintext is different from decrypted E with private key!");
+    /* --- HPKE (public key encryption) --- */
+    printf("\n--- HPKE (public key encryption)\n");
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&E, &tmp, &A2);
+    ba_xor_into(&E, &plaintext);
+    ba_print_hex("E (Bob)   : ", &E);
+    ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
+    ba_xor(&D, &tmp, &A);
+    ba_xor_into(&D, &E);   /* => plaintext */
+    ba_print_hex("D (Alice) : ", &D);
+    if (ba_equal(&D, &plaintext))
+        puts("+ plaintext is correctly decrypted from E with private key!");
+    else
+        puts("- plaintext is different from decrypted E with private key!");
 
-	/* *** EVE bypass TESTS *** */
-	printf("\n\n*** EVE bypass TESTS\n");
+    /* *** EVE bypass TESTS *** */
+    printf("\n\n*** EVE bypass TESTS\n");
 
-	/* EVE HPKS */
-	printf("\n*** HPKS (public key signature)\n");
-	S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ nonce;
-	printf("S (Eve)   : %016llx\n", (unsigned long long)S);
-	V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2; /* X */
-	printf("V (Bob)   : %016llx\n", (unsigned long long)V);
-	if (V == nonce)
-		puts("+ nonce fake signature 1 verification with Alice public key is correct!");
-	else
-		puts("- nonce fake signature 1 verification with Alice public key is incorrect!");
-	S2 = V ^ nonce;
-	printf("S2 (Eve)  : %016llx\n", (unsigned long long)S2);
-	V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2; /* KK */
-	printf("V2 (Bob)  : %016llx\n", (unsigned long long)V2);
-	if (V2 == nonce)
-		puts("+ nonce fake signature 2 verification with Alice public key is correct!");
-	else
-		puts("- nonce fake signature 2 verification with Alice public key is incorrect!");
+    /* EVE HPKS */
+    printf("\n*** HPKS (public key signature)\n");
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&S, &tmp, &nonce);
+    ba_print_hex("S (Eve)   : ", &S);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V, &tmp, &A2);   /* X */
+    ba_print_hex("V (Bob)   : ", &V);
+    if (ba_equal(&V, &nonce))
+        puts("+ nonce fake signature 1 verification with Alice public key is correct!");
+    else
+        puts("- nonce fake signature 1 verification with Alice public key is incorrect!");
+    ba_xor(&S2, &V, &nonce);
+    ba_print_hex("S2 (Eve)  : ", &S2);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V2, &tmp, &A2);
+    ba_xor_into(&V2, &S2);   /* KK */
+    ba_print_hex("V2 (Bob)  : ", &V2);
+    if (ba_equal(&V2, &nonce))
+        puts("+ nonce fake signature 2 verification with Alice public key is correct!");
+    else
+        puts("- nonce fake signature 2 verification with Alice public key is incorrect!");
 
-	/* EVE HPKS + HSKE with preshared made public */
-	printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n");
-	E = fscx_revolve_n(nonce, preshared, preshared, I_VALUE);
-	printf("E (Eve)   : %016llx\n", (unsigned long long)E);
-	S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ E;
-	printf("S (Eve)   : %016llx\n", (unsigned long long)S);
-	V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2; /* X */
-	printf("V (Eve)   : %016llx\n", (unsigned long long)V);
-	S2 = V ^ S;
-	printf("S2 (Eve)  : %016llx\n", (unsigned long long)S2);
-	V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2; /* KK */
-	printf("V2 (Bob)  : %016llx\n", (unsigned long long)V2);
-	D = fscx_revolve_n(V2, preshared, preshared, R_VALUE);
-	printf("D (Bob)   : %016llx\n", (unsigned long long)D); /* X */
-	if (D == nonce)
-		puts("+ fake signature(encrypted nonce) verification with Alice public key is correct!");
-	else
-		puts("- fake signature(encrypted nonce) verification with Alice public key is incorrect!");
+    /* EVE HPKS + HSKE with preshared made public */
+    printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n");
+    ba_fscx_revolve_n(&E, &nonce, &preshared, &preshared, I_VALUE);
+    ba_print_hex("E (Eve)   : ", &E);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&S, &tmp, &A2);
+    ba_xor_into(&S, &E);
+    ba_print_hex("S (Eve)   : ", &S);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V, &tmp, &A2);   /* X */
+    ba_print_hex("V (Eve)   : ", &V);
+    ba_xor(&S2, &V, &S);
+    ba_print_hex("S2 (Eve)  : ", &S2);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V2, &tmp, &A2);
+    ba_xor_into(&V2, &S2);   /* KK */
+    ba_print_hex("V2 (Bob)  : ", &V2);
+    ba_fscx_revolve_n(&D, &V2, &preshared, &preshared, R_VALUE);
+    ba_print_hex("D (Bob)   : ", &D);   /* X */
+    if (ba_equal(&D, &nonce))
+        puts("+ fake signature(encrypted nonce) verification with Alice public key is correct!");
+    else
+        puts("- fake signature(encrypted nonce) verification with Alice public key is incorrect!");
 
-	/* EVE HPKS + HSKE with preshared made public - v2 */
-	printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2\n");
-	S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ nonce;
-	printf("S (Eve)   : %016llx\n", (unsigned long long)S);
-	E = fscx_revolve_n(S, preshared, preshared, I_VALUE);
-	printf("E (Eve)   : %016llx\n", (unsigned long long)E);
-	V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2; /* X */
-	printf("V (Eve)   : %016llx\n", (unsigned long long)V);
-	S2 = V ^ E;
-	printf("S2 (Eve)  : %016llx\n", (unsigned long long)S2);
-	V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2; /* KK */
-	printf("V2 (Bob)  : %016llx\n", (unsigned long long)V2);
-	D = fscx_revolve_n(V2, preshared, preshared, R_VALUE);
-	printf("D (Bob)   : %016llx\n", (unsigned long long)D); /* X */
-	if (D == nonce)
-		puts("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!");
-	else
-		puts("- fake signature(encrypted nonce) v2 verification with Alice public key is incorrect!");
+    /* EVE HPKS + HSKE with preshared made public - v2 */
+    printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2\n");
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&S, &tmp, &A2);
+    ba_xor_into(&S, &nonce);
+    ba_print_hex("S (Eve)   : ", &S);
+    ba_fscx_revolve_n(&E, &S, &preshared, &preshared, I_VALUE);
+    ba_print_hex("E (Eve)   : ", &E);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V, &tmp, &A2);   /* X */
+    ba_print_hex("V (Eve)   : ", &V);
+    ba_xor(&S2, &V, &E);
+    ba_print_hex("S2 (Eve)  : ", &S2);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&V2, &tmp, &A2);
+    ba_xor_into(&V2, &S2);   /* KK */
+    ba_print_hex("V2 (Bob)  : ", &V2);
+    ba_fscx_revolve_n(&D, &V2, &preshared, &preshared, R_VALUE);
+    ba_print_hex("D (Bob)   : ", &D);   /* X */
+    if (ba_equal(&D, &nonce))
+        puts("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!");
+    else
+        puts("- fake signature(encrypted nonce) v2 verification with Alice public key is incorrect!");
 
-	/* EVE HPKE */
-	printf("\n*** HPKE (public key encryption)\n");
-	E = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ plaintext;
-	printf("E (Bob)   : %016llx\n", (unsigned long long)E);
-	D = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2; /* X */
-	printf("D (Eve)   : %016llx\n", (unsigned long long)D);
-	E2 = D ^ E;
-	D2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ E2; /* KK */
-	printf("D2 (Eve)  : %016llx\n", (unsigned long long)D2);
-	if ((D == nonce) || (D2 == nonce))
-		puts("+ Eve could decrypt plaintext without Alice's private key!");
-	else
-		puts("- Eve could not decrypt plaintext without Alice's private key!");
+    /* EVE HPKE */
+    printf("\n*** HPKE (public key encryption)\n");
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&E, &tmp, &A2);
+    ba_xor_into(&E, &plaintext);
+    ba_print_hex("E (Bob)   : ", &E);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&D, &tmp, &A2);   /* X */
+    ba_print_hex("D (Eve)   : ", &D);
+    ba_xor(&E2, &D, &E);
+    ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
+    ba_xor(&D2, &tmp, &E2);   /* KK */
+    ba_print_hex("D2 (Eve)  : ", &D2);
+    if (ba_equal(&D, &nonce) || ba_equal(&D2, &nonce))
+        puts("+ Eve could decrypt plaintext without Alice's private key!");
+    else
+        puts("- Eve could not decrypt plaintext without Alice's private key!");
 
-	fclose(urnd);
-	return 0;
+    fclose(urnd);
+    return 0;
 }
