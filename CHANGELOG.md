@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.3] - 2026-03-30
+
+### Added — HPKE performance benchmark across all three test files
+
+#### `Herradura_tests.c`, `Herradura_tests.go`, `Herradura_tests.py`
+
+- **Benchmark [11] — HPKE encrypt+decrypt round-trip** added to all three test
+  files. Each iteration performs the full HPKE protocol cycle:
+  1. Key setup: `C = fscx_revolve(A, B, i)`, `C2 = fscx_revolve(A2, B2, i)`,
+     `hn = C ⊕ C2`
+  2. Bob encrypts: `E = fscx_revolve_n(C, B2, hn, r) ⊕ A2 ⊕ P`
+  3. Alice decrypts: `D = fscx_revolve_n(C2, B, hn, r) ⊕ A ⊕ E`
+
+  Throughput on Raspberry Pi 5 (ARM Cortex-A76):
+
+  | Implementation | 64-bit | 128-bit | 256-bit |
+  |----------------|--------|---------|---------|
+  | C (`gcc -O2`)  | — | — | 21.1 K ops/sec |
+  | Go (`go run`)  | 2.80 K | 1.29 K | 0.61 K ops/sec |
+  | Python 3       | 1.20 K | 604 | 303 ops/sec |
+
+  HPKE throughput is comparable to HKEX because both require the same compute:
+  2× `fscx_revolve(i)` for key setup and 2× `fscx_revolve_n(r)` for the
+  encrypt/decrypt pair.
+
+- **Version comment** added to each test file header referencing v1.3.3.
+
+---
+
 ## [1.3.2] - 2026-03-29
 
 ### Changed — performance, readability, and cross-language structural consistency

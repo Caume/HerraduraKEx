@@ -183,7 +183,7 @@ gcc -m32 -o HAEN HAEN.o asm_io.o
 ./HAEN
 ```
 
-# Performance (v1.3.2, Raspberry Pi 5 — ARM Cortex-A76)
+# Performance (v1.3.3, Raspberry Pi 5 — ARM Cortex-A76)
 
 Benchmarks from `Herradura_tests.{c,go,py}` at 256-bit parameters
 (1 second wall time per benchmark, `-O2` for C, default `go run` for Go).
@@ -192,34 +192,37 @@ Benchmarks from `Herradura_tests.{c,go,py}` at 256-bit parameters
 
 | Benchmark | Throughput |
 |-----------|-----------|
-| FSCX single step | 11.0 M ops/sec |
+| FSCX single step | 11.1 M ops/sec |
 | FSCX_REVOLVE_N (i=64 steps) | 167 K ops/sec |
-| FSCX_REVOLVE_N (r=192 steps) | 55.6 K ops/sec |
-| HKEX full handshake | 20.9 K ops/sec |
-| HSKE encrypt+decrypt round-trip | 41.4 K ops/sec |
+| FSCX_REVOLVE_N (r=192 steps) | 56.0 K ops/sec |
+| HKEX full handshake | 21.1 K ops/sec |
+| HSKE encrypt+decrypt round-trip | 41.8 K ops/sec |
+| HPKE encrypt+decrypt round-trip | 21.1 K ops/sec |
 
 ## Go (go run)
 
 | Benchmark | 64-bit | 128-bit | 256-bit |
 |-----------|--------|---------|---------|
-| FSCX single step | 235 K ops/sec | 265 K ops/sec | 239 K ops/sec |
-| FSCX_REVOLVE_N (i steps) | 15.8 K | 7.87 K | 3.46 K ops/sec |
-| FSCX_REVOLVE_N (r steps) | 5.36 K | 2.60 K | 1.22 K ops/sec |
-| HKEX full handshake | 2.01 K | 0.98 K | 0.43 K ops/sec |
-| HSKE encrypt+decrypt round-trip | 4.01 K | 1.86 K | 0.81 K ops/sec |
+| FSCX single step | 372 K ops/sec | 383 K ops/sec | 318 K ops/sec |
+| FSCX_REVOLVE_N (i steps) | 22.6 K | 10.9 K | 4.65 K ops/sec |
+| FSCX_REVOLVE_N (r steps) | 7.38 K | 3.60 K | 1.56 K ops/sec |
+| HKEX full handshake | 2.75 K | 1.33 K | 0.58 K ops/sec |
+| HSKE encrypt+decrypt round-trip | 5.30 K | 2.46 K | 1.20 K ops/sec |
+| HPKE encrypt+decrypt round-trip | 2.80 K | 1.29 K | 0.61 K ops/sec |
 
 ## Python 3
 
 | Benchmark | 64-bit | 128-bit | 256-bit |
 |-----------|--------|---------|---------|
-| FSCX single step | 163 K ops/sec | 162 K ops/sec | 158 K ops/sec |
-| FSCX_REVOLVE_N (i steps) | 9.28 K | 4.70 K | 2.24 K ops/sec |
-| FSCX_REVOLVE_N (r steps) | 3.14 K | 1.57 K | 748 ops/sec |
-| HKEX full handshake | 1.20 K | 601 | 299 ops/sec |
-| HSKE encrypt+decrypt round-trip | 2.30 K | 1.16 K | 570 ops/sec |
+| FSCX single step | 166 K ops/sec | 165 K ops/sec | 156 K ops/sec |
+| FSCX_REVOLVE_N (i steps) | 9.20 K | 4.64 K | 2.32 K ops/sec |
+| FSCX_REVOLVE_N (r steps) | 3.08 K | 1.54 K | 747 ops/sec |
+| HKEX full handshake | 1.16 K | 585 | 290 ops/sec |
+| HSKE encrypt+decrypt round-trip | 2.28 K | 1.16 K | 563 ops/sec |
+| HPKE encrypt+decrypt round-trip | 1.20 K | 604 | 303 ops/sec |
 
-*The C implementation is ~45× faster than Go and ~70× faster than Python at
-the HKEX handshake level (256-bit), owing to the byte-parallel fused `ba_fscx`
+*The C implementation is ~35× faster than Go and ~70× faster than Python at
+the HPKE round-trip level (256-bit), owing to the byte-parallel fused `ba_fscx`
 and hardware `POPCNT` leveraged through GCC `-O2`.*
 
 # Final note
