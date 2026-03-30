@@ -16,13 +16,17 @@
 #include <string.h>
 #include <time.h>
 
-/* Key size in bits — must be a positive multiple of 8.
+/* Key size in bits -- must be a positive multiple of 8 and >= 16.
    Matches the default in "Herradura cryptographic suite.c", and in
    the Go and Python implementations. */
 #define KEYBITS  256
 #define KEYBYTES (KEYBITS / 8)
 #define I_VALUE  (KEYBITS / 4)       /* 64  for 256-bit */
 #define R_VALUE  (3 * KEYBITS / 4)   /* 192 for 256-bit */
+
+#if KEYBYTES < 2
+#  error "KEYBITS must be >= 16 for the single-pass ba_fscx implementation"
+#endif
 
 /* Target wall time per benchmark (seconds). */
 #define BENCH_SEC 1.0
@@ -49,6 +53,7 @@ static void ba_rand(BitArray *dst)
     }
 }
 
+/* dst = a XOR b.  Aliasing dst == a or dst == b is safe. */
 static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     int i;
@@ -56,42 +61,17 @@ static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
         dst->b[i] = a->b[i] ^ b->b[i];
 }
 
-/* dst = src rotated left by 1 bit (big-endian, b[0] is MSB). */
-static void ba_rol1(BitArray *dst, const BitArray *src)
-{
-    int i;
-    uint8_t msbit = (src->b[0] >> 7) & 1;
-    for (i = 0; i < KEYBYTES - 1; i++)
-        dst->b[i] = (uint8_t)((src->b[i] << 1) | (src->b[i + 1] >> 7));
-    dst->b[KEYBYTES - 1] = (uint8_t)((src->b[KEYBYTES - 1] << 1) | msbit);
-}
-
-/* dst = src rotated right by 1 bit (big-endian, b[0] is MSB). */
-static void ba_ror1(BitArray *dst, const BitArray *src)
-{
-    int i;
-    uint8_t lsbit = src->b[KEYBYTES - 1] & 1;
-    for (i = KEYBYTES - 1; i > 0; i--)
-        dst->b[i] = (uint8_t)((src->b[i] >> 1) | (src->b[i - 1] << 7));
-    dst->b[0] = (uint8_t)((src->b[0] >> 1) | (lsbit << 7));
-}
-
 static int ba_equal(const BitArray *a, const BitArray *b)
 {
     return memcmp(a->b, b->b, KEYBYTES) == 0;
 }
 
-/* Count set bits across all bytes. */
+/* Count set bits using the hardware popcount instruction when available. */
 static int ba_popcount(const BitArray *a)
 {
     int cnt = 0, i;
-    for (i = 0; i < KEYBYTES; i++) {
-        uint8_t v = a->b[i];
-        while (v) {
-            cnt += (v & 1);
-            v >>= 1;
-        }
-    }
+    for (i = 0; i < KEYBYTES; i++)
+        cnt += __builtin_popcount(a->b[i]);
     return cnt;
 }
 
@@ -116,43 +96,75 @@ static void ba_flip_bit(BitArray *dst, const BitArray *src, int pos)
 /* FSCX primitives                                                     */
 /* ------------------------------------------------------------------ */
 
+/* Full Surroundings Cyclic XOR:
+   result = a XOR b XOR ROL(a) XOR ROL(b) XOR ROR(a) XOR ROR(b)
+
+   Fused single-pass implementation: ROL and ROR are computed inline from
+   adjacent bytes, avoiding 4 temporary BitArray allocations and 5 separate
+   memory passes.  Requires KEYBYTES >= 2. */
 static void ba_fscx(BitArray *result, const BitArray *a, const BitArray *b)
 {
-    BitArray rol_a, rol_b, ror_a, ror_b;
+    /* Wrap-around bits extracted before the loop */
+    uint8_t a_msbit = a->b[0] >> 7;
+    uint8_t b_msbit = b->b[0] >> 7;
+    uint8_t a_lsbit = a->b[KEYBYTES - 1] & 1;
+    uint8_t b_lsbit = b->b[KEYBYTES - 1] & 1;
     int i;
-    ba_rol1(&rol_a, a);
-    ba_rol1(&rol_b, b);
-    ba_ror1(&ror_a, a);
-    ba_ror1(&ror_b, b);
-    for (i = 0; i < KEYBYTES; i++)
+
+    /* byte 0: ROR wraps in from the last byte */
+    result->b[0] = a->b[0] ^ b->b[0]
+        ^ (uint8_t)((a->b[0] << 1) | (a->b[1] >> 7))   /* ROL(a)[0] */
+        ^ (uint8_t)((b->b[0] << 1) | (b->b[1] >> 7))   /* ROL(b)[0] */
+        ^ (uint8_t)((a->b[0] >> 1) | (a_lsbit << 7))   /* ROR(a)[0] */
+        ^ (uint8_t)((b->b[0] >> 1) | (b_lsbit << 7));  /* ROR(b)[0] */
+
+    /* middle bytes: no wrap-around */
+    for (i = 1; i < KEYBYTES - 1; i++)
         result->b[i] = a->b[i] ^ b->b[i]
-                     ^ rol_a.b[i] ^ rol_b.b[i]
-                     ^ ror_a.b[i] ^ ror_b.b[i];
+            ^ (uint8_t)((a->b[i] << 1) | (a->b[i + 1] >> 7))
+            ^ (uint8_t)((b->b[i] << 1) | (b->b[i + 1] >> 7))
+            ^ (uint8_t)((a->b[i] >> 1) | (a->b[i - 1] << 7))
+            ^ (uint8_t)((b->b[i] >> 1) | (b->b[i - 1] << 7));
+
+    /* last byte: ROL wraps in from the first byte */
+    result->b[KEYBYTES - 1] = a->b[KEYBYTES-1] ^ b->b[KEYBYTES-1]
+        ^ (uint8_t)((a->b[KEYBYTES-1] << 1) | a_msbit)
+        ^ (uint8_t)((b->b[KEYBYTES-1] << 1) | b_msbit)
+        ^ (uint8_t)((a->b[KEYBYTES-1] >> 1) | (a->b[KEYBYTES-2] << 7))
+        ^ (uint8_t)((b->b[KEYBYTES-1] >> 1) | (b->b[KEYBYTES-2] << 7));
 }
 
+/* FSCX_REVOLVE: iterate fscx(a, b) n times keeping b constant.
+   Double-buffered: alternates between two local buffers to avoid
+   copying the result back every step. */
 static void ba_fscx_revolve(BitArray *result, const BitArray *a,
                              const BitArray *b, int steps)
 {
-    BitArray tmp;
-    int i;
-    *result = *a;
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
     for (i = 0; i < steps; i++) {
-        ba_fscx(&tmp, result, b);
-        *result = tmp;
+        ba_fscx(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
     }
+    *result = buf[idx];
 }
 
+/* FSCX_REVOLVE_N (v1.1): nonce-augmented iteration.
+   Each step: result = FSCX(result, b) XOR nonce */
 static void ba_fscx_revolve_n(BitArray *result, const BitArray *a,
                                const BitArray *b, const BitArray *nonce,
                                int steps)
 {
-    BitArray tmp;
-    int i;
-    *result = *a;
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
     for (i = 0; i < steps; i++) {
-        ba_fscx(&tmp, result, b);
-        ba_xor(result, &tmp, nonce);
+        ba_fscx(&buf[1 - idx], &buf[idx], b);
+        ba_xor(&buf[1 - idx], &buf[1 - idx], nonce);
+        idx ^= 1;
     }
+    *result = buf[idx];
 }
 
 /* ------------------------------------------------------------------ */

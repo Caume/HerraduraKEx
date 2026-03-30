@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"math/bits"
 	"time"
 )
 
@@ -48,7 +49,7 @@ func NewFromBytes(data []byte, _ int, size int) *BitArray {
 	return ba
 }
 
-func New_rand_bitarray(bitlength int) *BitArray {
+func newRandBitArray(bitlength int) *BitArray {
 	buf := make([]byte, bitlength/8)
 	_, err := rand.Read(buf)
 	if err != nil {
@@ -58,7 +59,7 @@ func New_rand_bitarray(bitlength int) *BitArray {
 }
 
 func randBA(size int) *BitArray {
-	return New_rand_bitarray(size)
+	return newRandBitArray(size)
 }
 
 func (ba *BitArray) Xor(other *BitArray) *BitArray {
@@ -95,15 +96,11 @@ func (ba *BitArray) Format(f fmt.State, verb rune) {
 	fmt.Fprint(f, s)
 }
 
-// Popcount counts set bits by iterating over bytes.
+// Popcount counts set bits using the hardware popcount instruction when available.
 func (ba *BitArray) Popcount() int {
 	cnt := 0
 	for _, b := range ba.val.Bytes() {
-		v := b
-		for v != 0 {
-			cnt += int(v & 1)
-			v >>= 1
-		}
+		cnt += bits.OnesCount8(b)
 	}
 	return cnt
 }
@@ -112,12 +109,7 @@ func (ba *BitArray) Popcount() int {
 func (ba *BitArray) FlipBit(pos int) *BitArray {
 	result := &BitArray{size: ba.size}
 	result.val.Set(&ba.val)
-	cur := result.val.Bit(pos)
-	if cur == 0 {
-		result.val.SetBit(&result.val, pos, 1)
-	} else {
-		result.val.SetBit(&result.val, pos, 0)
-	}
+	result.val.SetBit(&result.val, pos, result.val.Bit(pos)^1)
 	return result
 }
 
@@ -125,15 +117,15 @@ func (ba *BitArray) FlipBit(pos int) *BitArray {
 // FSCX functions
 // ---------------------------------------------------------------------------
 
-func Fscx(ba, bb *BitArray) *BitArray {
-	result := ba.Xor(bb)
-	ba = ba.RotateLeft(1)
-	bb = bb.RotateLeft(1)
-	result = result.Xor(ba).Xor(bb)
-	ba = ba.RotateLeft(-2)
-	bb = bb.RotateLeft(-2)
-	result = result.Xor(ba).Xor(bb)
-	return result
+// Fscx computes the Full Surroundings Cyclic XOR:
+//
+//	result = A ⊕ B ⊕ ROL(A) ⊕ ROL(B) ⊕ ROR(A) ⊕ ROR(B)
+//
+// Each term maps directly to the formula; no parameter shadowing.
+func Fscx(a, b *BitArray) *BitArray {
+	return a.Xor(b).
+		Xor(a.RotateLeft(1)).Xor(b.RotateLeft(1)).
+		Xor(a.RotateLeft(-1)).Xor(b.RotateLeft(-1))
 }
 
 func FscxRevolve(ba, bb *BitArray, steps int) *BitArray {

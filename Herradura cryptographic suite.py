@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.1
+    Herradura Cryptographic Suite v1.3.2
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,25 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.3.2: performance and readability ---
+
+    - BitArray: added rotated(n) non-mutating rotation method (positive = left,
+      negative = right); replaces the copy-then-mutate pattern.
+    - BitArray: added random() classmethod, consistent with the tests file.
+    - fscx: rewritten using rotated(); each term maps directly to the formula
+      A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B). No longer mutates its inputs.
+    - fscx defined before fscx_revolve/fscx_revolve_n for consistent ordering
+      with C and Go (definition before first use).
+    - Protocol code wrapped in main() with if __name__ == "__main__" guard,
+      consistent with the tests file, C, and Go (each has an explicit entry point).
+    - KEYBITS, I_VALUE, R_VALUE defined as module-level constants, matching C.
+    - BitArray.random() used throughout main(), consistent with tests file.
+
+    --- v1.3: BitArray (multi-byte parameter support) ---
+
+    The Python implementation now uses 256-bit parameters by default, matching
+    the C and Go versions at the same bit width.
 
     --- v1.1: FSCX_REVOLVE_N ---
 
@@ -46,9 +65,17 @@
 import os
 
 
+# Key size in bits — must be a positive multiple of 8.
+# Change to use a different parameter width; I_VALUE and R_VALUE scale automatically.
+# Equivalent to 256-bit parameters in the C and Go versions.
+KEYBITS = 256
+I_VALUE = KEYBITS // 4       # 64  for 256-bit
+R_VALUE = 3 * KEYBITS // 4   # 192 for 256-bit
+
+
 class BitArray:
     """Fixed-width bit string backed by a Python int.
-    Supports XOR, in-place rotation, equality, and hex/bytes/uint I/O.
+    Supports XOR, rotation, equality, and hex/bytes/uint I/O.
     Size must be a positive multiple of 8.
     """
 
@@ -82,6 +109,14 @@ class BitArray:
     def copy(self) -> 'BitArray':
         return BitArray(self._size, self._val)
 
+    def rotated(self, n: int) -> 'BitArray':
+        """Return a new BitArray rotated left by n bits (right if n < 0)."""
+        n %= self._size
+        if n == 0:
+            return BitArray(self._size, self._val)
+        return BitArray(self._size,
+                        ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
+
     def rol(self, n: int) -> None:
         """Rotate left in-place by n bits."""
         n %= self._size
@@ -112,12 +147,25 @@ class BitArray:
     def __repr__(self) -> str:
         return f'BitArray({self._size}, 0x{self.hex})'
 
-def new_rand_bitarray(bitlength):
-    result = BitArray(bitlength)
-    result.bytes = os.urandom(bitlength // 8) # bytes([1] * (bitlength // 8))  # Replace with a secure random number generator
-    return result
+    @classmethod
+    def random(cls, size: int) -> 'BitArray':
+        """Return a random BitArray of *size* bits using os.urandom."""
+        ba = cls(size)
+        ba.bytes = os.urandom(size // 8)
+        return ba
 
-def fscx_revolve(A, B, steps, verbose=False):
+
+# ---------------------------------------------------------------------------
+# FSCX functions
+# ---------------------------------------------------------------------------
+
+def fscx(A: BitArray, B: BitArray) -> BitArray:
+    """Full Surroundings Cyclic XOR: A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B).
+    Uses rotated() — does not mutate its inputs."""
+    return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
+
+
+def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) -> BitArray:
     result = A.copy()
     for step in range(steps):
         result = fscx(result, B)
@@ -125,7 +173,9 @@ def fscx_revolve(A, B, steps, verbose=False):
             print(f"Step {step + 1}: {result.hex}")
     return result
 
-def fscx_revolve_n(A, B, nonce, steps, verbose=False):
+
+def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray,
+                   steps: int, verbose: bool = False) -> BitArray:
     """Nonce-augmented FSCX_REVOLVE (v1.1).
     Each step: result = fscx(result, B) ^ nonce
     Breaks pure GF(2)-linearity while preserving HKEX equality and orbit properties.
@@ -137,17 +187,6 @@ def fscx_revolve_n(A, B, nonce, steps, verbose=False):
             print(f"Step {step + 1}: {result.hex}")
     return result
 
-def fscx(A, B):     # [binary] full surroundings cyclic xor
-    result = A ^ B
-    A.rol(1)
-    B.rol(1)
-    result ^= A ^ B
-    A.ror(2)
-    B.ror(2)
-    result ^= A ^ B
-    A.rol(1)
-    B.rol(1)
-    return result
 
 '''
 let,    Alice, Bob: i + r == bitlength b;  i == 1/4 bitlength; r == 3/4 bitlength; bitlength is a power of 2 >= 8
@@ -205,149 +244,155 @@ HPKE (public key encryption)
             shares E with Alice
     Alice:  P = fscx_revolve(C2, B, r) ^ A ^ E
 '''
-# Examples with b = 256 bits:
-r_value = 192  # Adjust as needed
-i_value = 64   # Adjust as needed
 
-A = new_rand_bitarray(256)
-print(f"A         : {A.hex}")
-B = new_rand_bitarray(256)
-print(f"B         : {B.hex}")
-A2 = new_rand_bitarray(256)
-print(f"A2        : {A2.hex}")
-B2 = new_rand_bitarray(256)
-print(f"B2        : {B2.hex}")
-C = fscx_revolve(A, B, i_value)
-print(f"C         : {C.hex}")
-C2 = fscx_revolve(A2, B2, i_value)
-print(f"C2        : {C2.hex}")
-hkex_nonce = C ^ C2
-print(f"hkex_nonce: {hkex_nonce.hex}")
-nonce = new_rand_bitarray(256)
-print(f"nonce     : {nonce.hex}")
-preshared = new_rand_bitarray(256)
-print(f"preshared : {preshared.hex}")
-plaintext = new_rand_bitarray(256)
-print(f"plaintext : {plaintext.hex}")
 
-print (f"\n--- HKEX (key exchange)")
-skeyA = fscx_revolve_n(C2 , B, hkex_nonce, r_value) ^ A
-print(f"skeyA (Alice): {skeyA.hex}")
-skeyB = fscx_revolve_n(C , B2, hkex_nonce, r_value) ^ A2
-print(f"skeyB (Bob)  : {skeyB.hex}")
-if skeyA == skeyB: # Assert equality
-    print("+ session keys skeyA and skeyB are equal!")
-else:
-    print("- session keys skeyA and skeyB are different!")
+def main():
+    # Examples with b = KEYBITS bits:
+    A  = BitArray.random(KEYBITS)
+    B  = BitArray.random(KEYBITS)
+    A2 = BitArray.random(KEYBITS)
+    B2 = BitArray.random(KEYBITS)
+    nonce     = BitArray.random(KEYBITS)
+    preshared = BitArray.random(KEYBITS)
+    plaintext = BitArray.random(KEYBITS)
 
-print ("\n--- HSKE (symmetric key encryption)")
-E = fscx_revolve_n(plaintext, preshared, preshared, i_value)
-print(f"E (Alice) : {E.hex}")
-D = fscx_revolve_n(E , preshared, preshared, r_value)
-print(f"D (Bob)   : {D.hex}")
-if D == plaintext: # Assert equality
-    print("+ plaintext is correctly decrypted from E with preshared key")
-else:
-    print("- plaintext is different from decrypted E with preshared key!")
+    C  = fscx_revolve(A,  B,  I_VALUE)
+    C2 = fscx_revolve(A2, B2, I_VALUE)
+    hkex_nonce = C ^ C2
 
-print ("\n--- HPKS (public key signature)")
-S = fscx_revolve_n(C2 , B, hkex_nonce, r_value) ^ A  ^ plaintext
-print(f"S (Alice) : {S.hex}")
-V = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ S
-print(f"V (Bob)   : {V.hex}")
-if V == plaintext: # Assert equality
-    print("+ signature S from plaintext is correct!")
-else:
-    print("- signature S from plaintext is incorrect!")
+    print(f"A         : {A.hex}")
+    print(f"B         : {B.hex}")
+    print(f"A2        : {A2.hex}")
+    print(f"B2        : {B2.hex}")
+    print(f"preshared : {preshared.hex}")
+    print(f"plaintext : {plaintext.hex}")
+    print(f"nonce     : {nonce.hex}")
+    print(f"C         : {C.hex}")
+    print(f"C2        : {C2.hex}")
+    print(f"hkex_nonce: {hkex_nonce.hex}")
 
-print ("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public")
-E = fscx_revolve_n(plaintext, preshared, preshared, i_value)
-print(f"E (Alice) : {E.hex}")
-S = fscx_revolve_n(C2 , B, hkex_nonce, r_value) ^ A  ^ E # A+B2+C is the trapdoor for deceiving EVE!!!!
-print(f"S (Alice) : {S.hex}")
-V = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ S   # => E
-print(f"V (Bob)   : {V.hex}")
-D = fscx_revolve_n(V, preshared, preshared, r_value)  # => plainText
-print(f"D (Bob)   : {D.hex}")
-if D == plaintext: # Assert equality
-    print("+ signature S(E) from plaintext is correct!")
-else:
-    print("- signature S(E) from plaintext is incorrect!")
+    print(f"\n--- HKEX (key exchange)")
+    skeyA = fscx_revolve_n(C2, B,  hkex_nonce, R_VALUE) ^ A
+    print(f"skeyA (Alice): {skeyA.hex}")
+    skeyB = fscx_revolve_n(C,  B2, hkex_nonce, R_VALUE) ^ A2
+    print(f"skeyB (Bob)  : {skeyB.hex}")
+    if skeyA == skeyB:
+        print("+ session keys skeyA and skeyB are equal!")
+    else:
+        print("- session keys skeyA and skeyB are different!")
 
-print ("\n--- HPKE (public key encryption)")
-E = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ plaintext
-print(f"E (Bob)   : {E.hex}")
-D = fscx_revolve_n(C2 , B, hkex_nonce, r_value)  ^ A ^ E  # => plaintext
-print(f"D (Alice) : {D.hex}")
-if D == plaintext: # Assert equality
-    print("+ plaintext is correctly decrypted from E with private key!")
-else:
-    print("- plaintext is different from decrypted E with private key!")
+    print("\n--- HSKE (symmetric key encryption)")
+    E = fscx_revolve_n(plaintext, preshared, preshared, I_VALUE)
+    print(f"E (Alice) : {E.hex}")
+    D = fscx_revolve_n(E, preshared, preshared, R_VALUE)
+    print(f"D (Bob)   : {D.hex}")
+    if D == plaintext:
+        print("+ plaintext is correctly decrypted from E with preshared key")
+    else:
+        print("- plaintext is different from decrypted E with preshared key!")
 
-print (f"\n\n*** EVE bypass TESTS")
-print (f"\n*** HPKS (public key signature)")
-S = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ nonce  # ^ bruteForceValue  ## w/o A+B+C2 Eve would be forced to do a Brute force attack to find it.
-print(f"S (Eve)   : {S.hex}")
-V = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2  # X
-print(f"V (Bob)   : {V.hex}")
-if V == nonce: # Assert equality
-    print("+ nonce fake signature 1 verification with Alice public key is correct!")
-else:
-    print("- nonce fake signature 1 verification with Alice public key is incorrect!")
-S2 = V ^ nonce
-print(f"S2 (Eve)  : {S2.hex}")
-V2 = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ S2 # KK
-print(f"V2 (Bob)  : {V2.hex}")
-if V2 == nonce: # Assert equality
-    print("+ nonce fake signature 2 verification with Alice public key is correct!")
-else:
-    print("- nonce fake signature 2 verification with Alice public key is incorrect!")
+    print("\n--- HPKS (public key signature)")
+    S = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ plaintext
+    print(f"S (Alice) : {S.hex}")
+    V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S
+    print(f"V (Bob)   : {V.hex}")
+    if V == plaintext:
+        print("+ signature S from plaintext is correct!")
+    else:
+        print("- signature S from plaintext is incorrect!")
 
-print (f"\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public")
-E = fscx_revolve_n(nonce, preshared, preshared, i_value)
-print(f"E (Eve)   : {E.hex}")
-S = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ E  # ^ bruteForceValue  ## w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
-print(f"S (Eve)   : {S.hex}")
-V = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 #X
-print(f"V (Eve)   : {V.hex}")
-S2 = V ^ S
-print(f"S2 (Eve)  : {S2.hex}")
-V2 = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ S2 # KK
-print(f"V2 (Bob)  : {V2.hex}")
-D = fscx_revolve_n(V2, preshared, preshared, r_value)
-print(f"D (Bob)   : {D.hex}") #X
-if D == nonce: # Assert equality
-    print("+ fake signature(encrypted nonce) verification with Alice public key is correct!")
-else:
-    print("- fake signature(encrypted nonce) verification with Alice public key is incorrect!")
+    print("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public")
+    E = fscx_revolve_n(plaintext, preshared, preshared, I_VALUE)
+    print(f"E (Alice) : {E.hex}")
+    S = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ E  # A+B2+C is the trapdoor for deceiving EVE
+    print(f"S (Alice) : {S.hex}")
+    V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S  # => E
+    print(f"V (Bob)   : {V.hex}")
+    D = fscx_revolve_n(V, preshared, preshared, R_VALUE)      # => plaintext
+    print(f"D (Bob)   : {D.hex}")
+    if D == plaintext:
+        print("+ signature S(E) from plaintext is correct!")
+    else:
+        print("- signature S(E) from plaintext is incorrect!")
 
-print (f"\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2")
-S = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ nonce  # ^ bruteForceValue  ## w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
-print(f"S (Eve)   : {S.hex}")
-E = fscx_revolve_n(S, preshared, preshared, i_value)
-print(f"E (Eve)   : {E.hex}")
-V = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 #X
-print(f"V (Eve)   : {V.hex}")
-S2 = V ^ E
-print(f"S2 (Eve)  : {S2.hex}")
-V2 = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ S2 # KK
-print(f"V2 (Bob)  : {V2.hex}")
-D = fscx_revolve_n(V2, preshared, preshared, r_value)
-print(f"D (Bob)   : {D.hex}") #X
-if D == nonce: # Assert equality
-    print("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!")
-else:
-    print("- fake signature(encrypted nonce) v2 verification with Alice public key is incorrect!")
+    print("\n--- HPKE (public key encryption)")
+    E = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ plaintext
+    print(f"E (Bob)   : {E.hex}")
+    D = fscx_revolve_n(C2, B, hkex_nonce, R_VALUE) ^ A ^ E   # => plaintext
+    print(f"D (Alice) : {D.hex}")
+    if D == plaintext:
+        print("+ plaintext is correctly decrypted from E with private key!")
+    else:
+        print("- plaintext is different from decrypted E with private key!")
 
-print (f"\n*** HPKE (public key encryption)")
-E = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 ^ plaintext  # ^ bruteForceValue  ## w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
-print(f"E (Bob)   : {E.hex}")
-D = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ A2 #X, but == fsession from private/public key generation if components had been reused from an HKEX!?
-print(f"D (Eve)   : {D.hex}")
-E2 = D ^ E
-D2 = fscx_revolve_n(C, B2, hkex_nonce, r_value) ^ E2 # KK
-print(f"D2 (Eve)  : {D2.hex}")
-if (D == nonce) or (D2 == nonce): # Assert equality
-    print("+ Eve could decrypt plaintext without Alice's private key!")
-else:
-    print("- Eve could not decrypt plaintext without Alice's private key!")
+    print(f"\n\n*** EVE bypass TESTS")
+    print(f"\n*** HPKS (public key signature)")
+    S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ nonce  # w/o A+B+C2 Eve would be forced to brute force
+    print(f"S (Eve)   : {S.hex}")
+    V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2  # X
+    print(f"V (Bob)   : {V.hex}")
+    if V == nonce:
+        print("+ nonce fake signature 1 verification with Alice public key is correct!")
+    else:
+        print("- nonce fake signature 1 verification with Alice public key is incorrect!")
+    S2 = V ^ nonce
+    print(f"S2 (Eve)  : {S2.hex}")
+    V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2  # KK
+    print(f"V2 (Bob)  : {V2.hex}")
+    if V2 == nonce:
+        print("+ nonce fake signature 2 verification with Alice public key is correct!")
+    else:
+        print("- nonce fake signature 2 verification with Alice public key is incorrect!")
+
+    print(f"\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public")
+    E = fscx_revolve_n(nonce, preshared, preshared, I_VALUE)
+    print(f"E (Eve)   : {E.hex}")
+    S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ E  # w/o A+B2+C Eve would be forced to brute force
+    print(f"S (Eve)   : {S.hex}")
+    V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2  # X
+    print(f"V (Eve)   : {V.hex}")
+    S2 = V ^ S
+    print(f"S2 (Eve)  : {S2.hex}")
+    V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2  # KK
+    print(f"V2 (Bob)  : {V2.hex}")
+    D = fscx_revolve_n(V2, preshared, preshared, R_VALUE)
+    print(f"D (Bob)   : {D.hex}")  # X
+    if D == nonce:
+        print("+ fake signature(encrypted nonce) verification with Alice public key is correct!")
+    else:
+        print("- fake signature(encrypted nonce) verification with Alice public key is incorrect!")
+
+    print(f"\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2")
+    S = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ nonce  # w/o A+B2+C Eve would be forced to brute force
+    print(f"S (Eve)   : {S.hex}")
+    E = fscx_revolve_n(S, preshared, preshared, I_VALUE)
+    print(f"E (Eve)   : {E.hex}")
+    V = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2  # X
+    print(f"V (Eve)   : {V.hex}")
+    S2 = V ^ E
+    print(f"S2 (Eve)  : {S2.hex}")
+    V2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ S2  # KK
+    print(f"V2 (Bob)  : {V2.hex}")
+    D = fscx_revolve_n(V2, preshared, preshared, R_VALUE)
+    print(f"D (Bob)   : {D.hex}")  # X
+    if D == nonce:
+        print("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!")
+    else:
+        print("- fake signature(encrypted nonce) v2 verification with Alice public key is incorrect!")
+
+    print(f"\n*** HPKE (public key encryption)")
+    E = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2 ^ plaintext  # w/o A+B2+C Eve would be forced to brute force
+    print(f"E (Bob)   : {E.hex}")
+    D = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ A2  # X
+    print(f"D (Eve)   : {D.hex}")
+    E2 = D ^ E
+    D2 = fscx_revolve_n(C, B2, hkex_nonce, R_VALUE) ^ E2  # KK
+    print(f"D2 (Eve)  : {D2.hex}")
+    if (D == nonce) or (D2 == nonce):
+        print("+ Eve could decrypt plaintext without Alice's private key!")
+    else:
+        print("- Eve could not decrypt plaintext without Alice's private key!")
+
+
+if __name__ == '__main__':
+    main()

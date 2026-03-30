@@ -62,6 +62,14 @@ class BitArray:
     def copy(self) -> 'BitArray':
         return BitArray(self._size, self._val)
 
+    def rotated(self, n: int) -> 'BitArray':
+        """Return a new BitArray rotated left by n bits (right if n < 0)."""
+        n %= self._size
+        if n == 0:
+            return BitArray(self._size, self._val)
+        return BitArray(self._size,
+                        ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
+
     def rol(self, n: int) -> None:
         """Rotate left in-place by n bits."""
         n %= self._size
@@ -116,36 +124,28 @@ def new_rand_bitarray(bitlength: int) -> BitArray:
 	result.uint = randbits(bitlength)
 	return result
 
-#fscx(a,b) = (a ^ b ^ rol(a) ^ rol(b) ^ ror(a) ^ ror(b))
-def fscx(A: BitArray, B: BitArray, keybits: int) -> BitArray:
-	"""Perform one FSCX transformation."""
-	a = A.copy()
-	b = B.copy()
-	result = a ^ b
-	a.ror(1)
-	b.ror(1)
-	result ^= a ^ b
-	a.rol(2)
-	b.rol(2)
-	result ^= a ^ b
-	return result
+# fscx(A,B) = A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B)
+# Uses rotated() — does not mutate its inputs.
+def fscx(A: BitArray, B: BitArray) -> BitArray:
+    """Full Surroundings Cyclic XOR: A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B)."""
+    return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
 
-#Iterative version of fscx
-def fscx_revolve(A: BitArray, B: BitArray, keybits: int, steps: int, verbose: bool = False) -> BitArray:
+# Iterative version of fscx
+def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) -> BitArray:
     result = A
     for n in range(steps):
         prev = result
-        result = fscx(result, B, keybits)
+        result = fscx(result, B)
         if verbose:
             print(f"---FSCX_REVOLVE_PRINT UP:{prev} DOWN:{B} Step {n + 1}: {result}")
     return result
 
-def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray, keybits: int, steps: int, verbose: bool = False) -> BitArray:
+def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray, steps: int, verbose: bool = False) -> BitArray:
     """Nonce-augmented FSCX_REVOLVE (v1.1). Each step: result = fscx(result,B) XOR nonce."""
     result = A.copy()
     for n in range(steps):
         prev = result
-        result = fscx(result, B, keybits) ^ nonce
+        result = fscx(result, B) ^ nonce
         if verbose:
             print(f"---FSCX_REVOLVE_N_PRINT UP:{prev} DOWN:{B} Step {n + 1}: {result}")
     return result
@@ -181,20 +181,20 @@ def main ():
 	print(f"ALICE:")
 	print(f"{A} A [Secret 1]")
 	print(f"{B} B [Secret 2]")
-	D=fscx_revolve(A,B,keybits,pubkeybits,verbose) #for 64 keybits, 63 and 31 pubkeybits are weak; 3/4 or 1/4 seems best.
+	D=fscx_revolve(A,B,pubkeybits,verbose) #for 64 keybits, 63 and 31 pubkeybits are weak; 3/4 or 1/4 seems best.
 	print(f"{D} [FSCX_REVOLVE(A,B,{pubkeybits})] ->")
 	print(f"    BOB:")
 	print(f"    A2 {A2} [Secret 3]")
 	print(f"    B2 {B2} [Secret 4]")
-	D2=fscx_revolve(A2,B2,keybits,pubkeybits,verbose)
+	D2=fscx_revolve(A2,B2,pubkeybits,verbose)
 	print(f" <- D2 {D2} [FSCX_REVOLVE(A2,B2,{pubkeybits})]")
 	hkex_nonce = D ^ D2
 	print(f"{hkex_nonce} hkex_nonce [D xor D2]")
 	print(f"ALICE:")
-	FA=fscx_revolve_n(D2,B,hkex_nonce,keybits,privkeybits,verbose)^A #---for 64 keybits, 1 and 33 pubkeybits are weak; 1 - pubkeybits seems best.
+	FA=fscx_revolve_n(D2,B,hkex_nonce,privkeybits,verbose)^A #---for 64 keybits, 1 and 33 pubkeybits are weak; 1 - pubkeybits seems best.
 	print(f"{FA} FA [FSCX_REVOLVE_N(D2,B,{privkeybits}) xor A]")
 	print(f"    BOB:")
-	FA2=fscx_revolve_n(D,B2,hkex_nonce,keybits,privkeybits,verbose)^A2
+	FA2=fscx_revolve_n(D,B2,hkex_nonce,privkeybits,verbose)^A2
 	if FA == FA2:
 		print(f"    FA2 == FA {FA2} [FSCX_REVOLVE_N(D,B2,{privkeybits}) xor A2]")
 	else:

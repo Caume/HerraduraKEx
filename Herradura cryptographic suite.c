@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.2
+/*  Herradura Cryptographic Suite v1.3.2
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,20 +17,32 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.2: BitArray (multi-byte parameter support) ---
+    --- v1.3.2: performance and readability ---
 
-    The C implementation now uses a BitArray type: a fixed-width bit string
-    backed by a big-endian byte array, matching the Python and Go versions.
-    Default key size is 256 bits (i_value = 64, r_value = 192).
+    - ba_fscx: fused into a single-pass loop.  Eliminates 4 temporary BitArray
+      allocations and reduces 5 separate memory passes to 1.
+    - ba_fscx_revolve / ba_fscx_revolve_n: double-buffered with index swap;
+      eliminates one full BitArray copy per iteration step.
+    - ba_rol1 / ba_ror1: removed from the public API; their logic is now
+      inlined inside ba_fscx.
+    - ba_xor_into: removed; replaced by ba_xor(dst, dst, src) at every call
+      site (aliasing dst == a is safe in ba_xor).
+    - Version header updated; build comment moved to a single line.
+
+    --- v1.3: BitArray (multi-byte parameter support) ---
+
+    The C implementation uses a BitArray type: a fixed-width bit string backed
+    by a big-endian byte array, matching the Python and Go versions.
+    Default key size is 256 bits (I_VALUE = 64, R_VALUE = 192).
 
     BitArray supports:
-      - XOR (ba_xor / ba_xor_into)
-      - Rotate-left / rotate-right by 1 bit (big-endian)
+      - XOR (ba_xor — aliasing-safe)
       - Equality comparison (ba_equal)
       - Hex printing (ba_print_hex)
       - Secure random fill from /dev/urandom (ba_rand)
 
-    The key size is controlled by KEYBITS (must be a positive multiple of 8).
+    The key size is controlled by KEYBITS (must be a positive multiple of 8
+    and >= 16 for the single-pass ba_fscx implementation).
     Change the #define to use a different bit width; all parameters and step
     counts scale automatically.
 
@@ -66,13 +78,17 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Key size in bits -- must be a positive multiple of 8.
+/* Key size in bits -- must be a positive multiple of 8 and >= 16.
    Change this to use a different parameter width; I_VALUE and R_VALUE scale
    automatically. Equivalent to 256-bit parameters in the Go and Python versions. */
 #define KEYBITS  256
 #define KEYBYTES (KEYBITS / 8)
 #define I_VALUE  (KEYBITS / 4)       /* 64  for 256-bit */
 #define R_VALUE  (3 * KEYBITS / 4)   /* 192 for 256-bit */
+
+#if KEYBYTES < 2
+#  error "KEYBITS must be >= 16 for the single-pass ba_fscx implementation"
+#endif
 
 /* Fixed-width bit array backed by a big-endian byte array.
    b[0] holds the most-significant byte; size is always KEYBYTES. */
@@ -89,40 +105,12 @@ static void ba_rand(BitArray *dst, FILE *urnd)
     }
 }
 
-/* dst = a XOR b */
+/* dst = a XOR b.  Aliasing dst == a or dst == b is safe. */
 static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     int i;
     for (i = 0; i < KEYBYTES; i++)
         dst->b[i] = a->b[i] ^ b->b[i];
-}
-
-/* dst ^= src  (in-place XOR) */
-static void ba_xor_into(BitArray *dst, const BitArray *src)
-{
-    int i;
-    for (i = 0; i < KEYBYTES; i++)
-        dst->b[i] ^= src->b[i];
-}
-
-/* dst = src rotated left by 1 bit (big-endian: b[0] is MSB). */
-static void ba_rol1(BitArray *dst, const BitArray *src)
-{
-    int i;
-    uint8_t msbit = (src->b[0] >> 7) & 1;
-    for (i = 0; i < KEYBYTES - 1; i++)
-        dst->b[i] = (uint8_t)((src->b[i] << 1) | (src->b[i + 1] >> 7));
-    dst->b[KEYBYTES - 1] = (uint8_t)((src->b[KEYBYTES - 1] << 1) | msbit);
-}
-
-/* dst = src rotated right by 1 bit (big-endian: b[0] is MSB). */
-static void ba_ror1(BitArray *dst, const BitArray *src)
-{
-    int i;
-    uint8_t lsbit = src->b[KEYBYTES - 1] & 1;
-    for (i = KEYBYTES - 1; i > 0; i--)
-        dst->b[i] = (uint8_t)((src->b[i] >> 1) | (src->b[i - 1] << 7));
-    dst->b[0] = (uint8_t)((src->b[0] >> 1) | (lsbit << 7));
 }
 
 /* Returns 1 if a == b, 0 otherwise. */
@@ -142,32 +130,57 @@ static void ba_print_hex(const char *label, const BitArray *a)
 }
 
 /* Full Surroundings Cyclic XOR:
-   result = a XOR b XOR ROL(a) XOR ROL(b) XOR ROR(a) XOR ROR(b) */
+   result = a XOR b XOR ROL(a) XOR ROL(b) XOR ROR(a) XOR ROR(b)
+
+   Fused single-pass implementation: ROL and ROR are computed inline from
+   adjacent bytes, avoiding 4 temporary BitArray allocations and 5 separate
+   memory passes.  Requires KEYBYTES >= 2. */
 static void ba_fscx(BitArray *result, const BitArray *a, const BitArray *b)
 {
-    BitArray rol_a, rol_b, ror_a, ror_b;
+    /* Wrap-around bits extracted before the loop */
+    uint8_t a_msbit = a->b[0] >> 7;
+    uint8_t b_msbit = b->b[0] >> 7;
+    uint8_t a_lsbit = a->b[KEYBYTES - 1] & 1;
+    uint8_t b_lsbit = b->b[KEYBYTES - 1] & 1;
     int i;
-    ba_rol1(&rol_a, a);
-    ba_rol1(&rol_b, b);
-    ba_ror1(&ror_a, a);
-    ba_ror1(&ror_b, b);
-    for (i = 0; i < KEYBYTES; i++)
+
+    /* byte 0: ROR wraps in from the last byte */
+    result->b[0] = a->b[0] ^ b->b[0]
+        ^ (uint8_t)((a->b[0] << 1) | (a->b[1] >> 7))   /* ROL(a)[0] */
+        ^ (uint8_t)((b->b[0] << 1) | (b->b[1] >> 7))   /* ROL(b)[0] */
+        ^ (uint8_t)((a->b[0] >> 1) | (a_lsbit << 7))   /* ROR(a)[0] */
+        ^ (uint8_t)((b->b[0] >> 1) | (b_lsbit << 7));  /* ROR(b)[0] */
+
+    /* middle bytes: no wrap-around */
+    for (i = 1; i < KEYBYTES - 1; i++)
         result->b[i] = a->b[i] ^ b->b[i]
-                     ^ rol_a.b[i] ^ rol_b.b[i]
-                     ^ ror_a.b[i] ^ ror_b.b[i];
+            ^ (uint8_t)((a->b[i] << 1) | (a->b[i + 1] >> 7))
+            ^ (uint8_t)((b->b[i] << 1) | (b->b[i + 1] >> 7))
+            ^ (uint8_t)((a->b[i] >> 1) | (a->b[i - 1] << 7))
+            ^ (uint8_t)((b->b[i] >> 1) | (b->b[i - 1] << 7));
+
+    /* last byte: ROL wraps in from the first byte */
+    result->b[KEYBYTES - 1] = a->b[KEYBYTES-1] ^ b->b[KEYBYTES-1]
+        ^ (uint8_t)((a->b[KEYBYTES-1] << 1) | a_msbit)
+        ^ (uint8_t)((b->b[KEYBYTES-1] << 1) | b_msbit)
+        ^ (uint8_t)((a->b[KEYBYTES-1] >> 1) | (a->b[KEYBYTES-2] << 7))
+        ^ (uint8_t)((b->b[KEYBYTES-1] >> 1) | (b->b[KEYBYTES-2] << 7));
 }
 
-/* FSCX_REVOLVE: iterate fscx(a, b) n times keeping b constant. */
+/* FSCX_REVOLVE: iterate fscx(a, b) n times keeping b constant.
+   Double-buffered: alternates between two local buffers to avoid
+   copying the result back every step. */
 static void ba_fscx_revolve(BitArray *result, const BitArray *a,
                              const BitArray *b, int steps)
 {
-    BitArray tmp;
-    int i;
-    *result = *a;
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
     for (i = 0; i < steps; i++) {
-        ba_fscx(&tmp, result, b);
-        *result = tmp;
+        ba_fscx(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
     }
+    *result = buf[idx];
 }
 
 /* FSCX_REVOLVE_N (v1.1): nonce-augmented iteration.
@@ -176,14 +189,73 @@ static void ba_fscx_revolve_n(BitArray *result, const BitArray *a,
                                const BitArray *b, const BitArray *nonce,
                                int steps)
 {
-    BitArray tmp;
-    int i;
-    *result = *a;
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
     for (i = 0; i < steps; i++) {
-        ba_fscx(&tmp, result, b);
-        ba_xor(result, &tmp, nonce);
+        ba_fscx(&buf[1 - idx], &buf[idx], b);
+        ba_xor(&buf[1 - idx], &buf[1 - idx], nonce);
+        idx ^= 1;
     }
+    *result = buf[idx];
 }
+
+/*
+let,    Alice, Bob: i + r == bitlength b;  i == 1/4 bitlength; r == 3/4 bitlength; bitlength is a power of 2 >= 8
+        P be a plaintext message of bitlength b,
+        E the encrypted version of plaintext P,
+        D == P the decrypted version of E.
+let,    Alice: A,B be random values of bitlength b,
+        Bob: A2,B2 be random values of bitlength b
+let,    Alice: C = fscx_revolve(A, B, i) ,
+        Bob: C2 = fscx_revolve(A2, B2, i)
+then,   Alice: D = fscx_revolve(C2, B, r) ^ A ,
+        Bob: D2 = fscx_revolve(C, B2, r) ^ A2
+where,  Alice, Bob: D == D2
+then,   fscx_revolve(C2, B, r) ^ A  == fscx_revolve(C, B2, r) ^ A2,
+        fscx_revolve(C2, B, r) ^ A ^ P == fscx_revolve(C, B2, r) ^ A2 ^ P,
+        fscx_revolve(C2, B, R) ^ A ^ A2 ^ P == fscx_revolve(C, B2, r)  ^ P  #Note that this form breaks trapdoor
+also,   fscx_revolve(C2, B, r) ^ A  ^ P == fscx_revolve(C2 ^ P, B, r) ^ A
+
+let,    public key => {C,B2,A2,r},
+        private key => {C2,B,A,r}
+then,   E = fscx_revolve(C, B2, r) ^ A2  ^ P,
+        P == (D = fscx_revolve(C2, B, r) ^ A ^ E)
+
+let,    E = fscx_revolve(C2, B, r) ^ A  ^ P
+then,   fscx_revolve(E, B2, i) ^ A2 ^ P  == 0
+        fscx_revolve(E ^ P, B2, i) == 0
+
+HKEX (key exchange)
+    Alice:  C = fscx_revolve(A,B,i)
+            send C to Bob and get C2
+            shared_key = fscx_revolve(C2, B, r) ^ A,
+    Bob:    C2 = fscx_revolve(A2,B2,i)
+            send C2 to Alice and get C
+            shared_key => fscx_revolve(C, B2, r) ^ A2
+
+HSKE (symmetric key encryption):
+    Alice,Bob:  share key of bitlength b
+    Alice:  E = fscx_revolve(P , key , i)
+            shares E with Bob
+    Bob:    P = fscx_revolve(E , key , r)
+
+HPKS (public key signature)
+    Alice:  C = fscx_revolve(A,B,i)
+            C2 = fscx_revolve(A2,B2,i)
+            {publish (C,B2,A2,r) as public key, also disclose b,r,i; keep the rest of parameters (C2,B,A) as private key},
+            S = fscx_revolve(C2, B, r) ^ A ^ P
+            shares E, S with Bob
+    Bob:    P = fscx_revolve(C,B2, r) ^ A2  ^ S
+
+HPKE (public key encryption)
+    Alice:  C = fscx_revolve(A,B,i),
+            C2 = fscx_revolve(A2,B2,i),
+            {publish (C,B2,A2,r) as public key, keep the rest of parameters as private key},
+    Bob:    E = fscx_revolve(C, B2, r) ^ A2  ^ P
+            shares E with Alice
+    Alice:  P = fscx_revolve(C2, B, r) ^ A ^ E
+*/
 
 int main(void)
 {
@@ -251,11 +323,11 @@ int main(void)
     printf("\n--- HPKS (public key signature)\n");
     ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
     ba_xor(&S, &tmp, &A);
-    ba_xor_into(&S, &plaintext);
+    ba_xor(&S, &S, &plaintext);
     ba_print_hex("S (Alice) : ", &S);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V, &tmp, &A2);
-    ba_xor_into(&V, &S);
+    ba_xor(&V, &V, &S);
     ba_print_hex("V (Bob)   : ", &V);
     if (ba_equal(&V, &plaintext))
         puts("+ signature S from plaintext is correct!");
@@ -268,11 +340,11 @@ int main(void)
     ba_print_hex("E (Alice) : ", &E);
     ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
     ba_xor(&S, &tmp, &A);
-    ba_xor_into(&S, &E);   /* A+B2+C is the trapdoor */
+    ba_xor(&S, &S, &E);   /* A+B2+C is the trapdoor */
     ba_print_hex("S (Alice) : ", &S);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V, &tmp, &A2);
-    ba_xor_into(&V, &S);   /* => E */
+    ba_xor(&V, &V, &S);   /* => E */
     ba_print_hex("V (Bob)   : ", &V);
     ba_fscx_revolve_n(&D, &V, &preshared, &preshared, R_VALUE);   /* => plaintext */
     ba_print_hex("D (Bob)   : ", &D);
@@ -285,11 +357,11 @@ int main(void)
     printf("\n--- HPKE (public key encryption)\n");
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&E, &tmp, &A2);
-    ba_xor_into(&E, &plaintext);
+    ba_xor(&E, &E, &plaintext);
     ba_print_hex("E (Bob)   : ", &E);
     ba_fscx_revolve_n(&tmp, &C2, &B, &hkex_nonce, R_VALUE);
     ba_xor(&D, &tmp, &A);
-    ba_xor_into(&D, &E);   /* => plaintext */
+    ba_xor(&D, &D, &E);   /* => plaintext */
     ba_print_hex("D (Alice) : ", &D);
     if (ba_equal(&D, &plaintext))
         puts("+ plaintext is correctly decrypted from E with private key!");
@@ -315,7 +387,7 @@ int main(void)
     ba_print_hex("S2 (Eve)  : ", &S2);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V2, &tmp, &A2);
-    ba_xor_into(&V2, &S2);   /* KK */
+    ba_xor(&V2, &V2, &S2);   /* KK */
     ba_print_hex("V2 (Bob)  : ", &V2);
     if (ba_equal(&V2, &nonce))
         puts("+ nonce fake signature 2 verification with Alice public key is correct!");
@@ -328,7 +400,7 @@ int main(void)
     ba_print_hex("E (Eve)   : ", &E);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&S, &tmp, &A2);
-    ba_xor_into(&S, &E);
+    ba_xor(&S, &S, &E);
     ba_print_hex("S (Eve)   : ", &S);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V, &tmp, &A2);   /* X */
@@ -337,7 +409,7 @@ int main(void)
     ba_print_hex("S2 (Eve)  : ", &S2);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V2, &tmp, &A2);
-    ba_xor_into(&V2, &S2);   /* KK */
+    ba_xor(&V2, &V2, &S2);   /* KK */
     ba_print_hex("V2 (Bob)  : ", &V2);
     ba_fscx_revolve_n(&D, &V2, &preshared, &preshared, R_VALUE);
     ba_print_hex("D (Bob)   : ", &D);   /* X */
@@ -350,7 +422,7 @@ int main(void)
     printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2\n");
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&S, &tmp, &A2);
-    ba_xor_into(&S, &nonce);
+    ba_xor(&S, &S, &nonce);
     ba_print_hex("S (Eve)   : ", &S);
     ba_fscx_revolve_n(&E, &S, &preshared, &preshared, I_VALUE);
     ba_print_hex("E (Eve)   : ", &E);
@@ -361,7 +433,7 @@ int main(void)
     ba_print_hex("S2 (Eve)  : ", &S2);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&V2, &tmp, &A2);
-    ba_xor_into(&V2, &S2);   /* KK */
+    ba_xor(&V2, &V2, &S2);   /* KK */
     ba_print_hex("V2 (Bob)  : ", &V2);
     ba_fscx_revolve_n(&D, &V2, &preshared, &preshared, R_VALUE);
     ba_print_hex("D (Bob)   : ", &D);   /* X */
@@ -374,7 +446,7 @@ int main(void)
     printf("\n*** HPKE (public key encryption)\n");
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&E, &tmp, &A2);
-    ba_xor_into(&E, &plaintext);
+    ba_xor(&E, &E, &plaintext);
     ba_print_hex("E (Bob)   : ", &E);
     ba_fscx_revolve_n(&tmp, &C, &B2, &hkex_nonce, R_VALUE);
     ba_xor(&D, &tmp, &A2);   /* X */

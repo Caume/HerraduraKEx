@@ -62,6 +62,14 @@ class BitArray:
     def copy(self) -> 'BitArray':
         return BitArray(self._size, self._val)
 
+    def rotated(self, n: int) -> 'BitArray':
+        """Return a new BitArray rotated left by n bits (right if n < 0)."""
+        n %= self._size
+        if n == 0:
+            return BitArray(self._size, self._val)
+        return BitArray(self._size,
+                        ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
+
     def rol(self, n: int) -> None:
         """Rotate left in-place by n bits."""
         n %= self._size
@@ -113,11 +121,9 @@ class BitArray:
 # ---------------------------------------------------------------------------
 
 def fscx(A: BitArray, B: BitArray) -> BitArray:
-    a, b = A.copy(), B.copy()
-    result = a ^ b
-    a.ror(1); b.ror(1); result = result ^ a ^ b
-    a.rol(2); b.rol(2); result = result ^ a ^ b
-    return result
+    """Full Surroundings Cyclic XOR: A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B).
+    Uses rotated() — does not mutate its inputs."""
+    return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
 
 
 def fscx_revolve(A: BitArray, B: BitArray, steps: int) -> BitArray:
