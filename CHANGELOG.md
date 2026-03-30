@@ -4,6 +4,34 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.1] - 2026-03-29
+
+### Changed
+- **`Herradura_tests.c`**, **`Herradura_tests.go`**, **`Herradura_tests.py`**:
+
+  - **Test [1] (non-commutativity)**: switched from `fscx_revolve` to
+    `fscx_revolve_n` with a random nonce per trial, confirming
+    `FSCX_REVOLVE_N(A,B,N,n) ≠ FSCX_REVOLVE_N(B,A,N,n)` in general.
+    The nonce term `T_n(N)` cancels from both sides so commutativity depends
+    only on A and B; the test remains 0/10000.
+
+  - **New test [6] — FSCX_REVOLVE_N nonce-avalanche**: flip 1 bit of the nonce
+    N while keeping A and B constant and measure the output Hamming distance.
+    The change equals `T_n(e_k)` where `T_n = I + L + … + L^(n-1)`, which
+    is independent of A and B (deterministic, so min = max = mean).
+    For `n = size/4` (i_val): `HD = size/4` exactly — 16/32/64 bits for
+    64/128/256-bit parameters respectively — far above the 3-bit single-step
+    FSCX diffusion.  Pass criterion: `HD ≥ size/4`.
+
+  - **Benchmark [7]** (was [6]): FSCX throughput — unchanged.
+  - **Benchmark [8]** (was [7]): renamed from *FSCX_REVOLVE throughput* to
+    **FSCX_REVOLVE_N throughput**; benchmark now calls `fscx_revolve_n` with
+    a random nonce.
+  - **Benchmarks [9–10]** (were [8–9]): HKEX handshake and HSKE round-trip —
+    unchanged, renumbered.
+
+---
+
 ## [1.3] - 2026-03-29
 
 ### Changed

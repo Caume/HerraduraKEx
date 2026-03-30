@@ -183,16 +183,19 @@ static void print_rate(long long ops, double secs)
 static void test_noncommutativity(void)
 {
     int i, comm = 0;
-    BitArray a, b, ab, ba_rev;
+    BitArray a, b, n, ab, ba_rev;
     /* FSCX(A,B) == FSCX(B,A) always (symmetric formula).
-       Asymmetry arises from FSCX_REVOLVE, where B is held constant across
-       iterations: FSCX_REVOLVE(A,B,n) != FSCX_REVOLVE(B,A,n) in general. */
-    printf("[1] FSCX_REVOLVE non-commutativity: FSCX_REVOLVE(A,B,n) != FSCX_REVOLVE(B,A,n)\n");
+       Asymmetry arises in FSCX_REVOLVE_N, where B is held constant across
+       iterations: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n) in general.
+       The nonce term T_n(N) cancels from both sides of the difference, so
+       commutativity is determined solely by the A and B inputs. */
+    printf("[1] FSCX_REVOLVE_N non-commutativity: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n)\n");
     for (i = 0; i < 10000; i++) {
         ba_rand(&a);
         ba_rand(&b);
-        ba_fscx_revolve(&ab,     &a, &b, I_VALUE);
-        ba_fscx_revolve(&ba_rev, &b, &a, I_VALUE);
+        ba_rand(&n);
+        ba_fscx_revolve_n(&ab,     &a, &b, &n, I_VALUE);
+        ba_fscx_revolve_n(&ba_rev, &b, &a, &n, I_VALUE);
         if (ba_equal(&ab, &ba_rev))
             comm++;
     }
@@ -332,6 +335,46 @@ static void test_key_sensitivity(void)
     putchar('\n');
 }
 
+static void test_avalanche_revolve_n(void)
+{
+    int i, hd;
+    double total = 0.0;
+    int gmin = KEYBITS + 1, gmax = -1;
+    BitArray a, b, nonce, nonce_flip, base, flipped, diff;
+    /* FSCX_REVOLVE_N nonce-injection avalanche.
+       Flipping 1 bit of the nonce N while keeping A and B constant propagates
+       through all remaining revolve steps.  The change in the output equals
+       T_n(e_k) where T_n = I + L + ... + L^(n-1) and e_k is the unit vector
+       at bit position k.  Unlike the 3-bit diffusion of single-step FSCX or
+       the purely linear FSCX_REVOLVE, T_n accumulates contributions from every
+       step, producing a much larger Hamming distance.
+       Expected: HD >> 3 (significantly more than single-step FSCX diffusion). */
+    printf("[6] FSCX_REVOLVE_N nonce-avalanche: flip 1 nonce bit, measure output diffusion\n");
+    for (i = 0; i < 1000; i++) {
+        ba_rand(&a);
+        ba_rand(&b);
+        ba_rand(&nonce);
+        ba_fscx_revolve_n(&base,    &a, &b, &nonce,      I_VALUE);
+        ba_flip_bit(&nonce_flip, &nonce, 0);
+        ba_fscx_revolve_n(&flipped, &a, &b, &nonce_flip, I_VALUE);
+        ba_xor(&diff, &base, &flipped);
+        hd = ba_popcount(&diff);
+        total += hd;
+        if (hd < gmin) gmin = hd;
+        if (hd > gmax) gmax = hd;
+    }
+    {
+        double mean = total / 1000.0;
+        /* HD = popcount(T_n(e_0)) is deterministic (independent of A and B),
+           so min == max == mean.  For n = KEYBITS/4, HD = KEYBITS/4 exactly.
+           Pass if HD >= KEYBITS/4 (far above the 3-bit single-step diffusion). */
+        printf("    bits=%d  mean HD=%.1f (expected >=%d)  min=%d  max=%d  [%s]\n",
+               KEYBITS, mean, KEYBITS / 4, gmin, gmax,
+               mean >= (double)(KEYBITS / 4) ? "PASS" : "FAIL");
+    }
+    putchar('\n');
+}
+
 /* ------------------------------------------------------------------ */
 /* Performance benchmarks                                              */
 /* ------------------------------------------------------------------ */
@@ -344,7 +387,7 @@ static void bench_fscx_throughput(void)
     double secs;
     int i;
 
-    printf("[6] FSCX throughput  (bits=%d)\n    ", KEYBITS);
+    printf("[7] FSCX throughput  (bits=%d)\n    ", KEYBITS);
     ba_rand(&a); ba_rand(&b);
     /* warm up */
     for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
@@ -358,24 +401,24 @@ static void bench_fscx_throughput(void)
     putchar('\n');
 }
 
-static void bench_fscx_revolve_throughput(void)
+static void bench_fscx_revolve_n_throughput(void)
 {
     int steps_arr[2] = { I_VALUE, R_VALUE };
     const char *labels[2] = { "i", "r" };
     int s, i;
     struct timespec t0, t1;
 
-    printf("[7] FSCX_REVOLVE throughput  (bits=%d)\n", KEYBITS);
+    printf("[8] FSCX_REVOLVE_N throughput  (bits=%d)\n", KEYBITS);
     for (s = 0; s < 2; s++) {
-        BitArray a, b, tmp;
+        BitArray a, b, nonce, tmp;
         long long ops = 0;
         double secs;
-        ba_rand(&a); ba_rand(&b);
-        for (i = 0; i < 5; i++) ba_fscx_revolve(&tmp, &a, &b, steps_arr[s]);
+        ba_rand(&a); ba_rand(&b); ba_rand(&nonce);
+        for (i = 0; i < 5; i++) ba_fscx_revolve_n(&tmp, &a, &b, &nonce, steps_arr[s]);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         do {
             for (i = 0; i < 20; i++) {
-                ba_fscx_revolve(&tmp, &a, &b, steps_arr[s]);
+                ba_fscx_revolve_n(&tmp, &a, &b, &nonce, steps_arr[s]);
                 a = tmp;
             }
             ops += 20;
@@ -395,7 +438,7 @@ static void bench_hkex_handshake(void)
     int i;
     BitArray a, b, a2, b2, c, c2, hn, keyA, keyB, tmp;
 
-    printf("[8] HKEX full handshake  (bits=%d)\n    ", KEYBITS);
+    printf("[9] HKEX full handshake  (bits=%d)\n    ", KEYBITS);
     /* warm up */
     for (i = 0; i < 3; i++) {
         ba_rand(&a); ba_rand(&b); ba_rand(&a2); ba_rand(&b2);
@@ -430,7 +473,7 @@ static void bench_hske_roundtrip(void)
     int i;
     BitArray pt, key, enc, dec;
 
-    printf("[9] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
+    printf("[10] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
     /* warm up */
     for (i = 0; i < 5; i++) {
         ba_rand(&pt); ba_rand(&key);
@@ -473,9 +516,11 @@ int main(void)
     test_bit_frequency();
     test_key_sensitivity();
 
+    test_avalanche_revolve_n();
+
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();
-    bench_fscx_revolve_throughput();
+    bench_fscx_revolve_n_throughput();
     bench_hkex_handshake();
     bench_hske_roundtrip();
 
