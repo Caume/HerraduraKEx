@@ -1,6 +1,7 @@
 /* Build: gcc -O2 -o Herradura_tests Herradura_tests.c */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray)
+    v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -506,6 +507,49 @@ static void bench_hske_roundtrip(void)
     putchar('\n');
 }
 
+/* HPKE (public key encryption) full round-trip:
+   Key setup: C = fscx_revolve(A,B,i), C2 = fscx_revolve(A2,B2,i), hn = C^C2
+   Bob encrypts:   E = fscx_revolve_n(C, B2, hn, r) ^ A2 ^ P
+   Alice decrypts: D = fscx_revolve_n(C2, B,  hn, r) ^ A  ^ E  (== P) */
+static void bench_hpke_roundtrip(void)
+{
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    BitArray a, b, a2, b2, c, c2, hn, pt, E, D, tmp;
+
+    printf("[11] HPKE encrypt+decrypt round-trip  (bits=%d)\n    ", KEYBITS);
+    /* warm up */
+    for (i = 0; i < 3; i++) {
+        ba_rand(&a); ba_rand(&b); ba_rand(&a2); ba_rand(&b2); ba_rand(&pt);
+        ba_fscx_revolve(&c,  &a,  &b,  I_VALUE);
+        ba_fscx_revolve(&c2, &a2, &b2, I_VALUE);
+        ba_xor(&hn, &c, &c2);
+        ba_fscx_revolve_n(&tmp, &c,  &b2, &hn, R_VALUE);
+        ba_xor(&E, &tmp, &a2); ba_xor(&E, &E, &pt);         /* Bob encrypts   */
+        ba_fscx_revolve_n(&tmp, &c2, &b,  &hn, R_VALUE);
+        ba_xor(&D, &tmp, &a);  ba_xor(&D, &D, &E);          /* Alice decrypts */
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 10; i++) {
+            ba_rand(&a); ba_rand(&b); ba_rand(&a2); ba_rand(&b2); ba_rand(&pt);
+            ba_fscx_revolve(&c,  &a,  &b,  I_VALUE);
+            ba_fscx_revolve(&c2, &a2, &b2, I_VALUE);
+            ba_xor(&hn, &c, &c2);
+            ba_fscx_revolve_n(&tmp, &c,  &b2, &hn, R_VALUE);
+            ba_xor(&E, &tmp, &a2); ba_xor(&E, &E, &pt);
+            ba_fscx_revolve_n(&tmp, &c2, &b,  &hn, R_VALUE);
+            ba_xor(&D, &tmp, &a);  ba_xor(&D, &D, &E);
+        }
+        ops += 10;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
 /* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
@@ -535,6 +579,7 @@ int main(void)
     bench_fscx_revolve_n_throughput();
     bench_hkex_handshake();
     bench_hske_roundtrip();
+    bench_hpke_roundtrip();
 
     fclose(urnd_fp);
     return 0;

@@ -1,5 +1,6 @@
 '''
     Herradura KEx -- Security & Performance Tests (Python)
+    v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -413,6 +414,33 @@ def bench_hske_roundtrip():
     print()
 
 
+# HPKE (public key encryption) full round-trip:
+# Key setup: C = fscx_revolve(A,B,i), C2 = fscx_revolve(A2,B2,i), hn = C^C2
+# Bob encrypts:   E = fscx_revolve_n(C, B2, hn, r) ^ A2 ^ pt
+# Alice decrypts: D = fscx_revolve_n(C2, B,  hn, r) ^ A  ^ E  (== pt)
+def bench_hpke_roundtrip():
+    print("[11] HPKE encrypt+decrypt round-trip")
+    for size in SIZES:
+        iv = i_val(size)
+        rv = r_val(size)
+        sink = BitArray(size, 0)
+        def fn():
+            nonlocal sink
+            A  = BitArray.random(size)
+            B  = BitArray.random(size)
+            A2 = BitArray.random(size)
+            B2 = BitArray.random(size)
+            pt = BitArray.random(size)
+            C  = fscx_revolve(A, B, iv)
+            C2 = fscx_revolve(A2, B2, iv)
+            hn = C ^ C2
+            E  = fscx_revolve_n(C, B2, hn, rv) ^ A2 ^ pt  # Bob encrypts
+            D  = fscx_revolve_n(C2, B, hn, rv) ^ A ^ E    # Alice decrypts
+            sink ^= D
+        _bench(f"bits={size:3d}", fn)
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -434,3 +462,4 @@ if __name__ == '__main__':
     bench_fscx_revolve_n()
     bench_hkex_handshake()
     bench_hske_roundtrip()
+    bench_hpke_roundtrip()

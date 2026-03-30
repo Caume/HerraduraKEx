@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -483,6 +484,35 @@ func benchHskeRoundTrip() {
 	fmt.Println()
 }
 
+// HPKE (public key encryption) full round-trip:
+// Key setup: C = FscxRevolve(A,B,i), C2 = FscxRevolve(A2,B2,i), hn = C^C2
+// Bob encrypts:   E = FscxRevolveN(C, B2, hn, r) ^ A2 ^ pt
+// Alice decrypts: D = FscxRevolveN(C2, B,  hn, r) ^ A  ^ E  (== pt)
+func benchHpkeRoundTrip() {
+	fmt.Println("[11] HPKE encrypt+decrypt round-trip")
+	for _, size := range sizes {
+		iv := iVal(size)
+		rv := rVal(size)
+		sink := randBA(size)
+		ops, elapsed := bench("", func() {
+			A := randBA(size)
+			B := randBA(size)
+			A2 := randBA(size)
+			B2 := randBA(size)
+			pt := randBA(size)
+			C := FscxRevolve(A, B, iv)
+			C2 := FscxRevolve(A2, B2, iv)
+			hn := C.Xor(C2)
+			E := FscxRevolveN(C, B2, hn, rv).Xor(A2).Xor(pt) // Bob encrypts
+			D := FscxRevolveN(C2, B, hn, rv).Xor(A).Xor(E)   // Alice decrypts
+			sink = sink.Xor(D)
+		})
+		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println()
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -504,4 +534,5 @@ func main() {
 	benchFscxRevolveN()
 	benchHkexHandshake()
 	benchHskeRoundTrip()
+	benchHpkeRoundTrip()
 }
