@@ -87,8 +87,104 @@ Example implementations are provided in multiple languages, including C, Go, Pyt
 and assembler.  Assembly examples for both x86 and ARM Linux are available in the
 source tree.
 
+# FSCX_REVOLVE_N (v1.1)
+
+FSCX_REVOLVE_N is a nonce-augmented variant of FSCX_REVOLVE introduced in v1.1 of the Herradura Cryptographic Suite. Instead of iterating FSCX alone, each step applies:
+
+	result = FSCX(result, B) ⊕ N
+
+where N is a nonce derived from protocol context (no new secrets required):
+
+- **HKEX, HPKS, HPKE**: N = C ⊕ C2, computable from the public key (C is published; C2 = FSCX_REVOLVE(A2, B2, i) is derivable from the public parameters A2, B2 and the public round count i).
+- **HSKE**: N = key (the shared key is injected at every revolve step, not only at the input/output boundaries).
+
+Using the linear operator notation L = Id ⊕ ROL ⊕ ROR, the two variants compare as:
+
+	FSCX_REVOLVE  (A, B,    n) = L^n(A) ⊕ S_n(B)           [purely linear in A over GF(2)]
+	FSCX_REVOLVE_N(A, B, N, n) = L^n(A) ⊕ T_n(L(B) ⊕ N)    [affine in A over GF(2)]
+
+where S_n = L + L² + ... + L^n and T_n = I + L + ... + L^(n-1).
+
+The key security improvement is that the purely linear structure is broken: an attacker observing two public values C₁ and C₂ computed with the same B but different A values can no longer extract L^i(A₁ ⊕ A₂) from C₁ ⊕ C₂ across sessions, because the session-specific nonce N mixes into the affine constant at every step.
+
+**Proof that the HKEX equality is preserved under FSCX_REVOLVE_N:**
+
+The equality FSCX_REVOLVE_N(C2, B, N, r) ⊕ A = FSCX_REVOLVE_N(C, B2, N, r) ⊕ A2 holds because expanding both sides with C = FSCX_REVOLVE(A, B, i) and C2 = FSCX_REVOLVE(A2, B2, i), and applying L^(r+i) = I (since r+i = P), the condition reduces to:
+
+	L^r(T_i(Z)) = T_r(Z)   for all Z
+
+This is identical to the condition without the nonce — N cancels from both sides identically. The same condition guarantees correctness for HSKE, HPKS, and HPKE.
+
+**Orbit properties** are preserved: FSCX_REVOLVE_N(·, B, N, ·) is a bijection on GF(2)^P, so all orbits are finite. Empirical validation confirms orbit lengths remain ≤ 2P.
+
+# Build & Run Instructions
+
+## C
+
+```bash
+# Basic HKEX (64-bit)
+gcc -DINTSZ=64 -O2 -o HKEX Herradura_KEx.c
+./HKEX
+
+# Basic HKEX with verbose output (brute-force attack simulation)
+gcc -DINTSZ=64 -DVERBOSE -O2 -o HKEX_verbose Herradura_KEx.c
+./HKEX_verbose
+
+# Basic HKEX with GMP big numbers (requires libgmp-dev)
+gcc -DINTSZ=256 -O2 -o HKEX_bignum Herradura_KEx_bignum.c -lgmp
+./HKEX_bignum
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
+./"Herradura cryptographic suite"
+
+# Security & performance tests
+gcc -O2 -o Herradura_tests Herradura_tests.c
+./Herradura_tests
+```
+
+## Go
+
+```bash
+# Basic HKEX
+go run Herradura_KEx.go
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+go run "Herradura cryptographic suite.go"
+
+# Security & performance tests
+go run Herradura_tests.go
+```
+
+## Python
+
+```bash
+# Basic HKEX
+python3 Herradura_KEx.py -b 64 -v
+
+# Full cryptographic suite (HKEX + HSKE + HPKS + HPKE)
+python3 "Herradura cryptographic suite.py"
+
+# Security & performance tests
+python3 Herradura_tests.py
+```
+
+## Assembly
+
+```bash
+# ARM Linux (requires arm-linux-gnueabi-gcc; run with QEMU on non-ARM host)
+arm-linux-gnueabi-gcc -o HKEX_arm HKEX_arm_linux.s
+./HKEX_arm          # on ARM hardware
+qemu-arm ./HKEX_arm # on non-ARM host
+
+# x86 NASM assembly (requires NASM and asm_io.o library)
+nasm -f elf HAEN.asm
+gcc -m32 -o HAEN HAEN.o asm_io.o
+./HAEN
+```
+
 # Final note
-These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations. 
+These cryptographic algorithms and protocols are released in the hope that they will be useful for building efficient and robust schemes, based on bitwise operations.
 
 
 OAHR

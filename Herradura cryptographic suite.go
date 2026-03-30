@@ -1,10 +1,10 @@
-/*  Herradura Cryptographic Suite
-    
-    Copyright (C) 2024 Omar Alejandro Herrera Reyna
+/*  Herradura Cryptographic Suite v1.1
+
+    Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
-    it under the terms of the MIT License or the GNU General Public License 
-    as published by the Free Software Foundation, either version 3 of the License, 
+    it under the terms of the MIT License or the GNU General Public License
+    as published by the Free Software Foundation, either version 3 of the License,
     or (at your option) any later version.
 
     Under the terms of the GNU General Public License, please also consider that:
@@ -15,7 +15,32 @@
     GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>. */
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.1: FSCX_REVOLVE_N ---
+
+    v1.1 introduces FSCX_REVOLVE_N: a nonce-augmented variant of FSCX_REVOLVE
+    where each iteration XORs a nonce N after the FSCX step:
+        result = FSCX(result, B) ⊕ N
+
+    This converts the purely linear GF(2) function to affine, breaking linearity
+    while preserving the HKEX equality and orbit properties.
+
+    Nonce derivation (no new secrets):
+    - For HKEX, HPKS, HPKE: hkex_nonce = C ⊕ C2  — computable from the public key
+      (C is in the public key; C2 = fscx_revolve(A2, B2, i) can be computed from
+      A2, B2 also in the public key)
+    - For HSKE: N = preshared key — the key is injected at every revolve step,
+      not just at input/output boundaries
+
+    Mathematical proof that HKEX equality is preserved:
+    The HKEX equality
+        FSCX_REVOLVE_N(C2, B, N, r) ⊕ A = FSCX_REVOLVE_N(C, B2, N, r) ⊕ A2
+    holds because when you expand with C = FSCX_REVOLVE(A, B, i) and
+    C2 = FSCX_REVOLVE(A2, B2, i), and use L^(r+i) = I (since r+i=P), the
+    condition reduces to L^r(T_i(Z)) = T_r(Z) — the same condition as without
+    the nonce. N cancels identically from both sides.
+*/
 
 package main
 
@@ -23,21 +48,79 @@ import (
 	"crypto/rand"
 	"fmt"
 	"log"
-
-	"github.com/tunabay/go-bitarray"
+	"math/big"
 )
 
-func New_rand_bitarray(bitlength int) *bitarray.BitArray {
+// BitArray is a fixed-width bit string backed by big.Int.
+// Supports XOR, rotation, equality, and hex formatting via %x.
+// Size must be a positive multiple of 8.
+type BitArray struct {
+	val  big.Int
+	size int
+}
+
+func bitArrayMask(size int) *big.Int {
+	mask := new(big.Int).Lsh(big.NewInt(1), uint(size))
+	return mask.Sub(mask, big.NewInt(1))
+}
+
+// NewFromBytes constructs a BitArray from raw bytes (big-endian). The offset
+// parameter is accepted for API compatibility but must be 0.
+func NewFromBytes(data []byte, _ int, size int) *BitArray {
+	ba := &BitArray{size: size}
+	ba.val.SetBytes(data[:size/8])
+	return ba
+}
+
+// Xor returns a new BitArray that is the bitwise XOR of ba and other.
+func (ba *BitArray) Xor(other *BitArray) *BitArray {
+	result := &BitArray{size: ba.size}
+	result.val.Xor(&ba.val, &other.val)
+	return result
+}
+
+// RotateLeft returns a new BitArray rotated left by n bits.
+// Negative n rotates right.
+func (ba *BitArray) RotateLeft(n int) *BitArray {
+	size := ba.size
+	n = ((n % size) + size) % size
+	result := &BitArray{size: size}
+	if n == 0 {
+		result.val.Set(&ba.val)
+		return result
+	}
+	left := new(big.Int).Lsh(&ba.val, uint(n))
+	right := new(big.Int).Rsh(&ba.val, uint(size-n))
+	result.val.Or(left, right)
+	result.val.And(&result.val, bitArrayMask(size))
+	return result
+}
+
+// Equal reports whether ba and other have the same size and value.
+func (ba *BitArray) Equal(other *BitArray) bool {
+	return ba.size == other.size && ba.val.Cmp(&other.val) == 0
+}
+
+// Format implements fmt.Formatter; supports the %x verb with zero-padded output.
+func (ba *BitArray) Format(f fmt.State, verb rune) {
+	hexDigits := ba.size / 4
+	s := ba.val.Text(16)
+	for i := len(s); i < hexDigits; i++ {
+		f.Write([]byte{'0'})
+	}
+	fmt.Fprint(f, s)
+}
+
+func New_rand_bitarray(bitlength int) *BitArray {
 	buf := make([]byte, bitlength/8)
 	_, err := rand.Read(buf)
 	if err != nil {
 		log.Fatalf("ERROR while generating random string: %s", err)
 	}
-	result := bitarray.NewFromBytes(buf, 0, bitlength)
-	return result
+	return NewFromBytes(buf, 0, bitlength)
 }
 
-func Fscx_revolve(ba *bitarray.BitArray, bb *bitarray.BitArray, steps int, verbose bool) *bitarray.BitArray {
+func Fscx_revolve(ba *BitArray, bb *BitArray, steps int, verbose bool) *BitArray {
 	result := ba
 	for i := 1; i <= steps; i++ {
 		result = Fscx(result, bb)
@@ -48,7 +131,23 @@ func Fscx_revolve(ba *bitarray.BitArray, bb *bitarray.BitArray, steps int, verbo
 	return result
 }
 
-func Fscx(ba *bitarray.BitArray, bb *bitarray.BitArray) *bitarray.BitArray {
+// Fscx_revolve_n: nonce-augmented FSCX_REVOLVE (v1.1).
+// Each step: result = FSCX(result, bb) ⊕ nonce
+// Breaks the pure GF(2)-linearity of FSCX_REVOLVE while preserving the HKEX equality
+// and orbit properties. The HKEX equality holds for any nonce value because N cancels
+// from both sides of the protocol equality condition.
+func Fscx_revolve_n(ba *BitArray, bb *BitArray, nonce *BitArray, steps int, verbose bool) *BitArray {
+	result := ba
+	for i := 1; i <= steps; i++ {
+		result = Fscx(result, bb).Xor(nonce)
+		if verbose {
+			fmt.Printf("Step %d: %x\n", i, result)
+		}
+	}
+	return result
+}
+
+func Fscx(ba *BitArray, bb *BitArray) *BitArray {
 	result := ba.Xor(bb)
 	ba = ba.RotateLeft(1)
 	bb = bb.RotateLeft(1)
@@ -144,6 +243,8 @@ func main() {
 	fmt.Printf("C         : %x\n", C)
 	C2 := Fscx_revolve(A2, B2, i_value, false)
 	fmt.Printf("C2        : %x\n", C2)
+	hkex_nonce := C.Xor(C2) // N = C ⊕ C2: session-specific nonce (computable from public key)
+	fmt.Printf("hkex_nonce: %x\n", hkex_nonce)
 	nonce := New_rand_bitarray(256)
 	fmt.Printf("nonce     : %x\n", nonce)
 	preshared := New_rand_bitarray(256)
@@ -152,9 +253,9 @@ func main() {
 	fmt.Printf("plaintext : %x\n", plaintext)
 
 	fmt.Printf("\n--- HKEX (key exchange)\n")
-	skeyA := Fscx_revolve(C2, B, r_value, false).Xor(A)
+	skeyA := Fscx_revolve_n(C2, B, hkex_nonce, r_value, false).Xor(A)
 	fmt.Printf("skeyA     : %x\n", skeyA)
-	skeyB := Fscx_revolve(C, B2, r_value, false).Xor(A2)
+	skeyB := Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2)
 	fmt.Printf("skeyB     : %x\n", skeyB)
 	if skeyA.Equal(skeyB) { // Assert equality
 		fmt.Printf("+ session keys skeyA and skeyB are equal!\n")
@@ -163,9 +264,9 @@ func main() {
 	}
 
 	fmt.Printf("\n--- HSKE (symmetric key encryption)\n")
-	E := Fscx_revolve(plaintext, preshared, i_value, false)
+	E := Fscx_revolve_n(plaintext, preshared, preshared, i_value, false)
 	fmt.Printf("E (Alice) : %x\n", E)
-	D := Fscx_revolve(E, preshared, r_value, false)
+	D := Fscx_revolve_n(E, preshared, preshared, r_value, false)
 	fmt.Printf("D (Bob)   : %x\n", D)
 	if D.Equal(plaintext) { // Assert equality
 		fmt.Printf("+ plaintext is correctly decrypted from E with preshared key\n")
@@ -174,9 +275,9 @@ func main() {
 	}
 
 	fmt.Printf("\n--- HPKS (public key signature)\n")
-	S := Fscx_revolve(C2, B, r_value, false).Xor(A).Xor(plaintext)
+	S := Fscx_revolve_n(C2, B, hkex_nonce, r_value, false).Xor(A).Xor(plaintext)
 	fmt.Printf("S (Alice) : %x\n", S)
-	V := Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(S) // == plaintext !!!!
+	V := Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(S) // == plaintext !!!!
 	fmt.Printf("V (Bob)   : %x\n", V)
 	if V.Equal(plaintext) { // Assert equality
 		fmt.Printf("+ signature S from plaintext is correct!\n")
@@ -185,13 +286,13 @@ func main() {
 	}
 
 	fmt.Printf("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n")
-	E = Fscx_revolve(plaintext, preshared, i_value, false)
+	E = Fscx_revolve_n(plaintext, preshared, preshared, i_value, false)
 	fmt.Printf("E (Alice) : %x\n", E)
-	S = Fscx_revolve(C2, B, r_value, false).Xor(A).Xor(E) // A+B2+C is the trapdoor for deceiving EVE!!!!
+	S = Fscx_revolve_n(C2, B, hkex_nonce, r_value, false).Xor(A).Xor(E) // A+B2+C is the trapdoor for deceiving EVE!!!!
 	fmt.Printf("S (Alice) : %x\n", S)
-	V = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(S) // == encryptedText
+	V = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(S) // == encryptedText
 	fmt.Printf("V (Bob)   : %x\n", V)
-	D = Fscx_revolve(V, preshared, r_value, false) // => plaintext
+	D = Fscx_revolve_n(V, preshared, preshared, r_value, false) // => plaintext
 	fmt.Printf("D (Bob)   : %x\n", D)
 	if D.Equal(plaintext) { // Assert equality
 		fmt.Printf("+ signature S(E) from plaintext is correct!\n")
@@ -200,9 +301,9 @@ func main() {
 	}
 
 	fmt.Printf("\n--- HPKE (public key encryption)\n")
-	E = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(plaintext)
+	E = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(plaintext)
 	fmt.Printf("E (Bob)   : %x\n", E)
-	D = Fscx_revolve(C2, B, r_value, false).Xor(A).Xor(E) // == plaintext !!!!
+	D = Fscx_revolve_n(C2, B, hkex_nonce, r_value, false).Xor(A).Xor(E) // == plaintext !!!!
 	fmt.Printf("D (Alice) : %x\n", D)
 	if D.Equal(plaintext) { // Assert equality
 		fmt.Printf("+ plaintext is correctly decrypted from E with private key!\n")
@@ -212,9 +313,9 @@ func main() {
 
 	fmt.Printf("\n\n*** EVE bypass TESTS\n")
 	fmt.Printf("*** HPKS (public key signature)\n")
-	S = Fscx_revolve(C, B2, r_value, false).Xor(nonce) // ^ bruteForceValue  // w/o A+A2+C2 Eve would be forced to do a Brute force attack to find it.
+	S = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(nonce) // ^ bruteForceValue  // w/o A+A2+C2 Eve would be forced to do a Brute force attack to find it.
 	fmt.Printf("S (Eve)   : %x\n", S)
-	V = Fscx_revolve(C, B2, r_value, false).Xor(A2) // X
+	V = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2) // X
 	fmt.Printf("V (Bob)   : %x\n", V)
 	if V.Equal(nonce) { // Assert equality
 		fmt.Printf("+ nonce fake signature 1 verification with Alice public key is correct!\n")
@@ -223,7 +324,7 @@ func main() {
 	}
 	S2 := V.Xor(nonce)
 	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 := Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(S2) // KK
+	V2 := Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(S2) // KK
 	fmt.Printf("V2 (Bob)  : %x\n", V2)
 	if V2.Equal(nonce) { // Assert equality
 		fmt.Printf("+ nonce fake signature 2 verification with Alice public key is correct!\n")
@@ -232,17 +333,17 @@ func main() {
 	}
 
 	fmt.Printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n")
-	E = Fscx_revolve(nonce, preshared, i_value, false)
+	E = Fscx_revolve_n(nonce, preshared, preshared, i_value, false)
 	fmt.Printf("E (Eve)   : %x\n", E)
-	S = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(E) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
+	S = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(E) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
 	fmt.Printf("S (Eve)   : %x\n", S)
-	V = Fscx_revolve(C, B2, r_value, false).Xor(A2) // X
+	V = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2) // X
 	fmt.Printf("V (Eve)   : %x\n", V)
 	S2 = V.Xor(S)
 	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(S2) // KK
+	V2 = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(S2) // KK
 	fmt.Printf("V2 (Bob)  : %x\n", V2)
-	D = Fscx_revolve(V2, preshared, r_value, false)
+	D = Fscx_revolve_n(V2, preshared, preshared, r_value, false)
 	fmt.Printf("D (Bob)   : %x\n", D) //X
 	if D.Equal(nonce) {               // Assert equality
 		fmt.Printf("+ fake signature(encrypted nonce) verification with Alice public key is correct!\n")
@@ -251,17 +352,17 @@ func main() {
 	}
 
 	fmt.Printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2\n")
-	S = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(nonce) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
+	S = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(nonce) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
 	fmt.Printf("S (Eve)   : %x\n", S)
-	E = Fscx_revolve(S, preshared, i_value, false)
+	E = Fscx_revolve_n(S, preshared, preshared, i_value, false)
 	fmt.Printf("E (Eve)   : %x\n", E)
-	V = Fscx_revolve(C, B2, r_value, false).Xor(A2) // X
+	V = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2) // X
 	fmt.Printf("V (Eve)   : %x\n", V)
 	S2 = V.Xor(E)
 	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(S2) // KK
+	V2 = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(S2) // KK
 	fmt.Printf("V2 (Bob)  : %x\n", V2)
-	D = Fscx_revolve(V2, preshared, r_value, false)
+	D = Fscx_revolve_n(V2, preshared, preshared, r_value, false)
 	fmt.Printf("D (Bob)   : %x\n", D) //X
 	if D.Equal(nonce) {               // Assert equality
 		fmt.Printf("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!\n")
@@ -270,13 +371,13 @@ func main() {
 	}
 
 	fmt.Printf("\n*** HPKE (public key encryption)\n")
-	E = Fscx_revolve(C, B2, r_value, false).Xor(A2).Xor(plaintext) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
+	E = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2).Xor(plaintext) // ^ bruteForceValue  // w/o A+B2+C  Eve would be forced to do a Brute force attack to find it.
 	fmt.Printf("E (Bob)   : %x\n", E)
-	D = Fscx_revolve(C, B2, r_value, false).Xor(A2) //X, but == fsession from private/public key generation if components had been reused from an HKEX!?
+	D = Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(A2) //X, but == fsession from private/public key generation if components had been reused from an HKEX!?
 	fmt.Printf("D (Eve)   : %x\n", D)
 	E2 := D.Xor(E)
-	D2 := Fscx_revolve(C, B2, r_value, false).Xor(E2) // KK
-	fmt.Printf("D2 (Eve)  : %x\n", V2)
+	D2 := Fscx_revolve_n(C, B2, hkex_nonce, r_value, false).Xor(E2) // KK
+	fmt.Printf("D2 (Eve)  : %x\n", D2)
 	if D.Equal(nonce) || D2.Equal(nonce) { // Assert equality
 		fmt.Printf("+ Eve could decrypt plaintext without Alice's private key!\n")
 	} else {

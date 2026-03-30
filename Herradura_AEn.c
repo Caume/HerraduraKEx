@@ -1,7 +1,7 @@
 /*  Herradura AEn (HAEN)- an asymmetric, one to one, cipher based on the FSCX function and 
     parameters from a previous Key Exchange with Herradura KEx (HKEX).
     
-    Copyright (C) 2017-2019 Omar Alejandro Herrera Reyna
+    Copyright (C) 2017-2026 Omar Alejandro Herrera Reyna
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the MIT License or the GNU General Public License 
@@ -147,6 +147,18 @@ INT64 FSCX_REVOLVE (INT64 *Up, INT64 *Down, unsigned long int pasos){
     return result;
 }
 
+/* FSCX_REVOLVE_N: nonce-augmented FSCX_REVOLVE (v1.1)
+   Each step: result = FSCX(result, Down) XOR nonce */
+INT64 FSCX_REVOLVE_N (INT64 *Up, INT64 *Down, INT64 nonce, unsigned long int pasos){
+    INT64 result;
+    unsigned long int cont;
+    result=*Up;
+    for (cont=0; cont<pasos; cont++){
+        result=FSCX(&result,Down) ^ nonce;
+    }
+    return result;
+}
+
 #ifdef VERBOSE /*rlm*/
 /* FSCX iteration function that prints each step */
 INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
@@ -190,13 +202,15 @@ int main (){
   printf("    B2 %llx [Secret 4]\n",B2);
   D2=FSCX_REVOLVE(&A2,&B2,PUBSIZE);  //63 and 32 rounds are weak; 16 seems best.
   printf(" <- D2 %llx [FSCX_REVOLVE(A2,B2,%u)]\n",D2, PUBSIZE);
+  INT64 hkex_nonce = D ^ D2;
+  printf("%llx hkex_nonce [D xor D2]\n", hkex_nonce);
   printf("ALICE:\n");
-  FA=(FSCX_REVOLVE(&D2,&B,(INTSZ-PUBSIZE)))^A;
-  printf("%llx FA [FSCX_REVOLVE(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
+  FA=(FSCX_REVOLVE_N(&D2,&B,(INTSZ-PUBSIZE),hkex_nonce))^A;
+  printf("%llx FA [FSCX_REVOLVE_N(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
   printf("    BOB:\n");
-  FA2=(FSCX_REVOLVE(&D,&B2,(INTSZ-PUBSIZE)))^A2;
+  FA2=(FSCX_REVOLVE_N(&D,&B2,(INTSZ-PUBSIZE),hkex_nonce))^A2;
   assert(FA == FA2);
-  printf("    FA2 = FA %llx [FSCX_REVOLVE(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
+  printf("    FA2 = FA %llx [FSCX_REVOLVE_N(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
 
   printf("\n\n--- Herradura one-to-one asymmetric Encryption - keys of same size & interactive KEX Alice,Bob(HAEN1) ---\n\n");
   PSV=FA;
@@ -207,8 +221,8 @@ int main (){
   printf("%llx B [Secret from KEX]\n",B);
   printf("%llx P [MSG in plain text]\n",P);
   K=P^PSV^A;
-  E=FSCX_REVOLVE(&K,&B,PUBSIZE);
-  printf("%llx E [Shared encrypted MSG, FSCX_REVOLVE(P xor PSV xor A, B ,%u)] ->\n",E,PUBSIZE);
+  E=FSCX_REVOLVE_N(&K,&B,PSV,PUBSIZE);
+  printf("%llx E [Shared encrypted MSG, FSCX_REVOLVE_N(P xor PSV xor A, B ,%u)] ->\n",E,PUBSIZE);
   
   /*Bob's decryption key is: PSV,A2,B2,(INTSZ - PUBSIZE) */
   /*  (Strictly speaking, when PSV = FA and FA comes from previous HKEX using A,B,A2,B2, you 
@@ -217,8 +231,8 @@ int main (){
   printf("    PSV %llx [Pre-shared key from KEX (FA2)]\n",PSV);
   printf("    A2 %llx [Secret from KEX]\n",A2);
   printf("    B2 %llx [Secret from KEX]\n",B2);
-  P2=(FSCX_REVOLVE(&E,&B2,INTSZ-PUBSIZE))^A2;  
-  printf("    P2 %llx [MSG in plain text, FSCX_REVOLVE(E,B2,%u) xor A2] \n",P2,INTSZ-PUBSIZE);
+  P2=(FSCX_REVOLVE_N(&E,&B2,PSV,INTSZ-PUBSIZE))^A2;
+  printf("    P2 %llx [MSG in plain text, FSCX_REVOLVE_N(E,B2,%u) xor A2] \n",P2,INTSZ-PUBSIZE);
   assert(P == P2);
 
   /* Note: you can use a different preshared value (i.e. not from KEX), but in that case you still 
@@ -238,8 +252,8 @@ int main (){
   printf("%llx B [shared secret by Bob (alternate channel)]\n",B);
   printf("%llx P [MSG in plain text]\n",P);
   K=P^PSV;
-  E=FSCX_REVOLVE(&K,&B,PUBSIZE);
-  printf("%llx E [Shared encrypted MSG, FSCX_REVOLVE(P xor PSV, B ,%u)] ->\n",E,PUBSIZE);
+  E=FSCX_REVOLVE_N(&K,&B,PSV,PUBSIZE);
+  printf("%llx E [Shared encrypted MSG, FSCX_REVOLVE_N(P xor PSV, B ,%u)] ->\n",E,PUBSIZE);
   
   /*Bob's decryption key is: PSV,A,A2,B2,(INTSZ - PUBSIZE) */
   /*  (Strictly speaking, when PSV = FA and FA comes from previous HKEX using A,B,A2,B2, you 
@@ -249,8 +263,8 @@ int main (){
   printf("    A  %llx [Secret from KEX]\n",A);
   printf("    A2 %llx [Secret from KEX]\n",A2);
   printf("    B2 %llx [Secret from KEX]\n",B2);
-  P2=(FSCX_REVOLVE(&E,&B2,INTSZ-PUBSIZE))^A^A2;  
-  printf("    P2 %llx [MSG in plain text, FSCX_REVOLVE(E,B2,%u) xor A xor A2] \n",P2,INTSZ-PUBSIZE);
+  P2=(FSCX_REVOLVE_N(&E,&B2,PSV,INTSZ-PUBSIZE))^A^A2;
+  printf("    P2 %llx [MSG in plain text, FSCX_REVOLVE_N(E,B2,%u) xor A xor A2] \n",P2,INTSZ-PUBSIZE);
   assert(P == P2);
 
   /* Note: you can use a different preshared value (i.e. not from KEX), but in that case you still 
