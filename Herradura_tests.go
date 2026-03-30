@@ -194,16 +194,19 @@ func fmtRate(ops int, elapsed time.Duration) string {
 
 func testNonCommutativity() {
 	// Fscx(A,B) == Fscx(B,A) always (symmetric formula: A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B)).
-	// Asymmetry arises from FscxRevolve, where B is held constant across
-	// iterations: FscxRevolve(A,B,n) != FscxRevolve(B,A,n) in general.
-	fmt.Println("[1] FscxRevolve non-commutativity: FscxRevolve(A,B,n) != FscxRevolve(B,A,n)")
+	// Asymmetry arises in FscxRevolveN, where B is held constant across
+	// iterations: FscxRevolveN(A,B,N,n) != FscxRevolveN(B,A,N,n) in general.
+	// The nonce term T_n(N) cancels from both sides of the difference, so
+	// commutativity is determined solely by the A and B inputs.
+	fmt.Println("[1] FscxRevolveN non-commutativity: FscxRevolveN(A,B,N,n) != FscxRevolveN(B,A,N,n)")
 	for _, size := range sizes {
 		iv := iVal(size)
 		comm := 0
 		for i := 0; i < 10000; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			if FscxRevolve(a, b, iv).Equal(FscxRevolve(b, a, iv)) {
+			n := randBA(size)
+			if FscxRevolveN(a, b, n, iv).Equal(FscxRevolveN(b, a, n, iv)) {
 				comm++
 			}
 		}
@@ -362,12 +365,54 @@ func testKeySensitivity() {
 	fmt.Println()
 }
 
+func testAvalancheRevolveN() {
+	// FSCX_REVOLVE_N nonce-injection avalanche.
+	// Flipping 1 bit of the nonce N while keeping A and B constant propagates
+	// through all remaining revolve steps.  The change in the output equals
+	// T_n(e_k) where T_n = I + L + ... + L^(n-1) and e_k is the unit vector
+	// at bit position k.  Unlike the 3-bit diffusion of single-step FSCX or
+	// the purely linear FscxRevolve, T_n accumulates contributions from every
+	// step.  HD = popcount(T_n(e_0)) is deterministic (independent of A and B),
+	// so min == max == mean.  For n = size/4 (i_val), HD = size/4 exactly.
+	fmt.Println("[6] FscxRevolveN nonce-avalanche: flip 1 nonce bit, measure output diffusion")
+	for _, size := range sizes {
+		iv := iVal(size)
+		total := 0.0
+		gmin := size + 1
+		gmax := -1
+		for i := 0; i < 1000; i++ {
+			a := randBA(size)
+			b := randBA(size)
+			n := randBA(size)
+			base := FscxRevolveN(a, b, n, iv)
+			nf := n.FlipBit(0)
+			hd := FscxRevolveN(a, b, nf, iv).Xor(base).Popcount()
+			total += float64(hd)
+			if hd < gmin {
+				gmin = hd
+			}
+			if hd > gmax {
+				gmax = hd
+			}
+		}
+		mean := total / 1000.0
+		expected := size / 4
+		status := "PASS"
+		if mean < float64(expected) {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  mean HD=%.1f (expected >=%d)  min=%d  max=%d  [%s]\n",
+			size, mean, expected, gmin, gmax, status)
+	}
+	fmt.Println()
+}
+
 // ---------------------------------------------------------------------------
 // Performance benchmarks
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[6] FSCX throughput")
+	fmt.Println("[7] FSCX throughput")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -380,8 +425,8 @@ func benchFscx() {
 	fmt.Println()
 }
 
-func benchFscxRevolve() {
-	fmt.Println("[7] FSCX_REVOLVE throughput")
+func benchFscxRevolveN() {
+	fmt.Println("[8] FSCX_REVOLVE_N throughput")
 	for _, size := range sizes {
 		for _, stepsLabel := range []struct {
 			steps int
@@ -392,10 +437,11 @@ func benchFscxRevolve() {
 		} {
 			a := randBA(size)
 			b := randBA(size)
+			n := randBA(size)
 			steps := stepsLabel.steps
 			lbl := stepsLabel.label
 			ops, elapsed := bench("", func() {
-				FscxRevolve(a, b, steps)
+				FscxRevolveN(a, b, n, steps)
 			})
 			fmt.Printf("    bits=%3d  steps=%-12s        : %s  (%d ops in %.2fs)\n",
 				size, lbl, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -405,7 +451,7 @@ func benchFscxRevolve() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[8] HKEX full handshake")
+	fmt.Println("[9] HKEX full handshake")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -427,7 +473,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[9] HSKE round-trip: encrypt+decrypt")
+	fmt.Println("[10] HSKE round-trip: encrypt+decrypt")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -459,9 +505,11 @@ func main() {
 	testBitFrequency()
 	testKeySensitivity()
 
+	testAvalancheRevolveN()
+
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()
-	benchFscxRevolve()
+	benchFscxRevolveN()
 	benchHkexHandshake()
 	benchHskeRoundTrip()
 }

@@ -157,16 +157,19 @@ TARGET_SEC = 1.0
 
 def test_noncommutativity():
     # FSCX(A,B) == FSCX(B,A) always (symmetric formula: A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B)).
-    # Asymmetry arises from FSCX_REVOLVE, where B is held constant across
-    # iterations: FSCX_REVOLVE(A,B,n) != FSCX_REVOLVE(B,A,n) in general.
-    print("[1] FSCX_REVOLVE non-commutativity: FSCX_REVOLVE(A,B,n) != FSCX_REVOLVE(B,A,n)")
+    # Asymmetry arises in FSCX_REVOLVE_N, where B is held constant across
+    # iterations: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n) in general.
+    # The nonce term T_n(N) cancels from both sides of the difference, so
+    # commutativity is determined solely by the A and B inputs.
+    print("[1] FSCX_REVOLVE_N non-commutativity: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n)")
     for size in SIZES:
         iv = i_val(size)
         comm = 0
         for _ in range(10000):
             a = BitArray.random(size)
             b = BitArray.random(size)
-            if fscx_revolve(a, b, iv) == fscx_revolve(b, a, iv):
+            n = BitArray.random(size)
+            if fscx_revolve_n(a, b, n, iv) == fscx_revolve_n(b, a, n, iv):
                 comm += 1
         status = "PASS" if comm == 0 else "FAIL"
         print(f"    bits={size:3d}  {comm:5d} / 10000 commutative  [{status}]")
@@ -280,6 +283,41 @@ def test_key_sensitivity():
     print()
 
 
+def test_avalanche_revolve_n():
+    # FSCX_REVOLVE_N nonce-injection avalanche.
+    # Flipping 1 bit of the nonce N while keeping A and B constant propagates
+    # through all remaining revolve steps.  The change in the output equals
+    # T_n(e_k) where T_n = I + L + ... + L^(n-1) and e_k is the unit vector
+    # at bit position k.  Unlike the 3-bit diffusion of single-step FSCX or
+    # the purely linear FSCX_REVOLVE, T_n accumulates contributions from every
+    # step.  HD = popcount(T_n(e_0)) is deterministic (independent of A and B),
+    # so min == max == mean.  For n = size/4 (i_val), HD = size/4 exactly.
+    print("[6] FSCX_REVOLVE_N nonce-avalanche: flip 1 nonce bit, measure output diffusion")
+    for size in SIZES:
+        iv = i_val(size)
+        expected = size // 4
+        total = 0.0
+        gmin = size + 1
+        gmax = -1
+        for _ in range(1000):
+            a = BitArray.random(size)
+            b = BitArray.random(size)
+            n = BitArray.random(size)
+            base    = fscx_revolve_n(a, b, n,           iv)
+            nf      = n.flip_bit(0)
+            flipped = fscx_revolve_n(a, b, nf,          iv)
+            hd = (base ^ flipped).popcount()
+            total += hd
+            if hd < gmin:
+                gmin = hd
+            if hd > gmax:
+                gmax = hd
+        mean = total / 1000.0
+        status = "PASS" if mean >= expected else "FAIL"
+        print(f"    bits={size:3d}  mean HD={mean:.1f} (expected >={expected})  min={gmin}  max={gmax}  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -309,7 +347,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[6] FSCX throughput")
+    print("[7] FSCX throughput")
     for size in SIZES:
         a = BitArray.random(size)
         b = BitArray.random(size)
@@ -320,20 +358,21 @@ def bench_fscx():
     print()
 
 
-def bench_fscx_revolve():
-    print("[7] FSCX_REVOLVE throughput")
+def bench_fscx_revolve_n():
+    print("[8] FSCX_REVOLVE_N throughput")
     for size in SIZES:
         for steps, label in [(i_val(size), f"i({i_val(size)})"), (r_val(size), f"r({r_val(size)})")]:
             a = BitArray.random(size)
             b = BitArray.random(size)
-            def fn(a=a, b=b, steps=steps):
-                return fscx_revolve(a, b, steps)
+            n = BitArray.random(size)
+            def fn(a=a, b=b, n=n, steps=steps):
+                return fscx_revolve_n(a, b, n, steps)
             _bench(f"bits={size:3d}  steps={label}", fn)
     print()
 
 
 def bench_hkex_handshake():
-    print("[8] HKEX full handshake")
+    print("[9] HKEX full handshake")
     for size in SIZES:
         iv = i_val(size)
         rv = r_val(size)
@@ -352,7 +391,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[9] HSKE round-trip: encrypt+decrypt")
+    print("[10] HSKE round-trip: encrypt+decrypt")
     for size in SIZES:
         iv = i_val(size)
         rv = r_val(size)
@@ -382,8 +421,10 @@ if __name__ == '__main__':
     test_bit_frequency()
     test_key_sensitivity()
 
+    test_avalanche_revolve_n()
+
     print("--- Performance Benchmarks ---\n")
     bench_fscx()
-    bench_fscx_revolve()
+    bench_fscx_revolve_n()
     bench_hkex_handshake()
     bench_hske_roundtrip()
