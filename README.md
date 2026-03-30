@@ -138,7 +138,7 @@ gcc -DINTSZ=256 -O2 -o HKEX_bignum Herradura_KEx_bignum.c -lgmp
 gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
 ./"Herradura cryptographic suite"
 
-# Security & performance tests
+# Security & performance tests (256-bit BitArray)
 gcc -O2 -o Herradura_tests Herradura_tests.c
 ./Herradura_tests
 ```
