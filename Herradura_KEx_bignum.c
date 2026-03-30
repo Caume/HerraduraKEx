@@ -88,6 +88,20 @@ void FSCX_REVOLVE(mpz_t Up, mpz_t Down, unsigned long int passes, /*out*/ mpz_t 
     }
 }
 
+/* FSCX_REVOLVE_N: nonce-augmented FSCX_REVOLVE (v1.1)
+   Each step: result = FSCX(result, Down) XOR nonce */
+void FSCX_REVOLVE_N(mpz_t Up, mpz_t Down, mpz_t nonce, unsigned long int passes, mpz_t result) {
+    unsigned long int count;
+    mpz_init2(result, INTSZ);
+    mpz_set(result, Up);
+    mpz_t newResult; mpz_init2(newResult, INTSZ);
+    for(count=0u; count < passes; count++) {
+        FSCX(result, Down, newResult);
+        mpz_xor(newResult, newResult, nonce);
+        mpz_set(result, newResult);
+    }
+}
+
 int main () {
   gmp_randstate_t rndstate;
   gmp_randinit_mt(rndstate);
@@ -145,16 +159,19 @@ int main () {
   FSCX_REVOLVE(A2,B2, PUBSIZE, D2);
   printf(" <- D2 "); mpz_out_str(NULL, 16, D2); printf(" [FSCX_REVOLVE(A2,B2,%u)]\n", PUBSIZE);
 
+  mpz_t hkex_nonce; mpz_init2(hkex_nonce, INTSZ); mpz_xor(hkex_nonce, D, D2);
+  printf("hkex_nonce: "); mpz_out_str(NULL, 16, hkex_nonce); printf(" [D xor D2]\n");
+
   printf("ALICE:\n");
-  FSCX_REVOLVE(D2,B,INTSZ-PUBSIZE, FA);
+  FSCX_REVOLVE_N(D2,B,hkex_nonce,INTSZ-PUBSIZE, FA);
   mpz_xor(FA, A, FA);
-  mpz_out_str(NULL, 16, FA); printf(" FA [FSCX_REVOLVE(D2,B,%u) xor A]\n", INTSZ-PUBSIZE);
+  mpz_out_str(NULL, 16, FA); printf(" FA [FSCX_REVOLVE_N(D2,B,%u) xor A]\n", INTSZ-PUBSIZE);
 
   printf("    BOB:\n");
-  FSCX_REVOLVE(D,B2,INTSZ-PUBSIZE, FA2);
+  FSCX_REVOLVE_N(D,B2,hkex_nonce,INTSZ-PUBSIZE, FA2);
   mpz_xor(FA2, A2, FA2);
   printf("    FA2 = FA ");
-  mpz_out_str(NULL, 16, FA2); printf(" [FSCX_REVOLVE(D,B2,%u) xor A2]\n",INTSZ-PUBSIZE);
+  mpz_out_str(NULL, 16, FA2); printf(" [FSCX_REVOLVE_N(D,B2,%u) xor A2]\n",INTSZ-PUBSIZE);
 
   assert(mpz_cmp(FA,FA2) == 0);
 

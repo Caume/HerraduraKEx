@@ -147,6 +147,18 @@ INT64 FSCX_REVOLVE (INT64 *Up, INT64 *Down, unsigned long int pasos){
     return result;
 }
 
+/* FSCX_REVOLVE_N: nonce-augmented FSCX_REVOLVE (v1.1)
+   Each step: result = FSCX(result, Down) XOR nonce */
+INT64 FSCX_REVOLVE_N (INT64 *Up, INT64 *Down, INT64 nonce, unsigned long int pasos){
+    INT64 result;
+    unsigned long int cont;
+    result=*Up;
+    for (cont=0; cont<pasos; cont++){
+        result=FSCX(&result,Down) ^ nonce;
+    }
+    return result;
+}
+
 #ifdef VERBOSE /*rlm*/
 /* FSCX iteration function that prints each step */
 INT64 FSCX_REVOLVE_PRINT (INT64 *Up, INT64 *Down, unsigned long int pasos){
@@ -195,14 +207,17 @@ int main (){
   D2=FSCX_REVOLVE(&A2,&B2,PUBSIZE);  //63 and 32 rounds are weak; 16 seems best.
   printf(" <- D2 %llx [FSCX_REVOLVE(A2,B2,%u)]\n",D2, PUBSIZE);
 
+  INT64 hkex_nonce = D ^ D2;
+  printf("%llx hkex_nonce [D xor D2]\n", hkex_nonce);
+
   printf("ALICE:\n");
-  FA=(FSCX_REVOLVE(&D2,&B,(INTSZ-PUBSIZE)))^A;
-  printf("%llx FA [FSCX_REVOLVE(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
+  FA=(FSCX_REVOLVE_N(&D2,&B,(INTSZ-PUBSIZE),hkex_nonce))^A;
+  printf("%llx FA [FSCX_REVOLVE_N(D2,B,%u) xor A] \n",FA, (INTSZ-PUBSIZE));
 
   printf("    BOB:\n");
-  FA2=(FSCX_REVOLVE(&D,&B2,(INTSZ-PUBSIZE)))^A2;
+  FA2=(FSCX_REVOLVE_N(&D,&B2,(INTSZ-PUBSIZE),hkex_nonce))^A2;
   assert(FA == FA2);
-  printf("    FA2 = FA %llx [FSCX_REVOLVE(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
+  printf("    FA2 = FA %llx [FSCX_REVOLVE_N(D,B2,%u) xor A2] \n",FA2, (INTSZ-PUBSIZE));
 
 #ifdef VERBOSE /*rlm*/
 //NOTE: Only D and D2 (Exchanged by Alice and Bob) are known to EVE:  

@@ -94,6 +94,17 @@ func (h *HerraduraKEx) FSCXRevolve(up, down *big.Int, passes int) (result big.In
 	return result
 }
 
+// FSCXRevolveN: nonce-augmented FSCXRevolve (v1.1).
+// Each step: result = FSCX(result, down) XOR nonce
+func (h *HerraduraKEx) FSCXRevolveN(up, down, nonce *big.Int, passes int) (result big.Int) {
+	result = *up
+	for count := 0; count < passes; count++ {
+		result = h.FSCX(result, *down)
+		result.Xor(&result, nonce)
+	}
+	return result
+}
+
 func (h *HerraduraKEx) Seed() {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	h.randctx = r
@@ -142,11 +153,15 @@ func main() {
 	d2 := hkex.FSCXRevolve(&hkex.a2, &hkex.b2, hkex.pubSz)
 	fmt.Printf("\t\t\t\t<- D2 0x%s [FSCXRevolve(A2,B2,%d)]\n", d2.Text(16), hkex.pubSz)
 
-	hkex.fa = hkex.FSCXRevolve(&d2, &hkex.b, hkex.intSz-hkex.pubSz)
-	hkex.fa.Xor(&hkex.fa, &hkex.a)
-	fmt.Printf("0x%s FA [FSCXRevolve(D2,B,%d) xor A]\n", hkex.fa.Text(16), hkex.intSz-hkex.pubSz)
+	var hkexNonce big.Int
+	hkexNonce.Xor(&d, &d2)
+	fmt.Printf("0x%s hkex_nonce [D xor D2]\n", hkexNonce.Text(16))
 
-	hkex.fa2 = hkex.FSCXRevolve(&d, &hkex.b2, hkex.intSz-hkex.pubSz)
+	hkex.fa = hkex.FSCXRevolveN(&d2, &hkex.b, &hkexNonce, hkex.intSz-hkex.pubSz)
+	hkex.fa.Xor(&hkex.fa, &hkex.a)
+	fmt.Printf("0x%s FA [FSCXRevolveN(D2,B,%d) xor A]\n", hkex.fa.Text(16), hkex.intSz-hkex.pubSz)
+
+	hkex.fa2 = hkex.FSCXRevolveN(&d, &hkex.b2, &hkexNonce, hkex.intSz-hkex.pubSz)
 	hkex.fa2.Xor(&hkex.fa2, &hkex.a2)
-	fmt.Printf("\t\t\t\t FA = FA2 0x%s [FSCXRevolve(D,B2,%d) xor A2]\n", hkex.fa2.Text(16), hkex.intSz-hkex.pubSz)
+	fmt.Printf("\t\t\t\t FA = FA2 0x%s [FSCXRevolveN(D,B2,%d) xor A2]\n", hkex.fa2.Text(16), hkex.intSz-hkex.pubSz)
 }

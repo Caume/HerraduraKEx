@@ -44,6 +44,7 @@ keyB2:  .word 0x5C45404B
  dA2:   .word 0
  skey:  .word 0
  skey2: .word 0
+ hkex_nonce: .word 0
 
     .text
     .global main
@@ -73,6 +74,15 @@ main:
     ldr r3, =dA2
     str r0, [r3]
 
+    @ -- compute hkex_nonce = dA ^ dA2
+    ldr r0, =dA
+    ldr r0, [r0]
+    ldr r1, =dA2
+    ldr r1, [r1]
+    eor r0, r0, r1
+    ldr r1, =hkex_nonce
+    str r0, [r1]
+
     @ -- FSCX final rounds ALICE
     ldr r0, =dA2
     ldr r0, [r0]
@@ -80,7 +90,9 @@ main:
     ldr r1, [r1]
     ldr r2, =rounds2
     ldr r2, [r2]
-    bl  fscx_revolve
+    ldr r3, =hkex_nonce
+    ldr r3, [r3]
+    bl  fscx_revolve_n
     ldr r3, =keyA
     ldr r3, [r3]
     eor r0, r0, r3
@@ -94,7 +106,9 @@ main:
     ldr r1, [r1]
     ldr r2, =rounds2
     ldr r2, [r2]
-    bl  fscx_revolve
+    ldr r3, =hkex_nonce
+    ldr r3, [r3]
+    bl  fscx_revolve_n
     ldr r3, =keyA2
     ldr r3, [r3]
     eor r0, r0, r3
