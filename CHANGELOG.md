@@ -4,6 +4,82 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.2] - 2026-03-29
+
+### Changed — performance, readability, and cross-language structural consistency
+
+#### All suite files (`Herradura cryptographic suite.{c,go,py}`)
+- **Version headers** updated to v1.3.2; prior v1.1/v1.2 labels corrected to v1.3.
+
+#### C — `Herradura cryptographic suite.c` and `Herradura_tests.c`
+- **`ba_fscx` — fused single-pass**: ROL and ROR are now computed inline from
+  adjacent bytes in a single loop, eliminating 4 temporary `BitArray` stack
+  allocations and reducing 5 separate memory passes to 1.
+  A `#if KEYBYTES < 2 #error` guard documents the KEYBITS ≥ 16 requirement.
+- **`ba_fscx_revolve` / `ba_fscx_revolve_n` — double-buffering**: two local
+  buffers alternate with `idx ^= 1`, eliminating one full `BitArray` struct
+  copy per iteration step.
+- **`ba_popcount` — hardware `__builtin_popcount`** (tests only): replaces the
+  manual bit-shift loop; compiles to a single `POPCNT` instruction on x86-64/ARM.
+- **`ba_xor_into` removed** (suite only): every call site replaced by
+  `ba_xor(dst, dst, src)`, which is correct since `ba_xor` handles aliasing.
+- **`ba_rol1` / `ba_ror1` removed**: rotation logic is now inlined inside
+  `ba_fscx`; these helpers are no longer part of the API.
+
+#### Go — `Herradura cryptographic suite.go` and `Herradura_tests.go`
+- **`Fscx` rewritten**: replaces the parameter-shadowing style
+  (`ba = ba.RotateLeft(1)`) with a direct formula expression — each of the six
+  terms maps one-to-one to `A⊕B⊕ROL(A)⊕ROL(B)⊕ROR(A)⊕ROR(B)`.
+- **Naming — suite file**: `Fscx_revolve` → `FscxRevolve`, `Fscx_revolve_n` →
+  `FscxRevolveN`, `New_rand_bitarray` → `NewRandBitArray`; removes non-idiomatic
+  underscores in exported Go names, consistent with the tests file.
+- **Naming — tests file**: `New_rand_bitarray` → `newRandBitArray` (unexported).
+- **Local variables in `main`**: `r_value`/`i_value` → `rValue`/`iValue`,
+  `hkex_nonce` → `hkexNonce` (idiomatic Go camelCase).
+- **`Popcount` — `math/bits.OnesCount8`** (tests only): replaces the manual
+  bit-shift loop; compiles to a hardware popcount instruction.
+- **`FlipBit` simplified** (tests only): `if cur == 0 / else` replaced by
+  the one-liner `SetBit(&v, pos, v.Bit(pos)^1)`.
+
+#### Python — `Herradura_KEx.py` (basic key-exchange demo)
+- **`BitArray.rotated(n)`** added: same non-mutating rotation method as the suite
+  and tests files; brings the basic demo into structural parity with those files.
+- **`fscx` rewritten** using `rotated()`; no longer mutates its inputs.
+- **`keybits` parameter removed** from `fscx`, `fscx_revolve`, and `fscx_revolve_n`:
+  the parameter was unused in all three functions (size is carried by the
+  `BitArray` object itself); callers in `main()` updated accordingly.
+
+#### Python — `Herradura cryptographic suite.py` and `Herradura_tests.py`
+- **`BitArray.rotated(n)`** — new non-mutating rotation method (both files):
+  returns a new `BitArray` rotated left by `n` bits (right if `n < 0`).
+  Positive and negative rotations share one method, matching `RotateLeft` in Go.
+- **`fscx` rewritten** (both files): replaces the copy-then-mutate pattern
+  (`a.ror(1); a.rol(2)`) with a direct expression using `rotated()`.
+  No input mutation occurs — the function is now a pure transformation.
+- **`BitArray.random()` classmethod added** (suite only): the suite now uses the
+  same `BitArray.random(size)` interface as the tests file; `new_rand_bitarray()`
+  is removed.
+- **`main()` function and `if __name__ == '__main__':` guard** (suite only):
+  protocol demonstration code is wrapped in `main()`, consistent with Go and C
+  which have explicit entry-point functions.
+- **`fscx` defined before `fscx_revolve`** (suite only): declaration order now
+  matches C and Go (definition before first use).
+- **Module-level constants** (suite only): `KEYBITS = 256`, `I_VALUE`,
+  `R_VALUE` defined at module scope, matching the C `#define` names.
+
+#### Not applicable — `Herradura_KEx.{c,go}`, `Herradura_KEx_bignum.c`, `HAEN.asm`, `HKEX_arm_linux.s`
+The v1.3.2 optimisations do not apply to these files:
+- The C and Go basic KEx files and the GMP bignum file implement FSCX via a
+  bit-by-bit extraction loop (`BITX`/`BIT` helpers) rather than byte-parallel
+  ROL/ROR operations, so the fused single-pass `ba_fscx` is architecturally
+  inapplicable. Their `FSCX_REVOLVE` loops operate on scalar or GMP values
+  with no per-step struct copy to eliminate.
+- The x86 NASM and ARM assembly files are fixed instruction sequences; none of
+  the language-level improvements (compiler hints, Python integer arithmetic,
+  Go struct layout) apply.
+
+---
+
 ## [1.3.1] - 2026-03-29
 
 ### Changed
