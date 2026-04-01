@@ -77,7 +77,7 @@ $\blacksquare$
 
 **Definition:**
 
-$$\text{FSCX}\_\text{REVOLVE}(A,\, B,\, k) \;=\; f_B^k(A)$$
+$$\text{FSCX\textunderscore REVOLVE}(A,\, B,\, k) \;=\; f_B^k(A)$$
 
 where $f_B(X) = \text{FSCX}(X, B) = M \cdot X \oplus M \cdot B$ is an affine map over $\mathbb{GF}(2)^n$.
 
@@ -101,7 +101,7 @@ Empirically, the actual orbit period is always $n$ or $n/2$ (from test [3]). The
 
 **Definition (v1.1):**
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}(A,\, B,\, N,\, k) \;:\;
+$$\text{FSCX\textunderscore REVOLVE\textunderscore N}(A,\, B,\, N,\, k) \;:\;
 \begin{cases}
 X_0 = A \\
 X_{j+1} = \text{FSCX}(X_j,\, B) \oplus N \;=\; M \cdot X_j \oplus M \cdot B \oplus N
@@ -115,7 +115,7 @@ $$g^n_{B,N}(A) \;=\; M^n \cdot A \;+\; S_n \cdot (M \cdot B \oplus N) \;=\; A \;
 
 The nonce $N$ does not affect the period, and decryption is still the complementary revolve.
 
-**Nonce propagation linearity:** If $N$ changes by $\delta N$, the change in $\text{FSCX}\_\text{REVOLVE}\_\text{N}(\cdot, B, N, k)$ at step $k$ is:
+**Nonce propagation linearity:** If $N$ changes by $\delta N$, the change in $\text{FSCX\textunderscore REVOLVE\textunderscore N}(\cdot, B, N, k)$ at step $k$ is:
 
 $$\delta\text{Output} \;=\; S_k \cdot \delta N \;=\; (I + M + M^2 + \cdots + M^{k-1}) \cdot \delta N$$
 
@@ -130,15 +130,15 @@ In particular, for $k = n$ this is $S_n \cdot \delta N = 0$, so nonce changes ar
 **Protocol:**
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad A,\, B \leftarrow \text{random};\quad C = \text{FSCX}\_\text{REVOLVE}(A,\, B,\, i) \\
-&\textbf{Bob:}\quad A_2,\, B_2 \leftarrow \text{random};\quad C_2 = \text{FSCX}\_\text{REVOLVE}(A_2,\, B_2,\, i)
+&\textbf{Alice:}\quad A,\, B \leftarrow \text{random};\quad C = \text{FSCX\textunderscore REVOLVE}(A,\, B,\, i) \\
+&\textbf{Bob:}\quad A_2,\, B_2 \leftarrow \text{random};\quad C_2 = \text{FSCX\textunderscore REVOLVE}(A_2,\, B_2,\, i)
 \end{aligned}$$
 
 $$\text{Alice} \xrightarrow{C} \text{Bob} \qquad \text{Bob} \xrightarrow{C_2} \text{Alice}$$
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad sk_A = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2,\, B,\, N,\, r) \oplus A \\
-&\textbf{Bob:}\quad sk_B = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C,\, B_2,\, N,\, r) \oplus A_2 \\
+&\textbf{Alice:}\quad sk_A = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C_2,\, B,\, N,\, r) \oplus A \\
+&\textbf{Bob:}\quad sk_B = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C,\, B_2,\, N,\, r) \oplus A_2 \\
 &\text{where}\quad N = C \oplus C_2
 \end{aligned}$$
 
@@ -159,7 +159,7 @@ M \cdot S_r \;+\; M^{r+1} \cdot S_i
 
 Therefore the condition holds for all $B, B_2$, completing the proof. The nonce $N = C \oplus C_2$ contributes equally to both sides and cancels identically. $\blacksquare$
 
-> **Hardness assumption (unproven):** Security requires that given $C = \text{FSCX}\_\text{REVOLVE}(A, B, i) = M^i \cdot A + M \cdot S_i \cdot B$, recovering $(A, B)$ is computationally hard. This is a system of $n$ linear equations in $2n$ unknowns over $\mathbb{GF}(2)$. The system is underdetermined (underconstrained by a factor of 2), and no formal reduction to a standard hard problem (DLP, RSA, LWE) has been established.
+> **Hardness assumption (unproven):** Security requires that given $C = \text{FSCX\textunderscore REVOLVE}(A, B, i) = M^i \cdot A + M \cdot S_i \cdot B$, recovering $(A, B)$ is computationally hard. This is a system of $n$ linear equations in $2n$ unknowns over $\mathbb{GF}(2)$. The system is underdetermined (underconstrained by a factor of 2), and no formal reduction to a standard hard problem (DLP, RSA, LWE) has been established.
 
 ---
 
@@ -167,8 +167,8 @@ Therefore the condition holds for all $B, B_2$, completing the proof. The nonce 
 
 **Protocol:**
 
-$$\text{Encrypt:}\quad E = \text{FSCX}\_\text{REVOLVE}\_\text{N}(P,\, K,\, K,\, i)$$
-$$\text{Decrypt:}\quad D = \text{FSCX}\_\text{REVOLVE}\_\text{N}(E,\, K,\, K,\, r)$$
+$$\text{Encrypt:}\quad E = \text{FSCX\textunderscore REVOLVE\textunderscore N}(P,\, K,\, K,\, i)$$
+$$\text{Decrypt:}\quad D = \text{FSCX\textunderscore REVOLVE\textunderscore N}(E,\, K,\, K,\, r)$$
 
 **Correctness:** From Theorem 5 with $B = K$, $N = K$:
 
@@ -190,8 +190,8 @@ $$\begin{aligned}
 \end{aligned}$$
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad S = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2,\, B,\, N,\, r) \oplus A \oplus P \quad [= sk_A \oplus P] \\
-&\textbf{Bob:}\quad V = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus S \quad [= sk_B \oplus S]
+&\textbf{Alice:}\quad S = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C_2,\, B,\, N,\, r) \oplus A \oplus P \quad [= sk_A \oplus P] \\
+&\textbf{Bob:}\quad V = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus S \quad [= sk_B \oplus S]
 \end{aligned}$$
 
 **Correctness:** $V = sk_B \oplus sk_A \oplus P = P$ (since $sk_A = sk_B$). $\checkmark$
@@ -211,19 +211,19 @@ $$\begin{aligned}
 $$\begin{aligned}
 &\text{Alice publishes:}\quad (C,\, B_2,\, A_2) \text{ as public key} \\
 &\text{Alice keeps:}\quad (C_2,\, B,\, A) \text{ as private key} \\
-&N = C \oplus C_2 \quad \text{(derivable from public key;}\; C_2 = \text{FSCX}\_\text{REVOLVE}(A_2,\, B_2,\, i)\text{)}
+&N = C \oplus C_2 \quad \text{(derivable from public key;}\; C_2 = \text{FSCX\textunderscore REVOLVE}(A_2,\, B_2,\, i)\text{)}
 \end{aligned}$$
 
 $$\begin{aligned}
-&\textbf{Bob:}\quad E = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus P \\
-&\textbf{Alice:}\quad D = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2,\, B,\, N,\, r) \oplus A \oplus E
+&\textbf{Bob:}\quad E = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus P \\
+&\textbf{Alice:}\quad D = \text{FSCX\textunderscore REVOLVE\textunderscore N}(C_2,\, B,\, N,\, r) \oplus A \oplus E
 \end{aligned}$$
 
 **Correctness:**
 
 $$\begin{aligned}
-D &= \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2,\, B,\, N,\, r) \oplus A \oplus E \\
-  &= sk_A \oplus \text{FSCX}\_\text{REVOLVE}\_\text{N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus P \\
+D &= \text{FSCX\textunderscore REVOLVE\textunderscore N}(C_2,\, B,\, N,\, r) \oplus A \oplus E \\
+  &= sk_A \oplus \text{FSCX\textunderscore REVOLVE\textunderscore N}(C,\, B_2,\, N,\, r) \oplus A_2 \oplus P \\
   &= sk_A \oplus sk_B \oplus P \\
   &= P \quad (\text{since } sk_A = sk_B) \quad \checkmark
 \end{aligned}$$
@@ -265,7 +265,7 @@ FSCX is not a nonlinear function. All security comes from iteration count and pa
 
 Let $E = sk_B \oplus A_2 \oplus P$. Then:
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2,\, B,\, N,\, r) \oplus A \oplus (E \oplus \delta) \;=\; P \oplus \delta$$
+$$\text{FSCX\textunderscore REVOLVE\textunderscore N}(C_2,\, B,\, N,\, r) \oplus A \oplus (E \oplus \delta) \;=\; P \oplus \delta$$
 
 Flipping bit $k$ of $E$ flips bit $k$ of the decrypted plaintext. There is a bijective XOR relationship between ciphertext bits and plaintext bits, which means HPKE has no ciphertext integrity. An active attacker who can submit modified ciphertexts to a decryption oracle can target specific plaintext bits.
 
@@ -301,7 +301,7 @@ recovering $(A, B) \in \mathbb{GF}(2)^n \times \mathbb{GF}(2)^n$ is hard. This i
 
 **W5 — The nonce $N = C \oplus C_2$ is publicly derivable.**
 
-$$N \;=\; C \oplus C_2 \;=\; \text{FSCX}\_\text{REVOLVE}(A,\, B,\, i) \oplus \text{FSCX}\_\text{REVOLVE}(A_2,\, B_2,\, i)$$
+$$N \;=\; C \oplus C_2 \;=\; \text{FSCX\textunderscore REVOLVE}(A,\, B,\, i) \oplus \text{FSCX\textunderscore REVOLVE}(A_2,\, B_2,\, i)$$
 
 Both $C$ and $C_2$ are transmitted as public values. $N$ is not secret, and contributes zero entropy beyond the public key material. The nonce's role is purely structural (enabling the HKEX equality proof), not to introduce unpredictability.
 
@@ -309,9 +309,9 @@ Both $C$ and $C_2$ are transmitted as public values. $N$ is not secret, and cont
 
 **W6 — Short effective key space for meet-in-the-middle.**
 
-$C = \text{FSCX}\_\text{REVOLVE}(A, B, i)$ with $i = n/4 = 64$ steps. An attacker might attack this by splitting:
+$C = \text{FSCX\textunderscore REVOLVE}(A, B, i)$ with $i = n/4 = 64$ steps. An attacker might attack this by splitting:
 
-$$\text{FSCX}\_\text{REVOLVE}(A,\, B,\, i) \;=\; f_B^i(A)$$
+$$\text{FSCX\textunderscore REVOLVE}(A,\, B,\, i) \;=\; f_B^i(A)$$
 
 and searching over $(A, B)$ pairs. Since $M^{n/2} = I$, the orbit has period at most $n/2$, meaning at most $n/2$ distinct values of $C$ can arise from any fixed $B$. This reduces the effective pre-image space compared to a random function over $\mathbb{GF}(2)^n$.
 
@@ -348,8 +348,8 @@ $$M \cdot S_r \;+\; M^{r+1} \cdot S_i \;=\; S_n \;=\; 0$$
 
 Together, these imply that for any $A, B, A_2, B_2 \in \mathbb{GF}(2)^n$ and any nonce $N$:
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}\!\left(\text{FSCX}\_\text{REVOLVE}(A_2,\, B_2,\, i),\; B,\; N,\; r\right) \oplus A$$
+$$\text{FSCX\textunderscore REVOLVE\textunderscore N}\!\left(\text{FSCX\textunderscore REVOLVE}(A_2,\, B_2,\, i),\; B,\; N,\; r\right) \oplus A$$
 $$=$$
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}\!\left(\text{FSCX}\_\text{REVOLVE}(A,\, B,\, i),\; B_2,\; N,\; r\right) \oplus A_2$$
+$$\text{FSCX\textunderscore REVOLVE\textunderscore N}\!\left(\text{FSCX\textunderscore REVOLVE}(A,\, B,\, i),\; B_2,\; N,\; r\right) \oplus A_2$$
 
 This identity is the mathematical core from which all four protocols derive their correctness. All protocols are **correct**. Whether they are **secure** against computationally bounded adversaries depends on the unformalized hardness of inverting FSCX\_REVOLVE — which currently lacks a proof under any standard cryptographic assumption.
