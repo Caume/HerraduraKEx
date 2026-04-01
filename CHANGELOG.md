@@ -4,6 +4,40 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.4] - 2026-04-01
+
+### Fixed — SecurityProofs.md: formula corrections and HPKS₂ protocol
+
+#### `SecurityProofs.md`
+
+- **§1.4 nonce propagation (formula error):** Removed the unsupported claim
+  "HD = r/n × n = r bits" for k = r = 3n/4. That expression was a tautology,
+  not a derived result, and "HD = k" is false in general (counterexample:
+  k = 3 gives HD = 4 via S₃·e₀ = e₁⊕e₂⊕e_(n-2)⊕e_(n-1)). Replaced with the
+  correct statement: HD = popcount(S_k · e_j), which is deterministic, and the
+  empirically confirmed result HD = n/4 for k = i = n/4 (test [6]).
+
+- **§W4 solution count (formula error):** "n^n solutions" corrected to "2^n
+  solutions". The map φ(A,B) = M^i·A + M·S_i·B is linear from GF(2)^(2n) to
+  GF(2)^n; its kernel has dimension n, giving 2^n elements in every preimage.
+
+- **§2.3 HPKS → HPKS₂ (theoretical protocol fix):** The original scheme
+  S = sk_A ⊕ P trivially leaks sk_A from a single (P, S) pair. The corrected
+  scheme HPKS₂ replaces the XOR with HSKE encryption of P under sk_A:
+
+    Alice:  S = FSCX_REVOLVE_N(P, sk_A, sk_A, i)   [HSKE-encrypt]
+    Bob:    V = FSCX_REVOLVE_N(S, sk_B, sk_B, r)   [HSKE-decrypt]; check V = P
+
+  Correctness follows from HSKE (Theorem 5). The trivial key-recovery attack is
+  eliminated because the coefficient of sk_A in the equation is S_i·(M+I) =
+  S_i·x⁻¹(x+1)², which is a zero divisor in R_n (not a unit), so the equation
+  has no unique solution for sk_A. The scheme remains GF(2)-linear in sk_A, so
+  full EUF-CMA requires a non-linear primitive beyond the current suite.
+
+- **§Summary table:** HPKS row updated to HPKS₂ with revised EUF-CMA status.
+
+---
+
 ## [1.3.3] - 2026-03-30
 
 ### Added — HPKE performance benchmark across all three test files

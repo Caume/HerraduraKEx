@@ -119,7 +119,7 @@ The nonce $N$ does not affect the period, and decryption is still the complement
 
 $$\delta\text{Output} = S_k \cdot \delta N = (I + M + M^2 + \cdots + M^{k-1}) \cdot \delta N$$
 
-In particular, for $k = n$ this is $S_n \cdot \delta N = 0$, so nonce changes are fully absorbed over a full cycle. For $k = r = 3n/4$, the diffusion of a 1-bit nonce flip gives Hamming distance $r/n \times n = r$ bits (confirmed: test [6] gives $\text{HD} = n/4$ for $k = i = n/4$).
+In particular, for $k = n$ this is $S_n \cdot \delta N = 0$, so nonce changes are fully absorbed over a full cycle. The Hamming distance of a single-bit nonce flip is deterministic (independent of $A$ and $B$) and equals $\text{popcount}(S_k \cdot e_j)$. Test [6] empirically confirms $\text{HD} = n/4$ for $k = i = n/4$ (with $\min = \max = n/4$). Note: the formula $\text{HD} = k$ does not hold in general; for example, at $k = 3$ one can verify $S_3 \cdot e_0 = e_1 \oplus e_2 \oplus e_{n-2} \oplus e_{n-1}$, giving $\text{HD} = 4 \neq 3$.
 
 ---
 
@@ -180,7 +180,7 @@ So decrypting is applying the same map for the complementary $r$ steps: $g^r(g^i
 
 ---
 
-### 2.3 HPKS — Public Key Signature
+### 2.3 HPKS — Public Key Signature (HPKS₂)
 
 **Protocol** (Alice signs plaintext $P$):
 
@@ -189,18 +189,21 @@ $$\begin{aligned}
 &\text{Private key:}\quad (C_2, B, A)
 \end{aligned}$$
 
+The original scheme used $S = sk_A \oplus P$ (a direct XOR mask), which trivially leaks $sk_A$ (see W3). The corrected scheme **HPKS₂** replaces the XOR with HSKE encryption of $P$ under $sk_A$:
+
 $$\begin{aligned}
-&\textbf{Alice:}\quad S = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C_2, B, N, r) \oplus A \oplus P \quad [= sk_A \oplus P] \\
-&\textbf{Bob:}\quad V = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C, B_2, N, r) \oplus A_2 \oplus S \quad [= sk_B \oplus S]
+&\textbf{Alice:}\quad S = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(P,\; sk_A,\; sk_A,\; i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
+&\textbf{Bob:}\quad V = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(S,\; sk_B,\; sk_B,\; r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
+&\qquad\text{Check: } V = P
 \end{aligned}$$
 
-**Correctness:** $V = sk_B \oplus sk_A \oplus P = P$ (since $sk_A = sk_B$). $\checkmark$
+**Correctness:** From HSKE correctness (Theorem 5 with $B = sk_A$, $N = sk_A$):
 
-> **Critical property — Signature reveals session key:**
->
-> $$S = sk_A \oplus P$$
->
-> Given $P$ and $S$, an attacker trivially recovers $sk_A = S \oplus P$. Once $sk_A$ is known, any subsequent message signed with the same key pair is immediately decryptable. This is a one-time signature at best; reusing the same public key for multiple signatures leaks the session key.
+$$g^{i+r}_{sk_A,\,sk_A}(P) = g^n_{sk_A,\,sk_A}(P) = P$$
+
+Since $sk_A = sk_B$: $V = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(S,\; sk_B,\; sk_B,\; r) = P$. $\checkmark$
+
+This change requires no new primitives: signing is HSKE encryption of $P$ under the shared session key; verification is HSKE decryption.
 
 ---
 
@@ -273,19 +276,25 @@ Flipping bit $k$ of $E$ flips bit $k$ of the decrypted plaintext. There is a bij
 
 ---
 
-**W3 — HPKS is not existentially unforgeable under chosen-message attack.**
+**W3 — Original HPKS directly leaks the session key; HPKS₂ eliminates this.**
 
-The signature satisfies:
+In the original scheme $S = sk_A \oplus P$, a single signed pair $(P, S)$ immediately reveals:
 
-$$S = sk_A \oplus P \qquad V = sk_B \oplus S = P \quad \text{(verification passes)}$$
+$$sk_A = S \oplus P$$
 
-Given any two valid signed messages $(P_1, S_1)$ and $(P_2, S_2)$ under the same key:
+A forger who recovers $sk_A$ can sign any $P'$ as $S' = sk_A \oplus P'$, breaking the scheme after one signing query.
 
-$$S_1 \oplus S_2 = P_1 \oplus P_2 \implies sk_A = S_1 \oplus P_1 \quad \text{(one message suffices)}$$
+**HPKS₂** eliminates this by replacing the XOR with HSKE encryption. From the affine iteration formula:
 
-One signed message fully reveals $sk_A$. A forger knowing $sk_A$ can sign any message $P'$ as $S' = sk_A \oplus P'$. This breaks one-time security after a single signing query.
+$$S = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(P,\; sk_A,\; sk_A,\; i) = M^i \cdot P + S_i \cdot (M + I) \cdot sk_A$$
 
-> **Implication:** HPKS is not EUF-CMA. It is valid as a one-time signature (sign once, never reuse) only if $sk_A$ is derived freshly per message (new $A$, $B$ each time).
+The coefficient of $sk_A$ is $S_i \cdot (M + I)$. In $R_n$:
+
+$$M + I = L + L^{-1} = x^{-1}(x+1)^2$$
+
+Since $(x+1)^n = 0$ in $R_n$, the factor $(x+1)^2$ is a zero divisor — $M + I$ is **not a unit**. Therefore $S_i \cdot (M + I)$ is also not a unit, and the equation $S = M^i \cdot P + S_i \cdot (M+I) \cdot sk_A$ has no unique solution for $sk_A$. The trivial one-query key recovery is eliminated.
+
+> **Remaining limitation:** The dependence of $S$ on $sk_A$ is still $\mathbb{GF}(2)$-linear — an unavoidable consequence of the linear structure of FSCX. Full EUF-CMA security would require a non-linear primitive not present in the suite. Multiple signing queries under the same key pair can progressively constrain $sk_A$ through the underdetermined linear system.
 
 ---
 
@@ -295,7 +304,7 @@ The security of all protocols reduces to: given
 
 $$C = M^i \cdot A + M \cdot S_i \cdot B, \quad i = n/4$$
 
-recovering $(A, B) \in \mathbb{GF}(2)^n \times \mathbb{GF}(2)^n$ is hard. This is a single linear equation in $2n$ unknowns over $\mathbb{GF}(2)^n$ — the system is underdetermined with $n^n$ solutions. Security relies on the attacker being unable to exploit the specific structure of $M^i$ and $S_i$. No reduction to DLP, CDH, lattice problems, or any other NIST-standardized hardness assumption exists.
+recovering $(A, B) \in \mathbb{GF}(2)^n \times \mathbb{GF}(2)^n$ is hard. This is a single linear equation in $2n$ unknowns over $\mathbb{GF}(2)^n$ — the system is underdetermined with $2^n$ solutions (the solution set is an affine subspace of dimension $n$ over $\mathbb{GF}(2)$). Security relies on the attacker being unable to exploit the specific structure of $M^i$ and $S_i$. No reduction to DLP, CDH, lattice problems, or any other NIST-standardized hardness assumption exists.
 
 ---
 
@@ -329,7 +338,7 @@ None of HSKE, HPKE, or HPKS provides joint confidentiality + integrity + authent
 |---|---|---|---|---|---|
 | HKEX | ✓ Proven | Unformalized | — | — | — |
 | HSKE | ✓ Proven | Unformalized | Unproven | ✗ (malleable) | — |
-| HPKS | ✓ Proven | Unformalized | — | — | ✗ (one-time) |
+| HPKS₂ | ✓ Proven | Unformalized | — | — | Partial (non-unit coeff.) |
 | HPKE | ✓ Proven | Unformalized | Unproven | ✗ (malleable) | — |
 
 ---
