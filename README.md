@@ -186,15 +186,43 @@ python3 Herradura_tests.py
 ## Assembly
 
 ```bash
-# ARM Linux (requires arm-linux-gnueabi-gcc; run with QEMU on non-ARM host)
+# ARM Linux — basic HKEX only (requires arm-linux-gnueabi-gcc)
 arm-linux-gnueabi-gcc -o HKEX_arm HKEX_arm_linux.s
-./HKEX_arm          # on ARM hardware
-qemu-arm ./HKEX_arm # on non-ARM host
+./HKEX_arm                           # on ARM hardware
+qemu-arm -L /usr/arm-linux-gnueabi ./HKEX_arm  # on non-ARM host
 
-# x86 NASM assembly (requires NASM and asm_io.o library)
+# ARM Linux — full suite + tests (HKEX + HSKE + HPKS + HPKE, 32-bit Thumb)
+arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" "Herradura cryptographic suite.s"
+arm-linux-gnueabi-gcc -o Herradura_tests_arm Herradura_tests.s
+qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"
+qemu-arm -L /usr/arm-linux-gnueabi ./Herradura_tests_arm
+
+# NASM i386 — legacy asymmetric encryption (requires NASM and asm_io.o library)
 nasm -f elf HAEN.asm
 gcc -m32 -o HAEN HAEN.o asm_io.o
 ./HAEN
+
+# NASM i386 — full suite + tests (HKEX + HSKE + HPKS + HPKE, pure Linux syscalls)
+# Requires: nasm, x86_64-linux-gnu-ld (or ld with elf_i386 support), qemu-i386
+nasm -f elf32 "Herradura cryptographic suite.asm" -o suite32.o
+nasm -f elf32 Herradura_tests.asm -o tests32.o
+x86_64-linux-gnu-ld -m elf_i386 -o "Herradura cryptographic suite_i386" suite32.o
+x86_64-linux-gnu-ld -m elf_i386 -o Herradura_tests_i386 tests32.o
+qemu-i386 "./Herradura cryptographic suite_i386"
+qemu-i386 ./Herradura_tests_i386
+# On a native x86/x86_64 Linux host the binaries run directly without qemu-i386
+```
+
+## Arduino
+
+The `.ino` files require the Arduino IDE or `arduino-cli` with the AVR board
+package installed (e.g. Arduino Uno / Nano). Open the file in the IDE and
+upload to a board with a serial monitor at 9600 baud, or:
+
+```bash
+# Compile-check only (requires arduino-cli with arduino:avr board package)
+arduino-cli compile --fqbn arduino:avr:uno "Herradura cryptographic suite.ino"
+arduino-cli compile --fqbn arduino:avr:uno Herradura_tests.ino
 ```
 
 # Performance (v1.3.3, Raspberry Pi 5 — ARM Cortex-A76)

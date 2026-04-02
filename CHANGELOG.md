@@ -4,6 +4,66 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.7] - 2026-04-01
+
+### Added — NASM i386, ARM Thumb, and Arduino implementations
+
+Six new source files bring full HKEX + HSKE + HPKS + HPKE coverage to assembly
+and embedded platforms.
+
+#### `Herradura cryptographic suite.asm` (new — NASM i386)
+
+- Full four-protocol suite (HKEX, HSKE, HPKS, HPKE) in NASM i386 assembly.
+- Pure Linux syscall interface (`int 0x80`); no libc or `asm_io` dependency.
+- 32-bit operands: `KEYBITS=32`, `I_VALUE=8`, `R_VALUE=24`.
+- Fixed test values: A=0xDEADBEEF, B=0xCAFEBABE, A2=0x12345678, B2=0xABCDEF01,
+  key=0x5A5A5A5A, plaintext=0xDEADC0DE.
+- Build: `nasm -f elf32 … -o suite32.o && x86_64-linux-gnu-ld -m elf_i386 -o … suite32.o`
+- Run: `qemu-i386 "./Herradura cryptographic suite_i386"` (or natively on x86/x86_64)
+
+#### `Herradura_tests.asm` (new — NASM i386)
+
+- Four correctness tests × 100 LCG-random trials each (HKEX, HSKE, HPKS, HPKE).
+- LCG PRNG: Numerical Recipes constants (multiplier 1664525, addend 1013904223,
+  seed 0x12345678).
+- Outer loops use `dec ecx / jnz near` to avoid the ±127-byte limit of `loop`.
+- All four tests verified: 100/100 passed.
+
+#### `Herradura cryptographic suite.s` (new — GAS ARM 32-bit Thumb)
+
+- Full four-protocol suite in ARM Thumb-2 assembly (`.cpu cortex-a7`).
+- Defines both `fscx_revolve` and `fscx_revolve_n` (the existing
+  `HKEX_arm_linux.s` calls `fscx_revolve_n` but never defines it).
+- `.thumb_func` annotations required for ARM/Thumb interworking.
+- Build: `arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" "Herradura cryptographic suite.s"`
+- Run: `qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"`
+
+#### `Herradura_tests.s` (new — GAS ARM 32-bit Thumb)
+
+- Four correctness tests × 100 LCG-random trials each (HKEX, HSKE, HPKS, HPKE).
+- All four tests verified: 100/100 passed on qemu-arm.
+
+#### `Herradura cryptographic suite.ino` (new — Arduino)
+
+- Full four-protocol suite for Arduino (32-bit `unsigned long`).
+- `Serial` output at 9600 baud; `printHex` / `printHexLine` helpers for
+  zero-padded hex display.
+- Compatible with boards using `unsigned long` as a 32-bit type (Uno, Nano,
+  Mega, etc.).
+
+#### `Herradura_tests.ino` (new — Arduino)
+
+- Four correctness tests × 100 LCG-random trials each (HKEX, HSKE, HPKS, HPKE).
+- Results printed over Serial; `loop()` reruns every 30 seconds.
+
+#### `README.md`
+
+- Updated Assembly build section with commands for the new NASM and ARM suite
+  and test binaries.
+- Added Arduino section with `arduino-cli` compile-check command.
+
+---
+
 ## [1.3.6] - 2026-04-01
 
 ### Added — HPKS sign+verify correctness test across all three test files
