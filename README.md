@@ -117,6 +117,20 @@ This is identical to the condition without the nonce — N cancels from both sid
 
 **Orbit properties** are preserved: FSCX_REVOLVE_N(·, B, N, ·) is a bijection on GF(2)^P, so all orbits are finite. Empirical validation confirms orbit lengths remain ≤ 2P.
 
+## When to use FSCX_REVOLVE vs FSCX_REVOLVE_N
+
+The rule is straightforward: use FSCX_REVOLVE_N wherever the **same key material could produce multiple outputs** (encryption), and plain FSCX_REVOLVE for **key setup where the inputs are already fresh random values** per session.
+
+| Operation | Function | Reason |
+|-----------|----------|--------|
+| HKEX public value setup: `C = fscx_revolve(A, B, i)` | FSCX_REVOLVE | A and B are ephemeral random secrets generated fresh per session — C is already session-unique. A nonce would add overhead without any security benefit. |
+| HKEX shared key derivation | FSCX_REVOLVE_N (nonce = C⊕C2) | Breaks the linear structure for the derived key. Nonce is computable from public values; no extra secret needed. |
+| HSKE encrypt / decrypt | FSCX_REVOLVE_N (nonce = key) | **Essential.** Without a nonce, HSKE is a deterministic cipher: same plaintext + same key = same ciphertext, breaking semantic security (IND-CPA). The key is injected at every step, not just at boundaries. |
+| HPKS sign / verify | FSCX_REVOLVE_N (nonce = C⊕C2) | Same as HKEX derivation — breaks linearity for the signature computation. |
+| HPKE encrypt / decrypt | FSCX_REVOLVE_N (nonce = C⊕C2) | Session-specific nonce binds the ciphertext to the current key exchange, preventing ciphertext reuse across sessions. |
+
+**Summary:** The performance cost of FSCX_REVOLVE_N over plain FSCX_REVOLVE is one extra XOR per step. This overhead is worthwhile everywhere except key setup with ephemeral inputs, where the randomness comes from key generation rather than the iteration function. Using FSCX_REVOLVE for key setup avoids requiring nonce negotiation at that stage while preserving all security properties.
+
 # Build & Run Instructions
 
 ## C

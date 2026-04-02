@@ -4,6 +4,48 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.3.6] - 2026-04-01
+
+### Added — HPKS sign+verify correctness test across all three test files
+
+#### `Herradura_tests.c`, `Herradura_tests.go`, `Herradura_tests.py`
+
+- **Security test [7] — HPKS sign+verify correctness** added to all three test
+  files. Each of 10 000 trials generates fresh random keys (A, B, A2, B2) and a
+  random plaintext, then checks:
+
+  ```
+  C  = fscx_revolve(A, B, i)
+  C2 = fscx_revolve(A2, B2, i)
+  hn = C ⊕ C2
+  S  = fscx_revolve_n(C2, B, hn, r) ⊕ A ⊕ P   (sign)
+  V  = fscx_revolve_n(C,  B2, hn, r) ⊕ A2 ⊕ S  (verify)
+  assert V == P
+  ```
+
+  Correctness follows from the HKEX equality: both sides of the shared-key
+  computation equal `fscx_revolve_n(·, ·, hn, r) ⊕ A[2]`, so the XOR terms
+  cancel and `V = P` holds for all valid key pairs. Expected: 10 000/10 000.
+
+- **Benchmarks renumbered [8–12]** (were [7–11]) to accommodate the new test.
+
+- **Version comment** updated to v1.3.6 in each test file header.
+
+---
+
+## [1.3.5] - 2026-04-01
+
+### Added — README: guidance on when to use FSCX_REVOLVE vs FSCX_REVOLVE_N
+
+#### `README.md`
+
+- New subsection **'When to use FSCX_REVOLVE vs FSCX_REVOLVE_N'** added under
+  the existing FSCX_REVOLVE_N section. Includes a per-operation reference table
+  covering HKEX key setup, HKEX key derivation, HSKE, HPKS, and HPKE, with the
+  function to use and the security rationale for each choice.
+
+---
+
 ## [1.3.4] - 2026-04-01
 
 ### Fixed — SecurityProofs.md: formula corrections and HPKS₂ protocol
