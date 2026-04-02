@@ -1,6 +1,7 @@
 /* Build: gcc -O2 -o Herradura_tests Herradura_tests.c */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray)
+    v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -388,6 +389,34 @@ static void test_avalanche_revolve_n(void)
     putchar('\n');
 }
 
+static void test_hpks_sign_verify(void)
+{
+    int i, ok = 0;
+    BitArray a, b, a2, b2, c, c2, hn, plaintext, S, V, tmp;
+    printf("[7] HPKS sign+verify correctness: V == plaintext\n");
+    for (i = 0; i < 10000; i++) {
+        ba_rand(&a);  ba_rand(&b);
+        ba_rand(&a2); ba_rand(&b2);
+        ba_rand(&plaintext);
+        ba_fscx_revolve(&c,  &a,  &b,  I_VALUE);
+        ba_fscx_revolve(&c2, &a2, &b2, I_VALUE);
+        ba_xor(&hn, &c, &c2);
+        /* sign: S = fscx_revolve_n(C2, B, hn, r) ^ A ^ P */
+        ba_fscx_revolve_n(&tmp, &c2, &b, &hn, R_VALUE);
+        ba_xor(&S, &tmp, &a);
+        ba_xor(&S, &S, &plaintext);
+        /* verify: V = fscx_revolve_n(C, B2, hn, r) ^ A2 ^ S */
+        ba_fscx_revolve_n(&tmp, &c, &b2, &hn, R_VALUE);
+        ba_xor(&V, &tmp, &a2);
+        ba_xor(&V, &V, &S);
+        if (ba_equal(&V, &plaintext))
+            ok++;
+    }
+    printf("    bits=%d  %d / 10000 verified  [%s]\n",
+           KEYBITS, ok, ok == 10000 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
 /* ------------------------------------------------------------------ */
 /* Performance benchmarks                                              */
 /* ------------------------------------------------------------------ */
@@ -400,7 +429,7 @@ static void bench_fscx_throughput(void)
     double secs;
     int i;
 
-    printf("[7] FSCX throughput  (bits=%d)\n    ", KEYBITS);
+    printf("[8] FSCX throughput  (bits=%d)\n    ", KEYBITS);
     ba_rand(&a); ba_rand(&b);
     /* warm up */
     for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
@@ -421,7 +450,7 @@ static void bench_fscx_revolve_n_throughput(void)
     int s, i;
     struct timespec t0, t1;
 
-    printf("[8] FSCX_REVOLVE_N throughput  (bits=%d)\n", KEYBITS);
+    printf("[9] FSCX_REVOLVE_N throughput  (bits=%d)\n", KEYBITS);
     for (s = 0; s < 2; s++) {
         BitArray a, b, nonce, tmp;
         long long ops = 0;
@@ -451,7 +480,7 @@ static void bench_hkex_handshake(void)
     int i;
     BitArray a, b, a2, b2, c, c2, hn, keyA, keyB, tmp;
 
-    printf("[9] HKEX full handshake  (bits=%d)\n    ", KEYBITS);
+    printf("[10] HKEX full handshake  (bits=%d)\n    ", KEYBITS);
     /* warm up */
     for (i = 0; i < 3; i++) {
         ba_rand(&a); ba_rand(&b); ba_rand(&a2); ba_rand(&b2);
@@ -486,7 +515,7 @@ static void bench_hske_roundtrip(void)
     int i;
     BitArray pt, key, enc, dec;
 
-    printf("[10] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
+    printf("[11] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
     /* warm up */
     for (i = 0; i < 5; i++) {
         ba_rand(&pt); ba_rand(&key);
@@ -519,7 +548,7 @@ static void bench_hpke_roundtrip(void)
     int i;
     BitArray a, b, a2, b2, c, c2, hn, pt, E, D, tmp;
 
-    printf("[11] HPKE encrypt+decrypt round-trip  (bits=%d)\n    ", KEYBITS);
+    printf("[12] HPKE encrypt+decrypt round-trip  (bits=%d)\n    ", KEYBITS);
     /* warm up */
     for (i = 0; i < 3; i++) {
         ba_rand(&a); ba_rand(&b); ba_rand(&a2); ba_rand(&b2); ba_rand(&pt);
@@ -573,6 +602,7 @@ int main(void)
     test_key_sensitivity();
 
     test_avalanche_revolve_n();
+    test_hpks_sign_verify();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();

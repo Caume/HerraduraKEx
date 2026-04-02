@@ -1,5 +1,6 @@
 '''
     Herradura KEx -- Security & Performance Tests (Python)
+    v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -325,6 +326,34 @@ def test_avalanche_revolve_n():
     print()
 
 
+def test_hpks_sign_verify():
+    # HPKS: S = fscx_revolve_n(C2, B, hn, r) ^ A ^ P   (sign)
+    #        V = fscx_revolve_n(C,  B2, hn, r) ^ A2 ^ S (verify)
+    # Correctness follows from the HKEX equality: both sides equal the shared key,
+    # so V = shared_key ^ A2 ^ (shared_key ^ A ^ P) = A ^ A2 ^ A2 ^ P = ... = P.
+    print("[7] HPKS sign+verify correctness: V == plaintext")
+    for size in SIZES:
+        iv = i_val(size)
+        rv = r_val(size)
+        ok = 0
+        for _ in range(10000):
+            a  = BitArray.random(size)
+            b  = BitArray.random(size)
+            a2 = BitArray.random(size)
+            b2 = BitArray.random(size)
+            pt = BitArray.random(size)
+            c  = fscx_revolve(a, b, iv)
+            c2 = fscx_revolve(a2, b2, iv)
+            hn = c ^ c2
+            S = fscx_revolve_n(c2, b, hn, rv) ^ a ^ pt   # sign
+            V = fscx_revolve_n(c, b2, hn, rv) ^ a2 ^ S   # verify
+            if V == pt:
+                ok += 1
+        status = "PASS" if ok == 10000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:5d} / 10000 verified  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -354,7 +383,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[7] FSCX throughput")
+    print("[8] FSCX throughput")
     for size in SIZES:
         a = BitArray.random(size)
         b = BitArray.random(size)
@@ -366,7 +395,7 @@ def bench_fscx():
 
 
 def bench_fscx_revolve_n():
-    print("[8] FSCX_REVOLVE_N throughput")
+    print("[9] FSCX_REVOLVE_N throughput")
     for size in SIZES:
         for steps, label in [(i_val(size), f"i({i_val(size)})"), (r_val(size), f"r({r_val(size)})")]:
             a = BitArray.random(size)
@@ -379,7 +408,7 @@ def bench_fscx_revolve_n():
 
 
 def bench_hkex_handshake():
-    print("[9] HKEX full handshake")
+    print("[10] HKEX full handshake")
     for size in SIZES:
         iv = i_val(size)
         rv = r_val(size)
@@ -398,7 +427,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[10] HSKE round-trip: encrypt+decrypt")
+    print("[11] HSKE round-trip: encrypt+decrypt")
     for size in SIZES:
         iv = i_val(size)
         rv = r_val(size)
@@ -419,7 +448,7 @@ def bench_hske_roundtrip():
 # Bob encrypts:   E = fscx_revolve_n(C, B2, hn, r) ^ A2 ^ pt
 # Alice decrypts: D = fscx_revolve_n(C2, B,  hn, r) ^ A  ^ E  (== pt)
 def bench_hpke_roundtrip():
-    print("[11] HPKE encrypt+decrypt round-trip")
+    print("[12] HPKE encrypt+decrypt round-trip")
     for size in SIZES:
         iv = i_val(size)
         rv = r_val(size)
@@ -456,6 +485,7 @@ if __name__ == '__main__':
     test_key_sensitivity()
 
     test_avalanche_revolve_n()
+    test_hpks_sign_verify()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

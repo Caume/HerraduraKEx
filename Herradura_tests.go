@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -400,12 +401,42 @@ func testAvalancheRevolveN() {
 	fmt.Println()
 }
 
+func testHpksSignVerify() {
+	fmt.Println("[7] HPKS sign+verify correctness: V == plaintext")
+	for _, size := range sizes {
+		iv := iVal(size)
+		rv := rVal(size)
+		ok := 0
+		for i := 0; i < 10000; i++ {
+			a := randBA(size)
+			b := randBA(size)
+			a2 := randBA(size)
+			b2 := randBA(size)
+			pt := randBA(size)
+			c := FscxRevolve(a, b, iv)
+			c2 := FscxRevolve(a2, b2, iv)
+			hn := c.Xor(c2)
+			S := FscxRevolveN(c2, b, hn, rv).Xor(a).Xor(pt)  // sign
+			V := FscxRevolveN(c, b2, hn, rv).Xor(a2).Xor(S)  // verify
+			if V.Equal(pt) {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 10000 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %5d / 10000 verified  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
 // ---------------------------------------------------------------------------
 // Performance benchmarks
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[7] FSCX throughput")
+	fmt.Println("[8] FSCX throughput")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -419,7 +450,7 @@ func benchFscx() {
 }
 
 func benchFscxRevolveN() {
-	fmt.Println("[8] FSCX_REVOLVE_N throughput")
+	fmt.Println("[9] FSCX_REVOLVE_N throughput")
 	for _, size := range sizes {
 		for _, stepsLabel := range []struct {
 			steps int
@@ -444,7 +475,7 @@ func benchFscxRevolveN() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[9] HKEX full handshake")
+	fmt.Println("[10] HKEX full handshake")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -466,7 +497,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[10] HSKE round-trip: encrypt+decrypt")
+	fmt.Println("[11] HSKE round-trip: encrypt+decrypt")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -489,7 +520,7 @@ func benchHskeRoundTrip() {
 // Bob encrypts:   E = FscxRevolveN(C, B2, hn, r) ^ A2 ^ pt
 // Alice decrypts: D = FscxRevolveN(C2, B,  hn, r) ^ A  ^ E  (== pt)
 func benchHpkeRoundTrip() {
-	fmt.Println("[11] HPKE encrypt+decrypt round-trip")
+	fmt.Println("[12] HPKE encrypt+decrypt round-trip")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -528,6 +559,7 @@ func main() {
 	testKeySensitivity()
 
 	testAvalancheRevolveN()
+	testHpksSignVerify()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()
