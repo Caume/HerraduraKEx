@@ -634,3 +634,195 @@ All experimental scripts are in `SecurityProofsCode/`:
 | `hkex_fscxn_analysis.py` | Single-nonce analysis: Case (a) public nonce (break survives), Case (b) private nonce (correctness destroyed), Case (c) offset formula verified |
 | `hkex_nonce_impossibility.py` | HSKE/HPKE mechanism; exhaustive 10-strategy nonce search; direct Theorem 8 verification ($S_r \cdot n_A$ constant iff correct) |
 | `hkex_multinonce_analysis.py` | Multi-nonce closed form (Theorem 9); 8 nonce strategies; $k = 1, 2, 4$ exchanged pairs; GF(2) even-sum collapse |
+| `hkex_nl_proposal.py` | Non-linear proposals §9: HKEX-GF correctness + Eve-failure (4 000 trials); FSCX-CY non-linearity, period analysis, HKEX-CY failure, Eve-failure |
+
+---
+
+## 9. Non-Linear Proposals
+
+Theorem 10 establishes that any protocol whose shared secret is derived via a $\mathbb{GF}(2)$-linear iterated map on the exchanged public values is insecure: the same $S_n = 0$ identity that guarantees correctness simultaneously exposes $sk$ as a linear function of $(C, C_2)$. This section develops two concrete non-linear alternatives.
+
+### 9.1 Fix Requirement
+
+A secure replacement must satisfy two competing conditions simultaneously:
+
+1. **Key-exchange correctness.** Two parties with independent secrets $(A, B)$ and $(A_2, B_2)$ must independently compute the same $sk$.
+2. **Privacy of $sk$.** The shared secret $sk$ must not be computable from the public wire values $(C, C_2)$ alone.
+
+Theorem 10 shows these two conditions are mutually exclusive under $\mathbb{GF}(2)$-linearity. The escape route is to use a **non-linear** primitive, i.e. a function $F$ such that $F(A \oplus X) \neq F(A) \oplus F(X)$ in general.
+
+The two proposals below attack this from different angles:
+
+- **HKEX-GF** (§9.2): replace the key-exchange step with $\mathbb{GF}(2^n)$ Diffie-Hellman; keep FSCX intact for all symmetric operations.
+- **FSCX-CY** (§9.3): replace the XOR inside FSCX with integer addition to introduce carry non-linearity; analyse what is preserved and what breaks.
+
+---
+
+### 9.2 HKEX-GF — Diffie-Hellman over $\mathbb{GF}(2^n)^*$
+
+#### 9.2.1 Algebraic structure
+
+$\mathbb{GF}(2^n)$ is the field of polynomials over $\mathbb{GF}(2)$ of degree $< n$, reduced modulo a fixed irreducible polynomial $p(x)$ of degree $n$. Two irreducible polynomials used in the implementation:
+
+$$p_{32}(x) = x^{32} + x^{22} + x^2 + x + 1, \qquad p_{64}(x) = x^{64} + x^4 + x^3 + x + 1$$
+
+**Field multiplication** $a \cdot b \in \mathbb{GF}(2^n)$ is carryless polynomial multiplication reduced mod $p(x)$, implementable by the shift-and-XOR loop:
+
+```
+result = 0
+for i in 0..n-1:
+    if b[0] == 1:  result ^= a
+    carry = a[n-1]
+    a <<= 1
+    if carry:      a ^= poly   # XOR with lower n bits of p(x)
+    b >>= 1
+```
+
+**Operations used:** XOR and left-shift only — no integer multiplication or modular arithmetic.
+
+**Non-linearity over $\mathbb{GF}(2)$:** The map $a \mapsto g^a$ (field exponentiation with fixed generator $g$) is non-linear in $a$ over $\mathbb{GF}(2)$:
+
+$$g^{a \oplus x} \neq g^a \oplus g^x \quad \text{in general}$$
+
+This contrasts with the FSCX map $A \mapsto M^i \cdot A + M \cdot S_i \cdot B$, which is $\mathbb{GF}(2)$-linear in $A$.
+
+#### 9.2.2 Protocol
+
+Pre-agreed public parameters: field size $n$, irreducible polynomial $p(x)$, generator $g \in \mathbb{GF}(2^n)^*$.
+
+| Step | Alice | Bob |
+|------|-------|-----|
+| Private | $a \xleftarrow{\$} \{1,\ldots,2^n{-}1\}$ | $b \xleftarrow{\$} \{1,\ldots,2^n{-}1\}$ |
+| Public | $C = g^a \in \mathbb{GF}(2^n)^*$ | $C_2 = g^b \in \mathbb{GF}(2^n)^*$ |
+| Shared | $sk = C_2^{\,a} = g^{ab}$ | $sk = C^{\,b} = g^{ab}$ |
+
+**Correctness proof:**
+
+$$C_2^{\,a} = (g^b)^a = g^{ba} = g^{ab} = (g^a)^b = C^{\,b} \qquad \blacksquare$$
+
+This holds by commutativity and associativity of multiplication in $\mathbb{GF}(2^n)^*$, which are ring axioms satisfied for any polynomial choice (irreducible or not). Irreducibility is required only for the group to be a field (every non-zero element invertible).
+
+#### 9.2.3 Why Eve's formula fails
+
+Eve's classical attack computes $sk_\text{eve} = S_{r+1} \cdot (C \oplus C_2)$.
+
+Under HKEX-GF, the public values $C = g^a$ and $C_2 = g^b$ are field elements whose XOR $C \oplus C_2 = g^a \oplus g^b$ has no algebraic relationship to $g^{ab}$. Specifically:
+
+$$S_{r+1} \cdot (g^a \oplus g^b) \neq g^{ab} \quad \text{in general}$$
+
+because $S_{r+1}$ is the $\mathbb{GF}(2)$-linear FSCX partial-sum operator acting on XOR-structured vectors, while $g^{ab}$ is determined by field multiplication — a different algebraic structure. The two cannot coincide except by accidental collision (probability $2^{-n}$), confirmed at $0/4000$ over all trials.
+
+#### 9.2.4 Security assumption
+
+The hardness of HKEX-GF reduces to the **Computational Diffie-Hellman (CDH)** problem in $\mathbb{GF}(2^n)^*$: given $g^a$ and $g^b$, compute $g^{ab}$.
+
+CDH in $\mathbb{GF}(2^n)^*$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^*$ is hard. Sub-exponential attacks (index calculus, function field sieve variants) exist for binary extension fields; practical parameters:
+
+| $n$ | Estimated classical security | Note |
+|-----|------------------------------|------|
+| 64  | ≪ 64 bits (demonstration only) | Sub-exponential attacks apply |
+| 128 | ≈ 60–80 bits | Marginal; for demos only |
+| 256 | ≈ 128 bits | Recommended minimum for real use |
+| 512 | ≈ 192+ bits | Conservative |
+
+For production use, elliptic curve Diffie-Hellman over a binary curve (or a prime-field ECDH) provides better security-per-bit. HKEX-GF as presented is a proof-of-concept demonstrating that the classical break is structurally avoidable.
+
+#### 9.2.5 FSCX period preserved
+
+FSCX, fscx\_revolve, and all symmetric protocols (HSKE, HPKS, HPKE) are **unchanged**. Their correctness proofs (Theorems 1–6, Corollaries 1–3) remain valid. The HKEX-GF key exchange produces $sk \in \mathbb{GF}(2^n)^*$, which is passed to HSKE/HPKS/HPKE as a pre-shared symmetric key — the existing interface.
+
+**Verified experimentally:** `fscx_revolve(fscx_revolve(P, K, i), K, r) = P` for $i + r = n$ holds at 4000/4000 trials across $n \in \{32, 64\}$ (Section I-D of `hkex_nl_proposal.py`).
+
+---
+
+### 9.3 FSCX-CY — Carry-Injection FSCX (Experimental)
+
+#### 9.3.1 Construction
+
+Define the **carry-injection** variant:
+
+$$\text{FSCX-CY}(A, B) = M\!\left((A + B) \bmod 2^n\right)$$
+
+where $+$ is ordinary integer addition (not $\oplus$), and $M = I \oplus \text{ROL}(1) \oplus \text{ROR}(1)$ is the standard FSCX linear operator.
+
+Compared to standard FSCX:
+
+$$\text{FSCX}(A, B) = M(A \oplus B), \qquad \text{FSCX-CY}(A, B) = M\!\left((A + B) \bmod 2^n\right)$$
+
+The difference is the **carry term**:
+
+$$\delta(A, B) = (A + B \bmod 2^n) \oplus (A \oplus B)$$
+
+which satisfies $\text{FSCX-CY}(A, B) = \text{FSCX}(A, B) \oplus M(\delta(A, B))$.
+
+**Operations used:** XOR, cyclic rotation, and integer addition (mod $2^n$) — all basic binary operations.
+
+#### 9.3.2 Non-linearity over $\mathbb{GF}(2)$
+
+**Claim.** For fixed $B \neq 0$, the map $A \mapsto \text{FSCX-CY}(A, B)$ is **not** $\mathbb{GF}(2)$-linear.
+
+**Proof.** A $\mathbb{GF}(2)$-linear map $f$ satisfies $f(A \oplus X) = f(A) \oplus f(X)$. For affine maps, $f(A \oplus X) = f(A) \oplus f(X) \oplus f(0)$. We test the affine condition:
+
+$$\text{FSCX-CY}(A \oplus X, B) \stackrel{?}{=} \text{FSCX-CY}(A, B) \oplus \text{FSCX-CY}(X, B) \oplus \text{FSCX-CY}(0, B)$$
+
+The left side equals $M((A \oplus X) + B \bmod 2^n)$. The right side, after simplification using $M$'s linearity, equals $M((A + B \bmod 2^n) \oplus (X + B \bmod 2^n) \oplus B)$. These differ precisely when the carry in $A + B$ and the carry in $X + B$ do not cancel uniformly — which occurs whenever $A \text{ AND } B \neq X \text{ AND } B$ modulo their carry chains. Experimentally: 4998/5000 random triples $(A, X, B)$ violate the affine condition. $\blacksquare$
+
+The carry term $\delta(A, B)$ encodes the full carry chain of $A + B$:
+
+$$\delta(A, B) = 2(A \mathbin{\text{AND}} B) \oplus 2(A \mathbin{\text{AND}} B \oplus A \mathbin{\text{XOR}} B \text{-carry}) \oplus \cdots$$
+
+involving AND operations at every bit position, which are products in $\mathbb{GF}(2)$ — hence non-linear.
+
+#### 9.3.3 HKEX-CY: why correctness fails
+
+The HKEX correctness identity relies on:
+
+$$A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B \tag{FSCX key relation}$$
+
+which follows from the affine closed form $f_B^k(A) = M^k \cdot A + M \cdot S_k \cdot B$ — a consequence of $\mathbb{GF}(2)$-linearity. When $f_B(A) = M((A+B) \bmod 2^n)$, no analogous closed form exists: the carry terms at each iteration step $j$ depend non-linearly on the current state $A_j$, which in turn depends on the private pair $(A, B)$.
+
+Consequently, the telescoping cancellation $M \cdot S_r + M^{r+1} \cdot S_i = S_n = 0$ has no equivalent under FSCX-CY, and $sk_\text{alice} \neq sk_\text{bob}$ in general.
+
+**Verified experimentally:** HKEX-CY with $n = 32$, $i = 8$, $r = 24$ gives $sk_\text{alice} = sk_\text{bob}$ in 0/2000 trials (Section II-C of `hkex_nl_proposal.py`).
+
+#### 9.3.4 HSKE-CY: period structure
+
+For HSKE, correctness requires the iterated map $g_K^T(P) = P$ for a fixed step count $T = i + r$. Under FSCX-CY, the functional period $T(K) = \text{lcm of all cycle lengths of } g_K$ is **key-dependent** and astronomically large:
+
+| $n$ | $K$ | FSCX period | FSCX-CY period |
+|-----|-----|-------------|----------------|
+| 8 | 0x00 | 4 | 4 |
+| 8 | 0x01 | 8 | 20 520 |
+| 8 | 0x7F | 8 | 188 404 |
+| 16 | 0x0001 | 16 | $\approx 1.14 \times 10^{20}$ |
+| 16 | 0x7FFF | 16 | $\approx 5.2 \times 10^{30}$ |
+
+The explosion in period length makes FSCX-CY unsuitable as a direct drop-in replacement for FSCX in HSKE: the encrypt/decrypt step count $T(K)$ would need to be computed per-key (computationally expensive) and would be astronomically large (impractical).
+
+The near-infinite periods are a consequence of the carry operator coupling all bit positions: the iterated map visits an enormous fraction of $\{0, \ldots, 2^n{-}1\}$ before returning to any starting point.
+
+#### 9.3.5 Eve's attack on FSCX-CY
+
+Eve applies $sk_\text{eve} = S_{r+1} \cdot (C \oplus C_2)$ to FSCX-CY public values.
+
+Under FSCX-CY, each public value $C = g_B^i(A)$ encodes private carry terms $\delta(A_j, B)$ accumulated over $i$ steps. These terms depend non-linearly on $(A, B)$ and cannot be separated from $C$ by any $\mathbb{GF}(2)$-linear operator. As a result, $S_{r+1} \cdot (C \oplus C_2) \neq sk_\text{alice}$ in general.
+
+**Verified experimentally:** Eve's formula succeeds 0/2000 times on FSCX-CY sessions (Section II-D of `hkex_nl_proposal.py`). Probability of accidental success $\approx 2^{-32}$ per trial.
+
+---
+
+### 9.4 Summary and Recommendation
+
+| Property | HKEX-GF | FSCX-CY |
+|----------|---------|---------|
+| Key-exchange correct | **Yes** (proved by field commutativity) | No (S_n = 0 has no carry analog) |
+| Non-linear over $\mathbb{GF}(2)$ | Yes (exponentiation) | Yes (carry term) |
+| Eve's $S_{r+1}(C \oplus C_2)$ fails | Yes (0/4 000 trials) | Yes (0/2 000 trials) |
+| Operations | XOR + left-shift | XOR + rotation + ADD |
+| FSCX period preserved | Yes (HSKE/HPKS/HPKE unchanged) | No (key-dependent, exponentially large) |
+| Security assumption | DLP in $\mathbb{GF}(2^n)^*$ | Unknown |
+| Copies a known cipher | No (DH is a key-exchange, not a cipher) | No |
+
+**Recommended fix.** Replace the HKEX key-exchange step with HKEX-GF. All symmetric protocols (HSKE, HPKS, HPKE) continue using standard FSCX with no changes. The period structure $M^n = I$, $S_n = 0$ remains valid; all correctness proofs (Theorems 1–6, Corollaries 1–3) are unaffected. The only change is in how the shared symmetric key $sk$ is established: via $\mathbb{GF}(2^n)$ DH rather than via FSCX iteration.
+
+**FSCX-CY as a direction.** Although FSCX-CY cannot replace FSCX directly, it demonstrates that carry-injection creates genuine non-linearity with a minimal code change (one operation: `A ^ B` → `(A + B) mod 2^n`). A future variant could use FSCX-CY for a symmetric cipher where the key-specific period $T(K)$ is precomputed and incorporated into the protocol design.
