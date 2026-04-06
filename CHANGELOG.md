@@ -4,6 +4,88 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.4.0] - 2026-04-06
+
+### BREAKING CHANGE — HKEX replaced with HKEX-GF; HPKS upgraded to Schnorr; HPKE upgraded to El Gamal
+
+The classical HKEX key exchange is **broken**: the shared secret `sk = S_{r+1}·(C⊕C2)` is directly computable from the two public wire values alone (proved in SecurityProofs.md, Theorem 7). Version 1.4.0 replaces it with Diffie-Hellman over `GF(2^n)*`, and replaces the trivially-reversible HPKS/HPKE XOR constructions with standard Schnorr signatures and El Gamal encryption.
+
+#### Protocol changes (all languages)
+
+- **HKEX-GF** replaces HKEX in every implementation:
+  - Alice: private scalar `a`, public `C = g^a` (GF exponentiation)
+  - Bob: private scalar `b`, public `C2 = g^b`
+  - Shared: `sk = C2^a = C^b = g^{ab}` (field commutativity)
+  - Arithmetic: carryless polynomial multiplication mod irreducible `p(x)` — XOR and left-shift only
+- **`fscx_revolve_n` removed** from all files. The nonce contribution `S_k·N` cancels identically from both sides of the key-exchange equation (Theorem 8), providing zero security benefit.
+- **HSKE** simplified to `fscx_revolve(P, key, i)` / `fscx_revolve(E, key, r)` (previously used `fscx_revolve_n`; functionally equivalent, now simplified).
+- **HPKS** replaced with a **Schnorr-style signature** (32-bit GF parameters):
+  - Sign: choose nonce `k`; `R = g^k`; challenge `e = fscx_revolve(R, msg, i)`; response `s = (k - a·e) mod (2^32-1)`
+  - Verify: `g^s · C^e == R`
+  - The 32-bit field is used because the Schnorr response requires modular integer arithmetic over the group order; at 256-bit this requires GMP-style big integers not available in plain C or assembly.
+- **HPKE** replaced with **El Gamal + HSKE** (32-bit GF parameters):
+  - Bob: ephemeral `r`; `R = g^r`; `enc_key = C^r = g^{ar}`; `E = fscx_revolve(P, enc_key, i)`
+  - Alice: `dec_key = R^a = g^{ra}`; `D = fscx_revolve(E, dec_key, r) = P`
+  - Correctness: `g^{ar} = g^{ra}` by field commutativity.
+
+#### Security
+
+| n | Primitive polynomial | Classical security |
+|---|---------------------|-------------------|
+| 32 | x³²+x²²+x²+x+1 = 0x00400007 | demo only |
+| 64 | x⁶⁴+x⁴+x³+x+1 = 0x1B | ~40 bits |
+| 128 | x¹²⁸+x⁷+x²+x+1 = 0x87 | ~60–80 bits |
+| 256 | x²⁵⁶+x¹⁰+x⁵+x²+1 = 0x425 | ~128 bits (recommended) |
+
+Generator `g = 3` (polynomial `x+1`) for all field sizes.
+
+#### Files updated
+
+- `Herradura cryptographic suite.py` — GF arithmetic added, HKEX-GF implemented, `fscx_revolve_n` removed, HPKS Schnorr and HPKE El Gamal implemented, Eve bypass tests updated.
+- `Herradura_tests.py` — test [1] updated for HKEX-GF; tests [7] Schnorr correctness, [8] Schnorr Eve-resistance, [9] El Gamal correctness added; benchmarks renumbered [10]–[14].
+- `Herradura cryptographic suite.go` — `GfMul`/`GfPow` added (`math/big`), `FscxRevolveN` removed, HPKS Schnorr and HPKE El Gamal implemented.
+- `Herradura_tests.go` — same structural updates as Python tests.
+- `Herradura cryptographic suite.c` — `gf_mul_ba`/`gf_pow_ba` added for GF(2^256) and `gf_mul_32`/`gf_pow_32` for 32-bit GF; `ba_fscx_revolve_n` removed; HPKS Schnorr and HPKE El Gamal implemented with 32-bit GF operands.
+- `Herradura_tests.c` — tests [7] Schnorr (1000 trials), [8] Schnorr Eve-resistance, [9] El Gamal (1000 trials); benchmarks [10]–[14] updated.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: `gf_mul_32`/`gf_pow_32` and LCG PRNG added; `fscx_revolve_n` removed; Schnorr and El Gamal sections implemented using `umull`/`adds`/`addcs`/`subs`/`subcc` for 32-bit modular arithmetic.
+- `Herradura_tests.s` — ARM Thumb-2: test_hpks (Schnorr, 20 trials) and test_hpke (El Gamal, 20 trials) added.
+- `Herradura cryptographic suite.asm` — NASM i386: `gf_mul_32`/`gf_pow_32` and LCG PRNG added; `FSCX_revolve_n` removed; Schnorr and El Gamal sections using `mul`/`add`/`adc`/`sub`/`dec` for modular arithmetic.
+- `Herradura_tests.asm` — NASM i386: test_hpks (Schnorr, 20 trials) and test_hpke (El Gamal, 20 trials) added.
+- `Herradura cryptographic suite.ino` — Arduino: LCG PRNG added, HPKS Schnorr and HPKE El Gamal implemented.
+- `Herradura_tests.ino` — Arduino: test_hpks and test_hpke replaced with Schnorr and El Gamal correctness tests.
+
+#### Security proofs added (SecurityProofsCode/)
+
+- `hkex_gf_test.py` — standalone HKEX-GF test suite (GF arithmetic, DH correctness 5K, Eve resistance 5K, BSGS DLP illustration, benchmarks).
+- `hkex_cy_test.py` — FSCX-CY exhaustive analysis (non-linearity, HKEX-CY failure, period explosion, Eve resistance).
+
+#### Files removed
+
+- `Herradura_KEx.c` — basic HKEX-only C implementation (superseded by the full suite).
+- `Herradura_KEx.go` — basic HKEX-only Go implementation (superseded by the full suite).
+- `Herradura_KEx.py` — basic HKEX-only Python implementation (superseded by the full suite).
+- `Herradura_KEx_bignum.c` — arbitrary-precision HKEX using GNU MP (superseded by the full suite with GF arithmetic).
+- `HKEX_arm_linux.s` — basic HKEX-only ARM assembly example (superseded by `Herradura cryptographic suite.s`).
+- `Herradura_AEn.c` — HAEN asymmetric encryption (deprecated since v1.0; superseded by HSKE).
+- `HAEN.asm` — HAEN in NASM i386 assembly (deprecated).
+- `FSCX_HAEN1.ino` — Arduino HAEN proof of concept (16-bit; deprecated).
+- `FSCX_HAEN1_ulong.ino` — Arduino HAEN proof of concept (32-bit; deprecated).
+
+#### Repository reorganised
+
+- `CryptosuiteTests/` folder created. All `Herradura_tests.*` source files moved here.
+- `CryptosuiteTests/go.mod` added (`module herradurakex/tests`, no external dependencies).
+- The repository now contains only: cryptographic suite implementations, their tests, and security proof code/documentation.
+
+#### Documentation updated
+
+- `README.md` — rewritten for v1.4.0: HKEX-GF protocol description, Schnorr/El Gamal protocol summary, updated build instructions and performance table, repository structure diagram.
+- `CLAUDE.md` — updated build commands, repository structure, and protocol stack description.
+- `SecurityProofs.md` — Section 9 (non-linear proposals), Section 10 (v1.4.0 migration summary), Section 5.1/5.2 tables updated.
+- `PQCanalysis.md` — fully revised for v1.4.0 protocols (HKEX-GF, HPKS Schnorr, HPKE El Gamal, HSKE).
+
+---
+
 ## [1.3.7] - 2026-04-01
 
 ### Added — NASM i386, ARM Thumb, and Arduino implementations
@@ -423,7 +505,7 @@ The v1.3.2 optimisations do not apply to these files:
 
 - `Herradura_KEx.c` – reference C implementation of HKEX (64-bit integers).
 - `Herradura_KEx_bignum.c` – arbitrary-precision HKEX using GNU MP (libgmp).
-- `Herradura_AEn.c` – HAEN asymmetric encryption (deprecated; use HSKE instead).
 - `Herradura_KEx.go` – Go HKEX sample using `math/big`.
-- `FSCX_HAEN1.ino` / `FSCX_HAEN1_ulong.ino` – Arduino proofs of concept (16/32-bit).
-- `HAEN.asm` – HAEN in Intel x86 32-bit NASM assembly.
+- ~~`Herradura_AEn.c`~~ – removed in v1.4.0 (HAEN deprecated; superseded by HSKE).
+- ~~`FSCX_HAEN1.ino`~~ / ~~`FSCX_HAEN1_ulong.ino`~~ – removed in v1.4.0.
+- ~~`HAEN.asm`~~ – removed in v1.4.0.

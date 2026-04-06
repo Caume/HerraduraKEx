@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.3.2
+/*  Herradura Cryptographic Suite v1.4.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,45 +17,43 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.4.0: HKEX-GF (Diffie-Hellman over GF(2^n)*) ---
+
+    The broken fscx_revolve_n-based HKEX is replaced with HKEX-GF: a correct
+    Diffie-Hellman key exchange over the multiplicative group GF(2^n)*.
+
+    FscxRevolveN has been removed entirely from all protocol code.
+
+    HKEX-GF protocol:
+    - Pre-agreed: generator g=3 (polynomial x+1), irreducible poly p(x)
+    - Alice: private scalar a -> public C = g^a in GF(2^n)*
+    - Bob:   private scalar b -> public C2 = g^b
+    - Shared key: sk = C2^a = C^b = g^{ab}  (DH commutativity in GF(2^n)*)
+    Security rests on the hardness of DLP in GF(2^n)*, not on orbit structure.
+
+    Protocol stack:
+    - HKEX: replaced with GF DH (above)
+    - HSKE: FscxRevolve(P, key, i) / FscxRevolve(E, key, r) — unchanged
+    - HPKS: Schnorr-like signature with FscxRevolve challenge.
+            Sign:   k random; R=g^k; e=FscxRevolve(R,P,I); s=(k-a*e) mod ord
+            Verify: g^s * C^e == R  (public key C = g^a; anyone can verify)
+    - HPKE: El Gamal + FscxRevolve.
+            Bob: r ephemeral; R=g^r; enc_key=C^r=g^{ar}; E=FscxRevolve(P,enc_key,I)
+            Alice: dec_key=R^a=g^{ar}; D=FscxRevolve(E,dec_key,R)==P
+
     --- v1.3.2: performance and readability ---
 
     - Fscx: rewritten without parameter shadowing; each term maps directly
       to the formula A⊕B⊕ROL(A)⊕ROL(B)⊕ROR(A)⊕ROR(B).
-    - FscxRevolve / FscxRevolveN: renamed from Fscx_revolve / Fscx_revolve_n
-      to follow Go's idiomatic PascalCase naming convention (consistent with
-      the tests file).
+    - FscxRevolve: renamed from Fscx_revolve to follow Go's PascalCase convention.
     - NewRandBitArray: renamed from New_rand_bitarray for the same reason.
-    - Local variables in main: renamed to camelCase (iValue, rValue, hkexNonce).
-    - Version header updated to v1.3.
+    - Local variables in main: renamed to camelCase.
+    - Version header updated to v1.4.0.
 
     --- v1.3: BitArray (multi-byte parameter support) ---
 
     The Go implementation now uses 256-bit parameters by default, matching
     the C and Python versions at the same bit width.
-
-    --- v1.1: FSCX_REVOLVE_N ---
-
-    v1.1 introduces FSCX_REVOLVE_N: a nonce-augmented variant of FSCX_REVOLVE
-    where each iteration XORs a nonce N after the FSCX step:
-        result = FSCX(result, B) ⊕ N
-
-    This converts the purely linear GF(2) function to affine, breaking linearity
-    while preserving the HKEX equality and orbit properties.
-
-    Nonce derivation (no new secrets):
-    - For HKEX, HPKS, HPKE: hkex_nonce = C ⊕ C2  — computable from the public key
-      (C is in the public key; C2 = fscx_revolve(A2, B2, i) can be computed from
-      A2, B2 also in the public key)
-    - For HSKE: N = preshared key — the key is injected at every revolve step,
-      not just at input/output boundaries
-
-    Mathematical proof that HKEX equality is preserved:
-    The HKEX equality
-        FSCX_REVOLVE_N(C2, B, N, r) ⊕ A = FSCX_REVOLVE_N(C, B2, N, r) ⊕ A2
-    holds because when you expand with C = FSCX_REVOLVE(A, B, i) and
-    C2 = FSCX_REVOLVE(A2, B2, i), and use L^(r+i) = I (since r+i=P), the
-    condition reduces to L^r(T_i(Z)) = T_r(Z) — the same condition as without
-    the nonce. N cancels identically from both sides.
 */
 
 package main
@@ -161,122 +159,146 @@ func FscxRevolve(a, b *BitArray, steps int, verbose bool) *BitArray {
 	return result
 }
 
-// FscxRevolveN is the nonce-augmented variant (v1.1).
-// Each step: result = Fscx(result, b) ⊕ nonce
-// Breaks the pure GF(2)-linearity of FscxRevolve while preserving the HKEX
-// equality and orbit properties. The HKEX equality holds for any nonce value
-// because N cancels from both sides of the protocol equality condition.
-func FscxRevolveN(a, b, nonce *BitArray, steps int, verbose bool) *BitArray {
-	result := a
-	for i := 1; i <= steps; i++ {
-		result = Fscx(result, b).Xor(nonce)
-		if verbose {
-			fmt.Printf("Step %d: %x\n", i, result)
+// ---------------------------------------------------------------------------
+// GF(2^n) field arithmetic — XOR + left-shift using big.Int
+// ---------------------------------------------------------------------------
+
+// gfPoly maps bit-width to irreducible polynomial (lower n bits; x^n implicit).
+var gfPoly = map[int]*big.Int{
+	32:  new(big.Int).SetUint64(0x00400007),
+	64:  new(big.Int).SetUint64(0x0000001B),
+	128: new(big.Int).SetUint64(0x00000087),
+	256: new(big.Int).SetUint64(0x00000425),
+}
+
+const gfGen = 3 // g = x+1 in GF(2^n)[x]
+
+// GfMul multiplies a and b in GF(2^n) using carryless polynomial multiplication
+// modulo the irreducible polynomial poly, with field size n bits.
+func GfMul(a, b, poly *big.Int, n int) *big.Int {
+	result := new(big.Int)
+	aCopy := new(big.Int).Set(a)
+	bCopy := new(big.Int).Set(b)
+	mask := bitArrayMask(n)
+	one := big.NewInt(1)
+	for i := 0; i < n; i++ {
+		if new(big.Int).And(bCopy, one).Sign() != 0 {
+			result.Xor(result, aCopy)
 		}
+		carry := new(big.Int).And(new(big.Int).Rsh(aCopy, uint(n-1)), one).Sign() != 0
+		aCopy.And(new(big.Int).Lsh(aCopy, 1), mask)
+		if carry {
+			aCopy.Xor(aCopy, poly)
+		}
+		bCopy.Rsh(bCopy, 1)
+	}
+	return result
+}
+
+// GfPow computes base^exp in GF(2^n)* via repeated squaring.
+func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
+	result := big.NewInt(1)
+	bCopy := new(big.Int).Set(base)
+	eCopy := new(big.Int).Set(exp)
+	one := big.NewInt(1)
+	for eCopy.Sign() > 0 {
+		if new(big.Int).And(eCopy, one).Sign() != 0 {
+			result = GfMul(result, bCopy, poly, n)
+		}
+		bCopy = GfMul(bCopy, bCopy, poly, n)
+		eCopy.Rsh(eCopy, 1)
 	}
 	return result
 }
 
 /*
-let,    Alice, Bob: i + r == bitlength b;  i == 1/4 bitlength; r == 3/4 bitlength; bitlength is a power of 2 >= 8
-		P be a plaintext message of bitlength b,
-		E the encrypted version of plaintext P,
-		D == P the decrypted version of E.
-let,    Alice: A,B be random values of bitlength b,
-		Bob: A2,B2 be random values of bitlength b
-let,    Alice: C = fscx_revolve(A, B, i) ,
-		Bob: C2 = fscx_revolve(A2, B2, i)
-then,   Alice: D = fscx_revolve(C2, B, r) ^ A ,
-		Bob: D2 = fscx_revolve(C, B2, r) ^ A2
-where,  Alice, Bob: D == D2
-then,   fscx_revolve(C2, B, r) ^ A  == fscx_revolve(C, B2, r) ^ A2,
-		fscx_revolve(C2, B, r) ^ A ^ P == fscx_revolve(C, B2, r) ^ A2 ^ P,
-		fscx_revolve(C2, B, R) ^ A ^ A2 ^ P == fscx_revolve(C, B2, r)  ^ P #Note that this form breaks trapdoor
-also,   fscx_revolve(C2, B, r) ^ A  ^ P == fscx_revolve(C2 ^ P, B, r) ^ A
-
-let,    public key => {C,B2,A2,r},
-		private key => {C2,B,A,r}
-then,   E = fscx_revolve(C, B2, r) ^ A2  ^ P,
-		P == (D = fscx_revolve(C2, B, r) ^ A ^ E)
-
-let,    E = fscx_revolve(C2, B, r) ^ A  ^ P
-then,   fscx_revolve(E, B2, i) ^ A2 ^ P  == 0
-		fscx_revolve(E ^ P, B2, i) == 0
-
-HKEX (key exchange)
-	Alice:  C = fscx_revolve(A,B,i)
-			send C to Bob and get C2
-			shared_key = fscx_revolve(C2, B, r) ^ A,
-	Bob:    C2 = fscx_revolve(A2,B2,i)
-			send C2 to Alice and get C
-			shared_key => fscx_revolve(C, B2, r) ^ A2
+HKEX-GF (key exchange over GF(2^n)*)
+    Pre-agreed: generator g=gfGen, irreducible polynomial gfPoly[n]
+    Alice:  private scalar a (random n-bit integer)
+            C = g^a in GF(2^n)*
+            send C to Bob and receive C2
+            sk = C2^a in GF(2^n)*
+    Bob:    private scalar b (random n-bit integer)
+            C2 = g^b in GF(2^n)*
+            send C2 to Alice and receive C
+            sk = C^b in GF(2^n)*
+    Result: C2^a = (g^b)^a = g^{ab} = (g^a)^b = C^b
 
 HSKE (symmetric key encryption):
-	Alice,Bob:  share key of bitlength b
-	Alice:  E = fscx_revolve(P , key , i)
-			shares E with Bob
-	Bob:    P = fscx_revolve(E , key , r)
+    Alice,Bob:  share preshared key of bitlength n
+    Alice:  E = FscxRevolve(P, key, i)
+            shares E with Bob
+    Bob:    P = FscxRevolve(E, key, r)
 
-HPKS (public key signature)
-	Alice:  C = fscx_revolve(A,B,i)
-			C2 = fscx_revolve(A2,B2,i)
-			{publish (C,B2,A2,r) as public key, also disclose b,r,i; keep the rest of parameters (C2,B,A) as private key},
-			S = fscx_revolve(C2, B, r) ^ A ^ P
-			shares E, S with Bob
-	Bob:    P = fscx_revolve(C,B2, r) ^ A2  ^ S
+HPKS (Schnorr-like public key signature — publicly verifiable)
+    Alice:  private scalar a (integer), public C = g^a
+    Sign(P):
+      k  = random nonce scalar
+      R  = g^k  in GF(2^n)*                           (commitment)
+      e  = FscxRevolve(R_bits, P, I_VALUE)             (challenge via FscxRevolve)
+      s  = (k - a * e) mod (2^n - 1)                  (Schnorr response)
+      signature = (R, s)
+    Verify(P, C, sig=(R, s)):
+      e  = FscxRevolve(R_bits, P, I_VALUE)             (recompute challenge)
+      check: g^s * C^e == R  in GF(2^n)*
+    Correctness: g^s * C^e = g^{k-ae} * g^{ae} = g^k = R  ✓
+    Security: forging (R, s) without a requires solving DLP for C = g^a.
 
-HPKE (public key encryption)
-	Alice:  C = fscx_revolve(A,B,i),
-			C2 = fscx_revolve(A2,B2,i),
-			{publish (C,B2,A2,r) as public key, keep the rest of parameters as private key},
-	Bob:    E = fscx_revolve(C, B2, r) ^ A2  ^ P
-			shares E with Alice
-	Alice:  P = fscx_revolve(C2, B, r) ^ A ^ E
+HPKE (public key encryption — El Gamal + FscxRevolve)
+    Alice:  private scalar a, public C = g^a
+    Bob:    picks ephemeral r; R = g^r  (ephemeral public)
+            enc_key = C^r = g^{ar}     (from Alice's public + Bob's ephemeral private)
+            E = FscxRevolve(P, enc_key, I_VALUE)
+            sends (R, E) to Alice
+    Alice:  dec_key = R^a = g^{ra} = enc_key
+            D = FscxRevolve(E, dec_key, R_VALUE) == P
+    Security: Eve has (C, R, E). Deriving enc_key = g^{ar} from g^a and g^r is CDH.
 */
 
 func main() {
-	// Example Usage (256-bit parameters):
-	iValue := 64  // i = KEYBITS/4
-	rValue := 192 // r = 3*KEYBITS/4
+	const n = 256
+	iValue := n / 4   // 64
+	rValue := 3 * n / 4 // 192
 
-	A := NewRandBitArray(256)
-	B := NewRandBitArray(256)
-	A2 := NewRandBitArray(256)
-	B2 := NewRandBitArray(256)
-	nonce := NewRandBitArray(256)
-	preshared := NewRandBitArray(256)
-	plaintext := NewRandBitArray(256)
+	poly := gfPoly[n]
+	g := big.NewInt(gfGen)
 
-	C := FscxRevolve(A, B, iValue, false)
-	C2 := FscxRevolve(A2, B2, iValue, false)
-	hkexNonce := C.Xor(C2) // N = C ⊕ C2: session-specific nonce (computable from public key)
+	// ORD = 2^n - 1  (group order of GF(2^n)* for Schnorr integer arithmetic)
+	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), n), big.NewInt(1))
 
-	fmt.Printf("A         : %x\n", A)
-	fmt.Printf("B         : %x\n", B)
-	fmt.Printf("A2        : %x\n", A2)
-	fmt.Printf("B2        : %x\n", B2)
+	a         := NewRandBitArray(n)   // Alice's private scalar
+	b         := NewRandBitArray(n)   // Bob's private scalar
+	preshared := NewRandBitArray(n)
+	plaintext := NewRandBitArray(n)
+	decoy     := NewRandBitArray(n)   // Eve's random value (cannot compute sk)
+
+	// HKEX-GF key exchange
+	C  := &BitArray{size: n}; C.val.Set(GfPow(g, &a.val, poly, n))
+	C2 := &BitArray{size: n}; C2.val.Set(GfPow(g, &b.val, poly, n))
+	sk := &BitArray{size: n}; sk.val.Set(GfPow(&C2.val, &a.val, poly, n))
+	skBob := &BitArray{size: n}; skBob.val.Set(GfPow(&C.val, &b.val, poly, n))
+
+	fmt.Printf("a         : %x\n", a)
+	fmt.Printf("b         : %x\n", b)
 	fmt.Printf("preshared : %x\n", preshared)
 	fmt.Printf("plaintext : %x\n", plaintext)
-	fmt.Printf("nonce     : %x\n", nonce)
+	fmt.Printf("decoy     : %x\n", decoy)
 	fmt.Printf("C         : %x\n", C)
 	fmt.Printf("C2        : %x\n", C2)
-	fmt.Printf("hkex_nonce: %x\n", hkexNonce)
 
-	fmt.Printf("\n--- HKEX (key exchange)\n")
-	skeyA := FscxRevolveN(C2, B, hkexNonce, rValue, false).Xor(A)
-	fmt.Printf("skeyA (Alice): %x\n", skeyA)
-	skeyB := FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2)
-	fmt.Printf("skeyB (Bob)  : %x\n", skeyB)
-	if skeyA.Equal(skeyB) {
-		fmt.Printf("+ session keys skeyA and skeyB are equal!\n")
+	fmt.Printf("\n--- HKEX-GF (key exchange over GF(2^%d)*)\n", n)
+	fmt.Printf("sk (Alice): %x\n", sk)
+	fmt.Printf("sk (Bob)  : %x\n", skBob)
+	if sk.Equal(skBob) {
+		fmt.Printf("+ session keys sk (Alice) and sk (Bob) are equal!\n")
 	} else {
-		fmt.Printf("- session keys skeyA and skeyB are different!\n")
+		fmt.Printf("- session keys sk (Alice) and sk (Bob) are different!\n")
 	}
 
 	fmt.Printf("\n--- HSKE (symmetric key encryption)\n")
-	E := FscxRevolveN(plaintext, preshared, preshared, iValue, false)
+	E := FscxRevolve(plaintext, preshared, iValue, false)
 	fmt.Printf("E (Alice) : %x\n", E)
-	D := FscxRevolveN(E, preshared, preshared, rValue, false)
+	D := FscxRevolve(E, preshared, rValue, false)
 	fmt.Printf("D (Bob)   : %x\n", D)
 	if D.Equal(plaintext) {
 		fmt.Printf("+ plaintext is correctly decrypted from E with preshared key\n")
@@ -284,113 +306,99 @@ func main() {
 		fmt.Printf("- plaintext is different from decrypted E with preshared key!\n")
 	}
 
-	fmt.Printf("\n--- HPKS (public key signature)\n")
-	S := FscxRevolveN(C2, B, hkexNonce, rValue, false).Xor(A).Xor(plaintext)
-	fmt.Printf("S (Alice) : %x\n", S)
-	V := FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(S) // == plaintext
-	fmt.Printf("V (Bob)   : %x\n", V)
-	if V.Equal(plaintext) {
-		fmt.Printf("+ signature S from plaintext is correct!\n")
+	fmt.Printf("\n--- HPKS (Schnorr-like signature: sign with private, verify with public key)\n")
+	// Sign: Alice picks nonce k, commitment R=g^k,
+	//       challenge e = FscxRevolve(R, P, I),  response s = (k - a*e) mod ord
+	kS  := NewRandBitArray(n)
+	RS  := &BitArray{size: n}; RS.val.Set(GfPow(g, &kS.val, poly, n))
+	eS  := FscxRevolve(RS, plaintext, iValue, false)  // challenge via FscxRevolve
+	ae  := new(big.Int).Mul(&a.val, &eS.val)
+	sS  := new(big.Int).Mod(new(big.Int).Sub(&kS.val, ae), ord) // Schnorr response
+	fmt.Printf("R (commit): %x\n", RS)
+	fmt.Printf("e (fscx)  : %x\n", eS)
+	fmt.Printf("s (resp)  : %0*x\n", n/4, sS)
+	// Verify: anyone with Alice's public key C checks g^s * C^e == R
+	eV  := FscxRevolve(RS, plaintext, iValue, false)
+	lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&C.val, &eV.val, poly, n), poly, n)
+	if lhs.Cmp(&RS.val) == 0 {
+		fmt.Printf("+ Schnorr verified: g^s · C^e == R  [public key sufficient]\n")
 	} else {
-		fmt.Printf("- signature S from plaintext is incorrect!\n")
+		fmt.Printf("- Schnorr verification failed!\n")
 	}
 
-	fmt.Printf("\n--- HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n")
-	E = FscxRevolveN(plaintext, preshared, preshared, iValue, false)
-	fmt.Printf("E (Alice) : %x\n", E)
-	S = FscxRevolveN(C2, B, hkexNonce, rValue, false).Xor(A).Xor(E) // A+B2+C is the trapdoor for deceiving EVE
-	fmt.Printf("S (Alice) : %x\n", S)
-	V = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(S) // == encryptedText
-	fmt.Printf("V (Bob)   : %x\n", V)
-	D = FscxRevolveN(V, preshared, preshared, rValue, false) // => plaintext
-	fmt.Printf("D (Bob)   : %x\n", D)
-	if D.Equal(plaintext) {
-		fmt.Printf("+ signature S(E) from plaintext is correct!\n")
+	fmt.Printf("\n--- HPKS (Schnorr) + HSKE: Alice signs the HSKE ciphertext; Bob verifies then decrypts\n")
+	EHs := FscxRevolve(plaintext, preshared, iValue, false)  // HSKE: Alice encrypts P
+	kHs := NewRandBitArray(n)
+	RHs := &BitArray{size: n}; RHs.val.Set(GfPow(g, &kHs.val, poly, n))
+	eHs := FscxRevolve(RHs, EHs, iValue, false)              // challenge over ciphertext
+	aeH := new(big.Int).Mul(&a.val, &eHs.val)
+	sHs := new(big.Int).Mod(new(big.Int).Sub(&kHs.val, aeH), ord)
+	fmt.Printf("E (HSKE)  : %x\n", EHs)
+	fmt.Printf("R (commit): %x\n", RHs)
+	fmt.Printf("s (resp)  : %0*x\n", n/4, sHs)
+	// Bob verifies Schnorr on E, then decrypts via HSKE
+	eHv  := FscxRevolve(RHs, EHs, iValue, false)
+	lhsH := GfMul(GfPow(g, sHs, poly, n), GfPow(&C.val, &eHv.val, poly, n), poly, n)
+	DHs  := FscxRevolve(EHs, preshared, rValue, false)  // HSKE: Bob decrypts
+	fmt.Printf("D (Bob)   : %x\n", DHs)
+	if lhsH.Cmp(&RHs.val) == 0 && DHs.Equal(plaintext) {
+		fmt.Printf("+ Schnorr on ciphertext verified; plaintext decrypted correctly!\n")
 	} else {
-		fmt.Printf("- signature S(E) from plaintext is incorrect!\n")
+		fmt.Printf("- Schnorr verification or decryption failed!\n")
 	}
 
-	fmt.Printf("\n--- HPKE (public key encryption)\n")
-	E = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(plaintext)
-	fmt.Printf("E (Bob)   : %x\n", E)
-	D = FscxRevolveN(C2, B, hkexNonce, rValue, false).Xor(A).Xor(E) // == plaintext
-	fmt.Printf("D (Alice) : %x\n", D)
-	if D.Equal(plaintext) {
-		fmt.Printf("+ plaintext is correctly decrypted from E with private key!\n")
+	fmt.Printf("\n--- HPKE (public key encryption, El Gamal + FscxRevolve)\n")
+	// Bob generates ephemeral key pair; derives enc_key from Alice's public C
+	r      := NewRandBitArray(n)
+	R      := &BitArray{size: n}; R.val.Set(GfPow(g, &r.val, poly, n))
+	encKey := &BitArray{size: n}; encKey.val.Set(GfPow(&C.val, &r.val, poly, n)) // C^r = g^{ar}
+	EHpke  := FscxRevolve(plaintext, encKey, iValue, false)  // Bob encrypts
+	fmt.Printf("r   (Bob eph priv): %x\n", r)
+	fmt.Printf("R   (Bob eph pub) : %x\n", R)
+	fmt.Printf("E   (Bob)         : %x\n", EHpke)
+	// Alice derives the same enc_key using her private scalar a and Bob's ephemeral public R
+	decKey := &BitArray{size: n}; decKey.val.Set(GfPow(&R.val, &a.val, poly, n)) // R^a = g^{ra}
+	DHpke  := FscxRevolve(EHpke, decKey, rValue, false)  // Alice decrypts
+	fmt.Printf("D   (Alice)       : %x\n", DHpke)
+	if DHpke.Equal(plaintext) {
+		fmt.Printf("+ plaintext is correctly decrypted from E with Alice's private key!\n")
 	} else {
 		fmt.Printf("- plaintext is different from decrypted E with private key!\n")
 	}
 
 	fmt.Printf("\n\n*** EVE bypass TESTS\n")
-	fmt.Printf("*** HPKS (public key signature)\n")
-	S = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(nonce) // w/o A+A2+C2 Eve would be forced to brute force
-	fmt.Printf("S (Eve)   : %x\n", S)
-	V = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2) // X
-	fmt.Printf("V (Bob)   : %x\n", V)
-	if V.Equal(nonce) {
-		fmt.Printf("+ nonce fake signature 1 verification with Alice public key is correct!\n")
+	fmt.Printf("*** HPKS Schnorr — Eve cannot forge without knowing Alice's private key a\n")
+	// Eve wants to forge (R_eve, s_eve) for decoy so that g^{s_eve} * C^{e_eve} == R_eve
+	// where e_eve = FscxRevolve(R_eve, decoy, I).  Without a, Eve can't compute s_eve.
+	// Eve's attempt: pick a random R_eve and a random s_eve, hope the equation holds.
+	REve   := &BitArray{size: n}
+	REve.val.Set(GfPow(g, &NewRandBitArray(n).val, poly, n))
+	eEve   := FscxRevolve(REve, decoy, iValue, false)
+	sEve   := new(big.Int).Set(&NewRandBitArray(n).val)   // random guess — Eve doesn't know a
+	lhsEve := GfMul(GfPow(g, sEve, poly, n), GfPow(&C.val, &eEve.val, poly, n), poly, n)
+	lhsEveBA := &BitArray{size: n}; lhsEveBA.val.Set(lhsEve)
+	fmt.Printf("R_eve (Eve)  : %x\n", REve)
+	fmt.Printf("lhs_eve      : %x\n", lhsEveBA)
+	fmt.Printf("match R_eve? : %v\n", lhsEve.Cmp(&REve.val) == 0)
+	if lhsEve.Cmp(&REve.val) == 0 {
+		fmt.Printf("+ Eve forged Schnorr signature (Eve wins)!\n")
 	} else {
-		fmt.Printf("- nonce fake signature 1 verification with Alice public key is incorrect!\n")
-	}
-	S2 := V.Xor(nonce)
-	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 := FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(S2) // KK
-	fmt.Printf("V2 (Bob)  : %x\n", V2)
-	if V2.Equal(nonce) {
-		fmt.Printf("+ nonce fake signature 2 verification with Alice public key is correct!\n")
-	} else {
-		fmt.Printf("- nonce fake signature 2 verification with Alice public key is incorrect!\n")
-	}
-
-	fmt.Printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public\n")
-	E = FscxRevolveN(nonce, preshared, preshared, iValue, false)
-	fmt.Printf("E (Eve)   : %x\n", E)
-	S = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(E) // w/o A+B2+C Eve would be forced to brute force
-	fmt.Printf("S (Eve)   : %x\n", S)
-	V = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2) // X
-	fmt.Printf("V (Eve)   : %x\n", V)
-	S2 = V.Xor(S)
-	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(S2) // KK
-	fmt.Printf("V2 (Bob)  : %x\n", V2)
-	D = FscxRevolveN(V2, preshared, preshared, rValue, false)
-	fmt.Printf("D (Bob)   : %x\n", D) // X
-	if D.Equal(nonce) {
-		fmt.Printf("+ fake signature(encrypted nonce) verification with Alice public key is correct!\n")
-	} else {
-		fmt.Printf("- fake signature(encrypted nonce) verification with Alice public key is incorrect!\n")
+		fmt.Printf("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)\n")
 	}
 
-	fmt.Printf("\n*** HPKS (public key signature) + HSKE (symmetric key encryption) with preshared key made public - v2\n")
-	S = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(nonce) // w/o A+B2+C Eve would be forced to brute force
-	fmt.Printf("S (Eve)   : %x\n", S)
-	E = FscxRevolveN(S, preshared, preshared, iValue, false)
-	fmt.Printf("E (Eve)   : %x\n", E)
-	V = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2) // X
-	fmt.Printf("V (Eve)   : %x\n", V)
-	S2 = V.Xor(E)
-	fmt.Printf("S2 (Eve)  : %x\n", S2)
-	V2 = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(S2) // KK
-	fmt.Printf("V2 (Bob)  : %x\n", V2)
-	D = FscxRevolveN(V2, preshared, preshared, rValue, false)
-	fmt.Printf("D (Bob)   : %x\n", D) // X
-	if D.Equal(nonce) {
-		fmt.Printf("+ fake signature(encrypted nonce) v2 verification with Alice public key is correct!\n")
+	fmt.Printf("\n*** HPKE — Eve cannot decrypt without Alice's private key\n")
+	// Bob encrypted with enc_key = C^r = g^{ar}; sent (R, E).
+	// Eve intercepts (R, E) and knows public values (C, R).
+	// Eve's best attempt: use C XOR R as a key guess (no math, just public combination).
+	eveKeyGuess := C.Xor(R)
+	fmt.Printf("R (Bob eph pub)  : %x\n", R)
+	fmt.Printf("E (ciphertext)   : %x\n", EHpke)
+	fmt.Printf("Eve key guess    : %x\n", eveKeyGuess)
+	DEve := FscxRevolve(EHpke, eveKeyGuess, rValue, false)
+	fmt.Printf("D_eve (Eve)      : %x\n", DEve)
+	if DEve.Equal(plaintext) {
+		fmt.Printf("+ Eve decrypted plaintext (Eve wins)!\n")
 	} else {
-		fmt.Printf("- fake signature(encrypted nonce) v2 verification with Alice public key is incorrect!\n")
-	}
-
-	fmt.Printf("\n*** HPKE (public key encryption)\n")
-	E = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2).Xor(plaintext) // w/o A+B2+C Eve would be forced to brute force
-	fmt.Printf("E (Bob)   : %x\n", E)
-	D = FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(A2) // X
-	fmt.Printf("D (Eve)   : %x\n", D)
-	E2 := D.Xor(E)
-	D2 := FscxRevolveN(C, B2, hkexNonce, rValue, false).Xor(E2) // KK
-	fmt.Printf("D2 (Eve)  : %x\n", D2)
-	if D.Equal(nonce) || D2.Equal(nonce) {
-		fmt.Printf("+ Eve could decrypt plaintext without Alice's private key!\n")
-	} else {
-		fmt.Printf("- Eve could not decrypt plaintext without Alice's private key!\n")
+		fmt.Printf("- Eve could not decrypt without Alice's private key (CDH protection holds)\n")
 	}
 }

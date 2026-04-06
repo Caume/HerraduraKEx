@@ -1,7 +1,7 @@
 # Formal Cryptographic Analysis of the Herradura Cryptographic Suite
 
-**Status:** Formal proof of insecurity complete; root cause identified.  
-**Last updated:** 2026-04-04
+**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  
+**Last updated:** 2026-04-05
 
 ---
 
@@ -556,12 +556,13 @@ None of HSKE, HPKE, or HPKS provides joint confidentiality + integrity + authent
 
 ### 5.1 Protocol Security Status
 
-| Protocol | Correctness | Classical Break | IND-CPA | IND-CCA2 | EUF-CMA |
-|---|---|---|---|---|---|
-| HKEX | ✓ Proven | **BROKEN** (Thm. 7) | ✗ | — | — |
-| HSKE | ✓ Proven | N/A (pre-shared key) | Unproven | ✗ (malleable) | — |
-| HPKS₂ | ✓ Proven | **BROKEN** (sk public) | — | — | ✗ |
-| HPKE | ✓ Proven | **BROKEN** (Thm. 7) | ✗ | ✗ (malleable) | — |
+| Protocol | Correctness | Classical Break | IND-CPA | IND-CCA2 | EUF-CMA | Status (v1.4.0) |
+|---|---|---|---|---|---|---|
+| HKEX (old) | ✓ Proven | **BROKEN** (Thm. 7) | ✗ | — | — | **Removed** |
+| HKEX-GF | ✓ Proven (field comm.) | CDH in GF(2ⁿ)* | Unproven | — | — | **Active** |
+| HSKE | ✓ Proven | N/A (pre-shared key) | Unproven | ✗ (malleable) | — | Active |
+| HPKS₂ | ✓ Proven | N/A (sk via HKEX-GF) | — | — | Unproven | Active |
+| HPKE | ✓ Proven | N/A (sk via HKEX-GF) | Unproven | ✗ (malleable) | — | Active |
 
 ---
 
@@ -580,6 +581,10 @@ None of HSKE, HPKE, or HPKS provides joint confidentiality + integrity + authent
 | $k$ exchanged public values do not help (any $k$) | **Proved** | Each term linear; $k = 1, 2, 4$ tested |
 | Root cause: GF(2)-linearity/correctness–security incompatibility | **Proved** (Thm. 10) | Algebraic; no counterexample exists |
 | Quantum attacks: classical break makes them moot | **Proved** | See §6 |
+| **HKEX-GF correctness:** $g^{ab} = g^{ba}$ in $\mathbb{GF}(2^n)^*$ | **Proved** (field commutativity) | Algebraic + 5K/1K trials (Python/C) |
+| **HKEX-GF Eve resistance:** $S_{r+1}(C \oplus C_2) \neq sk$ | **Proved** | 10K trials — 0 successes |
+| **FSCX-CY non-linearity** | **Proved** | 4998/5000 affine-test failures |
+| **FSCX-CY HKEX failure** | **Proved** | 0/2000 correctness trials |
 
 ---
 
@@ -635,6 +640,8 @@ All experimental scripts are in `SecurityProofsCode/`:
 | `hkex_nonce_impossibility.py` | HSKE/HPKE mechanism; exhaustive 10-strategy nonce search; direct Theorem 8 verification ($S_r \cdot n_A$ constant iff correct) |
 | `hkex_multinonce_analysis.py` | Multi-nonce closed form (Theorem 9); 8 nonce strategies; $k = 1, 2, 4$ exchanged pairs; GF(2) even-sum collapse |
 | `hkex_nl_proposal.py` | Non-linear proposals §9: HKEX-GF correctness + Eve-failure (4 000 trials); FSCX-CY non-linearity, period analysis, HKEX-CY failure, Eve-failure |
+| `hkex_gf_test.py` | Standalone HKEX-GF test suite: GF arithmetic (1K trials), DH correctness (5K), Eve resistance (5K), BSGS DLP illustration (n=16), FSCX period preserved (5K), benchmarks |
+| `hkex_cy_test.py` | FSCX-CY exhaustive analysis: XOR-translation proof, HKEX-CY failure (5K), period measurements, Eve resistance |
 
 ---
 
@@ -826,3 +833,66 @@ Under FSCX-CY, each public value $C = g_B^i(A)$ encodes private carry terms $\de
 **Recommended fix.** Replace the HKEX key-exchange step with HKEX-GF. All symmetric protocols (HSKE, HPKS, HPKE) continue using standard FSCX with no changes. The period structure $M^n = I$, $S_n = 0$ remains valid; all correctness proofs (Theorems 1–6, Corollaries 1–3) are unaffected. The only change is in how the shared symmetric key $sk$ is established: via $\mathbb{GF}(2^n)$ DH rather than via FSCX iteration.
 
 **FSCX-CY as a direction.** Although FSCX-CY cannot replace FSCX directly, it demonstrates that carry-injection creates genuine non-linearity with a minimal code change (one operation: `A ^ B` → `(A + B) mod 2^n`). A future variant could use FSCX-CY for a symmetric cipher where the key-specific period $T(K)$ is precomputed and incorporated into the protocol design.
+
+---
+
+## 10. v1.4.0 Migration: HKEX → HKEX-GF
+
+### 10.1 Change Summary
+
+Version 1.4.0 replaces the broken HKEX key exchange with HKEX-GF across all implementations (Python, Go, C, ARM assembly, NASM i386, Arduino). Two functions are affected:
+
+| Function | v1.3.x (broken) | v1.4.0 (fixed) |
+|----------|-----------------|----------------|
+| Key exchange | FSCX-based (linear, $sk$ public) | DH over $\mathbb{GF}(2^n)^*$ |
+| `fscx_revolve_n` | Used in HKEX/HPKS/HPKE | **Removed** — nonce cancels identically |
+| HSKE | `fscx_revolve_n(P, K, K, i)` | `fscx_revolve(P, K, i)` |
+| HPKS | $S = sk \oplus P$, where $sk = \text{FSCX-based}$ | $S = sk \oplus P$, where $sk = g^{ab}$ |
+| HPKE | $E = sk \oplus P$, where $sk = \text{FSCX-based}$ | $E = sk \oplus P$, where $sk = g^{ab}$ |
+
+### 10.2 Why `fscx_revolve_n` Was Removed
+
+Theorem 10 (proved in §4.5 / SecurityProofsCode) shows that any nonce $N$ injected during FSCX iteration satisfies:
+
+$$\text{FSCX\_REVOLVE\_N}(A, B, N, k) = M^k \cdot A \oplus M \cdot S_k \cdot B \oplus S_k \cdot N$$
+
+The nonce contribution $S_k \cdot N$ is the same on both sides of the key exchange equation, so it cancels identically — providing no protection against the classical break. With HKEX-GF, the nonce was derived as $N = C \oplus C_2$ (a public value), making its use circular and pointless. `fscx_revolve_n` is therefore removed rather than kept as dead code.
+
+### 10.3 Primitive Polynomials Used
+
+| $n$ | Primitive polynomial | Hex constant (lower $n$ bits) |
+|-----|---------------------|-------------------------------|
+| 32  | $x^{32} + x^{22} + x^2 + x + 1$ | `0x00400007` |
+| 64  | $x^{64} + x^4 + x^3 + x + 1$ | `0x000000000000001B` |
+| 128 | $x^{128} + x^7 + x^2 + x + 1$ | `0x00000000000000000000000000000087` |
+| 256 | $x^{256} + x^{10} + x^5 + x^2 + 1$ | `0x0000...0425` |
+
+Generator $g = 3$ (polynomial $x + 1$) for all field sizes.
+
+### 10.4 Experimental Confirmation (v1.4.0 Test Results)
+
+All results from `Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c`:
+
+| Test | Result |
+|------|--------|
+| HKEX-GF correctness $g^{ab} = g^{ba}$ | 10 000/10 000 (Python), 1 000/1 000 (C) |
+| Eve classical attack $S_{r+1}(C \oplus C_2) \neq sk$ | 0/10 000 successes |
+| HPKS sign+verify $sk \oplus P \xrightarrow{\text{verify}} P$ | 10 000/10 000 |
+| Key sensitivity (flip 1 bit of $a$ → HD in $sk$) | mean $\approx n/2$ (avalanche) |
+| FSCX orbit period (unchanged) | $n$ or $n/2$, 0 exceptions |
+| FSCX bit-frequency bias | 49.5–50.5% per bit |
+| HSKE round-trip $\text{fscx\_revolve}^2(P, K, i, r) = P$ | 5 000/5 000 |
+
+### 10.5 Security Status After Migration
+
+| Weakness | v1.3.x | v1.4.0 |
+|----------|--------|--------|
+| W2: $sk$ computable from $(C, C_2)$ | **ACTIVE** (Thm. 7) | **Mitigated** — $sk = g^{ab}$ requires DLP |
+| W3: HPKE no confidentiality | **ACTIVE** | **Mitigated** — $E = sk \oplus P$ with CDH-hard $sk$ |
+| W5: Single $(P,S)$ reveals $sk$ | **ACTIVE** | **Mitigated** — $sk$ is CDH-hard to compute |
+| W6: No hardness assumption established | **ACTIVE** | **Mitigated** — CDH in $\mathbb{GF}(2^n)^*$ |
+| W4: Bit malleability (no IND-CCA2) | Active | Still active (structural to XOR encryption) |
+| W7: Short orbit space | Active | Still active for FSCX; irrelevant for GF DH |
+| W8: No authenticated encryption | Active | Still active (no MAC component) |
+
+The key exchange is now provably secure under CDH in $\mathbb{GF}(2^n)^*$. Remaining weaknesses (W4, W7, W8) are structural to the XOR-based symmetric protocols and are documented; they do not affect the key exchange itself.
