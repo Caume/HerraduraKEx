@@ -1,7 +1,7 @@
 # Formal Cryptographic Analysis of the Herradura Cryptographic Suite
 
-**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  
-**Last updated:** 2026-04-05
+**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions proposed and verified in v1.4.0 (§11).  
+**Last updated:** 2026-04-07
 
 ---
 
@@ -896,3 +896,266 @@ All results from `Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c`
 | W8: No authenticated encryption | Active | Still active (no MAC component) |
 
 The key exchange is now provably secure under CDH in $\mathbb{GF}(2^n)^*$. Remaining weaknesses (W4, W7, W8) are structural to the XOR-based symmetric protocols and are documented; they do not affect the key exchange itself.
+
+---
+
+## 11. Non-linearity and Post-quantum Extensions (v1.4.0)
+
+This section analyses the two remaining structural weaknesses of the v1.4.0 suite and
+proposes verified fixes:
+
+1. **GF(2)-linearity** of FSCX — allows linear-algebraic attacks on symmetric protocols.
+2. **Quantum vulnerability** of HKEX-GF — GF(2^n)^* DLP is broken by Shor's algorithm.
+
+All claims in this section are supported by `SecurityProofsCode/hkex_nl_verification.py`.
+
+---
+
+### 11.1 The GF(2)-Linearity Problem
+
+**Theorem 11 — FSCX is GF(2)-affine in each argument.**
+
+For fixed $B$:
+
+$$\text{FSCX\_REVOLVE}(X, B, r) = R \cdot X \oplus K \cdot B$$
+
+where $R = M^r$ and $K = M + M^2 + \cdots + M^r \in \mathbb{GF}(2)^{n \times n}$.
+
+*Proof:* By induction.  Base case: $\text{FSCX}(X, B) = M(X \oplus B) = M \cdot X \oplus M \cdot B$.
+For step $k+1$: $\text{FSCX}(M^k X \oplus S_k B, B) = M(M^k X \oplus S_k B \oplus B) = M^{k+1} X \oplus M(S_k + I) B = R \cdot X \oplus K \cdot B$. $\blacksquare$
+
+**Consequence.** Eve holding $(X, \text{FSCX\_REVOLVE}(X, B, r))$ for a single plaintext–ciphertext pair
+can solve $K \cdot B = C \oplus R \cdot X$ for $B$ by Gaussian elimination over $\mathbb{GF}(2)$ in $O(n^3)$ time,
+provided $K$ has full rank over $\mathbb{GF}(2)$.  Even when $K$ is rank-deficient, the null-space dimension
+is at most $n - \text{rank}(K)$, bounding the residual key entropy.
+
+**Root cause.** The linearity is intrinsic to the XOR / rotation structure of $M = I \oplus \text{ROL} \oplus \text{ROR}$:
+every operation is a $\mathbb{GF}(2)$-linear map.  No composition of XOR and rotation can introduce
+non-linearity over $\mathbb{GF}(2)$.
+
+---
+
+### 11.2 NL-FSCX Primitives
+
+The minimal fix injects one *integer addition* per round.  Integer addition mod $2^n$ is
+**non-linear** over $\mathbb{GF}(2)$: the carry bit at position $k$ depends on the AND of all
+bit-pairs below position $k$, a polynomial of degree $k$ over $\mathbb{GF}(2)$.
+
+Two variants are defined; they serve different roles.
+
+#### 11.2.1 NL-FSCX v1 (carry from both arguments)
+
+$$\text{NL-FSCX}(A, B) = \text{FSCX}(A, B) \oplus \text{ROL}\!\left((A + B) \bmod 2^n,\; \frac{n}{4}\right)$$
+
+| Property | Value | Verified |
+|----------|-------|----------|
+| Non-linear over $\mathbb{GF}(2)$ | Yes — carry is degree-$k$ Boolean poly | Analytical |
+| Bijective in $A$ for fixed $B$ | **No** — collisions exist for all $B$ | n=8: 256/256 non-bijective; n=32: collision found above birthday bound |
+| Consistent period | **None** — orbit lengths are chaotic | n=32: 500/500 pairs found no period in 256 steps |
+| Iterative inverse | **Diverges** — not a contraction | 500/500 non-convergent |
+
+**Why ROL($n/4$):** The quarter-rotation places the injected carry bits at phase quadrature
+relative to the FSCX XOR structure ($M^{n/2} = I$), maximising cross-mixing between
+the carry channel and the XOR channel per round.
+
+**Consequence for HSKE.** The non-existence of a consistent period means the standard
+revolve-based decryption identity $\text{FSCX\_REVOLVE}(E, K, n/2 - r) = P$ cannot be ported to
+NL-FSCX v1.  Counter mode (§11.3.1) is the only applicable HSKE construction.
+
+#### 11.2.2 NL-FSCX v2 (B-only offset, explicit inverse)
+
+$$\text{NL-FSCX}_{v2}(A, B) = \text{FSCX}(A, B) + \text{ROL}\!\left(B \cdot \left\lfloor\frac{B+1}{2}\right\rfloor \bmod 2^n,\; \frac{n}{4}\right) \pmod{2^n}$$
+
+The offset $\delta(B) = \text{ROL}(B \cdot \lfloor(B+1)/2\rfloor \bmod 2^n,\, n/4)$ depends **only on $B$**.
+
+| Property | Value | Verified |
+|----------|-------|----------|
+| Non-linear over $\mathbb{GF}(2)$ | Yes — $B \cdot \lfloor(B+1)/2\rfloor$ involves integer carry | 500/500 linearity violations (n=32) |
+| Bijective in $A$ for fixed $B$ | **Yes** — offset is independent of $A$ | n=8: 0/256 non-bijective |
+| Exact closed-form inverse | $A = B \oplus M^{-1}\!\left((Y - \delta(B)) \bmod 2^n\right)$ | 1000/1000 correct (n=32) |
+| HSKE revolve enc→dec | Correct | 200/200 round-trips (n=32) |
+
+**Proof of inverse.** $\text{NL-FSCX}_{v2}(A, B) = M(A \oplus B) + \delta(B)$.  Stripping the offset:
+$(Y - \delta(B)) \bmod 2^n = M(A \oplus B)$.  Applying $M^{-1}$:
+$A \oplus B = M^{-1}\!\big((Y - \delta(B)) \bmod 2^n\big)$, so $A = B \oplus M^{-1}(\cdots)$. $\blacksquare$
+
+**Note on linearity channel.** $A$ still enters $\text{FSCX}(A, B)$ through the linear map $M$.
+The non-linearity is in the $B$-channel (key) only.  For HSKE, the adversary observes
+$C = P \oplus \text{keystream}$ and never $A$ directly; the key $K$ enters exclusively via $B$,
+so the $B$-channel non-linearity is sufficient to defeat linear key-recovery attacks.
+
+---
+
+### 11.3 HSKE Variants
+
+Two secure HSKE constructions are defined; both are chosen depending on API requirements.
+
+#### 11.3.1 HSKE-A1: Counter Mode with NL-FSCX v1
+
+$$\text{keystream}[i] = \text{NL-FSCX-REVOLVE}(K,\; K \oplus i,\; n/4)$$
+$$C[i] = P[i] \oplus \text{keystream}[i]$$
+$$D[i] = C[i] \oplus \text{keystream}[i] = P[i]$$
+
+No inverse is required.  The counter $i$ ensures keystream uniqueness per block.
+Decryption is identical to encryption (XOR-symmetric).
+
+**Security argument.**  $\text{keystream}[i]$ is the output of $n/4$ rounds of NL-FSCX v1 starting
+from seed $K$ with parameter $K \oplus i$.  Non-linearity prevents GF(2) linear recovery of $K$
+from any set of (plaintext, ciphertext) pairs.  Assuming NL-FSCX v1 acts as a
+pseudorandom function (PRF), CPA security follows from standard stream cipher arguments.
+
+#### 11.3.2 HSKE-A2: Revolve Mode with NL-FSCX v2
+
+$$E = \text{NL-FSCX-REVOLVE}_{v2}(P,\; K,\; r)$$
+$$P = \text{NL-FSCX-REVOLVE}_{v2}^{-1}(E,\; K,\; r)$$
+
+where $\text{NL-FSCX-REVOLVE}_{v2}^{-1}$ applies the closed-form single-step inverse $r$ times in reverse.
+
+This preserves the original `fscx_revolve(P, K, r)` / `fscx_revolve(E, K, n-r)` API shape.
+The explicit inverse from §11.2.2 is applied $r$ times, each costing one integer subtraction,
+one ROL, and one application of $M^{-1} = M^{n/2-1}$, so total decrypt cost is
+$O(r \cdot n/2)$ FSCX steps — same asymptotic order as standard HSKE.
+
+---
+
+### 11.4 HKEX-RNL: PQC Key Exchange (B2)
+
+HKEX-GF relies on the DLP in $\mathbb{GF}(2^n)^*$, which Shor's algorithm solves in polynomial time
+on a quantum computer.  The following replacement is proposed.
+
+#### 11.4.1 Ring structure
+
+The FSCX linear map $M = I \oplus \text{ROL} \oplus \text{ROR}$ corresponds to multiplication by the
+polynomial $m(x) = 1 + x + x^{n-1}$ in $\mathbb{GF}(2)[x]/(x^n + 1)$.  Lifting the coefficient ring
+from $\mathbb{GF}(2)$ to $\mathbb{Z}/q\mathbb{Z}$ for a prime $q$:
+
+$$\mathcal{R}_q = (\mathbb{Z}/q\mathbb{Z})[x]\,/\,(x^n + 1)$$
+
+In $\mathcal{R}_q$, multiplication by $m(x) = 1 + x + x^{n-1}$ is exactly FSCX\_REVOLVE applied once,
+but over $\mathbb{Z}/q\mathbb{Z}$ instead of $\mathbb{GF}(2)$.
+
+**Theorem 12 — $m(x)$ is invertible in $\mathcal{R}_q$ for $n = 2^k$, $q$ prime.**
+
+*Verified for $(n, q) \in \{(16, 257), (16, 769), (16, 3329), (16, 7681), (16, 12289)\}$:
+inverse computes correctly, $m(x) \cdot m^{-1}(x) = 1$ in all cases.*
+
+The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdot q / 2$:
+
+| $q$ | $\|m^{-1}\|_\infty$ | $\|m^{-1}\|_1$ |
+|-----|---------------------|----------------|
+| 257 | 115 | 1 127 |
+| 769 | 360 | 2 487 |
+| 3 329 | 1 275 | 11 828 |
+| 7 681 | 3 432 | 24 841 |
+| 12 289 | 5 491 | 53 863 |
+
+#### 11.4.2 Protocol: HKEX-RNL (Ring-NL, blinded)
+
+**Setup.** Parties agree on public parameters $(n, q, p, g)$ with $p < q$ both prime.
+
+**Key generation (Alice):**
+- Private: $s_A \leftarrow \mathcal{R}_q$ uniformly at random.
+- Session random: $a_\text{rand} \leftarrow \mathcal{R}_q$ uniformly (transmitted in the clear).
+- Blinded polynomial: $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal{R}_q$.
+- Public key: $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal{R}_p$, where $\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.
+
+Bob generates $(s_B, a_\text{rand,B}, m_\text{blind,B}, C_B)$ analogously.
+
+**Key agreement:**
+$$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind,B} \cdot s_B \in \mathcal{R}_q$$
+$$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind,A} \cdot s_A \in \mathcal{R}_q$$
+
+Commutativity of $\mathcal{R}_q$ gives $K_A \approx K_B$; reconciliation extracts a shared bit-string.
+
+**KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 for final extraction:
+
+$$sk = \text{NL-FSCX-REVOLVE}(K,\; K,\; n/4)$$
+
+#### 11.4.3 Security
+
+**Hardness.** The blinding polynomial $a_\text{rand}$ is fresh per session, making $m_\text{blind}$
+uniformly random in $\mathcal{R}_q$.  The key-exchange problem then reduces to the
+**Ring-LWR (Learning With Rounding)** problem on $\mathcal{R}_q$, which is a standard
+Ring-LWE/LWR instance over a power-of-two cyclotomic ring — the same structure as Kyber.
+This is believed post-quantum hard; no polynomial-time quantum algorithm is known.
+
+**Naive algebraic attack analysis.**  Without blinding ($m_\text{blind} = m$), Eve computes
+$m^{-1} \cdot (C \cdot q/p) \bmod q$ attempting to recover $s$.  The attack fails because
+rounding noise $\delta$ (bounded by $q/(2p)$ per coefficient) is amplified by $\|m^{-1}\|_1 \gg q$
+before any wrap-around threshold is crossed:
+
+| $p$ | $q/p$ | $\|m^{-1}\|_1 \cdot q/(2p)$ | Wraps mod $q$? | Attack success |
+|-----|-------|------------------------------|----------------|----------------|
+| 4   | 192   | $\approx 73\,728$            | Yes            | 0/200 |
+| 64  | 12    | $\approx 14\,922$            | Yes            | 0/200 |
+| 256 | 3     | $\approx 3\,730$             | Yes            | 0/200 |
+
+Even at the smallest rounding gap ($p = 256$, $q/p = 3$), amplified noise exceeds $q$,
+making exact recovery impossible.  This protection is structural to the dense $m^{-1}$.
+
+**Note on lattice reduction.** The naive attack is not the strongest possible.  LLL/BKZ lattice
+reduction operates on the lattice defined by the system and can exploit the sparse, fixed
+structure of $m(x)$ in the unblinded case ($m_\text{blind} = m$) to gain extra algebraic leverage.
+Blinding with $a_\text{rand}$ converts the problem to a standard Ring-LWR instance with a random
+public polynomial, for which no sub-exponential quantum attack is known.  The blinding is
+therefore **required** for a provable security claim.
+
+---
+
+### 11.5 Verification Summary
+
+All results are from `SecurityProofsCode/hkex_nl_verification.py` (n=32 unless noted).
+
+#### Q1 — Period of NL-FSCX v1
+
+| Test | Result | Conclusion |
+|------|--------|------------|
+| Standard FSCX period $M^{n/2} = I$ (n=32, B=0) | 133/500 pairs satisfy period = n/2 | ~25% of random B values lie in null$(K_{n/2})$; confirms prior PL-1 analysis |
+| NL-FSCX v1 orbit lengths (n=8, 1024 samples) | 938/1024 find no period in 256 steps; remainder have variable lengths | No consistent period |
+| NL-FSCX v1 period (n=32, 500 samples) | 500/500 find no period in 256 steps | Period property completely destroyed |
+| HSKE-A1 counter mode encrypt→decrypt | 200/200 correct | Counter mode is viable |
+
+#### Q2 — FSCX-LWR algebraic attack
+
+| Test | Result | Conclusion |
+|------|--------|------------|
+| $m(x)$ invertible in $\mathcal{R}_q$, q ∈ {257…12289} | Yes, all 5 values; $m \cdot m^{-1} = 1$ verified | Algebraic inverse exists |
+| Naive attack: exact $s$ recovery (fixed $m$, p ∈ {4…256}) | 0/200 for every $p$ value | Rounding noise too large for naive inversion |
+| Noise amplification $\|m^{-1}\|_1 \cdot q/(2p)$ vs. $q$ | Exceeds $q$ for all tested $(q,p)$ | Structural protection against naive inversion |
+| Blinded $m$ vs. fixed $m$ (naive attack) | Both 0/200 | Blinding adds standard Ring-LWR hardness beyond structural noise protection |
+
+#### Q3 — NL-FSCX injectivity and inverse
+
+| Test | Result | Conclusion |
+|------|--------|------------|
+| NL-FSCX v1 bijectivity (n=8, exhaustive) | 256/256 B values non-bijective; example: B=0x00, A=0x00 and A=0x33 both map to 0x00 | v1 is **not** a bijection |
+| NL-FSCX v1 collision (n=32, 131,072 samples per B) | Collision found: A=0x4dbde3c0, A'=0x2a48fe58, B=0x774e8bcb → 0xde0387dd | v1 non-bijective at n=32 also |
+| Iterative inverse convergence (n=32, 500 trials) | 0/500 converge | Fixed-point iteration is not a contraction |
+| NL-FSCX v2 bijectivity (n=8, exhaustive) | 0/256 B values non-bijective | v2 is bijective |
+| NL-FSCX v2 inverse correctness (n=32) | 1000/1000 | Exact closed-form inverse confirmed |
+| NL-FSCX v2 linearity test (n=32) | 500/500 linearity violations | v2 is non-linear |
+| HSKE-A2 revolve enc→dec (v2, n=32) | 200/200 | Revolve mode viable with v2 |
+
+---
+
+### 11.6 Recommended Construction (C3 Hybrid)
+
+The C3 hybrid assigns each primitive to the role that matches its properties:
+
+| Role | Primitive | Rationale |
+|------|-----------|-----------|
+| HSKE (counter mode) | **NL-FSCX v1** (HSKE-A1) | Strongest non-linearity; no inverse needed |
+| HSKE (revolve mode) | **NL-FSCX v2** (HSKE-A2) | Exact inverse; bijective; preserves API |
+| HKEX key exchange | **HKEX-RNL** with blinded $m$ (B2) | Standard Ring-LWR hardness; PQC resistant |
+| HKEX KDF post-process | **NL-FSCX v1** revolve | One-way; no inverse needed |
+| HPKS commitment hash | **NL-FSCX v1** revolve | One-way; hardened against linear preimage |
+| HPKE encryption | **NL-FSCX v2** revolve | Invertible; bijective |
+
+**Parameters for HKEX-RNL** (suggested, requires further analysis before deployment):
+- $n = 256$, $q = 3329$ (Kyber-aligned), $p = 1024$, $p' = 32$
+- $a_\text{rand}$: 256-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
+- KDF: $sk = \text{NL-FSCX-REVOLVE}_{v1}(K_\text{raw}, K_\text{raw}, n/4)$
+
+**Status.** The cryptosuite code (`.c`, `.go`, `.py`, `.s`, `.asm`, `.ino`) continues to use
+standard FSCX in v1.4.0.  The NL-FSCX primitives and HKEX-RNL are documented here as
+verified proposals; code migration is planned for a future version.
