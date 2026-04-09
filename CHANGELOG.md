@@ -4,6 +4,46 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.4.1] - 2026-04-08
+
+### Documentation — PQCanalysis.md merged into SecurityProofs.md
+
+`PQCanalysis.md` is removed.  All content has been integrated into `SecurityProofs.md`
+as **§12 (Classical and Quantum Security Analysis)**, with duplicate sections eliminated
+and the most up-to-date data retained.
+
+#### Content added to SecurityProofs.md (§12)
+
+- **§12.1 Classical DLP attacks on GF(2^n)*** — full attack complexity table (BSGS,
+  Pohlig–Hellman, index calculus, Barbulescu quasi-polynomial); BSGS n=32 experiment
+  (`A_PRIV=0xDEADBEEF`, solved in 0.622 s); effective-security discussion.
+- **§12.2 Classical security of HSKE / HPKS / HPKE** — known-plaintext attack on HSKE
+  (1 pair → full $c_K$, 0 unconstrained bits at n=64); classical forgery analysis for
+  HPKS; CDH attack path for HPKE.
+- **§12.3 HPKS challenge function — algebraic properties** — affine bijection proof
+  (0 collisions in 50 000 trials); predictable challenge delta identity
+  $e(R_2) \oplus e(R_1) = M^i \cdot (R_1 \oplus R_2)$ (100% verified); consequence for
+  ROM-based security proofs and the forking lemma.
+- **§12.4 Quantum algorithm analysis** — Grover (symmetric key-only), Simon (inapplicable
+  to GF DLP, applicable to HSKE affine structure), Bernstein–Vazirani (HSKE 1-query
+  recovery), Shor (primary quantum threat: O(n² log n) DLP for HKEX-GF/HPKS/HPKE),
+  HHL (irrelevant — GF(2) systems already classically efficient).
+- **§12.5 Protocol-level quantum security summary** — updated table including HKEX-RNL
+  (§11.4) as the proposed PQC replacement.
+- **§12.6 Root cause: why GF(2^n)* is the wrong group** — comparison table across
+  GF(2^n)*, Z_p*, ECDLP, and Ring-LWR; motivation for the §11.4 HKEX-RNL proposal.
+
+#### Files removed
+
+- `PQCanalysis.md` — superseded by SecurityProofs.md §12.
+
+#### Status update
+
+- `SecurityProofs.md` header updated to reference §12.
+- Last-updated date updated to 2026-04-08.
+
+---
+
 ## [1.4.0] - 2026-04-06
 
 ### BREAKING CHANGE — HKEX replaced with HKEX-GF; HPKS upgraded to Schnorr; HPKE upgraded to El Gamal
@@ -83,6 +123,51 @@ Generator `g = 3` (polynomial `x+1`) for all field sizes.
 - `CLAUDE.md` — updated build commands, repository structure, and protocol stack description.
 - `SecurityProofs.md` — Section 9 (non-linear proposals), Section 10 (v1.4.0 migration summary), Section 5.1/5.2 tables updated.
 - `PQCanalysis.md` — fully revised for v1.4.0 protocols (HKEX-GF, HPKS Schnorr, HPKE El Gamal, HSKE).
+
+#### Non-linearity and PQC analysis (SecurityProofsCode/, SecurityProofs.md §11)
+
+This work addresses the two remaining structural weaknesses of v1.4.0:
+FSCX GF(2)-linearity (linear key-recovery attacks) and the quantum vulnerability of
+HKEX-GF (Shor's algorithm solves GF(2^n)* DLP).
+
+**SecurityProofs.md §11** — NL-FSCX non-linearity and PQC extensions:
+- Theorem 11: formal proof that fscx_revolve is GF(2)-affine (linear key-recovery
+  attack surface) with closed-form `R·X ⊕ K·B`.
+- **NL-FSCX v1** — `nl_fscx(A,B) = fscx(A,B) ⊕ ROL((A+B) mod 2^n, n/4)`: integer
+  carry injection breaks GF(2) linearity; verified non-bijective (collisions at n=8
+  and n=32); no consistent period.
+- **NL-FSCX v2** — `nl_fscx_v2(A,B) = fscx(A,B) + ROL(B·⌊(B+1)/2⌋ mod 2^n, n/4)`:
+  B-only offset; bijective (0/256 non-bijective at n=8); exact closed-form inverse
+  `A = B ⊕ M⁻¹((Y − δ(B)) mod 2^n)`; verified correct 1000/1000.
+- **HSKE-A1** (counter mode, v1) and **HSKE-A2** (revolve mode, v2) constructions.
+- Theorem 12: m(x) = 1+x+x^{n-1} is invertible in Z_q[x]/(x^n+1); ‖m⁻¹‖_1 >> q
+  (dense inverse amplifies rounding noise; naive algebraic attack 0/200 for all p).
+- **HKEX-RNL** (B2): PQC key exchange via Ring-LWR with blinded FSCX polynomial
+  `m_blind = m + a_rand`; reduces to standard Ring-LWR hardness (NIST-adjacent);
+  NL-FSCX v1 used as KDF post-processor.
+- **C3 hybrid** recommendation: v1 for one-way roles (KDF, HPKS commitment, counter
+  HSKE); v2 for invertible roles (revolve HSKE, HPKE payload).
+
+**SecurityProofsCode/hkex_nl_verification.py** (new) — three-part verification script:
+- Q1: nl_fscx period analysis (n=8: 938/1024 no period; n=32: 500/500 no period);
+  HSKE counter-mode correctness 200/200.
+- Q2: negacyclic circulant matrix construction; invertibility for q ∈ {257…12289};
+  algebraic attack 0/200 for all p; noise amplification analysis.
+- Q3: v1 non-bijectivity (n=8: 256/256; n=32: collision A=0x4dbde3c0/A'=0x2a48fe58);
+  iterative inverse divergence 500/500; v2 bijectivity + inverse 1000/1000.
+
+**SecurityProofsCode/hkex_cfscx_preshared.py** (new) — preshared-value FSCX constructions
+PS-1 through PS-5 (integer expansion); security analysis of each scheme.
+
+**SecurityProofsCode/hkex_cfscx_twostep.py** (new) — two-step FSCX constructions with
+compression/expansion; R2-CB (weakest: no S needed), R2-EC (B-cancellation proven).
+
+**SecurityProofsCode/hkex_cfscx_intops.py** (new) — integer-operation schemes (padlock,
+asymmetric, hash-like); includes AK-2 zero-matrix finding (S drops out entirely:
+(I⊕R⊕R²⊕R³)=0) and PL-1 null-space finding (rank((R⊕I)·K)=2 → 25% commutativity).
+
+**SecurityProofsCode/hkex_cfscx_compress.py** and **hkex_cfscx_blong.py** (new) —
+cfscx_compress algebraic analysis and long-block construction variants.
 
 ---
 
