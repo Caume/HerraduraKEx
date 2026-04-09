@@ -1,5 +1,8 @@
 '''
-    Herradura KEx -- Security & Performance Tests (Python)
+    Herradura KEx — Security & Performance Tests (Python)
+    v1.5.0: added PQC extension tests [10-16] and benchmarks [22-25].
+            benchmarks renumbered [17-21] (were [10-14] in v1.4.0).
+    v1.4.0: replaced broken fscx_revolve_n HKEX tests with HKEX-GF tests.
     v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
@@ -29,10 +32,7 @@ import time
 # ---------------------------------------------------------------------------
 
 class BitArray:
-    """Fixed-width bit string backed by a Python int.
-    Supports XOR, in-place rotation, equality, and hex/bytes/uint I/O.
-    Size must be a positive multiple of 8.
-    """
+    """Fixed-width bit string backed by a Python int."""
 
     __slots__ = ('_val', '_size', '_mask')
 
@@ -65,7 +65,6 @@ class BitArray:
         return BitArray(self._size, self._val)
 
     def rotated(self, n: int) -> 'BitArray':
-        """Return a new BitArray rotated left by n bits (right if n < 0)."""
         n %= self._size
         if n == 0:
             return BitArray(self._size, self._val)
@@ -73,13 +72,11 @@ class BitArray:
                         ((self._val << n) | (self._val >> (self._size - n))) & self._mask)
 
     def rol(self, n: int) -> None:
-        """Rotate left in-place by n bits."""
         n %= self._size
         if n:
             self._val = ((self._val << n) | (self._val >> (self._size - n))) & self._mask
 
     def ror(self, n: int) -> None:
-        """Rotate right in-place by n bits."""
         n %= self._size
         if n:
             self._val = ((self._val >> n) | (self._val << (self._size - n))) & self._mask
@@ -104,27 +101,22 @@ class BitArray:
 
     @classmethod
     def random(cls, size: int) -> 'BitArray':
-        """Return a random BitArray of *size* bits using os.urandom."""
         ba = cls(size)
         ba.bytes = os.urandom(size // 8)
         return ba
 
     def flip_bit(self, pos: int) -> 'BitArray':
-        """Return a new BitArray with bit *pos* (0=LSB) flipped."""
         return BitArray(self._size, self._val ^ (1 << pos))
 
     def popcount(self) -> int:
-        """Return count of set bits."""
         return bin(self._val).count('1')
 
 
 # ---------------------------------------------------------------------------
-# FSCX functions (copy-based, self-contained)
+# FSCX functions (classical — linear map M = I+ROL+ROR over GF(2))
 # ---------------------------------------------------------------------------
 
 def fscx(A: BitArray, B: BitArray) -> BitArray:
-    """Full Surroundings Cyclic XOR: A ^ B ^ ROL(A) ^ ROL(B) ^ ROR(A) ^ ROR(B).
-    Uses rotated() — does not mutate its inputs."""
     return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
 
 
@@ -135,11 +127,140 @@ def fscx_revolve(A: BitArray, B: BitArray, steps: int) -> BitArray:
     return result
 
 
-def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray, steps: int) -> BitArray:
+# ---------------------------------------------------------------------------
+# GF(2^n) field arithmetic (classical)
+# ---------------------------------------------------------------------------
+
+GF_POLY = {32: 0x00400007, 64: 0x0000001B, 128: 0x00000087, 256: 0x00000425}
+GF_GEN  = 3
+
+def gf_mul(a: int, b: int, poly: int, n: int) -> int:
+    result = 0; mask = (1 << n) - 1; hb = 1 << (n - 1)
+    for _ in range(n):
+        if b & 1: result ^= a
+        carry = bool(a & hb)
+        a = (a << 1) & mask
+        if carry: a ^= poly
+        b >>= 1
+    return result
+
+def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
+    result = 1; base &= (1 << n) - 1
+    while exp:
+        if exp & 1: result = gf_mul(result, base, poly, n)
+        base = gf_mul(base, base, poly, n)
+        exp >>= 1
+    return result
+
+
+# ---------------------------------------------------------------------------
+# NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
+# ---------------------------------------------------------------------------
+
+def _m_inv(X: BitArray) -> BitArray:
+    """M^{-1}(X) = M^{n/2-1}(X).  M^{n/2} = I so M^{-1} = M^{n/2-1}."""
+    n    = X._size
+    zero = BitArray(n, 0)
+    return fscx_revolve(X, zero, n // 2 - 1)
+
+
+def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:
+    """NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4).
+    Non-linear over GF(2) via integer carry.  NOT bijective in A."""
+    n   = A._size
+    mix = BitArray(n, (A.uint + B.uint) & A._mask)
+    return fscx(A, B) ^ mix.rotated(n // 4)
+
+
+def nl_fscx_revolve_v1(A: BitArray, B: BitArray, steps: int) -> BitArray:
     result = A.copy()
     for _ in range(steps):
-        result = fscx(result, B) ^ nonce
+        result = nl_fscx_v1(result, B)
     return result
+
+
+def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
+    """NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^n.
+    delta(B) = ROL(B*(B+1)//2 mod 2^n, n/4).  Bijective in A; exact inverse."""
+    n     = A._size
+    mask  = A._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
+
+
+def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
+    """Exact inverse of one nl_fscx_v2 step: A = B XOR M^{-1}((Y-delta(B)) mod 2^n)."""
+    n     = Y._size
+    mask  = Y._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    Z     = BitArray(n, (Y.uint - delta.uint) & mask)
+    return B ^ _m_inv(Z)
+
+
+def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    result = A.copy()
+    for _ in range(steps):
+        result = nl_fscx_v2(result, B)
+    return result
+
+
+def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
+    result = Y.copy()
+    for _ in range(steps):
+        result = nl_fscx_v2_inv(result, B)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
+# ---------------------------------------------------------------------------
+
+def _rnl_poly_mul(f, g, q, n):
+    h = [0] * n
+    for i, fi in enumerate(f):
+        if fi == 0:
+            continue
+        for j, gj in enumerate(g):
+            k = i + j
+            if k < n:
+                h[k] = (h[k] + fi * gj) % q
+            else:
+                h[k - n] = (h[k - n] - fi * gj) % q
+    return [v % q for v in h]
+
+def _rnl_poly_add(f, g, q):
+    return [(a + b) % q for a, b in zip(f, g)]
+
+def _rnl_round(poly, from_q, to_p):
+    return [(c * to_p + from_q // 2) // from_q % to_p for c in poly]
+
+def _rnl_lift(poly, from_p, to_q):
+    return [c * to_q // from_p % to_q for c in poly]
+
+def _rnl_m_poly(n):
+    p = [0] * n; p[0] = p[1] = p[n - 1] = 1; return p
+
+def _rnl_rand_poly(n, q):
+    return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
+
+def _rnl_small_poly(n, b):
+    return [int.from_bytes(os.urandom(1), 'big') % (b + 1) for _ in range(n)]
+
+def _rnl_bits_to_bitarray(poly, pp, size):
+    val = 0; thr = pp // 2
+    for i, c in enumerate(poly[:size]):
+        if c >= thr:
+            val |= (1 << i)
+    return BitArray(size, val)
+
+def _rnl_keygen(m_blind, n, q, p, b):
+    s = _rnl_small_poly(n, b)
+    C = _rnl_round(_rnl_poly_mul(m_blind, s, q, n), q, p)
+    return s, C
+
+def _rnl_agree(s, C_other, q, p, pp, n, key_bits):
+    K = _rnl_poly_mul(s, _rnl_lift(C_other, p, q), q, n)
+    return _rnl_bits_to_bitarray(_rnl_round(K, q, pp), pp, key_bits)
 
 
 # ---------------------------------------------------------------------------
@@ -149,65 +270,68 @@ def fscx_revolve_n(A: BitArray, B: BitArray, nonce: BitArray, steps: int) -> Bit
 def i_val(size: int) -> int:
     return size // 4
 
-
 def r_val(size: int) -> int:
     return size * 3 // 4
 
 
-SIZES = [64, 128, 256]
+SIZES     = [64, 128, 256]      # bit sizes for classical + NL-FSCX tests
+RNL_SIZES = [32, 64]            # ring polynomial degrees for HKEX-RNL tests
+                                 # (n=256 is the production size but slow in Python)
+RNLQ  = 65537  # Fermat prime (2^16+1); lower noise-to-margin ratio than q=3329
+RNLP  = 4096   # public-key rounding modulus
+RNLPP = 2      # reconciliation modulus (1 bit per coefficient)
+RNLB  = 1      # small-secret bound
 
 TARGET_SEC = 1.0
 
 
 # ---------------------------------------------------------------------------
-# Security tests
+# S_op helper for Eve-resistance test [6]
 # ---------------------------------------------------------------------------
 
-def test_noncommutativity():
-    # FSCX(A,B) == FSCX(B,A) always (symmetric formula: A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B)).
-    # Asymmetry arises in FSCX_REVOLVE_N, where B is held constant across
-    # iterations: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n) in general.
-    # The nonce term T_n(N) cancels from both sides of the difference, so
-    # commutativity is determined solely by the A and B inputs.
-    print("[1] FSCX_REVOLVE_N non-commutativity: FSCX_REVOLVE_N(A,B,N,n) != FSCX_REVOLVE_N(B,A,N,n)")
+def s_op(delta: BitArray, r: int) -> BitArray:
+    size = delta._size
+    zero = BitArray(size, 0)
+    acc  = BitArray(size, 0)
+    cur  = delta.copy()
+    for _ in range(r + 1):
+        acc ^= cur
+        cur = fscx(cur, zero)
+    return acc
+
+
+# ---------------------------------------------------------------------------
+# Security tests — classical protocols [1-9]
+# ---------------------------------------------------------------------------
+
+def test_hkex_gf_correctness():
+    print("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]")
     for size in SIZES:
-        iv = i_val(size)
-        comm = 0
+        poly = GF_POLY.get(size, 0x00000425)
+        ok = 0
         for _ in range(10000):
             a = BitArray.random(size)
             b = BitArray.random(size)
-            n = BitArray.random(size)
-            if fscx_revolve_n(a, b, n, iv) == fscx_revolve_n(b, a, n, iv):
-                comm += 1
-        status = "PASS" if comm == 0 else "FAIL"
-        print(f"    bits={size:3d}  {comm:5d} / 10000 commutative  [{status}]")
+            C  = gf_pow(GF_GEN, a.uint, poly, size)
+            C2 = gf_pow(GF_GEN, b.uint, poly, size)
+            if gf_pow(C2, a.uint, poly, size) == gf_pow(C, b.uint, poly, size):
+                ok += 1
+        status = "PASS" if ok == 10000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:5d} / 10000 correct  [{status}]")
     print()
 
 
 def test_avalanche():
-    # FSCX is a linear map over GF(2): output bit i depends only on input bits
-    # i-1, i, i+1 (cyclic). Flipping one input bit always changes exactly 3 output
-    # bits — the bit and its two cyclic neighbors. Security comes from FSCX_REVOLVE
-    # iteration, not single-step diffusion.
-    # Frobenius over GF(2): (1+t+t^-1)^(2^k) = 1+t^(2^k)+t^(-2^k), so power-of-2
-    # step counts (like i_val = size//4) also give 3-bit diffusion.
-    print("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)")
+    print("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)  [CLASSICAL]")
     for size in SIZES:
-        total = 0.0
-        gmin = size + 1
-        gmax = -1
+        total = 0.0; gmin = size + 1; gmax = -1
         for _ in range(1000):
-            a = BitArray.random(size)
-            b = BitArray.random(size)
+            a = BitArray.random(size); b = BitArray.random(size)
             base = fscx(a, b)
             for bit in range(size):
-                ap = a.flip_bit(bit)
-                hd = (fscx(ap, b) ^ base).popcount()
+                hd = (fscx(a.flip_bit(bit), b) ^ base).popcount()
                 total += hd
-                if hd < gmin:
-                    gmin = hd
-                if hd > gmax:
-                    gmax = hd
+                gmin = min(gmin, hd); gmax = max(gmax, hd)
         mean = total / (1000.0 * size)
         status = "PASS" if 2.9 <= mean <= 3.1 else "FAIL"
         print(f"    bits={size:3d}  mean={mean:.2f} (expected 3/{size})  min={gmin}  max={gmax}  [{status}]")
@@ -215,142 +339,307 @@ def test_avalanche():
 
 
 def test_orbit_period():
-    print("[3] Orbit period: FSCX_REVOLVE cycles back to A")
+    print("[3] Orbit period: FSCX_REVOLVE cycles back to A  [CLASSICAL]")
     for size in SIZES:
-        cnt_p  = 0
-        cnt_hp = 0
-        other  = 0
-        cap = 2 * size
+        cnt_p = 0; cnt_hp = 0; other = 0; cap = 2 * size
         for _ in range(100):
-            a = BitArray.random(size)
-            b = BitArray.random(size)
-            cur = fscx(a, b)
-            period = 1
+            a = BitArray.random(size); b = BitArray.random(size)
+            cur = fscx(a, b); period = 1
             while cur != a and period < cap:
-                cur = fscx(cur, b)
-                period += 1
-            if period == size:
-                cnt_p += 1
-            elif period == size // 2:
-                cnt_hp += 1
-            else:
-                other += 1
+                cur = fscx(cur, b); period += 1
+            if period == size:        cnt_p  += 1
+            elif period == size // 2: cnt_hp += 1
+            else:                     other  += 1
         status = "PASS" if other == 0 else "FAIL"
         print(f"    bits={size:3d}  period={size}: {cnt_p:3d}  period={size//2}: {cnt_hp:3d}  other: {other}  [{status}]")
     print()
 
 
 def test_bit_frequency():
-    print("[4] Bit-frequency bias: 100000 FSCX outputs per size")
+    print("[4] Bit-frequency bias: 100000 FSCX outputs per size  [CLASSICAL]")
     N = 100000
     for size in SIZES:
         counts = [0] * size
         for _ in range(N):
-            a = BitArray.random(size)
-            b = BitArray.random(size)
-            out = fscx(a, b)
-            val = out.uint
+            val = fscx(BitArray.random(size), BitArray.random(size)).uint
             for bit in range(size):
-                if (val >> bit) & 1:
-                    counts[bit] += 1
-        pcts = [c / N * 100.0 for c in counts]
-        mn = min(pcts)
-        mx = max(pcts)
-        mean = sum(pcts) / size
+                if (val >> bit) & 1: counts[bit] += 1
+        pcts  = [c / N * 100.0 for c in counts]
+        mn = min(pcts); mx = max(pcts); mean = sum(pcts) / size
         status = "PASS" if mn > 47.0 and mx < 53.0 else "FAIL"
         print(f"    bits={size:3d}  min={mn:.2f}%  max={mx:.2f}%  mean={mean:.2f}%  [{status}]")
     print()
 
 
-def test_key_sensitivity():
-    # sk = FSCX_REVOLVE_N(C2, B, hn, r) ^ A
-    # Flipping bit k of A changes sk by exactly 1 bit via the direct XOR term.
-    # The nonce change propagates L^i(e_k) into hn = C^C2; algebraically
-    # S_r * L^i(e_k) cancels to zero, leaving only the 1-bit XOR contribution.
-    # This is a structural property of the HKEX XOR construction.
-    print("[5] HKEX session key XOR construction (expected: exactly 1-bit direct sensitivity)")
+def test_hkex_gf_key_sensitivity():
+    print("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]")
     for size in SIZES:
-        total = 0.0
-        iv = i_val(size)
-        rv = r_val(size)
+        poly = GF_POLY.get(size, 0x00000425); total = 0.0
         for _ in range(10000):
-            a  = BitArray.random(size)
-            b  = BitArray.random(size)
-            a2 = BitArray.random(size)
-            b2 = BitArray.random(size)
-            c  = fscx_revolve(a, b, iv)
-            c2 = fscx_revolve(a2, b2, iv)
-            hn = c ^ c2
-            key1 = fscx_revolve_n(c2, b, hn, rv) ^ a
-            af   = a.flip_bit(0)
-            key2 = fscx_revolve_n(c2, b, hn, rv) ^ af
-            total += (key1 ^ key2).popcount()
+            a  = BitArray.random(size); b  = BitArray.random(size)
+            C2 = gf_pow(GF_GEN, b.uint, poly, size)
+            sk1 = gf_pow(C2, a.uint,             poly, size)
+            sk2 = gf_pow(C2, a.flip_bit(0).uint, poly, size)
+            total += BitArray(size, sk1 ^ sk2).popcount()
         mean = total / 10000.0
-        status = "PASS" if 0.9 <= mean <= 1.1 else "FAIL"
-        print(f"    bits={size:3d}  mean Hamming={mean:.2f} (expected 1/{size})  [{status}]")
+        status = "PASS" if mean >= size // 4 else "FAIL"
+        print(f"    bits={size:3d}  mean HD={mean:.2f} (expected >={size//4})  [{status}]")
     print()
 
 
-def test_avalanche_revolve_n():
-    # FSCX_REVOLVE_N nonce-injection avalanche.
-    # Flipping 1 bit of the nonce N while keeping A and B constant propagates
-    # through all remaining revolve steps.  The change in the output equals
-    # T_n(e_k) where T_n = I + L + ... + L^(n-1) and e_k is the unit vector
-    # at bit position k.  Unlike the 3-bit diffusion of single-step FSCX or
-    # the purely linear FSCX_REVOLVE, T_n accumulates contributions from every
-    # step.  HD = popcount(T_n(e_0)) is deterministic (independent of A and B),
-    # so min == max == mean.  For n = size/4 (i_val), HD = size/4 exactly.
-    print("[6] FSCX_REVOLVE_N nonce-avalanche: flip 1 nonce bit, measure output diffusion")
+def test_hkex_gf_eve_resistance():
+    print("[6] HKEX-GF Eve resistance: S_op(C^C2, r) != sk for 10000 trials  [CLASSICAL]")
     for size in SIZES:
-        iv = i_val(size)
-        expected = size // 4
-        total = 0.0
-        gmin = size + 1
-        gmax = -1
-        for _ in range(1000):
-            a = BitArray.random(size)
-            b = BitArray.random(size)
-            n = BitArray.random(size)
-            base    = fscx_revolve_n(a, b, n,           iv)
-            nf      = n.flip_bit(0)
-            flipped = fscx_revolve_n(a, b, nf,          iv)
-            hd = (base ^ flipped).popcount()
-            total += hd
-            if hd < gmin:
-                gmin = hd
-            if hd > gmax:
-                gmax = hd
-        mean = total / 1000.0
-        status = "PASS" if mean >= expected else "FAIL"
-        print(f"    bits={size:3d}  mean HD={mean:.1f} (expected >={expected})  min={gmin}  max={gmax}  [{status}]")
-    print()
-
-
-def test_hpks_sign_verify():
-    # HPKS: S = fscx_revolve_n(C2, B, hn, r) ^ A ^ P   (sign)
-    #        V = fscx_revolve_n(C,  B2, hn, r) ^ A2 ^ S (verify)
-    # Correctness follows from the HKEX equality: both sides equal the shared key,
-    # so V = shared_key ^ A2 ^ (shared_key ^ A ^ P) = A ^ A2 ^ A2 ^ P = ... = P.
-    print("[7] HPKS sign+verify correctness: V == plaintext")
-    for size in SIZES:
-        iv = i_val(size)
-        rv = r_val(size)
-        ok = 0
+        poly = GF_POLY.get(size, 0x00000425); rv = r_val(size); successes = 0
         for _ in range(10000):
-            a  = BitArray.random(size)
-            b  = BitArray.random(size)
-            a2 = BitArray.random(size)
-            b2 = BitArray.random(size)
-            pt = BitArray.random(size)
-            c  = fscx_revolve(a, b, iv)
-            c2 = fscx_revolve(a2, b2, iv)
-            hn = c ^ c2
-            S = fscx_revolve_n(c2, b, hn, rv) ^ a ^ pt   # sign
-            V = fscx_revolve_n(c, b2, hn, rv) ^ a2 ^ S   # verify
-            if V == pt:
-                ok += 1
-        status = "PASS" if ok == 10000 else "FAIL"
-        print(f"    bits={size:3d}  {ok:5d} / 10000 verified  [{status}]")
+            a  = BitArray.random(size); b  = BitArray.random(size)
+            C  = BitArray(size, gf_pow(GF_GEN, a.uint, poly, size))
+            C2 = BitArray(size, gf_pow(GF_GEN, b.uint, poly, size))
+            real_sk = BitArray(size, gf_pow(C2.uint, a.uint, poly, size))
+            if s_op(C ^ C2, rv) == real_sk: successes += 1
+        status = "PASS" if successes == 0 else "FAIL"
+        print(f"    bits={size:3d}  {successes:5d} / 10000 Eve successes (expected 0)  [{status}]")
+    print()
+
+
+def test_hpks_schnorr_correctness():
+    print("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]")
+    for size in SIZES:
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0
+        for _ in range(1000):
+            a     = BitArray.random(size)
+            C_int = gf_pow(GF_GEN, a.uint, poly, size)
+            pt    = BitArray.random(size)
+            k     = BitArray.random(size)
+            R_int = gf_pow(GF_GEN, k.uint, poly, size)
+            R_b   = BitArray(size, R_int)
+            e     = fscx_revolve(R_b, pt, iv)
+            s     = (k.uint - a.uint * e.uint) % ord_
+            lhs   = gf_mul(gf_pow(GF_GEN, s,      poly, size),
+                           gf_pow(C_int,  e.uint,  poly, size), poly, size)
+            if lhs == R_int: ok += 1
+        status = "PASS" if ok == 1000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / 1000 verified  [{status}]")
+    print()
+
+
+def test_hpks_schnorr_eve_resistance():
+    print("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]")
+    for size in SIZES:
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); wins = 0
+        for _ in range(1000):
+            a     = BitArray.random(size)
+            C_int = gf_pow(GF_GEN, a.uint, poly, size)
+            decoy = BitArray.random(size)
+            R_eve = BitArray(size, gf_pow(GF_GEN, BitArray.random(size).uint, poly, size))
+            e_eve = fscx_revolve(R_eve, decoy, iv)
+            s_eve = BitArray.random(size).uint
+            lhs   = gf_mul(gf_pow(GF_GEN, s_eve,      poly, size),
+                           gf_pow(C_int,  e_eve.uint,  poly, size), poly, size)
+            if lhs == R_eve.uint: wins += 1
+        status = "PASS" if wins == 0 else "FAIL"
+        print(f"    bits={size:3d}  {wins:4d} / 1000 Eve wins (expected 0)  [{status}]")
+    print()
+
+
+def test_hpke_roundtrip():
+    print("[9] HPKE encrypt+decrypt correctness (El Gamal + fscx_revolve)  [CLASSICAL]")
+    for size in SIZES:
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size); ok = 0
+        for _ in range(1000):
+            a   = BitArray.random(size); pt = BitArray.random(size)
+            C   = gf_pow(GF_GEN, a.uint, poly, size)
+            r   = BitArray.random(size)
+            R   = gf_pow(GF_GEN, r.uint, poly, size)
+            enc = BitArray(size, gf_pow(C, r.uint, poly, size))
+            E   = fscx_revolve(pt,  enc, iv)
+            dec = BitArray(size, gf_pow(R, a.uint, poly, size))
+            D   = fscx_revolve(E,   dec, rv)
+            if D == pt: ok += 1
+        status = "PASS" if ok == 1000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / 1000 decrypted  [{status}]")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Security tests — PQC extension [10-16]
+# ---------------------------------------------------------------------------
+
+def test_nl_fscx_v1_nonlinearity():
+    # NL-FSCX v1 must violate GF(2) linearity: if linear,
+    # f(A,B) XOR f(0,B) == fscx(A,0) for all A,B.  Count violations.
+    # Also verify period is destroyed: no period found in 4*n steps.
+    print("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]")
+    for size in SIZES:
+        zero = BitArray(size, 0)
+        # Linearity violations
+        violations = 0
+        for _ in range(1000):
+            A = BitArray.random(size); B = BitArray.random(size)
+            lin_pred = fscx(A, zero) ^ nl_fscx_v1(zero, B)
+            if nl_fscx_v1(A, B) != lin_pred:
+                violations += 1
+        # Period check: no period in 4*n steps
+        cap = 4 * size; no_period = 0
+        for _ in range(200):
+            A = BitArray.random(size); B = BitArray.random(size)
+            cur = nl_fscx_v1(A, B); found = False
+            for _ in range(1, cap):
+                cur = nl_fscx_v1(cur, B)
+                if cur == A: found = True; break
+            if not found: no_period += 1
+        status = "PASS" if violations == 1000 and no_period >= 190 else "FAIL"
+        print(f"    bits={size:3d}  linearity violations={violations}/1000  "
+              f"no-period={no_period}/200  [{status}]")
+    print()
+
+
+def test_nl_fscx_v2_bijective_inverse():
+    # NL-FSCX v2 must be bijective in A for all B (non-bijective count = 0),
+    # and the closed-form inverse must be correct for 1000 random (A,B) pairs.
+    print("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]")
+    for size in SIZES:
+        # Bijectivity: map A -> nl_fscx_v2(A, B) must be injective for fixed B
+        # (tested via collision count over random samples)
+        non_bij = 0
+        for _ in range(500):
+            B    = BitArray.random(size)
+            seen = {}
+            for _ in range(min(256, 1 << min(size, 8))):
+                A   = BitArray.random(size)
+                out = nl_fscx_v2(A, B).uint
+                if out in seen and seen[out] != A.uint:
+                    non_bij += 1; break
+                seen[out] = A.uint
+        # Inverse correctness
+        inv_ok = 0
+        for _ in range(1000):
+            A = BitArray.random(size); B = BitArray.random(size)
+            if nl_fscx_v2_inv(nl_fscx_v2(A, B), B) == A:
+                inv_ok += 1
+        # Non-linearity check
+        zero = BitArray(size, 0)
+        nl_ok = 0
+        for _ in range(500):
+            A = BitArray.random(size); B = BitArray.random(size)
+            if nl_fscx_v2(A, B) != BitArray(size,
+               (fscx(A, zero).uint ^ nl_fscx_v2(zero, B).uint)):
+                nl_ok += 1
+        status = "PASS" if non_bij == 0 and inv_ok == 1000 and nl_ok >= 490 else "FAIL"
+        print(f"    bits={size:3d}  collisions={non_bij}/500  inv={inv_ok}/1000  "
+              f"nonlinear={nl_ok}/500  [{status}]")
+    print()
+
+
+def test_hske_nl_a1_correctness():
+    # HSKE-NL-A1 counter-mode: C = P XOR keystream; D = C XOR keystream = P.
+    # keystream[i] = nl_fscx_revolve_v1(K, K XOR i, n/4).
+    # Test correctness for 1000 random (K, P, counter) tuples.
+    print("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
+    for size in SIZES:
+        iv = i_val(size); ok = 0
+        for trial in range(1000):
+            K   = BitArray.random(size)
+            P   = BitArray.random(size)
+            ctr = trial % (1 << min(size, 16))
+            B   = BitArray(size, K.uint ^ ctr)
+            ks  = nl_fscx_revolve_v1(K, B, iv)
+            C   = BitArray(size, P.uint ^ ks.uint)
+            D   = BitArray(size, C.uint ^ ks.uint)
+            if D == P: ok += 1
+        status = "PASS" if ok == 1000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / 1000 correct  [{status}]")
+    print()
+
+
+def test_hske_nl_a2_correctness():
+    # HSKE-NL-A2 revolve mode: E = nl_fscx_revolve_v2(P, K, r);
+    # D = nl_fscx_revolve_v2_inv(E, K, r) must equal P.
+    # Trials reduced to 200: nl_fscx_v2_inv calls M^{n/2-1} per step — O(n^2/2) fscx ops total.
+    print("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]")
+    for size in SIZES:
+        rv = r_val(size); ok = 0
+        for _ in range(200):
+            K = BitArray.random(size); P = BitArray.random(size)
+            E = nl_fscx_revolve_v2(P, K, rv)
+            D = nl_fscx_revolve_v2_inv(E, K, rv)
+            if D == P: ok += 1
+        status = "PASS" if ok == 200 else "FAIL"
+        print(f"    bits={size:3d}  {ok:3d} / 200 correct  [{status}]")
+    print()
+
+
+def test_hkex_rnl_correctness():
+    # HKEX-RNL: both parties must derive equal raw key bits K_raw (near-certainty
+    # at the chosen parameters) and equal final sk after NL-FSCX KDF.
+    # Uses RNL_SIZES (smaller than KEYBITS) for performance.
+    # Production size is n=256; error probability is negligible at n>=64, b=1.
+    print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B  [PQC-EXT]")
+    print(f"     (ring sizes {RNL_SIZES}; production size is n=256)")
+    for n_rnl in RNL_SIZES:
+        m_base = _rnl_m_poly(n_rnl)
+        ok_raw = 0; ok_sk = 0; trials = 200
+        for _ in range(trials):
+            a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
+            m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            if K_A == K_B:
+                ok_raw += 1
+                sk_A = nl_fscx_revolve_v1(K_A, K_A, n_rnl // 4)
+                sk_B = nl_fscx_revolve_v1(K_B, K_B, n_rnl // 4)
+                if sk_A == sk_B: ok_sk += 1
+        status = "PASS" if ok_raw >= trials * 90 // 100 else "FAIL"
+        print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{trials}  sk agree={ok_sk}/{trials}  [{status}]")
+    print()
+
+
+def test_hpks_nl_correctness():
+    # HPKS-NL: Schnorr with NL-FSCX v1 challenge.
+    # Sign:   k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
+    # Verify: g^s * C^e == R
+    print("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
+    for size in SIZES:
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0
+        for _ in range(1000):
+            a     = BitArray.random(size)
+            C_int = gf_pow(GF_GEN, a.uint, poly, size)
+            pt    = BitArray.random(size)
+            k     = BitArray.random(size)
+            R_int = gf_pow(GF_GEN, k.uint, poly, size)
+            R_b   = BitArray(size, R_int)
+            e     = nl_fscx_revolve_v1(R_b, pt, iv)
+            s     = (k.uint - a.uint * e.uint) % ord_
+            lhs   = gf_mul(gf_pow(GF_GEN, s,      poly, size),
+                           gf_pow(C_int,  e.uint,  poly, size), poly, size)
+            if lhs == R_int: ok += 1
+        status = "PASS" if ok == 1000 else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / 1000 verified  [{status}]")
+    print()
+
+
+def test_hpke_nl_correctness():
+    # HPKE-NL: El Gamal + NL-FSCX v2 encryption.
+    # Bob:   enc=C^r; E=nl_fscx_revolve_v2(P, enc, I)
+    # Alice: dec=R^a=enc; D=nl_fscx_revolve_v2_inv(E, dec, I) must equal P.
+    # Trials reduced to 200: nl_fscx_v2_inv calls M^{n/2-1} per step.
+    print("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]")
+    for size in SIZES:
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ok = 0
+        for _ in range(200):
+            a   = BitArray.random(size); pt = BitArray.random(size)
+            C   = gf_pow(GF_GEN, a.uint, poly, size)
+            r   = BitArray.random(size)
+            R   = gf_pow(GF_GEN, r.uint, poly, size)
+            enc = BitArray(size, gf_pow(C, r.uint, poly, size))
+            E   = nl_fscx_revolve_v2(pt, enc, iv)
+            dec = BitArray(size, gf_pow(R, a.uint, poly, size))
+            D   = nl_fscx_revolve_v2_inv(E, dec, iv)
+            if D == pt: ok += 1
+        status = "PASS" if ok == 200 else "FAIL"
+        print(f"    bits={size:3d}  {ok:3d} / 200 decrypted  [{status}]")
     print()
 
 
@@ -359,114 +648,140 @@ def test_hpks_sign_verify():
 # ---------------------------------------------------------------------------
 
 def _bench(label: str, fn):
-    """Run fn in batches of 100 until ~TARGET_SEC elapsed. Return (ops, elapsed)."""
-    # warm up
     for _ in range(10):
         fn()
-    t0 = time.perf_counter()
-    ops = 0
+    t0 = time.perf_counter(); ops = 0
     while True:
-        for _ in range(100):
-            fn()
+        for _ in range(100): fn()
         ops += 100
         elapsed = time.perf_counter() - t0
-        if elapsed >= TARGET_SEC:
-            break
+        if elapsed >= TARGET_SEC: break
     rate = ops / elapsed
-    if rate >= 1e6:
-        rate_str = f"{rate/1e6:.2f} M ops/sec"
-    elif rate >= 1e3:
-        rate_str = f"{rate/1e3:.2f} K ops/sec"
-    else:
-        rate_str = f"{rate:.2f} ops/sec"
-    print(f"    {label:<40s}: {rate_str}  ({ops} ops in {elapsed:.2f}s)")
+    if rate >= 1e6:    rate_str = f"{rate/1e6:.2f} M ops/sec"
+    elif rate >= 1e3:  rate_str = f"{rate/1e3:.2f} K ops/sec"
+    else:              rate_str = f"{rate:.2f} ops/sec"
+    print(f"    {label:<44s}: {rate_str}  ({ops} ops in {elapsed:.2f}s)")
 
 
 def bench_fscx():
-    print("[8] FSCX throughput")
+    print("[17] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
-        a = BitArray.random(size)
-        b = BitArray.random(size)
+        a = BitArray.random(size); b = BitArray.random(size)
         def fn():
-            nonlocal a
-            a = fscx(a, b)
+            nonlocal a; a = fscx(a, b)
         _bench(f"bits={size:3d}", fn)
     print()
 
 
-def bench_fscx_revolve_n():
-    print("[9] FSCX_REVOLVE_N throughput")
+def bench_hkex_gf_pow():
+    print("[18] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in SIZES:
-        for steps, label in [(i_val(size), f"i({i_val(size)})"), (r_val(size), f"r({r_val(size)})")]:
-            a = BitArray.random(size)
-            b = BitArray.random(size)
-            n = BitArray.random(size)
-            def fn(a=a, b=b, n=n, steps=steps):
-                return fscx_revolve_n(a, b, n, steps)
-            _bench(f"bits={size:3d}  steps={label}", fn)
+        poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
+        def fn(a=a, poly=poly, size=size):
+            return gf_pow(GF_GEN, a.uint, poly, size)
+        _bench(f"bits={size:3d}  gf_pow(g, a)", fn)
     print()
 
 
 def bench_hkex_handshake():
-    print("[10] HKEX full handshake")
+    print("[19] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in SIZES:
-        iv = i_val(size)
-        rv = r_val(size)
+        poly = GF_POLY.get(size, 0x00000425)
         def fn():
-            a  = BitArray.random(size)
-            b  = BitArray.random(size)
-            a2 = BitArray.random(size)
-            b2 = BitArray.random(size)
-            c  = fscx_revolve(a, b, iv)
-            c2 = fscx_revolve(a2, b2, iv)
-            hn = c ^ c2
-            _keyA = fscx_revolve_n(c2, b,  hn, rv) ^ a
-            _keyB = fscx_revolve_n(c,  b2, hn, rv) ^ a2
+            a = BitArray.random(size); b = BitArray.random(size)
+            C  = gf_pow(GF_GEN, a.uint, poly, size)
+            C2 = gf_pow(GF_GEN, b.uint, poly, size)
+            gf_pow(C2, a.uint, poly, size); gf_pow(C, b.uint, poly, size)
         _bench(f"bits={size:3d}", fn)
     print()
 
 
 def bench_hske_roundtrip():
-    print("[11] HSKE round-trip: encrypt+decrypt")
+    print("[20] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
-        iv = i_val(size)
-        rv = r_val(size)
-        sink = BitArray(size, 0)
+        iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
             nonlocal sink
-            pt  = BitArray.random(size)
-            key = BitArray.random(size)
-            enc = fscx_revolve_n(pt,  key, key, iv)
-            dec = fscx_revolve_n(enc, key, key, rv)
-            sink ^= dec ^ pt
+            pt = BitArray.random(size); key = BitArray.random(size)
+            sink ^= fscx_revolve(fscx_revolve(pt, key, iv), key, rv) ^ pt
         _bench(f"bits={size:3d}", fn)
     print()
 
 
-# HPKE (public key encryption) full round-trip:
-# Key setup: C = fscx_revolve(A,B,i), C2 = fscx_revolve(A2,B2,i), hn = C^C2
-# Bob encrypts:   E = fscx_revolve_n(C, B2, hn, r) ^ A2 ^ pt
-# Alice decrypts: D = fscx_revolve_n(C2, B,  hn, r) ^ A  ^ E  (== pt)
 def bench_hpke_roundtrip():
-    print("[12] HPKE encrypt+decrypt round-trip")
+    print("[21] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in SIZES:
-        iv = i_val(size)
-        rv = r_val(size)
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
-        def fn():
+        def fn(size=size, poly=poly, iv=iv, rv=rv):
             nonlocal sink
-            A  = BitArray.random(size)
-            B  = BitArray.random(size)
-            A2 = BitArray.random(size)
-            B2 = BitArray.random(size)
-            pt = BitArray.random(size)
-            C  = fscx_revolve(A, B, iv)
-            C2 = fscx_revolve(A2, B2, iv)
-            hn = C ^ C2
-            E  = fscx_revolve_n(C, B2, hn, rv) ^ A2 ^ pt  # Bob encrypts
-            D  = fscx_revolve_n(C2, B, hn, rv) ^ A ^ E    # Alice decrypts
-            sink ^= D
+            a   = BitArray.random(size); pt = BitArray.random(size)
+            C   = gf_pow(GF_GEN, a.uint, poly, size)
+            r   = BitArray.random(size); R = gf_pow(GF_GEN, r.uint, poly, size)
+            enc = BitArray(size, gf_pow(C, r.uint, poly, size))
+            dec = BitArray(size, gf_pow(R, a.uint, poly, size))
+            sink ^= fscx_revolve(fscx_revolve(pt, enc, iv), dec, rv)
         _bench(f"bits={size:3d}", fn)
+    print()
+
+
+def bench_nl_fscx_revolve():
+    print("[22] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    for size in SIZES:
+        iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
+        def fn():
+            nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
+        _bench(f"bits={size:3d}  v1 n/4 steps", fn)
+    print("[22b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+    for size in SIZES:
+        rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
+        def fn(size=size, rv=rv, b=b):
+            nonlocal a; E = nl_fscx_revolve_v2(a, b, rv); a = nl_fscx_revolve_v2_inv(E, b, rv)
+        _bench(f"bits={size:3d}  v2 enc+dec r_val", fn)
+    print()
+
+
+def bench_hske_nl_a1_roundtrip():
+    print("[23] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    for size in SIZES:
+        iv = i_val(size); sink = BitArray(size, 0)
+        def fn(size=size, iv=iv):
+            nonlocal sink
+            K = BitArray.random(size); P = BitArray.random(size)
+            B = BitArray(size, K.uint ^ 0)
+            ks = nl_fscx_revolve_v1(K, B, iv)
+            sink ^= BitArray(size, P.uint ^ ks.uint)
+        _bench(f"bits={size:3d}", fn)
+    print()
+
+
+def bench_hske_nl_a2_roundtrip():
+    print("[24] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    for size in SIZES:
+        rv = r_val(size); sink = BitArray(size, 0)
+        def fn(size=size, rv=rv):
+            nonlocal sink
+            K = BitArray.random(size); P = BitArray.random(size)
+            E = nl_fscx_revolve_v2(P, K, rv)
+            sink ^= nl_fscx_revolve_v2_inv(E, K, rv)
+        _bench(f"bits={size:3d}", fn)
+    print()
+
+
+def bench_hkex_rnl_handshake():
+    # Uses RNL_SIZES for speed; production uses n=256.
+    print("[25] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
+    for n_rnl in RNL_SIZES:
+        m_base = _rnl_m_poly(n_rnl)
+        def fn(n_rnl=n_rnl, m_base=m_base):
+            a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
+            m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+        _bench(f"n={n_rnl:3d}  full exchange", fn)
     print()
 
 
@@ -477,19 +792,33 @@ def bench_hpke_roundtrip():
 if __name__ == '__main__':
     print("=== Herradura KEx \u2014 Security & Performance Tests (Python) ===\n")
 
-    print("--- Security Assumption Tests ---\n")
-    test_noncommutativity()
+    print("--- Security Tests: Classical Protocols ---\n")
+    test_hkex_gf_correctness()
     test_avalanche()
     test_orbit_period()
     test_bit_frequency()
-    test_key_sensitivity()
+    test_hkex_gf_key_sensitivity()
+    test_hkex_gf_eve_resistance()
+    test_hpks_schnorr_correctness()
+    test_hpks_schnorr_eve_resistance()
+    test_hpke_roundtrip()
 
-    test_avalanche_revolve_n()
-    test_hpks_sign_verify()
+    print("--- Security Tests: PQC Extension (NL-FSCX + HKEX-RNL) ---\n")
+    test_nl_fscx_v1_nonlinearity()
+    test_nl_fscx_v2_bijective_inverse()
+    test_hske_nl_a1_correctness()
+    test_hske_nl_a2_correctness()
+    test_hkex_rnl_correctness()
+    test_hpks_nl_correctness()
+    test_hpke_nl_correctness()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()
-    bench_fscx_revolve_n()
+    bench_hkex_gf_pow()
     bench_hkex_handshake()
     bench_hske_roundtrip()
     bench_hpke_roundtrip()
+    bench_nl_fscx_revolve()
+    bench_hske_nl_a1_roundtrip()
+    bench_hske_nl_a2_roundtrip()
+    bench_hkex_rnl_handshake()

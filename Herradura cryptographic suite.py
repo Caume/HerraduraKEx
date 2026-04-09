@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.4.0
+    Herradura Cryptographic Suite v1.5.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,12 +18,36 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.0: NL-FSCX non-linear extension and PQC protocols ---
+
+    Adds two NL-FSCX primitives and five PQC-hardened protocol variants
+    alongside the existing classical (non-PQC) algorithms (kept for reference).
+
+    NL-FSCX v1:  nl_fscx_v1(A,B) = fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
+      Injects integer-carry non-linearity.  Not bijective in A — for one-way
+      use only (counter-mode HSKE, HKEX KDF, HPKS challenge hash).
+
+    NL-FSCX v2:  nl_fscx_v2(A,B) = (fscx(A,B) + ROL(B*(B+1)//2, n/4)) mod 2^n
+      B-only additive offset; bijective in A with closed-form inverse.
+      Used for revolve-mode HSKE and HPKE where decryption is required.
+
+    PQC protocol variants (C3 hybrid assignment):
+      HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
+      HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
+      HKEX-RNL    — Ring-LWR key exchange (quantum-resistant; replaces HKEX-GF)
+      HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
+      HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
+
+    Classical protocols (not PQC — kept for reference and comparison):
+      HKEX-GF     — Diffie-Hellman over GF(2^n)* (broken by Shor's algorithm)
+      HSKE        — fscx_revolve symmetric encryption (linear key recovery)
+      HPKS        — Schnorr with fscx_revolve challenge (linear challenge)
+      HPKE        — El Gamal + fscx_revolve (linear encryption)
+
     --- v1.4.0: HKEX-GF (Diffie-Hellman over GF(2^n)*) ---
 
     The broken fscx_revolve_n-based HKEX is replaced with HKEX-GF: a correct
     Diffie-Hellman key exchange over the multiplicative group GF(2^n)*.
-
-    fscx_revolve_n has been removed entirely from all protocol code.
 
     HKEX-GF protocol:
     - Pre-agreed: generator g=3 (polynomial x+1), irreducible poly p(x)
@@ -31,48 +55,39 @@
     - Bob:   private scalar b -> public C2 = g^b
     - Shared key: sk = C2^a = C^b = g^{ab}  (DH commutativity in GF(2^n)*)
     Security rests on the hardness of DLP in GF(2^n)*, not on orbit structure.
-
-    Protocol stack:
-    - HKEX: replaced with GF DH (above)
-    - HSKE: fscx_revolve(P, key, i) / fscx_revolve(E, key, r) — unchanged
-    - HPKS: Schnorr-like signature with fscx_revolve challenge.
-            Sign:   k random; R=g^k; e=fscx_revolve(R,P,I); s=(k-a*e) mod ord
-            Verify: g^s * C^e == R  (public key C = g^a; anyone can verify)
-    - HPKE: El Gamal + fscx_revolve.
-            Bob: r ephemeral; R=g^r; enc_key=C^r=g^{ar}; E=fscx_revolve(P,enc_key,I)
-            Alice: dec_key=R^a=g^{ar}; D=fscx_revolve(E,dec_key,R)==P
+    NOTE: DLP in GF(2^n)* is vulnerable to Shor's algorithm on quantum computers.
 
     --- v1.3.2: performance and readability ---
-
-    - BitArray: added rotated(n) non-mutating rotation method (positive = left,
-      negative = right); replaces the copy-then-mutate pattern.
-    - BitArray: added random() classmethod, consistent with the tests file.
-    - fscx: rewritten using rotated(); each term maps directly to the formula
-      A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B). No longer mutates its inputs.
-    - fscx defined before fscx_revolve for consistent ordering
-      with C and Go (definition before first use).
-    - Protocol code wrapped in main() with if __name__ == "__main__" guard,
-      consistent with the tests file, C, and Go (each has an explicit entry point).
-    - KEYBITS, I_VALUE, R_VALUE defined as module-level constants, matching C.
-    - BitArray.random() used throughout main(), consistent with tests file.
-
     --- v1.3: BitArray (multi-byte parameter support) ---
-
-    The Python implementation now uses 256-bit parameters by default, matching
-    the C and Go versions at the same bit width.
 '''
 
 import os
 
 
+# ---------------------------------------------------------------------------
+# Global parameters
+# ---------------------------------------------------------------------------
+
 # Key size in bits — must be a positive multiple of 8.
 # Change to use a different parameter width; I_VALUE and R_VALUE scale automatically.
-# Equivalent to 256-bit parameters in the C and Go versions.
 KEYBITS = 256
 I_VALUE = KEYBITS // 4       # 64  for 256-bit
 R_VALUE = 3 * KEYBITS // 4   # 192 for 256-bit
 ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmetic)
 
+# HKEX-RNL Ring-LWR parameters (see SecurityProofs.md §11.4)
+# q=65537 (Fermat prime, fast arithmetic) gives lower noise-to-margin ratio than
+# q=3329 (Kyber), ensuring reliable single-block agreement at the cost of larger
+# keys.  Production deployment should add reconciliation hints (NewHope-style).
+RNLQ  = 65537  # prime modulus (2^16 + 1)
+RNLP  = 4096   # public-key rounding modulus
+RNLPP = 2      # reconciliation modulus (1 bit extracted per ring coefficient)
+RNLB  = 1      # small-secret bound: coefficients uniform in {0, ..., RNLB}
+
+
+# ---------------------------------------------------------------------------
+# BitArray class
+# ---------------------------------------------------------------------------
 
 class BitArray:
     """Fixed-width bit string backed by a Python int.
@@ -157,7 +172,7 @@ class BitArray:
 
 
 # ---------------------------------------------------------------------------
-# FSCX functions
+# FSCX functions (classical — linear map M = I + ROL + ROR over GF(2))
 # ---------------------------------------------------------------------------
 
 def fscx(A: BitArray, B: BitArray) -> BitArray:
@@ -176,7 +191,7 @@ def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) ->
 
 
 # ---------------------------------------------------------------------------
-# GF(2^n) field arithmetic — XOR + left-shift only
+# GF(2^n) field arithmetic — XOR + left-shift only (classical)
 # ---------------------------------------------------------------------------
 # Primitive polynomials (lower n bits; the x^n coefficient is implicit).
 GF_POLY = {32: 0x00400007, 64: 0x0000001B, 128: 0x00000087, 256: 0x00000425}
@@ -203,62 +218,231 @@ def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
     return result
 
 
+# ---------------------------------------------------------------------------
+# NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
+# ---------------------------------------------------------------------------
+
+def _m_inv(X: BitArray) -> BitArray:
+    """M^{-1}(X): inverse of the FSCX linear map M = I+ROL+ROR over GF(2).
+    Since M^{n/2} = I, M^{-1} = M^{n/2-1}.  Applies n/2-1 fscx steps with B=0."""
+    n    = X._size
+    zero = BitArray(n, 0)
+    return fscx_revolve(X, zero, n // 2 - 1)
+
+
+def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:
+    """NL-FSCX v1: injects integer-carry non-linearity from A+B into FSCX.
+
+    nl_fscx_v1(A,B) = fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
+
+    Properties: non-linear over GF(2); NOT bijective in A (collisions exist).
+    Use for: HSKE counter-mode keystream, HKEX-RNL KDF, HPKS-NL challenge hash.
+    """
+    n   = A._size
+    mix = BitArray(n, (A.uint + B.uint) & A._mask)
+    return fscx(A, B) ^ mix.rotated(n // 4)
+
+
+def nl_fscx_revolve_v1(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    """Iterate nl_fscx_v1 *steps* times (B held constant)."""
+    result = A.copy()
+    for _ in range(steps):
+        result = nl_fscx_v1(result, B)
+    return result
+
+
+def nl_fscx_v2(A: BitArray, B: BitArray) -> BitArray:
+    """NL-FSCX v2: B-only additive offset; bijective in A with closed-form inverse.
+
+    delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4)
+    nl_fscx_v2(A,B) = (fscx(A,B) + delta(B)) mod 2^n
+
+    Properties: non-linear over GF(2); bijective in A for all B; exact inverse.
+    Use for: HSKE revolve-mode encryption/decryption, HPKE-NL encryption.
+    """
+    n     = A._size
+    mask  = A._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    return BitArray(n, (fscx(A, B).uint + delta.uint) & mask)
+
+
+def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
+    """Exact inverse of one nl_fscx_v2 step: A = B XOR M^{-1}((Y - delta(B)) mod 2^n).
+
+    Derivation: Y = M(A XOR B) + delta(B)  =>  A XOR B = M^{-1}(Y - delta(B))
+    Applying M^{-1} = M^{n/2-1} recovers A XOR B, then XOR with B gives A.
+    """
+    n     = Y._size
+    mask  = Y._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    Z     = BitArray(n, (Y.uint - delta.uint) & mask)
+    return B ^ _m_inv(Z)
+
+
+def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    """Iterate nl_fscx_v2 *steps* times (B held constant)."""
+    result = A.copy()
+    for _ in range(steps):
+        result = nl_fscx_v2(result, B)
+    return result
+
+
+def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
+    """Invert nl_fscx_revolve_v2: apply nl_fscx_v2_inv *steps* times."""
+    result = Y.copy()
+    for _ in range(steps):
+        result = nl_fscx_v2_inv(result, B)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
+# ---------------------------------------------------------------------------
+
+def _rnl_poly_mul(f, g, q, n):
+    """Multiply f*g in Z_q[x]/(x^n+1) (negacyclic, x^n ≡ -1). O(n^2)."""
+    h = [0] * n
+    for i, fi in enumerate(f):
+        if fi == 0:
+            continue
+        for j, gj in enumerate(g):
+            k = i + j
+            if k < n:
+                h[k] = (h[k] + fi * gj) % q
+            else:
+                h[k - n] = (h[k - n] - fi * gj) % q
+    return [v % q for v in h]
+
+def _rnl_poly_add(f, g, q):
+    return [(a + b) % q for a, b in zip(f, g)]
+
+def _rnl_round(poly, from_q, to_p):
+    """Round each coefficient from Z_{from_q} to Z_{to_p} (nearest integer)."""
+    return [(c * to_p + from_q // 2) // from_q % to_p for c in poly]
+
+def _rnl_lift(poly, from_p, to_q):
+    """Lift from Z_{from_p} to Z_{to_q} by integer scaling (c -> c * to_q // from_p)."""
+    return [c * to_q // from_p % to_q for c in poly]
+
+def _rnl_m_poly(n):
+    """FSCX polynomial m(x) = 1 + x + x^{n-1} as a coefficient list in Z_q."""
+    p = [0] * n
+    p[0] = p[1] = p[n - 1] = 1
+    return p
+
+def _rnl_rand_poly(n, q):
+    """Uniform random polynomial in Z_q^n."""
+    return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
+
+def _rnl_small_poly(n, b):
+    """Random polynomial with small coefficients uniform in {0, ..., b}."""
+    return [int.from_bytes(os.urandom(1), 'big') % (b + 1) for _ in range(n)]
+
+def _rnl_bits_to_bitarray(poly, pp, size):
+    """Extract 1 bit per coefficient (coeff >= pp//2 → bit=1) and pack into BitArray."""
+    val = 0
+    threshold = pp // 2
+    for i, c in enumerate(poly[:size]):
+        if c >= threshold:
+            val |= (1 << i)
+    return BitArray(size, val)
+
+def _rnl_keygen(m_blind, n, q, p, b):
+    """Generate one party's (s, C) key pair for HKEX-RNL.
+    s: private small polynomial; C: public rounded polynomial."""
+    s  = _rnl_small_poly(n, b)
+    ms = _rnl_poly_mul(m_blind, s, q, n)
+    C  = _rnl_round(ms, q, p)
+    return s, C
+
+def _rnl_agree(s, C_other, q, p, pp, n, key_bits):
+    """Compute raw key bits from private s and the other party's public C.
+    Returns a BitArray of *key_bits* bits."""
+    C_lifted = _rnl_lift(C_other, p, q)
+    K_poly   = _rnl_poly_mul(s, C_lifted, q, n)
+    K_bits   = _rnl_round(K_poly, q, pp)
+    return _rnl_bits_to_bitarray(K_bits, pp, key_bits)
+
+
+# ---------------------------------------------------------------------------
+# Protocol documentation
+# ---------------------------------------------------------------------------
 '''
-HKEX-GF (key exchange over GF(2^n)*)
-    Pre-agreed: generator g=GF_GEN, irreducible polynomial GF_POLY[n]
-    Alice:  private scalar a (random n-bit integer)
-            C = g^a in GF(2^n)*
-            send C to Bob and receive C2
-            sk = C2^a in GF(2^n)*
-    Bob:    private scalar b (random n-bit integer)
-            C2 = g^b in GF(2^n)*
-            send C2 to Alice and receive C
-            sk = C^b in GF(2^n)*
-    Result: C2^a = (g^b)^a = g^{ab} = (g^a)^b = C^b  (commutativity of GF mult)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CLASSICAL PROTOCOLS (not PQC — broken by Shor's algorithm or linear attacks)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-HSKE (symmetric key encryption):
-    Alice,Bob:  share preshared key of bitlength n
-    Alice:  E = fscx_revolve(P, key, i)
-            shares E with Bob
-    Bob:    P = fscx_revolve(E, key, r)
+HKEX-GF (key exchange over GF(2^n)*):
+  Alice:  C  = g^a;   sk = C2^a = g^{ab}
+  Bob:    C2 = g^b;   sk = C^b  = g^{ab}
+  Break:  Shor's algorithm recovers a from C=g^a in O(n^2 log n) quantum time.
 
-HPKS (Schnorr-like public key signature — publicly verifiable)
-    Alice:  private scalar a (integer), public C = g^a
-    Sign(P):
-      k  = random nonce scalar
-      R  = g^k  in GF(2^n)*                          (commitment)
-      e  = fscx_revolve(R_bits, P, I_VALUE)           (challenge via fscx_revolve)
-      s  = (k - a * e.uint) mod (2^n - 1)            (Schnorr response)
-      signature = (R, s)
-    Verify(P, C, sig=(R, s)):
-      e  = fscx_revolve(R_bits, P, I_VALUE)           (recompute challenge)
-      check: g^s * C^e == R  in GF(2^n)*
-    Correctness: g^s * C^e = g^{k-ae} * g^{ae} = g^k = R  ✓
-    Security: forging (R, s) without a requires solving DLP for C = g^a.
+HSKE (symmetric key encryption, linear):
+  Encrypt: E = fscx_revolve(P,  key, i)
+  Decrypt: D = fscx_revolve(E,  key, r)  [i = n/4, r = 3n/4]
+  Break:   One known-plaintext pair recovers key via GF(2) linear algebra.
 
-HPKE (public key encryption — El Gamal + fscx_revolve)
-    Alice:  private scalar a, public C = g^a
-    Bob:    picks ephemeral r; R = g^r  (ephemeral public)
-            enc_key = C^r = g^{ar}     (from Alice's public + Bob's ephemeral private)
-            E = fscx_revolve(P, enc_key, I_VALUE)
-            sends (R, E) to Alice
-    Alice:  dec_key = R^a = g^{ra} = enc_key
-            D = fscx_revolve(E, dec_key, R_VALUE) == P
-    Security: Eve has (C, R, E). Deriving enc_key = g^{ar} from g^a and g^r is CDH.
+HPKS (Schnorr-like signature, linear challenge):
+  Sign:    k random; R=g^k; e=fscx_revolve(R,P,I); s=(k-a*e) mod ord
+  Verify:  g^s * C^e == R;  C = g^a
+  Break:   DLP recovers a; linear challenge is preimage-vulnerable.
+
+HPKE (El Gamal + fscx_revolve, linear encryption):
+  Bob:     r random; R=g^r; enc=C^r; E=fscx_revolve(P,enc,I)
+  Alice:   dec=R^a=enc;     D=fscx_revolve(E,dec,R)
+  Break:   DLP recovers a; HSKE sub-protocol has linear key recovery.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs.md §11)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
+  keystream[i] = nl_fscx_revolve_v1(K, K XOR i, n/4)
+  Encrypt:  C = P XOR keystream[counter]
+  Decrypt:  P = C XOR keystream[counter]   (XOR-symmetric)
+  Security: keystream non-linearity defeats linear key-recovery; counter
+            ensures keystream uniqueness per block.  Assumes NL-FSCX v1 as PRF.
+
+HSKE-NL-A2 (revolve-mode HSKE with NL-FSCX v2):
+  Encrypt:  E = nl_fscx_revolve_v2(P, K, r)
+  Decrypt:  D = nl_fscx_revolve_v2_inv(E, K, r)  [closed-form inverse]
+  Security: B-channel non-linearity defeats linear key-recovery on K.
+            API-compatible with classical HSKE (same encrypt/decrypt shape).
+
+HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
+  Setup:    a_rand random; m_blind = m(x) + a_rand  [m(x)=1+x+x^{n-1}]
+  Alice:    s_A small private; C_A = round_p(m_blind * s_A)
+  Bob:      s_B small private; C_B = round_p(m_blind * s_B)
+  Agree:    K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
+  KDF:      sk = nl_fscx_revolve_v1(K_raw, K_raw, n/4)
+  Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
+            polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
+  Parameters: n=256, q=3329, p=1024, pp=2, b=1.
+
+HPKS-NL (Schnorr + NL-FSCX v1 challenge):
+  Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
+  Verify:  g^s * C^e == R;  C = g^a
+  Note:    GF(2^n)* DLP still applies (Shor's); NL challenge hardens the
+           fscx-specific linear preimage attack on e.
+
+HPKE-NL (El Gamal + NL-FSCX v2):
+  Bob:     r random; R=g^r; enc=C^r; E=nl_fscx_revolve_v2(P,enc,I)
+  Alice:   dec=R^a=enc;     D=nl_fscx_revolve_v2_inv(E,dec,R)
+  Note:    GF(2^n)* DLP still applies; NL encryption hardens the HSKE
+           sub-protocol linear key-recovery attack.
 '''
 
 
 def main():
-    # Examples with b = KEYBITS bits:
     poly = GF_POLY.get(KEYBITS, 0x00000425)
 
-    a         = BitArray.random(KEYBITS)   # Alice's private scalar
+    a         = BitArray.random(KEYBITS)   # Alice's private scalar (GF DH)
     b         = BitArray.random(KEYBITS)   # Bob's private scalar
     preshared = BitArray.random(KEYBITS)
     plaintext = BitArray.random(KEYBITS)
-    decoy     = BitArray.random(KEYBITS)   # Eve's random value (cannot compute sk)
+    decoy     = BitArray.random(KEYBITS)   # Eve's random value
 
-    # HKEX-GF key exchange
+    # HKEX-GF key exchange (classical)
     C  = BitArray(KEYBITS, gf_pow(GF_GEN, a.uint, poly, KEYBITS))
     C2 = BitArray(KEYBITS, gf_pow(GF_GEN, b.uint, poly, KEYBITS))
     sk = BitArray(KEYBITS, gf_pow(C2.uint, a.uint, poly, KEYBITS))
@@ -272,120 +456,164 @@ def main():
     print(f"C         : {C.hex}")
     print(f"C2        : {C2.hex}")
 
-    print(f"\n--- HKEX-GF (key exchange over GF(2^{KEYBITS})*)")
+    # ── CLASSICAL protocols ──────────────────────────────────────────────────
+    print(f"\n--- HKEX-GF [CLASSICAL — not PQC; Shor's algorithm breaks DLP]")
+    print(f"    (DH over GF(2^{KEYBITS})*)")
     print(f"sk (Alice): {sk.hex}")
     sk_bob = BitArray(KEYBITS, sk_bob_val)
     print(f"sk (Bob)  : {sk_bob.hex}")
     if sk == sk_bob:
-        print("+ session keys sk (Alice) and sk (Bob) are equal!")
+        print("+ session keys agree!")
     else:
-        print("- session keys sk (Alice) and sk (Bob) are different!")
+        print("- session keys differ!")
 
-    print("\n--- HSKE (symmetric key encryption)")
-    E = fscx_revolve(plaintext, preshared, I_VALUE)
-    print(f"E (Alice) : {E.hex}")
-    D = fscx_revolve(E, preshared, R_VALUE)
-    print(f"D (Bob)   : {D.hex}")
-    if D == plaintext:
-        print("+ plaintext is correctly decrypted from E with preshared key")
+    print("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]")
+    print("    (fscx_revolve symmetric encryption)")
+    E_hske = fscx_revolve(plaintext, preshared, I_VALUE)
+    print(f"E (Alice) : {E_hske.hex}")
+    D_hske = fscx_revolve(E_hske, preshared, R_VALUE)
+    print(f"D (Bob)   : {D_hske.hex}")
+    if D_hske == plaintext:
+        print("+ plaintext correctly decrypted")
     else:
-        print("- plaintext is different from decrypted E with preshared key!")
+        print("- decryption failed!")
 
-    print("\n--- HPKS (Schnorr-like signature: sign with private, verify with public key)")
-    # Sign: Alice picks nonce k, commitment R=g^k,
-    #       challenge e = fscx_revolve(R, P, I),  response s = (k - a*e) mod ord
+    print("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]")
+    print("    (Schnorr-like with fscx_revolve challenge)")
     k_s   = BitArray.random(KEYBITS)
     R_s   = BitArray(KEYBITS, gf_pow(GF_GEN, k_s.uint, poly, KEYBITS))
-    e_s   = fscx_revolve(R_s, plaintext, I_VALUE)          # challenge via fscx_revolve
-    s_s   = (k_s.uint - a.uint * e_s.uint) % ORD           # Schnorr response
-    print(f"R (commit): {R_s.hex}")
-    print(f"e (fscx)  : {e_s.hex}")
-    print(f"s (resp)  : {s_s:0{KEYBITS//4}x}")
-    # Verify: anyone with Alice's public key C checks g^s * C^e == R
+    e_s   = fscx_revolve(R_s, plaintext, I_VALUE)
+    s_s   = (k_s.uint - a.uint * e_s.uint) % ORD
     e_v   = fscx_revolve(R_s, plaintext, I_VALUE)
     lhs   = gf_mul(gf_pow(GF_GEN, s_s, poly, KEYBITS),
-                   gf_pow(C.uint, e_v.uint, poly, KEYBITS),
-                   poly, KEYBITS)
+                   gf_pow(C.uint, e_v.uint, poly, KEYBITS), poly, KEYBITS)
     if lhs == R_s.uint:
-        print("+ Schnorr verified: g^s · C^e == R  [public key sufficient]")
+        print("+ Schnorr verified: g^s · C^e == R")
     else:
         print("- Schnorr verification failed!")
 
-    print("\n--- HPKS (Schnorr) + HSKE: Alice signs the HSKE ciphertext; Bob verifies then decrypts")
-    E_hs  = fscx_revolve(plaintext, preshared, I_VALUE)    # HSKE: Alice encrypts P
-    k_hs  = BitArray.random(KEYBITS)
-    R_hs  = BitArray(KEYBITS, gf_pow(GF_GEN, k_hs.uint, poly, KEYBITS))
-    e_hs  = fscx_revolve(R_hs, E_hs, I_VALUE)              # challenge over ciphertext E
-    s_hs  = (k_hs.uint - a.uint * e_hs.uint) % ORD
-    print(f"E (HSKE)  : {E_hs.hex}")
-    print(f"R (commit): {R_hs.hex}")
-    print(f"s (resp)  : {s_hs:0{KEYBITS//4}x}")
-    # Bob verifies Schnorr on E, then decrypts via HSKE
-    e_hv  = fscx_revolve(R_hs, E_hs, I_VALUE)
-    lhs_h = gf_mul(gf_pow(GF_GEN, s_hs, poly, KEYBITS),
-                   gf_pow(C.uint, e_hv.uint, poly, KEYBITS),
-                   poly, KEYBITS)
-    D_hs  = fscx_revolve(E_hs, preshared, R_VALUE)         # HSKE: Bob decrypts
-    print(f"D (Bob)   : {D_hs.hex}")
-    if lhs_h == R_hs.uint and D_hs == plaintext:
-        print("+ Schnorr on ciphertext verified; plaintext decrypted correctly!")
+    print("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
+    print("    (El Gamal + fscx_revolve)")
+    r_hpke   = BitArray.random(KEYBITS)
+    R_hpke   = BitArray(KEYBITS, gf_pow(GF_GEN, r_hpke.uint, poly, KEYBITS))
+    enc_key  = BitArray(KEYBITS, gf_pow(C.uint, r_hpke.uint, poly, KEYBITS))
+    E_hpke   = fscx_revolve(plaintext, enc_key, I_VALUE)
+    dec_key  = BitArray(KEYBITS, gf_pow(R_hpke.uint, a.uint, poly, KEYBITS))
+    D_hpke   = fscx_revolve(E_hpke, dec_key, R_VALUE)
+    print(f"E (Bob)   : {E_hpke.hex}")
+    print(f"D (Alice) : {D_hpke.hex}")
+    if D_hpke == plaintext:
+        print("+ plaintext correctly decrypted")
     else:
-        print("- Schnorr verification or decryption failed!")
+        print("- decryption failed!")
 
-    print("\n--- HPKE (public key encryption, El Gamal + fscx_revolve)")
-    # Bob generates ephemeral key pair; derives enc_key from Alice's public C
-    r       = BitArray.random(KEYBITS)
-    R       = BitArray(KEYBITS, gf_pow(GF_GEN, r.uint, poly, KEYBITS))
-    enc_key = BitArray(KEYBITS, gf_pow(C.uint,  r.uint, poly, KEYBITS))  # C^r = g^{ar}
-    E = fscx_revolve(plaintext, enc_key, I_VALUE)   # Bob encrypts
-    print(f"r   (Bob eph priv): {r.hex}")
-    print(f"R   (Bob eph pub) : {R.hex}")
-    print(f"E   (Bob)         : {E.hex}")
-    # Alice derives the same enc_key using her private scalar a and Bob's ephemeral public R
-    dec_key = BitArray(KEYBITS, gf_pow(R.uint, a.uint, poly, KEYBITS))   # R^a = g^{ra}
-    D = fscx_revolve(E, dec_key, R_VALUE)           # Alice decrypts
-    print(f"D   (Alice)       : {D.hex}")
-    if D == plaintext:
-        print("+ plaintext is correctly decrypted from E with Alice's private key!")
+    # ── PQC-HARDENED protocols ───────────────────────────────────────────────
+    print("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
+    counter    = 0
+    ks_a1      = nl_fscx_revolve_v1(preshared,
+                                    BitArray(KEYBITS, preshared.uint ^ counter),
+                                    KEYBITS // 4)
+    E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)
+    D_a1 = BitArray(KEYBITS, E_a1.uint ^ ks_a1.uint)
+    print(f"E (Alice) : {E_a1.hex}")
+    print(f"D (Bob)   : {D_a1.hex}")
+    if D_a1 == plaintext:
+        print("+ plaintext correctly decrypted")
     else:
-        print("- plaintext is different from decrypted E with private key!")
+        print("- decryption failed!")
 
+    print("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]")
+    E_a2 = nl_fscx_revolve_v2(plaintext, preshared, R_VALUE)
+    D_a2 = nl_fscx_revolve_v2_inv(E_a2, preshared, R_VALUE)
+    print(f"E (Alice) : {E_a2.hex}")
+    print(f"D (Bob)   : {D_a2.hex}")
+    if D_a2 == plaintext:
+        print("+ plaintext correctly decrypted")
+    else:
+        print("- decryption failed!")
+
+    print("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]")
+    print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=3329 — may be slow)")
+    n_rnl    = KEYBITS
+    m_base   = _rnl_m_poly(n_rnl)
+    a_rand   = _rnl_rand_poly(n_rnl, RNLQ)         # session random, public
+    m_blind  = _rnl_poly_add(m_base, a_rand, RNLQ) # blinded polynomial
+    s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+    s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+    K_raw_A  = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
+    K_raw_B  = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
+    sk_rnl_A = nl_fscx_revolve_v1(K_raw_A, K_raw_A, KEYBITS // 4)
+    sk_rnl_B = nl_fscx_revolve_v1(K_raw_B, K_raw_B, KEYBITS // 4)
+    print(f"sk (Alice): {sk_rnl_A.hex}")
+    print(f"sk (Bob)  : {sk_rnl_B.hex}")
+    if K_raw_A == K_raw_B:
+        print("+ raw key bits agree; shared session key established!")
+    else:
+        bits_diff = bin(K_raw_A.uint ^ K_raw_B.uint).count('1')
+        print(f"- raw key disagrees ({bits_diff} bit(s)) — rounding noise (retry)")
+
+    print("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
+    print("    (GF DLP still present; NL hardens linear challenge preimage)")
+    k_nl   = BitArray.random(KEYBITS)
+    R_nl   = BitArray(KEYBITS, gf_pow(GF_GEN, k_nl.uint, poly, KEYBITS))
+    e_nl   = nl_fscx_revolve_v1(R_nl, plaintext, I_VALUE)
+    s_nl   = (k_nl.uint - a.uint * e_nl.uint) % ORD
+    e_nl_v = nl_fscx_revolve_v1(R_nl, plaintext, I_VALUE)
+    lhs_nl = gf_mul(gf_pow(GF_GEN, s_nl, poly, KEYBITS),
+                    gf_pow(C.uint, e_nl_v.uint, poly, KEYBITS), poly, KEYBITS)
+    if lhs_nl == R_nl.uint:
+        print("+ HPKS-NL verified: g^s · C^e == R")
+    else:
+        print("- HPKS-NL verification failed!")
+
+    print("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
+    print("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")
+    r_nl     = BitArray.random(KEYBITS)
+    R_nl2    = BitArray(KEYBITS, gf_pow(GF_GEN, r_nl.uint, poly, KEYBITS))
+    enc_nl   = BitArray(KEYBITS, gf_pow(C.uint, r_nl.uint, poly, KEYBITS))
+    E_nl     = nl_fscx_revolve_v2(plaintext, enc_nl, I_VALUE)
+    dec_nl   = BitArray(KEYBITS, gf_pow(R_nl2.uint, a.uint, poly, KEYBITS))
+    D_nl     = nl_fscx_revolve_v2_inv(E_nl, dec_nl, I_VALUE)
+    print(f"E (Bob)   : {E_nl.hex}")
+    print(f"D (Alice) : {D_nl.hex}")
+    if D_nl == plaintext:
+        print("+ plaintext correctly decrypted")
+    else:
+        print("- decryption failed!")
+
+    # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")
-    print(f"*** HPKS Schnorr — Eve cannot forge without knowing Alice's private key a")
-    # Alice's real signature on plaintext:
-    real_R = R_s; real_s = s_s
-    # Eve wants to forge (R_e, s_e) for decoy so that g^{s_e} * C^{e_e} == R_e
-    # where e_e = fscx_revolve(R_e, decoy, I).  Without a, Eve can't compute s_e.
-    # Eve's attempt: pick a random R_e and a random s_e, hope the equation holds.
-    R_eve   = BitArray(KEYBITS, gf_pow(GF_GEN, BitArray.random(KEYBITS).uint, poly, KEYBITS))
-    e_eve   = fscx_revolve(R_eve, decoy, I_VALUE)
-    s_eve   = BitArray.random(KEYBITS).uint          # random guess — Eve doesn't know a
+
+    print(f"*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a")
+    R_eve   = BitArray(KEYBITS, gf_pow(GF_GEN,
+                                       BitArray.random(KEYBITS).uint, poly, KEYBITS))
+    e_eve   = nl_fscx_revolve_v1(R_eve, decoy, I_VALUE)
+    s_eve   = BitArray.random(KEYBITS).uint
     lhs_eve = gf_mul(gf_pow(GF_GEN, s_eve,     poly, KEYBITS),
-                     gf_pow(C.uint,  e_eve.uint, poly, KEYBITS),
-                     poly, KEYBITS)
-    print(f"R_eve (Eve)  : {R_eve.hex}")
-    print(f"lhs_eve      : {BitArray(KEYBITS, lhs_eve).hex}")
-    print(f"match R_eve? : {lhs_eve == R_eve.uint}")
+                     gf_pow(C.uint,  e_eve.uint, poly, KEYBITS), poly, KEYBITS)
     if lhs_eve == R_eve.uint:
-        print("+ Eve forged Schnorr signature (Eve wins)!")
+        print("+ Eve forged HPKS-NL signature (Eve wins)!")
     else:
         print("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)")
 
-    print(f"\n*** HPKE — Eve cannot decrypt without Alice's private key")
-    # Bob encrypted with enc_key = C^r = g^{ar}; sent (R, E).
-    # Eve intercepts (R, E) and knows public values (C, R).
-    # Eve tries to reconstruct dec_key = R^a using only public values C and R.
-    # Eve's best attempt: use C XOR R as a key guess (no math, just public combination).
-    eve_key_guess = C ^ R
-    print(f"R (Bob eph pub)  : {R.hex}")
-    print(f"E (ciphertext)   : {E.hex}")
-    print(f"Eve key guess    : {eve_key_guess.hex}")
-    D_eve = fscx_revolve(E, eve_key_guess, R_VALUE)
-    print(f"D_eve (Eve)      : {D_eve.hex}")
+    print(f"*** HPKE-NL — Eve cannot decrypt without Alice's private key")
+    eve_key = C ^ R_nl2
+    D_eve   = nl_fscx_revolve_v2_inv(E_nl, eve_key, I_VALUE)
     if D_eve == plaintext:
         print("+ Eve decrypted plaintext (Eve wins)!")
     else:
-        print("- Eve could not decrypt without Alice's private key (CDH protection holds)")
+        print("- Eve could not decrypt without Alice's private key (CDH + NL protection)")
+
+    print(f"*** HKEX-RNL — Eve cannot derive shared key from public ring polynomials")
+    # Eve knows (C_A, C_B, a_rand, m_blind) but not s_A or s_B.
+    # Naive attack: lift C_A and try to invert m_blind to recover s_A.
+    # The rounding noise amplification (||m_blind^{-1}||_1 >> q) defeats this.
+    # For the bypass test we just show that a random BitArray guess does not match.
+    eve_rnl_guess = BitArray.random(KEYBITS)
+    if eve_rnl_guess == sk_rnl_A:
+        print("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
+    else:
+        print("- Eve random guess does not match shared key (Ring-LWR protection)")
 
 
 if __name__ == '__main__':
