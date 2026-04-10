@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.4.0
+/*  Herradura Cryptographic Suite v1.5.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,43 +17,40 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.0: NL-FSCX non-linear extension and PQC protocols ---
+
+    Adds two NL-FSCX primitives and five PQC-hardened protocol variants
+    alongside the existing classical (non-PQC) algorithms (kept for reference).
+
+    NL-FSCX v1:  NlFscxV1(A,B) = Fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
+      Injects integer-carry non-linearity.  Not bijective in A — for one-way
+      use only (counter-mode HSKE, HKEX KDF, HPKS challenge hash).
+
+    NL-FSCX v2:  NlFscxV2(A,B) = (Fscx(A,B) + delta(B)) mod 2^n
+      delta(B) = ROL(B*floor((B+1)/2) mod 2^n, n/4)
+      B-only additive offset; bijective in A with closed-form inverse.
+      Used for revolve-mode HSKE and HPKE where decryption is required.
+
+    PQC protocol variants (C3 hybrid assignment):
+      HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
+      HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
+      HKEX-RNL    — Ring-LWR key exchange (quantum-resistant; replaces HKEX-GF)
+      HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
+      HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
+
+    Classical protocols (not PQC — kept for reference and comparison):
+      HKEX-GF     — Diffie-Hellman over GF(2^n)* (broken by Shor's algorithm)
+      HSKE        — FscxRevolve symmetric encryption (linear key recovery)
+      HPKS        — Schnorr with FscxRevolve challenge (linear challenge)
+      HPKE        — El Gamal + FscxRevolve (linear encryption)
+
     --- v1.4.0: HKEX-GF (Diffie-Hellman over GF(2^n)*) ---
 
-    The broken fscx_revolve_n-based HKEX is replaced with HKEX-GF: a correct
+    The broken FscxRevolveN-based HKEX is replaced with HKEX-GF: a correct
     Diffie-Hellman key exchange over the multiplicative group GF(2^n)*.
 
-    FscxRevolveN has been removed entirely from all protocol code.
-
-    HKEX-GF protocol:
-    - Pre-agreed: generator g=3 (polynomial x+1), irreducible poly p(x)
-    - Alice: private scalar a -> public C = g^a in GF(2^n)*
-    - Bob:   private scalar b -> public C2 = g^b
-    - Shared key: sk = C2^a = C^b = g^{ab}  (DH commutativity in GF(2^n)*)
-    Security rests on the hardness of DLP in GF(2^n)*, not on orbit structure.
-
-    Protocol stack:
-    - HKEX: replaced with GF DH (above)
-    - HSKE: FscxRevolve(P, key, i) / FscxRevolve(E, key, r) — unchanged
-    - HPKS: Schnorr-like signature with FscxRevolve challenge.
-            Sign:   k random; R=g^k; e=FscxRevolve(R,P,I); s=(k-a*e) mod ord
-            Verify: g^s * C^e == R  (public key C = g^a; anyone can verify)
-    - HPKE: El Gamal + FscxRevolve.
-            Bob: r ephemeral; R=g^r; enc_key=C^r=g^{ar}; E=FscxRevolve(P,enc_key,I)
-            Alice: dec_key=R^a=g^{ar}; D=FscxRevolve(E,dec_key,R)==P
-
     --- v1.3.2: performance and readability ---
-
-    - Fscx: rewritten without parameter shadowing; each term maps directly
-      to the formula A⊕B⊕ROL(A)⊕ROL(B)⊕ROR(A)⊕ROR(B).
-    - FscxRevolve: renamed from Fscx_revolve to follow Go's PascalCase convention.
-    - NewRandBitArray: renamed from New_rand_bitarray for the same reason.
-    - Local variables in main: renamed to camelCase.
-    - Version header updated to v1.4.0.
-
     --- v1.3: BitArray (multi-byte parameter support) ---
-
-    The Go implementation now uses 256-bit parameters by default, matching
-    the C and Python versions at the same bit width.
 */
 
 package main
@@ -65,9 +62,11 @@ import (
 	"math/big"
 )
 
+// ---------------------------------------------------------------------------
+// BitArray
+// ---------------------------------------------------------------------------
+
 // BitArray is a fixed-width bit string backed by big.Int.
-// Supports XOR, rotation, equality, and hex formatting via %x.
-// Size must be a positive multiple of 8.
 type BitArray struct {
 	val  big.Int
 	size int
@@ -78,33 +77,38 @@ func bitArrayMask(size int) *big.Int {
 	return mask.Sub(mask, big.NewInt(1))
 }
 
-// NewFromBytes constructs a BitArray from raw bytes (big-endian). The offset
-// parameter is accepted for API compatibility but must be 0.
 func NewFromBytes(data []byte, _ int, size int) *BitArray {
 	ba := &BitArray{size: size}
 	ba.val.SetBytes(data[:size/8])
 	return ba
 }
 
-// NewRandBitArray returns a cryptographically random BitArray of bitlength bits.
 func NewRandBitArray(bitlength int) *BitArray {
 	buf := make([]byte, bitlength/8)
-	_, err := rand.Read(buf)
-	if err != nil {
+	if _, err := rand.Read(buf); err != nil {
 		log.Fatalf("ERROR while generating random string: %s", err)
 	}
 	return NewFromBytes(buf, 0, bitlength)
 }
 
-// Xor returns a new BitArray that is the bitwise XOR of ba and other.
+func NewBitArray(size int, val *big.Int) *BitArray {
+	ba := &BitArray{size: size}
+	ba.val.And(val, bitArrayMask(size))
+	return ba
+}
+
+func (ba *BitArray) Copy() *BitArray {
+	result := &BitArray{size: ba.size}
+	result.val.Set(&ba.val)
+	return result
+}
+
 func (ba *BitArray) Xor(other *BitArray) *BitArray {
 	result := &BitArray{size: ba.size}
 	result.val.Xor(&ba.val, &other.val)
 	return result
 }
 
-// RotateLeft returns a new BitArray rotated left by n bits.
-// Negative n rotates right.
 func (ba *BitArray) RotateLeft(n int) *BitArray {
 	size := ba.size
 	n = ((n % size) + size) % size
@@ -120,12 +124,10 @@ func (ba *BitArray) RotateLeft(n int) *BitArray {
 	return result
 }
 
-// Equal reports whether ba and other have the same size and value.
 func (ba *BitArray) Equal(other *BitArray) bool {
 	return ba.size == other.size && ba.val.Cmp(&other.val) == 0
 }
 
-// Format implements fmt.Formatter; supports the %x verb with zero-padded output.
 func (ba *BitArray) Format(f fmt.State, verb rune) {
 	hexDigits := ba.size / 4
 	s := ba.val.Text(16)
@@ -135,21 +137,18 @@ func (ba *BitArray) Format(f fmt.State, verb rune) {
 	fmt.Fprint(f, s)
 }
 
-// Fscx computes the Full Surroundings Cyclic XOR:
-//
-//	result = A ⊕ B ⊕ ROL(A) ⊕ ROL(B) ⊕ ROR(A) ⊕ ROR(B)
-//
-// Each term maps directly to the formula; no parameter shadowing.
+// ---------------------------------------------------------------------------
+// FSCX functions (classical — linear map M = I+ROL+ROR over GF(2))
+// ---------------------------------------------------------------------------
+
 func Fscx(a, b *BitArray) *BitArray {
 	return a.Xor(b).
 		Xor(a.RotateLeft(1)).Xor(b.RotateLeft(1)).
 		Xor(a.RotateLeft(-1)).Xor(b.RotateLeft(-1))
 }
 
-// FscxRevolve iterates Fscx(a, b) for the given number of steps,
-// keeping b constant. If verbose is true, each intermediate result is printed.
 func FscxRevolve(a, b *BitArray, steps int, verbose bool) *BitArray {
-	result := a
+	result := a.Copy()
 	for i := 1; i <= steps; i++ {
 		result = Fscx(result, b)
 		if verbose {
@@ -160,10 +159,9 @@ func FscxRevolve(a, b *BitArray, steps int, verbose bool) *BitArray {
 }
 
 // ---------------------------------------------------------------------------
-// GF(2^n) field arithmetic — XOR + left-shift using big.Int
+// GF(2^n) field arithmetic
 // ---------------------------------------------------------------------------
 
-// gfPoly maps bit-width to irreducible polynomial (lower n bits; x^n implicit).
 var gfPoly = map[int]*big.Int{
 	32:  new(big.Int).SetUint64(0x00400007),
 	64:  new(big.Int).SetUint64(0x0000001B),
@@ -171,10 +169,8 @@ var gfPoly = map[int]*big.Int{
 	256: new(big.Int).SetUint64(0x00000425),
 }
 
-const gfGen = 3 // g = x+1 in GF(2^n)[x]
+const gfGen = 3
 
-// GfMul multiplies a and b in GF(2^n) using carryless polynomial multiplication
-// modulo the irreducible polynomial poly, with field size n bits.
 func GfMul(a, b, poly *big.Int, n int) *big.Int {
 	result := new(big.Int)
 	aCopy := new(big.Int).Set(a)
@@ -195,7 +191,6 @@ func GfMul(a, b, poly *big.Int, n int) *big.Int {
 	return result
 }
 
-// GfPow computes base^exp in GF(2^n)* via repeated squaring.
 func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 	result := big.NewInt(1)
 	bCopy := new(big.Int).Set(base)
@@ -211,72 +206,238 @@ func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 	return result
 }
 
-/*
-HKEX-GF (key exchange over GF(2^n)*)
-    Pre-agreed: generator g=gfGen, irreducible polynomial gfPoly[n]
-    Alice:  private scalar a (random n-bit integer)
-            C = g^a in GF(2^n)*
-            send C to Bob and receive C2
-            sk = C2^a in GF(2^n)*
-    Bob:    private scalar b (random n-bit integer)
-            C2 = g^b in GF(2^n)*
-            send C2 to Alice and receive C
-            sk = C^b in GF(2^n)*
-    Result: C2^a = (g^b)^a = g^{ab} = (g^a)^b = C^b
+// ---------------------------------------------------------------------------
+// NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
+// ---------------------------------------------------------------------------
 
-HSKE (symmetric key encryption):
-    Alice,Bob:  share preshared key of bitlength n
-    Alice:  E = FscxRevolve(P, key, i)
-            shares E with Bob
-    Bob:    P = FscxRevolve(E, key, r)
+// MInv computes M^{-1}(X) = M^{n/2-1}(X).
+// Since M^{n/2} = I, M^{-1} = M^{n/2-1}. Applies n/2-1 Fscx steps with B=0.
+func MInv(x *BitArray) *BitArray {
+	zero := &BitArray{size: x.size}
+	return FscxRevolve(x, zero, x.size/2-1, false)
+}
 
-HPKS (Schnorr-like public key signature — publicly verifiable)
-    Alice:  private scalar a (integer), public C = g^a
-    Sign(P):
-      k  = random nonce scalar
-      R  = g^k  in GF(2^n)*                           (commitment)
-      e  = FscxRevolve(R_bits, P, I_VALUE)             (challenge via FscxRevolve)
-      s  = (k - a * e) mod (2^n - 1)                  (Schnorr response)
-      signature = (R, s)
-    Verify(P, C, sig=(R, s)):
-      e  = FscxRevolve(R_bits, P, I_VALUE)             (recompute challenge)
-      check: g^s * C^e == R  in GF(2^n)*
-    Correctness: g^s * C^e = g^{k-ae} * g^{ae} = g^k = R  ✓
-    Security: forging (R, s) without a requires solving DLP for C = g^a.
+// NlFscxV1 computes Fscx(A,B) XOR ROL((A+B) mod 2^n, n/4).
+// Injects integer-carry non-linearity. NOT bijective in A.
+func NlFscxV1(a, b *BitArray) *BitArray {
+	n := a.size
+	mask := bitArrayMask(n)
+	sum := new(big.Int).Add(&a.val, &b.val)
+	sum.And(sum, mask)
+	mixBA := &BitArray{size: n}
+	mixBA.val.Set(sum)
+	return Fscx(a, b).Xor(mixBA.RotateLeft(n / 4))
+}
 
-HPKE (public key encryption — El Gamal + FscxRevolve)
-    Alice:  private scalar a, public C = g^a
-    Bob:    picks ephemeral r; R = g^r  (ephemeral public)
-            enc_key = C^r = g^{ar}     (from Alice's public + Bob's ephemeral private)
-            E = FscxRevolve(P, enc_key, I_VALUE)
-            sends (R, E) to Alice
-    Alice:  dec_key = R^a = g^{ra} = enc_key
-            D = FscxRevolve(E, dec_key, R_VALUE) == P
-    Security: Eve has (C, R, E). Deriving enc_key = g^{ar} from g^a and g^r is CDH.
-*/
+// NlFscxRevolveV1 iterates NlFscxV1 steps times (B held constant).
+func NlFscxRevolveV1(a, b *BitArray, steps int) *BitArray {
+	result := a.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV1(result, b)
+	}
+	return result
+}
+
+// nlFscxDeltaV2 computes delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4).
+func nlFscxDeltaV2(b *BitArray) *BitArray {
+	n := b.size
+	mask := bitArrayMask(n)
+	one := big.NewInt(1)
+	bPlus1 := new(big.Int).Add(&b.val, one)
+	half := new(big.Int).Rsh(bPlus1, 1) // floor((B+1)/2)
+	prod := new(big.Int).Mul(&b.val, half)
+	prod.And(prod, mask)
+	deltaBA := &BitArray{size: n}
+	deltaBA.val.Set(prod)
+	return deltaBA.RotateLeft(n / 4)
+}
+
+// NlFscxV2 computes (Fscx(A,B) + delta(B)) mod 2^n.
+// delta(B) = ROL(B*floor((B+1)/2) mod 2^n, n/4). Bijective in A; exact inverse.
+func NlFscxV2(a, b *BitArray) *BitArray {
+	n := a.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
+	fscxOut := Fscx(a, b)
+	sum := new(big.Int).Add(&fscxOut.val, &delta.val)
+	sum.And(sum, mask)
+	result := &BitArray{size: n}
+	result.val.Set(sum)
+	return result
+}
+
+// NlFscxV2Inv computes the exact inverse of one NlFscxV2 step:
+// A = B XOR M^{-1}((Y - delta(B)) mod 2^n).
+func NlFscxV2Inv(y, b *BitArray) *BitArray {
+	n := y.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
+	diff := new(big.Int).Sub(&y.val, &delta.val)
+	diff.And(diff, mask) // mod 2^n (handles negative via mask)
+	// ensure non-negative after and-with-mask: Add(2^n, diff) if diff < 0
+	// but big.Int.And with a positive mask always gives non-negative result
+	zBA := &BitArray{size: n}
+	zBA.val.Set(diff)
+	return b.Xor(MInv(zBA))
+}
+
+// NlFscxRevolveV2 iterates NlFscxV2 steps times (B held constant).
+func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
+	result := a.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV2(result, b)
+	}
+	return result
+}
+
+// NlFscxRevolveV2Inv inverts NlFscxRevolveV2 by applying NlFscxV2Inv steps times.
+func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
+	result := y.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV2Inv(result, b)
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
+// ---------------------------------------------------------------------------
+
+// HKEX-RNL parameters (see SecurityProofs.md §11.4)
+const (
+	rnlQ  = 65537 // Fermat prime (2^16+1)
+	rnlP  = 4096  // public-key rounding modulus
+	rnlPP = 2     // reconciliation modulus (1 bit per coefficient)
+	rnlB  = 1     // small-secret bound: coefficients uniform in {0, ..., rnlB}
+)
+
+func rnlPolyMul(f, g []int, q, n int) []int {
+	h := make([]int, n)
+	for i, fi := range f {
+		if fi == 0 {
+			continue
+		}
+		for j, gj := range g {
+			k := i + j
+			if k < n {
+				h[k] = (h[k] + fi*gj) % q
+			} else {
+				h[k-n] = (h[k-n] - fi*gj%q + q) % q
+			}
+		}
+	}
+	return h
+}
+
+func rnlPolyAdd(f, g []int, q int) []int {
+	h := make([]int, len(f))
+	for i := range f {
+		h[i] = (f[i] + g[i]) % q
+	}
+	return h
+}
+
+func rnlRound(poly []int, fromQ, toP int) []int {
+	h := make([]int, len(poly))
+	for i, c := range poly {
+		h[i] = (c*toP + fromQ/2) / fromQ % toP
+	}
+	return h
+}
+
+func rnlLift(poly []int, fromP, toQ int) []int {
+	h := make([]int, len(poly))
+	for i, c := range poly {
+		h[i] = c * toQ / fromP % toQ
+	}
+	return h
+}
+
+func rnlMPoly(n int) []int {
+	p := make([]int, n)
+	p[0], p[1], p[n-1] = 1, 1, 1
+	return p
+}
+
+func rnlRandPoly(n, q int) []int {
+	p := make([]int, n)
+	buf := make([]byte, 4)
+	for i := range p {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		v := int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
+		if v < 0 {
+			v = -v
+		}
+		p[i] = v % q
+	}
+	return p
+}
+
+func rnlSmallPoly(n, b int) []int {
+	p := make([]int, n)
+	buf := make([]byte, 1)
+	for i := range p {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		p[i] = int(buf[0]) % (b + 1)
+	}
+	return p
+}
+
+func rnlBitsToBitArray(poly []int, pp, size int) *BitArray {
+	threshold := pp / 2
+	val := new(big.Int)
+	for i := 0; i < size && i < len(poly); i++ {
+		if poly[i] >= threshold {
+			val.SetBit(val, i, 1)
+		}
+	}
+	ba := &BitArray{size: size}
+	ba.val.Set(val)
+	return ba
+}
+
+func rnlKeygen(mBlind []int, n, q, p, b int) ([]int, []int) {
+	s := rnlSmallPoly(n, b)
+	ms := rnlPolyMul(mBlind, s, q, n)
+	c := rnlRound(ms, q, p)
+	return s, c
+}
+
+func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int) *BitArray {
+	cLifted := rnlLift(cOther, p, q)
+	kPoly := rnlPolyMul(s, cLifted, q, n)
+	kBits := rnlRound(kPoly, q, pp)
+	return rnlBitsToBitArray(kBits, pp, keyBits)
+}
+
+// ---------------------------------------------------------------------------
+// main — protocol demonstrations
+// ---------------------------------------------------------------------------
 
 func main() {
 	const n = 256
-	iValue := n / 4   // 64
-	rValue := 3 * n / 4 // 192
+	iValue := n / 4
+	rValue := 3 * n / 4
 
 	poly := gfPoly[n]
 	g := big.NewInt(gfGen)
-
-	// ORD = 2^n - 1  (group order of GF(2^n)* for Schnorr integer arithmetic)
 	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), n), big.NewInt(1))
 
-	a         := NewRandBitArray(n)   // Alice's private scalar
-	b         := NewRandBitArray(n)   // Bob's private scalar
+	a         := NewRandBitArray(n)
+	b         := NewRandBitArray(n)
 	preshared := NewRandBitArray(n)
 	plaintext := NewRandBitArray(n)
-	decoy     := NewRandBitArray(n)   // Eve's random value (cannot compute sk)
+	decoy     := NewRandBitArray(n)
 
 	// HKEX-GF key exchange
-	C  := &BitArray{size: n}; C.val.Set(GfPow(g, &a.val, poly, n))
-	C2 := &BitArray{size: n}; C2.val.Set(GfPow(g, &b.val, poly, n))
-	sk := &BitArray{size: n}; sk.val.Set(GfPow(&C2.val, &a.val, poly, n))
-	skBob := &BitArray{size: n}; skBob.val.Set(GfPow(&C.val, &b.val, poly, n))
+	C  := NewBitArray(n, GfPow(g, &a.val, poly, n))
+	C2 := NewBitArray(n, GfPow(g, &b.val, poly, n))
+	sk := NewBitArray(n, GfPow(&C2.val, &a.val, poly, n))
+	skBob := NewBitArray(n, GfPow(&C.val, &b.val, poly, n))
 
 	fmt.Printf("a         : %x\n", a)
 	fmt.Printf("b         : %x\n", b)
@@ -286,119 +447,192 @@ func main() {
 	fmt.Printf("C         : %x\n", C)
 	fmt.Printf("C2        : %x\n", C2)
 
-	fmt.Printf("\n--- HKEX-GF (key exchange over GF(2^%d)*)\n", n)
+	// ── CLASSICAL protocols ──────────────────────────────────────────────────
+	fmt.Printf("\n--- HKEX-GF [CLASSICAL — not PQC; Shor's algorithm breaks DLP]\n")
+	fmt.Printf("    (DH over GF(2^%d)*)\n", n)
 	fmt.Printf("sk (Alice): %x\n", sk)
 	fmt.Printf("sk (Bob)  : %x\n", skBob)
 	if sk.Equal(skBob) {
-		fmt.Printf("+ session keys sk (Alice) and sk (Bob) are equal!\n")
+		fmt.Println("+ session keys agree!")
 	} else {
-		fmt.Printf("- session keys sk (Alice) and sk (Bob) are different!\n")
+		fmt.Println("- session keys differ!")
 	}
 
-	fmt.Printf("\n--- HSKE (symmetric key encryption)\n")
-	E := FscxRevolve(plaintext, preshared, iValue, false)
-	fmt.Printf("E (Alice) : %x\n", E)
-	D := FscxRevolve(E, preshared, rValue, false)
-	fmt.Printf("D (Bob)   : %x\n", D)
-	if D.Equal(plaintext) {
-		fmt.Printf("+ plaintext is correctly decrypted from E with preshared key\n")
+	fmt.Println("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]")
+	fmt.Println("    (FscxRevolve symmetric encryption)")
+	eHske := FscxRevolve(plaintext, preshared, iValue, false)
+	fmt.Printf("P (plain) : %x\n", plaintext)
+	fmt.Printf("E (Alice) : %x\n", eHske)
+	dHske := FscxRevolve(eHske, preshared, rValue, false)
+	fmt.Printf("D (Bob)   : %x\n", dHske)
+	if dHske.Equal(plaintext) {
+		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Printf("- plaintext is different from decrypted E with preshared key!\n")
+		fmt.Println("- decryption failed!")
 	}
 
-	fmt.Printf("\n--- HPKS (Schnorr-like signature: sign with private, verify with public key)\n")
-	// Sign: Alice picks nonce k, commitment R=g^k,
-	//       challenge e = FscxRevolve(R, P, I),  response s = (k - a*e) mod ord
-	kS  := NewRandBitArray(n)
-	RS  := &BitArray{size: n}; RS.val.Set(GfPow(g, &kS.val, poly, n))
-	eS  := FscxRevolve(RS, plaintext, iValue, false)  // challenge via FscxRevolve
-	ae  := new(big.Int).Mul(&a.val, &eS.val)
-	sS  := new(big.Int).Mod(new(big.Int).Sub(&kS.val, ae), ord) // Schnorr response
-	fmt.Printf("R (commit): %x\n", RS)
-	fmt.Printf("e (fscx)  : %x\n", eS)
-	fmt.Printf("s (resp)  : %0*x\n", n/4, sS)
-	// Verify: anyone with Alice's public key C checks g^s * C^e == R
-	eV  := FscxRevolve(RS, plaintext, iValue, false)
+	fmt.Println("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]")
+	fmt.Println("    (Schnorr-like with FscxRevolve challenge)")
+	kS := NewRandBitArray(n)
+	RS := NewBitArray(n, GfPow(g, &kS.val, poly, n))
+	eS := FscxRevolve(RS, plaintext, iValue, false)
+	sS := new(big.Int).Mod(new(big.Int).Sub(&kS.val, new(big.Int).Mul(&a.val, &eS.val)), ord)
+	eV := FscxRevolve(RS, plaintext, iValue, false)
 	lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&C.val, &eV.val, poly, n), poly, n)
+	fmt.Printf("P (msg)        : %x\n", plaintext)
+	fmt.Printf("R [Alice,sign] : %x\n", RS)
+	fmt.Printf("e [Alice,sign] : %x\n", eS)
+	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, sS)
+	fmt.Printf("  [Bob,verify] : g^s·C^e = %0*x\n", n/4, lhs)
 	if lhs.Cmp(&RS.val) == 0 {
-		fmt.Printf("+ Schnorr verified: g^s · C^e == R  [public key sufficient]\n")
+		fmt.Println("  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
 	} else {
-		fmt.Printf("- Schnorr verification failed!\n")
+		fmt.Println("  [Bob,verify] : - Schnorr verification failed!")
 	}
 
-	fmt.Printf("\n--- HPKS (Schnorr) + HSKE: Alice signs the HSKE ciphertext; Bob verifies then decrypts\n")
-	EHs := FscxRevolve(plaintext, preshared, iValue, false)  // HSKE: Alice encrypts P
-	kHs := NewRandBitArray(n)
-	RHs := &BitArray{size: n}; RHs.val.Set(GfPow(g, &kHs.val, poly, n))
-	eHs := FscxRevolve(RHs, EHs, iValue, false)              // challenge over ciphertext
-	aeH := new(big.Int).Mul(&a.val, &eHs.val)
-	sHs := new(big.Int).Mod(new(big.Int).Sub(&kHs.val, aeH), ord)
-	fmt.Printf("E (HSKE)  : %x\n", EHs)
-	fmt.Printf("R (commit): %x\n", RHs)
-	fmt.Printf("s (resp)  : %0*x\n", n/4, sHs)
-	// Bob verifies Schnorr on E, then decrypts via HSKE
-	eHv  := FscxRevolve(RHs, EHs, iValue, false)
-	lhsH := GfMul(GfPow(g, sHs, poly, n), GfPow(&C.val, &eHv.val, poly, n), poly, n)
-	DHs  := FscxRevolve(EHs, preshared, rValue, false)  // HSKE: Bob decrypts
-	fmt.Printf("D (Bob)   : %x\n", DHs)
-	if lhsH.Cmp(&RHs.val) == 0 && DHs.Equal(plaintext) {
-		fmt.Printf("+ Schnorr on ciphertext verified; plaintext decrypted correctly!\n")
+	fmt.Println("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
+	fmt.Println("    (El Gamal + FscxRevolve)")
+	rHpke  := NewRandBitArray(n)
+	RHpke  := NewBitArray(n, GfPow(g, &rHpke.val, poly, n))
+	encKey := NewBitArray(n, GfPow(&C.val, &rHpke.val, poly, n))
+	eHpke  := FscxRevolve(plaintext, encKey, iValue, false)
+	decKey := NewBitArray(n, GfPow(&RHpke.val, &a.val, poly, n))
+	dHpke  := FscxRevolve(eHpke, decKey, rValue, false)
+	fmt.Printf("P (plain) : %x\n", plaintext)
+	fmt.Printf("E (Bob)   : %x\n", eHpke)
+	fmt.Printf("D (Alice) : %x\n", dHpke)
+	if dHpke.Equal(plaintext) {
+		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Printf("- Schnorr verification or decryption failed!\n")
+		fmt.Println("- decryption failed!")
 	}
 
-	fmt.Printf("\n--- HPKE (public key encryption, El Gamal + FscxRevolve)\n")
-	// Bob generates ephemeral key pair; derives enc_key from Alice's public C
-	r      := NewRandBitArray(n)
-	R      := &BitArray{size: n}; R.val.Set(GfPow(g, &r.val, poly, n))
-	encKey := &BitArray{size: n}; encKey.val.Set(GfPow(&C.val, &r.val, poly, n)) // C^r = g^{ar}
-	EHpke  := FscxRevolve(plaintext, encKey, iValue, false)  // Bob encrypts
-	fmt.Printf("r   (Bob eph priv): %x\n", r)
-	fmt.Printf("R   (Bob eph pub) : %x\n", R)
-	fmt.Printf("E   (Bob)         : %x\n", EHpke)
-	// Alice derives the same enc_key using her private scalar a and Bob's ephemeral public R
-	decKey := &BitArray{size: n}; decKey.val.Set(GfPow(&R.val, &a.val, poly, n)) // R^a = g^{ra}
-	DHpke  := FscxRevolve(EHpke, decKey, rValue, false)  // Alice decrypts
-	fmt.Printf("D   (Alice)       : %x\n", DHpke)
-	if DHpke.Equal(plaintext) {
-		fmt.Printf("+ plaintext is correctly decrypted from E with Alice's private key!\n")
+	// ── PQC-HARDENED protocols ───────────────────────────────────────────────
+	fmt.Println("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
+	counter := 0
+	bA1 := NewBitArray(n, new(big.Int).Xor(&preshared.val, big.NewInt(int64(counter))))
+	ksA1 := NlFscxRevolveV1(preshared, bA1, n/4)
+	eA1 := NewBitArray(n, new(big.Int).Xor(&plaintext.val, &ksA1.val))
+	dA1 := NewBitArray(n, new(big.Int).Xor(&eA1.val, &ksA1.val))
+	fmt.Printf("P (plain) : %x\n", plaintext)
+	fmt.Printf("E (Alice) : %x\n", eA1)
+	fmt.Printf("D (Bob)   : %x\n", dA1)
+	if dA1.Equal(plaintext) {
+		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Printf("- plaintext is different from decrypted E with private key!\n")
+		fmt.Println("- decryption failed!")
 	}
 
-	fmt.Printf("\n\n*** EVE bypass TESTS\n")
-	fmt.Printf("*** HPKS Schnorr — Eve cannot forge without knowing Alice's private key a\n")
-	// Eve wants to forge (R_eve, s_eve) for decoy so that g^{s_eve} * C^{e_eve} == R_eve
-	// where e_eve = FscxRevolve(R_eve, decoy, I).  Without a, Eve can't compute s_eve.
-	// Eve's attempt: pick a random R_eve and a random s_eve, hope the equation holds.
-	REve   := &BitArray{size: n}
-	REve.val.Set(GfPow(g, &NewRandBitArray(n).val, poly, n))
-	eEve   := FscxRevolve(REve, decoy, iValue, false)
-	sEve   := new(big.Int).Set(&NewRandBitArray(n).val)   // random guess — Eve doesn't know a
+	fmt.Println("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]")
+	eA2 := NlFscxRevolveV2(plaintext, preshared, rValue)
+	dA2 := NlFscxRevolveV2Inv(eA2, preshared, rValue)
+	fmt.Printf("P (plain) : %x\n", plaintext)
+	fmt.Printf("E (Alice) : %x\n", eA2)
+	fmt.Printf("D (Bob)   : %x\n", dA2)
+	if dA2.Equal(plaintext) {
+		fmt.Println("+ plaintext correctly decrypted")
+	} else {
+		fmt.Println("- decryption failed!")
+	}
+
+	fmt.Printf("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]\n")
+	fmt.Printf("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=%d, q=%d)\n", n, rnlQ)
+	nRnl := n
+	mBase := rnlMPoly(nRnl)
+	aRand := rnlRandPoly(nRnl, rnlQ)
+	mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
+	sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+	sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+	kRawA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, n)
+	kRawB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, n)
+	skRnlA := NlFscxRevolveV1(kRawA, kRawA, n/4)
+	skRnlB := NlFscxRevolveV1(kRawB, kRawB, n/4)
+	fmt.Printf("sk (Alice): %x\n", skRnlA)
+	fmt.Printf("sk (Bob)  : %x\n", skRnlB)
+	if kRawA.Equal(kRawB) {
+		fmt.Println("+ raw key bits agree; shared session key established!")
+	} else {
+		diffBits := new(big.Int).Xor(&kRawA.val, &kRawB.val)
+		fmt.Printf("- raw key disagrees (%d bit(s)) — rounding noise (retry)\n",
+			countBits(diffBits))
+	}
+
+	fmt.Println("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
+	fmt.Println("    (GF DLP still present; NL hardens linear challenge preimage)")
+	kNl  := NewRandBitArray(n)
+	RNl  := NewBitArray(n, GfPow(g, &kNl.val, poly, n))
+	eNl  := NlFscxRevolveV1(RNl, plaintext, iValue)
+	sNl  := new(big.Int).Mod(new(big.Int).Sub(&kNl.val, new(big.Int).Mul(&a.val, &eNl.val)), ord)
+	eNlV := NlFscxRevolveV1(RNl, plaintext, iValue)
+	lhsNl := GfMul(GfPow(g, sNl, poly, n), GfPow(&C.val, &eNlV.val, poly, n), poly, n)
+	fmt.Printf("P (msg)        : %x\n", plaintext)
+	fmt.Printf("R [Alice,sign] : %x\n", RNl)
+	fmt.Printf("e [Alice,sign] : %x\n", eNl)
+	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, sNl)
+	fmt.Printf("  [Bob,verify] : g^s·C^e = %0*x\n", n/4, lhsNl)
+	if lhsNl.Cmp(&RNl.val) == 0 {
+		fmt.Println("  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
+	} else {
+		fmt.Println("  [Bob,verify] : - HPKS-NL verification failed!")
+	}
+
+	fmt.Println("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
+	fmt.Println("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")
+	rNl   := NewRandBitArray(n)
+	RNl2  := NewBitArray(n, GfPow(g, &rNl.val, poly, n))
+	encNl := NewBitArray(n, GfPow(&C.val, &rNl.val, poly, n))
+	eHpkeNl := NlFscxRevolveV2(plaintext, encNl, iValue)
+	decNl := NewBitArray(n, GfPow(&RNl2.val, &a.val, poly, n))
+	dHpkeNl := NlFscxRevolveV2Inv(eHpkeNl, decNl, iValue)
+	fmt.Printf("P (plain) : %x\n", plaintext)
+	fmt.Printf("E (Bob)   : %x\n", eHpkeNl)
+	fmt.Printf("D (Alice) : %x\n", dHpkeNl)
+	if dHpkeNl.Equal(plaintext) {
+		fmt.Println("+ plaintext correctly decrypted")
+	} else {
+		fmt.Println("- decryption failed!")
+	}
+
+	// ── Eve bypass tests ─────────────────────────────────────────────────────
+	fmt.Println("\n\n*** EVE bypass TESTS")
+
+	fmt.Println("*** HPKS-NL — Eve cannot forge Schnorr without knowing private key a")
+	REve  := NewBitArray(n, GfPow(g, &NewRandBitArray(n).val, poly, n))
+	eEve  := NlFscxRevolveV1(REve, decoy, iValue)
+	sEve  := &NewRandBitArray(n).val
 	lhsEve := GfMul(GfPow(g, sEve, poly, n), GfPow(&C.val, &eEve.val, poly, n), poly, n)
-	lhsEveBA := &BitArray{size: n}; lhsEveBA.val.Set(lhsEve)
-	fmt.Printf("R_eve (Eve)  : %x\n", REve)
-	fmt.Printf("lhs_eve      : %x\n", lhsEveBA)
-	fmt.Printf("match R_eve? : %v\n", lhsEve.Cmp(&REve.val) == 0)
 	if lhsEve.Cmp(&REve.val) == 0 {
-		fmt.Printf("+ Eve forged Schnorr signature (Eve wins)!\n")
+		fmt.Println("+ Eve forged HPKS-NL signature (Eve wins)!")
 	} else {
-		fmt.Printf("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)\n")
+		fmt.Println("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)")
 	}
 
-	fmt.Printf("\n*** HPKE — Eve cannot decrypt without Alice's private key\n")
-	// Bob encrypted with enc_key = C^r = g^{ar}; sent (R, E).
-	// Eve intercepts (R, E) and knows public values (C, R).
-	// Eve's best attempt: use C XOR R as a key guess (no math, just public combination).
-	eveKeyGuess := C.Xor(R)
-	fmt.Printf("R (Bob eph pub)  : %x\n", R)
-	fmt.Printf("E (ciphertext)   : %x\n", EHpke)
-	fmt.Printf("Eve key guess    : %x\n", eveKeyGuess)
-	DEve := FscxRevolve(EHpke, eveKeyGuess, rValue, false)
-	fmt.Printf("D_eve (Eve)      : %x\n", DEve)
-	if DEve.Equal(plaintext) {
-		fmt.Printf("+ Eve decrypted plaintext (Eve wins)!\n")
+	fmt.Println("*** HPKE-NL — Eve cannot decrypt without Alice's private key")
+	eveKey := NewBitArray(n, new(big.Int).Xor(&C.val, &RNl2.val))
+	dEve   := NlFscxRevolveV2Inv(eHpkeNl, eveKey, iValue)
+	if dEve.Equal(plaintext) {
+		fmt.Println("+ Eve decrypted plaintext (Eve wins)!")
 	} else {
-		fmt.Printf("- Eve could not decrypt without Alice's private key (CDH protection holds)\n")
+		fmt.Println("- Eve could not decrypt without Alice's private key (CDH + NL protection)")
 	}
+
+	fmt.Println("*** HKEX-RNL — Eve cannot derive shared key from public ring polynomials")
+	eveRnlGuess := NewRandBitArray(n)
+	if eveRnlGuess.Equal(skRnlA) {
+		fmt.Println("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
+	} else {
+		fmt.Println("- Eve random guess does not match shared key (Ring-LWR protection)")
+	}
+}
+
+// countBits counts set bits in a *big.Int.
+func countBits(x *big.Int) int {
+	count := 0
+	for _, b := range x.Bytes() {
+		for b != 0 {
+			count += int(b & 1)
+			b >>= 1
+		}
+	}
+	return count
 }

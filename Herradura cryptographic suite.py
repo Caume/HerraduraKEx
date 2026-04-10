@@ -470,6 +470,7 @@ def main():
     print("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]")
     print("    (fscx_revolve symmetric encryption)")
     E_hske = fscx_revolve(plaintext, preshared, I_VALUE)
+    print(f"P (plain) : {plaintext.hex}")
     print(f"E (Alice) : {E_hske.hex}")
     D_hske = fscx_revolve(E_hske, preshared, R_VALUE)
     print(f"D (Bob)   : {D_hske.hex}")
@@ -487,10 +488,15 @@ def main():
     e_v   = fscx_revolve(R_s, plaintext, I_VALUE)
     lhs   = gf_mul(gf_pow(GF_GEN, s_s, poly, KEYBITS),
                    gf_pow(C.uint, e_v.uint, poly, KEYBITS), poly, KEYBITS)
+    print(f"P (msg)        : {plaintext.hex}")
+    print(f"R [Alice,sign] : {R_s.hex}")
+    print(f"e [Alice,sign] : {e_s.hex}")
+    print(f"s [Alice,sign] : {s_s:0{KEYBITS//4}x}")
+    print(f"  [Bob,verify] : g^s·C^e = {lhs:0{KEYBITS//4}x}")
     if lhs == R_s.uint:
-        print("+ Schnorr verified: g^s · C^e == R")
+        print(f"  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
     else:
-        print("- Schnorr verification failed!")
+        print(f"  [Bob,verify] : - Schnorr verification failed!")
 
     print("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
     print("    (El Gamal + fscx_revolve)")
@@ -500,6 +506,7 @@ def main():
     E_hpke   = fscx_revolve(plaintext, enc_key, I_VALUE)
     dec_key  = BitArray(KEYBITS, gf_pow(R_hpke.uint, a.uint, poly, KEYBITS))
     D_hpke   = fscx_revolve(E_hpke, dec_key, R_VALUE)
+    print(f"P (plain) : {plaintext.hex}")
     print(f"E (Bob)   : {E_hpke.hex}")
     print(f"D (Alice) : {D_hpke.hex}")
     if D_hpke == plaintext:
@@ -515,6 +522,7 @@ def main():
                                     KEYBITS // 4)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)
     D_a1 = BitArray(KEYBITS, E_a1.uint ^ ks_a1.uint)
+    print(f"P (plain) : {plaintext.hex}")
     print(f"E (Alice) : {E_a1.hex}")
     print(f"D (Bob)   : {D_a1.hex}")
     if D_a1 == plaintext:
@@ -525,6 +533,7 @@ def main():
     print("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]")
     E_a2 = nl_fscx_revolve_v2(plaintext, preshared, R_VALUE)
     D_a2 = nl_fscx_revolve_v2_inv(E_a2, preshared, R_VALUE)
+    print(f"P (plain) : {plaintext.hex}")
     print(f"E (Alice) : {E_a2.hex}")
     print(f"D (Bob)   : {D_a2.hex}")
     if D_a2 == plaintext:
@@ -561,10 +570,15 @@ def main():
     e_nl_v = nl_fscx_revolve_v1(R_nl, plaintext, I_VALUE)
     lhs_nl = gf_mul(gf_pow(GF_GEN, s_nl, poly, KEYBITS),
                     gf_pow(C.uint, e_nl_v.uint, poly, KEYBITS), poly, KEYBITS)
+    print(f"P (msg)        : {plaintext.hex}")
+    print(f"R [Alice,sign] : {R_nl.hex}")
+    print(f"e [Alice,sign] : {e_nl.hex}")
+    print(f"s [Alice,sign] : {s_nl:0{KEYBITS//4}x}")
+    print(f"  [Bob,verify] : g^s·C^e = {lhs_nl:0{KEYBITS//4}x}")
     if lhs_nl == R_nl.uint:
-        print("+ HPKS-NL verified: g^s · C^e == R")
+        print(f"  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
     else:
-        print("- HPKS-NL verification failed!")
+        print(f"  [Bob,verify] : - HPKS-NL verification failed!")
 
     print("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
     print("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")
@@ -574,6 +588,7 @@ def main():
     E_nl     = nl_fscx_revolve_v2(plaintext, enc_nl, I_VALUE)
     dec_nl   = BitArray(KEYBITS, gf_pow(R_nl2.uint, a.uint, poly, KEYBITS))
     D_nl     = nl_fscx_revolve_v2_inv(E_nl, dec_nl, I_VALUE)
+    print(f"P (plain) : {plaintext.hex}")
     print(f"E (Bob)   : {E_nl.hex}")
     print(f"D (Alice) : {D_nl.hex}")
     if D_nl == plaintext:

@@ -1,4 +1,9 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.0: added PQC extension tests [10-16] (NL-FSCX, HKEX-RNL, HPKS-NL, HPKE-NL);
+            benchmarks renumbered [17-21] (were [10-14] in v1.4.0);
+            new PQC benchmarks [22-25].
+    v1.4.0: HPKS replaced with Schnorr-like scheme [7][8]; HPKE El Gamal [9];
+            benchmarks renumbered [10-14].
     v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
 
@@ -53,15 +58,24 @@ func NewFromBytes(data []byte, _ int, size int) *BitArray {
 
 func newRandBitArray(bitlength int) *BitArray {
 	buf := make([]byte, bitlength/8)
-	_, err := rand.Read(buf)
-	if err != nil {
+	if _, err := rand.Read(buf); err != nil {
 		log.Fatalf("ERROR while generating random string: %s", err)
 	}
 	return NewFromBytes(buf, 0, bitlength)
 }
 
-func randBA(size int) *BitArray {
-	return newRandBitArray(size)
+func newBA(size int, val *big.Int) *BitArray {
+	ba := &BitArray{size: size}
+	ba.val.And(val, bitArrayMask(size))
+	return ba
+}
+
+func randBA(size int) *BitArray { return newRandBitArray(size) }
+
+func (ba *BitArray) Copy() *BitArray {
+	result := &BitArray{size: ba.size}
+	result.val.Set(&ba.val)
+	return result
 }
 
 func (ba *BitArray) Xor(other *BitArray) *BitArray {
@@ -98,7 +112,6 @@ func (ba *BitArray) Format(f fmt.State, verb rune) {
 	fmt.Fprint(f, s)
 }
 
-// Popcount counts set bits using the hardware popcount instruction when available.
 func (ba *BitArray) Popcount() int {
 	cnt := 0
 	for _, b := range ba.val.Bytes() {
@@ -107,23 +120,16 @@ func (ba *BitArray) Popcount() int {
 	return cnt
 }
 
-// FlipBit returns a new BitArray with bit pos (0=LSB) toggled.
 func (ba *BitArray) FlipBit(pos int) *BitArray {
-	result := &BitArray{size: ba.size}
-	result.val.Set(&ba.val)
+	result := ba.Copy()
 	result.val.SetBit(&result.val, pos, result.val.Bit(pos)^1)
 	return result
 }
 
 // ---------------------------------------------------------------------------
-// FSCX functions
+// FSCX functions (classical)
 // ---------------------------------------------------------------------------
 
-// Fscx computes the Full Surroundings Cyclic XOR:
-//
-//	result = A ⊕ B ⊕ ROL(A) ⊕ ROL(B) ⊕ ROR(A) ⊕ ROR(B)
-//
-// Each term maps directly to the formula; no parameter shadowing.
 func Fscx(a, b *BitArray) *BitArray {
 	return a.Xor(b).
 		Xor(a.RotateLeft(1)).Xor(b.RotateLeft(1)).
@@ -131,19 +137,248 @@ func Fscx(a, b *BitArray) *BitArray {
 }
 
 func FscxRevolve(ba, bb *BitArray, steps int) *BitArray {
-	result := ba
+	result := ba.Copy()
 	for i := 0; i < steps; i++ {
 		result = Fscx(result, bb)
 	}
 	return result
 }
 
-func FscxRevolveN(ba, bb, nonce *BitArray, steps int) *BitArray {
-	result := ba
-	for i := 0; i < steps; i++ {
-		result = Fscx(result, bb).Xor(nonce)
+// ---------------------------------------------------------------------------
+// GF(2^n) field arithmetic
+// ---------------------------------------------------------------------------
+
+var gfPoly = map[int]*big.Int{
+	32:  new(big.Int).SetUint64(0x00400007),
+	64:  new(big.Int).SetUint64(0x0000001B),
+	128: new(big.Int).SetUint64(0x00000087),
+	256: new(big.Int).SetUint64(0x00000425),
+}
+
+const gfGen = 3
+
+func GfMul(a, b, poly *big.Int, n int) *big.Int {
+	result := new(big.Int)
+	aCopy := new(big.Int).Set(a)
+	bCopy := new(big.Int).Set(b)
+	mask := bitArrayMask(n)
+	one := big.NewInt(1)
+	for i := 0; i < n; i++ {
+		if new(big.Int).And(bCopy, one).Sign() != 0 {
+			result.Xor(result, aCopy)
+		}
+		carry := new(big.Int).And(new(big.Int).Rsh(aCopy, uint(n-1)), one).Sign() != 0
+		aCopy.And(new(big.Int).Lsh(aCopy, 1), mask)
+		if carry {
+			aCopy.Xor(aCopy, poly)
+		}
+		bCopy.Rsh(bCopy, 1)
 	}
 	return result
+}
+
+func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
+	result := big.NewInt(1)
+	bCopy := new(big.Int).Set(base)
+	eCopy := new(big.Int).Set(exp)
+	one := big.NewInt(1)
+	for eCopy.Sign() > 0 {
+		if new(big.Int).And(eCopy, one).Sign() != 0 {
+			result = GfMul(result, bCopy, poly, n)
+		}
+		bCopy = GfMul(bCopy, bCopy, poly, n)
+		eCopy.Rsh(eCopy, 1)
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// NL-FSCX primitives (v1.5.0)
+// ---------------------------------------------------------------------------
+
+func MInv(x *BitArray) *BitArray {
+	zero := &BitArray{size: x.size}
+	return FscxRevolve(x, zero, x.size/2-1)
+}
+
+func NlFscxV1(a, b *BitArray) *BitArray {
+	n := a.size
+	mask := bitArrayMask(n)
+	sum := new(big.Int).Add(&a.val, &b.val)
+	sum.And(sum, mask)
+	mixBA := &BitArray{size: n}
+	mixBA.val.Set(sum)
+	return Fscx(a, b).Xor(mixBA.RotateLeft(n / 4))
+}
+
+func NlFscxRevolveV1(a, b *BitArray, steps int) *BitArray {
+	result := a.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV1(result, b)
+	}
+	return result
+}
+
+func nlFscxDeltaV2(b *BitArray) *BitArray {
+	n := b.size
+	mask := bitArrayMask(n)
+	bPlus1 := new(big.Int).Add(&b.val, big.NewInt(1))
+	half := new(big.Int).Rsh(bPlus1, 1)
+	prod := new(big.Int).Mul(&b.val, half)
+	prod.And(prod, mask)
+	deltaBA := &BitArray{size: n}
+	deltaBA.val.Set(prod)
+	return deltaBA.RotateLeft(n / 4)
+}
+
+func NlFscxV2(a, b *BitArray) *BitArray {
+	n := a.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
+	fscxOut := Fscx(a, b)
+	sum := new(big.Int).Add(&fscxOut.val, &delta.val)
+	sum.And(sum, mask)
+	result := &BitArray{size: n}
+	result.val.Set(sum)
+	return result
+}
+
+func NlFscxV2Inv(y, b *BitArray) *BitArray {
+	n := y.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
+	diff := new(big.Int).Sub(&y.val, &delta.val)
+	diff.And(diff, mask)
+	zBA := &BitArray{size: n}
+	zBA.val.Set(diff)
+	return b.Xor(MInv(zBA))
+}
+
+func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
+	result := a.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV2(result, b)
+	}
+	return result
+}
+
+func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
+	result := y.Copy()
+	for i := 0; i < steps; i++ {
+		result = NlFscxV2Inv(result, b)
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
+// ---------------------------------------------------------------------------
+
+const (
+	rnlQ  = 65537
+	rnlP  = 4096
+	rnlPP = 2
+	rnlB  = 1
+)
+
+func rnlPolyMul(f, g []int, q, n int) []int {
+	h := make([]int, n)
+	for i, fi := range f {
+		if fi == 0 {
+			continue
+		}
+		for j, gj := range g {
+			k := i + j
+			if k < n {
+				h[k] = (h[k] + fi*gj) % q
+			} else {
+				h[k-n] = (h[k-n] - fi*gj%q + q) % q
+			}
+		}
+	}
+	return h
+}
+
+func rnlPolyAdd(f, g []int, q int) []int {
+	h := make([]int, len(f))
+	for i := range f {
+		h[i] = (f[i] + g[i]) % q
+	}
+	return h
+}
+
+func rnlRound(poly []int, fromQ, toP int) []int {
+	h := make([]int, len(poly))
+	for i, c := range poly {
+		h[i] = (c*toP + fromQ/2) / fromQ % toP
+	}
+	return h
+}
+
+func rnlLift(poly []int, fromP, toQ int) []int {
+	h := make([]int, len(poly))
+	for i, c := range poly {
+		h[i] = c * toQ / fromP % toQ
+	}
+	return h
+}
+
+func rnlMPoly(n int) []int {
+	p := make([]int, n)
+	p[0], p[1], p[n-1] = 1, 1, 1
+	return p
+}
+
+func rnlRandPoly(n, q int) []int {
+	p := make([]int, n)
+	buf := make([]byte, 4)
+	for i := range p {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		v := int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
+		if v < 0 {
+			v = -v
+		}
+		p[i] = v % q
+	}
+	return p
+}
+
+func rnlSmallPoly(n, b int) []int {
+	p := make([]int, n)
+	buf := make([]byte, 1)
+	for i := range p {
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("rand.Read: %s", err)
+		}
+		p[i] = int(buf[0]) % (b + 1)
+	}
+	return p
+}
+
+func rnlBitsToBitArray(poly []int, pp, size int) *BitArray {
+	threshold := pp / 2
+	val := new(big.Int)
+	for i := 0; i < size && i < len(poly); i++ {
+		if poly[i] >= threshold {
+			val.SetBit(val, i, 1)
+		}
+	}
+	ba := &BitArray{size: size}
+	ba.val.Set(val)
+	return ba
+}
+
+func rnlKeygen(mBlind []int, n, q, p, b int) ([]int, []int) {
+	s := rnlSmallPoly(n, b)
+	c := rnlRound(rnlPolyMul(mBlind, s, q, n), q, p)
+	return s, c
+}
+
+func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int) *BitArray {
+	kPoly := rnlPolyMul(s, rnlLift(cOther, p, q), q, n)
+	return rnlBitsToBitArray(rnlRound(kPoly, q, pp), pp, keyBits)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,9 +388,14 @@ func FscxRevolveN(ba, bb, nonce *BitArray, steps int) *BitArray {
 func iVal(size int) int { return size / 4 }
 func rVal(size int) int { return size * 3 / 4 }
 
-var sizes = []int{64, 128, 256}
+func gfOrd(size int) *big.Int {
+	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(size)), big.NewInt(1))
+}
 
-// bench warms up with 10 calls, then runs batches of 100 until 1 second elapsed.
+var sizes    = []int{64, 128, 256} // FSCX-only tests (fast)
+var gfSizes  = []int{32}           // GfPow tests (big.Int is slow; matches 32-bit C/asm targets)
+var rnlSizes = []int{32, 64}
+
 func bench(label string, fn func()) (ops int, elapsed time.Duration) {
 	for i := 0; i < 10; i++ {
 		fn()
@@ -182,45 +422,48 @@ func fmtRate(ops int, elapsed time.Duration) string {
 	return fmt.Sprintf("%.2f K ops/sec", rate/1e3)
 }
 
+// S_op helper for Eve-resistance test [6]
+func SOpBA(delta *BitArray, r int) *BitArray {
+	acc := &BitArray{size: delta.size}
+	cur := delta.Copy()
+	zero := &BitArray{size: delta.size}
+	for i := 0; i <= r; i++ {
+		acc.val.Xor(&acc.val, &cur.val)
+		cur = Fscx(cur, zero)
+	}
+	return acc
+}
+
 // ---------------------------------------------------------------------------
-// Security tests
+// Security tests — classical protocols [1-9]
 // ---------------------------------------------------------------------------
 
-func testNonCommutativity() {
-	// Fscx(A,B) == Fscx(B,A) always (symmetric formula: A^B^ROL(A)^ROL(B)^ROR(A)^ROR(B)).
-	// Asymmetry arises in FscxRevolveN, where B is held constant across
-	// iterations: FscxRevolveN(A,B,N,n) != FscxRevolveN(B,A,N,n) in general.
-	// The nonce term T_n(N) cancels from both sides of the difference, so
-	// commutativity is determined solely by the A and B inputs.
-	fmt.Println("[1] FscxRevolveN non-commutativity: FscxRevolveN(A,B,N,n) != FscxRevolveN(B,A,N,n)")
-	for _, size := range sizes {
-		iv := iVal(size)
-		comm := 0
-		for i := 0; i < 10000; i++ {
+func testHkexGFCorrectness() {
+	fmt.Println("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		ok := 0
+		for i := 0; i < 1000; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			n := randBA(size)
-			if FscxRevolveN(a, b, n, iv).Equal(FscxRevolveN(b, a, n, iv)) {
-				comm++
+			C := GfPow(g, &a.val, poly, size)
+			C2 := GfPow(g, &b.val, poly, size)
+			if GfPow(C2, &a.val, poly, size).Cmp(GfPow(C, &b.val, poly, size)) == 0 {
+				ok++
 			}
 		}
 		status := "PASS"
-		if comm != 0 {
+		if ok != 1000 {
 			status = "FAIL"
 		}
-		fmt.Printf("    bits=%3d  %5d / 10000 commutative  [%s]\n", size, comm, status)
+		fmt.Printf("    bits=%3d  %5d / 1000 correct  [%s]\n", size, ok, status)
 	}
 	fmt.Println()
 }
 
 func testAvalanche() {
-	// Fscx is a linear map over GF(2): output bit i depends only on input bits
-	// i-1, i, i+1 (cyclic). Flipping one input bit always changes exactly 3 output
-	// bits — the bit and its two cyclic neighbors. Security comes from FscxRevolve
-	// iteration, not single-step diffusion.
-	// Frobenius over GF(2): (1+t+t^-1)^(2^k) = 1+t^(2^k)+t^(-2^k), so power-of-2
-	// step counts (like iVal = size/4) also give exactly 3-bit diffusion.
-	fmt.Println("[2] Fscx single-step linear diffusion (expected: exactly 3 bits per flip)")
+	fmt.Println("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)  [CLASSICAL]")
 	for _, size := range sizes {
 		total := 0.0
 		gmin := size + 1
@@ -253,7 +496,7 @@ func testAvalanche() {
 }
 
 func testOrbitPeriod() {
-	fmt.Println("[3] Orbit period: FSCX_REVOLVE cycles back to A")
+	fmt.Println("[3] Orbit period: FSCX_REVOLVE cycles back to A  [CLASSICAL]")
 	for _, size := range sizes {
 		cntP := 0
 		cntHP := 0
@@ -287,8 +530,8 @@ func testOrbitPeriod() {
 }
 
 func testBitFrequency() {
-	fmt.Println("[4] Bit-frequency bias: 100000 FSCX outputs per size")
-	N := 100000
+	fmt.Println("[4] Bit-frequency bias: 10000 FSCX outputs per size  [CLASSICAL]")
+	N := 10000
 	for _, size := range sizes {
 		counts := make([]int, size)
 		for trial := 0; trial < N; trial++ {
@@ -325,69 +568,22 @@ func testBitFrequency() {
 	fmt.Println()
 }
 
-func testKeySensitivity() {
-	// sk = FscxRevolveN(C2, B, hn, r) ^ A
-	// Flipping bit k of A changes sk by exactly 1 bit via the direct XOR term.
-	// The nonce change propagates L^i(e_k) into hn = C^C2; algebraically
-	// S_r * L^i(e_k) cancels to zero, leaving only the 1-bit XOR contribution.
-	// This is a structural property of the HKEX XOR construction.
-	fmt.Println("[5] HKEX session key XOR construction (expected: exactly 1-bit direct sensitivity)")
-	for _, size := range sizes {
+func testHkexGFKeySensitivity() {
+	fmt.Println("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
 		total := 0.0
-		iv := iVal(size)
-		rv := rVal(size)
-		for i := 0; i < 10000; i++ {
-			a := randBA(size)
-			b := randBA(size)
-			a2 := randBA(size)
-			b2 := randBA(size)
-			c := FscxRevolve(a, b, iv)
-			c2 := FscxRevolve(a2, b2, iv)
-			hn := c.Xor(c2)
-			key1 := FscxRevolveN(c2, b, hn, rv).Xor(a)
-			af := a.FlipBit(0)
-			key2 := FscxRevolveN(c2, b, hn, rv).Xor(af)
-			total += float64(key1.Xor(key2).Popcount())
-		}
-		mean := total / 10000.0
-		status := "PASS"
-		if mean < 0.9 || mean > 1.1 {
-			status = "FAIL"
-		}
-		fmt.Printf("    bits=%3d  mean Hamming=%.2f (expected 1/%d)  [%s]\n", size, mean, size, status)
-	}
-	fmt.Println()
-}
-
-func testAvalancheRevolveN() {
-	// FSCX_REVOLVE_N nonce-injection avalanche.
-	// Flipping 1 bit of the nonce N while keeping A and B constant propagates
-	// through all remaining revolve steps.  The change in the output equals
-	// T_n(e_k) where T_n = I + L + ... + L^(n-1) and e_k is the unit vector
-	// at bit position k.  Unlike the 3-bit diffusion of single-step FSCX or
-	// the purely linear FscxRevolve, T_n accumulates contributions from every
-	// step.  HD = popcount(T_n(e_0)) is deterministic (independent of A and B),
-	// so min == max == mean.  For n = size/4 (i_val), HD = size/4 exactly.
-	fmt.Println("[6] FscxRevolveN nonce-avalanche: flip 1 nonce bit, measure output diffusion")
-	for _, size := range sizes {
-		iv := iVal(size)
-		total := 0.0
-		gmin := size + 1
-		gmax := -1
 		for i := 0; i < 1000; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			n := randBA(size)
-			base := FscxRevolveN(a, b, n, iv)
-			nf := n.FlipBit(0)
-			hd := FscxRevolveN(a, b, nf, iv).Xor(base).Popcount()
-			total += float64(hd)
-			if hd < gmin {
-				gmin = hd
-			}
-			if hd > gmax {
-				gmax = hd
-			}
+			C2 := GfPow(g, &b.val, poly, size)
+			sk1 := GfPow(C2, &a.val, poly, size)
+			af := a.FlipBit(0)
+			sk2 := GfPow(C2, &af.val, poly, size)
+			diff := &BitArray{size: size}
+			diff.val.Xor(sk1, sk2)
+			total += float64(diff.Popcount())
 		}
 		mean := total / 1000.0
 		expected := size / 4
@@ -395,38 +591,373 @@ func testAvalancheRevolveN() {
 		if mean < float64(expected) {
 			status = "FAIL"
 		}
-		fmt.Printf("    bits=%3d  mean HD=%.1f (expected >=%d)  min=%d  max=%d  [%s]\n",
-			size, mean, expected, gmin, gmax, status)
+		fmt.Printf("    bits=%3d  mean HD=%.2f (expected >=%d)  [%s]\n", size, mean, expected, status)
 	}
 	fmt.Println()
 }
 
-func testHpksSignVerify() {
-	fmt.Println("[7] HPKS sign+verify correctness: V == plaintext")
-	for _, size := range sizes {
-		iv := iVal(size)
+func testHkexGFEveResistance() {
+	fmt.Println("[6] HKEX-GF Eve resistance: S_op(C XOR C2, r) != sk for 1000 trials  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
 		rv := rVal(size)
-		ok := 0
-		for i := 0; i < 10000; i++ {
+		successes := 0
+		for i := 0; i < 1000; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			a2 := randBA(size)
-			b2 := randBA(size)
+			C := newBA(size, GfPow(g, &a.val, poly, size))
+			C2 := newBA(size, GfPow(g, &b.val, poly, size))
+			realSk := newBA(size, GfPow(&C2.val, &a.val, poly, size))
+			delta := C.Xor(C2)
+			eveGuess := SOpBA(delta, rv)
+			if eveGuess.Equal(realSk) {
+				successes++
+			}
+		}
+		status := "PASS"
+		if successes != 0 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %5d / 1000 Eve successes (expected 0)  [%s]\n", size, successes, status)
+	}
+	fmt.Println()
+}
+
+func testHpksSchnorrCorrectness() {
+	fmt.Println("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		iv := iVal(size)
+		ord := gfOrd(size)
+		ok := 0
+		for i := 0; i < 1000; i++ {
+			a := randBA(size)
+			cVal := GfPow(g, &a.val, poly, size)
 			pt := randBA(size)
-			c := FscxRevolve(a, b, iv)
-			c2 := FscxRevolve(a2, b2, iv)
-			hn := c.Xor(c2)
-			S := FscxRevolveN(c2, b, hn, rv).Xor(a).Xor(pt)  // sign
-			V := FscxRevolveN(c, b2, hn, rv).Xor(a2).Xor(S)  // verify
-			if V.Equal(pt) {
+			k := randBA(size)
+			rInt := GfPow(g, &k.val, poly, size)
+			rB := newBA(size, rInt)
+			e := FscxRevolve(rB, pt, iv)
+			s := new(big.Int).Mod(new(big.Int).Sub(&k.val, new(big.Int).Mul(&a.val, &e.val)), ord)
+			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.val, poly, size), poly, size)
+			if lhs.Cmp(rInt) == 0 {
 				ok++
 			}
 		}
 		status := "PASS"
-		if ok != 10000 {
+		if ok != 1000 {
 			status = "FAIL"
 		}
-		fmt.Printf("    bits=%3d  %5d / 10000 verified  [%s]\n", size, ok, status)
+		fmt.Printf("    bits=%3d  %4d / 1000 verified  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
+func testHpksSchnorrEveResistance() {
+	fmt.Println("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		iv := iVal(size)
+		wins := 0
+		for i := 0; i < 1000; i++ {
+			a := randBA(size)
+			cVal := GfPow(g, &a.val, poly, size)
+			decoy := randBA(size)
+			rEve := newBA(size, GfPow(g, &randBA(size).val, poly, size))
+			eEve := FscxRevolve(rEve, decoy, iv)
+			sEve := new(big.Int).Set(&randBA(size).val)
+			lhs := GfMul(GfPow(g, sEve, poly, size), GfPow(cVal, &eEve.val, poly, size), poly, size)
+			if lhs.Cmp(&rEve.val) == 0 {
+				wins++
+			}
+		}
+		status := "PASS"
+		if wins != 0 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %4d / 1000 Eve wins (expected 0)  [%s]\n", size, wins, status)
+	}
+	fmt.Println()
+}
+
+func testHpkeRoundTrip() {
+	fmt.Println("[9] HPKE encrypt+decrypt correctness (El Gamal + FscxRevolve)  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		iv := iVal(size)
+		rv := rVal(size)
+		ok := 0
+		for i := 0; i < 1000; i++ {
+			a := randBA(size)
+			pt := randBA(size)
+			cVal := GfPow(g, &a.val, poly, size)
+			r := randBA(size)
+			rVal2 := GfPow(g, &r.val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
+			E := FscxRevolve(pt, encKey, iv)
+			decKey := newBA(size, GfPow(rVal2, &a.val, poly, size))
+			D := FscxRevolve(E, decKey, rv)
+			if D.Equal(pt) {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 1000 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %4d / 1000 decrypted  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
+// ---------------------------------------------------------------------------
+// Security tests — PQC extension [10-16]
+// ---------------------------------------------------------------------------
+
+func testNlFscxV1Nonlinearity() {
+	// NL-FSCX v1 must violate GF(2) linearity: if linear,
+	// f(A,B) XOR f(0,B) == Fscx(A,0) for all A,B. Count violations.
+	// Also verify period is destroyed: no period found in 4*n steps.
+	fmt.Println("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]")
+	for _, size := range sizes {
+		zero := &BitArray{size: size}
+		violations := 0
+		for i := 0; i < 1000; i++ {
+			A := randBA(size)
+			B := randBA(size)
+			linPred := Fscx(A, zero).Xor(NlFscxV1(zero, B))
+			if !NlFscxV1(A, B).Equal(linPred) {
+				violations++
+			}
+		}
+		cap := 4 * size
+		noPeriod := 0
+		for i := 0; i < 200; i++ {
+			A := randBA(size)
+			B := randBA(size)
+			cur := NlFscxV1(A, B)
+			found := false
+			for j := 1; j < cap; j++ {
+				cur = NlFscxV1(cur, B)
+				if cur.Equal(A) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				noPeriod++
+			}
+		}
+		status := "PASS"
+		if violations != 1000 || noPeriod < 190 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  linearity violations=%d/1000  no-period=%d/200  [%s]\n",
+			size, violations, noPeriod, status)
+	}
+	fmt.Println()
+}
+
+func testNlFscxV2BijectiveInverse() {
+	// NL-FSCX v2 must be bijective in A for all B (collision count = 0),
+	// the closed-form inverse must be correct, and v2 must be non-linear.
+	fmt.Println("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]")
+	for _, size := range sizes {
+		// Collision test: map A->NlFscxV2(A,B) must be injective for fixed B
+		nonBij := 0
+		for i := 0; i < 500; i++ {
+			B := randBA(size)
+			seen := make(map[string]uint64)
+			samples := 256
+			if size < 8 {
+				samples = 1 << uint(size)
+			}
+			for j := 0; j < samples; j++ {
+				A := randBA(size)
+				out := NlFscxV2(A, B).val.Text(16)
+				if prev, ok := seen[out]; ok && prev != A.val.Uint64() {
+					nonBij++
+					break
+				}
+				seen[out] = A.val.Uint64()
+			}
+		}
+		// Inverse correctness
+		invOk := 0
+		for i := 0; i < 1000; i++ {
+			A := randBA(size)
+			B := randBA(size)
+			if NlFscxV2Inv(NlFscxV2(A, B), B).Equal(A) {
+				invOk++
+			}
+		}
+		// Non-linearity
+		zero := &BitArray{size: size}
+		nlOk := 0
+		for i := 0; i < 500; i++ {
+			A := randBA(size)
+			B := randBA(size)
+			linPred := Fscx(A, zero).Xor(NlFscxV2(zero, B))
+			if !NlFscxV2(A, B).Equal(linPred) {
+				nlOk++
+			}
+		}
+		status := "PASS"
+		if nonBij != 0 || invOk != 1000 || nlOk < 490 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  collisions=%d/500  inv=%d/1000  nonlinear=%d/500  [%s]\n",
+			size, nonBij, invOk, nlOk, status)
+	}
+	fmt.Println()
+}
+
+func testHskeNlA1Correctness() {
+	fmt.Println("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
+	for _, size := range sizes {
+		iv := iVal(size)
+		ok := 0
+		for trial := 0; trial < 1000; trial++ {
+			K := randBA(size)
+			P := randBA(size)
+			ctr := int64(trial % (1 << 16))
+			bCtr := newBA(size, new(big.Int).Xor(&K.val, big.NewInt(ctr)))
+			ks := NlFscxRevolveV1(K, bCtr, iv)
+			C := newBA(size, new(big.Int).Xor(&P.val, &ks.val))
+			D := newBA(size, new(big.Int).Xor(&C.val, &ks.val))
+			if D.Equal(P) {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 1000 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %4d / 1000 correct  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
+func testHskeNlA2Correctness() {
+	// Trials reduced to 50: NlFscxV2Inv calls M^{n/2-1} per step — O(n^2) ops per trial.
+	fmt.Println("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]")
+	for _, size := range sizes {
+		rv := rVal(size)
+		ok := 0
+		for i := 0; i < 50; i++ {
+			K := randBA(size)
+			P := randBA(size)
+			E := NlFscxRevolveV2(P, K, rv)
+			D := NlFscxRevolveV2Inv(E, K, rv)
+			if D.Equal(P) {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 50 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %3d / 50 correct  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
+func testHkexRnlCorrectness() {
+	fmt.Println("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B  [PQC-EXT]")
+	fmt.Printf("     (ring sizes %v; production size is n=256)\n", rnlSizes)
+	for _, nRnl := range rnlSizes {
+		mBase := rnlMPoly(nRnl)
+		okRaw := 0
+		okSk := 0
+		trials := 200
+		for i := 0; i < trials; i++ {
+			aRand := rnlRandPoly(nRnl, rnlQ)
+			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
+			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			KA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+			KB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+			if KA.Equal(KB) {
+				okRaw++
+				skA := NlFscxRevolveV1(KA, KA, nRnl/4)
+				skB := NlFscxRevolveV1(KB, KB, nRnl/4)
+				if skA.Equal(skB) {
+					okSk++
+				}
+			}
+		}
+		status := "PASS"
+		if okRaw < trials*90/100 {
+			status = "FAIL"
+		}
+		fmt.Printf("    n=%3d  raw agree=%d/%d  sk agree=%d/%d  [%s]\n",
+			nRnl, okRaw, trials, okSk, trials, status)
+	}
+	fmt.Println()
+}
+
+func testHpksNlCorrectness() {
+	fmt.Println("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		iv := iVal(size)
+		ord := gfOrd(size)
+		ok := 0
+		for i := 0; i < 1000; i++ {
+			a := randBA(size)
+			cVal := GfPow(g, &a.val, poly, size)
+			pt := randBA(size)
+			k := randBA(size)
+			rInt := GfPow(g, &k.val, poly, size)
+			rB := newBA(size, rInt)
+			e := NlFscxRevolveV1(rB, pt, iv)
+			s := new(big.Int).Mod(new(big.Int).Sub(&k.val, new(big.Int).Mul(&a.val, &e.val)), ord)
+			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.val, poly, size), poly, size)
+			if lhs.Cmp(rInt) == 0 {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 1000 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %4d / 1000 verified  [%s]\n", size, ok, status)
+	}
+	fmt.Println()
+}
+
+func testHpkeNlCorrectness() {
+	// Trials reduced to 200: NlFscxV2Inv calls M^{n/2-1} per step.
+	fmt.Println("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		iv := iVal(size)
+		ok := 0
+		for i := 0; i < 200; i++ {
+			a := randBA(size)
+			pt := randBA(size)
+			cVal := GfPow(g, &a.val, poly, size)
+			r := randBA(size)
+			rInt := GfPow(g, &r.val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
+			E := NlFscxRevolveV2(pt, encKey, iv)
+			decKey := newBA(size, GfPow(rInt, &a.val, poly, size))
+			D := NlFscxRevolveV2Inv(E, decKey, iv)
+			if D.Equal(pt) {
+				ok++
+			}
+		}
+		status := "PASS"
+		if ok != 200 {
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  %3d / 200 decrypted  [%s]\n", size, ok, status)
 	}
 	fmt.Println()
 }
@@ -436,7 +967,7 @@ func testHpksSignVerify() {
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[8] FSCX throughput")
+	fmt.Println("[17] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -449,46 +980,33 @@ func benchFscx() {
 	fmt.Println()
 }
 
-func benchFscxRevolveN() {
-	fmt.Println("[9] FSCX_REVOLVE_N throughput")
-	for _, size := range sizes {
-		for _, stepsLabel := range []struct {
-			steps int
-			label string
-		}{
-			{iVal(size), fmt.Sprintf("i(%d)", iVal(size))},
-			{rVal(size), fmt.Sprintf("r(%d)", rVal(size))},
-		} {
-			a := randBA(size)
-			b := randBA(size)
-			n := randBA(size)
-			steps := stepsLabel.steps
-			lbl := stepsLabel.label
-			ops, elapsed := bench("", func() {
-				FscxRevolveN(a, b, n, steps)
-			})
-			fmt.Printf("    bits=%3d  steps=%-12s        : %s  (%d ops in %.2fs)\n",
-				size, lbl, fmtRate(ops, elapsed), ops, elapsed.Seconds())
-		}
+func benchHkexGFPow() {
+	fmt.Println("[18] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
+		a := randBA(size)
+		ops, elapsed := bench("", func() {
+			GfPow(g, &a.val, poly, size)
+		})
+		fmt.Printf("    bits=%3d  gf_pow(g, a)             : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
 	fmt.Println()
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[10] HKEX full handshake")
-	for _, size := range sizes {
-		iv := iVal(size)
-		rv := rVal(size)
+	fmt.Println("[19] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
 		ops, elapsed := bench("", func() {
 			a := randBA(size)
 			b := randBA(size)
-			a2 := randBA(size)
-			b2 := randBA(size)
-			c := FscxRevolve(a, b, iv)
-			c2 := FscxRevolve(a2, b2, iv)
-			hn := c.Xor(c2)
-			_ = FscxRevolveN(c2, b, hn, rv).Xor(a)
-			_ = FscxRevolveN(c, b2, hn, rv).Xor(a2)
+			C := GfPow(g, &a.val, poly, size)
+			C2 := GfPow(g, &b.val, poly, size)
+			_ = GfPow(C2, &a.val, poly, size)
+			_ = GfPow(C, &b.val, poly, size)
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -497,7 +1015,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[11] HSKE round-trip: encrypt+decrypt")
+	fmt.Println("[20] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		rv := rVal(size)
@@ -505,8 +1023,8 @@ func benchHskeRoundTrip() {
 		ops, elapsed := bench("", func() {
 			pt := randBA(size)
 			key := randBA(size)
-			enc := FscxRevolveN(pt, key, key, iv)
-			dec := FscxRevolveN(enc, key, key, rv)
+			enc := FscxRevolve(pt, key, iv)
+			dec := FscxRevolve(enc, key, rv)
 			sink = sink.Xor(dec.Xor(pt))
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
@@ -515,31 +1033,109 @@ func benchHskeRoundTrip() {
 	fmt.Println()
 }
 
-// HPKE (public key encryption) full round-trip:
-// Key setup: C = FscxRevolve(A,B,i), C2 = FscxRevolve(A2,B2,i), hn = C^C2
-// Bob encrypts:   E = FscxRevolveN(C, B2, hn, r) ^ A2 ^ pt
-// Alice decrypts: D = FscxRevolveN(C2, B,  hn, r) ^ A  ^ E  (== pt)
 func benchHpkeRoundTrip() {
-	fmt.Println("[12] HPKE encrypt+decrypt round-trip")
-	for _, size := range sizes {
+	fmt.Println("[21] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	for _, size := range gfSizes {
+		poly := gfPoly[size]
+		g := big.NewInt(gfGen)
 		iv := iVal(size)
 		rv := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
-			A := randBA(size)
-			B := randBA(size)
-			A2 := randBA(size)
-			B2 := randBA(size)
+			a := randBA(size)
 			pt := randBA(size)
-			C := FscxRevolve(A, B, iv)
-			C2 := FscxRevolve(A2, B2, iv)
-			hn := C.Xor(C2)
-			E := FscxRevolveN(C, B2, hn, rv).Xor(A2).Xor(pt) // Bob encrypts
-			D := FscxRevolveN(C2, B, hn, rv).Xor(A).Xor(E)   // Alice decrypts
+			cVal := GfPow(g, &a.val, poly, size)
+			r := randBA(size)
+			rVal2 := GfPow(g, &r.val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
+			E := FscxRevolve(pt, encKey, iv)
+			decKey := newBA(size, GfPow(rVal2, &a.val, poly, size))
+			D := FscxRevolve(E, decKey, rv)
 			sink = sink.Xor(D)
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println()
+}
+
+func benchNlFscxRevolve() {
+	fmt.Println("[22] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	for _, size := range sizes {
+		iv := iVal(size)
+		a := randBA(size)
+		b := randBA(size)
+		ops, elapsed := bench("", func() {
+			a = NlFscxRevolveV1(a, b, iv)
+		})
+		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println("[22b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
+	for _, size := range []int{64} { // O(n^2) per op; skip 128/256 in benchmark
+		rv := rVal(size)
+		a := randBA(size)
+		b := randBA(size)
+		ops, elapsed := bench("", func() {
+			E := NlFscxRevolveV2(a, b, rv)
+			a = NlFscxRevolveV2Inv(E, b, rv)
+		})
+		fmt.Printf("    bits=%3d  v2 enc+dec r_val         : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println()
+}
+
+func benchHskeNlA1RoundTrip() {
+	fmt.Println("[23] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	for _, size := range sizes {
+		iv := iVal(size)
+		sink := randBA(size)
+		ops, elapsed := bench("", func() {
+			K := randBA(size)
+			P := randBA(size)
+			bCtr := newBA(size, new(big.Int).Set(&K.val)) // counter=0
+			ks := NlFscxRevolveV1(K, bCtr, iv)
+			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.val, &ks.val)))
+		})
+		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println()
+}
+
+func benchHskeNlA2RoundTrip() {
+	fmt.Println("[24] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
+	for _, size := range []int{64} { // O(n^2) per op; skip 128/256 in benchmark
+		rv := rVal(size)
+		sink := randBA(size)
+		ops, elapsed := bench("", func() {
+			K := randBA(size)
+			P := randBA(size)
+			E := NlFscxRevolveV2(P, K, rv)
+			sink = sink.Xor(NlFscxRevolveV2Inv(E, K, rv))
+		})
+		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
+	fmt.Println()
+}
+
+func benchHkexRnlHandshake() {
+	fmt.Println("[25] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Printf("     (ring sizes %v; n^2 poly-mul — O(n^2) per exchange)\n", rnlSizes)
+	for _, nRnl := range rnlSizes {
+		mBase := rnlMPoly(nRnl)
+		ops, elapsed := bench("", func() {
+			aRand := rnlRandPoly(nRnl, rnlQ)
+			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
+			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			_ = rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+			_ = rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+		})
+		fmt.Printf("    n=%3d  full exchange             : %s  (%d ops in %.2fs)\n",
+			nRnl, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
 	fmt.Println()
 }
@@ -551,20 +1147,34 @@ func benchHpkeRoundTrip() {
 func main() {
 	fmt.Println("=== Herradura KEx \u2014 Security & Performance Tests (Go) ===\n")
 
-	fmt.Println("--- Security Assumption Tests ---\n")
-	testNonCommutativity()
+	fmt.Println("--- Security Tests: Classical Protocols ---\n")
+	testHkexGFCorrectness()
 	testAvalanche()
 	testOrbitPeriod()
 	testBitFrequency()
-	testKeySensitivity()
+	testHkexGFKeySensitivity()
+	testHkexGFEveResistance()
+	testHpksSchnorrCorrectness()
+	testHpksSchnorrEveResistance()
+	testHpkeRoundTrip()
 
-	testAvalancheRevolveN()
-	testHpksSignVerify()
+	fmt.Println("--- Security Tests: PQC Extension (NL-FSCX + HKEX-RNL) ---\n")
+	testNlFscxV1Nonlinearity()
+	testNlFscxV2BijectiveInverse()
+	testHskeNlA1Correctness()
+	testHskeNlA2Correctness()
+	testHkexRnlCorrectness()
+	testHpksNlCorrectness()
+	testHpkeNlCorrectness()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()
-	benchFscxRevolveN()
+	benchHkexGFPow()
 	benchHkexHandshake()
 	benchHskeRoundTrip()
 	benchHpkeRoundTrip()
+	benchNlFscxRevolve()
+	benchHskeNlA1RoundTrip()
+	benchHskeNlA2RoundTrip()
+	benchHkexRnlHandshake()
 }

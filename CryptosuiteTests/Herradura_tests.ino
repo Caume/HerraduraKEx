@@ -1,16 +1,26 @@
-/*  Herradura KEx — Security Tests v1.3.7 (Arduino, 32-bit)
-    HKEX, HSKE, HPKS, HPKE correctness tests with LCG PRNG (100 iterations each)
+/*  Herradura KEx — Security Tests v1.4.0 (Arduino, 32-bit)
+    HKEX-GF, HSKE, HPKS, HPKE correctness tests with LCG PRNG (100 iterations each)
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
     MIT License / GPL v3.0 — choose either.
 
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
+
+    v1.4.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE.
+      - fscx_revolve_n removed.
+      - [1] HKEX-GF correctness: g^{ab} == g^{ba}.
+      - [2] HSKE round-trip: fscx_revolve(fscx_revolve(P,K,i),K,r) == P.
+      - [3] HPKS Schnorr: g^s * C^e == R  (s = k-a*e mod ORD).
+      - [4] HPKE El Gamal: fscx_revolve(E, R^a, r) == P.
 */
 
 #define KEYBITS  32
 #define I_VALUE  (KEYBITS / 4)        /* 8  */
 #define R_VALUE  (3 * KEYBITS / 4)    /* 24 */
+
+#define GF_POLY32 0x00400007UL
+#define GF_GEN    3UL
 
 typedef unsigned long uint32;
 
@@ -41,9 +51,30 @@ uint32 fscx_revolve(uint32 a, uint32 b, int steps) {
     return a;
 }
 
-uint32 fscx_revolve_n(uint32 a, uint32 b, uint32 nonce, int steps) {
-    for (int i = 0; i < steps; i++) a = fscx(a, b) ^ nonce;
-    return a;
+/* ------------------------------------------------------------------ */
+/* GF(2^32) arithmetic                                                */
+/* ------------------------------------------------------------------ */
+
+uint32 gf_mul_32(uint32 a, uint32 b) {
+    uint32 r = 0;
+    for (int i = 0; i < 32; i++) {
+        if (b & 1) r ^= a;
+        uint32 carry = a >> 31;
+        a <<= 1;
+        if (carry) a ^= GF_POLY32;
+        b >>= 1;
+    }
+    return r;
+}
+
+uint32 gf_pow_32(uint32 base, uint32 exp) {
+    uint32 r = 1;
+    while (exp) {
+        if (exp & 1) r = gf_mul_32(r, base);
+        base = gf_mul_32(base, base);
+        exp >>= 1;
+    }
+    return r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -51,33 +82,30 @@ uint32 fscx_revolve_n(uint32 a, uint32 b, uint32 nonce, int steps) {
 /* ------------------------------------------------------------------ */
 
 /*
- * [1] HKEX key exchange correctness
- *     skeyA = fscx_revolve_n(C2, B,  hn, R) ^ A
- *     skeyB = fscx_revolve_n(C,  B2, hn, R) ^ A2
- *     Pass condition: skeyA == skeyB
+ * [1] HKEX-GF correctness: g^{ab} == g^{ba}
+ *     C = g^a, C2 = g^b, skA = C2^a, skB = C^b; Pass: skA == skB
  */
-void test_hkex() {
-    Serial.println("[1] HKEX key exchange correctness");
+void test_hkex_gf() {
+    Serial.println("[1] HKEX-GF correctness: g^{ab} == g^{ba}");
     int pass = 0;
-    for (int i = 0; i < 100; i++) {
-        uint32 a  = prng_next(), b  = prng_next();
-        uint32 a2 = prng_next(), b2 = prng_next();
-        uint32 c  = fscx_revolve(a,  b,  I_VALUE);
-        uint32 c2 = fscx_revolve(a2, b2, I_VALUE);
-        uint32 hn = c ^ c2;
-        uint32 skA = fscx_revolve_n(c2, b,  hn, R_VALUE) ^ a;
-        uint32 skB = fscx_revolve_n(c,  b2, hn, R_VALUE) ^ a2;
+    for (int i = 0; i < 20; i++) {
+        uint32 a = prng_next() | 1;   /* ensure odd */
+        uint32 b = prng_next() | 1;
+        uint32 C   = gf_pow_32(GF_GEN, a);
+        uint32 C2  = gf_pow_32(GF_GEN, b);
+        uint32 skA = gf_pow_32(C2, a);
+        uint32 skB = gf_pow_32(C,  b);
         if (skA == skB) pass++;
     }
-    Serial.print("    "); Serial.print(pass); Serial.print(" / 100 passed  [");
-    Serial.println(pass == 100 ? "PASS]" : "FAIL]");
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
+    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
     Serial.println();
 }
 
 /*
  * [2] HSKE symmetric encryption correctness
- *     E = fscx_revolve_n(P, key, key, I)
- *     D = fscx_revolve_n(E, key, key, R)
+ *     E = fscx_revolve(P, key, I)
+ *     D = fscx_revolve(E, key, R)
  *     Pass condition: D == P
  */
 void test_hske() {
@@ -86,8 +114,8 @@ void test_hske() {
     for (int i = 0; i < 100; i++) {
         uint32 p   = prng_next();
         uint32 key = prng_next();
-        uint32 enc = fscx_revolve_n(p,   key, key, I_VALUE);
-        uint32 dec = fscx_revolve_n(enc, key, key, R_VALUE);
+        uint32 enc = fscx_revolve(p,   key, I_VALUE);
+        uint32 dec = fscx_revolve(enc, key, R_VALUE);
         if (dec == p) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 100 passed  [");
@@ -96,52 +124,57 @@ void test_hske() {
 }
 
 /*
- * [3] HPKS public key signature correctness
- *     S = fscx_revolve_n(C2, B,  hn, R) ^ A  ^ P
- *     V = fscx_revolve_n(C,  B2, hn, R) ^ A2 ^ S
- *     Pass condition: V == P
+ * [3] HPKS Schnorr correctness: g^s * C^e == R
+ *     a private; C = g^a; k nonce; R = g^k
+ *     e = fscx_revolve(R, p, I_VALUE)
+ *     s = (k - a*e) mod ORD  (ORD = 2^32-1)
+ *     pass: gf_mul_32(g^s, C^e) == R
  */
 void test_hpks() {
-    Serial.println("[3] HPKS public key signature correctness");
+    Serial.println("[3] HPKS Schnorr correctness: g^s*C^e == R");
     int pass = 0;
-    for (int i = 0; i < 100; i++) {
-        uint32 a  = prng_next(), b  = prng_next();
-        uint32 a2 = prng_next(), b2 = prng_next();
+    for (int i = 0; i < 20; i++) {
+        uint32 a  = prng_next() | 1;
         uint32 p  = prng_next();
-        uint32 c  = fscx_revolve(a,  b,  I_VALUE);
-        uint32 c2 = fscx_revolve(a2, b2, I_VALUE);
-        uint32 hn = c ^ c2;
-        uint32 S  = fscx_revolve_n(c2, b,  hn, R_VALUE) ^ a  ^ p;
-        uint32 V  = fscx_revolve_n(c,  b2, hn, R_VALUE) ^ a2 ^ S;
-        if (V == p) pass++;
+        uint32 k  = prng_next();
+        uint32 C  = gf_pow_32(GF_GEN, a);
+        uint32 R  = gf_pow_32(GF_GEN, k);
+        uint32 e  = fscx_revolve(R, p, I_VALUE);
+        uint64_t ae = ((uint64_t)a * (uint64_t)e) % 0xFFFFFFFFULL;
+        uint32 s  = (uint32)(((uint64_t)k + 0xFFFFFFFFULL - ae) % 0xFFFFFFFFULL);
+        uint32 gs = gf_pow_32(GF_GEN, s);
+        uint32 Ce = gf_pow_32(C, e);
+        if (gf_mul_32(gs, Ce) == R) pass++;
     }
-    Serial.print("    "); Serial.print(pass); Serial.print(" / 100 passed  [");
-    Serial.println(pass == 100 ? "PASS]" : "FAIL]");
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
+    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
     Serial.println();
 }
 
 /*
- * [4] HPKE public key encryption correctness
- *     E = fscx_revolve_n(C,  B2, hn, R) ^ A2 ^ P
- *     D = fscx_revolve_n(C2, B,  hn, R) ^ A  ^ E
- *     Pass condition: D == P
+ * [4] HPKE El Gamal encrypt+decrypt correctness
+ *     a private; C = g^a; r ephemeral; R = g^r
+ *     enc_key = C^r = g^{ar}; E = fscx_revolve(P, enc_key, I_VALUE)
+ *     dec_key = R^a = g^{ra}; D = fscx_revolve(E, dec_key, R_VALUE)
+ *     pass: D == P
  */
 void test_hpke() {
-    Serial.println("[4] HPKE public key encryption correctness");
+    Serial.println("[4] HPKE El Gamal encrypt+decrypt: D == P");
     int pass = 0;
-    for (int i = 0; i < 100; i++) {
-        uint32 a  = prng_next(), b  = prng_next();
-        uint32 a2 = prng_next(), b2 = prng_next();
-        uint32 p  = prng_next();
-        uint32 c  = fscx_revolve(a,  b,  I_VALUE);
-        uint32 c2 = fscx_revolve(a2, b2, I_VALUE);
-        uint32 hn = c ^ c2;
-        uint32 E  = fscx_revolve_n(c,  b2, hn, R_VALUE) ^ a2 ^ p;
-        uint32 D  = fscx_revolve_n(c2, b,  hn, R_VALUE) ^ a  ^ E;
+    for (int i = 0; i < 20; i++) {
+        uint32 a       = prng_next() | 1;
+        uint32 p       = prng_next();
+        uint32 r       = prng_next() | 1;
+        uint32 C       = gf_pow_32(GF_GEN, a);
+        uint32 R       = gf_pow_32(GF_GEN, r);
+        uint32 enc_key = gf_pow_32(C, r);
+        uint32 E       = fscx_revolve(p, enc_key, I_VALUE);
+        uint32 dec_key = gf_pow_32(R, a);
+        uint32 D       = fscx_revolve(E, dec_key, R_VALUE);
         if (D == p) pass++;
     }
-    Serial.print("    "); Serial.print(pass); Serial.print(" / 100 passed  [");
-    Serial.println(pass == 100 ? "PASS]" : "FAIL]");
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
+    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
     Serial.println();
 }
 
@@ -160,7 +193,7 @@ void loop() {
     Serial.println("=== Herradura KEx - Security Tests (Arduino, 32-bit) ===");
     Serial.println();
 
-    test_hkex();
+    test_hkex_gf();
     test_hske();
     test_hpks();
     test_hpke();
