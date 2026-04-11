@@ -4,6 +4,68 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.0] - 2026-04-11
+
+### Added — NL-FSCX v2, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL across all implementations
+
+Version 1.5.0 adds non-linear extensions to FSCX (breaking GF(2)-linearity and period structure)
+and a post-quantum key exchange (HKEX-RNL via Ring-LWR), porting them to every language
+including C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino.
+
+#### New primitives
+
+- **NL-FSCX v1** — `nl_fscx(A,B) = fscx(A,B) ⊕ ROL(A+B, n/4)`: integer carry injection
+  breaks GF(2) linearity and orbit periods; used as KDF/commitment function.
+- **NL-FSCX v2** — `nl_fscx_v2(A,B) = fscx(A,B) + δ(B) mod 2^n`,
+  where `δ(B) = ROL(B·⌊(B+1)/2⌋ mod 2^n, n/4)`: bijective in A for all B;
+  closed-form inverse `A = B ⊕ M⁻¹((Y − δ(B)) mod 2^n)` (`M⁻¹ = fscx_revolve(·, 0, n/2−1)`).
+
+#### New protocols
+
+- **HSKE-NL-A1** (counter-mode): `ks = nl_fscx_revolve_v1(K, K⊕ctr, i)`;
+  `E = P ⊕ ks`; `D = E ⊕ ks = P`.
+- **HSKE-NL-A2** (revolve-mode): `E = nl_fscx_revolve_v2(P, K, r)`;
+  `D = nl_fscx_revolve_v2_inv(E, K, r) = P`.
+- **HKEX-RNL** (Ring-LWR key exchange; conjectured quantum-resistant):
+  shared `m_blind = m(x) + a_rand` in `Z_q[x]/(x^n+1)`;
+  Alice/Bob derive `C = round_p(m_blind · s)` with small secret `s`;
+  agreement via `K = round_pp(s · lift(C_other))`; final `sk = nl_fscx_revolve_v1(K, K, i)`.
+  Parameters: `n=256` (C/Go/Python), `n=32` (assembly/Arduino/C-tests); `q=65537`, `p=4096`.
+- **HPKS-NL** (NL-hardened Schnorr): challenge `e = nl_fscx_revolve_v1(R, P, i)`.
+- **HPKE-NL** (NL-hardened El Gamal): `E = nl_fscx_revolve_v2(P, enc_key, i)`;
+  `D = nl_fscx_revolve_v2_inv(E, dec_key, i)`.
+
+#### Files updated (all languages)
+
+- `Herradura cryptographic suite.py` — NL-FSCX v1/v2, all five new protocols, Eve bypass tests.
+- `CryptosuiteTests/Herradura_tests.py` — tests [10]–[16] (NL-FSCX, HSKE-NL-A1/A2, HKEX-RNL,
+  HPKS-NL, HPKE-NL); benchmarks renumbered [17]–[25].
+- `Herradura cryptographic suite.go` — same protocol additions as Python.
+- `CryptosuiteTests/Herradura_tests.go` — same test additions.
+- `Herradura cryptographic suite.c` — NL-FSCX v1/v2 (256-bit BitArray), HKEX-RNL (n=256),
+  HPKS-NL, HPKE-NL; `ba_add256`, `ba_sub256`, `ba_mul256_lo`, `ba_rol64_256`, `m_inv_ba` added.
+- `CryptosuiteTests/Herradura_tests.c` — tests [10]–[16] (32-bit NL-FSCX and RNL, n=32);
+  benchmarks renumbered [17]–[21].
+- `Herradura cryptographic suite.asm` — NASM i386: `nl_fscx_delta_v2`, `nl_fscx_v1/v2/v2_inv`,
+  `nl_fscx_revolve_v1/v2/v2_inv`, `m_inv_32`; RNL poly helpers (n=32); new protocol sections.
+- `CryptosuiteTests/Herradura_tests.asm` — NASM i386: tests [1]–[10] (v1.4.0 tests [1]–[4]
+  plus new [5]–[10] for NL/RNL protocols); memory-variable loop counters; EBP pass counter.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: same additions as NASM; `umull`/`udiv`/`mls`
+  for mod-65537 ring arithmetic; `.ltorg` after every subroutine.
+- `CryptosuiteTests/Herradura_tests.s` — ARM Thumb-2: tests [1]–[10]; r10/r11 loop
+  counter/pass count (callee-saved); `it`/conditional suffix pattern for modular arithmetic.
+- `Herradura cryptographic suite.ino` — Arduino: NL-FSCX v1/v2/inverse, HKEX-RNL (n=32),
+  HPKS-NL, HPKE-NL; LCG PRNG for RNL poly generation.
+- `CryptosuiteTests/Herradura_tests.ino` — Arduino: tests [1]–[10], 30-second rerun loop.
+
+#### Security proofs (SecurityProofs.md)
+
+- **§11** — NL-FSCX non-linearity and PQC extensions (Theorems 11–12; HKEX-RNL,
+  HSKE-NL-A1/A2, HPKS-NL, HPKE-NL; C3 hybrid recommendation).
+- **§12** — Classical and quantum security analysis (merged from PQCanalysis.md in v1.4.1).
+
+---
+
 ## [1.4.1] - 2026-04-08
 
 ### Documentation — PQCanalysis.md merged into SecurityProofs.md

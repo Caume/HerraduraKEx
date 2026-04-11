@@ -1,8 +1,10 @@
-# Herradura Cryptographic Suite (v1.4.0)
+# Herradura Cryptographic Suite (v1.5.0)
 
-The Herradura Cryptographic Suite implements four cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive and Diffie-Hellman key exchange over GF(2^n)*.
+The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
-> **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaces it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof of the break and `PQCanalysis.md` for the security analysis of v1.4.0 protocols.
+> **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
+>
+> **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
 
 ---
 
@@ -44,12 +46,22 @@ HKEX-GF is a standard Diffie-Hellman key exchange over the multiplicative group 
 
 # Herradura Cryptographic Suite
 
-The suite builds four protocols on top of HKEX-GF and FSCX_REVOLVE:
+The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FSCX extensions:
+
+**Classical (v1.4.0):**
 
 1. **HKEX-GF** — key exchange (DH over $\mathbb{GF}(2^n)^*$, as above)
 2. **HSKE** — symmetric encryption: $E = \text{FSCX\_REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX\_REVOLVE}(E, \mathit{key}, r)$
-3. **HPKS** — Schnorr-style public key signature: choose nonce $k$; $R = g^k$; challenge $e = \text{FSCX\_REVOLVE}(R, P, i)$; response $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
-4. **HPKE** — El Gamal public key encryption: ephemeral $r$; $R = g^r$; $\mathit{enc\_key} = C^r = g^{ar}$; $E = \text{FSCX\_REVOLVE}(P, \mathit{enc\_key}, i)$; Alice decrypts with $\mathit{dec\_key} = R^a = g^{ra}$
+3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX\_REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
+4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\mathit{enc\_key} = C^r$; $E = \text{FSCX\_REVOLVE}(P, \mathit{enc\_key}, i)$; Alice decrypts with $\mathit{dec\_key} = R^a$
+
+**Post-quantum / NL-hardened (v1.5.0):**
+
+5. **HSKE-NL-A1** — counter-mode with NL-FSCX v1: $\mathit{ks} = \text{NL-FSCX-revolve-v1}(K, K \oplus \mathit{ctr}, i)$; $E = P \oplus \mathit{ks}$
+6. **HSKE-NL-A2** — revolve-mode with NL-FSCX v2: $E = \text{NL-FSCX-revolve-v2}(P, K, r)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, K, r)$
+7. **HKEX-RNL** — Ring-LWR key exchange (conjectured quantum-resistant): shared $m_\text{blind}$ in $\mathbb{Z}_q[x]/(x^n+1)$; parties derive $C = \text{round}_p(m_\text{blind} \cdot s)$; agreement $K = \text{round}_{pp}(s \cdot \text{lift}(C_\text{other}))$
+8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
+9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \mathit{enc\_key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \mathit{dec\_key}, i)$
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino.
 
@@ -121,7 +133,7 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.4.0, Raspberry Pi 5 — ARM Cortex-A76)
+# Performance (v1.5.0, Raspberry Pi 5 — ARM Cortex-A76)
 
 Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}`.
 GF arithmetic benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit parameters.
@@ -162,9 +174,8 @@ CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
 SecurityProofsCode/                                 — formal break proofs (Python)
-SecurityProofs.md                                   — algebraic security analysis
+SecurityProofs.md                                   — algebraic security analysis (incl. §11 NL/PQC, §12 quantum analysis)
 SecurityProofs2.md                                  — additional break proofs
-PQCanalysis.md                                      — post-quantum / classical analysis
 ```
 
 ---

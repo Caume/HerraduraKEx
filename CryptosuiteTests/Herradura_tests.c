@@ -1,16 +1,24 @@
 /* Build: gcc -O2 -o Herradura_tests Herradura_tests.c */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32-bit GF)
-    v1.4.0: HKEX-GF (DH over GF(2^256)*); Schnorr HPKS; El Gamal HPKE.
+    v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
       Tests [1]-[6]: 256-bit HKEX-GF and FSCX primitives (unchanged).
       [7] HPKS Schnorr correctness: g^s * C^e == R  (32-bit GF).
       [8] HPKS Schnorr Eve resistance: random forgery fails (32-bit GF).
       [9] HPKE El Gamal correctness: D = fscx_revolve(E, R^a, r) == P (32-bit GF).
-      [10] FSCX throughput (256-bit).
-      [11] HKEX-GF gf_pow throughput (32-bit).
-      [12] HKEX-GF full handshake (32-bit).
-      [13] HSKE round-trip (256-bit).
-      [14] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      --- v1.5.0 additions ---
+      [10] NL-FSCX v1 non-linearity and aperiodicity (32-bit).
+      [11] NL-FSCX v2 bijectivity and exact inverse (32-bit).
+      [12] HSKE-NL-A1 counter-mode correctness: D == P (32-bit).
+      [13] HSKE-NL-A2 revolve-mode correctness: D == P (32-bit).
+      [14] HKEX-RNL key agreement: K_A == K_B (n=32, Ring-LWR).
+      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge, 32-bit GF).
+      [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt, 32-bit GF).
+      [17] FSCX throughput (256-bit).
+      [18] HKEX-GF gf_pow throughput (32-bit).
+      [19] HKEX-GF full handshake (32-bit).
+      [20] HSKE round-trip (256-bit).
+      [21] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
       GFPow-heavy tests and benchmarks use 32-bit parameters for practical speed.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -271,6 +279,171 @@ static uint32_t fscx_revolve32(uint32_t a, uint32_t b, int steps)
     int i;
     for (i = 0; i < steps; i++) a = fscx32(a, b);
     return a;
+}
+
+/* ------------------------------------------------------------------ */
+/* 32-bit NL-FSCX primitives (v1.5.0)                                 */
+/* ROL by n/4 = 8 bits for 32-bit operands                            */
+/* ------------------------------------------------------------------ */
+
+static uint32_t rol32_8(uint32_t x) { return (x << 8) | (x >> 24); }
+
+/* NL-FSCX v1: fscx(a,b) ^ ROL8(a+b) */
+static uint32_t nl_fscx_v1_32(uint32_t a, uint32_t b)
+{
+    return fscx32(a, b) ^ rol32_8(a + b);
+}
+
+static uint32_t nl_fscx_revolve_v1_32(uint32_t a, uint32_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) a = nl_fscx_v1_32(a, b);
+    return a;
+}
+
+/* delta(b) = ROL8(b * ((b+1) >> 1)) mod 2^32 */
+static uint32_t nl_fscx_delta_v2_32(uint32_t b)
+{
+    return rol32_8(b * ((b + 1) >> 1));
+}
+
+/* NL-FSCX v2: fscx(a,b) + delta(b) mod 2^32 */
+static uint32_t nl_fscx_v2_32(uint32_t a, uint32_t b)
+{
+    return fscx32(a, b) + nl_fscx_delta_v2_32(b);
+}
+
+/* M^{-1}(x) = fscx_revolve(x, 0, 15)  (32/2 - 1 = 15 steps) */
+static uint32_t m_inv_32(uint32_t x)
+{
+    return fscx_revolve32(x, 0, 15);
+}
+
+/* NL-FSCX v2 inverse: b ^ M^{-1}(y - delta(b)) */
+static uint32_t nl_fscx_v2_inv_32(uint32_t y, uint32_t b)
+{
+    return b ^ m_inv_32(y - nl_fscx_delta_v2_32(b));
+}
+
+static uint32_t nl_fscx_revolve_v2_32(uint32_t a, uint32_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) a = nl_fscx_v2_32(a, b);
+    return a;
+}
+
+static uint32_t nl_fscx_revolve_v2_inv_32(uint32_t y, uint32_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) y = nl_fscx_v2_inv_32(y, b);
+    return y;
+}
+
+/* ------------------------------------------------------------------ */
+/* HKEX-RNL helpers: Ring-LWR key exchange (n=32, negacyclic)        */
+/* Z_q[x]/(x^32+1), q=65537, p=4096, pp=2, b=1                       */
+/* ------------------------------------------------------------------ */
+
+#define RNL_N32  32
+#define RNL_Q32  65537
+#define RNL_P32  4096
+#define RNL_PP32 2
+#define RNL_B32  1
+
+typedef int32_t rnl32_poly_t[RNL_N32];
+
+/* Negacyclic multiply: h = f*g in Z_q[x]/(x^32+1) */
+static void rnl32_poly_mul(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
+{
+    int32_t tmp[RNL_N32];
+    int i, j;
+    memset(tmp, 0, sizeof(tmp));
+    for (i = 0; i < RNL_N32; i++) {
+        if (!f[i]) continue;
+        for (j = 0; j < RNL_N32; j++) {
+            int k = i + j;
+            int64_t prod = (int64_t)f[i] * g[j];
+            if (k < RNL_N32)
+                tmp[k] = (int32_t)((tmp[k] + prod) % RNL_Q32);
+            else
+                tmp[k - RNL_N32] = (int32_t)(
+                    (tmp[k - RNL_N32] - prod % RNL_Q32 + RNL_Q32) % RNL_Q32);
+        }
+    }
+    memcpy(h, tmp, sizeof(rnl32_poly_t));
+}
+
+static void rnl32_poly_add(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
+{
+    int i;
+    for (i = 0; i < RNL_N32; i++) h[i] = (f[i] + g[i]) % RNL_Q32;
+}
+
+static void rnl32_round(int32_t *out, const rnl32_poly_t in, int from_q, int to_p)
+{
+    int i;
+    for (i = 0; i < RNL_N32; i++)
+        out[i] = (int32_t)(((int64_t)in[i] * to_p + from_q / 2) / from_q % to_p);
+}
+
+static void rnl32_lift(rnl32_poly_t out, const int32_t *in, int from_p, int to_q)
+{
+    int i;
+    for (i = 0; i < RNL_N32; i++)
+        out[i] = (int32_t)((int64_t)in[i] * to_q / from_p % to_q);
+}
+
+/* m(x) = 1 + x + x^{n-1} */
+static void rnl32_m_poly(rnl32_poly_t p)
+{
+    memset(p, 0, sizeof(rnl32_poly_t));
+    p[0] = p[1] = p[RNL_N32 - 1] = 1;
+}
+
+static void rnl32_rand_poly(rnl32_poly_t p)
+{
+    int i;
+    for (i = 0; i < RNL_N32; i++)
+        p[i] = (int32_t)(rand32() % RNL_Q32);
+}
+
+static void rnl32_small_poly(rnl32_poly_t p)
+{
+    int i;
+    for (i = 0; i < RNL_N32; i++)
+        p[i] = (int32_t)(rand32() % (RNL_B32 + 1));
+}
+
+/* Pack RNL_N32 bits: coefficient >= pp/2 -> bit = 1 */
+static uint32_t rnl32_bits_to_u32(const int32_t *bits_poly)
+{
+    uint32_t r = 0;
+    int i;
+    for (i = 0; i < RNL_N32; i++)
+        if (bits_poly[i] >= RNL_PP32 / 2)
+            r |= (1u << i);
+    return r;
+}
+
+/* keygen: s=small private, C=round_p(m_blind * s) */
+static void rnl32_keygen(int32_t s_out[RNL_N32], int32_t c_out[RNL_N32],
+                         const rnl32_poly_t m_blind)
+{
+    rnl32_poly_t ms;
+    rnl32_small_poly(s_out);
+    rnl32_poly_mul(ms, m_blind, s_out);
+    rnl32_round(c_out, ms, RNL_Q32, RNL_P32);
+}
+
+/* agree: K_raw = round_pp(s * lift(C_other)) packed to uint32 */
+static uint32_t rnl32_agree(const int32_t s[RNL_N32], const int32_t c_other[RNL_N32])
+{
+    rnl32_poly_t c_lifted, k_poly;
+    int32_t k_bits[RNL_N32];
+    rnl32_lift(c_lifted, c_other, RNL_P32, RNL_Q32);
+    rnl32_poly_mul(k_poly, s, c_lifted);
+    rnl32_round(k_bits, k_poly, RNL_Q32, RNL_PP32);
+    return rnl32_bits_to_u32(k_bits);
 }
 
 /* ------------------------------------------------------------------ */
@@ -553,10 +726,185 @@ static void test_hpke_el_gamal(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [10]-[14]                                   */
+/* Security tests [10]-[16]: v1.5.0 NL-FSCX and PQC protocols        */
 /* ------------------------------------------------------------------ */
 
-/* [10] FSCX throughput (256-bit) */
+/* I/R values for 32-bit NL tests */
+#define NL_I32  8   /* 32/4 */
+#define NL_R32  24  /* 3*32/4 */
+
+/* [10] NL-FSCX v1 non-linearity and aperiodicity (32-bit) */
+static void test_nl_fscx_v1_nonlinearity(void)
+{
+    int i, violations = 0, no_period = 0;
+    printf("[10] NL-FSCX v1 non-linearity and aperiodicity  (bits=32)\n");
+    /* Linearity check: f(A,B) ^ f(0,B) == fscx(A,0) is the linear prediction;
+       violations count how often NL-FSCX v1 differs from that prediction. */
+    for (i = 0; i < 1000; i++) {
+        uint32_t A = rand32(), B = rand32();
+        uint32_t lin_pred = fscx32(A, 0) ^ nl_fscx_v1_32(0, B);
+        if (nl_fscx_v1_32(A, B) != lin_pred)
+            violations++;
+    }
+    /* Aperiodicity: orbit of 4*n=128 steps from a random start should not cycle */
+    for (i = 0; i < 200; i++) {
+        uint32_t A = rand32(), B = rand32();
+        uint32_t cur = nl_fscx_v1_32(A, B);
+        int found = 0, step;
+        for (step = 1; step < 128; step++) {
+            cur = nl_fscx_v1_32(cur, B);
+            if (cur == A) { found = 1; break; }
+        }
+        if (!found) no_period++;
+    }
+    printf("    bits=32  linearity violations=%d/1000  no-period=%d/200  [%s]\n",
+           violations, no_period,
+           (violations == 1000 && no_period >= 190) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [11] NL-FSCX v2 bijectivity and exact inverse (32-bit) */
+static void test_nl_fscx_v2_bijective_inverse(void)
+{
+    int i, non_bij = 0, inv_ok = 0, nl_ok = 0;
+    printf("[11] NL-FSCX v2 bijectivity and exact inverse  (bits=32)\n");
+    /* Collision test: for 500 random B, draw pairs (A1,A2) and check no collision */
+    for (i = 0; i < 500; i++) {
+        uint32_t B = rand32();
+        uint32_t A1 = rand32(), A2 = rand32();
+        if (A1 != A2 && nl_fscx_v2_32(A1, B) == nl_fscx_v2_32(A2, B))
+            non_bij++;
+    }
+    /* Inverse correctness: nl_fscx_v2_inv(nl_fscx_v2(A,B), B) == A */
+    for (i = 0; i < 1000; i++) {
+        uint32_t A = rand32(), B = rand32();
+        if (nl_fscx_v2_inv_32(nl_fscx_v2_32(A, B), B) == A)
+            inv_ok++;
+    }
+    /* Non-linearity: f(A,B) != fscx(A,0) ^ f(0,B) for most inputs */
+    for (i = 0; i < 500; i++) {
+        uint32_t A = rand32(), B = rand32();
+        if (nl_fscx_v2_32(A, B) != (fscx32(A, 0) ^ nl_fscx_v2_32(0, B)))
+            nl_ok++;
+    }
+    printf("    bits=32  collisions=%d/500  inv=%d/1000  nonlinear=%d/500  [%s]\n",
+           non_bij, inv_ok, nl_ok,
+           (non_bij == 0 && inv_ok == 1000 && nl_ok >= 490) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [12] HSKE-NL-A1 counter-mode correctness: D == P  (32-bit) */
+static void test_hske_nl_a1_correctness(void)
+{
+    int i, ok = 0;
+    printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  (bits=32)\n");
+    for (i = 0; i < 1000; i++) {
+        uint32_t K   = rand32();
+        uint32_t P   = rand32();
+        uint32_t ctr = (uint32_t)i & 0xFFFF;
+        uint32_t ks  = nl_fscx_revolve_v1_32(K, K ^ ctr, NL_I32);
+        uint32_t E   = P ^ ks;
+        uint32_t D   = E ^ ks;
+        if (D == P) ok++;
+    }
+    printf("    bits=32  %d / 1000 correct  [%s]\n",
+           ok, ok == 1000 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [13] HSKE-NL-A2 revolve-mode correctness: D == P  (32-bit) */
+static void test_hske_nl_a2_correctness(void)
+{
+    int i, ok = 0;
+    printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  (bits=32)\n");
+    for (i = 0; i < 1000; i++) {
+        uint32_t K = rand32();
+        uint32_t P = rand32();
+        uint32_t E = nl_fscx_revolve_v2_32(P, K, NL_R32);
+        uint32_t D = nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
+        if (D == P) ok++;
+    }
+    printf("    bits=32  %d / 1000 correct  [%s]\n",
+           ok, ok == 1000 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [14] HKEX-RNL key agreement: K_A == K_B  (n=32, Ring-LWR) */
+static void test_hkex_rnl_correctness(void)
+{
+    int i, ok_raw = 0;
+    rnl32_poly_t m_base, a_rand, m_blind;
+    printf("[14] HKEX-RNL key agreement: K_A == K_B  (n=%d, Ring-LWR)\n", RNL_N32);
+    rnl32_m_poly(m_base);
+    for (i = 0; i < 200; i++) {
+        int32_t s_A[RNL_N32], c_A[RNL_N32];
+        int32_t s_B[RNL_N32], c_B[RNL_N32];
+        uint32_t K_A, K_B;
+        rnl32_rand_poly(a_rand);
+        rnl32_poly_add(m_blind, m_base, a_rand);
+        rnl32_keygen(s_A, c_A, m_blind);
+        rnl32_keygen(s_B, c_B, m_blind);
+        K_A = rnl32_agree(s_A, c_B);
+        K_B = rnl32_agree(s_B, c_A);
+        if (K_A == K_B) ok_raw++;
+    }
+    printf("    n=%d  raw agree=%d/200  [%s]\n",
+           RNL_N32, ok_raw, ok_raw >= 180 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [15] HPKS-NL correctness: g^s * C^e == R  (NL-FSCX v1 challenge, 32-bit GF) */
+static void test_hpks_nl_correctness(void)
+{
+    int i, ok = 0;
+    uint32_t a, plain, k, C32, R32;
+    uint32_t e32, s32;
+    uint64_t ae, ord = 0xFFFFFFFFULL;
+    printf("[15] HPKS-NL correctness: g^s · C^e == R  (NL-FSCX v1 challenge, bits=32)\n");
+    for (i = 0; i < 1000; i++) {
+        a     = rand32() | 1;
+        plain = rand32();
+        k     = rand32();
+        C32   = gf_pow_32((uint32_t)GF_GEN32, a);
+        R32   = gf_pow_32((uint32_t)GF_GEN32, k);
+        e32   = nl_fscx_revolve_v1_32(R32, plain, NL_I32);
+        ae    = (uint64_t)a * (uint64_t)e32 % ord;
+        s32   = (uint32_t)(((uint64_t)k + ord - ae) % ord);
+        if (gf_mul_32(gf_pow_32((uint32_t)GF_GEN32, s32),
+                      gf_pow_32(C32, e32)) == R32)
+            ok++;
+    }
+    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt, 32-bit GF) */
+static void test_hpke_nl_correctness(void)
+{
+    int i, ok = 0;
+    uint32_t a, plain, r, C32, R32, enc_key, E32, dec_key, D32;
+    printf("[16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt, bits=32)\n");
+    for (i = 0; i < 1000; i++) {
+        a        = rand32() | 1;
+        plain    = rand32();
+        r        = rand32() | 1;
+        C32      = gf_pow_32((uint32_t)GF_GEN32, a);
+        R32      = gf_pow_32((uint32_t)GF_GEN32, r);
+        enc_key  = gf_pow_32(C32, r);
+        E32      = nl_fscx_revolve_v2_32(plain, enc_key, NL_I32);
+        dec_key  = gf_pow_32(R32, a);
+        D32      = nl_fscx_revolve_v2_inv_32(E32, dec_key, NL_I32);
+        if (D32 == plain) ok++;
+    }
+    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance benchmarks [17]-[21]                                   */
+/* ------------------------------------------------------------------ */
+
+/* [17] FSCX throughput (256-bit) */
 static void bench_fscx_throughput(void)
 {
     BitArray a, b, tmp;
@@ -564,7 +912,7 @@ static void bench_fscx_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[10] FSCX throughput  (bits=%d)\n    ", KEYBITS);
+    printf("[17] FSCX throughput  (bits=%d)\n    ", KEYBITS);
     ba_rand(&a); ba_rand(&b);
     for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -585,7 +933,7 @@ static void bench_gf_pow32_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[11] HKEX-GF gf_pow throughput  (bits=32)\n    ");
+    printf("[18] HKEX-GF gf_pow throughput  (bits=32)\n    ");
     base = rand32() | 1;
     exp  = rand32() | 1;
     for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -607,7 +955,7 @@ static void bench_hkex_gf32_handshake(void)
     double secs;
     int i;
     uint32_t a, b, C, C2, skA, skB;
-    printf("[12] HKEX-GF full handshake  (bits=32)\n    ");
+    printf("[19] HKEX-GF full handshake  (bits=32)\n    ");
     a = rand32() | 1; b = rand32() | 1;
     for (i = 0; i < 5; i++) {
         C   = gf_pow_32((uint32_t)GF_GEN32, a);
@@ -640,7 +988,7 @@ static void bench_hske_roundtrip(void)
     double secs;
     int i;
     BitArray pt, key, enc, dec;
-    printf("[13] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
+    printf("[20] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
     for (i = 0; i < 5; i++) {
         ba_rand(&pt); ba_rand(&key);
         ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
@@ -668,7 +1016,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     double secs;
     int i;
     uint32_t a, r, C32, R32, enc_key, E32, dec_key, D32, pt;
-    printf("[14] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
+    printf("[21] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
     a = rand32() | 1; r = rand32() | 1; pt = rand32();
     C32 = gf_pow_32((uint32_t)GF_GEN32, a);
     for (i = 0; i < 5; i++) {
@@ -708,7 +1056,7 @@ int main(void)
         return 1;
     }
 
-    printf("=== Herradura KEx \xe2\x80\x94 Security & Performance Tests (C) ===\n\n");
+    printf("=== Herradura KEx v1.5.0 \xe2\x80\x94 Security & Performance Tests (C) ===\n\n");
 
     puts("--- Security Assumption Tests ---\n");
     test_hkex_gf_correctness();
@@ -720,6 +1068,15 @@ int main(void)
     test_hpks_schnorr_correctness();
     test_hpks_schnorr_eve();
     test_hpke_el_gamal();
+
+    puts("--- v1.5.0 NL-FSCX and PQC Tests ---\n");
+    test_nl_fscx_v1_nonlinearity();
+    test_nl_fscx_v2_bijective_inverse();
+    test_hske_nl_a1_correctness();
+    test_hske_nl_a2_correctness();
+    test_hkex_rnl_correctness();
+    test_hpks_nl_correctness();
+    test_hpke_nl_correctness();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();

@@ -17,7 +17,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.5.0: NL-FSCX non-linearity and PQC extensions ---
+    --- v1.5.0: NL-FSCX non-linear extension and PQC extensions ---
 
     New in v1.5.0:
       - NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4)
@@ -26,34 +26,20 @@
         Fully bijective; used in HSKE-NL-A2 (revolve-mode) and HPKE-NL.
       - HSKE-NL-A1: counter-mode symmetric encryption with NL-FSCX v1 keystream.
       - HSKE-NL-A2: revolve-mode symmetric encryption with NL-FSCX v2 (invertible).
-      - HKEX-RNL: Ring-LWR key exchange (n=32 demo; production size n=256).
-        Conjectured quantum-resistant under Ring-LWR hardness assumption.
+      - HKEX-RNL: Ring-LWR key exchange (n=256; conjectured quantum-resistant).
       - HPKS-NL: NL-hardened Schnorr signature using NL-FSCX v1 challenge.
       - HPKE-NL: NL-hardened El Gamal encryption using NL-FSCX v2.
 
-    --- v1.4.0: HKEX replaced with HKEX-GF (Diffie-Hellman over GF(2^n)*) ---
+    All protocols operate at KEYBITS=256 by default.
 
-    The classical HKEX key exchange is BROKEN: sk = S_{r+1}*(C XOR C2) is a
-    publicly computable linear formula (proved in SecurityProofs.md, Theorem 7).
-    fscx_revolve_n offered no fix (nonce cancels identically, Theorem 10).
+    --- v1.4.0: HKEX replaced with HKEX-GF (Diffie-Hellman over GF(2^n)*) ---
 
     HKEX-GF replaces HKEX with Diffie-Hellman over GF(2^KEYBITS)*:
       - Alice: private scalar a, public C  = g^a  (GF exponentiation)
       - Bob:   private scalar b, public C2 = g^b
       - Shared: sk = C2^a = C^b = g^{ab}  (field commutativity)
-    Security: CDH/DLP in GF(2^n)*. For n=256, classical security ~128 bits
-    under the best known index-calculus attacks.
-
-    fscx_revolve_n is removed — it provided no security benefit.
-    HSKE, HPKS, HPKE keep standard fscx_revolve unchanged.
 
     --- v1.3.2: performance and readability ---
-
-    - ba_fscx: fused into a single-pass loop.
-    - ba_fscx_revolve: double-buffered with index swap.
-    - ba_rol1 / ba_ror1: inlined inside ba_fscx.
-    - ba_xor_into: replaced by ba_xor(dst, dst, src).
-
     --- v1.3: BitArray (multi-byte parameter support) ---
 
     The C implementation uses a BitArray type: a fixed-width bit string backed
@@ -261,70 +247,7 @@ static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * 32-bit GF(2^32) arithmetic and FSCX for HPKS Schnorr and HPKE El Gamal.
- *
- * Schnorr requires s = (k - a*e) mod ORD where ORD = 2^32-1.  Using 32-bit
- * parameters keeps this computable with a uint64_t intermediate for a*e.
- *
- * Primitive polynomial for GF(2^32): x^32+x^22+x^2+x+1 = 0x00400007
- * Generator g = 3.
- * ───────────────────────────────────────────────────────────────────────────── */
-
-#define GF_POLY32  0x00400007UL
-#define GF_GEN32   3UL
-#define I_VALUE32  8             /* 32/4 */
-#define R_VALUE32  24            /* 3*32/4 */
-
-static uint32_t gf_mul_32(uint32_t a, uint32_t b)
-{
-    uint32_t r = 0;
-    int i;
-    for (i = 0; i < 32; i++) {
-        if (b & 1) r ^= a;
-        { uint32_t carry = a >> 31; a <<= 1; if (carry) a ^= (uint32_t)GF_POLY32; }
-        b >>= 1;
-    }
-    return r;
-}
-
-static uint32_t gf_pow_32(uint32_t base, uint32_t exp)
-{
-    uint32_t r = 1;
-    while (exp) {
-        if (exp & 1) r = gf_mul_32(r, base);
-        base = gf_mul_32(base, base);
-        exp >>= 1;
-    }
-    return r;
-}
-
-static uint32_t rol32(uint32_t x) { return (x << 1) | (x >> 31); }
-static uint32_t ror32(uint32_t x) { return (x >> 1) | (x << 31); }
-
-static uint32_t fscx32(uint32_t a, uint32_t b)
-{
-    return a ^ b ^ rol32(a) ^ rol32(b) ^ ror32(a) ^ ror32(b);
-}
-
-static uint32_t fscx_revolve32(uint32_t a, uint32_t b, int steps)
-{
-    int i;
-    for (i = 0; i < steps; i++) a = fscx32(a, b);
-    return a;
-}
-
-static uint32_t rand32(FILE *urnd)
-{
-    uint32_t v;
-    if (fread(&v, 4, 1, urnd) != 1) {
-        fputs("ERROR: could not read from /dev/urandom\n", stderr);
-        exit(1);
-    }
-    return v;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 256-bit integer helpers (needed for NL-FSCX v2)
+ * 256-bit integer helpers (needed for NL-FSCX v2 and Schnorr arithmetic)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static void ba_add256(BitArray *dst, const BitArray *a, const BitArray *b)
@@ -388,6 +311,85 @@ static void ba_mul256_lo(BitArray *dst, const BitArray *a, const BitArray *b)
     }
     for (i = 0; i < KEYBYTES; i++)
         dst->b[KEYBYTES - 1 - i] = result[i];
+}
+
+/* Full 512-bit schoolbook multiply, then reduce mod (2^256-1).
+   Reduction: (lo + hi) mod (2^256-1), where hi*2^256 + lo = a*b. */
+static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    uint8_t full[2 * KEYBYTES];   /* little-endian 512-bit product */
+    uint8_t lo[KEYBYTES];
+    uint16_t carry;
+    int i, j, all_ff;
+
+    memset(full, 0, sizeof(full));
+    for (i = 0; i < KEYBYTES; i++) {
+        uint8_t ai = a->b[KEYBYTES - 1 - i];
+        if (!ai) continue;
+        carry = 0;
+        for (j = 0; j < KEYBYTES; j++) {
+            uint16_t prod = (uint16_t)ai * b->b[KEYBYTES - 1 - j]
+                            + full[i + j] + carry;
+            full[i + j] = (uint8_t)prod;
+            carry = prod >> 8;
+        }
+        /* propagate remaining carry through high half */
+        {
+            int k;
+            for (k = i + KEYBYTES; carry && k < 2 * KEYBYTES; k++) {
+                uint16_t s = (uint16_t)full[k] + carry;
+                full[k] = (uint8_t)s;
+                carry = s >> 8;
+            }
+        }
+    }
+    /* full[0..KB-1] = lo (LE); full[KB..2KB-1] = hi (LE) */
+    carry = 0;
+    for (i = 0; i < KEYBYTES; i++) {
+        uint16_t s = (uint16_t)full[i] + full[KEYBYTES + i] + carry;
+        lo[i] = (uint8_t)s;
+        carry = s >> 8;
+    }
+    if (carry) {
+        /* sum = 2^256 + lo256; mod (2^256-1) = lo256 + 1 */
+        carry = 1;
+        for (i = 0; i < KEYBYTES && carry; i++) {
+            uint16_t s = (uint16_t)lo[i] + carry;
+            lo[i] = (uint8_t)s;
+            carry = s >> 8;
+        }
+        if (carry) { memset(lo, 0, KEYBYTES); lo[0] = 1; }
+    } else {
+        /* if lo == 2^256-1, reduce to 0 */
+        all_ff = 1;
+        for (i = 0; i < KEYBYTES; i++) if (lo[i] != 0xFF) { all_ff = 0; break; }
+        if (all_ff) memset(lo, 0, KEYBYTES);
+    }
+    for (i = 0; i < KEYBYTES; i++)
+        dst->b[KEYBYTES - 1 - i] = lo[i];
+}
+
+/* dst = (a - b) mod (2^256-1) */
+static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    int16_t borrow = 0;
+    int i, all_ff;
+    for (i = KEYBYTES - 1; i >= 0; i--) {
+        int16_t d = (int16_t)(uint16_t)a->b[i] - (uint16_t)b->b[i] + borrow;
+        dst->b[i] = (uint8_t)d;
+        borrow = d >> 8;
+    }
+    if (borrow) {
+        /* a < b: result = (a - b + 2^256) - 1 */
+        for (i = KEYBYTES - 1; i >= 0; i--) {
+            if (dst->b[i] > 0) { dst->b[i]--; break; }
+            dst->b[i] = 0xFF;
+        }
+    }
+    /* if result == 2^256-1, reduce to 0 */
+    all_ff = 1;
+    for (i = 0; i < KEYBYTES; i++) if (dst->b[i] != 0xFF) { all_ff = 0; break; }
+    if (all_ff) memset(dst->b, 0, KEYBYTES);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -485,69 +487,10 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * 32-bit NL-FSCX primitives (for HPKS-NL and HPKE-NL)
+ * HKEX-RNL: Ring-LWR key exchange helpers (n=256, negacyclic Z_q[x]/(x^n+1))
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* M^{-1} at 32 bits: M^{15} = 15 fscx steps with B=0 */
-static uint32_t m_inv32(uint32_t x)
-{
-    int i;
-    for (i = 0; i < 15; i++) x = fscx32(x, 0);
-    return x;
-}
-
-/* NL-FSCX v1 (32-bit): fscx(A,B) XOR ROL((A+B) mod 2^32, 8) */
-static uint32_t nl_fscx32_v1(uint32_t a, uint32_t b)
-{
-    uint32_t mix = a + b; /* mod 2^32 */
-    uint32_t rol8 = (mix << 8) | (mix >> 24);
-    return fscx32(a, b) ^ rol8;
-}
-
-static uint32_t nl_fscx_revolve32_v1(uint32_t a, uint32_t b, int steps)
-{
-    int i;
-    for (i = 0; i < steps; i++) a = nl_fscx32_v1(a, b);
-    return a;
-}
-
-static uint32_t nl_fscx_delta32_v2(uint32_t b)
-{
-    uint32_t half = (b + 1) >> 1;
-    uint32_t prod = b * half;
-    return (prod << 8) | (prod >> 24);
-}
-
-static uint32_t nl_fscx32_v2(uint32_t a, uint32_t b)
-{
-    return fscx32(a, b) + nl_fscx_delta32_v2(b); /* mod 2^32 */
-}
-
-static uint32_t nl_fscx32_v2_inv(uint32_t y, uint32_t b)
-{
-    uint32_t z = y - nl_fscx_delta32_v2(b); /* mod 2^32 */
-    return b ^ m_inv32(z);
-}
-
-static uint32_t nl_fscx_revolve32_v2(uint32_t a, uint32_t b, int steps)
-{
-    int i;
-    for (i = 0; i < steps; i++) a = nl_fscx32_v2(a, b);
-    return a;
-}
-
-static uint32_t nl_fscx_revolve32_v2_inv(uint32_t y, uint32_t b, int steps)
-{
-    int i;
-    for (i = 0; i < steps; i++) y = nl_fscx32_v2_inv(y, b);
-    return y;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * HKEX-RNL: Ring-LWR key exchange helpers (n=32 for practical demo speed)
- * ───────────────────────────────────────────────────────────────────────────── */
-
-#define RNL_N  32
+#define RNL_N  256
 #define RNL_Q  65537
 #define RNL_P  4096
 #define RNL_PP 2
@@ -622,13 +565,16 @@ static void rnl_small_poly(rnl_poly_t p, FILE *urnd)
     }
 }
 
-/* Extract RNL_N bits into uint32_t (coefficient >= pp/2 -> bit=1) */
-static void rnl_bits_to_u32(uint32_t *out, const int32_t *bits_poly)
+/* Extract RNL_N bits into BitArray (coefficient >= pp/2 -> bit=1).
+   Bit i maps to byte KEYBYTES-1-i/8, bit position i%8. */
+static void rnl_bits_to_ba(BitArray *out, const int32_t *bits_poly)
 {
     int i;
-    *out = 0;
-    for (i = 0; i < RNL_N; i++)
-        if (bits_poly[i] >= RNL_PP / 2) *out |= (1u << i);
+    memset(out->b, 0, KEYBYTES);
+    for (i = 0; i < RNL_N && i < KEYBITS; i++) {
+        if (bits_poly[i] >= RNL_PP / 2)
+            out->b[KEYBYTES - 1 - i / 8] |= (uint8_t)(1u << (i % 8));
+    }
 }
 
 /* keygen: s=small private, C=round_p(m_blind * s) */
@@ -641,17 +587,16 @@ static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
     rnl_round(c_out, ms, RNL_Q, RNL_P);
 }
 
-/* agree: K_bits = round_pp(s * lift(C_other)) */
-static uint32_t rnl_agree(const int32_t s[RNL_N], const int32_t c_other[RNL_N])
+/* agree: K_raw = round_pp(s * lift(C_other)), packed into BitArray */
+static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
+                      const int32_t c_other[RNL_N])
 {
     rnl_poly_t c_lifted, k_poly;
     int32_t k_bits[RNL_N];
-    uint32_t result;
     rnl_lift(c_lifted, c_other, RNL_P, RNL_Q);
     rnl_poly_mul(k_poly, s, c_lifted);
     rnl_round(k_bits, k_poly, RNL_Q, RNL_PP);
-    rnl_bits_to_u32(&result, k_bits);
-    return result;
+    rnl_bits_to_ba(out, k_bits);
 }
 
 /*
@@ -660,18 +605,21 @@ HKEX-GF (key exchange — Diffie-Hellman over GF(2^n)*):
     Alice:  private a -> public C  = g^a
     Bob:    private b -> public C2 = g^b
     Shared: sk = C2^a = C^b = g^{ab}  (field multiplication is commutative)
+    Break:  Shor's algorithm recovers a from C = g^a.
 
-HSKE (symmetric key encryption — FSCX-based, unchanged):
+HSKE (symmetric key encryption — FSCX-based, linear):
     share key of bitlength n
     Alice:  E = fscx_revolve(P, key, i)
     Bob:    P = fscx_revolve(E, key, r)  [i+r=n -> orbit closes]
+    Break:  One known-plaintext pair recovers key via GF(2) linear algebra.
 
-HPKS (Schnorr public key signature, 32-bit GF params):
-    Alice private: a,  public C = g^a,  ORD = 2^32-1
+HPKS (Schnorr public key signature, 256-bit):
+    Alice private: a,  public C = g^a,  ORD = 2^256-1
     Sign(P):  k random; R=g^k; e=fscx_revolve(R,P,i); s=(k-a*e) mod ORD
     Verify:   g^s * C^e == R
+    Break:  DLP recovers a; linear challenge is preimage-vulnerable.
 
-HPKE (El Gamal public key encryption, 32-bit GF params):
+HPKE (El Gamal public key encryption, 256-bit):
     Alice private: a,  public C = g^a
     Bob encrypts: r random; R=g^r; enc_key=C^r; E=fscx_revolve(P,enc_key,i)
     Alice decrypts: dec_key=R^a; D=fscx_revolve(E,dec_key,r) = P
@@ -684,37 +632,28 @@ HSKE-NL-A2 (revolve-mode with NL-FSCX v2, 256-bit):
     E = nl_fscx_revolve_v2(P, K, R_VALUE)
     D = nl_fscx_revolve_v2_inv(E, K, R_VALUE) = P
 
-HKEX-RNL (Ring-LWR key exchange, n=32 demo):
+HKEX-RNL (Ring-LWR key exchange, n=256):
     Shared m_blind = m(x) + a_rand in Z_q[x]/(x^n+1)
     Alice: s_A small, C_A = round_p(m_blind * s_A)
     Bob:   s_B small, C_B = round_p(m_blind * s_B)
     K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
-    K_A ~= K_B (with high probability)
+    K_A ~= K_B (with high probability); sk = nl_fscx_revolve_v1(K, K, I_VALUE)
 
-HPKS-NL (NL-hardened Schnorr, 32-bit):
-    e = nl_fscx_revolve32_v1(R, P, I_VALUE32)
+HPKS-NL (NL-hardened Schnorr, 256-bit):
+    e = nl_fscx_revolve_v1(R, P, I_VALUE)  (NL challenge)
 
-HPKE-NL (NL-hardened El Gamal, 32-bit):
-    E = nl_fscx_revolve32_v2(P, enc_key, I_VALUE32)
-    D = nl_fscx_revolve32_v2_inv(E, dec_key, I_VALUE32)
+HPKE-NL (NL-hardened El Gamal, 256-bit):
+    E = nl_fscx_revolve_v2(P, enc_key, I_VALUE)
+    D = nl_fscx_revolve_v2_inv(E, dec_key, I_VALUE)
 */
 
 int main(void)
 {
     FILE *urnd;
-    BitArray a_priv, b_priv;
+    BitArray a, b, preshared, plaintext, decoy;
     BitArray C, C2;
-    BitArray skeyA, skeyB;
-    BitArray preshared, plaintext;
-    BitArray E_ba, D_ba;
-
-    uint32_t a32, plain32;
-    uint32_t C32;
-    uint32_t k32, R32, e32, s32;
-    uint32_t r32, R_hpke, enc_key32;
-    uint32_t dec_key32, E32, D32;
-    uint64_t ae64;
-    uint64_t ord32 = 0xFFFFFFFFULL;
+    /* saved for Eve tests */
+    BitArray E_nl_saved, R_nl2_saved, sk_rnl_A_saved;
 
     urnd = fopen("/dev/urandom", "rb");
     if (!urnd) {
@@ -722,91 +661,102 @@ int main(void)
         return 1;
     }
 
-    ba_rand(&a_priv,    urnd);
-    ba_rand(&b_priv,    urnd);
+    ba_rand(&a,         urnd);
+    ba_rand(&b,         urnd);
     ba_rand(&preshared, urnd);
     ba_rand(&plaintext, urnd);
-    a_priv.b[KEYBYTES - 1] |= 1;
-    b_priv.b[KEYBYTES - 1] |= 1;
+    ba_rand(&decoy,     urnd);
 
-    a32     = rand32(urnd) | 1;
-    plain32 = rand32(urnd);
-    C32     = gf_pow_32((uint32_t)GF_GEN32, a32);
+    /* Precompute GF DH public keys */
+    gf_pow_ba(&C,  &GF_GEN, &a);
+    gf_pow_ba(&C2, &GF_GEN, &b);
 
-    ba_print_hex("a_priv    : ", &a_priv);
-    ba_print_hex("b_priv    : ", &b_priv);
+    ba_print_hex("a         : ", &a);
+    ba_print_hex("b         : ", &b);
     ba_print_hex("preshared : ", &preshared);
     ba_print_hex("plaintext : ", &plaintext);
-
-    /* --- HKEX-GF [CLASSICAL — not PQC; Shor's algorithm breaks DLP] */
-    printf("\n--- HKEX-GF [CLASSICAL \xe2\x80\x94 not PQC; Shor's algorithm breaks DLP]\n");
-    gf_pow_ba(&C,     &GF_GEN, &a_priv);
-    gf_pow_ba(&C2,    &GF_GEN, &b_priv);
-    gf_pow_ba(&skeyA, &C2,     &a_priv);
-    gf_pow_ba(&skeyB, &C,      &b_priv);
+    ba_print_hex("decoy     : ", &decoy);
     ba_print_hex("C         : ", &C);
     ba_print_hex("C2        : ", &C2);
-    ba_print_hex("skeyA     : ", &skeyA);
-    ba_print_hex("skeyB     : ", &skeyB);
-    if (ba_equal(&skeyA, &skeyB))
-        puts("+ session keys skeyA and skeyB are equal!");
-    else
-        puts("- session keys skeyA and skeyB are different!");
 
-    /* --- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair] */
-    printf("\n--- HSKE [CLASSICAL \xe2\x80\x94 not PQC; linear key recovery from 1 KPT pair]\n");
-    ba_print_hex("P (plain) : ", &plaintext);
-    ba_fscx_revolve(&E_ba, &plaintext, &preshared, I_VALUE);
-    ba_print_hex("E (Alice) : ", &E_ba);
-    ba_fscx_revolve(&D_ba, &E_ba, &preshared, R_VALUE);
-    ba_print_hex("D (Bob)   : ", &D_ba);
-    if (ba_equal(&D_ba, &plaintext))
-        puts("+ plaintext correctly decrypted");
-    else
-        puts("- plaintext is different from decrypted E!");
-
-    /* --- HPKS [CLASSICAL — not PQC; DLP + linear challenge] */
-    printf("\n--- HPKS [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear challenge]\n");
-    printf("a32       : 0x%08x\n", a32);
-    printf("C32 (g^a) : 0x%08x\n", C32);
-    k32  = rand32(urnd);
-    R32  = gf_pow_32((uint32_t)GF_GEN32, k32);
-    e32  = fscx_revolve32(R32, plain32, I_VALUE32);
-    ae64 = (uint64_t)a32 * (uint64_t)e32 % ord32;
-    s32  = (uint32_t)(((uint64_t)k32 + ord32 - ae64) % ord32);
-    printf("P (msg)        : 0x%08x\n", plain32);
-    printf("R [Alice,sign] : 0x%08x\n", R32);
-    printf("e [Alice,sign] : 0x%08x\n", e32);
-    printf("s [Alice,sign] : 0x%08x\n", s32);
+    /* --- HKEX-GF [CLASSICAL -- not PQC; Shor's algorithm breaks DLP] */
+    printf("\n--- HKEX-GF [CLASSICAL \xe2\x80\x94 not PQC; Shor's algorithm breaks DLP]\n");
+    printf("    (DH over GF(2^%d)*)\n", KEYBITS);
     {
-        uint32_t gs = gf_pow_32((uint32_t)GF_GEN32, s32);
-        uint32_t Ce = gf_pow_32(C32, e32);
-        uint32_t lhs = gf_mul_32(gs, Ce);
-        printf("  [Bob,verify] : g^s\xc2\xb7""C^e = 0x%08x\n", lhs);
-        if (lhs == R32)
-            puts("  [Bob,verify] : + Schnorr verified: g^s \xc2\xb7 C^e == R");
+        BitArray skA, skB;
+        gf_pow_ba(&skA, &C2, &a);
+        gf_pow_ba(&skB, &C,  &b);
+        ba_print_hex("sk (Alice): ", &skA);
+        ba_print_hex("sk (Bob)  : ", &skB);
+        if (ba_equal(&skA, &skB))
+            puts("+ session keys agree!");
         else
-            puts("  [Bob,verify] : - Schnorr verification FAILED!");
+            puts("- session keys differ!");
     }
 
-    /* --- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol] */
-    printf("\n--- HPKE [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear HSKE sub-protocol]\n");
-    r32       = rand32(urnd) | 1;
-    R_hpke    = gf_pow_32((uint32_t)GF_GEN32, r32);
-    enc_key32 = gf_pow_32(C32, r32);
-    E32       = fscx_revolve32(plain32, enc_key32, I_VALUE32);
-    dec_key32 = gf_pow_32(R_hpke, a32);
-    D32       = fscx_revolve32(E32, dec_key32, R_VALUE32);
-    printf("P (plain) : 0x%08x\n", plain32);
-    printf("R (g^r)   : 0x%08x\n", R_hpke);
-    printf("E (Bob)   : 0x%08x\n", E32);
-    printf("D (Alice) : 0x%08x\n", D32);
-    if (D32 == plain32)
-        puts("+ plaintext correctly decrypted");
-    else
-        puts("- HPKE El Gamal decryption FAILED!");
+    /* --- HSKE [CLASSICAL -- not PQC; linear key recovery from 1 KPT pair] */
+    printf("\n--- HSKE [CLASSICAL \xe2\x80\x94 not PQC; linear key recovery from 1 KPT pair]\n");
+    puts("    (fscx_revolve symmetric encryption)");
+    {
+        BitArray E_hske, D_hske;
+        ba_print_hex("P (plain) : ", &plaintext);
+        ba_fscx_revolve(&E_hske, &plaintext, &preshared, I_VALUE);
+        ba_print_hex("E (Alice) : ", &E_hske);
+        ba_fscx_revolve(&D_hske, &E_hske, &preshared, R_VALUE);
+        ba_print_hex("D (Bob)   : ", &D_hske);
+        if (ba_equal(&D_hske, &plaintext))
+            puts("+ plaintext correctly decrypted");
+        else
+            puts("- decryption failed!");
+    }
 
-    /* --- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1] */
+    /* --- HPKS [CLASSICAL -- not PQC; DLP + linear challenge] */
+    printf("\n--- HPKS [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear challenge]\n");
+    puts("    (Schnorr-like with fscx_revolve challenge)");
+    {
+        BitArray k_s, R_s, e_s, ae_s, s_s, gs, Ce, lhs;
+        ba_rand(&k_s, urnd);
+        gf_pow_ba(&R_s, &GF_GEN, &k_s);
+        ba_fscx_revolve(&e_s, &R_s, &plaintext, I_VALUE);
+        /* s = (k - a*e) mod (2^256-1) */
+        ba_mul_mod_ord(&ae_s, &a, &e_s);
+        ba_sub_mod_ord(&s_s, &k_s, &ae_s);
+        /* verify: g^s * C^e == R */
+        gf_pow_ba(&gs, &GF_GEN, &s_s);
+        gf_pow_ba(&Ce, &C, &e_s);
+        gf_mul_ba(&lhs, &gs, &Ce);
+        ba_print_hex("P (msg)        : ", &plaintext);
+        ba_print_hex("R [Alice,sign] : ", &R_s);
+        ba_print_hex("e [Alice,sign] : ", &e_s);
+        ba_print_hex("s [Alice,sign] : ", &s_s);
+        ba_print_hex("  [Bob,verify] : g^s\xc2\xb7""C^e = ", &lhs);
+        if (ba_equal(&lhs, &R_s))
+            puts("  [Bob,verify] : + Schnorr verified: g^s \xc2\xb7 C^e == R");
+        else
+            puts("  [Bob,verify] : - Schnorr verification failed!");
+    }
+
+    /* --- HPKE [CLASSICAL -- not PQC; DLP + linear HSKE sub-protocol] */
+    printf("\n--- HPKE [CLASSICAL \xe2\x80\x94 not PQC; DLP + linear HSKE sub-protocol]\n");
+    puts("    (El Gamal + fscx_revolve)");
+    {
+        BitArray r_hpke, R_hpke, enc_key, E_hpke, dec_key, D_hpke;
+        ba_rand(&r_hpke, urnd);
+        gf_pow_ba(&R_hpke,  &GF_GEN, &r_hpke);
+        gf_pow_ba(&enc_key, &C,      &r_hpke);
+        ba_fscx_revolve(&E_hpke, &plaintext, &enc_key, I_VALUE);
+        gf_pow_ba(&dec_key, &R_hpke, &a);
+        ba_fscx_revolve(&D_hpke, &E_hpke, &dec_key, R_VALUE);
+        ba_print_hex("P (plain) : ", &plaintext);
+        ba_print_hex("E (Bob)   : ", &E_hpke);
+        ba_print_hex("D (Alice) : ", &D_hpke);
+        if (ba_equal(&D_hpke, &plaintext))
+            puts("+ plaintext correctly decrypted");
+        else
+            puts("- decryption failed!");
+    }
+
+    /* --- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1] */
     printf("\n--- HSKE-NL-A1 [PQC-HARDENED \xe2\x80\x94 counter-mode with NL-FSCX v1]\n");
     {
         BitArray ks_nl1, E_nl1, D_nl1;
@@ -820,10 +770,10 @@ int main(void)
         if (ba_equal(&D_nl1, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- HSKE-NL-A1 decryption FAILED!");
+            puts("- decryption failed!");
     }
 
-    /* --- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2] */
+    /* --- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2] */
     printf("\n--- HSKE-NL-A2 [PQC-HARDENED \xe2\x80\x94 revolve-mode with NL-FSCX v2]\n");
     {
         BitArray E_nl2, D_nl2;
@@ -835,146 +785,132 @@ int main(void)
         if (ba_equal(&D_nl2, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- HSKE-NL-A2 decryption FAILED!");
+            puts("- decryption failed!");
     }
 
-    /* --- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant] */
+    /* --- HKEX-RNL [PQC -- Ring-LWR key exchange; conjectured quantum-resistant] */
     printf("\n--- HKEX-RNL [PQC \xe2\x80\x94 Ring-LWR key exchange; conjectured quantum-resistant]\n");
-    printf("    (ring size n=%d; production size is n=256)\n", RNL_N);
+    puts("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=3329 \xe2\x80\x94 may be slow)");
     {
         rnl_poly_t m_base, a_rand_poly, m_blind;
         rnl_poly_t s_A_poly, s_B_poly;
         int32_t C_A[RNL_N], C_B[RNL_N];
-        uint32_t KA, KB, skA_nl, skB_nl;
+        BitArray KA, KB, skA_nl, skB_nl;
+        int i, bits_diff;
+        BitArray diff_ba;
 
         rnl_m_poly(m_base);
         rnl_rand_poly(a_rand_poly, urnd);
         rnl_poly_add(m_blind, m_base, a_rand_poly);
         rnl_keygen(s_A_poly, C_A, m_blind, urnd);
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
-        KA = rnl_agree(s_A_poly, C_B);
-        KB = rnl_agree(s_B_poly, C_A);
-        printf("K_raw_A   : 0x%08x\n", KA);
-        printf("K_raw_B   : 0x%08x\n", KB);
-        skA_nl = nl_fscx_revolve32_v1(KA, KA, I_VALUE32);
-        skB_nl = nl_fscx_revolve32_v1(KB, KB, I_VALUE32);
-        printf("sk_A (NL) : 0x%08x\n", skA_nl);
-        printf("sk_B (NL) : 0x%08x\n", skB_nl);
-        if (KA == KB)
-            puts("+ raw keys agree");
-        else
-            puts("- raw keys differ (reconciliation error — retry with fresh keys)");
-        if (skA_nl == skB_nl)
-            puts("+ session keys agree");
-        else
-            puts("- session keys differ");
-    }
-
-    /* --- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge] */
-    printf("\n--- HPKS-NL [NL-hardened Schnorr \xe2\x80\x94 NL-FSCX v1 challenge]\n");
-    {
-        uint32_t k_nl, R_nl, e_nl, s_nl;
-        k_nl  = rand32(urnd);
-        R_nl  = gf_pow_32((uint32_t)GF_GEN32, k_nl);
-        e_nl  = nl_fscx_revolve32_v1(R_nl, plain32, I_VALUE32);
-        ae64  = (uint64_t)a32 * (uint64_t)e_nl % ord32;
-        s_nl  = (uint32_t)(((uint64_t)k_nl + ord32 - ae64) % ord32);
-        printf("P (msg)        : 0x%08x\n", plain32);
-        printf("R [Alice,sign] : 0x%08x\n", R_nl);
-        printf("e [Alice,sign] : 0x%08x\n", e_nl);
-        printf("s [Alice,sign] : 0x%08x\n", s_nl);
-        {
-            uint32_t gs_nl = gf_pow_32((uint32_t)GF_GEN32, s_nl);
-            uint32_t Ce_nl = gf_pow_32(C32, e_nl);
-            uint32_t lhs_nl = gf_mul_32(gs_nl, Ce_nl);
-            printf("  [Bob,verify] : g^s\xc2\xb7""C^e = 0x%08x\n", lhs_nl);
-            if (lhs_nl == R_nl)
-                puts("  [Bob,verify] : + Schnorr verified: g^s \xc2\xb7 C^e == R");
-            else
-                puts("  [Bob,verify] : - Schnorr verification FAILED!");
+        rnl_agree(&KA, s_A_poly, C_B);
+        rnl_agree(&KB, s_B_poly, C_A);
+        nl_fscx_revolve_v1_ba(&skA_nl, &KA, &KA, I_VALUE);
+        nl_fscx_revolve_v1_ba(&skB_nl, &KB, &KB, I_VALUE);
+        ba_print_hex("sk (Alice): ", &skA_nl);
+        ba_print_hex("sk (Bob)  : ", &skB_nl);
+        if (ba_equal(&KA, &KB)) {
+            puts("+ raw key bits agree; shared session key established!");
+        } else {
+            ba_xor(&diff_ba, &KA, &KB);
+            bits_diff = 0;
+            for (i = 0; i < KEYBYTES; i++)
+                bits_diff += __builtin_popcount(diff_ba.b[i]);
+            printf("- raw key disagrees (%d bit(s)) \xe2\x80\x94 rounding noise (retry)\n",
+                   bits_diff);
         }
+        sk_rnl_A_saved = skA_nl;
     }
 
-    /* --- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption] */
-    printf("\n--- HPKE-NL [NL-hardened El Gamal \xe2\x80\x94 NL-FSCX v2 encryption]\n");
+    /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */
+    printf("\n--- HPKS-NL [NL-hardened Schnorr \xe2\x80\x94 NL-FSCX v1 challenge]\n");
+    puts("    (GF DLP still present; NL hardens linear challenge preimage)");
     {
-        uint32_t r_nl, R_nl_hpke, enc_nl, E_nl32, dec_nl, D_nl32;
-        r_nl      = rand32(urnd) | 1;
-        R_nl_hpke = gf_pow_32((uint32_t)GF_GEN32, r_nl);
-        enc_nl    = gf_pow_32(C32, r_nl);
-        E_nl32    = nl_fscx_revolve32_v2(plain32, enc_nl, I_VALUE32);
-        dec_nl    = gf_pow_32(R_nl_hpke, a32);
-        D_nl32    = nl_fscx_revolve32_v2_inv(E_nl32, dec_nl, I_VALUE32);
-        printf("P (plain) : 0x%08x\n", plain32);
-        printf("R (g^r)   : 0x%08x\n", R_nl_hpke);
-        printf("E (Bob)   : 0x%08x\n", E_nl32);
-        printf("D (Alice) : 0x%08x\n", D_nl32);
-        if (D_nl32 == plain32)
+        BitArray k_nl, R_nl, e_nl, ae_nl, s_nl, gs_nl, Ce_nl, lhs_nl;
+        ba_rand(&k_nl, urnd);
+        gf_pow_ba(&R_nl, &GF_GEN, &k_nl);
+        nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &plaintext, I_VALUE);
+        ba_mul_mod_ord(&ae_nl, &a, &e_nl);
+        ba_sub_mod_ord(&s_nl, &k_nl, &ae_nl);
+        /* verify */
+        nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &plaintext, I_VALUE);
+        gf_pow_ba(&gs_nl, &GF_GEN, &s_nl);
+        gf_pow_ba(&Ce_nl, &C, &e_nl);
+        gf_mul_ba(&lhs_nl, &gs_nl, &Ce_nl);
+        ba_print_hex("P (msg)        : ", &plaintext);
+        ba_print_hex("R [Alice,sign] : ", &R_nl);
+        ba_print_hex("e [Alice,sign] : ", &e_nl);
+        ba_print_hex("s [Alice,sign] : ", &s_nl);
+        ba_print_hex("  [Bob,verify] : g^s\xc2\xb7""C^e = ", &lhs_nl);
+        if (ba_equal(&lhs_nl, &R_nl))
+            puts("  [Bob,verify] : + HPKS-NL verified: g^s \xc2\xb7 C^e == R");
+        else
+            puts("  [Bob,verify] : - HPKS-NL verification failed!");
+    }
+
+    /* --- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption] */
+    printf("\n--- HPKE-NL [NL-hardened El Gamal \xe2\x80\x94 NL-FSCX v2 encryption]\n");
+    puts("    (GF DLP still present; NL hardens linear HSKE sub-protocol)");
+    {
+        BitArray r_nl, R_nl2, enc_nl, E_nl, dec_nl, D_nl;
+        ba_rand(&r_nl, urnd);
+        gf_pow_ba(&R_nl2,  &GF_GEN, &r_nl);
+        gf_pow_ba(&enc_nl, &C,      &r_nl);
+        nl_fscx_revolve_v2_ba(&E_nl, &plaintext, &enc_nl, I_VALUE);
+        gf_pow_ba(&dec_nl, &R_nl2, &a);
+        nl_fscx_revolve_v2_inv_ba(&D_nl, &E_nl, &dec_nl, I_VALUE);
+        ba_print_hex("P (plain) : ", &plaintext);
+        ba_print_hex("E (Bob)   : ", &E_nl);
+        ba_print_hex("D (Alice) : ", &D_nl);
+        if (ba_equal(&D_nl, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- HPKE-NL decryption FAILED!");
+            puts("- decryption failed!");
+        /* save for Eve test */
+        E_nl_saved   = E_nl;
+        R_nl2_saved  = R_nl2;
     }
 
     /* *** EVE bypass TESTS *** */
     printf("\n\n*** EVE bypass TESTS\n");
 
-    /* Eve attempts HPKS-NL Schnorr forgery */
-    printf("\n*** HPKS-NL Schnorr \xe2\x80\x94 Eve cannot forge without DLP solution\n");
+    puts("*** HPKS-NL \xe2\x80\x94 Eve cannot forge Schnorr without knowing private key a");
     {
-        uint32_t r_eve   = rand32(urnd);
-        uint32_t s_eve   = rand32(urnd);
-        uint32_t e_eve   = nl_fscx_revolve32_v1(r_eve, plain32, I_VALUE32);
-        uint32_t gs_eve  = gf_pow_32((uint32_t)GF_GEN32, s_eve);
-        uint32_t Ce_eve  = gf_pow_32(C32, e_eve);
-        uint32_t lhs_eve = gf_mul_32(gs_eve, Ce_eve);
-        printf("R_eve     : 0x%08x\n", r_eve);
-        printf("lhs_eve   : 0x%08x\n", lhs_eve);
-        if (lhs_eve == r_eve)
-            puts("+ Eve forged signature (attack succeeded - UNEXPECTED!)");
+        BitArray rand_exp, R_eve, e_eve, s_eve, gs_eve, Ce_eve, lhs_eve;
+        ba_rand(&rand_exp, urnd);
+        gf_pow_ba(&R_eve, &GF_GEN, &rand_exp);
+        nl_fscx_revolve_v1_ba(&e_eve, &R_eve, &decoy, I_VALUE);
+        ba_rand(&s_eve, urnd);
+        gf_pow_ba(&gs_eve,  &GF_GEN, &s_eve);
+        gf_pow_ba(&Ce_eve,  &C,      &e_eve);
+        gf_mul_ba(&lhs_eve, &gs_eve, &Ce_eve);
+        if (ba_equal(&lhs_eve, &R_eve))
+            puts("+ Eve forged HPKS-NL signature (Eve wins)!");
         else
-            puts("- Eve could not forge signature (NL-DLP protection holds)");
+            puts("- Eve could not forge: g^s_eve \xc2\xb7 C^e_eve \xe2\x89\xa0 R_eve  (DLP protection)");
     }
 
-    /* Eve attempts HPKE-NL XOR key guess */
-    printf("\n*** HPKE-NL El Gamal \xe2\x80\x94 Eve cannot decrypt without CDH solution\n");
+    puts("*** HPKE-NL \xe2\x80\x94 Eve cannot decrypt without Alice's private key");
     {
-        uint32_t r_nl2, R_nl2, enc_nl2, E_nl2_val, dec_nl2, D_nl2_val;
-        r_nl2    = rand32(urnd) | 1;
-        R_nl2    = gf_pow_32((uint32_t)GF_GEN32, r_nl2);
-        enc_nl2  = gf_pow_32(C32, r_nl2);
-        E_nl2_val = nl_fscx_revolve32_v2(plain32, enc_nl2, I_VALUE32);
-        uint32_t eve_key = C32 ^ R_nl2; /* wrong: XOR instead of GF product */
-        D_nl2_val = nl_fscx_revolve32_v2_inv(E_nl2_val, eve_key, I_VALUE32);
-        printf("eve_key   : 0x%08x (C XOR R, not C^r)\n", eve_key);
-        printf("D_eve     : 0x%08x\n", D_nl2_val);
-        if (D_nl2_val == plain32)
-            puts("+ Eve decrypted plaintext (attack succeeded - UNEXPECTED!)");
+        BitArray eve_key, D_eve;
+        /* Eve's wrong key: C XOR R_nl2 (should be C^r = GF product) */
+        ba_xor(&eve_key, &C, &R_nl2_saved);
+        nl_fscx_revolve_v2_inv_ba(&D_eve, &E_nl_saved, &eve_key, I_VALUE);
+        if (ba_equal(&D_eve, &plaintext))
+            puts("+ Eve decrypted plaintext (Eve wins)!");
         else
-            puts("- Eve could not decrypt without CDH solution (NL-DLP protection holds)");
+            puts("- Eve could not decrypt without Alice's private key (CDH + NL protection)");
     }
 
-    /* Eve attempts HKEX-RNL random 32-bit guess */
-    printf("\n*** HKEX-RNL \xe2\x80\x94 Eve random 32-bit key guess\n");
+    puts("*** HKEX-RNL \xe2\x80\x94 Eve cannot derive shared key from public ring polynomials");
     {
-        rnl_poly_t m_base2, a_rand2, m_blind2;
-        int32_t C_A2[RNL_N], C_B2[RNL_N];
-        rnl_poly_t s_A2, s_B2;
-        uint32_t KA2, KB2, eve_guess;
-        rnl_m_poly(m_base2);
-        rnl_rand_poly(a_rand2, urnd);
-        rnl_poly_add(m_blind2, m_base2, a_rand2);
-        rnl_keygen(s_A2, C_A2, m_blind2, urnd);
-        rnl_keygen(s_B2, C_B2, m_blind2, urnd);
-        KA2 = rnl_agree(s_A2, C_B2);
-        KB2 = rnl_agree(s_B2, C_A2);
-        eve_guess = rand32(urnd);
-        printf("KA2       : 0x%08x\n", KA2);
-        printf("KB2       : 0x%08x\n", KB2);
-        printf("eve_guess : 0x%08x\n", eve_guess);
-        if (eve_guess == KA2 || eve_guess == KB2)
-            puts("+ Eve guessed key (attack succeeded - UNEXPECTED!)");
+        BitArray eve_rnl_guess;
+        ba_rand(&eve_rnl_guess, urnd);
+        if (ba_equal(&eve_rnl_guess, &sk_rnl_A_saved))
+            puts("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!");
         else
-            puts("- Eve random guess failed (Ring-LWR protection holds)");
+            puts("- Eve random guess does not match shared key (Ring-LWR protection)");
     }
 
     fclose(urnd);
