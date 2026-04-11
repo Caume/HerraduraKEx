@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.1: added --rounds/-r and --time/-t CLI options (also HTEST_ROUNDS / HTEST_TIME env).
     v1.5.0: added PQC extension tests [10-16] and benchmarks [22-25].
             benchmarks renumbered [17-21] (were [10-14] in v1.4.0).
     v1.4.0: replaced broken fscx_revolve_n HKEX tests with HKEX-GF tests.
@@ -24,7 +25,9 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 '''
 
+import argparse
 import os
+import sys
 import time
 
 # ---------------------------------------------------------------------------
@@ -284,7 +287,30 @@ RNLP  = 4096   # public-key rounding modulus
 RNLPP = 2      # reconciliation modulus (1 bit per coefficient)
 RNLB  = 1      # small-secret bound
 
-TARGET_SEC = 1.0
+TARGET_SEC = 1.0  # kept for reference; overridden by g_bench_sec at runtime
+
+# --- Runtime limits (set in __main__ via CLI / env vars) -----------------
+g_rounds     = 0    # 0 = use per-test default
+g_bench_sec  = 1.0  # benchmark duration (seconds)
+g_time_limit = 0.0  # per-test wall-clock cap; 0 = none
+
+
+def _iters(default_n: int) -> int:
+    """Effective iteration count: g_rounds if set, otherwise default_n."""
+    return g_rounds if g_rounds > 0 else default_n
+
+
+def _trange(n: int):
+    """Like range(n) but stops early when g_time_limit is reached.
+    Yields the iteration index so callers can use it as a loop variable."""
+    if g_time_limit <= 0:
+        yield from range(n)
+        return
+    t0 = time.monotonic()
+    for i in range(n):
+        yield i
+        if (i & 63) == 63 and time.monotonic() - t0 >= g_time_limit:
+            return
 
 
 # ---------------------------------------------------------------------------
@@ -310,31 +336,33 @@ def test_hkex_gf_correctness():
     print("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
-        ok = 0
-        for _ in range(GF_TRIALS):
+        ok = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a = BitArray.random(size)
             b = BitArray.random(size)
             C  = gf_pow(GF_GEN, a.uint, poly, size)
             C2 = gf_pow(GF_GEN, b.uint, poly, size)
             if gf_pow(C2, a.uint, poly, size) == gf_pow(C, b.uint, poly, size):
                 ok += 1
-        status = "PASS" if ok == GF_TRIALS else "FAIL"
-        print(f"    bits={size:3d}  {ok:5d} / {GF_TRIALS} correct  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:5d} / {n_run} correct  [{status}]")
     print()
 
 
 def test_avalanche():
     print("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)  [CLASSICAL]")
     for size in SIZES:
-        total = 0.0; gmin = size + 1; gmax = -1
-        for _ in range(1000):
+        total = 0.0; gmin = size + 1; gmax = -1; n_run = 0
+        for _ in _trange(_iters(1000)):
+            n_run += 1
             a = BitArray.random(size); b = BitArray.random(size)
             base = fscx(a, b)
             for bit in range(size):
                 hd = (fscx(a.flip_bit(bit), b) ^ base).popcount()
                 total += hd
                 gmin = min(gmin, hd); gmax = max(gmax, hd)
-        mean = total / (1000.0 * size)
+        mean = total / (float(n_run) * size) if n_run > 0 else 0.0
         status = "PASS" if 2.9 <= mean <= 3.1 else "FAIL"
         print(f"    bits={size:3d}  mean={mean:.2f} (expected 3/{size})  min={gmin}  max={gmax}  [{status}]")
     print()
@@ -344,7 +372,7 @@ def test_orbit_period():
     print("[3] Orbit period: FSCX_REVOLVE cycles back to A  [CLASSICAL]")
     for size in SIZES:
         cnt_p = 0; cnt_hp = 0; other = 0; cap = 2 * size
-        for _ in range(100):
+        for _ in _trange(_iters(100)):
             a = BitArray.random(size); b = BitArray.random(size)
             cur = fscx(a, b); period = 1
             while cur != a and period < cap:
@@ -358,15 +386,16 @@ def test_orbit_period():
 
 
 def test_bit_frequency():
-    print("[4] Bit-frequency bias: 10000 FSCX outputs per size  [CLASSICAL]")
-    N = 10000
+    N = _iters(10000)
+    print(f"[4] Bit-frequency bias: {N} FSCX outputs per size  [CLASSICAL]")
     for size in SIZES:
-        counts = [0] * size
-        for _ in range(N):
+        counts = [0] * size; n_run = 0
+        for _ in _trange(N):
+            n_run += 1
             val = fscx(BitArray.random(size), BitArray.random(size)).uint
             for bit in range(size):
                 if (val >> bit) & 1: counts[bit] += 1
-        pcts  = [c / N * 100.0 for c in counts]
+        pcts  = [c / n_run * 100.0 for c in counts] if n_run > 0 else [0.0] * size
         mn = min(pcts); mx = max(pcts); mean = sum(pcts) / size
         status = "PASS" if mn > 47.0 and mx < 53.0 else "FAIL"
         print(f"    bits={size:3d}  min={mn:.2f}%  max={mx:.2f}%  mean={mean:.2f}%  [{status}]")
@@ -376,39 +405,43 @@ def test_bit_frequency():
 def test_hkex_gf_key_sensitivity():
     print("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); total = 0.0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); total = 0.0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a  = BitArray.random(size); b  = BitArray.random(size)
             C2 = gf_pow(GF_GEN, b.uint, poly, size)
             sk1 = gf_pow(C2, a.uint,             poly, size)
             sk2 = gf_pow(C2, a.flip_bit(0).uint, poly, size)
             total += BitArray(size, sk1 ^ sk2).popcount()
-        mean = total / float(GF_TRIALS)
+        mean = total / float(n_run) if n_run > 0 else 0.0
         status = "PASS" if mean >= size // 4 else "FAIL"
         print(f"    bits={size:3d}  mean HD={mean:.2f} (expected >={size//4})  [{status}]")
     print()
 
 
 def test_hkex_gf_eve_resistance():
-    print(f"[6] HKEX-GF Eve resistance: S_op(C^C2, r) != sk for {GF_TRIALS} trials  [CLASSICAL]")
+    T = _iters(GF_TRIALS)
+    print(f"[6] HKEX-GF Eve resistance: S_op(C^C2, r) != sk for {T} trials  [CLASSICAL]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); rv = r_val(size); successes = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); rv = r_val(size); successes = 0; n_run = 0
+        for _ in _trange(T):
+            n_run += 1
             a  = BitArray.random(size); b  = BitArray.random(size)
             C  = BitArray(size, gf_pow(GF_GEN, a.uint, poly, size))
             C2 = BitArray(size, gf_pow(GF_GEN, b.uint, poly, size))
             real_sk = BitArray(size, gf_pow(C2.uint, a.uint, poly, size))
             if s_op(C ^ C2, rv) == real_sk: successes += 1
         status = "PASS" if successes == 0 else "FAIL"
-        print(f"    bits={size:3d}  {successes:5d} / {GF_TRIALS} Eve successes (expected 0)  [{status}]")
+        print(f"    bits={size:3d}  {successes:5d} / {n_run} Eve successes (expected 0)  [{status}]")
     print()
 
 
 def test_hpks_schnorr_correctness():
     print("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a     = BitArray.random(size)
             C_int = gf_pow(GF_GEN, a.uint, poly, size)
             pt    = BitArray.random(size)
@@ -420,16 +453,17 @@ def test_hpks_schnorr_correctness():
             lhs   = gf_mul(gf_pow(GF_GEN, s,      poly, size),
                            gf_pow(C_int,  e.uint,  poly, size), poly, size)
             if lhs == R_int: ok += 1
-        status = "PASS" if ok == GF_TRIALS else "FAIL"
-        print(f"    bits={size:3d}  {ok:4d} / {GF_TRIALS} verified  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / {n_run} verified  [{status}]")
     print()
 
 
 def test_hpks_schnorr_eve_resistance():
     print("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); wins = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); wins = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a     = BitArray.random(size)
             C_int = gf_pow(GF_GEN, a.uint, poly, size)
             decoy = BitArray.random(size)
@@ -440,15 +474,16 @@ def test_hpks_schnorr_eve_resistance():
                            gf_pow(C_int,  e_eve.uint,  poly, size), poly, size)
             if lhs == R_eve.uint: wins += 1
         status = "PASS" if wins == 0 else "FAIL"
-        print(f"    bits={size:3d}  {wins:4d} / {GF_TRIALS} Eve wins (expected 0)  [{status}]")
+        print(f"    bits={size:3d}  {wins:4d} / {n_run} Eve wins (expected 0)  [{status}]")
     print()
 
 
 def test_hpke_roundtrip():
     print("[9] HPKE encrypt+decrypt correctness (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size); ok = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size); ok = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a   = BitArray.random(size); pt = BitArray.random(size)
             C   = gf_pow(GF_GEN, a.uint, poly, size)
             r   = BitArray.random(size)
@@ -458,8 +493,8 @@ def test_hpke_roundtrip():
             dec = BitArray(size, gf_pow(R, a.uint, poly, size))
             D   = fscx_revolve(E,   dec, rv)
             if D == pt: ok += 1
-        status = "PASS" if ok == GF_TRIALS else "FAIL"
-        print(f"    bits={size:3d}  {ok:4d} / {GF_TRIALS} decrypted  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / {n_run} decrypted  [{status}]")
     print()
 
 
@@ -474,37 +509,41 @@ def test_nl_fscx_v1_nonlinearity():
     print("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]")
     for size in SIZES:
         zero = BitArray(size, 0)
+        N1 = _iters(1000); N2 = _iters(200)
         # Linearity violations
-        violations = 0
-        for _ in range(1000):
+        violations = 0; n1_run = 0
+        for _ in _trange(N1):
+            n1_run += 1
             A = BitArray.random(size); B = BitArray.random(size)
             lin_pred = fscx(A, zero) ^ nl_fscx_v1(zero, B)
             if nl_fscx_v1(A, B) != lin_pred:
                 violations += 1
         # Period check: no period in 4*n steps
-        cap = 4 * size; no_period = 0
-        for _ in range(200):
+        cap = 4 * size; no_period = 0; n2_run = 0
+        for _ in _trange(N2):
+            n2_run += 1
             A = BitArray.random(size); B = BitArray.random(size)
             cur = nl_fscx_v1(A, B); found = False
             for _ in range(1, cap):
                 cur = nl_fscx_v1(cur, B)
                 if cur == A: found = True; break
             if not found: no_period += 1
-        status = "PASS" if violations == 1000 and no_period >= 190 else "FAIL"
-        print(f"    bits={size:3d}  linearity violations={violations}/1000  "
-              f"no-period={no_period}/200  [{status}]")
+        status = "PASS" if violations == n1_run and no_period >= n2_run * 95 // 100 else "FAIL"
+        print(f"    bits={size:3d}  linearity violations={violations}/{n1_run}  "
+              f"no-period={no_period}/{n2_run}  [{status}]")
     print()
 
 
 def test_nl_fscx_v2_bijective_inverse():
     # NL-FSCX v2 must be bijective in A for all B (non-bijective count = 0),
-    # and the closed-form inverse must be correct for 1000 random (A,B) pairs.
+    # and the closed-form inverse must be correct for N random (A,B) pairs.
     print("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]")
     for size in SIZES:
+        N1 = _iters(500); N2 = _iters(1000); N3 = _iters(500)
         # Bijectivity: map A -> nl_fscx_v2(A, B) must be injective for fixed B
-        # (tested via collision count over random samples)
-        non_bij = 0
-        for _ in range(500):
+        non_bij = 0; n1_run = 0
+        for _ in _trange(N1):
+            n1_run += 1
             B    = BitArray.random(size)
             seen = {}
             for _ in range(min(256, 1 << min(size, 8))):
@@ -514,33 +553,35 @@ def test_nl_fscx_v2_bijective_inverse():
                     non_bij += 1; break
                 seen[out] = A.uint
         # Inverse correctness
-        inv_ok = 0
-        for _ in range(1000):
+        inv_ok = 0; n2_run = 0
+        for _ in _trange(N2):
+            n2_run += 1
             A = BitArray.random(size); B = BitArray.random(size)
             if nl_fscx_v2_inv(nl_fscx_v2(A, B), B) == A:
                 inv_ok += 1
         # Non-linearity check
         zero = BitArray(size, 0)
-        nl_ok = 0
-        for _ in range(500):
+        nl_ok = 0; n3_run = 0
+        for _ in _trange(N3):
+            n3_run += 1
             A = BitArray.random(size); B = BitArray.random(size)
             if nl_fscx_v2(A, B) != BitArray(size,
                (fscx(A, zero).uint ^ nl_fscx_v2(zero, B).uint)):
                 nl_ok += 1
-        status = "PASS" if non_bij == 0 and inv_ok == 1000 and nl_ok >= 490 else "FAIL"
-        print(f"    bits={size:3d}  collisions={non_bij}/500  inv={inv_ok}/1000  "
-              f"nonlinear={nl_ok}/500  [{status}]")
+        status = "PASS" if non_bij == 0 and inv_ok == n2_run and nl_ok >= n3_run * 98 // 100 else "FAIL"
+        print(f"    bits={size:3d}  collisions={non_bij}/{n1_run}  inv={inv_ok}/{n2_run}  "
+              f"nonlinear={nl_ok}/{n3_run}  [{status}]")
     print()
 
 
 def test_hske_nl_a1_correctness():
     # HSKE-NL-A1 counter-mode: C = P XOR keystream; D = C XOR keystream = P.
     # keystream[i] = nl_fscx_revolve_v1(K, K XOR i, n/4).
-    # Test correctness for 1000 random (K, P, counter) tuples.
     print("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
     for size in SIZES:
-        iv = i_val(size); ok = 0
-        for trial in range(1000):
+        iv = i_val(size); ok = 0; n_run = 0
+        for trial in _trange(_iters(1000)):
+            n_run += 1
             K   = BitArray.random(size)
             P   = BitArray.random(size)
             ctr = trial % (1 << min(size, 16))
@@ -549,25 +590,26 @@ def test_hske_nl_a1_correctness():
             C   = BitArray(size, P.uint ^ ks.uint)
             D   = BitArray(size, C.uint ^ ks.uint)
             if D == P: ok += 1
-        status = "PASS" if ok == 1000 else "FAIL"
-        print(f"    bits={size:3d}  {ok:4d} / 1000 correct  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / {n_run} correct  [{status}]")
     print()
 
 
 def test_hske_nl_a2_correctness():
     # HSKE-NL-A2 revolve mode: E = nl_fscx_revolve_v2(P, K, r);
     # D = nl_fscx_revolve_v2_inv(E, K, r) must equal P.
-    # Trials reduced to 50: nl_fscx_v2_inv calls M^{n/2-1} per step — O(n^2) fscx ops total.
+    # Default 50 trials: nl_fscx_v2_inv calls M^{n/2-1} per step — O(n^2) fscx ops total.
     print("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]")
     for size in SIZES:
-        rv = r_val(size); ok = 0
-        for _ in range(50):
+        rv = r_val(size); ok = 0; n_run = 0
+        for _ in _trange(_iters(50)):
+            n_run += 1
             K = BitArray.random(size); P = BitArray.random(size)
             E = nl_fscx_revolve_v2(P, K, rv)
             D = nl_fscx_revolve_v2_inv(E, K, rv)
             if D == P: ok += 1
-        status = "PASS" if ok == 50 else "FAIL"
-        print(f"    bits={size:3d}  {ok:3d} /  50 correct  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:3d} / {n_run:3d} correct  [{status}]")
     print()
 
 
@@ -580,8 +622,9 @@ def test_hkex_rnl_correctness():
     print(f"     (ring sizes {RNL_SIZES}; production size is n=256)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
-        ok_raw = 0; ok_sk = 0; trials = 200
-        for _ in range(trials):
+        ok_raw = 0; ok_sk = 0; n_run = 0
+        for _ in _trange(_iters(200)):
+            n_run += 1
             a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
             s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
@@ -593,8 +636,8 @@ def test_hkex_rnl_correctness():
                 sk_A = nl_fscx_revolve_v1(K_A, K_A, n_rnl // 4)
                 sk_B = nl_fscx_revolve_v1(K_B, K_B, n_rnl // 4)
                 if sk_A == sk_B: ok_sk += 1
-        status = "PASS" if ok_raw >= trials * 90 // 100 else "FAIL"
-        print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{trials}  sk agree={ok_sk}/{trials}  [{status}]")
+        status = "PASS" if ok_raw >= n_run * 90 // 100 else "FAIL"
+        print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{n_run}  sk agree={ok_sk}/{n_run}  [{status}]")
     print()
 
 
@@ -604,8 +647,9 @@ def test_hpks_nl_correctness():
     # Verify: g^s * C^e == R
     print("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ord_ = (1 << size) - 1; ok = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a     = BitArray.random(size)
             C_int = gf_pow(GF_GEN, a.uint, poly, size)
             pt    = BitArray.random(size)
@@ -617,8 +661,8 @@ def test_hpks_nl_correctness():
             lhs   = gf_mul(gf_pow(GF_GEN, s,      poly, size),
                            gf_pow(C_int,  e.uint,  poly, size), poly, size)
             if lhs == R_int: ok += 1
-        status = "PASS" if ok == GF_TRIALS else "FAIL"
-        print(f"    bits={size:3d}  {ok:4d} / {GF_TRIALS} verified  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:4d} / {n_run} verified  [{status}]")
     print()
 
 
@@ -628,8 +672,9 @@ def test_hpke_nl_correctness():
     # Alice: dec=R^a=enc; D=nl_fscx_revolve_v2_inv(E, dec, I) must equal P.
     print("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]")
     for size in GF_SIZES:
-        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ok = 0
-        for _ in range(GF_TRIALS):
+        poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); ok = 0; n_run = 0
+        for _ in _trange(_iters(GF_TRIALS)):
+            n_run += 1
             a   = BitArray.random(size); pt = BitArray.random(size)
             C   = gf_pow(GF_GEN, a.uint, poly, size)
             r   = BitArray.random(size)
@@ -639,8 +684,8 @@ def test_hpke_nl_correctness():
             dec = BitArray(size, gf_pow(R, a.uint, poly, size))
             D   = nl_fscx_revolve_v2_inv(E, dec, iv)
             if D == pt: ok += 1
-        status = "PASS" if ok == GF_TRIALS else "FAIL"
-        print(f"    bits={size:3d}  {ok:3d} / {GF_TRIALS} decrypted  [{status}]")
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  {ok:3d} / {n_run} decrypted  [{status}]")
     print()
 
 
@@ -656,7 +701,7 @@ def _bench(label: str, fn):
         for _ in range(100): fn()
         ops += 100
         elapsed = time.perf_counter() - t0
-        if elapsed >= TARGET_SEC: break
+        if elapsed >= g_bench_sec: break
     rate = ops / elapsed
     if rate >= 1e6:    rate_str = f"{rate/1e6:.2f} M ops/sec"
     elif rate >= 1e3:  rate_str = f"{rate/1e3:.2f} K ops/sec"
@@ -791,7 +836,43 @@ def bench_hkex_rnl_handshake():
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    print("=== Herradura KEx \u2014 Security & Performance Tests (Python) ===\n")
+    # --- Arg parsing (CLI overrides env vars) ---
+    parser = argparse.ArgumentParser(
+        description="Herradura KEx v1.5.1 — Security & Performance Tests (Python)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
+    parser.add_argument('-r', '--rounds', type=int, default=0,
+                        metavar='N', help='max iterations per security test (default: test-specific)')
+    parser.add_argument('-t', '--time', type=float, default=0.0,
+                        metavar='T', dest='time_limit',
+                        help='benchmark duration and per-test time cap in seconds')
+    args = parser.parse_args()
+
+    # env var fallbacks (only if CLI not set)
+    _env_r = os.environ.get('HTEST_ROUNDS', '')
+    _env_t = os.environ.get('HTEST_TIME', '')
+    if args.rounds == 0 and _env_r.isdigit() and int(_env_r) > 0:
+        args.rounds = int(_env_r)
+    if args.time_limit == 0.0 and _env_t:
+        try:
+            args.time_limit = float(_env_t)
+        except ValueError:
+            pass
+
+    # apply to module-level globals (module-level code; no 'global' keyword needed)
+    if args.rounds > 0:
+        g_rounds = args.rounds
+    if args.time_limit > 0:
+        g_bench_sec  = args.time_limit
+        g_time_limit = args.time_limit
+
+    print("=== Herradura KEx v1.5.1 \u2014 Security & Performance Tests (Python) ===")
+    if g_rounds > 0 or g_time_limit > 0:
+        parts = []
+        if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
+        if g_time_limit > 0: parts.append(f"time_limit={g_time_limit:.2f}s")
+        print(f"    Config: {', '.join(parts)}")
+    print()
 
     print("--- Security Tests: Classical Protocols ---\n")
     test_hkex_gf_correctness()
