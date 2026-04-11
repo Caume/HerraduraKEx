@@ -4,6 +4,235 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.0] - 2026-04-11
+
+### Added — NL-FSCX v2, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL across all implementations
+
+Version 1.5.0 adds non-linear extensions to FSCX (breaking GF(2)-linearity and period structure)
+and a post-quantum key exchange (HKEX-RNL via Ring-LWR), porting them to every language
+including C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino.
+
+#### New primitives
+
+- **NL-FSCX v1** — `nl_fscx(A,B) = fscx(A,B) ⊕ ROL(A+B, n/4)`: integer carry injection
+  breaks GF(2) linearity and orbit periods; used as KDF/commitment function.
+- **NL-FSCX v2** — `nl_fscx_v2(A,B) = fscx(A,B) + δ(B) mod 2^n`,
+  where `δ(B) = ROL(B·⌊(B+1)/2⌋ mod 2^n, n/4)`: bijective in A for all B;
+  closed-form inverse `A = B ⊕ M⁻¹((Y − δ(B)) mod 2^n)` (`M⁻¹ = fscx_revolve(·, 0, n/2−1)`).
+
+#### New protocols
+
+- **HSKE-NL-A1** (counter-mode): `ks = nl_fscx_revolve_v1(K, K⊕ctr, i)`;
+  `E = P ⊕ ks`; `D = E ⊕ ks = P`.
+- **HSKE-NL-A2** (revolve-mode): `E = nl_fscx_revolve_v2(P, K, r)`;
+  `D = nl_fscx_revolve_v2_inv(E, K, r) = P`.
+- **HKEX-RNL** (Ring-LWR key exchange; conjectured quantum-resistant):
+  shared `m_blind = m(x) + a_rand` in `Z_q[x]/(x^n+1)`;
+  Alice/Bob derive `C = round_p(m_blind · s)` with small secret `s`;
+  agreement via `K = round_pp(s · lift(C_other))`; final `sk = nl_fscx_revolve_v1(K, K, i)`.
+  Parameters: `n=256` (C/Go/Python), `n=32` (assembly/Arduino/C-tests); `q=65537`, `p=4096`.
+- **HPKS-NL** (NL-hardened Schnorr): challenge `e = nl_fscx_revolve_v1(R, P, i)`.
+- **HPKE-NL** (NL-hardened El Gamal): `E = nl_fscx_revolve_v2(P, enc_key, i)`;
+  `D = nl_fscx_revolve_v2_inv(E, dec_key, i)`.
+
+#### Files updated (all languages)
+
+- `Herradura cryptographic suite.py` — NL-FSCX v1/v2, all five new protocols, Eve bypass tests.
+- `CryptosuiteTests/Herradura_tests.py` — tests [10]–[16] (NL-FSCX, HSKE-NL-A1/A2, HKEX-RNL,
+  HPKS-NL, HPKE-NL); benchmarks renumbered [17]–[25].
+- `Herradura cryptographic suite.go` — same protocol additions as Python.
+- `CryptosuiteTests/Herradura_tests.go` — same test additions.
+- `Herradura cryptographic suite.c` — NL-FSCX v1/v2 (256-bit BitArray), HKEX-RNL (n=256),
+  HPKS-NL, HPKE-NL; `ba_add256`, `ba_sub256`, `ba_mul256_lo`, `ba_rol64_256`, `m_inv_ba` added.
+- `CryptosuiteTests/Herradura_tests.c` — tests [10]–[16] (32-bit NL-FSCX and RNL, n=32);
+  benchmarks renumbered [17]–[21].
+- `Herradura cryptographic suite.asm` — NASM i386: `nl_fscx_delta_v2`, `nl_fscx_v1/v2/v2_inv`,
+  `nl_fscx_revolve_v1/v2/v2_inv`, `m_inv_32`; RNL poly helpers (n=32); new protocol sections.
+- `CryptosuiteTests/Herradura_tests.asm` — NASM i386: tests [1]–[10] (v1.4.0 tests [1]–[4]
+  plus new [5]–[10] for NL/RNL protocols); memory-variable loop counters; EBP pass counter.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: same additions as NASM; `umull`/`udiv`/`mls`
+  for mod-65537 ring arithmetic; `.ltorg` after every subroutine.
+- `CryptosuiteTests/Herradura_tests.s` — ARM Thumb-2: tests [1]–[10]; r10/r11 loop
+  counter/pass count (callee-saved); `it`/conditional suffix pattern for modular arithmetic.
+- `Herradura cryptographic suite.ino` — Arduino: NL-FSCX v1/v2/inverse, HKEX-RNL (n=32),
+  HPKS-NL, HPKE-NL; LCG PRNG for RNL poly generation.
+- `CryptosuiteTests/Herradura_tests.ino` — Arduino: tests [1]–[10], 30-second rerun loop.
+
+#### Security proofs (SecurityProofs.md)
+
+- **§11** — NL-FSCX non-linearity and PQC extensions (Theorems 11–12; HKEX-RNL,
+  HSKE-NL-A1/A2, HPKS-NL, HPKE-NL; C3 hybrid recommendation).
+- **§12** — Classical and quantum security analysis (merged from PQCanalysis.md in v1.4.1).
+
+---
+
+## [1.4.1] - 2026-04-08
+
+### Documentation — PQCanalysis.md merged into SecurityProofs.md
+
+`PQCanalysis.md` is removed.  All content has been integrated into `SecurityProofs.md`
+as **§12 (Classical and Quantum Security Analysis)**, with duplicate sections eliminated
+and the most up-to-date data retained.
+
+#### Content added to SecurityProofs.md (§12)
+
+- **§12.1 Classical DLP attacks on GF(2^n)*** — full attack complexity table (BSGS,
+  Pohlig–Hellman, index calculus, Barbulescu quasi-polynomial); BSGS n=32 experiment
+  (`A_PRIV=0xDEADBEEF`, solved in 0.622 s); effective-security discussion.
+- **§12.2 Classical security of HSKE / HPKS / HPKE** — known-plaintext attack on HSKE
+  (1 pair → full $c_K$, 0 unconstrained bits at n=64); classical forgery analysis for
+  HPKS; CDH attack path for HPKE.
+- **§12.3 HPKS challenge function — algebraic properties** — affine bijection proof
+  (0 collisions in 50 000 trials); predictable challenge delta identity
+  $e(R_2) \oplus e(R_1) = M^i \cdot (R_1 \oplus R_2)$ (100% verified); consequence for
+  ROM-based security proofs and the forking lemma.
+- **§12.4 Quantum algorithm analysis** — Grover (symmetric key-only), Simon (inapplicable
+  to GF DLP, applicable to HSKE affine structure), Bernstein–Vazirani (HSKE 1-query
+  recovery), Shor (primary quantum threat: O(n² log n) DLP for HKEX-GF/HPKS/HPKE),
+  HHL (irrelevant — GF(2) systems already classically efficient).
+- **§12.5 Protocol-level quantum security summary** — updated table including HKEX-RNL
+  (§11.4) as the proposed PQC replacement.
+- **§12.6 Root cause: why GF(2^n)* is the wrong group** — comparison table across
+  GF(2^n)*, Z_p*, ECDLP, and Ring-LWR; motivation for the §11.4 HKEX-RNL proposal.
+
+#### Files removed
+
+- `PQCanalysis.md` — superseded by SecurityProofs.md §12.
+
+#### Status update
+
+- `SecurityProofs.md` header updated to reference §12.
+- Last-updated date updated to 2026-04-08.
+
+---
+
+## [1.4.0] - 2026-04-06
+
+### BREAKING CHANGE — HKEX replaced with HKEX-GF; HPKS upgraded to Schnorr; HPKE upgraded to El Gamal
+
+The classical HKEX key exchange is **broken**: the shared secret `sk = S_{r+1}·(C⊕C2)` is directly computable from the two public wire values alone (proved in SecurityProofs.md, Theorem 7). Version 1.4.0 replaces it with Diffie-Hellman over `GF(2^n)*`, and replaces the trivially-reversible HPKS/HPKE XOR constructions with standard Schnorr signatures and El Gamal encryption.
+
+#### Protocol changes (all languages)
+
+- **HKEX-GF** replaces HKEX in every implementation:
+  - Alice: private scalar `a`, public `C = g^a` (GF exponentiation)
+  - Bob: private scalar `b`, public `C2 = g^b`
+  - Shared: `sk = C2^a = C^b = g^{ab}` (field commutativity)
+  - Arithmetic: carryless polynomial multiplication mod irreducible `p(x)` — XOR and left-shift only
+- **`fscx_revolve_n` removed** from all files. The nonce contribution `S_k·N` cancels identically from both sides of the key-exchange equation (Theorem 8), providing zero security benefit.
+- **HSKE** simplified to `fscx_revolve(P, key, i)` / `fscx_revolve(E, key, r)` (previously used `fscx_revolve_n`; functionally equivalent, now simplified).
+- **HPKS** replaced with a **Schnorr-style signature** (32-bit GF parameters):
+  - Sign: choose nonce `k`; `R = g^k`; challenge `e = fscx_revolve(R, msg, i)`; response `s = (k - a·e) mod (2^32-1)`
+  - Verify: `g^s · C^e == R`
+  - The 32-bit field is used because the Schnorr response requires modular integer arithmetic over the group order; at 256-bit this requires GMP-style big integers not available in plain C or assembly.
+- **HPKE** replaced with **El Gamal + HSKE** (32-bit GF parameters):
+  - Bob: ephemeral `r`; `R = g^r`; `enc_key = C^r = g^{ar}`; `E = fscx_revolve(P, enc_key, i)`
+  - Alice: `dec_key = R^a = g^{ra}`; `D = fscx_revolve(E, dec_key, r) = P`
+  - Correctness: `g^{ar} = g^{ra}` by field commutativity.
+
+#### Security
+
+| n | Primitive polynomial | Classical security |
+|---|---------------------|-------------------|
+| 32 | x³²+x²²+x²+x+1 = 0x00400007 | demo only |
+| 64 | x⁶⁴+x⁴+x³+x+1 = 0x1B | ~40 bits |
+| 128 | x¹²⁸+x⁷+x²+x+1 = 0x87 | ~60–80 bits |
+| 256 | x²⁵⁶+x¹⁰+x⁵+x²+1 = 0x425 | ~128 bits (recommended) |
+
+Generator `g = 3` (polynomial `x+1`) for all field sizes.
+
+#### Files updated
+
+- `Herradura cryptographic suite.py` — GF arithmetic added, HKEX-GF implemented, `fscx_revolve_n` removed, HPKS Schnorr and HPKE El Gamal implemented, Eve bypass tests updated.
+- `Herradura_tests.py` — test [1] updated for HKEX-GF; tests [7] Schnorr correctness, [8] Schnorr Eve-resistance, [9] El Gamal correctness added; benchmarks renumbered [10]–[14].
+- `Herradura cryptographic suite.go` — `GfMul`/`GfPow` added (`math/big`), `FscxRevolveN` removed, HPKS Schnorr and HPKE El Gamal implemented.
+- `Herradura_tests.go` — same structural updates as Python tests.
+- `Herradura cryptographic suite.c` — `gf_mul_ba`/`gf_pow_ba` added for GF(2^256) and `gf_mul_32`/`gf_pow_32` for 32-bit GF; `ba_fscx_revolve_n` removed; HPKS Schnorr and HPKE El Gamal implemented with 32-bit GF operands.
+- `Herradura_tests.c` — tests [7] Schnorr (1000 trials), [8] Schnorr Eve-resistance, [9] El Gamal (1000 trials); benchmarks [10]–[14] updated.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: `gf_mul_32`/`gf_pow_32` and LCG PRNG added; `fscx_revolve_n` removed; Schnorr and El Gamal sections implemented using `umull`/`adds`/`addcs`/`subs`/`subcc` for 32-bit modular arithmetic.
+- `Herradura_tests.s` — ARM Thumb-2: test_hpks (Schnorr, 20 trials) and test_hpke (El Gamal, 20 trials) added.
+- `Herradura cryptographic suite.asm` — NASM i386: `gf_mul_32`/`gf_pow_32` and LCG PRNG added; `FSCX_revolve_n` removed; Schnorr and El Gamal sections using `mul`/`add`/`adc`/`sub`/`dec` for modular arithmetic.
+- `Herradura_tests.asm` — NASM i386: test_hpks (Schnorr, 20 trials) and test_hpke (El Gamal, 20 trials) added.
+- `Herradura cryptographic suite.ino` — Arduino: LCG PRNG added, HPKS Schnorr and HPKE El Gamal implemented.
+- `Herradura_tests.ino` — Arduino: test_hpks and test_hpke replaced with Schnorr and El Gamal correctness tests.
+
+#### Security proofs added (SecurityProofsCode/)
+
+- `hkex_gf_test.py` — standalone HKEX-GF test suite (GF arithmetic, DH correctness 5K, Eve resistance 5K, BSGS DLP illustration, benchmarks).
+- `hkex_cy_test.py` — FSCX-CY exhaustive analysis (non-linearity, HKEX-CY failure, period explosion, Eve resistance).
+
+#### Files removed
+
+- `Herradura_KEx.c` — basic HKEX-only C implementation (superseded by the full suite).
+- `Herradura_KEx.go` — basic HKEX-only Go implementation (superseded by the full suite).
+- `Herradura_KEx.py` — basic HKEX-only Python implementation (superseded by the full suite).
+- `Herradura_KEx_bignum.c` — arbitrary-precision HKEX using GNU MP (superseded by the full suite with GF arithmetic).
+- `HKEX_arm_linux.s` — basic HKEX-only ARM assembly example (superseded by `Herradura cryptographic suite.s`).
+- `Herradura_AEn.c` — HAEN asymmetric encryption (deprecated since v1.0; superseded by HSKE).
+- `HAEN.asm` — HAEN in NASM i386 assembly (deprecated).
+- `FSCX_HAEN1.ino` — Arduino HAEN proof of concept (16-bit; deprecated).
+- `FSCX_HAEN1_ulong.ino` — Arduino HAEN proof of concept (32-bit; deprecated).
+
+#### Repository reorganised
+
+- `CryptosuiteTests/` folder created. All `Herradura_tests.*` source files moved here.
+- `CryptosuiteTests/go.mod` added (`module herradurakex/tests`, no external dependencies).
+- The repository now contains only: cryptographic suite implementations, their tests, and security proof code/documentation.
+
+#### Documentation updated
+
+- `README.md` — rewritten for v1.4.0: HKEX-GF protocol description, Schnorr/El Gamal protocol summary, updated build instructions and performance table, repository structure diagram.
+- `CLAUDE.md` — updated build commands, repository structure, and protocol stack description.
+- `SecurityProofs.md` — Section 9 (non-linear proposals), Section 10 (v1.4.0 migration summary), Section 5.1/5.2 tables updated.
+- `PQCanalysis.md` — fully revised for v1.4.0 protocols (HKEX-GF, HPKS Schnorr, HPKE El Gamal, HSKE).
+
+#### Non-linearity and PQC analysis (SecurityProofsCode/, SecurityProofs.md §11)
+
+This work addresses the two remaining structural weaknesses of v1.4.0:
+FSCX GF(2)-linearity (linear key-recovery attacks) and the quantum vulnerability of
+HKEX-GF (Shor's algorithm solves GF(2^n)* DLP).
+
+**SecurityProofs.md §11** — NL-FSCX non-linearity and PQC extensions:
+- Theorem 11: formal proof that fscx_revolve is GF(2)-affine (linear key-recovery
+  attack surface) with closed-form `R·X ⊕ K·B`.
+- **NL-FSCX v1** — `nl_fscx(A,B) = fscx(A,B) ⊕ ROL((A+B) mod 2^n, n/4)`: integer
+  carry injection breaks GF(2) linearity; verified non-bijective (collisions at n=8
+  and n=32); no consistent period.
+- **NL-FSCX v2** — `nl_fscx_v2(A,B) = fscx(A,B) + ROL(B·⌊(B+1)/2⌋ mod 2^n, n/4)`:
+  B-only offset; bijective (0/256 non-bijective at n=8); exact closed-form inverse
+  `A = B ⊕ M⁻¹((Y − δ(B)) mod 2^n)`; verified correct 1000/1000.
+- **HSKE-A1** (counter mode, v1) and **HSKE-A2** (revolve mode, v2) constructions.
+- Theorem 12: m(x) = 1+x+x^{n-1} is invertible in Z_q[x]/(x^n+1); ‖m⁻¹‖_1 >> q
+  (dense inverse amplifies rounding noise; naive algebraic attack 0/200 for all p).
+- **HKEX-RNL** (B2): PQC key exchange via Ring-LWR with blinded FSCX polynomial
+  `m_blind = m + a_rand`; reduces to standard Ring-LWR hardness (NIST-adjacent);
+  NL-FSCX v1 used as KDF post-processor.
+- **C3 hybrid** recommendation: v1 for one-way roles (KDF, HPKS commitment, counter
+  HSKE); v2 for invertible roles (revolve HSKE, HPKE payload).
+
+**SecurityProofsCode/hkex_nl_verification.py** (new) — three-part verification script:
+- Q1: nl_fscx period analysis (n=8: 938/1024 no period; n=32: 500/500 no period);
+  HSKE counter-mode correctness 200/200.
+- Q2: negacyclic circulant matrix construction; invertibility for q ∈ {257…12289};
+  algebraic attack 0/200 for all p; noise amplification analysis.
+- Q3: v1 non-bijectivity (n=8: 256/256; n=32: collision A=0x4dbde3c0/A'=0x2a48fe58);
+  iterative inverse divergence 500/500; v2 bijectivity + inverse 1000/1000.
+
+**SecurityProofsCode/hkex_cfscx_preshared.py** (new) — preshared-value FSCX constructions
+PS-1 through PS-5 (integer expansion); security analysis of each scheme.
+
+**SecurityProofsCode/hkex_cfscx_twostep.py** (new) — two-step FSCX constructions with
+compression/expansion; R2-CB (weakest: no S needed), R2-EC (B-cancellation proven).
+
+**SecurityProofsCode/hkex_cfscx_intops.py** (new) — integer-operation schemes (padlock,
+asymmetric, hash-like); includes AK-2 zero-matrix finding (S drops out entirely:
+(I⊕R⊕R²⊕R³)=0) and PL-1 null-space finding (rank((R⊕I)·K)=2 → 25% commutativity).
+
+**SecurityProofsCode/hkex_cfscx_compress.py** and **hkex_cfscx_blong.py** (new) —
+cfscx_compress algebraic analysis and long-block construction variants.
+
+---
+
 ## [1.3.7] - 2026-04-01
 
 ### Added — NASM i386, ARM Thumb, and Arduino implementations
@@ -423,7 +652,7 @@ The v1.3.2 optimisations do not apply to these files:
 
 - `Herradura_KEx.c` – reference C implementation of HKEX (64-bit integers).
 - `Herradura_KEx_bignum.c` – arbitrary-precision HKEX using GNU MP (libgmp).
-- `Herradura_AEn.c` – HAEN asymmetric encryption (deprecated; use HSKE instead).
 - `Herradura_KEx.go` – Go HKEX sample using `math/big`.
-- `FSCX_HAEN1.ino` / `FSCX_HAEN1_ulong.ino` – Arduino proofs of concept (16/32-bit).
-- `HAEN.asm` – HAEN in Intel x86 32-bit NASM assembly.
+- ~~`Herradura_AEn.c`~~ – removed in v1.4.0 (HAEN deprecated; superseded by HSKE).
+- ~~`FSCX_HAEN1.ino`~~ / ~~`FSCX_HAEN1_ulong.ino`~~ – removed in v1.4.0.
+- ~~`HAEN.asm`~~ – removed in v1.4.0.
