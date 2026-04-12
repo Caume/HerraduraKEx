@@ -19,14 +19,24 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 - `CryptosuiteTests/Herradura_tests.go` — same flags via `flag` package;
   `timeExceeded()` helper with `time.Since()`.
 
-#### Documentation — KaTeX rendering fix (README.md, SecurityProofs.md)
+#### Documentation — KaTeX rendering fixes (README.md, SecurityProofs.md)
 
-- Fixed `'_' allowed only in math mode` errors on GitHub: moved `\_` out of
-  `\text{}` blocks (text mode) into math mode.  Pattern is now
-  `\text{FSCX}\_\text{REVOLVE}` / `\text{FSCX}\_\text{REVOLVE}\_\text{N}` /
-  `\text{fscx}\_\text{revolve}` throughout both files (42 occurrences fixed).
-- `README.md`: also fixed `\mathit{enc\_key}` → `\mathit{enc}\_\mathit{key}` and
-  `\mathit{dec\_key}` → `\mathit{dec}\_\mathit{key}`.
+Two separate KaTeX errors resolved (both caused by v1.5.0 content not applying
+the conventions established in earlier fix commits):
+
+- **`'_' allowed only in math mode`** — `\_` inside `\text{}` is rejected in
+  text mode.  Fix: place `\_` in math mode between separate `\text{}` groups.
+- **`Double subscripts: use braces to clarify`** — `\text{X}\_\text{Y}\_\text{Z}`
+  parses `\_` as the subscript operator twice on the same base.  Fix: use
+  `\textunderscore` (a text/math command that produces a literal `_` glyph) in
+  place of `\_`.
+
+Final correct pattern (58 occurrences across both files):
+`\text{FSCX}\textunderscore\text{REVOLVE}` /
+`\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}` /
+`\text{fscx}\textunderscore\text{revolve}`.
+`README.md`: also `\mathit{enc}\textunderscore\mathit{key}` and
+`\mathit{dec}\textunderscore\mathit{key}`.
 
 ---
 

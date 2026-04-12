@@ -96,7 +96,7 @@ $\blacksquare$
 
 **Definition:**
 
-$$\text{FSCX}\_\text{REVOLVE}(A, B, k) = f_B^k(A)$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}(A, B, k) = f_B^k(A)$$
 
 where $f_B(X) = \text{FSCX}(X, B) = M \cdot X \oplus M \cdot B$ is an affine map over $\mathbb{GF}(2)^n$.
 
@@ -141,7 +141,7 @@ $$= I + M + M^2 + \cdots + M^{n-1} = S_n = 0 \quad \blacksquare$$
 
 **Definition (v1.1):**
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}(A, B, N, k) :
+$$\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(A, B, N, k) :
 \begin{cases}
 X_0 = A \\
 X_{j+1} = \text{FSCX}(X_j, B) \oplus N = M \cdot X_j \oplus M \cdot B \oplus N
@@ -149,7 +149,7 @@ X_{j+1} = \text{FSCX}(X_j, B) \oplus N = M \cdot X_j \oplus M \cdot B \oplus N
 
 This is the affine map $g_{B,N}(X) = M \cdot X + (M \cdot B \oplus N)$ with translation $c = M \cdot B \oplus N$. The closed-form iteration formula is:
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}(A, B, N, k) = M^k \cdot A + M \cdot S_k \cdot B \oplus S_k \cdot N$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(A, B, N, k) = M^k \cdot A + M \cdot S_k \cdot B \oplus S_k \cdot N$$
 
 **Theorem 5 — Period still divides $n$:**
 
@@ -157,7 +157,7 @@ $$g^n_{B,N}(A) = M^n \cdot A + S_n \cdot (M \cdot B \oplus N) = A + 0 = A$$
 
 The nonce $N$ does not affect the period, and decryption is the complementary revolve.
 
-**Nonce propagation linearity:** If $N$ changes by $\delta N$, the change in $\text{FSCX}\_\text{REVOLVE}\_\text{N}(\cdot, B, N, k)$ at step $k$ is:
+**Nonce propagation linearity:** If $N$ changes by $\delta N$, the change in $\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(\cdot, B, N, k)$ at step $k$ is:
 
 $$\delta\text{Output} = S_k \cdot \delta N = (I + M + M^2 + \cdots + M^{k-1}) \cdot \delta N$$
 
@@ -172,15 +172,15 @@ For $k = n$ this is $S_n \cdot \delta N = 0$, so nonce changes are fully absorbe
 **Protocol:**
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad A, B \leftarrow \text{random};\quad C = \text{FSCX}\_\text{REVOLVE}(A, B, i) \\
-&\textbf{Bob:}\quad A_2, B_2 \leftarrow \text{random};\quad C_2 = \text{FSCX}\_\text{REVOLVE}(A_2, B_2, i)
+&\textbf{Alice:}\quad A, B \leftarrow \text{random};\quad C = \text{FSCX}\textunderscore\text{REVOLVE}(A, B, i) \\
+&\textbf{Bob:}\quad A_2, B_2 \leftarrow \text{random};\quad C_2 = \text{FSCX}\textunderscore\text{REVOLVE}(A_2, B_2, i)
 \end{aligned}$$
 
 $$\text{Alice} \xrightarrow{C} \text{Bob} \qquad \text{Bob} \xrightarrow{C_2} \text{Alice}$$
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad sk_A = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2, B, N, r) \oplus A \\
-&\textbf{Bob:}\quad sk_B = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C, B_2, N, r) \oplus A_2 \\
+&\textbf{Alice:}\quad sk_A = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C_2, B, N, r) \oplus A \\
+&\textbf{Bob:}\quad sk_B = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C, B_2, N, r) \oplus A_2 \\
 &\text{where}\quad N = C \oplus C_2
 \end{aligned}$$
 
@@ -213,8 +213,8 @@ This formula depends only on the public wire values $C$ and $C_2$. The private p
 
 **Protocol:**
 
-$$\text{Encrypt:}\quad E = \text{FSCX}\_\text{REVOLVE}\_\text{N}(P, K, K, i)$$
-$$\text{Decrypt:}\quad D = \text{FSCX}\_\text{REVOLVE}\_\text{N}(E, K, K, r)$$
+$$\text{Encrypt:}\quad E = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(P, K, K, i)$$
+$$\text{Decrypt:}\quad D = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(E, K, K, r)$$
 
 Applying the affine formula with $B = N = K$:
 
@@ -250,8 +250,8 @@ $$\begin{aligned}
 The original scheme used $S = sk_A \oplus P$ (a direct XOR mask), which trivially leaks $sk_A$ (see W3). The corrected scheme **HPKS₂** replaces the XOR with HSKE encryption of $P$ under $sk_A$:
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad S = \text{FSCX}\_\text{REVOLVE}\_\text{N}(P,\; sk_A,\; sk_A,\; i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
-&\textbf{Bob:}\quad V = \text{FSCX}\_\text{REVOLVE}\_\text{N}(S,\; sk_B,\; sk_B,\; r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
+&\textbf{Alice:}\quad S = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(P,\; sk_A,\; sk_A,\; i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
+&\textbf{Bob:}\quad V = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(S,\; sk_B,\; sk_B,\; r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
 &\qquad\text{Check: } V = P
 \end{aligned}$$
 
@@ -272,8 +272,8 @@ $$\begin{aligned}
 \end{aligned}$$
 
 $$\begin{aligned}
-&\textbf{Bob:}\quad E = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C, B_2, N, r) \oplus A_2 \oplus P \\
-&\textbf{Alice:}\quad D = \text{FSCX}\_\text{REVOLVE}\_\text{N}(C_2, B, N, r) \oplus A \oplus E
+&\textbf{Bob:}\quad E = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C, B_2, N, r) \oplus A_2 \oplus P \\
+&\textbf{Alice:}\quad D = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(C_2, B, N, r) \oplus A \oplus E
 \end{aligned}$$
 
 **Correctness:**
@@ -311,7 +311,7 @@ Since $sk_B = S_{r+1} \cdot (C \oplus C_2)$ is a linear function of public value
 
 ### 3.2 Single Nonce Injection Cannot Fix HKEX
 
-**The proposal:** Replace the public-key computation $C = \text{FSCX}\_\text{REVOLVE}(A, B, i)$ with the nonce-augmented variant $C = \text{FSCX}\_\text{REVOLVE}\_\text{N}(A, B, \Phi, i)$:
+**The proposal:** Replace the public-key computation $C = \text{FSCX}\textunderscore\text{REVOLVE}(A, B, i)$ with the nonce-augmented variant $C = \text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(A, B, \Phi, i)$:
 
 $$C = M^i \cdot A + S_i \cdot (M \cdot B \oplus \Phi)$$
 
@@ -352,7 +352,7 @@ $$sk_A \oplus sk_B = M^r \cdot S_i \cdot (B \oplus B_2) \neq 0 \quad \text{for i
 >
 > If $sk_A = sk_B$ for **all** independently generated key pairs $(A,B)$ and $(A_2,B_2)$, then $sk$ is a $\mathbb{GF}(2)$-affine function of $(C, C_2)$ alone.
 
-*Proof.* Applying the affine iteration formula for $\text{FSCX}\_\text{REVOLVE}\_\text{N}$ and substituting $A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B$:
+*Proof.* Applying the affine iteration formula for $\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}$ and substituting $A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B$:
 
 $$sk_A = M^r \cdot C_2 + S_r \cdot (M \cdot B \oplus n_A) \oplus A$$
 $$= M^r \cdot (C \oplus C_2) \oplus \underbrace{(S_r \cdot M + M^{r+1} \cdot S_i)}_{S_n = 0} \cdot B \oplus S_r \cdot n_A$$
@@ -618,9 +618,9 @@ $$M \cdot S_r + M^{r+1} \cdot S_i = S_n = 0$$
 
 Together, these imply that for any $A, B, A_2, B_2 \in \mathbb{GF}(2)^n$ and any nonce $N$:
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}\!\left(\text{FSCX}\_\text{REVOLVE}(A_2, B_2, i),\; B,\; N,\; r\right) \oplus A$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}\!\left(\text{FSCX}\textunderscore\text{REVOLVE}(A_2, B_2, i),\; B,\; N,\; r\right) \oplus A$$
 $$=$$
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}\!\left(\text{FSCX}\_\text{REVOLVE}(A, B, i),\; B_2,\; N,\; r\right) \oplus A_2$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}\!\left(\text{FSCX}\textunderscore\text{REVOLVE}(A, B, i),\; B_2,\; N,\; r\right) \oplus A_2$$
 
 This identity is the mathematical core from which all four protocols derive their correctness. All protocols are **correct**. However, the same identity that enables correctness also ensures that the shared secret $sk = S_{r+1} \cdot (C \oplus C_2)$ contains no private information — breaking the key exchange.
 
@@ -854,7 +854,7 @@ Version 1.4.0 replaces the broken HKEX key exchange with HKEX-GF across all impl
 
 Theorem 10 (proved in §4.5 / SecurityProofsCode) shows that any nonce $N$ injected during FSCX iteration satisfies:
 
-$$\text{FSCX}\_\text{REVOLVE}\_\text{N}(A, B, N, k) = M^k \cdot A \oplus M \cdot S_k \cdot B \oplus S_k \cdot N$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}(A, B, N, k) = M^k \cdot A \oplus M \cdot S_k \cdot B \oplus S_k \cdot N$$
 
 The nonce contribution $S_k \cdot N$ is the same on both sides of the key exchange equation, so it cancels identically — providing no protection against the classical break. With HKEX-GF, the nonce was derived as $N = C \oplus C_2$ (a public value), making its use circular and pointless. `fscx_revolve_n` is therefore removed rather than kept as dead code.
 
@@ -881,7 +881,7 @@ All results from `Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c`
 | Key sensitivity (flip 1 bit of $a$ → HD in $sk$) | mean $\approx n/2$ (avalanche) |
 | FSCX orbit period (unchanged) | $n$ or $n/2$, 0 exceptions |
 | FSCX bit-frequency bias | 49.5–50.5% per bit |
-| HSKE round-trip $\text{fscx}\_\text{revolve}^2(P, K, i, r) = P$ | 5 000/5 000 |
+| HSKE round-trip $\text{fscx}\textunderscore\text{revolve}^2(P, K, i, r) = P$ | 5 000/5 000 |
 
 ### 10.5 Security Status After Migration
 
@@ -917,14 +917,14 @@ All claims in this section are supported by `SecurityProofsCode/hkex_nl_verifica
 
 For fixed $B$:
 
-$$\text{FSCX}\_\text{REVOLVE}(X, B, r) = R \cdot X \oplus K \cdot B$$
+$$\text{FSCX}\textunderscore\text{REVOLVE}(X, B, r) = R \cdot X \oplus K \cdot B$$
 
 where $R = M^r$ and $K = M + M^2 + \cdots + M^r \in \mathbb{GF}(2)^{n \times n}$.
 
 *Proof:* By induction.  Base case: $\text{FSCX}(X, B) = M(X \oplus B) = M \cdot X \oplus M \cdot B$.
 For step $k+1$: $\text{FSCX}(M^k X \oplus S_k B, B) = M(M^k X \oplus S_k B \oplus B) = M^{k+1} X \oplus M(S_k + I) B = R \cdot X \oplus K \cdot B$. $\blacksquare$
 
-**Consequence.** Eve holding $(X, \text{FSCX}\_\text{REVOLVE}(X, B, r))$ for a single plaintext–ciphertext pair
+**Consequence.** Eve holding $(X, \text{FSCX}\textunderscore\text{REVOLVE}(X, B, r))$ for a single plaintext–ciphertext pair
 can solve $K \cdot B = C \oplus R \cdot X$ for $B$ by Gaussian elimination over $\mathbb{GF}(2)$ in $O(n^3)$ time,
 provided $K$ has full rank over $\mathbb{GF}(2)$.  Even when $K$ is rank-deficient, the null-space dimension
 is at most $n - \text{rank}(K)$, bounding the residual key entropy.
@@ -959,7 +959,7 @@ relative to the FSCX XOR structure ($M^{n/2} = I$), maximising cross-mixing betw
 the carry channel and the XOR channel per round.
 
 **Consequence for HSKE.** The non-existence of a consistent period means the standard
-revolve-based decryption identity $\text{FSCX}\_\text{REVOLVE}(E, K, n/2 - r) = P$ cannot be ported to
+revolve-based decryption identity $\text{FSCX}\textunderscore\text{REVOLVE}(E, K, n/2 - r) = P$ cannot be ported to
 NL-FSCX v1.  Counter mode (§11.3.1) is the only applicable HSKE construction.
 
 #### 11.2.2 NL-FSCX v2 (B-only offset, explicit inverse)
@@ -1229,11 +1229,11 @@ determined.  **HSKE provides no security under known-plaintext attack at any $n$
 #### 12.2.2 HPKS — Classical Forgery Resistance
 
 Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
-$e^* = \text{fscx}\_\text{revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+$e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
 
 - If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
 - If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
-  constraint $e^* = \text{fscx}\_\text{revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
+  constraint $e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
   together.  Since fscx\_revolve is an affine bijection in its first argument (see §12.3),
   solving both simultaneously reduces to DLP hardness.
 
@@ -1242,7 +1242,7 @@ quasi-polynomial attack in §12.1 and the challenge-function caveat in §12.3.
 
 #### 12.2.3 HPKE — Classical Attack
 
-Ciphertext is $(R, E) = (g^r,\, \text{fscx}\_\text{revolve}(P,\, g^{ar},\, i))$.  Recovering the
+Ciphertext is $(R, E) = (g^r,\, \text{fscx}\textunderscore\text{revolve}(P,\, g^{ar},\, i))$.  Recovering the
 plaintext requires $g^{ar}$, which is the CDH problem given $(g^a, g^r)$.
 Since CDH $\leq$ DLP, all classical DLP attacks in §12.1 apply directly.
 
@@ -1255,7 +1255,7 @@ DLP on $\mathit{ek} = C^r$ or $\mathit{ek} = R^a$ may then recover $a$ or $r$.
 ### 12.3 HPKS Challenge Function — Algebraic Properties
 
 The challenge in HPKS uses fscx\_revolve in place of a hash function:
-$e = \text{fscx}\_\text{revolve}(R_\text{bits}, P, i)$.  Two algebraic properties affect
+$e = \text{fscx}\textunderscore\text{revolve}(R_\text{bits}, P, i)$.  Two algebraic properties affect
 provable security.
 
 **Property 1 — Affine bijection in $R$.**
@@ -1270,7 +1270,7 @@ so no two distinct $R$ values produce the same challenge $e$.
 
 By the difference identity (Theorem 11 linearity):
 
-$$e(R_2) \oplus e(R_1) = \text{fscx}\_\text{revolve}(R_1 \oplus R_2,\; 0,\; i) = M^i \cdot (R_1 \oplus R_2)$$
+$$e(R_2) \oplus e(R_1) = \text{fscx}\textunderscore\text{revolve}(R_1 \oplus R_2,\; 0,\; i) = M^i \cdot (R_1 \oplus R_2)$$
 
 Given any one valid challenge $e(R_1)$, the challenge for any $R_2 = R_1 \oplus \delta$ is
 $e(R_2) = e(R_1) \oplus M^i \cdot \delta$ — **publicly computable without oracle access**.
