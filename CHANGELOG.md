@@ -4,6 +4,32 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.1] - 2026-04-11
+
+### Fixed / Added
+
+#### Test execution limits (C, Python, Go)
+
+- `CryptosuiteTests/Herradura_tests.c` — `--rounds`/`-r` and `--time`/`-t` CLI flags;
+  `HTEST_ROUNDS` / `HTEST_TIME` environment variable fallbacks; wall-clock timeout
+  via `CLOCK_MONOTONIC`; all 16 security tests scale iteration counts and pass
+  thresholds to actual runs completed.
+- `CryptosuiteTests/Herradura_tests.py` — same flags via `argparse`; `_trange()`
+  generator checks `time.monotonic()` every 64 iterations.
+- `CryptosuiteTests/Herradura_tests.go` — same flags via `flag` package;
+  `timeExceeded()` helper with `time.Since()`.
+
+#### Documentation — KaTeX rendering fix (README.md, SecurityProofs.md)
+
+- Fixed `'_' allowed only in math mode` errors on GitHub: moved `\_` out of
+  `\text{}` blocks (text mode) into math mode.  Pattern is now
+  `\text{FSCX}\_\text{REVOLVE}` / `\text{FSCX}\_\text{REVOLVE}\_\text{N}` /
+  `\text{fscx}\_\text{revolve}` throughout both files (42 occurrences fixed).
+- `README.md`: also fixed `\mathit{enc\_key}` → `\mathit{enc}\_\mathit{key}` and
+  `\mathit{dec\_key}` → `\mathit{dec}\_\mathit{key}`.
+
+---
+
 ## [1.5.0] - 2026-04-11
 
 ### Added — NL-FSCX v2, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL across all implementations
