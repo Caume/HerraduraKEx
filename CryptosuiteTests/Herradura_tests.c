@@ -1,4 +1,8 @@
-/* Build: gcc -O2 -o Herradura_tests Herradura_tests.c */
+/* Build: gcc -O2 -o Herradura_tests Herradura_tests.c
+   Usage: ./Herradura_tests [-r ROUNDS] [-t SECS]
+     -r, --rounds N   max iterations per security test (default: test-specific)
+     -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
+   Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32-bit GF)
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
@@ -47,13 +51,18 @@
 #  error "GF polynomial constants are only defined for KEYBITS=256 in this build"
 #endif
 
-#define BENCH_SEC 1.0
+/* BENCH_SEC removed: use g_bench_sec (default 1.0, overridden by -t / HTEST_TIME) */
 
 typedef struct {
     uint8_t b[KEYBYTES];
 } BitArray;
 
 static FILE *urnd_fp;
+
+/* --- Runtime limits (set via CLI -r/-t or env HTEST_ROUNDS/HTEST_TIME) --- */
+static int    g_rounds     = 0;    /* 0 = use per-test default            */
+static double g_bench_sec  = 1.0;  /* benchmark duration (seconds)        */
+static double g_time_limit = 0.0;  /* per-test wall-clock cap; 0 = none   */
 
 /* ------------------------------------------------------------------ */
 /* BitArray primitives                                                 */
@@ -470,6 +479,18 @@ static void print_rate(long long ops, double secs)
                rate, ops, secs);
 }
 
+/* Effective iteration count: honours g_rounds when set, else per-test default. */
+#define TEST_ROUNDS(def)  ((g_rounds > 0) ? g_rounds : (def))
+
+/* Returns 1 when the per-test time cap is set and has been reached. */
+static int time_exceeded(struct timespec *t0)
+{
+    struct timespec t1;
+    if (g_time_limit <= 0.0) return 0;
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    return elapsed_sec(t0, &t1) >= g_time_limit;
+}
+
 /* ------------------------------------------------------------------ */
 /* Security tests [1]-[6]: 256-bit HKEX-GF and FSCX primitives       */
 /* ------------------------------------------------------------------ */
@@ -478,9 +499,12 @@ static void print_rate(long long ops, double secs)
 static void test_hkex_gf_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     BitArray a_priv, b_priv, C, C2, skA, skB;
     printf("[1] HKEX-GF correctness: g^{ab} == g^{ba}  (field commutativity)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         ba_rand(&a_priv);
         ba_rand(&b_priv);
         a_priv.b[KEYBYTES - 1] |= 1;   /* odd exponents */
@@ -491,9 +515,10 @@ static void test_hkex_gf_correctness(void)
         gf_pow_ba(&skB, &C,  &b_priv);
         if (ba_equal(&skA, &skB))
             ok++;
+        if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=%d  %d / 1000  [%s]\n",
-           KEYBITS, ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=%d  %d / %d  [%s]\n",
+           KEYBITS, ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -503,9 +528,12 @@ static void test_avalanche(void)
     int trial, bit;
     double total = 0.0;
     int gmin = KEYBITS + 1, gmax = -1;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     BitArray a, b, base_out, ap, flip_out, diff;
     printf("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)\n");
-    for (trial = 0; trial < 1000; trial++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (trial = 0; trial < N; trial++) {
         ba_rand(&a);
         ba_rand(&b);
         ba_fscx(&base_out, &a, &b);
@@ -519,9 +547,10 @@ static void test_avalanche(void)
             if (hd < gmin) gmin = hd;
             if (hd > gmax) gmax = hd;
         }
+        if ((trial & 63) == 63 && time_exceeded(&t0)) { N = trial + 1; break; }
     }
     {
-        double mean = total / (1000.0 * (double)KEYBITS);
+        double mean = total / ((double)N * (double)KEYBITS);
         printf("    bits=%d  mean=%.2f (expected 3/%d)  min=%d  max=%d  [%s]\n",
                KEYBITS, mean, KEYBITS, gmin, gmax,
                (mean >= 2.9 && mean <= 3.1) ? "PASS" : "FAIL");
@@ -534,9 +563,12 @@ static void test_orbit_period(void)
 {
     int trial, cntP = 0, cntHP = 0, other = 0;
     int cap = 2 * KEYBITS;
+    int N = TEST_ROUNDS(100);
+    struct timespec t0;
     BitArray a, b, cur, tmp;
     printf("[3] Orbit period: FSCX_REVOLVE(A,B,n) cycles back to A\n");
-    for (trial = 0; trial < 100; trial++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (trial = 0; trial < N; trial++) {
         int period = 1;
         ba_rand(&a);
         ba_rand(&b);
@@ -549,6 +581,7 @@ static void test_orbit_period(void)
         if      (period == KEYBITS)     cntP++;
         else if (period == KEYBITS / 2) cntHP++;
         else                            other++;
+        if ((trial & 15) == 15 && time_exceeded(&t0)) { N = trial + 1; break; }
     }
     printf("    bits=%d  period=%d: %3d  period=%d: %3d  other: %d  [%s]\n",
            KEYBITS, KEYBITS, cntP, KEYBITS / 2, cntHP, other,
@@ -562,10 +595,12 @@ static void test_bit_frequency(void)
     int bit, trial;
     long long counts[KEYBITS];
     double minpct, maxpct, meanpct;
-    int N = 100000;
+    int N = TEST_ROUNDS(100000);
+    struct timespec t0;
     BitArray a, b, out;
     printf("[4] Bit-frequency bias: %d FSCX outputs\n", N);
     memset(counts, 0, sizeof(counts));
+    clock_gettime(CLOCK_MONOTONIC, &t0);
     for (trial = 0; trial < N; trial++) {
         ba_rand(&a);
         ba_rand(&b);
@@ -573,6 +608,7 @@ static void test_bit_frequency(void)
         for (bit = 0; bit < KEYBITS; bit++)
             if (ba_get_bit(&out, bit))
                 counts[bit]++;
+        if ((trial & 255) == 255 && time_exceeded(&t0)) { N = trial + 1; break; }
     }
     minpct = 101.0; maxpct = -1.0; meanpct = 0.0;
     for (bit = 0; bit < KEYBITS; bit++) {
@@ -593,10 +629,13 @@ static void test_hkex_gf_key_sensitivity(void)
 {
     int i;
     double total = 0.0;
+    int N = TEST_ROUNDS(500);
+    struct timespec t0;
     BitArray a_priv, b_priv, C2, sk1, sk2, a_flip, diff;
     printf("[5] HKEX-GF key sensitivity: flip 1 bit of a -> mean Hamming(sk1, sk2) ~= %d\n",
            KEYBITS / 2);
-    for (i = 0; i < 500; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         ba_rand(&a_priv);
         ba_rand(&b_priv);
         a_priv.b[KEYBYTES - 1] |= 1;
@@ -607,9 +646,10 @@ static void test_hkex_gf_key_sensitivity(void)
         gf_pow_ba(&sk2, &C2, &a_flip);
         ba_xor(&diff, &sk1, &sk2);
         total += ba_popcount(&diff);
+        if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
     }
     {
-        double mean = total / 500.0;
+        double mean = total / (double)N;
         double lo = KEYBITS * 0.35, hi = KEYBITS * 0.65;
         printf("    bits=%d  mean HD=%.1f (expected ~%d)  [%s]\n",
                KEYBITS, mean, KEYBITS / 2,
@@ -622,12 +662,15 @@ static void test_hkex_gf_key_sensitivity(void)
 static void test_eve_attack_resistance(void)
 {
     int i, hits = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     BitArray a_priv, b_priv, C, C2, sk_real, eve_sk;
     BitArray delta, cur, zero, acc, next;
     int j;
     printf("[6] Eve classical attack: S_{r+1}(C XOR C2) != sk  (HKEX-GF resistance)\n");
     memset(zero.b, 0, KEYBYTES);
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         ba_rand(&a_priv);
         ba_rand(&b_priv);
         a_priv.b[KEYBYTES - 1] |= 1;
@@ -647,9 +690,10 @@ static void test_eve_attack_resistance(void)
         eve_sk = acc;
         if (ba_equal(&eve_sk, &sk_real))
             hits++;
+        if ((i & 7) == 7 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=%d  Eve succeeded %d / 1000  [%s]\n",
-           KEYBITS, hits, hits == 0 ? "PASS - attack fails" : "FAIL");
+    printf("    bits=%d  Eve succeeded %d / %d  [%s]\n",
+           KEYBITS, hits, N, hits == 0 ? "PASS - attack fails" : "FAIL");
     putchar('\n');
 }
 
@@ -661,10 +705,13 @@ static void test_eve_attack_resistance(void)
 static void test_hpks_schnorr_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     uint32_t a, plain, k, C32, R32, e32, s32;
     uint64_t ae, ord = 0xFFFFFFFFULL;
     printf("[7] HPKS Schnorr correctness: g^s * C^e == R  (bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         a     = rand32() | 1;
         plain = rand32();
         k     = rand32();
@@ -676,8 +723,9 @@ static void test_hpks_schnorr_correctness(void)
         if (gf_mul_32(gf_pow_32((uint32_t)GF_GEN32, s32),
                       gf_pow_32(C32, e32)) == R32)
             ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -685,9 +733,12 @@ static void test_hpks_schnorr_correctness(void)
 static void test_hpks_schnorr_eve(void)
 {
     int i, hits = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     uint32_t a, plain, C32, r_eve, s_eve, e_eve;
     printf("[8] HPKS Schnorr Eve resistance: random forgery fails  (bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         a      = rand32() | 1;
         plain  = rand32();
         r_eve  = rand32();
@@ -697,9 +748,10 @@ static void test_hpks_schnorr_eve(void)
         if (gf_mul_32(gf_pow_32((uint32_t)GF_GEN32, s_eve),
                       gf_pow_32(C32, e_eve)) == r_eve)
             hits++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000 Eve wins  [%s]\n",
-           hits, hits == 0 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d Eve wins  [%s]\n",
+           hits, N, hits == 0 ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -707,9 +759,12 @@ static void test_hpks_schnorr_eve(void)
 static void test_hpke_el_gamal(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     uint32_t a, plain, r, C32, R32, enc_key, E32, dec_key, D32;
     printf("[9] HPKE El Gamal encrypt+decrypt: D == plaintext  (bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         a        = rand32() | 1;
         plain    = rand32();
         r        = rand32() | 1;
@@ -720,8 +775,9 @@ static void test_hpke_el_gamal(void)
         dec_key  = gf_pow_32(R32, a);    /* R^a = g^{ra}  (Alice's dec key) */
         D32      = fscx_revolve32(E32, dec_key, 24);
         if (D32 == plain) ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -737,17 +793,23 @@ static void test_hpke_el_gamal(void)
 static void test_nl_fscx_v1_nonlinearity(void)
 {
     int i, violations = 0, no_period = 0;
+    int N1 = TEST_ROUNDS(1000);
+    int N2 = TEST_ROUNDS(200);
+    struct timespec t0;
     printf("[10] NL-FSCX v1 non-linearity and aperiodicity  (bits=32)\n");
     /* Linearity check: f(A,B) ^ f(0,B) == fscx(A,0) is the linear prediction;
        violations count how often NL-FSCX v1 differs from that prediction. */
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N1; i++) {
         uint32_t A = rand32(), B = rand32();
         uint32_t lin_pred = fscx32(A, 0) ^ nl_fscx_v1_32(0, B);
         if (nl_fscx_v1_32(A, B) != lin_pred)
             violations++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
     }
     /* Aperiodicity: orbit of 4*n=128 steps from a random start should not cycle */
-    for (i = 0; i < 200; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N2; i++) {
         uint32_t A = rand32(), B = rand32();
         uint32_t cur = nl_fscx_v1_32(A, B);
         int found = 0, step;
@@ -756,10 +818,11 @@ static void test_nl_fscx_v1_nonlinearity(void)
             if (cur == A) { found = 1; break; }
         }
         if (!found) no_period++;
+        if ((i & 31) == 31 && time_exceeded(&t0)) { N2 = i + 1; break; }
     }
-    printf("    bits=32  linearity violations=%d/1000  no-period=%d/200  [%s]\n",
-           violations, no_period,
-           (violations == 1000 && no_period >= 190) ? "PASS" : "FAIL");
+    printf("    bits=32  linearity violations=%d/%d  no-period=%d/%d  [%s]\n",
+           violations, N1, no_period, N2,
+           (violations == N1 && no_period >= N2 * 95 / 100) ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -767,29 +830,39 @@ static void test_nl_fscx_v1_nonlinearity(void)
 static void test_nl_fscx_v2_bijective_inverse(void)
 {
     int i, non_bij = 0, inv_ok = 0, nl_ok = 0;
+    int N1 = TEST_ROUNDS(500);
+    int N2 = TEST_ROUNDS(1000);
+    int N3 = TEST_ROUNDS(500);
+    struct timespec t0;
     printf("[11] NL-FSCX v2 bijectivity and exact inverse  (bits=32)\n");
-    /* Collision test: for 500 random B, draw pairs (A1,A2) and check no collision */
-    for (i = 0; i < 500; i++) {
+    /* Collision test: for N1 random B, draw pairs (A1,A2) and check no collision */
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N1; i++) {
         uint32_t B = rand32();
         uint32_t A1 = rand32(), A2 = rand32();
         if (A1 != A2 && nl_fscx_v2_32(A1, B) == nl_fscx_v2_32(A2, B))
             non_bij++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
     }
     /* Inverse correctness: nl_fscx_v2_inv(nl_fscx_v2(A,B), B) == A */
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N2; i++) {
         uint32_t A = rand32(), B = rand32();
         if (nl_fscx_v2_inv_32(nl_fscx_v2_32(A, B), B) == A)
             inv_ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N2 = i + 1; break; }
     }
     /* Non-linearity: f(A,B) != fscx(A,0) ^ f(0,B) for most inputs */
-    for (i = 0; i < 500; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N3; i++) {
         uint32_t A = rand32(), B = rand32();
         if (nl_fscx_v2_32(A, B) != (fscx32(A, 0) ^ nl_fscx_v2_32(0, B)))
             nl_ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N3 = i + 1; break; }
     }
-    printf("    bits=32  collisions=%d/500  inv=%d/1000  nonlinear=%d/500  [%s]\n",
-           non_bij, inv_ok, nl_ok,
-           (non_bij == 0 && inv_ok == 1000 && nl_ok >= 490) ? "PASS" : "FAIL");
+    printf("    bits=32  collisions=%d/%d  inv=%d/%d  nonlinear=%d/%d  [%s]\n",
+           non_bij, N1, inv_ok, N2, nl_ok, N3,
+           (non_bij == 0 && inv_ok == N2 && nl_ok >= N3 * 98 / 100) ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -797,8 +870,11 @@ static void test_nl_fscx_v2_bijective_inverse(void)
 static void test_hske_nl_a1_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  (bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         uint32_t K   = rand32();
         uint32_t P   = rand32();
         uint32_t ctr = (uint32_t)i & 0xFFFF;
@@ -806,9 +882,10 @@ static void test_hske_nl_a1_correctness(void)
         uint32_t E   = P ^ ks;
         uint32_t D   = E ^ ks;
         if (D == P) ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000 correct  [%s]\n",
-           ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d correct  [%s]\n",
+           ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -816,16 +893,20 @@ static void test_hske_nl_a1_correctness(void)
 static void test_hske_nl_a2_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  (bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         uint32_t K = rand32();
         uint32_t P = rand32();
         uint32_t E = nl_fscx_revolve_v2_32(P, K, NL_R32);
         uint32_t D = nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
         if (D == P) ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000 correct  [%s]\n",
-           ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d correct  [%s]\n",
+           ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -833,10 +914,13 @@ static void test_hske_nl_a2_correctness(void)
 static void test_hkex_rnl_correctness(void)
 {
     int i, ok_raw = 0;
+    int N = TEST_ROUNDS(200);
+    struct timespec t0;
     rnl32_poly_t m_base, a_rand, m_blind;
     printf("[14] HKEX-RNL key agreement: K_A == K_B  (n=%d, Ring-LWR)\n", RNL_N32);
     rnl32_m_poly(m_base);
-    for (i = 0; i < 200; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         int32_t s_A[RNL_N32], c_A[RNL_N32];
         int32_t s_B[RNL_N32], c_B[RNL_N32];
         uint32_t K_A, K_B;
@@ -847,9 +931,10 @@ static void test_hkex_rnl_correctness(void)
         K_A = rnl32_agree(s_A, c_B);
         K_B = rnl32_agree(s_B, c_A);
         if (K_A == K_B) ok_raw++;
+        if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    n=%d  raw agree=%d/200  [%s]\n",
-           RNL_N32, ok_raw, ok_raw >= 180 ? "PASS" : "FAIL");
+    printf("    n=%d  raw agree=%d/%d  [%s]\n",
+           RNL_N32, ok_raw, N, ok_raw >= N * 9 / 10 ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -857,11 +942,14 @@ static void test_hkex_rnl_correctness(void)
 static void test_hpks_nl_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     uint32_t a, plain, k, C32, R32;
     uint32_t e32, s32;
     uint64_t ae, ord = 0xFFFFFFFFULL;
     printf("[15] HPKS-NL correctness: g^s · C^e == R  (NL-FSCX v1 challenge, bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         a     = rand32() | 1;
         plain = rand32();
         k     = rand32();
@@ -873,8 +961,9 @@ static void test_hpks_nl_correctness(void)
         if (gf_mul_32(gf_pow_32((uint32_t)GF_GEN32, s32),
                       gf_pow_32(C32, e32)) == R32)
             ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -882,9 +971,12 @@ static void test_hpks_nl_correctness(void)
 static void test_hpke_nl_correctness(void)
 {
     int i, ok = 0;
+    int N = TEST_ROUNDS(1000);
+    struct timespec t0;
     uint32_t a, plain, r, C32, R32, enc_key, E32, dec_key, D32;
     printf("[16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt, bits=32)\n");
-    for (i = 0; i < 1000; i++) {
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
         a        = rand32() | 1;
         plain    = rand32();
         r        = rand32() | 1;
@@ -895,8 +987,9 @@ static void test_hpke_nl_correctness(void)
         dec_key  = gf_pow_32(R32, a);
         D32      = nl_fscx_revolve_v2_inv_32(E32, dec_key, NL_I32);
         if (D32 == plain) ok++;
+        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    bits=32  %d / 1000  [%s]\n", ok, ok == 1000 ? "PASS" : "FAIL");
+    printf("    bits=32  %d / %d  [%s]\n", ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -920,7 +1013,7 @@ static void bench_fscx_throughput(void)
         for (i = 0; i < 100; i++) { ba_fscx(&tmp, &a, &b); a = tmp; }
         ops += 100;
         clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
     print_rate(ops, secs);
     putchar('\n');
 }
@@ -942,7 +1035,7 @@ static void bench_gf_pow32_throughput(void)
         for (i = 0; i < 1000; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
         ops += 1000;
         clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
     print_rate(ops, secs);
     putchar('\n');
 }
@@ -975,7 +1068,7 @@ static void bench_hkex_gf32_handshake(void)
         }
         ops += 100;
         clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
     print_rate(ops, secs);
     putchar('\n');
 }
@@ -1003,7 +1096,7 @@ static void bench_hske_roundtrip(void)
         }
         ops += 20;
         clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
     print_rate(ops, secs);
     putchar('\n');
 }
@@ -1039,7 +1132,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
         }
         ops += 100;
         clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < BENCH_SEC);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
     print_rate(ops, secs);
     putchar('\n');
 }
@@ -1048,15 +1141,53 @@ static void bench_hpke_el_gamal_roundtrip(void)
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
-int main(void)
+int main(int argc, char *argv[])
 {
+    int i;
+    const char *env_r, *env_t;
+
+    /* --- env var defaults --- */
+    if ((env_r = getenv("HTEST_ROUNDS")) && atoi(env_r) > 0)
+        g_rounds = atoi(env_r);
+    if ((env_t = getenv("HTEST_TIME")) && atof(env_t) > 0.0) {
+        g_bench_sec  = atof(env_t);
+        g_time_limit = atof(env_t);
+    }
+
+    /* --- CLI args override env --- */
+    for (i = 1; i < argc; i++) {
+        if ((!strcmp(argv[i], "-r") || !strcmp(argv[i], "--rounds")) && i + 1 < argc) {
+            g_rounds = atoi(argv[++i]);
+        } else if ((!strcmp(argv[i], "-t") || !strcmp(argv[i], "--time")) && i + 1 < argc) {
+            double v = atof(argv[++i]);
+            g_bench_sec  = v;
+            g_time_limit = v;
+        } else {
+            fprintf(stderr,
+                "Usage: %s [-r ROUNDS] [-t SECS]\n"
+                "  -r, --rounds N   max iterations per security test\n"
+                "  -t, --time   T   benchmark duration and per-test time cap (seconds)\n"
+                "  Env: HTEST_ROUNDS=N  HTEST_TIME=T\n", argv[0]);
+            return 1;
+        }
+    }
+
     urnd_fp = fopen("/dev/urandom", "rb");
     if (!urnd_fp) {
         fputs("ERROR: cannot open /dev/urandom\n", stderr);
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.0 \xe2\x80\x94 Security & Performance Tests (C) ===\n\n");
+    printf("=== Herradura KEx v1.5.1 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    if (g_rounds > 0 || g_time_limit > 0.0) {
+        if (g_rounds > 0 && g_time_limit > 0.0)
+            printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
+        else if (g_rounds > 0)
+            printf("    Config: rounds=%d\n", g_rounds);
+        else
+            printf("    Config: time_limit=%.2fs\n", g_time_limit);
+    }
+    putchar('\n');
 
     puts("--- Security Assumption Tests ---\n");
     test_hkex_gf_correctness();

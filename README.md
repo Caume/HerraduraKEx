@@ -20,9 +20,9 @@ $$\text{FSCX}(A, B) = M \cdot (A \oplus B)$$
 
 **FSCX_REVOLVE(A, B, n)** iterates FSCX $n$ times with $B$ held constant:
 
-$$\text{FSCX\_REVOLVE}(A, B, n) = \text{FSCX}^{\circ n}(A, B)$$
+$$\text{FSCX}\_\text{REVOLVE}(A, B, n) = \text{FSCX}^{\circ n}(A, B)$$
 
-For bitstrings of size $P = 2^k$, the orbit period is always $P$ or $P/2$, so $\text{FSCX\_REVOLVE}(A, B, P) = A$ for all $A$, $B$.
+For bitstrings of size $P = 2^k$, the orbit period is always $P$ or $P/2$, so $\text{FSCX}\_\text{REVOLVE}(A, B, P) = A$ for all $A$, $B$.
 
 ---
 
@@ -51,9 +51,9 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 **Classical (v1.4.0):**
 
 1. **HKEX-GF** — key exchange (DH over $\mathbb{GF}(2^n)^*$, as above)
-2. **HSKE** — symmetric encryption: $E = \text{FSCX\_REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX\_REVOLVE}(E, \mathit{key}, r)$
-3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX\_REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
-4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\mathit{enc\_key} = C^r$; $E = \text{FSCX\_REVOLVE}(P, \mathit{enc\_key}, i)$; Alice decrypts with $\mathit{dec\_key} = R^a$
+2. **HSKE** — symmetric encryption: $E = \text{FSCX}\_\text{REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX}\_\text{REVOLVE}(E, \mathit{key}, r)$
+3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX}\_\text{REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
+4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\mathit{enc}\_\mathit{key} = C^r$; $E = \text{FSCX}\_\text{REVOLVE}(P, \mathit{enc}\_\mathit{key}, i)$; Alice decrypts with $\mathit{dec}\_\mathit{key} = R^a$
 
 **Post-quantum / NL-hardened (v1.5.0):**
 
@@ -61,7 +61,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 6. **HSKE-NL-A2** — revolve-mode with NL-FSCX v2: $E = \text{NL-FSCX-revolve-v2}(P, K, r)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, K, r)$
 7. **HKEX-RNL** — Ring-LWR key exchange (conjectured quantum-resistant): shared $m_\text{blind}$ in $\mathbb{Z}_q[x]/(x^n+1)$; parties derive $C = \text{round}_p(m_\text{blind} \cdot s)$; agreement $K = \text{round}_{pp}(s \cdot \text{lift}(C_\text{other}))$
 8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
-9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \mathit{enc\_key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \mathit{dec\_key}, i)$
+9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \mathit{enc}\_\mathit{key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \mathit{dec}\_\mathit{key}, i)$
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino.
 
