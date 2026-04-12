@@ -38,6 +38,12 @@ Final correct pattern (58 occurrences across both files):
 `README.md`: also `\mathit{enc}\textunderscore\mathit{key}` and
 `\mathit{dec}\textunderscore\mathit{key}`.
 
+- **`Missing close brace`** (`SecurityProofs.md` line 702) — `\xleftarrow{\$}`
+  inside `$...$` inline math: GitHub's markdown parser treats `\$` as closing
+  the math span, leaving `\xleftarrow{` with no matching `}`.  Fix: replace
+  `\$` with `\textdollar` (KaTeX's dollar-sign command, contains no literal
+  `$` character).
+
 ---
 
 ## [1.5.0] - 2026-04-11

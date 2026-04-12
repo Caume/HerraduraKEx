@@ -699,7 +699,7 @@ Pre-agreed public parameters: field size $n$, irreducible polynomial $p(x)$, gen
 
 | Step | Alice | Bob |
 |------|-------|-----|
-| Private | $a \xleftarrow{\$} \{1,\ldots,2^n{-}1\}$ | $b \xleftarrow{\$} \{1,\ldots,2^n{-}1\}$ |
+| Private | $a \xleftarrow{\textdollar} \{1,\ldots,2^n{-}1\}$ | $b \xleftarrow{\textdollar} \{1,\ldots,2^n{-}1\}$ |
 | Public | $C = g^a \in \mathbb{GF}(2^n)^*$ | $C_2 = g^b \in \mathbb{GF}(2^n)^*$ |
 | Shared | $sk = C_2^{\,a} = g^{ab}$ | $sk = C^{\,b} = g^{ab}$ |
 
