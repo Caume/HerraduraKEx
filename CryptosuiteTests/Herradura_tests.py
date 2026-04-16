@@ -618,7 +618,12 @@ def test_hkex_rnl_correctness():
     # at the chosen parameters) and equal final sk after NL-FSCX KDF.
     # Uses RNL_SIZES (smaller than KEYBITS) for performance.
     # Production size is n=256; error probability is negligible at n>=64, b=1.
-    print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B  [PQC-EXT]")
+    #
+    # Protocol: one party generates a_rand and transmits it in the clear; both
+    # derive the shared m_blind = m_base + a_rand and compute individual public keys
+    # C = round_p(m_blind · s).  Agreement holds by ring commutativity:
+    # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs.md.
+    print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; production size is n=256)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -626,16 +631,15 @@ def test_hkex_rnl_correctness():
         for _ in _trange(_iters(200)):
             n_run += 1
             a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
-            m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+            m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # shared public polynomial
             s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
             s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
             K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
-            if K_A == K_B:
-                ok_raw += 1
-                sk_A = nl_fscx_revolve_v1(K_A, K_A, n_rnl // 4)
-                sk_B = nl_fscx_revolve_v1(K_B, K_B, n_rnl // 4)
-                if sk_A == sk_B: ok_sk += 1
+            if K_A == K_B: ok_raw += 1
+            sk_A = nl_fscx_revolve_v1(K_A, K_A, n_rnl // 4)
+            sk_B = nl_fscx_revolve_v1(K_B, K_B, n_rnl // 4)
+            if sk_A == sk_B: ok_sk += 1
         status = "PASS" if ok_raw >= n_run * 90 // 100 else "FAIL"
         print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{n_run}  sk agree={ok_sk}/{n_run}  [{status}]")
     print()
@@ -825,8 +829,8 @@ def bench_hkex_rnl_handshake():
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
             s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
             s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
-            K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
-            K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
         _bench(f"n={n_rnl:3d}  full exchange", fn)
     print()
 

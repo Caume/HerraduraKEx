@@ -14,8 +14,7 @@ CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
 SecurityProofsCode/                                 — formal break proofs (Python scripts)
-SecurityProofs.md / SecurityProofs2.md              — algebraic analysis
-PQCanalysis.md                                      — classical & post-quantum analysis
+SecurityProofs.md                                   — algebraic analysis (incl. §11 NL/PQC, §12 quantum analysis)
 ```
 
 ## Build Commands
@@ -63,7 +62,7 @@ qemu-i386 "./Herradura cryptographic suite_i386"
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-./CryptosuiteTests/Herradura_tests          # C — 9 security tests + 5 benchmarks
+./CryptosuiteTests/Herradura_tests          # C — 16 security tests + 5 benchmarks
 cd CryptosuiteTests && go run Herradura_tests.go
 python3 CryptosuiteTests/Herradura_tests.py
 ```
@@ -84,8 +83,9 @@ Linear map M = I ⊕ ROL ⊕ ROR; order of M is n/2. Iterating FSCX creates peri
 
 **GF(2^n) arithmetic:** `gf_mul` (carryless multiply mod irreducible polynomial), `gf_pow` (square-and-multiply). Generator g = 3.
 
-### Protocol Stack (v1.4.0)
+### Protocol Stack (v1.5.0)
 
+**Classical (v1.4.0):**
 ```
 FSCX_REVOLVE + GF(2^n)* arithmetic
 ├── HKEX-GF  — C = g^a; C2 = g^b; sk = C2^a = C^b = g^{ab}
@@ -98,7 +98,47 @@ FSCX_REVOLVE + GF(2^n)* arithmetic
                D = fscx_revolve(E, dec_key, r) = P
 ```
 
+**NL/PQC (v1.5.0):**
+```
+NL-FSCX primitives + Ring-LWR
+├── HSKE-NL-A1 — counter-mode: ks = nl_fscx_revolve_v1(K, K⊕ctr, i); E = P ⊕ ks
+├── HSKE-NL-A2 — revolve-mode: E = nl_fscx_revolve_v2(P, K, r); D = inverse
+├── HKEX-RNL   — Ring-LWR key exchange (conjectured quantum-resistant)
+├── HPKS-NL    — Schnorr with NL-FSCX v1 challenge: e = nl_fscx_revolve_v1(R, msg, i)
+└── HPKE-NL    — El Gamal with NL-FSCX v2: E = nl_fscx_revolve_v2(P, enc_key, i)
+```
+
 Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Arduino; 256-bit in C/Go/Python suite. HSKE and FSCX tests always use 256-bit.
+
+## KaTeX Rendering Rules for Markdown Files
+
+GitHub renders math in `README.md`, `SecurityProofs.md`, and similar files via KaTeX. Three classes of errors have been fixed and **must not be reintroduced**:
+
+### 1. `'_' allowed only in math mode`
+**Cause:** `\_` inside a `\text{}` block — KaTeX rejects `\_` in text mode.
+**Wrong:** `\text{FSCX\_REVOLVE}`, `\mathit{enc\_key}`
+**Correct:** use `\textunderscore` to produce a literal underscore glyph in math mode:
+- `\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}`
+- `\mathit{enc}\textunderscore\mathit{key}`
+
+### 2. `Double subscripts: use braces to clarify`
+**Cause:** using `\_` as the subscript operator between `\text{}` groups creates two subscripts on the same base.
+**Wrong:** `\text{FSCX}\_\text{REVOLVE}\_\text{N}` (the intermediate "fix" for error 1)
+**Correct:** same as above — `\textunderscore` is not a subscript operator, so it is safe for multi-segment names.
+
+### 3. `Missing close brace`
+**Cause:** `\xleftarrow{\$}` — GitHub's markdown parser treats `\$` as closing the inline math span `$...$`, so KaTeX receives an unclosed brace.
+**Wrong:** `\xleftarrow{\$}`
+**Correct:** `\xleftarrow{\textdollar}` — `\textdollar` is the KaTeX dollar-sign glyph command with no literal `$`.
+
+### Summary table
+
+| Pattern to avoid | Correct replacement | Error prevented |
+|---|---|---|
+| `\text{FOO\_BAR}` | `\text{FOO}\textunderscore\text{BAR}` | `'_' allowed only in math mode` |
+| `\mathit{foo\_bar}` | `\mathit{foo}\textunderscore\mathit{bar}` | `'_' allowed only in math mode` |
+| `\text{A}\_\text{B}\_\text{C}` | `\text{A}\textunderscore\text{B}\textunderscore\text{C}` | `Double subscripts` |
+| `\xleftarrow{\$}` | `\xleftarrow{\textdollar}` | `Missing close brace` |
 
 ## License
 

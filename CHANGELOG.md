@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
-## [1.5.1] - 2026-04-11
+## [1.5.1] - 2026-04-16
 
 ### Fixed / Added
 
@@ -43,6 +43,58 @@ Final correct pattern (58 occurrences across both files):
   the math span, leaving `\xleftarrow{` with no matching `}`.  Fix: replace
   `\$` with `\textdollar` (KaTeX's dollar-sign command, contains no literal
   `$` character).
+
+#### Documentation and code inconsistency review
+
+Cross-file audit of documentation vs. implementation; all inconsistencies resolved.
+
+**CLAUDE.md:**
+- Test count corrected: `9 security tests` → `16 security tests` (reflects v1.5.0 tests [1]–[16]).
+- Repository structure: removed `SecurityProofs2.md` (never existed) and `PQCanalysis.md`
+  (removed in v1.4.1, merged into `SecurityProofs.md §12`).
+- Protocol stack section updated from v1.4.0 to v1.5.0; added five NL/PQC protocol entries
+  (HSKE-NL-A1, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL).
+
+**README.md:**
+- Version in title updated to v1.5.1.
+
+**`CryptosuiteTests/Herradura_tests.c`:**
+- Stale block comments on benchmark functions corrected: `[11]`–`[14]` → `[18]`–`[21]`
+  (printf statements already printed the correct numbers; only the block comments lagged).
+
+#### PQC proofs and tests review
+
+**`SecurityProofs.md`:**
+- §11 section header: `(v1.4.0)` → `(v1.5.0)`; opening sentence updated to "documents
+  the verified fixes implemented in v1.5.0" (was "proposes verified fixes").
+- §11.4.2 HKEX-RNL protocol: clarified that `m_blind = m(x) + a_rand` is a **shared**
+  public polynomial (one party generates `a_rand` and transmits it; both use the same
+  `m_blind`).  Previous wording "Bob generates analogously" implied independent polynomials,
+  which breaks key agreement by commutativity.
+- §11.4.3 attack table: added `(q=769, n=16, 200 trials…)` attribution — the q value
+  used for the table was previously unstated.
+- §11.5 Q1 table: first row description `B=0` corrected to `random B` (the verification
+  script generates random B per trial, not a fixed B=0).
+- §11.5 Q2 table: replaced two "not yet verified" rows with confirmed results for the
+  deployed parameters `(q=65537, n=32)` and `(q=65537, n=256)`.
+- §11.6: updated recommended parameters from `q=3329/p=1024/p'=32` to the deployed
+  `q=65537/p=4096/pp=2`; replaced stale "code migration planned" status note with
+  v1.5.0 implementation status and noise-amplification verification summary.
+- §12.5 protocol summary table: added six new rows covering the v1.5.0 NL protocols
+  (HSKE-NL-A1, HSKE-NL-A2 — both key-only and known-plaintext cases; HPKS-NL; HPKE-NL;
+  HKEX-RNL).
+
+**`SecurityProofsCode/hkex_nl_verification.py`:**
+- §2.1 extended to verify `m(x)` invertibility for deployed parameters `(q=65537, n=32)`
+  and `(q=65537, n=256)` — both confirmed invertible with `m·m⁻¹ = 1`.
+- §2.3 extended to compute noise amplification `‖m⁻¹‖₁ · q/(2p)` for deployed
+  `q=65537, n=32, p=4096` (result: ≈4.3×10⁶ ≫ q — structural protection confirmed).
+
+**`CryptosuiteTests/Herradura_tests.{c,go,py}` — test [14] HKEX-RNL:**
+- All three implementations now report both raw agreement (`K_A == K_B`) and
+  KDF-processed agreement (`sk_A == sk_B`) — previously only the Go file checked both.
+- Added explanatory comment describing the shared-polynomial protocol structure.
+- Go benchmark [25]: same structural consistency (was already correct; comment added).
 
 ---
 

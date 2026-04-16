@@ -863,7 +863,11 @@ func testHskeNlA2Correctness() {
 }
 
 func testHkexRnlCorrectness() {
-	fmt.Println("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B  [PQC-EXT]")
+	// Protocol: one party generates aRand and transmits it in the clear; both
+	// derive the shared mBlind = mBase + aRand and compute individual public keys
+	// C = round_p(mBlind · s).  Agreement holds by ring commutativity:
+	// sA·(mBlind·sB) = sB·(mBlind·sA).  See §11.4.2 of SecurityProofs.md.
+	fmt.Println("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; production size is n=256)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := rnlMPoly(nRnl)
@@ -872,17 +876,15 @@ func testHkexRnlCorrectness() {
 		t0 := time.Now()
 		for i := 0; i < trials; i++ {
 			aRand := rnlRandPoly(nRnl, rnlQ)
-			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
+			mBlind := rnlPolyAdd(mBase, aRand, rnlQ) // shared public polynomial
 			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
 			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
 			KA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			KB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
-			if KA.Equal(KB) {
-				okRaw++
-				skA := NlFscxRevolveV1(KA, KA, nRnl/4)
-				skB := NlFscxRevolveV1(KB, KB, nRnl/4)
-				if skA.Equal(skB) { okSk++ }
-			}
+			if KA.Equal(KB) { okRaw++ }
+			skA := NlFscxRevolveV1(KA, KA, nRnl/4)
+			skB := NlFscxRevolveV1(KB, KB, nRnl/4)
+			if skA.Equal(skB) { okSk++ }
 			if i&15 == 15 && timeExceeded(t0) { trials = i + 1; break }
 		}
 		status := "PASS"

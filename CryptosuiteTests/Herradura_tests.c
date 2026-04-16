@@ -910,14 +910,18 @@ static void test_hske_nl_a2_correctness(void)
     putchar('\n');
 }
 
-/* [14] HKEX-RNL key agreement: K_A == K_B  (n=32, Ring-LWR) */
+/* [14] HKEX-RNL key agreement: K_A == K_B and sk_A == sk_B  (n=32, Ring-LWR)
+   Protocol: one party generates a_rand and transmits it in the clear; both derive
+   the shared m_blind = m_base + a_rand and compute their individual public keys
+   C = round_p(m_blind · s).  Agreement holds because the ring is commutative:
+   s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs.md. */
 static void test_hkex_rnl_correctness(void)
 {
-    int i, ok_raw = 0;
+    int i, ok_raw = 0, ok_sk = 0;
     int N = TEST_ROUNDS(200);
     struct timespec t0;
     rnl32_poly_t m_base, a_rand, m_blind;
-    printf("[14] HKEX-RNL key agreement: K_A == K_B  (n=%d, Ring-LWR)\n", RNL_N32);
+    printf("[14] HKEX-RNL key agreement: K_A == K_B / sk_A == sk_B  (n=%d, Ring-LWR)\n", RNL_N32);
     rnl32_m_poly(m_base);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
@@ -925,16 +929,20 @@ static void test_hkex_rnl_correctness(void)
         int32_t s_B[RNL_N32], c_B[RNL_N32];
         uint32_t K_A, K_B;
         rnl32_rand_poly(a_rand);
-        rnl32_poly_add(m_blind, m_base, a_rand);
+        rnl32_poly_add(m_blind, m_base, a_rand);   /* shared public polynomial */
         rnl32_keygen(s_A, c_A, m_blind);
         rnl32_keygen(s_B, c_B, m_blind);
         K_A = rnl32_agree(s_A, c_B);
         K_B = rnl32_agree(s_B, c_A);
         if (K_A == K_B) ok_raw++;
+        /* KDF post-processing: sk = nl_fscx_revolve_v1(K, K, n/4) */
+        if (nl_fscx_revolve_v1_32(K_A, K_A, NL_I32) ==
+            nl_fscx_revolve_v1_32(K_B, K_B, NL_I32)) ok_sk++;
         if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
     }
-    printf("    n=%d  raw agree=%d/%d  [%s]\n",
-           RNL_N32, ok_raw, N, ok_raw >= N * 9 / 10 ? "PASS" : "FAIL");
+    printf("    n=%d  raw agree=%d/%d  sk agree=%d/%d  [%s]\n",
+           RNL_N32, ok_raw, N, ok_sk, N,
+           ok_raw >= N * 9 / 10 ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -1018,7 +1026,7 @@ static void bench_fscx_throughput(void)
     putchar('\n');
 }
 
-/* [11] HKEX-GF gf_pow throughput (32-bit) */
+/* [18] HKEX-GF gf_pow throughput (32-bit) */
 static void bench_gf_pow32_throughput(void)
 {
     uint32_t base, exp, tmp;
@@ -1040,7 +1048,7 @@ static void bench_gf_pow32_throughput(void)
     putchar('\n');
 }
 
-/* [12] HKEX-GF full handshake (32-bit: 4 gf_pow_32 calls) */
+/* [19] HKEX-GF full handshake (32-bit: 4 gf_pow_32 calls) */
 static void bench_hkex_gf32_handshake(void)
 {
     struct timespec t0, t1;
@@ -1073,7 +1081,7 @@ static void bench_hkex_gf32_handshake(void)
     putchar('\n');
 }
 
-/* [13] HSKE round-trip: encrypt+decrypt (256-bit) */
+/* [20] HSKE round-trip: encrypt+decrypt (256-bit) */
 static void bench_hske_roundtrip(void)
 {
     struct timespec t0, t1;
@@ -1101,7 +1109,7 @@ static void bench_hske_roundtrip(void)
     putchar('\n');
 }
 
-/* [14] HPKE El Gamal encrypt+decrypt round-trip (32-bit) */
+/* [21] HPKE El Gamal encrypt+decrypt round-trip (32-bit) */
 static void bench_hpke_el_gamal_roundtrip(void)
 {
     struct timespec t0, t1;
