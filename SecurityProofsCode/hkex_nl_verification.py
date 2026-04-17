@@ -280,24 +280,35 @@ print(f"\n[2.1]  Invertibility of m(x) in Z_q[x]/(x^n+1) for various (n, q)")
 n_lwr   = 16
 q_vals  = [257, 769, 3329, 7681, 12289]
 
-m16 = m_poly(n_lwr)
-print(f"  n={n_lwr}, m(x) = {m16}")
-print(f"\n  {'q':>6}  {'inv?':>5}  {'‖m⁻¹‖_∞':>9}  {'‖m⁻¹‖_1':>9}  {'verify':>7}")
+def check_inv_table(n_check, q_list, label=""):
+    mn = m_poly(n_check)
+    if label:
+        print(f"\n  {label}")
+    print(f"  n={n_check}")
+    print(f"  {'q':>7}  {'inv?':>5}  {'‖m⁻¹‖_∞':>11}  {'‖m⁻¹‖_1':>11}  {'verify':>7}")
+    results = {}
+    for q in q_list:
+        mi = poly_inv_mod(mn, q, n_check)
+        if mi is None:
+            print(f"  {q:7d}  {'NO':>5}")
+            results[q] = None
+        else:
+            chk  = poly_mul_neg(mn, mi, q, n_check)
+            ok   = chk[0] == 1 and all(c == 0 for c in chk[1:])
+            cinf = max(abs(centered_coeff(c, q)) for c in mi)
+            c1   = sum(abs(centered_coeff(c, q)) for c in mi)
+            print(f"  {q:7d}  {'YES':>5}  {cinf:11d}  {c1:11d}  {'✓' if ok else '✗':>7}")
+            results[q] = mi
+    return results
 
-inv_results = {}
-for q in q_vals:
-    mi = poly_inv_mod(m16, q, n_lwr)
-    if mi is None:
-        print(f"  {q:6d}  {'NO':>5}")
-        inv_results[q] = None
-    else:
-        # Verify
-        chk   = poly_mul_neg(m16, mi, q, n_lwr)
-        ok    = chk[0] == 1 and all(c == 0 for c in chk[1:])
-        cinf  = max(abs(centered_coeff(c, q)) for c in mi)
-        c1    = sum(abs(centered_coeff(c, q)) for c in mi)
-        print(f"  {q:6d}  {'YES':>5}  {cinf:9d}  {c1:9d}  {'✓' if ok else '✗':>7}")
-        inv_results[q] = mi
+inv_results = check_inv_table(n_lwr, q_vals, "Prior verification (n=16, q ∈ {257…12289})")
+
+# Deployed code uses q=65537 at n=32 (assembly / C tests) and n=256 (suite C/Go/Python).
+# Verify these parameter pairs explicitly.
+print()
+inv_results_32  = check_inv_table(32,  [65537], "Deployed params — n=32,  q=65537")
+print()
+inv_results_256 = check_inv_table(256, [65537], "Deployed params — n=256, q=65537  (slow — negacyclic 256×256 GJ)")
 
 # ── 2.2  Algebraic attack: recover s from C = round_p(m·s mod q) ─────────────
 print(f"\n[2.2]  Algebraic attack: Eve computes s_rec = m⁻¹ · (C · q/p) mod q")
@@ -347,12 +358,25 @@ for q in [769, 3329]:
     if mi is None: continue
     c1   = sum(abs(centered_coeff(c, q)) for c in mi)
     cinf = max(abs(centered_coeff(c, q)) for c in mi)
-    print(f"\n  q={q}:")
+    print(f"\n  q={q}, n={n_lwr}:")
     print(f"    ‖m⁻¹‖_1 = {c1}  →  output noise ≤ {c1} · q/(2p)")
     for p in [16, 32, 64]:
         max_out_noise = c1 * (q // (2 * p))
         recoverable   = max_out_noise >= q // 2
         print(f"    p={p:3d}: max output noise ≈ {max_out_noise:6d}  "
+              f"({'wraps mod q → s unrecoverable' if recoverable else 'small → s likely recoverable'})")
+
+# Deployed parameters: q=65537, n=32, p=4096
+mi32 = inv_results_32.get(65537)
+if mi32 is not None:
+    q_dep, n_dep, p_dep = 65537, 32, 4096
+    c1   = sum(abs(centered_coeff(c, q_dep)) for c in mi32)
+    print(f"\n  q={q_dep}, n={n_dep} (deployed):")
+    print(f"    ‖m⁻¹‖_1 = {c1}  →  output noise ≤ {c1} · q/(2p)")
+    for p in [p_dep, 256, 64]:
+        max_out_noise = c1 * (q_dep // (2 * p))
+        recoverable   = max_out_noise >= q_dep // 2
+        print(f"    p={p:4d}: max output noise ≈ {max_out_noise:12d}  "
               f"({'wraps mod q → s unrecoverable' if recoverable else 'small → s likely recoverable'})")
 
 # ── 2.4  Random blinding: m_blind = m + a_rand ───────────────────────────────

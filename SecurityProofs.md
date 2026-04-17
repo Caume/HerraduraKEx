@@ -1,7 +1,7 @@
 # Formal Cryptographic Analysis of the Herradura Cryptographic Suite
 
-**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions proposed and verified in v1.4.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  
-**Last updated:** 2026-04-08
+**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions implemented in v1.5.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  Deployed-parameter verification and §12.5 NL-protocol rows added in v1.5.1.
+**Last updated:** 2026-04-16
 
 ---
 
@@ -899,10 +899,10 @@ The key exchange is now provably secure under CDH in $\mathbb{GF}(2^n)^*$. Remai
 
 ---
 
-## 11. Non-linearity and Post-quantum Extensions (v1.4.0)
+## 11. Non-linearity and Post-quantum Extensions (v1.5.0)
 
 This section analyses the two remaining structural weaknesses of the v1.4.0 suite and
-proposes verified fixes:
+documents the verified fixes implemented in v1.5.0:
 
 1. **GF(2)-linearity** of FSCX — allows linear-algebraic attacks on symmetric protocols.
 2. **Quantum vulnerability** of HKEX-GF — GF(2^n)^* DLP is broken by Shor's algorithm.
@@ -1053,19 +1053,22 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
 
 **Setup.** Parties agree on public parameters $(n, q, p, g)$ with $p < q$ both prime.
 
-**Key generation (Alice):**
-- Private: $s_A \leftarrow \mathcal{R}_q$ uniformly at random.
-- Session random: $a_\text{rand} \leftarrow \mathcal{R}_q$ uniformly (transmitted in the clear).
-- Blinded polynomial: $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal{R}_q$.
-- Public key: $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal{R}_p$, where $\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.
+**Shared polynomial setup (one-shot, per session):**
+- One party (e.g. Alice) draws $a_\text{rand} \leftarrow \mathcal{R}_q$ uniformly and
+  transmits it in the clear.  Both parties compute the **shared** blinded polynomial:
+  $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal{R}_q$.
 
-Bob generates $(s_B, a_\text{rand,B}, m_\text{blind,B}, C_B)$ analogously.
+**Key generation (Alice and Bob, independently):**
+- Alice: private $s_A \leftarrow \mathcal{R}_q$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal{R}_p$.
+- Bob:   private $s_B \leftarrow \mathcal{R}_q$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal{R}_p$.
+
+Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)
 
 **Key agreement:**
-$$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind,B} \cdot s_B \in \mathcal{R}_q$$
-$$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind,A} \cdot s_A \in \mathcal{R}_q$$
+$$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal{R}_q$$
+$$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind} \cdot s_A \in \mathcal{R}_q$$
 
-Commutativity of $\mathcal{R}_q$ gives $K_A \approx K_B$; reconciliation extracts a shared bit-string.
+Commutativity of $\mathcal{R}_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 for final extraction:
 
@@ -1082,7 +1085,8 @@ This is believed post-quantum hard; no polynomial-time quantum algorithm is know
 **Naive algebraic attack analysis.**  Without blinding ($m_\text{blind} = m$), Eve computes
 $m^{-1} \cdot (C \cdot q/p) \bmod q$ attempting to recover $s$.  The attack fails because
 rounding noise $\delta$ (bounded by $q/(2p)$ per coefficient) is amplified by $\|m^{-1}\|_1 \gg q$
-before any wrap-around threshold is crossed:
+before any wrap-around threshold is crossed.  (Verified with $q = 769$, $n = 16$, 200 trials per
+$p$ — see `SecurityProofsCode/hkex_nl_verification.py` §2.2.)
 
 | $p$ | $q/p$ | $\|m^{-1}\|_1 \cdot q/(2p)$ | Wraps mod $q$? | Attack success |
 |-----|-------|------------------------------|----------------|----------------|
@@ -1110,17 +1114,23 @@ All results are from `SecurityProofsCode/hkex_nl_verification.py` (n=32 unless n
 
 | Test | Result | Conclusion |
 |------|--------|------------|
-| Standard FSCX period $M^{n/2} = I$ (n=32, B=0) | 133/500 pairs satisfy period = n/2 | ~25% of random B values lie in null$(K_{n/2})$; confirms prior PL-1 analysis |
+| Standard FSCX period $M^{n/2} = I$ (n=32, random B) | 133/500 pairs satisfy period = n/2 | ~25% of random (X,B) pairs have orbit period exactly n/2; confirms prior PL-1 analysis |
 | NL-FSCX v1 orbit lengths (n=8, 1024 samples) | 938/1024 find no period in 256 steps; remainder have variable lengths | No consistent period |
 | NL-FSCX v1 period (n=32, 500 samples) | 500/500 find no period in 256 steps | Period property completely destroyed |
 | HSKE-A1 counter mode encrypt→decrypt | 200/200 correct | Counter mode is viable |
 
 #### Q2 — FSCX-LWR algebraic attack
 
+All rows below use $n = 16$ unless noted.  The deployed implementation uses $q = 65537$,
+$n \in \{32, 256\}$; those parameter pairs are marked ⚠ pending verification.
+
 | Test | Result | Conclusion |
 |------|--------|------------|
-| $m(x)$ invertible in $\mathcal{R}_q$, q ∈ {257…12289} | Yes, all 5 values; $m \cdot m^{-1} = 1$ verified | Algebraic inverse exists |
-| Naive attack: exact $s$ recovery (fixed $m$, p ∈ {4…256}) | 0/200 for every $p$ value | Rounding noise too large for naive inversion |
+| $m(x)$ invertible in $\mathcal{R}_q$, $q \in \{257, 769, 3329, 7681, 12289\}$, $n=16$ | Yes, all 5 values; $m \cdot m^{-1} = 1$ verified | Algebraic inverse exists for these $(n,q)$ |
+| $m(x)$ invertible, $q = 65537$, $n = 32$ | Yes; $\|m^{-1}\|_\infty = 31\,833$, $\|m^{-1}\|_1 = 536\,649$ | Verified in `hkex_nl_verification.py` §2.1 |
+| $m(x)$ invertible, $q = 65537$, $n = 256$ | Yes; $\|m^{-1}\|_\infty = 32\,640$, $\|m^{-1}\|_1 = 4\,286\,173$ | Verified in `hkex_nl_verification.py` §2.1 |
+| Noise amplification $\|m^{-1}\|_1 \cdot q/(2p)$ for deployed params ($q=65537$, $n=32$, $p=4096$) | $\approx 4\,293\,192 \gg q$ | Wraps mod $q$ — structural protection holds |
+| Naive attack: exact $s$ recovery (fixed $m$, $q=769$, $n=16$, $p \in \{4…256\}$) | 0/200 for every $p$ value | Rounding noise too large for naive inversion |
 | Noise amplification $\|m^{-1}\|_1 \cdot q/(2p)$ vs. $q$ | Exceeds $q$ for all tested $(q,p)$ | Structural protection against naive inversion |
 | Blinded $m$ vs. fixed $m$ (naive attack) | Both 0/200 | Blinding adds standard Ring-LWR hardness beyond structural noise protection |
 
@@ -1151,14 +1161,22 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
 | HPKS commitment hash | **NL-FSCX v1** revolve | One-way; hardened against linear preimage |
 | HPKE encryption | **NL-FSCX v2** revolve | Invertible; bijective |
 
-**Parameters for HKEX-RNL** (suggested, requires further analysis before deployment):
-- $n = 256$, $q = 3329$ (Kyber-aligned), $p = 1024$, $p' = 32$
-- $a_\text{rand}$: 256-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
+**Parameters for HKEX-RNL** (deployed in v1.5.0; requires further analysis before production use):
+- $n = 256$ (suite C/Go/Python), $n = 32$ (assembly, Arduino, C/Go/Python tests)
+- $q = 65537$ ($= 2^{16}+1$, Fermat prime); chosen over $q = 3329$ (Kyber) for lower
+  noise-to-margin ratio at small $n$, ensuring reliable single-block agreement without
+  reconciliation hints
+- $p = 4096$, $p' = 2$ (1 bit extracted per ring coefficient)
+- $a_\text{rand}$: $n$-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
 - KDF: $sk = \text{NL-FSCX-REVOLVE}_{v1}(K_\text{raw}, K_\text{raw}, n/4)$
 
-**Status.** The cryptosuite code (`.c`, `.go`, `.py`, `.s`, `.asm`, `.ino`) continues to use
-standard FSCX in v1.4.0.  The NL-FSCX primitives and HKEX-RNL are documented here as
-verified proposals; code migration is planned for a future version.
+*Verification.* The invertibility of $m(x)$ in $\mathbb{Z}_q[x]/(x^n+1)$ is confirmed for
+the deployed parameters $(q=65537, n=32)$ and $(q=65537, n=256)$ by `hkex_nl_verification.py` §2.1.
+Noise amplification at $p=4096$ gives $\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$,
+confirming structural protection against naive inversion (§11.4.3, §11.5 Q2).
+
+**Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
+The C3 hybrid assignment (table above) governs the current implementation.
 
 ---
 
@@ -1381,7 +1399,13 @@ without solving a linear system at all (direct XOR), HHL is irrelevant.
 | **HSKE** (known-plaintext) | — | 1 KPT pair → full $c_K$, $O(n^2)$ | BV: 1 query | **None** |
 | **HPKS** | DLP in $\mathbb{GF}(2^n)^*$ + non-ROM challenge | Quasi-polynomial DLP | Shor's DLP | **None** |
 | **HPKE** | CDH in $\mathbb{GF}(2^n)^*$ | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
-| **HKEX-RNL** (proposed, §11.4) | Ring-LWR with blinded $m$ | No known sub-exponential attack | No known polynomial-time quantum attack | Conjectured — pending proof |
+| **HSKE-NL-A1** (§11.3.1, key-only) | NL-FSCX v1 PRF | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
+| **HSKE-NL-A1** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
+| **HSKE-NL-A2** (§11.3.2, key-only) | NL-FSCX v2 bijection | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
+| **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
+| **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^*$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
+| **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^*$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
+| **HKEX-RNL** (§11.4) | Ring-LWR with blinded $m$ | No known sub-exponential attack | No known polynomial-time quantum attack | Conjectured — pending proof |
 
 **HSKE key-only** provides $n/2$ bits of post-quantum security only when no plaintext
 is ever observed.  In any realistic deployment, plaintexts are available and this bound
