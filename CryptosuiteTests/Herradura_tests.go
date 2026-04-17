@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added -rounds and -time CLI flags (also HTEST_ROUNDS / HTEST_TIME env vars).
     v1.5.0: added PQC extension tests [10-16] (NL-FSCX, HKEX-RNL, HPKS-NL, HPKE-NL);
             benchmarks renumbered [17-21] (were [10-14] in v1.4.0);
@@ -1174,7 +1175,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.1 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.2 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

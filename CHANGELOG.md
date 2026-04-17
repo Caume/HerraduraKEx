@@ -4,6 +4,36 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.2] - 2026-04-16
+
+### Proposed — multi-size key-length tests for `Herradura_tests.c`
+
+Analysis of the gap between the Python and C test suites: `Herradura_tests.py`
+loops each test over `SIZES = [64, 128, 256]` (FSCX tests) and `GF_SIZES = [32, 64]`
+(GF protocol tests), while `Herradura_tests.c` runs each test at a single hardcoded
+size (256-bit for tests [1]–[6], 32-bit for tests [7]–[16]).
+
+Three structural changes proposed for a follow-up implementation commit:
+
+1. **Generalize `BitArray`** — add `int nbits; int nbytes;` fields (max buffer stays
+   32 bytes); thread `nbits` through all `ba_*` and `ba_fscx*` functions; add `ba_add`
+   (mod 2^n addition) required by NL-FSCX v1/v2 at non-32-bit widths.
+
+2. **Add 64-bit GF layer** — `gf_mul_64` / `gf_pow_64` (poly `0x1BULL`,
+   GF(2^64)); `fscx64` / `fscx_revolve64`; `nl_fscx_v1_64` / `nl_fscx_v2_64` and
+   their inverses, mirroring the existing `_32` helpers.
+
+3. **Loop tests over multiple sizes**:
+   ```c
+   static const int SIZES[]    = {64, 128, 256}; /* tests 2,3,4,10,11,12,13 */
+   static const int GF_SIZES[] = {32, 64};        /* tests 1,5,6,7,8,9,15,16 */
+   ```
+
+Version strings bumped to v1.5.2 in `Herradura_tests.c`, `Herradura_tests.py`,
+and `Herradura_tests.go`.
+
+---
+
 ## [1.5.1] - 2026-04-16
 
 ### Fixed / Added
