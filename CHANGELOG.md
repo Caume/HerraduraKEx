@@ -4,7 +4,27 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
-## [1.5.2] - 2026-04-17
+## [1.5.2] - 2026-04-18
+
+### Fixed — KaTeX rendering in `SecurityProofs.md` (`^*` and `\mathcal{R}_q` cross-span emphasis)
+
+Three more broken rendering regions in `SecurityProofs.md` fixed:
+
+- **`^*` cross-span `*`-emphasis** (lines 726, 1202–1206, 1249–1254): `*` (U+002A)
+  between `^` and `$`/`,`/`}` (all CommonMark punctuation) is both-flanking — it can
+  open AND close `*`-emphasis.  When multiple `$...\mathbb{GF}(2^n)^*...$` spans appear
+  in the same paragraph, or when the forgery section packs many `$R^*$`, `$s^*$`,
+  `$e^*$` spans together, opener/closer pairs form across span boundaries, consuming
+  the intervening `$` math delimiters and garbling all affected text.
+  Fix: replace `*` (U+002A) with `∗` (U+2217, ASTERISK OPERATOR) in each
+  problematic span — only the three affected paragraphs, not the many safe
+  single-occurrence spans elsewhere.  U+2217 is not a CommonMark emphasis delimiter;
+  KaTeX renders it identically to `*` in math mode.
+- **Lines 1068–1069** (`$$K_A$$`/`$$K_B$$` display math): `\mathcal{R}_q` (where `}`
+  precedes `_q`) across the two consecutive display-math blocks creates a cross-block
+  `_`-emphasis opener/closer pair; fixed with `\mathcal R_q`.
+
+---
 
 ### Fixed — KaTeX rendering in `SecurityProofs.md` (cross-span emphasis collision)
 
