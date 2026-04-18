@@ -13,7 +13,13 @@ Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite, one file 
 CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
-SecurityProofsCode/                                 — formal break proofs (Python scripts)
+SecurityProofsCode/                                 — standalone Python proof/analysis scripts:
+  hkex_gf_test.py          — HKEX-GF DH correctness + BSGS DLP illustration
+  hkex_nl_verification.py  — NL-FSCX period analysis, Ring-LWR invertibility/noise, v2 bijectivity
+  hkex_cy_test.py          — FSCX-CY exhaustive non-linearity & HKEX-CY failure proof
+  hkex_cfscx_*.py          — preshared-value, two-step, integer-op, compress/blong constructions
+  hkex_classical_break.py  — classical algebraic break proofs
+  hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
 SecurityProofs.md                                   — algebraic analysis (incl. §11 NL/PQC, §12 quantum analysis)
 ```
 
@@ -33,7 +39,7 @@ gcc -O2 -o CryptosuiteTests/Herradura_tests CryptosuiteTests/Herradura_tests.c
 go run "Herradura cryptographic suite.go"
 cd CryptosuiteTests && go run Herradura_tests.go
 ```
-No external dependencies (go.sum is empty).
+Two `go.mod` files: root-level (`module herradurakex`, suite only) and `CryptosuiteTests/go.mod` (`module herradurakex/tests`). Neither has external dependencies.
 
 ### Python
 ```bash
@@ -62,10 +68,26 @@ qemu-i386 "./Herradura cryptographic suite_i386"
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-./CryptosuiteTests/Herradura_tests          # C — 16 security tests + 5 benchmarks
+# C — tests [1]–[16] (security) + benchmarks [17]–[21]
+./CryptosuiteTests/Herradura_tests
+./CryptosuiteTests/Herradura_tests -r 500        # cap each test at 500 iterations
+./CryptosuiteTests/Herradura_tests -t 2.0        # cap wall-clock per test/bench at 2 s
+HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests  # env-var equivalents
+
+# Go — tests [1]–[16] + benchmarks [17]–[25]
 cd CryptosuiteTests && go run Herradura_tests.go
+cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
+
+# Python — tests [1]–[16] + benchmarks [17]–[25]
 python3 CryptosuiteTests/Herradura_tests.py
+python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
+
+# Assembly — build first (see Build Commands), then run:
+qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
+qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ```
+
+The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 
