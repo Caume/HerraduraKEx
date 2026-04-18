@@ -4,7 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
-## [1.5.2] - 2026-04-16
+## [1.5.2] - 2026-04-17
+
+### Fixed — KaTeX rendering in `SecurityProofs.md` (cross-span emphasis collision)
+
+Six formulas in `SecurityProofs.md` rendered as raw source code on GitHub due to
+cmark-gfm processing emphasis `_` delimiters before detecting `$...$` inline math spans.
+
+Root cause: `_` preceded by `}` (a CommonMark punctuation character) satisfies the
+left-flanking delimiter rule and can open an emphasis run.  When a matching
+right-flanking `_` appears in a later math span on the same line or paragraph,
+GitHub's parser consumes both underscores as emphasis, destroying the enclosing
+`$` math spans.
+
+Fixes applied:
+
+- **Lines 1062–1063** (`\mathcal{R}_q`, `\mathcal{R}_p`) — dropping the braces around
+  the single-character `\mathcal` argument (`\mathcal R_q`) means `_q` is now preceded
+  by the alphanumeric `R`, which is not left-flanking and cannot open emphasis.
+- **Line 1171** (`\text{NL-FSCX-REVOLVE}_{v1}`) — `}_{v1}` still has `_` preceded by
+  `}`, so the entire subscripted name is rewritten using `\textunderscore` separators:
+  `\text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}`.
+- **Lines 1057–1059** (§11.4.2 shared polynomial setup) — same `\mathcal{R}_q` →
+  `\mathcal R_q` fix; opener `_q` on line 1057 was pairing with `m_\text{blind}`
+  closer on line 1059 across the paragraph boundary of two `$...$` spans.
+- **Line 1071** (§11.4.2 commutativity sentence) — `\mathcal{R}_q` opener at start
+  of line paired with `m_\text{blind}` closer in the adjacent span on the same line;
+  fixed with `\mathcal R_q`.
+
+---
 
 ### Proposed — multi-size key-length tests for `Herradura_tests.c`
 
