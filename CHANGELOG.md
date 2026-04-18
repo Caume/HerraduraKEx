@@ -4,7 +4,25 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
-## [1.5.2] - 2026-04-17
+## [1.5.2] - 2026-04-18
+
+### Fixed — KaTeX rendering in `SecurityProofs.md` (`^*` and `\mathcal{R}_q` cross-span emphasis)
+
+Additional cross-span emphasis collisions in `SecurityProofs.md` fixed:
+
+- **`^*` in inline math spans** — `*` between `^` and `$`/`,`/`}` (all CommonMark
+  punctuation) is both-flanking: it can open AND close `*`-emphasis.  When two or more
+  `$...\mathbb{GF}(2^n)^*...$` spans appear in the same paragraph (lines 726, 1202–1206)
+  or the forgery section contains many `$R^*$`, `$s^*$`, `$e^*$`, `$P^*$` spans
+  (lines 1249–1254), opener/closer pairs form across span boundaries, destroying both
+  math spans and garbling the surrounding text.
+  Fix: `^*` → `^{\ast}` throughout all inline math (`\ast` renders identically as ∗
+  but contains no literal `*` character, preventing emphasis matching).
+  Applies to `\mathbb{GF}(2^n)^{\ast}`, `\mathbb{GF}(2^{32})^{\ast}`,
+  `\mathbb{Z}_p^{\ast}`, and all starred variables in §12.2.2.
+- **Lines 1068–1069** (`$$K_A/K_B$$` display math) — `\mathcal{R}_q` (where `}`
+  precedes `_q`) across the two consecutive display-math blocks creates a cross-block
+  emphasis pair.  Fixed with `\mathcal R_q` (no braces around single-char argument).
 
 ### Fixed — KaTeX rendering in `SecurityProofs.md` (cross-span emphasis collision)
 
