@@ -723,7 +723,7 @@ because $S_{r+1}$ is the $\mathbb{GF}(2)$-linear FSCX partial-sum operator actin
 
 The hardness of HKEX-GF reduces to the **Computational Diffie-Hellman (CDH)** problem in $\mathbb{GF}(2^n)^*$: given $g^a$ and $g^b$, compute $g^{ab}$.
 
-CDH in $\mathbb{GF}(2^n)^*$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^*$ is hard. Sub-exponential attacks (index calculus, function field sieve variants) exist for binary extension fields; practical parameters:
+CDH in $\mathbb{GF}(2^n)^∗$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^∗$ is hard. Sub-exponential attacks (index calculus, function field sieve variants) exist for binary extension fields; practical parameters:
 
 | $n$ | Estimated classical security | Note |
 |-----|------------------------------|------|
@@ -1065,8 +1065,8 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
 Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)
 
 **Key agreement:**
-$$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal{R}_q$$
-$$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind} \cdot s_A \in \mathcal{R}_q$$
+$$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal R_q$$
+$$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind} \cdot s_A \in \mathcal R_q$$
 
 Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
@@ -1199,11 +1199,11 @@ The group has order $2^n - 1$.  Known classical attack complexities:
 | **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $(\log 2^n)^{O(\log\log 2^n)}$ | Specific to characteristic-2 fields |
 
 The **quasi-polynomial algorithm** is the dominant classical threat.  It exploits the
-characteristic-2 structure of $\mathbb{GF}(2^n)^*$ via a descent using sparse linear systems in
+characteristic-2 structure of $\mathbb{GF}(2^n)^∗$ via a descent using sparse linear systems in
 function fields — a technique with no known analogue for DLP in prime-order elliptic curve groups
-or in $\mathbb{Z}_p^*$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
-fields.  The recommended minimum for $\mathbb{GF}(2^n)^*$ DLP (if it must be used) is $n \geq 3000$;
-most standards bodies advise **against** using $\mathbb{GF}(2^n)^*$ for new DLP-based designs.
+or in $\mathbb{Z}_p^∗$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
+fields.  The recommended minimum for $\mathbb{GF}(2^n)^∗$ DLP (if it must be used) is $n \geq 3000$;
+most standards bodies advise **against** using $\mathbb{GF}(2^n)^∗$ for new DLP-based designs.
 
 **Experimental verification at $n = 32$ (demo parameters).**
 
@@ -1246,12 +1246,12 @@ determined.  **HSKE provides no security under known-plaintext attack at any $n$
 
 #### 12.2.2 HPKS — Classical Forgery Resistance
 
-Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
-$e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+Forgery requires finding $(R^∗, s^∗)$ satisfying $g^{s^∗} \cdot C^{e^∗} = R^∗$ where
+$e^∗ = \text{fscx}\textunderscore\text{revolve}(R^∗_\text{bits}, P^∗, i)$, without knowing the private key $a$.
 
-- If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
-- If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
-  constraint $e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
+- If Eve fixes $R^∗$ first: she needs $s^∗ = \log_g(R^∗ \cdot C^{-e^∗})$ — a DLP instance.
+- If Eve fixes $s^∗$ first: she can compute $g^{s^∗} \cdot C^{e^∗}$ for any $e^∗$, but the
+  constraint $e^∗ = \text{fscx}\textunderscore\text{revolve}(R^∗_\text{bits}, P^∗, i)$ ties $R^∗$ and $e^∗$
   together.  Since fscx\_revolve is an affine bijection in its first argument (see §12.3),
   solving both simultaneously reduces to DLP hardness.
 
