@@ -1054,9 +1054,9 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
 **Setup.** Parties agree on public parameters $(n, q, p, g)$ with $p < q$ both prime.
 
 **Shared polynomial setup (one-shot, per session):**
-- One party (e.g. Alice) draws $a_\text{rand} \leftarrow \mathcal{R}_q$ uniformly and
+- One party (e.g. Alice) draws $a_\text{rand} \leftarrow \mathcal R_q$ uniformly and
   transmits it in the clear.  Both parties compute the **shared** blinded polynomial:
-  $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal{R}_q$.
+  $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal R_q$.
 
 **Key generation (Alice and Bob, independently):**
 - Alice: private $s_A \leftarrow \mathcal R_q$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal R_p$.
@@ -1068,7 +1068,7 @@ Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes round
 $$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal{R}_q$$
 $$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind} \cdot s_A \in \mathcal{R}_q$$
 
-Commutativity of $\mathcal{R}_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
+Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 for final extraction:
 
