@@ -1059,8 +1059,8 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
   $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal{R}_q$.
 
 **Key generation (Alice and Bob, independently):**
-- Alice: private $s_A \leftarrow \mathcal{R}_q$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal{R}_p$.
-- Bob:   private $s_B \leftarrow \mathcal{R}_q$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal{R}_p$.
+- Alice: private $s_A \leftarrow \mathcal R_q$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal R_p$.
+- Bob:   private $s_B \leftarrow \mathcal R_q$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal R_p$.
 
 Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)
 
@@ -1168,7 +1168,7 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
   reconciliation hints
 - $p = 4096$, $p' = 2$ (1 bit extracted per ring coefficient)
 - $a_\text{rand}$: $n$-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
-- KDF: $sk = \text{NL-FSCX-REVOLVE}_{v1}(K_\text{raw}, K_\text{raw}, n/4)$
+- KDF: $sk = \text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}(K_\text{raw}, K_\text{raw}, n/4)$
 
 *Verification.* The invertibility of $m(x)$ in $\mathbb{Z}_q[x]/(x^n+1)$ is confirmed for
 the deployed parameters $(q=65537, n=32)$ and $(q=65537, n=256)$ by `hkex_nl_verification.py` §2.1.
