@@ -5,8 +5,8 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32-bit GF)
-    v1.5.5: aligned test output labels ([CLASSICAL]/[PQC-EXT]) and section headers with
-            Python/Go; fixed version banner (was stuck at v1.5.3).
+    v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
+            ([CLASSICAL]/[PQC-EXT]) and section headers; fixed version banner.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length loops for all tests (matching Python/Go).
@@ -28,6 +28,12 @@
       [19] HKEX-GF full handshake (32-bit).
       [20] HSKE round-trip (256-bit).
       [21] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      --- v1.5.5 additions ---
+      [22] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
+      [22b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
+      [23] HSKE-NL-A1 counter-mode throughput (32-bit).
+      [24] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
+      [25] HKEX-RNL full handshake throughput (n=32).
       GFPow-heavy tests and benchmarks use 32-bit parameters for practical speed.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -1197,6 +1203,145 @@ static void bench_hpke_el_gamal_roundtrip(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Performance benchmarks [22]-[25]: PQC extension                    */
+/* ------------------------------------------------------------------ */
+
+/* [22] NL-FSCX v1 revolve throughput + [22b] v2 enc+dec round-trip (32-bit) */
+static void bench_nl_fscx_revolve(void)
+{
+    uint32_t a, b, E;
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    printf("[22] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
+           NL_I32);
+    a = rand32(); b = rand32();
+    for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 100; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
+        ops += 100;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    print_rate(ops, secs);
+    putchar('\n');
+
+    printf("[22b] NL-FSCX v2 revolve+inv throughput  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
+           NL_R32);
+    a = rand32(); b = rand32(); ops = 0;
+    for (i = 0; i < 5; i++) {
+        E = nl_fscx_revolve_v2_32(a, b, NL_R32);
+        a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 100; i++) {
+            E = nl_fscx_revolve_v2_32(a, b, NL_R32);
+            a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32);
+        }
+        ops += 100;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
+/* [23] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0) */
+static void bench_hske_nl_a1_roundtrip(void)
+{
+    uint32_t K, P, ks, sink = 0;
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    printf("[23] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
+    K = rand32(); P = rand32();
+    for (i = 0; i < 10; i++) { ks = nl_fscx_revolve_v1_32(K, K, NL_I32); sink ^= P ^ ks; }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 100; i++) {
+            K  = rand32(); P = rand32();
+            ks = nl_fscx_revolve_v1_32(K, K, NL_I32);   /* ctr=0 for throughput */
+            sink ^= P ^ ks;
+        }
+        ops += 100;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    (void)sink;
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
+/* [24] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit) */
+static void bench_hske_nl_a2_roundtrip(void)
+{
+    uint32_t K, P, E, sink = 0;
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    printf("[24] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
+           NL_R32);
+    K = rand32(); P = rand32();
+    for (i = 0; i < 5; i++) {
+        E    = nl_fscx_revolve_v2_32(P, K, NL_R32);
+        sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 100; i++) {
+            K    = rand32(); P = rand32();
+            E    = nl_fscx_revolve_v2_32(P, K, NL_R32);
+            sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
+        }
+        ops += 100;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    (void)sink;
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
+/* [25] HKEX-RNL full handshake throughput (n=32) */
+static void bench_hkex_rnl_handshake(void)
+{
+    rnl32_poly_t m_base, a_rand, m_blind;
+    int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
+    uint32_t K_A, K_B, sink = 0;
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    printf("[25] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
+    rnl32_m_poly(m_base);
+    for (i = 0; i < 3; i++) {
+        rnl32_rand_poly(a_rand);
+        rnl32_poly_add(m_blind, m_base, a_rand);
+        rnl32_keygen(s_A, c_A, m_blind);
+        rnl32_keygen(s_B, c_B, m_blind);
+        K_A = rnl32_agree(s_A, c_B); K_B = rnl32_agree(s_B, c_A);
+        sink ^= K_A ^ K_B;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 10; i++) {
+            rnl32_rand_poly(a_rand);
+            rnl32_poly_add(m_blind, m_base, a_rand);
+            rnl32_keygen(s_A, c_A, m_blind);
+            rnl32_keygen(s_B, c_B, m_blind);
+            K_A = rnl32_agree(s_A, c_B); K_B = rnl32_agree(s_B, c_A);
+            sink ^= K_A ^ K_B;
+        }
+        ops += 10;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    (void)sink;
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1274,6 +1419,10 @@ int main(int argc, char *argv[])
     bench_hkex_gf32_handshake();
     bench_hske_roundtrip();
     bench_hpke_el_gamal_roundtrip();
+    bench_nl_fscx_revolve();
+    bench_hske_nl_a1_roundtrip();
+    bench_hske_nl_a2_roundtrip();
+    bench_hkex_rnl_handshake();
 
     fclose(urnd_fp);
     return 0;
