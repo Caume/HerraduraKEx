@@ -1,7 +1,7 @@
 # Formal Cryptographic Analysis of the Herradura Cryptographic Suite
 
-**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions implemented in v1.5.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  Deployed-parameter verification and §12.5 NL-protocol rows added in v1.5.1.
-**Last updated:** 2026-04-16
+**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions implemented in v1.5.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  Deployed-parameter verification and §12.5 NL-protocol rows added in v1.5.1.  HKEX-RNL secret sampler upgraded to CBD(eta=1) in v1.5.3 (§11.4.2, §11.6).
+**Last updated:** 2026-04-19
 
 ---
 
@@ -1059,10 +1059,10 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
   $m_\text{blind} = m(x) + a_\text{rand} \in \mathcal R_q$.
 
 **Key generation (Alice and Bob, independently):**
-- Alice: private $s_A \leftarrow \mathcal R_q$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal R_p$.
-- Bob:   private $s_B \leftarrow \mathcal R_q$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal R_p$.
+- Alice: private $s_A \leftarrow \mathrm{CBD}(\eta)$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal R_p$.
+- Bob:   private $s_B \leftarrow \mathrm{CBD}(\eta)$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal R_p$.
 
-Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)
+Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)  $\mathrm{CBD}(\eta)$ is the centered binomial distribution: each coefficient $s_i = \sum_{j=0}^{\eta-1}(a_j - b_j)$ where $a_j, b_j \overset{\$}{\leftarrow} \{0,1\}$ independently.  Deployed with $\eta = 1$, giving $s_i \in \{-1, 0, 1\}$ with zero mean and $\Pr[s_i = \pm 1] = 1/4$.  This matches the Kyber/NIST baseline for proper Ring-LWR secret entropy and eliminates the mean bias of the previous uniform $\{0,1\}$ sampler.
 
 **Key agreement:**
 $$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal R_q$$
@@ -1161,12 +1161,13 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
 | HPKS commitment hash | **NL-FSCX v1** revolve | One-way; hardened against linear preimage |
 | HPKE encryption | **NL-FSCX v2** revolve | Invertible; bijective |
 
-**Parameters for HKEX-RNL** (deployed in v1.5.0; requires further analysis before production use):
+**Parameters for HKEX-RNL** (deployed in v1.5.0; secret sampler upgraded to CBD in v1.5.3; requires further analysis before production use):
 - $n = 256$ (suite C/Go/Python), $n = 32$ (assembly, Arduino, C/Go/Python tests)
 - $q = 65537$ ($= 2^{16}+1$, Fermat prime); chosen over $q = 3329$ (Kyber) for lower
   noise-to-margin ratio at small $n$, ensuring reliable single-block agreement without
   reconciliation hints
 - $p = 4096$, $p' = 2$ (1 bit extracted per ring coefficient)
+- **Secret distribution:** $\mathrm{CBD}(\eta=1)$, coefficients in $\{-1, 0, 1\}$ with zero mean (upgraded from uniform $\{0,1\}$ in v1.5.3)
 - $a_\text{rand}$: $n$-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
 - KDF: $sk = \text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}(K_\text{raw}, K_\text{raw}, n/4)$
 
@@ -1174,8 +1175,11 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
 the deployed parameters $(q=65537, n=32)$ and $(q=65537, n=256)$ by `hkex_nl_verification.py` §2.1.
 Noise amplification at $p=4096$ gives $\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$,
 confirming structural protection against naive inversion (§11.4.3, §11.5 Q2).
+The max coefficient magnitude of $\mathrm{CBD}(1)$ equals that of the previous $\{0,1\}$ sampler,
+so the noise budget is unchanged.
 
 **Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
+The CBD(eta=1) secret sampler was deployed across all language implementations in v1.5.3.
 The C3 hybrid assignment (table above) governs the current implementation.
 
 ---

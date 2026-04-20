@@ -1,4 +1,4 @@
-;  Herradura KEx -- Correctness Tests v1.5.0
+;  Herradura KEx -- Correctness Tests v1.5.3
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS Schnorr, HPKE El Gamal,
 ;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS=32; I_VALUE=8; R_VALUE=24; HKEX-RNL N=32, q=65537, p=4096
@@ -31,7 +31,7 @@ section .data
     rnl_g_ptr   dd 0
     rnl_h_ptr   dd 0
 
-    hdr         db "=== Herradura KEx v1.5.0 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
+    hdr         db "=== Herradura KEx v1.5.3 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
     hdr_l       equ $-hdr
 
     t1_hdr      db "[1] HKEX-GF key exchange correctness: sk_alice == sk_bob (20 iterations)", 10
@@ -1180,7 +1180,7 @@ rnl_poly_mul:
     sub  edx, ebx
 .rpm_add_no_sub:
     pop  ebx
-    mov  ecx, [esp+4]
+    mov  ecx, [esp]         ; restore k from stack ([esp+4] was i — off by one)
     mov  [rnl_tmp + ecx*4], edx
     pop  edx
     pop  ecx
@@ -1203,7 +1203,7 @@ rnl_poly_mul:
     sub  edx, ebx
 .rpm_neg_no_sub:
     pop  ebx
-    mov  ecx, [esp+4]
+    mov  ecx, [esp]         ; restore k-N from stack ([esp+4] was i — off by one)
     mov  [rnl_tmp + ecx*4], edx
     pop  edx
     pop  ecx
@@ -1372,28 +1372,38 @@ rnl_rand_poly:
     ret
 
 ; ============================================================
-; rnl_small_poly: EAX=p  --> fills p with {0,1} coeffs
+; rnl_cbd_poly: EAX=p  --> fills p with CBD(1) coeffs in {RNL_Q-1, 0, 1}
+;   raw = prng_next(); a = raw&1; b = (raw>>1)&1; coeff = a-b mod RNL_Q
 ; ============================================================
-rnl_small_poly:
+rnl_cbd_poly:
     push ebx
     push ecx
     push edx
     push esi
+    push edi
     mov  esi, eax
     xor  ecx, ecx
-.rsp_loop:
+.rcp_loop:
     cmp  ecx, RNL_N
-    jge  .rsp_done
+    jge  .rcp_done
     push ecx
     push esi
     call prng_next
-    and  eax, 1
+    mov  edi, eax
+    and  edi, 1         ; a = raw & 1
+    shr  eax, 1
+    and  eax, 1         ; b = (raw>>1) & 1
+    sub  edi, eax       ; coeff = a - b
+    jge  .rcp_store
+    add  edi, RNL_Q
+.rcp_store:
     pop  esi
     pop  ecx
-    mov  [esi + ecx*4], eax
+    mov  [esi + ecx*4], edi
     inc  ecx
-    jmp  .rsp_loop
-.rsp_done:
+    jmp  .rcp_loop
+.rcp_done:
+    pop  edi
     pop  esi
     pop  edx
     pop  ecx
@@ -1446,7 +1456,7 @@ rnl_keygen:
     mov  ebp, ecx
 
     mov  eax, esi
-    call rnl_small_poly
+    call rnl_cbd_poly
 
     mov  dword [rnl_h_ptr], rnl_tmp
     mov  [rnl_f_ptr], ebp

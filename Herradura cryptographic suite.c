@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.0
+/*  Herradura Cryptographic Suite v1.5.3
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,13 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1) ---
+
+    HKEX-RNL secret polynomial now uses a centered binomial distribution CBD(eta=1)
+    instead of the previous uniform {0,1} sampler.  CBD(1) produces coefficients in
+    {-1, 0, 1} (stored mod q) with zero mean, matching the Kyber/NIST baseline for
+    proper Ring-LWR hardness without changing the noise budget.
 
     --- v1.5.0: NL-FSCX non-linear extension and PQC extensions ---
 
@@ -494,7 +501,7 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 #define RNL_Q  65537
 #define RNL_P  4096
 #define RNL_PP 2
-#define RNL_B  1
+#define RNL_ETA  1  /* CBD eta: secret coeffs from CBD(1) in {-1,0,1} mod q */
 
 typedef int32_t rnl_poly_t[RNL_N];
 
@@ -555,13 +562,17 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
     }
 }
 
-static void rnl_small_poly(rnl_poly_t p, FILE *urnd)
+/* CBD(eta=1): coeff = popcount(low eta bits) - popcount(next eta bits), mod q.
+   Produces {-1,0,1} with P(-1)=P(1)=1/4, P(0)=1/2; zero mean. */
+static void rnl_cbd_poly(rnl_poly_t p, FILE *urnd)
 {
     int i;
     uint8_t v;
     for (i = 0; i < RNL_N; i++) {
         if (fread(&v, 1, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
-        p[i] = (int32_t)(v % (RNL_B + 1));
+        int a = (int)(v & 1);
+        int b = (int)((v >> 1) & 1);
+        p[i] = (int32_t)((a - b + RNL_Q) % RNL_Q);
     }
 }
 
@@ -577,12 +588,12 @@ static void rnl_bits_to_ba(BitArray *out, const int32_t *bits_poly)
     }
 }
 
-/* keygen: s=small private, C=round_p(m_blind * s) */
+/* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
 static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                        const rnl_poly_t m_blind, FILE *urnd)
 {
     rnl_poly_t ms;
-    rnl_small_poly(s_out, urnd);
+    rnl_cbd_poly(s_out, urnd);
     rnl_poly_mul(ms, m_blind, s_out);
     rnl_round(c_out, ms, RNL_Q, RNL_P);
 }

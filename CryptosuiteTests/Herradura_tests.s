@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.0
+/*  Herradura KEx -- Correctness Tests v1.5.3
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL
@@ -31,7 +31,7 @@
     .data
     .balign 4
 
-fmt_hdr:  .asciz "=== Herradura KEx v1.5.0 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
+fmt_hdr:  .asciz "=== Herradura KEx v1.5.3 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
 fmt_t1:   .asciz "[1] HKEX-GF key exchange: sk_alice == sk_bob (20 iterations)\n"
 fmt_t2:   .asciz "[2] HSKE encrypt+decrypt round-trip: D == plaintext (100 iterations)\n"
 fmt_t3:   .asciz "[3] HPKS Schnorr: g^s * C^e == R (20 iterations)\n"
@@ -1058,13 +1058,15 @@ rpm_outer:
     cmp     r7, #RNL_N
     bge     rpm_outer_done
     ldr     r9, [r4, r7, lsl #2]
-    cbz     r9, rpm_outer_next
+    cmp     r9, #0
+    beq     rpm_outer_next
     mov     r8, #0
 rpm_inner:
     cmp     r8, #RNL_N
     bge     rpm_inner_done
     ldr     r10, [r5, r8, lsl #2]
-    cbz     r10, rpm_inner_next
+    cmp     r10, #0
+    beq     rpm_inner_next
     umull   r0, r1, r9, r10
     add     r0, r0, r1
     udiv    r1, r0, r11
@@ -1206,23 +1208,33 @@ rrp_done:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* rnl_small_poly: r0=p -> p[i]=prng_next()&1                         */
+/* rnl_cbd_poly: r0=p -> p[i] = CBD(1) coeff in {RNL_Q-1, 0, 1}      */
+/*   raw = prng_next(); a = raw&1; b = (raw>>1)&1; coeff = a-b mod q  */
 /* ------------------------------------------------------------------ */
     .thumb_func
-rnl_small_poly:
-    push    {r4-r5, lr}
+rnl_cbd_poly:
+    push    {r4-r7, lr}
     mov     r4, r0
     mov     r5, #0
-rsp_loop:
+rcp_loop:
     cmp     r5, #RNL_N
-    bge     rsp_done
+    bge     rcp_done
     bl      prng_next
-    and     r0, r0, #1
+    mov     r6, r0
+    and     r6, r6, #1          @ a = raw & 1
+    lsr     r0, r0, #1
+    and     r0, r0, #1          @ b = (raw>>1) & 1
+    sub     r0, r6, r0          @ coeff = a - b
+    cmp     r0, #0
+    bge     rcp_store
+    ldr     r7, =RNL_Q
+    add     r0, r0, r7
+rcp_store:
     str     r0, [r4, r5, lsl #2]
     add     r5, r5, #1
-    b       rsp_loop
-rsp_done:
-    pop     {r4-r5, pc}
+    b       rcp_loop
+rcp_done:
+    pop     {r4-r7, pc}
     .ltorg
 
 /* ------------------------------------------------------------------ */
@@ -1261,7 +1273,7 @@ rnl_keygen:
     mov     r5, r1
     mov     r6, r2
     mov     r0, r4
-    bl      rnl_small_poly
+    bl      rnl_cbd_poly
     ldr     r0, =rnl_h_ptr
     ldr     r1, =rnl_tmp
     str     r1, [r0]

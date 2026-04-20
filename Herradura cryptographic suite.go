@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.0
+/*  Herradura Cryptographic Suite v1.5.3
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,12 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1) ---
+
+    HKEX-RNL secret polynomial now uses centered binomial distribution CBD(eta=1)
+    instead of uniform {0,1}.  Produces {-1,0,1} with zero mean; matches the Kyber
+    baseline for proper Ring-LWR hardness without changing the noise budget.
 
     --- v1.5.0: NL-FSCX non-linear extension and PQC protocols ---
 
@@ -308,7 +314,7 @@ const (
 	rnlQ  = 65537 // Fermat prime (2^16+1)
 	rnlP  = 4096  // public-key rounding modulus
 	rnlPP = 2     // reconciliation modulus (1 bit per coefficient)
-	rnlB  = 1     // small-secret bound: coefficients uniform in {0, ..., rnlB}
+	rnlEta = 1    // CBD eta: secret coefficients drawn from CBD(1) in {-1,0,1}
 )
 
 func rnlPolyMul(f, g []int, q, n int) []int {
@@ -375,14 +381,18 @@ func rnlRandPoly(n, q int) []int {
 	return p
 }
 
-func rnlSmallPoly(n, b int) []int {
+// rnlCBDPoly samples n coefficients from CBD(eta=1): each = popcount(low bit) - popcount(next bit),
+// stored mod q.  Produces {-1,0,1} with zero mean; matches Kyber Ring-LWR secret distribution.
+func rnlCBDPoly(n, q int) []int {
 	p := make([]int, n)
 	buf := make([]byte, 1)
 	for i := range p {
 		if _, err := rand.Read(buf); err != nil {
 			log.Fatalf("rand.Read: %s", err)
 		}
-		p[i] = int(buf[0]) % (b + 1)
+		a := int(buf[0]) & 1
+		b := (int(buf[0]) >> 1) & 1
+		p[i] = (a - b + q) % q
 	}
 	return p
 }
@@ -400,8 +410,8 @@ func rnlBitsToBitArray(poly []int, pp, size int) *BitArray {
 	return ba
 }
 
-func rnlKeygen(mBlind []int, n, q, p, b int) ([]int, []int) {
-	s := rnlSmallPoly(n, b)
+func rnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
+	s := rnlCBDPoly(n, q)
 	ms := rnlPolyMul(mBlind, s, q, n)
 	c := rnlRound(ms, q, p)
 	return s, c
@@ -541,8 +551,8 @@ func main() {
 	mBase := rnlMPoly(nRnl)
 	aRand := rnlRandPoly(nRnl, rnlQ)
 	mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
-	sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
-	sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+	sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
+	sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 	kRawA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, n)
 	kRawB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, n)
 	skRnlA := NlFscxRevolveV1(kRawA, kRawA, n/4)

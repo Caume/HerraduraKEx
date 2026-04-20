@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added --rounds/-r and --time/-t CLI options (also HTEST_ROUNDS / HTEST_TIME env).
     v1.5.0: added PQC extension tests [10-16] and benchmarks [22-25].
@@ -247,8 +248,13 @@ def _rnl_m_poly(n):
 def _rnl_rand_poly(n, q):
     return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
 
-def _rnl_small_poly(n, b):
-    return [int.from_bytes(os.urandom(1), 'big') % (b + 1) for _ in range(n)]
+def _rnl_cbd_poly(n, q):
+    """CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1) mod q. Produces {-1,0,1} with zero mean."""
+    out = []
+    for _ in range(n):
+        v = int.from_bytes(os.urandom(1), 'big')
+        out.append((( v & 1) - ((v >> 1) & 1) + q) % q)
+    return out
 
 def _rnl_bits_to_bitarray(poly, pp, size):
     val = 0; thr = pp // 2
@@ -257,8 +263,8 @@ def _rnl_bits_to_bitarray(poly, pp, size):
             val |= (1 << i)
     return BitArray(size, val)
 
-def _rnl_keygen(m_blind, n, q, p, b):
-    s = _rnl_small_poly(n, b)
+def _rnl_keygen(m_blind, n, q, p):
+    s = _rnl_cbd_poly(n, q)
     C = _rnl_round(_rnl_poly_mul(m_blind, s, q, n), q, p)
     return s, C
 
@@ -286,7 +292,7 @@ RNL_SIZES = [32, 64]            # ring polynomial degrees for HKEX-RNL tests
 RNLQ  = 65537  # Fermat prime (2^16+1); lower noise-to-margin ratio than q=3329
 RNLP  = 4096   # public-key rounding modulus
 RNLPP = 2      # reconciliation modulus (1 bit per coefficient)
-RNLB  = 1      # small-secret bound
+RNLETA = 1     # CBD eta: secret coefficients from CBD(1) in {-1,0,1}
 
 TARGET_SEC = 1.0  # kept for reference; overridden by g_bench_sec at runtime
 
@@ -633,8 +639,8 @@ def test_hkex_rnl_correctness():
             n_run += 1
             a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # shared public polynomial
-            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
-            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
+            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
             K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             if K_A == K_B: ok_raw += 1
@@ -828,8 +834,8 @@ def bench_hkex_rnl_handshake():
         def fn(n_rnl=n_rnl, m_base=m_base):
             a_rand  = _rnl_rand_poly(n_rnl, RNLQ)
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
-            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
-            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+            s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
+            s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
             _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
         _bench(f"n={n_rnl:3d}  full exchange", fn)
@@ -843,7 +849,7 @@ def bench_hkex_rnl_handshake():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.2 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.5.3 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -871,7 +877,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.2 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.3 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

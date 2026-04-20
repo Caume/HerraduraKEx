@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.0 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.3 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: NL-FSCX v2, HSKE-NL-A1/A2, HKEX-RNL (N=32), HPKS-NL, HPKE-NL.
     v1.4.0: HKEX replaced with HKEX-GF; Schnorr HPKS; El Gamal HPKE.
       - HPKS: Schnorr; s=(k-a*e) mod ORD; verify g^s*C^e==R.
@@ -29,7 +30,7 @@
 #define RNL_Q   65537L
 #define RNL_P   4096L
 #define RNL_PP  2L
-#define RNL_B   1
+#define RNL_ETA 1  /* CBD eta: secret coeffs drawn from CBD(1) in {-1,0,1} mod q */
 
 typedef unsigned long uint32;
 
@@ -199,8 +200,14 @@ static void rnl_rand_poly(long *p) {
     for (int i = 0; i < RNL_N; i++) p[i] = (long)(lcg_next() % (uint32)RNL_Q);
 }
 
-static void rnl_small_poly(long *p) {
-    for (int i = 0; i < RNL_N; i++) p[i] = (long)(lcg_next() % (uint32)(RNL_B + 1));
+/* CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1), stored mod q. Zero-mean {-1,0,1}. */
+static void rnl_cbd_poly(long *p) {
+    for (int i = 0; i < RNL_N; i++) {
+        uint32 raw = lcg_next();
+        int a = (int)(raw & 1);
+        int b = (int)((raw >> 1) & 1);
+        p[i] = (long)((a - b + (long)RNL_Q) % (long)RNL_Q);
+    }
 }
 
 /* extract N bits from rounded poly into a uint32 key */
@@ -215,7 +222,7 @@ static uint32 rnl_bits_to_key(const long *bits_poly) {
 /* keygen: s = small poly, C = round_p(m_blind * s) */
 static void rnl_keygen(long *s, long *C, const long *m_blind) {
     static long ms[RNL_N];
-    rnl_small_poly(s);
+    rnl_cbd_poly(s);
     rnl_poly_mul(ms, m_blind, s);
     rnl_round(C, ms, RNL_Q, RNL_P);
 }
@@ -248,7 +255,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura Cryptographic Suite v1.5.0 (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura Cryptographic Suite v1.5.3 (Arduino, 32-bit) ===");
     Serial.println();
 
     printHexLine("a_priv : ", A_PRIV);
