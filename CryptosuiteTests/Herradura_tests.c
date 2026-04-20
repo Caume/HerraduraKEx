@@ -13,6 +13,9 @@
             Phase 4 — multi-size loops [2]–[4],[10]–[13]: 128-bit FSCX/__uint128_t
             and 128-bit NL-FSCX added; [2]–[4] loop {64,128,256}; [10]–[13] loop
             {64,128} (256-bit NL-FSCX omitted; 256-bit mul not implemented).
+            Phase 5 — test methodology alignment: [11] bijectivity upgraded to
+            BIJ_SAMPLES=256 random A values per B with pairwise collision scan,
+            matching Python/Go hash-map methodology.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
@@ -1288,6 +1291,9 @@ static void test_hpke_el_gamal(void)
 #define NL_I128  32  /* 128/4 */
 #define NL_R128  96  /* 3*128/4 */
 
+/* Bijectivity sample count: 256 A values per B, matching Python/Go */
+#define BIJ_SAMPLES 256
+
 /* [10] NL-FSCX v1 non-linearity and aperiodicity */
 static void test_nl_fscx_v1_nonlinearity(void)
 {
@@ -1343,28 +1349,49 @@ static void test_nl_fscx_v1_nonlinearity(void)
     putchar('\n');
 }
 
-/* [11] NL-FSCX v2 bijectivity and exact inverse */
+/* [11] NL-FSCX v2 bijectivity and exact inverse
+   Bijectivity: for each B, sample BIJ_SAMPLES random A values and check that no
+   two distinct A inputs map to the same output (collision detection, O(n^2) scan).
+   Matches Python/Go methodology of 256 samples per B with hash-map collision check. */
 static void test_nl_fscx_v2_bijective_inverse(void)
 {
     static const int sizes[] = {64, 128};
-    int si, i, size;
+    int si, i, j, k, size;
     struct timespec t0;
     printf("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]\n");
     for (si = 0; si < 2; si++) {
         int non_bij = 0, inv_ok = 0, nl_ok = 0;
         int N1 = TEST_ROUNDS(500), N2 = TEST_ROUNDS(1000), N3 = TEST_ROUNDS(500);
         size = sizes[si];
-        /* Collision test */
+        /* Bijectivity: BIJ_SAMPLES random A values per B; detect output collisions */
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N1; i++) {
+            int found = 0;
             if (size == 128) {
-                __uint128_t B = rand128(), A1 = rand128(), A2 = rand128();
-                if (A1 != A2 && nl_fscx_v2_128(A1, B) == nl_fscx_v2_128(A2, B)) non_bij++;
+                __uint128_t A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES];
+                __uint128_t B = rand128();
+                for (j = 0; j < BIJ_SAMPLES; j++) {
+                    A_arr[j]   = rand128();
+                    out_arr[j] = nl_fscx_v2_128(A_arr[j], B);
+                }
+                for (j = 0; j < BIJ_SAMPLES && !found; j++)
+                    for (k = j + 1; k < BIJ_SAMPLES && !found; k++)
+                        if (out_arr[j] == out_arr[k] && A_arr[j] != A_arr[k])
+                            found = 1;
             } else {
-                uint64_t B = rand64(), A1 = rand64(), A2 = rand64();
-                if (A1 != A2 && nl_fscx_v2_64(A1, B) == nl_fscx_v2_64(A2, B)) non_bij++;
+                uint64_t A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES];
+                uint64_t B = rand64();
+                for (j = 0; j < BIJ_SAMPLES; j++) {
+                    A_arr[j]   = rand64();
+                    out_arr[j] = nl_fscx_v2_64(A_arr[j], B);
+                }
+                for (j = 0; j < BIJ_SAMPLES && !found; j++)
+                    for (k = j + 1; k < BIJ_SAMPLES && !found; k++)
+                        if (out_arr[j] == out_arr[k] && A_arr[j] != A_arr[k])
+                            found = 1;
             }
-            if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
+            if (found) non_bij++;
+            if ((i & 15) == 15 && time_exceeded(&t0)) { N1 = i + 1; break; }
         }
         /* Inverse correctness */
         clock_gettime(CLOCK_MONOTONIC, &t0);
