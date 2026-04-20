@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.3
+/*  Herradura Cryptographic Suite v1.5.4
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,9 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)) ---
+    rnl_poly_mul now uses Cooley-Tukey NTT over Z_{65537} with negacyclic twist.
 
     --- v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1) ---
 
@@ -505,24 +508,72 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 
 typedef int32_t rnl_poly_t[RNL_N];
 
-/* Negacyclic multiply: h = f*g in Z_q[x]/(x^n+1) */
-static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+/* Modular exponentiation (base^exp mod m) for NTT twiddle setup */
+static uint32_t rnl_mod_pow(uint32_t base, uint32_t exp, uint32_t m)
 {
-    int32_t tmp[RNL_N];
-    int i, j;
-    memset(tmp, 0, sizeof(tmp));
-    for (i = 0; i < RNL_N; i++) {
-        if (!f[i]) continue;
-        for (j = 0; j < RNL_N; j++) {
-            int k = i + j;
-            int64_t prod = (int64_t)f[i] * g[j];
-            if (k < RNL_N)
-                tmp[k] = (int32_t)((tmp[k] + prod) % RNL_Q);
-            else
-                tmp[k - RNL_N] = (int32_t)((tmp[k - RNL_N] - prod % RNL_Q + RNL_Q) % RNL_Q);
+    uint64_t r = 1, b = base % m;
+    for (; exp; exp >>= 1) { if (exp & 1) r = r * b % m; b = b * b % m; }
+    return (uint32_t)r;
+}
+
+/* Cooley-Tukey iterative NTT over Z_q (in-place). n must be a power of 2.
+   Uses primitive root 3 (valid since q=65537 is a Fermat prime, ord(3)=q-1=2^16). */
+static void rnl_ntt(int32_t *a, int n, int q, int invert)
+{
+    int i, j = 0, length, k;
+    uint32_t w, wn;
+    /* Bit-reversal permutation */
+    for (i = 1; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { int32_t t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+    /* Butterfly stages */
+    for (length = 2; length <= n; length <<= 1) {
+        w = rnl_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
+        if (invert) w = rnl_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i += length) {
+            wn = 1;
+            for (k = 0; k < length >> 1; k++) {
+                int32_t u = a[i + k];
+                int32_t v = (int32_t)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                a[i + k]              = (u + v) % q;
+                a[i + k + (length >> 1)] = (u - v + q) % q;
+                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+            }
         }
     }
-    memcpy(h, tmp, sizeof(rnl_poly_t));
+    if (invert) {
+        uint32_t inv_n = rnl_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i++)
+            a[i] = (int32_t)((uint64_t)a[i] * inv_n % (uint32_t)q);
+    }
+}
+
+/* Negacyclic multiply: h = f*g in Z_q[x]/(x^n+1) via NTT. O(n log n).
+   ψ = 3^((q-1)/(2n)) is a primitive 2n-th root; ψ^n ≡ -1 encodes the wrap. */
+static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+{
+    int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];
+    uint32_t psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), RNL_Q);
+    uint32_t psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
+    uint32_t pw = 1, pw_inv = 1;
+    int i;
+    for (i = 0; i < RNL_N; i++) {
+        fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q);
+        ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q);
+        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q);
+    }
+    rnl_ntt(fa, RNL_N, RNL_Q, 0);
+    rnl_ntt(ga, RNL_N, RNL_Q, 0);
+    for (i = 0; i < RNL_N; i++)
+        ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q);
+    rnl_ntt(ha, RNL_N, RNL_Q, 1);
+    for (i = 0; i < RNL_N; i++) {
+        h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q);
+    }
 }
 
 static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)

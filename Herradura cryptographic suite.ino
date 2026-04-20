@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.3 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.4 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: NL-FSCX v2, HSKE-NL-A1/A2, HKEX-RNL (N=32), HPKS-NL, HPKE-NL.
     v1.4.0: HKEX replaced with HKEX-GF; Schnorr HPKS; El Gamal HPKE.
@@ -156,22 +157,61 @@ uint32 nl_fscx_revolve_v2_inv(uint32 y, uint32 b, int steps) {
 /* HKEX-RNL: Ring-LWR helpers  (N=32, q=65537, p=4096, pp=2, B=1)   */
 /* ------------------------------------------------------------------ */
 
-/* Negacyclic poly multiply: h = f*g in Z_q[x]/(x^N+1) */
-static void rnl_poly_mul(long *h, const long *f, const long *g) {
-    static long tmp[RNL_N];
-    for (int i = 0; i < RNL_N; i++) tmp[i] = 0;
-    for (int i = 0; i < RNL_N; i++) {
-        if (!f[i]) continue;
-        for (int j = 0; j < RNL_N; j++) {
-            int k = i + j;
-            long long prod = (long long)f[i] * g[j] % RNL_Q;
-            if (k < RNL_N)
-                tmp[k] = (tmp[k] + prod) % RNL_Q;
-            else
-                tmp[k - RNL_N] = ((tmp[k - RNL_N] - prod) % RNL_Q + RNL_Q) % RNL_Q;
+static uint32_t rnl_mod_pow(uint32_t base, uint32_t exp, uint32_t m) {
+    uint64_t r = 1, b = base % m;
+    for (; exp; exp >>= 1) { if (exp & 1) r = r * b % m; b = b * b % m; }
+    return (uint32_t)r;
+}
+
+static void rnl_ntt(long *a, int n, long q, int invert) {
+    int i, j = 0, length, k;
+    uint32_t w, wn;
+    for (i = 1; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { long t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+    for (length = 2; length <= n; length <<= 1) {
+        w = rnl_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
+        if (invert) w = rnl_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i += length) {
+            wn = 1;
+            for (k = 0; k < length >> 1; k++) {
+                long u = a[i + k];
+                long v = (long)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                a[i + k]                 = (u + v) % q;
+                a[i + k + (length >> 1)] = (u - v + q) % q;
+                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+            }
         }
     }
-    for (int i = 0; i < RNL_N; i++) h[i] = tmp[i];
+    if (invert) {
+        uint32_t inv_n = rnl_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i++) a[i] = (long)((uint64_t)a[i] * inv_n % (uint32_t)q);
+    }
+}
+
+/* Negacyclic poly multiply: h = f*g in Z_q[x]/(x^N+1) via NTT. O(N log N). */
+static void rnl_poly_mul(long *h, const long *f, const long *g) {
+    static long fa[RNL_N], ga[RNL_N], ha[RNL_N];
+    uint32_t psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), RNL_Q);
+    uint32_t psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
+    uint32_t pw = 1, pw_inv = 1;
+    int i;
+    for (i = 0; i < RNL_N; i++) {
+        fa[i] = (long)((uint64_t)f[i] * pw % RNL_Q);
+        ga[i] = (long)((uint64_t)g[i] * pw % RNL_Q);
+        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q);
+    }
+    rnl_ntt(fa, RNL_N, RNL_Q, 0);
+    rnl_ntt(ga, RNL_N, RNL_Q, 0);
+    for (i = 0; i < RNL_N; i++) ha[i] = (long)((uint64_t)fa[i] * ga[i] % RNL_Q);
+    rnl_ntt(ha, RNL_N, RNL_Q, 1);
+    for (i = 0; i < RNL_N; i++) {
+        h[i]   = (long)((uint64_t)ha[i] * pw_inv % RNL_Q);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q);
+    }
 }
 
 static void rnl_poly_add(long *h, const long *f, const long *g) {

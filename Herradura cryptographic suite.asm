@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.3
+;  Herradura Cryptographic Suite v1.5.4
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -72,7 +72,29 @@ section .data
     rnl_g_ptr   dd 0
     rnl_h_ptr   dd 0
 
-    hdr         db "=== Herradura Cryptographic Suite v1.5.3 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    ; NTT tables (n=32, q=65537, psi=3^1024 mod q)
+    rnl_psi_pow_tab:
+        dd 1,8224,65529,65282,64,2040,65025,49217
+        dd 4096,65023,32769,4112,65533,32641,32,1020
+        dd 65281,57377,2048,65280,49153,2056,65535,49089
+        dd 16,510,65409,61457,1024,32640,57345,1028
+    rnl_psi_inv_pow_tab:
+        dd 1,64509,8192,32897,64513,4080,128,65027
+        dd 65521,16448,2,63481,16384,257,63489,8160
+        dd 256,64517,65505,32896,4,61425,32768,514
+        dd 61441,16320,512,63497,65473,255,8,57313
+    rnl_omega_fwd_tab:
+        dd 1,65529,64,65025,4096,32769,65533,32
+        dd 65281,2048,49153,65535,16,65409,1024,57345
+    rnl_omega_inv_tab:
+        dd 1,8192,64513,128,65521,2,16384,63489
+        dd 256,65505,4,32768,61441,512,65473,8
+    rnl_inv_n:   dd 63489
+    rnl_bit_rev_tab:
+        db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
+        db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
+
+    hdr         db "=== Herradura Cryptographic Suite v1.5.4 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "
@@ -175,6 +197,9 @@ section .bss
     rnl_C_B     resd RNL_N
     rnl_tmp     resd RNL_N    ; temp output for poly_mul/round/lift
     rnl_tmp2    resd RNL_N    ; second temp
+    rnl_fa      resd RNL_N   ; NTT work arrays
+    rnl_ga      resd RNL_N
+    rnl_ha      resd RNL_N
 
 section .text
 global _start
@@ -1258,143 +1283,262 @@ rnl_poly_add:
     ret
 
 ; ============================================================
-; rnl_poly_mul: uses [rnl_h_ptr],[rnl_f_ptr],[rnl_g_ptr]
-;   h = f * g in Z_q[x]/(x^N+1), N=32, Q=65537
-;   Uses rnl_tmp as temp buffer.
+; rnl_ntt: in-place NTT/INTT  [cdecl: push arr; push invert; call]
+;   arr=array ptr (dwords), invert=0(fwd)/1(inv)
+; ============================================================
+rnl_ntt:
+    push  ebp
+    mov   ebp, esp
+    sub   esp, 24
+    ; locals: [ebp-4]=omega_l [ebp-8]=half [ebp-12]=grp_i
+    ;         [ebp-16]=wn     [ebp-20]=omega_tab [ebp-24]=length
+    push  ebx
+    push  ecx
+    push  edx
+    push  esi
+    push  edi
+    ; args: [ebp+8]=arr  [ebp+12]=invert
+    mov   esi, [ebp+8]
+
+    ; Bit-reversal permutation
+    xor   ecx, ecx
+.ntt_br:
+    cmp   ecx, RNL_N
+    jge   .ntt_br_done
+    movzx eax, byte [rnl_bit_rev_tab + ecx]
+    cmp   ecx, eax
+    jge   .ntt_br_skip
+    mov   edx, [esi + ecx*4]
+    mov   ebx, [esi + eax*4]
+    mov   [esi + ecx*4], ebx
+    mov   [esi + eax*4], edx
+.ntt_br_skip:
+    inc   ecx
+    jmp   .ntt_br
+.ntt_br_done:
+
+    ; Select omega table
+    mov   eax, rnl_omega_fwd_tab
+    cmp   dword [ebp+12], 0
+    je    .ntt_tab_ok
+    mov   eax, rnl_omega_inv_tab
+.ntt_tab_ok:
+    mov   [ebp-20], eax
+
+    ; Stage loop: length = 2,4,8,16,32
+    mov   dword [ebp-24], 2
+.ntt_stage:
+    mov   ebx, [ebp-24]
+    cmp   ebx, RNL_N
+    jg    .ntt_stage_done
+
+    mov   ecx, ebx
+    shr   ecx, 1
+    mov   [ebp-8], ecx          ; half
+
+    ; step = 32/length; omega_l = omega_tab[step]
+    mov   eax, 32
+    xor   edx, edx
+    div   ebx                    ; eax = step
+    mov   ecx, [ebp-20]
+    mov   eax, [ecx + eax*4]
+    mov   [ebp-4], eax           ; omega_l
+
+    ; Group loop
+    mov   dword [ebp-12], 0
+.ntt_grp:
+    cmp   dword [ebp-12], RNL_N
+    jge   .ntt_grp_done
+    mov   dword [ebp-16], 1     ; wn = 1
+
+    ; Butterfly loop: k via edi
+    xor   edi, edi
+.ntt_bf:
+    cmp   edi, [ebp-8]
+    jge   .ntt_bf_done
+
+    ; u = arr[grp_i+k]
+    mov   eax, [ebp-12]
+    add   eax, edi
+    mov   ecx, [esi + eax*4]    ; u
+
+    ; v_raw = arr[grp_i+k+half]
+    add   eax, [ebp-8]
+    mov   edx, [esi + eax*4]    ; v_raw
+
+    ; v = v_raw * wn mod q
+    push  eax
+    push  ecx
+    mov   eax, edx
+    mul   dword [ebp-16]
+    add   eax, edx
+    xor   edx, edx
+    mov   ecx, RNL_Q
+    div   ecx                   ; edx = v
+    pop   ecx                   ; u
+    pop   eax                   ; idx2
+
+    ; arr[grp_i+k] = (u+v) mod q
+    push  eax
+    mov   eax, [ebp-12]
+    add   eax, edi
+    mov   ebx, ecx
+    add   ebx, edx
+    cmp   ebx, RNL_Q
+    jl    .ntt_nosub1
+    sub   ebx, RNL_Q
+.ntt_nosub1:
+    mov   [esi + eax*4], ebx
+
+    ; arr[grp_i+k+half] = (u-v+q) mod q
+    pop   eax
+    sub   ecx, edx
+    add   ecx, RNL_Q
+    cmp   ecx, RNL_Q
+    jl    .ntt_nosub2
+    sub   ecx, RNL_Q
+.ntt_nosub2:
+    mov   [esi + eax*4], ecx
+
+    ; wn = wn * omega_l mod q
+    mov   eax, [ebp-16]
+    mul   dword [ebp-4]
+    add   eax, edx
+    xor   edx, edx
+    mov   ecx, RNL_Q
+    div   ecx
+    mov   [ebp-16], edx
+
+    inc   edi
+    jmp   .ntt_bf
+.ntt_bf_done:
+
+    mov   eax, [ebp-24]
+    add   [ebp-12], eax
+    jmp   .ntt_grp
+.ntt_grp_done:
+
+    shl   dword [ebp-24], 1
+    jmp   .ntt_stage
+.ntt_stage_done:
+
+    ; If inverse: scale by inv_n
+    cmp   dword [ebp+12], 0
+    je    .ntt_inv_done
+    xor   ecx, ecx
+.ntt_scale:
+    cmp   ecx, RNL_N
+    jge   .ntt_inv_done
+    mov   eax, [esi + ecx*4]
+    mul   dword [rnl_inv_n]
+    add   eax, edx
+    xor   edx, edx
+    mov   ebx, RNL_Q
+    div   ebx
+    mov   [esi + ecx*4], edx
+    inc   ecx
+    jmp   .ntt_scale
+.ntt_inv_done:
+
+    pop   edi
+    pop   esi
+    pop   edx
+    pop   ecx
+    pop   ebx
+    leave
+    ret
+
+; ============================================================
+; rnl_poly_mul: h=f*g in Z_q[x]/(x^N+1) via NTT. O(N log N).
 ; ============================================================
 rnl_poly_mul:
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    push ebp
+    push  ebx
+    push  ecx
+    push  edx
+    push  esi
+    push  edi
+    push  ebp
 
-    ; zero rnl_tmp
-    xor  eax, eax
-    mov  ecx, RNL_N
-    mov  edi, rnl_tmp
-    rep  stosd
+    ; Twist: fa[i]=f[i]*psi_pow[i] mod q, ga[i]=g[i]*psi_pow[i] mod q
+    mov   esi, [rnl_f_ptr]
+    mov   edi, [rnl_g_ptr]
+    xor   ecx, ecx
+.rpm_twist:
+    cmp   ecx, RNL_N
+    jge   .rpm_twist_done
+    mov   ebp, [rnl_psi_pow_tab + ecx*4]  ; psi_pow[i]
+    mov   eax, [esi + ecx*4]
+    mul   ebp
+    add   eax, edx
+    xor   edx, edx
+    mov   ebx, RNL_Q
+    div   ebx
+    mov   [rnl_fa + ecx*4], edx
+    mov   eax, [edi + ecx*4]
+    mul   ebp
+    add   eax, edx
+    xor   edx, edx
+    mov   ebx, RNL_Q
+    div   ebx
+    mov   [rnl_ga + ecx*4], edx
+    inc   ecx
+    jmp   .rpm_twist
+.rpm_twist_done:
 
-    mov  esi, [rnl_f_ptr]   ; f
-    ; ebp = g pointer (load fresh each inner iteration)
+    push  dword 0
+    push  dword rnl_fa
+    call  rnl_ntt
+    add   esp, 8
 
-    xor  ecx, ecx           ; i = 0 (outer loop)
-.rpm_outer:
-    cmp  ecx, RNL_N
-    jge  .rpm_outer_done
+    push  dword 0
+    push  dword rnl_ga
+    call  rnl_ntt
+    add   esp, 8
 
-    mov  eax, [esi + ecx*4] ; f[i]
-    test eax, eax
-    jz   .rpm_outer_next
+    ; Pointwise multiply: ha[i] = fa[i]*ga[i] mod q
+    xor   ecx, ecx
+.rpm_pw:
+    cmp   ecx, RNL_N
+    jge   .rpm_pw_done
+    mov   eax, [rnl_fa + ecx*4]
+    mul   dword [rnl_ga + ecx*4]
+    add   eax, edx
+    xor   edx, edx
+    mov   ebx, RNL_Q
+    div   ebx
+    mov   [rnl_ha + ecx*4], edx
+    inc   ecx
+    jmp   .rpm_pw
+.rpm_pw_done:
 
-    mov  ebp, ecx           ; save i in ebp
+    push  dword 1
+    push  dword rnl_ha
+    call  rnl_ntt
+    add   esp, 8
 
-    xor  ebx, ebx           ; j = 0 (inner loop)
-.rpm_inner:
-    cmp  ebx, RNL_N
-    jge  .rpm_inner_done
+    ; Untwist: h[i] = ha[i]*psi_inv_pow[i] mod q
+    mov   edi, [rnl_h_ptr]
+    xor   ecx, ecx
+.rpm_untwist:
+    cmp   ecx, RNL_N
+    jge   .rpm_untwist_done
+    mov   eax, [rnl_ha + ecx*4]
+    mul   dword [rnl_psi_inv_pow_tab + ecx*4]
+    add   eax, edx
+    xor   edx, edx
+    mov   ebx, RNL_Q
+    div   ebx
+    mov   [edi + ecx*4], edx
+    inc   ecx
+    jmp   .rpm_untwist
+.rpm_untwist_done:
 
-    mov  edi, [rnl_g_ptr]
-    mov  edx, [edi + ebx*4] ; g[j]
-    test edx, edx
-    jz   .rpm_inner_next
-
-    ; prod = f[i] * g[j]  -- need 64-bit result
-    ; eax = f[i] (already), edx = g[j]
-    push eax
-    push ebx
-    push ecx
-    push edx
-    ; compute f[i]*g[j] mod Q using lo+hi trick: 2^32 ≡ 1 (mod 65537)
-    mov  eax, [esi + ebp*4] ; f[i]
-    xor  edx, edx
-    pop  ecx                ; ecx = g[j]
-    mul  ecx                ; edx:eax = f[i] * g[j]
-    ; prod mod Q = (lo + hi) mod Q  since 2^32 ≡ 1 (mod 65537)
-    add  eax, edx           ; eax = lo + hi
-    ; now reduce mod Q=65537
-    xor  edx, edx
-    mov  ecx, RNL_Q
-    div  ecx                ; eax = quot, edx = eax mod Q
-    mov  eax, edx           ; eax = prod_mod_q
-    pop  ecx                ; ecx = saved ecx (i)
-    pop  ebx                ; ebx = j
-    pop  edx                ; edx = saved
-
-    ; k = i + j
-    mov  edx, ebp           ; edx = i
-    add  edx, ebx           ; edx = k = i+j
-    cmp  edx, RNL_N
-    jge  .rpm_neg
-
-    ; tmp[k] = (tmp[k] + prod) % Q
-    push eax
-    push ecx
-    push edx
-    mov  ecx, edx           ; k
-    mov  edx, [rnl_tmp + ecx*4]
-    add  edx, eax
-    xor  eax, eax
-    push ebx
-    mov  ebx, RNL_Q
-    cmp  edx, ebx
-    jl   .rpm_add_no_sub
-    sub  edx, ebx
-.rpm_add_no_sub:
-    pop  ebx
-    mov  ecx, [esp]         ; restore k from stack ([esp+4] was i — off by one)
-    mov  [rnl_tmp + ecx*4], edx
-    pop  edx
-    pop  ecx
-    pop  eax
-    jmp  .rpm_inner_next
-
-.rpm_neg:
-    ; k >= N: tmp[k-N] = (tmp[k-N] - prod + Q) % Q
-    sub  edx, RNL_N
-    push eax
-    push ecx
-    push edx
-    mov  ecx, edx
-    mov  edx, [rnl_tmp + ecx*4]
-    sub  edx, eax           ; tmp[k-N] - prod (may go negative, but we add Q)
-    push ebx
-    mov  ebx, RNL_Q
-    add  edx, ebx           ; + Q
-    cmp  edx, ebx
-    jl   .rpm_neg_no_sub
-    sub  edx, ebx
-.rpm_neg_no_sub:
-    pop  ebx
-    mov  ecx, [esp]         ; restore k-N from stack ([esp+4] was i — off by one)
-    mov  [rnl_tmp + ecx*4], edx
-    pop  edx
-    pop  ecx
-    pop  eax
-
-.rpm_inner_next:
-    inc  ebx
-    jmp  .rpm_inner
-.rpm_inner_done:
-
-.rpm_outer_next:
-    inc  ecx
-    jmp  .rpm_outer
-.rpm_outer_done:
-
-    ; copy rnl_tmp to h
-    mov  esi, rnl_tmp
-    mov  edi, [rnl_h_ptr]
-    mov  ecx, RNL_N
-    rep  movsd
-
-    pop  ebp
-    pop  edi
-    pop  esi
-    pop  edx
-    pop  ecx
-    pop  ebx
+    pop   ebp
+    pop   edi
+    pop   esi
+    pop   edx
+    pop   ecx
+    pop   ebx
     ret
 
 ; ============================================================

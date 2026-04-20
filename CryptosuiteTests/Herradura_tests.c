@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32-bit GF)
+    v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length loops for all tests (matching Python/Go).
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
@@ -363,25 +364,66 @@ static uint32_t nl_fscx_revolve_v2_inv_32(uint32_t y, uint32_t b, int steps)
 
 typedef int32_t rnl32_poly_t[RNL_N32];
 
-/* Negacyclic multiply: h = f*g in Z_q[x]/(x^32+1) */
-static void rnl32_poly_mul(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
+static uint32_t rnl32_mod_pow(uint32_t base, uint32_t exp, uint32_t m)
 {
-    int32_t tmp[RNL_N32];
-    int i, j;
-    memset(tmp, 0, sizeof(tmp));
-    for (i = 0; i < RNL_N32; i++) {
-        if (!f[i]) continue;
-        for (j = 0; j < RNL_N32; j++) {
-            int k = i + j;
-            int64_t prod = (int64_t)f[i] * g[j];
-            if (k < RNL_N32)
-                tmp[k] = (int32_t)((tmp[k] + prod) % RNL_Q32);
-            else
-                tmp[k - RNL_N32] = (int32_t)(
-                    (tmp[k - RNL_N32] - prod % RNL_Q32 + RNL_Q32) % RNL_Q32);
+    uint64_t r = 1, b = base % m;
+    for (; exp; exp >>= 1) { if (exp & 1) r = r * b % m; b = b * b % m; }
+    return (uint32_t)r;
+}
+
+static void rnl32_ntt(int32_t *a, int n, int q, int invert)
+{
+    int i, j = 0, length, k;
+    uint32_t w, wn;
+    for (i = 1; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { int32_t t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+    for (length = 2; length <= n; length <<= 1) {
+        w = rnl32_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
+        if (invert) w = rnl32_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i += length) {
+            wn = 1;
+            for (k = 0; k < length >> 1; k++) {
+                int32_t u = a[i + k];
+                int32_t v = (int32_t)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                a[i + k]                 = (u + v) % q;
+                a[i + k + (length >> 1)] = (u - v + q) % q;
+                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+            }
         }
     }
-    memcpy(h, tmp, sizeof(rnl32_poly_t));
+    if (invert) {
+        uint32_t inv_n = rnl32_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i++)
+            a[i] = (int32_t)((uint64_t)a[i] * inv_n % (uint32_t)q);
+    }
+}
+
+/* Negacyclic multiply: h = f*g in Z_q[x]/(x^32+1) via NTT. O(n log n). */
+static void rnl32_poly_mul(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
+{
+    int32_t fa[RNL_N32], ga[RNL_N32], ha[RNL_N32];
+    uint32_t psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * RNL_N32), RNL_Q32);
+    uint32_t psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
+    uint32_t pw = 1, pw_inv = 1;
+    int i;
+    for (i = 0; i < RNL_N32; i++) {
+        fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q32);
+        ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q32);
+        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q32);
+    }
+    rnl32_ntt(fa, RNL_N32, RNL_Q32, 0);
+    rnl32_ntt(ga, RNL_N32, RNL_Q32, 0);
+    for (i = 0; i < RNL_N32; i++)
+        ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+    rnl32_ntt(ha, RNL_N32, RNL_Q32, 1);
+    for (i = 0; i < RNL_N32; i++) {
+        h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q32);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
+    }
 }
 
 static void rnl32_poly_add(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)

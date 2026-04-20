@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n), ~6× speedup at n=32).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added --rounds/-r and --time/-t CLI options (also HTEST_ROUNDS / HTEST_TIME env).
@@ -220,18 +221,39 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 # ---------------------------------------------------------------------------
 
+def _ntt_inplace(a, q, invert):
+    n = len(a); j = 0
+    for i in range(1, n):
+        bit = n >> 1
+        while j & bit: j ^= bit; bit >>= 1
+        j ^= bit
+        if i < j: a[i], a[j] = a[j], a[i]
+    length = 2
+    while length <= n:
+        w = pow(3, (q - 1) // length, q)
+        if invert: w = pow(w, q - 2, q)
+        for i in range(0, n, length):
+            wn = 1
+            for k in range(length >> 1):
+                u = a[i + k]; v = a[i + k + (length >> 1)] * wn % q
+                a[i + k] = (u + v) % q; a[i + k + (length >> 1)] = (u - v) % q
+                wn = wn * w % q
+        length <<= 1
+    if invert:
+        inv_n = pow(n, q - 2, q)
+        for i in range(n): a[i] = a[i] * inv_n % q
+
 def _rnl_poly_mul(f, g, q, n):
-    h = [0] * n
-    for i, fi in enumerate(f):
-        if fi == 0:
-            continue
-        for j, gj in enumerate(g):
-            k = i + j
-            if k < n:
-                h[k] = (h[k] + fi * gj) % q
-            else:
-                h[k - n] = (h[k - n] - fi * gj) % q
-    return [v % q for v in h]
+    psi = pow(3, (q - 1) // (2 * n), q); psi_inv = pow(psi, q - 2, q)
+    fa, ga = list(f), list(g); pw = 1
+    for i in range(n):
+        fa[i] = fa[i] * pw % q; ga[i] = ga[i] * pw % q; pw = pw * psi % q
+    _ntt_inplace(fa, q, False); _ntt_inplace(ga, q, False)
+    ha = [fa[i] * ga[i] % q for i in range(n)]
+    _ntt_inplace(ha, q, True)
+    pw_inv = 1
+    for i in range(n): ha[i] = ha[i] * pw_inv % q; pw_inv = pw_inv * psi_inv % q
+    return ha
 
 def _rnl_poly_add(f, g, q):
     return [(a + b) % q for a, b in zip(f, g)]
@@ -849,7 +871,7 @@ def bench_hkex_rnl_handshake():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.3 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.5.4 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,

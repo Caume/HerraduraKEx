@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added -rounds and -time CLI flags (also HTEST_ROUNDS / HTEST_TIME env vars).
@@ -313,22 +314,57 @@ const (
 	rnlEta = 1 // CBD eta: secret coefficients drawn from CBD(1) in {-1,0,1}
 )
 
-func rnlPolyMul(f, g []int, q, n int) []int {
-	h := make([]int, n)
-	for i, fi := range f {
-		if fi == 0 {
-			continue
+func rnlModPow(base, exp, mod int) int {
+	r, b := 1, base%mod
+	for exp > 0 {
+		if exp&1 == 1 {
+			r = r * b % mod
 		}
-		for j, gj := range g {
-			k := i + j
-			if k < n {
-				h[k] = (h[k] + fi*gj) % q
-			} else {
-				h[k-n] = (h[k-n] - fi*gj%q + q) % q
+		b = b * b % mod
+		exp >>= 1
+	}
+	return r
+}
+
+func rnlNTT(a []int, q int, invert bool) {
+	n := len(a); j := 0
+	for i := 1; i < n; i++ {
+		bit := n >> 1
+		for ; j&bit != 0; bit >>= 1 { j ^= bit }
+		j ^= bit
+		if i < j { a[i], a[j] = a[j], a[i] }
+	}
+	for length := 2; length <= n; length <<= 1 {
+		w := rnlModPow(3, (q-1)/length, q)
+		if invert { w = rnlModPow(w, q-2, q) }
+		for i := 0; i < n; i += length {
+			wn := 1
+			for k := 0; k < length>>1; k++ {
+				u := a[i+k]; v := a[i+k+length>>1] * wn % q
+				a[i+k] = (u + v) % q; a[i+k+length>>1] = (u - v + q) % q
+				wn = wn * w % q
 			}
 		}
 	}
-	return h
+	if invert {
+		invN := rnlModPow(n, q-2, q)
+		for i := range a { a[i] = a[i] * invN % q }
+	}
+}
+
+func rnlPolyMul(f, g []int, q, n int) []int {
+	psi := rnlModPow(3, (q-1)/(2*n), q); psiInv := rnlModPow(psi, q-2, q)
+	fa, ga := make([]int, n), make([]int, n); pw := 1
+	for i := 0; i < n; i++ {
+		fa[i] = f[i] * pw % q; ga[i] = g[i] * pw % q; pw = pw * psi % q
+	}
+	rnlNTT(fa, q, false); rnlNTT(ga, q, false)
+	ha := make([]int, n)
+	for i := range ha { ha[i] = fa[i] * ga[i] % q }
+	rnlNTT(ha, q, true)
+	pwInv := 1
+	for i := range ha { ha[i] = ha[i] * pwInv % q; pwInv = pwInv * psiInv % q }
+	return ha
 }
 
 func rnlPolyAdd(f, g []int, q int) []int {
@@ -1180,7 +1216,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.3 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.4 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

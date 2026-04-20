@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.3 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.5.4 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -7,6 +7,7 @@
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
 
+    v1.5.4: NTT-based negacyclic polynomial multiplication (O(N log N)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: added PQC extension tests [5]-[10].
       - [5] NL-FSCX v2 inverse roundtrip.
@@ -131,21 +132,58 @@ uint32 nl_fscx_revolve_v2_inv(uint32 y, uint32 b, int steps) {
 /* HKEX-RNL helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-static void rnl_poly_mul(long *h, const long *f, const long *g) {
-    static long tmp[RNL_N];
-    for (int i = 0; i < RNL_N; i++) tmp[i] = 0;
-    for (int i = 0; i < RNL_N; i++) {
-        if (!f[i]) continue;
-        for (int j = 0; j < RNL_N; j++) {
-            int k = i + j;
-            long long prod = (long long)f[i] * g[j] % RNL_Q;
-            if (k < RNL_N)
-                tmp[k] = (tmp[k] + prod) % RNL_Q;
-            else
-                tmp[k - RNL_N] = ((tmp[k - RNL_N] - prod) % RNL_Q + RNL_Q) % RNL_Q;
+static uint32_t rnl_mod_pow(uint32_t base, uint32_t exp, uint32_t m) {
+    uint64_t r = 1, b = base % m;
+    for (; exp; exp >>= 1) { if (exp & 1) r = r * b % m; b = b * b % m; }
+    return (uint32_t)r;
+}
+static void rnl_ntt(long *a, int n, long q, int invert) {
+    int i, j = 0, length, k;
+    uint32_t w, wn;
+    for (i = 1; i < n; i++) {
+        int bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { long t = a[i]; a[i] = a[j]; a[j] = t; }
+    }
+    for (length = 2; length <= n; length <<= 1) {
+        w = rnl_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
+        if (invert) w = rnl_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i += length) {
+            wn = 1;
+            for (k = 0; k < length >> 1; k++) {
+                long u = a[i + k];
+                long v = (long)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                a[i + k]                 = (u + v) % q;
+                a[i + k + (length >> 1)] = (u - v + q) % q;
+                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+            }
         }
     }
-    for (int i = 0; i < RNL_N; i++) h[i] = tmp[i];
+    if (invert) {
+        uint32_t inv_n = rnl_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
+        for (i = 0; i < n; i++) a[i] = (long)((uint64_t)a[i] * inv_n % (uint32_t)q);
+    }
+}
+static void rnl_poly_mul(long *h, const long *f, const long *g) {
+    static long fa[RNL_N], ga[RNL_N], ha[RNL_N];
+    uint32_t psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), (uint32_t)RNL_Q);
+    uint32_t psi_inv = rnl_mod_pow(psi, (uint32_t)(RNL_Q - 2), (uint32_t)RNL_Q);
+    uint32_t pw = 1, pw_inv = 1;
+    int i;
+    for (i = 0; i < RNL_N; i++) {
+        fa[i] = (long)((uint64_t)f[i] * pw % (uint32_t)RNL_Q);
+        ga[i] = (long)((uint64_t)g[i] * pw % (uint32_t)RNL_Q);
+        pw    = (uint32_t)((uint64_t)pw * psi % (uint32_t)RNL_Q);
+    }
+    rnl_ntt(fa, RNL_N, RNL_Q, 0);
+    rnl_ntt(ga, RNL_N, RNL_Q, 0);
+    for (i = 0; i < RNL_N; i++) ha[i] = (long)((uint64_t)fa[i] * ga[i] % (uint32_t)RNL_Q);
+    rnl_ntt(ha, RNL_N, RNL_Q, 1);
+    for (i = 0; i < RNL_N; i++) {
+        h[i]   = (long)((uint64_t)ha[i] * pw_inv % (uint32_t)RNL_Q);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % (uint32_t)RNL_Q);
+    }
 }
 
 static void rnl_poly_add(long *h, const long *f, const long *g) {

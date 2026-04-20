@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.3
+    Herradura Cryptographic Suite v1.5.4
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,12 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)) ---
+
+    _rnl_poly_mul now uses a Cooley-Tukey NTT over Z_{65537} (a Fermat prime, 2^16+1)
+    with a negacyclic twist (ψ = 3^((q-1)/(2n)), primitive 2n-th root of unity).
+    Replaces the O(n²) schoolbook multiply: ~32× speedup at n=256.
 
     --- v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1) ---
 
@@ -307,19 +313,60 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 # ---------------------------------------------------------------------------
 
+def _ntt_inplace(a, q, invert):
+    """Cooley-Tukey iterative NTT over Z_q (in-place). len(a) must be a power of 2.
+    Uses primitive root 3; works for q=65537 (Fermat prime, ord(3)=2^16=q-1)."""
+    n = len(a)
+    j = 0
+    for i in range(1, n):
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j ^= bit
+        if i < j:
+            a[i], a[j] = a[j], a[i]
+    length = 2
+    while length <= n:
+        w = pow(3, (q - 1) // length, q)
+        if invert:
+            w = pow(w, q - 2, q)
+        for i in range(0, n, length):
+            wn = 1
+            for k in range(length >> 1):
+                u = a[i + k]
+                v = a[i + k + (length >> 1)] * wn % q
+                a[i + k]              = (u + v) % q
+                a[i + k + (length >> 1)] = (u - v) % q
+                wn = wn * w % q
+        length <<= 1
+    if invert:
+        inv_n = pow(n, q - 2, q)
+        for i in range(n):
+            a[i] = a[i] * inv_n % q
+
+
 def _rnl_poly_mul(f, g, q, n):
-    """Multiply f*g in Z_q[x]/(x^n+1) (negacyclic, x^n ≡ -1). O(n^2)."""
-    h = [0] * n
-    for i, fi in enumerate(f):
-        if fi == 0:
-            continue
-        for j, gj in enumerate(g):
-            k = i + j
-            if k < n:
-                h[k] = (h[k] + fi * gj) % q
-            else:
-                h[k - n] = (h[k - n] - fi * gj) % q
-    return [v % q for v in h]
+    """Multiply f*g in Z_q[x]/(x^n+1) via negacyclic NTT. O(n log n).
+    ψ = 3^((q-1)/(2n)) is a primitive 2n-th root of unity; ψ^n ≡ -1 (mod q)
+    encodes the negacyclic wrap without explicit branch logic."""
+    psi     = pow(3, (q - 1) // (2 * n), q)
+    psi_inv = pow(psi, q - 2, q)
+    fa, ga  = list(f), list(g)
+    pw = 1
+    for i in range(n):
+        fa[i] = fa[i] * pw % q
+        ga[i] = ga[i] * pw % q
+        pw = pw * psi % q
+    _ntt_inplace(fa, q, False)
+    _ntt_inplace(ga, q, False)
+    ha = [fa[i] * ga[i] % q for i in range(n)]
+    _ntt_inplace(ha, q, True)
+    pw_inv = 1
+    for i in range(n):
+        ha[i]  = ha[i] * pw_inv % q
+        pw_inv = pw_inv * psi_inv % q
+    return ha
 
 def _rnl_poly_add(f, g, q):
     return [(a + b) % q for a, b in zip(f, g)]
