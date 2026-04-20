@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.3
+/*  Herradura Cryptographic Suite v1.5.4
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -42,7 +42,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.3 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.4 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -145,6 +145,29 @@ rnl_f_ptr:   .word 0
 rnl_g_ptr:   .word 0
 rnl_h_ptr:   .word 0
 
+/* NTT tables for negacyclic poly_mul (n=32, q=65537=2^16+1, psi=3^1024)  */
+    .align 2
+rnl_psi_pow_tab:
+    .word 1,8224,65529,65282,64,2040,65025,49217
+    .word 4096,65023,32769,4112,65533,32641,32,1020
+    .word 65281,57377,2048,65280,49153,2056,65535,49089
+    .word 16,510,65409,61457,1024,32640,57345,1028
+rnl_psi_inv_pow_tab:
+    .word 1,64509,8192,32897,64513,4080,128,65027
+    .word 65521,16448,2,63481,16384,257,63489,8160
+    .word 256,64517,65505,32896,4,61425,32768,514
+    .word 61441,16320,512,63497,65473,255,8,57313
+rnl_omega_fwd_tab:
+    .word 1,65529,64,65025,4096,32769,65533,32
+    .word 65281,2048,49153,65535,16,65409,1024,57345
+rnl_omega_inv_tab:
+    .word 1,8192,64513,128,65521,2,16384,63489
+    .word 256,65505,4,32768,61441,512,65473,8
+rnl_inv_n:   .word 63489
+rnl_bit_rev_tab:
+    .byte 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
+    .byte 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
+
 /* ------------------------------------------------------------------ */
 /* .bss: RNL polynomial arrays (RNL_N*4 = 128 bytes each)             */
 /* ------------------------------------------------------------------ */
@@ -159,6 +182,9 @@ rnl_C_A:     .space 128
 rnl_C_B:     .space 128
 rnl_tmp:     .space 128
 rnl_tmp2:    .space 128
+rnl_fa:      .space 128    /* NTT work array */
+rnl_ga:      .space 128    /* NTT work array */
+rnl_ha:      .space 128    /* NTT work array */
 
 /* ------------------------------------------------------------------ */
 /* .text                                                               */
@@ -1211,89 +1237,243 @@ rpa_done:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* rnl_poly_mul: h=f*g mod (x^N+1) in Z_q; pointers via rnl_{f,g,h}_ptr */
+/* rnl_ntt: in-place NTT/INTT on array of RNL_N words                  */
+/* r0=array ptr  r1=0(fwd)/1(inv)                                       */
+/* Uses precomputed tables: rnl_bit_rev_tab, rnl_omega_{fwd,inv}_tab    */
+/* Registers: r4=arr r5=inv_flag r6=i r7=j r8=len r9=half              */
+/*            r10=step r11=omega_tab r0-r3=scratch                      */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+rnl_ntt:
+    push    {r4-r11, lr}
+    mov     r4, r0                  @ arr ptr
+    mov     r5, r1                  @ inv flag
+
+    @ --- Bit-reversal permutation using precomputed table ---
+    ldr     r11, =rnl_bit_rev_tab
+    mov     r6, #0
+ntt_br:
+    cmp     r6, #RNL_N
+    bge     ntt_br_done
+    ldrb    r7, [r11, r6]           @ j = bit_rev[i]
+    cmp     r6, r7
+    bge     ntt_br_next
+    ldr     r0, [r4, r6, lsl #2]
+    ldr     r1, [r4, r7, lsl #2]
+    str     r1, [r4, r6, lsl #2]
+    str     r0, [r4, r7, lsl #2]
+ntt_br_next:
+    add     r6, r6, #1
+    b       ntt_br
+ntt_br_done:
+
+    @ Select forward or inverse omega table
+    ldr     r11, =rnl_omega_fwd_tab
+    ldr     r12, =rnl_omega_inv_tab
+    cmp     r5, #0
+    it      ne
+    movne   r11, r12
+
+    @ --- Butterfly stages: length = 2,4,8,16,32 ---
+    @ r8=length  r9=half  r10=twiddle step (16/half = n/length)
+    mov     r8, #2
+    mov     r10, #16                @ step starts at 16 (for half=1)
+ntt_stage:
+    cmp     r8, #RNL_N
+    bgt     ntt_stage_done
+    lsr     r9, r8, #1              @ half = length/2
+
+    @ Group loop: r6 = group start (i), step = r8 (length)
+    mov     r6, #0
+ntt_grp:
+    cmp     r6, #RNL_N
+    bge     ntt_grp_done
+
+    @ Butterfly loop: r7 = k (0..half-1)
+    mov     r7, #0
+ntt_bf:
+    cmp     r7, r9                  @ while k < half
+    bge     ntt_bf_done
+
+    @ Load wn = omega_tab[k * step]
+    mul     r0, r7, r10             @ idx = k * step
+    ldr     r2, [r11, r0, lsl #2]  @ wn = omega_tab[idx]
+
+    @ u = arr[i+k],  v_raw = arr[i+k+half]
+    add     r0, r6, r7             @ i+k
+    ldr     r3, [r4, r0, lsl #2]  @ u
+    add     r1, r0, r9             @ i+k+half
+    ldr     r0, [r4, r1, lsl #2]  @ v_raw
+
+    @ v = v_raw * wn mod q (fast Fermat: 2^16 ≡ -1, 2^32 ≡ 1 mod 65537)
+    umull   r0, r12, r0, r2        @ r12:r0 = v_raw * wn
+    add     r0, r0, r12            @ r0 += r12 (since 2^32 ≡ 1)
+    lsr     r12, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r12
+    it      mi
+    addmi   r0, r0, #RNL_Q         @ r0 = v (mod q)
+
+    @ Store a[i+k] = (u + v) mod q
+    add     r12, r3, r0
+    ldr     r2, =RNL_Q
+    cmp     r12, r2
+    it      cs
+    subcs   r12, r12, r2
+    add     r2, r6, r7
+    str     r12, [r4, r2, lsl #2]
+
+    @ Store a[i+k+half] = (u - v + q) mod q
+    ldr     r2, =RNL_Q
+    sub     r12, r3, r0
+    add     r12, r12, r2
+    cmp     r12, r2
+    it      cs
+    subcs   r12, r12, r2
+    add     r2, r6, r7
+    add     r2, r2, r9             @ i+k+half
+    str     r12, [r4, r2, lsl #2]
+
+    add     r7, r7, #1
+    b       ntt_bf
+ntt_bf_done:
+
+    add     r6, r6, r8             @ i += length
+    b       ntt_grp
+ntt_grp_done:
+
+    lsl     r8, r8, #1             @ length <<= 1
+    lsr     r10, r10, #1           @ step >>= 1
+    b       ntt_stage
+ntt_stage_done:
+
+    @ If inverse: multiply all by inv_n = 63489
+    cmp     r5, #0
+    beq     ntt_inv_done
+    ldr     r1, =rnl_inv_n
+    ldr     r2, [r1]               @ inv_n = 63489
+    mov     r6, #0
+ntt_scale:
+    cmp     r6, #RNL_N
+    bge     ntt_inv_done
+    ldr     r0, [r4, r6, lsl #2]
+    umull   r0, r1, r0, r2
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r4, r6, lsl #2]
+    add     r6, r6, #1
+    b       ntt_scale
+ntt_inv_done:
+
+    pop     {r4-r11, pc}
+    .ltorg
+
+/* rnl_poly_mul: h=f*g in Z_q[x]/(x^N+1) via NTT. O(N log N).          */
+/* Args via rnl_{f,g,h}_ptr (unchanged calling convention).              */
 /* ------------------------------------------------------------------ */
     .thumb_func
 rnl_poly_mul:
     push    {r4-r11, lr}
 
-    ldr     r6, =rnl_tmp
-    mov     r0, #0
-    mov     r1, #RNL_N
-rpm_zero:
-    str     r0, [r6], #4
-    subs    r1, r1, #1
-    bne     rpm_zero
-    ldr     r6, =rnl_tmp
-
+    @ Copy f[] and g[] to work arrays fa[], ga[] with psi twist
     ldr     r4, =rnl_f_ptr
-    ldr     r4, [r4]
+    ldr     r4, [r4]               @ f ptr
     ldr     r5, =rnl_g_ptr
-    ldr     r5, [r5]
-    ldr     r11, =RNL_Q
-
-    mov     r7, #0
-rpm_outer:
-    cmp     r7, #RNL_N
-    bge     rpm_outer_done
-    ldr     r9, [r4, r7, lsl #2]
-    cmp     r9, #0
-    beq     rpm_outer_next
-
-    mov     r8, #0
-rpm_inner:
-    cmp     r8, #RNL_N
-    bge     rpm_inner_done
-    ldr     r10, [r5, r8, lsl #2]
-    cmp     r10, #0
-    beq     rpm_inner_next
-
-    umull   r0, r1, r9, r10
+    ldr     r5, [r5]               @ g ptr
+    ldr     r6, =rnl_fa            @ fa ptr
+    ldr     r7, =rnl_ga            @ ga ptr
+    ldr     r8, =rnl_psi_pow_tab   @ psi_pow table
+    mov     r9, #0                 @ i
+rpm_twist:
+    cmp     r9, #RNL_N
+    bge     rpm_twist_done
+    ldr     r10, [r8, r9, lsl #2]  @ psi_pow[i]
+    ldr     r11, [r4, r9, lsl #2]  @ f[i]
+    @ fa[i] = f[i] * psi_pow[i] mod q
+    umull   r0, r1, r11, r10
     add     r0, r0, r1
-    udiv    r1, r0, r11
-    mls     r0, r11, r1, r0
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r6, r9, lsl #2]
+    @ ga[i] = g[i] * psi_pow[i] mod q
+    ldr     r11, [r5, r9, lsl #2]  @ g[i]
+    umull   r0, r1, r11, r10
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r7, r9, lsl #2]
+    add     r9, r9, #1
+    b       rpm_twist
+rpm_twist_done:
 
-    add     r10, r7, r8
-    cmp     r10, #RNL_N
-    bge     rpm_neg
+    @ Forward NTT on fa
+    ldr     r0, =rnl_fa
+    mov     r1, #0
+    bl      rnl_ntt
+    @ Forward NTT on ga
+    ldr     r0, =rnl_ga
+    mov     r1, #0
+    bl      rnl_ntt
 
-    ldr     r1, [r6, r10, lsl #2]
-    add     r1, r1, r0
-    cmp     r1, r11
-    it      cs
-    subcs   r1, r1, r11
-    str     r1, [r6, r10, lsl #2]
-    b       rpm_inner_next
+    @ Pointwise multiply: ha[i] = fa[i] * ga[i] mod q
+    ldr     r4, =rnl_fa
+    ldr     r5, =rnl_ga
+    ldr     r6, =rnl_ha
+    mov     r9, #0
+rpm_pw:
+    cmp     r9, #RNL_N
+    bge     rpm_pw_done
+    ldr     r10, [r4, r9, lsl #2]
+    ldr     r11, [r5, r9, lsl #2]
+    umull   r0, r1, r10, r11
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r6, r9, lsl #2]
+    add     r9, r9, #1
+    b       rpm_pw
+rpm_pw_done:
 
-rpm_neg:
-    sub     r10, r10, #RNL_N
-    ldr     r1, [r6, r10, lsl #2]
-    sub     r1, r1, r0
-    add     r1, r1, r11
-    cmp     r1, r11
-    it      cs
-    subcs   r1, r1, r11
-    str     r1, [r6, r10, lsl #2]
+    @ Inverse NTT on ha
+    ldr     r0, =rnl_ha
+    mov     r1, #1
+    bl      rnl_ntt
 
-rpm_inner_next:
-    add     r8, r8, #1
-    b       rpm_inner
-rpm_inner_done:
-
-rpm_outer_next:
-    add     r7, r7, #1
-    b       rpm_outer
-rpm_outer_done:
-
+    @ Untwist: h[i] = ha[i] * psi_inv_pow[i] mod q, copy to output
     ldr     r3, =rnl_h_ptr
-    ldr     r3, [r3]
-    ldr     r6, =rnl_tmp
-    mov     r7, #RNL_N
-rpm_copy:
-    ldr     r0, [r6], #4
-    str     r0, [r3], #4
-    subs    r7, r7, #1
-    bne     rpm_copy
+    ldr     r3, [r3]               @ h ptr
+    ldr     r6, =rnl_ha
+    ldr     r8, =rnl_psi_inv_pow_tab
+    mov     r9, #0
+rpm_untwist:
+    cmp     r9, #RNL_N
+    bge     rpm_untwist_done
+    ldr     r10, [r8, r9, lsl #2]  @ psi_inv_pow[i]
+    ldr     r11, [r6, r9, lsl #2]  @ ha[i]
+    umull   r0, r1, r11, r10
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r3, r9, lsl #2]
+    add     r9, r9, #1
+    b       rpm_untwist
+rpm_untwist_done:
 
     pop     {r4-r11, pc}
 

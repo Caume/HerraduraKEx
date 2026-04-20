@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.3
+/*  Herradura KEx -- Correctness Tests v1.5.4
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL
@@ -56,6 +56,29 @@ rnl_f_ptr: .word 0
 rnl_g_ptr: .word 0
 rnl_h_ptr: .word 0
 
+/* NTT tables (n=32, q=65537) */
+    .align 2
+rnl_psi_pow_tab:
+    .word 1,8224,65529,65282,64,2040,65025,49217
+    .word 4096,65023,32769,4112,65533,32641,32,1020
+    .word 65281,57377,2048,65280,49153,2056,65535,49089
+    .word 16,510,65409,61457,1024,32640,57345,1028
+rnl_psi_inv_pow_tab:
+    .word 1,64509,8192,32897,64513,4080,128,65027
+    .word 65521,16448,2,63481,16384,257,63489,8160
+    .word 256,64517,65505,32896,4,61425,32768,514
+    .word 61441,16320,512,63497,65473,255,8,57313
+rnl_omega_fwd_tab:
+    .word 1,65529,64,65025,4096,32769,65533,32
+    .word 65281,2048,49153,65535,16,65409,1024,57345
+rnl_omega_inv_tab:
+    .word 1,8192,64513,128,65521,2,16384,63489
+    .word 256,65505,4,32768,61441,512,65473,8
+rnl_inv_n:   .word 63489
+rnl_bit_rev_tab:
+    .byte 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
+    .byte 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
+
 /* ------------------------------------------------------------------ */
 /* .bss scratch + RNL poly arrays                                      */
 /* ------------------------------------------------------------------ */
@@ -92,6 +115,9 @@ rnl_C_A:     .space 128
 rnl_C_B:     .space 128
 rnl_tmp:     .space 128
 rnl_tmp2:    .space 128
+rnl_fa:      .space 128
+rnl_ga:      .space 128
+rnl_ha:      .space 128
 
 /* ------------------------------------------------------------------ */
 /* .text                                                               */
@@ -1035,78 +1061,196 @@ rpa_done:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* rnl_poly_mul: h=f*g mod (x^N+1) in Z_q                            */
-/* ------------------------------------------------------------------ */
+/* rnl_ntt: in-place NTT/INTT. r0=array r1=0(fwd)/1(inv)              */
+    .thumb_func
+rnl_ntt:
+    push    {r4-r11, lr}
+    mov     r4, r0
+    mov     r5, r1
+    ldr     r11, =rnl_bit_rev_tab
+    mov     r6, #0
+t_ntt_br:
+    cmp     r6, #RNL_N
+    bge     t_ntt_br_done
+    ldrb    r7, [r11, r6]
+    cmp     r6, r7
+    bge     t_ntt_br_next
+    ldr     r0, [r4, r6, lsl #2]
+    ldr     r1, [r4, r7, lsl #2]
+    str     r1, [r4, r6, lsl #2]
+    str     r0, [r4, r7, lsl #2]
+t_ntt_br_next:
+    add     r6, r6, #1
+    b       t_ntt_br
+t_ntt_br_done:
+    ldr     r11, =rnl_omega_fwd_tab
+    ldr     r12, =rnl_omega_inv_tab
+    cmp     r5, #0
+    it      ne
+    movne   r11, r12
+    mov     r8, #2
+    mov     r10, #16
+t_ntt_stage:
+    cmp     r8, #RNL_N
+    bgt     t_ntt_stage_done
+    lsr     r9, r8, #1
+    mov     r6, #0
+t_ntt_grp:
+    cmp     r6, #RNL_N
+    bge     t_ntt_grp_done
+    mov     r7, #0
+t_ntt_bf:
+    cmp     r7, r9
+    bge     t_ntt_bf_done
+    mul     r0, r7, r10
+    ldr     r2, [r11, r0, lsl #2]
+    add     r0, r6, r7
+    ldr     r3, [r4, r0, lsl #2]
+    add     r1, r0, r9
+    ldr     r0, [r4, r1, lsl #2]
+    umull   r0, r12, r0, r2
+    add     r0, r0, r12
+    lsr     r12, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r12
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    add     r12, r3, r0
+    ldr     r2, =RNL_Q
+    cmp     r12, r2
+    it      cs
+    subcs   r12, r12, r2
+    add     r2, r6, r7
+    str     r12, [r4, r2, lsl #2]
+    ldr     r2, =RNL_Q
+    sub     r12, r3, r0
+    add     r12, r12, r2
+    cmp     r12, r2
+    it      cs
+    subcs   r12, r12, r2
+    add     r2, r6, r7
+    add     r2, r2, r9
+    str     r12, [r4, r2, lsl #2]
+    add     r7, r7, #1
+    b       t_ntt_bf
+t_ntt_bf_done:
+    add     r6, r6, r8
+    b       t_ntt_grp
+t_ntt_grp_done:
+    lsl     r8, r8, #1
+    lsr     r10, r10, #1
+    b       t_ntt_stage
+t_ntt_stage_done:
+    cmp     r5, #0
+    beq     t_ntt_inv_done
+    ldr     r1, =rnl_inv_n
+    ldr     r2, [r1]
+    mov     r6, #0
+t_ntt_scale:
+    cmp     r6, #RNL_N
+    bge     t_ntt_inv_done
+    ldr     r0, [r4, r6, lsl #2]
+    umull   r0, r1, r0, r2
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r4, r6, lsl #2]
+    add     r6, r6, #1
+    b       t_ntt_scale
+t_ntt_inv_done:
+    pop     {r4-r11, pc}
+    .ltorg
+
+/* rnl_poly_mul: h=f*g in Z_q[x]/(x^N+1) via NTT. O(N log N).        */
     .thumb_func
 rnl_poly_mul:
     push    {r4-r11, lr}
-    ldr     r6, =rnl_tmp
-    mov     r0, #0
-    mov     r1, #RNL_N
-rpm_zero:
-    str     r0, [r6], #4
-    subs    r1, r1, #1
-    bne     rpm_zero
-    ldr     r6, =rnl_tmp
     ldr     r4, =rnl_f_ptr
     ldr     r4, [r4]
     ldr     r5, =rnl_g_ptr
     ldr     r5, [r5]
-    ldr     r11, =RNL_Q
-    mov     r7, #0
-rpm_outer:
-    cmp     r7, #RNL_N
-    bge     rpm_outer_done
-    ldr     r9, [r4, r7, lsl #2]
-    cmp     r9, #0
-    beq     rpm_outer_next
-    mov     r8, #0
-rpm_inner:
-    cmp     r8, #RNL_N
-    bge     rpm_inner_done
-    ldr     r10, [r5, r8, lsl #2]
-    cmp     r10, #0
-    beq     rpm_inner_next
-    umull   r0, r1, r9, r10
+    ldr     r6, =rnl_fa
+    ldr     r7, =rnl_ga
+    ldr     r8, =rnl_psi_pow_tab
+    mov     r9, #0
+t_rpm_twist:
+    cmp     r9, #RNL_N
+    bge     t_rpm_twist_done
+    ldr     r10, [r8, r9, lsl #2]
+    ldr     r11, [r4, r9, lsl #2]
+    umull   r0, r1, r11, r10
     add     r0, r0, r1
-    udiv    r1, r0, r11
-    mls     r0, r11, r1, r0
-    add     r10, r7, r8
-    cmp     r10, #RNL_N
-    bge     rpm_neg
-    ldr     r1, [r6, r10, lsl #2]
-    add     r1, r1, r0
-    cmp     r1, r11
-    it      cs
-    subcs   r1, r1, r11
-    str     r1, [r6, r10, lsl #2]
-    b       rpm_inner_next
-rpm_neg:
-    sub     r10, r10, #RNL_N
-    ldr     r1, [r6, r10, lsl #2]
-    sub     r1, r1, r0
-    add     r1, r1, r11
-    cmp     r1, r11
-    it      cs
-    subcs   r1, r1, r11
-    str     r1, [r6, r10, lsl #2]
-rpm_inner_next:
-    add     r8, r8, #1
-    b       rpm_inner
-rpm_inner_done:
-rpm_outer_next:
-    add     r7, r7, #1
-    b       rpm_outer
-rpm_outer_done:
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r6, r9, lsl #2]
+    ldr     r11, [r5, r9, lsl #2]
+    umull   r0, r1, r11, r10
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r7, r9, lsl #2]
+    add     r9, r9, #1
+    b       t_rpm_twist
+t_rpm_twist_done:
+    ldr     r0, =rnl_fa
+    mov     r1, #0
+    bl      rnl_ntt
+    ldr     r0, =rnl_ga
+    mov     r1, #0
+    bl      rnl_ntt
+    ldr     r4, =rnl_fa
+    ldr     r5, =rnl_ga
+    ldr     r6, =rnl_ha
+    mov     r9, #0
+t_rpm_pw:
+    cmp     r9, #RNL_N
+    bge     t_rpm_pw_done
+    ldr     r10, [r4, r9, lsl #2]
+    ldr     r11, [r5, r9, lsl #2]
+    umull   r0, r1, r10, r11
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r6, r9, lsl #2]
+    add     r9, r9, #1
+    b       t_rpm_pw
+t_rpm_pw_done:
+    ldr     r0, =rnl_ha
+    mov     r1, #1
+    bl      rnl_ntt
     ldr     r3, =rnl_h_ptr
     ldr     r3, [r3]
-    ldr     r6, =rnl_tmp
-    mov     r7, #RNL_N
-rpm_copy:
-    ldr     r0, [r6], #4
-    str     r0, [r3], #4
-    subs    r7, r7, #1
-    bne     rpm_copy
+    ldr     r6, =rnl_ha
+    ldr     r8, =rnl_psi_inv_pow_tab
+    mov     r9, #0
+t_rpm_untwist:
+    cmp     r9, #RNL_N
+    bge     t_rpm_untwist_done
+    ldr     r10, [r8, r9, lsl #2]
+    ldr     r11, [r6, r9, lsl #2]
+    umull   r0, r1, r11, r10
+    add     r0, r0, r1
+    lsr     r1, r0, #16
+    uxth    r0, r0
+    sub     r0, r0, r1
+    it      mi
+    addmi   r0, r0, #RNL_Q
+    str     r0, [r3, r9, lsl #2]
+    add     r9, r9, #1
+    b       t_rpm_untwist
+t_rpm_untwist_done:
     pop     {r4-r11, pc}
     .ltorg
 
