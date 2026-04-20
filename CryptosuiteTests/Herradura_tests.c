@@ -4,13 +4,15 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32/64-bit GF)
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
     v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
             ([CLASSICAL]/[PQC-EXT]) and section headers; fixed version banner.
-            Multi-size loops for tests [1],[5]–[9],[14]–[16]: 64-bit GF(2^64) and
-            64-bit NL-FSCX added; tests loop over {32,64} (GF/NL) and {32,64,256} for
-            [1],[5],[6]; HKEX-RNL [14] loops over n∈{32,64}; key-sensitivity PASS
-            criterion aligned to mean >= n/4 (matching Python/Go).
+            Phase 3 — multi-size loops [1],[5]–[9],[14]–[16]: 64-bit GF(2^64) and
+            64-bit NL-FSCX; tests [1],[5],[6] loop {32,64,256}; [7]–[9],[14]–[16]
+            loop {32,64}; key-sensitivity PASS criterion aligned to mean >= n/4.
+            Phase 4 — multi-size loops [2]–[4],[10]–[13]: 128-bit FSCX/__uint128_t
+            and 128-bit NL-FSCX added; [2]–[4] loop {64,128,256}; [10]–[13] loop
+            {64,128} (256-bit NL-FSCX omitted; 256-bit mul not implemented).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
@@ -467,6 +469,78 @@ static uint64_t nl_fscx_revolve_v2_inv_64(uint64_t y, uint64_t b, int steps)
 }
 
 /* ------------------------------------------------------------------ */
+/* 128-bit FSCX and NL-FSCX primitives                                */
+/* ROL-1/ROR-1 for FSCX; ROL-32 for NL-FSCX (n/4 = 128/4 = 32 bits) */
+/* ------------------------------------------------------------------ */
+
+static __uint128_t rand128(void)
+{
+    __uint128_t hi = rand64(), lo = rand64();
+    return (hi << 64) | lo;
+}
+
+static __uint128_t rol128(__uint128_t x) { return (x << 1) | (x >> 127); }
+static __uint128_t ror128(__uint128_t x) { return (x >> 1) | (x << 127); }
+
+static __uint128_t fscx128(__uint128_t a, __uint128_t b)
+{
+    return a ^ b ^ rol128(a) ^ rol128(b) ^ ror128(a) ^ ror128(b);
+}
+
+static __uint128_t fscx_revolve128(__uint128_t a, __uint128_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) a = fscx128(a, b);
+    return a;
+}
+
+static __uint128_t rol128_32(__uint128_t x) { return (x << 32) | (x >> 96); }
+
+static __uint128_t nl_fscx_v1_128(__uint128_t a, __uint128_t b)
+{
+    return fscx128(a, b) ^ rol128_32(a + b);
+}
+
+static __uint128_t nl_fscx_revolve_v1_128(__uint128_t a, __uint128_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) a = nl_fscx_v1_128(a, b);
+    return a;
+}
+
+static __uint128_t nl_fscx_delta_v2_128(__uint128_t b)
+{
+    return rol128_32(b * ((b + 1) >> 1));
+}
+
+static __uint128_t nl_fscx_v2_128(__uint128_t a, __uint128_t b)
+{
+    return fscx128(a, b) + nl_fscx_delta_v2_128(b);
+}
+
+/* M^{-1}(x) = fscx_revolve(x, 0, 63)  (128/2 - 1 = 63 steps) */
+static __uint128_t m_inv_128(__uint128_t x) { return fscx_revolve128(x, 0, 63); }
+
+static __uint128_t nl_fscx_v2_inv_128(__uint128_t y, __uint128_t b)
+{
+    return b ^ m_inv_128(y - nl_fscx_delta_v2_128(b));
+}
+
+static __uint128_t nl_fscx_revolve_v2_128(__uint128_t a, __uint128_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) a = nl_fscx_v2_128(a, b);
+    return a;
+}
+
+static __uint128_t nl_fscx_revolve_v2_inv_128(__uint128_t y, __uint128_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++) y = nl_fscx_v2_inv_128(y, b);
+    return y;
+}
+
+/* ------------------------------------------------------------------ */
 /* HKEX-RNL helpers: Ring-LWR key exchange (n=32, negacyclic)        */
 /* Z_q[x]/(x^32+1), q=65537, p=4096, pp=2, b=1                       */
 /* ------------------------------------------------------------------ */
@@ -760,6 +834,13 @@ static int time_exceeded(struct timespec *t0)
 /* Security tests [1]-[6]: HKEX-GF and FSCX primitives               */
 /* ------------------------------------------------------------------ */
 
+/* 128-bit popcount helper */
+static int popcount128(__uint128_t x)
+{
+    return __builtin_popcountll((uint64_t)(x >> 64))
+         + __builtin_popcountll((uint64_t)x);
+}
+
 /* Eve s_op helpers: acc = XOR of fscx^0..r applied to delta */
 static uint32_t s_op32(uint32_t delta, int r)
 {
@@ -821,35 +902,61 @@ static void test_hkex_gf_correctness(void)
 /* [2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip) */
 static void test_avalanche(void)
 {
-    int trial, bit;
-    double total = 0.0;
-    int gmin = KEYBITS + 1, gmax = -1;
-    int N = TEST_ROUNDS(1000);
+    static const int sizes[] = {64, 128, 256};
+    int si, trial, N, size;
     struct timespec t0;
-    BitArray a, b, base_out, ap, flip_out, diff;
     printf("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)  [CLASSICAL]\n");
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (trial = 0; trial < N; trial++) {
-        ba_rand(&a);
-        ba_rand(&b);
-        ba_fscx(&base_out, &a, &b);
-        for (bit = 0; bit < KEYBITS; bit++) {
-            int hd;
-            ba_flip_bit(&ap, &a, bit);
-            ba_fscx(&flip_out, &ap, &b);
-            ba_xor(&diff, &flip_out, &base_out);
-            hd = ba_popcount(&diff);
-            total += hd;
-            if (hd < gmin) gmin = hd;
-            if (hd > gmax) gmax = hd;
+    for (si = 0; si < 3; si++) {
+        double total = 0.0;
+        int gmin, gmax;
+        size = sizes[si]; gmin = size + 1; gmax = -1;
+        N = TEST_ROUNDS(1000);
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (trial = 0; trial < N; trial++) {
+            if (size == 256) {
+                BitArray a, b, base_out, ap, flip_out, diff;
+                int bit;
+                ba_rand(&a); ba_rand(&b);
+                ba_fscx(&base_out, &a, &b);
+                for (bit = 0; bit < 256; bit++) {
+                    int hd;
+                    ba_flip_bit(&ap, &a, bit);
+                    ba_fscx(&flip_out, &ap, &b);
+                    ba_xor(&diff, &flip_out, &base_out);
+                    hd = ba_popcount(&diff);
+                    total += hd;
+                    if (hd < gmin) gmin = hd;
+                    if (hd > gmax) gmax = hd;
+                }
+            } else if (size == 128) {
+                __uint128_t a = rand128(), b = rand128(), base;
+                int bit;
+                base = fscx128(a, b);
+                for (bit = 0; bit < 128; bit++) {
+                    int hd = popcount128(fscx128(a ^ ((__uint128_t)1 << bit), b) ^ base);
+                    total += hd;
+                    if (hd < gmin) gmin = hd;
+                    if (hd > gmax) gmax = hd;
+                }
+            } else {
+                uint64_t a = rand64(), b = rand64(), base;
+                int bit;
+                base = fscx64(a, b);
+                for (bit = 0; bit < 64; bit++) {
+                    int hd = __builtin_popcountll(fscx64(a ^ (1ULL << bit), b) ^ base);
+                    total += hd;
+                    if (hd < gmin) gmin = hd;
+                    if (hd > gmax) gmax = hd;
+                }
+            }
+            if ((trial & 63) == 63 && time_exceeded(&t0)) { N = trial + 1; break; }
         }
-        if ((trial & 63) == 63 && time_exceeded(&t0)) { N = trial + 1; break; }
-    }
-    {
-        double mean = total / ((double)N * (double)KEYBITS);
-        printf("    bits=%d  mean=%.2f (expected 3/%d)  min=%d  max=%d  [%s]\n",
-               KEYBITS, mean, KEYBITS, gmin, gmax,
-               (mean >= 2.9 && mean <= 3.1) ? "PASS" : "FAIL");
+        {
+            double mean = total / ((double)N * (double)size);
+            printf("    bits=%3d  mean=%.2f (expected 3/%d)  min=%d  max=%d  [%s]\n",
+                   size, mean, size, gmin, gmax,
+                   (mean >= 2.9 && mean <= 3.1) ? "PASS" : "FAIL");
+        }
     }
     putchar('\n');
 }
@@ -857,66 +964,86 @@ static void test_avalanche(void)
 /* [3] Orbit period: FSCX_REVOLVE(A,B,n) cycles back to A */
 static void test_orbit_period(void)
 {
-    int trial, cntP = 0, cntHP = 0, other = 0;
-    int cap = 2 * KEYBITS;
-    int N = TEST_ROUNDS(100);
+    static const int sizes[] = {64, 128, 256};
+    int si, trial, N, size;
     struct timespec t0;
-    BitArray a, b, cur, tmp;
-    printf("[3] Orbit period: FSCX_REVOLVE(A,B,n) cycles back to A  [CLASSICAL]\n");
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (trial = 0; trial < N; trial++) {
-        int period = 1;
-        ba_rand(&a);
-        ba_rand(&b);
-        ba_fscx(&cur, &a, &b);
-        while (!ba_equal(&cur, &a) && period < cap) {
-            ba_fscx(&tmp, &cur, &b);
-            cur = tmp;
-            period++;
+    printf("[3] Orbit period: FSCX_REVOLVE cycles back to A  [CLASSICAL]\n");
+    for (si = 0; si < 3; si++) {
+        int cntP = 0, cntHP = 0, other = 0;
+        size = sizes[si];
+        N = TEST_ROUNDS(100);
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (trial = 0; trial < N; trial++) {
+            int period = 1, cap = 2 * size;
+            if (size == 256) {
+                BitArray a, b, cur, tmp;
+                ba_rand(&a); ba_rand(&b);
+                ba_fscx(&cur, &a, &b);
+                while (!ba_equal(&cur, &a) && period < cap) {
+                    ba_fscx(&tmp, &cur, &b); cur = tmp; period++;
+                }
+            } else if (size == 128) {
+                __uint128_t a = rand128(), b = rand128(), cur = fscx128(a, b);
+                while (cur != a && period < cap) { cur = fscx128(cur, b); period++; }
+            } else {
+                uint64_t a = rand64(), b = rand64(), cur = fscx64(a, b);
+                while (cur != a && period < cap) { cur = fscx64(cur, b); period++; }
+            }
+            if      (period == size)     cntP++;
+            else if (period == size / 2) cntHP++;
+            else                         other++;
+            if ((trial & 15) == 15 && time_exceeded(&t0)) { N = trial + 1; break; }
         }
-        if      (period == KEYBITS)     cntP++;
-        else if (period == KEYBITS / 2) cntHP++;
-        else                            other++;
-        if ((trial & 15) == 15 && time_exceeded(&t0)) { N = trial + 1; break; }
+        printf("    bits=%3d  period=%d: %3d  period=%d: %3d  other: %d  [%s]\n",
+               size, size, cntP, size / 2, cntHP, other,
+               other == 0 ? "PASS" : "FAIL");
     }
-    printf("    bits=%d  period=%d: %3d  period=%d: %3d  other: %d  [%s]\n",
-           KEYBITS, KEYBITS, cntP, KEYBITS / 2, cntHP, other,
-           other == 0 ? "PASS" : "FAIL");
     putchar('\n');
 }
 
 /* [4] Bit-frequency bias */
 static void test_bit_frequency(void)
 {
-    int bit, trial;
-    long long counts[KEYBITS];
-    double minpct, maxpct, meanpct;
-    int N = TEST_ROUNDS(100000);
+    static const int sizes[] = {64, 128, 256};
+    int si, bit, trial, N, size;
     struct timespec t0;
-    BitArray a, b, out;
-    printf("[4] Bit-frequency bias: %d FSCX outputs  [CLASSICAL]\n", N);
-    memset(counts, 0, sizeof(counts));
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (trial = 0; trial < N; trial++) {
-        ba_rand(&a);
-        ba_rand(&b);
-        ba_fscx(&out, &a, &b);
-        for (bit = 0; bit < KEYBITS; bit++)
-            if (ba_get_bit(&out, bit))
-                counts[bit]++;
-        if ((trial & 255) == 255 && time_exceeded(&t0)) { N = trial + 1; break; }
+    long long counts[256];
+    printf("[4] Bit-frequency bias  [CLASSICAL]\n");
+    for (si = 0; si < 3; si++) {
+        double minpct, maxpct, meanpct;
+        size = sizes[si];
+        N = TEST_ROUNDS(10000);
+        memset(counts, 0, (size_t)size * sizeof(long long));
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (trial = 0; trial < N; trial++) {
+            if (size == 256) {
+                BitArray a, b, out;
+                ba_rand(&a); ba_rand(&b); ba_fscx(&out, &a, &b);
+                for (bit = 0; bit < 256; bit++)
+                    if (ba_get_bit(&out, bit)) counts[bit]++;
+            } else if (size == 128) {
+                __uint128_t out = fscx128(rand128(), rand128());
+                for (bit = 0; bit < 128; bit++)
+                    if ((out >> bit) & 1) counts[bit]++;
+            } else {
+                uint64_t out = fscx64(rand64(), rand64());
+                for (bit = 0; bit < 64; bit++)
+                    if ((out >> bit) & 1) counts[bit]++;
+            }
+            if ((trial & 255) == 255 && time_exceeded(&t0)) { N = trial + 1; break; }
+        }
+        minpct = 101.0; maxpct = -1.0; meanpct = 0.0;
+        for (bit = 0; bit < size; bit++) {
+            double pct = (double)counts[bit] / (double)N * 100.0;
+            meanpct += pct;
+            if (pct < minpct) minpct = pct;
+            if (pct > maxpct) maxpct = pct;
+        }
+        meanpct /= (double)size;
+        printf("    bits=%3d  min=%.2f%%  max=%.2f%%  mean=%.2f%%  [%s]\n",
+               size, minpct, maxpct, meanpct,
+               (minpct > 47.0 && maxpct < 53.0) ? "PASS" : "FAIL");
     }
-    minpct = 101.0; maxpct = -1.0; meanpct = 0.0;
-    for (bit = 0; bit < KEYBITS; bit++) {
-        double pct = (double)counts[bit] / (double)N * 100.0;
-        meanpct += pct;
-        if (pct < minpct) minpct = pct;
-        if (pct > maxpct) maxpct = pct;
-    }
-    meanpct /= (double)KEYBITS;
-    printf("    bits=%d  min=%.2f%%  max=%.2f%%  mean=%.2f%%  [%s]\n",
-           KEYBITS, minpct, maxpct, meanpct,
-           (minpct > 47.0 && maxpct < 53.0) ? "PASS" : "FAIL");
     putchar('\n');
 }
 
@@ -1153,130 +1280,184 @@ static void test_hpke_el_gamal(void)
 /* Security tests [10]-[16]: v1.5.0 NL-FSCX and PQC protocols        */
 /* ------------------------------------------------------------------ */
 
-/* I/R values for 32/64-bit NL tests */
-#define NL_I32  8   /* 32/4 */
-#define NL_R32  24  /* 3*32/4 */
-#define NL_I64  16  /* 64/4 */
-#define NL_R64  48  /* 3*64/4 */
+/* I/R values for 32/64/128-bit NL tests */
+#define NL_I32   8   /* 32/4 */
+#define NL_R32   24  /* 3*32/4 */
+#define NL_I64   16  /* 64/4 */
+#define NL_R64   48  /* 3*64/4 */
+#define NL_I128  32  /* 128/4 */
+#define NL_R128  96  /* 3*128/4 */
 
-/* [10] NL-FSCX v1 non-linearity and aperiodicity (32-bit) */
+/* [10] NL-FSCX v1 non-linearity and aperiodicity */
 static void test_nl_fscx_v1_nonlinearity(void)
 {
-    int i, violations = 0, no_period = 0;
-    int N1 = TEST_ROUNDS(1000);
-    int N2 = TEST_ROUNDS(200);
+    static const int sizes[] = {64, 128};
+    int si, i, size;
     struct timespec t0;
-    printf("[10] NL-FSCX v1 non-linearity and aperiodicity  (bits=32)  [PQC-EXT]\n");
-    /* Linearity check: f(A,B) ^ f(0,B) == fscx(A,0) is the linear prediction;
-       violations count how often NL-FSCX v1 differs from that prediction. */
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N1; i++) {
-        uint32_t A = rand32(), B = rand32();
-        uint32_t lin_pred = fscx32(A, 0) ^ nl_fscx_v1_32(0, B);
-        if (nl_fscx_v1_32(A, B) != lin_pred)
-            violations++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
-    }
-    /* Aperiodicity: orbit of 4*n=128 steps from a random start should not cycle */
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N2; i++) {
-        uint32_t A = rand32(), B = rand32();
-        uint32_t cur = nl_fscx_v1_32(A, B);
-        int found = 0, step;
-        for (step = 1; step < 128; step++) {
-            cur = nl_fscx_v1_32(cur, B);
-            if (cur == A) { found = 1; break; }
+    printf("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]\n");
+    for (si = 0; si < 2; si++) {
+        int violations = 0, no_period = 0;
+        int N1 = TEST_ROUNDS(1000), N2 = TEST_ROUNDS(200);
+        size = sizes[si];
+        int cap = 4 * size;
+        /* Linearity check */
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N1; i++) {
+            if (size == 128) {
+                __uint128_t A = rand128(), B = rand128();
+                __uint128_t lin_pred = fscx128(A, 0) ^ nl_fscx_v1_128(0, B);
+                if (nl_fscx_v1_128(A, B) != lin_pred) violations++;
+            } else {
+                uint64_t A = rand64(), B = rand64();
+                uint64_t lin_pred = fscx64(A, 0) ^ nl_fscx_v1_64(0, B);
+                if (nl_fscx_v1_64(A, B) != lin_pred) violations++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
         }
-        if (!found) no_period++;
-        if ((i & 31) == 31 && time_exceeded(&t0)) { N2 = i + 1; break; }
+        /* Aperiodicity: orbit of 4*n steps should not return to A */
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N2; i++) {
+            int found = 0, step;
+            if (size == 128) {
+                __uint128_t A = rand128(), B = rand128();
+                __uint128_t cur = nl_fscx_v1_128(A, B);
+                for (step = 1; step < cap; step++) {
+                    cur = nl_fscx_v1_128(cur, B);
+                    if (cur == A) { found = 1; break; }
+                }
+            } else {
+                uint64_t A = rand64(), B = rand64();
+                uint64_t cur = nl_fscx_v1_64(A, B);
+                for (step = 1; step < cap; step++) {
+                    cur = nl_fscx_v1_64(cur, B);
+                    if (cur == A) { found = 1; break; }
+                }
+            }
+            if (!found) no_period++;
+            if ((i & 31) == 31 && time_exceeded(&t0)) { N2 = i + 1; break; }
+        }
+        printf("    bits=%3d  linearity violations=%d/%d  no-period=%d/%d  [%s]\n",
+               size, violations, N1, no_period, N2,
+               (violations == N1 && no_period >= N2 * 95 / 100) ? "PASS" : "FAIL");
     }
-    printf("    bits=32  linearity violations=%d/%d  no-period=%d/%d  [%s]\n",
-           violations, N1, no_period, N2,
-           (violations == N1 && no_period >= N2 * 95 / 100) ? "PASS" : "FAIL");
     putchar('\n');
 }
 
-/* [11] NL-FSCX v2 bijectivity and exact inverse (32-bit) */
+/* [11] NL-FSCX v2 bijectivity and exact inverse */
 static void test_nl_fscx_v2_bijective_inverse(void)
 {
-    int i, non_bij = 0, inv_ok = 0, nl_ok = 0;
-    int N1 = TEST_ROUNDS(500);
-    int N2 = TEST_ROUNDS(1000);
-    int N3 = TEST_ROUNDS(500);
+    static const int sizes[] = {64, 128};
+    int si, i, size;
     struct timespec t0;
-    printf("[11] NL-FSCX v2 bijectivity and exact inverse  (bits=32)  [PQC-EXT]\n");
-    /* Collision test: for N1 random B, draw pairs (A1,A2) and check no collision */
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N1; i++) {
-        uint32_t B = rand32();
-        uint32_t A1 = rand32(), A2 = rand32();
-        if (A1 != A2 && nl_fscx_v2_32(A1, B) == nl_fscx_v2_32(A2, B))
-            non_bij++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
+    printf("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]\n");
+    for (si = 0; si < 2; si++) {
+        int non_bij = 0, inv_ok = 0, nl_ok = 0;
+        int N1 = TEST_ROUNDS(500), N2 = TEST_ROUNDS(1000), N3 = TEST_ROUNDS(500);
+        size = sizes[si];
+        /* Collision test */
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N1; i++) {
+            if (size == 128) {
+                __uint128_t B = rand128(), A1 = rand128(), A2 = rand128();
+                if (A1 != A2 && nl_fscx_v2_128(A1, B) == nl_fscx_v2_128(A2, B)) non_bij++;
+            } else {
+                uint64_t B = rand64(), A1 = rand64(), A2 = rand64();
+                if (A1 != A2 && nl_fscx_v2_64(A1, B) == nl_fscx_v2_64(A2, B)) non_bij++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N1 = i + 1; break; }
+        }
+        /* Inverse correctness */
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N2; i++) {
+            if (size == 128) {
+                __uint128_t A = rand128(), B = rand128();
+                if (nl_fscx_v2_inv_128(nl_fscx_v2_128(A, B), B) == A) inv_ok++;
+            } else {
+                uint64_t A = rand64(), B = rand64();
+                if (nl_fscx_v2_inv_64(nl_fscx_v2_64(A, B), B) == A) inv_ok++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N2 = i + 1; break; }
+        }
+        /* Non-linearity */
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N3; i++) {
+            if (size == 128) {
+                __uint128_t A = rand128(), B = rand128();
+                if (nl_fscx_v2_128(A, B) != (fscx128(A, 0) ^ nl_fscx_v2_128(0, B))) nl_ok++;
+            } else {
+                uint64_t A = rand64(), B = rand64();
+                if (nl_fscx_v2_64(A, B) != (fscx64(A, 0) ^ nl_fscx_v2_64(0, B))) nl_ok++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N3 = i + 1; break; }
+        }
+        printf("    bits=%3d  collisions=%d/%d  inv=%d/%d  nonlinear=%d/%d  [%s]\n",
+               size, non_bij, N1, inv_ok, N2, nl_ok, N3,
+               (non_bij == 0 && inv_ok == N2 && nl_ok >= N3 * 98 / 100) ? "PASS" : "FAIL");
     }
-    /* Inverse correctness: nl_fscx_v2_inv(nl_fscx_v2(A,B), B) == A */
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N2; i++) {
-        uint32_t A = rand32(), B = rand32();
-        if (nl_fscx_v2_inv_32(nl_fscx_v2_32(A, B), B) == A)
-            inv_ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N2 = i + 1; break; }
-    }
-    /* Non-linearity: f(A,B) != fscx(A,0) ^ f(0,B) for most inputs */
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N3; i++) {
-        uint32_t A = rand32(), B = rand32();
-        if (nl_fscx_v2_32(A, B) != (fscx32(A, 0) ^ nl_fscx_v2_32(0, B)))
-            nl_ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N3 = i + 1; break; }
-    }
-    printf("    bits=32  collisions=%d/%d  inv=%d/%d  nonlinear=%d/%d  [%s]\n",
-           non_bij, N1, inv_ok, N2, nl_ok, N3,
-           (non_bij == 0 && inv_ok == N2 && nl_ok >= N3 * 98 / 100) ? "PASS" : "FAIL");
     putchar('\n');
 }
 
-/* [12] HSKE-NL-A1 counter-mode correctness: D == P  (32-bit) */
+/* [12] HSKE-NL-A1 counter-mode correctness: D == P */
 static void test_hske_nl_a1_correctness(void)
 {
-    int i, ok = 0;
-    int N = TEST_ROUNDS(1000);
+    static const int sizes[] = {64, 128};
+    int si, i, size;
     struct timespec t0;
-    printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  (bits=32)  [PQC-EXT]\n");
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N; i++) {
-        uint32_t K   = rand32();
-        uint32_t P   = rand32();
-        uint32_t ctr = (uint32_t)i & 0xFFFF;
-        uint32_t ks  = nl_fscx_revolve_v1_32(K, K ^ ctr, NL_I32);
-        uint32_t E   = P ^ ks;
-        uint32_t D   = E ^ ks;
-        if (D == P) ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+    printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]\n");
+    for (si = 0; si < 2; si++) {
+        int ok = 0, N = TEST_ROUNDS(1000);
+        size = sizes[si];
+        int iv = size / 4;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N; i++) {
+            if (size == 128) {
+                __uint128_t K = rand128(), P = rand128();
+                __uint128_t ctr = (uint32_t)i & 0xFFFF;
+                __uint128_t ks = nl_fscx_revolve_v1_128(K, K ^ ctr, iv);
+                if ((P ^ ks ^ ks) == P) ok++;
+            } else {
+                uint64_t K = rand64(), P = rand64();
+                uint64_t ctr = (uint32_t)i & 0xFFFF;
+                uint64_t ks = nl_fscx_revolve_v1_64(K, K ^ ctr, iv);
+                if ((P ^ ks ^ ks) == P) ok++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    bits=%3d  %4d / %d correct  [%s]\n",
+               size, ok, N, ok == N ? "PASS" : "FAIL");
     }
-    printf("    bits=32  %d / %d correct  [%s]\n",
-           ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
-/* [13] HSKE-NL-A2 revolve-mode correctness: D == P  (32-bit) */
+/* [13] HSKE-NL-A2 revolve-mode correctness: D == P */
 static void test_hske_nl_a2_correctness(void)
 {
-    int i, ok = 0;
-    int N = TEST_ROUNDS(1000);
+    static const int sizes[] = {64, 128};
+    int si, i, size;
     struct timespec t0;
-    printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  (bits=32)  [PQC-EXT]\n");
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N; i++) {
-        uint32_t K = rand32();
-        uint32_t P = rand32();
-        uint32_t E = nl_fscx_revolve_v2_32(P, K, NL_R32);
-        uint32_t D = nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
-        if (D == P) ok++;
-        if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+    printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]\n");
+    for (si = 0; si < 2; si++) {
+        int ok = 0, N = TEST_ROUNDS(1000);
+        size = sizes[si];
+        int rv = 3 * size / 4;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N; i++) {
+            if (size == 128) {
+                __uint128_t K = rand128(), P = rand128();
+                __uint128_t E = nl_fscx_revolve_v2_128(P, K, rv);
+                __uint128_t D = nl_fscx_revolve_v2_inv_128(E, K, rv);
+                if (D == P) ok++;
+            } else {
+                uint64_t K = rand64(), P = rand64();
+                uint64_t E = nl_fscx_revolve_v2_64(P, K, rv);
+                uint64_t D = nl_fscx_revolve_v2_inv_64(E, K, rv);
+                if (D == P) ok++;
+            }
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    bits=%3d  %4d / %d correct  [%s]\n",
+               size, ok, N, ok == N ? "PASS" : "FAIL");
     }
-    printf("    bits=32  %d / %d correct  [%s]\n",
-           ok, N, ok == N ? "PASS" : "FAIL");
     putchar('\n');
 }
 
