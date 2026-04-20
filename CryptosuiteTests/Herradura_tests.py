@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.5: fixed version banner (was stuck at v1.5.3).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n), ~6× speedup at n=32).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
@@ -899,7 +900,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.3 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.5 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

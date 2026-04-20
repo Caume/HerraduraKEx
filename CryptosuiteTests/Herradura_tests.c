@@ -5,6 +5,8 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, 256-bit BitArray + 32-bit GF)
+    v1.5.5: aligned test output labels ([CLASSICAL]/[PQC-EXT]) and section headers with
+            Python/Go; fixed version banner (was stuck at v1.5.3).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length loops for all tests (matching Python/Go).
@@ -551,7 +553,7 @@ static void test_hkex_gf_correctness(void)
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
     BitArray a_priv, b_priv, C, C2, skA, skB;
-    printf("[1] HKEX-GF correctness: g^{ab} == g^{ba}  (field commutativity)\n");
+    printf("[1] HKEX-GF correctness: g^{ab} == g^{ba}  (field commutativity)  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         ba_rand(&a_priv);
@@ -580,7 +582,7 @@ static void test_avalanche(void)
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
     BitArray a, b, base_out, ap, flip_out, diff;
-    printf("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)\n");
+    printf("[2] FSCX single-step linear diffusion (expected: exactly 3 bits per flip)  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (trial = 0; trial < N; trial++) {
         ba_rand(&a);
@@ -615,7 +617,7 @@ static void test_orbit_period(void)
     int N = TEST_ROUNDS(100);
     struct timespec t0;
     BitArray a, b, cur, tmp;
-    printf("[3] Orbit period: FSCX_REVOLVE(A,B,n) cycles back to A\n");
+    printf("[3] Orbit period: FSCX_REVOLVE(A,B,n) cycles back to A  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (trial = 0; trial < N; trial++) {
         int period = 1;
@@ -647,7 +649,7 @@ static void test_bit_frequency(void)
     int N = TEST_ROUNDS(100000);
     struct timespec t0;
     BitArray a, b, out;
-    printf("[4] Bit-frequency bias: %d FSCX outputs\n", N);
+    printf("[4] Bit-frequency bias: %d FSCX outputs  [CLASSICAL]\n", N);
     memset(counts, 0, sizeof(counts));
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (trial = 0; trial < N; trial++) {
@@ -681,7 +683,7 @@ static void test_hkex_gf_key_sensitivity(void)
     int N = TEST_ROUNDS(500);
     struct timespec t0;
     BitArray a_priv, b_priv, C2, sk1, sk2, a_flip, diff;
-    printf("[5] HKEX-GF key sensitivity: flip 1 bit of a -> mean Hamming(sk1, sk2) ~= %d\n",
+    printf("[5] HKEX-GF key sensitivity: flip 1 bit of a -> mean Hamming(sk1, sk2) ~= %d  [CLASSICAL]\n",
            KEYBITS / 2);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
@@ -716,7 +718,7 @@ static void test_eve_attack_resistance(void)
     BitArray a_priv, b_priv, C, C2, sk_real, eve_sk;
     BitArray delta, cur, zero, acc, next;
     int j;
-    printf("[6] Eve classical attack: S_{r+1}(C XOR C2) != sk  (HKEX-GF resistance)\n");
+    printf("[6] Eve classical attack: S_{r+1}(C XOR C2) != sk  (HKEX-GF resistance)  [CLASSICAL]\n");
     memset(zero.b, 0, KEYBYTES);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
@@ -758,7 +760,7 @@ static void test_hpks_schnorr_correctness(void)
     struct timespec t0;
     uint32_t a, plain, k, C32, R32, e32, s32;
     uint64_t ae, ord = 0xFFFFFFFFULL;
-    printf("[7] HPKS Schnorr correctness: g^s * C^e == R  (bits=32)\n");
+    printf("[7] HPKS Schnorr correctness: g^s * C^e == R  (bits=32)  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         a     = rand32() | 1;
@@ -785,7 +787,7 @@ static void test_hpks_schnorr_eve(void)
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
     uint32_t a, plain, C32, r_eve, s_eve, e_eve;
-    printf("[8] HPKS Schnorr Eve resistance: random forgery fails  (bits=32)\n");
+    printf("[8] HPKS Schnorr Eve resistance: random forgery fails  (bits=32)  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         a      = rand32() | 1;
@@ -811,7 +813,7 @@ static void test_hpke_el_gamal(void)
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
     uint32_t a, plain, r, C32, R32, enc_key, E32, dec_key, D32;
-    printf("[9] HPKE El Gamal encrypt+decrypt: D == plaintext  (bits=32)\n");
+    printf("[9] HPKE El Gamal encrypt+decrypt: D == plaintext  (bits=32)  [CLASSICAL]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         a        = rand32() | 1;
@@ -845,7 +847,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
     int N1 = TEST_ROUNDS(1000);
     int N2 = TEST_ROUNDS(200);
     struct timespec t0;
-    printf("[10] NL-FSCX v1 non-linearity and aperiodicity  (bits=32)\n");
+    printf("[10] NL-FSCX v1 non-linearity and aperiodicity  (bits=32)  [PQC-EXT]\n");
     /* Linearity check: f(A,B) ^ f(0,B) == fscx(A,0) is the linear prediction;
        violations count how often NL-FSCX v1 differs from that prediction. */
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -883,7 +885,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
     int N2 = TEST_ROUNDS(1000);
     int N3 = TEST_ROUNDS(500);
     struct timespec t0;
-    printf("[11] NL-FSCX v2 bijectivity and exact inverse  (bits=32)\n");
+    printf("[11] NL-FSCX v2 bijectivity and exact inverse  (bits=32)  [PQC-EXT]\n");
     /* Collision test: for N1 random B, draw pairs (A1,A2) and check no collision */
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N1; i++) {
@@ -921,7 +923,7 @@ static void test_hske_nl_a1_correctness(void)
     int i, ok = 0;
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
-    printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  (bits=32)\n");
+    printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  (bits=32)  [PQC-EXT]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         uint32_t K   = rand32();
@@ -944,7 +946,7 @@ static void test_hske_nl_a2_correctness(void)
     int i, ok = 0;
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
-    printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  (bits=32)\n");
+    printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  (bits=32)  [PQC-EXT]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         uint32_t K = rand32();
@@ -970,7 +972,7 @@ static void test_hkex_rnl_correctness(void)
     int N = TEST_ROUNDS(200);
     struct timespec t0;
     rnl32_poly_t m_base, a_rand, m_blind;
-    printf("[14] HKEX-RNL key agreement: K_A == K_B / sk_A == sk_B  (n=%d, Ring-LWR)\n", RNL_N32);
+    printf("[14] HKEX-RNL key agreement: K_A == K_B / sk_A == sk_B  (n=%d, Ring-LWR)  [PQC-EXT]\n", RNL_N32);
     rnl32_m_poly(m_base);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
@@ -1004,7 +1006,7 @@ static void test_hpks_nl_correctness(void)
     uint32_t a, plain, k, C32, R32;
     uint32_t e32, s32;
     uint64_t ae, ord = 0xFFFFFFFFULL;
-    printf("[15] HPKS-NL correctness: g^s · C^e == R  (NL-FSCX v1 challenge, bits=32)\n");
+    printf("[15] HPKS-NL correctness: g^s · C^e == R  (NL-FSCX v1 challenge, bits=32)  [PQC-EXT]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         a     = rand32() | 1;
@@ -1031,7 +1033,7 @@ static void test_hpke_nl_correctness(void)
     int N = TEST_ROUNDS(1000);
     struct timespec t0;
     uint32_t a, plain, r, C32, R32, enc_key, E32, dec_key, D32;
-    printf("[16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt, bits=32)\n");
+    printf("[16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt, bits=32)  [PQC-EXT]\n");
     clock_gettime(CLOCK_MONOTONIC, &t0);
     for (i = 0; i < N; i++) {
         a        = rand32() | 1;
@@ -1235,7 +1237,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.3 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.5 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
@@ -1246,7 +1248,7 @@ int main(int argc, char *argv[])
     }
     putchar('\n');
 
-    puts("--- Security Assumption Tests ---\n");
+    puts("--- Security Tests: Classical Protocols ---\n");
     test_hkex_gf_correctness();
     test_avalanche();
     test_orbit_period();
@@ -1257,7 +1259,7 @@ int main(int argc, char *argv[])
     test_hpks_schnorr_eve();
     test_hpke_el_gamal();
 
-    puts("--- v1.5.0 NL-FSCX and PQC Tests ---\n");
+    puts("--- Security Tests: PQC Extension (NL-FSCX + HKEX-RNL) ---\n");
     test_nl_fscx_v1_nonlinearity();
     test_nl_fscx_v2_bijective_inverse();
     test_hske_nl_a1_correctness();
