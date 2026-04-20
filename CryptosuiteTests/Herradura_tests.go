@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added -rounds and -time CLI flags (also HTEST_ROUNDS / HTEST_TIME env vars).
     v1.5.0: added PQC extension tests [10-16] (NL-FSCX, HKEX-RNL, HPKS-NL, HPKE-NL);
@@ -309,7 +310,7 @@ const (
 	rnlQ  = 65537
 	rnlP  = 4096
 	rnlPP = 2
-	rnlB  = 1
+	rnlEta = 1 // CBD eta: secret coefficients drawn from CBD(1) in {-1,0,1}
 )
 
 func rnlPolyMul(f, g []int, q, n int) []int {
@@ -376,14 +377,18 @@ func rnlRandPoly(n, q int) []int {
 	return p
 }
 
-func rnlSmallPoly(n, b int) []int {
+// rnlCBDPoly samples n coefficients from CBD(eta=1): each = (raw&1) - ((raw>>1)&1) mod q.
+// Produces {-1,0,1} with zero mean; matches Kyber Ring-LWR secret distribution.
+func rnlCBDPoly(n, q int) []int {
 	p := make([]int, n)
 	buf := make([]byte, 1)
 	for i := range p {
 		if _, err := rand.Read(buf); err != nil {
 			log.Fatalf("rand.Read: %s", err)
 		}
-		p[i] = int(buf[0]) % (b + 1)
+		a := int(buf[0]) & 1
+		b := (int(buf[0]) >> 1) & 1
+		p[i] = (a - b + q) % q
 	}
 	return p
 }
@@ -401,8 +406,8 @@ func rnlBitsToBitArray(poly []int, pp, size int) *BitArray {
 	return ba
 }
 
-func rnlKeygen(mBlind []int, n, q, p, b int) ([]int, []int) {
-	s := rnlSmallPoly(n, b)
+func rnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
+	s := rnlCBDPoly(n, q)
 	c := rnlRound(rnlPolyMul(mBlind, s, q, n), q, p)
 	return s, c
 }
@@ -878,8 +883,8 @@ func testHkexRnlCorrectness() {
 		for i := 0; i < trials; i++ {
 			aRand := rnlRandPoly(nRnl, rnlQ)
 			mBlind := rnlPolyAdd(mBase, aRand, rnlQ) // shared public polynomial
-			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
-			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
+			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 			KA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			KB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			if KA.Equal(KB) { okRaw++ }
@@ -1120,8 +1125,8 @@ func benchHkexRnlHandshake() {
 		ops, elapsed := bench("", func() {
 			aRand := rnlRandPoly(nRnl, rnlQ)
 			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
-			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
-			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP, rnlB)
+			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
+			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 			_ = rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			_ = rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 		})
@@ -1175,7 +1180,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.2 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.3 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

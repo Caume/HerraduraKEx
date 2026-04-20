@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.0 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.5.3 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -7,6 +7,7 @@
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
 
+    v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: added PQC extension tests [5]-[10].
       - [5] NL-FSCX v2 inverse roundtrip.
       - [6] HSKE-NL-A2 revolve-mode correctness.
@@ -28,7 +29,7 @@
 #define RNL_Q   65537L
 #define RNL_P   4096L
 #define RNL_PP  2L
-#define RNL_B   1
+#define RNL_ETA 1  /* CBD eta: secret coeffs drawn from CBD(1) in {-1,0,1} mod q */
 
 typedef unsigned long uint32;
 
@@ -166,8 +167,14 @@ static void rnl_m_poly(long *p) {
     p[0] = p[1] = p[RNL_N - 1] = 1;
 }
 
-static void rnl_small_poly(long *p) {
-    for (int i = 0; i < RNL_N; i++) p[i] = (long)(prng_next() % (uint32)(RNL_B + 1));
+/* CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1), stored mod q. Zero-mean {-1,0,1}. */
+static void rnl_cbd_poly(long *p) {
+    for (int i = 0; i < RNL_N; i++) {
+        uint32 raw = prng_next();
+        int a = (int)(raw & 1);
+        int b = (int)((raw >> 1) & 1);
+        p[i] = (long)((a - b + (long)RNL_Q) % (long)RNL_Q);
+    }
 }
 
 static void rnl_rand_poly(long *p) {
@@ -184,7 +191,7 @@ static uint32 rnl_bits_to_key(const long *bits_poly) {
 
 static void rnl_keygen(long *s, long *C, const long *m_blind) {
     static long ms[RNL_N];
-    rnl_small_poly(s);
+    rnl_cbd_poly(s);
     rnl_poly_mul(ms, m_blind, s);
     rnl_round(C, ms, RNL_Q, RNL_P);
 }
@@ -407,7 +414,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura KEx v1.5.0 - Security Tests (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura KEx v1.5.3 - Security Tests (Arduino, 32-bit) ===");
     Serial.println();
 
     test_hkex_gf();

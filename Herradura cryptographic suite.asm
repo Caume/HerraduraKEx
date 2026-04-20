@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.0
+;  Herradura Cryptographic Suite v1.5.3
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -72,7 +72,7 @@ section .data
     rnl_g_ptr   dd 0
     rnl_h_ptr   dd 0
 
-    hdr         db "=== Herradura Cryptographic Suite v1.5.0 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    hdr         db "=== Herradura Cryptographic Suite v1.5.3 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "
@@ -1555,28 +1555,38 @@ rnl_rand_poly:
     ret
 
 ; ============================================================
-; rnl_small_poly: EAX=p  --> fills p with small coeffs in {0,1}
+; rnl_cbd_poly: EAX=p  --> fills p with CBD(1) coeffs in {RNL_Q-1, 0, 1}
+;   raw = prng_next(); a = raw&1; b = (raw>>1)&1; coeff = a-b mod RNL_Q
 ; ============================================================
-rnl_small_poly:
+rnl_cbd_poly:
     push ebx
     push ecx
     push edx
     push esi
+    push edi
     mov  esi, eax
     xor  ecx, ecx
-.rsp_loop:
+.rcp_loop:
     cmp  ecx, RNL_N
-    jge  .rsp_done
+    jge  .rcp_done
     push ecx
     push esi
     call prng_next
-    and  eax, 1         ; % (B+1) = % 2 = & 1
+    mov  edi, eax
+    and  edi, 1         ; a = raw & 1
+    shr  eax, 1
+    and  eax, 1         ; b = (raw>>1) & 1
+    sub  edi, eax       ; coeff = a - b  (may be -1)
+    jge  .rcp_store
+    add  edi, RNL_Q     ; coeff + RNL_Q to keep non-negative
+.rcp_store:
     pop  esi
     pop  ecx
-    mov  [esi + ecx*4], eax
+    mov  [esi + ecx*4], edi
     inc  ecx
-    jmp  .rsp_loop
-.rsp_done:
+    jmp  .rcp_loop
+.rcp_done:
+    pop  edi
     pop  esi
     pop  edx
     pop  ecx
@@ -1630,9 +1640,9 @@ rnl_keygen:
     mov  edi, ebx       ; C_out
     mov  ebp, ecx       ; m_blind
 
-    ; rnl_small_poly(s)
+    ; rnl_cbd_poly(s)
     mov  eax, esi
-    call rnl_small_poly
+    call rnl_cbd_poly
 
     ; rnl_poly_mul(rnl_tmp, m_blind, s)
     mov  dword [rnl_h_ptr], rnl_tmp

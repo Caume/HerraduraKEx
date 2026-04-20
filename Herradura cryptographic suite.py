@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.0
+    Herradura Cryptographic Suite v1.5.3
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,14 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1) ---
+
+    HKEX-RNL secret polynomial now uses a centered binomial distribution CBD(eta=1)
+    instead of the previous uniform {0,1} sampler.  CBD(1) produces coefficients in
+    {-1, 0, 1} with zero mean and probabilities {1/4, 1/2, 1/4}, matching the Kyber
+    baseline for proper Ring-LWR hardness.  The max coefficient magnitude is unchanged
+    (1), so the noise budget and parameter set are unaffected.
 
     --- v1.5.0: NL-FSCX non-linear extension and PQC protocols ---
 
@@ -82,7 +90,7 @@ ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmeti
 RNLQ  = 65537  # prime modulus (2^16 + 1)
 RNLP  = 4096   # public-key rounding modulus
 RNLPP = 2      # reconciliation modulus (1 bit extracted per ring coefficient)
-RNLB  = 1      # small-secret bound: coefficients uniform in {0, ..., RNLB}
+RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
 
 
 # ---------------------------------------------------------------------------
@@ -334,9 +342,19 @@ def _rnl_rand_poly(n, q):
     """Uniform random polynomial in Z_q^n."""
     return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
 
-def _rnl_small_poly(n, b):
-    """Random polynomial with small coefficients uniform in {0, ..., b}."""
-    return [int.from_bytes(os.urandom(1), 'big') % (b + 1) for _ in range(n)]
+def _rnl_cbd_poly(n, eta, q):
+    """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q)
+    where a = popcount of eta random bits, b = popcount of next eta random bits.
+    Matches the Kyber/NIST PQC secret-distribution baseline for eta=2 or eta=3."""
+    mask = (1 << eta) - 1
+    byte_count = (2 * eta + 7) // 8
+    out = []
+    for _ in range(n):
+        raw = int.from_bytes(os.urandom(byte_count), 'big')
+        a   = bin(raw & mask).count('1')
+        b   = bin((raw >> eta) & mask).count('1')
+        out.append((a - b) % q)
+    return out
 
 def _rnl_bits_to_bitarray(poly, pp, size):
     """Extract 1 bit per coefficient (coeff >= pp//2 → bit=1) and pack into BitArray."""
@@ -349,8 +367,8 @@ def _rnl_bits_to_bitarray(poly, pp, size):
 
 def _rnl_keygen(m_blind, n, q, p, b):
     """Generate one party's (s, C) key pair for HKEX-RNL.
-    s: private small polynomial; C: public rounded polynomial."""
-    s  = _rnl_small_poly(n, b)
+    s: private CBD(b) polynomial; C: public rounded polynomial."""
+    s  = _rnl_cbd_poly(n, b, q)
     ms = _rnl_poly_mul(m_blind, s, q, n)
     C  = _rnl_round(ms, q, p)
     return s, C
@@ -417,7 +435,7 @@ HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   KDF:      sk = nl_fscx_revolve_v1(K_raw, K_raw, n/4)
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
-  Parameters: n=256, q=3329, p=1024, pp=2, b=1.
+  Parameters: n=256, q=65537, p=4096, pp=2, eta=1 (CBD(1) secret distribution).
 
 HPKS-NL (Schnorr + NL-FSCX v1 challenge):
   Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
