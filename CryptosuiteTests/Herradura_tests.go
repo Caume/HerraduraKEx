@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.5: aligned version banner with C and Python.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
@@ -1216,7 +1217,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.4 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.5 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
