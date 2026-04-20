@@ -1237,14 +1237,16 @@ rpm_outer:
     cmp     r7, #RNL_N
     bge     rpm_outer_done
     ldr     r9, [r4, r7, lsl #2]
-    cbz     r9, rpm_outer_next
+    cmp     r9, #0
+    beq     rpm_outer_next
 
     mov     r8, #0
 rpm_inner:
     cmp     r8, #RNL_N
     bge     rpm_inner_done
     ldr     r10, [r5, r8, lsl #2]
-    cbz     r10, rpm_inner_next
+    cmp     r10, #0
+    beq     rpm_inner_next
 
     umull   r0, r1, r9, r10
     add     r0, r0, r1

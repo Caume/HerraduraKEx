@@ -1343,7 +1343,7 @@ rnl_poly_mul:
     sub  edx, ebx
 .rpm_add_no_sub:
     pop  ebx
-    mov  ecx, [esp+4]       ; restore k from stack
+    mov  ecx, [esp]         ; restore k from stack ([esp+4] was i — off by one)
     mov  [rnl_tmp + ecx*4], edx
     pop  edx
     pop  ecx
@@ -1367,7 +1367,7 @@ rnl_poly_mul:
     sub  edx, ebx
 .rpm_neg_no_sub:
     pop  ebx
-    mov  ecx, [esp+4]
+    mov  ecx, [esp]         ; restore k-N from stack ([esp+4] was i — off by one)
     mov  [rnl_tmp + ecx*4], edx
     pop  edx
     pop  ecx
