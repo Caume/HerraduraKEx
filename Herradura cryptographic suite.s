@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.4
+/*  Herradura Cryptographic Suite v1.5.6
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -42,7 +42,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.4 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.6 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -1558,7 +1558,8 @@ rmp_zero:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* rnl_rand_poly: r0=p -> p[i]=prng_next()%Q                          */
+/* rnl_rand_poly: r0=p -> p[i] = uniform in [0,Q) via 3-byte rejection*/
+/* threshold = (1<<24)-(1<<24)%RNL_Q = 0xFF00FF; reject prob ~0.39%  */
 /* ------------------------------------------------------------------ */
     .thumb_func
 rnl_rand_poly:
@@ -1569,7 +1570,12 @@ rnl_rand_poly:
 rrp_loop:
     cmp     r5, #RNL_N
     bge     rrp_done
+rrp_sample:
     bl      prng_next
+    ubfx    r0, r0, #0, #24          @ mask to 24 bits
+    ldr     r6, =0xFF00FF            @ threshold = (1<<24)-(1<<24)%RNL_Q
+    cmp     r0, r6
+    bge     rrp_sample               @ reject: redraw
     udiv    r6, r0, r7
     mls     r0, r7, r6, r0
     str     r0, [r4, r5, lsl #2]

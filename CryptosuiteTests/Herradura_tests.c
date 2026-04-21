@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.6: rnl_rand_coeff bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
             ([CLASSICAL]/[PQC-EXT]) and section headers; fixed version banner.
             Phase 3 — multi-size loops [1],[5]–[9],[14]–[16]: 64-bit GF(2^64) and
@@ -267,6 +268,22 @@ static uint32_t rand32(void)
         exit(1);
     }
     return v;
+}
+
+/* Bias-free uniform draw in [0, RNL_Q32=65537): 3-byte rejection sampling.
+   threshold = (1<<24) - (1<<24)%65537 = 16711935; rejection prob ~0.39%. */
+static uint32_t rnl_rand_coeff(void)
+{
+    static const uint32_t threshold = 16711935u; /* (1<<24)-(1<<24)%65537 */
+    uint8_t buf[3];
+    for (;;) {
+        if (fread(buf, 3, 1, urnd_fp) != 1) {
+            fputs("ERROR: read from /dev/urandom failed\n", stderr);
+            exit(1);
+        }
+        uint32_t v = ((uint32_t)buf[0] << 16) | ((uint32_t)buf[1] << 8) | buf[2];
+        if (v < threshold) return v % 65537u;
+    }
 }
 
 static uint32_t gf_mul_32(uint32_t a, uint32_t b)
@@ -649,7 +666,7 @@ static void rnl32_rand_poly(rnl32_poly_t p)
 {
     int i;
     for (i = 0; i < RNL_N32; i++)
-        p[i] = (int32_t)(rand32() % RNL_Q32);
+        p[i] = (int32_t)rnl_rand_coeff();
 }
 
 /* CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1), stored mod q. Zero-mean {-1,0,1}. */
@@ -753,7 +770,7 @@ static void rnl_m_poly_n(int32_t *p, int n)
 static void rnl_rand_poly_n(int32_t *p, int n)
 {
     int i;
-    for (i = 0; i < n; i++) p[i] = (int32_t)(rand32() % RNL_Q32);
+    for (i = 0; i < n; i++) p[i] = (int32_t)rnl_rand_coeff();
 }
 
 static void rnl_cbd_poly_n(int32_t *p, int n)
@@ -1955,7 +1972,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.5 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.6 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.4
+/*  Herradura Cryptographic Suite v1.5.6
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,10 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling ---
+    rnl_rand_poly now draws 3 bytes (24-bit) with rejection sampling (threshold =
+    (1<<24) - (1<<24)%RNL_Q = 16711935) to eliminate the ~1/2^32 modular bias.
 
     --- v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)) ---
     rnl_poly_mul now uses Cooley-Tukey NTT over Z_{65537} with negacyclic twist.
@@ -605,11 +609,14 @@ static void rnl_m_poly(rnl_poly_t p)
 
 static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
 {
-    int i;
-    uint32_t v;
-    for (i = 0; i < RNL_N; i++) {
-        if (fread(&v, 4, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
-        p[i] = (int32_t)(v % RNL_Q);
+    static const uint32_t threshold = (1u << 24) - ((1u << 24) % RNL_Q);
+    int i = 0;
+    while (i < RNL_N) {
+        uint8_t buf[3];
+        if (fread(buf, 3, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
+        uint32_t v = ((uint32_t)buf[0] << 16) | ((uint32_t)buf[1] << 8) | buf[2];
+        if (v < threshold)
+            p[i++] = (int32_t)(v % RNL_Q);
     }
 }
 

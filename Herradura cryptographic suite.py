@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.4
+    Herradura Cryptographic Suite v1.5.6
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,11 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling ---
+
+    _rnl_rand_poly now uses 24-bit rejection sampling (threshold = (1<<24) - (1<<24)%q)
+    to eliminate the ~1/2^32 modular bias introduced by the previous 4-byte draw.
 
     --- v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)) ---
 
@@ -386,8 +391,14 @@ def _rnl_m_poly(n):
     return p
 
 def _rnl_rand_poly(n, q):
-    """Uniform random polynomial in Z_q^n."""
-    return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
+    """Uniform random polynomial in Z_q^n (bias-free: 3-byte rejection sampling)."""
+    threshold = (1 << 24) - (1 << 24) % q
+    out = []
+    while len(out) < n:
+        v = int.from_bytes(os.urandom(3), 'big')
+        if v < threshold:
+            out.append(v % q)
+    return out
 
 def _rnl_cbd_poly(n, eta, q):
     """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q)
