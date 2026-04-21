@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.4
+/*  Herradura Cryptographic Suite v1.5.6
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,10 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling ---
+    rnlRandPoly now draws 3 bytes (24-bit) with rejection sampling (threshold =
+    (1<<24) - (1<<24)%q = 16711935) to eliminate the ~1/2^32 modular bias.
 
     --- v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)) ---
     rnlPolyMul now uses Cooley-Tukey NTT over Z_{65537} with negacyclic twist.
@@ -426,16 +430,18 @@ func rnlMPoly(n int) []int {
 
 func rnlRandPoly(n, q int) []int {
 	p := make([]int, n)
-	buf := make([]byte, 4)
-	for i := range p {
+	buf := make([]byte, 3)
+	threshold := (1 << 24) - (1<<24)%q
+	i := 0
+	for i < n {
 		if _, err := rand.Read(buf); err != nil {
 			log.Fatalf("rand.Read: %s", err)
 		}
-		v := int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
-		if v < 0 {
-			v = -v
+		v := int(buf[0])<<16 | int(buf[1])<<8 | int(buf[2])
+		if v < threshold {
+			p[i] = v % q
+			i++
 		}
-		p[i] = v % q
 	}
 	return p
 }

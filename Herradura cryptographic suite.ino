@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.4 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.6 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=0xFF00FF).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: NL-FSCX v2, HSKE-NL-A1/A2, HKEX-RNL (N=32), HPKS-NL, HPKE-NL.
@@ -237,7 +238,11 @@ static void rnl_m_poly(long *p) {
 }
 
 static void rnl_rand_poly(long *p) {
-    for (int i = 0; i < RNL_N; i++) p[i] = (long)(lcg_next() % (uint32)RNL_Q);
+    static const uint32 threshold = 0xFF00FFu; /* (1<<24) - (1<<24)%RNL_Q */
+    for (int i = 0; i < RNL_N; ) {
+        uint32 v = lcg_next() & 0xFFFFFFu;
+        if (v < threshold) p[i++] = (long)(v % (uint32)RNL_Q);
+    }
 }
 
 /* CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1), stored mod q. Zero-mean {-1,0,1}. */
