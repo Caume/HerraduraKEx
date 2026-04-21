@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.7: m_inv_32/64/128 use precomputed rotation tables (0x6DB6DB6D / constants).
     v1.5.6: rnl_rand_coeff bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
             ([CLASSICAL]/[PQC-EXT]) and section headers; fixed version banner.
@@ -356,11 +357,24 @@ static uint32_t nl_fscx_v2_32(uint32_t a, uint32_t b)
     return fscx32(a, b) + nl_fscx_delta_v2_32(b);
 }
 
-/* M^{-1}(x) = fscx_revolve(x, 0, 15)  (32/2 - 1 = 15 steps) */
+/* M^{-1}(x) = XOR of ROL(x,k) for k in bits of 0x6DB6DB6D
+   Table = {0,2,3,5,6,8,9,11,12,14,15,17,18,20,21,23,24,26,27,29,30} (n=32) */
+#define ROL32(v,k) (((v)<<(k))|((v)>>(32-(k))))
 static uint32_t m_inv_32(uint32_t x)
 {
-    return fscx_revolve32(x, 0, 15);
+    return x
+        ^ ROL32(x, 2)  ^ ROL32(x, 3)
+        ^ ROL32(x, 5)  ^ ROL32(x, 6)
+        ^ ROL32(x, 8)  ^ ROL32(x, 9)
+        ^ ROL32(x, 11) ^ ROL32(x, 12)
+        ^ ROL32(x, 14) ^ ROL32(x, 15)
+        ^ ROL32(x, 17) ^ ROL32(x, 18)
+        ^ ROL32(x, 20) ^ ROL32(x, 21)
+        ^ ROL32(x, 23) ^ ROL32(x, 24)
+        ^ ROL32(x, 26) ^ ROL32(x, 27)
+        ^ ROL32(x, 29) ^ ROL32(x, 30);
 }
+#undef ROL32
 
 /* NL-FSCX v2 inverse: b ^ M^{-1}(y - delta(b)) */
 static uint32_t nl_fscx_v2_inv_32(uint32_t y, uint32_t b)
@@ -466,8 +480,16 @@ static uint64_t nl_fscx_v2_64(uint64_t a, uint64_t b)
     return fscx64(a, b) + nl_fscx_delta_v2_64(b);
 }
 
-/* M^{-1}(x) = fscx_revolve(x, 0, 31)  (64/2 - 1 = 31 steps) */
-static uint64_t m_inv_64(uint64_t x) { return fscx_revolve64(x, 0, 31); }
+/* M^{-1}(x) = XOR of ROL(x,k) for k in bits of 0xB6DB6DB6DB6DB6DB (n=64) */
+static uint64_t m_inv_64(uint64_t x)
+{
+    static const uint64_t tbl = UINT64_C(0xB6DB6DB6DB6DB6DB);
+    uint64_t r = x; /* k=0 term */
+    int k;
+    for (k = 1; k < 64; k++)
+        if ((tbl >> k) & 1) r ^= (x << k) | (x >> (64 - k));
+    return r;
+}
 
 static uint64_t nl_fscx_v2_inv_64(uint64_t y, uint64_t b)
 {
@@ -538,8 +560,19 @@ static __uint128_t nl_fscx_v2_128(__uint128_t a, __uint128_t b)
     return fscx128(a, b) + nl_fscx_delta_v2_128(b);
 }
 
-/* M^{-1}(x) = fscx_revolve(x, 0, 63)  (128/2 - 1 = 63 steps) */
-static __uint128_t m_inv_128(__uint128_t x) { return fscx_revolve128(x, 0, 63); }
+/* M^{-1}(x) = XOR of ROL(x,k) for k in bits of
+   (0x6DB6DB6DB6DB6DB6 << 64) | 0xDB6DB6DB6DB6DB6D  (n=128) */
+static __uint128_t m_inv_128(__uint128_t x)
+{
+    static const __uint128_t tbl =
+        ((__uint128_t)UINT64_C(0x6DB6DB6DB6DB6DB6) << 64)
+        | UINT64_C(0xDB6DB6DB6DB6DB6D);
+    __uint128_t r = x; /* k=0 term */
+    int k;
+    for (k = 1; k < 128; k++)
+        if ((tbl >> k) & 1) r ^= (x << k) | (x >> (128 - k));
+    return r;
+}
 
 static __uint128_t nl_fscx_v2_inv_128(__uint128_t y, __uint128_t b)
 {
@@ -1972,7 +2005,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.6 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.7 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

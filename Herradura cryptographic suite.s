@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.6
+/*  Herradura Cryptographic Suite v1.5.7
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -42,7 +42,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.6 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.7 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -1129,15 +1129,55 @@ nl_fscx_v2:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* m_inv_32: r0=X -> r0=fscx_revolve(X, 0, 15)                       */
+/* m_inv_32: r0=X -> r0=M^{-1}(X) via precomputed rotation table     */
+/* M^{-1}(X) = XOR of ROL(X,k) for k in {0,2,3,5,6,8,9,...,29,30}   */
+/* (bits of 0x6DB6DB6D = fscx_revolve(1,0,15) for n=32)              */
 /* ------------------------------------------------------------------ */
     .thumb_func
 m_inv_32:
-    push    {lr}
-    mov     r1, #0
-    mov     r2, #15
-    bl      fscx_revolve
-    pop     {pc}
+    @ r0=X; result in r0; r1=saved X, r2=scratch (all caller-saved)
+    mov     r1, r0              @ save original X
+    ror     r2, r1, #30         @ ROL(X, 2)
+    eor     r0, r0, r2
+    ror     r2, r1, #29         @ ROL(X, 3)
+    eor     r0, r0, r2
+    ror     r2, r1, #27         @ ROL(X, 5)
+    eor     r0, r0, r2
+    ror     r2, r1, #26         @ ROL(X, 6)
+    eor     r0, r0, r2
+    ror     r2, r1, #24         @ ROL(X, 8)
+    eor     r0, r0, r2
+    ror     r2, r1, #23         @ ROL(X, 9)
+    eor     r0, r0, r2
+    ror     r2, r1, #21         @ ROL(X,11)
+    eor     r0, r0, r2
+    ror     r2, r1, #20         @ ROL(X,12)
+    eor     r0, r0, r2
+    ror     r2, r1, #18         @ ROL(X,14)
+    eor     r0, r0, r2
+    ror     r2, r1, #17         @ ROL(X,15)
+    eor     r0, r0, r2
+    ror     r2, r1, #15         @ ROL(X,17)
+    eor     r0, r0, r2
+    ror     r2, r1, #14         @ ROL(X,18)
+    eor     r0, r0, r2
+    ror     r2, r1, #12         @ ROL(X,20)
+    eor     r0, r0, r2
+    ror     r2, r1, #11         @ ROL(X,21)
+    eor     r0, r0, r2
+    ror     r2, r1, #9          @ ROL(X,23)
+    eor     r0, r0, r2
+    ror     r2, r1, #8          @ ROL(X,24)
+    eor     r0, r0, r2
+    ror     r2, r1, #6          @ ROL(X,26)
+    eor     r0, r0, r2
+    ror     r2, r1, #5          @ ROL(X,27)
+    eor     r0, r0, r2
+    ror     r2, r1, #3          @ ROL(X,29)
+    eor     r0, r0, r2
+    ror     r2, r1, #2          @ ROL(X,30)
+    eor     r0, r0, r2
+    bx      lr
 
     .ltorg
 

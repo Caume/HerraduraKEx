@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.6
+/*  Herradura Cryptographic Suite v1.5.7
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,11 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.7: precomputed M^{-1} for NlFscxV2Inv ---
+    MInv now computes the rotation table for M^{-1} = M^{n/2-1} once on first call
+    (bootstrapping from FscxRevolve(1, 0, n/2-1)), caches it per bit-size via sync.Map,
+    then applies M^{-1}(X) as XOR of RotateLeft(X, k) for each k in the table.
 
     --- v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling ---
     rnlRandPoly now draws 3 bytes (24-bit) with rejection sampling (threshold =
@@ -73,6 +78,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"sync"
 )
 
 // ---------------------------------------------------------------------------
@@ -223,11 +229,39 @@ func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 // NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
 // ---------------------------------------------------------------------------
 
-// MInv computes M^{-1}(X) = M^{n/2-1}(X).
-// Since M^{n/2} = I, M^{-1} = M^{n/2-1}. Applies n/2-1 Fscx steps with B=0.
+// mInvCache holds per-bit-size precomputed rotation tables for MInv.
+var mInvCache sync.Map // map[int][]int
+
+// computeMInvRotations bootstraps the rotation table for M^{-1} at bit-size n.
+func computeMInvRotations(n int) []int {
+	unit := &BitArray{size: n}
+	unit.val.SetInt64(1)
+	zero := &BitArray{size: n}
+	v := FscxRevolve(unit, zero, n/2-1, false)
+	var rotations []int
+	for k := 0; k < n; k++ {
+		if v.val.Bit(k) == 1 {
+			rotations = append(rotations, k)
+		}
+	}
+	return rotations
+}
+
+// MInv applies M^{-1}(X) via a precomputed rotation table (cached per bit-size).
+// The table is bootstrapped once from FscxRevolve(1, 0, n/2-1).
 func MInv(x *BitArray) *BitArray {
-	zero := &BitArray{size: x.size}
-	return FscxRevolve(x, zero, x.size/2-1, false)
+	n := x.size
+	val, ok := mInvCache.Load(n)
+	if !ok {
+		rotations := computeMInvRotations(n)
+		val, _ = mInvCache.LoadOrStore(n, rotations)
+	}
+	rotations := val.([]int)
+	result := &BitArray{size: n}
+	for _, k := range rotations {
+		result = result.Xor(x.RotateLeft(k))
+	}
+	return result
 }
 
 // NlFscxV1 computes Fscx(A,B) XOR ROL((A+B) mod 2^n, n/4).

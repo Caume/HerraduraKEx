@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.4 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.5.7 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -7,6 +7,7 @@
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
 
+    v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(N log N)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: added PQC extension tests [5]-[10].
@@ -91,8 +92,20 @@ uint32 gf_pow_32(uint32 base, uint32 exp) {
 /* NL-FSCX primitives (v1.5.0)                                        */
 /* ------------------------------------------------------------------ */
 
+/* M^{-1}(X) = XOR of ROL(X,k) for k in bits of 0x6DB6DB6D (n=32) */
+static uint32 _rol32(uint32 v, int k) { return (v << k) | (v >> (32 - k)); }
 uint32 m_inv_32(uint32 x) {
-    return fscx_revolve(x, 0, KEYBITS / 2 - 1);
+    return x
+        ^ _rol32(x, 2)  ^ _rol32(x, 3)
+        ^ _rol32(x, 5)  ^ _rol32(x, 6)
+        ^ _rol32(x, 8)  ^ _rol32(x, 9)
+        ^ _rol32(x, 11) ^ _rol32(x, 12)
+        ^ _rol32(x, 14) ^ _rol32(x, 15)
+        ^ _rol32(x, 17) ^ _rol32(x, 18)
+        ^ _rol32(x, 20) ^ _rol32(x, 21)
+        ^ _rol32(x, 23) ^ _rol32(x, 24)
+        ^ _rol32(x, 26) ^ _rol32(x, 27)
+        ^ _rol32(x, 29) ^ _rol32(x, 30);
 }
 
 uint32 nl_fscx_delta_v2(uint32 B) {

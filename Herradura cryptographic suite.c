@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.6
+/*  Herradura Cryptographic Suite v1.5.7
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,12 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv_ba ---
+    m_inv_ba now computes the rotation table for M^{-1} = M^{127}(X) once on first call
+    (bootstrapping from ba_fscx_revolve(1, 0, 127)), caches the rotation offsets in a
+    static array, then applies M^{-1}(X) as XOR of ba_rol_k(X, k) for each k in the
+    table.  New ba_rol_k helper performs arbitrary-bit cyclic rotation on 256-bit arrays.
 
     --- v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling ---
     rnl_rand_poly now draws 3 bytes (24-bit) with rejection sampling (threshold =
@@ -304,6 +310,24 @@ static void ba_rol64_256(BitArray *dst, const BitArray *src)
     memcpy(dst->b + KEYBYTES - 8, tmp, 8);
 }
 
+/* Cyclic left-rotation by k bits on KEYBYTES big-endian array.
+   byte_shift = k/8 positions; bit_shift = k%8 bits within each byte. */
+static void ba_rol_k(BitArray *dst, const BitArray *src, int k)
+{
+    int byte_shift = (k / 8) % KEYBYTES;
+    int bit_shift  = k % 8;
+    int i;
+    if (bit_shift == 0) {
+        for (i = 0; i < KEYBYTES; i++)
+            dst->b[i] = src->b[(i + byte_shift) % KEYBYTES];
+    } else {
+        int rshift = 8 - bit_shift;
+        for (i = 0; i < KEYBYTES; i++)
+            dst->b[i] = (uint8_t)((src->b[(i + byte_shift) % KEYBYTES] << bit_shift)
+                                | (src->b[(i + byte_shift + 1) % KEYBYTES] >> rshift));
+    }
+}
+
 /* Low 256-bit schoolbook multiply: dst = a*b mod 2^256 */
 static void ba_mul256_lo(BitArray *dst, const BitArray *a, const BitArray *b)
 {
@@ -416,10 +440,35 @@ static const BitArray ONE_BA  = {{
     0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0x01
 }};
 
-/* M^{-1}(X) = M^{127}(X): apply fscx with B=0 for KEYBITS/2-1 = 127 steps */
+/* M^{-1}(X): apply precomputed rotation table, bootstrapped once on first call.
+   Table = bit positions of fscx_revolve(1, 0, KEYBITS/2-1); M^{-1}(X) = XOR of
+   ba_rol_k(X, k) for each k in the table (~2n/3 rotations vs n/2-1 FSCX steps). */
 static void m_inv_ba(BitArray *dst, const BitArray *src)
 {
-    ba_fscx_revolve(dst, src, &ZERO_BA, KEYBITS / 2 - 1);
+    static int initialized = 0;
+    static int rotations[KEYBITS];
+    static int nrot = 0;
+    int i;
+
+    if (!initialized) {
+        BitArray unit = {{0}}, tmp;
+        int k;
+        unit.b[KEYBYTES - 1] = 1;   /* unit = 1 (bit 0 set in big-endian) */
+        ba_fscx_revolve(&tmp, &unit, &ZERO_BA, KEYBITS / 2 - 1);
+        for (k = 0; k < KEYBITS; k++)
+            if (tmp.b[KEYBYTES - 1 - k / 8] & (1u << (k % 8)))
+                rotations[nrot++] = k;
+        initialized = 1;
+    }
+
+    {
+        BitArray acc = {{0}}, tmp;
+        for (i = 0; i < nrot; i++) {
+            ba_rol_k(&tmp, src, rotations[i]);
+            ba_xor(&acc, &acc, &tmp);
+        }
+        *dst = acc;
+    }
 }
 
 /* NL-FSCX v1: fscx(A,B) XOR ROL((A+B) mod 2^n, n/4) */
