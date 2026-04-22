@@ -899,16 +899,18 @@ func testNlFscxV2BijectiveInverse() {
 }
 
 func testHskeNlA1Correctness() {
+	// HSKE-NL-A1 with per-session nonce: base = K XOR N; ks = NlFscxRevolveV1(base, base XOR ctr, n/4).
 	fmt.Println("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for trial := 0; trial < N; trial++ {
-			K := randBA(size); P := randBA(size)
+			K := randBA(size); nonce := randBA(size); P := randBA(size)
+			base := newBA(size, new(big.Int).Xor(&K.val, &nonce.val))
 			ctr := int64(trial % (1 << 16))
-			bCtr := newBA(size, new(big.Int).Xor(&K.val, big.NewInt(ctr)))
-			ks := NlFscxRevolveV1(K, bCtr, iv)
+			bCtr := newBA(size, new(big.Int).Xor(&base.val, big.NewInt(ctr)))
+			ks := NlFscxRevolveV1(base, bCtr, iv)
 			C := newBA(size, new(big.Int).Xor(&P.val, &ks.val))
 			D := newBA(size, new(big.Int).Xor(&C.val, &ks.val))
 			if D.Equal(P) { ok++ }
@@ -1162,10 +1164,12 @@ func benchHskeNlA1RoundTrip() {
 		iv := iVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
-			K := randBA(size)
-			P := randBA(size)
-			bCtr := newBA(size, new(big.Int).Set(&K.val)) // counter=0
-			ks := NlFscxRevolveV1(K, bCtr, iv)
+			K     := randBA(size)
+			nonce := randBA(size)
+			base  := newBA(size, new(big.Int).Xor(&K.val, &nonce.val))
+			P     := randBA(size)
+			bCtr  := newBA(size, new(big.Int).Set(&base.val)) // counter=0
+			ks    := NlFscxRevolveV1(base, bCtr, iv)
 			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.val, &ks.val)))
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",

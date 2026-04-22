@@ -87,6 +87,7 @@ lbl_r_hpke:  .asciz "r (ephem)   "
 lbl_R_hpke:  .asciz "R = g^r     "
 lbl_E_hpke:  .asciz "E (Bob)     "
 lbl_D_hpke:  .asciz "D (Alice)   "
+lbl_N_nl1:   .asciz "N (nonce)   "
 lbl_ks_nl1:  .asciz "ks (NL-v1)  "
 lbl_E_nl1:   .asciz "E (NL-A1)   "
 lbl_D_nl1:   .asciz "D (NL-A1)   "
@@ -128,6 +129,7 @@ val_E_hpke:  .word 0
 val_dec_key: .word 0
 val_D_hpke:  .word 0
 /* v1.5.0 storage */
+val_nonce_nl1: .word 0
 val_ks_nl1:  .word 0
 val_E_nl1:   .word 0
 val_D_nl1:   .word 0
@@ -523,18 +525,21 @@ hpke_done:
 
     /* ================================================================
        HSKE-NL-A1  (counter-mode with NL-FSCX v1)
-       ks = nl_fscx_revolve_v1(key, key, I_VALUE)
-       E  = plain XOR ks;  D = E XOR ks  (must == plain)
+       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(base, base, I_VALUE)
+       E = plain XOR ks;  D = E XOR ks  (must == plain)
        ================================================================ */
     ldr     r0, =fmt_hske_nl1_hdr
     bl      printf
 
-    ldr     r0, =val_key
-    ldr     r0, [r0]
+    bl      prng_next               @ r0 = nonce N
+    ldr     r3, =val_nonce_nl1
+    str     r0, [r3]                @ save N
     ldr     r1, =val_key
     ldr     r1, [r1]
+    eor     r0, r0, r1              @ r0 = base = N XOR key
+    mov     r1, r0                  @ r1 = base (counter=0: B = base)
     mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1      @ r0 = ks
     ldr     r3, =val_ks_nl1
     str     r0, [r3]
 
@@ -550,8 +555,8 @@ hpke_done:
     str     r4, [r3]
 
     ldr     r0, =fmt_hex
-    ldr     r1, =lbl_ks_nl1
-    ldr     r2, =val_ks_nl1
+    ldr     r1, =lbl_N_nl1
+    ldr     r2, =val_nonce_nl1
     ldr     r2, [r2]
     bl      printf
     ldr     r0, =fmt_hex

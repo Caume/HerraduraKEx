@@ -70,7 +70,11 @@ Counter always starts at 0 per-session. If the same key K is reused across
 sessions the keystream is identical. Fix: generate a random nonce N, derive the
 session base as K XOR N, transmit N alongside ciphertext.
 
-Status: **TODO**
+Status: **DONE (v1.5.9)** — Random nonce N added to HSKE-NL-A1 across all language targets
+(Python, C, Go, Arduino, ARM Thumb-2, NASM i386 suite + test files). Session base is now
+`base = K XOR N`; keystream is `nl_fscx_revolve_v1(base, base XOR ctr, n/4)`. N is generated
+fresh each session and displayed alongside ciphertext. Eliminates keystream reuse when K is
+reused across sessions.
 
 ---
 

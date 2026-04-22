@@ -17,8 +17,11 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.5.9: nl_fscx_revolve_v2_inv_ba precomputes delta(B) once ---
-    delta(B) is now computed once before the loop and reused each step.
+    --- v1.5.9: HSKE-NL-A1 per-session nonce; nl_fscx_revolve_v2_inv_ba delta precompute ---
+    HSKE-NL-A1 now generates a random per-session nonce N and derives session base
+    = K XOR N (transmitted alongside ciphertext).  Eliminates keystream reuse when
+    the same long-term key K is used across sessions.
+    nl_fscx_revolve_v2_inv_ba precomputes delta(B) once before the loop.
     Loop body: ba_sub256(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
     Eliminates one nl_fscx_delta_v2 call (arbitrary-precision mul+rol) per step.
 
@@ -752,7 +755,8 @@ HPKE (El Gamal public key encryption, 256-bit):
     Alice decrypts: dec_key=R^a; D=fscx_revolve(E,dec_key,r) = P
 
 HSKE-NL-A1 (counter-mode with NL-FSCX v1, 256-bit):
-    ks = nl_fscx_revolve_v1(K, K XOR counter, I_VALUE)
+    N = random(256 bits); base = K XOR N  [per-session nonce; N transmitted with ciphertext]
+    ks = nl_fscx_revolve_v1(base, base XOR counter, I_VALUE)
     E = P XOR ks;  D = E XOR ks = P
 
 HSKE-NL-A2 (revolve-mode with NL-FSCX v2, 256-bit):
@@ -886,11 +890,13 @@ int main(void)
     /* --- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1] */
     printf("\n--- HSKE-NL-A1 [PQC-HARDENED \xe2\x80\x94 counter-mode with NL-FSCX v1]\n");
     {
-        BitArray ks_nl1, E_nl1, D_nl1;
-        /* counter=0: B = preshared XOR 0 = preshared */
-        nl_fscx_revolve_v1_ba(&ks_nl1, &preshared, &preshared, I_VALUE);
+        BitArray N_a1, base_a1, ks_nl1, E_nl1, D_nl1;
+        ba_rand(&N_a1, urnd);                         /* per-session nonce          */
+        ba_xor(&base_a1, &preshared, &N_a1);          /* base = K XOR N             */
+        nl_fscx_revolve_v1_ba(&ks_nl1, &base_a1, &base_a1, I_VALUE); /* counter=0  */
         ba_xor(&E_nl1, &plaintext, &ks_nl1);
         ba_xor(&D_nl1, &E_nl1,    &ks_nl1);
+        ba_print_hex("N (nonce) : ", &N_a1);
         ba_print_hex("P (plain) : ", &plaintext);
         ba_print_hex("E (Alice) : ", &E_nl1);
         ba_print_hex("D (Bob)   : ", &D_nl1);

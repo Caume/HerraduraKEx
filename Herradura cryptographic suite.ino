@@ -9,7 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
-    v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once — eliminates per-step multiply.
+    v1.5.9: HSKE-NL-A1 per-session nonce (lcg_next XOR K); nl_fscx_revolve_v2_inv delta precompute.
     v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=0xFF00FF).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
@@ -393,10 +393,12 @@ void loop() {
     /* ---------------------------------------------------------------- */
     Serial.println("--- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]");
     {
-        /* counter=0: B = K XOR 0 = K */
-        uint32 ks = nl_fscx_revolve_v1(K, K, I_VALUE);
-        uint32 E  = PLAIN ^ ks;
-        uint32 D  = E ^ ks;
+        uint32 N    = lcg_next();              /* per-session nonce            */
+        uint32 base = K ^ N;                   /* session key base = K XOR N   */
+        uint32 ks   = nl_fscx_revolve_v1(base, base, I_VALUE);  /* counter=0  */
+        uint32 E    = PLAIN ^ ks;
+        uint32 D    = E ^ ks;
+        printHexLine("N (nonce) : ", N);
         printHexLine("E (Alice) : ", E);
         printHexLine("D (Bob)   : ", D);
         Serial.println(D == PLAIN ? "+ plaintext correctly decrypted" : "- decryption failed!");

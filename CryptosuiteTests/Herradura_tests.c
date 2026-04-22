@@ -1478,7 +1478,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
     putchar('\n');
 }
 
-/* [12] HSKE-NL-A1 counter-mode correctness: D == P */
+/* [12] HSKE-NL-A1 counter-mode correctness: D == P (with per-session nonce) */
 static void test_hske_nl_a1_correctness(void)
 {
     static const int sizes[] = {64, 128};
@@ -1492,14 +1492,16 @@ static void test_hske_nl_a1_correctness(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 128) {
-                __uint128_t K = rand128(), P = rand128();
+                __uint128_t K = rand128(), nonce = rand128(), P = rand128();
+                __uint128_t base = K ^ nonce;
                 __uint128_t ctr = (uint32_t)i & 0xFFFF;
-                __uint128_t ks = nl_fscx_revolve_v1_128(K, K ^ ctr, iv);
+                __uint128_t ks = nl_fscx_revolve_v1_128(base, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             } else {
-                uint64_t K = rand64(), P = rand64();
+                uint64_t K = rand64(), nonce = rand64(), P = rand64();
+                uint64_t base = K ^ nonce;
                 uint64_t ctr = (uint32_t)i & 0xFFFF;
-                uint64_t ks = nl_fscx_revolve_v1_64(K, K ^ ctr, iv);
+                uint64_t ks = nl_fscx_revolve_v1_64(base, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             }
             if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
@@ -1874,7 +1876,7 @@ static void bench_nl_fscx_revolve(void)
     putchar('\n');
 }
 
-/* [23] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0) */
+/* [23] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0, with nonce) */
 static void bench_hske_nl_a1_roundtrip(void)
 {
     uint32_t K, P, ks, sink = 0;
@@ -1884,12 +1886,18 @@ static void bench_hske_nl_a1_roundtrip(void)
     int i;
     printf("[23] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
     K = rand32(); P = rand32();
-    for (i = 0; i < 10; i++) { ks = nl_fscx_revolve_v1_32(K, K, NL_I32); sink ^= P ^ ks; }
+    for (i = 0; i < 10; i++) {
+        uint32_t nonce = rand32(), base = K ^ nonce;
+        ks = nl_fscx_revolve_v1_32(base, base, NL_I32);
+        sink ^= P ^ ks;
+    }
     clock_gettime(CLOCK_MONOTONIC, &t0);
     do {
         for (i = 0; i < 100; i++) {
-            K  = rand32(); P = rand32();
-            ks = nl_fscx_revolve_v1_32(K, K, NL_I32);   /* ctr=0 for throughput */
+            uint32_t nonce = rand32();
+            K = rand32(); P = rand32();
+            uint32_t base = K ^ nonce;
+            ks = nl_fscx_revolve_v1_32(base, base, NL_I32);  /* ctr=0 */
             sink ^= P ^ ks;
         }
         ops += 100;
