@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.6 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.7 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=0xFF00FF).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
@@ -112,9 +113,21 @@ static void printHexLine(const char *label, uint32 val) {
 /* NL-FSCX primitives (v1.5.0)                                        */
 /* ------------------------------------------------------------------ */
 
-/* M^{-1}(X) = fscx_revolve(X, 0, KEYBITS/2 - 1) */
+/* M^{-1}(X) = XOR of ROL(X,k) for k in bits of 0x6DB6DB6D.
+   Table = {0,2,3,5,6,8,9,11,12,14,15,17,18,20,21,23,24,26,27,29,30} (n=32). */
+static uint32 _rol32(uint32 v, int k) { return (v << k) | (v >> (32 - k)); }
 uint32 m_inv_32(uint32 x) {
-    return fscx_revolve(x, 0, KEYBITS / 2 - 1);
+    return x
+        ^ _rol32(x, 2)  ^ _rol32(x, 3)
+        ^ _rol32(x, 5)  ^ _rol32(x, 6)
+        ^ _rol32(x, 8)  ^ _rol32(x, 9)
+        ^ _rol32(x, 11) ^ _rol32(x, 12)
+        ^ _rol32(x, 14) ^ _rol32(x, 15)
+        ^ _rol32(x, 17) ^ _rol32(x, 18)
+        ^ _rol32(x, 20) ^ _rol32(x, 21)
+        ^ _rol32(x, 23) ^ _rol32(x, 24)
+        ^ _rol32(x, 26) ^ _rol32(x, 27)
+        ^ _rol32(x, 29) ^ _rol32(x, 30);
 }
 
 /* delta(B) = ROL32(B * floor((B+1)/2), 8) */

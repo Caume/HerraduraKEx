@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.6
+    Herradura Cryptographic Suite v1.5.7
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,13 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv ---
+
+    _m_inv now computes the rotation table for M^{-1} = M^{n/2-1} once on first call
+    (bootstrapping from fscx_revolve(1, 0, n/2-1)), caches it per bit-size, then applies
+    M^{-1}(X) as XOR of ROL(X,k) for each k in the table.  Reduces each inverse step
+    from n/2-1 FSCX iterations to ~2n/3 XOR-rotation pairs.
 
     --- v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling ---
 
@@ -241,12 +248,23 @@ def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
 # NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
 # ---------------------------------------------------------------------------
 
+# Rotation-table cache: maps bit-size n to tuple of rotation offsets k such that
+# M^{-1}(X) = XOR of ROL(X, k) for k in the tuple.  Populated lazily on first call.
+_m_inv_rotations: dict[int, tuple[int, ...]] = {}
+
 def _m_inv(X: BitArray) -> BitArray:
-    """M^{-1}(X): inverse of the FSCX linear map M = I+ROL+ROR over GF(2).
-    Since M^{n/2} = I, M^{-1} = M^{n/2-1}.  Applies n/2-1 fscx steps with B=0."""
-    n    = X._size
-    zero = BitArray(n, 0)
-    return fscx_revolve(X, zero, n // 2 - 1)
+    """M^{-1}(X): apply precomputed rotation table for M^{n/2-1}.
+    Table is bootstrapped once from fscx_revolve(1, 0, n/2-1) and cached per bit-size."""
+    n = X._size
+    if n not in _m_inv_rotations:
+        unit = BitArray(n, 1)
+        zero = BitArray(n, 0)
+        v = fscx_revolve(unit, zero, n // 2 - 1)
+        _m_inv_rotations[n] = tuple(k for k in range(n) if (v.uint >> k) & 1)
+    result = BitArray(n, 0)
+    for k in _m_inv_rotations[n]:
+        result = result ^ X.rotated(k)
+    return result
 
 
 def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:

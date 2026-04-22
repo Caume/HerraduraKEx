@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.7: _m_inv uses precomputed rotation table (lazy init, cached per bit-size).
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: fixed version banner (was stuck at v1.5.3).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n), ~6× speedup at n=32).
@@ -165,11 +166,20 @@ def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
 # NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
 # ---------------------------------------------------------------------------
 
+_m_inv_rotations: dict[int, tuple[int, ...]] = {}
+
 def _m_inv(X: BitArray) -> BitArray:
-    """M^{-1}(X) = M^{n/2-1}(X).  M^{n/2} = I so M^{-1} = M^{n/2-1}."""
-    n    = X._size
-    zero = BitArray(n, 0)
-    return fscx_revolve(X, zero, n // 2 - 1)
+    """M^{-1}(X) via precomputed rotation table, cached per bit-size."""
+    n = X._size
+    if n not in _m_inv_rotations:
+        unit = BitArray(n, 1)
+        zero = BitArray(n, 0)
+        v = fscx_revolve(unit, zero, n // 2 - 1)
+        _m_inv_rotations[n] = tuple(k for k in range(n) if (v.uint >> k) & 1)
+    result = BitArray(n, 0)
+    for k in _m_inv_rotations[n]:
+        result = result ^ X.rotated(k)
+    return result
 
 
 def nl_fscx_v1(A: BitArray, B: BitArray) -> BitArray:
@@ -873,7 +883,7 @@ def bench_hkex_rnl_handshake():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.6 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.5.7 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -901,7 +911,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.6 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.7 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

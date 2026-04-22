@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.4
+/*  Herradura KEx -- Correctness Tests v1.5.7
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL
@@ -31,7 +31,7 @@
     .data
     .balign 4
 
-fmt_hdr:  .asciz "=== Herradura KEx v1.5.3 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
+fmt_hdr:  .asciz "=== Herradura KEx v1.5.7 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
 fmt_t1:   .asciz "[1] HKEX-GF key exchange: sk_alice == sk_bob (20 iterations)\n"
 fmt_t2:   .asciz "[2] HSKE encrypt+decrypt round-trip: D == plaintext (100 iterations)\n"
 fmt_t3:   .asciz "[3] HPKS Schnorr: g^s * C^e == R (20 iterations)\n"
@@ -958,15 +958,54 @@ nl_fscx_v2:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* m_inv_32: r0=X -> r0=fscx_revolve(X,0,15)                          */
+/* m_inv_32: r0=X -> r0=M^{-1}(X) via precomputed rotation table     */
+/* M^{-1}(X) = XOR of ROL(X,k) for k in {0,2,3,5,6,8,9,...,29,30}   */
 /* ------------------------------------------------------------------ */
     .thumb_func
 m_inv_32:
-    push    {lr}
-    mov     r1, #0
-    mov     r2, #15
-    bl      fscx_revolve
-    pop     {pc}
+    @ r0=X; result in r0; r1=saved X, r2=scratch (all caller-saved)
+    mov     r1, r0
+    ror     r2, r1, #30
+    eor     r0, r0, r2
+    ror     r2, r1, #29
+    eor     r0, r0, r2
+    ror     r2, r1, #27
+    eor     r0, r0, r2
+    ror     r2, r1, #26
+    eor     r0, r0, r2
+    ror     r2, r1, #24
+    eor     r0, r0, r2
+    ror     r2, r1, #23
+    eor     r0, r0, r2
+    ror     r2, r1, #21
+    eor     r0, r0, r2
+    ror     r2, r1, #20
+    eor     r0, r0, r2
+    ror     r2, r1, #18
+    eor     r0, r0, r2
+    ror     r2, r1, #17
+    eor     r0, r0, r2
+    ror     r2, r1, #15
+    eor     r0, r0, r2
+    ror     r2, r1, #14
+    eor     r0, r0, r2
+    ror     r2, r1, #12
+    eor     r0, r0, r2
+    ror     r2, r1, #11
+    eor     r0, r0, r2
+    ror     r2, r1, #9
+    eor     r0, r0, r2
+    ror     r2, r1, #8
+    eor     r0, r0, r2
+    ror     r2, r1, #6
+    eor     r0, r0, r2
+    ror     r2, r1, #5
+    eor     r0, r0, r2
+    ror     r2, r1, #3
+    eor     r0, r0, r2
+    ror     r2, r1, #2
+    eor     r0, r0, r2
+    bx      lr
     .ltorg
 
 /* ------------------------------------------------------------------ */

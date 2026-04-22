@@ -1,4 +1,4 @@
-;  Herradura KEx -- Correctness Tests v1.5.4
+;  Herradura KEx -- Correctness Tests v1.5.7
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS Schnorr, HPKE El Gamal,
 ;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS=32; I_VALUE=8; R_VALUE=24; HKEX-RNL N=32, q=65537, p=4096
@@ -53,7 +53,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura KEx v1.5.4 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
+    hdr         db "=== Herradura KEx v1.5.7 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
     hdr_l       equ $-hdr
 
     t1_hdr      db "[1] HKEX-GF key exchange correctness: sk_alice == sk_bob (20 iterations)", 10
@@ -954,16 +954,73 @@ nl_fscx_v2:
     ret
 
 ; ============================================================
-; m_inv_32: EAX=X --> EAX=M^{-1}(X) = fscx_revolve(X, 0, 15)
+; m_inv_32: EAX=X --> EAX=M^{-1}(X) via precomputed rotation table
+; M^{-1}(X) = XOR of ROL(X,k) for k in {0,2,3,5,6,8,9,...,29,30}
 ; ============================================================
 m_inv_32:
-    push ebx
-    push ecx
-    mov  ebx, 0
-    mov  ecx, 15
-    call FSCX_revolve
-    pop  ecx
-    pop  ebx
+    push    ebx
+    mov     ebx, eax
+    mov     ecx, ebx
+    rol     ecx, 2
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 3
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 5
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 6
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 8
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 9
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 11
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 12
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 14
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 15
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 17
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 18
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 20
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 21
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 23
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 24
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 26
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 27
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 29
+    xor     eax, ecx
+    mov     ecx, ebx
+    rol     ecx, 30
+    xor     eax, ecx
+    pop     ebx
     ret
 
 ; ============================================================

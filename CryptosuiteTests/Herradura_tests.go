@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.7: MInv uses precomputed rotation table (sync.Map cache per bit-size).
     v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: aligned version banner with C and Python.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
@@ -41,6 +42,7 @@ import (
 	"math/big"
 	"math/bits"
 	"os"
+	"sync"
 	"strconv"
 	"time"
 )
@@ -231,9 +233,35 @@ func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 // NL-FSCX primitives (v1.5.0)
 // ---------------------------------------------------------------------------
 
+var mInvCache sync.Map // map[int][]int
+
+func computeMInvRotations(n int) []int {
+	unit := &BitArray{size: n}
+	unit.val.SetInt64(1)
+	zero := &BitArray{size: n}
+	v := FscxRevolve(unit, zero, n/2-1)
+	var rotations []int
+	for k := 0; k < n; k++ {
+		if v.val.Bit(k) == 1 {
+			rotations = append(rotations, k)
+		}
+	}
+	return rotations
+}
+
 func MInv(x *BitArray) *BitArray {
-	zero := &BitArray{size: x.size}
-	return FscxRevolve(x, zero, x.size/2-1)
+	n := x.size
+	val, ok := mInvCache.Load(n)
+	if !ok {
+		rotations := computeMInvRotations(n)
+		val, _ = mInvCache.LoadOrStore(n, rotations)
+	}
+	rotations := val.([]int)
+	result := &BitArray{size: n}
+	for _, k := range rotations {
+		result = result.Xor(x.RotateLeft(k))
+	}
+	return result
 }
 
 func NlFscxV1(a, b *BitArray) *BitArray {
@@ -1218,7 +1246,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.6 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.7 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
