@@ -18,11 +18,14 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once ---
+    --- v1.5.9: HSKE-NL-A1 per-session nonce; nl_fscx_revolve_v2_inv delta precompute ---
 
-    delta(B) is now computed once before the loop and reused each step, eliminating
-    redundant multiply-and-rotate work per iteration.  Loop body: z = y - delta;
-    y = B XOR _m_inv(z).  Reduces per-step cost from O(delta+M^{-1}) to O(M^{-1}).
+    HSKE-NL-A1 now generates a random per-session nonce N and derives the session
+    key base as K XOR N (transmitted alongside ciphertext).  Eliminates keystream
+    reuse when the same long-term key K is used across sessions.
+
+    nl_fscx_revolve_v2_inv precomputes delta(B) once before the loop; loop body:
+    z = y - delta; y = B XOR _m_inv(z).  Eliminates per-step multiply-and-rotate.
 
     --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv ---
 
@@ -502,11 +505,13 @@ PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs.md §11)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
-  keystream[i] = nl_fscx_revolve_v1(K, K XOR i, n/4)
-  Encrypt:  C = P XOR keystream[counter]
-  Decrypt:  P = C XOR keystream[counter]   (XOR-symmetric)
-  Security: keystream non-linearity defeats linear key-recovery; counter
-            ensures keystream uniqueness per block.  Assumes NL-FSCX v1 as PRF.
+  Nonce:    N = random(n bits)   [per-session; transmitted alongside ciphertext]
+  base      = K XOR N            [session key base]
+  keystream[i] = nl_fscx_revolve_v1(base, base XOR i, n/4)
+  Encrypt:  C = (N, P XOR keystream[0])
+  Decrypt:  base = K XOR N; P = C XOR keystream[0]
+  Security: per-session nonce ensures distinct keystreams across sessions;
+            NL non-linearity defeats linear key-recovery. Assumes NL-FSCX v1 as PRF.
 
 HSKE-NL-A2 (revolve-mode HSKE with NL-FSCX v2):
   Encrypt:  E = nl_fscx_revolve_v2(P, K, r)
@@ -622,11 +627,14 @@ def main():
     # ── PQC-HARDENED protocols ───────────────────────────────────────────────
     print("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
     counter    = 0
-    ks_a1      = nl_fscx_revolve_v1(preshared,
-                                    BitArray(KEYBITS, preshared.uint ^ counter),
+    N_a1       = BitArray.random(KEYBITS)                         # per-session nonce
+    base_a1    = BitArray(KEYBITS, preshared.uint ^ N_a1.uint)   # K XOR N
+    ks_a1      = nl_fscx_revolve_v1(base_a1,
+                                    BitArray(KEYBITS, base_a1.uint ^ counter),
                                     KEYBITS // 4)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)
     D_a1 = BitArray(KEYBITS, E_a1.uint ^ ks_a1.uint)
+    print(f"N (nonce) : {N_a1.hex}")
     print(f"P (plain) : {plaintext.hex}")
     print(f"E (Alice) : {E_a1.hex}")
     print(f"D (Bob)   : {D_a1.hex}")

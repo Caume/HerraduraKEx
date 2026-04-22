@@ -56,6 +56,7 @@ section .data
     prng_state  dd 0xDEADBEEE
 
     ; NL / RNL scratch scalars
+    val_nonce_nl1 dd 0  ; HSKE-NL-A1 per-session nonce
     val_ks_nl1  dd 0    ; HSKE-NL-A1 keystream
     val_E_nl1   dd 0
     val_E_nl2   dd 0    ; HSKE-NL-A2 ciphertext (saved for Eve)
@@ -149,6 +150,8 @@ section .data
     ; v1.5.0 section headers
     hske_nl1_hdr db 10, "--- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1]", 10
     hske_nl1_hdr_l equ $-hske_nl1_hdr
+    lbl_N_nl1    db "N (nonce)    : "
+    lbl_N_nl1_l  equ $-lbl_N_nl1
     hske_nl2_hdr db 10, "--- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]", 10
     hske_nl2_hdr_l equ $-hske_nl2_hdr
     hkex_rnl_hdr db 10, "--- HKEX-RNL [PQC -- Ring-LWR key exchange; N=32, q=65537]", 10
@@ -520,11 +523,13 @@ _start:
     mov  ecx, hske_nl1_hdr_l
     call print_str
 
-    ; ks = nl_fscx_revolve_v1(K, K, 8)  [counter=0 -> B=K]
-    mov  eax, [val_key]
-    mov  ebx, [val_key]
+    ; N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(base, base, I_VALUE)
+    call prng_next              ; eax = nonce N
+    mov  [val_nonce_nl1], eax
+    xor  eax, [val_key]         ; eax = base = N XOR key
+    mov  ebx, eax               ; ebx = base (counter=0: B = base)
     mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1
+    call nl_fscx_revolve_v1     ; eax = ks
     mov  [val_ks_nl1], eax
 
     ; E = plain XOR ks
@@ -532,14 +537,16 @@ _start:
     xor  eax, [val_ks_nl1]
     mov  [val_E_nl1], eax
 
-    ; D = E XOR ks
-    mov  eax, [val_E_nl1]
-    xor  eax, [val_ks_nl1]
+    ; print N
+    mov  eax, lbl_N_nl1
+    mov  ecx, lbl_N_nl1_l
+    call print_str
+    mov  eax, [val_nonce_nl1]
+    call print_hex32
 
-    mov  ecx, eax              ; save D
+    ; print E
     mov  eax, lbl_E_nl
-    mov  ecx, lbl_E_nl_l       ; oops, clobber -- use push/pop
-    push ecx
+    mov  ecx, lbl_E_nl_l
     call print_str
     mov  eax, [val_E_nl1]
     call print_hex32
@@ -547,7 +554,7 @@ _start:
     mov  eax, lbl_D_nl
     mov  ecx, lbl_D_nl_l
     call print_str
-    ; recompute D
+    ; D = E XOR ks
     mov  eax, [val_E_nl1]
     xor  eax, [val_ks_nl1]
     push eax

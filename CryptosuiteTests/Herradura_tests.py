@@ -621,20 +621,22 @@ def test_nl_fscx_v2_bijective_inverse():
 
 
 def test_hske_nl_a1_correctness():
-    # HSKE-NL-A1 counter-mode: C = P XOR keystream; D = C XOR keystream = P.
-    # keystream[i] = nl_fscx_revolve_v1(K, K XOR i, n/4).
+    # HSKE-NL-A1 counter-mode with per-session nonce: N random; base = K XOR N.
+    # keystream[i] = nl_fscx_revolve_v1(base, base XOR i, n/4).
     print("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); ok = 0; n_run = 0
         for trial in _trange(_iters(1000)):
             n_run += 1
-            K   = BitArray.random(size)
-            P   = BitArray.random(size)
-            ctr = trial % (1 << min(size, 16))
-            B   = BitArray(size, K.uint ^ ctr)
-            ks  = nl_fscx_revolve_v1(K, B, iv)
-            C   = BitArray(size, P.uint ^ ks.uint)
-            D   = BitArray(size, C.uint ^ ks.uint)
+            K    = BitArray.random(size)
+            N    = BitArray.random(size)                 # per-session nonce
+            P    = BitArray.random(size)
+            base = BitArray(size, K.uint ^ N.uint)       # session key base
+            ctr  = trial % (1 << min(size, 16))
+            B    = BitArray(size, base.uint ^ ctr)
+            ks   = nl_fscx_revolve_v1(base, B, iv)
+            C    = BitArray(size, P.uint ^ ks.uint)
+            D    = BitArray(size, C.uint ^ ks.uint)
             if D == P: ok += 1
         status = "PASS" if ok == n_run else "FAIL"
         print(f"    bits={size:3d}  {ok:4d} / {n_run} correct  [{status}]")
@@ -843,9 +845,11 @@ def bench_hske_nl_a1_roundtrip():
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
             nonlocal sink
-            K = BitArray.random(size); P = BitArray.random(size)
-            B = BitArray(size, K.uint ^ 0)
-            ks = nl_fscx_revolve_v1(K, B, iv)
+            K    = BitArray.random(size); P = BitArray.random(size)
+            N    = BitArray.random(size)
+            base = BitArray(size, K.uint ^ N.uint)
+            B    = BitArray(size, base.uint ^ 0)  # counter=0
+            ks   = nl_fscx_revolve_v1(base, B, iv)
             sink ^= BitArray(size, P.uint ^ ks.uint)
         _bench(f"bits={size:3d}", fn)
     print()

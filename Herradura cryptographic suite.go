@@ -17,8 +17,11 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once ---
-    delta(B) is now computed once before the loop and reused each step.
+    --- v1.5.9: HSKE-NL-A1 per-session nonce; NlFscxRevolveV2Inv delta precompute ---
+    HSKE-NL-A1 now generates a random per-session nonce N and derives session base
+    = K XOR N (transmitted alongside ciphertext).  Eliminates keystream reuse when
+    the same long-term key K is used across sessions.
+    NlFscxRevolveV2Inv precomputes delta(B) once before the loop.
     Loop body: diff = result - delta; result = b.Xor(MInv(diff)).
     Eliminates one nlFscxDeltaV2 big.Int multiply per iteration.
 
@@ -631,11 +634,14 @@ func main() {
 
 	// ── PQC-HARDENED protocols ───────────────────────────────────────────────
 	fmt.Println("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
+	nA1    := randBA(n)                                                    // per-session nonce
+	baseA1 := NewBitArray(n, new(big.Int).Xor(&preshared.val, &nA1.val)) // base = K XOR N
 	counter := 0
-	bA1 := NewBitArray(n, new(big.Int).Xor(&preshared.val, big.NewInt(int64(counter))))
-	ksA1 := NlFscxRevolveV1(preshared, bA1, n/4)
+	bA1 := NewBitArray(n, new(big.Int).Xor(&baseA1.val, big.NewInt(int64(counter))))
+	ksA1 := NlFscxRevolveV1(baseA1, bA1, n/4)
 	eA1 := NewBitArray(n, new(big.Int).Xor(&plaintext.val, &ksA1.val))
 	dA1 := NewBitArray(n, new(big.Int).Xor(&eA1.val, &ksA1.val))
+	fmt.Printf("N (nonce) : %x\n", nA1)
 	fmt.Printf("P (plain) : %x\n", plaintext)
 	fmt.Printf("E (Alice) : %x\n", eA1)
 	fmt.Printf("D (Bob)   : %x\n", dA1)
