@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.7 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.9 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=0xFF00FF).
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
@@ -163,7 +164,8 @@ uint32 nl_fscx_revolve_v2(uint32 a, uint32 b, int steps) {
 }
 
 uint32 nl_fscx_revolve_v2_inv(uint32 y, uint32 b, int steps) {
-    for (int i = 0; i < steps; i++) y = nl_fscx_v2_inv(y, b);
+    uint32 delta = nl_fscx_delta_v2(b);  /* precompute once — b is constant */
+    for (int i = 0; i < steps; i++) y = b ^ m_inv_32(y - delta);
     return y;
 }
 

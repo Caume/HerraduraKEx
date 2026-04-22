@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.7
+/*  Herradura Cryptographic Suite v1.5.9
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,11 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.9: nl_fscx_revolve_v2_inv_ba precomputes delta(B) once ---
+    delta(B) is now computed once before the loop and reused each step.
+    Loop body: ba_sub256(z, buf, delta); m_inv_ba(mz, z); ba_xor(buf, b, mz).
+    Eliminates one nl_fscx_delta_v2 call (arbitrary-precision mul+rol) per step.
 
     --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv_ba ---
     m_inv_ba now computes the rotation table for M^{-1} = M^{127}(X) once on first call
@@ -539,11 +544,15 @@ static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
 static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
                                        const BitArray *b, int steps)
 {
-    BitArray buf[2];
+    BitArray delta, buf[2];
     int idx = 0, i;
+    nl_fscx_delta_v2(&delta, b);   /* precompute once — b is constant */
     buf[0] = *y;
     for (i = 0; i < steps; i++) {
-        nl_fscx_v2_inv_ba(&buf[1 - idx], &buf[idx], b);
+        BitArray z, mz;
+        ba_sub256(&z, &buf[idx], &delta);
+        m_inv_ba(&mz, &z);
+        ba_xor(&buf[1 - idx], b, &mz);
         idx ^= 1;
     }
     *result = buf[idx];

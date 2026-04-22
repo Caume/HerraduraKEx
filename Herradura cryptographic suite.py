@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.7
+    Herradura Cryptographic Suite v1.5.9
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,12 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once ---
+
+    delta(B) is now computed once before the loop and reused each step, eliminating
+    redundant multiply-and-rotate work per iteration.  Loop body: z = y - delta;
+    y = B XOR _m_inv(z).  Reduces per-step cost from O(delta+M^{-1}) to O(M^{-1}).
 
     --- v1.5.7: precomputed M^{-1} for nl_fscx_v2_inv ---
 
@@ -325,10 +331,15 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
-    """Invert nl_fscx_revolve_v2: apply nl_fscx_v2_inv *steps* times."""
+    """Invert nl_fscx_revolve_v2: apply nl_fscx_v2_inv *steps* times.
+    delta(B) is precomputed once — B is constant throughout the revolve."""
+    n     = Y._size
+    mask  = Y._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
     for _ in range(steps):
-        result = nl_fscx_v2_inv(result, B)
+        z      = BitArray(n, (result.uint - delta.uint) & mask)
+        result = B ^ _m_inv(z)
     return result
 
 

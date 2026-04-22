@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.7
+/*  Herradura KEx -- Correctness Tests v1.5.9
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL
@@ -31,7 +31,7 @@
     .data
     .balign 4
 
-fmt_hdr:  .asciz "=== Herradura KEx v1.5.7 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
+fmt_hdr:  .asciz "=== Herradura KEx v1.5.9 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
 fmt_t1:   .asciz "[1] HKEX-GF key exchange: sk_alice == sk_bob (20 iterations)\n"
 fmt_t2:   .asciz "[2] HSKE encrypt+decrypt round-trip: D == plaintext (100 iterations)\n"
 fmt_t3:   .asciz "[3] HPKS Schnorr: g^s * C^e == R (20 iterations)\n"
@@ -1049,24 +1049,28 @@ nlrv2_done:
 
 /* ------------------------------------------------------------------ */
 /* nl_fscx_revolve_v2_inv: r0=Y, r1=B, r2=steps -> r0                */
+/* delta(B) precomputed once — b constant throughout the revolve      */
 /* ------------------------------------------------------------------ */
     .thumb_func
 nl_fscx_revolve_v2_inv:
-    push    {r4-r6, lr}
-    mov     r4, r0
-    mov     r5, r1
-    mov     r6, r2
+    push    {r4-r7, lr}
+    mov     r4, r0              @ r4 = current y
+    mov     r5, r1              @ r5 = B
+    mov     r6, r2              @ r6 = steps
+    mov     r0, r5
+    bl      nl_fscx_delta_v2    @ r0 = delta(B)
+    mov     r7, r0              @ r7 = delta (precomputed once)
 nlrv2i_loop:
     cbz     r6, nlrv2i_done
+    sub     r4, r4, r7          @ z = y - delta  (mod 2^32)
     mov     r0, r4
-    mov     r1, r5
-    bl      nl_fscx_v2_inv
-    mov     r4, r0
+    bl      m_inv_32            @ r0 = M^{-1}(z)
+    eor     r4, r0, r5          @ y = B XOR M^{-1}(z)
     subs    r6, r6, #1
     b       nlrv2i_loop
 nlrv2i_done:
     mov     r0, r4
-    pop     {r4-r6, pc}
+    pop     {r4-r7, pc}
     .ltorg
 
 /* ------------------------------------------------------------------ */

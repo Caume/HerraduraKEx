@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.7 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.5.9 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -137,7 +137,8 @@ uint32 nl_fscx_revolve_v2(uint32 a, uint32 b, int steps) {
 }
 
 uint32 nl_fscx_revolve_v2_inv(uint32 y, uint32 b, int steps) {
-    for (int i = 0; i < steps; i++) y = nl_fscx_v2_inv(y, b);
+    uint32 delta = nl_fscx_delta_v2(b);  /* precompute once — b is constant */
+    for (int i = 0; i < steps; i++) y = b ^ m_inv_32(y - delta);
     return y;
 }
 

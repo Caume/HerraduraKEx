@@ -1,4 +1,4 @@
-;  Herradura KEx -- Correctness Tests v1.5.7
+;  Herradura KEx -- Correctness Tests v1.5.9
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS Schnorr, HPKE El Gamal,
 ;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS=32; I_VALUE=8; R_VALUE=24; HKEX-RNL N=32, q=65537, p=4096
@@ -53,7 +53,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura KEx v1.5.7 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
+    hdr         db "=== Herradura KEx v1.5.9 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
     hdr_l       equ $-hdr
 
     t1_hdr      db "[1] HKEX-GF key exchange correctness: sk_alice == sk_bob (20 iterations)", 10
@@ -1067,22 +1067,30 @@ nl_fscx_revolve_v2:
 
 ; ============================================================
 ; nl_fscx_revolve_v2_inv: EAX=Y, EBX=B, ECX=steps --> EAX
+; delta(B) precomputed once — B constant throughout the revolve
 ; ============================================================
 nl_fscx_revolve_v2_inv:
     push esi
     push edi
-    mov  esi, eax
-    mov  edi, ecx
+    push ebp
+    mov  esi, eax               ; esi = current y
+    mov  edi, ecx               ; edi = steps
+    mov  eax, ebx
+    call nl_fscx_delta_v2       ; eax = delta(B)
+    mov  ebp, eax               ; ebp = delta (precomputed once)
 .rv2i_loop:
     test edi, edi
     jz   .rv2i_done
+    sub  esi, ebp               ; z = y - delta  (mod 2^32)
     mov  eax, esi
-    call nl_fscx_v2_inv
+    call m_inv_32               ; eax = M^{-1}(z)
+    xor  eax, ebx               ; y = B XOR M^{-1}(z)
     mov  esi, eax
     dec  edi
     jmp  .rv2i_loop
 .rv2i_done:
     mov  eax, esi
+    pop  ebp
     pop  edi
     pop  esi
     ret
