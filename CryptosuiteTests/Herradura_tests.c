@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.9: nl_fscx_revolve_v2_inv_{32,64,128} precompute delta(B) once — eliminates per-step multiply.
     v1.5.7: m_inv_32/64/128 use precomputed rotation tables (0x6DB6DB6D / constants).
     v1.5.6: rnl_rand_coeff bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
@@ -391,8 +392,9 @@ static uint32_t nl_fscx_revolve_v2_32(uint32_t a, uint32_t b, int steps)
 
 static uint32_t nl_fscx_revolve_v2_inv_32(uint32_t y, uint32_t b, int steps)
 {
+    uint32_t delta = nl_fscx_delta_v2_32(b);  /* precompute once */
     int i;
-    for (i = 0; i < steps; i++) y = nl_fscx_v2_inv_32(y, b);
+    for (i = 0; i < steps; i++) y = b ^ m_inv_32(y - delta);
     return y;
 }
 
@@ -505,8 +507,9 @@ static uint64_t nl_fscx_revolve_v2_64(uint64_t a, uint64_t b, int steps)
 
 static uint64_t nl_fscx_revolve_v2_inv_64(uint64_t y, uint64_t b, int steps)
 {
+    uint64_t delta = nl_fscx_delta_v2_64(b);  /* precompute once */
     int i;
-    for (i = 0; i < steps; i++) y = nl_fscx_v2_inv_64(y, b);
+    for (i = 0; i < steps; i++) y = b ^ m_inv_64(y - delta);
     return y;
 }
 
@@ -588,8 +591,9 @@ static __uint128_t nl_fscx_revolve_v2_128(__uint128_t a, __uint128_t b, int step
 
 static __uint128_t nl_fscx_revolve_v2_inv_128(__uint128_t y, __uint128_t b, int steps)
 {
+    __uint128_t delta = nl_fscx_delta_v2_128(b);  /* precompute once */
     int i;
-    for (i = 0; i < steps; i++) y = nl_fscx_v2_inv_128(y, b);
+    for (i = 0; i < steps; i++) y = b ^ m_inv_128(y - delta);
     return y;
 }
 
@@ -2005,7 +2009,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.7 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.9 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

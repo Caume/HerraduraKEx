@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: MInv uses precomputed rotation table (sync.Map cache per bit-size).
     v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling (threshold=16711935).
     v1.5.5: aligned version banner with C and Python.
@@ -326,9 +327,16 @@ func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
 }
 
 func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
+	n := y.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
 	result := y.Copy()
 	for i := 0; i < steps; i++ {
-		result = NlFscxV2Inv(result, b)
+		diff := new(big.Int).Sub(&result.val, &delta.val)
+		diff.And(diff, mask)
+		zBA := &BitArray{size: n}
+		zBA.val.Set(diff)
+		result = b.Xor(MInv(zBA))
 	}
 	return result
 }
@@ -1246,7 +1254,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.7 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.9 \u2014 Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

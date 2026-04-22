@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.7
+/*  Herradura Cryptographic Suite v1.5.9
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,11 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once ---
+    delta(B) is now computed once before the loop and reused each step.
+    Loop body: diff = result - delta; result = b.Xor(MInv(diff)).
+    Eliminates one nlFscxDeltaV2 big.Int multiply per iteration.
 
     --- v1.5.7: precomputed M^{-1} for NlFscxV2Inv ---
     MInv now computes the rotation table for M^{-1} = M^{n/2-1} once on first call
@@ -338,10 +343,18 @@ func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
 }
 
 // NlFscxRevolveV2Inv inverts NlFscxRevolveV2 by applying NlFscxV2Inv steps times.
+// delta(b) is precomputed once — b is constant throughout the revolve.
 func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
+	n := y.size
+	mask := bitArrayMask(n)
+	delta := nlFscxDeltaV2(b)
 	result := y.Copy()
 	for i := 0; i < steps; i++ {
-		result = NlFscxV2Inv(result, b)
+		diff := new(big.Int).Sub(&result.val, &delta.val)
+		diff.And(diff, mask)
+		zBA := &BitArray{size: n}
+		zBA.val.Set(diff)
+		result = b.Xor(MInv(zBA))
 	}
 	return result
 }
