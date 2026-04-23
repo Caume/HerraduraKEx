@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv_{32,64,128} precompute delta(B) once — eliminates per-step multiply.
     v1.5.7: m_inv_32/64/128 use precomputed rotation tables (0x6DB6DB6D / constants).
     v1.5.6: rnl_rand_coeff bias fix — 3-byte rejection sampling (threshold=16711935).
@@ -1573,8 +1574,8 @@ static void test_hkex_rnl_correctness(void)
                 K_A = rnl32_agree(s_A, c_B);
                 K_B = rnl32_agree(s_B, c_A);
                 if (K_A == K_B) ok_raw++;
-                if (nl_fscx_revolve_v1_32(K_A, K_A, NL_I32) ==
-                    nl_fscx_revolve_v1_32(K_B, K_B, NL_I32)) ok_sk++;
+                if (nl_fscx_revolve_v1_32((K_A<<4)|(K_A>>28), K_A, NL_I32) ==
+                    nl_fscx_revolve_v1_32((K_B<<4)|(K_B>>28), K_B, NL_I32)) ok_sk++;
                 if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
             }
         } else {
@@ -1590,8 +1591,8 @@ static void test_hkex_rnl_correctness(void)
                 K_A64 = rnl_agree_n(s_A64, c_B64, 64);
                 K_B64 = rnl_agree_n(s_B64, c_A64, 64);
                 if (K_A64 == K_B64) ok_raw++;
-                if (nl_fscx_revolve_v1_64(K_A64, K_A64, NL_I64) ==
-                    nl_fscx_revolve_v1_64(K_B64, K_B64, NL_I64)) ok_sk++;
+                if (nl_fscx_revolve_v1_64((K_A64<<8)|(K_A64>>56), K_A64, NL_I64) ==
+                    nl_fscx_revolve_v1_64((K_B64<<8)|(K_B64>>56), K_B64, NL_I64)) ok_sk++;
                 if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
             }
         }
@@ -2017,7 +2018,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.9 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.10 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

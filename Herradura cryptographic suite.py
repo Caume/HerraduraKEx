@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.9
+    Herradura Cryptographic Suite v1.5.10
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,16 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.10: HKEX-RNL KDF seed fix — ROL(K, n/8) breaks step-1 degeneracy ---
+
+    HKEX-RNL KDF now derives the initial state as seed = ROL(K, n/8) instead of
+    using K directly:
+      seed = ROL(K, n/8)
+      sk   = nl_fscx_revolve_v1(seed, K, n/4)
+    When A0 = B = K, fscx(K,K) = 0, making step 1 a pure rotation (linear in K).
+    ROL(K, n/8) ensures seed != K, so fscx(seed, K) != 0 and full non-linear carry
+    mixing is active from the very first step.
 
     --- v1.5.9: HSKE-NL-A1 per-session nonce; nl_fscx_revolve_v2_inv delta precompute ---
 
@@ -524,7 +534,7 @@ HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   Alice:    s_A small private; C_A = round_p(m_blind * s_A)
   Bob:      s_B small private; C_B = round_p(m_blind * s_B)
   Agree:    K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
-  KDF:      sk = nl_fscx_revolve_v1(K_raw, K_raw, n/4)
+  KDF:      seed = ROL(K_raw, n/8); sk = nl_fscx_revolve_v1(seed, K_raw, n/4)
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
   Parameters: n=256, q=65537, p=4096, pp=2, eta=1 (CBD(1) secret distribution).
@@ -664,8 +674,8 @@ def main():
     s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
     K_raw_A  = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
     K_raw_B  = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
-    sk_rnl_A = nl_fscx_revolve_v1(K_raw_A, K_raw_A, KEYBITS // 4)
-    sk_rnl_B = nl_fscx_revolve_v1(K_raw_B, K_raw_B, KEYBITS // 4)
+    sk_rnl_A = nl_fscx_revolve_v1(K_raw_A.rotated(KEYBITS // 8), K_raw_A, KEYBITS // 4)
+    sk_rnl_B = nl_fscx_revolve_v1(K_raw_B.rotated(KEYBITS // 8), K_raw_B, KEYBITS // 4)
     print(f"sk (Alice): {sk_rnl_A.hex}")
     print(f"sk (Bob)  : {sk_rnl_B.hex}")
     if K_raw_A == K_raw_B:

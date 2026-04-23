@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.9
+/*  Herradura KEx -- Correctness Tests v1.5.10
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL
@@ -31,7 +31,7 @@
     .data
     .balign 4
 
-fmt_hdr:  .asciz "=== Herradura KEx v1.5.9 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
+fmt_hdr:  .asciz "=== Herradura KEx v1.5.10 -- Correctness Tests (ARM Thumb, KEYBITS=32) ===\n\n"
 fmt_t1:   .asciz "[1] HKEX-GF key exchange: sk_alice == sk_bob (20 iterations)\n"
 fmt_t2:   .asciz "[2] HSKE encrypt+decrypt round-trip: D == plaintext (100 iterations)\n"
 fmt_t3:   .asciz "[3] HPKS Schnorr: g^s * C^e == R (20 iterations)\n"

@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.9
+/*  Herradura Cryptographic Suite v1.5.10
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,12 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.10: HKEX-RNL KDF seed fix — ROL(K, n/8) breaks step-1 degeneracy ---
+
+    HKEX-RNL KDF: seed = ba_rol_k(K, n/8); sk = nl_fscx_revolve_v1(seed, K, n/4).
+    When A0=B=K, fscx(K,K)=0 so step 1 was a pure rotation (linear).
+    ROL(K,n/8) ensures seed!=K, activating full carry non-linearity from step 1.
 
     --- v1.5.9: HSKE-NL-A1 per-session nonce; nl_fscx_revolve_v2_inv_ba delta precompute ---
     HSKE-NL-A1 now generates a random per-session nonce N and derives session base
@@ -768,7 +774,8 @@ HKEX-RNL (Ring-LWR key exchange, n=256):
     Alice: s_A small, C_A = round_p(m_blind * s_A)
     Bob:   s_B small, C_B = round_p(m_blind * s_B)
     K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
-    K_A ~= K_B (with high probability); sk = nl_fscx_revolve_v1(K, K, I_VALUE)
+    K_A ~= K_B (with high probability)
+    KDF: seed=ba_rol_k(K,n/8); sk=nl_fscx_revolve_v1(seed,K,n/4)
 
 HPKS-NL (NL-hardened Schnorr, 256-bit):
     e = nl_fscx_revolve_v1(R, P, I_VALUE)  (NL challenge)
@@ -939,8 +946,11 @@ int main(void)
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
         rnl_agree(&KA, s_A_poly, C_B);
         rnl_agree(&KB, s_B_poly, C_A);
-        nl_fscx_revolve_v1_ba(&skA_nl, &KA, &KA, I_VALUE);
-        nl_fscx_revolve_v1_ba(&skB_nl, &KB, &KB, I_VALUE);
+        BitArray seedA, seedB;
+        ba_rol_k(&seedA, &KA, KEYBYTES);           /* ROL(K, n/8) = ROL(K, 32) */
+        nl_fscx_revolve_v1_ba(&skA_nl, &seedA, &KA, I_VALUE);
+        ba_rol_k(&seedB, &KB, KEYBYTES);
+        nl_fscx_revolve_v1_ba(&skB_nl, &seedB, &KB, I_VALUE);
         ba_print_hex("sk (Alice): ", &skA_nl);
         ba_print_hex("sk (Bob)  : ", &skB_nl);
         if (ba_equal(&KA, &KB)) {

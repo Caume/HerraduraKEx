@@ -90,7 +90,13 @@ import hashlib
 sk_bytes = hashlib.shake_256(nl_fscx_raw.bytes).digest(KEYBITS // 8)
 ```
 
-Status: **TODO**
+Status: **DONE (v1.5.10)** — KDF seed fixed across all 6 language targets (suite + test files):
+  seed = ROL(K, n/8);  sk = nl_fscx_revolve_v1(seed, K, n/4)
+The original A₀=B=K caused fscx(K,K)=0 on step 1, making it a pure rotation (linear).
+ROL(K,n/8) ≠ K ensures fscx(seed,K)≠0 from step 1, activating carry non-linearity
+throughout. A second bijective pass (v2) was considered but rejected — it is invertible
+for fixed K and adds no one-wayness. Note: no formal PRF proof; this is a strengthened
+heuristic.
 
 ---
 
