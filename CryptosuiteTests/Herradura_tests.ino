@@ -7,7 +7,7 @@
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
 
-    v1.5.10: HKEX-RNL KDF: seed=ROL32(K,4); mid=nl_fscx_revolve_v1(seed,K,I); sk=nl_fscx_revolve_v2(mid,K,I).
+    v1.5.10: HKEX-RNL KDF seed fix: seed=ROL32(K,4); sk=nl_fscx_revolve_v1(seed,K,I).
     v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(N log N)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
@@ -382,10 +382,8 @@ void test_hkex_rnl() {
         uint32 KB = rnl_agree(s_B, C_A);
         if (KA == KB) {
             ok_raw++;
-            uint32 seedA = _rol32(KA, 4);
-            uint32 skA   = nl_fscx_revolve_v2(nl_fscx_revolve_v1(seedA, KA, I_VALUE), KA, I_VALUE);
-            uint32 seedB = _rol32(KB, 4);
-            uint32 skB   = nl_fscx_revolve_v2(nl_fscx_revolve_v1(seedB, KB, I_VALUE), KB, I_VALUE);
+            uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4), KA, I_VALUE);
+            uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4), KB, I_VALUE);
             if (skA == skB) ok_sk++;
         }
     }

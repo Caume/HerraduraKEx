@@ -17,13 +17,11 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-    --- v1.5.10: HKEX-RNL two-pass KDF with RotateLeft(K, n/8) seed ---
+    --- v1.5.10: HKEX-RNL KDF seed fix — RotateLeft(K, n/8) breaks step-1 degeneracy ---
 
-    HKEX-RNL KDF upgraded to two-pass chain:
-      seed = RotateLeft(K, n/8); mid = NlFscxRevolveV1(seed, K, n/4);
-      sk   = NlFscxRevolveV2(mid, K, n/4)
-    Eliminates step-1 degeneracy (Fscx(K,K)=0) and chains v1 carry-XOR
-    with v2 multiplicative-delta non-linearity.
+    HKEX-RNL KDF: seed = K.RotateLeft(n/8); sk = NlFscxRevolveV1(seed, K, n/4).
+    When A0=B=K, Fscx(K,K)=0 so step 1 was a pure rotation (linear in K).
+    RotateLeft(K,n/8) ensures seed!=K, activating full carry non-linearity from step 1.
 
     --- v1.5.9: HSKE-NL-A1 per-session nonce; NlFscxRevolveV2Inv delta precompute ---
     HSKE-NL-A1 now generates a random per-session nonce N and derives session base
@@ -681,12 +679,8 @@ func main() {
 	sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 	kRawA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, n)
 	kRawB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, n)
-	seedA  := kRawA.RotateLeft(n / 8)
-	midA   := NlFscxRevolveV1(seedA, kRawA, n/4)
-	skRnlA := NlFscxRevolveV2(midA, kRawA, n/4)
-	seedB  := kRawB.RotateLeft(n / 8)
-	midB   := NlFscxRevolveV1(seedB, kRawB, n/4)
-	skRnlB := NlFscxRevolveV2(midB, kRawB, n/4)
+	skRnlA := NlFscxRevolveV1(kRawA.RotateLeft(n/8), kRawA, n/4)
+	skRnlB := NlFscxRevolveV1(kRawB.RotateLeft(n/8), kRawB, n/4)
 	fmt.Printf("sk (Alice): %x\n", skRnlA)
 	fmt.Printf("sk (Bob)  : %x\n", skRnlB)
 	if kRawA.Equal(kRawB) {

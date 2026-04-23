@@ -9,7 +9,7 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
-    v1.5.10: HKEX-RNL two-pass KDF: seed=ROL32(K,4); mid=nl_fscx_revolve_v1(seed,K,I); sk=nl_fscx_revolve_v2(mid,K,I).
+    v1.5.10: HKEX-RNL KDF seed fix: seed=ROL32(K,4); sk=nl_fscx_revolve_v1(seed,K,I).
     v1.5.9: HSKE-NL-A1 per-session nonce (lcg_next XOR K); nl_fscx_revolve_v2_inv delta precompute.
     v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=0xFF00FF).
@@ -434,12 +434,8 @@ void loop() {
         rnl_keygen(s_B, C_B, m_blind);
         uint32 KA = rnl_agree(s_A, C_B);
         uint32 KB = rnl_agree(s_B, C_A);
-        uint32 seedA = _rol32(KA, 4);  /* ROL(K, n/8) where n=32 */
-        uint32 midA  = nl_fscx_revolve_v1(seedA, KA, I_VALUE);
-        uint32 skA   = nl_fscx_revolve_v2(midA,  KA, I_VALUE);
-        uint32 seedB = _rol32(KB, 4);
-        uint32 midB  = nl_fscx_revolve_v1(seedB, KB, I_VALUE);
-        uint32 skB   = nl_fscx_revolve_v2(midB,  KB, I_VALUE);
+        uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4), KA, I_VALUE);
+        uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4), KB, I_VALUE);
         printHexLine("sk (Alice): ", skA);
         printHexLine("sk (Bob)  : ", skB);
         if (KA == KB) {

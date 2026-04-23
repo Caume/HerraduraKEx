@@ -688,13 +688,9 @@ hske_nl2_done:
     ldr     r0, [r0]
     ror     r0, r0, #28         @ seed = ROL32(KA, 4)  [n/8 = 32/8 = 4]
     ldr     r1, =val_KA
-    ldr     r1, [r1]
+    ldr     r1, [r1]            @ B = KA
     mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1  @ r0 = mid
-    ldr     r1, =val_KA
-    ldr     r1, [r1]            @ reload B = KA
-    mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v2  @ r0 = sk
+    bl      nl_fscx_revolve_v1  @ r0 = sk
     ldr     r3, =val_sk_rnl
     str     r0, [r3]
 

@@ -661,26 +661,20 @@ _start:
     call rnl_agree
     mov  [val_KB], eax
 
-    ; skA = two-pass KDF(KA): seed=ROL32(KA,4); mid=v1(seed,KA,I); sk=v2(mid,KA,I)
+    ; skA = nl_fscx_revolve_v1(ROL32(KA,4), KA, I_VALUE)
     mov  eax, [val_KA]
     rol  eax, 4              ; seed = ROL32(KA, 4)  [n/8 = 32/8 = 4]
     mov  ebx, [val_KA]
     mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1  ; eax = mid
-    mov  ebx, [val_KA]       ; reload B = KA
-    mov  ecx, I_VALUE
-    call nl_fscx_revolve_v2  ; eax = sk
+    call nl_fscx_revolve_v1  ; eax = sk
     mov  [val_sk_rnl], eax
 
-    ; skB = two-pass KDF(KB)
+    ; skB = nl_fscx_revolve_v1(ROL32(KB,4), KB, I_VALUE)
     mov  eax, [val_KB]
     rol  eax, 4
     mov  ebx, [val_KB]
     mov  ecx, I_VALUE
     call nl_fscx_revolve_v1
-    mov  ebx, [val_KB]
-    mov  ecx, I_VALUE
-    call nl_fscx_revolve_v2
 
     push eax
     mov  eax, lbl_sk_alice

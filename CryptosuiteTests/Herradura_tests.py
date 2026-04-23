@@ -1,6 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
-    v1.5.10: HKEX-RNL KDF upgraded to two-pass chain (seed=ROL(K,n/8), v1+v2).
+    v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: _m_inv uses precomputed rotation table (lazy init, cached per bit-size).
     v1.5.6: rnl_rand_poly bias fix — 3-byte rejection sampling (threshold=16711935).
@@ -686,12 +686,8 @@ def test_hkex_rnl_correctness():
             K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             if K_A == K_B: ok_raw += 1
-            seed_A = K_A.rotated(n_rnl // 8)
-            sk_A   = nl_fscx_revolve_v2(nl_fscx_revolve_v1(seed_A, K_A, n_rnl // 4),
-                                        K_A, n_rnl // 4)
-            seed_B = K_B.rotated(n_rnl // 8)
-            sk_B   = nl_fscx_revolve_v2(nl_fscx_revolve_v1(seed_B, K_B, n_rnl // 4),
-                                        K_B, n_rnl // 4)
+            sk_A = nl_fscx_revolve_v1(K_A.rotated(n_rnl // 8), K_A, n_rnl // 4)
+            sk_B = nl_fscx_revolve_v1(K_B.rotated(n_rnl // 8), K_B, n_rnl // 4)
             if sk_A == sk_B: ok_sk += 1
         status = "PASS" if ok_raw >= n_run * 90 // 100 else "FAIL"
         print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{n_run}  sk agree={ok_sk}/{n_run}  [{status}]")
