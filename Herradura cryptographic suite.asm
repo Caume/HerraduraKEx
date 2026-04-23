@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.9
+;  Herradura Cryptographic Suite v1.5.10
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -95,7 +95,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura Cryptographic Suite v1.5.9 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    hdr         db "=== Herradura Cryptographic Suite v1.5.10 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "
@@ -661,18 +661,26 @@ _start:
     call rnl_agree
     mov  [val_KB], eax
 
-    ; skA = nl_fscx_revolve_v1(KA, KA, I_VALUE)
+    ; skA = two-pass KDF(KA): seed=ROL32(KA,4); mid=v1(seed,KA,I); sk=v2(mid,KA,I)
     mov  eax, [val_KA]
+    rol  eax, 4              ; seed = ROL32(KA, 4)  [n/8 = 32/8 = 4]
     mov  ebx, [val_KA]
     mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1
+    call nl_fscx_revolve_v1  ; eax = mid
+    mov  ebx, [val_KA]       ; reload B = KA
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2  ; eax = sk
     mov  [val_sk_rnl], eax
 
-    ; skB = nl_fscx_revolve_v1(KB, KB, I_VALUE)
+    ; skB = two-pass KDF(KB)
     mov  eax, [val_KB]
+    rol  eax, 4
     mov  ebx, [val_KB]
     mov  ecx, I_VALUE
     call nl_fscx_revolve_v1
+    mov  ebx, [val_KB]
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2
 
     push eax
     mov  eax, lbl_sk_alice

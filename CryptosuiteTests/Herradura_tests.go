@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.10: HKEX-RNL KDF upgraded to two-pass chain (seed=RotateLeft(K,n/8), v1+v2).
     v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: MInv uses precomputed rotation table (sync.Map cache per bit-size).
     v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling (threshold=16711935).
@@ -964,8 +965,10 @@ func testHkexRnlCorrectness() {
 			KA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			KB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
 			if KA.Equal(KB) { okRaw++ }
-			skA := NlFscxRevolveV1(KA, KA, nRnl/4)
-			skB := NlFscxRevolveV1(KB, KB, nRnl/4)
+			seedA := KA.RotateLeft(nRnl / 8)
+			skA   := NlFscxRevolveV2(NlFscxRevolveV1(seedA, KA, nRnl/4), KA, nRnl/4)
+			seedB := KB.RotateLeft(nRnl / 8)
+			skB   := NlFscxRevolveV2(NlFscxRevolveV1(seedB, KB, nRnl/4), KB, nRnl/4)
 			if skA.Equal(skB) { okSk++ }
 			if i&15 == 15 && timeExceeded(t0) { trials = i + 1; break }
 		}
@@ -1258,7 +1261,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.9 \u2014 Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.10 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

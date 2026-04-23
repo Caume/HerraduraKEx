@@ -1070,9 +1070,28 @@ $$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{b
 
 Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
-**KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 for final extraction:
+**KDF post-processing.**  The reconciled raw key $K$ is processed through a two-pass chain:
 
-$$sk = \text{NL-FSCX-REVOLVE}(K,\; K,\; n/4)$$
+$$seed = \text{ROL}(K,\; n/8)$$
+$$mid = \text{NL-FSCX-REVOLVE}_{v1}(seed,\; K,\; n/4)$$
+$$sk = \text{NL-FSCX-REVOLVE}_{v2}(mid,\; K,\; n/4)$$
+
+**Rationale for the two-pass design.**  The earlier single-pass KDF ($sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$) suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first revolve step reduces to a pure rotation,
+
+$$A_1 = \text{ROL}((K + K) \bmod 2^n,\; n/4) = \text{ROL}(K \ll 1,\; n/4),$$
+
+which is linear in $K$.  Non-linearity accumulates only from step 2 onward.
+
+Setting $seed = \text{ROL}(K, n/8) \neq K$ ensures $\text{FSCX}(seed, K) = M(seed \oplus K) \neq 0$ immediately, so full non-linear carry mixing is active from the first step of Pass 1.
+
+The two passes provide **algebraically independent non-linearity**:
+
+| Pass | Non-linearity source | Bijective in input? |
+|------|----------------------|---------------------|
+| v1 ($n/4$ steps) | Integer carry in $(A + K) \bmod 2^n$ XOR'd into GF(2) output | No — collisions exist |
+| v2 ($n/4$ steps) | Multiplicative delta $\delta(K) = \text{ROL}(K \cdot \lfloor(K+1)/2\rfloor \bmod 2^n,\; n/4)$ | Yes — bijective with closed-form inverse |
+
+An algebraic attack must break both the carry-based non-linearity of v1 and the multiplicative-delta structure of v2 simultaneously.  Since Pass 2 is bijective in $mid$ for fixed $K$, all one-wayness resides in Pass 1; Pass 2 contributes additional mixing depth and a second independent algebraic obstacle.  Brute-force cost remains $2^n$.
 
 #### 11.4.3 Security
 

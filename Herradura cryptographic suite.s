@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.9
+/*  Herradura Cryptographic Suite v1.5.10
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -42,7 +42,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.9 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.10 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -686,10 +686,15 @@ hske_nl2_done:
 
     ldr     r0, =val_KA
     ldr     r0, [r0]
+    ror     r0, r0, #28         @ seed = ROL32(KA, 4)  [n/8 = 32/8 = 4]
     ldr     r1, =val_KA
     ldr     r1, [r1]
     mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1  @ r0 = mid
+    ldr     r1, =val_KA
+    ldr     r1, [r1]            @ reload B = KA
+    mov     r2, #I_VALUE
+    bl      nl_fscx_revolve_v2  @ r0 = sk
     ldr     r3, =val_sk_rnl
     str     r0, [r3]
 

@@ -90,7 +90,15 @@ import hashlib
 sk_bytes = hashlib.shake_256(nl_fscx_raw.bytes).digest(KEYBITS // 8)
 ```
 
-Status: **TODO**
+Status: **DONE (v1.5.10)** — Replaced the single-pass KDF with a two-pass chain that
+stays entirely within Herradura primitives (no external hash required):
+  seed = ROL(K, n/8);  mid = nl_fscx_revolve_v1(seed, K, n/4);
+  sk   = nl_fscx_revolve_v2(mid,  K, n/4)
+The ROL(K, n/8) seed breaks the A₀=B=K first-step degeneracy (fscx(K,K)=0) so
+full carry non-linearity is active from step 1.  Pass 2 chains v2's multiplicative-
+delta non-linearity against v1's carry-XOR structure; an attacker must break both
+simultaneously.  Applied to all 6 language targets (suite + test files).
+Note: no formal PRF proof exists for either pass; this is a strengthened heuristic.
 
 ---
 
