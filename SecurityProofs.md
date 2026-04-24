@@ -1036,8 +1036,8 @@ but over $\mathbb{Z}/q\mathbb{Z}$ instead of $\mathbb{GF}(2)$.
 
 **Theorem 12 — $m(x)$ is invertible in $\mathcal{R}_q$ for $n = 2^k$, $q$ prime.**
 
-*Verified for $(n, q) \in \{(16, 257), (16, 769), (16, 3329), (16, 7681), (16, 12289)\}$:
-inverse computes correctly, $m(x) \cdot m^{-1}(x) = 1$ in all cases.*
+Verified for $(n, q) \in \{(16, 257), (16, 769), (16, 3329), (16, 7681), (16, 12289)\}$:
+inverse computes correctly, $m(x) \cdot m^{-1}(x) = 1$ in all cases.
 
 The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdot q / 2$:
 
@@ -1062,7 +1062,7 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
 - Alice: private $s_A \leftarrow \mathrm{CBD}(\eta)$; public key $C_A = \lfloor m_\text{blind} \cdot s_A \rceil_p \in \mathcal R_p$.
 - Bob:   private $s_B \leftarrow \mathrm{CBD}(\eta)$; public key $C_B = \lfloor m_\text{blind} \cdot s_B \rceil_p \in \mathcal R_p$.
 
-Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)  $\mathrm{CBD}(\eta)$ is the centered binomial distribution: each coefficient $s_i = \sum_{j=0}^{\eta-1}(a_j - b_j)$ where $a_j, b_j \overset{\$}{\leftarrow} \{0,1\}$ independently.  Deployed with $\eta = 1$, giving $s_i \in \{-1, 0, 1\}$ with zero mean and $\Pr[s_i = \pm 1] = 1/4$.  This matches the Kyber/NIST baseline for proper Ring-LWR secret entropy and eliminates the mean bias of the previous uniform $\{0,1\}$ sampler.
+Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)  $\mathrm{CBD}(\eta)$ is the centered binomial distribution: each coefficient $s_i = \sum_{j=0}^{\eta-1}(a_j - b_j)$ where $a_j, b_j \overset{\textdollar}{\leftarrow} \{0,1\}$ independently.  Deployed with $\eta = 1$, giving $s_i \in \{-1, 0, 1\}$ with zero mean and $\Pr[s_i = \pm 1] = 1/4$.  This matches the Kyber/NIST baseline for proper Ring-LWR secret entropy and eliminates the mean bias of the previous uniform $\{0,1\}$ sampler.
 
 **Key agreement:**
 $$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal R_q$$
@@ -1074,7 +1074,7 @@ Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B 
 
 $$seed = \text{ROL}(K,\; n/8), \qquad sk = \text{NL-FSCX-REVOLVE}_{v1}(seed,\; K,\; n/4)$$
 
-**Rationale.**  The original KDF ($sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$) suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first step reduces to a pure rotation,
+**Rationale.**  The original KDF, $sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$, suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first step reduces to a pure rotation,
 
 $$A_1 = \text{ROL}((K + K) \bmod 2^n,\; n/4) = \text{ROL}(K \ll 1,\; n/4),$$
 
