@@ -1036,8 +1036,8 @@ but over $\mathbb{Z}/q\mathbb{Z}$ instead of $\mathbb{GF}(2)$.
 
 **Theorem 12 — $m(x)$ is invertible in $\mathcal{R}_q$ for $n = 2^k$, $q$ prime.**
 
-*Verified for $(n, q) \in \lbrace(16, 257), (16, 769), (16, 3329), (16, 7681), (16, 12289)\rbrace$:
-inverse computes correctly, $m(x) \cdot m^{-1}(x) = 1$ in all cases.*
+Verified for $(n, q) \in \{(16, 257), (16, 769), (16, 3329), (16, 7681), (16, 12289)\}$:
+inverse computes correctly, $m(x) \cdot m^{-1}(x) = 1$ in all cases.
 
 The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdot q / 2$:
 
