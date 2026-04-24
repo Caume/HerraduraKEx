@@ -1074,7 +1074,7 @@ Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B 
 
 $$seed = \text{ROL}(K,\; n/8), \qquad sk = \text{NL-FSCX-REVOLVE}_{v1}(seed,\; K,\; n/4)$$
 
-**Rationale.**  The original KDF (where $sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$) suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first step reduces to a pure rotation,
+**Rationale.**  The original KDF, $sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$, suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first step reduces to a pure rotation,
 
 $$A_1 = \text{ROL}((K + K) \bmod 2^n,\; n/4) = \text{ROL}(K \ll 1,\; n/4),$$
 
