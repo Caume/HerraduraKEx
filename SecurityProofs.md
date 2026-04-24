@@ -600,7 +600,7 @@ The classical break (Theorem 7) recovers $sk$ in $O(n^2)$ classical operations. 
 | **Shor** | Discrete logarithm | Inapplicable — HKEX has no DLP structure |
 | **HHL** | Linear system solving | Already polynomial classically; no quantum advantage relevant |
 
-The classical break makes all quantum attacks moot for the current design. For any future variant that patches the classical break by introducing genuine nonlinearity, Grover's algorithm and Simon's algorithm become the relevant post-quantum threats.
+The classical break makes all quantum attacks moot for the current design. For any future variant that patches the classical break by introducing genuine nonlinearity, Grover's algorithm and Simon's algorithm become the relevant post-quantum threats. For the detailed quantum security analysis of the v1.4.0 suite (HKEX-GF and related protocols), see §10.8.
 
 ---
 
@@ -723,7 +723,48 @@ because $S_{r+1}$ is the $\mathbb{GF}(2)$-linear FSCX partial-sum operator actin
 
 The hardness of HKEX-GF reduces to the **Computational Diffie-Hellman (CDH)** problem in $\mathbb{GF}(2^n)^*$: given $g^a$ and $g^b$, compute $g^{ab}$.
 
-CDH in $\mathbb{GF}(2^n)^∗$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^∗$ is hard. Sub-exponential attacks (index calculus, function field sieve variants) exist for binary extension fields; practical parameters:
+CDH in $\mathbb{GF}(2^n)^*$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^*$ is hard.  Known classical attack complexities on the DLP in $\mathbb{GF}(2^n)^*$:
+
+| Algorithm | Complexity | Notes |
+|-----------|------------|-------|
+| Baby-step giant-step (BSGS) | $O(2^{n/2})$ time, $O(2^{n/2})$ space | Generic group algorithm |
+| Pohlig–Hellman | $O(\sqrt{q_{\max}})$ where $q_{\max}$ = largest prime factor of group order | Dangerous when order is smooth |
+| Index calculus (function field sieve) | $L_{2^n}[1/2, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^*$ |
+| **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $(\log 2^n)^{O(\log\log 2^n)}$ | Specific to characteristic-2 fields |
+
+The **quasi-polynomial algorithm** is the dominant classical threat.  It exploits the
+characteristic-2 structure of $\mathbb{GF}(2^n)^*$ via a descent using sparse linear systems in
+function fields — a technique with no known analogue for DLP in prime-order elliptic curve groups
+or in $\mathbb{Z}_p^*$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
+fields.  The recommended minimum for $\mathbb{GF}(2^n)^*$ DLP (if it must be used) is $n \geq 3000$;
+most standards bodies advise **against** using $\mathbb{GF}(2^n)^*$ for new DLP-based designs.
+
+**Experimental verification at $n = 32$ (demo parameters).**
+
+BSGS was applied to recover the discrete log from the 32-bit HKEX-GF demonstration:
+
+```python
+A_PRIV = 0xDEADBEEF   # Alice's private key
+C      = 0x5B8AE480   # Public key: gf_pow(3, A_PRIV) in GF(2^32)*
+
+# BSGS recovered:
+a_rec  = 0x00CFE112   # Smallest exponent satisfying gf_pow(3, a_rec) == C
+# Verification:
+gf_pow(3, a_rec) == C         # True: 0x5B8AE480
+# Shared secret recovered:
+sk_from_dlp = gf_pow(C2, a_rec)   # == 0xD3DB6BC3  (matches actual sk)
+# Time: 0.622 s on a single CPU core
+```
+
+The recovered $a_\text{rec} \neq A_\text{PRIV}$ because $g = 3$ is not a primitive element of
+$\mathbb{GF}(2^{32})^*$: its order is a proper divisor of $2^{32}-1$.  Multiple exponents share
+the same public key; BSGS finds the smallest representative.  The shared secret is nevertheless
+fully recovered because $g^{ab}$ is the same regardless of which representative is used.
+
+**Effective security:** $n = 32$ is broken in under 1 second.  The quasi-polynomial attack
+extends to all practical $n$ values.
+
+**Practical parameters:**
 
 | $n$ | Estimated classical security | Note |
 |-----|------------------------------|------|
@@ -732,7 +773,7 @@ CDH in $\mathbb{GF}(2^n)^∗$ is believed hard for large $n$, under the assumpti
 | 256 | ≈ 128 bits | Recommended minimum for real use |
 | 512 | ≈ 192+ bits | Conservative |
 
-For production use, elliptic curve Diffie-Hellman over a binary curve (or a prime-field ECDH) provides better security-per-bit. HKEX-GF as presented is a proof-of-concept demonstrating that the classical break is structurally avoidable.
+For production use, elliptic curve Diffie-Hellman over a binary curve (or a prime-field ECDH) provides better security-per-bit.  HKEX-GF as presented is a proof-of-concept demonstrating that the classical break is structurally avoidable; the root cause analysis in §10.9 explains why $\mathbb{GF}(2^n)^*$ is ultimately unsuitable for a production key exchange.
 
 #### 9.2.5 FSCX period preserved
 
@@ -896,6 +937,199 @@ All results from `Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c`
 | W8: No authenticated encryption | Active | Still active (no MAC component) |
 
 The key exchange is now provably secure under CDH in $\mathbb{GF}(2^n)^*$. Remaining weaknesses (W4, W7, W8) are structural to the XOR-based symmetric protocols and are documented; they do not affect the key exchange itself.
+
+
+---
+
+### 10.6 Classical Security Analysis of v1.4.0 Protocols
+
+#### 10.6.1 HSKE — Known-Plaintext Attack
+
+By Theorem 11 (§11.1): $E = M^i \cdot P \oplus M \cdot S_i \cdot K$.  Defining $c_K \triangleq M \cdot S_i \cdot K$:
+
+$$c_K = E \oplus M^i \cdot P$$
+
+One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: rank$(\Phi) = 64$
+(experimentally verified: 0 unconstrained key bits from a single pair), meaning $K$ is uniquely
+determined.  **HSKE provides no security under known-plaintext attack at any $n$.**
+
+#### 10.6.2 HPKS — Classical Forgery Resistance
+
+Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
+$e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+
+- If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
+- If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
+  constraint $e^* = \text{fscx}\textunderscore\text{revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
+  together.  Since fscx\_revolve is an affine bijection in its first argument (see §10.7),
+  solving both simultaneously reduces to DLP hardness.
+
+Forgery resistance is equivalent to DLP hardness in $\mathbb{GF}(2^n)^*$, subject to the
+quasi-polynomial attack in §9.2.4 and the challenge-function caveat in §10.7.
+
+#### 10.6.3 HPKE — Classical Attack
+
+Ciphertext is $(R, E) = (g^r,\, \text{fscx}\textunderscore\text{revolve}(P,\, g^{ar},\, i))$.  Recovering the
+plaintext requires $g^{ar}$, which is the CDH problem given $(g^a, g^r)$.
+Since CDH $\leq$ DLP, all classical DLP attacks in §9.2.4 apply directly.
+
+Additionally, the affine structure of fscx\_revolve means that given $(g^r, E)$ and a
+known-plaintext pair, $c_{\mathit{ek}} = E \oplus M^i \cdot P$ recovers the key constant.
+DLP on $\mathit{ek} = C^r$ or $\mathit{ek} = R^a$ may then recover $a$ or $r$.
+
+---
+
+### 10.7 HPKS Challenge Function — Algebraic Properties
+
+The challenge in HPKS uses fscx\_revolve in place of a hash function:
+$e = \text{fscx}\textunderscore\text{revolve}(R_\text{bits}, P, i)$.  Two algebraic properties affect
+provable security.
+
+**Property 1 — Affine bijection in $R$.**
+
+For fixed $P$ and $i$, the map $R \mapsto M^i \cdot R \oplus M \cdot S_i \cdot P$
+is an affine bijection: the linear part $M^i$ is invertible (since $M$ has order $n/2$),
+so no two distinct $R$ values produce the same challenge $e$.
+
+*Verified:* 50 000 random $R$ values at $n = 64$, fixed $P$: **0 collisions**.
+
+**Property 2 — Predictable challenge delta.**
+
+By the difference identity (Theorem 11 linearity):
+
+$$e(R_2) \oplus e(R_1) = \text{fscx}\textunderscore\text{revolve}(R_1 \oplus R_2,\; 0,\; i) = M^i \cdot (R_1 \oplus R_2)$$
+
+Given any one valid challenge $e(R_1)$, the challenge for any $R_2 = R_1 \oplus \delta$ is
+$e(R_2) = e(R_1) \oplus M^i \cdot \delta$ — **publicly computable without oracle access**.
+
+*Verified:* 10 000 random $(R_1, R_2)$ pairs at $n = 64$: delta identity holds **100%**.
+
+**Consequence for Random Oracle Model (ROM) security proofs.**
+
+Standard Schnorr security proofs (Pointcheval–Stern, forking lemma) assume the challenge
+hash is a random oracle: an adversary who queries $H$ on one input learns nothing about
+outputs on other inputs.  fscx\_revolve violates this: the adversary can predict all
+challenges without any oracle query.
+
+The forking lemma requires that rewinding the adversary with a different challenge on the
+same $R$ produces an *independent* random challenge.  Here, given $e_1$ for $(R, P)$, an
+adversary computes the challenge $e_2$ for $(R, P')$ as $e_2 = e_1 \oplus M^i \cdot (P \oplus P')$.
+The rewound challenge is deterministically related to the original — the forking lemma
+does not apply in its standard form.
+
+**Practical implication.** The DLP in $\mathbb{GF}(2^n)^*$ still protects the private key
+$a$: Eve cannot recover $a$ from the Schnorr equation without solving DLP.  But the
+non-ROM challenge means the standard Schnorr security proof does not carry over, and
+subtle attacks exploiting challenge predictability cannot be excluded by proof alone.
+The NL-FSCX v1 revolve (§11.2.1) hardens the challenge against linear prediction;
+full ROM replacement requires a dedicated cryptographic hash function.
+
+---
+
+### 10.8 Quantum Algorithm Analysis (v1.4.0)
+
+#### 10.8.1 Grover's Algorithm
+
+**HSKE (key-only attack).**  Brute-force key search costs $O(2^n)$ classically and
+$O(2^{n/2})$ with Grover.  For $n = 256$: $2^{128}$ post-quantum symmetric security
+against key-only attacks.  This bound is vacuous when plaintexts are available — the
+classical 1-pair KPT attack recovers the key in $O(n^2)$ regardless.
+
+**HKEX-GF, HPKS, HPKE.**  Security rests on DLP in $\mathbb{GF}(2^n)^*$.  Shor's
+algorithm (§10.8.4) solves DLP in polynomial quantum time and strictly dominates
+Grover for all these protocols.  **Grover is irrelevant for the GF-DLP protocols.**
+
+#### 10.8.2 Simon's Algorithm
+
+**Simon's problem:** find the hidden period $s$ of a function $f(x) = f(x \oplus s)$
+in $O(n)$ quantum queries, where $s$ is $\mathbb{GF}(2)$-linear.
+
+**Applicability.** The DLP function $f(x) = g^x$ in $\mathbb{GF}(2^n)^*$ has collisions
+determined by the *cyclic* group structure of the exponent: $g^{x_1} = g^{x_2}$ iff
+$x_1 \equiv x_2 \pmod{|\langle g \rangle|}$.  This is a $\mathbb{Z}$-linear period, not a
+$\mathbb{GF}(2)$-linear period.  Simon's QFT over $\mathbb{GF}(2)^n$ cannot extract it;
+the correct tool is Shor's QFT over $\mathbb{Z}_N$.
+
+**Application to HSKE.** HSKE has affine $\mathbb{GF}(2)$ structure, so Simon's hidden
+subgroup problem can be applied to the HSKE encryption oracle.  It recovers the kernel of
+the affine map — providing no advantage beyond the classical 1-pair KPT attack.
+
+#### 10.8.3 Bernstein–Vazirani Algorithm
+
+**HSKE.**  The encryption map $E = M^i \cdot P \oplus c_K$ is affine in $P$.  With
+oracle access (fixed key, variable plaintext), BV recovers $c_K$ in **1 quantum query**,
+matching the classical known-plaintext bound.  No asymptotic quantum advantage over the
+classical attack.
+
+**HKEX-GF, HPKS, HPKE.** Involve $\mathbb{GF}(2^n)^*$ exponentiation, which is not
+$\mathbb{GF}(2)$-affine in the exponent.  BV does not apply.
+
+#### 10.8.4 Shor's Algorithm — Primary Quantum Threat
+
+Shor's algorithm solves the DLP in any cyclic group $G = \langle g \rangle$ of order $N$
+in $O((\log N)^2 \log\log N \cdot \log\log\log N)$ quantum gate operations.  For
+$\mathbb{GF}(2^n)^*$: group order $N = 2^n - 1$, quantum time $O(n^2 \log n)$.
+
+| Adversary | Best DLP attack on $\mathbb{GF}(2^n)^*$ | Complexity |
+|-----------|----------------------------------------|------------|
+| Classical | Quasi-polynomial (Barbulescu 2013) | $(\log N)^{O(\log\log N)}$ |
+| Quantum | Shor's algorithm | $O((\log N)^2 \log\log N)$ |
+
+Both attacks break $\mathbb{GF}(2^n)^*$ DLP at all practical parameter sizes.
+
+**HKEX-GF.** Given $(C, C_2) = (g^a, g^b)$, Shor's algorithm recovers $a$ (or $b$) in
+$O(n^2 \log n)$ quantum time; the shared secret $g^{ab} = C_2^a$ follows immediately.
+
+**HPKS.** Shor's algorithm recovers the private signing key $a$ from the public key
+$C = g^a$.  With $a$ known, arbitrary signature forgeries are trivial.
+
+**HPKE.** Shor's algorithm recovers the ephemeral exponent $r$ from $R = g^r$,
+immediately yielding the encryption key $\mathit{ek} = C^r$.
+
+**HSKE.** Not directly affected — HSKE security does not depend on DLP.
+
+#### 10.8.5 HHL and Quantum Linear Algebra
+
+**HSKE.**  Recovering $K$ from $c_K$ requires solving $\Phi \cdot K = c_K$ over
+$\mathbb{GF}(2)$.  HHL solves linear systems over $\mathbb{R}$ or $\mathbb{C}$; it does
+not directly apply to $\mathbb{GF}(2)$ systems.  Quantum algorithms for $\mathbb{GF}(2)$
+linear algebra offer at most polynomial speedup, but the classical $O(n^{2.37})$ algorithm
+already solves the system efficiently.  Since one KPT pair gives full $c_K$ recovery
+without solving a linear system at all (direct XOR), HHL is irrelevant.
+
+---
+
+### 10.9 Root Cause: Why GF(2^n)* Is the Wrong Group
+
+The choice of $\mathbb{GF}(2^n)^*$ as the DLP group introduces weaknesses absent in
+standard DLP groups:
+
+1. **Characteristic-2 quasi-polynomial attack** (Barbulescu et al., 2013): exploits
+   sparse relations in the function field $\mathbb{GF}(2^n)(t)$, achieving
+   $(\log N)^{O(\log\log N)}$ classical complexity.  This does not apply to prime-order
+   elliptic curves or $\mathbb{Z}_p^*$.
+
+2. **Shor's algorithm at $O(n^2 \log n)$**: applies to any cyclic group DLP; the
+   characteristic-2 structure provides no resistance.
+
+3. **Generator order**: when $g = 3$ is not a primitive element of $\mathbb{GF}(2^n)^*$
+   (its actual order divides $2^n - 1$), the effective group size is smaller than assumed,
+   reducing security further.
+
+**Comparison with alternatives:**
+
+| Group | Classical DLP | Quantum DLP |
+|-------|--------------|-------------|
+| $\mathbb{GF}(2^n)^*$ | Quasi-polynomial (weak) | Shor's polynomial |
+| $\mathbb{Z}_p^*$, $p$ prime | Sub-exponential (NFS) | Shor's polynomial |
+| Elliptic curve over $\mathbb{GF}(p)$ | Exponential (ECDLP) | Shor's polynomial |
+| Ring-LWR ($\mathcal{R}_q$, blinded $m$, §11.4) | Exponential (conjectured) | No known polynomial attack |
+
+Moving the key exchange to a prime-order elliptic curve restores classical DLP hardness
+(no known sub-exponential algorithm) but does not address Shor's algorithm.  Only a
+lattice, code-based, or isogeny-based construction provides a plausible path to
+post-quantum security.  The HKEX-RNL proposal in §11.4 (Ring-LWR with blinded FSCX
+polynomial) is the recommended direction within the Herradura suite.
 
 ---
 
@@ -1192,217 +1426,7 @@ The C3 hybrid assignment (table above) governs the current implementation.
 
 ---
 
-## 12. Classical and Quantum Security Analysis (v1.4.0)
-
-*Content merged from PQCanalysis.md (v1.4.1).  That document is superseded by this section.*
-
----
-
-### 12.1 Classical DLP Attacks on GF(2^n)*
-
-The security of HKEX-GF, HPKS, and HPKE rests on the DLP in $\mathbb{GF}(2^n)^*$.
-The group has order $2^n - 1$.  Known classical attack complexities:
-
-| Algorithm | Complexity | Notes |
-|-----------|------------|-------|
-| Baby-step giant-step (BSGS) | $O(2^{n/2})$ time, $O(2^{n/2})$ space | Generic group algorithm |
-| Pohlig–Hellman | $O(\sqrt{q_{\max}})$ where $q_{\max}$ = largest prime factor of group order | Dangerous when order is smooth |
-| Index calculus (function field sieve) | $L_{2^n}[1/2, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^*$ |
-| **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $(\log 2^n)^{O(\log\log 2^n)}$ | Specific to characteristic-2 fields |
-
-The **quasi-polynomial algorithm** is the dominant classical threat.  It exploits the
-characteristic-2 structure of $\mathbb{GF}(2^n)^∗$ via a descent using sparse linear systems in
-function fields — a technique with no known analogue for DLP in prime-order elliptic curve groups
-or in $\mathbb{Z}_p^∗$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
-fields.  The recommended minimum for $\mathbb{GF}(2^n)^∗$ DLP (if it must be used) is $n \geq 3000$;
-most standards bodies advise **against** using $\mathbb{GF}(2^n)^∗$ for new DLP-based designs.
-
-**Experimental verification at $n = 32$ (demo parameters).**
-
-BSGS was applied to recover the discrete log from the 32-bit HKEX-GF demonstration:
-
-```python
-A_PRIV = 0xDEADBEEF   # Alice's private key
-C      = 0x5B8AE480   # Public key: gf_pow(3, A_PRIV) in GF(2^32)*
-
-# BSGS recovered:
-a_rec  = 0x00CFE112   # Smallest exponent satisfying gf_pow(3, a_rec) == C
-# Verification:
-gf_pow(3, a_rec) == C         # True: 0x5B8AE480
-# Shared secret recovered:
-sk_from_dlp = gf_pow(C2, a_rec)   # == 0xD3DB6BC3  (matches actual sk)
-# Time: 0.622 s on a single CPU core
-```
-
-The recovered $a_\text{rec} \neq A_\text{PRIV}$ because $g = 3$ is not a primitive element of
-$\mathbb{GF}(2^{32})^*$: its order is a proper divisor of $2^{32}-1$.  Multiple exponents share
-the same public key; BSGS finds the smallest representative.  The shared secret is nevertheless
-fully recovered because $g^{ab}$ is the same regardless of which representative is used.
-
-**Effective security:** $n = 32$ is broken in under 1 second.  The quasi-polynomial attack
-extends to all practical $n$ values.
-
----
-
-### 12.2 Classical Security of HSKE, HPKS, and HPKE
-
-#### 12.2.1 HSKE — Known-Plaintext Attack
-
-By Theorem 11 (§11.1): $E = M^i \cdot P \oplus M \cdot S_i \cdot K$.  Defining $c_K \triangleq M \cdot S_i \cdot K$:
-
-$$c_K = E \oplus M^i \cdot P$$
-
-One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: rank$(\Phi) = 64$
-(experimentally verified: 0 unconstrained key bits from a single pair), meaning $K$ is uniquely
-determined.  **HSKE provides no security under known-plaintext attack at any $n$.**
-
-#### 12.2.2 HPKS — Classical Forgery Resistance
-
-Forgery requires finding $(R^∗, s^∗)$ satisfying $g^{s^∗} \cdot C^{e^∗} = R^∗$ where
-$e^∗ = \text{fscx}\textunderscore\text{revolve}(R^∗_\text{bits}, P^∗, i)$, without knowing the private key $a$.
-
-- If Eve fixes $R^∗$ first: she needs $s^∗ = \log_g(R^∗ \cdot C^{-e^∗})$ — a DLP instance.
-- If Eve fixes $s^∗$ first: she can compute $g^{s^∗} \cdot C^{e^∗}$ for any $e^∗$, but the
-  constraint $e^∗ = \text{fscx}\textunderscore\text{revolve}(R^∗_\text{bits}, P^∗, i)$ ties $R^∗$ and $e^∗$
-  together.  Since fscx\_revolve is an affine bijection in its first argument (see §12.3),
-  solving both simultaneously reduces to DLP hardness.
-
-Forgery resistance is equivalent to DLP hardness in $\mathbb{GF}(2^n)^*$, subject to the
-quasi-polynomial attack in §12.1 and the challenge-function caveat in §12.3.
-
-#### 12.2.3 HPKE — Classical Attack
-
-Ciphertext is $(R, E) = (g^r,\, \text{fscx}\textunderscore\text{revolve}(P,\, g^{ar},\, i))$.  Recovering the
-plaintext requires $g^{ar}$, which is the CDH problem given $(g^a, g^r)$.
-Since CDH $\leq$ DLP, all classical DLP attacks in §12.1 apply directly.
-
-Additionally, the affine structure of fscx\_revolve means that given $(g^r, E)$ and a
-known-plaintext pair, $c_{\mathit{ek}} = E \oplus M^i \cdot P$ recovers the key constant.
-DLP on $\mathit{ek} = C^r$ or $\mathit{ek} = R^a$ may then recover $a$ or $r$.
-
----
-
-### 12.3 HPKS Challenge Function — Algebraic Properties
-
-The challenge in HPKS uses fscx\_revolve in place of a hash function:
-$e = \text{fscx}\textunderscore\text{revolve}(R_\text{bits}, P, i)$.  Two algebraic properties affect
-provable security.
-
-**Property 1 — Affine bijection in $R$.**
-
-For fixed $P$ and $i$, the map $R \mapsto M^i \cdot R \oplus M \cdot S_i \cdot P$
-is an affine bijection: the linear part $M^i$ is invertible (since $M$ has order $n/2$),
-so no two distinct $R$ values produce the same challenge $e$.
-
-*Verified:* 50 000 random $R$ values at $n = 64$, fixed $P$: **0 collisions**.
-
-**Property 2 — Predictable challenge delta.**
-
-By the difference identity (Theorem 11 linearity):
-
-$$e(R_2) \oplus e(R_1) = \text{fscx}\textunderscore\text{revolve}(R_1 \oplus R_2,\; 0,\; i) = M^i \cdot (R_1 \oplus R_2)$$
-
-Given any one valid challenge $e(R_1)$, the challenge for any $R_2 = R_1 \oplus \delta$ is
-$e(R_2) = e(R_1) \oplus M^i \cdot \delta$ — **publicly computable without oracle access**.
-
-*Verified:* 10 000 random $(R_1, R_2)$ pairs at $n = 64$: delta identity holds **100%**.
-
-**Consequence for Random Oracle Model (ROM) security proofs.**
-
-Standard Schnorr security proofs (Pointcheval–Stern, forking lemma) assume the challenge
-hash is a random oracle: an adversary who queries $H$ on one input learns nothing about
-outputs on other inputs.  fscx\_revolve violates this: the adversary can predict all
-challenges without any oracle query.
-
-The forking lemma requires that rewinding the adversary with a different challenge on the
-same $R$ produces an *independent* random challenge.  Here, given $e_1$ for $(R, P)$, an
-adversary computes the challenge $e_2$ for $(R, P')$ as $e_2 = e_1 \oplus M^i \cdot (P \oplus P')$.
-The rewound challenge is deterministically related to the original — the forking lemma
-does not apply in its standard form.
-
-**Practical implication.** The DLP in $\mathbb{GF}(2^n)^*$ still protects the private key
-$a$: Eve cannot recover $a$ from the Schnorr equation without solving DLP.  But the
-non-ROM challenge means the standard Schnorr security proof does not carry over, and
-subtle attacks exploiting challenge predictability cannot be excluded by proof alone.
-The NL-FSCX v1 revolve (§11.2.1) hardens the challenge against linear prediction;
-full ROM replacement requires a dedicated cryptographic hash function.
-
----
-
-### 12.4 Quantum Algorithm Analysis
-
-#### 12.4.1 Grover's Algorithm
-
-**HSKE (key-only attack).**  Brute-force key search costs $O(2^n)$ classically and
-$O(2^{n/2})$ with Grover.  For $n = 256$: $2^{128}$ post-quantum symmetric security
-against key-only attacks.  This bound is vacuous when plaintexts are available — the
-classical 1-pair KPT attack recovers the key in $O(n^2)$ regardless.
-
-**HKEX-GF, HPKS, HPKE.**  Security rests on DLP in $\mathbb{GF}(2^n)^*$.  Shor's
-algorithm (§12.4.4) solves DLP in polynomial quantum time and strictly dominates
-Grover for all these protocols.  **Grover is irrelevant for the GF-DLP protocols.**
-
-#### 12.4.2 Simon's Algorithm
-
-**Simon's problem:** find the hidden period $s$ of a function $f(x) = f(x \oplus s)$
-in $O(n)$ quantum queries, where $s$ is $\mathbb{GF}(2)$-linear.
-
-**Applicability.** The DLP function $f(x) = g^x$ in $\mathbb{GF}(2^n)^*$ has collisions
-determined by the *cyclic* group structure of the exponent: $g^{x_1} = g^{x_2}$ iff
-$x_1 \equiv x_2 \pmod{|\langle g \rangle|}$.  This is a $\mathbb{Z}$-linear period, not a
-$\mathbb{GF}(2)$-linear period.  Simon's QFT over $\mathbb{GF}(2)^n$ cannot extract it;
-the correct tool is Shor's QFT over $\mathbb{Z}_N$.
-
-**Application to HSKE.** HSKE has affine $\mathbb{GF}(2)$ structure, so Simon's hidden
-subgroup problem can be applied to the HSKE encryption oracle.  It recovers the kernel of
-the affine map — providing no advantage beyond the classical 1-pair KPT attack.
-
-#### 12.4.3 Bernstein–Vazirani Algorithm
-
-**HSKE.**  The encryption map $E = M^i \cdot P \oplus c_K$ is affine in $P$.  With
-oracle access (fixed key, variable plaintext), BV recovers $c_K$ in **1 quantum query**,
-matching the classical known-plaintext bound.  No asymptotic quantum advantage over the
-classical attack.
-
-**HKEX-GF, HPKS, HPKE.** Involve $\mathbb{GF}(2^n)^*$ exponentiation, which is not
-$\mathbb{GF}(2)$-affine in the exponent.  BV does not apply.
-
-#### 12.4.4 Shor's Algorithm — Primary Quantum Threat
-
-Shor's algorithm solves the DLP in any cyclic group $G = \langle g \rangle$ of order $N$
-in $O((\log N)^2 \log\log N \cdot \log\log\log N)$ quantum gate operations.  For
-$\mathbb{GF}(2^n)^*$: group order $N = 2^n - 1$, quantum time $O(n^2 \log n)$.
-
-| Adversary | Best DLP attack on $\mathbb{GF}(2^n)^*$ | Complexity |
-|-----------|----------------------------------------|------------|
-| Classical | Quasi-polynomial (Barbulescu 2013) | $(\log N)^{O(\log\log N)}$ |
-| Quantum | Shor's algorithm | $O((\log N)^2 \log\log N)$ |
-
-Both attacks break $\mathbb{GF}(2^n)^*$ DLP at all practical parameter sizes.
-
-**HKEX-GF.** Given $(C, C_2) = (g^a, g^b)$, Shor's algorithm recovers $a$ (or $b$) in
-$O(n^2 \log n)$ quantum time; the shared secret $g^{ab} = C_2^a$ follows immediately.
-
-**HPKS.** Shor's algorithm recovers the private signing key $a$ from the public key
-$C = g^a$.  With $a$ known, arbitrary signature forgeries are trivial.
-
-**HPKE.** Shor's algorithm recovers the ephemeral exponent $r$ from $R = g^r$,
-immediately yielding the encryption key $\mathit{ek} = C^r$.
-
-**HSKE.** Not directly affected — HSKE security does not depend on DLP.
-
-#### 12.4.5 HHL and Quantum Linear Algebra
-
-**HSKE.** Recovering $K$ from $c_K$ requires solving $\Phi \cdot K = c_K$ over
-$\mathbb{GF}(2)$.  HHL solves linear systems over $\mathbb{R}$ or $\mathbb{C}$; it does
-not directly apply to $\mathbb{GF}(2)$ systems.  Quantum algorithms for $\mathbb{GF}(2)$
-linear algebra offer at most polynomial speedup, but the classical $O(n^{2.37})$ algorithm
-already solves the system efficiently.  Since one KPT pair gives full $c_K$ recovery
-without solving a linear system at all (direct XOR), HHL is irrelevant.
-
----
-
-### 12.5 Protocol-Level Quantum Security Summary
+### 11.7 Protocol-Level Quantum Security Summary
 
 | Protocol | Security assumption | Classical attack | Quantum attack | Post-quantum security |
 |----------|---------------------|------------------|----------------|-----------------------|
@@ -1424,41 +1448,3 @@ is ever observed.  In any realistic deployment, plaintexts are available and thi
 does not apply.  The NL-FSCX counter-mode and revolve-mode HSKE variants (§11.3) preserve
 the same KPT vulnerability; they harden against linear key-recovery but do not eliminate
 the 1-pair attack because the underlying structure remains affine.
-
----
-
-### 12.6 Root Cause: Why GF(2^n)* Is the Wrong Group
-
-The choice of $\mathbb{GF}(2^n)^*$ as the DLP group introduces weaknesses absent in
-standard DLP groups:
-
-1. **Characteristic-2 quasi-polynomial attack** (Barbulescu et al., 2013): exploits
-   sparse relations in the function field $\mathbb{GF}(2^n)(t)$, achieving
-   $(\log N)^{O(\log\log N)}$ classical complexity.  This does not apply to prime-order
-   elliptic curves or $\mathbb{Z}_p^*$.
-
-2. **Shor's algorithm at $O(n^2 \log n)$**: applies to any cyclic group DLP; the
-   characteristic-2 structure provides no resistance.
-
-3. **Generator order**: when $g = 3$ is not a primitive element of $\mathbb{GF}(2^n)^*$
-   (its actual order divides $2^n - 1$), the effective group size is smaller than assumed,
-   reducing security further.
-
-**Comparison with alternatives:**
-
-| Group | Classical DLP | Quantum DLP |
-|-------|--------------|-------------|
-| $\mathbb{GF}(2^n)^*$ | Quasi-polynomial (weak) | Shor's polynomial |
-| $\mathbb{Z}_p^*$, $p$ prime | Sub-exponential (NFS) | Shor's polynomial |
-| Elliptic curve over $\mathbb{GF}(p)$ | Exponential (ECDLP) | Shor's polynomial |
-| Ring-LWR ($\mathcal{R}_q$, blinded $m$, §11.4) | Exponential (conjectured) | No known polynomial attack |
-
-Moving the key exchange to a prime-order elliptic curve restores classical DLP hardness
-(no known sub-exponential algorithm) but does not address Shor's algorithm.  Only a
-lattice, code-based, or isogeny-based construction provides a plausible path to
-post-quantum security.  The HKEX-RNL proposal in §11.4 (Ring-LWR with blinded FSCX
-polynomial) is the recommended direction within the Herradura suite.
-
----
-
-*This section supersedes PQCanalysis.md, which has been removed in v1.4.1.*
