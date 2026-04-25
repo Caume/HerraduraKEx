@@ -42,6 +42,292 @@ For n=32 (ARM Thumb-2, NASM i386, Arduino): `ROL(base, 4)` — implemented as `R
 
 ---
 
+## [1.5.12] - 2026-04-24
+
+### Changed — `SecurityProofs.md`: §12 integrated into earlier sections
+
+`§12 (Classical and Quantum Security Analysis)` was a late appendix holding
+analysis that logically belonged alongside the earlier protocol-development sections.
+Content redistributed to match the development timeline:
+
+- **§9.2.4** — expanded with full DLP attack taxonomy (BSGS, Pohlig–Hellman, index
+  calculus, quasi-polynomial), n=32 BSGS experimental verification, and cross-reference
+  to §10.9.
+- **§6** — added cross-reference to §10.8 for post-fix quantum analysis.
+- **§10.6** — classical security analysis of v1.4.0 protocols (HSKE known-plaintext,
+  HPKS forgery resistance, HPKE CDH attack path).
+- **§10.7** — HPKS challenge function algebraic properties (affine bijection,
+  predictable delta identity, ROM gap for EUF-CMA).
+- **§10.8** — quantum algorithm analysis for v1.4.0 (Grover, Simon, Bernstein–Vazirani,
+  Shor, HHL).
+- **§10.9** — root-cause analysis of GF(2^n)* as DLP group; comparison table across
+  GF(2^n)*, Z_p*, ECDLP, Ring-LWR; motivation for HKEX-RNL.
+- **§11.7** — protocol-level quantum security summary table (all protocols).
+- **§12 removed** — no content lost; every subsection relocated.
+
+**Files changed (1):** `SecurityProofs.md`.
+
+---
+
+## [1.5.11] - 2026-04-23
+
+### Fixed — KaTeX rendering errors in `SecurityProofs.md` §11
+
+Four incremental fixes resolving three distinct parse failures in §11.4:
+
+1. **`\$` inside inline math** (§11.4.2, line 1065): GitHub's Markdown parser treats
+   `\$` as closing the `$...$` span, leaving `\overset{` with an unclosed brace.
+   Fix: `\overset{\$}` → `\overset{\textdollar}`.
+
+2. **`\{`/`\}` inside italic span** (§11.4.1, line 1039): `\{`/`\}` inside `*...*`
+   italic markup are Markdown-escaped to bare `{`/`}` before KaTeX sees them, making
+   set braces invisible.
+   Fix: `\{` → `\lbrace`, `\}` → `\rbrace` (letter-prefixed; not a Markdown escape).
+
+3. **Italic span blocking math** (§11.4.1): the `*Verified for ...*` span prevented
+   GitHub's math extension from parsing `$...$` delimiters inside it.
+   Fix: removed the `*...*` italic markers; `\{`/`\}` reverted from `\lbrace`/`\rbrace`
+   (not needed outside italic context).
+
+4. **Nested parentheses breaking math span** (§11.4.2, KDF formula): formula
+   `($sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$)` — the inner `(K, K, n/4)` parens
+   satisfy GitHub's link-paren-depth tracker before the `$` math span closes.
+   Fix: outer `(` `$...$` `)` rewritten as `, where $sk = ...,$` (no wrapping parens).
+
+**Files changed (1):** `SecurityProofs.md`.
+
+---
+
+## [1.5.10] - 2026-04-22
+
+### Changed — HKEX-RNL KDF simplified to single-pass with ROL(K, n/8) seed
+
+The KDF seed degeneracy (`fscx(K, K) = 0` on step 1 when A₀ = B = K`) was the root
+cause.  Two-pass chain (v1.5.10-initial) was simplified to a single pass once the v2
+second pass was shown to be bijective for fixed K — adding no one-wayness.
+
+**Final KDF (all targets):**
+```
+seed = ROL(K, n/8);  sk = nl_fscx_revolve_v1(seed, K, n/4)
+```
+
+For n=256 (C/Go/Python): `ROL(K, 32)`.
+For n=32 (assembly/Arduino/C-tests): `ROL(K, 4)`.
+
+`SecurityProofs.md §11.4` updated with algebraic rationale and revised table.
+
+**Files changed (12):** all language targets (suite + tests) and `SecurityProofs.md`.
+
+**TODO.md item closed:** #4 (HKEX-RNL KDF degeneracy fix).
+
+---
+
+## [1.5.9] - 2026-04-22
+
+### Changed — `nl_fscx_revolve_v2_inv`: precompute δ(B) once; HSKE-NL-A1 per-session nonce
+
+Two independent improvements across all language targets:
+
+#### Performance — precompute δ(B) in `nl_fscx_revolve_v2_inv`
+
+`delta(B)` was recomputed on every iteration even though B is constant throughout the
+loop.  Now computed once before the loop; inner body becomes `z = y − delta; y = B ⊕ m_inv(z)`.
+Eliminates one multiply-and-rotate (or big-integer multiply for n=256) per step in
+Python, C (32/64/128-bit), Go, Arduino, ARM Thumb-2, and NASM i386.
+
+**Files changed (12):** all language targets (suite + tests). Closes TODO #8.
+
+#### Security — HSKE-NL-A1 per-session nonce
+
+Added random nonce N to HSKE-NL-A1 counter-mode so the keystream changes each session
+even when K is reused.  Session base becomes `K ⊕ N`; N is generated fresh per run and
+displayed alongside ciphertext.  Applied to Python, C, Go, Arduino, ARM Thumb-2, and
+NASM i386 suite + test files.
+
+**Files changed (9):** suite and test files for all targets. Closes TODO #3.
+
+---
+
+## [1.5.8] - 2026-04-21
+
+### Added — build and run scripts for all language targets
+
+Eight shell scripts added to the repository root:
+
+| Script | Purpose |
+|---|---|
+| `build_c.sh` | Build C suite and tests; checks for `gcc` |
+| `build_go.sh` | Build Go suite and tests; checks for `go` |
+| `build_arm.sh` | Build ARM Thumb-2 binaries; checks for `arm-linux-gnueabi-gcc` |
+| `build_asm_i386.sh` | Build NASM i386 binaries; checks for `nasm` + linker |
+| `build_arduino.sh` | Build Arduino firmware; checks for `arduino-cli` |
+| `run_arm.sh` | Run ARM binaries via `qemu-arm`; usage instructions |
+| `run_asm_i386.sh` | Run i386 binaries via `qemu-i386`; usage instructions |
+| `run_arduino.sh` | Run Arduino firmware via `simavr`; usage instructions |
+
+Each build script prints `apt-get install` instructions for any missing tool.
+
+**Files changed (8):** new scripts only.
+
+---
+
+## [1.5.7] - 2026-04-21
+
+### Changed — precomputed M⁻¹ rotation table for `nl_fscx_v2_inv`; Arduino banner fix
+
+#### Performance — precomputed M⁻¹ rotation table
+
+`M⁻¹(X) = M^{n/2−1}(X)` is now applied via a precomputed rotation table: XOR of
+`ROL(X, k)` for each `k` where bit `k` of `M⁻¹(1)` is set.
+
+- **n=256 (C/Go/Python):** table bootstrapped once on first call via the old
+  `fscx_revolve` path (lazy init, cached per bit-size).
+- **n=32 (assembly/Arduino/C-tests):** constant `0x6DB6DB6D` hardcoded
+  (21 rotations, analytically verified).
+- **n=64/128 (C test file):** 64-bit constants hardcoded.
+
+Reduces each `nl_fscx_v2_inv` step from 127 FSCX iterations (n=256) to ~170
+XOR-rotation pairs (~2n/3 density). All language targets updated: C, Go, Python,
+Arduino (unrolled helper), ARM Thumb-2 (ROR+EOR pairs), NASM i386 (ROL+XOR pairs).
+
+**Files changed (12):** all language targets (suite + tests).
+
+#### Fixed — stale v1.5.3 version banner in Arduino `loop()`
+
+`loop()` in both `.ino` files still printed `v1.5.3`; corrected to `v1.5.7`.
+
+**Files changed (2):** `Herradura cryptographic suite.ino`, `CryptosuiteTests/Herradura_tests.ino`.
+
+---
+
+## [1.5.6] - 2026-04-20
+
+### Fixed — modular bias in `rnl_rand_poly` — 3-byte rejection sampling
+
+The previous 4-byte draw followed by naive `% Q` had ~1/2³² per-coefficient bias
+(value 0 appeared once more than all others over the full 32-bit cycle).
+
+**Fix (all targets):** 24-bit rejection-sampling loop with threshold
+`(1<<24) − (1<<24)%65537 = 16711935`. Rejection probability ≈ 0.39%.
+
+Added `rnl_rand_coeff()` helper to C tests (replaces `rand32()%Q` in
+`rnl32_rand_poly` and `rnl_rand_poly_n`).
+
+Applied to: Python, C, Go, ARM Thumb-2, NASM i386, Arduino.
+
+**Files changed (9):** `Herradura cryptographic suite.{c,go,py,s,asm,ino}`,
+`CryptosuiteTests/Herradura_tests.{c,go,py}`.
+
+---
+
+## [1.5.5] - 2026-04-20
+
+### Changed — C test suite: multi-size loops, PQC benchmarks, output alignment (Phases 1–5)
+
+Five-phase expansion bringing `Herradura_tests.c` to full parity with Python and Go:
+
+#### Phase 1–2 (earlier) — infrastructure
+
+Generalized `BitArray` with `int nbits`/`int nbytes` fields; added `ba_add` (mod 2ⁿ
+addition) required by NL-FSCX at non-32-bit widths. Added `gf_mul_64`/`gf_pow_64`
+(GF(2⁶⁴), poly `0x1B`) and corresponding 64-bit FSCX/NL-FSCX primitives.
+
+#### Phase 3 — GF/NL multi-size loops (tests [1],[5]–[9],[14]–[16])
+
+- Tests [1],[5],[6]: loop over `{32, 64, 256}`.
+- Tests [7]–[9],[14]–[16]: loop over `{32, 64}`.
+- Key-sensitivity PASS criterion aligned to `mean ≥ n/4` (matching Python/Go).
+- 64-bit Schnorr uses `__uint128_t` for `(a·e) mod (2⁶⁴−1)` overflow safety.
+
+#### Phase 4 — FSCX/NL-FSCX multi-size loops (tests [2]–[4],[10]–[13])
+
+Added 128-bit FSCX primitives (`fscx128`/`fscx_revolve128` via `__uint128_t`) and full
+128-bit NL-FSCX v1/v2/inv suite; `rol128_32` for n/4=32-bit shift; `rand128()` helper.
+
+- Tests [2]–[4]: loop `{64, 128, 256}` using `fscx64`/`fscx128`/`ba_fscx` dispatch.
+- Tests [10]–[13]: loop `{64, 128}` using 64/128-bit NL-FSCX scalar functions.
+  (256-bit NL-FSCX deferred — requires 256-bit integer multiply.)
+- `popcount128()` helper for 128-bit Hamming distance in test [2].
+
+#### Phase 5 — test [11] bijectivity methodology alignment
+
+Upgraded test [11] bijectivity sub-test to match Python/Go: sample
+`BIJ_SAMPLES=256` random A values per B and detect output collisions via O(n²)
+pairwise scan (vs. prior single-pair draw).
+
+#### Output and benchmarks alignment
+
+- Version banner bumped to v1.5.5 in `Herradura_tests.c`, `.py`, `.go`.
+- C test labels: added `[CLASSICAL]` tag to tests [1]–[9] and `[PQC-EXT]` to
+  [10]–[16], matching existing Python/Go output.
+- C section headers renamed to match Python/Go.
+- PQC benchmarks [22]–[25] ported from Python/Go to C:
+  - [22] NL-FSCX v1 revolve throughput (32-bit, n/4=8 steps)
+  - [22b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val=24 steps)
+  - [23] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0)
+  - [24] HSKE-NL-A2 revolve-mode round-trip (32-bit, r_val=24 steps)
+  - [25] HKEX-RNL full handshake throughput (n=32)
+
+**Files changed (3):** `CryptosuiteTests/Herradura_tests.{c,go,py}`.
+
+---
+
+## [1.5.4] - 2026-04-20
+
+### Changed — replace O(n²) polynomial multiplication with negacyclic NTT in all implementations
+
+Cooley-Tukey NTT over Z₆₅₅₃₇ (Fermat prime) with negacyclic twist
+`ψ = 3^{(q−1)/(2n)} mod q` replaces the naive O(n²) `_rnl_poly_mul` in every
+language implementation and test suite. ~32× speedup at n=256; ~6× at n=32.
+
+| Target | Change |
+|---|---|
+| C, Go, Python | `rnl_ntt`/`rnlNTT`/`_ntt_inplace` + NTT-based `poly_mul` |
+| ARM Thumb-2 (.s) | Precomputed tables + `rnl_ntt` subroutine (`umull` + fast Fermat mod) |
+| NASM i386 (.asm) | Precomputed tables + `rnl_ntt` (stack-frame cdecl) + NTT `poly_mul` |
+| Arduino (.ino) | Same NTT using `uint64_t` multiply |
+
+`SecurityProofs.md` status line updated with v1.5.4 NTT note.
+
+**Files changed (13):** all language targets (suite + tests) and `SecurityProofs.md`.
+
+---
+
+## [1.5.3] - 2026-04-19
+
+### Changed — HKEX-RNL secret sampler upgraded to CBD(η=1); assembly bug fixes
+
+#### Security — CBD(η=1) secret polynomial sampler
+
+Replaced the uniform `{0,1}` secret polynomial sampler (`rnl_small_poly` /
+`rnlSmallPoly` / `_rnl_small_poly`) with centered binomial distribution CBD(η=1)
+across all language targets.
+
+CBD(1) samples each coefficient as `(a − b) mod q` where `a, b` are independent
+uniform bits, producing values in `{−1, 0, 1}` with zero mean and `P(±1) = 1/4`.
+This matches the Kyber/NIST PQC baseline secret distribution and eliminates the
+positive mean bias of the previous `{0,1}` sampler — a prerequisite for standard
+Ring-LWR hardness arguments. The max coefficient magnitude (1) is unchanged, so
+the noise budget and parameter set `(n, q, p, p', η)` are unaffected.
+
+`SecurityProofs.md §11.4.2` and `§11.6` updated to document CBD(η=1) and its rationale.
+
+**Files changed (13):** all language targets (suite + tests) and `SecurityProofs.md`.
+
+#### Fixed — ARM `cbz` hi-register and NASM `poly_mul` stack offset
+
+- **ARM Thumb-2:** `cbz` only accepts lo-registers r0–r7; replaced `cbz r9`/`cbz r10`
+  with `cmp`+`beq` pairs in both `.s` files.
+- **NASM i386:** after `pop ebx` in `rnl_poly_mul`, `[esp]` = k and `[esp+4]` = i;
+  the code was reading `[esp+4]` (= i) to get k, writing every partial product to
+  `rnl_tmp[i]` instead of `rnl_tmp[k]`. Fixed to `[esp]` in both `.rpm_add_no_sub`
+  and `.rpm_neg_no_sub` branches in both `.asm` files.
+
+**Files changed (4):** `Herradura cryptographic suite.{asm,s}`,
+`CryptosuiteTests/Herradura_tests.{asm,s}`.
+
+---
+
 ## [1.5.2] - 2026-04-18
 
 ### Fixed — KaTeX rendering in `SecurityProofs.md` (`^*` and `\mathcal{R}_q` cross-span emphasis)
