@@ -776,6 +776,8 @@ HSKE-NL-A1 (counter-mode with NL-FSCX v1, 256-bit):
 HSKE-NL-A2 (revolve-mode with NL-FSCX v2, 256-bit):
     E = nl_fscx_revolve_v2(P, K, R_VALUE)
     D = nl_fscx_revolve_v2_inv(E, K, R_VALUE) = P
+    CAUTION: Deterministic — same (P, K) always yields the same E. Embed a nonce
+    in P when multiple messages may be encrypted under the same key.
 
 HKEX-RNL (Ring-LWR key exchange, n=256):
     Shared m_blind = m(x) + a_rand in Z_q[x]/(x^n+1)

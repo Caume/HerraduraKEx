@@ -577,6 +577,7 @@ _start:
 .nl1_done:
 
     ; ================================================================== HSKE-NL-A2
+    ; CAUTION: deterministic — same (plain, key) always yields same E.
     mov  eax, hske_nl2_hdr
     mov  ecx, hske_nl2_hdr_l
     call print_str

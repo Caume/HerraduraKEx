@@ -4,6 +4,34 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.14] - 2026-04-25
+
+### Documentation — HSKE-NL-A2 deterministic encryption caveat (all targets)
+
+HSKE-NL-A2 carries no nonce: the same (plaintext, key) pair always produces the
+same ciphertext.  It does not achieve IND-CPA security in the multi-message sense
+unless an external session differentiator is embedded in the plaintext before
+encryption.  This usage constraint was undocumented; added in all seven locations:
+
+- **`SecurityProofs.md §11.3.2`** — new paragraph after the cost analysis:
+  explains the IND-CPA gap, contrasts with HSKE-NL-A1's per-session nonce, and
+  gives concrete guidance (embed sequence number / nonce / session ID in plaintext).
+- **`Herradura cryptographic suite.py`** — `CAUTION:` line added to the HSKE-NL-A2
+  protocol comment block.
+- **`Herradura cryptographic suite.c`** — same `CAUTION:` added to the block comment.
+- **`Herradura cryptographic suite.go`** — one-liner in the protocol list expanded to
+  note determinism and multi-message constraint.
+- **`Herradura cryptographic suite.s`** (ARM Thumb-2) — `CAUTION:` line added inside
+  the block comment preceding the HSKE-NL-A2 section.
+- **`Herradura cryptographic suite.asm`** (NASM i386) — `CAUTION:` comment added
+  above the `mov eax, hske_nl2_hdr` instruction.
+- **`Herradura cryptographic suite.ino`** (Arduino) — `CAUTION:` comment added inside
+  the banner block.
+
+**No functional code changes.**
+
+---
+
 ## [1.5.13] - 2026-04-24
 
 ### Fixed — HSKE-NL-A1 counter=0 step-1 degeneracy (security, all targets)

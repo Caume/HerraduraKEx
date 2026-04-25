@@ -593,6 +593,7 @@ hske_nl1_done:
        HSKE-NL-A2  (revolve-mode with NL-FSCX v2)
        E = nl_fscx_revolve_v2(plain, key, I_VALUE)
        D = nl_fscx_revolve_v2_inv(E, key, I_VALUE)  must == plain
+       CAUTION: deterministic — same (plain, key) always yields same E.
        ================================================================ */
     ldr     r0, =fmt_hske_nl2_hdr
     bl      printf

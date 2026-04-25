@@ -535,6 +535,9 @@ HSKE-NL-A2 (revolve-mode HSKE with NL-FSCX v2):
   Decrypt:  D = nl_fscx_revolve_v2_inv(E, K, r)  [closed-form inverse]
   Security: B-channel non-linearity defeats linear key-recovery on K.
             API-compatible with classical HSKE (same encrypt/decrypt shape).
+  CAUTION:  Deterministic — same (P, K) always yields the same E. Not IND-CPA
+            in the multi-message sense without a nonce in P. Prefer HSKE-NL-A1
+            when multiple messages may be encrypted under the same key.
 
 HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   Setup:    a_rand random; m_blind = m(x) + a_rand  [m(x)=1+x+x^{n-1}]

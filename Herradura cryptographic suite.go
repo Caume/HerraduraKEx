@@ -72,7 +72,8 @@
 
     PQC protocol variants (C3 hybrid assignment):
       HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
-      HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
+      HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible); deterministic
+                    (no nonce — embed one in plaintext for multi-message use)
       HKEX-RNL    — Ring-LWR key exchange (quantum-resistant; replaces HKEX-GF)
       HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
       HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption

@@ -1259,6 +1259,14 @@ The explicit inverse from §11.2.2 is applied $r$ times, each costing one intege
 one ROL, and one application of $M^{-1} = M^{n/2-1}$, so total decrypt cost is
 $O(r \cdot n/2)$ FSCX steps — same asymptotic order as standard HSKE.
 
+**Usage constraint — deterministic encryption.** HSKE-NL-A2 carries no nonce:
+the same (plaintext, key) pair always produces the same ciphertext.  It does not
+achieve IND-CPA security in the multi-message sense unless an external session
+differentiator (sequence number, nonce, or session ID) is embedded in the
+plaintext before encryption.  HSKE-NL-A1 (§11.3.1) provides a per-session nonce
+as part of the protocol; prefer A1 when multiple messages may be encrypted under
+the same key.
+
 ---
 
 ### 11.4 HKEX-RNL: PQC Key Exchange (B2)
