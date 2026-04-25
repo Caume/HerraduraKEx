@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.10
+/*  Herradura Cryptographic Suite v1.5.13
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,13 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.13: HSKE-NL-A1 seed fix — RotateLeft(base, n/8) breaks counter=0 step-1 degeneracy ---
+
+    HSKE-NL-A1 keystream: seed = base.RotateLeft(n/8); ks = NlFscxRevolveV1(seed, base^ctr, n/4).
+    When A=B=base (counter=0), Fscx(base,base)=0 so step 1 was a pure rotation (linear in base).
+    RotateLeft(base,n/8) ensures seed!=base, activating full carry non-linearity from step 1.
+    Same degeneracy pattern fixed for HKEX-RNL KDF in v1.5.10; now applied consistently.
 
     --- v1.5.10: HKEX-RNL KDF seed fix — RotateLeft(K, n/8) breaks step-1 degeneracy ---
 
@@ -640,11 +647,11 @@ func main() {
 
 	// ── PQC-HARDENED protocols ───────────────────────────────────────────────
 	fmt.Println("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
-	nA1    := randBA(n)                                                    // per-session nonce
+	nA1    := NewRandBitArray(n)                                           // per-session nonce
 	baseA1 := NewBitArray(n, new(big.Int).Xor(&preshared.val, &nA1.val)) // base = K XOR N
 	counter := 0
 	bA1 := NewBitArray(n, new(big.Int).Xor(&baseA1.val, big.NewInt(int64(counter))))
-	ksA1 := NlFscxRevolveV1(baseA1, bA1, n/4)
+	ksA1 := NlFscxRevolveV1(baseA1.RotateLeft(n/8), bA1, n/4) // seed=ROL(base,n/8) avoids step-1 degeneracy
 	eA1 := NewBitArray(n, new(big.Int).Xor(&plaintext.val, &ksA1.val))
 	dA1 := NewBitArray(n, new(big.Int).Xor(&eA1.val, &ksA1.val))
 	fmt.Printf("N (nonce) : %x\n", nA1)

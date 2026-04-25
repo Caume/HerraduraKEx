@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.10
+/*  Herradura Cryptographic Suite v1.5.13
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -8,6 +8,8 @@
     NL-FSCX v2: nl_v2(A,B) = fscx(A,B) + ROL32(B*((B+1)>>1), 8)  mod 2^32
                 inv: B XOR M^{-1}((Y-delta(B)) mod 2^32)
     HKEX-RNL:  Ring-LWR; N=32, q=65537, p=4096, pp=2
+
+    v1.5.13: HSKE-NL-A1 seed=ROR(base,28) [=ROL(base,4)=ROL(base,n/8)] fixes counter=0 degeneracy.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
     MIT License / GPL v3.0 — choose either.
@@ -525,7 +527,7 @@ hpke_done:
 
     /* ================================================================
        HSKE-NL-A1  (counter-mode with NL-FSCX v1)
-       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(base, base, I_VALUE)
+       N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4), base, I_VALUE)
        E = plain XOR ks;  D = E XOR ks  (must == plain)
        ================================================================ */
     ldr     r0, =fmt_hske_nl1_hdr
@@ -537,9 +539,10 @@ hpke_done:
     ldr     r1, =val_key
     ldr     r1, [r1]
     eor     r0, r0, r1              @ r0 = base = N XOR key
-    mov     r1, r0                  @ r1 = base (counter=0: B = base)
+    mov     r1, r0                  @ r1 = B = base (counter=0)
+    ror     r0, r0, #28             @ r0 = ROL(base, 4) = seed  [n=32, n/8=4]
     mov     r2, #I_VALUE
-    bl      nl_fscx_revolve_v1      @ r0 = ks
+    bl      nl_fscx_revolve_v1      @ r0 = ks  (A=seed, B=base)
     ldr     r3, =val_ks_nl1
     str     r0, [r3]
 

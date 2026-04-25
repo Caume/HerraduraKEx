@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.10 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.13 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
     KEYBITS = 32
 
@@ -9,6 +9,8 @@
     Upload via Arduino IDE or: arduino --upload --board arduino:avr:uno ...
     Monitor: 9600 baud serial monitor.
 
+    v1.5.13: HSKE-NL-A1 seed fix: seed=_rol32(base,4); ks=nl_fscx_revolve_v1(seed,base,I).
+             When A=B=base, fscx(base,base)=0; ROL by n/8=4 activates non-linearity from step 1.
     v1.5.10: HKEX-RNL KDF seed fix: seed=ROL32(K,4); sk=nl_fscx_revolve_v1(seed,K,I).
     v1.5.9: HSKE-NL-A1 per-session nonce (lcg_next XOR K); nl_fscx_revolve_v2_inv delta precompute.
     v1.5.7: m_inv_32 uses precomputed rotation table (0x6DB6DB6D) — replaces 15-step loop.
@@ -396,7 +398,7 @@ void loop() {
     {
         uint32 N    = lcg_next();              /* per-session nonce            */
         uint32 base = K ^ N;                   /* session key base = K XOR N   */
-        uint32 ks   = nl_fscx_revolve_v1(base, base, I_VALUE);  /* counter=0  */
+        uint32 ks   = nl_fscx_revolve_v1(_rol32(base, 4), base, I_VALUE);  /* seed=ROL(base,n/8=4) */
         uint32 E    = PLAIN ^ ks;
         uint32 D    = E ^ ks;
         printHexLine("N (nonce) : ", N);

@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: _m_inv uses precomputed rotation table (lazy init, cached per bit-size).
@@ -623,7 +624,7 @@ def test_nl_fscx_v2_bijective_inverse():
 
 def test_hske_nl_a1_correctness():
     # HSKE-NL-A1 counter-mode with per-session nonce: N random; base = K XOR N.
-    # keystream[i] = nl_fscx_revolve_v1(base, base XOR i, n/4).
+    # keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4).
     print("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); ok = 0; n_run = 0
@@ -635,7 +636,7 @@ def test_hske_nl_a1_correctness():
             base = BitArray(size, K.uint ^ N.uint)       # session key base
             ctr  = trial % (1 << min(size, 16))
             B    = BitArray(size, base.uint ^ ctr)
-            ks   = nl_fscx_revolve_v1(base, B, iv)
+            ks   = nl_fscx_revolve_v1(base.rotated(size // 8), B, iv)  # seed=ROL(base,n/8)
             C    = BitArray(size, P.uint ^ ks.uint)
             D    = BitArray(size, C.uint ^ ks.uint)
             if D == P: ok += 1
@@ -850,7 +851,7 @@ def bench_hske_nl_a1_roundtrip():
             N    = BitArray.random(size)
             base = BitArray(size, K.uint ^ N.uint)
             B    = BitArray(size, base.uint ^ 0)  # counter=0
-            ks   = nl_fscx_revolve_v1(base, B, iv)
+            ks   = nl_fscx_revolve_v1(base.rotated(size // 8), B, iv)  # seed=ROL(base,n/8)
             sink ^= BitArray(size, P.uint ^ ks.uint)
         _bench(f"bits={size:3d}", fn)
     print()
