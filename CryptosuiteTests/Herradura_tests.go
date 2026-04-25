@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.13: HSKE-NL-A1 seed fix — seed=RotateLeft(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=RotateLeft(K,n/8) breaks step-1 degeneracy.
     v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once — eliminates per-step multiply.
     v1.5.7: MInv uses precomputed rotation table (sync.Map cache per bit-size).
@@ -900,7 +901,7 @@ func testNlFscxV2BijectiveInverse() {
 }
 
 func testHskeNlA1Correctness() {
-	// HSKE-NL-A1 with per-session nonce: base = K XOR N; ks = NlFscxRevolveV1(base, base XOR ctr, n/4).
+	// HSKE-NL-A1 with per-session nonce: base = K XOR N; ks = NlFscxRevolveV1(ROL(base,n/8), base XOR ctr, n/4).
 	fmt.Println("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
@@ -911,7 +912,7 @@ func testHskeNlA1Correctness() {
 			base := newBA(size, new(big.Int).Xor(&K.val, &nonce.val))
 			ctr := int64(trial % (1 << 16))
 			bCtr := newBA(size, new(big.Int).Xor(&base.val, big.NewInt(ctr)))
-			ks := NlFscxRevolveV1(base, bCtr, iv)
+			ks := NlFscxRevolveV1(base.RotateLeft(size/8), bCtr, iv) // seed=ROL(base,n/8)
 			C := newBA(size, new(big.Int).Xor(&P.val, &ks.val))
 			D := newBA(size, new(big.Int).Xor(&C.val, &ks.val))
 			if D.Equal(P) { ok++ }

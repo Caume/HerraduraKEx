@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.10
+    Herradura Cryptographic Suite v1.5.13
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,13 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.13: HSKE-NL-A1 seed fix — ROL(base, n/8) breaks counter=0 step-1 degeneracy ---
+
+    HSKE-NL-A1 keystream: seed = base.rotated(n/8); ks = nl_fscx_revolve_v1(seed, base^ctr, n/4).
+    When A=B=base (counter=0), fscx(base,base)=0 so step 1 was a pure rotation (linear).
+    ROL(base,n/8) ensures seed!=base, activating full carry non-linearity from step 1.
+    Same degeneracy pattern fixed for HKEX-RNL KDF in v1.5.10; now applied consistently.
 
     --- v1.5.10: HKEX-RNL KDF seed fix — ROL(K, n/8) breaks step-1 degeneracy ---
 
@@ -517,7 +524,7 @@ PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs.md §11)
 HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
   Nonce:    N = random(n bits)   [per-session; transmitted alongside ciphertext]
   base      = K XOR N            [session key base]
-  keystream[i] = nl_fscx_revolve_v1(base, base XOR i, n/4)
+  keystream[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4)
   Encrypt:  C = (N, P XOR keystream[0])
   Decrypt:  base = K XOR N; P = C XOR keystream[0]
   Security: per-session nonce ensures distinct keystreams across sessions;
@@ -639,7 +646,7 @@ def main():
     counter    = 0
     N_a1       = BitArray.random(KEYBITS)                         # per-session nonce
     base_a1    = BitArray(KEYBITS, preshared.uint ^ N_a1.uint)   # K XOR N
-    ks_a1      = nl_fscx_revolve_v1(base_a1,
+    ks_a1      = nl_fscx_revolve_v1(base_a1.rotated(KEYBITS // 8),  # seed=ROL(base,n/8)
                                     BitArray(KEYBITS, base_a1.uint ^ counter),
                                     KEYBITS // 4)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)

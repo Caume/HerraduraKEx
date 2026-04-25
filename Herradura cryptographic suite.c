@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.10
+/*  Herradura Cryptographic Suite v1.5.13
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,14 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.13: HSKE-NL-A1 seed fix — ROL(base, n/8) breaks counter=0 step-1 degeneracy ---
+
+    HSKE-NL-A1 keystream: seed = ba_rol_k(base, n/8); ks = nl_fscx_revolve_v1(seed, base^ctr, n/4).
+    When A=B=base (counter=0), fscx(base,base)=0 so step 1 was a pure rotation (linear).
+    ROL(base,n/8) ensures seed!=base, activating full carry non-linearity from step 1.
+    Same degeneracy pattern fixed for HKEX-RNL KDF in v1.5.10; now applied consistently.
+    Also fixes stale q=3329 comment (was 65537 since v1.5.4).
 
     --- v1.5.10: HKEX-RNL KDF seed fix — ROL(K, n/8) breaks step-1 degeneracy ---
 
@@ -762,7 +770,7 @@ HPKE (El Gamal public key encryption, 256-bit):
 
 HSKE-NL-A1 (counter-mode with NL-FSCX v1, 256-bit):
     N = random(256 bits); base = K XOR N  [per-session nonce; N transmitted with ciphertext]
-    ks = nl_fscx_revolve_v1(base, base XOR counter, I_VALUE)
+    ks = nl_fscx_revolve_v1(ROL(base, n/8), base XOR counter, I_VALUE)
     E = P XOR ks;  D = E XOR ks = P
 
 HSKE-NL-A2 (revolve-mode with NL-FSCX v2, 256-bit):
@@ -900,7 +908,9 @@ int main(void)
         BitArray N_a1, base_a1, ks_nl1, E_nl1, D_nl1;
         ba_rand(&N_a1, urnd);                         /* per-session nonce          */
         ba_xor(&base_a1, &preshared, &N_a1);          /* base = K XOR N             */
-        nl_fscx_revolve_v1_ba(&ks_nl1, &base_a1, &base_a1, I_VALUE); /* counter=0  */
+        BitArray seed_a1;
+        ba_rol_k(&seed_a1, &base_a1, KEYBYTES);       /* seed = ROL(base, n/8)      */
+        nl_fscx_revolve_v1_ba(&ks_nl1, &seed_a1, &base_a1, I_VALUE); /* counter=0  */
         ba_xor(&E_nl1, &plaintext, &ks_nl1);
         ba_xor(&D_nl1, &E_nl1,    &ks_nl1);
         ba_print_hex("N (nonce) : ", &N_a1);
@@ -930,7 +940,7 @@ int main(void)
 
     /* --- HKEX-RNL [PQC -- Ring-LWR key exchange; conjectured quantum-resistant] */
     printf("\n--- HKEX-RNL [PQC \xe2\x80\x94 Ring-LWR key exchange; conjectured quantum-resistant]\n");
-    puts("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=3329 \xe2\x80\x94 may be slow)");
+    puts("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537)");
     {
         rnl_poly_t m_base, a_rand_poly, m_blind;
         rnl_poly_t s_A_poly, s_B_poly;

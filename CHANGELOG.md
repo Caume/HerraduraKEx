@@ -4,6 +4,44 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.13] - 2026-04-24
+
+### Fixed — HSKE-NL-A1 counter=0 step-1 degeneracy (security, all targets)
+
+**Root cause.** The HSKE-NL-A1 keystream call `nl_fscx_revolve_v1(base, base XOR ctr, n/4)`
+passes `A = B = base` when `ctr = 0`.  With `A = B`, `FSCX(A, B) = M(A ⊕ B) = M(0) = 0`, so
+step 1 contributes only the linear term `ROL(2·base, n/4)`.  Non-linearity accumulates only
+from step 2 onward — the same degeneracy fixed for the HKEX-RNL KDF in v1.5.10.
+
+**Fix.** Replace the A (seed) argument with `ROL(base, n/8)` across all language targets:
+
+```
+ks[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4)
+```
+
+For n=256 (C/Go/Python): `ROL(base, 32)`.
+For n=32 (ARM Thumb-2, NASM i386, Arduino): `ROL(base, 4)` — implemented as `ROR(base, 28)` on ARM.
+
+**Files changed (9):**
+- `Herradura cryptographic suite.c` — seed via `ba_rol_k(&seed_a1, &base_a1, KEYBYTES)` (n/8=32)
+- `Herradura cryptographic suite.go` — `baseA1.RotateLeft(n/8)`
+- `Herradura cryptographic suite.py` — `base_a1.rotated(KEYBITS // 8)`
+- `Herradura cryptographic suite.s` — `ror r0, r0, #28` before `bl nl_fscx_revolve_v1`
+- `Herradura cryptographic suite.asm` — `rol eax, 4` before `call nl_fscx_revolve_v1`
+- `Herradura cryptographic suite.ino` — `_rol32(base, 4)`
+- `CryptosuiteTests/Herradura_tests.c` — inline ROL in test [12] for n=64 and n=128
+- `CryptosuiteTests/Herradura_tests.go` — `base.RotateLeft(size/8)` in test [12]
+- `CryptosuiteTests/Herradura_tests.py` — `base.rotated(size // 8)` in test [12] and bench [23]
+
+**Documentation updated:**
+- `SecurityProofs.md §11.3.1` — updated keystream formula and added seed-rotation rationale
+- `SecurityProofs.md §11.6` — updated KDF table entry to reflect v1.5.10 seed fix (was stale)
+- `Herradura cryptographic suite.c:933` — fixed stale `q=3329` comment (should be `q=65537` since v1.5.4)
+
+**TODO.md items closed:** #9 (degeneracy fix), #10 (stale q comment), #11 (stale §11.6 KDF formula).
+
+---
+
 ## [1.5.2] - 2026-04-18
 
 ### Fixed — KaTeX rendering in `SecurityProofs.md` (`^*` and `\mathcal{R}_q` cross-span emphasis)

@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.10
+;  Herradura Cryptographic Suite v1.5.13
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
@@ -9,6 +9,8 @@
 ;              delta(B) = ROL32(B*((B+1)>>1), 8)
 ;              inv: B XOR M^{-1}((Y - delta(B)) mod 2^32)
 ;  HKEX-RNL: Ring-LWR, N=32, q=65537, p=4096, pp=2, B=1
+;
+;  v1.5.13: HSKE-NL-A1 seed=ROL(base,4) [n/8=4] fixes counter=0 step-1 degeneracy.
 ;
 ;  Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 ;  MIT License / GPL v3.0 -- choose either.
@@ -523,13 +525,14 @@ _start:
     mov  ecx, hske_nl1_hdr_l
     call print_str
 
-    ; N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(base, base, I_VALUE)
+    ; N = prng_next(); base = key XOR N; ks = nl_fscx_revolve_v1(ROL(base,4), base, I_VALUE)
     call prng_next              ; eax = nonce N
     mov  [val_nonce_nl1], eax
     xor  eax, [val_key]         ; eax = base = N XOR key
-    mov  ebx, eax               ; ebx = base (counter=0: B = base)
+    mov  ebx, eax               ; ebx = B = base (counter=0)
+    rol  eax, 4                 ; eax = ROL(base, 4) = seed  [n=32, n/8=4]
     mov  ecx, I_VALUE
-    call nl_fscx_revolve_v1     ; eax = ks
+    call nl_fscx_revolve_v1     ; eax = ks  (A=seed, B=base)
     mov  [val_ks_nl1], eax
 
     ; E = plain XOR ks

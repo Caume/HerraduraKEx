@@ -1226,17 +1226,26 @@ Two secure HSKE constructions are defined; both are chosen depending on API requ
 
 #### 11.3.1 HSKE-A1: Counter Mode with NL-FSCX v1
 
-$$\text{keystream}[i] = \text{NL-FSCX-REVOLVE}(K,\; K \oplus i,\; n/4)$$
+Let $\text{base} = K \oplus N$ where $N$ is a random per-session nonce (transmitted with ciphertext).
+
+$$\text{keystream}[i] = \text{NL-FSCX-REVOLVE}\!\left(\text{ROL}(\text{base},\; n/8),\; \text{base} \oplus i,\; n/4\right)$$
 $$C[i] = P[i] \oplus \text{keystream}[i]$$
 $$D[i] = C[i] \oplus \text{keystream}[i] = P[i]$$
 
 No inverse is required.  The counter $i$ ensures keystream uniqueness per block.
 Decryption is identical to encryption (XOR-symmetric).
 
+**Seed rotation rationale.**  Without the ROL, counter $i = 0$ passes $A = B = \text{base}$, giving
+$\text{FSCX}(\text{base}, \text{base}) = M(\text{base} \oplus \text{base}) = 0$ on step 1 — making the first
+output purely a rotation of $2 \cdot \text{base}$, linear in $\text{base}$.  Setting the seed to
+$\text{ROL}(\text{base}, n/8) \neq \text{base}$ ensures $\text{FSCX}(\text{seed}, \text{base}) \neq 0$ and
+integer-carry non-linearity is active from step 1 across all counter values.
+This mirrors the HKEX-RNL KDF fix in v1.5.10.  (v1.5.13)
+
 **Security argument.**  $\text{keystream}[i]$ is the output of $n/4$ rounds of NL-FSCX v1 starting
-from seed $K$ with parameter $K \oplus i$.  Non-linearity prevents GF(2) linear recovery of $K$
-from any set of (plaintext, ciphertext) pairs.  Assuming NL-FSCX v1 acts as a
-pseudorandom function (PRF), CPA security follows from standard stream cipher arguments.
+from seed $\text{ROL}(\text{base}, n/8)$ with parameter $\text{base} \oplus i$.  Non-linearity prevents
+GF(2) linear recovery of $K$ from any set of (plaintext, ciphertext) pairs.  Assuming NL-FSCX v1
+acts as a pseudorandom function (PRF), CPA security follows from standard stream cipher arguments.
 
 #### 11.3.2 HSKE-A2: Revolve Mode with NL-FSCX v2
 
@@ -1411,7 +1420,7 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
 - $p = 4096$, $p' = 2$ (1 bit extracted per ring coefficient)
 - **Secret distribution:** $\mathrm{CBD}(\eta=1)$, coefficients in $\{-1, 0, 1\}$ with zero mean (upgraded from uniform $\{0,1\}$ in v1.5.3)
 - $a_\text{rand}$: $n$-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
-- KDF: $sk = \text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}(K_\text{raw}, K_\text{raw}, n/4)$
+- KDF: $\text{seed} = \text{ROL}(K_\text{raw},\; n/8)$; $sk = \text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}(\text{seed},\; K_\text{raw},\; n/4)$
 
 *Verification.* The invertibility of $m(x)$ in $\mathbb{Z}_q[x]/(x^n+1)$ is confirmed for
 the deployed parameters $(q=65537, n=32)$ and $(q=65537, n=256)$ by `hkex_nl_verification.py` §2.1.

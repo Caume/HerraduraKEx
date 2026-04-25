@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv_{32,64,128} precompute delta(B) once — eliminates per-step multiply.
     v1.5.7: m_inv_32/64/128 use precomputed rotation tables (0x6DB6DB6D / constants).
@@ -1495,14 +1496,16 @@ static void test_hske_nl_a1_correctness(void)
             if (size == 128) {
                 __uint128_t K = rand128(), nonce = rand128(), P = rand128();
                 __uint128_t base = K ^ nonce;
+                __uint128_t seed = (base << 16) | (base >> 112); /* ROL(base, n/8=16) */
                 __uint128_t ctr = (uint32_t)i & 0xFFFF;
-                __uint128_t ks = nl_fscx_revolve_v1_128(base, base ^ ctr, iv);
+                __uint128_t ks = nl_fscx_revolve_v1_128(seed, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             } else {
                 uint64_t K = rand64(), nonce = rand64(), P = rand64();
                 uint64_t base = K ^ nonce;
+                uint64_t seed = (base << 8) | (base >> 56); /* ROL(base, n/8=8) */
                 uint64_t ctr = (uint32_t)i & 0xFFFF;
-                uint64_t ks = nl_fscx_revolve_v1_64(base, base ^ ctr, iv);
+                uint64_t ks = nl_fscx_revolve_v1_64(seed, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             }
             if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }

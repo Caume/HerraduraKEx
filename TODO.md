@@ -300,3 +300,158 @@ loop `{64, 128}`. 256-bit NL-FSCX deferred (requires 256-bit integer multiply).
 Status: **DONE (v1.5.5)** — [5] fixed in Phase 3 (criterion changed to `mean >= n/4`).
 [11] upgraded to `BIJ_SAMPLES=256` random A values per B with O(n²) pairwise output
 collision scan, matching Python/Go 256-sample hash-map methodology.
+
+---
+
+## v1.5.x Review — Findings (2026-04-24)
+
+### 9. HSKE-NL-A1 counter=0 step-1 degeneracy (Security, High)
+
+**Files:** C:903, Go:647, Python:642–643; all assembly targets
+
+When `counter = 0` both arguments to `nl_fscx_revolve_v1` equal `base`, so
+`FSCX(base, base) = M(base ⊕ base) = M(0) = 0`. Step 1 contributes only the
+linear term `ROL(2·base, n/4)`; non-linearity accumulates from step 2 of n/4
+only — the same degeneracy fixed for the HKEX-RNL KDF in v1.5.10.
+
+Fix: use `ROL(base, n/8)` as the A (seed) argument across all languages:
+```
+ks[i] = nl_fscx_revolve_v1(ROL(base, n/8), base XOR i, n/4)
+```
+Also update SecurityProofs.md §11.3.1 formula and §11.6 table.
+
+Status: **DONE (v1.5.13)** — `ROL(base, n/8)` seed applied across all 6 suite targets
+(C, Go, Python, ARM Thumb-2, NASM i386, Arduino) and 3 test targets (C, Go, Python).
+SecurityProofs.md §11.3.1 updated with new formula and seed-rotation rationale.
+
+---
+
+### 10. Stale `q=3329` comment in C main() (Correctness, Trivial)
+
+**File:** `Herradura cryptographic suite.c:933`
+
+`puts("    (Ring-LWR, ..., q=3329 ...")` but `RNL_Q = 65537` since v1.5.4.
+
+Fix: update the string literal to `q=65537`.
+
+Status: **DONE (v1.5.13)**
+
+---
+
+### 11. §11.6 KDF formula stale — missing v1.5.10 seed fix (Documentation, Trivial)
+
+**File:** `SecurityProofs.md:1414`
+
+Table entry still shows `KDF: sk = NL-FSCX-REVOLVE-v1(K_raw, K_raw, n/4)`.
+The §11.4.2 body has the correct v1.5.10 formula but §11.6 was not updated.
+
+Fix: replace the table entry with:
+```
+seed = ROL(K_raw, n/8);  sk = NL-FSCX-REVOLVE-v1(seed, K_raw, n/4)
+```
+
+Status: **DONE (v1.5.13)**
+
+---
+
+### 12. HSKE-NL-A2 deterministic encryption undocumented (Security/Docs, Medium)
+
+**Files:** `SecurityProofs.md §11.3.2`; code comments in all language targets
+
+HSKE-NL-A2 (`NlFscxRevolveV2(P, K, r)`) has no nonce — same (key, plaintext)
+always produces identical ciphertext. This is not a correctness bug but must be
+documented as a usage constraint: HSKE-NL-A2 must not encrypt multiple distinct
+messages under the same key without external message differentiation.
+
+Fix: add a note to §11.3.2 and to the in-code protocol comment blocks.
+
+Status: **OPEN**
+
+---
+
+### 13. HKEX-RNL failure rate uncharacterized at deployed parameters (Analysis, Medium)
+
+**Files:** `SecurityProofs.md §11.5 Q2`; new `SecurityProofsCode/hkex_rnl_failure_rate.py`
+
+§11.5 Q2 marks `(q=65537, n=256, p=4096)` as `⚠ pending verification`. No
+empirical P(K_A ≠ K_B) row exists for the deployed parameter set.
+
+Fix: add a script that samples (s_A, s_B, a_rand) uniformly and measures the
+empirical key-disagreement rate over ≥ 10,000 trials at n=256. Record the result
+in §11.5 Q2. If failure rate > 1%, a reconciliation hint mechanism is needed.
+
+Status: **OPEN**
+
+---
+
+### 14. NTT twiddle recomputation per poly-multiply call (Performance, Medium)
+
+**Files:** C `rnl_ntt` / `rnl_poly_mul`; Go `rnlNTT` / `rnlPolyMul`
+
+`rnl_poly_mul` recomputes ψ and ψ⁻¹ via `rnl_mod_pow` on every call. Inside
+`rnl_ntt`, each of the 8 butterfly stages calls `rnl_mod_pow` once for the stage
+twiddle `w`. For ≈4 poly-mul calls per HKEX-RNL exchange, this is ≈40
+`rnl_mod_pow` invocations (each up to 16 modular multiplications) on top of the
+butterfly work.
+
+Fix: precompute a lazy-initialized static table (same pattern as `m_inv_ba`):
+- `psi_powers[n]` — twist/untwist values for pre/post-NTT phase
+- `stage_w[log₂n]` — per-stage ω values for forward and inverse NTT
+
+Expected gain: ~5–10% reduction in HKEX-RNL exchange time.
+
+Status: **OPEN**
+
+---
+
+### 15. Fermat prime fast modulo for NTT inner loops (Performance, Medium)
+
+**Files:** C `rnl_ntt` inner loop; Go `rnlNTT` inner loop
+
+q = 65537 = 2^16 + 1 is a Fermat prime. The NTT butterfly loops execute
+`(uint64_t)a * b % RNL_Q` which issues a 64-bit division. The reduction is
+divisionless for this prime:
+
+```c
+static inline uint32_t rnl_mod_q(uint64_t x) {
+    uint32_t lo = x & 0xFFFF, hi = (x >> 16) & 0xFFFF, top = (x >> 32) & 1;
+    int32_t r = (int32_t)(lo - hi + top);
+    if (r < 0)      r += RNL_Q;
+    if (r >= RNL_Q) r -= RNL_Q;
+    return (uint32_t)r;
+}
+```
+
+Each NTT call performs n/2 × log₂n = 1024 butterfly steps with 1–2 modular
+reductions each. Replacing `% RNL_Q` in the hot path eliminates all divides.
+Expected speedup: ~2× for the NTT, ~1.3–1.5× for a full HKEX-RNL exchange.
+
+Status: **OPEN**
+
+---
+
+### 16. `rnl_cbd_poly` bit-per-byte inefficiency (Performance, Low)
+
+**Files:** C `rnl_cbd_poly`; Go `rnlCBDPoly`; Python `_rnl_cbd_poly`
+
+With η=1 each coefficient needs 2 bits (one `a` bit, one `b` bit). Current code
+reads 1 byte per coefficient and uses only bits 0–1 → 75% of urandom entropy
+discarded. For n=256 that is 256 bytes drawn when 64 would suffice.
+
+Fix: process 4 coefficients per byte (bit-pairs at positions 0-1, 2-3, 4-5, 6-7).
+Apply to C, Go, Python. Note: byte-for-byte output changes — update affected tests.
+
+Status: **OPEN**
+
+---
+
+## Updated priority order
+
+1. #9  — HSKE-NL-A1 counter=0 degeneracy (security regression matching KDF fix)
+2. #13 — HKEX-RNL failure rate (close pending-verification gap)
+3. #12 — HSKE-NL-A2 deterministic encryption caveat (documentation)
+4. #15 — Fermat prime fast modulo (largest performance win)
+5. #14 — NTT twiddle precomputation (moderate performance win)
+6. #10 — Stale q=3329 comment (trivial)
+7. #11 — Stale §11.6 KDF formula (trivial)
+8. #16 — CBD bit efficiency (low effort, minor gain)
