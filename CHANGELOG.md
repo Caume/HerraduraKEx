@@ -4,6 +4,47 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.15] - 2026-04-25
+
+### Analysis — HKEX-RNL key-agreement failure rate characterized (all deployed parameters)
+
+New script `SecurityProofsCode/hkex_rnl_failure_rate.py` measures the empirical
+key-disagreement rate P(K_A ≠ K_B) at deployed parameters across four sections.
+
+#### Results
+
+| Parameters | Failures | Rate | 95% CI |
+|---|---|---|---|
+| n=32, p=4096, η=1, 10 000 trials | 204/10 000 | **2.04%** | 1.78–2.34% |
+| n=256, p=4096, η=1, 5 000 trials | 1 862/5 000 | **37.24%** | 35.9–38.6% |
+
+Single-bit errors dominate (201/204 at n=32; 1456/1862 at n=256). Maximum bit-error
+count: 2 at n=32, 5 at n=256.
+
+#### Root-cause analysis (§2)
+
+Per-coefficient error (`max|eA−eB| = 134`) is tiny relative to the extraction threshold
+(16 384 = q/4), yet failures occur at extraction boundaries.  Root cause: ring convolution
+over n coefficients accumulates error as O(√n), so at n=256 boundary crossings are frequent.
+A p-sensitivity sweep (§4) confirms no p value below q fixes the problem (0.80% at p=8192).
+
+#### Verdict
+
+**Reconciliation hints required.** The single-polynomial structure of HKEX-RNL (vs. the
+k×k matrix in Kyber) gives insufficient noise averaging at n=256.  NewHope-style 1-bit
+reconciliation hints are needed; they add n/8 bytes of public data per party and reduce the
+failure rate to effectively zero.  Architectural fix planned (TODO.md item #13).
+
+#### Files changed
+
+- `SecurityProofsCode/hkex_rnl_failure_rate.py` — new; four-section analysis script
+- `SecurityProofs.md §11.5 Q2` — four new rows; removed ⚠ pending-verification note;
+  added p-sensitivity table
+- `SecurityProofs.md §11.6` — replaced stale "reliable without reconciliation" claim with
+  correctness-warning block; added failure-rate table and reconciliation-hint requirement
+
+---
+
 ## [1.5.14] - 2026-04-25
 
 ### Documentation — HSKE-NL-A2 deterministic encryption caveat (all targets)
