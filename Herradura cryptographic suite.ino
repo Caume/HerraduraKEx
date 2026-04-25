@@ -410,6 +410,7 @@ void loop() {
 
     /* ---------------------------------------------------------------- */
     /* HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]      */
+    /* CAUTION: deterministic -- same (P, K) always yields the same E. */
     /* ---------------------------------------------------------------- */
     Serial.println("--- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2]");
     {

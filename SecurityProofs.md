@@ -1259,6 +1259,14 @@ The explicit inverse from §11.2.2 is applied $r$ times, each costing one intege
 one ROL, and one application of $M^{-1} = M^{n/2-1}$, so total decrypt cost is
 $O(r \cdot n/2)$ FSCX steps — same asymptotic order as standard HSKE.
 
+**Usage constraint — deterministic encryption.** HSKE-NL-A2 carries no nonce:
+the same (plaintext, key) pair always produces the same ciphertext.  It does not
+achieve IND-CPA security in the multi-message sense unless an external session
+differentiator (sequence number, nonce, or session ID) is embedded in the
+plaintext before encryption.  HSKE-NL-A1 (§11.3.1) provides a per-session nonce
+as part of the protocol; prefer A1 when multiple messages may be encrypted under
+the same key.
+
 ---
 
 ### 11.4 HKEX-RNL: PQC Key Exchange (B2)
@@ -1370,10 +1378,9 @@ All results are from `SecurityProofsCode/hkex_nl_verification.py` (n=32 unless n
 | NL-FSCX v1 period (n=32, 500 samples) | 500/500 find no period in 256 steps | Period property completely destroyed |
 | HSKE-A1 counter mode encrypt→decrypt | 200/200 correct | Counter mode is viable |
 
-#### Q2 — FSCX-LWR algebraic attack
+#### Q2 — FSCX-LWR algebraic attack and key-agreement correctness
 
-All rows below use $n = 16$ unless noted.  The deployed implementation uses $q = 65537$,
-$n \in \{32, 256\}$; those parameter pairs are marked ⚠ pending verification.
+All rows below use $n = 16$ unless noted.
 
 | Test | Result | Conclusion |
 |------|--------|------------|
@@ -1384,6 +1391,10 @@ $n \in \{32, 256\}$; those parameter pairs are marked ⚠ pending verification.
 | Naive attack: exact $s$ recovery (fixed $m$, $q=769$, $n=16$, $p \in \{4…256\}$) | 0/200 for every $p$ value | Rounding noise too large for naive inversion |
 | Noise amplification $\|m^{-1}\|_1 \cdot q/(2p)$ vs. $q$ | Exceeds $q$ for all tested $(q,p)$ | Structural protection against naive inversion |
 | Blinded $m$ vs. fixed $m$ (naive attack) | Both 0/200 | Blinding adds standard Ring-LWR hardness beyond structural noise protection |
+| **Key-agreement failure rate** ($q=65537$, $n=32$, $p=4096$, $\eta=1$), 10 000 trials | **204 / 10 000 = 2.04%** (95% CI: 1.78–2.34%) | Fails the <1% threshold; reconciliation hints required. Single-bit errors dominate (201/204). `hkex_rnl_failure_rate.py` §1 |
+| **Key-agreement failure rate** ($q=65537$, $n=256$, $p=4096$, $\eta=1$), 5 000 trials | **1 862 / 5 000 = 37.24%** (95% CI: 35.9–38.6%) | Completely unusable without reconciliation. Per-coeff error accumulates as $O(\sqrt{n})$ via ring convolution. `hkex_rnl_failure_rate.py` §3 |
+| Max per-coeff error $\|e_A - e_B\|_\infty$ ($n=32$, 10 000 trials) | 134 (0.82% of extraction threshold 16 384) | Individual errors are tiny; failures occur only near extraction boundaries. §2 |
+| $p$-sensitivity at $n=32$: failure rate vs. $p \in \{512,\ldots,8192\}$ | 14.7% → 8.45% → 4.4% → 2.2% → 0.80% | No tested $p$ achieves <1%; architectural fix (reconciliation hints) required. §4 |
 
 #### Q3 — NL-FSCX injectivity and inverse
 
@@ -1412,26 +1423,42 @@ The C3 hybrid assigns each primitive to the role that matches its properties:
 | HPKS commitment hash | **NL-FSCX v1** revolve | One-way; hardened against linear preimage |
 | HPKE encryption | **NL-FSCX v2** revolve | Invertible; bijective |
 
-**Parameters for HKEX-RNL** (deployed in v1.5.0; secret sampler upgraded to CBD in v1.5.3; requires further analysis before production use):
+**Parameters for HKEX-RNL** (deployed in v1.5.0; CBD sampler in v1.5.3; correctness verified in v1.5.15):
 - $n = 256$ (suite C/Go/Python), $n = 32$ (assembly, Arduino, C/Go/Python tests)
-- $q = 65537$ ($= 2^{16}+1$, Fermat prime); chosen over $q = 3329$ (Kyber) for lower
-  noise-to-margin ratio at small $n$, ensuring reliable single-block agreement without
-  reconciliation hints
+- $q = 65537$ ($= 2^{16}+1$, Fermat prime)
 - $p = 4096$, $p' = 2$ (1 bit extracted per ring coefficient)
-- **Secret distribution:** $\mathrm{CBD}(\eta=1)$, coefficients in $\{-1, 0, 1\}$ with zero mean (upgraded from uniform $\{0,1\}$ in v1.5.3)
+- **Secret distribution:** $\mathrm{CBD}(\eta=1)$, coefficients in $\{-1, 0, 1\}$ with zero mean
 - $a_\text{rand}$: $n$-coefficient polynomial, coefficients uniform in $\mathbb{Z}/q\mathbb{Z}$, transmitted per session
 - KDF: $\text{seed} = \text{ROL}(K_\text{raw},\; n/8)$; $sk = \text{NL-FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{v1}(\text{seed},\; K_\text{raw},\; n/4)$
 
-*Verification.* The invertibility of $m(x)$ in $\mathbb{Z}_q[x]/(x^n+1)$ is confirmed for
-the deployed parameters $(q=65537, n=32)$ and $(q=65537, n=256)$ by `hkex_nl_verification.py` §2.1.
-Noise amplification at $p=4096$ gives $\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$,
-confirming structural protection against naive inversion (§11.4.3, §11.5 Q2).
-The max coefficient magnitude of $\mathrm{CBD}(1)$ equals that of the previous $\{0,1\}$ sampler,
-so the noise budget is unchanged.
+*Algebraic verification.* Invertibility of $m(x)$ in $\mathbb{Z}_q[x]/(x^n+1)$ confirmed for
+$(q=65537, n \in \{32, 256\})$ by `hkex_nl_verification.py` §2.1.  Noise amplification
+$\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$ confirms structural protection against
+naive algebraic inversion (§11.4.3, §11.5 Q2).
+
+**⚠ Correctness warning — reconciliation hints required.**
+Empirical failure-rate measurement (`hkex_rnl_failure_rate.py`, v1.5.15) shows:
+
+| Parameters | Failure rate | 95% CI |
+|---|---|---|
+| $n=32$, $p=4096$, $\eta=1$, 10 000 trials | **2.04%** | 1.78–2.34% |
+| $n=256$, $p=4096$, $\eta=1$, 5 000 trials | **37.24%** | 35.9–38.6% |
+
+Root cause: the per-coefficient error in $K_\text{poly}$ accumulates as $O(\sqrt{n})$ via ring
+convolution over $n$ terms (each CBD(1) coefficient × rounding noise $\leq q/(2p) = 8$).
+Although individual errors are tiny ($\leq 134$ out of extraction threshold 16 384), extraction
+boundaries at $q/4$ and $3q/4$ are crossed frequently when 256 error terms accumulate.
+Increasing $p$ alone does not fix the problem: a p-sensitivity sweep at $n=32$ shows 0.80%
+failure rate even at $p=8192$.  The $n=256$ case requires architectural correction.
+
+**Required fix:** NewHope-style 1-bit reconciliation hints.  Each party transmits one hint bit per
+ring coefficient indicating which side of the nearest extraction boundary their value lies on;
+the other party uses the hint to resolve near-boundary cases.  This reduces the failure rate to
+effectively zero without changing the security assumptions.  Planned in TODO.md item #13.
 
 **Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
-The CBD(eta=1) secret sampler was deployed across all language implementations in v1.5.3.
-The C3 hybrid assignment (table above) governs the current implementation.
+The CBD(η=1) secret sampler was deployed in v1.5.3.  Correctness failure characterised in v1.5.15.
+Reconciliation hints are required before production use.
 
 ---
 
