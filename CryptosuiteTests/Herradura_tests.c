@@ -741,15 +741,46 @@ static void rnl32_keygen(int32_t s_out[RNL_N32], int32_t c_out[RNL_N32],
     rnl32_round(c_out, ms, RNL_Q32, RNL_P32);
 }
 
-/* agree: K_raw = round_pp(s * lift(C_other)) packed to uint32 */
-static uint32_t rnl32_agree(const int32_t s[RNL_N32], const int32_t c_other[RNL_N32])
+/* Peikert hint: 1-bit per coeff, packed to uint32 (n=32 fits exactly). */
+static uint32_t rnl32_hint(const int32_t K_poly[RNL_N32])
+{
+    uint32_t hint = 0;
+    int i;
+    for (i = 0; i < RNL_N32; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
+        if (r % 2) hint |= (1u << i);
+    }
+    return hint;
+}
+
+/* Reconcile n=32 K_poly bits using hint, return packed uint32 key. */
+static uint32_t rnl32_reconcile(const int32_t K_poly[RNL_N32], uint32_t hint)
+{
+    const uint32_t qh = RNL_Q32 / 2;
+    uint32_t key = 0;
+    int i;
+    for (i = 0; i < RNL_N32; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t h = (hint >> i) & 1u;
+        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
+            key |= (1u << i);
+    }
+    return key;
+}
+
+/* agree: reconciler path (hint_out≠NULL) or receiver path (hint_in≠NULL). */
+static uint32_t rnl32_agree(const int32_t s[RNL_N32], const int32_t c_other[RNL_N32],
+                              const uint32_t *hint_in, uint32_t *hint_out)
 {
     rnl32_poly_t c_lifted, k_poly;
-    int32_t k_bits[RNL_N32];
     rnl32_lift(c_lifted, c_other, RNL_P32, RNL_Q32);
     rnl32_poly_mul(k_poly, s, c_lifted);
-    rnl32_round(k_bits, k_poly, RNL_Q32, RNL_PP32);
-    return rnl32_bits_to_u32(k_bits);
+    if (!hint_in) {
+        *hint_out = rnl32_hint(k_poly);
+        return rnl32_reconcile(k_poly, *hint_out);
+    }
+    return rnl32_reconcile(k_poly, *hint_in);
 }
 
 /* ------------------------------------------------------------------ */
@@ -843,14 +874,46 @@ static void rnl_keygen_n(int32_t *s_out, int32_t *c_out, const int32_t *m_blind,
     rnl_round_n(c_out, ms, RNL_Q32, RNL_P32, n);
 }
 
-/* agree: K_raw = round_pp(s * lift(C_other)) packed to uint64_t */
-static uint64_t rnl_agree_n(const int32_t *s, const int32_t *c_other, int n)
+/* Peikert hint for generic-n (n≤64), packed to uint64_t. */
+static uint64_t rnl_hint_n(const int32_t *K_poly, int n)
 {
-    int32_t c_lifted[n], k_poly[n], k_bits[n];
+    uint64_t hint = 0;
+    int i;
+    for (i = 0; i < n; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
+        if (r % 2) hint |= ((uint64_t)1 << i);
+    }
+    return hint;
+}
+
+/* Reconcile generic-n K_poly using hint, return packed uint64_t key. */
+static uint64_t rnl_reconcile_n(const int32_t *K_poly, uint64_t hint, int n)
+{
+    const uint32_t qh = RNL_Q32 / 2;
+    uint64_t key = 0;
+    int i;
+    for (i = 0; i < n; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t h = (uint32_t)((hint >> i) & 1u);
+        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
+            key |= ((uint64_t)1 << i);
+    }
+    return key;
+}
+
+/* agree (generic n): reconciler (hint_out≠NULL) or receiver (hint_in≠NULL). */
+static uint64_t rnl_agree_n(const int32_t *s, const int32_t *c_other, int n,
+                              const uint64_t *hint_in, uint64_t *hint_out)
+{
+    int32_t c_lifted[n], k_poly[n];
     rnl_lift_n(c_lifted, c_other, RNL_P32, RNL_Q32, n);
     rnl_poly_mul_n(k_poly, s, c_lifted, n);
-    rnl_round_n(k_bits, k_poly, RNL_Q32, RNL_PP32, n);
-    return rnl_bits_to_u64(k_bits, n);
+    if (!hint_in) {
+        *hint_out = rnl_hint_n(k_poly, n);
+        return rnl_reconcile_n(k_poly, *hint_out, n);
+    }
+    return rnl_reconcile_n(k_poly, *hint_in, n);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1559,7 +1622,7 @@ static void test_hkex_rnl_correctness(void)
     int si, i, ok_raw, ok_sk, N, n;
     struct timespec t0;
     printf("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]\n");
-    printf("     (ring sizes {32,64}; production size is n=256)\n");
+    printf("     (ring sizes {32,64}; Peikert reconciliation -- expect 100%% agreement)\n");
     for (si = 0; si < 2; si++) {
         n = rnl_sizes[si]; ok_raw = 0; ok_sk = 0; N = TEST_ROUNDS(200);
         clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -1569,13 +1632,13 @@ static void test_hkex_rnl_correctness(void)
             for (i = 0; i < N; i++) {
                 int32_t s_A[RNL_N32], c_A[RNL_N32];
                 int32_t s_B[RNL_N32], c_B[RNL_N32];
-                uint32_t K_A, K_B;
+                uint32_t K_A, K_B, hint_A;
                 rnl32_rand_poly(a_rand);
                 rnl32_poly_add(m_blind, m_base, a_rand);
                 rnl32_keygen(s_A, c_A, m_blind);
                 rnl32_keygen(s_B, c_B, m_blind);
-                K_A = rnl32_agree(s_A, c_B);
-                K_B = rnl32_agree(s_B, c_A);
+                K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);   /* reconciler */
+                K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);   /* receiver */
                 if (K_A == K_B) ok_raw++;
                 if (nl_fscx_revolve_v1_32((K_A<<4)|(K_A>>28), K_A, NL_I32) ==
                     nl_fscx_revolve_v1_32((K_B<<4)|(K_B>>28), K_B, NL_I32)) ok_sk++;
@@ -1586,13 +1649,13 @@ static void test_hkex_rnl_correctness(void)
             rnl_m_poly_n(m_base64, 64);
             for (i = 0; i < N; i++) {
                 int32_t s_A64[64], c_A64[64], s_B64[64], c_B64[64];
-                uint64_t K_A64, K_B64;
+                uint64_t K_A64, K_B64, hint_A64;
                 rnl_rand_poly_n(a_rand64, 64);
                 rnl_poly_add_n(m_blind64, m_base64, a_rand64, 64);
                 rnl_keygen_n(s_A64, c_A64, m_blind64, 64);
                 rnl_keygen_n(s_B64, c_B64, m_blind64, 64);
-                K_A64 = rnl_agree_n(s_A64, c_B64, 64);
-                K_B64 = rnl_agree_n(s_B64, c_A64, 64);
+                K_A64 = rnl_agree_n(s_A64, c_B64, 64, NULL, &hint_A64);  /* reconciler */
+                K_B64 = rnl_agree_n(s_B64, c_A64, 64, &hint_A64, NULL);  /* receiver */
                 if (K_A64 == K_B64) ok_raw++;
                 if (nl_fscx_revolve_v1_64((K_A64<<8)|(K_A64>>56), K_A64, NL_I64) ==
                     nl_fscx_revolve_v1_64((K_B64<<8)|(K_B64>>56), K_B64, NL_I64)) ok_sk++;
@@ -1601,7 +1664,7 @@ static void test_hkex_rnl_correctness(void)
         }
         printf("    n=%3d  raw agree=%d/%d  sk agree=%d/%d  [%s]\n",
                n, ok_raw, N, ok_sk, N,
-               ok_raw >= N * 9 / 10 ? "PASS" : "FAIL");
+               ok_raw == N ? "PASS" : "FAIL");
     }
     putchar('\n');
 }
@@ -1955,21 +2018,25 @@ static void bench_hkex_rnl_handshake(void)
     printf("[25] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
     rnl32_m_poly(m_base);
     for (i = 0; i < 3; i++) {
+        uint32_t hint_A;
         rnl32_rand_poly(a_rand);
         rnl32_poly_add(m_blind, m_base, a_rand);
         rnl32_keygen(s_A, c_A, m_blind);
         rnl32_keygen(s_B, c_B, m_blind);
-        K_A = rnl32_agree(s_A, c_B); K_B = rnl32_agree(s_B, c_A);
+        K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
+        K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);
         sink ^= K_A ^ K_B;
     }
     clock_gettime(CLOCK_MONOTONIC, &t0);
     do {
         for (i = 0; i < 10; i++) {
+            uint32_t hint_A;
             rnl32_rand_poly(a_rand);
             rnl32_poly_add(m_blind, m_base, a_rand);
             rnl32_keygen(s_A, c_A, m_blind);
             rnl32_keygen(s_B, c_B, m_blind);
-            K_A = rnl32_agree(s_A, c_B); K_B = rnl32_agree(s_B, c_A);
+            K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
+            K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);
             sink ^= K_A ^ K_B;
         }
         ops += 10;

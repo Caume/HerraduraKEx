@@ -472,6 +472,22 @@ def _rnl_bits_to_bitarray(poly, pp, size):
             val |= (1 << i)
     return BitArray(size, val)
 
+def _rnl_hint(K_poly, q):
+    """Peikert cross-rounding: 1-bit hint per coefficient.
+    h[i] = floor((4*c + q/2) / q) % 4 % 2  (0 if c near 0 or q/2, 1 if near q/4 or 3q/4)"""
+    return [((4 * c + q // 2) // q) % 4 % 2 for c in K_poly]
+
+def _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits):
+    """Extract key bits using Peikert cross-rounding hint. Both parties call with
+    the same hint (from the reconciler) and their own K_poly to guarantee agreement."""
+    val = 0
+    qh = q // 2
+    for i, (c, h) in enumerate(zip(K_poly[:key_bits], hint[:key_bits])):
+        b = ((2 * c + h * qh + qh) // q) % pp
+        if b:
+            val |= (1 << i)
+    return val
+
 def _rnl_keygen(m_blind, n, q, p, b):
     """Generate one party's (s, C) key pair for HKEX-RNL.
     s: private CBD(b) polynomial; C: public rounded polynomial."""
@@ -480,13 +496,16 @@ def _rnl_keygen(m_blind, n, q, p, b):
     C  = _rnl_round(ms, q, p)
     return s, C
 
-def _rnl_agree(s, C_other, q, p, pp, n, key_bits):
-    """Compute raw key bits from private s and the other party's public C.
-    Returns a BitArray of *key_bits* bits."""
+def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
+    """Compute raw key bits with Peikert cross-rounding reconciliation.
+    Reconciler path (hint=None): generate hint, return (K_raw, hint).
+    Receiver path (hint provided): use hint, return K_raw."""
     C_lifted = _rnl_lift(C_other, p, q)
     K_poly   = _rnl_poly_mul(s, C_lifted, q, n)
-    K_bits   = _rnl_round(K_poly, q, pp)
-    return _rnl_bits_to_bitarray(K_bits, pp, key_bits)
+    if hint is None:
+        hint = _rnl_hint(K_poly, q)
+        return BitArray(key_bits, _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits)), hint
+    return BitArray(key_bits, _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits))
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +562,9 @@ HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   Setup:    a_rand random; m_blind = m(x) + a_rand  [m(x)=1+x+x^{n-1}]
   Alice:    s_A small private; C_A = round_p(m_blind * s_A)
   Bob:      s_B small private; C_B = round_p(m_blind * s_B)
-  Agree:    K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
+  Agree:    K_poly_A = s_A * lift(C_B);  hint_A = rnl_hint(K_poly_A)
+            K_raw_A = reconcile(K_poly_A, hint_A)  [Alice: reconciler]
+            K_raw_B = reconcile(K_poly_B, hint_A)  [Bob: uses Alice's hint]
   KDF:      seed = ROL(K_raw, n/8); sk = nl_fscx_revolve_v1(seed, K_raw, n/4)
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
@@ -682,8 +703,8 @@ def main():
     m_blind  = _rnl_poly_add(m_base, a_rand, RNLQ) # blinded polynomial
     s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
     s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
-    K_raw_A  = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
-    K_raw_B  = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
+    K_raw_A, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
+    K_raw_B          = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS, hint_A)
     sk_rnl_A = nl_fscx_revolve_v1(K_raw_A.rotated(KEYBITS // 8), K_raw_A, KEYBITS // 4)
     sk_rnl_B = nl_fscx_revolve_v1(K_raw_B.rotated(KEYBITS // 8), K_raw_B, KEYBITS // 4)
     print(f"sk (Alice): {sk_rnl_A.hex}")
@@ -692,7 +713,7 @@ def main():
         print("+ raw key bits agree; shared session key established!")
     else:
         bits_diff = bin(K_raw_A.uint ^ K_raw_B.uint).count('1')
-        print(f"- raw key disagrees ({bits_diff} bit(s)) — rounding noise (retry)")
+        print(f"- raw key disagrees ({bits_diff} bit(s)) — reconciliation failed!")
 
     print("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
     print("    (GF DLP still present; NL hardens linear challenge preimage)")

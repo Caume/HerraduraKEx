@@ -731,16 +731,51 @@ static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
     rnl_round(c_out, ms, RNL_Q, RNL_P);
 }
 
-/* agree: K_raw = round_pp(s * lift(C_other)), packed into BitArray */
+/* Peikert cross-rounding: 1-bit hint per coefficient packed into hint[RNL_N/8]. */
+static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
+{
+    int i;
+    memset(hint, 0, RNL_N / 8);
+    for (i = 0; i < RNL_N; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q / 2) / RNL_Q) % 4;
+        if (r % 2)
+            hint[i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+/* Extract KEYBITS key bits using Peikert cross-rounding hint. */
+static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
+                                const uint8_t hint[RNL_N / 8])
+{
+    int i;
+    const uint32_t qh = RNL_Q / 2;
+    memset(out->b, 0, sizeof(out->b));
+    for (i = 0; i < RNL_N && i < KEYBITS; i++) {
+        uint32_t c = (uint32_t)K_poly[i];
+        uint32_t h = (hint[i / 8] >> (i % 8)) & 1u;
+        uint32_t b = (uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q) % RNL_PP;
+        if (b)
+            out->b[i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+/* agree: compute raw key with Peikert reconciliation.
+   Reconciler path (hint_in=NULL, hint_out≠NULL): generate hint, use own hint.
+   Receiver path  (hint_in≠NULL):                 use provided hint.           */
 static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
-                      const int32_t c_other[RNL_N])
+                      const int32_t c_other[RNL_N],
+                      const uint8_t *hint_in, uint8_t *hint_out)
 {
     rnl_poly_t c_lifted, k_poly;
-    int32_t k_bits[RNL_N];
     rnl_lift(c_lifted, c_other, RNL_P, RNL_Q);
     rnl_poly_mul(k_poly, s, c_lifted);
-    rnl_round(k_bits, k_poly, RNL_Q, RNL_PP);
-    rnl_bits_to_ba(out, k_bits);
+    if (!hint_in) {
+        rnl_hint(hint_out, k_poly);
+        rnl_reconcile_bits(out, k_poly, hint_out);
+    } else {
+        rnl_reconcile_bits(out, k_poly, hint_in);
+    }
 }
 
 /*
@@ -783,8 +818,8 @@ HKEX-RNL (Ring-LWR key exchange, n=256):
     Shared m_blind = m(x) + a_rand in Z_q[x]/(x^n+1)
     Alice: s_A small, C_A = round_p(m_blind * s_A)
     Bob:   s_B small, C_B = round_p(m_blind * s_B)
-    K_A = round_pp(s_A * lift(C_B));  K_B = round_pp(s_B * lift(C_A))
-    K_A ~= K_B (with high probability)
+    K_poly_A = s_A * lift(C_B);  hint_A = rnl_hint(K_poly_A)  [Alice: reconciler]
+    K_raw_A = reconcile(K_poly_A, hint_A);  K_raw_B = reconcile(K_poly_B, hint_A)
     KDF: seed=ba_rol_k(K,n/8); sk=nl_fscx_revolve_v1(seed,K,n/4)
 
 HPKS-NL (NL-hardened Schnorr, 256-bit):
@@ -954,10 +989,11 @@ int main(void)
         rnl_m_poly(m_base);
         rnl_rand_poly(a_rand_poly, urnd);
         rnl_poly_add(m_blind, m_base, a_rand_poly);
+        uint8_t hint_A[RNL_N / 8];
         rnl_keygen(s_A_poly, C_A, m_blind, urnd);
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
-        rnl_agree(&KA, s_A_poly, C_B);
-        rnl_agree(&KB, s_B_poly, C_A);
+        rnl_agree(&KA, s_A_poly, C_B, NULL, hint_A);   /* Alice: reconciler */
+        rnl_agree(&KB, s_B_poly, C_A, hint_A, NULL);   /* Bob: receiver */
         BitArray seedA, seedB;
         ba_rol_k(&seedA, &KA, KEYBYTES);           /* ROL(K, n/8) = ROL(K, 32) */
         nl_fscx_revolve_v1_ba(&skA_nl, &seedA, &KA, I_VALUE);

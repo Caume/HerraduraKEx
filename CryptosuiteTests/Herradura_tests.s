@@ -38,14 +38,14 @@ fmt_t3:   .asciz "[3] HPKS Schnorr: g^s * C^e == R (20 iterations)\n"
 fmt_t4:   .asciz "[4] HPKE El Gamal: D == plaintext (20 iterations)\n"
 fmt_t5:   .asciz "[5] NL-FSCX v2 inverse: v2_inv(v2(A,B),B) == A (20 iterations)\n"
 fmt_t6:   .asciz "[6] HSKE-NL-A2 revolve-mode: D == plaintext (20 iterations)\n"
-fmt_t7:   .asciz "[7] HKEX-RNL key agreement: KA == KB (10 trials, pass >= 8)\n"
+fmt_t7:   .asciz "[7] HKEX-RNL key agreement: KA == KB (10 trials, Peikert reconciliation -- expect 100%)\n"
 fmt_t8:   .asciz "[8] HPKS-NL Schnorr: NL challenge g^s*C^e == R (20 iterations)\n"
 fmt_t9:   .asciz "[9] HPKE-NL: D == plaintext, NL-FSCX v2 (20 iterations)\n"
 fmt_t10:  .asciz "[10] HPKS-NL Eve resistance: random forgery rejected (20 trials)\n"
 
 fmt_p20:  .asciz "    20 / 20 passed  [PASS]\n"
 fmt_p100: .asciz "    100 / 100 passed  [PASS]\n"
-fmt_prnl: .asciz "    >= 8 / 10 raw keys agreed  [PASS]\n"
+fmt_prnl: .asciz "    10 / 10 agreed (Peikert reconciliation)  [PASS]\n"
 fmt_fail: .asciz "    FAILED  [FAIL]\n"
 
 lcg_state: .word 0x12345678
@@ -105,6 +105,7 @@ t_E_e:     .space 4
 t_dec_key: .space 4
 t_KA:      .space 4
 t_KB:      .space 4
+t_hint_A:  .space 4
 
 rnl_m_base:  .space 128
 rnl_a_rand:  .space 128
@@ -510,12 +511,16 @@ t7_loop:
     bl      rnl_keygen
     ldr     r0, =rnl_s_A
     ldr     r1, =rnl_C_B
-    bl      rnl_agree
+    bl      rnl_agree_full          @ r0=KA, r1=hint_A
     ldr     r3, =t_KA
     str     r0, [r3]
+    ldr     r3, =t_hint_A
+    str     r1, [r3]
     ldr     r0, =rnl_s_B
     ldr     r1, =rnl_C_A
-    bl      rnl_agree
+    ldr     r2, =t_hint_A
+    ldr     r2, [r2]
+    bl      rnl_agree_recv          @ r0=KB
     ldr     r3, =t_KB
     str     r0, [r3]
     ldr     r0, =t_KA
@@ -528,7 +533,7 @@ t7_loop:
 t7_skip:
     subs    r10, r10, #1
     bne     t7_loop
-    cmp     r11, #8
+    cmp     r11, #10
     blt     t7_fail
     ldr     r0, =fmt_prnl
     bl      printf
@@ -1478,18 +1483,107 @@ rnl_keygen:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* rnl_agree: r0=s, r1=C_other -> r0=uint32 key                       */
+/* rnl_hint32: r0=K_poly -> r0=hint_uint32                            */
 /* ------------------------------------------------------------------ */
     .thumb_func
-rnl_agree:
+rnl_hint32:
+    push    {r4-r9, lr}
+    mov     r4, r0              @ r4 = K_poly
+    mov     r5, #0              @ r5 = hint result
+    mov     r6, #0              @ r6 = i
+    ldr     r8, =0x4000         @ r8 = q/4 = 16384
+    ldr     r9, =0x8000         @ r9 = q/2 = 32768
+rh32_loop:
+    cmp     r6, #RNL_N
+    bge     rh32_done
+    ldr     r7, [r4, r6, lsl #2]    @ r7 = c
+    cmp     r7, r8              @ c < q/4 → quarter=0, h=0
+    blt     rh32_next
+    cmp     r7, r9              @ c < q/2 → quarter=1, h=1
+    bge     rh32_upper
+    mov     r0, #1
+    lsl     r0, r0, r6
+    orr     r5, r5, r0
+    b       rh32_next
+rh32_upper:
+    add     r0, r8, r9          @ r0 = 3q/4 = 49152
+    cmp     r7, r0              @ c < 3q/4 → quarter=2, h=0
+    blt     rh32_next
+    mov     r0, #1              @ quarter=3, h=1
+    lsl     r0, r0, r6
+    orr     r5, r5, r0
+rh32_next:
+    add     r6, r6, #1
+    b       rh32_loop
+rh32_done:
+    mov     r0, r5
+    pop     {r4-r9, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* rnl_reconcile32: r0=K_poly, r1=hint -> r0=key_uint32               */
+/*   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2                    */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+rnl_reconcile32:
+    push    {r4-r9, lr}
+    mov     r4, r0              @ r4 = K_poly
+    mov     r5, r1              @ r5 = hint
+    mov     r7, #0              @ r7 = key result
+    mov     r6, #0              @ r6 = i
+    ldr     r8, =0x8000         @ r8 = q/2 = 32768
+    ldr     r9, =RNL_Q          @ r9 = q = 65537
+rc32_loop:
+    cmp     r6, #RNL_N
+    bge     rc32_done
+    ldr     r0, [r4, r6, lsl #2]    @ r0 = c
+    lsl     r0, r0, #1              @ r0 = 2*c
+    lsr     r1, r5, r6
+    and     r1, r1, #1              @ r1 = h
+    lsl     r1, r1, #15             @ r1 = h * 32768
+    add     r0, r0, r1              @ r0 = 2*c + h*32768
+    add     r0, r0, r8              @ r0 = 2*c + h*32768 + 32768
+    cmp     r0, r9
+    blt     rc32_next               @ val < q → b=0
+    sub     r0, r0, r9
+    cmp     r0, r9
+    bge     rc32_upper
+    mov     r0, #1                  @ val in [q,2q) → b=1
+    lsl     r0, r0, r6
+    orr     r7, r7, r0
+    b       rc32_next
+rc32_upper:
+    sub     r0, r0, r9
+    cmp     r0, r9
+    blt     rc32_next               @ val in [2q,3q) → b=0
+    mov     r0, #1                  @ val in [3q,4q) → b=1
+    lsl     r0, r0, r6
+    orr     r7, r7, r0
+rc32_next:
+    add     r6, r6, #1
+    b       rc32_loop
+rc32_done:
+    mov     r0, r7
+    pop     {r4-r9, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* rnl_agree_full: r0=s, r1=C_other -> r0=key, r1=hint  [reconciler] */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+rnl_agree_full:
     push    {r4-r6, lr}
-    mov     r4, r0
-    mov     r5, r1
+    mov     r4, r0              @ r4 = s
+    mov     r5, r1              @ r5 = C_other
+
     ldr     r0, =rnl_tmp
     mov     r1, r5
     ldr     r2, =RNL_P
     ldr     r3, =RNL_Q
     bl      rnl_lift
+
     ldr     r0, =rnl_h_ptr
     ldr     r1, =rnl_tmp2
     str     r1, [r0]
@@ -1498,15 +1592,52 @@ rnl_agree:
     ldr     r0, =rnl_g_ptr
     ldr     r1, =rnl_tmp
     str     r1, [r0]
-    bl      rnl_poly_mul
-    ldr     r0, =rnl_tmp
-    ldr     r1, =rnl_tmp2
-    ldr     r2, =RNL_Q
-    ldr     r3, =RNL_PP
-    bl      rnl_round
-    ldr     r0, =rnl_tmp
-    bl      rnl_bits32
+    bl      rnl_poly_mul        @ K_poly now in rnl_tmp2
+
+    ldr     r0, =rnl_tmp2
+    bl      rnl_hint32          @ r0 = hint
+    mov     r6, r0              @ r6 = hint
+
+    ldr     r0, =rnl_tmp2
+    mov     r1, r6
+    bl      rnl_reconcile32     @ r0 = key
+
+    mov     r1, r6              @ r1 = hint
     pop     {r4-r6, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* rnl_agree_recv: r0=s, r1=C_other, r2=hint -> r0=key  [receiver]   */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+rnl_agree_recv:
+    push    {r4-r5, lr}
+    mov     r4, r0              @ r4 = s
+    mov     r5, r2              @ r5 = hint (save r2 before clobbered)
+
+    ldr     r0, =rnl_tmp
+    @ r1 = C_other (still valid)
+    ldr     r2, =RNL_P
+    ldr     r3, =RNL_Q
+    bl      rnl_lift
+
+    ldr     r0, =rnl_h_ptr
+    ldr     r1, =rnl_tmp2
+    str     r1, [r0]
+    ldr     r0, =rnl_f_ptr
+    str     r4, [r0]
+    ldr     r0, =rnl_g_ptr
+    ldr     r1, =rnl_tmp
+    str     r1, [r0]
+    bl      rnl_poly_mul        @ K_poly now in rnl_tmp2
+
+    ldr     r0, =rnl_tmp2
+    mov     r1, r5
+    bl      rnl_reconcile32     @ r0 = key
+
+    pop     {r4-r5, pc}
+
     .ltorg
 
     .section .note.GNU-stack,"",%progbits

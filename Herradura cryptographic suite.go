@@ -546,11 +546,45 @@ func rnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
 	return s, c
 }
 
-func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int) *BitArray {
+// rnlHint returns the Peikert cross-rounding hint: 1 bit per coefficient.
+func rnlHint(kPoly []int, q int) []byte {
+	hint := make([]byte, (len(kPoly)+7)/8)
+	for i, c := range kPoly {
+		r := (4*c+q/2)/q % 4
+		if r%2 != 0 {
+			hint[i/8] |= 1 << (uint(i) % 8)
+		}
+	}
+	return hint
+}
+
+// rnlReconcileBits extracts keyBits key bits from kPoly using the reconciliation hint.
+func rnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
+	qh := q / 2
+	val := new(big.Int)
+	for i := 0; i < keyBits && i < len(kPoly); i++ {
+		c := kPoly[i]
+		h := int((hint[i/8] >> (uint(i) % 8)) & 1)
+		if (2*c+h*qh+qh)/q%pp != 0 {
+			val.SetBit(val, i, 1)
+		}
+	}
+	ba := &BitArray{size: keyBits}
+	ba.val.Set(val)
+	return ba
+}
+
+// rnlAgree computes raw key bits with Peikert cross-rounding reconciliation.
+// Reconciler path (hintIn=nil): generate hint, return (K_raw, hint).
+// Receiver path  (hintIn≠nil): use provided hint, return (K_raw, nil).
+func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArray, []byte) {
 	cLifted := rnlLift(cOther, p, q)
 	kPoly := rnlPolyMul(s, cLifted, q, n)
-	kBits := rnlRound(kPoly, q, pp)
-	return rnlBitsToBitArray(kBits, pp, keyBits)
+	if hintIn == nil {
+		hintIn = rnlHint(kPoly, q)
+		return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), hintIn
+	}
+	return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -685,8 +719,8 @@ func main() {
 	mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
 	sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 	sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-	kRawA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, n)
-	kRawB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, n)
+	kRawA, hintA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, n, nil)
+	kRawB, _     := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, n, hintA)
 	skRnlA := NlFscxRevolveV1(kRawA.RotateLeft(n/8), kRawA, n/4)
 	skRnlB := NlFscxRevolveV1(kRawB.RotateLeft(n/8), kRawB, n/4)
 	fmt.Printf("sk (Alice): %x\n", skRnlA)
@@ -695,7 +729,7 @@ func main() {
 		fmt.Println("+ raw key bits agree; shared session key established!")
 	} else {
 		diffBits := new(big.Int).Xor(&kRawA.val, &kRawB.val)
-		fmt.Printf("- raw key disagrees (%d bit(s)) — rounding noise (retry)\n",
+		fmt.Printf("- raw key disagrees (%d bit(s)) — reconciliation failed!\n",
 			countBits(diffBits))
 	}
 

@@ -68,6 +68,7 @@ section .data
     val_dec_nl  dd 0
     val_KA      dd 0
     val_KB      dd 0
+    val_hint_A  dd 0
     val_sk_rnl  dd 0
 
     ; rnl_poly_mul implicit argument pointers
@@ -653,16 +654,18 @@ _start:
     mov  ecx, rnl_m_blind
     call rnl_keygen
 
-    ; KA = rnl_agree(rnl_s_A, rnl_C_B)
+    ; KA, hint_A = rnl_agree_full(rnl_s_A, rnl_C_B)
     mov  eax, rnl_s_A
     mov  ebx, rnl_C_B
-    call rnl_agree
+    call rnl_agree_full     ; EAX=KA, EDX=hint_A
     mov  [val_KA], eax
+    mov  [val_hint_A], edx
 
-    ; KB = rnl_agree(rnl_s_B, rnl_C_A)
+    ; KB = rnl_agree_recv(rnl_s_B, rnl_C_A, hint_A)
     mov  eax, rnl_s_B
     mov  ebx, rnl_C_A
-    call rnl_agree
+    mov  ecx, [val_hint_A]
+    call rnl_agree_recv     ; EAX=KB
     mov  [val_KB], eax
 
     ; skA = nl_fscx_revolve_v1(ROL32(KA,4), KA, I_VALUE)
@@ -1893,66 +1896,176 @@ rnl_keygen:
     ret
 
 ; ============================================================
-; rnl_agree: EAX=s, EBX=C_other --> EAX=uint32 key
-;   lift(C_other); mul(s, lifted); round(PP); bits32
+; rnl_hint32: EAX=K_poly -> EAX=hint_uint32
+;   For each coeff c: quarter = c / (q/4); h = quarter % 2
 ; ============================================================
-rnl_agree:
+rnl_hint32:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    mov  esi, eax
+    xor  edi, edi
+    xor  ecx, ecx
+.rh32_loop:
+    cmp  ecx, RNL_N
+    jge  .rh32_done
+    mov  eax, [esi + ecx*4]
+    cmp  eax, 0x4000         ; q/4
+    jl   .rh32_next
+    cmp  eax, 0x8000         ; q/2
+    jge  .rh32_upper
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+    jmp  .rh32_next
+.rh32_upper:
+    cmp  eax, 0xC000         ; 3q/4
+    jl   .rh32_next
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+.rh32_next:
+    inc  ecx
+    jmp  .rh32_loop
+.rh32_done:
+    mov  eax, edi
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    ret
+
+; ============================================================
+; rnl_reconcile32: EAX=K_poly, EBX=hint -> EAX=key_uint32
+;   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2
+; ============================================================
+rnl_reconcile32:
     push ebx
     push ecx
     push edx
     push esi
     push edi
     push ebp
-    mov  esi, eax       ; s
-    mov  edi, ebx       ; C_other
-
-    ; rnl_lift(rnl_tmp, C_other, P, Q)
-    mov  ebp, rnl_tmp   ; out
-    mov  esi, edi       ; in = C_other
-    mov  ecx, RNL_P
-    mov  edx, RNL_Q
-    call rnl_lift
-
-    ; rnl_poly_mul(rnl_tmp2, s, rnl_tmp)
-    mov  dword [rnl_h_ptr], rnl_tmp2
-    mov  esi, [esp+4]   ; restore s... hmm stack is shifted
-    ; use saved esi from stack: esi was pushed 5th from bottom
-    ; Actually let me save s separately
+    mov  esi, eax
+    mov  ebp, ebx
+    xor  edi, edi
+    xor  ecx, ecx
+.rc32_loop:
+    cmp  ecx, RNL_N
+    jge  .rc32_done
+    mov  eax, [esi + ecx*4]  ; c
+    shl  eax, 1              ; 2*c
+    mov  edx, ebp
+    shr  edx, cl
+    and  edx, 1              ; h
+    shl  edx, 15             ; h * 32768
+    add  eax, edx            ; 2*c + h*32768
+    add  eax, 0x8000         ; + 32768
+    ; b = (eax / 65537) % 2; eax/65537 ∈ {0,1,2,3}
+    cmp  eax, RNL_Q
+    jl   .rc32_next          ; val < q → b=0
+    sub  eax, RNL_Q
+    cmp  eax, RNL_Q
+    jge  .rc32_upper
+    ; val in [q, 2q) → b=1
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+    jmp  .rc32_next
+.rc32_upper:
+    sub  eax, RNL_Q
+    cmp  eax, RNL_Q
+    jl   .rc32_next          ; val in [2q, 3q) → b=0
+    ; val in [3q, 4q) → b=1
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+.rc32_next:
+    inc  ecx
+    jmp  .rc32_loop
+.rc32_done:
+    mov  eax, edi
     pop  ebp
     pop  edi
     pop  esi
     pop  edx
     pop  ecx
     pop  ebx
-    ; esi = s, edi = C_other
+    ret
+
+; ============================================================
+; rnl_agree_full: EAX=s, EBX=C_other -> EAX=key, EDX=hint
+; ============================================================
+rnl_agree_full:
     push ebx
-    push ecx
-    push edx
     push esi
     push edi
     push ebp
-    ; now esi = s (5th push from current esp)
-    mov  esi, [esp + 5*4]  ; recover s
+    sub  esp, 4                 ; [esp] = hint slot
+
+    mov  edi, eax               ; edi = s  (rnl_lift preserves edi)
+    mov  esi, ebx               ; esi = C_other
+
+    mov  ebp, rnl_tmp
+    mov  ecx, RNL_P
+    mov  edx, RNL_Q
+    call rnl_lift
+
     mov  dword [rnl_h_ptr], rnl_tmp2
-    mov  [rnl_f_ptr], esi
+    mov  [rnl_f_ptr], edi
     mov  dword [rnl_g_ptr], rnl_tmp
     call rnl_poly_mul
 
-    ; rnl_round(rnl_tmp, rnl_tmp2, Q, PP)
-    mov  ebp, rnl_tmp
-    mov  esi, rnl_tmp2
-    mov  ecx, RNL_Q
-    mov  edx, RNL_PP
-    call rnl_round
+    mov  eax, rnl_tmp2
+    call rnl_hint32
+    mov  [esp], eax
 
-    ; rnl_bits32(rnl_tmp) -> eax
-    mov  eax, rnl_tmp
-    call rnl_bits32
+    mov  eax, rnl_tmp2
+    mov  ebx, [esp]
+    call rnl_reconcile32
 
+    mov  edx, [esp]
+    add  esp, 4
     pop  ebp
     pop  edi
     pop  esi
-    pop  edx
-    pop  ecx
+    pop  ebx
+    ret
+
+; ============================================================
+; rnl_agree_recv: EAX=s, EBX=C_other, ECX=hint -> EAX=key
+; ============================================================
+rnl_agree_recv:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    sub  esp, 4                 ; [esp] = hint slot
+
+    mov  edi, eax               ; edi = s  (rnl_lift preserves edi)
+    mov  esi, ebx               ; esi = C_other
+    mov  [esp], ecx             ; save hint
+
+    mov  ebp, rnl_tmp
+    mov  ecx, RNL_P
+    mov  edx, RNL_Q
+    call rnl_lift
+
+    mov  dword [rnl_h_ptr], rnl_tmp2
+    mov  [rnl_f_ptr], edi
+    mov  dword [rnl_g_ptr], rnl_tmp
+    call rnl_poly_mul
+
+    mov  eax, rnl_tmp2
+    mov  ebx, [esp]
+    call rnl_reconcile32
+
+    add  esp, 4
+    pop  ebp
+    pop  edi
+    pop  esi
     pop  ebx
     ret

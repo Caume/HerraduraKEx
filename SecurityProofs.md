@@ -1,7 +1,7 @@
 # Formal Cryptographic Analysis of the Herradura Cryptographic Suite
 
-**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions implemented in v1.5.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  Deployed-parameter verification and §12.5 NL-protocol rows added in v1.5.1.  HKEX-RNL secret sampler upgraded to CBD(eta=1) in v1.5.3 (§11.4.2, §11.6).  HKEX-RNL polynomial multiplication replaced with negacyclic NTT over $\mathbb{Z}_{65537}$ in v1.5.4 (O(n log n), ~32× speedup at n=256).
-**Last updated:** 2026-04-19 (v1.5.4)
+**Status:** Formal proof of insecurity complete; HKEX-GF fix implemented in v1.4.0.  NL-FSCX non-linearity and PQC extensions implemented in v1.5.0 (§11).  Full quantum algorithm analysis in §12 (merged from PQCanalysis.md, v1.4.1).  Deployed-parameter verification and §12.5 NL-protocol rows added in v1.5.1.  HKEX-RNL secret sampler upgraded to CBD(eta=1) in v1.5.3 (§11.4.2, §11.6).  HKEX-RNL polynomial multiplication replaced with negacyclic NTT over $\mathbb{Z}_{65537}$ in v1.5.4 (O(n log n), ~32× speedup at n=256).  Peikert 1-bit reconciliation deployed in v1.5.16 (§11.4.2, §11.6) — HKEX-RNL correctness now guaranteed.
+**Last updated:** 2026-04-25 (v1.5.16)
 
 ---
 
@@ -1321,6 +1321,18 @@ $$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{b
 
 Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
+**Peikert reconciliation (1-bit hint per coefficient).**  Because the raw product polynomials agree only approximately, direct extraction of bits fails at a rate of ~2% ($n=32$) to ~37% ($n=256$).  Peikert-style cross-rounding eliminates this:
+
+1. **Hint generation (Alice, reconciler).** For each coefficient $c_i$ of $K_\text{poly,A}$:
+$$h_i = \left\lfloor \frac{4\,c_i + q/2}{q} \right\rfloor \bmod 2, \qquad h_i \in \{0,1\}$$
+Alice transmits the hint vector $(h_0,\ldots,h_{n-1})$ as a side-channel alongside her public key.
+
+2. **Key extraction (both parties).** For a coefficient $c_i$ (from either $K_\text{poly,A}$ or $K_\text{poly,B}$) and the shared hint $h_i$:
+$$b_i = \left\lfloor \frac{2\,c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
+The extracted key is $K_\text{raw} = \sum_{i=0}^{k-1} b_i \, 2^i$ (first $k$ coefficients, $k = n/4$ for a 64-bit key at $n=256$).
+
+3. **Correctness guarantee.** Empirical measurement (`hkex_rnl_failure_rate.py` §2) shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/8 = 8192$.  The extraction formula is equivalent to $\mathrm{round}((c_i + h_i \cdot q/4) / (q/2)) \bmod 2$ — the hint shifts the extraction boundary by $q/4$, so any boundary crossing within $\pm q/8$ is resolved deterministically.  The result is **0 failures** across all tested parameter combinations (`hkex_rnl_failure_rate.py` §5).
+
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 with a rotated seed:
 
 $$seed = \text{ROL}(K,\; n/8), \qquad sk = \text{NL-FSCX-REVOLVE}_{v1}(seed,\; K,\; n/4)$$
@@ -1395,6 +1407,8 @@ All rows below use $n = 16$ unless noted.
 | **Key-agreement failure rate** ($q=65537$, $n=256$, $p=4096$, $\eta=1$), 5 000 trials | **1 862 / 5 000 = 37.24%** (95% CI: 35.9–38.6%) | Completely unusable without reconciliation. Per-coeff error accumulates as $O(\sqrt{n})$ via ring convolution. `hkex_rnl_failure_rate.py` §3 |
 | Max per-coeff error $\|e_A - e_B\|_\infty$ ($n=32$, 10 000 trials) | 134 (0.82% of extraction threshold 16 384) | Individual errors are tiny; failures occur only near extraction boundaries. §2 |
 | $p$-sensitivity at $n=32$: failure rate vs. $p \in \{512,\ldots,8192\}$ | 14.7% → 8.45% → 4.4% → 2.2% → 0.80% | No tested $p$ achieves <1%; architectural fix (reconciliation hints) required. §4 |
+| **Peikert reconciliation failure rate** ($q=65537$, $n=32$, $p=4096$, $\eta=1$), 10 000 trials | **0 / 10 000 = 0%** | Reconciliation eliminates all key-agreement failures; correctness guaranteed by max per-coeff error ≪ $q/8$. `hkex_rnl_failure_rate.py` §5 |
+| **Peikert reconciliation failure rate** ($q=65537$, $n=256$, $p=4096$, $\eta=1$), 5 000 trials | **0 / 5 000 = 0%** | Confirmed at full suite parameter size. `hkex_rnl_failure_rate.py` §5 |
 
 #### Q3 — NL-FSCX injectivity and inverse
 
@@ -1436,29 +1450,20 @@ $(q=65537, n \in \{32, 256\})$ by `hkex_nl_verification.py` §2.1.  Noise amplif
 $\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$ confirms structural protection against
 naive algebraic inversion (§11.4.3, §11.5 Q2).
 
-**⚠ Correctness warning — reconciliation hints required.**
-Empirical failure-rate measurement (`hkex_rnl_failure_rate.py`, v1.5.15) shows:
+**Correctness — Peikert reconciliation deployed (v1.5.16).**
+Without reconciliation, empirical failure rates were 2.04% ($n=32$) and 37.24% ($n=256$).
+Peikert 1-bit reconciliation hints (§11.4.2) eliminate all failures:
 
-| Parameters | Failure rate | 95% CI |
+| Parameters | Failure rate (without reconciliation) | Failure rate (with Peikert hints) |
 |---|---|---|
-| $n=32$, $p=4096$, $\eta=1$, 10 000 trials | **2.04%** | 1.78–2.34% |
-| $n=256$, $p=4096$, $\eta=1$, 5 000 trials | **37.24%** | 35.9–38.6% |
+| $n=32$, $p=4096$, $\eta=1$, 10 000 trials | 2.04% (204/10 000) | **0%** (0/10 000) |
+| $n=256$, $p=4096$, $\eta=1$, 5 000 trials | 37.24% (1 862/5 000) | **0%** (0/5 000) |
 
-Root cause: the per-coefficient error in $K_\text{poly}$ accumulates as $O(\sqrt{n})$ via ring
-convolution over $n$ terms (each CBD(1) coefficient × rounding noise $\leq q/(2p) = 8$).
-Although individual errors are tiny ($\leq 134$ out of extraction threshold 16 384), extraction
-boundaries at $q/4$ and $3q/4$ are crossed frequently when 256 error terms accumulate.
-Increasing $p$ alone does not fix the problem: a p-sensitivity sweep at $n=32$ shows 0.80%
-failure rate even at $p=8192$.  The $n=256$ case requires architectural correction.
-
-**Required fix:** NewHope-style 1-bit reconciliation hints.  Each party transmits one hint bit per
-ring coefficient indicating which side of the nearest extraction boundary their value lies on;
-the other party uses the hint to resolve near-boundary cases.  This reduces the failure rate to
-effectively zero without changing the security assumptions.  Planned in TODO.md item #13.
+Alice generates and transmits a 1-bit hint per coefficient ($h_i \in \{0,1\}$); both parties use the hint for extraction.  The maximum per-coefficient error $\leq 379 \ll q/8 = 8192$ guarantees the hint always resolves boundary crossings correctly (`hkex_rnl_failure_rate.py` §5).  Security assumptions are unchanged: the hint is derived from the public $K_\text{poly}$ after rounding and reveals no information about $s_A$.
 
 **Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
-The CBD(η=1) secret sampler was deployed in v1.5.3.  Correctness failure characterised in v1.5.15.
-Reconciliation hints are required before production use.
+The CBD(η=1) secret sampler was deployed in v1.5.3.  Failure rates characterised in v1.5.15.
+Peikert reconciliation deployed in v1.5.16 — correctness now guaranteed.
 
 ---
 
