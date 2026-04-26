@@ -68,7 +68,7 @@ section .data
     t5_hdr_l    equ $-t5_hdr
     t6_hdr      db "[6] HSKE-NL-A2 revolve-mode correctness: D == plaintext (20 iterations)", 10
     t6_hdr_l    equ $-t6_hdr
-    t7_hdr      db "[7] HKEX-RNL key agreement: KA == KB (10 trials, pass >= 8)", 10
+    t7_hdr      db "[7] HKEX-RNL key agreement: KA == KB (10 trials, Peikert reconciliation -- expect 100%)", 10
     t7_hdr_l    equ $-t7_hdr
     t8_hdr      db "[8] HPKS-NL Schnorr correctness: g^s * C^e == R with NL challenge (20 iter)", 10
     t8_hdr_l    equ $-t8_hdr
@@ -81,7 +81,7 @@ section .data
     pass20_l    equ $-pass20
     pass100     db "    100 / 100 passed  [PASS]", 10
     pass100_l   equ $-pass100
-    pass_rnl    db "    >= 8 / 10 raw keys agreed  [PASS]", 10
+    pass_rnl    db "    10 / 10 agreed (Peikert reconciliation)  [PASS]", 10
     pass_rnl_l  equ $-pass_rnl
     fail_msg    db "    FAILED  [FAIL]", 10
     fail_msg_l  equ $-fail_msg
@@ -113,6 +113,7 @@ section .bss
     ; RNL scratch
     t_KA        resd 1
     t_KB        resd 1
+    t_hint_A    resd 1
     t_ctr       resd 1    ; loop counter (memory-saved)
 
     ; HKEX-RNL polynomial arrays (RNL_N dwords = 128 bytes each)
@@ -524,16 +525,18 @@ _start:
     mov  ecx, rnl_m_blind
     call rnl_keygen
 
-    ; KA = agree(s_A, C_B)
+    ; KA, hint_A = rnl_agree_full(s_A, C_B)
     mov  eax, rnl_s_A
     mov  ebx, rnl_C_B
-    call rnl_agree
+    call rnl_agree_full         ; EAX=KA, EDX=hint_A
     mov  [t_KA], eax
+    mov  [t_hint_A], edx
 
-    ; KB = agree(s_B, C_A)
+    ; KB = rnl_agree_recv(s_B, C_A, hint_A)
     mov  eax, rnl_s_B
     mov  ebx, rnl_C_A
-    call rnl_agree
+    mov  ecx, [t_hint_A]
+    call rnl_agree_recv         ; EAX=KB
     mov  [t_KB], eax
 
     mov  eax, [t_KA]
@@ -544,7 +547,7 @@ _start:
     dec  dword [t_ctr]
     jnz  near .t7_loop
 
-    cmp  ebp, 8
+    cmp  ebp, 10
     jl   .t7_fail
     mov  eax, pass_rnl
     mov  ecx, pass_rnl_l
@@ -1700,9 +1703,52 @@ rnl_keygen:
     ret
 
 ; ============================================================
-; rnl_agree: EAX=s, EBX=C_other --> EAX=uint32 key
+; rnl_hint32: EAX=K_poly -> EAX=hint_uint32
 ; ============================================================
-rnl_agree:
+rnl_hint32:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    mov  esi, eax
+    xor  edi, edi
+    xor  ecx, ecx
+.rh32_loop:
+    cmp  ecx, RNL_N
+    jge  .rh32_done
+    mov  eax, [esi + ecx*4]
+    cmp  eax, 0x4000
+    jl   .rh32_next
+    cmp  eax, 0x8000
+    jge  .rh32_upper
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+    jmp  .rh32_next
+.rh32_upper:
+    cmp  eax, 0xC000
+    jl   .rh32_next
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+.rh32_next:
+    inc  ecx
+    jmp  .rh32_loop
+.rh32_done:
+    mov  eax, edi
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    ret
+
+; ============================================================
+; rnl_reconcile32: EAX=K_poly, EBX=hint -> EAX=key_uint32
+;   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2
+; ============================================================
+rnl_reconcile32:
     push ebx
     push ecx
     push edx
@@ -1710,46 +1756,119 @@ rnl_agree:
     push edi
     push ebp
     mov  esi, eax
-    mov  edi, ebx
-
-    mov  ebp, rnl_tmp
-    mov  esi, edi
-    mov  ecx, RNL_P
-    mov  edx, RNL_Q
-    call rnl_lift
-
+    mov  ebp, ebx
+    xor  edi, edi
+    xor  ecx, ecx
+.rc32_loop:
+    cmp  ecx, RNL_N
+    jge  .rc32_done
+    mov  eax, [esi + ecx*4]  ; c
+    shl  eax, 1              ; 2*c
+    mov  edx, ebp
+    shr  edx, cl
+    and  edx, 1              ; h
+    shl  edx, 15             ; h * 32768
+    add  eax, edx            ; 2*c + h*32768
+    add  eax, 0x8000         ; + 32768
+    cmp  eax, RNL_Q
+    jl   .rc32_next
+    sub  eax, RNL_Q
+    cmp  eax, RNL_Q
+    jge  .rc32_upper
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+    jmp  .rc32_next
+.rc32_upper:
+    sub  eax, RNL_Q
+    cmp  eax, RNL_Q
+    jl   .rc32_next
+    mov  edx, 1
+    shl  edx, cl
+    or   edi, edx
+.rc32_next:
+    inc  ecx
+    jmp  .rc32_loop
+.rc32_done:
+    mov  eax, edi
     pop  ebp
     pop  edi
     pop  esi
     pop  edx
     pop  ecx
     pop  ebx
+    ret
+
+; ============================================================
+; rnl_agree_full: EAX=s, EBX=C_other -> EAX=key, EDX=hint
+; ============================================================
+rnl_agree_full:
     push ebx
-    push ecx
-    push edx
     push esi
     push edi
     push ebp
+    sub  esp, 4
 
-    mov  esi, [esp + 5*4]
+    mov  edi, eax
+    mov  esi, ebx
+
+    mov  ebp, rnl_tmp
+    mov  ecx, RNL_P
+    mov  edx, RNL_Q
+    call rnl_lift
+
     mov  dword [rnl_h_ptr], rnl_tmp2
-    mov  [rnl_f_ptr], esi
+    mov  [rnl_f_ptr], edi
     mov  dword [rnl_g_ptr], rnl_tmp
     call rnl_poly_mul
 
-    mov  ebp, rnl_tmp
-    mov  esi, rnl_tmp2
-    mov  ecx, RNL_Q
-    mov  edx, RNL_PP
-    call rnl_round
+    mov  eax, rnl_tmp2
+    call rnl_hint32
+    mov  [esp], eax
 
-    mov  eax, rnl_tmp
-    call rnl_bits32
+    mov  eax, rnl_tmp2
+    mov  ebx, [esp]
+    call rnl_reconcile32
 
+    mov  edx, [esp]
+    add  esp, 4
     pop  ebp
     pop  edi
     pop  esi
-    pop  edx
-    pop  ecx
+    pop  ebx
+    ret
+
+; ============================================================
+; rnl_agree_recv: EAX=s, EBX=C_other, ECX=hint -> EAX=key
+; ============================================================
+rnl_agree_recv:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    sub  esp, 4
+
+    mov  edi, eax
+    mov  esi, ebx
+    mov  [esp], ecx
+
+    mov  ebp, rnl_tmp
+    mov  ecx, RNL_P
+    mov  edx, RNL_Q
+    call rnl_lift
+
+    mov  dword [rnl_h_ptr], rnl_tmp2
+    mov  [rnl_f_ptr], edi
+    mov  dword [rnl_g_ptr], rnl_tmp
+    call rnl_poly_mul
+
+    mov  eax, rnl_tmp2
+    mov  ebx, [esp]
+    call rnl_reconcile32
+
+    add  esp, 4
+    pop  ebp
+    pop  edi
+    pop  esi
     pop  ebx
     ret

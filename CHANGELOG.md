@@ -4,6 +4,48 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.16] - 2026-04-25
+
+### Fix — HKEX-RNL: Peikert 1-bit reconciliation eliminates key-agreement failures (all targets)
+
+Implements Peikert cross-rounding reconciliation for HKEX-RNL across all six language
+targets (C, Go, Python, ARM Thumb-2, NASM i386, Arduino) in both suite and test files.
+Reduces key-agreement failure rate from 2.04% (n=32) / 37.24% (n=256) to **0%**.
+
+#### Protocol change
+
+Alice (reconciler) generates a 1-bit hint per ring coefficient from her raw product
+polynomial $K_\text{poly,A}$ and transmits it alongside her public key:
+$$h_i = \left\lfloor \frac{4c_i + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod 2$$
+Both parties use Alice's hint to extract each key bit (NewHope cross-rounding):
+$$b_i = \left\lfloor \frac{2c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
+Because `max|K_poly_A[i] − K_poly_B[i]| ≤ 379 ≪ q/4 = 16384`, the hint always
+resolves boundary crossings exactly.  Security assumptions are unchanged.
+
+#### Test criterion change
+
+Test [14]/[7] pass criterion raised from ≥ 90% to **100%** agreement.
+
+#### Files changed
+
+- `Herradura cryptographic suite.py` — `_rnl_hint`, `_rnl_reconcile_bits`; `_rnl_agree` returns `(K_raw, hint)` on reconciler path, `K_raw` on receiver path
+- `CryptosuiteTests/Herradura_tests.py` — same helpers; test [14] criterion 100%; bench [25] updated
+- `Herradura cryptographic suite.c` — `rnl_hint`, `rnl_reconcile_bits`; `rnl_agree(…, hint_in, hint_out)` with NULL sentinel
+- `CryptosuiteTests/Herradura_tests.c` — `rnl32_hint`, `rnl32_reconcile`, `rnl32_agree`; `rnl_hint_n`, `rnl_reconcile_n`, `rnl_agree_n`; test [14] criterion 100%
+- `Herradura cryptographic suite.go` — `rnlHint`, `rnlReconcileBits`; `rnlAgree(…, hintIn []byte) (*BitArray, []byte)`
+- `CryptosuiteTests/Herradura_tests.go` — same; test [14] criterion 100%; bench [25] updated
+- `Herradura cryptographic suite.ino` — `rnl_hint`, `rnl_reconcile`; `rnl_agree(…, hint_in, hint_out)` with NULL sentinel
+- `Herradura cryptographic suite.s` — `rnl_hint32`, `rnl_reconcile32`, `rnl_agree_full`, `rnl_agree_recv`; call site updated
+- `CryptosuiteTests/Herradura_tests.s` — same four subroutines; test [7] criterion 10/10
+- `Herradura cryptographic suite.asm` — `rnl_hint32`, `rnl_reconcile32`, `rnl_agree_full` (EAX=s,EBX=C_other→EAX=key,EDX=hint), `rnl_agree_recv` (ECX=hint); call site updated
+- `CryptosuiteTests/Herradura_tests.asm` — same; test [7] criterion 10/10
+- `SecurityProofs.md §11.4.2` — new "Peikert reconciliation" subsection with hint/extraction formulas and correctness guarantee
+- `SecurityProofs.md §11.5 Q2` — two new rows confirming 0 failures at n=32 and n=256
+- `SecurityProofs.md §11.6` — replaced ⚠ Correctness warning with confirmation table; status updated
+- `SecurityProofsCode/hkex_rnl_failure_rate.py` — §5 added; `_rnl_hint`, `_rnl_reconcile_bits`, `_rnl_exchange_reconciled`; asserts 0 failures at both n=32 and n=256
+
+---
+
 ## [1.5.15] - 2026-04-25
 
 ### Analysis — HKEX-RNL key-agreement failure rate characterized (all deployed parameters)

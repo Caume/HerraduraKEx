@@ -488,9 +488,39 @@ func rnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
 	return s, c
 }
 
-func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int) *BitArray {
+func rnlHint(kPoly []int, q int) []byte {
+	hint := make([]byte, (len(kPoly)+7)/8)
+	for i, c := range kPoly {
+		r := (4*c+q/2)/q % 4
+		if r%2 != 0 {
+			hint[i/8] |= 1 << (uint(i) % 8)
+		}
+	}
+	return hint
+}
+
+func rnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
+	qh := q / 2
+	val := new(big.Int)
+	for i := 0; i < keyBits && i < len(kPoly); i++ {
+		c := kPoly[i]
+		h := int((hint[i/8] >> (uint(i) % 8)) & 1)
+		if (2*c+h*qh+qh)/q%pp != 0 {
+			val.SetBit(val, i, 1)
+		}
+	}
+	ba := &BitArray{size: keyBits}
+	ba.val.Set(val)
+	return ba
+}
+
+func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArray, []byte) {
 	kPoly := rnlPolyMul(s, rnlLift(cOther, p, q), q, n)
-	return rnlBitsToBitArray(rnlRound(kPoly, q, pp), pp, keyBits)
+	if hintIn == nil {
+		hintIn = rnlHint(kPoly, q)
+		return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), hintIn
+	}
+	return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -952,7 +982,7 @@ func testHkexRnlCorrectness() {
 	// C = round_p(mBlind · s).  Agreement holds by ring commutativity:
 	// sA·(mBlind·sB) = sB·(mBlind·sA).  See §11.4.2 of SecurityProofs.md.
 	fmt.Println("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
-	fmt.Printf("     (ring sizes %v; production size is n=256)\n", rnlSizes)
+	fmt.Printf("     (ring sizes %v; Peikert reconciliation -- expect 100%% agreement)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := rnlMPoly(nRnl)
 		okRaw, okSk := 0, 0
@@ -960,11 +990,11 @@ func testHkexRnlCorrectness() {
 		t0 := time.Now()
 		for i := 0; i < trials; i++ {
 			aRand := rnlRandPoly(nRnl, rnlQ)
-			mBlind := rnlPolyAdd(mBase, aRand, rnlQ) // shared public polynomial
+			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
 			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			KA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
-			KB := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+			KA, hintA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl, nil)
+			KB, _     := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl, hintA)
 			if KA.Equal(KB) { okRaw++ }
 			skA := NlFscxRevolveV1(KA.RotateLeft(nRnl/8), KA, nRnl/4)
 			skB := NlFscxRevolveV1(KB.RotateLeft(nRnl/8), KB, nRnl/4)
@@ -972,7 +1002,7 @@ func testHkexRnlCorrectness() {
 			if i&15 == 15 && timeExceeded(t0) { trials = i + 1; break }
 		}
 		status := "PASS"
-		if okRaw < trials*90/100 { status = "FAIL" }
+		if okRaw < trials { status = "FAIL" }
 		fmt.Printf("    n=%3d  raw agree=%d/%d  sk agree=%d/%d  [%s]\n",
 			nRnl, okRaw, trials, okSk, trials, status)
 	}
@@ -1207,8 +1237,8 @@ func benchHkexRnlHandshake() {
 			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
 			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
 			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			_ = rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl)
-			_ = rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl)
+			_, hintA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl, nil)
+			_, _ = rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl, hintA)
 		})
 		fmt.Printf("    n=%3d  full exchange             : %s  (%d ops in %.2fs)\n",
 			nRnl, fmtRate(ops, elapsed), ops, elapsed.Seconds())

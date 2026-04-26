@@ -304,14 +304,28 @@ def _rnl_bits_to_bitarray(poly, pp, size):
             val |= (1 << i)
     return BitArray(size, val)
 
+def _rnl_hint(K_poly, q):
+    return [((4 * c + q // 2) // q) % 4 % 2 for c in K_poly]
+
+def _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits):
+    qh = q // 2
+    val = 0
+    for i, (c, h) in enumerate(zip(K_poly[:key_bits], hint[:key_bits])):
+        b = ((2 * c + h * qh + qh) // q) % pp
+        if b: val |= (1 << i)
+    return val
+
 def _rnl_keygen(m_blind, n, q, p):
     s = _rnl_cbd_poly(n, q)
     C = _rnl_round(_rnl_poly_mul(m_blind, s, q, n), q, p)
     return s, C
 
-def _rnl_agree(s, C_other, q, p, pp, n, key_bits):
+def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
     K = _rnl_poly_mul(s, _rnl_lift(C_other, p, q), q, n)
-    return _rnl_bits_to_bitarray(_rnl_round(K, q, pp), pp, key_bits)
+    if hint is None:
+        hint = _rnl_hint(K, q)
+        return BitArray(key_bits, _rnl_reconcile_bits(K, hint, q, pp, key_bits)), hint
+    return BitArray(key_bits, _rnl_reconcile_bits(K, hint, q, pp, key_bits))
 
 
 # ---------------------------------------------------------------------------
@@ -674,7 +688,7 @@ def test_hkex_rnl_correctness():
     # C = round_p(m_blind · s).  Agreement holds by ring commutativity:
     # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs.md.
     print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
-    print(f"     (ring sizes {RNL_SIZES}; production size is n=256)")
+    print(f"     (ring sizes {RNL_SIZES}; Peikert reconciliation — expect 100% agreement)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
         ok_raw = 0; ok_sk = 0; n_run = 0
@@ -684,13 +698,13 @@ def test_hkex_rnl_correctness():
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # shared public polynomial
             s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
             s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
-            K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
-            K_B = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            K_A, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            K_B         = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl, hint_A)
             if K_A == K_B: ok_raw += 1
             sk_A = nl_fscx_revolve_v1(K_A.rotated(n_rnl // 8), K_A, n_rnl // 4)
             sk_B = nl_fscx_revolve_v1(K_B.rotated(n_rnl // 8), K_B, n_rnl // 4)
             if sk_A == sk_B: ok_sk += 1
-        status = "PASS" if ok_raw >= n_run * 90 // 100 else "FAIL"
+        status = "PASS" if ok_raw == n_run else "FAIL"
         print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{n_run}  sk agree={ok_sk}/{n_run}  [{status}]")
     print()
 
@@ -881,8 +895,8 @@ def bench_hkex_rnl_handshake():
             m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
             s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
             s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP)
-            _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
-            _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            _, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
+            _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl, hint_A)
         _bench(f"n={n_rnl:3d}  full exchange", fn)
     print()
 
