@@ -16,10 +16,10 @@ Reduces key-agreement failure rate from 2.04% (n=32) / 37.24% (n=256) to **0%**.
 
 Alice (reconciler) generates a 1-bit hint per ring coefficient from her raw product
 polynomial $K_\text{poly,A}$ and transmits it alongside her public key:
-$$h_i = \lfloor 4c_i/q \rfloor \bmod 4 \bmod 2$$
-Both parties use Alice's hint to extract each key bit:
-$$r_i = \lfloor 4c_i/q \rfloor \bmod 4, \quad b_i = (r_i + h_i) / 2 \bmod p'$$
-Because `max|K_poly_A[i] − K_poly_B[i]| ≤ 379 ≪ q/8 = 8192`, the hint always
+$$h_i = \left\lfloor \frac{4c_i + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod 2$$
+Both parties use Alice's hint to extract each key bit (NewHope cross-rounding):
+$$b_i = \left\lfloor \frac{2c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
+Because `max|K_poly_A[i] − K_poly_B[i]| ≤ 379 ≪ q/4 = 16384`, the hint always
 resolves boundary crossings exactly.  Security assumptions are unchanged.
 
 #### Test criterion change
