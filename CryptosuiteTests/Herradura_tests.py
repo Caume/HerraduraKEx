@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.18: HPKS-Stern-F [17] + HPKE-Stern-F [18] + bench [26] (code-based PQC).
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv precomputes delta(B) once — eliminates per-step multiply.
@@ -35,7 +36,9 @@
 '''
 
 import argparse
+import itertools
 import os
+import random
 import sys
 import time
 
@@ -234,6 +237,135 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
         z      = BitArray(n, (result.uint - delta.uint) & mask)
         result = B ^ _m_inv(z)
     return result
+
+
+# ---------------------------------------------------------------------------
+# HPKS-Stern-F / HPKE-Stern-F helpers (self-contained, mirrors suite)
+# ---------------------------------------------------------------------------
+
+def _stern_hash(n: int, *items) -> 'BitArray':
+    mask = (1 << n) - 1
+    h = BitArray(n, 0)
+    for item in items:
+        v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
+        h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
+    return h
+
+def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
+    seed = BitArray(n, seed_int)
+    A0   = BitArray(n, seed_int ^ row).rotated(n // 8)
+    return nl_fscx_revolve_v1(A0, seed, n // 4)
+
+def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
+    s = 0
+    for i in range(n_rows):
+        row = _stern_matrix_row(seed_int, i, n)
+        s  |= (bin(row.uint & e_int).count('1') & 1) << i
+    return s
+
+def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
+    n    = pi_seed._size
+    key  = pi_seed.rotated(n // 8)
+    perm = list(range(N))
+    st   = pi_seed.copy()
+    for i in range(N - 1, 0, -1):
+        st = nl_fscx_v1(st, key)
+        perm[i], perm[st.uint % (i + 1)] = perm[st.uint % (i + 1)], perm[i]
+    return perm
+
+def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
+    result = 0
+    for i in range(N):
+        if (v_int >> i) & 1:
+            result |= 1 << perm[i]
+    return result
+
+def stern_f_keygen(n: int):
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    seed   = BitArray.random(n)
+    e_int  = sum(1 << p for p in random.sample(range(n), t))
+    return seed, e_int, _stern_syndrome(seed.uint, e_int, n, n_rows)
+
+def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    commits = []; round_data = []
+    for _ in range(rounds):
+        r_int   = sum(1 << p for p in random.sample(range(n), t))
+        y_int   = (e_int ^ r_int) & ((1 << n) - 1)
+        pi_seed = BitArray.random(n)
+        perm    = _stern_gen_perm(pi_seed, n)
+        Hr  = _stern_syndrome(seed.uint, r_int, n, n_rows)
+        sr  = _stern_apply_perm(perm, r_int, n)
+        sy  = _stern_apply_perm(perm, y_int, n)
+        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr)),
+                        _stern_hash(n, BitArray(n, sr)),
+                        _stern_hash(n, BitArray(n, sy))))
+        round_data.append((r_int, y_int, pi_seed, Hr, sr, sy))
+    flat = [msg]
+    for c0, c1, c2 in commits:
+        flat += [c0, c1, c2]
+    ch_st = _stern_hash(n, *flat); challenges = []
+    for i in range(rounds):
+        ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
+        challenges.append(ch_st.uint % 3)
+    responses = []
+    for i, (r_int, y_int, pi_seed, _Hr, sr, sy) in enumerate(round_data):
+        b = challenges[i]
+        if   b == 0: responses.append((sr, sy))
+        elif b == 1: responses.append((pi_seed, r_int))
+        else:        responses.append((pi_seed, y_int))
+    return (commits, challenges, responses)
+
+def hpks_stern_f_verify(msg, sig, seed, syndrome, n):
+    n_rows = n // 2; t = max(2, n // 16)
+    commits, challenges, responses = sig
+    flat = [msg]
+    for c0, c1, c2 in commits:
+        flat += [c0, c1, c2]
+    ch_st = _stern_hash(n, *flat)
+    for i, b in enumerate(challenges):
+        ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
+        if ch_st.uint % 3 != b: return False
+    for i, b in enumerate(challenges):
+        c0, c1, c2 = commits[i]; resp = responses[i]
+        if b == 0:
+            sr, sy = resp
+            if _stern_hash(n, BitArray(n, sr)) != c1: return False
+            if _stern_hash(n, BitArray(n, sy)) != c2: return False
+            if bin(sr).count('1') != t:               return False
+        elif b == 1:
+            pi_seed, r_int = resp
+            if bin(r_int).count('1') != t:            return False
+            perm = _stern_gen_perm(pi_seed, n)
+            Hr   = _stern_syndrome(seed.uint, r_int, n, n_rows)
+            if _stern_hash(n, pi_seed, BitArray(n, Hr)) != c0: return False
+            sr   = _stern_apply_perm(perm, r_int, n)
+            if _stern_hash(n, BitArray(n, sr)) != c1: return False
+        else:
+            pi_seed, y_int = resp
+            perm = _stern_gen_perm(pi_seed, n)
+            Hy   = _stern_syndrome(seed.uint, y_int, n, n_rows)
+            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome)) != c0: return False
+            sy   = _stern_apply_perm(perm, y_int, n)
+            if _stern_hash(n, BitArray(n, sy)) != c2: return False
+    return True
+
+def hpke_stern_f_encap(seed, n):
+    n_rows = n // 2; t = max(2, n // 16)
+    e_p    = sum(1 << p for p in random.sample(range(n), t))
+    ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return K, ct
+
+def hpke_stern_f_decap(ciphertext, seed, n):
+    n_rows = n // 2; t = max(2, n // 16)
+    for pos in itertools.combinations(range(n), t):
+        e_p = sum(1 << p for p in pos)
+        if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
+            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -757,6 +889,54 @@ def test_hpke_nl_correctness():
     print()
 
 
+def test_hpks_stern_f_correctness():
+    print("[17] HPKS-Stern-F sign/verify correctness  [CODE-BASED PQC]")
+    SDF_SIZES  = [32, 64]
+    SDF_ROUNDS = 8        # reduced for speed; 219 needed for 128-bit soundness
+    SDF_TRIALS = 20
+    for size in SDF_SIZES:
+        ok = 0; n_run = 0
+        for _ in _trange(_iters(SDF_TRIALS)):
+            n_run += 1
+            sf_seed, sf_e, sf_syn = stern_f_keygen(size)
+            msg = BitArray.random(size)
+            sig = hpks_stern_f_sign(msg, sf_e, sf_seed, sf_syn, size, SDF_ROUNDS)
+            if hpks_stern_f_verify(msg, sig, sf_seed, sf_syn, size):
+                ok += 1
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d} rounds={SDF_ROUNDS}  {ok:3d}/{n_run} verified  [{status}]")
+    # Eve bypass: random signature should not verify
+    size = 32; sf_seed, sf_e, sf_syn = stern_f_keygen(size)
+    decoy = BitArray.random(size)
+    fake_pi = BitArray.random(size); fake_r = sum(1 << p for p in random.sample(range(size), max(2, size//16)))
+    fake_c0 = _stern_hash(size, fake_pi, BitArray(size, 0))
+    fake_c1 = _stern_hash(size, BitArray(size, fake_r))
+    fake_c2 = _stern_hash(size, BitArray(size, 0))
+    fake_commits = [(fake_c0, fake_c1, fake_c2)] * SDF_ROUNDS
+    fake_chal = [0] * SDF_ROUNDS
+    fake_resp  = [(BitArray(size, fake_r), fake_r)] * SDF_ROUNDS
+    eve_sig = (fake_commits, fake_chal, fake_resp)
+    eve_ok = hpks_stern_f_verify(decoy, eve_sig, sf_seed, sf_syn, size)
+    print(f"    Eve forge attempt: {'PASS (rejected)' if not eve_ok else 'FAIL (accepted!)'}")
+    print()
+
+
+def test_hpke_stern_f_correctness():
+    print("[18] HPKE-Stern-F encap/decap correctness (n=32, brute-force)  [CODE-BASED PQC]")
+    SDF_TRIALS_KEM = _iters(30)
+    size = 32; ok = 0; n_run = 0
+    for _ in _trange(SDF_TRIALS_KEM):
+        n_run += 1
+        sf_seed, _sf_e, _sf_syn = stern_f_keygen(size)
+        K_enc, ct = hpke_stern_f_encap(sf_seed, size)
+        K_dec = hpke_stern_f_decap(ct, sf_seed, size)
+        if K_dec is not None and K_dec == K_enc:
+            ok += 1
+    status = "PASS" if ok == n_run else "FAIL"
+    print(f"    bits={size:3d}  {ok:3d}/{n_run} sessions agreed  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -778,7 +958,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[17] FSCX throughput  [CLASSICAL]")
+    print("[19] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -788,7 +968,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[18] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[20] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -798,7 +978,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[19] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[21] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -811,7 +991,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[20] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[22] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -823,7 +1003,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[21] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[23] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -840,13 +1020,13 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[22] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[24] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[22b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
+    print("[24b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
     for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
@@ -856,7 +1036,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[23] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[25] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -872,7 +1052,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[24] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
+    print("[26] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
     for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -886,7 +1066,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[25] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[27] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -901,6 +1081,18 @@ def bench_hkex_rnl_handshake():
     print()
 
 
+def bench_hpks_stern_f():
+    print("[28] HPKS-Stern-F sign+verify throughput (n=32, rounds=4)  [CODE-BASED PQC]")
+    size = 32; rounds = 4
+    sf_seed, sf_e, sf_syn = stern_f_keygen(size)
+    msg = BitArray.random(size); sink = [True]
+    def fn():
+        sig = hpks_stern_f_sign(msg, sf_e, sf_seed, sf_syn, size, rounds)
+        sink[0] = hpks_stern_f_verify(msg, sig, sf_seed, sf_syn, size)
+    _bench(f"bits={size:3d} rounds={rounds}  sign+verify", fn)
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -908,7 +1100,7 @@ def bench_hkex_rnl_handshake():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.10 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.5.18 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -936,7 +1128,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.10 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.18 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -964,6 +1156,10 @@ if __name__ == '__main__':
     test_hpks_nl_correctness()
     test_hpke_nl_correctness()
 
+    print("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
+    test_hpks_stern_f_correctness()
+    test_hpke_stern_f_correctness()
+
     print("--- Performance Benchmarks ---\n")
     bench_fscx()
     bench_hkex_gf_pow()
@@ -972,5 +1168,7 @@ if __name__ == '__main__':
     bench_hpke_roundtrip()
     bench_nl_fscx_revolve()
     bench_hske_nl_a1_roundtrip()
+
     bench_hske_nl_a2_roundtrip()
     bench_hkex_rnl_handshake()
+    bench_hpks_stern_f()
