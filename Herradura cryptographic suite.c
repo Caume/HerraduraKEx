@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.13
+/*  Herradura Cryptographic Suite v1.5.17
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,8 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.17: NTT twiddle precomputation — lazy-initialized static table eliminates rnl_mod_pow calls per rnl_poly_mul ---
 
     --- v1.5.13: HSKE-NL-A1 seed fix — ROL(base, n/8) breaks counter=0 step-1 degeneracy ---
 
@@ -595,38 +597,71 @@ static uint32_t rnl_mod_pow(uint32_t base, uint32_t exp, uint32_t m)
     return (uint32_t)r;
 }
 
+/* Precomputed NTT twiddle tables for n=RNL_N, q=RNL_Q (lazy-initialized on first use). */
+#define RNL_LOG2N 8  /* log2(256) */
+static struct {
+    uint32_t psi_pow[RNL_N];          /* ψ^i for pre-twist */
+    uint32_t psi_inv_pow[RNL_N];      /* ψ^{-i} for post-twist */
+    uint32_t stage_w_fwd[RNL_LOG2N];  /* per-stage ω, forward NTT */
+    uint32_t stage_w_inv[RNL_LOG2N];  /* per-stage ω, inverse NTT */
+    uint32_t inv_n;                   /* n^{-1} mod q for INTT scaling */
+    int      ready;
+} rnl_tw;
+
+static void rnl_twiddle_init(void)
+{
+    uint32_t psi, psi_inv, pw, pw_inv, w;
+    int i, s, length;
+    if (rnl_tw.ready) return;
+    psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), RNL_Q);
+    psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
+    pw = pw_inv = 1;
+    for (i = 0; i < RNL_N; i++) {
+        rnl_tw.psi_pow[i]     = pw;
+        rnl_tw.psi_inv_pow[i] = pw_inv;
+        pw     = (uint32_t)((uint64_t)pw     * psi     % RNL_Q);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q);
+    }
+    for (s = 0, length = 2; length <= RNL_N; length <<= 1, s++) {
+        w = rnl_mod_pow(3, (RNL_Q - 1) / (uint32_t)length, RNL_Q);
+        rnl_tw.stage_w_fwd[s] = w;
+        rnl_tw.stage_w_inv[s] = rnl_mod_pow(w, RNL_Q - 2, RNL_Q);
+    }
+    rnl_tw.inv_n = rnl_mod_pow((uint32_t)RNL_N, RNL_Q - 2, RNL_Q);
+    rnl_tw.ready = 1;
+}
+
 /* Cooley-Tukey iterative NTT over Z_q (in-place). n must be a power of 2.
    Uses primitive root 3 (valid since q=65537 is a Fermat prime, ord(3)=q-1=2^16). */
 static void rnl_ntt(int32_t *a, int n, int q, int invert)
 {
-    int i, j = 0, length, k;
+    int i, j = 0, length, k, s;
     uint32_t w, wn;
-    /* Bit-reversal permutation */
+    const uint32_t *sw;
+    rnl_twiddle_init();
+    sw = invert ? rnl_tw.stage_w_inv : rnl_tw.stage_w_fwd;
     for (i = 1; i < n; i++) {
         int bit = n >> 1;
         for (; j & bit; bit >>= 1) j ^= bit;
         j ^= bit;
         if (i < j) { int32_t t = a[i]; a[i] = a[j]; a[j] = t; }
     }
-    /* Butterfly stages */
-    for (length = 2; length <= n; length <<= 1) {
-        w = rnl_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
-        if (invert) w = rnl_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+    for (length = 2, s = 0; length <= n; length <<= 1, s++) {
+        w = sw[s];
         for (i = 0; i < n; i += length) {
             wn = 1;
             for (k = 0; k < length >> 1; k++) {
                 int32_t u = a[i + k];
                 int32_t v = (int32_t)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
-                a[i + k]              = (u + v) % q;
+                a[i + k]                 = (u + v) % q;
                 a[i + k + (length >> 1)] = (u - v + q) % q;
                 wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
             }
         }
     }
     if (invert) {
-        uint32_t inv_n = rnl_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
         for (i = 0; i < n; i++)
-            a[i] = (int32_t)((uint64_t)a[i] * inv_n % (uint32_t)q);
+            a[i] = (int32_t)((uint64_t)a[i] * rnl_tw.inv_n % (uint32_t)q);
     }
 }
 
@@ -635,24 +670,19 @@ static void rnl_ntt(int32_t *a, int n, int q, int invert)
 static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
 {
     int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];
-    uint32_t psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), RNL_Q);
-    uint32_t psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
-    uint32_t pw = 1, pw_inv = 1;
     int i;
+    rnl_twiddle_init();
     for (i = 0; i < RNL_N; i++) {
-        fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q);
-        ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q);
-        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q);
+        fa[i] = (int32_t)((uint64_t)f[i] * rnl_tw.psi_pow[i] % RNL_Q);
+        ga[i] = (int32_t)((uint64_t)g[i] * rnl_tw.psi_pow[i] % RNL_Q);
     }
     rnl_ntt(fa, RNL_N, RNL_Q, 0);
     rnl_ntt(ga, RNL_N, RNL_Q, 0);
     for (i = 0; i < RNL_N; i++)
         ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q);
     rnl_ntt(ha, RNL_N, RNL_Q, 1);
-    for (i = 0; i < RNL_N; i++) {
-        h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q);
-        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q);
-    }
+    for (i = 0; i < RNL_N; i++)
+        h[i] = (int32_t)((uint64_t)ha[i] * rnl_tw.psi_inv_pow[i] % RNL_Q);
 }
 
 static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)

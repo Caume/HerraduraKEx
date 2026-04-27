@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.17: NTT twiddle precomputation — rnlTwCache map; rnlTwGet eliminates rnlModPow calls per rnlPolyMul.
     v1.5.13: HSKE-NL-A1 seed fix — seed=RotateLeft(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=RotateLeft(K,n/8) breaks step-1 degeneracy.
     v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once — eliminates per-step multiply.
@@ -366,17 +367,47 @@ func rnlModPow(base, exp, mod int) int {
 	return r
 }
 
+type rnlTwEntry struct {
+	psiPow, psiInvPow []int
+	stageWFwd, stageWInv []int
+	invN int
+}
+
+var rnlTwCache = map[int]*rnlTwEntry{}
+
+func rnlTwGet(n, q int) *rnlTwEntry {
+	if e, ok := rnlTwCache[n]; ok { return e }
+	e := &rnlTwEntry{psiPow: make([]int, n), psiInvPow: make([]int, n)}
+	psi := rnlModPow(3, (q-1)/(2*n), q); psiInv := rnlModPow(psi, q-2, q)
+	pw, pwInv := 1, 1
+	for i := 0; i < n; i++ {
+		e.psiPow[i] = pw; e.psiInvPow[i] = pwInv
+		pw = pw * psi % q; pwInv = pwInv * psiInv % q
+	}
+	for length := 2; length <= n; length <<= 1 {
+		w := rnlModPow(3, (q-1)/length, q)
+		e.stageWFwd = append(e.stageWFwd, w)
+		e.stageWInv = append(e.stageWInv, rnlModPow(w, q-2, q))
+	}
+	e.invN = rnlModPow(n, q-2, q)
+	rnlTwCache[n] = e
+	return e
+}
+
 func rnlNTT(a []int, q int, invert bool) {
-	n := len(a); j := 0
+	n := len(a)
+	tw := rnlTwGet(n, q)
+	sw := tw.stageWFwd
+	if invert { sw = tw.stageWInv }
+	j := 0
 	for i := 1; i < n; i++ {
 		bit := n >> 1
 		for ; j&bit != 0; bit >>= 1 { j ^= bit }
 		j ^= bit
 		if i < j { a[i], a[j] = a[j], a[i] }
 	}
-	for length := 2; length <= n; length <<= 1 {
-		w := rnlModPow(3, (q-1)/length, q)
-		if invert { w = rnlModPow(w, q-2, q) }
+	for s, length := 0, 2; length <= n; length, s = length<<1, s+1 {
+		w := sw[s]
 		for i := 0; i < n; i += length {
 			wn := 1
 			for k := 0; k < length>>1; k++ {
@@ -387,23 +418,21 @@ func rnlNTT(a []int, q int, invert bool) {
 		}
 	}
 	if invert {
-		invN := rnlModPow(n, q-2, q)
-		for i := range a { a[i] = a[i] * invN % q }
+		for i := range a { a[i] = a[i] * tw.invN % q }
 	}
 }
 
 func rnlPolyMul(f, g []int, q, n int) []int {
-	psi := rnlModPow(3, (q-1)/(2*n), q); psiInv := rnlModPow(psi, q-2, q)
-	fa, ga := make([]int, n), make([]int, n); pw := 1
+	tw := rnlTwGet(n, q)
+	fa, ga := make([]int, n), make([]int, n)
 	for i := 0; i < n; i++ {
-		fa[i] = f[i] * pw % q; ga[i] = g[i] * pw % q; pw = pw * psi % q
+		fa[i] = f[i] * tw.psiPow[i] % q; ga[i] = g[i] * tw.psiPow[i] % q
 	}
 	rnlNTT(fa, q, false); rnlNTT(ga, q, false)
 	ha := make([]int, n)
 	for i := range ha { ha[i] = fa[i] * ga[i] % q }
 	rnlNTT(ha, q, true)
-	pwInv := 1
-	for i := range ha { ha[i] = ha[i] * pwInv % q; pwInv = pwInv * psiInv % q }
+	for i := range ha { ha[i] = ha[i] * tw.psiInvPow[i] % q }
 	return ha
 }
 

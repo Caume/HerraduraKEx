@@ -619,19 +619,65 @@ static uint32_t rnl32_mod_pow(uint32_t base, uint32_t exp, uint32_t m)
     return (uint32_t)r;
 }
 
+/* Precomputed NTT twiddle tables for n∈{32,64}, q=RNL_Q32 (lazy-initialized). */
+#define RNL32_LOG2N_MAX 6  /* log2(64)=6 covers both n=32 and n=64 */
+static struct {
+    int      n;
+    uint32_t psi_pow[64];
+    uint32_t psi_inv_pow[64];
+    uint32_t stage_w_fwd[RNL32_LOG2N_MAX];
+    uint32_t stage_w_inv[RNL32_LOG2N_MAX];
+    uint32_t inv_n;
+    int      ready;
+} rnl32_tw[2] = { {32}, {64} };  /* index 0=n=32, index 1=n=64 */
+
+static void rnl32_tw_init(int idx)
+{
+    uint32_t psi, psi_inv, pw, pw_inv, w;
+    int n, i, s, length;
+    if (rnl32_tw[idx].ready) return;
+    n = rnl32_tw[idx].n;
+    psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * (uint32_t)n), RNL_Q32);
+    psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
+    pw = pw_inv = 1;
+    for (i = 0; i < n; i++) {
+        rnl32_tw[idx].psi_pow[i]     = pw;
+        rnl32_tw[idx].psi_inv_pow[i] = pw_inv;
+        pw     = (uint32_t)((uint64_t)pw     * psi     % RNL_Q32);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
+    }
+    for (s = 0, length = 2; length <= n; length <<= 1, s++) {
+        w = rnl32_mod_pow(3, (RNL_Q32 - 1) / (uint32_t)length, RNL_Q32);
+        rnl32_tw[idx].stage_w_fwd[s] = w;
+        rnl32_tw[idx].stage_w_inv[s] = rnl32_mod_pow(w, RNL_Q32 - 2, RNL_Q32);
+    }
+    rnl32_tw[idx].inv_n = rnl32_mod_pow((uint32_t)n, RNL_Q32 - 2, RNL_Q32);
+    rnl32_tw[idx].ready = 1;
+}
+
+static int rnl32_tw_idx(int n)
+{
+    return (n == 32) ? 0 : (n == 64) ? 1 : -1;
+}
+
 static void rnl32_ntt(int32_t *a, int n, int q, int invert)
 {
-    int i, j = 0, length, k;
+    int i, j = 0, length, k, s, idx = rnl32_tw_idx(n);
     uint32_t w, wn;
+    const uint32_t *sw = NULL;
+    if (idx >= 0) { rnl32_tw_init(idx); sw = invert ? rnl32_tw[idx].stage_w_inv : rnl32_tw[idx].stage_w_fwd; }
     for (i = 1; i < n; i++) {
         int bit = n >> 1;
         for (; j & bit; bit >>= 1) j ^= bit;
         j ^= bit;
         if (i < j) { int32_t t = a[i]; a[i] = a[j]; a[j] = t; }
     }
-    for (length = 2; length <= n; length <<= 1) {
-        w = rnl32_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
-        if (invert) w = rnl32_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+    for (length = 2, s = 0; length <= n; length <<= 1, s++) {
+        if (sw) { w = sw[s]; }
+        else {
+            w = rnl32_mod_pow(3, (uint32_t)(q - 1) / (uint32_t)length, (uint32_t)q);
+            if (invert) w = rnl32_mod_pow(w, (uint32_t)(q - 2), (uint32_t)q);
+        }
         for (i = 0; i < n; i += length) {
             wn = 1;
             for (k = 0; k < length >> 1; k++) {
@@ -644,7 +690,8 @@ static void rnl32_ntt(int32_t *a, int n, int q, int invert)
         }
     }
     if (invert) {
-        uint32_t inv_n = rnl32_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
+        uint32_t inv_n = (idx >= 0) ? rnl32_tw[idx].inv_n :
+                         rnl32_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
         for (i = 0; i < n; i++)
             a[i] = (int32_t)((uint64_t)a[i] * inv_n % (uint32_t)q);
     }
@@ -654,24 +701,19 @@ static void rnl32_ntt(int32_t *a, int n, int q, int invert)
 static void rnl32_poly_mul(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
 {
     int32_t fa[RNL_N32], ga[RNL_N32], ha[RNL_N32];
-    uint32_t psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * RNL_N32), RNL_Q32);
-    uint32_t psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
-    uint32_t pw = 1, pw_inv = 1;
     int i;
+    rnl32_tw_init(0);
     for (i = 0; i < RNL_N32; i++) {
-        fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q32);
-        ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q32);
-        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q32);
+        fa[i] = (int32_t)((uint64_t)f[i] * rnl32_tw[0].psi_pow[i] % RNL_Q32);
+        ga[i] = (int32_t)((uint64_t)g[i] * rnl32_tw[0].psi_pow[i] % RNL_Q32);
     }
     rnl32_ntt(fa, RNL_N32, RNL_Q32, 0);
     rnl32_ntt(ga, RNL_N32, RNL_Q32, 0);
     for (i = 0; i < RNL_N32; i++)
         ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
     rnl32_ntt(ha, RNL_N32, RNL_Q32, 1);
-    for (i = 0; i < RNL_N32; i++) {
-        h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q32);
-        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
-    }
+    for (i = 0; i < RNL_N32; i++)
+        h[i] = (int32_t)((uint64_t)ha[i] * rnl32_tw[0].psi_inv_pow[i] % RNL_Q32);
 }
 
 static void rnl32_poly_add(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
@@ -791,23 +833,38 @@ static uint32_t rnl32_agree(const int32_t s[RNL_N32], const int32_t c_other[RNL_
 static void rnl_poly_mul_n(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
     int32_t fa[n], ga[n], ha[n];
-    uint32_t psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * (uint32_t)n), RNL_Q32);
-    uint32_t psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
-    uint32_t pw = 1, pw_inv = 1;
-    int i;
-    for (i = 0; i < n; i++) {
-        fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q32);
-        ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q32);
-        pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q32);
-    }
-    rnl32_ntt(fa, n, RNL_Q32, 0);
-    rnl32_ntt(ga, n, RNL_Q32, 0);
-    for (i = 0; i < n; i++)
-        ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
-    rnl32_ntt(ha, n, RNL_Q32, 1);
-    for (i = 0; i < n; i++) {
-        h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q32);
-        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
+    int i, idx = rnl32_tw_idx(n);
+    if (idx >= 0) {
+        rnl32_tw_init(idx);
+        for (i = 0; i < n; i++) {
+            fa[i] = (int32_t)((uint64_t)f[i] * rnl32_tw[idx].psi_pow[i] % RNL_Q32);
+            ga[i] = (int32_t)((uint64_t)g[i] * rnl32_tw[idx].psi_pow[i] % RNL_Q32);
+        }
+        rnl32_ntt(fa, n, RNL_Q32, 0);
+        rnl32_ntt(ga, n, RNL_Q32, 0);
+        for (i = 0; i < n; i++)
+            ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+        rnl32_ntt(ha, n, RNL_Q32, 1);
+        for (i = 0; i < n; i++)
+            h[i] = (int32_t)((uint64_t)ha[i] * rnl32_tw[idx].psi_inv_pow[i] % RNL_Q32);
+    } else {
+        uint32_t psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * (uint32_t)n), RNL_Q32);
+        uint32_t psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
+        uint32_t pw = 1, pw_inv = 1;
+        for (i = 0; i < n; i++) {
+            fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q32);
+            ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q32);
+            pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q32);
+        }
+        rnl32_ntt(fa, n, RNL_Q32, 0);
+        rnl32_ntt(ga, n, RNL_Q32, 0);
+        for (i = 0; i < n; i++)
+            ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+        rnl32_ntt(ha, n, RNL_Q32, 1);
+        for (i = 0; i < n; i++) {
+            h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q32);
+            pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
+        }
     }
 }
 
