@@ -4,6 +4,45 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.17] - 2026-04-26
+
+### Performance — NTT twiddle precomputation eliminates `rnl_mod_pow` calls per `rnl_poly_mul` (C, Go)
+
+Adds a lazy-initialized static twiddle table to the NTT used by HKEX-RNL, eliminating all
+`rnl_mod_pow` invocations from the hot path after the first `rnl_poly_mul` call.
+
+#### What was recomputed on every call
+
+Each `rnl_poly_mul` call previously executed:
+- 2 `rnl_mod_pow` calls for ψ and ψ⁻¹ (pre/post-twist powers)
+- 3 × `log₂n` `rnl_mod_pow` calls inside the three `rnl_ntt` invocations (one per butterfly stage)
+- 1 additional `rnl_mod_pow` for n⁻¹ inside the inverse NTT
+
+Total: ~27 modular exponentiations (each up to 16 multiplications) per `rnl_poly_mul`.
+
+#### What is precomputed
+
+- `psi_pow[n]` / `psi_inv_pow[n]` — ψ^i and ψ^{-i} for pre/post-twist
+- `stage_w_fwd[log₂n]` / `stage_w_inv[log₂n]` — per-stage ω for forward/inverse NTT
+- `inv_n` — n⁻¹ mod q for INTT scaling
+
+Initialized on first use (same lazy-init pattern as `m_inv_ba`). After initialization the per-call
+cost is ~3 table lookups per stage (replacing 3 `rnl_mod_pow` calls).
+
+#### Files changed
+
+- `Herradura cryptographic suite.c` — `rnl_twiddle_init`, `rnl_tw` struct; `rnl_ntt` and `rnl_poly_mul` use precomputed table
+- `CryptosuiteTests/Herradura_tests.c` — `rnl32_tw_init`, `rnl32_tw` (2-entry array for n∈{32,64}); `rnl32_ntt`, `rnl32_poly_mul`, `rnl_poly_mul_n` use precomputed table
+- `Herradura cryptographic suite.go` — `rnlTwEntry` struct, `rnlTwCache` map, `rnlTwGet`; `rnlNTT` and `rnlPolyMul` use precomputed table
+- `CryptosuiteTests/Herradura_tests.go` — same
+
+#### Observed speedup
+
+Go bench [25] HKEX-RNL handshake (n=64): **3.15 K → 4.72 K ops/sec (+50%)**.
+C bench [25] (n=32): 66.6 K ops/sec (single size; n=64 path also optimized via `rnl_poly_mul_n`).
+
+---
+
 ## [1.5.16] - 2026-04-25
 
 ### Fix — HKEX-RNL: Peikert 1-bit reconciliation eliminates key-agreement failures (all targets)
