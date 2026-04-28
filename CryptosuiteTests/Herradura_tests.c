@@ -5,6 +5,8 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18] + bench [28].
+            Benchmarks renumbered [17]–[25] → [19]–[27] to make room for new tests.
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv_{32,64,128} precompute delta(B) once — eliminates per-step multiply.
@@ -36,16 +38,19 @@
       [14] HKEX-RNL key agreement: K_A == K_B (n=32/64, Ring-LWR).
       [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge, 32/64-bit GF).
       [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt, 32/64-bit GF).
-      [17] FSCX throughput (256-bit).
-      [18] HKEX-GF gf_pow throughput (32-bit).
-      [19] HKEX-GF full handshake (32-bit).
-      [20] HSKE round-trip (256-bit).
-      [21] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
-      [22] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
-      [22b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
-      [23] HSKE-NL-A1 counter-mode throughput (32-bit).
-      [24] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
-      [25] HKEX-RNL full handshake throughput (n=32).
+      [17] HPKS-Stern-F correctness: sign+verify, N=256, t=16, rounds=4  [CODE-BASED PQC].
+      [18] HPKE-Stern-F correctness: encap+decap, N=32, t=2 (brute-force)  [CODE-BASED PQC].
+      [19] FSCX throughput (256-bit).
+      [20] HKEX-GF gf_pow throughput (32-bit).
+      [21] HKEX-GF full handshake (32-bit).
+      [22] HSKE round-trip (256-bit).
+      [23] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      [24] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
+      [24b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
+      [25] HSKE-NL-A1 counter-mode throughput (32-bit).
+      [26] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
+      [27] HKEX-RNL full handshake throughput (n=32).
+      [28] HPKS-Stern-F sign+verify throughput (N=256, t=16, rounds=4)  [CODE-BASED PQC].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -253,6 +258,67 @@ static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
         ba_shr1(&e);
     }
     *dst = r;
+}
+
+/* ------------------------------------------------------------------ */
+/* 256-bit integer + NL-FSCX helpers (needed by Stern-F tests)        */
+/* ------------------------------------------------------------------ */
+
+static void ba_add256(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    uint16_t carry = 0;
+    int i;
+    for (i = KEYBYTES - 1; i >= 0; i--) {
+        uint16_t s = (uint16_t)a->b[i] + b->b[i] + carry;
+        dst->b[i] = (uint8_t)s;
+        carry = s >> 8;
+    }
+}
+
+static void ba_rol64_256(BitArray *dst, const BitArray *src)
+{
+    uint8_t tmp[8];
+    memcpy(tmp, src->b, 8);
+    memcpy(dst->b, src->b + 8, KEYBYTES - 8);
+    memcpy(dst->b + KEYBYTES - 8, tmp, 8);
+}
+
+static void ba_rol_k(BitArray *dst, const BitArray *src, int k)
+{
+    int byte_shift = (k / 8) % KEYBYTES;
+    int bit_shift  = k % 8;
+    int i;
+    if (bit_shift == 0) {
+        for (i = 0; i < KEYBYTES; i++)
+            dst->b[i] = src->b[(i + byte_shift) % KEYBYTES];
+    } else {
+        int rshift = 8 - bit_shift;
+        for (i = 0; i < KEYBYTES; i++)
+            dst->b[i] = (uint8_t)((src->b[(i + byte_shift) % KEYBYTES] << bit_shift)
+                                | (src->b[(i + byte_shift + 1) % KEYBYTES] >> rshift));
+    }
+}
+
+static void nl_fscx_v1_ba(BitArray *result, const BitArray *a, const BitArray *b)
+{
+    BitArray f, s, m;
+    ba_fscx(&f, a, b);
+    ba_add256(&s, a, b);
+    ba_rol64_256(&m, &s);
+    ba_xor(result, &f, &m);
+}
+
+static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
+                                    const BitArray *b, int steps)
+{
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
+    for (i = 0; i < steps; i++) {
+        nl_fscx_v1_ba(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
+    }
+    *result = buf[idx];
 }
 
 /* ------------------------------------------------------------------ */
@@ -1812,10 +1878,394 @@ static void test_hpke_nl_correctness(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [17]-[21]                                   */
+/* Security tests [17]-[18]: CODE-BASED PQC (Stern-F)                 */
 /* ------------------------------------------------------------------ */
 
-/* [17] FSCX throughput (256-bit) */
+#define SDF_N_ROWS   (KEYBITS / 2)     /* 128 rows                       */
+#define SDF_T        (KEYBITS / 16)    /* weight 16                      */
+#define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* 16 syndrome bytes              */
+#define SDF_TEST_ROUNDS 4              /* reduced rounds for test speed  */
+
+/* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
+static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items)
+{
+    BitArray h = {{0}};
+    int i;
+    for (i = 0; i < n_items; i++) {
+        BitArray hxv, rotv;
+        ba_xor(&hxv, &h, &items[i]);
+        ba_rol_k(&rotv, &items[i], KEYBITS / 8);
+        nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+    }
+    *out = h;
+}
+
+/* H[row] = NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed) */
+static void stern_matrix_row_ba(BitArray *out, const BitArray *seed, int row)
+{
+    BitArray sxr = *seed, a0;
+    sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
+    ba_rol_k(&a0, &sxr, KEYBITS / 8);
+    nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
+}
+
+/* n_rows-bit syndrome = H*e^T mod 2. */
+static void stern_syndrome_ba(uint8_t *syndr, const BitArray *seed,
+                               const BitArray *e)
+{
+    int i;
+    memset(syndr, 0, SDF_SYNBYTES);
+    for (i = 0; i < SDF_N_ROWS; i++) {
+        BitArray row;
+        int pc = 0, k;
+        stern_matrix_row_ba(&row, seed, i);
+        for (k = 0; k < KEYBYTES; k++)
+            pc ^= __builtin_popcount(row.b[k] & e->b[k]);
+        if (pc & 1)
+            syndr[i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+static void syndr_to_ba_t(BitArray *out, const uint8_t *syndr)
+{
+    memset(out->b, 0, KEYBYTES);
+    memcpy(out->b + KEYBYTES / 2, syndr, SDF_SYNBYTES);
+}
+
+static void stern_gen_perm_ba(uint8_t *perm, const BitArray *pi_seed, int N)
+{
+    BitArray key, st;
+    int i;
+    for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
+    ba_rol_k(&key, pi_seed, KEYBITS / 8);
+    st = *pi_seed;
+    for (i = N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        nl_fscx_v1_ba(&st, &st, &key);
+        v = ((uint32_t)st.b[KEYBYTES - 2] << 8) | st.b[KEYBYTES - 1];
+        j = (int)(v % (unsigned)(i + 1));
+        { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+    }
+}
+
+static void stern_apply_perm_ba(BitArray *out, const uint8_t *perm,
+                                 const BitArray *v, int N)
+{
+    int i;
+    memset(out->b, 0, KEYBYTES);
+    for (i = 0; i < N; i++) {
+        int byt = KEYBYTES - 1 - i / 8;
+        int bit = i % 8;
+        if (v->b[byt] & (uint8_t)(1u << bit)) {
+            int ob  = KEYBYTES - 1 - perm[i] / 8;
+            int obb = perm[i] % 8;
+            out->b[ob] |= (uint8_t)(1u << obb);
+        }
+    }
+}
+
+static void stern_rand_error_ba(BitArray *e)
+{
+    uint8_t idx[KEYBITS];
+    int i;
+    for (i = 0; i < KEYBITS; i++) idx[i] = (uint8_t)i;
+    memset(e->b, 0, KEYBYTES);
+    for (i = KEYBITS - 1; i >= KEYBITS - SDF_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e->b[KEYBYTES - 1 - idx[i] / 8] |= (uint8_t)(1u << (idx[i] % 8));
+    }
+}
+
+static void stern_fs_challenges_t(int *chals, int rounds,
+                                   const BitArray *msg,
+                                   const BitArray *c0,
+                                   const BitArray *c1,
+                                   const BitArray *c2)
+{
+    BitArray ch_st = {{0}};
+    int i;
+#define _SFS_T(item) do { \
+    BitArray _hxv, _rotv; \
+    ba_xor(&_hxv, &ch_st, &(item)); \
+    ba_rol_k(&_rotv, &(item), KEYBITS / 8); \
+    nl_fscx_revolve_v1_ba(&ch_st, &_hxv, &_rotv, I_VALUE); \
+} while (0)
+    _SFS_T(*msg);
+    for (i = 0; i < rounds; i++) { _SFS_T(c0[i]); _SFS_T(c1[i]); _SFS_T(c2[i]); }
+#undef _SFS_T
+    for (i = 0; i < rounds; i++) {
+        BitArray idx_ba = {{0}};
+        uint32_t v;
+        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
+        v = ((uint32_t)ch_st.b[KEYBYTES-4]<<24)|((uint32_t)ch_st.b[KEYBYTES-3]<<16)
+          | ((uint32_t)ch_st.b[KEYBYTES-2]<<8)|ch_st.b[KEYBYTES-1];
+        chals[i] = (int)(v % 3u);
+    }
+}
+
+typedef struct {
+    BitArray c0[SDF_TEST_ROUNDS], c1[SDF_TEST_ROUNDS], c2[SDF_TEST_ROUNDS];
+    int      b[SDF_TEST_ROUNDS];
+    BitArray resp_a[SDF_TEST_ROUNDS];
+    BitArray resp_b[SDF_TEST_ROUNDS];
+} SternSigT;
+
+static void hpks_stern_f_sign_t(SternSigT *sig, const BitArray *msg,
+                                  const BitArray *e, const BitArray *seed)
+{
+    BitArray r[SDF_TEST_ROUNDS], y[SDF_TEST_ROUNDS], pi[SDF_TEST_ROUNDS];
+    BitArray sr[SDF_TEST_ROUNDS], sy[SDF_TEST_ROUNDS];
+    uint8_t Hr[SDF_TEST_ROUNDS][SDF_SYNBYTES];
+    uint8_t perm[KEYBITS];
+    int i;
+
+    for (i = 0; i < SDF_TEST_ROUNDS; i++) {
+        BitArray items[2];
+        stern_rand_error_ba(&r[i]);
+        ba_xor(&y[i], e, &r[i]);
+        ba_rand(&pi[i]);
+        stern_syndrome_ba(Hr[i], seed, &r[i]);
+        stern_gen_perm_ba(perm, &pi[i], KEYBITS);
+        stern_apply_perm_ba(&sr[i], perm, &r[i], KEYBITS);
+        stern_apply_perm_ba(&sy[i], perm, &y[i], KEYBITS);
+        items[0] = pi[i]; syndr_to_ba_t(&items[1], Hr[i]);
+        stern_hash_ba(&sig->c0[i], items, 2);
+        stern_hash_ba(&sig->c1[i], &sr[i], 1);
+        stern_hash_ba(&sig->c2[i], &sy[i], 1);
+    }
+    stern_fs_challenges_t(sig->b, SDF_TEST_ROUNDS, msg,
+                          sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        if      (bv == 0) { sig->resp_a[i] = sr[i]; sig->resp_b[i] = sy[i]; }
+        else if (bv == 1) { sig->resp_a[i] = pi[i]; sig->resp_b[i] = r[i];  }
+        else              { sig->resp_a[i] = pi[i]; sig->resp_b[i] = y[i];  }
+    }
+}
+
+static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
+                                   const BitArray *seed, const uint8_t *syndr)
+{
+    int chals[SDF_TEST_ROUNDS];
+    uint8_t perm[KEYBITS];
+    int i;
+
+    stern_fs_challenges_t(chals, SDF_TEST_ROUNDS, msg,
+                          sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF_TEST_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+
+    for (i = 0; i < SDF_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        BitArray tmp;
+        if (bv == 0) {
+            stern_hash_ba(&tmp, &sig->resp_a[i], 1);
+            if (!ba_equal(&tmp, &sig->c1[i])) return 0;
+            stern_hash_ba(&tmp, &sig->resp_b[i], 1);
+            if (!ba_equal(&tmp, &sig->c2[i])) return 0;
+            if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
+        } else if (bv == 1) {
+            uint8_t Hr[SDF_SYNBYTES];
+            BitArray items[2], sr2;
+            if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
+            stern_syndrome_ba(Hr, seed, &sig->resp_b[i]);
+            items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hr);
+            stern_hash_ba(&tmp, items, 2);
+            if (!ba_equal(&tmp, &sig->c0[i])) return 0;
+            stern_gen_perm_ba(perm, &sig->resp_a[i], KEYBITS);
+            stern_apply_perm_ba(&sr2, perm, &sig->resp_b[i], KEYBITS);
+            stern_hash_ba(&tmp, &sr2, 1);
+            if (!ba_equal(&tmp, &sig->c1[i])) return 0;
+        } else {
+            uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
+            BitArray items[2], sy2;
+            int k;
+            stern_syndrome_ba(Hy, seed, &sig->resp_b[i]);
+            for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
+            items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hys);
+            stern_hash_ba(&tmp, items, 2);
+            if (!ba_equal(&tmp, &sig->c0[i])) return 0;
+            stern_gen_perm_ba(perm, &sig->resp_a[i], KEYBITS);
+            stern_apply_perm_ba(&sy2, perm, &sig->resp_b[i], KEYBITS);
+            stern_hash_ba(&tmp, &sy2, 1);
+            if (!ba_equal(&tmp, &sig->c2[i])) return 0;
+        }
+    }
+    return 1;
+}
+
+/* ---- 32-bit Stern-F for HPKE-Stern-F test [18]  (n=32, t=2) ---- */
+
+#define SDF32_N     32
+#define SDF32_T     2    /* max(2, 32/16) = 2 */
+#define SDF32_NROWS 16
+
+static uint32_t stern32_matrix_row(uint32_t seed, int row)
+{
+    uint32_t sxr = seed ^ (uint32_t)row;
+    uint32_t a0  = (sxr << 4) | (sxr >> 28);  /* ROL by n/8=4 bits */
+    return nl_fscx_revolve_v1_32(a0, seed, 8); /* I = n/4 = 8 steps */
+}
+
+static uint16_t stern32_syndrome(uint32_t seed, uint32_t e)
+{
+    uint16_t s = 0;
+    int i;
+    for (i = 0; i < SDF32_NROWS; i++)
+        if (__builtin_popcount(stern32_matrix_row(seed, i) & e) & 1)
+            s |= (uint16_t)(1u << i);
+    return s;
+}
+
+static uint32_t stern32_hash(uint32_t h, uint32_t v)
+{
+    uint32_t key = (v << 4) | (v >> 28);
+    return nl_fscx_revolve_v1_32(h ^ v, key, 8);
+}
+
+static uint32_t stern32_rand_error(void)
+{
+    uint8_t idx[SDF32_N];
+    uint32_t e = 0;
+    int i;
+    for (i = 0; i < SDF32_N; i++) idx[i] = (uint8_t)i;
+    for (i = SDF32_N - 1; i >= SDF32_N - SDF32_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e |= 1u << idx[i];
+    }
+    return e;
+}
+
+static uint32_t stern32_rand_seed(void)
+{
+    uint8_t buf[4];
+    if (fread(buf, 4, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+    return ((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|((uint32_t)buf[2]<<8)|buf[3];
+}
+
+static uint32_t hpke_stern_f_encap_32(uint32_t seed, uint16_t *ct_out,
+                                        uint32_t *e_out)
+{
+    uint32_t e_p = stern32_rand_error();
+    *ct_out = stern32_syndrome(seed, e_p);
+    *e_out  = e_p;
+    return stern32_hash(stern32_hash(0, seed), e_p);
+}
+
+static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
+{
+    /* Brute-force C(32,2) = 496 combinations */
+    int i, j;
+    for (i = 0; i < SDF32_N; i++)
+        for (j = i + 1; j < SDF32_N; j++) {
+            uint32_t e_p = (1u << i) | (1u << j);
+            if (stern32_syndrome(seed, e_p) == ct)
+                return stern32_hash(stern32_hash(0, seed), e_p);
+        }
+    return 0xFFFFFFFFu;
+}
+
+/* [17] HPKS-Stern-F correctness: sign+verify, N=256, t=16, rounds=4 */
+static void test_hpks_stern_f_correctness(void)
+{
+    int N = g_rounds > 0 ? g_rounds : 5;
+    int ok = 0, fail = 0, i;
+    struct timespec t0;
+    static SternSigT sf_sig;
+    printf("[17] HPKS-Stern-F correctness: sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n",
+           KEYBITS, SDF_T, SDF_TEST_ROUNDS);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
+        BitArray seed, e, msg;
+        uint8_t syndr[SDF_SYNBYTES];
+        ba_rand(&seed);
+        stern_rand_error_ba(&e);
+        stern_syndrome_ba(syndr, &seed, &e);
+        ba_rand(&msg);
+        hpks_stern_f_sign_t(&sf_sig, &msg, &e, &seed);
+        if (hpks_stern_f_verify_t(&sf_sig, &msg, &seed, syndr)) ok++;
+        else fail++;
+        if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+    }
+    printf("    %d / %d verified  [%s]\n\n", ok, N, fail == 0 ? "PASS" : "FAIL");
+}
+
+/* [18] HPKE-Stern-F correctness: encap+decap, n=32, t=2 (brute-force) */
+static void test_hpke_stern_f_correctness(void)
+{
+    int N = g_rounds > 0 ? g_rounds : 20;
+    int ok = 0, fail = 0, i;
+    struct timespec t0;
+    printf("[18] HPKE-Stern-F correctness: encap+decap  (n=%d, t=%d, brute-force)  [CODE-BASED PQC]\n",
+           SDF32_N, SDF32_T);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
+        uint32_t seed, e_prime, K_enc, K_dec;
+        uint16_t ct;
+        seed  = stern32_rand_seed();
+        K_enc = hpke_stern_f_encap_32(seed, &ct, &e_prime);
+        K_dec = hpke_stern_f_decap_32(seed, ct);
+        if (K_enc == K_dec) ok++;
+        else fail++;
+        if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+    }
+    printf("    %d / %d decapsulated  [%s]\n\n", ok, N, fail == 0 ? "PASS" : "FAIL");
+}
+
+/* [28] HPKS-Stern-F sign+verify throughput (N=256, t=16, rounds=4) */
+static void bench_hpks_stern_f(void)
+{
+    struct timespec t0, t1;
+    long long ops = 0;
+    double secs;
+    int i;
+    static SternSigT bsig;
+    BitArray seed, e, msg;
+    uint8_t syndr[SDF_SYNBYTES];
+    printf("[28] HPKS-Stern-F sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n    ",
+           KEYBITS, SDF_T, SDF_TEST_ROUNDS);
+    ba_rand(&seed); stern_rand_error_ba(&e);
+    stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg);
+    for (i = 0; i < 2; i++) {
+        hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
+        hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    do {
+        for (i = 0; i < 2; i++) {
+            hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
+            hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
+        }
+        ops += 2;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+    print_rate(ops, secs);
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance benchmarks [19]-[23]                                   */
+/* ------------------------------------------------------------------ */
+
+/* [19] FSCX throughput (256-bit) */
 static void bench_fscx_throughput(void)
 {
     BitArray a, b, tmp;
@@ -1823,7 +2273,7 @@ static void bench_fscx_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[17] FSCX throughput  (bits=%d)\n    ", KEYBITS);
+    printf("[19] FSCX throughput  (bits=%d)\n    ", KEYBITS);
     ba_rand(&a); ba_rand(&b);
     for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -1836,7 +2286,7 @@ static void bench_fscx_throughput(void)
     putchar('\n');
 }
 
-/* [18] HKEX-GF gf_pow throughput (32-bit) */
+/* [20] HKEX-GF gf_pow throughput (32-bit) */
 static void bench_gf_pow32_throughput(void)
 {
     uint32_t base, exp, tmp;
@@ -1844,7 +2294,7 @@ static void bench_gf_pow32_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[18] HKEX-GF gf_pow throughput  (bits=32)\n    ");
+    printf("[20] HKEX-GF gf_pow throughput  (bits=32)\n    ");
     base = rand32() | 1;
     exp  = rand32() | 1;
     for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -1858,7 +2308,7 @@ static void bench_gf_pow32_throughput(void)
     putchar('\n');
 }
 
-/* [19] HKEX-GF full handshake (32-bit: 4 gf_pow_32 calls) */
+/* [21] HKEX-GF full handshake (32-bit: 4 gf_pow_32 calls) */
 static void bench_hkex_gf32_handshake(void)
 {
     struct timespec t0, t1;
@@ -1866,7 +2316,7 @@ static void bench_hkex_gf32_handshake(void)
     double secs;
     int i;
     uint32_t a, b, C, C2, skA, skB;
-    printf("[19] HKEX-GF full handshake  (bits=32)\n    ");
+    printf("[21] HKEX-GF full handshake  (bits=32)\n    ");
     a = rand32() | 1; b = rand32() | 1;
     for (i = 0; i < 5; i++) {
         C   = gf_pow_32((uint32_t)GF_GEN32, a);
@@ -1891,7 +2341,7 @@ static void bench_hkex_gf32_handshake(void)
     putchar('\n');
 }
 
-/* [20] HSKE round-trip: encrypt+decrypt (256-bit) */
+/* [22] HSKE round-trip: encrypt+decrypt (256-bit) */
 static void bench_hske_roundtrip(void)
 {
     struct timespec t0, t1;
@@ -1899,7 +2349,7 @@ static void bench_hske_roundtrip(void)
     double secs;
     int i;
     BitArray pt, key, enc, dec;
-    printf("[20] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
+    printf("[22] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
     for (i = 0; i < 5; i++) {
         ba_rand(&pt); ba_rand(&key);
         ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
@@ -1919,7 +2369,7 @@ static void bench_hske_roundtrip(void)
     putchar('\n');
 }
 
-/* [21] HPKE El Gamal encrypt+decrypt round-trip (32-bit) */
+/* [23] HPKE El Gamal encrypt+decrypt round-trip (32-bit) */
 static void bench_hpke_el_gamal_roundtrip(void)
 {
     struct timespec t0, t1;
@@ -1927,7 +2377,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     double secs;
     int i;
     uint32_t a, r, C32, R32, enc_key, E32, dec_key, D32, pt;
-    printf("[21] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
+    printf("[23] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
     a = rand32() | 1; r = rand32() | 1; pt = rand32();
     C32 = gf_pow_32((uint32_t)GF_GEN32, a);
     for (i = 0; i < 5; i++) {
@@ -1956,10 +2406,10 @@ static void bench_hpke_el_gamal_roundtrip(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [22]-[25]: PQC extension                    */
+/* Performance benchmarks [24]-[27]: PQC extension                    */
 /* ------------------------------------------------------------------ */
 
-/* [22] NL-FSCX v1 revolve throughput + [22b] v2 enc+dec round-trip (32-bit) */
+/* [24] NL-FSCX v1 revolve throughput + [24b] v2 enc+dec round-trip (32-bit) */
 static void bench_nl_fscx_revolve(void)
 {
     uint32_t a, b, E;
@@ -1967,7 +2417,7 @@ static void bench_nl_fscx_revolve(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[22] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
+    printf("[24] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
            NL_I32);
     a = rand32(); b = rand32();
     for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
@@ -1980,7 +2430,7 @@ static void bench_nl_fscx_revolve(void)
     print_rate(ops, secs);
     putchar('\n');
 
-    printf("[22b] NL-FSCX v2 revolve+inv throughput  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
+    printf("[24b] NL-FSCX v2 revolve+inv throughput  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
            NL_R32);
     a = rand32(); b = rand32(); ops = 0;
     for (i = 0; i < 5; i++) {
@@ -2000,7 +2450,7 @@ static void bench_nl_fscx_revolve(void)
     putchar('\n');
 }
 
-/* [23] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0, with nonce) */
+/* [25] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0, with nonce) */
 static void bench_hske_nl_a1_roundtrip(void)
 {
     uint32_t K, P, ks, sink = 0;
@@ -2008,7 +2458,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[23] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
+    printf("[25] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
     K = rand32(); P = rand32();
     for (i = 0; i < 10; i++) {
         uint32_t nonce = rand32(), base = K ^ nonce;
@@ -2032,7 +2482,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     putchar('\n');
 }
 
-/* [24] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit) */
+/* [26] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit) */
 static void bench_hske_nl_a2_roundtrip(void)
 {
     uint32_t K, P, E, sink = 0;
@@ -2040,7 +2490,7 @@ static void bench_hske_nl_a2_roundtrip(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[24] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
+    printf("[26] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
            NL_R32);
     K = rand32(); P = rand32();
     for (i = 0; i < 5; i++) {
@@ -2062,7 +2512,7 @@ static void bench_hske_nl_a2_roundtrip(void)
     putchar('\n');
 }
 
-/* [25] HKEX-RNL full handshake throughput (n=32) */
+/* [27] HKEX-RNL full handshake throughput (n=32) */
 static void bench_hkex_rnl_handshake(void)
 {
     rnl32_poly_t m_base, a_rand, m_blind;
@@ -2072,7 +2522,7 @@ static void bench_hkex_rnl_handshake(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[25] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
+    printf("[27] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
     rnl32_m_poly(m_base);
     for (i = 0; i < 3; i++) {
         uint32_t hint_A;
@@ -2145,7 +2595,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.10 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.18 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
@@ -2176,6 +2626,10 @@ int main(int argc, char *argv[])
     test_hpks_nl_correctness();
     test_hpke_nl_correctness();
 
+    puts("--- Security Tests: Code-Based PQC (Stern-F) ---\n");
+    test_hpks_stern_f_correctness();
+    test_hpke_stern_f_correctness();
+
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();
     bench_gf_pow32_throughput();
@@ -2186,6 +2640,7 @@ int main(int argc, char *argv[])
     bench_hske_nl_a1_roundtrip();
     bench_hske_nl_a2_roundtrip();
     bench_hkex_rnl_handshake();
+    bench_hpks_stern_f();
 
     fclose(urnd_fp);
     return 0;

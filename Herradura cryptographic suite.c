@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.17
+/*  Herradura Cryptographic Suite v1.5.18
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,10 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC (Theorem 17, §11.8.4) ---
+    Stern 3-challenge ZKP + Fiat-Shamir in QROM; security reduces to SD(N,t) + NL-FSCX PRF.
+    N=256, n_rows=128, t=16, rounds=32 (production: >=219 for 128-bit soundness).
 
     --- v1.5.17: NTT twiddle precomputation — lazy-initialized static table eliminates rnl_mod_pow calls per rnl_poly_mul ---
 
@@ -858,7 +862,309 @@ HPKS-NL (NL-hardened Schnorr, 256-bit):
 HPKE-NL (NL-hardened El Gamal, 256-bit):
     E = nl_fscx_revolve_v2(P, enc_key, I_VALUE)
     D = nl_fscx_revolve_v2_inv(E, dec_key, I_VALUE)
+
+HPKS-Stern-F (Stern syndrome-decoding signature, code-based PQC):
+    KeyGen: seed random; e <- {wt-t, len-N}; s = H*e^T
+    Sign:   Stern 3-challenge ZKP of (e: H*e^T=s, wt(e)=t) + Fiat-Shamir in QROM
+    Verify: Re-derive Fiat-Shamir challenges; check one Stern response per round
+    Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs.md §11.8.4)
+
+HPKE-Stern-F (Niederreiter KEM, code-based PQC):
+    KeyGen: same as HPKS-Stern-F (seed, e, s=H*e^T)
+    Encap:  e' <- {wt-t}; K = Hash(seed, e'); ciphertext c = H*e'^T
+    Decap:  decode c to find e' (brute-force demo; QC-MDPC for production); K = Hash(seed,e')
 */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * CODE-BASED PQC: HPKS-Stern-F / HPKE-Stern-F  (v1.5.18)
+ * Stern 3-challenge ZKP + Fiat-Shamir in QROM.
+ * Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs.md §11.8.4).
+ * N=KEYBITS=256, n_rows=128, t=16, rounds=32  (production: >=219).
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define SDF_N_ROWS   (KEYBITS / 2)     /* parity-check rows: 128             */
+#define SDF_T        (KEYBITS / 16)    /* error weight: 16                   */
+#define SDF_ROUNDS   32                /* ZKP rounds (demo; prod >= 219)     */
+#define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* syndrome bytes: 16                 */
+
+/* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
+static void stern_hash(BitArray *out, const BitArray *items, int n_items)
+{
+    BitArray h = {{0}};
+    int i;
+    for (i = 0; i < n_items; i++) {
+        BitArray hxv, rotv;
+        ba_xor(&hxv, &h, &items[i]);
+        ba_rol_k(&rotv, &items[i], KEYBITS / 8);
+        nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+    }
+    *out = h;
+}
+
+/* H[row] = NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed) */
+static void stern_matrix_row(BitArray *out, const BitArray *seed, int row)
+{
+    BitArray sxr = *seed, a0;
+    sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
+    ba_rol_k(&a0, &sxr, KEYBITS / 8);
+    nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
+}
+
+/* n_rows-bit syndrome s = H*e^T mod 2 packed into syndr[SDF_SYNBYTES]. */
+static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
+                            const BitArray *e)
+{
+    int i;
+    memset(syndr, 0, SDF_SYNBYTES);
+    for (i = 0; i < SDF_N_ROWS; i++) {
+        BitArray row;
+        int pc = 0, k;
+        stern_matrix_row(&row, seed, i);
+        for (k = 0; k < KEYBYTES; k++)
+            pc ^= __builtin_popcount(row.b[k] & e->b[k]);
+        if (pc & 1)
+            syndr[i / 8] |= (uint8_t)(1u << (i % 8));
+    }
+}
+
+/* Pack syndrome into lower half of a BitArray (upper bytes = 0). */
+static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
+{
+    memset(out->b, 0, KEYBYTES);
+    memcpy(out->b + KEYBYTES / 2, syndr, SDF_SYNBYTES);
+}
+
+/* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG. */
+static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
+{
+    BitArray key, st;
+    int i;
+    for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
+    ba_rol_k(&key, pi_seed, KEYBITS / 8);
+    st = *pi_seed;
+    for (i = N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        nl_fscx_v1_ba(&st, &st, &key);
+        v = ((uint32_t)st.b[KEYBYTES - 2] << 8) | st.b[KEYBYTES - 1];
+        j = (int)(v % (unsigned)(i + 1));
+        { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+    }
+}
+
+/* Apply permutation: out[perm[i]] = v[i] for N bits. */
+static void stern_apply_perm(BitArray *out, const uint8_t *perm,
+                              const BitArray *v, int N)
+{
+    int i;
+    memset(out->b, 0, KEYBYTES);
+    for (i = 0; i < N; i++) {
+        int byt = KEYBYTES - 1 - i / 8;
+        int bit = i % 8;
+        if (v->b[byt] & (uint8_t)(1u << bit)) {
+            int ob  = KEYBYTES - 1 - perm[i] / 8;
+            int obb = perm[i] % 8;
+            out->b[ob] |= (uint8_t)(1u << obb);
+        }
+    }
+}
+
+/* Popcount of a 256-bit BitArray. */
+static int ba_popcount(const BitArray *a)
+{
+    int i, n = 0;
+    for (i = 0; i < KEYBYTES; i++) n += __builtin_popcount(a->b[i]);
+    return n;
+}
+
+/* Generate weight-SDF_T error vector via partial Fisher-Yates + /dev/urandom. */
+static void stern_rand_error(BitArray *e, FILE *urnd)
+{
+    uint8_t idx[KEYBITS];
+    int i;
+    for (i = 0; i < KEYBITS; i++) idx[i] = (uint8_t)i;
+    memset(e->b, 0, KEYBYTES);
+    for (i = KEYBITS - 1; i >= KEYBITS - SDF_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd) != 1) {
+                fputs("urandom error\n", stderr); exit(1);
+            }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e->b[KEYBYTES - 1 - idx[i] / 8] |= (uint8_t)(1u << (idx[i] % 8));
+    }
+}
+
+/* Key generation: random seed, weight-t error e, syndrome = H*e^T. */
+static void stern_f_keygen(BitArray *seed, BitArray *e, uint8_t *syndr,
+                            FILE *urnd)
+{
+    ba_rand(seed, urnd);
+    stern_rand_error(e, urnd);
+    stern_syndrome(syndr, seed, e);
+}
+
+/* Derive Fiat-Shamir challenges from message and all round commits. */
+static void stern_fs_challenges(int *chals, int rounds,
+                                 const BitArray *msg,
+                                 const BitArray *c0,
+                                 const BitArray *c1,
+                                 const BitArray *c2)
+{
+    BitArray ch_st = {{0}};
+    int i;
+
+#define _SFS(item) do { \
+    BitArray _hxv, _rotv; \
+    ba_xor(&_hxv, &ch_st, &(item)); \
+    ba_rol_k(&_rotv, &(item), KEYBITS / 8); \
+    nl_fscx_revolve_v1_ba(&ch_st, &_hxv, &_rotv, I_VALUE); \
+} while (0)
+
+    _SFS(*msg);
+    for (i = 0; i < rounds; i++) { _SFS(c0[i]); _SFS(c1[i]); _SFS(c2[i]); }
+#undef _SFS
+
+    for (i = 0; i < rounds; i++) {
+        BitArray idx_ba = {{0}};
+        uint32_t v;
+        idx_ba.b[KEYBYTES - 1] = (uint8_t)(i & 0xFF);
+        nl_fscx_v1_ba(&ch_st, &ch_st, &idx_ba);
+        v = ((uint32_t)ch_st.b[KEYBYTES - 4] << 24)
+          | ((uint32_t)ch_st.b[KEYBYTES - 3] << 16)
+          | ((uint32_t)ch_st.b[KEYBYTES - 2] << 8)
+          |  ch_st.b[KEYBYTES - 1];
+        chals[i] = (int)(v % 3u);
+    }
+}
+
+/* Signature structure for HPKS-Stern-F (SDF_ROUNDS rounds). */
+typedef struct {
+    BitArray c0[SDF_ROUNDS], c1[SDF_ROUNDS], c2[SDF_ROUNDS];
+    int      b[SDF_ROUNDS];
+    BitArray resp_a[SDF_ROUNDS]; /* sr (b=0) or pi_seed (b=1,2) */
+    BitArray resp_b[SDF_ROUNDS]; /* sy (b=0) or r (b=1) or y (b=2) */
+} SternSig;
+
+/* Sign: generate Stern commitments and Fiat-Shamir responses. */
+static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
+                               const BitArray *e, const BitArray *seed,
+                               FILE *urnd)
+{
+    BitArray r[SDF_ROUNDS], y[SDF_ROUNDS], pi[SDF_ROUNDS];
+    BitArray sr[SDF_ROUNDS], sy[SDF_ROUNDS];
+    uint8_t Hr[SDF_ROUNDS][SDF_SYNBYTES];
+    uint8_t perm[KEYBITS];
+    int i;
+
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        BitArray items[2];
+        stern_rand_error(&r[i], urnd);
+        ba_xor(&y[i], e, &r[i]);
+        ba_rand(&pi[i], urnd);
+        stern_syndrome(Hr[i], seed, &r[i]);
+        stern_gen_perm(perm, &pi[i], KEYBITS);
+        stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
+        stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
+        items[0] = pi[i]; syndr_to_ba(&items[1], Hr[i]);
+        stern_hash(&sig->c0[i], items, 2);
+        stern_hash(&sig->c1[i], &sr[i], 1);
+        stern_hash(&sig->c2[i], &sy[i], 1);
+    }
+
+    stern_fs_challenges(sig->b, SDF_ROUNDS, msg,
+                        sig->c0, sig->c1, sig->c2);
+
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        int bv = sig->b[i];
+        if      (bv == 0) { sig->resp_a[i] = sr[i]; sig->resp_b[i] = sy[i]; }
+        else if (bv == 1) { sig->resp_a[i] = pi[i]; sig->resp_b[i] = r[i];  }
+        else              { sig->resp_a[i] = pi[i]; sig->resp_b[i] = y[i];  }
+    }
+}
+
+/* Verify: re-derive Fiat-Shamir challenges and check all Stern responses. */
+static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
+                                const BitArray *seed, const uint8_t *syndr)
+{
+    int chals[SDF_ROUNDS];
+    uint8_t perm[KEYBITS];
+    int i;
+
+    stern_fs_challenges(chals, SDF_ROUNDS, msg,
+                        sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+
+    for (i = 0; i < SDF_ROUNDS; i++) {
+        int bv = sig->b[i];
+        BitArray tmp;
+        if (bv == 0) {
+            /* (sr, sy): check c1=hash(sr), c2=hash(sy), wt(sr)=t */
+            stern_hash(&tmp, &sig->resp_a[i], 1);
+            if (!ba_equal(&tmp, &sig->c1[i])) return 0;
+            stern_hash(&tmp, &sig->resp_b[i], 1);
+            if (!ba_equal(&tmp, &sig->c2[i])) return 0;
+            if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
+        } else if (bv == 1) {
+            /* (pi_seed, r): check c0 via Hr, c1 via sigma(r), wt(r)=t */
+            uint8_t Hr[SDF_SYNBYTES];
+            BitArray items[2], sr2;
+            if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
+            stern_syndrome(Hr, seed, &sig->resp_b[i]);
+            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
+            stern_hash(&tmp, items, 2);
+            if (!ba_equal(&tmp, &sig->c0[i])) return 0;
+            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
+            stern_apply_perm(&sr2, perm, &sig->resp_b[i], KEYBITS);
+            stern_hash(&tmp, &sr2, 1);
+            if (!ba_equal(&tmp, &sig->c1[i])) return 0;
+        } else {
+            /* (pi_seed, y): check c0 via Hy XOR syndr, c2 via sigma(y) */
+            uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
+            BitArray items[2], sy2;
+            int k;
+            stern_syndrome(Hy, seed, &sig->resp_b[i]);
+            for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
+            items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hys);
+            stern_hash(&tmp, items, 2);
+            if (!ba_equal(&tmp, &sig->c0[i])) return 0;
+            stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
+            stern_apply_perm(&sy2, perm, &sig->resp_b[i], KEYBITS);
+            stern_hash(&tmp, &sy2, 1);
+            if (!ba_equal(&tmp, &sig->c2[i])) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Encapsulate: K = hash(seed, e'), ct = H*e'^T; e_out = e' (demo). */
+static void hpke_stern_f_encap(BitArray *K_out, uint8_t *ct, BitArray *e_out,
+                                const BitArray *seed, FILE *urnd)
+{
+    BitArray items[2];
+    stern_rand_error(e_out, urnd);
+    stern_syndrome(ct, seed, e_out);
+    items[0] = *seed;
+    items[1] = *e_out;
+    stern_hash(K_out, items, 2);
+}
+
+/* Decapsulate using known e' (demo only; production needs QC-MDPC decoder). */
+static void hpke_stern_f_decap_known(BitArray *K_out,
+                                      const BitArray *e_p,
+                                      const BitArray *seed)
+{
+    BitArray items[2];
+    items[0] = *seed;
+    items[1] = *e_p;
+    stern_hash(K_out, items, 2);
+}
 
 int main(void)
 {
@@ -867,6 +1173,8 @@ int main(void)
     BitArray C, C2;
     /* saved for Eve tests */
     BitArray E_nl_saved, R_nl2_saved, sk_rnl_A_saved;
+    BitArray sf_seed_saved, sf_K_enc_saved;
+    uint8_t  sf_syn_saved[SDF_SYNBYTES];
 
     urnd = fopen("/dev/urandom", "rb");
     if (!urnd) {
@@ -1093,6 +1401,40 @@ int main(void)
         R_nl2_saved  = R_nl2;
     }
 
+    /* --- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA <= q_H/T_SD + eps_PRF] */
+    printf("\n--- HPKS-Stern-F [CODE-BASED PQC \xe2\x80\x94 EUF-CMA \xe2\x89\xa4 q_H/T_SD + \xce\xb5_PRF]\n");
+    printf("    (N=%d, t=%d, rounds=%d; soundness=(2/3)^%d)\n",
+           KEYBITS, SDF_T, SDF_ROUNDS, SDF_ROUNDS);
+    {
+        static SternSig sf_sig;
+        BitArray sf_e;
+        stern_f_keygen(&sf_seed_saved, &sf_e, sf_syn_saved, urnd);
+        ba_print_hex("seed     : ", &sf_seed_saved);
+        ba_print_hex("msg      : ", &plaintext);
+        hpks_stern_f_sign(&sf_sig, &plaintext, &sf_e, &sf_seed_saved, urnd);
+        if (hpks_stern_f_verify(&sf_sig, &plaintext, &sf_seed_saved, sf_syn_saved))
+            puts("+ HPKS-Stern-F signature verified");
+        else
+            puts("- HPKS-Stern-F verification FAILED");
+    }
+
+    /* --- HPKE-Stern-F [CODE-BASED PQC -- Niederreiter KEM] */
+    printf("\n--- HPKE-Stern-F [CODE-BASED PQC \xe2\x80\x94 Niederreiter KEM, N=%d]\n", KEYBITS);
+    puts("    (brute-force decap infeasible at N=256; demo uses known e')");
+    {
+        BitArray sf_e_p, K_dec;
+        uint8_t sf_ct[SDF_SYNBYTES];
+        hpke_stern_f_encap(&sf_K_enc_saved, sf_ct, &sf_e_p, &sf_seed_saved, urnd);
+        hpke_stern_f_decap_known(&K_dec, &sf_e_p, &sf_seed_saved);
+        ba_print_hex("K (encap): ", &sf_K_enc_saved);
+        ba_print_hex("K (decap): ", &K_dec);
+        puts("    NOTE: decap uses known e' (demo only; production: QC-MDPC decoder)");
+        if (ba_equal(&sf_K_enc_saved, &K_dec))
+            puts("+ HPKE-Stern-F session keys agree");
+        else
+            puts("- HPKE-Stern-F key agreement FAILED");
+    }
+
     /* *** EVE bypass TESTS *** */
     printf("\n\n*** EVE bypass TESTS\n");
 
@@ -1132,6 +1474,34 @@ int main(void)
             puts("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!");
         else
             puts("- Eve random guess does not match shared key (Ring-LWR protection)");
+    }
+
+    puts("*** HPKS-Stern-F \xe2\x80\x94 Eve cannot forge without solving SD(N,t)");
+    {
+        static SternSig eve_sig;
+        int i;
+        for (i = 0; i < SDF_ROUNDS; i++) {
+            ba_rand(&eve_sig.c0[i], urnd);
+            ba_rand(&eve_sig.c1[i], urnd);
+            ba_rand(&eve_sig.c2[i], urnd);
+            eve_sig.b[i] = 0;
+            ba_rand(&eve_sig.resp_a[i], urnd);
+            ba_rand(&eve_sig.resp_b[i], urnd);
+        }
+        if (hpks_stern_f_verify(&eve_sig, &decoy, &sf_seed_saved, sf_syn_saved))
+            puts("+ Eve forged HPKS-Stern-F (Eve wins)!");
+        else
+            puts("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)");
+    }
+
+    puts("*** HPKE-Stern-F \xe2\x80\x94 Eve cannot derive session key from syndrome ciphertext");
+    {
+        BitArray eve_K_guess;
+        ba_rand(&eve_K_guess, urnd);
+        if (ba_equal(&eve_K_guess, &sf_K_enc_saved))
+            puts("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!");
+        else
+            puts("- Eve random guess does not match session key  (SD protection)");
     }
 
     fclose(urnd);
