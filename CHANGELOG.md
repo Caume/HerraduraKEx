@@ -4,6 +4,54 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.18] - 2026-04-28
+
+### Feature — HPKS-Stern-F and HPKE-Stern-F: code-based PQC across all 6 targets
+
+Adds two new protocols based on the Stern identification scheme (ZKP for syndrome decoding), providing code-based post-quantum hardness independent of lattice assumptions. Both protocols are implemented in all six language targets: Python, Go, C, ARM Thumb-2, NASM i386, and Arduino.
+
+#### HPKS-Stern-F — Code-Based Signature (EUF-CMA)
+
+3-challenge Fiat-Shamir transformed Stern ZKP for syndrome decoding. Parameters: N=32, t=2, nRows=16, rounds=4 (assembly targets use 32-bit operands for KEYBITS=32; C/Go/Python use 256-bit).
+
+- **Commit phase** (per round): generate random r (weight t), y = e ⊕ r, permutation π; compute c0 = hash(π, H·r^T), c1 = hash(σ(r)), c2 = hash(σ(y)) where σ = apply(π, ·)
+- **Challenge** (Fiat-Shamir via NL-FSCX): b ∈ {0, 1, 2} derived from H(msg, c0, c1, c2)
+- **Response**: b=0 → (σ(r), σ(y)); b=1 → (π, r); b=2 → (π, y)
+- **Verify**: consistency of commitments and weight-t checks per challenge branch
+- Security: EUF-CMA under the Syndrome Decoding assumption
+
+#### HPKE-Stern-F — Code-Based KEM (Niederreiter)
+
+Niederreiter-style KEM with syndrome as ciphertext and NL-FSCX hash as session key.
+
+- **Encap**: sample e' (weight t); ct = H·e'^T; K = hash(seed, e')
+- **Decap** (known-e' demo): K = hash(seed, e'); production requires a QC-MDPC syndrome decoder
+
+#### NL-FSCX primitives
+
+Both protocols share `sternHash` (NL-FSCX v1 with ROL(v,4) key schedule, 8 steps) and `sternMatrixRow` (same construction for parity-check matrix H). Fisher-Yates permutation generation uses `nl_fscx_v1` as PRNG.
+
+#### Files changed
+
+- `Herradura cryptographic suite.py` — `stern_hash1/2`, `stern_matrix_row`, `stern_syndrome`, `stern_popcount_eq2`, `stern_gen_perm`, `stern_apply_perm`, `stern_rand_error`, `stern_fs_challenges`, `hpks_stern_f_sign/verify`, `hpke_stern_f_encap/decap_known`; demo + Eve tests in main
+- `CryptosuiteTests/Herradura_tests.py` — tests [11]–[12], benchmarks [26]–[28]
+- `Herradura cryptographic suite.go` — same 13 functions (`SternHash1`, etc.); demo + Eve tests
+- `CryptosuiteTests/Herradura_tests.go` — tests [11]–[16], benchmarks [26]–[28]
+- `Herradura cryptographic suite.c` — same 13 functions; demo + Eve tests
+- `CryptosuiteTests/Herradura_tests.c` — tests [11]–[18], benchmarks [22]–[28]
+- `Herradura cryptographic suite.s` (ARM Thumb-2) — 13 Stern-F functions + demo + Eve tests; SDF_N=32
+- `CryptosuiteTests/Herradura_tests.s` (ARM Thumb-2) — tests [11]–[12]
+- `Herradura cryptographic suite.asm` (NASM i386) — 13 Stern-F functions + demo + Eve tests; SDF_N=32
+- `CryptosuiteTests/Herradura_tests.asm` (NASM i386) — tests [11]–[12]
+
+#### Test results
+
+All targets produce passing correctness tests:
+- Assembly targets: [11] 3/3 verified, [12] 3/3 keys match
+- C/Go/Python: [11]–[12] (sign+verify, KEM), plus additional Eve-resistance and property tests
+
+---
+
 ## [1.5.17] - 2026-04-26
 
 ### Performance — NTT twiddle precomputation eliminates `rnl_mod_pow` calls per `rnl_poly_mul` (C, Go)

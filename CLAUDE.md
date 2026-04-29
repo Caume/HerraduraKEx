@@ -68,21 +68,22 @@ qemu-i386 "./Herradura cryptographic suite_i386"
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-# C — tests [1]–[16] (security) + benchmarks [17]–[21]
+# C — tests [1]–[18] (security) + benchmarks [19]–[28]
 ./CryptosuiteTests/Herradura_tests
 ./CryptosuiteTests/Herradura_tests -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests -t 2.0        # cap wall-clock per test/bench at 2 s
 HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests  # env-var equivalents
 
-# Go — tests [1]–[16] + benchmarks [17]–[25]
+# Go — tests [1]–[16] + benchmarks [17]–[28]
 cd CryptosuiteTests && go run Herradura_tests.go
 cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
 
-# Python — tests [1]–[16] + benchmarks [17]–[25]
+# Python — tests [1]–[16] + benchmarks [17]–[28]
 python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
 # Assembly — build first (see Build Commands), then run:
+# ARM/NASM: tests [1]–[12]
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ```
@@ -128,6 +129,17 @@ NL-FSCX primitives + Ring-LWR
 ├── HKEX-RNL   — Ring-LWR key exchange (conjectured quantum-resistant)
 ├── HPKS-NL    — Schnorr with NL-FSCX v1 challenge: e = nl_fscx_revolve_v1(R, msg, i)
 └── HPKE-NL    — El Gamal with NL-FSCX v2: E = nl_fscx_revolve_v2(P, enc_key, i)
+```
+
+**Code-Based PQC (v1.5.18):**
+```
+Stern identification protocol (ZKP for syndrome decoding)
+├── HPKS-Stern-F — Fiat-Shamir signature: N=32, t=2, rounds=4
+│                  commit: c0=hash(π,H·r^T), c1=hash(σ(r)), c2=hash(σ(y))
+│                  challenge b∈{0,1,2} via NL-FSCX hash of msg+commitments
+│                  response reveals permuted r, y=e⊕r, or permutation π
+└── HPKE-Stern-F — Niederreiter KEM: ct=H·e'^T; K=hash(seed,e')
+                   (demo uses known e'; production needs QC-MDPC decoder)
 ```
 
 Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Arduino; 256-bit in C/Go/Python suite. HSKE and FSCX tests always use 256-bit.
