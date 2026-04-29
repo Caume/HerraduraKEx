@@ -1,5 +1,6 @@
-/*  Herradura Cryptographic Suite v1.5.13 — Arduino (32-bit)
-    HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
+/*  Herradura Cryptographic Suite v1.5.18 — Arduino (32-bit)
+    HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
+    HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -330,6 +331,161 @@ static uint32 rnl_agree(const long *s, const long *C_other,
 }
 
 /* ------------------------------------------------------------------ */
+/* HPKS-Stern-F / HPKE-Stern-F (v1.5.18, code-based PQC)             */
+/* N=32, t=2, rows=16, rounds=4. Security <= SD(32,2) + NL-FSCX PRF. */
+/* ------------------------------------------------------------------ */
+
+#define SDF_N      32
+#define SDF_T      2
+#define SDF_NROWS  16
+#define SDF_ROUNDS 4
+
+static uint32 stern_hash1_32(uint32 v) {
+    return nl_fscx_revolve_v1(v, _rol32(v, 4), I_VALUE);
+}
+
+static uint32 stern_hash2_32(uint32 a, uint32 b) {
+    uint32 h = nl_fscx_revolve_v1(a, _rol32(a, 4), I_VALUE);
+    return nl_fscx_revolve_v1(h ^ b, _rol32(b, 4), I_VALUE);
+}
+
+static uint32 stern_matrix_row_32(uint32 seed, int row) {
+    return nl_fscx_revolve_v1(_rol32(seed ^ (uint32)row, 4), seed, I_VALUE);
+}
+
+static uint32 stern_syndrome_32(uint32 seed, uint32 e) {
+    uint32 synd = 0;
+    for (int row = 0; row < SDF_NROWS; row++) {
+        uint32 v = stern_matrix_row_32(seed, row) & e;
+        v ^= v >> 16; v ^= v >> 8; v ^= v >> 4; v ^= v >> 2; v ^= v >> 1;
+        if (v & 1) synd |= (1UL << row);
+    }
+    return synd;
+}
+
+static void stern_gen_perm_32(uint8_t *perm, uint32 pi_seed) {
+    uint32 key = _rol32(pi_seed, 4), st = pi_seed;
+    for (int i = 0; i < SDF_N; i++) perm[i] = (uint8_t)i;
+    for (int i = SDF_N - 1; i > 0; i--) {
+        st = nl_fscx_v1(st, key);
+        int j = (int)(st % (uint32)(i + 1));
+        uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp;
+    }
+}
+
+static uint32 stern_apply_perm_32(const uint8_t *perm, uint32 v) {
+    uint32 out = 0;
+    for (int i = 0; i < SDF_N; i++)
+        if ((v >> i) & 1) out |= (1UL << perm[i]);
+    return out;
+}
+
+static uint32 stern_rand_error_32(void) {
+    uint8_t idx[SDF_N];
+    uint32 j;
+    for (int i = 0; i < SDF_N; i++) idx[i] = (uint8_t)i;
+    j = lcg_next() % (uint32)SDF_N;
+    { uint8_t t = idx[SDF_N-1]; idx[SDF_N-1] = idx[j]; idx[j] = t; }
+    j = lcg_next() % (uint32)(SDF_N - 1);
+    { uint8_t t = idx[SDF_N-2]; idx[SDF_N-2] = idx[j]; idx[j] = t; }
+    return (1UL << idx[SDF_N-1]) | (1UL << idx[SDF_N-2]);
+}
+
+typedef struct {
+    uint32 c0[SDF_ROUNDS], c1[SDF_ROUNDS], c2[SDF_ROUNDS];
+    uint32 b[SDF_ROUNDS];
+    uint32 respA[SDF_ROUNDS];  /* sr (b=0) or pi_seed (b=1,2) */
+    uint32 respB[SDF_ROUNDS];  /* sy (b=0) or r   (b=1) or y  (b=2) */
+} SternSig32;
+
+static void stern_fs_challenges_32(uint32 *chals, uint32 msg,
+                                    const uint32 *c0,
+                                    const uint32 *c1,
+                                    const uint32 *c2) {
+    uint32 h = 0;
+    h = nl_fscx_revolve_v1(h ^ msg, _rol32(msg, 4), I_VALUE);
+    for (int i = 0; i < SDF_ROUNDS; i++) {
+        h = nl_fscx_revolve_v1(h ^ c0[i], _rol32(c0[i], 4), I_VALUE);
+        h = nl_fscx_revolve_v1(h ^ c1[i], _rol32(c1[i], 4), I_VALUE);
+        h = nl_fscx_revolve_v1(h ^ c2[i], _rol32(c2[i], 4), I_VALUE);
+    }
+    for (int i = 0; i < SDF_ROUNDS; i++) {
+        h = nl_fscx_v1(h, (uint32)i);
+        chals[i] = h % 3;
+    }
+}
+
+static void hpks_stern_f_sign_32(SternSig32 *sig, uint32 msg,
+                                   uint32 e, uint32 seed) {
+    static uint8_t perm[SDF_N];
+    static uint32 r_tmp[SDF_ROUNDS],  y_tmp[SDF_ROUNDS];
+    static uint32 pi_tmp[SDF_ROUNDS], sr_tmp[SDF_ROUNDS], sy_tmp[SDF_ROUNDS];
+    for (int i = 0; i < SDF_ROUNDS; i++) {
+        uint32 r  = stern_rand_error_32();
+        uint32 y  = e ^ r;
+        uint32 pi = lcg_next();
+        stern_gen_perm_32(perm, pi);
+        uint32 sr = stern_apply_perm_32(perm, r);
+        uint32 sy = stern_apply_perm_32(perm, y);
+        uint32 hr = stern_syndrome_32(seed, r);
+        sig->c0[i] = stern_hash2_32(pi, hr);
+        sig->c1[i] = stern_hash1_32(sr);
+        sig->c2[i] = stern_hash1_32(sy);
+        r_tmp[i] = r;  y_tmp[i] = y;
+        pi_tmp[i] = pi; sr_tmp[i] = sr; sy_tmp[i] = sy;
+    }
+    stern_fs_challenges_32(sig->b, msg, sig->c0, sig->c1, sig->c2);
+    for (int i = 0; i < SDF_ROUNDS; i++) {
+        uint32 bv = sig->b[i];
+        if      (bv == 0) { sig->respA[i] = sr_tmp[i]; sig->respB[i] = sy_tmp[i]; }
+        else if (bv == 1) { sig->respA[i] = pi_tmp[i]; sig->respB[i] = r_tmp[i];  }
+        else              { sig->respA[i] = pi_tmp[i]; sig->respB[i] = y_tmp[i];  }
+    }
+}
+
+static int hpks_stern_f_verify_32(const SternSig32 *sig, uint32 msg,
+                                    uint32 seed, uint32 synd) {
+    static uint8_t perm[SDF_N];
+    uint32 chals[SDF_ROUNDS];
+    stern_fs_challenges_32(chals, msg, sig->c0, sig->c1, sig->c2);
+    for (int i = 0; i < SDF_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+    for (int i = 0; i < SDF_ROUNDS; i++) {
+        uint32 bv = sig->b[i], ra = sig->respA[i], rb = sig->respB[i];
+        if (bv == 0) {
+            if (stern_hash1_32(ra) != sig->c1[i]) return 0;
+            if (stern_hash1_32(rb) != sig->c2[i]) return 0;
+            uint32 v = ra; if (!v) return 0;
+            v &= v-1; if (!v) return 0; v &= v-1; if (v) return 0;
+        } else if (bv == 1) {
+            uint32 v = rb; if (!v) return 0;
+            v &= v-1; if (!v) return 0; v &= v-1; if (v) return 0;
+            uint32 hr = stern_syndrome_32(seed, rb);
+            if (stern_hash2_32(ra, hr) != sig->c0[i]) return 0;
+            stern_gen_perm_32(perm, ra);
+            if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c1[i]) return 0;
+        } else {
+            uint32 hy = stern_syndrome_32(seed, rb);
+            if (stern_hash2_32(ra, hy ^ synd) != sig->c0[i]) return 0;
+            stern_gen_perm_32(perm, ra);
+            if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c2[i]) return 0;
+        }
+    }
+    return 1;
+}
+
+static uint32 hpke_stern_f_encap_32(uint32 seed, uint32 *ct_out, uint32 *e_out) {
+    uint32 e_p  = stern_rand_error_32();
+    *e_out  = e_p;
+    *ct_out = stern_syndrome_32(seed, e_p);
+    return stern_hash2_32(seed, e_p);
+}
+
+static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
+    return stern_hash2_32(seed, e_p);
+}
+
+/* ------------------------------------------------------------------ */
 /* Fixed test vectors                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -348,7 +504,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura Cryptographic Suite v1.5.7 (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura Cryptographic Suite v1.5.18 (Arduino, 32-bit) ===");
     Serial.println();
 
     printHexLine("a_priv : ", A_PRIV);
@@ -522,6 +678,43 @@ void loop() {
     Serial.println();
 
     /* ---------------------------------------------------------------- */
+    /* HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP signature, N=32]     */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- HPKS-Stern-F [PQC -- Fiat-Shamir Stern ZKP, N=32, t=2, rounds=4]");
+    uint32 sf_seed = 0, sf_synd = 0, sf_e = 0;
+    {
+        static SternSig32 sf_sig;
+        sf_seed = lcg_next();
+        sf_e    = stern_rand_error_32();
+        sf_synd = stern_syndrome_32(sf_seed, sf_e);
+        hpks_stern_f_sign_32(&sf_sig, PLAIN, sf_e, sf_seed);
+        int ok = hpks_stern_f_verify_32(&sf_sig, PLAIN, sf_seed, sf_synd);
+        printHexLine("seed     : ", sf_seed);
+        printHexLine("error e  : ", sf_e);
+        printHexLine("syndrome : ", sf_synd);
+        Serial.println(ok ? "+ HPKS-Stern-F verified!" : "- HPKS-Stern-F FAILED!");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]               */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- HPKE-Stern-F [PQC -- Niederreiter KEM, N=32, t=2]");
+    uint32 sf_K_enc_saved = 0;
+    {
+        uint32 e_prime, ct;
+        sf_K_enc_saved = hpke_stern_f_encap_32(sf_seed, &ct, &e_prime);
+        uint32 K_dec   = hpke_stern_f_decap_32(sf_seed, e_prime);
+        printHexLine("ct       : ", ct);
+        printHexLine("K (enc)  : ", sf_K_enc_saved);
+        printHexLine("K (dec)  : ", K_dec);
+        Serial.println(sf_K_enc_saved == K_dec
+            ? "+ HPKE-Stern-F KEM keys agree!"
+            : "- HPKE-Stern-F KEM keys differ!");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
     /* EVE bypass tests                                                 */
     /* ---------------------------------------------------------------- */
     Serial.println("*** EVE bypass TESTS ***");
@@ -541,6 +734,28 @@ void loop() {
         Serial.println(eve_guess == sk_rnl_saved
             ? "+ Eve guessed HKEX-RNL key (astronomically unlikely)!"
             : "- Eve random guess does not match shared key (Ring-LWR protection)");
+    }
+
+    Serial.println("*** HPKS-Stern-F -- Eve forges signature (random data)");
+    {
+        static SternSig32 eve_sig;
+        for (int i = 0; i < SDF_ROUNDS; i++) {
+            eve_sig.c0[i] = lcg_next(); eve_sig.c1[i] = lcg_next();
+            eve_sig.c2[i] = lcg_next(); eve_sig.b[i]  = lcg_next() % 3;
+            eve_sig.respA[i] = lcg_next(); eve_sig.respB[i] = lcg_next();
+        }
+        int ok = hpks_stern_f_verify_32(&eve_sig, PLAIN, sf_seed, sf_synd);
+        Serial.println(ok
+            ? "+ Eve forged signature (soundness failure)!"
+            : "- Eve forge rejected (SD soundness)");
+    }
+
+    Serial.println("*** HPKE-Stern-F -- Eve random guess vs KEM key");
+    {
+        uint32 eve_K = lcg_next();
+        Serial.println(eve_K == sf_K_enc_saved
+            ? "+ Eve guessed KEM key (astronomically unlikely)!"
+            : "- Eve random K does not match KEM key (SD protection)");
     }
     Serial.println();
 

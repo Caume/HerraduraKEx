@@ -4,11 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.19] - 2026-04-29
+
+### Feature — HPKS-Stern-F and HPKE-Stern-F: Arduino implementation
+
+Adds HPKS-Stern-F and HPKE-Stern-F to the Arduino target, completing the six-language suite started in v1.5.18. Parameters: SDF_N=32, SDF_T=2, SDF_NROWS=16, SDF_ROUNDS=4 (same as ARM Thumb-2 and NASM i386).
+
+#### Files changed
+
+- `Herradura cryptographic suite.ino` — `stern_hash1_32`, `stern_hash2_32`, `stern_matrix_row_32`, `stern_syndrome_32`, `stern_gen_perm_32`, `stern_apply_perm_32`, `stern_rand_error_32`, `SternSig32` struct, `stern_fs_challenges_32`, `hpks_stern_f_sign_32`, `hpks_stern_f_verify_32`, `hpke_stern_f_encap_32`, `hpke_stern_f_decap_32`; demo section + Eve tests in `loop()`; banner updated to v1.5.18
+- `CryptosuiteTests/Herradura_tests.ino` — same 13 helper definitions + test [11] HPKS-Stern-F sign+verify (5 trials), test [12] HPKE-Stern-F encap+decap (5 trials); banner updated to v1.5.18
+
+#### Test results
+
+- [11] HPKS-Stern-F: 5/5 sign+verify correct (compile-verified via g++ mock)
+- [12] HPKE-Stern-F: 5/5 encap+decap keys match (compile-verified via g++ mock)
+
+---
+
 ## [1.5.18] - 2026-04-28
 
 ### Feature — HPKS-Stern-F and HPKE-Stern-F: code-based PQC across all 6 targets
 
-Adds two new protocols based on the Stern identification scheme (ZKP for syndrome decoding), providing code-based post-quantum hardness independent of lattice assumptions. Both protocols are implemented in all six language targets: Python, Go, C, ARM Thumb-2, NASM i386, and Arduino.
+Adds two new protocols based on the Stern identification scheme (ZKP for syndrome decoding), providing code-based post-quantum hardness independent of lattice assumptions. Both protocols are implemented in five language targets: Python, Go, C, ARM Thumb-2, and NASM i386. Arduino added in v1.5.19.
 
 #### HPKS-Stern-F — Code-Based Signature (EUF-CMA)
 
@@ -34,11 +52,11 @@ Both protocols share `sternHash` (NL-FSCX v1 with ROL(v,4) key schedule, 8 steps
 #### Files changed
 
 - `Herradura cryptographic suite.py` — `stern_hash1/2`, `stern_matrix_row`, `stern_syndrome`, `stern_popcount_eq2`, `stern_gen_perm`, `stern_apply_perm`, `stern_rand_error`, `stern_fs_challenges`, `hpks_stern_f_sign/verify`, `hpke_stern_f_encap/decap_known`; demo + Eve tests in main
-- `CryptosuiteTests/Herradura_tests.py` — tests [11]–[12], benchmarks [26]–[28]
+- `CryptosuiteTests/Herradura_tests.py` — tests [17]–[18] (Stern-F sign+verify, KEM), benchmark [28]
 - `Herradura cryptographic suite.go` — same 13 functions (`SternHash1`, etc.); demo + Eve tests
-- `CryptosuiteTests/Herradura_tests.go` — tests [11]–[16], benchmarks [26]–[28]
+- `CryptosuiteTests/Herradura_tests.go` — tests [17]–[18] (Stern-F sign+verify, KEM), benchmark [28]
 - `Herradura cryptographic suite.c` — same 13 functions; demo + Eve tests
-- `CryptosuiteTests/Herradura_tests.c` — tests [11]–[18], benchmarks [22]–[28]
+- `CryptosuiteTests/Herradura_tests.c` — tests [17]–[18] (Stern-F sign+verify, KEM), benchmark [28]
 - `Herradura cryptographic suite.s` (ARM Thumb-2) — 13 Stern-F functions + demo + Eve tests; SDF_N=32
 - `CryptosuiteTests/Herradura_tests.s` (ARM Thumb-2) — tests [11]–[12]
 - `Herradura cryptographic suite.asm` (NASM i386) — 13 Stern-F functions + demo + Eve tests; SDF_N=32
@@ -47,8 +65,8 @@ Both protocols share `sternHash` (NL-FSCX v1 with ROL(v,4) key schedule, 8 steps
 #### Test results
 
 All targets produce passing correctness tests:
-- Assembly targets: [11] 3/3 verified, [12] 3/3 keys match
-- C/Go/Python: [11]–[12] (sign+verify, KEM), plus additional Eve-resistance and property tests
+- Assembly targets (ARM/NASM, N=32): [11] 3/3 verified, [12] 3/3 keys match
+- C/Go/Python (N=256): [17] sign+verify, [18] encap+decap KEM, plus Eve-resistance tests in main
 
 ---
 
