@@ -4,6 +4,33 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.20] - 2026-04-29
+
+### Feature — Multi-size key-length standardization: Python tests and suite (Batch 1)
+
+Expands protocol coverage to all four standard key sizes (32, 64, 128, 256 bits) in the Python test suite and adds an N=256 HPKE-Stern-F demo to the Python suite.
+
+#### Test coverage changes (`CryptosuiteTests/Herradura_tests.py`)
+
+- `GF_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — affects tests [7]–[9] (HKEX-GF, HPKS, HPKE) and tests [15]–[16] (HPKS-NL, HPKE-NL) and benchmarks
+- `RNL_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — affects test [14] (HKEX-RNL) and benchmark
+- Test [17] `SDF_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — HPKS-Stern-F sign/verify at all four sizes
+- Test [18] adds known-e' decap path for N=32,64,128,256 alongside the existing N=32 brute-force path; new helpers `hpke_stern_f_encap_with_e` and `hpke_stern_f_decap_known` added
+
+#### Suite changes (`Herradura cryptographic suite.py`)
+
+- Added N=256 known-e' HPKE-Stern-F demo after the existing N=32 brute-force demo
+- `hpke_stern_f_decap` now supports two paths: known-e' (`e_int != 0`) and brute-force (`e_int = 0`)
+- `hpke_stern_f_encap_with_e` helper added (returns `(K, ct, e_p)` for test/demo use)
+- Version bumped to v1.5.20 in suite and tests headers
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.py`
+- `Herradura cryptographic suite.py`
+
+---
+
 ## [1.5.19] - 2026-04-29
 
 ### Feature — HPKS-Stern-F and HPKE-Stern-F: Arduino implementation
