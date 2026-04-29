@@ -6,6 +6,23 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-29
 
+### Feature — Multi-size key-length standardization: C tests NL-FSCX 256-bit (Batch 2)
+
+Adds 256-bit (BitArray) support to C tests [10]–[13] for all NL-FSCX v1/v2 protocols. Implements `ba_sub256`, `ba_mul256`, `m_inv_ba`, `nl_fscx_v2_ba`, `nl_fscx_v2_inv_ba`, `nl_fscx_revolve_v2_ba`, and `nl_fscx_revolve_v2_inv_ba` as BitArray helpers. The `M^{-1}` polynomial table for n=256 was derived by GCD computation: `(1+x+x^255)^{-1}` in `GF(2)[x]/(x^256+1)` yields the four-word table `{0xb6db6db6db6db6db, 0xdb6db6db6db6db6d, 0x6db6db6db6db6db6, 0xb6db6db6db6db6db}`.
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — new BitArray v2 helpers; tests [10]–[13] expanded to `{64,128,256}`; `NL_I256=64`, `NL_R256=192` macros added
+
+#### Test results (gcc -O2, `-r 20 -t 10.0`)
+
+- [10] NL-FSCX v1 non-linearity: 20/20 violations + no-period at 64/128/256 bits [PASS]
+- [11] NL-FSCX v2 bijectivity: 0 collisions, 20/20 inv, 20/20 nonlinear at 64/128/256 bits [PASS]
+- [12] HSKE-NL-A1 counter-mode: 20/20 at 64/128/256 bits [PASS]
+- [13] HSKE-NL-A2 revolve-mode: 20/20 at 64/128/256 bits [PASS]
+
+---
+
 ### Feature — Multi-size key-length standardization: Python tests and suite (Batch 1)
 
 Expands protocol coverage to all four standard key sizes (32, 64, 128, 256 bits) in the Python test suite and adds an N=256 HPKE-Stern-F demo to the Python suite.

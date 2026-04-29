@@ -5,6 +5,9 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests [10]-[13] expanded to
+            {64,128,256}; adds ba_sub256, ba_mul256, m_inv_ba, nl_fscx_v2_ba,
+            nl_fscx_v2_inv_ba, nl_fscx_revolve_v2_ba, nl_fscx_revolve_v2_inv_ba.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18] + bench [28].
             Benchmarks renumbered [17]–[25] → [19]–[27] to make room for new tests.
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -19,7 +22,7 @@
             loop {32,64}; key-sensitivity PASS criterion aligned to mean >= n/4.
             Phase 4 — multi-size loops [2]–[4],[10]–[13]: 128-bit FSCX/__uint128_t
             and 128-bit NL-FSCX added; [2]–[4] loop {64,128,256}; [10]–[13] loop
-            {64,128} (256-bit NL-FSCX omitted; 256-bit mul not implemented).
+            {64,128,256} (256-bit NL-FSCX v2 via new BitArray helpers, v1.5.20).
             Phase 5 — test methodology alignment: [11] bijectivity upgraded to
             BIJ_SAMPLES=256 random A values per B with pairwise collision scan,
             matching Python/Go hash-map methodology.
@@ -316,6 +319,128 @@ static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
     buf[0] = *a;
     for (i = 0; i < steps; i++) {
         nl_fscx_v1_ba(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
+    }
+    *result = buf[idx];
+}
+
+/* ------------------------------------------------------------------ */
+/* 256-bit NL-FSCX v2 BitArray helpers                                */
+/* ROL-64 for NL-FSCX (n/4 = 64 bits for n=256); addition/sub mod    */
+/* 2^256; grade-school 256×256→256 multiply for delta computation.    */
+/* M^{-1} table computed from GCD: 1+x+x^255 in GF(2)[x]/(x^256+1). */
+/* ------------------------------------------------------------------ */
+
+static void ba_sub256(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    int16_t borrow = 0;
+    int i;
+    for (i = KEYBYTES - 1; i >= 0; i--) {
+        int16_t s = (int16_t)a->b[i] - (int16_t)b->b[i] - borrow;
+        dst->b[i] = (uint8_t)(s & 0xFF);
+        borrow = (s < 0) ? 1 : 0;
+    }
+}
+
+static void ba_mul256(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    /* Grade-school byte-level multiply mod 2^256 (big-endian byte array) */
+    uint64_t acc[KEYBYTES];
+    int i, j;
+    memset(acc, 0, sizeof(acc));
+    for (i = 0; i < KEYBYTES; i++)
+        for (j = 0; j < KEYBYTES - i; j++) {
+            int ridx = KEYBYTES - 1 - i - j;
+            acc[ridx] += (uint64_t)a->b[KEYBYTES - 1 - i] * b->b[KEYBYTES - 1 - j];
+        }
+    { /* Propagate carries LSB→MSB */
+        uint64_t carry = 0;
+        for (i = KEYBYTES - 1; i >= 0; i--) {
+            uint64_t s = acc[i] + carry;
+            dst->b[i] = (uint8_t)s;
+            carry = s >> 8;
+        }
+    }
+}
+
+/* M^{-1} polynomial table for n=256: 256-bit bitmask split into four
+   64-bit words (words[0]=k=0..63, words[1]=k=64..127, etc.).
+   Derived from GCD(1+x+x^255, x^256+1) in GF(2)[x]. */
+static const uint64_t MINV256_TBL[4] = {
+    UINT64_C(0xb6db6db6db6db6db),  /* k=0..63   */
+    UINT64_C(0xdb6db6db6db6db6d),  /* k=64..127 */
+    UINT64_C(0x6db6db6db6db6db6),  /* k=128..191 */
+    UINT64_C(0xb6db6db6db6db6db)   /* k=192..255 */
+};
+
+static void m_inv_ba(BitArray *result, const BitArray *x)
+{
+    BitArray r, rot;
+    int k;
+    r = *x; /* k=0 term */
+    for (k = 1; k < KEYBITS; k++) {
+        if ((MINV256_TBL[k >> 6] >> (k & 63)) & 1) {
+            ba_rol_k(&rot, x, k);
+            ba_xor(&r, &r, &rot);
+        }
+    }
+    *result = r;
+}
+
+static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
+{
+    /* delta(b) = ROL(b * ((b+1)/2), 64) where arithmetic is mod 2^256 */
+    static const BitArray ONE = {{ [KEYBYTES-1] = 1 }};
+    BitArray b1, half, prod;
+    ba_add256(&b1, b, &ONE);    /* b1 = b + 1 */
+    half = b1; ba_shr1(&half);  /* half = (b+1) >> 1  (i.e. (b+1)/2) */
+    ba_mul256(&prod, b, &half); /* prod = b * half mod 2^256 */
+    ba_rol64_256(delta, &prod); /* delta = ROL(prod, 64) */
+}
+
+static void nl_fscx_v2_ba(BitArray *result, const BitArray *a, const BitArray *b)
+{
+    BitArray f, delta;
+    ba_fscx(&f, a, b);
+    nl_fscx_delta_v2_ba(&delta, b);
+    ba_add256(result, &f, &delta);
+}
+
+static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArray *b)
+{
+    /* inv(y, b) = b ^ M^{-1}(y - delta(b)) */
+    BitArray delta, ym_d, inv_ym;
+    nl_fscx_delta_v2_ba(&delta, b);
+    ba_sub256(&ym_d, y, &delta);
+    m_inv_ba(&inv_ym, &ym_d);
+    ba_xor(result, b, &inv_ym);
+}
+
+static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
+                                    const BitArray *b, int steps)
+{
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
+    for (i = 0; i < steps; i++) {
+        nl_fscx_v2_ba(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
+    }
+    *result = buf[idx];
+}
+
+static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
+                                       const BitArray *b, int steps)
+{
+    BitArray delta, buf[2];
+    int idx = 0, i;
+    nl_fscx_delta_v2_ba(&delta, b); /* precompute once */
+    buf[0] = *y;
+    for (i = 0; i < steps; i++) {
+        BitArray ym_d, inv_ym;
+        ba_sub256(&ym_d, &buf[idx], &delta);
+        m_inv_ba(&inv_ym, &ym_d);
+        ba_xor(&buf[1 - idx], b, &inv_ym);
         idx ^= 1;
     }
     *result = buf[idx];
@@ -1525,13 +1650,15 @@ static void test_hpke_el_gamal(void)
 /* Security tests [10]-[16]: v1.5.0 NL-FSCX and PQC protocols        */
 /* ------------------------------------------------------------------ */
 
-/* I/R values for 32/64/128-bit NL tests */
+/* I/R values for 32/64/128/256-bit NL tests */
 #define NL_I32   8   /* 32/4 */
 #define NL_R32   24  /* 3*32/4 */
 #define NL_I64   16  /* 64/4 */
 #define NL_R64   48  /* 3*64/4 */
 #define NL_I128  32  /* 128/4 */
 #define NL_R128  96  /* 3*128/4 */
+#define NL_I256  64  /* 256/4 */
+#define NL_R256  192 /* 3*256/4 */
 
 /* Bijectivity sample count: 256 A values per B, matching Python/Go */
 #define BIJ_SAMPLES 256
@@ -1539,11 +1666,11 @@ static void test_hpke_el_gamal(void)
 /* [10] NL-FSCX v1 non-linearity and aperiodicity */
 static void test_nl_fscx_v1_nonlinearity(void)
 {
-    static const int sizes[] = {64, 128};
+    static const int sizes[] = {64, 128, 256};
     int si, i, size;
     struct timespec t0;
     printf("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         int violations = 0, no_period = 0;
         int N1 = TEST_ROUNDS(1000), N2 = TEST_ROUNDS(200);
         size = sizes[si];
@@ -1551,7 +1678,16 @@ static void test_nl_fscx_v1_nonlinearity(void)
         /* Linearity check */
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N1; i++) {
-            if (size == 128) {
+            if (size == 256) {
+                BitArray A, B, fA0, fB0, lin_pred, nl;
+                static const BitArray ZERO = {{0}};
+                ba_rand(&A); ba_rand(&B);
+                nl_fscx_v1_ba(&fA0, &A, &ZERO);
+                nl_fscx_v1_ba(&fB0, &ZERO, &B);
+                ba_xor(&lin_pred, &fA0, &fB0);
+                nl_fscx_v1_ba(&nl, &A, &B);
+                if (!ba_equal(&nl, &lin_pred)) violations++;
+            } else if (size == 128) {
                 __uint128_t A = rand128(), B = rand128();
                 __uint128_t lin_pred = fscx128(A, 0) ^ nl_fscx_v1_128(0, B);
                 if (nl_fscx_v1_128(A, B) != lin_pred) violations++;
@@ -1566,7 +1702,15 @@ static void test_nl_fscx_v1_nonlinearity(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N2; i++) {
             int found = 0, step;
-            if (size == 128) {
+            if (size == 256) {
+                BitArray A, B, cur;
+                ba_rand(&A); ba_rand(&B);
+                nl_fscx_v1_ba(&cur, &A, &B);
+                for (step = 1; step < cap; step++) {
+                    nl_fscx_v1_ba(&cur, &cur, &B);
+                    if (ba_equal(&cur, &A)) { found = 1; break; }
+                }
+            } else if (size == 128) {
                 __uint128_t A = rand128(), B = rand128();
                 __uint128_t cur = nl_fscx_v1_128(A, B);
                 for (step = 1; step < cap; step++) {
@@ -1597,11 +1741,11 @@ static void test_nl_fscx_v1_nonlinearity(void)
    Matches Python/Go methodology of 256 samples per B with hash-map collision check. */
 static void test_nl_fscx_v2_bijective_inverse(void)
 {
-    static const int sizes[] = {64, 128};
+    static const int sizes[] = {64, 128, 256};
     int si, i, j, k, size;
     struct timespec t0;
     printf("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         int non_bij = 0, inv_ok = 0, nl_ok = 0;
         int N1 = TEST_ROUNDS(500), N2 = TEST_ROUNDS(1000), N3 = TEST_ROUNDS(500);
         size = sizes[si];
@@ -1609,7 +1753,18 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N1; i++) {
             int found = 0;
-            if (size == 128) {
+            if (size == 256) {
+                BitArray A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES], B;
+                ba_rand(&B);
+                for (j = 0; j < BIJ_SAMPLES; j++) {
+                    ba_rand(&A_arr[j]);
+                    nl_fscx_v2_ba(&out_arr[j], &A_arr[j], &B);
+                }
+                for (j = 0; j < BIJ_SAMPLES && !found; j++)
+                    for (k = j + 1; k < BIJ_SAMPLES && !found; k++)
+                        if (ba_equal(&out_arr[j], &out_arr[k]) &&
+                            !ba_equal(&A_arr[j], &A_arr[k])) found = 1;
+            } else if (size == 128) {
                 __uint128_t A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES];
                 __uint128_t B = rand128();
                 for (j = 0; j < BIJ_SAMPLES; j++) {
@@ -1638,7 +1793,13 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         /* Inverse correctness */
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N2; i++) {
-            if (size == 128) {
+            if (size == 256) {
+                BitArray A, B, enc, dec;
+                ba_rand(&A); ba_rand(&B);
+                nl_fscx_v2_ba(&enc, &A, &B);
+                nl_fscx_v2_inv_ba(&dec, &enc, &B);
+                if (ba_equal(&dec, &A)) inv_ok++;
+            } else if (size == 128) {
                 __uint128_t A = rand128(), B = rand128();
                 if (nl_fscx_v2_inv_128(nl_fscx_v2_128(A, B), B) == A) inv_ok++;
             } else {
@@ -1650,7 +1811,16 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         /* Non-linearity */
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N3; i++) {
-            if (size == 128) {
+            if (size == 256) {
+                static const BitArray ZERO = {{0}};
+                BitArray A, B, fA0, fB0, lin_pred, nl;
+                ba_rand(&A); ba_rand(&B);
+                nl_fscx_v2_ba(&fA0, &A, &ZERO);
+                nl_fscx_v2_ba(&fB0, &ZERO, &B);
+                ba_xor(&lin_pred, &fA0, &fB0);
+                nl_fscx_v2_ba(&nl, &A, &B);
+                if (!ba_equal(&nl, &lin_pred)) nl_ok++;
+            } else if (size == 128) {
                 __uint128_t A = rand128(), B = rand128();
                 if (nl_fscx_v2_128(A, B) != (fscx128(A, 0) ^ nl_fscx_v2_128(0, B))) nl_ok++;
             } else {
@@ -1669,17 +1839,36 @@ static void test_nl_fscx_v2_bijective_inverse(void)
 /* [12] HSKE-NL-A1 counter-mode correctness: D == P (with per-session nonce) */
 static void test_hske_nl_a1_correctness(void)
 {
-    static const int sizes[] = {64, 128};
+    static const int sizes[] = {64, 128, 256};
     int si, i, size;
     struct timespec t0;
     printf("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         int ok = 0, N = TEST_ROUNDS(1000);
         size = sizes[si];
         int iv = size / 4;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 128) {
+            if (size == 256) {
+                /* ROL(base, n/8=32): use ba_rol_k */
+                static const BitArray ZERO = {{0}};
+                BitArray K, nonce, P, base, seed, ctr_ba, ctr_xor, ks;
+                uint32_t ctr_val = (uint32_t)i & 0xFFFF;
+                ba_rand(&K); ba_rand(&nonce); ba_rand(&P);
+                ba_xor(&base, &K, &nonce);
+                ba_rol_k(&seed, &base, 32);  /* ROL(base, n/8=32) */
+                /* ctr_ba = little-endian ctr_val in last 4 bytes */
+                ctr_ba = ZERO;
+                ctr_ba.b[KEYBYTES-4] = (uint8_t)(ctr_val >> 24);
+                ctr_ba.b[KEYBYTES-3] = (uint8_t)(ctr_val >> 16);
+                ctr_ba.b[KEYBYTES-2] = (uint8_t)(ctr_val >>  8);
+                ctr_ba.b[KEYBYTES-1] = (uint8_t)(ctr_val);
+                ba_xor(&ctr_xor, &base, &ctr_ba);
+                nl_fscx_revolve_v1_ba(&ks, &seed, &ctr_xor, iv);
+                /* E = P ^ ks; D = E ^ ks = P */
+                { BitArray E, D; ba_xor(&E, &P, &ks); ba_xor(&D, &E, &ks);
+                  if (ba_equal(&D, &P)) ok++; }
+            } else if (size == 128) {
                 __uint128_t K = rand128(), nonce = rand128(), P = rand128();
                 __uint128_t base = K ^ nonce;
                 __uint128_t seed = (base << 16) | (base >> 112); /* ROL(base, n/8=16) */
@@ -1705,17 +1894,23 @@ static void test_hske_nl_a1_correctness(void)
 /* [13] HSKE-NL-A2 revolve-mode correctness: D == P */
 static void test_hske_nl_a2_correctness(void)
 {
-    static const int sizes[] = {64, 128};
+    static const int sizes[] = {64, 128, 256};
     int si, i, size;
     struct timespec t0;
     printf("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         int ok = 0, N = TEST_ROUNDS(1000);
         size = sizes[si];
         int rv = 3 * size / 4;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 128) {
+            if (size == 256) {
+                BitArray K, P, E, D;
+                ba_rand(&K); ba_rand(&P);
+                nl_fscx_revolve_v2_ba(&E, &P, &K, rv);
+                nl_fscx_revolve_v2_inv_ba(&D, &E, &K, rv);
+                if (ba_equal(&D, &P)) ok++;
+            } else if (size == 128) {
                 __uint128_t K = rand128(), P = rand128();
                 __uint128_t E = nl_fscx_revolve_v2_128(P, K, rv);
                 __uint128_t D = nl_fscx_revolve_v2_inv_128(E, K, rv);
