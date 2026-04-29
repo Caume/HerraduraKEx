@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.17
+/*  Herradura Cryptographic Suite v1.5.18
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -16,6 +16,8 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC — ZKP sign/verify and Niederreiter KEM (all targets) ---
 
     --- v1.5.17: NTT twiddle precomputation — rnlTwCache map; rnlTwGet eliminates rnlModPow calls per rnlPolyMul ---
 
@@ -78,7 +80,9 @@
                     (no nonce — embed one in plaintext for multi-message use)
       HKEX-RNL    — Ring-LWR key exchange (quantum-resistant; replaces HKEX-GF)
       HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
-      HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
+      HPKE-NL      — El Gamal with NL-FSCX v2 encryption/decryption
+      HPKS-Stern-F — Stern ZKP signature (EUF-CMA ≤ q_H/T_SD + ε_PRF)
+      HPKE-Stern-F — Niederreiter KEM (IND-CPA under SD; demo uses known e')
 
     Classical protocols (not PQC — kept for reference and comparison):
       HKEX-GF     — Diffie-Hellman over GF(2^n)* (broken by Shor's algorithm)
@@ -619,6 +623,244 @@ func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArr
 }
 
 // ---------------------------------------------------------------------------
+// Stern-F: Code-Based PQC (HPKS-Stern-F / HPKE-Stern-F)
+// ---------------------------------------------------------------------------
+
+const (
+	sdfNRows  = 256 / 2  // 128 parity-check rows
+	sdfT      = 256 / 16 // 16 error weight
+	sdfRounds = 32        // ZKP rounds (soundness (2/3)^32)
+)
+
+// sternHash computes the chain hash h <- NlFscxV1^{n/4}(h^v, ROL(v,n/8)) for each item.
+func sternHash(items ...*BitArray) *BitArray {
+	n := 256
+	if len(items) > 0 {
+		n = items[0].size
+	}
+	h := &BitArray{size: n}
+	for _, v := range items {
+		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
+	}
+	return h
+}
+
+// sternMatrixRow generates row i of the parity-check matrix: NlFscxV1^{n/4}(ROL(seed^row, n/8), seed).
+func sternMatrixRow(seed *BitArray, row int) *BitArray {
+	n := seed.size
+	sxr := seed.Xor(NewBitArray(n, big.NewInt(int64(row&0xFF))))
+	return NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
+}
+
+// sternSyndrome computes H·e^T mod 2 (nRows bits packed into *big.Int, bit i = row i).
+func sternSyndrome(seed, e *BitArray) *big.Int {
+	nRows := seed.size / 2
+	syn := new(big.Int)
+	for i := 0; i < nRows; i++ {
+		row := sternMatrixRow(seed, i)
+		dot := new(big.Int).And(&row.val, &e.val)
+		if countBits(dot)%2 == 1 {
+			syn.SetBit(syn, i, 1)
+		}
+	}
+	return syn
+}
+
+// syndrToBA stores a syndrome *big.Int in the low bits of a BitArray.
+func syndrToBA(n int, syn *big.Int) *BitArray {
+	ba := &BitArray{size: n}
+	ba.val.Set(syn)
+	return ba
+}
+
+// sternGenPerm derives a Fisher-Yates permutation deterministically from piSeed via NlFscxV1.
+func sternGenPerm(piSeed *BitArray, N int) []int {
+	n := piSeed.size
+	key := piSeed.RotateLeft(n / 8)
+	st := piSeed.Copy()
+	perm := make([]int, N)
+	for i := range perm {
+		perm[i] = i
+	}
+	for i := N - 1; i > 0; i-- {
+		st = NlFscxV1(st, key)
+		v := uint32(st.val.Uint64())
+		j := int(v % uint32(i+1))
+		perm[i], perm[j] = perm[j], perm[i]
+	}
+	return perm
+}
+
+// sternApplyPerm applies permutation: out[perm[i]] = v[i].
+func sternApplyPerm(perm []int, v *BitArray) *BitArray {
+	N := v.size
+	out := &BitArray{size: N}
+	for i := 0; i < N; i++ {
+		if v.val.Bit(i) == 1 {
+			out.val.SetBit(&out.val, perm[i], 1)
+		}
+	}
+	return out
+}
+
+// sternRandError generates a weight-t error vector via partial Fisher-Yates with crypto/rand.
+func sternRandError(n, t int) *BitArray {
+	idx := make([]int, n)
+	for i := range idx {
+		idx[i] = i
+	}
+	for i := n - 1; i >= n-t; i-- {
+		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			log.Fatalf("rand.Int: %s", err)
+		}
+		ji := int(j.Int64())
+		idx[i], idx[ji] = idx[ji], idx[i]
+	}
+	e := &BitArray{size: n}
+	for i := n - 1; i >= n-t; i-- {
+		e.val.SetBit(&e.val, idx[i], 1)
+	}
+	return e
+}
+
+// sternFKeygen generates (seed, e, syndrome): random seed, weight-t error, H·e^T.
+func sternFKeygen(n int) (*BitArray, *BitArray, *big.Int) {
+	seed := NewRandBitArray(n)
+	e := sternRandError(n, n/16)
+	return seed, e, sternSyndrome(seed, e)
+}
+
+// sternFsChallenges derives Fiat-Shamir challenges from msg and all round commitments.
+func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int {
+	n := msg.size
+	chSt := &BitArray{size: n}
+	sfs := func(item *BitArray) {
+		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
+	}
+	sfs(msg)
+	for i := 0; i < rounds; i++ {
+		sfs(c0[i]); sfs(c1[i]); sfs(c2[i])
+	}
+	chals := make([]int, rounds)
+	for i := 0; i < rounds; i++ {
+		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
+		chSt = NlFscxV1(chSt, idxBA)
+		chals[i] = int(uint32(chSt.val.Uint64()) % 3)
+	}
+	return chals
+}
+
+// SternRound holds one round of a Stern ZKP signature.
+type SternRound struct {
+	c0, c1, c2   *BitArray
+	b             int
+	respA, respB  *BitArray
+}
+
+// SternSig is a Fiat-Shamir Stern signature.
+type SternSig struct {
+	rounds []SternRound
+}
+
+// hpksSternFSign produces a Stern-F signature over msg using secret (e, seed).
+func hpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
+	n := msg.size
+	t := n / 16
+	sig := &SternSig{rounds: make([]SternRound, rounds)}
+	type rtmp struct{ r, y, pi, sr, sy *BitArray }
+	tmp := make([]rtmp, rounds)
+	c0s := make([]*BitArray, rounds)
+	c1s := make([]*BitArray, rounds)
+	c2s := make([]*BitArray, rounds)
+
+	for i := 0; i < rounds; i++ {
+		r := sternRandError(n, t)
+		y := e.Xor(r)
+		pi := NewRandBitArray(n)
+		perm := sternGenPerm(pi, n)
+		sr := sternApplyPerm(perm, r)
+		sy := sternApplyPerm(perm, y)
+		hrBA := syndrToBA(n, sternSyndrome(seed, r))
+		c0 := sternHash(pi, hrBA)
+		c1 := sternHash(sr)
+		c2 := sternHash(sy)
+		tmp[i] = rtmp{r, y, pi, sr, sy}
+		sig.rounds[i].c0 = c0; sig.rounds[i].c1 = c1; sig.rounds[i].c2 = c2
+		c0s[i] = c0; c1s[i] = c1; c2s[i] = c2
+	}
+	chals := sternFsChallenges(rounds, msg, c0s, c1s, c2s)
+	for i := 0; i < rounds; i++ {
+		bv := chals[i]
+		sig.rounds[i].b = bv
+		switch bv {
+		case 0:
+			sig.rounds[i].respA = tmp[i].sr
+			sig.rounds[i].respB = tmp[i].sy
+		case 1:
+			sig.rounds[i].respA = tmp[i].pi
+			sig.rounds[i].respB = tmp[i].r
+		default:
+			sig.rounds[i].respA = tmp[i].pi
+			sig.rounds[i].respB = tmp[i].y
+		}
+	}
+	return sig
+}
+
+// hpksSternFVerify verifies a Stern-F signature. Returns true iff valid.
+func hpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *big.Int) bool {
+	rounds := len(sig.rounds)
+	n := msg.size
+	t := n / 16
+	c0s := make([]*BitArray, rounds)
+	c1s := make([]*BitArray, rounds)
+	c2s := make([]*BitArray, rounds)
+	for i, r := range sig.rounds {
+		c0s[i] = r.c0; c1s[i] = r.c1; c2s[i] = r.c2
+	}
+	chals := sternFsChallenges(rounds, msg, c0s, c1s, c2s)
+	for i, r := range sig.rounds {
+		if chals[i] != r.b {
+			return false
+		}
+	}
+	for _, r := range sig.rounds {
+		switch r.b {
+		case 0:
+			if !sternHash(r.respA).Equal(r.c1) { return false }
+			if !sternHash(r.respB).Equal(r.c2) { return false }
+			if countBits(&r.respA.val) != t { return false }
+		case 1:
+			if countBits(&r.respB.val) != t { return false }
+			hrBA := syndrToBA(n, sternSyndrome(seed, r.respB))
+			if !sternHash(r.respA, hrBA).Equal(r.c0) { return false }
+			sr2 := sternApplyPerm(sternGenPerm(r.respA, n), r.respB)
+			if !sternHash(sr2).Equal(r.c1) { return false }
+		default:
+			hysBA := syndrToBA(n, new(big.Int).Xor(sternSyndrome(seed, r.respB), syndrome))
+			if !sternHash(r.respA, hysBA).Equal(r.c0) { return false }
+			sy2 := sternApplyPerm(sternGenPerm(r.respA, n), r.respB)
+			if !sternHash(sy2).Equal(r.c2) { return false }
+		}
+	}
+	return true
+}
+
+// hpkeSternFEncap generates K = hash(seed, e'), ct = H·e'^T (Niederreiter KEM).
+// Returns (K, ct, e'). e' is returned for demo decap; production needs QC-MDPC decoder.
+func hpkeSternFEncap(seed *BitArray, n int) (*BitArray, *big.Int, *BitArray) {
+	ePrime := sternRandError(n, n/16)
+	ct := sternSyndrome(seed, ePrime)
+	return sternHash(seed, ePrime), ct, ePrime
+}
+
+// hpkeSternFDecapKnown recomputes K = hash(seed, e') given e' directly (demo only).
+func hpkeSternFDecapKnown(ePrime, seed *BitArray) *BitArray {
+	return sternHash(seed, ePrime)
+}
+
+// ---------------------------------------------------------------------------
 // main — protocol demonstrations
 // ---------------------------------------------------------------------------
 
@@ -800,6 +1042,31 @@ func main() {
 		fmt.Println("- decryption failed!")
 	}
 
+	fmt.Println("\n--- HPKS-Stern-F [CODE-BASED PQC — EUF-CMA ≤ q_H/T_SD + ε_PRF]")
+	fmt.Printf("    (N=%d, t=%d, rounds=%d; soundness=(2/3)^%d)\n", n, sdfT, sdfRounds, sdfRounds)
+	sfSeed, sfE, sfSyn := sternFKeygen(n)
+	sfSig := hpksSternFSign(plaintext, sfE, sfSeed, sdfRounds)
+	fmt.Printf("seed     : %x\n", sfSeed)
+	fmt.Printf("msg      : %x\n", plaintext)
+	if hpksSternFVerify(plaintext, sfSig, sfSeed, sfSyn) {
+		fmt.Println("+ HPKS-Stern-F signature verified")
+	} else {
+		fmt.Println("- HPKS-Stern-F verification FAILED")
+	}
+
+	fmt.Printf("\n--- HPKE-Stern-F [CODE-BASED PQC — Niederreiter KEM, N=%d]\n", n)
+	fmt.Println("    (brute-force decap infeasible at N=256; demo uses known e')")
+	sfKEnc, _, sfEPrime := hpkeSternFEncap(sfSeed, n)
+	sfKDec := hpkeSternFDecapKnown(sfEPrime, sfSeed)
+	fmt.Printf("K (encap): %x\n", sfKEnc)
+	fmt.Printf("K (decap): %x\n", sfKDec)
+	fmt.Println("    NOTE: decap uses known e' (demo only; production: QC-MDPC decoder)")
+	if sfKEnc.Equal(sfKDec) {
+		fmt.Println("+ HPKE-Stern-F session keys agree")
+	} else {
+		fmt.Println("- HPKE-Stern-F key agreement FAILED")
+	}
+
 	// ── Eve bypass tests ─────────────────────────────────────────────────────
 	fmt.Println("\n\n*** EVE bypass TESTS")
 
@@ -829,6 +1096,30 @@ func main() {
 		fmt.Println("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
 	} else {
 		fmt.Println("- Eve random guess does not match shared key (Ring-LWR protection)")
+	}
+
+	fmt.Println("*** HPKS-Stern-F — Eve cannot forge without solving SD(N,t)")
+	eveSig := &SternSig{rounds: make([]SternRound, sdfRounds)}
+	for i := range eveSig.rounds {
+		eveSig.rounds[i].c0 = NewRandBitArray(n)
+		eveSig.rounds[i].c1 = NewRandBitArray(n)
+		eveSig.rounds[i].c2 = NewRandBitArray(n)
+		eveSig.rounds[i].b = 0
+		eveSig.rounds[i].respA = NewRandBitArray(n)
+		eveSig.rounds[i].respB = NewRandBitArray(n)
+	}
+	if hpksSternFVerify(decoy, eveSig, sfSeed, sfSyn) {
+		fmt.Println("+ Eve forged HPKS-Stern-F (Eve wins)!")
+	} else {
+		fmt.Println("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)")
+	}
+
+	fmt.Println("*** HPKE-Stern-F — Eve cannot derive session key from syndrome ciphertext")
+	eveKGuess := NewRandBitArray(n)
+	if eveKGuess.Equal(sfKEnc) {
+		fmt.Println("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
+	} else {
+		fmt.Println("- Eve random guess does not match session key  (SD protection)")
 	}
 }
 

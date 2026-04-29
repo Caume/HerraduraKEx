@@ -1,6 +1,7 @@
-;  Herradura Cryptographic Suite v1.5.13
+;  Herradura Cryptographic Suite v1.5.18
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
-;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
+;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
+;                        HPKS-Stern-F, HPKE-Stern-F
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
 ;  HKEX-GF: DH over GF(2^32)*, poly x^32+x^22+x^2+x+1, generator g=3
 ;  HPKS:    Schnorr signature; s=(k-a*e) mod ORD; verify g^s*C^e==R
@@ -29,6 +30,10 @@
 %define RNL_Q      65537
 %define RNL_P      4096
 %define RNL_PP     2
+%define SDF_N      32
+%define SDF_T      2
+%define SDF_NROWS  16
+%define SDF_ROUNDS 4
 
 section .data
 
@@ -98,7 +103,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura Cryptographic Suite v1.5.10 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    hdr         db "=== Herradura Cryptographic Suite v1.5.18 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "
@@ -190,6 +195,42 @@ section .data
     eve_rnl_ok  db "- Eve random guess does not match shared key (Ring-LWR protection)", 10
     eve_rnl_ok_l equ $-eve_rnl_ok
 
+    ; Stern-F (code-based PQC) strings
+    sdf_sign_hdr db 10, "--- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA; N=32, t=2, rounds=4]", 10
+    sdf_sign_hdr_l equ $-sdf_sign_hdr
+    sdf_enc_hdr  db 10, "--- HPKE-Stern-F [CODE-BASED PQC -- Niederreiter KEM, N=32]", 10
+    sdf_enc_hdr_l equ $-sdf_enc_hdr
+    sdf_note     db "    (demo: decap uses known e'; production needs QC-MDPC decoder)", 10
+    sdf_note_l   equ $-sdf_note
+    sdf_ok_msg   db "+ HPKS-Stern-F signature verified", 10
+    sdf_ok_l     equ $-sdf_ok_msg
+    sdf_fail_msg db "- HPKS-Stern-F verification FAILED", 10
+    sdf_fail_l   equ $-sdf_fail_msg
+    hpke_sdf_ok  db "+ HPKE-Stern-F session keys agree", 10
+    hpke_sdf_ok_l equ $-hpke_sdf_ok
+    hpke_sdf_fail db "- HPKE-Stern-F key agreement FAILED", 10
+    hpke_sdf_fail_l equ $-hpke_sdf_fail
+    eve_sdf_ok   db "- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)", 10
+    eve_sdf_ok_l equ $-eve_sdf_ok
+    eve_sdf_fail_s db "+ Eve forged HPKS-Stern-F (Eve wins!)", 10
+    eve_sdf_fail_l equ $-eve_sdf_fail_s
+    eve_hpke_sdf_ok db "- Eve random guess does not match session key  (SD protection)", 10
+    eve_hpke_sdf_ok_l equ $-eve_hpke_sdf_ok
+    eve_hpke_sdf_fail db "+ Eve guessed HPKE-Stern-F session key!", 10
+    eve_hpke_sdf_fail_l equ $-eve_hpke_sdf_fail
+    lbl_K_enc    db "K (encap) : "
+    lbl_K_enc_l  equ $-lbl_K_enc
+    lbl_K_dec    db "K (decap) : "
+    lbl_K_dec_l  equ $-lbl_K_dec
+    ; Stern-F storage
+    val_sdf_seed dd 0
+    val_sdf_syn  dd 0
+    val_sdf_e    dd 0
+    val_sdf_K_enc dd 0
+    val_sdf_K_dec dd 0
+    val_sdf_e_prime dd 0
+    val_sdf_ct   dd 0
+
 section .bss
     hex_buf     resb 12
 
@@ -206,6 +247,20 @@ section .bss
     rnl_fa      resd RNL_N   ; NTT work arrays
     rnl_ga      resd RNL_N
     rnl_ha      resd RNL_N
+    ; Stern-F scratch (N=32, rounds=4)
+    sdf_perm    resb SDF_N
+    sdf_c0      resd SDF_ROUNDS
+    sdf_c1      resd SDF_ROUNDS
+    sdf_c2      resd SDF_ROUNDS
+    sdf_b       resd SDF_ROUNDS
+    sdf_respA   resd SDF_ROUNDS
+    sdf_respB   resd SDF_ROUNDS
+    sdf_r_tmp   resd SDF_ROUNDS
+    sdf_y_tmp   resd SDF_ROUNDS
+    sdf_pi_tmp  resd SDF_ROUNDS
+    sdf_sr_tmp  resd SDF_ROUNDS
+    sdf_sy_tmp  resd SDF_ROUNDS
+    sdf_chals_tmp resd SDF_ROUNDS
 
 section .text
 global _start
@@ -858,6 +913,76 @@ _start:
     call print_str
 .hpke_nl_done:
 
+    ; ================================================================== HPKS-Stern-F
+    mov  eax, sdf_sign_hdr
+    mov  ecx, sdf_sign_hdr_l
+    call print_str
+
+    ; key: seed = prng_next(), e = rand_error (weight-2)
+    call prng_next
+    mov  [val_sdf_seed], eax
+    call stern_rand_error_32
+    mov  [val_sdf_e], eax
+    ; syndrome = H·e^T
+    mov  eax, [val_sdf_seed]
+    mov  ebx, [val_sdf_e]
+    call stern_syndrome_32
+    mov  [val_sdf_syn], eax
+    ; sign
+    call hpks_stern_f_sign_32
+    ; verify
+    call hpks_stern_f_verify_32
+    cmp  eax, 1
+    jne  .hpks_sdf_fail
+    mov  eax, sdf_ok_msg
+    mov  ecx, sdf_ok_l
+    call print_str
+    jmp  .hpks_sdf_done
+.hpks_sdf_fail:
+    mov  eax, sdf_fail_msg
+    mov  ecx, sdf_fail_l
+    call print_str
+.hpks_sdf_done:
+
+    ; ================================================================== HPKE-Stern-F
+    mov  eax, sdf_enc_hdr
+    mov  ecx, sdf_enc_hdr_l
+    call print_str
+    mov  eax, sdf_note
+    mov  ecx, sdf_note_l
+    call print_str
+
+    ; encap
+    call hpke_stern_f_encap_32
+    ; decap (known e')
+    mov  eax, [val_sdf_e_prime]
+    call hpke_stern_f_decap_known_32
+    mov  [val_sdf_K_dec], eax
+
+    mov  eax, lbl_K_enc
+    mov  ecx, lbl_K_enc_l
+    call print_str
+    mov  eax, [val_sdf_K_enc]
+    call print_hex32
+    mov  eax, lbl_K_dec
+    mov  ecx, lbl_K_dec_l
+    call print_str
+    mov  eax, [val_sdf_K_dec]
+    call print_hex32
+
+    mov  eax, [val_sdf_K_enc]
+    cmp  eax, [val_sdf_K_dec]
+    jne  .hpke_sdf_fail
+    mov  eax, hpke_sdf_ok
+    mov  ecx, hpke_sdf_ok_l
+    call print_str
+    jmp  .hpke_sdf_done
+.hpke_sdf_fail:
+    mov  eax, hpke_sdf_fail
+    mov  ecx, hpke_sdf_fail_l
+    call print_str
+.hpke_sdf_done:
+
     ; ================================================================== EVE tests
     mov  eax, eve_hdr
     mov  ecx, eve_hdr_l
@@ -895,6 +1020,41 @@ _start:
     mov  ecx, eve_fail_l
     call print_str
 .eve_rnl_done:
+
+    ; Eve tries to forge HPKS-Stern-F: flip respA[0]
+    mov  eax, [sdf_respA]      ; original respA[0]
+    push eax                   ; save original
+    not  eax
+    mov  [sdf_respA], eax      ; corrupted
+    call hpks_stern_f_verify_32
+    mov  ebx, eax              ; save result
+    pop  eax
+    mov  [sdf_respA], eax      ; restore
+    cmp  ebx, 1
+    je   .eve_sdf_forge_fail
+    mov  eax, eve_sdf_ok
+    mov  ecx, eve_sdf_ok_l
+    call print_str
+    jmp  .eve_sdf_forge_done
+.eve_sdf_forge_fail:
+    mov  eax, eve_sdf_fail_s
+    mov  ecx, eve_sdf_fail_l
+    call print_str
+.eve_sdf_forge_done:
+
+    ; Eve guesses HPKE-Stern-F session key
+    call prng_next
+    cmp  eax, [val_sdf_K_enc]
+    je   .eve_hpke_sdf_fail
+    mov  eax, eve_hpke_sdf_ok
+    mov  ecx, eve_hpke_sdf_ok_l
+    call print_str
+    jmp  .eve_hpke_sdf_done
+.eve_hpke_sdf_fail:
+    mov  eax, eve_hpke_sdf_fail
+    mov  ecx, eve_hpke_sdf_fail_l
+    call print_str
+.eve_hpke_sdf_done:
 
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
@@ -2067,5 +2227,545 @@ rnl_agree_recv:
     pop  ebp
     pop  edi
     pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_hash1_32: EAX=v -> EAX=sternHash(v)
+; h = nl_fscx_revolve_v1(v, ROL(v,4), 8)
+; ============================================================
+stern_hash1_32:
+    push ecx
+    push ebx
+    mov  ebx, eax
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  ebx
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
+; ============================================================
+stern_hash2_32:
+    push esi
+    push ecx
+    mov  esi, ebx           ; save item1
+    ; step1: h = nl_fscx_revolve_v1(item0, ROL(item0,4), 8)
+    mov  ebx, eax
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1 ; eax = h
+    ; step2: h = nl_fscx_revolve_v1(h^item1, ROL(item1,4), 8)
+    xor  eax, esi
+    mov  ebx, esi
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    pop  ecx
+    pop  esi
+    ret
+
+; ============================================================
+; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]
+; H[row] = nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8)
+; ============================================================
+stern_matrix_row_32:
+    push ecx
+    push esi
+    mov  esi, eax           ; save seed
+    xor  eax, ebx           ; seed XOR row
+    rol  eax, 4             ; base
+    mov  ebx, esi           ; B = seed
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  esi
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_syndrome_32: EAX=seed, EBX=e -> EAX=syndrome (16-bit)
+; ============================================================
+stern_syndrome_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, eax           ; seed
+    mov  edi, ebx           ; e
+    xor  ebp, ebp           ; accumulator
+    xor  ecx, ecx           ; row = 0
+.sds_loop:
+    cmp  ecx, SDF_NROWS
+    jge  .sds_done
+    push ecx
+    mov  eax, esi
+    mov  ebx, ecx
+    call stern_matrix_row_32
+    pop  ecx
+    and  eax, edi
+    mov  edx, eax
+    shr  edx, 16
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 8
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 4
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 2
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 1
+    xor  eax, edx
+    and  eax, 1
+    shl  eax, cl
+    or   ebp, eax
+    inc  ecx
+    jmp  .sds_loop
+.sds_done:
+    mov  eax, ebp
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_popcount_eq2: EAX=v -> EAX=1 iff popcount==2
+; ============================================================
+stern_popcount_eq2:
+    push ecx
+    test eax, eax
+    jz   .speq2_fail
+    lea  ecx, [eax-1]
+    and  eax, ecx
+    jz   .speq2_fail
+    lea  ecx, [eax-1]
+    test eax, ecx
+    jnz  .speq2_fail
+    mov  eax, 1
+    jmp  .speq2_done
+.speq2_fail:
+    xor  eax, eax
+.speq2_done:
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_gen_perm_32: EAX=pi_seed -> sdf_perm[0..31]
+; Fisher-Yates using nl_fscx_v1 as PRNG
+; ============================================================
+stern_gen_perm_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, eax
+    mov  edi, eax
+    rol  edi, 4             ; key = ROL(pi_seed, 4)
+    xor  ecx, ecx
+.sgp_init:
+    cmp  ecx, SDF_N
+    jge  .sgp_init_done
+    mov  byte [sdf_perm + ecx], cl
+    inc  ecx
+    jmp  .sgp_init
+.sgp_init_done:
+    mov  ebp, SDF_N - 1
+.sgp_loop:
+    cmp  ebp, 1
+    jl   .sgp_done
+    mov  eax, esi
+    mov  ebx, edi
+    call nl_fscx_v1
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, ebp
+    inc  ecx
+    div  ecx                ; edx = esi % (i+1)
+    movzx eax, byte [sdf_perm + ebp]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + ebp], cl
+    mov  byte [sdf_perm + edx], al
+    dec  ebp
+    jmp  .sgp_loop
+.sgp_done:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_apply_perm_32: EAX=v -> EAX = apply(sdf_perm, v)
+; ============================================================
+stern_apply_perm_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    mov  esi, eax
+    xor  edi, edi
+    xor  ecx, ecx
+.sap_loop:
+    cmp  ecx, SDF_N
+    jge  .sap_done
+    bt   esi, ecx
+    jnc  .sap_next
+    movzx eax, byte [sdf_perm + ecx]
+    bts  edi, eax
+.sap_next:
+    inc  ecx
+    jmp  .sap_loop
+.sap_done:
+    mov  eax, edi
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_rand_error_32: -> EAX = weight-2 error vector
+; ============================================================
+stern_rand_error_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    push edx
+    xor  ecx, ecx
+.sre_init:
+    cmp  ecx, SDF_N
+    jge  .sre_init_done
+    mov  byte [sdf_perm + ecx], cl
+    inc  ecx
+    jmp  .sre_init
+.sre_init_done:
+    call prng_next
+    xor  edx, edx
+    mov  ecx, 32
+    div  ecx
+    movzx eax, byte [sdf_perm + 31]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + 31], cl
+    mov  byte [sdf_perm + edx], al
+    call prng_next
+    xor  edx, edx
+    mov  ecx, 31
+    div  ecx
+    movzx eax, byte [sdf_perm + 30]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + 30], cl
+    mov  byte [sdf_perm + edx], al
+    movzx ecx, byte [sdf_perm + 31]
+    mov  eax, 1
+    shl  eax, cl
+    movzx ecx, byte [sdf_perm + 30]
+    mov  edx, 1
+    shl  edx, cl
+    or   eax, edx
+    pop  edx
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_fs_challenges_32: -> sdf_chals_tmp[0..3]
+; reads val_plain (msg), sdf_c0, sdf_c1, sdf_c2
+; ============================================================
+stern_fs_challenges_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    push edx
+    xor  esi, esi
+    mov  eax, [val_plain]
+    xor  eax, esi
+    mov  ebx, [val_plain]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    xor  edi, edi
+.sfc_round_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .sfc_round_done
+    mov  eax, [sdf_c0 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c0 + edi*4]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c1 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c1 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c2 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c2 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    inc  edi
+    jmp  .sfc_round_loop
+.sfc_round_done:
+    xor  edi, edi
+.sfc_chal_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .sfc_done
+    mov  eax, esi
+    mov  ebx, edi
+    call nl_fscx_v1
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx
+    mov  [sdf_chals_tmp + edi*4], edx
+    inc  edi
+    jmp  .sfc_chal_loop
+.sfc_done:
+    pop  edx
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_f_sign_32: reads val_sdf_e, val_sdf_seed, val_plain
+; fills sdf_c0..c2, sdf_b, sdf_respA, sdf_respB
+; ============================================================
+hpks_stern_f_sign_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, [val_sdf_seed]
+    mov  edi, [val_sdf_e]
+    xor  ebp, ebp
+.hsfs_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hsfs_loop_done
+    call stern_rand_error_32
+    mov  [sdf_r_tmp + ebp*4], eax
+    xor  eax, edi
+    mov  [sdf_y_tmp + ebp*4], eax
+    call prng_next
+    mov  [sdf_pi_tmp + ebp*4], eax
+    call stern_gen_perm_32
+    mov  eax, [sdf_r_tmp + ebp*4]
+    call stern_apply_perm_32
+    mov  [sdf_sr_tmp + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    call stern_apply_perm_32
+    mov  [sdf_sy_tmp + ebp*4], eax
+    mov  eax, esi
+    mov  ebx, [sdf_r_tmp + ebp*4]
+    call stern_syndrome_32
+    mov  ebx, eax
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    call stern_hash2_32
+    mov  [sdf_c0 + ebp*4], eax
+    mov  eax, [sdf_sr_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c1 + ebp*4], eax
+    mov  eax, [sdf_sy_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c2 + ebp*4], eax
+    inc  ebp
+    jmp  .hsfs_loop
+.hsfs_loop_done:
+    call stern_fs_challenges_32
+    xor  ebp, ebp
+.hsfs_resp_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hsfs_resp_done
+    mov  eax, [sdf_chals_tmp + ebp*4]
+    mov  [sdf_b + ebp*4], eax
+    cmp  eax, 0
+    je   .hsfs_case0
+    cmp  eax, 1
+    je   .hsfs_case1
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .hsfs_resp_next
+.hsfs_case0:
+    mov  eax, [sdf_sr_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_sy_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .hsfs_resp_next
+.hsfs_case1:
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_r_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+.hsfs_resp_next:
+    inc  ebp
+    jmp  .hsfs_resp_loop
+.hsfs_resp_done:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_f_verify_32: -> EAX=1 valid, 0 invalid
+; ============================================================
+hpks_stern_f_verify_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    call stern_fs_challenges_32
+    xor  ecx, ecx
+.hsfv_chal_chk:
+    cmp  ecx, SDF_ROUNDS
+    jge  .hsfv_chal_ok
+    mov  eax, [sdf_chals_tmp + ecx*4]
+    cmp  eax, [sdf_b + ecx*4]
+    jne  .hsfv_fail
+    inc  ecx
+    jmp  .hsfv_chal_chk
+.hsfv_chal_ok:
+    mov  esi, [val_sdf_seed]
+    mov  edi, [val_sdf_syn]
+    xor  ebp, ebp
+.hsfv_round_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hsfv_pass
+    mov  ecx, [sdf_b + ebp*4]
+    mov  edx, [sdf_respA + ebp*4]
+    cmp  ecx, 0
+    je   .hsfv_case0
+    cmp  ecx, 1
+    je   .hsfv_case1
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32
+    xor  eax, edi
+    mov  ebx, eax
+    mov  eax, edx
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .hsfv_fail
+    mov  eax, edx
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .hsfv_fail
+    jmp  .hsfv_round_next
+.hsfv_case0:
+    mov  eax, edx
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .hsfv_fail
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .hsfv_fail
+    mov  eax, edx
+    call stern_popcount_eq2
+    test eax, eax
+    jz   .hsfv_fail
+    jmp  .hsfv_round_next
+.hsfv_case1:
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_popcount_eq2
+    test eax, eax
+    jz   .hsfv_fail
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32
+    mov  ebx, eax
+    mov  eax, edx
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .hsfv_fail
+    mov  eax, edx
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .hsfv_fail
+.hsfv_round_next:
+    inc  ebp
+    jmp  .hsfv_round_loop
+.hsfv_pass:
+    mov  eax, 1
+    jmp  .hsfv_exit
+.hsfv_fail:
+    xor  eax, eax
+.hsfv_exit:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpke_stern_f_encap_32: fills val_sdf_e_prime, val_sdf_ct, val_sdf_K_enc
+; ============================================================
+hpke_stern_f_encap_32:
+    push ebx
+    push esi
+    push ecx
+    push edx
+    call stern_rand_error_32
+    mov  esi, eax
+    mov  [val_sdf_e_prime], eax
+    mov  eax, [val_sdf_seed]
+    mov  ebx, esi
+    call stern_syndrome_32
+    mov  [val_sdf_ct], eax
+    mov  eax, [val_sdf_seed]
+    mov  ebx, esi
+    call stern_hash2_32
+    mov  [val_sdf_K_enc], eax
+    pop  edx
+    pop  ecx
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpke_stern_f_decap_known_32: EAX=e' -> EAX=K=hash2(seed,e')
+; ============================================================
+hpke_stern_f_decap_known_32:
+    push ebx
+    mov  ebx, eax
+    mov  eax, [val_sdf_seed]
+    call stern_hash2_32
     pop  ebx
     ret

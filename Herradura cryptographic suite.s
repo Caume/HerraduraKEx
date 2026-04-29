@@ -1,6 +1,7 @@
-/*  Herradura Cryptographic Suite v1.5.13
+/*  Herradura Cryptographic Suite v1.5.18
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
-                                       HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL
+                                       HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
+                                       HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
     HKEX-GF:   DH over GF(2^32)*, poly x^32+x^22+x^2+x+1, generator g=3
     HPKS:      Schnorr; s=(k-a*e) mod ORD; verify g^s*C^e==R
@@ -36,6 +37,10 @@
     .equ RNL_Q,    65537
     .equ RNL_P,    4096
     .equ RNL_PP,   2
+    .equ SDF_N,    32
+    .equ SDF_T,    2
+    .equ SDF_NROWS,16
+    .equ SDF_ROUNDS,4
 
 /* ------------------------------------------------------------------ */
 /* .data section                                                       */
@@ -44,7 +49,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.10 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.18 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -59,6 +64,17 @@ fmt_hkex_rnl_hdr:  .asciz "-- HKEX-RNL [PQC -- Ring-LWR; N=32, q=65537] --\n"
 fmt_hpks_nl_hdr:   .asciz "-- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] --\n"
 fmt_hpke_nl_hdr:   .asciz "-- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encrypt] --\n"
 fmt_eve_hdr:       .asciz "*** EVE bypass TESTS ***\n"
+fmt_sdf_sign_hdr:  .asciz "\n-- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA; N=32, t=2, rounds=4] --\n"
+fmt_sdf_enc_hdr:   .asciz "\n-- HPKE-Stern-F [CODE-BASED PQC -- Niederreiter KEM, N=32] --\n"
+fmt_sdf_note:      .asciz "    (demo: decap uses known e'; production needs QC-MDPC decoder)\n"
+fmt_sdf_ok:        .asciz "+ HPKS-Stern-F signature verified\n"
+fmt_sdf_fail_msg:  .asciz "- HPKS-Stern-F verification FAILED\n"
+fmt_hpke_sdf_ok:   .asciz "+ HPKE-Stern-F session keys agree\n"
+fmt_hpke_sdf_fail: .asciz "- HPKE-Stern-F key agreement FAILED\n"
+fmt_eve_sdf_ok:    .asciz "- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)\n"
+fmt_eve_sdf_fail:  .asciz "+ Eve forged HPKS-Stern-F (Eve wins!)\n"
+fmt_eve_hpke_sdf_ok:  .asciz "- Eve random guess does not match session key  (SD protection)\n"
+fmt_eve_hpke_sdf_fail: .asciz "+ Eve guessed HPKE-Stern-F session key!\n"
 
 /* result strings */
 fmt_ok:          .asciz "+ correct!\n"
@@ -98,6 +114,8 @@ lbl_D_nl2:   .asciz "D (NL-A2)   "
 lbl_sk_a:    .asciz "sk (Alice)  "
 lbl_Ka:      .asciz "KA (raw)    "
 lbl_Kb:      .asciz "KB (raw)    "
+lbl_K_enc:   .asciz "K (encap)   "
+lbl_K_dec:   .asciz "K (decap)   "
 
     .balign 4
 /* fixed test vectors */
@@ -145,6 +163,14 @@ val_KA:      .word 0
 val_KB:      .word 0
 val_hint_A:  .word 0
 val_sk_rnl:  .word 0
+/* Stern-F (code-based PQC) storage */
+val_sdf_seed:    .word 0    @ parity check seed (public)
+val_sdf_syn:     .word 0    @ syndrome H·e^T (public)
+val_sdf_e:       .word 0    @ error vector (secret)
+val_sdf_K_enc:   .word 0    @ KEM encap key
+val_sdf_K_dec:   .word 0    @ KEM decap key
+val_sdf_e_prime: .word 0    @ KEM ephemeral error
+val_sdf_ct:      .word 0    @ KEM ciphertext (syndrome)
 /* implicit poly arg pointers */
 rnl_f_ptr:   .word 0
 rnl_g_ptr:   .word 0
@@ -190,6 +216,20 @@ rnl_tmp2:    .space 128
 rnl_fa:      .space 128    /* NTT work array */
 rnl_ga:      .space 128    /* NTT work array */
 rnl_ha:      .space 128    /* NTT work array */
+/* Stern-F scratch (N=32, rounds=4) */
+sdf_perm:     .space 32   /* permutation scratch (Fisher-Yates + apply_perm) */
+sdf_c0:       .space 16   /* c0[0..3]: commit(pi, H·r^T) */
+sdf_c1:       .space 16   /* c1[0..3]: commit(sigma(r)) */
+sdf_c2:       .space 16   /* c2[0..3]: commit(sigma(y)) */
+sdf_b:        .space 16   /* challenge[0..3] (0,1,2) */
+sdf_respA:    .space 16   /* respA[0..3] */
+sdf_respB:    .space 16   /* respB[0..3] */
+sdf_r_tmp:    .space 16   /* r[0..3] sign temporaries */
+sdf_y_tmp:    .space 16   /* y[0..3] = e XOR r */
+sdf_pi_tmp:   .space 16   /* pi[0..3] perm seeds */
+sdf_sr_tmp:   .space 16   /* sigma(r)[0..3] */
+sdf_sy_tmp:   .space 16   /* sigma(y)[0..3] */
+sdf_chals_tmp:.space 16   /* verify: re-derived challenges */
 
 /* ------------------------------------------------------------------ */
 /* .text                                                               */
@@ -908,6 +948,96 @@ hpke_nl_done:
     ldr     r0, =fmt_nl
     bl      printf
 
+    /* ================================================================
+       HPKS-Stern-F  (code-based PQC: Syndrome Decoding ZKP, EUF-CMA)
+       N=32, t=2, rounds=4; seed and e generated via prng_next
+       ================================================================ */
+    ldr     r0, =fmt_sdf_sign_hdr
+    bl      printf
+
+    @ key generation: seed = prng_next()
+    bl      prng_next
+    ldr     r3, =val_sdf_seed
+    str     r0, [r3]
+
+    @ e = stern_rand_error_32() — weight-2 error vector
+    bl      stern_rand_error_32
+    ldr     r3, =val_sdf_e
+    str     r0, [r3]
+
+    @ sdf_syn = stern_syndrome_32(seed, e)
+    ldr     r0, =val_sdf_seed
+    ldr     r0, [r0]
+    ldr     r1, =val_sdf_e
+    ldr     r1, [r1]
+    bl      stern_syndrome_32
+    ldr     r3, =val_sdf_syn
+    str     r0, [r3]
+
+    @ sign: fills sdf_c0..c2, sdf_b, sdf_respA, sdf_respB
+    bl      hpks_stern_f_sign_32
+
+    @ verify
+    bl      hpks_stern_f_verify_32
+    cmp     r0, #1
+    bne     hpks_sdf_fail
+    ldr     r0, =fmt_sdf_ok
+    bl      printf
+    b       hpks_sdf_done
+hpks_sdf_fail:
+    ldr     r0, =fmt_sdf_fail_msg
+    bl      printf
+hpks_sdf_done:
+    ldr     r0, =fmt_nl
+    bl      printf
+
+    /* ================================================================
+       HPKE-Stern-F  (Niederreiter KEM, N=32, t=2)
+       Encap: K = hash(seed, e'); ct = H·e'^T
+       Decap (known e'): K' = hash(seed, e')  [demo]
+       ================================================================ */
+    ldr     r0, =fmt_sdf_enc_hdr
+    bl      printf
+    ldr     r0, =fmt_sdf_note
+    bl      printf
+
+    @ encap: fills val_sdf_K_enc, val_sdf_ct, val_sdf_e_prime
+    bl      hpke_stern_f_encap_32
+
+    @ decap (known e'): K' = hash2(seed, e')
+    ldr     r0, =val_sdf_e_prime
+    ldr     r0, [r0]
+    bl      hpke_stern_f_decap_known_32
+    ldr     r3, =val_sdf_K_dec
+    str     r0, [r3]
+
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_K_enc
+    ldr     r2, =val_sdf_K_enc
+    ldr     r2, [r2]
+    bl      printf
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_K_dec
+    ldr     r2, =val_sdf_K_dec
+    ldr     r2, [r2]
+    bl      printf
+
+    ldr     r0, =val_sdf_K_enc
+    ldr     r0, [r0]
+    ldr     r1, =val_sdf_K_dec
+    ldr     r1, [r1]
+    cmp     r0, r1
+    bne     hpke_sdf_fail
+    ldr     r0, =fmt_hpke_sdf_ok
+    bl      printf
+    b       hpke_sdf_done
+hpke_sdf_fail:
+    ldr     r0, =fmt_hpke_sdf_fail
+    bl      printf
+hpke_sdf_done:
+    ldr     r0, =fmt_nl
+    bl      printf
+
     /* ================================================================ EVE tests */
     ldr     r0, =fmt_eve_hdr
     bl      printf
@@ -948,6 +1078,38 @@ eve_rnl_fail:
     ldr     r0, =fmt_eve_fail
     bl      printf
 eve_rnl_done:
+
+    /* Eve tries to forge HPKS-Stern-F: flip respA[0] to trigger mismatch */
+    ldr     r4, =sdf_respA
+    ldr     r5, [r4]            @ save original respA[0]
+    mvn     r0, r5              @ flip all bits
+    str     r0, [r4]
+    bl      hpks_stern_f_verify_32
+    mov     r6, r0              @ save verify result
+    str     r5, [r4]            @ restore original respA[0]
+    cmp     r6, #1
+    beq     eve_sdf_forge_fail
+    ldr     r0, =fmt_eve_sdf_ok
+    bl      printf
+    b       eve_sdf_forge_done
+eve_sdf_forge_fail:
+    ldr     r0, =fmt_eve_sdf_fail
+    bl      printf
+eve_sdf_forge_done:
+
+    /* Eve guesses HPKE-Stern-F session key */
+    bl      prng_next
+    ldr     r1, =val_sdf_K_enc
+    ldr     r1, [r1]
+    cmp     r0, r1
+    beq     eve_hpke_sdf_fail
+    ldr     r0, =fmt_eve_hpke_sdf_ok
+    bl      printf
+    b       eve_hpke_sdf_done
+eve_hpke_sdf_fail:
+    ldr     r0, =fmt_eve_hpke_sdf_fail
+    bl      printf
+eve_hpke_sdf_done:
 
     mov     r0, #0
     bl      exit
@@ -1895,6 +2057,595 @@ rnl_agree_recv:
     bl      rnl_reconcile32     @ r0 = key
 
     pop     {r4-r5, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_hash1_32: r0=v -> r0=sternHash(v)                            */
+/* h = nl_fscx_revolve_v1(v, ROL(v,4), 8)  (h starts at 0)           */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_hash1_32:
+    ror     r1, r0, #28         @ ROL(v, 4) = ROR(v, 28)
+    mov     r2, #8              @ I_VALUE = n/4
+    b       nl_fscx_revolve_v1  @ tail call; result in r0
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_hash2_32: r0=item0, r1=item1 -> r0=sternHash(item0, item1)  */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_hash2_32:
+    push    {r4-r5, lr}
+    mov     r4, r0              @ save item0
+    mov     r5, r1              @ save item1
+    @ step1: h = nl_fscx_revolve_v1(item0, ROL(item0,4), 8)
+    ror     r1, r4, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    @ step2: h = nl_fscx_revolve_v1(h XOR item1, ROL(item1,4), 8)
+    eor     r0, r0, r5
+    ror     r1, r5, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    pop     {r4-r5, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_matrix_row_32: r0=seed, r1=row -> r0=H[row]                  */
+/* H[row] = nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8)             */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_matrix_row_32:
+    push    {r4, lr}
+    mov     r4, r0              @ save seed
+    eor     r0, r0, r1          @ seed XOR row
+    ror     r0, r0, #28         @ base = ROL(seed XOR row, 4)
+    mov     r1, r4              @ B = seed
+    mov     r2, #8
+    pop     {r4, lr}
+    b       nl_fscx_revolve_v1  @ tail call
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_syndrome_32: r0=seed, r1=e -> r0=syndrome (16-bit)           */
+/* syndrome[row] = parity(H[row] AND e), for row 0..SDF_NROWS-1      */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_syndrome_32:
+    push    {r4-r8, lr}
+    mov     r4, r0              @ seed
+    mov     r5, r1              @ e
+    mov     r6, #0              @ syndrome accumulator
+    mov     r7, #0              @ row index
+sds_loop:
+    cmp     r7, #SDF_NROWS
+    bge     sds_done
+    mov     r0, r4
+    mov     r1, r7
+    bl      stern_matrix_row_32     @ r0 = H[row]
+    and     r0, r0, r5              @ H[row] AND e
+    @ parity fold
+    eor     r0, r0, r0, lsr #16
+    eor     r0, r0, r0, lsr #8
+    eor     r0, r0, r0, lsr #4
+    eor     r0, r0, r0, lsr #2
+    eor     r0, r0, r0, lsr #1
+    and     r0, r0, #1
+    lsl     r0, r0, r7
+    orr     r6, r6, r0
+    add     r7, r7, #1
+    b       sds_loop
+sds_done:
+    mov     r0, r6
+    pop     {r4-r8, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_popcount_eq2: r0=v -> r0=1 iff popcount(v)==2, else 0        */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_popcount_eq2:
+    cbz     r0, speq2_fail
+    sub     r1, r0, #1
+    ands    r0, r0, r1          @ clear lowest set bit
+    beq     speq2_fail          @ was exactly 1 bit: fail
+    sub     r1, r0, #1
+    tst     r0, r1              @ test if more than 1 remaining bit
+    bne     speq2_fail
+    mov     r0, #1
+    bx      lr
+speq2_fail:
+    mov     r0, #0
+    bx      lr
+
+/* ------------------------------------------------------------------ */
+/* stern_gen_perm_32: r0=pi_seed -> writes sdf_perm[0..31]            */
+/* Fisher-Yates using nl_fscx_v1 as PRNG                              */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_gen_perm_32:
+    push    {r4-r9, lr}
+    mov     r4, r0              @ pi_seed
+    ror     r5, r4, #28         @ key = ROL(pi_seed, 4)
+    mov     r6, r4              @ st = pi_seed (PRNG state)
+    ldr     r7, =sdf_perm
+    @ initialize: perm[i] = i
+    mov     r8, #0
+sgp_init:
+    cmp     r8, #SDF_N
+    bge     sgp_init_done
+    strb    r8, [r7, r8]
+    add     r8, r8, #1
+    b       sgp_init
+sgp_init_done:
+    @ Fisher-Yates shuffle: i = N-1 downto 1
+    mov     r8, #31             @ i = SDF_N - 1
+sgp_loop:
+    cmp     r8, #1
+    blt     sgp_done
+    @ st = nl_fscx_v1(st, key)
+    mov     r0, r6
+    mov     r1, r5
+    bl      nl_fscx_v1
+    mov     r6, r0
+    @ j = (unsigned)st MOD (i+1)
+    add     r9, r8, #1
+    udiv    r0, r6, r9
+    mul     r0, r0, r9
+    sub     r9, r6, r0          @ j = st - (st/( i+1))*(i+1)
+    @ swap perm[i] and perm[j]
+    ldrb    r0, [r7, r8]
+    ldrb    r1, [r7, r9]
+    strb    r1, [r7, r8]
+    strb    r0, [r7, r9]
+    sub     r8, r8, #1
+    b       sgp_loop
+sgp_done:
+    pop     {r4-r9, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_apply_perm_32: r0=v -> r0 = apply sdf_perm to bits of v      */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_apply_perm_32:
+    push    {r4-r7, lr}
+    mov     r4, r0              @ v
+    ldr     r5, =sdf_perm
+    mov     r6, #0              @ result
+    mov     r7, #0              @ bit index i
+sap_loop:
+    cmp     r7, #SDF_N
+    bge     sap_done
+    lsr     r0, r4, r7
+    tst     r0, #1
+    beq     sap_next
+    ldrb    r0, [r5, r7]        @ perm[i]
+    mov     r1, #1
+    lsl     r1, r1, r0
+    orr     r6, r6, r1
+sap_next:
+    add     r7, r7, #1
+    b       sap_loop
+sap_done:
+    mov     r0, r6
+    pop     {r4-r7, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_rand_error_32: no args -> r0 = weight-SDF_T error vector     */
+/* Partial Fisher-Yates (t=2 draws) using prng_next                   */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_rand_error_32:
+    push    {r4-r7, lr}
+    ldr     r4, =sdf_perm
+    @ initialize perm[i] = i
+    mov     r5, #0
+sre_init:
+    cmp     r5, #SDF_N
+    bge     sre_init_done
+    strb    r5, [r4, r5]
+    add     r5, r5, #1
+    b       sre_init
+sre_init_done:
+    @ draw 1: i=31; j = prng % 32; swap perm[31], perm[j]
+    bl      prng_next
+    mov     r5, #32
+    udiv    r6, r0, r5
+    mul     r6, r6, r5
+    sub     r6, r0, r6          @ j = prng % 32
+    ldrb    r0, [r4, #31]
+    ldrb    r1, [r4, r6]
+    strb    r1, [r4, #31]
+    strb    r0, [r4, r6]
+    @ draw 2: i=30; j = prng % 31; swap perm[30], perm[j]
+    bl      prng_next
+    mov     r5, #31
+    udiv    r6, r0, r5
+    mul     r6, r6, r5
+    sub     r6, r0, r6          @ j = prng % 31
+    ldrb    r0, [r4, #30]
+    ldrb    r1, [r4, r6]
+    strb    r1, [r4, #30]
+    strb    r0, [r4, r6]
+    @ result = (1 << perm[31]) | (1 << perm[30])
+    ldrb    r5, [r4, #31]
+    ldrb    r6, [r4, #30]
+    mov     r0, #1
+    lsl     r0, r0, r5
+    mov     r1, #1
+    lsl     r1, r1, r6
+    orr     r0, r0, r1
+    pop     {r4-r7, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* stern_fs_challenges_32: r0=out_ptr -> writes 4 challenges to *r0   */
+/* Reads val_plain (msg), sdf_c0, sdf_c1, sdf_c2                     */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+stern_fs_challenges_32:
+    push    {r4-r9, lr}
+    mov     r9, r0              @ out_ptr
+    mov     r4, #0              @ chSt = 0
+    @ sfs(msg): chSt = nl_fscx_revolve_v1(chSt ^ msg, ROL(msg,4), 8)
+    ldr     r5, =val_plain
+    ldr     r5, [r5]
+    eor     r0, r4, r5
+    ror     r1, r5, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    mov     r4, r0
+    @ for i=0..3: sfs(c0[i]), sfs(c1[i]), sfs(c2[i])
+    mov     r8, #0
+sfc_round_loop:
+    cmp     r8, #SDF_ROUNDS
+    bge     sfc_round_done
+    ldr     r5, =sdf_c0
+    ldr     r5, [r5, r8, lsl #2]
+    eor     r0, r4, r5
+    ror     r1, r5, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    mov     r4, r0
+    ldr     r5, =sdf_c1
+    ldr     r5, [r5, r8, lsl #2]
+    eor     r0, r4, r5
+    ror     r1, r5, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    mov     r4, r0
+    ldr     r5, =sdf_c2
+    ldr     r5, [r5, r8, lsl #2]
+    eor     r0, r4, r5
+    ror     r1, r5, #28
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    mov     r4, r0
+    add     r8, r8, #1
+    b       sfc_round_loop
+sfc_round_done:
+    @ extract per-round challenges: chSt = nl_fscx_v1(chSt, i); out[i] = chSt % 3
+    mov     r8, #0
+sfc_chal_loop:
+    cmp     r8, #SDF_ROUNDS
+    bge     sfc_done
+    mov     r0, r4
+    mov     r1, r8
+    bl      nl_fscx_v1
+    mov     r4, r0
+    mov     r5, #3
+    udiv    r6, r4, r5
+    mul     r6, r6, r5
+    sub     r6, r4, r6          @ challenge = chSt % 3
+    str     r6, [r9, r8, lsl #2]
+    add     r8, r8, #1
+    b       sfc_chal_loop
+sfc_done:
+    pop     {r4-r9, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hpks_stern_f_sign_32: uses val_sdf_seed, val_sdf_e, val_plain      */
+/* fills sdf_c0..c2, sdf_b, sdf_respA, sdf_respB                     */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpks_stern_f_sign_32:
+    push    {r4-r11, lr}
+    ldr     r10, =val_sdf_e
+    ldr     r10, [r10]          @ r10 = e (preserved across inner calls)
+    ldr     r11, =val_sdf_seed
+    ldr     r11, [r11]          @ r11 = seed
+    @ commit phase: for i=0..SDF_ROUNDS-1
+    mov     r4, #0
+hsfs_loop:
+    cmp     r4, #SDF_ROUNDS
+    bge     hsfs_loop_done
+    @ r = stern_rand_error_32()
+    bl      stern_rand_error_32
+    mov     r5, r0              @ r5 = r
+    @ y = e XOR r
+    eor     r6, r10, r5         @ r6 = y
+    @ pi = prng_next()
+    bl      prng_next
+    mov     r7, r0              @ r7 = pi
+    @ stern_gen_perm_32(pi) -> sdf_perm
+    mov     r0, r7
+    bl      stern_gen_perm_32
+    @ sr = stern_apply_perm_32(r)
+    mov     r0, r5
+    bl      stern_apply_perm_32
+    mov     r8, r0              @ r8 = sr = sigma(r)
+    @ sy = stern_apply_perm_32(y)
+    mov     r0, r6
+    bl      stern_apply_perm_32
+    mov     r9, r0              @ r9 = sy = sigma(y)
+    @ hr = stern_syndrome_32(seed, r)
+    mov     r0, r11
+    mov     r1, r5
+    bl      stern_syndrome_32   @ r0 = H·r^T (16-bit)
+    @ c0[i] = stern_hash2_32(pi, hr)
+    mov     r1, r0
+    mov     r0, r7
+    bl      stern_hash2_32
+    ldr     r3, =sdf_c0
+    str     r0, [r3, r4, lsl #2]
+    @ c1[i] = stern_hash1_32(sr)
+    mov     r0, r8
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c1
+    str     r0, [r3, r4, lsl #2]
+    @ c2[i] = stern_hash1_32(sy)
+    mov     r0, r9
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c2
+    str     r0, [r3, r4, lsl #2]
+    @ save per-round temporaries
+    ldr     r3, =sdf_r_tmp
+    str     r5, [r3, r4, lsl #2]
+    ldr     r3, =sdf_y_tmp
+    str     r6, [r3, r4, lsl #2]
+    ldr     r3, =sdf_pi_tmp
+    str     r7, [r3, r4, lsl #2]
+    ldr     r3, =sdf_sr_tmp
+    str     r8, [r3, r4, lsl #2]
+    ldr     r3, =sdf_sy_tmp
+    str     r9, [r3, r4, lsl #2]
+    add     r4, r4, #1
+    b       hsfs_loop
+hsfs_loop_done:
+    @ Fiat-Shamir challenges -> sdf_chals_tmp
+    ldr     r0, =sdf_chals_tmp
+    bl      stern_fs_challenges_32
+    @ collect responses based on challenges
+    mov     r4, #0
+hsfs_resp_loop:
+    cmp     r4, #SDF_ROUNDS
+    bge     hsfs_resp_done
+    ldr     r3, =sdf_chals_tmp
+    ldr     r5, [r3, r4, lsl #2]   @ b = chals[i]
+    ldr     r3, =sdf_b
+    str     r5, [r3, r4, lsl #2]
+    cmp     r5, #0
+    beq     hsfs_case0
+    cmp     r5, #1
+    beq     hsfs_case1
+    @ case 2: respA = pi, respB = y
+    ldr     r3, =sdf_pi_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respA
+    str     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_y_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respB
+    str     r0, [r3, r4, lsl #2]
+    b       hsfs_resp_next
+hsfs_case0:
+    @ case 0: respA = sr, respB = sy
+    ldr     r3, =sdf_sr_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respA
+    str     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_sy_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respB
+    str     r0, [r3, r4, lsl #2]
+    b       hsfs_resp_next
+hsfs_case1:
+    @ case 1: respA = pi, respB = r
+    ldr     r3, =sdf_pi_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respA
+    str     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_r_tmp
+    ldr     r0, [r3, r4, lsl #2]
+    ldr     r3, =sdf_respB
+    str     r0, [r3, r4, lsl #2]
+hsfs_resp_next:
+    add     r4, r4, #1
+    b       hsfs_resp_loop
+hsfs_resp_done:
+    pop     {r4-r11, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hpks_stern_f_verify_32: -> r0=1 valid, 0 invalid                   */
+/* reads sdf_c0..c2, sdf_b, sdf_respA, sdf_respB, val_sdf_seed/syn   */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpks_stern_f_verify_32:
+    push    {r4-r11, lr}
+    @ re-derive challenges
+    ldr     r0, =sdf_chals_tmp
+    bl      stern_fs_challenges_32
+    @ check chals_tmp[i] == sdf_b[i]
+    mov     r4, #0
+hsfv_chal_chk:
+    cmp     r4, #SDF_ROUNDS
+    bge     hsfv_chal_ok
+    ldr     r3, =sdf_chals_tmp
+    ldr     r5, [r3, r4, lsl #2]
+    ldr     r3, =sdf_b
+    ldr     r6, [r3, r4, lsl #2]
+    cmp     r5, r6
+    bne     hsfv_fail
+    add     r4, r4, #1
+    b       hsfv_chal_chk
+hsfv_chal_ok:
+    ldr     r10, =val_sdf_seed
+    ldr     r10, [r10]          @ seed
+    ldr     r11, =val_sdf_syn
+    ldr     r11, [r11]          @ syndrome
+    @ verify each round
+    mov     r4, #0
+hsfv_round_loop:
+    cmp     r4, #SDF_ROUNDS
+    bge     hsfv_pass
+    ldr     r3, =sdf_b
+    ldr     r5, [r3, r4, lsl #2]   @ b
+    ldr     r3, =sdf_respA
+    ldr     r6, [r3, r4, lsl #2]   @ respA
+    ldr     r3, =sdf_respB
+    ldr     r7, [r3, r4, lsl #2]   @ respB
+    cmp     r5, #0
+    beq     hsfv_case0
+    cmp     r5, #1
+    beq     hsfv_case1
+    @ case 2: respA=pi, respB=y
+    @ check hash2(pi, H·y^T ^ syndrome) == c0[i]
+    mov     r0, r10
+    mov     r1, r7
+    bl      stern_syndrome_32       @ r0 = H·y^T
+    eor     r0, r0, r11             @ hysBA = H·y^T ^ syndrome
+    mov     r1, r0
+    mov     r0, r6                  @ pi
+    bl      stern_hash2_32
+    ldr     r3, =sdf_c0
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+    @ check hash1(apply_perm(pi, y)) == c2[i]
+    mov     r0, r6
+    bl      stern_gen_perm_32
+    mov     r0, r7
+    bl      stern_apply_perm_32
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c2
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+    b       hsfv_round_next
+hsfv_case0:
+    @ check hash1(sr) == c1[i]
+    mov     r0, r6
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c1
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+    @ check hash1(sy) == c2[i]
+    mov     r0, r7
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c2
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+    @ check wt(sr) == SDF_T
+    mov     r0, r6
+    bl      stern_popcount_eq2
+    cbz     r0, hsfv_fail
+    b       hsfv_round_next
+hsfv_case1:
+    @ check wt(r) == SDF_T
+    mov     r0, r7
+    bl      stern_popcount_eq2
+    cbz     r0, hsfv_fail
+    @ check hash2(pi, H·r^T) == c0[i]
+    mov     r0, r10
+    mov     r1, r7
+    bl      stern_syndrome_32       @ r0 = H·r^T
+    mov     r1, r0
+    mov     r0, r6                  @ pi
+    bl      stern_hash2_32
+    ldr     r3, =sdf_c0
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+    @ check hash1(apply_perm(pi, r)) == c1[i]
+    mov     r0, r6
+    bl      stern_gen_perm_32
+    mov     r0, r7
+    bl      stern_apply_perm_32
+    bl      stern_hash1_32
+    ldr     r3, =sdf_c1
+    ldr     r1, [r3, r4, lsl #2]
+    cmp     r0, r1
+    bne     hsfv_fail
+hsfv_round_next:
+    add     r4, r4, #1
+    b       hsfv_round_loop
+hsfv_pass:
+    mov     r0, #1
+    pop     {r4-r11, pc}
+hsfv_fail:
+    mov     r0, #0
+    pop     {r4-r11, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hpke_stern_f_encap_32: no args                                      */
+/* e' = rand_error; ct = H·e'^T; K = hash2(seed, e')                 */
+/* fills val_sdf_e_prime, val_sdf_ct, val_sdf_K_enc                   */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpke_stern_f_encap_32:
+    push    {r4-r5, lr}
+    bl      stern_rand_error_32
+    mov     r4, r0              @ e'
+    ldr     r3, =val_sdf_e_prime
+    str     r4, [r3]
+    ldr     r5, =val_sdf_seed
+    ldr     r5, [r5]            @ seed
+    @ ct = stern_syndrome_32(seed, e')
+    mov     r0, r5
+    mov     r1, r4
+    bl      stern_syndrome_32
+    ldr     r3, =val_sdf_ct
+    str     r0, [r3]
+    @ K = stern_hash2_32(seed, e')
+    mov     r0, r5
+    mov     r1, r4
+    bl      stern_hash2_32
+    ldr     r3, =val_sdf_K_enc
+    str     r0, [r3]
+    pop     {r4-r5, pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hpke_stern_f_decap_known_32: r0=e' -> r0=K=hash2(seed,e')         */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hpke_stern_f_decap_known_32:
+    push    {r4, lr}
+    mov     r4, r0              @ e'
+    ldr     r0, =val_sdf_seed
+    ldr     r0, [r0]
+    mov     r1, r4
+    bl      stern_hash2_32
+    pop     {r4, pc}
 
     .ltorg
 

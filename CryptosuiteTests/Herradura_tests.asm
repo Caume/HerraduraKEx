@@ -1,6 +1,7 @@
-;  Herradura KEx -- Correctness Tests v1.5.10
+;  Herradura KEx -- Correctness Tests v1.5.18
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS Schnorr, HPKE El Gamal,
-;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL
+;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL,
+;                        HPKS-Stern-F, HPKE-Stern-F
 ;  KEYBITS=32; I_VALUE=8; R_VALUE=24; HKEX-RNL N=32, q=65537, p=4096
 ;  20 iterations per HKEX/HPKS/HPKE test; 100 per HSKE; 20 per NL tests; 10 per RNL
 ;
@@ -21,6 +22,10 @@
 %define RNL_Q      65537
 %define RNL_P      4096
 %define RNL_PP     2
+%define SDF_N      32
+%define SDF_T      2
+%define SDF_NROWS  16
+%define SDF_ROUNDS 4
 
 section .data
 
@@ -53,7 +58,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura KEx v1.5.10 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
+    hdr         db "=== Herradura KEx v1.5.18 -- Correctness Tests (NASM i386, KEYBITS=32) ===", 10, 10
     hdr_l       equ $-hdr
 
     t1_hdr      db "[1] HKEX-GF key exchange correctness: sk_alice == sk_bob (20 iterations)", 10
@@ -76,6 +81,10 @@ section .data
     t9_hdr_l    equ $-t9_hdr
     t10_hdr     db "[10] HPKS-NL Eve resistance: random forgery rejected (20 trials)", 10
     t10_hdr_l   equ $-t10_hdr
+    t11_hdr     db "[11] HPKS-Stern-F: sign+verify correctness (3 trials, N=32, t=2, rounds=4)", 10
+    t11_hdr_l   equ $-t11_hdr
+    t12_hdr     db "[12] HPKE-Stern-F: encap+decap KEM (3 trials, N=32, t=2)", 10
+    t12_hdr_l   equ $-t12_hdr
 
     pass20      db "    20 / 20 passed  [PASS]", 10
     pass20_l    equ $-pass20
@@ -83,8 +92,21 @@ section .data
     pass100_l   equ $-pass100
     pass_rnl    db "    10 / 10 agreed (Peikert reconciliation)  [PASS]", 10
     pass_rnl_l  equ $-pass_rnl
+    pass3v      db "    3 / 3 verified  [PASS]", 10
+    pass3v_l    equ $-pass3v
+    pass3k      db "    3 / 3 keys match  [PASS]", 10
+    pass3k_l    equ $-pass3k
     fail_msg    db "    FAILED  [FAIL]", 10
     fail_msg_l  equ $-fail_msg
+    ; Stern-F test storage
+    t_sdf_seed  dd 0
+    t_sdf_syn   dd 0
+    t_sdf_e     dd 0
+    t_sdf_msg   dd 0
+    t_sdf_K_enc dd 0
+    t_sdf_K_dec dd 0
+    t_sdf_e_prime dd 0
+    t_sdf_ct    dd 0
 
 section .bss
 
@@ -129,6 +151,20 @@ section .bss
     rnl_fa      resd RNL_N   ; NTT work arrays
     rnl_ga      resd RNL_N
     rnl_ha      resd RNL_N
+    ; Stern-F scratch
+    sdf_perm    resb SDF_N
+    sdf_c0      resd SDF_ROUNDS
+    sdf_c1      resd SDF_ROUNDS
+    sdf_c2      resd SDF_ROUNDS
+    sdf_b       resd SDF_ROUNDS
+    sdf_respA   resd SDF_ROUNDS
+    sdf_respB   resd SDF_ROUNDS
+    sdf_r_tmp   resd SDF_ROUNDS
+    sdf_y_tmp   resd SDF_ROUNDS
+    sdf_pi_tmp  resd SDF_ROUNDS
+    sdf_sr_tmp  resd SDF_ROUNDS
+    sdf_sy_tmp  resd SDF_ROUNDS
+    sdf_chals_tmp resd SDF_ROUNDS
 
 section .text
 global _start
@@ -800,6 +836,85 @@ _start:
     mov  ecx, fail_msg_l
     call print_str
 .t10_done:
+
+    ; ================================================================== [11] HPKS-Stern-F (3 trials)
+    mov  eax, t11_hdr
+    mov  ecx, t11_hdr_l
+    call print_str
+    mov  dword [t_ctr], 3
+    mov  dword [t_sk], 0       ; pass counter
+.t11_loop:
+    ; seed = prng_next()
+    call prng_next
+    mov  [t_sdf_seed], eax
+    ; e = weight-2 error
+    call stern_rand_error_32
+    mov  [t_sdf_e], eax
+    ; msg = prng_next()
+    call prng_next
+    mov  [t_sdf_msg], eax
+    ; syndrome = H·e^T
+    mov  eax, [t_sdf_seed]
+    mov  ebx, [t_sdf_e]
+    call stern_syndrome_32
+    mov  [t_sdf_syn], eax
+    ; sign
+    call hpks_stern_f_sign_32
+    ; verify
+    call hpks_stern_f_verify_32
+    cmp  eax, 1
+    jne  .t11_skip
+    inc  dword [t_sk]
+.t11_skip:
+    dec  dword [t_ctr]
+    jnz  .t11_loop
+    cmp  dword [t_sk], 3
+    jne  .t11_fail
+    mov  eax, pass3v
+    mov  ecx, pass3v_l
+    call print_str
+    jmp  .t11_done
+.t11_fail:
+    mov  eax, fail_msg
+    mov  ecx, fail_msg_l
+    call print_str
+.t11_done:
+
+    ; ================================================================== [12] HPKE-Stern-F KEM (3 trials)
+    mov  eax, t12_hdr
+    mov  ecx, t12_hdr_l
+    call print_str
+    mov  dword [t_ctr], 3
+    mov  dword [t_sk], 0
+.t12_loop:
+    ; seed = prng_next()
+    call prng_next
+    mov  [t_sdf_seed], eax
+    ; encap
+    call hpke_stern_f_encap_32
+    ; decap (known e')
+    mov  eax, [t_sdf_e_prime]
+    call hpke_stern_f_decap_known_32
+    mov  [t_sdf_K_dec], eax
+    ; check K_enc == K_dec
+    mov  eax, [t_sdf_K_enc]
+    cmp  eax, [t_sdf_K_dec]
+    jne  .t12_skip
+    inc  dword [t_sk]
+.t12_skip:
+    dec  dword [t_ctr]
+    jnz  .t12_loop
+    cmp  dword [t_sk], 3
+    jne  .t12_fail
+    mov  eax, pass3k
+    mov  ecx, pass3k_l
+    call print_str
+    jmp  .t12_done
+.t12_fail:
+    mov  eax, fail_msg
+    mov  ecx, fail_msg_l
+    call print_str
+.t12_done:
 
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
@@ -1870,5 +1985,542 @@ rnl_agree_recv:
     pop  ebp
     pop  edi
     pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_hash1_32: EAX=v -> EAX = sternHash(v)
+; ============================================================
+stern_hash1_32:
+    push ecx
+    push ebx
+    mov  ebx, eax
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  ebx
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
+; ============================================================
+stern_hash2_32:
+    push esi
+    push ecx
+    mov  esi, ebx
+    mov  ebx, eax
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    xor  eax, esi
+    mov  ebx, esi
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    pop  ecx
+    pop  esi
+    ret
+
+; ============================================================
+; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]
+; ============================================================
+stern_matrix_row_32:
+    push ecx
+    push esi
+    mov  esi, eax
+    xor  eax, ebx
+    rol  eax, 4
+    mov  ebx, esi
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  esi
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_syndrome_32: EAX=seed, EBX=e -> EAX=syndrome (16-bit)
+; ============================================================
+stern_syndrome_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, eax
+    mov  edi, ebx
+    xor  ebp, ebp
+    xor  ecx, ecx
+.tsds_loop:
+    cmp  ecx, SDF_NROWS
+    jge  .tsds_done
+    push ecx
+    mov  eax, esi
+    mov  ebx, ecx
+    call stern_matrix_row_32
+    pop  ecx
+    and  eax, edi
+    mov  edx, eax
+    shr  edx, 16
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 8
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 4
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 2
+    xor  eax, edx
+    mov  edx, eax
+    shr  edx, 1
+    xor  eax, edx
+    and  eax, 1
+    shl  eax, cl
+    or   ebp, eax
+    inc  ecx
+    jmp  .tsds_loop
+.tsds_done:
+    mov  eax, ebp
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_popcount_eq2: EAX=v -> EAX=1 iff popcount==2
+; ============================================================
+stern_popcount_eq2:
+    push ecx
+    test eax, eax
+    jz   .tspeq2_fail
+    lea  ecx, [eax-1]
+    and  eax, ecx
+    jz   .tspeq2_fail
+    lea  ecx, [eax-1]
+    test eax, ecx
+    jnz  .tspeq2_fail
+    mov  eax, 1
+    jmp  .tspeq2_done
+.tspeq2_fail:
+    xor  eax, eax
+.tspeq2_done:
+    pop  ecx
+    ret
+
+; ============================================================
+; stern_gen_perm_32: EAX=pi_seed -> sdf_perm[0..31]
+; ============================================================
+stern_gen_perm_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, eax
+    mov  edi, eax
+    rol  edi, 4
+    xor  ecx, ecx
+.tsgp_init:
+    cmp  ecx, SDF_N
+    jge  .tsgp_init_done
+    mov  byte [sdf_perm + ecx], cl
+    inc  ecx
+    jmp  .tsgp_init
+.tsgp_init_done:
+    mov  ebp, SDF_N - 1
+.tsgp_loop:
+    cmp  ebp, 1
+    jl   .tsgp_done
+    mov  eax, esi
+    mov  ebx, edi
+    call nl_fscx_v1
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, ebp
+    inc  ecx
+    div  ecx
+    movzx eax, byte [sdf_perm + ebp]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + ebp], cl
+    mov  byte [sdf_perm + edx], al
+    dec  ebp
+    jmp  .tsgp_loop
+.tsgp_done:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_apply_perm_32: EAX=v -> EAX = apply(sdf_perm, v)
+; ============================================================
+stern_apply_perm_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    mov  esi, eax
+    xor  edi, edi
+    xor  ecx, ecx
+.tsap_loop:
+    cmp  ecx, SDF_N
+    jge  .tsap_done
+    bt   esi, ecx
+    jnc  .tsap_next
+    movzx eax, byte [sdf_perm + ecx]
+    bts  edi, eax
+.tsap_next:
+    inc  ecx
+    jmp  .tsap_loop
+.tsap_done:
+    mov  eax, edi
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_rand_error_32: -> EAX = weight-2 error vector
+; ============================================================
+stern_rand_error_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    push edx
+    xor  ecx, ecx
+.tsre_init:
+    cmp  ecx, SDF_N
+    jge  .tsre_init_done
+    mov  byte [sdf_perm + ecx], cl
+    inc  ecx
+    jmp  .tsre_init
+.tsre_init_done:
+    call prng_next
+    xor  edx, edx
+    mov  ecx, 32
+    div  ecx
+    movzx eax, byte [sdf_perm + 31]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + 31], cl
+    mov  byte [sdf_perm + edx], al
+    call prng_next
+    xor  edx, edx
+    mov  ecx, 31
+    div  ecx
+    movzx eax, byte [sdf_perm + 30]
+    movzx ecx, byte [sdf_perm + edx]
+    mov  byte [sdf_perm + 30], cl
+    mov  byte [sdf_perm + edx], al
+    movzx ecx, byte [sdf_perm + 31]
+    mov  eax, 1
+    shl  eax, cl
+    movzx ecx, byte [sdf_perm + 30]
+    mov  edx, 1
+    shl  edx, cl
+    or   eax, edx
+    pop  edx
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; stern_fs_challenges_32: -> sdf_chals_tmp[0..3]
+; reads t_sdf_msg, sdf_c0, sdf_c1, sdf_c2
+; ============================================================
+stern_fs_challenges_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    push edx
+    xor  esi, esi
+    mov  eax, [t_sdf_msg]
+    xor  eax, esi
+    mov  ebx, [t_sdf_msg]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    xor  edi, edi
+.tsfc_round_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .tsfc_round_done
+    mov  eax, [sdf_c0 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c0 + edi*4]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c1 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c1 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c2 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c2 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    inc  edi
+    jmp  .tsfc_round_loop
+.tsfc_round_done:
+    xor  edi, edi
+.tsfc_chal_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .tsfc_done
+    mov  eax, esi
+    mov  ebx, edi
+    call nl_fscx_v1
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx
+    mov  [sdf_chals_tmp + edi*4], edx
+    inc  edi
+    jmp  .tsfc_chal_loop
+.tsfc_done:
+    pop  edx
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_f_sign_32: reads t_sdf_e, t_sdf_seed, t_sdf_msg
+; fills sdf_c0..c2, sdf_b, sdf_respA, sdf_respB
+; ============================================================
+hpks_stern_f_sign_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    mov  esi, [t_sdf_seed]
+    mov  edi, [t_sdf_e]
+    xor  ebp, ebp
+.thsfs_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .thsfs_loop_done
+    call stern_rand_error_32
+    mov  [sdf_r_tmp + ebp*4], eax
+    xor  eax, edi
+    mov  [sdf_y_tmp + ebp*4], eax
+    call prng_next
+    mov  [sdf_pi_tmp + ebp*4], eax
+    call stern_gen_perm_32
+    mov  eax, [sdf_r_tmp + ebp*4]
+    call stern_apply_perm_32
+    mov  [sdf_sr_tmp + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    call stern_apply_perm_32
+    mov  [sdf_sy_tmp + ebp*4], eax
+    mov  eax, esi
+    mov  ebx, [sdf_r_tmp + ebp*4]
+    call stern_syndrome_32
+    mov  ebx, eax
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    call stern_hash2_32
+    mov  [sdf_c0 + ebp*4], eax
+    mov  eax, [sdf_sr_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c1 + ebp*4], eax
+    mov  eax, [sdf_sy_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c2 + ebp*4], eax
+    inc  ebp
+    jmp  .thsfs_loop
+.thsfs_loop_done:
+    call stern_fs_challenges_32
+    xor  ebp, ebp
+.thsfs_resp_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .thsfs_resp_done
+    mov  eax, [sdf_chals_tmp + ebp*4]
+    mov  [sdf_b + ebp*4], eax
+    cmp  eax, 0
+    je   .thsfs_case0
+    cmp  eax, 1
+    je   .thsfs_case1
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .thsfs_resp_next
+.thsfs_case0:
+    mov  eax, [sdf_sr_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_sy_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .thsfs_resp_next
+.thsfs_case1:
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_r_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+.thsfs_resp_next:
+    inc  ebp
+    jmp  .thsfs_resp_loop
+.thsfs_resp_done:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_f_verify_32: -> EAX=1 valid, 0 invalid
+; reads t_sdf_seed, t_sdf_syn
+; ============================================================
+hpks_stern_f_verify_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+    call stern_fs_challenges_32
+    xor  ecx, ecx
+.thsfv_chal_chk:
+    cmp  ecx, SDF_ROUNDS
+    jge  .thsfv_chal_ok
+    mov  eax, [sdf_chals_tmp + ecx*4]
+    cmp  eax, [sdf_b + ecx*4]
+    jne  .thsfv_fail
+    inc  ecx
+    jmp  .thsfv_chal_chk
+.thsfv_chal_ok:
+    mov  esi, [t_sdf_seed]
+    mov  edi, [t_sdf_syn]
+    xor  ebp, ebp
+.thsfv_round_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .thsfv_pass
+    mov  ecx, [sdf_b + ebp*4]
+    mov  edx, [sdf_respA + ebp*4]
+    cmp  ecx, 0
+    je   .thsfv_case0
+    cmp  ecx, 1
+    je   .thsfv_case1
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32
+    xor  eax, edi
+    mov  ebx, eax
+    mov  eax, edx
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .thsfv_fail
+    mov  eax, edx
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .thsfv_fail
+    jmp  .thsfv_round_next
+.thsfv_case0:
+    mov  eax, edx
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .thsfv_fail
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .thsfv_fail
+    mov  eax, edx
+    call stern_popcount_eq2
+    test eax, eax
+    jz   .thsfv_fail
+    jmp  .thsfv_round_next
+.thsfv_case1:
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_popcount_eq2
+    test eax, eax
+    jz   .thsfv_fail
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32
+    mov  ebx, eax
+    mov  eax, edx
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .thsfv_fail
+    mov  eax, edx
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .thsfv_fail
+.thsfv_round_next:
+    inc  ebp
+    jmp  .thsfv_round_loop
+.thsfv_pass:
+    mov  eax, 1
+    jmp  .thsfv_exit
+.thsfv_fail:
+    xor  eax, eax
+.thsfv_exit:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpke_stern_f_encap_32: fills t_sdf_e_prime, t_sdf_ct, t_sdf_K_enc
+; ============================================================
+hpke_stern_f_encap_32:
+    push ebx
+    push esi
+    push ecx
+    push edx
+    call stern_rand_error_32
+    mov  esi, eax
+    mov  [t_sdf_e_prime], eax
+    mov  eax, [t_sdf_seed]
+    mov  ebx, esi
+    call stern_syndrome_32
+    mov  [t_sdf_ct], eax
+    mov  eax, [t_sdf_seed]
+    mov  ebx, esi
+    call stern_hash2_32
+    mov  [t_sdf_K_enc], eax
+    pop  edx
+    pop  ecx
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpke_stern_f_decap_known_32: EAX=e' -> EAX=K=hash2(seed,e')
+; reads t_sdf_seed
+; ============================================================
+hpke_stern_f_decap_known_32:
+    push ebx
+    mov  ebx, eax
+    mov  eax, [t_sdf_seed]
+    call stern_hash2_32
     pop  ebx
     ret

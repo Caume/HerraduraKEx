@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.13
+    Herradura Cryptographic Suite v1.5.18
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -17,6 +17,16 @@
 
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    --- v1.5.18: HPKS-Stern-F / HPKE-Stern-F — code-based PQC (SD + NL-FSCX v1 PRF) ---
+
+    Adds HPKS-Stern-F (Stern identification + Fiat-Shamir, §11.8.4) and HPKE-Stern-F
+    (Niederreiter KEM). Security of HPKS-Stern-F reduces to SD(N,t) [NP-complete,
+    BMvT 1978] plus NL-FSCX v1 PRF — the only complete chain to a studied hard
+    problem in the suite (Theorem 17, SecurityProofs.md §11.8.4).
+    Replaces the GF(2^n)* discrete-log base that Shor's algorithm breaks in HPKS-NL
+    and HPKE-NL.  Parameters: N=n, n_rows=n/2, t=n/16 (16 at n=256), SDFR=32 rounds
+    (demo; production requires ≥219 for 128-bit soundness).
 
     --- v1.5.13: HSKE-NL-A1 seed fix — ROL(base, n/8) breaks counter=0 step-1 degeneracy ---
 
@@ -113,7 +123,9 @@
     --- v1.3: BitArray (multi-byte parameter support) ---
 '''
 
+import itertools
 import os
+import random
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +147,11 @@ RNLQ  = 65537  # prime modulus (2^16 + 1)
 RNLP  = 4096   # public-key rounding modulus
 RNLPP = 2      # reconciliation modulus (1 bit extracted per ring coefficient)
 RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
+
+# HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs.md §11.8.4)
+SDFNR = KEYBITS // 2           # parity-check rows (syndrome bits; [N, N/2, t] code, N=KEYBITS)
+SDFT  = max(2, KEYBITS // 16)  # error weight t (= 16 at n=256; ≥ 2 at all widths)
+SDFR  = 32                     # Fiat-Shamir rounds (32 → ~19-bit soundness; production: ≥ 219)
 
 
 # ---------------------------------------------------------------------------
@@ -509,6 +526,207 @@ def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
 
 
 # ---------------------------------------------------------------------------
+# HPKS-Stern-F / HPKE-Stern-F — Code-Based PQC (Syndrome Decoding + NL-FSCX PRF)
+# Security reduces to SD(N,t) [NP-complete] + NL-FSCX v1 PRF.  See §11.8.4.
+# ---------------------------------------------------------------------------
+
+def _stern_hash(n: int, *items: 'BitArray') -> 'BitArray':
+    """Chain-hash items to n bits: h ← NL-FSCX_v1^{n/4}(h⊕v, ROL(v,n/8)) for each v."""
+    mask = (1 << n) - 1
+    h = BitArray(n, 0)
+    for item in items:
+        v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
+        h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
+    return h
+
+
+def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
+    """Row *row* of public parity-check matrix H: F_seed(row) via NL-FSCX v1 PRF."""
+    seed = BitArray(n, seed_int)
+    A0   = BitArray(n, seed_int ^ row).rotated(n // 8)
+    return nl_fscx_revolve_v1(A0, seed, n // 4)
+
+
+def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
+    """Compute n_rows-bit syndrome s = H·e^T mod 2."""
+    s = 0
+    for i in range(n_rows):
+        row = _stern_matrix_row(seed_int, i, n)
+        s  |= (bin(row.uint & e_int).count('1') & 1) << i
+    return s
+
+
+def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
+    """Fisher-Yates shuffle of [0..N-1] driven by NL-FSCX v1 PRNG."""
+    n    = pi_seed._size
+    key  = pi_seed.rotated(n // 8)
+    perm = list(range(N))
+    st   = pi_seed.copy()
+    for i in range(N - 1, 0, -1):
+        st = nl_fscx_v1(st, key)
+        perm[i], perm[st.uint % (i + 1)] = perm[st.uint % (i + 1)], perm[i]
+    return perm
+
+
+def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
+    """Apply permutation perm to N-bit integer v: result[perm[i]] = v[i]."""
+    result = 0
+    for i in range(N):
+        if (v_int >> i) & 1:
+            result |= 1 << perm[i]
+    return result
+
+
+def stern_f_keygen(n: int = None):
+    """Stern-F key generation for HPKS-Stern-F and HPKE-Stern-F.
+
+    Returns (seed, e_int, syndrome):
+      seed     — n-bit public matrix seed (public)
+      e_int    — N-bit weight-t error vector (private key)
+      syndrome — n_rows-bit syndrome H·e^T mod 2 (public key component)
+    """
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    seed   = BitArray.random(n)
+    e_int  = sum(1 << p for p in random.sample(range(n), t))
+    return seed, e_int, _stern_syndrome(seed.uint, e_int, n, n_rows)
+
+
+def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
+                      syndrome: int, n: int = None, rounds: int = None):
+    """HPKS-Stern-F: sign msg using Stern's 3-challenge protocol + Fiat-Shamir.
+
+    Correct Stern blinding: prover draws weight-t r and sets y = e ⊕ r so that
+    wt(r) = t is verifiable for b=1 and wt(σ(r)) = t for b=0.
+
+    Commits per round:
+      c0 = H(σ_seed, H·r^T)   c1 = H(σ(r))   c2 = H(σ(y))
+    Responses:
+      b=0: (σ(r), σ(y))  → check c1, c2, wt(σ(r))=t
+      b=1: (σ_seed, r)   → check c0, c1, wt(r)=t
+      b=2: (σ_seed, y)   → check c0 via H(σ_seed, H·y^T⊕s), check c2
+
+    Soundness: (2/3)^rounds; production needs rounds ≥ 219 for 128-bit soundness.
+    """
+    if n      is None: n      = KEYBITS
+    if rounds is None: rounds = SDFR
+    n_rows = n // 2
+    t      = max(2, n // 16)
+
+    commits    = []
+    round_data = []
+    for _ in range(rounds):
+        r_int   = sum(1 << p for p in random.sample(range(n), t))  # weight-t blinding
+        y_int   = (e_int ^ r_int) & ((1 << n) - 1)                # y = e ⊕ r
+        pi_seed = BitArray.random(n)
+        perm    = _stern_gen_perm(pi_seed, n)
+        Hr  = _stern_syndrome(seed.uint, r_int, n, n_rows)
+        sr  = _stern_apply_perm(perm, r_int, n)
+        sy  = _stern_apply_perm(perm, y_int, n)
+        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr)),
+                        _stern_hash(n, BitArray(n, sr)),
+                        _stern_hash(n, BitArray(n, sy))))
+        round_data.append((r_int, y_int, pi_seed, Hr, sr, sy))
+
+    # Fiat-Shamir: all challenges from H(msg || all_commits)
+    flat = [msg]
+    for c0, c1, c2 in commits:
+        flat += [c0, c1, c2]
+    ch_st = _stern_hash(n, *flat)
+    challenges = []
+    for i in range(rounds):
+        ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
+        challenges.append(ch_st.uint % 3)
+
+    responses = []
+    for i, (r_int, y_int, pi_seed, _Hr, sr, sy) in enumerate(round_data):
+        b = challenges[i]
+        if   b == 0: responses.append((sr, sy))             # reveal (σ(r), σ(y))
+        elif b == 1: responses.append((pi_seed, r_int))     # reveal (σ_seed, r)
+        else:        responses.append((pi_seed, y_int))     # reveal (σ_seed, y)
+    return (commits, challenges, responses)
+
+
+def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
+                        syndrome: int, n: int = None) -> bool:
+    """HPKS-Stern-F: verify signature sig on msg against public (seed, syndrome)."""
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    commits, challenges, responses = sig
+
+    # Re-derive and check Fiat-Shamir challenges
+    flat = [msg]
+    for c0, c1, c2 in commits:
+        flat += [c0, c1, c2]
+    ch_st = _stern_hash(n, *flat)
+    for i, b in enumerate(challenges):
+        ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
+        if ch_st.uint % 3 != b:
+            return False
+
+    for i, b in enumerate(challenges):
+        c0, c1, c2 = commits[i]
+        resp = responses[i]
+        if b == 0:                                        # reveal (σ(r), σ(y))
+            sr, sy = resp
+            if _stern_hash(n, BitArray(n, sr)) != c1:          return False
+            if _stern_hash(n, BitArray(n, sy)) != c2:          return False
+            if bin(sr).count('1') != t:                        return False
+        elif b == 1:                                      # reveal (σ_seed, r)
+            pi_seed, r_int = resp
+            if bin(r_int).count('1') != t:                     return False
+            perm = _stern_gen_perm(pi_seed, n)
+            Hr   = _stern_syndrome(seed.uint, r_int, n, n_rows)
+            if _stern_hash(n, pi_seed, BitArray(n, Hr)) != c0: return False
+            sr   = _stern_apply_perm(perm, r_int, n)
+            if _stern_hash(n, BitArray(n, sr)) != c1:          return False
+        else:                                             # reveal (σ_seed, y)
+            pi_seed, y_int = resp
+            perm = _stern_gen_perm(pi_seed, n)
+            Hy   = _stern_syndrome(seed.uint, y_int, n, n_rows)
+            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome)) != c0: return False
+            sy   = _stern_apply_perm(perm, y_int, n)
+            if _stern_hash(n, BitArray(n, sy)) != c2:          return False
+    return True
+
+
+def hpke_stern_f_encap(seed: 'BitArray', n: int = None):
+    """HPKE-Stern-F encapsulation (Niederreiter KEM).
+
+    Returns (K, ciphertext):
+      K          — n-bit session key (derived from fresh error e')
+      ciphertext — n_rows-bit syndrome H·e'^T (public; hard to invert without decoder)
+    """
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    e_p    = sum(1 << p for p in random.sample(range(n), t))
+    ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return K, ct
+
+
+def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
+                       n: int = None):
+    """HPKE-Stern-F decapsulation via brute-force syndrome decoder.
+
+    Enumerates all weight-t vectors to find e' with H·e'^T = ciphertext.
+    Practical only for small N (N ≤ 64, t ≤ 4).  Production requires QC-MDPC.
+    Returns session key K (same as encapsulator) or None if decode fails.
+    """
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    for pos in itertools.combinations(range(n), t):
+        e_p = sum(1 << p for p in pos)
+        if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
+            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -581,6 +799,24 @@ HPKE-NL (El Gamal + NL-FSCX v2):
   Alice:   dec=R^a=enc;     D=nl_fscx_revolve_v2_inv(E,dec,R)
   Note:    GF(2^n)* DLP still applies; NL encryption hardens the HSKE
            sub-protocol linear key-recovery attack.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CODE-BASED PQC PROTOCOLS (v1.5.18 — Theorem 17, SecurityProofs.md §11.8.4)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+HPKS-Stern-F (Stern syndrome-decoding signature — replaces HPKS-NL):
+  KeyGen:  seed random; e ←{wt-t, len-N}; s = H·e^T  (H generated via NL-FSCX v1 PRF)
+  Sign:    Stern 3-challenge ZKP of (e: H·e^T=s, wt(e)=t) + Fiat-Shamir in QROM
+  Verify:  Re-derive Fiat-Shamir challenges; check one Stern response per round
+  Security: EUF-CMA ≤ q_H/T_SD + ε_PRF (Theorem 17); SD(N,t) is NP-complete [BMvT 1978].
+  Parameters: N=n=256, n_rows=128, t=16, rounds=32 (demo; production: ≥ 219 rounds).
+
+HPKE-Stern-F (Niederreiter KEM — replaces HPKE-NL):
+  KeyGen:  same as HPKS-Stern-F (seed, e, s=H·e^T)
+  Encap:   e' ←{wt-t}; K = Hash(seed, e'); ciphertext c = H·e'^T
+  Decap:   decode c to find e' (brute-force for demo; QC-MDPC for production); K = Hash(seed, e')
+  Security: K indistinguishable from random given c, since finding e' from H·e'^T = c
+            is SD(N,t) hardness.  Requires QC-MDPC decoder for production (N=256, t=16).
 '''
 
 
@@ -750,6 +986,32 @@ def main():
     else:
         print("- decryption failed!")
 
+    print("\n--- HPKS-Stern-F [PQC — Stern SD signature; EUF-CMA ≤ SD(N,t) + NL-FSCX PRF]")
+    print(f"    (n={KEYBITS}, N={KEYBITS}, t={SDFT}, rounds={SDFR}; soundness=(2/3)^{SDFR})")
+    sf_seed, sf_e, sf_syn = stern_f_keygen(KEYBITS)
+    sf_sig  = hpks_stern_f_sign(plaintext, sf_e, sf_seed, sf_syn)
+    sf_ok   = hpks_stern_f_verify(plaintext, sf_sig, sf_seed, sf_syn)
+    print(f"seed     : {sf_seed.hex[:32]}…")
+    print(f"syndrome : {sf_syn:0{KEYBITS//4}x}"[:50] + "…")
+    print(f"msg      : {plaintext.hex[:32]}…")
+    print(f"sig      : {len(sf_sig[0])} rounds, challenge bits {sf_sig[1][:8]}…")
+    if sf_ok:
+        print("+ HPKS-Stern-F signature verified")
+    else:
+        print("- HPKS-Stern-F verification FAILED")
+
+    print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; brute-force demo at n=32]")
+    print("    (production use requires QC-MDPC decoder; demo uses n=32, t=2)")
+    sf32_seed, sf32_e, sf32_syn = stern_f_keygen(32)
+    sf32_K_enc, sf32_ct = hpke_stern_f_encap(sf32_seed, 32)
+    sf32_K_dec = hpke_stern_f_decap(sf32_ct, sf32_e, sf32_seed, 32)
+    print(f"K (encap): {sf32_K_enc.hex}")
+    print(f"K (decap): {sf32_K_dec.hex if sf32_K_dec else 'decode failed'}")
+    if sf32_K_dec is not None and sf32_K_dec == sf32_K_enc:
+        print("+ HPKE-Stern-F session keys agree")
+    else:
+        print("- HPKE-Stern-F key agreement FAILED")
+
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")
 
@@ -783,6 +1045,32 @@ def main():
         print("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
     else:
         print("- Eve random guess does not match shared key (Ring-LWR protection)")
+
+    print(f"*** HPKS-Stern-F — Eve cannot forge without solving SD(N,t)")
+    # Eve constructs a fake signature with random responses; must fail verification.
+    # (She cannot generate consistent Stern commitments without knowing e.)
+    fake_rounds = SDFR
+    fake_pi_seed = BitArray.random(KEYBITS)
+    fake_y  = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & ((1 << KEYBITS) - 1)
+    fake_c1 = _stern_hash(KEYBITS, fake_pi_seed, BitArray(KEYBITS, 0))
+    fake_c2 = _stern_hash(KEYBITS, BitArray(KEYBITS, fake_y))
+    fake_c3 = _stern_hash(KEYBITS, BitArray(KEYBITS, fake_y ^ 1))
+    fake_commits = [(fake_c1, fake_c2, fake_c3)] * fake_rounds
+    fake_challenges = [0] * fake_rounds
+    fake_responses  = [(fake_pi_seed, fake_y)] * fake_rounds
+    eve_sf_sig = (fake_commits, fake_challenges, fake_responses)
+    if hpks_stern_f_verify(decoy, eve_sf_sig, sf_seed, sf_syn):
+        print("+ Eve forged HPKS-Stern-F (Eve wins)!")
+    else:
+        print("- Eve could not forge: Fiat-Shamir challenges mismatch  (SD + PRF protection)")
+
+    print(f"*** HPKE-Stern-F — Eve cannot derive session key from syndrome ciphertext")
+    # Eve sees (sf32_seed, sf32_ct) but not sf32_e. She guesses K randomly.
+    eve_K_guess = BitArray.random(32)
+    if sf32_K_dec is not None and eve_K_guess == sf32_K_dec:
+        print("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
+    else:
+        print("- Eve random guess does not match session key (SD protection)")
 
 
 if __name__ == '__main__':
