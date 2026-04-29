@@ -6,6 +6,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-29
 
+### Feature — Multi-size key-length standardization: C tests HKEX-RNL n=128/256 (Batch 4)
+
+Expands HKEX-RNL to ring sizes n=128 and n=256 in C test [14]. The NTT twiddle table is extended from `n∈{32,64}` to `n∈{32,64,128,256}` (`psi_pow[256]`, `stage_w_fwd[8]`). Adds `rnl_hint_128`/`rnl_reconcile_128`/`rnl_agree_128` using `__uint128_t` keys, and `rnl_hint_ba`/`rnl_reconcile_ba`/`rnl_agree_ba` using `BitArray` keys with bit-packed hint representation.
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — NTT table + 4 new RNL helper functions; test [14] expanded to `{32,64,128,256}`
+
+#### Test results (gcc -O2, `-t 3.0`)
+
+- [14] HKEX-RNL: 200/200 raw agree + 200/200 sk agree at n=32/64/128/256 [PASS]
+
+---
+
 ### Feature — Multi-size key-length standardization: C tests GF(2^128) (Batch 3)
 
 Adds GF(2^128) arithmetic and expands C tests [1],[5]–[9],[15],[16] to include 128-bit (and 256-bit where scalar arithmetic is not required). Implements `gf_mul_128`, `gf_pow_128`, `mul128_mod_ord128`, and `s_op128` as `__uint128_t` helpers.
