@@ -1,10 +1,12 @@
-# Herradura Cryptographic Suite (v1.5.1)
+# Herradura Cryptographic Suite (v1.5.18)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
+>
+> **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs.md §11.8.4` for the formal reduction (Theorem 17).
 
 ---
 
@@ -63,7 +65,12 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
 9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \mathit{enc}\textunderscore\mathit{key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \mathit{dec}\textunderscore\mathit{key}, i)$
 
-Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino.
+**Code-based PQC (v1.5.18):**
+
+10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature (EUF-CMA ≤ SD($n$,$t$) + NL-FSCX v1 PRF): commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$. Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
+11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. Production decap requires a QC-MDPC syndrome decoder; demo uses known $e'$.
+
+Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
 
 ---
 
@@ -72,7 +79,7 @@ Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 a
 ## C
 
 ```bash
-# Full cryptographic suite (HKEX-GF + HSKE + HPKS Schnorr + HPKE El Gamal)
+# Full cryptographic suite (all protocols: classical, NL/PQC, Stern-F code-based)
 gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
 ./"Herradura cryptographic suite"
 
@@ -104,7 +111,7 @@ python3 CryptosuiteTests/Herradura_tests.py
 ## Assembly
 
 ```bash
-# ARM Linux — full suite + tests (HKEX-GF + HSKE + HPKS Schnorr + HPKE El Gamal, 32-bit Thumb)
+# ARM Linux — full suite + tests (32-bit Thumb; classical + NL/PQC + Stern-F protocols)
 arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" "Herradura cryptographic suite.s"
 arm-linux-gnueabi-gcc -o CryptosuiteTests/Herradura_tests_arm CryptosuiteTests/Herradura_tests.s
 qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"
@@ -133,36 +140,54 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.5.0, Raspberry Pi 5 — ARM Cortex-A76)
+# Performance (v1.5.18, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
-Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}`.
-GF arithmetic benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit parameters.
+Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 3.0`.
+GF/NL/Stern benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit parameters.
 
 ## C (gcc -O2)
 
 | Benchmark | Throughput |
 |-----------|-----------|
-| FSCX single step (256-bit) | 11.1 M ops/sec |
-| gf_pow throughput (32-bit) | 22,533 M ops/sec |
-| HKEX-GF full handshake (32-bit) | 2,255 M ops/sec |
-| HSKE encrypt+decrypt round-trip (256-bit) | 43.5 K ops/sec |
-| HPKE El Gamal round-trip (32-bit) | 2,258 M ops/sec |
+| FSCX single step (256-bit) | 10.4 M ops/sec |
+| gf_pow throughput (32-bit) | 19,841 M ops/sec |
+| HKEX-GF full handshake (32-bit) | 1,968 M ops/sec |
+| HSKE round-trip (256-bit) | 40.9 K ops/sec |
+| HPKE El Gamal round-trip (32-bit) | 2,004 M ops/sec |
+| NL-FSCX v1 revolve (32-bit, n/4 steps) | 1,968 M ops/sec |
+| NL-FSCX v2 enc+dec (32-bit) | 1,941 M ops/sec |
+| HSKE-NL-A1 counter-mode (32-bit) | 10.2 M ops/sec |
+| HSKE-NL-A2 revolve-mode (32-bit) | 15.2 M ops/sec |
+| HKEX-RNL full handshake (n=32) | 65.7 K ops/sec |
+| HPKS-Stern-F sign+verify (N=256, t=16, rounds=4) | 113 ops/sec |
 
-## Go (go run) — v1.3.3 reference, 256-bit parameters
-
-| Benchmark | 64-bit | 128-bit | 256-bit |
-|-----------|--------|---------|---------|
-| FSCX single step | 372 K ops/sec | 383 K ops/sec | 318 K ops/sec |
-| HKEX-GF full handshake | 2.75 K | 1.33 K | 0.58 K ops/sec |
-| HSKE encrypt+decrypt round-trip | 5.30 K | 2.46 K | 1.20 K ops/sec |
-
-## Python 3 — v1.3.3 reference, 256-bit parameters
+## Go (go run)
 
 | Benchmark | 64-bit | 128-bit | 256-bit |
 |-----------|--------|---------|---------|
-| FSCX single step | 166 K ops/sec | 165 K ops/sec | 156 K ops/sec |
-| HKEX-GF full handshake | 1.16 K | 585 | 290 ops/sec |
-| HSKE encrypt+decrypt round-trip | 2.28 K | 1.16 K | 563 ops/sec |
+| FSCX single step | 146 K | 121 K | 110 K ops/sec |
+| HKEX-GF full handshake (32-bit) | 270 ops/sec | — | — |
+| HSKE round-trip | 2.15 K | 1.03 K | 413 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | 6.34 K | 2.62 K | 1.21 K ops/sec |
+| NL-FSCX v2 enc+dec | 213 ops/sec | — | — |
+| HSKE-NL-A1 counter-mode | 5.65 K | 2.66 K | 1.18 K ops/sec |
+| HSKE-NL-A2 revolve-mode (64-bit) | 220 ops/sec | — | — |
+| HKEX-RNL full handshake | 10.0 K (n=32) | 4.79 K (n=64) | — |
+| HPKS-Stern-F sign+verify (N=256, rounds=4) | 1.3 ops/sec | — | — |
+
+## Python 3
+
+| Benchmark | 64-bit | 128-bit | 256-bit |
+|-----------|--------|---------|---------|
+| FSCX single step | 157 K | 152 K | 155 K ops/sec |
+| HKEX-GF full handshake (32-bit) | 491 ops/sec | — | — |
+| HSKE round-trip | 2.36 K | 1.18 K | 601 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | 7.29 K | 3.63 K | 1.85 K ops/sec |
+| NL-FSCX v2 enc+dec | 296 ops/sec | — | — |
+| HSKE-NL-A1 counter-mode | 7.01 K | 3.63 K | 1.82 K ops/sec |
+| HSKE-NL-A2 revolve-mode (64-bit) | 295 ops/sec | — | — |
+| HKEX-RNL full handshake | 1.05 K (n=32) | 510 (n=64) | — |
+| HPKS-Stern-F sign+verify (N=32, rounds=4) | 75.7 ops/sec | — | — |
 
 ---
 
@@ -174,8 +199,7 @@ CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
 SecurityProofsCode/                                 — formal break proofs (Python)
-SecurityProofs.md                                   — algebraic security analysis (incl. §11 NL/PQC, §12 quantum analysis)
-SecurityProofs2.md                                  — additional break proofs
+SecurityProofs.md                                   — algebraic analysis (incl. §11 NL/PQC, §12 quantum, §11.8.4 Stern-F)
 ```
 
 ---

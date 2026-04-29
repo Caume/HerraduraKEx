@@ -134,7 +134,8 @@ NL-FSCX primitives + Ring-LWR
 **Code-Based PQC (v1.5.18):**
 ```
 Stern identification protocol (ZKP for syndrome decoding)
-├── HPKS-Stern-F — Fiat-Shamir signature: N=32, t=2, rounds=4
+├── HPKS-Stern-F — Fiat-Shamir signature (C/Go/Python: N=n=256, t=16, rounds=32;
+│                  assembly/Arduino: N=32, t=2, rounds=4)
 │                  commit: c0=hash(π,H·r^T), c1=hash(σ(r)), c2=hash(σ(y))
 │                  challenge b∈{0,1,2} via NL-FSCX hash of msg+commitments
 │                  response reveals permuted r, y=e⊕r, or permutation π
