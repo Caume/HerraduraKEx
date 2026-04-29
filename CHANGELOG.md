@@ -6,6 +6,33 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-29
 
+### Feature — Multi-size key-length standardization: C tests GF(2^128) (Batch 3)
+
+Adds GF(2^128) arithmetic and expands C tests [1],[5]–[9],[15],[16] to include 128-bit (and 256-bit where scalar arithmetic is not required). Implements `gf_mul_128`, `gf_pow_128`, `mul128_mod_ord128`, and `s_op128` as `__uint128_t` helpers.
+
+#### Expansion summary
+
+- Tests [1],[5],[6]: `{32,64,256}` → `{32,64,128,256}` (HKEX-GF correctness, key sensitivity, Eve resistance)
+- Tests [7],[8],[15]: `{32,64}` → `{32,64,128}` (HPKS Schnorr and HPKS-NL; 256-bit skipped — scalar `a·e mod 2^256−1` would require 512-bit intermediates)
+- Tests [9],[16]: `{32,64}` → `{32,64,128,256}` (HPKE El Gamal and HPKE-NL; no scalar arithmetic needed)
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — `gf_mul_128`, `gf_pow_128`, `mul128_mod_ord128`, `s_op128`; tests [1],[5]–[9],[15],[16] expanded
+
+#### Test results (gcc -O2, `-t 2.0`)
+
+- [1] HKEX-GF correctness: 100/100 at 32/64/128 bits; 80/80 at 256 bits [PASS]
+- [5] Key sensitivity: mean HD ≥ n/4 at 32/64/128/256 bits [PASS]
+- [6] Eve resistance: 0 successes at 32/64/128/256 bits [PASS]
+- [7] HPKS Schnorr: 100/100 verified at 32/64/128 bits [PASS]
+- [8] HPKS Schnorr Eve: 0/100 wins at 32/64/128 bits [PASS]
+- [9] HPKE El Gamal: 100/100 decrypted at 32/64/128/256 bits [PASS]
+- [15] HPKS-NL: 100/100 verified at 32/64/128 bits [PASS]
+- [16] HPKE-NL: 100/100 decrypted at 32/64/128/256 bits [PASS]
+
+---
+
 ### Feature — Multi-size key-length standardization: C tests NL-FSCX 256-bit (Batch 2)
 
 Adds 256-bit (BitArray) support to C tests [10]–[13] for all NL-FSCX v1/v2 protocols. Implements `ba_sub256`, `ba_mul256`, `m_inv_ba`, `nl_fscx_v2_ba`, `nl_fscx_v2_inv_ba`, `nl_fscx_revolve_v2_ba`, and `nl_fscx_revolve_v2_inv_ba` as BitArray helpers. The `M^{-1}` polynomial table for n=256 was derived by GCD computation: `(1+x+x^255)^{-1}` in `GF(2)[x]/(x^256+1)` yields the four-word table `{0xb6db6db6db6db6db, 0xdb6db6db6db6db6d, 0x6db6db6db6db6db6, 0xb6db6db6db6db6db}`.

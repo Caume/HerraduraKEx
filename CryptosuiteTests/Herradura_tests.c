@@ -5,9 +5,12 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
-    v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests [10]-[13] expanded to
-            {64,128,256}; adds ba_sub256, ba_mul256, m_inv_ba, nl_fscx_v2_ba,
-            nl_fscx_v2_inv_ba, nl_fscx_revolve_v2_ba, nl_fscx_revolve_v2_inv_ba.
+    v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests expanded to full multi-size:
+            Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub256, ba_mul256,
+            m_inv_ba, nl_fscx_v2_ba/inv_ba, nl_fscx_revolve_v2_ba/inv_ba.
+            Batch 3 — GF(2^128) arithmetic (gf_mul_128, gf_pow_128, mul128_mod_ord128);
+            [1],[5],[6] loop {32,64,128,256}; [7],[8],[15] loop {32,64,128};
+            [9],[16] loop {32,64,128,256}.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18] + bench [28].
             Benchmarks renumbered [17]–[25] → [19]–[27] to make room for new tests.
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -22,7 +25,7 @@
             loop {32,64}; key-sensitivity PASS criterion aligned to mean >= n/4.
             Phase 4 — multi-size loops [2]–[4],[10]–[13]: 128-bit FSCX/__uint128_t
             and 128-bit NL-FSCX added; [2]–[4] loop {64,128,256}; [10]–[13] loop
-            {64,128,256} (256-bit NL-FSCX v2 via new BitArray helpers, v1.5.20).
+            {64,128} (then extended to 256 in v1.5.20 Batch 2).
             Phase 5 — test methodology alignment: [11] bijectivity upgraded to
             BIJ_SAMPLES=256 random A values per B with pairwise collision scan,
             matching Python/Go hash-map methodology.
@@ -1228,17 +1231,79 @@ static uint64_t s_op64(uint64_t delta, int r)
     return acc;
 }
 
+/* ------------------------------------------------------------------ */
+/* 128-bit GF(2^128) arithmetic (for Batch-3 multi-size tests)        */
+/* Poly: x^128+x^7+x^2+x+1 → low 64-bit constant 0x87               */
+/* Generator g=3; group order 2^128-1                                 */
+/* ------------------------------------------------------------------ */
+
+#define GF_POLY128_LO  UINT64_C(0x87)  /* low 64 bits of x^128+x^7+x^2+x+1 */
+
+static __uint128_t gf_mul_128(__uint128_t a, __uint128_t b)
+{
+    __uint128_t r = 0;
+    int i;
+    for (i = 0; i < 128; i++) {
+        if (b & 1) r ^= a;
+        { int carry = (int)(a >> 127) & 1;
+          a <<= 1;
+          if (carry) a ^= (__uint128_t)GF_POLY128_LO; }
+        b >>= 1;
+    }
+    return r;
+}
+
+static __uint128_t gf_pow_128(__uint128_t base, __uint128_t exp)
+{
+    __uint128_t r = 1;
+    while (exp) {
+        if (exp & 1) r = gf_mul_128(r, base);
+        base = gf_mul_128(base, base);
+        exp >>= 1;
+    }
+    return r;
+}
+
+/* (a * b) mod (2^128 - 1): full 256-bit product via 64-bit halves */
+static __uint128_t mul128_mod_ord128(__uint128_t a, __uint128_t b)
+{
+    uint64_t a_hi = (uint64_t)(a >> 64), a_lo = (uint64_t)a;
+    uint64_t b_hi = (uint64_t)(b >> 64), b_lo = (uint64_t)b;
+    __uint128_t p_ll = (__uint128_t)a_lo * b_lo;
+    __uint128_t p_lh = (__uint128_t)a_lo * b_hi;
+    __uint128_t p_hl = (__uint128_t)a_hi * b_lo;
+    __uint128_t p_hh = (__uint128_t)a_hi * b_hi;
+    __uint128_t mid  = p_lh + p_hl;
+    int mid_ov = (mid < p_lh) ? 1 : 0;
+    __uint128_t lo   = p_ll + (mid << 64);
+    int lo_ov  = (lo < p_ll) ? 1 : 0;
+    __uint128_t hi   = p_hh + (mid >> 64) + ((__uint128_t)mid_ov << 64) + lo_ov;
+    __uint128_t r    = lo + hi;
+    if (r < lo) r++;                              /* carry: 2^128 ≡ 1 */
+    if (r == (__uint128_t)0 - 1) r = 0;           /* 2^128-1 ≡ 0 */
+    return r;
+}
+
+static __uint128_t s_op128(__uint128_t delta, int r)
+{
+    __uint128_t acc = 0, cur = delta;
+    int j;
+    for (j = 0; j <= r; j++) { acc ^= cur; cur = fscx128(cur, 0); }
+    return acc;
+}
+
 /* [1] HKEX-GF correctness: shared key derived by Alice == shared key derived by Bob */
 static void test_hkex_gf_correctness(void)
 {
-    static const int sizes[] = {32, 64, 256};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
     BitArray a256, b256, C256, C2_256, skA256, skB256;
+    __uint128_t a128, b128, C128, C2_128, skA128, skB128;
     uint64_t a64, b64, C64, C2_64, skA64, skB64;
     uint32_t a32, b32, C32a, C2_32a, skA32, skB32;
     printf("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
@@ -1250,6 +1315,11 @@ static void test_hkex_gf_correctness(void)
                 gf_pow_ba(&skA256, &C2_256, &a256);
                 gf_pow_ba(&skB256, &C256,   &b256);
                 if (ba_equal(&skA256, &skB256)) ok++;
+            } else if (size == 128) {
+                a128 = rand128()|1; b128 = rand128()|1;
+                C128   = gf_pow_128(3, a128); C2_128 = gf_pow_128(3, b128);
+                skA128 = gf_pow_128(C2_128, a128); skB128 = gf_pow_128(C128, b128);
+                if (skA128 == skB128) ok++;
             } else if (size == 64) {
                 a64 = rand64()|1; b64 = rand64()|1;
                 C64   = gf_pow_64(3ULL, a64); C2_64 = gf_pow_64(3ULL, b64);
@@ -1420,15 +1490,16 @@ static void test_bit_frequency(void)
 /* [5] HKEX-GF key sensitivity: flip 1 bit of a -> mean HD >= n/4 */
 static void test_hkex_gf_key_sensitivity(void)
 {
-    static const int sizes[] = {32, 64, 256};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, N, size;
     struct timespec t0;
     double total, mean;
     BitArray a256, b256, C2_256, sk1_256, sk2_256, aflip256, diff256;
+    __uint128_t a128ks, b128ks, C2_128ks, sk1_128ks, sk2_128ks;
     uint64_t a64, b64, C2_64, sk1_64, sk2_64;
     uint32_t a32, b32, C2_32b, sk1_32, sk2_32;
     printf("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; total = 0.0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
@@ -1441,6 +1512,12 @@ static void test_hkex_gf_key_sensitivity(void)
                 gf_pow_ba(&sk2_256, &C2_256, &aflip256);
                 ba_xor(&diff256, &sk1_256, &sk2_256);
                 total += ba_popcount(&diff256);
+            } else if (size == 128) {
+                a128ks = rand128()|1; b128ks = rand128()|1;
+                C2_128ks = gf_pow_128(3, b128ks);
+                sk1_128ks = gf_pow_128(C2_128ks, a128ks);
+                sk2_128ks = gf_pow_128(C2_128ks, a128ks ^ 1);
+                total += (double)popcount128(sk1_128ks ^ sk2_128ks);
             } else if (size == 64) {
                 a64 = rand64()|1; b64 = rand64()|1;
                 C2_64  = gf_pow_64(3ULL, b64);
@@ -1467,16 +1544,17 @@ static void test_hkex_gf_key_sensitivity(void)
 /* [6] Eve classical attack resistance: S_{r+1}(C XOR C2) != sk in HKEX-GF */
 static void test_eve_attack_resistance(void)
 {
-    static const int sizes[] = {32, 64, 256};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, hits, N, size;
     struct timespec t0;
     BitArray a256, b256, C256, C2_256, sk256, evsk256;
     BitArray delta256, cur256, zero256, acc256, nxt256;
+    __uint128_t a128ev, b128ev, C128ev, C2_128ev, sk128ev, evsk128ev;
     uint64_t a64, b64, C64e, C2_64e, sk64, evsk64;
     uint32_t a32e, b32e, C32e, C2_32e, sk32, evsk32;
     printf("[6] HKEX-GF Eve resistance: S_op(C^C2, r) != sk  [CLASSICAL]\n");
     memset(zero256.b, 0, KEYBYTES);
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; hits = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
@@ -1498,6 +1576,12 @@ static void test_eve_attack_resistance(void)
                 }
                 evsk256 = acc256;
                 if (ba_equal(&evsk256, &sk256)) hits++;
+            } else if (size == 128) {
+                a128ev = rand128()|1; b128ev = rand128()|1;
+                C128ev  = gf_pow_128(3, a128ev); C2_128ev = gf_pow_128(3, b128ev);
+                sk128ev  = gf_pow_128(C2_128ev, a128ev);
+                evsk128ev = s_op128(C128ev ^ C2_128ev, rv);
+                if (evsk128ev == sk128ev) hits++;
             } else if (size == 64) {
                 a64 = rand64()|1; b64 = rand64()|1;
                 C64e  = gf_pow_64(3ULL, a64); C2_64e = gf_pow_64(3ULL, b64);
@@ -1526,20 +1610,32 @@ static void test_eve_attack_resistance(void)
 /* [7] HPKS Schnorr correctness: g^s * C^e == R */
 static void test_hpks_schnorr_correctness(void)
 {
-    static const int sizes[] = {32, 64};
+    static const int sizes[] = {32, 64, 128};
     int si, i, ok, N, size;
     struct timespec t0;
     uint32_t a32s, plain32, k32, C32s, R32s, e32s, s32s;
     uint64_t a64s, plain64, k64, C64s, R64s, e64s, s64s;
+    __uint128_t a128s, plain128s, k128s, C128s, R128s, e128s, s128s, ae128s;
     uint64_t ord32 = 0xFFFFFFFFULL;
     uint64_t ord64 = 0xFFFFFFFFFFFFFFFFULL;
+    __uint128_t ord128 = (__uint128_t)0 - 1;  /* 2^128 - 1 */
     __uint128_t ae128;
     printf("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 64) {
+            if (size == 128) {
+                a128s = rand128()|1; plain128s = rand128(); k128s = rand128();
+                C128s = gf_pow_128(3, a128s);
+                R128s = gf_pow_128(3, k128s);
+                e128s = fscx_revolve128(R128s, plain128s, 32); /* 128/4 */
+                ae128s = mul128_mod_ord128(a128s, e128s);
+                { __uint128_t kn = (k128s == ord128) ? 0 : k128s;
+                  s128s = (kn >= ae128s) ? (kn - ae128s) : (ord128 - ae128s + kn); }
+                if (gf_mul_128(gf_pow_128(3, s128s),
+                               gf_pow_128(C128s, e128s)) == R128s) ok++;
+            } else if (size == 64) {
                 a64s = rand64()|1; plain64 = rand64(); k64 = rand64();
                 C64s = gf_pow_64(3ULL, a64s);
                 R64s = gf_pow_64(3ULL, k64);
@@ -1571,17 +1667,26 @@ static void test_hpks_schnorr_correctness(void)
 /* [8] HPKS Schnorr Eve resistance: random forgery attempts fail */
 static void test_hpks_schnorr_eve(void)
 {
-    static const int sizes[] = {32, 64};
+    static const int sizes[] = {32, 64, 128};
     int si, i, hits, N, size;
     struct timespec t0;
     uint32_t a32e2, C32e2, reve32, seve32, eeve32;
     uint64_t a64e2, C64e2, reve64, seve64, eeve64;
+    __uint128_t a128e2, C128e2, reve128, seve128, eeve128;
     printf("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         size = sizes[si]; hits = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 64) {
+            if (size == 128) {
+                __uint128_t plain128e = rand128();
+                a128e2 = rand128()|1;
+                C128e2 = gf_pow_128(3, a128e2);
+                reve128 = rand128(); seve128 = rand128();
+                eeve128 = fscx_revolve128(reve128, plain128e, 32); /* 128/4 */
+                if (gf_mul_128(gf_pow_128(3, seve128),
+                               gf_pow_128(C128e2, eeve128)) == reve128) hits++;
+            } else if (size == 64) {
                 uint64_t plain64e = rand64();
                 a64e2 = rand64()|1;
                 C64e2 = gf_pow_64(3ULL, a64e2);
@@ -1609,17 +1714,38 @@ static void test_hpks_schnorr_eve(void)
 /* [9] HPKE El Gamal encrypt+decrypt: D == plaintext */
 static void test_hpke_el_gamal(void)
 {
-    static const int sizes[] = {32, 64};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
     uint32_t a32g, r32g, C32g, R32g, enc32, E32g, dec32, D32g;
     uint64_t a64g, r64g, C64g, R64g, enc64, E64g, dec64, D64g;
+    __uint128_t a128g, r128g, C128g, R128g, enc128g, E128g, dec128g, D128g;
+    BitArray a256g, r256g, C256g, R256g, enc256g, E256g, dec256g, D256g, pt256g;
     printf("[9] HPKE encrypt+decrypt correctness (El Gamal + fscx_revolve)  [CLASSICAL]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 64) {
+            if (size == 256) {
+                ba_rand(&pt256g); ba_rand(&a256g); ba_rand(&r256g);
+                a256g.b[KEYBYTES-1] |= 1; r256g.b[KEYBYTES-1] |= 1;
+                gf_pow_ba(&C256g, &GF_GEN, &a256g);
+                gf_pow_ba(&R256g, &GF_GEN, &r256g);
+                gf_pow_ba(&enc256g, &C256g, &r256g);
+                ba_fscx_revolve(&E256g, &pt256g, &enc256g, I_VALUE);
+                gf_pow_ba(&dec256g, &R256g, &a256g);
+                ba_fscx_revolve(&D256g, &E256g, &dec256g, R_VALUE);
+                if (ba_equal(&D256g, &pt256g)) ok++;
+            } else if (size == 128) {
+                __uint128_t pt128g = rand128();
+                a128g = rand128()|1; r128g = rand128()|1;
+                C128g = gf_pow_128(3, a128g); R128g = gf_pow_128(3, r128g);
+                enc128g = gf_pow_128(C128g, r128g);
+                E128g   = fscx_revolve128(pt128g, enc128g, 32); /* 128/4 */
+                dec128g = gf_pow_128(R128g, a128g);
+                D128g   = fscx_revolve128(E128g, dec128g, 96); /* 3*128/4 */
+                if (D128g == pt128g) ok++;
+            } else if (size == 64) {
                 uint64_t pt64 = rand64();
                 a64g = rand64()|1; r64g = rand64()|1;
                 C64g = gf_pow_64(3ULL, a64g); R64g = gf_pow_64(3ULL, r64g);
@@ -1990,20 +2116,32 @@ static void test_hkex_rnl_correctness(void)
 /* [15] HPKS-NL correctness: g^s * C^e == R  (NL-FSCX v1 challenge) */
 static void test_hpks_nl_correctness(void)
 {
-    static const int sizes[] = {32, 64};
+    static const int sizes[] = {32, 64, 128};
     int si, i, ok, N, size;
     struct timespec t0;
     uint32_t a32nl, plain32nl, k32nl, C32nl, R32nl, e32nl, s32nl;
     uint64_t a64nl, plain64nl, k64nl, C64nl, R64nl, e64nl, s64nl;
+    __uint128_t a128nl, plain128nl, k128nl, C128nl, R128nl, e128nl, s128nl, ae128nl2;
     uint64_t ord32 = 0xFFFFFFFFULL;
     uint64_t ord64 = 0xFFFFFFFFFFFFFFFFULL;
+    __uint128_t ord128 = (__uint128_t)0 - 1;  /* 2^128 - 1 */
     __uint128_t ae128nl;
     printf("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 3; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 64) {
+            if (size == 128) {
+                a128nl = rand128()|1; plain128nl = rand128(); k128nl = rand128();
+                C128nl = gf_pow_128(3, a128nl);
+                R128nl = gf_pow_128(3, k128nl);
+                e128nl = nl_fscx_revolve_v1_128(R128nl, plain128nl, NL_I128);
+                ae128nl2 = mul128_mod_ord128(a128nl, e128nl);
+                { __uint128_t kn = (k128nl == ord128) ? 0 : k128nl;
+                  s128nl = (kn >= ae128nl2) ? (kn - ae128nl2) : (ord128 - ae128nl2 + kn); }
+                if (gf_mul_128(gf_pow_128(3, s128nl),
+                               gf_pow_128(C128nl, e128nl)) == R128nl) ok++;
+            } else if (size == 64) {
                 a64nl = rand64()|1; plain64nl = rand64(); k64nl = rand64();
                 C64nl = gf_pow_64(3ULL, a64nl);
                 R64nl = gf_pow_64(3ULL, k64nl);
@@ -2035,17 +2173,38 @@ static void test_hpks_nl_correctness(void)
 /* [16] HPKE-NL correctness: D == P  (NL-FSCX v2 encrypt/decrypt) */
 static void test_hpke_nl_correctness(void)
 {
-    static const int sizes[] = {32, 64};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
     uint32_t a32h, r32h, C32h, R32h, enc32h, E32h, dec32h, D32h;
     uint64_t a64h, r64h, C64h, R64h, enc64h, E64h, dec64h, D64h;
+    __uint128_t a128h, r128h, C128h, R128h, enc128h, E128h, dec128h, D128h;
+    BitArray a256h, r256h, C256h, R256h, enc256h, E256h, dec256h, D256h, pt256h;
     printf("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]\n");
-    for (si = 0; si < 2; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 64) {
+            if (size == 256) {
+                ba_rand(&pt256h); ba_rand(&a256h); ba_rand(&r256h);
+                a256h.b[KEYBYTES-1] |= 1; r256h.b[KEYBYTES-1] |= 1;
+                gf_pow_ba(&C256h, &GF_GEN, &a256h);
+                gf_pow_ba(&R256h, &GF_GEN, &r256h);
+                gf_pow_ba(&enc256h, &C256h, &r256h);
+                nl_fscx_revolve_v2_ba(&E256h, &pt256h, &enc256h, NL_I256);
+                gf_pow_ba(&dec256h, &R256h, &a256h);
+                nl_fscx_revolve_v2_inv_ba(&D256h, &E256h, &dec256h, NL_I256);
+                if (ba_equal(&D256h, &pt256h)) ok++;
+            } else if (size == 128) {
+                __uint128_t pt128h = rand128();
+                a128h = rand128()|1; r128h = rand128()|1;
+                C128h = gf_pow_128(3, a128h); R128h = gf_pow_128(3, r128h);
+                enc128h = gf_pow_128(C128h, r128h);
+                E128h   = nl_fscx_revolve_v2_128(pt128h, enc128h, NL_I128);
+                dec128h = gf_pow_128(R128h, a128h);
+                D128h   = nl_fscx_revolve_v2_inv_128(E128h, dec128h, NL_I128);
+                if (D128h == pt128h) ok++;
+            } else if (size == 64) {
                 uint64_t pt64h = rand64();
                 a64h = rand64()|1; r64h = rand64()|1;
                 C64h = gf_pow_64(3ULL, a64h); R64h = gf_pow_64(3ULL, r64h);
