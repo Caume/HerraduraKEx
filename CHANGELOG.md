@@ -4,7 +4,41 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
-## [1.5.20] - 2026-04-29
+## [1.5.20] - 2026-04-30
+
+### Feature — Parameterised integer arithmetic layer: bn_* (Batch 7 / TODO #18)
+
+Adds a self-contained `bn_*` big-endian byte-array arithmetic library (Groups A–E) inside `CryptosuiteTests/Herradura_tests.c`, enabling protocol tests to run at any supported key width without per-size dispatch. Uses this to extend tests [7] (HPKS Schnorr), [8] (Schnorr Eve), and [15] (HPKS-NL) from `{32,64,128}` to `{32,64,128,256}` bits — previously blocked by the absence of a 256-bit scalar multiplication mod ord.
+
+#### New functions (Groups A–E)
+
+- **Group A** (bit primitives): `bn_zero`, `bn_copy`, `bn_xor_n`, `bn_equal_n`, `bn_is_zero_n`, `bn_popcount_n`, `bn_shl1_n`, `bn_shr1_n`, `bn_rol_k_n`
+- **Group B** (mod 2^n): `bn_add_n`, `bn_sub_n`, `bn_mul_lo_n`, `bn_mul_full_n`
+- **Group C** (mod 2^n−1): `bn_mul_mod_ord_n`, `bn_sub_mod_ord_n`, `bn_add_mod_ord_n`
+- **Group D** (GF(2^n)): `gf_poly_for_n`, `bn_gf_mul_n`, `bn_gf_pow_n`
+- **Group E** (FSCX + NL-FSCX): `bn_fscx_n`, `bn_fscx_revolve_n`, `bn_m_inv_n` (bootstrapped from M^{n/2−1}(e₀), lazy-cached per nbits), `bn_nl_fscx_v1_n`, `bn_nl_fscx_revolve_v1_n`, `bn_nl_delta_v2_n`, `bn_nl_fscx_v2_n`, `bn_nl_fscx_v2_inv_n`, `bn_nl_fscx_revolve_v2_n`, `bn_nl_fscx_revolve_v2_inv_n`
+- **Utilities**: `bn_rand_n`, `bn_set_gen`
+
+#### Tests extended to 256-bit
+
+| Test | Old sizes | New sizes |
+|------|-----------|-----------|
+| [7] HPKS Schnorr correctness | {32,64,128} | {32,64,128,256} |
+| [8] HPKS Schnorr Eve resistance | {32,64,128} | {32,64,128,256} |
+| [15] HPKS-NL correctness | {32,64,128} | {32,64,128,256} |
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — `bn_*` section inserted; tests [7],[8],[15] rewritten using `bn_*`
+
+#### Test results (gcc -O2, `-r 10 -t 5.0`)
+
+- [7] 10/10 verified at all four sizes [PASS]
+- [8] 0/10 Eve wins at all four sizes [PASS]
+- [15] 10/10 verified at all four sizes [PASS]
+- All other tests unchanged [PASS]
+
+---
 
 ### Feature — Multi-size key-length standardization: C suite HPKE-Stern-F N=32 demo (Batch 6)
 

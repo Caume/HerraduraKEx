@@ -9,11 +9,13 @@
             Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub256, ba_mul256,
             m_inv_ba, nl_fscx_v2_ba/inv_ba, nl_fscx_revolve_v2_ba/inv_ba.
             Batch 3 — GF(2^128) arithmetic (gf_mul_128, gf_pow_128, mul128_mod_ord128);
-            [1],[5],[6] loop {32,64,128,256}; [7],[8],[15] loop {32,64,128};
-            [9],[16] loop {32,64,128,256}.
+            [1],[5],[6] loop {32,64,128,256}; [9],[16] loop {32,64,128,256}.
             Batch 4 — HKEX-RNL n=128/256: NTT twiddle table expanded to n∈{32,64,128,256};
             adds rnl_hint/reconcile/agree_128 (__uint128_t) and rnl_hint/reconcile/agree_ba
             (BitArray); test [14] loops {32,64,128,256}.
+            Batch 5 — HPKS/HPKE-Stern-F N=32/64; test [17] loops {32,64,256}; [18] adds N=64.
+            Batch 6 — bn_* parameterised arithmetic layer (Groups A–E); tests [7],[8],[15]
+            extended from {32,64,128} to {32,64,128,256} using bn_mul_mod_ord_n/bn_sub_mod_ord_n.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18] + bench [28].
             Benchmarks renumbered [17]–[25] → [19]–[27] to make room for new tests.
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -37,15 +39,15 @@
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
       Tests [1],[5],[6]: HKEX-GF (32/64/256-bit); [7]–[9],[14]–[16]: 32/64-bit loops.
       [1]  HKEX-GF correctness: g^{ab}==g^{ba} (32/64/256-bit GF).
-      [7]  HPKS Schnorr correctness: g^s * C^e == R  (32/64-bit GF).
-      [8]  HPKS Schnorr Eve resistance: random forgery fails (32/64-bit GF).
+      [7]  HPKS Schnorr correctness: g^s * C^e == R  (32/64/128/256-bit GF).
+      [8]  HPKS Schnorr Eve resistance: random forgery fails (32/64/128/256-bit GF).
       [9]  HPKE El Gamal correctness: D == P (32/64-bit GF).
       [10] NL-FSCX v1 non-linearity and aperiodicity (32-bit).
       [11] NL-FSCX v2 bijectivity and exact inverse (32-bit).
       [12] HSKE-NL-A1 counter-mode correctness: D == P (32-bit).
       [13] HSKE-NL-A2 revolve-mode correctness: D == P (32-bit).
       [14] HKEX-RNL key agreement: K_A == K_B (n=32/64, Ring-LWR).
-      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge, 32/64-bit GF).
+      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge, 32/64/128/256-bit GF).
       [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt, 32/64-bit GF).
       [17] HPKS-Stern-F correctness: sign+verify, N=256, t=16, rounds=4  [CODE-BASED PQC].
       [18] HPKE-Stern-F correctness: encap+decap, N=32, t=2 (brute-force)  [CODE-BASED PQC].
@@ -1384,6 +1386,406 @@ static __uint128_t s_op128(__uint128_t delta, int r)
     return acc;
 }
 
+/* ================================================================== */
+/* bn_* — parameterised big-endian byte-array arithmetic (Groups A-E) */
+/* nbits must be a positive multiple of 8; b[0]=MSB, b[nbytes-1]=LSB  */
+/* ================================================================== */
+
+#define BN_MAX_BITS  512
+#define BN_MAX_BYTES (BN_MAX_BITS / 8)
+
+/* --- Group A: bit-string primitives --- */
+
+static void bn_zero(uint8_t *a, int nb)
+{ memset(a, 0, (size_t)(nb / 8)); }
+
+static void bn_copy(uint8_t *dst, const uint8_t *src, int nb)
+{ memcpy(dst, src, (size_t)(nb / 8)); }
+
+static void bn_xor_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    for (i = 0; i < n; i++) dst[i] = a[i] ^ b[i];
+}
+
+static int bn_equal_n(const uint8_t *a, const uint8_t *b, int nb)
+{ return memcmp(a, b, (size_t)(nb / 8)) == 0; }
+
+static int bn_is_zero_n(const uint8_t *a, int nb)
+{
+    int i, n = nb / 8;
+    for (i = 0; i < n; i++) if (a[i]) return 0;
+    return 1;
+}
+
+static int bn_popcount_n(const uint8_t *a, int nb)
+{
+    int i, cnt = 0, n = nb / 8;
+    for (i = 0; i < n; i++) cnt += __builtin_popcount(a[i]);
+    return cnt;
+}
+
+static int bn_shl1_n(uint8_t *a, int nb)
+{
+    int i, n = nb / 8;
+    int carry = (a[0] >> 7) & 1;
+    for (i = 0; i < n - 1; i++)
+        a[i] = (uint8_t)((a[i] << 1) | (a[i + 1] >> 7));
+    a[n - 1] <<= 1;
+    return carry;
+}
+
+static int bn_shr1_n(uint8_t *a, int nb)
+{
+    int i, n = nb / 8;
+    int carry = a[n - 1] & 1;
+    for (i = n - 1; i > 0; i--)
+        a[i] = (uint8_t)((a[i] >> 1) | (a[i - 1] << 7));
+    a[0] >>= 1;
+    return carry;
+}
+
+static void bn_rol_k_n(uint8_t *dst, const uint8_t *src, int k, int nb)
+{
+    int n = nb / 8, byte_shift = (k / 8) % n, bit_shift = k % 8, i;
+    if (bit_shift == 0) {
+        for (i = 0; i < n; i++) dst[i] = src[(i + byte_shift) % n];
+    } else {
+        int rs = 8 - bit_shift;
+        for (i = 0; i < n; i++)
+            dst[i] = (uint8_t)((src[(i + byte_shift) % n] << bit_shift)
+                             | (src[(i + byte_shift + 1) % n] >> rs));
+    }
+}
+
+/* --- Group B: integer arithmetic mod 2^n --- */
+
+static void bn_add_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    uint16_t carry = 0;
+    for (i = n - 1; i >= 0; i--) {
+        uint16_t s = (uint16_t)a[i] + b[i] + carry;
+        dst[i] = (uint8_t)s; carry = s >> 8;
+    }
+}
+
+static void bn_sub_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    int16_t borrow = 0;
+    for (i = n - 1; i >= 0; i--) {
+        int16_t s = (int16_t)a[i] - b[i] - borrow;
+        dst[i] = (uint8_t)(s & 0xFF); borrow = (s < 0) ? 1 : 0;
+    }
+}
+
+/* a*b mod 2^n — schoolbook, low n bytes only */
+static void bn_mul_lo_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, j, n = nb / 8;
+    uint64_t acc[BN_MAX_BYTES];
+    memset(acc, 0, (size_t)n * sizeof(uint64_t));
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n - i; j++)
+            acc[n - 1 - i - j] += (uint64_t)a[n - 1 - i] * b[n - 1 - j];
+    { uint64_t carry = 0;
+      for (i = n - 1; i >= 0; i--) {
+          uint64_t s = acc[i] + carry;
+          dst[i] = (uint8_t)s; carry = s >> 8;
+      }
+    }
+}
+
+/* Full 2n-bit product into full2n[0..2*nbytes-1] (big-endian) */
+static void bn_mul_full_n(uint8_t *full2n, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, j, n = nb / 8;
+    uint64_t acc[BN_MAX_BYTES * 2];
+    memset(acc, 0, (size_t)(2 * n) * sizeof(uint64_t));
+    for (i = 0; i < n; i++)
+        for (j = 0; j < n; j++)
+            acc[2 * n - 1 - i - j] += (uint64_t)a[n - 1 - i] * b[n - 1 - j];
+    { uint64_t carry = 0;
+      for (i = 2 * n - 1; i >= 0; i--) {
+          uint64_t s = acc[i] + carry;
+          full2n[i] = (uint8_t)s; carry = s >> 8;
+      }
+    }
+}
+
+/* --- Group C: arithmetic mod (2^n − 1) --- */
+
+/* a*b mod (2^n-1): fold hi+lo halves of 2n-bit product */
+static void bn_mul_mod_ord_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    uint8_t full[BN_MAX_BYTES * 2];
+    int i, n = nb / 8;
+    uint16_t carry;
+    bn_mul_full_n(full, a, b, nb);
+    carry = 0;
+    for (i = n - 1; i >= 0; i--) {
+        uint16_t s = (uint16_t)full[i] + full[n + i] + carry;
+        dst[i] = (uint8_t)s; carry = s >> 8;
+    }
+    if (carry) { /* propagate carry: dst += 1 */
+        for (i = n - 1; i >= 0; i--) {
+            uint16_t s = (uint16_t)dst[i] + 1;
+            dst[i] = (uint8_t)s;
+            if (!(s >> 8)) break;
+        }
+    }
+    /* if all-0xFF → set to 0 (2^n-1 ≡ 0 mod ord) */
+    { int all_ff = 1;
+      for (i = 0; i < n; i++) if (dst[i] != 0xFF) { all_ff = 0; break; }
+      if (all_ff) memset(dst, 0, (size_t)n);
+    }
+}
+
+/* (a-b) mod (2^n-1): subtract; if borrow subtract 1 more (wrap) */
+static void bn_sub_mod_ord_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    int16_t borrow = 0;
+    for (i = n - 1; i >= 0; i--) {
+        int16_t s = (int16_t)a[i] - b[i] - borrow;
+        dst[i] = (uint8_t)(s & 0xFF); borrow = (s < 0) ? 1 : 0;
+    }
+    if (borrow) { /* dst = a-b+2^n; want a-b+ord = dst-1 */
+        for (i = n - 1; i >= 0; i--) {
+            if (dst[i]) { dst[i]--; break; }
+            dst[i] = 0xFF;
+        }
+    }
+}
+
+/* (a+b) mod (2^n-1) */
+static void bn_add_mod_ord_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    uint16_t carry = 0;
+    for (i = n - 1; i >= 0; i--) {
+        uint16_t s = (uint16_t)a[i] + b[i] + carry;
+        dst[i] = (uint8_t)s; carry = s >> 8;
+    }
+    if (carry) {
+        for (i = n - 1; i >= 0; i--) {
+            uint16_t s = (uint16_t)dst[i] + 1;
+            dst[i] = (uint8_t)s;
+            if (!(s >> 8)) break;
+        }
+    }
+    { int all_ff = 1;
+      for (i = 0; i < n; i++) if (dst[i] != 0xFF) { all_ff = 0; break; }
+      if (all_ff) memset(dst, 0, (size_t)n);
+    }
+}
+
+/* --- Group D: GF(2^n) field arithmetic --- */
+
+static const uint8_t *gf_poly_for_n(int nb)
+{
+    /* x^32+x^22+x^2+x+1 → 0x00400007 */
+    static const uint8_t p32[4]   = { 0x00, 0x40, 0x00, 0x07 };
+    /* x^64+x^4+x^3+x+1 → 0x1B */
+    static const uint8_t p64[8]   = { 0,0,0,0, 0,0,0,0x1B };
+    /* x^128+x^7+x^2+x+1 → 0x87 */
+    static const uint8_t p128[16] = { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0x87 };
+    /* x^256+x^10+x^5+x^2+1 → 0x0425 */
+    static const uint8_t p256[32] = {
+        0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
+        0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0x04,0x25 };
+    switch (nb) {
+        case  32: return p32;
+        case  64: return p64;
+        case 128: return p128;
+        default:  return p256;
+    }
+}
+
+/* Carryless multiply mod irreducible poly: LSB-first (shr1 b, shl1 a + reduce) */
+static void bn_gf_mul_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    uint8_t r[BN_MAX_BYTES], aa[BN_MAX_BYTES], bb[BN_MAX_BYTES];
+    const uint8_t *poly = gf_poly_for_n(nb);
+    int i, n = nb / 8;
+    memset(r, 0, (size_t)n);
+    bn_copy(aa, a, nb); bn_copy(bb, b, nb);
+    for (i = 0; i < nb; i++) {
+        if (bb[n - 1] & 1) bn_xor_n(r, r, aa, nb);
+        { int carry = bn_shl1_n(aa, nb);
+          if (carry) bn_xor_n(aa, aa, poly, nb); }
+        bn_shr1_n(bb, nb);
+    }
+    bn_copy(dst, r, nb);
+}
+
+/* Square-and-multiply */
+static void bn_gf_pow_n(uint8_t *dst, const uint8_t *base, const uint8_t *exp, int nb)
+{
+    uint8_t r[BN_MAX_BYTES], b[BN_MAX_BYTES], e[BN_MAX_BYTES];
+    int n = nb / 8;
+    memset(r, 0, (size_t)n); r[n - 1] = 1;
+    bn_copy(b, base, nb); bn_copy(e, exp, nb);
+    while (!bn_is_zero_n(e, nb)) {
+        if (e[n - 1] & 1) bn_gf_mul_n(r, r, b, nb);
+        bn_gf_mul_n(b, b, b, nb);
+        bn_shr1_n(e, nb);
+    }
+    bn_copy(dst, r, nb);
+}
+
+/* --- Group E: FSCX and NL-FSCX --- */
+
+static void bn_fscx_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    int i, n = nb / 8;
+    uint8_t a_msbit = a[0] >> 7, b_msbit = b[0] >> 7;
+    uint8_t a_lsbit = a[n-1] & 1, b_lsbit = b[n-1] & 1;
+    dst[0] = a[0] ^ b[0]
+        ^ (uint8_t)((a[0]<<1)|(a[1]>>7)) ^ (uint8_t)((b[0]<<1)|(b[1]>>7))
+        ^ (uint8_t)((a[0]>>1)|(a_lsbit<<7)) ^ (uint8_t)((b[0]>>1)|(b_lsbit<<7));
+    for (i = 1; i < n - 1; i++)
+        dst[i] = a[i] ^ b[i]
+            ^ (uint8_t)((a[i]<<1)|(a[i+1]>>7)) ^ (uint8_t)((b[i]<<1)|(b[i+1]>>7))
+            ^ (uint8_t)((a[i]>>1)|(a[i-1]<<7)) ^ (uint8_t)((b[i]>>1)|(b[i-1]<<7));
+    dst[n-1] = a[n-1] ^ b[n-1]
+        ^ (uint8_t)((a[n-1]<<1)|a_msbit) ^ (uint8_t)((b[n-1]<<1)|b_msbit)
+        ^ (uint8_t)((a[n-1]>>1)|(a[n-2]<<7)) ^ (uint8_t)((b[n-1]>>1)|(b[n-2]<<7));
+}
+
+static void bn_fscx_revolve_n(uint8_t *dst, const uint8_t *a, const uint8_t *b,
+                               int steps, int nb)
+{
+    uint8_t buf[2][BN_MAX_BYTES];
+    int idx = 0, i, n = nb / 8;
+    bn_copy(buf[0], a, nb);
+    for (i = 0; i < steps; i++) { bn_fscx_n(buf[1-idx], buf[idx], b, nb); idx ^= 1; }
+    bn_copy(dst, buf[idx], nb);
+}
+
+/* M^{-1}(x): lazy-init rotation table tbl = M^{n/2-1}(e_0) per nbits.
+   M^{n/2}=I so M^{n/2-1}=M^{-1}.  tbl bit k set → include ROL(src,k). */
+static void bn_m_inv_n(uint8_t *dst, const uint8_t *src, int nb)
+{
+    static uint8_t tbl[4][BN_MAX_BYTES];
+    static int tbl_ready[4] = {0,0,0,0};
+    int idx = (nb==32)?0:(nb==64)?1:(nb==128)?2:3;
+    int n = nb / 8, k;
+    if (!tbl_ready[idx]) {
+        uint8_t one[BN_MAX_BYTES], zero[BN_MAX_BYTES];
+        memset(one,  0, (size_t)n); one[n-1] = 1;
+        memset(zero, 0, (size_t)n);
+        bn_fscx_revolve_n(tbl[idx], one, zero, nb/2 - 1, nb);
+        tbl_ready[idx] = 1;
+    }
+    memset(dst, 0, (size_t)n);
+    for (k = 0; k < nb; k++) {
+        if ((tbl[idx][n - 1 - k/8] >> (k%8)) & 1) {
+            uint8_t rot[BN_MAX_BYTES];
+            bn_rol_k_n(rot, src, k, nb);
+            bn_xor_n(dst, dst, rot, nb);
+        }
+    }
+}
+
+/* NL-FSCX v1: fscx(a,b) ^ ROL(a+b, n/4) */
+static void bn_nl_fscx_v1_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    uint8_t f[BN_MAX_BYTES], s[BN_MAX_BYTES], m[BN_MAX_BYTES];
+    bn_fscx_n(f, a, b, nb);
+    bn_add_n(s, a, b, nb);
+    bn_rol_k_n(m, s, nb/4, nb);
+    bn_xor_n(dst, f, m, nb);
+}
+
+static void bn_nl_fscx_revolve_v1_n(uint8_t *dst, const uint8_t *a,
+                                     const uint8_t *b, int steps, int nb)
+{
+    uint8_t buf[2][BN_MAX_BYTES];
+    int idx = 0, i, n = nb / 8;
+    bn_copy(buf[0], a, nb);
+    for (i = 0; i < steps; i++) {
+        bn_nl_fscx_v1_n(buf[1-idx], buf[idx], b, nb); idx ^= 1;
+    }
+    bn_copy(dst, buf[idx], nb);
+}
+
+/* delta(b) = ROL(b * ((b+1)/2), n/4) */
+static void bn_nl_delta_v2_n(uint8_t *delta, const uint8_t *b, int nb)
+{
+    uint8_t b1[BN_MAX_BYTES], half[BN_MAX_BYTES], prod[BN_MAX_BYTES];
+    uint8_t one[BN_MAX_BYTES];
+    int n = nb / 8;
+    memset(one, 0, (size_t)n); one[n-1] = 1;
+    bn_add_n(b1, b, one, nb);
+    bn_copy(half, b1, nb); bn_shr1_n(half, nb);
+    bn_mul_lo_n(prod, b, half, nb);
+    bn_rol_k_n(delta, prod, nb/4, nb);
+}
+
+static void bn_nl_fscx_v2_n(uint8_t *dst, const uint8_t *a, const uint8_t *b, int nb)
+{
+    uint8_t f[BN_MAX_BYTES], delta[BN_MAX_BYTES];
+    bn_fscx_n(f, a, b, nb);
+    bn_nl_delta_v2_n(delta, b, nb);
+    bn_add_n(dst, f, delta, nb);
+}
+
+static void bn_nl_fscx_v2_inv_n(uint8_t *dst, const uint8_t *y,
+                                  const uint8_t *b, int nb)
+{
+    uint8_t delta[BN_MAX_BYTES], ym_d[BN_MAX_BYTES], inv_ym[BN_MAX_BYTES];
+    bn_nl_delta_v2_n(delta, b, nb);
+    bn_sub_n(ym_d, y, delta, nb);
+    bn_m_inv_n(inv_ym, ym_d, nb);
+    bn_xor_n(dst, b, inv_ym, nb);
+}
+
+static void bn_nl_fscx_revolve_v2_n(uint8_t *dst, const uint8_t *a,
+                                     const uint8_t *b, int steps, int nb)
+{
+    uint8_t buf[2][BN_MAX_BYTES];
+    int idx = 0, i, n = nb / 8;
+    bn_copy(buf[0], a, nb);
+    for (i = 0; i < steps; i++) {
+        bn_nl_fscx_v2_n(buf[1-idx], buf[idx], b, nb); idx ^= 1;
+    }
+    bn_copy(dst, buf[idx], nb);
+}
+
+static void bn_nl_fscx_revolve_v2_inv_n(uint8_t *dst, const uint8_t *y,
+                                         const uint8_t *b, int steps, int nb)
+{
+    uint8_t delta[BN_MAX_BYTES], buf[2][BN_MAX_BYTES];
+    int idx = 0, i, n = nb / 8;
+    bn_nl_delta_v2_n(delta, b, nb);
+    bn_copy(buf[0], y, nb);
+    for (i = 0; i < steps; i++) {
+        uint8_t ym_d[BN_MAX_BYTES], inv_ym[BN_MAX_BYTES];
+        bn_sub_n(ym_d, buf[idx], delta, nb);
+        bn_m_inv_n(inv_ym, ym_d, nb);
+        bn_xor_n(buf[1-idx], b, inv_ym, nb);
+        idx ^= 1;
+    }
+    bn_copy(dst, buf[idx], nb);
+}
+
+/* Utility helpers for tests */
+static void bn_rand_n(uint8_t *dst, int nb)
+{
+    int n = nb / 8;
+    if (fread(dst, (size_t)n, 1, urnd_fp) != 1) {
+        fputs("ERROR: read from /dev/urandom failed\n", stderr); exit(1);
+    }
+}
+
+static void bn_set_gen(uint8_t *dst, int nb)
+{
+    int n = nb / 8;
+    memset(dst, 0, (size_t)n); dst[n-1] = 3;
+}
+
 /* [1] HKEX-GF correctness: shared key derived by Alice == shared key derived by Bob */
 static void test_hkex_gf_correctness(void)
 {
@@ -1699,55 +2101,34 @@ static void test_eve_attack_resistance(void)
 /* Security tests [7]-[9]: Schnorr HPKS and El Gamal HPKE (32/64-bit) */
 /* ------------------------------------------------------------------ */
 
-/* [7] HPKS Schnorr correctness: g^s * C^e == R */
+/* [7] HPKS Schnorr correctness: g^s * C^e == R — bn_* layer, {32,64,128,256} */
 static void test_hpks_schnorr_correctness(void)
 {
-    static const int sizes[] = {32, 64, 128};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
-    uint32_t a32s, plain32, k32, C32s, R32s, e32s, s32s;
-    uint64_t a64s, plain64, k64, C64s, R64s, e64s, s64s;
-    __uint128_t a128s, plain128s, k128s, C128s, R128s, e128s, s128s, ae128s;
-    uint64_t ord32 = 0xFFFFFFFFULL;
-    uint64_t ord64 = 0xFFFFFFFFFFFFFFFFULL;
-    __uint128_t ord128 = (__uint128_t)0 - 1;  /* 2^128 - 1 */
-    __uint128_t ae128;
     printf("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 128) {
-                a128s = rand128()|1; plain128s = rand128(); k128s = rand128();
-                C128s = gf_pow_128(3, a128s);
-                R128s = gf_pow_128(3, k128s);
-                e128s = fscx_revolve128(R128s, plain128s, 32); /* 128/4 */
-                ae128s = mul128_mod_ord128(a128s, e128s);
-                { __uint128_t kn = (k128s == ord128) ? 0 : k128s;
-                  s128s = (kn >= ae128s) ? (kn - ae128s) : (ord128 - ae128s + kn); }
-                if (gf_mul_128(gf_pow_128(3, s128s),
-                               gf_pow_128(C128s, e128s)) == R128s) ok++;
-            } else if (size == 64) {
-                a64s = rand64()|1; plain64 = rand64(); k64 = rand64();
-                C64s = gf_pow_64(3ULL, a64s);
-                R64s = gf_pow_64(3ULL, k64);
-                e64s = fscx_revolve64(R64s, plain64, 16);
-                ae128 = (__uint128_t)a64s * e64s % (__uint128_t)ord64;
-                s64s  = (uint64_t)(((__uint128_t)k64 + (__uint128_t)ord64
-                                    - (uint64_t)ae128) % (__uint128_t)ord64);
-                if (gf_mul_64(gf_pow_64(3ULL, s64s),
-                              gf_pow_64(C64s, e64s)) == R64s) ok++;
-            } else {
-                a32s = rand32()|1; plain32 = rand32(); k32 = rand32();
-                C32s = gf_pow_32(GF_GEN32, a32s);
-                R32s = gf_pow_32(GF_GEN32, k32);
-                e32s = fscx_revolve32(R32s, plain32, 8);
-                ae128 = (__uint128_t)a32s * e32s % (__uint128_t)ord32;
-                s32s  = (uint32_t)(((__uint128_t)k32 + (__uint128_t)ord32
-                                    - (uint32_t)ae128) % (__uint128_t)ord32);
-                if (gf_mul_32(gf_pow_32(GF_GEN32, s32s),
-                              gf_pow_32(C32s, e32s)) == R32s) ok++;
-            }
+            int n = size / 8;
+            uint8_t a[BN_MAX_BYTES], plain[BN_MAX_BYTES], k[BN_MAX_BYTES];
+            uint8_t g[BN_MAX_BYTES], C[BN_MAX_BYTES], R[BN_MAX_BYTES];
+            uint8_t e[BN_MAX_BYTES], ae[BN_MAX_BYTES], s[BN_MAX_BYTES];
+            uint8_t gs[BN_MAX_BYTES], Ce[BN_MAX_BYTES], lhs[BN_MAX_BYTES];
+            bn_rand_n(a, size); a[n-1] |= 1;
+            bn_rand_n(plain, size); bn_rand_n(k, size);
+            bn_set_gen(g, size);
+            bn_gf_pow_n(C, g, a, size);
+            bn_gf_pow_n(R, g, k, size);
+            bn_fscx_revolve_n(e, R, plain, size/4, size);
+            bn_mul_mod_ord_n(ae, a, e, size);
+            bn_sub_mod_ord_n(s, k, ae, size);
+            bn_gf_pow_n(gs, g, s, size);
+            bn_gf_pow_n(Ce, C, e, size);
+            bn_gf_mul_n(lhs, gs, Ce, size);
+            if (bn_equal_n(lhs, R, size)) ok++;
             if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d verified  [%s]\n",
@@ -1756,45 +2137,32 @@ static void test_hpks_schnorr_correctness(void)
     putchar('\n');
 }
 
-/* [8] HPKS Schnorr Eve resistance: random forgery attempts fail */
+/* [8] HPKS Schnorr Eve resistance: random forgery attempts fail — {32,64,128,256} */
 static void test_hpks_schnorr_eve(void)
 {
-    static const int sizes[] = {32, 64, 128};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, hits, N, size;
     struct timespec t0;
-    uint32_t a32e2, C32e2, reve32, seve32, eeve32;
-    uint64_t a64e2, C64e2, reve64, seve64, eeve64;
-    __uint128_t a128e2, C128e2, reve128, seve128, eeve128;
     printf("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; hits = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 128) {
-                __uint128_t plain128e = rand128();
-                a128e2 = rand128()|1;
-                C128e2 = gf_pow_128(3, a128e2);
-                reve128 = rand128(); seve128 = rand128();
-                eeve128 = fscx_revolve128(reve128, plain128e, 32); /* 128/4 */
-                if (gf_mul_128(gf_pow_128(3, seve128),
-                               gf_pow_128(C128e2, eeve128)) == reve128) hits++;
-            } else if (size == 64) {
-                uint64_t plain64e = rand64();
-                a64e2 = rand64()|1;
-                C64e2 = gf_pow_64(3ULL, a64e2);
-                reve64 = rand64(); seve64 = rand64();
-                eeve64 = fscx_revolve64(reve64, plain64e, 16);
-                if (gf_mul_64(gf_pow_64(3ULL, seve64),
-                              gf_pow_64(C64e2, eeve64)) == reve64) hits++;
-            } else {
-                uint32_t plain32e = rand32();
-                a32e2 = rand32()|1;
-                C32e2 = gf_pow_32(GF_GEN32, a32e2);
-                reve32 = rand32(); seve32 = rand32();
-                eeve32 = fscx_revolve32(reve32, plain32e, 8);
-                if (gf_mul_32(gf_pow_32(GF_GEN32, seve32),
-                              gf_pow_32(C32e2, eeve32)) == reve32) hits++;
-            }
+            int n = size / 8;
+            uint8_t a[BN_MAX_BYTES], plain[BN_MAX_BYTES];
+            uint8_t g[BN_MAX_BYTES], C[BN_MAX_BYTES];
+            uint8_t R[BN_MAX_BYTES], s[BN_MAX_BYTES], e[BN_MAX_BYTES];
+            uint8_t gs[BN_MAX_BYTES], Ce[BN_MAX_BYTES], lhs[BN_MAX_BYTES];
+            bn_rand_n(a, size); a[n-1] |= 1;
+            bn_rand_n(plain, size);
+            bn_rand_n(R, size); bn_rand_n(s, size);
+            bn_set_gen(g, size);
+            bn_gf_pow_n(C, g, a, size);
+            bn_fscx_revolve_n(e, R, plain, size/4, size);
+            bn_gf_pow_n(gs, g, s, size);
+            bn_gf_pow_n(Ce, C, e, size);
+            bn_gf_mul_n(lhs, gs, Ce, size);
+            if (bn_equal_n(lhs, R, size)) hits++;
             if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d Eve wins (expected 0)  [%s]\n",
@@ -2244,55 +2612,34 @@ static void test_hkex_rnl_correctness(void)
     putchar('\n');
 }
 
-/* [15] HPKS-NL correctness: g^s * C^e == R  (NL-FSCX v1 challenge) */
+/* [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1) — bn_* layer, {32,64,128,256} */
 static void test_hpks_nl_correctness(void)
 {
-    static const int sizes[] = {32, 64, 128};
+    static const int sizes[] = {32, 64, 128, 256};
     int si, i, ok, N, size;
     struct timespec t0;
-    uint32_t a32nl, plain32nl, k32nl, C32nl, R32nl, e32nl, s32nl;
-    uint64_t a64nl, plain64nl, k64nl, C64nl, R64nl, e64nl, s64nl;
-    __uint128_t a128nl, plain128nl, k128nl, C128nl, R128nl, e128nl, s128nl, ae128nl2;
-    uint64_t ord32 = 0xFFFFFFFFULL;
-    uint64_t ord64 = 0xFFFFFFFFFFFFFFFFULL;
-    __uint128_t ord128 = (__uint128_t)0 - 1;  /* 2^128 - 1 */
-    __uint128_t ae128nl;
     printf("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         size = sizes[si]; ok = 0; N = TEST_ROUNDS(100);
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            if (size == 128) {
-                a128nl = rand128()|1; plain128nl = rand128(); k128nl = rand128();
-                C128nl = gf_pow_128(3, a128nl);
-                R128nl = gf_pow_128(3, k128nl);
-                e128nl = nl_fscx_revolve_v1_128(R128nl, plain128nl, NL_I128);
-                ae128nl2 = mul128_mod_ord128(a128nl, e128nl);
-                { __uint128_t kn = (k128nl == ord128) ? 0 : k128nl;
-                  s128nl = (kn >= ae128nl2) ? (kn - ae128nl2) : (ord128 - ae128nl2 + kn); }
-                if (gf_mul_128(gf_pow_128(3, s128nl),
-                               gf_pow_128(C128nl, e128nl)) == R128nl) ok++;
-            } else if (size == 64) {
-                a64nl = rand64()|1; plain64nl = rand64(); k64nl = rand64();
-                C64nl = gf_pow_64(3ULL, a64nl);
-                R64nl = gf_pow_64(3ULL, k64nl);
-                e64nl = nl_fscx_revolve_v1_64(R64nl, plain64nl, NL_I64);
-                ae128nl = (__uint128_t)a64nl * e64nl % (__uint128_t)ord64;
-                s64nl   = (uint64_t)(((__uint128_t)k64nl + (__uint128_t)ord64
-                                      - (uint64_t)ae128nl) % (__uint128_t)ord64);
-                if (gf_mul_64(gf_pow_64(3ULL, s64nl),
-                              gf_pow_64(C64nl, e64nl)) == R64nl) ok++;
-            } else {
-                a32nl = rand32()|1; plain32nl = rand32(); k32nl = rand32();
-                C32nl = gf_pow_32(GF_GEN32, a32nl);
-                R32nl = gf_pow_32(GF_GEN32, k32nl);
-                e32nl = nl_fscx_revolve_v1_32(R32nl, plain32nl, NL_I32);
-                ae128nl = (__uint128_t)a32nl * e32nl % (__uint128_t)ord32;
-                s32nl   = (uint32_t)(((__uint128_t)k32nl + (__uint128_t)ord32
-                                      - (uint32_t)ae128nl) % (__uint128_t)ord32);
-                if (gf_mul_32(gf_pow_32(GF_GEN32, s32nl),
-                              gf_pow_32(C32nl, e32nl)) == R32nl) ok++;
-            }
+            int n = size / 8;
+            uint8_t a[BN_MAX_BYTES], plain[BN_MAX_BYTES], k[BN_MAX_BYTES];
+            uint8_t g[BN_MAX_BYTES], C[BN_MAX_BYTES], R[BN_MAX_BYTES];
+            uint8_t e[BN_MAX_BYTES], ae[BN_MAX_BYTES], s[BN_MAX_BYTES];
+            uint8_t gs[BN_MAX_BYTES], Ce[BN_MAX_BYTES], lhs[BN_MAX_BYTES];
+            bn_rand_n(a, size); a[n-1] |= 1;
+            bn_rand_n(plain, size); bn_rand_n(k, size);
+            bn_set_gen(g, size);
+            bn_gf_pow_n(C, g, a, size);
+            bn_gf_pow_n(R, g, k, size);
+            bn_nl_fscx_revolve_v1_n(e, R, plain, size/4, size);
+            bn_mul_mod_ord_n(ae, a, e, size);
+            bn_sub_mod_ord_n(s, k, ae, size);
+            bn_gf_pow_n(gs, g, s, size);
+            bn_gf_pow_n(Ce, C, e, size);
+            bn_gf_mul_n(lhs, gs, Ce, size);
+            if (bn_equal_n(lhs, R, size)) ok++;
             if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
         }
         printf("    bits=%3d  %4d / %d verified  [%s]\n",
@@ -3495,7 +3842,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.18 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.20 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
