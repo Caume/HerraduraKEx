@@ -6,6 +6,22 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-29
 
+### Feature — Multi-size key-length standardization: C suite HPKE-Stern-F N=32 demo (Batch 6)
+
+Adds N=32 brute-force HPKE-Stern-F demo to `Herradura cryptographic suite.c`, completing parity with the Python suite. New helpers: `s32_fscx`, `s32_nl_revolve`, `stern32_matrix_row`, `stern32_syndrome`, `stern32_hash`, `stern32_rand_error`, `hpke_stern_f_encap_32`, `hpke_stern_f_decap_32`. The demo now prints two blocks: N=32 brute-force (C(32,2)=496 candidates) then N=256 known-e'. Both success messages updated to specify size and path.
+
+#### Files changed
+
+- `Herradura cryptographic suite.c` — N=32 Stern-F helpers + N=32 demo block; N=256 success message updated
+- `README.md` — v1.5.20 note updated
+
+#### Test results
+
+- N=32 brute-force: `K (encap) == K (decap)` [PASS]
+- N=256 known-e': `K (encap) == K (decap)` [PASS]
+
+---
+
 ### Feature — Multi-size key-length standardization: C tests Stern-F N=32/64 (Batch 5)
 
 Expands Stern-F tests [17] and [18] to cover N=32 and N=64 parameter sets alongside the existing N=256. Adds N=32 HPKS-Stern-F sign/verify helpers (`stern32_gen_perm`, `stern32_apply_perm`, `stern32_hash_n`, `stern_fs_challenges_32`, `SternSig32T`, `hpks_stern_f_sign_32`, `hpks_stern_f_verify_32`) and a full N=64 Stern-F layer (`stern_hash_64`, `stern_matrix_row_64`, `stern_syndrome_64`, `stern_rand_error_64`, `stern64_rand_seed`, `stern_gen_perm_64`, `stern_apply_perm_64`, `stern_hash_64_n`, `stern_fs_challenges_64`, `SternSig64T`, `hpks_stern_f_sign_64`, `hpks_stern_f_verify_64`, `hpke_stern_f_encap_64`, `hpke_stern_f_decap_known_64`). Raises `SDF_TEST_ROUNDS` from 4 to 8 for all sizes.

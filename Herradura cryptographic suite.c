@@ -1166,6 +1166,94 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
     stern_hash(K_out, items, 2);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * HPKE-Stern-F N=32 brute-force demo helpers  (N=32, t=2, C(32,2)=496)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define SDF32_N     32
+#define SDF32_T     2
+#define SDF32_NROWS 16
+
+static uint32_t s32_fscx(uint32_t a, uint32_t b)
+{
+    uint32_t r1a = (a << 1) | (a >> 31), r1b = (b << 1) | (b >> 31);
+    uint32_t r1ar = (a >> 1) | (a << 31), r1br = (b >> 1) | (b << 31);
+    return a ^ b ^ r1a ^ r1b ^ r1ar ^ r1br;
+}
+
+static uint32_t s32_nl_revolve(uint32_t a, uint32_t b, int steps)
+{
+    int i;
+    for (i = 0; i < steps; i++)
+        a = s32_fscx(a, b) ^ (((a + b) << 8) | ((a + b) >> 24));
+    return a;
+}
+
+static uint32_t stern32_matrix_row(uint32_t seed, int row)
+{
+    uint32_t sxr = seed ^ (uint32_t)row;
+    uint32_t a0  = (sxr << 4) | (sxr >> 28);  /* ROL by n/8 = 4 bits */
+    return s32_nl_revolve(a0, seed, 8);        /* I = n/4 = 8 steps   */
+}
+
+static uint16_t stern32_syndrome(uint32_t seed, uint32_t e)
+{
+    uint16_t s = 0;
+    int i;
+    for (i = 0; i < SDF32_NROWS; i++)
+        if (__builtin_popcount(stern32_matrix_row(seed, i) & e) & 1)
+            s |= (uint16_t)(1u << i);
+    return s;
+}
+
+static uint32_t stern32_hash(uint32_t h, uint32_t v)
+{
+    uint32_t key = (v << 4) | (v >> 28);
+    return s32_nl_revolve(h ^ v, key, 8);
+}
+
+static uint32_t stern32_rand_error(FILE *urnd)
+{
+    uint8_t idx[SDF32_N];
+    uint32_t e = 0;
+    int i;
+    for (i = 0; i < SDF32_N; i++) idx[i] = (uint8_t)i;
+    for (i = SDF32_N - 1; i >= SDF32_N - SDF32_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e |= 1u << idx[i];
+    }
+    return e;
+}
+
+static uint32_t hpke_stern_f_encap_32(uint32_t seed, uint16_t *ct_out,
+                                        uint32_t *e_out, FILE *urnd)
+{
+    uint32_t e_p = stern32_rand_error(urnd);
+    *ct_out = stern32_syndrome(seed, e_p);
+    *e_out  = e_p;
+    return stern32_hash(stern32_hash(0, seed), e_p);
+}
+
+static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
+{
+    int i, j;
+    for (i = 0; i < SDF32_N; i++)
+        for (j = i + 1; j < SDF32_N; j++) {
+            uint32_t e_p = (1u << i) | (1u << j);
+            if (stern32_syndrome(seed, e_p) == ct)
+                return stern32_hash(stern32_hash(0, seed), e_p);
+        }
+    return 0xFFFFFFFFu; /* decode failed */
+}
+
 int main(void)
 {
     FILE *urnd;
@@ -1418,7 +1506,32 @@ int main(void)
             puts("- HPKS-Stern-F verification FAILED");
     }
 
-    /* --- HPKE-Stern-F [CODE-BASED PQC -- Niederreiter KEM] */
+    /* --- HPKE-Stern-F N=32 [CODE-BASED PQC -- Niederreiter KEM, brute-force] */
+    printf("\n--- HPKE-Stern-F [CODE-BASED PQC \xe2\x80\x94 Niederreiter KEM, N=%d]\n", SDF32_N);
+    printf("    (N=%d, t=%d; brute-force C(%d,%d)=496 candidates)\n",
+           SDF32_N, SDF32_T, SDF32_N, SDF32_T);
+    {
+        uint8_t sf32_seed_buf[4];
+        uint32_t sf32_seed, sf32_e_p, sf32_K_enc, sf32_K_dec;
+        uint16_t sf32_ct;
+        if (fread(sf32_seed_buf, 4, 1, urnd) != 1) {
+            fputs("urandom error\n", stderr); return 1;
+        }
+        sf32_seed  = ((uint32_t)sf32_seed_buf[0] << 24) |
+                     ((uint32_t)sf32_seed_buf[1] << 16) |
+                     ((uint32_t)sf32_seed_buf[2] <<  8) |
+                      (uint32_t)sf32_seed_buf[3];
+        sf32_K_enc = hpke_stern_f_encap_32(sf32_seed, &sf32_ct, &sf32_e_p, urnd);
+        sf32_K_dec = hpke_stern_f_decap_32(sf32_seed, sf32_ct);
+        printf("K (encap): %08x\n", sf32_K_enc);
+        printf("K (decap): %08x\n", sf32_K_dec);
+        if (sf32_K_enc == sf32_K_dec)
+            puts("+ HPKE-Stern-F session keys agree (N=32, brute-force)");
+        else
+            puts("- HPKE-Stern-F key agreement FAILED (N=32)");
+    }
+
+    /* --- HPKE-Stern-F N=256 [CODE-BASED PQC -- Niederreiter KEM, known-e'] */
     printf("\n--- HPKE-Stern-F [CODE-BASED PQC \xe2\x80\x94 Niederreiter KEM, N=%d]\n", KEYBITS);
     puts("    (brute-force decap infeasible at N=256; demo uses known e')");
     {
@@ -1430,9 +1543,9 @@ int main(void)
         ba_print_hex("K (decap): ", &K_dec);
         puts("    NOTE: decap uses known e' (demo only; production: QC-MDPC decoder)");
         if (ba_equal(&sf_K_enc_saved, &K_dec))
-            puts("+ HPKE-Stern-F session keys agree");
+            puts("+ HPKE-Stern-F session keys agree (N=256, known-e')");
         else
-            puts("- HPKE-Stern-F key agreement FAILED");
+            puts("- HPKE-Stern-F key agreement FAILED (N=256)");
     }
 
     /* *** EVE bypass TESTS *** */
