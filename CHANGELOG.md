@@ -6,6 +6,44 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-30
 
+### Performance — Fermat prime fast modulo for NTT inner loops (Batch 8 / TODO #15)
+
+Replaces all `(uint64_t)a * b % RNL_Q` operations in the NTT hot paths with a
+divisionless Fermat-prime reduction: since q = 65537 = 2^16+1, we have
+2^16 ≡ −1 and 2^32 ≡ 1 (mod q), so for x = a·b: x ≡ (x & 0xFFFF) − ((x>>16) & 0xFFFF) + (x>>32) (mod q).
+The result r ∈ [−65535, 65536], so at most one conditional add (`if r < 0 r += 65537`) is needed;
+the `r ≥ q` branch is dead code (max r = 65536 < 65537).
+
+#### New helpers
+
+- C: `static inline uint32_t rnl_mulmodq(uint32_t a, uint32_t b)` — added to `Herradura cryptographic suite.c` and `CryptosuiteTests/Herradura_tests.c`
+- Go: `func rnlMulModQ(a, b int) int` — added to `Herradura cryptographic suite.go` and `CryptosuiteTests/Herradura_tests.go`
+
+#### Call sites replaced
+
+- `rnl_ntt` / `rnl32_ntt` butterfly (3 multiplications): `* wn % q`, `* w % q`, invert-path `* inv_n % q`
+- `rnl_poly_mul` / `rnl32_poly_mul` / `rnl_poly_mul_n` (4–9 multiplications): ψ-twist pre/post and pointwise product
+- `rnlNTT` and `rnlPolyMul` in both Go files
+
+#### Benchmark result (gcc -O2, `-t 3.0`, n=32)
+
+| Benchmark | Before | After | Δ |
+|-----------|--------|-------|---|
+| HKEX-RNL handshake (n=32) | 65.7 K ops/sec | 77.3 K ops/sec | +17.6% |
+
+#### Files changed
+
+- `Herradura cryptographic suite.c` — `rnl_mulmodq` helper; `rnl_ntt` + `rnl_poly_mul` updated
+- `CryptosuiteTests/Herradura_tests.c` — `rnl_mulmodq` helper; `rnl32_ntt` + `rnl32_poly_mul` + `rnl_poly_mul_n` updated
+- `Herradura cryptographic suite.go` — `rnlMulModQ` helper; `rnlNTT` + `rnlPolyMul` updated
+- `CryptosuiteTests/Herradura_tests.go` — `rnlMulModQ` helper; `rnlNTT` + `rnlPolyMul` updated
+
+#### Test results (gcc -O2, `-t 3.0`)
+
+- All 18 security tests pass [PASS]
+
+---
+
 ### Feature — Parameterised integer arithmetic layer: bn_* (Batch 7 / TODO #18)
 
 Adds a self-contained `bn_*` big-endian byte-array arithmetic library (Groups A–E) inside `CryptosuiteTests/Herradura_tests.c`, enabling protocol tests to run at any supported key width without per-size dispatch. Uses this to extend tests [7] (HPKS Schnorr), [8] (Schnorr Eve), and [15] (HPKS-NL) from `{32,64,128}` to `{32,64,128,256}` bits — previously blocked by the absence of a 256-bit scalar multiplication mod ord.

@@ -439,6 +439,17 @@ func rnlTwGet(n, q int) *rnlTwEntry {
 	return e
 }
 
+// rnlMulModQ computes a*b mod 65537 using the Fermat-prime identity
+// 2^16 ≡ -1, 2^32 ≡ 1 mod 65537, avoiding a hardware divide.
+func rnlMulModQ(a, b int) int {
+	x := a * b
+	r := (x & 0xFFFF) - ((x >> 16) & 0xFFFF) + (x >> 32)
+	if r < 0 {
+		r += 65537
+	}
+	return r
+}
+
 func rnlNTT(a []int, q int, invert bool) {
 	n := len(a)
 	tw := rnlTwGet(n, q)
@@ -463,16 +474,16 @@ func rnlNTT(a []int, q int, invert bool) {
 			wn := 1
 			for k := 0; k < length>>1; k++ {
 				u := a[i+k]
-				v := a[i+k+length>>1] * wn % q
+				v := rnlMulModQ(a[i+k+length>>1], wn)
 				a[i+k] = (u + v) % q
 				a[i+k+length>>1] = (u - v + q) % q
-				wn = wn * w % q
+				wn = rnlMulModQ(wn, w)
 			}
 		}
 	}
 	if invert {
 		for i := range a {
-			a[i] = a[i] * tw.invN % q
+			a[i] = rnlMulModQ(a[i], tw.invN)
 		}
 	}
 }
@@ -481,18 +492,18 @@ func rnlPolyMul(f, g []int, q, n int) []int {
 	tw := rnlTwGet(n, q)
 	fa, ga := make([]int, n), make([]int, n)
 	for i := 0; i < n; i++ {
-		fa[i] = f[i] * tw.psiPow[i] % q
-		ga[i] = g[i] * tw.psiPow[i] % q
+		fa[i] = rnlMulModQ(f[i], tw.psiPow[i])
+		ga[i] = rnlMulModQ(g[i], tw.psiPow[i])
 	}
 	rnlNTT(fa, q, false)
 	rnlNTT(ga, q, false)
 	ha := make([]int, n)
 	for i := range ha {
-		ha[i] = fa[i] * ga[i] % q
+		ha[i] = rnlMulModQ(fa[i], ga[i])
 	}
 	rnlNTT(ha, q, true)
 	for i := range ha {
-		ha[i] = ha[i] * tw.psiInvPow[i] % q
+		ha[i] = rnlMulModQ(ha[i], tw.psiInvPow[i])
 	}
 	return ha
 }

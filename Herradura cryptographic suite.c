@@ -635,6 +635,19 @@ static void rnl_twiddle_init(void)
     rnl_tw.ready = 1;
 }
 
+/* Fermat-prime modular multiply mod 65537 = 2^16+1.
+   x = a*b; since 2^16 ≡ -1 and 2^32 ≡ 1 mod q: x ≡ lo - mid + hi (mod q).
+   r ∈ [-65535, 65536] so at most one conditional add/subtract needed. */
+static inline uint32_t rnl_mulmodq(uint32_t a, uint32_t b)
+{
+    uint64_t x = (uint64_t)a * b;
+    int32_t r = (int32_t)(x & 0xFFFF)
+              - (int32_t)((x >> 16) & 0xFFFF)
+              + (int32_t)(x >> 32);
+    if (r < 0) r += 65537;
+    return (uint32_t)r;
+}
+
 /* Cooley-Tukey iterative NTT over Z_q (in-place). n must be a power of 2.
    Uses primitive root 3 (valid since q=65537 is a Fermat prime, ord(3)=q-1=2^16). */
 static void rnl_ntt(int32_t *a, int n, int q, int invert)
@@ -656,16 +669,16 @@ static void rnl_ntt(int32_t *a, int n, int q, int invert)
             wn = 1;
             for (k = 0; k < length >> 1; k++) {
                 int32_t u = a[i + k];
-                int32_t v = (int32_t)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                int32_t v = (int32_t)rnl_mulmodq((uint32_t)a[i + k + (length >> 1)], wn);
                 a[i + k]                 = (u + v) % q;
                 a[i + k + (length >> 1)] = (u - v + q) % q;
-                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+                wn = rnl_mulmodq(wn, w);
             }
         }
     }
     if (invert) {
         for (i = 0; i < n; i++)
-            a[i] = (int32_t)((uint64_t)a[i] * rnl_tw.inv_n % (uint32_t)q);
+            a[i] = (int32_t)rnl_mulmodq((uint32_t)a[i], rnl_tw.inv_n);
     }
 }
 
@@ -677,16 +690,16 @@ static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
     int i;
     rnl_twiddle_init();
     for (i = 0; i < RNL_N; i++) {
-        fa[i] = (int32_t)((uint64_t)f[i] * rnl_tw.psi_pow[i] % RNL_Q);
-        ga[i] = (int32_t)((uint64_t)g[i] * rnl_tw.psi_pow[i] % RNL_Q);
+        fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], rnl_tw.psi_pow[i]);
+        ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], rnl_tw.psi_pow[i]);
     }
     rnl_ntt(fa, RNL_N, RNL_Q, 0);
     rnl_ntt(ga, RNL_N, RNL_Q, 0);
     for (i = 0; i < RNL_N; i++)
-        ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q);
+        ha[i] = (int32_t)rnl_mulmodq((uint32_t)fa[i], (uint32_t)ga[i]);
     rnl_ntt(ha, RNL_N, RNL_Q, 1);
     for (i = 0; i < RNL_N; i++)
-        h[i] = (int32_t)((uint64_t)ha[i] * rnl_tw.psi_inv_pow[i] % RNL_Q);
+        h[i] = (int32_t)rnl_mulmodq((uint32_t)ha[i], rnl_tw.psi_inv_pow[i]);
 }
 
 static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
