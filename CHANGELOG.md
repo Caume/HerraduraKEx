@@ -4,6 +4,167 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.20] - 2026-04-30
+
+### Feature — Parameterised integer arithmetic layer: bn_* (Batch 7 / TODO #18)
+
+Adds a self-contained `bn_*` big-endian byte-array arithmetic library (Groups A–E) inside `CryptosuiteTests/Herradura_tests.c`, enabling protocol tests to run at any supported key width without per-size dispatch. Uses this to extend tests [7] (HPKS Schnorr), [8] (Schnorr Eve), and [15] (HPKS-NL) from `{32,64,128}` to `{32,64,128,256}` bits — previously blocked by the absence of a 256-bit scalar multiplication mod ord.
+
+#### New functions (Groups A–E)
+
+- **Group A** (bit primitives): `bn_zero`, `bn_copy`, `bn_xor_n`, `bn_equal_n`, `bn_is_zero_n`, `bn_popcount_n`, `bn_shl1_n`, `bn_shr1_n`, `bn_rol_k_n`
+- **Group B** (mod 2^n): `bn_add_n`, `bn_sub_n`, `bn_mul_lo_n`, `bn_mul_full_n`
+- **Group C** (mod 2^n−1): `bn_mul_mod_ord_n`, `bn_sub_mod_ord_n`, `bn_add_mod_ord_n`
+- **Group D** (GF(2^n)): `gf_poly_for_n`, `bn_gf_mul_n`, `bn_gf_pow_n`
+- **Group E** (FSCX + NL-FSCX): `bn_fscx_n`, `bn_fscx_revolve_n`, `bn_m_inv_n` (bootstrapped from M^{n/2−1}(e₀), lazy-cached per nbits), `bn_nl_fscx_v1_n`, `bn_nl_fscx_revolve_v1_n`, `bn_nl_delta_v2_n`, `bn_nl_fscx_v2_n`, `bn_nl_fscx_v2_inv_n`, `bn_nl_fscx_revolve_v2_n`, `bn_nl_fscx_revolve_v2_inv_n`
+- **Utilities**: `bn_rand_n`, `bn_set_gen`
+
+#### Tests extended to 256-bit
+
+| Test | Old sizes | New sizes |
+|------|-----------|-----------|
+| [7] HPKS Schnorr correctness | {32,64,128} | {32,64,128,256} |
+| [8] HPKS Schnorr Eve resistance | {32,64,128} | {32,64,128,256} |
+| [15] HPKS-NL correctness | {32,64,128} | {32,64,128,256} |
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — `bn_*` section inserted; tests [7],[8],[15] rewritten using `bn_*`
+
+#### Test results (gcc -O2, `-r 10 -t 5.0`)
+
+- [7] 10/10 verified at all four sizes [PASS]
+- [8] 0/10 Eve wins at all four sizes [PASS]
+- [15] 10/10 verified at all four sizes [PASS]
+- All other tests unchanged [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: C suite HPKE-Stern-F N=32 demo (Batch 6)
+
+Adds N=32 brute-force HPKE-Stern-F demo to `Herradura cryptographic suite.c`, completing parity with the Python suite. New helpers: `s32_fscx`, `s32_nl_revolve`, `stern32_matrix_row`, `stern32_syndrome`, `stern32_hash`, `stern32_rand_error`, `hpke_stern_f_encap_32`, `hpke_stern_f_decap_32`. The demo now prints two blocks: N=32 brute-force (C(32,2)=496 candidates) then N=256 known-e'. Both success messages updated to specify size and path.
+
+#### Files changed
+
+- `Herradura cryptographic suite.c` — N=32 Stern-F helpers + N=32 demo block; N=256 success message updated
+- `README.md` — v1.5.20 note updated
+
+#### Test results
+
+- N=32 brute-force: `K (encap) == K (decap)` [PASS]
+- N=256 known-e': `K (encap) == K (decap)` [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: C tests Stern-F N=32/64 (Batch 5)
+
+Expands Stern-F tests [17] and [18] to cover N=32 and N=64 parameter sets alongside the existing N=256. Adds N=32 HPKS-Stern-F sign/verify helpers (`stern32_gen_perm`, `stern32_apply_perm`, `stern32_hash_n`, `stern_fs_challenges_32`, `SternSig32T`, `hpks_stern_f_sign_32`, `hpks_stern_f_verify_32`) and a full N=64 Stern-F layer (`stern_hash_64`, `stern_matrix_row_64`, `stern_syndrome_64`, `stern_rand_error_64`, `stern64_rand_seed`, `stern_gen_perm_64`, `stern_apply_perm_64`, `stern_hash_64_n`, `stern_fs_challenges_64`, `SternSig64T`, `hpks_stern_f_sign_64`, `hpks_stern_f_verify_64`, `hpke_stern_f_encap_64`, `hpke_stern_f_decap_known_64`). Raises `SDF_TEST_ROUNDS` from 4 to 8 for all sizes.
+
+#### Parameter sets
+
+| N  | n_rows | t  | synbytes | rounds |
+|----|--------|----|----------|--------|
+| 32 | 16     | 2  | 2        | 8      |
+| 64 | 32     | 4  | 4        | 8      |
+| 256| 128    | 16 | 16       | 8      |
+
+- Test [17]: loop `{32, 64, 256}` — HPKS-Stern-F sign+verify at each parameter set
+- Test [18]: N=32 brute-force C(32,2)=496 + N=64 known-e' fast path (direct key derivation from e')
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — N=32 HPKS helpers, N=64 full Stern-F layer, tests [17] and [18] expanded; `SDF_TEST_ROUNDS` 4→8
+
+#### Test results (gcc -O2, `-t 3.0`)
+
+- [17] HPKS-Stern-F: 5/5 verified at N=32/64/256, rounds=8 [PASS]
+- [18] HPKE-Stern-F: 20/20 decapsulated at N=32 (brute-force), 20/20 at N=64 (known-e') [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: C tests HKEX-RNL n=128/256 (Batch 4)
+
+Expands HKEX-RNL to ring sizes n=128 and n=256 in C test [14]. The NTT twiddle table is extended from `n∈{32,64}` to `n∈{32,64,128,256}` (`psi_pow[256]`, `stage_w_fwd[8]`). Adds `rnl_hint_128`/`rnl_reconcile_128`/`rnl_agree_128` using `__uint128_t` keys, and `rnl_hint_ba`/`rnl_reconcile_ba`/`rnl_agree_ba` using `BitArray` keys with bit-packed hint representation.
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — NTT table + 4 new RNL helper functions; test [14] expanded to `{32,64,128,256}`
+
+#### Test results (gcc -O2, `-t 3.0`)
+
+- [14] HKEX-RNL: 200/200 raw agree + 200/200 sk agree at n=32/64/128/256 [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: C tests GF(2^128) (Batch 3)
+
+Adds GF(2^128) arithmetic and expands C tests [1],[5]–[9],[15],[16] to include 128-bit (and 256-bit where scalar arithmetic is not required). Implements `gf_mul_128`, `gf_pow_128`, `mul128_mod_ord128`, and `s_op128` as `__uint128_t` helpers.
+
+#### Expansion summary
+
+- Tests [1],[5],[6]: `{32,64,256}` → `{32,64,128,256}` (HKEX-GF correctness, key sensitivity, Eve resistance)
+- Tests [7],[8],[15]: `{32,64}` → `{32,64,128}` (HPKS Schnorr and HPKS-NL; 256-bit skipped — scalar `a·e mod 2^256−1` would require 512-bit intermediates)
+- Tests [9],[16]: `{32,64}` → `{32,64,128,256}` (HPKE El Gamal and HPKE-NL; no scalar arithmetic needed)
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — `gf_mul_128`, `gf_pow_128`, `mul128_mod_ord128`, `s_op128`; tests [1],[5]–[9],[15],[16] expanded
+
+#### Test results (gcc -O2, `-t 2.0`)
+
+- [1] HKEX-GF correctness: 100/100 at 32/64/128 bits; 80/80 at 256 bits [PASS]
+- [5] Key sensitivity: mean HD ≥ n/4 at 32/64/128/256 bits [PASS]
+- [6] Eve resistance: 0 successes at 32/64/128/256 bits [PASS]
+- [7] HPKS Schnorr: 100/100 verified at 32/64/128 bits [PASS]
+- [8] HPKS Schnorr Eve: 0/100 wins at 32/64/128 bits [PASS]
+- [9] HPKE El Gamal: 100/100 decrypted at 32/64/128/256 bits [PASS]
+- [15] HPKS-NL: 100/100 verified at 32/64/128 bits [PASS]
+- [16] HPKE-NL: 100/100 decrypted at 32/64/128/256 bits [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: C tests NL-FSCX 256-bit (Batch 2)
+
+Adds 256-bit (BitArray) support to C tests [10]–[13] for all NL-FSCX v1/v2 protocols. Implements `ba_sub256`, `ba_mul256`, `m_inv_ba`, `nl_fscx_v2_ba`, `nl_fscx_v2_inv_ba`, `nl_fscx_revolve_v2_ba`, and `nl_fscx_revolve_v2_inv_ba` as BitArray helpers. The `M^{-1}` polynomial table for n=256 was derived by GCD computation: `(1+x+x^255)^{-1}` in `GF(2)[x]/(x^256+1)` yields the four-word table `{0xb6db6db6db6db6db, 0xdb6db6db6db6db6d, 0x6db6db6db6db6db6, 0xb6db6db6db6db6db}`.
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — new BitArray v2 helpers; tests [10]–[13] expanded to `{64,128,256}`; `NL_I256=64`, `NL_R256=192` macros added
+
+#### Test results (gcc -O2, `-r 20 -t 10.0`)
+
+- [10] NL-FSCX v1 non-linearity: 20/20 violations + no-period at 64/128/256 bits [PASS]
+- [11] NL-FSCX v2 bijectivity: 0 collisions, 20/20 inv, 20/20 nonlinear at 64/128/256 bits [PASS]
+- [12] HSKE-NL-A1 counter-mode: 20/20 at 64/128/256 bits [PASS]
+- [13] HSKE-NL-A2 revolve-mode: 20/20 at 64/128/256 bits [PASS]
+
+---
+
+### Feature — Multi-size key-length standardization: Python tests and suite (Batch 1)
+
+Expands protocol coverage to all four standard key sizes (32, 64, 128, 256 bits) in the Python test suite and adds an N=256 HPKE-Stern-F demo to the Python suite.
+
+#### Test coverage changes (`CryptosuiteTests/Herradura_tests.py`)
+
+- `GF_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — affects tests [7]–[9] (HKEX-GF, HPKS, HPKE) and tests [15]–[16] (HPKS-NL, HPKE-NL) and benchmarks
+- `RNL_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — affects test [14] (HKEX-RNL) and benchmark
+- Test [17] `SDF_SIZES` expanded from `[32, 64]` to `[32, 64, 128, 256]` — HPKS-Stern-F sign/verify at all four sizes
+- Test [18] adds known-e' decap path for N=32,64,128,256 alongside the existing N=32 brute-force path; new helpers `hpke_stern_f_encap_with_e` and `hpke_stern_f_decap_known` added
+
+#### Suite changes (`Herradura cryptographic suite.py`)
+
+- Added N=256 known-e' HPKE-Stern-F demo after the existing N=32 brute-force demo
+- `hpke_stern_f_decap` now supports two paths: known-e' (`e_int != 0`) and brute-force (`e_int = 0`)
+- `hpke_stern_f_encap_with_e` helper added (returns `(K, ct, e_p)` for test/demo use)
+- Version bumped to v1.5.20 in suite and tests headers
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.py`
+- `Herradura cryptographic suite.py`
+
+---
+
 ## [1.5.19] - 2026-04-29
 
 ### Feature — HPKS-Stern-F and HPKE-Stern-F: Arduino implementation

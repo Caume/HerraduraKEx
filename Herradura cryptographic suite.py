@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.18
+    Herradura Cryptographic Suite v1.5.20
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.20: HPKE-Stern-F N=256 known-e' demo; multi-size standardization ---
     --- v1.5.18: HPKS-Stern-F / HPKE-Stern-F — code-based PQC (SD + NL-FSCX v1 PRF) ---
 
     Adds HPKS-Stern-F (Stern identification + Fiat-Shamir, §11.8.4) and HPKE-Stern-F
@@ -710,20 +711,37 @@ def hpke_stern_f_encap(seed: 'BitArray', n: int = None):
 
 def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
                        n: int = None):
-    """HPKE-Stern-F decapsulation via brute-force syndrome decoder.
+    """HPKE-Stern-F decapsulation.
 
-    Enumerates all weight-t vectors to find e' with H·e'^T = ciphertext.
-    Practical only for small N (N ≤ 64, t ≤ 4).  Production requires QC-MDPC.
-    Returns session key K (same as encapsulator) or None if decode fails.
+    Two paths:
+    - Known-e' (e_int != 0): derive K directly from the encapsulation error.
+      Use when the caller holds the plaintext error (test/demo) or a QC-MDPC
+      decoder has already recovered it.
+    - Brute-force (e_int == 0): enumerate all weight-t candidates.
+      Practical only for N ≤ 64, t ≤ 4.  Production requires QC-MDPC.
+    Returns session key K or None if decode fails.
     """
     if n is None: n = KEYBITS
     n_rows = n // 2
     t      = max(2, n // 16)
+    if e_int:
+        return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)))
     for pos in itertools.combinations(range(n), t):
         e_p = sum(1 << p for p in pos)
         if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
             return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
     return None
+
+
+def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
+    """Like hpke_stern_f_encap but also returns the plaintext error e_p."""
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    e_p    = sum(1 << p for p in random.sample(range(n), t))
+    ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return K, ct, e_p
 
 
 # ---------------------------------------------------------------------------
@@ -1001,16 +1019,28 @@ def main():
         print("- HPKS-Stern-F verification FAILED")
 
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; brute-force demo at n=32]")
-    print("    (production use requires QC-MDPC decoder; demo uses n=32, t=2)")
-    sf32_seed, sf32_e, sf32_syn = stern_f_keygen(32)
+    print("    (N=32, t=2; C(32,2)=496 candidates; production requires QC-MDPC decoder)")
+    sf32_seed, _sf32_e, _sf32_syn = stern_f_keygen(32)
     sf32_K_enc, sf32_ct = hpke_stern_f_encap(sf32_seed, 32)
-    sf32_K_dec = hpke_stern_f_decap(sf32_ct, sf32_e, sf32_seed, 32)
+    sf32_K_dec = hpke_stern_f_decap(sf32_ct, 0, sf32_seed, 32)  # e_int=0 → brute-force
     print(f"K (encap): {sf32_K_enc.hex}")
     print(f"K (decap): {sf32_K_dec.hex if sf32_K_dec else 'decode failed'}")
     if sf32_K_dec is not None and sf32_K_dec == sf32_K_enc:
-        print("+ HPKE-Stern-F session keys agree")
+        print("+ HPKE-Stern-F session keys agree (n=32, brute-force)")
     else:
-        print("- HPKE-Stern-F key agreement FAILED")
+        print("- HPKE-Stern-F key agreement FAILED (n=32)")
+
+    print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; known-e' demo at n=256]")
+    print(f"    (N={KEYBITS}, t={KEYBITS//16}; known e' passed to decap — production decoder not included)")
+    sf256_seed, _sf256_e, _sf256_syn = stern_f_keygen(KEYBITS)
+    sf256_K_enc, sf256_ct, sf256_ep = hpke_stern_f_encap_with_e(sf256_seed, KEYBITS)
+    sf256_K_dec = hpke_stern_f_decap(sf256_ct, sf256_ep, sf256_seed, KEYBITS)
+    print(f"K (encap): {sf256_K_enc.hex[:32]}…")
+    print(f"K (decap): {sf256_K_dec.hex[:32] + '…' if sf256_K_dec else 'decode failed'}")
+    if sf256_K_dec is not None and sf256_K_dec == sf256_K_enc:
+        print("+ HPKE-Stern-F session keys agree (n=256, known-e')")
+    else:
+        print("- HPKE-Stern-F key agreement FAILED (n=256)")
 
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")

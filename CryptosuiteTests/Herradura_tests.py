@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.20: multi-size standardization — GF/RNL/Stern-F tests at 32,64,128,256 bits.
     v1.5.18: HPKS-Stern-F [17] + HPKE-Stern-F [18] + bench [26] (code-based PQC).
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
@@ -367,6 +368,18 @@ def hpke_stern_f_decap(ciphertext, seed, n):
             return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
     return None
 
+def hpke_stern_f_encap_with_e(seed, n):
+    """Like hpke_stern_f_encap but also returns the plaintext error e_p (for tests)."""
+    n_rows = n // 2; t = max(2, n // 16)
+    e_p = sum(1 << p for p in random.sample(range(n), t))
+    ct  = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    K   = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    return K, ct, e_p
+
+def hpke_stern_f_decap_known(e_int, seed, n):
+    """Known-error decap: given the plaintext error e_int, derive K directly."""
+    return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)))
+
 
 # ---------------------------------------------------------------------------
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
@@ -472,10 +485,9 @@ def r_val(size: int) -> int:
 
 
 SIZES     = [64, 128, 256]      # bit sizes for FSCX-only tests (fast)
-GF_SIZES  = [32, 64]            # bit sizes for GfPow tests (Python big-int is slow)
-GF_TRIALS = 100                 # trials for GfPow-heavy tests (32=asm target, 64=scaling)
-RNL_SIZES = [32, 64]            # ring polynomial degrees for HKEX-RNL tests
-                                 # (n=256 is the production size but slow in Python)
+GF_SIZES  = [32, 64, 128, 256]  # bit sizes for GfPow tests (Python big-int handles all)
+GF_TRIALS = 100                 # trials for GfPow-heavy tests
+RNL_SIZES = [32, 64, 128, 256]  # ring polynomial degrees for HKEX-RNL tests
 RNLQ  = 65537  # Fermat prime (2^16+1); lower noise-to-margin ratio than q=3329
 RNLP  = 4096   # public-key rounding modulus
 RNLPP = 2      # reconciliation modulus (1 bit per coefficient)
@@ -891,7 +903,7 @@ def test_hpke_nl_correctness():
 
 def test_hpks_stern_f_correctness():
     print("[17] HPKS-Stern-F sign/verify correctness  [CODE-BASED PQC]")
-    SDF_SIZES  = [32, 64]
+    SDF_SIZES  = [32, 64, 128, 256]
     SDF_ROUNDS = 8        # reduced for speed; 219 needed for 128-bit soundness
     SDF_TRIALS = 20
     for size in SDF_SIZES:
@@ -922,8 +934,9 @@ def test_hpks_stern_f_correctness():
 
 
 def test_hpke_stern_f_correctness():
-    print("[18] HPKE-Stern-F encap/decap correctness (n=32, brute-force)  [CODE-BASED PQC]")
+    print("[18] HPKE-Stern-F encap/decap correctness  [CODE-BASED PQC]")
     SDF_TRIALS_KEM = _iters(30)
+    # N=32: brute-force decap (full decoder path; C(32,2)=496 candidates)
     size = 32; ok = 0; n_run = 0
     for _ in _trange(SDF_TRIALS_KEM):
         n_run += 1
@@ -933,7 +946,19 @@ def test_hpke_stern_f_correctness():
         if K_dec is not None and K_dec == K_enc:
             ok += 1
     status = "PASS" if ok == n_run else "FAIL"
-    print(f"    bits={size:3d}  {ok:3d}/{n_run} sessions agreed  [{status}]")
+    print(f"    bits={size:3d}  brute-force decap  {ok:3d}/{n_run} agreed  [{status}]")
+    # N=32,64,128,256: known-e' decap (verifies key derivation at all sizes)
+    for size in [32, 64, 128, 256]:
+        ok = 0; n_run = 0
+        for _ in _trange(_iters(SDF_TRIALS_KEM)):
+            n_run += 1
+            sf_seed, _sf_e, _sf_syn = stern_f_keygen(size)
+            K_enc, ct, e_p = hpke_stern_f_encap_with_e(sf_seed, size)
+            K_dec = hpke_stern_f_decap_known(e_p, sf_seed, size)
+            if K_dec == K_enc:
+                ok += 1
+        status = "PASS" if ok == n_run else "FAIL"
+        print(f"    bits={size:3d}  known-e' decap     {ok:3d}/{n_run} agreed  [{status}]")
     print()
 
 

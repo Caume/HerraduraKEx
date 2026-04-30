@@ -1,10 +1,12 @@
-# Herradura Cryptographic Suite (v1.5.18)
+# Herradura Cryptographic Suite (v1.5.20)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
+>
+> **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F.
 >
 > **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs.md §11.8.4` for the formal reduction (Theorem 17).
 
