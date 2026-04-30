@@ -6,6 +6,32 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [1.5.20] - 2026-04-29
 
+### Feature — Multi-size key-length standardization: C tests Stern-F N=32/64 (Batch 5)
+
+Expands Stern-F tests [17] and [18] to cover N=32 and N=64 parameter sets alongside the existing N=256. Adds N=32 HPKS-Stern-F sign/verify helpers (`stern32_gen_perm`, `stern32_apply_perm`, `stern32_hash_n`, `stern_fs_challenges_32`, `SternSig32T`, `hpks_stern_f_sign_32`, `hpks_stern_f_verify_32`) and a full N=64 Stern-F layer (`stern_hash_64`, `stern_matrix_row_64`, `stern_syndrome_64`, `stern_rand_error_64`, `stern64_rand_seed`, `stern_gen_perm_64`, `stern_apply_perm_64`, `stern_hash_64_n`, `stern_fs_challenges_64`, `SternSig64T`, `hpks_stern_f_sign_64`, `hpks_stern_f_verify_64`, `hpke_stern_f_encap_64`, `hpke_stern_f_decap_known_64`). Raises `SDF_TEST_ROUNDS` from 4 to 8 for all sizes.
+
+#### Parameter sets
+
+| N  | n_rows | t  | synbytes | rounds |
+|----|--------|----|----------|--------|
+| 32 | 16     | 2  | 2        | 8      |
+| 64 | 32     | 4  | 4        | 8      |
+| 256| 128    | 16 | 16       | 8      |
+
+- Test [17]: loop `{32, 64, 256}` — HPKS-Stern-F sign+verify at each parameter set
+- Test [18]: N=32 brute-force C(32,2)=496 + N=64 known-e' fast path (direct key derivation from e')
+
+#### Files changed
+
+- `CryptosuiteTests/Herradura_tests.c` — N=32 HPKS helpers, N=64 full Stern-F layer, tests [17] and [18] expanded; `SDF_TEST_ROUNDS` 4→8
+
+#### Test results (gcc -O2, `-t 3.0`)
+
+- [17] HPKS-Stern-F: 5/5 verified at N=32/64/256, rounds=8 [PASS]
+- [18] HPKE-Stern-F: 20/20 decapsulated at N=32 (brute-force), 20/20 at N=64 (known-e') [PASS]
+
+---
+
 ### Feature — Multi-size key-length standardization: C tests HKEX-RNL n=128/256 (Batch 4)
 
 Expands HKEX-RNL to ring sizes n=128 and n=256 in C test [14]. The NTT twiddle table is extended from `n∈{32,64}` to `n∈{32,64,128,256}` (`psi_pow[256]`, `stage_w_fwd[8]`). Adds `rnl_hint_128`/`rnl_reconcile_128`/`rnl_agree_128` using `__uint128_t` keys, and `rnl_hint_ba`/`rnl_reconcile_ba`/`rnl_agree_ba` using `BitArray` keys with bit-packed hint representation.

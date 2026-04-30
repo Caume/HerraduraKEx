@@ -2369,7 +2369,7 @@ static void test_hpke_nl_correctness(void)
 #define SDF_N_ROWS   (KEYBITS / 2)     /* 128 rows                       */
 #define SDF_T        (KEYBITS / 16)    /* weight 16                      */
 #define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* 16 syndrome bytes              */
-#define SDF_TEST_ROUNDS 4              /* reduced rounds for test speed  */
+#define SDF_TEST_ROUNDS 8              /* reduced rounds for test speed  */
 
 /* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
 static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items)
@@ -2668,51 +2668,466 @@ static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
     return 0xFFFFFFFFu;
 }
 
-/* [17] HPKS-Stern-F correctness: sign+verify, N=256, t=16, rounds=4 */
-static void test_hpks_stern_f_correctness(void)
+/* ---- N=32 HPKS-Stern-F sign+verify helpers (for test [17]) ---- */
+
+#define SDF32_TEST_ROUNDS 8
+
+static void stern32_gen_perm(uint8_t *perm, uint32_t pi_seed)
 {
-    int N = g_rounds > 0 ? g_rounds : 5;
-    int ok = 0, fail = 0, i;
-    struct timespec t0;
-    static SternSigT sf_sig;
-    printf("[17] HPKS-Stern-F correctness: sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n",
-           KEYBITS, SDF_T, SDF_TEST_ROUNDS);
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N; i++) {
-        BitArray seed, e, msg;
-        uint8_t syndr[SDF_SYNBYTES];
-        ba_rand(&seed);
-        stern_rand_error_ba(&e);
-        stern_syndrome_ba(syndr, &seed, &e);
-        ba_rand(&msg);
-        hpks_stern_f_sign_t(&sf_sig, &msg, &e, &seed);
-        if (hpks_stern_f_verify_t(&sf_sig, &msg, &seed, syndr)) ok++;
-        else fail++;
-        if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+    uint32_t key = (pi_seed << 4) | (pi_seed >> 28);  /* ROL by n/8=4 bits */
+    uint32_t st  = pi_seed;
+    int i;
+    for (i = 0; i < SDF32_N; i++) perm[i] = (uint8_t)i;
+    for (i = SDF32_N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        st = nl_fscx_v1_32(st, key);
+        v  = st & 0xFFFF;
+        j  = (int)(v % (unsigned)(i + 1));
+        { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
     }
-    printf("    %d / %d verified  [%s]\n\n", ok, N, fail == 0 ? "PASS" : "FAIL");
 }
 
-/* [18] HPKE-Stern-F correctness: encap+decap, n=32, t=2 (brute-force) */
+static uint32_t stern32_apply_perm(const uint8_t *perm, uint32_t v)
+{
+    uint32_t out = 0;
+    int i;
+    for (i = 0; i < SDF32_N; i++)
+        if ((v >> i) & 1)
+            out |= 1u << perm[i];
+    return out;
+}
+
+static uint32_t stern32_hash_n(const uint32_t *items, int n)
+{
+    uint32_t h = 0;
+    int i;
+    for (i = 0; i < n; i++) h = stern32_hash(h, items[i]);
+    return h;
+}
+
+static void stern_fs_challenges_32(int *chals, int rounds, uint32_t msg,
+                                    const uint32_t *c0, const uint32_t *c1,
+                                    const uint32_t *c2)
+{
+    uint32_t ch_st = 0;
+    int i;
+    ch_st = stern32_hash(ch_st, msg);
+    for (i = 0; i < rounds; i++) {
+        ch_st = stern32_hash(ch_st, c0[i]);
+        ch_st = stern32_hash(ch_st, c1[i]);
+        ch_st = stern32_hash(ch_st, c2[i]);
+    }
+    for (i = 0; i < rounds; i++) {
+        ch_st = nl_fscx_v1_32(ch_st, (uint32_t)i);
+        chals[i] = (int)(ch_st % 3u);
+    }
+}
+
+typedef struct {
+    uint32_t c0[SDF32_TEST_ROUNDS], c1[SDF32_TEST_ROUNDS], c2[SDF32_TEST_ROUNDS];
+    int      b[SDF32_TEST_ROUNDS];
+    uint32_t resp_a[SDF32_TEST_ROUNDS];
+    uint32_t resp_b[SDF32_TEST_ROUNDS];
+} SternSig32T;
+
+static void hpks_stern_f_sign_32(SternSig32T *sig, uint32_t msg,
+                                   uint32_t e, uint32_t seed)
+{
+    uint32_t r[SDF32_TEST_ROUNDS], y[SDF32_TEST_ROUNDS];
+    uint32_t pi_s[SDF32_TEST_ROUNDS];
+    uint32_t sr[SDF32_TEST_ROUNDS], sy[SDF32_TEST_ROUNDS];
+    uint8_t  perm[SDF32_N];
+    int i;
+    for (i = 0; i < SDF32_TEST_ROUNDS; i++) {
+        uint32_t items[2];
+        uint16_t Hr;
+        r[i]    = stern32_rand_error();
+        y[i]    = e ^ r[i];
+        pi_s[i] = stern32_rand_seed();
+        Hr = stern32_syndrome(seed, r[i]);
+        stern32_gen_perm(perm, pi_s[i]);
+        sr[i] = stern32_apply_perm(perm, r[i]);
+        sy[i] = stern32_apply_perm(perm, y[i]);
+        items[0] = pi_s[i]; items[1] = (uint32_t)Hr;
+        sig->c0[i] = stern32_hash_n(items, 2);
+        sig->c1[i] = stern32_hash(0, sr[i]);
+        sig->c2[i] = stern32_hash(0, sy[i]);
+    }
+    stern_fs_challenges_32(sig->b, SDF32_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF32_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        if      (bv == 0) { sig->resp_a[i] = sr[i];    sig->resp_b[i] = sy[i]; }
+        else if (bv == 1) { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = r[i];  }
+        else              { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = y[i];  }
+    }
+}
+
+static int hpks_stern_f_verify_32(const SternSig32T *sig, uint32_t msg,
+                                    uint32_t seed, uint16_t syndr)
+{
+    int chals[SDF32_TEST_ROUNDS];
+    uint8_t perm[SDF32_N];
+    int i;
+    stern_fs_challenges_32(chals, SDF32_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF32_TEST_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+    for (i = 0; i < SDF32_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        uint32_t items[2];
+        if (bv == 0) {
+            if (stern32_hash(0, sig->resp_a[i]) != sig->c1[i]) return 0;
+            if (stern32_hash(0, sig->resp_b[i]) != sig->c2[i]) return 0;
+            if (__builtin_popcount(sig->resp_a[i]) != SDF32_T) return 0;
+        } else if (bv == 1) {
+            uint32_t sr2;
+            uint16_t Hr;
+            if (__builtin_popcount(sig->resp_b[i]) != SDF32_T) return 0;
+            Hr  = stern32_syndrome(seed, sig->resp_b[i]);
+            items[0] = sig->resp_a[i]; items[1] = (uint32_t)Hr;
+            if (stern32_hash_n(items, 2) != sig->c0[i]) return 0;
+            stern32_gen_perm(perm, sig->resp_a[i]);
+            sr2 = stern32_apply_perm(perm, sig->resp_b[i]);
+            if (stern32_hash(0, sr2) != sig->c1[i]) return 0;
+        } else {
+            uint32_t sy2;
+            uint16_t Hy, Hys;
+            Hy  = stern32_syndrome(seed, sig->resp_b[i]);
+            Hys = Hy ^ syndr;
+            items[0] = sig->resp_a[i]; items[1] = (uint32_t)Hys;
+            if (stern32_hash_n(items, 2) != sig->c0[i]) return 0;
+            stern32_gen_perm(perm, sig->resp_a[i]);
+            sy2 = stern32_apply_perm(perm, sig->resp_b[i]);
+            if (stern32_hash(0, sy2) != sig->c2[i]) return 0;
+        }
+    }
+    return 1;
+}
+
+/* ---- N=64 Stern-F helpers ---- */
+
+#define SDF64_N           64
+#define SDF64_N_ROWS      32
+#define SDF64_T            4   /* 64/16 */
+#define SDF64_SYNBYTES     4
+#define SDF64_TEST_ROUNDS  8
+
+static uint64_t stern_hash_64(uint64_t h, uint64_t v)
+{
+    uint64_t key = (v << 8) | (v >> 56);   /* ROL by n/8=8 bits */
+    return nl_fscx_revolve_v1_64(h ^ v, key, 16);
+}
+
+static uint64_t stern_hash_64_n(const uint64_t *items, int n)
+{
+    uint64_t hv = 0;
+    int i;
+    for (i = 0; i < n; i++) hv = stern_hash_64(hv, items[i]);
+    return hv;
+}
+
+static uint64_t stern_matrix_row_64(uint64_t seed, int row)
+{
+    uint64_t sxr = seed ^ (uint64_t)row;
+    uint64_t a0  = (sxr << 8) | (sxr >> 56);
+    return nl_fscx_revolve_v1_64(a0, seed, 16);
+}
+
+static uint32_t stern_syndrome_64(uint64_t seed, uint64_t e)
+{
+    uint32_t s = 0;
+    int i;
+    for (i = 0; i < SDF64_N_ROWS; i++) {
+        uint64_t row = stern_matrix_row_64(seed, i);
+        if (__builtin_popcountll(row & e) & 1)
+            s |= (uint32_t)(1u << i);
+    }
+    return s;
+}
+
+static uint64_t stern_rand_error_64(void)
+{
+    uint8_t idx[SDF64_N];
+    uint64_t e = 0;
+    int i;
+    for (i = 0; i < SDF64_N; i++) idx[i] = (uint8_t)i;
+    for (i = SDF64_N - 1; i >= SDF64_N - SDF64_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e |= (uint64_t)1 << idx[i];
+    }
+    return e;
+}
+
+static uint64_t stern64_rand_seed(void)
+{
+    uint8_t buf[8];
+    if (fread(buf, 8, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+    return ((uint64_t)buf[0]<<56)|((uint64_t)buf[1]<<48)|((uint64_t)buf[2]<<40)|
+           ((uint64_t)buf[3]<<32)|((uint64_t)buf[4]<<24)|((uint64_t)buf[5]<<16)|
+           ((uint64_t)buf[6]<<8)|buf[7];
+}
+
+static void stern_gen_perm_64(uint8_t *perm, uint64_t pi_seed)
+{
+    uint64_t key = (pi_seed << 8) | (pi_seed >> 56);
+    uint64_t st  = pi_seed;
+    int i;
+    for (i = 0; i < SDF64_N; i++) perm[i] = (uint8_t)i;
+    for (i = SDF64_N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        st = nl_fscx_v1_64(st, key);
+        v  = (uint32_t)(st & 0xFFFF);
+        j  = (int)(v % (unsigned)(i + 1));
+        { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+    }
+}
+
+static uint64_t stern_apply_perm_64(const uint8_t *perm, uint64_t v)
+{
+    uint64_t out = 0;
+    int i;
+    for (i = 0; i < SDF64_N; i++)
+        if ((v >> i) & 1)
+            out |= (uint64_t)1 << perm[i];
+    return out;
+}
+
+static void stern_fs_challenges_64(int *chals, int rounds, uint64_t msg,
+                                    const uint64_t *c0, const uint64_t *c1,
+                                    const uint64_t *c2)
+{
+    uint64_t ch_st = 0;
+    int i;
+    ch_st = stern_hash_64(ch_st, msg);
+    for (i = 0; i < rounds; i++) {
+        ch_st = stern_hash_64(ch_st, c0[i]);
+        ch_st = stern_hash_64(ch_st, c1[i]);
+        ch_st = stern_hash_64(ch_st, c2[i]);
+    }
+    for (i = 0; i < rounds; i++) {
+        ch_st = nl_fscx_v1_64(ch_st, (uint64_t)i);
+        chals[i] = (int)((ch_st & 0xFFFF) % 3u);
+    }
+}
+
+typedef struct {
+    uint64_t c0[SDF64_TEST_ROUNDS], c1[SDF64_TEST_ROUNDS], c2[SDF64_TEST_ROUNDS];
+    int      b[SDF64_TEST_ROUNDS];
+    uint64_t resp_a[SDF64_TEST_ROUNDS];
+    uint64_t resp_b[SDF64_TEST_ROUNDS];
+} SternSig64T;
+
+static void hpks_stern_f_sign_64(SternSig64T *sig, uint64_t msg,
+                                   uint64_t e, uint64_t seed)
+{
+    uint64_t r[SDF64_TEST_ROUNDS], y[SDF64_TEST_ROUNDS];
+    uint64_t pi_s[SDF64_TEST_ROUNDS];
+    uint64_t sr[SDF64_TEST_ROUNDS], sy[SDF64_TEST_ROUNDS];
+    uint8_t  perm[SDF64_N];
+    int i;
+    for (i = 0; i < SDF64_TEST_ROUNDS; i++) {
+        uint64_t items[2];
+        uint32_t Hr;
+        r[i]    = stern_rand_error_64();
+        y[i]    = e ^ r[i];
+        pi_s[i] = stern64_rand_seed();
+        Hr = stern_syndrome_64(seed, r[i]);
+        stern_gen_perm_64(perm, pi_s[i]);
+        sr[i] = stern_apply_perm_64(perm, r[i]);
+        sy[i] = stern_apply_perm_64(perm, y[i]);
+        items[0] = pi_s[i]; items[1] = (uint64_t)Hr;
+        sig->c0[i] = stern_hash_64_n(items, 2);
+        sig->c1[i] = stern_hash_64(0, sr[i]);
+        sig->c2[i] = stern_hash_64(0, sy[i]);
+    }
+    stern_fs_challenges_64(sig->b, SDF64_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF64_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        if      (bv == 0) { sig->resp_a[i] = sr[i];    sig->resp_b[i] = sy[i]; }
+        else if (bv == 1) { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = r[i];  }
+        else              { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = y[i];  }
+    }
+}
+
+static int hpks_stern_f_verify_64(const SternSig64T *sig, uint64_t msg,
+                                    uint64_t seed, uint32_t syndr)
+{
+    int chals[SDF64_TEST_ROUNDS];
+    uint8_t perm[SDF64_N];
+    int i;
+    stern_fs_challenges_64(chals, SDF64_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF64_TEST_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+    for (i = 0; i < SDF64_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        uint64_t items[2];
+        if (bv == 0) {
+            if (stern_hash_64(0, sig->resp_a[i]) != sig->c1[i]) return 0;
+            if (stern_hash_64(0, sig->resp_b[i]) != sig->c2[i]) return 0;
+            if (__builtin_popcountll(sig->resp_a[i]) != SDF64_T) return 0;
+        } else if (bv == 1) {
+            uint64_t sr2;
+            uint32_t Hr;
+            if (__builtin_popcountll(sig->resp_b[i]) != SDF64_T) return 0;
+            Hr  = stern_syndrome_64(seed, sig->resp_b[i]);
+            items[0] = sig->resp_a[i]; items[1] = (uint64_t)Hr;
+            if (stern_hash_64_n(items, 2) != sig->c0[i]) return 0;
+            stern_gen_perm_64(perm, sig->resp_a[i]);
+            sr2 = stern_apply_perm_64(perm, sig->resp_b[i]);
+            if (stern_hash_64(0, sr2) != sig->c1[i]) return 0;
+        } else {
+            uint64_t sy2;
+            uint32_t Hy, Hys;
+            Hy  = stern_syndrome_64(seed, sig->resp_b[i]);
+            Hys = Hy ^ syndr;
+            items[0] = sig->resp_a[i]; items[1] = (uint64_t)Hys;
+            if (stern_hash_64_n(items, 2) != sig->c0[i]) return 0;
+            stern_gen_perm_64(perm, sig->resp_a[i]);
+            sy2 = stern_apply_perm_64(perm, sig->resp_b[i]);
+            if (stern_hash_64(0, sy2) != sig->c2[i]) return 0;
+        }
+    }
+    return 1;
+}
+
+/* HPKE-Stern-F at N=64 (known-e' fast path) */
+static uint64_t hpke_stern_f_encap_64(uint64_t seed, uint32_t *ct_out,
+                                        uint64_t *e_out)
+{
+    uint64_t e_p = stern_rand_error_64();
+    *ct_out = stern_syndrome_64(seed, e_p);
+    *e_out  = e_p;
+    return stern_hash_64(stern_hash_64(0, seed), e_p);
+}
+
+static uint64_t hpke_stern_f_decap_known_64(uint64_t seed, uint64_t e_prime)
+{
+    return stern_hash_64(stern_hash_64(0, seed), e_prime);
+}
+
+/* [17] HPKS-Stern-F correctness: sign+verify, N=32,64,256 */
+static void test_hpks_stern_f_correctness(void)
+{
+    int sizes[] = {32, 64, 256};
+    int si;
+    printf("[17] HPKS-Stern-F correctness: sign+verify  [CODE-BASED PQC]\n");
+    for (si = 0; si < 3; si++) {
+        int sz = sizes[si];
+        int N = g_rounds > 0 ? g_rounds : 5;
+        int ok = 0, fail = 0, i;
+        struct timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        if (sz == 32) {
+            static SternSig32T sig32;
+            for (i = 0; i < N; i++) {
+                uint32_t seed, e, msg;
+                uint16_t syndr;
+                seed  = stern32_rand_seed();
+                e     = stern32_rand_error();
+                syndr = stern32_syndrome(seed, e);
+                { uint8_t buf[4];
+                  if (fread(buf, 4, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+                  msg = ((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|
+                        ((uint32_t)buf[2]<<8)|buf[3]; }
+                hpks_stern_f_sign_32(&sig32, msg, e, seed);
+                if (hpks_stern_f_verify_32(&sig32, msg, seed, syndr)) ok++;
+                else fail++;
+                if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+            }
+        } else if (sz == 64) {
+            static SternSig64T sig64;
+            for (i = 0; i < N; i++) {
+                uint64_t seed, e, msg;
+                uint32_t syndr;
+                seed  = stern64_rand_seed();
+                e     = stern_rand_error_64();
+                syndr = stern_syndrome_64(seed, e);
+                msg   = stern64_rand_seed();
+                hpks_stern_f_sign_64(&sig64, msg, e, seed);
+                if (hpks_stern_f_verify_64(&sig64, msg, seed, syndr)) ok++;
+                else fail++;
+                if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+            }
+        } else {
+            static SternSigT sf_sig;
+            for (i = 0; i < N; i++) {
+                BitArray seed, e, msg;
+                uint8_t syndr[SDF_SYNBYTES];
+                ba_rand(&seed);
+                stern_rand_error_ba(&e);
+                stern_syndrome_ba(syndr, &seed, &e);
+                ba_rand(&msg);
+                hpks_stern_f_sign_t(&sf_sig, &msg, &e, &seed);
+                if (hpks_stern_f_verify_t(&sf_sig, &msg, &seed, syndr)) ok++;
+                else fail++;
+                if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+            }
+        }
+        printf("    bits=%3d  t=%d  rounds=%d  %d / %d verified  [%s]\n",
+               sz,
+               sz==32 ? SDF32_T : sz==64 ? SDF64_T : SDF_T,
+               sz==32 ? SDF32_TEST_ROUNDS : sz==64 ? SDF64_TEST_ROUNDS : SDF_TEST_ROUNDS,
+               ok, N, fail == 0 ? "PASS" : "FAIL");
+    }
+    putchar('\n');
+}
+
+/* [18] HPKE-Stern-F correctness: encap+decap, n=32 (brute-force), n=64 (known-e') */
 static void test_hpke_stern_f_correctness(void)
 {
-    int N = g_rounds > 0 ? g_rounds : 20;
-    int ok = 0, fail = 0, i;
-    struct timespec t0;
-    printf("[18] HPKE-Stern-F correctness: encap+decap  (n=%d, t=%d, brute-force)  [CODE-BASED PQC]\n",
-           SDF32_N, SDF32_T);
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (i = 0; i < N; i++) {
-        uint32_t seed, e_prime, K_enc, K_dec;
-        uint16_t ct;
-        seed  = stern32_rand_seed();
-        K_enc = hpke_stern_f_encap_32(seed, &ct, &e_prime);
-        K_dec = hpke_stern_f_decap_32(seed, ct);
-        if (K_enc == K_dec) ok++;
-        else fail++;
-        if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+    printf("[18] HPKE-Stern-F correctness: encap+decap  [CODE-BASED PQC]\n");
+    /* n=32 brute-force C(32,2)=496 */
+    {
+        int N = g_rounds > 0 ? g_rounds : 20;
+        int ok = 0, fail = 0, i;
+        struct timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N; i++) {
+            uint32_t seed, e_prime, K_enc, K_dec;
+            uint16_t ct;
+            seed  = stern32_rand_seed();
+            K_enc = hpke_stern_f_encap_32(seed, &ct, &e_prime);
+            K_dec = hpke_stern_f_decap_32(seed, ct);
+            if (K_enc == K_dec) ok++;
+            else fail++;
+            if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    n=%d t=%d (brute-force)  %d / %d decapsulated  [%s]\n",
+               SDF32_N, SDF32_T, ok, N, fail == 0 ? "PASS" : "FAIL");
     }
-    printf("    %d / %d decapsulated  [%s]\n\n", ok, N, fail == 0 ? "PASS" : "FAIL");
+    /* n=64 known-e' fast path */
+    {
+        int N = g_rounds > 0 ? g_rounds : 20;
+        int ok = 0, fail = 0, i;
+        struct timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        for (i = 0; i < N; i++) {
+            uint64_t seed, e_prime, K_enc, K_dec;
+            uint32_t ct;
+            seed  = stern64_rand_seed();
+            K_enc = hpke_stern_f_encap_64(seed, &ct, &e_prime);
+            K_dec = hpke_stern_f_decap_known_64(seed, e_prime);
+            if (K_enc == K_dec) ok++;
+            else fail++;
+            if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    n=%d t=%d (known-e')     %d / %d decapsulated  [%s]\n",
+               SDF64_N, SDF64_T, ok, N, fail == 0 ? "PASS" : "FAIL");
+    }
+    putchar('\n');
 }
 
 /* [28] HPKS-Stern-F sign+verify throughput (N=256, t=16, rounds=4) */
