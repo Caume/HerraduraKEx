@@ -435,12 +435,10 @@ def _rnl_rand_poly(n, q):
     return [int.from_bytes(os.urandom(4), 'big') % q for _ in range(n)]
 
 def _rnl_cbd_poly(n, q):
-    """CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1) mod q. Produces {-1,0,1} with zero mean."""
-    out = []
-    for _ in range(n):
-        v = int.from_bytes(os.urandom(1), 'big')
-        out.append((( v & 1) - ((v >> 1) & 1) + q) % q)
-    return out
+    """CBD(eta=1): 4 coefficients per byte, bit-pairs (0-1),(2-3),(4-5),(6-7)."""
+    raw = os.urandom((n + 3) // 4)
+    return [(((raw[i >> 2] >> ((i & 3) * 2)) & 1) - ((raw[i >> 2] >> ((i & 3) * 2 + 1)) & 1) + q) % q
+            for i in range(n)]
 
 def _rnl_bits_to_bitarray(poly, pp, size):
     val = 0; thr = pp // 2
@@ -1125,7 +1123,7 @@ def bench_hpks_stern_f():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.21 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.5.22 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -1153,7 +1151,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.21 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.22 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

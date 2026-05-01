@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.21 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.5.22 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
 
@@ -661,7 +661,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura KEx v1.5.21 - Security Tests (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura KEx v1.5.22 - Security Tests (Arduino, 32-bit) ===");
     Serial.println();
 
     test_hkex_gf();

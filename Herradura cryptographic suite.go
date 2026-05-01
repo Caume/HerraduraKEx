@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.21
+/*  Herradura Cryptographic Suite v1.5.22
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -556,17 +556,18 @@ func rnlRandPoly(n, q int) []int {
 	return p
 }
 
-// rnlCBDPoly samples n coefficients from CBD(eta=1): each = popcount(low bit) - popcount(next bit),
-// stored mod q.  Produces {-1,0,1} with zero mean; matches Kyber Ring-LWR secret distribution.
+// rnlCBDPoly samples n coefficients from CBD(eta=1): 4 coefficients per byte,
+// bit-pairs (0-1),(2-3),(4-5),(6-7). Produces {-1,0,1} with zero mean.
 func rnlCBDPoly(n, q int) []int {
-	p := make([]int, n)
-	buf := make([]byte, 1)
+	p   := make([]int, n)
+	buf := make([]byte, (n+3)/4)
+	if _, err := rand.Read(buf); err != nil {
+		log.Fatalf("rand.Read: %s", err)
+	}
 	for i := range p {
-		if _, err := rand.Read(buf); err != nil {
-			log.Fatalf("rand.Read: %s", err)
-		}
-		a := int(buf[0]) & 1
-		b := (int(buf[0]) >> 1) & 1
+		off := (i & 3) * 2
+		a   := int(buf[i>>2]>>off) & 1
+		b   := int(buf[i>>2]>>(off+1)) & 1
 		p[i] = (a - b + q) % q
 	}
 	return p

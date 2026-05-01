@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.21
+/*  Herradura Cryptographic Suite v1.5.22
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -742,16 +742,19 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
     }
 }
 
-/* CBD(eta=1): coeff = popcount(low eta bits) - popcount(next eta bits), mod q.
+/* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
    Produces {-1,0,1} with P(-1)=P(1)=1/4, P(0)=1/2; zero mean. */
 static void rnl_cbd_poly(rnl_poly_t p, FILE *urnd)
 {
     int i;
-    uint8_t v;
+    uint8_t buf[(RNL_N + 3) / 4];
+    if (fread(buf, 1, sizeof(buf), urnd) != sizeof(buf)) {
+        fputs("urandom error\n", stderr); exit(1);
+    }
     for (i = 0; i < RNL_N; i++) {
-        if (fread(&v, 1, 1, urnd) != 1) { fputs("urandom error\n", stderr); exit(1); }
-        int a = (int)(v & 1);
-        int b = (int)((v >> 1) & 1);
+        int off = (i & 3) * 2;
+        int a = (buf[i >> 2] >> off) & 1;
+        int b = (buf[i >> 2] >> (off + 1)) & 1;
         p[i] = (int32_t)((a - b + RNL_Q) % RNL_Q);
     }
 }

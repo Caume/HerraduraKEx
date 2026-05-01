@@ -963,14 +963,16 @@ static void rnl32_rand_poly(rnl32_poly_t p)
         p[i] = (int32_t)rnl_rand_coeff();
 }
 
-/* CBD(eta=1): coeff = (raw&1) - ((raw>>1)&1), stored mod q. Zero-mean {-1,0,1}. */
+/* CBD(eta=1): 16 coefficients per rand32() word — bit-pairs (0-1),(2-3),...,(30-31). */
 static void rnl32_cbd_poly(rnl32_poly_t p)
 {
     int i;
+    uint32_t raw = 0;
     for (i = 0; i < RNL_N32; i++) {
-        uint32_t raw = rand32();
-        int a = (int)(raw & 1);
-        int b = (int)((raw >> 1) & 1);
+        if ((i & 15) == 0) raw = rand32();
+        int off = (i & 15) * 2;
+        int a = (raw >> off) & 1;
+        int b = (raw >> (off + 1)) & 1;
         p[i] = (int32_t)((a - b + RNL_Q32) % RNL_Q32);
     }
 }
@@ -1116,10 +1118,12 @@ static void rnl_rand_poly_n(int32_t *p, int n)
 static void rnl_cbd_poly_n(int32_t *p, int n)
 {
     int i;
+    uint32_t raw = 0;
     for (i = 0; i < n; i++) {
-        uint32_t raw = rand32();
-        int32_t  a   = (int32_t)(raw & 1);
-        int32_t  b   = (int32_t)((raw >> 1) & 1);
+        if ((i & 15) == 0) raw = rand32();
+        int off = (i & 15) * 2;
+        int a = (raw >> off) & 1;
+        int b = (raw >> (off + 1)) & 1;
         p[i] = (int32_t)((a - b + RNL_Q32) % RNL_Q32);
     }
 }

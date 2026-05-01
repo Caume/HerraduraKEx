@@ -4,6 +4,52 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.22] - 2026-05-01
+
+### Fix — NASM i386 HKEX-RNL produced all-zero session keys (TODO #21)
+
+**Root cause:** `rnl_round` in `Herradura cryptographic suite.asm` had a
+triple-division bug in the `% to_p` section. After computing
+`floor((in[i]*to_p + from_q/2) / from_q)` with `div ecx` (division 1),
+the code should have performed one more `div ecx` to reduce the result
+modulo `to_p`. Instead there were two consecutive `xor edx, edx; div ecx`
+sequences: the first correctly left `edx = floor_result % to_p`, but the
+spurious second `xor edx, edx` then wiped that value before a redundant
+third division, causing `rnl_round` to return 0 for every coefficient.
+
+**Impact:** C_A and C_B were both all-zeros, making K_poly all-zeros and
+thus sk = 0 in every NASM i386 HKEX-RNL exchange.
+
+**Fix:** Removed the extra `xor edx, edx; div ecx` block from the
+`% to_p` section of `rnl_round` in `Herradura cryptographic suite.asm`.
+The NASM tests file (`CryptosuiteTests/Herradura_tests.asm`) already had
+the correct two-division form and was not affected.
+
+### Improvement — CBD(eta=1) reads 4 coefficients per byte (TODO #16)
+
+**Root cause:** `rnl_cbd_poly` (C), `rnlCBDPoly` (Go), `_rnl_cbd_poly` (Python)
+each called the random source once per coefficient but only consumed 2 bits of
+the 8-bit byte returned, discarding 75% of the entropy.
+
+**Fix:** For eta=1, read `ceil(n/4)` bytes once and extract all n coefficients
+using bit-pairs at positions (0-1), (2-3), (4-5), (6-7) within each byte.
+In the C test file, the LCG-backed `rnl32_cbd_poly` and `rnl_cbd_poly_n` now
+draw one `rand32()` word per 16 coefficients (bit-pairs 0-1…30-31).
+The Python suite retains a general path for eta>1 while using the fast byte
+packing for eta=1 (the only value used in all implementations).
+
+### Improvement — Go test [14] HKEX-RNL extends to n=128 and n=256 (TODO #23)
+
+`rnlSizes` in `CryptosuiteTests/Herradura_tests.go` was `{32, 64}`.
+Extended to `{32, 64, 128, 256}` so test [14] and benchmark [25] cover
+the same ring sizes as Python and C tests.
+
+### Maintenance — Version-banner sync
+
+All 12 implementation files advanced from v1.5.21 to v1.5.22.
+
+---
+
 ## [1.5.21] - 2026-04-30
 
 ### Fix — ARM HSKE-NL-A2 used wrong step count (TODO #22)
