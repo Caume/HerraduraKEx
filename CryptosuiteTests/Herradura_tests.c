@@ -860,6 +860,19 @@ static int rnl32_tw_idx(int n)
     return (n == 32) ? 0 : (n == 64) ? 1 : (n == 128) ? 2 : (n == 256) ? 3 : -1;
 }
 
+/* Fermat-prime modular multiply mod 65537 = 2^16+1.
+   x = a*b; since 2^16 ≡ -1 and 2^32 ≡ 1 mod q: x ≡ lo - mid + hi (mod q).
+   r ∈ [-65535, 65536] so at most one conditional add needed. */
+static inline uint32_t rnl_mulmodq(uint32_t a, uint32_t b)
+{
+    uint64_t x = (uint64_t)a * b;
+    int32_t r = (int32_t)(x & 0xFFFF)
+              - (int32_t)((x >> 16) & 0xFFFF)
+              + (int32_t)(x >> 32);
+    if (r < 0) r += 65537;
+    return (uint32_t)r;
+}
+
 static void rnl32_ntt(int32_t *a, int n, int q, int invert)
 {
     int i, j = 0, length, k, s, idx = rnl32_tw_idx(n);
@@ -882,10 +895,10 @@ static void rnl32_ntt(int32_t *a, int n, int q, int invert)
             wn = 1;
             for (k = 0; k < length >> 1; k++) {
                 int32_t u = a[i + k];
-                int32_t v = (int32_t)((uint64_t)a[i + k + (length >> 1)] * wn % (uint32_t)q);
+                int32_t v = (int32_t)rnl_mulmodq((uint32_t)a[i + k + (length >> 1)], wn);
                 a[i + k]                 = (u + v) % q;
                 a[i + k + (length >> 1)] = (u - v + q) % q;
-                wn = (uint32_t)((uint64_t)wn * w % (uint32_t)q);
+                wn = rnl_mulmodq(wn, w);
             }
         }
     }
@@ -893,7 +906,7 @@ static void rnl32_ntt(int32_t *a, int n, int q, int invert)
         uint32_t inv_n = (idx >= 0) ? rnl32_tw[idx].inv_n :
                          rnl32_mod_pow((uint32_t)n, (uint32_t)(q - 2), (uint32_t)q);
         for (i = 0; i < n; i++)
-            a[i] = (int32_t)((uint64_t)a[i] * inv_n % (uint32_t)q);
+            a[i] = (int32_t)rnl_mulmodq((uint32_t)a[i], inv_n);
     }
 }
 
@@ -904,16 +917,16 @@ static void rnl32_poly_mul(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_pol
     int i;
     rnl32_tw_init(0);
     for (i = 0; i < RNL_N32; i++) {
-        fa[i] = (int32_t)((uint64_t)f[i] * rnl32_tw[0].psi_pow[i] % RNL_Q32);
-        ga[i] = (int32_t)((uint64_t)g[i] * rnl32_tw[0].psi_pow[i] % RNL_Q32);
+        fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], rnl32_tw[0].psi_pow[i]);
+        ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], rnl32_tw[0].psi_pow[i]);
     }
     rnl32_ntt(fa, RNL_N32, RNL_Q32, 0);
     rnl32_ntt(ga, RNL_N32, RNL_Q32, 0);
     for (i = 0; i < RNL_N32; i++)
-        ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+        ha[i] = (int32_t)rnl_mulmodq((uint32_t)fa[i], (uint32_t)ga[i]);
     rnl32_ntt(ha, RNL_N32, RNL_Q32, 1);
     for (i = 0; i < RNL_N32; i++)
-        h[i] = (int32_t)((uint64_t)ha[i] * rnl32_tw[0].psi_inv_pow[i] % RNL_Q32);
+        h[i] = (int32_t)rnl_mulmodq((uint32_t)ha[i], rnl32_tw[0].psi_inv_pow[i]);
 }
 
 static void rnl32_poly_add(rnl32_poly_t h, const rnl32_poly_t f, const rnl32_poly_t g)
@@ -1037,33 +1050,33 @@ static void rnl_poly_mul_n(int32_t *h, const int32_t *f, const int32_t *g, int n
     if (idx >= 0) {
         rnl32_tw_init(idx);
         for (i = 0; i < n; i++) {
-            fa[i] = (int32_t)((uint64_t)f[i] * rnl32_tw[idx].psi_pow[i] % RNL_Q32);
-            ga[i] = (int32_t)((uint64_t)g[i] * rnl32_tw[idx].psi_pow[i] % RNL_Q32);
+            fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], rnl32_tw[idx].psi_pow[i]);
+            ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], rnl32_tw[idx].psi_pow[i]);
         }
         rnl32_ntt(fa, n, RNL_Q32, 0);
         rnl32_ntt(ga, n, RNL_Q32, 0);
         for (i = 0; i < n; i++)
-            ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+            ha[i] = (int32_t)rnl_mulmodq((uint32_t)fa[i], (uint32_t)ga[i]);
         rnl32_ntt(ha, n, RNL_Q32, 1);
         for (i = 0; i < n; i++)
-            h[i] = (int32_t)((uint64_t)ha[i] * rnl32_tw[idx].psi_inv_pow[i] % RNL_Q32);
+            h[i] = (int32_t)rnl_mulmodq((uint32_t)ha[i], rnl32_tw[idx].psi_inv_pow[i]);
     } else {
         uint32_t psi     = rnl32_mod_pow(3, (RNL_Q32 - 1) / (2 * (uint32_t)n), RNL_Q32);
         uint32_t psi_inv = rnl32_mod_pow(psi, RNL_Q32 - 2, RNL_Q32);
         uint32_t pw = 1, pw_inv = 1;
         for (i = 0; i < n; i++) {
-            fa[i] = (int32_t)((uint64_t)f[i] * pw % RNL_Q32);
-            ga[i] = (int32_t)((uint64_t)g[i] * pw % RNL_Q32);
-            pw    = (uint32_t)((uint64_t)pw * psi % RNL_Q32);
+            fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], pw);
+            ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], pw);
+            pw    = rnl_mulmodq(pw, psi);
         }
         rnl32_ntt(fa, n, RNL_Q32, 0);
         rnl32_ntt(ga, n, RNL_Q32, 0);
         for (i = 0; i < n; i++)
-            ha[i] = (int32_t)((uint64_t)fa[i] * ga[i] % RNL_Q32);
+            ha[i] = (int32_t)rnl_mulmodq((uint32_t)fa[i], (uint32_t)ga[i]);
         rnl32_ntt(ha, n, RNL_Q32, 1);
         for (i = 0; i < n; i++) {
-            h[i]   = (int32_t)((uint64_t)ha[i] * pw_inv % RNL_Q32);
-            pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q32);
+            h[i]   = (int32_t)rnl_mulmodq((uint32_t)ha[i], pw_inv);
+            pw_inv = rnl_mulmodq(pw_inv, psi_inv);
         }
     }
 }

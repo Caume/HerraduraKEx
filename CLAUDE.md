@@ -28,11 +28,17 @@ SecurityProofs.md                                   — algebraic analysis (incl
 ### C
 ```bash
 # Full cryptographic suite
-gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
+gcc -O2 -o "Herradura cryptographic suite_c" "Herradura cryptographic suite.c"
 
 # Security & performance tests
-gcc -O2 -o CryptosuiteTests/Herradura_tests CryptosuiteTests/Herradura_tests.c
+gcc -O2 -o CryptosuiteTests/Herradura_tests_c CryptosuiteTests/Herradura_tests.c
 ```
+
+> **Build collision hazard:** `go build file.go` (without `-o`) names its output
+> after the source filename stem — identical to the old unsuffixed C binary path.
+> The `_c` suffix makes all six target binaries distinct: `_c`, `_go`, `_arm`,
+> `_i386`, `_avr.elf`. Always use `build_go.sh` or pass `-o name_go` explicitly
+> when invoking `go build` directly. Never run bare `go build file.go`.
 
 ### Go
 ```bash
@@ -69,10 +75,10 @@ No automated test framework. Tests are manual: run each program and verify conso
 
 ```bash
 # C — tests [1]–[18] (security) + benchmarks [19]–[28]
-./CryptosuiteTests/Herradura_tests
-./CryptosuiteTests/Herradura_tests -r 500        # cap each test at 500 iterations
-./CryptosuiteTests/Herradura_tests -t 2.0        # cap wall-clock per test/bench at 2 s
-HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests  # env-var equivalents
+./CryptosuiteTests/Herradura_tests_c
+./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
+./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s
+HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests_c  # env-var equivalents
 
 # Go — tests [1]–[16] + benchmarks [17]–[28]
 cd CryptosuiteTests && go run Herradura_tests.go

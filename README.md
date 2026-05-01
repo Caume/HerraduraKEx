@@ -6,7 +6,7 @@ The Herradura Cryptographic Suite implements cryptographic protocols built on th
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
 >
-> **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F.
+> **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F. `bn_*` parameterised big-endian arithmetic layer added to C tests, extending Schnorr and HPKS-NL tests to 256-bit. NTT inner loops now use Fermat-prime fast modulo (`rnl_mulmodq`/`rnlMulModQ`), eliminating hardware divides in the HKEX-RNL hot path (+17.6% on n=32 in C).
 >
 > **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs.md §11.8.4` for the formal reduction (Theorem 17).
 
@@ -82,12 +82,12 @@ Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 a
 
 ```bash
 # Full cryptographic suite (all protocols: classical, NL/PQC, Stern-F code-based)
-gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
-./"Herradura cryptographic suite"
+gcc -O2 -o "Herradura cryptographic suite_c" "Herradura cryptographic suite.c"
+./"Herradura cryptographic suite_c"
 
 # Security & performance tests (in CryptosuiteTests/)
-gcc -O2 -o CryptosuiteTests/Herradura_tests CryptosuiteTests/Herradura_tests.c
-./CryptosuiteTests/Herradura_tests
+gcc -O2 -o CryptosuiteTests/Herradura_tests_c CryptosuiteTests/Herradura_tests.c
+./CryptosuiteTests/Herradura_tests_c
 ```
 
 ## Go
@@ -160,7 +160,7 @@ GF/NL/Stern benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit p
 | NL-FSCX v2 enc+dec (32-bit) | 1,941 M ops/sec |
 | HSKE-NL-A1 counter-mode (32-bit) | 10.2 M ops/sec |
 | HSKE-NL-A2 revolve-mode (32-bit) | 15.2 M ops/sec |
-| HKEX-RNL full handshake (n=32) | 65.7 K ops/sec |
+| HKEX-RNL full handshake (n=32) | 77.3 K ops/sec |
 | HPKS-Stern-F sign+verify (N=256, t=16, rounds=4) | 113 ops/sec |
 
 ## Go (go run)
