@@ -82,12 +82,12 @@ Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 a
 
 ```bash
 # Full cryptographic suite (all protocols: classical, NL/PQC, Stern-F code-based)
-gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c"
-./"Herradura cryptographic suite"
+gcc -O2 -o "Herradura cryptographic suite_c" "Herradura cryptographic suite.c"
+./"Herradura cryptographic suite_c"
 
 # Security & performance tests (in CryptosuiteTests/)
-gcc -O2 -o CryptosuiteTests/Herradura_tests CryptosuiteTests/Herradura_tests.c
-./CryptosuiteTests/Herradura_tests
+gcc -O2 -o CryptosuiteTests/Herradura_tests_c CryptosuiteTests/Herradura_tests.c
+./CryptosuiteTests/Herradura_tests_c
 ```
 
 ## Go

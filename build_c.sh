@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.8 — C build script
+# HerraduraKEx v1.5.20 — C build script
 # Compiles the cryptographic suite and test suite using gcc.
+#
+# Output binaries use the _c suffix to prevent collision with the Go build,
+# which defaults to the same stem when invoked without -o.
 #
 # Dependencies:
 #   gcc   — sudo apt-get install -y gcc
@@ -8,11 +11,11 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.8"
+VERSION="1.5.20"
 SUITE_SRC="Herradura cryptographic suite.c"
-SUITE_BIN="Herradura cryptographic suite"
+SUITE_BIN="Herradura cryptographic suite_c"
 TESTS_SRC="CryptosuiteTests/Herradura_tests.c"
-TESTS_BIN="CryptosuiteTests/Herradura_tests"
+TESTS_BIN="CryptosuiteTests/Herradura_tests_c"
 
 # ── dependency check ──────────────────────────────────────────────────────────
 if ! command -v gcc &>/dev/null; then
