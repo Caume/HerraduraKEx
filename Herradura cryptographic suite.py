@@ -468,9 +468,18 @@ def _rnl_rand_poly(n, q):
     return out
 
 def _rnl_cbd_poly(n, eta, q):
-    """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q)
-    where a = popcount of eta random bits, b = popcount of next eta random bits.
-    Matches the Kyber/NIST PQC secret-distribution baseline for eta=2 or eta=3."""
+    """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q).
+    For eta=1: 4 coefficients per byte, bit-pairs (0-1),(2-3),(4-5),(6-7).
+    For eta>1: general path — popcount of eta bits each side."""
+    if eta == 1:
+        raw = os.urandom((n + 3) // 4)
+        out = []
+        for i in range(n):
+            shift = (i & 3) * 2
+            a = (raw[i >> 2] >> shift) & 1
+            b = (raw[i >> 2] >> (shift + 1)) & 1
+            out.append((a - b) % q)
+        return out
     mask = (1 << eta) - 1
     byte_count = (2 * eta + 7) // 8
     out = []

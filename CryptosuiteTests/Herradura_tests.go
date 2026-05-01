@@ -1,5 +1,6 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
-    v1.5.21: version-banner sync; ARM HSKE-NL-A2 R_VALUE fix.
+    v1.5.22: CBD(eta=1) 4-coeffs/byte (#16); test[14] n∈{32,64,128,256} (#23); NASM rnl_round fix (#21).
+    v1.5.21: version-banner sync; ARM HSKE-NL-A2 R_VALUE fix; Python HKEX-RNL q-label.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18]; benchmarks renumbered [19-28].
     v1.5.17: NTT twiddle precomputation — rnlTwCache map; rnlTwGet eliminates rnlModPow calls per rnlPolyMul.
     v1.5.13: HSKE-NL-A1 seed fix — seed=RotateLeft(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -491,17 +492,18 @@ func rnlRandPoly(n, q int) []int {
 	return p
 }
 
-// rnlCBDPoly samples n coefficients from CBD(eta=1): each = (raw&1) - ((raw>>1)&1) mod q.
-// Produces {-1,0,1} with zero mean; matches Kyber Ring-LWR secret distribution.
+// rnlCBDPoly samples n coefficients from CBD(eta=1): 4 coefficients per byte,
+// bit-pairs (0-1),(2-3),(4-5),(6-7). Produces {-1,0,1} with zero mean.
 func rnlCBDPoly(n, q int) []int {
-	p := make([]int, n)
-	buf := make([]byte, 1)
+	p   := make([]int, n)
+	buf := make([]byte, (n+3)/4)
+	if _, err := rand.Read(buf); err != nil {
+		log.Fatalf("rand.Read: %s", err)
+	}
 	for i := range p {
-		if _, err := rand.Read(buf); err != nil {
-			log.Fatalf("rand.Read: %s", err)
-		}
-		a := int(buf[0]) & 1
-		b := (int(buf[0]) >> 1) & 1
+		off := (i & 3) * 2
+		a   := int(buf[i>>2]>>off) & 1
+		b   := int(buf[i>>2]>>(off+1)) & 1
 		p[i] = (a - b + q) % q
 	}
 	return p
@@ -574,7 +576,7 @@ func gfOrd(size int) *big.Int {
 
 var sizes    = []int{64, 128, 256} // FSCX-only tests (fast)
 var gfSizes  = []int{32}           // GfPow tests (big.Int is slow; matches 32-bit C/asm targets)
-var rnlSizes = []int{32, 64}
+var rnlSizes = []int{32, 64, 128, 256}
 
 func bench(label string, fn func()) (ops int, elapsed time.Duration) {
 	for i := 0; i < 10; i++ {
@@ -1630,7 +1632,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.21 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.22 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
