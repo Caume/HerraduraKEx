@@ -950,7 +950,7 @@ def main():
         print("- decryption failed!")
 
     print("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]")
-    print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=3329 — may be slow)")
+    print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537 — may be slow)")
     n_rnl    = KEYBITS
     m_base   = _rnl_m_poly(n_rnl)
     a_rand   = _rnl_rand_poly(n_rnl, RNLQ)         # session random, public

@@ -4,6 +4,46 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.21] - 2026-04-30
+
+### Fix — ARM HSKE-NL-A2 used wrong step count (TODO #22)
+
+**Root cause:** `Herradura cryptographic suite.s` called `nl_fscx_revolve_v2` and
+`nl_fscx_revolve_v2_inv` with `#I_VALUE` (= n/4 = 8 steps) for HSKE-NL-A2, while
+the protocol specifies `r = 3n/4 = R_VALUE = 24 steps`. NASM i386 and C were correct.
+HPKE-NL was unaffected — it legitimately uses `I_VALUE` (n/4).
+
+**Impact:** ARM and NASM i386 HSKE-NL-A2 ciphertexts were cross-incompatible; both
+self-decrypted correctly (symmetric use of the wrong step count) so the bug was silent.
+
+**Fix:** Changed both HSKE-NL-A2 call sites in `Herradura cryptographic suite.s`
+(encrypt and decrypt) from `mov r2, #I_VALUE` to `mov r2, #R_VALUE`. Updated the
+inline comments to match.
+
+### Fix — Python HKEX-RNL demo banner printed q=3329 (TODO #20)
+
+`Herradura cryptographic suite.py` line 953 printed `q=3329` (Kyber's modulus),
+but `RNLQ = 65537` since v1.5.4. The same banner was fixed in C at v1.5.13 but the
+Python file was missed. Changed to `q=65537`.
+
+### Maintenance — Version-banner sync (TODO #19)
+
+Nine files still carried `v1.5.18` in header comments and/or runtime-printed banner
+strings; the project was at v1.5.20. Updated all header comments and printed banners
+to v1.5.21 across:
+
+- `Herradura cryptographic suite.go` (header comment)
+- `CryptosuiteTests/Herradura_tests.go` (header changelog + printed banner)
+- `CryptosuiteTests/Herradura_tests.py` (argparse description + printed banner)
+- `Herradura cryptographic suite.s` / `CryptosuiteTests/Herradura_tests.s` (header + `.asciz` string)
+- `Herradura cryptographic suite.asm` / `CryptosuiteTests/Herradura_tests.asm` (header + `db` string)
+- `Herradura cryptographic suite.ino` / `CryptosuiteTests/Herradura_tests.ino` (header + `Serial.println`)
+
+Historical changelog entries inside file headers (e.g. `v1.5.18: HPKS-Stern-F...`)
+were left unchanged.
+
+---
+
 ## [1.5.20] - 2026-04-30
 
 ### Performance — Fermat prime fast modulo for NTT inner loops (Batch 8 / TODO #15)

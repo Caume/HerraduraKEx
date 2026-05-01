@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.21: version-banner sync; ARM HSKE-NL-A2 R_VALUE fix.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18]; benchmarks renumbered [19-28].
     v1.5.17: NTT twiddle precomputation — rnlTwCache map; rnlTwGet eliminates rnlModPow calls per rnlPolyMul.
     v1.5.13: HSKE-NL-A1 seed fix — seed=RotateLeft(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -1629,7 +1630,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.18 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.21 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

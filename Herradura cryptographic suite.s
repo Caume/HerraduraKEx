@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.18
+/*  Herradura Cryptographic Suite v1.5.21
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
                                        HPKS-Stern-F, HPKE-Stern-F
@@ -49,7 +49,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.18 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.21 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -632,8 +632,8 @@ hske_nl1_done:
 
     /* ================================================================
        HSKE-NL-A2  (revolve-mode with NL-FSCX v2)
-       E = nl_fscx_revolve_v2(plain, key, I_VALUE)
-       D = nl_fscx_revolve_v2_inv(E, key, I_VALUE)  must == plain
+       E = nl_fscx_revolve_v2(plain, key, R_VALUE)
+       D = nl_fscx_revolve_v2_inv(E, key, R_VALUE)  must == plain
        CAUTION: deterministic — same (plain, key) always yields same E.
        ================================================================ */
     ldr     r0, =fmt_hske_nl2_hdr
@@ -643,7 +643,7 @@ hske_nl1_done:
     ldr     r0, [r0]
     ldr     r1, =val_key
     ldr     r1, [r1]
-    mov     r2, #I_VALUE
+    mov     r2, #R_VALUE
     bl      nl_fscx_revolve_v2
     ldr     r3, =val_E_nl2
     str     r0, [r3]
@@ -652,7 +652,7 @@ hske_nl1_done:
     ldr     r0, [r0]
     ldr     r1, =val_key
     ldr     r1, [r1]
-    mov     r2, #I_VALUE
+    mov     r2, #R_VALUE
     bl      nl_fscx_revolve_v2_inv
     ldr     r3, =val_D_nl2
     str     r0, [r3]
