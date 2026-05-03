@@ -4,6 +4,65 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.23] - 2026-05-03
+
+### New Feature — HerraduraCli: OpenSSL-style command-line tool (TODO #25)
+
+A Python CLI in a new `HerraduraCli/` subdirectory exposing all non-broken Herradura
+protocols through an interface analogous to OpenSSL's `genpkey`, `pkey`, `enc`, `dec`,
+`sign`, `verify`, and `kex` subcommands. No external Python dependencies; uses only stdlib.
+
+**File layout:**
+- `HerraduraCli/herradura.py` — argparse dispatcher; all protocol subcommands
+- `HerraduraCli/codec.py` — pure-Python PEM and minimal DER INTEGER/SEQUENCE codec;
+  polynomial pack/unpack helpers for Ring-LWR polynomials
+- `HerraduraCli/primitives.py` — loads `"Herradura cryptographic suite.py"` via
+  `importlib.util` (space-in-filename workaround); re-exports all primitive symbols
+
+**Supported subcommands:**
+- `genpkey --algo <a>` — generate private key PEM for all 8 supported algorithms
+- `pkey --pubout / --text` — extract public key or print key fields as hex
+- `kex --algo hkex-gf/hkex-rnl --our … --their …` — HKEX-GF one-round or HKEX-RNL
+  two-round key exchange; writes SESSION KEY PEM or RESPONSE PEM
+- `enc / dec --algo hske/hske-nla1/hske-nla2/hpke/hpke-nl/hpke-stern` — encrypt and
+  decrypt using symmetric session keys or asymmetric public/private keys
+- `sign / verify --algo hpks/hpks-nl/hpks-stern` — Schnorr or Stern-F signatures;
+  `verify` exits 0/1 and prints `Signature OK` / `Verification FAILED`
+
+**HKEX-RNL 2-round protocol:** Alice publishes a fresh random `m_blind` polynomial in
+her public key PEM; Bob re-derives `C_B = round_p(m_A * s_B)` on his side and writes a
+RESPONSE PEM encoding `(K_B, C_B, Peikert-hint, n)`; Alice reads the response and
+completes with `K_A = reconcile(s_A * C_B, hint)`. The RESPONSE PEM doubles as a session
+key file (Bob's `K_B` is stored as the first field) so Bob can pass it directly to
+`enc`/`dec` without a separate kex step.
+
+**Key format summary (DER SEQUENCE):**
+- Classical/NL private: `{priv_int, pub_int, nbits}` (nbits//8 bytes each)
+- Classical/NL public: `{pub_int, nbits}`
+- HKEX-RNL private: `{s_packed(4n bytes), m_packed(4n bytes), n}`
+- HKEX-RNL public: `{C_packed(2n bytes), m_packed(4n bytes), n}`
+- Stern private/public: `{e_int / syn_int, seed_uint, n}` (n//8 bytes each)
+
+### New Feature — CliTest shell test suite (TODO #25)
+
+Four bash scripts in `CliTest/` exercising the full CLI:
+- `test_keygen.sh` — 16 cases: `genpkey` + `pkey --pubout` for all 8 algorithms; asserts
+  PEM headers and non-empty output
+- `test_encrypt.sh` — 7 cases: full enc/dec round-trips for hske, hske-nla1, hske-nla2
+  (via HKEX-GF session key), HKEX-RNL cross-party, hpke, hpke-nl, hpke-stern
+- `test_sign.sh` — 7 cases: sign/verify with correct and tampered messages for hpks,
+  hpks-nl (including wrong-key rejection), and hpks-stern
+- `test_vectors.sh` — 3 cases: HKEX-GF key-agreement (both parties produce identical
+  SESSION KEY PEM) and HKEX-RNL bidirectional cross-party enc/dec (validates Peikert
+  reconciliation)
+
+### Maintenance — Version-banner sync
+
+All 12 implementation files advanced from v1.5.22 (or v1.5.20 for Python suite/tests and
+C tests, which had missed earlier bumps) to v1.5.23.
+
+---
+
 ## [1.5.22] - 2026-05-01
 
 ### Fix — NASM i386 HKEX-RNL produced all-zero session keys (TODO #21)

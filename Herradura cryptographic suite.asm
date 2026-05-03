@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.22
+;  Herradura Cryptographic Suite v1.5.23
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
 ;                        HPKS-Stern-F, HPKE-Stern-F
@@ -103,7 +103,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura Cryptographic Suite v1.5.22 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    hdr         db "=== Herradura Cryptographic Suite v1.5.23 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "

@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.20
+    Herradura Cryptographic Suite v1.5.23
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.23: HerraduraCli — OpenSSL-style Python CLI (TODO #25); CliTest shell test suite ---
     --- v1.5.20: HPKE-Stern-F N=256 known-e' demo; multi-size standardization ---
     --- v1.5.18: HPKS-Stern-F / HPKE-Stern-F — code-based PQC (SD + NL-FSCX v1 PRF) ---
 

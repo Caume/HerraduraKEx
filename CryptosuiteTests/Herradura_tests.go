@@ -1,4 +1,5 @@
 /*  Herradura KEx -- Security & Performance Tests (Go)
+    v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.22: CBD(eta=1) 4-coeffs/byte (#16); test[14] n∈{32,64,128,256} (#23); NASM rnl_round fix (#21).
     v1.5.21: version-banner sync; ARM HSKE-NL-A2 R_VALUE fix; Python HKEX-RNL q-label.
     v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18]; benchmarks renumbered [19-28].
@@ -1632,7 +1633,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.22 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.23 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

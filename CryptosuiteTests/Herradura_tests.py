@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.20: multi-size standardization — GF/RNL/Stern-F tests at 32,64,128,256 bits.
     v1.5.18: HPKS-Stern-F [17] + HPKE-Stern-F [18] + bench [26] (code-based PQC).
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
@@ -1151,7 +1152,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.22 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.23 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
