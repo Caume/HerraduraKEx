@@ -1,10 +1,14 @@
-# Herradura Cryptographic Suite (v1.5.20)
+# Herradura Cryptographic Suite (v1.5.23)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
+>
+> **v1.5.23 note:** HerraduraCli — an OpenSSL-style Python CLI (`HerraduraCli/`) exposing all non-broken Herradura protocols via `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, and `verify` subcommands. Keys and ciphertexts use PEM-wrapped minimal DER. A `CliTest/` shell test suite covers key generation, encrypt/decrypt round-trips, sign/verify, and HKEX-GF/HKEX-RNL key-agreement correctness.
+>
+> **v1.5.22 note:** NASM i386 HKEX-RNL now produces correct non-zero session keys (triple-division bug in `rnl_round` fixed). `rnl_cbd_poly` reads 4 coefficients per byte for η=1 (was 1 byte/coeff, discarding 75% of entropy). Go test [14] HKEX-RNL expanded from n∈{32,64} to n∈{32,64,128,256}, matching C and Python test coverage.
 >
 > **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F. `bn_*` parameterised big-endian arithmetic layer added to C tests, extending Schnorr and HPKS-NL tests to 256-bit. NTT inner loops now use Fermat-prime fast modulo (`rnl_mulmodq`/`rnlMulModQ`), eliminating hardware divides in the HKEX-RNL hot path (+17.6% on n=32 in C).
 >
