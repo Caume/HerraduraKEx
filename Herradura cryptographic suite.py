@@ -383,6 +383,65 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 # ---------------------------------------------------------------------------
+# HFSCX-256: Merkle-Damgård hash over NL-FSCX v1 (v1.5.24)
+# ---------------------------------------------------------------------------
+
+# 32-byte ASCII domain constant for the default IV.
+_HFSCX256_IV_BYTES = b'HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00'
+
+
+def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
+    """HFSCX-256: 256-bit Merkle-Damgård hash built on NL-FSCX v1.
+
+    Compression function:
+        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 64)
+
+    Padding (ISO 7816-4 + Merkle-Damgård strengthening):
+        1. Append 0x80 to the message.
+        2. Zero-fill until total length is a multiple of 32 bytes.
+        3. Append a final 32-byte block: (bit_length_64bit XOR init_state)
+           where init_state is the initial chaining value (IV or key^IV).
+           XORing the initial state into the length block binds the key into
+           the last block's content, preventing fixed-point collapse when the
+           message compresses all initial chaining states to a single value
+           (which occurs for empty input with B=0 in the length block).
+
+    Bare hash:  iv=None  — initial state is the domain IV constant.
+    Keyed MAC:  pass iv = BitArray(256, key.uint ^
+                                   int.from_bytes(_HFSCX256_IV_BYTES,'big'))
+                The key is incorporated into both the initial chaining state
+                and the final length block, so different keys always produce
+                different outputs even for empty input.
+
+    Returns 32 bytes (256-bit digest).
+    """
+    n    = 256
+    blen = 32  # bytes per block
+    iv_int   = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
+    init_int = iv_int if iv is None else iv.uint
+    state    = BitArray(n, init_int)
+
+    # Padding: 0x80, then zeros to reach a multiple of 32 bytes
+    padded = bytearray(data) + b'\x80'
+    rem = len(padded) % blen
+    if rem:
+        padded += b'\x00' * (blen - rem)
+
+    # MD-strengthening: length block XOR'd with the initial state to bind the
+    # key into the final block and prevent fixed-point collapse on short inputs.
+    len_raw  = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
+    padded  += (len_raw ^ init_int).to_bytes(blen, 'big')
+
+    # Chain blocks through NL-FSCX v1 (64 steps per block at 256-bit)
+    steps = n // 4  # 64
+    for off in range(0, len(padded), blen):
+        block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
+        state = nl_fscx_revolve_v1(state, block, steps)
+
+    return state.uint.to_bytes(blen, 'big')
+
+
+# ---------------------------------------------------------------------------
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 # ---------------------------------------------------------------------------
 
