@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.5.23)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.5.24)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -9,6 +9,8 @@
 #   python3 herradura.py dec     --algo hske      --key sk.pem --in cipher.pem --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
+#   python3 herradura.py dgst                     --in file.bin               # hex to stdout
+#   python3 herradura.py dgst    --algo hfscx-256 --in file.bin --out d.pem   # PEM digest file
 #
 # HKEX-RNL key exchange (2-round — Bob responds first, then Alice completes):
 #   # Step 1: Bob responds to Alice's public key
@@ -33,6 +35,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
+    hfscx_256, _HFSCX256_IV_BYTES,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -67,6 +70,7 @@ _LABEL_SESSION     = 'HERRADURA SESSION KEY'
 _LABEL_RNL_RESP    = 'HERRADURA HKEX-RNL RESPONSE'
 _LABEL_SIG         = 'HERRADURA SIGNATURE'
 _LABEL_CT          = 'HERRADURA CIPHERTEXT'
+_LABEL_DIGEST      = 'HERRADURA DIGEST'
 
 # ---------------------------------------------------------------------------
 # I/O helpers
@@ -812,13 +816,36 @@ def cmd_verify(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: dgst
+# ---------------------------------------------------------------------------
+
+def cmd_dgst(args):
+    algo     = args.algo
+    in_bytes = _read_file(getattr(args, 'in'))
+    out_path = args.out
+
+    if algo == 'hfscx-256':
+        digest = hfscx_256(in_bytes)
+    else:
+        sys.exit(f"dgst: unsupported algorithm {algo!r}")
+
+    digest_int = int.from_bytes(digest, 'big')
+
+    if out_path == '-':
+        sys.stdout.write(digest.hex() + '\n')
+    else:
+        der = der_seq(der_int(digest_int, 32))
+        _write_file(out_path, pem_wrap(_LABEL_DIGEST, der))
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.5.23',
+        description='Herradura Cryptographic Suite CLI v1.5.24',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
@@ -874,6 +901,15 @@ def build_parser():
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
 
+    # dgst
+    dg = sub.add_parser('dgst', help='Compute a digest (default: HFSCX-256, hex to stdout)')
+    dg.add_argument('--algo', default='hfscx-256', choices=['hfscx-256'],
+                    help='Hash algorithm (default: hfscx-256)')
+    dg.add_argument('--in',  required=True, dest='in',
+                    help='Input file (use - for stdin)')
+    dg.add_argument('--out', default='-',
+                    help='Output: - prints hex to stdout (default); file path writes PEM digest')
+
     return p
 
 
@@ -885,6 +921,7 @@ _DISPATCH = {
     'dec':     cmd_dec,
     'sign':    cmd_sign,
     'verify':  cmd_verify,
+    'dgst':    cmd_dgst,
 }
 
 
