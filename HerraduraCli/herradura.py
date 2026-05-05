@@ -8,7 +8,9 @@
 #   python3 herradura.py enc     --algo hske      --key sk.pem --in msg.bin --out cipher.pem
 #   python3 herradura.py dec     --algo hske      --key sk.pem --in cipher.pem --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
+#   python3 herradura.py sign    --algo hpks-nl   --key sig.pem --in large.bin --digest hfscx-256 --out s.pem
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
+#   python3 herradura.py verify  --algo hpks-nl   --pubkey pub.pem --in large.bin --digest hfscx-256 --sig s.pem
 #   python3 herradura.py dgst                     --in file.bin               # hex to stdout
 #   python3 herradura.py dgst    --algo hfscx-256 --in file.bin --out d.pem   # PEM digest file
 #   python3 herradura.py encfile --algo hske-nla1 --key sk.pem --in large.bin --out cipher.hkx
@@ -746,6 +748,8 @@ def cmd_sign(args):
     algo     = args.algo
     key_path = args.key
     in_bytes = _read_file(getattr(args, 'in'))
+    if args.digest == 'hfscx-256':
+        in_bytes = hfscx_256(in_bytes)   # pre-hash: sign the 32-byte digest
 
     our_algo, our_ints = _decode_privkey(key_path)
 
@@ -783,6 +787,8 @@ def cmd_verify(args):
     algo        = args.algo
     pubkey_path = args.pubkey
     in_bytes    = _read_file(getattr(args, 'in'))
+    if args.digest == 'hfscx-256':
+        in_bytes = hfscx_256(in_bytes)   # pre-hash: verify against 32-byte digest
     sig_path    = args.sig
 
     their_algo, their_ints = _decode_pubkey(pubkey_path)
@@ -1029,6 +1035,9 @@ def build_parser():
     sg.add_argument('--key',  required=True)
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
+    sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: none=truncate input to block size (default), '
+                         'hfscx-256=hash full input then sign the 32-byte digest')
 
     # verify
     vf = sub.add_parser('verify', help='Verify a signature')
@@ -1036,6 +1045,8 @@ def build_parser():
     vf.add_argument('--pubkey', required=True)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
+    vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
+                    help='Pre-hash algorithm: must match the value used during signing')
 
     # encfile
     ef = sub.add_parser('encfile',
