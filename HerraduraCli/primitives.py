@@ -25,6 +25,8 @@ nl_fscx_revolve_v2     = _s.nl_fscx_revolve_v2
 nl_fscx_revolve_v2_inv = _s.nl_fscx_revolve_v2_inv
 gf_mul                 = _s.gf_mul
 gf_pow                 = _s.gf_pow
+hfscx_256              = _s.hfscx_256
+_HFSCX256_IV_BYTES     = _s._HFSCX256_IV_BYTES
 
 # ── Ring-LWR / HKEX-RNL ─────────────────────────────────────────────────────
 _rnl_keygen         = _s._rnl_keygen

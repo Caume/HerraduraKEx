@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.5.23)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.5.24)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -8,7 +8,13 @@
 #   python3 herradura.py enc     --algo hske      --key sk.pem --in msg.bin --out cipher.pem
 #   python3 herradura.py dec     --algo hske      --key sk.pem --in cipher.pem --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
+#   python3 herradura.py sign    --algo hpks-nl   --key sig.pem --in large.bin --digest hfscx-256 --out s.pem
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
+#   python3 herradura.py verify  --algo hpks-nl   --pubkey pub.pem --in large.bin --digest hfscx-256 --sig s.pem
+#   python3 herradura.py dgst                     --in file.bin               # hex to stdout
+#   python3 herradura.py dgst    --algo hfscx-256 --in file.bin --out d.pem   # PEM digest file
+#   python3 herradura.py encfile --algo hske-nla1 --key sk.pem --in large.bin --out cipher.hkx
+#   python3 herradura.py decfile --algo hske-nla1 --key sk.pem --in cipher.hkx --out plain.bin
 #
 # HKEX-RNL key exchange (2-round — Bob responds first, then Alice completes):
 #   # Step 1: Bob responds to Alice's public key
@@ -22,6 +28,7 @@
 # Production use requires a QC-MDPC decoder (N=256, t=16).
 
 import argparse
+import hmac as _hmac
 import sys
 import os
 
@@ -33,6 +40,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
+    hfscx_256, _HFSCX256_IV_BYTES,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -67,6 +75,12 @@ _LABEL_SESSION     = 'HERRADURA SESSION KEY'
 _LABEL_RNL_RESP    = 'HERRADURA HKEX-RNL RESPONSE'
 _LABEL_SIG         = 'HERRADURA SIGNATURE'
 _LABEL_CT          = 'HERRADURA CIPHERTEXT'
+_LABEL_DIGEST      = 'HERRADURA DIGEST'
+
+# Binary container format for encfile / decfile (.hkx files)
+_HKX_MAGIC     = b'HKX1'   # 4-byte magic
+_HKX_ALGO_NLA1 = 0x01      # algo byte: HSKE-NL-A1 CTR-mode AEAD
+_HKX_BLOCK     = 32        # cipher block = 256 bits
 
 # ---------------------------------------------------------------------------
 # I/O helpers
@@ -734,6 +748,8 @@ def cmd_sign(args):
     algo     = args.algo
     key_path = args.key
     in_bytes = _read_file(getattr(args, 'in'))
+    if args.digest == 'hfscx-256':
+        in_bytes = hfscx_256(in_bytes)   # pre-hash: sign the 32-byte digest
 
     our_algo, our_ints = _decode_privkey(key_path)
 
@@ -771,6 +787,8 @@ def cmd_verify(args):
     algo        = args.algo
     pubkey_path = args.pubkey
     in_bytes    = _read_file(getattr(args, 'in'))
+    if args.digest == 'hfscx-256':
+        in_bytes = hfscx_256(in_bytes)   # pre-hash: verify against 32-byte digest
     sig_path    = args.sig
 
     their_algo, their_ints = _decode_pubkey(pubkey_path)
@@ -812,13 +830,164 @@ def cmd_verify(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: encfile   (HSKE-NL-A1 CTR-mode AEAD for arbitrary-size files)
+# ---------------------------------------------------------------------------
+#
+# Binary output format (.hkx):
+#   [0:4]        Magic b'HKX1'
+#   [4]          Algo byte: 0x01 = hske-nla1
+#   [5:13]       Plaintext length (big-endian uint64)
+#   [13:45]      Nonce N_nonce (32 bytes)
+#   [45:45+m*32] Ciphertext blocks (m = ceil(len/32); last block zero-padded)
+#   [45+m*32:]   Auth tag — HFSCX-256-MAC(mac_key, nonce||len||ciphertext)
+#
+# Keystream:  ks_i = nl_fscx_revolve_v1(seed, base XOR i, n/4)
+# MAC key:    nl_fscx_revolve_v1(ROL(seed, n/4), base, n/4)  [domain-separated]
+
+def cmd_encfile(args):
+    algo = args.algo
+    if algo != 'hske-nla1':
+        sys.exit(f"encfile: unsupported algorithm {algo!r}")
+
+    key_int, nbits = _load_key(args.key)
+    if nbits != 256:
+        sys.exit(f"encfile: key must be 256-bit; got {nbits}-bit")
+
+    plaintext     = _read_file(getattr(args, 'in'))
+    plaintext_len = len(plaintext)
+
+    n        = 256
+    blen     = _HKX_BLOCK          # 32 bytes
+    steps    = n // 4              # 64 NL-FSCX v1 steps per block
+    iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
+
+    K       = BitArray(n, key_int)
+    N_nonce = BitArray.random(n)
+    base    = BitArray(n, K.uint ^ N_nonce.uint)
+    seed    = base.rotated(n // 8)     # step-1 degeneracy fix (matches HSKE-NL-A1)
+
+    # Encrypt: ks_i = nl_fscx_revolve_v1(seed, base XOR i, 64); C_i = P_i XOR ks_i
+    n_blocks  = (plaintext_len + blen - 1) // blen   # 0 for empty plaintext
+    ct_blocks = bytearray()
+    for i in range(n_blocks):
+        chunk = plaintext[i * blen:(i + 1) * blen]
+        p_blk = chunk + b'\x00' * (blen - len(chunk))   # zero-pad final block
+        ks    = nl_fscx_revolve_v1(seed, BitArray(n, base.uint ^ i), steps)
+        ct_blocks += bytes(p ^ k for p, k in zip(p_blk, ks.uint.to_bytes(blen, 'big')))
+
+    # MAC key: domain-separated from encryption (second ROL shift)
+    mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)
+    mac_iv  = BitArray(n, mac_key.uint ^ iv_const)
+
+    # Auth tag: HFSCX-256-MAC over nonce || plaintext_len || ciphertext
+    mac_data = (N_nonce.uint.to_bytes(blen, 'big')
+                + plaintext_len.to_bytes(8, 'big')
+                + bytes(ct_blocks))
+    tag = hfscx_256(mac_data, iv=mac_iv)
+
+    header = (_HKX_MAGIC
+              + bytes([_HKX_ALGO_NLA1])
+              + plaintext_len.to_bytes(8, 'big')
+              + N_nonce.uint.to_bytes(blen, 'big'))
+    _write_file(args.out, header + bytes(ct_blocks) + tag)
+
+
+# ---------------------------------------------------------------------------
+# Sub-command: decfile
+# ---------------------------------------------------------------------------
+
+def cmd_decfile(args):
+    algo = args.algo
+    if algo != 'hske-nla1':
+        sys.exit(f"decfile: unsupported algorithm {algo!r}")
+
+    key_int, nbits = _load_key(args.key)
+    if nbits != 256:
+        sys.exit(f"decfile: key must be 256-bit; got {nbits}-bit")
+
+    raw = _read_file(getattr(args, 'in'))
+
+    # Parse and validate header
+    if len(raw) < 77:   # 4+1+8+32+32 minimum (empty plaintext + tag)
+        sys.exit("decfile: file too short to be a valid .hkx container")
+    if raw[:4] != _HKX_MAGIC:
+        sys.exit(f"decfile: invalid magic {raw[:4]!r} (expected {_HKX_MAGIC!r})")
+    if raw[4] != _HKX_ALGO_NLA1:
+        sys.exit(f"decfile: unsupported algo byte 0x{raw[4]:02x}")
+
+    plaintext_len = int.from_bytes(raw[5:13], 'big')
+    nonce_bytes   = raw[13:45]
+    n_blocks      = (plaintext_len + _HKX_BLOCK - 1) // _HKX_BLOCK
+    ct_end        = 45 + n_blocks * _HKX_BLOCK
+
+    if len(raw) < ct_end + 32:
+        sys.exit("decfile: file truncated (ciphertext blocks or auth tag missing)")
+
+    ct_bytes   = raw[45:ct_end]
+    tag_stored = bytes(raw[ct_end:ct_end + 32])
+
+    n        = 256
+    blen     = _HKX_BLOCK
+    steps    = n // 4
+    iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
+
+    K       = BitArray(n, key_int)
+    N_nonce = BitArray(n, int.from_bytes(nonce_bytes, 'big'))
+    base    = BitArray(n, K.uint ^ N_nonce.uint)
+    seed    = base.rotated(n // 8)
+
+    # Recompute auth tag and compare before decrypting (verify-then-decrypt)
+    mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)
+    mac_iv  = BitArray(n, mac_key.uint ^ iv_const)
+    mac_data = (nonce_bytes
+                + plaintext_len.to_bytes(8, 'big')
+                + bytes(ct_bytes))
+    tag_computed = hfscx_256(mac_data, iv=mac_iv)
+
+    if not _hmac.compare_digest(tag_stored, tag_computed):
+        sys.exit("decfile: authentication tag mismatch — file corrupt or wrong key")
+
+    # Decrypt and trim to exact plaintext length
+    plaintext = bytearray()
+    for i in range(n_blocks):
+        c_blk = ct_bytes[i * blen:(i + 1) * blen]
+        ks    = nl_fscx_revolve_v1(seed, BitArray(n, base.uint ^ i), steps)
+        plaintext += bytes(c ^ k for c, k in zip(c_blk, ks.uint.to_bytes(blen, 'big')))
+
+    _write_file(args.out, bytes(plaintext[:plaintext_len]))
+
+
+# ---------------------------------------------------------------------------
+# Sub-command: dgst
+# ---------------------------------------------------------------------------
+
+def cmd_dgst(args):
+    algo     = args.algo
+    in_bytes = _read_file(getattr(args, 'in'))
+    out_path = args.out
+
+    if algo == 'hfscx-256':
+        digest = hfscx_256(in_bytes)
+    else:
+        sys.exit(f"dgst: unsupported algorithm {algo!r}")
+
+    digest_int = int.from_bytes(digest, 'big')
+
+    if out_path == '-':
+        sys.stdout.write(digest.hex() + '\n')
+    else:
+        der = der_seq(der_int(digest_int, 32))
+        _write_file(out_path, pem_wrap(_LABEL_DIGEST, der))
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.5.23',
+        description='Herradura Cryptographic Suite CLI v1.5.24',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
@@ -866,6 +1035,9 @@ def build_parser():
     sg.add_argument('--key',  required=True)
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
+    sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: none=truncate input to block size (default), '
+                         'hfscx-256=hash full input then sign the 32-byte digest')
 
     # verify
     vf = sub.add_parser('verify', help='Verify a signature')
@@ -873,6 +1045,41 @@ def build_parser():
     vf.add_argument('--pubkey', required=True)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
+    vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
+                    help='Pre-hash algorithm: must match the value used during signing')
+
+    # encfile
+    ef = sub.add_parser('encfile',
+                        help='Encrypt a file of any size (AEAD, binary .hkx output)')
+    ef.add_argument('--algo', default='hske-nla1', choices=['hske-nla1'],
+                    help='Encryption algorithm (default: hske-nla1 CTR-mode AEAD)')
+    ef.add_argument('--key',  required=True,
+                    help='Session key PEM (from kex) or hex key file')
+    ef.add_argument('--in',  required=True, dest='in',
+                    help='Plaintext file to encrypt')
+    ef.add_argument('--out', required=True,
+                    help='Output .hkx file')
+
+    # decfile
+    df = sub.add_parser('decfile',
+                        help='Decrypt and authenticate a .hkx file')
+    df.add_argument('--algo', default='hske-nla1', choices=['hske-nla1'],
+                    help='Encryption algorithm (default: hske-nla1)')
+    df.add_argument('--key',  required=True,
+                    help='Session key PEM (from kex) or hex key file')
+    df.add_argument('--in',  required=True, dest='in',
+                    help='Encrypted .hkx file')
+    df.add_argument('--out', required=True,
+                    help='Output plaintext file')
+
+    # dgst
+    dg = sub.add_parser('dgst', help='Compute a digest (default: HFSCX-256, hex to stdout)')
+    dg.add_argument('--algo', default='hfscx-256', choices=['hfscx-256'],
+                    help='Hash algorithm (default: hfscx-256)')
+    dg.add_argument('--in',  required=True, dest='in',
+                    help='Input file (use - for stdin)')
+    dg.add_argument('--out', default='-',
+                    help='Output: - prints hex to stdout (default); file path writes PEM digest')
 
     return p
 
@@ -885,6 +1092,9 @@ _DISPATCH = {
     'dec':     cmd_dec,
     'sign':    cmd_sign,
     'verify':  cmd_verify,
+    'encfile': cmd_encfile,
+    'decfile': cmd_decfile,
+    'dgst':    cmd_dgst,
 }
 
 

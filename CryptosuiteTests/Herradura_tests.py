@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.5.24: HFSCX-256 hash primitive (TODO #26 Phase 1) — KAT, determinism, collision sanity.
     v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.20: multi-size standardization — GF/RNL/Stern-F tests at 32,64,128,256 bits.
     v1.5.18: HPKS-Stern-F [17] + HPKE-Stern-F [18] + bench [26] (code-based PQC).
@@ -239,6 +240,38 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
         z      = BitArray(n, (result.uint - delta.uint) & mask)
         result = B ^ _m_inv(z)
     return result
+
+
+# ---------------------------------------------------------------------------
+# HFSCX-256 (self-contained, mirrors suite)
+# ---------------------------------------------------------------------------
+
+_HFSCX256_IV_BYTES = b'HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00'
+
+
+def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
+    """HFSCX-256: 256-bit Merkle-Damgård hash over NL-FSCX v1 (self-contained copy)."""
+    n    = 256
+    blen = 32
+    iv_int   = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
+    init_int = iv_int if iv is None else iv.uint
+    state    = BitArray(n, init_int)
+
+    padded = bytearray(data) + b'\x80'
+    rem = len(padded) % blen
+    if rem:
+        padded += b'\x00' * (blen - rem)
+
+    # Length block XOR'd with initial state to bind the key into the final block.
+    len_raw = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
+    padded += (len_raw ^ init_int).to_bytes(blen, 'big')
+
+    steps = n // 4  # 64
+    for off in range(0, len(padded), blen):
+        block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
+        state = nl_fscx_revolve_v1(state, block, steps)
+
+    return state.uint.to_bytes(blen, 'big')
 
 
 # ---------------------------------------------------------------------------
@@ -961,6 +994,86 @@ def test_hpke_stern_f_correctness():
     print()
 
 
+def test_hfscx_256():
+    print("[19] HFSCX-256 hash — output length, known-answer, determinism, "
+          "collision sanity, block boundaries, keyed MAC  [HASH]")
+
+    # Known-answer tests (KAT) — pre-computed from the reference implementation
+    KAT = [
+        (b'',
+         '75de75aeffa8d6fb3d56134cb40a3f18'
+         '75857974e197a632bbf436160ed97a6b'),
+        (b'a',
+         'e37bd20f15e04f21a0921cf0a666d245'
+         '7bc2bccfd7bd2822e671da24bdb838a0'),
+        (b'abc',
+         'e2fb755521c5d75fc058cb77027a8dc2'
+         '9e16971cb774b6cc281696fca63fec43'),
+        (b'a' * 33,
+         '523c791286ae59faf48421955bf5ce1f'
+         '5c9bdeeb773fa4a1b235058ca56fc2b8'),
+    ]
+    kat_ok = True
+    for msg, expected in KAT:
+        got = hfscx_256(msg).hex()
+        if got != expected:
+            print(f"    KAT FAIL for {msg!r}: got {got}")
+            kat_ok = False
+    print(f"    Known-answer tests ({len(KAT)} vectors) [{'PASS' if kat_ok else 'FAIL'}]")
+
+    # Output length: always 32 bytes regardless of input size
+    len_ok = all(len(hfscx_256(b'\xaa' * sz)) == 32 for sz in [0, 1, 31, 32, 33, 63, 64, 65])
+    print(f"    Output always 32 bytes [{'PASS' if len_ok else 'FAIL'}]")
+
+    # Determinism: same input always gives same digest
+    n_det = _iters(200)
+    det_fail = 0
+    for _ in _trange(n_det):
+        data = os.urandom(random.randint(0, 128))
+        if hfscx_256(data) != hfscx_256(data):
+            det_fail += 1
+    print(f"    Determinism: {n_det - det_fail}/{n_det} consistent "
+          f"[{'PASS' if det_fail == 0 else 'FAIL'}]")
+
+    # Collision sanity: distinct random inputs rarely collide
+    n_coll = _iters(500)
+    collisions = 0
+    for _ in _trange(n_coll):
+        a = os.urandom(random.randint(0, 64))
+        b_bytes = os.urandom(random.randint(0, 64))
+        if a != b_bytes and hfscx_256(a) == hfscx_256(b_bytes):
+            collisions += 1
+    print(f"    Collision sanity: {collisions}/{n_coll} collisions found "
+          f"[{'PASS' if collisions == 0 else 'FAIL'}]")
+
+    # Block boundary sensitivity: inputs near 32/64-byte boundaries produce different hashes
+    boundary_ok = True
+    for ref_len in [31, 32, 33, 63, 64, 65]:
+        data = os.urandom(ref_len)
+        if hfscx_256(data) == hfscx_256(data + b'\x00'):
+            boundary_ok = False
+    print(f"    Block boundary sensitivity [{'PASS' if boundary_ok else 'FAIL'}]")
+
+    # Keyed MAC domain separation: keyed hash differs from bare hash and from other keys
+    iv_const = int.from_bytes(_HFSCX256_IV_BYTES, 'big')
+    mac_sep_ok = True
+    same_key_ok = True
+    for _ in range(50):
+        data = os.urandom(random.randint(0, 64))
+        key  = BitArray(256, int.from_bytes(os.urandom(32), 'big'))
+        mac_iv = BitArray(256, key.uint ^ iv_const)
+        bare   = hfscx_256(data)
+        tag1   = hfscx_256(data, iv=mac_iv)
+        tag2   = hfscx_256(data, iv=mac_iv)
+        if bare == tag1:
+            mac_sep_ok = False
+        if tag1 != tag2:
+            same_key_ok = False
+    print(f"    Keyed MAC differs from bare hash [{'PASS' if mac_sep_ok else 'FAIL'}]")
+    print(f"    Keyed MAC deterministic (same key) [{'PASS' if same_key_ok else 'FAIL'}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -982,7 +1095,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[19] FSCX throughput  [CLASSICAL]")
+    print("[20] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -992,7 +1105,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[20] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[21] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -1002,7 +1115,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[21] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[22] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -1015,7 +1128,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[22] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[23] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -1027,7 +1140,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[23] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[24] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -1044,13 +1157,13 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[24] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[25] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[24b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
+    print("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
     for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
@@ -1060,7 +1173,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[25] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[26] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -1076,7 +1189,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[26] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
+    print("[27] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
     for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -1090,7 +1203,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[27] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[28] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -1106,7 +1219,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[28] HPKS-Stern-F sign+verify throughput (n=32, rounds=4)  [CODE-BASED PQC]")
+    print("[29] HPKS-Stern-F sign+verify throughput (n=32, rounds=4)  [CODE-BASED PQC]")
     size = 32; rounds = 4
     sf_seed, sf_e, sf_syn = stern_f_keygen(size)
     msg = BitArray.random(size); sink = [True]
@@ -1152,7 +1265,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.23 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.5.24 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -1183,6 +1296,9 @@ if __name__ == '__main__':
     print("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
     test_hpks_stern_f_correctness()
     test_hpke_stern_f_correctness()
+
+    print("--- Security Tests: HFSCX-256 Hash ---\n")
+    test_hfscx_256()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

@@ -84,7 +84,7 @@ HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests_c  # env-var 
 cd CryptosuiteTests && go run Herradura_tests.go
 cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
 
-# Python — tests [1]–[16] + benchmarks [17]–[28]
+# Python — tests [1]–[19] (security) + benchmarks [20]–[29]
 python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
