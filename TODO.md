@@ -1830,7 +1830,7 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   constant-time comparison; if OK re-read (or buffer) and decrypt; trim to plaintext_len
 - Cross-check: Python `encfile` output → C `decfile` (and vice versa) must succeed
 
-**Batch 7 — Build scripts + CliTest** (1 commit)
+**Batch 7 — Build scripts + CliTest** (1 commit) ✅
 - `build_c.sh`: add CLI build step:
   `gcc -O2 -o HerraduraCli/herradura_cli HerraduraCli/herradura_cli.c`
 - `CliTest/test_c_keygen.sh`: genpkey all 8 types; pkey --pubout; grep PEM headers;
@@ -1864,7 +1864,7 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   C (rounds=32 × permutation work).  Flag this in `--help` text; recommend `--bits 32`
   for testing.
 
-Status: **IN PROGRESS** — Batches 1–6 done (v1.5.26).
+Status: **DONE** — Batches 1–7 complete (v1.5.26).
 
 **Batch 4 complete (v1.5.25):**
 - `HerraduraCli/herradura_cli.c` built and tested; all 12 functional tests pass
@@ -1893,11 +1893,21 @@ Status: **IN PROGRESS** — Batches 1–6 done (v1.5.26).
 - Tamper rejection verified: flipping a ciphertext byte exits 1 with auth-failure message
 - C↔Python interop verified: C encfile → Python decfile and Python encfile → C decfile both pass
 
+**Batch 7 complete (v1.5.26):**
+- `build_c.sh` updated to v1.5.26; CLI build step added
+- `CliTest/test_c_keygen.sh`: 16 PASS — all 8 algo types, genpkey + pkey pubout
+- `CliTest/test_c_encrypt.sh`: 7 PASS — hske/hske-nla1/hske-nla2, hkex-rnl cross-party,
+  hpke, hpke-nl, hpke-stern
+- `CliTest/test_c_sign.sh`: 7 PASS — hpks/hpks-nl (correct/wrong msg, wrong key),
+  hpks-stern N=256 (correct/wrong msg)
+- `CliTest/test_c_encfile.sh`: 5 PASS — 1 MiB round-trip, tamper rejection, 0/1/32-byte edges
+- `CliTest/test_c_interop.sh`: 4 PASS — C↔Python encfile and sign/verify cross-tool
+
 ---
 
 ## Updated priority order
 
-1. #27 — HerraduraCli C CLI + shared header library (**active**)
+1. #27 — HerraduraCli C CLI + shared header library (**DONE v1.5.26**)
 2. #17 — Multi-size standardization (Batches 3-6, C tests)
 3. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
 4. #25 — HerraduraCli Python CLI (**DONE v1.5.23**)
