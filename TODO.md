@@ -1864,7 +1864,16 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   C (rounds=32 × permutation work).  Flag this in `--help` text; recommend `--bits 32`
   for testing.
 
-Status: **TODO** — not yet started.
+Status: **IN PROGRESS** — Batches 1–4 done (v1.5.25).
+
+**Batch 4 complete (v1.5.25):**
+- `HerraduraCli/herradura_cli.c` built and tested; all 12 functional tests pass
+- Interop verified: C-only GF/RNL round-trips, C×Python GF cross-kex, C×Python RNL cross-kex
+  (Python-Alice+C-Bob and C-Alice+Python-Bob both produce matching session keys)
+- Bug fixed during dev: `rnl_reconcile_bits` packs bits LSB-first (b[0]=bits 0-7) while Python
+  `BitArray.bytes` is big-endian (byte 0 = bits 248-255); K and hint bytes reversed before DER
+  encoding (and reversed back after decoding) to match Python's layout
+- `pem_key_get_n` helper left in (unused; useful for Batch 5 n-validation)
 
 ---
 
