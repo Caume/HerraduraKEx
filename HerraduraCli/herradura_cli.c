@@ -554,6 +554,599 @@ static void cmd_kex(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Batch 5 helpers
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Write raw bytes to file or stdout. */
+static void write_binary_file(const char *path, const uint8_t *buf, size_t len)
+{
+    FILE *f = (!path || strcmp(path, "-") == 0) ? stdout : fopen(path, "wb");
+    if (!f) dief("cannot write: %s", path);
+    fwrite(buf, 1, len, f);
+    if (f != stdout) fclose(f);
+}
+
+/* Load session key (SESSION KEY or RNL RESPONSE, first field) into K. */
+static void load_sym_key(BitArray *K, const char *path)
+{
+    PemKey sk;
+    pem_key_load(&sk, path);
+    if (sk.n_items < 1) die("key: malformed session key PEM");
+    ba_from_ra(K, sk.vals[0], sk.vlens[0]);
+    pem_key_free(&sk);
+}
+
+/* DER INTEGER for a 1-byte value (format tags 0, 1, rounds=32, etc.). */
+static int der_i_byte(uint8_t v, uint8_t *out, size_t *olen)
+{ return der_int_enc(&v, 1, out, olen); }
+
+/* Build msg BitArray: first KEYBYTES of data, zero-padded on the right. */
+static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
+{
+    memset(msg->b, 0, KEYBYTES);
+    size_t cp = len < KEYBYTES ? len : KEYBYTES;
+    memcpy(msg->b, data, cp);
+}
+
+/* ─── Stern signature pack / unpack ─── */
+
+#define STERN_COMMITS_BYTES (3 * SDF_ROUNDS * KEYBYTES)   /* 3072 */
+#define STERN_CHAL_BYTES    ((SDF_ROUNDS + 3) / 4)        /* 8   */
+#define STERN_RESP_BYTES    (2 * SDF_ROUNDS * KEYBYTES)   /* 2048 */
+
+static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
+{
+    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
+    uint8_t chal[STERN_CHAL_BYTES];
+    uint8_t *resp    = malloc(STERN_RESP_BYTES);
+    if (!commits || !resp) die("out of memory");
+
+    /* Commits: c0, c1, c2 per round (each KEYBYTES bytes, big-endian). */
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 3 * KEYBYTES;
+          memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
+          memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
+          memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
+      }
+    }
+    /* Challenges: 2 bits per round, packed LSB-first within each byte. */
+    { int i;
+      memset(chal, 0, STERN_CHAL_BYTES);
+      for (i = 0; i < SDF_ROUNDS; i++)
+          chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
+    }
+    /* Responses: resp_a then resp_b per round (each KEYBYTES). */
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 2 * KEYBYTES;
+          memcpy(resp + off,          sig->resp_a[i].b, KEYBYTES);
+          memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
+      }
+    }
+
+    /* DER-encode each blob. */
+    uint8_t in_der[8], ir_der[8];
+    size_t ln, lr;
+    size_t ic_sz = DER_INT_LEN(STERN_COMMITS_BYTES);
+    size_t ich_sz = DER_INT_LEN(STERN_CHAL_BYTES);
+    size_t irs_sz = DER_INT_LEN(STERN_RESP_BYTES);
+    uint8_t *ic_der  = malloc(ic_sz);
+    uint8_t *ich_der = malloc(ich_sz);
+    uint8_t *irs_der = malloc(irs_sz);
+    if (!ic_der || !ich_der || !irs_der) die("out of memory");
+    size_t lc, lch, lrs;
+    der_i_n256(in_der, &ln);
+    der_i_byte(SDF_ROUNDS, ir_der, &lr);
+    der_int_enc(commits, STERN_COMMITS_BYTES, ic_der,  &lc);
+    der_int_enc(chal,    STERN_CHAL_BYTES,    ich_der, &lch);
+    der_int_enc(resp,    STERN_RESP_BYTES,    irs_der, &lrs);
+
+    const uint8_t *it[5] = {in_der, ir_der, ic_der, ich_der, irs_der};
+    size_t         il[5] = {ln,     lr,     lc,     lch,     lrs};
+    seq_and_write(it, il, 5, PEM_SIGNATURE, out_path);
+
+    free(commits); free(resp); free(ic_der); free(ich_der); free(irs_der);
+}
+
+static int stern_sig_load(const char *path, SternSig *sig)
+{
+    PemKey pk;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, PEM_SIGNATURE) != 0 || pk.n_items != 5)
+        { pem_key_free(&pk); return -1; }
+
+    /* Verify rounds. */
+    { int i, r = 0;
+      for (i = 0; i < (int)pk.vlens[1]; i++) r = (r << 8) | pk.vals[1][i];
+      if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
+    }
+
+    /* Right-align each big-endian blob. */
+    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
+    uint8_t chal[STERN_CHAL_BYTES];
+    uint8_t *resp    = malloc(STERN_RESP_BYTES);
+    if (!commits || !resp) die("out of memory");
+
+#define RA_BUF(dst, dlen, vp, vl) do { \
+    size_t _l = (vl) < (dlen) ? (vl) : (dlen); \
+    memset(dst, 0, dlen); \
+    memcpy((uint8_t *)(dst) + (dlen) - _l, vp, _l); \
+} while (0)
+
+    RA_BUF(commits, STERN_COMMITS_BYTES, pk.vals[2], pk.vlens[2]);
+    RA_BUF(chal,    STERN_CHAL_BYTES,    pk.vals[3], pk.vlens[3]);
+    RA_BUF(resp,    STERN_RESP_BYTES,    pk.vals[4], pk.vlens[4]);
+#undef RA_BUF
+
+    /* Unpack commits. */
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 3 * KEYBYTES;
+          memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
+          memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
+          memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
+      }
+    }
+    /* Unpack challenges. */
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++)
+          sig->b[i] = (chal[i / 4] >> ((i % 4) * 2)) & 3;
+    }
+    /* Unpack responses. */
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 2 * KEYBYTES;
+          memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
+          memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
+      }
+    }
+
+    free(commits); free(resp);
+    pem_key_free(&pk);
+    return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * dgst
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_dgst(int argc, char **argv)
+{
+    const char *algo     = get_arg(argc, argv, "--algo");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!algo) algo = "hfscx-256";
+    if (!in_path) die("dgst: --in required");
+
+    if (strcmp(algo, "hfscx-256") != 0)
+        dief("dgst: unsupported algorithm: %s", algo);
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    uint8_t digest[32];
+    hfscx_256(in_buf, in_len, NULL, digest);
+    free(in_buf);
+
+    if (!out_path || strcmp(out_path, "-") == 0) {
+        /* Hex to stdout. */
+        size_t i;
+        for (i = 0; i < 32; i++) printf("%02x", digest[i]);
+        putchar('\n');
+    } else {
+        /* HERRADURA DIGEST PEM (SEQUENCE containing single 32-byte INTEGER). */
+        uint8_t id[DER_INT_LEN(32)]; size_t ld;
+        der_int_enc(digest, 32, id, &ld);
+        const uint8_t *it[1] = {id}; size_t il[1] = {ld};
+        seq_and_write(it, il, 1, PEM_DIGEST, out_path);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * enc
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_enc(int argc, char **argv)
+{
+    const char *algo       = get_arg(argc, argv, "--algo");
+    const char *key_path   = get_arg(argc, argv, "--key");
+    const char *pubkey_path = get_arg(argc, argv, "--pubkey");
+    const char *in_path    = get_arg(argc, argv, "--in");
+    const char *out_path   = get_arg(argc, argv, "--out");
+    if (!algo)    die("enc: --algo required");
+    if (!in_path) die("enc: --in required");
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+
+    /* Plaintext BitArray: input left-aligned into big-endian block, zero-padded. */
+    BitArray P;
+    make_msg_ba(&P, in_buf, in_len);
+    free(in_buf);
+
+    /* ── Symmetric algos ── */
+    if (strcmp(algo, "hske") == 0 || strcmp(algo, "hske-nla1") == 0 ||
+        strcmp(algo, "hske-nla2") == 0) {
+        if (!key_path) dief("enc: --key required for %s", algo);
+        BitArray K;
+        load_sym_key(&K, key_path);
+
+        if (strcmp(algo, "hske") == 0) {
+            BitArray E;
+            ba_fscx_revolve(&E, &P, &K, I_VALUE);
+            uint8_t it0[8], itE[DER_INT_LEN(KEYBYTES)], itn[8];
+            size_t l0, lE, ln;
+            der_i_byte(0, it0, &l0); der_i32(E.b, itE, &lE); der_i_n256(itn, &ln);
+            const uint8_t *it[3] = {it0, itE, itn}; size_t il[3] = {l0, lE, ln};
+            seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
+
+        } else if (strcmp(algo, "hske-nla1") == 0) {
+            FILE *urnd = fopen("/dev/urandom", "rb");
+            if (!urnd) die("cannot open /dev/urandom");
+            BitArray N_nonce, base, seed, ks, E;
+            ba_rand(&N_nonce, urnd);
+            fclose(urnd);
+            ba_xor(&base, &K, &N_nonce);
+            ba_rol_k(&seed, &base, KEYBITS / 8);
+            nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
+            ba_xor(&E, &P, &ks);
+            uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)], itnb[8];
+            size_t l0, ln, lE, lnb;
+            der_i_byte(1, it0, &l0);
+            der_i32(N_nonce.b, itn, &ln);
+            der_i32(E.b, itE, &lE);
+            der_i_n256(itnb, &lnb);
+            const uint8_t *it[4] = {it0, itn, itE, itnb};
+            size_t il[4] = {l0, ln, lE, lnb};
+            seq_and_write(it, il, 4, PEM_CIPHERTEXT, out_path);
+
+        } else { /* hske-nla2 */
+            BitArray E;
+            nl_fscx_revolve_v2_ba(&E, &P, &K, R_VALUE);
+            uint8_t it0[8], itE[DER_INT_LEN(KEYBYTES)], itn[8];
+            size_t l0, lE, ln;
+            der_i_byte(0, it0, &l0); der_i32(E.b, itE, &lE); der_i_n256(itn, &ln);
+            const uint8_t *it[3] = {it0, itE, itn}; size_t il[3] = {l0, lE, ln};
+            seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
+        }
+        return;
+    }
+
+    /* ── Asymmetric algos ── */
+    if (!pubkey_path) dief("enc: --pubkey required for %s", algo);
+    PemKey pub_k;
+    pem_key_load(&pub_k, pubkey_path);
+
+    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0) {
+        /* vals[0]=pub (32 bytes), vals[1]=n */
+        if (pub_k.n_items < 1) die("enc: malformed public key");
+        BitArray pub, r, R, enc_key, E;
+        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        pem_key_free(&pub_k);
+
+        FILE *urnd = fopen("/dev/urandom", "rb");
+        if (!urnd) die("cannot open /dev/urandom");
+        ba_rand(&r, urnd); fclose(urnd);
+        gf_pow_ba(&R, &GF_GEN, &r);
+        gf_pow_ba(&enc_key, &pub, &r);
+        if (strcmp(algo, "hpke") == 0)
+            ba_fscx_revolve(&E, &P, &enc_key, I_VALUE);
+        else
+            nl_fscx_revolve_v2_ba(&E, &P, &enc_key, I_VALUE);
+        uint8_t iR[DER_INT_LEN(KEYBYTES)], iE[DER_INT_LEN(KEYBYTES)], in[8];
+        size_t lR, lE, ln;
+        der_i32(R.b, iR, &lR); der_i32(E.b, iE, &lE); der_i_n256(in, &ln);
+        const uint8_t *it[3] = {iR, iE, in}; size_t il[3] = {lR, lE, ln};
+        seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
+
+    } else if (strcmp(algo, "hpke-stern") == 0) {
+        /* vals[0]=syn32 (32 bytes), vals[1]=seed (32 bytes), vals[2]=n */
+        if (pub_k.n_items < 2) die("enc: malformed Stern public key");
+        BitArray seed_ba, K_ba, e_p, E;
+        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        pem_key_free(&pub_k);
+
+        FILE *urnd = fopen("/dev/urandom", "rb");
+        if (!urnd) die("cannot open /dev/urandom");
+        uint8_t ct_syndr[SDF_SYNBYTES];
+        hpke_stern_f_encap(&K_ba, ct_syndr, &e_p, &seed_ba, urnd);
+        fclose(urnd);
+        ba_fscx_revolve(&E, &P, &K_ba, I_VALUE);
+
+        /* Syndrome: zero-pad SDF_SYNBYTES → KEYBYTES. */
+        uint8_t ct32[KEYBYTES];
+        memset(ct32, 0, KEYBYTES);
+        memcpy(ct32 + KEYBYTES - SDF_SYNBYTES, ct_syndr, SDF_SYNBYTES);
+
+        uint8_t ict[DER_INT_LEN(KEYBYTES)], iep[DER_INT_LEN(KEYBYTES)];
+        uint8_t ik[DER_INT_LEN(KEYBYTES)],  iE[DER_INT_LEN(KEYBYTES)], in[8];
+        size_t lct, lep, lk, lE, ln;
+        der_i32(ct32,   ict, &lct); der_i32(e_p.b, iep, &lep);
+        der_i32(K_ba.b, ik,  &lk);  der_i32(E.b,   iE,  &lE); der_i_n256(in, &ln);
+        const uint8_t *it[5] = {ict, iep, ik, iE, in};
+        size_t         il[5] = {lct, lep, lk, lE, ln};
+        seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
+
+    } else {
+        pem_key_free(&pub_k);
+        dief("enc: unsupported algorithm: %s", algo);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * dec
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_dec(int argc, char **argv)
+{
+    const char *algo     = get_arg(argc, argv, "--algo");
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!algo)    die("dec: --algo required");
+    if (!in_path) die("dec: --in required");
+
+    /* Load ciphertext PEM. */
+    PemKey ct;
+    pem_key_load(&ct, in_path);
+    if (strcmp(ct.label, PEM_CIPHERTEXT) != 0)
+        dief("dec: expected CIPHERTEXT PEM, got: %s", ct.label);
+
+    /* ── Symmetric algos ── */
+    if (strcmp(algo, "hske") == 0 || strcmp(algo, "hske-nla1") == 0 ||
+        strcmp(algo, "hske-nla2") == 0) {
+        if (!key_path) dief("dec: --key required for %s", algo);
+        BitArray K;
+        load_sym_key(&K, key_path);
+
+        /* fmt_tag is vals[0][0]; E follows; for nla1 nonce is between them. */
+        int fmt = (ct.vlens[0] >= 1) ? ct.vals[0][0] : 0;
+        BitArray E, D;
+
+        if (strcmp(algo, "hske-nla1") == 0) {
+            if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
+            BitArray N_nonce, base, seed, ks;
+            ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
+            ba_from_ra(&E,       ct.vals[2], ct.vlens[2]);
+            pem_key_free(&ct);
+            ba_xor(&base, &K, &N_nonce);
+            ba_rol_k(&seed, &base, KEYBITS / 8);
+            nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
+            ba_xor(&D, &E, &ks);
+        } else {
+            if (ct.n_items < 3) die("dec: bad symmetric ciphertext");
+            ba_from_ra(&E, ct.vals[1], ct.vlens[1]);
+            pem_key_free(&ct);
+            if (strcmp(algo, "hske") == 0)
+                ba_fscx_revolve(&D, &E, &K, R_VALUE);
+            else
+                nl_fscx_revolve_v2_inv_ba(&D, &E, &K, R_VALUE);
+        }
+        write_binary_file(out_path, D.b, KEYBYTES);
+        return;
+    }
+
+    /* ── Asymmetric algos ── */
+    if (!key_path) dief("dec: --key required for %s", algo);
+    PemKey priv_k;
+    pem_key_load(&priv_k, key_path);
+
+    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0) {
+        /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
+        if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
+        if (priv_k.n_items < 1) die("dec: malformed private key");
+        BitArray priv, R, E, dec_key, D;
+        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
+        ba_from_ra(&R,    ct.vals[0],     ct.vlens[0]);
+        ba_from_ra(&E,    ct.vals[1],     ct.vlens[1]);
+        pem_key_free(&ct); pem_key_free(&priv_k);
+        gf_pow_ba(&dec_key, &R, &priv);
+        if (strcmp(algo, "hpke") == 0)
+            ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
+        else
+            nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
+        write_binary_file(out_path, D.b, KEYBYTES);
+
+    } else if (strcmp(algo, "hpke-stern") == 0) {
+        /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int */
+        if (ct.n_items < 4) die("dec: malformed HPKE-Stern ciphertext");
+        if (priv_k.n_items < 2) die("dec: malformed Stern private key");
+        BitArray e_p_ba, E_ba, seed_ba, K_dec, D;
+        ba_from_ra(&e_p_ba,  ct.vals[1],       ct.vlens[1]);
+        ba_from_ra(&E_ba,    ct.vals[3],       ct.vlens[3]);
+        ba_from_ra(&seed_ba, priv_k.vals[1],   priv_k.vlens[1]);
+        pem_key_free(&ct); pem_key_free(&priv_k);
+        hpke_stern_f_decap_known(&K_dec, &e_p_ba, &seed_ba);
+        ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
+        write_binary_file(out_path, D.b, KEYBYTES);
+
+    } else {
+        pem_key_free(&ct); pem_key_free(&priv_k);
+        dief("dec: unsupported algorithm: %s", algo);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * sign
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_sign(int argc, char **argv)
+{
+    const char *algo     = get_arg(argc, argv, "--algo");
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    const char *digest   = get_arg(argc, argv, "--digest");
+    if (!algo)     die("sign: --algo required");
+    if (!key_path) die("sign: --key required");
+    if (!in_path)  die("sign: --in required");
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    uint8_t msg_bytes[KEYBYTES];
+
+    if (digest && strcmp(digest, "hfscx-256") == 0) {
+        /* Pre-hash: sign the 32-byte digest. */
+        hfscx_256(in_buf, in_len, NULL, msg_bytes);
+        in_len = KEYBYTES;
+    } else {
+        memset(msg_bytes, 0, KEYBYTES);
+        size_t cp = in_len < KEYBYTES ? in_len : KEYBYTES;
+        memcpy(msg_bytes, in_buf, cp);
+        in_len = KEYBYTES;
+    }
+    free(in_buf);
+
+    BitArray msg;
+    memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    PemKey priv_k;
+    pem_key_load(&priv_k, key_path);
+
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
+        if (priv_k.n_items < 1) die("sign: malformed private key");
+        BitArray priv, k_rand, R, e, me, s_ba;
+        ba_from_ra(&priv, priv_k.vals[0], priv_k.vlens[0]);
+        pem_key_free(&priv_k);
+
+        ba_rand(&k_rand, urnd);
+        gf_pow_ba(&R, &GF_GEN, &k_rand);
+        if (strcmp(algo, "hpks") == 0)
+            ba_fscx_revolve(&e, &R, &msg, I_VALUE);
+        else
+            nl_fscx_revolve_v1_ba(&e, &R, &msg, I_VALUE);
+        /* s = (k - priv * e) mod (2^256-1) */
+        ba_mul_mod_ord(&me, &priv, &e);
+        ba_sub_mod_ord(&s_ba, &k_rand, &me);
+
+        uint8_t is[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
+        uint8_t ie[DER_INT_LEN(KEYBYTES)], in[8];
+        size_t ls, lR, le, ln;
+        der_i32(s_ba.b, is, &ls); der_i32(R.b, iR, &lR);
+        der_i32(e.b,    ie, &le); der_i_n256(in, &ln);
+        const uint8_t *it[4] = {is, iR, ie, in}; size_t il[4] = {ls, lR, le, ln};
+        seq_and_write(it, il, 4, PEM_SIGNATURE, out_path);
+
+    } else if (strcmp(algo, "hpks-stern") == 0) {
+        if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        BitArray e_ba, seed_ba;
+        ba_from_ra(&e_ba,    priv_k.vals[0], priv_k.vlens[0]);
+        ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
+        pem_key_free(&priv_k);
+
+        SternSig sig;
+        hpks_stern_f_sign(&sig, &msg, &e_ba, &seed_ba, urnd);
+        stern_sig_pack_and_write(&sig, out_path);
+
+    } else {
+        pem_key_free(&priv_k);
+        fclose(urnd);
+        dief("sign: unsupported algorithm: %s", algo);
+    }
+
+    fclose(urnd);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * verify
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_verify(int argc, char **argv)
+{
+    const char *algo        = get_arg(argc, argv, "--algo");
+    const char *pubkey_path = get_arg(argc, argv, "--pubkey");
+    const char *in_path     = get_arg(argc, argv, "--in");
+    const char *sig_path    = get_arg(argc, argv, "--sig");
+    const char *digest      = get_arg(argc, argv, "--digest");
+    if (!algo)        die("verify: --algo required");
+    if (!pubkey_path) die("verify: --pubkey required");
+    if (!in_path)     die("verify: --in required");
+    if (!sig_path)    die("verify: --sig required");
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    uint8_t msg_bytes[KEYBYTES];
+
+    if (digest && strcmp(digest, "hfscx-256") == 0) {
+        hfscx_256(in_buf, in_len, NULL, msg_bytes);
+    } else {
+        memset(msg_bytes, 0, KEYBYTES);
+        size_t cp = in_len < KEYBYTES ? in_len : KEYBYTES;
+        memcpy(msg_bytes, in_buf, cp);
+    }
+    free(in_buf);
+
+    BitArray msg;
+    memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    PemKey pub_k;
+    pem_key_load(&pub_k, pubkey_path);
+
+    if (strcmp(algo, "hpks") == 0 || strcmp(algo, "hpks-nl") == 0) {
+        if (pub_k.n_items < 1) die("verify: malformed public key");
+        BitArray pub;
+        ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
+        pem_key_free(&pub_k);
+
+        /* Load Schnorr sig: s, R, e, n */
+        PemKey sig_k;
+        pem_key_load(&sig_k, sig_path);
+        if (strcmp(sig_k.label, PEM_SIGNATURE) != 0 || sig_k.n_items < 3)
+            die("verify: invalid signature PEM");
+        BitArray s_ba, R, e_stored;
+        ba_from_ra(&s_ba,     sig_k.vals[0], sig_k.vlens[0]);
+        ba_from_ra(&R,        sig_k.vals[1], sig_k.vlens[1]);
+        ba_from_ra(&e_stored, sig_k.vals[2], sig_k.vlens[2]);
+        pem_key_free(&sig_k);
+
+        /* Recompute e_v = revolve(R, msg, I_VALUE) */
+        BitArray e_v;
+        if (strcmp(algo, "hpks") == 0)
+            ba_fscx_revolve(&e_v, &R, &msg, I_VALUE);
+        else
+            nl_fscx_revolve_v1_ba(&e_v, &R, &msg, I_VALUE);
+
+        /* lhs = g^s * pub^e_v; OK if lhs == R */
+        BitArray lhs1, lhs2, lhs;
+        gf_pow_ba(&lhs1, &GF_GEN, &s_ba);
+        gf_pow_ba(&lhs2, &pub,    &e_v);
+        gf_mul_ba(&lhs, &lhs1, &lhs2);
+
+        if (ba_equal(&lhs, &R)) { puts("Signature OK");          exit(0); }
+        else                    { puts("Verification FAILED");   exit(1); }
+
+    } else if (strcmp(algo, "hpks-stern") == 0) {
+        if (pub_k.n_items < 2) die("verify: malformed Stern public key");
+
+        /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned). */
+        uint8_t syn32[KEYBYTES], syndr[SDF_SYNBYTES];
+        memset(syn32, 0, KEYBYTES);
+        { size_t cl = pub_k.vlens[0] < KEYBYTES ? pub_k.vlens[0] : KEYBYTES;
+          memcpy(syn32 + KEYBYTES - cl, pub_k.vals[0], cl); }
+        memcpy(syndr, syn32 + KEYBYTES - SDF_SYNBYTES, SDF_SYNBYTES);
+
+        BitArray seed_ba;
+        ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);
+        pem_key_free(&pub_k);
+
+        SternSig sig;
+        if (stern_sig_load(sig_path, &sig) != 0)
+            die("verify: cannot load Stern signature");
+
+        int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
+        if (ok) { puts("Signature OK");        exit(0); }
+        else    { puts("Verification FAILED"); exit(1); }
+
+    } else {
+        pem_key_free(&pub_k);
+        dief("verify: unsupported algorithm: %s", algo);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -577,6 +1170,24 @@ static void usage(void)
 "    HKEX-RNL is 2-round: Bob runs step 1 (--their=alice_pub.pem),\n"
 "    Alice runs step 2 (--their=bob_resp.pem).\n"
 "\n"
+"  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE]\n"
+"    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2\n"
+"    Asymmetric (--pubkey): hpke hpke-nl hpke-stern\n"
+"\n"
+"  dec --algo ALGO --key KEY --in CT_FILE [--out FILE]\n"
+"    Decrypt.  Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"
+"\n"
+"  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256]\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern\n"
+"    --digest hfscx-256: pre-hash input before signing.\n"
+"\n"
+"  verify --algo ALGO --pubkey PUB --in FILE --sig SIG [--digest hfscx-256]\n"
+"    Verify signature.  Exits 0 on OK, 1 on failure.\n"
+"\n"
+"  dgst --in FILE [--algo hfscx-256] [--out FILE]\n"
+"    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"
+"    With --out FILE: HERRADURA DIGEST PEM.\n"
+"\n"
 "PEM output goes to stdout when --out is absent or '-'.\n"
 "All keys are 256-bit.\n"
     );
@@ -596,6 +1207,11 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }
     if (strcmp(cmd, "kex")     == 0) { cmd_kex(argc, argv);     return 0; }
+    if (strcmp(cmd, "enc")     == 0) { cmd_enc(argc, argv);     return 0; }
+    if (strcmp(cmd, "dec")     == 0) { cmd_dec(argc, argv);     return 0; }
+    if (strcmp(cmd, "sign")    == 0) { cmd_sign(argc, argv);    return 0; }
+    if (strcmp(cmd, "verify")  == 0) { cmd_verify(argc, argv);  return 0; }
+    if (strcmp(cmd, "dgst")    == 0) { cmd_dgst(argc, argv);    return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;

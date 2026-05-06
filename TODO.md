@@ -1864,7 +1864,7 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   C (rounds=32 × permutation work).  Flag this in `--help` text; recommend `--bits 32`
   for testing.
 
-Status: **IN PROGRESS** — Batches 1–4 done (v1.5.25).
+Status: **IN PROGRESS** — Batches 1–5 done (v1.5.25).
 
 **Batch 4 complete (v1.5.25):**
 - `HerraduraCli/herradura_cli.c` built and tested; all 12 functional tests pass
@@ -1874,6 +1874,15 @@ Status: **IN PROGRESS** — Batches 1–4 done (v1.5.25).
   `BitArray.bytes` is big-endian (byte 0 = bits 248-255); K and hint bytes reversed before DER
   encoding (and reversed back after decoding) to match Python's layout
 - `pem_key_get_n` helper left in (unused; useful for Batch 5 n-validation)
+
+**Batch 5 complete (v1.5.25):**
+- `cmd_enc`/`cmd_dec`: all 6 algos implemented (hske, hske-nla1, hske-nla2, hpke, hpke-nl,
+  hpke-stern); PEM ciphertext format byte-compatible with Python CLI
+- `cmd_sign`/`cmd_verify`: hpks, hpks-nl, hpks-stern; `--digest hfscx-256` pre-hashes input;
+  Schnorr exit 0/1 + "Signature OK"/"Verification FAILED"; C×Python cross-tool sign+verify pass
+- `cmd_dgst`: HFSCX-256 hash; hex to stdout or HERRADURA DIGEST PEM; matches Python known-answer
+- All C-only round-trips pass; C↔Python interop verified for all symmetric, asymmetric, and
+  signing algos including hpke-stern and hpks-stern
 
 ---
 
