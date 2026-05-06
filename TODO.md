@@ -1622,19 +1622,266 @@ Status: **TODO** — not yet started.
 
 ---
 
+### 27. HerraduraCli — C CLI tool + shared `herradura.h` header library (New Feature)
+
+**Goal:** A C command-line tool (`HerraduraCli/herradura_cli`) with feature parity to the
+Python CLI (`herradura.py`), backed by a new `herradura.h` header-only library that
+eliminates the current code duplication between `Herradura cryptographic suite.c` and
+`CryptosuiteTests/Herradura_tests.c`.  All three C programs — suite demo, tests, and CLI —
+compile independently via a single `gcc` invocation; no build-system changes beyond adding
+the CLI target to `build_c.sh`.
+
+Interoperability with the Python CLI is a hard requirement: keys, ciphertexts, signatures,
+and `.hkx` files produced by one implementation must be accepted by the other.
+
+---
+
+#### Architecture
+
+```
+herradura.h                         — NEW: header-only library; all crypto primitives as
+                                       static functions; types (BitArray, SternSig,
+                                       rnl_poly_t), constants, and HFSCX-256 hash
+Herradura cryptographic suite.c     — REFACTORED: #include "herradura.h"; keeps only main()
+CryptosuiteTests/Herradura_tests.c  — REFACTORED: #include "../herradura.h"; removes
+                                       duplicated primitives; keeps test helpers + main()
+HerraduraCli/
+  herradura_cli.c                   — NEW: C CLI (includes ../herradura.h +
+                                       herradura_codec.h); no crypto logic — CLI dispatch
+                                       only
+  herradura_codec.h                 — NEW: header-only PEM/DER/Base64 I/O helpers; no
+                                       external deps; only <stdio.h>, <stdlib.h>,
+                                       <string.h>, <stdint.h>
+CliTest/
+  test_c_keygen.sh                  — C CLI key generation smoke test
+  test_c_encrypt.sh                 — C CLI enc/dec round-trips
+  test_c_sign.sh                    — C CLI sign/verify + tamper detection
+  test_c_encfile.sh                 — C CLI encfile/decfile; tag rejection; edge cases
+  test_c_interop.sh                 — Python encrypts → C decrypts and vice versa
+```
+
+**Why header-only?**  Each binary compiles with a single `gcc source.c` invocation — the
+existing build model.  Exporting to a `.h`+`.c` pair would require a separate compile step
+and object-file linkage, breaking the one-liner build commands documented in `CLAUDE.md`.
+Header-only with `static` functions duplicates a few KB of compiled code per binary, which
+is acceptable.
+
+---
+
+#### Supported commands
+
+| Subcommand | Flags | Notes |
+|---|---|---|
+| `genpkey` | `--algo`, `--bits`, `--out` | All 8 key types |
+| `pkey` | `--in`, `--pubout`, `--out`, `--text` | Extract / display public key |
+| `kex` | `--algo`, `--our`, `--their`, `--out` | HKEX-GF and HKEX-RNL (2-round) |
+| `enc` | `--algo`, `--key`/`--pubkey`, `--in`, `--out` | HSKE, HSKE-NL-A1/A2, HPKE, HPKE-NL, HPKE-Stern-F |
+| `dec` | `--algo`, `--key`, `--in`, `--out` | Same set |
+| `sign` | `--algo`, `--key`, `--in`, `--out`, `[--digest hfscx-256]` | HPKS, HPKS-NL, HPKS-Stern-F |
+| `verify` | `--algo`, `--pubkey`, `--in`, `--sig`, `[--digest hfscx-256]` | Same set; exits 0/1 |
+| `dgst` | `[--algo hfscx-256]`, `--in`, `[--out]` | Hex to stdout or HERRADURA DIGEST PEM |
+| `encfile` | `--algo hske-nla1`, `--key`, `--in`, `--out` | HSKE-NL-A1 CTR AEAD → `.hkx` |
+| `decfile` | `--algo hske-nla1`, `--key`, `--in`, `--out` | Verify-then-decrypt `.hkx` |
+
+---
+
+#### New C primitives required
+
+**HFSCX-256** (Merkle-Damgård hash on NL-FSCX v1, identical to Python):
+
+```
+IV: "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0"  (32 bytes)
+Padding: append 0x80; zero-fill to multiple of 32; append 32-byte length block
+         (bit_length_64 XOR init_state) for MD-strengthening
+Chain:  state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 64)
+Keyed:  init_state = key XOR IV  (domain separation for MAC use)
+```
+
+```c
+/* Bare hash: iv = NULL.  Keyed MAC: pass 32-byte iv = key XOR _HFSCX256_IV. */
+static void hfscx_256(const uint8_t *data, size_t len,
+                      const uint8_t *iv,   /* NULL → use IV constant */
+                      uint8_t out[32]);
+```
+
+**HSKE-NL-A1 CTR AEAD helpers** (exposed via `herradura.h` for use by `encfile`/`decfile`):
+
+```c
+/* Derive one 32-byte keystream block for counter i. */
+static void hske_nla1_ks_block(const BitArray *seed, const BitArray *base,
+                                uint32_t i, BitArray *ks_out);
+
+/* Derive the MAC key (domain-separated from encryption key). */
+static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
+                               BitArray *mac_key_out);
+```
+
+---
+
+#### `herradura_codec.h` API
+
+```c
+/* Base64 */
+void b64_encode(const uint8_t *in, size_t in_len, char *out, size_t *out_len);
+int  b64_decode(const char *in, size_t in_len, uint8_t *out, size_t *out_len);
+
+/* PEM */
+int pem_wrap  (const char *label, const uint8_t *der, size_t der_len,
+               char *out, size_t *out_len);            /* writes "-----BEGIN label-----\n..." */
+int pem_unwrap(const char *pem, size_t pem_len,
+               char *label_out,                        /* caller-allocated, >= 80 bytes */
+               uint8_t *der_out, size_t *der_len);
+
+/* File I/O */
+int pem_read_file (const char *path, char *label_out, uint8_t *der_out, size_t *der_len);
+int pem_write_file(const char *path, const char *label, const uint8_t *der, size_t der_len);
+
+/* DER TLV (minimal subset: INTEGER 0x02, SEQUENCE 0x30) */
+int der_int_enc(const uint8_t *val, size_t val_len, uint8_t *out, size_t *out_len);
+int der_seq_enc(const uint8_t **items, const size_t *item_lens,
+                int n_items, uint8_t *out, size_t *out_len);
+int der_parse_seq(const uint8_t *der, size_t len,
+                  uint8_t **vals, size_t *val_lens, int max_items, int *n_out);
+```
+
+PEM label constants (must match Python exactly for interoperability):
+
+```c
+#define PEM_HKEX_GF_PRIV   "HERRADURA HKEX-GF PRIVATE KEY"
+#define PEM_HKEX_GF_PUB    "HERRADURA HKEX-GF PUBLIC KEY"
+#define PEM_HKEX_RNL_PRIV  "HERRADURA HKEX-RNL PRIVATE KEY"
+/* ... one per algo-type pair; SESSION KEY, CIPHERTEXT, SIGNATURE, DIGEST */
+```
+
+---
+
+#### `.hkx` binary format (shared with Python, must stay compatible)
+
+```
+Offset       Length   Field
+0            4        Magic: 'HKX1'
+4            1        Algo byte: 0x01 = hske-nla1
+5            8        Plaintext length (big-endian uint64)
+13           32       Nonce N_nonce
+45           m*32     Ciphertext blocks (last block zero-padded to 32 bytes)
+45 + m*32    32       Auth tag = hfscx_256(mac_key XOR IV, nonce||len_be8||ciphertext)
+```
+
+Minimum file size: 77 bytes (empty plaintext).  Streaming I/O in C: `encfile` writes header
++nonce, encrypts in 32-byte blocks to the output file, then appends the tag.  `decfile`
+reads header, buffers ciphertext to compute tag, rejects on mismatch before writing any
+plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
+
+**Constant-time tag comparison** (`decfile`): accumulate differences with `|=` over all
+32 bytes; reject if result non-zero.  Do not use `memcmp` (may short-circuit).
+
+---
+
+#### Implementation batches
+
+**Batch 1 — `herradura.h` shared library** (1 commit) ✅
+- New file `herradura.h`: copy all `static` crypto functions from
+  `Herradura cryptographic suite.c`; add header guards; include `<stdint.h>`, `<string.h>`,
+  `<stdio.h>`, `<stdlib.h>`
+- `Herradura cryptographic suite.c`: add `#include "herradura.h"`; delete every function
+  definition now in the header; keep only `main()` and SDF32 demo helpers
+- `CryptosuiteTests/Herradura_tests.c`: add `#include "../herradura.h"`; delete duplicated
+  primitive functions; keep test-only functions and `main()`
+- Both binaries build and all tests pass (`-r 5 -t 2.0`)
+
+**Batch 2 — HFSCX-256 in C** (1 commit) ✅
+- Add `_HFSCX256_IV[32]` constant and `hfscx_256()` to `herradura.h`
+- Add test `[19]` to `CryptosuiteTests/Herradura_tests.c`: known-answer vectors for
+  empty input, `\x61`, 33-byte cross-boundary, and collision-resistance sanity check;
+  expected digests cross-checked against Python `hfscx_256()`
+- Benchmarks renumbered `[19]-[28]` → `[20]-[29]`; both binaries build and all tests pass
+
+**Batch 3 — `herradura_codec.h` PEM/DER/Base64** (1 commit)
+- New file `HerraduraCli/herradura_codec.h`; all functions `static`; no external deps
+- Add self-test assertions at bottom (compiled away in non-debug builds with `#ifdef`)
+- Verify Python-generated PEM keys can be parsed by C codec and vice versa
+  (manual test script; no automated CI at this stage)
+
+**Batch 4 — C CLI: `genpkey`, `pkey`, `kex`** (1 commit)
+- New file `HerraduraCli/herradura_cli.c`
+- Subcommand dispatch table; `--help` usage text; `--out`/`--in` flag parser
+- `genpkey`: reads `/dev/urandom`; derives public key per protocol; DER-encodes per Python
+  layout; PEM-wraps; writes file
+- `pkey`: parses PEM label to detect algo; if `--pubout` writes public-only PEM; if
+  `--text` prints each DER integer as `field: <hex>` lines
+- `kex`: HKEX-GF (single-pass) and HKEX-RNL (2-round); writes SESSION KEY PEM
+
+**Batch 5 — C CLI: `enc`, `dec`, `sign`, `verify`, `dgst`** (1 commit)
+- `enc`/`dec`: HSKE, HSKE-NL-A1, HSKE-NL-A2 (symmetric, key from SESSION KEY PEM);
+  HPKE, HPKE-NL, HPKE-Stern-F (asymmetric); PEM ciphertext format identical to Python
+- `sign`: HPKS, HPKS-NL, HPKS-Stern-F; `--digest hfscx-256` pre-hashes input to 32
+  bytes before passing to signature logic (unchanged); HERRADURA SIGNATURE PEM output
+- `verify`: reads public key + SIGNATURE PEM + `--in` file; exits 0 on OK, 1 on FAIL;
+  prints `Signature OK` / `Verification FAILED` to stdout
+- `dgst`: computes HFSCX-256; hex to stdout (default) or HERRADURA DIGEST PEM (`--out`)
+
+**Batch 6 — C CLI: `encfile`, `decfile`** (1 commit)
+- Implement streaming HSKE-NL-A1 CTR AEAD using `hske_nla1_ks_block()` and
+  `hske_nla1_mac_key()` helpers from `herradura.h`
+- `encfile`: open output file; write header + nonce; stream plaintext blocks; compute and
+  append tag
+- `decfile`: parse header; stream ciphertext into accumulator to recompute tag;
+  constant-time comparison; if OK re-read (or buffer) and decrypt; trim to plaintext_len
+- Cross-check: Python `encfile` output → C `decfile` (and vice versa) must succeed
+
+**Batch 7 — Build scripts + CliTest** (1 commit)
+- `build_c.sh`: add CLI build step:
+  `gcc -O2 -o HerraduraCli/herradura_cli HerraduraCli/herradura_cli.c`
+- `CliTest/test_c_keygen.sh`: genpkey all 8 types; pkey --pubout; grep PEM headers;
+  assert non-empty
+- `CliTest/test_c_encrypt.sh`: kex → enc → dec round-trips for all algos; `cmp` with
+  original
+- `CliTest/test_c_sign.sh`: genpkey → sign → verify (PASS); flip a byte → verify (FAIL)
+- `CliTest/test_c_encfile.sh`: 1 MiB file; encrypt → decrypt → `cmp`; flip a byte in
+  ciphertext body → decfile must exit non-zero; edge cases: 0-byte, 1-byte, 32-byte files
+- `CliTest/test_c_interop.sh`: Python `encfile` → C `decfile`; C `encfile` → Python
+  `decfile`; Python `sign` → C `verify`; C `sign` → Python `verify` (one algo each as
+  smoke test)
+
+---
+
+#### Notes
+
+- **No external dependencies.** `herradura.h` and `herradura_codec.h` use only C99 standard
+  library headers (`<stdio.h>`, `<stdlib.h>`, `<string.h>`, `<stdint.h>`).  `/dev/urandom`
+  is the sole OS dependency (already used by the suite and tests).
+- **`--bits` default**: 256 for all classical and NL protocols.  Stern-F uses `--bits` as
+  the matrix dimension N (default 256; use 32 for fast testing, matching the assembly
+  targets).
+- **HSKE-NL-A2 deterministic caveat** (TODO #12): `enc --algo hske-nla2` help text will
+  warn that identical (key, plaintext) pairs produce identical ciphertext.
+- **`decfile` memory model**: for very large files, buffering the full ciphertext for MAC
+  verification requires heap allocation proportional to file size.  An alternative is a
+  two-pass approach (first pass: compute tag; second pass: decrypt if tag OK).  Use the
+  two-pass model to keep peak heap usage at O(1) (32-byte block buffers only).
+- **`hpks-stern-f` / `hpke-stern-f` with full N=256**: Stern-F signing at N=256 is slow in
+  C (rounds=32 × permutation work).  Flag this in `--help` text; recommend `--bits 32`
+  for testing.
+
+Status: **TODO** — not yet started.
+
+---
+
 ## Updated priority order
 
-1. #17 — Multi-size standardization (Batches 3-6, C tests)
-2. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
-3. #25 — HerraduraCli Python CLI (**DONE v1.5.23**)
-4. #21 — i386 HKEX-RNL zero session key (**DONE v1.5.22**)
-5. #23 — Go HKEX-RNL test coverage n=128,256 (**DONE v1.5.22**)
-6. #16 — CBD bit efficiency (**DONE v1.5.22**)
-7. #9  — HSKE-NL-A1 counter=0 degeneracy (**DONE v1.5.13**)
-8. #22 — ARM HSKE-NL-A2 R_VALUE fix (**DONE v1.5.21**)
-9. #19 — Stale version banners (**DONE v1.5.21**)
-10. #20 — Python suite q=3329 label (**DONE v1.5.21**)
-11. #24 — C binary `_c` suffix (**DONE v1.5.20**)
-12. #18 — Parameterized integer arithmetic layer (**DONE v1.5.20**)
-13. #15 — Fermat prime fast modulo (**DONE v1.5.20**)
-14. #14 — NTT twiddle precomputation (**DONE v1.5.17**)
+1. #27 — HerraduraCli C CLI + shared header library (**active**)
+2. #17 — Multi-size standardization (Batches 3-6, C tests)
+3. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
+4. #25 — HerraduraCli Python CLI (**DONE v1.5.23**)
+5. #26 — Large-file AEAD + hashed signing (**DONE v1.5.24**)
+6. #21 — i386 HKEX-RNL zero session key (**DONE v1.5.22**)
+7. #23 — Go HKEX-RNL test coverage n=128,256 (**DONE v1.5.22**)
+8. #16 — CBD bit efficiency (**DONE v1.5.22**)
+9. #9  — HSKE-NL-A1 counter=0 degeneracy (**DONE v1.5.13**)
+10. #22 — ARM HSKE-NL-A2 R_VALUE fix (**DONE v1.5.21**)
+11. #19 — Stale version banners (**DONE v1.5.21**)
+12. #20 — Python suite q=3329 label (**DONE v1.5.21**)
+13. #24 — C binary `_c` suffix (**DONE v1.5.20**)
+14. #18 — Parameterized integer arithmetic layer (**DONE v1.5.20**)
+15. #15 — Fermat prime fast modulo (**DONE v1.5.20**)
+16. #14 — NTT twiddle precomputation (**DONE v1.5.17**)

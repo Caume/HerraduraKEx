@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.5.25: herradura.h shared library + HFSCX-256 KAV test [19]; benchmarks renumbered [20]-[29].
     v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests expanded to full multi-size:
             Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub256, ba_mul256,
@@ -77,24 +78,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-
-#define KEYBITS  256
-#define KEYBYTES (KEYBITS / 8)
-#define I_VALUE  (KEYBITS / 4)
-#define R_VALUE  (3 * KEYBITS / 4)
-
-#if KEYBYTES < 2
-#  error "KEYBITS must be >= 16"
-#endif
-#if KEYBITS != 256
-#  error "GF polynomial constants are only defined for KEYBITS=256 in this build"
-#endif
-
-/* BENCH_SEC removed: use g_bench_sec (default 1.0, overridden by -t / HTEST_TIME) */
-
-typedef struct {
-    uint8_t b[KEYBYTES];
-} BitArray;
+#include "../herradura.h"
 
 static FILE *urnd_fp;
 
@@ -102,38 +86,6 @@ static FILE *urnd_fp;
 static int    g_rounds     = 0;    /* 0 = use per-test default            */
 static double g_bench_sec  = 1.0;  /* benchmark duration (seconds)        */
 static double g_time_limit = 0.0;  /* per-test wall-clock cap; 0 = none   */
-
-/* ------------------------------------------------------------------ */
-/* BitArray primitives                                                 */
-/* ------------------------------------------------------------------ */
-
-static void ba_rand(BitArray *dst)
-{
-    if (fread(dst->b, 1, KEYBYTES, urnd_fp) != (size_t)KEYBYTES) {
-        fputs("ERROR: read from /dev/urandom failed\n", stderr);
-        exit(1);
-    }
-}
-
-static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
-{
-    int i;
-    for (i = 0; i < KEYBYTES; i++)
-        dst->b[i] = a->b[i] ^ b->b[i];
-}
-
-static int ba_equal(const BitArray *a, const BitArray *b)
-{
-    return memcmp(a->b, b->b, KEYBYTES) == 0;
-}
-
-static int ba_popcount(const BitArray *a)
-{
-    int cnt = 0, i;
-    for (i = 0; i < KEYBYTES; i++)
-        cnt += __builtin_popcount(a->b[i]);
-    return cnt;
-}
 
 static int ba_get_bit(const BitArray *a, int pos)
 {
@@ -148,311 +100,6 @@ static void ba_flip_bit(BitArray *dst, const BitArray *src, int pos)
     int bit_pos  = pos % 8;
     *dst = *src;
     dst->b[byte_idx] ^= (uint8_t)(1u << bit_pos);
-}
-
-/* ------------------------------------------------------------------ */
-/* FSCX primitives (unchanged)                                        */
-/* ------------------------------------------------------------------ */
-
-static void ba_fscx(BitArray *result, const BitArray *a, const BitArray *b)
-{
-    uint8_t a_msbit = a->b[0] >> 7;
-    uint8_t b_msbit = b->b[0] >> 7;
-    uint8_t a_lsbit = a->b[KEYBYTES - 1] & 1;
-    uint8_t b_lsbit = b->b[KEYBYTES - 1] & 1;
-    int i;
-
-    result->b[0] = a->b[0] ^ b->b[0]
-        ^ (uint8_t)((a->b[0] << 1) | (a->b[1] >> 7))
-        ^ (uint8_t)((b->b[0] << 1) | (b->b[1] >> 7))
-        ^ (uint8_t)((a->b[0] >> 1) | (a_lsbit << 7))
-        ^ (uint8_t)((b->b[0] >> 1) | (b_lsbit << 7));
-
-    for (i = 1; i < KEYBYTES - 1; i++)
-        result->b[i] = a->b[i] ^ b->b[i]
-            ^ (uint8_t)((a->b[i] << 1) | (a->b[i + 1] >> 7))
-            ^ (uint8_t)((b->b[i] << 1) | (b->b[i + 1] >> 7))
-            ^ (uint8_t)((a->b[i] >> 1) | (a->b[i - 1] << 7))
-            ^ (uint8_t)((b->b[i] >> 1) | (b->b[i - 1] << 7));
-
-    result->b[KEYBYTES - 1] = a->b[KEYBYTES-1] ^ b->b[KEYBYTES-1]
-        ^ (uint8_t)((a->b[KEYBYTES-1] << 1) | a_msbit)
-        ^ (uint8_t)((b->b[KEYBYTES-1] << 1) | b_msbit)
-        ^ (uint8_t)((a->b[KEYBYTES-1] >> 1) | (a->b[KEYBYTES-2] << 7))
-        ^ (uint8_t)((b->b[KEYBYTES-1] >> 1) | (b->b[KEYBYTES-2] << 7));
-}
-
-static void ba_fscx_revolve(BitArray *result, const BitArray *a,
-                             const BitArray *b, int steps)
-{
-    BitArray buf[2];
-    int idx = 0, i;
-    buf[0] = *a;
-    for (i = 0; i < steps; i++) {
-        ba_fscx(&buf[1 - idx], &buf[idx], b);
-        idx ^= 1;
-    }
-    *result = buf[idx];
-}
-
-/* ------------------------------------------------------------------ */
-/* GF(2^KEYBITS) arithmetic                                           */
-/* ------------------------------------------------------------------ */
-
-/* Primitive polynomial: x^256 + x^10 + x^5 + x^2 + 1 = 0x0425 (lower bits) */
-static const BitArray GF_POLY = {{
-    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
-    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0x04,0x25
-}};
-
-/* Generator g = x+1 = 3 */
-static const BitArray GF_GEN = {{
-    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,
-    0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0x03
-}};
-
-static int ba_is_zero(const BitArray *a)
-{
-    int i;
-    for (i = 0; i < KEYBYTES; i++)
-        if (a->b[i]) return 0;
-    return 1;
-}
-
-static int ba_shl1(BitArray *a)
-{
-    int carry = (a->b[0] >> 7) & 1;
-    int i;
-    for (i = 0; i < KEYBYTES - 1; i++)
-        a->b[i] = (uint8_t)((a->b[i] << 1) | (a->b[i + 1] >> 7));
-    a->b[KEYBYTES - 1] <<= 1;
-    return carry;
-}
-
-static int ba_shr1(BitArray *a)
-{
-    int carry = a->b[KEYBYTES - 1] & 1;
-    int i;
-    for (i = KEYBYTES - 1; i > 0; i--)
-        a->b[i] = (uint8_t)((a->b[i] >> 1) | (a->b[i - 1] << 7));
-    a->b[0] >>= 1;
-    return carry;
-}
-
-static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
-{
-    BitArray r, aa, bb;
-    int i;
-    memset(r.b, 0, KEYBYTES);
-    aa = *a;
-    bb = *b;
-    for (i = 0; i < KEYBITS; i++) {
-        if (bb.b[KEYBYTES - 1] & 1)
-            ba_xor(&r, &r, &aa);
-        if (ba_shl1(&aa))
-            ba_xor(&aa, &aa, &GF_POLY);
-        ba_shr1(&bb);
-    }
-    *dst = r;
-}
-
-static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
-{
-    BitArray r, b, e;
-    memset(r.b, 0, KEYBYTES);
-    r.b[KEYBYTES - 1] = 1;
-    b = *base;
-    e = *exp;
-    while (!ba_is_zero(&e)) {
-        if (e.b[KEYBYTES - 1] & 1)
-            gf_mul_ba(&r, &r, &b);
-        gf_mul_ba(&b, &b, &b);
-        ba_shr1(&e);
-    }
-    *dst = r;
-}
-
-/* ------------------------------------------------------------------ */
-/* 256-bit integer + NL-FSCX helpers (needed by Stern-F tests)        */
-/* ------------------------------------------------------------------ */
-
-static void ba_add256(BitArray *dst, const BitArray *a, const BitArray *b)
-{
-    uint16_t carry = 0;
-    int i;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
-        uint16_t s = (uint16_t)a->b[i] + b->b[i] + carry;
-        dst->b[i] = (uint8_t)s;
-        carry = s >> 8;
-    }
-}
-
-static void ba_rol64_256(BitArray *dst, const BitArray *src)
-{
-    uint8_t tmp[8];
-    memcpy(tmp, src->b, 8);
-    memcpy(dst->b, src->b + 8, KEYBYTES - 8);
-    memcpy(dst->b + KEYBYTES - 8, tmp, 8);
-}
-
-static void ba_rol_k(BitArray *dst, const BitArray *src, int k)
-{
-    int byte_shift = (k / 8) % KEYBYTES;
-    int bit_shift  = k % 8;
-    int i;
-    if (bit_shift == 0) {
-        for (i = 0; i < KEYBYTES; i++)
-            dst->b[i] = src->b[(i + byte_shift) % KEYBYTES];
-    } else {
-        int rshift = 8 - bit_shift;
-        for (i = 0; i < KEYBYTES; i++)
-            dst->b[i] = (uint8_t)((src->b[(i + byte_shift) % KEYBYTES] << bit_shift)
-                                | (src->b[(i + byte_shift + 1) % KEYBYTES] >> rshift));
-    }
-}
-
-static void nl_fscx_v1_ba(BitArray *result, const BitArray *a, const BitArray *b)
-{
-    BitArray f, s, m;
-    ba_fscx(&f, a, b);
-    ba_add256(&s, a, b);
-    ba_rol64_256(&m, &s);
-    ba_xor(result, &f, &m);
-}
-
-static void nl_fscx_revolve_v1_ba(BitArray *result, const BitArray *a,
-                                    const BitArray *b, int steps)
-{
-    BitArray buf[2];
-    int idx = 0, i;
-    buf[0] = *a;
-    for (i = 0; i < steps; i++) {
-        nl_fscx_v1_ba(&buf[1 - idx], &buf[idx], b);
-        idx ^= 1;
-    }
-    *result = buf[idx];
-}
-
-/* ------------------------------------------------------------------ */
-/* 256-bit NL-FSCX v2 BitArray helpers                                */
-/* ROL-64 for NL-FSCX (n/4 = 64 bits for n=256); addition/sub mod    */
-/* 2^256; grade-school 256×256→256 multiply for delta computation.    */
-/* M^{-1} table computed from GCD: 1+x+x^255 in GF(2)[x]/(x^256+1). */
-/* ------------------------------------------------------------------ */
-
-static void ba_sub256(BitArray *dst, const BitArray *a, const BitArray *b)
-{
-    int16_t borrow = 0;
-    int i;
-    for (i = KEYBYTES - 1; i >= 0; i--) {
-        int16_t s = (int16_t)a->b[i] - (int16_t)b->b[i] - borrow;
-        dst->b[i] = (uint8_t)(s & 0xFF);
-        borrow = (s < 0) ? 1 : 0;
-    }
-}
-
-static void ba_mul256(BitArray *dst, const BitArray *a, const BitArray *b)
-{
-    /* Grade-school byte-level multiply mod 2^256 (big-endian byte array) */
-    uint64_t acc[KEYBYTES];
-    int i, j;
-    memset(acc, 0, sizeof(acc));
-    for (i = 0; i < KEYBYTES; i++)
-        for (j = 0; j < KEYBYTES - i; j++) {
-            int ridx = KEYBYTES - 1 - i - j;
-            acc[ridx] += (uint64_t)a->b[KEYBYTES - 1 - i] * b->b[KEYBYTES - 1 - j];
-        }
-    { /* Propagate carries LSB→MSB */
-        uint64_t carry = 0;
-        for (i = KEYBYTES - 1; i >= 0; i--) {
-            uint64_t s = acc[i] + carry;
-            dst->b[i] = (uint8_t)s;
-            carry = s >> 8;
-        }
-    }
-}
-
-/* M^{-1} polynomial table for n=256: 256-bit bitmask split into four
-   64-bit words (words[0]=k=0..63, words[1]=k=64..127, etc.).
-   Derived from GCD(1+x+x^255, x^256+1) in GF(2)[x]. */
-static const uint64_t MINV256_TBL[4] = {
-    UINT64_C(0xb6db6db6db6db6db),  /* k=0..63   */
-    UINT64_C(0xdb6db6db6db6db6d),  /* k=64..127 */
-    UINT64_C(0x6db6db6db6db6db6),  /* k=128..191 */
-    UINT64_C(0xb6db6db6db6db6db)   /* k=192..255 */
-};
-
-static void m_inv_ba(BitArray *result, const BitArray *x)
-{
-    BitArray r, rot;
-    int k;
-    r = *x; /* k=0 term */
-    for (k = 1; k < KEYBITS; k++) {
-        if ((MINV256_TBL[k >> 6] >> (k & 63)) & 1) {
-            ba_rol_k(&rot, x, k);
-            ba_xor(&r, &r, &rot);
-        }
-    }
-    *result = r;
-}
-
-static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
-{
-    /* delta(b) = ROL(b * ((b+1)/2), 64) where arithmetic is mod 2^256 */
-    static const BitArray ONE = {{ [KEYBYTES-1] = 1 }};
-    BitArray b1, half, prod;
-    ba_add256(&b1, b, &ONE);    /* b1 = b + 1 */
-    half = b1; ba_shr1(&half);  /* half = (b+1) >> 1  (i.e. (b+1)/2) */
-    ba_mul256(&prod, b, &half); /* prod = b * half mod 2^256 */
-    ba_rol64_256(delta, &prod); /* delta = ROL(prod, 64) */
-}
-
-static void nl_fscx_v2_ba(BitArray *result, const BitArray *a, const BitArray *b)
-{
-    BitArray f, delta;
-    ba_fscx(&f, a, b);
-    nl_fscx_delta_v2_ba(&delta, b);
-    ba_add256(result, &f, &delta);
-}
-
-static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArray *b)
-{
-    /* inv(y, b) = b ^ M^{-1}(y - delta(b)) */
-    BitArray delta, ym_d, inv_ym;
-    nl_fscx_delta_v2_ba(&delta, b);
-    ba_sub256(&ym_d, y, &delta);
-    m_inv_ba(&inv_ym, &ym_d);
-    ba_xor(result, b, &inv_ym);
-}
-
-static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
-                                    const BitArray *b, int steps)
-{
-    BitArray buf[2];
-    int idx = 0, i;
-    buf[0] = *a;
-    for (i = 0; i < steps; i++) {
-        nl_fscx_v2_ba(&buf[1 - idx], &buf[idx], b);
-        idx ^= 1;
-    }
-    *result = buf[idx];
-}
-
-static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
-                                       const BitArray *b, int steps)
-{
-    BitArray delta, buf[2];
-    int idx = 0, i;
-    nl_fscx_delta_v2_ba(&delta, b); /* precompute once */
-    buf[0] = *y;
-    for (i = 0; i < steps; i++) {
-        BitArray ym_d, inv_ym;
-        ba_sub256(&ym_d, &buf[idx], &delta);
-        m_inv_ba(&inv_ym, &ym_d);
-        ba_xor(&buf[1 - idx], b, &inv_ym);
-        idx ^= 1;
-    }
-    *result = buf[idx];
 }
 
 /* ------------------------------------------------------------------ */
@@ -859,19 +506,6 @@ static void rnl32_tw_init(int idx)
 static int rnl32_tw_idx(int n)
 {
     return (n == 32) ? 0 : (n == 64) ? 1 : (n == 128) ? 2 : (n == 256) ? 3 : -1;
-}
-
-/* Fermat-prime modular multiply mod 65537 = 2^16+1.
-   x = a*b; since 2^16 ≡ -1 and 2^32 ≡ 1 mod q: x ≡ lo - mid + hi (mod q).
-   r ∈ [-65535, 65536] so at most one conditional add needed. */
-static inline uint32_t rnl_mulmodq(uint32_t a, uint32_t b)
-{
-    uint64_t x = (uint64_t)a * b;
-    int32_t r = (int32_t)(x & 0xFFFF)
-              - (int32_t)((x >> 16) & 0xFFFF)
-              + (int32_t)(x >> 32);
-    if (r < 0) r += 65537;
-    return (uint32_t)r;
 }
 
 static void rnl32_ntt(int32_t *a, int n, int q, int invert)
@@ -1820,7 +1454,7 @@ static void test_hkex_gf_correctness(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                ba_rand(&a256); ba_rand(&b256);
+                ba_rand(&a256, urnd_fp); ba_rand(&b256, urnd_fp);
                 a256.b[KEYBYTES-1] |= 1; b256.b[KEYBYTES-1] |= 1;
                 gf_pow_ba(&C256,   &GF_GEN, &a256);
                 gf_pow_ba(&C2_256, &GF_GEN, &b256);
@@ -1868,7 +1502,7 @@ static void test_avalanche(void)
             if (size == 256) {
                 BitArray a, b, base_out, ap, flip_out, diff;
                 int bit;
-                ba_rand(&a); ba_rand(&b);
+                ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
                 ba_fscx(&base_out, &a, &b);
                 for (bit = 0; bit < 256; bit++) {
                     int hd;
@@ -1929,7 +1563,7 @@ static void test_orbit_period(void)
             int period = 1, cap = 2 * size;
             if (size == 256) {
                 BitArray a, b, cur, tmp;
-                ba_rand(&a); ba_rand(&b);
+                ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
                 ba_fscx(&cur, &a, &b);
                 while (!ba_equal(&cur, &a) && period < cap) {
                     ba_fscx(&tmp, &cur, &b); cur = tmp; period++;
@@ -1970,7 +1604,7 @@ static void test_bit_frequency(void)
         for (trial = 0; trial < N; trial++) {
             if (size == 256) {
                 BitArray a, b, out;
-                ba_rand(&a); ba_rand(&b); ba_fscx(&out, &a, &b);
+                ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp); ba_fscx(&out, &a, &b);
                 for (bit = 0; bit < 256; bit++)
                     if (ba_get_bit(&out, bit)) counts[bit]++;
             } else if (size == 128) {
@@ -2016,7 +1650,7 @@ static void test_hkex_gf_key_sensitivity(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                ba_rand(&a256); ba_rand(&b256);
+                ba_rand(&a256, urnd_fp); ba_rand(&b256, urnd_fp);
                 a256.b[KEYBYTES-1] |= 1; b256.b[KEYBYTES-1] |= 1;
                 gf_pow_ba(&C2_256, &GF_GEN, &b256);
                 gf_pow_ba(&sk1_256, &C2_256, &a256);
@@ -2073,7 +1707,7 @@ static void test_eve_attack_resistance(void)
             int rv = 3 * size / 4;
             if (size == 256) {
                 int j;
-                ba_rand(&a256); ba_rand(&b256);
+                ba_rand(&a256, urnd_fp); ba_rand(&b256, urnd_fp);
                 a256.b[KEYBYTES-1] |= 1; b256.b[KEYBYTES-1] |= 1;
                 gf_pow_ba(&C256,  &GF_GEN, &a256);
                 gf_pow_ba(&C2_256, &GF_GEN, &b256);
@@ -2205,7 +1839,7 @@ static void test_hpke_el_gamal(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                ba_rand(&pt256g); ba_rand(&a256g); ba_rand(&r256g);
+                ba_rand(&pt256g, urnd_fp); ba_rand(&a256g, urnd_fp); ba_rand(&r256g, urnd_fp);
                 a256g.b[KEYBYTES-1] |= 1; r256g.b[KEYBYTES-1] |= 1;
                 gf_pow_ba(&C256g, &GF_GEN, &a256g);
                 gf_pow_ba(&R256g, &GF_GEN, &r256g);
@@ -2285,7 +1919,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
             if (size == 256) {
                 BitArray A, B, fA0, fB0, lin_pred, nl;
                 static const BitArray ZERO = {{0}};
-                ba_rand(&A); ba_rand(&B);
+                ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v1_ba(&fA0, &A, &ZERO);
                 nl_fscx_v1_ba(&fB0, &ZERO, &B);
                 ba_xor(&lin_pred, &fA0, &fB0);
@@ -2308,7 +1942,7 @@ static void test_nl_fscx_v1_nonlinearity(void)
             int found = 0, step;
             if (size == 256) {
                 BitArray A, B, cur;
-                ba_rand(&A); ba_rand(&B);
+                ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v1_ba(&cur, &A, &B);
                 for (step = 1; step < cap; step++) {
                     nl_fscx_v1_ba(&cur, &cur, &B);
@@ -2359,9 +1993,9 @@ static void test_nl_fscx_v2_bijective_inverse(void)
             int found = 0;
             if (size == 256) {
                 BitArray A_arr[BIJ_SAMPLES], out_arr[BIJ_SAMPLES], B;
-                ba_rand(&B);
+                ba_rand(&B, urnd_fp);
                 for (j = 0; j < BIJ_SAMPLES; j++) {
-                    ba_rand(&A_arr[j]);
+                    ba_rand(&A_arr[j], urnd_fp);
                     nl_fscx_v2_ba(&out_arr[j], &A_arr[j], &B);
                 }
                 for (j = 0; j < BIJ_SAMPLES && !found; j++)
@@ -2399,7 +2033,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
         for (i = 0; i < N2; i++) {
             if (size == 256) {
                 BitArray A, B, enc, dec;
-                ba_rand(&A); ba_rand(&B);
+                ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v2_ba(&enc, &A, &B);
                 nl_fscx_v2_inv_ba(&dec, &enc, &B);
                 if (ba_equal(&dec, &A)) inv_ok++;
@@ -2418,7 +2052,7 @@ static void test_nl_fscx_v2_bijective_inverse(void)
             if (size == 256) {
                 static const BitArray ZERO = {{0}};
                 BitArray A, B, fA0, fB0, lin_pred, nl;
-                ba_rand(&A); ba_rand(&B);
+                ba_rand(&A, urnd_fp); ba_rand(&B, urnd_fp);
                 nl_fscx_v2_ba(&fA0, &A, &ZERO);
                 nl_fscx_v2_ba(&fB0, &ZERO, &B);
                 ba_xor(&lin_pred, &fA0, &fB0);
@@ -2458,7 +2092,7 @@ static void test_hske_nl_a1_correctness(void)
                 static const BitArray ZERO = {{0}};
                 BitArray K, nonce, P, base, seed, ctr_ba, ctr_xor, ks;
                 uint32_t ctr_val = (uint32_t)i & 0xFFFF;
-                ba_rand(&K); ba_rand(&nonce); ba_rand(&P);
+                ba_rand(&K, urnd_fp); ba_rand(&nonce, urnd_fp); ba_rand(&P, urnd_fp);
                 ba_xor(&base, &K, &nonce);
                 ba_rol_k(&seed, &base, 32);  /* ROL(base, n/8=32) */
                 /* ctr_ba = little-endian ctr_val in last 4 bytes */
@@ -2510,7 +2144,7 @@ static void test_hske_nl_a2_correctness(void)
         for (i = 0; i < N; i++) {
             if (size == 256) {
                 BitArray K, P, E, D;
-                ba_rand(&K); ba_rand(&P);
+                ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
                 nl_fscx_revolve_v2_ba(&E, &P, &K, rv);
                 nl_fscx_revolve_v2_inv_ba(&D, &E, &K, rv);
                 if (ba_equal(&D, &P)) ok++;
@@ -2682,7 +2316,7 @@ static void test_hpke_nl_correctness(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                ba_rand(&pt256h); ba_rand(&a256h); ba_rand(&r256h);
+                ba_rand(&pt256h, urnd_fp); ba_rand(&a256h, urnd_fp); ba_rand(&r256h, urnd_fp);
                 a256h.b[KEYBYTES-1] |= 1; r256h.b[KEYBYTES-1] |= 1;
                 gf_pow_ba(&C256h, &GF_GEN, &a256h);
                 gf_pow_ba(&R256h, &GF_GEN, &r256h);
@@ -2731,9 +2365,6 @@ static void test_hpke_nl_correctness(void)
 /* Security tests [17]-[18]: CODE-BASED PQC (Stern-F)                 */
 /* ------------------------------------------------------------------ */
 
-#define SDF_N_ROWS   (KEYBITS / 2)     /* 128 rows                       */
-#define SDF_T        (KEYBITS / 16)    /* weight 16                      */
-#define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* 16 syndrome bytes              */
 #define SDF_TEST_ROUNDS 8              /* reduced rounds for test speed  */
 
 /* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
@@ -2883,7 +2514,7 @@ static void hpks_stern_f_sign_t(SternSigT *sig, const BitArray *msg,
         BitArray items[2];
         stern_rand_error_ba(&r[i]);
         ba_xor(&y[i], e, &r[i]);
-        ba_rand(&pi[i]);
+        ba_rand(&pi[i], urnd_fp);
         stern_syndrome_ba(Hr[i], seed, &r[i]);
         stern_gen_perm_ba(perm, &pi[i], KEYBITS);
         stern_apply_perm_ba(&sr[i], perm, &r[i], KEYBITS);
@@ -3431,10 +3062,10 @@ static void test_hpks_stern_f_correctness(void)
             for (i = 0; i < N; i++) {
                 BitArray seed, e, msg;
                 uint8_t syndr[SDF_SYNBYTES];
-                ba_rand(&seed);
+                ba_rand(&seed, urnd_fp);
                 stern_rand_error_ba(&e);
                 stern_syndrome_ba(syndr, &seed, &e);
-                ba_rand(&msg);
+                ba_rand(&msg, urnd_fp);
                 hpks_stern_f_sign_t(&sf_sig, &msg, &e, &seed);
                 if (hpks_stern_f_verify_t(&sf_sig, &msg, &seed, syndr)) ok++;
                 else fail++;
@@ -3505,10 +3136,10 @@ static void bench_hpks_stern_f(void)
     static SternSigT bsig;
     BitArray seed, e, msg;
     uint8_t syndr[SDF_SYNBYTES];
-    printf("[28] HPKS-Stern-F sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n    ",
+    printf("[29] HPKS-Stern-F sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n    ",
            KEYBITS, SDF_T, SDF_TEST_ROUNDS);
-    ba_rand(&seed); stern_rand_error_ba(&e);
-    stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg);
+    ba_rand(&seed, urnd_fp); stern_rand_error_ba(&e);
+    stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg, urnd_fp);
     for (i = 0; i < 2; i++) {
         hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
         hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
@@ -3527,10 +3158,55 @@ static void bench_hpks_stern_f(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [19]-[23]                                   */
+/* Security test [19]: HFSCX-256 known-answer vectors                 */
 /* ------------------------------------------------------------------ */
 
-/* [19] FSCX throughput (256-bit) */
+static void test_hfscx_256_kav(void)
+{
+    static const uint8_t exp_empty[32] = {
+        0x75,0xde,0x75,0xae,0xff,0xa8,0xd6,0xfb,0x3d,0x56,0x13,0x4c,
+        0xb4,0x0a,0x3f,0x18,0x75,0x85,0x79,0x74,0xe1,0x97,0xa6,0x32,
+        0xbb,0xf4,0x36,0x16,0x0e,0xd9,0x7a,0x6b
+    };
+    static const uint8_t exp_a[32] = {
+        0xe3,0x7b,0xd2,0x0f,0x15,0xe0,0x4f,0x21,0xa0,0x92,0x1c,0xf0,
+        0xa6,0x66,0xd2,0x45,0x7b,0xc2,0xbc,0xcf,0xd7,0xbd,0x28,0x22,
+        0xe6,0x71,0xda,0x24,0xbd,0xb8,0x38,0xa0
+    };
+    static const uint8_t exp_33a[32] = {
+        0x95,0x1d,0x82,0x84,0x2d,0x31,0x2b,0x67,0xfa,0x47,0xd4,0x81,
+        0x22,0x03,0x61,0x22,0xa4,0x5b,0xbe,0xfb,0x0c,0x1f,0x42,0xcd,
+        0x4e,0xbc,0x07,0xb5,0xd7,0xd8,0x79,0xf6
+    };
+    uint8_t out[32], buf33[33], buf32a[32], buf32b[32], col_a[32], col_b[32];
+    int pass = 1;
+
+    printf("[19] HFSCX-256 known-answer vectors  [PQC-EXT]\n");
+
+    hfscx_256((const uint8_t *)"", 0, NULL, out);
+    if (memcmp(out, exp_empty, 32) != 0) { puts("  FAIL: empty"); pass = 0; }
+
+    { uint8_t b = 0x61; hfscx_256(&b, 1, NULL, out); }
+    if (memcmp(out, exp_a, 32) != 0) { puts("  FAIL: 0x61"); pass = 0; }
+
+    memset(buf33, 'A', 33);
+    hfscx_256(buf33, 33, NULL, out);
+    if (memcmp(out, exp_33a, 32) != 0) { puts("  FAIL: 33*A"); pass = 0; }
+
+    memset(buf32a, 'A', 32); memset(buf32b, 'B', 32);
+    hfscx_256(buf32a, 32, NULL, col_a);
+    hfscx_256(buf32b, 32, NULL, col_b);
+    if (memcmp(col_a, col_b, 32) == 0) { puts("  FAIL: collision A==B"); pass = 0; }
+
+    puts(pass ? "  PASS" : "  FAIL");
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance benchmarks [20]-[29]                                   */
+/* ------------------------------------------------------------------ */
+
+/* [20] FSCX throughput (256-bit) */
 static void bench_fscx_throughput(void)
 {
     BitArray a, b, tmp;
@@ -3538,8 +3214,8 @@ static void bench_fscx_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[19] FSCX throughput  (bits=%d)\n    ", KEYBITS);
-    ba_rand(&a); ba_rand(&b);
+    printf("[20] FSCX throughput  (bits=%d)\n    ", KEYBITS);
+    ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
     for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
     clock_gettime(CLOCK_MONOTONIC, &t0);
     do {
@@ -3559,7 +3235,7 @@ static void bench_gf_pow32_throughput(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[20] HKEX-GF gf_pow throughput  (bits=32)\n    ");
+    printf("[21] HKEX-GF gf_pow throughput  (bits=32)\n    ");
     base = rand32() | 1;
     exp  = rand32() | 1;
     for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -3581,7 +3257,7 @@ static void bench_hkex_gf32_handshake(void)
     double secs;
     int i;
     uint32_t a, b, C, C2, skA, skB;
-    printf("[21] HKEX-GF full handshake  (bits=32)\n    ");
+    printf("[22] HKEX-GF full handshake  (bits=32)\n    ");
     a = rand32() | 1; b = rand32() | 1;
     for (i = 0; i < 5; i++) {
         C   = gf_pow_32((uint32_t)GF_GEN32, a);
@@ -3614,16 +3290,16 @@ static void bench_hske_roundtrip(void)
     double secs;
     int i;
     BitArray pt, key, enc, dec;
-    printf("[22] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
+    printf("[23] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
     for (i = 0; i < 5; i++) {
-        ba_rand(&pt); ba_rand(&key);
+        ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
         ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
         ba_fscx_revolve(&dec, &enc, &key, R_VALUE);
     }
     clock_gettime(CLOCK_MONOTONIC, &t0);
     do {
         for (i = 0; i < 20; i++) {
-            ba_rand(&pt); ba_rand(&key);
+            ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
             ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
             ba_fscx_revolve(&dec, &enc, &key, R_VALUE);
         }
@@ -3642,7 +3318,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     double secs;
     int i;
     uint32_t a, r, C32, R32, enc_key, E32, dec_key, D32, pt;
-    printf("[23] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
+    printf("[24] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
     a = rand32() | 1; r = rand32() | 1; pt = rand32();
     C32 = gf_pow_32((uint32_t)GF_GEN32, a);
     for (i = 0; i < 5; i++) {
@@ -3682,7 +3358,7 @@ static void bench_nl_fscx_revolve(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[24] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
+    printf("[25] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
            NL_I32);
     a = rand32(); b = rand32();
     for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
@@ -3723,7 +3399,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[25] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
+    printf("[26] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
     K = rand32(); P = rand32();
     for (i = 0; i < 10; i++) {
         uint32_t nonce = rand32(), base = K ^ nonce;
@@ -3755,7 +3431,7 @@ static void bench_hske_nl_a2_roundtrip(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[26] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
+    printf("[27] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
            NL_R32);
     K = rand32(); P = rand32();
     for (i = 0; i < 5; i++) {
@@ -3787,7 +3463,7 @@ static void bench_hkex_rnl_handshake(void)
     long long ops = 0;
     double secs;
     int i;
-    printf("[27] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
+    printf("[28] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
     rnl32_m_poly(m_base);
     for (i = 0; i < 3; i++) {
         uint32_t hint_A;
@@ -3860,7 +3536,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.23 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.5.25 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
@@ -3894,6 +3570,9 @@ int main(int argc, char *argv[])
     puts("--- Security Tests: Code-Based PQC (Stern-F) ---\n");
     test_hpks_stern_f_correctness();
     test_hpke_stern_f_correctness();
+
+    puts("--- Security Tests: Hash (HFSCX-256) ---\n");
+    test_hfscx_256_kav();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();
