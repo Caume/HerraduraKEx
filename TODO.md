@@ -1796,11 +1796,12 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   expected digests cross-checked against Python `hfscx_256()`
 - Benchmarks renumbered `[19]-[28]` → `[20]-[29]`; both binaries build and all tests pass
 
-**Batch 3 — `herradura_codec.h` PEM/DER/Base64** (1 commit)
+**Batch 3 — `herradura_codec.h` PEM/DER/Base64** (1 commit) ✅
 - New file `HerraduraCli/herradura_codec.h`; all functions `static`; no external deps
-- Add self-test assertions at bottom (compiled away in non-debug builds with `#ifdef`)
-- Verify Python-generated PEM keys can be parsed by C codec and vice versa
-  (manual test script; no automated CI at this stage)
+- Self-test under `#ifdef HERRADURA_CODEC_SELFTEST`: round-trip + Python known-answer vectors
+- Bidirectional interop verified: Python PEM → C parse → C write → Python parse (all PASS)
+- Bug fix during dev: label scan used `*p != '-'` which stopped on hyphens in labels like
+  `HKEX-GF`; fixed to scan for `"-----"` sentinel
 
 **Batch 4 — C CLI: `genpkey`, `pkey`, `kex`** (1 commit)
 - New file `HerraduraCli/herradura_cli.c`
