@@ -562,6 +562,28 @@ static void hfscx_256(const uint8_t *data, size_t len,
     free(padded);
 }
 
+/* HSKE-NL-A1 CTR-mode AEAD helpers for encfile/decfile.
+ * Caller computes: base = K XOR nonce; seed = ba_rol_k(base, KEYBITS/8).
+ * Block counter i is XOR'd into the four least-significant bytes of base. */
+static void hske_nla1_ks_block(const BitArray *seed, const BitArray *base,
+                                uint32_t i, BitArray *ks_out)
+{
+    BitArray base_i = *base;
+    base_i.b[KEYBYTES-4] ^= (uint8_t)((i >> 24) & 0xFF);
+    base_i.b[KEYBYTES-3] ^= (uint8_t)((i >> 16) & 0xFF);
+    base_i.b[KEYBYTES-2] ^= (uint8_t)((i >>  8) & 0xFF);
+    base_i.b[KEYBYTES-1] ^= (uint8_t)( i        & 0xFF);
+    nl_fscx_revolve_v1_ba(ks_out, seed, &base_i, I_VALUE);
+}
+
+static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
+                               BitArray *mac_key_out)
+{
+    BitArray seed2;
+    ba_rol_k(&seed2, seed, KEYBITS / 4);
+    nl_fscx_revolve_v1_ba(mac_key_out, &seed2, base, I_VALUE);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * HKEX-RNL: Ring-LWR key exchange helpers (n=256, negacyclic Z_q[x]/(x^n+1))
  * ───────────────────────────────────────────────────────────────────────────── */

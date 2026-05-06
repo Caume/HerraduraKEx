@@ -1147,13 +1147,186 @@ static void cmd_verify(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * encfile / decfile  (HSKE-NL-A1 CTR-mode AEAD for arbitrary-size files)
+ * .hkx format:  magic(4) | algo(1) | len_be8(8) | nonce(32) | ct(n*32) | tag(32)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_encfile(int argc, char **argv)
+{
+    const char *algo     = get_arg(argc, argv, "--algo");
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!algo)     algo = "hske-nla1";
+    if (!key_path) die("encfile: --key required");
+    if (!in_path)  die("encfile: --in required");
+    if (!out_path) die("encfile: --out required");
+    if (strcmp(algo, "hske-nla1") != 0)
+        dief("encfile: unsupported algorithm %s", algo);
+
+    BitArray K;
+    load_sym_key(&K, key_path);
+
+    size_t plaintext_len;
+    uint8_t *plaintext = read_binary_file(in_path, &plaintext_len);
+
+    /* Generate nonce */
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+    uint8_t nonce_bytes[32];
+    if (fread(nonce_bytes, 1, 32, urnd) != 32) die("urandom read failed");
+    fclose(urnd);
+
+    /* Derive base and seed */
+    BitArray N_nonce, base, seed;
+    ba_from_ra(&N_nonce, nonce_bytes, 32);
+    ba_xor(&base, &K, &N_nonce);
+    ba_rol_k(&seed, &base, KEYBITS / 8);
+
+    /* Encrypt: ks_i = hske_nla1_ks_block(seed, base, i); ct_i = pt_i XOR ks_i */
+    size_t n_blocks = (plaintext_len + KEYBYTES - 1) / KEYBYTES;
+    uint8_t *ct_buf = n_blocks > 0 ? (uint8_t *)malloc(n_blocks * KEYBYTES) : NULL;
+    if (n_blocks > 0 && !ct_buf) die("out of memory");
+    {
+        size_t bi;
+        for (bi = 0; bi < n_blocks; bi++) {
+            uint8_t p_blk[32];
+            size_t chunk = plaintext_len - bi * KEYBYTES;
+            if (chunk > KEYBYTES) chunk = KEYBYTES;
+            memcpy(p_blk, plaintext + bi * KEYBYTES, chunk);
+            if (chunk < KEYBYTES) memset(p_blk + chunk, 0, KEYBYTES - chunk);
+            BitArray ks;
+            hske_nla1_ks_block(&seed, &base, (uint32_t)bi, &ks);
+            int j;
+            for (j = 0; j < KEYBYTES; j++)
+                ct_buf[bi * KEYBYTES + j] = p_blk[j] ^ ks.b[j];
+        }
+    }
+    free(plaintext);
+
+    /* MAC key: nl_fscx_revolve_v1(ROL(seed, n/4), base, I_VALUE) */
+    BitArray mac_key_ba;
+    hske_nla1_mac_key(&seed, &base, &mac_key_ba);
+    uint8_t mac_iv[32];
+    { int j; for (j = 0; j < 32; j++) mac_iv[j] = mac_key_ba.b[j] ^ _HFSCX256_IV[j]; }
+
+    /* Auth tag: HFSCX-256-MAC(mac_iv, nonce || len_be8 || ciphertext) */
+    size_t mac_len = 32 + 8 + n_blocks * KEYBYTES;
+    uint8_t *mac_data = (uint8_t *)malloc(mac_len);
+    if (!mac_data) die("out of memory");
+    memcpy(mac_data, nonce_bytes, 32);
+    { int j; uint64_t pl = (uint64_t)plaintext_len;
+      for (j = 0; j < 8; j++) mac_data[32+j] = (uint8_t)((pl >> (56 - 8*j)) & 0xFF); }
+    if (n_blocks > 0) memcpy(mac_data + 40, ct_buf, n_blocks * KEYBYTES);
+    uint8_t tag[32];
+    hfscx_256(mac_data, mac_len, mac_iv, tag);
+    free(mac_data);
+
+    /* Write .hkx file */
+    FILE *out = fopen(out_path, "wb");
+    if (!out) dief("encfile: cannot open %s for writing", out_path);
+    uint8_t hdr[45];
+    hdr[0]='H'; hdr[1]='K'; hdr[2]='X'; hdr[3]='1'; hdr[4]=0x01;
+    { int j; uint64_t pl = (uint64_t)plaintext_len;
+      for (j = 0; j < 8; j++) hdr[5+j] = (uint8_t)((pl >> (56 - 8*j)) & 0xFF); }
+    memcpy(hdr+13, nonce_bytes, 32);
+    fwrite(hdr, 1, 45, out);
+    if (n_blocks > 0) fwrite(ct_buf, 1, n_blocks * KEYBYTES, out);
+    fwrite(tag, 1, 32, out);
+    fclose(out);
+    free(ct_buf);
+}
+
+static void cmd_decfile(int argc, char **argv)
+{
+    const char *algo     = get_arg(argc, argv, "--algo");
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!algo)     algo = "hske-nla1";
+    if (!key_path) die("decfile: --key required");
+    if (!in_path)  die("decfile: --in required");
+    if (!out_path) die("decfile: --out required");
+    if (strcmp(algo, "hske-nla1") != 0)
+        dief("decfile: unsupported algorithm %s", algo);
+
+    BitArray K;
+    load_sym_key(&K, key_path);
+
+    size_t raw_len;
+    uint8_t *raw = read_binary_file(in_path, &raw_len);
+
+    /* Parse header */
+    if (raw_len < 77) die("decfile: file too short to be a valid .hkx container");
+    if (raw[0]!='H'||raw[1]!='K'||raw[2]!='X'||raw[3]!='1')
+        die("decfile: invalid magic (expected HKX1)");
+    if (raw[4] != 0x01) { char _ab[48]; snprintf(_ab,sizeof _ab,"decfile: unsupported algo byte 0x%02x",raw[4]); die(_ab); }
+
+    uint64_t plaintext_len = 0;
+    { int j; for (j = 0; j < 8; j++) plaintext_len = (plaintext_len << 8) | raw[5+j]; }
+    const uint8_t *nonce_bytes = raw + 13;
+    size_t n_blocks = (size_t)((plaintext_len + KEYBYTES - 1) / KEYBYTES);
+    size_t ct_end   = 45 + n_blocks * KEYBYTES;
+    if (raw_len < ct_end + 32) die("decfile: file truncated (ciphertext or auth tag missing)");
+    const uint8_t *ct_bytes   = raw + 45;
+    const uint8_t *tag_stored = raw + ct_end;
+
+    /* Derive base and seed */
+    BitArray N_nonce, base, seed;
+    ba_from_ra(&N_nonce, nonce_bytes, 32);
+    ba_xor(&base, &K, &N_nonce);
+    ba_rol_k(&seed, &base, KEYBITS / 8);
+
+    /* Compute MAC and compare (verify-then-decrypt) */
+    BitArray mac_key_ba;
+    hske_nla1_mac_key(&seed, &base, &mac_key_ba);
+    uint8_t mac_iv[32];
+    { int j; for (j = 0; j < 32; j++) mac_iv[j] = mac_key_ba.b[j] ^ _HFSCX256_IV[j]; }
+
+    size_t mac_len = 32 + 8 + n_blocks * KEYBYTES;
+    uint8_t *mac_data = (uint8_t *)malloc(mac_len);
+    if (!mac_data) die("out of memory");
+    memcpy(mac_data, nonce_bytes, 32);
+    { int j; for (j = 0; j < 8; j++) mac_data[32+j] = raw[5+j]; }
+    if (n_blocks > 0) memcpy(mac_data + 40, ct_bytes, n_blocks * KEYBYTES);
+    uint8_t tag_computed[32];
+    hfscx_256(mac_data, mac_len, mac_iv, tag_computed);
+    free(mac_data);
+
+    /* Constant-time tag comparison */
+    uint8_t diff = 0;
+    { int j; for (j = 0; j < 32; j++) diff |= tag_stored[j] ^ tag_computed[j]; }
+    if (diff != 0) { free(raw); die("decfile: authentication tag mismatch — file corrupt or wrong key"); }
+
+    /* Decrypt and write plaintext */
+    size_t pt_len = (size_t)plaintext_len;
+    uint8_t *plaintext = pt_len > 0 ? (uint8_t *)malloc(pt_len) : NULL;
+    if (pt_len > 0 && !plaintext) die("out of memory");
+    {
+        size_t bi;
+        for (bi = 0; bi < n_blocks; bi++) {
+            BitArray ks;
+            hske_nla1_ks_block(&seed, &base, (uint32_t)bi, &ks);
+            size_t chunk = pt_len - bi * KEYBYTES;
+            if (chunk > KEYBYTES) chunk = KEYBYTES;
+            int j;
+            for (j = 0; j < (int)chunk; j++)
+                plaintext[bi * KEYBYTES + j] = ct_bytes[bi * KEYBYTES + j] ^ ks.b[j];
+        }
+    }
+    free(raw);
+    write_binary_file(out_path, plaintext ? plaintext : (const uint8_t *)"", pt_len);
+    free(plaintext);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static void usage(void)
 {
     puts(
-"Herradura Cryptographic Suite CLI v1.5.25\n"
+"Herradura Cryptographic Suite CLI v1.5.26\n"
 "\n"
 "Usage: herradura_cli <command> [options]\n"
 "\n"
@@ -1176,6 +1349,12 @@ static void usage(void)
 "\n"
 "  dec --algo ALGO --key KEY --in CT_FILE [--out FILE]\n"
 "    Decrypt.  Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"
+"\n"
+"  encfile --algo hske-nla1 --key SK --in FILE --out FILE.hkx\n"
+"    Stream-encrypt an arbitrary-size file (HSKE-NL-A1 CTR-AEAD).\n"
+"\n"
+"  decfile --algo hske-nla1 --key SK --in FILE.hkx --out FILE\n"
+"    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256]\n"
 "    Sign.  Algorithms: hpks hpks-nl hpks-stern\n"
@@ -1212,6 +1391,8 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "sign")    == 0) { cmd_sign(argc, argv);    return 0; }
     if (strcmp(cmd, "verify")  == 0) { cmd_verify(argc, argv);  return 0; }
     if (strcmp(cmd, "dgst")    == 0) { cmd_dgst(argc, argv);    return 0; }
+    if (strcmp(cmd, "encfile") == 0) { cmd_encfile(argc, argv); return 0; }
+    if (strcmp(cmd, "decfile") == 0) { cmd_decfile(argc, argv); return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;

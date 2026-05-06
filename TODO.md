@@ -1821,7 +1821,7 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   prints `Signature OK` / `Verification FAILED` to stdout
 - `dgst`: computes HFSCX-256; hex to stdout (default) or HERRADURA DIGEST PEM (`--out`)
 
-**Batch 6 — C CLI: `encfile`, `decfile`** (1 commit)
+**Batch 6 — C CLI: `encfile`, `decfile`** (1 commit) ✅
 - Implement streaming HSKE-NL-A1 CTR AEAD using `hske_nla1_ks_block()` and
   `hske_nla1_mac_key()` helpers from `herradura.h`
 - `encfile`: open output file; write header + nonce; stream plaintext blocks; compute and
@@ -1864,7 +1864,7 @@ plaintext.  No full-file mmap — uses `fread`/`fwrite` in 32-byte chunks.
   C (rounds=32 × permutation work).  Flag this in `--help` text; recommend `--bits 32`
   for testing.
 
-Status: **IN PROGRESS** — Batches 1–5 done (v1.5.25).
+Status: **IN PROGRESS** — Batches 1–6 done (v1.5.26).
 
 **Batch 4 complete (v1.5.25):**
 - `HerraduraCli/herradura_cli.c` built and tested; all 12 functional tests pass
@@ -1883,6 +1883,15 @@ Status: **IN PROGRESS** — Batches 1–5 done (v1.5.25).
 - `cmd_dgst`: HFSCX-256 hash; hex to stdout or HERRADURA DIGEST PEM; matches Python known-answer
 - All C-only round-trips pass; C↔Python interop verified for all symmetric, asymmetric, and
   signing algos including hpke-stern and hpks-stern
+
+**Batch 6 complete (v1.5.26):**
+- `hske_nla1_ks_block` and `hske_nla1_mac_key` helpers added to `herradura.h`
+- `cmd_encfile`/`cmd_decfile` in `herradura_cli.c`; .hkx binary format (magic HKX1,
+  algo byte, uint64 length, nonce, ciphertext blocks, 32-byte HFSCX-256-MAC tag)
+- Constant-time tag comparison (`diff |= ct[j] ^ comp[j]` over all 32 bytes)
+- Edge cases verified: 0-byte, 1-byte, 32-byte, 1000-byte files all pass
+- Tamper rejection verified: flipping a ciphertext byte exits 1 with auth-failure message
+- C↔Python interop verified: C encfile → Python decfile and Python encfile → C decfile both pass
 
 ---
 
