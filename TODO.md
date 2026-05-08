@@ -1905,21 +1905,245 @@ Status: **DONE** — Batches 1–7 complete (v1.5.26).
 
 ---
 
+### 28. Go CLI Tool + `herradura` Go Package (New Feature)
+
+**Goal:** A Go command-line tool (`HerraduraCli/herradura_cli.go`) with full feature parity
+to the Python CLI (`herradura.py`) and C CLI (`herradura_cli.c`), backed by a reusable
+`herradura/` Go package — the Go equivalent of the `herradura.h` shared header library —
+that eliminates duplicated crypto logic between the suite demo, tests, and CLI.  All three
+Go programs import from one authoritative package.
+
+The package also adds two primitives not yet implemented in Go:
+
+1. **HFSCX-256** — the Merkle-Damgård hash built on NL-FSCX v1, present in Python and C
+   since v1.5.24.  Required for large-file digest, streaming AEAD authentication tag,
+   and `--digest hfscx-256` pre-hash signing.
+
+2. **HSKE-NL-A1 streaming helpers** — keystream block and MAC key derivation needed for
+   CTR-mode AEAD over files of arbitrary size (`.hkx` format).
+
+Interoperability with the Python and C CLIs is a hard requirement: keys, ciphertexts,
+signatures, and `.hkx` files produced by any implementation must be accepted by all others.
+
+---
+
+#### Architecture
+
+```
+herradura/                              — NEW: Go package (herradurakex/herradura)
+  herradura.go                          — all crypto primitives; HFSCX-256; HSKE-NL-A1 helpers
+  codec.go                              — PEM/DER/Base64 codec (Go equiv. of herradura_codec.h)
+Herradura cryptographic suite.go        — REFACTORED: imports herradurakex/herradura; keeps main()
+CryptosuiteTests/
+  Herradura_tests.go                    — REFACTORED: imports herradurakex/herradura
+  go.mod                               — UPDATED: require herradurakex + replace herradurakex => ..
+HerraduraCli/
+  herradura_cli.go                      — NEW: Go CLI; imports herradurakex/herradura
+  go.mod                               — NEW: require herradurakex + replace herradurakex => ..
+CliTest/
+  test_go_keygen.sh                     — Go CLI key generation smoke test
+  test_go_encrypt.sh                    — Go CLI enc/dec round-trips
+  test_go_sign.sh                       — Go CLI sign/verify + tamper detection
+  test_go_encfile.sh                    — Go CLI encfile/decfile; tag rejection; edge cases
+  test_go_interop.sh                    — Cross-tool: Go↔Python and Go↔C interop
+```
+
+**Why a Go package?**  The existing suite and test files each duplicate the same ~1100-line
+crypto core.  Extracting it to `herradura/` mirrors what `herradura.h` does for C: one
+authoritative copy, three consumers.  The CLI is then a thin argument-dispatch wrapper with
+no embedded crypto logic.
+
+---
+
+#### New Go primitives required
+
+**HFSCX-256** (absent from Go; present in Python v1.5.24 and C `herradura.h`):
+
+```go
+// Hfscx256 computes the HFSCX-256 hash.  iv==nil uses the standard domain IV.
+// A non-nil iv (32 bytes, caller sets iv = key XOR IV) selects the keyed-MAC variant.
+func Hfscx256(data []byte, iv []byte) []byte  // returns 32 bytes
+```
+
+Merkle-Damgård construction identical to Python/C:
+- IV: `"HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00"` (exactly 32 bytes)
+- Compression: `state = NlFscxRevolveV1(state, block, n/4)` per 32-byte block
+- Padding: append `0x80`; zero-fill to 32-byte boundary; append length block
+  (`bit_length_be8 XOR init_state` for MD strengthening)
+- Keyed MAC: `init_state = key XOR IV`
+
+**HSKE-NL-A1 streaming helpers** (mirror of `hske_nla1_ks_block` / `hske_nla1_mac_key`
+in `herradura.h`):
+
+```go
+// HskeNla1KsBlock returns the 32-byte keystream for CTR block i.
+func HskeNla1KsBlock(seed, base *BitArray, i uint32) *BitArray
+// HskeNla1MacKey returns the 32-byte MAC key (domain-separated from encryption).
+func HskeNla1MacKey(seed, base *BitArray) *BitArray
+```
+
+---
+
+#### `codec.go` API (Go equivalent of `herradura_codec.h`)
+
+```go
+func PemWrap(label string, der []byte) string
+func PemUnwrap(pem string) (label string, der []byte, err error)
+func DerInt(val []byte) []byte                    // encode DER INTEGER (0x02 TLV)
+func DerSeq(items ...[]byte) []byte               // wrap in SEQUENCE (0x30 TLV)
+func DerParseSeq(der []byte) ([][]byte, error)    // decode SEQUENCE of INTEGERs
+```
+
+PEM label constants (must match Python/C for interoperability):
+
+```go
+const (
+    PemHkexGfPriv  = "HERRADURA HKEX-GF PRIVATE KEY"
+    PemHkexGfPub   = "HERRADURA HKEX-GF PUBLIC KEY"
+    // ... one pair per algo; SESSION KEY, CIPHERTEXT, SIGNATURE, DIGEST
+)
+```
+
+---
+
+#### Supported CLI subcommands (full parity with Python and C CLIs)
+
+| Subcommand | Flags | Notes |
+|---|---|---|
+| `genpkey` | `--algo`, `--bits`, `--out` | All 8 key types |
+| `pkey` | `--in`, `--pubout`, `--out`, `--text` | Extract / display public key |
+| `kex` | `--algo`, `--our`, `--their`, `--out` | HKEX-GF and HKEX-RNL (2-round) |
+| `enc` | `--algo`, `--key`/`--pubkey`, `--in`, `--out` | HSKE, HSKE-NL-A1/A2, HPKE, HPKE-NL, HPKE-Stern-F |
+| `dec` | `--algo`, `--key`, `--in`, `--out` | Same set |
+| `sign` | `--algo`, `--key`, `--in`, `--out`, `[--digest hfscx-256]` | HPKS, HPKS-NL, HPKS-Stern-F |
+| `verify` | `--algo`, `--pubkey`, `--in`, `--sig`, `[--digest hfscx-256]` | Same set; exits 0/1 |
+| `dgst` | `[--algo hfscx-256]`, `--in`, `[--out]` | Hex to stdout or HERRADURA DIGEST PEM |
+| `encfile` | `--algo hske-nla1`, `--key`, `--in`, `--out` | HSKE-NL-A1 CTR AEAD → `.hkx` |
+| `decfile` | `--algo hske-nla1`, `--key`, `--in`, `--out` | Verify-then-decrypt `.hkx` |
+
+---
+
+#### `.hkx` binary format (byte-identical to Python and C)
+
+```
+Offset     Length  Field
+0          4       Magic: 'HKX1'
+4          1       Algo: 0x01 = hske-nla1
+5          8       Plaintext length (big-endian uint64)
+13         32      Nonce N_nonce
+45         m*32    Ciphertext blocks (last block zero-padded to 32 bytes)
+45+m*32    32      Auth tag: Hfscx256(mac_key XOR IV, nonce||len_be8||ciphertext)
+```
+
+Minimum file: 77 bytes (empty plaintext).  `decfile`: verify-then-decrypt, two-pass (first
+pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) block-level heap;
+`subtle.ConstantTimeCompare` from `crypto/subtle` for tag comparison (not `bytes.Equal`).
+
+---
+
+#### Implementation batches
+
+**Batch 1 — `herradura` Go package (library extraction + HFSCX-256)** (1 commit) ✅ v1.5.27
+- Create `herradura/herradura.go` in the root module: copy all exported crypto functions
+  from `Herradura cryptographic suite.go`; rename to exported (capitalised) identifiers;
+  add `Hfscx256`, `HskeNla1KsBlock`, `HskeNla1MacKey`
+- Create `herradura/codec.go`: PEM/DER codec; PEM label constants; `encoding/base64` only
+- Refactor `Herradura cryptographic suite.go`: add `import "herradurakex/herradura"`;
+  delete every function definition now in the package; keep only `main()` and demo helpers
+  that print results; update `go build` call in `build_go.sh` from
+  `go build -o "${SUITE_BIN}" "${SUITE_SRC}"` to `go build -o "${SUITE_BIN}" .` (directory
+  build required when the file imports local packages)
+- Update `CryptosuiteTests/go.mod`: add `require herradurakex v0.0.0` and
+  `replace herradurakex => ../`; refactor `Herradura_tests.go` to import
+  `herradurakex/herradura`; delete duplicated primitives; keep test helpers + `main()`
+- Add HFSCX-256 known-answer tests to `CryptosuiteTests/Herradura_tests.go` as test [17]
+  (renumbering subsequent items): empty input, `\x61`, 33-byte cross-boundary; expected
+  values cross-checked against Python (`primitives.hfscx_256`) and C (`hfscx_256` in
+  `herradura.h`)
+- Both binaries build and all existing tests pass
+
+**Batch 2 — Go CLI: `genpkey`, `pkey`, `kex`, `dgst`** (1 commit)
+- Create `HerraduraCli/herradura_cli.go` (`package main`); `flag`-based subcommand dispatch;
+  usage text matching Python CLI header comment style
+- Create `HerraduraCli/go.mod`: `module herradurakex/cli`, `require herradurakex v0.0.0`,
+  `replace herradurakex => ../`; add CLI build to `build_go.sh`:
+  `(cd HerraduraCli && go build -o herradura_cli_go .)` outputting `herradura_cli_go`
+- Implement `genpkey` (all 8 algos, reads `/dev/random` via `crypto/rand`)
+- Implement `pkey` (`--pubout` and `--text` modes)
+- Implement `kex` (HKEX-GF single-pass; HKEX-RNL 2-round with Peikert hint)
+- Implement `dgst`: HFSCX-256; hex to stdout (default) or HERRADURA DIGEST PEM (`--out`)
+- PEM/DER format byte-identical to Python and C
+
+**Batch 3 — Go CLI: `enc`, `dec`, `sign`, `verify`** (1 commit)
+- `enc`/`dec`: HSKE, HSKE-NL-A1, HSKE-NL-A2 (symmetric, key from SESSION KEY PEM or
+  `0x...` hex string); HPKE, HPKE-NL, HPKE-Stern-F (asymmetric)
+- `sign`/`verify`: HPKS, HPKS-NL, HPKS-Stern-F; `--digest hfscx-256` pre-hashes `--in`
+  to 32 bytes before signature math (unchanged); exits 0/1; prints
+  `Signature OK` / `Verification FAILED`
+- All PEM ciphertext and signature formats byte-identical to Python and C
+
+**Batch 4 — Go CLI: `encfile`, `decfile`** (1 commit)
+- Streaming HSKE-NL-A1 CTR AEAD using `HskeNla1KsBlock` + `HskeNla1MacKey` from the package
+- `encfile`: write header + nonce; encrypt 32-byte blocks via `fwrite`-style loop;
+  accumulate MAC input; append 32-byte HFSCX-256-MAC tag
+- `decfile`: parse and validate header; two-pass: first pass streams ciphertext to
+  recompute tag; `subtle.ConstantTimeCompare` for tag check; exit 1 on mismatch; second
+  pass decrypts and trims to `plaintext_len`
+- Edge cases: 0-byte, 1-byte, 32-byte (one full block), multi-MiB files
+
+**Batch 5 — `build_go.sh` + CliTest: Go CLI tests + interop** (1 commit)
+- `build_go.sh`: version bump; add CLI build step; verify all three binaries are built
+- `CliTest/test_go_keygen.sh`: genpkey all 8 types; pkey `--pubout`; grep PEM headers;
+  assert non-empty
+- `CliTest/test_go_encrypt.sh`: kex → enc → dec round-trips for all symmetric and
+  asymmetric algos; `cmp` with original
+- `CliTest/test_go_sign.sh`: genpkey → sign → verify (PASS); flip a byte → verify (FAIL)
+- `CliTest/test_go_encfile.sh`: 1 MiB encfile → decfile → `cmp`; flip byte → decfile exits
+  non-zero; edge cases 0/1/32-byte files
+- `CliTest/test_go_interop.sh`: Go↔Python and Go↔C cross-tool: `encfile`/`decfile`,
+  `sign`/`verify`, `dgst` output agreement (one algo each as smoke test)
+
+---
+
+#### Notes
+
+- **No external dependencies.** Uses only stdlib: `math/big`, `crypto/rand`, `crypto/subtle`,
+  `encoding/base64`, `encoding/binary`, `flag`, `fmt`, `os`, `io`, `bytes`.
+- **Go module wiring.** `HerraduraCli/go.mod` and the updated `CryptosuiteTests/go.mod`
+  both use `replace herradurakex => ../` so no network access or versioned release is needed.
+- **Build collision guard.** CLI binary is `herradura_cli_go`; suite stays
+  `"Herradura cryptographic suite_go"`; tests stay `Herradura_tests_go`.
+- **`build_go.sh` suite build change.** After Batch 1, the suite file imports a local
+  package and can no longer be built with `go build file.go` (file mode ignores the module
+  root for intra-module imports).  Change to `go build -o "${SUITE_BIN}" .` and update
+  `CLAUDE.md` build commands accordingly.
+- **HSKE-NL-A2 deterministic caveat** (TODO #12): `enc` help text warns that identical
+  (key, plaintext) pairs always produce identical ciphertext.
+- **Stern-F at N=256 is slow.** Flag in help text; recommend `--bits 32` for testing,
+  matching the assembly targets.
+- **HFSCX-256 test renumbering.** Adding test [17] in Go tests shifts benchmarks;
+  update printed labels accordingly.
+
+Status: **TODO** — not yet started.
+
+---
+
 ## Updated priority order
 
-1. #27 — HerraduraCli C CLI + shared header library (**DONE v1.5.26**)
-2. #17 — Multi-size standardization (Batches 3-6, C tests)
-3. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
-4. #25 — HerraduraCli Python CLI (**DONE v1.5.23**)
-5. #26 — Large-file AEAD + hashed signing (**DONE v1.5.24**)
-6. #21 — i386 HKEX-RNL zero session key (**DONE v1.5.22**)
-7. #23 — Go HKEX-RNL test coverage n=128,256 (**DONE v1.5.22**)
-8. #16 — CBD bit efficiency (**DONE v1.5.22**)
-9. #9  — HSKE-NL-A1 counter=0 degeneracy (**DONE v1.5.13**)
-10. #22 — ARM HSKE-NL-A2 R_VALUE fix (**DONE v1.5.21**)
-11. #19 — Stale version banners (**DONE v1.5.21**)
-12. #20 — Python suite q=3329 label (**DONE v1.5.21**)
-13. #24 — C binary `_c` suffix (**DONE v1.5.20**)
-14. #18 — Parameterized integer arithmetic layer (**DONE v1.5.20**)
-15. #15 — Fermat prime fast modulo (**DONE v1.5.20**)
-16. #14 — NTT twiddle precomputation (**DONE v1.5.17**)
+1. #28 — Go CLI + `herradura` Go package (**active**)
+2. #27 — HerraduraCli C CLI + shared header library (**DONE v1.5.26**)
+3. #17 — Multi-size standardization (Batches 3-6, C tests) (**DONE v1.5.20**)
+4. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
+5. #25 — HerraduraCli Python CLI (**DONE v1.5.23**)
+6. #26 — Large-file AEAD + hashed signing (**DONE v1.5.24**)
+7. #21 — i386 HKEX-RNL zero session key (**DONE v1.5.22**)
+8. #23 — Go HKEX-RNL test coverage n=128,256 (**DONE v1.5.22**)
+9. #16 — CBD bit efficiency (**DONE v1.5.22**)
+10. #9  — HSKE-NL-A1 counter=0 degeneracy (**DONE v1.5.13**)
+11. #22 — ARM HSKE-NL-A2 R_VALUE fix (**DONE v1.5.21**)
+12. #19 — Stale version banners (**DONE v1.5.21**)
+13. #20 — Python suite q=3329 label (**DONE v1.5.21**)
+14. #24 — C binary `_c` suffix (**DONE v1.5.20**)
+15. #18 — Parameterized integer arithmetic layer (**DONE v1.5.20**)
+16. #15 — Fermat prime fast modulo (**DONE v1.5.20**)
+17. #14 — NTT twiddle precomputation (**DONE v1.5.17**)
