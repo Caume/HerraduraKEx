@@ -14,6 +14,8 @@ SUITE_SRC="Herradura cryptographic suite.go"
 SUITE_BIN="Herradura cryptographic suite_go"
 TESTS_DIR="CryptosuiteTests"
 TESTS_BIN="Herradura_tests_go"
+CLI_DIR="HerraduraCli"
+CLI_BIN="herradura_cli_go"
 
 # ── dependency check ──────────────────────────────────────────────────────────
 if ! command -v go &>/dev/null; then
@@ -33,7 +35,12 @@ echo "  Compiling tests..."
 (cd "${TESTS_DIR}" && go build -o "${TESTS_BIN}" Herradura_tests.go)
 echo "    -> ${TESTS_DIR}/${TESTS_BIN}"
 
+echo "  Compiling CLI..."
+(cd "${CLI_DIR}" && go build -o "${CLI_BIN}" herradura_cli.go)
+echo "    -> ${CLI_DIR}/${CLI_BIN}"
+
 echo ""
 echo "Build complete. Run:"
 echo "  ./${SUITE_BIN}"
 echo "  ./${TESTS_DIR}/${TESTS_BIN} [-r ROUNDS] [-t SECONDS]"
+echo "  ./${CLI_DIR}/${CLI_BIN} <command> [options]"

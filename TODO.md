@@ -2062,17 +2062,18 @@ pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) bloc
   `herradura.h`)
 - Both binaries build and all existing tests pass
 
-**Batch 2 — Go CLI: `genpkey`, `pkey`, `kex`, `dgst`** (1 commit)
+**Batch 2 — Go CLI: `genpkey`, `pkey`, `kex`, `dgst`** (1 commit) ✅ v1.5.27
 - Create `HerraduraCli/herradura_cli.go` (`package main`); `flag`-based subcommand dispatch;
   usage text matching Python CLI header comment style
 - Create `HerraduraCli/go.mod`: `module herradurakex/cli`, `require herradurakex v0.0.0`,
   `replace herradurakex => ../`; add CLI build to `build_go.sh`:
-  `(cd HerraduraCli && go build -o herradura_cli_go .)` outputting `herradura_cli_go`
-- Implement `genpkey` (all 8 algos, reads `/dev/random` via `crypto/rand`)
-- Implement `pkey` (`--pubout` and `--text` modes)
-- Implement `kex` (HKEX-GF single-pass; HKEX-RNL 2-round with Peikert hint)
-- Implement `dgst`: HFSCX-256; hex to stdout (default) or HERRADURA DIGEST PEM (`--out`)
-- PEM/DER format byte-identical to Python and C
+  `(cd HerraduraCli && go build -o herradura_cli_go herradura_cli.go)` (file-level; C file present)
+- Implemented `genpkey` (all 8 algos)
+- Implemented `pkey` (`--pubout` and `--text` modes)
+- Implemented `kex` (HKEX-GF single-pass; HKEX-RNL 2-round with Peikert hint byte-reversal)
+- Implemented `dgst`: HFSCX-256; hex to stdout or HERRADURA DIGEST PEM (`--out`)
+- PEM/DER format byte-identical to Python and C; HFSCX-256 KAV verified; cross-language
+  HKEX-GF interop confirmed (Go privkey + Python pubkey → identical session key PEM)
 
 **Batch 3 — Go CLI: `enc`, `dec`, `sign`, `verify`** (1 commit)
 - `enc`/`dec`: HSKE, HSKE-NL-A1, HSKE-NL-A2 (symmetric, key from SESSION KEY PEM or
