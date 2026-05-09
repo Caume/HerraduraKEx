@@ -2130,6 +2130,322 @@ Status: **TODO** — not yet started.
 
 ---
 
+## v1.5.28 PQC Security & Performance Review — Findings (2026-05-08)
+
+Findings from a focused review of `SecurityProofs.md` §11 (PQC sections) and the
+Python proof scripts (`hkex_nl_verification.py`, `hkex_rnl_failure_rate.py`,
+`nl_fscx_prf_analysis.py`).  Each item has been independently audited against the
+deployed code paths.  Items #29–#33 were patched in v1.5.28; #34–#41 remain open.
+
+---
+
+### 29. HPKS-Stern-F secret sampling used Mersenne Twister (Security, Critical)
+**File:** `Herradura cryptographic suite.py` (Python only — C uses `/dev/urandom`,
+Go uses `crypto/rand`)
+
+`stern_f_keygen`, `hpks_stern_f_sign`, `hpke_stern_f_encap`, and
+`hpke_stern_f_encap_with_e` all sampled secret weight-`t` error vectors with
+`random.sample(range(n), t)`.  Python's `random` module is Mersenne Twister
+(MT19937) — not a CSPRNG; its 19937-bit state is recoverable from ~624 32-bit
+outputs.  The leaked values include the long-term private key `e_int`, the
+per-round Fiat-Shamir blinding `r_int` (and therefore `y = e ⊕ r`, leaking `e`),
+and the Niederreiter encapsulation error `e'`.
+
+Fix: introduced `_csprng_weight_t(n, t)` using `os.urandom` with 4-byte rejection
+sampling; replaced all four `random.sample` call sites.
+
+Status: **DONE (v1.5.28)** — Python only.  C and Go versions independently verified
+to be CSPRNG-clean (`/dev/urandom` and `crypto/rand` respectively).
+
+---
+
+### 30. `SDFR=32` default gives ~19-bit signature soundness (Security, Critical)
+**File:** `Herradura cryptographic suite.py:155`
+
+`SDFR = 32` Fiat-Shamir rounds yields `(2/3)^32 ≈ 2⁻¹⁸·⁷` soundness — a forger
+succeeds with probability one in ~430 000.  Production needs `rounds ≥ 219`
+(`⌈λ / log₂(3/2)⌉` for λ=128).  The doc-string warned but offered no runtime
+signal; tests, demos, and downstream callers using the default would silently
+ship a forgeable scheme.
+
+Fix: relabelled `SDFR` as DEMO ONLY, defined `_STERN_F_PRODUCTION_ROUNDS = 219`,
+and added a `RuntimeWarning` from `hpks_stern_f_sign` whenever `rounds < 219`,
+quoting the actual soundness in bits (`rounds × log₂(1.5)`).
+
+Status: **DONE (v1.5.28)**.
+
+---
+
+### 31. Stern parity matrix `H` rebuilt on every syndrome call (Performance, High)
+**File:** `Herradura cryptographic suite.py` (`_stern_syndrome`, callers)
+
+`_stern_syndrome` reconstructs every row of `H` via the NL-FSCX v1 PRF for each
+call.  Inside `hpks_stern_f_sign` and `hpks_stern_f_verify` the same `seed`
+generates the same `H` `(rounds × n_rows)` times: at `n=256, n_rows=128, rounds=219`
+that is 28 032 row-rebuilds, each 64 NL-FSCX steps — 1.79M wasted PRF evaluations
+per signature.
+
+Fix: added `_stern_build_H(seed_int, n, n_rows)` and `_stern_syndrome_H(H_rows, e_int)`.
+`stern_f_keygen`, `hpks_stern_f_sign`, `hpks_stern_f_verify`, `hpke_stern_f_encap`,
+`hpke_stern_f_encap_with_e`, and `hpke_stern_f_decap` build `H` once per call and
+reuse it.  The legacy `_stern_syndrome` is preserved as a thin wrapper for any
+external callers.
+
+Status: **DONE (v1.5.28)** — algorithmic save: `(rounds + verify_calls) × n_rows × (n/4)`
+NL-FSCX evals per sign/verify pair.  No wire-format change.
+
+---
+
+### 32. `delta(B)` recomputed inside `nl_fscx_revolve_v2` inner loop (Performance, Medium)
+**File:** `Herradura cryptographic suite.py:364`
+
+`nl_fscx_revolve_v2` called `nl_fscx_v2` in its loop, recomputing
+`delta(B) = ROL(B·⌊(B+1)/2⌋ mod 2ⁿ, n/4)` every step.  Since `B` is held constant
+across the revolve, `delta(B)` is a per-call constant.
+
+Fix: precompute `delta(B)` once before the loop (mirrors the existing
+`nl_fscx_revolve_v2_inv` optimization from v1.5.9); inner step is now one `fscx`
+plus one integer add.  Saves one bigint multiply and one rotation per step.
+
+Status: **DONE (v1.5.28)**.
+
+---
+
+### 33. `hpke_stern_f_decap` brute-force search has no upper bound (Robustness, Low)
+**File:** `Herradura cryptographic suite.py:826`
+
+When called without a known `e_int`, `hpke_stern_f_decap` enumerated
+`itertools.combinations(range(n), t)` — at `n=256, t=16` that is `C(256,16) ≈ 6.4×10²²`
+iterations, effectively non-terminating.
+
+Fix: refuse the brute-force path with a `ValueError` whenever `C(n,t) > 2³²`,
+directing the caller to supply `e_int` from a QC-MDPC decoder or to use
+`hpke_stern_f_decap_known`.
+
+Status: **DONE (v1.5.28)**.
+
+---
+
+### 34. HFSCX-256 lacks formal analysis in `SecurityProofs.md` (Documentation/Security, Medium)
+**Files:** `Herradura cryptographic suite.py:407` (`hfscx_256`), `SecurityProofs.md` §11.9,
+`SecurityProofsCode/hfscx_256_analysis.py`
+
+The `hfscx_256` Merkle-Damgård hash on NL-FSCX v1 is used in `_stern_hash`
+chains, the `dgst` subcommand, signature pre-hashing, and HSKE-NL-A1-CTR-AEAD
+authentication tags, but `SecurityProofs.md` §11 originally contained no
+analysis of it.
+
+Resolved by adding §11.9 (subsections 11.9.1–11.9.11) covering:
+
+1. **Construction recap** (§11.9.1): compression `C(s, m) = F₁⁶⁴(s, m)`,
+   IV constant, ISO 7816-4 padding, finalization block `(8|D|) ⊕ s₀`.
+2. **Security model** (§11.9.2): formalises three assumptions A1 (PRF), A2
+   (OWF), A3 (NL-FSCX v1 symmetry implying non-bijection in both inputs).
+3. **Collision resistance** (§11.9.3): `2¹²⁸` classical / `2⁸⁵` quantum (BHT)
+   under A1; MD-folklore reduction.
+4. **Preimage / second-preimage** (§11.9.4): `2²⁵⁶` classical / `2¹²⁸` quantum
+   under A2.
+5. **Length-extension resistance** (§11.9.5): Theorem 18 — finalization
+   defeats trivial extension under A2; keyed mode adds independent layer.
+6. **MAC mode recommendation** (§11.9.6): raw keyed-IV is sufficient for the
+   current single-purpose AEAD; HMAC-HFSCX-256 recommended if the same key is
+   ever reused across protocols.
+7. **Domain separation strategy** (§11.9.7): documents current implicit
+   separation; recommends 1-byte domain-tag prefix for future hardening.
+8. **Davies-Meyer hardening** (§11.9.8): recommends `C_DM(s, m) = F₁⁶⁴(s, m) ⊕ s`
+   for fixed-point + free-start-collision hardness; deferred to suite v2.0
+   bundled with other wire-format changes (#37, #38, #39).
+9. **`_stern_hash` cross-reference** (§11.9.9): notes that the Stern protocol
+   uses a different chain function — analysis is TODO #36, not #34.
+10. **Empirical evidence** (§11.9.10): backed by `hfscx_256_analysis.py` —
+    SAC mean 128.013/256 (input) and 128.091/256 (key) over 5 000 trials each;
+    byte chi² = 223.1 < 293.2 critical at p=0.05; 0 length-extension forgeries
+    in 200 trials; 1000/1000 domain-separation distinct; 0 fixed points in 200
+    `(s, m)` trials.
+
+The Davies-Meyer switch and the explicit DS-byte prefixes are deferred (open
+hardenings, not security-critical at deployed parameters).
+
+Status: **DONE (v1.5.30)** — §11.9 added; `hfscx_256_analysis.py` runs in
+~30 s and is referenced from §8 Experimental Code Index.
+
+---
+
+### 35. NL-FSCX v1 PRF — exhaustive Walsh spectrum at small `n` (Research/Cryptanalysis, Medium)
+**File:** `SecurityProofsCode/nl_fscx_prf_analysis.py` §5
+
+§5 of the PRF analysis script samples 2 000 random `(a, b)` mask pairs out of
+`2^{2n} = 2^64` (at `n=32`) and reports the maximum observed |bias|.  This is a
+Monte-Carlo estimate, not a bound — a low-frequency bias whose mask falls outside
+the 2 000-element sample is invisible.
+
+Add an exhaustive Walsh transform at small `n` (e.g. `n=12` or `n=16`):
+- Compute `|Bias(a, b)|` for **all** mask pairs.
+- Report max bias and compare to the random-function bound `O(√n / 2^{n/2})`.
+- Extrapolate (Bernstein bound) to `n=32, 256`.
+
+A confirmed bound is required for any rigorous PRF claim under §11.8.4 Theorem 17.
+
+Status: **TODO**.
+
+---
+
+### 36. `_stern_hash` not modeled as QRO in Theorem 17 reduction (Documentation/Security, Medium)
+**Files:** `Herradura cryptographic suite.py:603` (`_stern_hash`), `SecurityProofs.md` §11.8.4
+
+Theorem 17's EUF-CMA bound `Pr[forge] ≤ q_H / T_SD + ε_PRF` invokes Unruh's QROM
+Fiat-Shamir transform, which requires the hash to behave as a quantum random
+oracle.  The implementation uses `_stern_hash`, a chain of `nl_fscx_revolve_v1`
+evaluations:
+
+```
+h ← NL_FSCX_v1^{n/4}(h ⊕ v_i, ROL(v_i, n/8))   for each item v_i
+```
+
+This chain does **not** automatically inherit QRO behaviour from a PRF assumption
+on NL-FSCX v1.  Two paths:
+
+1. **Replace** `_stern_hash` with HMAC-HFSCX-256 plus per-slot domain-separation
+   constants (`c0`, `c1`, `c2` get distinct DS bytes); reduces security to
+   HFSCX-256 collision resistance — depends on #34 first.
+2. **Prove** the chain is QRO under the NL-FSCX v1 PRF/OWF assumption using the
+   indifferentiability framework (Maurer-Renner-Holenstein 2004 / Coron et al. 2005).
+
+Until this gap is closed, Theorem 17's bound is contingent on an unstated
+assumption.
+
+Status: **TODO**.
+
+---
+
+### 37. `_rnl_lift` rounds toward zero — switch to centered rounding (Performance/Correctness, Medium)
+**Files:** `Herradura cryptographic suite.py:510-512`, C / Go / ARM / NASM / Arduino
+equivalents, `SecurityProofsCode/hkex_rnl_failure_rate.py:95-97`
+
+`_rnl_round` uses centered rounding `(c·to_p + from_q//2) // from_q`, but
+`_rnl_lift` rounds toward zero: `c·to_q // from_p`.  The asymmetry adds a
+systematic bias of up to `q/(2p)` to every coefficient, eating into the noise
+budget.
+
+Fix:
+```python
+def _rnl_lift(poly, from_p, to_q):
+    return [(c * to_q + from_p // 2) // from_p % to_q for c in poly]
+```
+
+**Cross-language coordination required.**  The lift output enters `K_poly` and
+the reconciliation hint, so Python's lift must match C, Go, ARM Thumb-2, NASM i386,
+and Arduino.  Update all six language implementations in lockstep, then re-run
+`hkex_rnl_failure_rate.py` to refresh the failure-rate numbers in
+`SecurityProofs.md` §11.5 Q2 / §11.6.
+
+Expected effect: ~2× reduction in worst-case pre-reconciliation failure rate
+(currently 2.04 % at `n=32`, 37.24 % at `n=256`).  Post-reconciliation rate stays
+at 0 % — this is a margin improvement, not a correctness fix.
+
+Status: **TODO**.
+
+---
+
+### 38. KDF seed degenerates on rotation-periodic K (Security, Low)
+**File:** `Herradura cryptographic suite.py` HKEX-RNL KDF and HSKE-NL-A1 seed
+derivation (and the equivalent paths in C / Go / ARM / NASM / Arduino).
+
+The v1.5.10 / v1.5.13 fix sets `seed = ROL(K, n/8)` to break the step-1
+degeneracy when `A=B=K` (which makes `fscx(K,K)=0`).  The patch degenerates back
+to the original problem when `K` has a rotational period dividing `n/8` — e.g.
+any `K` of the form `pattern || pattern || …` with `pattern` of width `n/8`.
+At `n=32` this is roughly `2⁴ / 2³² ≈ 2⁻²⁸` of the keyspace; at `n=256` negligible.
+
+Defence in depth: XOR a non-rotational nothing-up-my-sleeve constant after the
+rotation:
+
+```python
+DOMAIN_CONST = 0x6A09E667...   # n-bit constant, low rotational symmetry
+seed = ROL(K, n/8) ^ DOMAIN_CONST
+```
+
+**Cross-language coordination required.**  Changes the derived `sk`; breaks
+Python ↔ C/Go/asm interop.  Schedule with the next major suite version bump.
+
+Practical risk: low — the attacker cannot choose `K` (it is the reconciled
+session secret), so the bad-`K` rate is the random-`K` rate, not adversarial.
+
+Status: **TODO**.
+
+---
+
+### 39. 2-bit Peikert reconciliation for higher key density (Performance, Low)
+**Files:** `Herradura cryptographic suite.py` `_rnl_hint`, `_rnl_reconcile_bits`,
+plus C / Go / asm / Arduino equivalents.
+
+§11.5 Q2 measures `‖e_A − e_B‖_∞ ≤ 379 ≪ q/8 = 8192`.  With this slack a 2-bit
+reconciliation (4 buckets, NewHope-style cross-rounding extension) extracts ~2
+bits per coefficient instead of 1.  At `n=256` this halves the polynomial size
+needed for a fixed-length output key, doubling HKEX-RNL throughput at the same
+security level.
+
+**Cross-language wire-format change.**  Hint encoding and extraction formulas
+change; coordinate across all six language targets and refresh
+`SecurityProofs.md` §11.4.2 / §11.5 Q2 numbers.
+
+Status: **TODO**.
+
+---
+
+### 40. NumPy NTT optional acceleration (Performance, Low)
+**File:** `Herradura cryptographic suite.py:448` (`_ntt_inplace`)
+
+`_ntt_inplace` does `wn = wn * w % q` in a hot pure-Python inner loop.  At
+`q = 65537` all NTT values fit in `uint32`.  A NumPy lift would give roughly 10×
+speedup on `_rnl_poly_mul` without changing semantics or wire format:
+
+- Precompute bit-reversal permutation and twiddle table once (already partial in
+  v1.5.17 — the table cache is the right hook).
+- Vectorize the butterfly with `np.uint32` arithmetic + Mersenne-style modular
+  reduction.
+- Gate behind `try: import numpy` so plain-Python deployments keep working.
+
+Python-side only; no cross-language coordination needed.
+
+Status: **TODO**.
+
+---
+
+### 41. Constant-time audit for `_stern_apply_perm` and friends (Security, Medium)
+**Files:** `Herradura cryptographic suite.py:686-692` (`_stern_apply_perm`),
+`:620-626` (`_stern_syndrome`), `:530-551` (`_rnl_cbd_poly`); plus the C, Go,
+ARM Thumb-2, NASM i386, and Arduino Stern-F implementations.
+
+The Python implementation has data-dependent branching on secret bit-vectors:
+
+```python
+for i in range(N):
+    if (v_int >> i) & 1:           # branches on each secret bit of r/y/e
+        result |= 1 << perm[i]
+```
+
+Stern's protocol relies on hiding which positions are set in `e`; branch timing
+leaks them.  CPython further leaks via `bin(x).count('1')` (variable-time over
+int size) and `% q` on bigints.
+
+Action items:
+1. **Document** that the Python suite is a reference implementation and is **not**
+   constant-time; production deployments must use the C / asm targets.
+2. **Audit** the C, Go, ARM Thumb-2, NASM i386, and Arduino Stern-F implementations
+   for the same data-dependent branching.  Where present, replace with branchless
+   bit manipulation:
+   ```c
+   result |= ((-((v >> i) & 1)) & (1ULL << perm[i]));
+   ```
+3. **Add a constant-time test** to the Python proof scripts that measures timing
+   variance vs. secret Hamming weight, failing if Pearson correlation exceeds a
+   threshold.
+
+Status: **TODO**.
+
+---
+
 ## Updated priority order
 
 1. #28 — Go CLI + `herradura` Go package (**active**)
@@ -2149,3 +2465,16 @@ Status: **TODO** — not yet started.
 15. #18 — Parameterized integer arithmetic layer (**DONE v1.5.20**)
 16. #15 — Fermat prime fast modulo (**DONE v1.5.20**)
 17. #14 — NTT twiddle precomputation (**DONE v1.5.17**)
+18. #29 — HPKS-Stern-F CSPRNG fix (**DONE v1.5.28**)
+19. #30 — `SDFR=32` demo runtime warning (**DONE v1.5.28**)
+20. #31 — Stern parity matrix caching (**DONE v1.5.28**)
+21. #32 — `delta(B)` precompute in `nl_fscx_revolve_v2` (**DONE v1.5.28**)
+22. #33 — `hpke_stern_f_decap` brute-force guard (**DONE v1.5.28**)
+23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**TODO**)
+24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
+25. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO**)
+26. #41 — Constant-time audit / documentation (**TODO**)
+27. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**TODO**)
+28. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
+29. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
+30. #40 — NumPy NTT optional acceleration (**TODO**)
