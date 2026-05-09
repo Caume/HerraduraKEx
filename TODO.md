@@ -2075,13 +2075,13 @@ pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) bloc
 - PEM/DER format byte-identical to Python and C; HFSCX-256 KAV verified; cross-language
   HKEX-GF interop confirmed (Go privkey + Python pubkey → identical session key PEM)
 
-**Batch 3 — Go CLI: `enc`, `dec`, `sign`, `verify`** (1 commit)
+**Batch 3 — Go CLI: `enc`, `dec`, `sign`, `verify`** (1 commit) ✅ v1.5.27
 - `enc`/`dec`: HSKE, HSKE-NL-A1, HSKE-NL-A2 (symmetric, key from SESSION KEY PEM or
   `0x...` hex string); HPKE, HPKE-NL, HPKE-Stern-F (asymmetric)
 - `sign`/`verify`: HPKS, HPKS-NL, HPKS-Stern-F; `--digest hfscx-256` pre-hashes `--in`
-  to 32 bytes before signature math (unchanged); exits 0/1; prints
-  `Signature OK` / `Verification FAILED`
-- All PEM ciphertext and signature formats byte-identical to Python and C
+  to 32 bytes before signature math; exits 0/1; prints `Signature OK` / `Verification FAILED`
+- All PEM ciphertext and signature formats byte-identical to Python; cross-language
+  HPKE enc/dec and HPKS sign/verify interop confirmed
 
 **Batch 4 — Go CLI: `encfile`, `decfile`** (1 commit)
 - Streaming HSKE-NL-A1 CTR AEAD using `HskeNla1KsBlock` + `HskeNla1MacKey` from the package

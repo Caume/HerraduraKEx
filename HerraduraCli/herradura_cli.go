@@ -2,11 +2,15 @@
 // v1.5.27
 //
 // Usage:
-//   herradura_cli_go genpkey --algo hkex-gf  --bits 256 --out alice.pem
-//   herradura_cli_go pkey    --in alice.pem   --pubout  --out alice_pub.pem
-//   herradura_cli_go kex     --algo hkex-gf   --our alice.pem --their bob_pub.pem --out sk.pem
-//   herradura_cli_go dgst    --in file.bin                       # hex to stdout
-//   herradura_cli_go dgst    --algo hfscx-256 --in file.bin --out d.pem
+//   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem
+//   herradura_cli_go pkey     --in alice.pem   --pubout  --out alice_pub.pem
+//   herradura_cli_go kex      --algo hkex-gf   --our alice.pem --their bob_pub.pem --out sk.pem
+//   herradura_cli_go enc      --algo hske      --key sk.pem --in msg.bin --out ct.pem
+//   herradura_cli_go dec      --algo hske      --key sk.pem --in ct.pem  --out plain.bin
+//   herradura_cli_go sign     --algo hpks      --key priv.pem --in msg.bin --out sig.pem
+//   herradura_cli_go verify   --algo hpks      --pubkey pub.pem --in msg.bin --sig sig.pem
+//   herradura_cli_go dgst     --in file.bin                       # hex to stdout
+//   herradura_cli_go dgst     --algo hfscx-256 --in file.bin --out d.pem
 //
 // HKEX-RNL (2-round):
 //   herradura_cli_go kex --algo hkex-rnl --our bob.pem --their alice_pub.pem --out resp.pem
@@ -20,6 +24,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strings"
 
 	. "herradurakex/herradura"
 )
@@ -47,6 +52,8 @@ const (
 
 	lblSession = "HERRADURA SESSION KEY"
 	lblRnlResp = "HERRADURA HKEX-RNL RESPONSE"
+	lblCT      = "HERRADURA CIPHERTEXT"
+	lblSig     = "HERRADURA SIGNATURE"
 	lblDigest  = "HERRADURA DIGEST"
 )
 
@@ -107,6 +114,14 @@ func writeString(path, s string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(s), 0644)
+}
+
+func writeBytes(path string, b []byte) error {
+	if path == "-" {
+		_, err := os.Stdout.Write(b)
+		return err
+	}
+	return os.WriteFile(path, b, 0644)
 }
 
 func readPEMInts(path string) (string, [][]byte, error) {
@@ -673,6 +688,683 @@ func cmdDgst(args []string) {
 	}
 }
 
+// ── Key loading helper (for enc/dec) ─────────────────────────────────────────
+
+// loadKey loads a session key from a SESSION KEY PEM, HKEX-RNL RESPONSE PEM,
+// or a plain-text 0x... hex string.  Returns (key, nbits).
+func loadKey(path string) (*big.Int, int, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	s := strings.TrimSpace(string(data))
+	if strings.HasPrefix(strings.ToLower(s), "0x") {
+		v, ok := new(big.Int).SetString(s[2:], 16)
+		if !ok {
+			return nil, 0, fmt.Errorf("invalid hex key %q", s)
+		}
+		nb := v.BitLen()
+		if nb < 32 {
+			nb = 32
+		}
+		nb = ((nb + 31) / 32) * 32
+		return v, nb, nil
+	}
+	label, der, err := PemUnwrap(s)
+	if err != nil {
+		return nil, 0, err
+	}
+	ints, err := DerParseSeq(der)
+	if err != nil {
+		return nil, 0, err
+	}
+	switch label {
+	case lblSession:
+		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[1]), nil
+	case lblRnlResp:
+		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[3]), nil
+	}
+	return nil, 0, fmt.Errorf("loadKey: expected SESSION KEY or HKEX-RNL RESPONSE PEM, got %q", label)
+}
+
+// ── Ciphertext encoding helpers ───────────────────────────────────────────────
+
+// encodeSymCT encodes a symmetric ciphertext (HSKE / HSKE-NL-A1 / HSKE-NL-A2).
+// For HSKE-NL-A1 pass nonce != nil to include format tag 1 + nonce field;
+// all other algos use format tag 0 (no nonce).
+func encodeSymCT(algo string, E *big.Int, n int, nonce *big.Int) (string, error) {
+	nb := n / 8
+	var items [][]byte
+	if algo == "hske-nla1" && nonce != nil {
+		tag, _ := derIntSmall(1)
+		nd, _  := derIntBig(nonce, nb)
+		ed, _  := derIntBig(E, nb)
+		nn, _  := derIntSmall(n)
+		items = [][]byte{tag, nd, ed, nn}
+	} else {
+		tag, _ := derIntSmall(0)
+		ed, _  := derIntBig(E, nb)
+		nn, _  := derIntSmall(n)
+		items = [][]byte{tag, ed, nn}
+	}
+	seq, err := DerSeqEnc(items...)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblCT, seq), nil
+}
+
+func encodeAsymCT(R, E *big.Int, n int) (string, error) {
+	nb := n / 8
+	rd, err := derIntBig(R, nb)
+	if err != nil {
+		return "", err
+	}
+	ed, err := derIntBig(E, nb)
+	if err != nil {
+		return "", err
+	}
+	nn, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(rd, ed, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblCT, seq), nil
+}
+
+// encodeSternCT encodes an HPKE-Stern-F KEM ciphertext.
+// K is stored for session-key extraction; e' stored for demo brute-force decap.
+func encodeSternCT(ctSyn *big.Int, ePrime, K *BitArray, E *big.Int, n int) (string, error) {
+	nb := n / 8
+	ca, err := derIntBig(ctSyn, nb)
+	if err != nil {
+		return "", err
+	}
+	ea, err := derIntBig(&ePrime.Val, nb)
+	if err != nil {
+		return "", err
+	}
+	ka, err := derIntBig(&K.Val, nb)
+	if err != nil {
+		return "", err
+	}
+	enc, err := derIntBig(E, nb)
+	if err != nil {
+		return "", err
+	}
+	nn, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(ca, ea, ka, enc, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblCT, seq), nil
+}
+
+// ── Signature encoding helpers ────────────────────────────────────────────────
+
+func encodeSchnorrSig(s, R, e *big.Int, n int) (string, error) {
+	nb := n / 8
+	sa, err := derIntBig(s, nb)
+	if err != nil {
+		return "", err
+	}
+	ra, err := derIntBig(R, nb)
+	if err != nil {
+		return "", err
+	}
+	ea, err := derIntBig(e, nb)
+	if err != nil {
+		return "", err
+	}
+	nn, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(sa, ra, ea, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblSig, seq), nil
+}
+
+// packSternSig serialises a *SternSig to the HERRADURA SIGNATURE PEM format,
+// matching Python's _pack_stern_sig and C's pack_stern_sig exactly.
+func packSternSig(sig *SternSig, n int) (string, error) {
+	rounds := len(sig.Rounds)
+	nb := n / 8
+
+	// Commits: c0||c1||c2 per round, each nb bytes big-endian
+	commitsBuf := make([]byte, 3*rounds*nb)
+	for i, r := range sig.Rounds {
+		off := i * 3 * nb
+		r.C0.Val.FillBytes(commitsBuf[off : off+nb])
+		r.C1.Val.FillBytes(commitsBuf[off+nb : off+2*nb])
+		r.C2.Val.FillBytes(commitsBuf[off+2*nb : off+3*nb])
+	}
+
+	// Challenges: 2 bits per round, packed LSB-first within each byte
+	chalNb := (rounds + 3) / 4
+	chalBytes := make([]byte, chalNb)
+	for i, r := range sig.Rounds {
+		chalBytes[i/4] |= byte((r.B & 3) << ((i % 4) * 2))
+	}
+
+	// Responses: respA||respB per round, each nb bytes big-endian
+	respBuf := make([]byte, 2*rounds*nb)
+	for i, r := range sig.Rounds {
+		off := i * 2 * nb
+		r.RespA.Val.FillBytes(respBuf[off : off+nb])
+		r.RespB.Val.FillBytes(respBuf[off+nb : off+2*nb])
+	}
+
+	nDer, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	rDer, err := derIntSmall(rounds)
+	if err != nil {
+		return "", err
+	}
+	cDer, err := derIntBig(new(big.Int).SetBytes(commitsBuf), len(commitsBuf))
+	if err != nil {
+		return "", err
+	}
+	chDer, err := derIntBig(new(big.Int).SetBytes(chalBytes), chalNb)
+	if err != nil {
+		return "", err
+	}
+	resDer, err := derIntBig(new(big.Int).SetBytes(respBuf), len(respBuf))
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(nDer, rDer, cDer, chDer, resDer)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblSig, seq), nil
+}
+
+// unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
+func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
+	n := bytesToInt(ints[0])
+	rounds := bytesToInt(ints[1])
+	nb := n / 8
+
+	padLeft := func(raw []byte, want int) []byte {
+		if len(raw) >= want {
+			return raw[len(raw)-want:]
+		}
+		out := make([]byte, want)
+		copy(out[want-len(raw):], raw)
+		return out
+	}
+
+	commitsRaw := padLeft(ints[2], 3*rounds*nb)
+	chalRaw    := padLeft(ints[3], (rounds+3)/4)
+	respRaw    := padLeft(ints[4], 2*rounds*nb)
+
+	sig := &SternSig{Rounds: make([]SternRound, rounds)}
+	for i := range sig.Rounds {
+		off := i * 3 * nb
+		sig.Rounds[i].C0 = NewBitArray(n, new(big.Int).SetBytes(commitsRaw[off:off+nb]))
+		sig.Rounds[i].C1 = NewBitArray(n, new(big.Int).SetBytes(commitsRaw[off+nb:off+2*nb]))
+		sig.Rounds[i].C2 = NewBitArray(n, new(big.Int).SetBytes(commitsRaw[off+2*nb:off+3*nb]))
+		sig.Rounds[i].B  = int((chalRaw[i/4] >> ((i % 4) * 2)) & 3)
+		off2 := i * 2 * nb
+		sig.Rounds[i].RespA = NewBitArray(n, new(big.Int).SetBytes(respRaw[off2:off2+nb]))
+		sig.Rounds[i].RespB = NewBitArray(n, new(big.Int).SetBytes(respRaw[off2+nb:off2+2*nb]))
+	}
+	return sig, n, nil
+}
+
+// msgPad returns inBytes truncated/zero-padded to exactly nbytes.
+func msgPad(inBytes []byte, nbytes int) []byte {
+	out := make([]byte, nbytes)
+	copy(out, inBytes)
+	return out
+}
+
+// ── enc ───────────────────────────────────────────────────────────────────────
+
+func cmdEnc(args []string) {
+	fs := flag.NewFlagSet("enc", flag.ExitOnError)
+	algo   := fs.String("algo", "", "Encryption algorithm")
+	key    := fs.String("key", "", "Key file (symmetric algos and HPKE enc uses --pubkey)")
+	pubkey := fs.String("pubkey", "", "Recipient public key file (asymmetric algos)")
+	in     := fs.String("in", "-", "Plaintext input file")
+	out    := fs.String("out", "-", "Ciphertext output PEM file")
+	fs.Parse(args)
+
+	if *algo == "" {
+		fmt.Fprintln(os.Stderr, "enc: --algo required")
+		os.Exit(1)
+	}
+
+	inBytes, err := readFile(*in)
+	if err != nil {
+		die("enc", err)
+	}
+
+	gen := new(big.Int).SetInt64(GfGen)
+
+	switch *algo {
+	case "hske", "hske-nla1", "hske-nla2":
+		if *key == "" {
+			fmt.Fprintf(os.Stderr, "enc: --key required for %s\n", *algo)
+			os.Exit(1)
+		}
+		keyInt, n, err := loadKey(*key)
+		if err != nil {
+			die("enc", err)
+		}
+		nb := n / 8
+		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
+		K := NewBitArray(n, keyInt)
+
+		var pem string
+		switch *algo {
+		case "hske":
+			E := FscxRevolve(P, K, n/4)
+			pem, err = encodeSymCT("hske", &E.Val, n, nil)
+		case "hske-nla1":
+			nonce := NewRandBitArray(n)
+			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+			seed  := base.RotateLeft(n / 8)
+			ks    := NlFscxRevolveV1(seed, base, n/4)
+			E     := NewBitArray(n, new(big.Int).Xor(&P.Val, &ks.Val))
+			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
+		case "hske-nla2":
+			E := NlFscxRevolveV2(P, K, 3*n/4)
+			pem, err = encodeSymCT("hske-nla2", &E.Val, n, nil)
+		}
+		if err != nil {
+			die("enc", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("enc", err)
+		}
+
+	case "hpke", "hpke-nl":
+		if *pubkey == "" {
+			fmt.Fprintf(os.Stderr, "enc: --pubkey required for %s\n", *algo)
+			os.Exit(1)
+		}
+		_, theirInts, err := readPEMInts(*pubkey)
+		if err != nil {
+			die("enc", err)
+		}
+		pubInt := new(big.Int).SetBytes(theirInts[0])
+		n := bytesToInt(theirInts[1])
+		poly := GfPoly[n]
+		if poly == nil {
+			poly = GfPoly[256]
+		}
+		nb := n / 8
+		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
+		r := NewRandBitArray(n)
+		R := GfPow(gen, &r.Val, poly, n)
+		encKey := NewBitArray(n, GfPow(pubInt, &r.Val, poly, n))
+
+		var pem string
+		if *algo == "hpke" {
+			E := FscxRevolve(P, encKey, n/4)
+			pem, err = encodeAsymCT(R, &E.Val, n)
+		} else {
+			E := NlFscxRevolveV2(P, encKey, n/4)
+			pem, err = encodeAsymCT(R, &E.Val, n)
+		}
+		if err != nil {
+			die("enc", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("enc", err)
+		}
+
+	case "hpke-stern":
+		if *pubkey == "" {
+			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern")
+			os.Exit(1)
+		}
+		_, theirInts, err := readPEMInts(*pubkey)
+		if err != nil {
+			die("enc", err)
+		}
+		n    := bytesToInt(theirInts[2])
+		seed := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+		nb   := n / 8
+		P    := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
+		K, ctSyn, ePrime := HpkeSternFEncap(seed, n)
+		E := FscxRevolve(P, K, n/4)
+		pem, err := encodeSternCT(ctSyn, ePrime, K, &E.Val, n)
+		if err != nil {
+			die("enc", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("enc", err)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "enc: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+}
+
+// ── dec ───────────────────────────────────────────────────────────────────────
+
+func cmdDec(args []string) {
+	fs := flag.NewFlagSet("dec", flag.ExitOnError)
+	algo := fs.String("algo", "", "Decryption algorithm")
+	key  := fs.String("key", "", "Key or private key file")
+	in   := fs.String("in", "-", "Ciphertext PEM input file")
+	out  := fs.String("out", "-", "Plaintext output file")
+	fs.Parse(args)
+
+	if *algo == "" {
+		fmt.Fprintln(os.Stderr, "dec: --algo required")
+		os.Exit(1)
+	}
+
+	switch *algo {
+	case "hske", "hske-nla1", "hske-nla2":
+		if *key == "" {
+			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
+			os.Exit(1)
+		}
+		keyInt, _, err := loadKey(*key)
+		if err != nil {
+			die("dec", err)
+		}
+		_, ctInts, err := readPEMInts(*in)
+		if err != nil {
+			die("dec", err)
+		}
+		// ctInts[0] = fmt tag; tag 1 → nonce present
+		fmtTag := bytesToInt(ctInts[0])
+		var EInt, nonceInt *big.Int
+		var n int
+		if fmtTag == 1 {
+			EInt    = new(big.Int).SetBytes(ctInts[2])
+			n       = bytesToInt(ctInts[3])
+			nonceInt = new(big.Int).SetBytes(ctInts[1])
+		} else {
+			EInt = new(big.Int).SetBytes(ctInts[1])
+			n    = bytesToInt(ctInts[2])
+		}
+		K := NewBitArray(n, keyInt)
+		E := NewBitArray(n, EInt)
+
+		var D *BitArray
+		switch *algo {
+		case "hske":
+			D = FscxRevolve(E, K, 3*n/4)
+		case "hske-nla1":
+			if nonceInt == nil {
+				fmt.Fprintln(os.Stderr, "dec: hske-nla1 ciphertext missing nonce")
+				os.Exit(1)
+			}
+			nonce := NewBitArray(n, nonceInt)
+			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+			seed  := base.RotateLeft(n / 8)
+			ks    := NlFscxRevolveV1(seed, base, n/4)
+			D      = NewBitArray(n, new(big.Int).Xor(&E.Val, &ks.Val))
+		case "hske-nla2":
+			D = NlFscxRevolveV2Inv(E, K, 3*n/4)
+		}
+		if err := writeBytes(*out, D.Bytes()); err != nil {
+			die("dec", err)
+		}
+
+	case "hpke", "hpke-nl":
+		if *key == "" {
+			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
+			os.Exit(1)
+		}
+		_, ourInts, err := readPEMInts(*key)
+		if err != nil {
+			die("dec", err)
+		}
+		_, ctInts, err := readPEMInts(*in)
+		if err != nil {
+			die("dec", err)
+		}
+		priv := new(big.Int).SetBytes(ourInts[0])
+		n    := bytesToInt(ourInts[2])
+		poly := GfPoly[n]
+		if poly == nil {
+			poly = GfPoly[256]
+		}
+		R    := new(big.Int).SetBytes(ctInts[0])
+		EInt := new(big.Int).SetBytes(ctInts[1])
+		decKey := NewBitArray(n, GfPow(R, priv, poly, n))
+		E      := NewBitArray(n, EInt)
+
+		var D *BitArray
+		if *algo == "hpke" {
+			D = FscxRevolve(E, decKey, 3*n/4)
+		} else {
+			D = NlFscxRevolveV2Inv(E, decKey, n/4)
+		}
+		if err := writeBytes(*out, D.Bytes()); err != nil {
+			die("dec", err)
+		}
+
+	case "hpke-stern":
+		if *key == "" {
+			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern")
+			os.Exit(1)
+		}
+		_, ourInts, err := readPEMInts(*key)
+		if err != nil {
+			die("dec", err)
+		}
+		_, ctInts, err := readPEMInts(*in)
+		if err != nil {
+			die("dec", err)
+		}
+		n       := bytesToInt(ourInts[2])
+		seed    := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+		ePrime  := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+		EInt    := new(big.Int).SetBytes(ctInts[3])
+		K_dec   := HpkeSternFDecapKnown(ePrime, seed)
+		E       := NewBitArray(n, EInt)
+		D       := FscxRevolve(E, K_dec, 3*n/4)
+		if err := writeBytes(*out, D.Bytes()); err != nil {
+			die("dec", err)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "dec: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+}
+
+// ── sign ──────────────────────────────────────────────────────────────────────
+
+func cmdSign(args []string) {
+	fs := flag.NewFlagSet("sign", flag.ExitOnError)
+	algo   := fs.String("algo", "", "Signature algorithm (hpks|hpks-nl|hpks-stern)")
+	key    := fs.String("key", "", "Private key file")
+	in     := fs.String("in", "-", "Message input file")
+	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	out    := fs.String("out", "-", "Signature PEM output file")
+	fs.Parse(args)
+
+	if *algo == "" || *key == "" {
+		fmt.Fprintln(os.Stderr, "sign: --algo and --key required")
+		os.Exit(1)
+	}
+
+	inBytes, err := readFile(*in)
+	if err != nil {
+		die("sign", err)
+	}
+	if *digest == "hfscx-256" {
+		inBytes = Hfscx256(inBytes, nil)
+	}
+
+	_, ourInts, err := readPEMInts(*key)
+	if err != nil {
+		die("sign", err)
+	}
+
+	gen := new(big.Int).SetInt64(GfGen)
+
+	switch *algo {
+	case "hpks", "hpks-nl":
+		priv := new(big.Int).SetBytes(ourInts[0])
+		n    := bytesToInt(ourInts[2])
+		poly := GfPoly[n]
+		if poly == nil {
+			poly = GfPoly[256]
+		}
+		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		k   := NewRandBitArray(n)
+		R   := GfPow(gen, &k.Val, poly, n)
+
+		var e *BitArray
+		if *algo == "hpks" {
+			e = FscxRevolve(NewBitArray(n, R), msg, n/4)
+		} else {
+			e = NlFscxRevolveV1(NewBitArray(n, R), msg, n/4)
+		}
+		// s = (k - priv * e) mod (2^n - 1)
+		ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+		s   := new(big.Int).Mod(
+			new(big.Int).Sub(&k.Val, new(big.Int).Mul(priv, &e.Val)),
+			ord,
+		)
+		pem, err := encodeSchnorrSig(s, R, &e.Val, n)
+		if err != nil {
+			die("sign", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("sign", err)
+		}
+
+	case "hpks-stern":
+		n    := bytesToInt(ourInts[2])
+		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
+		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		sig  := HpksSternFSign(msg, e, seed, SdfRounds)
+		pem, err := packSternSig(sig, n)
+		if err != nil {
+			die("sign", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("sign", err)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "sign: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+}
+
+// ── verify ────────────────────────────────────────────────────────────────────
+
+func cmdVerify(args []string) {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	algo   := fs.String("algo", "", "Signature algorithm")
+	pubkey := fs.String("pubkey", "", "Public key file")
+	in     := fs.String("in", "-", "Message input file")
+	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
+	sig    := fs.String("sig", "", "Signature PEM file")
+	fs.Parse(args)
+
+	if *algo == "" || *pubkey == "" || *sig == "" {
+		fmt.Fprintln(os.Stderr, "verify: --algo, --pubkey, --sig required")
+		os.Exit(1)
+	}
+
+	inBytes, err := readFile(*in)
+	if err != nil {
+		die("verify", err)
+	}
+	if *digest == "hfscx-256" {
+		inBytes = Hfscx256(inBytes, nil)
+	}
+
+	_, theirInts, err := readPEMInts(*pubkey)
+	if err != nil {
+		die("verify", err)
+	}
+
+	gen := new(big.Int).SetInt64(GfGen)
+
+	switch *algo {
+	case "hpks", "hpks-nl":
+		pub := new(big.Int).SetBytes(theirInts[0])
+		n   := bytesToInt(theirInts[1])
+		poly := GfPoly[n]
+		if poly == nil {
+			poly = GfPoly[256]
+		}
+		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+
+		_, sigInts, err := readPEMInts(*sig)
+		if err != nil {
+			die("verify", err)
+		}
+		sInt := new(big.Int).SetBytes(sigInts[0])
+		R    := new(big.Int).SetBytes(sigInts[1])
+		_     = sigInts[2] // e stored in sig; recomputed below for verification
+
+		// e_v = challenge recomputed from R and msg
+		var eV *BitArray
+		if *algo == "hpks" {
+			eV = FscxRevolve(NewBitArray(n, R), msg, n/4)
+		} else {
+			eV = NlFscxRevolveV1(NewBitArray(n, R), msg, n/4)
+		}
+		// Verify: g^s * pub^(e_recomputed) == R  (matches Python verify)
+		lhs := GfMul(
+			GfPow(gen, sInt, poly, n),
+			GfPow(pub, &eV.Val, poly, n),
+			poly, n,
+		)
+		if lhs.Cmp(R) == 0 {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+
+	case "hpks-stern":
+		synInt  := new(big.Int).SetBytes(theirInts[0])
+		n       := bytesToInt(theirInts[2])
+		seed    := NewBitArray(n, new(big.Int).SetBytes(theirInts[1]))
+		msg     := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+
+		_, sigInts, err := readPEMInts(*sig)
+		if err != nil {
+			die("verify", err)
+		}
+		sternSig, _, err := unpackSternSig(sigInts)
+		if err != nil {
+			die("verify", err)
+		}
+		if HpksSternFVerify(msg, sternSig, seed, synInt) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "verify: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 func die(prefix string, err error) {
@@ -687,10 +1379,16 @@ Commands:
   genpkey  --algo ALGO [--bits N] [--out FILE]
   pkey     --in FILE (--pubout | --text) [--out FILE]
   kex      --algo ALGO --our FILE --their FILE [--out FILE]
+  enc      --algo ALGO (--key FILE | --pubkey FILE) --in FILE [--out FILE]
+  dec      --algo ALGO --key FILE --in FILE [--out FILE]
+  sign     --algo ALGO --key FILE --in FILE [--digest hfscx-256] [--out FILE]
+  verify   --algo ALGO --pubkey FILE --in FILE --sig FILE [--digest hfscx-256]
   dgst     [--algo hfscx-256] --in FILE [--out FILE]
 
 Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern
 Algorithms (kex):           hkex-gf hkex-rnl
+Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hpke hpke-nl hpke-stern
+Algorithms (sign/verify):   hpks hpks-nl hpks-stern
 `)
 }
 
@@ -708,6 +1406,14 @@ func main() {
 		cmdPkey(rest)
 	case "kex":
 		cmdKex(rest)
+	case "enc":
+		cmdEnc(rest)
+	case "dec":
+		cmdDec(rest)
+	case "sign":
+		cmdSign(rest)
+	case "verify":
+		cmdVerify(rest)
 	case "dgst":
 		cmdDgst(rest)
 	default:
