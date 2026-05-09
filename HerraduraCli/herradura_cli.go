@@ -18,6 +18,8 @@
 package main
 
 import (
+	"crypto/subtle"
+	"encoding/binary"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -1365,6 +1367,211 @@ func cmdVerify(args []string) {
 	}
 }
 
+// ── encfile / decfile ────────────────────────────────────────────────────────
+//
+// Binary .hkx container format (HSKE-NL-A1 CTR-mode AEAD):
+//   [0:4]         Magic "HKX1"
+//   [4]           Algo byte: 0x01 = hske-nla1
+//   [5:13]        Plaintext length (big-endian uint64)
+//   [13:45]       Nonce N (32 bytes)
+//   [45:45+m*32]  Ciphertext blocks (m = ⌈len/32⌉; last block zero-padded)
+//   [45+m*32:]    Auth tag: HFSCX-256-MAC(mac_key, nonce‖len‖ciphertext)
+//
+// Keystream: ks_i = HskeNla1KsBlock(seed, base, i)
+// MAC key:   HskeNla1MacKey(seed, base)  [domain-separated via inner ROL]
+// MAC IV:    mac_key XOR Hfscx256IV
+//
+// Where: base = K XOR N_nonce;  seed = base.RotateLeft(32)
+
+const (
+	hkxMagic    = "HKX1"
+	hkxAlgoNLA1 = byte(0x01)
+	hkxHdrSize  = 4 + 1 + 8 + 32 // magic + algo + len8 + nonce32 = 45
+	hkxBlock    = 32
+	hkxMinSize  = hkxHdrSize + hkxBlock // 45 + 32-byte tag (0-byte plaintext)
+)
+
+func cmdEncfile(args []string) {
+	fs := flag.NewFlagSet("encfile", flag.ExitOnError)
+	algo := fs.String("algo", "hske-nla1", "Encryption algorithm (hske-nla1)")
+	key  := fs.String("key", "", "Session key file")
+	in   := fs.String("in", "-", "Plaintext input file")
+	out  := fs.String("out", "-", "Output .hkx file")
+	fs.Parse(args)
+
+	if *algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "encfile: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+	if *key == "" {
+		fmt.Fprintln(os.Stderr, "encfile: --key required")
+		os.Exit(1)
+	}
+
+	keyInt, nbits, err := loadKey(*key)
+	if err != nil {
+		die("encfile", err)
+	}
+	if nbits != 256 {
+		fmt.Fprintf(os.Stderr, "encfile: key must be 256-bit; got %d-bit\n", nbits)
+		os.Exit(1)
+	}
+
+	plaintext, err := readFile(*in)
+	if err != nil {
+		die("encfile", err)
+	}
+	ptLen := len(plaintext)
+	n := 256
+
+	K     := NewBitArray(n, keyInt)
+	nonce := NewRandBitArray(n)
+	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+	seed  := base.RotateLeft(n / 8) // matches Python base.rotated(n//8) = ROL 32 bits
+
+	// Encrypt in hkxBlock-byte blocks (last block zero-padded if needed)
+	nBlocks := (ptLen + hkxBlock - 1) / hkxBlock
+	ctBuf   := make([]byte, nBlocks*hkxBlock)
+	for i := 0; i < nBlocks; i++ {
+		ks     := HskeNla1KsBlock(seed, base, uint32(i))
+		ksBytes := ks.Bytes()
+		off    := i * hkxBlock
+		for j := 0; j < hkxBlock; j++ {
+			pb := byte(0)
+			if off+j < ptLen {
+				pb = plaintext[off+j]
+			}
+			ctBuf[off+j] = pb ^ ksBytes[j]
+		}
+	}
+
+	// MAC key (domain-separated from encryption by inner RotateLeft(64))
+	macKey := HskeNla1MacKey(seed, base)
+	ivConst := new(big.Int).SetBytes(Hfscx256IV[:])
+	macIV  := NewBitArray(n, new(big.Int).Xor(&macKey.Val, ivConst))
+
+	// Auth tag: HFSCX-256-MAC over nonce || plaintext_len || ciphertext
+	nonceBytes := nonce.Bytes()
+	lenBytes    := make([]byte, 8)
+	binary.BigEndian.PutUint64(lenBytes, uint64(ptLen))
+	macData := make([]byte, 0, len(nonceBytes)+8+len(ctBuf))
+	macData  = append(macData, nonceBytes...)
+	macData  = append(macData, lenBytes...)
+	macData  = append(macData, ctBuf...)
+	tag := Hfscx256(macData, macIV.Bytes())
+
+	// Assemble .hkx output
+	out_ := make([]byte, 0, hkxHdrSize+len(ctBuf)+hkxBlock)
+	out_  = append(out_, []byte(hkxMagic)...)
+	out_  = append(out_, hkxAlgoNLA1)
+	out_  = append(out_, lenBytes...)
+	out_  = append(out_, nonceBytes...)
+	out_  = append(out_, ctBuf...)
+	out_  = append(out_, tag...)
+
+	if err := writeBytes(*out, out_); err != nil {
+		die("encfile", err)
+	}
+}
+
+func cmdDecfile(args []string) {
+	fs := flag.NewFlagSet("decfile", flag.ExitOnError)
+	algo := fs.String("algo", "hske-nla1", "Decryption algorithm (hske-nla1)")
+	key  := fs.String("key", "", "Session key file")
+	in   := fs.String("in", "-", "Input .hkx file")
+	out  := fs.String("out", "-", "Plaintext output file")
+	fs.Parse(args)
+
+	if *algo != "hske-nla1" {
+		fmt.Fprintf(os.Stderr, "decfile: unsupported algorithm %q\n", *algo)
+		os.Exit(1)
+	}
+	if *key == "" {
+		fmt.Fprintln(os.Stderr, "decfile: --key required")
+		os.Exit(1)
+	}
+
+	keyInt, nbits, err := loadKey(*key)
+	if err != nil {
+		die("decfile", err)
+	}
+	if nbits != 256 {
+		fmt.Fprintf(os.Stderr, "decfile: key must be 256-bit; got %d-bit\n", nbits)
+		os.Exit(1)
+	}
+
+	raw, err := readFile(*in)
+	if err != nil {
+		die("decfile", err)
+	}
+
+	// Validate header
+	if len(raw) < hkxMinSize {
+		fmt.Fprintln(os.Stderr, "decfile: file too short to be a valid .hkx container")
+		os.Exit(1)
+	}
+	if string(raw[:4]) != hkxMagic {
+		fmt.Fprintf(os.Stderr, "decfile: invalid magic %q (expected %q)\n", raw[:4], hkxMagic)
+		os.Exit(1)
+	}
+	if raw[4] != hkxAlgoNLA1 {
+		fmt.Fprintf(os.Stderr, "decfile: unsupported algo byte 0x%02x\n", raw[4])
+		os.Exit(1)
+	}
+
+	ptLen    := int(binary.BigEndian.Uint64(raw[5:13]))
+	nonceBuf := raw[13:45]
+	nBlocks  := (ptLen + hkxBlock - 1) / hkxBlock
+	ctEnd    := hkxHdrSize + nBlocks*hkxBlock
+
+	if len(raw) < ctEnd+hkxBlock {
+		fmt.Fprintln(os.Stderr, "decfile: file truncated (ciphertext blocks or auth tag missing)")
+		os.Exit(1)
+	}
+
+	ctBytes   := raw[hkxHdrSize:ctEnd]
+	tagStored := raw[ctEnd : ctEnd+hkxBlock]
+
+	n := 256
+	K     := NewBitArray(n, keyInt)
+	nonce := NewBitArray(n, new(big.Int).SetBytes(nonceBuf))
+	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
+	seed  := base.RotateLeft(n / 8)
+
+	// Recompute MAC and verify before decrypting (verify-then-decrypt)
+	macKey  := HskeNla1MacKey(seed, base)
+	ivConst := new(big.Int).SetBytes(Hfscx256IV[:])
+	macIV   := NewBitArray(n, new(big.Int).Xor(&macKey.Val, ivConst))
+	lenBuf  := make([]byte, 8)
+	binary.BigEndian.PutUint64(lenBuf, uint64(ptLen))
+	macData := make([]byte, 0, len(nonceBuf)+8+len(ctBytes))
+	macData  = append(macData, nonceBuf...)
+	macData  = append(macData, lenBuf...)
+	macData  = append(macData, ctBytes...)
+	tagComputed := Hfscx256(macData, macIV.Bytes())
+
+	if subtle.ConstantTimeCompare(tagStored, tagComputed) != 1 {
+		fmt.Fprintln(os.Stderr, "decfile: authentication tag mismatch — file corrupt or wrong key")
+		os.Exit(1)
+	}
+
+	// Decrypt and trim to exact plaintext length
+	plaintext := make([]byte, nBlocks*hkxBlock)
+	for i := 0; i < nBlocks; i++ {
+		cBlk    := ctBytes[i*hkxBlock : (i+1)*hkxBlock]
+		ks      := HskeNla1KsBlock(seed, base, uint32(i))
+		ksBytes := ks.Bytes()
+		off     := i * hkxBlock
+		for j := 0; j < hkxBlock; j++ {
+			plaintext[off+j] = cBlk[j] ^ ksBytes[j]
+		}
+	}
+
+	if err := writeBytes(*out, plaintext[:ptLen]); err != nil {
+		die("decfile", err)
+	}
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 func die(prefix string, err error) {
@@ -1383,11 +1590,14 @@ Commands:
   dec      --algo ALGO --key FILE --in FILE [--out FILE]
   sign     --algo ALGO --key FILE --in FILE [--digest hfscx-256] [--out FILE]
   verify   --algo ALGO --pubkey FILE --in FILE --sig FILE [--digest hfscx-256]
+  encfile  --key FILE --in FILE --out FILE
+  decfile  --key FILE --in FILE --out FILE
   dgst     [--algo hfscx-256] --in FILE [--out FILE]
 
 Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern
 Algorithms (kex):           hkex-gf hkex-rnl
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hpke hpke-nl hpke-stern
+Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern
 `)
 }
@@ -1414,6 +1624,10 @@ func main() {
 		cmdSign(rest)
 	case "verify":
 		cmdVerify(rest)
+	case "encfile":
+		cmdEncfile(rest)
+	case "decfile":
+		cmdDecfile(rest)
 	case "dgst":
 		cmdDgst(rest)
 	default:
