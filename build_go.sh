@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HerraduraKEx v1.5.27 — Go build script
+# HerraduraKEx v1.5.28 — Go build script
 # Compiles the cryptographic suite and test suite using go build.
 #
 # Dependencies:
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="1.5.27"
+VERSION="1.5.28"
 SUITE_SRC="Herradura cryptographic suite.go"
 SUITE_BIN="Herradura cryptographic suite_go"
 TESTS_DIR="CryptosuiteTests"
@@ -44,3 +44,10 @@ echo "Build complete. Run:"
 echo "  ./${SUITE_BIN}"
 echo "  ./${TESTS_DIR}/${TESTS_BIN} [-r ROUNDS] [-t SECONDS]"
 echo "  ./${CLI_DIR}/${CLI_BIN} <command> [options]"
+echo ""
+echo "CLI tests (CliTest/):"
+echo "  bash CliTest/test_go_keygen.sh"
+echo "  bash CliTest/test_go_encrypt.sh"
+echo "  bash CliTest/test_go_sign.sh"
+echo "  bash CliTest/test_go_encfile.sh"
+echo "  bash CliTest/test_go_interop.sh"

@@ -2083,7 +2083,7 @@ pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) bloc
 - All PEM ciphertext and signature formats byte-identical to Python; cross-language
   HPKE enc/dec and HPKS sign/verify interop confirmed
 
-**Batch 4 — Go CLI: `encfile`, `decfile`** (1 commit)
+**Batch 4 — Go CLI: `encfile`, `decfile`** (1 commit) ✅ v1.5.27
 - Streaming HSKE-NL-A1 CTR AEAD using `HskeNla1KsBlock` + `HskeNla1MacKey` from the package
 - `encfile`: write header + nonce; encrypt 32-byte blocks via `fwrite`-style loop;
   accumulate MAC input; append 32-byte HFSCX-256-MAC tag
@@ -2091,18 +2091,19 @@ pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) bloc
   recompute tag; `subtle.ConstantTimeCompare` for tag check; exit 1 on mismatch; second
   pass decrypts and trims to `plaintext_len`
 - Edge cases: 0-byte, 1-byte, 32-byte (one full block), multi-MiB files
+- Tests: 0/1/32/100KB/2MiB roundtrip all OK; tamper → auth fail; Python↔Go interop OK
 
-**Batch 5 — `build_go.sh` + CliTest: Go CLI tests + interop** (1 commit)
-- `build_go.sh`: version bump; add CLI build step; verify all three binaries are built
+**Batch 5 — `build_go.sh` + CliTest: Go CLI tests + interop** (1 commit) ✅ v1.5.28
+- `build_go.sh`: version bump to v1.5.28; appended CliTest run instructions to build output
 - `CliTest/test_go_keygen.sh`: genpkey all 8 types; pkey `--pubout`; grep PEM headers;
-  assert non-empty
+  assert non-empty — **16 PASS**
 - `CliTest/test_go_encrypt.sh`: kex → enc → dec round-trips for all symmetric and
-  asymmetric algos; `cmp` with original
-- `CliTest/test_go_sign.sh`: genpkey → sign → verify (PASS); flip a byte → verify (FAIL)
-- `CliTest/test_go_encfile.sh`: 1 MiB encfile → decfile → `cmp`; flip byte → decfile exits
-  non-zero; edge cases 0/1/32-byte files
+  asymmetric algos; `cmp` with original — **7 PASS**
+- `CliTest/test_go_sign.sh`: genpkey → sign → verify (PASS); wrong msg/key → reject — **7 PASS**
+- `CliTest/test_go_encfile.sh`: 1 MiB encfile → decfile → `cmp`; tamper → exit non-zero;
+  edge cases 0/1/32-byte files — **5 PASS**
 - `CliTest/test_go_interop.sh`: Go↔Python and Go↔C cross-tool: `encfile`/`decfile`,
-  `sign`/`verify`, `dgst` output agreement (one algo each as smoke test)
+  `sign`/`verify`, `dgst` output agreement — **10 PASS**
 
 ---
 
