@@ -126,8 +126,10 @@
 '''
 
 import itertools
+import math
 import os
 import random
+import warnings
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +155,11 @@ RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) 
 # HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs.md §11.8.4)
 SDFNR = KEYBITS // 2           # parity-check rows (syndrome bits; [N, N/2, t] code, N=KEYBITS)
 SDFT  = max(2, KEYBITS // 16)  # error weight t (= 16 at n=256; ≥ 2 at all widths)
-SDFR  = 32                     # Fiat-Shamir rounds (32 → ~19-bit soundness; production: ≥ 219)
+SDFR  = 32                     # ⚠ DEMO ONLY: Fiat-Shamir rounds (~19-bit soundness).
+                               # Production deployments MUST use rounds ≥ 219 for
+                               # 128-bit soundness (⌈λ / log2(3/2)⌉ at λ=128).
+                               # Signing emits a RuntimeWarning when called below
+                               # the production threshold.
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +368,18 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
 
 
 def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
-    """Iterate nl_fscx_v2 *steps* times (B held constant)."""
+    """Iterate nl_fscx_v2 *steps* times (B held constant).
+
+    delta(B) is precomputed once before the loop (mirrors nl_fscx_revolve_v2_inv);
+    the inner step body becomes one fscx + one integer add. Saves one bigint
+    multiply and one rotation per iteration vs. calling nl_fscx_v2 in the loop.
+    """
+    n     = A._size
+    mask  = A._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = A.copy()
     for _ in range(steps):
-        result = nl_fscx_v2(result, B)
+        result = BitArray(n, (fscx(result, B).uint + delta.uint) & mask)
     return result
 
 
@@ -600,6 +614,27 @@ def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
 # Security reduces to SD(N,t) [NP-complete] + NL-FSCX v1 PRF.  See §11.8.4.
 # ---------------------------------------------------------------------------
 
+# Stern-F soundness threshold: ⌈λ / log2(3/2)⌉ for λ=128-bit security.
+_STERN_F_PRODUCTION_ROUNDS = 219
+
+
+def _csprng_weight_t(n: int, t: int) -> int:
+    """Sample a uniform weight-t bit vector on n positions using os.urandom.
+
+    Replaces random.sample() (Mersenne Twister — predictable from observed
+    outputs, unsuitable for sampling secret error vectors). Used for HPKS-Stern-F
+    private keys, per-round Fiat-Shamir blinding, and HPKE-Stern-F encapsulated
+    errors. 4-byte rejection sampling eliminates modular bias for any n ≤ 2^32.
+    """
+    chosen = set()
+    threshold = (1 << 32) - (1 << 32) % n
+    while len(chosen) < t:
+        v = int.from_bytes(os.urandom(4), 'big')
+        if v < threshold:
+            chosen.add(v % n)
+    return sum(1 << p for p in chosen)
+
+
 def _stern_hash(n: int, *items: 'BitArray') -> 'BitArray':
     """Chain-hash items to n bits: h ← NL-FSCX_v1^{n/4}(h⊕v, ROL(v,n/8)) for each v."""
     mask = (1 << n) - 1
@@ -617,13 +652,31 @@ def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
     return nl_fscx_revolve_v1(A0, seed, n // 4)
 
 
-def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
-    """Compute n_rows-bit syndrome s = H·e^T mod 2."""
+def _stern_build_H(seed_int: int, n: int, n_rows: int) -> list:
+    """Build all n_rows of the public parity matrix once, returned as int row words.
+
+    Hot paths (sign/verify/keygen/encap) call _stern_syndrome many times against
+    the same seed; building H once and reusing it eliminates the rounds × n_rows
+    per-call PRF evaluations the original implementation incurred.
+    """
+    return [_stern_matrix_row(seed_int, i, n).uint for i in range(n_rows)]
+
+
+def _stern_syndrome_H(H_rows: list, e_int: int) -> int:
+    """Compute syndrome H·e^T mod 2 from a precomputed matrix (list of row ints)."""
     s = 0
-    for i in range(n_rows):
-        row = _stern_matrix_row(seed_int, i, n)
-        s  |= (bin(row.uint & e_int).count('1') & 1) << i
+    for i, row in enumerate(H_rows):
+        s |= (bin(row & e_int).count('1') & 1) << i
     return s
+
+
+def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
+    """Compute n_rows-bit syndrome s = H·e^T mod 2.
+
+    Convenience wrapper that builds H on each call. Hot paths should instead call
+    _stern_build_H once and reuse the result via _stern_syndrome_H.
+    """
+    return _stern_syndrome_H(_stern_build_H(seed_int, n, n_rows), e_int)
 
 
 def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
@@ -659,8 +712,9 @@ def stern_f_keygen(n: int = None):
     n_rows = n // 2
     t      = max(2, n // 16)
     seed   = BitArray.random(n)
-    e_int  = sum(1 << p for p in random.sample(range(n), t))
-    return seed, e_int, _stern_syndrome(seed.uint, e_int, n, n_rows)
+    e_int  = _csprng_weight_t(n, t)
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+    return seed, e_int, _stern_syndrome_H(H_rows, e_int)
 
 
 def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
@@ -684,14 +738,25 @@ def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
     n_rows = n // 2
     t      = max(2, n // 16)
 
+    if rounds < _STERN_F_PRODUCTION_ROUNDS:
+        bits = rounds * math.log2(1.5)
+        warnings.warn(
+            f"HPKS-Stern-F: rounds={rounds} gives ~{bits:.1f}-bit soundness; "
+            f"production deployments require rounds ≥ {_STERN_F_PRODUCTION_ROUNDS} "
+            f"for 128-bit soundness.",
+            RuntimeWarning, stacklevel=2,
+        )
+
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+
     commits    = []
     round_data = []
     for _ in range(rounds):
-        r_int   = sum(1 << p for p in random.sample(range(n), t))  # weight-t blinding
+        r_int   = _csprng_weight_t(n, t)                            # weight-t blinding
         y_int   = (e_int ^ r_int) & ((1 << n) - 1)                # y = e ⊕ r
         pi_seed = BitArray.random(n)
         perm    = _stern_gen_perm(pi_seed, n)
-        Hr  = _stern_syndrome(seed.uint, r_int, n, n_rows)
+        Hr  = _stern_syndrome_H(H_rows, r_int)
         sr  = _stern_apply_perm(perm, r_int, n)
         sy  = _stern_apply_perm(perm, y_int, n)
         commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr)),
@@ -736,6 +801,9 @@ def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
         if ch_st.uint % 3 != b:
             return False
 
+    # Build H once: only needed for b ∈ {1, 2} branches but the seed is fixed.
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+
     for i, b in enumerate(challenges):
         c0, c1, c2 = commits[i]
         resp = responses[i]
@@ -748,14 +816,14 @@ def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
             pi_seed, r_int = resp
             if bin(r_int).count('1') != t:                     return False
             perm = _stern_gen_perm(pi_seed, n)
-            Hr   = _stern_syndrome(seed.uint, r_int, n, n_rows)
+            Hr   = _stern_syndrome_H(H_rows, r_int)
             if _stern_hash(n, pi_seed, BitArray(n, Hr)) != c0: return False
             sr   = _stern_apply_perm(perm, r_int, n)
             if _stern_hash(n, BitArray(n, sr)) != c1:          return False
         else:                                             # reveal (σ_seed, y)
             pi_seed, y_int = resp
             perm = _stern_gen_perm(pi_seed, n)
-            Hy   = _stern_syndrome(seed.uint, y_int, n, n_rows)
+            Hy   = _stern_syndrome_H(H_rows, y_int)
             if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome)) != c0: return False
             sy   = _stern_apply_perm(perm, y_int, n)
             if _stern_hash(n, BitArray(n, sy)) != c2:          return False
@@ -772,8 +840,9 @@ def hpke_stern_f_encap(seed: 'BitArray', n: int = None):
     if n is None: n = KEYBITS
     n_rows = n // 2
     t      = max(2, n // 16)
-    e_p    = sum(1 << p for p in random.sample(range(n), t))
-    ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    e_p    = _csprng_weight_t(n, t)
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+    ct     = _stern_syndrome_H(H_rows, e_p)
     K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
     return K, ct
 
@@ -787,7 +856,8 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
       Use when the caller holds the plaintext error (test/demo) or a QC-MDPC
       decoder has already recovered it.
     - Brute-force (e_int == 0): enumerate all weight-t candidates.
-      Practical only for N ≤ 64, t ≤ 4.  Production requires QC-MDPC.
+      Refuses to enter the brute-force loop above 2^32 candidates; production
+      deployments must supply a QC-MDPC decoder instead.
     Returns session key K or None if decode fails.
     """
     if n is None: n = KEYBITS
@@ -795,9 +865,16 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     t      = max(2, n // 16)
     if e_int:
         return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)))
+    if math.comb(n, t) > (1 << 32):
+        raise ValueError(
+            f"hpke_stern_f_decap: brute-force search infeasible at n={n}, t={t} "
+            f"(C(n,t)={math.comb(n, t):.2e} > 2^32). Provide e_int from a "
+            f"QC-MDPC decoder or use hpke_stern_f_decap_known."
+        )
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
     for pos in itertools.combinations(range(n), t):
         e_p = sum(1 << p for p in pos)
-        if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
+        if _stern_syndrome_H(H_rows, e_p) == ciphertext:
             return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
     return None
 
@@ -807,8 +884,9 @@ def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
     if n is None: n = KEYBITS
     n_rows = n // 2
     t      = max(2, n // 16)
-    e_p    = sum(1 << p for p in random.sample(range(n), t))
-    ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
+    e_p    = _csprng_weight_t(n, t)
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+    ct     = _stern_syndrome_H(H_rows, e_p)
     K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
     return K, ct, e_p
 
