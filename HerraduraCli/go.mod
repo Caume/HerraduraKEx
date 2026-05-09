@@ -1,4 +1,4 @@
-module herradurakex/tests
+module herradurakex/cli
 
 go 1.20
 

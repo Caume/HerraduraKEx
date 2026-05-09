@@ -1,26 +1,11 @@
-/*  Herradura KEx -- Security & Performance Tests (Go)
-    v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
-    v1.5.22: CBD(eta=1) 4-coeffs/byte (#16); test[14] n∈{32,64,128,256} (#23); NASM rnl_round fix (#21).
-    v1.5.21: version-banner sync; ARM HSKE-NL-A2 R_VALUE fix; Python HKEX-RNL q-label.
-    v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18]; benchmarks renumbered [19-28].
-    v1.5.17: NTT twiddle precomputation — rnlTwCache map; rnlTwGet eliminates rnlModPow calls per rnlPolyMul.
-    v1.5.13: HSKE-NL-A1 seed fix — seed=RotateLeft(base,n/8) breaks counter=0 step-1 degeneracy.
-    v1.5.10: HKEX-RNL KDF seed fix — seed=RotateLeft(K,n/8) breaks step-1 degeneracy.
-    v1.5.9: NlFscxRevolveV2Inv precomputes delta(B) once — eliminates per-step multiply.
-    v1.5.7: MInv uses precomputed rotation table (sync.Map cache per bit-size).
-    v1.5.6: rnlRandPoly bias fix — 3-byte rejection sampling (threshold=16711935).
-    v1.5.5: aligned version banner with C and Python.
-    v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
-    v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
-    v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
-    v1.5.1: added -rounds and -time CLI flags (also HTEST_ROUNDS / HTEST_TIME env vars).
-    v1.5.0: added PQC extension tests [10-16] (NL-FSCX, HKEX-RNL, HPKS-NL, HPKE-NL);
-            benchmarks renumbered [17-21] (were [10-14] in v1.4.0);
-            new PQC benchmarks [22-25].
-    v1.4.0: HPKS replaced with Schnorr-like scheme [7][8]; HPKE El Gamal [9];
-            benchmarks renumbered [10-14].
-    v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
-    v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
+/*  Herradura KEx — Security & Performance Tests (Go)
+    v1.5.27: refactored to import package herradura; added HFSCX-256 KAV test [17].
+    v1.5.23: HPKS-Stern-F + HPKE-Stern-F tests [17][18] (now [18][19]).
+    v1.5.22: CBD(eta=1) 4-coeffs/byte; test[14] n∈{32,64,128,256}.
+    v1.5.18: code-based PQC; benchmarks renumbered.
+    v1.5.0:  NL-FSCX PQC extension tests.
+    v1.4.0:  HKEX-GF Schnorr/El Gamal tests.
+    v1.3:    BitArray support.
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -28,44 +13,31 @@
     it under the terms of the MIT License or the GNU General Public License
     as published by the Free Software Foundation, either version 3 of the License,
     or (at your option) any later version.
-
-    Under the terms of the GNU General Public License, please also consider that:
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
 package main
 
 import (
-	"crypto/rand"
+	. "herradurakex/herradura"
+	"bytes"
 	"flag"
 	"fmt"
-	"log"
 	"math/big"
-	"math/bits"
 	"os"
-	"sync"
 	"strconv"
 	"time"
 )
 
 // ---------------------------------------------------------------------------
-// Runtime limits — set via CLI flags or env vars in main()
+// Runtime limits
 // ---------------------------------------------------------------------------
 
 var (
-	gRounds    int           // 0 = use per-test default
-	gBenchDur  time.Duration // benchmark duration (default: 1s)
-	gTimeLimit time.Duration // per-test wall-clock cap; 0 = none
+	gRounds    int
+	gBenchDur  time.Duration
+	gTimeLimit time.Duration
 )
 
-// testRounds returns the effective iteration count for a test.
 func testRounds(defaultN int) int {
 	if gRounds > 0 {
 		return gRounds
@@ -73,7 +45,6 @@ func testRounds(defaultN int) int {
 	return defaultN
 }
 
-// timeExceeded reports whether the per-test time cap has been reached.
 func timeExceeded(t0 time.Time) bool {
 	if gTimeLimit <= 0 {
 		return false
@@ -82,491 +53,11 @@ func timeExceeded(t0 time.Time) bool {
 }
 
 // ---------------------------------------------------------------------------
-// BitArray (self-contained)
+// Test-local helpers
 // ---------------------------------------------------------------------------
 
-type BitArray struct {
-	val  big.Int
-	size int
-}
-
-func bitArrayMask(size int) *big.Int {
-	mask := new(big.Int).Lsh(big.NewInt(1), uint(size))
-	return mask.Sub(mask, big.NewInt(1))
-}
-
-func NewFromBytes(data []byte, _ int, size int) *BitArray {
-	ba := &BitArray{size: size}
-	ba.val.SetBytes(data[:size/8])
-	return ba
-}
-
-func newRandBitArray(bitlength int) *BitArray {
-	buf := make([]byte, bitlength/8)
-	if _, err := rand.Read(buf); err != nil {
-		log.Fatalf("ERROR while generating random string: %s", err)
-	}
-	return NewFromBytes(buf, 0, bitlength)
-}
-
-func newBA(size int, val *big.Int) *BitArray {
-	ba := &BitArray{size: size}
-	ba.val.And(val, bitArrayMask(size))
-	return ba
-}
-
-func randBA(size int) *BitArray { return newRandBitArray(size) }
-
-func (ba *BitArray) Copy() *BitArray {
-	result := &BitArray{size: ba.size}
-	result.val.Set(&ba.val)
-	return result
-}
-
-func (ba *BitArray) Xor(other *BitArray) *BitArray {
-	result := &BitArray{size: ba.size}
-	result.val.Xor(&ba.val, &other.val)
-	return result
-}
-
-func (ba *BitArray) RotateLeft(n int) *BitArray {
-	size := ba.size
-	n = ((n % size) + size) % size
-	result := &BitArray{size: size}
-	if n == 0 {
-		result.val.Set(&ba.val)
-		return result
-	}
-	left := new(big.Int).Lsh(&ba.val, uint(n))
-	right := new(big.Int).Rsh(&ba.val, uint(size-n))
-	result.val.Or(left, right)
-	result.val.And(&result.val, bitArrayMask(size))
-	return result
-}
-
-func (ba *BitArray) Equal(other *BitArray) bool {
-	return ba.size == other.size && ba.val.Cmp(&other.val) == 0
-}
-
-func (ba *BitArray) Format(f fmt.State, verb rune) {
-	hexDigits := ba.size / 4
-	s := ba.val.Text(16)
-	for i := len(s); i < hexDigits; i++ {
-		f.Write([]byte{'0'})
-	}
-	fmt.Fprint(f, s)
-}
-
-func (ba *BitArray) Popcount() int {
-	cnt := 0
-	for _, b := range ba.val.Bytes() {
-		cnt += bits.OnesCount8(b)
-	}
-	return cnt
-}
-
-func (ba *BitArray) FlipBit(pos int) *BitArray {
-	result := ba.Copy()
-	result.val.SetBit(&result.val, pos, result.val.Bit(pos)^1)
-	return result
-}
-
-// ---------------------------------------------------------------------------
-// FSCX functions (classical)
-// ---------------------------------------------------------------------------
-
-func Fscx(a, b *BitArray) *BitArray {
-	return a.Xor(b).
-		Xor(a.RotateLeft(1)).Xor(b.RotateLeft(1)).
-		Xor(a.RotateLeft(-1)).Xor(b.RotateLeft(-1))
-}
-
-func FscxRevolve(ba, bb *BitArray, steps int) *BitArray {
-	result := ba.Copy()
-	for i := 0; i < steps; i++ {
-		result = Fscx(result, bb)
-	}
-	return result
-}
-
-// ---------------------------------------------------------------------------
-// GF(2^n) field arithmetic
-// ---------------------------------------------------------------------------
-
-var gfPoly = map[int]*big.Int{
-	32:  new(big.Int).SetUint64(0x00400007),
-	64:  new(big.Int).SetUint64(0x0000001B),
-	128: new(big.Int).SetUint64(0x00000087),
-	256: new(big.Int).SetUint64(0x00000425),
-}
-
-const gfGen = 3
-
-func GfMul(a, b, poly *big.Int, n int) *big.Int {
-	result := new(big.Int)
-	aCopy := new(big.Int).Set(a)
-	bCopy := new(big.Int).Set(b)
-	mask := bitArrayMask(n)
-	one := big.NewInt(1)
-	for i := 0; i < n; i++ {
-		if new(big.Int).And(bCopy, one).Sign() != 0 {
-			result.Xor(result, aCopy)
-		}
-		carry := new(big.Int).And(new(big.Int).Rsh(aCopy, uint(n-1)), one).Sign() != 0
-		aCopy.And(new(big.Int).Lsh(aCopy, 1), mask)
-		if carry {
-			aCopy.Xor(aCopy, poly)
-		}
-		bCopy.Rsh(bCopy, 1)
-	}
-	return result
-}
-
-func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
-	result := big.NewInt(1)
-	bCopy := new(big.Int).Set(base)
-	eCopy := new(big.Int).Set(exp)
-	one := big.NewInt(1)
-	for eCopy.Sign() > 0 {
-		if new(big.Int).And(eCopy, one).Sign() != 0 {
-			result = GfMul(result, bCopy, poly, n)
-		}
-		bCopy = GfMul(bCopy, bCopy, poly, n)
-		eCopy.Rsh(eCopy, 1)
-	}
-	return result
-}
-
-// ---------------------------------------------------------------------------
-// NL-FSCX primitives (v1.5.0)
-// ---------------------------------------------------------------------------
-
-var mInvCache sync.Map // map[int][]int
-
-func computeMInvRotations(n int) []int {
-	unit := &BitArray{size: n}
-	unit.val.SetInt64(1)
-	zero := &BitArray{size: n}
-	v := FscxRevolve(unit, zero, n/2-1)
-	var rotations []int
-	for k := 0; k < n; k++ {
-		if v.val.Bit(k) == 1 {
-			rotations = append(rotations, k)
-		}
-	}
-	return rotations
-}
-
-func MInv(x *BitArray) *BitArray {
-	n := x.size
-	val, ok := mInvCache.Load(n)
-	if !ok {
-		rotations := computeMInvRotations(n)
-		val, _ = mInvCache.LoadOrStore(n, rotations)
-	}
-	rotations := val.([]int)
-	result := &BitArray{size: n}
-	for _, k := range rotations {
-		result = result.Xor(x.RotateLeft(k))
-	}
-	return result
-}
-
-func NlFscxV1(a, b *BitArray) *BitArray {
-	n := a.size
-	mask := bitArrayMask(n)
-	sum := new(big.Int).Add(&a.val, &b.val)
-	sum.And(sum, mask)
-	mixBA := &BitArray{size: n}
-	mixBA.val.Set(sum)
-	return Fscx(a, b).Xor(mixBA.RotateLeft(n / 4))
-}
-
-func NlFscxRevolveV1(a, b *BitArray, steps int) *BitArray {
-	result := a.Copy()
-	for i := 0; i < steps; i++ {
-		result = NlFscxV1(result, b)
-	}
-	return result
-}
-
-func nlFscxDeltaV2(b *BitArray) *BitArray {
-	n := b.size
-	mask := bitArrayMask(n)
-	bPlus1 := new(big.Int).Add(&b.val, big.NewInt(1))
-	half := new(big.Int).Rsh(bPlus1, 1)
-	prod := new(big.Int).Mul(&b.val, half)
-	prod.And(prod, mask)
-	deltaBA := &BitArray{size: n}
-	deltaBA.val.Set(prod)
-	return deltaBA.RotateLeft(n / 4)
-}
-
-func NlFscxV2(a, b *BitArray) *BitArray {
-	n := a.size
-	mask := bitArrayMask(n)
-	delta := nlFscxDeltaV2(b)
-	fscxOut := Fscx(a, b)
-	sum := new(big.Int).Add(&fscxOut.val, &delta.val)
-	sum.And(sum, mask)
-	result := &BitArray{size: n}
-	result.val.Set(sum)
-	return result
-}
-
-func NlFscxV2Inv(y, b *BitArray) *BitArray {
-	n := y.size
-	mask := bitArrayMask(n)
-	delta := nlFscxDeltaV2(b)
-	diff := new(big.Int).Sub(&y.val, &delta.val)
-	diff.And(diff, mask)
-	zBA := &BitArray{size: n}
-	zBA.val.Set(diff)
-	return b.Xor(MInv(zBA))
-}
-
-func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
-	result := a.Copy()
-	for i := 0; i < steps; i++ {
-		result = NlFscxV2(result, b)
-	}
-	return result
-}
-
-func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
-	n := y.size
-	mask := bitArrayMask(n)
-	delta := nlFscxDeltaV2(b)
-	result := y.Copy()
-	for i := 0; i < steps; i++ {
-		diff := new(big.Int).Sub(&result.val, &delta.val)
-		diff.And(diff, mask)
-		zBA := &BitArray{size: n}
-		zBA.val.Set(diff)
-		result = b.Xor(MInv(zBA))
-	}
-	return result
-}
-
-// ---------------------------------------------------------------------------
-// HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
-// ---------------------------------------------------------------------------
-
-const (
-	rnlQ  = 65537
-	rnlP  = 4096
-	rnlPP = 2
-	rnlEta = 1 // CBD eta: secret coefficients drawn from CBD(1) in {-1,0,1}
-)
-
-func rnlModPow(base, exp, mod int) int {
-	r, b := 1, base%mod
-	for exp > 0 {
-		if exp&1 == 1 {
-			r = r * b % mod
-		}
-		b = b * b % mod
-		exp >>= 1
-	}
-	return r
-}
-
-type rnlTwEntry struct {
-	psiPow, psiInvPow []int
-	stageWFwd, stageWInv []int
-	invN int
-}
-
-var rnlTwCache = map[int]*rnlTwEntry{}
-
-func rnlTwGet(n, q int) *rnlTwEntry {
-	if e, ok := rnlTwCache[n]; ok { return e }
-	e := &rnlTwEntry{psiPow: make([]int, n), psiInvPow: make([]int, n)}
-	psi := rnlModPow(3, (q-1)/(2*n), q); psiInv := rnlModPow(psi, q-2, q)
-	pw, pwInv := 1, 1
-	for i := 0; i < n; i++ {
-		e.psiPow[i] = pw; e.psiInvPow[i] = pwInv
-		pw = pw * psi % q; pwInv = pwInv * psiInv % q
-	}
-	for length := 2; length <= n; length <<= 1 {
-		w := rnlModPow(3, (q-1)/length, q)
-		e.stageWFwd = append(e.stageWFwd, w)
-		e.stageWInv = append(e.stageWInv, rnlModPow(w, q-2, q))
-	}
-	e.invN = rnlModPow(n, q-2, q)
-	rnlTwCache[n] = e
-	return e
-}
-
-func rnlMulModQ(a, b int) int {
-	x := a * b
-	r := (x & 0xFFFF) - ((x >> 16) & 0xFFFF) + (x >> 32)
-	if r < 0 { r += 65537 }
-	return r
-}
-
-func rnlNTT(a []int, q int, invert bool) {
-	n := len(a)
-	tw := rnlTwGet(n, q)
-	sw := tw.stageWFwd
-	if invert { sw = tw.stageWInv }
-	j := 0
-	for i := 1; i < n; i++ {
-		bit := n >> 1
-		for ; j&bit != 0; bit >>= 1 { j ^= bit }
-		j ^= bit
-		if i < j { a[i], a[j] = a[j], a[i] }
-	}
-	for s, length := 0, 2; length <= n; length, s = length<<1, s+1 {
-		w := sw[s]
-		for i := 0; i < n; i += length {
-			wn := 1
-			for k := 0; k < length>>1; k++ {
-				u := a[i+k]; v := rnlMulModQ(a[i+k+length>>1], wn)
-				a[i+k] = (u + v) % q; a[i+k+length>>1] = (u - v + q) % q
-				wn = rnlMulModQ(wn, w)
-			}
-		}
-	}
-	if invert {
-		for i := range a { a[i] = rnlMulModQ(a[i], tw.invN) }
-	}
-}
-
-func rnlPolyMul(f, g []int, q, n int) []int {
-	tw := rnlTwGet(n, q)
-	fa, ga := make([]int, n), make([]int, n)
-	for i := 0; i < n; i++ {
-		fa[i] = rnlMulModQ(f[i], tw.psiPow[i]); ga[i] = rnlMulModQ(g[i], tw.psiPow[i])
-	}
-	rnlNTT(fa, q, false); rnlNTT(ga, q, false)
-	ha := make([]int, n)
-	for i := range ha { ha[i] = rnlMulModQ(fa[i], ga[i]) }
-	rnlNTT(ha, q, true)
-	for i := range ha { ha[i] = rnlMulModQ(ha[i], tw.psiInvPow[i]) }
-	return ha
-}
-
-func rnlPolyAdd(f, g []int, q int) []int {
-	h := make([]int, len(f))
-	for i := range f {
-		h[i] = (f[i] + g[i]) % q
-	}
-	return h
-}
-
-func rnlRound(poly []int, fromQ, toP int) []int {
-	h := make([]int, len(poly))
-	for i, c := range poly {
-		h[i] = (c*toP + fromQ/2) / fromQ % toP
-	}
-	return h
-}
-
-func rnlLift(poly []int, fromP, toQ int) []int {
-	h := make([]int, len(poly))
-	for i, c := range poly {
-		h[i] = c * toQ / fromP % toQ
-	}
-	return h
-}
-
-func rnlMPoly(n int) []int {
-	p := make([]int, n)
-	p[0], p[1], p[n-1] = 1, 1, 1
-	return p
-}
-
-func rnlRandPoly(n, q int) []int {
-	p := make([]int, n)
-	buf := make([]byte, 4)
-	for i := range p {
-		if _, err := rand.Read(buf); err != nil {
-			log.Fatalf("rand.Read: %s", err)
-		}
-		v := int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
-		if v < 0 {
-			v = -v
-		}
-		p[i] = v % q
-	}
-	return p
-}
-
-// rnlCBDPoly samples n coefficients from CBD(eta=1): 4 coefficients per byte,
-// bit-pairs (0-1),(2-3),(4-5),(6-7). Produces {-1,0,1} with zero mean.
-func rnlCBDPoly(n, q int) []int {
-	p   := make([]int, n)
-	buf := make([]byte, (n+3)/4)
-	if _, err := rand.Read(buf); err != nil {
-		log.Fatalf("rand.Read: %s", err)
-	}
-	for i := range p {
-		off := (i & 3) * 2
-		a   := int(buf[i>>2]>>off) & 1
-		b   := int(buf[i>>2]>>(off+1)) & 1
-		p[i] = (a - b + q) % q
-	}
-	return p
-}
-
-func rnlBitsToBitArray(poly []int, pp, size int) *BitArray {
-	threshold := pp / 2
-	val := new(big.Int)
-	for i := 0; i < size && i < len(poly); i++ {
-		if poly[i] >= threshold {
-			val.SetBit(val, i, 1)
-		}
-	}
-	ba := &BitArray{size: size}
-	ba.val.Set(val)
-	return ba
-}
-
-func rnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
-	s := rnlCBDPoly(n, q)
-	c := rnlRound(rnlPolyMul(mBlind, s, q, n), q, p)
-	return s, c
-}
-
-func rnlHint(kPoly []int, q int) []byte {
-	hint := make([]byte, (len(kPoly)+7)/8)
-	for i, c := range kPoly {
-		r := (4*c+q/2)/q % 4
-		if r%2 != 0 {
-			hint[i/8] |= 1 << (uint(i) % 8)
-		}
-	}
-	return hint
-}
-
-func rnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
-	qh := q / 2
-	val := new(big.Int)
-	for i := 0; i < keyBits && i < len(kPoly); i++ {
-		c := kPoly[i]
-		h := int((hint[i/8] >> (uint(i) % 8)) & 1)
-		if (2*c+h*qh+qh)/q%pp != 0 {
-			val.SetBit(val, i, 1)
-		}
-	}
-	ba := &BitArray{size: keyBits}
-	ba.val.Set(val)
-	return ba
-}
-
-func rnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArray, []byte) {
-	kPoly := rnlPolyMul(s, rnlLift(cOther, p, q), q, n)
-	if hintIn == nil {
-		hintIn = rnlHint(kPoly, q)
-		return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), hintIn
-	}
-	return rnlReconcileBits(kPoly, hintIn, q, pp, keyBits), nil
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+func newBA(size int, val *big.Int) *BitArray { return NewBitArray(size, val) }
+func randBA(size int) *BitArray              { return NewRandBitArray(size) }
 
 func iVal(size int) int { return size / 4 }
 func rVal(size int) int { return size * 3 / 4 }
@@ -575,8 +66,8 @@ func gfOrd(size int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(size)), big.NewInt(1))
 }
 
-var sizes    = []int{64, 128, 256} // FSCX-only tests (fast)
-var gfSizes  = []int{32}           // GfPow tests (big.Int is slow; matches 32-bit C/asm targets)
+var sizes    = []int{64, 128, 256}
+var gfSizes  = []int{32}
 var rnlSizes = []int{32, 64, 128, 256}
 
 func bench(label string, fn func()) (ops int, elapsed time.Duration) {
@@ -606,17 +97,34 @@ func fmtRate(ops int, elapsed time.Duration) string {
 	return fmt.Sprintf("%.2f K ops/sec", rate/1e3)
 }
 
-// S_op helper for Eve-resistance test [6]
+// SOpBA computes S_op(delta, r) = XOR_{i=0}^{r} Fscx^i(delta, 0).
 func SOpBA(delta *BitArray, r int) *BitArray {
-	acc := &BitArray{size: delta.size}
-	cur := delta.Copy()
-	zero := &BitArray{size: delta.size}
+	acc  := NewBitArray(delta.Size(), new(big.Int))
+	cur  := delta.Copy()
+	zero := NewBitArray(delta.Size(), new(big.Int))
 	for i := 0; i <= r; i++ {
-		acc.val.Xor(&acc.val, &cur.val)
+		acc.Val.Xor(&acc.Val, &cur.Val)
 		cur = Fscx(cur, zero)
 	}
 	return acc
 }
+
+// hpkeSternFBruteForce32 decapsulates by enumerating all C(32,2)=496 weight-2 errors.
+func hpkeSternFBruteForce32(seed *BitArray, ct *big.Int) (*BitArray, bool) {
+	for i := 0; i < 32; i++ {
+		for j := i + 1; j < 32; j++ {
+			e := NewBitArray(32, new(big.Int))
+			e.Val.SetBit(&e.Val, i, 1)
+			e.Val.SetBit(&e.Val, j, 1)
+			if SternSyndrome(seed, e).Cmp(ct) == 0 {
+				return e, true
+			}
+		}
+	}
+	return nil, false
+}
+
+const sdfTestRounds = 4
 
 // ---------------------------------------------------------------------------
 // Security tests — classical protocols [1-9]
@@ -625,24 +133,22 @@ func SOpBA(delta *BitArray, r int) *BitArray {
 func testHkexGFCorrectness() {
 	fmt.Println("[1] HKEX-GF correctness: g^{ab} == g^{ba} in GF(2^n)*  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C := GfPow(g, &a.val, poly, size)
-			C2 := GfPow(g, &b.val, poly, size)
-			if GfPow(C2, &a.val, poly, size).Cmp(GfPow(C, &b.val, poly, size)) == 0 {
+			C := GfPow(g, &a.Val, poly, size)
+			C2 := GfPow(g, &b.Val, poly, size)
+			if GfPow(C2, &a.Val, poly, size).Cmp(GfPow(C, &b.Val, poly, size)) == 0 {
 				ok++
 			}
 			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
-		if ok != N {
-			status = "FAIL"
-		}
+		if ok != N { status = "FAIL" }
 		fmt.Printf("    bits=%3d  %5d / %d correct  [%s]\n", size, ok, N, status)
 	}
 	fmt.Println()
@@ -671,9 +177,7 @@ func testAvalanche() {
 		}
 		mean := total / (float64(N) * float64(size))
 		status := "PASS"
-		if mean < 2.9 || mean > 3.1 {
-			status = "FAIL"
-		}
+		if mean < 2.9 || mean > 3.1 { status = "FAIL" }
 		fmt.Printf("    bits=%3d  mean=%.2f (expected 3/%d)  min=%d  max=%d  [%s]\n",
 			size, mean, size, gmin, gmax, status)
 	}
@@ -720,7 +224,7 @@ func testBitFrequency() {
 			b := randBA(size)
 			out := Fscx(a, b)
 			for bit := 0; bit < size; bit++ {
-				if out.val.Bit(bit) == 1 { counts[bit]++ }
+				if out.Val.Bit(bit) == 1 { counts[bit]++ }
 			}
 			if trial&255 == 255 && timeExceeded(t0) { break }
 		}
@@ -744,20 +248,19 @@ func testBitFrequency() {
 func testHkexGFKeySensitivity() {
 	fmt.Println("[5] HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		total := 0.0
 		N := testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C2 := GfPow(g, &b.val, poly, size)
-			sk1 := GfPow(C2, &a.val, poly, size)
+			C2 := GfPow(g, &b.Val, poly, size)
+			sk1 := GfPow(C2, &a.Val, poly, size)
 			af := a.FlipBit(0)
-			sk2 := GfPow(C2, &af.val, poly, size)
-			diff := &BitArray{size: size}
-			diff.val.Xor(sk1, sk2)
+			sk2 := GfPow(C2, &af.Val, poly, size)
+			diff := NewBitArray(size, new(big.Int).Xor(sk1, sk2))
 			total += float64(diff.Popcount())
 			if i&7 == 7 && timeExceeded(t0) { N = i + 1; break }
 		}
@@ -774,17 +277,17 @@ func testHkexGFEveResistance() {
 	N := testRounds(1000)
 	fmt.Printf("[6] HKEX-GF Eve resistance: S_op(C XOR C2, r) != sk for %d trials  [CLASSICAL]\n", N)
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		rv := rVal(size)
 		successes := 0
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			b := randBA(size)
-			C := newBA(size, GfPow(g, &a.val, poly, size))
-			C2 := newBA(size, GfPow(g, &b.val, poly, size))
-			realSk := newBA(size, GfPow(&C2.val, &a.val, poly, size))
+			C := newBA(size, GfPow(g, &a.Val, poly, size))
+			C2 := newBA(size, GfPow(g, &b.Val, poly, size))
+			realSk := newBA(size, GfPow(&C2.Val, &a.Val, poly, size))
 			delta := C.Xor(C2)
 			eveGuess := SOpBA(delta, rv)
 			if eveGuess.Equal(realSk) { successes++ }
@@ -800,22 +303,22 @@ func testHkexGFEveResistance() {
 func testHpksSchnorrCorrectness() {
 	fmt.Println("[7] HPKS Schnorr correctness: g^s · C^e == R  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		iv := iVal(size)
 		ord := gfOrd(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
+			cVal := GfPow(g, &a.Val, poly, size)
 			pt := randBA(size)
 			k := randBA(size)
-			rInt := GfPow(g, &k.val, poly, size)
+			rInt := GfPow(g, &k.Val, poly, size)
 			rB := newBA(size, rInt)
 			e := FscxRevolve(rB, pt, iv)
-			s := new(big.Int).Mod(new(big.Int).Sub(&k.val, new(big.Int).Mul(&a.val, &e.val)), ord)
-			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.val, poly, size), poly, size)
+			s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&a.Val, &e.Val)), ord)
+			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.Val, poly, size), poly, size)
 			if lhs.Cmp(rInt) == 0 { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
@@ -829,20 +332,20 @@ func testHpksSchnorrCorrectness() {
 func testHpksSchnorrEveResistance() {
 	fmt.Println("[8] HPKS Schnorr Eve resistance: random forgery attempts fail  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		iv := iVal(size)
 		wins, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
+			cVal := GfPow(g, &a.Val, poly, size)
 			decoy := randBA(size)
-			rEve := newBA(size, GfPow(g, &randBA(size).val, poly, size))
+			rEve := newBA(size, GfPow(g, &randBA(size).Val, poly, size))
 			eEve := FscxRevolve(rEve, decoy, iv)
-			sEve := new(big.Int).Set(&randBA(size).val)
-			lhs := GfMul(GfPow(g, sEve, poly, size), GfPow(cVal, &eEve.val, poly, size), poly, size)
-			if lhs.Cmp(&rEve.val) == 0 { wins++ }
+			sEve := new(big.Int).Set(&randBA(size).Val)
+			lhs := GfMul(GfPow(g, sEve, poly, size), GfPow(cVal, &eEve.Val, poly, size), poly, size)
+			if lhs.Cmp(&rEve.Val) == 0 { wins++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
@@ -855,8 +358,8 @@ func testHpksSchnorrEveResistance() {
 func testHpkeRoundTrip() {
 	fmt.Println("[9] HPKE encrypt+decrypt correctness (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		iv := iVal(size)
 		rv := rVal(size)
 		ok, N := 0, testRounds(1000)
@@ -864,12 +367,12 @@ func testHpkeRoundTrip() {
 		for i := 0; i < N; i++ {
 			a := randBA(size)
 			pt := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
+			cVal := GfPow(g, &a.Val, poly, size)
 			r := randBA(size)
-			rVal2 := GfPow(g, &r.val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
+			rVal2 := GfPow(g, &r.Val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
 			E := FscxRevolve(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rVal2, &a.val, poly, size))
+			decKey := newBA(size, GfPow(rVal2, &a.Val, poly, size))
 			D := FscxRevolve(E, decKey, rv)
 			if D.Equal(pt) { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
@@ -886,12 +389,9 @@ func testHpkeRoundTrip() {
 // ---------------------------------------------------------------------------
 
 func testNlFscxV1Nonlinearity() {
-	// NL-FSCX v1 must violate GF(2) linearity: if linear,
-	// f(A,B) XOR f(0,B) == Fscx(A,0) for all A,B. Count violations.
-	// Also verify period is destroyed: no period found in 4*n steps.
 	fmt.Println("[10] NL-FSCX v1 non-linearity and aperiodicity  [PQC-EXT]")
 	for _, size := range sizes {
-		zero := &BitArray{size: size}
+		zero := NewBitArray(size, new(big.Int))
 		N1, N2 := testRounds(1000), testRounds(200)
 		violations := 0
 		t0 := time.Now()
@@ -924,12 +424,9 @@ func testNlFscxV1Nonlinearity() {
 }
 
 func testNlFscxV2BijectiveInverse() {
-	// NL-FSCX v2 must be bijective in A for all B (collision count = 0),
-	// the closed-form inverse must be correct, and v2 must be non-linear.
 	fmt.Println("[11] NL-FSCX v2 bijectivity and exact inverse  [PQC-EXT]")
 	for _, size := range sizes {
 		N1, N2, N3 := testRounds(500), testRounds(1000), testRounds(500)
-		// Collision test
 		nonBij := 0
 		t0 := time.Now()
 		for i := 0; i < N1; i++ {
@@ -939,13 +436,12 @@ func testNlFscxV2BijectiveInverse() {
 			if size < 8 { samples = 1 << uint(size) }
 			for j := 0; j < samples; j++ {
 				A := randBA(size)
-				out := NlFscxV2(A, B).val.Text(16)
-				if prev, ok := seen[out]; ok && prev != A.val.Uint64() { nonBij++; break }
-				seen[out] = A.val.Uint64()
+				out := NlFscxV2(A, B).Val.Text(16)
+				if prev, ok := seen[out]; ok && prev != A.Val.Uint64() { nonBij++; break }
+				seen[out] = A.Val.Uint64()
 			}
 			if i&63 == 63 && timeExceeded(t0) { N1 = i + 1; break }
 		}
-		// Inverse correctness
 		invOk := 0
 		t0 = time.Now()
 		for i := 0; i < N2; i++ {
@@ -953,8 +449,7 @@ func testNlFscxV2BijectiveInverse() {
 			if NlFscxV2Inv(NlFscxV2(A, B), B).Equal(A) { invOk++ }
 			if i&63 == 63 && timeExceeded(t0) { N2 = i + 1; break }
 		}
-		// Non-linearity
-		zero := &BitArray{size: size}
+		zero := NewBitArray(size, new(big.Int))
 		nlOk := 0
 		t0 = time.Now()
 		for i := 0; i < N3; i++ {
@@ -972,7 +467,6 @@ func testNlFscxV2BijectiveInverse() {
 }
 
 func testHskeNlA1Correctness() {
-	// HSKE-NL-A1 with per-session nonce: base = K XOR N; ks = NlFscxRevolveV1(ROL(base,n/8), base XOR ctr, n/4).
 	fmt.Println("[12] HSKE-NL-A1 counter-mode correctness: D == P  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
@@ -980,12 +474,12 @@ func testHskeNlA1Correctness() {
 		t0 := time.Now()
 		for trial := 0; trial < N; trial++ {
 			K := randBA(size); nonce := randBA(size); P := randBA(size)
-			base := newBA(size, new(big.Int).Xor(&K.val, &nonce.val))
+			base := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
 			ctr := int64(trial % (1 << 16))
-			bCtr := newBA(size, new(big.Int).Xor(&base.val, big.NewInt(ctr)))
-			ks := NlFscxRevolveV1(base.RotateLeft(size/8), bCtr, iv) // seed=ROL(base,n/8)
-			C := newBA(size, new(big.Int).Xor(&P.val, &ks.val))
-			D := newBA(size, new(big.Int).Xor(&C.val, &ks.val))
+			bCtr := newBA(size, new(big.Int).Xor(&base.Val, big.NewInt(ctr)))
+			ks := NlFscxRevolveV1(base.RotateLeft(size/8), bCtr, iv)
+			C := newBA(size, new(big.Int).Xor(&P.Val, &ks.Val))
+			D := newBA(size, new(big.Int).Xor(&C.Val, &ks.Val))
 			if D.Equal(P) { ok++ }
 			if trial&63 == 63 && timeExceeded(t0) { N = trial + 1; break }
 		}
@@ -997,7 +491,6 @@ func testHskeNlA1Correctness() {
 }
 
 func testHskeNlA2Correctness() {
-	// Default 50 trials: NlFscxV2Inv calls M^{n/2-1} per step — O(n^2) ops per trial.
 	fmt.Println("[13] HSKE-NL-A2 revolve-mode correctness: D == P  [PQC-EXT]")
 	for _, size := range sizes {
 		rv := rVal(size)
@@ -1018,24 +511,20 @@ func testHskeNlA2Correctness() {
 }
 
 func testHkexRnlCorrectness() {
-	// Protocol: one party generates aRand and transmits it in the clear; both
-	// derive the shared mBlind = mBase + aRand and compute individual public keys
-	// C = round_p(mBlind · s).  Agreement holds by ring commutativity:
-	// sA·(mBlind·sB) = sB·(mBlind·sA).  See §11.4.2 of SecurityProofs.md.
 	fmt.Println("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; Peikert reconciliation -- expect 100%% agreement)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
-		mBase := rnlMPoly(nRnl)
+		mBase := RnlMPoly(nRnl)
 		okRaw, okSk := 0, 0
 		trials := testRounds(200)
 		t0 := time.Now()
 		for i := 0; i < trials; i++ {
-			aRand := rnlRandPoly(nRnl, rnlQ)
-			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
-			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			KA, hintA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl, nil)
-			KB, _     := rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl, hintA)
+			aRand  := RnlRandPoly(nRnl, RnlQ)
+			mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+			sA, CA := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
+			sB, CB := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
+			KA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, nRnl, nRnl, nil)
+			KB, _     := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, nRnl, nRnl, hintA)
 			if KA.Equal(KB) { okRaw++ }
 			skA := NlFscxRevolveV1(KA.RotateLeft(nRnl/8), KA, nRnl/4)
 			skB := NlFscxRevolveV1(KB.RotateLeft(nRnl/8), KB, nRnl/4)
@@ -1053,22 +542,22 @@ func testHkexRnlCorrectness() {
 func testHpksNlCorrectness() {
 	fmt.Println("[15] HPKS-NL correctness: g^s · C^e == R (NL-FSCX v1 challenge)  [PQC-EXT]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		iv := iVal(size)
 		ord := gfOrd(size)
 		ok, N := 0, testRounds(1000)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
+			cVal := GfPow(g, &a.Val, poly, size)
 			pt := randBA(size)
 			k := randBA(size)
-			rInt := GfPow(g, &k.val, poly, size)
+			rInt := GfPow(g, &k.Val, poly, size)
 			rB := newBA(size, rInt)
 			e := NlFscxRevolveV1(rB, pt, iv)
-			s := new(big.Int).Mod(new(big.Int).Sub(&k.val, new(big.Int).Mul(&a.val, &e.val)), ord)
-			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.val, poly, size), poly, size)
+			s := new(big.Int).Mod(new(big.Int).Sub(&k.Val, new(big.Int).Mul(&a.Val, &e.Val)), ord)
+			lhs := GfMul(GfPow(g, s, poly, size), GfPow(cVal, &e.Val, poly, size), poly, size)
 			if lhs.Cmp(rInt) == 0 { ok++ }
 			if i&63 == 63 && timeExceeded(t0) { N = i + 1; break }
 		}
@@ -1080,22 +569,21 @@ func testHpksNlCorrectness() {
 }
 
 func testHpkeNlCorrectness() {
-	// Default 200 trials: NlFscxV2Inv calls M^{n/2-1} per step.
 	fmt.Println("[16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt)  [PQC-EXT]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		iv := iVal(size)
 		ok, N := 0, testRounds(200)
 		t0 := time.Now()
 		for i := 0; i < N; i++ {
 			a := randBA(size); pt := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
+			cVal := GfPow(g, &a.Val, poly, size)
 			r := randBA(size)
-			rInt := GfPow(g, &r.val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
+			rInt := GfPow(g, &r.Val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
 			E := NlFscxRevolveV2(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rInt, &a.val, poly, size))
+			decKey := newBA(size, GfPow(rInt, &a.Val, poly, size))
 			D := NlFscxRevolveV2Inv(E, decKey, iv)
 			if D.Equal(pt) { ok++ }
 			if i&31 == 31 && timeExceeded(t0) { N = i + 1; break }
@@ -1108,11 +596,104 @@ func testHpkeNlCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks
+// Security test — HFSCX-256 hash known-answer vectors [17]
+// ---------------------------------------------------------------------------
+
+func testHfscx256KAV() {
+	fmt.Println("[17] HFSCX-256 known-answer vectors  [NL-FSCX HASH]")
+	expEmpty := []byte{
+		0x75, 0xde, 0x75, 0xae, 0xff, 0xa8, 0xd6, 0xfb,
+		0x3d, 0x56, 0x13, 0x4c, 0xb4, 0x0a, 0x3f, 0x18,
+		0x75, 0x85, 0x79, 0x74, 0xe1, 0x97, 0xa6, 0x32,
+		0xbb, 0xf4, 0x36, 0x16, 0x0e, 0xd9, 0x7a, 0x6b,
+	}
+	expA := []byte{
+		0xe3, 0x7b, 0xd2, 0x0f, 0x15, 0xe0, 0x4f, 0x21,
+		0xa0, 0x92, 0x1c, 0xf0, 0xa6, 0x66, 0xd2, 0x45,
+		0x7b, 0xc2, 0xbc, 0xcf, 0xd7, 0xbd, 0x28, 0x22,
+		0xe6, 0x71, 0xda, 0x24, 0xbd, 0xb8, 0x38, 0xa0,
+	}
+	exp33A := []byte{
+		0x95, 0x1d, 0x82, 0x84, 0x2d, 0x31, 0x2b, 0x67,
+		0xfa, 0x47, 0xd4, 0x81, 0x22, 0x03, 0x61, 0x22,
+		0xa4, 0x5b, 0xbe, 0xfb, 0x0c, 0x1f, 0x42, 0xcd,
+		0x4e, 0xbc, 0x07, 0xb5, 0xd7, 0xd8, 0x79, 0xf6,
+	}
+	type kav struct {
+		msg    []byte
+		label  string
+		expect []byte
+	}
+	tests := []kav{
+		{[]byte{}, "empty", expEmpty},
+		{[]byte{0x61}, "0x61", expA},
+		{bytes.Repeat([]byte{'A'}, 33), "33×A", exp33A},
+	}
+	pass := true
+	for _, tc := range tests {
+		got := Hfscx256(tc.msg, nil)
+		ok := bytes.Equal(got, tc.expect)
+		if !ok { pass = false }
+		lbl := "OK"
+		if !ok { lbl = "FAIL" }
+		fmt.Printf("    %-8s : %x  [%s]\n", tc.label, got, lbl)
+	}
+	status := "PASS"
+	if !pass { status = "FAIL" }
+	fmt.Printf("    [%s]\n\n", status)
+}
+
+// ---------------------------------------------------------------------------
+// Security tests — Code-Based PQC (Stern-F) [18-19]
+// ---------------------------------------------------------------------------
+
+func testHpksSternFCorrectness() {
+	fmt.Printf("[18] HPKS-Stern-F correctness: sign+verify  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	N := testRounds(3)
+	ok := 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		seed, e, syn := SternFKeygen(256)
+		msg := randBA(256)
+		sig := HpksSternFSign(msg, e, seed, sdfTestRounds)
+		if HpksSternFVerify(msg, sig, seed, syn) {
+			ok++
+		}
+		if timeExceeded(t0) { N = i + 1; break }
+	}
+	status := "PASS"
+	if ok != N { status = "FAIL" }
+	fmt.Printf("    %d / %d verified  [%s]\n\n", ok, N, status)
+}
+
+func testHpkeSternFCorrectness() {
+	fmt.Println("[19] HPKE-Stern-F correctness: encap+decap  (n=32, t=2, brute-force)  [CODE-BASED PQC]")
+	N := testRounds(20)
+	ok := 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		seed   := randBA(32)
+		ePrime := SternRandError(32, 2)
+		ct     := SternSyndrome(seed, ePrime)
+		K      := SternHash(seed, ePrime)
+		eDec, found := hpkeSternFBruteForce32(seed, ct)
+		if found {
+			KDec := SternHash(seed, eDec)
+			if K.Equal(KDec) { ok++ }
+		}
+		if timeExceeded(t0) { N = i + 1; break }
+	}
+	status := "PASS"
+	if ok != N { status = "FAIL" }
+	fmt.Printf("    %d / %d decapsulated  [%s]\n\n", ok, N, status)
+}
+
+// ---------------------------------------------------------------------------
+// Performance benchmarks [20-29]
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[19] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[20] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -1126,13 +707,13 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[20] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[21] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		a := randBA(size)
 		ops, elapsed := bench("", func() {
-			GfPow(g, &a.val, poly, size)
+			GfPow(g, &a.Val, poly, size)
 		})
 		fmt.Printf("    bits=%3d  gf_pow(g, a)             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1141,17 +722,17 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[21] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[22] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
+		poly := GfPoly[size]
+		g := big.NewInt(GfGen)
 		ops, elapsed := bench("", func() {
 			a := randBA(size)
 			b := randBA(size)
-			C := GfPow(g, &a.val, poly, size)
-			C2 := GfPow(g, &b.val, poly, size)
-			_ = GfPow(C2, &a.val, poly, size)
-			_ = GfPow(C, &b.val, poly, size)
+			C  := GfPow(g, &a.Val, poly, size)
+			C2 := GfPow(g, &b.Val, poly, size)
+			_ = GfPow(C2, &a.Val, poly, size)
+			_ = GfPow(C, &b.Val, poly, size)
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1160,13 +741,13 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[22] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[23] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
-		iv := iVal(size)
-		rv := rVal(size)
+		iv   := iVal(size)
+		rv   := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
-			pt := randBA(size)
+			pt  := randBA(size)
 			key := randBA(size)
 			enc := FscxRevolve(pt, key, iv)
 			dec := FscxRevolve(enc, key, rv)
@@ -1179,23 +760,23 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[23] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[24] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
-		poly := gfPoly[size]
-		g := big.NewInt(gfGen)
-		iv := iVal(size)
-		rv := rVal(size)
+		poly := GfPoly[size]
+		g    := big.NewInt(GfGen)
+		iv   := iVal(size)
+		rv   := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
-			a := randBA(size)
-			pt := randBA(size)
-			cVal := GfPow(g, &a.val, poly, size)
-			r := randBA(size)
-			rVal2 := GfPow(g, &r.val, poly, size)
-			encKey := newBA(size, GfPow(cVal, &r.val, poly, size))
-			E := FscxRevolve(pt, encKey, iv)
-			decKey := newBA(size, GfPow(rVal2, &a.val, poly, size))
-			D := FscxRevolve(E, decKey, rv)
+			a      := randBA(size)
+			pt     := randBA(size)
+			cVal   := GfPow(g, &a.Val, poly, size)
+			r      := randBA(size)
+			rVal2  := GfPow(g, &r.Val, poly, size)
+			encKey := newBA(size, GfPow(cVal, &r.Val, poly, size))
+			E      := FscxRevolve(pt, encKey, iv)
+			decKey := newBA(size, GfPow(rVal2, &a.Val, poly, size))
+			D      := FscxRevolve(E, decKey, rv)
 			sink = sink.Xor(D)
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
@@ -1205,22 +786,22 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[24] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[25] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
-		a := randBA(size)
-		b := randBA(size)
+		a  := randBA(size)
+		b  := randBA(size)
 		ops, elapsed := bench("", func() {
 			a = NlFscxRevolveV1(a, b, iv)
 		})
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[24b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
-	for _, size := range []int{64} { // O(n^2) per op; skip 128/256 in benchmark
+	fmt.Println("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
+	for _, size := range []int{64} {
 		rv := rVal(size)
-		a := randBA(size)
-		b := randBA(size)
+		a  := randBA(size)
+		b  := randBA(size)
 		ops, elapsed := bench("", func() {
 			E := NlFscxRevolveV2(a, b, rv)
 			a = NlFscxRevolveV2Inv(E, b, rv)
@@ -1232,18 +813,18 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[25] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[26] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
-		iv := iVal(size)
+		iv   := iVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
 			K     := randBA(size)
 			nonce := randBA(size)
-			base  := newBA(size, new(big.Int).Xor(&K.val, &nonce.val))
+			base  := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
 			P     := randBA(size)
-			bCtr  := newBA(size, new(big.Int).Set(&base.val)) // counter=0
+			bCtr  := newBA(size, new(big.Int).Set(&base.Val))
 			ks    := NlFscxRevolveV1(base, bCtr, iv)
-			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.val, &ks.val)))
+			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.Val, &ks.Val)))
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1252,9 +833,9 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[26] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
-	for _, size := range []int{64} { // O(n^2) per op; skip 128/256 in benchmark
-		rv := rVal(size)
+	fmt.Println("[27] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
+	for _, size := range []int{64} {
+		rv   := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {
 			K := randBA(size)
@@ -1269,17 +850,17 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[27] HKEX-RNL handshake throughput  [PQC-EXT]")
-	fmt.Printf("     (ring sizes %v; n^2 poly-mul — O(n^2) per exchange)\n", rnlSizes)
+	fmt.Println("[28] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
-		mBase := rnlMPoly(nRnl)
+		mBase := RnlMPoly(nRnl)
 		ops, elapsed := bench("", func() {
-			aRand := rnlRandPoly(nRnl, rnlQ)
-			mBlind := rnlPolyAdd(mBase, aRand, rnlQ)
-			sA, CA := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			sB, CB := rnlKeygen(mBlind, nRnl, rnlQ, rnlP)
-			_, hintA := rnlAgree(sA, CB, rnlQ, rnlP, rnlPP, nRnl, nRnl, nil)
-			_, _ = rnlAgree(sB, CA, rnlQ, rnlP, rnlPP, nRnl, nRnl, hintA)
+			aRand  := RnlRandPoly(nRnl, RnlQ)
+			mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+			sA, CA := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
+			sB, CB := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
+			_, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, nRnl, nRnl, nil)
+			_, _     = RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, nRnl, nRnl, hintA)
 		})
 		fmt.Printf("    n=%3d  full exchange             : %s  (%d ops in %.2fs)\n",
 			nRnl, fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1287,302 +868,13 @@ func benchHkexRnlHandshake() {
 	fmt.Println()
 }
 
-// ---------------------------------------------------------------------------
-// Stern-F helpers (Code-Based PQC)
-// ---------------------------------------------------------------------------
-
-const sdfTestRounds = 4 // fewer rounds than suite for fast tests
-
-func bigIntPopcount(x *big.Int) int {
-	cnt := 0
-	for _, b := range x.Bytes() {
-		cnt += bits.OnesCount8(b)
-	}
-	return cnt
-}
-
-func sternHash(items ...*BitArray) *BitArray {
-	n := 256
-	if len(items) > 0 {
-		n = items[0].size
-	}
-	h := &BitArray{size: n}
-	for _, v := range items {
-		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
-	}
-	return h
-}
-
-func sternMatrixRow(seed *BitArray, row int) *BitArray {
-	n := seed.size
-	sxr := seed.Xor(newBA(n, big.NewInt(int64(row&0xFF))))
-	return NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
-}
-
-func sternSyndrome(seed, e *BitArray) *big.Int {
-	nRows := seed.size / 2
-	syn := new(big.Int)
-	for i := 0; i < nRows; i++ {
-		row := sternMatrixRow(seed, i)
-		dot := new(big.Int).And(&row.val, &e.val)
-		if bigIntPopcount(dot)%2 == 1 {
-			syn.SetBit(syn, i, 1)
-		}
-	}
-	return syn
-}
-
-func syndrToBA(n int, syn *big.Int) *BitArray {
-	ba := &BitArray{size: n}
-	ba.val.Set(syn)
-	return ba
-}
-
-func sternGenPerm(piSeed *BitArray, N int) []int {
-	n := piSeed.size
-	key := piSeed.RotateLeft(n / 8)
-	st := piSeed.Copy()
-	perm := make([]int, N)
-	for i := range perm {
-		perm[i] = i
-	}
-	for i := N - 1; i > 0; i-- {
-		st = NlFscxV1(st, key)
-		v := uint32(st.val.Uint64())
-		j := int(v % uint32(i+1))
-		perm[i], perm[j] = perm[j], perm[i]
-	}
-	return perm
-}
-
-func sternApplyPerm(perm []int, v *BitArray) *BitArray {
-	N := v.size
-	out := &BitArray{size: N}
-	for i := 0; i < N; i++ {
-		if v.val.Bit(i) == 1 {
-			out.val.SetBit(&out.val, perm[i], 1)
-		}
-	}
-	return out
-}
-
-func sternRandError(n, t int) *BitArray {
-	idx := make([]int, n)
-	for i := range idx {
-		idx[i] = i
-	}
-	for i := n - 1; i >= n-t; i-- {
-		j, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		if err != nil {
-			log.Fatalf("rand.Int: %s", err)
-		}
-		ji := int(j.Int64())
-		idx[i], idx[ji] = idx[ji], idx[i]
-	}
-	e := &BitArray{size: n}
-	for i := n - 1; i >= n-t; i-- {
-		e.val.SetBit(&e.val, idx[i], 1)
-	}
-	return e
-}
-
-func sternFKeygenT(n int) (*BitArray, *BitArray, *big.Int) {
-	seed := randBA(n)
-	e := sternRandError(n, n/16)
-	return seed, e, sternSyndrome(seed, e)
-}
-
-func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int {
-	n := msg.size
-	chSt := &BitArray{size: n}
-	sfs := func(item *BitArray) {
-		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
-	}
-	sfs(msg)
-	for i := 0; i < rounds; i++ {
-		sfs(c0[i]); sfs(c1[i]); sfs(c2[i])
-	}
-	chals := make([]int, rounds)
-	for i := 0; i < rounds; i++ {
-		idxBA := newBA(n, big.NewInt(int64(i&0xFF)))
-		chSt = NlFscxV1(chSt, idxBA)
-		chals[i] = int(uint32(chSt.val.Uint64()) % 3)
-	}
-	return chals
-}
-
-type SternRound struct {
-	c0, c1, c2   *BitArray
-	b             int
-	respA, respB  *BitArray
-}
-
-type SternSig struct {
-	rounds []SternRound
-}
-
-func hpksSternFSignT(msg, e, seed *BitArray, rounds int) *SternSig {
-	n := msg.size
-	t := n / 16
-	sig := &SternSig{rounds: make([]SternRound, rounds)}
-	type rtmp struct{ r, y, pi, sr, sy *BitArray }
-	tmp := make([]rtmp, rounds)
-	c0s := make([]*BitArray, rounds)
-	c1s := make([]*BitArray, rounds)
-	c2s := make([]*BitArray, rounds)
-	for i := 0; i < rounds; i++ {
-		r := sternRandError(n, t)
-		y := e.Xor(r)
-		pi := randBA(n)
-		perm := sternGenPerm(pi, n)
-		sr := sternApplyPerm(perm, r)
-		sy := sternApplyPerm(perm, y)
-		hrBA := syndrToBA(n, sternSyndrome(seed, r))
-		c0 := sternHash(pi, hrBA)
-		c1 := sternHash(sr)
-		c2 := sternHash(sy)
-		tmp[i] = rtmp{r, y, pi, sr, sy}
-		sig.rounds[i].c0 = c0; sig.rounds[i].c1 = c1; sig.rounds[i].c2 = c2
-		c0s[i] = c0; c1s[i] = c1; c2s[i] = c2
-	}
-	chals := sternFsChallenges(rounds, msg, c0s, c1s, c2s)
-	for i := 0; i < rounds; i++ {
-		bv := chals[i]
-		sig.rounds[i].b = bv
-		switch bv {
-		case 0:
-			sig.rounds[i].respA = tmp[i].sr
-			sig.rounds[i].respB = tmp[i].sy
-		case 1:
-			sig.rounds[i].respA = tmp[i].pi
-			sig.rounds[i].respB = tmp[i].r
-		default:
-			sig.rounds[i].respA = tmp[i].pi
-			sig.rounds[i].respB = tmp[i].y
-		}
-	}
-	return sig
-}
-
-func hpksSternFVerifyT(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *big.Int) bool {
-	rounds := len(sig.rounds)
-	n := msg.size
-	t := n / 16
-	c0s := make([]*BitArray, rounds)
-	c1s := make([]*BitArray, rounds)
-	c2s := make([]*BitArray, rounds)
-	for i, r := range sig.rounds {
-		c0s[i] = r.c0; c1s[i] = r.c1; c2s[i] = r.c2
-	}
-	chals := sternFsChallenges(rounds, msg, c0s, c1s, c2s)
-	for i, r := range sig.rounds {
-		if chals[i] != r.b {
-			return false
-		}
-	}
-	for _, r := range sig.rounds {
-		switch r.b {
-		case 0:
-			if !sternHash(r.respA).Equal(r.c1) { return false }
-			if !sternHash(r.respB).Equal(r.c2) { return false }
-			if r.respA.Popcount() != t { return false }
-		case 1:
-			if r.respB.Popcount() != t { return false }
-			hrBA := syndrToBA(n, sternSyndrome(seed, r.respB))
-			if !sternHash(r.respA, hrBA).Equal(r.c0) { return false }
-			sr2 := sternApplyPerm(sternGenPerm(r.respA, n), r.respB)
-			if !sternHash(sr2).Equal(r.c1) { return false }
-		default:
-			hysBA := syndrToBA(n, new(big.Int).Xor(sternSyndrome(seed, r.respB), syndrome))
-			if !sternHash(r.respA, hysBA).Equal(r.c0) { return false }
-			sy2 := sternApplyPerm(sternGenPerm(r.respA, n), r.respB)
-			if !sternHash(sy2).Equal(r.c2) { return false }
-		}
-	}
-	return true
-}
-
-// hpkeSternFBruteForce32 decapsulates by enumerating all C(32,2)=496 weight-2 errors.
-func hpkeSternFBruteForce32(seed *BitArray, ct *big.Int) (*BitArray, bool) {
-	for i := 0; i < 32; i++ {
-		for j := i + 1; j < 32; j++ {
-			e := &BitArray{size: 32}
-			e.val.SetBit(&e.val, i, 1)
-			e.val.SetBit(&e.val, j, 1)
-			if sternSyndrome(seed, e).Cmp(ct) == 0 {
-				return e, true
-			}
-		}
-	}
-	return nil, false
-}
-
-// ---------------------------------------------------------------------------
-// Security tests — Code-Based PQC (Stern-F) [17-18]
-// ---------------------------------------------------------------------------
-
-func testHpksSternFCorrectness() {
-	fmt.Printf("[17] HPKS-Stern-F correctness: sign+verify  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
-	N := testRounds(3)
-	ok := 0
-	t0 := time.Now()
-	for i := 0; i < N; i++ {
-		seed, e, syn := sternFKeygenT(256)
-		msg := randBA(256)
-		sig := hpksSternFSignT(msg, e, seed, sdfTestRounds)
-		if hpksSternFVerifyT(msg, sig, seed, syn) {
-			ok++
-		}
-		if timeExceeded(t0) {
-			N = i + 1
-			break
-		}
-	}
-	status := "PASS"
-	if ok != N {
-		status = "FAIL"
-	}
-	fmt.Printf("    %d / %d verified  [%s]\n", ok, N, status)
-	fmt.Println()
-}
-
-func testHpkeSternFCorrectness() {
-	fmt.Println("[18] HPKE-Stern-F correctness: encap+decap  (n=32, t=2, brute-force)  [CODE-BASED PQC]")
-	N := testRounds(20)
-	ok := 0
-	t0 := time.Now()
-	for i := 0; i < N; i++ {
-		seed := randBA(32)
-		ePrime := sternRandError(32, 2)
-		ct := sternSyndrome(seed, ePrime)
-		K := sternHash(seed, ePrime)
-		eDec, found := hpkeSternFBruteForce32(seed, ct)
-		if found {
-			KDec := sternHash(seed, eDec)
-			if K.Equal(KDec) {
-				ok++
-			}
-		}
-		if timeExceeded(t0) {
-			N = i + 1
-			break
-		}
-	}
-	status := "PASS"
-	if ok != N {
-		status = "FAIL"
-	}
-	fmt.Printf("    %d / %d decapsulated  [%s]\n", ok, N, status)
-	fmt.Println()
-}
-
 func benchHpksSternF() {
-	fmt.Printf("[28] HPKS-Stern-F sign+verify throughput  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
-	seed, e, syn := sternFKeygenT(256)
+	fmt.Printf("[29] HPKS-Stern-F sign+verify throughput  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	seed, e, syn := SternFKeygen(256)
 	msg := randBA(256)
 	ops, elapsed := bench("", func() {
-		sig := hpksSternFSignT(msg, e, seed, sdfTestRounds)
-		hpksSternFVerifyT(msg, sig, seed, syn)
+		sig := HpksSternFSign(msg, e, seed, sdfTestRounds)
+		HpksSternFVerify(msg, sig, seed, syn)
 	})
 	fmt.Printf("    bits=256  sign+verify              : %s  (%d ops in %.2fs)\n",
 		fmtRate(ops, elapsed), ops, elapsed.Seconds())
@@ -1594,7 +886,6 @@ func benchHpksSternF() {
 // ---------------------------------------------------------------------------
 
 func main() {
-	// --- CLI flags ---
 	flagRounds := flag.Int("rounds", 0, "max iterations per security test (0 = test-specific default)")
 	flagR      := flag.Int("r", 0, "alias for -rounds")
 	flagTime   := flag.Float64("time", 0, "benchmark duration and per-test time cap in seconds (0 = defaults)")
@@ -1602,13 +893,12 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr,
 			"Usage: Herradura_tests [-rounds N] [-time T]\n"+
-			"  -rounds, -r N   max iterations per security test\n"+
-			"  -time,   -t T   benchmark duration and per-test time cap (seconds)\n"+
-			"  Env: HTEST_ROUNDS=N  HTEST_TIME=T\n")
+				"  -rounds, -r N   max iterations per security test\n"+
+				"  -time,   -t T   benchmark duration and per-test time cap (seconds)\n"+
+				"  Env: HTEST_ROUNDS=N  HTEST_TIME=T\n")
 	}
 	flag.Parse()
 
-	// env var fallbacks
 	if envR := os.Getenv("HTEST_ROUNDS"); envR != "" {
 		if v, err := strconv.Atoi(envR); err == nil && v > 0 && *flagRounds == 0 && *flagR == 0 {
 			gRounds = v
@@ -1620,7 +910,6 @@ func main() {
 			gTimeLimit = gBenchDur
 		}
 	}
-	// CLI overrides env
 	if r := *flagRounds; r > 0 { gRounds = r }
 	if r := *flagR;      r > 0 { gRounds = r }
 	if t := *flagTime;   t > 0 {
@@ -1633,7 +922,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.23 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.5.27 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1665,6 +954,9 @@ func main() {
 	testHkexRnlCorrectness()
 	testHpksNlCorrectness()
 	testHpkeNlCorrectness()
+
+	fmt.Println("--- Security Tests: HFSCX-256 Hash ---\n")
+	testHfscx256KAV()
 
 	fmt.Println("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
 	testHpksSternFCorrectness()
