@@ -153,33 +153,125 @@ Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Ar
 
 ## KaTeX Rendering Rules for Markdown Files
 
-GitHub renders math in `README.md`, `SecurityProofs.md`, and similar files via KaTeX. Three classes of errors have been fixed and **must not be reintroduced**:
+GitHub renders math in `README.md`, `SecurityProofs.md`, and similar files via KaTeX.  The pipeline is **markdown (CommonMark/GFM) first, then KaTeX**: backslash escapes inside math spans are resolved by the markdown layer **before** KaTeX sees the input.  Every patch below is verified against this pipeline (not against pure KaTeX) — see the validation script section.
 
-### 1. `'_' allowed only in math mode`
-**Cause:** `\_` inside a `\text{}` block — KaTeX rejects `\_` in text mode.
-**Wrong:** `\text{FSCX\_REVOLVE}`, `\mathit{enc\_key}`
-**Correct:** use `\textunderscore` to produce a literal underscore glyph in math mode:
-- `\text{FSCX}\textunderscore\text{REVOLVE}\textunderscore\text{N}`
-- `\mathit{enc}\textunderscore\mathit{key}`
+### Rule 1 — never put `_` between `\text{}` blocks
 
-### 2. `Double subscripts: use braces to clarify`
-**Cause:** using `\_` as the subscript operator between `\text{}` groups creates two subscripts on the same base.
-**Wrong:** `\text{FSCX}\_\text{REVOLVE}\_\text{N}` (the intermediate "fix" for error 1)
-**Correct:** same as above — `\textunderscore` is not a subscript operator, so it is safe for multi-segment names.
+CommonMark resolves `\_` inside math spans to a literal `_`, which KaTeX then parses as the **subscript operator**.  Two implications:
 
-### 3. `Missing close brace`
-**Cause:** `\xleftarrow{\$}` — GitHub's markdown parser treats `\$` as closing the inline math span `$...$`, so KaTeX receives an unclosed brace.
-**Wrong:** `\xleftarrow{\$}`
-**Correct:** `\xleftarrow{\textdollar}` — `\textdollar` is the KaTeX dollar-sign glyph command with no literal `$`.
+- `\text{A}\_\text{B}` becomes `\text{A}_\text{B}` after markdown — a single subscript that *renders* but visually attaches `B` underneath `A`.
+- `\text{A}\_\text{B}\_\text{C}` becomes `\text{A}_\text{B}_\text{C}` — two subscripts on the same base, which KaTeX rejects with **"Double subscripts: use braces to clarify"**.
 
-### Summary table
+`\textunderscore` is also wrong — it is a text-mode-only command in KaTeX 0.16+, and rejected wherever the parser is in math mode (which includes positions between `\text{}` blocks).
 
-| Pattern to avoid | Correct replacement | Error prevented |
-|---|---|---|
-| `\text{FOO\_BAR}` | `\text{FOO}\textunderscore\text{BAR}` | `'_' allowed only in math mode` |
-| `\mathit{foo\_bar}` | `\mathit{foo}\textunderscore\mathit{bar}` | `'_' allowed only in math mode` |
-| `\text{A}\_\text{B}\_\text{C}` | `\text{A}\textunderscore\text{B}\textunderscore\text{C}` | `Double subscripts` |
-| `\xleftarrow{\$}` | `\xleftarrow{\textdollar}` | `Missing close brace` |
+### Rule 2 — never put a bare `_` inside `\text{}`
+
+CommonMark resolves `\_` inside `\text{...}` to `_` as well.  KaTeX then sees `\text{FOO_BAR}` and rejects with **`"_" allowed only in math mode`**.
+
+### Rule 3 — never use `\$` or `\textdollar` in math mode
+
+`\$` inside `$...$` is consumed by markdown (the second `$` closes the span and KaTeX gets an unclosed brace).  `\textdollar` is text-mode-only in KaTeX 0.16+ and rejected anywhere in math mode.
+
+### Rule 4 — never write `^*` inside a math span
+
+A literal `*` in math mode is paired by markdown's emphasis parser with any other `*` later in the same paragraph (across math-span boundaries). The first `*` opens `<em>` mid-span, breaking math recognition entirely.  Use `^{\ast}` instead — `\ast` renders identically to `*` and the leading `\a` is not a markdown emphasis marker.
+
+### Rule 5 — display `$$...$$` blocks must be on their own line with blank lines before and after
+
+GitHub's renderer only emits `<math-renderer class="js-display-math">` when the `$$` block is on its own line (surrounded by blank lines).  **Only one valid format** is reliably rendered on GitHub:
+
+```
+$$expr$$
+```
+
+Single-line or content-attached multi-line are both valid:
+- **Single-line:** `$$expr$$` — entire expression on one line.
+- **Content-attached multi-line:** `$$first-content-line\n...\nlast-content-line$$` — the `$$` delimiters are attached to the first and last content lines respectively (not on separate blank lines).
+
+**INVALID — standalone `$$` delimiter lines are not rendered by GitHub:**
+```
+$$
+expr
+$$
+```
+A bare `$$` on its own line is never correctly rendered as display math; use the content-attached form instead.
+
+When a `$$` block follows immediately after prose (e.g. `**Compression function.**\n$$C(s,m) = ...$$`), GitHub fails to wrap it and the `$$...$$` is emitted as literal text with backslash escapes stripped — the visible "Unable to render expression" symptom.
+
+Inside numbered/bulleted lists, indent the `$$` block by 4 spaces and surround it with blank lines so it counts as a list-item paragraph break instead of ending the list.
+
+### Rule 6 — never place `$...$` directly after a non-space character
+
+GitHub's math regex requires that the opening `$` be preceded by whitespace, start of line, or punctuation **other than** `-`/`)`/`.`/etc.  `degree-$k$` does **not** render; `degree $k$` does.  Same rule for the closing `$`: it must be followed by whitespace or end-of-line, not an alphanumeric.
+
+### Rule 7 — never open a math span with `$[`
+
+GitHub processes GFM link references (`[text](url)`) **before** math spans.  When a math span opens with `$[`, the link parser may consume the `[...]` portion before the math parser sees it, leaving orphaned `$` delimiters that prevent the following display block from being recognized.  Use `\lbrack`/`\rbrack` instead of bare `[`/`]` at the start of a math span.
+
+### Rule 8 — never repeat `\command{...}_{...}` in multiple rows of a display environment
+
+The sequence `}_{` (closing brace of a LaTeX command followed by an opening braced subscript) is treated by CommonMark as a **both-flanking** `_` delimiter — one that can both open AND close emphasis.  When this sequence appears in two or more rows of a `\begin{cases}` or `\begin{aligned}` environment, the `_` from row 1 opens emphasis and the `_` from row 2 closes it, creating an `<em>` span that crosses row boundaries and breaks the display math block.  The symptom is double-encoded `&amp;amp;` and spurious blank lines inserted between rows.
+
+The trigger is specifically `\command{...}` (any backslash command with `{}` argument) followed by `_{...}` (subscript with braces) — e.g. `\mathrm{IV}_{\text{const}}`.  The same command with an **unbraced** single-character subscript (`\mathrm{IV}_c`) does **not** trigger emphasis (that `_` is only left-flanking, not right-flanking).
+
+Fix: avoid repeating `\command{...}_{...}` across multiple rows.  Use either:
+- **Text with hyphen:** `\text{IV-const}` instead of `\mathrm{IV}_{\text{const}}`
+- **Unbraced subscript:** `\mathrm{IV}_c` (only safe for single-character subscripts)
+
+### Rule 9 — never use any explicit spacing commands in math spans
+
+**Both** families of spacing commands fail on GitHub's KaTeX pipeline:
+
+- **Punctuation form** (`\;` `\!` `\,` `\:`): CommonMark resolves all `\<ASCII-punctuation>` sequences to the bare character before KaTeX sees the input (spec §6.7).  `\;` → `;`, `\!` → `!`, `\,` → `,`, `\:` → `:` — bare punctuation inside spacing position causes KaTeX to fail.
+- **Alphabetic form** (`\thickspace` `\negthinspace` `\thinspace` `\medspace`): not stripped by CommonMark, but GitHub's client-side KaTeX renders these incorrectly (visible artifacts or wrong spacing) in multiple locations throughout the document.
+
+The fix is to **omit spacing commands entirely**.  KaTeX automatically applies correct spacing to binary operators (`+`, `-`, `\oplus`, `=`, `\neq`, `\leq`, etc.) and relation operators without any explicit hints.  For negative spacing before big delimiters (`\bigl`, `\left`), simply omit the spacing command — `F^r\bigl(` renders correctly without `\!` or `\negthinspace`.
+
+### Correct patterns
+
+The only pattern that survives both rules is **dashes inside a single `\text{}` block** for compound names, and **explicit subscript syntax** when the visual is genuinely a subscript.
+
+| Pattern to avoid | Correct replacement |
+|---|---|
+| `\text{FOO}\textunderscore\text{BAR}` | `\text{FOO-BAR}` |
+| `\text{FOO}\_\text{BAR}` | `\text{FOO-BAR}` |
+| `\text{FOO\_BAR}` | `\text{FOO-BAR}` |
+| `\text{A}\textunderscore\text{B}\textunderscore\text{C}` | `\text{A-B-C}` |
+| `\text{A}\_\text{B}\_\text{C}` | `\text{A-B-C}` |
+| `\mathit{IV}\textunderscore\text{const}` | `\mathrm{IV}_{\text{const}}` (subscript form) |
+| `\mathrm{HFSCX\textunderscore 256}` | `\text{HFSCX-256}` |
+| `C\textunderscore\text{DM}` | `C_{\text{DM}}` |
+| `\xleftarrow{\textdollar}` / `\xleftarrow{\$}` | `\xleftarrow{R}` |
+| `\overset{\textdollar}{\leftarrow}` / `\overset{\$}{\leftarrow}` | `\overset{R}{\leftarrow}` |
+| `\mathbb{GF}(2^n)^*` | `\mathbb{GF}(2^n)^{\ast}` |
+| `(R^*, s^*)` | `(R^{\ast}, s^{\ast})` |
+| `**Bold.**\n$$x = y$$` (no blank line) | `**Bold.**\n\n$$x = y$$\n\n…` |
+| `1. item\n$$x = y$$\nfollow-up` (in a list) | `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent) |
+| `degree-$k$ Boolean` (no space before `$`) | `degree $k$ Boolean` |
+| `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
+| `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
+| `$$\nexpr\n$$` (standalone `$$` delimiter lines) | `$$expr$$` or `$$first-line\n...\nlast-line$$` |
+| `\;` / `\!` / `\,` / `\:` in math | (omit — rely on KaTeX auto-spacing) |
+| `\thickspace` / `\negthinspace` / `\thinspace` / `\medspace` in math | (omit — renders incorrectly on GitHub's KaTeX) |
+| `F^r\!\bigl(` or `F^r\negthinspace\bigl(` | `F^r\bigl(` (no spacing before big delimiter) |
+
+The "uniformly random sample" arrow conventionally has a dollar sign on top; `R` (for "Random") is the standard alternative used in cryptography texts that need ASCII-safe LaTeX.
+
+### Validation
+
+Before pushing changes that add or modify math, simulate GitHub's pipeline locally:
+
+```bash
+mkdir -p /tmp/katex-validate && cd /tmp/katex-validate && npm install katex
+NODE_PATH=/tmp/katex-validate/node_modules node \
+    /path/to/HerraduraKEx/SecurityProofsCode/validate_katex.js \
+    /path/to/HerraduraKEx/SecurityProofs.md
+# Expect: "1477 OK, 0 FAIL" (count varies as the document grows)
+```
+
+The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) that GitHub's markdown layer performs, and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations.
+
+Pure-KaTeX validation (`katex.renderToString` without escape resolution) **will give false positives** because it does not see the markdown layer; always use the pipeline simulator above.
 
 ## License
 

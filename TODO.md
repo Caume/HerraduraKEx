@@ -2478,3 +2478,40 @@ Status: **TODO**.
 28. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
 29. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
 30. #40 — NumPy NTT optional acceleration (**TODO**)
+
+---
+
+## GitHub KaTeX Rendering — §11.8.4 Cascade Failure (UNRESOLVED)
+
+### KR-1 — §11.8.4 display blocks show "Unable to render expression" from H_i onward
+
+**File:** `SecurityProofs.md`
+
+**Symptom:** On the devtest branch on GitHub, ALL display math blocks from the `H_i` formula (§11.8.4, line ~1607) onward fail to render. The last correctly rendered display block is `\Pr[\mathrm{forge}] \leq …` at the end of §11.8.3. The GitHub API (GFM mode) correctly wraps every display block in `<math-renderer class="js-display-math">` — the failure is purely client-side JavaScript.
+
+**Confirmed non-causes:**
+- KaTeX errors: validator reports **1477 OK, 0 FAIL** (even with `strict: 'error'`)
+- PIPE-FAIL patterns (`\;`, `\!`, `\,`): removing all of them did not fix the cascade
+- Alphabetic spacing commands (`\thickspace`, `\negthinspace`, `\thinspace`): introduced to replace `\;`/`\!`/`\,` — did not fix cascade AND caused new rendering artifacts throughout the document
+- H_i formula content: cascade persisted with multiple different formula versions
+- Standalone `$$` delimiter lines: reformatted to single-line; cascade persisted
+- `\begin{cases}` Rule 8 violation in §11.9: fixed in §11.9; cascade in §11.8.4 persisted
+- `$\lbrack N, k, t\rbrack$-code` (line 1605, only unique element between last-good and first-bad formula): changed to `$(N, k, t)$-code`; cascade persisted
+
+**Attempted fix versions:**
+| Version | Change | Result |
+|---|---|---|
+| v1.5.31–v1.5.34 | Fixed Rules 1–6 violations (`\textunderscore`, `\textdollar`, `^*`, display blocks) | Cascade still present |
+| v1.5.35 | `$[N,k,t]$` → `$\lbrack N,k,t\rbrack$`; multi-line `$$` format | Cascade still present |
+| v1.5.36 | Rule 7 added to CLAUDE.md; no content change | Cascade still present |
+| v1.5.37 | Fixed `\begin{cases}` Rule 8 violation in §11.9 | Cascade still present |
+| v1.5.38 | Reverted to single-line `$$expr$$` format | Cascade still present |
+| v1.5.39 | All `\;`/`\!`/`\,` → `\thickspace`/`\negthinspace`/`\thinspace` | Cascade still present; NEW rendering artifacts throughout document |
+| v1.5.40 | Removed `\;`/`\!` from §11.8.4 display blocks only | Cascade still present |
+| v1.5.41 | Restored alphabetic spacing + `$\lbrack N,k,t\rbrack$` → `$(N,k,t)$` | Cascade still present; alphabetic spacing artifacts persist |
+
+**All v1.5.31–v1.5.41 rendering fix attempts reverted in cleanup commit (after v1.5.30).**
+
+**Root cause:** Unknown. Cannot be reproduced via GitHub GFM API or local KaTeX validation. The cascade trigger is a client-side rendering behavior not exposed by any available tooling. Further investigation requires browser-level JavaScript debugging of GitHub's math rendering client, or waiting for a GitHub rendering engine update.
+
+**Status:** **OPEN** — unresolved, rendering fix commits cleaned up from PR.
