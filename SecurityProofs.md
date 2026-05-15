@@ -1596,7 +1596,7 @@ $$\Pr[\mathrm{forge}] \;\leq\; \ell \cdot \Pr[\mathrm{invert}\; h].$$
 
 Option B reduces security to **syndrome decoding**, which is NP-complete [Berlekamp-McEliece-Van Tilborg 1978] and has no known polynomial quantum algorithm.  NL-FSCX v1 acts as a pseudorandom generator for the public parity check matrix; all hardness derives from the code, not from assumptions about FSCX invertibility.
 
-**Public matrix generation.**  For an $[N, k, t]$-code, generate the $(N-k) \times N$ binary parity matrix $H$ row by row:
+**Public matrix generation.**  For an $(N, k, t)$-code, generate the $(N-k) \times N$ binary parity matrix $H$ row by row:
 
 $$H_i = F_1^{n/4}\!\bigl(\mathrm{ROL}(\mathrm{seed} \oplus i,\; n/8),\; \mathrm{seed}\bigr), \qquad i = 0, \ldots, N-k-1.$$
 
@@ -1675,9 +1675,12 @@ Each identification round:
 2. **Challenge.**  Verifier sends $b \xleftarrow{R} \{0, 1, 2\}$.
 
 3. **Response.**
-   - $b = 0$: reveal $(\pi, \mathbf{y})$; verifier checks $c_0$ and that $\pi$ is consistent with the support encoding.
-   - $b = 1$: reveal $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$; verifier checks $c_1$ and $H(\mathbf{y} \oplus \mathbf{e})^\top = H\mathbf{y}^\top \oplus \mathbf{s}$.
-   - $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
+
+   $b = 0$: reveal $(\pi, \mathbf{y})$; verifier checks $c_0$ and that $\pi$ is consistent with the support encoding.
+
+   $b = 1$: reveal $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$; verifier checks $c_1$ and $H(\mathbf{y} \oplus \mathbf{e})^\top = H\mathbf{y}^\top \oplus \mathbf{s}$.
+
+   $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
 
 Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.
 
