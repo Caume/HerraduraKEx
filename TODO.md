@@ -2509,9 +2509,171 @@ Status: **TODO**.
 | v1.5.39 | All `\;`/`\!`/`\,` → `\thickspace`/`\negthinspace`/`\thinspace` | Cascade still present; NEW rendering artifacts throughout document |
 | v1.5.40 | Removed `\;`/`\!` from §11.8.4 display blocks only | Cascade still present |
 | v1.5.41 | Restored alphabetic spacing + `$\lbrack N,k,t\rbrack$` → `$(N,k,t)$` | Cascade still present; alphabetic spacing artifacts persist |
+| v1.5.32 (session 2) | Rule 7 fix (`$[N,k,t]$` → `$(N,k,t)$`) + removed tight sub-list inside loose outer list | Cascade still present at `$b = 2$` |
 
 **All v1.5.31–v1.5.41 rendering fix attempts reverted in cleanup commit (after v1.5.30).**
 
 **Root cause:** Unknown. Cannot be reproduced via GitHub GFM API or local KaTeX validation. The cascade trigger is a client-side rendering behavior not exposed by any available tooling. Further investigation requires browser-level JavaScript debugging of GitHub's math rendering client, or waiting for a GitHub rendering engine update.
 
 **Status:** **OPEN** — unresolved, rendering fix commits cleaned up from PR.
+
+---
+
+## Research Plan — §11.8.4 Cascade Root-Cause Investigation
+
+The validator (cmEscape + KaTeX 0.16.46) shows 0 FAIL but Firefox on GitHub shows failures starting at `$b = 2$` (line ~1683) after every fix attempt. The gap between "automated test passes" and "browser fails" is the core mystery. The following batches investigate it systematically from most-likely to least-likely cause, without repeating anything already confirmed as a non-cause in KR-1.
+
+---
+
+### KR-2 (Batch A) — Orphan `$` emitted by GitHub when KaTeX fails
+
+**Hypothesis:** When GitHub's client-side KaTeX fails to render a math span (showing "Unable to render expression."), it may restore the original `$...$` delimiters into the DOM as text nodes rather than consuming them. Those orphan `$` characters, now present as literal text, are then re-scanned by GitHub's math-span finder, creating a mismatched pair that absorbs the opening `$` of `$b = 2$`.
+
+This hypothesis explains why `$b = 2$` appears as *literal text* (not as "Unable to render expression.") — the parser never identified it as a math span because a preceding orphan paired with its opening `$`.
+
+**Scope:** The validator tests each span independently with a fresh KaTeX call; it cannot detect cross-span `$` interactions in the live DOM.
+
+**Test steps:**
+
+1. Open Firefox DevTools (F12) → Elements tab.
+2. Navigate the DOM to `<li>` element for "b = 1:" inside item 3 of the "Each identification round" list.
+3. Inspect all child text nodes and `<math-renderer>` elements. Look for any text node containing a literal `$` character (especially inside a node that should be math-rendered).
+4. If literal `$` nodes are found: this hypothesis is confirmed. The fix is to find what triggers the KaTeX failure on the b=1 line and eliminate it.
+5. If NO literal `$` nodes: orphan emission is not the cause.
+
+**What it rules in/out:** Directly tests whether GitHub re-emits `$` delimiters on failure, which is the most mechanically plausible cascade explanation.
+
+---
+
+### KR-3 (Batch B) — Per-page expression-count or memory threshold
+
+**Hypothesis:** GitHub's client-side math renderer imposes a hard limit on the number of expressions rendered per page (e.g., 1 000 or 1 500). SecurityProofs.md has 1 477 math spans; if the threshold is near that number, expressions beyond the cutoff silently fail. The validator renders each span in isolation and has no page-level budget.
+
+A softer variant: the renderer uses a fixed-size JavaScript heap for intermediate KaTeX data. After processing ~1 400 expressions, some internal structure (glyph cache, font load state, etc.) is exhausted, causing all further renders to silently fail or throw.
+
+**Test steps:**
+
+1. Count which sequential number `$b = 2$` is among all math spans in the document (pipe `validate_katex.js` output through line-number filtering). Estimate: roughly ≥ 1 400 spans precede it.
+2. Create a branch `math-test-isolated` containing only §11.8.4 (lines 1595–1715) with no preceding content. Push and view on GitHub. If the cascade disappears, document length is the trigger.
+3. If cascade disappears in isolation: progressively prepend sections of the document (§1–§5, then §6–§10, etc.) until the cascade reappears. The section whose addition reintroduces the cascade identifies the threshold span count.
+4. Check GitHub's source or documentation for any stated math expression limit per page.
+
+**What it rules in/out:** Separates "content-specific trigger" (cascade appears even in isolation) from "document-volume trigger" (cascade appears only in the full document context).
+
+---
+
+### KR-4 (Batch C) — Browser-specific JavaScript rendering (Firefox vs Chrome)
+
+**Hypothesis:** GitHub's math rendering uses browser-specific CSS or JavaScript APIs. Firefox may handle a specific font-loading step, requestAnimationFrame timing, or MutationObserver differently, causing it to drop expressions that Chrome renders correctly.
+
+**Test steps:**
+
+1. Open the same GitHub URL (`SecurityProofs.md` on devtest) in Chromium or Chrome.
+2. Scroll to §11.8.4 and check whether `$b = 2$` and subsequent math renders.
+3. If Chrome renders correctly where Firefox fails: the issue is Firefox-specific. Sub-tests:
+   a. Disable all Firefox extensions (uBlock, privacy.resistFingerprinting, etc.) and reload.
+   b. Test in Firefox with `layout.css.math-style.enabled = true` and without.
+   c. Test in Firefox private window (clears extension interference).
+4. If both Chrome and Firefox fail at the same point: the issue is not browser-specific.
+
+**What it rules in/out:** Browser-specific behavior would shift the fix from "edit SecurityProofs.md" to "wait for a GitHub/Firefox update or workaround."
+
+---
+
+### KR-5 (Batch D) — GitHub server-side HTML inspection (API)
+
+**Hypothesis:** GitHub's server-side markdown-to-HTML step may not correctly wrap some math spans in `<math-renderer>` elements (for example, a span it parses as a link reference rather than math). The validator works on raw Markdown and never sees the intermediate HTML; a server-side mis-tagging would be invisible to it.
+
+KR-1 confirmed that display blocks ARE correctly wrapped in `<math-renderer class="js-display-math">`. This batch checks whether INLINE spans are also correctly wrapped.
+
+**Test steps:**
+
+```bash
+# Get GitHub's rendered HTML for a small excerpt containing the cascade boundary
+curl -s \
+  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.v3+json" \
+  https://api.github.com/markdown \
+  --data-raw '{
+    "text": "PASTE_LINES_1675_TO_1686_HERE",
+    "mode": "gfm",
+    "context": "Caume/HerraduraKEx"
+  }' | grep -o '<math-renderer[^>]*>[^<]*</math-renderer>' | head -30
+```
+
+1. Check whether GitHub wraps `$b = 0$`, `$b = 1$`, `$b = 2$` each in a `<math-renderer>` element.
+2. If `$b = 2$` is NOT wrapped: the server-side parser failed to identify it as math. Find what in the surrounding content causes this mis-parse.
+3. If `$b = 2$` IS wrapped: the server-side step is correct; the failure is purely client-side KaTeX.
+
+**What it rules in/out:** Definitively separates server-side mis-tagging from client-side rendering failure.
+
+---
+
+### KR-6 (Batch E) — Rendering timeout / resource exhaustion (large document)
+
+**Hypothesis:** GitHub's client-side math rendering runs asynchronously with a wall-clock timeout or a CPU-time budget. SecurityProofs.md is very large (1 700+ lines, 1 477 math spans). On a slow connection or under browser resource pressure, the renderer may time out partway through and silently abandon the remaining expressions.
+
+This differs from KR-3 (hard count limit) in that it is variable and may depend on system load.
+
+**Test steps:**
+
+1. Reload the GitHub page of SecurityProofs.md immediately after a hard refresh (Ctrl+Shift+R) on a fast connection and fast machine; observe the rendering state at §11.8.4 before and after 5 seconds, 10 seconds, 20 seconds. If expressions "pop in" late: the renderer is async and the cascade may be a race condition.
+2. Open the page on a slow connection (Firefox DevTools → Network → throttle to "Slow 3G") and reload. Does the cascade location change?
+3. Open the page with the browser idle (no other heavy processes). Does the cascade location change?
+4. If results vary between loads: the issue is non-deterministic → timeout/resource bound.
+5. If results are always consistent: deterministic → not a timeout race condition.
+
+**What it rules in/out:** Timeout/race conditions would show variable cascade location or delayed rendering; a deterministic failure at exactly the same span every time rules out this class.
+
+---
+
+### KR-7 (Batch F) — KaTeX version mismatch between validator and GitHub
+
+**Hypothesis:** GitHub's client-side KaTeX is a different version from the validator's 0.16.46. A command that passes 0.16.46 might fail in GitHub's version (for example, `\mathrm`, `\xleftarrow`, `\mathcal`, `\sigma`, or `\bmod` may have breaking changes between versions).
+
+**Test steps:**
+
+1. In Firefox DevTools → Sources tab, search for `katex.min.js` loaded by the GitHub page. Find the version string in the file header or in `katex.VERSION`.
+2. If the version differs from 0.16.46: install that version locally (`npm install katex@<version>`) and re-run the validator.
+3. If new FAILs appear: those spans are the trigger. Fix them.
+4. Key commands to watch for version-sensitivity: `\mathcal`, `\xleftarrow`, `\bmod`, `\mathrm`, `\bigl`/`\bigr`.
+
+**What it rules in/out:** A version difference would cause validator false-negatives and explain why automated tests pass but browser fails.
+
+---
+
+### KR-8 (Batch G) — `\mathcal{H}` / `\sigma_{\mathbf{e}}` leaving KaTeX in bad state
+
+**Hypothesis:** Some commands accumulate state inside the KaTeX renderer object across sequential calls (e.g., an internal glyph-metrics cache, a font-load promise, or a parser state flag). If GitHub reuses a single KaTeX renderer instance across all expressions on a page, a command that partially initialises some state may cause the NEXT expression to fail, even if both individually pass. The validator never sees this because it constructs a fresh environment for each span.
+
+Candidate state-leaving commands (first appearance in §11.8.4, preceding cascade):
+- `\mathcal` (in line 1671 display block `\mathcal{H}\!\left(...)`)
+- `\sigma_{\mathbf{e}}` (nested subscript + bold in the b=1 inline span)
+- `\xleftarrow` (in Commit/Challenge steps)
+- `\bmod` (in PRF Verification display blocks)
+
+**Test steps:**
+
+1. Replace `\mathcal{H}` with `\mathsf{H}` in line 1671. Push to a test branch. Check if cascade disappears.
+2. Replace `\sigma_{\mathbf{e}}` with `\sigma_e` (unbraced subscript) on the b=1 line AND in line 1673. Push. Check cascade.
+3. If any single replacement fixes the cascade: that command was the state-leaver. Add to CLAUDE.md as a Rule 10 with the specific command to avoid.
+4. If no single replacement helps: the state-leak is not from one specific command.
+
+**What it rules in/out:** Narrows to a specific KaTeX command that is safe in isolation but problematic in long sequences. This class of bug is invisible to any per-span validator.
+
+---
+
+### KR-9 (Batch H) — Browser page cache / stale render state
+
+**Hypothesis:** GitHub may cache the server-rendered HTML (including math markup) and serve a stale version that predates the latest fixes. Firefox's disk cache or a GitHub CDN cache may be serving an old version of the page where the math was broken. This would explain why multiple content fixes have no visible effect.
+
+**Test steps:**
+
+1. Hard-refresh: Ctrl+Shift+R (bypass browser cache for all resources).
+2. Super-hard-refresh: Firefox → Settings → Privacy & Security → Clear Data (cookies + cache), then reload.
+3. Check the `ETag` or `Last-Modified` header of the response to confirm whether GitHub is serving a fresh version after each merge.
+4. View the page in Firefox private window (no cache at all).
+5. Access the raw Markdown via `https://raw.githubusercontent.com/Caume/HerraduraKEx/devtest/SecurityProofs.md` and compare timestamps with the live preview page.
+6. If cache clearing fixes the rendering: the issue was a stale cache, not a content problem.
+
+**What it rules in/out:** Simplest possible explanation for "PR merged, content is correct, but browser still shows old rendering."
