@@ -2227,29 +2227,47 @@ Status: **DONE (v1.5.28)**.
 ---
 
 ### 34. HFSCX-256 lacks formal analysis in `SecurityProofs.md` (Documentation/Security, Medium)
-**Files:** `Herradura cryptographic suite.py:393` (`hfscx_256`), `SecurityProofs.md` §11
+**Files:** `Herradura cryptographic suite.py:407` (`hfscx_256`), `SecurityProofs.md` §11.9,
+`SecurityProofsCode/hfscx_256_analysis.py`
 
-The `hfscx_256` Merkle-Damgård hash on NL-FSCX v1 is used implicitly throughout
-the suite (Stern-F commitments via `_stern_hash`, the `dgst` subcommand, signature
-pre-hashing) but `SecurityProofs.md` §11 contains no analysis of it.
+The `hfscx_256` Merkle-Damgård hash on NL-FSCX v1 is used in `_stern_hash`
+chains, the `dgst` subcommand, signature pre-hashing, and HSKE-NL-A1-CTR-AEAD
+authentication tags, but `SecurityProofs.md` §11 originally contained no
+analysis of it.
 
-Specific gaps:
-- No collision-resistance argument.
-- No second-preimage / preimage argument.
-- The `len_raw ^ init_int` MD-strengthening prevents fixed-point collapse on empty
-  input but introduces a length-block dependence on the initial state; the
-  cryptographic effect of this twist is unanalysed.
-- The MD compression is `state ← nl_fscx_revolve_v1(state, block, n/4)` — the
-  Davies-Meyer feed-forward `state ← state ⊕ E(state, block)` is **not** applied.
-  NL-FSCX v1 is non-bijective in `A` (§11.5 Q3), so without the D-M XOR,
-  Joux-style free-start collisions are not ruled out.
+Resolved by adding §11.9 (subsections 11.9.1–11.9.11) covering:
 
-Add a `§11.9` covering: (1) collision-resistance heuristic, (2) recommended MAC
-mode (raw keyed-IV vs. HMAC-HFSCX-256), (3) domain separation strategy across
-suite call sites, (4) consideration of switching to Davies-Meyer compression for
-theoretical hardness against free-start collisions.
+1. **Construction recap** (§11.9.1): compression `C(s, m) = F₁⁶⁴(s, m)`,
+   IV constant, ISO 7816-4 padding, finalization block `(8|D|) ⊕ s₀`.
+2. **Security model** (§11.9.2): formalises three assumptions A1 (PRF), A2
+   (OWF), A3 (NL-FSCX v1 symmetry implying non-bijection in both inputs).
+3. **Collision resistance** (§11.9.3): `2¹²⁸` classical / `2⁸⁵` quantum (BHT)
+   under A1; MD-folklore reduction.
+4. **Preimage / second-preimage** (§11.9.4): `2²⁵⁶` classical / `2¹²⁸` quantum
+   under A2.
+5. **Length-extension resistance** (§11.9.5): Theorem 18 — finalization
+   defeats trivial extension under A2; keyed mode adds independent layer.
+6. **MAC mode recommendation** (§11.9.6): raw keyed-IV is sufficient for the
+   current single-purpose AEAD; HMAC-HFSCX-256 recommended if the same key is
+   ever reused across protocols.
+7. **Domain separation strategy** (§11.9.7): documents current implicit
+   separation; recommends 1-byte domain-tag prefix for future hardening.
+8. **Davies-Meyer hardening** (§11.9.8): recommends `C_DM(s, m) = F₁⁶⁴(s, m) ⊕ s`
+   for fixed-point + free-start-collision hardness; deferred to suite v2.0
+   bundled with other wire-format changes (#37, #38, #39).
+9. **`_stern_hash` cross-reference** (§11.9.9): notes that the Stern protocol
+   uses a different chain function — analysis is TODO #36, not #34.
+10. **Empirical evidence** (§11.9.10): backed by `hfscx_256_analysis.py` —
+    SAC mean 128.013/256 (input) and 128.091/256 (key) over 5 000 trials each;
+    byte chi² = 223.1 < 293.2 critical at p=0.05; 0 length-extension forgeries
+    in 200 trials; 1000/1000 domain-separation distinct; 0 fixed points in 200
+    `(s, m)` trials.
 
-Status: **TODO**.
+The Davies-Meyer switch and the explicit DS-byte prefixes are deferred (open
+hardenings, not security-critical at deployed parameters).
+
+Status: **DONE (v1.5.30)** — §11.9 added; `hfscx_256_analysis.py` runs in
+~30 s and is referenced from §8 Experimental Code Index.
 
 ---
 
@@ -2453,10 +2471,47 @@ Status: **TODO**.
 21. #32 — `delta(B)` precompute in `nl_fscx_revolve_v2` (**DONE v1.5.28**)
 22. #33 — `hpke_stern_f_decap` brute-force guard (**DONE v1.5.28**)
 23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**TODO**)
-24. #34 — HFSCX-256 formal analysis in §11 (**TODO**)
+24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
 25. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO**)
 26. #41 — Constant-time audit / documentation (**TODO**)
 27. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**TODO**)
 28. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
 29. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
 30. #40 — NumPy NTT optional acceleration (**TODO**)
+
+---
+
+## GitHub KaTeX Rendering — §11.8.4 Cascade Failure (UNRESOLVED)
+
+### KR-1 — §11.8.4 display blocks show "Unable to render expression" from H_i onward
+
+**File:** `SecurityProofs.md`
+
+**Symptom:** On the devtest branch on GitHub, ALL display math blocks from the `H_i` formula (§11.8.4, line ~1607) onward fail to render. The last correctly rendered display block is `\Pr[\mathrm{forge}] \leq …` at the end of §11.8.3. The GitHub API (GFM mode) correctly wraps every display block in `<math-renderer class="js-display-math">` — the failure is purely client-side JavaScript.
+
+**Confirmed non-causes:**
+- KaTeX errors: validator reports **1477 OK, 0 FAIL** (even with `strict: 'error'`)
+- PIPE-FAIL patterns (`\;`, `\!`, `\,`): removing all of them did not fix the cascade
+- Alphabetic spacing commands (`\thickspace`, `\negthinspace`, `\thinspace`): introduced to replace `\;`/`\!`/`\,` — did not fix cascade AND caused new rendering artifacts throughout the document
+- H_i formula content: cascade persisted with multiple different formula versions
+- Standalone `$$` delimiter lines: reformatted to single-line; cascade persisted
+- `\begin{cases}` Rule 8 violation in §11.9: fixed in §11.9; cascade in §11.8.4 persisted
+- `$\lbrack N, k, t\rbrack$-code` (line 1605, only unique element between last-good and first-bad formula): changed to `$(N, k, t)$-code`; cascade persisted
+
+**Attempted fix versions:**
+| Version | Change | Result |
+|---|---|---|
+| v1.5.31–v1.5.34 | Fixed Rules 1–6 violations (`\textunderscore`, `\textdollar`, `^*`, display blocks) | Cascade still present |
+| v1.5.35 | `$[N,k,t]$` → `$\lbrack N,k,t\rbrack$`; multi-line `$$` format | Cascade still present |
+| v1.5.36 | Rule 7 added to CLAUDE.md; no content change | Cascade still present |
+| v1.5.37 | Fixed `\begin{cases}` Rule 8 violation in §11.9 | Cascade still present |
+| v1.5.38 | Reverted to single-line `$$expr$$` format | Cascade still present |
+| v1.5.39 | All `\;`/`\!`/`\,` → `\thickspace`/`\negthinspace`/`\thinspace` | Cascade still present; NEW rendering artifacts throughout document |
+| v1.5.40 | Removed `\;`/`\!` from §11.8.4 display blocks only | Cascade still present |
+| v1.5.41 | Restored alphabetic spacing + `$\lbrack N,k,t\rbrack$` → `$(N,k,t)$` | Cascade still present; alphabetic spacing artifacts persist |
+
+**All v1.5.31–v1.5.41 rendering fix attempts reverted in cleanup commit (after v1.5.30).**
+
+**Root cause:** Unknown. Cannot be reproduced via GitHub GFM API or local KaTeX validation. The cascade trigger is a client-side rendering behavior not exposed by any available tooling. Further investigation requires browser-level JavaScript debugging of GitHub's math rendering client, or waiting for a GitHub rendering engine update.
+
+**Status:** **OPEN** — unresolved, rendering fix commits cleaned up from PR.
