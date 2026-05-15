@@ -198,7 +198,9 @@ A bare `$$` on its own line is never correctly rendered as display math; use the
 
 When a `$$` block follows immediately after prose (e.g. `**Compression function.**\n$$C(s,m) = ...$$`), GitHub fails to wrap it and the `$$...$$` is emitted as literal text with backslash escapes stripped — the visible "Unable to render expression" symptom.
 
-Inside numbered/bulleted lists, indent the `$$` block by 4 spaces and surround it with blank lines so it counts as a list-item paragraph break instead of ending the list.
+**CRITICAL — never 4-space-indent a `$$` block inside a numbered/bulleted list.**  When `$$...$$` is indented by 4 spaces inside a list item, GitHub's server classifies it as `js-inline-math` instead of `js-display-math`.  GitHub's JS then calls `content.slice(1,-1)` on the content (intended for stripping the single `$` delimiters), which leaves a leading `$` that KaTeX rejects with "Can't use function '\\$' in math mode".  This causes a cascade: every math expression after the bad element fails to render.
+
+The only safe placement for a `$$` display block near a list is **unindented** (column 0), with blank lines before and after.  The list will split around the display block (items after it restart in a new `<ol start="N">`), but the math renders correctly.  If the display block must stay visually inside the list, consider restructuring the content to use inline math or a table instead.
 
 ### Rule 6 — never place `$...$` directly after a non-space character
 
@@ -246,7 +248,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `\mathbb{GF}(2^n)^*` | `\mathbb{GF}(2^n)^{\ast}` |
 | `(R^*, s^*)` | `(R^{\ast}, s^{\ast})` |
 | `**Bold.**\n$$x = y$$` (no blank line) | `**Bold.**\n\n$$x = y$$\n\n…` |
-| `1. item\n$$x = y$$\nfollow-up` (in a list) | `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent) |
+| `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent in list) | **Never indent** — move `$$x = y$$` to column 0 (list splits, but math renders; cascade if indented) |
 | `degree-$k$ Boolean` (no space before `$`) | `degree $k$ Boolean` |
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |

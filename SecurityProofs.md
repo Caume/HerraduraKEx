@@ -1668,9 +1668,9 @@ Each identification round:
 
 1. **Commit.**  Draw $\mathbf{y} \xleftarrow{R} \{0,1\}^N$ and permutation $\pi \xleftarrow{R} S_N$.  Compute and send:
 
-    $$c_0 = \mathcal{H}\left(\pi, H\mathbf{y}^\top\right), \qquad c_1 = \mathcal{H}\left(\pi \circ \sigma_{\mathbf{e}}, H(\mathbf{y} \oplus \mathbf{e})^\top\right),$$
+$$c_0 = \mathcal{H}\left(\pi, H\mathbf{y}^\top\right), \qquad c_1 = \mathcal{H}\left(\pi \circ \sigma_{\mathbf{e}}, H(\mathbf{y} \oplus \mathbf{e})^\top\right),$$
 
-    where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support of $\mathbf{e}$ and $\mathcal{H}$ is a collision-resistant hash.
+where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support of $\mathbf{e}$ and $\mathcal{H}$ is a collision-resistant hash.
 
 2. **Challenge.**  Verifier sends $b \xleftarrow{R} \{0, 1, 2\}$.
 
