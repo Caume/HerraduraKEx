@@ -91,7 +91,8 @@ function extractSpans(src) {
     displayMatches.push({ index: m.index, len: m[0].length, content: m[1] });
   }
   for (const d of displayMatches) {
-    spans.push({ line: lineOf(d.index), type: 'display', raw: d.content, content: d.content });
+    // GitHub applies CommonMark escape resolution to display blocks too
+    spans.push({ line: lineOf(d.index), type: 'display', raw: d.content, content: cmEscape(d.content) });
     mask(d.index, d.index + d.len);
   }
 
@@ -138,7 +139,7 @@ const spans = extractSpans(src);
 let ok = 0, fail = 0, pipeFail = 0;
 
 for (const s of spans) {
-  const isPipe = s.type === 'inline' && PIPE_FAIL_RE.test(s.raw);
+  const isPipe = PIPE_FAIL_RE.test(s.raw); // check both inline and display
   const err = tryRender(s.content, s.type === 'display');
 
   if (err) {

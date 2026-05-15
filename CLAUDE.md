@@ -198,7 +198,9 @@ A bare `$$` on its own line is never correctly rendered as display math; use the
 
 When a `$$` block follows immediately after prose (e.g. `**Compression function.**\n$$C(s,m) = ...$$`), GitHub fails to wrap it and the `$$...$$` is emitted as literal text with backslash escapes stripped — the visible "Unable to render expression" symptom.
 
-Inside numbered/bulleted lists, indent the `$$` block by 4 spaces and surround it with blank lines so it counts as a list-item paragraph break instead of ending the list.
+Inside numbered/bulleted lists, avoid `$$` display blocks — move them before or after the list, or use inline `$...$` inside the item.
+
+**CRITICAL — GitHub has a per-page math expression limit of approximately 750 expressions.**  Documents with more than ~750 math spans show a cascade failure: every math expression past the threshold renders as "Unable to render expression".  The root cause is a client-side rendering limit, not any specific syntax error.  The only fix is to split the document at a section boundary so that each part stays under ~750 math expressions.  SecurityProofs.md was split into SecurityProofs-1.md (§1–§10, ~753 spans) and SecurityProofs-2.md (§11–§11.9, ~725 spans) for this reason.
 
 ### Rule 6 — never place `$...$` directly after a non-space character
 
@@ -246,7 +248,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `\mathbb{GF}(2^n)^*` | `\mathbb{GF}(2^n)^{\ast}` |
 | `(R^*, s^*)` | `(R^{\ast}, s^{\ast})` |
 | `**Bold.**\n$$x = y$$` (no blank line) | `**Bold.**\n\n$$x = y$$\n\n…` |
-| `1. item\n$$x = y$$\nfollow-up` (in a list) | `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent) |
+| `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent in list) | **Never indent** — move `$$x = y$$` to before/after the entire list (cascade if indented; also cascade if column 0 between items) |
 | `degree-$k$ Boolean` (no space before `$`) | `degree $k$ Boolean` |
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
@@ -265,11 +267,14 @@ Before pushing changes that add or modify math, simulate GitHub's pipeline local
 mkdir -p /tmp/katex-validate && cd /tmp/katex-validate && npm install katex
 NODE_PATH=/tmp/katex-validate/node_modules node \
     /path/to/HerraduraKEx/SecurityProofsCode/validate_katex.js \
-    /path/to/HerraduraKEx/SecurityProofs.md
-# Expect: "1477 OK, 0 FAIL" (count varies as the document grows)
+    /path/to/HerraduraKEx/SecurityProofs-1.md
+NODE_PATH=/tmp/katex-validate/node_modules node \
+    /path/to/HerraduraKEx/SecurityProofsCode/validate_katex.js \
+    /path/to/HerraduraKEx/SecurityProofs-2.md
+# Expect: "753 OK, 0 FAIL" and "724 OK, 0 FAIL" (counts vary as the documents grow)
 ```
 
-The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) that GitHub's markdown layer performs, and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations.
+The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) to **both** inline and display spans — matching GitHub's actual pipeline — and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations in both inline and display contexts.
 
 Pure-KaTeX validation (`katex.renderToString` without escape resolution) **will give false positives** because it does not see the markdown layer; always use the pipeline simulator above.
 
