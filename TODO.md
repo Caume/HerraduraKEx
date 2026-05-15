@@ -2510,6 +2510,7 @@ Status: **TODO**.
 | v1.5.40 | Removed `\;`/`\!` from §11.8.4 display blocks only | Cascade still present |
 | v1.5.41 | Restored alphabetic spacing + `$\lbrack N,k,t\rbrack$` → `$(N,k,t)$` | Cascade still present; alphabetic spacing artifacts persist |
 | v1.5.32 (session 2) | Rule 7 fix (`$[N,k,t]$` → `$(N,k,t)$`) + removed tight sub-list inside loose outer list | Cascade still present at `$b = 2$` |
+| v1.5.33 (session 3) | Rule 9 compliance for ALL 37 display blocks throughout document; validator updated to check display blocks; CLAUDE.md updated to note display-block escape resolution | Cascade unknown — PR pending |
 
 **All v1.5.31–v1.5.41 rendering fix attempts reverted in cleanup commit (after v1.5.30).**
 
@@ -2562,7 +2563,9 @@ A softer variant: the renderer uses a fixed-size JavaScript heap for intermediat
 
 ---
 
-### KR-4 (Batch C) — Browser-specific JavaScript rendering (Firefox vs Chrome)
+### KR-4 (Batch C) — Browser-specific JavaScript rendering (Firefox vs Chrome) ✓ ELIMINATED
+
+**Result (2026-05-15):** Tested in both Firefox (hard refresh) and Chromium. Same cascade at `$b = 2$` in both. Not browser-specific.
 
 **Hypothesis:** GitHub's math rendering uses browser-specific CSS or JavaScript APIs. Firefox may handle a specific font-loading step, requestAnimationFrame timing, or MutationObserver differently, causing it to drop expressions that Chrome renders correctly.
 
@@ -2580,7 +2583,9 @@ A softer variant: the renderer uses a fixed-size JavaScript heap for intermediat
 
 ---
 
-### KR-5 (Batch D) — GitHub server-side HTML inspection (API)
+### KR-5 (Batch D) — GitHub server-side HTML inspection (API) ✓ COMPLETED
+
+**Result (2026-05-15):** All 21 math spans in the §11.8.4 cascade boundary (lines 1669–1686) are correctly wrapped in `<math-renderer>` elements by GitHub's server. `$b = 0$`, `$b = 1$`, and `$b = 2$` are all wrapped as `js-inline-math`. The cascade is purely client-side. Additionally, GitHub applies CommonMark escape resolution (`\<ASCII-punctuation>` → bare char) to **display blocks** (`$$...$$`) as well as inline spans — confirmed by observing `\!` → `!` and `\;` → `;` in the API-returned display block content. The validator was updated to match (it now applies `cmEscape` to display blocks and checks them for PIPE_FAIL). After the fix, the previous validator blind-spot was: 25 display blocks with `\!`/`\;`/`\,`/`\:` violations went unchecked. These have all been fixed in the document.
 
 **Hypothesis:** GitHub's server-side markdown-to-HTML step may not correctly wrap some math spans in `<math-renderer>` elements (for example, a span it parses as a link reference rather than math). The validator works on raw Markdown and never sees the intermediate HTML; a server-side mis-tagging would be invisible to it.
 
@@ -2663,7 +2668,9 @@ Candidate state-leaving commands (first appearance in §11.8.4, preceding cascad
 
 ---
 
-### KR-9 (Batch H) — Browser page cache / stale render state
+### KR-9 (Batch H) — Browser page cache / stale render state ✓ ELIMINATED
+
+**Result (2026-05-15):** Hard refresh in Firefox and fresh load in Chromium both show identical cascade at `$b = 2$`. Not a cache issue.
 
 **Hypothesis:** GitHub may cache the server-rendered HTML (including math markup) and serve a stale version that predates the latest fixes. Firefox's disk cache or a GitHub CDN cache may be serving an old version of the page where the math was broken. This would explain why multiple content fixes have no visible effect.
 
@@ -2677,3 +2684,18 @@ Candidate state-leaving commands (first appearance in §11.8.4, preceding cascad
 6. If cache clearing fixes the rendering: the issue was a stale cache, not a content problem.
 
 **What it rules in/out:** Simplest possible explanation for "PR merged, content is correct, but browser still shows old rendering."
+
+---
+
+### KR-10 (Batch I) — Comprehensive Rule 9 fix for all display blocks + validator update
+
+**Hypothesis (extension of KR-5 finding):** GitHub applies CommonMark escape resolution to display blocks as well as inline spans (confirmed by KR-5 API inspection). The prior validator only applied `cmEscape` and PIPE_FAIL checking to inline spans. After updating the validator to check display blocks too, 25 display blocks throughout the document were found to have `\!`/`\;`/`\,`/`\:` violations. These may cause failures on GitHub's client-side KaTeX even though they pass KaTeX 0.16.46 locally — either because GitHub's KaTeX version is stricter, or because the bare `!`/`;`/`,`/`:` characters cause unexpected parse behaviour in specific contexts.
+
+**Fix applied (v1.5.33 session 3):**
+- Fixed all 37 display blocks with Rule 9 violations throughout `SecurityProofs.md` (lines 252, 621, 623, 712, 796, 802, 1004, 1186, 1205, 1235, 1256, 1257, 1287, 1331, 1335, 1342, 1346, 1520, 1522, 1549, 1557, 1561, 1571, 1585, 1601, 1611, 1613, 1671, 1691, 1722, 1781, 1784, 1787, 1803, 1841, 1848, 1879, 1897)
+- Updated `SecurityProofsCode/validate_katex.js` to apply `cmEscape` to display blocks and check PIPE_FAIL in both inline and display contexts
+- Updated `CLAUDE.md` to document that escape resolution applies to display blocks
+
+**Outcome:** Unknown — PR pending. Verify by checking GitHub page after PR merge.
+
+**What it rules in/out:** If cascade disappears: display block escape resolution was producing bad content for GitHub's KaTeX. If cascade persists: proceed to KR-2 (orphan `$` from failed render), KR-3 (expression count threshold), KR-7 (KaTeX version check), or KR-8 (state leak).

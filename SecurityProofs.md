@@ -250,8 +250,8 @@ $$\begin{aligned}
 The original scheme used $S = sk_A \oplus P$ (a direct XOR mask), which trivially leaks $sk_A$ (see W3). The corrected scheme **HPKS₂** replaces the XOR with HSKE encryption of $P$ under $sk_A$:
 
 $$\begin{aligned}
-&\textbf{Alice:}\quad S = \text{FSCX-REVOLVE-N}(P,\; sk_A,\; sk_A,\; i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
-&\textbf{Bob:}\quad V = \text{FSCX-REVOLVE-N}(S,\; sk_B,\; sk_B,\; r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
+&\textbf{Alice:}\quad S = \text{FSCX-REVOLVE-N}(P, sk_A, sk_A, i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
+&\textbf{Bob:}\quad V = \text{FSCX-REVOLVE-N}(S, sk_B, sk_B, r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
 &\qquad\text{Check: } V = P
 \end{aligned}$$
 
@@ -618,9 +618,9 @@ $$M \cdot S_r + M^{r+1} \cdot S_i = S_n = 0$$
 
 Together, these imply that for any $A, B, A_2, B_2 \in \mathbb{GF}(2)^n$ and any nonce $N$:
 
-$$\text{FSCX-REVOLVE-N}\!\left(\text{FSCX-REVOLVE}(A_2, B_2, i),\; B,\; N,\; r\right) \oplus A$$
+$$\text{FSCX-REVOLVE-N}\left(\text{FSCX-REVOLVE}(A_2, B_2, i), B, N, r\right) \oplus A$$
 $$=$$
-$$\text{FSCX-REVOLVE-N}\!\left(\text{FSCX-REVOLVE}(A, B, i),\; B_2,\; N,\; r\right) \oplus A_2$$
+$$\text{FSCX-REVOLVE-N}\left(\text{FSCX-REVOLVE}(A, B, i), B_2, N, r\right) \oplus A_2$$
 
 This identity is the mathematical core from which all four protocols derive their correctness. All protocols are **correct**. However, the same identity that enables correctness also ensures that the shared secret $sk = S_{r+1} \cdot (C \oplus C_2)$ contains no private information — breaking the key exchange.
 
@@ -709,7 +709,7 @@ Pre-agreed public parameters: field size $n$, irreducible polynomial $p(x)$, gen
 
 **Correctness proof:**
 
-$$C_2^{\,a} = (g^b)^a = g^{ba} = g^{ab} = (g^a)^b = C^{\,b} \qquad \blacksquare$$
+$$C_2^{a} = (g^b)^a = g^{ba} = g^{ab} = (g^a)^b = C^{b} \qquad \blacksquare$$
 
 This holds by commutativity and associativity of multiplication in $\mathbb{GF}(2^n)^*$, which are ring axioms satisfied for any polynomial choice (irreducible or not). Irreducibility is required only for the group to be a field (every non-zero element invertible).
 
@@ -793,13 +793,13 @@ FSCX, fscx\_revolve, and all symmetric protocols (HSKE, HPKS, HPKE) are **unchan
 
 Define the **carry-injection** variant:
 
-$$\text{FSCX-CY}(A, B) = M\!\left((A + B) \bmod 2^n\right)$$
+$$\text{FSCX-CY}(A, B) = M\left((A + B) \bmod 2^n\right)$$
 
 where $+$ is ordinary integer addition (not $\oplus$), and $M = I \oplus \text{ROL}(1) \oplus \text{ROR}(1)$ is the standard FSCX linear operator.
 
 Compared to standard FSCX:
 
-$$\text{FSCX}(A, B) = M(A \oplus B), \qquad \text{FSCX-CY}(A, B) = M\!\left((A + B) \bmod 2^n\right)$$
+$$\text{FSCX}(A, B) = M(A \oplus B), \qquad \text{FSCX-CY}(A, B) = M\left((A + B) \bmod 2^n\right)$$
 
 The difference is the **carry term**:
 
@@ -1001,7 +1001,7 @@ so no two distinct $R$ values produce the same challenge $e$.
 
 By the difference identity (Theorem 11 linearity):
 
-$$e(R_2) \oplus e(R_1) = \text{fscx-revolve}(R_1 \oplus R_2,\; 0,\; i) = M^i \cdot (R_1 \oplus R_2)$$
+$$e(R_2) \oplus e(R_1) = \text{fscx-revolve}(R_1 \oplus R_2, 0, i) = M^i \cdot (R_1 \oplus R_2)$$
 
 Given any one valid challenge $e(R_1)$, the challenge for any $R_2 = R_1 \oplus \delta$ is
 $e(R_2) = e(R_1) \oplus M^i \cdot \delta$ — **publicly computable without oracle access**.
@@ -1183,7 +1183,7 @@ Two variants are defined; they serve different roles.
 
 #### 11.2.1 NL-FSCX v1 (carry from both arguments)
 
-$$\text{NL-FSCX}(A, B) = \text{FSCX}(A, B) \oplus \text{ROL}\!\left((A + B) \bmod 2^n,\; \frac{n}{4}\right)$$
+$$\text{NL-FSCX}(A, B) = \text{FSCX}(A, B) \oplus \text{ROL}\left((A + B) \bmod 2^n, \frac{n}{4}\right)$$
 
 | Property | Value | Verified |
 |----------|-------|----------|
@@ -1202,7 +1202,7 @@ NL-FSCX v1.  Counter mode (§11.3.1) is the only applicable HSKE construction.
 
 #### 11.2.2 NL-FSCX v2 (B-only offset, explicit inverse)
 
-$$\text{NL-FSCX}_{v2}(A, B) = \text{FSCX}(A, B) + \text{ROL}\!\left(B \cdot \left\lfloor\frac{B+1}{2}\right\rfloor \bmod 2^n,\; \frac{n}{4}\right) \pmod{2^n}$$
+$$\text{NL-FSCX}_{v2}(A, B) = \text{FSCX}(A, B) + \text{ROL}\left(B \cdot \left\lfloor\frac{B+1}{2}\right\rfloor \bmod 2^n, \frac{n}{4}\right) \pmod{2^n}$$
 
 The offset $\delta(B) = \text{ROL}(B \cdot \lfloor(B+1)/2\rfloor \bmod 2^n, n/4)$ depends **only on $B$**.
 
@@ -1232,7 +1232,7 @@ Two secure HSKE constructions are defined; both are chosen depending on API requ
 
 Let $\text{base} = K \oplus N$ where $N$ is a random per-session nonce (transmitted with ciphertext).
 
-$$\text{keystream}[i] = \text{NL-FSCX-REVOLVE}\!\left(\text{ROL}(\text{base},\; n/8),\; \text{base} \oplus i,\; n/4\right)$$
+$$\text{keystream}[i] = \text{NL-FSCX-REVOLVE}\left(\text{ROL}(\text{base}, n/8), \text{base} \oplus i, n/4\right)$$
 $$C[i] = P[i] \oplus \text{keystream}[i]$$
 $$D[i] = C[i] \oplus \text{keystream}[i] = P[i]$$
 
@@ -1253,8 +1253,8 @@ acts as a pseudorandom function (PRF), CPA security follows from standard stream
 
 #### 11.3.2 HSKE-A2: Revolve Mode with NL-FSCX v2
 
-$$E = \text{NL-FSCX-REVOLVE}_{v2}(P,\; K,\; r)$$
-$$P = \text{NL-FSCX-REVOLVE}_{v2}^{-1}(E,\; K,\; r)$$
+$$E = \text{NL-FSCX-REVOLVE}_{v2}(P, K, r)$$
+$$P = \text{NL-FSCX-REVOLVE}_{v2}^{-1}(E, K, r)$$
 
 where $\text{NL-FSCX-REVOLVE}_{v2}^{-1}$ applies the closed-form single-step inverse $r$ times in reverse.
 
@@ -1284,7 +1284,7 @@ The FSCX linear map $M = I \oplus \text{ROL} \oplus \text{ROR}$ corresponds to m
 polynomial $m(x) = 1 + x + x^{n-1}$ in $\mathbb{GF}(2)[x]/(x^n + 1)$.  Lifting the coefficient ring
 from $\mathbb{GF}(2)$ to $\mathbb{Z}/q\mathbb{Z}$ for a prime $q$:
 
-$$\mathcal{R}_q = (\mathbb{Z}/q\mathbb{Z})[x]\,/\,(x^n + 1)$$
+$$\mathcal{R}_q = (\mathbb{Z}/q\mathbb{Z})[x] / (x^n + 1)$$
 
 In $\mathcal{R}_q$, multiplication by $m(x) = 1 + x + x^{n-1}$ is exactly FSCX\_REVOLVE applied once,
 but over $\mathbb{Z}/q\mathbb{Z}$ instead of $\mathbb{GF}(2)$.
@@ -1328,22 +1328,22 @@ Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B 
 **Peikert reconciliation (1-bit hint per coefficient).**  Because the raw product polynomials agree only approximately, direct extraction of bits fails at a rate of ~2% ($n=32$) to ~37% ($n=256$).  Peikert-style cross-rounding eliminates this:
 
 1. **Hint generation (Alice, reconciler).** For each coefficient $c_i$ of $K_\text{poly,A}$:
-$$h_i = \left\lfloor \frac{4\,c_i + q/2}{q} \right\rfloor \bmod 2, \qquad h_i \in \{0,1\}$$
+$$h_i = \left\lfloor \frac{4c_i + q/2}{q} \right\rfloor \bmod 2, \qquad h_i \in \{0,1\}$$
 Alice transmits the hint vector $(h_0,\ldots,h_{n-1})$ as a side-channel alongside her public key.
 
 2. **Key extraction (both parties).** For a coefficient $c_i$ (from either $K_\text{poly,A}$ or $K_\text{poly,B}$) and the shared hint $h_i$:
-$$b_i = \left\lfloor \frac{2\,c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
+$$b_i = \left\lfloor \frac{2c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
 The extracted key is $K_\text{raw} = \sum_{i=0}^{k-1} b_i 2^i$ (first $k$ coefficients, $k = n/4$ for a 64-bit key at $n=256$).
 
 3. **Correctness guarantee.** Empirical measurement (`hkex_rnl_failure_rate.py` §2) shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/8 = 8192$.  The extraction formula is equivalent to $\mathrm{round}((c_i + h_i \cdot q/4) / (q/2)) \bmod 2$ — the hint shifts the extraction boundary by $q/4$, so any boundary crossing within $\pm q/8$ is resolved deterministically.  The result is **0 failures** across all tested parameter combinations (`hkex_rnl_failure_rate.py` §5).
 
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 with a rotated seed:
 
-$$seed = \text{ROL}(K,\; n/8), \qquad sk = \text{NL-FSCX-REVOLVE}_{v1}(seed,\; K,\; n/4)$$
+$$seed = \text{ROL}(K, n/8), \qquad sk = \text{NL-FSCX-REVOLVE}_{v1}(seed, K, n/4)$$
 
 **Rationale.**  The original KDF, $sk = \text{NL-FSCX-REVOLVE}(K, K, n/4)$, suffered a first-step degeneracy: when $A_0 = B = K$, $\text{FSCX}(K, K) = K \oplus K \oplus \ldots = 0$, so the first step reduces to a pure rotation,
 
-$$A_1 = \text{ROL}((K + K) \bmod 2^n,\; n/4) = \text{ROL}(K \ll 1,\; n/4),$$
+$$A_1 = \text{ROL}((K + K) \bmod 2^n, n/4) = \text{ROL}(K \ll 1, n/4),$$
 
 which is linear in $K$.  Non-linearity accumulates only from step 2 onward.
 
@@ -1517,9 +1517,9 @@ The NL-FSCX v1 challenge in HPKS-NL and the NL-FSCX v2 encryption layer in HPKE-
 
 Exact primitive definitions (from implemented source):
 
-$$F_1(A, B) \;=\; M(A \oplus B) \;\oplus\; \mathrm{ROL}_{n/4}\!\bigl((A + B) \bmod 2^n\bigr)$$
+$$F_1(A, B) = M(A \oplus B) \oplus \mathrm{ROL}_{n/4}\bigl((A + B) \bmod 2^n\bigr)$$
 
-$$F_2(A, B) \;=\; \bigl(M(A \oplus B) + \delta(B)\bigr) \bmod 2^n, \qquad \delta(B) = \mathrm{ROL}_{n/4}\!\left(B \cdot \left\lfloor\frac{B+1}{2}\right\rfloor \bmod 2^n\right)$$
+$$F_2(A, B) = \bigl(M(A \oplus B) + \delta(B)\bigr) \bmod 2^n, \qquad \delta(B) = \mathrm{ROL}_{n/4}\left(B \cdot \left\lfloor\frac{B+1}{2}\right\rfloor \bmod 2^n\right)$$
 
 where $M = I \oplus \mathrm{ROL}_1 \oplus \mathrm{ROR}_1$ is the GF(2)-linear FSCX map of order $n/2$.
 
@@ -1546,7 +1546,7 @@ For $r \geq 2$ iterations, inverting $F_1^r(\cdot, B)$ is a system of $n$ Boolea
 
 Given a single evaluation pair $(G, Y)$ with $Y = F_2(G, K)$ for unknown $K$, recovering $K$ requires solving:
 
-$$M(K) + \delta(K) \;\equiv\; \bigl(Y \oplus M(G)\bigr) \pmod{2^n}.$$
+$$M(K) + \delta(K) \equiv \bigl(Y \oplus M(G)\bigr) \pmod{2^n}.$$
 
 The left side: $M(K)$ contributes degree-1 linear terms in the bits of $K$ over $\mathbb{GF}(2)$.  The term $\delta(K) = \mathrm{ROL}_{n/4}(K \cdot \lfloor(K+1)/2\rfloor \bmod 2^n)$ introduces degree-2 terms, since $K \cdot \lfloor(K+1)/2\rfloor$ in integer arithmetic produces products $k_j \cdot k_\ell$ of bit pairs (degree 2) before carry propagation.  The full system is therefore a **Multivariate Quadratic (MQ) problem** over $\mathbb{GF}(2)$ with $n$ unknowns.  With $m > n$ evaluation pairs the system becomes overdetermined, exactly the regime in which MQ is NP-complete [Garey-Johnson 1979]. $\blacksquare$
 
@@ -1554,11 +1554,11 @@ The left side: $M(K)$ contributes degree-1 linear terms in the bits of $K$ over 
 
 For generic $K_1 \neq K_2 \in \{0,1\}^n$, let $\pi_K(A) = F_2(A, K)$.  Then:
 
-$$\pi_{K_2}\!\bigl(\pi_{K_1}(A)\bigr) \;\neq\; \pi_{K_1}\!\bigl(\pi_{K_2}(A)\bigr) \quad \text{for generic } A.$$
+$$\pi_{K_2}\bigl(\pi_{K_1}(A)\bigr) \neq \pi_{K_1}\bigl(\pi_{K_2}(A)\bigr) \quad \text{for generic } A.$$
 
 *Proof.*  Setting $A = 0$: $\pi_{K_1}(0) = M(K_1) + \delta(K_1)$.  The composition is:
 
-$$\pi_{K_2}(\pi_{K_1}(0)) = M\!\bigl((M(K_1) + \delta(K_1)) \oplus K_2\bigr) + \delta(K_2) \pmod{2^n}.$$
+$$\pi_{K_2}(\pi_{K_1}(0)) = M\bigl((M(K_1) + \delta(K_1)) \oplus K_2\bigr) + \delta(K_2) \pmod{2^n}.$$
 
 Since $M$ is GF(2)-linear, $M(X \oplus K_2) = M(X) \oplus M(K_2)$; however, $X = M(K_1) + \delta(K_1)$ is an integer-addition result, so $X \oplus K_2$ mixes carry terms with GF(2) XOR in a way that is asymmetric under $K_1 \leftrightarrow K_2$ exchange.  Commutativity would require $\delta(K_1) - \delta(K_2) \equiv M(K_1 \oplus K_2) \pmod{2^n}$ as integers for all $(K_1, K_2)$; since $\delta$ is quadratic (Theorem 14) and $M$ is linear, this equation has at most a measure-zero set of solutions. $\blacksquare$
 
@@ -1568,7 +1568,7 @@ Since $M$ is GF(2)-linear, $M(X \oplus K_2) = M(X) \oplus M(K_2)$; however, $X =
 
 **Construction.**  Fix Winternitz width $w$ and set $\ell = \lceil|H_\mathrm{msg}|/\log_2 w\rceil$ where $|H_\mathrm{msg}|$ is the message-hash output length in bits.  Define the hash chain:
 
-$$h(x) = F_1^{n/4}\!\bigl(\mathrm{ROL}(x,\, n/8),\; x\bigr)$$
+$$h(x) = F_1^{n/4}\bigl(\mathrm{ROL}(x, n/8), x\bigr)$$
 
 (the same function used as the HKEX-RNL KDF in §11.4.2, with seed-rotation active from step 1).
 
@@ -1582,7 +1582,7 @@ For multi-message use, combine OTS leaves in a Merkle tree (using $h$ as the tre
 
 If $h$ is a one-way function, then HPKS-WOTS-F is EUF-CMA secure for a single signing query with:
 
-$$\Pr[\mathrm{forge}] \;\leq\; \ell \cdot \Pr[\mathrm{invert}\; h].$$
+$$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\operatorname{invert}(h)].$$
 
 *Proof.*  Any forger $\mathcal{A}$ producing $(d', \sigma')$ for $m' \neq m$ must, for some index $i$, produce $\sigma'_i$ with $h^{d'_i}(\sigma'_i) = \mathrm{pk}_i$ and $d'_i \neq d_i^*$.  Only $d'_i > d_i^*$ is useful (smaller $d'_i$ would reuse a revealed chain value).  Then $\mathcal{A}$ has computed $\sigma'_i$ with $h^{d'_i - d_i^*}(\sigma'_i) = \mathrm{pk}_i$, i.e.\ a preimage inversion starting from the released $\sigma_i^* = h^{w-1-d_i^*}(\mathrm{sk}_i)$.  This contradicts the OWF assumption.  A union bound over $\ell$ indices gives the stated bound. $\blacksquare$
 
@@ -1598,7 +1598,7 @@ Option B reduces security to **syndrome decoding**, which is NP-complete [Berlek
 
 **Public matrix generation.**  For an $(N, k, t)$-code, generate the $(N-k) \times N$ binary parity matrix $H$ row by row:
 
-$$H_i = F_1^{n/4}\!\bigl(\mathrm{ROL}(\mathrm{seed} \oplus i,\; n/8),\; \mathrm{seed}\bigr), \qquad i = 0, \ldots, N-k-1.$$
+$$H_i = F_1^{n/4}\bigl(\mathrm{ROL}(\mathrm{seed} \oplus i, n/8), \mathrm{seed}\bigr), \qquad i = 0, \ldots, N-k-1.$$
 
 Under the PRF assumption for NL-FSCX v1 (implied by the OWF assumption via the GGM PRG-to-PRF construction [Goldreich-Goldwasser-Micali 1986]), $H$ is computationally indistinguishable from a uniformly random binary matrix.
 
@@ -1608,9 +1608,9 @@ The security of Option B depends critically on NL-FSCX v1 behaving as a PRF.  Th
 
 Two instantiations are tested:
 
-$$F_K(i) = F_1^{n/4}\!\bigl(\mathrm{ROL}(K \oplus i,\; n/8),\; K\bigr) \qquad \text{(Stern-F row generator)}$$
+$$F_K(i) = F_1^{n/4}\bigl(\mathrm{ROL}(K \oplus i, n/8), K\bigr) \qquad \text{(Stern-F row generator)}$$
 
-$$G_K(i) = F_1^{n/4}\!\bigl(\mathrm{ROL}(K,\; n/8),\; K \oplus i\bigr) \qquad \text{(HSKE-NL-A1 keystream)}$$
+$$G_K(i) = F_1^{n/4}\bigl(\mathrm{ROL}(K, n/8), K \oplus i\bigr) \qquad \text{(HSKE-NL-A1 keystream)}$$
 
 The linear FSCX baseline $H_K(i) = M^r \cdot \mathrm{ROL}(K \oplus i, n/8) \oplus S_r \cdot K$ serves as the known-broken control.
 
@@ -1668,7 +1668,7 @@ Each identification round:
 
 1. **Commit.**  Draw $\mathbf{y} \xleftarrow{R} \{0,1\}^N$ and permutation $\pi \xleftarrow{R} S_N$.  Compute and send:
 
-    $$c_0 = \mathcal{H}\!\left(\pi,\; H\mathbf{y}^\top\right), \qquad c_1 = \mathcal{H}\!\left(\pi \circ \sigma_{\mathbf{e}},\; H(\mathbf{y} \oplus \mathbf{e})^\top\right),$$
+    $$c_0 = \mathcal{H}\left(\pi, H\mathbf{y}^\top\right), \qquad c_1 = \mathcal{H}\left(\pi \circ \sigma_{\mathbf{e}}, H(\mathbf{y} \oplus \mathbf{e})^\top\right),$$
 
     where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support of $\mathbf{e}$ and $\mathcal{H}$ is a collision-resistant hash.
 
@@ -1688,7 +1688,7 @@ Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \app
 
 Let $\mathrm{SD}(N,t)$ denote the syndrome decoding problem: given $(H, \mathbf{s})$ find $\mathbf{e}$ with $H\mathbf{e}^\top = \mathbf{s}$ and $\mathrm{wt}(\mathbf{e}) = t$.  If $\mathrm{SD}(N,t)$ requires $T_\mathrm{SD}$ quantum operations and NL-FSCX v1 is a secure PRF with advantage $\epsilon_\mathrm{PRF}$, then HPKS-Stern-F achieves EUF-CMA with:
 
-$$\Pr[\mathrm{forge}] \;\leq\; \frac{q_H}{T_\mathrm{SD}} + \epsilon_\mathrm{PRF}$$
+$$\Pr[\mathrm{forge}] \leq \frac{q_H}{T_\mathrm{SD}} + \epsilon_\mathrm{PRF}$$
 
 for $q_H$ quantum hash queries.
 
@@ -1719,7 +1719,7 @@ Theorem 15 establishes that $\{\pi_K : K \in \{0,1\}^n\}$ is a non-abelian famil
 
 A candidate HPKS construction: choose random ephemeral $K_2$; let the public key be:
 
-$$C = \pi_{K_1}\!\bigl(\pi_{K_2}\!\bigl(\pi_{K_1}^{-1}(G)\bigr)\bigr)$$
+$$C = \pi_{K_1}\bigl(\pi_{K_2}\bigl(\pi_{K_1}^{-1}(G)\bigr)\bigr)$$
 
 for a fixed public base point $G$.  Given $(C, \pi_{K_2})$, recovering $K_1$ is an instance of CSP in the group generated by the NL-FSCX v2 permutation family.
 
@@ -1778,13 +1778,13 @@ This section formalises the security claims, identifies one residual hardening o
 Let $n = 256$, block size $b = 32$ bytes.  Write $F_1^r(s, m)$ for NL-FSCX v1 iterated $r$ times with state $s$ and message-block parameter $m$.  HFSCX-256 takes input bytes $D$ and an optional 256-bit key $K$; it produces a 256-bit digest as follows.
 
 **Compression function.**
-$$C(s, m) \;=\; F_1^{64}(s, m) \;\in\; \{0,1\}^{256}.$$
+$$C(s, m) = F_1^{64}(s, m) \in \{0,1\}^{256}.$$
 
 **Initial state.**  Let $\text{IV-const}$ be the 32-byte ASCII constant `HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0` interpreted as a 256-bit integer.  Define
-$$s_0 \;=\; \begin{cases} \text{IV-const} & \text{(unkeyed)} \\ K \,\oplus\, \text{IV-const} & \text{(keyed MAC mode)} \end{cases}$$
+$$s_0 = \begin{cases} \text{IV-const} & \text{(unkeyed)} \\ K \oplus \text{IV-const} & \text{(keyed MAC mode)} \end{cases}$$
 
 **Padding (ISO 7816-4 + finalization).**  Append `0x80` to $D$; zero-fill to a multiple of $b$; append a 32-byte finalization block $\mathit{fin}$:
-$$\mathit{fin} \;=\; \bigl(8 \cdot |D|\bigr) \,\oplus\, s_0 \pmod{2^{256}}.$$
+$$\mathit{fin} = \bigl(8 \cdot |D|\bigr) \oplus s_0 \pmod{2^{256}}.$$
 
 **Iteration.**  For padded message $D' = m_1 \| m_2 \| \cdots \| m_k$ (where the last block is $\mathit{fin}$):
 $$s_i = C(s_{i-1}, m_i), \qquad i = 1, \ldots, k.$$
@@ -1800,7 +1800,7 @@ The security claims for HFSCX-256 are conditional on assumptions already used el
 **A2 (NL-FSCX v1 OWF, §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^{n/2}) = \Omega(2^{128})$ classical operations and $\Omega(2^{n/2})$ quantum queries (Grover lower bound, supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result).
 
 **A3 (Symmetric structure).**  $F_1(A, B) = F_1(B, A)$, since
-$$F_1(A, B) = M(A \oplus B) \,\oplus\, \mathrm{ROL}_{n/4}\bigl((A + B) \bmod 2^n\bigr)$$
+$$F_1(A, B) = M(A \oplus B) \oplus \mathrm{ROL}_{n/4}\bigl((A + B) \bmod 2^n\bigr)$$
 is symmetric under the swap $A \leftrightarrow B$.  Consequently, NL-FSCX v1 is non-bijective in $B$ as well as in $A$ (§11.5 Q3, by symmetry); $C(\cdot, m)$ is non-bijective in either input.
 
 A3 is structurally important: HFSCX-256 cannot claim ideal-cipher security from $C$ as a pseudorandom permutation.  All hardness claims below are therefore PRF-based, not PRP-based.
@@ -1838,14 +1838,14 @@ HFSCX-256's finalization block makes the published digest $s_k = C(s_{k-1}, \mat
 HFSCX-256 supports a keyed mode by setting $s_0 = K \oplus \text{IV-const}$.  This mode is used by `HerraduraCli` for the `HSKE-NL-A1-CTR-AEAD` authentication tag.  Two MAC constructions are evaluated.
 
 **(a) Raw keyed-IV MAC (deployed).**
-$$\mathrm{MAC}(K, D) \;=\; \text{HFSCX-256}(D,\, K).$$
+$$\mathrm{MAC}(K, D) = \text{HFSCX-256}(D, K).$$
 
 *Properties.*  Under A1, HFSCX-256 with secret IV is a PRF: the chain state at every step is unpredictable to an adversary without $K$.  EUF-CMA security follows from the PRF property by standard arguments [Bellare-Canetti-Krawczyk 1996, §3.2].
 
 *Caveat.*  The security claim applies A1 to the entire chain.  If A1 holds for one $F_1^{64}$ application but degrades when chained over many blocks, the raw keyed-IV MAC weakens.  Empirical avalanche tests (§11.9.10 §2) show ideal key-bit diffusion (mean 128.09 / 256 output bits flipped, σ = 7.98) for the deployed parameters, but this is a sanity check, not a chain-length proof.
 
 **(b) HMAC-HFSCX-256 (recommended for cross-protocol key reuse).**
-$$\mathrm{HMAC}(K, D) \;=\; \text{HFSCX-256}\Bigl(\bigl(K \oplus \mathit{opad}\bigr) \,\|\, \text{HFSCX-256}\bigl((K \oplus \mathit{ipad}) \,\|\, D\bigr)\Bigr)$$
+$$\mathrm{HMAC}(K, D) = \text{HFSCX-256}\Bigl(\bigl(K \oplus \mathit{opad}\bigr) \| \text{HFSCX-256}\bigl((K \oplus \mathit{ipad}) \| D\bigr)\Bigr)$$
 
 with $\mathit{ipad} = \mathtt{0x36}$ repeated and $\mathit{opad} = \mathtt{0x5C}$ repeated, each 32 bytes.
 
@@ -1876,7 +1876,7 @@ The AEAD tag uses a distinct effective IV via the per-session key.  Cross-flow c
 ### 11.9.8 Davies-Meyer hardening (future work)
 
 The deployed compression $C(s, m) = F_1^{64}(s, m)$ does not use a Davies-Meyer feed-forward.  The Davies-Meyer alternative is
-$$C_{\text{DM}}(s, m) \;=\; F_1^{64}(s, m) \,\oplus\, s.$$
+$$C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s.$$
 
 **Benefits of switching.**
 
@@ -1894,7 +1894,7 @@ $$C_{\text{DM}}(s, m) \;=\; F_1^{64}(s, m) \,\oplus\, s.$$
 ### 11.9.9 Note on `_stern_hash` (cross-reference)
 
 The Stern-F protocol uses a separate chaining function `_stern_hash`, not HFSCX-256:
-$$\mathrm{StH}(v_1, \ldots, v_k) \;=\; h_k, \quad h_0 = 0, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i,\; \mathrm{ROL}(v_i, n/8)\bigr).$$
+$$\mathrm{StH}(v_1, \ldots, v_k) = h_k, \quad h_0 = 0, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i, \mathrm{ROL}(v_i, n/8)\bigr).$$
 
 This rotates the message into the **key** slot of NL-FSCX v1 instead of the message slot, and lacks the finalization step.  Its security analysis (whether it satisfies the QRO assumption needed for Theorem 17's Fiat-Shamir transform) is the subject of TODO #36 and is **not** covered by §11.9.
 

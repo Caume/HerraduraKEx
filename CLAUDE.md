@@ -153,7 +153,7 @@ Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Ar
 
 ## KaTeX Rendering Rules for Markdown Files
 
-GitHub renders math in `README.md`, `SecurityProofs.md`, and similar files via KaTeX.  The pipeline is **markdown (CommonMark/GFM) first, then KaTeX**: backslash escapes inside math spans are resolved by the markdown layer **before** KaTeX sees the input.  Every patch below is verified against this pipeline (not against pure KaTeX) — see the validation script section.
+GitHub renders math in `README.md`, `SecurityProofs.md`, and similar files via KaTeX.  The pipeline is **markdown (CommonMark/GFM) first, then KaTeX**: backslash escapes inside math spans are resolved by the markdown layer **before** KaTeX sees the input.  This escape resolution applies to **both** inline `$...$` and display `$$...$$` blocks — confirmed via GitHub API inspection.  Every patch below is verified against this pipeline (not against pure KaTeX) — see the validation script section.
 
 ### Rule 1 — never put `_` between `\text{}` blocks
 
@@ -269,7 +269,7 @@ NODE_PATH=/tmp/katex-validate/node_modules node \
 # Expect: "1477 OK, 0 FAIL" (count varies as the document grows)
 ```
 
-The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) that GitHub's markdown layer performs, and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations.
+The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) to **both** inline and display spans — matching GitHub's actual pipeline — and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations in both inline and display contexts.
 
 Pure-KaTeX validation (`katex.renderToString` without escape resolution) **will give false positives** because it does not see the markdown layer; always use the pipeline simulator above.
 
