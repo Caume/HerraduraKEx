@@ -2527,7 +2527,34 @@ compression artifact (adds one hash per row of the Stern matrix H — acceptable
 Replace the "open gap" note with the measured compression fraction at n=32 and the
 resulting security assessment.
 
-Status: **TODO**.
+Status: **TODO** (Step 1 DONE — see below; Steps 2–3 pending).
+
+**Step 1 result (v1.5.43) — DONE.**  Test [20] added to `CryptosuiteTests/Herradura_tests.c`:
+HyperLogLog over all 2^32 inputs, m=16384 registers (~0.81% std-error), ~55 s per K on
+OrangePi RK3588.  Results for three representative K values:
+
+| K           | Hamming weight | Distinct fraction | vs random (63.2%) |
+|-------------|----------------|-------------------|-------------------|
+| 0x00000003  | 2 (min-t)      | **20.9%**         | 0.33×             |
+| 0xA3C5E7B9  | 17 (pseudo-rnd)| **21.7%**         | 0.34×             |
+| 0xFFFFFFFD  | 30 (max-t)     | **28.3%**         | 0.45×             |
+
+**Finding:** Range compression at n=32 is case **(a)** — the compression does NOT shrink
+as n grows.  All three K values are far below the 63.2% random expectation and are even
+more compressed than the small-n results (40–55% at n=12/16).  The range of
+F_stern(K, ·) at n=32 is only **21–28%** of the output domain.  This means:
+
+1. Walsh biases well beyond the random bound persist at n=32 — the §9.3 gap is confirmed
+   at the deployed bit size.
+2. The PRF claim for `_stern_hash` in Theorem 17 is challenged — the hash chain function
+   does not behave like a random function even at n=32.
+3. The fix is clear: **hash F_stern output through HFSCX-256** (one call per round) to
+   flatten the distribution.  This is a one-line change per target; wire-format change
+   for signatures (new version tag needed).
+
+**Next step:** TODO #42 Step 2 — characterize WHY the compression worsens at n=32
+(fixed-B NL-FSCX dynamics at 8 steps vs n=12 4-step case) and add the HFSCX-256
+output-hashing fix as a concrete sub-TODO.  Then Step 3: update SecurityProofs-2.md.
 
 Batch 1 — Python: added non-CT module header comment and docstrings to
 `_stern_apply_perm` and `_stern_syndrome_H` documenting reference-only status.
