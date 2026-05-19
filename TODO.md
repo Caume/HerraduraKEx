@@ -2286,7 +2286,23 @@ Add an exhaustive Walsh transform at small `n` (e.g. `n=12` or `n=16`):
 
 A confirmed bound is required for any rigorous PRF claim under §11.8.4 Theorem 17.
 
-Status: **TODO**.
+Status: **DONE (v1.5.42)** — New §9 added to `nl_fscx_prf_analysis.py` with four sub-sections:
+
+- **§9.1 (n=8):** Exhaustive over all 255×256 pairs; max_bias=1.0 (degenerate at r=2 steps).
+- **§9.2 (n=12):** Exhaustive over all 4 095×4 096 = 16.7M mask pairs (~2 min, 2 keys).
+  Result: max_bias ≈ 0.427, ratio ≈ 4.74× the random-function bound (0.090).
+  H_linear baseline: max_bias=1.0 (correctly detected as affine).
+- **§9.3 (Range compression):** F_stern maps only ~40–55% of inputs to distinct outputs at
+  n=8/12/16, vs ~63% expected for a truly random function.  The compressed range inflates
+  Walsh coefficients beyond the random bound.  This makes F_stern distinguishable from a
+  random function by collision counting at small n.  The impact at n=32 is an open gap.
+- **§9.4 (Extrapolation):** E[max_bias] ≈ √(4n·ln2 / 2^n); at n=32 ≈ 1.44×10⁻⁴.
+
+Key finding: the exhaustive Walsh scan reveals a range compression effect that is not
+captured by §5 sampling.  This does NOT constitute a confirmed PRF bound; instead it
+identifies a new open gap — the range compression at n=32 requires investigation.
+The finding motivates TODO #36 (QRO gap) and a future range-analysis item at n=32.
+`EXHAUSTIVE_N12 = True` by default; set False to skip the ~2-min §9.2 scan.
 
 ---
 
