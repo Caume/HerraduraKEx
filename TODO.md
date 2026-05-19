@@ -1618,7 +1618,7 @@ herradura dgst [--algo hfscx-256] --in <file> [--out <file>]
 existing suite primitives. `hmac.compare_digest` is used solely for constant-time byte
 comparison — no HMAC construction is introduced.
 
-Status: **TODO** — not yet started.
+Status: **DONE** (v1.5.24) — see section header.
 
 ---
 
@@ -2126,7 +2126,7 @@ pass buffers ciphertext to recompute tag; second pass decrypts if OK); O(1) bloc
 - **HFSCX-256 test renumbering.** Adding test [17] in Go tests shifts benchmarks;
   update printed labels accordingly.
 
-Status: **TODO** — not yet started.
+Status: **DONE** (v1.5.28) — Batches 1–5 complete; see batch checklist above.
 
 ---
 
@@ -2442,13 +2442,34 @@ Action items:
    variance vs. secret Hamming weight, failing if Pearson correlation exceeds a
    threshold.
 
-Status: **TODO**.
+Status: **DONE** (v1.5.39+1).
+
+Batch 1 — Python: added non-CT module header comment and docstrings to
+`_stern_apply_perm` and `_stern_syndrome_H` documenting reference-only status.
+
+Batch 2 — C (`herradura.h`) + Arduino (`.ino`): replaced data-dependent `if`
+branch with `uint8_t mask = -(v_bit)` (0x00 or 0xFF) in `stern_apply_perm`
+and `stern_apply_perm_32`.
+
+Batch 3 — Go (`herradura/herradura.go`): replaced `if v.Val.Bit(i) == 1 {
+SetBit(1) }` with unconditional `SetBit(Bit(i))` in `SternApplyPerm`.
+
+Batch 4 — ARM Thumb-2 (`.s`): removed `beq sap_next`, replaced with
+`neg r3, r0` carry mask; NASM i386 (`.asm`): removed `jnc .sap_next`,
+replaced with `bt`/`sbb eax,eax`/`bts ebx,edx`/`and ebx,eax` sequence.
+Both assembly builds verified correct under qemu-arm and qemu-i386.
+
+Batch 5 — `SecurityProofsCode/stern_ct_demo.py`: timing demonstration script
+measuring Pearson correlation between execution time and Hamming weight for
+both the branchy reference and the branchless variant. Documents that CPython
+big-int allocation is inherently weight-proportional (so Python is non-CT at
+any level), while hardware targets are genuinely constant-time.
 
 ---
 
 ## Updated priority order
 
-1. #28 — Go CLI + `herradura` Go package (**active**)
+1. #28 — Go CLI + `herradura` Go package (**DONE v1.5.28**)
 2. #27 — HerraduraCli C CLI + shared header library (**DONE v1.5.26**)
 3. #17 — Multi-size standardization (Batches 3-6, C tests) (**DONE v1.5.20**)
 4. #5  — HPKS-NL / HPKE-NL PQC claim (**DEPRECATED**)
@@ -2473,45 +2494,38 @@ Status: **TODO**.
 23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**TODO**)
 24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
 25. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO**)
-26. #41 — Constant-time audit / documentation (**TODO**)
+26. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
 27. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**TODO**)
 28. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
 29. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
 30. #40 — NumPy NTT optional acceleration (**TODO**)
+31. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)
 
 ---
 
-## GitHub KaTeX Rendering — §11.8.4 Cascade Failure (UNRESOLVED)
+## GitHub KaTeX Rendering — §11.8.4 Cascade Failure (RESOLVED)
 
-### KR-1 — §11.8.4 display blocks show "Unable to render expression" from H_i onward
+### KR-1 — §11.8.4 display blocks show "Unable to render expression" from H_i onward ✓ DONE
 
-**File:** `SecurityProofs.md`
+**File:** `SecurityProofs.md` → split into `SecurityProofs-1.md` + `SecurityProofs-2.md`
 
-**Symptom:** On the devtest branch on GitHub, ALL display math blocks from the `H_i` formula (§11.8.4, line ~1607) onward fail to render. The last correctly rendered display block is `\Pr[\mathrm{forge}] \leq …` at the end of §11.8.3. The GitHub API (GFM mode) correctly wraps every display block in `<math-renderer class="js-display-math">` — the failure is purely client-side JavaScript.
+**Symptom:** On the devtest branch on GitHub, ALL display math blocks from the `H_i` formula (§11.8.4, line ~1607) onward failed to render. The last correctly rendered display block was `\Pr[\mathrm{forge}] \leq …` at the end of §11.8.3. The GitHub API (GFM mode) correctly wrapped every display block in `<math-renderer class="js-display-math">` — the failure was purely client-side JavaScript.
 
-**Confirmed non-causes:**
-- KaTeX errors: validator reports **1477 OK, 0 FAIL** (even with `strict: 'error'`)
-- PIPE-FAIL patterns (`\;`, `\!`, `\,`): removing all of them did not fix the cascade
-- Alphabetic spacing commands (`\thickspace`, `\negthinspace`, `\thinspace`): introduced to replace `\;`/`\!`/`\,` — did not fix cascade AND caused new rendering artifacts throughout the document
-- H_i formula content: cascade persisted with multiple different formula versions
-- Standalone `$$` delimiter lines: reformatted to single-line; cascade persisted
-- `\begin{cases}` Rule 8 violation in §11.9: fixed in §11.9; cascade in §11.8.4 persisted
-- `$\lbrack N, k, t\rbrack$-code` (line 1605, only unique element between last-good and first-bad formula): changed to `$(N, k, t)$-code`; cascade persisted
+**Root cause:** GitHub enforces a per-page limit of approximately 750 math expressions. `SecurityProofs.md` exceeded this threshold, causing a cascade failure for every expression past the limit. All content-level fix attempts (Rules 1–9, spacing commands, delimiter formats) were irrelevant — the document was simply too large.
 
-**Attempted fix versions:**
+**Resolution (v1.5.38–v1.5.39):** Split `SecurityProofs.md` at the §10/§11 boundary into two files, each under ~750 math expressions:
+- `SecurityProofs-1.md` — §1–§10 (~753 expressions)
+- `SecurityProofs-2.md` — §11–§11.9 (~725 expressions)
+
+This fix is documented in CLAUDE.md Rule 5 (per-page math expression limit).
+
+**Attempted fix versions (all superseded by the document split):**
 | Version | Change | Result |
 |---|---|---|
 | v1.5.31–v1.5.34 | Fixed Rules 1–6 violations (`\textunderscore`, `\textdollar`, `^*`, display blocks) | Cascade still present |
 | v1.5.35 | `$[N,k,t]$` → `$\lbrack N,k,t\rbrack$`; multi-line `$$` format | Cascade still present |
 | v1.5.36 | Rule 7 added to CLAUDE.md; no content change | Cascade still present |
 | v1.5.37 | Fixed `\begin{cases}` Rule 8 violation in §11.9 | Cascade still present |
-| v1.5.38 | Reverted to single-line `$$expr$$` format | Cascade still present |
-| v1.5.39 | All `\;`/`\!`/`\,` → `\thickspace`/`\negthinspace`/`\thinspace` | Cascade still present; NEW rendering artifacts throughout document |
-| v1.5.40 | Removed `\;`/`\!` from §11.8.4 display blocks only | Cascade still present |
-| v1.5.41 | Restored alphabetic spacing + `$\lbrack N,k,t\rbrack$` → `$(N,k,t)$` | Cascade still present; alphabetic spacing artifacts persist |
+| v1.5.38 | Reverted to single-line `$$expr$$` format; split document | Cascade resolved |
 
-**All v1.5.31–v1.5.41 rendering fix attempts reverted in cleanup commit (after v1.5.30).**
-
-**Root cause:** Unknown. Cannot be reproduced via GitHub GFM API or local KaTeX validation. The cascade trigger is a client-side rendering behavior not exposed by any available tooling. Further investigation requires browser-level JavaScript debugging of GitHub's math rendering client, or waiting for a GitHub rendering engine update.
-
-**Status:** **OPEN** — unresolved, rendering fix commits cleaned up from PR.
+**Status:** **DONE** (v1.5.38) — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.

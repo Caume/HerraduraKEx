@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.23
+/*  Herradura Cryptographic Suite v1.5.40
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
                                        HPKS-Stern-F, HPKE-Stern-F
@@ -2212,6 +2212,8 @@ sgp_done:
 
 /* ------------------------------------------------------------------ */
 /* stern_apply_perm_32: r0=v -> r0 = apply sdf_perm to bits of v      */
+/* Branchless: mask r3 = -bit (0x00000000 or 0xFFFFFFFF); no branch   */
+/* on secret bits.                                                     */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_apply_perm_32:
@@ -2223,14 +2225,14 @@ stern_apply_perm_32:
 sap_loop:
     cmp     r7, #SDF_N
     bge     sap_done
-    lsr     r0, r4, r7
-    tst     r0, #1
-    beq     sap_next
-    ldrb    r0, [r5, r7]        @ perm[i]
+    lsr     r0, r4, r7          @ r0 = v >> i
+    and     r0, r0, #1          @ r0 = bit (0 or 1)
+    neg     r3, r0              @ r3 = -bit (mask: 0x00000000 or 0xFFFFFFFF)
+    ldrb    r0, [r5, r7]        @ r0 = perm[i]
     mov     r1, #1
-    lsl     r1, r1, r0
+    lsl     r1, r1, r0          @ r1 = 1 << perm[i]
+    and     r1, r1, r3          @ apply mask
     orr     r6, r6, r1
-sap_next:
     add     r7, r7, #1
     b       sap_loop
 sap_done:

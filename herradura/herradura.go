@@ -1,4 +1,5 @@
 /*  package herradura — Herradura Cryptographic Suite shared library
+    v1.5.40: SternApplyPerm made branchless (no branch on secret bits) — TODO #41.
     v1.5.27: extracted from "Herradura cryptographic suite.go".
 
     Provides all crypto primitives (FSCX, GF, NL-FSCX, HKEX-RNL, Stern-F),
@@ -742,13 +743,12 @@ func SternGenPerm(piSeed *BitArray, N int) []int {
 }
 
 // SternApplyPerm applies permutation perm: out[perm[i]] = v[i].
+// Branchless: SetBit is called unconditionally with Bit(i) (0 or 1).
 func SternApplyPerm(perm []int, v *BitArray) *BitArray {
 	N := v.size
 	out := &BitArray{size: N}
 	for i := 0; i < N; i++ {
-		if v.Val.Bit(i) == 1 {
-			out.Val.SetBit(&out.Val, perm[i], 1)
-		}
+		out.Val.SetBit(&out.Val, perm[i], v.Val.Bit(i))
 	}
 	return out
 }

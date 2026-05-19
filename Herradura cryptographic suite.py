@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.23
+    Herradura Cryptographic Suite v1.5.40
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.40: Constant-time audit — branchless stern_apply_perm + non-CT docs (TODO #41) ---
     --- v1.5.23: HerraduraCli — OpenSSL-style Python CLI (TODO #25); CliTest shell test suite ---
     --- v1.5.20: HPKE-Stern-F N=256 known-e' demo; multi-size standardization ---
     --- v1.5.18: HPKS-Stern-F / HPKE-Stern-F — code-based PQC (SD + NL-FSCX v1 PRF) ---
@@ -612,6 +613,11 @@ def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
 # ---------------------------------------------------------------------------
 # HPKS-Stern-F / HPKE-Stern-F — Code-Based PQC (Syndrome Decoding + NL-FSCX PRF)
 # Security reduces to SD(N,t) [NP-complete] + NL-FSCX v1 PRF.  See §11.8.4.
+#
+# TIMING NOTE — this Python implementation is a REFERENCE ONLY and is NOT
+# constant-time.  _stern_apply_perm and _stern_syndrome_H branch on secret
+# bit values, leaking Hamming-weight via timing.  Production deployments must
+# use the C or assembly targets, which use branchless bit-mask operations.
 # ---------------------------------------------------------------------------
 
 # Stern-F soundness threshold: ⌈λ / log2(3/2)⌉ for λ=128-bit security.
@@ -663,7 +669,11 @@ def _stern_build_H(seed_int: int, n: int, n_rows: int) -> list:
 
 
 def _stern_syndrome_H(H_rows: list, e_int: int) -> int:
-    """Compute syndrome H·e^T mod 2 from a precomputed matrix (list of row ints)."""
+    """Compute syndrome H·e^T mod 2 from a precomputed matrix (list of row ints).
+
+    NOT constant-time: bin().count() is variable-time over int size and the
+    bit-test inside the loop branches on e_int bits.  Reference only.
+    """
     s = 0
     for i, row in enumerate(H_rows):
         s |= (bin(row & e_int).count('1') & 1) << i
@@ -692,7 +702,12 @@ def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
 
 
 def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
-    """Apply permutation perm to N-bit integer v: result[perm[i]] = v[i]."""
+    """Apply permutation perm to N-bit integer v: result[perm[i]] = v[i].
+
+    NOT constant-time: the inner `if` branches on each secret bit of v,
+    leaking its Hamming weight via timing.  Reference only; C/asm targets
+    use a branchless mask: result |= (-(bit) & (1 << perm[i])).
+    """
     result = 0
     for i in range(N):
         if (v_int >> i) & 1:

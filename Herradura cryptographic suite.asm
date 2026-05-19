@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.23
+;  Herradura Cryptographic Suite v1.5.40
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
 ;                        HPKS-Stern-F, HPKE-Stern-F
@@ -2405,6 +2405,9 @@ stern_gen_perm_32:
 
 ; ============================================================
 ; stern_apply_perm_32: EAX=v -> EAX = apply(sdf_perm, v)
+; Branchless: bt sets CF=v[i]; sbb eax,eax yields mask (0 or -1);
+; bts ebx,edx sets the target bit unconditionally; and applies mask.
+; No branch on secret bits.
 ; ============================================================
 stern_apply_perm_32:
     push ebx
@@ -2415,15 +2418,17 @@ stern_apply_perm_32:
     xor  edi, edi
     xor  ecx, ecx
 .sap_loop:
-    cmp  ecx, SDF_N
-    jge  .sap_done
-    bt   esi, ecx
-    jnc  .sap_next
-    movzx eax, byte [sdf_perm + ecx]
-    bts  edi, eax
-.sap_next:
-    inc  ecx
-    jmp  .sap_loop
+    cmp   ecx, SDF_N
+    jge   .sap_done
+    bt    esi, ecx                   ; CF = v[i]
+    sbb   eax, eax                   ; eax = mask (0x00000000 or 0xFFFFFFFF)
+    movzx edx, byte [sdf_perm + ecx] ; edx = perm[i]
+    xor   ebx, ebx
+    bts   ebx, edx                   ; ebx = 1 << perm[i]
+    and   ebx, eax                   ; apply secret mask
+    or    edi, ebx                   ; accumulate
+    inc   ecx
+    jmp   .sap_loop
 .sap_done:
     mov  eax, edi
     pop  ecx

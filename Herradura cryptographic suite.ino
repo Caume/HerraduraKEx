@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.23 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.40 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32
@@ -373,10 +373,14 @@ static void stern_gen_perm_32(uint8_t *perm, uint32 pi_seed) {
     }
 }
 
+/* Branchless: mask = -(bit) is 0 or 0xFFFFFFFF; no branch on secret bits. */
 static uint32 stern_apply_perm_32(const uint8_t *perm, uint32 v) {
     uint32 out = 0;
-    for (int i = 0; i < SDF_N; i++)
-        if ((v >> i) & 1) out |= (1UL << perm[i]);
+    for (int i = 0; i < SDF_N; i++) {
+        uint32 bit  = (v >> i) & 1u;
+        uint32 mask = (uint32)(-(int32_t)bit);  /* 0x00000000 or 0xFFFFFFFF */
+        out |= mask & (1UL << perm[i]);
+    }
     return out;
 }
 
