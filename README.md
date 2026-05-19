@@ -1,10 +1,12 @@
-# Herradura Cryptographic Suite (v1.5.23)
+# Herradura Cryptographic Suite (v1.5.40)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
+>
+> **v1.5.40 note:** Constant-time audit (TODO #41): `stern_apply_perm` / `SternApplyPerm` made branchless across all targets (C, Go, ARM Thumb-2, NASM i386, Arduino) using arithmetic mask `-(bit)` to eliminate data-dependent branches that leaked the Hamming weight of secret error vectors. Python reference implementation documented as non-CT; `SecurityProofsCode/stern_ct_demo.py` added to demonstrate the timing correlation empirically.
 >
 > **v1.5.23 note:** HerraduraCli — an OpenSSL-style Python CLI (`HerraduraCli/`) exposing all non-broken Herradura protocols via `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, and `verify` subcommands. Keys and ciphertexts use PEM-wrapped minimal DER. A `CliTest/` shell test suite covers key generation, encrypt/decrypt round-trips, sign/verify, and HKEX-GF/HKEX-RNL key-agreement correctness.
 >

@@ -1,4 +1,5 @@
 /*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+    v1.5.40: stern_apply_perm made branchless (mask = -(v_bit)) — TODO #41.
     v1.5.24
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -908,20 +909,21 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
     }
 }
 
-/* Apply permutation: out[perm[i]] = v[i] for N bits. */
+/* Apply permutation: out[perm[i]] = v[i] for N bits.
+   Branchless: mask = -(v_bit) is 0x00 or 0xFF; no branch on secret bits. */
 static void stern_apply_perm(BitArray *out, const uint8_t *perm,
                               const BitArray *v, int N)
 {
     int i;
     memset(out->b, 0, KEYBYTES);
     for (i = 0; i < N; i++) {
-        int byt = KEYBYTES - 1 - i / 8;
-        int bit = i % 8;
-        if (v->b[byt] & (uint8_t)(1u << bit)) {
-            int ob  = KEYBYTES - 1 - perm[i] / 8;
-            int obb = perm[i] % 8;
-            out->b[ob] |= (uint8_t)(1u << obb);
-        }
+        int byt     = KEYBYTES - 1 - i / 8;
+        int bit     = i % 8;
+        uint8_t vb  = (v->b[byt] >> bit) & 1u;
+        uint8_t mask = (uint8_t)(-(int8_t)vb);  /* 0x00 or 0xFF */
+        int ob  = KEYBYTES - 1 - perm[i] / 8;
+        int obb = perm[i] % 8;
+        out->b[ob] |= mask & (uint8_t)(1u << obb);
     }
 }
 

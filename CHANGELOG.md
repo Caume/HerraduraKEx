@@ -4,6 +4,51 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.40] - 2026-05-19
+
+### Security — Constant-time audit: branchless `stern_apply_perm` across all targets (TODO #41)
+
+All six language targets contained a data-dependent branch in `stern_apply_perm` /
+`SternApplyPerm` that leaks the Hamming weight of the secret error vector `e` (used as
+the HPKS-Stern-F private key and the Fiat-Shamir blinding vectors `r` and `y`).
+
+**Root cause:** The inner loop branched on each secret bit:
+```python
+if (v_int >> i) & 1:           # branches on secret bit — timing leaks HW
+    result |= 1 << perm[i]
+```
+An attacker timing multiple sign operations could recover the weight and reduce
+the effective key space.
+
+**Fix — branchless arithmetic mask:** Replace the conditional with a mask derived by
+negating the extracted bit; the same instructions execute regardless of `v[i]`:
+
+| Target | Old (branchy) | New (branchless) |
+|---|---|---|
+| C (`herradura.h`) | `if (v->b[byt] & ...)` | `mask = -(v_bit)` (0x00 or 0xFF) |
+| Arduino (`.ino`) | `if ((v >> i) & 1)` | `mask = -(bit)` (0 or 0xFFFFFFFF) |
+| Go (`herradura.go`) | `if v.Val.Bit(i) == 1 { SetBit(1) }` | `SetBit(Bit(i))` (unconditional) |
+| ARM Thumb-2 (`.s`) | `tst r0,#1; beq sap_next` | `and r0,#1; neg r3,r0; and r1,r3` |
+| NASM i386 (`.asm`) | `bt esi,ecx; jnc .sap_next` | `bt; sbb eax,eax; bts ebx,edx; and ebx,eax` |
+
+**Python:** The Python reference implementation is intentionally **not** constant-time;
+CPython big-integer arithmetic is inherently timing-variable at the VM level. Non-CT
+documentation comments added to `_stern_apply_perm`, `_stern_syndrome_H`, and the
+Stern-F section header; `SecurityProofsCode/stern_ct_demo.py` added to demonstrate and
+measure the timing correlation empirically.
+
+**Files changed:**
+- `Herradura cryptographic suite.py` — non-CT documentation
+- `herradura.h` — branchless `stern_apply_perm`
+- `herradura/herradura.go` — branchless `SternApplyPerm`
+- `Herradura cryptographic suite.s` — branchless ARM `stern_apply_perm_32`
+- `Herradura cryptographic suite.asm` — branchless NASM `stern_apply_perm_32`
+- `Herradura cryptographic suite.ino` — branchless Arduino `stern_apply_perm_32`
+- `SecurityProofsCode/stern_ct_demo.py` — new timing demonstration script
+- `TODO.md` — #41 marked DONE; #26/#28/KR-1 stale status lines corrected
+
+---
+
 ## [1.5.23] - 2026-05-03
 
 ### New Feature — HerraduraCli: OpenSSL-style command-line tool (TODO #25)
