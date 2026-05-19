@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.40
+    Herradura Cryptographic Suite v1.5.41
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.5.41: rnl_lift centered rounding across all targets (TODO #37) ---
     --- v1.5.40: Constant-time audit — branchless stern_apply_perm + non-CT docs (TODO #41) ---
     --- v1.5.23: HerraduraCli — OpenSSL-style Python CLI (TODO #25); CliTest shell test suite ---
     --- v1.5.20: HPKE-Stern-F N=256 known-e' demo; multi-size standardization ---
@@ -523,8 +524,8 @@ def _rnl_round(poly, from_q, to_p):
     return [(c * to_p + from_q // 2) // from_q % to_p for c in poly]
 
 def _rnl_lift(poly, from_p, to_q):
-    """Lift from Z_{from_p} to Z_{to_q} by integer scaling (c -> c * to_q // from_p)."""
-    return [c * to_q // from_p % to_q for c in poly]
+    """Lift from Z_{from_p} to Z_{to_q} with centered rounding (c -> (c*to_q + from_p//2) // from_p)."""
+    return [(c * to_q + from_p // 2) // from_p % to_q for c in poly]
 
 def _rnl_m_poly(n):
     """FSCX polynomial m(x) = 1 + x + x^{n-1} as a coefficient list in Z_q."""

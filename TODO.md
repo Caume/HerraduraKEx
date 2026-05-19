@@ -2343,7 +2343,19 @@ Expected effect: ~2× reduction in worst-case pre-reconciliation failure rate
 (currently 2.04 % at `n=32`, 37.24 % at `n=256`).  Post-reconciliation rate stays
 at 0 % — this is a margin improvement, not a correctness fix.
 
-Status: **TODO**.
+Status: **DONE** (v1.5.41).
+
+Applied centered rounding to all six language targets (Python suite, C header,
+Go package, Arduino, ARM Thumb-2, NASM i386) and to both assembly test files,
+the Python test file, the C test file, and `SecurityProofsCode/hkex_rnl_failure_rate.py`.
+
+Re-running `hkex_rnl_failure_rate.py` shows the pre-reconciliation rates are
+within sampling noise of the old values (2.07 % at `n=32`, 37.24 % at `n=256`):
+the failure is dominated by polynomial convolution noise over n=256 terms, not
+by the single-coefficient lift quantization.  The centered rounding eliminates
+the systematic positive bias (up to q/2p ≈ 8 per coefficient) and is the
+correct formulation regardless.  Post-reconciliation rate confirmed 0 %.
+SecurityProofs-2.md §11.5/§11.6 numbers are unchanged (within noise).
 
 ---
 
@@ -2491,7 +2503,7 @@ any level), while hardware targets are genuinely constant-time.
 20. #31 — Stern parity matrix caching (**DONE v1.5.28**)
 21. #32 — `delta(B)` precompute in `nl_fscx_revolve_v2` (**DONE v1.5.28**)
 22. #33 — `hpke_stern_f_decap` brute-force guard (**DONE v1.5.28**)
-23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**TODO**)
+23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**DONE v1.5.41**)
 24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
 25. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO**)
 26. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)

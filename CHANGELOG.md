@@ -4,6 +4,41 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.41] - 2026-05-19
+
+### Correctness — `rnl_lift` centered rounding across all targets (TODO #37)
+
+`rnl_lift` / `_rnl_lift` / `RnlLift` previously rounded toward zero (`c * q / p`),
+introducing a systematic positive bias of up to `q/(2p) ≈ 8` per coefficient when
+lifting Ring-LWR public-key coefficients from `Z_p` to `Z_q`.  This is asymmetric
+with `rnl_round`, which already uses centered rounding.
+
+**Fix:** Switch all implementations to centered rounding:
+`(c * q + p/2) / p mod q`
+
+Applied consistently to every target in lockstep (wire-format change):
+
+| Target | File | Change |
+|---|---|---|
+| Python suite | `Herradura cryptographic suite.py` | `_rnl_lift` |
+| C header | `herradura.h` | `rnl_lift` |
+| Go package | `herradura/herradura.go` | `RnlLift` |
+| Arduino | `Herradura cryptographic suite.ino` | `rnl_lift` |
+| ARM Thumb-2 | `Herradura cryptographic suite.s` | `rnl_lift` (add `r6, lsr #1` before udiv) |
+| NASM i386 | `Herradura cryptographic suite.asm` | `rnl_lift` (shr+add before div) |
+| ARM tests | `CryptosuiteTests/Herradura_tests.s` | same ARM change |
+| i386 tests | `CryptosuiteTests/Herradura_tests.asm` | same NASM change |
+| Python tests | `CryptosuiteTests/Herradura_tests.py` | `_rnl_lift` |
+| C tests | `CryptosuiteTests/Herradura_tests.c` | `rnl_lift_n` |
+| Analysis script | `SecurityProofsCode/hkex_rnl_failure_rate.py` | `_lift_poly` |
+
+`hkex_rnl_failure_rate.py` re-run confirms post-reconciliation failure rate
+remains 0 % at both `n=32` and `n=256`.  Pre-reconciliation rates are within
+sampling noise of prior values (polynomial convolution dominates, not lift
+quantization); SecurityProofs-2.md §11.5/§11.6 numbers unchanged.
+
+---
+
 ## [1.5.40] - 2026-05-19
 
 ### Security — Constant-time audit: branchless `stern_apply_perm` across all targets (TODO #41)

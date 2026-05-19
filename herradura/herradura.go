@@ -1,4 +1,5 @@
 /*  package herradura — Herradura Cryptographic Suite shared library
+    v1.5.41: RnlLift centered rounding (TODO #37).
     v1.5.40: SternApplyPerm made branchless (no branch on secret bits) — TODO #41.
     v1.5.27: extracted from "Herradura cryptographic suite.go".
 
@@ -558,11 +559,11 @@ func RnlRound(poly []int, fromQ, toP int) []int {
 	return h
 }
 
-// RnlLift lifts polynomial coefficients from Z_fromP to Z_toQ.
+// RnlLift lifts polynomial coefficients from Z_fromP to Z_toQ with centered rounding.
 func RnlLift(poly []int, fromP, toQ int) []int {
 	h := make([]int, len(poly))
 	for i, c := range poly {
-		h[i] = c * toQ / fromP % toQ
+		h[i] = (c*toQ + fromP/2) / fromP % toQ
 	}
 	return h
 }

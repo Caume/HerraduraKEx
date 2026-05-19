@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.40 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.5.41 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32
@@ -244,10 +244,10 @@ static void rnl_round(long *out, const long *in, long from_q, long to_p) {
         out[i] = (long)(((long long)in[i] * to_p + from_q / 2) / from_q % to_p);
 }
 
-/* lift: out[i] = in[i] * to_q / from_p mod to_q */
+/* lift: out[i] = (in[i] * to_q + from_p/2) / from_p mod to_q  (centered rounding) */
 static void rnl_lift(long *out, const long *in, long from_p, long to_q) {
     for (int i = 0; i < RNL_N; i++)
-        out[i] = (long)((long long)in[i] * to_q / from_p % to_q);
+        out[i] = (long)(((long long)in[i] * to_q + from_p / 2) / from_p % to_q);
 }
 
 /* m(x) = 1 + x + x^{N-1} */
