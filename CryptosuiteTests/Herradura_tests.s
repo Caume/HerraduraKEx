@@ -1461,6 +1461,7 @@ rl_loop:
     bge     rl_done
     ldr     r0, [r5, r8, lsl #2]
     mul     r0, r0, r7
+    add     r0, r0, r6, lsr #1     @ += from_p/2 (centered rounding)
     udiv    r0, r0, r6
     udiv    r9, r0, r7
     mls     r0, r7, r9, r0

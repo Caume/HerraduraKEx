@@ -735,7 +735,7 @@ static void rnl_lift_n(int32_t *out, const int32_t *in, int from_p, int to_q, in
 {
     int i;
     for (i = 0; i < n; i++)
-        out[i] = (int32_t)((int64_t)in[i] * to_q / from_p % to_q);
+        out[i] = (int32_t)(((int64_t)in[i] * to_q + from_p / 2) / from_p % to_q);
 }
 
 static void rnl_m_poly_n(int32_t *p, int n)

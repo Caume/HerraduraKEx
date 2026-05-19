@@ -1638,13 +1638,18 @@ rnl_lift:
     jge  .rl_done
 
     mov  esi, [esp+4]
-    mov  eax, [esi + edi*4]
-    mov  ecx, [esp+12]
-    mul  ecx
-    mov  ecx, [esp+8]
-    div  ecx
+    mov  eax, [esi + edi*4]   ; in[i]
+    mov  ecx, [esp+12]        ; to_q
+    mul  ecx                  ; edx:eax = in[i] * to_q  (fits in 32 bits; edx=0)
+    ; add from_p // 2 (centered rounding)
+    mov  ecx, [esp+8]         ; from_p
+    shr  ecx, 1               ; ecx = from_p / 2
+    add  eax, ecx             ; eax += from_p / 2
+    ; divide by from_p
+    mov  ecx, [esp+8]         ; from_p (reload after shr)
+    div  ecx                  ; eax = (in[i]*to_q + from_p/2) / from_p
     xor  edx, edx
-    mov  ecx, [esp+12]
+    mov  ecx, [esp+12]        ; to_q
     div  ecx
     mov  eax, edx
 

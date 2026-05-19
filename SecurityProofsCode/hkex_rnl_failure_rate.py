@@ -93,7 +93,7 @@ def _round_poly(poly, from_q, to_p):
 
 
 def _lift_poly(poly, from_p, to_q):
-    return [c * to_q // from_p % to_q for c in poly]
+    return [(c * to_q + from_p // 2) // from_p % to_q for c in poly]
 
 
 def _m_poly(n):

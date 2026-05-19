@@ -460,7 +460,7 @@ def _rnl_round(poly, from_q, to_p):
     return [(c * to_p + from_q // 2) // from_q % to_p for c in poly]
 
 def _rnl_lift(poly, from_p, to_q):
-    return [c * to_q // from_p % to_q for c in poly]
+    return [(c * to_q + from_p // 2) // from_p % to_q for c in poly]
 
 def _rnl_m_poly(n):
     p = [0] * n; p[0] = p[1] = p[n - 1] = 1; return p

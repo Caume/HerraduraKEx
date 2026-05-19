@@ -1,4 +1,5 @@
 /*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+    v1.5.41: rnl_lift centered rounding (TODO #37).
     v1.5.40: stern_apply_perm made branchless (mask = -(v_bit)) — TODO #41.
     v1.5.24
 
@@ -723,7 +724,7 @@ static void rnl_lift(rnl_poly_t out, const int32_t *in, int from_p, int to_q)
 {
     int i;
     for (i = 0; i < RNL_N; i++)
-        out[i] = (int32_t)((int64_t)in[i] * to_q / from_p % to_q);
+        out[i] = (int32_t)(((int64_t)in[i] * to_q + from_p / 2) / from_p % to_q);
 }
 
 /* m(x) = 1 + x + x^{n-1} */
