@@ -1,4 +1,4 @@
-;  Herradura KEx -- Correctness Tests v1.5.23
+;  Herradura KEx -- Correctness Tests v1.6.0
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS Schnorr, HPKE El Gamal,
 ;                        NL-FSCX v2 inv, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL,
 ;                        HPKS-Stern-F, HPKE-Stern-F
@@ -1994,6 +1994,24 @@ rnl_agree_recv:
     ret
 
 ; ============================================================
+; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (TODO #43, v1.6.0)
+; s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799
+; ============================================================
+hfscx_32:
+    push ecx
+    push ebx
+    mov  ebx, eax
+    mov  eax, 0xA3C5E7B9
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  ebx, 0xA3C5E799
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  ebx
+    pop  ecx
+    ret
+
+; ============================================================
 ; stern_hash1_32: EAX=v -> EAX = sternHash(v)
 ; ============================================================
 stern_hash1_32:
@@ -2005,7 +2023,7 @@ stern_hash1_32:
     call nl_fscx_revolve_v1
     pop  ebx
     pop  ecx
-    ret
+    jmp  hfscx_32
 
 ; ============================================================
 ; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
@@ -2024,7 +2042,7 @@ stern_hash2_32:
     call nl_fscx_revolve_v1
     pop  ecx
     pop  esi
-    ret
+    jmp  hfscx_32
 
 ; ============================================================
 ; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]

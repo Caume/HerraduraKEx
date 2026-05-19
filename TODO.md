@@ -2628,7 +2628,7 @@ the Stern-F introduction).
 **Dependencies:** TODO #34 (HFSCX-256 formal analysis) is DONE (v1.5.30); this TODO
 can proceed immediately.
 
-Status: **TODO**.
+Status: **DONE v1.6.0**.  Updated all six language targets: Python (`_stern_hash`), C/`herradura.h` (`stern_hash`), Go package (`SternHash`), C suite n=32 demo (`stern32_hash`), ARM/i386 assembly (new `hfscx_32` + updated `stern_hash1_32`/`stern_hash2_32`), Arduino.  Also updated C/ARM/i386 test files.  All sign+verify and encap+decap tests pass across all targets.
 
 ---
 
@@ -2658,8 +2658,8 @@ Status: **TODO**.
 22. #33 — `hpke_stern_f_decap` brute-force guard (**DONE v1.5.28**)
 23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**DONE v1.5.41**)
 24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
-25. #43 — Hash `_stern_hash` output through HFSCX-256 (range compression fix) (**TODO**)
-26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO** — blocked on #43)
+25. #43 — Hash `_stern_hash` output through HFSCX-256 (range compression fix) (**DONE v1.6.0**)
+26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO** — was blocked on #43, now unblocked)
 27. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
 28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
 29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)

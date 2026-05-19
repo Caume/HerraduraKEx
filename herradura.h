@@ -1,4 +1,5 @@
 /*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+    v1.6.0: stern_hash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: rnl_lift centered rounding (TODO #37).
     v1.5.40: stern_apply_perm made branchless (mask = -(v_bit)) — TODO #41.
     v1.5.24
@@ -845,7 +846,8 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 #define SDF_ROUNDS   32                /* ZKP rounds (demo; prod >= 219)     */
 #define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* syndrome bytes: 16                 */
 
-/* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
+/* Chain-hash + HFSCX-256 finalizer: h <- NL-FSCX_v1^I(h XOR v, ROL(v,n/8)) for each
+ * item, then h <- HFSCX-256(h) to eliminate range compression (TODO #43, v1.6.0). */
 static void stern_hash(BitArray *out, const BitArray *items, int n_items)
 {
     BitArray h = {{0}};
@@ -855,6 +857,11 @@ static void stern_hash(BitArray *out, const BitArray *items, int n_items)
         ba_xor(&hxv, &h, &items[i]);
         ba_rol_k(&rotv, &items[i], KEYBITS / 8);
         nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+    }
+    {
+        uint8_t digest[32];
+        hfscx_256(h.b, KEYBYTES, NULL, digest);
+        memcpy(h.b, digest, KEYBYTES);
     }
     *out = h;
 }

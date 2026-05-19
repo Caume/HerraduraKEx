@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.6.0: stern_hash_ba + stern_hash_64 HFSCX-256 finalizer (TODO #43).
     v1.5.43: F_stern range compression HyperLogLog test [20] (TODO #42 Step 1);
              benchmarks renumbered [21]-[30].
     v1.5.25: herradura.h shared library + HFSCX-256 KAV test [19]; benchmarks renumbered [20]-[29].
@@ -2371,7 +2372,7 @@ static void test_hpke_nl_correctness(void)
 
 #define SDF_TEST_ROUNDS 8              /* reduced rounds for test speed  */
 
-/* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
+/* Chain-hash + HFSCX-256 finalizer (TODO #43, v1.6.0). */
 static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items)
 {
     BitArray h = {{0}};
@@ -2381,6 +2382,11 @@ static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items)
         ba_xor(&hxv, &h, &items[i]);
         ba_rol_k(&rotv, &items[i], KEYBITS / 8);
         nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+    }
+    {
+        uint8_t digest[32];
+        hfscx_256(h.b, KEYBYTES, NULL, digest);
+        memcpy(h.b, digest, KEYBYTES);
     }
     *out = h;
 }
@@ -2816,8 +2822,18 @@ static int hpks_stern_f_verify_32(const SternSig32T *sig, uint32_t msg,
 
 static uint64_t stern_hash_64(uint64_t h, uint64_t v)
 {
-    uint64_t key = (v << 8) | (v >> 56);   /* ROL by n/8=8 bits */
-    return nl_fscx_revolve_v1_64(h ^ v, key, 16);
+    uint64_t key = (v << 8) | (v >> 56);
+    uint64_t raw = nl_fscx_revolve_v1_64(h ^ v, key, 16);
+    uint8_t buf[8], digest[32];
+    buf[0]=(uint8_t)(raw>>56); buf[1]=(uint8_t)(raw>>48);
+    buf[2]=(uint8_t)(raw>>40); buf[3]=(uint8_t)(raw>>32);
+    buf[4]=(uint8_t)(raw>>24); buf[5]=(uint8_t)(raw>>16);
+    buf[6]=(uint8_t)(raw>> 8); buf[7]=(uint8_t)(raw);
+    hfscx_256(buf, 8, NULL, digest);
+    return ((uint64_t)digest[0]<<56)|((uint64_t)digest[1]<<48)|
+           ((uint64_t)digest[2]<<40)|((uint64_t)digest[3]<<32)|
+           ((uint64_t)digest[4]<<24)|((uint64_t)digest[5]<<16)|
+           ((uint64_t)digest[6]<< 8)| (uint64_t)digest[7];
 }
 
 static uint64_t stern_hash_64_n(const uint64_t *items, int n)

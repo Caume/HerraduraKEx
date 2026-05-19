@@ -1,4 +1,4 @@
-/*  Herradura KEx -- Correctness Tests v1.5.23
+/*  Herradura KEx -- Correctness Tests v1.6.0
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        NL-FSCX v2 inv, HSKE-NL-A2,
                                        HKEX-RNL, HPKS-NL, HPKE-NL,
@@ -1757,13 +1757,35 @@ rnl_agree_recv:
     .ltorg
 
 /* ------------------------------------------------------------------ */
+/* hfscx_32: r0=x -> r0=hfscx_32(x)  (TODO #43, v1.6.0)             */
+/* s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799    */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hfscx_32:
+    push    {r4, lr}
+    mov     r4, r0
+    ldr     r0, .LHIV2
+    mov     r1, r4
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    ldr     r1, .LHLB2
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1
+    pop     {r4, pc}
+.LHIV2: .word 0xA3C5E7B9
+.LHLB2: .word 0xA3C5E799
+
+/* ------------------------------------------------------------------ */
 /* stern_hash1_32: r0=v -> r0=sternHash(v)                            */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash1_32:
+    push    {lr}
     ror     r1, r0, #28
     mov     r2, #8
-    b       nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1
+    bl      hfscx_32
+    pop     {pc}
 
     .ltorg
 
@@ -1782,6 +1804,7 @@ stern_hash2_32:
     ror     r1, r5, #28
     mov     r2, #8
     bl      nl_fscx_revolve_v1
+    bl      hfscx_32
     pop     {r4-r5, pc}
 
     .ltorg

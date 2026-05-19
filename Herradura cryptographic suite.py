@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.41
+    Herradura Cryptographic Suite v1.6.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -643,13 +643,14 @@ def _csprng_weight_t(n: int, t: int) -> int:
 
 
 def _stern_hash(n: int, *items: 'BitArray') -> 'BitArray':
-    """Chain-hash items to n bits: h ← NL-FSCX_v1^{n/4}(h⊕v, ROL(v,n/8)) for each v."""
+    """Chain-hash items to n bits via NL-FSCX v1, finalized with HFSCX-256 (v1.6.0)."""
     mask = (1 << n) - 1
     h = BitArray(n, 0)
     for item in items:
         v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
         h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
-    return h
+    digest = hfscx_256(h.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':

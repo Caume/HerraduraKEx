@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.5.41
+;  Herradura Cryptographic Suite v1.6.0
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
 ;                        HPKS-Stern-F, HPKE-Stern-F
@@ -2232,8 +2232,28 @@ rnl_agree_recv:
     ret
 
 ; ============================================================
+; hfscx_32: EAX=x -> EAX=hfscx_32(x)
+; Two-step MD hash at 32-bit word size: breaks range compression.
+; s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799
+; (TODO #43, v1.6.0)
+; ============================================================
+hfscx_32:
+    push ecx
+    push ebx
+    mov  ebx, eax          ; B = x
+    mov  eax, 0xA3C5E7B9   ; A = IV_32
+    mov  ecx, 8
+    call nl_fscx_revolve_v1 ; eax = nl(IV, x, 8)
+    mov  ebx, 0xA3C5E799   ; B = LB = 0x20 ^ IV_32
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    pop  ebx
+    pop  ecx
+    ret
+
+; ============================================================
 ; stern_hash1_32: EAX=v -> EAX=sternHash(v)
-; h = nl_fscx_revolve_v1(v, ROL(v,4), 8)
+; raw=nl_fscx_revolve_v1(v,ROL(v,4),8); return hfscx_32(raw)
 ; ============================================================
 stern_hash1_32:
     push ecx
@@ -2244,7 +2264,7 @@ stern_hash1_32:
     call nl_fscx_revolve_v1
     pop  ebx
     pop  ecx
-    ret
+    jmp  hfscx_32           ; tail call: apply HFSCX-32 finalizer
 
 ; ============================================================
 ; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
@@ -2262,10 +2282,10 @@ stern_hash2_32:
     xor  eax, esi
     mov  ebx, esi
     rol  ebx, 4
-    call nl_fscx_revolve_v1
+    call nl_fscx_revolve_v1 ; eax = raw
     pop  ecx
     pop  esi
-    ret
+    jmp  hfscx_32           ; tail call: apply HFSCX-32 finalizer
 
 ; ============================================================
 ; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]

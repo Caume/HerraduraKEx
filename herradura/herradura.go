@@ -1,4 +1,5 @@
 /*  package herradura — Herradura Cryptographic Suite shared library
+    v1.6.0: SternHash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: RnlLift centered rounding (TODO #37).
     v1.5.40: SternApplyPerm made branchless (no branch on secret bits) — TODO #41.
     v1.5.27: extracted from "Herradura cryptographic suite.go".
@@ -684,7 +685,8 @@ const (
 	SdfRounds = 32       // ZKP rounds (soundness (2/3)^32)
 )
 
-// SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1.
+// SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
+// then applies HFSCX-256 to eliminate range compression (TODO #43, v1.6.0).
 func SternHash(items ...*BitArray) *BitArray {
 	n := 256
 	if len(items) > 0 {
@@ -694,7 +696,10 @@ func SternHash(items ...*BitArray) *BitArray {
 	for _, v := range items {
 		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
 	}
-	return h
+	digest := Hfscx256(h.Bytes(), nil)
+	result := &BitArray{size: n}
+	result.Val.SetBytes(digest[:n/8])
+	return result
 }
 
 // SternMatrixRow generates row i of the parity-check matrix.
