@@ -530,6 +530,15 @@ Tests §1, §2, §4, §8 detect GF(2)-linearity and low algebraic degree; linear
 
 *Scope and caveat.*  These tests rule out every polynomial-time distinguisher based on linearity, low algebraic degree, or cross-key structure.  They do **not** constitute a formal PRF proof.  A formal proof would require reducing PRF-security to a studied hardness assumption; the GGM construction (§11.8.4 above) provides that path once the NL-FSCX v1 OWF assumption is accepted.  The experimental evidence supports the assumption but does not replace it.
 
+**Exhaustive Walsh analysis at small $n$ (v1.5.42 — TODO #35).**  To complement the §5 sampling at $n=32$, `nl_fscx_prf_analysis.py` §9 adds an exhaustive Walsh-Hadamard scan at $n=12$: all $4095 \times 4096 = 16.7$M mask pairs $(a, b)$ are evaluated for two random keys.  Key findings:
+
+- **§9.1 ($n=8$):** max\_bias $= 1.0$ — degenerate at $r = 2$ steps; a perfect linear correlation exists for some $(a,b)$ pair.
+- **§9.2 ($n=12$):** max\_bias $\approx 0.43$, ratio $\approx 4.7\times$ the random-function bound $\sqrt{4 \cdot 12 \cdot \ln 2 / 2^{12}} \approx 0.090$.  The affine baseline $H\_\mathrm{linear}$ gives max\_bias $= 1.0$ (correctly detected).
+- **§9.3 (Range compression):** $F_K(\cdot)$ maps only $\approx 40$–$55\%$ of inputs to distinct outputs at $n = 8$/$12$/$16$, versus $\approx 63\%$ expected for a truly random function.  The compressed range inflates Walsh coefficients beyond the random bound.
+- **§9.4 (Extrapolation):** $\mathbb{E}[\mathrm{max\_bias}(n)] \approx \sqrt{4n \ln 2 / 2^n}$; at $n=32$ this is $\approx 1.44 \times 10^{-4}$.
+
+The elevated bias at $n=12$ is attributed to range compression, not to linear algebraic structure.  At the deployed $n=32$, §5 sampling is consistent with the random bound, but exhaustive verification requires scanning $2^{64}$ pairs — infeasible in pure Python.  The range compression at $n=32$ is an open gap: whether $F_\mathrm{stern}$ is computationally indistinguishable from a random function despite its non-bijective structure remains unresolved, and a formal treatment is deferred to future work.
+
 **Key generation.**
 - Private key: $\mathbf{e} \xleftarrow{R} \{\mathbf{v} \in \{0,1\}^N : \mathrm{wt}(\mathbf{v}) = t\}$.
 - Public key: $\mathbf{s} = H\mathbf{e}^\top \in \mathbb{GF}(2)^{N-k}$.

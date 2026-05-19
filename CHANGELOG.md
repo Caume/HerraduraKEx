@@ -4,6 +4,32 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.5.42] - 2026-05-19
+
+### Research — Exhaustive Walsh-Hadamard spectrum added to PRF analysis (TODO #35)
+
+`SecurityProofsCode/nl_fscx_prf_analysis.py` gains §9 (four sub-sections) that
+replaces the §5 Monte-Carlo bias estimate with a rigorous exhaustive scan at small `n`:
+
+- **§9.1 (n=8):** All 255×256 mask pairs; max\_bias=1.0 at r=2 steps (degenerate).
+- **§9.2 (n=12):** All 4 095×4 096 = 16.7M mask pairs (~2 min, `EXHAUSTIVE_N12=True`).
+  Result: max\_bias ≈ 0.43, ratio ≈ 4.7× the random-function bound 0.090.
+  Affine baseline H\_linear: max\_bias=1.0 (correctly detected).
+- **§9.3 (Range compression):** F\_stern maps only ~40–55% of inputs to distinct outputs
+  at n=8/12/16 vs ~63% for a truly random function.  Identified as the primary cause
+  of elevated Walsh coefficients at small n; open gap at the deployed n=32.
+- **§9.4 (Extrapolation):** Bernstein bound E[max\_bias] ≈ sqrt(4n·ln2/2^n); at n=32
+  this is ~1.44×10⁻⁴.
+
+`SecurityProofs-2.md` §11.8.4 updated with an "Exhaustive Walsh analysis" paragraph
+summarising the findings and identifying the range-compression open gap.
+`TODO.md` #35 marked DONE with full result summary.
+
+New helper functions: `_wht()`, `exhaustive_max_bias()`, `component_max_bias()`,
+`random_fn_max_bias_bound()` (all standalone, no external dependencies).
+
+---
+
 ## [1.5.41] - 2026-05-19
 
 ### Correctness — `rnl_lift` centered rounding across all targets (TODO #37)
