@@ -2527,7 +2527,7 @@ compression artifact (adds one hash per row of the Stern matrix H — acceptable
 Replace the "open gap" note with the measured compression fraction at n=32 and the
 resulting security assessment.
 
-Status: **TODO** (Step 1 DONE — see below; Steps 2–3 pending).
+Status: **DONE v1.5.43** (all three steps complete).
 
 **Step 1 result (v1.5.43) — DONE.**  Test [20] added to `CryptosuiteTests/Herradura_tests.c`:
 HyperLogLog over all 2^32 inputs, m=16384 registers (~0.81% std-error), ~55 s per K on
@@ -2573,7 +2573,7 @@ with ratio ~0.86 gives ~9×10⁻⁵ of the domain — effectively a constant fun
 
 This confirms the open gap is real and grows with n.  See TODO #43 for the fix.
 
-**Next step:** TODO #42 Step 3 — update SecurityProofs-2.md §11.8.4.
+**Step 3 result (v1.5.43) — DONE.**  SecurityProofs-2.md §11.8.4 updated: evidence matrix row added, "open gap" replaced with HLL measurement table, mechanism explanation, O(2^16) distinguisher security implication, and Fix formula (F_stern-v2 via HFSCX-256, TODO #43).
 
 Batch 1 — Python: added non-CT module header comment and docstrings to
 `_stern_apply_perm` and `_stern_syndrome_H` documenting reference-only status.
@@ -2662,7 +2662,7 @@ Status: **TODO**.
 26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO** — blocked on #43)
 27. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
 28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
-29. #42 — F_stern range compression at n=32 (Steps 1+2 **DONE v1.5.43**; Step 3 TODO)
+29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)
 30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
 31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
 32. #40 — NumPy NTT optional acceleration (**TODO**)

@@ -525,6 +525,7 @@ The higher-order differential test measures the algebraic degree.  The second-or
 | Key-bit sensitivity mean flips (§6) | 13.0 / 16.0 | 16.06 ± 2.9 (≈ ideal $n/2$) |
 | Output collision rate vs. birthday bound (§7) | 0 excess (near-bijective) | 0 excess (injective) |
 | Cross-key delta input-dependent (§8) | **Fails** — 0 % dependent | **Passes** — 100 % dependent |
+| Range compression vs random fn (§9.3, §10) | n/a (bijective) | **Fails** — 21–28% at n=32; see TODO #43 |
 
 Tests §1, §2, §4, §8 detect GF(2)-linearity and low algebraic degree; linear FSCX fails all four, NL-FSCX v1 passes all four.  Tests §3 and §6 measure diffusion; both functions achieve good avalanche.  Test §5 detects linear correlations; NL-FSCX v1's maximum sampled bias is consistent with the random-function Bernstein bound $O(\sqrt{n} / 2^{n/2})$.  Test §7 confirms near-uniform output distribution for random inputs.
 
@@ -532,12 +533,30 @@ Tests §1, §2, §4, §8 detect GF(2)-linearity and low algebraic degree; linear
 
 **Exhaustive Walsh analysis at small $n$ (v1.5.42 — TODO #35).**  To complement the §5 sampling at $n=32$, `nl_fscx_prf_analysis.py` §9 adds an exhaustive Walsh-Hadamard scan at $n=12$: all $4095 \times 4096 = 16.7$M mask pairs $(a, b)$ are evaluated for two random keys.  Key findings:
 
-- **§9.1 ($n=8$):** max\_bias $= 1.0$ — degenerate at $r = 2$ steps; a perfect linear correlation exists for some $(a,b)$ pair.
+- **§9.1 (n=8):** max_bias = 1.0 — degenerate at r = 2 steps; a perfect linear correlation exists for some (a,b) pair.
 - **§9.2 ($n=12$):** max\_bias $\approx 0.43$, ratio $\approx 4.7\times$ the random-function bound $\sqrt{4 \cdot 12 \cdot \ln 2 / 2^{12}} \approx 0.090$.  The affine baseline $H\_\mathrm{linear}$ gives max\_bias $= 1.0$ (correctly detected).
 - **§9.3 (Range compression):** $F_K(\cdot)$ maps only $\approx 40$–$55\%$ of inputs to distinct outputs at $n = 8$/$12$/$16$, versus $\approx 63\%$ expected for a truly random function.  The compressed range inflates Walsh coefficients beyond the random bound.
 - **§9.4 (Extrapolation):** $\mathbb{E}[\mathrm{max\_bias}(n)] \approx \sqrt{4n \ln 2 / 2^n}$; at $n=32$ this is $\approx 1.44 \times 10^{-4}$.
 
-The elevated bias at $n=12$ is attributed to range compression, not to linear algebraic structure.  At the deployed $n=32$, §5 sampling is consistent with the random bound, but exhaustive verification requires scanning $2^{64}$ pairs — infeasible in pure Python.  The range compression at $n=32$ is an open gap: whether $F_\mathrm{stern}$ is computationally indistinguishable from a random function despite its non-bijective structure remains unresolved, and a formal treatment is deferred to future work.
+The elevated bias at n=12 is attributed to range compression, not to linear algebraic structure.  At the deployed n=32, §5 sampling is consistent with the random bound, but exhaustive verification requires scanning 2^64 pairs — infeasible in pure Python.
+
+**Range compression at n=32 — exhaustively measured (v1.5.43, TODO #42).**  Test [20] in `CryptosuiteTests/Herradura_tests.c` uses HyperLogLog (m=16384 registers, ~0.81% std-error) over all 2^32 inputs to F_stern(K, ·) for three representative keys:
+
+| K | Hamming weight | Distinct fraction | vs random 63.2% |
+|---|---|---|---|
+| `0x00000003` | 2 (min-t) | **20.9%** | 0.33× |
+| `0xA3C5E7B9` | 17 | **21.7%** | 0.34× |
+| `0xFFFFFFFD` | 30 (max-t) | **28.3%** | 0.45× |
+
+The range compression does **not** shrink as n grows.  `nl_fscx_prf_analysis.py` §10 measures the step-by-step range fraction for n ∈ {8, 12, 16, 20} (exhaustive) and derives a per-step compression ratio of ~0.74–0.82× (increasing with n), versus 0.632× for a random function.  Because the step count r = n/4 grows linearly, cumulative compression worsens with n: at n=256 with r=64 steps, the predicted range fraction falls below 10^{-4}.
+
+**Security implication.**  A distinguisher that counts output collisions can separate F_stern from a random function at n=32 using O(2^16) queries (birthday bound against a ~24% range).  This constitutes a concrete polynomial-time distinguisher that falsifies the PRF assumption underlying Theorem 17, removing the ε_PRF term from the EUF-CMA bound.  Until TODO #43 is applied, Theorem 17 holds only against adversaries that do not exploit this collision-counting attack.
+
+**Fix (TODO #43).**  Composing F_stern with HFSCX-256 eliminates the range compression and restores ~63.2% distinct outputs (verified in `hfscx_256_analysis.py`):
+
+$$F_{\text{stern-v2}}(K, i) = \text{HFSCX-256}\bigl(F_1^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)\bigr) \bmod 2^n$$
+
+One HFSCX-256 call is added per row of H and per hash step in the commitment scheme.  After the fix, no known collision-counting distinguisher applies to F_stern-v2.  This is a wire-format breaking change; old and new HPKS-Stern-F signatures are incompatible.
 
 **Key generation.**
 - Private key: $\mathbf{e} \xleftarrow{R} \{\mathbf{v} \in \{0,1\}^N : \mathrm{wt}(\mathbf{v}) = t\}$.
