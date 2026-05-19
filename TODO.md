@@ -2552,9 +2552,28 @@ F_stern(K, ·) at n=32 is only **21–28%** of the output domain.  This means:
    flatten the distribution.  This is a one-line change per target; wire-format change
    for signatures (new version tag needed).
 
-**Next step:** TODO #42 Step 2 — characterize WHY the compression worsens at n=32
-(fixed-B NL-FSCX dynamics at 8 steps vs n=12 4-step case) and add the HFSCX-256
-output-hashing fix as a concrete sub-TODO.  Then Step 3: update SecurityProofs-2.md.
+**Step 2 result (v1.5.43) — DONE.**  §10 added to `SecurityProofsCode/nl_fscx_prf_analysis.py`:
+
+Step-by-step range fraction at n=8/12/16/20 (exhaustive):
+
+| n  | r  | k=1  | k=2  | k=3  | k=4  | k=5  |
+|----|----|----- |------|------|------|------|
+|  8 |  2 | 0.71 | 0.49 |      |      |      |
+| 12 |  3 | 0.68 | 0.50 | 0.41 |      |      |
+| 16 |  4 | 0.65 | 0.48 | 0.40 | 0.34 |      |
+| 20 |  5 | 0.63 | 0.45 | 0.38 | 0.32 | 0.27 |
+
+Per-step compression ratio: ~0.70–0.77 (increasing with n), vs 0.632 for a random
+function.  Back-calculated from C result (n=32, 23.6% mean): ~0.815 at n=32.
+
+**Mechanism:** each nl_fscx_v1(·, B) step with fixed B is non-injective, compressing the
+range by ~0.74x (at small n) to ~0.82x (at n=32) per application.  The step count
+r=n/4 grows linearly, so cumulative compression worsens with n.  At n=256, r=64 steps
+with ratio ~0.86 gives ~9×10⁻⁵ of the domain — effectively a constant function.
+
+This confirms the open gap is real and grows with n.  See TODO #43 for the fix.
+
+**Next step:** TODO #42 Step 3 — update SecurityProofs-2.md §11.8.4.
 
 Batch 1 — Python: added non-CT module header comment and docstrings to
 `_stern_apply_perm` and `_stern_syndrome_H` documenting reference-only status.
@@ -2576,6 +2595,40 @@ measuring Pearson correlation between execution time and Hamming weight for
 both the branchy reference and the branchless variant. Documents that CPython
 big-int allocation is inherently weight-proportional (so Python is non-CT at
 any level), while hardware targets are genuinely constant-time.
+
+---
+
+### 43. Hash `_stern_hash` output through HFSCX-256 to fix range compression (Security, High)
+**Files:** all six language targets (suite + test files), `SecurityProofs-2.md` §11.8.4
+
+The Step 1/Step 2 analysis (TODO #42, v1.5.43) confirmed that F_stern(K,·) at the
+deployed n=32 maps only ~21–28% of inputs to distinct outputs (vs 63.2% expected for a
+random function).  This range compression makes F_stern distinguishable from a random
+function by collision counting and directly falsifies the PRF assumption used in
+Theorem 17 (EUF-CMA bound for HPKS-Stern-F).
+
+**Fix:** compose F_stern's output with HFSCX-256 before use:
+
+```python
+def _stern_hash_v2(h, K, n):
+    raw = _nl_fscx_revolve_v1(h ^ K, rol(K, n // 8, n), n // 4, n)
+    digest = hfscx_256(raw.to_bytes(n // 8, 'big'))
+    return int.from_bytes(digest, 'big') >> (256 - n)
+```
+
+This eliminates the range compression artifact: HFSCX-256's output distribution
+approaches 63.2% distinct by the empirical analysis in §11.9 (`hfscx_256_analysis.py`).
+
+**Cross-language coordination required.**  Update `_stern_hash` in all six suite
+targets and `_stern_hash_ba` in the C/Go/asm test files.  Wire-format change: old
+and new HPKS-Stern-F signatures are incompatible — add a version tag (e.g.
+`HSTERN_V = 2`) and increment the suite version to 1.6.0 (first breaking change since
+the Stern-F introduction).
+
+**Dependencies:** TODO #34 (HFSCX-256 formal analysis) is DONE (v1.5.30); this TODO
+can proceed immediately.
+
+Status: **TODO**.
 
 ---
 
@@ -2605,13 +2658,15 @@ any level), while hardware targets are genuinely constant-time.
 22. #33 — `hpke_stern_f_decap` brute-force guard (**DONE v1.5.28**)
 23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**DONE v1.5.41**)
 24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
-25. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO**)
-26. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
-27. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**TODO**)
-28. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
-29. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
-30. #40 — NumPy NTT optional acceleration (**TODO**)
-31. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)
+25. #43 — Hash `_stern_hash` output through HFSCX-256 (range compression fix) (**TODO**)
+26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO** — blocked on #43)
+27. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
+28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
+29. #42 — F_stern range compression at n=32 (Steps 1+2 **DONE v1.5.43**; Step 3 TODO)
+30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
+31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
+32. #40 — NumPy NTT optional acceleration (**TODO**)
+33. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)
 
 ---
 
