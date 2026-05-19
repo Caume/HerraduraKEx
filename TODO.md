@@ -2472,6 +2472,63 @@ Action items:
 
 Status: **DONE** (v1.5.39+1).
 
+---
+
+### 42. F_stern range compression at n=32 — PRF gap analysis (Security/Research, Medium)
+**Files:** `Herradura cryptographic suite.py` (`_stern_apply_perm`, `_stern_hash`),
+`SecurityProofsCode/nl_fscx_prf_analysis.py` §9.3, `SecurityProofs-2.md` §11.8.4
+
+#### Background
+
+The v1.5.42 exhaustive Walsh scan (TODO #35) revealed that `F_stern(K, ·)` maps only
+~40–55% of inputs to distinct outputs at small n (n=8/12/16), vs ~63% expected for a
+truly random function.  This **range compression** is attributable to the fixed-B
+iteration structure: `NL_FSCX_v1(·, K, n)` is not a bijection for general K, and
+composing r = n/4 non-bijective maps reduces the range further.
+
+At n=12, the compression inflates the exhaustive Walsh max_bias to ~0.43
+(4.7× the random-function bound), making `F_stern` distinguishable from a
+random function by collision counting.  At the deployed n=32, the §5 sampling
+test is consistent with the random bound for those sampled pairs, but:
+
+- §5 samples only 2 000 pairs out of 2^64 possible — the worst-case (a, b) is
+  not reachable by sampling.
+- Enumerating all 2^32 outputs to measure range size at n=32 is infeasible in
+  pure Python.
+
+#### Plan
+
+**Step 1 — Measure range compression at n=32 in C or Go.**
+
+Add a dedicated test to `CryptosuiteTests/Herradura_tests.c` (or `.go`) that:
+- Evaluates `F_stern(K, x)` for all x in [0, 2^32) — requires 64 GB of RAM for
+  a full truth table, OR a HyperLogLog approximate distinct-count with ~0.1% error
+  using ~1 MB.
+- Reports the fraction of distinct outputs vs the random-function expectation 63.2%.
+
+Alternatively: sample 2^20 = 1M random inputs and count distinct outputs.  For a
+compressed function with 40% range, the birthday probability after 1M samples is
+~99.9%, giving a reliable estimate.
+
+**Step 2 — Characterize the compression mechanism.**
+
+Determine whether the range compression at n=32 is:
+(a) Similar to small n (~40%) → large Walsh bias exists at n=32 → PRF claim is
+    challenged; requires either a security reduction that accounts for compression
+    or a protocol redesign (e.g., adding output hashing to flatten the distribution).
+(b) Substantially smaller at n=32 (~60–63%) → compression shrinks as n grows and
+    r=n/4 provides enough mixing → PRF claim survives.
+
+If (a): add TODO to hash the F_stern output through HFSCX-256 to remove the
+compression artifact (adds one hash per row of the Stern matrix H — acceptable overhead).
+
+**Step 3 — Update SecurityProofs-2.md §11.8.4.**
+
+Replace the "open gap" note with the measured compression fraction at n=32 and the
+resulting security assessment.
+
+Status: **TODO**.
+
 Batch 1 — Python: added non-CT module header comment and docstrings to
 `_stern_apply_perm` and `_stern_syndrome_H` documenting reference-only status.
 
