@@ -2739,3 +2739,93 @@ correct output when run under `simavr`.
 
 
 **Status:** **DONE** (v1.5.38) — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
+
+---
+
+## Security Audit — Identify Insecure Functions
+
+**Goal:** Systematically locate functions in all language targets that have
+cryptographic or memory-safety weaknesses, and produce a prioritized list of
+findings for remediation.
+
+### Step 1 — Automated static analysis
+
+Run language-appropriate scanners across all source files and capture output:
+
+| Target | Tool | Command |
+|---|---|---|
+| C (suite + tests) | `cppcheck` | `cppcheck --enable=all --inconclusive "Herradura cryptographic suite.c" CryptosuiteTests/Herradura_tests.c` |
+| C | grep for known-unsafe libc | `grep -n 'gets\|strcpy\|strcat\|sprintf\|scanf\b\|rand()\b' "Herradura cryptographic suite.c" CryptosuiteTests/Herradura_tests.c` |
+| Python | `bandit` | `bandit -r "Herradura cryptographic suite.py" CryptosuiteTests/Herradura_tests.py` |
+| Go | `gosec` | `gosec ./...` from repo root |
+| Assembly (ARM + NASM) | grep | `grep -n 'rand\|srand\|memcpy\|strcpy' "Herradura cryptographic suite.s" "Herradura cryptographic suite.asm"` |
+
+### Step 2 — CSPRNG audit
+
+Verify every random-number call draws from a cryptographically secure source.
+Insecure sources: `rand()`, `srand()`, `random()`, Python `random` module,
+Go `math/rand`, any seeded PRNG used for key material.
+
+- **C:** all calls must be `getrandom()` or `/dev/urandom` reads; `prng_next` is deterministic by design and must only be used for test vectors, never key generation.
+- **Go:** confirm only `crypto/rand` is imported for key material; flag `math/rand` near key generation.
+- **Python:** confirm `os.urandom` everywhere; flag `random.randint` / missing `secrets` usage.
+- **Assembly:** ARM reads `/dev/urandom`; NASM uses the C PRNG only for fixed test vectors — verify this boundary.
+- **Arduino:** `random()` is seeded from `analogRead` (not a CSPRNG); document as a known limitation.
+
+### Step 3 — Constant-time audit
+
+Secret-dependent branches and memory accesses enable timing side channels.
+Audit every function that touches private keys, session keys, or signature scalars:
+
+1. **Equality comparisons** — flag `memcmp` or `==` on key material; replace with constant-time XOR-accumulate.
+2. **Early-exit loops** — flag `break`/`return` inside loops iterating over secret data.
+3. **Table lookups indexed by secret** — flag array accesses where the index is derived from a secret byte (cache-timing leak).
+4. **Variable-time division** — flag `%` and `/` on secret values in C; integer division is variable-time on most CPUs.
+
+Highest-risk functions (audit first):
+- `gf_mul` / `gf_mul_64` / `gf_mul_ba` — carryless multiply with early-exit `if (b & 1)` check
+- `gf_pow` / `gf_pow_ba` — square-and-multiply; exponent bit scan leaks private key bits
+- `ba_mul_mod_ord` / `mul128_mod_ord128` — Schnorr scalar `a·e mod ord`
+- `hpks_verify` / `hpks_nl_verify` — final key-equality comparison
+- `rnl_agree` / `rnl_hint` / `rnl_reconcile_bits` — session key derivation and comparison
+
+### Step 4 — Key material hygiene
+
+Check that private keys and session secrets are cleared from memory after use:
+
+- **C:** flag stack arrays holding `sk`, `a_priv`, `s_A`, `s_B` that are not `memset`-zeroed before return; use `explicit_bzero` or a compiler-barrier pattern.
+- **Go:** `big.Int` and slices holding private key material are not guaranteed to be cleared by the GC; document as a known limitation.
+- **Python:** `bytearray` can be zeroed; `int` and `bytes` are immutable and cannot — document any places where clearing is not possible.
+- **Assembly:** verify that callee-saved registers holding key material are cleared before `pop`/`bx lr`.
+
+### Step 5 — Buffer bounds and integer overflow (C and assembly)
+
+- **C:** verify all fixed-size arrays (`uint8_t hint[RNL_N]`, `uint32_t poly[RNL_N]`) are indexed only within declared bounds; flag any index derived from an untrusted length.
+- **C:** check `rnl_ntt` butterfly index `k + len/2` does not exceed `n` for all valid `len` values.
+- **NASM i386:** re-audit stack frame sizes in `rnl_poly_mul`, `rnl_hint`, `rnl_reconcile_bits` — the v1.5.3 wrong-offset bug (TODO A2) was a stack read error; verify no similar issues remain after Peikert additions.
+- **ARM Thumb-2:** verify `udiv` in `rnl_hint` does not divide by zero for degenerate inputs.
+
+### Step 6 — Hardcoded test vectors vs. production code paths
+
+Confirm that fixed private scalars (`a_priv = 0xDEADBEEF`, `b_priv = 0xCAFEBABF`)
+and fixed Stern error vectors appear **only** in demo `main()`/`loop()` blocks and
+test files, never in production key-generation paths. Grep:
+
+```bash
+grep -rn 'DEADBEEF\|CAFEBABF\|a_priv\|b_priv\|known_e\|test_e' \
+    "Herradura cryptographic suite".{c,go,py,s,asm,ino}
+```
+
+Flag any occurrence outside a clearly demarcated `/* demo */` or `#ifdef TEST` block.
+
+### Step 7 — Compile findings into a remediation table
+
+After steps 1–6, add a table here with columns:
+
+| ID | File(s) | Function | Weakness | Severity | Status |
+|---|---|---|---|---|---|
+
+Severity levels: **Critical** (direct key recovery), **High** (timing/side-channel),
+**Medium** (theoretical/implementation gap), **Low** (hygiene/documentation).
+
+Status: **OPEN**
