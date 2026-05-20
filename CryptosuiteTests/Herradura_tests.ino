@@ -35,7 +35,7 @@
 #define RNL_N   32
 #define RNL_Q   65537L
 #define RNL_P   4096L
-#define RNL_PP  2L
+#define RNL_PP  4L
 #define RNL_ETA 1  /* CBD eta: secret coeffs drawn from CBD(1) in {-1,0,1} mod q */
 
 typedef unsigned long uint32;
@@ -216,7 +216,7 @@ static void rnl_round(long *out, const long *in, long from_q, long to_p) {
 
 static void rnl_lift(long *out, const long *in, long from_p, long to_q) {
     for (int i = 0; i < RNL_N; i++)
-        out[i] = (long)((long long)in[i] * to_q / from_p % to_q);
+        out[i] = (long)(((long long)in[i] * to_q + from_p / 2) / from_p % to_q);
 }
 
 static void rnl_m_poly(long *p) {
@@ -235,7 +235,11 @@ static void rnl_cbd_poly(long *p) {
 }
 
 static void rnl_rand_poly(long *p) {
-    for (int i = 0; i < RNL_N; i++) p[i] = (long)(prng_next() % (uint32)RNL_Q);
+    static const uint32 threshold = 0xFF00FFu; /* (1<<24) - (1<<24)%RNL_Q */
+    for (int i = 0; i < RNL_N; ) {
+        uint32 v = prng_next() & 0xFFFFFFu;
+        if (v < threshold) p[i++] = (long)(v % (uint32)RNL_Q);
+    }
 }
 
 static uint32 rnl_bits_to_key(const long *bits_poly) {
@@ -253,12 +257,43 @@ static void rnl_keygen(long *s, long *C, const long *m_blind) {
     rnl_round(C, ms, RNL_Q, RNL_P);
 }
 
-static uint32 rnl_agree(const long *s, const long *C_other) {
-    static long c_lifted[RNL_N], k_poly[RNL_N], k_bits[RNL_N];
+/* 2-bit Peikert hint for first RNL_N/2 coefficients, packed 2 bits/coeff. */
+static uint32 rnl_hint(const long *K_poly) {
+    uint32 hint = 0;
+    for (int i = 0; i < RNL_N / 2; i++) {
+        unsigned long c = (unsigned long)K_poly[i];
+        unsigned long r = (unsigned long)((8UL * c + (unsigned long)(RNL_Q / 4))
+                                          / (unsigned long)RNL_Q) % 4UL;
+        hint |= (uint32)(r << (unsigned)(i * 2));
+    }
+    return hint;
+}
+
+/* 2-bit reconciliation: 2 bits per coeff from RNL_N/2 coefficients. */
+static uint32 rnl_reconcile(const long *K_poly, uint32 hint) {
+    const unsigned long qq = (unsigned long)(RNL_Q / 4);
+    uint32 key = 0;
+    for (int i = 0; i < RNL_N / 2; i++) {
+        unsigned long c = (unsigned long)K_poly[i];
+        unsigned long h = (hint >> (unsigned)(i * 2)) & 3UL;
+        unsigned long b = (4UL * c + (2UL * h + 1UL) * qq) / (unsigned long)RNL_Q
+                          % (unsigned long)RNL_PP;
+        key |= (uint32)(b << (unsigned)(i * 2));
+    }
+    return key;
+}
+
+/* agree: reconciler path (hint_out != NULL) or receiver path (hint_in != NULL). */
+static uint32 rnl_agree(const long *s, const long *C_other,
+                         const uint32 *hint_in, uint32 *hint_out) {
+    static long c_lifted[RNL_N], k_poly[RNL_N];
     rnl_lift(c_lifted, C_other, RNL_P, RNL_Q);
     rnl_poly_mul(k_poly, s, c_lifted);
-    rnl_round(k_bits, k_poly, RNL_Q, RNL_PP);
-    return rnl_bits_to_key(k_bits);
+    if (!hint_in) {
+        *hint_out = rnl_hint(k_poly);
+        return rnl_reconcile(k_poly, *hint_out);
+    }
+    return rnl_reconcile(k_poly, *hint_in);
 }
 
 /* ------------------------------------------------------------------ */
@@ -536,8 +571,9 @@ void test_hkex_rnl() {
         rnl_poly_add(m_blind, m_base, a_rand);
         rnl_keygen(s_A, C_A, m_blind);
         rnl_keygen(s_B, C_B, m_blind);
-        uint32 KA = rnl_agree(s_A, C_B);
-        uint32 KB = rnl_agree(s_B, C_A);
+        uint32 hint_A;
+        uint32 KA = rnl_agree(s_A, C_B, NULL, &hint_A);   /* reconciler */
+        uint32 KB = rnl_agree(s_B, C_A, &hint_A, NULL);   /* receiver */
         if (KA == KB) {
             ok_raw++;
             uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4), KA, I_VALUE);
