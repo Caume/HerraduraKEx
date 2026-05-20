@@ -37,7 +37,7 @@
 #define RNL_N   32
 #define RNL_Q   65537L
 #define RNL_P   4096L
-#define RNL_PP  2L
+#define RNL_PP  4L
 #define RNL_ETA 1  /* CBD eta: secret coeffs drawn from CBD(1) in {-1,0,1} mod q */
 
 typedef unsigned long uint32;
@@ -291,28 +291,28 @@ static void rnl_keygen(long *s, long *C, const long *m_blind) {
     rnl_round(C, ms, RNL_Q, RNL_P);
 }
 
-/* Peikert hint: 1-bit per coeff packed to uint32 (n=32 fits exactly). */
+/* 2-bit Peikert hint for first RNL_N/2 coefficients, packed 2 bits/coeff. */
 static uint32 rnl_hint(const long *K_poly) {
     uint32 hint = 0;
-    for (int i = 0; i < RNL_N; i++) {
+    for (int i = 0; i < RNL_N / 2; i++) {
         unsigned long c = (unsigned long)K_poly[i];
-        unsigned long r = (unsigned long)((4UL * c + (unsigned long)(RNL_Q / 2))
+        unsigned long r = (unsigned long)((8UL * c + (unsigned long)(RNL_Q / 4))
                                           / (unsigned long)RNL_Q) % 4UL;
-        if (r % 2UL) hint |= (1UL << i);
+        hint |= (uint32)(r << (unsigned)(i * 2));
     }
     return hint;
 }
 
-/* Reconcile K_poly bits using Peikert hint. */
+/* 2-bit reconciliation: 2 bits per coeff from RNL_N/2 coefficients. */
 static uint32 rnl_reconcile(const long *K_poly, uint32 hint) {
-    const unsigned long qh = (unsigned long)(RNL_Q / 2);
+    const unsigned long qq = (unsigned long)(RNL_Q / 4);
     uint32 key = 0;
-    for (int i = 0; i < RNL_N; i++) {
+    for (int i = 0; i < RNL_N / 2; i++) {
         unsigned long c = (unsigned long)K_poly[i];
-        unsigned long h = (hint >> i) & 1UL;
-        if ((unsigned long)((2UL * c + h * qh + qh) / (unsigned long)RNL_Q)
-                % (unsigned long)RNL_PP)
-            key |= (1UL << i);
+        unsigned long h = (hint >> (unsigned)(i * 2)) & 3UL;
+        unsigned long b = (4UL * c + (2UL * h + 1UL) * qq) / (unsigned long)RNL_Q
+                          % (unsigned long)RNL_PP;
+        key |= (uint32)(b << (unsigned)(i * 2));
     }
     return key;
 }

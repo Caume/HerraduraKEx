@@ -24,7 +24,7 @@
     .equ RNL_N,    32
     .equ RNL_Q,    65537
     .equ RNL_P,    4096
-    .equ RNL_PP,   2
+    .equ RNL_PP,   4
     .equ SDF_N,    32
     .equ SDF_T,    2
     .equ SDF_NROWS,16
@@ -1600,6 +1600,8 @@ rnl_keygen:
 
 /* ------------------------------------------------------------------ */
 /* rnl_hint32: r0=K_poly -> r0=hint_uint32                            */
+/*   2-bit hint per coeff; RNL_N/2=16 coefficients used.             */
+/*   Thresholds: 6145, 14337, 22529, 30721, 38913, 47105, 55297      */
 /* ------------------------------------------------------------------ */
     .thumb_func
 rnl_hint32:
@@ -1607,26 +1609,42 @@ rnl_hint32:
     mov     r4, r0              @ r4 = K_poly
     mov     r5, #0              @ r5 = hint result
     mov     r6, #0              @ r6 = i
-    ldr     r8, =0x4000         @ r8 = q/4 = 16384
-    ldr     r9, =0x8000         @ r9 = q/2 = 32768
 rh32_loop:
-    cmp     r6, #RNL_N
+    cmp     r6, #(RNL_N/2)
     bge     rh32_done
     ldr     r7, [r4, r6, lsl #2]    @ r7 = c
-    cmp     r7, r8              @ c < q/4 → quarter=0, h=0
-    blt     rh32_next
-    cmp     r7, r9              @ c < q/2 → quarter=1, h=1
-    bge     rh32_upper
+    mov     r0, #0
+    ldr     r8, =6145
+    cmp     r7, r8
+    blt     rh32_store
     mov     r0, #1
-    lsl     r0, r0, r6
-    orr     r5, r5, r0
-    b       rh32_next
-rh32_upper:
-    add     r0, r8, r9          @ r0 = 3q/4 = 49152
-    cmp     r7, r0              @ c < 3q/4 → quarter=2, h=0
-    blt     rh32_next
-    mov     r0, #1              @ quarter=3, h=1
-    lsl     r0, r0, r6
+    ldr     r8, =14337
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #2
+    ldr     r8, =22529
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #3
+    ldr     r8, =30721
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #0
+    ldr     r8, =38913
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #1
+    ldr     r8, =47105
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #2
+    ldr     r8, =55297
+    cmp     r7, r8
+    blt     rh32_store
+    mov     r0, #3
+rh32_store:
+    lsl     r8, r6, #1          @ r8 = 2*i
+    lsl     r0, r0, r8          @ r0 = h << (2*i)
     orr     r5, r5, r0
 rh32_next:
     add     r6, r6, #1
@@ -1639,7 +1657,7 @@ rh32_done:
 
 /* ------------------------------------------------------------------ */
 /* rnl_reconcile32: r0=K_poly, r1=hint -> r0=key_uint32               */
-/*   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2                    */
+/*   b[i] = ((4*c + (2*h+1)*(q/4)) / q) % 4; 16 coefficients.       */
 /* ------------------------------------------------------------------ */
     .thumb_func
 rnl_reconcile32:
@@ -1648,34 +1666,35 @@ rnl_reconcile32:
     mov     r5, r1              @ r5 = hint
     mov     r7, #0              @ r7 = key result
     mov     r6, #0              @ r6 = i
-    ldr     r8, =0x8000         @ r8 = q/2 = 32768
+    ldr     r8, =0x4000         @ r8 = q/4 = 16384
     ldr     r9, =RNL_Q          @ r9 = q = 65537
 rc32_loop:
-    cmp     r6, #RNL_N
+    cmp     r6, #(RNL_N/2)
     bge     rc32_done
     ldr     r0, [r4, r6, lsl #2]    @ r0 = c
-    lsl     r0, r0, #1              @ r0 = 2*c
-    lsr     r1, r5, r6
-    and     r1, r1, #1              @ r1 = h
-    lsl     r1, r1, #15             @ r1 = h * 32768
-    add     r0, r0, r1              @ r0 = 2*c + h*32768
-    add     r0, r0, r8              @ r0 = 2*c + h*32768 + 32768
+    lsl     r0, r0, #2              @ r0 = 4*c
+    lsl     r1, r6, #1              @ r1 = 2*i
+    lsr     r2, r5, r1              @ r2 = hint >> (2*i)
+    and     r2, r2, #3              @ r2 = h
+    lsl     r1, r2, #1              @ r1 = 2*h
+    add     r1, r1, #1              @ r1 = 2*h+1
+    mla     r0, r1, r8, r0          @ r0 = 4*c + (2*h+1)*(q/4)
+    mov     r2, #0
     cmp     r0, r9
-    blt     rc32_next               @ val < q → b=0
+    blt     rc32_pack
     sub     r0, r0, r9
+    mov     r2, #1
     cmp     r0, r9
-    bge     rc32_upper
-    mov     r0, #1                  @ val in [q,2q) → b=1
-    lsl     r0, r0, r6
-    orr     r7, r7, r0
-    b       rc32_next
-rc32_upper:
+    blt     rc32_pack
     sub     r0, r0, r9
+    mov     r2, #2
     cmp     r0, r9
-    blt     rc32_next               @ val in [2q,3q) → b=0
-    mov     r0, #1                  @ val in [3q,4q) → b=1
-    lsl     r0, r0, r6
-    orr     r7, r7, r0
+    blt     rc32_pack
+    mov     r2, #3
+rc32_pack:
+    lsl     r1, r6, #1          @ r1 = 2*i
+    lsl     r2, r2, r1          @ r2 = b << (2*i)
+    orr     r7, r7, r2
 rc32_next:
     add     r6, r6, #1
     b       rc32_loop

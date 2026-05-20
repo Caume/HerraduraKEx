@@ -595,7 +595,7 @@ static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
 #define RNL_N  256
 #define RNL_Q  65537
 #define RNL_P  4096
-#define RNL_PP 2
+#define RNL_PP 4
 #define RNL_ETA  1  /* CBD eta: secret coeffs from CBD(1) in {-1,0,1} mod q */
 
 typedef int32_t rnl_poly_t[RNL_N];
@@ -788,32 +788,32 @@ static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
     rnl_round(c_out, ms, RNL_Q, RNL_P);
 }
 
-/* Peikert cross-rounding: 1-bit hint per coefficient packed into hint[RNL_N/8]. */
+/* 2-bit Peikert cross-rounding hint for first RNL_N/2 coefficients, packed 2 bits/coeff.
+   h[i] = floor((8*c + q/4) / q) % 4 */
 static void rnl_hint(uint8_t hint[RNL_N / 8], const rnl_poly_t K_poly)
 {
     int i;
     memset(hint, 0, RNL_N / 8);
-    for (i = 0; i < RNL_N; i++) {
+    for (i = 0; i < RNL_N / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q / 2) / RNL_Q) % 4;
-        if (r % 2)
-            hint[i / 8] |= (uint8_t)(1u << (i % 8));
+        uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q / 4) / RNL_Q) % 4;
+        hint[i / 4] |= (uint8_t)(r << ((i % 4) * 2));
     }
 }
 
-/* Extract KEYBITS key bits using Peikert cross-rounding hint. */
+/* Extract KEYBITS key bits: 2 bits per coefficient from KEYBITS/2 coefficients.
+   b[i] = floor((4*c + (2*h+1)*(q/4)) / q) % 4 */
 static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
                                 const uint8_t hint[RNL_N / 8])
 {
     int i;
-    const uint32_t qh = RNL_Q / 2;
+    const uint32_t qq = RNL_Q / 4;
     memset(out->b, 0, sizeof(out->b));
-    for (i = 0; i < RNL_N && i < KEYBITS; i++) {
+    for (i = 0; i < KEYBITS / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t h = (hint[i / 8] >> (i % 8)) & 1u;
-        uint32_t b = (uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q) % RNL_PP;
-        if (b)
-            out->b[i / 8] |= (uint8_t)(1u << (i % 8));
+        uint32_t h = (hint[i / 4] >> ((i % 4) * 2)) & 3u;
+        uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q) % RNL_PP;
+        out->b[i / 4] |= (uint8_t)(b << ((i % 4) * 2));
     }
 }
 

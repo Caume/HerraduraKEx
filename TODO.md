@@ -2423,7 +2423,10 @@ security level.
 change; coordinate across all six language targets and refresh
 `SecurityProofs.md` §11.4.2 / §11.5 Q2 numbers.
 
-Status: **TODO**.
+Status: **DONE** (v1.7.0).  Correct formula: $h_i = \lfloor(8c_i + q/4)/q\rfloor \bmod 4$;
+$b_i = \lfloor(4c_i + (2h_i+1)\lfloor q/4\rfloor)/q\rfloor \bmod 4$.  All six targets
+updated and verified (Python, C, Go, ARM Thumb-2, NASM i386, Arduino).
+Test [14] HKEX-RNL passes 20/20 for n=32,64,128,256 across C, Go, Python, ARM, NASM.
 
 ---
 
@@ -2669,7 +2672,7 @@ Status: **DONE v1.6.0**.  Updated all six language targets: Python (`_stern_hash
 27. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
 28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
 29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)
-30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**TODO**)
+30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**DONE v1.7.0**)
 31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
 32. #40 — NumPy NTT optional acceleration (**TODO**)
 33. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)

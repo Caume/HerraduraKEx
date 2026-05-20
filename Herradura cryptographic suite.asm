@@ -29,7 +29,7 @@
 %define RNL_N      32
 %define RNL_Q      65537
 %define RNL_P      4096
-%define RNL_PP     2
+%define RNL_PP     4
 %define SDF_N      32
 %define SDF_T      2
 %define SDF_NROWS  16
@@ -1986,7 +1986,7 @@ rnl_cbd_poly:
 
 ; ============================================================
 ; rnl_bits32: EAX=bits_poly --> EAX=uint32 key
-;   bit i set if bits_poly[i] >= RNL_PP/2 = 1
+;   bit i set if bits_poly[i] >= RNL_PP/2 = 2
 ; ============================================================
 rnl_bits32:
     push ebx
@@ -2000,7 +2000,7 @@ rnl_bits32:
     cmp  ecx, RNL_N
     jge  .rb_done
     mov  eax, [esi + ecx*4]
-    cmp  eax, 1         ; >= RNL_PP/2
+    cmp  eax, 2         ; >= RNL_PP/2
     jl   .rb_next
     mov  eax, 1
     shl  eax, cl
@@ -2058,7 +2058,9 @@ rnl_keygen:
 
 ; ============================================================
 ; rnl_hint32: EAX=K_poly -> EAX=hint_uint32
-;   For each coeff c: quarter = c / (q/4); h = quarter % 2
+;   2-bit hint per coefficient; uses RNL_N/2=16 coefficients.
+;   h[i] = floor((8*c + q/4)/q) % 4 via threshold comparisons.
+;   Thresholds: 6145, 14337, 22529, 30721, 38913, 47105, 55297
 ; ============================================================
 rnl_hint32:
     push ebx
@@ -2070,23 +2072,38 @@ rnl_hint32:
     xor  edi, edi
     xor  ecx, ecx
 .rh32_loop:
-    cmp  ecx, RNL_N
+    cmp  ecx, (RNL_N/2)     ; loop over first 16 coefficients
     jge  .rh32_done
     mov  eax, [esi + ecx*4]
-    cmp  eax, 0x4000         ; q/4
-    jl   .rh32_next
-    cmp  eax, 0x8000         ; q/2
-    jge  .rh32_upper
+    ; Compute h via threshold cascade
+    xor  edx, edx            ; edx = h (default 0)
+    cmp  eax, 6145
+    jl   .rh32_store         ; c < 6145 → h=0
     mov  edx, 1
-    shl  edx, cl
-    or   edi, edx
-    jmp  .rh32_next
-.rh32_upper:
-    cmp  eax, 0xC000         ; 3q/4
-    jl   .rh32_next
+    cmp  eax, 14337
+    jl   .rh32_store         ; c < 14337 → h=1
+    mov  edx, 2
+    cmp  eax, 22529
+    jl   .rh32_store         ; c < 22529 → h=2
+    mov  edx, 3
+    cmp  eax, 30721
+    jl   .rh32_store         ; c < 30721 → h=3
+    xor  edx, edx
+    cmp  eax, 38913
+    jl   .rh32_store         ; c < 38913 → h=0
     mov  edx, 1
-    shl  edx, cl
+    cmp  eax, 47105
+    jl   .rh32_store         ; c < 47105 → h=1
+    mov  edx, 2
+    cmp  eax, 55297
+    jl   .rh32_store         ; c < 55297 → h=2
+    mov  edx, 3              ; c >= 55297 → h=3
+.rh32_store:
+    push ecx
+    shl  ecx, 1              ; ecx = 2*i
+    shl  edx, cl             ; edx = h << (2*i)
     or   edi, edx
+    pop  ecx
 .rh32_next:
     inc  ecx
     jmp  .rh32_loop
@@ -2101,7 +2118,8 @@ rnl_hint32:
 
 ; ============================================================
 ; rnl_reconcile32: EAX=K_poly, EBX=hint -> EAX=key_uint32
-;   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2
+;   2-bit extraction: b[i] = ((4*c + (2*h+1)*(q/4)) / q) % 4
+;   Uses RNL_N/2=16 coefficients; result packed 2 bits/coeff.
 ; ============================================================
 rnl_reconcile32:
     push ebx
@@ -2111,39 +2129,41 @@ rnl_reconcile32:
     push edi
     push ebp
     mov  esi, eax
-    mov  ebp, ebx
+    mov  ebp, ebx            ; ebp = hint
     xor  edi, edi
     xor  ecx, ecx
 .rc32_loop:
-    cmp  ecx, RNL_N
+    cmp  ecx, (RNL_N/2)     ; loop over 16 coefficients
     jge  .rc32_done
     mov  eax, [esi + ecx*4]  ; c
-    shl  eax, 1              ; 2*c
+    shl  eax, 2              ; 4*c
+    push ecx
+    shl  ecx, 1              ; ecx = 2*i
     mov  edx, ebp
-    shr  edx, cl
-    and  edx, 1              ; h
-    shl  edx, 15             ; h * 32768
-    add  eax, edx            ; 2*c + h*32768
-    add  eax, 0x8000         ; + 32768
-    ; b = (eax / 65537) % 2; eax/65537 ∈ {0,1,2,3}
+    shr  edx, cl             ; hint >> (2*i)
+    and  edx, 3              ; h (2-bit hint)
+    shl  edx, 1              ; 2*h
+    inc  edx                 ; 2*h+1
+    imul edx, 0x4000         ; (2*h+1) * (q/4)
+    add  eax, edx            ; 4*c + (2*h+1)*(q/4)
+    ; b = eax/q mod 4 via cascaded subtraction
+    xor  edx, edx
     cmp  eax, RNL_Q
-    jl   .rc32_next          ; val < q → b=0
+    jl   .rc32_pack          ; val < q → b=0
     sub  eax, RNL_Q
-    cmp  eax, RNL_Q
-    jge  .rc32_upper
-    ; val in [q, 2q) → b=1
     mov  edx, 1
-    shl  edx, cl
-    or   edi, edx
-    jmp  .rc32_next
-.rc32_upper:
+    cmp  eax, RNL_Q
+    jl   .rc32_pack          ; val in [q,2q) → b=1
     sub  eax, RNL_Q
+    mov  edx, 2
     cmp  eax, RNL_Q
-    jl   .rc32_next          ; val in [2q, 3q) → b=0
-    ; val in [3q, 4q) → b=1
-    mov  edx, 1
-    shl  edx, cl
+    jl   .rc32_pack          ; val in [2q,3q) → b=2
+    mov  edx, 3              ; val in [3q,4q) → b=3
+.rc32_pack:
+    ; pack b (in edx) at bit position 2*i (ecx still holds 2*i)
+    shl  edx, cl             ; edx = b << (2*i)
     or   edi, edx
+    pop  ecx
 .rc32_next:
     inc  ecx
     jmp  .rc32_loop

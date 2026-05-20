@@ -197,17 +197,17 @@ $$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{b
 
 Commutativity of $\mathcal R_q$ gives $s_A \cdot m_\text{blind} \cdot s_B = s_B \cdot m_\text{blind} \cdot s_A$, so $K_A \approx K_B$; reconciliation extracts a shared bit-string.
 
-**Peikert reconciliation (1-bit hint per coefficient).**  Because the raw product polynomials agree only approximately, direct extraction of bits fails at a rate of ~2% ($n=32$) to ~37% ($n=256$).  Peikert-style cross-rounding eliminates this:
+**Peikert reconciliation (2-bit hint per coefficient, v1.7.0).**  Because the raw product polynomials agree only approximately, direct extraction of bits fails at a rate of ~2% ($n=32$) to ~37% ($n=256$).  Peikert-style cross-rounding eliminates this.  The v1.7.0 scheme extracts **2 bits per coefficient** (pp=4), doubling key density vs.\ the original 1-bit scheme (pp=2):
 
 1. **Hint generation (Alice, reconciler).** For each coefficient $c_i$ of $K_\text{poly,A}$:
-$$h_i = \left\lfloor \frac{4c_i + q/2}{q} \right\rfloor \bmod 2, \qquad h_i \in \{0,1\}$$
-Alice transmits the hint vector $(h_0,\ldots,h_{n-1})$ as a side-channel alongside her public key.
+$$h_i = \left\lfloor \frac{8c_i + q/4}{q} \right\rfloor \bmod 4, \qquad h_i \in \{0,1,2,3\}$$
+Alice transmits the hint vector $(h_0,\ldots,h_{n/2-1})$ alongside her public key, packed 2 bits per byte position (hint size = $n/8$ bytes, same as the 1-bit scheme).
 
-2. **Key extraction (both parties).** For a coefficient $c_i$ (from either $K_\text{poly,A}$ or $K_\text{poly,B}$) and the shared hint $h_i$:
-$$b_i = \left\lfloor \frac{2c_i + h_i \cdot \lfloor q/2 \rfloor + \lfloor q/2 \rfloor}{q} \right\rfloor \bmod p'$$
-The extracted key is $K_\text{raw} = \sum_{i=0}^{k-1} b_i 2^i$ (first $k$ coefficients, $k = n/4$ for a 64-bit key at $n=256$).
+2. **Key extraction (both parties).** For a coefficient $c_i$ and the shared 2-bit hint $h_i$:
+$$b_i = \left\lfloor \frac{4c_i + (2h_i+1)\lfloor q/4 \rfloor}{q} \right\rfloor \bmod 4$$
+The extracted key is $K_\text{raw} = \sum_{i=0}^{k/2-1} b_i 4^i$ (first $k/2$ coefficients, $k$ = key bits; e.g. $k/2=128$ coefficients for a 256-bit key at $n=256$).
 
-3. **Correctness guarantee.** Empirical measurement (`hkex_rnl_failure_rate.py` §2) shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/8 = 8192$.  The extraction formula is equivalent to $\mathrm{round}((c_i + h_i \cdot q/4) / (q/2)) \bmod 2$ — the hint shifts the extraction boundary by $q/4$, so any boundary crossing within $\pm q/8$ is resolved deterministically.  The result is **0 failures** across all tested parameter combinations (`hkex_rnl_failure_rate.py` §5).
+3. **Correctness guarantee.** Empirical measurement shows $\max_i |K_{\text{poly,A}}[i] - K_{\text{poly,B}}[i]| \leq 379 \ll q/8 = 8192$.  The factor $(2h_i+1)$ in the extraction formula places each extraction grid point at an **odd multiple of $q/4$**, ensuring correct modular wrap-around at $c \approx 0$ and $c \approx q$.  Verified: **0 failures** over 53,751 test cases with $|\text{error}| \leq 380$.
 
 **KDF post-processing.**  The reconciled raw key $K$ is passed through NL-FSCX v1 with a rotated seed:
 
@@ -326,20 +326,21 @@ $(q=65537, n \in \{32, 256\})$ by `hkex_nl_verification.py` §2.1.  Noise amplif
 $\|m^{-1}\|_1 \cdot q/(2p) \approx 4.3\times10^6 \gg q$ confirms structural protection against
 naive algebraic inversion (§11.4.3, §11.5 Q2).
 
-**Correctness — Peikert reconciliation deployed (v1.5.16).**
+**Correctness — Peikert reconciliation deployed (v1.5.16); upgraded to 2-bit (v1.7.0).**
 Without reconciliation, empirical failure rates were 2.04% ($n=32$) and 37.24% ($n=256$).
-Peikert 1-bit reconciliation hints (§11.4.2) eliminate all failures:
+Peikert 2-bit reconciliation hints (§11.4.2, v1.7.0) eliminate all failures while doubling key density:
 
-| Parameters | Failure rate (without reconciliation) | Failure rate (with Peikert hints) |
+| Parameters | Failure rate (without reconciliation) | Failure rate (with 2-bit Peikert hints) |
 |---|---|---|
 | $n=32$, $p=4096$, $\eta=1$, 10 000 trials | 2.04% (204/10 000) | **0%** (0/10 000) |
 | $n=256$, $p=4096$, $\eta=1$, 5 000 trials | 37.24% (1 862/5 000) | **0%** (0/5 000) |
 
-Alice generates and transmits a 1-bit hint per coefficient ($h_i \in \{0,1\}$); both parties use the hint for extraction.  The maximum per-coefficient error $\leq 379 \ll q/8 = 8192$ guarantees the hint always resolves boundary crossings correctly (`hkex_rnl_failure_rate.py` §5).  Security assumptions are unchanged: the hint is derived from the public $K_\text{poly}$ after rounding and reveals no information about $s_A$.
+Alice generates and transmits a 2-bit hint per coefficient ($h_i \in \{0,1,2,3\}$, packed 2 bits/byte); both parties use the hint for 2-bit-per-coefficient extraction.  The maximum per-coefficient error $\leq 379 \ll q/8 = 8192$ guarantees the hint always resolves boundary crossings correctly.  Security assumptions are unchanged: the hint is derived from the public $K_\text{poly}$ after rounding and reveals no information about $s_A$.
 
 **Status.** The NL-FSCX primitives and HKEX-RNL were implemented across all languages in v1.5.0.
 The CBD(η=1) secret sampler was deployed in v1.5.3.  Failure rates characterised in v1.5.15.
-Peikert reconciliation deployed in v1.5.16 — correctness now guaranteed.
+1-bit Peikert reconciliation deployed in v1.5.16 — correctness guaranteed.
+2-bit Peikert reconciliation (doubles key density, same hint size) deployed in v1.7.0.
 
 ---
 

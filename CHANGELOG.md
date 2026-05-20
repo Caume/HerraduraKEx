@@ -4,6 +4,38 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.7.0] - 2026-05-20
+
+### Feature — 2-bit Peikert reconciliation for HKEX-RNL (TODO #39)
+
+Upgraded HKEX-RNL from 1-bit to 2-bit Peikert cross-rounding, doubling key density
+(2 bits extracted per ring coefficient, pp=4 instead of pp=2).  At n=256 this halves
+the polynomial size needed for a 256-bit output key.
+
+**Correct formulas** (all six language targets):
+- Hint: $h_i = \lfloor(8c_i + q/4)/q\rfloor \bmod 4$
+- Extract: $b_i = \lfloor(4c_i + (2h_i+1)\lfloor q/4\rfloor)/q\rfloor \bmod 4$
+
+The `(2h+1)` multiplier places extraction grid points at odd multiples of q/4,
+ensuring correct modular wrap-around at the c≈0 and c≈q boundaries.
+
+**Files changed:**
+- `Herradura cryptographic suite.py` — `RNLPP`, `_rnl_hint`, `_rnl_reconcile_bits`
+- `herradura.h` — `RNL_PP`, `rnl_hint`, `rnl_reconcile_bits`
+- `herradura/herradura.go` — `RnlPP`, `RnlHint`, `RnlReconcileBits`
+- `Herradura cryptographic suite.s` — `RNL_PP`, `rnl_hint32`, `rnl_reconcile32` (thresholds: 6145,14337,22529,30721,38913,47105,55297)
+- `Herradura cryptographic suite.asm` — same
+- `Herradura cryptographic suite.ino` — `RNL_PP`, `rnl_hint`, `rnl_reconcile`
+- `CryptosuiteTests/Herradura_tests.py` — all four hint/reconcile variants
+- `CryptosuiteTests/Herradura_tests.c` — all four hint/reconcile function families
+- `CryptosuiteTests/Herradura_tests.s` / `.asm` — thresholds and formula
+- `SecurityProofs-2.md` §11.4.2 — updated with 2-bit formulas
+- `TODO.md` #39 — marked DONE
+
+Test [14] HKEX-RNL: 20/20 agreed for n=32,64,128,256 (C, Go, ARM, NASM).
+
+---
+
 ## [1.5.42] - 2026-05-19
 
 ### Research — Exhaustive Walsh-Hadamard spectrum added to PRF analysis (TODO #35)
