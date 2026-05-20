@@ -148,10 +148,10 @@ ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmeti
 # HKEX-RNL Ring-LWR parameters (see SecurityProofs.md §11.4)
 # q=65537 (Fermat prime, fast arithmetic) gives lower noise-to-margin ratio than
 # q=3329 (Kyber), ensuring reliable single-block agreement at the cost of larger
-# keys.  Production deployment should add reconciliation hints (NewHope-style).
+# keys.  2-bit Peikert reconciliation doubles extracted bits per coefficient.
 RNLQ  = 65537  # prime modulus (2^16 + 1)
 RNLP  = 4096   # public-key rounding modulus
-RNLPP = 2      # reconciliation modulus (1 bit extracted per ring coefficient)
+RNLPP = 4      # reconciliation modulus (2 bits extracted per ring coefficient)
 RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
 
 # HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs.md §11.8.4)
@@ -576,19 +576,18 @@ def _rnl_bits_to_bitarray(poly, pp, size):
     return BitArray(size, val)
 
 def _rnl_hint(K_poly, q):
-    """Peikert cross-rounding: 1-bit hint per coefficient.
-    h[i] = floor((4*c + q/2) / q) % 4 % 2  (0 if c near 0 or q/2, 1 if near q/4 or 3q/4)"""
-    return [((4 * c + q // 2) // q) % 4 % 2 for c in K_poly]
+    """2-bit Peikert cross-rounding hint per coefficient.
+    h[i] = floor((8*c + q/4) / q) % 4  (eighth-bucket index with 1/8-cycle bias)"""
+    return [((8 * c + q // 4) // q) % 4 for c in K_poly]
 
 def _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits):
-    """Extract key bits using Peikert cross-rounding hint. Both parties call with
-    the same hint (from the reconciler) and their own K_poly to guarantee agreement."""
+    """Extract key_bits key bits: 2 bits per coefficient from key_bits//2 coefficients.
+    Both parties call with the same hint and their own K_poly to guarantee agreement."""
     val = 0
-    qh = q // 2
-    for i, (c, h) in enumerate(zip(K_poly[:key_bits], hint[:key_bits])):
-        b = ((2 * c + h * qh + qh) // q) % pp
-        if b:
-            val |= (1 << i)
+    qq = q // 4
+    for i, (c, h) in enumerate(zip(K_poly[:key_bits // 2], hint[:key_bits // 2])):
+        b = ((4 * c + (2 * h + 1) * qq) // q) % pp  # pp=4 → b ∈ {0,1,2,3}
+        val |= (b << (2 * i))
     return val
 
 def _rnl_keygen(m_blind, n, q, p, b):
@@ -970,7 +969,7 @@ HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   KDF:      seed = ROL(K_raw, n/8); sk = nl_fscx_revolve_v1(seed, K_raw, n/4)
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
-  Parameters: n=256, q=65537, p=4096, pp=2, eta=1 (CBD(1) secret distribution).
+  Parameters: n=256, q=65537, p=4096, pp=4, eta=1 (CBD(1) secret distribution).
 
 HPKS-NL (Schnorr + NL-FSCX v1 challenge):
   Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord

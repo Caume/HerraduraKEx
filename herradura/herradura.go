@@ -424,7 +424,7 @@ func HskeNla1MacKey(seed, base *BitArray) *BitArray {
 const (
 	RnlQ   = 65537 // Fermat prime (2^16+1)
 	RnlP   = 4096  // public-key rounding modulus
-	RnlPP  = 2     // reconciliation modulus (1 bit per coefficient)
+	RnlPP  = 4     // reconciliation modulus (2 bits per coefficient)
 	RnlEta = 1     // CBD eta: secret coefficients in {-1,0,1}
 )
 
@@ -634,28 +634,27 @@ func RnlKeygen(mBlind []int, n, q, p int) ([]int, []int) {
 	return s, c
 }
 
-// RnlHint returns the Peikert cross-rounding hint: 1 bit per coefficient.
+// RnlHint returns the 2-bit Peikert cross-rounding hint for the first len(kPoly)/2 coefficients.
 func RnlHint(kPoly []int, q int) []byte {
-	hint := make([]byte, (len(kPoly)+7)/8)
-	for i, c := range kPoly {
-		r := (4*c+q/2)/q % 4
-		if r%2 != 0 {
-			hint[i/8] |= 1 << (uint(i) % 8)
-		}
+	n := len(kPoly)
+	hint := make([]byte, (n+7)/8) // n/2 coeffs × 2 bits = n bits = n/8 bytes
+	for i := 0; i < n/2; i++ {
+		c := kPoly[i]
+		r := (8*c+q/4)/q % 4
+		hint[i/4] |= byte(r << uint((i%4)*2))
 	}
 	return hint
 }
 
-// RnlReconcileBits extracts keyBits key bits using the reconciliation hint.
+// RnlReconcileBits extracts keyBits key bits using the 2-bit Peikert hint (keyBits/2 coefficients).
 func RnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
-	qh := q / 2
+	qq := q / 4
 	val := new(big.Int)
-	for i := 0; i < keyBits && i < len(kPoly); i++ {
+	for i := 0; i < keyBits/2 && i < len(kPoly); i++ {
 		c := kPoly[i]
-		h := int((hint[i/8] >> (uint(i) % 8)) & 1)
-		if (2*c+h*qh+qh)/q%pp != 0 {
-			val.SetBit(val, i, 1)
-		}
+		h := int((hint[i/4] >> uint((i%4)*2)) & 3)
+		b := (4*c+(2*h+1)*qq)/q % pp // pp=4 → b ∈ {0,1,2,3}
+		val.Or(val, new(big.Int).Lsh(big.NewInt(int64(b)), uint(2*i)))
 	}
 	ba := &BitArray{size: keyBits}
 	ba.Val.Set(val)

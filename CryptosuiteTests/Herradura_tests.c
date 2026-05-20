@@ -460,7 +460,7 @@ static __uint128_t nl_fscx_revolve_v2_inv_128(__uint128_t y, __uint128_t b, int 
 #define RNL_N32  32
 #define RNL_Q32  65537
 #define RNL_P32  4096
-#define RNL_PP32 2
+#define RNL_PP32 4
 #define RNL_ETA32  1  /* CBD eta: secret coeffs from CBD(1) in {-1,0,1} mod q */
 
 typedef int32_t rnl32_poly_t[RNL_N32];
@@ -639,30 +639,30 @@ static void rnl32_keygen(int32_t s_out[RNL_N32], int32_t c_out[RNL_N32],
     rnl32_round(c_out, ms, RNL_Q32, RNL_P32);
 }
 
-/* Peikert hint: 1-bit per coeff, packed to uint32 (n=32 fits exactly). */
+/* 2-bit Peikert hint for first RNL_N32/2=16 coefficients, packed 2 bits/coeff. */
 static uint32_t rnl32_hint(const int32_t K_poly[RNL_N32])
 {
     uint32_t hint = 0;
     int i;
-    for (i = 0; i < RNL_N32; i++) {
+    for (i = 0; i < RNL_N32 / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
-        if (r % 2) hint |= (1u << i);
+        uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q32 / 4) / RNL_Q32) % 4;
+        hint |= (r << (uint32_t)(i * 2));
     }
     return hint;
 }
 
-/* Reconcile n=32 K_poly bits using hint, return packed uint32 key. */
+/* 2-bit reconciliation: 2 bits/coeff from RNL_N32/2 coefficients. */
 static uint32_t rnl32_reconcile(const int32_t K_poly[RNL_N32], uint32_t hint)
 {
-    const uint32_t qh = RNL_Q32 / 2;
+    const uint32_t qq = RNL_Q32 / 4;
     uint32_t key = 0;
     int i;
-    for (i = 0; i < RNL_N32; i++) {
+    for (i = 0; i < RNL_N32 / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t h = (hint >> i) & 1u;
-        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
-            key |= (1u << i);
+        uint32_t h = (hint >> (uint32_t)(i * 2)) & 3u;
+        uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q32) % RNL_PP32;
+        key |= (b << (uint32_t)(i * 2));
     }
     return key;
 }
@@ -683,7 +683,7 @@ static uint32_t rnl32_agree(const int32_t s[RNL_N32], const int32_t c_other[RNL_
 
 /* ------------------------------------------------------------------ */
 /* Generic-n HKEX-RNL helpers (VLA, n must be power of 2)             */
-/* q=65537, p=4096, pp=2 shared with n=32 above                        */
+/* q=65537, p=4096, pp=4 shared with n=32 above                        */
 /* ------------------------------------------------------------------ */
 
 static void rnl_poly_mul_n(int32_t *h, const int32_t *f, const int32_t *g, int n)
@@ -789,30 +789,30 @@ static void rnl_keygen_n(int32_t *s_out, int32_t *c_out, const int32_t *m_blind,
     rnl_round_n(c_out, ms, RNL_Q32, RNL_P32, n);
 }
 
-/* Peikert hint for generic-n (n≤64), packed to uint64_t. */
+/* 2-bit Peikert hint for generic-n (n≤64), packed 2 bits/coeff into uint64_t. */
 static uint64_t rnl_hint_n(const int32_t *K_poly, int n)
 {
     uint64_t hint = 0;
     int i;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
-        if (r % 2) hint |= ((uint64_t)1 << i);
+        uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q32 / 4) / RNL_Q32) % 4;
+        hint |= ((uint64_t)r << (uint32_t)(i * 2));
     }
     return hint;
 }
 
-/* Reconcile generic-n K_poly using hint, return packed uint64_t key. */
+/* 2-bit reconciliation for generic-n, return packed uint64_t key. */
 static uint64_t rnl_reconcile_n(const int32_t *K_poly, uint64_t hint, int n)
 {
-    const uint32_t qh = RNL_Q32 / 2;
+    const uint32_t qq = RNL_Q32 / 4;
     uint64_t key = 0;
     int i;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t h = (uint32_t)((hint >> i) & 1u);
-        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
-            key |= ((uint64_t)1 << i);
+        uint32_t h = (uint32_t)((hint >> (uint32_t)(i * 2)) & 3u);
+        uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q32) % RNL_PP32;
+        key |= ((uint64_t)b << (uint32_t)(i * 2));
     }
     return key;
 }
@@ -839,24 +839,24 @@ static __uint128_t rnl_hint_128(const int32_t *K_poly, int n)
 {
     __uint128_t hint = 0;
     int i;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
-        if (r % 2) hint |= ((__uint128_t)1 << i);
+        uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q32 / 4) / RNL_Q32) % 4;
+        hint |= ((__uint128_t)r << (uint32_t)(i * 2));
     }
     return hint;
 }
 
 static __uint128_t rnl_reconcile_128(const int32_t *K_poly, __uint128_t hint, int n)
 {
-    const uint32_t qh = RNL_Q32 / 2;
+    const uint32_t qq = RNL_Q32 / 4;
     __uint128_t key = 0;
     int i;
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t h = (uint32_t)((hint >> i) & 1u);
-        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
-            key |= ((__uint128_t)1 << i);
+        uint32_t h = (uint32_t)((hint >> (uint32_t)(i * 2)) & 3u);
+        uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q32) % RNL_PP32;
+        key |= ((__uint128_t)b << (uint32_t)(i * 2));
     }
     return key;
 }
@@ -878,29 +878,30 @@ static __uint128_t rnl_agree_128(const int32_t *s, const int32_t *c_other, int n
 /* HKEX-RNL 256-bit helpers (BitArray hint/reconcile/agree)           */
 /* ------------------------------------------------------------------ */
 
-/* Peikert hint for n=256: 1 bit per coeff packed into BitArray (bit i = coeff i). */
+/* 2-bit Peikert hint for n=256: 2 bits/coeff for n/2=128 coeffs, packed into BitArray. */
 static void rnl_hint_ba(const int32_t *K_poly, int n, BitArray *hint)
 {
     int i;
     memset(hint->b, 0, KEYBYTES);
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t r = (uint32_t)(((uint64_t)4 * c + RNL_Q32 / 2) / RNL_Q32) % 4;
-        if (r % 2) hint->b[KEYBYTES - 1 - i / 8] |= (uint8_t)(1u << (i % 8));
+        uint32_t r = (uint32_t)(((uint64_t)8 * c + RNL_Q32 / 4) / RNL_Q32) % 4;
+        /* store 2-bit r at bit positions 2*i and 2*i+1 (LSB-first, big-endian byte order) */
+        hint->b[KEYBYTES - 1 - (2*i) / 8] |= (uint8_t)(r << ((2*i) % 8));
     }
 }
 
 static void rnl_reconcile_ba(const int32_t *K_poly, const BitArray *hint,
                                int n, BitArray *key)
 {
-    const uint32_t qh = RNL_Q32 / 2;
+    const uint32_t qq = RNL_Q32 / 4;
     int i;
     memset(key->b, 0, KEYBYTES);
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n / 2; i++) {
         uint32_t c = (uint32_t)K_poly[i];
-        uint32_t h = (hint->b[KEYBYTES - 1 - i / 8] >> (i % 8)) & 1u;
-        if ((uint32_t)(((uint64_t)2 * c + (uint64_t)h * qh + qh) / RNL_Q32) % RNL_PP32)
-            key->b[KEYBYTES - 1 - i / 8] |= (uint8_t)(1u << (i % 8));
+        uint32_t h = (hint->b[KEYBYTES - 1 - (2*i) / 8] >> ((2*i) % 8)) & 3u;
+        uint32_t b = (uint32_t)(((uint64_t)4 * c + (uint64_t)(2*h+1) * qq) / RNL_Q32) % RNL_PP32;
+        key->b[KEYBYTES - 1 - (2*i) / 8] |= (uint8_t)(b << ((2*i) % 8));
     }
 }
 

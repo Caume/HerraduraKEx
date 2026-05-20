@@ -21,7 +21,7 @@
 %define RNL_N      32
 %define RNL_Q      65537
 %define RNL_P      4096
-%define RNL_PP     2
+%define RNL_PP     4
 %define SDF_N      32
 %define SDF_T      2
 %define SDF_NROWS  16
@@ -1824,6 +1824,8 @@ rnl_keygen:
 
 ; ============================================================
 ; rnl_hint32: EAX=K_poly -> EAX=hint_uint32
+;   2-bit hint per coeff; RNL_N/2=16 coefficients used.
+;   Thresholds: 6145, 14337, 22529, 30721, 38913, 47105, 55297
 ; ============================================================
 rnl_hint32:
     push ebx
@@ -1835,23 +1837,37 @@ rnl_hint32:
     xor  edi, edi
     xor  ecx, ecx
 .rh32_loop:
-    cmp  ecx, RNL_N
+    cmp  ecx, (RNL_N/2)
     jge  .rh32_done
     mov  eax, [esi + ecx*4]
-    cmp  eax, 0x4000
-    jl   .rh32_next
-    cmp  eax, 0x8000
-    jge  .rh32_upper
+    xor  edx, edx
+    cmp  eax, 6145
+    jl   .rh32_store
     mov  edx, 1
-    shl  edx, cl
-    or   edi, edx
-    jmp  .rh32_next
-.rh32_upper:
-    cmp  eax, 0xC000
-    jl   .rh32_next
+    cmp  eax, 14337
+    jl   .rh32_store
+    mov  edx, 2
+    cmp  eax, 22529
+    jl   .rh32_store
+    mov  edx, 3
+    cmp  eax, 30721
+    jl   .rh32_store
+    xor  edx, edx
+    cmp  eax, 38913
+    jl   .rh32_store
     mov  edx, 1
-    shl  edx, cl
+    cmp  eax, 47105
+    jl   .rh32_store
+    mov  edx, 2
+    cmp  eax, 55297
+    jl   .rh32_store
+    mov  edx, 3
+.rh32_store:
+    push ecx
+    shl  ecx, 1              ; ecx = 2*i
+    shl  edx, cl             ; edx = h << (2*i)
     or   edi, edx
+    pop  ecx
 .rh32_next:
     inc  ecx
     jmp  .rh32_loop
@@ -1866,7 +1882,7 @@ rnl_hint32:
 
 ; ============================================================
 ; rnl_reconcile32: EAX=K_poly, EBX=hint -> EAX=key_uint32
-;   b[i] = ((2*c + h*32768 + 32768) / 65537) % 2
+;   b[i] = ((4*c + (2*h+1)*(q/4)) / q) % 4; 16 coefficients.
 ; ============================================================
 rnl_reconcile32:
     push ebx
@@ -1876,36 +1892,39 @@ rnl_reconcile32:
     push edi
     push ebp
     mov  esi, eax
-    mov  ebp, ebx
+    mov  ebp, ebx            ; ebp = hint
     xor  edi, edi
     xor  ecx, ecx
 .rc32_loop:
-    cmp  ecx, RNL_N
+    cmp  ecx, (RNL_N/2)
     jge  .rc32_done
     mov  eax, [esi + ecx*4]  ; c
-    shl  eax, 1              ; 2*c
+    shl  eax, 2              ; 4*c
+    push ecx
+    shl  ecx, 1              ; ecx = 2*i
     mov  edx, ebp
-    shr  edx, cl
-    and  edx, 1              ; h
-    shl  edx, 15             ; h * 32768
-    add  eax, edx            ; 2*c + h*32768
-    add  eax, 0x8000         ; + 32768
+    shr  edx, cl             ; hint >> (2*i)
+    and  edx, 3              ; h
+    shl  edx, 1              ; 2*h
+    inc  edx                 ; 2*h+1
+    imul edx, 0x4000         ; (2*h+1) * (q/4)
+    add  eax, edx            ; 4*c + (2*h+1)*(q/4)
+    xor  edx, edx
     cmp  eax, RNL_Q
-    jl   .rc32_next
+    jl   .rc32_pack
     sub  eax, RNL_Q
-    cmp  eax, RNL_Q
-    jge  .rc32_upper
     mov  edx, 1
-    shl  edx, cl
-    or   edi, edx
-    jmp  .rc32_next
-.rc32_upper:
+    cmp  eax, RNL_Q
+    jl   .rc32_pack
     sub  eax, RNL_Q
+    mov  edx, 2
     cmp  eax, RNL_Q
-    jl   .rc32_next
-    mov  edx, 1
-    shl  edx, cl
+    jl   .rc32_pack
+    mov  edx, 3
+.rc32_pack:
+    shl  edx, cl             ; edx = b << (2*i)
     or   edi, edx
+    pop  ecx
 .rc32_next:
     inc  ecx
     jmp  .rc32_loop

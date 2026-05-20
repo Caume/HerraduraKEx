@@ -329,7 +329,7 @@ func encodeSessionKey(key *BitArray, nbits int) (string, error) {
 }
 
 // encodeRNLResponse encodes Bob's HKEX-RNL step-1 response.
-// hint is Go's native packed hint (bit i/8 of byte[i] = coeff i hint).
+// hint is Go's native packed hint (2-bit per coeff: hint[i/4] bits (i%4)*2..(i%4)*2+1 = coeff i hint).
 // Bytes are reversed before DER encoding to match Python's big-endian convention.
 func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int) (string, error) {
 	// K_B: minimum-width big-endian encoding

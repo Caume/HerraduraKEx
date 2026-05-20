@@ -484,14 +484,14 @@ def _rnl_bits_to_bitarray(poly, pp, size):
     return BitArray(size, val)
 
 def _rnl_hint(K_poly, q):
-    return [((4 * c + q // 2) // q) % 4 % 2 for c in K_poly]
+    return [((8 * c + q // 4) // q) % 4 for c in K_poly]
 
 def _rnl_reconcile_bits(K_poly, hint, q, pp, key_bits):
-    qh = q // 2
+    qq = q // 4
     val = 0
-    for i, (c, h) in enumerate(zip(K_poly[:key_bits], hint[:key_bits])):
-        b = ((2 * c + h * qh + qh) // q) % pp
-        if b: val |= (1 << i)
+    for i, (c, h) in enumerate(zip(K_poly[:key_bits // 2], hint[:key_bits // 2])):
+        b = ((4 * c + (2 * h + 1) * qq) // q) % pp
+        val |= (b << (2 * i))
     return val
 
 def _rnl_keygen(m_blind, n, q, p):
@@ -524,7 +524,7 @@ GF_TRIALS = 100                 # trials for GfPow-heavy tests
 RNL_SIZES = [32, 64, 128, 256]  # ring polynomial degrees for HKEX-RNL tests
 RNLQ  = 65537  # Fermat prime (2^16+1); lower noise-to-margin ratio than q=3329
 RNLP  = 4096   # public-key rounding modulus
-RNLPP = 2      # reconciliation modulus (1 bit per coefficient)
+RNLPP = 4      # reconciliation modulus (2 bits per coefficient)
 RNLETA = 1     # CBD eta: secret coefficients from CBD(1) in {-1,0,1}
 
 TARGET_SEC = 1.0  # kept for reference; overridden by g_bench_sec at runtime
