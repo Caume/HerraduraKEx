@@ -41,7 +41,7 @@ run_elf() {
         exit 1
     fi
     echo "=== Arduino (ATmega2560) — ${LABEL} ===" >&2
-    if [ "${TIMEOUT}" -gt 0 ] 2>/dev/null; then
+    if (( TIMEOUT > 0 )); then
         timeout "${TIMEOUT}" simavr -m "${MCU}" -f "${FREQ}" "${ELF}" || true
     else
         simavr -m "${MCU}" -f "${FREQ}" "${ELF}"
