@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.6.1
+    Herradura Cryptographic Suite v1.7.3
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.7.3: NumPy NTT acceleration — ~10× speedup on _rnl_poly_mul (TODO #40) ---
     --- v1.5.41: rnl_lift centered rounding across all targets (TODO #37) ---
     --- v1.5.40: Constant-time audit — branchless stern_apply_perm + non-CT docs (TODO #41) ---
     --- v1.5.23: HerraduraCli — OpenSSL-style Python CLI (TODO #25); CliTest shell test suite ---
@@ -132,6 +133,74 @@ import math
 import os
 import random
 import warnings
+
+try:
+    import numpy as _np
+    _NUMPY = True
+    _NTT_CACHE = {}   # (q, n) -> (rev, fwd_tw, inv_tw, inv_n, psi_pows, psi_inv_pows)
+
+    def _ntt_tables(q, n):
+        key = (q, n)
+        if key in _NTT_CACHE:
+            return _NTT_CACHE[key]
+        bits = n.bit_length() - 1
+        tmp = _np.arange(n, dtype=_np.int32)
+        rev = _np.zeros(n, dtype=_np.int32)
+        for _ in range(bits):
+            rev = (rev << 1) | (tmp & 1)
+            tmp >>= 1
+        def _twiddles(invert):
+            tables, length = [], 2
+            while length <= n:
+                w = pow(3, (q - 1) // length, q)
+                if invert:
+                    w = pow(w, q - 2, q)
+                half = length >> 1
+                tw = _np.empty(half, dtype=_np.int64)
+                wn = 1
+                for k in range(half):
+                    tw[k] = wn
+                    wn = wn * w % q
+                tables.append(tw)
+                length <<= 1
+            return tables
+        fwd_tw = _twiddles(False)
+        inv_tw = _twiddles(True)
+        inv_n  = pow(n, q - 2, q)
+        psi     = pow(3, (q - 1) // (2 * n), q)
+        psi_inv = pow(psi, q - 2, q)
+        pw, pw_inv = 1, 1
+        psi_pows     = _np.empty(n, dtype=_np.int64)
+        psi_inv_pows = _np.empty(n, dtype=_np.int64)
+        for i in range(n):
+            psi_pows[i]     = pw
+            psi_inv_pows[i] = pw_inv
+            pw     = pw     * psi     % q
+            pw_inv = pw_inv * psi_inv % q
+        _NTT_CACHE[key] = (rev, fwd_tw, inv_tw, inv_n, psi_pows, psi_inv_pows)
+        return _NTT_CACHE[key]
+
+    def _ntt_np(arr, q, invert):
+        n = len(arr)
+        rev, fwd_tw, inv_tw, inv_n, _, _ = _ntt_tables(q, n)
+        tables = inv_tw if invert else fwd_tw
+        arr[:] = arr[rev]
+        stage, length = 0, 2
+        while length <= n:
+            half = length >> 1
+            A = arr.reshape(n // length, length)
+            U = A[:, :half].copy()
+            V = A[:, half:] * tables[stage] % q
+            A[:, :half] = (U + V) % q
+            A[:, half:] = (U - V + q) % q
+            length <<= 1
+            stage += 1
+        if invert:
+            arr *= inv_n
+            arr %= q
+
+except ImportError:
+    _NUMPY = False
 
 
 # ---------------------------------------------------------------------------
@@ -498,6 +567,15 @@ def _rnl_poly_mul(f, g, q, n):
     """Multiply f*g in Z_q[x]/(x^n+1) via negacyclic NTT. O(n log n).
     ψ = 3^((q-1)/(2n)) is a primitive 2n-th root of unity; ψ^n ≡ -1 (mod q)
     encodes the negacyclic wrap without explicit branch logic."""
+    if _NUMPY:
+        _, _, _, _, psi_pows, psi_inv_pows = _ntt_tables(q, n)
+        fa = _np.array(f, dtype=_np.int64) * psi_pows % q
+        ga = _np.array(g, dtype=_np.int64) * psi_pows % q
+        _ntt_np(fa, q, False)
+        _ntt_np(ga, q, False)
+        ha = fa * ga % q
+        _ntt_np(ha, q, True)
+        return (ha * psi_inv_pows % q).tolist()
     psi     = pow(3, (q - 1) // (2 * n), q)
     psi_inv = pow(psi, q - 2, q)
     fa, ga  = list(f), list(g)
