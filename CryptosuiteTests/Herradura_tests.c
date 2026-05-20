@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.6.1: stern_hash_ba DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash_ba + stern_hash_64 HFSCX-256 finalizer (TODO #43).
     v1.5.43: F_stern range compression HyperLogLog test [20] (TODO #42 Step 1);
              benchmarks renumbered [21]-[30].
@@ -2372,10 +2373,12 @@ static void test_hpke_nl_correctness(void)
 
 #define SDF_TEST_ROUNDS 8              /* reduced rounds for test speed  */
 
-/* Chain-hash + HFSCX-256 finalizer (TODO #43, v1.6.0). */
-static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items)
+/* Chain-hash + HFSCX-256 finalizer (TODO #43, v1.6.0).
+ * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1). */
+static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
     BitArray h = {{0}};
+    h.b[KEYBYTES - 1] = (uint8_t)(ds & 0xFF);
     int i;
     for (i = 0; i < n_items; i++) {
         BitArray hxv, rotv;
@@ -2530,9 +2533,9 @@ static void hpks_stern_f_sign_t(SternSigT *sig, const BitArray *msg,
         stern_apply_perm_ba(&sr[i], perm, &r[i], KEYBITS);
         stern_apply_perm_ba(&sy[i], perm, &y[i], KEYBITS);
         items[0] = pi[i]; syndr_to_ba_t(&items[1], Hr[i]);
-        stern_hash_ba(&sig->c0[i], items, 2);
-        stern_hash_ba(&sig->c1[i], &sr[i], 1);
-        stern_hash_ba(&sig->c2[i], &sy[i], 1);
+        stern_hash_ba(&sig->c0[i], items, 2, 1);
+        stern_hash_ba(&sig->c1[i], &sr[i], 1, 2);
+        stern_hash_ba(&sig->c2[i], &sy[i], 1, 3);
     }
     stern_fs_challenges_t(sig->b, SDF_TEST_ROUNDS, msg,
                           sig->c0, sig->c1, sig->c2);
@@ -2560,9 +2563,9 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
         int bv = sig->b[i];
         BitArray tmp;
         if (bv == 0) {
-            stern_hash_ba(&tmp, &sig->resp_a[i], 1);
+            stern_hash_ba(&tmp, &sig->resp_a[i], 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
-            stern_hash_ba(&tmp, &sig->resp_b[i], 1);
+            stern_hash_ba(&tmp, &sig->resp_b[i], 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
             if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
         } else if (bv == 1) {
@@ -2571,11 +2574,11 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
             if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
             stern_syndrome_ba(Hr, seed, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hr);
-            stern_hash_ba(&tmp, items, 2);
+            stern_hash_ba(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
             stern_gen_perm_ba(perm, &sig->resp_a[i], KEYBITS);
             stern_apply_perm_ba(&sr2, perm, &sig->resp_b[i], KEYBITS);
-            stern_hash_ba(&tmp, &sr2, 1);
+            stern_hash_ba(&tmp, &sr2, 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
         } else {
             uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
@@ -2584,11 +2587,11 @@ static int hpks_stern_f_verify_t(const SternSigT *sig, const BitArray *msg,
             stern_syndrome_ba(Hy, seed, &sig->resp_b[i]);
             for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
             items[0] = sig->resp_a[i]; syndr_to_ba_t(&items[1], Hys);
-            stern_hash_ba(&tmp, items, 2);
+            stern_hash_ba(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
             stern_gen_perm_ba(perm, &sig->resp_a[i], KEYBITS);
             stern_apply_perm_ba(&sy2, perm, &sig->resp_b[i], KEYBITS);
-            stern_hash_ba(&tmp, &sy2, 1);
+            stern_hash_ba(&tmp, &sy2, 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
         }
     }

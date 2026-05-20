@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.6.0
+/*  Herradura Cryptographic Suite v1.6.1
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -181,7 +181,7 @@ static uint32_t hpke_stern_f_encap_32(uint32_t seed, uint16_t *ct_out,
     uint32_t e_p = stern32_rand_error(urnd);
     *ct_out = stern32_syndrome(seed, e_p);
     *e_out  = e_p;
-    return stern32_hash(stern32_hash(0, seed), e_p);
+    return stern32_hash(stern32_hash(4, seed), e_p);  /* ds=4: KEM key slot */
 }
 
 static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
@@ -191,7 +191,7 @@ static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
         for (j = i + 1; j < SDF32_N; j++) {
             uint32_t e_p = (1u << i) | (1u << j);
             if (stern32_syndrome(seed, e_p) == ct)
-                return stern32_hash(stern32_hash(0, seed), e_p);
+                return stern32_hash(stern32_hash(4, seed), e_p);  /* ds=4: KEM key slot */
         }
     return 0xFFFFFFFFu; /* decode failed */
 }

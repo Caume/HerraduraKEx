@@ -1,4 +1,5 @@
 /*  package herradura — Herradura Cryptographic Suite shared library
+    v1.6.1: SternHash ds parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: SternHash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: RnlLift centered rounding (TODO #37).
     v1.5.40: SternApplyPerm made branchless (no branch on secret bits) — TODO #41.
@@ -687,12 +688,14 @@ const (
 
 // SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
 // then applies HFSCX-256 to eliminate range compression (TODO #43, v1.6.0).
-func SternHash(items ...*BitArray) *BitArray {
+// ds is the domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1).
+func SternHash(ds int, items ...*BitArray) *BitArray {
 	n := 256
 	if len(items) > 0 {
 		n = items[0].size
 	}
 	h := &BitArray{size: n}
+	h.Val.SetInt64(int64(ds))
 	for _, v := range items {
 		h = NlFscxRevolveV1(h.Xor(v), v.RotateLeft(n/8), n/4)
 	}
@@ -839,9 +842,9 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 		sr := SternApplyPerm(perm, r)
 		sy := SternApplyPerm(perm, y)
 		hrBA := SyndrToBA(n, SternSyndrome(seed, r))
-		c0 := SternHash(pi, hrBA)
-		c1 := SternHash(sr)
-		c2 := SternHash(sy)
+		c0 := SternHash(1, pi, hrBA)
+		c1 := SternHash(2, sr)
+		c2 := SternHash(3, sy)
 		tmp[i] = rtmp{r, y, pi, sr, sy}
 		sig.Rounds[i].C0 = c0
 		sig.Rounds[i].C1 = c1
@@ -891,10 +894,10 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 	for _, r := range sig.Rounds {
 		switch r.B {
 		case 0:
-			if !SternHash(r.RespA).Equal(r.C1) {
+			if !SternHash(2, r.RespA).Equal(r.C1) {
 				return false
 			}
-			if !SternHash(r.RespB).Equal(r.C2) {
+			if !SternHash(3, r.RespB).Equal(r.C2) {
 				return false
 			}
 			if CountBits(&r.RespA.Val) != t {
@@ -905,20 +908,20 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 				return false
 			}
 			hrBA := SyndrToBA(n, SternSyndrome(seed, r.RespB))
-			if !SternHash(r.RespA, hrBA).Equal(r.C0) {
+			if !SternHash(1, r.RespA, hrBA).Equal(r.C0) {
 				return false
 			}
 			sr2 := SternApplyPerm(SternGenPerm(r.RespA, n), r.RespB)
-			if !SternHash(sr2).Equal(r.C1) {
+			if !SternHash(2, sr2).Equal(r.C1) {
 				return false
 			}
 		default:
 			hysBA := SyndrToBA(n, new(big.Int).Xor(SternSyndrome(seed, r.RespB), syndrome))
-			if !SternHash(r.RespA, hysBA).Equal(r.C0) {
+			if !SternHash(1, r.RespA, hysBA).Equal(r.C0) {
 				return false
 			}
 			sy2 := SternApplyPerm(SternGenPerm(r.RespA, n), r.RespB)
-			if !SternHash(sy2).Equal(r.C2) {
+			if !SternHash(3, sy2).Equal(r.C2) {
 				return false
 			}
 		}
@@ -931,10 +934,10 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 func HpkeSternFEncap(seed *BitArray, n int) (*BitArray, *big.Int, *BitArray) {
 	ePrime := SternRandError(n, n/16)
 	ct := SternSyndrome(seed, ePrime)
-	return SternHash(seed, ePrime), ct, ePrime
+	return SternHash(4, seed, ePrime), ct, ePrime
 }
 
 // HpkeSternFDecapKnown recomputes K = hash(seed, e') given e' directly (demo only).
 func HpkeSternFDecapKnown(ePrime, seed *BitArray) *BitArray {
-	return SternHash(seed, ePrime)
+	return SternHash(4, seed, ePrime)
 }

@@ -278,13 +278,15 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
 # HPKS-Stern-F / HPKE-Stern-F helpers (self-contained, mirrors suite)
 # ---------------------------------------------------------------------------
 
-def _stern_hash(n: int, *items) -> 'BitArray':
+def _stern_hash(n: int, *items, ds: int = 0) -> 'BitArray':
+    """Chain-hash + HFSCX-256 finalizer (v1.6.0). ds: domain-sep tag (TODO #36, v1.6.1)."""
     mask = (1 << n) - 1
-    h = BitArray(n, 0)
+    h = BitArray(n, ds & mask)
     for item in items:
         v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
         h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
-    return h
+    digest = hfscx_256(h.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
     seed = BitArray(n, seed_int)
@@ -334,9 +336,9 @@ def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
         Hr  = _stern_syndrome(seed.uint, r_int, n, n_rows)
         sr  = _stern_apply_perm(perm, r_int, n)
         sy  = _stern_apply_perm(perm, y_int, n)
-        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr)),
-                        _stern_hash(n, BitArray(n, sr)),
-                        _stern_hash(n, BitArray(n, sy))))
+        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr), ds=1),
+                        _stern_hash(n, BitArray(n, sr), ds=2),
+                        _stern_hash(n, BitArray(n, sy), ds=3)))
         round_data.append((r_int, y_int, pi_seed, Hr, sr, sy))
     flat = [msg]
     for c0, c1, c2 in commits:
@@ -367,31 +369,31 @@ def hpks_stern_f_verify(msg, sig, seed, syndrome, n):
         c0, c1, c2 = commits[i]; resp = responses[i]
         if b == 0:
             sr, sy = resp
-            if _stern_hash(n, BitArray(n, sr)) != c1: return False
-            if _stern_hash(n, BitArray(n, sy)) != c2: return False
-            if bin(sr).count('1') != t:               return False
+            if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
+            if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
+            if bin(sr).count('1') != t:                     return False
         elif b == 1:
             pi_seed, r_int = resp
-            if bin(r_int).count('1') != t:            return False
+            if bin(r_int).count('1') != t:                  return False
             perm = _stern_gen_perm(pi_seed, n)
             Hr   = _stern_syndrome(seed.uint, r_int, n, n_rows)
-            if _stern_hash(n, pi_seed, BitArray(n, Hr)) != c0: return False
+            if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
             sr   = _stern_apply_perm(perm, r_int, n)
-            if _stern_hash(n, BitArray(n, sr)) != c1: return False
+            if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
         else:
             pi_seed, y_int = resp
             perm = _stern_gen_perm(pi_seed, n)
             Hy   = _stern_syndrome(seed.uint, y_int, n, n_rows)
-            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome)) != c0: return False
+            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome), ds=1) != c0: return False
             sy   = _stern_apply_perm(perm, y_int, n)
-            if _stern_hash(n, BitArray(n, sy)) != c2: return False
+            if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
     return True
 
 def hpke_stern_f_encap(seed, n):
     n_rows = n // 2; t = max(2, n // 16)
     e_p    = sum(1 << p for p in random.sample(range(n), t))
     ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
-    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct
 
 def hpke_stern_f_decap(ciphertext, seed, n):
@@ -399,7 +401,7 @@ def hpke_stern_f_decap(ciphertext, seed, n):
     for pos in itertools.combinations(range(n), t):
         e_p = sum(1 << p for p in pos)
         if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
-            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return None
 
 def hpke_stern_f_encap_with_e(seed, n):
@@ -407,12 +409,12 @@ def hpke_stern_f_encap_with_e(seed, n):
     n_rows = n // 2; t = max(2, n // 16)
     e_p = sum(1 << p for p in random.sample(range(n), t))
     ct  = _stern_syndrome(seed.uint, e_p, n, n_rows)
-    K   = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    K   = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct, e_p
 
 def hpke_stern_f_decap_known(e_int, seed, n):
     """Known-error decap: given the plaintext error e_int, derive K directly."""
-    return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)))
+    return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)), ds=4)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-;  Herradura Cryptographic Suite v1.6.0
+;  Herradura Cryptographic Suite v1.6.1
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
 ;                        HPKS-Stern-F, HPKE-Stern-F

@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.6.0 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.6.1 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32

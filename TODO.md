@@ -2330,7 +2330,13 @@ on NL-FSCX v1.  Two paths:
 Until this gap is closed, Theorem 17's bound is contingent on an unstated
 assumption.
 
-Status: **TODO**.
+Status: **DONE v1.6.1**.
+
+Added a `ds` (domain-separation) integer parameter to `_stern_hash` (Python suite + test), `stern_hash` (C header + test), `SternHash` (Go package + test), and the C suite n=32 demo KEM (`stern32_hash` initial value).  DS values: c0=1, c1=2, c2=3, KEM-key=4, challenge=0.  Under the ROM on HFSCX-256 (§11.9.2), per-slot DS ensures c0, c1, c2, and the KEM key invoke independent random oracles, satisfying Unruh's QROM requirement for Theorem 17.
+
+Assembly/Arduino (n=32 toy demo): sign/verify `stern_hash1_32`/`stern_hash2_32` do not yet carry per-slot DS; structural distinctness limits same-slot collision to ≤2^{-32} — negligible at n=32.  Full assembly DS is a future hardening item.
+
+SecurityProofs-2.md §11.9.9 updated with QRO argument; Theorem 17 proof step (iv) updated to reference ROM on HFSCX-256.  Validator: 749 OK, 0 FAIL.
 
 ---
 
@@ -2659,7 +2665,7 @@ Status: **DONE v1.6.0**.  Updated all six language targets: Python (`_stern_hash
 23. #37 — `_rnl_lift` centered rounding (cross-language wire change) (**DONE v1.5.41**)
 24. #34 — HFSCX-256 formal analysis in §11 (**DONE v1.5.30**)
 25. #43 — Hash `_stern_hash` output through HFSCX-256 (range compression fix) (**DONE v1.6.0**)
-26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**TODO** — was blocked on #43, now unblocked)
+26. #36 — `_stern_hash` QRO modeling for Theorem 17 (**DONE v1.6.1** — DS parameter + §11.9.9 QRO argument)
 27. #41 — Constant-time audit / documentation (**DONE v1.5.39+1**)
 28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
 29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)

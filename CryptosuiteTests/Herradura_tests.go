@@ -1,4 +1,5 @@
 /*  Herradura KEx — Security & Performance Tests (Go)
+    v1.6.1: SternHash ds parameter (TODO #36).
     v1.5.27: refactored to import package herradura; added HFSCX-256 KAV test [17].
     v1.5.23: HPKS-Stern-F + HPKE-Stern-F tests [17][18] (now [18][19]).
     v1.5.22: CBD(eta=1) 4-coeffs/byte; test[14] n∈{32,64,128,256}.
@@ -675,10 +676,10 @@ func testHpkeSternFCorrectness() {
 		seed   := randBA(32)
 		ePrime := SternRandError(32, 2)
 		ct     := SternSyndrome(seed, ePrime)
-		K      := SternHash(seed, ePrime)
+		K      := SternHash(4, seed, ePrime)
 		eDec, found := hpkeSternFBruteForce32(seed, ct)
 		if found {
-			KDec := SternHash(seed, eDec)
+			KDec := SternHash(4, seed, eDec)
 			if K.Equal(KDec) { ok++ }
 		}
 		if timeExceeded(t0) { N = i + 1; break }

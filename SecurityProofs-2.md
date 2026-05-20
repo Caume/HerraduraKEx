@@ -582,17 +582,17 @@ where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support 
 
    $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
 
-Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.
+Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (§11.9.9) now finalizes through HFSCX-256 with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256 (§11.9), this provides the independent quantum random oracles required by Unruh's transform.
 
 **Theorem 17 — EUF-CMA of HPKS-Stern-F.**
 
-Let $\mathrm{SD}(N,t)$ denote the syndrome decoding problem: given $(H, \mathbf{s})$ find $\mathbf{e}$ with $H\mathbf{e}^\top = \mathbf{s}$ and $\mathrm{wt}(\mathbf{e}) = t$.  If $\mathrm{SD}(N,t)$ requires $T_\mathrm{SD}$ quantum operations and NL-FSCX v1 is a secure PRF with advantage $\epsilon_\mathrm{PRF}$, then HPKS-Stern-F achieves EUF-CMA with:
+Let $\mathrm{SD}(N,t)$ denote the syndrome decoding problem: given $(H, \mathbf{s})$ find $\mathbf{e}$ with $H\mathbf{e}^\top = \mathbf{s}$ and $\mathrm{wt}(\mathbf{e}) = t$.  If $\mathrm{SD}(N,t)$ requires $T_\mathrm{SD}$ quantum operations, NL-FSCX v1 is a secure PRF with advantage $\epsilon_\mathrm{PRF}$, and HFSCX-256 is modeled as a random oracle, then HPKS-Stern-F achieves EUF-CMA with:
 
 $$\Pr[\mathrm{forge}] \leq \frac{q_H}{T_\mathrm{SD}} + \epsilon_\mathrm{PRF}$$
 
 for $q_H$ quantum hash queries.
 
-*Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
+*Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — `_stern_hash` outputs `HFSCX-256(ds || chain(...))` where `ds` is a per-slot domain tag; under the ROM on HFSCX-256, the per-slot outputs are independent random oracles, satisfying Unruh's QROM requirement.  EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
 
 **HPKE-Stern-F: Niederreiter-Style KEM.**  Use the same $(H, \mathbf{s} = H\mathbf{e}^\top)$ for key encapsulation:
 
@@ -791,12 +791,17 @@ $$C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s.$$
 
 **Recommendation.**  Schedule the Davies-Meyer switch for a future major version (suite v2.0) when other wire-format changes (TODO #37, #38, #39) can be bundled.  Until then, the deployed construction is heuristically secure under A1+A2; A2 alone guarantees $2^{128}$ classical / $2^{128}$ quantum attack cost on every direct attack vector (collision, preimage, second-preimage, length extension, MAC forgery).
 
-### 11.9.9 Note on `_stern_hash` (cross-reference)
+### 11.9.9 `_stern_hash` QRO argument (TODO #36 — DONE v1.6.1)
 
-The Stern-F protocol uses a separate chaining function `_stern_hash`, not HFSCX-256:
-$$\mathrm{StH}(v_1, \ldots, v_k) = h_k, \quad h_0 = 0, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i, \mathrm{ROL}(v_i, n/8)\bigr).$$
+As of v1.6.1 the Stern-F commitment hash is (ds = domain-separation tag):
 
-This rotates the message into the **key** slot of NL-FSCX v1 instead of the message slot, and lacks the finalization step.  Its security analysis (whether it satisfies the QRO assumption needed for Theorem 17's Fiat-Shamir transform) is the subject of TODO #36 and is **not** covered by §11.9.
+$$\mathrm{StH}_{\mathrm{ds}}(v_1, \ldots, v_k) = \mathrm{HFSCX\text{-}256}(h_k)[0{:}n/8], \quad h_0 = \mathrm{ds}, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i, \mathrm{ROL}(v_i, n/8)\bigr)$$
+
+Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0 for the Fiat-Shamir challenge.
+
+**QRO argument.** Under the ROM on HFSCX-256 (§11.9.2, assumption A1), distinct per-slot ds values guarantee that c0, c1, c2, and the KEM key each invoke an independent random oracle.  By Unruh's composition theorem [Unruh 2015], this satisfies the QROM requirement for Theorem 17's Fiat-Shamir transform.  The range compression gap from TODO #42 (F_stern maps only ~24% of 2^32 inputs to distinct outputs at n=32) is resolved: the HFSCX-256 finalization added in v1.6.0 maps the chained state through a full 256-bit hash before truncation, restoring the ~63.2% distinct-output fraction expected of a random function.
+
+**Assembly/Arduino (n=32 toy demo).** The 32-bit `hfscx_32` finalizer and the KEM call with ds=4 provide the same QRO property for the KEM slot.  The sign/verify `stern_hash1_32`/`stern_hash2_32` in the n=32 demo do not yet carry per-slot DS tags; structural distinctness (different item counts) limits same-slot collision probability to at most 2^(-32) — negligible at toy parameters.  Full per-slot DS for assembly is a future hardening item.
 
 ### 11.9.10 Empirical evidence
 
