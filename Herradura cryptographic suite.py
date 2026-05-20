@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.5.41
+    Herradura Cryptographic Suite v1.6.1
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -642,14 +642,17 @@ def _csprng_weight_t(n: int, t: int) -> int:
     return sum(1 << p for p in chosen)
 
 
-def _stern_hash(n: int, *items: 'BitArray') -> 'BitArray':
-    """Chain-hash items to n bits: h ← NL-FSCX_v1^{n/4}(h⊕v, ROL(v,n/8)) for each v."""
+def _stern_hash(n: int, *items: 'BitArray', ds: int = 0) -> 'BitArray':
+    """Chain-hash items to n bits via NL-FSCX v1, finalized with HFSCX-256 (v1.6.0).
+    ds: domain-separation tag initialising the chain state (0=challenge/default,
+        1=c0, 2=c1, 3=c2, 4=KEM-key).  Prevents cross-slot collisions (TODO #36)."""
     mask = (1 << n) - 1
-    h = BitArray(n, 0)
+    h = BitArray(n, ds & mask)
     for item in items:
         v = item if isinstance(item, BitArray) else BitArray(n, int(item) & mask)
         h = nl_fscx_revolve_v1(h ^ v, v.rotated(n // 8), n // 4)
-    return h
+    digest = hfscx_256(h.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
@@ -775,9 +778,9 @@ def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
         Hr  = _stern_syndrome_H(H_rows, r_int)
         sr  = _stern_apply_perm(perm, r_int, n)
         sy  = _stern_apply_perm(perm, y_int, n)
-        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr)),
-                        _stern_hash(n, BitArray(n, sr)),
-                        _stern_hash(n, BitArray(n, sy))))
+        commits.append((_stern_hash(n, pi_seed, BitArray(n, Hr), ds=1),
+                        _stern_hash(n, BitArray(n, sr), ds=2),
+                        _stern_hash(n, BitArray(n, sy), ds=3)))
         round_data.append((r_int, y_int, pi_seed, Hr, sr, sy))
 
     # Fiat-Shamir: all challenges from H(msg || all_commits)
@@ -825,24 +828,24 @@ def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
         resp = responses[i]
         if b == 0:                                        # reveal (σ(r), σ(y))
             sr, sy = resp
-            if _stern_hash(n, BitArray(n, sr)) != c1:          return False
-            if _stern_hash(n, BitArray(n, sy)) != c2:          return False
-            if bin(sr).count('1') != t:                        return False
+            if _stern_hash(n, BitArray(n, sr), ds=2) != c1:          return False
+            if _stern_hash(n, BitArray(n, sy), ds=3) != c2:          return False
+            if bin(sr).count('1') != t:                               return False
         elif b == 1:                                      # reveal (σ_seed, r)
             pi_seed, r_int = resp
-            if bin(r_int).count('1') != t:                     return False
+            if bin(r_int).count('1') != t:                            return False
             perm = _stern_gen_perm(pi_seed, n)
             Hr   = _stern_syndrome_H(H_rows, r_int)
-            if _stern_hash(n, pi_seed, BitArray(n, Hr)) != c0: return False
+            if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
             sr   = _stern_apply_perm(perm, r_int, n)
-            if _stern_hash(n, BitArray(n, sr)) != c1:          return False
+            if _stern_hash(n, BitArray(n, sr), ds=2) != c1:          return False
         else:                                             # reveal (σ_seed, y)
             pi_seed, y_int = resp
             perm = _stern_gen_perm(pi_seed, n)
             Hy   = _stern_syndrome_H(H_rows, y_int)
-            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome)) != c0: return False
+            if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syndrome), ds=1) != c0: return False
             sy   = _stern_apply_perm(perm, y_int, n)
-            if _stern_hash(n, BitArray(n, sy)) != c2:          return False
+            if _stern_hash(n, BitArray(n, sy), ds=3) != c2:          return False
     return True
 
 
@@ -859,7 +862,7 @@ def hpke_stern_f_encap(seed: 'BitArray', n: int = None):
     e_p    = _csprng_weight_t(n, t)
     H_rows = _stern_build_H(seed.uint, n, n_rows)
     ct     = _stern_syndrome_H(H_rows, e_p)
-    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct
 
 
@@ -880,7 +883,7 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     n_rows = n // 2
     t      = max(2, n // 16)
     if e_int:
-        return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)))
+        return _stern_hash(n, seed, BitArray(n, e_int & ((1 << n) - 1)), ds=4)
     if math.comb(n, t) > (1 << 32):
         raise ValueError(
             f"hpke_stern_f_decap: brute-force search infeasible at n={n}, t={t} "
@@ -891,7 +894,7 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     for pos in itertools.combinations(range(n), t):
         e_p = sum(1 << p for p in pos)
         if _stern_syndrome_H(H_rows, e_p) == ciphertext:
-            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+            return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return None
 
 
@@ -903,7 +906,7 @@ def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
     e_p    = _csprng_weight_t(n, t)
     H_rows = _stern_build_H(seed.uint, n, n_rows)
     ct     = _stern_syndrome_H(H_rows, e_p)
-    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)))
+    K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct, e_p
 
 

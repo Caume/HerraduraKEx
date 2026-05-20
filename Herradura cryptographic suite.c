@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.23
+/*  Herradura Cryptographic Suite v1.6.1
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -145,7 +145,13 @@ static uint16_t stern32_syndrome(uint32_t seed, uint32_t e)
 static uint32_t stern32_hash(uint32_t h, uint32_t v)
 {
     uint32_t key = (v << 4) | (v >> 28);
-    return s32_nl_revolve(h ^ v, key, 8);
+    uint32_t raw = s32_nl_revolve(h ^ v, key, 8);
+    uint8_t buf[4], digest[32];
+    buf[0]=(uint8_t)(raw>>24); buf[1]=(uint8_t)(raw>>16);
+    buf[2]=(uint8_t)(raw>> 8); buf[3]=(uint8_t)(raw);
+    hfscx_256(buf, 4, NULL, digest);
+    return ((uint32_t)digest[0]<<24)|((uint32_t)digest[1]<<16)|
+           ((uint32_t)digest[2]<< 8)| (uint32_t)digest[3];
 }
 
 static uint32_t stern32_rand_error(FILE *urnd)
@@ -175,7 +181,7 @@ static uint32_t hpke_stern_f_encap_32(uint32_t seed, uint16_t *ct_out,
     uint32_t e_p = stern32_rand_error(urnd);
     *ct_out = stern32_syndrome(seed, e_p);
     *e_out  = e_p;
-    return stern32_hash(stern32_hash(0, seed), e_p);
+    return stern32_hash(stern32_hash(4, seed), e_p);  /* ds=4: KEM key slot */
 }
 
 static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
@@ -185,7 +191,7 @@ static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
         for (j = i + 1; j < SDF32_N; j++) {
             uint32_t e_p = (1u << i) | (1u << j);
             if (stern32_syndrome(seed, e_p) == ct)
-                return stern32_hash(stern32_hash(0, seed), e_p);
+                return stern32_hash(stern32_hash(4, seed), e_p);  /* ds=4: KEM key slot */
         }
     return 0xFFFFFFFFu; /* decode failed */
 }

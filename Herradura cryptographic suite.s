@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.41
+/*  Herradura Cryptographic Suite v1.6.1
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
                                        HPKS-Stern-F, HPKE-Stern-F
@@ -2062,14 +2062,38 @@ rnl_agree_recv:
     .ltorg
 
 /* ------------------------------------------------------------------ */
+/* hfscx_32: r0=x -> r0=hfscx_32(x)                                  */
+/* Two-step MD hash at 32-bit word size: breaks range compression.    */
+/* s = nl(IV,x,8); return nl(s, 0x20^IV, 8)  (TODO #43, v1.6.0)     */
+/* IV=0xA3C5E7B9, LB=0xA3C5E799 (=0x20^IV)                           */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hfscx_32:
+    push    {r4, lr}
+    mov     r4, r0              @ save x
+    ldr     r0, .LHIV           @ A = IV_32
+    mov     r1, r4              @ B = x
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1  @ s = nl(IV, x, 8)
+    ldr     r1, .LHLB           @ B = LB = 0x20 ^ IV_32
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1  @ return nl(s, LB, 8)
+    pop     {r4, pc}
+.LHIV: .word 0xA3C5E7B9
+.LHLB: .word 0xA3C5E799
+
+/* ------------------------------------------------------------------ */
 /* stern_hash1_32: r0=v -> r0=sternHash(v)                            */
-/* h = nl_fscx_revolve_v1(v, ROL(v,4), 8)  (h starts at 0)           */
+/* h = nl_fscx_revolve_v1(v, ROL(v,4), 8); return hfscx_32(h)        */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash1_32:
+    push    {lr}
     ror     r1, r0, #28         @ ROL(v, 4) = ROR(v, 28)
-    mov     r2, #8              @ I_VALUE = n/4
-    b       nl_fscx_revolve_v1  @ tail call; result in r0
+    mov     r2, #8
+    bl      nl_fscx_revolve_v1  @ r0 = raw
+    bl      hfscx_32            @ r0 = hfscx_32(raw)
+    pop     {pc}
 
     .ltorg
 
@@ -2089,7 +2113,9 @@ stern_hash2_32:
     eor     r0, r0, r5
     ror     r1, r5, #28
     mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1  @ r0 = raw
+    @ finalize with hfscx_32
+    bl      hfscx_32            @ r0 = hfscx_32(raw)
     pop     {r4-r5, pc}
 
     .ltorg

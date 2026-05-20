@@ -1,4 +1,6 @@
 /*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+    v1.6.1: stern_hash DS parameter — closes QRO gap for Theorem 17 (TODO #36).
+    v1.6.0: stern_hash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: rnl_lift centered rounding (TODO #37).
     v1.5.40: stern_apply_perm made branchless (mask = -(v_bit)) — TODO #41.
     v1.5.24
@@ -845,16 +847,24 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 #define SDF_ROUNDS   32                /* ZKP rounds (demo; prod >= 219)     */
 #define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* syndrome bytes: 16                 */
 
-/* Chain-hash: h <- NL-FSCX_v1^I(h XOR v, ROL(v, n/8)) for each item. */
-static void stern_hash(BitArray *out, const BitArray *items, int n_items)
+/* Chain-hash + HFSCX-256 finalizer: h <- NL-FSCX_v1^I(h XOR v, ROL(v,n/8)) for each
+ * item, then h <- HFSCX-256(h) to eliminate range compression (TODO #43, v1.6.0).
+ * ds: domain-separation tag (0=challenge, 1=c0, 2=c1, 3=c2, 4=KEM) (TODO #36, v1.6.1). */
+static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsigned ds)
 {
     BitArray h = {{0}};
+    h.b[KEYBYTES - 1] = (uint8_t)(ds & 0xFF); /* DS in LSB (big-endian) */
     int i;
     for (i = 0; i < n_items; i++) {
         BitArray hxv, rotv;
         ba_xor(&hxv, &h, &items[i]);
         ba_rol_k(&rotv, &items[i], KEYBITS / 8);
         nl_fscx_revolve_v1_ba(&h, &hxv, &rotv, I_VALUE);
+    }
+    {
+        uint8_t digest[32];
+        hfscx_256(h.b, KEYBYTES, NULL, digest);
+        memcpy(h.b, digest, KEYBYTES);
     }
     *out = h;
 }
@@ -1023,9 +1033,9 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
         stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
         stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
         items[0] = pi[i]; syndr_to_ba(&items[1], Hr[i]);
-        stern_hash(&sig->c0[i], items, 2);
-        stern_hash(&sig->c1[i], &sr[i], 1);
-        stern_hash(&sig->c2[i], &sy[i], 1);
+        stern_hash(&sig->c0[i], items, 2, 1);
+        stern_hash(&sig->c1[i], &sr[i], 1, 2);
+        stern_hash(&sig->c2[i], &sy[i], 1, 3);
     }
 
     stern_fs_challenges(sig->b, SDF_ROUNDS, msg,
@@ -1056,9 +1066,9 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
         int bv = sig->b[i];
         BitArray tmp;
         if (bv == 0) {
-            stern_hash(&tmp, &sig->resp_a[i], 1);
+            stern_hash(&tmp, &sig->resp_a[i], 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
-            stern_hash(&tmp, &sig->resp_b[i], 1);
+            stern_hash(&tmp, &sig->resp_b[i], 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
             if (ba_popcount(&sig->resp_a[i]) != SDF_T) return 0;
         } else if (bv == 1) {
@@ -1067,11 +1077,11 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
             stern_syndrome(Hr, seed, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
-            stern_hash(&tmp, items, 2);
+            stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
             stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
             stern_apply_perm(&sr2, perm, &sig->resp_b[i], KEYBITS);
-            stern_hash(&tmp, &sr2, 1);
+            stern_hash(&tmp, &sr2, 1, 2);
             if (!ba_equal(&tmp, &sig->c1[i])) return 0;
         } else {
             uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
@@ -1080,11 +1090,11 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             stern_syndrome(Hy, seed, &sig->resp_b[i]);
             for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
             items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hys);
-            stern_hash(&tmp, items, 2);
+            stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
             stern_gen_perm(perm, &sig->resp_a[i], KEYBITS);
             stern_apply_perm(&sy2, perm, &sig->resp_b[i], KEYBITS);
-            stern_hash(&tmp, &sy2, 1);
+            stern_hash(&tmp, &sy2, 1, 3);
             if (!ba_equal(&tmp, &sig->c2[i])) return 0;
         }
     }
@@ -1100,7 +1110,7 @@ static void hpke_stern_f_encap(BitArray *K_out, uint8_t *ct, BitArray *e_out,
     stern_syndrome(ct, seed, e_out);
     items[0] = *seed;
     items[1] = *e_out;
-    stern_hash(K_out, items, 2);
+    stern_hash(K_out, items, 2, 4);
 }
 
 /* Decapsulate using known e' (demo only; production needs QC-MDPC decoder). */
@@ -1111,7 +1121,7 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
     BitArray items[2];
     items[0] = *seed;
     items[1] = *e_p;
-    stern_hash(K_out, items, 2);
+    stern_hash(K_out, items, 2, 4);
 }
 
 #endif /* HERRADURA_H */

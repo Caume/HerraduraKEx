@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.41 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.6.1 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
     KEYBITS = 32
@@ -340,13 +340,20 @@ static uint32 rnl_agree(const long *s, const long *C_other,
 #define SDF_NROWS  16
 #define SDF_ROUNDS 4
 
+/* HFSCX-32: two-step MD hash at 32-bit word size (TODO #43, v1.6.0).
+ * s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799 */
+static uint32 hfscx_32(uint32 x) {
+    uint32 s = nl_fscx_revolve_v1(0xA3C5E7B9UL, x, 8);
+    return nl_fscx_revolve_v1(s, 0xA3C5E799UL, 8);
+}
+
 static uint32 stern_hash1_32(uint32 v) {
-    return nl_fscx_revolve_v1(v, _rol32(v, 4), I_VALUE);
+    return hfscx_32(nl_fscx_revolve_v1(v, _rol32(v, 4), I_VALUE));
 }
 
 static uint32 stern_hash2_32(uint32 a, uint32 b) {
     uint32 h = nl_fscx_revolve_v1(a, _rol32(a, 4), I_VALUE);
-    return nl_fscx_revolve_v1(h ^ b, _rol32(b, 4), I_VALUE);
+    return hfscx_32(nl_fscx_revolve_v1(h ^ b, _rol32(b, 4), I_VALUE));
 }
 
 static uint32 stern_matrix_row_32(uint32 seed, int row) {
