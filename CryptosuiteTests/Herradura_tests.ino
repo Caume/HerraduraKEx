@@ -263,13 +263,12 @@ static uint32 rnl_hint(const long *K_poly) {
     for (int i = 0; i < RNL_N / 2; i++) {
         unsigned long c = (unsigned long)K_poly[i];
         unsigned long r = (unsigned long)((8UL * c + (unsigned long)(RNL_Q / 4))
-                                          / (unsigned long)RNL_Q) % 4UL;
+                                          / (unsigned long)RNL_Q) & 3UL;
         hint |= (uint32)(r << (unsigned)(i * 2));
     }
     return hint;
 }
 
-/* 2-bit reconciliation: 2 bits per coeff from RNL_N/2 coefficients. */
 static uint32 rnl_reconcile(const long *K_poly, uint32 hint) {
     const unsigned long qq = (unsigned long)(RNL_Q / 4);
     uint32 key = 0;
@@ -277,7 +276,7 @@ static uint32 rnl_reconcile(const long *K_poly, uint32 hint) {
         unsigned long c = (unsigned long)K_poly[i];
         unsigned long h = (hint >> (unsigned)(i * 2)) & 3UL;
         unsigned long b = (4UL * c + (2UL * h + 1UL) * qq) / (unsigned long)RNL_Q
-                          % (unsigned long)RNL_PP;
+                          & 3UL;
         key |= (uint32)(b << (unsigned)(i * 2));
     }
     return key;
