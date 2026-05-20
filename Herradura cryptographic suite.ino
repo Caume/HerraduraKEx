@@ -515,7 +515,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura Cryptographic Suite v1.5.23 (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura Cryptographic Suite v1.6.1 (Arduino, 32-bit) ===");
     Serial.println();
 
     printHexLine("a_priv : ", A_PRIV);
