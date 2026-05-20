@@ -4,6 +4,37 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.7.3] - 2026-05-20
+
+### Performance — NumPy NTT acceleration for HKEX-RNL (TODO #40)
+
+Gates a vectorised NTT path behind `try: import numpy` in both
+`Herradura cryptographic suite.py` and `CryptosuiteTests/Herradura_tests.py`.
+When NumPy is present, `_rnl_poly_mul` uses the new path; otherwise falls back
+to the existing pure-Python `_ntt_inplace` unchanged.
+
+**Implementation:**
+- `_ntt_tables(q, n)` — builds and caches (keyed by `(q, n)`) the bit-reversal
+  permutation (`int32`), per-stage forward and inverse twiddle arrays (`int64`),
+  scalar inverse `n`, and the negacyclic pre/post-twist power vectors.  Cache is
+  populated on first call and reused on every subsequent call at the same parameters.
+- `_ntt_np(arr, q, invert)` — applies the permutation via `arr[:] = arr[rev]`
+  (safe: fancy indexing returns a copy), then iterates butterfly stages using
+  `arr.reshape(n//length, length)` views and vectorised `int64` arithmetic.
+- `_rnl_poly_mul` dispatch — converts `f`, `g` to `int64` arrays, applies the
+  cached twist, calls `_ntt_np` three times (forward × 2, inverse × 1), applies
+  inverse twist, and returns a plain Python list.  Pure-Python path unchanged.
+
+**Files changed:**
+- `Herradura cryptographic suite.py` — numpy try-block after imports; `_rnl_poly_mul` dispatch
+- `CryptosuiteTests/Herradura_tests.py` — same
+- `TODO.md` #40 — marked DONE
+
+Wire format: unchanged.  Expected speedup when NumPy is installed: ~10× on
+`_rnl_poly_mul` at n=256 (dominant cost in HKEX-RNL).
+
+---
+
 ## [1.7.0] - 2026-05-20
 
 ### Feature — 2-bit Peikert reconciliation for HKEX-RNL (TODO #39)

@@ -2445,7 +2445,13 @@ speedup on `_rnl_poly_mul` without changing semantics or wire format:
 
 Python-side only; no cross-language coordination needed.
 
-Status: **TODO**.
+Status: **DONE** (v1.7.3).  `_ntt_tables(q, n)` builds and caches the bit-reversal
+permutation, per-stage forward/inverse twiddle arrays (`int64`), and the negacyclic
+pre/post-twist power arrays on first call, keyed by `(q, n)`.  `_ntt_np(arr, q, invert)`
+applies them via vectorised NumPy butterfly loops.  `_rnl_poly_mul` dispatches to the
+NumPy path when `_NUMPY` is True, falling back to the original `_ntt_inplace` otherwise.
+Both `Herradura cryptographic suite.py` and `CryptosuiteTests/Herradura_tests.py` updated.
+Gate: `try: import numpy as _np` at module level.  Wire format unchanged.
 
 ---
 
