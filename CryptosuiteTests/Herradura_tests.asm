@@ -14,6 +14,9 @@
 
 %define SYS_EXIT   1
 %define SYS_WRITE  4
+%define SYS_READ   3
+%define SYS_OPEN   5
+%define SYS_CLOSE  6
 %define STDOUT     1
 %define I_VALUE    8
 %define R_VALUE    24
@@ -29,7 +32,8 @@
 
 section .data
 
-    prng_state  dd 0x12345678
+    prng_state  dd 0x12345678   ; overwritten from /dev/urandom at _start (SA-01)
+    urandom_path db '/dev/urandom', 0
 
     ; implicit arg pointers for rnl_poly_mul/add
     rnl_f_ptr   dd 0
@@ -170,6 +174,24 @@ section .text
 global _start
 
 _start:
+    ; SA-01: seed prng_state from /dev/urandom (fallback: keep default if open fails)
+    mov  eax, SYS_OPEN
+    mov  ebx, urandom_path
+    xor  ecx, ecx
+    xor  edx, edx
+    int  0x80
+    test eax, eax
+    js   .tests_prng_seeded
+    mov  esi, eax
+    mov  eax, SYS_READ
+    mov  ebx, esi
+    mov  ecx, prng_state
+    mov  edx, 4
+    int  0x80
+    mov  eax, SYS_CLOSE
+    mov  ebx, esi
+    int  0x80
+.tests_prng_seeded:
     mov  eax, hdr
     mov  ecx, hdr_l
     call print_str

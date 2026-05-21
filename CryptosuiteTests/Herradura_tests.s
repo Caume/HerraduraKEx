@@ -57,7 +57,9 @@ fmt_p3v:  .asciz "    3 / 3 verified  [PASS]\n"
 fmt_p3k:  .asciz "    3 / 3 keys match  [PASS]\n"
 fmt_fail: .asciz "    FAILED  [FAIL]\n"
 
-lcg_state: .word 0x12345678
+lcg_state:   .word 0x12345678   /* overwritten from /dev/urandom at main() (SA-01) */
+str_urandom: .asciz "/dev/urandom"
+str_mode_r:  .asciz "r"
 lcg_mul:   .word 1664525
 lcg_add:   .word 1013904223
 
@@ -159,6 +161,22 @@ sdf_chals_tmp: .space 16
     .thumb_func
 main:
     push    {r4-r11, lr}
+
+    @ SA-01: seed lcg_state from /dev/urandom (fallback: keep default if open fails)
+    ldr     r0, =str_urandom
+    ldr     r1, =str_mode_r
+    bl      fopen
+    cmp     r0, #0
+    beq     tests_prng_seeded
+    mov     r4, r0
+    ldr     r0, =lcg_state
+    mov     r1, #4
+    mov     r2, #1
+    mov     r3, r4
+    bl      fread
+    mov     r0, r4
+    bl      fclose
+tests_prng_seeded:
 
     ldr     r0, =fmt_hdr
     bl      printf

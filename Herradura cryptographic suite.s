@@ -125,7 +125,9 @@ val_key:     .word 0x5A5A5A5A
 val_plain:   .word 0xDEADC0DE
 
 /* LCG PRNG */
-lcg_state:   .word 0xDEADBEEE
+lcg_state:   .word 0xDEADBEEE   /* overwritten from /dev/urandom at main() (SA-01) */
+str_urandom: .asciz "/dev/urandom"
+str_mode_r:  .asciz "r"
 lcg_mul:     .word 1664525
 lcg_add:     .word 1013904223
 
@@ -240,6 +242,22 @@ sdf_chals_tmp:.space 16   /* verify: re-derived challenges */
 
 main:
     push    {r4-r11, lr}
+
+    @ SA-01: seed lcg_state from /dev/urandom (fallback: keep default if open fails)
+    ldr     r0, =str_urandom
+    ldr     r1, =str_mode_r
+    bl      fopen
+    cmp     r0, #0
+    beq     prng_seeded
+    mov     r4, r0              @ r4 = FILE*
+    ldr     r0, =lcg_state      @ buf = &lcg_state
+    mov     r1, #4              @ size = 4
+    mov     r2, #1              @ count = 1
+    mov     r3, r4              @ stream = FILE*
+    bl      fread
+    mov     r0, r4
+    bl      fclose
+prng_seeded:
 
     ldr     r0, =fmt_header
     bl      printf

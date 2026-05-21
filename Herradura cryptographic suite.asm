@@ -22,6 +22,9 @@
 
 %define SYS_EXIT   1
 %define SYS_WRITE  4
+%define SYS_READ   3
+%define SYS_OPEN   5
+%define SYS_CLOSE  6
 %define STDOUT     1
 %define I_VALUE    8
 %define R_VALUE    24
@@ -60,7 +63,8 @@ section .data
     val_dec_key dd 0
     val_D_hpke  dd 0
 
-    prng_state  dd 0xDEADBEEE
+    prng_state  dd 0xDEADBEEE   ; overwritten from /dev/urandom at _start (SA-01)
+    urandom_path db '/dev/urandom', 0
 
     ; NL / RNL scratch scalars
     val_nonce_nl1 dd 0  ; HSKE-NL-A1 per-session nonce
@@ -280,6 +284,24 @@ global _start
 %endmacro
 
 _start:
+    ; SA-01: seed prng_state from /dev/urandom (fallback: keep default if open fails)
+    mov  eax, SYS_OPEN
+    mov  ebx, urandom_path
+    xor  ecx, ecx               ; O_RDONLY = 0
+    xor  edx, edx
+    int  0x80
+    test eax, eax
+    js   .prng_seeded
+    mov  esi, eax               ; esi = fd
+    mov  eax, SYS_READ
+    mov  ebx, esi
+    mov  ecx, prng_state
+    mov  edx, 4
+    int  0x80
+    mov  eax, SYS_CLOSE
+    mov  ebx, esi
+    int  0x80
+.prng_seeded:
     ; ------------------------------------------------------------------ header
     mov  eax, hdr
     mov  ecx, hdr_l

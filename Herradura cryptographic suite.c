@@ -560,5 +560,9 @@ int main(void)
     }
 
     fclose(urnd);
+    /* SA-09: clear private key material from stack before return */
+    explicit_bzero(&a,         sizeof(a));
+    explicit_bzero(&b,         sizeof(b));
+    explicit_bzero(&preshared, sizeof(preshared));
     return 0;
 }
