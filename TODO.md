@@ -2685,7 +2685,7 @@ Status: **DONE v1.6.0**.  Updated all six language targets: Python (`_stern_hash
 29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)
 30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**DONE v1.7.0**)
 31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**DONE v1.8.0**)
-32. #40 — NumPy NTT optional acceleration (**TODO**)
+32. #40 — NumPy NTT optional acceleration (**DONE v1.7.3**)
 33. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)
 
 ---
@@ -2933,3 +2933,262 @@ Status: **DONE v1.7.4** — Protocol Layer wrappers added to `herradura.h`; publ
 aliases `hkex_rnl_keygen` / `hkex_rnl_agree` and library docstring added to
 `"Herradura cryptographic suite.py"`; `docs/TUTORIAL.md`, `docs/examples/c/`,
 `docs/examples/go/`, `docs/examples/python/` created and verified.
+
+---
+
+### 45. C `stern_gen_perm` 16-bit PRNG bias (Security, High)
+
+**Files:** `herradura.h:958-972`
+
+`stern_gen_perm` extracts only the bottom 16 bits of each NL-FSCX v1 state block
+(`(st.b[KEYBYTES-2] << 8) | st.b[KEYBYTES-1]`) to generate Fisher-Yates swap
+indices, then reduces modulo `(n - i)` without rejection sampling.  Two problems:
+(a) only 65536 possible values feed into a range that can be up to 255, producing
+modular bias proportional to `65536 mod (n-i)` for each position; (b) using only 2
+of 32 bytes wastes 240 bits of PRNG output and weakens the permutation distribution.
+A biased permutation leaks structural information about the secret error vector `e`
+across Stern rounds, potentially narrowing the search space for an adversary.
+
+**Plan:** Replace the 16-bit extraction with a full 256-bit counter-mode draw
+(advance the NL-FSCX v1 state once per index, use all 32 bytes in sequence) and
+add rejection sampling: if the drawn value modulo `(n-i)` would come from a biased
+region (`v >= floor(2^k / (n-i)) * (n-i)` for the drawn bit-width `k`), discard and
+redraw.  Mirror the fix in Go `sternGenPerm` and Python `_csprng_weight_t` (already
+uses 4-byte rejection sampling; audit for the same bias).
+
+Status: **Open**
+
+---
+
+### 46. No soundness warning for SDFR=32 in C and Go (Security, Medium)
+
+**Files:** `herradura.h:899`, `herradura/herradura.go:714`
+
+Python `hpks_stern_f_sign` emits a `RuntimeWarning` when `SDFR < 219` and documents
+`_STERN_F_PRODUCTION_ROUNDS = 219` in a module-level constant.  The C and Go
+implementations use `SDF_ROUNDS = 32` / the equivalent constant with no warning,
+no assertion, and no documentation in the function signature that this is a demo
+parameter.  A caller compiling the header or importing the package has no indication
+that signing with 32 rounds gives only ~51-bit soundness (2^{-32} per round ×
+challenge space 3), far below the 128-bit security target requiring ≥219 rounds.
+
+**Plan:** (1) Add a `#if SDF_ROUNDS < 219` compile-time warning in `herradura.h`
+(using `#pragma message` or `_Static_assert` with a descriptive string); (2) add a
+`if rounds < 219 { log.Printf("WARNING: ...") }` guard at the top of
+`HpksSternFSign` in Go; (3) add a module-level `SDF_PRODUCTION_ROUNDS = 219`
+constant to `herradura.h` and document it in the header comment for
+`hpks_stern_f_sign`.
+
+Status: **DONE** — `SDF_PRODUCTION_ROUNDS 219` constant and `#pragma message` added
+to `herradura.h`; `SdfProductionRounds = 219` constant and `log.Printf` guard added
+to `HpksSternFSign` in `herradura/herradura.go`.
+
+---
+
+### 47. HKEX-RNL `m_blind` hint unauthenticated (Security, High)
+
+**Files:** `herradura.h` (rnl_agree / hkex_rnl_agree), `herradura/herradura.go`
+(RnlAgree), `"Herradura cryptographic suite.py"` (_rnl_agree), all language targets
+
+The Peikert reconciliation hint vector `m_blind` (2 bits per coefficient, 64 bytes
+for n=256) is transmitted from Bob to Alice alongside Bob's public key `b_pub`, but
+nothing in the current protocol authenticates or integrity-protects `m_blind`.  An
+active adversary who can tamper with the channel can flip hint bits to steer the
+reconciled key toward a value of their choosing, breaking the key-agreement
+correctness guarantee and potentially leaking information about Alice's or Bob's
+private polynomials through the resulting key mismatch.  This is a known weakness of
+unauthenticated Peikert reconciliation.
+
+**Plan:** Document this limitation explicitly in the `hkex_rnl_agree` header comment
+and `docs/TUTORIAL.md` security notes: "HKEX-RNL provides key agreement only; the
+caller is responsible for authenticating the transcript (e.g., via HPKS-NL or a MAC
+over `(b_pub ‖ m_blind)`) before using the derived key."  As a separate hardening
+step (if desired), consider binding `m_blind` into the KDF input so a tampered hint
+produces a different key rather than silent agreement on a wrong key.
+
+Status: **Open**
+
+---
+
+### 48. Fiat-Shamir challenge derivation inconsistency across languages (Security/Interoperability, Medium)
+
+**Files:** `herradura.h:1025-1057` (stern_fs_challenges),
+`herradura/herradura.go:820-838` (sternFsChallenges),
+`"Herradura cryptographic suite.py":901-906` (hpks_stern_f_sign)
+
+Python's `_stern_hash` chains NL-FSCX v1 over all inputs and then applies the full
+`hfscx_256` finalizer (Merkle-Damgård pad + final compression) before expanding
+per-round challenges.  C `stern_fs_challenges` and Go `sternFsChallenges` chain
+NL-FSCX v1 without the HFSCX-256 finalizer — raw NL-FSCX output is used directly as
+the challenge seed.  The two derivations produce different challenge sequences for
+identical inputs, making Stern signatures generated in Python unverifiable in C/Go
+and vice versa.  Cross-language interoperability is impossible until these are
+unified.
+
+**Plan:** Choose one canonical derivation and apply it to all three languages.
+Recommended: use `hfscx_256` (the full hash) as the challenge oracle in all
+languages — this matches the Python implementation, which is the most
+security-conscious of the three, and ensures the Fiat-Shamir hash function is
+domain-separated and collision-resistant.  Update `stern_fs_challenges` in C and
+`sternFsChallenges` in Go to call `hfscx_256` on the concatenated commitment bytes,
+then expand per-round challenges from the 256-bit output.
+
+Status: **DONE** — HFSCX-256 finalizer added to C `stern_fs_challenges`
+(`herradura.h`) and Go `sternFsChallenges` (`herradura/herradura.go`) after the
+NL-FSCX v1 chaining loop, matching Python's `_stern_hash` exactly. C and Go sign+
+verify round-trips confirmed passing.
+
+---
+
+### 49. Go `rnlTwCache` plain map — data race under concurrent use (Concurrency, Medium)
+
+**Files:** `herradura/herradura.go:479`
+
+`rnlTwCache` is declared as `var rnlTwCache = map[int]*rnlTwEntry{}` and accessed
+in `rnlTwiddleInit` with no synchronization.  The function uses a `ready` flag on the
+entry struct as a guard, but concurrent goroutines can race on the map read/write
+itself (map access is not safe for concurrent use in Go).  By contrast, `mInvCache`
+on line 235 correctly uses `sync.Map`.  Running the package under Go's race detector
+(`go test -race`) will flag this.
+
+**Plan:** Replace `rnlTwCache map[int]*rnlTwEntry` with `sync.Map` and adapt
+`rnlTwiddleInit` to use `LoadOrStore` semantics, matching the pattern already used
+for `mInvCache`.
+
+Status: **DONE** — `rnlTwCache` changed to `sync.Map`; `rnlTwGet` updated to use
+`Load` / `LoadOrStore`, matching the `mInvCache` pattern.
+
+---
+
+### 50. C `rnl_twiddle_init` TOCTOU race (Concurrency, Low)
+
+**Files:** `herradura.h:674-695`
+
+`rnl_twiddle_init` checks `if (rnl_tw.ready) return;` and then sets
+`rnl_tw.ready = 1;` after populating the twiddle table, with no atomics or memory
+barriers between.  On multi-core systems two threads can both observe `ready == 0`,
+both enter initialization, and produce a torn twiddle table.  In practice the C suite
+is single-threaded in the demo, but the header is distributed as a library.
+
+**Plan:** Guard initialization with a `pthread_once_t` or a C11 `_Atomic int` flag
+with `atomic_compare_exchange_strong`.  Since the header is single-file, prefer
+`pthread_once` (portable, POSIX) wrapped in a `#ifdef _POSIX_THREADS` guard with
+a fallback `_Atomic` path.
+
+Status: **DONE** — `int ready` removed from `rnl_tw` struct; body moved to
+`rnl_twiddle_do_init`; `rnl_twiddle_init` now wraps `pthread_once` on POSIX builds
+and a CAS-based `_Atomic int` spin-once on non-POSIX builds.
+
+---
+
+### 51. C `hfscx_256` unchecked `malloc` (Safety, Medium)
+
+**Files:** `herradura.h:597`
+
+`hfscx_256` allocates the padded message buffer with
+`padded = (uint8_t *)malloc(padded_len);` and immediately calls `memcpy` into it
+without checking whether `malloc` returned NULL.  On allocation failure this is
+undefined behavior (null pointer dereference in `memcpy`).  While unlikely in normal
+operation, it is a latent crash bug in any context where the hash is called on very
+large messages or under memory pressure.
+
+**Plan:** Add a NULL check immediately after the `malloc` call:
+```c
+if (!padded) { fprintf(stderr, "hfscx_256: out of memory\n"); exit(1); }
+```
+This is consistent with the project's existing error handling convention (abort on
+unrecoverable errors in a demo/library context).
+
+Status: **DONE** — NULL check added at `herradura.h:597`; aborts with `fprintf`+`exit(1)`.
+
+---
+
+### 52. C and Go `stern_syndrome` recomputes H matrix on every call (Performance, Medium)
+
+**Files:** `herradura.h:933-948` (stern_syndrome),
+`herradura/herradura.go:742-754` (SternSyndrome)
+
+Every call to `stern_syndrome` (and equivalently Go `SternSyndrome`) reconstructs
+all `SDF_N_ROWS` rows of the parity-check matrix `H` from the seed before computing
+the syndrome `H·e^T`.  In `hpks_stern_f_sign` this function is called once per
+round (32× in the demo, up to 219× in production) plus once in the verifier, so the
+matrix is regenerated at minimum 33 times for a single sign+verify cycle.  Python
+avoids this with `_stern_build_H` which precomputes the matrix once.
+
+**Plan:** Add `stern_build_H` to `herradura.h` (signature:
+`void stern_build_H(const BitArray seed, BitArray H[SDF_N_ROWS])`) and a matching
+`SternBuildH` in Go.  Update `hpks_stern_f_sign` / `HpksSternFSign` and
+`hpks_stern_f_verify` / `HpksSternFVerify` to build H once and pass it through.
+
+Status: **Open**
+
+---
+
+### 53. Go `rnlMulModQ` `int` overflow on 32-bit platforms (Portability, Low)
+
+**Files:** `herradura/herradura.go:506-514`
+
+`rnlMulModQ` computes `x := a * b` where `a` and `b` are both `int`.  For RNLQ =
+65537, the maximum product is 65536² = 4,294,836,225 which exceeds `MaxInt32`
+(2,147,483,647).  On a 64-bit platform `int` is 64 bits and the Fermat trick is
+correct.  On a 32-bit platform (e.g., GOARCH=386 or GOARCH=arm) `int` is 32 bits
+and `a * b` silently overflows, producing wrong modular results and breaking all
+Ring-LWR arithmetic.
+
+**Plan:** Change the local variables in `rnlMulModQ` from `int` to `int64`:
+`x := int64(a) * int64(b)` and adjust the Fermat decomposition accordingly.  Add a
+compile-time guard `var _ = [1]struct{}{}[unsafe.Sizeof(0)-8]` (panics if `int` is
+not 64-bit) or a `//go:build !386 && !arm` constraint on the file if 32-bit support
+is explicitly out of scope.
+
+Status: **DONE** — `x` changed to `int64(a) * int64(b)`; Fermat decomposition and
+return cast to `int(r)` updated accordingly. Function signature unchanged; no
+build constraint needed since the fix is now correct on all platforms.
+
+---
+
+### 54. C `hpks_stern_f_sign` large VLA / stack allocation (Performance/Safety, Low)
+
+**Files:** `herradura.h:1068-1102`
+
+`hpks_stern_f_sign` declares five arrays of `BitArray` on the stack:
+`r[SDF_ROUNDS], y[SDF_ROUNDS], pi[SDF_ROUNDS], sr[SDF_ROUNDS], sy[SDF_ROUNDS]`.
+With `SDF_ROUNDS = 32` and `sizeof(BitArray) = KEYBYTES = 32`, this is
+5 × 32 × 32 = 5 120 bytes.  Scaled to production `SDF_ROUNDS = 219`, it becomes
+5 × 219 × 32 = 35 040 bytes — approximately 34 KB of stack per signing call.
+Embedded or RTOS targets typically have stacks of 4–8 KB; this allocation will stack
+overflow silently.
+
+**Plan:** Replace the five fixed-size stack arrays with heap allocations
+(`malloc(SDF_ROUNDS * sizeof(BitArray))`) with appropriate free-on-return and
+NULL checks.  For embedded targets where `malloc` is unavailable, document a
+`HPKS_STERN_MAX_ROUNDS` compile-time cap and the corresponding stack budget.
+
+Status: **DONE** — `r`, `y`, `pi`, `sr`, `sy` (BitArray) and `Hr` (uint8_t) moved
+to heap via `malloc`; NULL check with `exit(1)` added; `Hr` flattened to
+`uint8_t *` with row access via `Hr + i * SDF_SYNBYTES`; all six freed at end of
+function.
+
+---
+
+### 55. Comment typo in `ba_rnl_kdf_seed`: "KEYBYTES bytes" should be "KEYBYTES bits" (Documentation, Trivial)
+
+**Files:** `herradura.h:570`
+
+The inline comment on the `ba_rol_k` call reads:
+```c
+ba_rol_k(dst, k, KEYBYTES); /* ROL by KEYBYTES bytes = n/8 bits */
+```
+`KEYBYTES` is the number of bytes (32 for 256-bit keys), and the rotation amount is
+`KEYBYTES` bytes = n/8 bits — which is correct mathematically — but the comment says
+"ROL by KEYBYTES bytes" where it should say "ROL by KEYBYTES*8 bits" or more clearly
+"ROL left by n/8 bits (= KEYBYTES byte positions)".  The current wording implies the
+rotation is measured in bytes, which could confuse readers about whether it is a
+bit-rotation or a byte-rotation.
+
+**Plan:** Change the comment to:
+```c
+ba_rol_k(dst, k, KEYBYTES); /* ROL left by n/8 bits (KEYBYTES byte positions) */
+```
+
+Status: **DONE** — comment corrected at `herradura.h:572`.

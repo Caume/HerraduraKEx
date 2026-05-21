@@ -35,6 +35,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _POSIX_THREADS
+#  include <pthread.h>
+#else
+#  include <stdatomic.h>
+#endif
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Key-size parameters
@@ -569,7 +574,7 @@ static const uint8_t _RNL_KDF_DC[KEYBYTES] = {
 static void ba_rnl_kdf_seed(BitArray *dst, const BitArray *k)
 {
     int i;
-    ba_rol_k(dst, k, KEYBYTES);   /* ROL by KEYBYTES bytes = n/8 bits */
+    ba_rol_k(dst, k, KEYBYTES);   /* ROL left by n/8 bits (KEYBYTES byte positions) */
     for (i = 0; i < KEYBYTES; i++)
         dst->b[i] ^= _RNL_KDF_DC[i];
 }
@@ -594,6 +599,7 @@ static void hfscx_256(const uint8_t *data, size_t len,
     padded_len += 32;  /* MD-strengthening length block */
 
     padded = (uint8_t *)malloc(padded_len);
+    if (!padded) { fprintf(stderr, "hfscx_256: out of memory\n"); exit(1); }
     if (len) memcpy(padded, data, len);
     padded[len] = 0x80;
     memset(padded + len + 1, 0, padded_len - len - 1);
@@ -668,14 +674,12 @@ static struct {
     uint32_t stage_w_fwd[RNL_LOG2N];  /* per-stage ω, forward NTT */
     uint32_t stage_w_inv[RNL_LOG2N];  /* per-stage ω, inverse NTT */
     uint32_t inv_n;                   /* n^{-1} mod q for INTT scaling */
-    int      ready;
 } rnl_tw;
 
-static void rnl_twiddle_init(void)
+static void rnl_twiddle_do_init(void)
 {
     uint32_t psi, psi_inv, pw, pw_inv, w;
     int i, s, length;
-    if (rnl_tw.ready) return;
     psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_N), RNL_Q);
     psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
     pw = pw_inv = 1;
@@ -691,8 +695,28 @@ static void rnl_twiddle_init(void)
         rnl_tw.stage_w_inv[s] = rnl_mod_pow(w, RNL_Q - 2, RNL_Q);
     }
     rnl_tw.inv_n = rnl_mod_pow((uint32_t)RNL_N, RNL_Q - 2, RNL_Q);
-    rnl_tw.ready = 1;
 }
+
+#ifdef _POSIX_THREADS
+static pthread_once_t rnl_tw_once = PTHREAD_ONCE_INIT;
+static void rnl_twiddle_init(void) { pthread_once(&rnl_tw_once, rnl_twiddle_do_init); }
+#else
+/* 0 = uninitialized, 1 = in progress, 2 = done */
+static _Atomic int rnl_tw_state = ATOMIC_VAR_INIT(0);
+static void rnl_twiddle_init(void)
+{
+    int expected = 0;
+    if (atomic_load_explicit(&rnl_tw_state, memory_order_acquire) == 2) return;
+    if (atomic_compare_exchange_strong_explicit(
+            &rnl_tw_state, &expected, 1,
+            memory_order_acq_rel, memory_order_acquire)) {
+        rnl_twiddle_do_init();
+        atomic_store_explicit(&rnl_tw_state, 2, memory_order_release);
+    } else {
+        while (atomic_load_explicit(&rnl_tw_state, memory_order_acquire) != 2) {}
+    }
+}
+#endif
 
 /* Fermat-prime modular multiply mod 65537 = 2^16+1.
    x = a*b; since 2^16 ≡ -1 and 2^32 ≡ 1 mod q: x ≡ lo - mid + hi (mod q).
@@ -894,10 +918,17 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
  * N=KEYBITS=256, n_rows=128, t=16, rounds=32  (production: >=219).
  * ───────────────────────────────────────────────────────────────────────────── */
 
-#define SDF_N_ROWS   (KEYBITS / 2)     /* parity-check rows: 128             */
-#define SDF_T        (KEYBITS / 16)    /* error weight: 16                   */
-#define SDF_ROUNDS   32                /* ZKP rounds (demo; prod >= 219)     */
-#define SDF_SYNBYTES (SDF_N_ROWS / 8)  /* syndrome bytes: 16                 */
+#define SDF_N_ROWS          (KEYBITS / 2)  /* parity-check rows: 128             */
+#define SDF_T               (KEYBITS / 16) /* error weight: 16                   */
+#define SDF_ROUNDS          32             /* ZKP rounds (demo; prod >= 219)     */
+#define SDF_PRODUCTION_ROUNDS 219          /* rounds for 128-bit soundness       */
+#define SDF_SYNBYTES        (SDF_N_ROWS / 8) /* syndrome bytes: 16               */
+
+#if SDF_ROUNDS < SDF_PRODUCTION_ROUNDS
+#pragma message("WARNING: SDF_ROUNDS < SDF_PRODUCTION_ROUNDS (219). " \
+    "Stern signatures have sub-128-bit soundness. For production use, " \
+    "redefine SDF_ROUNDS to SDF_PRODUCTION_ROUNDS before including this header.")
+#endif
 
 /* Chain-hash + HFSCX-256 finalizer: h <- NL-FSCX_v1^I(h XOR v, ROL(v,n/8)) for each
  * item, then h <- HFSCX-256(h) to eliminate range compression (TODO #43, v1.6.0).
@@ -1043,6 +1074,12 @@ static void stern_fs_challenges(int *chals, int rounds,
     for (i = 0; i < rounds; i++) { _SFS(c0[i]); _SFS(c1[i]); _SFS(c2[i]); }
 #undef _SFS
 
+    {
+        uint8_t digest[32];
+        hfscx_256(ch_st.b, KEYBYTES, NULL, digest);
+        memcpy(ch_st.b, digest, KEYBYTES);
+    }
+
     for (i = 0; i < rounds; i++) {
         BitArray idx_ba = {{0}};
         uint32_t v;
@@ -1069,22 +1106,29 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
                                const BitArray *e, const BitArray *seed,
                                FILE *urnd)
 {
-    BitArray r[SDF_ROUNDS], y[SDF_ROUNDS], pi[SDF_ROUNDS];
-    BitArray sr[SDF_ROUNDS], sy[SDF_ROUNDS];
-    uint8_t Hr[SDF_ROUNDS][SDF_SYNBYTES];
+    BitArray *r  = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
+    BitArray *y  = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
+    BitArray *pi = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
+    BitArray *sr = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
+    BitArray *sy = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
+    uint8_t  *Hr = (uint8_t  *)malloc(SDF_ROUNDS * SDF_SYNBYTES);
     uint8_t perm[KEYBITS];
     int i;
+
+    if (!r || !y || !pi || !sr || !sy || !Hr) {
+        fprintf(stderr, "hpks_stern_f_sign: out of memory\n"); exit(1);
+    }
 
     for (i = 0; i < SDF_ROUNDS; i++) {
         BitArray items[2];
         stern_rand_error(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
         ba_rand(&pi[i], urnd);
-        stern_syndrome(Hr[i], seed, &r[i]);
+        stern_syndrome(Hr + i * SDF_SYNBYTES, seed, &r[i]);
         stern_gen_perm(perm, &pi[i], KEYBITS);
         stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
         stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
-        items[0] = pi[i]; syndr_to_ba(&items[1], Hr[i]);
+        items[0] = pi[i]; syndr_to_ba(&items[1], Hr + i * SDF_SYNBYTES);
         stern_hash(&sig->c0[i], items, 2, 1);
         stern_hash(&sig->c1[i], &sr[i], 1, 2);
         stern_hash(&sig->c2[i], &sy[i], 1, 3);
@@ -1099,6 +1143,8 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
         else if (bv == 1) { sig->resp_a[i] = pi[i]; sig->resp_b[i] = r[i];  }
         else              { sig->resp_a[i] = pi[i]; sig->resp_b[i] = y[i];  }
     }
+
+    free(r); free(y); free(pi); free(sr); free(sy); free(Hr);
 }
 
 /* Verify: re-derive Fiat-Shamir challenges and check all Stern responses. */

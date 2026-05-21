@@ -476,11 +476,11 @@ type rnlTwEntry struct {
 	invN      int
 }
 
-var rnlTwCache = map[int]*rnlTwEntry{}
+var rnlTwCache sync.Map // map[int]*rnlTwEntry
 
 func rnlTwGet(n, q int) *rnlTwEntry {
-	if e, ok := rnlTwCache[n]; ok {
-		return e
+	if val, ok := rnlTwCache.Load(n); ok {
+		return val.(*rnlTwEntry)
 	}
 	e := &rnlTwEntry{psiPow: make([]int, n), psiInvPow: make([]int, n)}
 	psi := rnlModPow(3, (q-1)/(2*n), q)
@@ -498,18 +498,19 @@ func rnlTwGet(n, q int) *rnlTwEntry {
 		e.stageWInv = append(e.stageWInv, rnlModPow(w, q-2, q))
 	}
 	e.invN = rnlModPow(n, q-2, q)
-	rnlTwCache[n] = e
-	return e
+	val, _ := rnlTwCache.LoadOrStore(n, e)
+	return val.(*rnlTwEntry)
 }
 
 // rnlMulModQ computes a*b mod 65537 using the Fermat-prime identity.
+// int64 arithmetic prevents overflow on 32-bit platforms (65536² > MaxInt32).
 func rnlMulModQ(a, b int) int {
-	x := a * b
+	x := int64(a) * int64(b)
 	r := (x & 0xFFFF) - ((x >> 16) & 0xFFFF) + (x >> 32)
 	if r < 0 {
 		r += 65537
 	}
-	return r
+	return int(r)
 }
 
 func rnlNTT(a []int, q int, invert bool) {
@@ -708,9 +709,10 @@ func RnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArr
 
 // Stern-F default parameters for full-security targets (C/Go/Python suite).
 const (
-	SdfNRows  = 256 / 2  // 128 parity-check rows
-	SdfT      = 256 / 16 // 16 error weight
-	SdfRounds = 32       // ZKP rounds (soundness (2/3)^32)
+	SdfNRows          = 256 / 2  // 128 parity-check rows
+	SdfT              = 256 / 16 // 16 error weight
+	SdfRounds         = 32       // ZKP rounds (soundness (2/3)^32; demo only)
+	SdfProductionRounds = 219    // rounds required for 128-bit soundness
 )
 
 // SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
@@ -829,6 +831,9 @@ func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int 
 		sfs(c1[i])
 		sfs(c2[i])
 	}
+	digest := Hfscx256(chSt.Bytes(), nil)
+	chSt = &BitArray{size: n}
+	chSt.Val.SetBytes(digest[:n/8])
 	chals := make([]int, rounds)
 	for i := 0; i < rounds; i++ {
 		idxBA := NewBitArray(n, big.NewInt(int64(i&0xFF)))
@@ -852,6 +857,10 @@ type SternSig struct {
 
 // HpksSternFSign produces a Stern-F signature over msg using secret (e, seed).
 func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
+	if rounds < SdfProductionRounds {
+		log.Printf("WARNING: HpksSternFSign called with rounds=%d < SdfProductionRounds=%d; "+
+			"Stern signatures have sub-128-bit soundness (demo only)", rounds, SdfProductionRounds)
+	}
 	n := msg.size
 	t := n / 16
 	sig := &SternSig{Rounds: make([]SternRound, rounds)}
