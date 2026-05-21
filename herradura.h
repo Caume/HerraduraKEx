@@ -1176,4 +1176,99 @@ static void hpke_stern_f_decap_known(BitArray *K_out,
     stern_hash(K_out, items, 2, 4);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Protocol Layer — high-level wrappers for library callers
+ *
+ * These thin functions assemble the low-level primitives into the four named
+ * Herradura protocols.  Include herradura.h in any C translation unit, compile
+ * with -O2, and call these directly — no separate library build step needed.
+ *
+ *   hkex_gf_pubkey / hkex_gf_agree   — HKEX-GF key exchange
+ *   hske_encrypt   / hske_decrypt     — HSKE symmetric encryption
+ *   hpks_sign      / hpks_verify      — HPKS Schnorr signature
+ *   hpke_encrypt   / hpke_decrypt     — HPKE El Gamal encryption
+ *
+ * For PQC-hardened protocols use: hpks_stern_f_sign / hpks_stern_f_verify
+ * (Stern ZKP, code-based), rnl_keygen / rnl_agree (Ring-LWR), and the
+ * NL-FSCX revolve primitives directly — they are already protocol-level.
+ *
+ * See docs/TUTORIAL.md for complete usage examples.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* HKEX-GF: derive public key pub = g^priv in GF(2^KEYBITS)*. */
+static inline void hkex_gf_pubkey(const BitArray *priv, BitArray *pub)
+{
+    gf_pow_ba(pub, &GF_GEN, priv);
+}
+
+/* HKEX-GF: derive shared secret shared = their_pub^my_priv in GF(2^KEYBITS)*. */
+static inline void hkex_gf_agree(const BitArray *my_priv,
+                                   const BitArray *their_pub,
+                                   BitArray *shared)
+{
+    gf_pow_ba(shared, their_pub, my_priv);
+}
+
+/* HSKE: encrypt pt -> ct using key (I_VALUE steps). */
+static inline void hske_encrypt(const BitArray *pt, const BitArray *key,
+                                 BitArray *ct)
+{
+    ba_fscx_revolve(ct, pt, key, I_VALUE);
+}
+
+/* HSKE: decrypt ct -> pt using key (R_VALUE steps). */
+static inline void hske_decrypt(const BitArray *ct, const BitArray *key,
+                                 BitArray *pt)
+{
+    ba_fscx_revolve(pt, ct, key, R_VALUE);
+}
+
+/* HPKS: sign msg with private key priv.
+ * Outputs commitment R = g^k and scalar s = (k - priv*e) mod ord.
+ * Send (R, s) to the verifier along with the message. */
+static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
+                               BitArray *R_out, BitArray *s_out, FILE *urnd)
+{
+    BitArray k, e, ae;
+    ba_rand(&k, urnd);
+    gf_pow_ba(R_out, &GF_GEN, &k);
+    ba_fscx_revolve(&e, R_out, msg, I_VALUE);
+    ba_mul_mod_ord(&ae, priv, &e);
+    ba_sub_mod_ord(s_out, &k, &ae);
+}
+
+/* HPKS: verify Schnorr signature (R, s) on msg under public key pub.
+ * Returns 1 if valid, 0 otherwise. */
+static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
+                                const BitArray *R, const BitArray *s)
+{
+    BitArray e, gs, Ce, lhs;
+    ba_fscx_revolve(&e, R, msg, I_VALUE);
+    gf_pow_ba(&gs, &GF_GEN, s);
+    gf_pow_ba(&Ce, pub, &e);
+    gf_mul_ba(&lhs, &gs, &Ce);
+    return ba_equal(&lhs, R);
+}
+
+/* HPKE: encrypt pt for the holder of private key corresponding to pub.
+ * Outputs ephemeral R (send alongside ciphertext) and ciphertext ct. */
+static inline void hpke_encrypt(const BitArray *pt, const BitArray *pub,
+                                  BitArray *R_out, BitArray *ct_out, FILE *urnd)
+{
+    BitArray r, enc_key;
+    ba_rand(&r, urnd);
+    gf_pow_ba(R_out, &GF_GEN, &r);
+    gf_pow_ba(&enc_key, pub, &r);
+    ba_fscx_revolve(ct_out, pt, &enc_key, I_VALUE);
+}
+
+/* HPKE: decrypt ciphertext ct using private key priv and sender's ephemeral R. */
+static inline void hpke_decrypt(const BitArray *ct, const BitArray *R,
+                                  const BitArray *priv, BitArray *pt_out)
+{
+    BitArray dec_key;
+    gf_pow_ba(&dec_key, R, priv);
+    ba_fscx_revolve(pt_out, ct, &dec_key, R_VALUE);
+}
+
 #endif /* HERRADURA_H */

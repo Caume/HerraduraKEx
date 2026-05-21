@@ -127,6 +127,33 @@
 
     --- v1.3.2: performance and readability ---
     --- v1.3: BitArray (multi-byte parameter support) ---
+
+    Library usage
+    ─────────────
+    This file is importable as a Python module.  Because the filename contains
+    spaces, use importlib to load it:
+
+        import importlib.util, pathlib
+        _spec = importlib.util.spec_from_file_location(
+            "herradura",
+            pathlib.Path(__file__).parent / "Herradura cryptographic suite.py")
+        h = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(h)
+
+    Public API (no underscore prefix):
+        BitArray, fscx, fscx_revolve
+        gf_mul, gf_pow
+        nl_fscx_v1, nl_fscx_revolve_v1
+        nl_fscx_v2, nl_fscx_v2_inv, nl_fscx_revolve_v2, nl_fscx_revolve_v2_inv
+        hfscx_256
+        stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
+        hpke_stern_f_encap, hpke_stern_f_decap
+        hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
+
+    Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
+        RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
+
+    See docs/TUTORIAL.md for complete per-protocol code examples.
 '''
 
 import itertools
@@ -1359,6 +1386,9 @@ def main():
     else:
         print("- Eve random guess does not match session key (SD protection)")
 
+
+hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)
+hkex_rnl_agree  = _rnl_agree    # (s, C_other, q, p, pp, n, key_bits, hint=None) -> (K, hint)
 
 if __name__ == '__main__':
     main()

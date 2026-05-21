@@ -2879,3 +2879,57 @@ present in C, Go, or Python suite files ✓.  Confirmed outside production key-g
 paths ✓.
 
 Status: **DONE** — audit complete 2026-05-20; findings SA-01 through SA-09 logged above.
+
+---
+
+### 44. Tutorial and library documentation for C, Go, and Python targets (Documentation, Medium)
+**Files:** `herradura.h`, `Herradura cryptographic suite.py`, `docs/TUTORIAL.md` (new),
+`docs/examples/c/hello_herradura.c` (new), `docs/examples/go/hello_herradura.go` (new),
+`docs/examples/python/hello_herradura.py` (new)
+
+The suite has no documentation or examples aimed at developers who want to integrate
+it into their own projects.  All three language implementations are structured as
+standalone demo programs.  Concrete friction points:
+
+- **C** — `herradura.h` is a valid header-only library but has no usage guide,
+  no concise API summary, and no example project.  The calling sequence for each
+  protocol is only visible by reading the 568-line demo `main()`.
+- **Go** — the `herradura/` package exists (`package herradura`, module path
+  `herradurakex/herradura`) but is undocumented and has no import examples.
+- **Python** — the filename contains spaces (`"Herradura cryptographic suite.py"`),
+  preventing a plain `import` statement; all Ring-LWR functions are `_`-prefixed
+  (private), making HKEX-RNL inaccessible without reading the source.
+
+**Plan:**
+
+1. **`herradura.h` — Protocol Layer section:** eight thin `static inline` wrappers
+   that assemble primitives into the four named classical protocols:
+   `hkex_gf_pubkey`, `hkex_gf_agree`, `hske_encrypt`, `hske_decrypt`,
+   `hpks_sign`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt`.
+   PQC functions (`rnl_keygen`, `rnl_agree`, `hpks_stern_f_sign`, etc.) are
+   already protocol-level and need no additional wrappers.
+
+2. **`"Herradura cryptographic suite.py"` — Public aliases:** add
+   `hkex_rnl_keygen = _rnl_keygen` and `hkex_rnl_agree = _rnl_agree` before
+   `if __name__ == '__main__':`, and extend the module docstring with a
+   "Library usage" section documenting the `importlib` load pattern and the
+   public API surface.
+
+3. **`docs/TUTORIAL.md`:** comprehensive integration guide covering C, Go, and
+   Python — getting started, per-protocol code recipes for all protocol families,
+   parameter reference table (KEYBITS, I_VALUE, R_VALUE, RNLQ/P/PP, SDF_N/T/ROUNDS),
+   and security notes (classical vs NL/PQC vs code-based; constant-time status;
+   production caveats for Stern demo parameters and QC-MDPC decoder gap).
+
+4. **`docs/examples/`:** three minimal runnable programs — one per language — each
+   demonstrating HKEX-GF, HSKE, HKEX-RNL, and HPKS-Stern-F in ~80 LOC.
+
+**Standardization changes only where necessary:** the Go package and `herradura.h`
+are already well-structured; changes are additive only.  Python private `_rnl_*`
+aliases are exposed without renaming.  No wire-format changes, no version bumps
+to protocol output.
+
+Status: **DONE v1.7.4** — Protocol Layer wrappers added to `herradura.h`; public
+aliases `hkex_rnl_keygen` / `hkex_rnl_agree` and library docstring added to
+`"Herradura cryptographic suite.py"`; `docs/TUTORIAL.md`, `docs/examples/c/`,
+`docs/examples/go/`, `docs/examples/python/` created and verified.
