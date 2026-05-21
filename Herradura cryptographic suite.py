@@ -1388,7 +1388,7 @@ def main():
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)
-hkex_rnl_agree  = _rnl_agree    # (s, C_other, q, p, pp, n, key_bits, hint=None) -> (K, hint)
+hkex_rnl_agree  = _rnl_agree    # (s, C_other, q, p, pp, n, key_bits, hint=None) -> (K, hint) or K
 
 if __name__ == '__main__':
     main()
