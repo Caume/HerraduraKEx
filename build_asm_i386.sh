@@ -5,7 +5,10 @@
 #
 # Dependencies (build):
 #   nasm     — sudo apt-get install -y nasm
-#   ld       — sudo apt-get install -y binutils
+#   ld with elf_i386 emulation — one of:
+#     x86_64 host : sudo apt-get install -y binutils
+#     ARM64 host  : sudo apt-get install -y binutils-x86-64-linux-gnu
+#                or sudo apt-get install -y binutils-i686-linux-gnu
 #
 # Dependencies (run — see run_asm_i386.sh):
 #   qemu-i386
@@ -29,20 +32,36 @@ if ! command -v nasm &>/dev/null; then
     exit 1
 fi
 
-if ! command -v x86_64-linux-gnu-ld &>/dev/null && ! command -v ld &>/dev/null; then
-    echo "ERROR: linker (ld / x86_64-linux-gnu-ld) not found."
-    echo "  Install: sudo apt-get install -y binutils"
+# Find a linker that actually supports the elf_i386 emulation.
+# The native ld on ARM64 hosts only knows aarch64/arm emulations, so we probe
+# each candidate rather than assuming presence implies elf_i386 support.
+find_i386_linker() {
+    local candidates=(
+        x86_64-linux-gnu-ld   # binutils-x86-64-linux-gnu  (works on any host arch)
+        i686-linux-gnu-ld     # binutils-i686-linux-gnu    (works on any host arch)
+        ld                    # system linker (supports elf_i386 on x86_64 hosts only)
+    )
+    for ld_bin in "${candidates[@]}"; do
+        if command -v "${ld_bin}" &>/dev/null; then
+            if "${ld_bin}" --help 2>&1 | grep -q 'elf_i386'; then
+                echo "${ld_bin}"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
+if ! LD=$(find_i386_linker); then
+    echo "ERROR: no linker with elf_i386 emulation found."
+    echo "  x86_64 host : sudo apt-get install -y binutils"
+    echo "  ARM64 host  : sudo apt-get install -y binutils-x86-64-linux-gnu"
+    echo "             or sudo apt-get install -y binutils-i686-linux-gnu"
     exit 1
 fi
 
-# Prefer the explicit cross linker; fall back to system ld if capable
-if command -v x86_64-linux-gnu-ld &>/dev/null; then
-    LD="x86_64-linux-gnu-ld"
-else
-    LD="ld"
-fi
-
 echo "=== HerraduraKEx v${VERSION} — NASM i386 build ==="
+echo "  Linker: ${LD}"
 
 echo "  Assembling suite..."
 nasm -f elf32 "${SUITE_SRC}" -o "${SUITE_OBJ}"
