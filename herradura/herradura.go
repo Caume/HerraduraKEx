@@ -1,4 +1,5 @@
 /*  package herradura — Herradura Cryptographic Suite shared library
+    v1.8.0: KDF domain constant — RnlKdfSeed: ROL(k,n/8) XOR RnlKdfDC (TODO #38).
     v1.6.1: SternHash ds parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: SternHash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: RnlLift centered rounding (TODO #37).
@@ -359,6 +360,28 @@ var Hfscx256IV = [32]byte{
 	'S', 'U', 'I', 'T', 'E', 0, 0, 0, 0, 0, 0, 0,
 }
 
+// RnlKdfDC is the 256-bit NUMS constant XOR'd into the KDF seed after ROL(K, n/8).
+// Derived from SHA-256 initial hash values H0..H7 (big-endian 32-bit words).
+// Prevents KDF degeneracy when K has a rotational period dividing n/8 (TODO #38, v1.8.0).
+var RnlKdfDC = [32]byte{
+	0x6A, 0x09, 0xE6, 0x67, 0xBB, 0x67, 0xAE, 0x85,
+	0x3C, 0x6E, 0xF3, 0x72, 0xA5, 0x4F, 0xF5, 0x3A,
+	0x51, 0x0E, 0x52, 0x7F, 0x9B, 0x05, 0x68, 0x8C,
+	0x1F, 0x83, 0xD9, 0xAB, 0x5B, 0xE0, 0xCD, 0x19,
+}
+
+// RnlKdfSeed returns ROL(k, n/8) XOR RnlKdfDC for the given n-bit key.
+// Use this instead of k.RotateLeft(n/8) wherever an HKEX-RNL KDF or
+// HSKE-NL-A1 seed is required (TODO #38, v1.8.0).
+func RnlKdfSeed(k *BitArray) *BitArray {
+	n := k.size
+	rotated := k.RotateLeft(n / 8)
+	dc := new(big.Int)
+	dcBytes := RnlKdfDC[32-n/8:]
+	dc.SetBytes(dcBytes)
+	return NewBitArray(n, new(big.Int).Xor(&rotated.Val, dc))
+}
+
 // Hfscx256 computes the HFSCX-256 hash of data.
 // iv==nil uses the standard domain IV (bare hash).
 // A non-nil iv (32 bytes, caller sets iv = key XOR Hfscx256IV[:]) selects the keyed-MAC variant.
@@ -406,7 +429,7 @@ func Hfscx256(data []byte, iv []byte) []byte {
 // ---------------------------------------------------------------------------
 
 // HskeNla1KsBlock returns the 32-byte keystream block for counter i.
-// Caller must set: base = K XOR nonce; seed = base.RotateLeft(256/8).
+// Caller must set: base = K XOR nonce; seed = rnlKdfSeed(base)  [ROL(base,n/8) XOR DC].
 func HskeNla1KsBlock(seed, base *BitArray, i uint32) *BitArray {
 	baseI := base.Copy()
 	iBI := new(big.Int).SetUint64(uint64(i))

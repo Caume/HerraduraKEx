@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.7.3
+    Herradura Cryptographic Suite v1.8.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.8.0: KDF domain constant — seed = ROL(K,n/8) XOR _RNL_KDF_DC_256 for HSKE-NL-A1 and HKEX-RNL (TODO #38) ---
     --- v1.7.3: NumPy NTT acceleration — ~10× speedup on _rnl_poly_mul (TODO #40) ---
     --- v1.5.41: rnl_lift centered rounding across all targets (TODO #37) ---
     --- v1.5.40: Constant-time audit — branchless stern_apply_perm + non-CT docs (TODO #41) ---
@@ -476,6 +477,11 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 
 # 32-byte ASCII domain constant for the default IV.
 _HFSCX256_IV_BYTES = b'HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00'
+
+# NUMS constant for KDF domain separation (SHA-256 initial hash values H0..H7
+# concatenated as big-endian 32-bit words).  For n<256 use top n bits.
+# Prevents KDF degeneracy when K is rotation-periodic (TODO #38, v1.8.0).
+_RNL_KDF_DC_256 = 0x6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0CD19
 
 
 def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
@@ -1170,9 +1176,10 @@ def main():
     counter    = 0
     N_a1       = BitArray.random(KEYBITS)                         # per-session nonce
     base_a1    = BitArray(KEYBITS, preshared.uint ^ N_a1.uint)   # K XOR N
-    ks_a1      = nl_fscx_revolve_v1(base_a1.rotated(KEYBITS // 8),  # seed=ROL(base,n/8)
-                                    BitArray(KEYBITS, base_a1.uint ^ counter),
-                                    KEYBITS // 4)
+    ks_a1      = nl_fscx_revolve_v1(
+                    BitArray(KEYBITS, base_a1.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+                    BitArray(KEYBITS, base_a1.uint ^ counter),
+                    KEYBITS // 4)
     E_a1 = BitArray(KEYBITS, plaintext.uint ^ ks_a1.uint)
     D_a1 = BitArray(KEYBITS, E_a1.uint ^ ks_a1.uint)
     print(f"N (nonce) : {N_a1.hex}")
@@ -1205,8 +1212,12 @@ def main():
     s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
     K_raw_A, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
     K_raw_B          = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS, hint_A)
-    sk_rnl_A = nl_fscx_revolve_v1(K_raw_A.rotated(KEYBITS // 8), K_raw_A, KEYBITS // 4)
-    sk_rnl_B = nl_fscx_revolve_v1(K_raw_B.rotated(KEYBITS // 8), K_raw_B, KEYBITS // 4)
+    sk_rnl_A = nl_fscx_revolve_v1(
+        BitArray(KEYBITS, K_raw_A.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+        K_raw_A, KEYBITS // 4)
+    sk_rnl_B = nl_fscx_revolve_v1(
+        BitArray(KEYBITS, K_raw_B.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+        K_raw_B, KEYBITS // 4)
     print(f"sk (Alice): {sk_rnl_A.hex}")
     print(f"sk (Bob)  : {sk_rnl_B.hex}")
     if K_raw_A == K_raw_B:

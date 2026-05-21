@@ -1,4 +1,5 @@
 /*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+    v1.8.0: KDF domain constant — ba_rnl_kdf_seed: ROL(k,n/8) XOR _RNL_KDF_DC (TODO #38).
     v1.6.1: stern_hash DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash HFSCX-256 finalizer — eliminates range compression (TODO #43).
     v1.5.41: rnl_lift centered rounding (TODO #37).
@@ -550,6 +551,28 @@ static const uint8_t _HFSCX256_IV[32] = {
     'H','F','S','C','X','-','2','5','6','/','H','E','R','R','A','D',
     'U','R','A','-','S','U','I','T','E',0,0,0,0,0,0,0
 };
+
+/* NUMS constant for KDF domain separation (SHA-256 initial hash values H0..H7,
+ * big-endian 32-bit words concatenated).  XOR'd into seed after ROL(K, n/8)
+ * to prevent KDF degeneracy when K is rotation-periodic (TODO #38, v1.8.0). */
+static const uint8_t _RNL_KDF_DC[KEYBYTES] = {
+    0x6A,0x09,0xE6,0x67, 0xBB,0x67,0xAE,0x85,
+    0x3C,0x6E,0xF3,0x72, 0xA5,0x4F,0xF5,0x3A,
+    0x51,0x0E,0x52,0x7F, 0x9B,0x05,0x68,0x8C,
+    0x1F,0x83,0xD9,0xAB, 0x5B,0xE0,0xCD,0x19
+};
+
+#define _RNL_KDF_DC_32  0x6A09E667U
+#define _RNL_KDF_DC_64  0x6A09E667BB67AE85ULL
+
+/* ba_rnl_kdf_seed: compute ROL(k, n/8) XOR _RNL_KDF_DC into dst. */
+static void ba_rnl_kdf_seed(BitArray *dst, const BitArray *k)
+{
+    int i;
+    ba_rol_k(dst, k, KEYBYTES);   /* ROL by KEYBYTES bytes = n/8 bits */
+    for (i = 0; i < KEYBYTES; i++)
+        dst->b[i] ^= _RNL_KDF_DC[i];
+}
 
 /* HFSCX-256: Merkle-Damgård hash built on NL-FSCX v1.
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */

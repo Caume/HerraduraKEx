@@ -5,6 +5,7 @@
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
 /*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+    v1.8.0: KDF domain constant — ba_rnl_kdf_seed replaces ba_rol_k at all HSKE-NL-A1/HKEX-RNL seed sites (TODO #38).
     v1.6.1: stern_hash_ba DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash_ba + stern_hash_64 HFSCX-256 finalizer (TODO #43).
     v1.5.43: F_stern range compression HyperLogLog test [20] (TODO #42 Step 1);
@@ -2095,13 +2096,13 @@ static void test_hske_nl_a1_correctness(void)
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             if (size == 256) {
-                /* ROL(base, n/8=32): use ba_rol_k */
+                /* KDF seed: ROL(base, n/8) XOR DC */
                 static const BitArray ZERO = {{0}};
                 BitArray K, nonce, P, base, seed, ctr_ba, ctr_xor, ks;
                 uint32_t ctr_val = (uint32_t)i & 0xFFFF;
                 ba_rand(&K, urnd_fp); ba_rand(&nonce, urnd_fp); ba_rand(&P, urnd_fp);
                 ba_xor(&base, &K, &nonce);
-                ba_rol_k(&seed, &base, 32);  /* ROL(base, n/8=32) */
+                ba_rnl_kdf_seed(&seed, &base);
                 /* ctr_ba = little-endian ctr_val in last 4 bytes */
                 ctr_ba = ZERO;
                 ctr_ba.b[KEYBYTES-4] = (uint8_t)(ctr_val >> 24);
@@ -2116,14 +2117,14 @@ static void test_hske_nl_a1_correctness(void)
             } else if (size == 128) {
                 __uint128_t K = rand128(), nonce = rand128(), P = rand128();
                 __uint128_t base = K ^ nonce;
-                __uint128_t seed = (base << 16) | (base >> 112); /* ROL(base, n/8=16) */
+                __uint128_t seed = ((base << 16) | (base >> 112)) ^ (((__uint128_t)_RNL_KDF_DC_64 << 64) | 0x3C6EF372A54FF53AULL);
                 __uint128_t ctr = (uint32_t)i & 0xFFFF;
                 __uint128_t ks = nl_fscx_revolve_v1_128(seed, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
             } else {
                 uint64_t K = rand64(), nonce = rand64(), P = rand64();
                 uint64_t base = K ^ nonce;
-                uint64_t seed = (base << 8) | (base >> 56); /* ROL(base, n/8=8) */
+                uint64_t seed = ((base << 8) | (base >> 56)) ^ _RNL_KDF_DC_64;
                 uint64_t ctr = (uint32_t)i & 0xFFFF;
                 uint64_t ks = nl_fscx_revolve_v1_64(seed, base ^ ctr, iv);
                 if ((P ^ ks ^ ks) == P) ok++;
@@ -2203,8 +2204,8 @@ static void test_hkex_rnl_correctness(void)
                 K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
                 K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);
                 if (K_A == K_B) ok_raw++;
-                if (nl_fscx_revolve_v1_32((K_A<<4)|(K_A>>28), K_A, NL_I32) ==
-                    nl_fscx_revolve_v1_32((K_B<<4)|(K_B>>28), K_B, NL_I32)) ok_sk++;
+                if (nl_fscx_revolve_v1_32(((K_A<<4)|(K_A>>28)) ^ _RNL_KDF_DC_32, K_A, NL_I32) ==
+                    nl_fscx_revolve_v1_32(((K_B<<4)|(K_B>>28)) ^ _RNL_KDF_DC_32, K_B, NL_I32)) ok_sk++;
                 if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
             }
         } else if (n == 64) {
@@ -2220,8 +2221,8 @@ static void test_hkex_rnl_correctness(void)
                 K_A64 = rnl_agree_n(s_A64, c_B64, 64, NULL, &hint_A64);
                 K_B64 = rnl_agree_n(s_B64, c_A64, 64, &hint_A64, NULL);
                 if (K_A64 == K_B64) ok_raw++;
-                if (nl_fscx_revolve_v1_64((K_A64<<8)|(K_A64>>56), K_A64, NL_I64) ==
-                    nl_fscx_revolve_v1_64((K_B64<<8)|(K_B64>>56), K_B64, NL_I64)) ok_sk++;
+                if (nl_fscx_revolve_v1_64(((K_A64<<8)|(K_A64>>56)) ^ _RNL_KDF_DC_64, K_A64, NL_I64) ==
+                    nl_fscx_revolve_v1_64(((K_B64<<8)|(K_B64>>56)) ^ _RNL_KDF_DC_64, K_B64, NL_I64)) ok_sk++;
                 if ((i & 15) == 15 && time_exceeded(&t0)) { N = i + 1; break; }
             }
         } else if (n == 128) {
@@ -2256,8 +2257,8 @@ static void test_hkex_rnl_correctness(void)
                 rnl_agree_ba(s_A256, c_B256, 256, NULL, &hint_A256, &K_A256);
                 rnl_agree_ba(s_B256, c_A256, 256, &hint_A256, NULL, &K_B256);
                 if (ba_equal(&K_A256, &K_B256)) ok_raw++;
-                ba_rol_k(&seed_A, &K_A256, 32); /* ROL by n/8=32 */
-                ba_rol_k(&seed_B, &K_B256, 32);
+                ba_rnl_kdf_seed(&seed_A, &K_A256);
+                ba_rnl_kdf_seed(&seed_B, &K_B256);
                 nl_fscx_revolve_v1_ba(&sk_A256, &seed_A, &K_A256, NL_I256);
                 nl_fscx_revolve_v1_ba(&sk_B256, &seed_B, &K_B256, NL_I256);
                 if (ba_equal(&sk_A256, &sk_B256)) ok_sk++;
@@ -3510,7 +3511,8 @@ static void bench_hske_nl_a1_roundtrip(void)
     K = rand32(); P = rand32();
     for (i = 0; i < 10; i++) {
         uint32_t nonce = rand32(), base = K ^ nonce;
-        ks = nl_fscx_revolve_v1_32(base, base, NL_I32);
+        uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
+        ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);
         sink ^= P ^ ks;
     }
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -3519,7 +3521,8 @@ static void bench_hske_nl_a1_roundtrip(void)
             uint32_t nonce = rand32();
             K = rand32(); P = rand32();
             uint32_t base = K ^ nonce;
-            ks = nl_fscx_revolve_v1_32(base, base, NL_I32);  /* ctr=0 */
+            uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
+            ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);  /* ctr=0 */
             sink ^= P ^ ks;
         }
         ops += 100;
@@ -3643,7 +3646,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.5.43 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.8.0 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
