@@ -61,13 +61,23 @@ arm-linux-gnueabi-gcc -o "Herradura cryptographic suite_arm" "Herradura cryptogr
 arm-linux-gnueabi-gcc -o CryptosuiteTests/Herradura_tests_arm CryptosuiteTests/Herradura_tests.s
 qemu-arm -L /usr/arm-linux-gnueabi "./Herradura cryptographic suite_arm"
 
-# NASM i386
+# NASM i386 — use the build script (it selects a linker with elf_i386 support)
+./build_asm_i386.sh
+qemu-i386 "./Herradura cryptographic suite_i386"
+
+# Manual linker invocation (ld must support elf_i386 — see portability note below)
 nasm -f elf32 "Herradura cryptographic suite.asm" -o suite32.o
 nasm -f elf32 CryptosuiteTests/Herradura_tests.asm -o tests32.o
 x86_64-linux-gnu-ld -m elf_i386 -o "Herradura cryptographic suite_i386" suite32.o
 x86_64-linux-gnu-ld -m elf_i386 -o CryptosuiteTests/Herradura_tests_i386 tests32.o
-qemu-i386 "./Herradura cryptographic suite_i386"
 ```
+
+> **i386 linker portability:** `x86_64-linux-gnu-ld -m elf_i386` fails on ARM64 hosts
+> (e.g. Raspberry Pi 5 / Ubuntu) with "unrecognized emulation mode: elf_i386" because the
+> native `ld` (aarch64) has no i386 emulation.  `build_asm_i386.sh` auto-detects the first
+> available linker with `elf_i386` support.  If none is found, install one:
+> - `sudo apt-get install -y binutils-x86-64-linux-gnu`  (provides `x86_64-linux-gnu-ld`)
+> - `sudo apt-get install -y binutils-i686-linux-gnu`    (provides `i686-linux-gnu-ld`)
 
 ## Testing
 
