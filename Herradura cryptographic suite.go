@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.5.27
+/*  Herradura Cryptographic Suite v1.8.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -141,7 +141,7 @@ func main() {
 	baseA1 := NewBitArray(n, new(big.Int).Xor(&preshared.Val, &nA1.Val))
 	counter := 0
 	bA1  := NewBitArray(n, new(big.Int).Xor(&baseA1.Val, big.NewInt(int64(counter))))
-	ksA1 := NlFscxRevolveV1(baseA1.RotateLeft(n/8), bA1, n/4)
+	ksA1 := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, n/4)
 	eA1  := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ksA1.Val))
 	dA1  := NewBitArray(n, new(big.Int).Xor(&eA1.Val, &ksA1.Val))
 	fmt.Printf("N (nonce) : %x\n", nA1)
@@ -176,8 +176,8 @@ func main() {
 	sB, CB := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
 	kRawA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, nRnl, n, nil)
 	kRawB, _     := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, nRnl, n, hintA)
-	skRnlA := NlFscxRevolveV1(kRawA.RotateLeft(n/8), kRawA, n/4)
-	skRnlB := NlFscxRevolveV1(kRawB.RotateLeft(n/8), kRawB, n/4)
+	skRnlA := NlFscxRevolveV1(RnlKdfSeed(kRawA), kRawA, n/4)
+	skRnlB := NlFscxRevolveV1(RnlKdfSeed(kRawB), kRawB, n/4)
 	fmt.Printf("sk (Alice): %x\n", skRnlA)
 	fmt.Printf("sk (Bob)  : %x\n", skRnlB)
 	if kRawA.Equal(kRawB) {

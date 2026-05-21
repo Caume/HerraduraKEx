@@ -1,5 +1,5 @@
 // HerraduraCli/herradura_cli.go — Go CLI for the Herradura Cryptographic Suite
-// v1.5.27
+// v1.8.0
 //
 // Usage:
 //   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem
@@ -977,7 +977,7 @@ func cmdEnc(args []string) {
 		case "hske-nla1":
 			nonce := NewRandBitArray(n)
 			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-			seed  := base.RotateLeft(n / 8)
+			seed  := RnlKdfSeed(base)
 			ks    := NlFscxRevolveV1(seed, base, n/4)
 			E     := NewBitArray(n, new(big.Int).Xor(&P.Val, &ks.Val))
 			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
@@ -1112,7 +1112,7 @@ func cmdDec(args []string) {
 			}
 			nonce := NewBitArray(n, nonceInt)
 			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-			seed  := base.RotateLeft(n / 8)
+			seed  := RnlKdfSeed(base)
 			ks    := NlFscxRevolveV1(seed, base, n/4)
 			D      = NewBitArray(n, new(big.Int).Xor(&E.Val, &ks.Val))
 		case "hske-nla2":
@@ -1427,7 +1427,7 @@ func cmdEncfile(args []string) {
 	K     := NewBitArray(n, keyInt)
 	nonce := NewRandBitArray(n)
 	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-	seed  := base.RotateLeft(n / 8) // matches Python base.rotated(n//8) = ROL 32 bits
+	seed  := RnlKdfSeed(base) // ROL(base, n/8) XOR DC
 
 	// Encrypt in hkxBlock-byte blocks (last block zero-padded if needed)
 	nBlocks := (ptLen + hkxBlock - 1) / hkxBlock
@@ -1536,7 +1536,7 @@ func cmdDecfile(args []string) {
 	K     := NewBitArray(n, keyInt)
 	nonce := NewBitArray(n, new(big.Int).SetBytes(nonceBuf))
 	base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
-	seed  := base.RotateLeft(n / 8)
+	seed  := RnlKdfSeed(base) // ROL(base, n/8) XOR DC
 
 	// Recompute MAC and verify before decrypting (verify-then-decrypt)
 	macKey  := HskeNla1MacKey(seed, base)

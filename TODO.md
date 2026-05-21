@@ -2405,7 +2405,12 @@ Python ↔ C/Go/asm interop.  Schedule with the next major suite version bump.
 Practical risk: low — the attacker cannot choose `K` (it is the reconciled
 session secret), so the bad-`K` rate is the random-`K` rate, not adversarial.
 
-Status: **TODO**.
+Status: **DONE (v1.8.0)** — `seed = ROL(K, n/8) XOR DC` where `DC` = SHA-256 initial
+hash values (H0..H7, 256-bit; H0 = `0x6A09E667` for 32-bit assembly/Arduino targets).
+Implemented across all 6 targets: C (`ba_rnl_kdf_seed` in `herradura.h`), Go (`RnlKdfSeed`
+in `herradura/herradura.go`), Python (`_RNL_KDF_DC_256`), ARM Thumb-2 (`RNL_KDF_DC` equ),
+NASM i386 (`%define RNL_KDF_DC`), Arduino (`#define RNL_KDF_DC`). All suite, test, and CLI
+files updated. Breaking wire change — incompatible with v1.7.x derived keys.
 
 ---
 
@@ -2679,7 +2684,7 @@ Status: **DONE v1.6.0**.  Updated all six language targets: Python (`_stern_hash
 28. #35 — NL-FSCX v1 PRF Walsh spectrum at small `n` (**DONE v1.5.42**)
 29. #42 — F_stern range compression at n=32 (**DONE v1.5.43** — all 3 steps)
 30. #39 — 2-bit Peikert reconciliation (cross-language wire change) (**DONE v1.7.0**)
-31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**TODO**)
+31. #38 — KDF rotation-periodic-K patch (cross-language wire change) (**DONE v1.8.0**)
 32. #40 — NumPy NTT optional acceleration (**TODO**)
 33. KR-1 — §11.8.4 KaTeX cascade failure (**DONE v1.5.38** — document split)
 
@@ -2830,15 +2835,15 @@ After steps 1–6, add a table here with columns:
 
 | ID | File(s) | Function | Weakness | Severity | Status |
 |---|---|---|---|---|---|
-| SA-01 | `suite.asm`, `suite.s` | `prng_next` (LCG) | Fixed seed `0xDEADBEEE` — entire PRNG sequence is deterministic across all runs; every "random" key, nonce, and polynomial is identical every run. In HPKS Schnorr the signing nonce k is predictable → private key recovery via `a = (k - s)·e⁻¹ mod ord`. Affects HKEX-GF k, HSKE-NL-A1 nonce N, HKEX-RNL blind polynomial + secret, Stern-F seed/error. ARM Thumb-2 and NASM i386 are both affected; neither seeds from `/dev/urandom` or `getrandom`. | **Critical** | Open |
-| SA-02 | `herradura.h:227` | `gf_pow_ba` | Square-and-multiply: `while (!ba_is_zero(&e))` loop count leaks the bit-length of the private key; `if (e.b[KEYBYTES-1] & 1)` branches on each private key bit — full key bit pattern leaks via timing. Used with private key `a` in HKEX-GF and HPKS sign. | **High** | Open |
-| SA-03 | `herradura.h:208` | `gf_mul_ba` | Inner-loop `if (bb.b[KEYBYTES-1] & 1)` branches on the bit being processed — execution path differs per secret bit. Called from `gf_pow_ba` with private key as exponent; also leaks via carry branch `if (ba_shl1(&aa))`. | **High** | Open |
-| SA-04 | `herradura.h:338` | `ba_mul_mod_ord` | `if (!ai) continue` skips the entire inner multiply loop for zero bytes in Schnorr scalar `a` — leaks zero-byte positions in the private key via timing. Used in `HPKS_sign`: `ba_mul_mod_ord(&ae_s, &a, &e_s)`. | **High** | Open |
-| SA-05 | `herradura/herradura.go:210` | `GfPow`, `GfMul` | Same variable-time square-and-multiply as SA-02/03: `eCopy.Sign() > 0` loop count + `And(eCopy, one).Sign() != 0` branch per key bit. `big.Int` operations are not constant-time. | **High** | Open |
-| SA-06 | `suite.py:359` | `gf_pow`, `gf_mul` | Same variable-time pattern as SA-02/03: `while exp:` loop exits early on leading zeros; `if exp & 1:` branches on each exponent bit. Python CPython also leaks via GIL scheduling and object allocation patterns. | **High** | Open |
-| SA-07 | `CryptosuiteTests/Herradura_tests.py:393,401` | `stern_f_keygen`, `hpks_stern_f_sign` | `random.sample()` (Mersenne Twister) used for error vector `e_int` (private key) and nonce `r_int`. MT is predictable from 624 observed outputs. Suite file uses `_csprng_weight_t()` (os.urandom); test file diverges and would be a dangerous reference if copied. | **Medium** | Open |
-| SA-08 | `herradura.h:84` | `ba_equal` | `memcmp` is not constant-time — early-exit on first differing byte. Used in `hpks_stern_f_verify` to compare commitment hashes (`ba_equal(&tmp, &sig->c1[i])`). Timing oracle requires repeated verify calls; hashes are public values but early-exit may leak information in online settings. | **Low** | Open |
-| SA-09 | `Herradura cryptographic suite.c` | `main()` | Stack-allocated private keys (`a`, `b`, `k_s`, `ae_s`, `s_s`, `skA`, `skB`) not zeroed via `explicit_bzero` before function returns. Compiler may optimize away plain `memset`. Process exits immediately in demo context (mitigates), but pattern is unsafe for library use. | **Low** | Open |
+| SA-01 | `suite.asm`, `suite.s` | `prng_next` (LCG) | Fixed seed `0xDEADBEEE` — entire PRNG sequence is deterministic across all runs; every "random" key, nonce, and polynomial is identical every run. In HPKS Schnorr the signing nonce k is predictable → private key recovery via `a = (k - s)·e⁻¹ mod ord`. Affects HKEX-GF k, HSKE-NL-A1 nonce N, HKEX-RNL blind polynomial + secret, Stern-F seed/error. ARM Thumb-2 and NASM i386 are both affected; neither seeds from `/dev/urandom` or `getrandom`. | **Critical** | **DONE (v1.7.4)** |
+| SA-02 | `herradura.h:227` | `gf_pow_ba` | Square-and-multiply: `while (!ba_is_zero(&e))` loop count leaks the bit-length of the private key; `if (e.b[KEYBYTES-1] & 1)` branches on each private key bit — full key bit pattern leaks via timing. Used with private key `a` in HKEX-GF and HPKS sign. | **High** | **DONE (v1.7.4)** |
+| SA-03 | `herradura.h:208` | `gf_mul_ba` | Inner-loop `if (bb.b[KEYBYTES-1] & 1)` branches on the bit being processed — execution path differs per secret bit. Called from `gf_pow_ba` with private key as exponent; also leaks via carry branch `if (ba_shl1(&aa))`. | **High** | **DONE (v1.7.4)** |
+| SA-04 | `herradura.h:338` | `ba_mul_mod_ord` | `if (!ai) continue` skips the entire inner multiply loop for zero bytes in Schnorr scalar `a` — leaks zero-byte positions in the private key via timing. Used in `HPKS_sign`: `ba_mul_mod_ord(&ae_s, &a, &e_s)`. | **High** | **DONE (v1.7.4)** |
+| SA-05 | `herradura/herradura.go:210` | `GfPow`, `GfMul` | Same variable-time square-and-multiply as SA-02/03: `eCopy.Sign() > 0` loop count + `And(eCopy, one).Sign() != 0` branch per key bit. `big.Int` operations are not constant-time. | **High** | **DONE (v1.7.4)** |
+| SA-06 | `suite.py:359` | `gf_pow`, `gf_mul` | Same variable-time pattern as SA-02/03: `while exp:` loop exits early on leading zeros; `if exp & 1:` branches on each exponent bit. Python CPython also leaks via GIL scheduling and object allocation patterns. | **High** | **DONE (v1.7.4)** |
+| SA-07 | `CryptosuiteTests/Herradura_tests.py:393,401` | `stern_f_keygen`, `hpks_stern_f_sign` | `random.sample()` (Mersenne Twister) used for error vector `e_int` (private key) and nonce `r_int`. MT is predictable from 624 observed outputs. Suite file uses `_csprng_weight_t()` (os.urandom); test file diverges and would be a dangerous reference if copied. | **Medium** | **DONE (v1.7.4)** |
+| SA-08 | `herradura.h:84` | `ba_equal` | `memcmp` is not constant-time — early-exit on first differing byte. Used in `hpks_stern_f_verify` to compare commitment hashes (`ba_equal(&tmp, &sig->c1[i])`). Timing oracle requires repeated verify calls; hashes are public values but early-exit may leak information in online settings. | **Low** | **DONE (v1.7.4)** |
+| SA-09 | `Herradura cryptographic suite.c` | `main()` | Stack-allocated private keys (`a`, `b`, `k_s`, `ae_s`, `s_s`, `skA`, `skB`) not zeroed via `explicit_bzero` before function returns. Compiler may optimize away plain `memset`. Process exits immediately in demo context (mitigates), but pattern is unsafe for library use. | **Low** | **DONE (v1.7.4)** |
 
 Severity levels: **Critical** (direct key recovery), **High** (timing/side-channel),
 **Medium** (theoretical/implementation gap), **Low** (hygiene/documentation).

@@ -1,5 +1,6 @@
 '''
     Herradura KEx — Security & Performance Tests (Python)
+    v1.8.0: KDF domain constant (TODO #38) — _RNL_KDF_DC_256 applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.7.3: NumPy NTT acceleration — ~10× speedup on _rnl_poly_mul (TODO #40).
     v1.5.24: HFSCX-256 hash primitive (TODO #26 Phase 1) — KAT, determinism, collision sanity.
     v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
@@ -316,6 +317,7 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 # ---------------------------------------------------------------------------
 
 _HFSCX256_IV_BYTES = b'HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00'
+_RNL_KDF_DC_256 = 0x6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0CD19
 
 
 def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
@@ -919,7 +921,7 @@ def test_hske_nl_a1_correctness():
             base = BitArray(size, K.uint ^ N.uint)       # session key base
             ctr  = trial % (1 << min(size, 16))
             B    = BitArray(size, base.uint ^ ctr)
-            ks   = nl_fscx_revolve_v1(base.rotated(size // 8), B, iv)  # seed=ROL(base,n/8)
+            ks   = nl_fscx_revolve_v1(BitArray(size, base.rotated(size // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - size))), B, iv)
             C    = BitArray(size, P.uint ^ ks.uint)
             D    = BitArray(size, C.uint ^ ks.uint)
             if D == P: ok += 1
@@ -970,8 +972,8 @@ def test_hkex_rnl_correctness():
             K_A, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, n_rnl)
             K_B         = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, n_rnl, hint_A)
             if K_A == K_B: ok_raw += 1
-            sk_A = nl_fscx_revolve_v1(K_A.rotated(n_rnl // 8), K_A, n_rnl // 4)
-            sk_B = nl_fscx_revolve_v1(K_B.rotated(n_rnl // 8), K_B, n_rnl // 4)
+            sk_A = nl_fscx_revolve_v1(BitArray(n_rnl, K_A.rotated(n_rnl // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n_rnl))), K_A, n_rnl // 4)
+            sk_B = nl_fscx_revolve_v1(BitArray(n_rnl, K_B.rotated(n_rnl // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n_rnl))), K_B, n_rnl // 4)
             if sk_A == sk_B: ok_sk += 1
         status = "PASS" if ok_raw == n_run else "FAIL"
         print(f"    n={n_rnl:3d}  raw agree={ok_raw}/{n_run}  sk agree={ok_sk}/{n_run}  [{status}]")
@@ -1275,7 +1277,7 @@ def bench_hske_nl_a1_roundtrip():
             N    = BitArray.random(size)
             base = BitArray(size, K.uint ^ N.uint)
             B    = BitArray(size, base.uint ^ 0)  # counter=0
-            ks   = nl_fscx_revolve_v1(base.rotated(size // 8), B, iv)  # seed=ROL(base,n/8)
+            ks   = nl_fscx_revolve_v1(BitArray(size, base.rotated(size // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - size))), B, iv)
             sink ^= BitArray(size, P.uint ^ ks.uint)
         _bench(f"bits={size:3d}", fn)
     print()
@@ -1358,7 +1360,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.5.24 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.8.0 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

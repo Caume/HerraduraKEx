@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.6.1
+/*  Herradura Cryptographic Suite v1.8.0
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
                                        HPKS-Stern-F, HPKE-Stern-F
@@ -33,6 +33,7 @@
 /* ------------------------------------------------------------------ */
     .equ I_VALUE,  8
     .equ R_VALUE,  24
+    .equ RNL_KDF_DC, 0x6A09E667     @ SHA-256 H0 — domain constant for KDF seed
     .equ RNL_N,    32
     .equ RNL_Q,    65537
     .equ RNL_P,    4096
@@ -49,7 +50,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.5.23 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.8.0 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -599,7 +600,9 @@ hpke_done:
     ldr     r1, [r1]
     eor     r0, r0, r1              @ r0 = base = N XOR key
     mov     r1, r0                  @ r1 = B = base (counter=0)
-    ror     r0, r0, #28             @ r0 = ROL(base, 4) = seed  [n=32, n/8=4]
+    ror     r0, r0, #28             @ r0 = ROL(base, 4)         [n=32, n/8=4]
+    ldr     r2, =RNL_KDF_DC
+    eor     r0, r0, r2              @ r0 = seed = ROL(base,4) XOR DC
     mov     r2, #I_VALUE
     bl      nl_fscx_revolve_v1      @ r0 = ks  (A=seed, B=base)
     ldr     r3, =val_ks_nl1
@@ -753,7 +756,9 @@ hske_nl2_done:
 
     ldr     r0, =val_KA
     ldr     r0, [r0]
-    ror     r0, r0, #28         @ seed = ROL32(KA, 4)  [n/8 = 32/8 = 4]
+    ror     r0, r0, #28         @ ROL32(KA, 4)           [n/8 = 32/8 = 4]
+    ldr     r3, =RNL_KDF_DC
+    eor     r0, r0, r3          @ seed = ROL(KA,4) XOR DC
     ldr     r1, =val_KA
     ldr     r1, [r1]            @ B = KA
     mov     r2, #I_VALUE

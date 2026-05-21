@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.5.24)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.8.0)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -40,7 +40,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
-    hfscx_256, _HFSCX256_IV_BYTES,
+    hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -615,7 +615,7 @@ def cmd_enc(args):
         elif algo == 'hske-nla1':
             N_nonce = BitArray.random(nbits)
             base    = BitArray(nbits, K.uint ^ N_nonce.uint)
-            seed    = base.rotated(nbits // 8)
+            seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
             ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
             E       = BitArray(nbits, P.uint ^ ks.uint)
             _write_file(out_path, _encode_sym_ct('hske-nla1', E.uint, nbits, nonce_int=N_nonce.uint))
@@ -692,7 +692,7 @@ def cmd_dec(args):
                 sys.exit("hske-nla1 ciphertext missing nonce")
             N_nonce = BitArray(nbits, nonce_int)
             base    = BitArray(nbits, K.uint ^ N_nonce.uint)
-            seed    = base.rotated(nbits // 8)
+            seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
             ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
             D       = BitArray(nbits, E.uint ^ ks.uint)
         else:  # hske-nla2
@@ -864,7 +864,7 @@ def cmd_encfile(args):
     K       = BitArray(n, key_int)
     N_nonce = BitArray.random(n)
     base    = BitArray(n, K.uint ^ N_nonce.uint)
-    seed    = base.rotated(n // 8)     # step-1 degeneracy fix (matches HSKE-NL-A1)
+    seed    = BitArray(n, base.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
 
     # Encrypt: ks_i = nl_fscx_revolve_v1(seed, base XOR i, 64); C_i = P_i XOR ks_i
     n_blocks  = (plaintext_len + blen - 1) // blen   # 0 for empty plaintext
@@ -934,7 +934,7 @@ def cmd_decfile(args):
     K       = BitArray(n, key_int)
     N_nonce = BitArray(n, int.from_bytes(nonce_bytes, 'big'))
     base    = BitArray(n, K.uint ^ N_nonce.uint)
-    seed    = base.rotated(n // 8)
+    seed    = BitArray(n, base.rotated(n // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - n)))
 
     # Recompute auth tag and compare before decrypting (verify-then-decrypt)
     mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)

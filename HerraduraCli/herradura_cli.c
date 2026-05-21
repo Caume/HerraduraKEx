@@ -787,7 +787,7 @@ static void cmd_enc(int argc, char **argv)
             ba_rand(&N_nonce, urnd);
             fclose(urnd);
             ba_xor(&base, &K, &N_nonce);
-            ba_rol_k(&seed, &base, KEYBITS / 8);
+            ba_rnl_kdf_seed(&seed, &base);
             nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
             ba_xor(&E, &P, &ks);
             uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)], itnb[8];
@@ -910,7 +910,7 @@ static void cmd_dec(int argc, char **argv)
             ba_from_ra(&E,       ct.vals[2], ct.vlens[2]);
             pem_key_free(&ct);
             ba_xor(&base, &K, &N_nonce);
-            ba_rol_k(&seed, &base, KEYBITS / 8);
+            ba_rnl_kdf_seed(&seed, &base);
             nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
             ba_xor(&D, &E, &ks);
         } else {

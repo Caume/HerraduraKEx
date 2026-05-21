@@ -1,4 +1,5 @@
 /*  Herradura KEx — Security & Performance Tests (Go)
+    v1.8.0: KDF domain constant (TODO #38) — RnlKdfSeed applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.6.1: SternHash ds parameter (TODO #36).
     v1.5.27: refactored to import package herradura; added HFSCX-256 KAV test [17].
     v1.5.23: HPKS-Stern-F + HPKE-Stern-F tests [17][18] (now [18][19]).
@@ -478,7 +479,7 @@ func testHskeNlA1Correctness() {
 			base := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
 			ctr := int64(trial % (1 << 16))
 			bCtr := newBA(size, new(big.Int).Xor(&base.Val, big.NewInt(ctr)))
-			ks := NlFscxRevolveV1(base.RotateLeft(size/8), bCtr, iv)
+			ks := NlFscxRevolveV1(RnlKdfSeed(base), bCtr, iv)
 			C := newBA(size, new(big.Int).Xor(&P.Val, &ks.Val))
 			D := newBA(size, new(big.Int).Xor(&C.Val, &ks.Val))
 			if D.Equal(P) { ok++ }
@@ -527,8 +528,8 @@ func testHkexRnlCorrectness() {
 			KA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, nRnl, nRnl, nil)
 			KB, _     := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, nRnl, nRnl, hintA)
 			if KA.Equal(KB) { okRaw++ }
-			skA := NlFscxRevolveV1(KA.RotateLeft(nRnl/8), KA, nRnl/4)
-			skB := NlFscxRevolveV1(KB.RotateLeft(nRnl/8), KB, nRnl/4)
+			skA := NlFscxRevolveV1(RnlKdfSeed(KA), KA, nRnl/4)
+			skB := NlFscxRevolveV1(RnlKdfSeed(KB), KB, nRnl/4)
 			if skA.Equal(skB) { okSk++ }
 			if i&15 == 15 && timeExceeded(t0) { trials = i + 1; break }
 		}
@@ -824,7 +825,7 @@ func benchHskeNlA1RoundTrip() {
 			base  := newBA(size, new(big.Int).Xor(&K.Val, &nonce.Val))
 			P     := randBA(size)
 			bCtr  := newBA(size, new(big.Int).Set(&base.Val))
-			ks    := NlFscxRevolveV1(base, bCtr, iv)
+			ks    := NlFscxRevolveV1(RnlKdfSeed(base), bCtr, iv)
 			sink = sink.Xor(newBA(size, new(big.Int).Xor(&P.Val, &ks.Val)))
 		})
 		fmt.Printf("    bits=%3d                          : %s  (%d ops in %.2fs)\n",
@@ -923,7 +924,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.5.27 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.8.0 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

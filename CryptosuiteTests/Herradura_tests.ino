@@ -1,4 +1,4 @@
-/*  Herradura KEx — Security Tests v1.5.23 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests v1.8.0 (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL,
     HPKS-Stern-F, HPKE-Stern-F
 
@@ -31,6 +31,8 @@
 
 #define GF_POLY32 0x00400007UL
 #define GF_GEN    3UL
+
+#define RNL_KDF_DC 0x6A09E667UL     /* NUMS domain constant for KDF seed (SHA-256 H0) */
 
 #define RNL_N   32
 #define RNL_Q   65537L
@@ -575,8 +577,8 @@ void test_hkex_rnl() {
         uint32 KB = rnl_agree(s_B, C_A, &hint_A, NULL);   /* receiver */
         if (KA == KB) {
             ok_raw++;
-            uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4), KA, I_VALUE);
-            uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4), KB, I_VALUE);
+            uint32 skA = nl_fscx_revolve_v1(_rol32(KA, 4) ^ RNL_KDF_DC, KA, I_VALUE);
+            uint32 skB = nl_fscx_revolve_v1(_rol32(KB, 4) ^ RNL_KDF_DC, KB, I_VALUE);
             if (skA == skB) ok_sk++;
         }
     }
@@ -696,7 +698,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura KEx v1.5.23 - Security Tests (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura KEx v1.8.0 - Security Tests (Arduino, 32-bit) ===");
     Serial.println();
 
     test_hkex_gf();

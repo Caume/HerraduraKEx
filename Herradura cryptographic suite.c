@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.6.1
+/*  Herradura Cryptographic Suite v1.8.0
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -243,6 +243,8 @@ int main(void)
             puts("+ session keys agree!");
         else
             puts("- session keys differ!");
+        explicit_bzero(&skA, sizeof(skA));
+        explicit_bzero(&skB, sizeof(skB));
     }
 
     /* --- HSKE [CLASSICAL -- not PQC; linear key recovery from 1 KPT pair] */
@@ -285,6 +287,9 @@ int main(void)
             puts("  [Bob,verify] : + Schnorr verified: g^s \xc2\xb7 C^e == R");
         else
             puts("  [Bob,verify] : - Schnorr verification failed!");
+        explicit_bzero(&k_s,  sizeof(k_s));
+        explicit_bzero(&ae_s, sizeof(ae_s));
+        explicit_bzero(&s_s,  sizeof(s_s));
     }
 
     /* --- HPKE [CLASSICAL -- not PQC; DLP + linear HSKE sub-protocol] */
@@ -305,6 +310,9 @@ int main(void)
             puts("+ plaintext correctly decrypted");
         else
             puts("- decryption failed!");
+        explicit_bzero(&r_hpke,  sizeof(r_hpke));
+        explicit_bzero(&enc_key, sizeof(enc_key));
+        explicit_bzero(&dec_key, sizeof(dec_key));
     }
 
     /* --- HSKE-NL-A1 [PQC-HARDENED -- counter-mode with NL-FSCX v1] */
@@ -314,7 +322,7 @@ int main(void)
         ba_rand(&N_a1, urnd);                         /* per-session nonce          */
         ba_xor(&base_a1, &preshared, &N_a1);          /* base = K XOR N             */
         BitArray seed_a1;
-        ba_rol_k(&seed_a1, &base_a1, KEYBYTES);       /* seed = ROL(base, n/8)      */
+        ba_rnl_kdf_seed(&seed_a1, &base_a1);           /* seed = ROL(base,n/8)^DC    */
         nl_fscx_revolve_v1_ba(&ks_nl1, &seed_a1, &base_a1, I_VALUE); /* counter=0  */
         ba_xor(&E_nl1, &plaintext, &ks_nl1);
         ba_xor(&D_nl1, &E_nl1,    &ks_nl1);
@@ -326,6 +334,8 @@ int main(void)
             puts("+ plaintext correctly decrypted");
         else
             puts("- decryption failed!");
+        explicit_bzero(&seed_a1, sizeof(seed_a1));
+        explicit_bzero(&base_a1, sizeof(base_a1));
     }
 
     /* --- HSKE-NL-A2 [PQC-HARDENED -- revolve-mode with NL-FSCX v2] */
@@ -363,9 +373,9 @@ int main(void)
         rnl_agree(&KA, s_A_poly, C_B, NULL, hint_A);   /* Alice: reconciler */
         rnl_agree(&KB, s_B_poly, C_A, hint_A, NULL);   /* Bob: receiver */
         BitArray seedA, seedB;
-        ba_rol_k(&seedA, &KA, KEYBYTES);           /* ROL(K, n/8) = ROL(K, 32) */
+        ba_rnl_kdf_seed(&seedA, &KA);              /* ROL(K,n/8) XOR DC          */
         nl_fscx_revolve_v1_ba(&skA_nl, &seedA, &KA, I_VALUE);
-        ba_rol_k(&seedB, &KB, KEYBYTES);
+        ba_rnl_kdf_seed(&seedB, &KB);
         nl_fscx_revolve_v1_ba(&skB_nl, &seedB, &KB, I_VALUE);
         ba_print_hex("sk (Alice): ", &skA_nl);
         ba_print_hex("sk (Bob)  : ", &skB_nl);
@@ -380,6 +390,10 @@ int main(void)
                    bits_diff);
         }
         sk_rnl_A_saved = skA_nl;
+        explicit_bzero(&KA,     sizeof(KA));
+        explicit_bzero(&KB,     sizeof(KB));
+        explicit_bzero(&seedA,  sizeof(seedA));
+        explicit_bzero(&seedB,  sizeof(seedB));
     }
 
     /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */
@@ -406,6 +420,9 @@ int main(void)
             puts("  [Bob,verify] : + HPKS-NL verified: g^s \xc2\xb7 C^e == R");
         else
             puts("  [Bob,verify] : - HPKS-NL verification failed!");
+        explicit_bzero(&k_nl,  sizeof(k_nl));
+        explicit_bzero(&ae_nl, sizeof(ae_nl));
+        explicit_bzero(&s_nl,  sizeof(s_nl));
     }
 
     /* --- HPKE-NL [NL-hardened El Gamal -- NL-FSCX v2 encryption] */
@@ -429,6 +446,9 @@ int main(void)
         /* save for Eve test */
         E_nl_saved   = E_nl;
         R_nl2_saved  = R_nl2;
+        explicit_bzero(&r_nl,   sizeof(r_nl));
+        explicit_bzero(&enc_nl, sizeof(enc_nl));
+        explicit_bzero(&dec_nl, sizeof(dec_nl));
     }
 
     /* --- HPKS-Stern-F [CODE-BASED PQC -- EUF-CMA <= q_H/T_SD + eps_PRF] */
