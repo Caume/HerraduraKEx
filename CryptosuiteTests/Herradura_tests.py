@@ -386,11 +386,24 @@ def _stern_apply_perm(perm: list, v_int: int, N: int) -> int:
             result |= 1 << perm[i]
     return result
 
+def _csprng_weight_t(n: int, t: int) -> int:
+    """SA-07: os.urandom-based weight-t bit vector via index sampling.
+    Rejection-samples t distinct indices from [0, n) using 4-byte draws with
+    bias elimination (threshold method), then sets those bits.
+    Replaces random.sample() (Mersenne Twister) for secret material."""
+    chosen: set = set()
+    threshold = (1 << 32) - (1 << 32) % n
+    while len(chosen) < t:
+        v = int.from_bytes(os.urandom(4), 'big')
+        if v < threshold:
+            chosen.add(v % n)
+    return sum(1 << p for p in chosen)
+
 def stern_f_keygen(n: int):
     n_rows = n // 2
     t      = max(2, n // 16)
     seed   = BitArray.random(n)
-    e_int  = sum(1 << p for p in random.sample(range(n), t))
+    e_int  = _csprng_weight_t(n, t)
     return seed, e_int, _stern_syndrome(seed.uint, e_int, n, n_rows)
 
 def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
@@ -398,7 +411,7 @@ def hpks_stern_f_sign(msg, e_int, seed, syndrome, n, rounds):
     t      = max(2, n // 16)
     commits = []; round_data = []
     for _ in range(rounds):
-        r_int   = sum(1 << p for p in random.sample(range(n), t))
+        r_int   = _csprng_weight_t(n, t)           # SA-07: was random.sample()
         y_int   = (e_int ^ r_int) & ((1 << n) - 1)
         pi_seed = BitArray.random(n)
         perm    = _stern_gen_perm(pi_seed, n)
@@ -460,7 +473,7 @@ def hpks_stern_f_verify(msg, sig, seed, syndrome, n):
 
 def hpke_stern_f_encap(seed, n):
     n_rows = n // 2; t = max(2, n // 16)
-    e_p    = sum(1 << p for p in random.sample(range(n), t))
+    e_p    = _csprng_weight_t(n, t)  # SA-07: was random.sample()
     ct     = _stern_syndrome(seed.uint, e_p, n, n_rows)
     K      = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct
@@ -476,7 +489,7 @@ def hpke_stern_f_decap(ciphertext, seed, n):
 def hpke_stern_f_encap_with_e(seed, n):
     """Like hpke_stern_f_encap but also returns the plaintext error e_p (for tests)."""
     n_rows = n // 2; t = max(2, n // 16)
-    e_p = sum(1 << p for p in random.sample(range(n), t))
+    e_p = _csprng_weight_t(n, t)  # SA-07: was random.sample()
     ct  = _stern_syndrome(seed.uint, e_p, n, n_rows)
     K   = _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return K, ct, e_p
@@ -1032,7 +1045,7 @@ def test_hpks_stern_f_correctness():
     # Eve bypass: random signature should not verify
     size = 32; sf_seed, sf_e, sf_syn = stern_f_keygen(size)
     decoy = BitArray.random(size)
-    fake_pi = BitArray.random(size); fake_r = sum(1 << p for p in random.sample(range(size), max(2, size//16)))
+    fake_pi = BitArray.random(size); fake_r = _csprng_weight_t(size, max(2, size//16))  # SA-07
     fake_c0 = _stern_hash(size, fake_pi, BitArray(size, 0))
     fake_c1 = _stern_hash(size, BitArray(size, fake_r))
     fake_c2 = _stern_hash(size, BitArray(size, 0))

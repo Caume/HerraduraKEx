@@ -186,6 +186,8 @@ var GfPoly = map[int]*big.Int{
 const GfGen = 3
 
 // GfMul computes a·b in GF(2^n) (carryless multiply mod poly).
+// The inner branch is on bits of b (the base, a public value when called from
+// GfPow); it does not directly expose private key bits in that path.
 func GfMul(a, b, poly *big.Int, n int) *big.Int {
 	result := new(big.Int)
 	aCopy := new(big.Int).Set(a)
@@ -207,12 +209,15 @@ func GfMul(a, b, poly *big.Int, n int) *big.Int {
 }
 
 // GfPow computes base^exp in GF(2^n) using square-and-multiply.
+// SA-02/05: iterates exactly n times — no early exit on leading zero bits of
+// exp, so loop count no longer leaks exp's bit-length. Residual: the per-bit
+// conditional call still leaks individual exp bits; big.Int has no CT select.
 func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 	result := big.NewInt(1)
 	bCopy := new(big.Int).Set(base)
 	eCopy := new(big.Int).Set(exp)
 	one := big.NewInt(1)
-	for eCopy.Sign() > 0 {
+	for i := 0; i < n; i++ { // fixed n iterations — no early exit
 		if new(big.Int).And(eCopy, one).Sign() != 0 {
 			result = GfMul(result, bCopy, poly, n)
 		}

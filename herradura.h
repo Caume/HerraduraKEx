@@ -79,9 +79,14 @@ static void ba_xor(BitArray *dst, const BitArray *a, const BitArray *b)
 }
 
 /* Returns 1 if a == b, 0 otherwise. */
+/* SA-08: constant-time equality — XOR-accumulate all bytes before comparing. */
 static int ba_equal(const BitArray *a, const BitArray *b)
 {
-    return memcmp(a->b, b->b, KEYBYTES) == 0;
+    uint8_t diff = 0;
+    int i;
+    for (i = 0; i < KEYBYTES; i++)
+        diff |= a->b[i] ^ b->b[i];
+    return diff == 0;
 }
 
 /* Print label + hex representation of a + newline. */
@@ -205,35 +210,51 @@ static int ba_shr1(BitArray *a)
 
 /* GF(2^KEYBITS) multiplication: dst = a * b mod GF_POLY.
    Shift-and-XOR: O(KEYBITS) iterations. */
+/* SA-02/03: constant-time GF(2^KEYBITS) multiply.
+   All branches replaced with bitmask selects so execution time is
+   independent of the value of either operand (private key). */
 static void gf_mul_ba(BitArray *dst, const BitArray *a, const BitArray *b)
 {
     BitArray r, aa, bb;
-    int i;
+    uint8_t bit_mask, carry_mask;
+    int i, k;
     memset(r.b, 0, KEYBYTES);
     aa = *a;
     bb = *b;
     for (i = 0; i < KEYBITS; i++) {
-        if (bb.b[KEYBYTES - 1] & 1)
-            ba_xor(&r, &r, &aa);
-        if (ba_shl1(&aa))
-            ba_xor(&aa, &aa, &GF_POLY);
+        /* CT: XOR aa into r iff LSB of bb is set */
+        bit_mask = (uint8_t)(0u - (bb.b[KEYBYTES - 1] & 1u));
+        for (k = 0; k < KEYBYTES; k++)
+            r.b[k] ^= aa.b[k] & bit_mask;
+        /* CT: reduce aa by GF_POLY iff its MSB is set */
+        carry_mask = (uint8_t)(0u - (aa.b[0] >> 7));
+        ba_shl1(&aa);
+        for (k = 0; k < KEYBYTES; k++)
+            aa.b[k] ^= GF_POLY.b[k] & carry_mask;
         ba_shr1(&bb);
     }
     *dst = r;
 }
 
-/* GF(2^KEYBITS) exponentiation: dst = base^exp mod GF_POLY.
-   Binary repeated squaring: O(KEYBITS) multiplications. */
+/* SA-02: constant-time GF(2^KEYBITS) exponentiation.
+   Iterates exactly KEYBITS times (no early exit on leading zeros) and
+   uses CT select instead of a conditional call, so loop count and
+   branch pattern are independent of the exponent (private key). */
 static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
 {
-    BitArray r, b, e;
+    BitArray r, b, e, tmp;
+    uint8_t bit, sel;
+    int i, k;
     memset(r.b, 0, KEYBYTES);
-    r.b[KEYBYTES - 1] = 1;   /* multiplicative identity: 1 */
+    r.b[KEYBYTES - 1] = 1;   /* multiplicative identity */
     b = *base;
     e = *exp;
-    while (!ba_is_zero(&e)) {
-        if (e.b[KEYBYTES - 1] & 1)
-            gf_mul_ba(&r, &r, &b);
+    for (i = 0; i < KEYBITS; i++) {
+        bit = e.b[KEYBYTES - 1] & 1u;
+        gf_mul_ba(&tmp, &r, &b);        /* always compute r*b */
+        sel = (uint8_t)(0u - bit);      /* 0xFF if bit set, 0x00 if not */
+        for (k = 0; k < KEYBYTES; k++) /* CT select: r = bit ? tmp : r */
+            r.b[k] = (r.b[k] & ~sel) | (tmp.b[k] & sel);
         gf_mul_ba(&b, &b, &b);
         ba_shr1(&e);
     }
@@ -332,10 +353,11 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     uint16_t carry;
     int i, j, all_ff;
 
+    /* SA-04: removed `if (!ai) continue` — unconditional outer loop so
+       execution time does not leak zero bytes in the private key scalar. */
     memset(full, 0, sizeof(full));
     for (i = 0; i < KEYBYTES; i++) {
         uint8_t ai = a->b[KEYBYTES - 1 - i];
-        if (!ai) continue;
         carry = 0;
         for (j = 0; j < KEYBYTES; j++) {
             uint16_t prod = (uint16_t)ai * b->b[KEYBYTES - 1 - j]
@@ -345,7 +367,8 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         }
         {
             int k;
-            for (k = i + KEYBYTES; carry && k < 2 * KEYBYTES; k++) {
+            /* SA-04: unconditional carry propagation — no early exit on carry==0 */
+            for (k = i + KEYBYTES; k < 2 * KEYBYTES; k++) {
                 uint16_t s = (uint16_t)full[k] + carry;
                 full[k] = (uint8_t)s;
                 carry = s >> 8;
@@ -360,15 +383,17 @@ static void ba_mul_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
     }
     if (carry) {
         carry = 1;
-        for (i = 0; i < KEYBYTES && carry; i++) {
+        /* SA-04: unconditional carry propagation */
+        for (i = 0; i < KEYBYTES; i++) {
             uint16_t s = (uint16_t)lo[i] + carry;
             lo[i] = (uint8_t)s;
             carry = s >> 8;
         }
         if (carry) { memset(lo, 0, KEYBYTES); lo[0] = 1; }
     } else {
+        /* SA-04: no early-exit break in all_ff scan */
         all_ff = 1;
-        for (i = 0; i < KEYBYTES; i++) if (lo[i] != 0xFF) { all_ff = 0; break; }
+        for (i = 0; i < KEYBYTES; i++) all_ff &= (lo[i] == 0xFF);
         if (all_ff) memset(lo, 0, KEYBYTES);
     }
     for (i = 0; i < KEYBYTES; i++)
@@ -386,13 +411,17 @@ static void ba_sub_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
         borrow = d >> 8;
     }
     if (borrow) {
+        /* SA-04: CT subtract-1 — propagate borrow unconditionally */
+        uint16_t sub1 = 1;
         for (i = KEYBYTES - 1; i >= 0; i--) {
-            if (dst->b[i] > 0) { dst->b[i]--; break; }
-            dst->b[i] = 0xFF;
+            uint16_t d = (uint16_t)dst->b[i] - sub1;
+            dst->b[i] = (uint8_t)d;
+            sub1 = (d >> 8) & 1u;
         }
     }
+    /* SA-04: no early-exit break in all_ff scan */
     all_ff = 1;
-    for (i = 0; i < KEYBYTES; i++) if (dst->b[i] != 0xFF) { all_ff = 0; break; }
+    for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
     if (all_ff) memset(dst->b, 0, KEYBYTES);
 }
 

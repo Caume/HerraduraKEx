@@ -357,9 +357,12 @@ def gf_mul(a: int, b: int, poly: int, n: int) -> int:
     return result
 
 def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
-    """base^exp in GF(2^n)* via repeated squaring. O(n log exp) ops."""
+    """base^exp in GF(2^n)* via repeated squaring.
+    SA-02/06: iterates exactly n times — no early exit on leading zero bits of
+    exp so loop count does not leak exp's bit-length. Residual per-bit branch
+    is a known Python/arbitrary-precision int limitation."""
     result = 1; base &= (1 << n) - 1
-    while exp:
+    for _ in range(n):               # fixed n iterations
         if exp & 1: result = gf_mul(result, base, poly, n)
         base = gf_mul(base, base, poly, n)
         exp >>= 1

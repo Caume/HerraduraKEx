@@ -2830,8 +2830,47 @@ After steps 1–6, add a table here with columns:
 
 | ID | File(s) | Function | Weakness | Severity | Status |
 |---|---|---|---|---|---|
+| SA-01 | `suite.asm`, `suite.s` | `prng_next` (LCG) | Fixed seed `0xDEADBEEE` — entire PRNG sequence is deterministic across all runs; every "random" key, nonce, and polynomial is identical every run. In HPKS Schnorr the signing nonce k is predictable → private key recovery via `a = (k - s)·e⁻¹ mod ord`. Affects HKEX-GF k, HSKE-NL-A1 nonce N, HKEX-RNL blind polynomial + secret, Stern-F seed/error. ARM Thumb-2 and NASM i386 are both affected; neither seeds from `/dev/urandom` or `getrandom`. | **Critical** | Open |
+| SA-02 | `herradura.h:227` | `gf_pow_ba` | Square-and-multiply: `while (!ba_is_zero(&e))` loop count leaks the bit-length of the private key; `if (e.b[KEYBYTES-1] & 1)` branches on each private key bit — full key bit pattern leaks via timing. Used with private key `a` in HKEX-GF and HPKS sign. | **High** | Open |
+| SA-03 | `herradura.h:208` | `gf_mul_ba` | Inner-loop `if (bb.b[KEYBYTES-1] & 1)` branches on the bit being processed — execution path differs per secret bit. Called from `gf_pow_ba` with private key as exponent; also leaks via carry branch `if (ba_shl1(&aa))`. | **High** | Open |
+| SA-04 | `herradura.h:338` | `ba_mul_mod_ord` | `if (!ai) continue` skips the entire inner multiply loop for zero bytes in Schnorr scalar `a` — leaks zero-byte positions in the private key via timing. Used in `HPKS_sign`: `ba_mul_mod_ord(&ae_s, &a, &e_s)`. | **High** | Open |
+| SA-05 | `herradura/herradura.go:210` | `GfPow`, `GfMul` | Same variable-time square-and-multiply as SA-02/03: `eCopy.Sign() > 0` loop count + `And(eCopy, one).Sign() != 0` branch per key bit. `big.Int` operations are not constant-time. | **High** | Open |
+| SA-06 | `suite.py:359` | `gf_pow`, `gf_mul` | Same variable-time pattern as SA-02/03: `while exp:` loop exits early on leading zeros; `if exp & 1:` branches on each exponent bit. Python CPython also leaks via GIL scheduling and object allocation patterns. | **High** | Open |
+| SA-07 | `CryptosuiteTests/Herradura_tests.py:393,401` | `stern_f_keygen`, `hpks_stern_f_sign` | `random.sample()` (Mersenne Twister) used for error vector `e_int` (private key) and nonce `r_int`. MT is predictable from 624 observed outputs. Suite file uses `_csprng_weight_t()` (os.urandom); test file diverges and would be a dangerous reference if copied. | **Medium** | Open |
+| SA-08 | `herradura.h:84` | `ba_equal` | `memcmp` is not constant-time — early-exit on first differing byte. Used in `hpks_stern_f_verify` to compare commitment hashes (`ba_equal(&tmp, &sig->c1[i])`). Timing oracle requires repeated verify calls; hashes are public values but early-exit may leak information in online settings. | **Low** | Open |
+| SA-09 | `Herradura cryptographic suite.c` | `main()` | Stack-allocated private keys (`a`, `b`, `k_s`, `ae_s`, `s_s`, `skA`, `skB`) not zeroed via `explicit_bzero` before function returns. Compiler may optimize away plain `memset`. Process exits immediately in demo context (mitigates), but pattern is unsafe for library use. | **Low** | Open |
 
 Severity levels: **Critical** (direct key recovery), **High** (timing/side-channel),
 **Medium** (theoretical/implementation gap), **Low** (hygiene/documentation).
 
-Status: **OPEN**
+### Audit notes
+
+**Step 1 — Static analysis:** `cppcheck`, `bandit`, `gosec` not installed on this host.
+Grep for known-unsafe libc (`gets`, `strcpy`, `strcat`, `sprintf`, `scanf`, `rand()`) found
+no hits in C or assembly suite files.
+
+**Step 2 — CSPRNG:** C: no `rand()`/`srand()`/`random()` calls ✓.  Go: no `math/rand` ✓.
+Python suite: `os.urandom` exclusively ✓.  Python tests: see SA-07.  ARM/NASM: see SA-01
+(LCG, not a CSPRNG).
+
+**Step 3 — Constant-time:** SA-02 through SA-06.  The GF-based classical protocols
+(HKEX-GF, HPKS, HPKE) all use variable-time `gf_pow`/`gf_mul` with the private key as
+exponent.  Highest-risk entry point: `gf_pow_ba` in `herradura.h`.
+
+**Step 4 — Key material hygiene:** Intermediate buffers in `gf_mul_ba` and `gf_pow_ba`
+are `memset`-zeroed at entry (not exit), limiting but not eliminating residue.  Stack
+private keys in `main()` are not cleared; see SA-09.  Go and Python: language limitations
+prevent reliable zeroing of immutable key objects.
+
+**Step 5 — Buffer bounds:** C `rnl_ntt` butterfly indices (`i+k`, `i+k+length/2`) stay
+within `[0, RNL_N-1]` for all valid `length` values ✓.  NASM `rnl_poly_mul` uses BSS
+globals, no stack overflow risk ✓.  ARM `udiv` divisors in `rnl_reconcile32` are
+`RNL_Q=65537` and `RNL_PP=4` (hardcoded constants, never zero) ✓.  ARM `rnl_hint32`
+uses threshold comparisons, no division ✓.
+
+**Step 6 — Hardcoded test vectors:** `0xDEADBEEF`/`0xCAFEBABF` appear only in `.asm`,
+`.s`, and `.ino` demo `main()`/`loop()` sections, and in assembly string labels.  Not
+present in C, Go, or Python suite files ✓.  Confirmed outside production key-generation
+paths ✓.
+
+Status: **DONE** — audit complete 2026-05-20; findings SA-01 through SA-09 logged above.
