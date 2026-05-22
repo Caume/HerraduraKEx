@@ -966,21 +966,38 @@ static void stern_matrix_row(BitArray *out, const BitArray *seed, int row)
     nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
 }
 
-/* n_rows-bit syndrome s = H*e^T mod 2 packed into syndr[SDF_SYNBYTES]. */
-static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
-                            const BitArray *e)
+/* Build all SDF_N_ROWS rows of parity-check matrix H from seed.
+   Hot paths (sign/verify) call this once and reuse H via stern_syndrome_H. */
+static void stern_build_H(BitArray *H, const BitArray *seed)
+{
+    int i;
+    for (i = 0; i < SDF_N_ROWS; i++)
+        stern_matrix_row(&H[i], seed, i);
+}
+
+/* Syndrome from prebuilt H: s = H*e^T mod 2, packed into syndr[SDF_SYNBYTES]. */
+static void stern_syndrome_H(uint8_t *syndr, const BitArray *H,
+                              const BitArray *e)
 {
     int i;
     memset(syndr, 0, SDF_SYNBYTES);
     for (i = 0; i < SDF_N_ROWS; i++) {
-        BitArray row;
         int pc = 0, k;
-        stern_matrix_row(&row, seed, i);
         for (k = 0; k < KEYBYTES; k++)
-            pc ^= __builtin_popcount(row.b[k] & e->b[k]);
+            pc ^= __builtin_popcount(H[i].b[k] & e->b[k]);
         if (pc & 1)
             syndr[i / 8] |= (uint8_t)(1u << (i % 8));
     }
+}
+
+/* n_rows-bit syndrome s = H*e^T mod 2 packed into syndr[SDF_SYNBYTES].
+   One-off wrapper; hot paths should use stern_build_H + stern_syndrome_H. */
+static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
+                            const BitArray *e)
+{
+    BitArray H[SDF_N_ROWS];
+    stern_build_H(H, seed);
+    stern_syndrome_H(syndr, H, e);
 }
 
 /* Pack syndrome into lower half of a BitArray (upper bytes = 0). */
@@ -1134,6 +1151,7 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
     BitArray *sr = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
     BitArray *sy = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
     uint8_t  *Hr = (uint8_t  *)malloc(SDF_ROUNDS * SDF_SYNBYTES);
+    BitArray H_mat[SDF_N_ROWS];
     uint8_t perm[KEYBITS];
     int i;
 
@@ -1141,12 +1159,14 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
         fprintf(stderr, "hpks_stern_f_sign: out of memory\n"); exit(1);
     }
 
+    stern_build_H(H_mat, seed);
+
     for (i = 0; i < SDF_ROUNDS; i++) {
         BitArray items[2];
         stern_rand_error(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
         ba_rand(&pi[i], urnd);
-        stern_syndrome(Hr + i * SDF_SYNBYTES, seed, &r[i]);
+        stern_syndrome_H(Hr + i * SDF_SYNBYTES, H_mat, &r[i]);
         stern_gen_perm(perm, &pi[i], KEYBITS);
         stern_apply_perm(&sr[i], perm, &r[i], KEYBITS);
         stern_apply_perm(&sy[i], perm, &y[i], KEYBITS);
@@ -1174,8 +1194,11 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
                                 const BitArray *seed, const uint8_t *syndr)
 {
     int chals[SDF_ROUNDS];
+    BitArray H_mat[SDF_N_ROWS];
     uint8_t perm[KEYBITS];
     int i;
+
+    stern_build_H(H_mat, seed);
 
     stern_fs_challenges(chals, SDF_ROUNDS, msg,
                         sig->c0, sig->c1, sig->c2);
@@ -1195,7 +1218,7 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             uint8_t Hr[SDF_SYNBYTES];
             BitArray items[2], sr2;
             if (ba_popcount(&sig->resp_b[i]) != SDF_T) return 0;
-            stern_syndrome(Hr, seed, &sig->resp_b[i]);
+            stern_syndrome_H(Hr, H_mat, &sig->resp_b[i]);
             items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hr);
             stern_hash(&tmp, items, 2, 1);
             if (!ba_equal(&tmp, &sig->c0[i])) return 0;
@@ -1207,7 +1230,7 @@ static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
             uint8_t Hy[SDF_SYNBYTES], Hys[SDF_SYNBYTES];
             BitArray items[2], sy2;
             int k;
-            stern_syndrome(Hy, seed, &sig->resp_b[i]);
+            stern_syndrome_H(Hy, H_mat, &sig->resp_b[i]);
             for (k = 0; k < SDF_SYNBYTES; k++) Hys[k] = Hy[k] ^ syndr[k];
             items[0] = sig->resp_a[i]; syndr_to_ba(&items[1], Hys);
             stern_hash(&tmp, items, 2, 1);

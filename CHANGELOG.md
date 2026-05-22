@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.2] - 2026-05-21
+
+### Performance — precompute H matrix in Stern sign/verify (TODO #52)
+
+`stern_syndrome` / `SternSyndrome` rebuilt all `SDF_N_ROWS` (128) rows of the
+parity-check matrix from seed on every call.  In `hpks_stern_f_sign` (32 rounds) and
+`hpks_stern_f_verify` (up to 32 rounds) this meant 33+ full matrix constructions per
+sign+verify cycle; at production parameters (≥219 rounds) the overhead is ~440 builds.
+Each build costs 128 × `I_VALUE` (= 64) NL-FSCX v1 steps, so sign+verify was burning
+~33 × 128 × 64 = **270 k PRF evaluations** on matrix generation alone.
+
+**Fix:** Added `stern_build_H` (C, `herradura.h`) and `SternBuildH` (Go) that
+precompute the full H matrix once; added `stern_syndrome_H` (C) and `sternSyndromeH`
+(Go) that compute `H·e^T` from the prebuilt rows.  `hpks_stern_f_sign` and
+`hpks_stern_f_verify` in both C and Go now build H once at entry and reuse it for all
+per-round syndrome evaluations (32× → 1× matrix build per sign or verify call).
+`stern_syndrome` / `SternSyndrome` are retained as one-off wrappers (keygen, encap).
+Python already used this pattern via `_stern_build_H` / `_stern_syndrome_H`.
+
+**Files changed:** `herradura.h`, `herradura/herradura.go`.
+
+---
+
 ## [1.8.1] - 2026-05-21
 
 ### Security — `stern_gen_perm` PRNG bias eliminated (TODO #45)
