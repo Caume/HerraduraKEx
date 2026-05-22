@@ -460,6 +460,12 @@ models that exclude quantum adversaries.
 
 - **HKEX-RNL** is conjectured quantum-resistant, based on Ring-LWR hardness.
   It has not been formally reduced from NIST-standardised parameters.
+- **HKEX-RNL unauthenticated hint:** The Peikert reconciliation hint vector
+  (`m_blind`, 64 bytes at n=256) is transmitted from Bob to Alice unauthenticated.
+  An active adversary who can tamper with the channel can flip hint bits to steer
+  the reconciled key toward a value of their choosing.  **HKEX-RNL provides key
+  agreement only; the caller is responsible for authenticating the transcript**
+  (e.g. via HPKS-NL, or a MAC over `b_pub ‖ m_blind`) before using the derived key.
 - **HPKS-NL and HPKE-NL** still use GF(2^256)* DLP for the public key; the NL
   extension hardens only the symmetric sub-protocol.  They are not fully PQC.
 - **HSKE-NL-A1/A2** are symmetric-only and do not depend on any public-key assumption.

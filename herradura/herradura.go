@@ -693,6 +693,10 @@ func RnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
 // RnlAgree computes raw key bits with Peikert reconciliation.
 // Reconciler (hintIn==nil): generates hint; returns (K_raw, hint).
 // Receiver  (hintIn!=nil):  uses provided hint; returns (K_raw, nil).
+// SECURITY: the hint vector is transmitted unauthenticated. An active adversary
+// who tampers with hintIn can steer the reconciled key. HKEX-RNL provides key
+// agreement only; the caller must authenticate the transcript (e.g. via HPKS-NL
+// or a MAC over bPub||hint) before using the derived key.
 func RnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArray, []byte) {
 	cLifted := RnlLift(cOther, p, q)
 	kPoly := RnlPolyMul(s, cLifted, q, n)

@@ -715,7 +715,12 @@ def _rnl_keygen(m_blind, n, q, p, b):
 def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
     """Compute raw key bits with Peikert cross-rounding reconciliation.
     Reconciler path (hint=None): generate hint, return (K_raw, hint).
-    Receiver path (hint provided): use hint, return K_raw."""
+    Receiver path (hint provided): use hint, return K_raw.
+
+    SECURITY: the hint vector is transmitted unauthenticated. An active
+    adversary who tampers with the hint can steer the reconciled key.
+    HKEX-RNL provides key agreement only; the caller must authenticate the
+    transcript (e.g. via HPKS-NL or a MAC over b_pub||hint) before use."""
     C_lifted = _rnl_lift(C_other, p, q)
     K_poly   = _rnl_poly_mul(s, C_lifted, q, n)
     if hint is None:
