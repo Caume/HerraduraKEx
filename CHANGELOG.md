@@ -4,6 +4,51 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.3] - 2026-05-22
+
+### Documentation — Cryptographic concepts primer for general IT/security audience (TODO #56)
+
+Added `docs/INTRODUCTION.md`: a 12-part, ~1 000-line plain-language guide covering
+every core concept used in the suite, written for readers with a general IT/security
+background but no formal cryptography training.
+
+**Contents:**
+
+| Part | Topic |
+|---|---|
+| 0 | Reading guide — four reader profiles, cross-reference notation |
+| 1 | Bits, XOR, ROL/ROR — toy 8-bit examples, Shannon diffusion/confusion |
+| 2 | Finite fields — GF(2), GF(2^n) polynomial arithmetic, discrete logarithm |
+| 3 | Key exchange — DH paint analogy, integer DH, HKEX-GF 8-bit walkthrough, forward secrecy |
+| 4 | FSCX and HSKE — bit-flow example, orbit period, encrypt/decrypt round-trip |
+| 5 | Non-linearity — why linearity is exploitable, NL-FSCX v1/v2, quantum connection |
+| 6 | Digital signatures — Schnorr commit-challenge-respond, Fiat-Shamir, HPKS |
+| 7 | El Gamal encryption — hybrid encryption, HPKE walkthrough |
+| 8 | Quantum threats — Shor/Grover in plain English, harvest-now-decrypt-later |
+| 9 | Ring-LWR — lattices, LWE, HKEX-RNL full handshake, Peikert reconciliation |
+| 10 | Code-based PQC — syndrome decoding, Niederreiter KEM, Stern ZKP, HPKS-Stern-F |
+| 11 | Suite at a glance — 11-protocol reference table, decision tree, proof scope |
+| 12 | Glossary — 25 terms, 2–4 sentences each |
+
+Every section includes at least one verifiable reference (DOI, arXiv ID, or NIST
+permalink) and cross-links to SecurityProofs-1.md/SecurityProofs-2.md and TUTORIAL.md.
+
+**Also fixed in this release:**
+
+- `docs/TUTORIAL.md`: added "Background reading" pointer to INTRODUCTION.md.
+- `README.md`: corrected stale version number (was v1.5.40, now v1.8.3); fixed four
+  `SecurityProofs.md` references to the correct split files (SecurityProofs-1.md
+  §3/§6, SecurityProofs-2.md §11/§11.8.4); repaired six KaTeX rule violations
+  (`\textunderscore` → hyphen in `\text{}`, `\!` removed from display block,
+  `^*` → `^{\ast}` for the `GF(2^n)*` group); updated repository structure listing
+  to include `herradura.h`, `HerraduraCli/`, `docs/`, and the split SecurityProofs
+  files; added v1.7.4 and v1.8.3 version callout notes.
+
+**Files changed:** `docs/INTRODUCTION.md` (new), `docs/TUTORIAL.md`, `README.md`,
+`CHANGELOG.md`, `TODO.md`.
+
+---
+
 ## [1.8.2] - 2026-05-21
 
 ### Performance — precompute H matrix in Stern sign/verify (TODO #52)
