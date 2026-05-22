@@ -895,7 +895,12 @@ static void rnl_reconcile_bits(BitArray *out, const rnl_poly_t K_poly,
 
 /* agree: compute raw key with Peikert reconciliation.
    Reconciler path (hint_in=NULL, hint_out≠NULL): generate hint, use own hint.
-   Receiver path  (hint_in≠NULL):                 use provided hint.           */
+   Receiver path  (hint_in≠NULL):                 use provided hint.
+   SECURITY: hint_out (m_blind) is transmitted unauthenticated.  An active
+   adversary who tampers with hint_in can steer the reconciled key.  HKEX-RNL
+   provides key agreement only; the caller is responsible for authenticating the
+   transcript (e.g. via HPKS-NL or a MAC over b_pub||m_blind) before using the
+   derived key.                                                                 */
 static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
                       const int32_t c_other[RNL_N],
                       const uint8_t *hint_in, uint8_t *hint_out)

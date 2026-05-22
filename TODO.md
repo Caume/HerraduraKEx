@@ -3017,7 +3017,12 @@ over `(b_pub ‖ m_blind)`) before using the derived key."  As a separate harden
 step (if desired), consider binding `m_blind` into the KDF input so a tampered hint
 produces a different key rather than silent agreement on a wrong key.
 
-Status: **Open**
+Status: **DONE (v1.8.2)** — Warning added to all three language targets and docs:
+- `herradura.h` `rnl_agree` block comment: unauthenticated hint caveat + example mitigations
+- `herradura/herradura.go` `RnlAgree` doc comment: same caveat
+- `Herradura cryptographic suite.py` `_rnl_agree` docstring: same caveat
+- `docs/TUTORIAL.md` §NL/PQC security notes: "HKEX-RNL unauthenticated hint" bullet with
+  explicit guidance that callers must authenticate `b_pub ‖ m_blind` before using the key.
 
 ---
 
