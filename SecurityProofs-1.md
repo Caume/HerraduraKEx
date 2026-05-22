@@ -959,13 +959,13 @@ determined.  **HSKE provides no security under known-plaintext attack at any $n$
 
 #### 10.6.2 HPKS — Classical Forgery Resistance
 
-Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
-$e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+Forgery requires finding a forged pair $(R', s')$ satisfying $g^{s'} \cdot C^{e'} = R'$
+where e′ = fscx-revolve(R′, P′, i), without knowing the private key $a$.
 
-- If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
-- If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
-  constraint $e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
-  together.  Since fscx\_revolve is an affine bijection in its first argument (see §10.7),
+- If Eve fixes R′ first: she needs $s' = \log_g(R' \cdot C^{-e'})$ — a DLP instance.
+- If Eve fixes s′ first: she can compute $g^{s'} \cdot C^{e'}$ for any e′, but the
+  constraint e′ = fscx-revolve(R′, P′, i) ties R′ and e′ together.  Since
+  fscx\_revolve is an affine bijection in its first argument (see §10.7),
   solving both simultaneously reduces to DLP hardness.
 
 Forgery resistance is equivalent to DLP hardness in $\mathbb{GF}(2^n)^*$, subject to the

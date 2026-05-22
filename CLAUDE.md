@@ -186,6 +186,14 @@ CommonMark resolves `\_` inside `\text{...}` to `_` as well.  KaTeX then sees `\
 
 A literal `*` in math mode is paired by markdown's emphasis parser with any other `*` later in the same paragraph (across math-span boundaries). The first `*` opens `<em>` mid-span, breaking math recognition entirely.  Use `^{\ast}` instead — `\ast` renders identically to `*` and the leading `\a` is not a markdown emphasis marker.
 
+**CRITICAL — do not apply `^{\ast}` as a blanket file-wide replacement in documents near the 750-expression limit.**  When `^*` is paired and consumed by markdown, the enclosing `$...$` span is broken and GitHub's renderer does **not count it** toward the ~750 math-expression limit.  Replacing `^*` with `^{\ast}` makes those spans valid again, which GitHub then counts — potentially pushing the total over 750 and triggering a cascade "Unable to render expression" failure across the **entire document**, even for spans that were previously rendering correctly.  The validator (`validate_katex.js`) gives a false green in this situation because it extracts `$...$` spans before simulating CommonMark emphasis pairing, so it never sees the spans as broken in the first place.
+
+When a document is near the 750-expression limit and contains broken `^*` spans, the safe approach is:
+1. Fix only the affected section (not the whole file).
+2. Replace inline prose references to forged/starred values with Unicode prime ′ (U+2032) directly in the text (not in `$...$`), to avoid adding new counted expressions.
+3. Keep `$...$` only for the actual equations, and use prime notation `'` inside those spans (`R'`, `s'`, etc.) instead of `^{\ast}`.
+4. Net result: the number of new valid expressions added should be ≤ 5 so the total stays below 750.
+
 ### Rule 5 — display `$$...$$` blocks must be on their own line with blank lines before and after
 
 GitHub's renderer only emits `<math-renderer class="js-display-math">` when the `$$` block is on its own line (surrounded by blank lines).  **Only one valid format** is reliably rendered on GitHub:
@@ -255,8 +263,8 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `C\textunderscore\text{DM}` | `C_{\text{DM}}` |
 | `\xleftarrow{\textdollar}` / `\xleftarrow{\$}` | `\xleftarrow{R}` |
 | `\overset{\textdollar}{\leftarrow}` / `\overset{\$}{\leftarrow}` | `\overset{R}{\leftarrow}` |
-| `\mathbb{GF}(2^n)^*` | `\mathbb{GF}(2^n)^{\ast}` |
-| `(R^*, s^*)` | `(R^{\ast}, s^{\ast})` |
+| `\mathbb{GF}(2^n)^*` | `\mathbb{GF}(2^n)^{\ast}` — **but only when the document is safely below 750 expressions** (see Rule 4 cascade warning) |
+| `(R^*, s^*)` multiple times in same paragraph | Use prime notation: `$(R', s')$` for equations; plain-text ′ (U+2032) for prose references — do **not** use `^{\ast}` if near the 750 limit |
 | `**Bold.**\n$$x = y$$` (no blank line) | `**Bold.**\n\n$$x = y$$\n\n…` |
 | `1. item\n\n    $$x = y$$\n\n    follow-up` (4-space indent in list) | **Never indent** — move `$$x = y$$` to before/after the entire list (cascade if indented; also cascade if column 0 between items) |
 | `degree-$k$ Boolean` (no space before `$`) | `degree $k$ Boolean` |
