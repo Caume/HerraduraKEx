@@ -1,10 +1,14 @@
-# Herradura Cryptographic Suite (v1.5.40)
+# Herradura Cryptographic Suite (v1.8.3)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
-> **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs.md` for the formal proof.
+> **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs-1.md §3` for the formal proof.
 >
-> **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs.md §11` for proofs and analysis.
+> **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs-1.md §6` (quantum analysis) and `SecurityProofs-2.md §11` (NL/PQC proofs) for analysis.
+>
+> **v1.8.3 note:** Comprehensive cryptographic concepts primer (`docs/INTRODUCTION.md`) — plain-language guide to all core concepts (GF(2^n), FSCX, DH, Schnorr, El Gamal, quantum threats, Ring-LWR, Stern ZKP) with toy examples, verified references, and cross-links to TUTORIAL.md and the SecurityProofs documents.
+>
+> **v1.7.4 note:** Developer integration tutorial (`docs/TUTORIAL.md`) — per-protocol API recipes in C, Go, and Python; `herradura.h` Protocol Layer wrappers; public Python aliases `hkex_rnl_keygen`/`hkex_rnl_agree`; runnable examples in `docs/examples/`. Full CSPRNG and constant-time audit (SA-01–SA-09): nine findings resolved across all six language targets.
 >
 > **v1.5.40 note:** Constant-time audit (TODO #41): `stern_apply_perm` / `SternApplyPerm` made branchless across all targets (C, Go, ARM Thumb-2, NASM i386, Arduino) using arithmetic mask `-(bit)` to eliminate data-dependent branches that leaked the Hamming weight of secret error vectors. Python reference implementation documented as non-CT; `SecurityProofsCode/stern_ct_demo.py` added to demonstrate the timing correlation empirically.
 >
@@ -14,7 +18,7 @@ The Herradura Cryptographic Suite implements cryptographic protocols built on th
 >
 > **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F. `bn_*` parameterised big-endian arithmetic layer added to C tests, extending Schnorr and HPKS-NL tests to 256-bit. NTT inner loops now use Fermat-prime fast modulo (`rnl_mulmodq`/`rnlMulModQ`), eliminating hardware divides in the HKEX-RNL hot path (+17.6% on n=32 in C).
 >
-> **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs.md §11.8.4` for the formal reduction (Theorem 17).
+> **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs-2.md §11.8.4` for the formal reduction (Theorem 17).
 
 ---
 
@@ -22,7 +26,7 @@ The Herradura Cryptographic Suite implements cryptographic protocols built on th
 
 Let $A$, $B$, $C$ be bitstrings of size $P$, where $A_i$ is the $i$-th bit (from left to right), and $i \in \{0,\ldots,P-1\}$. Let $\oplus$ denote bitwise XOR and let $\circlearrowleft$, $\circlearrowright$ denote 1-bit cyclic left and right rotations respectively.
 
-$$\text{FSCX}(A, B) = A \oplus B \oplus \circlearrowleft\!A \oplus \circlearrowleft\!B \oplus \circlearrowright\!A \oplus \circlearrowright\!B$$
+$$\text{FSCX}(A, B) = A \oplus B \oplus \circlearrowleft A \oplus \circlearrowleft B \oplus \circlearrowright A \oplus \circlearrowright B$$
 
 Equivalently, defining the linear operator $M = I \oplus \text{ROL} \oplus \text{ROR}$:
 
@@ -30,15 +34,15 @@ $$\text{FSCX}(A, B) = M \cdot (A \oplus B)$$
 
 **FSCX_REVOLVE(A, B, n)** iterates FSCX $n$ times with $B$ held constant:
 
-$$\text{FSCX}\textunderscore\text{REVOLVE}(A, B, n) = \text{FSCX}^{\circ n}(A, B)$$
+$$\text{FSCX-REVOLVE}(A, B, n) = \text{FSCX}^{\circ n}(A, B)$$
 
-For bitstrings of size $P = 2^k$, the orbit period is always $P$ or $P/2$, so $\text{FSCX}\textunderscore\text{REVOLVE}(A, B, P) = A$ for all $A$, $B$.
+For bitstrings of size $P = 2^k$, the orbit period is always $P$ or $P/2$, so $\text{FSCX-REVOLVE}(A, B, P) = A$ for all $A$, $B$.
 
 ---
 
 # HKEX-GF — Key Exchange over GF(2^n)*
 
-HKEX-GF is a standard Diffie-Hellman key exchange over the multiplicative group $\mathbb{GF}(2^n)^*$.
+HKEX-GF is a standard Diffie-Hellman key exchange over the multiplicative group $\mathbb{GF}(2^n)^{\ast}$.
 
 1. **Setup.** Both parties agree on an irreducible polynomial $p(x)$ of degree $n$ and a generator $g = 3$.
 2. **Key generation.** Alice draws a private scalar $a$; Bob draws $b$.
@@ -60,10 +64,10 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 
 **Classical (v1.4.0):**
 
-1. **HKEX-GF** — key exchange (DH over $\mathbb{GF}(2^n)^*$, as above)
-2. **HSKE** — symmetric encryption: $E = \text{FSCX}\textunderscore\text{REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX}\textunderscore\text{REVOLVE}(E, \mathit{key}, r)$
-3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX}\textunderscore\text{REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
-4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\mathit{enc}\textunderscore\mathit{key} = C^r$; $E = \text{FSCX}\textunderscore\text{REVOLVE}(P, \mathit{enc}\textunderscore\mathit{key}, i)$; Alice decrypts with $\mathit{dec}\textunderscore\mathit{key} = R^a$
+1. **HKEX-GF** — key exchange (DH over $\mathbb{GF}(2^n)^{\ast}$, as above)
+2. **HSKE** — symmetric encryption: $E = \text{FSCX-REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX-REVOLVE}(E, \mathit{key}, r)$
+3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX-REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
+4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\text{enc-key} = C^r$; $E = \text{FSCX-REVOLVE}(P, \text{enc-key}, i)$; Alice decrypts with $\text{dec-key} = R^a$
 
 **Post-quantum / NL-hardened (v1.5.0):**
 
@@ -71,7 +75,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 6. **HSKE-NL-A2** — revolve-mode with NL-FSCX v2: $E = \text{NL-FSCX-revolve-v2}(P, K, r)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, K, r)$
 7. **HKEX-RNL** — Ring-LWR key exchange (conjectured quantum-resistant): shared $m_\text{blind}$ in $\mathbb{Z}_q[x]/(x^n+1)$; parties derive $C = \text{round}_p(m_\text{blind} \cdot s)$; agreement $K = \text{round}_{pp}(s \cdot \text{lift}(C_\text{other}))$
 8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
-9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \mathit{enc}\textunderscore\mathit{key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \mathit{dec}\textunderscore\mathit{key}, i)$
+9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \text{enc-key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \text{dec-key}, i)$
 
 **Code-based PQC (v1.5.18):**
 
@@ -202,12 +206,23 @@ GF/NL/Stern benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit p
 # Repository Structure
 
 ```
-Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite implementations
+Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite (all six language targets)
+herradura.h                                         — header-only C library (Protocol Layer wrappers)
 CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
-SecurityProofsCode/                                 — formal break proofs (Python)
-SecurityProofs.md                                   — algebraic analysis (incl. §11 NL/PQC, §12 quantum, §11.8.4 Stern-F)
+HerraduraCli/                                       — Python CLI (genpkey/pkey/kex/enc/dec/sign/verify)
+SecurityProofsCode/                                 — standalone Python proof and analysis scripts
+SecurityProofs-1.md                                 — formal analysis §1–§10 (algebraic foundations,
+                                                      protocol security, quantum attack analysis,
+                                                      v1.4.0 migration)
+SecurityProofs-2.md                                 — formal analysis §11–§11.9 (NL-FSCX,
+                                                      Ring-LWR, Stern-F, HFSCX-256 hash)
+SecurityProofs.md                                   — split index (redirects to the two files above)
+docs/
+  INTRODUCTION.md                                   — plain-language cryptographic concepts primer
+  TUTORIAL.md                                       — integration tutorial (C/Go/Python API recipes)
+  examples/                                         — minimal runnable examples (C, Go, Python)
 ```
 
 ---

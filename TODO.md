@@ -4,6 +4,247 @@ Generated from security/performance review of v1.5.x NL-FSCX + Ring-LWR implemen
 
 ---
 
+## Documentation
+
+### 56. Add `docs/INTRODUCTION.md` — lay-audience primer for all core cryptographic concepts (Documentation, High)
+
+**Rationale:** `docs/TUTORIAL.md` covers *how to call* the library APIs.
+`SecurityProofs-1.md` / `SecurityProofs-2.md` are mathematically dense and assume
+graduate-level algebra.  There is no entry point for IT/security practitioners who
+understand TLS, public-key certificates, and hashing but have never studied Galois
+field arithmetic or lattice problems.  `INTRODUCTION.md` fills that gap: a
+"for dummies" conceptual reference that lets readers understand *why* the suite
+works the way it does, follow the SecurityProofs arguments at a high level, and make
+informed deployment decisions.
+
+**Target audience:** Developer or security professional with a working knowledge of
+TLS/HTTPS, symmetric encryption (AES), hashing (SHA-256), and basic public-key
+concepts (RSA at a surface level) — but no background in abstract algebra, lattices,
+or coding theory.
+
+**Writing style:**
+
+- Plain English first, then a one-line formal version of each definition.
+- Concrete toy examples (small numbers, few bits) before the real parameters.
+- Explicit "what this means in practice" boxes after each concept.
+- Footnoted, verifiable references (RFCs, NIST documents, Wikipedia stable
+  sections, textbook chapters) so nothing is a claim without a source.
+- Cross-links: "→ See SecurityProofs-1 §1.2" and "→ See TUTORIAL.md §HKEX-GF"
+  after each concept that has a counterpart in those documents.
+
+---
+
+**Proposed section outline:**
+
+#### Part 0 — Reading guide (≈ 0.5 page)
+
+Purpose of this document, how it relates to TUTORIAL.md and SecurityProofs,
+suggested reading order for four reader profiles:
+(a) developer who just wants to use the library,
+(b) security reviewer assessing the suite,
+(c) researcher checking the proofs,
+(d) student learning applied cryptography.
+
+#### Part 1 — Bits, bytes, and the language of crypto (≈ 1 page)
+
+- Binary representation; XOR as "controlled flip"; the key insight: XOR is
+  its own inverse (`A ⊕ B ⊕ B = A`).
+- Why XOR dominates symmetric crypto (speed, uniformity, no carry propagation).
+- Cyclic bit rotation (ROL / ROR): definition with a 4-bit example, and why it
+  provides diffusion without arithmetic.
+- Reference: Shannon's "diffusion" and "confusion" criteria
+  (Shannon 1949, *Communication Theory of Secrecy Systems*,
+  Bell System Technical Journal 28(4):656–715).
+
+#### Part 2 — Finite fields without the algebra (≈ 2 pages)
+
+- What a "field" is: a number system where you can add, subtract, multiply, and
+  divide (except by zero), illustrated with ordinary fractions.
+- GF(2) = {0, 1} with XOR as addition and AND as multiplication — the simplest
+  possible field.
+- GF(2^n): polynomials whose coefficients are 0 or 1; arithmetic is the same but
+  "mod an irreducible polynomial".  Toy example: GF(2^4) mod x^4+x+1, showing
+  that multiplication stays inside the field.
+- Why GF(2^n) matters for crypto: the discrete-logarithm problem (DLP) — finding
+  `a` given `g` and `g^a` — is believed hard, analogously to the integer DLP
+  underpinning classical Diffie-Hellman.
+- Reference: Lidl & Niederreiter, *Introduction to Finite Fields and Their
+  Applications*, Cambridge University Press, rev. ed. 1994, ch. 1–2.
+  Also: NIST SP 800-38D, Appendix B (GF(2^128) arithmetic for GCM).
+
+#### Part 3 — Key exchange: the Diffie-Hellman idea (≈ 2 pages)
+
+- Alice-and-Bob metaphor: how two people can agree on a secret over a public
+  channel by exchanging "painted colours" (the classic paint-mixing analogy).
+- Integer DH: g^a mod p; why computing `a` from g^a is hard (DLP).
+- HKEX-GF as DH in GF(2^n)*: `C = g^a`; `C2 = g^b`; `sk = g^{ab}`.
+  Walk through one handshake with toy 8-bit values.
+- What an eavesdropper (EVE) sees and why that doesn't help her.
+- Limitations: DH is vulnerable to man-in-the-middle and to quantum computers
+  running Shor's algorithm.
+- Reference: Diffie & Hellman 1976, *New Directions in Cryptography*, IEEE
+  Transactions on Information Theory 22(6):644–654 (open access).
+  Also: RFC 7748 (Curve25519/X25519 modern DH).
+
+#### Part 4 — Symmetric encryption and FSCX (≈ 2 pages)
+
+- Stream cipher concept: generate a keystream, XOR it with plaintext.
+- The FSCX primitive: what `FSCX(A,B) = A ⊕ B ⊕ ROL(A) ⊕ ROL(B) ⊕ ROR(A) ⊕ ROR(B)` does visually (bit-flow diagram with 8-bit example).
+- FSCX_REVOLVE: apply FSCX repeatedly with fixed B; the orbit always returns
+  to start after n or n/2 steps (shown empirically — no algebra required).
+- HSKE encryption: encrypt with depth i = n/4, decrypt with complementary depth
+  r = 3n/4.  Why i + r = n guarantees round-trip correctness.
+- What "linearity" means and why it is a problem: linear maps can be inverted
+  or predicted once enough input-output pairs are collected.
+- Reference: Stinson, *Cryptography: Theory and Practice*, 4th ed., CRC Press
+  2018, ch. 2 (stream ciphers and pseudo-randomness).
+
+#### Part 5 — Non-linearity and why it matters (≈ 1.5 pages)
+
+- The AES S-box as the canonical non-linear element: substitution is inherently
+  non-linear because no matrix equation describes it exactly.
+- NL-FSCX: how adding a non-linear mixing step (modular multiply, data-dependent
+  rotation, or similar) breaks the linearity of vanilla FSCX.
+- The concept of algebraic degree: a truly random function has maximum degree;
+  linear functions have degree 1.
+- Why non-linearity is necessary for post-quantum security (linear systems can be
+  solved efficiently even by quantum computers using Gaussian elimination).
+- Reference: Carlet, *Boolean Functions for Cryptography and Coding Theory*,
+  Cambridge University Press 2021, ch. 1 (nonlinearity measures).
+  Also: SecurityProofs-1 §1, §2 for the formal treatment.
+
+#### Part 6 — Digital signatures: proving without revealing (≈ 2 pages)
+
+- What a signature is: a mathematical commitment that only the private key holder
+  can produce, which anyone can verify with the public key.
+- Schnorr identification protocol in three steps:
+  (1) Commit R = g^k (random nonce),
+  (2) Receive challenge e,
+  (3) Respond s = k − a·e.
+  Toy example with small numbers.
+- Fiat-Shamir transform: replace interactive challenge with a hash — making the
+  signature non-interactive.
+- HPKS: same Schnorr flow but challenge computed via FSCX_REVOLVE instead of a
+  hash; HPKS-NL uses NL-FSCX for the challenge.
+- Reference: Schnorr 1991, *Efficient Signature Generation by Smart Cards*, Journal
+  of Cryptology 4(3):161–174.
+  Also: Fiat & Shamir 1987, *How to Prove Yourself*, CRYPTO 1986, LNCS 263.
+
+#### Part 7 — Public-key encryption: El Gamal (≈ 1.5 pages)
+
+- Hybrid encryption intuition: use public-key crypto only to wrap a symmetric key.
+- El Gamal: choose ephemeral r; ciphertext = (g^r, P · pk^r).
+  Decryption: P = ciphertext[1] / (g^r)^sk.
+- HPKE: the same structure but multiplication replaced by FSCX_REVOLVE.
+- Reference: ElGamal 1985, *A Public Key Cryptosystem and a Signature Scheme Based
+  on Discrete Logarithms*, IEEE Transactions on Information Theory 31(4):469–472.
+
+#### Part 8 — Quantum threats and why they matter now (≈ 1.5 pages)
+
+- Qubits and superposition in one paragraph (no equations); the key takeaway:
+  a quantum computer can run many computations in parallel.
+- Shor's algorithm: breaks integer DH, RSA, and ECDH in polynomial time.
+  Impact on HKEX-GF and classical HPKS/HPKE.
+- Grover's algorithm: halves the effective key length of symmetric ciphers
+  (AES-128 becomes roughly AES-64 equivalent); HSKE-NL at 256 bits retains
+  ~128-bit post-quantum security.
+- "Harvest now, decrypt later" threat: why deploying PQC matters even if
+  large quantum computers are still years away.
+- Reference: Shor 1994, *Algorithms for Quantum Computation*, FOCS 1994.
+  Grover 1996, *A Fast Quantum Mechanical Algorithm for Database Search*, STOC.
+  NIST IR 8413 (2022) status report on post-quantum standardization.
+
+#### Part 9 — Lattice-based crypto and Ring-LWR (≈ 2.5 pages)
+
+- Lattices in plain English: a regular grid in high-dimensional space; the hard
+  problem is finding the shortest or closest vector.
+- Learning With Errors (LWE): given many `(a, a·s + small_error)` pairs, recover
+  s.  Even quantum computers cannot do this efficiently (believed).
+- Ring variant (RLWE / RLWR): coefficients live in a polynomial ring mod (x^n+1);
+  this compresses key sizes from O(n^2) to O(n).
+- "Rounding" instead of "error": in LWR, the small error comes from a deterministic
+  rounding step (`⌊q/p · x⌋`) rather than random noise, simplifying
+  implementation and analysis.
+- HKEX-RNL walkthrough: keygen, exchange, Peikert 1-bit reconciliation, KDF.
+  Show why Bob and Alice converge to the same key despite the rounding gap.
+- Parameter choices (n=256, q=65537, p=4096): why these give ~128-bit classical
+  and ~64-bit quantum security (conservative estimate).
+- Reference: Regev 2005, *On Lattices, Learning with Errors, Random Linear Codes,
+  and Cryptography*, STOC 2005 (foundational LWE paper).
+  Banerjee, Peikert & Rosen 2012, *Pseudorandom Functions and Lattices* (LWR).
+  NIST FIPS 203 (ML-KEM / Kyber, 2024) for a standardized Ring-LWE comparison.
+  SecurityProofs-1 §11.4–§11.6 for the HKEX-RNL formal analysis.
+
+#### Part 10 — Code-based crypto and the Stern protocol (≈ 2 pages)
+
+- Error-correcting codes in one page: a codeword is a message plus redundancy bits;
+  errors flip some bits; decoding recovers the message.  Syndrome = parity-check
+  result; a non-zero syndrome reveals an error happened.
+- Syndrome decoding problem (SDP): given a parity-check matrix H and a syndrome s,
+  find a low-weight error vector e such that H·e^T = s.  NP-hard in general
+  (proven); believed quantum-hard.
+- Niederreiter KEM: public key = H (scrambled parity-check matrix); to encrypt,
+  pick a random low-weight e, send s = H·e^T; shared secret = hash(e).
+- Stern's zero-knowledge proof: Alice knows e without revealing it by committing to
+  permuted views of e and proving one view is consistent with the syndrome.
+  Fiat-Shamir makes it a signature.
+- HPKS-Stern-F and HPKE-Stern-F in the suite: parameters, commit/challenge/respond
+  cycle, and how the NL-FSCX hash replaces SHA in the challenge step.
+- Reference: McEliece 1978 (original code-based PKE).
+  Stern 1994, *A New Identification Scheme Based on Syndrome Decoding*, CRYPTO 1993.
+  NIST FIPS 205 (SLH-DSA / SPHINCS+) and the BIKE/HQC alternate candidates for
+  modern code-based context.
+  SecurityProofs-1 §8 for the Stern ZKP formal treatment.
+
+#### Part 11 — Putting it all together: the suite at a glance (≈ 1 page)
+
+- One-page table: protocol → hard problem relied on → quantum threat level →
+  SecurityProofs section → TUTORIAL.md section.
+- Decision tree: "Which protocol should I use for my use case?"
+- What the security proofs actually prove vs. what they assume (distinguishing
+  "proven secure under X assumption" from "no known attacks").
+
+#### Part 12 — Glossary (≈ 1 page)
+
+Concise definitions (2–4 sentences each) for: bit, byte, XOR, ROL/ROR, field,
+GF(2^n), discrete logarithm, one-way function, trapdoor, key exchange, forward
+secrecy, digital signature, zero-knowledge proof, lattice, LWE/LWR, syndrome,
+parity-check matrix, NP-hard, quantum supremacy, Shor, Grover, Fiat-Shamir,
+FSCX, FSCX_REVOLVE, orbit period, CBD (centered binomial distribution),
+Peikert reconciliation.
+
+---
+
+**Files to create:**
+
+- `docs/INTRODUCTION.md` — the main document
+- No new code files; all code examples are already in TUTORIAL.md
+
+**Cross-references to add once the document exists:**
+
+- Add "→ See INTRODUCTION.md §Part X" links at the top of SecurityProofs-1.md
+  and SecurityProofs-2.md.
+- Add a "Background reading" note at the top of TUTORIAL.md pointing to
+  INTRODUCTION.md for readers unfamiliar with the underlying concepts.
+- Add `docs/INTRODUCTION.md` to the docs/ section of README.md.
+
+**Validation checklist:**
+
+- [ ] All math rendered via the KaTeX pipeline (run `validate_katex.js` if any
+      `$...$` spans are added; prefer plain English + small numeric examples over
+      LaTeX where possible in this document).
+- [ ] Every cited reference includes author, year, title, venue/publisher, and a
+      stable URL (DOI, NIST permalink, or arXiv ID) so readers can verify.
+- [ ] Toy examples verified by hand (8-bit or 16-bit FSCX, small-field DH).
+- [ ] Reading time target: ≤ 45 minutes end-to-end for the target audience.
+
+Status: **DONE** — `docs/INTRODUCTION.md` created (Parts 0–12: reading guide, bits/XOR,
+GF(2^n), DH/HKEX-GF, FSCX/HSKE, non-linearity, Schnorr/HPKS, El Gamal/HPKE,
+quantum threats, Ring-LWR/HKEX-RNL, code-based/Stern, suite table, glossary).
+Cross-reference note added to `docs/TUTORIAL.md`.
+
+---
+
 ## Security
 
 ### 1. RNLB=1 — sparse secrets (Critical)

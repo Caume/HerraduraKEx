@@ -14,6 +14,11 @@ The suite implements four protocol families:
 **Security note:** The classical protocols (HKEX-GF, HSKE, HPKS, HPKE) are vulnerable to quantum
 attacks. Use the NL/PQC or code-based variants for new deployments. See [Security notes](#security-notes).
 
+**Background reading:** If you are new to the cryptographic concepts used here (finite fields,
+Diffie-Hellman, lattices, zero-knowledge proofs, etc.), read
+[docs/INTRODUCTION.md](INTRODUCTION.md) first — it covers every prerequisite in plain language
+with toy examples and verified references.
+
 ---
 
 ## Contents
