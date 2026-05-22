@@ -4,6 +4,157 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.1] - 2026-05-21
+
+### Security — `stern_gen_perm` PRNG bias eliminated (TODO #45)
+
+`stern_gen_perm` / `SternGenPerm` / `_stern_gen_perm` previously extracted only the
+bottom 16 bits of each NL-FSCX v1 state block and reduced modulo `(N-i)` without
+rejection sampling, wasting 240 bits of entropy and introducing modular bias proportional
+to `65536 mod (N-i)`.  A biased permutation leaks structural information about the secret
+error vector `e` across Stern rounds.
+
+**Fix:** Full 32-bit counter-mode extraction — all `KEYBYTES` of each NL-FSCX v1 state
+block are consumed as sequential big-endian 32-bit words before the state is advanced
+(no entropy wasted).  Rejection sampling uses `threshold = 2^32 − 2^32 mod range` kept
+as `uint64` to prevent truncation to 0 when `range` divides `2^32` (which would cause an
+infinite loop).
+
+**Files changed:**
+- `herradura.h` — `stern_gen_perm` rewritten
+- `herradura/herradura.go` — `SternGenPerm` rewritten
+- `Herradura cryptographic suite.py` — `_stern_gen_perm` rewritten
+- `TODO.md` #45 — marked DONE
+
+---
+
+## [1.8.0] - 2026-05-21
+
+### Security — KDF domain constant prevents rotation-periodic key degeneracy (TODO #38)
+
+**Breaking wire change** (incompatible with v1.7.x derived keys).
+
+The v1.5.10 `seed = ROL(K, n/8)` fix for step-1 FSCX degeneracy itself degenerates
+when `K` has a rotational period dividing `n/8`.  XORing a nothing-up-my-sleeve constant
+after the rotation breaks all such periodic keys.
+
+`seed = ROL(K, n/8) XOR DC`
+
+`DC` is the SHA-256 initial hash values (H0–H7 = `6A09E667 BB67AE85 3C6EF372 A54FF53A
+510E527F 9B05688C 1F83D9AB 5BE0CD19`; 32-bit targets use H0 = `0x6A09E667`).
+
+**Files changed:** `herradura.h` (`ba_rnl_kdf_seed`), `herradura/herradura.go` (`RnlKdfSeed`),
+`Herradura cryptographic suite.py` (`_RNL_KDF_DC_256`), ARM Thumb-2 (`RNL_KDF_DC` equ),
+NASM i386 (`%define RNL_KDF_DC`), Arduino (`#define RNL_KDF_DC`), all test/CLI files.
+
+### Security — Stern-F Fiat-Shamir challenge consistency across languages (TODO #48)
+
+C `stern_fs_challenges` and Go `sternFsChallenges` used raw NL-FSCX v1 output as the
+challenge seed; Python `_stern_hash` applied the full HFSCX-256 finalizer.  The two
+derivations produced different challenge sequences for identical inputs, making Stern
+signatures generated in Python unverifiable in C/Go and vice versa.
+
+**Fix:** HFSCX-256 finalizer added after the NL-FSCX v1 chaining loop in C and Go,
+matching Python exactly.  C and Go sign+verify round-trips confirmed passing.
+
+**Files changed:** `herradura.h` (`stern_fs_challenges`), `herradura/herradura.go`
+(`sternFsChallenges`).
+
+### Security — Stern-F soundness warning for demo parameters (TODO #46)
+
+`SDF_ROUNDS = 32` gives only ~51-bit soundness (2^{−32} per round × challenge space 3),
+far below the 128-bit target requiring ≥219 rounds.  Added:
+- `SDF_PRODUCTION_ROUNDS 219` compile-time constant + `#pragma message` warning when
+  `SDF_ROUNDS < SDF_PRODUCTION_ROUNDS` in `herradura.h`
+- `SdfProductionRounds = 219` constant + `log.Printf` guard in `HpksSternFSign` (Go)
+
+### Concurrency — Go `rnlTwCache` data race (TODO #49)
+
+`rnlTwCache` was a plain `map[int]*rnlTwEntry` with no synchronization; concurrent
+goroutines could race on map read/write.  Replaced with `sync.Map`; `rnlTwGet` updated
+to use `Load` / `LoadOrStore`, matching the existing `mInvCache` pattern.
+
+**Files changed:** `herradura/herradura.go`.
+
+### Concurrency — C `rnl_twiddle_init` TOCTOU race (TODO #50)
+
+`rnl_twiddle_init` used a plain `int ready` flag with no atomics.  Fixed by moving the
+body to `rnl_twiddle_do_init` and wrapping in `pthread_once` on POSIX builds; falls back
+to a CAS-based `_Atomic int` spin-once on non-POSIX builds.
+
+**Files changed:** `herradura.h` (`rnl_twiddle_init`, `rnl_twiddle_do_init`).
+
+### Safety — C `hfscx_256` unchecked `malloc` (TODO #51)
+
+`hfscx_256` called `memcpy` into the `malloc` return value without a NULL check, causing
+undefined behavior on allocation failure.  Added `if (!padded) { fprintf+exit(1); }`.
+
+**Files changed:** `herradura.h`.
+
+### Portability — Go `rnlMulModQ` 32-bit `int` overflow (TODO #53)
+
+`a * b` with `a, b` as `int` silently overflows on 32-bit platforms (GOARCH=386/arm)
+since 65536² = 4 294 836 225 > MaxInt32.  Changed local variables to `int64(a) * int64(b)`.
+
+**Files changed:** `herradura/herradura.go`.
+
+### Performance/Safety — C `hpks_stern_f_sign` VLA stack overflow risk (TODO #54)
+
+Five `BitArray` arrays of size `SDF_ROUNDS` (5 × 219 × 32 = 34 KB at production rounds)
+were stack-allocated.  Moved all five (`r`, `y`, `pi`, `sr`, `sy`) plus `Hr` to heap
+via `malloc`; NULL checks with `exit(1)` added; all freed at function return.
+
+**Files changed:** `herradura.h`.
+
+### Documentation — Comment typo in `ba_rnl_kdf_seed` (TODO #55)
+
+"ROL by KEYBYTES bytes" corrected to "ROL left by n/8 bits (KEYBYTES byte positions)".
+
+**Files changed:** `herradura.h`.
+
+---
+
+## [1.7.4] - 2026-05-21
+
+### Security — CSPRNG and timing-attack audit SA-01..SA-09
+
+Full security audit of all six language targets.  Nine findings resolved:
+
+| ID | Severity | Finding | Fix |
+|---|---|---|---|
+| SA-01 | Critical | Fixed LCG seed (`0xDEADBEEE`) in ARM Thumb-2 and NASM i386 — entire key/nonce sequence deterministic across runs | Replaced `prng_next` with `/dev/urandom` reads (`getrandom` syscall on NASM) |
+| SA-02 | High | `gf_pow_ba` (C): variable-time square-and-multiply leaks private key bit-length and bit pattern via loop count and branch | Made constant-time |
+| SA-03 | High | `gf_mul_ba` (C): `if (bb.b[KEYBYTES-1] & 1)` branches on secret bit | Made constant-time |
+| SA-04 | High | `ba_mul_mod_ord` (C): `if (!ai) continue` skips multiply loop on zero bytes of Schnorr scalar | Made constant-time |
+| SA-05 | High | `GfPow`/`GfMul` (Go): same variable-time pattern as SA-02/03 | Made constant-time |
+| SA-06 | High | `gf_pow`/`gf_mul` (Python): `while exp:` early-exit + `if exp & 1:` branch on each key bit | Made constant-time |
+| SA-07 | Medium | `random.sample()` (Mersenne Twister) used in Python test file for Stern-F private key and nonce | Replaced with `_csprng_weight_t()` / `os.urandom` |
+| SA-08 | Low | `ba_equal` uses `memcmp` (early-exit) for commitment hash comparison in `hpks_stern_f_verify` | Replaced with constant-time comparison |
+| SA-09 | Low | Stack private keys in C `main()` not zeroed via `explicit_bzero` | Added `explicit_bzero` on exit |
+
+### Documentation — Developer tutorial and library API (TODO #44)
+
+- **`herradura.h`:** Protocol Layer section — eight `static inline` wrappers
+  (`hkex_gf_pubkey`, `hkex_gf_agree`, `hske_encrypt`, `hske_decrypt`,
+  `hpks_sign`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt`)
+- **`Herradura cryptographic suite.py`:** public aliases `hkex_rnl_keygen` /
+  `hkex_rnl_agree` and "Library usage" docstring section added
+- **`docs/TUTORIAL.md`:** comprehensive integration guide — getting started, per-protocol
+  code recipes, parameter reference table, security notes
+- **`docs/examples/`:** three minimal runnable programs (C, Go, Python) each demonstrating
+  HKEX-GF, HSKE, HKEX-RNL, and HPKS-Stern-F in ~80 LOC
+
+### Build — i386 ASM portability fix (build_asm_i386.sh)
+
+`x86_64-linux-gnu-ld -m elf_i386` fails on ARM64 hosts (Raspberry Pi 5, Ubuntu) with
+"unrecognized emulation mode: elf_i386".  `build_asm_i386.sh` now probes each linker
+candidate (`x86_64-linux-gnu-ld`, `i686-linux-gnu-ld`, system `ld`) for actual `elf_i386`
+emulation support before using it.  Emits a clear install hint if none is found.
+
+**Files changed:** `build_asm_i386.sh`, `CLAUDE.md`.
+
+---
+
 ## [1.7.3] - 2026-05-20
 
 ### Performance — NumPy NTT acceleration for HKEX-RNL (TODO #40)

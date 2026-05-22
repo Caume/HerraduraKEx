@@ -2956,7 +2956,18 @@ region (`v >= floor(2^k / (n-i)) * (n-i)` for the drawn bit-width `k`), discard 
 redraw.  Mirror the fix in Go `sternGenPerm` and Python `_csprng_weight_t` (already
 uses 4-byte rejection sampling; audit for the same bias).
 
-Status: **Open**
+Status: **DONE (v1.8.1)** — Counter-mode extraction and rejection sampling implemented in all
+three language targets:
+- **C** (`herradura.h` `stern_gen_perm`): `ba_rol_k` key = ROL(pi_seed, KEYBITS/8); walks
+  all KEYBYTES of each NL-FSCX v1 state block as 4-byte big-endian draws; `uint64_t`
+  threshold `= 2^32 - 2^32 % range` with `(uint64_t)v >= threshold` comparison (critical:
+  keeps threshold as `uint64_t` to avoid truncating to 0 when range divides 2^32).
+- **Go** (`herradura/herradura.go` `SternGenPerm`): identical counter-mode draw with
+  `threshold := uint64(0x100000000) - uint64(0x100000000)%range_`; cursor starts at `nb`
+  to force state advance on first draw.
+- **Python** (`Herradura cryptographic suite.py` `_stern_gen_perm`): `(1<<32) - (1<<32)%range_`
+  rejection threshold; big-endian 4-byte draw from NL-FSCX v1 state.
+All single-language round-trips (C sign→C verify, Go sign→Go verify, Python sign→verify) pass.
 
 ---
 

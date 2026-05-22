@@ -985,20 +985,37 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
     memcpy(out->b + KEYBYTES / 2, syndr, SDF_SYNBYTES);
 }
 
-/* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG. */
+/* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.
+   Counter-mode extraction: all KEYBYTES of each state block are consumed as
+   sequential 32-bit draws before the state is advanced, so no entropy is wasted.
+   Rejection sampling (threshold = 2^32 - 2^32%range, kept as uint64 to avoid
+   truncating to 0 when range divides 2^32) eliminates modular bias. */
 static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 {
     BitArray key, st;
-    int i;
+    int i, cursor;
     for (i = 0; i < N; i++) perm[i] = (uint8_t)i;
     ba_rol_k(&key, pi_seed, KEYBITS / 8);
     st = *pi_seed;
+    cursor = KEYBYTES;                          /* force state advance on first draw */
     for (i = N - 1; i > 0; i--) {
+        uint64_t range     = (uint64_t)(i + 1);
+        uint64_t threshold = UINT64_C(0x100000000) -
+                             (UINT64_C(0x100000000) % range);
         uint32_t v;
         int j;
-        nl_fscx_v1_ba(&st, &st, &key);
-        v = ((uint32_t)st.b[KEYBYTES - 2] << 8) | st.b[KEYBYTES - 1];
-        j = (int)(v % (unsigned)(i + 1));
+        do {
+            if (cursor + 4 > KEYBYTES) {
+                nl_fscx_v1_ba(&st, &st, &key);
+                cursor = 0;
+            }
+            v = ((uint32_t)st.b[cursor    ] << 24) |
+                ((uint32_t)st.b[cursor + 1] << 16) |
+                ((uint32_t)st.b[cursor + 2] <<  8) |
+                 (uint32_t)st.b[cursor + 3];
+            cursor += 4;
+        } while ((uint64_t)v >= threshold);
+        j = (int)(v % (uint32_t)range);
         { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
     }
 }

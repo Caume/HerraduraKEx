@@ -807,14 +807,33 @@ def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
 
 
 def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
-    """Fisher-Yates shuffle of [0..N-1] driven by NL-FSCX v1 PRNG."""
-    n    = pi_seed._size
-    key  = pi_seed.rotated(n // 8)
-    perm = list(range(N))
-    st   = pi_seed.copy()
+    """Fisher-Yates shuffle of [0..N-1] driven by NL-FSCX v1 PRNG.
+
+    Counter-mode extraction: all n/8 bytes of each state block are consumed as
+    sequential 32-bit draws before advancing the state (no entropy wasted).
+    Rejection sampling (threshold = 2^32 - 2^32%range) eliminates modular bias.
+    """
+    n       = pi_seed._size
+    nb      = n // 8
+    key     = pi_seed.rotated(n // 8)
+    perm    = list(range(N))
+    st      = pi_seed.copy()
+    buf     = b'\x00' * nb
+    cursor  = nb                               # force state advance on first draw
     for i in range(N - 1, 0, -1):
-        st = nl_fscx_v1(st, key)
-        perm[i], perm[st.uint % (i + 1)] = perm[st.uint % (i + 1)], perm[i]
+        range_    = i + 1
+        threshold = (1 << 32) - (1 << 32) % range_
+        while True:
+            if cursor + 4 > nb:
+                st     = nl_fscx_v1(st, key)
+                buf    = st.bytes
+                cursor = 0
+            v       = int.from_bytes(buf[cursor:cursor + 4], 'big')
+            cursor += 4
+            if v < threshold:
+                break
+        k = v % range_
+        perm[i], perm[k] = perm[k], perm[i]
     return perm
 
 
