@@ -3136,7 +3136,13 @@ avoids this with `_stern_build_H` which precomputes the matrix once.
 `SternBuildH` in Go.  Update `hpks_stern_f_sign` / `HpksSternFSign` and
 `hpks_stern_f_verify` / `HpksSternFVerify` to build H once and pass it through.
 
-Status: **Open**
+Status: **DONE (v1.8.2)** — Added `stern_build_H` (C) and `SternBuildH` (Go) that precompute
+all `SDF_N_ROWS` rows of H once.  Added `stern_syndrome_H` (C) and `sternSyndromeH` (Go)
+that compute `H·e^T` from the prebuilt matrix.  `stern_syndrome` (C) and `SternSyndrome`
+(Go) are retained as one-off wrappers (keygen, encap) that build H internally.
+`hpks_stern_f_sign` and `hpks_stern_f_verify` in both C and Go now call `stern_build_H` /
+`SternBuildH` once at entry and use the fast `_H` variant for all per-round syndrome
+evaluations, reducing matrix construction from `rounds` calls down to 1.
 
 ---
 

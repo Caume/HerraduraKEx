@@ -745,18 +745,33 @@ func SternMatrixRow(seed *BitArray, row int) *BitArray {
 	return NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
 }
 
-// SternSyndrome computes H·e^T mod 2.
-func SternSyndrome(seed, e *BitArray) *big.Int {
+// SternBuildH precomputes all n/2 rows of the parity-check matrix.
+// Hot paths (sign/verify) call this once and reuse H via sternSyndromeH.
+func SternBuildH(seed *BitArray) []*BitArray {
 	nRows := seed.size / 2
+	H := make([]*BitArray, nRows)
+	for i := range H {
+		H[i] = SternMatrixRow(seed, i)
+	}
+	return H
+}
+
+// sternSyndromeH computes H·e^T mod 2 from a prebuilt H matrix.
+func sternSyndromeH(H []*BitArray, e *BitArray) *big.Int {
 	syn := new(big.Int)
-	for i := 0; i < nRows; i++ {
-		row := SternMatrixRow(seed, i)
+	for i, row := range H {
 		dot := new(big.Int).And(&row.Val, &e.Val)
 		if CountBits(dot)%2 == 1 {
 			syn.SetBit(syn, i, 1)
 		}
 	}
 	return syn
+}
+
+// SternSyndrome computes H·e^T mod 2.
+// One-off wrapper; hot paths should use SternBuildH + sternSyndromeH.
+func SternSyndrome(seed, e *BitArray) *big.Int {
+	return sternSyndromeH(SternBuildH(seed), e)
 }
 
 // SyndrToBA stores a syndrome *big.Int in the low bits of a BitArray.
@@ -888,6 +903,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 	}
 	n := msg.size
 	t := n / 16
+	H := SternBuildH(seed)
 	sig := &SternSig{Rounds: make([]SternRound, rounds)}
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
 	tmp := make([]rtmp, rounds)
@@ -902,7 +918,7 @@ func HpksSternFSign(msg, e, seed *BitArray, rounds int) *SternSig {
 		perm := SternGenPerm(pi, n)
 		sr := SternApplyPerm(perm, r)
 		sy := SternApplyPerm(perm, y)
-		hrBA := SyndrToBA(n, SternSyndrome(seed, r))
+		hrBA := SyndrToBA(n, sternSyndromeH(H, r))
 		c0 := SternHash(1, pi, hrBA)
 		c1 := SternHash(2, sr)
 		c2 := SternHash(3, sy)
@@ -938,6 +954,7 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 	rounds := len(sig.Rounds)
 	n := msg.size
 	t := n / 16
+	H := SternBuildH(seed)
 	c0s := make([]*BitArray, rounds)
 	c1s := make([]*BitArray, rounds)
 	c2s := make([]*BitArray, rounds)
@@ -968,7 +985,7 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 			if CountBits(&r.RespB.Val) != t {
 				return false
 			}
-			hrBA := SyndrToBA(n, SternSyndrome(seed, r.RespB))
+			hrBA := SyndrToBA(n, sternSyndromeH(H, r.RespB))
 			if !SternHash(1, r.RespA, hrBA).Equal(r.C0) {
 				return false
 			}
@@ -977,7 +994,7 @@ func HpksSternFVerify(msg *BitArray, sig *SternSig, seed *BitArray, syndrome *bi
 				return false
 			}
 		default:
-			hysBA := SyndrToBA(n, new(big.Int).Xor(SternSyndrome(seed, r.RespB), syndrome))
+			hysBA := SyndrToBA(n, new(big.Int).Xor(sternSyndromeH(H, r.RespB), syndrome))
 			if !SternHash(1, r.RespA, hysBA).Equal(r.C0) {
 				return false
 			}
