@@ -763,18 +763,39 @@ func SyndrToBA(n int, syn *big.Int) *BitArray {
 }
 
 // SternGenPerm derives a Fisher-Yates permutation deterministically from piSeed.
+// Counter-mode extraction: all n/8 bytes of each state block are consumed as
+// sequential 32-bit draws before advancing the state (no entropy wasted).
+// Rejection sampling (threshold = 2^32 - 2^32%range, as uint64 to avoid truncation
+// when range divides 2^32) eliminates modular bias.
 func SternGenPerm(piSeed *BitArray, N int) []int {
 	n := piSeed.size
+	nb := n / 8
 	key := piSeed.RotateLeft(n / 8)
 	st := piSeed.Copy()
 	perm := make([]int, N)
 	for i := range perm {
 		perm[i] = i
 	}
+	var stBytes []byte
+	cursor := nb // force state advance on first draw
 	for i := N - 1; i > 0; i-- {
-		st = NlFscxV1(st, key)
-		v := uint32(st.Val.Uint64())
-		j := int(v % uint32(i+1))
+		range_ := uint64(i + 1)
+		threshold := uint64(0x100000000) - uint64(0x100000000)%range_
+		var v uint32
+		for {
+			if cursor+4 > nb {
+				st = NlFscxV1(st, key)
+				stBytes = st.Bytes()
+				cursor = 0
+			}
+			v = uint32(stBytes[cursor])<<24 | uint32(stBytes[cursor+1])<<16 |
+				uint32(stBytes[cursor+2])<<8 | uint32(stBytes[cursor+3])
+			cursor += 4
+			if uint64(v) < threshold {
+				break
+			}
+		}
+		j := int(v % uint32(range_))
 		perm[i], perm[j] = perm[j], perm[i]
 	}
 	return perm
