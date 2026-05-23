@@ -4,6 +4,31 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.5] - 2026-05-23
+
+### Documentation — KaTeX rendering fixes in SecurityProofs-2.md (TODO #59)
+
+Fixed two math rendering failures in `SecurityProofs-2.md`; all other sections untouched.
+
+**Line 458 — `\operatorname` blocked (Rule 10)**
+
+`\operatorname{invert}` inside a `$$...$$` display block is rejected by GitHub's
+KaTeX macro allowlist.  Replaced with `\text{invert}`.
+
+**Line 460 — `^*` emphasis breakage (Rule 4)**
+
+A single proof sentence contained 5 bare `^*` patterns (`d_i^*` ×4 and
+`\sigma_i^*` ×1).  CommonMark paired the `*` characters across `$...$`
+boundaries, breaking every math span in the sentence.  Replaced all 5 with
+`^{\ast}`.
+
+A full scan of SecurityProofs-2.md confirmed no further Rule 4, Rule 6, or
+Rule 10 violations outside table cells.
+
+**Files changed:** `SecurityProofs-2.md`, `TODO.md`, `CHANGELOG.md`.
+
+---
+
 ## [1.8.4] - 2026-05-23
 
 ### Documentation — KaTeX rendering fixes in SecurityProofs-1.md (TODO #57, #58)

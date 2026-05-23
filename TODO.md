@@ -3514,3 +3514,18 @@ Status: **DONE** — all 14 `^*` occurrences on lines 962–967 replaced with `^
 **Fix:** Replaced all 7 occurrences of `^*` with `^{\ast}` on those lines only.
 
 Status: **DONE** — 7 replacements across lines 730 and 739–744; no other lines touched.
+
+---
+
+### 59. SecurityProofs-2.md — `^*` emphasis breakage and `\operatorname` (Documentation, High)
+
+**File:** `SecurityProofs-2.md`, lines 458 and 460
+
+**Root cause (two violations):**
+
+- **Line 458 — Rule 10:** `\operatorname{invert}` inside a `$$...$$` display block is blocked by GitHub's KaTeX macro allowlist ("The following macros are not allowed: operatorname"). Fixed to `\text{invert}`.
+- **Line 460 — Rule 4:** One long proof sentence contains 5 bare `^*` patterns (`d_i^*` ×4 and `\sigma_i^*` ×1). CommonMark pairs them across `$...$` boundaries, breaking every math span in the sentence. Replaced all 5 with `^{\ast}`.
+
+**Scan result:** No other paragraphs in SecurityProofs-2.md have multiple `^*` occurrences outside table cells; no Rule 6 violations found.
+
+Status: **DONE** — lines 458 and 460 fixed; no other lines touched.
