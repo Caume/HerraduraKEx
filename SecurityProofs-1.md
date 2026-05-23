@@ -727,7 +727,7 @@ because $S_{r+1}$ is the $\mathbb{GF}(2)$-linear FSCX partial-sum operator actin
 
 The hardness of HKEX-GF reduces to the **Computational Diffie-Hellman (CDH)** problem in $\mathbb{GF}(2^n)^*$: given $g^a$ and $g^b$, compute $g^{ab}$.
 
-CDH in $\mathbb{GF}(2^n)^*$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^*$ is hard.  Known classical attack complexities on the DLP in $\mathbb{GF}(2^n)^*$:
+CDH in $\mathbb{GF}(2^n)^{\ast}$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^{\ast}$ is hard.  Known classical attack complexities on the DLP in $\mathbb{GF}(2^n)^{\ast}$:
 
 | Algorithm | Complexity | Notes |
 |-----------|------------|-------|
@@ -737,11 +737,11 @@ CDH in $\mathbb{GF}(2^n)^*$ is believed hard for large $n$, under the assumption
 | **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $(\log 2^n)^{O(\log\log 2^n)}$ | Specific to characteristic-2 fields |
 
 The **quasi-polynomial algorithm** is the dominant classical threat.  It exploits the
-characteristic-2 structure of $\mathbb{GF}(2^n)^*$ via a descent using sparse linear systems in
+characteristic-2 structure of $\mathbb{GF}(2^n)^{\ast}$ via a descent using sparse linear systems in
 function fields — a technique with no known analogue for DLP in prime-order elliptic curve groups
-or in $\mathbb{Z}_p^*$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
-fields.  The recommended minimum for $\mathbb{GF}(2^n)^*$ DLP (if it must be used) is $n \geq 3000$;
-most standards bodies advise **against** using $\mathbb{GF}(2^n)^*$ for new DLP-based designs.
+or in $\mathbb{Z}_p^{\ast}$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
+fields.  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is $n \geq 3000$;
+most standards bodies advise **against** using $\mathbb{GF}(2^n)^{\ast}$ for new DLP-based designs.
 
 **Experimental verification at $n = 32$ (demo parameters).**
 

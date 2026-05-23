@@ -3498,3 +3498,19 @@ NODE_PATH=/tmp/katex-validate/node_modules node \
 ```
 
 Status: **DONE** — all 14 `^*` occurrences on lines 962–967 replaced with `^{\ast}`.
+
+---
+
+### 58. SecurityProofs-1.md §9.2.4 — `^*` emphasis breakage in two paragraphs (Documentation, High)
+
+**File:** `SecurityProofs-1.md`, lines 730 and 739–744 (section "9.2.4 Security assumption")
+
+**Symptom (screenshot 2026-05-23):** Math spans broken in two paragraphs — raw `$...$` delimiters visible as plain text, portions of prose rendered as italic.
+
+**Root cause:** Same Rule 4 violation as TODO #57.
+- Line 730: three `$\mathbb{GF}(2^n)^*$` in one sentence — two `*` pair across math boundaries.
+- Lines 739–744: four `^*` across one paragraph (`\mathbb{GF}(2^n)^*` ×3 and `\mathbb{Z}_p^*` ×1) — two pairs, both break math.
+
+**Fix:** Replaced all 7 occurrences of `^*` with `^{\ast}` on those lines only.
+
+Status: **DONE** — 7 replacements across lines 730 and 739–744; no other lines touched.

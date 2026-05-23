@@ -4,6 +4,46 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.4] - 2026-05-23
+
+### Documentation — KaTeX rendering fixes in SecurityProofs-1.md (TODO #57, #58)
+
+Fixed math rendering failures in three sections of `SecurityProofs-1.md` caused by
+KaTeX pipeline rule violations.  All other sections were unaffected and untouched.
+
+**§10.6.2 HPKS — Classical Forgery Resistance (TODO #57)**
+
+The forgery-resistance paragraph and bullet list contained 14 bare `^*` patterns
+(`R^*`, `s^*`, `e^*`, `P^*`, `C^{-e^*}`).  CommonMark's emphasis parser paired the
+`*` characters across `$...$` boundaries, breaking every math span in the block.
+Replaced all 14 occurrences with `^{\ast}` (Rule 4).
+
+**§10.6.1 HSKE — rank formula**
+
+`rank$(\Phi) = 64$` placed `$` directly after a non-space character, preventing
+GitHub from recognising the opening math delimiter.  Fixed to `$\text{rank}(\Phi) = 64$`
+(Rule 6).  An intermediate attempt using `\operatorname` was rejected by GitHub's KaTeX
+macro allowlist; `\text{}` is the correct substitute.
+
+**§9.2.4 Security assumption (TODO #58)**
+
+Two paragraphs contained multiple `^*` occurrences that caused the same emphasis-pairing
+breakage:
+- Line 730: three `$\mathbb{GF}(2^n)^*$` in one sentence.
+- Lines 739–744: `$\mathbb{GF}(2^n)^*$` (×3) and `$\mathbb{Z}_p^*$` (×1).
+
+Replaced all 7 occurrences with `^{\ast}` (Rule 4).
+
+**CLAUDE.md — added Rule 10**
+
+Documented that `\operatorname` is blocked by GitHub's KaTeX macro allowlist
+("The following macros are not allowed: operatorname").  Use `\text{name}` instead.
+Added Rule 10 and a corresponding row in the correct-patterns table.
+
+**Files changed:** `SecurityProofs-1.md`, `CLAUDE.md`, `TODO.md`, `CHANGELOG.md`.
+
+---
+
 ## [1.8.3] - 2026-05-22
 
 ### Documentation — Cryptographic concepts primer for general IT/security audience (TODO #56)
