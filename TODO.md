@@ -3455,3 +3455,46 @@ ba_rol_k(dst, k, KEYBYTES); /* ROL left by n/8 bits (KEYBYTES byte positions) */
 ```
 
 Status: **DONE** — comment corrected at `herradura.h:572`.
+
+---
+
+## KaTeX Math Rendering Fixes
+
+### 57. SecurityProofs-1.md §10.6.2 — `^*` emphasis breakage (Documentation, High)
+
+**File:** `SecurityProofs-1.md`, lines 962–969 (section "10.6.2 HPKS — Classical Forgery Resistance")
+
+**Symptom (screenshot 2026-05-23):** Every math span in §10.6.2 fails to render on GitHub — raw LaTeX-like text leaks into the page (e.g. `R^_\textit{bits}` visible as plain text instead of rendered math).  The section immediately above and below renders correctly.
+
+**Root cause:** CLAUDE.md Rule 4 — "never write `^*` inside a math span."  The two-paragraph block (lines 962–969) contains 8+ bare `*` characters (from `R^*`, `s^*`, `e^*`, `P^*`, `C^{-e^*}`, etc.) in the same paragraph and bullet list.  CommonMark's emphasis parser pairs them across `$...$` boundaries, breaking math-span detection for the entire block.  The `\mathbb{GF}(2^n)^*` on line 971 is fine because its paragraph contains only one `*` with no matching partner.
+
+**Fix:** Replace every `^*` with `^{\ast}` in lines 962–969 only.  `\ast` renders identically to `*` in KaTeX and is invisible to the emphasis parser (the leading `\a` is not an emphasis marker).
+
+**Exact substitutions (14 replacements, 8 unique locations):**
+
+| Line | Original | Replacement |
+|---|---|---|
+| 962 | `(R^*, s^*)` | `(R^{\ast}, s^{\ast})` |
+| 962 | `g^{s^*}` | `g^{s^{\ast}}` |
+| 962 | `C^{e^*}` | `C^{e^{\ast}}` |
+| 962 | `R^*` (standalone) | `R^{\ast}` |
+| 963 | `e^*` | `e^{\ast}` |
+| 963 | `R^*_\text{bits}` | `R^{\ast}_\text{bits}` |
+| 963 | `P^*` | `P^{\ast}` |
+| 965 | `$R^*$` | `$R^{\ast}$` |
+| 965 | `s^* = \log_g(R^* \cdot C^{-e^*})` | `s^{\ast} = \log_g(R^{\ast} \cdot C^{-e^{\ast}})` |
+| 966 | `$s^*$` | `$s^{\ast}$` |
+| 966 | `g^{s^*} \cdot C^{e^*}` | `g^{s^{\ast}} \cdot C^{e^{\ast}}` |
+| 966 | `$e^*$` (end of line) | `$e^{\ast}$` |
+| 967 | `e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)` | `e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)` |
+| 967 | `$R^*$ and $e^*$` | `$R^{\ast}$ and $e^{\ast}$` |
+
+**No other lines need changes.**  Lines outside 962–969 either have no `^*` or have a lone `^*` with no pairing partner in the same paragraph (e.g. line 971 `\mathbb{GF}(2^n)^*`).
+
+**Validation:** After applying the fix, run the KaTeX pipeline validator to confirm zero failures in the affected section:
+```bash
+NODE_PATH=/tmp/katex-validate/node_modules node \
+    SecurityProofsCode/validate_katex.js SecurityProofs-1.md
+```
+
+Status: **DONE** — all 14 `^*` occurrences on lines 962–967 replaced with `^{\ast}`.

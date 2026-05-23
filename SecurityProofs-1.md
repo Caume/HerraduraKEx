@@ -953,18 +953,18 @@ By Theorem 11 (§11.1): $E = M^i \cdot P \oplus M \cdot S_i \cdot K$.  Defining 
 
 $$c_K = E \oplus M^i \cdot P$$
 
-One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: rank$(\Phi) = 64$
+One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: $\text{rank}(\Phi) = 64$
 (experimentally verified: 0 unconstrained key bits from a single pair), meaning $K$ is uniquely
 determined.  **HSKE provides no security under known-plaintext attack at any $n$.**
 
 #### 10.6.2 HPKS — Classical Forgery Resistance
 
-Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
-$e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+Forgery requires finding $(R^{\ast}, s^{\ast})$ satisfying $g^{s^{\ast}} \cdot C^{e^{\ast}} = R^{\ast}$ where
+$e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$, without knowing the private key $a$.
 
-- If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
-- If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
-  constraint $e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
+- If Eve fixes $R^{\ast}$ first: she needs $s^{\ast} = \log_g(R^{\ast} \cdot C^{-e^{\ast}})$ — a DLP instance.
+- If Eve fixes $s^{\ast}$ first: she can compute $g^{s^{\ast}} \cdot C^{e^{\ast}}$ for any $e^{\ast}$, but the
+  constraint $e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$ ties $R^{\ast}$ and $e^{\ast}$
   together.  Since fscx\_revolve is an affine bijection in its first argument (see §10.7),
   solving both simultaneously reduces to DLP hardness.
 
