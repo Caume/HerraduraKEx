@@ -239,6 +239,10 @@ Fix: avoid repeating `\command{...}_{...}` across multiple rows.  Use either:
 
 The fix is to **omit spacing commands entirely**.  KaTeX automatically applies correct spacing to binary operators (`+`, `-`, `\oplus`, `=`, `\neq`, `\leq`, etc.) and relation operators without any explicit hints.  For negative spacing before big delimiters (`\bigl`, `\left`), simply omit the spacing command — `F^r\bigl(` renders correctly without `\!` or `\negthinspace`.
 
+### Rule 10 — never use `\operatorname` (blocked by GitHub's KaTeX allowlist)
+
+`\operatorname` is not in GitHub's KaTeX macro allowlist and produces the error "The following macros are not allowed: operatorname".  Use `\text{name}` instead — it renders identically for named operators (rank, ker, im, span, etc.) and is always permitted.
+
 ### Correct patterns
 
 The only pattern that survives both rules is **dashes inside a single `\text{}` block** for compound names, and **explicit subscript syntax** when the visual is genuinely a subscript.
@@ -263,6 +267,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
 | `$$\nexpr\n$$` (standalone `$$` delimiter lines) | `$$expr$$` or `$$first-line\n...\nlast-line$$` |
+| `\operatorname{rank}(\Phi)` | `\text{rank}(\Phi)` — `\operatorname` blocked by GitHub allowlist |
 | `\;` / `\!` / `\,` / `\:` in math | (omit — rely on KaTeX auto-spacing) |
 | `\thickspace` / `\negthinspace` / `\thinspace` / `\medspace` in math | (omit — renders incorrectly on GitHub's KaTeX) |
 | `F^r\!\bigl(` or `F^r\negthinspace\bigl(` | `F^r\bigl(` (no spacing before big delimiter) |
