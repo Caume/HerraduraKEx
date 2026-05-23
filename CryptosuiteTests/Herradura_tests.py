@@ -611,7 +611,7 @@ def r_val(size: int) -> int:
     return size * 3 // 4
 
 
-SIZES     = [64, 128, 256]      # bit sizes for FSCX-only tests (fast)
+SIZES     = [32, 64, 128, 256]  # bit sizes for FSCX/HSKE/NL benchmarks
 GF_SIZES  = [32, 64, 128, 256]  # bit sizes for GfPow tests (Python big-int handles all)
 GF_TRIALS = 100                 # trials for GfPow-heavy tests
 RNL_SIZES = [32, 64, 128, 256]  # ring polynomial degrees for HKEX-RNL tests
@@ -1314,14 +1314,15 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[29] HPKS-Stern-F sign+verify throughput (n=32, rounds=4)  [CODE-BASED PQC]")
-    size = 32; rounds = 4
-    sf_seed, sf_e, sf_syn = stern_f_keygen(size)
-    msg = BitArray.random(size); sink = [True]
-    def fn():
-        sig = hpks_stern_f_sign(msg, sf_e, sf_seed, sf_syn, size, rounds)
-        sink[0] = hpks_stern_f_verify(msg, sig, sf_seed, sf_syn, size)
-    _bench(f"bits={size:3d} rounds={rounds}  sign+verify", fn)
+    print("[29] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    rounds = 4; sink = [True]
+    for size in SIZES:
+        sf_seed, sf_e, sf_syn = stern_f_keygen(size)
+        msg = BitArray.random(size)
+        def fn(s=size, se=sf_seed, e=sf_e, sy=sf_syn, ms=msg):
+            sig = hpks_stern_f_sign(ms, e, se, sy, s, rounds)
+            sink[0] = hpks_stern_f_verify(ms, sig, se, sy, s)
+        _bench(f"bits={size:3d} rounds={rounds}  sign+verify", fn)
     print()
 
 

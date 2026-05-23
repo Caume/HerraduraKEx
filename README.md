@@ -196,15 +196,15 @@ C benchmarks use native types per size: `uint32_t` / `uint64_t` / `__uint128_t` 
 
 | Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
 |-----------|--------|--------|---------|---------|
-| FSCX single step | — | 161 K | 160 K | 158 K ops/sec |
+| FSCX single step | 156 K | 161 K | 160 K | 158 K ops/sec |
 | HKEX-GF gf\_pow | 1.90 K | 484 | 120 | 27.6 ops/sec |
 | HKEX-GF full handshake | 504 | 118 | 28.0 | 6.70 ops/sec |
-| HSKE round-trip | — | 2.53 K | 1.27 K | 628 ops/sec |
+| HSKE round-trip | 4.82 K | 2.53 K | 1.27 K | 628 ops/sec |
 | HPKE El Gamal round-trip | 457 | 113 | 27.5 | 6.61 ops/sec |
-| NL-FSCX v1 revolve (n/4 steps) | — | 7.49 K | 3.75 K | 1.85 K ops/sec |
-| NL-FSCX v2 enc+dec | — | 294 | 80.7 | 20.5 ops/sec |
-| HSKE-NL-A1 counter-mode | — | 7.05 K | 3.65 K | 1.83 K ops/sec |
-| HSKE-NL-A2 revolve-mode | — | 296 | 80.8 | 20.5 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | 14.4 K | 7.49 K | 3.75 K | 1.85 K ops/sec |
+| NL-FSCX v2 enc+dec | 1.04 K | 294 | 80.7 | 20.5 ops/sec |
+| HSKE-NL-A1 counter-mode | 13.0 K | 7.05 K | 3.65 K | 1.83 K ops/sec |
+| HSKE-NL-A2 revolve-mode | 1.04 K | 296 | 80.8 | 20.5 ops/sec |
 | HKEX-RNL full handshake (n=…) | 1.12 K | 543 | 256 | 119 ops/sec |
 | HPKS-Stern-F sign+verify (N=n, rounds=4) | 26.7 ops/sec | 15.6 ops/sec | 6.11 ops/sec | 1.82 ops/sec |
 
