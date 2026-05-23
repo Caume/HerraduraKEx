@@ -403,7 +403,7 @@ For fixed $B$ with $\mathrm{wt}(B) \geq 2$, let $F_1^r(A, B)$ denote $r$ iterati
 1. After $r = 1$: algebraic degree $\leq \mathrm{wt}(b_0, \ldots, b_{n-1})$ in the bits of $A$, at most $\lceil n/2 \rceil$ for generic $B$.
 2. After $r \geq 2$: degree saturates at $n$ (the maximum for any Boolean function on $n$ variables).
 
-*Proof.*  The GF(2)-linear term $M(A \oplus B)$ contributes degree 1 in the bits of $A$.  The non-linear term is $T = \mathrm{ROL}_{n/4}\bigl((A+B) \bmod 2^n\bigr)$.  For fixed $B$, bit $j$ of $(A+B) \bmod 2^n$ equals $a_j \oplus b_j \oplus c_{j-1}$ (writing $c_j$ for $\mathrm{carry}_j$) where the full-adder carry satisfies:
+*Proof.*  The GF(2)-linear term $M(A \oplus B)$ contributes degree 1 in the bits of $A$.  The non-linear term is $T = \mathrm{ROL}((A+B) \bmod 2^n, n/4)$.  For fixed $B$, bit $j$ of $(A+B) \bmod 2^n$ equals $a_j \oplus b_j \oplus c_{j-1}$ (writing $c_j$ for $\mathrm{carry}_j$) where the full-adder carry satisfies:
 
 $$\mathrm{carry}_{-1} = 0, \qquad \mathrm{carry}_j = a_j \cdot b_j \oplus (a_j \oplus b_j) \cdot \mathrm{carry}_{j-1}.$$
 
