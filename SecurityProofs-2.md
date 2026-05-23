@@ -455,9 +455,9 @@ For multi-message use, combine OTS leaves in a Merkle tree (using $h$ as the tre
 
 If $h$ is a one-way function, then HPKS-WOTS-F is EUF-CMA secure for a single signing query with:
 
-$$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\operatorname{invert}(h)].$$
+$$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
-*Proof.*  Any forger $\mathcal{A}$ producing $(d', \sigma')$ for $m' \neq m$ must, for some index $i$, produce $\sigma'_i$ with $h^{d'_i}(\sigma'_i) = \mathrm{pk}_i$ and $d'_i \neq d_i^*$.  Only $d'_i > d_i^*$ is useful (smaller $d'_i$ would reuse a revealed chain value).  Then $\mathcal{A}$ has computed $\sigma'_i$ with $h^{d'_i - d_i^*}(\sigma'_i) = \mathrm{pk}_i$, i.e.\ a preimage inversion starting from the released $\sigma_i^* = h^{w-1-d_i^*}(\mathrm{sk}_i)$.  This contradicts the OWF assumption.  A union bound over $\ell$ indices gives the stated bound. $\blacksquare$
+*Proof.*  Any forger $\mathcal{A}$ producing $(d', \sigma')$ for $m' \neq m$ must, for some index $i$, produce $\sigma'_i$ with $h^{d'_i}(\sigma'_i) = \mathrm{pk}_i$ and $d'_i \neq d_i^{\ast}$.  Only $d'_i > d_i^{\ast}$ is useful (smaller $d'_i$ would reuse a revealed chain value).  Then $\mathcal{A}$ has computed $\sigma'_i$ with $h^{d'_i - d_i^{\ast}}(\sigma'_i) = \mathrm{pk}_i$, i.e.\ a preimage inversion starting from the released $\sigma_i^{\ast} = h^{w-1-d_i^{\ast}}(\mathrm{sk}_i)$.  This contradicts the OWF assumption.  A union bound over $\ell$ indices gives the stated bound. $\blacksquare$
 
 **Quantum analysis.**  Grover's algorithm finds a preimage of $h^k$ in $O(2^{n/2})$ quantum queries.  By Corollary 2, NL-FSCX v1 preimage inversion (after $\geq 2$ rounds, which $n/4$ rounds certainly satisfies for $n \geq 8$) is a degree-$n$ system for which no sub-exponential quantum solver is known.  For $n = 256$: $2^{128}$ quantum query lower bound.
 
