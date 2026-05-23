@@ -403,13 +403,13 @@ For fixed $B$ with $\mathrm{wt}(B) \geq 2$, let $F_1^r(A, B)$ denote $r$ iterati
 1. After $r = 1$: algebraic degree $\leq \mathrm{wt}(b_0, \ldots, b_{n-1})$ in the bits of $A$, at most $\lceil n/2 \rceil$ for generic $B$.
 2. After $r \geq 2$: degree saturates at $n$ (the maximum for any Boolean function on $n$ variables).
 
-*Proof.*  The GF(2)-linear term $M(A \oplus B)$ contributes degree 1 in the bits of $A$.  The non-linear term is $T = \mathrm{ROL}_{n/4}\bigl((A+B) \bmod 2^n\bigr)$.  For fixed $B$, bit $j$ of $(A+B) \bmod 2^n$ equals $a_j \oplus b_j \oplus \mathrm{carry}_{j-1}$ where the full-adder carry satisfies:
+*Proof.*  The GF(2)-linear term $M(A \oplus B)$ contributes degree 1 in the bits of $A$.  The non-linear term is $T = \mathrm{ROL}_{n/4}\bigl((A+B) \bmod 2^n\bigr)$.  For fixed $B$, bit $j$ of $(A+B) \bmod 2^n$ equals $a_j \oplus b_j \oplus c_{j-1}$ (writing $c_j$ for $\mathrm{carry}_j$) where the full-adder carry satisfies:
 
 $$\mathrm{carry}_{-1} = 0, \qquad \mathrm{carry}_j = a_j \cdot b_j \oplus (a_j \oplus b_j) \cdot \mathrm{carry}_{j-1}.$$
 
-With $b_j = 1$: $\mathrm{carry}_j = a_j \oplus \mathrm{carry}_{j-1} \oplus a_j \cdot \mathrm{carry}_{j-1}$, giving $\deg(\mathrm{carry}_j) = \deg(\mathrm{carry}_{j-1}) + 1$.  With $b_j = 0$: $\mathrm{carry}_j = a_j \cdot \mathrm{carry}_{j-1}$, again $+1$.  Hence $\deg(\mathrm{carry}_j) = \mathrm{wt}(b_0, \ldots, b_j)$.  For $\mathrm{wt}(B) \geq 2$ some output bit of $T$ reaches degree $\geq 2$ after one step.
+With $b_j = 1$: $c_j = a_j \oplus c_{j-1} \oplus a_j \cdot c_{j-1}$, giving $\deg(c_j) = \deg(c_{j-1}) + 1$.  With $b_j = 0$: $c_j = a_j \cdot c_{j-1}$, again $+1$.  Hence $\deg(c_j) = \mathrm{wt}(b_0, \ldots, b_j)$.  For $\mathrm{wt}(B) \geq 2$ some output bit of $T$ reaches degree $\geq 2$ after one step.
 
-After round 1, the input to round 2 has degree $d \geq 2$ in the original $A$ bits.  In round 2 the product $a_j \cdot \mathrm{carry}_{j-1}$ has degree $d + d = 2d$.  Over $\mathbb{GF}(2)^n$ the degree is capped at $n$; since $2d \geq 4$ already exceeds 2 and repeated multiplication drives degree towards $n$, saturation occurs after at most two rounds. $\blacksquare$
+After round 1, the input to round 2 has degree $d \geq 2$ in the original $A$ bits.  In round 2 the product $a_j \cdot c_{j-1}$ has degree $d + d = 2d$.  Over $\mathbb{GF}(2)^n$ the degree is capped at $n$; since $2d \geq 4$ already exceeds 2 and repeated multiplication drives degree towards $n$, saturation occurs after at most two rounds. $\blacksquare$
 
 **Corollary 2 — Gröbner Basis Offers No Advantage.**
 
