@@ -152,54 +152,59 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.5.18, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
+# Performance (v1.8.3, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
-Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 3.0`.
-GF/NL/Stern benchmarks use 32-bit parameters; FSCX/HSKE benchmarks use 256-bit parameters.
+Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 1.5`.
+C benchmarks run at fixed sizes (32-bit GF/NL, 256-bit FSCX/HSKE).
+Go/Python columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.
 
 ## C (gcc -O2)
 
 | Benchmark | Throughput |
 |-----------|-----------|
-| FSCX single step (256-bit) | 10.4 M ops/sec |
-| gf_pow throughput (32-bit) | 19,841 M ops/sec |
-| HKEX-GF full handshake (32-bit) | 1,968 M ops/sec |
-| HSKE round-trip (256-bit) | 40.9 K ops/sec |
-| HPKE El Gamal round-trip (32-bit) | 2,004 M ops/sec |
-| NL-FSCX v1 revolve (32-bit, n/4 steps) | 1,968 M ops/sec |
-| NL-FSCX v2 enc+dec (32-bit) | 1,941 M ops/sec |
-| HSKE-NL-A1 counter-mode (32-bit) | 10.2 M ops/sec |
-| HSKE-NL-A2 revolve-mode (32-bit) | 15.2 M ops/sec |
-| HKEX-RNL full handshake (n=32) | 77.3 K ops/sec |
-| HPKS-Stern-F sign+verify (N=256, t=16, rounds=4) | 113 ops/sec |
+| FSCX single step (256-bit) | 10.6 M ops/sec |
+| gf\_pow throughput (32-bit) | 20,260 M ops/sec |
+| HKEX-GF full handshake (32-bit) | 2,027 M ops/sec |
+| HSKE round-trip (256-bit) | 41.8 K ops/sec |
+| HPKE El Gamal round-trip (32-bit) | 2,021 M ops/sec |
+| NL-FSCX v1 revolve (32-bit, n/4 steps) | 2,027 M ops/sec |
+| NL-FSCX v2 enc+dec (32-bit) | 2,021 M ops/sec |
+| HSKE-NL-A1 counter-mode (32-bit) | 10.5 M ops/sec |
+| HSKE-NL-A2 revolve-mode (32-bit) | 15.6 M ops/sec |
+| HKEX-RNL full handshake (n=32) | 92.2 K ops/sec |
+| HPKS-Stern-F sign+verify (N=256, t=16, rounds=8) | 53.3 ops/sec |
 
 ## Go (go run)
 
-| Benchmark | 64-bit | 128-bit | 256-bit |
-|-----------|--------|---------|---------|
-| FSCX single step | 146 K | 121 K | 110 K ops/sec |
-| HKEX-GF full handshake (32-bit) | 270 ops/sec | — | — |
-| HSKE round-trip | 2.15 K | 1.03 K | 413 ops/sec |
-| NL-FSCX v1 revolve (n/4 steps) | 6.34 K | 2.62 K | 1.21 K ops/sec |
-| NL-FSCX v2 enc+dec | 213 ops/sec | — | — |
-| HSKE-NL-A1 counter-mode | 5.65 K | 2.66 K | 1.18 K ops/sec |
-| HSKE-NL-A2 revolve-mode (64-bit) | 220 ops/sec | — | — |
-| HKEX-RNL full handshake | 10.0 K (n=32) | 4.79 K (n=64) | — |
-| HPKS-Stern-F sign+verify (N=256, rounds=4) | 1.3 ops/sec | — | — |
+| Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
+|-----------|--------|--------|---------|---------|
+| FSCX single step | — | 80.0 K | 65.5 K | 53.3 K ops/sec |
+| HKEX-GF gf\_pow | 630 ops/sec | — | — | — |
+| HKEX-GF full handshake | 160 ops/sec | — | — | — |
+| HSKE round-trip | — | 1.32 K | 570 | 240 ops/sec |
+| HPKE El Gamal round-trip | 150 ops/sec | — | — | — |
+| NL-FSCX v1 revolve (n/4 steps) | — | 3.64 K | 1.42 K | 610 ops/sec |
+| NL-FSCX v2 enc+dec | — | 130 ops/sec | — | — |
+| HSKE-NL-A1 counter-mode | — | 3.65 K | 1.24 K | 720 ops/sec |
+| HSKE-NL-A2 revolve-mode | — | 120 ops/sec | — | — |
+| HKEX-RNL full handshake (n=…) | 8.05 K | 5.02 K | 2.17 K | 1.05 K ops/sec |
+| HPKS-Stern-F sign+verify (N=256, rounds=4) | — | — | — | 1.78 ops/sec |
 
 ## Python 3
 
-| Benchmark | 64-bit | 128-bit | 256-bit |
-|-----------|--------|---------|---------|
-| FSCX single step | 157 K | 152 K | 155 K ops/sec |
-| HKEX-GF full handshake (32-bit) | 491 ops/sec | — | — |
-| HSKE round-trip | 2.36 K | 1.18 K | 601 ops/sec |
-| NL-FSCX v1 revolve (n/4 steps) | 7.29 K | 3.63 K | 1.85 K ops/sec |
-| NL-FSCX v2 enc+dec | 296 ops/sec | — | — |
-| HSKE-NL-A1 counter-mode | 7.01 K | 3.63 K | 1.82 K ops/sec |
-| HSKE-NL-A2 revolve-mode (64-bit) | 295 ops/sec | — | — |
-| HKEX-RNL full handshake | 1.05 K (n=32) | 510 (n=64) | — |
-| HPKS-Stern-F sign+verify (N=32, rounds=4) | 75.7 ops/sec | — | — |
+| Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
+|-----------|--------|--------|---------|---------|
+| FSCX single step | — | 161 K | 160 K | 158 K ops/sec |
+| HKEX-GF gf\_pow | 1.90 K | 484 | 120 | 27.6 ops/sec |
+| HKEX-GF full handshake | 504 | 118 | 28.0 | 6.70 ops/sec |
+| HSKE round-trip | — | 2.53 K | 1.27 K | 628 ops/sec |
+| HPKE El Gamal round-trip | 457 | 113 | 27.5 | 6.61 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | — | 7.49 K | 3.75 K | 1.85 K ops/sec |
+| NL-FSCX v2 enc+dec | — | 298 ops/sec | — | — |
+| HSKE-NL-A1 counter-mode | — | 7.05 K | 3.65 K | 1.83 K ops/sec |
+| HSKE-NL-A2 revolve-mode | — | 298 ops/sec | — | — |
+| HKEX-RNL full handshake (n=…) | 1.12 K | 543 | 256 | 119 ops/sec |
+| HPKS-Stern-F sign+verify (N=32, rounds=4) | 26.7 ops/sec | — | — | — |
 
 ---
 
