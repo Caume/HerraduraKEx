@@ -953,7 +953,7 @@ By Theorem 11 (§11.1): $E = M^i \cdot P \oplus M \cdot S_i \cdot K$.  Defining 
 
 $$c_K = E \oplus M^i \cdot P$$
 
-One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: $\operatorname{rank}(\Phi) = 64$
+One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: $\text{rank}(\Phi) = 64$
 (experimentally verified: 0 unconstrained key bits from a single pair), meaning $K$ is uniquely
 determined.  **HSKE provides no security under known-plaintext attack at any $n$.**
 
