@@ -959,12 +959,12 @@ determined.  **HSKE provides no security under known-plaintext attack at any $n$
 
 #### 10.6.2 HPKS — Classical Forgery Resistance
 
-Forgery requires finding $(R^*, s^*)$ satisfying $g^{s^*} \cdot C^{e^*} = R^*$ where
-$e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$, without knowing the private key $a$.
+Forgery requires finding $(R^{\ast}, s^{\ast})$ satisfying $g^{s^{\ast}} \cdot C^{e^{\ast}} = R^{\ast}$ where
+$e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$, without knowing the private key $a$.
 
-- If Eve fixes $R^*$ first: she needs $s^* = \log_g(R^* \cdot C^{-e^*})$ — a DLP instance.
-- If Eve fixes $s^*$ first: she can compute $g^{s^*} \cdot C^{e^*}$ for any $e^*$, but the
-  constraint $e^* = \text{fscx-revolve}(R^*_\text{bits}, P^*, i)$ ties $R^*$ and $e^*$
+- If Eve fixes $R^{\ast}$ first: she needs $s^{\ast} = \log_g(R^{\ast} \cdot C^{-e^{\ast}})$ — a DLP instance.
+- If Eve fixes $s^{\ast}$ first: she can compute $g^{s^{\ast}} \cdot C^{e^{\ast}}$ for any $e^{\ast}$, but the
+  constraint $e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$ ties $R^{\ast}$ and $e^{\ast}$
   together.  Since fscx\_revolve is an affine bijection in its first argument (see §10.7),
   solving both simultaneously reduces to DLP hardness.
 
