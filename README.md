@@ -206,7 +206,7 @@ C benchmarks use native types per size: `uint32_t` / `uint64_t` / `__uint128_t` 
 | HSKE-NL-A1 counter-mode | — | 7.05 K | 3.65 K | 1.83 K ops/sec |
 | HSKE-NL-A2 revolve-mode | — | 296 | 80.8 | 20.5 ops/sec |
 | HKEX-RNL full handshake (n=…) | 1.12 K | 543 | 256 | 119 ops/sec |
-| HPKS-Stern-F sign+verify (N=32, rounds=4) | 26.7 ops/sec | — | — | — |
+| HPKS-Stern-F sign+verify (N=n, rounds=4) | 26.7 ops/sec | 15.6 ops/sec | 6.11 ops/sec | 1.82 ops/sec |
 
 ---
 
