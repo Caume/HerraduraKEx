@@ -69,7 +69,7 @@ func gfOrd(size int) *big.Int {
 }
 
 var sizes    = []int{64, 128, 256}
-var gfSizes  = []int{32}
+var gfSizes  = []int{32, 64, 128, 256}
 var rnlSizes = []int{32, 64, 128, 256}
 
 func bench(label string, fn func()) (ops int, elapsed time.Duration) {
@@ -799,8 +799,8 @@ func benchNlFscxRevolve() {
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
-	for _, size := range []int{64} {
+	fmt.Println("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+	for _, size := range sizes {
 		rv := rVal(size)
 		a  := randBA(size)
 		b  := randBA(size)
@@ -835,8 +835,8 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[27] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
-	for _, size := range []int{64} {
+	fmt.Println("[27] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
 		ops, elapsed := bench("", func() {

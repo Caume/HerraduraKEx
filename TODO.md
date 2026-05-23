@@ -3543,3 +3543,57 @@ Status: **DONE** — lines 458 and 460 fixed; no other lines touched.
 **CLAUDE.md:** Added Rule 11 documenting the inline `\command{}_{braced}` + `letter_` pairing mechanism and its fix; added a row to the correct-patterns table.
 
 Status: **DONE** — line 406 fixed; Rule 11 added to CLAUDE.md.
+
+---
+
+### 61. README.md performance tables — standardise to 64/128/256-bit for all three languages (Documentation/Testing, Medium)
+
+**Current state (v1.8.3 tables, commit `a72171c`):**
+
+Several benchmark rows still have `—` in the 64-bit, 128-bit, or 256-bit columns for one or more languages, making cross-language comparisons incomplete:
+
+| Benchmark | C 64 | C 128 | C 256 | Go 64 | Go 128 | Go 256 | Py 64 | Py 128 | Py 256 |
+|-----------|------|-------|-------|-------|--------|--------|-------|--------|--------|
+| FSCX single step | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HKEX-GF gf\_pow | — | — | — | — | — | — | ✓ | ✓ | ✓ |
+| HKEX-GF handshake | — | — | — | — | — | — | ✓ | ✓ | ✓ |
+| HSKE round-trip | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HPKE El Gamal | — | — | — | — | — | — | ✓ | ✓ | ✓ |
+| NL-FSCX v1 revolve | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| NL-FSCX v2 enc+dec | — | — | — | ✓ | — | — | ✓ | — | — |
+| HSKE-NL-A1 | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HSKE-NL-A2 | — | — | — | ✓ | — | — | ✓ | — | — |
+| HKEX-RNL handshake | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HPKS-Stern-F | — | — | ✓ | — | — | ✓ | — | — | — |
+
+**Target state:** Every row in every language table has measured values (not `—`) for the 64-bit, 128-bit, and 256-bit columns.  The 32-bit column may remain where the language only tests 32-bit; benchmarks that are genuinely single-size (HPKS-Stern-F fixed at N=256) are exempt.
+
+**Work required per language:**
+
+*C (`CryptosuiteTests/Herradura_tests.c`):*
+- Add multi-size loops to all benchmark functions — C already has 64-bit and 128-bit implementations (`gf_mul_64`, `gf_pow_64`, `gf_mul_128`, etc.) and 64/128-bit NL-FSCX primitives.
+- Benchmarks needing loops: FSCX (add 64/128), gf\_pow (add 64/128/256), handshake (add 64/128/256), HSKE (add 64/128), HPKE (add 64/128/256), NL-FSCX v1 (add 64/128/256), NL-FSCX v2 (add 64 at minimum), HSKE-NL-A1 (add 64/128/256), HSKE-NL-A2 (add 64), HKEX-RNL (add n=64/128/256).
+- C table becomes a multi-column table matching Go/Python.
+
+*Go (`CryptosuiteTests/Herradura_tests.go`):*
+- Change `gfSizes = []int{32}` → `[]int{32, 64, 128, 256}` (or add a separate `gfSizes256` slice).
+- The Go `GfPow`/`GfMul` functions already handle all sizes via `big.Int` arithmetic — no new implementation needed.
+- NL-FSCX v2: extend `benchNlFscxRevolve` loop from `[]int{64}` to `[]int{64, 128, 256}`.
+- HSKE-NL-A2: extend `benchHskeNlA2RoundTrip` loop from `[]int{64}` to `[]int{64, 128, 256}`.
+
+*Python (`CryptosuiteTests/Herradura_tests.py`):*
+- NL-FSCX v2: extend `bench_nl_fscx_revolve` loop from `[64]` to `SIZES` (i.e., `[64, 128, 256]`).
+- HSKE-NL-A2: extend `bench_hske_nl_a2_roundtrip` loop from `[64]` to `SIZES`.
+- No other changes needed — Python already covers all other benchmarks at 64/128/256-bit.
+
+**Notes:**
+- NL-FSCX v2 and HSKE-NL-A2 at 128/256-bit are O(n²) and will be slow (~seconds per op); run with short `-t` to cap benchmark time.
+- The C table currently shows a single "Throughput" column — it should be restructured to 3–4 columns matching Go/Python once multi-size loops are added.
+- Keep the existing 32-bit column where present; it is informative for the C NL/GF benchmarks.
+
+**Batches:**
+1. Python — extend NL-FSCX v2 and HSKE-NL-A2 loops; run benchmarks; update README Python table.
+2. Go — extend gfSizes and NL-FSCX v2 / HSKE-NL-A2 loops; run benchmarks; update README Go table.
+3. C — add multi-size benchmark loops; restructure C table; run benchmarks; update README C table.
+
+Status: **DONE** — Python/Go/C benchmarks extended to 64/128/256-bit; README tables restructured to 4-column format (32/64/128/256-bit).

@@ -1258,8 +1258,8 @@ def bench_nl_fscx_revolve():
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps, 64-bit only)  [PQC-EXT]")
-    for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
+    print("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+    for size in SIZES:
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
             nonlocal a; E = nl_fscx_revolve_v2(a, b, rv); a = nl_fscx_revolve_v2_inv(E, b, rv)
@@ -1284,8 +1284,8 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[27] HSKE-NL-A2 revolve-mode round-trip (64-bit only)  [PQC-EXT]")
-    for size in [64]:  # O(n^2) per op; skip 128/256 in benchmark
+    print("[27] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
             nonlocal sink

@@ -160,34 +160,36 @@ Go/Python columns correspond to operand bit-width; for HKEX-RNL the column heade
 
 ## C (gcc -O2)
 
-| Benchmark | Throughput |
-|-----------|-----------|
-| FSCX single step (256-bit) | 10.6 M ops/sec |
-| gf\_pow throughput (32-bit) | 20,260 M ops/sec |
-| HKEX-GF full handshake (32-bit) | 2,027 M ops/sec |
-| HSKE round-trip (256-bit) | 41.8 K ops/sec |
-| HPKE El Gamal round-trip (32-bit) | 2,021 M ops/sec |
-| NL-FSCX v1 revolve (32-bit, n/4 steps) | 2,027 M ops/sec |
-| NL-FSCX v2 enc+dec (32-bit) | 2,021 M ops/sec |
-| HSKE-NL-A1 counter-mode (32-bit) | 10.5 M ops/sec |
-| HSKE-NL-A2 revolve-mode (32-bit) | 15.6 M ops/sec |
-| HKEX-RNL full handshake (n=32) | 92.2 K ops/sec |
-| HPKS-Stern-F sign+verify (N=256, t=16, rounds=8) | 53.3 ops/sec |
+C benchmarks use native types per size: `uint32_t` / `uint64_t` / `__uint128_t` / `BitArray`.
+
+| Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
+|-----------|--------|--------|---------|---------|
+| FSCX single step | — | 19,894 M | 19,906 M | 10.36 M ops/sec |
+| HKEX-GF gf\_pow | 19,916 M | 1,990 M | 19.52 M | 124 ops/sec |
+| HKEX-GF full handshake | 1,924 M | 19.60 M | 19.67 M | 30.6 ops/sec |
+| HSKE round-trip | — | 10.04 M | 4.99 M | 40.8 K ops/sec |
+| HPKE El Gamal round-trip | 1,988 M | 19.84 M | 19.71 M | 40.9 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | — | 19,600 M | 3,975 M | 104 K ops/sec |
+| NL-FSCX v2 enc+dec | — | 1,979 M | 19.77 M | 469 ops/sec |
+| HSKE-NL-A1 counter-mode | — | 6.71 M | 3.36 M | 102 K ops/sec |
+| HSKE-NL-A2 revolve-mode | — | 9.98 M | 4.06 M | 457 ops/sec |
+| HKEX-RNL full handshake (n=…) | 92.3 K | 40.9 K | 18.5 K | 8.35 K ops/sec |
+| HPKS-Stern-F sign+verify (N=256, t=16, rounds=8) | — | — | — | 52.9 ops/sec |
 
 ## Go (go run)
 
 | Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
 |-----------|--------|--------|---------|---------|
-| FSCX single step | — | 80.0 K | 65.5 K | 53.3 K ops/sec |
-| HKEX-GF gf\_pow | 630 ops/sec | — | — | — |
-| HKEX-GF full handshake | 160 ops/sec | — | — | — |
-| HSKE round-trip | — | 1.32 K | 570 | 240 ops/sec |
-| HPKE El Gamal round-trip | 150 ops/sec | — | — | — |
-| NL-FSCX v1 revolve (n/4 steps) | — | 3.64 K | 1.42 K | 610 ops/sec |
-| NL-FSCX v2 enc+dec | — | 130 ops/sec | — | — |
-| HSKE-NL-A1 counter-mode | — | 3.65 K | 1.24 K | 720 ops/sec |
-| HSKE-NL-A2 revolve-mode | — | 120 ops/sec | — | — |
-| HKEX-RNL full handshake (n=…) | 8.05 K | 5.02 K | 2.17 K | 1.05 K ops/sec |
+| FSCX single step | — | 125 K | 104 K | 97.8 K ops/sec |
+| HKEX-GF gf\_pow | 800 | 234 | 51.0 | 10.9 ops/sec |
+| HKEX-GF full handshake | 222 | 53.8 | 11.4 | 2.77 ops/sec |
+| HSKE round-trip | — | 2.12 K | 769 | 397 ops/sec |
+| HPKE El Gamal round-trip | 199 | 52.6 | 11.6 | 2.82 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | — | 5.47 K | 2.50 K | 1.15 K ops/sec |
+| NL-FSCX v2 enc+dec | — | 191 | 46.9 | 11.5 ops/sec |
+| HSKE-NL-A1 counter-mode | — | 5.27 K | 2.29 K | 1.11 K ops/sec |
+| HSKE-NL-A2 revolve-mode | — | 195 | 49.5 | 12.1 ops/sec |
+| HKEX-RNL full handshake (n=…) | 11.3 K | 7.02 K | 2.72 K | 1.42 K ops/sec |
 | HPKS-Stern-F sign+verify (N=256, rounds=4) | — | — | — | 1.78 ops/sec |
 
 ## Python 3
@@ -200,9 +202,9 @@ Go/Python columns correspond to operand bit-width; for HKEX-RNL the column heade
 | HSKE round-trip | — | 2.53 K | 1.27 K | 628 ops/sec |
 | HPKE El Gamal round-trip | 457 | 113 | 27.5 | 6.61 ops/sec |
 | NL-FSCX v1 revolve (n/4 steps) | — | 7.49 K | 3.75 K | 1.85 K ops/sec |
-| NL-FSCX v2 enc+dec | — | 298 ops/sec | — | — |
+| NL-FSCX v2 enc+dec | — | 294 | 80.7 | 20.5 ops/sec |
 | HSKE-NL-A1 counter-mode | — | 7.05 K | 3.65 K | 1.83 K ops/sec |
-| HSKE-NL-A2 revolve-mode | — | 298 ops/sec | — | — |
+| HSKE-NL-A2 revolve-mode | — | 296 | 80.8 | 20.5 ops/sec |
 | HKEX-RNL full handshake (n=…) | 1.12 K | 543 | 256 | 119 ops/sec |
 | HPKS-Stern-F sign+verify (N=32, rounds=4) | 26.7 ops/sec | — | — | — |
 

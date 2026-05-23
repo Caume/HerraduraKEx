@@ -3314,143 +3314,284 @@ static void test_hfscx_256_kav(void)
 /* Performance benchmarks [21]-[30]                                   */
 /* ------------------------------------------------------------------ */
 
-/* [20] FSCX throughput (256-bit) */
+/* [21] FSCX throughput (64/128/256-bit) */
 static void bench_fscx_throughput(void)
 {
-    BitArray a, b, tmp;
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    printf("[21] FSCX throughput  (bits=%d)\n    ", KEYBITS);
-    ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
-    for (i = 0; i < 10; i++) ba_fscx(&tmp, &a, &b);
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) { ba_fscx(&tmp, &a, &b); a = tmp; }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[21] FSCX throughput  [CLASSICAL]\n");
+    /* 64-bit */
+    { uint64_t a = rand64(), b = rand64(), tmp;
+      for (i = 0; i < 10; i++) { tmp = fscx64(a, b); a = tmp; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) { tmp = fscx64(a, b); a = tmp; }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t a = rand128(), b = rand128(), tmp;
+      for (i = 0; i < 10; i++) { tmp = fscx128(a, b); a = tmp; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) { tmp = fscx128(a, b); a = tmp; }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray a, b, tmp;
+      ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
+      for (i = 0; i < 10; i++) { ba_fscx(&tmp, &a, &b); a = tmp; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) { ba_fscx(&tmp, &a, &b); a = tmp; }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
-/* [20] HKEX-GF gf_pow throughput (32-bit) */
-static void bench_gf_pow32_throughput(void)
-{
-    uint32_t base, exp, tmp;
-    struct timespec t0, t1;
-    long long ops = 0;
-    double secs;
-    int i;
-    printf("[22] HKEX-GF gf_pow throughput  (bits=32)\n    ");
-    base = rand32() | 1;
-    exp  = rand32() | 1;
-    for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 1000; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
-        ops += 1000;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
-    putchar('\n');
-}
-
-/* [21] HKEX-GF full handshake (32-bit: 4 gf_pow_32 calls) */
-static void bench_hkex_gf32_handshake(void)
+/* [22] HKEX-GF gf_pow throughput (32/64/128/256-bit) */
+static void bench_gf_pow_throughput(void)
 {
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    uint32_t a, b, C, C2, skA, skB;
-    printf("[23] HKEX-GF full handshake  (bits=32)\n    ");
-    a = rand32() | 1; b = rand32() | 1;
-    for (i = 0; i < 5; i++) {
-        C   = gf_pow_32((uint32_t)GF_GEN32, a);
-        C2  = gf_pow_32((uint32_t)GF_GEN32, b);
-        skA = gf_pow_32(C2, a);
-        skB = gf_pow_32(C,  b);
-        a = skA | 1; b = skB | 1;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) {
-            C   = gf_pow_32((uint32_t)GF_GEN32, a);
-            C2  = gf_pow_32((uint32_t)GF_GEN32, b);
-            skA = gf_pow_32(C2, a);
-            skB = gf_pow_32(C,  b);
-            a = skA | 1; b = skB | 1;
-        }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[22] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
+    /* 32-bit */
+    { uint32_t base = rand32() | 1, exp = rand32() | 1, tmp;
+      for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
+    /* 64-bit */
+    { uint64_t base = rand64() | 1, exp = rand64() | 1;
+      for (i = 0; i < 5; i++) base = gf_pow_64(base, exp) | 1;
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) base = gf_pow_64(base, exp) | 1;
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t base = rand128() | 1, exp = rand128() | 1;
+      for (i = 0; i < 3; i++) base = gf_pow_128(base, exp) | 1;
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { base = gf_pow_128(base, exp) | 1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray base, exp;
+      ba_rand(&base, urnd_fp); base.b[KEYBYTES-1] |= 1;
+      ba_rand(&exp,  urnd_fp); exp.b[KEYBYTES-1]  |= 1;
+      for (i = 0; i < 2; i++) { gf_pow_ba(&base, &base, &exp); base.b[KEYBYTES-1] |= 1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { gf_pow_ba(&base, &base, &exp); base.b[KEYBYTES-1] |= 1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
-/* [22] HSKE round-trip: encrypt+decrypt (256-bit) */
+/* [23] HKEX-GF full handshake (32/64/128/256-bit: 4 gf_pow calls) */
+static void bench_hkex_gf_handshake(void)
+{
+    struct timespec t0, t1;
+    long long ops;
+    double secs;
+    int i;
+    printf("[23] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
+    /* 32-bit */
+    { uint32_t a = rand32()|1, b = rand32()|1, C, C2, skA, skB;
+      for (i = 0; i < 5; i++) {
+          C = gf_pow_32(GF_GEN32, a); C2 = gf_pow_32(GF_GEN32, b);
+          skA = gf_pow_32(C2, a); skB = gf_pow_32(C, b);
+          a = skA|1; b = skB|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) {
+               C = gf_pow_32(GF_GEN32, a); C2 = gf_pow_32(GF_GEN32, b);
+               skA = gf_pow_32(C2, a); skB = gf_pow_32(C, b);
+               a = skA|1; b = skB|1; }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
+    /* 64-bit */
+    { uint64_t a = rand64()|1, b = rand64()|1, C, C2, skA, skB;
+      for (i = 0; i < 3; i++) {
+          C = gf_pow_64(3ULL, a); C2 = gf_pow_64(3ULL, b);
+          skA = gf_pow_64(C2, a); skB = gf_pow_64(C, b);
+          a = skA|1; b = skB|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { C = gf_pow_64(3ULL, a); C2 = gf_pow_64(3ULL, b);
+           skA = gf_pow_64(C2, a); skB = gf_pow_64(C, b);
+           a = skA|1; b = skB|1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t a = rand128()|1, b = rand128()|1, C, C2, skA, skB;
+      for (i = 0; i < 2; i++) {
+          C = gf_pow_128((__uint128_t)3, a); C2 = gf_pow_128((__uint128_t)3, b);
+          skA = gf_pow_128(C2, a); skB = gf_pow_128(C, b);
+          a = skA|1; b = skB|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { C = gf_pow_128((__uint128_t)3, a); C2 = gf_pow_128((__uint128_t)3, b);
+           skA = gf_pow_128(C2, a); skB = gf_pow_128(C, b);
+           a = skA|1; b = skB|1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray a, b, C, C2, skA, skB;
+      ba_rand(&a, urnd_fp); a.b[KEYBYTES-1]|=1;
+      ba_rand(&b, urnd_fp); b.b[KEYBYTES-1]|=1;
+      for (i = 0; i < 1; i++) {
+          gf_pow_ba(&C, &GF_GEN, &a); gf_pow_ba(&C2, &GF_GEN, &b);
+          gf_pow_ba(&skA, &C2, &a);   gf_pow_ba(&skB, &C, &b);
+          a = skA; a.b[KEYBYTES-1]|=1; b = skB; b.b[KEYBYTES-1]|=1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { gf_pow_ba(&C, &GF_GEN, &a); gf_pow_ba(&C2, &GF_GEN, &b);
+           gf_pow_ba(&skA, &C2, &a);   gf_pow_ba(&skB, &C, &b);
+           a = skA; a.b[KEYBYTES-1]|=1; b = skB; b.b[KEYBYTES-1]|=1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
+    putchar('\n');
+}
+
+/* [24] HSKE round-trip: encrypt+decrypt (64/128/256-bit) */
 static void bench_hske_roundtrip(void)
 {
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    BitArray pt, key, enc, dec;
-    printf("[24] HSKE round-trip: encrypt+decrypt  (bits=%d)\n    ", KEYBITS);
-    for (i = 0; i < 5; i++) {
-        ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
-        ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
-        ba_fscx_revolve(&dec, &enc, &key, R_VALUE);
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 20; i++) {
-            ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
-            ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
-            ba_fscx_revolve(&dec, &enc, &key, R_VALUE);
-        }
-        ops += 20;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[24] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
+    /* 64-bit */
+    { uint64_t pt, key, enc, sink = 0;
+      for (i = 0; i < 5; i++) {
+          pt = rand64(); key = rand64();
+          enc = fscx_revolve64(pt, key, 16);
+          sink ^= fscx_revolve64(enc, key, 48); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 200; i++) {
+               pt = rand64(); key = rand64();
+               enc = fscx_revolve64(pt, key, 16);
+               sink ^= fscx_revolve64(enc, key, 48); }
+           ops += 200; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t pt, key, enc, sink = 0;
+      for (i = 0; i < 5; i++) {
+          pt = rand128(); key = rand128();
+          enc = fscx_revolve128(pt, key, 32);
+          sink ^= fscx_revolve128(enc, key, 96); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 50; i++) {
+               pt = rand128(); key = rand128();
+               enc = fscx_revolve128(pt, key, 32);
+               sink ^= fscx_revolve128(enc, key, 96); }
+           ops += 50; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray pt, key, enc, dec;
+      for (i = 0; i < 5; i++) {
+          ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
+          ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
+          ba_fscx_revolve(&dec, &enc, &key, R_VALUE); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 20; i++) {
+               ba_rand(&pt, urnd_fp); ba_rand(&key, urnd_fp);
+               ba_fscx_revolve(&enc, &pt,  &key, I_VALUE);
+               ba_fscx_revolve(&dec, &enc, &key, R_VALUE); }
+           ops += 20; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
-/* [23] HPKE El Gamal encrypt+decrypt round-trip (32-bit) */
+/* [25] HPKE El Gamal encrypt+decrypt round-trip (32/64/128/256-bit) */
 static void bench_hpke_el_gamal_roundtrip(void)
 {
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    uint32_t a, r, C32, R32, enc_key, E32, dec_key, D32, pt;
-    printf("[25] HPKE El Gamal encrypt+decrypt round-trip  (bits=32)\n    ");
-    a = rand32() | 1; r = rand32() | 1; pt = rand32();
-    C32 = gf_pow_32((uint32_t)GF_GEN32, a);
-    for (i = 0; i < 5; i++) {
-        R32     = gf_pow_32((uint32_t)GF_GEN32, r);
-        enc_key = gf_pow_32(C32, r);
-        E32     = fscx_revolve32(pt, enc_key, 8);
-        dec_key = gf_pow_32(R32, a);
-        D32     = fscx_revolve32(E32, dec_key, 24);
-        r = R32 | 1;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) {
-            R32     = gf_pow_32((uint32_t)GF_GEN32, r);
-            enc_key = gf_pow_32(C32, r);
-            E32     = fscx_revolve32(pt, enc_key, 8);
-            dec_key = gf_pow_32(R32, a);
-            D32     = fscx_revolve32(E32, dec_key, 24);
-            r = R32 | 1;
-        }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[25] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
+    /* 32-bit */
+    { uint32_t a = rand32()|1, r = rand32()|1, pt = rand32();
+      uint32_t C = gf_pow_32(GF_GEN32, a), R, ek, E, dk;
+      for (i = 0; i < 5; i++) {
+          R = gf_pow_32(GF_GEN32, r); ek = gf_pow_32(C, r);
+          E = fscx_revolve32(pt, ek, NL_I32);
+          dk = gf_pow_32(R, a);
+          pt = fscx_revolve32(E, dk, NL_R32); r = R|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) {
+               R = gf_pow_32(GF_GEN32, r); ek = gf_pow_32(C, r);
+               E = fscx_revolve32(pt, ek, NL_I32);
+               dk = gf_pow_32(R, a);
+               pt = fscx_revolve32(E, dk, NL_R32); r = R|1; }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
+    /* 64-bit */
+    { uint64_t a = rand64()|1, r = rand64()|1, pt = rand64();
+      uint64_t C = gf_pow_64(3ULL, a), R, ek, E, dk;
+      for (i = 0; i < 3; i++) {
+          R = gf_pow_64(3ULL, r); ek = gf_pow_64(C, r);
+          E = fscx_revolve64(pt, ek, NL_I64);
+          dk = gf_pow_64(R, a);
+          pt = fscx_revolve64(E, dk, NL_R64); r = R|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { R = gf_pow_64(3ULL, r); ek = gf_pow_64(C, r);
+           E = fscx_revolve64(pt, ek, NL_I64);
+           dk = gf_pow_64(R, a);
+           pt = fscx_revolve64(E, dk, NL_R64); r = R|1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t a = rand128()|1, r = rand128()|1, pt = rand128();
+      __uint128_t C = gf_pow_128((__uint128_t)3, a), R, ek, E, dk;
+      for (i = 0; i < 2; i++) {
+          R = gf_pow_128((__uint128_t)3, r); ek = gf_pow_128(C, r);
+          E = fscx_revolve128(pt, ek, NL_I128);
+          dk = gf_pow_128(R, a);
+          pt = fscx_revolve128(E, dk, NL_R128); r = R|1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { R = gf_pow_128((__uint128_t)3, r); ek = gf_pow_128(C, r);
+           E = fscx_revolve128(pt, ek, NL_I128);
+           dk = gf_pow_128(R, a);
+           pt = fscx_revolve128(E, dk, NL_R128); r = R|1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray a, r_ba, pt_ba, C, R, ek, E, dk;
+      ba_rand(&a, urnd_fp); a.b[KEYBYTES-1]|=1;
+      ba_rand(&r_ba, urnd_fp); r_ba.b[KEYBYTES-1]|=1;
+      ba_rand(&pt_ba, urnd_fp);
+      gf_pow_ba(&C, &GF_GEN, &a);
+      for (i = 0; i < 1; i++) {
+          gf_pow_ba(&R, &GF_GEN, &r_ba); gf_pow_ba(&ek, &C, &r_ba);
+          ba_fscx_revolve(&E, &pt_ba, &ek, I_VALUE);
+          gf_pow_ba(&dk, &R, &a);
+          ba_fscx_revolve(&pt_ba, &E, &dk, R_VALUE);
+          r_ba = R; r_ba.b[KEYBYTES-1]|=1; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { gf_pow_ba(&R, &GF_GEN, &r_ba); gf_pow_ba(&ek, &C, &r_ba);
+           ba_fscx_revolve(&E, &pt_ba, &ek, I_VALUE);
+           gf_pow_ba(&dk, &R, &a);
+           ba_fscx_revolve(&pt_ba, &E, &dk, R_VALUE);
+           r_ba = R; r_ba.b[KEYBYTES-1]|=1; ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
@@ -3458,150 +3599,284 @@ static void bench_hpke_el_gamal_roundtrip(void)
 /* Performance benchmarks [24]-[27]: PQC extension                    */
 /* ------------------------------------------------------------------ */
 
-/* [26] NL-FSCX v1 revolve throughput + [26b] v2 enc+dec round-trip (32-bit) */
+/* [26] NL-FSCX v1 revolve (64/128/256-bit) + [26b] v2 enc+dec (64/128/256-bit) */
 static void bench_nl_fscx_revolve(void)
 {
-    uint32_t a, b, E;
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    printf("[26] NL-FSCX v1 revolve throughput  (bits=32, n/4=%d steps)  [PQC-EXT]\n    ",
-           NL_I32);
-    a = rand32(); b = rand32();
-    for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[26] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
+    /* 64-bit */
+    { uint64_t a = rand64(), b = rand64();
+      for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_64(a, b, NL_I64);
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) a = nl_fscx_revolve_v1_64(a, b, NL_I64);
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t a = rand128(), b = rand128();
+      for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_128(a, b, NL_I128);
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 200; i++) a = nl_fscx_revolve_v1_128(a, b, NL_I128);
+           ops += 200; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray a, b;
+      ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
+      for (i = 0; i < 5; i++) nl_fscx_revolve_v1_ba(&a, &a, &b, NL_I256);
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 50; i++) nl_fscx_revolve_v1_ba(&a, &a, &b, NL_I256);
+           ops += 50; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 
-    printf("[26b] NL-FSCX v2 revolve+inv throughput  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
-           NL_R32);
-    a = rand32(); b = rand32(); ops = 0;
-    for (i = 0; i < 5; i++) {
-        E = nl_fscx_revolve_v2_32(a, b, NL_R32);
-        a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32);
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) {
-            E = nl_fscx_revolve_v2_32(a, b, NL_R32);
-            a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32);
-        }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[26b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
+    /* 64-bit */
+    { uint64_t a = rand64(), b = rand64(), E;
+      for (i = 0; i < 5; i++) {
+          E = nl_fscx_revolve_v2_64(a, b, NL_R64);
+          a = nl_fscx_revolve_v2_inv_64(E, b, NL_R64); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) {
+               E = nl_fscx_revolve_v2_64(a, b, NL_R64);
+               a = nl_fscx_revolve_v2_inv_64(E, b, NL_R64); }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 64  v2 enc+dec    "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t a = rand128(), b = rand128(), E;
+      for (i = 0; i < 3; i++) {
+          E = nl_fscx_revolve_v2_128(a, b, NL_R128);
+          a = nl_fscx_revolve_v2_inv_128(E, b, NL_R128); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { E = nl_fscx_revolve_v2_128(a, b, NL_R128);
+           a = nl_fscx_revolve_v2_inv_128(E, b, NL_R128); ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=128  v2 enc+dec    "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray a, b, E;
+      ba_rand(&a, urnd_fp); ba_rand(&b, urnd_fp);
+      for (i = 0; i < 2; i++) {
+          nl_fscx_revolve_v2_ba(&E, &a, &b, NL_R256);
+          nl_fscx_revolve_v2_inv_ba(&a, &E, &b, NL_R256); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { nl_fscx_revolve_v2_ba(&E, &a, &b, NL_R256);
+           nl_fscx_revolve_v2_inv_ba(&a, &E, &b, NL_R256); ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  v2 enc+dec    "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
-/* [25] HSKE-NL-A1 counter-mode throughput (32-bit, ctr=0, with nonce) */
+/* [27] HSKE-NL-A1 counter-mode throughput (64/128/256-bit, ctr=0, with nonce) */
 static void bench_hske_nl_a1_roundtrip(void)
 {
-    uint32_t K, P, ks, sink = 0;
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    printf("[27] HSKE-NL-A1 counter-mode throughput  (bits=32)  [PQC-EXT]\n    ");
-    K = rand32(); P = rand32();
-    for (i = 0; i < 10; i++) {
-        uint32_t nonce = rand32(), base = K ^ nonce;
-        uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
-        ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);
-        sink ^= P ^ ks;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) {
-            uint32_t nonce = rand32();
-            K = rand32(); P = rand32();
-            uint32_t base = K ^ nonce;
-            uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
-            ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);  /* ctr=0 */
-            sink ^= P ^ ks;
-        }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    (void)sink;
-    print_rate(ops, secs);
+    printf("[27] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
+    /* 64-bit */
+    { uint64_t K, P, ks, sink = 0;
+      K = rand64(); P = rand64();
+      for (i = 0; i < 10; i++) {
+          uint64_t nonce = rand64(), base = K ^ nonce;
+          uint64_t seed = ((base << 8) | (base >> 56)) ^ _RNL_KDF_DC_64;
+          ks = nl_fscx_revolve_v1_64(seed, base, NL_I64);
+          sink ^= P ^ ks; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) {
+               uint64_t nonce = rand64(); K = rand64(); P = rand64();
+               uint64_t base = K ^ nonce;
+               uint64_t seed = ((base << 8) | (base >> 56)) ^ _RNL_KDF_DC_64;
+               ks = nl_fscx_revolve_v1_64(seed, base, NL_I64);
+               sink ^= P ^ ks; }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t K, P, ks, sink = 0;
+      K = rand128(); P = rand128();
+      for (i = 0; i < 5; i++) {
+          __uint128_t nonce = rand128(), base = K ^ nonce;
+          __uint128_t seed = ((base << 16) | (base >> 112)) ^
+                             (((__uint128_t)_RNL_KDF_DC_64 << 64) | 0x3C6EF372A54FF53AULL);
+          ks = nl_fscx_revolve_v1_128(seed, base, NL_I128);
+          sink ^= P ^ ks; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 50; i++) {
+               __uint128_t nonce = rand128(); K = rand128(); P = rand128();
+               __uint128_t base = K ^ nonce;
+               __uint128_t seed = ((base << 16) | (base >> 112)) ^
+                                  (((__uint128_t)_RNL_KDF_DC_64 << 64) | 0x3C6EF372A54FF53AULL);
+               ks = nl_fscx_revolve_v1_128(seed, base, NL_I128);
+               sink ^= P ^ ks; }
+           ops += 50; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray K, P, nonce, base, seed, ks, sink;
+      memset(&sink, 0, sizeof(sink));
+      ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
+      for (i = 0; i < 5; i++) {
+          ba_rand(&nonce, urnd_fp); ba_xor(&base, &K, &nonce);
+          ba_rnl_kdf_seed(&seed, &base);
+          nl_fscx_revolve_v1_ba(&ks, &seed, &base, NL_I256);
+          ba_xor(&sink, &sink, &P); ba_xor(&sink, &sink, &ks); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 20; i++) {
+               ba_rand(&nonce, urnd_fp); ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
+               ba_xor(&base, &K, &nonce);
+               ba_rnl_kdf_seed(&seed, &base);
+               nl_fscx_revolve_v1_ba(&ks, &seed, &base, NL_I256);
+               ba_xor(&sink, &sink, &P); ba_xor(&sink, &sink, &ks); }
+           ops += 20; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
-/* [26] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit) */
+/* [28] HSKE-NL-A2 revolve-mode round-trip throughput (64/128/256-bit) */
 static void bench_hske_nl_a2_roundtrip(void)
 {
-    uint32_t K, P, E, sink = 0;
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    printf("[28] HSKE-NL-A2 revolve-mode round-trip  (bits=32, r_val=%d steps)  [PQC-EXT]\n    ",
-           NL_R32);
-    K = rand32(); P = rand32();
-    for (i = 0; i < 5; i++) {
-        E    = nl_fscx_revolve_v2_32(P, K, NL_R32);
-        sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 100; i++) {
-            K    = rand32(); P = rand32();
-            E    = nl_fscx_revolve_v2_32(P, K, NL_R32);
-            sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32);
-        }
-        ops += 100;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    (void)sink;
-    print_rate(ops, secs);
+    printf("[28] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
+    /* 64-bit */
+    { uint64_t K = rand64(), P = rand64(), E, sink = 0;
+      for (i = 0; i < 5; i++) {
+          E = nl_fscx_revolve_v2_64(P, K, NL_R64);
+          sink ^= nl_fscx_revolve_v2_inv_64(E, K, NL_R64); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 100; i++) {
+               K = rand64(); P = rand64();
+               E = nl_fscx_revolve_v2_64(P, K, NL_R64);
+               sink ^= nl_fscx_revolve_v2_inv_64(E, K, NL_R64); }
+           ops += 100; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* 128-bit */
+    { __uint128_t K = rand128(), P = rand128(), E, sink = 0;
+      for (i = 0; i < 3; i++) {
+          E = nl_fscx_revolve_v2_128(P, K, NL_R128);
+          sink ^= nl_fscx_revolve_v2_inv_128(E, K, NL_R128); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { K = rand128(); P = rand128();
+           E = nl_fscx_revolve_v2_128(P, K, NL_R128);
+           sink ^= nl_fscx_revolve_v2_inv_128(E, K, NL_R128); ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* 256-bit */
+    { BitArray K, P, E, D;
+      ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
+      for (i = 0; i < 2; i++) {
+          nl_fscx_revolve_v2_ba(&E, &P, &K, NL_R256);
+          nl_fscx_revolve_v2_inv_ba(&D, &E, &K, NL_R256); P = D; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { ba_rand(&K, urnd_fp); ba_rand(&P, urnd_fp);
+           nl_fscx_revolve_v2_ba(&E, &P, &K, NL_R256);
+           nl_fscx_revolve_v2_inv_ba(&D, &E, &K, NL_R256); ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
 /* [27] HKEX-RNL full handshake throughput (n=32) */
 static void bench_hkex_rnl_handshake(void)
 {
-    rnl32_poly_t m_base, a_rand, m_blind;
-    int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
-    uint32_t K_A, K_B, sink = 0;
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    printf("[29] HKEX-RNL handshake throughput  (n=%d)  [PQC-EXT]\n    ", RNL_N32);
-    rnl32_m_poly(m_base);
-    for (i = 0; i < 3; i++) {
-        uint32_t hint_A;
-        rnl32_rand_poly(a_rand);
-        rnl32_poly_add(m_blind, m_base, a_rand);
-        rnl32_keygen(s_A, c_A, m_blind);
-        rnl32_keygen(s_B, c_B, m_blind);
-        K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
-        K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);
-        sink ^= K_A ^ K_B;
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 10; i++) {
-            uint32_t hint_A;
-            rnl32_rand_poly(a_rand);
-            rnl32_poly_add(m_blind, m_base, a_rand);
-            rnl32_keygen(s_A, c_A, m_blind);
-            rnl32_keygen(s_B, c_B, m_blind);
-            K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
-            K_B = rnl32_agree(s_B, c_A, &hint_A, NULL);
-            sink ^= K_A ^ K_B;
-        }
-        ops += 10;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    (void)sink;
-    print_rate(ops, secs);
+    printf("[29] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
+    /* n=32 (rnl32 fast path) */
+    { rnl32_poly_t m_base, a_rand, m_blind;
+      int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
+      uint32_t K_A, K_B, sink = 0;
+      rnl32_m_poly(m_base);
+      for (i = 0; i < 3; i++) {
+          uint32_t hint_A;
+          rnl32_rand_poly(a_rand); rnl32_poly_add(m_blind, m_base, a_rand);
+          rnl32_keygen(s_A, c_A, m_blind); rnl32_keygen(s_B, c_B, m_blind);
+          K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
+          K_B = rnl32_agree(s_B, c_A, &hint_A, NULL); sink ^= K_A ^ K_B; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 10; i++) {
+               uint32_t hint_A;
+               rnl32_rand_poly(a_rand); rnl32_poly_add(m_blind, m_base, a_rand);
+               rnl32_keygen(s_A, c_A, m_blind); rnl32_keygen(s_B, c_B, m_blind);
+               K_A = rnl32_agree(s_A, c_B, NULL, &hint_A);
+               K_B = rnl32_agree(s_B, c_A, &hint_A, NULL); sink ^= K_A ^ K_B; }
+           ops += 10; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    n= 32  "); print_rate(ops, secs); putchar('\n'); }
+    /* n=64 (generic path, uint64_t hint) */
+    { int32_t m_base[64], a_rand[64], m_blind[64];
+      int32_t s_A[64], c_A[64], s_B[64], c_B[64];
+      uint64_t K_A, K_B, sink = 0, hint_A;
+      rnl_m_poly_n(m_base, 64);
+      for (i = 0; i < 3; i++) {
+          rnl_rand_poly_n(a_rand, 64); rnl_poly_add_n(m_blind, m_base, a_rand, 64);
+          rnl_keygen_n(s_A, c_A, m_blind, 64); rnl_keygen_n(s_B, c_B, m_blind, 64);
+          K_A = rnl_agree_n(s_A, c_B, 64, NULL, &hint_A);
+          K_B = rnl_agree_n(s_B, c_A, 64, &hint_A, NULL); sink ^= K_A ^ K_B; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 5; i++) {
+               rnl_rand_poly_n(a_rand, 64); rnl_poly_add_n(m_blind, m_base, a_rand, 64);
+               rnl_keygen_n(s_A, c_A, m_blind, 64); rnl_keygen_n(s_B, c_B, m_blind, 64);
+               K_A = rnl_agree_n(s_A, c_B, 64, NULL, &hint_A);
+               K_B = rnl_agree_n(s_B, c_A, 64, &hint_A, NULL); sink ^= K_A ^ K_B; }
+           ops += 5; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    n= 64  "); print_rate(ops, secs); putchar('\n'); }
+    /* n=128 (__uint128_t hint) */
+    { int32_t m_base[128], a_rand[128], m_blind[128];
+      int32_t s_A[128], c_A[128], s_B[128], c_B[128];
+      __uint128_t K_A, K_B, hint_A; uint64_t sink = 0;
+      rnl_m_poly_n(m_base, 128);
+      for (i = 0; i < 2; i++) {
+          rnl_rand_poly_n(a_rand, 128); rnl_poly_add_n(m_blind, m_base, a_rand, 128);
+          rnl_keygen_n(s_A, c_A, m_blind, 128); rnl_keygen_n(s_B, c_B, m_blind, 128);
+          K_A = rnl_agree_128(s_A, c_B, 128, NULL, &hint_A);
+          K_B = rnl_agree_128(s_B, c_A, 128, &hint_A, NULL);
+          sink ^= (uint64_t)K_A ^ (uint64_t)K_B; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 2; i++) {
+               rnl_rand_poly_n(a_rand, 128); rnl_poly_add_n(m_blind, m_base, a_rand, 128);
+               rnl_keygen_n(s_A, c_A, m_blind, 128); rnl_keygen_n(s_B, c_B, m_blind, 128);
+               K_A = rnl_agree_128(s_A, c_B, 128, NULL, &hint_A);
+               K_B = rnl_agree_128(s_B, c_A, 128, &hint_A, NULL);
+               sink ^= (uint64_t)K_A ^ (uint64_t)K_B; }
+           ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    n=128  "); print_rate(ops, secs); putchar('\n'); }
+    /* n=256 (BitArray hint) */
+    { int32_t m_base[256], a_rand[256], m_blind[256];
+      int32_t s_A[256], c_A[256], s_B[256], c_B[256];
+      BitArray K_A, K_B, hint_A;
+      rnl_m_poly_n(m_base, 256);
+      for (i = 0; i < 1; i++) {
+          rnl_rand_poly_n(a_rand, 256); rnl_poly_add_n(m_blind, m_base, a_rand, 256);
+          rnl_keygen_n(s_A, c_A, m_blind, 256); rnl_keygen_n(s_B, c_B, m_blind, 256);
+          rnl_agree_ba(s_A, c_B, 256, NULL, &hint_A, &K_A);
+          rnl_agree_ba(s_B, c_A, 256, &hint_A, NULL, &K_B); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { rnl_rand_poly_n(a_rand, 256); rnl_poly_add_n(m_blind, m_base, a_rand, 256);
+           rnl_keygen_n(s_A, c_A, m_blind, 256); rnl_keygen_n(s_B, c_B, m_blind, 256);
+           rnl_agree_ba(s_A, c_B, 256, NULL, &hint_A, &K_A);
+           rnl_agree_ba(s_B, c_A, 256, &hint_A, NULL, &K_B); ops++;
+           clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    n=256  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
@@ -3687,8 +3962,8 @@ int main(int argc, char *argv[])
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();
-    bench_gf_pow32_throughput();
-    bench_hkex_gf32_handshake();
+    bench_gf_pow_throughput();
+    bench_hkex_gf_handshake();
     bench_hske_roundtrip();
     bench_hpke_el_gamal_roundtrip();
     bench_nl_fscx_revolve();
