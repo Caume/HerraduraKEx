@@ -4,6 +4,61 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.6] - 2026-05-23
+
+### Documentation — KaTeX rendering fix in SecurityProofs-2.md §11.8.2 + Rule 11 (TODO #60)
+
+**SecurityProofs-2.md line 406 — Theorem 13 proof paragraph**
+
+`\mathrm{ROL}_{n/4}` created a `}_{` both-flanking `_` opener.  The `c_{j-1}`
+shorthand introduced in the previous fix (TODO #59) acted as a right-flanking
+closer: a plain letter (`c`) before `_` satisfies the CommonMark right-flanking
+condition even when `_` is followed by `{`.  CommonMark paired opener and closer
+across all math spans between them, breaking the entire paragraph.
+
+Fixed by converting to function notation: `\mathrm{ROL}((A+B) \bmod 2^n, n/4)`.
+The `}_{` opener disappears; the remaining `_` characters have no valid pairing
+partner.
+
+**CLAUDE.md — added Rule 11**
+
+Documents the inline `\command{...}_{braced}` + `letter_{...}` pairing mechanism:
+- `\command{...}_{braced}` — both-flanking (opener and closer)
+- `letter_{braced}` (e.g. `c_{j-1}`) — right-flanking closer only
+- `letter_letter` (e.g. `a_j`) — both-flanking
+
+Fix: convert `\command{...}_{braced}` subscripts to function notation to remove
+the `}_{` opener.  Added Rule 11 and a row in the correct-patterns table.
+
+**Files changed:** `SecurityProofs-2.md`, `CLAUDE.md`, `TODO.md`, `CHANGELOG.md`.
+
+---
+
+## [1.8.5] - 2026-05-23
+
+### Documentation — KaTeX rendering fixes in SecurityProofs-2.md (TODO #59)
+
+Fixed two math rendering failures in `SecurityProofs-2.md`; all other sections untouched.
+
+**Line 458 — `\operatorname` blocked (Rule 10)**
+
+`\operatorname{invert}` inside a `$$...$$` display block is rejected by GitHub's
+KaTeX macro allowlist.  Replaced with `\text{invert}`.
+
+**Line 460 — `^*` emphasis breakage (Rule 4)**
+
+A single proof sentence contained 5 bare `^*` patterns (`d_i^*` ×4 and
+`\sigma_i^*` ×1).  CommonMark paired the `*` characters across `$...$`
+boundaries, breaking every math span in the sentence.  Replaced all 5 with
+`^{\ast}`.
+
+A full scan of SecurityProofs-2.md confirmed no further Rule 4, Rule 6, or
+Rule 10 violations outside table cells.
+
+**Files changed:** `SecurityProofs-2.md`, `TODO.md`, `CHANGELOG.md`.
+
+---
+
 ## [1.8.4] - 2026-05-23
 
 ### Documentation — KaTeX rendering fixes in SecurityProofs-1.md (TODO #57, #58)

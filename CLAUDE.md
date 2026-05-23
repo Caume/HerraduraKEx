@@ -243,6 +243,18 @@ The fix is to **omit spacing commands entirely**.  KaTeX automatically applies c
 
 `\operatorname` is not in GitHub's KaTeX macro allowlist and produces the error "The following macros are not allowed: operatorname".  Use `\text{name}` instead — it renders identically for named operators (rank, ker, im, span, etc.) and is always permitted.
 
+### Rule 11 — in inline paragraphs, `\command{}_{braced}` pairs with any downstream `letter_` as an emphasis span
+
+Rule 8 covers display environments.  The same `}_{` mechanism also breaks **inline** paragraphs whenever a `\command{...}_{braced}` opener is followed anywhere in the same paragraph by a `letter_{...}` or `letter_letter` subscript that acts as a closer:
+
+- **`\command{...}_{braced}`** (e.g. `\mathrm{ROL}_{n/4}`) — both-flanking: `}` (punctuation) before `_`, `{` (punctuation) after `_` → valid opener **and** closer.
+- **`letter_{braced}`** (e.g. `c_{j-1}`) — right-flanking closer only: the plain letter before `_` satisfies the not-preceded-by-punctuation condition, so `_` is right-flanking and can **close** a preceding opener — even though `_` is not left-flanking and cannot itself open.
+- **`letter_letter`** (e.g. `a_j`, `b_j`, `c_j`) — both-flanking: valid opener **and** closer.
+
+CommonMark pairs the first opener with the first valid closer that follows, creating an `<em>` span that crosses all `$...$` boundaries between them and breaks every math span in the paragraph.
+
+**Fix:** convert `\command{...}_{braced}` subscripts to function notation so the subscript `}_{` disappears entirely.  For example, `\mathrm{ROL}_{n/4}\bigl(x\bigr)` → `\mathrm{ROL}(x, n/4)`.  An unbraced single-character subscript `\command{...}_k` is also safe (left-flanking only, cannot close), but function notation is preferred for multi-character parameters.
+
 ### Correct patterns
 
 The only pattern that survives both rules is **dashes inside a single `\text{}` block** for compound names, and **explicit subscript syntax** when the visual is genuinely a subscript.
@@ -266,6 +278,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `degree-$k$ Boolean` (no space before `$`) | `degree $k$ Boolean` |
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
+| `\mathrm{ROL}_{n/4}\bigl(x\bigr)` in a paragraph that also has `c_{j-1}` | `\mathrm{ROL}(x, n/4)` — function notation removes `}_{` opener (Rule 11) |
 | `$$\nexpr\n$$` (standalone `$$` delimiter lines) | `$$expr$$` or `$$first-line\n...\nlast-line$$` |
 | `\operatorname{rank}(\Phi)` | `\text{rank}(\Phi)` — `\operatorname` blocked by GitHub allowlist |
 | `\;` / `\!` / `\,` / `\:` in math | (omit — rely on KaTeX auto-spacing) |

@@ -3514,3 +3514,32 @@ Status: **DONE** — all 14 `^*` occurrences on lines 962–967 replaced with `^
 **Fix:** Replaced all 7 occurrences of `^*` with `^{\ast}` on those lines only.
 
 Status: **DONE** — 7 replacements across lines 730 and 739–744; no other lines touched.
+
+---
+
+### 59. SecurityProofs-2.md — `^*` emphasis breakage and `\operatorname` (Documentation, High)
+
+**File:** `SecurityProofs-2.md`, lines 458 and 460
+
+**Root cause (two violations):**
+
+- **Line 458 — Rule 10:** `\operatorname{invert}` inside a `$$...$$` display block is blocked by GitHub's KaTeX macro allowlist ("The following macros are not allowed: operatorname"). Fixed to `\text{invert}`.
+- **Line 460 — Rule 4:** One long proof sentence contains 5 bare `^*` patterns (`d_i^*` ×4 and `\sigma_i^*` ×1). CommonMark pairs them across `$...$` boundaries, breaking every math span in the sentence. Replaced all 5 with `^{\ast}`.
+
+**Scan result:** No other paragraphs in SecurityProofs-2.md have multiple `^*` occurrences outside table cells; no Rule 6 violations found.
+
+Status: **DONE** — lines 458 and 460 fixed; no other lines touched.
+
+---
+
+### 60. SecurityProofs-2.md §11.8.2 Theorem 13 proof — Rule 11 inline `}_{` opener (Documentation, High)
+
+**File:** `SecurityProofs-2.md`, line 406 (first prose paragraph of Theorem 13 proof)
+
+**Root cause — Rule 11 (new):** `\mathrm{ROL}_{n/4}` created a `}_{` both-flanking `_` opener in an inline paragraph.  `c_{j-1}` (introduced in the previous fix for TODO #59's line 460) acts as a right-flanking closer because the plain letter `c` before `_` satisfies the right-flanking condition even when `_` is followed by `{`.  CommonMark paired the opener and closer across all math spans between them.
+
+**Fix:** Converted `\mathrm{ROL}_{n/4}\bigl((A+B) \bmod 2^n\bigr)` to function notation `\mathrm{ROL}((A+B) \bmod 2^n, n/4)`, eliminating the `}_{` opener.  The remaining `_` characters (`c_{j-1}`, `c_j`, `}_j`) have no valid pairing partner.
+
+**CLAUDE.md:** Added Rule 11 documenting the inline `\command{}_{braced}` + `letter_` pairing mechanism and its fix; added a row to the correct-patterns table.
+
+Status: **DONE** — line 406 fixed; Rule 11 added to CLAUDE.md.
