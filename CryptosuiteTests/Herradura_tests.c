@@ -3039,13 +3039,218 @@ static uint64_t hpke_stern_f_decap_known_64(uint64_t seed, uint64_t e_prime)
     return stern_hash_64(stern_hash_64(0, seed), e_prime);
 }
 
-/* [17] HPKS-Stern-F correctness: sign+verify, N=32,64,256 */
+/* ---- N=128 Stern-F helpers ---- */
+
+#define SDF128_N           128
+#define SDF128_N_ROWS       64
+#define SDF128_T             8   /* 128/16 */
+#define SDF128_SYNBYTES      8
+#define SDF128_TEST_ROUNDS   8
+
+static __uint128_t stern_hash_128(__uint128_t h, __uint128_t v)
+{
+    __uint128_t key = (v << 16) | (v >> 112);
+    __uint128_t raw = nl_fscx_revolve_v1_128(h ^ v, key, NL_I128);
+    uint8_t buf[16], digest[32];
+    int i;
+    for (i = 0; i < 16; i++) buf[i] = (uint8_t)(raw >> (120 - 8*i));
+    hfscx_256(buf, 16, NULL, digest);
+    { __uint128_t out = 0;
+      for (i = 0; i < 16; i++) out = (out << 8) | digest[i];
+      return out; }
+}
+
+static __uint128_t stern_hash_128_n(const __uint128_t *items, int n)
+{
+    __uint128_t hv = 0;
+    int i;
+    for (i = 0; i < n; i++) hv = stern_hash_128(hv, items[i]);
+    return hv;
+}
+
+static __uint128_t stern_matrix_row_128(__uint128_t seed, int row)
+{
+    __uint128_t sxr = seed ^ (__uint128_t)row;
+    __uint128_t a0  = (sxr << 16) | (sxr >> 112);
+    return nl_fscx_revolve_v1_128(a0, seed, NL_I128);
+}
+
+static uint64_t stern_syndrome_128(__uint128_t seed, __uint128_t e)
+{
+    uint64_t s = 0;
+    int i;
+    for (i = 0; i < SDF128_N_ROWS; i++) {
+        __uint128_t row = stern_matrix_row_128(seed, i);
+        if (popcount128(row & e) & 1)
+            s |= (uint64_t)1 << i;
+    }
+    return s;
+}
+
+static __uint128_t stern_rand_error_128(void)
+{
+    uint8_t idx[SDF128_N];
+    __uint128_t e = 0;
+    int i;
+    for (i = 0; i < SDF128_N; i++) idx[i] = (uint8_t)i;
+    for (i = SDF128_N - 1; i >= SDF128_N - SDF128_T; i--) {
+        unsigned int range = (unsigned int)(i + 1);
+        unsigned int thresh = 256 - (256 % range);
+        uint8_t rnd;
+        int j;
+        do {
+            if (fread(&rnd, 1, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+        } while ((unsigned int)rnd >= thresh);
+        j = (int)(rnd % range);
+        { uint8_t tmp = idx[i]; idx[i] = idx[j]; idx[j] = tmp; }
+        e |= (__uint128_t)1 << idx[i];
+    }
+    return e;
+}
+
+static __uint128_t stern128_rand_seed(void)
+{
+    uint8_t buf[16];
+    __uint128_t v = 0;
+    int i;
+    if (fread(buf, 16, 1, urnd_fp) != 1) { fputs("urandom\n", stderr); exit(1); }
+    for (i = 0; i < 16; i++) v = (v << 8) | buf[i];
+    return v;
+}
+
+static void stern_gen_perm_128(uint8_t *perm, __uint128_t pi_seed)
+{
+    __uint128_t key = (pi_seed << 16) | (pi_seed >> 112);
+    __uint128_t st  = pi_seed;
+    int i;
+    for (i = 0; i < SDF128_N; i++) perm[i] = (uint8_t)i;
+    for (i = SDF128_N - 1; i > 0; i--) {
+        uint32_t v;
+        int j;
+        st = nl_fscx_v1_128(st, key);
+        v  = (uint32_t)(st & 0xFFFF);
+        j  = (int)(v % (unsigned)(i + 1));
+        { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
+    }
+}
+
+static __uint128_t stern_apply_perm_128(const uint8_t *perm, __uint128_t v)
+{
+    __uint128_t out = 0;
+    int i;
+    for (i = 0; i < SDF128_N; i++)
+        if ((v >> i) & 1)
+            out |= (__uint128_t)1 << perm[i];
+    return out;
+}
+
+static void stern_fs_challenges_128(int *chals, int rounds, __uint128_t msg,
+                                     const __uint128_t *c0, const __uint128_t *c1,
+                                     const __uint128_t *c2)
+{
+    __uint128_t ch_st = 0;
+    int i;
+    ch_st = stern_hash_128(ch_st, msg);
+    for (i = 0; i < rounds; i++) {
+        ch_st = stern_hash_128(ch_st, c0[i]);
+        ch_st = stern_hash_128(ch_st, c1[i]);
+        ch_st = stern_hash_128(ch_st, c2[i]);
+    }
+    for (i = 0; i < rounds; i++) {
+        ch_st = nl_fscx_v1_128(ch_st, (__uint128_t)i);
+        chals[i] = (int)((uint32_t)(ch_st & 0xFFFF) % 3u);
+    }
+}
+
+typedef struct {
+    __uint128_t c0[SDF128_TEST_ROUNDS], c1[SDF128_TEST_ROUNDS], c2[SDF128_TEST_ROUNDS];
+    int         b[SDF128_TEST_ROUNDS];
+    __uint128_t resp_a[SDF128_TEST_ROUNDS];
+    __uint128_t resp_b[SDF128_TEST_ROUNDS];
+} SternSig128T;
+
+static void hpks_stern_f_sign_128(SternSig128T *sig, __uint128_t msg,
+                                   __uint128_t e, __uint128_t seed)
+{
+    __uint128_t r[SDF128_TEST_ROUNDS], y[SDF128_TEST_ROUNDS];
+    __uint128_t pi_s[SDF128_TEST_ROUNDS];
+    __uint128_t sr[SDF128_TEST_ROUNDS], sy[SDF128_TEST_ROUNDS];
+    uint8_t perm[SDF128_N];
+    int i;
+    for (i = 0; i < SDF128_TEST_ROUNDS; i++) {
+        __uint128_t items[2];
+        uint64_t Hr;
+        r[i]    = stern_rand_error_128();
+        y[i]    = e ^ r[i];
+        pi_s[i] = stern128_rand_seed();
+        Hr = stern_syndrome_128(seed, r[i]);
+        stern_gen_perm_128(perm, pi_s[i]);
+        sr[i] = stern_apply_perm_128(perm, r[i]);
+        sy[i] = stern_apply_perm_128(perm, y[i]);
+        items[0] = pi_s[i]; items[1] = (__uint128_t)Hr;
+        sig->c0[i] = stern_hash_128_n(items, 2);
+        sig->c1[i] = stern_hash_128(0, sr[i]);
+        sig->c2[i] = stern_hash_128(0, sy[i]);
+    }
+    stern_fs_challenges_128(sig->b, SDF128_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF128_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        if      (bv == 0) { sig->resp_a[i] = sr[i];    sig->resp_b[i] = sy[i]; }
+        else if (bv == 1) { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = r[i];  }
+        else              { sig->resp_a[i] = pi_s[i];  sig->resp_b[i] = y[i];  }
+    }
+}
+
+static int hpks_stern_f_verify_128(const SternSig128T *sig, __uint128_t msg,
+                                    __uint128_t seed, uint64_t syndr)
+{
+    int chals[SDF128_TEST_ROUNDS];
+    uint8_t perm[SDF128_N];
+    int i;
+    stern_fs_challenges_128(chals, SDF128_TEST_ROUNDS, msg,
+                            sig->c0, sig->c1, sig->c2);
+    for (i = 0; i < SDF128_TEST_ROUNDS; i++)
+        if (chals[i] != sig->b[i]) return 0;
+    for (i = 0; i < SDF128_TEST_ROUNDS; i++) {
+        int bv = sig->b[i];
+        __uint128_t items[2];
+        if (bv == 0) {
+            if (stern_hash_128(0, sig->resp_a[i]) != sig->c1[i]) return 0;
+            if (stern_hash_128(0, sig->resp_b[i]) != sig->c2[i]) return 0;
+            if (popcount128(sig->resp_a[i]) != SDF128_T) return 0;
+        } else if (bv == 1) {
+            __uint128_t sr2;
+            uint64_t Hr;
+            if (popcount128(sig->resp_b[i]) != SDF128_T) return 0;
+            Hr  = stern_syndrome_128(seed, sig->resp_b[i]);
+            items[0] = sig->resp_a[i]; items[1] = (__uint128_t)Hr;
+            if (stern_hash_128_n(items, 2) != sig->c0[i]) return 0;
+            stern_gen_perm_128(perm, sig->resp_a[i]);
+            sr2 = stern_apply_perm_128(perm, sig->resp_b[i]);
+            if (stern_hash_128(0, sr2) != sig->c1[i]) return 0;
+        } else {
+            __uint128_t sy2;
+            uint64_t Hy, Hys;
+            Hy  = stern_syndrome_128(seed, sig->resp_b[i]);
+            Hys = Hy ^ syndr;
+            items[0] = sig->resp_a[i]; items[1] = (__uint128_t)Hys;
+            if (stern_hash_128_n(items, 2) != sig->c0[i]) return 0;
+            stern_gen_perm_128(perm, sig->resp_a[i]);
+            sy2 = stern_apply_perm_128(perm, sig->resp_b[i]);
+            if (stern_hash_128(0, sy2) != sig->c2[i]) return 0;
+        }
+    }
+    return 1;
+}
+
+/* [17] HPKS-Stern-F correctness: sign+verify, N=32,64,128,256 */
 static void test_hpks_stern_f_correctness(void)
 {
-    int sizes[] = {32, 64, 256};
+    int sizes[] = {32, 64, 128, 256};
     int si;
     printf("[17] HPKS-Stern-F correctness: sign+verify  [CODE-BASED PQC]\n");
-    for (si = 0; si < 3; si++) {
+    for (si = 0; si < 4; si++) {
         int sz = sizes[si];
         int N = g_rounds > 0 ? g_rounds : 5;
         int ok = 0, fail = 0, i;
@@ -3082,6 +3287,20 @@ static void test_hpks_stern_f_correctness(void)
                 else fail++;
                 if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
             }
+        } else if (sz == 128) {
+            static SternSig128T sig128;
+            for (i = 0; i < N; i++) {
+                __uint128_t seed, e, msg;
+                uint64_t syndr;
+                seed  = stern128_rand_seed();
+                e     = stern_rand_error_128();
+                syndr = stern_syndrome_128(seed, e);
+                msg   = stern128_rand_seed();
+                hpks_stern_f_sign_128(&sig128, msg, e, seed);
+                if (hpks_stern_f_verify_128(&sig128, msg, seed, syndr)) ok++;
+                else fail++;
+                if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+            }
         } else {
             static SternSigT sf_sig;
             for (i = 0; i < N; i++) {
@@ -3099,8 +3318,9 @@ static void test_hpks_stern_f_correctness(void)
         }
         printf("    bits=%3d  t=%d  rounds=%d  %d / %d verified  [%s]\n",
                sz,
-               sz==32 ? SDF32_T : sz==64 ? SDF64_T : SDF_T,
-               sz==32 ? SDF32_TEST_ROUNDS : sz==64 ? SDF64_TEST_ROUNDS : SDF_TEST_ROUNDS,
+               sz==32 ? SDF32_T : sz==64 ? SDF64_T : sz==128 ? SDF128_T : SDF_T,
+               sz==32 ? SDF32_TEST_ROUNDS : sz==64 ? SDF64_TEST_ROUNDS :
+                        sz==128 ? SDF128_TEST_ROUNDS : SDF_TEST_ROUNDS,
                ok, N, fail == 0 ? "PASS" : "FAIL");
     }
     putchar('\n');
@@ -3277,6 +3497,24 @@ static void bench_hpks_stern_f(void)
            ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
       } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
       printf("    N= 64  t=%2d  rounds=%d  ", SDF64_T, SDF64_TEST_ROUNDS);
+      print_rate(ops, secs); putchar('\n'); }
+    /* N=128 */
+    { static SternSig128T bsig128;
+      __uint128_t seed128 = stern128_rand_seed(), e128 = stern_rand_error_128(), msg128;
+      uint64_t syndr128 = stern_syndrome_128(seed128, e128);
+      msg128 = stern128_rand_seed();
+      for (i = 0; i < 2; i++) {
+          hpks_stern_f_sign_128(&bsig128, msg128, e128, seed128);
+          hpks_stern_f_verify_128(&bsig128, msg128, seed128, syndr128);
+      }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 2; i++) {
+               hpks_stern_f_sign_128(&bsig128, msg128, e128, seed128);
+               hpks_stern_f_verify_128(&bsig128, msg128, seed128, syndr128);
+           }
+           ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    N=%3d  t=%2d  rounds=%d  ", SDF128_N, SDF128_T, SDF128_TEST_ROUNDS);
       print_rate(ops, secs); putchar('\n'); }
     /* N=256 */
     { static SternSigT bsig;
