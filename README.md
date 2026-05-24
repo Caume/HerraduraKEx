@@ -155,8 +155,7 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 # Performance (v1.8.3, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
 Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 1.5`.
-C benchmarks run at fixed sizes (32-bit GF/NL, 256-bit FSCX/HSKE).
-Go/Python columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.
+Columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.
 
 ## C (gcc -O2)
 
@@ -164,17 +163,17 @@ C benchmarks use native types per size: `uint32_t` / `uint64_t` / `__uint128_t` 
 
 | Benchmark | 32-bit | 64-bit | 128-bit | 256-bit |
 |-----------|--------|--------|---------|---------|
-| FSCX single step | — | 19,894 M | 19,906 M | 10.36 M ops/sec |
+| FSCX single step | 20,118 M | 20,125 M | 20,134 M | 10.56 M ops/sec |
 | HKEX-GF gf\_pow | 19,916 M | 1,990 M | 19.52 M | 124 ops/sec |
 | HKEX-GF full handshake | 1,924 M | 19.60 M | 19.67 M | 30.6 ops/sec |
-| HSKE round-trip | — | 10.04 M | 4.99 M | 40.8 K ops/sec |
+| HSKE round-trip | 15.75 M | 10.27 M | 5.13 M | 41.61 K ops/sec |
 | HPKE El Gamal round-trip | 1,988 M | 19.84 M | 19.71 M | 40.9 ops/sec |
-| NL-FSCX v1 revolve (n/4 steps) | — | 19,600 M | 3,975 M | 104 K ops/sec |
-| NL-FSCX v2 enc+dec | — | 1,979 M | 19.77 M | 469 ops/sec |
-| HSKE-NL-A1 counter-mode | — | 6.71 M | 3.36 M | 102 K ops/sec |
-| HSKE-NL-A2 revolve-mode | — | 9.98 M | 4.06 M | 457 ops/sec |
+| NL-FSCX v1 revolve (n/4 steps) | 20,173 M | 20,184 M | 4,037 M | 105.64 K ops/sec |
+| NL-FSCX v2 enc+dec | 20,185 M | 2,017 M | 20.19 M | 475.58 ops/sec |
+| HSKE-NL-A1 counter-mode | 10.54 M | 6.81 M | 3.39 M | 103.40 K ops/sec |
+| HSKE-NL-A2 revolve-mode | 15.73 M | 10.17 M | 4.02 M | 474.88 ops/sec |
 | HKEX-RNL full handshake (n=…) | 92.3 K | 40.9 K | 18.5 K | 8.35 K ops/sec |
-| HPKS-Stern-F sign+verify (N=256, t=16, rounds=8) | — | — | — | 52.9 ops/sec |
+| HPKS-Stern-F sign+verify (N=n, rounds=8) | 198 K ops/sec | 504 ops/sec | — | 52.9 ops/sec |
 
 ## Go (go run)
 

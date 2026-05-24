@@ -3234,34 +3234,69 @@ static void test_fstern_range_n32(void)
            " see TODO #42 Step 2\n");
 }
 
-/* [30] HPKS-Stern-F sign+verify throughput (N=256, t=16, rounds=4) */
+/* [30] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
 static void bench_hpks_stern_f(void)
 {
     struct timespec t0, t1;
-    long long ops = 0;
+    long long ops;
     double secs;
     int i;
-    static SternSigT bsig;
-    BitArray seed, e, msg;
-    uint8_t syndr[SDF_SYNBYTES];
-    printf("[30] HPKS-Stern-F sign+verify  (N=%d, t=%d, rounds=%d)  [CODE-BASED PQC]\n    ",
-           KEYBITS, SDF_T, SDF_TEST_ROUNDS);
-    ba_rand(&seed, urnd_fp); stern_rand_error_ba(&e);
-    stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg, urnd_fp);
-    for (i = 0; i < 2; i++) {
-        hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
-        hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
-    }
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    do {
-        for (i = 0; i < 2; i++) {
-            hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
-            hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
-        }
-        ops += 2;
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-    } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
-    print_rate(ops, secs);
+    printf("[30] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
+    /* N=32 */
+    { static SternSig32T bsig32;
+      uint32_t seed32 = stern32_rand_seed(), e32 = stern32_rand_error(), msg32;
+      uint16_t syndr32 = stern32_syndrome(seed32, e32);
+      msg32 = stern32_rand_seed();
+      for (i = 0; i < 2; i++) {
+          hpks_stern_f_sign_32(&bsig32, msg32, e32, seed32);
+          hpks_stern_f_verify_32(&bsig32, msg32, seed32, syndr32);
+      }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 2; i++) {
+               hpks_stern_f_sign_32(&bsig32, msg32, e32, seed32);
+               hpks_stern_f_verify_32(&bsig32, msg32, seed32, syndr32);
+           }
+           ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    N= 32  t=%2d  rounds=%d  ", SDF32_T, SDF32_TEST_ROUNDS);
+      print_rate(ops, secs); putchar('\n'); }
+    /* N=64 */
+    { static SternSig64T bsig64;
+      uint64_t seed64 = stern64_rand_seed(), e64 = stern_rand_error_64(), msg64;
+      uint32_t syndr64 = stern_syndrome_64(seed64, e64);
+      msg64 = stern64_rand_seed();
+      for (i = 0; i < 2; i++) {
+          hpks_stern_f_sign_64(&bsig64, msg64, e64, seed64);
+          hpks_stern_f_verify_64(&bsig64, msg64, seed64, syndr64);
+      }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 2; i++) {
+               hpks_stern_f_sign_64(&bsig64, msg64, e64, seed64);
+               hpks_stern_f_verify_64(&bsig64, msg64, seed64, syndr64);
+           }
+           ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    N= 64  t=%2d  rounds=%d  ", SDF64_T, SDF64_TEST_ROUNDS);
+      print_rate(ops, secs); putchar('\n'); }
+    /* N=256 */
+    { static SternSigT bsig;
+      BitArray seed, e, msg;
+      uint8_t syndr[SDF_SYNBYTES];
+      ba_rand(&seed, urnd_fp); stern_rand_error_ba(&e);
+      stern_syndrome_ba(syndr, &seed, &e); ba_rand(&msg, urnd_fp);
+      for (i = 0; i < 2; i++) {
+          hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
+          hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
+      }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 2; i++) {
+               hpks_stern_f_sign_t(&bsig, &msg, &e, &seed);
+               hpks_stern_f_verify_t(&bsig, &msg, &seed, syndr);
+           }
+           ops += 2; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    N=%3d  t=%2d  rounds=%d  ", KEYBITS, SDF_T, SDF_TEST_ROUNDS);
+      print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 }
 
@@ -3322,6 +3357,14 @@ static void bench_fscx_throughput(void)
     double secs;
     int i;
     printf("[21] FSCX throughput  [CLASSICAL]\n");
+    /* 32-bit */
+    { uint32_t a = rand32(), b = rand32(), tmp;
+      for (i = 0; i < 10; i++) { tmp = fscx32(a, b); a = tmp; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) { tmp = fscx32(a, b); a = tmp; }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t a = rand64(), b = rand64(), tmp;
       for (i = 0; i < 10; i++) { tmp = fscx64(a, b); a = tmp; }
@@ -3469,6 +3512,20 @@ static void bench_hske_roundtrip(void)
     double secs;
     int i;
     printf("[24] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
+    /* 32-bit */
+    { uint32_t pt, key, enc, sink = 0;
+      for (i = 0; i < 5; i++) {
+          pt = rand32(); key = rand32();
+          enc = fscx_revolve32(pt, key, NL_I32);
+          sink ^= fscx_revolve32(enc, key, NL_R32); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) {
+               pt = rand32(); key = rand32();
+               enc = fscx_revolve32(pt, key, NL_I32);
+               sink ^= fscx_revolve32(enc, key, NL_R32); }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t pt, key, enc, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -3607,6 +3664,14 @@ static void bench_nl_fscx_revolve(void)
     double secs;
     int i;
     printf("[26] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
+    /* 32-bit */
+    { uint32_t a = rand32(), b = rand32();
+      for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t a = rand64(), b = rand64();
       for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_64(a, b, NL_I64);
@@ -3635,6 +3700,18 @@ static void bench_nl_fscx_revolve(void)
     putchar('\n');
 
     printf("[26b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
+    /* 32-bit */
+    { uint32_t a = rand32(), b = rand32(), E;
+      for (i = 0; i < 5; i++) {
+          E = nl_fscx_revolve_v2_32(a, b, NL_R32);
+          a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) {
+               E = nl_fscx_revolve_v2_32(a, b, NL_R32);
+               a = nl_fscx_revolve_v2_inv_32(E, b, NL_R32); }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      printf("    bits= 32  v2 enc+dec    "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t a = rand64(), b = rand64(), E;
       for (i = 0; i < 5; i++) {
@@ -3681,6 +3758,24 @@ static void bench_hske_nl_a1_roundtrip(void)
     double secs;
     int i;
     printf("[27] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
+    /* 32-bit */
+    { uint32_t K, P, ks, sink = 0;
+      K = rand32(); P = rand32();
+      for (i = 0; i < 10; i++) {
+          uint32_t nonce = rand32(), base = K ^ nonce;
+          uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
+          ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);
+          sink ^= P ^ ks; }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) {
+               uint32_t nonce = rand32(); K = rand32(); P = rand32();
+               uint32_t base = K ^ nonce;
+               uint32_t seed = ((base << 4) | (base >> 28)) ^ _RNL_KDF_DC_32;
+               ks = nl_fscx_revolve_v1_32(seed, base, NL_I32);
+               sink ^= P ^ ks; }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t K, P, ks, sink = 0;
       K = rand64(); P = rand64();
@@ -3749,6 +3844,19 @@ static void bench_hske_nl_a2_roundtrip(void)
     double secs;
     int i;
     printf("[28] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
+    /* 32-bit */
+    { uint32_t K = rand32(), P = rand32(), E, sink = 0;
+      for (i = 0; i < 5; i++) {
+          E = nl_fscx_revolve_v2_32(P, K, NL_R32);
+          sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32); }
+      ops = 0; clock_gettime(CLOCK_MONOTONIC, &t0);
+      do { for (i = 0; i < 1000; i++) {
+               K = rand32(); P = rand32();
+               E = nl_fscx_revolve_v2_32(P, K, NL_R32);
+               sink ^= nl_fscx_revolve_v2_inv_32(E, K, NL_R32); }
+           ops += 1000; clock_gettime(CLOCK_MONOTONIC, &t1);
+      } while ((secs = elapsed_sec(&t0, &t1)) < g_bench_sec);
+      (void)sink; printf("    bits= 32  "); print_rate(ops, secs); putchar('\n'); }
     /* 64-bit */
     { uint64_t K = rand64(), P = rand64(), E, sink = 0;
       for (i = 0; i < 5; i++) {
