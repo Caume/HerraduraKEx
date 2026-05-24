@@ -68,7 +68,7 @@ func gfOrd(size int) *big.Int {
 	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(size)), big.NewInt(1))
 }
 
-var sizes    = []int{64, 128, 256}
+var sizes    = []int{32, 64, 128, 256}
 var gfSizes  = []int{32, 64, 128, 256}
 var rnlSizes = []int{32, 64, 128, 256}
 
@@ -871,15 +871,17 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[29] HPKS-Stern-F sign+verify throughput  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
-	seed, e, syn := SternFKeygen(256)
-	msg := randBA(256)
-	ops, elapsed := bench("", func() {
-		sig := HpksSternFSign(msg, e, seed, sdfTestRounds)
-		HpksSternFVerify(msg, sig, seed, syn)
-	})
-	fmt.Printf("    bits=256  sign+verify              : %s  (%d ops in %.2fs)\n",
-		fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	fmt.Printf("[29] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	for _, size := range sizes {
+		seed, e, syn := SternFKeygen(size)
+		msg := randBA(size)
+		ops, elapsed := bench("", func() {
+			sig := HpksSternFSign(msg, e, seed, sdfTestRounds)
+			HpksSternFVerify(msg, sig, seed, syn)
+		})
+		fmt.Printf("    bits=%3d  sign+verify              : %s  (%d ops in %.2fs)\n",
+			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	}
 	fmt.Println()
 }
 
