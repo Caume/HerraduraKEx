@@ -4,6 +4,62 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.7] - 2026-05-23
+
+### Testing — Complete 32-bit benchmark columns; add N=128 HPKS-Stern-F in C (TODO #61 extension)
+
+Extended all three benchmark suites and the README performance tables to full
+32/64/128/256-bit coverage, and added a new N=128 HPKS-Stern-F implementation in C.
+
+**Python (`CryptosuiteTests/Herradura_tests.py`)**
+
+- Expanded `SIZES` from `[64, 128, 256]` to `[32, 64, 128, 256]`.  All benchmark
+  functions using `SIZES` (FSCX, HSKE, NL-FSCX v1/v2, HSKE-NL-A1, HSKE-NL-A2)
+  now emit 32-bit rows.
+- Refactored `bench_hpks_stern_f` from a hardcoded `size=32` single-N run to a loop
+  over `SIZES` with `rounds=4`, adding measured values at N=64 (15.6 ops/sec),
+  N=128 (6.11 ops/sec), and N=256 (1.82 ops/sec).
+
+**Go (`CryptosuiteTests/Herradura_tests.go`)**
+
+- Expanded `var sizes` from `[]int{64, 128, 256}` to `[]int{32, 64, 128, 256}`.
+  All benchmark functions using `sizes` now emit 32-bit rows.
+- Refactored `benchHpksSternF` from hardcoded N=256 to a loop over `sizes` with
+  `sdfTestRounds=4`, emitting N=32 (21.8), N=64 (16.5), N=128 (8.28), N=256
+  (3.28 ops/sec).
+
+**C (`CryptosuiteTests/Herradura_tests.c`)**
+
+- Added 32-bit measurement blocks to `bench_fscx_throughput`, `bench_hske_roundtrip`,
+  `bench_nl_fscx_revolve` (v1 and v2), `bench_hske_nl_a1_roundtrip`, and
+  `bench_hske_nl_a2_roundtrip` using existing `fscx32`/`nl_fscx_revolve_v*_32`
+  functions.
+- Expanded `bench_hpks_stern_f` from N=256-only to N=32/64/256.
+
+**N=128 HPKS-Stern-F in C (new implementation)**
+
+Full Stern protocol at N=128 using `__uint128_t`:
+
+- Parameters: N=128, T=8 (N/16), rows=64, rounds=8.  Type `SternSig128T`.
+- `stern_hash_128`: NL-FSCX v1 revolve (NL\_I128=32 steps) with ROL-16 key
+  derivation and HFSCX-256 finalizer — same design pattern as N=64.
+- `stern_syndrome_128`: returns `uint64_t` (64 parity-check rows).
+- `stern_gen_perm_128` / `stern_apply_perm_128` over 128 elements.
+- `hpks_stern_f_sign_128` / `hpks_stern_f_verify_128`.
+- Correctness test [17] extended to N=32/64/128/256 (all PASS).
+- Benchmark [30] result: **467 ops/sec** (RK3588 Cortex-A76 @ 2.4 GHz, `-t 1.5`).
+
+**README.md**
+
+All `—` cells in the C performance table filled.  Stern-F row now covers N=32
+(198 K ops/sec), N=64 (504 ops/sec), N=128 (467 ops/sec), N=256 (52.9 ops/sec).
+Introductory note updated to remove stale "fixed sizes" qualifier.
+
+**Files changed:** `CryptosuiteTests/Herradura_tests.py`, `CryptosuiteTests/Herradura_tests.go`,
+`CryptosuiteTests/Herradura_tests.c`, `README.md`, `CHANGELOG.md`.
+
+---
+
 ## [1.8.6] - 2026-05-23
 
 ### Documentation — KaTeX rendering fix in SecurityProofs-2.md §11.8.2 + Rule 11 (TODO #60)
