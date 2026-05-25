@@ -1,4 +1,5 @@
-/*  Herradura KEx — Security & Performance Tests (Go)
+/*  Herradura KEx — Security & Performance Tests (Go) v1.8.8
+    v1.8.7: 32-bit benchmark columns; benchHpksSternF loops over all sizes (TODO #61 extension).
     v1.8.0: KDF domain constant (TODO #38) — RnlKdfSeed applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.6.1: SternHash ds parameter (TODO #36).
     v1.5.27: refactored to import package herradura; added HFSCX-256 KAV test [17].
@@ -926,7 +927,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.8.0 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.8.8 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

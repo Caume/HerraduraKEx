@@ -1,10 +1,14 @@
-# Herradura Cryptographic Suite (v1.8.3)
+# Herradura Cryptographic Suite (v1.8.8)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs-1.md §3` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs-1.md §6` (quantum analysis) and `SecurityProofs-2.md §11` (NL/PQC proofs) for analysis.
+>
+> **v1.8.8 note:** `herradura.h` C23/GCC 13+ compatibility fix — `ATOMIC_VAR_INIT` (deprecated in C17, removed in C23) replaced with direct `= 0` initialisation; no API change.
+>
+> **v1.8.7 note:** N=128 `HPKS-Stern-F` implementation in C (`__uint128_t`, T=8, 64 parity-check rows, rounds=8); all benchmark tables now cover all four sizes (32/64/128/256-bit) across C, Go, and Python.
 >
 > **v1.8.3 note:** Comprehensive cryptographic concepts primer (`docs/INTRODUCTION.md`) — plain-language guide to all core concepts (GF(2^n), FSCX, DH, Schnorr, El Gamal, quantum threats, Ring-LWR, Stern ZKP) with toy examples, verified references, and cross-links to TUTORIAL.md and the SecurityProofs documents.
 >
@@ -79,7 +83,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 
 **Code-based PQC (v1.5.18):**
 
-10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature (EUF-CMA ≤ SD($n$,$t$) + NL-FSCX v1 PRF): commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$. Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
+10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature (EUF-CMA ≤ SD($n$,$t$) + NL-FSCX v1 PRF): commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (production default; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
 11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. Production decap requires a QC-MDPC syndrome decoder; demo uses known $e'$.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
@@ -152,7 +156,7 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.8.3, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
+# Performance (v1.8.8, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
 Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 1.5`.
 Columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.

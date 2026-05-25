@@ -4,7 +4,8 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF)
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.8.8
+    v1.8.7: 32-bit benchmark columns added; N=128 HPKS-Stern-F implemented (TODO #61 extension).
     v1.8.0: KDF domain constant — ba_rnl_kdf_seed replaces ba_rol_k at all HSKE-NL-A1/HKEX-RNL seed sites (TODO #38).
     v1.6.1: stern_hash_ba DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash_ba + stern_hash_64 HFSCX-256 finalizer (TODO #43).
@@ -2179,7 +2180,7 @@ static void test_hske_nl_a2_correctness(void)
    Protocol: one party generates a_rand and transmits it in the clear; both derive
    the shared m_blind = m_base + a_rand and compute their individual public keys
    C = round_p(m_blind · s).  Agreement holds because the ring is commutative:
-   s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs.md. */
+   s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-2.md. */
 static void test_hkex_rnl_correctness(void)
 {
     static const int rnl_sizes[] = {32, 64, 128, 256};
@@ -4267,7 +4268,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.8.0 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.8.8 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

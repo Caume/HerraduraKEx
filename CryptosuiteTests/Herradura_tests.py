@@ -1,5 +1,6 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python)
+    Herradura KEx — Security & Performance Tests (Python) v1.8.8
+    v1.8.7: 32-bit benchmark columns; bench_hpks_stern_f loops over all sizes (TODO #61 extension).
     v1.8.0: KDF domain constant (TODO #38) — _RNL_KDF_DC_256 applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.7.3: NumPy NTT acceleration — ~10× speedup on _rnl_poly_mul (TODO #40).
     v1.5.24: HFSCX-256 hash primitive (TODO #26 Phase 1) — KAT, determinism, collision sanity.
@@ -957,7 +958,7 @@ def test_hkex_rnl_correctness():
     # Protocol: one party generates a_rand and transmits it in the clear; both
     # derive the shared m_blind = m_base + a_rand and compute individual public keys
     # C = round_p(m_blind · s).  Agreement holds by ring commutativity:
-    # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs.md.
+    # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-2.md.
     print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; Peikert reconciliation — expect 100% agreement)")
     for n_rnl in RNL_SIZES:
@@ -1361,7 +1362,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.8.0 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.8.8 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
