@@ -702,7 +702,7 @@ static pthread_once_t rnl_tw_once = PTHREAD_ONCE_INIT;
 static void rnl_twiddle_init(void) { pthread_once(&rnl_tw_once, rnl_twiddle_do_init); }
 #else
 /* 0 = uninitialized, 1 = in progress, 2 = done */
-static _Atomic int rnl_tw_state = ATOMIC_VAR_INIT(0);
+static _Atomic int rnl_tw_state = 0;
 static void rnl_twiddle_init(void)
 {
     int expected = 0;

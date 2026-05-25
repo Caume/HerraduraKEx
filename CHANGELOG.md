@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.8] - 2026-05-24
+
+### Fix — Remove deprecated `ATOMIC_VAR_INIT` (C23 compatibility, Armbian/GCC 13+)
+
+**`herradura.h:705`** — replaced `static _Atomic int rnl_tw_state = ATOMIC_VAR_INIT(0);`
+with `static _Atomic int rnl_tw_state = 0;`.  `ATOMIC_VAR_INIT` was deprecated in C17
+and removed in C23; GCC 13+ (as shipped on Armbian / Orange Pi 5b) rejects it with
+"implicit declaration" and "initializer element is not constant".  Direct initialization
+of `_Atomic` variables is valid since C11 and is the correct form.
+
+**Files changed:** `herradura.h`, `CHANGELOG.md`.
+
+---
+
 ## [1.8.7] - 2026-05-23
 
 ### Testing — Complete 32-bit benchmark columns; add N=128 HPKS-Stern-F in C (TODO #61 extension)
