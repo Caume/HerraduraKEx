@@ -192,6 +192,7 @@ The centered $\ell_1$-norm of $m^{-1}(x)$ scales as $\|m^{-1}\|_1 \approx n \cdo
 Both use the **same** $m_\text{blind}$.  ($\lfloor \cdot \rceil_p$ denotes rounding from $\mathbb{Z}/q\mathbb{Z}$ to $\mathbb{Z}/p\mathbb{Z}$.)  $\mathrm{CBD}(\eta)$ is the centered binomial distribution: each coefficient $s_i = \sum_{j=0}^{\eta-1}(a_j - b_j)$ where $a_j, b_j \xleftarrow{R} \{0,1\}$ independently.  Deployed with $\eta = 1$, giving $s_i \in \{-1, 0, 1\}$ with zero mean and $\Pr[s_i = \pm 1] = 1/4$.  This matches the Kyber/NIST baseline for proper Ring-LWR secret entropy and eliminates the mean bias of the previous uniform $\{0,1\}$ sampler.
 
 **Key agreement:**
+
 $$K_A = \left\lfloor s_A \cdot C_B \right\rceil_{p'} \approx s_A \cdot m_\text{blind} \cdot s_B \in \mathcal R_q$$
 $$K_B = \left\lfloor s_B \cdot C_A \right\rceil_{p'} \approx s_B \cdot m_\text{blind} \cdot s_A \in \mathcal R_q$$
 
@@ -679,15 +680,19 @@ This section formalises the security claims, identifies one residual hardening o
 Let $n = 256$, block size $b = 32$ bytes.  Write $F_1^r(s, m)$ for NL-FSCX v1 iterated $r$ times with state $s$ and message-block parameter $m$.  HFSCX-256 takes input bytes $D$ and an optional 256-bit key $K$; it produces a 256-bit digest as follows.
 
 **Compression function.**
+
 $$C(s, m) = F_1^{64}(s, m) \in \{0,1\}^{256}.$$
 
 **Initial state.**  Let $\text{IV-const}$ be the 32-byte ASCII constant `HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0` interpreted as a 256-bit integer.  Define
+
 $$s_0 = \begin{cases} \text{IV-const} & \text{(unkeyed)} \cr K \oplus \text{IV-const} & \text{(keyed MAC mode)} \end{cases}$$
 
 **Padding (ISO 7816-4 + finalization).**  Append `0x80` to $D$; zero-fill to a multiple of $b$; append a 32-byte finalization block $\mathit{fin}$:
+
 $$\mathit{fin} = \bigl(8 \cdot |D|\bigr) \oplus s_0 \pmod{2^{256}}.$$
 
 **Iteration.**  For padded message $D' = m_1 \| m_2 \| \cdots \| m_k$ (where the last block is $\mathit{fin}$):
+
 $$s_i = C(s_{i-1}, m_i), \qquad i = 1, \ldots, k.$$
 
 **Output.**  $\text{HFSCX-256}(D, K) = s_k$.
@@ -701,6 +706,7 @@ The security claims for HFSCX-256 are conditional on assumptions already used el
 **A2 (NL-FSCX v1 OWF, §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^{n/2}) = \Omega(2^{128})$ classical operations and $\Omega(2^{n/2})$ quantum queries (Grover lower bound, supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result).
 
 **A3 (Symmetric structure).**  $F_1(A, B) = F_1(B, A)$, since
+
 $$F_1(A, B) = M(A \oplus B) \oplus \mathrm{ROL}_{n/4}\bigl((A + B) \bmod 2^n\bigr)$$
 is symmetric under the swap $A \leftrightarrow B$.  Consequently, NL-FSCX v1 is non-bijective in $B$ as well as in $A$ (§11.5 Q3, by symmetry); $C(\cdot, m)$ is non-bijective in either input.
 
@@ -739,6 +745,7 @@ HFSCX-256's finalization block makes the published digest $s_k = C(s_{k-1}, \mat
 HFSCX-256 supports a keyed mode by setting $s_0 = K \oplus \text{IV-const}$.  This mode is used by `HerraduraCli` for the `HSKE-NL-A1-CTR-AEAD` authentication tag.  Two MAC constructions are evaluated.
 
 **(a) Raw keyed-IV MAC (deployed).**
+
 $$\mathrm{MAC}(K, D) = \text{HFSCX-256}(D, K).$$
 
 *Properties.*  Under A1, HFSCX-256 with secret IV is a PRF: the chain state at every step is unpredictable to an adversary without $K$.  EUF-CMA security follows from the PRF property by standard arguments [Bellare-Canetti-Krawczyk 1996, §3.2].
@@ -746,6 +753,7 @@ $$\mathrm{MAC}(K, D) = \text{HFSCX-256}(D, K).$$
 *Caveat.*  The security claim applies A1 to the entire chain.  If A1 holds for one $F_1^{64}$ application but degrades when chained over many blocks, the raw keyed-IV MAC weakens.  Empirical avalanche tests (§11.9.10 §2) show ideal key-bit diffusion (mean 128.09 / 256 output bits flipped, σ = 7.98) for the deployed parameters, but this is a sanity check, not a chain-length proof.
 
 **(b) HMAC-HFSCX-256 (recommended for cross-protocol key reuse).**
+
 $$\mathrm{HMAC}(K, D) = \text{HFSCX-256}\Bigl(\bigl(K \oplus \mathit{opad}\bigr) \| \text{HFSCX-256}\bigl((K \oplus \mathit{ipad}) \| D\bigr)\Bigr)$$
 
 with $\mathit{ipad} = \mathtt{0x36}$ repeated and $\mathit{opad} = \mathtt{0x5C}$ repeated, each 32 bytes.
@@ -777,6 +785,7 @@ The AEAD tag uses a distinct effective IV via the per-session key.  Cross-flow c
 ### 11.9.8 Davies-Meyer hardening (future work)
 
 The deployed compression $C(s, m) = F_1^{64}(s, m)$ does not use a Davies-Meyer feed-forward.  The Davies-Meyer alternative is
+
 $$C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s.$$
 
 **Benefits of switching.**
