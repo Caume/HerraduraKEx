@@ -682,7 +682,7 @@ Let $n = 256$, block size $b = 32$ bytes.  Write $F_1^r(s, m)$ for NL-FSCX v1 it
 $$C(s, m) = F_1^{64}(s, m) \in \{0,1\}^{256}.$$
 
 **Initial state.**  Let $\text{IV-const}$ be the 32-byte ASCII constant `HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0` interpreted as a 256-bit integer.  Define
-$$s_0 = \begin{cases} \text{IV-const} & \text{(unkeyed)} \\ K \oplus \text{IV-const} & \text{(keyed MAC mode)} \end{cases}$$
+$$s_0 = \begin{cases} \text{IV-const} & \text{(unkeyed)} \cr K \oplus \text{IV-const} & \text{(keyed MAC mode)} \end{cases}$$
 
 **Padding (ISO 7816-4 + finalization).**  Append `0x80` to $D$; zero-fill to a multiple of $b$; append a 32-byte finalization block $\mathit{fin}$:
 $$\mathit{fin} = \bigl(8 \cdot |D|\bigr) \oplus s_0 \pmod{2^{256}}.$$
