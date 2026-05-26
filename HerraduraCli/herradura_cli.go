@@ -528,16 +528,30 @@ func cmdPkey(args []string) {
 // ── kex ──────────────────────────────────────────────────────────────────────
 
 func cmdKex(args []string) {
-	fs := flag.NewFlagSet("kex", flag.ExitOnError)
-	algo  := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl)")
-	our   := fs.String("our", "", "Our private key file")
+	fs  := flag.NewFlagSet("kex", flag.ExitOnError)
+	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl)")
+	our  := fs.String("our", "", "Our private key file")
 	their := fs.String("their", "", "Their public key or response file")
-	out   := fs.String("out", "-", "Output path")
+	out  := fs.String("out", "-", "Output path")
+	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (hfscx-256)")
 	fs.Parse(args)
 
 	if *algo == "" || *our == "" || *their == "" {
 		fmt.Fprintln(os.Stderr, "kex: --algo, --our, --their required")
 		os.Exit(1)
+	}
+	if *kdf != "" && *kdf != "hfscx-256" {
+		fmt.Fprintf(os.Stderr, "kex: unsupported --kdf value %q\n", *kdf)
+		os.Exit(1)
+	}
+
+	// applyKDF returns a new BitArray with HFSCX-256 applied when --kdf is set.
+	applyKDF := func(ba *BitArray, n int) *BitArray {
+		if *kdf != "hfscx-256" {
+			return ba
+		}
+		digest := Hfscx256(ba.Bytes(), nil)
+		return NewBitArray(n, new(big.Int).SetBytes(digest))
 	}
 
 	switch *algo {
@@ -560,7 +574,7 @@ func cmdKex(args []string) {
 		}
 
 		sk   := GfPow(pub, priv, poly, n)
-		skBA := NewBitArray(n, sk)
+		skBA := applyKDF(NewBitArray(n, sk), n)
 		pem, err := encodeSessionKey(skBA, n)
 		if err != nil {
 			die("kex", err)
@@ -591,8 +605,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
-			// Compute K_B and reconciliation hint
+			// Compute K_B and reconciliation hint; apply KDF to K_B if requested.
 			K_B, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+			K_B = applyKDF(K_B, n)
 
 			pem, err := encodeRNLResponse(K_B, C_B, hint, n)
 			if err != nil {
@@ -626,6 +641,7 @@ func cmdKex(args []string) {
 			}
 
 			K_A, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintBuf)
+			K_A = applyKDF(K_A, n)
 			pem, err := encodeSessionKey(K_A, n)
 			if err != nil {
 				die("kex", err)
@@ -1585,7 +1601,7 @@ func usage() {
 Commands:
   genpkey  --algo ALGO [--bits N] [--out FILE]
   pkey     --in FILE (--pubout | --text) [--out FILE]
-  kex      --algo ALGO --our FILE --their FILE [--out FILE]
+  kex      --algo ALGO --our FILE --their FILE [--kdf hfscx-256] [--out FILE]
   enc      --algo ALGO (--key FILE | --pubkey FILE) --in FILE [--out FILE]
   dec      --algo ALGO --key FILE --in FILE [--out FILE]
   sign     --algo ALGO --key FILE --in FILE [--digest hfscx-256] [--out FILE]

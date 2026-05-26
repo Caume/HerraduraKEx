@@ -5,6 +5,7 @@
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
 #   python3 herradura.py pkey    --in alice.pem --pubout --out alice_pub.pem
 #   python3 herradura.py kex     --algo hkex-gf  --our alice.pem --their bob_pub.pem --out sk.pem
+#   python3 herradura.py kex     --algo hkex-gf  --our alice.pem --their bob_pub.pem --kdf hfscx-256 --out sk.pem
 #   python3 herradura.py enc     --algo hske      --key sk.pem --in msg.bin --out cipher.pem
 #   python3 herradura.py dec     --algo hske      --key sk.pem --in cipher.pem --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
@@ -227,8 +228,8 @@ def _encode_rnl_response(K_int, C_B_poly, hint, n):
     C_packed, C_nb = pack_poly(C_B_poly, 2)
     hint_int = 0
     for i, b in enumerate(hint):
-        hint_int |= b << i
-    hint_nb = max(1, (len(hint) + 7) // 8)
+        hint_int |= (b & 3) << (2 * i)   # 2 bits per coeff; matches decoder's (hint_int>>(2*i))&3
+    hint_nb = max(1, (2 * len(hint) + 7) // 8)
     der = der_seq(der_int(K_int,    K_nb),
                   der_int(C_packed, C_nb),
                   der_int(hint_int, hint_nb),
@@ -258,7 +259,7 @@ def _decode_rnl_response(path):
         raise ValueError(f"Expected HKEX-RNL RESPONSE PEM, got {label!r}")
     K_int, C_packed, hint_int, n, hint_len = ints
     C_B_poly = unpack_poly(C_packed, n, 2)
-    hint = [(hint_int >> i) & 1 for i in range(hint_len)]
+    hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     return K_int, C_B_poly, hint, n
 
 
@@ -535,9 +536,16 @@ def cmd_pkey(args):
 # ---------------------------------------------------------------------------
 
 def cmd_kex(args):
-    algo      = args.algo
-    our_path  = args.our
+    algo       = args.algo
+    our_path   = args.our
     their_path = args.their
+    use_kdf    = getattr(args, 'kdf', 'none') == 'hfscx-256'
+
+    def _apply_kdf(k_int, nbits):
+        if not use_kdf:
+            return k_int
+        raw = k_int.to_bytes(nbits // 8, 'big')
+        return int.from_bytes(hfscx_256(raw), 'big')
 
     if algo == 'hkex-gf':
         our_algo,   our_ints   = _decode_privkey(our_path)
@@ -545,7 +553,7 @@ def cmd_kex(args):
         priv_int, _, nbits = our_ints
         pub_int = their_ints[0]
         poly    = GF_POLY.get(nbits, GF_POLY[256])
-        sk_int  = gf_pow(pub_int, priv_int, poly, nbits)
+        sk_int  = _apply_kdf(gf_pow(pub_int, priv_int, poly, nbits), nbits)
         _write_file(args.out, _encode_session_key(sk_int, nbits))
 
     elif algo == 'hkex-rnl':
@@ -564,7 +572,8 @@ def cmd_kex(args):
                 sys.exit(f"Ring size mismatch: ours n={n}, theirs n={n_their}")
             C_B    = _rnl_derive_C(m_A, s_B, n)
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
-            _write_file(args.out, _encode_rnl_response(K_B.uint, C_B, hint, n))
+            K_B_int = _apply_kdf(K_B.uint, n)
+            _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n))
 
         elif their_label == _LABEL_RNL_RESP:
             # ── STEP 2: Alice completes the handshake ───────────────────────
@@ -576,7 +585,7 @@ def cmd_kex(args):
             if n != n_resp:
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
             K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint)
-            _write_file(args.out, _encode_session_key(K_A.uint, n))
+            _write_file(args.out, _encode_session_key(_apply_kdf(K_A.uint, n), n))
 
         else:
             sys.exit(
@@ -1011,6 +1020,9 @@ def build_parser():
     kx.add_argument('--our',   required=True)
     kx.add_argument('--their', required=True)
     kx.add_argument('--out',   required=True)
+    kx.add_argument('--kdf', default='none', choices=['none', 'hfscx-256'],
+                    help='Post-hash raw shared secret with HFSCX-256 (default: none). '
+                         'Both sides must use the same --kdf flag.')
 
     # enc
     en = sub.add_parser('enc', help='Encrypt')

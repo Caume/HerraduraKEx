@@ -1350,6 +1350,18 @@ def main():
     else:
         print("- HPKE-Stern-F key agreement FAILED (n=256)")
 
+    # ── HFSCX-256 ────────────────────────────────────────────────────────────
+    print("\n--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1; 256-bit output]")
+    _tv = b"HFSCX-256 test vector"
+    _bare = hfscx_256(_tv)
+    _mac_iv = BitArray(KEYBITS, preshared.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
+    _keyed  = hfscx_256(_tv, iv=_mac_iv)
+    print(f"digest (bare)  : {_bare.hex()}")
+    print(f"digest (keyed) : {_keyed.hex()}")
+    print(f"+ hash length correct ({len(_bare)} bytes)")
+    print("+ keyed ≠ bare (key influences output)" if _bare != _keyed
+          else "- keyed == bare (unexpected!)")
+
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")
 

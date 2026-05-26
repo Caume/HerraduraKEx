@@ -27,6 +27,7 @@ gf_mul                 = _s.gf_mul
 gf_pow                 = _s.gf_pow
 hfscx_256              = _s.hfscx_256
 _HFSCX256_IV_BYTES     = _s._HFSCX256_IV_BYTES
+_RNL_KDF_DC_256        = _s._RNL_KDF_DC_256
 
 # ── Ring-LWR / HKEX-RNL ─────────────────────────────────────────────────────
 _rnl_keygen         = _s._rnl_keygen

@@ -7,6 +7,7 @@
  *   herradura_cli pkey    --in alice.pem --pubout --out alice_pub.pem
  *   herradura_cli pkey    --in alice.pem --text
  *   herradura_cli kex     --algo hkex-gf  --our alice.pem --their bob_pub.pem --out sk.pem
+ *   herradura_cli kex     --algo hkex-gf  --our alice.pem --their bob_pub.pem --kdf hfscx-256 --out sk.pem
  *   herradura_cli kex     --algo hkex-rnl --our bob.pem   --their alice_pub.pem --out bob_resp.pem
  *   herradura_cli kex     --algo hkex-rnl --our alice.pem --their bob_resp.pem  --out sk.pem
  *
@@ -413,12 +414,15 @@ static void cmd_pkey(int argc, char **argv)
 
 static void cmd_kex(int argc, char **argv)
 {
-    const char *algo      = get_arg(argc, argv, "--algo");
-    const char *our_path  = get_arg(argc, argv, "--our");
+    const char *algo       = get_arg(argc, argv, "--algo");
+    const char *our_path   = get_arg(argc, argv, "--our");
     const char *their_path = get_arg(argc, argv, "--their");
-    const char *out_path  = get_arg(argc, argv, "--out");
+    const char *out_path   = get_arg(argc, argv, "--out");
+    const char *kdf        = get_arg(argc, argv, "--kdf");
     if (!algo || !our_path || !their_path || !out_path)
         die("kex: --algo, --our, --their, --out required");
+    if (kdf && strcmp(kdf, "hfscx-256") != 0)
+        dief("kex: unsupported --kdf value: %s", kdf);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -436,6 +440,14 @@ static void cmd_kex(int argc, char **argv)
         gf_pow_ba(&sk, &pub_theirs, &priv);
         pem_key_free(&our); pem_key_free(&their);
 
+        /* Apply KDF if requested: sk = HFSCX-256(sk) */
+        if (kdf) {
+            uint8_t kdf_out[32];
+            hfscx_256(sk.b, KEYBYTES, NULL, kdf_out);
+            memcpy(sk.b, kdf_out, 32);
+            explicit_bzero(kdf_out, sizeof(kdf_out));
+        }
+
         const uint8_t *sk_start; size_t sk_len;
         ba_min_bytes(&sk, &sk_start, &sk_len);
         uint8_t isk[DER_INT_LEN(KEYBYTES)], in[8]; size_t lsk, ln;
@@ -443,6 +455,7 @@ static void cmd_kex(int argc, char **argv)
         der_i_n256(in, &ln);
         const uint8_t *it[2] = {isk, in}; size_t il[2] = {lsk, ln};
         seq_and_write(it, il, 2, PEM_SESSION_KEY, out_path);
+        explicit_bzero(&sk, sizeof(sk));
         fclose(urnd); return;
     }
 
@@ -482,6 +495,14 @@ static void cmd_kex(int argc, char **argv)
             BitArray K_B_rev; int ri_k;
             for (ri_k = 0; ri_k < KEYBYTES; ri_k++)
                 K_B_rev.b[ri_k] = K_B.b[KEYBYTES-1-ri_k];
+
+            /* Apply KDF if requested: K_B_rev = HFSCX-256(K_B_rev) */
+            if (kdf) {
+                uint8_t kdf_out[32];
+                hfscx_256(K_B_rev.b, KEYBYTES, NULL, kdf_out);
+                memcpy(K_B_rev.b, kdf_out, 32);
+                explicit_bzero(kdf_out, sizeof(kdf_out));
+            }
 
             uint8_t hint_rev[RNL_N / 8];
             { int ri; for (ri = 0; ri < RNL_N/8; ri++) hint_rev[ri] = hint[RNL_N/8-1-ri]; }
@@ -533,6 +554,15 @@ static void cmd_kex(int argc, char **argv)
             BitArray K_A_rev; int ri_ka;
             for (ri_ka = 0; ri_ka < KEYBYTES; ri_ka++)
                 K_A_rev.b[ri_ka] = K_A.b[KEYBYTES-1-ri_ka];
+
+            /* Apply KDF if requested: K_A_rev = HFSCX-256(K_A_rev) */
+            if (kdf) {
+                uint8_t kdf_out[32];
+                hfscx_256(K_A_rev.b, KEYBYTES, NULL, kdf_out);
+                memcpy(K_A_rev.b, kdf_out, 32);
+                explicit_bzero(kdf_out, sizeof(kdf_out));
+            }
+
             const uint8_t *ka_start; size_t ka_len;
             ba_min_bytes(&K_A_rev, &ka_start, &ka_len);
             uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8]; size_t lk, ln;
@@ -1338,10 +1368,12 @@ static void usage(void)
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
 "    Extract public key (--pubout) or print fields in hex (--text).\n"
 "\n"
-"  kex --algo ALGO --our PRIV --their PUB --out FILE\n"
+"  kex --algo ALGO --our PRIV --their PUB --out FILE [--kdf hfscx-256]\n"
 "    Key exchange.  Algorithms: hkex-gf hkex-rnl\n"
 "    HKEX-RNL is 2-round: Bob runs step 1 (--their=alice_pub.pem),\n"
 "    Alice runs step 2 (--their=bob_resp.pem).\n"
+"    --kdf hfscx-256: post-hash the raw shared secret with HFSCX-256.\n"
+"    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE]\n"
 "    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2\n"
