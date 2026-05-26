@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.8.0
+    Herradura Cryptographic Suite v1.8.8
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -29,7 +29,7 @@
     Adds HPKS-Stern-F (Stern identification + Fiat-Shamir, §11.8.4) and HPKE-Stern-F
     (Niederreiter KEM). Security of HPKS-Stern-F reduces to SD(N,t) [NP-complete,
     BMvT 1978] plus NL-FSCX v1 PRF — the only complete chain to a studied hard
-    problem in the suite (Theorem 17, SecurityProofs.md §11.8.4).
+    problem in the suite (Theorem 17, SecurityProofs-2.md §11.8.4).
     Replaces the GF(2^n)* discrete-log base that Shor's algorithm breaks in HPKS-NL
     and HPKE-NL.  Parameters: N=n, n_rows=n/2, t=n/16 (16 at n=256), SDFR=32 rounds
     (demo; production requires ≥219 for 128-bit soundness).
@@ -242,7 +242,7 @@ I_VALUE = KEYBITS // 4       # 64  for 256-bit
 R_VALUE = 3 * KEYBITS // 4   # 192 for 256-bit
 ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmetic)
 
-# HKEX-RNL Ring-LWR parameters (see SecurityProofs.md §11.4)
+# HKEX-RNL Ring-LWR parameters (see SecurityProofs-2.md §11.4)
 # q=65537 (Fermat prime, fast arithmetic) gives lower noise-to-margin ratio than
 # q=3329 (Kyber), ensuring reliable single-block agreement at the cost of larger
 # keys.  2-bit Peikert reconciliation doubles extracted bits per coefficient.
@@ -251,7 +251,7 @@ RNLP  = 4096   # public-key rounding modulus
 RNLPP = 4      # reconciliation modulus (2 bits extracted per ring coefficient)
 RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
 
-# HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs.md §11.8.4)
+# HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs-2.md §11.8.4)
 SDFNR = KEYBITS // 2           # parity-check rows (syndrome bits; [N, N/2, t] code, N=KEYBITS)
 SDFT  = max(2, KEYBITS // 16)  # error weight t (= 16 at n=256; ≥ 2 at all widths)
 SDFR  = 32                     # ⚠ DEMO ONLY: Fiat-Shamir rounds (~19-bit soundness).
@@ -1076,7 +1076,7 @@ HPKE (El Gamal + fscx_revolve, linear encryption):
   Break:   DLP recovers a; HSKE sub-protocol has linear key recovery.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs.md §11)
+PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs-2.md §11)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
@@ -1122,7 +1122,7 @@ HPKE-NL (El Gamal + NL-FSCX v2):
            sub-protocol linear key-recovery attack.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CODE-BASED PQC PROTOCOLS (v1.5.18 — Theorem 17, SecurityProofs.md §11.8.4)
+CODE-BASED PQC PROTOCOLS (v1.5.18 — Theorem 17, SecurityProofs-2.md §11.8.4)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HPKS-Stern-F (Stern syndrome-decoding signature — replaces HPKS-NL):

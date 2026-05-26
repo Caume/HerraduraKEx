@@ -20,7 +20,7 @@ SecurityProofsCode/                                 — standalone Python proof/
   hkex_cfscx_*.py          — preshared-value, two-step, integer-op, compress/blong constructions
   hkex_classical_break.py  — classical algebraic break proofs
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
-SecurityProofs.md                                   — algebraic analysis (incl. §11 NL/PQC, §12 quantum analysis)
+SecurityProofs.md                                   — split index (redirects to SecurityProofs-1.md §1–§10 and SecurityProofs-2.md §11–§11.9; quantum analysis is in SecurityProofs-1.md §6)
 ```
 
 ## Build Commands

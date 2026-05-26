@@ -1,4 +1,5 @@
-/*  herradura.h — Herradura Cryptographic Suite, header-only shared library
+/*  herradura.h — Herradura Cryptographic Suite, header-only shared library v1.8.8
+    v1.8.8: ATOMIC_VAR_INIT removed — direct = 0 init for C23/GCC 13+ compatibility.
     v1.8.0: KDF domain constant — ba_rnl_kdf_seed: ROL(k,n/8) XOR _RNL_KDF_DC (TODO #38).
     v1.6.1: stern_hash DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash HFSCX-256 finalizer — eliminates range compression (TODO #43).
@@ -919,7 +920,7 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 /* ─────────────────────────────────────────────────────────────────────────────
  * CODE-BASED PQC: HPKS-Stern-F / HPKE-Stern-F  (v1.5.18)
  * Stern 3-challenge ZKP + Fiat-Shamir in QROM.
- * Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs.md §11.8.4).
+ * Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs-2.md §11.8.4).
  * N=KEYBITS=256, n_rows=128, t=16, rounds=32  (production: >=219).
  * ───────────────────────────────────────────────────────────────────────────── */
 

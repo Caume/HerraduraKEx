@@ -1,5 +1,5 @@
 // HerraduraCli/herradura_cli.go — Go CLI for the Herradura Cryptographic Suite
-// v1.8.0
+// v1.8.8
 //
 // Usage:
 //   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem

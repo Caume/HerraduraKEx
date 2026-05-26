@@ -651,7 +651,7 @@ adds HKEX-RNL and the Stern protocols.
 Post-Quantum Cryptography Standardization Process," 2022.
 [(NIST IR 8413)](https://doi.org/10.6028/NIST.IR.8413-upd1)
 
-→ SP2 §12 for a detailed quantum algorithm analysis of each Herradura protocol.
+→ SP1 §6 for a detailed quantum algorithm analysis of each Herradura protocol.
 
 ---
 

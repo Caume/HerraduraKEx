@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.8.0)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.8.8)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem

@@ -1,4 +1,4 @@
-/*  package herradura — Herradura Cryptographic Suite shared library
+/*  package herradura — Herradura Cryptographic Suite shared library v1.8.8
     v1.8.0: KDF domain constant — RnlKdfSeed: ROL(k,n/8) XOR RnlKdfDC (TODO #38).
     v1.6.1: SternHash ds parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: SternHash HFSCX-256 finalizer — eliminates range compression (TODO #43).
@@ -448,7 +448,7 @@ func HskeNla1MacKey(seed, base *BitArray) *BitArray {
 // HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 // ---------------------------------------------------------------------------
 
-// RNL protocol parameters (see SecurityProofs.md §11.4).
+// RNL protocol parameters (see SecurityProofs-2.md §11.4).
 const (
 	RnlQ   = 65537 // Fermat prime (2^16+1)
 	RnlP   = 4096  // public-key rounding modulus

@@ -3597,3 +3597,131 @@ Several benchmark rows still have `—` in the 64-bit, 128-bit, or 256-bit colum
 3. C — add multi-size benchmark loops; restructure C table; run benchmarks; update README C table.
 
 Status: **DONE** — Python/Go/C benchmarks extended to 64/128/256-bit; README tables restructured to 4-column format (32/64/128/256-bit).
+
+---
+
+### 62. README.md version header stale — v1.8.3 should be v1.8.8 (Documentation, Trivial)
+
+**Files:** `README.md`, lines 1 and 155.
+
+**Current state:**
+- Line 1: `# Herradura Cryptographic Suite (v1.8.3)`
+- Line 155: `# Performance (v1.8.3, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)`
+
+**Required:** Update both occurrences to `v1.8.8` (the current CHANGELOG version).
+
+**Also:** Add callout notes for v1.8.4–v1.8.8 under the existing `> **v1.8.3 note:**` block.
+Significant functional/compatibility changes worth noting:
+- v1.8.4–v1.8.6: KaTeX rendering fixes in SecurityProofs docs (documentation only; no API change).
+- v1.8.7: N=128 `HPKS-Stern-F` implementation in C; all benchmark tables now cover all four sizes (32/64/128/256-bit).
+- v1.8.8: `ATOMIC_VAR_INIT` removed from `herradura.h` for C23/GCC 13+ compatibility.
+
+**Fix:**
+1. Replace `(v1.8.3)` with `(v1.8.8)` in line 1.
+2. Replace `v1.8.3,` with `v1.8.8,` in line 155.
+3. Insert callout notes for v1.8.7 and v1.8.8 (the most functionally relevant releases after v1.8.3) above the `> **v1.8.3 note:**` line, following the existing note style.
+
+Status: **DONE** — title updated to v1.8.8, performance section updated to v1.8.8, v1.8.7 and v1.8.8 callout notes added.
+
+---
+
+### 63. Source file version headers stale — all say v1.8.0, should be v1.8.8 (Documentation, Trivial)
+
+**Root cause:** The source file header comments record the last version in which each file was substantially changed.  `herradura.h` and `herradura/herradura.go` were last updated in v1.8.0 (KDF domain constant), and the suite/test files were not touched in v1.8.1–v1.8.8 except for benchmark extensions in v1.8.7 and ATOMIC_VAR_INIT in v1.8.8.  The banner version in each file should track to the current release so that `grep v1.` gives a meaningful history.
+
+**Files and current version strings:**
+- `Herradura cryptographic suite.c` line 1: `v1.8.0`
+- `Herradura cryptographic suite.go` line 1: `v1.8.0`
+- `Herradura cryptographic suite.py` line 2: `v1.8.0`
+- `herradura.h` line 1: `v1.8.0` (needs v1.8.8 — `ATOMIC_VAR_INIT` fix)
+- `herradura/herradura.go` line 1: `v1.8.0`
+- `CryptosuiteTests/Herradura_tests.c` line 8 banner string: `v1.8.0` (also the `printf` on line 4270)
+- `CryptosuiteTests/Herradura_tests.go` line 2: `v1.8.0`
+- `CryptosuiteTests/Herradura_tests.py` line 2: `v1.8.0`
+
+**Fix per file:**
+- `herradura.h`: add `v1.8.8: ATOMIC_VAR_INIT removed (C23/GCC 13+ compatibility).` at top of changelog block; update header version to `v1.8.8`.
+- `CryptosuiteTests/Herradura_tests.c`: add `v1.8.7: 32-bit benchmark columns; N=128 HPKS-Stern-F (TODO #61 extension).`; update header version.
+- `CryptosuiteTests/Herradura_tests.go` and `.py`: add `v1.8.7: 32-bit benchmark columns extended.` entry.
+- Remaining files with no functional changes in v1.8.1–v1.8.8: update header version string only (no new changelog entry needed).
+
+Status: **DONE** — version strings updated to v1.8.8 in all 8 files; herradura.h and test files received new changelog entries.
+
+---
+
+### 64. Stale `SecurityProofs.md` references in source files — should point to split files (Documentation, Low)
+
+**Background:** The monolithic `SecurityProofs.md` was split into `SecurityProofs-1.md` (§1–§10) and `SecurityProofs-2.md` (§11–§11.9) to avoid GitHub's ~750 math-expression rendering limit.  `SecurityProofs.md` now serves only as a redirect index.  All §11.x section references in source-code comments should point directly to `SecurityProofs-2.md`; §11.4.2 references should also be updated.
+
+**Affected locations (9 occurrences):**
+
+| File | Line | Current reference | Corrected reference |
+|------|------|-------------------|---------------------|
+| `herradura.h` | 922 | `SecurityProofs.md §11.8.4` | `SecurityProofs-2.md §11.8.4` |
+| `Herradura cryptographic suite.py` | 32 | `SecurityProofs.md §11.8.4` | `SecurityProofs-2.md §11.8.4` |
+| `Herradura cryptographic suite.py` | 245 | `SecurityProofs.md §11.4` | `SecurityProofs-2.md §11.4` |
+| `Herradura cryptographic suite.py` | 254 | `SecurityProofs.md §11.8.4` | `SecurityProofs-2.md §11.8.4` |
+| `Herradura cryptographic suite.py` | 1079 | `SecurityProofs.md §11` | `SecurityProofs-2.md §11` |
+| `Herradura cryptographic suite.py` | 1125 | `SecurityProofs.md §11.8.4` | `SecurityProofs-2.md §11.8.4` |
+| `CryptosuiteTests/Herradura_tests.py` | 960 | `SecurityProofs.md §11.4.2` | `SecurityProofs-2.md §11.4.2` |
+| `herradura/herradura.go` | 451 | `SecurityProofs.md §11.4` | `SecurityProofs-2.md §11.4` |
+| `CryptosuiteTests/Herradura_tests.c` | 2182 | `SecurityProofs.md §11.4.2` | `SecurityProofs-2.md §11.4.2` |
+
+**Fix:** Simple text replacement in each file.  No logic changes.
+
+Status: **DONE** — all 9 occurrences updated; no remaining `SecurityProofs.md` references in source files.
+
+---
+
+### 65. Stale §12 references — quantum analysis is in SecurityProofs-1.md §6 (Documentation, Low)
+
+**Background:** When the SecurityProofs document was restructured, the old §12 "Quantum Attack Analysis" was renumbered to §6 in `SecurityProofs-1.md`.  Several documents still reference the non-existent §12.
+
+**Affected locations:**
+
+| File | Line | Current reference | Corrected reference |
+|------|------|-------------------|---------------------|
+| `SecurityProofs-1.md` | 3 | `§12 (merged from PQCanalysis.md…)`, `§12.5 NL-protocol rows` | `§6 (merged from PQCanalysis.md…)`, `§6.5 NL-protocol rows` |
+| `SecurityProofs.md` | 3 | same as above (identical status block) | same correction |
+| `CLAUDE.md` | 23 | `§12 quantum analysis` in repo structure table | `§6 quantum analysis` (in SecurityProofs-1.md) |
+| `docs/INTRODUCTION.md` | 654 | `→ SP2 §12 for a detailed quantum algorithm analysis` | `→ SP1 §6 for a detailed quantum algorithm analysis` |
+
+**Fix:**
+- `SecurityProofs-1.md` line 3: replace `§12` with `§6` and `§12.5` with `§6.5` in the status paragraph.
+- `SecurityProofs.md` line 3: same replacement.
+- `CLAUDE.md` line 23: replace `§12 quantum analysis` with `§6 quantum analysis (SecurityProofs-1.md)`.
+- `docs/INTRODUCTION.md` line 654: replace `SP2 §12` with `SP1 §6`.
+
+**Note:** Also verify that `SecurityProofs-1.md` §6.5 exists (or that §6 contains the NL-protocol rows that were in §12.5), and adjust if the sub-section numbering differs.
+
+Status: **DONE** — §6 has no sub-sections so `§12.5` was simplified to `§6`; all four files updated; no remaining §12 references in markdown files.
+
+---
+
+### 66. README HPKS-Stern-F parameter note — benchmark rounds vs. suite default rounds unclear (Documentation, Low)
+
+**File:** `README.md`, line 82 and benchmark rows (lines 176, 192, 208).
+
+**Issue:** Line 82 states "Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$."  This correctly describes the suite default (`SDF_ROUNDS = 32` in `herradura.h`).  However, the C benchmark row (line 176) is labelled `(N=n, rounds=8)` and the Go/Python rows (lines 192, 208) are labelled `(N=n, rounds=4)`, since the test suite uses reduced rounds for throughput measurement.  A reader who notices the mismatch between the `rounds = 32` in the protocol description and `rounds=8`/`rounds=4` in the benchmark labels may be confused.
+
+**Fix:** Add a parenthetical clarification on line 82 after the rounds parameter, e.g.:
+
+> rounds $= 32$ (suite default; benchmarks use reduced rounds for throughput measurement)
+
+Alternatively, add a footnote below the benchmark tables noting that reduced rounds are used for measurement speed.
+
+Status: **DONE** — parenthetical "(production default; benchmarks use 4–8 rounds for throughput measurement)" added after `rounds = 32` in the HPKS-Stern-F protocol description.
+
+---
+
+### 67. SecurityProofs-1.md/SecurityProofs.md status header is 14 months stale (Documentation, Low)
+
+**Files:** `SecurityProofs-1.md` line 4, `SecurityProofs.md` line 4.
+
+**Current state:** `**Last updated:** 2026-04-25 (v1.5.16)`
+
+**Issue:** The status block was last updated in April 2026 at v1.5.16.  The suite is now at v1.8.8 (May 2026) with significant additions: v1.6.0 HFSCX-256 finalizer, v1.6.1 domain separation, v1.7.3 NumPy acceleration, v1.8.0 KDF domain constant, v1.8.1 permutation bias fix, v1.8.2 H-matrix precomputation, v1.8.7 N=128 Stern-F.  None of these are reflected in the status paragraph.
+
+**Fix:** Update the `**Last updated:**` line to `2026-05-25 (v1.8.8)` and append the major milestones since v1.5.16 to the status paragraph.
+
+Status: **DONE** — status paragraph updated with v1.6.0–v1.8.7 milestones; "Last updated" bumped to 2026-05-25 (v1.8.8) in both SecurityProofs-1.md and SecurityProofs.md.
