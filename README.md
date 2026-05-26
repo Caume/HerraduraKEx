@@ -1,10 +1,12 @@
-# Herradura Cryptographic Suite (v1.8.8)
+# Herradura Cryptographic Suite (v1.8.9)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
 > **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs-1.md §3` for the formal proof.
 >
 > **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs-1.md §6` (quantum analysis) and `SecurityProofs-2.md §11` (NL/PQC proofs) for analysis.
+>
+> **v1.8.9 note:** `--kdf hfscx-256` flag added to the `kex` subcommand in all three CLIs (C, Go, Python) — post-hashes the raw HKEX-GF or HKEX-RNL shared secret through HFSCX-256, producing a uniformly distributed 256-bit key. HFSCX-256 standalone demo block added to all three suite `main()` programs.
 >
 > **v1.8.8 note:** `herradura.h` C23/GCC 13+ compatibility fix — `ATOMIC_VAR_INIT` (deprecated in C17, removed in C23) replaced with direct `= 0` initialisation; no API change.
 >
@@ -156,7 +158,7 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.8.8, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
+# Performance (v1.8.9, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
 Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 1.5`.
 Columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.
