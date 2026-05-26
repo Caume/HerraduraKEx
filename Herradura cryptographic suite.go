@@ -249,6 +249,35 @@ func main() {
 		fmt.Println("- HPKE-Stern-F key agreement FAILED")
 	}
 
+	// ── HFSCX-256 ───────────────────────────────────────────────────────────
+	fmt.Println("\n--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1; 256-bit output]")
+	{
+		tv := []byte("HFSCX-256 test vector")
+		bareOut := Hfscx256(tv, nil)
+		// Keyed MAC: iv = preshared XOR Hfscx256IV
+		presBytes := preshared.Bytes() // 32 bytes big-endian
+		macIV := make([]byte, 32)
+		for i := range macIV {
+			macIV[i] = presBytes[i] ^ Hfscx256IV[i]
+		}
+		keyedOut := Hfscx256(tv, macIV)
+		fmt.Printf("digest (bare)  : %x\n", bareOut)
+		fmt.Printf("digest (keyed) : %x\n", keyedOut)
+		fmt.Printf("+ hash length correct (%d bytes)\n", len(bareOut))
+		same := true
+		for i := range bareOut {
+			if bareOut[i] != keyedOut[i] {
+				same = false
+				break
+			}
+		}
+		if !same {
+			fmt.Println("+ keyed ≠ bare (key influences output)")
+		} else {
+			fmt.Println("- keyed == bare (unexpected!)")
+		}
+	}
+
 	// ── Eve bypass tests ─────────────────────────────────────────────────────
 	fmt.Println("\n\n*** EVE bypass TESTS")
 

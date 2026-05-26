@@ -3725,3 +3725,72 @@ Status: **DONE** — parenthetical "(production default; benchmarks use 4–8 ro
 **Fix:** Update the `**Last updated:**` line to `2026-05-25 (v1.8.8)` and append the major milestones since v1.5.16 to the status paragraph.
 
 Status: **DONE** — status paragraph updated with v1.6.0–v1.8.7 milestones; "Last updated" bumped to 2026-05-25 (v1.8.8) in both SecurityProofs-1.md and SecurityProofs.md.
+
+---
+
+### 68. Add HFSCX-256 KDF step to `kex` CLI and standalone hash demo to suite files (Feature, Medium)
+
+**Rationale:** HFSCX-256 is implemented in all three language implementations (C `herradura.h` static function, Go `herradura/herradura.go` exported `Hfscx256`, Python suite-level `hfscx_256`), and the `dgst` subcommand (standalone file digest) and `sign`/`verify --digest hfscx-256` (pre-hash before signing) are already present in all three CLIs.  Two gaps remain:
+
+1. **No KDF step in `kex`.**  The `kex` subcommand stores the raw Diffie-Hellman output (`g^{ab}` for HKEX-GF; the Ring-LWR reconciliation value for HKEX-RNL) directly as the session key without passing it through a KDF.  Raw GF(2^n) DH values have non-uniform bit distribution and retain algebraic structure; a `--kdf hfscx-256` flag would post-hash the raw shared secret through HFSCX-256 (`sk_out = HFSCX-256(raw_sk)`) before writing the SESSION KEY PEM, producing a uniformly random 256-bit key with full domain separation.
+
+2. **No standalone hash demo in the suite programs.**  The C, Go, and Python suite `main()` programs demonstrate all protocol primitives (HKEX-GF, HSKE, HPKS, HPKE, NL variants, Stern-F) but never call `hfscx_256` / `Hfscx256` directly, so the hash primitive is invisible to a reader running the suite.
+
+**Current state:**
+
+- `dgst` subcommand: **already implemented** in all three CLIs (`herradura_cli.c`, `herradura_cli.go`, `herradura.py`) — reads a file and writes the HFSCX-256 hex digest or PEM.
+- `sign`/`verify --digest hfscx-256`: **already implemented** in all three CLIs.
+- `kex --kdf`: **missing** in all three CLIs (C, Go, Python).
+- Suite demo HFSCX-256 block: **missing** in all three suite `main()` programs (`Herradura cryptographic suite.c`, `Herradura cryptographic suite.go`, `Herradura cryptographic suite.py`).
+
+**Library-call status (informational):**
+
+| Language | Function | Location | Accessible |
+|---|---|---|---|
+| C | `hfscx_256(data, len, iv, out)` | `herradura.h` (static) | yes — any TU that includes the header |
+| Go | `Hfscx256(data, iv []byte) []byte` | `herradura/herradura.go` (exported) | yes — any importer of `herradurakex/herradura` |
+| Python | `hfscx_256(data, *, iv=None) -> bytes` | `Herradura cryptographic suite.py` | yes — imported by `HerraduraCli/primitives.py` |
+
+No new library functions are needed; the API surface is complete.
+
+**Plan:**
+
+**A. Add `--kdf hfscx-256` flag to `kex` in all three CLIs.**
+
+Affects `HerraduraCli/herradura_cli.c`, `HerraduraCli/herradura_cli.go`, `HerraduraCli/herradura.py`.
+
+For each CLI:
+- Add `--kdf` optional parameter (default: `none`; accepted values: `none`, `hfscx-256`).
+- After computing the raw shared secret but before encoding the SESSION KEY PEM, if `--kdf hfscx-256` is set, replace `raw_sk` with `HFSCX-256(raw_sk_bytes)` (bare hash, no IV/key).
+- Update the help string and the usage comment at the top of each file.
+- Both sides of an exchange must use the same `--kdf` flag to derive the same final key.
+
+Example usage (matching OpenSSL `openssl kdf` style):
+```
+herradura_cli kex --algo hkex-gf --our alice.pem --their bob_pub.pem --kdf hfscx-256 --out sk.pem
+```
+
+**B. Add HFSCX-256 standalone demo block to each suite `main()`.**
+
+Affects `Herradura cryptographic suite.c`, `Herradura cryptographic suite.go`, `Herradura cryptographic suite.py`.
+
+Insert a new protocol block (after HPKE-Stern-F, before Eve bypass tests) that:
+1. Hashes a fixed test vector (e.g. the ASCII bytes `"HFSCX-256 test vector"`) and prints the hex digest.
+2. Hashes the same test vector keyed with the session key `sk` and prints the keyed digest.
+3. Verifies that the bare and keyed digests differ (trivially true for non-zero keys).
+4. Prints one line confirming the hash length is 32 bytes (256 bits).
+
+Format mirrors existing blocks:
+```
+--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1; 256-bit output]
+digest (bare)  : <64-char hex>
+digest (keyed) : <64-char hex>
++ hash length correct (32 bytes)
++ keyed != bare (key influences output)
+```
+
+**Scope note:** Assembly (ARM, i386, AVR) and Arduino implementations are out of scope; those targets do not have a CLI layer and lack heap allocation for the padding buffer.
+
+**Side fixes:** `_encode_rnl_response` in `HerraduraCli/herradura.py` had a pre-existing bug where the hint was packed as `b << i` (overlapping 2-bit values at 1-bit offsets) with `hint_nb = (len(hint)+7)//8`, causing `OverflowError` when any hint coefficient was 2 or 3 at the last position; the encoder and decoder were inconsistent (decoder read only 1 bit per coefficient).  Fixed to use 2 bits per coefficient throughout: `(b & 3) << (2*i)`, `hint_nb = (2*len(hint)+7)//8`, `(hint_int>>(2*i))&3`.  Also fixed `_RNL_KDF_DC_256` missing from `HerraduraCli/primitives.py` (added alongside `_HFSCX256_IV_BYTES`).  All 79 CLI tests pass after both fixes (previously the HKEX-RNL cross-party test was a pre-existing FAIL).
+
+Status: **DONE** — HFSCX-256 demo block added to all three suite `main()` programs; `--kdf hfscx-256` flag added to `kex` in C, Go, and Python CLIs; pre-existing Python hint-encoding bug and missing `_RNL_KDF_DC_256` re-export fixed as side effects; all 79 CLI tests pass.

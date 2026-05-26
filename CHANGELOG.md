@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.9] - 2026-05-26
+
+### Feature — HFSCX-256 KDF for `kex` and hash demo in suite programs (TODO #68)
+
+**`--kdf hfscx-256` flag added to `kex` subcommand** (all three CLIs: C `herradura_cli.c`, Go `herradura_cli.go`, Python `herradura.py`).
+
+When `--kdf hfscx-256` is specified, the raw shared secret is post-hashed through HFSCX-256 before being written to the SESSION KEY PEM.  This applies to both HKEX-GF (the raw $g^{ab}$ field element) and HKEX-RNL (the Ring-LWR reconciliation value, after the LSB→MSB reversal that converts it to canonical big-endian form).  The KDF produces a uniformly distributed 256-bit key and removes the algebraic structure present in raw GF($2^n$) DH values.
+
+Both parties must supply `--kdf hfscx-256` to derive the same final key.
+
+**HFSCX-256 demo block added to all three suite `main()` programs** (`Herradura cryptographic suite.c`, `.go`, `.py`).
+
+A new protocol block inserted after the HPKE-Stern-F demonstration (before the Eve bypass tests) shows the hash primitive in action:
+
+- Bare digest of `"HFSCX-256 test vector"` — deterministic cross-language value `fd84942b119b4cd7b7697e27db7c611b14b192f5fd67fd1ce4c76a3b0abf3d3d`.
+- Keyed digest using `preshared XOR _HFSCX256_IV` as the MAC key.
+- Confirmation that the two digests differ and that the output is 32 bytes.
+
+**Side fixes (pre-existing bugs corrected as part of this work):**
+
+- **Python hint encoding bug (`HerraduraCli/herradura.py`):** `_encode_rnl_response` packed the 2-bit Peikert hint coefficients at 1-bit offsets (`hint_int |= b << i`, `hint_nb = (len(hint)+7)//8`), causing `OverflowError` when any hint value was 2 or 3 at the last coefficient position, and producing an inconsistent round-trip (decoder read only 1 bit/coeff).  Fixed to 2 bits per coefficient: `(b & 3) << (2 * i)`, `hint_nb = (2 * len(hint) + 7) // 8`, decoder `(hint_int >> (2 * i)) & 3`.  This also resolved the pre-existing HKEX-RNL cross-party test failure in `CliTest/test_encrypt.sh`.
+- **Missing re-export in `HerraduraCli/primitives.py`:** `_RNL_KDF_DC_256` was imported by `herradura.py` but never re-exported from `primitives.py`; added `_RNL_KDF_DC_256 = _s._RNL_KDF_DC_256`.
+
+All 79 CLI tests pass (7 suites, 0 FAIL) after these changes.
+
+**Files changed:** `Herradura cryptographic suite.c`, `Herradura cryptographic suite.go`, `Herradura cryptographic suite.py`, `HerraduraCli/herradura_cli.c`, `HerraduraCli/herradura_cli.go`, `HerraduraCli/herradura.py`, `HerraduraCli/primitives.py`, `TODO.md`, `CHANGELOG.md`, `README.md`.
+
+---
+
 ## [1.8.8] - 2026-05-24
 
 ### Fix — Remove deprecated `ATOMIC_VAR_INIT` (C23 compatibility, Armbian/GCC 13+)

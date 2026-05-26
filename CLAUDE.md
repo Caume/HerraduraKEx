@@ -23,6 +23,10 @@ SecurityProofsCode/                                 — standalone Python proof/
 SecurityProofs.md                                   — split index (redirects to SecurityProofs-1.md §1–§10 and SecurityProofs-2.md §11–§11.9; quantum analysis is in SecurityProofs-1.md §6)
 ```
 
+## Changelog and README Policy
+
+All notable changes are documented in `CHANGELOG.md` only.  Do **not** add version notes, release blurbs, or change summaries to `README.md`.  The README describes the current state of the project; the CHANGELOG tracks its history.  When a feature or fix is completed, add a new versioned entry to `CHANGELOG.md` and update the version number in the `README.md` title line — nothing else.
+
 ## Build Commands
 
 ### C

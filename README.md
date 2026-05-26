@@ -1,28 +1,6 @@
-# Herradura Cryptographic Suite (v1.8.8)
+# Herradura Cryptographic Suite (v1.8.9)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
-
-> **v1.4.0 note:** The original HKEX key exchange (based directly on FSCX_REVOLVE) was classically broken — the shared secret was directly computable from the two public wire values alone. v1.4.0 replaced it with **HKEX-GF**, a standard Diffie-Hellman construction over the multiplicative group of GF(2^n). See `SecurityProofs-1.md §3` for the formal proof.
->
-> **v1.5.0 note:** FSCX is GF(2)-linear, making HSKE vulnerable to linear key-recovery attacks, and HKEX-GF is broken by Shor's algorithm. v1.5.0 adds **NL-FSCX** (non-linear extension breaking GF(2)-linearity and orbit periods) and **HKEX-RNL** (Ring-LWR key exchange conjectured quantum-resistant). See `SecurityProofs-1.md §6` (quantum analysis) and `SecurityProofs-2.md §11` (NL/PQC proofs) for analysis.
->
-> **v1.8.8 note:** `herradura.h` C23/GCC 13+ compatibility fix — `ATOMIC_VAR_INIT` (deprecated in C17, removed in C23) replaced with direct `= 0` initialisation; no API change.
->
-> **v1.8.7 note:** N=128 `HPKS-Stern-F` implementation in C (`__uint128_t`, T=8, 64 parity-check rows, rounds=8); all benchmark tables now cover all four sizes (32/64/128/256-bit) across C, Go, and Python.
->
-> **v1.8.3 note:** Comprehensive cryptographic concepts primer (`docs/INTRODUCTION.md`) — plain-language guide to all core concepts (GF(2^n), FSCX, DH, Schnorr, El Gamal, quantum threats, Ring-LWR, Stern ZKP) with toy examples, verified references, and cross-links to TUTORIAL.md and the SecurityProofs documents.
->
-> **v1.7.4 note:** Developer integration tutorial (`docs/TUTORIAL.md`) — per-protocol API recipes in C, Go, and Python; `herradura.h` Protocol Layer wrappers; public Python aliases `hkex_rnl_keygen`/`hkex_rnl_agree`; runnable examples in `docs/examples/`. Full CSPRNG and constant-time audit (SA-01–SA-09): nine findings resolved across all six language targets.
->
-> **v1.5.40 note:** Constant-time audit (TODO #41): `stern_apply_perm` / `SternApplyPerm` made branchless across all targets (C, Go, ARM Thumb-2, NASM i386, Arduino) using arithmetic mask `-(bit)` to eliminate data-dependent branches that leaked the Hamming weight of secret error vectors. Python reference implementation documented as non-CT; `SecurityProofsCode/stern_ct_demo.py` added to demonstrate the timing correlation empirically.
->
-> **v1.5.23 note:** HerraduraCli — an OpenSSL-style Python CLI (`HerraduraCli/`) exposing all non-broken Herradura protocols via `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, and `verify` subcommands. Keys and ciphertexts use PEM-wrapped minimal DER. A `CliTest/` shell test suite covers key generation, encrypt/decrypt round-trips, sign/verify, and HKEX-GF/HKEX-RNL key-agreement correctness.
->
-> **v1.5.22 note:** NASM i386 HKEX-RNL now produces correct non-zero session keys (triple-division bug in `rnl_round` fixed). `rnl_cbd_poly` reads 4 coefficients per byte for η=1 (was 1 byte/coeff, discarding 75% of entropy). Go test [14] HKEX-RNL expanded from n∈{32,64} to n∈{32,64,128,256}, matching C and Python test coverage.
->
-> **v1.5.20 note:** Python tests and suite expanded to cover all four standard key sizes (32, 64, 128, 256 bits) for GF, HKEX-RNL, and Stern-F protocols. `hpke_stern_f_decap` now supports a known-e' fast path in addition to brute-force; N=256 HPKE-Stern-F demo added to the Python suite. C test [17] loops {32,64,256} and test [18] covers N=32 brute-force and N=64 known-e'. C suite now demos both N=32 brute-force and N=256 known-e' for HPKE-Stern-F. `bn_*` parameterised big-endian arithmetic layer added to C tests, extending Schnorr and HPKS-NL tests to 256-bit. NTT inner loops now use Fermat-prime fast modulo (`rnl_mulmodq`/`rnlMulModQ`), eliminating hardware divides in the HKEX-RNL hot path (+17.6% on n=32 in C).
->
-> **v1.5.18 note:** HPKS-NL and HPKE-NL remain quantum-vulnerable because their security still depends on the GF(2^n)* discrete-log base that Shor's algorithm breaks. v1.5.18 adds **HPKS-Stern-F** (Fiat-Shamir Stern ZKP signature) and **HPKE-Stern-F** (Niederreiter KEM), whose security reduces to Syndrome Decoding (NP-complete) and the NL-FSCX v1 PRF. See `SecurityProofs-2.md §11.8.4` for the formal reduction (Theorem 17).
 
 ---
 
@@ -156,7 +134,7 @@ arduino-cli compile --fqbn arduino:avr:uno CryptosuiteTests/Herradura_tests.ino
 
 ---
 
-# Performance (v1.8.8, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
+# Performance (v1.8.9, Orange Pi 5 — RK3588, Cortex-A76 @ 2.4 GHz)
 
 Benchmarks from `CryptosuiteTests/Herradura_tests.{c,go,py}` with `-t 1.5`.
 Columns correspond to operand bit-width; for HKEX-RNL the column header is the ring degree $n$.
