@@ -2,7 +2,7 @@
 
 This guide shows how to use the Herradura suite as a library in your own C, Go, or Python project.
 
-The suite implements four protocol families:
+The suite implements four protocol families plus a hash primitive:
 
 | Protocol | Classical | NL/PQC variant | Code-based PQC |
 |----------|-----------|----------------|----------------|
@@ -10,6 +10,7 @@ The suite implements four protocol families:
 | Symmetric encryption | HSKE | HSKE-NL-A1, HSKE-NL-A2 | — |
 | Schnorr signature | HPKS | HPKS-NL | HPKS-Stern-F |
 | El Gamal encryption | HPKE | HPKE-NL | HPKE-Stern-F |
+| Hash / MAC | — | HFSCX-256 | — |
 
 **Security note:** The classical protocols (HKEX-GF, HSKE, HPKS, HPKE) are vulnerable to quantum
 attacks. Use the NL/PQC or code-based variants for new deployments. See [Security notes](#security-notes).
@@ -111,6 +112,33 @@ hpke_encrypt(&plaintext,  &alice_pub,  &R_ephem, &ciphertext, urnd);
 hpke_decrypt(&ciphertext, &R_ephem, &alice_priv, &recovered);
 ```
 
+### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+
+Counter-mode stream cipher based on NL-FSCX v1.  A fresh random nonce must be
+transmitted alongside the ciphertext so the recipient can reproduce the keystream.
+
+```c
+BitArray key;       /* 256-bit key (e.g. from HKEX-GF or HKEX-RNL) */
+BitArray plaintext;
+BitArray N_a1, base_a1, seed_a1, ks, ciphertext, recovered;
+
+ba_rand(&key, urnd);
+ba_rand(&plaintext, urnd);
+
+ba_rand(&N_a1, urnd);                        /* fresh per-session nonce     */
+ba_xor(&base_a1, &key, &N_a1);              /* session base = K XOR N      */
+ba_rnl_kdf_seed(&seed_a1, &base_a1);         /* seed = ROL(base,n/8) XOR DC */
+
+/* Counter = 0 for first block; XOR counter into base_a1 for subsequent blocks */
+nl_fscx_revolve_v1_ba(&ks, &seed_a1, &base_a1, I_VALUE);  /* keystream block 0 */
+ba_xor(&ciphertext, &plaintext, &ks);       /* encrypt */
+ba_xor(&recovered,  &ciphertext, &ks);      /* decrypt */
+/* ba_equal(&plaintext, &recovered) == 1 */
+
+explicit_bzero(&seed_a1, sizeof(seed_a1));
+explicit_bzero(&base_a1, sizeof(base_a1));
+```
+
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
 
 ```c
@@ -157,6 +185,27 @@ BitArray msg;
 ba_rand(&msg, urnd);
 hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);           /* sign   */
 int ok = hpks_stern_f_verify(&sig, &msg, &seed, syndr);   /* verify */
+```
+
+### HFSCX-256 hash and MAC
+
+Merkle-Damgård hash built on NL-FSCX v1; returns 32 bytes.  Pass `iv = NULL`
+for a bare digest; pass `iv = key XOR _HFSCX256_IV` for a keyed MAC.
+
+```c
+#include <string.h>
+
+const uint8_t msg[] = "hello";
+uint8_t digest[KEYBYTES];
+
+/* Bare hash */
+hfscx_256(msg, sizeof msg - 1, NULL, digest);
+
+/* Keyed MAC: iv = key XOR _HFSCX256_IV */
+uint8_t mac_iv[KEYBYTES];
+for (int i = 0; i < KEYBYTES; i++)
+    mac_iv[i] = alice_shared.b[i] ^ _HFSCX256_IV[i];
+hfscx_256(msg, sizeof msg - 1, mac_iv, digest);
 ```
 
 ### Complete runnable example
@@ -234,6 +283,24 @@ recovered  := FscxRevolve(ciphertext, aliceShared, rValue)
 /* plaintext.Equal(recovered) */
 ```
 
+### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+
+```go
+import "math/big"
+
+key       := NewRandBitArray(n)
+plaintext := NewRandBitArray(n)
+
+nA1    := NewRandBitArray(n)
+baseA1 := NewBitArray(n, new(big.Int).Xor(&key.Val, &nA1.Val))
+bA1    := NewBitArray(n, new(big.Int).Xor(&baseA1.Val, big.NewInt(0))) /* counter = 0 */
+ks     := NlFscxRevolveV1(RnlKdfSeed(baseA1), bA1, n/4)
+ct     := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ks.Val))
+dec    := NewBitArray(n, new(big.Int).Xor(&ct.Val, &ks.Val))
+/* dec.Equal(plaintext) */
+/* Transmit nA1 alongside ct so the recipient can reproduce the keystream. */
+```
+
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
 
 ```go
@@ -259,6 +326,23 @@ seed, e, syn := SternFKeygen(n)
 msg := NewRandBitArray(n)
 sig := HpksSternFSign(msg, e, seed, SdfRounds)
 ok  := HpksSternFVerify(msg, sig, seed, syn)
+```
+
+### HFSCX-256 hash and MAC
+
+```go
+data := []byte("hello")
+
+/* Bare hash */
+digest := Hfscx256(data, nil)
+
+/* Keyed MAC: iv = key XOR Hfscx256IV */
+keyBytes := aliceShared.Bytes()
+macIV := make([]byte, 32)
+for i := range macIV {
+    macIV[i] = keyBytes[i] ^ Hfscx256IV[i]
+}
+mac := Hfscx256(data, macIV)
 ```
 
 ### Complete runnable example
@@ -316,6 +400,22 @@ recovered  = h.fscx_revolve(ciphertext, alice_shared, h.R_VALUE)
 assert plaintext == recovered
 ```
 
+### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+
+```python
+key   = h.BitArray.random(n)
+nonce = h.BitArray.random(n)
+pt    = h.BitArray.random(n)
+
+base  = h.BitArray(n, key.uint ^ nonce.uint)
+seed  = h.BitArray(n, base.rotated(n // 8).uint ^ h._RNL_KDF_DC_256)
+ks    = h.nl_fscx_revolve_v1(seed, h.BitArray(n, base.uint ^ 0), n // 4)  # counter=0
+ct    = h.BitArray(n, pt.uint ^ ks.uint)
+dec   = h.BitArray(n, ct.uint ^ ks.uint)
+assert dec == pt
+# Transmit nonce alongside ct so the recipient can reproduce the keystream.
+```
+
 ### HSKE-NL-A2 symmetric encryption (NL/PQC)
 
 ```python
@@ -353,6 +453,19 @@ seed, e_int, syndrome = h.stern_f_keygen(n)
 msg = h.BitArray.random(n)
 sig = h.hpks_stern_f_sign(msg, e_int, seed, syndrome, n)
 ok  = h.hpks_stern_f_verify(msg, sig, seed, syndrome, n)
+```
+
+### HFSCX-256 hash and MAC
+
+```python
+data = b"hello"
+
+# Bare hash
+digest = h.hfscx_256(data)
+
+# Keyed MAC: iv = key XOR IV
+mac_iv = h.BitArray(n, alice_shared.uint ^ int.from_bytes(h._HFSCX256_IV_BYTES, 'big'))
+mac = h.hfscx_256(data, iv=mac_iv)
 ```
 
 ### NumPy acceleration
@@ -403,6 +516,18 @@ See [`docs/examples/python/hello_herradura.py`](examples/python/hello_herradura.
 | HPKS-Stern-F | SD(N,t) + NL-FSCX v1 PRF | Demo params (rounds=32); production needs rounds≥219 |
 | HPKE-Stern-F | SD(N,t) | Demo only; decap requires QC-MDPC decoder for production |
 
+### Hash primitive
+
+| Primitive | Hard problem | Output |
+|-----------|-------------|--------|
+| HFSCX-256 | NL-FSCX v1 one-wayness | 256 bits (32 bytes) |
+
+Merkle-Damgård construction: each 32-byte message block is fed through
+`nl_fscx_revolve_v1(state, block, 64)` with the previous state as the chaining
+variable.  ISO 7816-4 padding appends `0x80` then zeros to a 32-byte boundary,
+followed by a length block.  The domain IV is the 32-byte ASCII string
+`HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0`.
+
 ### C high-level wrappers (added in v1.7.4)
 
 ```c
@@ -444,9 +569,13 @@ int  hpks_stern_f_verify (const SternSig *sig, const BitArray *msg,
 | RLWR reconciliation pp | `RNL_PP` | `RnlPP` | `RNLPP` | 4 |
 | RLWR polynomial degree | `RNL_N` | (= key bits) | (= `KEYBITS`) | 256 |
 | RLWR secret distribution | `RNL_ETA` | — | `RNLB` | 1 (CBD) |
-| Stern error weight | `SDF_T` | `SdfT` | `SDFT` | 16 |
-| Stern ZKP rounds (demo) | `SDF_ROUNDS` | `SdfRounds` | `SDFR` | 32 |
+| Stern error weight | `SDF_T` | `SdfT` | `SDFT` | 16 (N=256; T=N/16) |
+| Stern ZKP rounds (demo) | `SDF_ROUNDS` | `SdfRounds` | `SDFR` | 32 (N=256) |
 | GF generator | `GF_GEN` (BitArray) | `GfGen = 3` | `GF_GEN = 3` | 3 |
+| HFSCX-256 domain IV | `_HFSCX256_IV[32]` | `Hfscx256IV` | `_HFSCX256_IV_BYTES` | `b'HFSCX-256/HERRADURA-SUITE\x00…'` |
+
+Stern-F parameters scale with N: T = N/16, rows = N/4.  C/Go/Python support
+N ∈ {32, 64, 128, 256}; assembly and Arduino targets are fixed at N=32 (T=2, rounds=4).
 
 ---
 
@@ -463,6 +592,12 @@ models that exclude quantum adversaries.
 
 ### NL/PQC protocols (HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL)
 
+- **HKEX-GF / HKEX-RNL raw shared secret:** The raw output of `hkex_gf_agree`
+  (a GF(2^n) element) and `rnl_agree` (a Ring-LWR reconciliation value) both
+  retain algebraic structure and non-uniform bit distribution.  Post-hash through
+  HFSCX-256 before using the value as a symmetric key.  In the CLI, pass
+  `--kdf hfscx-256` to `kex`; in library code call `hfscx_256` / `Hfscx256` /
+  `hfscx_256` directly.  Both parties must apply the same step.
 - **HKEX-RNL** is conjectured quantum-resistant, based on Ring-LWR hardness.
   It has not been formally reduced from NIST-standardised parameters.
 - **HKEX-RNL unauthenticated hint:** The Peikert reconciliation hint vector
