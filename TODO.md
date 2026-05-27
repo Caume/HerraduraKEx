@@ -3973,4 +3973,4 @@ In §3.3 HKEX-GF and §9 HKEX-RNL, add a brief note after each "shared secret" d
 
 **Files to modify:** `docs/INTRODUCTION.md`
 
-Status: **OPEN**
+Status: **DONE** — Part 4.5 (HFSCX-256 conceptual explanation: Merkle-Damgård construction, NL-FSCX v1 as compression function, keyed MAC, AEAD) inserted between Part 4 and Part 5; KDF derivation notes added to §3.3 and §9.4; HFSCX-256 row added to Part 11.1 protocol table; two new decision-tree branches added to Part 11.2; four glossary entries added to Part 12 (Merkle-Damgård, MAC, AEAD, HFSCX-256).
