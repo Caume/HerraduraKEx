@@ -3794,3 +3794,183 @@ digest (keyed) : <64-char hex>
 **Side fixes:** `_encode_rnl_response` in `HerraduraCli/herradura.py` had a pre-existing bug where the hint was packed as `b << i` (overlapping 2-bit values at 1-bit offsets) with `hint_nb = (len(hint)+7)//8`, causing `OverflowError` when any hint coefficient was 2 or 3 at the last position; the encoder and decoder were inconsistent (decoder read only 1 bit per coefficient).  Fixed to use 2 bits per coefficient throughout: `(b & 3) << (2*i)`, `hint_nb = (2*len(hint)+7)//8`, `(hint_int>>(2*i))&3`.  Also fixed `_RNL_KDF_DC_256` missing from `HerraduraCli/primitives.py` (added alongside `_HFSCX256_IV_BYTES`).  All 79 CLI tests pass after both fixes (previously the HKEX-RNL cross-party test was a pre-existing FAIL).
 
 Status: **DONE** — HFSCX-256 demo block added to all three suite `main()` programs; `--kdf hfscx-256` flag added to `kex` in C, Go, and Python CLIs; pre-existing Python hint-encoding bug and missing `_RNL_KDF_DC_256` re-export fixed as side effects; all 79 CLI tests pass.
+
+---
+
+### 69. Update `docs/TUTORIAL.md` for HFSCX-256 API and multi-size Stern-F parameters (Documentation, Medium)
+
+**Motivated by:** v1.8.9 (HFSCX-256 first-class demo in all three suite programs; `--kdf hfscx-256` flag in `kex` CLI) and v1.8.7 (N=128 HPKS-Stern-F in C; multi-size benchmark coverage at 32/64/128/256 bits).
+
+**Background:** `docs/TUTORIAL.md` was written at v1.8.3 and covers all protocols but omits HFSCX-256 entirely.  Since v1.8.9 the hash is now explicitly demonstrated in the suite output, is available as a `--kdf` option in `kex`, and is accessible via the same public API surface as the other primitives (`herradura.h`, `herradura/herradura.go`, `Herradura cryptographic suite.py`).  The parameter reference table also misrepresents Stern-F as having fixed `SDF_T = 16` / `SDF_ROUNDS = 32`, whereas C now supports N=32 (T=2, rounds=4), N=64 (T=4, rounds=8), and N=128 (T=8, rounds=8) in addition to the N=256 default.
+
+**Required changes:**
+
+#### 1. Add `HFSCX-256` sections to each language integration block
+
+Show the bare hash and keyed MAC API immediately after the Stern-F examples.
+
+**C:**
+```c
+/* Bare hash */
+uint8_t digest[32];
+uint8_t msg[] = "HFSCX-256 test";
+hfscx_256(msg, sizeof msg - 1, NULL, digest);
+
+/* Keyed MAC: iv = key XOR _HFSCX256_IV */
+uint8_t mac_iv[KEYBYTES];
+for (int i = 0; i < KEYBYTES; i++)
+    mac_iv[i] = alice_shared.b[i] ^ _HFSCX256_IV[i];
+hfscx_256(msg, sizeof msg - 1, mac_iv, digest);
+```
+
+**Go (`herradura` package):**
+```go
+data := []byte("HFSCX-256 test")
+
+// Bare hash
+digest := Hfscx256(data, nil)
+
+// Keyed MAC: iv = key XOR Hfscx256IV
+iv := make([]byte, 32)
+for i := range iv { iv[i] = aliceShared.Bytes()[i] ^ Hfscx256IV[i] }
+mac := Hfscx256(data, iv)
+```
+
+**Python:**
+```python
+import h  # the suite module
+
+data = b"HFSCX-256 test"
+
+# Bare hash
+digest = h.hfscx_256(data)
+
+# Keyed MAC
+mac_iv = h.BitArray(h.KEYBITS, alice_shared.uint ^ int.from_bytes(h._HFSCX256_IV_BYTES, 'big'))
+mac = h.hfscx_256(data, iv=mac_iv)
+```
+
+#### 2. Add `--kdf hfscx-256` note to Security Notes
+
+In the NL/PQC protocols subsection, add a bullet:
+
+> **HKEX-GF / HKEX-RNL raw shared secret:** The raw output of `hkex_gf_agree` / `rnl_agree` has non-uniform bit distribution (GF element or LWR reconciliation value). Pass `--kdf hfscx-256` to the `kex` CLI subcommand to post-hash the secret through HFSCX-256, producing a uniformly random 256-bit session key. Both parties must use the same flag.
+
+#### 3. Update the parameter reference table
+
+Add HFSCX-256 constants:
+
+| Parameter | C | Go | Python | Value |
+|---|---|---|---|---|
+| HFSCX-256 IV | `_HFSCX256_IV[32]` | `Hfscx256IV` | `_HFSCX256_IV_BYTES` | `b'HFSCX-256/HERRADURA-SUITE\x00…'` |
+
+Update the Stern-F rows to reflect that `SDF_T` and `SDF_ROUNDS` scale with N; the table values (T=16, rounds=32) are the N=256 defaults. Add a note:
+
+> Stern-F parameters scale with N: T = N/16, rows = N/4. C supports N=32 (T=2, rounds=4), N=64 (T=4, rounds=8), N=128 (T=8, rounds=8), and N=256 (T=16, rounds=32). Go and Python support all four sizes. Assembly/Arduino: N=32 only.
+
+#### 4. Add HSKE-NL-A1 (counter-mode) examples to C and Python sections
+
+The C section currently shows no NL encryption examples; Python shows only HSKE-NL-A2.  HSKE-NL-A1 is the recommended non-linear stream cipher and its nonce handling is non-obvious.
+
+**C (add after HPKS example):**
+```c
+/* HSKE-NL-A1: counter-mode stream cipher with nonce */
+BitArray key, nonce, plaintext, ciphertext, recovered;
+ba_rand(&key, urnd);
+ba_rand(&nonce, urnd);
+ba_rand(&plaintext, urnd);
+
+hske_nl_a1_encrypt(&plaintext, &key, &nonce, &ciphertext);   /* session base = key XOR nonce */
+hske_nl_a1_decrypt(&ciphertext, &key, &nonce, &recovered);
+/* ba_equal(&plaintext, &recovered) == 1 */
+```
+
+**Python (add after HSKE-NL-A2 example):**
+```python
+key   = h.BitArray.random(n)
+nonce = h.BitArray.random(n)
+pt    = h.BitArray.random(n)
+base  = h.BitArray(n, key.uint ^ nonce.uint)
+seed  = base.rotated(n // 8)
+ct    = h.nl_fscx_revolve_v1(seed, h.BitArray(n, base.uint ^ 0), n // 4)  # counter=0
+dec   = h.nl_fscx_revolve_v1(seed, h.BitArray(n, base.uint ^ 0), n // 4)
+assert (pt.uint ^ ct.uint) == (ct.uint ^ dec.uint)  # XOR symmetry check
+```
+(Note: the suite wraps this in `hske_nl_a1_encrypt`; the raw call is shown here for clarity.)
+
+**Files to modify:** `docs/TUTORIAL.md`
+
+Status: **DONE** — HFSCX-256 sections (bare hash + keyed MAC) added to C, Go, and Python integration blocks; HSKE-NL-A1 counter-mode examples added to C, Go, and Python; hash primitive row added to protocol reference; parameter table updated with `_HFSCX256_IV` constants and Stern-F multi-size note; KDF security bullet added to Security Notes.
+
+---
+
+### 70. Update `docs/INTRODUCTION.md` for HFSCX-256 concepts (Documentation, Medium)
+
+**Motivated by:** v1.8.9 (HFSCX-256 is now a first-class primitive with suite demo output and CLI integration). `docs/INTRODUCTION.md` was written at v1.8.3 and makes no mention of HFSCX-256, Merkle-Damgård construction, or the AEAD streaming mode — all of which are part of the deployed suite.
+
+**Background:** A reader who runs any of the three suite programs now sees a `--- HFSCX-256 [HASH]` output block, but INTRODUCTION.md provides no conceptual grounding for what that means. The Part 11 suite table lists 11 protocols but omits HFSCX-256 as a hash primitive. The decision tree has no branch for "need to hash or MAC data". The glossary has no entries for Merkle-Damgård, MAC, or AEAD.
+
+**Required changes:**
+
+#### 1. Add HFSCX-256 conceptual explanation
+
+Insert as a new **Part 4.5** (between "FSCX and HSKE" and "Non-linearity") or as a subsection **§4.5** within Part 4, covering:
+
+- **Why a hash function is needed:** Raw DH shared secrets (e.g. GF elements from HKEX-GF) have algebraic structure — not all 256-bit values appear equally often. A hash "whitens" the output so that downstream protocols see a uniformly random key.
+- **Merkle-Damgård construction in plain English:** Split the message into 32-byte blocks. Start from a fixed IV. Feed each block through a compression function with the previous chaining value. Final state is the hash. One toy example: 3 blocks → compress(compress(compress(IV, B0), B1), B2).
+- **Why NL-FSCX v1 is used as the compression function:** It is already a one-way function (non-bijective in A); iterating it n/4 times provides enough diffusion. The fixed IV provides domain separation.
+- **Keyed MAC variant:** XOR the key into the initial chaining state (replace IV with `key XOR IV`). This ties the output to knowledge of the key.
+- **AEAD (HSKE-NL-A1-CTR):** Briefly mention that HFSCX-256 is used as the authentication tag in the streaming CTR-mode AEAD (`encfile` CLI command); the cipher provides confidentiality and the MAC provides integrity.
+- **Cross-reference:** → TUT §HFSCX-256 for API usage. → SP2 §11.2 for the NL-FSCX one-wayness argument.
+
+Toy example (2-block message):
+```
+IV    = HFSCX-256/HERRADURA-SUITE (fixed 32 bytes)
+B0    = first 32 bytes of message
+B1    = second 32 bytes (padded with 0x80… if needed)
+hash  = NL-FSCX-v1-revolve(NL-FSCX-v1-revolve(IV, B0, n/4), B1, n/4)
+```
+
+#### 2. Update Part 11.1 protocol reference table
+
+Add a row for HFSCX-256:
+
+| HFSCX-256 | Hash/MAC | NL-FSCX v1 one-wayness | Grover (halves collision resistance) | SP2 §11.2 | §HFSCX-256 |
+
+Adjust the table header to add a "Hash" column in the first column scope.
+
+#### 3. Update Part 11.2 decision tree
+
+Add a branch:
+```
+Need to hash data or authenticate a message?
+└── HFSCX-256 (bare digest) or HFSCX-256-MAC (keyed)
+```
+
+Also add under key exchange:
+```
+Need to derive a uniformly random key from a DH or Ring-LWR output?
+└── Post-hash with HFSCX-256 (--kdf hfscx-256 in CLI)
+```
+
+#### 4. Update Part 12 glossary
+
+Add four entries:
+
+- **Merkle-Damgård construction.** A way to build a hash function for arbitrary-length messages from a fixed-length compression function. The message is padded to a multiple of the block size, then each block is fed through the compression function together with the previous chaining value. The final chaining value is the hash. Used in MD5, SHA-1, and SHA-256; also the design of HFSCX-256.
+
+- **MAC (Message Authentication Code).** A keyed hash: both the message and a secret key are inputs, and only someone who knows the key can produce or verify the tag. Provides integrity and authenticity (but not non-repudiation). HFSCX-256-MAC uses the key as the initial chaining state.
+
+- **AEAD (Authenticated Encryption with Associated Data).** A mode that combines confidentiality (encryption) with integrity (a MAC over the ciphertext and any associated metadata). An attacker who tampers with the ciphertext causes decryption to fail before any plaintext is produced. HSKE-NL-A1-CTR with HFSCX-256-MAC implements AEAD for the `encfile` CLI command.
+
+- **HFSCX-256.** A 256-bit hash function built on NL-FSCX v1 as a Merkle-Damgård compression function, using the fixed IV `HFSCX-256/HERRADURA-SUITE`. Used as a KDF (post-hash for DH shared secrets), a MAC (keyed by XOR-ing the key into the IV), and an AEAD tag in streaming encryption.
+
+#### 5. Add KDF note to Part 3 (key exchange) and Part 9 (Ring-LWR)
+
+In §3.3 HKEX-GF and §9 HKEX-RNL, add a brief note after each "shared secret" description:
+
+> **Key derivation:** The raw shared secret `g^{ab}` (or the Ring-LWR reconciliation value) retains algebraic structure and should be post-hashed before use as a symmetric key. HFSCX-256 provides this step: `sk = HFSCX-256(raw_secret_bytes)`. In the CLI, pass `--kdf hfscx-256` to `kex` to apply this step automatically.
+
+**Files to modify:** `docs/INTRODUCTION.md`
+
+Status: **DONE** — Part 4.5 (HFSCX-256 conceptual explanation: Merkle-Damgård construction, NL-FSCX v1 as compression function, keyed MAC, AEAD) inserted between Part 4 and Part 5; KDF derivation notes added to §3.3 and §9.4; HFSCX-256 row added to Part 11.1 protocol table; two new decision-tree branches added to Part 11.2; four glossary entries added to Part 12 (Merkle-Damgård, MAC, AEAD, HFSCX-256).

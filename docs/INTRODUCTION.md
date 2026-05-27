@@ -263,6 +263,13 @@ gf_pow(0x03, ?) = 0x8F — the discrete logarithm in GF(2^8).  (Easily done for
 → TUT §HKEX-GF for API usage.
 → Part 8 of this document for the quantum threat.
 
+**Key derivation note:** The raw shared secret `sk` is a GF(2^n) element with
+non-uniform bit distribution — not all 256-bit values appear with equal probability.
+Before using it as a symmetric key, post-hash it through HFSCX-256 to produce a
+uniformly random 256-bit output: `final_key = HFSCX-256(sk_bytes)`.  In the CLI,
+`--kdf hfscx-256` on the `kex` subcommand applies this step automatically.
+See Part 4.5 for the construction.
+
 ### 3.4 Forward secrecy
 
 If Alice and Bob use fresh random values a, b for every session, a later compromise
@@ -377,6 +384,108 @@ the NL-FSCX mixing step is added to break the linearity; see Part 5.
 
 **Reference:** D. Stinson, *Cryptography: Theory and Practice*, 4th ed., CRC Press,
 2018, chapter 2 (stream ciphers and pseudo-randomness).
+
+---
+
+## Part 4.5 — HFSCX-256: a hash function from NL-FSCX
+
+### 4.5.1 Why the suite needs a hash function
+
+A good **hash function** takes input of any length and produces a fixed-size output
+that looks random — any change to the input produces a completely different output.
+Cryptographic hash functions are used for:
+
+- **Key derivation:** post-processing a raw DH shared secret to remove algebraic
+  structure (see the note at §3.3 and §9.4).
+- **Data integrity:** computing a digest so that any tampering is detectable.
+- **Message authentication (MAC):** mixing a secret key into the digest to prove both
+  integrity and knowledge of the key.
+- **Pre-hash signing:** reducing a large file to 32 bytes before signing with HPKS,
+  HPKS-NL, or HPKS-Stern-F (via `--digest hfscx-256` in the CLI).
+
+### 4.5.2 Merkle-Damgård construction in plain English
+
+Most standard hash functions (SHA-256, SHA-3's predecessors, MD5) are built on the
+**Merkle-Damgård (MD) construction**.  It converts a fixed-length **compression
+function** into a hash for messages of any length:
+
+1. **Pad** the message to a multiple of the block size.  HFSCX-256 uses ISO 7816-4
+   padding: append byte `0x80`, then zero bytes until the length is a multiple of
+   32 bytes, then append one final 32-byte block containing the original bit-length
+   (Merkle-Damgård strengthening).
+2. **Initialize** a 32-byte chaining variable from a fixed **IV** (initial value).
+3. **Chain** each 32-byte block through the compression function:
+   ```
+   state = compress(state, block)
+   ```
+4. The final state is the hash.
+
+**Toy 2-block example** (the message fits in one block after padding):
+
+```
+IV    = "HFSCX-256/HERRADURA-SUITE\x00\x00\x00\x00\x00\x00\x00"  (32 bytes, fixed)
+B₀    = padded message block  (0x80 + zeros fills to 32 bytes)
+B₁    = length block          (zeros || bit_length as 8-byte big-endian)
+
+state = compress(IV, B₀)
+hash  = compress(state, B₁)    ← final 32-byte digest
+```
+
+The length block prevents **length-extension attacks**: appending extra data to an
+existing message produces a different hash rather than extending the old one.
+
+**Reference:** I. Damgård, "A Design Principle for Hash Functions," *CRYPTO 1989*,
+LNCS 435, pp. 416–427.
+[(Springer)](https://doi.org/10.1007/0-387-34805-0_39)
+
+### 4.5.3 NL-FSCX v1 as the compression function
+
+**HFSCX-256** instantiates the Merkle-Damgård construction with NL-FSCX v1 as the
+compression function, iterated 64 steps (= n/4):
+
+```
+compress(state, block) = nl_fscx_revolve_v1(state, block, 64)
+```
+
+NL-FSCX v1 is already used as a one-way function in HPKS-NL and HKEX-RNL: recovering
+the input from the output requires inverting 64 steps of a non-linear mixing
+operation — a property that makes it a sound compression function.
+
+The IV is the ASCII constant `HFSCX-256/HERRADURA-SUITE` zero-padded to 32 bytes.
+Starting from a public, fixed IV means the hash is deterministic and domain-separated
+from other NL-FSCX v1 uses in the suite.
+
+The C, Go, and Python implementations share the same IV and chaining logic, so the
+same message produces byte-identical digests in all three languages.
+
+→ SP2 §11.2 for the NL-FSCX v1 one-wayness argument.
+→ TUT §HFSCX-256 for API usage (bare hash and keyed MAC examples).
+
+### 4.5.4 Keyed MAC variant
+
+XOR the secret key into the IV before chaining:
+
+```
+mac_iv = key XOR IV
+hash   = HFSCX-256(message, initial_state = mac_iv)
+```
+
+The key binds the initial chaining state, making the output infeasible to compute
+without knowing the key.  It is also XOR'd into the Merkle-Damgård length block,
+preventing a fixed-point collapse where different keys could produce identical hashes
+for empty input.
+
+### 4.5.5 AEAD: authenticated encryption for files
+
+The `encfile`/`decfile` CLI commands combine HSKE-NL-A1 counter-mode encryption
+with HFSCX-256-MAC to form an **AEAD** (Authenticated Encryption with Associated
+Data) scheme named HSKE-NL-A1-CTR:
+
+1. Encrypt each 32-byte block with a keystream from NL-FSCX v1 (counter mode).
+2. Append an HFSCX-256-MAC tag over the nonce, plaintext length, and entire ciphertext.
+
+Decryption verifies the tag *before* producing any plaintext — a single tampered byte
+causes the tag check to fail and nothing is returned.
 
 ---
 
@@ -771,6 +880,10 @@ finalises the shared secret:
   sk   = nl_fscx_revolve_v1(seed, kA, n/4)
 ```
 
+Alternatively, post-hash the raw reconciled value through HFSCX-256 for a
+well-defined, uniform 256-bit key: `sk = HFSCX-256(kA_bytes)`.  In the CLI, pass
+`--kdf hfscx-256` to `kex`; both parties must use the same flag.  See Part 4.5.
+
 **Reference:** C. Peikert, "Lattice Cryptography for the Internet," *SCN 2014*, LNCS
 8642, pp. 197–219 (introduces the 1-bit reconciliation used here).
 [(Springer)](https://doi.org/10.1007/978-3-319-10879-7_11)
@@ -920,6 +1033,7 @@ For a modern code-based signature, see NIST FIPS 205 (SLH-DSA / SPHINCS+), 2024.
 | HPKE-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP1 §11.8 | §HPKE-NL |
 | HPKS-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8 | §HPKS-Stern |
 | HPKE-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8.2 | §HPKE-Stern |
+| HFSCX-256 | Hash / MAC | NL-FSCX v1 one-wayness | Grover only (halves collision resistance) | SP2 §11.2 | §HFSCX-256 |
 
 ### 11.2 Decision tree: which protocol should I use?
 
@@ -927,6 +1041,9 @@ For a modern code-based signature, see NIST FIPS 205 (SLH-DSA / SPHINCS+), 2024.
 Need to exchange a key?
 ├── Quantum safety required → HKEX-RNL
 └── Classical only (legacy/constrained device) → HKEX-GF
+
+Need to derive a uniform symmetric key from a DH or Ring-LWR exchange?
+└── Post-hash with HFSCX-256 (--kdf hfscx-256 in CLI, or call hfscx_256 directly)
 
 Need to encrypt data symmetrically?
 ├── Post-quantum + non-linear → HSKE-NL-A1 (stream) or HSKE-NL-A2 (permutation)
@@ -941,6 +1058,9 @@ Need public-key (asymmetric) encryption?
 ├── Code-based PQC → HPKE-Stern-F
 ├── NL/PQC → HPKE-NL
 └── Classical → HPKE
+
+Need to hash data or authenticate a message?
+└── HFSCX-256 (bare digest) or HFSCX-256-MAC (keyed: iv = key XOR IV)
 ```
 
 ### 11.3 What the security proofs prove vs. what they assume
@@ -1057,6 +1177,29 @@ to generate small secret polynomial coefficients with low noise.
 **Peikert reconciliation.** A 1-bit-per-coefficient hint that lets two parties whose
 Ring-LWR values are close (but not equal due to rounding) agree on exactly the same
 bit string.
+
+**Merkle-Damgård construction.** A method for building a hash function for arbitrary-length
+messages from a fixed-length compression function.  The message is padded to a multiple
+of the block size; each block is fed through the compression function together with the
+previous chaining value; the final chaining value is the hash.  Adding a length block at
+the end prevents length-extension attacks.  Used in MD5, SHA-1, SHA-256, and HFSCX-256.
+
+**MAC (Message Authentication Code).** A keyed hash: both the message and a secret key
+are inputs, and only someone who knows the key can produce or verify the tag.  Provides
+integrity and authenticity (but not non-repudiation, since the key is shared).
+HFSCX-256-MAC is computed by XOR-ing the key into the hash IV before chaining.
+
+**AEAD (Authenticated Encryption with Associated Data).** A mode that combines
+confidentiality (encryption) with integrity (a MAC over the ciphertext and any
+associated metadata).  An attacker who tampers with the ciphertext causes decryption
+to fail before any plaintext is produced.  HSKE-NL-A1-CTR with HFSCX-256-MAC
+implements AEAD for the `encfile`/`decfile` CLI commands.
+
+**HFSCX-256.** A 256-bit hash function built on NL-FSCX v1 as a Merkle-Damgård
+compression function, using the fixed IV `HFSCX-256/HERRADURA-SUITE\x00…`.  Used as
+a KDF (post-hash for DH shared secrets), a MAC (keyed via IV XOR key), and an AEAD
+authentication tag in streaming file encryption.  Output is 32 bytes, identical across
+the C, Go, and Python implementations.
 
 ---
 
