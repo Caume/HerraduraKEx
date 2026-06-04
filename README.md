@@ -36,7 +36,7 @@ HKEX-GF is a standard Diffie-Hellman key exchange over the multiplicative group 
 | 32  | $x^{32}+x^{22}+x^2+x+1$ (`0x00400007`) | demo only |
 | 64  | $x^{64}+x^4+x^3+x+1$ (`0x1B`) | ~40 bits |
 | 128 | $x^{128}+x^7+x^2+x+1$ (`0x87`) | ~60–80 bits |
-| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | ~128 bits (recommended) |
+| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | ~80–90 bits (FFS L[1/3]; deprecated NIST/ENISA — see §9.2.4) |
 
 ---
 

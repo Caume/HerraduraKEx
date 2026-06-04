@@ -4059,3 +4059,93 @@ Status: **DONE** (2026-06-03)
 | HFSCX-256 | No new generic Merkle-Damgård attacks beyond known length-extension / multi-collision. No published cryptanalysis of NL-FSCX v1 compression function. | No new threat; collision bound 2^128 remains valid. | None. |
 | Quantum algorithms | NIST SP 800-235 draft (2024) is the current reference. No new speedups beyond Grover / BKZ-hybrid through 2025. No quantum speedup for syndrome decoding beyond √-speedup for ISD. | Grover halving for symmetric primitives unchanged. Shor still breaks all GF(2^n)* DLP. BKZ-quantum hybrid for lattices unchanged at ~core-SVP. | None. |
 
+---
+
+### 72. Davies-Meyer feed-forward for HFSCX-256 (Security/Correctness, Low)
+
+**Rationale:** The deployed compression function $C(s, m) = F_1^{64}(s, m)$ lacks a
+Davies-Meyer feed-forward.  The Davies-Meyer variant $C_{\text{DM}}(s, m) = F_1^{64}(s, m)
+\oplus s$ provides provable fixed-point hardness and free-start collision hardness that the
+current construction lacks (§11.9.8).  The three prerequisites for bundling this change —
+TODO #37 (`_rnl_lift` centered rounding), TODO #38 (KDF domain constant), and TODO #39
+(2-bit Peikert reconciliation) — are all DONE, removing the last stated blocker.
+
+**Scope:**
+- Add XOR feed-forward to the `F_1^{64}` compression step in HFSCX-256 across all six
+  language targets (Python, C, Go, ARM, i386, Arduino).
+- Update `SecurityProofsCode/hfscx_256_analysis.py` tests that measure fixed-point counts
+  and collision rates.
+- Bump the construction name to `HFSCX-256-DM` and update §11.9.1 compression-function
+  definition in SecurityProofs-2.md.
+- This is a **wire-format breaking change**: all existing HFSCX-256 digests, pre-hashed
+  signatures, and AEAD tags become incompatible.  Plan for a version bump and migration
+  note in CHANGELOG.md.
+
+**Security gain:** Aligns with PGV-1 (one of the 12 provably-secure Davies-Meyer-family
+compression functions [Black-Rogaway-Shrimpton 2002]).  Fixed-point hardness: finding
+$s$ with $F_1^{64}(s, m) = 0$ requires $\Omega(2^{n/2})$ work (preimage of zero under A2).
+
+**Suggested approach:** Implement and test in a single batch across all targets; bundle
+with any other breaking wire-format changes scheduled for v2.0.
+
+Status: **PENDING**
+
+---
+
+### 73. Per-slot domain-separation tags for Assembly/Arduino Stern-F (Security, Low)
+
+**Rationale:** The 256-bit language targets (Python, C, Go) carry per-slot DS tags
+(ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key) through the
+`_stern_hash` / `stern_hash` / `SternHash` functions, providing independent random oracles
+for each commitment slot as required by Unruh's QROM Fiat-Shamir transform (§11.9.9,
+TODO #36 — DONE v1.6.1).
+
+The 32-bit ARM/i386/Arduino toy-demo implementations (`stern_hash1_32`, `stern_hash2_32`)
+currently use structural distinctness (different item counts) instead of explicit DS tags.
+At n=32 this limits same-slot collision probability to $\leq 2^{-32}$ — negligible for
+toy parameters — but it leaves a gap relative to the full QRO argument.
+
+**Scope:**
+- Add a `ds` parameter to `stern_hash1_32` and `stern_hash2_32` in the ARM
+  (`Herradura cryptographic suite.s`, `CryptosuiteTests/Herradura_tests.s`),
+  i386 (`.asm` equivalents), and Arduino (`.ino`) implementations.
+- Pass ds=1/2/3/4 at each call site (commit, verify, KEM encap/decap).
+- Verify sign+verify and encap+decap still pass for the n=32 demo after the change.
+
+**Note:** This is a hardening item for the toy demo; it does not affect the n=256
+production targets.  No wire-format change for the 256-bit targets.
+
+Status: **PENDING**
+
+---
+
+### 74. NL-FSCX v1 OWF — independent cryptanalysis required before production deployment (Research, High)
+
+**Rationale:** Both Option A (HPKS-WOTS-F, Theorem 16) and Option B (HPKS/HPKE-Stern-F,
+Theorem 17 PRF reduction) ultimately reduce security to the **NL-FSCX v1 one-way function
+assumption**: given $y = F_1^{64}(s, m)$ for known $m$, recovering $s$ requires
+$\Omega(2^{n/2})$ work.  This assumption is **new** and has not been reduced to a studied
+hard problem (§11.8.3, honest limitation).  Corollary 2 rules out Gröbner-basis algebraic
+attacks; the degree-saturation argument (Theorem 13) and exhaustive Walsh evidence at small
+$n$ support the assumption — but they do not constitute a formal proof or external validation.
+
+**Scope:** This is a research task, not a code task.
+
+1. **Literature survey:** Search IACR ePrint, FSE/ToSC, and Crypto/Eurocrypt proceedings
+   for any published cryptanalysis of NL-FSCX v1 or structurally similar carry-injected
+   XOR-rotation primitives.
+2. **Dedicated cryptanalysis attempt:** Apply known techniques — algebraic degree analysis
+   beyond Theorem 13, differential/linear cryptanalysis, meet-in-the-middle on the carry
+   channel, SAT/MILP formulations — to $F_1^r$ for $r \in \{2, 4, 8, 16, 64\}$ at $n=32$.
+3. **Formal reduction (aspirational):** Attempt to reduce NL-FSCX v1 OWF to a known hard
+   problem (e.g., Learning Parity with Noise, approximate short integer solution, or a
+   bounded-carry variant of LWE).
+4. **Document findings** in SecurityProofs-2.md §11.8.3 and update Theorem 16's honest
+   limitation paragraph.
+
+**Risk:** Until external cryptanalysis validates or refutes the OWF assumption,
+HPKS-Stern-F / HPKE-Stern-F should be considered research-quality software.  BIKE and HQC
+(NIST alternates) rest on the quasi-cyclic syndrome decoding assumption, which has received
+far more external scrutiny.
+
+Status: **PENDING**
