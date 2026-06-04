@@ -4,6 +4,81 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.1] - 2026-06-04
+
+### Security — Per-slot domain-separation tags for Assembly/Arduino Stern-F (TODO #73)
+
+Added an explicit `ds` (domain-separation) parameter to `stern_hash1_32` and `stern_hash2_32` in all five 32-bit targets, closing the gap between the toy-demo and the full 256-bit QRO argument.
+
+**Change:** `ds` is XOR'd into the first item before the initial `nl_fscx_revolve_v1` call:
+
+```c
+// Before (structural distinctness only)
+stern_hash1_32(v):       nl(v, ROL(v,4), 8)
+stern_hash2_32(a, b):    nl(nl(a, ROL(a,4), 8) ^ b, ROL(b,4), 8)
+
+// After (explicit DS tag)
+stern_hash1_32(ds, v):   nl(ds^v, ROL(v,4), 8)
+stern_hash2_32(ds,a,b):  nl(nl(ds^a, ROL(a,4), 8) ^ b, ROL(b,4), 8)
+```
+
+Call-site DS values: c0=1, c1=2, c2=3, KEM key (encap+decap)=4.  Challenge hash uses ds=0 implicitly (the existing `stern_fs_challenges_32` accumulator is unchanged).
+
+**Files changed:**
+- `Herradura cryptographic suite.ino` — function signatures, all call sites
+- `Herradura cryptographic suite.s` (ARM) — function bodies (r0=ds, r1=v / r0=ds, r1=a, r2=b), all call sites
+- `CryptosuiteTests/Herradura_tests.s` (ARM tests) — identical
+- `Herradura cryptographic suite.asm` (i386) — function bodies (EAX=ds, EBX=v / EAX=ds, EBX=a, ECX=b), all call sites
+- `CryptosuiteTests/Herradura_tests.asm` (i386 tests) — identical
+- `TODO.md` — TODO #73 marked DONE v1.9.1
+
+**Testing:** i386 tests [11] HPKS-Stern-F sign+verify and [12] HPKE-Stern-F encap+decap both PASS under qemu-i386.
+
+---
+
+## [1.9.0] - 2026-06-04
+
+### Security — Davies-Meyer feed-forward for HFSCX-256-DM (TODO #72) ⚠ WIRE-FORMAT BREAKING
+
+**Summary:** The HFSCX-256 compression function is upgraded to the Davies-Meyer variant.  The construction is renamed HFSCX-256-DM.  All pre-v1.9.0 HFSCX-256 digests, pre-hashed signatures, and AEAD tags are **incompatible** with v1.9.0.
+
+**Change:** Every compression step now feeds the pre-compression state back in:
+
+```
+C_DM(s, m) = F_1^{64}(s, m) ⊕ s          (was: C(s, m) = F_1^{64}(s, m))
+```
+
+**Security gains** (see §11.9.8):
+- **Fixed-point hardness:** A fixed point now requires $F_1^{64}(s, m) = 0$ — a preimage of zero under A2, requiring $\Omega(2^{128})$ work. Previously only an empirical (non-provable) absence was known.
+- **Free-start collision hardness:** The DM structure rules out a structural speed-up from the non-bijectivity of $F_1$; free-start collisions are as hard as regular collisions under A1.
+- **PGV-1 alignment:** $C_{\text{DM}}$ is one of the 12 provably-secure PGV compression functions [BRS 2002, PGV 1993].
+
+**Files changed across all six language targets:**
+
+- `herradura.h` — `hfscx_256` compression loop: `BitArray prev = state` before each block, `ba_xor(&state, &state, &prev)` after.
+- `herradura/herradura.go` — `Hfscx256` compression loop: `prev := state.Copy()`, XOR back with `new(big.Int).Xor(&state.Val, &prev.Val)`.
+- `Herradura cryptographic suite.py` — `hfscx_256` loop: `prev = state`, `state = BitArray(n, state.uint ^ prev.uint)`.
+- `CryptosuiteTests/Herradura_tests.py` — self-contained copy of `hfscx_256` updated identically.
+- `Herradura cryptographic suite.ino` — `hfscx_32`: `prev = 0xA3C5E7B9UL; s = nl(prev,x,8)^prev; return nl(s,LB,8)^s`.
+- `Herradura cryptographic suite.s` (ARM) — `hfscx_32` extended to push `{r4, r5, lr}`, uses `r5` as prev register, adds two `eor` instructions.
+- `CryptosuiteTests/Herradura_tests.s` (ARM tests) — identical `hfscx_32` update.
+- `Herradura cryptographic suite.asm` (i386) — `hfscx_32` pushes/pops `edi`, uses it as prev, adds two `xor` instructions.
+- `CryptosuiteTests/Herradura_tests.asm` (i386 tests) — identical `hfscx_32` update.
+
+**KAV vectors updated** (C test [19], Go test [17], Python test [19]):
+- Empty `""` : `e7082e7f038a6e32e480b5f1d969ea2c19565d327defb0f8500f6fac8fe246cc`
+- `"a"` (0x61): `73b2d91bbdf0fc000de7cd16ac45d7f3f41be5609524dbeba30605a89d138ec5`
+- `"abc"` : `394e2176329b94f4f6704730a01083bec51a49584bbb54abf05e5fa19cd05bb2`
+- 33 × `"a"`: `49aee3b6126e44beff589d8288da6ec3f92f1f763368dfb85fb6b9664bc30adb`
+
+**SecurityProofsCode/hfscx_256_analysis.py §7** updated: fixed-point search now tests $F_1^{64}(s,m) = 0$ rather than $F_1^{64}(s,m) = s$.
+
+**SecurityProofs-2.md §11.9** updated throughout: construction name, §11.9.1 compression-function definition, §11.9.8 rewritten from "future work" to "DONE", §11.9.11 open hardenings list updated.
+
+**Files changed:** `herradura.h`, `herradura/herradura.go`, `Herradura cryptographic suite.{py,ino,s,asm}`, `CryptosuiteTests/Herradura_tests.{py,s,asm}`, `CryptosuiteTests/Herradura_tests.{c,go}`, `SecurityProofsCode/hfscx_256_analysis.py`, `SecurityProofs-1.md`, `SecurityProofs-2.md`, `TODO.md`, `CHANGELOG.md`, `README.md`.
+
+---
+
 ## [1.8.10] - 2026-06-03
 
 ### Documentation — Security proof corrections from landscape review (TODO #71)

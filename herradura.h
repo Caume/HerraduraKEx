@@ -549,7 +549,7 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * HFSCX-256: Merkle-Damgård hash on NL-FSCX v1 (v1.5.25)
+ * HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1, Davies-Meyer compression (v1.9.0)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 /* IV: "HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0" (32 bytes) */
@@ -580,7 +580,8 @@ static void ba_rnl_kdf_seed(BitArray *dst, const BitArray *k)
         dst->b[i] ^= _RNL_KDF_DC[i];
 }
 
-/* HFSCX-256: Merkle-Damgård hash built on NL-FSCX v1.
+/* HFSCX-256-DM: Merkle-Damgård hash built on NL-FSCX v1 with Davies-Meyer feed-forward.
+ * Compression: C_DM(s,m) = F_1^{64}(s,m) ⊕ s.
  * Bare hash: iv = NULL.  Keyed MAC: iv = key XOR _HFSCX256_IV (32 bytes). */
 static void hfscx_256(const uint8_t *data, size_t len,
                       const uint8_t *iv, uint8_t out[32])
@@ -615,10 +616,12 @@ static void hfscx_256(const uint8_t *data, size_t len,
             lb[24 + i] ^= (uint8_t)((bit_len >> (56 - 8 * i)) & 0xFF);
     }
 
-    /* Chain each 32-byte block through 64 steps of NL-FSCX v1 */
+    /* Chain each 32-byte block: C_DM(s,m) = F_1^{64}(s,m) ⊕ s (Davies-Meyer) */
     for (off = 0; off < padded_len; off += 32) {
+        BitArray prev = state;
         memcpy(block.b, padded + off, 32);
         nl_fscx_revolve_v1_ba(&state, &state, &block, 64);
+        ba_xor(&state, &state, &prev);
     }
 
     memcpy(out, state.b, 32);

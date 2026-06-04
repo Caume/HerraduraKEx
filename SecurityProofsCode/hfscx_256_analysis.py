@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hfscx_256_analysis.py — Empirical security tests for HFSCX-256 (TODO #34, §11.9).
+hfscx_256_analysis.py — Empirical security tests for HFSCX-256-DM (TODO #34/#72, §11.9).
 
   §1  Avalanche on input bit flips                    (ideal mean = 128 / 256)
   §2  Avalanche on key bit flips (keyed MAC mode)     (ideal mean = 128 / 256)
@@ -231,29 +231,27 @@ def section6(trials: int = 1_000) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 def section7(trials: int = 200) -> None:
     print(SEP)
-    print(f"§7 — Fixed-point search on C(s, m) = F1^64(s, m)  "
+    print(f"§7 — Fixed-point search on C_DM(s, m) = F1^64(s, m) ⊕ s  "
           f"({trials} (s, m) pairs)")
     print(SEP)
-    print("    Searches for s, m with C(s, m) == s. Plain MD without Davies-")
-    print("    Meyer feed-forward is theoretically vulnerable to fixed points;")
-    print("    empirically they should be rare for random (s, m).")
+    print("    With Davies-Meyer compression (deployed v1.9.0), a fixed point")
+    print("    requires F1^64(s, m) = 0 — a preimage of zero under A2, costing")
+    print("    Ω(2^128) work.  We search for this condition directly.")
     fps = 0
-    near_fps = 0  # within 1 bit
+    near_fps = 0  # within 1 bit (F1^64(s,m) has ≤1 bit set)
     t0 = time.monotonic()
     for _ in range(trials):
         s = BitArray(256, int.from_bytes(os.urandom(32), 'big'))
         m = BitArray(256, int.from_bytes(os.urandom(32), 'big'))
         out = nl_fscx_revolve_v1(s, m, 64)
-        if out.uint == s.uint:
+        if out.uint == 0:
             fps += 1
-        elif bin(out.uint ^ s.uint).count('1') <= 1:
+        elif bin(out.uint).count('1') <= 1:
             near_fps += 1
     elapsed = time.monotonic() - t0
-    print(f"  Exact fixed points     : {fps}/{trials}    (expected: 0)")
-    print(f"  Near-fixed (≤1 bit)    : {near_fps}/{trials}  (expected ≈ 0)")
-    print(f"  Note: a Davies-Meyer compression C_DM(s, m) = C(s, m) ⊕ s would")
-    print(f"        require F1^64(s, m) = 0 for a fixed point — strictly harder.")
-    print(f"  Time                   : {elapsed:.1f} s")
+    print(f"  F1^64(s,m)==0 (fixed pts): {fps}/{trials}    (expected: 0)")
+    print(f"  Near-zero (≤1 bit set)   : {near_fps}/{trials}  (expected ≈ 0)")
+    print(f"  Time                     : {elapsed:.1f} s")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -262,7 +260,7 @@ def section7(trials: int = 200) -> None:
 def main() -> None:
     full = '--full' in sys.argv
     print()
-    print("hfscx_256_analysis.py — HFSCX-256 empirical security tests")
+    print("hfscx_256_analysis.py — HFSCX-256-DM empirical security tests")
     print(f"  Backs SecurityProofs.md §11.9 (TODO #34)")
     print()
     section1()

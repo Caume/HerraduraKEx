@@ -1794,53 +1794,61 @@ rnl_agree_recv:
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* hfscx_32: r0=x -> r0=hfscx_32(x)  (TODO #43, v1.6.0)             */
-/* s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799    */
+/* hfscx_32: r0=x -> r0=hfscx_32(x)  (DM, v1.9.0)                   */
+/* C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799              */
+/* s=nl(IV,x,8)^IV; return nl(s,LB,8)^s                              */
 /* ------------------------------------------------------------------ */
     .thumb_func
 hfscx_32:
-    push    {r4, lr}
+    push    {r4, r5, lr}
     mov     r4, r0
-    ldr     r0, .LHIV2
-    mov     r1, r4
+    ldr     r5, .LHIV2          @ r5 = IV_32 (prev for block 1)
+    ldr     r0, .LHIV2          @ A = IV_32
+    mov     r1, r4              @ B = x
     mov     r2, #8
-    bl      nl_fscx_revolve_v1
-    ldr     r1, .LHLB2
+    bl      nl_fscx_revolve_v1  @ r0 = nl(IV, x, 8)
+    eor     r0, r0, r5          @ s = result ^ IV  (DM block 1)
+    mov     r5, r0              @ r5 = s  (prev for block 2)
+    ldr     r1, .LHLB2          @ B = LB
     mov     r2, #8
-    bl      nl_fscx_revolve_v1
-    pop     {r4, pc}
+    bl      nl_fscx_revolve_v1  @ r0 = nl(s, LB, 8)
+    eor     r0, r0, r5          @ result ^ s  (DM block 2)
+    pop     {r4, r5, pc}
 .LHIV2: .word 0xA3C5E7B9
 .LHLB2: .word 0xA3C5E799
 
 /* ------------------------------------------------------------------ */
-/* stern_hash1_32: r0=v -> r0=sternHash(v)                            */
+/* stern_hash1_32: r0=ds, r1=v -> r0=sternHash(ds,v)                 */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash1_32:
-    push    {lr}
-    ror     r1, r0, #28
+    push    {r4, lr}
+    ror     r4, r1, #28         @ r4 = ROL(v,4)
+    eor     r0, r0, r1          @ r0 = ds ^ v
+    mov     r1, r4              @ r1 = ROL(v,4)
     mov     r2, #8
     bl      nl_fscx_revolve_v1
     bl      hfscx_32
-    pop     {pc}
+    pop     {r4, pc}
 
     .ltorg
 
 /* ------------------------------------------------------------------ */
-/* stern_hash2_32: r0=item0, r1=item1 -> r0=sternHash(item0,item1)   */
+/* stern_hash2_32: r0=ds, r1=a, r2=b -> r0=sternHash(ds,a,b)        */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_hash2_32:
     push    {r4-r5, lr}
-    mov     r4, r0
-    mov     r5, r1
-    ror     r1, r4, #28
+    ror     r4, r1, #28         @ r4 = ROL(a,4)
+    mov     r5, r2              @ r5 = b
+    eor     r0, r0, r1          @ r0 = ds ^ a
+    mov     r1, r4              @ r1 = ROL(a,4)
     mov     r2, #8
-    bl      nl_fscx_revolve_v1
-    eor     r0, r0, r5
-    ror     r1, r5, #28
+    bl      nl_fscx_revolve_v1  @ r0 = h
+    eor     r0, r0, r5          @ h ^ b
+    ror     r1, r5, #28         @ ROL(b,4)
     mov     r2, #8
-    bl      nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1  @ r0 = raw
     bl      hfscx_32
     pop     {r4-r5, pc}
 
@@ -2122,16 +2130,19 @@ thsfs_loop:
     mov     r0, r11
     mov     r1, r5
     bl      stern_syndrome_32
-    mov     r1, r0
-    mov     r0, r7
+    mov     r2, r0              @ r2 = hr
+    mov     r1, r7              @ r1 = pi
+    mov     r0, #1              @ ds = 1
     bl      stern_hash2_32
     ldr     r3, =sdf_c0
     str     r0, [r3, r4, lsl #2]
-    mov     r0, r8
+    mov     r1, r8              @ r1 = sr
+    mov     r0, #2              @ ds = 2
     bl      stern_hash1_32
     ldr     r3, =sdf_c1
     str     r0, [r3, r4, lsl #2]
-    mov     r0, r9
+    mov     r1, r9              @ r1 = sy
+    mov     r0, #3              @ ds = 3
     bl      stern_hash1_32
     ldr     r3, =sdf_c2
     str     r0, [r3, r4, lsl #2]
@@ -2243,8 +2254,9 @@ thsfv_round_loop:
     mov     r1, r7
     bl      stern_syndrome_32
     eor     r0, r0, r11
-    mov     r1, r0
-    mov     r0, r6
+    mov     r2, r0              @ r2 = hy^synd
+    mov     r1, r6              @ r1 = pi
+    mov     r0, #1              @ ds = 1
     bl      stern_hash2_32
     ldr     r3, =sdf_c0
     ldr     r1, [r3, r4, lsl #2]
@@ -2254,6 +2266,8 @@ thsfv_round_loop:
     bl      stern_gen_perm_32
     mov     r0, r7
     bl      stern_apply_perm_32
+    mov     r1, r0              @ r1 = apply_perm result
+    mov     r0, #3              @ ds = 3
     bl      stern_hash1_32
     ldr     r3, =sdf_c2
     ldr     r1, [r3, r4, lsl #2]
@@ -2261,13 +2275,15 @@ thsfv_round_loop:
     bne     thsfv_fail
     b       thsfv_round_next
 thsfv_case0:
-    mov     r0, r6
+    mov     r1, r6              @ r1 = sr
+    mov     r0, #2              @ ds = 2
     bl      stern_hash1_32
     ldr     r3, =sdf_c1
     ldr     r1, [r3, r4, lsl #2]
     cmp     r0, r1
     bne     thsfv_fail
-    mov     r0, r7
+    mov     r1, r7              @ r1 = sy
+    mov     r0, #3              @ ds = 3
     bl      stern_hash1_32
     ldr     r3, =sdf_c2
     ldr     r1, [r3, r4, lsl #2]
@@ -2284,8 +2300,9 @@ thsfv_case1:
     mov     r0, r10
     mov     r1, r7
     bl      stern_syndrome_32
-    mov     r1, r0
-    mov     r0, r6
+    mov     r2, r0              @ r2 = H·r^T
+    mov     r1, r6              @ r1 = pi
+    mov     r0, #1              @ ds = 1
     bl      stern_hash2_32
     ldr     r3, =sdf_c0
     ldr     r1, [r3, r4, lsl #2]
@@ -2295,6 +2312,8 @@ thsfv_case1:
     bl      stern_gen_perm_32
     mov     r0, r7
     bl      stern_apply_perm_32
+    mov     r1, r0              @ r1 = apply_perm result
+    mov     r0, #2              @ ds = 2
     bl      stern_hash1_32
     ldr     r3, =sdf_c1
     ldr     r1, [r3, r4, lsl #2]
@@ -2329,8 +2348,9 @@ hpke_stern_f_encap_32:
     bl      stern_syndrome_32
     ldr     r3, =t_sdf_ct
     str     r0, [r3]
-    mov     r0, r5
-    mov     r1, r4
+    mov     r2, r4              @ r2 = e'
+    mov     r1, r5              @ r1 = seed
+    mov     r0, #4              @ ds = 4
     bl      stern_hash2_32
     ldr     r3, =t_sdf_K_enc
     str     r0, [r3]
@@ -2344,10 +2364,11 @@ hpke_stern_f_encap_32:
     .thumb_func
 hpke_stern_f_decap_known_32:
     push    {r4, lr}
-    mov     r4, r0
-    ldr     r0, =t_sdf_seed
-    ldr     r0, [r0]
-    mov     r1, r4
+    mov     r4, r0              @ e'
+    ldr     r1, =t_sdf_seed
+    ldr     r1, [r1]            @ r1 = seed
+    mov     r2, r4              @ r2 = e'
+    mov     r0, #4              @ ds = 4
     bl      stern_hash2_32
     pop     {r4, pc}
 

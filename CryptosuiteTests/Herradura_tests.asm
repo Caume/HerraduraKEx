@@ -2035,31 +2035,38 @@ rnl_agree_recv:
     ret
 
 ; ============================================================
-; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (TODO #43, v1.6.0)
-; s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799
+; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (DM, v1.9.0)
+; C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799
+; s=nl(IV,x,8)^IV; return nl(s,LB,8)^s
 ; ============================================================
 hfscx_32:
     push ecx
     push ebx
-    mov  ebx, eax
-    mov  eax, 0xA3C5E7B9
+    push edi               ; save edi (callee-saved)
+    mov  ebx, eax          ; B = x
+    mov  edi, 0xA3C5E7B9   ; prev = IV_32
+    mov  eax, 0xA3C5E7B9   ; A = IV_32
     mov  ecx, 8
-    call nl_fscx_revolve_v1
-    mov  ebx, 0xA3C5E799
+    call nl_fscx_revolve_v1 ; eax = nl(IV, x, 8)
+    xor  eax, edi           ; eax ^= IV  (DM block 1)
+    mov  edi, eax           ; prev = s
+    mov  ebx, 0xA3C5E799   ; B = LB = 0x20 ^ IV_32
     mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call nl_fscx_revolve_v1 ; eax = nl(s, LB, 8)
+    xor  eax, edi           ; eax ^= s  (DM block 2)
+    pop  edi
     pop  ebx
     pop  ecx
     ret
 
 ; ============================================================
-; stern_hash1_32: EAX=v -> EAX = sternHash(v)
+; stern_hash1_32: EAX=ds, EBX=v -> EAX=sternHash(ds,v)
 ; ============================================================
 stern_hash1_32:
     push ecx
     push ebx
-    mov  ebx, eax
-    rol  ebx, 4
+    xor  eax, ebx           ; eax = ds ^ v  (ebx = v)
+    rol  ebx, 4             ; ebx = ROL(v,4)
     mov  ecx, 8
     call nl_fscx_revolve_v1
     pop  ebx
@@ -2067,21 +2074,28 @@ stern_hash1_32:
     jmp  hfscx_32
 
 ; ============================================================
-; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
+; stern_hash2_32: EAX=ds, EBX=a, ECX=b -> EAX=sternHash(ds,a,b)
 ; ============================================================
 stern_hash2_32:
     push esi
+    push edi
     push ecx
-    mov  esi, ebx
-    mov  ebx, eax
-    rol  ebx, 4
-    mov  ecx, 8
-    call nl_fscx_revolve_v1
-    xor  eax, esi
+    push ebx
+    mov  esi, ebx           ; esi = a
+    mov  edi, ecx           ; edi = b
+    xor  eax, esi           ; eax = ds ^ a
     mov  ebx, esi
-    rol  ebx, 4
-    call nl_fscx_revolve_v1
+    rol  ebx, 4             ; ebx = ROL(a,4)
+    mov  ecx, 8
+    call nl_fscx_revolve_v1 ; eax = h
+    xor  eax, edi           ; h ^ b
+    mov  ebx, edi
+    rol  ebx, 4             ; ebx = ROL(b,4)
+    mov  ecx, 8
+    call nl_fscx_revolve_v1 ; eax = raw
+    pop  ebx
     pop  ecx
+    pop  edi
     pop  esi
     jmp  hfscx_32
 
@@ -2398,14 +2412,17 @@ hpks_stern_f_sign_32:
     mov  eax, esi
     mov  ebx, [sdf_r_tmp + ebp*4]
     call stern_syndrome_32
-    mov  ebx, eax
-    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  ecx, eax                       ; ecx = hr
+    mov  ebx, [sdf_pi_tmp + ebp*4]     ; ebx = pi
+    mov  eax, 1                         ; ds = 1
     call stern_hash2_32
     mov  [sdf_c0 + ebp*4], eax
-    mov  eax, [sdf_sr_tmp + ebp*4]
+    mov  ebx, [sdf_sr_tmp + ebp*4]     ; ebx = sr
+    mov  eax, 2                         ; ds = 2
     call stern_hash1_32
     mov  [sdf_c1 + ebp*4], eax
-    mov  eax, [sdf_sy_tmp + ebp*4]
+    mov  ebx, [sdf_sy_tmp + ebp*4]     ; ebx = sy
+    mov  eax, 3                         ; ds = 3
     call stern_hash1_32
     mov  [sdf_c2 + ebp*4], eax
     inc  ebp
@@ -2487,9 +2504,10 @@ hpks_stern_f_verify_32:
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32
-    xor  eax, edi
-    mov  ebx, eax
-    mov  eax, edx
+    xor  eax, edi               ; hy^synd
+    mov  ecx, eax               ; ecx = hy^synd
+    mov  ebx, edx               ; ebx = pi
+    mov  eax, 1                 ; ds = 1
     call stern_hash2_32
     cmp  eax, [sdf_c0 + ebp*4]
     jne  .thsfv_fail
@@ -2497,16 +2515,20 @@ hpks_stern_f_verify_32:
     call stern_gen_perm_32
     mov  eax, [sdf_respB + ebp*4]
     call stern_apply_perm_32
+    mov  ebx, eax               ; ebx = apply_perm result
+    mov  eax, 3                 ; ds = 3
     call stern_hash1_32
     cmp  eax, [sdf_c2 + ebp*4]
     jne  .thsfv_fail
     jmp  .thsfv_round_next
 .thsfv_case0:
-    mov  eax, edx
+    mov  ebx, edx               ; ebx = ra
+    mov  eax, 2                 ; ds = 2
     call stern_hash1_32
     cmp  eax, [sdf_c1 + ebp*4]
     jne  .thsfv_fail
-    mov  eax, [sdf_respB + ebp*4]
+    mov  ebx, [sdf_respB + ebp*4]  ; ebx = rb
+    mov  eax, 3                 ; ds = 3
     call stern_hash1_32
     cmp  eax, [sdf_c2 + ebp*4]
     jne  .thsfv_fail
@@ -2523,8 +2545,9 @@ hpks_stern_f_verify_32:
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32
-    mov  ebx, eax
-    mov  eax, edx
+    mov  ecx, eax               ; ecx = H·r^T
+    mov  ebx, edx               ; ebx = pi
+    mov  eax, 1                 ; ds = 1
     call stern_hash2_32
     cmp  eax, [sdf_c0 + ebp*4]
     jne  .thsfv_fail
@@ -2532,6 +2555,8 @@ hpks_stern_f_verify_32:
     call stern_gen_perm_32
     mov  eax, [sdf_respB + ebp*4]
     call stern_apply_perm_32
+    mov  ebx, eax               ; ebx = apply_perm result
+    mov  eax, 2                 ; ds = 2
     call stern_hash1_32
     cmp  eax, [sdf_c1 + ebp*4]
     jne  .thsfv_fail
@@ -2567,8 +2592,9 @@ hpke_stern_f_encap_32:
     mov  ebx, esi
     call stern_syndrome_32
     mov  [t_sdf_ct], eax
-    mov  eax, [t_sdf_seed]
-    mov  ebx, esi
+    mov  ecx, esi               ; ecx = e'
+    mov  ebx, [t_sdf_seed]     ; ebx = seed
+    mov  eax, 4                 ; ds = 4
     call stern_hash2_32
     mov  [t_sdf_K_enc], eax
     pop  edx
@@ -2582,9 +2608,12 @@ hpke_stern_f_encap_32:
 ; reads t_sdf_seed
 ; ============================================================
 hpke_stern_f_decap_known_32:
+    push ecx
     push ebx
-    mov  ebx, eax
-    mov  eax, [t_sdf_seed]
+    mov  ecx, eax               ; ecx = e'
+    mov  ebx, [t_sdf_seed]     ; ebx = seed
+    mov  eax, 4                 ; ds = 4
     call stern_hash2_32
     pop  ebx
+    pop  ecx
     ret
