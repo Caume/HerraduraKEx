@@ -499,7 +499,7 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 # ---------------------------------------------------------------------------
-# HFSCX-256: Merkle-Damgård hash over NL-FSCX v1 (v1.5.24)
+# HFSCX-256-DM: Merkle-Damgård hash over NL-FSCX v1, Davies-Meyer compression (v1.9.0)
 # ---------------------------------------------------------------------------
 
 # 32-byte ASCII domain constant for the default IV.
@@ -512,10 +512,10 @@ _RNL_KDF_DC_256 = 0x6A09E667BB67AE853C6EF372A54FF53A510E527F9B05688C1F83D9AB5BE0
 
 
 def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
-    """HFSCX-256: 256-bit Merkle-Damgård hash built on NL-FSCX v1.
+    """HFSCX-256-DM: 256-bit Merkle-Damgård hash built on NL-FSCX v1, Davies-Meyer compression.
 
-    Compression function:
-        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 64)
+    Compression function (Davies-Meyer):
+        state_{i+1} = nl_fscx_revolve_v1(state_i, block_i, 64) ⊕ state_i
 
     Padding (ISO 7816-4 + Merkle-Damgård strengthening):
         1. Append 0x80 to the message.
@@ -553,11 +553,13 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw  = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded  += (len_raw ^ init_int).to_bytes(blen, 'big')
 
-    # Chain blocks through NL-FSCX v1 (64 steps per block at 256-bit)
+    # Chain blocks: C_DM(s, m) = F_1^{64}(s, m) ⊕ s (Davies-Meyer feed-forward)
     steps = n // 4  # 64
     for off in range(0, len(padded), blen):
+        prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
         state = nl_fscx_revolve_v1(state, block, steps)
+        state = BitArray(n, state.uint ^ prev.uint)
 
     return state.uint.to_bytes(blen, 'big')
 
@@ -1350,8 +1352,8 @@ def main():
     else:
         print("- HPKE-Stern-F key agreement FAILED (n=256)")
 
-    # ── HFSCX-256 ────────────────────────────────────────────────────────────
-    print("\n--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1; 256-bit output]")
+    # ── HFSCX-256-DM ─────────────────────────────────────────────────────────
+    print("\n--- HFSCX-256-DM [HASH — Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output]")
     _tv = b"HFSCX-256 test vector"
     _bare = hfscx_256(_tv)
     _mac_iv = BitArray(KEYBITS, preshared.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))

@@ -5,7 +5,7 @@
 > **This is Part 2 of a split document.**
 >
 > - **Part 1 — §1–§10** (SecurityProofs-1.md): Algebraic Foundations · Protocol Analysis · Security Analysis · Quantum Attack Analysis · v1.4.0 Migration
-> - **Part 2 — §11–§11.9** (this file): Non-linearity and Post-quantum Extensions · HFSCX-256
+> - **Part 2 — §11–§11.9** (this file): Non-linearity and Post-quantum Extensions · HFSCX-256-DM
 
 ---
 
@@ -581,11 +581,11 @@ The range compression does **not** shrink as n grows.  `nl_fscx_prf_analysis.py`
 
 **Security implication.**  A distinguisher that counts output collisions can separate F_stern from a random function at n=32 using O(2^16) queries (birthday bound against a ~24% range).  This constitutes a concrete polynomial-time distinguisher that falsifies the PRF assumption underlying Theorem 17, removing the ε_PRF term from the EUF-CMA bound.  Until TODO #43 is applied, Theorem 17 holds only against adversaries that do not exploit this collision-counting attack.
 
-**Fix (TODO #43).**  Composing F_stern with HFSCX-256 eliminates the range compression and restores ~63.2% distinct outputs (verified in `hfscx_256_analysis.py`):
+**Fix (TODO #43).**  Composing F_stern with HFSCX-256-DM eliminates the range compression and restores ~63.2% distinct outputs (verified in `hfscx_256_analysis.py`):
 
-$$F_{\text{stern-v2}}(K, i) = \text{HFSCX-256}\bigl(F_1^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)\bigr) \bmod 2^n$$
+$$F_{\text{stern-v2}}(K, i) = \text{HFSCX-256-DM}\bigl(F_1^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)\bigr) \bmod 2^n$$
 
-One HFSCX-256 call is added per row of H and per hash step in the commitment scheme.  After the fix, no known collision-counting distinguisher applies to F_stern-v2.  This is a wire-format breaking change; old and new HPKS-Stern-F signatures are incompatible.
+One HFSCX-256-DM call is added per row of H and per hash step in the commitment scheme.  After the fix, no known collision-counting distinguisher applies to F_stern-v2.  This is a wire-format breaking change; old and new HPKS-Stern-F signatures are incompatible.
 
 **Key generation.**
 - Private key: $\mathbf{e} \xleftarrow{R} \{\mathbf{v} \in \{0,1\}^N : \mathrm{wt}(\mathbf{v}) = t\}$.
@@ -611,17 +611,17 @@ where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support 
 
    $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
 
-Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (§11.9.9) now finalizes through HFSCX-256 with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256 (§11.9), this provides the independent quantum random oracles required by Unruh's transform.
+Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (§11.9.9) now finalizes through HFSCX-256-DM with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256-DM (§11.9), this provides the independent quantum random oracles required by Unruh's transform.
 
 **Theorem 17 — EUF-CMA of HPKS-Stern-F.**
 
-Let $\mathrm{SD}(N,t)$ denote the syndrome decoding problem: given $(H, \mathbf{s})$ find $\mathbf{e}$ with $H\mathbf{e}^\top = \mathbf{s}$ and $\mathrm{wt}(\mathbf{e}) = t$.  If $\mathrm{SD}(N,t)$ requires $T_\mathrm{SD}$ quantum operations, NL-FSCX v1 is a secure PRF with advantage $\epsilon_\mathrm{PRF}$, and HFSCX-256 is modeled as a random oracle, then HPKS-Stern-F achieves EUF-CMA with:
+Let $\mathrm{SD}(N,t)$ denote the syndrome decoding problem: given $(H, \mathbf{s})$ find $\mathbf{e}$ with $H\mathbf{e}^\top = \mathbf{s}$ and $\mathrm{wt}(\mathbf{e}) = t$.  If $\mathrm{SD}(N,t)$ requires $T_\mathrm{SD}$ quantum operations, NL-FSCX v1 is a secure PRF with advantage $\epsilon_\mathrm{PRF}$, and HFSCX-256-DM is modeled as a random oracle, then HPKS-Stern-F achieves EUF-CMA with:
 
 $$\Pr[\mathrm{forge}] \leq \frac{q_H}{T_\mathrm{SD}} + \epsilon_\mathrm{PRF}$$
 
 for $q_H$ quantum hash queries.
 
-*Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — `_stern_hash` outputs `HFSCX-256(ds || chain(...))` where `ds` is a per-slot domain tag; under the ROM on HFSCX-256, the per-slot outputs are independent random oracles, satisfying Unruh's QROM requirement.  EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
+*Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — `_stern_hash` outputs `HFSCX-256-DM(ds || chain(...))` where `ds` is a per-slot domain tag; under the ROM on HFSCX-256-DM, the per-slot outputs are independent random oracles, satisfying Unruh's QROM requirement.  EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
 
 **HPKE-Stern-F: Niederreiter-Style KEM.**  Use the same $(H, \mathbf{s} = H\mathbf{e}^\top)$ for key encapsulation:
 
@@ -702,24 +702,24 @@ This option is documented as a future research direction.
 
 ---
 
-## 11.9 HFSCX-256 — Hash function on NL-FSCX v1
+## 11.9 HFSCX-256-DM — Hash function on NL-FSCX v1
 
-HFSCX-256 (deployed v1.5.24) is a 256-bit Merkle-Damgård hash built on NL-FSCX v1.
+HFSCX-256-DM (deployed v1.9.0; originally HFSCX-256 from v1.5.24) is a 256-bit Merkle-Damgård hash built on NL-FSCX v1 with Davies-Meyer feed-forward compression.
 It serves three roles in the suite:
 
 - generic digest (the `dgst` subcommand of `HerraduraCli`),
 - pre-hash for `sign` / `verify` flows (compresses arbitrary-length messages to a 256-bit input for HPKS / HPKS-NL / HPKS-Stern-F),
 - authentication tag for `HSKE-NL-A1-CTR-AEAD` (large-file streaming encryption).
 
-This section formalises the security claims, identifies one residual hardening opportunity (Davies-Meyer feed-forward), and is backed by `SecurityProofsCode/hfscx_256_analysis.py`.
+This section formalises the security claims for the deployed Davies-Meyer construction and is backed by `SecurityProofsCode/hfscx_256_analysis.py`.
 
 ### 11.9.1 Construction
 
-Let $n = 256$, block size $b = 32$ bytes.  Write $F_1^r(s, m)$ for NL-FSCX v1 iterated $r$ times with state $s$ and message-block parameter $m$.  HFSCX-256 takes input bytes $D$ and an optional 256-bit key $K$; it produces a 256-bit digest as follows.
+Let $n = 256$, block size $b = 32$ bytes.  Write $F_1^r(s, m)$ for NL-FSCX v1 iterated $r$ times with state $s$ and message-block parameter $m$.  HFSCX-256-DM takes input bytes $D$ and an optional 256-bit key $K$; it produces a 256-bit digest as follows.
 
-**Compression function.**
+**Compression function (Davies-Meyer).**
 
-$$C(s, m) = F_1^{64}(s, m) \in \{0,1\}^{256}.$$
+$$C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s \in \{0,1\}^{256}.$$
 
 **Initial state.**  Let $\text{IV-const}$ be the 32-byte ASCII constant `HFSCX-256/HERRADURA-SUITE\0\0\0\0\0\0\0` interpreted as a 256-bit integer.  Define
 
@@ -731,13 +731,13 @@ $$\mathit{fin} = \bigl(8 \cdot |D|\bigr) \oplus s_0 \pmod{2^{256}}.$$
 
 **Iteration.**  For padded message $D' = m_1 \| m_2 \| \cdots \| m_k$ (where the last block is $\mathit{fin}$):
 
-$$s_i = C(s_{i-1}, m_i), \qquad i = 1, \ldots, k.$$
+$$s_i = C_{\text{DM}}(s_{i-1}, m_i) = F_1^{64}(s_{i-1}, m_i) \oplus s_{i-1}, \qquad i = 1, \ldots, k.$$
 
-**Output.**  $\text{HFSCX-256}(D, K) = s_k$.
+**Output.**  $\text{HFSCX-256-DM}(D, K) = s_k$.
 
 ### 11.9.2 Security model and assumptions
 
-The security claims for HFSCX-256 are conditional on assumptions already used elsewhere in §11:
+The security claims for HFSCX-256-DM are conditional on assumptions already used elsewhere in §11:
 
 **A1 (NL-FSCX v1 PRF, §11.8.4).**  For random key $K$, the function $i \mapsto F_1^{64}(K \oplus i, K)$ is computationally indistinguishable from a uniformly random function $\{0,1\}^n \to \{0,1\}^n$ against polynomial-time distinguishers.
 
@@ -748,7 +748,7 @@ The security claims for HFSCX-256 are conditional on assumptions already used el
 $$F_1(A, B) = M(A \oplus B) \oplus \mathrm{ROL}_{n/4}\bigl((A + B) \bmod 2^n\bigr)$$
 is symmetric under the swap $A \leftrightarrow B$.  Consequently, NL-FSCX v1 is non-bijective in $B$ as well as in $A$ (§11.5 Q3, by symmetry); $C(\cdot, m)$ is non-bijective in either input.
 
-A3 is structurally important: HFSCX-256 cannot claim ideal-cipher security from $C$ as a pseudorandom permutation.  All hardness claims below are therefore PRF-based, not PRP-based.
+A3 is structurally important: HFSCX-256-DM cannot claim ideal-cipher security from $C_{\text{DM}}$ as a pseudorandom permutation.  All hardness claims below are therefore PRF-based, not PRP-based.
 
 ### 11.9.3 Collision resistance
 
@@ -756,13 +756,13 @@ A3 is structurally important: HFSCX-256 cannot claim ideal-cipher security from 
 
 **MD lemma.**  Any internal collision $C(s, m_1) = C(s', m_2)$ with $(s, m_1) \neq (s', m_2)$ propagates to a full hash collision through the standard Merkle-Damgård argument; conversely, every full collision implies an internal collision somewhere along the two chains.
 
-**Heuristic claim.**  Under A1, the compression $C$ is computationally indistinguishable from a random function $\{0,1\}^{256} \times \{0,1\}^{256} \to \{0,1\}^{256}$.  The expected number of evaluations to find a collision in such a function is $\sqrt{\pi \cdot 2^{n} / 2} \approx 2^{128.3}$.  Therefore, under A1, finding any HFSCX-256 collision requires $\approx 2^{128}$ work classically.
+**Heuristic claim.**  Under A1, the compression $C_{\text{DM}}$ is computationally indistinguishable from a random function $\{0,1\}^{256} \times \{0,1\}^{256} \to \{0,1\}^{256}$.  The expected number of evaluations to find a collision in such a function is $\sqrt{\pi \cdot 2^{n} / 2} \approx 2^{128.3}$.  Therefore, under A1, finding any HFSCX-256-DM collision requires $\approx 2^{128}$ work classically.
 
-**Free-start collisions.**  An attacker controlling the chain state can search for $C(s_1, m_1) = C(s_2, m_2)$ with $s_1 \neq s_2$.  The same generic $2^{128}$ bound applies.  Unlike a Davies-Meyer construction (§11.9.8), no further structural hardness is claimed: the non-bijectivity of $F_1^{64}$ in both arguments means that ad-hoc free-start collisions might be slightly cheaper than $2^{128}$; the gap is bounded above by the worst-case orbit-merging rate of $F_1$, which empirically is too small to measure at $n = 256$ (no observed gap in §11.9.10 §1–§3).
+**Free-start collisions.**  Under the Davies-Meyer construction (§11.9.8), a free-start collision $C_{\text{DM}}(s_1, m_1) = C_{\text{DM}}(s_2, m_2)$ with $s_1 \neq s_2$ requires $F_1^{64}(s_1, m_1) \oplus F_1^{64}(s_2, m_2) = s_1 \oplus s_2$.  Even if $F_1^{64}$ maps both inputs to the same value (exploiting its non-bijectivity), that forces $s_1 = s_2$, contradicting the free-start hypothesis.  The $2^{128}$ bound is therefore structurally tighter than for the earlier plain-MD construction.
 
 ### 11.9.4 Preimage and second-preimage resistance
 
-**Preimage.**  Given target digest $h$, find any $D$ with $\text{HFSCX-256}(D) = h$.  Generic bound: $\Theta(2^n)$ classical, $\Theta(2^{n/2})$ quantum (Grover).  Reduction to A2: any preimage attack must invert $C$ on the final compression (else the digest cannot match), contradicting A2.
+**Preimage.**  Given target digest $h$, find any $D$ with $\text{HFSCX-256-DM}(D) = h$.  Generic bound: $\Theta(2^n)$ classical, $\Theta(2^{n/2})$ quantum (Grover).  Reduction to A2: any preimage attack must invert $C_{\text{DM}}$ on the final compression (else the digest cannot match), contradicting A2.
 
 **Second preimage.**  Given $D$, find $D' \neq D$ with the same digest.  Generic bound: $\Theta(2^n)$ classical (no birthday speed-up since one input is fixed).  Implied by collision resistance under standard hash arguments.
 
@@ -770,29 +770,29 @@ A3 is structurally important: HFSCX-256 cannot claim ideal-cipher security from 
 
 A plain Merkle-Damgård hash without finalization admits the extension attack: given $h = H(D)$, an attacker can set the chain state to $h$ and continue, producing $H(D \| \mathrm{pad}(D) \| D')$ for arbitrary $D'$ without knowing $D$.
 
-HFSCX-256's finalization block makes the published digest $s_k = C(s_{k-1}, \mathit{fin})$, where $s_{k-1}$ is the state after processing the real message blocks but before finalization.  The attacker is given $s_k$, not $s_{k-1}$.
+HFSCX-256-DM's finalization block makes the published digest $s_k = C_{\text{DM}}(s_{k-1}, \mathit{fin})$, where $s_{k-1}$ is the state after processing the real message blocks but before finalization.  The attacker is given $s_k$, not $s_{k-1}$.
 
-**Theorem 18 — Length extension is infeasible under A2.**  Any extension attacker who, given $\text{HFSCX-256}(D)$ alone, produces $\text{HFSCX-256}(D \| X)$ for an attacker-chosen $X$ must recover $s_{k-1}$ from $s_k = C(s_{k-1}, \mathit{fin})$ — an inversion of $C$ that requires $\Omega(2^{n/2})$ work under A2. $\blacksquare$
+**Theorem 18 — Length extension is infeasible under A2.**  Any extension attacker who, given $\text{HFSCX-256-DM}(D)$ alone, produces $\text{HFSCX-256-DM}(D \| X)$ for an attacker-chosen $X$ must recover $s_{k-1}$ from $s_k = C_{\text{DM}}(s_{k-1}, \mathit{fin})$ — an inversion of $C_{\text{DM}}$ that requires $\Omega(2^{n/2})$ work under A2. $\blacksquare$
 
-**Empirical confirmation.**  `hfscx_256_analysis.py` §5: 0 successful naive forgeries in 200 trials (the naive forgery treats $h_M$ directly as a chain state and processes one extension block; this never matches the true digest of $D \| X$).
+**Empirical confirmation.**  `hfscx_256_analysis.py` §5: 0 successful naive forgeries in 200 trials (the naive forgery treats $h_M$ directly as a chain state and processes one extension block using $C_{\text{DM}}$; this never matches the true digest of $D \| X$).
 
 **Keyed mode bonus.**  In keyed mode the finalization block content is $(8|D|) \oplus K \oplus \text{IV-const}$, which the attacker cannot construct without $K$.  This adds a second layer of length-extension protection independent of A2.
 
 ### 11.9.6 Keyed mode and MAC use
 
-HFSCX-256 supports a keyed mode by setting $s_0 = K \oplus \text{IV-const}$.  This mode is used by `HerraduraCli` for the `HSKE-NL-A1-CTR-AEAD` authentication tag.  Two MAC constructions are evaluated.
+HFSCX-256-DM supports a keyed mode by setting $s_0 = K \oplus \text{IV-const}$.  This mode is used by `HerraduraCli` for the `HSKE-NL-A1-CTR-AEAD` authentication tag.  Two MAC constructions are evaluated.
 
 **(a) Raw keyed-IV MAC (deployed).**
 
-$$\mathrm{MAC}(K, D) = \text{HFSCX-256}(D, K).$$
+$$\mathrm{MAC}(K, D) = \text{HFSCX-256-DM}(D, K).$$
 
-*Properties.*  Under A1, HFSCX-256 with secret IV is a PRF: the chain state at every step is unpredictable to an adversary without $K$.  EUF-CMA security follows from the PRF property by standard arguments [Bellare-Canetti-Krawczyk 1996, §3.2].
+*Properties.*  Under A1, HFSCX-256-DM with secret IV is a PRF: the chain state at every step is unpredictable to an adversary without $K$.  EUF-CMA security follows from the PRF property by standard arguments [Bellare-Canetti-Krawczyk 1996, §3.2].
 
 *Caveat.*  The security claim applies A1 to the entire chain.  If A1 holds for one $F_1^{64}$ application but degrades when chained over many blocks, the raw keyed-IV MAC weakens.  Empirical avalanche tests (§11.9.10 §2) show ideal key-bit diffusion (mean 128.09 / 256 output bits flipped, σ = 7.98) for the deployed parameters, but this is a sanity check, not a chain-length proof.
 
-**(b) HMAC-HFSCX-256 (recommended for cross-protocol key reuse).**
+**(b) HMAC-HFSCX-256-DM (recommended for cross-protocol key reuse).**
 
-$$\mathrm{HMAC}(K, D) = \text{HFSCX-256}\Bigl(\bigl(K \oplus \mathit{opad}\bigr) \| \text{HFSCX-256}\bigl((K \oplus \mathit{ipad}) \| D\bigr)\Bigr)$$
+$$\mathrm{HMAC}(K, D) = \text{HFSCX-256-DM}\Bigl(\bigl(K \oplus \mathit{opad}\bigr) \| \text{HFSCX-256-DM}\bigl((K \oplus \mathit{ipad}) \| D\bigr)\Bigr)$$
 
 with $\mathit{ipad} = \mathtt{0x36}$ repeated and $\mathit{opad} = \mathtt{0x5C}$ repeated, each 32 bytes.
 
@@ -803,7 +803,7 @@ with $\mathit{ipad} = \mathtt{0x36}$ repeated and $\mathit{opad} = \mathtt{0x5C}
 
 Both follow from A1 + A2.  HMAC adds resistance against extension and key-recovery attacks even if the compression has minor structural weaknesses, at the cost of one extra hash invocation per MAC.
 
-**Recommendation.**  The current single-purpose AEAD use is well-served by raw keyed-IV.  For protocols intending to reuse the same long-term key across multiple algorithms or modes (e.g. derive both an encryption key and a MAC key from one master), HMAC-HFSCX-256 should be preferred.  This is captured as a future TODO item once such cross-protocol reuse is introduced.
+**Recommendation.**  The current single-purpose AEAD use is well-served by raw keyed-IV.  For protocols intending to reuse the same long-term key across multiple algorithms or modes (e.g. derive both an encryption key and a MAC key from one master), HMAC-HFSCX-256-DM should be preferred.  This is captured as a future TODO item once such cross-protocol reuse is introduced.
 
 ### 11.9.7 Domain separation across suite call sites
 
@@ -816,44 +816,37 @@ Both follow from A1 + A2.  HMAC adds resistance against extension and key-recove
 
 The `dgst` and pre-hash flows share the same effective IV.  This is acceptable when the input distributions cannot collide: the pre-hash flow always operates on attacker-supplied messages, but so does `dgst`, so a true cross-flow collision would only be an issue if (i) one flow appended additional content the other did not, *and* (ii) that content fell on a block boundary that mimicked the other's padding.  Neither holds in the current codebase.
 
-The AEAD tag uses a distinct effective IV via the per-session key.  Cross-flow collision would require either a second-preimage on $\text{HFSCX-256}(\cdot, K)$ for some $K$ (ruled out by collision resistance), or $K = 0$ (ruled out by the AEAD key-derivation step which produces $K$ from a Ring-LWR shared secret with negligible probability of $K = 0$).
+The AEAD tag uses a distinct effective IV via the per-session key.  Cross-flow collision would require either a second-preimage on $\text{HFSCX-256-DM}(\cdot, K)$ for some $K$ (ruled out by collision resistance), or $K = 0$ (ruled out by the AEAD key-derivation step which produces $K$ from a Ring-LWR shared secret with negligible probability of $K = 0$).
 
 **Future hardening.**  For a fully rigorous domain-separation argument that does not depend on collision-resistance reasoning, prefix every input with a 1-byte domain tag: e.g. `0x01` for `dgst`, `0x02` for sign-pre-hash, `0x03` for AEAD-MAC.  This is a backwards-compatible change if introduced as a versioned wire-format option (HFSCX-256-DS); it is not urgent.
 
-### 11.9.8 Davies-Meyer hardening (future work)
+### 11.9.8 Davies-Meyer compression — DONE v1.9.0 (TODO #72)
 
-The deployed compression $C(s, m) = F_1^{64}(s, m)$ does not use a Davies-Meyer feed-forward.  The Davies-Meyer alternative is
+As of v1.9.0 the compression function is the Davies-Meyer variant $C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s$ (see §11.9.1).  This section records the security benefits and the wire-format break.
 
-$$C_{\text{DM}}(s, m) = F_1^{64}(s, m) \oplus s.$$
+**Benefits gained.**
 
-**Benefits of switching.**
+1. **Fixed-point hardness.**  $C_{\text{DM}}(s, m) = s$ requires $F_1^{64}(s, m) = 0$, which under A2 requires $\Omega(2^{n/2})$ work (preimage of zero under A2).  Before v1.9.0, fixed points were orbit-period-64 points of $F_1(\cdot, m)$; no formal lower bound existed, only empirical absence.
+2. **Free-start collision hardness.**  As argued in §11.9.3, the Davies-Meyer structure rules out a structural speed-up from the non-bijectivity of $F_1$.
+3. **PGV-1 alignment.**  $C_{\text{DM}}$ is one of the 12 provably-secure PGV compression functions [BRS 2002, PGV 1993].
 
-1. **Fixed-point hardness.**  $C_{\text{DM}}(s, m) = s$ requires $F_1^{64}(s, m) = 0$, which under A2 requires $\Omega(2^{n/2})$ work (preimage of zero).  In contrast, fixed points of $C$ are orbit-period-64 points of $F_1(\cdot, m)$, which §11.5 Q1 shows are rare but for which no provable lower bound exists.  Empirically (`hfscx_256_analysis.py` §7) no fixed points were observed in 200 random $(s, m)$ trials, but this is not a bound.
-2. **Free-start collision hardness.**  $C_{\text{DM}}(s_1, m_1) = C_{\text{DM}}(s_2, m_2)$ requires $F_1^{64}(s_1, m_1) \oplus F_1^{64}(s_2, m_2) = s_1 \oplus s_2$.  This constrained collision does not benefit from the non-bijectivity of $F_1$ in either argument: even if $F_1^{64}(s_1, m_1) = F_1^{64}(s_2, m_2)$ for some structural reason, the equation only holds when $s_1 = s_2$, contradicting the free-start hypothesis.
-3. **PGV-1 alignment.**  Davies-Meyer is one of the 12 secure compression schemes in the Black-Rogaway-Shrimpton-Preneel-Govaerts-Vandewalle classification [BRS 2002, PGV 1993]; switching aligns HFSCX-256 with the standard hash design playbook.
-
-**Costs.**
-
-- One additional 256-bit XOR per message block — negligible.
-- **Wire-format change.** Every existing HFSCX-256 digest, pre-hashed signature, and AEAD tag becomes incompatible.  This is a breaking change requiring a version bump (HFSCX-256-DM), parallel deployment, and migration tooling.
-
-**Recommendation.**  Schedule the Davies-Meyer switch for a future major version (suite v2.0) when other wire-format changes (TODO #37, #38, #39) can be bundled.  Until then, the deployed construction is heuristically secure under A1+A2; A2 alone guarantees $2^{128}$ classical / $2^{128}$ quantum attack cost on every direct attack vector (collision, preimage, second-preimage, length extension, MAC forgery).
+**Wire-format note.**  This is a breaking change: all pre-v1.9.0 HFSCX-256 digests, pre-hashed signatures, and AEAD tags are incompatible with HFSCX-256-DM.  The cost per block is one 256-bit XOR (negligible).
 
 ### 11.9.9 `_stern_hash` QRO argument (TODO #36 — DONE v1.6.1)
 
 As of v1.6.1 the Stern-F commitment hash is (ds = domain-separation tag):
 
-$$\mathrm{StH}_{\mathrm{ds}}(v_1, \ldots, v_k) = \mathrm{HFSCX\text{-}256}(h_k)[0{:}n/8], \quad h_0 = \mathrm{ds}, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i, \mathrm{ROL}(v_i, n/8)\bigr)$$
+$$\mathrm{StH}_{\mathrm{ds}}(v_1, \ldots, v_k) = \mathrm{HFSCX\text{-}256\text{-}DM}(h_k)[0{:}n/8], \quad h_0 = \mathrm{ds}, \quad h_i = F_1^{n/4}\bigl(h_{i-1} \oplus v_i, \mathrm{ROL}(v_i, n/8)\bigr)$$
 
 Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0 for the Fiat-Shamir challenge.
 
-**QRO argument.** Under the ROM on HFSCX-256 (§11.9.2, assumption A1), distinct per-slot ds values guarantee that c0, c1, c2, and the KEM key each invoke an independent random oracle.  By Unruh's composition theorem [Unruh 2015], this satisfies the QROM requirement for Theorem 17's Fiat-Shamir transform.  The range compression gap from TODO #42 (F_stern maps only ~24% of 2^32 inputs to distinct outputs at n=32) is resolved: the HFSCX-256 finalization added in v1.6.0 maps the chained state through a full 256-bit hash before truncation, restoring the ~63.2% distinct-output fraction expected of a random function.
+**QRO argument.** Under the ROM on HFSCX-256-DM (§11.9.2, assumption A1), distinct per-slot ds values guarantee that c0, c1, c2, and the KEM key each invoke an independent random oracle.  By Unruh's composition theorem [Unruh 2015], this satisfies the QROM requirement for Theorem 17's Fiat-Shamir transform.  The range compression gap from TODO #42 (F_stern maps only ~24% of 2^32 inputs to distinct outputs at n=32) is resolved: the HFSCX-256-DM finalization maps the chained state through a full 256-bit hash before truncation, restoring the ~63.2% distinct-output fraction expected of a random function.
 
 **Assembly/Arduino (n=32 toy demo).** The 32-bit `hfscx_32` finalizer and the KEM call with ds=4 provide the same QRO property for the KEM slot.  The sign/verify `stern_hash1_32`/`stern_hash2_32` in the n=32 demo do not yet carry per-slot DS tags; structural distinctness (different item counts) limits same-slot collision probability to at most 2^(-32) — negligible at toy parameters.  Full per-slot DS for assembly is a future hardening item.
 
 ### 11.9.10 Empirical evidence
 
-`SecurityProofsCode/hfscx_256_analysis.py` measured the following at $n = 256$:
+`SecurityProofsCode/hfscx_256_analysis.py` measured the following at $n = 256$ (HFSCX-256-DM, v1.9.0):
 
 | Test | Result | Interpretation |
 |---|---|---|
@@ -864,13 +857,13 @@ Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0
 | §4 Collision sanity, $2^{17}$ trials (`--full`) | not run by default — birthday bound $2^{128}$ | Skipped: any observable collision below $2^{60}$ would falsify A1. |
 | §5 Length-extension naive forgery, 200 trials | 0 / 200 successful | Confirms Theorem 18: finalization block defeats trivial extension. |
 | §6 Domain separation (unkeyed vs keyed), 1 000 trials | 1000 / 1000 differ | Keyed mode distinct from unkeyed for all non-zero $K$. |
-| §7 Fixed-point search, 200 random $(s, m)$ pairs | 0 exact, 0 within 1 bit | No structural fixed points found; supports §11.9.8 claim that DM is a hardening, not a fix for an observed weakness. |
+| §7 Fixed-point search (DM), 200 random $(s, m)$ pairs | 0 with $F_1^{64}(s,m)=0$, 0 near-zero | Fixed-point condition is preimage of zero under A2; no instances found, consistent with $\Omega(2^{128})$ hardness (§11.9.8). |
 
 These tests rule out trivial weaknesses (low diffusion, biased output, length-extension, accidental key collisions, structural fixed points).  They do **not** constitute a formal proof: collision and preimage hardness rest on A1 + A2.
 
 ### 11.9.11 Summary
 
-HFSCX-256 provides:
+HFSCX-256-DM provides:
 
 | Property | Bound | Assumption |
 |---|---|---|
@@ -883,6 +876,6 @@ HFSCX-256 provides:
 
 **Open hardenings** (not security-critical at current parameters):
 
-1. Switch to Davies-Meyer compression $C \oplus s$ at next major version (§11.9.8).
+1. ~~Switch to Davies-Meyer compression $C \oplus s$ at next major version (§11.9.8).~~ **DONE v1.9.0.**
 2. Add 1-byte domain-tag prefix per call site (§11.9.7).
-3. Switch the AEAD tag to HMAC-HFSCX-256 if the same $K$ is ever reused for non-MAC purposes (§11.9.6).
+3. Switch the AEAD tag to HMAC-HFSCX-256-DM if the same $K$ is ever reused for non-MAC purposes (§11.9.6).

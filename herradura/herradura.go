@@ -350,7 +350,7 @@ func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
 }
 
 // ---------------------------------------------------------------------------
-// HFSCX-256: Merkle-Damgård hash on NL-FSCX v1
+// HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1 with Davies-Meyer compression (v1.9.0)
 // ---------------------------------------------------------------------------
 
 // Hfscx256IV is the 32-byte domain separation constant (ASCII + zero padding).
@@ -382,7 +382,8 @@ func RnlKdfSeed(k *BitArray) *BitArray {
 	return NewBitArray(n, new(big.Int).Xor(&rotated.Val, dc))
 }
 
-// Hfscx256 computes the HFSCX-256 hash of data.
+// Hfscx256 computes the HFSCX-256-DM hash of data (Davies-Meyer compression).
+// Compression: C_DM(s,m) = F_1^{64}(s,m) ⊕ s.
 // iv==nil uses the standard domain IV (bare hash).
 // A non-nil iv (32 bytes, caller sets iv = key XOR Hfscx256IV[:]) selects the keyed-MAC variant.
 func Hfscx256(data []byte, iv []byte) []byte {
@@ -414,11 +415,13 @@ func Hfscx256(data []byte, iv []byte) []byte {
 	}
 	padded = append(padded, lb...)
 
-	// Chain each 32-byte block: state = NlFscxRevolveV1(state, block, 64)
+	// Chain each 32-byte block: C_DM(s,m) = F_1^{64}(s,m) ⊕ s (Davies-Meyer)
 	for off := 0; off < len(padded); off += 32 {
+		prev := state.Copy()
 		block := &BitArray{size: 256}
 		block.Val.SetBytes(padded[off : off+32])
 		state = NlFscxRevolveV1(state, block, 64)
+		state = NewBitArray(256, new(big.Int).Xor(&state.Val, &prev.Val))
 	}
 
 	return state.Bytes()

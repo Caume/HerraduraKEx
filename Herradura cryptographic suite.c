@@ -510,8 +510,8 @@ int main(void)
             puts("- HPKE-Stern-F key agreement FAILED (N=256)");
     }
 
-    /* --- HFSCX-256 [HASH -- Merkle-Damgård over NL-FSCX v1; 256-bit output] */
-    printf("\n--- HFSCX-256 [HASH \xe2\x80\x94 Merkle-Damg\xc3\xa5rd over NL-FSCX v1; 256-bit output]\n");
+    /* --- HFSCX-256-DM [HASH -- Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output] */
+    printf("\n--- HFSCX-256-DM [HASH \xe2\x80\x94 Merkle-Damg\xc3\xa5rd over NL-FSCX v1, Davies-Meyer; 256-bit output]\n");
     {
         static const uint8_t tv[] = "HFSCX-256 test vector";
         uint8_t bare_out[32], keyed_out[32], mac_iv[32];

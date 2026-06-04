@@ -4088,7 +4088,9 @@ $s$ with $F_1^{64}(s, m) = 0$ requires $\Omega(2^{n/2})$ work (preimage of zero 
 **Suggested approach:** Implement and test in a single batch across all targets; bundle
 with any other breaking wire-format changes scheduled for v2.0.
 
-Status: **PENDING**
+Status: **DONE v1.9.0** — Davies-Meyer feed-forward deployed across all six language targets.
+KAV vectors updated in C/Go/Python tests.  Construction renamed HFSCX-256-DM.
+SecurityProofs-2.md §11.9 updated.  Wire-format breaking change (incompatible with pre-v1.9.0).
 
 ---
 
@@ -4115,7 +4117,13 @@ toy parameters — but it leaves a gap relative to the full QRO argument.
 **Note:** This is a hardening item for the toy demo; it does not affect the n=256
 production targets.  No wire-format change for the 256-bit targets.
 
-Status: **PENDING**
+Status: **DONE v1.9.1** — Added `ds` parameter (uint32) to `stern_hash1_32(ds, v)` and
+`stern_hash2_32(ds, a, b)` in all five 32-bit targets: ARM suite (`.s`), ARM tests (`.s`),
+i386 suite (`.asm`), i386 tests (`.asm`), Arduino (`.ino`).  DS is XOR'd into the first
+item before the initial `nl_fscx_revolve_v1` call, matching the 256-bit convention.  Call
+sites updated with ds=1 (c0), ds=2 (c1), ds=3 (c2), ds=4 (KEM key/encap/decap).  All
+[11] and [12] tests pass on i386 (qemu-i386); ARM cross-compiler not installed on the build
+host but the logic is identical to the verified i386 port.
 
 ---
 

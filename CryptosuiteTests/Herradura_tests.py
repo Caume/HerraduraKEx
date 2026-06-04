@@ -338,10 +338,13 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     len_raw = int.from_bytes(b'\x00' * (blen - 8) + (len(data) * 8).to_bytes(8, 'big'), 'big')
     padded += (len_raw ^ init_int).to_bytes(blen, 'big')
 
+    # Chain blocks: C_DM(s, m) = F_1^{64}(s, m) ⊕ s (Davies-Meyer feed-forward)
     steps = n // 4  # 64
     for off in range(0, len(padded), blen):
+        prev = state
         block = BitArray(n, int.from_bytes(padded[off:off + blen], 'big'))
         state = nl_fscx_revolve_v1(state, block, steps)
+        state = BitArray(n, state.uint ^ prev.uint)
 
     return state.uint.to_bytes(blen, 'big')
 
@@ -1091,23 +1094,23 @@ def test_hpke_stern_f_correctness():
 
 
 def test_hfscx_256():
-    print("[19] HFSCX-256 hash — output length, known-answer, determinism, "
+    print("[19] HFSCX-256-DM hash — output length, known-answer, determinism, "
           "collision sanity, block boundaries, keyed MAC  [HASH]")
 
     # Known-answer tests (KAT) — pre-computed from the reference implementation
     KAT = [
         (b'',
-         '75de75aeffa8d6fb3d56134cb40a3f18'
-         '75857974e197a632bbf436160ed97a6b'),
+         'e7082e7f038a6e32e480b5f1d969ea2c'
+         '19565d327defb0f8500f6fac8fe246cc'),
         (b'a',
-         'e37bd20f15e04f21a0921cf0a666d245'
-         '7bc2bccfd7bd2822e671da24bdb838a0'),
+         '73b2d91bbdf0fc000de7cd16ac45d7f3'
+         'f41be5609524dbeba30605a89d138ec5'),
         (b'abc',
-         'e2fb755521c5d75fc058cb77027a8dc2'
-         '9e16971cb774b6cc281696fca63fec43'),
+         '394e2176329b94f4f6704730a01083be'
+         'c51a49584bbb54abf05e5fa19cd05bb2'),
         (b'a' * 33,
-         '523c791286ae59faf48421955bf5ce1f'
-         '5c9bdeeb773fa4a1b235058ca56fc2b8'),
+         '49aee3b6126e44beff589d8288da6ec3'
+         'f92f1f763368dfb85fb6b9664bc30adb'),
     ]
     kat_ok = True
     for msg, expected in KAT:

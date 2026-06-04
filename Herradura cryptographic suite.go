@@ -249,8 +249,8 @@ func main() {
 		fmt.Println("- HPKE-Stern-F key agreement FAILED")
 	}
 
-	// ── HFSCX-256 ───────────────────────────────────────────────────────────
-	fmt.Println("\n--- HFSCX-256 [HASH — Merkle-Damgård over NL-FSCX v1; 256-bit output]")
+	// ── HFSCX-256-DM ─────────────────────────────────────────────────────────
+	fmt.Println("\n--- HFSCX-256-DM [HASH — Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output]")
 	{
 		tv := []byte("HFSCX-256 test vector")
 		bareOut := Hfscx256(tv, nil)

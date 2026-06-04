@@ -2278,60 +2278,73 @@ rnl_agree_recv:
     ret
 
 ; ============================================================
-; hfscx_32: EAX=x -> EAX=hfscx_32(x)
-; Two-step MD hash at 32-bit word size: breaks range compression.
-; s=nl(IV,x,8); return nl(s,LB,8)  IV=0xA3C5E7B9, LB=0xA3C5E799
-; (TODO #43, v1.6.0)
+; hfscx_32: EAX=x -> EAX=hfscx_32(x)  (DM, v1.9.0)
+; C_DM(s,m)=nl(s,m,8)^s; IV=0xA3C5E7B9, LB=0xA3C5E799
+; s=nl(IV,x,8)^IV; return nl(s,LB,8)^s
 ; ============================================================
 hfscx_32:
     push ecx
     push ebx
+    push edi               ; save edi (callee-saved)
     mov  ebx, eax          ; B = x
+    mov  edi, 0xA3C5E7B9   ; prev = IV_32
     mov  eax, 0xA3C5E7B9   ; A = IV_32
     mov  ecx, 8
     call nl_fscx_revolve_v1 ; eax = nl(IV, x, 8)
+    xor  eax, edi           ; eax ^= IV  (DM block 1)
+    mov  edi, eax           ; prev = s
     mov  ebx, 0xA3C5E799   ; B = LB = 0x20 ^ IV_32
     mov  ecx, 8
-    call nl_fscx_revolve_v1
+    call nl_fscx_revolve_v1 ; eax = nl(s, LB, 8)
+    xor  eax, edi           ; eax ^= s  (DM block 2)
+    pop  edi
     pop  ebx
     pop  ecx
     ret
 
 ; ============================================================
-; stern_hash1_32: EAX=v -> EAX=sternHash(v)
-; raw=nl_fscx_revolve_v1(v,ROL(v,4),8); return hfscx_32(raw)
+; stern_hash1_32: EAX=ds, EBX=v -> EAX=sternHash(ds,v)
+; h=nl(ds^v,ROL(v,4),8); return hfscx_32(h)
 ; ============================================================
 stern_hash1_32:
     push ecx
     push ebx
-    mov  ebx, eax
-    rol  ebx, 4
+    xor  eax, ebx           ; eax = ds ^ v  (ebx = v)
+    rol  ebx, 4             ; ebx = ROL(v,4)
     mov  ecx, 8
     call nl_fscx_revolve_v1
     pop  ebx
     pop  ecx
-    jmp  hfscx_32           ; tail call: apply HFSCX-32 finalizer
+    jmp  hfscx_32
 
 ; ============================================================
-; stern_hash2_32: EAX=item0, EBX=item1 -> EAX=sternHash(item0,item1)
+; stern_hash2_32: EAX=ds, EBX=a, ECX=b -> EAX=sternHash(ds,a,b)
+; h=nl(ds^a,ROL(a,4),8); return hfscx_32(nl(h^b,ROL(b,4),8))
 ; ============================================================
 stern_hash2_32:
     push esi
+    push edi
     push ecx
-    mov  esi, ebx           ; save item1
-    ; step1: h = nl_fscx_revolve_v1(item0, ROL(item0,4), 8)
-    mov  ebx, eax
-    rol  ebx, 4
+    push ebx
+    mov  esi, ebx           ; esi = a
+    mov  edi, ecx           ; edi = b
+    ; step1: h = nl(ds^a, ROL(a,4), 8)
+    xor  eax, esi           ; eax = ds ^ a
+    mov  ebx, esi
+    rol  ebx, 4             ; ebx = ROL(a,4)
     mov  ecx, 8
     call nl_fscx_revolve_v1 ; eax = h
-    ; step2: h = nl_fscx_revolve_v1(h^item1, ROL(item1,4), 8)
-    xor  eax, esi
-    mov  ebx, esi
-    rol  ebx, 4
+    ; step2: h = nl(h^b, ROL(b,4), 8)
+    xor  eax, edi           ; h ^ b
+    mov  ebx, edi
+    rol  ebx, 4             ; ebx = ROL(b,4)
+    mov  ecx, 8
     call nl_fscx_revolve_v1 ; eax = raw
+    pop  ebx
     pop  ecx
+    pop  edi
     pop  esi
-    jmp  hfscx_32           ; tail call: apply HFSCX-32 finalizer
+    jmp  hfscx_32
 
 ; ============================================================
 ; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]
@@ -2653,14 +2666,17 @@ hpks_stern_f_sign_32:
     mov  eax, esi
     mov  ebx, [sdf_r_tmp + ebp*4]
     call stern_syndrome_32
-    mov  ebx, eax
-    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  ecx, eax                       ; ecx = hr
+    mov  ebx, [sdf_pi_tmp + ebp*4]     ; ebx = pi
+    mov  eax, 1                         ; ds = 1
     call stern_hash2_32
     mov  [sdf_c0 + ebp*4], eax
-    mov  eax, [sdf_sr_tmp + ebp*4]
+    mov  ebx, [sdf_sr_tmp + ebp*4]     ; ebx = sr
+    mov  eax, 2                         ; ds = 2
     call stern_hash1_32
     mov  [sdf_c1 + ebp*4], eax
-    mov  eax, [sdf_sy_tmp + ebp*4]
+    mov  ebx, [sdf_sy_tmp + ebp*4]     ; ebx = sy
+    mov  eax, 3                         ; ds = 3
     call stern_hash1_32
     mov  [sdf_c2 + ebp*4], eax
     inc  ebp
@@ -2741,9 +2757,10 @@ hpks_stern_f_verify_32:
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32
-    xor  eax, edi
-    mov  ebx, eax
-    mov  eax, edx
+    xor  eax, edi               ; hy^synd
+    mov  ecx, eax               ; ecx = hy^synd
+    mov  ebx, edx               ; ebx = pi
+    mov  eax, 1                 ; ds = 1
     call stern_hash2_32
     cmp  eax, [sdf_c0 + ebp*4]
     jne  .hsfv_fail
@@ -2751,16 +2768,20 @@ hpks_stern_f_verify_32:
     call stern_gen_perm_32
     mov  eax, [sdf_respB + ebp*4]
     call stern_apply_perm_32
+    mov  ebx, eax               ; ebx = apply_perm result
+    mov  eax, 3                 ; ds = 3
     call stern_hash1_32
     cmp  eax, [sdf_c2 + ebp*4]
     jne  .hsfv_fail
     jmp  .hsfv_round_next
 .hsfv_case0:
-    mov  eax, edx
+    mov  ebx, edx               ; ebx = ra
+    mov  eax, 2                 ; ds = 2
     call stern_hash1_32
     cmp  eax, [sdf_c1 + ebp*4]
     jne  .hsfv_fail
-    mov  eax, [sdf_respB + ebp*4]
+    mov  ebx, [sdf_respB + ebp*4]  ; ebx = rb
+    mov  eax, 3                 ; ds = 3
     call stern_hash1_32
     cmp  eax, [sdf_c2 + ebp*4]
     jne  .hsfv_fail
@@ -2777,8 +2798,9 @@ hpks_stern_f_verify_32:
     mov  eax, esi
     mov  ebx, [sdf_respB + ebp*4]
     call stern_syndrome_32
-    mov  ebx, eax
-    mov  eax, edx
+    mov  ecx, eax               ; ecx = H·r^T
+    mov  ebx, edx               ; ebx = pi
+    mov  eax, 1                 ; ds = 1
     call stern_hash2_32
     cmp  eax, [sdf_c0 + ebp*4]
     jne  .hsfv_fail
@@ -2786,6 +2808,8 @@ hpks_stern_f_verify_32:
     call stern_gen_perm_32
     mov  eax, [sdf_respB + ebp*4]
     call stern_apply_perm_32
+    mov  ebx, eax               ; ebx = apply_perm result
+    mov  eax, 2                 ; ds = 2
     call stern_hash1_32
     cmp  eax, [sdf_c1 + ebp*4]
     jne  .hsfv_fail
@@ -2821,8 +2845,9 @@ hpke_stern_f_encap_32:
     mov  ebx, esi
     call stern_syndrome_32
     mov  [val_sdf_ct], eax
-    mov  eax, [val_sdf_seed]
-    mov  ebx, esi
+    mov  ecx, esi               ; ecx = e'
+    mov  ebx, [val_sdf_seed]    ; ebx = seed
+    mov  eax, 4                 ; ds = 4
     call stern_hash2_32
     mov  [val_sdf_K_enc], eax
     pop  edx
@@ -2835,9 +2860,12 @@ hpke_stern_f_encap_32:
 ; hpke_stern_f_decap_known_32: EAX=e' -> EAX=K=hash2(seed,e')
 ; ============================================================
 hpke_stern_f_decap_known_32:
+    push ecx
     push ebx
-    mov  ebx, eax
-    mov  eax, [val_sdf_seed]
+    mov  ecx, eax               ; ecx = e'
+    mov  ebx, [val_sdf_seed]    ; ebx = seed
+    mov  eax, 4                 ; ds = 4
     call stern_hash2_32
     pop  ebx
+    pop  ecx
     ret
