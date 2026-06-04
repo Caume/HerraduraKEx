@@ -3974,3 +3974,76 @@ In §3.3 HKEX-GF and §9 HKEX-RNL, add a brief note after each "shared secret" d
 **Files to modify:** `docs/INTRODUCTION.md`
 
 Status: **DONE** — Part 4.5 (HFSCX-256 conceptual explanation: Merkle-Damgård construction, NL-FSCX v1 as compression function, keyed MAC, AEAD) inserted between Part 4 and Part 5; KDF derivation notes added to §3.3 and §9.4; HFSCX-256 row added to Part 11.1 protocol table; two new decision-tree branches added to Part 11.2; four glossary entries added to Part 12 (Merkle-Damgård, MAC, AEAD, HFSCX-256).
+
+---
+
+### 71. Cryptographic landscape review — new developments or discoveries that may affect suite security (Research, Medium)
+
+**Rationale:** Cryptographic research moves continuously. Algorithmic advances, new
+mathematical insights, and implementation attacks published after the suite's security
+proofs were written could affect the security margins of one or more protocols.  A
+periodic review ensures that the assumptions underpinning each protocol remain current
+and that `SecurityProofs-1.md` / `SecurityProofs-2.md` accurately reflect the state
+of the art.
+
+**Scope:** Review developments relevant to each hard problem the suite relies on:
+
+| Protocol family | Hard problem | Where to look |
+|---|---|---|
+| HKEX-GF, HPKS, HPKE (classical) | DLP in GF(2^n)* | Index-calculus / function-field sieve advances; IACR ePrint, IEEE TIT |
+| HKEX-RNL | Ring-LWR / RLWE | NIST PQC round 4 / final standards (FIPS 203 ML-KEM); IACR Crypto/Eurocrypt/Asiacrypt proceedings |
+| HPKS-Stern-F, HPKE-Stern-F | Syndrome Decoding Problem (SDP) | NIST PQC code-based candidates (BIKE, HQC); Information-Set Decoding (ISD) algorithm progress |
+| NL-FSCX v1 PRF / OWF | Algebraic / statistical attacks on NL-FSCX | IACR FSE / ToSC; any new algebraic degree or differential attack tools |
+| HFSCX-256 | Collision / preimage resistance | Merkle-Damgård analysis; any new meet-in-the-middle or multi-collision attacks |
+| All | Quantum algorithms beyond Shor/Grover | Quantum walks, QAOA advances; NIST IR 8413 update if published |
+
+**Concrete questions to answer for each area:**
+
+1. **GF(2^n) DLP:** Have index-calculus or function-field sieve algorithms been
+   improved for characteristic-2 fields since 2015?  (Granger–Kleinjung–Zumbrägel
+   2014–2016 broke small-characteristic fields; how does GF(2^256) fare today?)
+   Does the deployed irreducible polynomial `x^256 + x^10 + x^5 + x^2 + 1` have
+   any known structural weakness?
+
+2. **Ring-LWR:** Has the security of Ring-LWR (as opposed to MLWE/MSIS in FIPS 203)
+   been tightened or weakened since the suite's parameter choice (n=256, q=65537,
+   p=4096, η=1)?  Have any new algebraic or lattice-reduction attacks appeared that
+   change the n=256 security estimate?
+
+3. **Syndrome Decoding:** Has the best known ISD algorithm (Prange, Stern, BJMM,
+   MMT, MO) improved for binary linear codes with the Stern-F parameters
+   (N=256, t=16)?  Does the current `SDF_PRODUCTION_ROUNDS = 219` remain sufficient
+   for 128-bit soundness under any new forgery technique?
+
+4. **NL-FSCX PRF gap (follow-up to TODO #42):** Has any new algebraic technique
+   (higher-order differentials, MILP-based diffusion analysis) been published that
+   could close or widen the range-compression distinguisher gap identified in §9.3
+   of `nl_fscx_prf_analysis.py`?
+
+5. **HFSCX-256:** Are there any new generic Merkle-Damgård attacks (beyond the
+   length-extension and multi-collision results already addressed in §11.9) that
+   could reduce the collision bound below 2^128?
+
+6. **Quantum:** Has any post-2022 result changed Grover's effective bit-security
+   halving for symmetric primitives, or introduced a new quantum speedup for
+   lattice/code problems beyond the known sqrt-speedup for ISD?
+
+**Deliverables:**
+
+- A summary table (added here as a Status note) with one row per area:
+  `| Area | Key papers / developments | Impact on suite | Action required? |`
+- If any finding requires a concrete code or documentation change, create a new
+  numbered TODO item for it.
+- Update the "Last updated" date in `SecurityProofs-1.md` and `SecurityProofs.md`
+  to reflect the review date.
+
+**Suggested sources:**
+
+- IACR ePrint archive (eprint.iacr.org) — search each protocol family.
+- NIST PQC project page (csrc.nist.gov/projects/post-quantum-cryptography) —
+  final standards FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA) and
+  any new call for proposals.
+- Crypto/Eurocrypt/Asiacrypt/FSE proceedings, 2022–present.
+- NIST IR 8413 updates.
+
+Status: **PENDING**
