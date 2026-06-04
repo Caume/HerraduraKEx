@@ -4156,4 +4156,4 @@ HPKS-Stern-F / HPKE-Stern-F should be considered research-quality software.  BIK
 (NIST alternates) rest on the quasi-cyclic syndrome decoding assumption, which has received
 far more external scrutiny.
 
-Status: **PENDING**
+Status: **DONE** v1.9.2 — Items 1–2 and 4 complete.  `SecurityProofsCode/nl_fscx_owf_analysis.py` covers differential, linear, rotational, B=0, and MITM analysis; SecurityProofs-2.md §11.8.3 updated.  Key finding: rotational equivariance at 1–6% (vs. 2^{-n} random expectation) is a structural open concern inherited from the FSCX base.  Item 3 (formal reduction to studied hardness) remains open — recorded as an open gap in §11.8.3.

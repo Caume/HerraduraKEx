@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.2] - 2026-06-04
+
+### Research — NL-FSCX v1 OWF cryptanalysis (TODO #74)
+
+Completed the dedicated cryptanalysis of NL-FSCX v1 as a one-way function, fulfilling TODO #74 scope items 1–2 and 4.
+
+**New script:** `SecurityProofsCode/nl_fscx_owf_analysis.py` — five classical analyses of $F_1^{n/4}(\cdot, B)$:
+1. **Differential** — DDT at n=8 (exhaustive) and n=32 (sampled); key finding: MDP is B-dependent (generic B: ~0.10 at r=8; sparse-bit B: ~0.77 — degenerate trails).
+2. **Linear bias** — Walsh spectrum at n=8 and sampled at n=32; max bias at n=32 (0.070) is within the Bernstein random-function bound (0.087) — PASS.
+3. **Rotational cryptanalysis** — rotational-equivariance rates of **1–6%** at n=32, r=8 for all k ∈ {1,2,4,7,8,16}, far above the 2^{-32} random expectation.  Structural correlation inherited from the FSCX linear base; integer-carry NL term only partially breaks it.  Not a direct preimage attack (at most n-factor speedup), but an open design concern.
+4. **B=0 degeneracy** — confirmed GF(2)-linear and singular (rank 2/8 for L_2 at n=8); negligible in all protocol uses (Pr[B=0] = 2^{-n}).
+5. **MITM preimage** — 28.1% image coverage at n=20, average preimage count 3.52; MITM provides no asymptotic speedup (O(2^n) = brute force).
+
+**Documentation:** SecurityProofs-2.md §11.8.3 extended with "Cryptanalytic evidence (TODO #74, v1.9.2)" subsection containing all empirical results, the rotational-structure open concern, and updated open gaps list.
+
+**Files changed:**
+- `SecurityProofsCode/nl_fscx_owf_analysis.py` — new analysis script
+- `SecurityProofs-2.md` — §11.8.3 extended
+- `TODO.md` — TODO #74 marked DONE v1.9.2 (formal reduction remains open gap)
+- `README.md` — version bumped to v1.9.2
+
+---
+
 ## [1.9.1] - 2026-06-04
 
 ### Security — Per-slot domain-separation tags for Assembly/Arduino Stern-F (TODO #73)

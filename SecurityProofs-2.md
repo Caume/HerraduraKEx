@@ -491,6 +491,20 @@ $$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
 **Honest limitation.**  Theorem 16 reduces security to the NL-FSCX v1 one-wayness assumption, which is a **new assumption** not yet reduced to a studied hard problem.  Corollary 2 rules out Gröbner-basis algebraic attacks, but non-algebraic exploits are not excluded.  Independent cryptanalysis of NL-FSCX v1 as an OWF is required before deployment.
 
+**Cryptanalytic evidence (TODO #74, v1.9.2).**  `SecurityProofsCode/nl_fscx_owf_analysis.py` applies five classical techniques to $F_{1}^{n/4}(\cdot, B)$ with fixed $B$; results are summarised below.
+
+*Differential analysis.* At $n = 8$, the maximum differential probability (MDP) is strongly $B$-dependent: for generic $B$ (e.g. $B = \text{0xa5}$) MDP falls to $\approx 0.10$ at $r = 8$, while sparse-bit $B$ values (e.g. $B = \text{0x3c}$) retain MDP $\approx 0.77$ at $r = 8$, indicating degenerate differential trails along those $B$ values.  At $n = 32$, $r = 8$: zero repeated $(dA, dY)$ pairs in $10^5$ trials, consistent with uniform differential distribution.
+
+*Linear bias.* At $n = 8$ the max Walsh bias falls to $0.24$–$0.40$ at $r = 8$; at $n = 32$, $r = 8$ the sampled max bias ($0.070$) is within the Bernstein random-function bound ($0.087$), consistent with no exploitable linear structure.
+
+*Rotational cryptanalysis.* For all rotation amounts $k \in \{1,2,4,7,8,16\}$ at $n = 32$, $r = 8$, the fraction of random pairs $(A, B)$ satisfying $F_{1}^r(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_{1}^r(A,B), k)$ is approximately $1$–$6\%$, far above the $2^{-32}$ expectation for a random function.  This structural correlation is inherited from the FSCX linear base (exactly rotation-equivariant by construction); the integer-carry non-linear term only partially breaks it.  The correlation does not directly yield a preimage attack — it provides at most an $n$-factor constant speedup, not asymptotic improvement over $O(2^{n/2})$ — but it is an open design concern requiring formal rotational differential analysis (Khovratovich-Nikolić 2010 framework).
+
+*B=0 degeneracy.* $F_{1}^r(A, 0) = L_{r}(A)$ is confirmed GF(2)-linear and **singular** (rank 2/8 for $L_{2}$ at $n = 8$), meaning $F_{1}^r(\cdot, 0)$ collapses most inputs.  All protocol instantiations have $\Pr[B = 0] = 2^{-n}$, negligible.
+
+*MITM preimage.* Exhaustive enumeration at $n = 20$, $r = 5$ shows $28.1\%$ image coverage (average preimage count $3.52$).  Non-injectivity means backward enumeration requires $O(2^n)$ forward work, confirming MITM provides no asymptotic speedup.
+
+*Open concerns from this analysis.* (1) Rotational equivariance at $1$–$6\%$ requires formal rotational differential analysis (Khovratovich-Nikolić 2010).  (2) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is uncharacterised.  (3) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.
+
 ---
 
 ### 11.8.4 Option B — HPKS-Stern-F and HPKE-Stern-F (Code-Based via FSCX PRF)
