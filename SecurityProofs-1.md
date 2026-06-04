@@ -733,15 +733,20 @@ CDH in $\mathbb{GF}(2^n)^{\ast}$ is believed hard for large $n$, under the assum
 |-----------|------------|-------|
 | Baby-step giant-step (BSGS) | $O(2^{n/2})$ time, $O(2^{n/2})$ space | Generic group algorithm |
 | Pohlig–Hellman | $O(\sqrt{q_{\max}})$ where $q_{\max}$ = largest prime factor of group order | Dangerous when order is smooth |
-| Index calculus (function field sieve) | $L_{2^n}[1/2, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^*$ |
-| **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $(\log 2^n)^{O(\log\log 2^n)}$ | Specific to characteristic-2 fields |
+| Index calculus (function field sieve) | $L_{2^n}[1/3, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^{\ast}$; better constant than GNFS for prime fields |
+| **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $n^{O(\log n)}$ | Specific to characteristic-2 fields; practical for highly composite $n$ |
 
-The **quasi-polynomial algorithm** is the dominant classical threat.  It exploits the
-characteristic-2 structure of $\mathbb{GF}(2^n)^{\ast}$ via a descent using sparse linear systems in
-function fields — a technique with no known analogue for DLP in prime-order elliptic curve groups
-or in $\mathbb{Z}_p^{\ast}$.  In practice it has broken DLP in $\mathbb{GF}(2^{1279})$ and related
-fields.  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is $n \geq 3000$;
-most standards bodies advise **against** using $\mathbb{GF}(2^n)^{\ast}$ for new DLP-based designs.
+The **function field sieve (FFS)** is the practical binding constraint for $\mathbb{GF}(2^n)^{\ast}$
+at cryptographic sizes including $n = 256$.  Its complexity $L_{2^n}[1/3, c]$ is sub-exponential
+with a smaller constant $c$ than the number-field sieve for prime-field DLP, making binary-field
+DLP systematically weaker than an equal-bit-count prime-field DLP at the same $n$.
+The **quasi-polynomial algorithm** (Granger–Kleinjung–Zumbrägel 2014–2016, refining Barbulescu
+et al. 2013) achieves even better asymptotic complexity but has only been practically demonstrated
+for fields with highly composite extension degree (e.g. $\mathbb{GF}(2^{6120})$,
+$\mathbb{GF}(2^{9234})$).  For $\mathbb{GF}(2^{256})$ specifically, the FFS $L[1/3]$ remains the
+practical attack.  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is
+$n \geq 3000$; NIST SP 800-57 Rev. 5 (2020) and ENISA "Algorithms, Key Sizes and Parameters"
+(2022) both **deprecate** $\mathbb{GF}(2^n)^{\ast}$ for new designs.
 
 **Experimental verification at $n = 32$ (demo parameters).**
 
@@ -768,16 +773,28 @@ fully recovered because $g^{ab}$ is the same regardless of which representative 
 **Effective security:** $n = 32$ is broken in under 1 second.  The quasi-polynomial attack
 extends to all practical $n$ values.
 
-**Practical parameters:**
+**Practical parameters (updated 2026 — TODO #71 landscape review):**
 
 | $n$ | Estimated classical security | Note |
 |-----|------------------------------|------|
-| 64  | ≪ 64 bits (demonstration only) | Sub-exponential attacks apply |
-| 128 | ≈ 60–80 bits | Marginal; for demos only |
-| 256 | ≈ 128 bits | Recommended minimum for real use |
-| 512 | ≈ 192+ bits | Conservative |
+| 64  | ≪ 40 bits (demonstration only) | FFS $L[1/3]$ applies |
+| 128 | ≈ 50–60 bits | Below 80-bit floor; demos only |
+| 256 | ≈ 80–90 bits (**below 128-bit**) | FFS $L[1/3]$; NIST/ENISA deprecated |
+| 512 | ≈ 110–120 bits | Still below 128-bit target |
+| 1024 | ≈ 128–140 bits | Minimum for 128-bit security |
 
-For production use, elliptic curve Diffie-Hellman over a binary curve (or a prime-field ECDH) provides better security-per-bit.  HKEX-GF as presented is a proof-of-concept demonstrating that the classical break is structurally avoidable; the root cause analysis in §10.9 explains why $\mathbb{GF}(2^n)^*$ is ultimately unsuitable for a production key exchange.
+**2026 landscape update (TODO #71):** The entry $n = 256 \approx 128$ bits in earlier versions
+of this document was incorrect.  Under the FFS $L[1/3]$ attack, $\mathbb{GF}(2^{256})^{\ast}$ DLP
+provides approximately 80–90 bits of classical security — well below the 128-bit target.  Reaching
+128 bits under $L[1/3]$ requires $n \approx 1000$ or higher (analogous to how 3072-bit prime-field
+DH is needed for 128-bit security, not 256-bit).  NIST SP 800-57 Part 1 Rev. 5 (2020) and ENISA
+"Algorithms, Key Sizes and Parameters" (2022) deprecate $\mathbb{GF}(2^n)^{\ast}$ for new designs
+entirely; the correction here documents the concrete security shortfall at $n = 256$.
+
+For production use, elliptic curve Diffie-Hellman over a prime-order curve (ECDH) provides better
+security-per-bit than any $\mathbb{GF}(2^n)^{\ast}$ construction.  HKEX-GF is a proof-of-concept
+demonstrating that the classical structural break (§3) is avoidable; §10.9 explains why
+$\mathbb{GF}(2^n)^{\ast}$ is ultimately unsuitable as a production DLP group.
 
 #### 9.2.5 FSCX period preserved
 
@@ -1074,12 +1091,16 @@ Shor's algorithm solves the DLP in any cyclic group $G = \langle g \rangle$ of o
 in $O((\log N)^2 \log\log N \cdot \log\log\log N)$ quantum gate operations.  For
 $\mathbb{GF}(2^n)^*$: group order $N = 2^n - 1$, quantum time $O(n^2 \log n)$.
 
-| Adversary | Best DLP attack on $\mathbb{GF}(2^n)^*$ | Complexity |
-|-----------|----------------------------------------|------------|
-| Classical | Quasi-polynomial (Barbulescu 2013) | $(\log N)^{O(\log\log N)}$ |
-| Quantum | Shor's algorithm | $O((\log N)^2 \log\log N)$ |
+| Adversary | Best DLP attack on $\mathbb{GF}(2^n)^{\ast}$ | Complexity |
+|-----------|-----------------------------------------------|------------|
+| Classical (practical) | Function field sieve (FFS) | $L_{2^n}[1/3, c]$ — ~80–90 bits at $n=256$ |
+| Classical (asymptotic) | Quasi-polynomial (Granger–Kleinjung–Zumbrägel 2014–2016) | $n^{O(\log n)}$ — demonstrated for composite-degree fields |
+| Quantum | Shor's algorithm | $O(n^2 \log n)$ — breaks all practical sizes |
 
-Both attacks break $\mathbb{GF}(2^n)^*$ DLP at all practical parameter sizes.
+Both the FFS (classical) and Shor's algorithm (quantum) break $\mathbb{GF}(2^n)^{\ast}$ DLP at
+all practical parameter sizes.  At $n = 256$ the FFS gives approximately 80–90 bits of classical
+security (below the 128-bit target); Shor's algorithm reduces this to polynomial time on a
+fault-tolerant quantum computer.
 
 **HKEX-GF.** Given $(C, C_2) = (g^a, g^b)$, Shor's algorithm recovers $a$ (or $b$) in
 $O(n^2 \log n)$ quantum time; the shared secret $g^{ab} = C_2^a$ follows immediately.

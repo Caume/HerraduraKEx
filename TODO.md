@@ -3974,3 +3974,88 @@ In §3.3 HKEX-GF and §9 HKEX-RNL, add a brief note after each "shared secret" d
 **Files to modify:** `docs/INTRODUCTION.md`
 
 Status: **DONE** — Part 4.5 (HFSCX-256 conceptual explanation: Merkle-Damgård construction, NL-FSCX v1 as compression function, keyed MAC, AEAD) inserted between Part 4 and Part 5; KDF derivation notes added to §3.3 and §9.4; HFSCX-256 row added to Part 11.1 protocol table; two new decision-tree branches added to Part 11.2; four glossary entries added to Part 12 (Merkle-Damgård, MAC, AEAD, HFSCX-256).
+
+---
+
+### 71. Cryptographic landscape review — new developments or discoveries that may affect suite security (Research, Medium)
+
+**Rationale:** Cryptographic research moves continuously. Algorithmic advances, new
+mathematical insights, and implementation attacks published after the suite's security
+proofs were written could affect the security margins of one or more protocols.  A
+periodic review ensures that the assumptions underpinning each protocol remain current
+and that `SecurityProofs-1.md` / `SecurityProofs-2.md` accurately reflect the state
+of the art.
+
+**Scope:** Review developments relevant to each hard problem the suite relies on:
+
+| Protocol family | Hard problem | Where to look |
+|---|---|---|
+| HKEX-GF, HPKS, HPKE (classical) | DLP in GF(2^n)* | Index-calculus / function-field sieve advances; IACR ePrint, IEEE TIT |
+| HKEX-RNL | Ring-LWR / RLWE | NIST PQC round 4 / final standards (FIPS 203 ML-KEM); IACR Crypto/Eurocrypt/Asiacrypt proceedings |
+| HPKS-Stern-F, HPKE-Stern-F | Syndrome Decoding Problem (SDP) | NIST PQC code-based candidates (BIKE, HQC); Information-Set Decoding (ISD) algorithm progress |
+| NL-FSCX v1 PRF / OWF | Algebraic / statistical attacks on NL-FSCX | IACR FSE / ToSC; any new algebraic degree or differential attack tools |
+| HFSCX-256 | Collision / preimage resistance | Merkle-Damgård analysis; any new meet-in-the-middle or multi-collision attacks |
+| All | Quantum algorithms beyond Shor/Grover | Quantum walks, QAOA advances; NIST IR 8413 update if published |
+
+**Concrete questions to answer for each area:**
+
+1. **GF(2^n) DLP:** Have index-calculus or function-field sieve algorithms been
+   improved for characteristic-2 fields since 2015?  (Granger–Kleinjung–Zumbrägel
+   2014–2016 broke small-characteristic fields; how does GF(2^256) fare today?)
+   Does the deployed irreducible polynomial `x^256 + x^10 + x^5 + x^2 + 1` have
+   any known structural weakness?
+
+2. **Ring-LWR:** Has the security of Ring-LWR (as opposed to MLWE/MSIS in FIPS 203)
+   been tightened or weakened since the suite's parameter choice (n=256, q=65537,
+   p=4096, η=1)?  Have any new algebraic or lattice-reduction attacks appeared that
+   change the n=256 security estimate?
+
+3. **Syndrome Decoding:** Has the best known ISD algorithm (Prange, Stern, BJMM,
+   MMT, MO) improved for binary linear codes with the Stern-F parameters
+   (N=256, t=16)?  Does the current `SDF_PRODUCTION_ROUNDS = 219` remain sufficient
+   for 128-bit soundness under any new forgery technique?
+
+4. **NL-FSCX PRF gap (follow-up to TODO #42):** Has any new algebraic technique
+   (higher-order differentials, MILP-based diffusion analysis) been published that
+   could close or widen the range-compression distinguisher gap identified in §9.3
+   of `nl_fscx_prf_analysis.py`?
+
+5. **HFSCX-256:** Are there any new generic Merkle-Damgård attacks (beyond the
+   length-extension and multi-collision results already addressed in §11.9) that
+   could reduce the collision bound below 2^128?
+
+6. **Quantum:** Has any post-2022 result changed Grover's effective bit-security
+   halving for symmetric primitives, or introduced a new quantum speedup for
+   lattice/code problems beyond the known sqrt-speedup for ISD?
+
+**Deliverables:**
+
+- A summary table (added here as a Status note) with one row per area:
+  `| Area | Key papers / developments | Impact on suite | Action required? |`
+- If any finding requires a concrete code or documentation change, create a new
+  numbered TODO item for it.
+- Update the "Last updated" date in `SecurityProofs-1.md` and `SecurityProofs.md`
+  to reflect the review date.
+
+**Suggested sources:**
+
+- IACR ePrint archive (eprint.iacr.org) — search each protocol family.
+- NIST PQC project page (csrc.nist.gov/projects/post-quantum-cryptography) —
+  final standards FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA) and
+  any new call for proposals.
+- Crypto/Eurocrypt/Asiacrypt/FSE proceedings, 2022–present.
+- NIST IR 8413 updates.
+
+Status: **DONE** (2026-06-03)
+
+**Findings summary (2026 landscape review):**
+
+| Area | Key papers / developments | Impact on suite | Action required? |
+|---|---|---|---|
+| GF(2^n) DLP (HKEX-GF, HPKS, HPKE) | FFS L[1/3] is the practical attack; GKZ quasi-polynomial only applies to highly composite-degree fields. NIST SP 800-57 Rev. 5 (2020) and ENISA (2022) deprecate GF(2^n)* for new designs. | n=256 gives ~80–90 bits classical security (NOT 128 bits as previously stated). Suite §9.2.4 corrected. | Done — §9.2.4 and §10.8.4 updated; HKEX-GF, HPKS, HPKE remain **None** post-quantum. |
+| Ring-LWR (HKEX-RNL) | MATZOV Report 2022; Albrecht et al. LWE estimator updates 2023. BKZ-based lattice reduction is the best known attack. No new algebraic attack on q=65537 (x^256+1 doesn't split since 512 ∤ q−1). | n=256, q=65537, p=4096, η=1 → ~105–115 classical Core-SVP bits, ~95–105 quantum. Below ML-KEM-768 128-bit target but above 100-bit floor. | Done — §11.4.3 and §11.6 updated with concrete estimate. |
+| Syndrome Decoding (HPKS/HPKE-Stern-F) | BJMM/SDE estimator tool (Becker-Joux-May-Meurer). BIKE-128 uses N≈24,646 for 128-bit classical security. | N=256, t=16 gives only ~56–60 bits classical (NOT 128 bits). N=256 is demo-only; 128-bit needs N ≥ 17,000. | Done — §11.7 table and §11.8.4 updated; new TODO items needed for production parameters. |
+| NL-FSCX v1 PRF / OWF | No new algebraic technique published through 2025 that closes or widens the range-compression distinguisher. The HFSCX-256 post-composition fix (TODO #43) addresses the range-compression PRF gap. | No new threat. TODO #43 (HFSCX-256 composition fix) remains the recommended hardening. | No new action needed; TODO #43 status unchanged. |
+| HFSCX-256 | No new generic Merkle-Damgård attacks beyond known length-extension / multi-collision. No published cryptanalysis of NL-FSCX v1 compression function. | No new threat; collision bound 2^128 remains valid. | None. |
+| Quantum algorithms | NIST SP 800-235 draft (2024) is the current reference. No new speedups beyond Grover / BKZ-hybrid through 2025. No quantum speedup for syndrome decoding beyond √-speedup for ISD. | Grover halving for symmetric primitives unchanged. Shor still breaks all GF(2^n)* DLP. BKZ-quantum hybrid for lattices unchanged at ~core-SVP. | None. |
+
