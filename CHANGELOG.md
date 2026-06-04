@@ -31,6 +31,7 @@ Call-site DS values: c0=1, c1=2, c2=3, KEM key (encap+decap)=4.  Challenge hash 
 - `Herradura cryptographic suite.asm` (i386) — function bodies (EAX=ds, EBX=v / EAX=ds, EBX=a, ECX=b), all call sites
 - `CryptosuiteTests/Herradura_tests.asm` (i386 tests) — identical
 - `TODO.md` — TODO #73 marked DONE v1.9.1
+- `README.md` — version bumped to v1.9.1
 
 **Testing:** i386 tests [11] HPKS-Stern-F sign+verify and [12] HPKE-Stern-F encap+decap both PASS under qemu-i386.
 
