@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.3] - 2026-06-04
+
+### Research — Rotational differential analysis of NL-FSCX v1 (TODO #75)
+
+Characterises the rotational open concern from TODO #74 by distinguishing one-sided from two-sided rotation.
+
+**Key findings:**
+- **One-sided rotation** (B fixed — all PRF uses: Stern-F, HSKE-NL-A1, HFSCX-256-DM): p ≈ 0 across all (r, k, B) tested (upper bound < 2^{-17}). PRF security is unaffected.
+- **Two-sided rotation** (WOTS hash chain): power-law decay p(r) ≈ C(k)·r^{-alpha(k)}, not geometric. At r=64 (n=256): p(k=1) ≈ 0.78%, requiring ~90 query pairs for a 50%-advantage random-oracle distinguisher (q = ln2/p).
+- Theorem 16 (HPKS-WOTS-F EUF-CMA) uses OWF only, not ROM — the RO-distinguisher does NOT break Theorem 16.
+
+**New script:** `SecurityProofsCode/nl_fscx_rot_analysis.py` — five sections: single-round probability (§1), one-sided vs. two-sided comparison (§2), multi-round power-law decay (§3), extrapolation to n=256 (§4), protocol impact analysis (§5).
+
+**Documentation:** SecurityProofs-2.md §11.8.3 extended with "Rotational structure (TODO #75)" subsection and updated "open concerns" paragraph.
+
+**Files changed:**
+- `SecurityProofsCode/nl_fscx_rot_analysis.py` — new analysis script
+- `SecurityProofs-2.md` — §11.8.3 extended
+- `TODO.md` — TODO #75 marked DONE v1.9.3
+- `README.md` — version bumped to v1.9.3
+
+---
+
 ## [1.9.2] - 2026-06-04
 
 ### Research — NL-FSCX v1 OWF cryptanalysis (TODO #74)

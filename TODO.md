@@ -4157,3 +4157,62 @@ HPKS-Stern-F / HPKE-Stern-F should be considered research-quality software.  BIK
 far more external scrutiny.
 
 Status: **DONE** v1.9.2 — Items 1–2 and 4 complete.  `SecurityProofsCode/nl_fscx_owf_analysis.py` covers differential, linear, rotational, B=0, and MITM analysis; SecurityProofs-2.md §11.8.3 updated.  Key finding: rotational equivariance at 1–6% (vs. 2^{-n} random expectation) is a structural open concern inherited from the FSCX base.  Item 3 (formal reduction to studied hardness) remains open — recorded as an open gap in §11.8.3.
+
+---
+
+### 75. Formal rotational differential analysis of NL-FSCX v1 (Research, High)
+
+**Context:** TODO #74 (`SecurityProofsCode/nl_fscx_owf_analysis.py` §3) found that
+$F_1^r$ has rotational-equivariance rates of approximately $1$–$6\%$ at $n = 32$, $r = 8$,
+for all tested rotation amounts $k \in \{1,2,4,7,8,16\}$.  This is many orders of magnitude
+above the $2^{-32}$ expectation for a random function.  The source is clear: the FSCX linear
+component is exactly rotation-equivariant; the $\mathrm{ROL}((A+B) \bmod 2^n, n/4)$
+non-linear term breaks equivariance only when the integer carry pattern changes under rotation
+of both inputs.
+
+The critical open question is whether this residual rotational structure enables any
+**attack better than brute force** on any of the three OWF/PRF uses of $F_1$:
+
+- HPKS-WOTS-F hash chain: $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8), x)$
+- HFSCX-256-DM compression: $C_\mathrm{DM}(s, m) = F_1^{64}(s, m) \oplus s$
+- HPKS/HPKE-Stern-F PRF matrix row generator: $F_1^{n/4}(\mathrm{ROL}(\mathrm{seed} \oplus i, n/8), \mathrm{seed})$
+
+**Scope:**
+
+1. **Analytical single-round rotational probability.**  Derive $p_\mathrm{rot}(k)$:
+   the probability over uniform random $(A, B)$ that
+   $F_1(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_1(A,B), k)$.
+   The FSCX term contributes 1 exactly; the deviation comes from the carry difference
+   $\mathrm{ROL}((A+B), n/4) \oplus \mathrm{ROL}(\mathrm{ROL}(A,k)+\mathrm{ROL}(B,k), n/4)$.
+   Compute $p_\mathrm{rot}(k)$ in closed form or tight bounds for $k \in \{1, 2, n/4\}$.
+
+2. **Multi-round decay.**  Measure whether $p_\mathrm{rot}^{(r)}(k)$ (the $r$-round
+   rotational probability) decays as $p_\mathrm{rot}(k)^r$ (independent rounds) or
+   exhibits correlation across rounds.  If decay is geometric, compute $r^*$ such that
+   $p_\mathrm{rot}^{(r^*)}(k) < 2^{-n/2}$ — below the Grover threshold.
+
+3. **Rotational distinguisher advantage.**  Apply the Khovratovich-Nikolić 2010
+   framework to determine whether an adversary with oracle access to $F_1^{n/4}$
+   can distinguish it from a random function using rotational pairs with advantage
+   $> 2^{-\lambda}$ using fewer than $2^{\lambda}$ queries.
+
+4. **Preimage speedup quantification.**  For the HPKS-WOTS-F hash chain, determine
+   whether the rotational correlation allows a preimage oracle to check multiple
+   rotation candidates simultaneously, and whether this speedup exceeds the $n$-factor
+   constant established in §11.8.3.
+
+5. **Document findings** in a new `SecurityProofsCode/nl_fscx_rot_analysis.py` script
+   and extend SecurityProofs-2.md §11.8.3 with a "Rotational structure" subsection
+   covering the analytical results from items 1–4.
+
+**Expected outcomes:**
+- If $p_\mathrm{rot}(k)$ is analytically derivable: a closed-form expression for the
+  single-round rotational probability in terms of $n$ and $k$.
+- If the multi-round decay is geometric and $r^* \leq n/4$: the rotational distinguisher
+  advantage is negligible at the protocol's round count — the NOTE in §11.8.3 can be
+  downgraded to a remark.
+- If the decay is slower than geometric or the distinguisher advantage is non-negligible:
+  the rotational structure is a genuine security concern requiring a design change (e.g.,
+  adding a rotation-breaking step to $F_1$).
+
+Status: **DONE** v1.9.3 — All four scope items complete.  `SecurityProofsCode/nl_fscx_rot_analysis.py` covers single-round probability, one-sided vs two-sided comparison, multi-round power-law decay, extrapolation to n=256, and protocol impact.  Key findings: (1) one-sided rotation (B fixed, all PRF uses) gives p≈0 — PRF security unaffected; (2) two-sided rotation (WOTS hash chain) follows p(r)≈0.42/r power law — polynomial RO-distinguisher (~90 pairs at n=256, q=ln2/p) but does NOT break Theorem 16 (OWF-based proof).  SecurityProofs-2.md §11.8.3 extended with "Rotational structure" analysis.

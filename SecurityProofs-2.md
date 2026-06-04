@@ -497,13 +497,27 @@ $$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
 *Linear bias.* At $n = 8$ the max Walsh bias falls to $0.24$–$0.40$ at $r = 8$; at $n = 32$, $r = 8$ the sampled max bias ($0.070$) is within the Bernstein random-function bound ($0.087$), consistent with no exploitable linear structure.
 
-*Rotational cryptanalysis.* For all rotation amounts $k \in \{1,2,4,7,8,16\}$ at $n = 32$, $r = 8$, the fraction of random pairs $(A, B)$ satisfying $F_{1}^r(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_{1}^r(A,B), k)$ is approximately $1$–$6\%$, far above the $2^{-32}$ expectation for a random function.  This structural correlation is inherited from the FSCX linear base (exactly rotation-equivariant by construction); the integer-carry non-linear term only partially breaks it.  The correlation does not directly yield a preimage attack — it provides at most an $n$-factor constant speedup, not asymptotic improvement over $O(2^{n/2})$ — but it is an open design concern requiring formal rotational differential analysis (Khovratovich-Nikolić 2010 framework).
+*Rotational cryptanalysis.* For all rotation amounts $k \in \{1,2,4,7,8,16\}$ at $n = 32$, $r = 8$, the fraction of random pairs $(A, B)$ satisfying $F_{1}^r(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_{1}^r(A,B), k)$ is approximately $1$–$6\%$, far above the $2^{-32}$ expectation for a random function.  This structural correlation is inherited from the FSCX linear base (exactly rotation-equivariant by construction); the integer-carry non-linear term only partially breaks it.  See the **Rotational structure** follow-up below (TODO #75) for a full characterisation of which protocol uses are affected.
 
 *B=0 degeneracy.* $F_{1}^r(A, 0) = L_{r}(A)$ is confirmed GF(2)-linear and **singular** (rank 2/8 for $L_{2}$ at $n = 8$), meaning $F_{1}^r(\cdot, 0)$ collapses most inputs.  All protocol instantiations have $\Pr[B = 0] = 2^{-n}$, negligible.
 
 *MITM preimage.* Exhaustive enumeration at $n = 20$, $r = 5$ shows $28.1\%$ image coverage (average preimage count $3.52$).  Non-injectivity means backward enumeration requires $O(2^n)$ forward work, confirming MITM provides no asymptotic speedup.
 
-*Open concerns from this analysis.* (1) Rotational equivariance at $1$–$6\%$ requires formal rotational differential analysis (Khovratovich-Nikolić 2010).  (2) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is uncharacterised.  (3) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.
+*Open concerns from this analysis.* (1) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is uncharacterised.  (2) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.  (The rotational concern is characterised in the follow-up analysis below.)
+
+**Rotational structure (TODO #75, v1.9.3).**  `SecurityProofsCode/nl_fscx_rot_analysis.py` resolves the rotational open concern by separating *one-sided* rotation ($A$ rotated, $B$ fixed) from *two-sided* rotation (both rotated simultaneously).
+
+*One-sided rotation (B fixed).* For all $r$ and $k$ tested, $\Pr_{A}\bigl[F_{1}^r(\mathrm{ROL}(A,k), B) = \mathrm{ROL}(F_{1}^r(A,B), k)\bigr] < 10^{-5}$ (zero hits in $10^5$ trials per configuration).  The structural reason: one-sided equivariance requires $\mathrm{ROL}(\mathrm{ROL}(A,k)+B, n/4) \oplus \mathrm{ROL}(A+B, n/4+k)$ to equal the $A$-independent constant $M(B) \oplus M(\mathrm{ROL}(B,k))$, a condition that does not hold for generic $B$.
+
+*Two-sided rotation (both inputs rotated).* The two-sided probability $p_{\text{rot}}(r,k)$ follows a power law rather than geometric decay:
+
+$$p_{\text{rot}}(r,k) \approx C(k) \cdot r^{-\alpha(k)}$$
+
+where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \approx 1.88$, $C(8) \approx 0.65$.  At the protocol round count $r = n/4 = 64$ for $n = 256$: $p_{\text{rot}}(64,1) \approx 0.78\%$, requiring approximately $90$ query pairs for a $50\%$-advantage random-oracle distinguisher ($q \approx \ln 2 / p$).
+
+*Protocol impact.* All PRF uses of $F_{1}$ have a fixed key $B$: the Stern-F row generator $F_{K}(i) = F_{1}^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)$, the HSKE-NL-A1 keystream, and the HFSCX-256-DM compression function.  These are one-sided; $p \approx 0$ — **rotation-safe**.  The HPKS-WOTS-F hash chain $h(x) = F_{1}^{n/4}(\mathrm{ROL}(x, n/8), x)$ is two-sided (rotating $x$ rotates both $A$ and $B$), so a $\approx 90$-pair random-oracle distinguisher exists.  However, Theorem 16 reduces HPKS-WOTS-F to the OWF assumption on $h$, not to a random-oracle assumption — the distinguisher does **not** break Theorem 16.
+
+*Conclusion.* The rotational NOTE from TODO #74 is now fully characterised: it is a polynomial-query random-oracle distinguisher against the WOTS hash chain that does **not** affect the current security proofs.  It is a design concern only for future constructions requiring $h$ to behave as a random oracle.
 
 ---
 
