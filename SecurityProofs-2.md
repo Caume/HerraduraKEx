@@ -230,6 +230,18 @@ uniformly random in $\mathcal{R}_q$.  The key-exchange problem then reduces to t
 Ring-LWE/LWR instance over a power-of-two cyclotomic ring — the same structure as Kyber.
 This is believed post-quantum hard; no polynomial-time quantum algorithm is known.
 
+**Security estimate (2026 landscape review, TODO #71).** For the deployed parameters
+$(n=256, q=65537, p=4096, \eta=1)$, BKZ-based lattice reduction (the best known classical
+attack via the Ring-LWR-to-Ring-LWE reduction) is estimated at approximately **105–115
+classical Core-SVP bits** and **95–105 quantum Core-SVP bits** (MATZOV Report 2022;
+Albrecht et al. LWE estimator 2023 updates).  This is below the 128-bit target of NIST
+ML-KEM-768 (which uses Module-LWE with $k=3$ rings at $n=256$, $q=3329$) but comfortably
+above the 100-bit floor.  No new algebraic attack on Ring-LWR exploiting the Fermat prime
+$q=65537$ has been published through 2025 (the polynomial $x^{256}+1$ does not split into
+degree-1 factors over $\mathbb{F}_{65537}$ since $512 \nmid q-1$, ruling out NTRU-style
+subfield attacks).  The CBD($\eta=1$) secret distribution provides less margin than
+$\eta=2$ (used in Kyber-512) but remains secure at $n=256$.
+
 **Naive algebraic attack analysis.**  Without blinding ($m_\text{blind} = m$), Eve computes
 $m^{-1} \cdot (C \cdot q/p) \bmod q$ attempting to recover $s$.  The attack fails because
 rounding noise $\delta$ (bounded by $q/(2p)$ per coefficient) is amplified by $\|m^{-1}\|_1 \gg q$
@@ -343,13 +355,20 @@ The CBD(η=1) secret sampler was deployed in v1.5.3.  Failure rates characterise
 1-bit Peikert reconciliation deployed in v1.5.16 — correctness guaranteed.
 2-bit Peikert reconciliation (doubles key density, same hint size) deployed in v1.7.0.
 
+**Security estimate (2026 landscape review, TODO #71).**  At the deployed parameters
+$(n=256, q=65537, p=4096, \eta=1)$, BKZ-based lattice reduction gives approximately
+**105–115 classical Core-SVP bits** and **95–105 quantum Core-SVP bits** (see §11.4.3 for
+the full analysis).  This is below the 128-bit target of NIST ML-KEM-768 but comfortably
+above the 100-bit floor.  No new algebraic attack exploiting $q=65537$ has been published
+through 2025.
+
 ---
 
 ### 11.7 Protocol-Level Quantum Security Summary
 
 | Protocol | Security assumption | Classical attack | Quantum attack | Post-quantum security |
 |----------|---------------------|------------------|----------------|-----------------------|
-| **HKEX-GF** | DLP in $\mathbb{GF}(2^n)^*$ | Quasi-polynomial (Barbulescu 2013) | Shor's DLP | **None** |
+| **HKEX-GF** | DLP in $\mathbb{GF}(2^n)^{\ast}$ | FFS $L[1/3]$: ~80–90 bits at $n=256$ (§9.2.4; deprecated NIST/ENISA); GKZ quasi-poly asymptotic for composite-degree fields | Shor's DLP | **None** |
 | **HSKE** (key-only) | Exhaustive search | Brute force $2^n$ | Grover $2^{n/2}$ | $n/2$ bits |
 | **HSKE** (known-plaintext) | — | 1 KPT pair → full $c_K$, $O(n^2)$ | BV: 1 query | **None** |
 | **HPKS** | DLP in $\mathbb{GF}(2^n)^*$ + non-ROM challenge | Quasi-polynomial DLP | Shor's DLP | **None** |
@@ -360,16 +379,24 @@ The CBD(η=1) secret sampler was deployed in v1.5.3.  Failure rates characterise
 | **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
 | **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^*$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
 | **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^*$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
-| **HKEX-RNL** (§11.4) | Ring-LWR with blinded $m$ | No known sub-exponential attack | No known polynomial-time quantum attack | Conjectured — pending proof |
+| **HKEX-RNL** (§11.4) | Ring-LWR with blinded $m$ | BKZ: ~105–115 classical Core-SVP bits (MATZOV 2022; §11.4.3) | BKZ-hybrid: ~95–105 quantum Core-SVP bits | ~105 classical / ~100 quantum bits (§11.4.3); below ML-KEM-768 128-bit target |
 | **HPKS-WOTS-F** (§11.8.3, proposed) | NL-FSCX v1 OWF (new assumption) | Degree-$n$ Boolean system — $O(2^n)$, Corollary 2 | Grover $O(2^{n/2})$ | $n/2$ bits (under NL-FSCX v1 OWF) |
-| **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(n,t)$ + NL-FSCX v1 PRF | ISD $O(2^{0.054n})$ | Quantum ISD $O(2^{0.042n})$ | $0.042n$ bits |
-| **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(n,t)$ + NL-FSCX v1 PRF | ISD $O(2^{0.054n})$ | Quantum ISD $O(2^{0.042n})$ | $0.042n$ bits |
+| **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
+| **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
 
 **HSKE key-only** provides $n/2$ bits of post-quantum security only when no plaintext
 is ever observed.  In any realistic deployment, plaintexts are available and this bound
 does not apply.  The NL-FSCX counter-mode and revolve-mode HSKE variants (§11.3) preserve
 the same KPT vulnerability; they harden against linear key-recovery but do not eliminate
 the 1-pair attack because the underlying structure remains affine.
+
+**Note on concrete security estimates (2026 landscape review, TODO #71).**  The classical attack
+column for HKEX-GF now reflects the FFS $L[1/3]$ result (§9.2.4): at $n=256$ the best practical
+classical attack gives ~80–90 bits, not 128 bits.  Binary-field DLP is deprecated by NIST SP 800-57
+Rev. 5 (2020) and ENISA (2022).  HKEX-RNL estimates come from BKZ/MATZOV 2022 (§11.4.3).
+HPKS-Stern-F / HPKE-Stern-F concrete estimates use the SDE estimator (Becker-Joux-May-Meurer)
+for $(N=256, k=128, t=16)$; see §11.8.4.  All Stern-F rows are marked **demo only** at $N=256$;
+production use requires $N \geq 17000$ for 128-bit classical security (BIKE-128 uses $N \approx 24646$).
 
 ---
 
@@ -612,6 +639,17 @@ For efficient decapsulation, $\mathbf{e}$ must embed a structured decoding trapd
 | Quantum | Grover brute-force | $O(2^{N/2})$ — dominated by ISD |
 
 Syndrome decoding for random binary linear codes has no known polynomial quantum algorithm.  NIST alternates BIKE and HQC base their security on the quasi-cyclic special case of this same assumption.
+
+**Deployed parameter caveat (2026 landscape review, TODO #71).**  The asymptotic exponents in the
+table above apply in the regime where $N$ is large and the rate $k/N$ and relative distance $t/N$
+are fixed.  At the deployed parameters $(N=256, k=128, t=16)$, the SDE estimator (Becker-Joux-May-Meurer,
+2012) gives a concrete classical ISD estimate of approximately $2^{56}$–$2^{60}$ operations and a
+quantum ISD estimate of approximately $2^{30}$–$2^{40}$ operations (Kirshanova 2018).  These are
+**demonstration parameters only**; they do not achieve 128-bit security.  For reference, BIKE-128
+(NIST alternate finalist) uses $N \approx 24646$, $t = 134$ to reach 128-bit classical and ~118-bit
+quantum security.  The 128-bit classical floor requires approximately $N \geq 17000$ at $t/N \approx
+0.0625$.  Until higher-$N$ parameters are adopted, HPKS-Stern-F and HPKE-Stern-F should be treated
+as proof-of-concept implementations.
 
 ---
 

@@ -4046,4 +4046,16 @@ of the art.
 - Crypto/Eurocrypt/Asiacrypt/FSE proceedings, 2022–present.
 - NIST IR 8413 updates.
 
-Status: **PENDING**
+Status: **DONE** (2026-06-03)
+
+**Findings summary (2026 landscape review):**
+
+| Area | Key papers / developments | Impact on suite | Action required? |
+|---|---|---|---|
+| GF(2^n) DLP (HKEX-GF, HPKS, HPKE) | FFS L[1/3] is the practical attack; GKZ quasi-polynomial only applies to highly composite-degree fields. NIST SP 800-57 Rev. 5 (2020) and ENISA (2022) deprecate GF(2^n)* for new designs. | n=256 gives ~80–90 bits classical security (NOT 128 bits as previously stated). Suite §9.2.4 corrected. | Done — §9.2.4 and §10.8.4 updated; HKEX-GF, HPKS, HPKE remain **None** post-quantum. |
+| Ring-LWR (HKEX-RNL) | MATZOV Report 2022; Albrecht et al. LWE estimator updates 2023. BKZ-based lattice reduction is the best known attack. No new algebraic attack on q=65537 (x^256+1 doesn't split since 512 ∤ q−1). | n=256, q=65537, p=4096, η=1 → ~105–115 classical Core-SVP bits, ~95–105 quantum. Below ML-KEM-768 128-bit target but above 100-bit floor. | Done — §11.4.3 and §11.6 updated with concrete estimate. |
+| Syndrome Decoding (HPKS/HPKE-Stern-F) | BJMM/SDE estimator tool (Becker-Joux-May-Meurer). BIKE-128 uses N≈24,646 for 128-bit classical security. | N=256, t=16 gives only ~56–60 bits classical (NOT 128 bits). N=256 is demo-only; 128-bit needs N ≥ 17,000. | Done — §11.7 table and §11.8.4 updated; new TODO items needed for production parameters. |
+| NL-FSCX v1 PRF / OWF | No new algebraic technique published through 2025 that closes or widens the range-compression distinguisher. The HFSCX-256 post-composition fix (TODO #43) addresses the range-compression PRF gap. | No new threat. TODO #43 (HFSCX-256 composition fix) remains the recommended hardening. | No new action needed; TODO #43 status unchanged. |
+| HFSCX-256 | No new generic Merkle-Damgård attacks beyond known length-extension / multi-collision. No published cryptanalysis of NL-FSCX v1 compression function. | No new threat; collision bound 2^128 remains valid. | None. |
+| Quantum algorithms | NIST SP 800-235 draft (2024) is the current reference. No new speedups beyond Grover / BKZ-hybrid through 2025. No quantum speedup for syndrome decoding beyond √-speedup for ISD. | Grover halving for symmetric primitives unchanged. Shor still breaks all GF(2^n)* DLP. BKZ-quantum hybrid for lattices unchanged at ~core-SVP. | None. |
+

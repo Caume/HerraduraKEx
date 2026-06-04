@@ -4,6 +4,32 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.8.10] - 2026-06-03
+
+### Documentation — Security proof corrections from landscape review (TODO #71)
+
+**SecurityProofs-1.md corrections:**
+
+- **§9.2.4 FFS complexity fix:** Corrected `L[1/2]` → `L[1/3]` for the Function Field Sieve attack on binary extension field DLP.  Added distinction between FFS (practical, L[1/3], demonstrated for all field sizes including GF(2^256)) and the Granger–Kleinjung–Zumbrägel quasi-polynomial algorithm (asymptotic, only demonstrated for highly composite extension degrees such as GF(2^6120) and GF(2^9234)).
+- **§9.2.4 parameter table fix:** Corrected the security estimate for n=256 from "~128 bits" to "~80–90 bits (FFS L[1/3])".  Added note that binary-field DLP is deprecated by NIST SP 800-57 Rev. 5 (2020) and ENISA "Algorithms, Key Sizes and Parameters" (2022).  Added n=1024 row for reference.  Added "2026 landscape update" explanatory paragraph.
+- **§10.8.4 Shor's table fix:** Updated the classical attacks row to split FFS (practical, ~80–90 bits at n=256) from quasi-polynomial (asymptotic, composite-degree fields only).
+- **Prose fix:** Replaced LaTeX escaping `Zumbr{\"a}gel` with correct UTF-8 `Zumbrägel` in two locations.
+
+**SecurityProofs-2.md additions and corrections:**
+
+- **§11.4.3:** Added concrete security estimate paragraph for HKEX-RNL: ~105–115 classical Core-SVP bits, ~95–105 quantum Core-SVP bits (MATZOV Report 2022; Albrecht et al. LWE estimator 2023).  Documents that q=65537 has no known subfield attack (512 ∤ q−1), and that CBD(η=1) is secure at n=256 with less margin than η=2.
+- **§11.6:** Added security estimate note cross-referencing §11.4.3.
+- **§11.7 table updates:**
+  - HKEX-GF classical attack column: FFS L[1/3] ~80–90 bits at n=256 (deprecated NIST/ENISA); GKZ quasi-poly asymptotic note.
+  - HKEX-RNL post-quantum security: replaced "Conjectured — pending proof" with concrete BKZ estimates (~105 classical / ~100 quantum bits; §11.4.3).
+  - HPKS-Stern-F and HPKE-Stern-F: replaced asymptotic ISD formula `2^{0.054N}` with concrete SDE estimates (~56–60 bits classical, ~30–40 bits quantum at N=256); marked as **demo only** with 128-bit threshold (N ≥ 17,000).
+  - Added explanatory note below the table on data sources and BIKE-128 reference parameters.
+- **§11.8.4:** Added "Deployed parameter caveat" paragraph: N=256, t=16 provides ~56–60 bits classical / ~30–40 bits quantum per the SDE estimator; BIKE-128 uses N≈24,646 for 128-bit classical security.
+
+**TODO.md:** TODO #71 marked DONE with a findings summary table covering all six research areas.
+
+---
+
 ## [1.8.9] - 2026-05-26
 
 ### Feature — HFSCX-256 KDF for `kex` and hash demo in suite programs (TODO #68)
