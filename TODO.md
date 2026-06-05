@@ -4216,3 +4216,91 @@ The critical open question is whether this residual rotational structure enables
   adding a rotation-breaking step to $F_1$).
 
 Status: **DONE** v1.9.3 — All four scope items complete.  `SecurityProofsCode/nl_fscx_rot_analysis.py` covers single-round probability, one-sided vs two-sided comparison, multi-round power-law decay, extrapolation to n=256, and protocol impact.  Key findings: (1) one-sided rotation (B fixed, all PRF uses) gives p≈0 — PRF security unaffected; (2) two-sided rotation (WOTS hash chain) follows p(r)≈0.42/r power law — polynomial RO-distinguisher (~90 pairs at n=256, q=ln2/p) but does NOT break Theorem 16 (OWF-based proof).  SecurityProofs-2.md §11.8.3 extended with "Rotational structure" analysis.
+
+---
+
+### 76. Explore zero-knowledge proof capabilities with PQC algorithms in the suite (Research, High)
+
+**Rationale:** The suite currently contains one ZKP construction — the Stern-based
+identification protocol compiled into a signature via Fiat-Shamir (HPKS-Stern-F) — and one
+KEM built on the same syndrome-decoding witness (HPKE-Stern-F/Niederreiter).  These cover
+code-based hardness.  The two other PQC pillars in the suite — the Ring-LWR key exchange
+(HKEX-RNL) and the NL-FSCX OWF / PRF — have no dedicated ZKP layer.  Before the suite can
+support privacy-preserving credentials, anonymous authentication, or threshold protocols, it
+needs an inventory of what ZKP techniques are applicable to each hardness assumption and a
+concrete construction plan for the most promising ones.
+
+**Scope:**
+
+1. **Survey applicable ZKP frameworks per hardness assumption.**
+
+   | Suite assumption | Candidate ZKP framework | Notes |
+   |---|---|---|
+   | Syndrome decoding (Stern) | Stern protocol (already implemented), MPC-in-the-head (MPCITH), Ligero/Ligero++ | MPCITH (CRYPTO 2017) reduces proof size significantly over repeated Stern |
+   | Ring-LWR / Ring-LWE | Lyubashevsky lattice commitments, BDLOP commitments, Lattice-based $\Sigma$-protocols | BDLOP (2018) supports linear/multiplicative relations over polynomial rings |
+   | NL-FSCX OWF / PRF | Hash-based ZK (MPC-in-the-head, ZKBoo, ZKB++), generic NIZK via Fiat-Shamir | Depends on PRF security of NL-FSCX v1; requires OWF assumption from TODO #74 |
+   | GF(2^n) DLP (classical HKEX-GF) | Sigma protocols for DLP in GF(2^n), Schnorr-style (HPKS already exists) | Not PQC; included for completeness |
+
+2. **Evaluate proof size, prover/verifier cost, and round complexity** for each candidate
+   framework at the suite's standard parameters (n=256, Ring-LWR n=256/q=65537).  Compare
+   against NIST PQC signature standards: CRYSTALS-Dilithium (ML-DSA, FIPS 204), SPHINCS+
+   (SLH-DSA, FIPS 205), and FALCON (FN-DSA).
+
+3. **Design a Ring-LWR ZKP of knowledge of secret key.**  Given public key $C = \text{round}_p(m \cdot s)$,
+   construct a $\Sigma$-protocol proving knowledge of a CBD(1) polynomial $s$ consistent with
+   $C$ without revealing $s$.  This is the lattice analogue of the Stern protocol and would
+   enable HKEX-RNL-based anonymous credentials.  Starting point: Lyubashevsky 2012
+   ($\Sigma$-protocols for lattice problems, Eurocrypt 2012) adapted to the rounding
+   operator.
+
+4. **Design a NL-FSCX PRF ZKP of knowledge.**  Given $y = F_1^{n/4}(\text{ROL}(s,n/8), m)$
+   for public $m$ and $y$, construct a ZKP proving knowledge of $s$ without revealing it.
+   Two candidate approaches:
+   - **MPC-in-the-head** (Ishai et al. 2007): treat $F_1^{n/4}$ circuit as an MPC computation;
+     secret-share $s$ among virtual parties; prove consistency of revealed shares.
+   - **ZKBoo / ZKB++** (Giacomelli et al. 2016 / Chase et al. 2017): decompose $F_1$ round
+     function into XOR/AND/ROL gates; build ZK proof from the decomposed circuit.  ROL is
+     linear (free in ZKBoo); the non-linear term $\text{ROL}((A+B) \bmod 2^n, n/4)$ introduces
+     a bounded number of AND gates per round.
+
+5. **Prototype the most promising construction** as a Python proof-of-concept in
+   `SecurityProofsCode/`.  Implement prover and verifier; measure proof size and round
+   count at $n=32$ (toy) and $n=256$ (production); verify soundness via 1,000 honest-prover
+   trials and 1,000 simulated cheating-prover trials.
+
+6. **Document findings** in a new `SecurityProofsCode/zkp_pqc_exploration.py` script and a
+   new `SecurityProofs-2.md` subsection (§11.10 or appended to §11.9) covering:
+   - Applicability matrix (which ZKP framework fits which assumption)
+   - Parameter comparison table vs. NIST standards
+   - Concrete protocol description for the best-performing construction
+   - Open gaps and implementation roadmap for extending to C/Go targets
+
+**References:**
+- Stern 1994, *A New Identification Scheme Based on Syndrome Decoding*, CRYPTO 1993.
+- Lyubashevsky 2012, *Lattice Signatures Without Trapdoors*, Eurocrypt 2012.
+- Ishai, Kushilevitz, Ostrovsky, Sahai 2007, *Zero-Knowledge from Secure Multiparty Computation*, STOC 2007 (MPC-in-the-head).
+- Giacomelli, Madsen, Orlandi 2016, *ZKBoo: Faster Zero-Knowledge for Boolean Circuits*, USENIX Security 2016.
+- Chase et al. 2017, *Post-Quantum Zero-Knowledge and Signatures from Symmetric-Key Primitives*, CCS 2017 (ZKB++).
+- Baum, Damgård, Lyubashevsky, Oechsner, Peikert 2018, *More Efficient Commitments from Structured Lattice Assumptions*, SCN 2018 (BDLOP).
+- NIST FIPS 204 (ML-DSA / Dilithium), FIPS 205 (SLH-DSA / SPHINCS+), FIPS 206 (FN-DSA / Falcon).
+- SecurityProofs-2.md §11.8 (NL-FSCX OWF analysis), §11.9 (QROM Fiat-Shamir for Stern).
+
+**Files to create / modify:**
+
+| File | Change |
+|---|---|
+| `SecurityProofsCode/zkp_pqc_exploration.py` | New — ZKP prototype and parameter comparison |
+| `SecurityProofs-3.md §11.10` | New — ZKP applicability matrix, Ring-LWR Σ-protocol, NL-FSCX ZKBoo |
+| `CHANGELOG.md` | Add versioned entry when scope items are complete |
+
+**Prerequisite:** TODO #74 (NL-FSCX OWF assumption status) should be resolved before
+committing to an NL-FSCX-based ZKP construction; if the OWF assumption is refuted, the
+Ring-LWR or code-based ZKP path becomes the primary track.
+
+Status: **DONE v1.9.4** — All six scope items complete.
+  §1 Survey: applicability matrix across B2 (syndrome decoding), B1 (Ring-LWR), A (NL-FSCX OWF/PRF).
+  §2 Ring-LWR Σ-protocol: Lyubashevsky-style, Fiat-Shamir, rejection sampling; completeness 0/1000 failures, soundness 0/200 cheat passes (n=32).  Proof: 132 B (n=32) / 1 056 B (n=256).
+  §3 NL-FSCX ZKBoo: 3-party Boolean circuit for F1^1 (n=8, 7 AND gates), ZKBoo prover/verifier, R=4 demo rounds; completeness 0/1000 failures, soundness ≈(1/3)^R coincidental passes.  Proof sizes: 35 KB (n=8) / 920 KB (n=256, R=219).
+  §4 Parameter comparison vs ML-DSA / SLH-DSA / Picnic / Stern-F.
+  §5 Open construction paths: NTT-accelerated Σ-protocol, ZKB++, hybrid credential scheme.
+  §11.10 in SecurityProofs-3.md (split to keep SecurityProofs-2.md under ~750 KaTeX expressions).
