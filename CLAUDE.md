@@ -10,9 +10,19 @@ HerraduraKEx is a cryptographic suite implementing four protocols — HKEX-GF (k
 
 ```
 Herradura cryptographic suite.{c,go,py,s,asm,ino}  — protocol suite, one file per language
+herradura.h                                         — header-only C library (shared by CLI and external code)
 CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
-  go.mod
+  go.mod                                            — module herradurakex/tests
+HerraduraCli/
+  herradura.py / herradura_cli.c / herradura_cli.go — OpenSSL-style CLI (Python, C, Go)
+  herradura_codec.h / codec.py                      — PEM/DER encode-decode helpers
+  primitives.py                                     — suite import shim for Python CLI
+  go.mod                                            — module herradurakex/cli (replaces ../go.mod)
+CliTest/
+  test_keygen.sh  test_vectors.sh  test_sign.sh     — Python CLI integration tests
+  test_encrypt.sh test_encfile.sh  test_signfile.sh
+  test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
 SecurityProofsCode/                                 — standalone Python proof/analysis scripts:
   hkex_gf_test.py          — HKEX-GF DH correctness + BSGS DLP illustration
   hkex_nl_verification.py  — NL-FSCX period analysis, Ring-LWR invertibility/noise, v2 bijectivity
@@ -20,14 +30,35 @@ SecurityProofsCode/                                 — standalone Python proof/
   hkex_cfscx_*.py          — preshared-value, two-step, integer-op, compress/blong constructions
   hkex_classical_break.py  — classical algebraic break proofs
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
-SecurityProofs.md                                   — split index (redirects to SecurityProofs-1.md §1–§10 and SecurityProofs-2.md §11–§11.9; quantum analysis is in SecurityProofs-1.md §6)
+  validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
+SecurityProofs.md                                   — split index (redirects to Parts 1–3; quantum analysis is in SecurityProofs-1.md §6)
+SecurityProofs-1.md                                 — §1–§10: Algebraic Foundations … v1.4.0 Migration (~753 math expressions)
+SecurityProofs-2.md                                 — §11–§11.9: NL-FSCX PQC extensions · HFSCX-256 (~873 math expressions)
+SecurityProofs-3.md                                 — §11.10: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo (~121 math expressions)
+docs/
+  TUTORIAL.md               — API usage guide per protocol and language
+  INTRODUCTION.md           — lay-audience primer for all core concepts
+  examples/{python,c,go}/   — hello_herradura.* integration examples
 ```
 
-## Changelog and README Policy
+Three `go.mod` files: root-level (`module herradurakex`), `CryptosuiteTests/` (`module herradurakex/tests`), and `HerraduraCli/` (`module herradurakex/cli`, uses `replace herradurakex => ../`). None has external dependencies.
+
+## Changelog, README, and TODO Policy
 
 All notable changes are documented in `CHANGELOG.md` only.  Do **not** add version notes, release blurbs, or change summaries to `README.md`.  The README describes the current state of the project; the CHANGELOG tracks its history.  When a feature or fix is completed, add a new versioned entry to `CHANGELOG.md` and update the version number in the `README.md` title line — nothing else.
 
+Work items are tracked in `TODO.md` as numbered entries (#1–#N) with a `Status:` line.  When completing a TODO, update its `Status:` line to `**DONE vX.Y.Z**` with the release version, then add the corresponding `CHANGELOG.md` entry.  Version numbers follow `MAJOR.MINOR.PATCH`; each TODO completion is typically one PATCH bump.
+
 ## Build Commands
+
+Use the build scripts when building everything; they apply the correct flags, output names, and dependency checks.
+
+```bash
+./build_c.sh          # compiles suite, tests, and HerraduraCli/herradura_cli
+./build_go.sh         # compiles suite, tests, and HerraduraCli/herradura_cli_go
+./build_arm.sh        # ARM Thumb-2 suite + tests (requires arm-linux-gnueabi-gcc)
+./build_asm_i386.sh   # NASM i386 suite + tests (auto-detects elf_i386-capable linker)
+```
 
 ### C
 ```bash
@@ -36,6 +67,9 @@ gcc -O2 -o "Herradura cryptographic suite_c" "Herradura cryptographic suite.c"
 
 # Security & performance tests
 gcc -O2 -o CryptosuiteTests/Herradura_tests_c CryptosuiteTests/Herradura_tests.c
+
+# CLI
+gcc -O2 -o HerraduraCli/herradura_cli HerraduraCli/herradura_cli.c
 ```
 
 > **Build collision hazard:** `go build file.go` (without `-o`) names its output
@@ -48,8 +82,10 @@ gcc -O2 -o CryptosuiteTests/Herradura_tests_c CryptosuiteTests/Herradura_tests.c
 ```bash
 go run "Herradura cryptographic suite.go"
 cd CryptosuiteTests && go run Herradura_tests.go
+
+# CLI
+cd HerraduraCli && go build -o herradura_cli_go .
 ```
-Two `go.mod` files: root-level (`module herradurakex`, suite only) and `CryptosuiteTests/go.mod` (`module herradurakex/tests`). Neither has external dependencies.
 
 ### Python
 ```bash
@@ -112,6 +148,37 @@ The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets t
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 
+### CLI integration tests (CliTest/)
+
+```bash
+# Python CLI — build not required (python3 used directly)
+bash CliTest/test_keygen.sh
+bash CliTest/test_vectors.sh   # key-agreement correctness: Alice+Bob derive same secret
+bash CliTest/test_sign.sh
+bash CliTest/test_encrypt.sh
+bash CliTest/test_encfile.sh
+bash CliTest/test_signfile.sh
+
+# C CLI — requires HerraduraCli/herradura_cli (build_c.sh)
+bash CliTest/test_c_keygen.sh
+bash CliTest/test_c_interop.sh # Python-generated keys consumed by C CLI and vice versa
+
+# Go CLI — requires HerraduraCli/herradura_cli_go (build_go.sh)
+bash CliTest/test_go_keygen.sh
+bash CliTest/test_go_interop.sh
+```
+
+### SecurityProofsCode scripts
+
+Each script in `SecurityProofsCode/` is self-contained (no imports from the suite).  Run them to reproduce the analysis results cited in `SecurityProofs-*.md`:
+
+```bash
+python3 SecurityProofsCode/hkex_gf_test.py          # DH correctness + DLP
+python3 SecurityProofsCode/hkex_rnl_failure_rate.py  # HKEX-RNL failure-rate analysis
+python3 SecurityProofsCode/nl_fscx_owf_analysis.py   # NL-FSCX OWF cryptanalysis
+python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential analysis
+```
+
 ## Core Cryptographic Architecture
 
 ### Primitives
@@ -126,7 +193,7 @@ Linear map M = I ⊕ ROL ⊕ ROR; order of M is n/2. Iterating FSCX creates peri
 
 **GF(2^n) arithmetic:** `gf_mul` (carryless multiply mod irreducible polynomial), `gf_pow` (square-and-multiply). Generator g = 3.
 
-### Protocol Stack (v1.5.0)
+### Protocol Stack
 
 **Classical (v1.4.0):**
 ```
@@ -164,6 +231,19 @@ Stern identification protocol (ZKP for syndrome decoding)
 ```
 
 Parameters: i = n/4, r = 3n/4. GF arithmetic uses 32-bit operands in assembly/Arduino; 256-bit in C/Go/Python suite. HSKE and FSCX tests always use 256-bit.
+
+### herradura.h — header-only C library
+
+`herradura.h` exposes the entire suite as a single-include header.  External C code (including `HerraduraCli/herradura_cli.c`) includes it directly; there is no separate compilation step.  All exported symbols are prefixed `ba_`, `gf_`, `nl_`, `rnl_`, `hkex_`, `hske_`, `hpks_`, `hpke_`, `stern_`, or `hpks_stern_`/`hpke_stern_`.
+
+### HerraduraCli — OpenSSL-style CLI
+
+Three parallel implementations (`herradura.py`, `herradura_cli.c`, `herradura_cli_go`) share the same PEM wire format and subcommand interface: `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile`.  PEM files produced by any implementation are byte-for-byte compatible with the others.
+
+- Python CLI (`herradura.py`) imports the suite via `primitives.py`, which uses `importlib` to load the space-named suite file.
+- C CLI (`herradura_cli.c`) `#include`s `../herradura.h` and `herradura_codec.h` for PEM/DER encode-decode.
+- HKEX-RNL key exchange is two-round: Bob responds first (`kex --algo hkex-rnl --our bob.pem --their alice_pub.pem`), then Alice completes using Bob's response PEM.
+- `docs/examples/` contains minimal `hello_herradura.{py,c,go}` integration samples.  The Python example shows the `importlib` pattern required because the suite filename contains spaces.
 
 ## KaTeX Rendering Rules for Markdown Files
 

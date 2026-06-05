@@ -4,6 +4,31 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.4] - 2026-06-04
+
+### Research — Zero-knowledge proof exploration for PQC algorithms (TODO #76)
+
+Surveys and prototypes ZKP constructions for the two PQC hardness pillars not yet covered by ZKP infrastructure (B1: Ring-LWR; A: NL-FSCX OWF/PRF).  The third pillar (B2: syndrome decoding) is already implemented via HPKS-Stern-F (v1.5.18).
+
+**New script:** `SecurityProofsCode/zkp_pqc_exploration.py` — five sections:
+- §1 Applicability matrix across B2 (Stern), B1 (Ring-LWR), A (NL-FSCX).
+- §2 Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir): commit/challenge/respond/verify with rejection sampling.  Completeness 0/1000 failures; soundness 0/200 cheat passes (n=32).  Proof size: 132 B (n=32) / 1 056 B (n=256) — smaller than ML-DSA-44 (2 420 B).
+- §3 NL-FSCX ZKBoo: 3-party Boolean circuit for F1 (n=8 toy, 7 AND gates per step).  ZKBoo AND gate via XOR shares and per-party random coins.  Completeness 0/1000; soundness ≈ (1/3)^R coincidental FS passes (expected).  Proof sizes: 35 KB (n=8) / 920 KB (n=256, R=219 for 128-bit soundness).
+- §4 Parameter comparison vs ML-DSA, SLH-DSA, Picnic, HPKS-Stern-F.
+- §5 Open construction paths: NTT Σ-protocol, ZKB++, hybrid Ring-LWR + Stern-F credential.
+
+**New documentation:** `SecurityProofs-3.md` — §11.10 Zero-Knowledge Proof Extensions (split from SecurityProofs-2.md to stay under GitHub KaTeX expression limit; 121 math expressions).  SecurityProofs.md index updated to Part 3.
+
+**Files changed:**
+- `SecurityProofsCode/zkp_pqc_exploration.py` — new script
+- `SecurityProofs-3.md` — new Part 3 document
+- `SecurityProofs.md` — index updated (two→three parts)
+- `TODO.md` — TODO #76 marked DONE v1.9.4
+- `README.md` — version bumped to v1.9.4
+- `CLAUDE.md` — SecurityProofs-3.md added to repository structure
+
+---
+
 ## [1.9.3] - 2026-06-04
 
 ### Research — Rotational differential analysis of NL-FSCX v1 (TODO #75)

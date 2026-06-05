@@ -907,3 +907,5 @@ HFSCX-256-DM provides:
 1. ~~Switch to Davies-Meyer compression $C \oplus s$ at next major version (§11.9.8).~~ **DONE v1.9.0.**
 2. Add 1-byte domain-tag prefix per call site (§11.9.7).
 3. Switch the AEAD tag to HMAC-HFSCX-256-DM if the same $K$ is ever reused for non-MAC purposes (§11.9.6).
+
+---
