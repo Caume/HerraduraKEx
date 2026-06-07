@@ -47,6 +47,15 @@ hpks_stern_f_verify       = _s.hpks_stern_f_verify
 hpke_stern_f_encap_with_e = _s.hpke_stern_f_encap_with_e
 hpke_stern_f_decap        = _s.hpke_stern_f_decap
 
+# ── ZKP-RNL: Ring-LWR Σ-protocol ─────────────────────────────────────────────
+rnl_sigma_sign   = _s.rnl_sigma_sign
+rnl_sigma_verify = _s.rnl_sigma_verify
+
+# ── ZKP-NL: NL-FSCX ZKBoo ────────────────────────────────────────────────────
+zkp_nl_keygen = _s.zkp_nl_keygen
+zkp_nl_prove  = _s.zkp_nl_prove
+zkp_nl_verify = _s.zkp_nl_verify
+
 # ── Module-level constants ───────────────────────────────────────────────────
 KEYBITS = _s.KEYBITS          # default key width (256)
 GF_POLY = _s.GF_POLY          # irreducible poly dict keyed by bit width
@@ -61,3 +70,5 @@ R_VALUE = _s.R_VALUE          # FSCX decrypt steps (3*KEYBITS/4 = 192)
 SDFT   = _s.SDFT              # Stern-F error weight t
 SDFNR  = _s.SDFNR             # Stern-F parity-check rows
 SDFR   = _s.SDFR              # Stern-F Fiat-Shamir rounds
+_ZKP_NL_DEFAULT_N   = _s._ZKP_NL_DEFAULT_N    # ZKBoo CLI default bit width (8)
+_ZKP_NL_PROD_ROUNDS = _s._ZKP_NL_PROD_ROUNDS  # ZKBoo production rounds (219)

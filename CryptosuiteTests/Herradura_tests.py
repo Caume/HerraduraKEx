@@ -1,5 +1,7 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.8.8
+    Herradura KEx — Security & Performance Tests (Python) v1.9.11
+    v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
+            benchmarks renumbered [22]-[33].
     v1.8.7: 32-bit benchmark columns; bench_hpks_stern_f loops over all sizes (TODO #61 extension).
     v1.8.0: KDF domain constant (TODO #38) — _RNL_KDF_DC_256 applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.7.3: NumPy NTT acceleration — ~10× speedup on _rnl_poly_mul (TODO #40).
@@ -18,7 +20,7 @@
     v1.5.2: proposed multi-size key-length tests for Herradura_tests.c (matching Python).
     v1.5.1: added --rounds/-r and --time/-t CLI options (also HTEST_ROUNDS / HTEST_TIME env).
     v1.5.0: added PQC extension tests [10-16] and benchmarks [22-25].
-            benchmarks renumbered [17-21] (were [10-14] in v1.4.0).
+            benchmarks renumbered [17-21] (were [10-14] in v1.4.0) (now [22]-[33]).
     v1.4.0: replaced broken fscx_revolve_n HKEX tests with HKEX-GF tests.
     v1.3.6: added HPKS sign+verify correctness test [7]; benchmarks renumbered [8-12].
     v1.3.3: added HPKE encrypt+decrypt round-trip benchmark [11].
@@ -605,6 +607,260 @@ def _rnl_agree(s, C_other, q, p, pp, n, key_bits, hint=None):
 
 
 # ---------------------------------------------------------------------------
+# ZKP-RNL Sigma-protocol helpers (self-contained, mirrors suite)
+# ---------------------------------------------------------------------------
+
+_SIGMA_GAMMA       = {32: 4096, 64: 8192, 128: 8192, 256: 8192}
+_SIGMA_T           = {32: 4,    64: 8,    128: 12,   256: 16}
+_SIGMA_MAX_ATTEMPTS = 1000
+
+
+def _sigma_params(n):
+    gamma = _SIGMA_GAMMA.get(n, 8192 if n >= 64 else 4096)
+    t     = _SIGMA_T.get(n, max(4, n // 16))
+    return gamma, t
+
+
+def _sigma_poly_bytes(poly):
+    return b''.join((c % (1 << 32)).to_bytes(4, 'big') for c in poly)
+
+
+def _sigma_challenge(m_poly, C_poly, w_poly, n, q, t, msg_bytes):
+    seed = hfscx_256(
+        n.to_bytes(4, 'big')
+        + _sigma_poly_bytes(m_poly)
+        + _sigma_poly_bytes(C_poly)
+        + _sigma_poly_bytes(w_poly)
+        + msg_bytes
+    )
+    positions = []
+    idx = 0
+    while len(positions) < t:
+        h = hfscx_256(seed + b'pos' + idx.to_bytes(4, 'big'))
+        v = int.from_bytes(h[:4], 'big') % n
+        if v not in positions:
+            positions.append(v)
+        idx += 1
+    c = [0] * n
+    for k, pos in enumerate(positions):
+        h = hfscx_256(seed + b'sgn' + k.to_bytes(4, 'big'))
+        c[pos] = 1 if (h[0] & 1) == 0 else q - 1
+    return c
+
+
+def _rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg_bytes):
+    q     = RNLQ
+    gamma, t = _sigma_params(n)
+    bound = gamma - t
+    h     = q // 2
+    for _ in range(_SIGMA_MAX_ATTEMPTS):
+        y    = [int.from_bytes(os.urandom(4), 'big') % (2 * gamma + 1) - gamma
+                for _ in range(n)]
+        y_q  = [yi % q for yi in y]
+        my   = _rnl_poly_mul(m_poly, y_q, q, n)
+        w    = [c - q if c > h else c for c in my]
+        c    = _sigma_challenge(m_poly, C_poly, w, n, q, t, msg_bytes)
+        cs   = _rnl_poly_mul(c, s_poly, q, n)
+        cs_c = [x - q if x > h else x for x in cs]
+        z    = [y[i] + cs_c[i] for i in range(n)]
+        if max(abs(zi) for zi in z) <= bound:
+            return w, c, z
+    raise RuntimeError("_rnl_sigma_sign: rejection limit reached")
+
+
+def _rnl_sigma_verify(m_poly, C_poly, n, msg_bytes, w_poly, c_poly, z_poly):
+    q = RNLQ
+    p = RNLP
+    gamma, t = _sigma_params(n)
+    bound = gamma - t
+    slack = t * (q // (2 * p) + 1)
+    if max(abs(zi) for zi in z_poly) > bound:
+        return False
+    if c_poly != _sigma_challenge(m_poly, C_poly, w_poly, n, q, t, msg_bytes):
+        return False
+    h    = q // 2
+    z_q  = [zi % q for zi in z_poly]
+    mz   = _rnl_poly_mul(m_poly, z_q, q, n)
+    lift = _rnl_lift(C_poly, p, q)
+    ct   = _rnl_poly_mul(c_poly, lift, q, n)
+    w_q  = [wi % q for wi in w_poly]
+    diff = [(mz[i] - ct[i] - w_q[i]) % q for i in range(n)]
+    diff_c = [d - q if d > h else d for d in diff]
+    return max(abs(d) for d in diff_c) <= slack
+
+
+# ---------------------------------------------------------------------------
+# ZKP-NL ZKBoo helpers (self-contained, mirrors suite)
+# ---------------------------------------------------------------------------
+
+def _zkp_nl_h(*args):
+    buf = b''
+    for a in args:
+        if isinstance(a, bytes):
+            buf += a
+        elif isinstance(a, int):
+            buf += a.to_bytes(max(1, (a.bit_length() + 7) // 8), 'big')
+        else:
+            buf += repr(a).encode()
+    return hfscx_256(buf)
+
+
+def _zkp_nl_prg_bit(tape_key, gate_id):
+    h = _zkp_nl_h(tape_key, gate_id.to_bytes(4, 'big'))
+    return h[0] & 1
+
+
+def _zkp_nl_rol(x, r, n):
+    m = (1 << n) - 1
+    r = r % n
+    return ((x << r) | (x >> (n - r))) & m
+
+
+def _zkp_nl_evaluate_circuit(shares, tapes, B, n):
+    mask = (1 << n) - 1
+    carry = [[0, 0, 0]] * n
+    gate_views = [[], [], []]
+    gate_id = 0
+    for i in range(n - 1):
+        ai = [(shares[p] >> i) & 1 for p in range(3)]
+        ci = [carry[i][p] for p in range(3)]
+        Bi = (B >> i) & 1
+        ri = [_zkp_nl_prg_bit(tapes[p], gate_id) for p in range(3)]
+        gate_id += 1
+        and_out = [0, 0, 0]
+        for p in range(3):
+            p1 = (p + 1) % 3
+            and_out[p] = ((ai[p] & ci[p]) ^ (ai[p] & ci[p1])
+                          ^ (ai[p1] & ci[p]) ^ ri[p] ^ ri[p1])
+            gate_views[p].append((ai[p], ci[p], and_out[p]))
+        c_next = [(Bi * ai[p]) ^ and_out[p] ^ (Bi * ci[p]) for p in range(3)]
+        carry[i + 1] = c_next
+    sum_shares = [0, 0, 0]
+    for i in range(n):
+        for p in range(3):
+            bit_i = ((shares[p] >> i) & 1) ^ ((B >> i) & 1) ^ carry[i][p]
+            sum_shares[p] ^= bit_i << i
+    rot_shares = [_zkp_nl_rol(sum_shares[p], n // 4, n) for p in range(3)]
+    B_const = (B ^ _zkp_nl_rol(B, 1, n) ^ _zkp_nl_rol(B, n - 1, n)) & mask
+    lin_shares = [0, 0, 0]
+    for p in range(3):
+        A_terms = (shares[p] ^ _zkp_nl_rol(shares[p], 1, n)
+                   ^ _zkp_nl_rol(shares[p], n - 1, n)) & mask
+        lin_shares[p] = A_terms
+    lin_shares[0] ^= B_const
+    out_shares = [(lin_shares[p] ^ rot_shares[p]) & mask for p in range(3)]
+    return out_shares, gate_views
+
+
+def _zkp_nl_keygen(n):
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    A = int.from_bytes(os.urandom(nb), 'big') & mask
+    B = int.from_bytes(os.urandom(nb), 'big') & mask
+    y = nl_fscx_v1(BitArray(n, A), BitArray(n, B)).uint
+    return A, B, y
+
+
+def _zkp_nl_prove(A, B, y, n, rounds, msg_bytes):
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    all_coms  = []
+    all_views = []
+    com_block = b''
+    for j in range(rounds):
+        s0 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s1 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s2 = (A ^ s0 ^ s1) & mask
+        shares = [s0, s1, s2]
+        tapes  = [os.urandom(32) for _ in range(3)]
+        out_shares, gate_views = _zkp_nl_evaluate_circuit(shares, tapes, B, n)
+        coms = [
+            _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]),
+                      tapes[p], out_shares[p].to_bytes(nb, 'big'))
+            for p in range(3)
+        ]
+        all_coms.append(coms)
+        all_views.append((shares, tapes, out_shares, gate_views))
+        com_block += b''.join(coms)
+    ch_seed = _zkp_nl_h(
+        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
+    )
+    def _pack_view(p_idx, shares_l, tapes_l, out_shares_l, gate_views_l):
+        view  = shares_l[p_idx].to_bytes(nb, 'big')
+        view += tapes_l[p_idx]
+        view += out_shares_l[p_idx].to_bytes(nb, 'big')
+        for in0, in1, out in gate_views_l[p_idx]:
+            view += bytes([in0 | (in1 << 1) | (out << 2)])
+        return view
+    rounds_out = []
+    for j in range(rounds):
+        h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
+        e = h[0] % 3
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        shares, tapes, out_shares, gate_views = all_views[j]
+        rounds_out.append({
+            'com_0':   all_coms[j][0],
+            'com_1':   all_coms[j][1],
+            'com_2':   all_coms[j][2],
+            'e':       e,
+            'view_p1': _pack_view(p1, shares, tapes, out_shares, gate_views),
+            'view_p2': _pack_view(p2, shares, tapes, out_shares, gate_views),
+        })
+    return rounds_out
+
+
+def _zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    coms_list  = [[r['com_0'], r['com_1'], r['com_2']] for r in proof_rounds]
+    challenges = [r['e'] for r in proof_rounds]
+    com_block = b''.join(b''.join(coms) for coms in coms_list)
+    ch_seed   = _zkp_nl_h(
+        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
+    )
+    for j in range(rounds):
+        h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
+        if h[0] % 3 != challenges[j]:
+            return False
+    def _unpack_view(view_bytes):
+        share = int.from_bytes(view_bytes[:nb], 'big')
+        tape  = view_bytes[nb:nb + 32]
+        out_s = int.from_bytes(view_bytes[nb + 32:nb + 32 + nb], 'big')
+        gv = []
+        for k in range(n - 1):
+            b3 = view_bytes[nb + 32 + nb + k]
+            gv.append((b3 & 1, (b3 >> 1) & 1, (b3 >> 2) & 1))
+        return share, tape, out_s, gv
+    for j, e in enumerate(challenges):
+        resp = proof_rounds[j]
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        share_p1, tape_p1, out_p1, gv_p1 = _unpack_view(resp['view_p1'])
+        share_p2, tape_p2, out_p2, gv_p2 = _unpack_view(resp['view_p2'])
+        c_p1 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p1]),
+                          tape_p1, out_p1.to_bytes(nb, 'big'))
+        c_p2 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p2]),
+                          tape_p2, out_p2.to_bytes(nb, 'big'))
+        if c_p1 != coms_list[j][p1] or c_p2 != coms_list[j][p2]:
+            return False
+        carry_p1, carry_p2 = 0, 0
+        for i in range(n - 1):
+            ai_p1 = (share_p1 >> i) & 1
+            ai_p2 = (share_p2 >> i) & 1
+            ci_p1 = carry_p1
+            ci_p2 = carry_p2
+            Bi    = (B >> i) & 1
+            ri_p1 = _zkp_nl_prg_bit(tape_p1, i)
+            ri_p2 = _zkp_nl_prg_bit(tape_p2, i)
+            exp_and_p1 = ((ai_p1 & ci_p1) ^ (ai_p1 & ci_p2)
+                          ^ (ai_p2 & ci_p1) ^ ri_p1 ^ ri_p2)
+            if gv_p1[i][2] != exp_and_p1:
+                return False
+            carry_p1 = (Bi * ai_p1) ^ exp_and_p1 ^ (Bi * ci_p1)
+            carry_p2 = (Bi * ai_p2) ^ gv_p2[i][2] ^ (Bi * ci_p2)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -1174,6 +1430,65 @@ def test_hfscx_256():
 
 
 # ---------------------------------------------------------------------------
+# Security tests [20]-[21]: ZKP-RNL and ZKP-NL
+# ---------------------------------------------------------------------------
+
+ZKP_MSG  = b"Herradura ZKP test"
+ZKP_MSG2 = b"Herradura ZKP tamper"
+
+
+def test_zkp_rnl_correctness():
+    print("[20] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
+    for n in [32, 256]:
+        N = _iters(5)
+        ok_verify = 0; ok_tamper = 0; n_run = 0
+        m_base = _rnl_m_poly(n)
+        for _ in _trange(N):
+            n_run += 1
+            a_rand  = _rnl_rand_poly(n, RNLQ)
+            m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+            s, C    = _rnl_keygen(m_blind, n, RNLQ, RNLP)
+            try:
+                w, c, z = _rnl_sigma_sign(s, m_blind, C, n, ZKP_MSG)
+            except RuntimeError:
+                n_run -= 1; continue
+            if _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w, c, z):
+                ok_verify += 1
+            if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG2, w, c, z):
+                ok_tamper += 1
+        status = "PASS" if (ok_verify == n_run and ok_tamper == n_run) else "FAIL"
+        print(f"    n={n:3d}  verify={ok_verify}/{n_run}  tamper_reject={ok_tamper}/{n_run}"
+              f"  [{status}]")
+    print()
+
+
+def test_zkp_nl_correctness():
+    print("[21] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
+    zkp_nl_rounds = 16
+    for n in [32, 64]:
+        N = _iters(5)
+        ok_verify = 0; ok_tamper = 0; n_run = 0
+        for _ in _trange(N):
+            n_run += 1
+            A, B, y = _zkp_nl_keygen(n)
+            proof = _zkp_nl_prove(A, B, y, n, zkp_nl_rounds, ZKP_MSG)
+            if _zkp_nl_verify(B, y, n, zkp_nl_rounds, ZKP_MSG, proof):
+                ok_verify += 1
+            # tamper: flip one bit in com_1[0]
+            tampered = [dict(r) for r in proof]
+            c1 = bytearray(tampered[0]['com_1'])
+            c1[0] ^= 1
+            tampered[0] = dict(tampered[0])
+            tampered[0]['com_1'] = bytes(c1)
+            if not _zkp_nl_verify(B, y, n, zkp_nl_rounds, ZKP_MSG, tampered):
+                ok_tamper += 1
+        status = "PASS" if (ok_verify == n_run and ok_tamper == n_run) else "FAIL"
+        print(f"    n={n:2d}  rounds={zkp_nl_rounds}  verify={ok_verify}/{n_run}"
+              f"  tamper_reject={ok_tamper}/{n_run}  [{status}]")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
 
@@ -1194,7 +1509,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[20] FSCX throughput  [CLASSICAL]")
+    print("[22] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -1204,7 +1519,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[21] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[23] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -1214,7 +1529,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[22] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[24] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -1227,7 +1542,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[23] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[25] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -1239,7 +1554,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[24] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[26] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -1256,13 +1571,13 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[25] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[27] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+    print("[27b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
@@ -1272,7 +1587,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[26] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[28] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -1288,7 +1603,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[27] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    print("[29] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -1302,7 +1617,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[28] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[30] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -1318,7 +1633,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[29] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    print("[31] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
     rounds = 4; sink = [True]
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
@@ -1330,6 +1645,34 @@ def bench_hpks_stern_f():
     print()
 
 
+def bench_zkp_rnl():
+    n = 256
+    print(f"[32] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
+    m_base  = _rnl_m_poly(n)
+    a_rand  = _rnl_rand_poly(n, RNLQ)
+    m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+    s, C    = _rnl_keygen(m_blind, n, RNLQ, RNLP)
+    def fn():
+        try:
+            w, c, z = _rnl_sigma_sign(s, m_blind, C, n, ZKP_MSG)
+            _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w, c, z)
+        except RuntimeError:
+            pass
+    _bench(f"n={n:3d}  sign+verify", fn)
+    print()
+
+
+def bench_zkp_nl():
+    n = 32; rounds = 16
+    print(f"[33] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
+    A, B, y = _zkp_nl_keygen(n)
+    def fn():
+        proof = _zkp_nl_prove(A, B, y, n, rounds, ZKP_MSG)
+        _zkp_nl_verify(B, y, n, rounds, ZKP_MSG, proof)
+    _bench(f"n={n:2d}  rounds={rounds}  prove+verify", fn)
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1337,7 +1680,7 @@ def bench_hpks_stern_f():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.5.22 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.11 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -1365,7 +1708,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.8.8 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.11 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -1400,6 +1743,10 @@ if __name__ == '__main__':
     print("--- Security Tests: HFSCX-256 Hash ---\n")
     test_hfscx_256()
 
+    print("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
+    test_zkp_rnl_correctness()
+    test_zkp_nl_correctness()
+
     print("--- Performance Benchmarks ---\n")
     bench_fscx()
     bench_hkex_gf_pow()
@@ -1408,7 +1755,8 @@ if __name__ == '__main__':
     bench_hpke_roundtrip()
     bench_nl_fscx_revolve()
     bench_hske_nl_a1_roundtrip()
-
     bench_hske_nl_a2_roundtrip()
     bench_hkex_rnl_handshake()
     bench_hpks_stern_f()
+    bench_zkp_rnl()
+    bench_zkp_nl()

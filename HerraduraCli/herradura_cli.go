@@ -57,6 +57,11 @@ const (
 	lblCT      = "HERRADURA CIPHERTEXT"
 	lblSig     = "HERRADURA SIGNATURE"
 	lblDigest  = "HERRADURA DIGEST"
+
+	lblZkpRnlProof = "HERRADURA ZKP-RNL PROOF"
+	lblZkpNlPriv   = "HERRADURA ZKP-NL PRIVATE KEY"
+	lblZkpNlPub    = "HERRADURA ZKP-NL PUBLIC KEY"
+	lblZkpNlProof  = "HERRADURA ZKP-NL PROOF"
 )
 
 var privToAlgo = map[string]string{
@@ -416,6 +421,14 @@ func cmdGenpkey(args []string) {
 		seed, e, _ := SternFKeygen(n)
 		pem, err = encodeSternPriv(e, seed, n, *algo)
 
+	case *algo == "hpks-zkp-nl":
+		A, B, y, kerr := ZkpNlKeygen(ZkpNlDefaultN)
+		if kerr != nil {
+			fmt.Fprintln(os.Stderr, "genpkey:", kerr)
+			os.Exit(1)
+		}
+		pem = encodeZkpNlPriv(A, B, y, ZkpNlDefaultN)
+
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
 		os.Exit(1)
@@ -446,6 +459,38 @@ func cmdPkey(args []string) {
 	if !*pubout && !*text {
 		fmt.Fprintln(os.Stderr, "pkey: specify --pubout or --text")
 		os.Exit(1)
+	}
+
+	// Handle ZKP-NL private key (raw binary PEM — not DER SEQUENCE)
+	{
+		lbl, lerr := peekPEMLabel(*in)
+		if lerr != nil {
+			die("pkey", lerr)
+		}
+		if lbl == lblZkpNlPriv {
+			body, rerr := readRawPEM(*in, lblZkpNlPriv)
+			if rerr != nil {
+				die("pkey", rerr)
+			}
+			A, B, y, zkpN, derr := decodeZkpNlPriv(body)
+			if derr != nil {
+				die("pkey", derr)
+			}
+			if *pubout {
+				pemOut := encodeZkpNlPub(B, y, zkpN)
+				if werr := writeString(*out, pemOut); werr != nil {
+					die("pkey", werr)
+				}
+			} else {
+				fmt.Printf("algorithm : hpks-zkp-nl\n")
+				fmt.Printf("n         : %d\n", zkpN)
+				nb := (zkpN + 7) / 8
+				fmt.Printf("A (priv)  : %0*x\n", nb*2, A)
+				fmt.Printf("B (pub)   : %0*x\n", nb*2, B)
+				fmt.Printf("y (pub)   : %0*x\n", nb*2, y)
+			}
+			return
+		}
 	}
 
 	label, ints, err := readPEMInts(*in)
@@ -948,6 +993,190 @@ func msgPad(inBytes []byte, nbytes int) []byte {
 	return out
 }
 
+// ── ZKP raw-binary PEM helpers ────────────────────────────────────────────────
+
+func peekPEMLabel(path string) (string, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return "", err
+	}
+	label, _, err := PemUnwrap(string(data))
+	return label, err
+}
+
+func readRawPEM(path, expectLabel string) ([]byte, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return nil, err
+	}
+	label, body, err := PemUnwrap(string(data))
+	if err != nil {
+		return nil, err
+	}
+	if label != expectLabel {
+		return nil, fmt.Errorf("expected PEM label %q, got %q", expectLabel, label)
+	}
+	return body, nil
+}
+
+// encodeZkpRnlProof serializes a ZKP-RNL proof to raw binary PEM.
+// Wire: 4B n | n×4B w (s32-be) | n×4B c (u32-be) | n×4B z (s32-be)
+func encodeZkpRnlProof(w, c, z []int, n int) string {
+	buf := make([]byte, 4+n*12)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint32(buf[4+i*4:], uint32(int32(w[i])))
+	}
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint32(buf[4+n*4+i*4:], uint32(c[i]))
+	}
+	for i := 0; i < n; i++ {
+		binary.BigEndian.PutUint32(buf[4+n*8+i*4:], uint32(int32(z[i])))
+	}
+	return PemWrap(lblZkpRnlProof, buf)
+}
+
+func decodeZkpRnlProof(body []byte) (w, c, z []int, n int, err error) {
+	if len(body) < 4 {
+		return nil, nil, nil, 0, fmt.Errorf("ZKP-RNL proof too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if len(body) < 4+n*12 {
+		return nil, nil, nil, 0, fmt.Errorf("ZKP-RNL proof truncated (n=%d)", n)
+	}
+	w = make([]int, n)
+	c = make([]int, n)
+	z = make([]int, n)
+	for i := 0; i < n; i++ {
+		w[i] = int(int32(binary.BigEndian.Uint32(body[4+i*4:])))
+	}
+	for i := 0; i < n; i++ {
+		c[i] = int(binary.BigEndian.Uint32(body[4+n*4+i*4:]))
+	}
+	for i := 0; i < n; i++ {
+		z[i] = int(int32(binary.BigEndian.Uint32(body[4+n*8+i*4:])))
+	}
+	return
+}
+
+// encodeZkpNlPriv: Wire: 4B n | nb A | nb B | nb y
+func encodeZkpNlPriv(A, B, y uint32, n int) string {
+	nb := (n + 7) / 8
+	buf := make([]byte, 4+3*nb)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	for i := nb - 1; i >= 0; i-- {
+		buf[4+i] = byte(A); A >>= 8
+	}
+	for i := nb - 1; i >= 0; i-- {
+		buf[4+nb+i] = byte(B); B >>= 8
+	}
+	for i := nb - 1; i >= 0; i-- {
+		buf[4+2*nb+i] = byte(y); y >>= 8
+	}
+	return PemWrap(lblZkpNlPriv, buf)
+}
+
+func decodeZkpNlPriv(body []byte) (A, B, y uint32, n int, err error) {
+	if len(body) < 4 {
+		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	nb := (n + 7) / 8
+	if len(body) < 4+3*nb {
+		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey truncated")
+	}
+	for i := 0; i < nb; i++ {
+		A = (A << 8) | uint32(body[4+i])
+	}
+	for i := 0; i < nb; i++ {
+		B = (B << 8) | uint32(body[4+nb+i])
+	}
+	for i := 0; i < nb; i++ {
+		y = (y << 8) | uint32(body[4+2*nb+i])
+	}
+	return
+}
+
+// encodeZkpNlPub: Wire: 4B n | nb B | nb y
+func encodeZkpNlPub(B, y uint32, n int) string {
+	nb := (n + 7) / 8
+	buf := make([]byte, 4+2*nb)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	for i := nb - 1; i >= 0; i-- {
+		buf[4+i] = byte(B); B >>= 8
+	}
+	for i := nb - 1; i >= 0; i-- {
+		buf[4+nb+i] = byte(y); y >>= 8
+	}
+	return PemWrap(lblZkpNlPub, buf)
+}
+
+func decodeZkpNlPub(body []byte) (B, y uint32, n int, err error) {
+	if len(body) < 4 {
+		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	nb := (n + 7) / 8
+	if len(body) < 4+2*nb {
+		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey truncated")
+	}
+	for i := 0; i < nb; i++ {
+		B = (B << 8) | uint32(body[4+i])
+	}
+	for i := 0; i < nb; i++ {
+		y = (y << 8) | uint32(body[4+nb+i])
+	}
+	return
+}
+
+// encodeZkpNlProof: Wire: 4B n | 4B rounds | R×(96B coms | 1B e | 2B l1 | v1 | 2B l2 | v2)
+func encodeZkpNlProof(proof []ZkpNlRound, n int) string {
+	R := len(proof)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	binary.BigEndian.PutUint32(buf[4:], uint32(R))
+	for _, r := range proof {
+		buf = append(buf, r.Com0[:]...)
+		buf = append(buf, r.Com1[:]...)
+		buf = append(buf, r.Com2[:]...)
+		buf = append(buf, byte(r.E))
+		l1 := len(r.ViewP1)
+		buf = append(buf, byte(l1>>8), byte(l1))
+		buf = append(buf, r.ViewP1...)
+		l2 := len(r.ViewP2)
+		buf = append(buf, byte(l2>>8), byte(l2))
+		buf = append(buf, r.ViewP2...)
+	}
+	return PemWrap(lblZkpNlProof, buf)
+}
+
+func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
+	if len(body) < 8 {
+		return nil, 0, fmt.Errorf("ZKP-NL proof too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	R := int(binary.BigEndian.Uint32(body[4:8]))
+	off := 8
+	proof = make([]ZkpNlRound, R)
+	for j := 0; j < R; j++ {
+		if off+97 > len(body) {
+			return nil, 0, fmt.Errorf("ZKP-NL proof round %d truncated", j)
+		}
+		copy(proof[j].Com0[:], body[off:off+32]); off += 32
+		copy(proof[j].Com1[:], body[off:off+32]); off += 32
+		copy(proof[j].Com2[:], body[off:off+32]); off += 32
+		proof[j].E = int(body[off]); off++
+		l1 := int(body[off])<<8 | int(body[off+1]); off += 2
+		proof[j].ViewP1 = body[off : off+l1]; off += l1
+		if off+2 > len(body) {
+			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
+		}
+		l2 := int(body[off])<<8 | int(body[off+1]); off += 2
+		proof[j].ViewP2 = body[off : off+l2]; off += l2
+	}
+	return
+}
+
 // ── enc ───────────────────────────────────────────────────────────────────────
 
 func cmdEnc(args []string) {
@@ -1226,6 +1455,28 @@ func cmdSign(args []string) {
 		inBytes = Hfscx256(inBytes, nil)
 	}
 
+	// ZKP-NL: raw binary PEM — must not call readPEMInts
+	if *algo == "nl-zkboo" {
+		body, rerr := readRawPEM(*key, lblZkpNlPriv)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "sign nl-zkboo: %v\n", rerr)
+			os.Exit(1)
+		}
+		A, B, y, zkpN, derr := decodeZkpNlPriv(body)
+		if derr != nil {
+			die("sign", derr)
+		}
+		proof, perr := ZkpNlProve(A, B, y, zkpN, ZkpNlDemoRounds, msgPad(inBytes, 32))
+		if perr != nil {
+			die("sign", perr)
+		}
+		pem := encodeZkpNlProof(proof, zkpN)
+		if werr := writeString(*out, pem); werr != nil {
+			die("sign", werr)
+		}
+		return
+	}
+
 	_, ourInts, err := readPEMInts(*key)
 	if err != nil {
 		die("sign", err)
@@ -1234,6 +1485,23 @@ func cmdSign(args []string) {
 	gen := new(big.Int).SetInt64(GfGen)
 
 	switch *algo {
+	case "rnl-sigma":
+		// derive Cp from stored s and m_blind
+		zkpN := bytesToInt(ourInts[2])
+		zkpS := unpackPolyRaw(ourInts[0], zkpN, 4)
+		zkpM := unpackPolyRaw(ourInts[1], zkpN, 4)
+		ms   := RnlPolyMul(zkpM, zkpS, RnlQ, zkpN)
+		zkpCp := RnlRound(ms, RnlQ, RnlP)
+		w, c, z, serr := RnlSigmaSign(zkpS, zkpM, zkpCp, zkpN, msgPad(inBytes, 32))
+		if serr != nil {
+			die("sign", serr)
+		}
+		pem := encodeZkpRnlProof(w, c, z, zkpN)
+		if werr := writeString(*out, pem); werr != nil {
+			die("sign", werr)
+		}
+		return
+
 	case "hpks", "hpks-nl":
 		priv := new(big.Int).SetBytes(ourInts[0])
 		n    := bytesToInt(ourInts[2])
@@ -1309,6 +1577,35 @@ func cmdVerify(args []string) {
 		inBytes = Hfscx256(inBytes, nil)
 	}
 
+	// ZKP-NL: raw binary PEM — must not call readPEMInts
+	if *algo == "nl-zkboo" {
+		pubBody, rerr := readRawPEM(*pubkey, lblZkpNlPub)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "verify nl-zkboo: %v\n", rerr)
+			os.Exit(1)
+		}
+		B, y, zkpN, derr := decodeZkpNlPub(pubBody)
+		if derr != nil {
+			die("verify", derr)
+		}
+		proofBody, perr := readRawPEM(*sig, lblZkpNlProof)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "verify nl-zkboo: %v\n", perr)
+			os.Exit(1)
+		}
+		proof, _, uerr := decodeZkpNlProof(proofBody)
+		if uerr != nil {
+			die("verify", uerr)
+		}
+		if ZkpNlVerify(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+	}
+
 	_, theirInts, err := readPEMInts(*pubkey)
 	if err != nil {
 		die("verify", err)
@@ -1317,6 +1614,29 @@ func cmdVerify(args []string) {
 	gen := new(big.Int).SetInt64(GfGen)
 
 	switch *algo {
+	case "rnl-sigma":
+		// HKEX-RNL public key: theirInts[0]=C (2B/coeff), theirInts[1]=mBlind (4B/coeff), theirInts[2]=n
+		zkpN  := bytesToInt(theirInts[2])
+		zkpCp := unpackPolyRaw(theirInts[0], zkpN, 2)
+		zkpM  := unpackPolyRaw(theirInts[1], zkpN, 4)
+
+		proofBody, perr := readRawPEM(*sig, lblZkpRnlProof)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "verify rnl-sigma: %v\n", perr)
+			os.Exit(1)
+		}
+		w, c, z, _, derr := decodeZkpRnlProof(proofBody)
+		if derr != nil {
+			die("verify", derr)
+		}
+		if RnlSigmaVerify(zkpM, zkpCp, zkpN, msgPad(inBytes, 32), w, c, z) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+
 	case "hpks", "hpks-nl":
 		pub := new(big.Int).SetBytes(theirInts[0])
 		n   := bytesToInt(theirInts[1])
@@ -1610,11 +1930,11 @@ Commands:
   decfile  --key FILE --in FILE --out FILE
   dgst     [--algo hfscx-256] --in FILE [--out FILE]
 
-Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern
+Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl
 Algorithms (kex):           hkex-gf hkex-rnl
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
-Algorithms (sign/verify):   hpks hpks-nl hpks-stern
+Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
 `)
 }
 

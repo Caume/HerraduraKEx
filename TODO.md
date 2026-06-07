@@ -4304,3 +4304,597 @@ Status: **DONE v1.9.4** — All six scope items complete.
   §4 Parameter comparison vs ML-DSA / SLH-DSA / Picnic / Stern-F.
   §5 Open construction paths: NTT-accelerated Σ-protocol, ZKB++, hybrid credential scheme.
   §11.10 in SecurityProofs-3.md (split to keep SecurityProofs-2.md under ~750 KaTeX expressions).
+
+---
+
+### 77. Implement ZKP protocols as production library functions, CLI subcommands, and tests (Feature, High)
+
+**Rationale:** TODO #76 (DONE v1.9.4) researched and prototyped two ZKP constructions in
+`SecurityProofsCode/zkp_pqc_exploration.py`:
+
+1. **Ring-LWR Σ-protocol** — proves knowledge of an HKEX-RNL private key without
+   revealing it.  Proof size: 132 B (n=32) / 1 056 B (n=256).  Smaller than ML-DSA-44
+   (2 420 B).  Enables anonymous credentials and HKEX-RNL-based privacy-preserving
+   authentication.
+
+2. **NL-FSCX ZKBoo** — 3-party MPC-in-the-head proof of knowledge of an NL-FSCX v1
+   preimage.  Proof size: ≈35 KB (n=8, R=219) / ≈920 KB (n=256, R=219).  Enables
+   privacy-preserving proofs for any statement whose truth depends on a secret
+   NL-FSCX preimage.
+
+Both constructions are prototype-only today.  This TODO promotes them to first-class
+library functions integrated into all applicable language targets, adds OpenSSL-style
+PEM/DER wire formats to the CLI, adds security tests and benchmarks, and updates
+the tutorial and SecurityProofs documents.
+
+---
+
+#### 1. New protocol identifiers
+
+**HPKS-ZKP-RNL** — Ring-LWR Σ-protocol proof-of-knowledge (Lyubashevsky-style,
+Fiat-Shamir compiled).
+
+- Statement: public pair (m, C) where m ∈ Z_q^n is the HKEX-RNL blinding polynomial
+  and C ∈ Z_p^n is the public key.
+- Witness: CBD(1) polynomial s ∈ {−1,0,1}^n with C = round_p(m·s mod q) in
+  Z_q[x]/(x^n+1).
+- Message binding: challenge c = SHAKE-256(m ‖ C ‖ w ‖ msg) — including msg makes
+  the proof a proper signature.
+- Parameters: n=256, q=65537, p=4096, γ=8192, t=16 (production);
+  n=32, γ=4096, t=4 (assembly / Arduino).
+- Reuses the existing HKEX-RNL keypair — no new keygen command required.
+
+**HPKS-ZKP-NL** — NL-FSCX ZKBoo proof-of-knowledge (3-party MPC-in-the-head,
+Giacomelli–Madsen–Orlandi 2016).
+
+- Statement: public pair (B, y) where y = NL-FSCX-v1-revolve(ROL(A, n/8), B, n/4)
+  evaluated in the suite's n-bit integer arithmetic.
+- Witness: secret preimage A.
+- New keypair type: A is the private key; (B, y) is the public key.
+- Parameters: n=8 (7 AND gates per step, 7×64=448 AND gates for n/4=2 steps;
+  proof ≈35 KB at R=219 for 128-bit soundness); n=256 proof (≈920 KB) is tracked
+  as a research target — CLI uses n=8 by default.  Full n=256 production requires a
+  ZKB++ optimization pass (proof ≈300 KB, see §5 open paths in SecurityProofs-3.md
+  §11.10) which is deferred.
+- Challenge binding: derived per round from SHAKE-256(all commitments ‖ B ‖ y ‖ msg).
+
+---
+
+#### 2. PEM / DER wire format
+
+New PEM labels following the `HERRADURA <ALGO> <TYPE>` convention already used in
+the CLI.  Distinct labels (not `HERRADURA SIGNATURE`) let mixed-algorithm pipelines
+identify proof type without parsing the DER body.
+
+| PEM label | DER body (ASN.1 SEQUENCE) | Used by |
+|---|---|---|
+| `HERRADURA ZKP-NL PRIVATE KEY` | `{ INTEGER n, INTEGER A }` | ZKBoo keygen |
+| `HERRADURA ZKP-NL PUBLIC KEY` | `{ INTEGER n, INTEGER B, INTEGER y }` | ZKBoo verify |
+| `HERRADURA ZKP-RNL PROOF` | `{ INTEGER n, SEQUENCE w_coeffs, SEQUENCE c_coeffs, SEQUENCE z_coeffs }` | Σ-protocol sign/verify |
+| `HERRADURA ZKP-NL PROOF` | `{ INTEGER n, INTEGER rounds, SEQUENCE round_list }` | ZKBoo sign/verify |
+
+where `round_list` contains `rounds` repetitions of
+`SEQUENCE { OCTET STRING com_0, OCTET STRING com_1, OCTET STRING com_2, INTEGER e, OCTET STRING view_e1, OCTET STRING view_e2 }`.
+Each commitment is a 32-byte SHAKE-256 digest.  Each view encodes the party's PRNG
+seed (32 bytes) followed by the per-AND-gate output shares for that party.
+
+Codec helpers to add to `HerraduraCli/codec.py`:
+- `encode_zkp_rnl_proof(n, w, c, z)` / `decode_zkp_rnl_proof(path)`
+- `encode_zkp_nl_privkey(n, A)` / `decode_zkp_nl_privkey(path)`
+- `encode_zkp_nl_pubkey(n, B, y)` / `decode_zkp_nl_pubkey(path)`
+- `encode_zkp_nl_proof(n, rounds, round_list)` / `decode_zkp_nl_proof(path)`
+
+`_decode_privkey` / `_decode_pubkey` in `herradura.py` dispatch on the new labels.
+
+---
+
+#### 3. CLI subcommands and arguments
+
+**genpkey** — one new `--algo` choice:
+
+```
+genpkey --algo hpks-zkp-nl [--bits N] --out nl_priv.pem [--pubout nl_pub.pem]
+```
+
+Generates random A and B of bit-width N (default 8 for ZKBoo demo; must be a
+multiple of 8).  Computes y = NL-FSCX-v1-revolve(ROL(A, N/8), B, N/4).  Writes
+`HERRADURA ZKP-NL PRIVATE KEY` to `--out`; writes `HERRADURA ZKP-NL PUBLIC KEY`
+if `--pubout` is given.  (HPKS-ZKP-RNL reuses `--algo hkex-rnl` — no change.)
+
+**sign** — two new `--algo` choices:
+
+```
+sign --algo rnl-sigma  --key alice.pem --in msg.bin --out proof.pem
+sign --algo nl-zkboo   --key nl_priv.pem --in msg.bin --out proof.pem
+```
+
+`rnl-sigma` loads an `HKEX-RNL PRIVATE KEY` PEM.  Calls `rnl_sigma_sign` with
+rejection sampling; writes `HERRADURA ZKP-RNL PROOF`.
+
+`nl-zkboo` loads a `ZKP-NL PRIVATE KEY` PEM.  Calls `zkp_nl_prove` for R=219 rounds
+(configurable via `--rounds`); writes `HERRADURA ZKP-NL PROOF`.
+
+**verify** — two new `--algo` choices (mirror of sign):
+
+```
+verify --algo rnl-sigma  --pubkey alice_pub.pem --in msg.bin --sig proof.pem
+verify --algo nl-zkboo   --pubkey nl_pub.pem --in msg.bin --sig proof.pem
+```
+
+Loads the matching public key PEM and proof PEM; calls `rnl_sigma_verify` or
+`zkp_nl_verify`; exits 0 on success, 1 on failure (same convention as `hpks`).
+
+Full CLI example sequence (same style as the usage comment block at the top of
+`herradura.py`):
+
+```
+# ── Ring-LWR ZKP (reuses HKEX-RNL keypair) ──────────────────────────────────
+python3 herradura.py genpkey --algo hkex-rnl --bits 256 --out alice.pem
+python3 herradura.py pkey    --in alice.pem --pubout alice_pub.pem
+python3 herradura.py sign    --algo rnl-sigma --key alice.pem \
+                             --in msg.bin --out proof.pem
+python3 herradura.py verify  --algo rnl-sigma --pubkey alice_pub.pem \
+                             --in msg.bin --sig proof.pem
+
+# ── NL-FSCX ZKBoo ────────────────────────────────────────────────────────────
+python3 herradura.py genpkey --algo hpks-zkp-nl --bits 8 \
+                             --out nl_priv.pem --pubout nl_pub.pem
+python3 herradura.py sign    --algo nl-zkboo --key nl_priv.pem \
+                             --in msg.bin --out zkp_nl_proof.pem
+python3 herradura.py verify  --algo nl-zkboo --pubkey nl_pub.pem \
+                             --in msg.bin --sig zkp_nl_proof.pem
+```
+
+The same subcommand names and flag names are used in the C (`herradura_cli`) and
+Go (`herradura_cli_go`) CLIs.
+
+---
+
+#### 4. Library API (all applicable language targets)
+
+Add the following functions following the naming conventions established by
+`hpks_stern_f_sign` / `hpks_stern_f_verify` in `herradura.h` (C), the Go suite,
+and the Python suite.  Prototypes given in Python notation for brevity.
+
+**Ring-LWR Σ-protocol (C, Go, Python; ARM n=32; i386 n=32; Arduino n=32):**
+
+```python
+def rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg_bytes):
+    """
+    Lyubashevsky-style Fiat-Shamir signature.
+    Returns (w_poly, c_poly, z_poly) after rejection sampling.
+    Parameters: n, q=65537, p=4096, γ={4096 if n==32 else 8192}, t={4 if n==32 else 16}.
+    """
+
+def rnl_sigma_verify(m_poly, C_poly, n, msg_bytes, w_poly, c_poly, z_poly):
+    """
+    Returns True iff:
+      (1) ||z||_∞ ≤ γ − t
+      (2) c == SHAKE-256(m ‖ C ‖ w ‖ msg)
+      (3) ||m·z − w − c·lift(C)||_∞ ≤ t·⌈q/(2p)⌉
+    """
+```
+
+**NL-FSCX ZKBoo (C, Go, Python; Arduino n=8/R=4 demo only):**
+
+```python
+def zkp_nl_keygen(n):
+    """Returns (A, B, y) where y = nl_fscx_revolve_v1(rol(A, n//8), B, n//4)."""
+
+def zkp_nl_prove(A, B, y, n, rounds, msg_bytes):
+    """
+    ZKBoo prover.  Returns a list of `rounds` dicts, each with keys:
+      com_0, com_1, com_2   — 32-byte SHAKE-256 commitments
+      e                     — revealed party index ∈ {0, 1, 2}
+      view_e1, view_e2      — bytes encoding seed + AND-gate output shares
+    Challenge e per round derived by Fiat-Shamir over all commitments + msg.
+    """
+
+def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
+    """
+    ZKBoo verifier.  Returns True iff all rounds verify.
+    For each round: re-derives AND-gate outputs from two revealed views;
+    reconstructs hidden output; checks commitments and final output == y.
+    """
+```
+
+**C API notes:**
+- Proof data returned as a caller-allocated struct array; size constants defined in
+  `herradura.h` for compile-time buffer sizing.
+- `rnl_sigma_sign` writes into output buffers `w[n]`, `c[n]`, `z[n]` (int32_t arrays).
+- `zkp_nl_prove` writes into a caller-allocated `ZkpNlRound rounds[R]` array;
+  `ZkpNlRound` is a struct with `com_0[32]`, `com_1[32]`, `com_2[32]`, `e` (uint8_t),
+  and `view_e1[VIEW_BYTES]`, `view_e2[VIEW_BYTES]` (where `VIEW_BYTES` = 32 + AND gate
+  share bytes for the given n).
+
+**Go API notes:**
+- Return `([]int32, []int32, []int32, error)` for `rnlSigmaSign`.
+- Return `([]ZkpNlRound, error)` for `zkpNlProve`; `ZkpNlRound` is a struct.
+
+**Assembly (ARM Thumb-2 and NASM i386):**
+Implement `rnl_sigma_sign_32` and `rnl_sigma_verify_32` for n=32.  These are
+self-contained subroutines reusing the existing `rnl_poly_mul` / `rnl_hint` /
+`rnl_reconcile_bits` register conventions.  ZKBoo is not implemented in assembly
+(circuit evaluation requires dynamic dispatch over AND gates with 32-byte hash
+calls; impractical in 32-bit bare-metal assembly without a SHA library).
+
+**Arduino:**
+Add `rnl_sigma_sign_32` / `rnl_sigma_verify_32` at n=32, mirroring the C suite
+(`uint32_t` throughout, no dynamic allocation).  Add a minimal ZKBoo demo at n=8
+R=4 for the demo loop (not full soundness — just illustrates the concept).
+
+---
+
+#### 5. Tests and benchmarks
+
+Append after the existing Stern-F tests in each test file.  Exact test numbers
+are assigned when the implementation lands; the descriptions below define the
+required test coverage.
+
+**Security tests:**
+
+| Test | Description | Protocol | Trials | Pass criterion |
+|---|---|---|---|---|
+| ZKP-RNL completeness | Honest prover at n=32 (and n=256 in Python/C/Go) | HPKS-ZKP-RNL | 100 | 0 failures |
+| ZKP-RNL soundness | Random z, no s, n=32 | HPKS-ZKP-RNL | 100 | 0 verifier accepts |
+| ZKP-RNL cross-lang | Proof produced by Python verifies under C and Go verifier | HPKS-ZKP-RNL | 10 | All accept |
+| ZKP-NL completeness | Honest prover at n=8, R=4 | HPKS-ZKP-NL | 100 | 0 failures |
+| ZKP-NL soundness | Random views, no A, n=8, R=4 | HPKS-ZKP-NL | 100 | 0 verifier accepts |
+
+**Benchmarks (Python/C/Go only — assembly at n=32 only for ZKP-RNL):**
+
+| Benchmark | Protocol | Sizes |
+|---|---|---|
+| ZKP-RNL proof generation throughput | HPKS-ZKP-RNL | n=32, n=256 |
+| ZKP-RNL verification throughput | HPKS-ZKP-RNL | n=32, n=256 |
+| ZKP-NL prove (toy) throughput | HPKS-ZKP-NL | n=8, R=4 |
+| ZKP-NL verify (toy) throughput | HPKS-ZKP-NL | n=8, R=4 |
+
+Benchmarks use the existing `-r` / `-t` timing infrastructure.
+
+---
+
+#### 6. CLI integration tests (CliTest/)
+
+| Script | What it tests |
+|---|---|
+| `CliTest/test_zkp_rnl.sh` | Python CLI: `genpkey` (hkex-rnl) → `sign` (rnl-sigma) → `verify` round-trip; tampered message must fail |
+| `CliTest/test_zkp_nl.sh` | Python CLI: `genpkey` (hpks-zkp-nl) → `sign` (nl-zkboo) → `verify` round-trip; wrong pubkey must fail |
+| `CliTest/test_c_zkp_rnl.sh` | C CLI (herradura_cli): same ZKP-RNL round-trip |
+| `CliTest/test_go_zkp_rnl.sh` | Go CLI (herradura_cli_go): same ZKP-RNL round-trip |
+| `CliTest/test_zkp_interop.sh` | Cross-language: Python `sign --algo rnl-sigma` → C `verify --algo rnl-sigma`; C sign → Go verify; Go sign → Python verify |
+
+Each test script prints `[PASS]` / `[FAIL]` per check, mirroring `test_c_interop.sh`.
+
+---
+
+#### 7. Documentation
+
+**`docs/TUTORIAL.md`** — new top-level section "ZKP Protocols":
+
+- When to use ZKP vs. conventional signatures: ZKPs prove knowledge without
+  message binding; with Fiat-Shamir they become signatures.  Use ZKP-RNL for
+  anonymous credentials where the verifier should not learn the signing key's
+  relationship to other keys; use ZKP-NL when the secret is an NL-FSCX preimage.
+- HPKS-ZKP-RNL API walk-through (keygen → sign → verify, Python and C snippets).
+- HPKS-ZKP-NL API walk-through (keygen → prove → verify, Python snippet).
+- CLI usage examples matching §3 above.
+- Proof-size and performance comparison table (ZKP-RNL vs. ZKP-NL vs.
+  HPKS-Stern-F vs. HPKS, populated from benchmark results).
+- Cross-reference: "See SecurityProofs-3.md §11.10 for completeness, soundness,
+  and zero-knowledge proofs."
+
+**`SecurityProofs-3.md §11.10`** — add implementation subsection after the
+existing §11.10.3 empirical results:
+
+- Note that `rnl_sigma_sign` / `rnl_sigma_verify` and `zkp_nl_prove` /
+  `zkp_nl_verify` are now in the suite (not prototype-only).
+- Table of function names per language target.
+- Comparison of ZKP-RNL proof size (1 056 B, n=256) vs. HPKS-Stern-F signature
+  and ML-DSA-44 from the §4 table already in the document.
+- Note that ZKP-NL at n=256 (920 KB) awaits ZKB++ optimization (open path §5);
+  CLI defaults to n=8 (35 KB) for now.
+
+---
+
+#### 8. Implementation batches
+
+| Batch | Scope | Notes |
+|---|---|---|
+| Batch 1 ✅ | Python suite (`rnl_sigma_*`, `zkp_nl_*`) + `codec.py` + `herradura.py` CLI | **DONE v1.9.5** — reference implementation; PEM/DER format validated |
+| Batch 2 ✅ | C (`herradura.h`) + C CLI (`herradura_cli.c`) | **DONE v1.9.6** — ZKP-RNL + ZKP-NL in header-only library; CLI `genpkey`/`pkey`/`sign`/`verify`; Python↔C PEM interop verified |
+| Batch 3 ✅ | Go suite + Go CLI (`herradura_cli.go`) | **DONE v1.9.7** — ZKP-RNL + ZKP-NL in `herradura/herradura.go`; CLI `genpkey`/`pkey`/`sign`/`verify`; demo blocks in suite |
+| Batch 4 ✅ | ARM Thumb-2 (`rnl_sigma_sign_32` / `rnl_sigma_verify_32` only) | **DONE v1.9.8** — sign/verify + demo block in main(); reuses rnl_poly_mul NTT + hfscx_32 |
+| Batch 5 ✅ | NASM i386 (`rnl_sigma_sign_32` / `rnl_sigma_verify_32` only) | **DONE v1.9.9** — sign/verify + demo block in `_start`; local stack frames for multi-call loops; saves/restores EBP around `rnl_lift`; reuses `rnl_poly_mul` NTT + `hfscx_32` + `rnl_lift` |
+| Batch 6 ✅ | Arduino (ZKP-RNL n=32 + ZKBoo n=8/R=4 demo) | **DONE v1.9.10** — `rnl_sigma_sign`/`rnl_sigma_verify` (n=32, γ=4096, t=4) + `zkp_nl_prove_8`/`zkp_nl_verify_8` ZKBoo (n=8, R=4); `static long` arrays only; no heap; targets Arduino Mega |
+| Batch 7 ✅ | `CryptosuiteTests/` — security tests and benchmarks for all targets | **DONE v1.9.11** — [21][22] C / [20][21] Go+Py ZKP-RNL+ZKP-NL; benches [33][34] C / [32][33] Go+Py |
+| Batch 8 ✅ | `CliTest/` scripts (see §6) | **DONE v1.9.12** — 5 new scripts: test_zkp_rnl.sh, test_zkp_nl.sh, test_c_zkp_rnl.sh, test_go_zkp_rnl.sh, test_zkp_interop.sh; Python CLI "Proof OK"→"Signature OK" fix |
+| Batch 9 ✅ | `docs/TUTORIAL.md` + `SecurityProofs-3.md §11.10` update (see §7) | **DONE v1.9.13** — `## ZKP Protocols` top-level section in TUTORIAL (C/Go/Py snippets, CLI usage, comparison table); §11.10.4 Suite Implementation + §11.10.5/§11.10.6 renumber in SecurityProofs-3 |
+
+---
+
+#### Files to create / modify
+
+| File | Change |
+|---|---|
+| `Herradura cryptographic suite.py` | Add `rnl_sigma_sign`, `rnl_sigma_verify`, `zkp_nl_keygen`, `zkp_nl_prove`, `zkp_nl_verify` |
+| `herradura.h` | Add same functions with C API; add `ZkpNlRound` struct and buffer size macros |
+| `Herradura cryptographic suite.go` | Add same functions with Go API |
+| `Herradura cryptographic suite.s` | Add `rnl_sigma_sign_32`, `rnl_sigma_verify_32` (ARM Thumb-2) |
+| `Herradura cryptographic suite.asm` | Add same (NASM i386) |
+| `Herradura cryptographic suite.ino` | Add ZKP-RNL n=32 + ZKBoo n=8/R=4 demo |
+| `CryptosuiteTests/Herradura_tests.c` | New ZKP test cases and benchmarks |
+| `CryptosuiteTests/Herradura_tests.go` | Same |
+| `CryptosuiteTests/Herradura_tests.py` | Same |
+| `CryptosuiteTests/Herradura_tests.s` | ZKP-RNL tests at n=32 |
+| `CryptosuiteTests/Herradura_tests.asm` | Same |
+| `CryptosuiteTests/Herradura_tests.ino` | Same |
+| `HerraduraCli/codec.py` | New DER encode/decode helpers for ZKP-RNL and ZKP-NL proof PEMs |
+| `HerraduraCli/herradura.py` | New PEM labels; extend `genpkey`, `sign`, `verify`; new `_encode_zkp_*` / `_decode_zkp_*` helpers |
+| `HerraduraCli/herradura_cli.c` | New subcommand handlers for `hpks-zkp-nl` keygen, `rnl-sigma` and `nl-zkboo` sign/verify |
+| `HerraduraCli/herradura_cli.go` | Same |
+| `CliTest/test_zkp_rnl.sh` | New |
+| `CliTest/test_zkp_nl.sh` | New |
+| `CliTest/test_c_zkp_rnl.sh` | New |
+| `CliTest/test_go_zkp_rnl.sh` | New |
+| `CliTest/test_zkp_interop.sh` | New |
+| `docs/TUTORIAL.md` | New "ZKP Protocols" section |
+| `SecurityProofs-3.md §11.10` | New implementation subsection (function names, proof-size table) |
+| `CHANGELOG.md` | Versioned entry per batch |
+
+**Prerequisites:**
+
+- TODO #76 DONE v1.9.4 — research prototype in `SecurityProofsCode/zkp_pqc_exploration.py`
+  is the reference implementation for all library functions.
+- TODO #74 (NL-FSCX OWF status) — ZKP-NL soundness is contingent on the NL-FSCX OWF
+  assumption.  If TODO #74 reveals a structural weakness, the ZKP-NL soundness claim
+  must be downgraded and documented accordingly; ZKP-RNL is independent and unaffected.
+
+**References:**
+
+- Lyubashevsky 2012, *Lattice Signatures Without Trapdoors*, Eurocrypt 2012.
+- Giacomelli, Madsen, Orlandi 2016, *ZKBoo: Faster Zero-Knowledge for Boolean Circuits*,
+  USENIX Security 2016.
+- Chase et al. 2017, *Post-Quantum Zero-Knowledge and Signatures from Symmetric-Key
+  Primitives*, CCS 2017 (ZKB++ — future optimization path for ZKP-NL at n=256).
+- SecurityProofs-3.md §11.10 (completeness, soundness, zero-knowledge proofs,
+  and proof-size analysis for both constructions).
+- `SecurityProofsCode/zkp_pqc_exploration.py` §2–§3 (reference prover/verifier code).
+
+Status: **DONE v1.9.13** — **Batch 1 DONE v1.9.5 · Batch 2 DONE v1.9.6 · Batch 3 DONE v1.9.7 · Batch 4 DONE v1.9.8 · Batch 5 DONE v1.9.9 · Batch 6 DONE v1.9.10 · Batch 7 DONE v1.9.11 · Batch 8 DONE v1.9.12 · Batch 9 DONE v1.9.13** — Batch 1: Python suite + codec + CLI.  Batch 2: C header-only library (`herradura.h`) adds ZKP-RNL + ZKP-NL functions + C CLI extensions.  Batch 3: Go package (`herradura/herradura.go`) adds `ZkpRnlParams`, `RnlSigmaSign`, `RnlSigmaVerify`, `ZkpNlKeygen`, `ZkpNlProve`, `ZkpNlVerify`, `ZkpNlRound`; codec.go adds 4 PEM label constants; `herradura_cli.go` extends `genpkey` (`hpks-zkp-nl`), `pkey` (ZKP-NL pubout/text), `sign` (`rnl-sigma`, `nl-zkboo`), `verify` (`rnl-sigma`, `nl-zkboo`); suite `main()` extended with ZKP-RNL and ZKP-NL demo blocks.  Batch 4: ARM Thumb-2 `rnl_sigma_sign_32`/`rnl_sigma_verify_32` + demo in `main()`.  Batch 5: NASM i386 `rnl_sigma_sign_32`/`rnl_sigma_verify_32` + demo in `_start`; local stack frames; EBP save/restore around `rnl_lift`.  Batch 6: Arduino `rnl_sigma_sign`/`rnl_sigma_verify` (n=32) + `zkp_nl_prove_8`/`zkp_nl_verify_8` ZKBoo (n=8, R=4); all-static allocation for Arduino Mega.  Batch 7: `CryptosuiteTests/` — ZKP-RNL+ZKP-NL security tests + benchmarks in C/Go/Python using production library.  Batch 8: 5 CliTest scripts (ZKP-RNL + ZKP-NL Python/C/Go + full 6-direction interop); Python CLI "Proof OK"→"Signature OK" consistency fix.  Batch 9 DONE v1.9.13: `docs/TUTORIAL.md` `## ZKP Protocols` section (C/Go/Py snippets, CLI usage, comparison table); `SecurityProofs-3.md` §11.10.4 Suite Implementation + §11.10.5/§11.10.6 renumber; applicability matrix and comparison table updated to "Implemented".
+
+---
+
+### 78. New application directions from primitive characteristics — research catalogue (Research, Medium)
+
+**Rationale:** A systematic analysis of HerraduraKEx primitive properties identified ten
+candidate applications that are either unique to this suite's algebraic structure or
+particularly well-served by its existing building blocks.  This item records the findings
+so they can be tracked, refined, and promoted to implementation TODOs individually.
+
+Each candidate is labelled with its implementation distance (Low / Medium / High) and the
+specific primitive property it exploits.  Candidates are ordered from most to least
+immediately actionable.
+
+---
+
+#### 78.A — Format-Preserving Encryption (Low)
+
+**Primitive:** `nl_fscx_revolve_v2` bijectivity — bijective in plaintext A for every fixed
+tweak B, with closed-form inverse via `nl_fscx_revolve_v2_inv`.
+
+**Construction:**
+```python
+def fpe_encrypt(plaintext: BitArray, key: bytes, context: bytes) -> BitArray:
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + context), 'big'))
+    return nl_fscx_revolve_v2(plaintext, B, I_VALUE)
+
+def fpe_decrypt(ciphertext: BitArray, key: bytes, context: bytes) -> BitArray:
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + context), 'big'))
+    return nl_fscx_revolve_v2_inv(ciphertext, B, I_VALUE)
+```
+
+**Why native:** `delta(B) = ROL(B * floor((B+1)/2) mod 2^n, n/4)` is precomputed once per
+context, making the tweak overhead one multiply and one rotation per block.  Standard
+AES-FFX requires specialised modular arithmetic for arbitrary-alphabet FPE; `nl_fscx_v2`
+is natively a bijection on `{0,1}^n` with no adaptation.
+
+**Use cases:** Encrypting fixed-width database fields (SSNs, credit card numbers, tokens)
+without changing field width; searchable deterministic encryption of indexed columns.
+
+**Caveat:** Same (key, context, plaintext) always produces the same ciphertext — suitable
+for deterministic/searchable encryption, not for IND-CPA without a per-record nonce in the
+context.  This is the same determinism constraint already documented for HSKE-NL-A2 (TODO #12).
+
+---
+
+#### 78.B — Tweakable Wide-Block Cipher for Disk / File Encryption (Low)
+
+**Primitive:** `nl_fscx_revolve_v2` with `delta(B)` precomputed once per block sector.
+
+**Construction (analogous to AES-XTS):**
+```python
+def sector_encrypt(blocks: list[BitArray], key: bytes, sector: int) -> list[BitArray]:
+    return [
+        nl_fscx_revolve_v2(
+            block,
+            BitArray(KEYBITS, int.from_bytes(hfscx_256(key + sector.to_bytes(8,'big')
+                                                       + i.to_bytes(4,'big')), 'big')),
+            I_VALUE
+        )
+        for i, block in enumerate(blocks)
+    ]
+```
+
+**Why native:** The `delta(B)` term in `nl_fscx_v2` depends only on B and is precomputed
+once per (sector, block-index) pair.  Standard XTS requires a GF(2^128) multiply per
+sector; here the tweak cost is one HFSCX-256 call plus one integer multiply and one
+rotation — both already O(n) operations in the suite.
+
+**Key advantage over HSKE-NL-A2:** Each block gets a unique B derived from a public
+(sector, index) pair, so distinct blocks always have distinct tweaks even under a fixed
+key, defeating the deterministic-encryption limitation.
+
+---
+
+#### 78.C — Forward-Secret Unidirectional Ratchet (Medium)
+
+**Primitive:** `nl_fscx_revolve_v1` one-wayness (OWF conjecture — Theorem 16,
+SecurityProofs-2 §11.8.3).
+
+**Construction:**
+```python
+RATCHET_DOMAIN = BitArray(KEYBITS, int.from_bytes(b'NL-FSCX-RATCHET-V1\x00' * 2, 'big'))
+
+def ratchet_advance(state: BitArray) -> tuple[BitArray, bytes]:
+    """Returns (new_state, message_key). Erase state after calling."""
+    msg_key = hfscx_256(state.bytes + b'\x01')
+    new_state = nl_fscx_revolve_v1(state, RATCHET_DOMAIN, 1)
+    return new_state, msg_key
+```
+
+**Why native:** The same OWF assumption that underlies HPKS-WOTS-F (Theorem 16) and
+HSKE-NL-A1 (§11.3.1) makes `nl_fscx_revolve_v1` one-directional.  Erasing `state_i`
+makes `msg_key_i` irrecoverable from `state_{i+1}`, giving forward secrecy without a
+DH exchange per message.  All building blocks (`nl_fscx_revolve_v1`, `hfscx_256`) are
+already in the suite.
+
+**Open question:** The non-bijectivity of `nl_fscx_v1` means two distinct states could
+converge (collide) after enough steps, re-entering a previously-seen state.  Bounding
+the collision probability over the ratchet lifetime is a prerequisite before deployment.
+A `SecurityProofsCode/nl_fscx_v1_ratchet_collision.py` analysis script (analogous to
+`hkex_rnl_failure_rate.py`) would characterise the expected collision distance.
+
+---
+
+#### 78.D — PQC Password-Authenticated Key Exchange / PAKE (High)
+
+**Primitives:** HKEX-RNL (quantum-resistant key exchange) + ZKBoo (`zkp_nl_prove` /
+`zkp_nl_verify`) + HFSCX-256 (password hash).
+
+**Sketch:**
+```
+Registration:
+    client: H_pw = hfscx_256(password + salt)
+    client -> server: (salt, H_pw, client HKEX-RNL public key)
+
+Login:
+    1. client <-> server: HKEX-RNL handshake -> shared_key
+    2. client: proof = zkp_nl_prove(password_bits, salt, H_pw, msg=shared_key)
+    3. client -> server: proof
+    4. server: zkp_nl_verify(salt, H_pw, msg=shared_key, proof)
+    5. Both derive session key from shared_key (authenticated by step 4)
+```
+
+**Why native:** All existing PQC PAKEs (KHAPE, OPAQUE-Kyber) import external components.
+This construction uses only primitives already in HerraduraKEx.
+
+**Open gap:** The current ZKBoo proves preimage of a single `nl_fscx_v1` step; a password
+hash requires proving knowledge through HFSCX-256's full 64-round Merkle-Damgard chain.
+The practical near-term path is a simpler construction: client derives a blinded value
+from the password and uses it as the HKEX-RNL key material, with the ZKBoo proving only
+the final binding step.  This requires a formal security reduction that does not yet exist.
+
+---
+
+#### 78.E — Non-Abelian Key Exchange — Option C Continuation (High / Research)
+
+**Primitive:** `nl_fscx_revolve_v2` permutation family `{pi_K}` — non-abelian by
+Theorem 15 (SecurityProofs-2 §11.8.5).  Key recovery from a single evaluation pair is
+MQ-hard (Theorem 14); no polynomial quantum algorithm is known for generic non-abelian
+Conjugacy Search Problem (Ettinger-Hoyer-Knill 2004).
+
+**Three obstacles from §11.8.5 remain open:**
+1. No transfer theorem from black-box CSP hardness to the NL-FSCX v2 circuit model.
+2. No verified lower bound on orbit length of `pi_K` — small-subgroup attacks not excluded.
+3. No formal reduction to studied CSP (braid group results do not directly transfer).
+
+**Recommended first step:** A `SecurityProofsCode/nl_fscx_v2_orbit.py` script (analogous
+to `nl_fscx_rot_analysis.py`) characterising orbit-length distribution of
+`nl_fscx_revolve_v2(G, K, steps)` for random K would close obstacle 2.
+
+---
+
+#### 78.F — Verifiable Delay Function (VDF) — limited model (Low / Research)
+
+**Primitive:** FSCX orbit periodicity — `fscx_revolve(A, B, n) = A`.
+
+**Construction:**
+```python
+def vdf_eval(x: BitArray, t: int, domain: BitArray) -> BitArray:
+    return fscx_revolve(x, domain, t)
+
+def vdf_verify(x: BitArray, y: BitArray, t: int, domain: BitArray) -> bool:
+    return fscx_revolve(y, domain, KEYBITS - t) == x
+```
+
+**Critical limitation:** FSCX is GF(2)-linear: `M^t` can be precomputed in O(n^3), bypassing
+the sequential delay. Not a full VDF against adversaries with matrix exponentiation capability.
+
+---
+
+#### 78.G — Oblivious PRF (OPRF) — research direction (High)
+
+**Primitive:** `nl_fscx_v1` input symmetry — `nl_fscx_v1(A, B) = nl_fscx_v1(B, A)` (A3).
+
+**Open gap:** Requires formal blinding scheme and security reduction. Research direction only.
+
+---
+
+#### 78.H — Masking-Friendly / Side-Channel-Resistant Implementation (Medium)
+
+**Primitive:** FSCX GF(2)-linearity for Boolean masking; ZKBoo 3-party decomposition for NL-FSCX.
+
+**FSCX masking:**
+```python
+# FSCX(A XOR r, B) = FSCX(A, B) XOR FSCX(r, 0)  [by GF(2)-linearity of M]
+r      = BitArray.random(KEYBITS)
+masked = fscx_revolve(A ^ r, B, I_VALUE)
+result = masked ^ fscx_revolve(r, BitArray(KEYBITS, 0), I_VALUE)
+```
+
+ZKBoo circuit in `_zkp_nl_evaluate_circuit` is structurally a 3-share Boolean masking scheme.
+Target platforms: Arduino and ARM Thumb-2.
+
+---
+
+#### 78.I — Code-Based Ring / Group Signature (Medium)
+
+**Primitive:** HPKS-Stern-F. OR-composition of k Stern identification instances.
+**Constraint:** Proof size scales O(SDFR x k).
+
+---
+
+#### 78.J — Cryptographic Accumulator from HFSCX-256 (Very Low)
+
+**Primitive:** HFSCX-256 collision resistance.
+```python
+leaf = lambda x: hfscx_256(b'\x00' + x)
+node = lambda l, r: hfscx_256(b'\x01' + l + r)
+```
+
+---
+
+#### Summary table
+
+| Sub-item | Primitive exploited | Implementation distance | Key open question |
+|---|---|---|---|
+| 78.A FPE | NL-FSCX v2 bijectivity | Low | None — wrap existing functions |
+| 78.B Tweakable block cipher | NL-FSCX v2 delta(B) structure | Low | None — wrap existing functions |
+| 78.C NL-FSCX ratchet | NL-FSCX v1 one-wayness | Medium | Collision probability over ratchet lifetime |
+| 78.D PQC PAKE | HKEX-RNL + ZKBoo + HFSCX-256 | High | ZKBoo for full HFSCX-256 chain; formal reduction |
+| 78.E Non-Abelian KEx | F2 non-commutativity (Theorem 15) | High (research) | Orbit length bound; circuit-model CSP reduction |
+| 78.F VDF (limited) | FSCX orbit period | Low to implement; not a full VDF | Matrix shortcut breaks sequentiality |
+| 78.G OPRF | NL-FSCX v1 symmetry (A3) | High (research) | Formal blinding scheme; security reduction |
+| 78.H Masking / side-channel | FSCX linearity + ZKBoo decomposition | Medium | Formal higher-order masking proof |
+| 78.I Ring / group signature | Stern ZKP OR-composition | Medium | Proof-size scaling with ring size |
+| 78.J Accumulator | HFSCX-256 collision resistance | Very low | None — direct from existing hash |
+
+**Recommended first implementations:**
+1. **78.B** Tweakable block cipher — resolves HSKE-NL-A2 determinism (TODO #12).
+2. **78.A** FPE — same primitive, zero new code.
+3. **78.J** Accumulator — trivial wrapper around `hfscx_256`.
+4. **78.C** Ratchet — gated on collision-probability analysis.
+5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
+
+Status: **TODO**

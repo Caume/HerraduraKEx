@@ -178,6 +178,100 @@ static void pem_key_load(PemKey *k, const char *path)
 }
 static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 
+/* Read raw-binary PEM (no DER parse). Returns heap buffer; *olen = byte count. */
+static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, size_t *olen)
+{
+    size_t raw_len;
+    uint8_t *raw = read_binary_file(path, &raw_len);
+    char label[80] = {0};
+    size_t cap = raw_len;
+    uint8_t *buf = (uint8_t *)malloc(cap);
+    if (!buf) die("out of memory");
+    /* pem_read_file opens the file itself; raw is only for sizing */
+    free(raw);
+    if (pem_read_file(path, label, buf, &cap) != 0)
+        dief("cannot parse PEM from: %s", path);
+    if (expect_label && strcmp(label, expect_label) != 0) {
+        free(buf);
+        fprintf(stderr, "expected PEM label '%s', got '%s'\n", expect_label, label);
+        exit(1);
+    }
+    *olen = cap;
+    return buf;
+}
+
+/* Peek at a PEM label without DER-parsing the body. */
+static void zkp_pem_peek_label(const char *path, char label_out[80])
+{
+    size_t dummy_len = 4096;
+    uint8_t dummy[4096];
+    memset(label_out, 0, 80);
+    pem_read_file(path, label_out, dummy, &dummy_len);
+}
+
+/* Serialize ZkpNlRound[] to raw bytes (matches Python encode_zkp_nl_proof). */
+static uint8_t *zkp_nl_pack_proof(const ZkpNlRound *proof, int rounds, int n, size_t *olen)
+{
+    size_t vl = proof[0].view_len;
+    size_t per = 96 + 1 + 2 + vl + 2 + vl;
+    size_t total = 8 + (size_t)rounds * per;
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (!buf) die("out of memory");
+    buf[0]=(uint8_t)(n>>24);      buf[1]=(uint8_t)(n>>16);
+    buf[2]=(uint8_t)(n>>8);       buf[3]=(uint8_t)n;
+    buf[4]=(uint8_t)(rounds>>24); buf[5]=(uint8_t)(rounds>>16);
+    buf[6]=(uint8_t)(rounds>>8);  buf[7]=(uint8_t)rounds;
+    uint8_t *p = buf + 8;
+    int j;
+    for (j = 0; j < rounds; j++) {
+        memcpy(p, proof[j].com_0, 32); p += 32;
+        memcpy(p, proof[j].com_1, 32); p += 32;
+        memcpy(p, proof[j].com_2, 32); p += 32;
+        *p++ = proof[j].e;
+        *p++ = (uint8_t)(vl >> 8); *p++ = (uint8_t)vl;
+        memcpy(p, proof[j].view_p1, vl); p += vl;
+        *p++ = (uint8_t)(vl >> 8); *p++ = (uint8_t)vl;
+        memcpy(p, proof[j].view_p2, vl); p += vl;
+    }
+    *olen = total;
+    return buf;
+}
+
+/* Deserialize ZkpNlRound[] from raw bytes. */
+static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
+                                        int *n_out, int *rounds_out)
+{
+    if (blen < 8) die("ZKP-NL proof too short");
+    int n = (int)(((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|
+                  ((uint32_t)buf[2]<<8)|buf[3]);
+    int rounds = (int)(((uint32_t)buf[4]<<24)|((uint32_t)buf[5]<<16)|
+                       ((uint32_t)buf[6]<<8)|buf[7]);
+    *n_out = n; *rounds_out = rounds;
+    ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
+    if (!proof) die("out of memory");
+    const uint8_t *p = buf + 8;
+    int j;
+    for (j = 0; j < rounds; j++) {
+        if (p + 97 + 4 > buf + blen) die("truncated ZKP-NL proof");
+        memcpy(proof[j].com_0, p, 32); p += 32;
+        memcpy(proof[j].com_1, p, 32); p += 32;
+        memcpy(proof[j].com_2, p, 32); p += 32;
+        proof[j].e = *p++;
+        size_t l1 = ((size_t)p[0] << 8) | p[1]; p += 2;
+        if (p + l1 > buf + blen) die("truncated ZKP-NL proof view");
+        proof[j].view_p1  = (uint8_t *)malloc(l1);
+        if (!proof[j].view_p1) die("out of memory");
+        memcpy(proof[j].view_p1, p, l1); p += l1;
+        proof[j].view_len = l1;
+        size_t l2 = ((size_t)p[0] << 8) | p[1]; p += 2;
+        if (p + l2 > buf + blen) die("truncated ZKP-NL proof view");
+        proof[j].view_p2  = (uint8_t *)malloc(l2);
+        if (!proof[j].view_p2) die("out of memory");
+        memcpy(proof[j].view_p2, p, l2); p += l2;
+    }
+    return proof;
+}
+
 /* Get integer n=256 from a val. Returns 0 on success. */
 static int pem_key_get_n(const PemKey *k, int idx)
 {
@@ -263,6 +357,24 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
+    /* ZKP-NL keypair: raw binary PEM (A, B, y, n) */
+    if (strcmp(algo, "hpks-zkp-nl") == 0) {
+        int nl_n = ZKP_NL_DEFAULT_N, nb = (nl_n+7)/8, k;
+        uint32_t A, B, y;
+        zkp_nl_keygen(nl_n, urnd, &A, &B, &y);
+        size_t blen = 4 + (size_t)3*nb;
+        uint8_t *body = (uint8_t *)malloc(blen);
+        if (!body) die("out of memory");
+        body[0]=(uint8_t)(nl_n>>24); body[1]=(uint8_t)(nl_n>>16);
+        body[2]=(uint8_t)(nl_n>>8);  body[3]=(uint8_t)nl_n;
+        for (k=0;k<nb;k++) body[4+k]       = (uint8_t)(A>>(8*(nb-1-k)));
+        for (k=0;k<nb;k++) body[4+nb+k]    = (uint8_t)(B>>(8*(nb-1-k)));
+        for (k=0;k<nb;k++) body[4+2*nb+k]  = (uint8_t)(y>>(8*(nb-1-k)));
+        if (pem_write_file(out ? out : "-", PEM_ZKP_NL_PRIV, body, blen) != 0)
+            die("cannot write ZKP-NL private key");
+        free(body); fclose(urnd); return;
+    }
+
     fclose(urnd);
     dief("genpkey: unsupported algorithm: %s", algo);
 }
@@ -286,6 +398,45 @@ static void cmd_pkey(int argc, char **argv)
     int text   = has_flag(argc, argv, "--text");
     if (!in_path) die("pkey: --in required");
     if (!pubout && !text) die("pkey: specify --pubout or --text");
+
+    /* ZKP-NL keys use raw binary PEM — handle before DER-based path. */
+    {
+        char peek[80];
+        zkp_pem_peek_label(in_path, peek);
+        if (strcmp(peek, PEM_ZKP_NL_PRIV) == 0) {
+            size_t blen;
+            uint8_t *body = zkp_raw_pem_read(in_path, PEM_ZKP_NL_PRIV, &blen);
+            if (blen < 4) die("pkey: malformed ZKP-NL private key");
+            int nl_n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+                             ((uint32_t)body[2]<<8)|body[3]);
+            int nb = (nl_n+7)/8;
+            if ((int)blen < 4+3*nb) die("pkey: malformed ZKP-NL private key (short)");
+            uint32_t A=0, B=0, y=0; int k;
+            for (k=0;k<nb;k++) A=(A<<8)|body[4+k];
+            for (k=0;k<nb;k++) B=(B<<8)|body[4+nb+k];
+            for (k=0;k<nb;k++) y=(y<<8)|body[4+2*nb+k];
+            free(body);
+            if (text) {
+                printf("%-10s: %s\n", "algorithm", "hpks-zkp-nl");
+                printf("%-10s: %d\n", "n", nl_n);
+                printf("%-10s: %0*x\n", "A_private", 2*nb, A);
+                printf("%-10s: %0*x\n", "B_public",  2*nb, B);
+                printf("%-10s: %0*x\n", "y_public",  2*nb, y);
+            } else {
+                size_t pub_len = 4 + (size_t)2*nb;
+                uint8_t *pub = (uint8_t *)malloc(pub_len);
+                if (!pub) die("out of memory");
+                pub[0]=(uint8_t)(nl_n>>24); pub[1]=(uint8_t)(nl_n>>16);
+                pub[2]=(uint8_t)(nl_n>>8);  pub[3]=(uint8_t)nl_n;
+                for (k=0;k<nb;k++) pub[4+k]    = (uint8_t)(B>>(8*(nb-1-k)));
+                for (k=0;k<nb;k++) pub[4+nb+k] = (uint8_t)(y>>(8*(nb-1-k)));
+                if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PUB, pub, pub_len) != 0)
+                    die("cannot write ZKP-NL public key");
+                free(pub);
+            }
+            return;
+        }
+    }
 
     PemKey k; pem_key_load(&k, in_path);
 
@@ -1030,6 +1181,34 @@ static void cmd_sign(int argc, char **argv)
     BitArray msg;
     memcpy(msg.b, msg_bytes, KEYBYTES);
 
+    /* nl-zkboo uses raw binary PEM — handle before pem_key_load. */
+    if (strcmp(algo, "nl-zkboo") == 0) {
+        FILE *urnd2 = fopen("/dev/urandom", "rb");
+        if (!urnd2) die("cannot open /dev/urandom");
+        size_t kblen;
+        uint8_t *kbody = zkp_raw_pem_read(key_path, PEM_ZKP_NL_PRIV, &kblen);
+        if (kblen < 4) die("sign: malformed ZKP-NL private key");
+        int nl_n = (int)(((uint32_t)kbody[0]<<24)|((uint32_t)kbody[1]<<16)|
+                         ((uint32_t)kbody[2]<<8)|kbody[3]);
+        int nb = (nl_n+7)/8;
+        if ((int)kblen < 4+3*nb) die("sign: malformed ZKP-NL private key (short)");
+        uint32_t zkA=0, zkB=0, zky=0; int ki;
+        for (ki=0;ki<nb;ki++) zkA=(zkA<<8)|kbody[4+ki];
+        for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
+        for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
+        free(kbody);
+        ZkpNlRound *zk_proof = zkp_nl_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+                                             msg_bytes, KEYBYTES, urnd2);
+        fclose(urnd2);
+        size_t pack_len;
+        uint8_t *pack = zkp_nl_pack_proof(zk_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
+        zkp_nl_proof_free(zk_proof, ZKP_NL_PROD_ROUNDS);
+        if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PROOF, pack, pack_len) != 0)
+            die("cannot write ZKP-NL proof");
+        free(pack);
+        return;
+    }
+
     PemKey priv_k;
     pem_key_load(&priv_k, key_path);
 
@@ -1071,6 +1250,45 @@ static void cmd_sign(int argc, char **argv)
         hpks_stern_f_sign(&sig, &msg, &e_ba, &seed_ba, urnd);
         stern_sig_pack_and_write(&sig, out_path);
 
+    } else if (strcmp(algo, "rnl-sigma") == 0) {
+        /* ZKP-RNL: uses hkex-rnl private key, n must equal RNL_N */
+        if (priv_k.n_items < 3) die("sign: malformed hkex-rnl private key");
+        int sig_n = pem_key_get_n(&priv_k, 2);
+        if (sig_n != RNL_N) die("sign: rnl-sigma requires n=256 key");
+        rnl_poly_t sig_s, sig_m, sig_ms, sig_Cp;
+        poly_unpack(sig_s, priv_k.vals[0], priv_k.vlens[0], 4);
+        poly_unpack(sig_m, priv_k.vals[1], priv_k.vlens[1], 4);
+        pem_key_free(&priv_k);
+        rnl_poly_mul(sig_ms, sig_m, sig_s);
+        rnl_round(sig_Cp, sig_ms, RNL_Q, RNL_P);
+
+        rnl_poly_t sig_w, sig_c, sig_z;
+        int r = rnl_sigma_sign(sig_s, sig_m, sig_Cp, RNL_N,
+                               msg.b, KEYBYTES, urnd, sig_w, sig_c, sig_z);
+        if (r != 0) die("sign: rnl-sigma rejection limit reached");
+
+        /* Write raw binary proof: 4B n | n×4B w | n×4B c | n×4B z */
+        size_t proof_len = 4 + (size_t)RNL_N * 12;
+        uint8_t *pbuf = (uint8_t *)malloc(proof_len);
+        if (!pbuf) die("out of memory");
+        pbuf[0]=(uint8_t)(RNL_N>>24); pbuf[1]=(uint8_t)(RNL_N>>16);
+        pbuf[2]=(uint8_t)(RNL_N>>8);  pbuf[3]=(uint8_t)RNL_N;
+        int pi;
+        for (pi=0;pi<RNL_N;pi++) {
+            uint32_t v;
+            v=(uint32_t)sig_w[pi];
+            pbuf[4+pi*4+0]=v>>24; pbuf[4+pi*4+1]=v>>16; pbuf[4+pi*4+2]=v>>8; pbuf[4+pi*4+3]=v;
+            v=(uint32_t)sig_c[pi];
+            pbuf[4+RNL_N*4+pi*4+0]=v>>24; pbuf[4+RNL_N*4+pi*4+1]=v>>16;
+            pbuf[4+RNL_N*4+pi*4+2]=v>>8;  pbuf[4+RNL_N*4+pi*4+3]=v;
+            v=(uint32_t)sig_z[pi];
+            pbuf[4+RNL_N*8+pi*4+0]=v>>24; pbuf[4+RNL_N*8+pi*4+1]=v>>16;
+            pbuf[4+RNL_N*8+pi*4+2]=v>>8;  pbuf[4+RNL_N*8+pi*4+3]=v;
+        }
+        if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_RNL_PROOF, pbuf, proof_len) != 0)
+            die("cannot write ZKP-RNL proof");
+        free(pbuf);
+
     } else {
         pem_key_free(&priv_k);
         fclose(urnd);
@@ -1111,6 +1329,31 @@ static void cmd_verify(int argc, char **argv)
 
     BitArray msg;
     memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    /* nl-zkboo uses raw binary PEM — handle before pem_key_load. */
+    if (strcmp(algo, "nl-zkboo") == 0) {
+        size_t pkblen;
+        uint8_t *pkbody = zkp_raw_pem_read(pubkey_path, PEM_ZKP_NL_PUB, &pkblen);
+        if (pkblen < 4) die("verify: malformed ZKP-NL public key");
+        int nl_n = (int)(((uint32_t)pkbody[0]<<24)|((uint32_t)pkbody[1]<<16)|
+                         ((uint32_t)pkbody[2]<<8)|pkbody[3]);
+        int nb = (nl_n+7)/8;
+        if ((int)pkblen < 4+2*nb) die("verify: malformed ZKP-NL public key (short)");
+        uint32_t zkB=0, zky=0; int ki;
+        for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|pkbody[4+ki];
+        for (ki=0;ki<nb;ki++) zky=(zky<<8)|pkbody[4+nb+ki];
+        free(pkbody);
+        size_t prflen;
+        uint8_t *prfbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_NL_PROOF, &prflen);
+        int prf_n, prf_rounds;
+        ZkpNlRound *zk_proof = zkp_nl_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
+        free(prfbuf);
+        if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
+        int ok = zkp_nl_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, zk_proof);
+        zkp_nl_proof_free(zk_proof, prf_rounds);
+        if (ok) { puts("Signature OK");         exit(0); }
+        else    { puts("Verification FAILED");  exit(1); }
+    }
 
     PemKey pub_k;
     pem_key_load(&pub_k, pubkey_path);
@@ -1169,6 +1412,44 @@ static void cmd_verify(int argc, char **argv)
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
         if (ok) { puts("Signature OK");        exit(0); }
         else    { puts("Verification FAILED"); exit(1); }
+
+    } else if (strcmp(algo, "rnl-sigma") == 0) {
+        /* ZKP-RNL verify: pubkey = hkex-rnl public key (C_p, m, n) */
+        if (pub_k.n_items < 3) die("verify: malformed hkex-rnl public key");
+        int vfy_n = pem_key_get_n(&pub_k, 2);
+        if (vfy_n != RNL_N) die("verify: rnl-sigma requires n=256 key");
+        rnl_poly_t vfy_Cp, vfy_m;
+        poly_unpack(vfy_Cp, pub_k.vals[0], pub_k.vlens[0], 2);
+        poly_unpack(vfy_m,  pub_k.vals[1], pub_k.vlens[1], 4);
+        pem_key_free(&pub_k);
+
+        /* Read proof */
+        size_t plen;
+        uint8_t *pbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_RNL_PROOF, &plen);
+        if (plen < 4 + (size_t)RNL_N*12) die("verify: truncated ZKP-RNL proof");
+        int pn = (int)(((uint32_t)pbuf[0]<<24)|((uint32_t)pbuf[1]<<16)|
+                       ((uint32_t)pbuf[2]<<8)|pbuf[3]);
+        if (pn != RNL_N) die("verify: proof n mismatch");
+        rnl_poly_t vfy_w, vfy_c, vfy_z;
+        int pi;
+        for (pi=0;pi<RNL_N;pi++) {
+            vfy_w[pi]=(int32_t)(((uint32_t)pbuf[4+pi*4]<<24)|((uint32_t)pbuf[4+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+pi*4+2]<<8)|pbuf[4+pi*4+3]);
+            vfy_c[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*4+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+RNL_N*4+pi*4+2]<<8)|
+                                pbuf[4+RNL_N*4+pi*4+3]);
+            vfy_z[pi]=(int32_t)(((uint32_t)pbuf[4+RNL_N*8+pi*4]<<24)|
+                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+1]<<16)|
+                                ((uint32_t)pbuf[4+RNL_N*8+pi*4+2]<<8)|
+                                pbuf[4+RNL_N*8+pi*4+3]);
+        }
+        free(pbuf);
+
+        int ok = rnl_sigma_verify(vfy_m, vfy_Cp, RNL_N, msg.b, KEYBYTES,
+                                   vfy_w, vfy_c, vfy_z);
+        if (ok) { puts("Signature OK");         exit(0); }
+        else    { puts("Verification FAILED");  exit(1); }
 
     } else {
         pem_key_free(&pub_k);
@@ -1363,7 +1644,7 @@ static void usage(void)
 "Commands:\n"
 "  genpkey --algo ALGO [--out FILE]\n"
 "    Generate a private key.  Algorithms: hkex-gf hkex-rnl hpks hpks-nl\n"
-"    hpke hpke-nl hpks-stern hpke-stern\n"
+"    hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl\n"
 "\n"
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
 "    Extract public key (--pubout) or print fields in hex (--text).\n"
@@ -1389,11 +1670,15 @@ static void usage(void)
 "    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256]\n"
-"    Sign.  Algorithms: hpks hpks-nl hpks-stern\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n"
+"    rnl-sigma: key = hkex-rnl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
+"    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
 "\n"
 "  verify --algo ALGO --pubkey PUB --in FILE --sig SIG [--digest hfscx-256]\n"
 "    Verify signature.  Exits 0 on OK, 1 on failure.\n"
+"    rnl-sigma: pubkey = hkex-rnl public key; sig = ZKP-RNL PROOF PEM.\n"
+"    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
 "\n"
 "  dgst --in FILE [--algo hfscx-256] [--out FILE]\n"
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"

@@ -1022,3 +1022,576 @@ func HpkeSternFEncap(seed *BitArray, n int) (*BitArray, *big.Int, *BitArray) {
 func HpkeSternFDecapKnown(ePrime, seed *BitArray) *BitArray {
 	return SternHash(4, seed, ePrime)
 }
+
+// ---------------------------------------------------------------------------
+// ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
+// SecurityProofs-3.md §11.10.2
+// ---------------------------------------------------------------------------
+
+const sigmaMaxAttempts = 1000
+
+// ZkpRnlParams returns (gamma, t) for the Ring-LWR Σ-protocol at bit-width n.
+func ZkpRnlParams(n int) (gamma, t int) {
+	if n <= 32 {
+		return 4096, 4
+	}
+	return 8192, 16
+}
+
+// sigmaPolyBytes serializes a polynomial (possibly signed) to bytes for hashing (4 B/coeff).
+func sigmaPolyBytes(poly []int) []byte {
+	out := make([]byte, len(poly)*4)
+	for i, c := range poly {
+		v := uint32(c) // two's complement handles negative
+		out[4*i+0] = byte(v >> 24)
+		out[4*i+1] = byte(v >> 16)
+		out[4*i+2] = byte(v >> 8)
+		out[4*i+3] = byte(v)
+	}
+	return out
+}
+
+// sigmaPolyMulN multiplies two polynomials in Z_q[x]/(x^n+1) using O(n²) schoolbook.
+// Used for n<256 where NTT twiddles are not precomputed.
+func sigmaPolyMulN(f, g []int, n, q int) []int {
+	h := make([]int, n)
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			idx := i + j
+			v := int64(f[i]) * int64(g[j])
+			if idx >= n {
+				idx -= n
+				v = -v
+			}
+			h[idx] = int((int64(h[idx]) + v + int64(q)*int64(q)) % int64(q))
+		}
+	}
+	return h
+}
+
+// sigmaChallenge derives a sparse ternary challenge polynomial from (m, C, w, msg).
+// Returns a []int of length n in {0, 1, q-1} with exactly t nonzero entries.
+func sigmaChallenge(mPoly, cPoly, wPoly []int, n, q, t int, msg []byte) []int {
+	buf := make([]byte, 4)
+	buf[0] = byte(n >> 24); buf[1] = byte(n >> 16)
+	buf[2] = byte(n >> 8);  buf[3] = byte(n)
+	data := make([]byte, 0, 4+len(mPoly)*12+len(msg))
+	data = append(data, buf...)
+	data = append(data, sigmaPolyBytes(mPoly)...)
+	data = append(data, sigmaPolyBytes(cPoly)...)
+	data = append(data, sigmaPolyBytes(wPoly)...)
+	data = append(data, msg...)
+	seed := Hfscx256(data, nil)
+
+	// Expand seed to t distinct positions
+	positions := make([]int, 0, t)
+	seen := make(map[int]bool, t)
+	for idx := 0; len(positions) < t; idx++ {
+		ext := Hfscx256(append(seed, append([]byte("pos"), []byte{byte(idx >> 24), byte(idx >> 16), byte(idx >> 8), byte(idx)}...)...), nil)
+		v := (int(ext[0])<<24 | int(ext[1])<<16 | int(ext[2])<<8 | int(ext[3])) & 0x7FFFFFFF
+		v = v % n
+		if !seen[v] {
+			seen[v] = true
+			positions = append(positions, v)
+		}
+	}
+
+	// Assign ±1 signs (stored as Z_q: +1 or q-1)
+	out := make([]int, n)
+	for k, pos := range positions {
+		ext := Hfscx256(append(seed, append([]byte("sgn"), []byte{byte(k >> 24), byte(k >> 16), byte(k >> 8), byte(k)}...)...), nil)
+		if ext[0]&1 == 0 {
+			out[pos] = 1
+		} else {
+			out[pos] = q - 1
+		}
+	}
+	return out
+}
+
+// RnlSigmaSign produces a ZKP-RNL Σ-protocol proof of knowledge of s s.t. C = round_p(m·s).
+// Returns (wPoly, cPoly, zPoly). Returns error if rejection limit is exceeded.
+func RnlSigmaSign(sPoly, mPoly, cPoly []int, n int, msg []byte) (w, c, z []int, err error) {
+	q := RnlQ
+	gamma, t := ZkpRnlParams(n)
+	bound := gamma - t
+	half := q / 2
+
+	polyMul := func(f, g []int) []int {
+		if n == 256 {
+			return RnlPolyMul(f, g, q, n)
+		}
+		return sigmaPolyMulN(f, g, n, q)
+	}
+
+	rangeSz := 2*gamma + 1
+	buf := make([]byte, 4)
+	for attempt := 0; attempt < sigmaMaxAttempts; attempt++ {
+		y := make([]int, n)
+		for i := range y {
+			if _, rerr := rand.Read(buf); rerr != nil {
+				return nil, nil, nil, rerr
+			}
+			v := int(binary.BigEndian.Uint32(buf)) % rangeSz
+			y[i] = v - gamma
+		}
+		yQ := make([]int, n)
+		for i, yi := range y {
+			yQ[i] = ((yi % q) + q) % q
+		}
+		my := polyMul(mPoly, yQ)
+		wLocal := make([]int, n)
+		for i, c := range my {
+			if c > half {
+				wLocal[i] = c - q
+			} else {
+				wLocal[i] = c
+			}
+		}
+		cLocal := sigmaChallenge(mPoly, cPoly, wLocal, n, q, t, msg)
+		cs := polyMul(cLocal, sPoly)
+		csC := make([]int, n)
+		for i, x := range cs {
+			if x > half {
+				csC[i] = x - q
+			} else {
+				csC[i] = x
+			}
+		}
+		zLocal := make([]int, n)
+		ok := true
+		for i := range zLocal {
+			zLocal[i] = y[i] + csC[i]
+			if zLocal[i] > bound || zLocal[i] < -bound {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return wLocal, cLocal, zLocal, nil
+		}
+	}
+	return nil, nil, nil, fmt.Errorf("RnlSigmaSign: rejection sampling limit (%d) reached", sigmaMaxAttempts)
+}
+
+// RnlSigmaVerify verifies a ZKP-RNL Σ-protocol proof (w, c, z) for statement (m, C, msg).
+func RnlSigmaVerify(mPoly, cpoly []int, n int, msg []byte, wPoly, cPoly, zPoly []int) bool {
+	q := RnlQ
+	p := RnlP
+	gamma, t := ZkpRnlParams(n)
+	bound := gamma - t
+	slack := t * (q/(2*p) + 1)
+	half := q / 2
+
+	polyMul := func(f, g []int) []int {
+		if n == 256 {
+			return RnlPolyMul(f, g, q, n)
+		}
+		return sigmaPolyMulN(f, g, n, q)
+	}
+
+	// (1) infinity-norm bound
+	for _, zi := range zPoly {
+		if zi > bound || zi < -bound {
+			return false
+		}
+	}
+	// (2) Fiat-Shamir consistency
+	cRecomputed := sigmaChallenge(mPoly, cpoly, wPoly, n, q, t, msg)
+	for i := range cRecomputed {
+		if cRecomputed[i] != cPoly[i] {
+			return false
+		}
+	}
+	// (3) rounding slack: ||m·z − w − c·lift(C)||∞ ≤ slack
+	zQ := make([]int, n)
+	for i, zi := range zPoly {
+		zQ[i] = ((zi % q) + q) % q
+	}
+	mz := polyMul(mPoly, zQ)
+	lift := RnlLift(cpoly, p, q)
+	ct := polyMul(cPoly, lift)
+	wQ := make([]int, n)
+	for i, wi := range wPoly {
+		wQ[i] = ((wi % q) + q) % q
+	}
+	for i := range mz {
+		d := ((mz[i] - ct[i] - wQ[i]) % q + q) % q
+		dc := d
+		if dc > half {
+			dc = dc - q
+		}
+		if dc > slack || dc < -slack {
+			return false
+		}
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// ZKP-NL: NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
+// SecurityProofs-3.md §11.10.3
+// ---------------------------------------------------------------------------
+
+const (
+	ZkpNlDefaultN   = 8
+	ZkpNlDemoRounds = 4
+	ZkpNlProdRounds = 219
+	ZkpNlMaxN       = 32
+)
+
+// ZkpNlRound holds one round of a ZKBoo proof.
+type ZkpNlRound struct {
+	Com0, Com1, Com2 [32]byte
+	E                int
+	ViewP1, ViewP2   []byte
+}
+
+func zkpNlRol(x uint32, r, n int) uint32 {
+	r = ((r % n) + n) % n
+	if r == 0 {
+		return x
+	}
+	mask := uint32((1 << uint(n)) - 1)
+	return ((x << uint(r)) | (x >> uint(n-r))) & mask
+}
+
+func zkpNlH(parts ...[]byte) []byte {
+	var buf []byte
+	for _, p := range parts {
+		buf = append(buf, p...)
+	}
+	return Hfscx256(buf, nil)
+}
+
+func zkpNlPrgBit(tape []byte, gateID int) int {
+	gidBuf := []byte{byte(gateID >> 24), byte(gateID >> 16), byte(gateID >> 8), byte(gateID)}
+	h := zkpNlH(tape, gidBuf)
+	return int(h[0] & 1)
+}
+
+// zkpNlEvalCircuit evaluates nl_fscx_v1(A, B) in 3-party ZKBoo decomposition.
+// shares: XOR shares of A (A = s0^s1^s2), tapes: 3×32-byte tapes.
+// Returns (outShares[3], gateViews[3][n-1]) where each gate view byte = ai|(ci<<1)|(andOut<<2).
+func zkpNlEvalCircuit(shares [3]uint32, tapes [3][]byte, B uint32, n int) ([3]uint32, [3][]byte) {
+	mask := uint32((1 << uint(n)) - 1)
+	carry := [3]uint32{} // current carry bits per party; starts at 0
+	gateViews := [3][]byte{
+		make([]byte, n-1),
+		make([]byte, n-1),
+		make([]byte, n-1),
+	}
+
+	for i := 0; i < n-1; i++ {
+		var ai, ci, ri [3]int
+		Bi := int((B >> uint(i)) & 1)
+		for p := 0; p < 3; p++ {
+			ai[p] = int((shares[p] >> uint(i)) & 1)
+			ci[p] = int((carry[p] >> uint(i)) & 1)
+			ri[p] = zkpNlPrgBit(tapes[p], i)
+		}
+		var andOut [3]int
+		for p := 0; p < 3; p++ {
+			p1 := (p + 1) % 3
+			andOut[p] = (ai[p]&ci[p])^(ai[p]&ci[p1])^(ai[p1]&ci[p])^ri[p]^ri[p1]
+		}
+		for p := 0; p < 3; p++ {
+			gateViews[p][i] = byte(ai[p] | (ci[p] << 1) | (andOut[p] << 2))
+		}
+		// c_{i+1} = Bi*ai XOR andOut XOR Bi*ci
+		for p := 0; p < 3; p++ {
+			cNext := (Bi*ai[p])^andOut[p]^(Bi*ci[p])
+			if cNext == 1 {
+				carry[p] |= 1 << uint(i+1)
+			} else {
+				carry[p] &^= 1 << uint(i+1)
+			}
+		}
+	}
+
+	// Sum shares: bit i of (A+B) mod 2^n = A_i XOR B_i XOR carry_i (linear)
+	var sumShares [3]uint32
+	for i := 0; i < n; i++ {
+		Bi := uint32((B >> uint(i)) & 1)
+		for p := 0; p < 3; p++ {
+			bit := ((shares[p] >> uint(i)) & 1) ^ Bi ^ ((carry[p] >> uint(i)) & 1)
+			sumShares[p] ^= bit << uint(i)
+		}
+	}
+
+	// ROL_{n/4} (linear — apply identically to each share)
+	var rotShares [3]uint32
+	for p := 0; p < 3; p++ {
+		rotShares[p] = zkpNlRol(sumShares[p], n/4, n)
+	}
+
+	// Linear part: fscx(A, B) with B constant
+	Bconst := (B ^ zkpNlRol(B, 1, n) ^ zkpNlRol(B, n-1, n)) & mask
+	var linShares [3]uint32
+	for p := 0; p < 3; p++ {
+		Aterms := (shares[p] ^ zkpNlRol(shares[p], 1, n) ^ zkpNlRol(shares[p], n-1, n)) & mask
+		linShares[p] = Aterms
+	}
+	linShares[0] ^= Bconst // absorb public constant into party 0 only
+
+	var outShares [3]uint32
+	for p := 0; p < 3; p++ {
+		outShares[p] = (linShares[p] ^ rotShares[p]) & mask
+	}
+	return outShares, gateViews
+}
+
+func zkpNlPackView(share uint32, tape []byte, outShare uint32, gateBytes []byte, n, nb int) []byte {
+	buf := make([]byte, nb+32+nb+len(gateBytes))
+	// share (nb bytes big-endian)
+	for i := nb - 1; i >= 0; i-- {
+		buf[i] = byte(share)
+		share >>= 8
+	}
+	copy(buf[nb:nb+32], tape)
+	// out_share (nb bytes big-endian)
+	os := outShare
+	for i := nb + 32 + nb - 1; i >= nb+32; i-- {
+		buf[i] = byte(os)
+		os >>= 8
+	}
+	copy(buf[nb+32+nb:], gateBytes)
+	return buf
+}
+
+func zkpNlUnpackView(buf []byte, n, nb int) (share uint32, tape []byte, outShare uint32, gv []byte) {
+	share = 0
+	for i := 0; i < nb; i++ {
+		share = (share << 8) | uint32(buf[i])
+	}
+	tape = buf[nb : nb+32]
+	outShare = 0
+	for i := nb + 32; i < nb+32+nb; i++ {
+		outShare = (outShare << 8) | uint32(buf[i])
+	}
+	gv = buf[nb+32+nb:]
+	return
+}
+
+// ZkpNlKeygen generates (A private, B public, y = nl_fscx_v1(A,B) public).
+func ZkpNlKeygen(n int) (A, B, y uint32, err error) {
+	nb := (n + 7) / 8
+	mask := uint32((1 << uint(n)) - 1)
+	buf := make([]byte, nb*2)
+	if _, err = rand.Read(buf); err != nil {
+		return
+	}
+	A = 0
+	for i := 0; i < nb; i++ {
+		A = (A << 8) | uint32(buf[i])
+	}
+	A &= mask
+	B = 0
+	for i := 0; i < nb; i++ {
+		B = (B << 8) | uint32(buf[nb+i])
+	}
+	B &= mask
+	// nl_fscx_v1(A, B) as uint32
+	aBA := NewBitArray(n, new(big.Int).SetUint64(uint64(A)))
+	bBA := NewBitArray(n, new(big.Int).SetUint64(uint64(B)))
+	yBA := NlFscxV1(aBA, bBA)
+	y = uint32(yBA.Val.Uint64()) & mask
+	return
+}
+
+// ZkpNlProve produces a ZKBoo proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
+func ZkpNlProve(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlRound, error) {
+	mask := uint32((1 << uint(n)) - 1)
+	nb := (n + 7) / 8
+
+	type roundData struct {
+		coms      [3][32]byte
+		shares    [3]uint32
+		tapes     [3][]byte
+		outShares [3]uint32
+		gateViews [3][]byte
+	}
+	allData := make([]roundData, rounds)
+	var comBlock []byte
+
+	buf := make([]byte, nb)
+	for j := 0; j < rounds; j++ {
+		var s [3]uint32
+		for k := 0; k < 2; k++ {
+			if _, err := rand.Read(buf); err != nil {
+				return nil, err
+			}
+			s[k] = 0
+			for i := 0; i < nb; i++ {
+				s[k] = (s[k] << 8) | uint32(buf[i])
+			}
+			s[k] &= mask
+		}
+		s[2] = (A ^ s[0] ^ s[1]) & mask
+
+		var tapes [3][]byte
+		for k := 0; k < 3; k++ {
+			tapes[k] = make([]byte, 32)
+			if _, err := rand.Read(tapes[k]); err != nil {
+				return nil, err
+			}
+		}
+
+		outShares, gateViews := zkpNlEvalCircuit(s, tapes, B, n)
+
+		var rd roundData
+		rd.shares = s
+		rd.tapes = tapes
+		rd.outShares = outShares
+		rd.gateViews = gateViews
+
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		for p := 0; p < 3; p++ {
+			osBuf := make([]byte, nb)
+			os := outShares[p]
+			for i := nb - 1; i >= 0; i-- {
+				osBuf[i] = byte(os)
+				os >>= 8
+			}
+			h := zkpNlH(jBuf, []byte{byte(p)}, tapes[p], osBuf)
+			copy(rd.coms[p][:], h)
+			comBlock = append(comBlock, h...)
+		}
+		allData[j] = rd
+	}
+
+	// Fiat-Shamir challenge seed
+	nBuf := make([]byte, nb)
+	bVal := B
+	for i := nb - 1; i >= 0; i-- {
+		nBuf[i] = byte(bVal)
+		bVal >>= 8
+	}
+	yBuf := make([]byte, nb)
+	yVal := y
+	for i := nb - 1; i >= 0; i-- {
+		yBuf[i] = byte(yVal)
+		yVal >>= 8
+	}
+	chSeed := zkpNlH(comBlock, nBuf, yBuf, msg)
+
+	result := make([]ZkpNlRound, rounds)
+	for j := 0; j < rounds; j++ {
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		h := zkpNlH(chSeed, jBuf)
+		e := int(h[0]) % 3
+		p1 := (e + 1) % 3
+		p2 := (e + 2) % 3
+
+		rd := allData[j]
+		result[j].Com0 = rd.coms[0]
+		result[j].Com1 = rd.coms[1]
+		result[j].Com2 = rd.coms[2]
+		result[j].E = e
+		result[j].ViewP1 = zkpNlPackView(rd.shares[p1], rd.tapes[p1], rd.outShares[p1], rd.gateViews[p1], n, nb)
+		result[j].ViewP2 = zkpNlPackView(rd.shares[p2], rd.tapes[p2], rd.outShares[p2], rd.gateViews[p2], n, nb)
+	}
+	return result, nil
+}
+
+// ZkpNlVerify verifies a ZKBoo proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
+func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) bool {
+	nb := (n + 7) / 8
+
+	// Reconstruct commitment block and Fiat-Shamir seed
+	var comBlock []byte
+	for _, r := range proof {
+		comBlock = append(comBlock, r.Com0[:]...)
+		comBlock = append(comBlock, r.Com1[:]...)
+		comBlock = append(comBlock, r.Com2[:]...)
+	}
+	nBuf := make([]byte, nb)
+	bVal := B
+	for i := nb - 1; i >= 0; i-- {
+		nBuf[i] = byte(bVal); bVal >>= 8
+	}
+	yBuf := make([]byte, nb)
+	yVal := y
+	for i := nb - 1; i >= 0; i-- {
+		yBuf[i] = byte(yVal); yVal >>= 8
+	}
+	chSeed := zkpNlH(comBlock, nBuf, yBuf, msg)
+
+	eqBytes := func(a []byte, b [32]byte) bool {
+		if len(a) < 32 {
+			return false
+		}
+		for i := 0; i < 32; i++ {
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	osBuf := func(v uint32) []byte {
+		b := make([]byte, nb)
+		for i := nb - 1; i >= 0; i-- {
+			b[i] = byte(v); v >>= 8
+		}
+		return b
+	}
+
+	for j, r := range proof {
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		h := zkpNlH(chSeed, jBuf)
+		e := int(h[0]) % 3
+		if e != r.E {
+			return false
+		}
+		p1 := (e + 1) % 3
+		p2 := (e + 2) % 3
+
+		shareP1, tapeP1, outP1, gvP1 := zkpNlUnpackView(r.ViewP1, n, nb)
+		shareP2, tapeP2, outP2, gvP2 := zkpNlUnpackView(r.ViewP2, n, nb)
+
+		// Verify commitments for revealed parties
+		c1h := zkpNlH(jBuf, []byte{byte(p1)}, tapeP1, osBuf(outP1))
+		if !eqBytes(c1h, r.comAt(p1)) {
+			return false
+		}
+		c2h := zkpNlH(jBuf, []byte{byte(p2)}, tapeP2, osBuf(outP2))
+		if !eqBytes(c2h, r.comAt(p2)) {
+			return false
+		}
+
+		// Re-evaluate p1's AND gates using both revealed shares
+		var carryP1, carryP2 uint32
+		for i := 0; i < n-1; i++ {
+			aiP1 := int((shareP1 >> uint(i)) & 1)
+			aiP2 := int((shareP2 >> uint(i)) & 1)
+			ciP1 := int((carryP1 >> uint(i)) & 1)
+			ciP2 := int((carryP2 >> uint(i)) & 1)
+			Bi   := int((B >> uint(i)) & 1)
+
+			riP1 := zkpNlPrgBit(tapeP1, i)
+			riP2 := zkpNlPrgBit(tapeP2, i)
+
+			expAndP1 := (aiP1&ciP1) ^ (aiP1&ciP2) ^ (aiP2&ciP1) ^ riP1 ^ riP2
+			if int((gvP1[i]>>2)&1) != expAndP1 {
+				return false
+			}
+			andOutP2 := int((gvP2[i] >> 2) & 1)
+
+			cNextP1 := (Bi*aiP1) ^ expAndP1 ^ (Bi * ciP1)
+			if cNextP1 == 1 { carryP1 |= 1 << uint(i+1) } else { carryP1 &^= 1 << uint(i+1) }
+			cNextP2 := (Bi*aiP2) ^ andOutP2 ^ (Bi * ciP2)
+			if cNextP2 == 1 { carryP2 |= 1 << uint(i+1) } else { carryP2 &^= 1 << uint(i+1) }
+		}
+	}
+	return true
+}
+
+// comAt returns the commitment for party p (0, 1, or 2).
+func (r *ZkpNlRound) comAt(p int) [32]byte {
+	switch p {
+	case 0: return r.Com0
+	case 1: return r.Com1
+	default: return r.Com2
+	}
+}

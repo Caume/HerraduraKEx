@@ -43,6 +43,11 @@ const (
 	PemSignature     = "HERRADURA SIGNATURE"
 	PemCiphertext    = "HERRADURA CIPHERTEXT"
 	PemDigest        = "HERRADURA DIGEST"
+
+	PemZkpRnlProof = "HERRADURA ZKP-RNL PROOF"
+	PemZkpNlPriv   = "HERRADURA ZKP-NL PRIVATE KEY"
+	PemZkpNlPub    = "HERRADURA ZKP-NL PUBLIC KEY"
+	PemZkpNlProof  = "HERRADURA ZKP-NL PROOF"
 )
 
 // ---------------------------------------------------------------------------

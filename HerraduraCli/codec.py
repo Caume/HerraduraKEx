@@ -118,6 +118,167 @@ def pem_unwrap(pem_text: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# ZKP-RNL proof encode/decode
+#   Wire format (raw binary, PEM label "HERRADURA ZKP-RNL PROOF"):
+#     4B n  |  n×4B w (signed s32-be)  |  n×4B c (unsigned u32-be)  |  n×4B z (signed s32-be)
+# ---------------------------------------------------------------------------
+
+def _s32be_pack(coeffs: list) -> bytes:
+    """Serialize list of signed integers as n×4-byte big-endian two's complement."""
+    return b''.join(c.to_bytes(4, 'big', signed=True) for c in coeffs)
+
+
+def _u32be_pack(coeffs: list) -> bytes:
+    """Serialize list of non-negative integers as n×4-byte big-endian unsigned."""
+    return b''.join(c.to_bytes(4, 'big') for c in coeffs)
+
+
+def _s32be_unpack(data: bytes, n: int, offset: int = 0) -> tuple:
+    """Deserialize n signed s32-be values from data[offset:]; return (list, end_offset)."""
+    out = []
+    for i in range(n):
+        val = int.from_bytes(data[offset:offset + 4], 'big', signed=True)
+        out.append(val)
+        offset += 4
+    return out, offset
+
+
+def _u32be_unpack(data: bytes, n: int, offset: int = 0) -> tuple:
+    """Deserialize n unsigned u32-be values from data[offset:]; return (list, end_offset)."""
+    out = []
+    for i in range(n):
+        val = int.from_bytes(data[offset:offset + 4], 'big')
+        out.append(val)
+        offset += 4
+    return out, offset
+
+
+def encode_zkp_rnl_proof(w_poly: list, c_poly: list, z_poly: list, n: int) -> str:
+    """Encode a ZKP-RNL Σ-protocol proof as a PEM block.
+
+    w_poly: centered Z_q coefficients; c_poly: sparse ternary Z_q; z_poly: signed ints.
+    """
+    body  = n.to_bytes(4, 'big')
+    body += _s32be_pack(w_poly)
+    body += _u32be_pack(c_poly)
+    body += _s32be_pack(z_poly)
+    return pem_wrap("HERRADURA ZKP-RNL PROOF", body)
+
+
+def decode_zkp_rnl_proof(pem_text: str) -> tuple:
+    """Decode a ZKP-RNL PEM proof block.
+
+    Returns (w_poly, c_poly, z_poly, n).
+    """
+    label, body = pem_unwrap(pem_text)
+    if label != "HERRADURA ZKP-RNL PROOF":
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    n = int.from_bytes(body[:4], 'big')
+    off = 4
+    w_poly, off = _s32be_unpack(body, n, off)
+    c_poly, off = _u32be_unpack(body, n, off)
+    z_poly, off = _s32be_unpack(body, n, off)
+    return w_poly, c_poly, z_poly, n
+
+
+# ---------------------------------------------------------------------------
+# ZKP-NL keypair and proof encode/decode
+#   Private key  (label "HERRADURA ZKP-NL PRIVATE KEY"):
+#     4B n  |  nb bytes A  (nb = ceil(n/8))
+#   Public key   (label "HERRADURA ZKP-NL PUBLIC KEY"):
+#     4B n  |  nb bytes B  |  nb bytes y
+#   Proof        (label "HERRADURA ZKP-NL PROOF"):
+#     4B n  |  4B rounds  |  for each round:
+#       32B com_0  |  32B com_1  |  32B com_2  |  1B e
+#       |  2B len_p1  |  view_p1  |  2B len_p2  |  view_p2
+# ---------------------------------------------------------------------------
+
+def encode_zkp_nl_privkey(A: int, B: int, y: int, n: int) -> str:
+    """Encode a ZKP-NL private key (A, B, y, n) as PEM.
+
+    All three values are stored so that `pkey --pubout` can extract (B, y, n)
+    without needing to re-run nl_fscx_v1.
+    """
+    nb   = (n + 7) // 8
+    body = (n.to_bytes(4, 'big')
+            + A.to_bytes(nb, 'big')
+            + B.to_bytes(nb, 'big')
+            + y.to_bytes(nb, 'big'))
+    return pem_wrap("HERRADURA ZKP-NL PRIVATE KEY", body)
+
+
+def decode_zkp_nl_privkey(pem_text: str) -> tuple:
+    """Decode a ZKP-NL private key PEM block. Returns (A, B, y, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != "HERRADURA ZKP-NL PRIVATE KEY":
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    n  = int.from_bytes(body[:4], 'big')
+    nb = (n + 7) // 8
+    A  = int.from_bytes(body[4:4 + nb], 'big')
+    B  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
+    y  = int.from_bytes(body[4 + 2 * nb:4 + 3 * nb], 'big')
+    return A, B, y, n
+
+
+def encode_zkp_nl_pubkey(B: int, y: int, n: int) -> str:
+    """Encode a ZKP-NL public key (B, y) as PEM."""
+    nb   = (n + 7) // 8
+    body = n.to_bytes(4, 'big') + B.to_bytes(nb, 'big') + y.to_bytes(nb, 'big')
+    return pem_wrap("HERRADURA ZKP-NL PUBLIC KEY", body)
+
+
+def decode_zkp_nl_pubkey(pem_text: str) -> tuple:
+    """Decode a ZKP-NL public key PEM block. Returns (B, y, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != "HERRADURA ZKP-NL PUBLIC KEY":
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    n  = int.from_bytes(body[:4], 'big')
+    nb = (n + 7) // 8
+    B  = int.from_bytes(body[4:4 + nb], 'big')
+    y  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
+    return B, y, n
+
+
+def encode_zkp_nl_proof(proof_rounds: list, n: int) -> str:
+    """Encode a ZKP-NL ZKBoo proof list as PEM.
+
+    proof_rounds: list of dicts with keys com_0, com_1, com_2, e, view_p1, view_p2.
+    """
+    R    = len(proof_rounds)
+    body = n.to_bytes(4, 'big') + R.to_bytes(4, 'big')
+    for rnd in proof_rounds:
+        body += rnd['com_0'] + rnd['com_1'] + rnd['com_2']
+        body += bytes([rnd['e']])
+        for vk in ('view_p1', 'view_p2'):
+            v = rnd[vk]
+            body += len(v).to_bytes(2, 'big') + v
+    return pem_wrap("HERRADURA ZKP-NL PROOF", body)
+
+
+def decode_zkp_nl_proof(pem_text: str) -> tuple:
+    """Decode a ZKP-NL PEM proof block. Returns (proof_rounds, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != "HERRADURA ZKP-NL PROOF":
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    off = 0
+    n   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    R   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    rounds = []
+    for _ in range(R):
+        com_0 = body[off:off + 32]; off += 32
+        com_1 = body[off:off + 32]; off += 32
+        com_2 = body[off:off + 32]; off += 32
+        e     = body[off];          off += 1
+        l1    = int.from_bytes(body[off:off + 2], 'big'); off += 2
+        vp1   = body[off:off + l1]; off += l1
+        l2    = int.from_bytes(body[off:off + 2], 'big'); off += 2
+        vp2   = body[off:off + l2]; off += l2
+        rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
+                       'e': e, 'view_p1': vp1, 'view_p2': vp2})
+    return rounds, n
+
+
+# ---------------------------------------------------------------------------
 # Self-test (runs when imported as __main__ only)
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':
@@ -140,4 +301,25 @@ if __name__ == '__main__':
     pem = pem_wrap(label, der_seq(der_int(42)))
     lbl, raw = pem_unwrap(pem)
     assert lbl == label
+    # Round-trip ZKP-RNL proof
+    n_test = 8
+    w_test = [100, -200, 300, -400, 500, -600, 700, -800]
+    c_test = [0, 1, 65536, 0, 0, 1, 0, 0]
+    z_test = [-1000, 2000, -3000, 4000, -5000, 6000, -7000, 8000]
+    rnl_pem = encode_zkp_rnl_proof(w_test, c_test, z_test, n_test)
+    w2, c2, z2, n2 = decode_zkp_rnl_proof(rnl_pem)
+    assert w2 == w_test and c2 == c_test and z2 == z_test and n2 == n_test
+    # Round-trip ZKP-NL keys and proof
+    A_t, B_t, y_t, n_t = 0xAB, 0xCD, 0xEF, 8
+    priv_pem = encode_zkp_nl_privkey(A_t, B_t, y_t, n_t)
+    A2, B2, y2, n2 = decode_zkp_nl_privkey(priv_pem)
+    assert (A2, B2, y2, n2) == (A_t, B_t, y_t, n_t)
+    pub_pem = encode_zkp_nl_pubkey(B_t, y_t, n_t)
+    B3, y3, n3 = decode_zkp_nl_pubkey(pub_pem)
+    assert (B3, y3, n3) == (B_t, y_t, n_t)
+    rnd_t = [{'com_0': b'\x01' * 32, 'com_1': b'\x02' * 32, 'com_2': b'\x03' * 32,
+              'e': 1, 'view_p1': b'\xaa\xbb', 'view_p2': b'\xcc\xdd\xee'}]
+    proof_pem = encode_zkp_nl_proof(rnd_t, 8)
+    rounds2, n4 = decode_zkp_nl_proof(proof_pem)
+    assert n4 == 8 and rounds2[0]['e'] == 1 and rounds2[0]['view_p1'] == b'\xaa\xbb'
     print("codec.py self-test OK")

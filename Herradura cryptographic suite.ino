@@ -1,6 +1,6 @@
-/*  Herradura Cryptographic Suite v1.8.0 — Arduino (32-bit)
+/*  Herradura Cryptographic Suite v1.9.10 — Arduino (32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-    HPKS-Stern-F, HPKE-Stern-F
+    HPKS-Stern-F, HPKE-Stern-F, ZKP-RNL, ZKP-NL
     KEYBITS = 32
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
@@ -42,6 +42,17 @@
 #define RNL_P   4096L
 #define RNL_PP  4L
 #define RNL_ETA 1  /* CBD eta: secret coeffs drawn from CBD(1) in {-1,0,1} mod q */
+
+/* ZKP-RNL: Lyubashevsky Sigma-protocol (n=32) */
+#define SIGMA_GAMMA 4096
+#define SIGMA_T     4
+#define SIGMA_BOUND 4092      /* gamma - t */
+#define SIGMA_SLACK 32
+#define SIGMA_RANGE 8193      /* 2*gamma + 1 */
+
+/* ZKP-NL: minimal ZKBoo concept demo (n=8 bits, R=4 rounds) */
+#define ZKP_NL_N   8
+#define ZKP_NL_R   4
 
 typedef unsigned long uint32;
 
@@ -501,6 +512,248 @@ static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
 }
 
 /* ------------------------------------------------------------------ */
+/* ZKP-RNL: Lyubashevsky Ring-LWR Sigma-protocol (n=32)               */
+/* Requires Arduino Mega or Due (8+ KB SRAM).                         */
+/* ------------------------------------------------------------------ */
+
+/* Scratch polys shared between sign and verify. */
+static long sig_y[RNL_N], sig_w[RNL_N], sig_c[RNL_N], sig_z[RNL_N];
+static long sig_pos[SIGMA_T];
+static long sig_tmp0[RNL_N], sig_tmp1[RNL_N], sig_tmp2[RNL_N];
+static long sig_tmp3[RNL_N], sig_tmp4[RNL_N];
+
+/* Derive SIGMA_T-sparse ternary challenge polynomial into sig_c. */
+static void sigma_challenge(const long *m, const long *C_pub,
+                             const long *w, uint32 msg) {
+    int i, k;
+    uint32 seed = hfscx_32((uint32)RNL_N);
+    for (i = 0; i < RNL_N; i++) seed = hfscx_32(seed ^ (uint32)m[i]);
+    for (i = 0; i < RNL_N; i++) seed = hfscx_32(seed ^ (uint32)C_pub[i]);
+    for (i = 0; i < RNL_N; i++) seed = hfscx_32(seed ^ (uint32)w[i]);
+    seed = hfscx_32(seed ^ msg);
+    for (i = 0; i < RNL_N; i++) sig_c[i] = 0;
+    k = 0;
+    uint32 idx = 0;
+    while (k < SIGMA_T) {
+        uint32 h2 = hfscx_32((idx << 16) ^ seed);
+        idx++;
+        int pos = (int)(h2 & 31u);
+        int dup = 0;
+        for (int jj = 0; jj < k; jj++) if (sig_pos[jj] == (long)pos) { dup = 1; break; }
+        if (!dup) sig_pos[k++] = (long)pos;
+    }
+    for (int jj = 0; jj < SIGMA_T; jj++) {
+        uint32 h2 = hfscx_32(((uint32)jj << 24) ^ seed);
+        sig_c[(int)sig_pos[jj]] = (h2 & 1u) ? (long)(RNL_Q - 1L) : 1L;
+    }
+}
+
+/* Rejection-sampling Sigma-prover. Returns 1=ok, 0=exhausted (>200 attempts). */
+static int rnl_sigma_sign(const long *m, const long *s,
+                           const long *C_pub, uint32 msg) {
+    int i, attempt;
+    for (attempt = 0; attempt < 200; attempt++) {
+        for (i = 0; i < RNL_N; i++) {
+            uint32 v    = lcg_next() % (uint32)SIGMA_RANGE;
+            sig_y[i]    = (long)v - (long)SIGMA_GAMMA;
+            sig_tmp0[i] = sig_y[i] < 0 ? sig_y[i] + RNL_Q : sig_y[i];
+        }
+        rnl_poly_mul(sig_tmp1, m, sig_tmp0);
+        for (i = 0; i < RNL_N; i++)
+            sig_w[i] = sig_tmp1[i] > RNL_Q / 2 ? sig_tmp1[i] - RNL_Q : sig_tmp1[i];
+        sigma_challenge(m, C_pub, sig_w, msg);
+        rnl_poly_mul(sig_tmp2, sig_c, s);
+        int ok = 1;
+        for (i = 0; i < RNL_N; i++) {
+            long c_i = sig_tmp2[i] > RNL_Q / 2 ? sig_tmp2[i] - RNL_Q : sig_tmp2[i];
+            long z   = sig_y[i] + c_i;
+            if ((z < 0 ? -z : z) > (long)SIGMA_BOUND) { ok = 0; break; }
+            sig_z[i] = z;
+        }
+        if (ok) return 1;
+    }
+    return 0;
+}
+
+/* Three-step verifier. Returns 1=accept, 0=reject. */
+static int rnl_sigma_verify(const long *m, const long *C_pub, uint32 msg) {
+    int i;
+    for (i = 0; i < RNL_N; i++) {
+        long az = sig_z[i] < 0 ? -sig_z[i] : sig_z[i];
+        if (az > (long)SIGMA_BOUND) return 0;
+    }
+    for (i = 0; i < RNL_N; i++) sig_tmp0[i] = sig_c[i];
+    sigma_challenge(m, C_pub, sig_w, msg);
+    for (i = 0; i < RNL_N; i++) if (sig_c[i] != sig_tmp0[i]) return 0;
+    for (i = 0; i < RNL_N; i++) sig_c[i] = sig_tmp0[i];
+    for (i = 0; i < RNL_N; i++)
+        sig_tmp2[i] = sig_z[i] < 0 ? sig_z[i] + RNL_Q : sig_z[i];
+    rnl_lift(sig_tmp1, C_pub, RNL_P, RNL_Q);
+    rnl_poly_mul(sig_tmp3, m, sig_tmp2);
+    rnl_poly_mul(sig_tmp4, sig_c, sig_tmp1);
+    for (i = 0; i < RNL_N; i++) {
+        long wq  = sig_w[i] < 0 ? sig_w[i] + RNL_Q : sig_w[i];
+        long raw = sig_tmp3[i] - sig_tmp4[i] - wq;
+        raw = ((raw % RNL_Q) + RNL_Q) % RNL_Q;
+        if (raw > RNL_Q / 2) raw -= RNL_Q;
+        if ((raw < 0 ? -raw : raw) > (long)SIGMA_SLACK) return 0;
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* ZKP-NL: minimal ZKBoo concept demo (n=8 bits, R=4 rounds)         */
+/* PRG/commitments use hfscx_32 — concept illustration only.          */
+/* ------------------------------------------------------------------ */
+
+static uint32  zkp_coms[ZKP_NL_R][3];
+static uint8_t zkp_e[ZKP_NL_R];
+static uint32  zkp_sh1[ZKP_NL_R], zkp_tp1[ZKP_NL_R], zkp_out1[ZKP_NL_R];
+static uint32  zkp_sh2[ZKP_NL_R], zkp_tp2[ZKP_NL_R], zkp_out2[ZKP_NL_R];
+static uint8_t zkp_gv1[ZKP_NL_R][ZKP_NL_N - 1];
+static uint8_t zkp_gv2[ZKP_NL_R][ZKP_NL_N - 1];
+
+static int zkp_prg_bit(uint32 tape, int gate) {
+    return (int)(hfscx_32(tape ^ (uint32)gate) & 1u);
+}
+
+static uint32 zkp_commit(uint32 tape, uint32 share, uint32 out_share,
+                          const uint8_t *gv) {
+    int i;
+    uint32 h = hfscx_32(tape ^ share ^ out_share);
+    for (i = 0; i < ZKP_NL_N - 1; i++) h = hfscx_32(h ^ (uint32)gv[i]);
+    return h;
+}
+
+/* F1(A,B) at 8 bits: FSCX_8(A,B) XOR ROL8((A+B) mod 256, 2). */
+static uint32 zkp_nl_f1_8(uint32 A, uint32 B) {
+    uint32 a = A & 0xFFu, b = B & 0xFFu;
+    uint32 lin = (a ^ b ^ ((a<<1)|(a>>7)) ^ ((b<<1)|(b>>7))
+                  ^ ((a>>1)|(a<<7)) ^ ((b>>1)|(b<<7))) & 0xFFu;
+    uint32 s   = (a + b) & 0xFFu;
+    return (lin ^ (((s<<2)|(s>>6)) & 0xFFu)) & 0xFFu;
+}
+
+/* 3-party ripple-carry evaluation of F1 at 8 bits.
+   sh0^sh1^sh2=A (XOR shares); *o0^*o1^*o2=F1(A,B). */
+static void zkp_eval(uint32 s0, uint32 s1, uint32 s2,
+                     uint32 t0, uint32 t1, uint32 t2, uint32 B,
+                     uint32 *o0, uint32 *o1, uint32 *o2,
+                     uint8_t *gva, uint8_t *gvb, uint8_t *gvc) {
+    uint32 sh[3] = { s0 & 0xFFu, s1 & 0xFFu, s2 & 0xFFu };
+    uint32 tp[3] = { t0, t1, t2 };
+    uint8_t *gv[3] = { gva, gvb, gvc };
+    uint8_t carry[ZKP_NL_N + 1][3];
+    int i, p;
+    for (p = 0; p < 3; p++) carry[0][p] = 0;
+    for (i = 0; i < ZKP_NL_N - 1; i++) {
+        int Bi = (int)((B >> i) & 1u);
+        int ai[3], ci[3], ri[3], ao[3];
+        for (p = 0; p < 3; p++) {
+            ai[p] = (int)((sh[p] >> i) & 1u);
+            ci[p] = (int)(carry[i][p]);
+            ri[p] = zkp_prg_bit(tp[p], i);
+        }
+        for (p = 0; p < 3; p++) {
+            int p1 = (p + 1) % 3;
+            ao[p] = (ai[p]&ci[p]) ^ (ai[p]&ci[p1]) ^ (ai[p1]&ci[p]) ^ ri[p] ^ ri[p1];
+            gv[p][i] = (uint8_t)(ai[p] | (ci[p] << 1) | (ao[p] << 2));
+        }
+        for (p = 0; p < 3; p++)
+            carry[i+1][p] = (uint8_t)((Bi & ai[p]) ^ ao[p] ^ (Bi & ci[p]));
+    }
+    uint32 sum_s[3] = { 0u, 0u, 0u };
+    for (i = 0; i < ZKP_NL_N; i++) {
+        int Bi = (int)((B >> i) & 1u);
+        for (p = 0; p < 3; p++) {
+            int sb = (int)((sh[p] >> i) & 1u) ^ Bi ^ (int)(carry[i][p]);
+            sum_s[p] ^= (uint32)sb << i;
+        }
+    }
+    uint32 Bc = (B ^ ((B<<1)|(B>>7)) ^ ((B>>1)|(B<<7))) & 0xFFu;
+    uint32 out[3];
+    for (p = 0; p < 3; p++) {
+        uint32 rot = ((sum_s[p] << 2) | (sum_s[p] >> 6)) & 0xFFu;
+        uint32 lin = (sh[p] ^ ((sh[p]<<1)|(sh[p]>>7)) ^ ((sh[p]>>1)|(sh[p]<<7))) & 0xFFu;
+        if (p == 0) lin ^= Bc;
+        out[p] = (lin ^ rot) & 0xFFu;
+    }
+    *o0 = out[0]; *o1 = out[1]; *o2 = out[2];
+}
+
+/* Prove knowledge of A such that F1(A,B)=y; proof stored in module statics. */
+static void zkp_nl_prove_8(uint32 A, uint32 B, uint32 y, uint32 msg) {
+    static uint32  all_sh[ZKP_NL_R][3], all_tp[ZKP_NL_R][3], all_out[ZKP_NL_R][3];
+    static uint8_t all_gv[ZKP_NL_R][3][ZKP_NL_N - 1];
+    int j, p, i;
+    for (j = 0; j < ZKP_NL_R; j++) {
+        uint32 s0 = lcg_next() & 0xFFu;
+        uint32 s1 = lcg_next() & 0xFFu;
+        uint32 s2 = (A ^ s0 ^ s1) & 0xFFu;
+        all_sh[j][0] = s0; all_sh[j][1] = s1; all_sh[j][2] = s2;
+        for (p = 0; p < 3; p++) all_tp[j][p] = lcg_next();
+        zkp_eval(s0, s1, s2,
+                 all_tp[j][0], all_tp[j][1], all_tp[j][2], B & 0xFFu,
+                 &all_out[j][0], &all_out[j][1], &all_out[j][2],
+                 all_gv[j][0], all_gv[j][1], all_gv[j][2]);
+        for (p = 0; p < 3; p++)
+            zkp_coms[j][p] = zkp_commit(all_tp[j][p], all_sh[j][p],
+                                         all_out[j][p], all_gv[j][p]);
+    }
+    uint32 h = hfscx_32(msg ^ B ^ y);
+    for (j = 0; j < ZKP_NL_R; j++)
+        for (p = 0; p < 3; p++) h = hfscx_32(h ^ zkp_coms[j][p]);
+    for (j = 0; j < ZKP_NL_R; j++) {
+        h = hfscx_32(h ^ (uint32)j);
+        zkp_e[j] = (uint8_t)(h % 3u);
+    }
+    for (j = 0; j < ZKP_NL_R; j++) {
+        int e = (int)(zkp_e[j]);
+        int p1 = (e + 1) % 3, p2 = (e + 2) % 3;
+        zkp_sh1[j]  = all_sh[j][p1];  zkp_tp1[j]  = all_tp[j][p1];
+        zkp_out1[j] = all_out[j][p1];
+        zkp_sh2[j]  = all_sh[j][p2];  zkp_tp2[j]  = all_tp[j][p2];
+        zkp_out2[j] = all_out[j][p2];
+        for (i = 0; i < ZKP_NL_N - 1; i++) {
+            zkp_gv1[j][i] = all_gv[j][p1][i];
+            zkp_gv2[j][i] = all_gv[j][p2][i];
+        }
+    }
+}
+
+/* Verify ZKBoo proof from module statics. Returns 1=accept, 0=reject. */
+static int zkp_nl_verify_8(uint32 B, uint32 y, uint32 msg) {
+    int j;
+    uint32 h = hfscx_32(msg ^ B ^ y);
+    for (j = 0; j < ZKP_NL_R; j++)
+        for (int p = 0; p < 3; p++) h = hfscx_32(h ^ zkp_coms[j][p]);
+    for (j = 0; j < ZKP_NL_R; j++) {
+        h = hfscx_32(h ^ (uint32)j);
+        if ((uint8_t)(h % 3u) != zkp_e[j]) return 0;
+    }
+    for (j = 0; j < ZKP_NL_R; j++) {
+        int e = (int)(zkp_e[j]);
+        int p1 = (e + 1) % 3, p2 = (e + 2) % 3;
+        if (zkp_commit(zkp_tp1[j], zkp_sh1[j], zkp_out1[j], zkp_gv1[j]) != zkp_coms[j][p1]) return 0;
+        if (zkp_commit(zkp_tp2[j], zkp_sh2[j], zkp_out2[j], zkp_gv2[j]) != zkp_coms[j][p2]) return 0;
+        uint8_t c1 = 0, c2 = 0;
+        for (int i = 0; i < ZKP_NL_N - 1; i++) {
+            int Bi   = (int)((B >> i) & 1u);
+            int a1   = (int)((zkp_sh1[j] >> i) & 1u);
+            int a2   = (int)((zkp_sh2[j] >> i) & 1u);
+            int r1   = zkp_prg_bit(zkp_tp1[j], i);
+            int r2   = zkp_prg_bit(zkp_tp2[j], i);
+            int exp_ao1 = (a1&c1) ^ (a1&c2) ^ (a2&c1) ^ r1 ^ r2;
+            if (((zkp_gv1[j][i] >> 2) & 1) != exp_ao1) return 0;
+            c1 = (uint8_t)((Bi & a1) ^ exp_ao1 ^ (Bi & c1));
+            int ao2 = (zkp_gv2[j][i] >> 2) & 1;
+            c2 = (uint8_t)((Bi & a2) ^ ao2    ^ (Bi & c2));
+        }
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /* Fixed test vectors                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -519,7 +772,7 @@ void setup() {
 }
 
 void loop() {
-    Serial.println("=== Herradura Cryptographic Suite v1.8.0 (Arduino, 32-bit) ===");
+    Serial.println("=== Herradura Cryptographic Suite v1.9.10 (Arduino, 32-bit) ===");
     Serial.println();
 
     printHexLine("a_priv : ", A_PRIV);
@@ -628,9 +881,9 @@ void loop() {
     /* ---------------------------------------------------------------- */
     Serial.println("--- HKEX-RNL [PQC -- Ring-LWR key exchange; N=32, q=65537]");
     uint32 sk_rnl_saved = 0;
+    static long m_base[RNL_N], a_rand[RNL_N], m_blind[RNL_N];
+    static long s_A[RNL_N], s_B[RNL_N], C_A[RNL_N], C_B[RNL_N];
     {
-        static long m_base[RNL_N], a_rand[RNL_N], m_blind[RNL_N];
-        static long s_A[RNL_N], s_B[RNL_N], C_A[RNL_N], C_B[RNL_N];
         rnl_m_poly(m_base);
         rnl_rand_poly(a_rand);
         rnl_poly_add(m_blind, m_base, a_rand);
@@ -771,6 +1024,34 @@ void loop() {
         Serial.println(eve_K == sf_K_enc_saved
             ? "+ Eve guessed KEM key (astronomically unlikely)!"
             : "- Eve random K does not match KEM key (SD protection)");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* ZKP-RNL [Lyubashevsky Ring-LWR Sigma-protocol; n=32, t=4]       */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]");
+    {
+        int ok = rnl_sigma_sign(m_blind, s_A, C_A, PLAIN);
+        if (ok) ok = rnl_sigma_verify(m_blind, C_A, PLAIN);
+        Serial.println(ok ? "+ ZKP-RNL proof verified!" : "- ZKP-RNL FAILED");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* ZKP-NL [ZKBoo MPC-in-the-head; n=8 bits, R=4 rounds]            */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- ZKP-NL [ZKBoo concept demo; n=8, R=4 rounds]");
+    {
+        uint32 A_nl = lcg_next() & 0xFFu;
+        uint32 B_nl = lcg_next() & 0xFFu;
+        uint32 y_nl = zkp_nl_f1_8(A_nl, B_nl);
+        zkp_nl_prove_8(A_nl, B_nl, y_nl, PLAIN);
+        int ok = zkp_nl_verify_8(B_nl, y_nl, PLAIN);
+        printHexLine("A (wit)   : ", A_nl);
+        printHexLine("B (pub)   : ", B_nl);
+        printHexLine("y=F1(A,B) : ", y_nl);
+        Serial.println(ok ? "+ ZKP-NL proof verified!" : "- ZKP-NL FAILED");
     }
     Serial.println();
 
