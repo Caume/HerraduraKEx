@@ -46,6 +46,10 @@
 #define PEM_SIGNATURE       "HERRADURA SIGNATURE"
 #define PEM_CIPHERTEXT      "HERRADURA CIPHERTEXT"
 #define PEM_DIGEST          "HERRADURA DIGEST"
+#define PEM_ZKP_RNL_PROOF   "HERRADURA ZKP-RNL PROOF"
+#define PEM_ZKP_NL_PRIV     "HERRADURA ZKP-NL PRIVATE KEY"
+#define PEM_ZKP_NL_PUB      "HERRADURA ZKP-NL PUBLIC KEY"
+#define PEM_ZKP_NL_PROOF    "HERRADURA ZKP-NL PROOF"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros

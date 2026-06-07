@@ -1,4 +1,6 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.8.8
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.11
+    v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
+            benchmarks renumbered [22]-[33].
     v1.8.7: 32-bit benchmark columns; benchHpksSternF loops over all sizes (TODO #61 extension).
     v1.8.0: KDF domain constant (TODO #38) — RnlKdfSeed applied to all HSKE-NL-A1 and HKEX-RNL seed sites.
     v1.6.1: SternHash ds parameter (TODO #36).
@@ -692,11 +694,11 @@ func testHpkeSternFCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks [20-29]
+// Performance benchmarks [22-33]
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[20] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[22] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -710,7 +712,7 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[21] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[23] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -725,7 +727,7 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[22] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[24] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -744,7 +746,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[23] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[25] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		rv   := rVal(size)
@@ -763,7 +765,7 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[24] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[26] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g    := big.NewInt(GfGen)
@@ -789,7 +791,7 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[25] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[27] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		a  := randBA(size)
@@ -800,7 +802,7 @@ func benchNlFscxRevolve() {
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[25b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+	fmt.Println("[27b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		rv := rVal(size)
 		a  := randBA(size)
@@ -816,7 +818,7 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[26] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[28] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		sink := randBA(size)
@@ -836,7 +838,7 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[27] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	fmt.Println("[29] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
 	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
@@ -853,7 +855,7 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[28] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Println("[30] HKEX-RNL handshake throughput  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := RnlMPoly(nRnl)
@@ -872,7 +874,7 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[29] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[31] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
@@ -883,6 +885,114 @@ func benchHpksSternF() {
 		fmt.Printf("    bits=%3d  sign+verify              : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
+	fmt.Println()
+}
+
+// ---------------------------------------------------------------------------
+// Security tests [20]-[21]: ZKP-RNL and ZKP-NL
+// ---------------------------------------------------------------------------
+
+var zkpMsg  = []byte("Herradura ZKP test")
+var zkpMsg2 = []byte("Herradura ZKP tamper")
+
+func testZkpRnlCorrectness() {
+	fmt.Println("[20] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
+	zkpRnlSizes := []int{32, 256}
+	for _, n := range zkpRnlSizes {
+		N := testRounds(5)
+		okVerify, okTamper := 0, 0
+		t0 := time.Now()
+		mBase := RnlMPoly(n)
+		for i := 0; i < N; i++ {
+			aRand  := RnlRandPoly(n, RnlQ)
+			mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+			s, C   := RnlKeygen(mBlind, n, RnlQ, RnlP)
+			w, c, z, err := RnlSigmaSign(s, mBlind, C, n, zkpMsg)
+			if err != nil { N = i + 1; break }
+			if RnlSigmaVerify(mBlind, C, n, zkpMsg, w, c, z) {
+				okVerify++
+			}
+			if !RnlSigmaVerify(mBlind, C, n, zkpMsg2, w, c, z) {
+				okTamper++
+			}
+			if timeExceeded(t0) { N = i + 1; break }
+		}
+		status := "PASS"
+		if okVerify != N || okTamper != N { status = "FAIL" }
+		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d  [%s]\n",
+			n, okVerify, N, okTamper, N, status)
+	}
+	fmt.Println()
+}
+
+func testZkpNlCorrectness() {
+	fmt.Println("[21] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
+	zkpNlSizes  := []int{32, 64}
+	zkpNlRounds := 16
+	for _, n := range zkpNlSizes {
+		N := testRounds(5)
+		okVerify, okTamper := 0, 0
+		t0 := time.Now()
+		for i := 0; i < N; i++ {
+			A, B, y, err := ZkpNlKeygen(n)
+			if err != nil { N = i + 1; break }
+			proof, err := ZkpNlProve(A, B, y, n, zkpNlRounds, zkpMsg)
+			if err != nil { N = i + 1; break }
+			if ZkpNlVerify(B, y, n, zkpNlRounds, zkpMsg, proof) {
+				okVerify++
+			}
+			// tamper: flip one bit in com_1[0]
+			proof[0].Com1[0] ^= 1
+			if !ZkpNlVerify(B, y, n, zkpNlRounds, zkpMsg, proof) {
+				okTamper++
+			}
+			if timeExceeded(t0) { N = i + 1; break }
+		}
+		status := "PASS"
+		if okVerify != N || okTamper != N { status = "FAIL" }
+		fmt.Printf("    n=%2d  rounds=%d  verify=%d/%d  tamper_reject=%d/%d  [%s]\n",
+			n, zkpNlRounds, okVerify, N, okTamper, N, status)
+	}
+	fmt.Println()
+}
+
+// ---------------------------------------------------------------------------
+// Performance benchmarks [32]-[33]: ZKP
+// ---------------------------------------------------------------------------
+
+func benchZkpRnl() {
+	const n = 256
+	fmt.Printf("[32] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
+	mBase  := RnlMPoly(n)
+	aRand  := RnlRandPoly(n, RnlQ)
+	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+	s, C   := RnlKeygen(mBlind, n, RnlQ, RnlP)
+	ops, elapsed := bench("", func() {
+		w, c, z, err := RnlSigmaSign(s, mBlind, C, n, zkpMsg)
+		if err == nil {
+			RnlSigmaVerify(mBlind, C, n, zkpMsg, w, c, z)
+		}
+	})
+	fmt.Printf("    n=%3d  sign+verify              : %s  (%d ops in %.2fs)\n",
+		n, fmtRate(ops, elapsed), ops, elapsed.Seconds())
+	fmt.Println()
+}
+
+func benchZkpNl() {
+	const (
+		n      = 32
+		rounds = 16
+	)
+	fmt.Printf("[33] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
+	A, B, y, _ := ZkpNlKeygen(n)
+	ops, elapsed := bench("", func() {
+		proof, err := ZkpNlProve(A, B, y, n, rounds, zkpMsg)
+		if err == nil {
+			ZkpNlVerify(B, y, n, rounds, zkpMsg, proof)
+		}
+	})
+	fmt.Printf("    n=%2d  rounds=%d  prove+verify     : %s  (%d ops in %.2fs)\n",
+		n, rounds, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	fmt.Println()
 }
 
@@ -927,7 +1037,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.8.8 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.11 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -967,6 +1077,10 @@ func main() {
 	testHpksSternFCorrectness()
 	testHpkeSternFCorrectness()
 
+	fmt.Println("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
+	testZkpRnlCorrectness()
+	testZkpNlCorrectness()
+
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()
 	benchHkexGFPow()
@@ -978,4 +1092,6 @@ func main() {
 	benchHskeNlA2RoundTrip()
 	benchHkexRnlHandshake()
 	benchHpksSternF()
+	benchZkpRnl()
+	benchZkpNl()
 }

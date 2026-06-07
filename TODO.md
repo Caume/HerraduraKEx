@@ -4603,13 +4603,13 @@ existing §11.10.3 empirical results:
 |---|---|---|
 | Batch 1 ✅ | Python suite (`rnl_sigma_*`, `zkp_nl_*`) + `codec.py` + `herradura.py` CLI | **DONE v1.9.5** — reference implementation; PEM/DER format validated |
 | Batch 2 ✅ | C (`herradura.h`) + C CLI (`herradura_cli.c`) | **DONE v1.9.6** — ZKP-RNL + ZKP-NL in header-only library; CLI `genpkey`/`pkey`/`sign`/`verify`; Python↔C PEM interop verified |
-| Batch 3 | Go suite + Go CLI (`herradura_cli.go`) | Matches C struct conventions; uses `[]int32` slices |
-| Batch 4 | ARM Thumb-2 (`rnl_sigma_sign_32` / `rnl_sigma_verify_32` only) | Reuses existing `rnl_poly_mul` subroutine |
-| Batch 5 | NASM i386 (same scope as Batch 4) | Reuses existing `rnl_poly_mul` proc |
-| Batch 6 | Arduino (ZKP-RNL n=32 + ZKBoo n=8/R=4 demo) | `uint32_t` throughout; no heap |
-| Batch 7 | `CryptosuiteTests/` — security tests and benchmarks for all targets | After all library batches |
-| Batch 8 | `CliTest/` scripts (see §6) | After CLI (Batches 1–3) |
-| Batch 9 | `docs/TUTORIAL.md` + `SecurityProofs-3.md §11.10` update (see §7) | After tests pass |
+| Batch 3 ✅ | Go suite + Go CLI (`herradura_cli.go`) | **DONE v1.9.7** — ZKP-RNL + ZKP-NL in `herradura/herradura.go`; CLI `genpkey`/`pkey`/`sign`/`verify`; demo blocks in suite |
+| Batch 4 ✅ | ARM Thumb-2 (`rnl_sigma_sign_32` / `rnl_sigma_verify_32` only) | **DONE v1.9.8** — sign/verify + demo block in main(); reuses rnl_poly_mul NTT + hfscx_32 |
+| Batch 5 ✅ | NASM i386 (`rnl_sigma_sign_32` / `rnl_sigma_verify_32` only) | **DONE v1.9.9** — sign/verify + demo block in `_start`; local stack frames for multi-call loops; saves/restores EBP around `rnl_lift`; reuses `rnl_poly_mul` NTT + `hfscx_32` + `rnl_lift` |
+| Batch 6 ✅ | Arduino (ZKP-RNL n=32 + ZKBoo n=8/R=4 demo) | **DONE v1.9.10** — `rnl_sigma_sign`/`rnl_sigma_verify` (n=32, γ=4096, t=4) + `zkp_nl_prove_8`/`zkp_nl_verify_8` ZKBoo (n=8, R=4); `static long` arrays only; no heap; targets Arduino Mega |
+| Batch 7 ✅ | `CryptosuiteTests/` — security tests and benchmarks for all targets | **DONE v1.9.11** — [21][22] C / [20][21] Go+Py ZKP-RNL+ZKP-NL; benches [33][34] C / [32][33] Go+Py |
+| Batch 8 ✅ | `CliTest/` scripts (see §6) | **DONE v1.9.12** — 5 new scripts: test_zkp_rnl.sh, test_zkp_nl.sh, test_c_zkp_rnl.sh, test_go_zkp_rnl.sh, test_zkp_interop.sh; Python CLI "Proof OK"→"Signature OK" fix |
+| Batch 9 ✅ | `docs/TUTORIAL.md` + `SecurityProofs-3.md §11.10` update (see §7) | **DONE v1.9.13** — `## ZKP Protocols` top-level section in TUTORIAL (C/Go/Py snippets, CLI usage, comparison table); §11.10.4 Suite Implementation + §11.10.5/§11.10.6 renumber in SecurityProofs-3 |
 
 ---
 
@@ -4661,7 +4661,7 @@ existing §11.10.3 empirical results:
   and proof-size analysis for both constructions).
 - `SecurityProofsCode/zkp_pqc_exploration.py` §2–§3 (reference prover/verifier code).
 
-Status: **Batch 1 DONE v1.9.5 · Batch 2 DONE v1.9.6** — Batch 1: Python suite + codec + CLI.  Batch 2: C header-only library (`herradura.h`) adds `sigma_params`, `sigma_poly_mul_n`, `sigma_challenge`, `rnl_sigma_sign`, `rnl_sigma_verify`, `ZkpNlRound` struct, `zkp_nl_keygen`, `zkp_nl_prove`, `zkp_nl_verify`, `zkp_nl_proof_free` + all helpers; `herradura_cli.c` extends `genpkey` (`hpks-zkp-nl`), `pkey` (ZKP-NL pubout), `sign` (`rnl-sigma`, `nl-zkboo`), `verify` (`rnl-sigma`, `nl-zkboo`); `herradura_codec.h` adds 4 PEM label constants; bidirectional Python↔C PEM interop verified; suite `main()` extended with ZKP-RNL and ZKP-NL demo blocks.  Batches 3–9 remain TODO.
+Status: **DONE v1.9.13** — **Batch 1 DONE v1.9.5 · Batch 2 DONE v1.9.6 · Batch 3 DONE v1.9.7 · Batch 4 DONE v1.9.8 · Batch 5 DONE v1.9.9 · Batch 6 DONE v1.9.10 · Batch 7 DONE v1.9.11 · Batch 8 DONE v1.9.12 · Batch 9 DONE v1.9.13** — Batch 1: Python suite + codec + CLI.  Batch 2: C header-only library (`herradura.h`) adds ZKP-RNL + ZKP-NL functions + C CLI extensions.  Batch 3: Go package (`herradura/herradura.go`) adds `ZkpRnlParams`, `RnlSigmaSign`, `RnlSigmaVerify`, `ZkpNlKeygen`, `ZkpNlProve`, `ZkpNlVerify`, `ZkpNlRound`; codec.go adds 4 PEM label constants; `herradura_cli.go` extends `genpkey` (`hpks-zkp-nl`), `pkey` (ZKP-NL pubout/text), `sign` (`rnl-sigma`, `nl-zkboo`), `verify` (`rnl-sigma`, `nl-zkboo`); suite `main()` extended with ZKP-RNL and ZKP-NL demo blocks.  Batch 4: ARM Thumb-2 `rnl_sigma_sign_32`/`rnl_sigma_verify_32` + demo in `main()`.  Batch 5: NASM i386 `rnl_sigma_sign_32`/`rnl_sigma_verify_32` + demo in `_start`; local stack frames; EBP save/restore around `rnl_lift`.  Batch 6: Arduino `rnl_sigma_sign`/`rnl_sigma_verify` (n=32) + `zkp_nl_prove_8`/`zkp_nl_verify_8` ZKBoo (n=8, R=4); all-static allocation for Arduino Mega.  Batch 7: `CryptosuiteTests/` — ZKP-RNL+ZKP-NL security tests + benchmarks in C/Go/Python using production library.  Batch 8: 5 CliTest scripts (ZKP-RNL + ZKP-NL Python/C/Go + full 6-direction interop); Python CLI "Proof OK"→"Signature OK" consistency fix.  Batch 9 DONE v1.9.13: `docs/TUTORIAL.md` `## ZKP Protocols` section (C/Go/Py snippets, CLI usage, comparison table); `SecurityProofs-3.md` §11.10.4 Suite Implementation + §11.10.5/§11.10.6 renumber; applicability matrix and comparison table updated to "Implemented".
 
 ---
 

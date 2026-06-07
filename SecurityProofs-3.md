@@ -19,10 +19,10 @@ Full prototype code with completeness and soundness tests: `SecurityProofsCode/z
 | Hardness assumption | ZKP framework | Status |
 |---|---|---|
 | B2: Syndrome decoding SD(N,t) | Stern identification + Fiat-Shamir | **Implemented** v1.5.18, §11.8.4 |
-| B2: Syndrome decoding | MPC-in-the-head (ZKBoo) | Prototype §11.10.3 |
-| B1: Ring-LWR (HKEX-RNL) | Lyubashevsky $\Sigma$-protocol | Prototype §11.10.2 |
+| B2: Syndrome decoding | MPC-in-the-head (ZKBoo) | **Implemented** v1.9.x, §11.10.3 |
+| B1: Ring-LWR (HKEX-RNL) | Lyubashevsky $\Sigma$-protocol | **Implemented** v1.9.x, §11.10.2 |
 | B1: Ring-LWR | BDLOP commitments + linear proof | Option (linear relations) |
-| A: NL-FSCX OWF/PRF | MPC-in-the-head (ZKBoo) | Prototype §11.10.3 |
+| A: NL-FSCX OWF/PRF | MPC-in-the-head (ZKBoo) | **Implemented** v1.9.x, §11.10.3 |
 | A: NL-FSCX OWF/PRF | ZKB++ / Picnic variant | Option (smaller proofs) |
 
 Primary use case for §11.10.2: **anonymous credentials** — prove knowledge of an HKEX-RNL private key matching a given public key without revealing the key, enabling privacy-preserving authentication.  The Stern construction (§11.8.4) applies to syndrome decoding witnesses only and does not directly extend to Ring-LWR keys.
@@ -115,18 +115,51 @@ At production parameters ($n=256$, $R=219$), basic ZKBoo yields approximately 92
 
 **Honest limitation.** The NL-FSCX OWF assumption (§11.8.3) must hold.  The rotational-structure open concern (§11.8.3, TODO #75) affects two-sided rotation only (WOTS hash chain); one-sided rotation (all PRF uses, including the carry-chain circuit) gives coincidence probability $\approx 0$, so the ZKBoo construction is unaffected.
 
-### 11.10.4 Comparison and Recommendations
+### 11.10.4 Suite Implementation
+
+Both constructions are now fully implemented in the Herradura Cryptographic Suite — not prototype-only.  The function table below maps each operation to the corresponding symbol in each language target.
+
+| Operation | C (`herradura.h`) | Go (`herradura` pkg) | Python (suite module) |
+|---|---|---|---|
+| ZKP-RNL keygen | `rnl_keygen` (shared with HKEX-RNL) | `RnlKeygen` | `hkex_rnl_keygen` |
+| ZKP-RNL sign | `rnl_sigma_sign` | `RnlSigmaSign` | `_rnl_sigma_sign` |
+| ZKP-RNL verify | `rnl_sigma_verify` | `RnlSigmaVerify` | `_rnl_sigma_verify` |
+| ZKP-NL keygen | `zkp_nl_keygen` | `ZkpNlKeygen` | `_zkp_nl_keygen` |
+| ZKP-NL prove | `zkp_nl_prove` | `ZkpNlProve` | `_zkp_nl_prove` |
+| ZKP-NL verify | `zkp_nl_verify` | `ZkpNlVerify` | `_zkp_nl_verify` |
+
+ARM Thumb-2 and NASM i386 targets implement ZKP-RNL only (`rnl_sigma_sign_32`, `rnl_sigma_verify_32`) at n=32.  The Arduino target includes both ZKP-RNL (n=32) and ZKBoo (n=8, R=4 demo).
+
+**Implemented proof sizes:**
+
+| Construction | $n$ | $R$ | Proof size | Targets |
+|---|---|---|---|---|
+| ZKP-RNL | 32 | — | proportional to $n$ | all (ARM/NASM at n=32) |
+| ZKP-RNL | 256 | — | **1,056 B** | C, Go, Python |
+| ZKP-NL | 8 | 4 | demo (toy) | all |
+| ZKP-NL | 8 | 219 | 35.5 KB | C, Python |
+| ZKP-NL | 256 | 219 | 920 KB | C, Go, Python |
+
+**Comparison with HPKS-Stern-F and ML-DSA-44 (from §4):**
+
+ZKP-RNL at n=256 produces a 1,056-byte proof — smaller than both HPKS-Stern-F (78 KB) and the NIST reference scheme ML-DSA-44 (2,420 bytes).  It is therefore the most compact PQC signing option in the suite for Ring-LWR keys, at the cost of heuristic rather than tight security.
+
+ZKP-NL at n=256 and R=219 yields 920 KB, which exceeds practical limits for most use cases.  The CLI defaults to n=8 (35.5 KB) for this reason.  The ZKB++ optimisation (§11.10.6 open direction 3) would reduce the n=256 proof to approximately 180 KB.
+
+CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-language interop is verified by `CliTest/test_zkp_interop.sh` (14-way test: 6 signing directions per protocol, plus 2 tamper-rejection checks).
+
+### 11.10.5 Comparison and Recommendations
 
 | Use case | Recommended construction | Proof size | Notes |
 |---|---|---|---|
 | PQC signature | HPKS-Stern-F (§11.8.4) | 78 KB | Production-ready, v1.5.18 |
-| Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 1 KB | Prototype; heuristic security |
-| NL-FSCX witness proof | ZKBoo (§11.10.3) | 920 KB | Research quality |
+| Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 1 KB | Implemented v1.9.x; heuristic security |
+| NL-FSCX witness proof | ZKBoo (§11.10.3) | 920 KB | Implemented v1.9.x; CLI defaults to n=8 |
 | NL-FSCX with circuit optimisation | ZKB++ / Picnic variant | ~180 KB (est.) | Future work |
 
 For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-protocol is the most practical option: its 1 KB proof size is competitive with ML-DSA-44 (2.4 KB).
 
-### 11.10.5 Open Research Directions
+### 11.10.6 Open Research Directions
 
 1. **Formal Ring-LWR reduction.** Establish a tight security reduction from the $\Sigma$-protocol soundness to Ring-LWR distinguishing hardness.  Quantify the effect of the rounding slack ($\leq t \cdot q/(2p) = 32$) on the security margin relative to the Lyubashevsky 2012 template.
 

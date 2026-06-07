@@ -278,6 +278,53 @@ func main() {
 		}
 	}
 
+	// ── ZKP-RNL: Ring-LWR Σ-protocol ────────────────────────────────────────
+	fmt.Println("\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n=32]")
+	{
+		zkpN := 32
+		zkpQ := RnlQ
+		zkpP := RnlP
+		zkpM := RnlMPoly(zkpN)
+		zkpA := RnlRandPoly(zkpN, zkpQ)
+		zkpMBlind := RnlPolyAdd(zkpM, zkpA, zkpQ)
+		zkpS, zkpCp := RnlKeygen(zkpMBlind, zkpN, zkpQ, zkpP)
+		zkpMsg := []byte("ZKP-RNL test message")
+		zkpW, zkpC, zkpZ, zkpErr := RnlSigmaSign(zkpS, zkpMBlind, zkpCp, zkpN, zkpMsg)
+		if zkpErr != nil {
+			fmt.Println("- ZKP-RNL sign error:", zkpErr)
+		} else {
+			ok := RnlSigmaVerify(zkpMBlind, zkpCp, zkpN, zkpMsg, zkpW, zkpC, zkpZ)
+			if ok {
+				fmt.Println("+ ZKP-RNL proof verified")
+			} else {
+				fmt.Println("- ZKP-RNL verify FAILED")
+			}
+		}
+	}
+
+	// ── ZKP-NL: NL-FSCX ZKBoo ───────────────────────────────────────────────
+	fmt.Printf("\n--- ZKP-NL [PROOF — NL-FSCX ZKBoo, MPC-in-the-head; n=%d, R=%d]\n",
+		ZkpNlDefaultN, ZkpNlDemoRounds)
+	{
+		zkpA, zkpB, zkpY, zkpErr := ZkpNlKeygen(ZkpNlDefaultN)
+		if zkpErr != nil {
+			fmt.Println("- ZKP-NL keygen error:", zkpErr)
+		} else {
+			zkpMsg := []byte("ZKP-NL test message")
+			zkpProof, zkpErr2 := ZkpNlProve(zkpA, zkpB, zkpY, ZkpNlDefaultN, ZkpNlDemoRounds, zkpMsg)
+			if zkpErr2 != nil {
+				fmt.Println("- ZKP-NL prove error:", zkpErr2)
+			} else {
+				ok := ZkpNlVerify(zkpB, zkpY, ZkpNlDefaultN, ZkpNlDemoRounds, zkpMsg, zkpProof)
+				if ok {
+					fmt.Println("+ ZKP-NL proof verified")
+				} else {
+					fmt.Println("- ZKP-NL verify FAILED")
+				}
+			}
+		}
+	}
+
 	// ── Eve bypass tests ─────────────────────────────────────────────────────
 	fmt.Println("\n\n*** EVE bypass TESTS")
 

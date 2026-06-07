@@ -37,7 +37,11 @@ import os
 sys.path.insert(0, os.path.dirname(__file__))
 
 from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
-                   pack_poly, unpack_poly)
+                   pack_poly, unpack_poly,
+                   encode_zkp_rnl_proof, decode_zkp_rnl_proof,
+                   encode_zkp_nl_privkey, decode_zkp_nl_privkey,
+                   encode_zkp_nl_pubkey, decode_zkp_nl_pubkey,
+                   encode_zkp_nl_proof, decode_zkp_nl_proof)
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
@@ -46,9 +50,12 @@ from primitives import (
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
+    rnl_sigma_sign, rnl_sigma_verify,
+    zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
     KEYBITS, GF_POLY, GF_GEN, ORD,
     RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, SDFT, SDFNR, SDFR,
+    _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
 )
 from primitives import _s as _suite_mod
 
@@ -65,6 +72,7 @@ _PRIV_ALGOS = {
     'hpke-nl':     'HERRADURA HPKE-NL PRIVATE KEY',
     'hpks-stern':  'HERRADURA HPKS-STERN PRIVATE KEY',
     'hpke-stern':  'HERRADURA HPKE-STERN PRIVATE KEY',
+    'hpks-zkp-nl': 'HERRADURA ZKP-NL PRIVATE KEY',
 }
 
 _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
@@ -77,6 +85,11 @@ _LABEL_RNL_RESP    = 'HERRADURA HKEX-RNL RESPONSE'
 _LABEL_SIG         = 'HERRADURA SIGNATURE'
 _LABEL_CT          = 'HERRADURA CIPHERTEXT'
 _LABEL_DIGEST      = 'HERRADURA DIGEST'
+_LABEL_ZKP_RNL     = 'HERRADURA ZKP-RNL PROOF'
+_LABEL_ZKP_NL      = 'HERRADURA ZKP-NL PROOF'
+
+_ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
+_ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
 
 # Binary container format for encfile / decfile (.hkx files)
 _HKX_MAGIC     = b'HKX1'   # 4-byte magic
@@ -189,21 +202,47 @@ def _encode_stern_pubkey(syn_int, seed, n, algo):
     return pem_wrap(_PUB_ALGOS[algo], der)
 
 
+def _load_zkp_nl_privkey(path):
+    """Load a ZKP-NL private key PEM; return (A, B, y, n)."""
+    pem_text = _read_file(path).decode('ascii')
+    return decode_zkp_nl_privkey(pem_text)
+
+
+def _load_zkp_nl_pubkey(path):
+    """Load a ZKP-NL public key PEM; return (B, y, n)."""
+    pem_text = _read_file(path).decode('ascii')
+    return decode_zkp_nl_pubkey(pem_text)
+
+
 def _decode_privkey(path):
-    """Load a private key PEM; return (algo, fields_list)."""
-    label, ints = _read_pem_ints(path)
-    algo = _LABEL_TO_ALGO.get(label)
+    """Load a private key PEM; return (algo, fields_list).
+
+    For ZKP-NL keys the fields_list contains raw bytes (not DER integers);
+    use _load_zkp_nl_privkey() directly when algo is known to be hpks-zkp-nl.
+    """
+    raw = _read_file(path).decode('ascii')
+    label, _ = pem_unwrap(raw)
+    if label == _PRIV_ALGOS.get('hpks-zkp-nl'):
+        A, B, y, n = decode_zkp_nl_privkey(raw)
+        return 'hpks-zkp-nl', (A, B, y, n)
+    label2, ints = _read_pem_ints(path)
+    algo = _LABEL_TO_ALGO.get(label2)
     if algo is None:
-        raise ValueError(f"Unrecognised PEM label: {label!r}")
+        raise ValueError(f"Unrecognised PEM label: {label2!r}")
     return algo, ints
 
 
 def _decode_pubkey(path):
     """Load a public key PEM; return (algo, fields_list)."""
-    label, ints = _read_pem_ints(path)
-    algo = _LABEL_TO_ALGO.get(label)
+    raw = _read_file(path).decode('ascii')
+    label, _ = pem_unwrap(raw)
+    if label == _PUB_ALGOS.get('hpks-zkp-nl'):
+        B, y, n = decode_zkp_nl_pubkey(raw)
+        return 'hpks-zkp-nl', (B, y, n)
+    label2, ints = _read_pem_ints(path)
+    algo = _LABEL_TO_ALGO.get(label2)
     if algo is None:
-        raise ValueError(f"Unrecognised PEM label: {label!r}")
+        raise ValueError(f"Unrecognised PEM label: {label2!r}")
     return algo, ints
 
 
@@ -474,6 +513,11 @@ def cmd_genpkey(args):
         seed, e_int, syn = stern_f_keygen(bits)
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
+    elif algo in _ZKP_NL_ALGOS:
+        n = bits if bits != KEYBITS else _ZKP_NL_DEFAULT_N
+        A, B, y = zkp_nl_keygen(n)
+        pem_out = encode_zkp_nl_privkey(A, B, y, n)
+
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
@@ -501,6 +545,9 @@ def cmd_pkey(args):
             syn   = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
             seed  = BitArray(n, seed_int)
             pem_out = _encode_stern_pubkey(syn, seed, n, algo)
+        elif algo in _ZKP_NL_ALGOS:
+            A, B, y, n = ints
+            pem_out = encode_zkp_nl_pubkey(B, y, n)
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -784,6 +831,26 @@ def cmd_sign(args):
         sig  = hpks_stern_f_sign(msg, e_int, seed, syn, n)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
+    elif algo == 'rnl-sigma':
+        # Sign using an HKEX-RNL private key: proves knowledge of s s.t. C = round_p(m·s)
+        if our_algo != 'hkex-rnl':
+            sys.exit(f"rnl-sigma sign: expected hkex-rnl key, got {our_algo!r}")
+        s_poly, m_poly, n = _decode_rnl_privkey(our_ints)
+        C_poly = _rnl_derive_C(m_poly, s_poly, n)
+        w, c, z = rnl_sigma_sign(s_poly, m_poly, C_poly, n, in_bytes)
+        pem_out = encode_zkp_rnl_proof(w, c, z, n)
+        _write_file(args.out, pem_out)
+
+    elif algo == 'nl-zkboo':
+        # Sign using a ZKP-NL private key: proves knowledge of A s.t. nl_fscx_v1(A,B)=y
+        if our_algo != 'hpks-zkp-nl':
+            sys.exit(f"nl-zkboo sign: expected hpks-zkp-nl key, got {our_algo!r}")
+        A, B, y, n = our_ints
+        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        proof_rounds = zkp_nl_prove(A, B, y, n, rounds, in_bytes)
+        pem_out = encode_zkp_nl_proof(proof_rounds, n)
+        _write_file(args.out, pem_out)
+
     else:
         sys.exit(f"sign: unsupported algorithm {algo!r}")
 
@@ -827,6 +894,37 @@ def cmd_verify(args):
         commits, challenges, responses, _n = _unpack_stern_sig(sig_path)
         sig  = (commits, challenges, responses)
         ok   = hpks_stern_f_verify(msg, sig, seed, syn_int, n)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    elif algo == 'rnl-sigma':
+        # Verify using an HKEX-RNL public key
+        if their_algo != 'hkex-rnl':
+            sys.exit(f"rnl-sigma verify: expected hkex-rnl pubkey, got {their_algo!r}")
+        C_poly, m_poly, n = _decode_rnl_pubkey(their_ints)
+        sig_pem = _read_file(sig_path).decode('ascii')
+        w, c, z, _n = decode_zkp_rnl_proof(sig_pem)
+        ok = rnl_sigma_verify(m_poly, C_poly, n, in_bytes, w, c, z)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    elif algo == 'nl-zkboo':
+        # Verify using a ZKP-NL public key
+        if their_algo != 'hpks-zkp-nl':
+            sys.exit(f"nl-zkboo verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
+        B, y, n = their_ints
+        sig_pem = _read_file(sig_path).decode('ascii')
+        proof_rounds, _n = decode_zkp_nl_proof(sig_pem)
+        rounds = len(proof_rounds)
+        ok = zkp_nl_verify(B, y, n, rounds, in_bytes, proof_rounds)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -1042,18 +1140,22 @@ def build_parser():
     de.add_argument('--out', required=True)
 
     # sign
-    sg = sub.add_parser('sign', help='Sign a message')
-    sg.add_argument('--algo', required=True, choices=['hpks', 'hpks-nl', 'hpks-stern'])
+    sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
+    sg.add_argument('--algo', required=True,
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo'])
     sg.add_argument('--key',  required=True)
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
     sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
                     help='Pre-hash: none=truncate input to block size (default), '
                          'hfscx-256=hash full input then sign the 32-byte digest')
+    sg.add_argument('--rounds', type=int, default=None,
+                    help='ZKBoo rounds (nl-zkboo only; default: 219 for 128-bit soundness)')
 
     # verify
-    vf = sub.add_parser('verify', help='Verify a signature')
-    vf.add_argument('--algo', required=True, choices=['hpks', 'hpks-nl', 'hpks-stern'])
+    vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
+    vf.add_argument('--algo', required=True,
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo'])
     vf.add_argument('--pubkey', required=True)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)

@@ -4,6 +4,287 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.13] - 2026-06-06
+
+### Feature — ZKP documentation Batch 9: TUTORIAL.md ZKP Protocols section + SecurityProofs-3.md §11.10.4 implementation subsection (TODO #77, Batch 9)
+
+Adds comprehensive ZKP documentation completing TODO #77.
+
+**`docs/TUTORIAL.md`** — new top-level `## ZKP Protocols` section:
+- When to use ZKP-RNL vs. ZKP-NL vs. HPKS-Stern-F (use-case guidance).
+- ZKP-RNL API walk-through (keygen → sign → verify) with C, Go, and Python snippets.
+- ZKP-NL API walk-through (keygen → prove → verify) with C, Go, and Python snippets.
+- CLI usage: `genpkey hkex-rnl`, `sign --algo rnl-sigma`, `verify --algo rnl-sigma`;
+  `genpkey hpks-zkp-nl`, `sign --algo nl-zkboo --rounds 4`, `verify --algo nl-zkboo`.
+- Proof-size and performance comparison table (ZKP-RNL vs ZKP-NL vs HPKS-Stern-F vs ML-DSA-44).
+- `### ZKP protocols` subsection added to Protocol reference.
+
+**`SecurityProofs-3.md`** — new §11.10.4 Suite Implementation subsection:
+- Function-name table per language target (C / Go / Python / ARM / NASM / Arduino).
+- Implemented proof-size table.
+- Comparison of ZKP-RNL 1,056 B vs HPKS-Stern-F 78 KB vs ML-DSA-44 2,420 B.
+- Note: ZKP-NL at n=256 (920 KB) awaits ZKB++ (§11.10.6 open direction 3).
+- Updated §11.10.1 applicability matrix: "Prototype" → "Implemented v1.9.x".
+- Updated §11.10.5 comparison table: implementation status notes.
+- Renumbered: old §11.10.4 Comparison → §11.10.5; old §11.10.5 Open → §11.10.6.
+
+**Files changed:**
+- `docs/TUTORIAL.md` — new ZKP Protocols section; ZKP entry in Protocol reference; Contents entry 4 added (5→6→7 renumber)
+- `SecurityProofs-3.md` — §11.10.4 new; §11.10.4→§11.10.5; §11.10.5→§11.10.6; applicability matrix + comparison table updated
+- `TODO.md` — Batch 9 marked DONE v1.9.13; Status updated
+- `README.md` — version bumped to v1.9.13
+
+---
+
+## [1.9.12] - 2026-06-06
+
+### Feature — ZKP CLI test suite Batch 8: CliTest ZKP-RNL + ZKP-NL shell tests (TODO #77, Batch 8)
+
+Adds five CliTest shell scripts covering ZKP-RNL and ZKP-NL sign/verify through all three CLI implementations, with cross-language interop verification.  Also fixes Python CLI output consistency (`"Proof OK"` → `"Signature OK"` for `rnl-sigma` and `nl-zkboo` verify to match C and Go output).
+
+**New scripts:**
+- `CliTest/test_zkp_rnl.sh` — Python CLI `genpkey hkex-rnl` → `sign rnl-sigma` → `verify rnl-sigma`; correct-msg PASS, wrong-msg reject, wrong-pubkey reject.
+- `CliTest/test_zkp_nl.sh` — Python CLI `genpkey hpks-zkp-nl` → `sign nl-zkboo --rounds 4` → `verify nl-zkboo`; correct PASS, wrong-msg reject, wrong-pubkey reject.
+- `CliTest/test_c_zkp_rnl.sh` — C CLI same ZKP-RNL round-trip.
+- `CliTest/test_go_zkp_rnl.sh` — Go CLI same ZKP-RNL round-trip.
+- `CliTest/test_zkp_interop.sh` — Full 6-direction cross-language interop for ZKP-RNL (Python↔C↔Go) and ZKP-NL (Python↔C↔Go); `--rounds 4` for speed.
+
+**Python CLI fix:** `cmd_verify` for `rnl-sigma` and `nl-zkboo` now prints `"Signature OK"` on success (was `"Proof OK"`), consistent with C and Go.
+
+**Files changed:**
+- `CliTest/test_zkp_rnl.sh` — new
+- `CliTest/test_zkp_nl.sh` — new
+- `CliTest/test_c_zkp_rnl.sh` — new
+- `CliTest/test_go_zkp_rnl.sh` — new
+- `CliTest/test_zkp_interop.sh` — new
+- `HerraduraCli/herradura.py` — "Proof OK" → "Signature OK" for ZKP verify
+- `TODO.md` — Batch 8 marked DONE v1.9.12
+- `README.md` — version bumped to v1.9.12
+
+---
+
+## [1.9.11] - 2026-06-06
+
+### Feature — ZKP test suite Batch 7: CryptosuiteTests ZKP-RNL + ZKP-NL security tests + benchmarks (TODO #77, Batch 7)
+
+Adds ZKP correctness and tamper-rejection security tests plus throughput benchmarks to all three compiled test targets.  Tests call the production library functions (not self-contained stubs).
+
+**`CryptosuiteTests/Herradura_tests.c`** — v1.9.11:
+- `[21] ZKP-RNL` — `rnl_sigma_sign` + `rnl_sigma_verify` completeness + wrong-message tamper at n∈{32,256}.
+- `[22] ZKP-NL` — `zkp_nl_prove` + `zkp_nl_verify` completeness + commitment-flip tamper at n∈{32,64}, R=16 rounds.
+- `[33] bench_zkp_rnl` — sign+verify throughput at n=256.
+- `[34] bench_zkp_nl` — prove+verify throughput at n=32, R=16.
+- Benchmarks renumbered [21]–[30] → [23]–[32].
+
+**`CryptosuiteTests/Herradura_tests.go`** — v1.9.11:
+- `[20] testZkpRnlCorrectness` + `[21] testZkpNlCorrectness`; `[32] benchZkpRnl` + `[33] benchZkpNl`.
+- Benchmarks renumbered [20]–[29] → [22]–[31].
+
+**`CryptosuiteTests/Herradura_tests.py`** — v1.9.11:
+- `[20] test_zkp_rnl_correctness` + `[21] test_zkp_nl_correctness`; `[32]`/`[33]` benchmarks.
+- Benchmarks renumbered [20]–[29] → [22]–[31].
+
+**Files changed:**
+- `CryptosuiteTests/Herradura_tests.c` — new tests [21][22], benches [33][34], renumbered [23]–[32]
+- `CryptosuiteTests/Herradura_tests.go` — new tests [20][21], benches [32][33], renumbered [22]–[31]
+- `CryptosuiteTests/Herradura_tests.py` — new tests [20][21], benches [32][33], renumbered [22]–[31]
+- `TODO.md` — Batch 7 marked DONE v1.9.11
+- `README.md` — version bumped to v1.9.11
+
+---
+
+## [1.9.10] - 2026-06-05
+
+### Feature — ZKP library Batch 6: Arduino ZKP-RNL + ZKBoo demo (TODO #77, Batch 6)
+
+Adds ZKP-RNL Ring-LWR Σ-protocol and minimal ZKBoo MPC-in-the-head demo to the Arduino suite (`Herradura cryptographic suite.ino`, v1.9.10).  All allocation is via `static long` / `static uint8_t` arrays — no heap, no `malloc`.  Targets Arduino Mega (8 KB SRAM).
+
+**New `#define` constants** — `SIGMA_GAMMA=4096`, `SIGMA_T=4`, `SIGMA_BOUND=4092`, `SIGMA_SLACK=32`, `SIGMA_RANGE=8193`; `ZKP_NL_N=8`, `ZKP_NL_R=4`.
+
+**New ZKP-RNL functions (module-scope statics):**
+- `sig_y`, `sig_w`, `sig_c`, `sig_z` — shared prover/verifier poly scratch (32 `long` each).
+- `sig_tmp0`–`sig_tmp4` — additional poly scratch shared between sign and verify.
+- `sigma_challenge(m, C_pub, w, msg)` — derives `SIGMA_T`-sparse ternary challenge into `sig_c` via chained `hfscx_32` seed expansion.
+- `rnl_sigma_sign(m, s, C_pub, msg) → int` — rejection-sampling prover; up to 200 attempts; fills `sig_w`, `sig_c`, `sig_z`.
+- `rnl_sigma_verify(m, C_pub, msg) → int` — three-step verifier: (1) ‖z‖∞ ≤ SIGMA_BOUND; (2) challenge consistency; (3) ‖m·z − c·lift(C) − w‖∞ ≤ SIGMA_SLACK.
+
+**New ZKBoo functions:**
+- `zkp_nl_f1_8(A, B)` — scalar F1(A,B) at 8 bits: FSCX_8(A,B) XOR ROL8((A+B) mod 256, 2).
+- `zkp_eval(s0,s1,s2, t0,t1,t2, B, o0,o1,o2, gva,gvb,gvc)` — 3-party ripple-carry evaluation of F1 at 8 bits; gate views encoded as `ai|(ci<<1)|(ao<<2)`.
+- `zkp_nl_prove_8(A, B, y, msg)` — Fiat-Shamir prover; stores proof in module-level statics `zkp_coms`, `zkp_e`, `zkp_sh1/2`, `zkp_tp1/2`, `zkp_out1/2`, `zkp_gv1/2`.
+- `zkp_nl_verify_8(B, y, msg) → int` — recomputes Fiat-Shamir challenges; checks commitments and AND-gate consistency for revealed parties p1=(e+1)%3, p2=(e+2)%3.
+
+**`loop()` changes:** HKEX-RNL key arrays (`m_blind`, `s_A`, `C_A`, etc.) lifted to `loop()`-scope statics for reuse by the ZKP-RNL demo. Two new demo blocks added before `delay(10000)`.
+
+---
+
+## [1.9.9] - 2026-06-05
+
+### Feature — ZKP library Batch 5: NASM i386 `rnl_sigma_sign_32` / `rnl_sigma_verify_32` (TODO #77, Batch 5)
+
+Adds ZKP-RNL Ring-LWR Σ-protocol sign and verify to the NASM i386 assembly suite (`Herradura cryptographic suite.asm`, v1.9.9). Reuses existing `rnl_poly_mul` (NTT-based), `hfscx_32` (DM-hash), and `rnl_lift` subroutines.
+
+**New `%define` constants** — `SIGMA_GAMMA=4096`, `SIGMA_T=4`, `SIGMA_BOUND=4092`, `SIGMA_SLACK=32`, `SIGMA_RANGE=8193`.
+
+**New `.bss` arrays** — `sig_y`, `sig_w`, `sig_c`, `sig_z` (128 B each), `sig_pos` (16 B for t=4 positions), `sigma_yq_tmp`, `sigma_liftc_tmp`, `sigma_mz_tmp`, `sigma_cw_tmp` (128 B each).
+
+**New functions:**
+- `sigma_fold_poly_32(eax=seed, ebx=poly_ptr) → eax=seed` — folds 32 coefficients into seed via hfscx_32; ESI/ECX preserved across hfscx_32 calls.
+- `sigma_challenge_32(eax=m_ptr, ebx=C_ptr, ecx=w_ptr, edx=msg)` — local stack frame; derives sparse ternary challenge into `sig_c` via chained hfscx_32 seed expansion (t=4 nonzero positions, ±1 signs).
+- `rnl_sigma_sign_32(eax=msg) → eax=0 ok / eax=-1 fail` — rejection-sampling prover with local stack frame; up to 200 attempts; fills `sig_w`, `sig_c`, `sig_z`; uses globals `rnl_s_A`, `rnl_m_blind`, `rnl_C_A` from HKEX-RNL.
+- `rnl_sigma_verify_32(eax=msg) → eax=1 ok / eax=0 fail` — three-step verifier with local stack frame: (1) ‖z‖∞ ≤ SIGMA_BOUND=4092; (2) recomputed challenge matches stored; (3) ‖m·z − c·lift(C) − w‖∞ ≤ SIGMA_SLACK=32; saves/restores EBP around `rnl_lift` call.
+
+**Demo block added to `_start`** — prints header, calls `rnl_sigma_sign_32(0xDEADB00B)` then `rnl_sigma_verify_32`, reports pass/fail before exit.
+
+---
+
+## [1.9.8] - 2026-06-05
+
+### Feature — ZKP library Batch 4: ARM Thumb-2 `rnl_sigma_sign_32` / `rnl_sigma_verify_32` (TODO #77, Batch 4)
+
+Adds ZKP-RNL Ring-LWR Σ-protocol sign and verify to the ARM Thumb-2 assembly suite (`Herradura cryptographic suite.s`, v1.9.8). Reuses existing `rnl_poly_mul` (NTT-based) and `hfscx_32` (DM-hash) subroutines.
+
+**New `.equ` constants** — `SIGMA_GAMMA`, `SIGMA_T`, `SIGMA_BOUND`, `SIGMA_SLACK`, `SIGMA_RANGE` (n=32 parameters).
+
+**New `.bss` arrays** — `sig_y`, `sig_w`, `sig_c`, `sig_z` (128 B each), `sig_pos` (16 B), `sigma_yq_tmp`, `sigma_liftc_tmp`, `sigma_mz_tmp`, `sigma_cw_tmp` (128 B each).
+
+**New functions:**
+- `sigma_fold_poly_32(r0=seed, r1=poly) → r0=seed` — chains 32 coefficients into seed via hfscx_32.
+- `sigma_challenge_32(r0=m, r1=C, r2=w, r3=msg)` — derives sparse ternary challenge into `sig_c` using chained hfscx_32 seed, t=4 positions, sign bits.
+- `rnl_sigma_sign_32(r0=msg) → r0=0 ok / 0xFFFFFFFF=fail` — rejection-sampling prover; fills `sig_w`, `sig_c`, `sig_z`; uses globals `rnl_s_A`, `rnl_m_blind`, `rnl_C_A` from HKEX-RNL.
+- `rnl_sigma_verify_32(r0=msg) → r0=1 ok / r0=0 fail` — three-step verifier: (1) ‖z‖∞ ≤ SIGMA_BOUND; (2) recomputed c′ = stored c; (3) ‖m·z − c·lift(C) − w‖∞ ≤ SIGMA_SLACK.
+
+**Demo block added to `main()`** — prints header, message scalar, calls sign then verify, reports pass/fail.
+
+---
+
+## [1.9.7] - 2026-06-05
+
+### Feature — ZKP library Batch 3: Go package + Go CLI (TODO #77, Batch 3)
+
+Adds ZKP-RNL (Ring-LWR Σ-protocol) and ZKP-NL (NL-FSCX ZKBoo) to the `herradurakex/herradura` Go package and extends `herradura_cli_go` with `sign`/`verify` subcommands for both proofs.
+
+**New exported functions in `herradura/herradura.go`:**
+- `ZkpRnlParams(n)` — returns (gamma, t) for ZKP-RNL at bit-width n.
+- `RnlSigmaSign(s, m, C, n, msg)` — ZKP-RNL prover with rejection sampling; returns (w, c, z, err).
+- `RnlSigmaVerify(m, C, n, msg, w, c, z)` — three-check ZKP-RNL verifier (‖z‖∞, FS challenge, rounding slack).
+- `ZkpNlKeygen(n)` — generates (A, B, y=nl_fscx_v1(A,B), err) as uint32.
+- `ZkpNlProve(A, B, y, n, rounds, msg)` — MPC-in-the-head ZKBoo prover; returns []ZkpNlRound.
+- `ZkpNlVerify(B, y, n, rounds, msg, proof)` — verifies ZKBoo proof; re-evaluates p1 AND gates.
+- `ZkpNlRound` struct — per-round ZKBoo proof with Com0/Com1/Com2 [32]byte, E int, ViewP1/ViewP2 []byte.
+
+**New PEM label constants in `herradura/codec.go`:**
+- `PemZkpRnlProof`, `PemZkpNlPriv`, `PemZkpNlPub`, `PemZkpNlProof`.
+
+**Extensions to `HerraduraCli/herradura_cli.go`:**
+- `genpkey --algo hpks-zkp-nl` — generates ZKP-NL keypair (raw binary PEM).
+- `pkey --in zkpnl.pem (--pubout | --text)` — extracts public key or prints fields for ZKP-NL keys.
+- `sign --algo rnl-sigma --key rnl.pem --in msg` — ZKP-RNL Σ-protocol signature.
+- `sign --algo nl-zkboo --key zkpnl.pem --in msg` — ZKBoo proof (demo rounds=4).
+- `verify --algo rnl-sigma --pubkey rnl_pub.pem --sig proof.pem` — verify ZKP-RNL proof.
+- `verify --algo nl-zkboo --pubkey zkpnl_pub.pem --sig proof.pem` — verify ZKBoo proof.
+
+**Demo blocks added to `Herradura cryptographic suite.go`:**
+- ZKP-RNL proof at n=32; ZKP-NL proof at n=8, R=4.
+
+---
+
+## [1.9.6] - 2026-06-05
+
+### Feature — ZKP library Batch 2: C header-only library + C CLI (TODO #77, Batch 2)
+
+Adds the Ring-LWR Σ-protocol (ZKP-RNL) and NL-FSCX ZKBoo (ZKP-NL) as static inline functions in `herradura.h` and as `sign`/`verify` subcommands in `herradura_cli.c`.  Python↔C bidirectional PEM interoperability verified.
+
+**New static functions in `herradura.h`:**
+- `sigma_params(n, &gamma, &t)` — ZKP-RNL parameter selector (γ, t) by polynomial dimension.
+- `sigma_poly_mul_n(h, f, g, n, q)` — O(n²) negacyclic multiplication for n ≠ RNL_N=256 (used for small-n demo; NTT path used for n=256).
+- `sigma_poly_bytes(out, poly, n)` — serialize n coefficients as n×4 big-endian bytes (matches Python `_sigma_poly_bytes`).
+- `sigma_challenge(m, Cp, w, n, q, t, msg, mlen, c_out)` — Fiat-Shamir sparse-ternary challenge derivation; uses `hfscx_256` with seed||"pos" / seed||"sgn" counter expansion.
+- `rnl_sigma_sign(s, m, Cp, n, msg, mlen, urnd, w_out, c_out, z_out)` — ZKP-RNL prover with rejection sampling; returns 0 or -1.
+- `rnl_sigma_verify(m, Cp, n, msg, mlen, w, c, z)` — three-check verifier (‖z‖∞ bound, FS challenge, rounding slack); returns 1/0.
+- `ZkpNlRound` struct — per-round ZKBoo proof: three 32-byte commitments, hidden-party index, and two heap-allocated party views.
+- `zkp_nl_proof_free(proof, rounds)` — free heap memory in a ZkpNlRound array.
+- `zkp_nl_rol(x, r, n)` — n-bit cyclic left-rotate.
+- `zkp_nl_commit(out, j, p, tape, out_share, nb)` — HFSCX-256 commitment: hash(j(4B)||p(1B)||tape(32B)||out_share(nb B)).
+- `zkp_nl_prg_bit(tape, gate_id)` — deterministic PRG bit from tape and gate index.
+- `zkp_nl_eval_3p(...)` — 3-party ZKBoo evaluation of nl_fscx_v1(A,B); carries the AND-gate chain; fills output shares and per-party gate-view bytes.
+- `zkp_nl_pack_view` / `zkp_nl_unpack_view` — view buffer serialize/deserialize.
+- `zkp_nl_f1(A, B, n)` — scalar evaluation of nl_fscx_v1 for keygen.
+- `zkp_nl_keygen(n, urnd, A_out, B_out, y_out)` — ZKBoo keypair generation.
+- `zkp_nl_prove(A, B, y, n, rounds, msg, mlen, urnd)` — heap-allocated ZkpNlRound proof array; fully Fiat-Shamir compiled.
+- `zkp_nl_verify(B, y, n, rounds, msg, mlen, proof)` — commitment check + AND-gate re-evaluation.
+- Constants: `SIGMA_MAX_ATTEMPTS` (1000), `ZKP_NL_DEFAULT_N` (8), `ZKP_NL_DEMO_ROUNDS` (4), `ZKP_NL_PROD_ROUNDS` (219), `ZKP_NL_MAX_N` (32).
+
+**New PEM label macros in `HerraduraCli/herradura_codec.h`:**
+- `PEM_ZKP_RNL_PROOF`, `PEM_ZKP_NL_PRIV`, `PEM_ZKP_NL_PUB`, `PEM_ZKP_NL_PROOF`.
+
+**Extended `HerraduraCli/herradura_cli.c`:**
+- Helper `zkp_raw_pem_read` — reads raw-binary (non-DER) PEM; label check before `pem_key_load`.
+- Helper `zkp_pem_peek_label` — reads label without allocating DER parse result.
+- Helpers `zkp_nl_pack_proof` / `zkp_nl_unpack_proof` — serialize/deserialize ZkpNlRound arrays matching Python `encode_zkp_nl_proof` / `decode_zkp_nl_proof`.
+- `genpkey --algo hpks-zkp-nl` — writes `HERRADURA ZKP-NL PRIVATE KEY` PEM (raw binary: 4B n | nb A | nb B | nb y).
+- `pkey --in zkpnl.pem --pubout` — detects `ZKP-NL PRIVATE KEY` label via peek; writes `HERRADURA ZKP-NL PUBLIC KEY`.
+- `sign --algo rnl-sigma --key hkex-rnl.pem` — derives C_p from privkey, calls `rnl_sigma_sign`, writes `HERRADURA ZKP-RNL PROOF` PEM.
+- `sign --algo nl-zkboo --key zkpnl.pem` — early-exit before `pem_key_load`; calls `zkp_nl_prove` at `ZKP_NL_PROD_ROUNDS=219`.
+- `verify --algo rnl-sigma --pubkey hkex-rnl-pub.pem` — calls `rnl_sigma_verify`.
+- `verify --algo nl-zkboo --pubkey zkpnl-pub.pem` — early-exit; calls `zkp_nl_verify`.
+
+**Extended `Herradura cryptographic suite.c` `main()`:**
+- ZKP-RNL demo block (n=256 keypair; sign + verify).
+- ZKP-NL demo block (n=8, R=ZKP_NL_DEMO_ROUNDS=4; keygen, prove, verify, free).
+
+---
+
+## [1.9.5] - 2026-06-05
+
+### Feature — ZKP library Batch 1: Python suite + codec + CLI (TODO #77, Batch 1)
+
+Implements the Ring-LWR Σ-protocol (HPKS-ZKP-RNL) and NL-FSCX ZKBoo (HPKS-ZKP-NL) as first-class library functions, DER/PEM wire format, and OpenSSL-style CLI subcommands.  Derived from the reference prototype in `SecurityProofsCode/zkp_pqc_exploration.py`.
+
+**New library functions in `Herradura cryptographic suite.py`:**
+- `rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg_bytes)` → `(w, c, z)` — Lyubashevsky rejection-sampling prover; Fiat-Shamir message binding via `hfscx_256`.
+- `rnl_sigma_verify(m_poly, C_poly, n, msg_bytes, w, c, z)` → `bool` — three-check verifier (‖z‖∞, FS challenge, rounding slack).
+- `zkp_nl_keygen(n)` → `(A, B, y)` — ZKBoo keypair where `y = nl_fscx_v1(A, B)`.
+- `zkp_nl_prove(A, B, y, n, rounds, msg_bytes)` → proof list — 3-party MPC-in-the-head with per-party tapes, AND-gate carry chain, Fiat-Shamir challenge.
+- `zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds)` → `bool` — commitment check + AND-gate consistency re-evaluation.
+- Helper constants: `_SIGMA_GAMMA`, `_SIGMA_T`, `_SIGMA_MAX_ATTEMPTS`, `_ZKP_NL_DEFAULT_N` (8), `_ZKP_NL_DEMO_ROUNDS` (4), `_ZKP_NL_PROD_ROUNDS` (219).
+
+**New codec functions in `HerraduraCli/codec.py`:**
+- `encode_zkp_rnl_proof` / `decode_zkp_rnl_proof` — PEM label `HERRADURA ZKP-RNL PROOF`; raw binary: 4B n + n×4B w (s32-be) + n×4B c (u32-be) + n×4B z (s32-be).
+- `encode_zkp_nl_privkey` / `decode_zkp_nl_privkey` — PEM label `HERRADURA ZKP-NL PRIVATE KEY`; stores (A, B, y, n) so `pkey --pubout` works without re-evaluation.
+- `encode_zkp_nl_pubkey` / `decode_zkp_nl_pubkey` — PEM label `HERRADURA ZKP-NL PUBLIC KEY`.
+- `encode_zkp_nl_proof` / `decode_zkp_nl_proof` — PEM label `HERRADURA ZKP-NL PROOF`; round-length-prefixed views.
+
+**New CLI in `HerraduraCli/herradura.py` and `primitives.py`:**
+- `genpkey --algo hpks-zkp-nl [--bits N]` — generates ZKP-NL keypair.
+- `pkey --in priv.pem --pubout` — extracts ZKP-NL public key.
+- `sign --algo rnl-sigma --key hkex-rnl.pem --in msg.bin --out proof.pem` — Ring-LWR Σ-proof.
+- `sign --algo nl-zkboo --key zkpnl.pem --in msg.bin --out proof.pem [--rounds R]` — NL-FSCX ZKBoo proof (default R=219).
+- `verify --algo rnl-sigma --pubkey hkex-rnl-pub.pem --in msg.bin --sig proof.pem`.
+- `verify --algo nl-zkboo --pubkey zkpnl-pub.pem --in msg.bin --sig proof.pem`.
+
+**Files changed:**
+- `Herradura cryptographic suite.py` — new ZKP constants and 8 new functions; updated public API docstring and suite demo.
+- `HerraduraCli/codec.py` — 8 new encode/decode functions + self-test additions.
+- `HerraduraCli/primitives.py` — new re-exports for ZKP functions and constants.
+- `HerraduraCli/herradura.py` — `hpks-zkp-nl` key type, `rnl-sigma`/`nl-zkboo` sign/verify subcommands, updated `build_parser`.
+- `TODO.md` — TODO #77 Batch 1 marked done.
+- `README.md` — version bumped to v1.9.5.
+
+---
+
+## [1.9.4-p1] - 2026-06-05
+
+### Research — New application directions catalogue (TODO #78)
+
+Ten candidate applications of the Herradura primitives catalogued in `TODO.md` with construction sketches, implementation distances, and open questions: FPE (78.A), tweakable block cipher (78.B), NL-FSCX ratchet (78.C), PQC PAKE (78.D), non-Abelian KEx (78.E), VDF limited model (78.F), OPRF (78.G), masking-friendly implementation (78.H), ring/group signature (78.I), and HFSCX-256 accumulator (78.J). Recommended first implementations: 78.B (tweakable cipher), 78.A (FPE), 78.J (accumulator).
+
+**Files changed:**
+- `TODO.md` — TODO #78 added with 10 sub-items and summary table
+- `.claude/settings.json` — `bgIsolation: none` so background sessions edit devtest directly
+
+---
+
 ## [1.9.4] - 2026-06-04
 
 ### Research — Zero-knowledge proof exploration for PQC algorithms (TODO #76)

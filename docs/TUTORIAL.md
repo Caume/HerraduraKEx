@@ -27,9 +27,10 @@ with toy examples and verified references.
 1. [C integration](#c-integration)
 2. [Go integration](#go-integration)
 3. [Python integration](#python-integration)
-4. [Protocol reference](#protocol-reference)
-5. [Parameter reference](#parameter-reference)
-6. [Security notes](#security-notes)
+4. [ZKP Protocols](#zkp-protocols)
+5. [Protocol reference](#protocol-reference)
+6. [Parameter reference](#parameter-reference)
+7. [Security notes](#security-notes)
 
 ---
 
@@ -488,6 +489,183 @@ See [`docs/examples/python/hello_herradura.py`](examples/python/hello_herradura.
 
 ---
 
+## ZKP Protocols
+
+Zero-knowledge proof (ZKP) constructions allow a prover to demonstrate knowledge
+of a secret (a Ring-LWR signing key, an NL-FSCX preimage) without revealing it.
+Combined with the Fiat-Shamir heuristic they yield non-interactive signatures.
+
+**When to use ZKP vs. conventional signatures:**
+
+- Use **ZKP-RNL** when you need an anonymous credential: the verifier learns only
+  that the signer holds *a* valid key, not which key relative to other keys.
+  Post-quantum hardness follows Ring-LWR.  Proof size is 1,056 bytes at n=256 —
+  smaller than ML-DSA-44 (2,420 bytes).
+- Use **ZKP-NL** when the secret is an NL-FSCX preimage — e.g. to prove knowledge
+  of the input to the one-way function without revealing it.  CLI defaults to n=8
+  (35.5 KB proof at R=219); production at n=256 yields 920 KB pending ZKB++
+  optimisation.
+- Use **HPKS-Stern-F** for conventional signatures where a formal reduction to
+  syndrome decoding hardness is required (78 KB, production-ready).
+
+See `SecurityProofs-3.md §11.10` for completeness, soundness, and zero-knowledge
+proofs of both constructions.
+
+### ZKP-RNL (Ring-LWR Σ-protocol)
+
+The signer reuses an **HKEX-RNL key pair** (`m_blind`, secret `s`, public `C`).
+Proof components: commitment polynomial `w`, sparse ternary challenge `c`,
+response polynomial `z`.  Parameters at n=256: γ=8192, t=16 challenge positions.
+
+#### C
+
+```c
+#include "herradura.h"
+
+/* Keygen: use HKEX-RNL keygen — same key type */
+rnl_poly_t m_blind, s, C_pub;
+rnl_m_poly(m_blind);
+rnl_keygen(s, C_pub, m_blind, urnd);
+
+/* Sign */
+rnl_poly_t w, z;
+int        c[RNL_N];
+int ok = rnl_sigma_sign(s, m_blind, C_pub, RNL_N, msg, msglen, urnd, w, c, z);
+
+/* Verify — only needs public key */
+ok = rnl_sigma_verify(m_blind, C_pub, RNL_N, msg, msglen, w, c, z);
+```
+
+#### Go
+
+```go
+import h "herradurakex/herradura"
+
+// Keygen: same as HKEX-RNL
+n      := h.RnlN
+mBlind := h.RnlMPoly(n)
+sA, CA := h.RnlKeygen(mBlind, n, h.RnlQ, h.RnlP)
+
+// Sign
+w, c, z, err := h.RnlSigmaSign(sA, mBlind, CA, n, msg)
+
+// Verify
+ok := h.RnlSigmaVerify(mBlind, CA, n, msg, w, c, z)
+```
+
+#### Python
+
+```python
+# Keygen: same as HKEX-RNL
+m_blind = h._rnl_m_poly(n)
+s, C_pub = h.hkex_rnl_keygen(m_blind, n, h.RNLQ, h.RNLP, h.RNLB)
+
+# Sign
+w, c, z = h._rnl_sigma_sign(s, m_blind, C_pub, n, msg)
+
+# Verify
+ok = h._rnl_sigma_verify(m_blind, C_pub, n, msg, w, c, z)
+```
+
+### ZKP-NL (NL-FSCX ZKBoo)
+
+Proves knowledge of `A` satisfying `F1(A, B) = y` via MPC-in-the-head.
+The key pair is `(A secret, B and y public)`.  Default parameters: n=8 (toy demo),
+R=4 rounds (soundness error (1/3)^4 ≈ 1.2%).  Use R=219 for 128-bit soundness.
+
+#### C
+
+```c
+#include "herradura.h"
+
+/* Keygen */
+uint32_t A, B, y;
+zkp_nl_keygen(ZKP_NL_DEFAULT_N, urnd, &A, &B, &y);  /* A secret; B, y public */
+
+/* Prove */
+int rounds = ZKP_NL_DEMO_ROUNDS;    /* 4; use ZKP_NL_PROD_ROUNDS=219 for production */
+ZkpNlRound *proof = zkp_nl_prove(A, B, y, ZKP_NL_DEFAULT_N, rounds, msg, msglen);
+
+/* Verify */
+int ok = zkp_nl_verify(B, y, ZKP_NL_DEFAULT_N, rounds, msg, msglen, proof);
+zkp_nl_proof_free(proof, rounds);
+```
+
+#### Go
+
+```go
+import h "herradurakex/herradura"
+
+// Keygen
+A, B, y, _ := h.ZkpNlKeygen(h.ZkpNlDefaultN)
+
+// Prove (demo rounds=4; use h.ZkpNlProdRounds=219 for production)
+proof, _ := h.ZkpNlProve(A, B, y, h.ZkpNlDefaultN, h.ZkpNlDemoRounds, msg)
+
+// Verify
+ok := h.ZkpNlVerify(B, y, h.ZkpNlDefaultN, h.ZkpNlDemoRounds, msg, proof)
+```
+
+#### Python
+
+```python
+# Keygen
+A, B, y = h._zkp_nl_keygen(n)     # A secret; B, y public
+
+# Prove (rounds=4 demo; 219 for 128-bit soundness)
+proof = h._zkp_nl_prove(A, B, y, n, rounds=4, msg=msg)
+
+# Verify
+ok = h._zkp_nl_verify(B, y, n, rounds=4, msg=msg, proof=proof)
+```
+
+### CLI usage
+
+```bash
+# ZKP-RNL — key type: hkex-rnl, algo: rnl-sigma
+python3 HerraduraCli/herradura.py genpkey --algo hkex-rnl --out priv.pem
+python3 HerraduraCli/herradura.py pkey    --in priv.pem --pubout --out pub.pem
+python3 HerraduraCli/herradura.py sign    --algo rnl-sigma --key priv.pem \
+        --in msg.bin --out sig.pem
+python3 HerraduraCli/herradura.py verify  --algo rnl-sigma --pubkey pub.pem \
+        --in msg.bin --sig sig.pem
+
+# C and Go CLIs share identical subcommands
+./HerraduraCli/herradura_cli     sign   --algo rnl-sigma --key priv.pem --in msg.bin --out sig.pem
+./HerraduraCli/herradura_cli_go  sign   --algo rnl-sigma --key priv.pem --in msg.bin --out sig.pem
+
+# ZKP-NL — key type: hpks-zkp-nl, algo: nl-zkboo
+python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --out zkpnl.pem
+python3 HerraduraCli/herradura.py pkey    --in zkpnl.pem --pubout --out zkpnl_pub.pem
+# Python CLI accepts --rounds; C CLI hardcodes 219 rounds; Go CLI hardcodes 4 rounds
+python3 HerraduraCli/herradura.py sign   --algo nl-zkboo --key zkpnl.pem \
+        --rounds 4 --in msg.bin --out proof.pem
+python3 HerraduraCli/herradura.py verify --algo nl-zkboo --pubkey zkpnl_pub.pem \
+        --in msg.bin --sig proof.pem
+./HerraduraCli/herradura_cli sign    --algo nl-zkboo --key zkpnl.pem --in msg.bin --out proof.pem
+./HerraduraCli/herradura_cli verify  --algo nl-zkboo --pubkey zkpnl_pub.pem --in msg.bin --sig proof.pem
+```
+
+Proof PEM files are cross-language compatible: a proof produced by the Python CLI
+verifies under the C and Go CLIs and vice versa.  See `CliTest/test_zkp_interop.sh`
+for a 14-way cross-language interop test.
+
+### Proof-size and performance comparison
+
+| Construction | Proof / signature size | Hardness | Notes |
+|---|---|---|---|
+| HPKS | 64 B | DLP in GF(2^256) — quantum-broken | Fastest |
+| ZKP-RNL (n=256) | **1,056 B** | Ring-LWR (heuristic) | Best lattice compactness |
+| ML-DSA-44 (reference) | 2,420 B | Module-LWE | NIST standard |
+| HPKS-Stern-F (rounds=219) | 78 KB | SD(N,t) + NL-FSCX v1 PRF | Production code-based PQC |
+| ZKP-NL (n=8, R=219) | 35.5 KB | NL-FSCX OWF | CLI default; toy parameters |
+| ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Awaits ZKB++ (~180 KB est.) |
+
+ZKP-RNL is the most compact lattice-based signing option in the suite.
+For NL-FSCX witness statements, ZKP-NL is the only applicable construction.
+
+---
+
 ## Protocol reference
 
 ### Classical protocols
@@ -515,6 +693,13 @@ See [`docs/examples/python/hello_herradura.py`](examples/python/hello_herradura.
 |----------|----------|--------|
 | HPKS-Stern-F | SD(N,t) + NL-FSCX v1 PRF | Demo params (rounds=32); production needs rounds≥219 |
 | HPKE-Stern-F | SD(N,t) | Demo only; decap requires QC-MDPC decoder for production |
+
+### ZKP protocols
+
+| Construction | Key type | Sign / prove | Verify | Proof size |
+|---|---|---|---|---|
+| ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 1,056 B (n=256) |
+| ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 35.5 KB (n=8, R=219) |
 
 ### Hash primitive
 

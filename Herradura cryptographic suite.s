@@ -1,7 +1,7 @@
-/*  Herradura Cryptographic Suite v1.8.0
+/*  Herradura Cryptographic Suite v1.9.8
     ARM 32-bit Thumb Assembly (GAS) — HKEX-GF, HSKE, HPKS, HPKE,
                                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-                                       HPKS-Stern-F, HPKE-Stern-F
+                                       HPKS-Stern-F, HPKE-Stern-F, ZKP-RNL
     KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
     HKEX-GF:   DH over GF(2^32)*, poly x^32+x^22+x^2+x+1, generator g=3
     HPKS:      Schnorr; s=(k-a*e) mod ORD; verify g^s*C^e==R
@@ -42,6 +42,12 @@
     .equ SDF_T,    2
     .equ SDF_NROWS,16
     .equ SDF_ROUNDS,4
+    /* ZKP-RNL parameters (n=32) */
+    .equ SIGMA_GAMMA, 4096
+    .equ SIGMA_T,     4
+    .equ SIGMA_BOUND, 4092
+    .equ SIGMA_SLACK, 32
+    .equ SIGMA_RANGE, 8193
 
 /* ------------------------------------------------------------------ */
 /* .data section                                                       */
@@ -50,7 +56,7 @@
     .balign 4
 
 /* format strings */
-fmt_header: .asciz "=== Herradura Cryptographic Suite v1.8.0 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
+fmt_header: .asciz "=== Herradura Cryptographic Suite v1.9.8 (ARM 32-bit Thumb, KEYBITS=32) ===\n"
 fmt_hex:    .asciz "%s: 0x%08x\n"
 fmt_nl:     .asciz "\n"
 
@@ -76,6 +82,12 @@ fmt_eve_sdf_ok:    .asciz "- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF p
 fmt_eve_sdf_fail:  .asciz "+ Eve forged HPKS-Stern-F (Eve wins!)\n"
 fmt_eve_hpke_sdf_ok:  .asciz "- Eve random guess does not match session key  (SD protection)\n"
 fmt_eve_hpke_sdf_fail: .asciz "+ Eve guessed HPKE-Stern-F session key!\n"
+fmt_zkp_rnl_hdr: .asciz "\n-- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4] --\n"
+fmt_zkp_rnl_ok:  .asciz "+ ZKP-RNL proof verified\n"
+fmt_zkp_rnl_fail:.asciz "- ZKP-RNL verify FAILED\n"
+lbl_sigma_msg:   .asciz "msg (sigma) "
+    .balign 4
+sigma_demo_msg:  .word 0xDEADB00B
 
 /* result strings */
 fmt_ok:          .asciz "+ correct!\n"
@@ -233,6 +245,16 @@ sdf_pi_tmp:   .space 16   /* pi[0..3] perm seeds */
 sdf_sr_tmp:   .space 16   /* sigma(r)[0..3] */
 sdf_sy_tmp:   .space 16   /* sigma(y)[0..3] */
 sdf_chals_tmp:.space 16   /* verify: re-derived challenges */
+/* ZKP-RNL scratch (n=32, 4 bytes per coeff) */
+sig_y:           .space 128  /* y poly (signed int32, [-gamma,gamma]) */
+sig_w:           .space 128  /* w = centered(m*y) (signed int32) */
+sig_c:           .space 128  /* challenge poly {0,1,q-1} */
+sig_z:           .space 128  /* z = y + cs (signed int32) */
+sig_pos:         .space 16   /* positions[4] of nonzero challenge entries */
+sigma_yq_tmp:    .space 128  /* y_q / z_q scratch for poly_mul */
+sigma_liftc_tmp: .space 128  /* lift(C) from p to q */
+sigma_mz_tmp:    .space 128  /* m*z (verify scratch) */
+sigma_cw_tmp:    .space 128  /* c*lift(C) / saved c (verify scratch) */
 
 /* ------------------------------------------------------------------ */
 /* .text                                                               */
@@ -1133,6 +1155,44 @@ eve_hpke_sdf_fail:
     ldr     r0, =fmt_eve_hpke_sdf_fail
     bl      printf
 eve_hpke_sdf_done:
+
+    /* ================================================================
+       ZKP-RNL  (Ring-LWR Sigma-protocol, N=32, gamma=4096, t=4)
+       Reuses rnl_s_A / rnl_m_blind / rnl_C_A from the HKEX-RNL section.
+       ================================================================ */
+    ldr     r0, =fmt_zkp_rnl_hdr
+    bl      printf
+
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_sigma_msg
+    ldr     r2, =sigma_demo_msg
+    ldr     r2, [r2]
+    bl      printf
+
+    ldr     r0, =sigma_demo_msg
+    ldr     r0, [r0]
+    bl      rnl_sigma_sign_32
+    cmp     r0, #0
+    bne     zkp_rnl_sign_fail
+
+    ldr     r0, =sigma_demo_msg
+    ldr     r0, [r0]
+    bl      rnl_sigma_verify_32
+    cmp     r0, #1
+    bne     zkp_rnl_verify_fail
+    ldr     r0, =fmt_zkp_rnl_ok
+    bl      printf
+    b       zkp_rnl_done
+zkp_rnl_sign_fail:
+    ldr     r0, =fmt_zkp_rnl_fail
+    bl      printf
+    b       zkp_rnl_done
+zkp_rnl_verify_fail:
+    ldr     r0, =fmt_zkp_rnl_fail
+    bl      printf
+zkp_rnl_done:
+    ldr     r0, =fmt_nl
+    bl      printf
 
     mov     r0, #0
     bl      exit
@@ -2735,6 +2795,466 @@ hpke_stern_f_decap_known_32:
     mov     r0, #4              @ ds = 4
     bl      stern_hash2_32
     pop     {r4, pc}
+
+    .ltorg
+
+/* ================================================================== */
+/* sigma_fold_poly_32: r0=seed, r1=poly_ptr -> r0=new_seed            */
+/* Chain-hashes all N=32 coefficients of poly into seed via hfscx_32. */
+/* ================================================================== */
+    .thumb_func
+sigma_fold_poly_32:
+    push    {r4-r6, lr}
+    mov     r4, r0              @ seed
+    mov     r5, r1              @ poly_ptr
+    mov     r6, #0              @ i = 0
+sfp_loop:
+    cmp     r6, #RNL_N
+    bge     sfp_done
+    ldr     r0, [r5, r6, lsl #2]
+    eor     r0, r0, r4
+    bl      hfscx_32
+    mov     r4, r0
+    add     r6, r6, #1
+    b       sfp_loop
+sfp_done:
+    mov     r0, r4
+    pop     {r4-r6, pc}
+
+    .ltorg
+
+/* ================================================================== */
+/* sigma_challenge_32: r0=m_ptr,r1=C_ptr,r2=w_ptr,r3=msg -> sig_c    */
+/* Derives sparse ternary challenge polynomial via chained hfscx_32.  */
+/* Seed = hfscx_32(N) folded over m,C,w,msg.  t=4 positions expand   */
+/* from seed; signs assigned by additional hash bits.                  */
+/* ================================================================== */
+    .thumb_func
+sigma_challenge_32:
+    push    {r4-r11, lr}
+    mov     r4, r0              @ m_ptr
+    mov     r5, r1              @ C_ptr
+    mov     r6, r2              @ w_ptr
+    mov     r7, r3              @ msg scalar
+
+    @ seed0 = hfscx_32(n=32)
+    mov     r0, #RNL_N
+    bl      hfscx_32
+    mov     r8, r0              @ r8 = running seed
+
+    @ fold m_ptr coefficients into seed
+    mov     r0, r8
+    mov     r1, r4
+    bl      sigma_fold_poly_32
+    mov     r8, r0
+
+    @ fold C_ptr coefficients into seed
+    mov     r0, r8
+    mov     r1, r5
+    bl      sigma_fold_poly_32
+    mov     r8, r0
+
+    @ fold w_ptr coefficients into seed
+    mov     r0, r8
+    mov     r1, r6
+    bl      sigma_fold_poly_32
+    mov     r8, r0
+
+    @ fold msg scalar into seed
+    eor     r0, r7, r8
+    bl      hfscx_32
+    mov     r8, r0              @ final seed
+
+    @ clear sig_c[0..31]
+    ldr     r10, =sig_c
+    mov     r0, #0
+    mov     r9, #0
+sc_clr:
+    cmp     r9, #RNL_N
+    bge     sc_pos_init
+    str     r0, [r10, r9, lsl #2]
+    add     r9, r9, #1
+    b       sc_clr
+
+sc_pos_init:
+    mov     r4, #0              @ idx = 0 (safe across hfscx_32: it saves r4)
+    mov     r9, #0              @ k = found count
+    ldr     r11, =sig_pos
+
+    @ expand t=4 distinct positions in [0,31]
+sc_pos_loop:
+    cmp     r9, #SIGMA_T
+    bge     sc_signs
+
+    @ h = hfscx_32(seed XOR (idx<<16)); pos = h & 31
+    lsl     r0, r4, #16
+    eor     r0, r0, r8
+    bl      hfscx_32
+    add     r4, r4, #1          @ idx++ (r4 preserved by hfscx_32)
+    and     r2, r0, #31         @ pos = h % 32
+
+    @ duplicate check against sig_pos[0..k-1]
+    mov     r0, #0              @ j = 0
+sc_dup:
+    cmp     r0, r9
+    bge     sc_no_dup
+    ldr     r3, [r11, r0, lsl #2]
+    cmp     r3, r2
+    beq     sc_pos_loop         @ duplicate: retry with next idx
+    add     r0, r0, #1
+    b       sc_dup
+sc_no_dup:
+    str     r2, [r11, r9, lsl #2]  @ sig_pos[k] = pos
+    add     r9, r9, #1
+    b       sc_pos_loop
+
+sc_signs:
+    @ q-1 = 65536 = 0x10000
+    mov     r5, #1
+    lsl     r5, r5, #16         @ r5 = 65536 = q-1
+    mov     r9, #0              @ k = 0
+
+sc_sign_loop:
+    cmp     r9, #SIGMA_T
+    bge     sc_done
+
+    @ sign_bit = hfscx_32(seed XOR (k<<24)) & 1
+    lsl     r0, r9, #24
+    eor     r0, r0, r8
+    bl      hfscx_32
+    and     r1, r0, #1          @ sign_bit (r4,r5,r8,r9,r10,r11 preserved)
+
+    ldr     r2, [r11, r9, lsl #2]  @ pos = sig_pos[k]
+    cmp     r1, #0
+    bne     sc_sign_neg
+    mov     r3, #1
+    b       sc_sign_store
+sc_sign_neg:
+    mov     r3, r5              @ q-1
+sc_sign_store:
+    str     r3, [r10, r2, lsl #2]  @ sig_c[pos] = val
+    add     r9, r9, #1
+    b       sc_sign_loop
+
+sc_done:
+    pop     {r4-r11, pc}
+
+    .ltorg
+
+/* ================================================================== */
+/* rnl_sigma_sign_32: r0=msg -> r0=0 success / r0=-1 exhausted        */
+/* Reads: rnl_s_A (s), rnl_m_blind (m), rnl_C_A (C, rounded)         */
+/* Writes: sig_y (y), sig_w (centered w), sig_c (challenge), sig_z (z)*/
+/* ================================================================== */
+    .thumb_func
+rnl_sigma_sign_32:
+    push    {r4-r11, lr}
+    mov     r4, r0              @ msg (preserved across retries)
+    mov     r5, #0              @ attempt counter
+    movw    r6, #200            @ max attempts
+
+sign_attempt:
+    cmp     r5, r6
+    bge     sign_exhausted
+    add     r5, r5, #1
+
+    @ --- sample y[i] for i=0..31 ---
+    ldr     r7, =sig_y
+    ldr     r8, =sigma_yq_tmp
+    mov     r9, #0              @ i
+    movw    r10, #8193          @ SIGMA_RANGE = 2*gamma+1
+    movw    r11, #4096          @ SIGMA_GAMMA
+
+sign_y_loop:
+    cmp     r9, #RNL_N
+    bge     sign_y_done
+    bl      prng_next           @ r0 = pseudo-random (clobbers r1,r2 only)
+    @ v = r0 % SIGMA_RANGE (= 0..8192)
+    udiv    r1, r0, r10         @ r1 = r0 / 8193
+    mls     r0, r10, r1, r0    @ r0 = r0 % 8193
+    @ y[i] = v - SIGMA_GAMMA (signed, in [-4096,4096])
+    sub     r1, r0, r11         @ r1 = y[i]
+    str     r1, [r7, r9, lsl #2]
+    @ y_q[i] = (y[i]<0) ? y[i]+q : y[i]
+    cmp     r1, #0
+    bge     sign_yq_pos
+    ldr     r2, =65537
+    add     r1, r1, r2
+sign_yq_pos:
+    str     r1, [r8, r9, lsl #2]
+    add     r9, r9, #1
+    b       sign_y_loop
+
+sign_y_done:
+    @ --- w = rnl_poly_mul(m, y_q) -> rnl_tmp ---
+    ldr     r0, =rnl_m_blind
+    ldr     r1, =rnl_f_ptr
+    str     r0, [r1]
+    ldr     r0, =sigma_yq_tmp
+    ldr     r1, =rnl_g_ptr
+    str     r0, [r1]
+    ldr     r0, =rnl_tmp
+    ldr     r1, =rnl_h_ptr
+    str     r0, [r1]
+    bl      rnl_poly_mul        @ rnl_tmp = m*y_q  (r4-r11 preserved)
+
+    @ --- center w, store to sig_w ---
+    ldr     r7, =rnl_tmp
+    ldr     r8, =sig_w
+    mov     r9, #0
+    movw    r10, #32768         @ q/2
+sign_center_w:
+    cmp     r9, #RNL_N
+    bge     sign_challenge
+    ldr     r0, [r7, r9, lsl #2]   @ w[i] in [0,q-1]
+    cmp     r0, r10
+    ble     sign_cw_pos
+    ldr     r1, =65537
+    sub     r0, r0, r1              @ w[i] -= q
+sign_cw_pos:
+    str     r0, [r8, r9, lsl #2]
+    add     r9, r9, #1
+    b       sign_center_w
+
+sign_challenge:
+    @ --- sigma_challenge_32(m, C, sig_w, msg) -> sig_c ---
+    ldr     r0, =rnl_m_blind
+    ldr     r1, =rnl_C_A
+    ldr     r2, =sig_w
+    mov     r3, r4              @ msg
+    bl      sigma_challenge_32  @ (r4-r11 preserved)
+
+    @ --- cs = rnl_poly_mul(sig_c, s) -> rnl_tmp2 ---
+    ldr     r0, =sig_c
+    ldr     r1, =rnl_f_ptr
+    str     r0, [r1]
+    ldr     r0, =rnl_s_A
+    ldr     r1, =rnl_g_ptr
+    str     r0, [r1]
+    ldr     r0, =rnl_tmp2
+    ldr     r1, =rnl_h_ptr
+    str     r0, [r1]
+    bl      rnl_poly_mul        @ rnl_tmp2 = c*s
+
+    @ --- compute z[i]=y[i]+centered(cs[i]); check |z[i]|<=SIGMA_BOUND ---
+    ldr     r7, =rnl_tmp2       @ cs (raw, [0,q-1])
+    ldr     r8, =sig_y          @ y (signed)
+    ldr     r9, =sig_z          @ z output
+    mov     r10, #0             @ i
+    movw    r11, #32768         @ q/2
+
+sign_z_loop:
+    cmp     r10, #RNL_N
+    bge     sign_z_done
+    @ cs_cent[i]: center cs[i] from [0,q-1] to signed
+    ldr     r0, [r7, r10, lsl #2]
+    cmp     r0, r11
+    ble     sign_cs_pos
+    ldr     r2, =65537
+    sub     r0, r0, r2              @ cs[i] -= q
+sign_cs_pos:
+    @ z[i] = y[i] + cs_cent[i]
+    ldr     r1, [r8, r10, lsl #2]
+    add     r0, r0, r1
+    @ bound check: |z[i]| <= SIGMA_BOUND = 4092
+    movw    r2, #4092
+    cmp     r0, r2
+    bgt     sign_attempt            @ z[i] > 4092: retry
+    neg     r2, r0
+    movw    r1, #4092
+    cmp     r2, r1
+    bgt     sign_attempt            @ z[i] < -4092: retry
+    @ store z[i]
+    str     r0, [r9, r10, lsl #2]
+    add     r10, r10, #1
+    b       sign_z_loop
+
+sign_z_done:
+    mov     r0, #0
+    pop     {r4-r11, pc}
+
+sign_exhausted:
+    mvn     r0, #0              @ r0 = 0xFFFFFFFF = -1
+    pop     {r4-r11, pc}
+
+    .ltorg
+
+/* ================================================================== */
+/* rnl_sigma_verify_32: r0=msg -> r0=1 ok / r0=0 fail                 */
+/* Reads: sig_w, sig_c, sig_z, rnl_m_blind, rnl_C_A                  */
+/* Steps: (1) ||z||∞<=bound  (2) c'==c  (3) ||mz-cL-w||∞<=slack     */
+/* ================================================================== */
+    .thumb_func
+rnl_sigma_verify_32:
+    push    {r4-r11, lr}
+    mov     r4, r0              @ msg
+
+    @ --- (1) check ||z||∞ <= SIGMA_BOUND = 4092 ---
+    ldr     r5, =sig_z
+    mov     r6, #0              @ i
+sv_bound_loop:
+    cmp     r6, #RNL_N
+    bge     sv_bound_ok
+    ldr     r0, [r5, r6, lsl #2]   @ z[i] (signed)
+    movw    r7, #4092               @ SIGMA_BOUND
+    cmp     r0, r7
+    bgt     sv_fail
+    neg     r1, r0
+    cmp     r1, r7
+    bgt     sv_fail
+    add     r6, r6, #1
+    b       sv_bound_loop
+sv_bound_ok:
+
+    @ --- (2a) save sig_c -> sigma_cw_tmp ---
+    ldr     r5, =sig_c
+    ldr     r6, =sigma_cw_tmp
+    mov     r7, #0
+sv_save_c:
+    cmp     r7, #RNL_N
+    bge     sv_rechallenge
+    ldr     r0, [r5, r7, lsl #2]
+    str     r0, [r6, r7, lsl #2]
+    add     r7, r7, #1
+    b       sv_save_c
+
+sv_rechallenge:
+    @ --- (2b) recompute challenge -> sig_c ---
+    ldr     r0, =rnl_m_blind
+    ldr     r1, =rnl_C_A
+    ldr     r2, =sig_w
+    mov     r3, r4
+    bl      sigma_challenge_32  @ sig_c = c'(m,C,w,msg)
+
+    @ --- (2c) compare sigma_cw_tmp (original c) with sig_c (c') ---
+    ldr     r5, =sig_c
+    ldr     r6, =sigma_cw_tmp
+    mov     r7, #0
+sv_cmp_c:
+    cmp     r7, #RNL_N
+    bge     sv_cmp_ok
+    ldr     r0, [r5, r7, lsl #2]
+    ldr     r1, [r6, r7, lsl #2]
+    cmp     r0, r1
+    bne     sv_fail
+    add     r7, r7, #1
+    b       sv_cmp_c
+sv_cmp_ok:
+
+    @ --- (2d) restore sig_c <- sigma_cw_tmp (needed for step 3) ---
+    ldr     r5, =sig_c
+    ldr     r6, =sigma_cw_tmp
+    mov     r7, #0
+sv_restore_c:
+    cmp     r7, #RNL_N
+    bge     sv_lift
+    ldr     r0, [r6, r7, lsl #2]
+    str     r0, [r5, r7, lsl #2]
+    add     r7, r7, #1
+    b       sv_restore_c
+
+sv_lift:
+    @ --- (3a) lift(C_A) -> sigma_liftc_tmp ---
+    ldr     r0, =sigma_liftc_tmp
+    ldr     r1, =rnl_C_A
+    mov     r2, #RNL_P          @ from_p = 4096
+    ldr     r3, =65537          @ to_q
+    bl      rnl_lift            @ (r4-r9 preserved by rnl_lift)
+
+    @ --- (3b) z_q[i] from sig_z -> sigma_yq_tmp ---
+    ldr     r5, =sig_z
+    ldr     r6, =sigma_yq_tmp
+    mov     r7, #0
+sv_zq:
+    cmp     r7, #RNL_N
+    bge     sv_mz
+    ldr     r0, [r5, r7, lsl #2]
+    cmp     r0, #0
+    bge     sv_zq_pos
+    ldr     r1, =65537
+    add     r0, r0, r1          @ z_q = z + q
+sv_zq_pos:
+    str     r0, [r6, r7, lsl #2]
+    add     r7, r7, #1
+    b       sv_zq
+
+sv_mz:
+    @ --- (3c) m * z_q -> sigma_mz_tmp ---
+    ldr     r0, =rnl_m_blind
+    ldr     r1, =rnl_f_ptr
+    str     r0, [r1]
+    ldr     r0, =sigma_yq_tmp
+    ldr     r1, =rnl_g_ptr
+    str     r0, [r1]
+    ldr     r0, =sigma_mz_tmp
+    ldr     r1, =rnl_h_ptr
+    str     r0, [r1]
+    bl      rnl_poly_mul
+
+    @ --- (3d) sig_c * sigma_liftc_tmp -> sigma_cw_tmp ---
+    ldr     r0, =sig_c
+    ldr     r1, =rnl_f_ptr
+    str     r0, [r1]
+    ldr     r0, =sigma_liftc_tmp
+    ldr     r1, =rnl_g_ptr
+    str     r0, [r1]
+    ldr     r0, =sigma_cw_tmp
+    ldr     r1, =rnl_h_ptr
+    str     r0, [r1]
+    bl      rnl_poly_mul
+
+    @ --- (3e) check ||mz - cL - w_q||∞ <= SIGMA_SLACK = 32 ---
+    ldr     r5, =sigma_mz_tmp
+    ldr     r6, =sigma_cw_tmp
+    ldr     r7, =sig_w
+    mov     r8, #0              @ i
+    movw    r9, #32768          @ q/2
+    movw    r10, #32            @ SIGMA_SLACK
+
+sv_slack_loop:
+    cmp     r8, #RNL_N
+    bge     sv_ok
+
+    ldr     r0, [r5, r8, lsl #2]   @ mz[i]   [0,q-1]
+    ldr     r1, [r6, r8, lsl #2]   @ cL[i]   [0,q-1]
+    ldr     r2, [r7, r8, lsl #2]   @ w[i]    signed
+    @ w_q = (w<0) ? w+q : w
+    cmp     r2, #0
+    bge     sv_wq_pos
+    ldr     r11, =65537
+    add     r2, r2, r11
+sv_wq_pos:
+    @ raw = mz - cL - w_q  (may be negative)
+    sub     r3, r0, r1
+    sub     r3, r3, r2
+    @ add 2*q = 131074 to make positive: raw in [-(2q-2), q-1] + 131074 >= 2
+    ldr     r11, =131074
+    add     r3, r3, r11         @ r3 in [2, 3q-1], positive
+    @ diff = r3 % q
+    ldr     r11, =65537
+    udiv    r0, r3, r11
+    mls     r3, r11, r0, r3     @ r3 = r3 % q  [0, q-1]
+    @ center: if r3 > q/2: r3 -= q
+    cmp     r3, r9
+    ble     sv_centered
+    ldr     r11, =65537
+    sub     r3, r3, r11
+sv_centered:
+    @ |r3| <= SIGMA_SLACK?
+    cmp     r3, r10
+    bgt     sv_fail
+    neg     r0, r3
+    cmp     r0, r10
+    bgt     sv_fail
+    add     r8, r8, #1
+    b       sv_slack_loop
+
+sv_ok:
+    mov     r0, #1
+    pop     {r4-r11, pc}
+sv_fail:
+    mov     r0, #0
+    pop     {r4-r11, pc}
 
     .ltorg
 

@@ -1366,4 +1366,527 @@ static inline void hpke_decrypt(const BitArray *ct, const BitArray *R,
     ba_fscx_revolve(pt_out, ct, &dec_key, R_VALUE);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * ZKP-RNL  Ring-LWR Σ-protocol (Lyubashevsky / Fiat-Shamir)
+ * SecurityProofs-3.md §11.10.2
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * A proof-of-knowledge for the relation { (m,C_p ; s) : C_p = round_p(m·s) }
+ * in Z_q[x]/(x^n+1).  Proof = (w, c, z); accepted iff:
+ *   ‖z‖∞ ≤ γ−t  and  round_p(m·z) ≈ w + c·lift(C_p)  (within slack).
+ *
+ * Parameters are chosen per polynomial dimension n; for n = RNL_N = 256 the
+ * NTT-based rnl_poly_mul is used; for smaller n a naive O(n²) multiply is used.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define SIGMA_MAX_ATTEMPTS 1000
+
+static void sigma_params(int n, int *g_out, int *t_out)
+{
+    *t_out = (n <= 32) ? 4 : (n <= 64) ? 8 : (n <= 128) ? 12 : 16;
+    *g_out = (n <= 32) ? 4096 : 8192;
+}
+
+/* O(n²) negacyclic poly mul in Z_q[x]/(x^n+1).  Used when n ≠ RNL_N. */
+static void sigma_poly_mul_n(int32_t *h, const int32_t *f, const int32_t *g, int n, int q)
+{
+    int i, j;
+    int64_t *tmp = (int64_t *)calloc((size_t)n, sizeof(int64_t));
+    if (!tmp) { fputs("sigma_poly_mul_n OOM\n", stderr); exit(1); }
+    for (i = 0; i < n; i++) {
+        int64_t fi = (uint32_t)f[i];
+        for (j = 0; j < n; j++) {
+            int k = (i + j) % n;
+            int64_t v = fi * (uint32_t)g[j] % q;
+            tmp[k] = (i + j >= n) ? (tmp[k] - v + q) % q : (tmp[k] + v) % q;
+        }
+    }
+    for (i = 0; i < n; i++) h[i] = (int32_t)tmp[i];
+    free(tmp);
+}
+
+/* Serialize n poly coefficients as n×4 big-endian bytes (lower u32 each). */
+static void sigma_poly_bytes(uint8_t *out, const int32_t *p, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        uint32_t v = (uint32_t)p[i];
+        out[i*4+0] = (uint8_t)(v >> 24); out[i*4+1] = (uint8_t)(v >> 16);
+        out[i*4+2] = (uint8_t)(v >>  8); out[i*4+3] = (uint8_t)v;
+    }
+}
+
+/* Fiat-Shamir: derive a sparse ternary challenge polynomial c from (m, C_p, w, msg).
+ * t nonzero coefficients in {1, q-1}.  Matches Python _sigma_challenge exactly. */
+static void sigma_challenge(const int32_t *m, const int32_t *Cp, const int32_t *w,
+                            int n, int q, int t, const uint8_t *msg, size_t mlen,
+                            int32_t *c_out)
+{
+    uint8_t seed[32];
+    /* Hash: 4B n | n×4B m | n×4B C | n×4B w | msg */
+    size_t bl = 4 + (size_t)n * 12 + mlen;
+    uint8_t *buf = (uint8_t *)malloc(bl);
+    if (!buf) { fputs("sigma_challenge OOM\n", stderr); exit(1); }
+    buf[0] = (uint8_t)((uint32_t)n >> 24); buf[1] = (uint8_t)((uint32_t)n >> 16);
+    buf[2] = (uint8_t)((uint32_t)n >>  8); buf[3] = (uint8_t)n;
+    sigma_poly_bytes(buf + 4,          m, n);
+    sigma_poly_bytes(buf + 4 + n * 4, Cp, n);
+    sigma_poly_bytes(buf + 4 + n * 8,  w, n);
+    if (mlen) memcpy(buf + 4 + n * 12, msg, mlen);
+    hfscx_256(buf, bl, NULL, seed);
+    free(buf);
+
+    /* Position expansion: seed||"pos"||4B_idx → sample t distinct positions in [0,n) */
+    int *pos = (int *)malloc((size_t)t * sizeof(int));
+    if (!pos) { fputs("sigma_challenge pos OOM\n", stderr); exit(1); }
+    uint8_t ext[39], h[32];
+    memcpy(ext, seed, 32); memcpy(ext + 32, "pos", 3);
+    int np = 0, idx = 0;
+    while (np < t) {
+        ext[35] = (uint8_t)(idx >> 24); ext[36] = (uint8_t)(idx >> 16);
+        ext[37] = (uint8_t)(idx >>  8); ext[38] = (uint8_t)idx;
+        hfscx_256(ext, 39, NULL, h);
+        uint32_t v = (uint32_t)(((uint32_t)h[0]<<24|(uint32_t)h[1]<<16|
+                                  (uint32_t)h[2]<<8|h[3]) % (uint32_t)n);
+        int dup = 0, k;
+        for (k = 0; k < np; k++) if (pos[k] == (int)v) { dup = 1; break; }
+        if (!dup) pos[np++] = (int)v;
+        idx++;
+    }
+    /* Sign expansion: seed||"sgn"||4B_k → ±1 per position */
+    memset(c_out, 0, (size_t)n * sizeof(int32_t));
+    memcpy(ext + 32, "sgn", 3);
+    for (int k = 0; k < t; k++) {
+        ext[35] = (uint8_t)(k >> 24); ext[36] = (uint8_t)(k >> 16);
+        ext[37] = (uint8_t)(k >>  8); ext[38] = (uint8_t)k;
+        hfscx_256(ext, 39, NULL, h);
+        c_out[pos[k]] = (h[0] & 1) ? (int32_t)(q - 1) : 1;
+    }
+    free(pos);
+}
+
+/* ZKP-RNL prover.
+ * s, m, Cp: n-element arrays in Z_q.  w_out, c_out, z_out: caller-allocated, n each.
+ * Returns 0 on success, -1 if SIGMA_MAX_ATTEMPTS exhausted. */
+static int rnl_sigma_sign(const int32_t *s, const int32_t *m, const int32_t *Cp,
+                          int n, const uint8_t *msg, size_t mlen, FILE *urnd,
+                          int32_t *w_out, int32_t *c_out, int32_t *z_out)
+{
+    int gamma, t;
+    sigma_params(n, &gamma, &t);
+    int bound = gamma - t, q = RNL_Q;
+    int64_t hq = q / 2;
+    uint32_t range = (uint32_t)(2 * gamma + 1);
+    uint32_t thresh = (1u << 24) - (1u << 24) % range;
+
+    int32_t *y   = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *y_q = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *my  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *ct  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *cs  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    if (!y || !y_q || !my || !ct || !cs) { fputs("OOM\n", stderr); exit(1); }
+
+    int ok = 0, attempt, i;
+    for (attempt = 0; attempt < SIGMA_MAX_ATTEMPTS; attempt++) {
+        for (i = 0; i < n; i++) {
+            uint32_t v;
+            do { uint8_t b[3];
+                 if (fread(b, 1, 3, urnd) != 3) { fputs("urandom\n", stderr); exit(1); }
+                 v = ((uint32_t)b[0] << 16) | ((uint32_t)b[1] << 8) | b[2];
+            } while (v >= thresh);
+            y[i] = (int32_t)(v % range) - gamma;
+        }
+        for (i = 0; i < n; i++) y_q[i] = (int32_t)(((int64_t)y[i] % q + q) % q);
+
+        if (n == RNL_N) rnl_poly_mul(my, m, y_q);
+        else            sigma_poly_mul_n(my, m, y_q, n, q);
+
+        for (i = 0; i < n; i++)
+            w_out[i] = (my[i] > (int32_t)hq) ? (int32_t)(my[i] - q) : my[i];
+
+        sigma_challenge(m, Cp, w_out, n, q, t, msg, mlen, ct);
+
+        if (n == RNL_N) rnl_poly_mul(cs, ct, s);
+        else            sigma_poly_mul_n(cs, ct, s, n, q);
+
+        int ok2 = 1;
+        for (i = 0; i < n; i++) {
+            int32_t csi = (cs[i] > (int32_t)hq) ? (int32_t)(cs[i] - q) : cs[i];
+            z_out[i] = y[i] + csi;
+            if (z_out[i] > bound || z_out[i] < -bound) ok2 = 0;
+        }
+        if (ok2) { memcpy(c_out, ct, (size_t)n * sizeof(int32_t)); ok = 1; break; }
+    }
+    free(y); free(y_q); free(my); free(ct); free(cs);
+    return ok ? 0 : -1;
+}
+
+/* ZKP-RNL verifier.  Returns 1 if proof is valid, 0 otherwise. */
+static int rnl_sigma_verify(const int32_t *m, const int32_t *Cp,
+                            int n, const uint8_t *msg, size_t mlen,
+                            const int32_t *w, const int32_t *c, const int32_t *z)
+{
+    int gamma, t;
+    sigma_params(n, &gamma, &t);
+    int bound = gamma - t, q = RNL_Q, p = RNL_P, i, valid = 1;
+    int64_t hq = q / 2, slack = (int64_t)t * (q / (2 * p) + 1);
+
+    for (i = 0; i < n; i++) if (z[i] > bound || z[i] < -bound) return 0;
+
+    int32_t *cc  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *z_q = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *lft = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *mz  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *cL  = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    int32_t *w_q = (int32_t *)malloc((size_t)n * sizeof(int32_t));
+    if (!cc || !z_q || !lft || !mz || !cL || !w_q) { fputs("OOM\n", stderr); exit(1); }
+
+    sigma_challenge(m, Cp, w, n, q, t, msg, mlen, cc);
+    for (i = 0; i < n; i++) if (cc[i] != c[i]) { valid = 0; goto vdone; }
+
+    for (i = 0; i < n; i++) z_q[i] = (int32_t)(((int64_t)z[i]  % q + q) % q);
+    for (i = 0; i < n; i++) lft[i] = (int32_t)((((int64_t)Cp[i] * q) + p/2) / p % q);
+    for (i = 0; i < n; i++) w_q[i] = (int32_t)(((int64_t)w[i]  % q + q) % q);
+
+    if (n == RNL_N) { rnl_poly_mul(mz, m, z_q); rnl_poly_mul(cL, c, lft); }
+    else            { sigma_poly_mul_n(mz, m, z_q, n, q); sigma_poly_mul_n(cL, c, lft, n, q); }
+
+    for (i = 0; i < n; i++) {
+        int64_t d = ((int64_t)mz[i] - cL[i] - w_q[i] + 2LL * q) % q;
+        if (d > hq) d -= q;
+        if (d > slack || d < -slack) { valid = 0; break; }
+    }
+vdone:
+    free(cc); free(z_q); free(lft); free(mz); free(cL); free(w_q);
+    return valid;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * ZKP-NL  NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
+ * SecurityProofs-3.md §11.10.3
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Proves knowledge of A s.t. nl_fscx_v1(A, B) = y (n ≤ ZKP_NL_MAX_N bits).
+ * Circuit: F1(A, B) = FSCX(A,B)  XOR  ROL_{n/4}((A+B) mod 2^n).
+ * The carry chain of (A+B) contributes n−1 AND gates (each 3-party shared).
+ * Soundness: (2/3)^R; R = ZKP_NL_PROD_ROUNDS gives 128-bit security.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define ZKP_NL_DEFAULT_N    8
+#define ZKP_NL_DEMO_ROUNDS  4
+#define ZKP_NL_PROD_ROUNDS  219
+#define ZKP_NL_MAX_N        32
+
+typedef struct {
+    uint8_t  com_0[32], com_1[32], com_2[32];
+    uint8_t  e;          /* hidden party index 0,1,2 */
+    uint8_t *view_p1;    /* heap: view of party (e+1)%3 */
+    uint8_t *view_p2;    /* heap: view of party (e+2)%3 */
+    size_t   view_len;
+} ZkpNlRound;
+
+static void zkp_nl_proof_free(ZkpNlRound *proof, int rounds)
+{
+    int j;
+    if (!proof) return;
+    for (j = 0; j < rounds; j++) { free(proof[j].view_p1); free(proof[j].view_p2); }
+    free(proof);
+}
+
+/* n-bit cyclic left-rotate. */
+static uint32_t zkp_nl_rol(uint32_t x, int r, int n)
+{
+    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    r = ((r % n) + n) % n;
+    return r ? ((x << r) | (x >> (n - r))) & mask : x & mask;
+}
+
+/* Commitment: HFSCX-256( j(4B) || p(1B) || tape(32B) || out_share(nb B) ). */
+static void zkp_nl_commit(uint8_t out[32], int j, int p,
+                          const uint8_t tape[32], uint32_t out_share, int nb)
+{
+    uint8_t buf[4 + 1 + 32 + 4];
+    int k;
+    buf[0]=(uint8_t)(j>>24); buf[1]=(uint8_t)(j>>16); buf[2]=(uint8_t)(j>>8); buf[3]=(uint8_t)j;
+    buf[4] = (uint8_t)p;
+    memcpy(buf + 5, tape, 32);
+    for (k = 0; k < nb; k++) buf[5+32+k] = (uint8_t)(out_share >> (8*(nb-1-k)));
+    hfscx_256(buf, (size_t)(5 + 32 + nb), NULL, out);
+}
+
+/* One PRG bit from tape and gate index. */
+static int zkp_nl_prg_bit(const uint8_t tape[32], int gate_id)
+{
+    uint8_t buf[36], h[32];
+    memcpy(buf, tape, 32);
+    buf[32]=(uint8_t)(gate_id>>24); buf[33]=(uint8_t)(gate_id>>16);
+    buf[34]=(uint8_t)(gate_id>>8);  buf[35]=(uint8_t)gate_id;
+    hfscx_256(buf, 36, NULL, h);
+    return h[0] & 1;
+}
+
+/* 3-party ZKBoo evaluation of nl_fscx_v1(A, B).
+ * shares: XOR shares of A.  tapes: per-party 32-byte tape.  B: public constant.
+ * Fills out0/out1/out2 (XOR shares of F1(A,B)) and gv0/gv1/gv2 (gate views, n-1 bytes each). */
+static void zkp_nl_eval_3p(
+    uint32_t s0, uint32_t s1, uint32_t s2,
+    const uint8_t *t0, const uint8_t *t1, const uint8_t *t2,
+    uint32_t B, int n,
+    uint32_t *out0, uint32_t *out1, uint32_t *out2,
+    uint8_t *gv0, uint8_t *gv1, uint8_t *gv2)
+{
+    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    uint32_t sh[3] = { s0, s1, s2 };
+    const uint8_t *tp[3] = { t0, t1, t2 };
+    uint8_t *gv[3] = { gv0, gv1, gv2 };
+    uint32_t carry[ZKP_NL_MAX_N + 1][3];
+    int i, p;
+    memset(carry, 0, sizeof(carry));
+
+    for (i = 0; i < n - 1; i++) {
+        int Bi = (B >> i) & 1;
+        int ai[3], ci[3], ri[3], ao[3];
+        for (p = 0; p < 3; p++) {
+            ai[p] = (sh[p] >> i) & 1; ci[p] = (int)carry[i][p];
+            ri[p] = zkp_nl_prg_bit(tp[p], i);
+        }
+        for (p = 0; p < 3; p++) {
+            int p1 = (p + 1) % 3;
+            ao[p] = (ai[p]&ci[p]) ^ (ai[p]&ci[p1]) ^ (ai[p1]&ci[p]) ^ ri[p] ^ ri[p1];
+            gv[p][i] = (uint8_t)(ai[p] | (ci[p] << 1) | (ao[p] << 2));
+        }
+        for (p = 0; p < 3; p++)
+            carry[i+1][p] = (uint32_t)((Bi & ai[p]) ^ ao[p] ^ (Bi & ci[p]));
+    }
+
+    uint32_t sum_s[3] = {0, 0, 0};
+    for (i = 0; i < n; i++) {
+        int Bi = (B >> i) & 1;
+        for (p = 0; p < 3; p++) {
+            int sb = ((sh[p] >> i) & 1) ^ Bi ^ (int)carry[i][p];
+            sum_s[p] ^= (uint32_t)sb << i;
+        }
+    }
+
+    uint32_t rot_s[3], lin_s[3];
+    uint32_t Bc = (B ^ zkp_nl_rol(B,1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
+    for (p = 0; p < 3; p++) {
+        rot_s[p] = zkp_nl_rol(sum_s[p], n/4, n);
+        lin_s[p] = (sh[p] ^ zkp_nl_rol(sh[p],1,n) ^ zkp_nl_rol(sh[p],n-1,n)) & mask;
+    }
+    lin_s[0] ^= Bc;
+
+    *out0 = (lin_s[0] ^ rot_s[0]) & mask;
+    *out1 = (lin_s[1] ^ rot_s[1]) & mask;
+    *out2 = (lin_s[2] ^ rot_s[2]) & mask;
+}
+
+/* Pack one party's view: share(nb) || tape(32) || out_share(nb) || gate_bytes(n-1). */
+static void zkp_nl_pack_view(uint8_t *buf, uint32_t share, const uint8_t tape[32],
+                              uint32_t out_share, const uint8_t *gate_bytes, int n, int nb)
+{
+    int k;
+    for (k = 0; k < nb; k++) buf[k] = (uint8_t)(share >> (8*(nb-1-k)));
+    memcpy(buf + nb, tape, 32);
+    for (k = 0; k < nb; k++) buf[nb+32+k] = (uint8_t)(out_share >> (8*(nb-1-k)));
+    if (n > 1) memcpy(buf + nb + 32 + nb, gate_bytes, (size_t)(n-1));
+}
+
+/* Unpack a view buffer; returns pointers into buf for tape and gate_bytes. */
+static void zkp_nl_unpack_view(const uint8_t *buf, int n, int nb,
+                                uint32_t *share_out, const uint8_t **tape_out,
+                                uint32_t *out_share_out, const uint8_t **gv_out)
+{
+    int k; uint32_t v = 0;
+    for (k = 0; k < nb; k++) v = (v << 8) | buf[k];
+    *share_out = v;
+    *tape_out  = buf + nb;
+    v = 0;
+    for (k = 0; k < nb; k++) v = (v << 8) | buf[nb+32+k];
+    *out_share_out = v;
+    *gv_out        = buf + nb + 32 + nb;
+}
+
+/* Direct evaluation of nl_fscx_v1(A, B) as a scalar (for keygen). */
+static uint32_t zkp_nl_f1(uint32_t A, uint32_t B, int n)
+{
+    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    uint32_t lin = (A ^ B ^ zkp_nl_rol(A,1,n) ^ zkp_nl_rol(B,1,n)
+                    ^ zkp_nl_rol(A,n-1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
+    return (lin ^ zkp_nl_rol((A+B)&mask, n/4, n)) & mask;
+}
+
+/* Generate a ZKP-NL keypair (n ≤ ZKP_NL_MAX_N).
+ * A is the private witness; (B, y) is the public statement. */
+static void zkp_nl_keygen(int n, FILE *urnd, uint32_t *A_out, uint32_t *B_out, uint32_t *y_out)
+{
+    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    int nb = (n + 7) / 8, k;
+    uint32_t A = 0, B = 0;
+    uint8_t rb;
+    for (k = 0; k < nb; k++) {
+        if (fread(&rb, 1, 1, urnd) != 1) { fputs("urandom\n", stderr); exit(1); }
+        A = (A << 8) | rb;
+    }
+    for (k = 0; k < nb; k++) {
+        if (fread(&rb, 1, 1, urnd) != 1) { fputs("urandom\n", stderr); exit(1); }
+        B = (B << 8) | rb;
+    }
+    A &= mask; B &= mask;
+    *A_out = A; *B_out = B; *y_out = zkp_nl_f1(A, B, n);
+}
+
+/* Prove knowledge of A s.t. F1(A, B) = y.
+ * Returns a heap-allocated array of `rounds` ZkpNlRound structs; free with zkp_nl_proof_free. */
+static ZkpNlRound *zkp_nl_prove(uint32_t A, uint32_t B, uint32_t y, int n, int rounds,
+                                 const uint8_t *msg, size_t mlen, FILE *urnd)
+{
+    int nb = (n + 7) / 8;
+    size_t gv_stride = (n > 1) ? (size_t)(n-1) : 1;
+    size_t view_len  = (size_t)(2*nb) + 32 + (n > 1 ? (size_t)(n-1) : 0);
+    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+
+    ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
+    uint8_t *all_coms  = (uint8_t *)malloc((size_t)rounds * 3 * 32);
+    uint32_t *all_sh   = (uint32_t *)malloc((size_t)rounds * 3 * sizeof(uint32_t));
+    uint8_t  *all_tp   = (uint8_t *)malloc((size_t)rounds * 3 * 32);
+    uint32_t *all_out  = (uint32_t *)malloc((size_t)rounds * 3 * sizeof(uint32_t));
+    uint8_t  *all_gv   = (uint8_t *)malloc((size_t)rounds * 3 * gv_stride);
+    if (!proof||!all_coms||!all_sh||!all_tp||!all_out||!all_gv)
+        { fputs("zkp_nl_prove OOM\n", stderr); exit(1); }
+    memset(all_gv, 0, (size_t)rounds * 3 * gv_stride);
+
+    int j, p, k;
+    /* Phase 1: generate shares, tapes, evaluate circuit, commit. */
+    for (j = 0; j < rounds; j++) {
+        uint32_t s0 = 0, s1 = 0;
+        uint8_t rb;
+        for (k = 0; k < nb; k++) {
+            if (fread(&rb,1,1,urnd)!=1){fputs("urandom\n",stderr);exit(1);} s0=(s0<<8)|rb;
+        }
+        for (k = 0; k < nb; k++) {
+            if (fread(&rb,1,1,urnd)!=1){fputs("urandom\n",stderr);exit(1);} s1=(s1<<8)|rb;
+        }
+        s0 &= mask; s1 &= mask;
+        uint32_t s2 = (A ^ s0 ^ s1) & mask;
+        all_sh[j*3+0] = s0; all_sh[j*3+1] = s1; all_sh[j*3+2] = s2;
+        for (p = 0; p < 3; p++)
+            if (fread(all_tp+(j*3+p)*32, 1, 32, urnd) != 32)
+                { fputs("urandom tape\n", stderr); exit(1); }
+
+        zkp_nl_eval_3p(s0, s1, s2,
+                        all_tp+(j*3+0)*32, all_tp+(j*3+1)*32, all_tp+(j*3+2)*32,
+                        B, n,
+                        &all_out[j*3+0], &all_out[j*3+1], &all_out[j*3+2],
+                        all_gv+(j*3+0)*gv_stride,
+                        all_gv+(j*3+1)*gv_stride,
+                        all_gv+(j*3+2)*gv_stride);
+
+        for (p = 0; p < 3; p++)
+            zkp_nl_commit(all_coms+(j*3+p)*32, j, p,
+                          all_tp+(j*3+p)*32, all_out[j*3+p], nb);
+    }
+
+    /* Phase 2: Fiat-Shamir challenge seed = hash(all_coms || B_bytes || y_bytes || msg). */
+    size_t ch_len = (size_t)rounds*3*32 + (size_t)nb + (size_t)nb + mlen;
+    uint8_t *ch_buf = (uint8_t *)malloc(ch_len);
+    if (!ch_buf) { fputs("OOM\n", stderr); exit(1); }
+    memcpy(ch_buf, all_coms, (size_t)rounds*3*32);
+    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+k]    = (uint8_t)(B >> (8*(nb-1-k)));
+    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+nb+k]  = (uint8_t)(y >> (8*(nb-1-k)));
+    if (mlen) memcpy(ch_buf+rounds*3*32+nb+nb, msg, mlen);
+    uint8_t ch_seed[32];
+    hfscx_256(ch_buf, ch_len, NULL, ch_seed);
+    free(ch_buf);
+
+    /* Phase 3: derive per-round challenges and pack views. */
+    for (j = 0; j < rounds; j++) {
+        uint8_t ext[36], h[32];
+        memcpy(ext, ch_seed, 32);
+        ext[32]=(uint8_t)(j>>24); ext[33]=(uint8_t)(j>>16);
+        ext[34]=(uint8_t)(j>>8);  ext[35]=(uint8_t)j;
+        hfscx_256(ext, 36, NULL, h);
+        int e = h[0] % 3, p1 = (e+1)%3, p2 = (e+2)%3;
+
+        memcpy(proof[j].com_0, all_coms+(j*3+0)*32, 32);
+        memcpy(proof[j].com_1, all_coms+(j*3+1)*32, 32);
+        memcpy(proof[j].com_2, all_coms+(j*3+2)*32, 32);
+        proof[j].e        = (uint8_t)e;
+        proof[j].view_len = view_len;
+        proof[j].view_p1  = (uint8_t *)malloc(view_len);
+        proof[j].view_p2  = (uint8_t *)malloc(view_len);
+        if (!proof[j].view_p1 || !proof[j].view_p2)
+            { fputs("OOM view\n", stderr); exit(1); }
+
+        zkp_nl_pack_view(proof[j].view_p1, all_sh[j*3+p1], all_tp+(j*3+p1)*32,
+                          all_out[j*3+p1], all_gv+(j*3+p1)*gv_stride, n, nb);
+        zkp_nl_pack_view(proof[j].view_p2, all_sh[j*3+p2], all_tp+(j*3+p2)*32,
+                          all_out[j*3+p2], all_gv+(j*3+p2)*gv_stride, n, nb);
+    }
+    free(all_coms); free(all_sh); free(all_tp); free(all_out); free(all_gv);
+    return proof;
+}
+
+/* Verify a ZKBoo proof.  Returns 1 if valid, 0 otherwise. */
+static int zkp_nl_verify(uint32_t B, uint32_t y, int n, int rounds,
+                          const uint8_t *msg, size_t mlen, ZkpNlRound *proof)
+{
+    int nb = (n + 7) / 8, j, k;
+
+    /* Recompute FS challenge seed. */
+    size_t ch_len = (size_t)rounds*3*32 + (size_t)nb + (size_t)nb + mlen;
+    uint8_t *ch_buf = (uint8_t *)malloc(ch_len);
+    if (!ch_buf) { fputs("OOM\n", stderr); exit(1); }
+    for (j = 0; j < rounds; j++) {
+        memcpy(ch_buf+j*3*32+0*32, proof[j].com_0, 32);
+        memcpy(ch_buf+j*3*32+1*32, proof[j].com_1, 32);
+        memcpy(ch_buf+j*3*32+2*32, proof[j].com_2, 32);
+    }
+    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+k]    = (uint8_t)(B >> (8*(nb-1-k)));
+    for (k = 0; k < nb; k++) ch_buf[rounds*3*32+nb+k]  = (uint8_t)(y >> (8*(nb-1-k)));
+    if (mlen) memcpy(ch_buf+rounds*3*32+nb+nb, msg, mlen);
+    uint8_t ch_seed[32];
+    hfscx_256(ch_buf, ch_len, NULL, ch_seed);
+    free(ch_buf);
+
+    for (j = 0; j < rounds; j++) {
+        uint8_t ext[36], h[32];
+        memcpy(ext, ch_seed, 32);
+        ext[32]=(uint8_t)(j>>24); ext[33]=(uint8_t)(j>>16);
+        ext[34]=(uint8_t)(j>>8);  ext[35]=(uint8_t)j;
+        hfscx_256(ext, 36, NULL, h);
+        if (h[0] % 3 != (int)proof[j].e) return 0;
+
+        int e = proof[j].e, p1 = (e+1)%3, p2 = (e+2)%3;
+        uint32_t sh_p1, sh_p2, out_p1, out_p2;
+        const uint8_t *tp_p1, *tp_p2, *gv_p1, *gv_p2;
+        zkp_nl_unpack_view(proof[j].view_p1, n, nb, &sh_p1, &tp_p1, &out_p1, &gv_p1);
+        zkp_nl_unpack_view(proof[j].view_p2, n, nb, &sh_p2, &tp_p2, &out_p2, &gv_p2);
+
+        uint8_t c_p1[32], c_p2[32];
+        zkp_nl_commit(c_p1, j, p1, tp_p1, out_p1, nb);
+        zkp_nl_commit(c_p2, j, p2, tp_p2, out_p2, nb);
+        const uint8_t *coms[3] = { proof[j].com_0, proof[j].com_1, proof[j].com_2 };
+        if (memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)) return 0;
+
+        /* Re-evaluate p1's AND gates using both revealed shares/tapes; check gate views. */
+        uint32_t carry_p1 = 0, carry_p2 = 0;
+        int i;
+        for (i = 0; i < n - 1; i++) {
+            int ai_p1 = (sh_p1 >> i) & 1, ai_p2 = (sh_p2 >> i) & 1;
+            int ci_p1 = (int)carry_p1,     ci_p2 = (int)carry_p2;
+            int Bi    = (B >> i) & 1;
+            int ri_p1 = zkp_nl_prg_bit(tp_p1, i), ri_p2 = zkp_nl_prg_bit(tp_p2, i);
+
+            int exp_ao_p1 = (ai_p1&ci_p1)^(ai_p1&ci_p2)^(ai_p2&ci_p1)^ri_p1^ri_p2;
+            if (((gv_p1[i] >> 2) & 1) != exp_ao_p1) return 0;
+
+            carry_p1 = (uint32_t)((Bi&ai_p1) ^ exp_ao_p1 ^ (Bi&ci_p1));
+            int ao_p2 = (gv_p2[i] >> 2) & 1;
+            carry_p2 = (uint32_t)((Bi&ai_p2) ^ ao_p2      ^ (Bi&ci_p2));
+        }
+    }
+    return 1;
+}
+
 #endif /* HERRADURA_H */

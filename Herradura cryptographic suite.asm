@@ -1,7 +1,8 @@
-;  Herradura Cryptographic Suite v1.8.0
+;  Herradura Cryptographic Suite v1.9.9
 ;  NASM i386 Assembly -- HKEX-GF, HSKE, HPKS, HPKE,
 ;                        HSKE-NL-A1/A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-;                        HPKS-Stern-F, HPKE-Stern-F
+;                        HPKS-Stern-F, HPKE-Stern-F,
+;                        ZKP-RNL (Ring-LWR Sigma-protocol)
 ;  KEYBITS = 32, I_VALUE = 8, R_VALUE = 24
 ;  HKEX-GF: DH over GF(2^32)*, poly x^32+x^22+x^2+x+1, generator g=3
 ;  HPKS:    Schnorr signature; s=(k-a*e) mod ORD; verify g^s*C^e==R
@@ -37,6 +38,11 @@
 %define SDF_T      2
 %define SDF_NROWS  16
 %define SDF_ROUNDS 4
+%define SIGMA_GAMMA  4096
+%define SIGMA_T      4
+%define SIGMA_BOUND  4092
+%define SIGMA_SLACK  32
+%define SIGMA_RANGE  8193
 %define RNL_KDF_DC 0x6A09E667       ; SHA-256 H0 — domain constant for KDF seed
 
 section .data
@@ -108,7 +114,7 @@ section .data
         db 0,16,8,24,4,20,12,28,2,18,10,26,6,22,14,30
         db 1,17,9,25,5,21,13,29,3,19,11,27,7,23,15,31
 
-    hdr         db "=== Herradura Cryptographic Suite v1.8.0 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
+    hdr         db "=== Herradura Cryptographic Suite v1.9.9 (NASM i386, KEYBITS=32, HKEX-GF) ===", 10
     hdr_l       equ $-hdr
 
     lbl_apriv   db "a_priv    : "
@@ -223,6 +229,13 @@ section .data
     eve_hpke_sdf_ok_l equ $-eve_hpke_sdf_ok
     eve_hpke_sdf_fail db "+ Eve guessed HPKE-Stern-F session key!", 10
     eve_hpke_sdf_fail_l equ $-eve_hpke_sdf_fail
+    zkp_rnl_hdr    db 10, "--- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4]", 10
+    zkp_rnl_hdr_l  equ $-zkp_rnl_hdr
+    zkp_rnl_ok     db "+ ZKP-RNL proof verified", 10
+    zkp_rnl_ok_l   equ $-zkp_rnl_ok
+    zkp_rnl_fail   db "- ZKP-RNL verify FAILED", 10
+    zkp_rnl_fail_l equ $-zkp_rnl_fail
+    sigma_demo_msg dd 0xDEADB00B
     lbl_K_enc    db "K (encap) : "
     lbl_K_enc_l  equ $-lbl_K_enc
     lbl_K_dec    db "K (decap) : "
@@ -266,6 +279,15 @@ section .bss
     sdf_sr_tmp  resd SDF_ROUNDS
     sdf_sy_tmp  resd SDF_ROUNDS
     sdf_chals_tmp resd SDF_ROUNDS
+    sig_y           resd RNL_N
+    sig_w           resd RNL_N
+    sig_c           resd RNL_N
+    sig_z           resd RNL_N
+    sig_pos         resd SIGMA_T
+    sigma_yq_tmp    resd RNL_N
+    sigma_liftc_tmp resd RNL_N
+    sigma_mz_tmp    resd RNL_N
+    sigma_cw_tmp    resd RNL_N
 
 section .text
 global _start
@@ -1081,6 +1103,31 @@ _start:
     mov  ecx, eve_hpke_sdf_fail_l
     call print_str
 .eve_hpke_sdf_done:
+
+    ; ================================================================== ZKP-RNL
+    mov  eax, zkp_rnl_hdr
+    mov  ecx, zkp_rnl_hdr_l
+    call print_str
+
+    mov  eax, [sigma_demo_msg]
+    call rnl_sigma_sign_32
+    test eax, eax
+    jnz  .zkp_rnl_fail
+
+    mov  eax, [sigma_demo_msg]
+    call rnl_sigma_verify_32
+    cmp  eax, 1
+    jne  .zkp_rnl_fail
+
+    mov  eax, zkp_rnl_ok
+    mov  ecx, zkp_rnl_ok_l
+    call print_str
+    jmp  .zkp_rnl_done
+.zkp_rnl_fail:
+    mov  eax, zkp_rnl_fail
+    mov  ecx, zkp_rnl_fail_l
+    call print_str
+.zkp_rnl_done:
 
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
@@ -2868,4 +2915,404 @@ hpke_stern_f_decap_known_32:
     call stern_hash2_32
     pop  ebx
     pop  ecx
+    ret
+
+; ============================================================
+; sigma_fold_poly_32: EAX=seed, EBX=poly_ptr -> EAX=new_seed
+; Folds all RNL_N poly coefficients into seed via hfscx_32.
+; hfscx_32 preserves ECX (saves it) and ESI (saved by
+; nl_fscx_revolve_v1 called inside), so both survive the call.
+; ============================================================
+sigma_fold_poly_32:
+    push ecx
+    push esi
+    mov  esi, ebx          ; esi = poly_ptr
+    xor  ecx, ecx          ; i = 0
+.sfp_loop:
+    cmp  ecx, RNL_N
+    jge  .sfp_done
+    xor  eax, [esi + ecx*4]
+    call hfscx_32
+    inc  ecx
+    jmp  .sfp_loop
+.sfp_done:
+    pop  esi
+    pop  ecx
+    ret
+
+; ============================================================
+; sigma_challenge_32: EAX=m_ptr, EBX=C_ptr, ECX=w_ptr, EDX=msg
+; Fills sig_c with SIGMA_T-sparse ternary challenge.
+; Uses local stack frame: [ebp-4]=seed, [ebp-8]=m_ptr,
+;   [ebp-12]=C_ptr, [ebp-16]=w_ptr, [ebp-20]=msg, [ebp-24]=idx.
+; ============================================================
+sigma_challenge_32:
+    push ebp
+    mov  ebp, esp
+    sub  esp, 24
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    mov  [ebp-8],  eax
+    mov  [ebp-12], ebx
+    mov  [ebp-16], ecx
+    mov  [ebp-20], edx
+
+    ; seed = hfscx_32(RNL_N), then fold m, C, w, msg
+    mov  eax, RNL_N
+    call hfscx_32
+    mov  ebx, [ebp-8]
+    call sigma_fold_poly_32
+    mov  ebx, [ebp-12]
+    call sigma_fold_poly_32
+    mov  ebx, [ebp-16]
+    call sigma_fold_poly_32
+    xor  eax, [ebp-20]
+    call hfscx_32
+    mov  [ebp-4], eax          ; save seed
+
+    ; clear sig_c
+    mov  edi, sig_c
+    xor  eax, eax
+    mov  ecx, RNL_N
+    rep  stosd
+
+    ; position expansion with duplicate rejection
+    mov  dword [ebp-24], 0     ; idx = 0
+    xor  esi, esi              ; k = 0 (positions found)
+
+.sc_pos_loop:
+    cmp  esi, SIGMA_T
+    jge  .sc_signs
+    mov  eax, [ebp-24]
+    shl  eax, 16
+    xor  eax, [ebp-4]
+    call hfscx_32
+    inc  dword [ebp-24]
+    and  eax, 31               ; pos = hash & 31
+    mov  edx, eax
+
+    xor  ecx, ecx              ; j = 0
+.sc_dup:
+    cmp  ecx, esi
+    jge  .sc_no_dup
+    cmp  edx, [sig_pos + ecx*4]
+    je   .sc_pos_loop
+    inc  ecx
+    jmp  .sc_dup
+.sc_no_dup:
+    mov  [sig_pos + esi*4], edx
+    inc  esi
+    jmp  .sc_pos_loop
+
+.sc_signs:
+    xor  ecx, ecx              ; j = 0
+.sc_sign_loop:
+    cmp  ecx, SIGMA_T
+    jge  .sc_done
+    mov  eax, ecx
+    shl  eax, 24
+    xor  eax, [ebp-4]
+    call hfscx_32
+    and  eax, 1                ; sign bit
+    mov  edi, [sig_pos + ecx*4]
+    test eax, eax
+    jne  .sc_sign_neg
+    mov  dword [sig_c + edi*4], 1
+    jmp  .sc_sign_next
+.sc_sign_neg:
+    mov  dword [sig_c + edi*4], 65536  ; -1 mod q = q-1
+.sc_sign_next:
+    inc  ecx
+    jmp  .sc_sign_loop
+
+.sc_done:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    mov  esp, ebp
+    pop  ebp
+    ret
+
+; ============================================================
+; rnl_sigma_sign_32: EAX=msg -> EAX=0 (ok) or -1 (exhausted)
+; Fills sig_y, sig_w, sig_c, sig_z via rejection sampling.
+; Reuses rnl_s_A, rnl_m_blind, rnl_C_A from HKEX-RNL section.
+; ============================================================
+rnl_sigma_sign_32:
+    push ebp
+    mov  ebp, esp
+    sub  esp, 8                ; [ebp-4]=msg, [ebp-8]=attempt
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    mov  [ebp-4], eax
+    mov  dword [ebp-8], 0
+
+.sign_attempt:
+    cmp  dword [ebp-8], 200
+    jge  .sign_exhausted
+    inc  dword [ebp-8]
+
+    ; sample y[i] and yq[i] = y[i] mod q (positive)
+    xor  esi, esi
+.sign_y_loop:
+    cmp  esi, RNL_N
+    jge  .sign_y_done
+    call prng_next
+    xor  edx, edx
+    mov  ecx, SIGMA_RANGE      ; 8193
+    div  ecx                   ; edx = eax % 8193
+    mov  eax, edx
+    sub  eax, SIGMA_GAMMA      ; y = v - 4096 (signed)
+    mov  [sig_y + esi*4], eax
+    test eax, eax
+    jns  .sign_yq_pos
+    add  eax, RNL_Q
+.sign_yq_pos:
+    mov  [sigma_yq_tmp + esi*4], eax
+    inc  esi
+    jmp  .sign_y_loop
+.sign_y_done:
+
+    ; w = rnl_m_blind * yq  (negacyclic NTT poly_mul)
+    mov  dword [rnl_f_ptr], rnl_m_blind
+    mov  dword [rnl_g_ptr], sigma_yq_tmp
+    mov  dword [rnl_h_ptr], rnl_tmp
+    call rnl_poly_mul
+
+    ; center rnl_tmp -> sig_w (signed, range [-q/2, q/2])
+    xor  esi, esi
+.sign_cw_loop:
+    cmp  esi, RNL_N
+    jge  .sign_challenge
+    mov  eax, [rnl_tmp + esi*4]
+    cmp  eax, 32768
+    jle  .sign_cw_pos
+    sub  eax, RNL_Q
+.sign_cw_pos:
+    mov  [sig_w + esi*4], eax
+    inc  esi
+    jmp  .sign_cw_loop
+
+.sign_challenge:
+    mov  eax, rnl_m_blind
+    mov  ebx, rnl_C_A
+    mov  ecx, sig_w
+    mov  edx, [ebp-4]
+    call sigma_challenge_32    ; fills sig_c
+
+    ; cs = sig_c * s_A
+    mov  dword [rnl_f_ptr], sig_c
+    mov  dword [rnl_g_ptr], rnl_s_A
+    mov  dword [rnl_h_ptr], rnl_tmp2
+    call rnl_poly_mul
+
+    ; z[i] = y[i] + center(cs[i]); reject if |z[i]| > SIGMA_BOUND
+    xor  esi, esi
+.sign_z_loop:
+    cmp  esi, RNL_N
+    jge  .sign_z_done
+    mov  eax, [rnl_tmp2 + esi*4]
+    cmp  eax, 32768
+    jle  .sign_cs_pos
+    sub  eax, RNL_Q
+.sign_cs_pos:
+    add  eax, [sig_y + esi*4]
+    mov  edx, eax
+    test edx, edx
+    jns  .sign_z_abs
+    neg  edx
+.sign_z_abs:
+    cmp  edx, SIGMA_BOUND
+    jg   .sign_attempt
+    mov  [sig_z + esi*4], eax
+    inc  esi
+    jmp  .sign_z_loop
+.sign_z_done:
+    xor  eax, eax
+    jmp  .sign_exit
+
+.sign_exhausted:
+    mov  eax, -1
+
+.sign_exit:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    mov  esp, ebp
+    pop  ebp
+    ret
+
+; ============================================================
+; rnl_sigma_verify_32: EAX=msg -> EAX=1 (ok) or 0 (fail)
+; Verifies sig_y/sig_w/sig_c/sig_z produced by rnl_sigma_sign_32.
+; Three checks: bound, recomputed challenge, slack on mz-cL-w.
+; ============================================================
+rnl_sigma_verify_32:
+    push ebp
+    mov  ebp, esp
+    sub  esp, 4                ; [ebp-4] = msg
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+
+    mov  [ebp-4], eax
+
+    ; (1) ||z||_inf <= SIGMA_BOUND
+    xor  esi, esi
+.sv_bound:
+    cmp  esi, RNL_N
+    jge  .sv_bound_ok
+    mov  eax, [sig_z + esi*4]
+    mov  edx, eax
+    test edx, edx
+    jns  .sv_z_abs
+    neg  edx
+.sv_z_abs:
+    cmp  edx, SIGMA_BOUND
+    jg   .sv_fail
+    inc  esi
+    jmp  .sv_bound
+.sv_bound_ok:
+
+    ; (2a) save sig_c -> sigma_cw_tmp
+    xor  esi, esi
+.sv_save_c:
+    cmp  esi, RNL_N
+    jge  .sv_rechallenge
+    mov  eax, [sig_c + esi*4]
+    mov  [sigma_cw_tmp + esi*4], eax
+    inc  esi
+    jmp  .sv_save_c
+
+.sv_rechallenge:
+    ; (2b) recompute challenge -> sig_c
+    mov  eax, rnl_m_blind
+    mov  ebx, rnl_C_A
+    mov  ecx, sig_w
+    mov  edx, [ebp-4]
+    call sigma_challenge_32
+
+    ; (2c) compare recomputed sig_c vs saved sigma_cw_tmp
+    xor  esi, esi
+.sv_cmp_c:
+    cmp  esi, RNL_N
+    jge  .sv_cmp_ok
+    mov  eax, [sig_c + esi*4]
+    cmp  eax, [sigma_cw_tmp + esi*4]
+    jne  .sv_fail
+    inc  esi
+    jmp  .sv_cmp_c
+.sv_cmp_ok:
+
+    ; (2d) restore sig_c <- sigma_cw_tmp
+    xor  esi, esi
+.sv_restore_c:
+    cmp  esi, RNL_N
+    jge  .sv_lift
+    mov  eax, [sigma_cw_tmp + esi*4]
+    mov  [sig_c + esi*4], eax
+    inc  esi
+    jmp  .sv_restore_c
+
+.sv_lift:
+    ; (3a) lift(C_A) from p=4096 to q=65537 -> sigma_liftc_tmp
+    ; rnl_lift args: EBP=out, ESI=in, ECX=from_p, EDX=to_q
+    ; Save/restore EBP since rnl_lift clobbers it
+    push ebp
+    mov  ebp, sigma_liftc_tmp
+    mov  esi, rnl_C_A
+    mov  ecx, RNL_P
+    mov  edx, RNL_Q
+    call rnl_lift
+    pop  ebp
+
+    ; (3b) z_q: make sig_z positive mod q -> sigma_yq_tmp
+    xor  esi, esi
+.sv_zq:
+    cmp  esi, RNL_N
+    jge  .sv_mz
+    mov  eax, [sig_z + esi*4]
+    test eax, eax
+    jns  .sv_zq_pos
+    add  eax, RNL_Q
+.sv_zq_pos:
+    mov  [sigma_yq_tmp + esi*4], eax
+    inc  esi
+    jmp  .sv_zq
+
+.sv_mz:
+    ; (3c) m*z_q -> sigma_mz_tmp
+    mov  dword [rnl_f_ptr], rnl_m_blind
+    mov  dword [rnl_g_ptr], sigma_yq_tmp
+    mov  dword [rnl_h_ptr], sigma_mz_tmp
+    call rnl_poly_mul
+
+    ; (3d) sig_c * sigma_liftc_tmp -> sigma_cw_tmp
+    mov  dword [rnl_f_ptr], sig_c
+    mov  dword [rnl_g_ptr], sigma_liftc_tmp
+    mov  dword [rnl_h_ptr], sigma_cw_tmp
+    call rnl_poly_mul
+
+    ; (3e) ||mz - cL - w||_inf <= SIGMA_SLACK
+    xor  esi, esi
+.sv_slack:
+    cmp  esi, RNL_N
+    jge  .sv_ok
+    mov  eax, [sigma_mz_tmp + esi*4]   ; mz in [0, q-1]
+    mov  ecx, [sigma_cw_tmp + esi*4]   ; cL in [0, q-1]
+    mov  edx, [sig_w + esi*4]          ; w signed
+    test edx, edx
+    jns  .sv_wq_pos
+    add  edx, RNL_Q
+.sv_wq_pos:
+    sub  eax, ecx                       ; eax = mz - cL
+    sub  eax, edx                       ; eax = mz - cL - wq
+    add  eax, 131074                    ; + 2q to ensure positive
+    xor  edx, edx
+    mov  ecx, RNL_Q
+    div  ecx                            ; edx = eax % q
+    mov  eax, edx
+    cmp  eax, 32768
+    jle  .sv_centered
+    sub  eax, RNL_Q                     ; center to [-q/2, q/2]
+.sv_centered:
+    mov  edx, eax
+    test edx, edx
+    jns  .sv_abs2
+    neg  edx
+.sv_abs2:
+    cmp  edx, SIGMA_SLACK
+    jg   .sv_fail
+    inc  esi
+    jmp  .sv_slack
+
+.sv_ok:
+    mov  eax, 1
+    jmp  .sv_exit
+
+.sv_fail:
+    xor  eax, eax
+
+.sv_exit:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ecx
+    pop  ebx
+    mov  esp, ebp
+    pop  ebp
     ret

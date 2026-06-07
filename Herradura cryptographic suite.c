@@ -534,6 +534,46 @@ int main(void)
         explicit_bzero(mac_iv, sizeof(mac_iv));
     }
 
+    /* --- ZKP-RNL [Ring-LWR Σ-protocol, Fiat-Shamir compiled; n=256] */
+    printf("\n--- ZKP-RNL [Ring-LWR \xcf\xa3-protocol, Fiat-Shamir, n=256]\n");
+    {
+        rnl_poly_t zkr_m, zkr_m_base, zkr_a_rand, zkr_s, zkr_Cp, zkr_ms;
+        rnl_poly_t zkr_w, zkr_c, zkr_z;
+        rnl_m_poly(zkr_m_base);
+        rnl_rand_poly(zkr_a_rand, urnd);
+        rnl_poly_add(zkr_m, zkr_m_base, zkr_a_rand);
+        rnl_keygen(zkr_s, zkr_ms, zkr_m, urnd);
+        rnl_poly_mul(zkr_ms, zkr_m, zkr_s);
+        rnl_round(zkr_Cp, zkr_ms, RNL_Q, RNL_P);
+        static const uint8_t zkr_msg[] = "ZKP-RNL demo";
+        int zkr_r = rnl_sigma_sign(zkr_s, zkr_m, zkr_Cp, RNL_N,
+                                    zkr_msg, sizeof(zkr_msg)-1, urnd,
+                                    zkr_w, zkr_c, zkr_z);
+        if (zkr_r == 0) {
+            int ok = rnl_sigma_verify(zkr_m, zkr_Cp, RNL_N,
+                                       zkr_msg, sizeof(zkr_msg)-1,
+                                       zkr_w, zkr_c, zkr_z);
+            puts(ok ? "+ ZKP-RNL proof verified" : "- ZKP-RNL verification FAILED");
+        } else {
+            puts("- ZKP-RNL rejection limit reached (unexpected)");
+        }
+    }
+
+    /* --- ZKP-NL [NL-FSCX ZKBoo; n=8, R=4] */
+    printf("\n--- ZKP-NL [NL-FSCX ZKBoo; n=8, R=%d]\n", ZKP_NL_DEMO_ROUNDS);
+    {
+        uint32_t zkn_A, zkn_B, zkn_y;
+        zkp_nl_keygen(ZKP_NL_DEFAULT_N, urnd, &zkn_A, &zkn_B, &zkn_y);
+        static const uint8_t zkn_msg[] = "ZKP-NL demo";
+        ZkpNlRound *zkn_proof = zkp_nl_prove(zkn_A, zkn_B, zkn_y,
+                                              ZKP_NL_DEFAULT_N, ZKP_NL_DEMO_ROUNDS,
+                                              zkn_msg, sizeof(zkn_msg)-1, urnd);
+        int ok = zkp_nl_verify(zkn_B, zkn_y, ZKP_NL_DEFAULT_N, ZKP_NL_DEMO_ROUNDS,
+                               zkn_msg, sizeof(zkn_msg)-1, zkn_proof);
+        zkp_nl_proof_free(zkn_proof, ZKP_NL_DEMO_ROUNDS);
+        puts(ok ? "+ ZKP-NL proof verified" : "- ZKP-NL verification FAILED");
+    }
+
     /* *** EVE bypass TESTS *** */
     printf("\n\n*** EVE bypass TESTS\n");
 

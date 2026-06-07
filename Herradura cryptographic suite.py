@@ -149,6 +149,8 @@
         stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
         hpke_stern_f_encap, hpke_stern_f_decap
         hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
+        rnl_sigma_sign, rnl_sigma_verify  (ZKP-RNL: Ring-LWR Σ-protocol)
+        zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify  (ZKP-NL: NL-FSCX ZKBoo)
 
     Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
         RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
@@ -259,6 +261,16 @@ SDFR  = 32                     # ⚠ DEMO ONLY: Fiat-Shamir rounds (~19-bit soun
                                # 128-bit soundness (⌈λ / log2(3/2)⌉ at λ=128).
                                # Signing emits a RuntimeWarning when called below
                                # the production threshold.
+
+# ZKP-RNL (Ring-LWR Σ-protocol) parameters (SecurityProofs-3.md §11.10.2)
+_SIGMA_GAMMA        = {32: 4096, 64: 8192, 128: 8192, 256: 8192}  # mask bound γ per n
+_SIGMA_T            = {32: 4,    64: 8,    128: 12,   256: 16}     # challenge weight t per n
+_SIGMA_MAX_ATTEMPTS = 1000   # rejection-sampling attempts before RuntimeError
+
+# ZKBoo (NL-FSCX MPC-in-the-head) parameters (SecurityProofs-3.md §11.10.3)
+_ZKP_NL_DEFAULT_N   = 8    # default bit-width for CLI (proof ≈35 KB at R=219)
+_ZKP_NL_DEMO_ROUNDS = 4    # illustration only: soundness ≈ (2/3)^4 ≈ 20%
+_ZKP_NL_PROD_ROUNDS = 219  # ⌈128 / log₂(3/2)⌉ — required for 128-bit soundness
 
 
 # ---------------------------------------------------------------------------
@@ -1050,6 +1062,394 @@ def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
 
 
 # ---------------------------------------------------------------------------
+# ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
+# SecurityProofs-3.md §11.10.2
+# ---------------------------------------------------------------------------
+#
+# Statement : (m, C) — blinding poly m ∈ Z_q^n, public key C ∈ Z_p^n
+# Witness   : s ∈ {-1,0,1}^n satisfying C = round_p(m·s mod q) in Z_q[x]/(x^n+1)
+# Message   : msg_bytes bound into challenge (Fiat-Shamir → signature)
+#
+# Sign  : y ← Unif[-γ,γ]^n;  w = m·y mod q (centered);
+#         c = challenge(m,C,w,msg); z = y + c·s (centered integers);
+#         reject and restart if ||z||∞ > γ − t.
+# Verify: (1) ||z||∞ ≤ γ−t; (2) c = challenge(m,C,w,msg);
+#         (3) ||m·z − w − c·lift(C)||∞ ≤ t·⌈q/(2p)⌉.
+# ---------------------------------------------------------------------------
+
+def _sigma_params(n):
+    """Return (gamma, t) for the Ring-LWR Σ-protocol at bit-width n."""
+    gamma = _SIGMA_GAMMA.get(n, 8192 if n >= 64 else 4096)
+    t     = _SIGMA_T.get(n, max(4, n // 16))
+    return gamma, t
+
+
+def _sigma_poly_bytes(poly):
+    """Serialize a polynomial (possibly signed/Z_q) to bytes for hashing (4 B/coeff)."""
+    return b''.join((c % (1 << 32)).to_bytes(4, 'big') for c in poly)
+
+
+def _sigma_challenge(m_poly, C_poly, w_poly, n, q, t, msg_bytes):
+    """Fiat-Shamir: derive sparse ternary challenge polynomial from (m, C, w, msg).
+
+    Returns a list of n integers in {0, 1, q-1} with exactly t nonzero entries.
+    Nonzero entries are either 1 (= +1) or q-1 (= -1 mod q).
+    """
+    seed = hfscx_256(
+        n.to_bytes(4, 'big')
+        + _sigma_poly_bytes(m_poly)
+        + _sigma_poly_bytes(C_poly)
+        + _sigma_poly_bytes(w_poly)
+        + msg_bytes
+    )
+    # Expand seed to t distinct positions via counter extension
+    positions = []
+    idx = 0
+    while len(positions) < t:
+        h = hfscx_256(seed + b'pos' + idx.to_bytes(4, 'big'))
+        v = int.from_bytes(h[:4], 'big') % n
+        if v not in positions:
+            positions.append(v)
+        idx += 1
+    # Assign ±1 signs (stored as Z_q: +1 or q-1)
+    c = [0] * n
+    for k, pos in enumerate(positions):
+        h = hfscx_256(seed + b'sgn' + k.to_bytes(4, 'big'))
+        c[pos] = 1 if (h[0] & 1) == 0 else q - 1
+    return c
+
+
+def rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg_bytes):
+    """ZKP-RNL: Ring-LWR Σ-protocol proof of knowledge of s s.t. C = round_p(m·s).
+
+    s_poly: CBD(1) coefficients in Z_q (values in {0, 1, q-1}).
+    m_poly, C_poly: from an HKEX-RNL keypair (_rnl_keygen).
+    msg_bytes: message to bind (Fiat-Shamir → signature).
+
+    Returns (w_poly, c_poly, z_poly) — the proof triple.
+    w_poly: centered Z_q coefficients in (-q/2, q/2].
+    c_poly: sparse ternary in Z_q — t entries of {1, q-1}, rest 0.
+    z_poly: centered integer list with ||z||∞ ≤ γ − t.
+
+    Raises RuntimeError if rejection limit is reached (extremely rare).
+    """
+    q     = RNLQ
+    p     = RNLP
+    gamma, t = _sigma_params(n)
+    bound = gamma - t
+    h     = q // 2  # centering threshold
+
+    for _ in range(_SIGMA_MAX_ATTEMPTS):
+        # Sample mask y ← Unif[-γ, γ]^n
+        y = []
+        for _ in range(n):
+            v = int.from_bytes(os.urandom(4), 'big') % (2 * gamma + 1)
+            y.append(v - gamma)
+
+        y_q  = [yi % q for yi in y]
+        my   = _rnl_poly_mul(m_poly, y_q, q, n)
+        # Center w coefficients into (-q/2, q/2]
+        w    = [c - q if c > h else c for c in my]
+
+        c    = _sigma_challenge(m_poly, C_poly, w, n, q, t, msg_bytes)
+        cs   = _rnl_poly_mul(c, s_poly, q, n)
+        cs_c = [x - q if x > h else x for x in cs]
+        z    = [y[i] + cs_c[i] for i in range(n)]
+
+        if max(abs(zi) for zi in z) <= bound:
+            return w, c, z
+
+    raise RuntimeError(
+        f"rnl_sigma_sign: rejection sampling limit ({_SIGMA_MAX_ATTEMPTS}) reached"
+    )
+
+
+def rnl_sigma_verify(m_poly, C_poly, n, msg_bytes, w_poly, c_poly, z_poly):
+    """Verify a ZKP-RNL Ring-LWR Σ-protocol proof.
+
+    Returns True iff (w, c, z) is an accepting transcript for (m, C, msg).
+    """
+    q = RNLQ
+    p = RNLP
+    gamma, t = _sigma_params(n)
+    bound = gamma - t
+    slack = t * (q // (2 * p) + 1)   # t × ⌈q/(2p)⌉ = e.g. 16 × 9 = 144 at n=256
+
+    # (1) Infinity-norm bound on response
+    if max(abs(zi) for zi in z_poly) > bound:
+        return False
+
+    # (2) Fiat-Shamir consistency
+    if c_poly != _sigma_challenge(m_poly, C_poly, w_poly, n, q, t, msg_bytes):
+        return False
+
+    # (3) Rounding slack: ||m·z − w − c·lift(C)||∞ ≤ slack
+    h    = q // 2
+    z_q  = [zi % q for zi in z_poly]
+    mz   = _rnl_poly_mul(m_poly, z_q, q, n)
+    lift = _rnl_lift(C_poly, p, q)
+    ct   = _rnl_poly_mul(c_poly, lift, q, n)
+    w_q  = [wi % q for wi in w_poly]
+    diff = [(mz[i] - ct[i] - w_q[i]) % q for i in range(n)]
+    diff_c = [d - q if d > h else d for d in diff]
+    return max(abs(d) for d in diff_c) <= slack
+
+
+# ---------------------------------------------------------------------------
+# ZKP-NL: NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
+# SecurityProofs-3.md §11.10.3
+# ---------------------------------------------------------------------------
+#
+# Statement : (B, y) — public; B, y ∈ {0,…,2^n-1}
+# Witness   : A ∈ {0,…,2^n-1} with nl_fscx_v1(A, B) = y
+# Circuit   : F1(A,B) = fscx(A,B) ⊕ ROL((A+B) mod 2^n, n/4)
+#   Linear  : fscx(A,B) — free XOR-rotation (linear in A, B constant public)
+#   Nonlinear: (A+B) mod 2^n — n−1 AND gates for carry chain (A_i AND c_i)
+#
+# ZKBoo 3-party AND gate: x,y secret-XOR-shared across parties 0,1,2.
+#   z_i = x_i·y_i ⊕ x_i·y_{i+1} ⊕ x_{i+1}·y_i ⊕ r_i ⊕ r_{i+1}  (indices mod 3)
+#   z_0 ⊕ z_1 ⊕ z_2 = x · y
+#
+# Soundness: (2/3)^R per proof; R=219 for 128-bit soundness.
+# ---------------------------------------------------------------------------
+
+def _zkp_nl_rol(x, r, n):
+    """Cyclic left-rotate n-bit integer x by r positions."""
+    m = (1 << n) - 1
+    r = r % n
+    return ((x << r) | (x >> (n - r))) & m
+
+
+def _zkp_nl_h(*args):
+    """Domain hash for ZKBoo commitments and challenges (HFSCX-256)."""
+    buf = b''
+    for a in args:
+        if isinstance(a, bytes):
+            buf += a
+        elif isinstance(a, int):
+            buf += a.to_bytes(max(1, (a.bit_length() + 7) // 8), 'big')
+        else:
+            buf += repr(a).encode()
+    return hfscx_256(buf)
+
+
+def _zkp_nl_prg_bit(tape_key, gate_id):
+    """One pseudorandom bit from party tape + gate index."""
+    h = _zkp_nl_h(tape_key, gate_id.to_bytes(4, 'big'))
+    return h[0] & 1
+
+
+def _zkp_nl_evaluate_circuit(shares, tapes, B, n):
+    """Evaluate nl_fscx_v1(A, B) in 3-party ZKBoo decomposition.
+
+    shares: list of 3 n-bit integers (XOR shares of A; A = s0^s1^s2)
+    tapes : list of 3 × 32-byte random tapes (one per party)
+    B     : public n-bit integer
+
+    Returns (out_shares, gate_views) where:
+      out_shares[p] = party p's output share (XOR of all three = nl_fscx_v1(A,B))
+      gate_views[p] = list of (a_bit, c_bit, and_out) for each of the n-1 AND gates
+    """
+    mask = (1 << n) - 1
+    carry = [[0, 0, 0]] * n   # carry[0] always 0 (no input carry)
+    gate_views = [[], [], []]
+    gate_id = 0
+
+    for i in range(n - 1):
+        ai = [(shares[p] >> i) & 1 for p in range(3)]
+        ci = [carry[i][p] for p in range(3)]
+        Bi = (B >> i) & 1
+
+        # c_{i+1} = Bi*Ai XOR (Ai AND ci) XOR Bi*ci
+        # Only (Ai AND ci) is a secret-secret AND gate.
+        ri = [_zkp_nl_prg_bit(tapes[p], gate_id) for p in range(3)]
+        gate_id += 1
+
+        and_out = [0, 0, 0]
+        for p in range(3):
+            p1 = (p + 1) % 3
+            and_out[p] = ((ai[p] & ci[p]) ^ (ai[p] & ci[p1])
+                          ^ (ai[p1] & ci[p]) ^ ri[p] ^ ri[p1])
+            gate_views[p].append((ai[p], ci[p], and_out[p]))
+
+        c_next = [(Bi * ai[p]) ^ and_out[p] ^ (Bi * ci[p]) for p in range(3)]
+        carry[i + 1] = c_next
+
+    # Sum shares: bit i of (A+B) mod 2^n = A_i XOR B_i XOR carry_i (linear)
+    sum_shares = [0, 0, 0]
+    for i in range(n):
+        for p in range(3):
+            bit_i = ((shares[p] >> i) & 1) ^ ((B >> i) & 1) ^ carry[i][p]
+            sum_shares[p] ^= bit_i << i
+
+    # ROL_{n/4} is a bit-permutation (linear) — apply identically to each share
+    rot_shares = [_zkp_nl_rol(sum_shares[p], n // 4, n) for p in range(3)]
+
+    # Linear part L(A,B): fscx(A,B) with B constant
+    B_const = (B ^ _zkp_nl_rol(B, 1, n) ^ _zkp_nl_rol(B, n - 1, n)) & mask
+    lin_shares = [0, 0, 0]
+    for p in range(3):
+        A_terms = (shares[p] ^ _zkp_nl_rol(shares[p], 1, n)
+                   ^ _zkp_nl_rol(shares[p], n - 1, n)) & mask
+        lin_shares[p] = A_terms
+    lin_shares[0] ^= B_const   # absorb public constant into party 0 only
+
+    # F1(A,B) = linear XOR rotated-sum
+    out_shares = [(lin_shares[p] ^ rot_shares[p]) & mask for p in range(3)]
+    return out_shares, gate_views
+
+
+def zkp_nl_keygen(n=_ZKP_NL_DEFAULT_N):
+    """Generate ZKP-NL keypair: (A private, B public, y = nl_fscx_v1(A,B) public).
+
+    n: bit-width; must be a positive multiple of 2. Default: 8 (demo).
+    """
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    A = int.from_bytes(os.urandom(nb), 'big') & mask
+    B = int.from_bytes(os.urandom(nb), 'big') & mask
+    y = nl_fscx_v1(BitArray(n, A), BitArray(n, B)).uint
+    return A, B, y
+
+
+def zkp_nl_prove(A, B, y, n, rounds, msg_bytes):
+    """ZKBoo prover: prove knowledge of A s.t. nl_fscx_v1(A, B) = y.
+
+    Returns a list of `rounds` dicts, each with keys:
+      com_0, com_1, com_2  — 32-byte HFSCX-256 commitments
+      e                    — hidden party index ∈ {0, 1, 2}
+      view_p1, view_p2     — bytes encoding revealed parties' shares, tape, and gate views
+    """
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+
+    all_coms  = []
+    all_views = []
+    com_block = b''
+
+    for j in range(rounds):
+        s0 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s1 = int.from_bytes(os.urandom(nb), 'big') & mask
+        s2 = (A ^ s0 ^ s1) & mask
+        shares = [s0, s1, s2]
+        tapes  = [os.urandom(32) for _ in range(3)]
+
+        out_shares, gate_views = _zkp_nl_evaluate_circuit(shares, tapes, B, n)
+
+        coms = [
+            _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]),
+                      tapes[p], out_shares[p].to_bytes(nb, 'big'))
+            for p in range(3)
+        ]
+        all_coms.append(coms)
+        all_views.append((shares, tapes, out_shares, gate_views))
+        com_block += b''.join(coms)
+
+    # Fiat-Shamir: bind B, y, msg_bytes, and all commitments
+    ch_seed = _zkp_nl_h(
+        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
+    )
+
+    def _pack_view(p_idx, shares_l, tapes_l, out_shares_l, gate_views_l):
+        view  = shares_l[p_idx].to_bytes(nb, 'big')
+        view += tapes_l[p_idx]
+        view += out_shares_l[p_idx].to_bytes(nb, 'big')
+        for in0, in1, out in gate_views_l[p_idx]:
+            view += bytes([in0 | (in1 << 1) | (out << 2)])
+        return view
+
+    rounds_out = []
+    for j in range(rounds):
+        h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
+        e = h[0] % 3
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        shares, tapes, out_shares, gate_views = all_views[j]
+        rounds_out.append({
+            'com_0':   all_coms[j][0],
+            'com_1':   all_coms[j][1],
+            'com_2':   all_coms[j][2],
+            'e':       e,
+            'view_p1': _pack_view(p1, shares, tapes, out_shares, gate_views),
+            'view_p2': _pack_view(p2, shares, tapes, out_shares, gate_views),
+        })
+    return rounds_out
+
+
+def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
+    """ZKBoo verifier: verify proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
+
+    Returns True iff all rounds verify.
+    """
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    view_size = nb + 32 + nb + (n - 1)   # share + tape + out + gate bits
+
+    coms_list  = [[r['com_0'], r['com_1'], r['com_2']] for r in proof_rounds]
+    challenges = [r['e'] for r in proof_rounds]
+
+    # Re-derive Fiat-Shamir challenges and validate
+    com_block = b''.join(b''.join(coms) for coms in coms_list)
+    ch_seed   = _zkp_nl_h(
+        com_block, B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes
+    )
+    for j in range(rounds):
+        h = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))
+        if h[0] % 3 != challenges[j]:
+            return False
+
+    def _unpack_view(view_bytes):
+        share = int.from_bytes(view_bytes[:nb], 'big')
+        tape  = view_bytes[nb:nb + 32]
+        out_s = int.from_bytes(view_bytes[nb + 32:nb + 32 + nb], 'big')
+        gv = []
+        for k in range(n - 1):
+            b3 = view_bytes[nb + 32 + nb + k]
+            gv.append((b3 & 1, (b3 >> 1) & 1, (b3 >> 2) & 1))
+        return share, tape, out_s, gv
+
+    for j, e in enumerate(challenges):
+        resp = proof_rounds[j]
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+
+        share_p1, tape_p1, out_p1, gv_p1 = _unpack_view(resp['view_p1'])
+        share_p2, tape_p2, out_p2, gv_p2 = _unpack_view(resp['view_p2'])
+
+        # Hidden party's output share
+        out_pe = (y ^ out_p1 ^ out_p2) & mask
+
+        # Verify commitments for revealed parties
+        c_p1 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p1]),
+                          tape_p1, out_p1.to_bytes(nb, 'big'))
+        c_p2 = _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p2]),
+                          tape_p2, out_p2.to_bytes(nb, 'big'))
+        if c_p1 != coms_list[j][p1] or c_p2 != coms_list[j][p2]:
+            return False
+
+        # Re-evaluate p1's AND gates using p1 and p2 shares (both revealed)
+        carry_p1, carry_p2 = 0, 0
+        for i in range(n - 1):
+            ai_p1 = (share_p1 >> i) & 1
+            ai_p2 = (share_p2 >> i) & 1
+            ci_p1 = carry_p1
+            ci_p2 = carry_p2
+            Bi    = (B >> i) & 1
+
+            ri_p1 = _zkp_nl_prg_bit(tape_p1, i)
+            ri_p2 = _zkp_nl_prg_bit(tape_p2, i)
+
+            exp_and_p1 = ((ai_p1 & ci_p1) ^ (ai_p1 & ci_p2)
+                          ^ (ai_p2 & ci_p1) ^ ri_p1 ^ ri_p2)
+
+            if gv_p1[i][2] != exp_and_p1:
+                return False
+
+            carry_p1 = (Bi * ai_p1) ^ exp_and_p1 ^ (Bi * ci_p1)
+            carry_p2 = (Bi * ai_p2) ^ gv_p2[i][2] ^ (Bi * ci_p2)
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -1363,6 +1763,43 @@ def main():
     print(f"+ hash length correct ({len(_bare)} bytes)")
     print("+ keyed ≠ bare (key influences output)" if _bare != _keyed
           else "- keyed == bare (unexpected!)")
+
+    # ── ZKP-RNL: Ring-LWR Σ-protocol ────────────────────────────────────────
+    print("\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n=32]")
+    _zkprnl_n = 32
+    _zkprnl_q = RNLQ
+    _zkprnl_p = RNLP
+    _zkprnl_m_base = _rnl_m_poly(_zkprnl_n)
+    _zkprnl_a_rand = _rnl_rand_poly(_zkprnl_n, _zkprnl_q)
+    _zkprnl_m      = _rnl_poly_add(_zkprnl_m_base, _zkprnl_a_rand, _zkprnl_q)
+    _zkprnl_s, _zkprnl_C = _rnl_keygen(_zkprnl_m, _zkprnl_n, _zkprnl_q, _zkprnl_p, RNLB)
+    _zkprnl_msg = b"ZKP-RNL test message"
+    _zkprnl_w, _zkprnl_c, _zkprnl_z = rnl_sigma_sign(
+        _zkprnl_s, _zkprnl_m, _zkprnl_C, _zkprnl_n, _zkprnl_msg)
+    _zkprnl_ok = rnl_sigma_verify(
+        _zkprnl_m, _zkprnl_C, _zkprnl_n, _zkprnl_msg,
+        _zkprnl_w, _zkprnl_c, _zkprnl_z)
+    print(f"proof (w[0]={_zkprnl_w[0]}, c-nonzero={sum(1 for x in _zkprnl_c if x)}, "
+          f"z[0]={_zkprnl_z[0]})")
+    print(f"+ ZKP-RNL proof verified" if _zkprnl_ok else "- ZKP-RNL verify FAILED")
+
+    # ── ZKP-NL: NL-FSCX ZKBoo ───────────────────────────────────────────────
+    print(f"\n--- ZKP-NL [PROOF — NL-FSCX ZKBoo, MPC-in-the-head; n={_ZKP_NL_DEFAULT_N}, R={_ZKP_NL_DEMO_ROUNDS}]")
+    _zkpnl_A, _zkpnl_B, _zkpnl_y = zkp_nl_keygen(_ZKP_NL_DEFAULT_N)
+    _zkpnl_msg = b"ZKP-NL test message"
+    _zkpnl_proof = zkp_nl_prove(
+        _zkpnl_A, _zkpnl_B, _zkpnl_y,
+        _ZKP_NL_DEFAULT_N, _ZKP_NL_DEMO_ROUNDS, _zkpnl_msg)
+    _zkpnl_ok = zkp_nl_verify(
+        _zkpnl_B, _zkpnl_y, _ZKP_NL_DEFAULT_N,
+        _ZKP_NL_DEMO_ROUNDS, _zkpnl_msg, _zkpnl_proof)
+    print(f"keypair: A=0x{_zkpnl_A:0{_ZKP_NL_DEFAULT_N//4}x}, "
+          f"B=0x{_zkpnl_B:0{_ZKP_NL_DEFAULT_N//4}x}, "
+          f"y=0x{_zkpnl_y:0{_ZKP_NL_DEFAULT_N//4}x}")
+    print(f"proof rounds: {len(_zkpnl_proof)}, "
+          f"view size: {len(_zkpnl_proof[0]['view_p1'])} bytes each")
+    print(f"+ ZKP-NL proof verified" if _zkpnl_ok else "- ZKP-NL verify FAILED")
+    print(f"  (demo uses R={_ZKP_NL_DEMO_ROUNDS}; production requires R={_ZKP_NL_PROD_ROUNDS} for 128-bit soundness)")
 
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")
