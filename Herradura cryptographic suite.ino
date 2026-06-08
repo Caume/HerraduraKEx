@@ -763,6 +763,46 @@ const uint32 K      = 0x5A5A5A5AUL;
 const uint32 PLAIN  = 0xDEADC0DEUL;
 
 /* ------------------------------------------------------------------ */
+/* 78.A — FPE at 32-bit: B = hfscx_32(hfscx_32(key) ^ context)       */
+/* 78.B — Tweakable: B = hfscx_32(hfscx_32(key ^ sector) ^ bidx)     */
+/* 78.J — Accumulator-32: leaf/node using hfscx_32                    */
+/* ------------------------------------------------------------------ */
+
+static uint32 fpe_encrypt_32(uint32 pt, uint32 key, uint32 context) {
+    uint32 B = hfscx_32(hfscx_32(key) ^ context);
+    return nl_fscx_revolve_v2(pt, B, I_VALUE);
+}
+static uint32 fpe_decrypt_32(uint32 ct, uint32 key, uint32 context) {
+    uint32 B = hfscx_32(hfscx_32(key) ^ context);
+    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE);
+}
+
+static uint32 twk_encrypt_32(uint32 block, uint32 key, uint32 sector, uint32 bidx) {
+    uint32 B = hfscx_32(hfscx_32(key ^ sector) ^ bidx);
+    return nl_fscx_revolve_v2(block, B, I_VALUE);
+}
+static uint32 twk_decrypt_32(uint32 block, uint32 key, uint32 sector, uint32 bidx) {
+    uint32 B = hfscx_32(hfscx_32(key ^ sector) ^ bidx);
+    return nl_fscx_revolve_v2_inv(block, B, I_VALUE);
+}
+
+/* Leaf: hfscx_32(0x00000000 ^ data); Node: hfscx_32(hfscx_32(0x01000000 ^ l) ^ r) */
+static uint32 haccum_leaf_32(uint32 data)             { return hfscx_32(0x00000000UL ^ data); }
+static uint32 haccum_node_32(uint32 left, uint32 right) { return hfscx_32(hfscx_32(0x01000000UL ^ left) ^ right); }
+static uint32 haccum_root_32(const uint32 *leaves, int n) {
+    /* power-of-2 pad; for small n only */
+    uint32 nodes[16]; int sz = 1, i;
+    while (sz < n && sz < 8) sz <<= 1;
+    for (i = 0; i < n && i < sz; i++) nodes[i] = leaves[i];
+    for (; i < sz; i++) nodes[i] = 0;
+    while (sz > 1) {
+        for (i = 0; i < sz / 2; i++) nodes[i] = haccum_node_32(nodes[2*i], nodes[2*i+1]);
+        sz /= 2;
+    }
+    return nodes[0];
+}
+
+/* ------------------------------------------------------------------ */
 /* Arduino entry points                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1052,6 +1092,60 @@ void loop() {
         printHexLine("B (pub)   : ", B_nl);
         printHexLine("y=F1(A,B) : ", y_nl);
         Serial.println(ok ? "+ ZKP-NL proof verified!" : "- ZKP-NL FAILED");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* FPE (78.A)                                                       */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]");
+    {
+        uint32 fpe_key = 0xABCD1234UL;
+        uint32 fpe_ctx = 0x00000042UL; /* record 66 */
+        uint32 fpe_ct  = fpe_encrypt_32(PLAIN, fpe_key, fpe_ctx);
+        uint32 fpe_rec = fpe_decrypt_32(fpe_ct, fpe_key, fpe_ctx);
+        printHexLine("plain  : ", PLAIN);
+        printHexLine("cipher : ", fpe_ct);
+        printHexLine("recover: ", fpe_rec);
+        Serial.println(fpe_rec == PLAIN ? "+ FPE round-trip correct" : "- FPE round-trip FAILED");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* Tweakable cipher (78.B)                                          */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]");
+    {
+        uint32 twk_key = 0x12345678UL;
+        uint32 twk_ct  = twk_encrypt_32(PLAIN, twk_key, 7, 3);
+        uint32 twk_rec = twk_decrypt_32(twk_ct, twk_key, 7, 3);
+        printHexLine("plain  : ", PLAIN);
+        printHexLine("cipher : ", twk_ct);
+        printHexLine("recover: ", twk_rec);
+        Serial.println(twk_rec == PLAIN ? "+ Tweakable cipher correct" : "- Tweakable cipher FAILED");
+    }
+    Serial.println();
+
+    /* ---------------------------------------------------------------- */
+    /* Accumulator (78.J)                                               */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- Accumulator (78.J) [Merkle root + membership; 32-bit]");
+    {
+        uint32 leaves[4] = {
+            haccum_leaf_32(0xAAAAAAAAUL),
+            haccum_leaf_32(0xBBBBBBBBUL),
+            haccum_leaf_32(0xCCCCCCCCUL),
+            haccum_leaf_32(0xDDDDDDDDUL),
+        };
+        uint32 root = haccum_root_32(leaves, 4);
+        /* manual proof for index 2: sibling is leaves[3], parent's sibling is node(l[0],l[1]) */
+        uint32 sib0 = leaves[3];
+        uint32 sib1 = haccum_node_32(leaves[0], leaves[1]);
+        uint32 cur  = haccum_node_32(leaves[2], sib0);
+        cur         = haccum_node_32(sib1, cur);
+        printHexLine("root         : ", root);
+        printHexLine("verify (idx2): ", cur);
+        Serial.println(cur == root ? "+ Accumulator proof correct" : "- Accumulator proof FAILED");
     }
     Serial.println();
 

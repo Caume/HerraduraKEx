@@ -4,6 +4,38 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.14] - 2026-06-07
+
+### Feature — Cryptographic Accumulator (78.J), Format-Preserving Encryption (78.A), and Tweakable Wide-Block Cipher (78.B) across all language targets (TODO #78)
+
+Implements three new protocol directions from TODO #78 in C, Go, Python, and Arduino (32-bit variants for Arduino; assembly targets skipped — no 256-bit HFSCX available).
+
+**78.J — Cryptographic Accumulator (HFSCX-256 Merkle tree):**
+Domain-separated leaf hash `HFSCX-256(0x00 ∥ data)` and node hash `HFSCX-256(0x01 ∥ left ∥ right)` per RFC 6962. Power-of-2 padding with zero-hashes. API: `haccum_leaf`, `haccum_node`, `haccum_root`, `haccum_prove`, `haccum_verify`.
+
+**78.A — Format-Preserving Encryption (FPE):**
+`B = HFSCX-256(key ∥ ctx)` → `C = NlFscxRevolveV2(P, B, 64)`. Deterministic and searchable on 256-bit blocks. `NlFscxRevolveV2Inv` for decryption. API: `fpe_encrypt`, `fpe_decrypt`.
+
+**78.B — Tweakable Wide-Block Cipher:**
+`B = HFSCX-256(key ∥ sector_be64 ∥ bidx_be32)` → per-block unique tweak resolving HSKE-NL-A2 determinism (TODO #12). API: `twk_encrypt`, `twk_decrypt`.
+
+**Files modified:**
+- `herradura.h` — `haccum_*`, `fpe_derive_b`, `fpe_encrypt`, `fpe_decrypt`, `twk_derive_b`, `twk_encrypt`, `twk_decrypt` (static inline functions).
+- `herradura/herradura.go` — Go package: `HaccumLeaf`, `HaccumNode`, `HaccumRoot`, `HaccumProve`, `HaccumVerify`; `FpeEncrypt`, `FpeDecrypt`; `TwkEncrypt`, `TwkDecrypt`.
+- `Herradura cryptographic suite.py` — Python suite: all 12 functions + demo blocks in `main()`.
+- `Herradura cryptographic suite.c` — C suite: demo blocks in `main()`.
+- `Herradura cryptographic suite.go` — Go suite: demo blocks in `main()`.
+- `Herradura cryptographic suite.ino` — Arduino: 32-bit variants (`fpe_encrypt_32`, `twk_encrypt_32`, `haccum_root_32`, etc.) + demo in `loop()`.
+- `HerraduraCli/herradura_cli.c` — C CLI: `cmd_fpe` and `cmd_twk` subcommands.
+- `HerraduraCli/herradura_cli.go` — Go CLI: `cmdFpe` and `cmdTwk` subcommands.
+- `HerraduraCli/herradura.py` — Python CLI: `cmd_fpe` and `cmd_twk` subcommands.
+- `HerraduraCli/primitives.py` — re-exports for new functions.
+- `CryptosuiteTests/Herradura_tests.c` — tests [23]–[25]: FPE, tweakable, accumulator; benchmarks renumbered [26]–[37].
+- `CryptosuiteTests/Herradura_tests.go` — tests [22]–[24]: FPE, tweakable, accumulator; benchmarks remain [25]–[33].
+- `CryptosuiteTests/Herradura_tests.py` — tests [22]–[24]: FPE, tweakable, accumulator; benchmarks renumbered [25]–[36].
+
+---
+
 ## [1.9.13] - 2026-06-06
 
 ### Feature — ZKP documentation Batch 9: TUTORIAL.md ZKP Protocols section + SecurityProofs-3.md §11.10.4 implementation subsection (TODO #77, Batch 9)

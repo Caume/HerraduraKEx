@@ -352,6 +352,77 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# 78.A FPE / 78.B Tweakable / 78.J Accumulator (self-contained copies)
+# ---------------------------------------------------------------------------
+
+_KEYBITS = 256
+_I_VALUE = _KEYBITS // 4  # 64
+
+def _fpe_derive_b(key: bytes, ctx: bytes) -> BitArray:
+    return BitArray(_KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
+
+def fpe_encrypt_test(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    return nl_fscx_revolve_v2(pt, _fpe_derive_b(key, ctx), _I_VALUE)
+
+def fpe_decrypt_test(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    return nl_fscx_revolve_v2_inv(ct, _fpe_derive_b(key, ctx), _I_VALUE)
+
+def twk_encrypt_test(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
+    B = BitArray(_KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
+    return nl_fscx_revolve_v2(block, B, _I_VALUE)
+
+def twk_decrypt_test(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
+    B = BitArray(_KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
+    return nl_fscx_revolve_v2_inv(ct, B, _I_VALUE)
+
+def haccum_leaf_test(data: bytes) -> bytes:
+    return hfscx_256(b'\x00' + data)
+
+def haccum_node_test(left: bytes, right: bytes) -> bytes:
+    return hfscx_256(b'\x01' + left + right)
+
+def haccum_root_test(leaf_hashes: list) -> bytes:
+    n = len(leaf_hashes)
+    sz = 1
+    while sz < n:
+        sz <<= 1
+    zero_hash = hfscx_256(b'\x00')
+    nodes = [lh for lh in leaf_hashes] + [zero_hash] * (sz - n)
+    while len(nodes) > 1:
+        nodes = [haccum_node_test(nodes[2*i], nodes[2*i+1]) for i in range(len(nodes) // 2)]
+    return nodes[0]
+
+def haccum_prove_test(leaf_hashes: list, idx: int) -> list:
+    n = len(leaf_hashes)
+    sz = 1
+    while sz < n:
+        sz <<= 1
+    zero_hash = hfscx_256(b'\x00')
+    nodes = [lh for lh in leaf_hashes] + [zero_hash] * (sz - n)
+    proof = []
+    cur = idx
+    while len(nodes) > 1:
+        sib = cur ^ 1
+        if sib < len(nodes):
+            proof.append(nodes[sib])
+        cur //= 2
+        nodes = [haccum_node_test(nodes[2*i], nodes[2*i+1]) for i in range(len(nodes) // 2)]
+    return proof
+
+def haccum_verify_test(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> bool:
+    cur = leaf_hash
+    for sib in proof:
+        if idx % 2 == 0:
+            cur = haccum_node_test(cur, sib)
+        else:
+            cur = haccum_node_test(sib, cur)
+        idx //= 2
+    return cur == root
+
+
+# ---------------------------------------------------------------------------
 # HPKS-Stern-F / HPKE-Stern-F helpers (self-contained, mirrors suite)
 # ---------------------------------------------------------------------------
 
@@ -1488,6 +1559,70 @@ def test_zkp_nl_correctness():
     print()
 
 
+# Security tests [22]-[24]: FPE / Tweakable / Accumulator (78.A/B/J)
+# ---------------------------------------------------------------------------
+
+def test_fpe_correctness():
+    print("[22] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
+    N = _iters(1000); ok = 0; n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        P   = BitArray.random(_KEYBITS)
+        key = BitArray.random(_KEYBITS).bytes
+        ctx = BitArray.random(64).bytes
+        C = fpe_encrypt_test(P, key, ctx)
+        D = fpe_decrypt_test(C, key, ctx)
+        if D.uint == P.uint:
+            ok += 1
+    status = "PASS" if ok == n_run else "FAIL"
+    print(f"    {ok} / {n_run} round-trips correct  [{status}]")
+    print()
+
+
+def test_twk_correctness():
+    print("[23] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
+    N = _iters(1000); ok = 0; n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        P      = BitArray.random(_KEYBITS)
+        key    = BitArray.random(_KEYBITS).bytes
+        sector = random.getrandbits(64)
+        bidx   = random.getrandbits(32)
+        C = twk_encrypt_test(P, key, sector, bidx)
+        D = twk_decrypt_test(C, key, sector, bidx)
+        if D.uint == P.uint:
+            ok += 1
+    status = "PASS" if ok == n_run else "FAIL"
+    print(f"    {ok} / {n_run} round-trips correct  [{status}]")
+    print()
+
+
+def test_accumulator_correctness():
+    print("[24] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
+    sizes = [1, 2, 4, 8, 16]
+    total = ok_valid = ok_reject = 0
+    for n in sizes:
+        leaves = [haccum_leaf_test(BitArray.random(64).bytes) for _ in range(n)]
+        root   = haccum_root_test(leaves)
+        for idx in range(n):
+            proof = haccum_prove_test(leaves, idx)
+            if haccum_verify_test(root, leaves[idx], proof, idx):
+                ok_valid += 1
+            # tamper: flip a byte in the first sibling hash
+            if proof:
+                tampered = [bytearray(s) for s in proof]
+                tampered[0][0] ^= 0xFF
+                tampered_list = [bytes(s) for s in tampered]
+                if not haccum_verify_test(root, leaves[idx], tampered_list, idx):
+                    ok_reject += 1
+            else:
+                ok_reject += 1  # n=1: empty proof, tamper not applicable
+            total += 1
+    status = "PASS" if ok_valid == total and ok_reject == total else "FAIL"
+    print(f"    valid={ok_valid}/{total}  tamper_reject={ok_reject}/{total}  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -1509,7 +1644,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[22] FSCX throughput  [CLASSICAL]")
+    print("[25] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -1519,7 +1654,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[23] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[26] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -1529,7 +1664,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[24] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[27] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -1542,7 +1677,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[25] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[28] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -1554,7 +1689,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[26] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[29] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -1571,7 +1706,7 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[27] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[30] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -1587,7 +1722,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[28] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[31] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -1603,7 +1738,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[29] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    print("[32] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -1617,7 +1752,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[30] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[33] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -1633,7 +1768,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[31] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    print("[34] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
     rounds = 4; sink = [True]
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
@@ -1647,7 +1782,7 @@ def bench_hpks_stern_f():
 
 def bench_zkp_rnl():
     n = 256
-    print(f"[32] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
+    print(f"[35] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
     m_base  = _rnl_m_poly(n)
     a_rand  = _rnl_rand_poly(n, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -1664,7 +1799,7 @@ def bench_zkp_rnl():
 
 def bench_zkp_nl():
     n = 32; rounds = 16
-    print(f"[33] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
+    print(f"[36] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
     A, B, y = _zkp_nl_keygen(n)
     def fn():
         proof = _zkp_nl_prove(A, B, y, n, rounds, ZKP_MSG)
@@ -1708,7 +1843,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.11 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.14 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -1746,6 +1881,11 @@ if __name__ == '__main__':
     print("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
     test_zkp_rnl_correctness()
     test_zkp_nl_correctness()
+
+    print("--- Security Tests: FPE / Tweakable / Accumulator (78.A/B/J) ---\n")
+    test_fpe_correctness()
+    test_twk_correctness()
+    test_accumulator_correctness()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

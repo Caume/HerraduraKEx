@@ -17,6 +17,7 @@
 package herradura
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -1594,4 +1595,143 @@ func (r *ZkpNlRound) comAt(p int) [32]byte {
 	case 1: return r.Com1
 	default: return r.Com2
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 78.J — Cryptographic Accumulator (Merkle tree on HFSCX-256) (TODO #78.J)
+//
+// Domain separation follows RFC 6962: 0x00 prefix for leaves, 0x01 for nodes.
+// ---------------------------------------------------------------------------
+
+// HaccumLeaf returns HFSCX-256(0x00 || data).
+func HaccumLeaf(data []byte) []byte {
+	return Hfscx256(append([]byte{0x00}, data...), nil)
+}
+
+// HaccumNode returns HFSCX-256(0x01 || left || right).
+func HaccumNode(left, right []byte) []byte {
+	buf := make([]byte, 1+len(left)+len(right))
+	buf[0] = 0x01
+	copy(buf[1:], left)
+	copy(buf[1+len(left):], right)
+	return Hfscx256(buf, nil)
+}
+
+// HaccumRoot computes the Merkle root of leafHashes (each 32 bytes).
+// Non-power-of-2 counts are padded with zero-hashes on the right.
+func HaccumRoot(leafHashes [][]byte) []byte {
+	n := len(leafHashes)
+	if n == 0 {
+		return make([]byte, 32)
+	}
+	sz := 1
+	for sz < n {
+		sz <<= 1
+	}
+	nodes := make([][]byte, sz)
+	for i := 0; i < n; i++ {
+		nodes[i] = append([]byte(nil), leafHashes[i]...)
+	}
+	for i := n; i < sz; i++ {
+		nodes[i] = make([]byte, 32)
+	}
+	for sz > 1 {
+		for i := 0; i < sz/2; i++ {
+			nodes[i] = HaccumNode(nodes[2*i], nodes[2*i+1])
+		}
+		sz /= 2
+	}
+	return nodes[0]
+}
+
+// HaccumProve returns the sibling-hash proof path for leaf at idx.
+func HaccumProve(leafHashes [][]byte, idx int) [][]byte {
+	n := len(leafHashes)
+	sz := 1
+	for sz < n {
+		sz <<= 1
+	}
+	nodes := make([][]byte, sz)
+	for i := 0; i < n; i++ {
+		nodes[i] = append([]byte(nil), leafHashes[i]...)
+	}
+	for i := n; i < sz; i++ {
+		nodes[i] = make([]byte, 32)
+	}
+	var proof [][]byte
+	cur := idx
+	for sz > 1 {
+		sib := cur ^ 1
+		proof = append(proof, append([]byte(nil), nodes[sib]...))
+		for i := 0; i < sz/2; i++ {
+			nodes[i] = HaccumNode(nodes[2*i], nodes[2*i+1])
+		}
+		sz /= 2
+		cur >>= 1
+	}
+	return proof
+}
+
+// HaccumVerify verifies a Merkle membership proof for leafHash at idx.
+func HaccumVerify(root, leafHash []byte, proof [][]byte, idx int) bool {
+	cur := append([]byte(nil), leafHash...)
+	for _, sib := range proof {
+		if idx%2 == 0 {
+			cur = HaccumNode(cur, sib)
+		} else {
+			cur = HaccumNode(sib, cur)
+		}
+		idx >>= 1
+	}
+	return bytes.Equal(cur, root)
+}
+
+// ---------------------------------------------------------------------------
+// 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
+//
+// B = HFSCX-256(key || ctx); C = NlFscxRevolveV2(P, B, IValue).
+// Same (key, ctx, plaintext) → same ciphertext (deterministic / searchable).
+// For IND-CPA include a per-record nonce in ctx.
+// ---------------------------------------------------------------------------
+
+func fpeDeriveB(key, ctx []byte) *BitArray {
+	tweak := Hfscx256(append(key, ctx...), nil)
+	return NewBitArray(256, new(big.Int).SetBytes(tweak))
+}
+
+// FpeEncrypt encrypts a 256-bit BitArray with key and context.
+func FpeEncrypt(pt *BitArray, key, ctx []byte) *BitArray {
+	return NlFscxRevolveV2(pt, fpeDeriveB(key, ctx), 64) // 64 = I_VALUE
+}
+
+// FpeDecrypt decrypts a 256-bit BitArray with key and context.
+func FpeDecrypt(ct *BitArray, key, ctx []byte) *BitArray {
+	return NlFscxRevolveV2Inv(ct, fpeDeriveB(key, ctx), 64)
+}
+
+// ---------------------------------------------------------------------------
+// 78.B — Tweakable Wide-Block Cipher (TODO #78.B)
+//
+// B = HFSCX-256(key || sector_be64 || bidx_be32); C = NlFscxRevolveV2(P, B, IValue).
+// Each block index within a sector gets a unique tweak, resolving the HSKE-NL-A2
+// determinism limitation (TODO #12).
+// ---------------------------------------------------------------------------
+
+func twkDeriveB(key []byte, sector uint64, bidx uint32) *BitArray {
+	buf := make([]byte, len(key)+12)
+	copy(buf, key)
+	binary.BigEndian.PutUint64(buf[len(key):], sector)
+	binary.BigEndian.PutUint32(buf[len(key)+8:], bidx)
+	tweak := Hfscx256(buf, nil)
+	return NewBitArray(256, new(big.Int).SetBytes(tweak))
+}
+
+// TwkEncrypt encrypts a 256-bit block with sector and block-index tweaks.
+func TwkEncrypt(block *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
+	return NlFscxRevolveV2(block, twkDeriveB(key, sector, bidx), 64)
+}
+
+// TwkDecrypt decrypts a 256-bit block with sector and block-index tweaks.
+func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
+	return NlFscxRevolveV2Inv(ct, twkDeriveB(key, sector, bidx), 64)
 }

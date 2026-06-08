@@ -4897,4 +4897,4 @@ node = lambda l, r: hfscx_256(b'\x01' + l + r)
 4. **78.C** Ratchet — gated on collision-probability analysis.
 5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
 
-Status: **TODO**
+Status: **78.A DONE v1.9.14 · 78.B DONE v1.9.14 · 78.J DONE v1.9.14** — Sub-items 78.A (FPE), 78.B (Tweakable), and 78.J (Accumulator) implemented across C (`herradura.h`), Go (`herradura/herradura.go`), Python suite, all three CLIs, and test suites; Arduino 32-bit variants added.  Sub-items 78.C–78.I remain TODO.

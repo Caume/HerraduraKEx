@@ -28,6 +28,7 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -997,6 +998,96 @@ func benchZkpNl() {
 }
 
 // ---------------------------------------------------------------------------
+// Security tests [22]-[24]: FPE / Tweakable / Accumulator (78.A/B/J)
+// ---------------------------------------------------------------------------
+
+func testFpeCorrectness() {
+	fmt.Println("[22] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
+	N := testRounds(1000)
+	ok := 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		P   := NewRandBitArray(256)
+		key := NewRandBitArray(256).Bytes()
+		ctx := NewRandBitArray(64).Bytes()
+		C   := FpeEncrypt(P, key, ctx)
+		D   := FpeDecrypt(C, key, ctx)
+		if D.Equal(P) {
+			ok++
+		}
+		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if ok != N { status = "FAIL" }
+	fmt.Printf("    %d / %d round-trips correct  [%s]\n\n", ok, N, status)
+}
+
+func testTwkCorrectness() {
+	fmt.Println("[23] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
+	N := testRounds(1000)
+	ok := 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		P      := NewRandBitArray(256)
+		key    := NewRandBitArray(256).Bytes()
+		sector := uint64(mrand.Int63())
+		bidx   := uint32(mrand.Int31())
+		C := TwkEncrypt(P, key, sector, bidx)
+		D := TwkDecrypt(C, key, sector, bidx)
+		if D.Equal(P) {
+			ok++
+		}
+		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if ok != N { status = "FAIL" }
+	fmt.Printf("    %d / %d round-trips correct  [%s]\n\n", ok, N, status)
+}
+
+func testAccumulatorCorrectness() {
+	fmt.Println("[24] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
+	sizes  := []int{1, 2, 4, 8, 16}
+	total, okValid, okReject := 0, 0, 0
+	for _, n := range sizes {
+		leaves := make([][]byte, n)
+		for i := range leaves {
+			leaves[i] = HaccumLeaf(NewRandBitArray(64).Bytes())
+		}
+		root := HaccumRoot(leaves)
+		for idx := 0; idx < n; idx++ {
+			proof := HaccumProve(leaves, idx)
+			if HaccumVerify(root, leaves[idx], proof, idx) {
+				okValid++
+			}
+			// tamper: flip a byte in the first sibling hash
+			if len(proof) > 0 {
+				tampered := make([][]byte, len(proof))
+				for j, s := range proof {
+					tampered[j] = append([]byte(nil), s...)
+				}
+				tampered[0][0] ^= 0xFF
+				if !HaccumVerify(root, leaves[idx], tampered, idx) {
+					okReject++
+				}
+			} else {
+				okReject++ // leaf n=1 has empty proof — root == leaf, tamper not possible
+			}
+			total++
+		}
+	}
+	status := "PASS"
+	if okValid != total || okReject != total { status = "FAIL" }
+	fmt.Printf("    valid=%d/%d  tamper_reject=%d/%d  [%s]\n\n",
+		okValid, total, okReject, total, status)
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1037,7 +1128,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.11 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.14 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1080,6 +1171,11 @@ func main() {
 	fmt.Println("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
 	testZkpRnlCorrectness()
 	testZkpNlCorrectness()
+
+	fmt.Println("--- Security Tests: FPE / Tweakable / Accumulator (78.A/B/J) ---\n")
+	testFpeCorrectness()
+	testTwkCorrectness()
+	testAccumulatorCorrectness()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()

@@ -1889,4 +1889,198 @@ static int zkp_nl_verify(uint32_t B, uint32_t y, int n, int rounds,
     return 1;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.J — Cryptographic Accumulator (Merkle tree on HFSCX-256) (TODO #78.J)
+ *
+ * Domain-separated leaf and node hashes prevent second-preimage cross-layer
+ * collisions (0x00 for leaves, 0x01 for interior nodes — RFC 6962 convention).
+ *
+ * haccum_leaf(data, dlen, out)       HFSCX-256(0x00 || data)
+ * haccum_node(left, right, out)      HFSCX-256(0x01 || left || right)
+ * haccum_root(hashes, n, out)        builds Merkle tree; pads to next pow-of-2
+ * haccum_prove(hashes, n, idx, &d)   returns sibling-hash path (malloc'd)
+ * haccum_verify(root, leaf, pth, d, idx)  verifies membership
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+static inline void haccum_leaf(const uint8_t *data, size_t dlen,
+                                uint8_t out[KEYBYTES])
+{
+    uint8_t *buf = (uint8_t *)malloc(1 + dlen);
+    if (!buf) { fprintf(stderr, "haccum_leaf: out of memory\n"); exit(1); }
+    buf[0] = 0x00;
+    if (dlen) memcpy(buf + 1, data, dlen);
+    hfscx_256(buf, 1 + dlen, NULL, out);
+    free(buf);
+}
+
+static inline void haccum_node(const uint8_t left[KEYBYTES],
+                                const uint8_t right[KEYBYTES],
+                                uint8_t out[KEYBYTES])
+{
+    uint8_t buf[1 + 2 * KEYBYTES];
+    buf[0] = 0x01;
+    memcpy(buf + 1,           left,  KEYBYTES);
+    memcpy(buf + 1 + KEYBYTES, right, KEYBYTES);
+    hfscx_256(buf, sizeof(buf), NULL, out);
+}
+
+static void haccum_root(const uint8_t (*leaf_hashes)[KEYBYTES], size_t n,
+                         uint8_t out[KEYBYTES])
+{
+    size_t sz = 1, i;
+    uint8_t (*nodes)[KEYBYTES];
+    while (sz < n) sz <<= 1;
+    nodes = (uint8_t (*)[KEYBYTES])malloc(sz * KEYBYTES);
+    if (!nodes) { fprintf(stderr, "haccum_root: out of memory\n"); exit(1); }
+    for (i = 0; i < n;  i++) memcpy(nodes[i], leaf_hashes[i], KEYBYTES);
+    for (     ; i < sz; i++) memset(nodes[i], 0,               KEYBYTES);
+    while (sz > 1) {
+        for (i = 0; i < sz / 2; i++)
+            haccum_node(nodes[2*i], nodes[2*i+1], nodes[i]);
+        sz /= 2;
+    }
+    memcpy(out, nodes[0], KEYBYTES);
+    free(nodes);
+}
+
+/* Returns a flat array of (depth * KEYBYTES) bytes; caller must free(). */
+static uint8_t *haccum_prove(const uint8_t (*leaf_hashes)[KEYBYTES], size_t n,
+                              size_t idx, int *depth_out)
+{
+    size_t sz = 1, i;
+    int d = 0;
+    uint8_t (*nodes)[KEYBYTES];
+    uint8_t *path;
+    size_t cur = idx;
+    while (sz < n) { sz <<= 1; d++; }
+    *depth_out = d;
+    nodes = (uint8_t (*)[KEYBYTES])malloc(sz * KEYBYTES);
+    if (!nodes) return NULL;
+    for (i = 0; i < n;  i++) memcpy(nodes[i], leaf_hashes[i], KEYBYTES);
+    for (     ; i < sz; i++) memset(nodes[i], 0,               KEYBYTES);
+    path = (uint8_t *)malloc((size_t)d * KEYBYTES);
+    if (!path) { free(nodes); return NULL; }
+    d = 0;
+    while (sz > 1) {
+        size_t sib = cur ^ 1;
+        memcpy(path + (size_t)d * KEYBYTES, nodes[sib], KEYBYTES);
+        d++;
+        for (i = 0; i < sz / 2; i++)
+            haccum_node(nodes[2*i], nodes[2*i+1], nodes[i]);
+        sz /= 2; cur >>= 1;
+    }
+    free(nodes);
+    return path;
+}
+
+static int haccum_verify(const uint8_t root[KEYBYTES],
+                          const uint8_t leaf_hash[KEYBYTES],
+                          const uint8_t *proof, int depth, size_t idx)
+{
+    uint8_t cur[KEYBYTES], next[KEYBYTES];
+    int d;
+    memcpy(cur, leaf_hash, KEYBYTES);
+    for (d = 0; d < depth; d++) {
+        const uint8_t *sib = proof + (size_t)d * KEYBYTES;
+        if (idx % 2 == 0) haccum_node(cur, sib, next);
+        else               haccum_node(sib, cur, next);
+        memcpy(cur, next, KEYBYTES);
+        idx >>= 1;
+    }
+    return memcmp(cur, root, KEYBYTES) == 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
+ *
+ * Bijective encryption on {0,1}^256: nl_fscx_revolve_v2 with tweak B derived
+ * from HFSCX-256(key || context).  Same (key, context, plaintext) always
+ * yields the same ciphertext — suitable for deterministic / searchable
+ * encryption.  Include a nonce in context for IND-CPA (e.g. record_id||nonce).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+static inline void fpe_derive_b(const uint8_t *key, size_t klen,
+                                 const uint8_t *ctx, size_t clen,
+                                 BitArray *B)
+{
+    uint8_t *tbuf = (uint8_t *)malloc(klen + clen);
+    uint8_t tweak[KEYBYTES];
+    if (!tbuf) { fprintf(stderr, "fpe: out of memory\n"); exit(1); }
+    if (klen) memcpy(tbuf,       key, klen);
+    if (clen) memcpy(tbuf + klen, ctx, clen);
+    hfscx_256(tbuf, klen + clen, NULL, tweak);
+    free(tbuf);
+    memcpy(B->b, tweak, KEYBYTES);
+}
+
+static inline void fpe_encrypt(const BitArray *pt,
+                                const uint8_t *key, size_t klen,
+                                const uint8_t *ctx, size_t clen,
+                                BitArray *ct)
+{
+    BitArray B;
+    fpe_derive_b(key, klen, ctx, clen, &B);
+    nl_fscx_revolve_v2_ba(ct, pt, &B, I_VALUE);
+}
+
+static inline void fpe_decrypt(const BitArray *ct,
+                                const uint8_t *key, size_t klen,
+                                const uint8_t *ctx, size_t clen,
+                                BitArray *pt)
+{
+    BitArray B;
+    fpe_derive_b(key, klen, ctx, clen, &B);
+    nl_fscx_revolve_v2_inv_ba(pt, ct, &B, I_VALUE);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.B — Tweakable Wide-Block Cipher (disk / file encryption) (TODO #78.B)
+ *
+ * Each block gets a unique tweak B = HFSCX-256(key || sector_be64 || bidx_be32),
+ * solving the determinism limitation of HSKE-NL-A2 (TODO #12).
+ * Encrypt sector s, block i: C = nl_fscx_revolve_v2(P, B(s,i), I_VALUE).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+static inline void twk_derive_b(const uint8_t *key, size_t klen,
+                                  uint64_t sector, uint32_t bidx,
+                                  BitArray *B)
+{
+    uint8_t *tbuf = (uint8_t *)malloc(klen + 12);
+    uint8_t tweak[KEYBYTES];
+    int i;
+    if (!tbuf) { fprintf(stderr, "twk: out of memory\n"); exit(1); }
+    if (klen) memcpy(tbuf, key, klen);
+    for (i = 7; i >= 0; i--) {
+        tbuf[klen + (size_t)i] = (uint8_t)(sector & 0xff);
+        sector >>= 8;
+    }
+    tbuf[klen + 8]  = (uint8_t)((bidx >> 24) & 0xff);
+    tbuf[klen + 9]  = (uint8_t)((bidx >> 16) & 0xff);
+    tbuf[klen + 10] = (uint8_t)((bidx >>  8) & 0xff);
+    tbuf[klen + 11] = (uint8_t)( bidx        & 0xff);
+    hfscx_256(tbuf, klen + 12, NULL, tweak);
+    free(tbuf);
+    memcpy(B->b, tweak, KEYBYTES);
+}
+
+static inline void twk_encrypt(const BitArray *block,
+                                 const uint8_t *key, size_t klen,
+                                 uint64_t sector, uint32_t bidx,
+                                 BitArray *ct)
+{
+    BitArray B;
+    twk_derive_b(key, klen, sector, bidx, &B);
+    nl_fscx_revolve_v2_ba(ct, block, &B, I_VALUE);
+}
+
+static inline void twk_decrypt(const BitArray *ct,
+                                 const uint8_t *key, size_t klen,
+                                 uint64_t sector, uint32_t bidx,
+                                 BitArray *block)
+{
+    BitArray B;
+    twk_derive_b(key, klen, sector, bidx, &B);
+    nl_fscx_revolve_v2_inv_ba(block, ct, &B, I_VALUE);
+}
+
 #endif /* HERRADURA_H */

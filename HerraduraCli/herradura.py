@@ -56,6 +56,8 @@ from primitives import (
     RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, SDFT, SDFNR, SDFR,
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
+    fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
+    haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
 )
 from primitives import _s as _suite_mod
 
@@ -1088,6 +1090,53 @@ def cmd_dgst(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: fpe (78.A)
+# ---------------------------------------------------------------------------
+
+def cmd_fpe(args):
+    key_int, nbits = _load_key(args.key)
+    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    ctx_bytes = args.context.encode() if args.context else b''
+    in_bytes  = _read_file(getattr(args, 'in'))
+    if len(in_bytes) < 32:
+        in_bytes = in_bytes.ljust(32, b'\x00')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    if args.encrypt:
+        R = fpe_encrypt(P, key_bytes, ctx_bytes)
+    else:
+        R = fpe_decrypt(P, key_bytes, ctx_bytes)
+    out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
+    if args.out == '-':
+        sys.stdout.buffer.write(out_bytes)
+    else:
+        with open(args.out, 'wb') as f:
+            f.write(out_bytes)
+
+
+# ---------------------------------------------------------------------------
+# Sub-command: twk (78.B)
+# ---------------------------------------------------------------------------
+
+def cmd_twk(args):
+    key_int, nbits = _load_key(args.key)
+    key_bytes = key_int.to_bytes(nbits // 8, 'big')
+    in_bytes  = _read_file(getattr(args, 'in'))
+    if len(in_bytes) < 32:
+        in_bytes = in_bytes.ljust(32, b'\x00')
+    P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    if args.encrypt:
+        R = twk_encrypt(P, key_bytes, args.sector, args.bidx)
+    else:
+        R = twk_decrypt(P, key_bytes, args.sector, args.bidx)
+    out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
+    if args.out == '-':
+        sys.stdout.buffer.write(out_bytes)
+    else:
+        with open(args.out, 'wb') as f:
+            f.write(out_bytes)
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1195,6 +1244,38 @@ def build_parser():
     dg.add_argument('--out', default='-',
                     help='Output: - prints hex to stdout (default); file path writes PEM digest')
 
+    # fpe (78.A)
+    fp = sub.add_parser('fpe',
+                        help='Format-preserving encrypt/decrypt a 256-bit block (78.A)')
+    fp.add_argument('--key',     required=True,
+                    help='Session key PEM')
+    fp.add_argument('--context', default='',
+                    help='Context/tweak string (optional)')
+    fp.add_argument('--in',     required=True, dest='in',
+                    help='Input file (32 bytes)')
+    fp.add_argument('--out',    default='-',
+                    help='Output file (raw 32 bytes); - for stdout')
+    fp_mode = fp.add_mutually_exclusive_group(required=True)
+    fp_mode.add_argument('--encrypt', action='store_true')
+    fp_mode.add_argument('--decrypt', action='store_true')
+
+    # twk (78.B)
+    tw = sub.add_parser('twk',
+                        help='Tweakable wide-block encrypt/decrypt a 256-bit block (78.B)')
+    tw.add_argument('--key',    required=True,
+                    help='Session key PEM')
+    tw.add_argument('--sector', type=int, default=0,
+                    help='Sector number (default 0)')
+    tw.add_argument('--bidx',   type=int, default=0,
+                    help='Block index within sector (default 0)')
+    tw.add_argument('--in',    required=True, dest='in',
+                    help='Input file (32 bytes)')
+    tw.add_argument('--out',   default='-',
+                    help='Output file (raw 32 bytes); - for stdout')
+    tw_mode = tw.add_mutually_exclusive_group(required=True)
+    tw_mode.add_argument('--encrypt', action='store_true')
+    tw_mode.add_argument('--decrypt', action='store_true')
+
     return p
 
 
@@ -1209,6 +1290,8 @@ _DISPATCH = {
     'encfile': cmd_encfile,
     'decfile': cmd_decfile,
     'dgst':    cmd_dgst,
+    'fpe':     cmd_fpe,
+    'twk':     cmd_twk,
 }
 
 

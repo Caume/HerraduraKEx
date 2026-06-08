@@ -1631,6 +1631,82 @@ static void cmd_decfile(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * fpe — format-preserving encrypt / decrypt (78.A)
+ *   --encrypt | --decrypt  --key SK --context CTX --in FILE [--out FILE]
+ *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_fpe(int argc, char **argv)
+{
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *ctx_str  = get_arg(argc, argv, "--context");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    int do_enc = has_flag(argc, argv, "--encrypt");
+    int do_dec = has_flag(argc, argv, "--decrypt");
+    if (!do_enc && !do_dec) die("fpe: --encrypt or --decrypt required");
+    if (!key_path) die("fpe: --key required");
+    if (!in_path)  die("fpe: --in required");
+    if (!ctx_str)  ctx_str = "";
+
+    BitArray K;
+    load_sym_key(&K, key_path);
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    BitArray P;
+    make_msg_ba(&P, in_buf, in_len);
+    free(in_buf);
+
+    BitArray R;
+    if (do_enc)
+        fpe_encrypt(&P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
+    else
+        fpe_decrypt(&P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
+
+    write_binary_file(out_path, R.b, KEYBYTES);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * twk — tweakable wide-block cipher encrypt / decrypt (78.B)
+ *   --encrypt | --decrypt  --key SK --sector N --bidx N --in FILE [--out FILE]
+ *   Input/output: raw 32-byte block.  Key: HERRADURA SESSION KEY PEM.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_twk(int argc, char **argv)
+{
+    const char *key_path    = get_arg(argc, argv, "--key");
+    const char *sector_str  = get_arg(argc, argv, "--sector");
+    const char *bidx_str    = get_arg(argc, argv, "--bidx");
+    const char *in_path     = get_arg(argc, argv, "--in");
+    const char *out_path    = get_arg(argc, argv, "--out");
+    int do_enc = has_flag(argc, argv, "--encrypt");
+    int do_dec = has_flag(argc, argv, "--decrypt");
+    if (!do_enc && !do_dec) die("twk: --encrypt or --decrypt required");
+    if (!key_path)   die("twk: --key required");
+    if (!in_path)    die("twk: --in required");
+    uint64_t sector = sector_str ? (uint64_t)strtoull(sector_str, NULL, 10) : 0;
+    uint32_t bidx   = bidx_str   ? (uint32_t)strtoul(bidx_str,   NULL, 10) : 0;
+
+    BitArray K;
+    load_sym_key(&K, key_path);
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    BitArray P;
+    make_msg_ba(&P, in_buf, in_len);
+    free(in_buf);
+
+    BitArray R;
+    if (do_enc)
+        twk_encrypt(&P, K.b, KEYBYTES, sector, bidx, &R);
+    else
+        twk_decrypt(&P, K.b, KEYBYTES, sector, bidx, &R);
+
+    write_binary_file(out_path, R.b, KEYBYTES);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1684,6 +1760,14 @@ static void usage(void)
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"
 "    With --out FILE: HERRADURA DIGEST PEM.\n"
 "\n"
+"  fpe (--encrypt|--decrypt) --key SK --context CTX --in FILE [--out FILE]\n"
+"    Format-preserving encrypt/decrypt a 32-byte block (78.A).\n"
+"    Key: HERRADURA SESSION KEY PEM.  CTX: arbitrary context string.\n"
+"\n"
+"  twk (--encrypt|--decrypt) --key SK [--sector N] [--bidx N] --in FILE [--out FILE]\n"
+"    Tweakable wide-block cipher (78.B).  Unique tweak per (sector, block-index).\n"
+"    Key: HERRADURA SESSION KEY PEM.\n"
+"\n"
 "PEM output goes to stdout when --out is absent or '-'.\n"
 "All keys are 256-bit.\n"
     );
@@ -1710,6 +1794,8 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "dgst")    == 0) { cmd_dgst(argc, argv);    return 0; }
     if (strcmp(cmd, "encfile") == 0) { cmd_encfile(argc, argv); return 0; }
     if (strcmp(cmd, "decfile") == 0) { cmd_decfile(argc, argv); return 0; }
+    if (strcmp(cmd, "fpe")     == 0) { cmd_fpe(argc, argv);     return 0; }
+    if (strcmp(cmd, "twk")     == 0) { cmd_twk(argc, argv);     return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;
