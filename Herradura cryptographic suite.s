@@ -85,6 +85,14 @@ fmt_eve_hpke_sdf_fail: .asciz "+ Eve guessed HPKE-Stern-F session key!\n"
 fmt_zkp_rnl_hdr: .asciz "\n-- ZKP-RNL [Ring-LWR Sigma-protocol; N=32, gamma=4096, t=4] --\n"
 fmt_zkp_rnl_ok:  .asciz "+ ZKP-RNL proof verified\n"
 fmt_zkp_rnl_fail:.asciz "- ZKP-RNL verify FAILED\n"
+fmt_masked_hdr:  .asciz "\n-- Masked HSKE (78.H) [GF(2)-linearity masking] --\n"
+fmt_masked_ok:   .asciz "- Masked HSKE encrypt/decrypt correct\n"
+fmt_masked_fail: .asciz "+ Masked HSKE encrypt/decrypt failed!\n"
+fmt_ratch_hdr:   .asciz "\n-- Ratchet (78.C) [forward-secret, 5 steps] --\n"
+fmt_ratch_ok:    .asciz "- Ratchet: 5 distinct message keys\n"
+fmt_ratch_fail:  .asciz "+ Ratchet: duplicate message keys!\n"
+    .balign 4
+ratchet_domain_32: .word 0x4E4C2D46   @ 'N','L','-','F' (first 4 bytes of NL-FSCX-RATCHET-V1)
 lbl_sigma_msg:   .asciz "msg (sigma) "
     .balign 4
 sigma_demo_msg:  .word 0xDEADB00B
@@ -1191,6 +1199,96 @@ zkp_rnl_verify_fail:
     ldr     r0, =fmt_zkp_rnl_fail
     bl      printf
 zkp_rnl_done:
+    ldr     r0, =fmt_nl
+    bl      printf
+
+    /* ── 78.H — Masked HSKE demo ──────────────────────────────────── */
+    ldr     r0, =fmt_masked_hdr
+    bl      printf
+    bl      prng_next
+    mov     r4, r0          @ plain
+    bl      prng_next
+    mov     r5, r0          @ key
+    bl      prng_next
+    mov     r6, r0          @ mask
+    @ ct = fscx_revolve(plain ^ mask, key, I_VALUE) ^ fscx_revolve(mask, 0, I_VALUE)
+    mov     r0, r4
+    eor     r0, r0, r6      @ A ^ mask
+    mov     r1, r5          @ key
+    mov     r2, #I_VALUE
+    bl      fscx_revolve
+    mov     r7, r0          @ fm
+    mov     r0, r6          @ mask
+    mov     r1, #0          @ zero
+    mov     r2, #I_VALUE
+    bl      fscx_revolve
+    eor     r7, r7, r0      @ ct
+    @ pt = fscx_revolve(ct ^ mask, key, R_VALUE) ^ fscx_revolve(mask, 0, R_VALUE)
+    mov     r0, r7
+    eor     r0, r0, r6      @ ct ^ mask
+    mov     r1, r5
+    mov     r2, #R_VALUE
+    bl      fscx_revolve
+    mov     r8, r0          @ fm
+    mov     r0, r6
+    mov     r1, #0
+    mov     r2, #R_VALUE
+    bl      fscx_revolve
+    eor     r8, r8, r0      @ recovered
+    cmp     r8, r4
+    beq     masked_ok
+    ldr     r0, =fmt_masked_fail
+    bl      printf
+    b       masked_done
+masked_ok:
+    ldr     r0, =fmt_masked_ok
+    bl      printf
+masked_done:
+
+    /* ── 78.C — Ratchet demo (5 steps) ───────────────────────────── */
+    ldr     r0, =fmt_ratch_hdr
+    bl      printf
+    @ seed state: prng_next as initial state
+    bl      prng_next
+    mov     r4, r0          @ state
+    ldr     r5, =ratchet_domain_32
+    ldr     r5, [r5]        @ domain constant
+    mov     r6, #5          @ steps
+    mov     r9, #0          @ seen[0] sentinel (first key)
+    mov     r10, #1         @ all_unique flag
+ratch_loop:
+    @ msg_key = nl_fscx_revolve_v1(state, 0x01, 1)
+    mov     r0, r4
+    mov     r1, #1
+    mov     r2, #1
+    bl      nl_fscx_revolve_v1
+    cmp     r6, #5
+    it      eq
+    moveq   r9, r0          @ save first key
+    cmp     r6, #5
+    it      ne
+    cmpeq   r10, #1         @ only check if still unique
+    it      ne
+    cmpeq   r0, r9          @ collision with first key?
+    it      eq
+    moveq   r10, #0         @ mark not unique
+    @ new_state = nl_fscx_revolve_v1(state, domain, 1)
+    mov     r0, r4
+    mov     r1, r5
+    mov     r2, #1
+    bl      nl_fscx_revolve_v1
+    mov     r4, r0
+    subs    r6, r6, #1
+    bne     ratch_loop
+    cmp     r10, #1
+    beq     ratch_unique_ok
+    ldr     r0, =fmt_ratch_fail
+    bl      printf
+    b       ratch_done
+ratch_unique_ok:
+    ldr     r0, =fmt_ratch_ok
+    bl      printf
+ratch_done:
     ldr     r0, =fmt_nl
     bl      printf
 

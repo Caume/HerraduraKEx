@@ -2083,4 +2083,113 @@ static inline void twk_decrypt(const BitArray *ct,
     nl_fscx_revolve_v2_inv_ba(block, ct, &B, I_VALUE);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.H — Masking-Friendly FSCX (Boolean masking via GF(2) linearity)
+ *
+ * FSCX(A⊕r, B, steps) ⊕ FSCX(r, 0, steps) = FSCX(A, B, steps)
+ * because M = I⊕ROL⊕ROR is GF(2)-linear, so M^steps(A⊕r) = M^steps(A)⊕M^steps(r).
+ *
+ * The caller supplies a uniform random mask r; no secret bits of A are
+ * exposed in any intermediate value computed by this function.
+ *
+ * hske_encrypt_masked / hske_decrypt_masked generate their own mask internally
+ * and return it in *mask_out so the caller can use or erase it.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* fscx_revolve_masked: compute FSCX(A,B,steps) without exposing A.
+ * mask must be a uniform random BitArray (caller-supplied).
+ * out  = FSCX(A⊕mask, B, steps) ⊕ FSCX(mask, 0, steps)
+ *      = FSCX(A, B, steps)  [by GF(2)-linearity of M^steps]. */
+static inline void fscx_revolve_masked(const BitArray *A, const BitArray *B,
+                                        const BitArray *mask, int steps,
+                                        BitArray *out)
+{
+    BitArray am, zero, fm, fz;
+    int i;
+    memset(zero.b, 0, KEYBYTES);
+    for (i = 0; i < KEYBYTES; i++) am.b[i] = A->b[i] ^ mask->b[i];
+    ba_fscx_revolve(&fm, &am,   B,     steps);
+    ba_fscx_revolve(&fz, mask, &zero,  steps);
+    for (i = 0; i < KEYBYTES; i++) out->b[i] = fm.b[i] ^ fz.b[i];
+}
+
+/* hske_encrypt_masked: HSKE encrypt with internal mask generation.
+ * Writes ciphertext to *ct and the mask used to *mask_out (caller must
+ * erase mask_out after use). */
+static inline void hske_encrypt_masked(const BitArray *pt, const BitArray *key,
+                                        BitArray *ct, BitArray *mask_out,
+                                        FILE *urnd)
+{
+    ba_rand(mask_out, urnd);
+    fscx_revolve_masked(pt, key, mask_out, I_VALUE, ct);
+}
+
+/* hske_decrypt_masked: HSKE decrypt with internal mask generation. */
+static inline void hske_decrypt_masked(const BitArray *ct, const BitArray *key,
+                                        BitArray *pt, BitArray *mask_out,
+                                        FILE *urnd)
+{
+    ba_rand(mask_out, urnd);
+    fscx_revolve_masked(ct, key, mask_out, R_VALUE, pt);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.C — Forward-Secret Unidirectional Ratchet
+ *
+ * state_{i+1} = nl_fscx_revolve_v1(state_i, RATCHET_DOMAIN, 1)
+ * msg_key_i   = hfscx_256(state_i || 0x01)   [32 bytes, caller frees]
+ *
+ * Because nl_fscx_v1 is non-bijective, knowing state_{i+1} does not reveal
+ * state_i (one-way by Theorem 16 OWF conjecture).  The caller MUST erase
+ * state_i after calling ratchet_advance.
+ *
+ * RATCHET_DOMAIN = first 32 bytes of "NL-FSCX-RATCHET-V1\0" repeated.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static const uint8_t _RATCHET_DOMAIN_BYTES[KEYBYTES] = {
+    /* b'NL-FSCX-RATCHET-V1\x00' repeated, truncated to 32 bytes */
+    'N','L','-','F','S','C','X','-','R','A','T','C','H','E','T','-',
+    'V','1','\0','N','L','-','F','S','C','X','-','R','A','T','C','H'
+};
+
+/* ratchet_init: derive initial state from seed via HFSCX-256(seed || 0x02). */
+static inline void ratchet_init(const uint8_t *seed, size_t slen, BitArray *state)
+{
+    uint8_t *buf = (uint8_t *)malloc(slen + 1);
+    if (!buf) { fprintf(stderr, "ratchet_init: out of memory\n"); exit(1); }
+    memcpy(buf, seed, slen);
+    buf[slen] = 0x02;
+    hfscx_256(buf, slen + 1, NULL, state->b);
+    free(buf);
+}
+
+/* ratchet_advance: advance state by one step.
+ * Writes next state to *new_state and 32-byte message key to msg_key[KEYBYTES].
+ * Caller MUST call ratchet_erase(state) immediately after. */
+static inline void ratchet_advance(const BitArray *state,
+                                    BitArray *new_state,
+                                    uint8_t msg_key[KEYBYTES])
+{
+    static const BitArray *domain = NULL;
+    static BitArray dom_ba;
+    uint8_t buf[KEYBYTES + 1];
+
+    if (!domain) {
+        memcpy(dom_ba.b, _RATCHET_DOMAIN_BYTES, KEYBYTES);
+        domain = &dom_ba;
+    }
+    /* msg_key = HFSCX-256(state || 0x01) */
+    memcpy(buf, state->b, KEYBYTES);
+    buf[KEYBYTES] = 0x01;
+    hfscx_256(buf, KEYBYTES + 1, NULL, msg_key);
+    /* new_state = nl_fscx_revolve_v1(state, DOMAIN, 1) */
+    nl_fscx_revolve_v1_ba(new_state, state, domain, 1);
+}
+
+/* ratchet_erase: zero-fill state (explicit, not optimised away). */
+static inline void ratchet_erase(BitArray *state)
+{
+    explicit_bzero(state->b, KEYBYTES);
+}
+
 #endif /* HERRADURA_H */

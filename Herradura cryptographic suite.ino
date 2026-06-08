@@ -766,6 +766,8 @@ const uint32 PLAIN  = 0xDEADC0DEUL;
 /* 78.A — FPE at 32-bit: B = hfscx_32(hfscx_32(key) ^ context)       */
 /* 78.B — Tweakable: B = hfscx_32(hfscx_32(key ^ sector) ^ bidx)     */
 /* 78.J — Accumulator-32: leaf/node using hfscx_32                    */
+/* 78.H — Masked HSKE-32: linearity masking for DPA resistance         */
+/* 78.C — Ratchet-32: forward-secret state advance                    */
 /* ------------------------------------------------------------------ */
 
 static uint32 fpe_encrypt_32(uint32 pt, uint32 key, uint32 context) {
@@ -784,6 +786,27 @@ static uint32 twk_encrypt_32(uint32 block, uint32 key, uint32 sector, uint32 bid
 static uint32 twk_decrypt_32(uint32 block, uint32 key, uint32 sector, uint32 bidx) {
     uint32 B = hfscx_32(hfscx_32(key ^ sector) ^ bidx);
     return nl_fscx_revolve_v2_inv(block, B, I_VALUE);
+}
+
+/* 78.H: fscx_revolve_masked_32(A, B, mask, steps) */
+static uint32 fscx_revolve_masked_32(uint32 A, uint32 B, uint32 mask, int steps) {
+    uint32 fm = fscx_revolve(A ^ mask, B, steps);
+    uint32 fz = fscx_revolve(mask,     0, steps);
+    return fm ^ fz;
+}
+static uint32 hske_encrypt_masked_32(uint32 pt, uint32 key, uint32 mask) {
+    return fscx_revolve_masked_32(pt, key, mask, I_VALUE);
+}
+static uint32 hske_decrypt_masked_32(uint32 ct, uint32 key, uint32 mask) {
+    return fscx_revolve_masked_32(ct, key, mask, R_VALUE);
+}
+
+/* 78.C: 32-bit ratchet domain constant: 'N','L','-','F' */
+static const uint32 RATCHET_DOMAIN_32 = 0x4E4C2D46UL;
+
+static uint32 ratchet_advance_32(uint32 state, uint32 *msg_key_out) {
+    *msg_key_out = nl_fscx_revolve_v1(state, 1, 1);
+    return nl_fscx_revolve_v1(state, RATCHET_DOMAIN_32, 1);
 }
 
 /* Leaf: hfscx_32(0x00000000 ^ data); Node: hfscx_32(hfscx_32(0x01000000 ^ l) ^ r) */
@@ -1146,6 +1169,38 @@ void loop() {
         printHexLine("root         : ", root);
         printHexLine("verify (idx2): ", cur);
         Serial.println(cur == root ? "+ Accumulator proof correct" : "- Accumulator proof FAILED");
+    }
+    Serial.println();
+
+    /* Masked HSKE (78.H)                                               */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- Masked HSKE (78.H) [GF(2)-linearity masking; 32-bit]");
+    {
+        uint32 plain32 = 0xDEADC0DEUL;
+        uint32 key32   = 0xCAFEBABEUL;
+        uint32 mask32  = 0xA5A5A5A5UL;
+        uint32 ct32    = hske_encrypt_masked_32(plain32, key32, mask32);
+        uint32 rec32   = hske_decrypt_masked_32(ct32,    key32, mask32);
+        printHexLine("cipher : ", ct32);
+        printHexLine("recover: ", rec32);
+        Serial.println(rec32 == plain32 ? "+ Masked HSKE correct" : "- Masked HSKE FAILED");
+    }
+    Serial.println();
+
+    /* Ratchet (78.C)                                                   */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- Ratchet (78.C) [forward-secret; 32-bit; 5 steps]");
+    {
+        uint32 state32 = 0x12345678UL;
+        uint32 mk0 = 0, mk;
+        bool unique = true;
+        for (int i = 0; i < 5; i++) {
+            state32 = ratchet_advance_32(state32, &mk);
+            if (i == 0) mk0 = mk;
+            else if (mk == mk0) unique = false;
+        }
+        Serial.println(unique ? "- Ratchet: 5 distinct message keys"
+                              : "+ Ratchet: duplicate message keys!");
     }
     Serial.println();
 

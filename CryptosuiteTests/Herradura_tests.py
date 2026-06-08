@@ -423,6 +423,33 @@ def haccum_verify_test(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> 
 
 
 # ---------------------------------------------------------------------------
+# 78.H Masking / 78.C Ratchet (self-contained copies)
+# ---------------------------------------------------------------------------
+
+_R_VALUE = _KEYBITS * 3 // 4  # 192
+
+def fscx_revolve_masked_test(A: BitArray, B: BitArray, mask: BitArray, steps: int) -> BitArray:
+    zero = BitArray(_KEYBITS, 0)
+    am   = BitArray(_KEYBITS, A.uint ^ mask.uint)
+    fm   = fscx_revolve(am, B, steps)
+    fz   = fscx_revolve(mask, zero, steps)
+    return BitArray(_KEYBITS, fm.uint ^ fz.uint)
+
+_RATCHET_DOMAIN_TEST = BitArray(
+    _KEYBITS,
+    int.from_bytes(b'NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V'[:_KEYBITS // 8], 'big')
+)
+
+def ratchet_init_test(seed: bytes) -> BitArray:
+    return BitArray(_KEYBITS, int.from_bytes(hfscx_256(seed + b'\x02'), 'big'))
+
+def ratchet_advance_test(state: BitArray):
+    msg_key   = hfscx_256(state.bytes + b'\x01')
+    new_state = nl_fscx_revolve_v1(state, _RATCHET_DOMAIN_TEST, 1)
+    return new_state, msg_key
+
+
+# ---------------------------------------------------------------------------
 # HPKS-Stern-F / HPKE-Stern-F helpers (self-contained, mirrors suite)
 # ---------------------------------------------------------------------------
 
@@ -1623,6 +1650,67 @@ def test_accumulator_correctness():
     print()
 
 
+def test_masked_hske():
+    print("[25] Masked HSKE (78.H) — GF(2)-linearity masking correctness  [NEW]")
+    N = _iters(200)
+    ok = 0
+    for _ in _trange(N):
+        pt   = BitArray.random(_KEYBITS)
+        key  = BitArray.random(_KEYBITS)
+        mask = BitArray.random(_KEYBITS)
+        ct  = fscx_revolve_masked_test(pt,  key, mask, _I_VALUE)
+        rec = fscx_revolve_masked_test(ct,  key, mask, _R_VALUE)
+        if rec.uint == pt.uint:
+            ok += 1
+    status = "PASS" if ok == N else "FAIL"
+    print(f"    round-trips={ok}/{N}  [{status}]")
+    # linearity check: F(A⊕r,B,n) ⊕ F(r,0,n) == F(A,B,n)
+    zero = BitArray(_KEYBITS, 0)
+    lin_ok = 0
+    for _ in range(min(N, 100)):
+        A  = BitArray.random(_KEYBITS)
+        B  = BitArray.random(_KEYBITS)
+        r  = BitArray.random(_KEYBITS)
+        direct   = fscx_revolve(A, B, _I_VALUE)
+        am       = BitArray(_KEYBITS, A.uint ^ r.uint)
+        masked   = BitArray(_KEYBITS,
+                            fscx_revolve(am, B, _I_VALUE).uint ^ fscx_revolve(r, zero, _I_VALUE).uint)
+        if masked.uint == direct.uint:
+            lin_ok += 1
+    lin_status = "PASS" if lin_ok == min(N, 100) else "FAIL"
+    print(f"    linearity={lin_ok}/{min(N, 100)}  [{lin_status}]")
+    print()
+
+
+def test_ratchet_forward_secrecy():
+    print("[26] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
+    steps = min(_iters(20), 20)
+    seeds_tested = 5; all_ok = True
+    for trial in range(seeds_tested):
+        seed  = f"test-seed-{trial}".encode()
+        state = ratchet_init_test(seed)
+        keys  = []
+        for _ in range(steps):
+            state, mk = ratchet_advance_test(state)
+            keys.append(mk)
+        if len(set(keys)) < len(keys):
+            all_ok = False
+            print(f"    trial {trial}: duplicate message key!")
+    # forward secrecy: two seeds must not converge in <steps
+    state1 = ratchet_init_test(b"seed-alice")
+    state2 = ratchet_init_test(b"seed-bob")
+    diverge = True
+    for _ in range(steps):
+        state1, _ = ratchet_advance_test(state1)
+        state2, _ = ratchet_advance_test(state2)
+        if state1.uint == state2.uint:
+            diverge = False
+    status = "PASS" if all_ok and diverge else "FAIL"
+    print(f"    key_uniqueness={'PASS' if all_ok else 'FAIL'}  "
+          f"divergence={'PASS' if diverge else 'FAIL'}  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -1815,7 +1903,7 @@ def bench_zkp_nl():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.9.11 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.15 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -1843,7 +1931,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.14 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.15 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -1886,6 +1974,10 @@ if __name__ == '__main__':
     test_fpe_correctness()
     test_twk_correctness()
     test_accumulator_correctness()
+
+    print("--- Security Tests: Masking / Ratchet (78.H/C) ---\n")
+    test_masked_hske()
+    test_ratchet_forward_secrecy()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

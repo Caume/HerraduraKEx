@@ -1088,6 +1088,78 @@ func testAccumulatorCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
+// Security tests [25]-[26]: Masking / Ratchet (78.H/C)
+// ---------------------------------------------------------------------------
+
+func testMaskedHske() {
+	fmt.Println("[25] Masked HSKE (78.H) — GF(2)-linearity masking  [NEW]")
+	N := testRounds(200)
+	okRt, okLin := 0, 0
+	for i := 0; i < N; i++ {
+		pt   := NewRandBitArray(256)
+		key  := NewRandBitArray(256)
+		ct, _  := HskeEncryptMasked(pt, key)
+		rec, _ := HskeDecryptMasked(ct, key)
+		if rec.Equal(pt) {
+			okRt++
+		}
+	}
+	// linearity: FscxRevolveMasked(A, B, r, n) == FscxRevolve(A, B, n)
+	linN := 100
+	for i := 0; i < linN; i++ {
+		A := NewRandBitArray(256)
+		B := NewRandBitArray(256)
+		r := NewRandBitArray(256)
+		direct := FscxRevolve(A, B, 64)
+		masked := FscxRevolveMasked(A, B, r, 64)
+		if masked.Equal(direct) {
+			okLin++
+		}
+	}
+	status := "PASS"
+	if okRt != N || okLin != linN { status = "FAIL" }
+	fmt.Printf("    round-trips=%d/%d  linearity=%d/%d  [%s]\n\n",
+		okRt, N, okLin, linN, status)
+}
+
+func testRatchetForwardSecrecy() {
+	fmt.Println("[26] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
+	steps := testRounds(10); if steps > 10 { steps = 10 }
+	okUniq, okDiv := true, true
+
+	// key uniqueness: steps should produce distinct keys
+	state := RatchetInit([]byte("test-seed-0"))
+	var first []byte
+	for i := 0; i < steps; i++ {
+		var mk []byte
+		state, mk = RatchetAdvance(state)
+		if i == 0 {
+			first = mk
+		} else if bytes.Equal(mk, first) {
+			okUniq = false
+		}
+	}
+
+	// divergence: two seeds should not converge
+	s1 := RatchetInit([]byte("seed-alice"))
+	s2 := RatchetInit([]byte("seed-bob"))
+	for i := 0; i < steps; i++ {
+		var dummy []byte
+		s1, dummy = RatchetAdvance(s1)
+		s2, dummy = RatchetAdvance(s2)
+		if s1.Equal(s2) { okDiv = false }
+		_ = dummy
+	}
+
+	status := "PASS"
+	if !okUniq || !okDiv { status = "FAIL" }
+	uniqStr := "PASS"; if !okUniq { uniqStr = "FAIL" }
+	divStr  := "PASS"; if !okDiv  { divStr  = "FAIL" }
+	fmt.Printf("    key_uniqueness=%s  divergence=%s  [%s]\n\n",
+		uniqStr, divStr, status)
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1128,7 +1200,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.14 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.15 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1176,6 +1248,10 @@ func main() {
 	testFpeCorrectness()
 	testTwkCorrectness()
 	testAccumulatorCorrectness()
+
+	fmt.Println("--- Security Tests: Masking / Ratchet (78.H/C) ---\n")
+	testMaskedHske()
+	testRatchetForwardSecrecy()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()

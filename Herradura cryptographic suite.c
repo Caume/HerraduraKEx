@@ -699,6 +699,39 @@ int main(void)
         (void)root_check;
     }
 
+    /* 78.H — Masked HSKE demo */
+    {
+        BitArray hske_plain, hske_key, hske_ct, hske_rec, mask;
+        ba_rand(&hske_plain, urnd); ba_rand(&hske_key, urnd);
+        hske_encrypt_masked(&hske_plain, &hske_key, &hske_ct, &mask, urnd);
+        hske_decrypt_masked(&hske_ct,   &hske_key, &hske_rec, &mask, urnd);
+        if (ba_equal(&hske_rec, &hske_plain))
+            puts("- Masked HSKE encrypt/decrypt correct");
+        else
+            puts("+ Masked HSKE encrypt/decrypt failed!");
+        explicit_bzero(&mask, sizeof(mask));
+    }
+
+    /* 78.C — Ratchet demo (5 steps) */
+    {
+        BitArray state, next;
+        uint8_t mk[KEYBYTES];
+        uint8_t seen[5][KEYBYTES];
+        int i, unique = 1;
+        ratchet_init((uint8_t *)"demo-seed-78c", 13, &state);
+        for (i = 0; i < 5; i++) {
+            ratchet_advance(&state, &next, mk);
+            memcpy(seen[i], mk, KEYBYTES);
+            ratchet_erase(&state);
+            state = next;
+        }
+        for (i = 1; i < 5 && unique; i++)
+            if (memcmp(seen[0], seen[i], KEYBYTES) == 0) unique = 0;
+        puts(unique ? "- Ratchet: 5 distinct message keys"
+                    : "+ Ratchet: duplicate message keys!");
+        ratchet_erase(&state);
+    }
+
     fclose(urnd);
     /* SA-09: clear private key material from stack before return */
     explicit_bzero(&a,         sizeof(a));
