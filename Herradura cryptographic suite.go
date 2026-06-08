@@ -379,4 +379,53 @@ func main() {
 	} else {
 		fmt.Println("- Eve random guess does not match session key  (SD protection)")
 	}
+
+	fmt.Println("*** FPE (78.A) — format-preserving encrypt/decrypt round-trip")
+	{
+		fpeKey := []byte("herradura-fpe-key-256bit-example")
+		fpeCtx := []byte("record:42")
+		fpePlain := NewRandBitArray(n)
+		fpeCt    := FpeEncrypt(fpePlain, fpeKey, fpeCtx)
+		fpeRec   := FpeDecrypt(fpeCt,   fpeKey, fpeCtx)
+		if fpeRec.Equal(fpePlain) {
+			fmt.Println("- FPE round-trip correct")
+		} else {
+			fmt.Println("+ FPE round-trip failed!")
+		}
+	}
+
+	fmt.Println("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt")
+	{
+		twkKey   := []byte("herradura-twk-key-256bit-example")
+		twkPlain := NewRandBitArray(n)
+		twkCt    := TwkEncrypt(twkPlain, twkKey, 7, 3)
+		twkRec   := TwkDecrypt(twkCt,   twkKey, 7, 3)
+		if twkRec.Equal(twkPlain) {
+			fmt.Println("- Tweakable cipher round-trip correct")
+		} else {
+			fmt.Println("+ Tweakable cipher round-trip failed!")
+		}
+	}
+
+	fmt.Println("*** Accumulator (78.J) — Merkle root + proof/verify for 4 leaves")
+	{
+		var leavesData [][]byte
+		var leafHashes [][]byte
+		for i := 0; i < 4; i++ {
+			d := []byte(fmt.Sprintf("leaf%d", i))
+			leavesData = append(leavesData, d)
+			leafHashes = append(leafHashes, HaccumLeaf(d))
+		}
+		root  := HaccumRoot(leafHashes)
+		proof := HaccumProve(leafHashes, 2)
+		ok    := HaccumVerify(root, leafHashes[2], proof, 2)
+		// tamper check: wrong leaf must fail
+		okWrong := HaccumVerify(root, leafHashes[0], proof, 2)
+		if ok && !okWrong {
+			fmt.Println("- Accumulator proof/verify correct")
+		} else {
+			fmt.Println("+ Accumulator proof/verify failed!")
+		}
+		_ = leavesData
+	}
 }

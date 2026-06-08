@@ -1908,6 +1908,93 @@ func cmdDecfile(args []string) {
 	}
 }
 
+// ── fpe (78.A) ───────────────────────────────────────────────────────────────
+
+func cmdFpe(args []string) {
+	fs      := flag.NewFlagSet("fpe", flag.ExitOnError)
+	keyPath := fs.String("key",     "",  "Session key PEM")
+	ctx     := fs.String("context", "",  "Context string (tweak)")
+	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	out     := fs.String("out",     "-", "Output file")
+	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
+	doDec   := fs.Bool("decrypt",   false, "Decrypt")
+	fs.Parse(args)
+
+	if !*doEnc && !*doDec {
+		fmt.Fprintln(os.Stderr, "fpe: --encrypt or --decrypt required")
+		os.Exit(1)
+	}
+	if *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "fpe: --key required")
+		os.Exit(1)
+	}
+	keyBig, _, err := loadKey(*keyPath)
+	if err != nil {
+		die("fpe", err)
+	}
+	K := NewBitArray(256, keyBig)
+
+	data, err := readFile(*in)
+	if err != nil {
+		die("fpe", err)
+	}
+	P := NewBitArray(256, new(big.Int).SetBytes(data))
+
+	var R *BitArray
+	if *doEnc {
+		R = FpeEncrypt(P, K.Bytes(), []byte(*ctx))
+	} else {
+		R = FpeDecrypt(P, K.Bytes(), []byte(*ctx))
+	}
+	if err := writeBytes(*out, R.Bytes()); err != nil {
+		die("fpe", err)
+	}
+}
+
+// ── twk (78.B) ───────────────────────────────────────────────────────────────
+
+func cmdTwk(args []string) {
+	fs      := flag.NewFlagSet("twk", flag.ExitOnError)
+	keyPath := fs.String("key",     "",  "Session key PEM")
+	sector  := fs.Uint64("sector",  0,   "Sector number")
+	bidx    := fs.Uint("bidx",      0,   "Block index within sector")
+	in      := fs.String("in",      "-", "Input file (32-byte block)")
+	out     := fs.String("out",     "-", "Output file")
+	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
+	doDec   := fs.Bool("decrypt",   false, "Decrypt")
+	fs.Parse(args)
+
+	if !*doEnc && !*doDec {
+		fmt.Fprintln(os.Stderr, "twk: --encrypt or --decrypt required")
+		os.Exit(1)
+	}
+	if *keyPath == "" {
+		fmt.Fprintln(os.Stderr, "twk: --key required")
+		os.Exit(1)
+	}
+	keyBig, _, err := loadKey(*keyPath)
+	if err != nil {
+		die("twk", err)
+	}
+	K := NewBitArray(256, keyBig)
+
+	data, err := readFile(*in)
+	if err != nil {
+		die("twk", err)
+	}
+	P := NewBitArray(256, new(big.Int).SetBytes(data))
+
+	var R *BitArray
+	if *doEnc {
+		R = TwkEncrypt(P, K.Bytes(), *sector, uint32(*bidx))
+	} else {
+		R = TwkDecrypt(P, K.Bytes(), *sector, uint32(*bidx))
+	}
+	if err := writeBytes(*out, R.Bytes()); err != nil {
+		die("twk", err)
+	}
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 func die(prefix string, err error) {
@@ -1935,6 +2022,8 @@ Algorithms (kex):           hkex-gf hkex-rnl
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
+  fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]
+  twk      --encrypt|--decrypt --key SK [--sector N] [--bidx N] --in FILE [--out FILE]
 `)
 }
 
@@ -1966,6 +2055,10 @@ func main() {
 		cmdDecfile(rest)
 	case "dgst":
 		cmdDgst(rest)
+	case "fpe":
+		cmdFpe(rest)
+	case "twk":
+		cmdTwk(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()

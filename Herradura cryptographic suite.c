@@ -643,6 +643,62 @@ int main(void)
             puts("- Eve random guess does not match session key  (SD protection)");
     }
 
+    puts("*** FPE (78.A) — format-preserving encrypt/decrypt round-trip");
+    {
+        BitArray fpe_plain, fpe_ct, fpe_rec;
+        const uint8_t fpe_key[] = "herradura-fpe-key-256bit-example";
+        const uint8_t fpe_ctx[] = "record:42";
+        ba_rand(&fpe_plain, urnd);
+        fpe_encrypt(&fpe_plain, fpe_key, sizeof(fpe_key)-1,
+                                fpe_ctx,  sizeof(fpe_ctx)-1,  &fpe_ct);
+        fpe_decrypt(&fpe_ct,   fpe_key, sizeof(fpe_key)-1,
+                                fpe_ctx,  sizeof(fpe_ctx)-1,  &fpe_rec);
+        if (ba_equal(&fpe_plain, &fpe_rec))
+            puts("- FPE round-trip correct");
+        else
+            puts("+ FPE round-trip failed!");
+    }
+
+    puts("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt");
+    {
+        BitArray twk_plain, twk_ct, twk_rec;
+        const uint8_t twk_key[] = "herradura-twk-key-256bit-example";
+        ba_rand(&twk_plain, urnd);
+        twk_encrypt(&twk_plain, twk_key, sizeof(twk_key)-1, 7, 3, &twk_ct);
+        twk_decrypt(&twk_ct,   twk_key, sizeof(twk_key)-1, 7, 3, &twk_rec);
+        if (ba_equal(&twk_plain, &twk_rec))
+            puts("- Tweakable cipher round-trip correct");
+        else
+            puts("+ Tweakable cipher round-trip failed!");
+    }
+
+    puts("*** Accumulator (78.J) — Merkle root + proof/verify for 4 leaves");
+    {
+        uint8_t leaves[4][KEYBYTES];
+        uint8_t root[KEYBYTES], root_check[KEYBYTES];
+        uint8_t *proof;
+        int depth, ok;
+        size_t i;
+        for (i = 0; i < 4; i++) {
+            char data[8];
+            snprintf(data, sizeof(data), "leaf%zu", i);
+            haccum_leaf((const uint8_t *)data, strlen(data), leaves[i]);
+        }
+        haccum_root((const uint8_t (*)[KEYBYTES])leaves, 4, root);
+        proof = haccum_prove((const uint8_t (*)[KEYBYTES])leaves, 4, 2, &depth);
+        ok = haccum_verify(root, leaves[2], proof, depth, 2);
+        free(proof);
+        /* tamper check: wrong index must fail */
+        proof = haccum_prove((const uint8_t (*)[KEYBYTES])leaves, 4, 2, &depth);
+        int ok_wrong = haccum_verify(root, leaves[0], proof, depth, 2);
+        free(proof);
+        if (ok && !ok_wrong)
+            puts("- Accumulator proof/verify correct");
+        else
+            puts("+ Accumulator proof/verify failed!");
+        (void)root_check;
+    }
+
     fclose(urnd);
     /* SA-09: clear private key material from stack before return */
     explicit_bzero(&a,         sizeof(a));

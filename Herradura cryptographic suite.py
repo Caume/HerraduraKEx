@@ -1450,6 +1450,95 @@ def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
 
 
 # ---------------------------------------------------------------------------
+# 78.J — Cryptographic Accumulator (Merkle tree on HFSCX-256) (TODO #78.J)
+# Domain separation: 0x00 prefix for leaves, 0x01 for interior nodes (RFC 6962).
+# ---------------------------------------------------------------------------
+
+def haccum_leaf(data: bytes) -> bytes:
+    """HFSCX-256(0x00 || data) — leaf hash."""
+    return hfscx_256(b'\x00' + data)
+
+def haccum_node(left: bytes, right: bytes) -> bytes:
+    """HFSCX-256(0x01 || left || right) — interior node hash."""
+    return hfscx_256(b'\x01' + left + right)
+
+def haccum_root(leaf_hashes: list) -> bytes:
+    """Merkle root of leaf_hashes (each 32 bytes). Pads to next power of 2."""
+    n = len(leaf_hashes)
+    if n == 0:
+        return b'\x00' * 32
+    sz = 1
+    while sz < n:
+        sz <<= 1
+    nodes = [leaf_hashes[i] if i < n else b'\x00' * 32 for i in range(sz)]
+    while sz > 1:
+        nodes = [haccum_node(nodes[2*i], nodes[2*i+1]) for i in range(sz // 2)]
+        sz //= 2
+    return nodes[0]
+
+def haccum_prove(leaf_hashes: list, idx: int) -> list:
+    """Return sibling-hash proof path for leaf at idx."""
+    n = len(leaf_hashes)
+    sz = 1
+    while sz < n:
+        sz <<= 1
+    nodes = [leaf_hashes[i] if i < n else b'\x00' * 32 for i in range(sz)]
+    proof = []
+    cur = idx
+    while sz > 1:
+        proof.append(nodes[cur ^ 1])
+        nodes = [haccum_node(nodes[2*i], nodes[2*i+1]) for i in range(sz // 2)]
+        sz //= 2
+        cur >>= 1
+    return proof
+
+def haccum_verify(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> bool:
+    """Verify a Merkle membership proof for leaf_hash at idx."""
+    cur = leaf_hash
+    for sib in proof:
+        cur = haccum_node(cur, sib) if idx % 2 == 0 else haccum_node(sib, cur)
+        idx >>= 1
+    return cur == root
+
+
+# ---------------------------------------------------------------------------
+# 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
+# B = HFSCX-256(key || ctx); C = nl_fscx_revolve_v2(P, B, I_VALUE).
+# Deterministic: same (key, ctx, plaintext) → same ciphertext.
+# For IND-CPA include a per-record nonce in ctx.
+# ---------------------------------------------------------------------------
+
+def fpe_encrypt(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    """Format-preserving encrypt pt using nl_fscx_revolve_v2 with key+ctx tweak."""
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
+    return nl_fscx_revolve_v2(pt, B, I_VALUE)
+
+def fpe_decrypt(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    """Format-preserving decrypt ct — inverse of fpe_encrypt."""
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
+    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE)
+
+
+# ---------------------------------------------------------------------------
+# 78.B — Tweakable Wide-Block Cipher (TODO #78.B)
+# B = HFSCX-256(key || sector_be64 || bidx_be32); each block gets a unique tweak.
+# Resolves HSKE-NL-A2 determinism limitation (TODO #12).
+# ---------------------------------------------------------------------------
+
+def twk_encrypt(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    """Tweakable block-cipher encrypt with per-(sector, block-index) tweak."""
+    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
+    return nl_fscx_revolve_v2(block, B, I_VALUE)
+
+def twk_decrypt(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    """Tweakable block-cipher decrypt — inverse of twk_encrypt."""
+    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
+    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
+    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE)
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -1860,6 +1949,38 @@ def main():
         print("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
     else:
         print("- Eve random guess does not match session key (SD protection)")
+
+    print("*** FPE (78.A) — format-preserving encrypt/decrypt round-trip")
+    fpe_key = b"herradura-fpe-key-256bit-example"
+    fpe_ctx = b"record:42"
+    fpe_plain = BitArray.random(KEYBITS)
+    fpe_ct  = fpe_encrypt(fpe_plain, fpe_key, fpe_ctx)
+    fpe_rec = fpe_decrypt(fpe_ct,   fpe_key, fpe_ctx)
+    if fpe_rec == fpe_plain:
+        print("- FPE round-trip correct")
+    else:
+        print("+ FPE round-trip failed!")
+
+    print("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt")
+    twk_key   = b"herradura-twk-key-256bit-example"
+    twk_plain = BitArray.random(KEYBITS)
+    twk_ct  = twk_encrypt(twk_plain, twk_key, sector=7, bidx=3)
+    twk_rec = twk_decrypt(twk_ct,   twk_key, sector=7, bidx=3)
+    if twk_rec == twk_plain:
+        print("- Tweakable cipher round-trip correct")
+    else:
+        print("+ Tweakable cipher round-trip failed!")
+
+    print("*** Accumulator (78.J) — Merkle root + proof/verify for 4 leaves")
+    leaf_hashes = [haccum_leaf(f"leaf{i}".encode()) for i in range(4)]
+    acc_root   = haccum_root(leaf_hashes)
+    acc_proof  = haccum_prove(leaf_hashes, 2)
+    ok         = haccum_verify(acc_root, leaf_hashes[2], acc_proof, 2)
+    ok_wrong   = haccum_verify(acc_root, leaf_hashes[0], acc_proof, 2)
+    if ok and not ok_wrong:
+        print("- Accumulator proof/verify correct")
+    else:
+        print("+ Accumulator proof/verify failed!")
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)
