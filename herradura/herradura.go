@@ -1735,3 +1735,67 @@ func TwkEncrypt(block *BitArray, key []byte, sector uint64, bidx uint32) *BitArr
 func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
 	return NlFscxRevolveV2Inv(ct, twkDeriveB(key, sector, bidx), 64)
 }
+
+// ---------------------------------------------------------------------------
+// 78.H — Masking-Friendly FSCX (Boolean masking via GF(2) linearity)
+//
+// FSCX(A⊕r, B, steps) ⊕ FSCX(r, 0, steps) = FSCX(A, B, steps)
+// because M = I⊕ROL⊕ROR is GF(2)-linear.  The caller supplies the mask r;
+// no secret bits of A appear in intermediate values.
+// ---------------------------------------------------------------------------
+
+// FscxRevolveMasked computes FscxRevolve(A, B, steps) without exposing A.
+// mask must be a uniform random BitArray.
+func FscxRevolveMasked(A, B, mask *BitArray, steps int) *BitArray {
+	zero := NewBitArray(256, new(big.Int))
+	am   := A.Xor(mask)
+	fm   := FscxRevolve(am,   B,    steps)
+	fz   := FscxRevolve(mask, zero, steps)
+	return fm.Xor(fz)
+}
+
+// HskeEncryptMasked encrypts pt with key using a fresh random mask.
+// Returns (ciphertext, mask).  Caller should zero mask after use.
+func HskeEncryptMasked(pt, key *BitArray) (*BitArray, *BitArray) {
+	mask := NewRandBitArray(256)
+	ct   := FscxRevolveMasked(pt, key, mask, 64) // I_VALUE = 64
+	return ct, mask
+}
+
+// HskeDecryptMasked decrypts ct with key using a fresh random mask.
+func HskeDecryptMasked(ct, key *BitArray) (*BitArray, *BitArray) {
+	mask := NewRandBitArray(256)
+	pt   := FscxRevolveMasked(ct, key, mask, 192) // R_VALUE = 192
+	return pt, mask
+}
+
+// ---------------------------------------------------------------------------
+// 78.C — Forward-Secret Unidirectional Ratchet
+//
+// state_{i+1} = NlFscxRevolveV1(state_i, RATCHET_DOMAIN, 1)
+// msg_key_i   = Hfscx256(state_i || 0x01)
+// ---------------------------------------------------------------------------
+
+var ratchetDomain = func() *BitArray {
+	d := []byte("NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V")
+	for len(d) < 32 {
+		d = append(d, 0)
+	}
+	return NewBitArray(256, new(big.Int).SetBytes(d[:32]))
+}()
+
+// RatchetInit derives an initial ratchet state from seed via Hfscx256(seed||0x02).
+func RatchetInit(seed []byte) *BitArray {
+	buf := append(append([]byte(nil), seed...), 0x02)
+	h   := Hfscx256(buf, nil)
+	return NewBitArray(256, new(big.Int).SetBytes(h))
+}
+
+// RatchetAdvance returns (nextState, msgKey).
+// Caller MUST zero the previous state immediately after this call.
+func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
+	buf     := append(state.Bytes(), 0x01)
+	msgKey  := Hfscx256(buf, nil)
+	next    := NlFscxRevolveV1(state, ratchetDomain, 1)
+	return next, msgKey
+}

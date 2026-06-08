@@ -1,4 +1,4 @@
-# HerraduraCli/primitives.py — loads the Herradura suite and re-exports symbols (v1.5.23)
+# HerraduraCli/primitives.py — loads the Herradura suite and re-exports symbols (v1.9.15)
 # Uses importlib.util to load a file with spaces in its name without renaming it.
 import importlib.util
 import os
@@ -83,3 +83,10 @@ haccum_node   = _s.haccum_node
 haccum_root   = _s.haccum_root
 haccum_prove  = _s.haccum_prove
 haccum_verify = _s.haccum_verify
+
+# ── 78.H Masking / 78.C Ratchet ─────────────────────────────────────────────
+fscx_revolve_masked  = _s.fscx_revolve_masked
+hske_encrypt_masked  = _s.hske_encrypt_masked
+hske_decrypt_masked  = _s.hske_decrypt_masked
+ratchet_init         = _s.ratchet_init
+ratchet_advance      = _s.ratchet_advance

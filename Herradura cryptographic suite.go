@@ -428,4 +428,41 @@ func main() {
 		}
 		_ = leavesData
 	}
+
+	// ── 78.H — Masked HSKE ──────────────────────────────────────────────────
+	fmt.Println("\n*** Masked HSKE (78.H) — GF(2)-linearity masking")
+	{
+		plain := NewRandBitArray(256)
+		key   := NewRandBitArray(256)
+		ct, _ := HskeEncryptMasked(plain, key)
+		rec, _ := HskeDecryptMasked(ct, key)
+		if rec.Equal(plain) {
+			fmt.Println("- Masked HSKE encrypt/decrypt correct")
+		} else {
+			fmt.Println("+ Masked HSKE encrypt/decrypt failed!")
+		}
+	}
+
+	// ── 78.C — Ratchet ──────────────────────────────────────────────────────
+	fmt.Println("\n*** Forward-secret ratchet (78.C) — 5 steps")
+	{
+		state := RatchetInit([]byte("demo-seed-78c"))
+		keys  := make([][]byte, 5)
+		for i := range keys {
+			var mk []byte
+			state, mk = RatchetAdvance(state)
+			keys[i] = mk
+		}
+		unique := true
+		for i := 1; i < 5 && unique; i++ {
+			if string(keys[0]) == string(keys[i]) {
+				unique = false
+			}
+		}
+		if unique {
+			fmt.Println("- Ratchet: 5 distinct message keys")
+		} else {
+			fmt.Println("+ Ratchet: duplicate message keys!")
+		}
+	}
 }

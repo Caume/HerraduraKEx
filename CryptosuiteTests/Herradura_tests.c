@@ -3843,7 +3843,83 @@ static void test_accumulator_correctness(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [26]-[37]                                    */
+/* Security Tests: Masking / Ratchet [26]-[27]                        */
+/* ------------------------------------------------------------------ */
+
+/* [26] Masked HSKE (78.H) GF(2)-linearity masking correctness */
+static void test_masked_hske(void)
+{
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    int n, ok_rt = 0, ok_lin = 0, N;
+    printf("[26] Masked HSKE (78.H) — GF(2)-linearity masking  [NEW]\n");
+    N = TEST_ROUNDS(200);
+    for (n = 0; n < N; n++) {
+        BitArray pt, key, mask, ct, rec;
+        ba_rand(&pt, urnd); ba_rand(&key, urnd); ba_rand(&mask, urnd);
+        hske_encrypt_masked(&pt, &key, &ct,  &mask, urnd);
+        hske_decrypt_masked(&ct, &key, &rec, &mask, urnd);
+        if (ba_equal(&rec, &pt)) ok_rt++;
+    }
+    /* linearity: F(A^r, B, n) ^ F(r, 0, n) == F(A, B, n) */
+    for (n = 0; n < 100; n++) {
+        BitArray A, B, r, zero, direct, am, fm, fz, masked;
+        ba_rand(&A, urnd); ba_rand(&B, urnd); ba_rand(&r, urnd);
+        memset(zero.b, 0, KEYBYTES);
+        ba_fscx_revolve(&direct, &A, &B, I_VALUE);
+        int i;
+        for (i = 0; i < KEYBYTES; i++) am.b[i] = A.b[i] ^ r.b[i];
+        ba_fscx_revolve(&fm, &am, &B,    I_VALUE);
+        ba_fscx_revolve(&fz, &r,  &zero, I_VALUE);
+        for (i = 0; i < KEYBYTES; i++) masked.b[i] = fm.b[i] ^ fz.b[i];
+        if (ba_equal(&masked, &direct)) ok_lin++;
+    }
+    fclose(urnd);
+    printf("    round-trips=%d/%d  linearity=%d/100  [%s]\n",
+           ok_rt, N, ok_lin,
+           (ok_rt == N && ok_lin == 100) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* [27] Ratchet (78.C) forward secrecy & key uniqueness */
+static void test_ratchet_forward_secrecy(void)
+{
+    int i, ok_uniq = 1, ok_div = 1;
+    int steps = TEST_ROUNDS(10); if (steps > 10) steps = 10;
+    printf("[27] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]\n");
+    {
+        BitArray state, next;
+        uint8_t mk0[KEYBYTES], mk[KEYBYTES];
+        ratchet_init((uint8_t *)"test-seed-0", 11, &state);
+        for (i = 0; i < steps; i++) {
+            ratchet_advance(&state, &next, mk);
+            if (i == 0) memcpy(mk0, mk, KEYBYTES);
+            else if (i > 0 && memcmp(mk, mk0, KEYBYTES) == 0) ok_uniq = 0;
+            ratchet_erase(&state);
+            state = next;
+        }
+        ratchet_erase(&state);
+    }
+    {
+        BitArray s1, s2, n1, n2;
+        uint8_t mk[KEYBYTES];
+        ratchet_init((uint8_t *)"seed-alice", 10, &s1);
+        ratchet_init((uint8_t *)"seed-bob",   9, &s2);
+        for (i = 0; i < steps; i++) {
+            ratchet_advance(&s1, &n1, mk); ratchet_erase(&s1); s1 = n1;
+            ratchet_advance(&s2, &n2, mk); ratchet_erase(&s2); s2 = n2;
+            if (ba_equal(&s1, &s2)) ok_div = 0;
+        }
+        ratchet_erase(&s1); ratchet_erase(&s2);
+    }
+    printf("    key_uniqueness=%s  divergence=%s  [%s]\n",
+           ok_uniq ? "PASS" : "FAIL",
+           ok_div  ? "PASS" : "FAIL",
+           (ok_uniq && ok_div) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance benchmarks [28]-[39]                                    */
 /* ------------------------------------------------------------------ */
 
 /* [26] FSCX throughput (64/128/256-bit) */
@@ -4573,6 +4649,10 @@ int main(int argc, char *argv[])
     test_fpe_correctness();
     test_twk_correctness();
     test_accumulator_correctness();
+
+    puts("--- Security Tests: Masking / Ratchet (78.H/C) ---\n");
+    test_masked_hske();
+    test_ratchet_forward_secrecy();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();

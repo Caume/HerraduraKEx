@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.15] - 2026-06-08
+
+### Feature — Masking-Friendly FSCX (78.H) and Forward-Secret Ratchet (78.C) across all language targets (TODO #78)
+
+Implements two new protocol directions from TODO #78 in C, Go, Python, ARM Thumb-2, NASM i386, and Arduino.
+
+**78.H — Masking-Friendly FSCX (GF(2)-linearity):**
+`FSCX(A⊕r, B, steps) ⊕ FSCX(r, 0, steps) = FSCX(A, B, steps)` — M = I⊕ROL⊕ROR is GF(2)-linear, so `M^steps(A⊕r) = M^steps(A) ⊕ M^steps(r)`. Mask `r` is fresh per call; no secret bits of `A` appear in any intermediate value. API: `fscx_revolve_masked`, `hske_encrypt_masked`, `hske_decrypt_masked`.
+
+**78.C — Forward-Secret Unidirectional Ratchet:**
+`state_{i+1} = NL-FSCX-v1(state_i, DOMAIN, 1)`; `msg_key_i = HFSCX-256(state_i ∥ 0x01)`. Domain constant: first 32 bytes of `NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V`. One-way by Theorem 16 OWF conjecture. API: `ratchet_init`, `ratchet_advance`, `ratchet_erase`. Analysis script: `SecurityProofsCode/nl_fscx_v1_ratchet_collision.py`.
+
+**Files modified:**
+- `herradura.h` — `fscx_revolve_masked`, `hske_encrypt_masked`, `hske_decrypt_masked`, `ratchet_init`, `ratchet_advance`, `ratchet_erase` (static inline + `_RATCHET_DOMAIN_BYTES`).
+- `herradura/herradura.go` — Go package: `FscxRevolveMasked`, `HskeEncryptMasked`, `HskeDecryptMasked`, `RatchetInit`, `RatchetAdvance`, `ratchetDomain`.
+- `Herradura cryptographic suite.py` — Python suite: all 7 functions + demo blocks in `main()`.
+- `Herradura cryptographic suite.c` — C suite: demo blocks for masked HSKE and ratchet in `main()`.
+- `Herradura cryptographic suite.go` — Go suite: demo blocks in `main()`.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: `fscx_revolve_masked_32` demo + `ratchet_advance_32` demo blocks; format strings and `ratchet_domain_32` in `.data`.
+- `Herradura cryptographic suite.asm` — NASM i386: same 32-bit demo blocks; strings and `ratchet_domain_32` in `.data`.
+- `Herradura cryptographic suite.ino` — Arduino: `fscx_revolve_masked_32`, `hske_encrypt_masked_32`, `hske_decrypt_masked_32`, `ratchet_advance_32`, `RATCHET_DOMAIN_32` + demo in `loop()`.
+- `HerraduraCli/primitives.py` — re-exports `fscx_revolve_masked`, `hske_encrypt_masked`, `hske_decrypt_masked`, `ratchet_init`, `ratchet_advance`.
+- `CryptosuiteTests/Herradura_tests.c` — tests [26]–[27]: masked HSKE, ratchet forward secrecy.
+- `CryptosuiteTests/Herradura_tests.go` — tests [25]–[26]: masked HSKE, ratchet.
+- `CryptosuiteTests/Herradura_tests.py` — tests [25]–[26]: masked HSKE, ratchet.
+- `SecurityProofsCode/nl_fscx_v1_ratchet_collision.py` — collision-probability analysis for the ratchet (birthday bound, image-size extrapolation to n=256, safe step bounds at 2^−128/2^−80/2^−64).
+
+---
+
 ## [1.9.14] - 2026-06-07
 
 ### Feature — Cryptographic Accumulator (78.J), Format-Preserving Encryption (78.A), and Tweakable Wide-Block Cipher (78.B) across all language targets (TODO #78)

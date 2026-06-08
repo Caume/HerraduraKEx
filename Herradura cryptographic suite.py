@@ -1539,6 +1539,63 @@ def twk_decrypt(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
 
 
 # ---------------------------------------------------------------------------
+# 78.H — Masking-Friendly FSCX (Boolean masking via GF(2) linearity)
+#
+# FSCX(A⊕r, B, steps) ⊕ FSCX(r, 0, steps) = FSCX(A, B, steps)
+# because M = I⊕ROL⊕ROR is GF(2)-linear.  No secret bits of A appear in
+# any intermediate value when mask r is uniform random.
+# ---------------------------------------------------------------------------
+
+def fscx_revolve_masked(A: BitArray, B: BitArray, mask: BitArray, steps: int) -> BitArray:
+    """Masked FSCX revolve: computes fscx_revolve(A, B, steps) without exposing A."""
+    zero = BitArray(KEYBITS, 0)
+    am   = BitArray(KEYBITS, A.uint ^ mask.uint)
+    fm   = fscx_revolve(am,   B,    steps)
+    fz   = fscx_revolve(mask, zero, steps)
+    return BitArray(KEYBITS, fm.uint ^ fz.uint)
+
+
+def hske_encrypt_masked(pt: BitArray, key: BitArray) -> tuple:
+    """HSKE encrypt with masking.  Returns (ciphertext, mask)."""
+    mask = BitArray.random(KEYBITS)
+    ct   = fscx_revolve_masked(pt, key, mask, I_VALUE)
+    return ct, mask
+
+
+def hske_decrypt_masked(ct: BitArray, key: BitArray) -> tuple:
+    """HSKE decrypt with masking.  Returns (plaintext, mask)."""
+    mask = BitArray.random(KEYBITS)
+    pt   = fscx_revolve_masked(ct, key, mask, R_VALUE)
+    return pt, mask
+
+
+# ---------------------------------------------------------------------------
+# 78.C — Forward-Secret Unidirectional Ratchet
+#
+# state_{i+1} = nl_fscx_revolve_v1(state_i, RATCHET_DOMAIN, 1)
+# msg_key_i   = hfscx_256(state_i.bytes || 0x01)
+# ---------------------------------------------------------------------------
+
+_RATCHET_DOMAIN = BitArray(
+    KEYBITS,
+    int.from_bytes(b'NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V'[:KEYBITS // 8], 'big')
+)
+
+
+def ratchet_init(seed: bytes) -> BitArray:
+    """Derive initial ratchet state from seed via hfscx_256(seed || 0x02)."""
+    return BitArray(KEYBITS, int.from_bytes(hfscx_256(seed + b'\x02'), 'big'))
+
+
+def ratchet_advance(state: BitArray) -> tuple:
+    """Advance ratchet by one step.  Returns (new_state, msg_key_bytes).
+    Caller MUST discard/zero the old state immediately."""
+    msg_key   = hfscx_256(state.bytes + b'\x01')
+    new_state = nl_fscx_revolve_v1(state, _RATCHET_DOMAIN, 1)
+    return new_state, msg_key
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -1981,6 +2038,28 @@ def main():
         print("- Accumulator proof/verify correct")
     else:
         print("+ Accumulator proof/verify failed!")
+
+    # 78.H — Masked HSKE demo
+    hske_plain = BitArray.random(KEYBITS)
+    hske_key   = BitArray.random(KEYBITS)
+    hske_ct, _  = hske_encrypt_masked(hske_plain, hske_key)
+    hske_rec, _ = hske_decrypt_masked(hske_ct,   hske_key)
+    if hske_rec.uint == hske_plain.uint:
+        print("- Masked HSKE encrypt/decrypt correct")
+    else:
+        print("+ Masked HSKE encrypt/decrypt failed!")
+
+    # 78.C — Ratchet demo (5 steps)
+    ratchet_seed = b"demo-seed-78c"
+    state = ratchet_init(ratchet_seed)
+    keys  = []
+    for _ in range(5):
+        state, mk = ratchet_advance(state)
+        keys.append(mk)
+    if len(set(keys)) == 5:
+        print("- Ratchet: 5 distinct message keys")
+    else:
+        print("+ Ratchet: duplicate message keys!")
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)

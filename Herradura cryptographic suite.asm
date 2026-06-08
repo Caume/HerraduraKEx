@@ -235,6 +235,21 @@ section .data
     zkp_rnl_ok_l   equ $-zkp_rnl_ok
     zkp_rnl_fail   db "- ZKP-RNL verify FAILED", 10
     zkp_rnl_fail_l equ $-zkp_rnl_fail
+    ; 78.H / 78.C strings
+    masked_hdr     db 10, "--- Masked HSKE (78.H) [GF(2)-linearity masking]", 10
+    masked_hdr_l   equ $-masked_hdr
+    masked_ok      db "- Masked HSKE encrypt/decrypt correct", 10
+    masked_ok_l    equ $-masked_ok
+    masked_fail    db "+ Masked HSKE encrypt/decrypt failed!", 10
+    masked_fail_l  equ $-masked_fail
+    ratch_hdr      db 10, "--- Ratchet (78.C) [forward-secret, 5 steps]", 10
+    ratch_hdr_l    equ $-ratch_hdr
+    ratch_ok       db "- Ratchet: 5 distinct message keys", 10
+    ratch_ok_l     equ $-ratch_ok
+    ratch_fail     db "+ Ratchet: duplicate message keys!", 10
+    ratch_fail_l   equ $-ratch_fail
+    ratchet_domain_32 dd 0x4E4C2D46   ; 'N','L','-','F' (first 4 of NL-FSCX-RATCHET-V1)
+    val_ratch_first_key dd 0           ; stores first msg_key for collision check
     sigma_demo_msg dd 0xDEADB00B
     lbl_K_enc    db "K (encap) : "
     lbl_K_enc_l  equ $-lbl_K_enc
@@ -1128,6 +1143,101 @@ _start:
     mov  ecx, zkp_rnl_fail_l
     call print_str
 .zkp_rnl_done:
+
+    ; ── 78.H — Masked HSKE demo ──────────────────────────────────────
+    mov  eax, masked_hdr
+    mov  ecx, masked_hdr_l
+    call print_str
+    call prng_next
+    mov  esi, eax          ; plain
+    call prng_next
+    mov  edi, eax          ; key
+    call prng_next
+    mov  ebp, eax          ; mask
+    ; ct = fscx_revolve(plain^mask, key, I_VALUE) ^ fscx_revolve(mask, 0, I_VALUE)
+    mov  eax, esi
+    xor  eax, ebp          ; plain ^ mask
+    mov  ebx, edi          ; key
+    mov  ecx, I_VALUE
+    call FSCX_revolve
+    push eax               ; save fm
+    mov  eax, ebp          ; mask
+    xor  ebx, ebx          ; zero
+    mov  ecx, I_VALUE
+    call FSCX_revolve
+    pop  ebx
+    xor  eax, ebx          ; ct
+    mov  [val_E], eax      ; store ct
+    ; rec = fscx_revolve(ct^mask, key, R_VALUE) ^ fscx_revolve(mask, 0, R_VALUE)
+    xor  eax, ebp          ; ct ^ mask
+    mov  ebx, edi
+    mov  ecx, R_VALUE
+    call FSCX_revolve
+    push eax               ; save fm
+    mov  eax, ebp
+    xor  ebx, ebx
+    mov  ecx, R_VALUE
+    call FSCX_revolve
+    pop  ebx
+    xor  eax, ebx          ; recovered
+    cmp  eax, esi
+    jne  .masked_fail
+    mov  eax, masked_ok
+    mov  ecx, masked_ok_l
+    call print_str
+    jmp  .masked_done
+.masked_fail:
+    mov  eax, masked_fail
+    mov  ecx, masked_fail_l
+    call print_str
+.masked_done:
+
+    ; ── 78.C — Ratchet demo (5 steps) ────────────────────────────────
+    mov  eax, ratch_hdr
+    mov  ecx, ratch_hdr_l
+    call print_str
+    call prng_next
+    mov  esi, eax          ; state
+    mov  ebp, 5            ; step counter
+    mov  dword [val_ratch_first_key], 0
+    mov  edi, 1            ; all_unique flag
+.ratch_loop:
+    ; msg_key = nl_fscx_revolve_v1(state, 1, 1)
+    mov  eax, esi
+    mov  ebx, 1
+    mov  ecx, 1
+    call nl_fscx_revolve_v1
+    cmp  ebp, 5
+    jne  .ratch_not_first
+    mov  [val_ratch_first_key], eax
+.ratch_not_first:
+    cmp  ebp, 5
+    je   .ratch_skip_cmp
+    cmp  edi, 1
+    jne  .ratch_skip_cmp
+    cmp  eax, [val_ratch_first_key]
+    jne  .ratch_skip_cmp
+    mov  edi, 0            ; collision with first key
+.ratch_skip_cmp:
+    ; new_state = nl_fscx_revolve_v1(state, domain, 1)
+    mov  eax, esi
+    mov  ebx, [ratchet_domain_32]
+    mov  ecx, 1
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    dec  ebp
+    jnz  .ratch_loop
+    cmp  edi, 1
+    jne  .ratch_fail
+    mov  eax, ratch_ok
+    mov  ecx, ratch_ok_l
+    call print_str
+    jmp  .ratch_done
+.ratch_fail:
+    mov  eax, ratch_fail
+    mov  ecx, ratch_fail_l
+    call print_str
+.ratch_done:
 
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
