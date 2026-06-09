@@ -3461,6 +3461,44 @@ static void test_fstern_range_n32(void)
            " see TODO #42 Step 2\n");
 }
 
+/* [28] HPKS-Stern-Ring (78.I): OR-composed ring signature, k=3, N=256 */
+static void test_hpks_stern_ring_correctness(void)
+{
+#define RING_K 3
+    struct timespec t0;
+    int N, ok = 0, i;
+    printf("[28] HPKS-Stern-Ring (78.I): OR-composition, k=%d, N=256, rounds=%d"
+           "  [CODE-BASED RING SIG]\n", RING_K, SDF_TEST_ROUNDS);
+    N = TEST_ROUNDS(3);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
+        BitArray ring_seeds[RING_K];
+        uint8_t  ring_syndrs[RING_K * SDF_SYNBYTES];
+        BitArray ring_e[RING_K], msg;
+        SternRingSig rsig;
+        int ki, j;
+
+        ba_rand(&msg, urnd_fp);
+        for (ki = 0; ki < RING_K; ki++) {
+            ba_rand(&ring_seeds[ki], urnd_fp);
+            stern_rand_error_ba(&ring_e[ki]);
+            stern_syndrome_ba(ring_syndrs + ki * SDF_SYNBYTES,
+                              &ring_seeds[ki], &ring_e[ki]);
+        }
+        j = i % RING_K;
+        stern_ring_alloc(&rsig, RING_K, SDF_TEST_ROUNDS);
+        stern_ring_sign(&rsig, &msg, &ring_e[j], j,
+                        ring_seeds, ring_syndrs, urnd_fp);
+        if (stern_ring_verify(&rsig, &msg, ring_seeds, ring_syndrs))
+            ok++;
+        stern_ring_free(&rsig);
+        if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
+    }
+    printf("    %d / %d ring-verified  [%s]\n\n",
+           ok, N, ok == N ? "PASS" : "FAIL");
+#undef RING_K
+}
+
 /* [32] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
 static void bench_hpks_stern_f(void)
 {
@@ -4637,6 +4675,7 @@ int main(int argc, char *argv[])
     test_hpks_stern_f_correctness();
     test_hpke_stern_f_correctness();
     test_fstern_range_n32();
+    test_hpks_stern_ring_correctness();
 
     puts("--- Security Tests: Hash (HFSCX-256) ---\n");
     test_hfscx_256_kav();

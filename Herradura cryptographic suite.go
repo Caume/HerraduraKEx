@@ -249,6 +249,24 @@ func main() {
 		fmt.Println("- HPKE-Stern-F key agreement FAILED")
 	}
 
+	// ── HPKS-Stern-Ring (78.I) ───────────────────────────────────────────────
+	fmt.Printf("\n--- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG — OR-composed Stern, N=%d, k=3]\n", n)
+	{
+		const ringK = 3
+		rKeys := make([]RingKeypair, ringK)
+		rE    := make([]*BitArray, ringK)
+		for i := 0; i < ringK; i++ {
+			rKeys[i].Seed, rE[i], rKeys[i].Syndrome = SternFKeygen(n)
+		}
+		// Sign as member 1 (index 1 in the ring)
+		rsig := HpksSternRingSign(plaintext, rE[1], 1, rKeys, SdfRounds)
+		if HpksSternRingVerify(plaintext, rsig, rKeys) {
+			fmt.Printf("+ HPKS-Stern-Ring signature verified (k=%d, signer=1)\n", ringK)
+		} else {
+			fmt.Printf("- HPKS-Stern-Ring verification FAILED (k=%d)\n", ringK)
+		}
+	}
+
 	// ── HFSCX-256-DM ─────────────────────────────────────────────────────────
 	fmt.Println("\n--- HFSCX-256-DM [HASH — Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output]")
 	{
@@ -370,6 +388,34 @@ func main() {
 		fmt.Println("+ Eve forged HPKS-Stern-F (Eve wins)!")
 	} else {
 		fmt.Println("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)")
+	}
+
+	fmt.Println("*** HPKS-Stern-Ring (78.I) — Eve cannot forge ring signature without valid secret key")
+	{
+		const ringK = 3
+		eveRKeys := make([]RingKeypair, ringK)
+		eveRE    := make([]*BitArray, ringK)
+		for i := 0; i < ringK; i++ {
+			eveRKeys[i].Seed, eveRE[i], eveRKeys[i].Syndrome = SternFKeygen(n)
+		}
+		// Eve builds a random ring sig without knowing any secret key
+		eveRSig := &SternRingSig{K: ringK, Rounds: SdfRounds, Members: make([]SternSig, ringK)}
+		for i := 0; i < ringK; i++ {
+			eveRSig.Members[i].Rounds = make([]SternRound, SdfRounds)
+			for r := 0; r < SdfRounds; r++ {
+				eveRSig.Members[i].Rounds[r].C0    = NewRandBitArray(n)
+				eveRSig.Members[i].Rounds[r].C1    = NewRandBitArray(n)
+				eveRSig.Members[i].Rounds[r].C2    = NewRandBitArray(n)
+				eveRSig.Members[i].Rounds[r].B     = 0
+				eveRSig.Members[i].Rounds[r].RespA = NewRandBitArray(n)
+				eveRSig.Members[i].Rounds[r].RespB = NewRandBitArray(n)
+			}
+		}
+		if HpksSternRingVerify(decoy, eveRSig, eveRKeys) {
+			fmt.Println("+ Eve forged HPKS-Stern-Ring (Eve wins)!")
+		} else {
+			fmt.Println("- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)")
+		}
 	}
 
 	fmt.Println("*** HPKE-Stern-F — Eve cannot derive session key from syndrome ciphertext")

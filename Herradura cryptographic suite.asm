@@ -248,6 +248,17 @@ section .data
     ratch_ok_l     equ $-ratch_ok
     ratch_fail     db "+ Ratchet: duplicate message keys!", 10
     ratch_fail_l   equ $-ratch_fail
+    ; 78.I ring signature strings
+    ring_hdr       db 10, "--- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG -- OR-composed Stern, k=2]", 10
+    ring_hdr_l     equ $-ring_hdr
+    ring_ok        db "+ HPKS-Stern-Ring signature verified (k=2, signer=1)", 10
+    ring_ok_l      equ $-ring_ok
+    ring_fail      db "- HPKS-Stern-Ring verification FAILED", 10
+    ring_fail_l    equ $-ring_fail
+    eve_ring_ok    db "- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)", 10
+    eve_ring_ok_l  equ $-eve_ring_ok
+    eve_ring_fail  db "+ Eve forged HPKS-Stern-Ring (Eve wins!)", 10
+    eve_ring_fail_l equ $-eve_ring_fail
     ratchet_domain_32 dd 0x4E4C2D46   ; 'N','L','-','F' (first 4 of NL-FSCX-RATCHET-V1)
     val_ratch_first_key dd 0           ; stores first msg_key for collision check
     sigma_demo_msg dd 0xDEADB00B
@@ -294,6 +305,14 @@ section .bss
     sdf_sr_tmp  resd SDF_ROUNDS
     sdf_sy_tmp  resd SDF_ROUNDS
     sdf_chals_tmp resd SDF_ROUNDS
+    ; Ring-Sig (78.I) scratch: k=2, rounds=4
+    ring0_c0    resd SDF_ROUNDS
+    ring0_c1    resd SDF_ROUNDS
+    ring0_c2    resd SDF_ROUNDS
+    ring0_b     resd SDF_ROUNDS
+    ring0_respA resd SDF_ROUNDS
+    ring0_respB resd SDF_ROUNDS
+    ring_joint_b resd SDF_ROUNDS
     sig_y           resd RNL_N
     sig_w           resd RNL_N
     sig_c           resd RNL_N
@@ -1046,6 +1065,25 @@ _start:
     call print_str
 .hpke_sdf_done:
 
+    ; ========================================================== HPKS-Stern-Ring (78.I)
+    mov  eax, ring_hdr
+    mov  ecx, ring_hdr_l
+    call print_str
+
+    call hpks_stern_ring2_sign_32
+    call hpks_stern_ring2_verify_32
+    cmp  eax, 1
+    jne  .ring_fail
+    mov  eax, ring_ok
+    mov  ecx, ring_ok_l
+    call print_str
+    jmp  .ring_done
+.ring_fail:
+    mov  eax, ring_fail
+    mov  ecx, ring_fail_l
+    call print_str
+.ring_done:
+
     ; ================================================================== EVE tests
     mov  eax, eve_hdr
     mov  ecx, eve_hdr_l
@@ -1118,6 +1156,26 @@ _start:
     mov  ecx, eve_hpke_sdf_fail_l
     call print_str
 .eve_hpke_sdf_done:
+
+    ; Eve tries to forge HPKS-Stern-Ring: flip ring0_respA[0] to break c1 check
+    mov  eax, [ring0_respA]
+    mov  ebx, eax
+    not  eax
+    mov  [ring0_respA], eax
+    call hpks_stern_ring2_verify_32
+    mov  ecx, eax
+    mov  [ring0_respA], ebx    ; restore
+    cmp  ecx, 1
+    je   .eve_ring_fail
+    mov  eax, eve_ring_ok
+    mov  ecx, eve_ring_ok_l
+    call print_str
+    jmp  .eve_ring_done
+.eve_ring_fail:
+    mov  eax, eve_ring_fail
+    mov  ecx, eve_ring_fail_l
+    call print_str
+.eve_ring_done:
 
     ; ================================================================== ZKP-RNL
     mov  eax, zkp_rnl_hdr
@@ -3425,4 +3483,386 @@ rnl_sigma_verify_32:
     pop  ebx
     mov  esp, ebp
     pop  ebp
+    ret
+
+; ============================================================
+; ring_fs_challenges_32: writes ring_joint_b[0..3]
+; Hashes msg then member0 (ring0_c0/c1/c2) then member1
+; (sdf_c0/c1/c2) in member-major order, same as Python/C/Go.
+; ============================================================
+ring_fs_challenges_32:
+    push ebx
+    push esi
+    push edi
+    push ecx
+    push edx
+    xor  esi, esi         ; chSt = 0
+    mov  eax, [val_plain]
+    xor  eax, esi
+    mov  ebx, [val_plain]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    ; member 0 commits
+    xor  edi, edi
+.rfc_m0_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .rfc_m0_done
+    mov  eax, [ring0_c0 + edi*4]
+    xor  eax, esi
+    mov  ebx, [ring0_c0 + edi*4]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [ring0_c1 + edi*4]
+    xor  eax, esi
+    mov  ebx, [ring0_c1 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [ring0_c2 + edi*4]
+    xor  eax, esi
+    mov  ebx, [ring0_c2 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    inc  edi
+    jmp  .rfc_m0_loop
+.rfc_m0_done:
+    ; member 1 commits
+    xor  edi, edi
+.rfc_m1_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .rfc_m1_done
+    mov  eax, [sdf_c0 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c0 + edi*4]
+    rol  ebx, 4
+    mov  ecx, 8
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c1 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c1 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    mov  eax, [sdf_c2 + edi*4]
+    xor  eax, esi
+    mov  ebx, [sdf_c2 + edi*4]
+    rol  ebx, 4
+    call nl_fscx_revolve_v1
+    mov  esi, eax
+    inc  edi
+    jmp  .rfc_m1_loop
+.rfc_m1_done:
+    ; extract per-round challenges
+    xor  edi, edi
+.rfc_chal_loop:
+    cmp  edi, SDF_ROUNDS
+    jge  .rfc_done
+    mov  eax, esi
+    mov  ebx, edi
+    call nl_fscx_v1
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx
+    mov  [ring_joint_b + edi*4], edx
+    inc  edi
+    jmp  .rfc_chal_loop
+.rfc_done:
+    pop  edx
+    pop  ecx
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_ring2_sign_32: k=2, signer=1, b0[r]=0 always
+; Uses val_sdf_seed/val_sdf_e/val_plain for member 1.
+; Fills ring0_c0/c1/c2/b/respA/respB and sdf_c0..respA/B.
+; ============================================================
+hpks_stern_ring2_sign_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+
+    ; --- Phase 1: simulate member 0 (b=0 all rounds) ---
+    xor  ebp, ebp
+.hrs2_sim_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrs2_sim_done
+    mov  dword [ring0_b + ebp*4], 0
+    ; c0 dummy = hash2_32(1, 0, 0)
+    mov  eax, 1
+    xor  ebx, ebx
+    xor  ecx, ecx
+    call stern_hash2_32
+    mov  [ring0_c0 + ebp*4], eax
+    ; sr0 = rand_error_32() -> respA
+    call stern_rand_error_32
+    mov  esi, eax
+    mov  [ring0_respA + ebp*4], esi
+    ; c1 = hash1_32(2, sr0)
+    mov  eax, 2
+    mov  ebx, esi
+    call stern_hash1_32
+    mov  [ring0_c1 + ebp*4], eax
+    ; sy0 = prng_next() -> respB
+    call prng_next
+    mov  edi, eax
+    mov  [ring0_respB + ebp*4], edi
+    ; c2 = hash1_32(3, sy0)
+    mov  eax, 3
+    mov  ebx, edi
+    call stern_hash1_32
+    mov  [ring0_c2 + ebp*4], eax
+    inc  ebp
+    jmp  .hrs2_sim_loop
+.hrs2_sim_done:
+
+    ; --- Phase 2: commit phase for member 1 (same as hpks_stern_f_sign_32) ---
+    mov  esi, [val_sdf_seed]       ; esi = seed (preserved)
+    mov  edi, [val_sdf_e]          ; edi = e (preserved)
+    xor  ebp, ebp
+.hrs2_commit_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrs2_commit_done
+    call stern_rand_error_32       ; eax = r
+    mov  [sdf_r_tmp + ebp*4], eax
+    mov  ebx, eax
+    xor  ebx, edi
+    mov  [sdf_y_tmp + ebp*4], ebx  ; y = e XOR r
+    call prng_next                 ; eax = pi
+    mov  [sdf_pi_tmp + ebp*4], eax
+    call stern_gen_perm_32         ; build perm from eax=pi
+    mov  eax, [sdf_r_tmp + ebp*4]
+    call stern_apply_perm_32       ; sr = sigma(r)
+    mov  [sdf_sr_tmp + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    call stern_apply_perm_32       ; sy = sigma(y)
+    mov  [sdf_sy_tmp + ebp*4], eax
+    ; hr = syndrome(seed, r)
+    mov  eax, esi
+    mov  ebx, [sdf_r_tmp + ebp*4]
+    call stern_syndrome_32
+    ; c0 = hash2_32(1, pi, hr)
+    mov  ecx, eax
+    mov  ebx, [sdf_pi_tmp + ebp*4]
+    mov  eax, 1
+    call stern_hash2_32
+    mov  [sdf_c0 + ebp*4], eax
+    ; c1 = hash1_32(2, sr)
+    mov  eax, 2
+    mov  ebx, [sdf_sr_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c1 + ebp*4], eax
+    ; c2 = hash1_32(3, sy)
+    mov  eax, 3
+    mov  ebx, [sdf_sy_tmp + ebp*4]
+    call stern_hash1_32
+    mov  [sdf_c2 + ebp*4], eax
+    inc  ebp
+    jmp  .hrs2_commit_loop
+.hrs2_commit_done:
+
+    ; --- Phase 3: joint FS challenges -> ring_joint_b ---
+    call ring_fs_challenges_32
+
+    ; --- Phase 4: b1[r] = joint[r] (b0=0, no offset); assign responses ---
+    xor  ebp, ebp
+.hrs2_resp_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrs2_resp_done
+    mov  eax, [ring_joint_b + ebp*4]
+    mov  [sdf_b + ebp*4], eax
+    cmp  eax, 0
+    je   .hrs2_case0
+    cmp  eax, 1
+    je   .hrs2_case1
+    ; case 2: respA=pi, respB=y
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_y_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .hrs2_resp_next
+.hrs2_case0:
+    mov  eax, [sdf_sr_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_sy_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+    jmp  .hrs2_resp_next
+.hrs2_case1:
+    mov  eax, [sdf_pi_tmp + ebp*4]
+    mov  [sdf_respA + ebp*4], eax
+    mov  eax, [sdf_r_tmp + ebp*4]
+    mov  [sdf_respB + ebp*4], eax
+.hrs2_resp_next:
+    inc  ebp
+    jmp  .hrs2_resp_loop
+.hrs2_resp_done:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; ============================================================
+; hpks_stern_ring2_verify_32: -> EAX=1 valid, 0 invalid
+; Verifies k=2 ring sig: member0 (b=0) + member1 (real signer).
+; ============================================================
+hpks_stern_ring2_verify_32:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    push ecx
+    push edx
+
+    ; re-derive joint challenges -> ring_joint_b
+    call ring_fs_challenges_32
+
+    ; check challenge sum: (b0[r]+b1[r]) % 3 == joint[r]
+    xor  ebp, ebp
+.hrv2_sum_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrv2_sum_ok
+    mov  eax, [ring0_b + ebp*4]
+    add  eax, [sdf_b + ebp*4]
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx                   ; edx = (b0+b1) % 3
+    cmp  edx, [ring_joint_b + ebp*4]
+    jne  .hrv2_fail
+    inc  ebp
+    jmp  .hrv2_sum_loop
+.hrv2_sum_ok:
+
+    ; verify member 0 (b=0: check c1, c2, popcount)
+    xor  ebp, ebp
+.hrv2_m0_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrv2_m0_done
+    ; ring0_b[r] must be 0
+    cmp  dword [ring0_b + ebp*4], 0
+    jne  .hrv2_fail
+    ; c1 = hash1(2, respA)
+    mov  eax, 2
+    mov  ebx, [ring0_respA + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [ring0_c1 + ebp*4]
+    jne  .hrv2_fail
+    ; popcount(respA) == 2
+    mov  eax, [ring0_respA + ebp*4]
+    call stern_popcount_eq2
+    cmp  eax, 1
+    jne  .hrv2_fail
+    ; c2 = hash1(3, respB)
+    mov  eax, 3
+    mov  ebx, [ring0_respB + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [ring0_c2 + ebp*4]
+    jne  .hrv2_fail
+    inc  ebp
+    jmp  .hrv2_m0_loop
+.hrv2_m0_done:
+
+    ; verify member 1 using same logic as hpks_stern_f_verify_32 but using sdf_b directly
+    mov  esi, [val_sdf_seed]
+    mov  edi, [val_sdf_syn]
+    xor  ebp, ebp
+.hrv2_m1_loop:
+    cmp  ebp, SDF_ROUNDS
+    jge  .hrv2_m1_done
+    mov  ecx, [sdf_b + ebp*4]
+    cmp  ecx, 0
+    je   .hrv2_b0
+    cmp  ecx, 1
+    je   .hrv2_b1
+    ; b=2: hy=syn(seed,respB); hys=hy XOR syn; c0=hash2(1,respA,hys); sy2=perm(respB); c2=hash1(3,sy2)
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32     ; H·y^T
+    xor  eax, edi              ; XOR syndrome
+    mov  ecx, eax
+    mov  ebx, [sdf_respA + ebp*4]
+    mov  eax, 1
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .hrv2_fail
+    mov  eax, [sdf_respA + ebp*4]
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    mov  ebx, eax
+    mov  eax, 3
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .hrv2_fail
+    jmp  .hrv2_m1_next
+.hrv2_b0:
+    ; c1=hash1(2,respA), popcount==2, c2=hash1(3,respB)
+    mov  eax, 2
+    mov  ebx, [sdf_respA + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .hrv2_fail
+    mov  eax, [sdf_respA + ebp*4]
+    call stern_popcount_eq2
+    cmp  eax, 1
+    jne  .hrv2_fail
+    mov  eax, 3
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_hash1_32
+    cmp  eax, [sdf_c2 + ebp*4]
+    jne  .hrv2_fail
+    jmp  .hrv2_m1_next
+.hrv2_b1:
+    ; popcount(respB)==2; hr=syn(seed,respB); c0=hash2(1,respA,hr); sr2=perm(respB); c1=hash1(2,sr2)
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_popcount_eq2
+    cmp  eax, 1
+    jne  .hrv2_fail
+    mov  eax, esi
+    mov  ebx, [sdf_respB + ebp*4]
+    call stern_syndrome_32     ; H·r^T
+    mov  ecx, eax
+    mov  ebx, [sdf_respA + ebp*4]
+    mov  eax, 1
+    call stern_hash2_32
+    cmp  eax, [sdf_c0 + ebp*4]
+    jne  .hrv2_fail
+    mov  eax, [sdf_respA + ebp*4]
+    call stern_gen_perm_32
+    mov  eax, [sdf_respB + ebp*4]
+    call stern_apply_perm_32
+    mov  ebx, eax
+    mov  eax, 2
+    call stern_hash1_32
+    cmp  eax, [sdf_c1 + ebp*4]
+    jne  .hrv2_fail
+.hrv2_m1_next:
+    inc  ebp
+    jmp  .hrv2_m1_loop
+.hrv2_m1_done:
+    mov  eax, 1
+    jmp  .hrv2_exit
+.hrv2_fail:
+    xor  eax, eax
+.hrv2_exit:
+    pop  edx
+    pop  ecx
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
     ret

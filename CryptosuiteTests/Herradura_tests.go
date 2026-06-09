@@ -694,6 +694,31 @@ func testHpkeSternFCorrectness() {
 	fmt.Printf("    %d / %d decapsulated  [%s]\n\n", ok, N, status)
 }
 
+func testHpksSternRingCorrectness() {
+	fmt.Printf("[27] HPKS-Stern-Ring correctness: OR-composition, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
+	N  := testRounds(3)
+	ok := 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		const ringK = 3
+		rKeys := make([]RingKeypair, ringK)
+		rE    := make([]*BitArray, ringK)
+		for ki := 0; ki < ringK; ki++ {
+			rKeys[ki].Seed, rE[ki], rKeys[ki].Syndrome = SternFKeygen(256)
+		}
+		msg  := randBA(256)
+		j    := i % ringK
+		rsig := HpksSternRingSign(msg, rE[j], j, rKeys, sdfTestRounds)
+		if HpksSternRingVerify(msg, rsig, rKeys) {
+			ok++
+		}
+		if timeExceeded(t0) { N = i + 1; break }
+	}
+	status := "PASS"
+	if ok != N { status = "FAIL" }
+	fmt.Printf("    %d / %d ring-verified  [%s]\n\n", ok, N, status)
+}
+
 // ---------------------------------------------------------------------------
 // Performance benchmarks [22-33]
 // ---------------------------------------------------------------------------
@@ -1239,6 +1264,7 @@ func main() {
 	fmt.Println("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
 	testHpksSternFCorrectness()
 	testHpkeSternFCorrectness()
+	testHpksSternRingCorrectness()
 
 	fmt.Println("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
 	testZkpRnlCorrectness()

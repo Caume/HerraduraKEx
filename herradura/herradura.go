@@ -1025,6 +1025,255 @@ func HpkeSternFDecapKnown(ePrime, seed *BitArray) *BitArray {
 }
 
 // ---------------------------------------------------------------------------
+// 78.I — Code-Based Ring Signature via HPKS-Stern-F OR-composition (TODO #78.I)
+//
+// Prove knowledge of one HPKS-Stern-F secret key in a ring of k public keys
+// without revealing which one.  OR-composes k Stern identification instances
+// using HVZK simulation for non-signer members and Fiat-Shamir with challenge
+// splitting: sum_i b[i][r] ≡ joint_b[r] (mod 3) for every round r.
+//
+// Proof size: O(k × rounds) SternRound triples.
+// Security: EUF-CMA under SD(N,t) per ring member.
+// ---------------------------------------------------------------------------
+
+// SternRingSig is a ring signature over k HPKS-Stern-F public keys.
+type SternRingSig struct {
+	K      int            // ring size
+	Rounds int            // rounds per member
+	// Members[i].Rounds[r] holds the (c0,c1,c2,b,respA,respB) for member i round r
+	Members []SternSig
+}
+
+// RingKeypair is a public key for ring membership.
+type RingKeypair struct {
+	Seed     *BitArray
+	Syndrome *big.Int
+}
+
+// sternRingChallenges derives one joint challenge per round from msg + all
+// k×rounds×(c0,c1,c2) commits, using member-major ordering.
+func sternRingChallenges(rounds, k int, msg *BitArray,
+	members []SternSig) []int {
+
+	n := msg.size
+	chSt := &BitArray{size: n}
+	sfs := func(item *BitArray) {
+		chSt = NlFscxRevolveV1(chSt.Xor(item), item.RotateLeft(n/8), n/4)
+	}
+	sfs(msg)
+	for i := 0; i < k; i++ {
+		for r := 0; r < rounds; r++ {
+			rnd := members[i].Rounds[r]
+			sfs(rnd.C0); sfs(rnd.C1); sfs(rnd.C2)
+		}
+	}
+	digest := Hfscx256(chSt.Bytes(), nil)
+	chSt = &BitArray{size: n}
+	chSt.Val.SetBytes(digest[:n/8])
+	joint := make([]int, rounds)
+	for r := 0; r < rounds; r++ {
+		idxBA := NewBitArray(n, big.NewInt(int64(r&0xFF)))
+		chSt = NlFscxV1(chSt, idxBA)
+		joint[r] = int(uint32(chSt.Val.Uint64()) % 3)
+	}
+	return joint
+}
+
+// sternSimulateRound returns a (c0,c1,c2,b,respA,respB) SternRound for the
+// given pre-chosen challenge b using the HVZK simulator (no secret key needed).
+// H must be pre-built from seed (SternBuildH).
+func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRound {
+	t := n / 16
+	var rnd SternRound
+	rnd.B = b
+	switch b {
+	case 0:
+		// c1 = hash(sr wt-t), c2 = hash(sy), c0 dummy (unchecked for b=0)
+		sr := SternRandError(n, t)
+		sy := NewRandBitArray(n)
+		rnd.C0 = SternHash(1, NewBitArray(n, new(big.Int)), NewBitArray(n, new(big.Int)))
+		rnd.C1 = SternHash(2, sr)
+		rnd.C2 = SternHash(3, sy)
+		rnd.RespA = sr
+		rnd.RespB = sy
+	case 1:
+		// c0 = hash(pi, H·r^T), c1 = hash(σ(r)), c2 dummy (unchecked for b=1)
+		pi := NewRandBitArray(n)
+		r  := SternRandError(n, t)
+		perm := SternGenPerm(pi, n)
+		hr := SyndrToBA(n, sternSyndromeH(H, r))
+		sr := SternApplyPerm(perm, r)
+		sy := NewRandBitArray(n)
+		rnd.C0 = SternHash(1, pi, hr)
+		rnd.C1 = SternHash(2, sr)
+		rnd.C2 = SternHash(3, sy)
+		rnd.RespA = pi
+		rnd.RespB = r
+	default: // b == 2
+		// c0 = hash(pi, H·y^T ⊕ s), c2 = hash(σ(y)), c1 dummy (unchecked for b=2)
+		pi := NewRandBitArray(n)
+		y  := NewRandBitArray(n)
+		perm := SternGenPerm(pi, n)
+		hy := sternSyndromeH(H, y)
+		hys := new(big.Int).Xor(hy, syndrome)
+		hysBA := SyndrToBA(n, hys)
+		sy := SternApplyPerm(perm, y)
+		sr := NewRandBitArray(n)
+		rnd.C0 = SternHash(1, pi, hysBA)
+		rnd.C1 = SternHash(2, sr)
+		rnd.C2 = SternHash(3, sy)
+		rnd.RespA = pi
+		rnd.RespB = y
+	}
+	return rnd
+}
+
+// HpksSternRingSign produces a ring signature proving knowledge of the secret
+// key at index j among the ring_keys without revealing j.
+func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) *SternRingSig {
+	k := len(ring)
+	n := msg.size
+
+	sig := &SternRingSig{
+		K:       k,
+		Rounds:  rounds,
+		Members: make([]SternSig, k),
+	}
+	for i := range sig.Members {
+		sig.Members[i].Rounds = make([]SternRound, rounds)
+	}
+
+	// Step 1: simulate non-signer members
+	for i := 0; i < k; i++ {
+		if i == j {
+			continue
+		}
+		H := SternBuildH(ring[i].Seed)
+		for r := 0; r < rounds; r++ {
+			b := int(uint32(new(big.Int).SetBytes(
+				NewRandBitArray(n).Bytes()).Uint64()) % 3)
+			sig.Members[i].Rounds[r] = sternSimulateRound(b, H, ring[i].Syndrome, n)
+		}
+	}
+
+	// Step 2: commit for real signer j
+	Hj := SternBuildH(ring[j].Seed)
+	t  := n / 16
+	type rtmp struct{ r, y, pi, sr, sy *BitArray }
+	tmp := make([]rtmp, rounds)
+	for r := 0; r < rounds; r++ {
+		rv   := SternRandError(n, t)
+		yv   := e.Xor(rv)
+		pi   := NewRandBitArray(n)
+		perm := SternGenPerm(pi, n)
+		hrBA := SyndrToBA(n, sternSyndromeH(Hj, rv))
+		sr   := SternApplyPerm(perm, rv)
+		sy   := SternApplyPerm(perm, yv)
+		sig.Members[j].Rounds[r].C0 = SternHash(1, pi, hrBA)
+		sig.Members[j].Rounds[r].C1 = SternHash(2, sr)
+		sig.Members[j].Rounds[r].C2 = SternHash(3, sy)
+		tmp[r] = rtmp{rv, yv, pi, sr, sy}
+	}
+
+	// Step 3: Fiat-Shamir joint challenges
+	joint := sternRingChallenges(rounds, k, msg, sig.Members)
+
+	// Step 4: assign real signer's challenge via challenge splitting
+	for r := 0; r < rounds; r++ {
+		simSum := 0
+		for i := 0; i < k; i++ {
+			if i != j {
+				simSum += sig.Members[i].Rounds[r].B
+			}
+		}
+		sig.Members[j].Rounds[r].B = ((joint[r] - simSum) % 3 + 3) % 3
+	}
+
+	// Step 5: complete real signer's responses
+	for r := 0; r < rounds; r++ {
+		bv := sig.Members[j].Rounds[r].B
+		switch bv {
+		case 0:
+			sig.Members[j].Rounds[r].RespA = tmp[r].sr
+			sig.Members[j].Rounds[r].RespB = tmp[r].sy
+		case 1:
+			sig.Members[j].Rounds[r].RespA = tmp[r].pi
+			sig.Members[j].Rounds[r].RespB = tmp[r].r
+		default:
+			sig.Members[j].Rounds[r].RespA = tmp[r].pi
+			sig.Members[j].Rounds[r].RespB = tmp[r].y
+		}
+	}
+	return sig
+}
+
+// HpksSternRingVerify verifies a ring signature. Returns true iff valid.
+func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) bool {
+	k      := sig.K
+	rounds := sig.Rounds
+	n      := msg.size
+	t      := n / 16
+
+	// Re-derive joint challenges
+	joint := sternRingChallenges(rounds, k, msg, sig.Members)
+
+	// Check challenge consistency: sum_i b[i][r] mod 3 == joint[r]
+	for r := 0; r < rounds; r++ {
+		s := 0
+		for i := 0; i < k; i++ {
+			s += sig.Members[i].Rounds[r].B
+		}
+		if (s%3+3)%3 != joint[r] {
+			return false
+		}
+	}
+
+	// Verify each member's responses
+	for i := 0; i < k; i++ {
+		H := SternBuildH(ring[i].Seed)
+		syn := ring[i].Syndrome
+		for r := 0; r < rounds; r++ {
+			rnd := sig.Members[i].Rounds[r]
+			switch rnd.B {
+			case 0:
+				if !SternHash(2, rnd.RespA).Equal(rnd.C1) {
+					return false
+				}
+				if !SternHash(3, rnd.RespB).Equal(rnd.C2) {
+					return false
+				}
+				if CountBits(&rnd.RespA.Val) != t {
+					return false
+				}
+			case 1:
+				if CountBits(&rnd.RespB.Val) != t {
+					return false
+				}
+				hrBA := SyndrToBA(n, sternSyndromeH(H, rnd.RespB))
+				if !SternHash(1, rnd.RespA, hrBA).Equal(rnd.C0) {
+					return false
+				}
+				sr2 := SternApplyPerm(SternGenPerm(rnd.RespA, n), rnd.RespB)
+				if !SternHash(2, sr2).Equal(rnd.C1) {
+					return false
+				}
+			default:
+				hysBA := SyndrToBA(n, new(big.Int).Xor(
+					sternSyndromeH(H, rnd.RespB), syn))
+				if !SternHash(1, rnd.RespA, hysBA).Equal(rnd.C0) {
+					return false
+				}
+				sy2 := SternApplyPerm(SternGenPerm(rnd.RespA, n), rnd.RespB)
+				if !SternHash(3, sy2).Equal(rnd.C2) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
 // ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
 // SecurityProofs-3.md §11.10.2
 // ---------------------------------------------------------------------------
