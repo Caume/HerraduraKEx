@@ -1319,15 +1319,16 @@ ratch_loop:
     mov     r2, #1
     bl      nl_fscx_revolve_v1
     cmp     r6, #5
-    it      eq
-    moveq   r9, r0          @ save first key
-    cmp     r6, #5
-    it      ne
-    cmpeq   r10, #1         @ only check if still unique
-    it      ne
-    cmpeq   r0, r9          @ collision with first key?
-    it      eq
-    moveq   r10, #0         @ mark not unique
+    bne     ratch_check_coll
+    mov     r9, r0          @ save first key
+    b       ratch_continue
+ratch_check_coll:
+    cmp     r10, #1         @ still unique?
+    bne     ratch_continue
+    cmp     r0, r9          @ collision with first key?
+    bne     ratch_continue
+    mov     r10, #0         @ mark not unique
+ratch_continue:
     @ new_state = nl_fscx_revolve_v1(state, domain, 1)
     mov     r0, r4
     mov     r1, r5
@@ -3823,6 +3824,7 @@ hrv2_b1:
     @ popcount(respB)==2; hrBA=syn(seed,respB); c0=hash2(1,respA,hrBA); sr2=perm(respB); c1=hash1(2,sr2)
     ldr     r3, =sdf_respB
     ldr     r8, [r3, r4, lsl #2]
+    mov     r0, r8
     bl      stern_popcount_eq2
     cmp     r0, #1
     bne     hrv2_fail

@@ -2816,6 +2816,7 @@ thrv2_b0:
 thrv2_b1:
     ldr     r3, =sdf_respB
     ldr     r8, [r3, r4, lsl #2]
+    mov     r0, r8
     bl      stern_popcount_eq2
     cmp     r0, #1
     bne     thrv2_fail
