@@ -4856,7 +4856,22 @@ the sequential delay. Not a full VDF against adversaries with matrix exponentiat
 
 **Primitive:** `nl_fscx_v1` input symmetry — `nl_fscx_v1(A, B) = nl_fscx_v1(B, A)` (A3).
 
-**Open gap:** Requires formal blinding scheme and security reduction. Research direction only.
+**Demo script:** `SecurityProofsCode/oprf_demo.py` (added v1.9.22) — four-section analysis:
+- §1: 2HashDH OPRF over GF(2^n)*: `F(k,x) = gf_pow(H(x), k)`.  Client blinds with random
+  exponent r; server evaluates alpha^k; client unblinds with r^{-1} mod (2^n−1).  GF exponent
+  law verified empirically.  Obliviousness under CDH demonstrated.
+- §2: NL-FSCX v1 commutativity test (500 triples): single-step symmetry A3 holds 100%;
+  iterated commutativity holds 0% — pure NL-FSCX DH-style OPRF is NOT viable.
+- §3: Hybrid NL-FSCX OPRF: `F_NL(k_dh, k_nl, x) = nl_fscx_revolve_v1(gf_pow(H(x),k_dh), k_nl, t)`.
+  k_nl is a public domain-separation parameter; obliviousness from CDH layer only.
+- §4: aPAKE integration — replaces `hfscx_256(pw+salt)` with `hfscx_256(OPRF(k_s,pw)+salt)`,
+  closing the offline dictionary attack gap from TODO #78.D.
+
+**Open gaps (from script §5):**
+- A. n=256 group order scalar inversion: gcd(r, 2^256−1) == 1 check needed per blind.
+- B. Formal One-More-GDH reduction adapted to GF(2^n)* setting.
+- C. Pure NL-FSCX OPRF: A3 symmetry does not extend to iterated chains; research direction.
+- D. UC-PAKE / SIM-BMP formal reduction for the aPAKE construction (§4).
 
 ---
 
@@ -4916,7 +4931,7 @@ node = lambda l, r: hfscx_256(b'\x01' + l + r)
 4. **78.C** Ratchet — gated on collision-probability analysis.
 5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
 
-Status: **78.A DONE v1.9.14 · 78.B DONE v1.9.14 · 78.J DONE v1.9.14 · 78.H DONE v1.9.15 · 78.C DONE v1.9.15 · 78.I DONE v1.9.16** — Sub-items 78.A (FPE), 78.B (Tweakable), 78.J (Accumulator), 78.H (Masking), 78.C (Ratchet), and 78.I (Ring Signature) implemented across C, Go, Python, ARM Thumb-2, NASM i386, and Arduino.  Sub-items 78.D–78.G remain TODO.
+Status: **78.A DONE v1.9.14 · 78.B DONE v1.9.14 · 78.J DONE v1.9.14 · 78.H DONE v1.9.15 · 78.C DONE v1.9.15 · 78.I DONE v1.9.16 · 78.D DONE v1.9.20 · 78.F DONE v1.9.21 · 78.G DONE v1.9.22** — Sub-items 78.A (FPE), 78.B (Tweakable), 78.J (Accumulator), 78.H (Masking), 78.C (Ratchet), 78.I (Ring Signature), 78.D (PAKE-ZKBoo), 78.F (VDF), and 78.G (OPRF) all have demo scripts and analysis.  Sub-item 78.E (Non-Abelian KEx) remains open — orbit length bound and CSP reduction are research-blocked.
 
 ---
 
