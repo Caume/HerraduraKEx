@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.22] - 2026-06-09
+
+### Research — OPRF demo: Oblivious PRF constructions from GF(2^n)* and NL-FSCX (TODO #78.G)
+
+Added `SecurityProofsCode/oprf_demo.py`: four-section analysis of OPRF constructions.
+
+- **§1 2HashDH OPRF over GF(2^n)*:** `F(k,x) = gf_pow(H(x), k)`. Verifies GF exponent law empirically; demonstrates obliviousness (three blinded queries are indistinguishable under CDH). Correct unblinding via `r^{-1} mod (2^n−1)`.
+- **§2 NL-FSCX commutativity:** Tests 500 random triples. Single-step symmetry A3 (`nl(A,B)==nl(B,A)`) holds 100%. Iterated commutativity (`NL_rev(NL_rev(X,R),K) == NL_rev(NL_rev(X,K),R)`) holds **0%** — pure NL-FSCX DH-style OPRF is not viable.
+- **§3 Hybrid NL-FSCX OPRF:** `F_NL = nl_fscx_revolve_v1(gf_pow(H(x), k_dh), k_nl, t)`. k_nl is a public domain-separation parameter; obliviousness from CDH layer only.
+- **§4 aPAKE integration:** Closes the offline dictionary attack gap from `hkex_pake_demo.py` by replacing `hfscx_256(pw+salt)` with `hfscx_256(OPRF(k_s,pw)+salt)`. Correct/wrong password paths demonstrated.
+
+---
+
 ## [1.9.21] - 2026-06-09
 
 ### Research — VDF demo: FSCX and NL-FSCX Verifiable Delay Functions (TODO #78.F)
