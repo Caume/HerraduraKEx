@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.20] - 2026-06-09
+
+### Research — PAKE-ZKBoo: PQC Password-Authenticated Key Exchange demo (TODO #78.D)
+
+Added `SecurityProofsCode/hkex_pake_demo.py`: demonstrates a native-primitive PAKE
+construction using only HKEX-RNL + ZKBoo (ZKP-NL) + HFSCX-256.
+
+**Protocol (3 messages):**
+- Registration: `pw_key = hfscx_256(password‖salt)`, domain-separated `zkp_A` (32-bit for
+  demo), `y = nl_fscx_v1(zkp_A, B)`.  Server stores `(salt, B, y)`; password never transmitted.
+- Login: HKEX-RNL ephemeral key exchange + ZKBoo proof of `nl_fscx_v1(zkp_A, B) = y` bound
+  to session's raw key `K_raw` via Fiat-Shamir message.  Both sides derive matching session key.
+- Wrong-password fast abort: local `nl_fscx_v1` check (7 ms) before ZKBoo — no server round-trip.
+
+**Demo output:** correct-password login succeeds (3.6 s, session keys match); wrong-password
+aborts at client (7 ms).
+
+**Open gaps documented in §4:** offline dictionary attack (PAKE not aPAKE — fix requires
+OPRF, TODO #78.G); no formal security reduction; demo uses ZKP_N=32 (Python speed limit) and
+R=16 rounds.
+
+---
+
 ## [1.9.19] - 2026-06-09
 
 ### Research — NL-FSCX v2 orbit-length analysis script (TODO #78.E)
