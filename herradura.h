@@ -630,7 +630,7 @@ static void hfscx_256(const uint8_t *data, size_t len,
 }
 
 /* HSKE-NL-A1 CTR-mode AEAD helpers for encfile/decfile.
- * Caller computes: base = K XOR nonce; seed = ba_rol_k(base, KEYBITS/8).
+ * Caller computes: base = K XOR nonce; seed = ba_rnl_kdf_seed(base).
  * Block counter i is XOR'd into the four least-significant bytes of base. */
 static void hske_nla1_ks_block(const BitArray *seed, const BitArray *base,
                                 uint32_t i, BitArray *ks_out)
@@ -1892,7 +1892,7 @@ vdone:
 #define ZKP_NL_DEFAULT_N    8
 #define ZKP_NL_DEMO_ROUNDS  4
 #define ZKP_NL_PROD_ROUNDS  219
-#define ZKP_NL_MAX_N        32
+#define ZKP_NL_MAX_N        64
 
 typedef struct {
     uint8_t  com_0[32], com_1[32], com_2[32];
@@ -1910,19 +1910,19 @@ static void zkp_nl_proof_free(ZkpNlRound *proof, int rounds)
     free(proof);
 }
 
-/* n-bit cyclic left-rotate. */
-static uint32_t zkp_nl_rol(uint32_t x, int r, int n)
+/* n-bit cyclic left-rotate (n ≤ 64). */
+static uint64_t zkp_nl_rol(uint64_t x, int r, int n)
 {
-    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
     r = ((r % n) + n) % n;
     return r ? ((x << r) | (x >> (n - r))) & mask : x & mask;
 }
 
 /* Commitment: HFSCX-256( j(4B) || p(1B) || tape(32B) || out_share(nb B) ). */
 static void zkp_nl_commit(uint8_t out[32], int j, int p,
-                          const uint8_t tape[32], uint32_t out_share, int nb)
+                          const uint8_t tape[32], uint64_t out_share, int nb)
 {
-    uint8_t buf[4 + 1 + 32 + 4];
+    uint8_t buf[4 + 1 + 32 + 8];  /* nb ≤ 8 for n ≤ ZKP_NL_MAX_N = 64 */
     int k;
     buf[0]=(uint8_t)(j>>24); buf[1]=(uint8_t)(j>>16); buf[2]=(uint8_t)(j>>8); buf[3]=(uint8_t)j;
     buf[4] = (uint8_t)p;
@@ -1946,25 +1946,25 @@ static int zkp_nl_prg_bit(const uint8_t tape[32], int gate_id)
  * shares: XOR shares of A.  tapes: per-party 32-byte tape.  B: public constant.
  * Fills out0/out1/out2 (XOR shares of F1(A,B)) and gv0/gv1/gv2 (gate views, n-1 bytes each). */
 static void zkp_nl_eval_3p(
-    uint32_t s0, uint32_t s1, uint32_t s2,
+    uint64_t s0, uint64_t s1, uint64_t s2,
     const uint8_t *t0, const uint8_t *t1, const uint8_t *t2,
-    uint32_t B, int n,
-    uint32_t *out0, uint32_t *out1, uint32_t *out2,
+    uint64_t B, int n,
+    uint64_t *out0, uint64_t *out1, uint64_t *out2,
     uint8_t *gv0, uint8_t *gv1, uint8_t *gv2)
 {
-    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
-    uint32_t sh[3] = { s0, s1, s2 };
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
+    uint64_t sh[3] = { s0, s1, s2 };
     const uint8_t *tp[3] = { t0, t1, t2 };
     uint8_t *gv[3] = { gv0, gv1, gv2 };
-    uint32_t carry[ZKP_NL_MAX_N + 1][3];
+    uint64_t carry[ZKP_NL_MAX_N + 1][3];
     int i, p;
     memset(carry, 0, sizeof(carry));
 
     for (i = 0; i < n - 1; i++) {
-        int Bi = (B >> i) & 1;
+        int Bi = (int)((B >> i) & 1);
         int ai[3], ci[3], ri[3], ao[3];
         for (p = 0; p < 3; p++) {
-            ai[p] = (sh[p] >> i) & 1; ci[p] = (int)carry[i][p];
+            ai[p] = (int)((sh[p] >> i) & 1); ci[p] = (int)carry[i][p];
             ri[p] = zkp_nl_prg_bit(tp[p], i);
         }
         for (p = 0; p < 3; p++) {
@@ -1973,20 +1973,20 @@ static void zkp_nl_eval_3p(
             gv[p][i] = (uint8_t)(ai[p] | (ci[p] << 1) | (ao[p] << 2));
         }
         for (p = 0; p < 3; p++)
-            carry[i+1][p] = (uint32_t)((Bi & ai[p]) ^ ao[p] ^ (Bi & ci[p]));
+            carry[i+1][p] = (uint64_t)((Bi & ai[p]) ^ ao[p] ^ (Bi & ci[p]));
     }
 
-    uint32_t sum_s[3] = {0, 0, 0};
+    uint64_t sum_s[3] = {0, 0, 0};
     for (i = 0; i < n; i++) {
-        int Bi = (B >> i) & 1;
+        int Bi = (int)((B >> i) & 1);
         for (p = 0; p < 3; p++) {
-            int sb = ((sh[p] >> i) & 1) ^ Bi ^ (int)carry[i][p];
-            sum_s[p] ^= (uint32_t)sb << i;
+            int sb = (int)((sh[p] >> i) & 1) ^ Bi ^ (int)carry[i][p];
+            sum_s[p] ^= (uint64_t)sb << i;
         }
     }
 
-    uint32_t rot_s[3], lin_s[3];
-    uint32_t Bc = (B ^ zkp_nl_rol(B,1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
+    uint64_t rot_s[3], lin_s[3];
+    uint64_t Bc = (B ^ zkp_nl_rol(B,1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
     for (p = 0; p < 3; p++) {
         rot_s[p] = zkp_nl_rol(sum_s[p], n/4, n);
         lin_s[p] = (sh[p] ^ zkp_nl_rol(sh[p],1,n) ^ zkp_nl_rol(sh[p],n-1,n)) & mask;
@@ -1999,8 +1999,8 @@ static void zkp_nl_eval_3p(
 }
 
 /* Pack one party's view: share(nb) || tape(32) || out_share(nb) || gate_bytes(n-1). */
-static void zkp_nl_pack_view(uint8_t *buf, uint32_t share, const uint8_t tape[32],
-                              uint32_t out_share, const uint8_t *gate_bytes, int n, int nb)
+static void zkp_nl_pack_view(uint8_t *buf, uint64_t share, const uint8_t tape[32],
+                              uint64_t out_share, const uint8_t *gate_bytes, int n, int nb)
 {
     int k;
     for (k = 0; k < nb; k++) buf[k] = (uint8_t)(share >> (8*(nb-1-k)));
@@ -2011,10 +2011,10 @@ static void zkp_nl_pack_view(uint8_t *buf, uint32_t share, const uint8_t tape[32
 
 /* Unpack a view buffer; returns pointers into buf for tape and gate_bytes. */
 static void zkp_nl_unpack_view(const uint8_t *buf, int n, int nb,
-                                uint32_t *share_out, const uint8_t **tape_out,
-                                uint32_t *out_share_out, const uint8_t **gv_out)
+                                uint64_t *share_out, const uint8_t **tape_out,
+                                uint64_t *out_share_out, const uint8_t **gv_out)
 {
-    int k; uint32_t v = 0;
+    int k; uint64_t v = 0;
     for (k = 0; k < nb; k++) v = (v << 8) | buf[k];
     *share_out = v;
     *tape_out  = buf + nb;
@@ -2025,21 +2025,21 @@ static void zkp_nl_unpack_view(const uint8_t *buf, int n, int nb,
 }
 
 /* Direct evaluation of nl_fscx_v1(A, B) as a scalar (for keygen). */
-static uint32_t zkp_nl_f1(uint32_t A, uint32_t B, int n)
+static uint64_t zkp_nl_f1(uint64_t A, uint64_t B, int n)
 {
-    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
-    uint32_t lin = (A ^ B ^ zkp_nl_rol(A,1,n) ^ zkp_nl_rol(B,1,n)
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
+    uint64_t lin = (A ^ B ^ zkp_nl_rol(A,1,n) ^ zkp_nl_rol(B,1,n)
                     ^ zkp_nl_rol(A,n-1,n) ^ zkp_nl_rol(B,n-1,n)) & mask;
     return (lin ^ zkp_nl_rol((A+B)&mask, n/4, n)) & mask;
 }
 
 /* Generate a ZKP-NL keypair (n ≤ ZKP_NL_MAX_N).
  * A is the private witness; (B, y) is the public statement. */
-static void zkp_nl_keygen(int n, FILE *urnd, uint32_t *A_out, uint32_t *B_out, uint32_t *y_out)
+static void zkp_nl_keygen(int n, FILE *urnd, uint64_t *A_out, uint64_t *B_out, uint64_t *y_out)
 {
-    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
     int nb = (n + 7) / 8, k;
-    uint32_t A = 0, B = 0;
+    uint64_t A = 0, B = 0;
     uint8_t rb;
     for (k = 0; k < nb; k++) {
         if (fread(&rb, 1, 1, urnd) != 1) { fputs("urandom\n", stderr); exit(1); }
@@ -2055,19 +2055,19 @@ static void zkp_nl_keygen(int n, FILE *urnd, uint32_t *A_out, uint32_t *B_out, u
 
 /* Prove knowledge of A s.t. F1(A, B) = y.
  * Returns a heap-allocated array of `rounds` ZkpNlRound structs; free with zkp_nl_proof_free. */
-static ZkpNlRound *zkp_nl_prove(uint32_t A, uint32_t B, uint32_t y, int n, int rounds,
+static ZkpNlRound *zkp_nl_prove(uint64_t A, uint64_t B, uint64_t y, int n, int rounds,
                                  const uint8_t *msg, size_t mlen, FILE *urnd)
 {
     int nb = (n + 7) / 8;
     size_t gv_stride = (n > 1) ? (size_t)(n-1) : 1;
     size_t view_len  = (size_t)(2*nb) + 32 + (n > 1 ? (size_t)(n-1) : 0);
-    uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+    uint64_t mask = (n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL;
 
     ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
-    uint8_t *all_coms  = (uint8_t *)malloc((size_t)rounds * 3 * 32);
-    uint32_t *all_sh   = (uint32_t *)malloc((size_t)rounds * 3 * sizeof(uint32_t));
+    uint8_t  *all_coms = (uint8_t *)malloc((size_t)rounds * 3 * 32);
+    uint64_t *all_sh   = (uint64_t *)malloc((size_t)rounds * 3 * sizeof(uint64_t));
     uint8_t  *all_tp   = (uint8_t *)malloc((size_t)rounds * 3 * 32);
-    uint32_t *all_out  = (uint32_t *)malloc((size_t)rounds * 3 * sizeof(uint32_t));
+    uint64_t *all_out  = (uint64_t *)malloc((size_t)rounds * 3 * sizeof(uint64_t));
     uint8_t  *all_gv   = (uint8_t *)malloc((size_t)rounds * 3 * gv_stride);
     if (!proof||!all_coms||!all_sh||!all_tp||!all_out||!all_gv)
         { fputs("zkp_nl_prove OOM\n", stderr); exit(1); }
@@ -2076,7 +2076,7 @@ static ZkpNlRound *zkp_nl_prove(uint32_t A, uint32_t B, uint32_t y, int n, int r
     int j, p, k;
     /* Phase 1: generate shares, tapes, evaluate circuit, commit. */
     for (j = 0; j < rounds; j++) {
-        uint32_t s0 = 0, s1 = 0;
+        uint64_t s0 = 0, s1 = 0;
         uint8_t rb;
         for (k = 0; k < nb; k++) {
             if (fread(&rb,1,1,urnd)!=1){fputs("urandom\n",stderr);exit(1);} s0=(s0<<8)|rb;
@@ -2085,7 +2085,7 @@ static ZkpNlRound *zkp_nl_prove(uint32_t A, uint32_t B, uint32_t y, int n, int r
             if (fread(&rb,1,1,urnd)!=1){fputs("urandom\n",stderr);exit(1);} s1=(s1<<8)|rb;
         }
         s0 &= mask; s1 &= mask;
-        uint32_t s2 = (A ^ s0 ^ s1) & mask;
+        uint64_t s2 = (A ^ s0 ^ s1) & mask;
         all_sh[j*3+0] = s0; all_sh[j*3+1] = s1; all_sh[j*3+2] = s2;
         for (p = 0; p < 3; p++)
             if (fread(all_tp+(j*3+p)*32, 1, 32, urnd) != 32)
@@ -2145,7 +2145,7 @@ static ZkpNlRound *zkp_nl_prove(uint32_t A, uint32_t B, uint32_t y, int n, int r
 }
 
 /* Verify a ZKBoo proof.  Returns 1 if valid, 0 otherwise. */
-static int zkp_nl_verify(uint32_t B, uint32_t y, int n, int rounds,
+static int zkp_nl_verify(uint64_t B, uint64_t y, int n, int rounds,
                           const uint8_t *msg, size_t mlen, ZkpNlRound *proof)
 {
     int nb = (n + 7) / 8, j, k;
@@ -2175,7 +2175,7 @@ static int zkp_nl_verify(uint32_t B, uint32_t y, int n, int rounds,
         if (h[0] % 3 != (int)proof[j].e) return 0;
 
         int e = proof[j].e, p1 = (e+1)%3, p2 = (e+2)%3;
-        uint32_t sh_p1, sh_p2, out_p1, out_p2;
+        uint64_t sh_p1, sh_p2, out_p1, out_p2;
         const uint8_t *tp_p1, *tp_p2, *gv_p1, *gv_p2;
         zkp_nl_unpack_view(proof[j].view_p1, n, nb, &sh_p1, &tp_p1, &out_p1, &gv_p1);
         zkp_nl_unpack_view(proof[j].view_p2, n, nb, &sh_p2, &tp_p2, &out_p2, &gv_p2);
@@ -2187,20 +2187,20 @@ static int zkp_nl_verify(uint32_t B, uint32_t y, int n, int rounds,
         if (memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)) return 0;
 
         /* Re-evaluate p1's AND gates using both revealed shares/tapes; check gate views. */
-        uint32_t carry_p1 = 0, carry_p2 = 0;
+        uint64_t carry_p1 = 0, carry_p2 = 0;
         int i;
         for (i = 0; i < n - 1; i++) {
-            int ai_p1 = (sh_p1 >> i) & 1, ai_p2 = (sh_p2 >> i) & 1;
-            int ci_p1 = (int)carry_p1,     ci_p2 = (int)carry_p2;
-            int Bi    = (B >> i) & 1;
+            int ai_p1 = (int)((sh_p1 >> i) & 1), ai_p2 = (int)((sh_p2 >> i) & 1);
+            int ci_p1 = (int)carry_p1,             ci_p2 = (int)carry_p2;
+            int Bi    = (int)((B >> i) & 1);
             int ri_p1 = zkp_nl_prg_bit(tp_p1, i), ri_p2 = zkp_nl_prg_bit(tp_p2, i);
 
             int exp_ao_p1 = (ai_p1&ci_p1)^(ai_p1&ci_p2)^(ai_p2&ci_p1)^ri_p1^ri_p2;
             if (((gv_p1[i] >> 2) & 1) != exp_ao_p1) return 0;
 
-            carry_p1 = (uint32_t)((Bi&ai_p1) ^ exp_ao_p1 ^ (Bi&ci_p1));
+            carry_p1 = (uint64_t)((Bi&ai_p1) ^ exp_ao_p1 ^ (Bi&ci_p1));
             int ao_p2 = (gv_p2[i] >> 2) & 1;
-            carry_p2 = (uint32_t)((Bi&ai_p2) ^ ao_p2      ^ (Bi&ci_p2));
+            carry_p2 = (uint64_t)((Bi&ai_p2) ^ ao_p2      ^ (Bi&ci_p2));
         }
     }
     return 1;

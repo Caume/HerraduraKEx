@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.18] - 2026-06-09
+
+### Fix — C ZKP-NL stack-buffer-overflow at n=64 and C CLI encfile/decfile KDF mismatch (TODO #79)
+
+Two C-only bugs discovered during a full build-and-test sweep across all six language targets:
+
+**79.A — `zkp_nl_eval_3p` stack-buffer-overflow when `n = 64` (`herradura.h`, `herradura_cli.c`, `CryptosuiteTests/Herradura_tests.c`, `Herradura cryptographic suite.c`):**
+`ZKP_NL_MAX_N` was 32, allocating `carry[33][3]` on the stack.  The loop `carry[i+1][p] = ...` writes up to index `n-1 = 63` for `n=64`, overflowing by 30 rows (360 bytes) and triggering "stack smashing detected".  A secondary UB also fired: `(1u << n) - 1u` is undefined for `n ≥ 32` with a 32-bit type.
+Fix: bumped `ZKP_NL_MAX_N` to 64, changed all ZKP-NL share/carry types from `uint32_t` to `uint64_t` (10 functions in `herradura.h`), updated the mask to `(n >= 64) ? UINT64_MAX : (1ULL << n) - 1ULL`, and updated all callers in the three affected source files (`printf` format updated to `%lx`).  Test [22] ZKP-NL now passes for both `n=32` and `n=64`.
+
+**79.B — C CLI `encfile`/`decfile` computed keystream seed with old v1.7 formula, breaking cross-language interop (`HerraduraCli/herradura_cli.c`):**
+Both `cmd_encfile` and `cmd_decfile` called `ba_rol_k(&seed, &base, KEYBITS/8)` instead of `ba_rnl_kdf_seed(&seed, &base)`.  The KDF step `ba_rnl_kdf_seed` (added in v1.8.0, TODO #38) XORs the SHA-256 constant `_RNL_KDF_DC` into the seed after the rotation; without it, C-generated `.hkx` files were unreadable by Go/Python and vice versa.  Fix: replaced the two `ba_rol_k` calls; also updated the stale comment at `herradura.h:633`.  All C↔Python and Go↔C encfile interop tests now pass.
+
+---
+
 ## [1.9.17] - 2026-06-08
 
 ### Fix — ARM Thumb-2 assembly bugs found on first live build (gcc-arm-linux-gnueabi)

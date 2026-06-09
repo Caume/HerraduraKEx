@@ -3632,7 +3632,7 @@ static void bench_zkp_nl(void)
     double secs;
     static const int n      = 32;
     static const int rounds = 16;
-    uint32_t A, B, y;
+    uint64_t A, B, y;
     ZkpNlRound *proof;
     int i;
     printf("[37] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
@@ -3770,7 +3770,7 @@ static void test_zkp_nl_correctness(void)
         struct timespec t0;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
-            uint32_t A, B, y;
+            uint64_t A, B, y;
             ZkpNlRound *proof;
             zkp_nl_keygen(n, urnd_fp, &A, &B, &y);
             proof = zkp_nl_prove(A, B, y, n, zkp_nl_rounds,

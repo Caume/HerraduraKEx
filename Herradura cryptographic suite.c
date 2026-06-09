@@ -562,7 +562,7 @@ int main(void)
     /* --- ZKP-NL [NL-FSCX ZKBoo; n=8, R=4] */
     printf("\n--- ZKP-NL [NL-FSCX ZKBoo; n=8, R=%d]\n", ZKP_NL_DEMO_ROUNDS);
     {
-        uint32_t zkn_A, zkn_B, zkn_y;
+        uint64_t zkn_A, zkn_B, zkn_y;
         zkp_nl_keygen(ZKP_NL_DEFAULT_N, urnd, &zkn_A, &zkn_B, &zkn_y);
         static const uint8_t zkn_msg[] = "ZKP-NL demo";
         ZkpNlRound *zkn_proof = zkp_nl_prove(zkn_A, zkn_B, zkn_y,
