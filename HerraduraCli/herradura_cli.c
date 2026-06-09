@@ -360,7 +360,7 @@ static void cmd_genpkey(int argc, char **argv)
     /* ZKP-NL keypair: raw binary PEM (A, B, y, n) */
     if (strcmp(algo, "hpks-zkp-nl") == 0) {
         int nl_n = ZKP_NL_DEFAULT_N, nb = (nl_n+7)/8, k;
-        uint32_t A, B, y;
+        uint64_t A, B, y;
         zkp_nl_keygen(nl_n, urnd, &A, &B, &y);
         size_t blen = 4 + (size_t)3*nb;
         uint8_t *body = (uint8_t *)malloc(blen);
@@ -411,7 +411,7 @@ static void cmd_pkey(int argc, char **argv)
                              ((uint32_t)body[2]<<8)|body[3]);
             int nb = (nl_n+7)/8;
             if ((int)blen < 4+3*nb) die("pkey: malformed ZKP-NL private key (short)");
-            uint32_t A=0, B=0, y=0; int k;
+            uint64_t A=0, B=0, y=0; int k;
             for (k=0;k<nb;k++) A=(A<<8)|body[4+k];
             for (k=0;k<nb;k++) B=(B<<8)|body[4+nb+k];
             for (k=0;k<nb;k++) y=(y<<8)|body[4+2*nb+k];
@@ -419,9 +419,9 @@ static void cmd_pkey(int argc, char **argv)
             if (text) {
                 printf("%-10s: %s\n", "algorithm", "hpks-zkp-nl");
                 printf("%-10s: %d\n", "n", nl_n);
-                printf("%-10s: %0*x\n", "A_private", 2*nb, A);
-                printf("%-10s: %0*x\n", "B_public",  2*nb, B);
-                printf("%-10s: %0*x\n", "y_public",  2*nb, y);
+                printf("%-10s: %0*lx\n", "A_private", 2*nb, (unsigned long)A);
+                printf("%-10s: %0*lx\n", "B_public",  2*nb, (unsigned long)B);
+                printf("%-10s: %0*lx\n", "y_public",  2*nb, (unsigned long)y);
             } else {
                 size_t pub_len = 4 + (size_t)2*nb;
                 uint8_t *pub = (uint8_t *)malloc(pub_len);
@@ -1192,7 +1192,7 @@ static void cmd_sign(int argc, char **argv)
                          ((uint32_t)kbody[2]<<8)|kbody[3]);
         int nb = (nl_n+7)/8;
         if ((int)kblen < 4+3*nb) die("sign: malformed ZKP-NL private key (short)");
-        uint32_t zkA=0, zkB=0, zky=0; int ki;
+        uint64_t zkA=0, zkB=0, zky=0; int ki;
         for (ki=0;ki<nb;ki++) zkA=(zkA<<8)|kbody[4+ki];
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
@@ -1339,7 +1339,7 @@ static void cmd_verify(int argc, char **argv)
                          ((uint32_t)pkbody[2]<<8)|pkbody[3]);
         int nb = (nl_n+7)/8;
         if ((int)pkblen < 4+2*nb) die("verify: malformed ZKP-NL public key (short)");
-        uint32_t zkB=0, zky=0; int ki;
+        uint64_t zkB=0, zky=0; int ki;
         for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|pkbody[4+ki];
         for (ki=0;ki<nb;ki++) zky=(zky<<8)|pkbody[4+nb+ki];
         free(pkbody);
@@ -1492,7 +1492,7 @@ static void cmd_encfile(int argc, char **argv)
     BitArray N_nonce, base, seed;
     ba_from_ra(&N_nonce, nonce_bytes, 32);
     ba_xor(&base, &K, &N_nonce);
-    ba_rol_k(&seed, &base, KEYBITS / 8);
+    ba_rnl_kdf_seed(&seed, &base);
 
     /* Encrypt: ks_i = hske_nla1_ks_block(seed, base, i); ct_i = pt_i XOR ks_i */
     size_t n_blocks = (plaintext_len + KEYBYTES - 1) / KEYBYTES;
@@ -1586,7 +1586,7 @@ static void cmd_decfile(int argc, char **argv)
     BitArray N_nonce, base, seed;
     ba_from_ra(&N_nonce, nonce_bytes, 32);
     ba_xor(&base, &K, &N_nonce);
-    ba_rol_k(&seed, &base, KEYBITS / 8);
+    ba_rnl_kdf_seed(&seed, &base);
 
     /* Compute MAC and compare (verify-then-decrypt) */
     BitArray mac_key_ba;

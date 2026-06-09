@@ -4898,3 +4898,129 @@ node = lambda l, r: hfscx_256(b'\x01' + l + r)
 5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
 
 Status: **78.A DONE v1.9.14 · 78.B DONE v1.9.14 · 78.J DONE v1.9.14 · 78.H DONE v1.9.15 · 78.C DONE v1.9.15 · 78.I DONE v1.9.16** — Sub-items 78.A (FPE), 78.B (Tweakable), 78.J (Accumulator), 78.H (Masking), 78.C (Ratchet), and 78.I (Ring Signature) implemented across C, Go, Python, ARM Thumb-2, NASM i386, and Arduino.  Sub-items 78.D–78.G remain TODO.
+
+---
+
+### 79. Fix two bugs found during full build-and-test run (Correctness/Security, High)
+
+**Discovered:** full build + test run across all six language targets (C, Go, Python, ARM
+Thumb-2, NASM i386, Arduino), plus CLI integration and interop tests.
+
+---
+
+#### 79.A — C ZKP-NL (`zkp_nl_eval_3p`) stack-buffer-overflow when `n = 64`
+
+**Affected files:** `herradura.h:1895,1959`, `CryptosuiteTests/Herradura_tests.c:3762`
+
+**Symptom:** The C test binary (`Herradura_tests_c`) terminates with "stack smashing
+detected" during `test_zkp_nl_correctness` when processing `n = 64`.  AddressSanitizer
+pinpoints a `stack-buffer-overflow` in `zkp_nl_eval_3p` (`herradura.h:1976`).
+
+**Root cause:**
+
+```c
+#define ZKP_NL_MAX_N  32
+...
+uint32_t carry[ZKP_NL_MAX_N + 1][3];   /* carry[33][3] */
+```
+
+The `carry` array is allocated for `n ≤ 32`, but the loop:
+
+```c
+for (i = 0; i < n - 1; i++)
+    carry[i + 1][p] = ...;   /* writes carry[1..n-1] */
+```
+
+writes up to index `n - 1 = 63` when `n = 64`, overflowing by 30 rows (360 bytes).
+
+A secondary UB also fires: the mask computation
+
+```c
+uint32_t mask = (n == 32) ? 0xFFFFFFFFU : (1u << n) - 1u;
+```
+
+is undefined when `n ≥ 32` because `1u << n` shifts a 32-bit type by ≥ 32 (C11 §6.5.7¶3).
+
+The C ZKP-NL implementation uses `uint32_t` for all shares and carry bits, making it
+structurally limited to `n ≤ 32`.  Python and Go correctly use arbitrary-precision integers
+and pass `n = 64` without issue.  The test (`zkp_nl_sizes[] = {32, 64}`) was inherited from
+the Python/Go versions without adjusting for the C type constraint.
+
+**Fix options (choose one):**
+
+1. **Cap C test at `n ≤ ZKP_NL_MAX_N`** — change `zkp_nl_sizes` in `Herradura_tests.c` to
+   `{32}` only.  Simple, no library change; reduces C test coverage vs. Python/Go.
+
+2. **Extend C ZKP-NL to 64-bit** — change all share/carry types to `uint64_t`, expand
+   the mask logic, and bump `ZKP_NL_MAX_N` to 64.  Correct and maintains coverage parity
+   but requires auditing every arithmetic operation in `zkp_nl_eval_3p`, `zkp_nl_prove`,
+   `zkp_nl_verify`, and `zkp_nl_keygen`.
+
+3. **Dual-path** — keep `uint32_t` path for `n ≤ 32` and add a `uint64_t` path for
+   `n ≤ 64`, selected at runtime inside `zkp_nl_eval_3p`.
+
+**Recommended:** Option 2.  Option 1 silently reduces security-test surface; option 2
+restores full parity and closes the UB.
+
+---
+
+#### 79.B — C CLI `encfile`/`decfile`: missing `_RNL_KDF_DC` in seed derivation
+
+**Affected file:** `HerraduraCli/herradura_cli.c` — `cmd_encfile` (line ≈1495) and
+`cmd_decfile` (line ≈1589)
+
+**Symptom:** The `test_c_interop.sh` and `test_go_interop.sh` integration tests both abort
+with "decfile: authentication tag mismatch — file corrupt or wrong key":
+
+- `C encfile → Python decfile`: **FAIL**
+- `Go encfile → C decfile`: **FAIL**
+- `Go encfile → Python decfile`: **PASS**
+
+C encrypts and decrypts its own files correctly (standalone `test_c_encfile.sh` passes), but
+its `.hkx` files are not readable by Go or Python and vice versa.
+
+**Root cause:**
+
+Both `cmd_encfile` and `cmd_decfile` compute the keystream seed as:
+
+```c
+ba_rol_k(&seed, &base, KEYBITS / 8);     /* ← OLD formula, v1.7 and earlier */
+```
+
+The correct formula — introduced in v1.8.0 (TODO #38, CHANGELOG entry) — is:
+
+```c
+ba_rnl_kdf_seed(&seed, &base);           /* ROL(base, n/8) XOR _RNL_KDF_DC */
+```
+
+`ba_rnl_kdf_seed` XORs the SHA-256 initial hash constant `_RNL_KDF_DC` into the seed after
+the rotation.  This XOR was added to prevent KDF degeneracy when the key is
+rotation-periodic.  The Go CLI (`herradura_cli.go`) and Python CLI (`herradura.py`) were
+updated to use the new formula at v1.8.0, but the C CLI was not.
+
+The stale comment at `herradura.h:633` also reflects the old formula and should be updated.
+
+**Fix (two-line change):**
+
+```c
+/* cmd_encfile (≈line 1495) and cmd_decfile (≈line 1589): */
+- ba_rol_k(&seed, &base, KEYBITS / 8);
++ ba_rnl_kdf_seed(&seed, &base);
+```
+
+Also update the comment at `herradura.h:633`:
+```c
+- * Caller computes: base = K XOR nonce; seed = ba_rol_k(base, KEYBITS/8).
++ * Caller computes: base = K XOR nonce; seed = ba_rnl_kdf_seed(base).
+```
+
+**Note:** After this fix, C-generated `.hkx` files from v1.9.17 and earlier will not be
+decryptable with the corrected CLI (the seed changed).  This is unavoidable — the old C CLI
+was generating files that were already incompatible with Go and Python.
+
+---
+
+**Scope:** Both bugs are C-only.  Go, Python, ARM Thumb-2, NASM i386, and Arduino all pass
+their respective test suites without errors.
+
+Status: **DONE v1.9.18** — 79.A: all ZKP-NL types promoted to `uint64_t`, `ZKP_NL_MAX_N` bumped to 64; 79.B: `ba_rnl_kdf_seed` substituted for `ba_rol_k` in both `cmd_encfile` and `cmd_decfile`; stale comment at `herradura.h:633` updated.  All C tests pass (test [22] n=64 PASS); all encfile interop tests pass (4/4 C↔Python, 10/10 Go↔C↔Python).
