@@ -4,6 +4,26 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.19] - 2026-06-09
+
+### Research — NL-FSCX v2 orbit-length analysis script (TODO #78.E)
+
+Added `SecurityProofsCode/nl_fscx_v2_orbit.py`: six-section empirical analysis of the
+`pi_K` permutation family underpinning the NASG (Non-Abelian Symmetric Group) key-exchange
+candidate (§11.8.5 "Option C").  Uses Brent's cycle detection to characterise orbit-length
+distribution and assess obstacle 2 ("no verified lower bound on orbit lengths").
+
+Key findings:
+- **n=24 anomaly**: ALL sampled (K, G) pairs have orbit ≤ 65536 with typical lengths 7–100,
+  despite a 2^24-element state space.  Orbit length is **non-monotone** in n.
+- **n=32**: ALL 200 sampled pairs have orbit > 2^16; empirical lower bound confirmed.
+- **Non-commutativity** (Theorem 15): 99.65% / 99.99% / 100% at n=8/16/32.
+- **CSP collision rate**: ~2 solutions per (G, K2, C) triple at n=6,8 (~33% unique).
+- Obstacle 2 is PARTIALLY addressed at n=32; the n=24 anomaly means production security
+  (n=256) cannot be inferred by extrapolation — independent analysis required.
+
+---
+
 ## [1.9.18] - 2026-06-09
 
 ### Fix — C ZKP-NL stack-buffer-overflow at n=64 and C CLI encfile/decfile KDF mismatch (TODO #79)

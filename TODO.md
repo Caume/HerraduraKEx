@@ -4809,9 +4809,11 @@ Conjugacy Search Problem (Ettinger-Hoyer-Knill 2004).
 2. No verified lower bound on orbit length of `pi_K` — small-subgroup attacks not excluded.
 3. No formal reduction to studied CSP (braid group results do not directly transfer).
 
-**Recommended first step:** A `SecurityProofsCode/nl_fscx_v2_orbit.py` script (analogous
-to `nl_fscx_rot_analysis.py`) characterising orbit-length distribution of
-`nl_fscx_revolve_v2(G, K, steps)` for random K would close obstacle 2.
+**Analysis script:** `SecurityProofsCode/nl_fscx_v2_orbit.py` (added v1.9.19)
+characterises orbit-length distribution of `pi_K` for random K via Brent's cycle
+detection.  Key finding: orbit lengths are NON-MONOTONE in n — at n=24 ALL orbits are
+short (≤100); at n=32 ALL orbits exceed 2^16.  Obstacle 2 is PARTIALLY addressed for
+n=32 but unresolved for n=256 (production).  Obstacles 1 and 3 remain open.
 
 ---
 
