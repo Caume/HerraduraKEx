@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.21] - 2026-06-09
+
+### Research — VDF demo: FSCX and NL-FSCX Verifiable Delay Functions (TODO #78.F)
+
+Added `SecurityProofsCode/vdf_demo.py`: four-section analysis of VDF constructions.
+
+- **§1 FSCX VDF (limited model):** `eval = fscx_revolve(x, d, t)`, `verify = fscx_revolve(y, d, P−t) == x`. Period P always divides n (verified); verification is 11× faster than eval at t = P−1.
+- **§2 Matrix attack:** Derives closed form `fscx_revolve(A, B, t) = M^t(A) ⊕ M·T_t·B` (GF(2) matrix exponentiation). Implements and verifies the formula; timing shows matrix beats sequential at t ≥ ~5000 for n=32. Confirms the FSCX VDF is broken in the standard model.
+- **§3 NL-FSCX v1 VDF:** Non-linear — no matrix shortcut. Period > 2^16 at n=32 (consistent with `nl_fscx_v2_orbit.py §4`); setup and verification infeasible without an efficient proof system.
+- **§4 Summary:** Neither construction is production-ready. Production VDF requires Pietrzak/Wesolowski succinct proofs, which need algebraic structure not yet found in FSCX.
+
+---
+
 ## [1.9.20] - 2026-06-09
 
 ### Research — PAKE-ZKBoo: PQC Password-Authenticated Key Exchange demo (TODO #78.D)

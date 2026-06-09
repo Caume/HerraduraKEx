@@ -4842,6 +4842,14 @@ def vdf_verify(x: BitArray, y: BitArray, t: int, domain: BitArray) -> bool:
 **Critical limitation:** FSCX is GF(2)-linear: `M^t` can be precomputed in O(n^3), bypassing
 the sequential delay. Not a full VDF against adversaries with matrix exponentiation capability.
 
+**Demo script:** `SecurityProofsCode/vdf_demo.py` (added v1.9.21) — four-section analysis:
+- §1: FSCX VDF eval/verify (P=n always holds; verify is faster when t > P/2).
+- §2: GF(2) matrix attack — proves closed form `M^t(A) ⊕ M·T_t·B`, shows crossover at t≈5000
+  for n=32 where matrix beats sequential.  Confirms the construction is BROKEN.
+- §3: NL-FSCX v1 VDF — non-linear, no matrix attack; but period P > 2^16 at n=32 (consistent
+  with orbit analysis), making setup and verification infeasible.
+- §4: Production path requires Pietrzak/Wesolowski succinct proofs.
+
 ---
 
 #### 78.G — Oblivious PRF (OPRF) — research direction (High)
