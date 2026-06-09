@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.23] - 2026-06-09
+
+### Research — Non-Abelian KEX analysis: orbit sweep, non-abelianness, Ko-Lee viability (TODO #78.E)
+
+Added `SecurityProofsCode/nl_fscx_v2_kex.py`: five-section analysis of the non-abelian KEX construction.
+
+- **§1 Orbit sweep n=8..40:** Anomaly confirmed at n=12 (ALL short ≤100); n=16,20,28,32,36,40 all-long (orbits > 4096); n=24 bounded (orbits ≤65536 — consistent with `nl_fscx_v2_orbit.py`).
+- **§2 Non-abelianness:** 200/200 (100%) of tested triples are non-abelian at n=32; explicit witness provided.
+- **§3 Commuting-pair density:** 0/300 single-step and 0/300 revolve-commuting pairs — Ko-Lee KEX not viable with random key selection.
+- **§4 KEX protocol demo:** Same-key revolve KEX (abelian, DLP-reducible) works; cross-key KEX fails; group inverse round-trip verified.
+- **§5 Obstacle status:** Obstacle 2 extended to n=8..40; Obstacles 1 and 3 remain research-open; Ko-Lee path blocked by absence of commuting subgroups.
+
+---
+
 ## [1.9.22] - 2026-06-09
 
 ### Research — OPRF demo: Oblivious PRF constructions from GF(2^n)* and NL-FSCX (TODO #78.G)

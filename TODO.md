@@ -4824,6 +4824,22 @@ detection.  Key finding: orbit lengths are NON-MONOTONE in n — at n=24 ALL orb
 short (≤100); at n=32 ALL orbits exceed 2^16.  Obstacle 2 is PARTIALLY addressed for
 n=32 but unresolved for n=256 (production).  Obstacles 1 and 3 remain open.
 
+**KEX demo script:** `SecurityProofsCode/nl_fscx_v2_kex.py` (added v1.9.23) — five-section analysis:
+- §1: Extended orbit sweep n=8..40: anomaly confirmed at n=12 (ALL short ≤100); n=16,20,28,32,36,40
+  all-long (orbits > cap=4096); n=24 bounded (orbits ≤ 65536, see nl_fscx_v2_orbit.py).
+- §2: Non-abelianness confirmed at 100% of 200 tested (K1,K2,A) triples at n=32; explicit witness.
+- §3: Commuting-pair density measured: 0/300 single-step and 0/300 revolve-commuting pairs — Ko-Lee
+  KEX not viable with random key selection; no useful commuting subgroups found.
+- §4: Same-key revolve KEX (abelian subgroup, DLP-reducible) works correctly; cross-key KEX fails
+  without commuting pairs; group inverse round-trip verified (`pi_K^{-1}(pi_K(A)) = A`).
+- §5: Obstacles 1 and 3 remain open (theoretical); Obstacle 2 extended to n=8..40.
+
+**Remaining open (research-blocked):**
+- Obstacle 1: circuit-model CSP transfer theorem — no structured commuting subgroups found, so no
+  Ko-Lee reduction is available; obstacle deepened by §3 results.
+- Obstacle 2: n=256 orbit safety — empirically untestable at production scale.
+- Obstacle 3: structured commuting-subgroup construction needed for Ko-Lee KEX instantiation.
+
 ---
 
 #### 78.F — Verifiable Delay Function (VDF) — limited model (Low / Research)
