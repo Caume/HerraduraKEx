@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.17] - 2026-06-08
+
+### Fix — ARM Thumb-2 assembly bugs found on first live build (gcc-arm-linux-gnueabi)
+
+Two bugs in `Herradura cryptographic suite.s` and `CryptosuiteTests/Herradura_tests.s`, both latent since the code was written but never caught because the ARM cross-compiler was not previously installed:
+
+- **IT-block condition mismatch in ratchet loop:** `it ne` block contained a `cmpeq` instruction (condition `eq` ≠ block condition `ne`), rejected by the assembler.  Replaced with a plain branch sequence (`bne ratch_check_coll` / `b ratch_continue`).
+- **Missing `mov r0, r8` before `stern_popcount_eq2` in ring-sig verify (b=1 path):** `r8` held the response value but `r0` was never loaded before the call, so the weight-2 check always evaluated a stale/wrong value and caused every b=1 round to fail.  Fixed in both the suite file (`hrv2_b1`) and the test file (`thrv2_b1`).
+
+All 13 ARM tests now pass under `qemu-arm`, including test [13] (HPKS-Stern-Ring: 3/3 ring-verified).
+
+---
+
 ## [1.9.16] - 2026-06-08
 
 ### Feature — HPKS-Stern-Ring: Code-Based Ring / Group Signature via OR-Composition (78.I) across all language targets (TODO #78)
