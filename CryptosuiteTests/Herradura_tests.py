@@ -606,6 +606,153 @@ def hpke_stern_f_decap_known(e_int, seed, n):
 
 
 # ---------------------------------------------------------------------------
+# HPKS-Stern-Ring: OR-composed ring signature (TODO #78.I)
+
+def _ring_stern_simulate_round(b, seed_int, syndrome, n):
+    """HVZK simulator: returns (c0,c1,c2,b,resp) for pre-chosen challenge b."""
+    n_rows = n // 2; t = max(2, n // 16)
+    if b == 0:
+        sr = _csprng_weight_t(n, t)
+        sy = int.from_bytes(os.urandom(n // 8), 'big')
+        c0 = _stern_hash(n, BitArray(n, 0), BitArray(n, 0), ds=1)
+        c1 = _stern_hash(n, BitArray(n, sr), ds=2)
+        c2 = _stern_hash(n, BitArray(n, sy), ds=3)
+        return (c0, c1, c2), b, (sr, sy)
+    elif b == 1:
+        pi = BitArray.random(n)
+        r  = _csprng_weight_t(n, t)
+        perm = _stern_gen_perm(pi, n)
+        Hr   = _stern_syndrome(seed_int, r, n, n_rows)
+        sr   = _stern_apply_perm(perm, r, n)
+        c0   = _stern_hash(n, pi, BitArray(n, Hr), ds=1)
+        c1   = _stern_hash(n, BitArray(n, sr), ds=2)
+        c2   = _stern_hash(n, BitArray(n, 0), ds=3)
+        return (c0, c1, c2), b, (pi, r)
+    else:
+        pi = BitArray.random(n)
+        y  = int.from_bytes(os.urandom(n // 8), 'big')
+        perm = _stern_gen_perm(pi, n)
+        Hy   = _stern_syndrome(seed_int, y, n, n_rows)
+        Hys  = Hy ^ syndrome
+        sy   = _stern_apply_perm(perm, y, n)
+        c0   = _stern_hash(n, pi, BitArray(n, Hys), ds=1)
+        c1   = _stern_hash(n, BitArray(n, 0), ds=2)
+        c2   = _stern_hash(n, BitArray(n, sy), ds=3)
+        return (c0, c1, c2), b, (pi, y)
+
+
+def _ring_stern_challenges(rounds, k, msg, all_commits):
+    """Fiat-Shamir: derive joint challenges from msg + all k*rounds commits."""
+    n = msg._size
+    flat = [msg]
+    for i in range(k):
+        for r in range(rounds):
+            c0, c1, c2 = all_commits[i][r]
+            flat += [c0, c1, c2]
+    ch_st = _stern_hash(n, *flat)
+    joint = []
+    for r in range(rounds):
+        ch_st = nl_fscx_v1(ch_st, BitArray(n, r))
+        joint.append(ch_st.uint % 3)
+    return joint
+
+
+def hpks_stern_ring_sign_local(msg, e_int, j, ring_keys, n, rounds):
+    """Ring sign as member j (ring_keys = [(seed, syndrome), ...])."""
+    k = len(ring_keys); t = max(2, n // 16); n_rows = n // 2
+    sim_commits  = [[None] * rounds for _ in range(k)]
+    sim_bs       = [[0] * rounds    for _ in range(k)]
+    sim_resps    = [[None] * rounds for _ in range(k)]
+
+    # Step 1: simulate non-signers
+    for i in range(k):
+        if i == j: continue
+        seed_i, syn_i = ring_keys[i]
+        for r in range(rounds):
+            bv = int.from_bytes(os.urandom(1), 'big') % 3
+            cmts, bv, resp = _ring_stern_simulate_round(bv, seed_i.uint, syn_i, n)
+            sim_commits[i][r] = cmts; sim_bs[i][r] = bv; sim_resps[i][r] = resp
+
+    # Step 2: commit phase for real signer j
+    seed_j, _ = ring_keys[j]
+    j_r_tmp  = []; j_y_tmp  = []; j_pi_tmp = []
+    j_sr_tmp = []; j_sy_tmp = []
+    for r in range(rounds):
+        rv = _csprng_weight_t(n, t)
+        yv = e_int ^ rv
+        pi = BitArray.random(n)
+        perm = _stern_gen_perm(pi, n)
+        Hr   = _stern_syndrome(seed_j.uint, rv, n, n_rows)
+        sr   = _stern_apply_perm(perm, rv, n)
+        sy   = _stern_apply_perm(perm, yv, n)
+        c0   = _stern_hash(n, pi, BitArray(n, Hr), ds=1)
+        c1   = _stern_hash(n, BitArray(n, sr), ds=2)
+        c2   = _stern_hash(n, BitArray(n, sy), ds=3)
+        sim_commits[j][r] = (c0, c1, c2)
+        j_r_tmp.append(rv); j_y_tmp.append(yv); j_pi_tmp.append(pi)
+        j_sr_tmp.append(sr); j_sy_tmp.append(sy)
+
+    # Step 3: Fiat-Shamir joint challenges
+    joint = _ring_stern_challenges(rounds, k, msg, sim_commits)
+
+    # Step 4: assign real signer's challenge via challenge splitting
+    for r in range(rounds):
+        sim_sum = sum(sim_bs[i][r] for i in range(k) if i != j)
+        bv = (joint[r] - sim_sum) % 3
+        sim_bs[j][r] = bv
+        if bv == 0:
+            sim_resps[j][r] = (j_sr_tmp[r], j_sy_tmp[r])
+        elif bv == 1:
+            sim_resps[j][r] = (j_pi_tmp[r], j_r_tmp[r])
+        else:
+            sim_resps[j][r] = (j_pi_tmp[r], j_y_tmp[r])
+
+    all_commits  = [[sim_commits[i][r]  for r in range(rounds)] for i in range(k)]
+    all_challenges = [[sim_bs[i][r]     for r in range(rounds)] for i in range(k)]
+    all_responses  = [[sim_resps[i][r]  for r in range(rounds)] for i in range(k)]
+    return all_commits, all_challenges, all_responses
+
+
+def hpks_stern_ring_verify_local(msg, sig, ring_keys, n):
+    """Verify a ring signature (all_commits, all_challenges, all_responses)."""
+    all_commits, all_challenges, all_responses = sig
+    k = len(ring_keys); rounds = len(all_commits[0]); t = max(2, n // 16); n_rows = n // 2
+
+    joint = _ring_stern_challenges(rounds, k, msg, all_commits)
+
+    for r in range(rounds):
+        s = sum(all_challenges[i][r] for i in range(k)) % 3
+        if s != joint[r]: return False
+
+    for i in range(k):
+        seed_i, syn_i = ring_keys[i]
+        for r in range(rounds):
+            b = all_challenges[i][r]; resp = all_responses[i][r]
+            c0, c1, c2 = all_commits[i][r]
+            if b == 0:
+                sr, sy = resp
+                if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
+                if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
+                if bin(sr).count('1') != t:                     return False
+            elif b == 1:
+                pi_seed, r_int = resp
+                if bin(r_int).count('1') != t:                  return False
+                perm = _stern_gen_perm(pi_seed, n)
+                Hr   = _stern_syndrome(seed_i.uint, r_int, n, n_rows)
+                if _stern_hash(n, pi_seed, BitArray(n, Hr), ds=1) != c0: return False
+                sr   = _stern_apply_perm(perm, r_int, n)
+                if _stern_hash(n, BitArray(n, sr), ds=2) != c1: return False
+            else:
+                pi_seed, y_int = resp
+                perm = _stern_gen_perm(pi_seed, n)
+                Hy   = _stern_syndrome(seed_i.uint, y_int, n, n_rows)
+                if _stern_hash(n, pi_seed, BitArray(n, Hy ^ syn_i), ds=1) != c0: return False
+                sy   = _stern_apply_perm(perm, y_int, n)
+                if _stern_hash(n, BitArray(n, sy), ds=3) != c2: return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 # ---------------------------------------------------------------------------
 
@@ -1447,6 +1594,26 @@ def test_hpke_stern_f_correctness():
     print()
 
 
+def test_hpks_stern_ring_correctness():
+    N_SDF = 32; SDF_RING_ROUNDS = 4; RING_K = 3
+    print(f"[27] HPKS-Stern-Ring correctness: OR-composition, k={RING_K}, N={N_SDF}, rounds={SDF_RING_ROUNDS}  [CODE-BASED RING SIG]")
+    n_run = _iters(3); ok = 0
+    for i in _trange(n_run):
+        ring_keys = []; ring_errors = []
+        for ki in range(RING_K):
+            seed_i, e_i, syn_i = stern_f_keygen(N_SDF)
+            ring_keys.append((seed_i, syn_i))
+            ring_errors.append(e_i)
+        j = i % RING_K
+        e_j = ring_errors[j]
+        msg = BitArray.random(N_SDF)
+        sig = hpks_stern_ring_sign_local(msg, e_j, j, ring_keys, N_SDF, SDF_RING_ROUNDS)
+        if hpks_stern_ring_verify_local(msg, sig, ring_keys, N_SDF):
+            ok += 1
+    status = "PASS" if ok == n_run else "FAIL"
+    print(f"    {ok} / {n_run} ring-verified  [{status}]\n")
+
+
 def test_hfscx_256():
     print("[19] HFSCX-256-DM hash — output length, known-answer, determinism, "
           "collision sanity, block boundaries, keyed MAC  [HASH]")
@@ -1903,7 +2070,7 @@ def bench_zkp_nl():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.9.15 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.16 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -1931,7 +2098,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.15 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.16 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -1962,6 +2129,7 @@ if __name__ == '__main__':
     print("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
     test_hpks_stern_f_correctness()
     test_hpke_stern_f_correctness()
+    test_hpks_stern_ring_correctness()
 
     print("--- Security Tests: HFSCX-256 Hash ---\n")
     test_hfscx_256()

@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.8.8
+/*  Herradura Cryptographic Suite v1.9.16
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -730,6 +730,32 @@ int main(void)
         puts(unique ? "- Ratchet: 5 distinct message keys"
                     : "+ Ratchet: duplicate message keys!");
         ratchet_erase(&state);
+    }
+
+    /* 78.I — Ring signature demo (k=3, sign as member 1) */
+    {
+#define RING_K 3
+        BitArray  ring_seeds[RING_K];
+        BitArray  ring_e[RING_K];
+        uint8_t   ring_syndrs[RING_K * SDF_SYNBYTES];
+        SternRingSig rsig;
+        int ring_j = 1, i;
+
+        for (i = 0; i < RING_K; i++) {
+            ba_rand(&ring_seeds[i], urnd);
+            stern_rand_error(&ring_e[i], urnd);
+            stern_syndrome(ring_syndrs + i * SDF_SYNBYTES, &ring_seeds[i], &ring_e[i]);
+        }
+        stern_ring_alloc(&rsig, RING_K, SDF_ROUNDS);
+        stern_ring_sign(&rsig, &plaintext, &ring_e[ring_j], ring_j,
+                         ring_seeds, ring_syndrs, urnd);
+        if (stern_ring_verify(&rsig, &plaintext, ring_seeds, ring_syndrs))
+            puts("- Ring sig (78.I): signature verified (k=3, signer=1)");
+        else
+            puts("+ Ring sig (78.I): verification FAILED");
+        stern_ring_free(&rsig);
+        for (i = 0; i < RING_K; i++) explicit_bzero(&ring_e[i], sizeof(ring_e[i]));
+#undef RING_K
     }
 
     fclose(urnd);

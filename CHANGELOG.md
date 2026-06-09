@@ -4,6 +4,48 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.17] - 2026-06-08
+
+### Fix — ARM Thumb-2 assembly bugs found on first live build (gcc-arm-linux-gnueabi)
+
+Two bugs in `Herradura cryptographic suite.s` and `CryptosuiteTests/Herradura_tests.s`, both latent since the code was written but never caught because the ARM cross-compiler was not previously installed:
+
+- **IT-block condition mismatch in ratchet loop:** `it ne` block contained a `cmpeq` instruction (condition `eq` ≠ block condition `ne`), rejected by the assembler.  Replaced with a plain branch sequence (`bne ratch_check_coll` / `b ratch_continue`).
+- **Missing `mov r0, r8` before `stern_popcount_eq2` in ring-sig verify (b=1 path):** `r8` held the response value but `r0` was never loaded before the call, so the weight-2 check always evaluated a stale/wrong value and caused every b=1 round to fail.  Fixed in both the suite file (`hrv2_b1`) and the test file (`thrv2_b1`).
+
+All 13 ARM tests now pass under `qemu-arm`, including test [13] (HPKS-Stern-Ring: 3/3 ring-verified).
+
+---
+
+## [1.9.16] - 2026-06-08
+
+### Feature — HPKS-Stern-Ring: Code-Based Ring / Group Signature via OR-Composition (78.I) across all language targets (TODO #78)
+
+Implements `HPKS-Stern-Ring` — a k-member ring signature built from OR-composition of k HPKS-Stern-F identification instances, via the HVZK simulator / challenge-splitting technique. Signing proves knowledge of one secret key in the ring without revealing which member signed; verifier only checks that per-round challenge sums equal the Fiat-Shamir joint challenge.
+
+**Protocol design:**
+- Non-signer members i ≠ j: HVZK simulator chooses challenge b_i pre-commitment; produces valid (c0_i, c1_i, c2_i, resp_i) without knowing the secret key.
+- Real signer j: commits normally; after Fiat-Shamir joint challenge is computed from all k×rounds×3 commits, splits challenge: b_j[r] = (joint[r] − Σ_{i≠j} b_i[r]) mod 3.
+- Fiat-Shamir: hash(msg ∥ member-major commit chain) → joint challenges.
+- Assembly/Arduino simplification: k=2, member 0 always uses b=0 (no HVZK case selection needed).
+
+**Files modified:**
+- `herradura.h` — `SternRingSig`, `stern_ring_alloc/free`, `stern_ring_challenges`, `stern_ring_simulate`, `stern_ring_sign`, `stern_ring_verify`.
+- `herradura/herradura.go` — Go package: `SternRingSig`, `RingKeypair`, `sternRingChallenges`, `sternSimulateRound`, `HpksSternRingSign`, `HpksSternRingVerify`.
+- `Herradura cryptographic suite.c` — C suite: ring demo (k=3, sign as member 1) + Eve bypass test.
+- `Herradura cryptographic suite.go` — Go suite: ring demo (k=3, sign as member 1) + Eve bypass test.
+- `Herradura cryptographic suite.py` — Python suite: ring demo (k=3, sign as member 1) + Eve bypass test.
+- `Herradura cryptographic suite.s` — ARM Thumb-2: k=2 ring sig (`ring_fs_challenges_32`, `hpks_stern_ring2_sign_32`, `hpks_stern_ring2_verify_32`) + demo + Eve test.
+- `Herradura cryptographic suite.asm` — NASM i386: same k=2 functions + demo + Eve test.
+- `Herradura cryptographic suite.ino` — Arduino: `SternRingSig2_32`, `ring_fs_challenges2_32`, `hpks_stern_ring2_sign_32`, `hpks_stern_ring2_verify_32` + demo in `loop()` + Eve test.
+- `CryptosuiteTests/Herradura_tests.c` — test [28]: HPKS-Stern-Ring correctness (k=3, N=256, rounds=8).
+- `CryptosuiteTests/Herradura_tests.go` — test [27]: HPKS-Stern-Ring correctness (k=3, N=256, rounds=16).
+- `CryptosuiteTests/Herradura_tests.py` — test [27]: HPKS-Stern-Ring correctness (k=3, N=32, rounds=4).
+- `CryptosuiteTests/Herradura_tests.s` — ARM Thumb-2: test [13] (k=2, 3 iterations).
+- `CryptosuiteTests/Herradura_tests.asm` — NASM i386: test [13] (k=2, 3 iterations).
+
+---
+
 ## [1.9.15] - 2026-06-08
 
 ### Feature — Masking-Friendly FSCX (78.H) and Forward-Secret Ratchet (78.C) across all language targets (TODO #78)
