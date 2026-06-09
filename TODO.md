@@ -4789,11 +4789,20 @@ Login:
 **Why native:** All existing PQC PAKEs (KHAPE, OPAQUE-Kyber) import external components.
 This construction uses only primitives already in HerraduraKEx.
 
-**Open gap:** The current ZKBoo proves preimage of a single `nl_fscx_v1` step; a password
-hash requires proving knowledge through HFSCX-256's full 64-round Merkle-Damgard chain.
-The practical near-term path is a simpler construction: client derives a blinded value
-from the password and uses it as the HKEX-RNL key material, with the ZKBoo proving only
-the final binding step.  This requires a formal security reduction that does not yet exist.
+**Demo script:** `SecurityProofsCode/hkex_pake_demo.py` (added v1.9.20) — 3-message PAKE
+implemented and demonstrated:
+- Registration: `pw_key = hfscx_256(password‖salt)`, `zkp_A = hfscx_256(pw_key‖"ZKP-A")[0:32b]`,
+  `y = nl_fscx_v1(zkp_A, B)`.  Server stores `(salt, B, y)`.
+- Login: HKEX-RNL channel + ZKBoo proves `nl_fscx_v1(zkp_A, B) = y` bound to session K_raw.
+- Wrong password: fast local abort (7 ms) before ZKBoo.
+- Session keys match on both sides.
+
+**Open gaps (from script §4):**
+- A. OFFLINE DICTIONARY ATTACK: construction is PAKE (not aPAKE) — attacker with `(salt, B, y)`
+  can brute-force passwords.  Fix requires OPRF (TODO #78.G).
+- B. No formal security reduction to standard PAKE model (SIM-BMP, UC-PAKE).
+- C. Demo uses `ZKP_N=32` for Python speed; full 256-bit authentication requires C or NumPy ZKBoo.
+- D. Demo rounds `R=16`; production requires `R=219`.
 
 ---
 
