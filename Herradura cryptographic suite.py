@@ -152,6 +152,7 @@
         hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
         rnl_sigma_sign, rnl_sigma_verify  (ZKP-RNL: Ring-LWR Σ-protocol)
         zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify  (ZKP-NL: NL-FSCX ZKBoo)
+        oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct  (OPRF: 2HashDH over GF(2^n)*)
 
     Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
         RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
@@ -1788,6 +1789,62 @@ def ratchet_advance(state: BitArray) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# 80 — Oblivious PRF (OPRF) over GF(2^n)*  (TODO #80)
+#
+# F(k, x) = gf_pow(H(x), k)  where  H = HFSCX-256 hash-to-field.
+# Oblivious under CDH in GF(2^n)*: the blinded value alpha = H(x)^r
+# is computationally indistinguishable from random without knowing x or r.
+#
+# Protocol: client calls oprf_blind(x) → (r, alpha); sends alpha to server.
+#           server calls oprf_eval(alpha, k) → beta; returns beta to client.
+#           client calls oprf_unblind(beta, r) → F = H(x)^k = oprf_direct(x, k).
+# ---------------------------------------------------------------------------
+
+def oprf_keygen() -> int:
+    """Random OPRF server key k in [2, 2^KEYBITS − 2]."""
+    while True:
+        k = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & ORD
+        if 1 < k < ORD:
+            return k
+
+
+def _oprf_hash_to_field(data: bytes) -> int:
+    """HFSCX-256(data) → non-zero element of GF(2^KEYBITS)."""
+    val = int.from_bytes(hfscx_256(data), 'big') & ORD
+    return val if val != 0 else 1
+
+
+def oprf_blind(x: bytes) -> tuple:
+    """Client: hash x and blind with random scalar r.
+    Returns (r, alpha) where alpha = H(x)^r in GF(2^KEYBITS)*.
+    r is secret (kept by client); alpha is sent to the server."""
+    poly = GF_POLY[KEYBITS]
+    while True:
+        r = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & ORD
+        if r > 1 and math.gcd(r, ORD) == 1:
+            break
+    alpha = gf_pow(_oprf_hash_to_field(x), r, poly, KEYBITS)
+    return r, alpha
+
+
+def oprf_eval(alpha: int, k: int) -> int:
+    """Server: evaluate alpha^k in GF(2^KEYBITS)*."""
+    return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)
+
+
+def oprf_unblind(beta: int, r: int) -> int:
+    """Client: recover F(k, x) = H(x)^k from beta = H(x)^{kr}.
+    Computes beta^{r^{-1} mod ORD}."""
+    r_inv = pow(r, -1, ORD)
+    return gf_pow(beta & ORD, r_inv, GF_POLY[KEYBITS], KEYBITS)
+
+
+def oprf_direct(x: bytes, k: int) -> int:
+    """Direct PRF evaluation F(k, x) = H(x)^k (server-side; not oblivious)."""
+    return gf_pow(_oprf_hash_to_field(x), k & ORD, GF_POLY[KEYBITS], KEYBITS)
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -2289,6 +2346,29 @@ def main():
         print("+ Eve forged ring signature (Eve wins!)")
     else:
         print("- Eve cannot forge: challenge-sum mismatch  (SD + PRF protection)")
+
+
+    # 80 — OPRF demo (blind / eval / unblind round-trip)
+    print("*** OPRF (80) — 2HashDH over GF(2^256)*")
+    _oprf_k   = oprf_keygen()
+    _oprf_pw  = b"oprf-demo-input"
+    _oprf_r, _oprf_alpha = oprf_blind(_oprf_pw)
+    _oprf_beta  = oprf_eval(_oprf_alpha, _oprf_k)
+    _oprf_F     = oprf_unblind(_oprf_beta, _oprf_r)
+    _oprf_check = oprf_direct(_oprf_pw, _oprf_k)
+    if _oprf_F == _oprf_check:
+        print("- OPRF blind/eval/unblind round-trip correct")
+    else:
+        print("+ OPRF round-trip failed!")
+    # aPAKE: OPRF output replaces direct password hash
+    _oprf_salt   = os.urandom(32)
+    _oprf_pw_key = hfscx_256(_oprf_F.to_bytes(KEYBITS // 8, 'big') + _oprf_salt)
+    _oprf_F2     = oprf_direct(_oprf_pw, _oprf_k)
+    _oprf_pw_key2 = hfscx_256(_oprf_F2.to_bytes(KEYBITS // 8, 'big') + _oprf_salt)
+    if _oprf_pw_key == _oprf_pw_key2:
+        print("- OPRF aPAKE: pw_key derived from OPRF output is deterministic")
+    else:
+        print("+ OPRF aPAKE pw_key mismatch!")
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)

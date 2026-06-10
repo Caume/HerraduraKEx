@@ -4,6 +4,17 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.24] - 2026-06-09
+
+### Feature — OPRF library + Python CLI (TODO #80 Batch 1)
+
+- **Python suite** (`Herradura cryptographic suite.py`): added 2HashDH OPRF over GF(2^256)* — `oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`; demo block in `main()` validates blind/eval/unblind round-trip and aPAKE pw_key derivation.
+- **`HerraduraCli/primitives.py`**: exports all five `oprf_*` symbols.
+- **Python CLI** (`HerraduraCli/herradura.py`): `genpkey --algo oprf` generates OPRF server key (PEM label `HERRADURA OPRF PRIVATE KEY`); `oprf-blind` (client blinding → `HERRADURA OPRF CLIENT STATE`), `oprf-eval` (server evaluation → `HERRADURA OPRF EVALUATION`), `oprf-unblind` (client unblinding → PRF output hex).
+- **`CliTest/test_oprf.sh`**: 8 Python CLI integration tests — keygen, blind, eval, unblind, determinism, different-input, different-key, pkey inspect — all passing.
+
+---
+
 ## [1.9.23] - 2026-06-09
 
 ### Research — Non-Abelian KEX analysis: orbit sweep, non-abelianness, Ko-Lee viability (TODO #78.E)

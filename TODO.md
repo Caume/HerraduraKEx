@@ -5093,7 +5093,7 @@ The following SecurityProofsCode scripts are **NOT** suitable for promotion:
 
 ---
 
-#### Batch 1 — OPRF: Python suite (`Herradura cryptographic suite.py`) + CLI (`herradura.py`)
+#### Batch 1 — OPRF: Python suite (`Herradura cryptographic suite.py`) + CLI (`herradura.py`) ✅ DONE v1.9.24
 
 **Suite functions to add** (prefix `oprf_`, following suite naming conventions):
 
@@ -5271,4 +5271,4 @@ New test scripts:
 5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
-Status: TODO
+Status: **Batch 1 DONE v1.9.24** — Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind` subcommands, `genpkey --algo oprf`) + `HerraduraCli/primitives.py` exports + `CliTest/test_oprf.sh` (8/8 passing). TODO

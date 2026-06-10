@@ -90,3 +90,10 @@ hske_encrypt_masked  = _s.hske_encrypt_masked
 hske_decrypt_masked  = _s.hske_decrypt_masked
 ratchet_init         = _s.ratchet_init
 ratchet_advance      = _s.ratchet_advance
+
+# ── 80 OPRF ──────────────────────────────────────────────────────────────────
+oprf_keygen          = _s.oprf_keygen
+oprf_blind           = _s.oprf_blind
+oprf_eval            = _s.oprf_eval
+oprf_unblind         = _s.oprf_unblind
+oprf_direct          = _s.oprf_direct
