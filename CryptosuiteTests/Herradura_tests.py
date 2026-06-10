@@ -1820,8 +1820,9 @@ def test_accumulator_correctness():
 def test_masked_hske():
     print("[25] Masked HSKE (78.H) — GF(2)-linearity masking correctness  [NEW]")
     N = _iters(200)
-    ok = 0
+    ok = 0; n_run = 0
     for _ in _trange(N):
+        n_run += 1
         pt   = BitArray.random(_KEYBITS)
         key  = BitArray.random(_KEYBITS)
         mask = BitArray.random(_KEYBITS)
@@ -1829,8 +1830,8 @@ def test_masked_hske():
         rec = fscx_revolve_masked_test(ct,  key, mask, _R_VALUE)
         if rec.uint == pt.uint:
             ok += 1
-    status = "PASS" if ok == N else "FAIL"
-    print(f"    round-trips={ok}/{N}  [{status}]")
+    status = "PASS" if ok == n_run else "FAIL"
+    print(f"    round-trips={ok}/{n_run}  [{status}]")
     # linearity check: F(A⊕r,B,n) ⊕ F(r,0,n) == F(A,B,n)
     zero = BitArray(_KEYBITS, 0)
     lin_ok = 0
