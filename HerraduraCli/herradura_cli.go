@@ -63,9 +63,10 @@ const (
 	lblZkpNlPub    = "HERRADURA ZKP-NL PUBLIC KEY"
 	lblZkpNlProof  = "HERRADURA ZKP-NL PROOF"
 
-	lblOprfPriv  = "HERRADURA OPRF PRIVATE KEY"
-	lblOprfState = "HERRADURA OPRF CLIENT STATE"
-	lblOprfEval  = "HERRADURA OPRF EVALUATION"
+	lblOprfPriv   = "HERRADURA OPRF PRIVATE KEY"
+	lblOprfState  = "HERRADURA OPRF CLIENT STATE"
+	lblOprfEval   = "HERRADURA OPRF EVALUATION"
+	lblPakeRecord = "HERRADURA PAKE RECORD"
 )
 
 var privToAlgo = map[string]string{
@@ -2164,6 +2165,93 @@ func cmdOprfUnblind(args []string) {
 	}
 }
 
+func cmdPakeRegister(args []string) {
+	fs    := flag.NewFlagSet("pake-register", flag.ExitOnError)
+	keyF  := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
+	pwF   := fs.String("password", "", "Password (default: demo-password)")
+	outF  := fs.String("out",      "-", "Output PAKE RECORD PEM")
+	fs.Parse(args)
+	if *keyF == "" {
+		fmt.Fprintln(os.Stderr, "pake-register: --key required")
+		os.Exit(1)
+	}
+	kLabel, kInts, err := readPEMInts(*keyF)
+	if err != nil { die("pake-register", err) }
+	if kLabel != lblOprfPriv {
+		fmt.Fprintf(os.Stderr, "pake-register: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+		os.Exit(1)
+	}
+	if len(kInts) < 1 {
+		fmt.Fprintln(os.Stderr, "pake-register: malformed OPRF private key")
+		os.Exit(1)
+	}
+	oprfKey := new(big.Int).SetBytes(kInts[0])
+	pw := []byte(*pwF)
+	if len(pw) == 0 {
+		pw = []byte("demo-password")
+	}
+	rec, err := HpakeRegister(pw, oprfKey)
+	if err != nil { die("pake-register", err) }
+
+	/* Encode: SEQUENCE(INTEGER(salt,32), INTEGER(B,4), INTEGER(y,4)) */
+	saltDer, e1 := DerIntEnc(rec.Salt[:])
+	bBuf := []byte{byte(rec.B >> 24), byte(rec.B >> 16), byte(rec.B >> 8), byte(rec.B)}
+	yBuf := []byte{byte(rec.Y >> 24), byte(rec.Y >> 16), byte(rec.Y >> 8), byte(rec.Y)}
+	bDer, e2 := DerIntEnc(bBuf)
+	yDer, e3 := DerIntEnc(yBuf)
+	if e1 != nil || e2 != nil || e3 != nil {
+		fmt.Fprintln(os.Stderr, "pake-register: DER encode error")
+		os.Exit(1)
+	}
+	seq, err := DerSeqEnc(saltDer, bDer, yDer)
+	if err != nil { die("pake-register", err) }
+	if err := writeString(*outF, PemWrap(lblPakeRecord, seq)); err != nil {
+		die("pake-register", err)
+	}
+}
+
+func cmdPakeDemo(args []string) {
+	fs   := flag.NewFlagSet("pake-demo", flag.ExitOnError)
+	keyF := fs.String("key",      "", "OPRF PRIVATE KEY PEM (server key)")
+	pwF  := fs.String("password", "demo-password", "Password")
+	fs.Parse(args)
+	if *keyF == "" {
+		fmt.Fprintln(os.Stderr, "pake-demo: --key required")
+		os.Exit(1)
+	}
+	kLabel, kInts, err := readPEMInts(*keyF)
+	if err != nil { die("pake-demo", err) }
+	if kLabel != lblOprfPriv {
+		fmt.Fprintf(os.Stderr, "pake-demo: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+		os.Exit(1)
+	}
+	if len(kInts) < 1 {
+		fmt.Fprintln(os.Stderr, "pake-demo: malformed OPRF private key")
+		os.Exit(1)
+	}
+	oprfKey := new(big.Int).SetBytes(kInts[0])
+	pw := []byte(*pwF)
+
+	rec, err := HpakeRegister(pw, oprfKey)
+	if err != nil { die("pake-demo", err) }
+
+	sk, err := HpakeLoginDemo(rec, pw, oprfKey)
+	if err != nil { die("pake-demo", err) }
+	if sk != nil {
+		fmt.Printf("- aPAKE login succeeded; session key: %x\n", sk)
+	} else {
+		fmt.Fprintln(os.Stderr, "+ aPAKE login failed!")
+		os.Exit(1)
+	}
+	skBad, _ := HpakeLoginDemo(rec, []byte("wrong-password"), oprfKey)
+	if skBad == nil {
+		fmt.Println("- aPAKE correctly rejects wrong password")
+	} else {
+		fmt.Println("+ aPAKE accepted wrong password! (security failure)")
+		os.Exit(1)
+	}
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 func die(prefix string, err error) {
@@ -2234,6 +2322,10 @@ func main() {
 		cmdOprfEval(rest)
 	case "oprf-unblind":
 		cmdOprfUnblind(rest)
+	case "pake-register":
+		cmdPakeRegister(rest)
+	case "pake-demo":
+		cmdPakeDemo(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()

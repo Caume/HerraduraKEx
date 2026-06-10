@@ -2112,6 +2112,104 @@ func OprfDirect(x []byte, k *big.Int, n int) *big.Int {
 	return GfPow(hx, k, GfPoly[n], n)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// aPAKE: augmented PAKE using HKEX-RNL + ZKBoo (NL-FSCX) + OPRF  (TODO #80)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const (
+	HpakeZkpN   = 32 // ZKBoo witness width (demo; production: 256)
+	HpakeRounds = 16 // ZKBoo rounds (demo; production: >= 219)
+)
+
+// HpakeRecord is the server-side user record produced by HpakeRegister.
+// Stores the OPRF output (not the password), so a stolen database cannot be
+// dictionary-attacked without also compromising the OPRF key.
+type HpakeRecord struct {
+	Salt [32]byte
+	B    uint32
+	Y    uint32
+}
+
+// hpakeDeriveZkpWitness returns the lower 32 bits of hfscx_256(oprfOut || "ZKP-A").
+func hpakeDeriveZkpWitness(oprfOut []byte) uint32 {
+	buf := make([]byte, len(oprfOut)+5)
+	copy(buf, oprfOut)
+	copy(buf[len(oprfOut):], "ZKP-A")
+	h := Hfscx256(buf, nil)
+	return (uint32(h[28]) << 24) | (uint32(h[29]) << 16) | (uint32(h[30]) << 8) | uint32(h[31])
+}
+
+// hpakeRnlKdf applies the HKEX-RNL session KDF to K_raw.
+func hpakeRnlKdf(kRaw *BitArray) []byte {
+	seed := RnlKdfSeed(kRaw)
+	return NlFscxRevolveV1(seed, kRaw, kRaw.size/4).Bytes()
+}
+
+// HpakeRegister creates a server-side aPAKE record for the given password and OPRF key.
+func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
+	rec := &HpakeRecord{}
+	if _, err := rand.Read(rec.Salt[:]); err != nil {
+		return nil, err
+	}
+	F := OprfDirect(password, oprfKey, 256)
+	fb := F.FillBytes(make([]byte, 32))
+	zkpA := hpakeDeriveZkpWitness(fb)
+
+	bBuf := make([]byte, 4)
+	if _, err := rand.Read(bBuf); err != nil {
+		return nil, err
+	}
+	B := (uint32(bBuf[0]) << 24) | (uint32(bBuf[1]) << 16) | (uint32(bBuf[2]) << 8) | uint32(bBuf[3])
+
+	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(zkpA)))
+	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(B)))
+	mask := uint32((1 << uint(HpakeZkpN)) - 1)
+	rec.B = B
+	rec.Y = uint32(NlFscxV1(aBA, bBA).Val.Uint64()) & mask
+	return rec, nil
+}
+
+// HpakeLoginDemo runs the full aPAKE login on both sides (demonstration).
+// Returns the 32-byte session key on success, or nil if the password does not match.
+func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte, error) {
+	F := OprfDirect(password, oprfKey, 256)
+	fb := F.FillBytes(make([]byte, 32))
+	zkpA := hpakeDeriveZkpWitness(fb)
+
+	mask := uint32((1 << uint(HpakeZkpN)) - 1)
+	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(zkpA)))
+	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(rec.B)))
+	if uint32(NlFscxV1(aBA, bBA).Val.Uint64())&mask != rec.Y {
+		return nil, nil // wrong password
+	}
+
+	// Ephemeral HKEX-RNL
+	n := 256
+	mBase := RnlMPoly(n)
+	aRand := RnlRandPoly(n, RnlQ)
+	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+	sC, CC := RnlKeygen(mBlind, n, RnlQ, RnlP)
+	sS, CS := RnlKeygen(mBlind, n, RnlQ, RnlP)
+	kRawC, hint := RnlAgree(sC, CS, RnlQ, RnlP, RnlPP, n, n, nil)
+	kRawS, _ := RnlAgree(sS, CC, RnlQ, RnlP, RnlPP, n, n, hint)
+
+	// ZKBoo: client proves knowledge of zkp_A bound to session channel
+	authLbl := []byte("PAKE-AUTH-v1")
+	authMsgC := append(kRawC.Bytes(), authLbl...)
+	authMsgS := append(kRawS.Bytes(), authLbl...)
+	proof, err := ZkpNlProve(zkpA, rec.B, rec.Y, HpakeZkpN, HpakeRounds, authMsgC)
+	if err != nil {
+		return nil, err
+	}
+	if !ZkpNlVerify(rec.B, rec.Y, HpakeZkpN, HpakeRounds, authMsgS, proof) {
+		return nil, nil
+	}
+
+	// Session key: hfscx_256(kdf(K_raw_c) || "PAKE-SESSION-v1")
+	skInput := append(hpakeRnlKdf(kRawC), []byte("PAKE-SESSION-v1")...)
+	return Hfscx256(skInput, nil), nil
+}
+
 // RatchetInit derives an initial ratchet state from seed via Hfscx256(seed||0x02).
 func RatchetInit(seed []byte) *BitArray {
 	buf := append(append([]byte(nil), seed...), 0x02)
