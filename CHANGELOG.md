@@ -4,6 +4,14 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.29] - 2026-06-10
+
+### Fix — Spurious FAIL in Python test [25] Masked HSKE under time-limited runs (TODO #84)
+
+- **`CryptosuiteTests/Herradura_tests.py`**: `test_masked_hske` compared `ok == N` (requested iterations) rather than `ok == n_run` (actual iterations run). When a `-t` time limit causes `_trange` to stop early (e.g., after 128 or 192 of 200 requested iterations), all passed iterations were reported as failures. Added `n_run` counter matching the pattern used by every other `_trange`-based test in the suite; PASS condition is now `ok == n_run`.
+
+---
+
 ## [1.9.28] - 2026-06-10
 
 ### Security — Fix three vulnerabilities identified in security review (TODO #81, #82, #83)

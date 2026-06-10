@@ -5515,4 +5515,4 @@ or patched by another test.
    correction, or similar), and add a deterministic regression test that runs the specific
    failing inputs.
 
-Status: **Open**
+Status: **DONE v1.9.29** — Root cause: `test_masked_hske` compared `ok == N` (requested iterations) instead of `ok == n_run` (actual iterations run by `_trange`). When `-t` limits wall-clock time, `_trange` stops at a 64-iteration checkpoint (e.g., i=191 → 192 iterations, i=127 → 128 iterations) and returns early; since the masked round-trip is mathematically guaranteed to succeed, `ok` equals the early-stop count, but `ok < N` → spurious FAIL. Fix: added `n_run` counter and changed PASS condition to `ok == n_run`, matching every other `_trange`-based test in the suite. Confirmed: with a tight time limit the test now reports e.g. `128/128 [PASS]` instead of `128/200 [FAIL]`.
