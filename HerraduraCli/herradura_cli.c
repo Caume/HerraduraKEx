@@ -246,6 +246,10 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
                   ((uint32_t)buf[2]<<8)|buf[3]);
     int rounds = (int)(((uint32_t)buf[4]<<24)|((uint32_t)buf[5]<<16)|
                        ((uint32_t)buf[6]<<8)|buf[7]);
+    if (n <= 0 || n > ZKP_NL_MAX_N)
+        die("ZKP-NL proof: n out of range");
+    if (rounds <= 0 || rounds > 4096)
+        die("ZKP-NL proof: rounds out of range");
     *n_out = n; *rounds_out = rounds;
     ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
     if (!proof) die("out of memory");

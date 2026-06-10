@@ -59,6 +59,9 @@
  * Buffer-size macros
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* Maximum PEM label length (excluding NUL). All callers allocate PEM_LABEL_MAX+1 bytes. */
+#define PEM_LABEL_MAX   79
+
 /* Worst-case output bytes for b64_encode(n bytes).
  * Python base64.encodebytes uses 76-char lines (57 input bytes each) + LF. */
 #define B64_ENC_LEN(n)  (((size_t)(n) + 56) / 57 * 77 + 1)
@@ -276,10 +279,11 @@ static int pem_wrap(const char *label, const uint8_t *der, size_t der_len,
 }
 
 /* Parse a PEM block.
- * label_out: caller-allocated buffer >= 80 bytes; receives NUL-terminated label.
+ * label_out: caller-allocated buffer of at least PEM_LABEL_MAX+1 bytes; receives
+ *   NUL-terminated label.  Returns -1 if the label exceeds PEM_LABEL_MAX characters.
  * der_out / *der_len: caller-provided buffer and its capacity on input;
  *   receives decoded DER bytes and byte count on output.
- * Returns 0 on success, -1 on malformed PEM or buffer too small. */
+ * Returns 0 on success, -1 on malformed PEM, oversized label, or buffer too small. */
 static int pem_unwrap(const char *pem, size_t pem_len,
                       char *label_out, uint8_t *der_out, size_t *der_len)
 {
@@ -296,6 +300,7 @@ static int pem_unwrap(const char *pem, size_t pem_len,
     if (p + 5 > end) return -1;
     if (label_out) {
         size_t ll = (size_t)(p - ls);
+        if (ll > PEM_LABEL_MAX) return -1;
         memcpy(label_out, ls, ll);
         label_out[ll] = '\0';
     }
@@ -473,6 +478,28 @@ static int herradura_codec_selftest(void)
     assert(strcmp(PEM_HKEX_GF_PRIV, "HERRADURA HKEX-GF PRIVATE KEY") == 0);
     assert(strcmp(PEM_SESSION_KEY,  "HERRADURA SESSION KEY")          == 0);
     assert(strcmp(PEM_SIGNATURE,    "HERRADURA SIGNATURE")            == 0);
+
+    /* ── 7. pem_unwrap rejects labels longer than PEM_LABEL_MAX ─────────────── */
+    {
+        /* Craft a PEM whose label is exactly PEM_LABEL_MAX+1 characters. */
+        char long_label[PEM_LABEL_MAX + 2];
+        memset(long_label, 'A', PEM_LABEL_MAX + 1);
+        long_label[PEM_LABEL_MAX + 1] = '\0';
+
+        /* Build "-----BEGIN AAA...A (80 A's)-----\nMAcCASoCAgEA\n-----END AAA...A-----\n" */
+        char bad_pem[512];
+        int bp = 0;
+        memcpy(bad_pem + bp, "-----BEGIN ", 11); bp += 11;
+        memcpy(bad_pem + bp, long_label, PEM_LABEL_MAX + 1); bp += PEM_LABEL_MAX + 1;
+        memcpy(bad_pem + bp, "-----\nMAcCASoCAgEA\n-----END ", 27); bp += 27;
+        memcpy(bad_pem + bp, long_label, PEM_LABEL_MAX + 1); bp += PEM_LABEL_MAX + 1;
+        memcpy(bad_pem + bp, "-----\n", 6); bp += 6;
+
+        char lout[PEM_LABEL_MAX + 1];
+        uint8_t dout[32];
+        size_t dlen = sizeof(dout);
+        assert(pem_unwrap(bad_pem, (size_t)bp, lout, dout, &dlen) == -1);
+    }
 
     return 1;
 }

@@ -97,6 +97,26 @@ static int ba_equal(const BitArray *a, const BitArray *b)
     return diff == 0;
 }
 
+/* Constant-time equality for 32-byte buffers. */
+/* SA-09: XOR-accumulate all bytes before comparing — no early exit. */
+static int ct_eq32(const uint8_t *a, const uint8_t *b)
+{
+    uint8_t diff = 0;
+    int i;
+    for (i = 0; i < 32; i++) diff |= a[i] ^ b[i];
+    return diff == 0;
+}
+
+/* Constant-time equality for KEYBYTES-byte buffers. */
+/* SA-10: XOR-accumulate all bytes before comparing — no early exit. */
+static int ct_eq_keybytes(const uint8_t *a, const uint8_t *b)
+{
+    uint8_t diff = 0;
+    int i;
+    for (i = 0; i < KEYBYTES; i++) diff |= a[i] ^ b[i];
+    return diff == 0;
+}
+
 /* Print label + hex representation of a + newline. */
 static void ba_print_hex(const char *label, const BitArray *a)
 {
@@ -2148,6 +2168,7 @@ static ZkpNlRound *zkp_nl_prove(uint64_t A, uint64_t B, uint64_t y, int n, int r
 static int zkp_nl_verify(uint64_t B, uint64_t y, int n, int rounds,
                           const uint8_t *msg, size_t mlen, ZkpNlRound *proof)
 {
+    if (n <= 0 || n > ZKP_NL_MAX_N || rounds <= 0 || rounds > 4096) return 0;
     int nb = (n + 7) / 8, j, k;
 
     /* Recompute FS challenge seed. */
@@ -2184,7 +2205,7 @@ static int zkp_nl_verify(uint64_t B, uint64_t y, int n, int rounds,
         zkp_nl_commit(c_p1, j, p1, tp_p1, out_p1, nb);
         zkp_nl_commit(c_p2, j, p2, tp_p2, out_p2, nb);
         const uint8_t *coms[3] = { proof[j].com_0, proof[j].com_1, proof[j].com_2 };
-        if (memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)) return 0;
+        if (!ct_eq32(c_p1, coms[p1]) || !ct_eq32(c_p2, coms[p2])) return 0;
 
         /* Re-evaluate p1's AND gates using both revealed shares/tapes; check gate views. */
         uint64_t carry_p1 = 0, carry_p2 = 0;
@@ -2304,7 +2325,7 @@ static int haccum_verify(const uint8_t root[KEYBYTES],
         memcpy(cur, next, KEYBYTES);
         idx >>= 1;
     }
-    return memcmp(cur, root, KEYBYTES) == 0;
+    return ct_eq_keybytes(cur, root);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
