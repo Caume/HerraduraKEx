@@ -1844,6 +1844,102 @@ static void cmd_oprf_unblind(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * pake-register / pake-demo  (TODO #80 Batch 4-C)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static uint32_t _pake_der_uint32(const uint8_t *val, size_t vlen)
+{
+    if (vlen > 0 && val[0] == 0x00) { val++; vlen--; }
+    uint32_t v = 0;
+    for (size_t i = 0; i < vlen && i < 4; i++)
+        v = (v << 8) | val[i];
+    return v;
+}
+
+static void cmd_pake_register(int argc, char **argv)
+{
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *pw_arg   = get_arg(argc, argv, "--password");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!key_path) die("pake-register: --key required");
+
+    PemKey kpem; pem_key_load(&kpem, key_path);
+    if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
+        dief("pake-register: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
+    if (kpem.n_items < 1) die("pake-register: malformed OPRF private key");
+    BitArray oprf_k;
+    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    pem_key_free(&kpem);
+
+    const char *pw = pw_arg ? pw_arg : "demo-password";
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    HpakeRecord rec;
+    hpake_register(&rec, (const uint8_t *)pw, strlen(pw), &oprf_k, urnd);
+    fclose(urnd);
+    explicit_bzero(&oprf_k, sizeof(oprf_k));
+
+    /* Encode: SEQUENCE(INTEGER(salt,32), INTEGER(B,4), INTEGER(y,4)) */
+    uint8_t isalt[DER_INT_LEN(32)], ib[DER_INT_LEN(4)], iy[DER_INT_LEN(4)];
+    size_t  lsalt, lb, ly;
+    der_int_enc(rec.salt, 32, isalt, &lsalt);
+    uint8_t b_bytes[4] = {(uint8_t)(rec.B>>24),(uint8_t)(rec.B>>16),(uint8_t)(rec.B>>8),(uint8_t)rec.B};
+    uint8_t y_bytes[4] = {(uint8_t)(rec.y>>24),(uint8_t)(rec.y>>16),(uint8_t)(rec.y>>8),(uint8_t)rec.y};
+    der_int_enc(b_bytes, 4, ib, &lb);
+    der_int_enc(y_bytes, 4, iy, &ly);
+    const uint8_t *it[3] = {isalt, ib, iy};
+    size_t il[3] = {lsalt, lb, ly};
+    seq_and_write(it, il, 3, PEM_PAKE_RECORD, out_path);
+}
+
+static void cmd_pake_demo(int argc, char **argv)
+{
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *pw_arg   = get_arg(argc, argv, "--password");
+    if (!key_path) die("pake-demo: --key required");
+
+    PemKey kpem; pem_key_load(&kpem, key_path);
+    if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
+        dief("pake-demo: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
+    if (kpem.n_items < 1) die("pake-demo: malformed OPRF private key");
+    BitArray oprf_k;
+    ba_from_der_item(&oprf_k, kpem.vals[0], kpem.vlens[0]);
+    pem_key_free(&kpem);
+
+    const char *pw = pw_arg ? pw_arg : "demo-password";
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    HpakeRecord rec;
+    hpake_register(&rec, (const uint8_t *)pw, strlen(pw), &oprf_k, urnd);
+
+    uint8_t sk[KEYBYTES];
+    if (hpake_login_demo(sk, &rec, (const uint8_t *)pw, strlen(pw), &oprf_k, urnd)) {
+        int i;
+        printf("- aPAKE login succeeded; session key: ");
+        for (i = 0; i < KEYBYTES; i++) printf("%02x", sk[i]);
+        putchar('\n');
+    } else {
+        puts("+ aPAKE login failed!");
+        explicit_bzero(&oprf_k, sizeof(oprf_k));
+        fclose(urnd);
+        exit(1);
+    }
+
+    uint8_t sk2[KEYBYTES];
+    if (!hpake_login_demo(sk2, &rec, (const uint8_t *)"wrong-password", 14, &oprf_k, urnd))
+        puts("- aPAKE correctly rejects wrong password");
+    else
+        puts("+ aPAKE accepted wrong password! (security failure)");
+
+    explicit_bzero(&oprf_k, sizeof(oprf_k));
+    explicit_bzero(sk,  sizeof(sk));
+    explicit_bzero(sk2, sizeof(sk2));
+    fclose(urnd);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1944,9 +2040,11 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "decfile") == 0) { cmd_decfile(argc, argv); return 0; }
     if (strcmp(cmd, "fpe")          == 0) { cmd_fpe(argc, argv);          return 0; }
     if (strcmp(cmd, "twk")          == 0) { cmd_twk(argc, argv);          return 0; }
-    if (strcmp(cmd, "oprf-blind")   == 0) { cmd_oprf_blind(argc, argv);   return 0; }
-    if (strcmp(cmd, "oprf-eval")    == 0) { cmd_oprf_eval(argc, argv);    return 0; }
-    if (strcmp(cmd, "oprf-unblind") == 0) { cmd_oprf_unblind(argc, argv); return 0; }
+    if (strcmp(cmd, "oprf-blind")    == 0) { cmd_oprf_blind(argc, argv);    return 0; }
+    if (strcmp(cmd, "oprf-eval")     == 0) { cmd_oprf_eval(argc, argv);     return 0; }
+    if (strcmp(cmd, "oprf-unblind")  == 0) { cmd_oprf_unblind(argc, argv);  return 0; }
+    if (strcmp(cmd, "pake-register") == 0) { cmd_pake_register(argc, argv); return 0; }
+    if (strcmp(cmd, "pake-demo")     == 0) { cmd_pake_demo(argc, argv);     return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;

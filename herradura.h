@@ -2706,4 +2706,121 @@ static void oprf_direct(BitArray *F, const uint8_t *x, size_t xlen, const BitArr
     gf_pow_ba(F, &hx, k);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * aPAKE: augmented PAKE using HKEX-RNL + ZKBoo (NL-FSCX) + OPRF  (TODO #80)
+ *
+ * Registration:
+ *   F       = oprf_direct(password, oprf_key)
+ *   zkp_A   = lower 32 bits of hfscx_256(F.b || "ZKP-A")
+ *   B       = random 32-bit integer
+ *   y       = zkp_nl_f1(zkp_A, B, 32)           [one NL-FSCX v1 step at n=32]
+ *   record  = { salt[32], B, y }                 [stored on server; no password]
+ *
+ * Login (both-sides demo):
+ *   Recompute zkp_A from password; fast-reject if nl_fscx_v1(zkp_A, B) != y
+ *   Ephemeral HKEX-RNL key agreement → K_raw_c, K_raw_s
+ *   Client: ZKBoo proof of zkp_A bound to K_raw_c
+ *   Server: ZKBoo verify using K_raw_s
+ *   Session key = hfscx_256(rnl_kdf(K_raw_c) || "PAKE-SESSION-v1")
+ *
+ * Demo parameters: HPAKE_ZKP_N=32, HPAKE_ROUNDS=16
+ *   Production: HPAKE_ROUNDS >= 219 for 128-bit soundness.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define HPAKE_ZKP_N    32   /* ZKBoo witness width (demo; production: 256)     */
+#define HPAKE_ROUNDS   16   /* ZKBoo rounds (demo; production: >= 219)         */
+
+typedef struct {
+    uint8_t  salt[32];
+    uint32_t B;
+    uint32_t y;
+} HpakeRecord;
+
+/* Derive 32-bit ZKBoo witness: lower 4 bytes of hfscx_256(oprf_out || "ZKP-A"). */
+static uint32_t _hpake_zkp_witness(const uint8_t oprf_out[KEYBYTES])
+{
+    uint8_t buf[KEYBYTES + 5], h[KEYBYTES];
+    memcpy(buf, oprf_out, KEYBYTES);
+    memcpy(buf + KEYBYTES, "ZKP-A", 5);
+    hfscx_256(buf, sizeof buf, NULL, h);
+    return ((uint32_t)h[28] << 24) | ((uint32_t)h[29] << 16)
+         | ((uint32_t)h[30] <<  8) |  (uint32_t)h[31];
+}
+
+/* KDF for HKEX-RNL channel: nl_fscx_revolve_v1(ba_rnl_kdf_seed(K), K, n/4). */
+static void _hpake_rnl_kdf(uint8_t out[KEYBYTES], const BitArray *K_raw)
+{
+    BitArray seed, sk;
+    ba_rnl_kdf_seed(&seed, K_raw);
+    nl_fscx_revolve_v1_ba(&sk, &seed, K_raw, KEYBITS / 4);
+    memcpy(out, sk.b, KEYBYTES);
+}
+
+/* hpake_register: create a server-side record for (password, oprf_key). */
+static void hpake_register(HpakeRecord *rec,
+                            const uint8_t *password, size_t pwlen,
+                            const BitArray *oprf_key, FILE *urnd)
+{
+    uint8_t b_bytes[4];
+    BitArray F;
+    if (fread(rec->salt, 1, 32, urnd) != 32) { fputs("urnd fail\n", stderr); exit(1); }
+    oprf_direct(&F, password, pwlen, oprf_key);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+    if (fread(b_bytes, 1, 4, urnd) != 4)     { fputs("urnd fail\n", stderr); exit(1); }
+    rec->B = ((uint32_t)b_bytes[0] << 24) | ((uint32_t)b_bytes[1] << 16)
+           | ((uint32_t)b_bytes[2] <<  8) |  (uint32_t)b_bytes[3];
+    rec->y = (uint32_t)zkp_nl_f1((uint64_t)zkp_A, (uint64_t)rec->B, HPAKE_ZKP_N);
+}
+
+/* hpake_login_demo: run both sides of the aPAKE login.
+   Returns 1 and fills session_key[KEYBYTES] on success; returns 0 on wrong password. */
+static int hpake_login_demo(uint8_t session_key[KEYBYTES],
+                             const HpakeRecord *rec,
+                             const uint8_t *password, size_t pwlen,
+                             const BitArray *oprf_key, FILE *urnd)
+{
+    BitArray F;
+    oprf_direct(&F, password, pwlen, oprf_key);
+    uint32_t zkp_A = _hpake_zkp_witness(F.b);
+
+    /* Fast reject: wrong password won't satisfy the ZKBoo statement */
+    if ((uint32_t)zkp_nl_f1((uint64_t)zkp_A, (uint64_t)rec->B, HPAKE_ZKP_N) != rec->y)
+        return 0;
+
+    /* Ephemeral HKEX-RNL */
+    rnl_poly_t m_base, a_rand, m_blind, s_c, C_c, s_s, C_s;
+    rnl_m_poly(m_base);
+    rnl_rand_poly(a_rand, urnd);
+    rnl_poly_add(m_blind, m_base, a_rand);
+    rnl_keygen(s_c, C_c, m_blind, urnd);
+    rnl_keygen(s_s, C_s, m_blind, urnd);
+
+    BitArray K_raw_c, K_raw_s;
+    uint8_t hint[RNL_N / 8];
+    rnl_agree(&K_raw_c, s_c, C_s, NULL, hint);  /* client: reconciler */
+    rnl_agree(&K_raw_s, s_s, C_c, hint, NULL);  /* server: receiver  */
+
+    /* ZKBoo: client proves knowledge of zkp_A bound to session channel */
+    uint8_t auth_c[KEYBYTES + 12], auth_s[KEYBYTES + 12];
+    memcpy(auth_c, K_raw_c.b, KEYBYTES);  memcpy(auth_c + KEYBYTES, "PAKE-AUTH-v1", 12);
+    memcpy(auth_s, K_raw_s.b, KEYBYTES);  memcpy(auth_s + KEYBYTES, "PAKE-AUTH-v1", 12);
+
+    ZkpNlRound *proof = zkp_nl_prove((uint64_t)zkp_A, (uint64_t)rec->B, (uint64_t)rec->y,
+                                      HPAKE_ZKP_N, HPAKE_ROUNDS,
+                                      auth_c, sizeof auth_c, urnd);
+    int ok = zkp_nl_verify((uint64_t)rec->B, (uint64_t)rec->y,
+                            HPAKE_ZKP_N, HPAKE_ROUNDS,
+                            auth_s, sizeof auth_s, proof);
+    zkp_nl_proof_free(proof, HPAKE_ROUNDS);
+    if (!ok) return 0;
+
+    /* Session key: hfscx_256(kdf(K_raw_c) || "PAKE-SESSION-v1") */
+    uint8_t kdf_bytes[KEYBYTES], sk_in[KEYBYTES + 15];
+    _hpake_rnl_kdf(kdf_bytes, &K_raw_c);
+    memcpy(sk_in, kdf_bytes, KEYBYTES);
+    memcpy(sk_in + KEYBYTES, "PAKE-SESSION-v1", 15);
+    hfscx_256(sk_in, sizeof sk_in, NULL, session_key);
+    return 1;
+}
+
 #endif /* HERRADURA_H */

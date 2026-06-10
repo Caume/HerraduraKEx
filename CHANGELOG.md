@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.27] - 2026-06-09
+
+### Feature — aPAKE C+Go library + CLI (TODO #80 Batch 4-C/Go)
+
+- **`herradura.h`**: added `HpakeRecord` struct, `HPAKE_ZKP_N` (32), `HPAKE_ROUNDS` (16) constants, `_hpake_zkp_witness`, `_hpake_rnl_kdf`, `hpake_register`, `hpake_login_demo` — aPAKE using HKEX-RNL + ZKBoo (NL-FSCX v1 at n=32) + OPRF; aPAKE demo block added to `Herradura cryptographic suite.c` `main()`.
+- **`HerraduraCli/herradura_codec.h`**: added `PEM_PAKE_RECORD` label constant.
+- **`HerraduraCli/herradura_cli.c`**: `pake-register` (outputs `HERRADURA PAKE RECORD` PEM with SEQUENCE of salt/B/y), `pake-demo` (full both-sides auth demo, prints session key and verifies wrong-password rejection); `_pake_der_uint32` helper; dispatch entries.
+- **`herradura/herradura.go`**: added `HpakeZkpN` (32), `HpakeRounds` (16), `HpakeRecord` type, `hpakeDeriveZkpWitness`, `hpakeRnlKdf`, `HpakeRegister`, `HpakeLoginDemo`; aPAKE demo block added to `Herradura cryptographic suite.go` `main()`.
+- **`HerraduraCli/herradura_cli.go`**: `lblPakeRecord` constant; `cmdPakeRegister`, `cmdPakeDemo` functions; dispatch cases.
+- **`CliTest/test_c_pake.sh`**: 7 C CLI aPAKE integration tests — all passing.
+- **`CliTest/test_go_pake.sh`**: 7 Go CLI aPAKE integration tests — all passing.
+
+---
+
 ## [1.9.26] - 2026-06-09
 
 ### Feature — aPAKE Python suite + CLI (TODO #80 Batch 4)

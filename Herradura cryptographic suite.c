@@ -776,6 +776,34 @@ int main(void)
         explicit_bzero(&oprf_r, sizeof(oprf_r));
     }
 
+    /* 80 — aPAKE demo (register + login) */
+    puts("\n*** aPAKE (80) — HKEX-RNL + ZKBoo + OPRF augmented PAKE");
+    {
+        const char *pake_pw      = "s3cr3t-pw";
+        const char *pake_pw_bad  = "wrong-pw";
+        BitArray   pake_oprf_k;
+        HpakeRecord pake_rec;
+        uint8_t    pake_sk[KEYBYTES];
+        oprf_keygen(&pake_oprf_k, urnd);
+        hpake_register(&pake_rec, (const uint8_t *)pake_pw, strlen(pake_pw),
+                       &pake_oprf_k, urnd);
+        if (hpake_login_demo(pake_sk, &pake_rec,
+                             (const uint8_t *)pake_pw, strlen(pake_pw),
+                             &pake_oprf_k, urnd))
+            puts("- aPAKE login with correct password: session key established");
+        else
+            puts("+ aPAKE login with correct password: FAILED!");
+        uint8_t pake_sk2[KEYBYTES];
+        if (!hpake_login_demo(pake_sk2, &pake_rec,
+                              (const uint8_t *)pake_pw_bad, strlen(pake_pw_bad),
+                              &pake_oprf_k, urnd))
+            puts("- aPAKE login with wrong password: correctly rejected");
+        else
+            puts("+ aPAKE login with wrong password: ACCEPTED (security failure)!");
+        explicit_bzero(&pake_oprf_k, sizeof(pake_oprf_k));
+        explicit_bzero(pake_sk, sizeof(pake_sk));
+    }
+
     fclose(urnd);
     /* SA-09: clear private key material from stack before return */
     explicit_bzero(&a,         sizeof(a));

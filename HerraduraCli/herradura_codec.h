@@ -53,6 +53,7 @@
 #define PEM_OPRF_PRIV       "HERRADURA OPRF PRIVATE KEY"
 #define PEM_OPRF_STATE      "HERRADURA OPRF CLIENT STATE"
 #define PEM_OPRF_EVAL       "HERRADURA OPRF EVALUATION"
+#define PEM_PAKE_RECORD     "HERRADURA PAKE RECORD"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros

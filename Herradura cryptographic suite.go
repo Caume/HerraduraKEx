@@ -524,13 +524,43 @@ func main() {
 			if err2 != nil {
 				fmt.Println("+ OprfBlind error:", err2)
 			} else {
-				beta   := OprfEval(alpha, k, 256)
-				F      := OprfUnblind(beta, r, 256)
+				beta    := OprfEval(alpha, k, 256)
+				F       := OprfUnblind(beta, r, 256)
 				Fdirect := OprfDirect(oprfMsg, k, 256)
 				if F.Cmp(Fdirect) == 0 {
 					fmt.Println("- OPRF blind/eval/unblind round-trip correct")
 				} else {
 					fmt.Println("+ OPRF round-trip failed!")
+				}
+			}
+		}
+	}
+
+	// ── 80 — aPAKE demo ──────────────────────────────────────────────────────
+	fmt.Println("\n*** aPAKE (80) — HKEX-RNL + ZKBoo + OPRF augmented PAKE")
+	{
+		pakePw := []byte("s3cr3t-pw")
+		pakeK, err := OprfKeygen(256)
+		if err != nil {
+			fmt.Println("+ OprfKeygen error:", err)
+		} else {
+			rec, err2 := HpakeRegister(pakePw, pakeK)
+			if err2 != nil {
+				fmt.Println("+ HpakeRegister error:", err2)
+			} else {
+				sk, err3 := HpakeLoginDemo(rec, pakePw, pakeK)
+				if err3 != nil {
+					fmt.Println("+ HpakeLoginDemo error:", err3)
+				} else if sk != nil {
+					fmt.Println("- aPAKE login with correct password: session key established")
+				} else {
+					fmt.Println("+ aPAKE login with correct password: FAILED!")
+				}
+				skBad, _ := HpakeLoginDemo(rec, []byte("wrong-pw"), pakeK)
+				if skBad == nil {
+					fmt.Println("- aPAKE login with wrong password: correctly rejected")
+				} else {
+					fmt.Println("+ aPAKE login with wrong password: ACCEPTED (security failure)!")
 				}
 			}
 		}
