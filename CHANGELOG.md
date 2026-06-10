@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.25] - 2026-06-09
+
+### Feature — OPRF C+Go library + CLI + cross-language interop tests (TODO #80 Batches 2, 3, 6)
+
+- **`herradura.h`**: added `ba_cmp256`, `_ba33_cmp`, `_ba33_iszero`, `ba_modinv_ord` (binary extended GCD mod 2^256-1 with coprimality retry), `oprf_hash_to_field`, `oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`; OPRF demo block added to `Herradura cryptographic suite.c` `main()`.
+- **`HerraduraCli/herradura_codec.h`**: added `PEM_OPRF_PRIV`, `PEM_OPRF_STATE`, `PEM_OPRF_EVAL` label constants.
+- **`HerraduraCli/herradura_cli.c`**: `genpkey --algo oprf`, `oprf-blind`, `oprf-eval`, `oprf-unblind` subcommands; `ba_from_der_item` helper; usage text updated.
+- **`herradura/herradura.go`**: added `OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`, `oprfOrd`, `oprfHashToField`; OPRF demo block added to `Herradura cryptographic suite.go` `main()`.
+- **`HerraduraCli/herradura_cli.go`**: `lblOprfPriv`/`lblOprfState`/`lblOprfEval` constants; `genpkey --algo oprf`; `cmdOprfBlind`, `cmdOprfEval`, `cmdOprfUnblind` functions; dispatch cases.
+- **`CliTest/test_c_oprf.sh`**: 7 C CLI integration tests — all passing.
+- **`CliTest/test_go_oprf.sh`**: 7 Go CLI integration tests — all passing.
+- **`CliTest/test_oprf_interop.sh`**: 8 cross-language interop tests (Python/C/Go key × blind × eval × unblind) — all passing.
+
+---
+
 ## [1.9.24] - 2026-06-09
 
 ### Feature — OPRF library + Python CLI (TODO #80 Batch 1)

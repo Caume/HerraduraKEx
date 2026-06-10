@@ -62,6 +62,10 @@ const (
 	lblZkpNlPriv   = "HERRADURA ZKP-NL PRIVATE KEY"
 	lblZkpNlPub    = "HERRADURA ZKP-NL PUBLIC KEY"
 	lblZkpNlProof  = "HERRADURA ZKP-NL PROOF"
+
+	lblOprfPriv  = "HERRADURA OPRF PRIVATE KEY"
+	lblOprfState = "HERRADURA OPRF CLIENT STATE"
+	lblOprfEval  = "HERRADURA OPRF EVALUATION"
 )
 
 var privToAlgo = map[string]string{
@@ -428,6 +432,25 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = encodeZkpNlPriv(A, B, y, ZkpNlDefaultN)
+
+	case *algo == "oprf":
+		k, kerr := OprfKeygen(n)
+		if kerr != nil {
+			fmt.Fprintln(os.Stderr, "genpkey:", kerr)
+			os.Exit(1)
+		}
+		kDer, e1 := derIntBig(k, n/8)
+		nDer, e2 := derIntSmall(n)
+		if e1 != nil || e2 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER encode error")
+			os.Exit(1)
+		}
+		seq, e3 := DerSeqEnc(kDer, nDer)
+		if e3 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER seq error")
+			os.Exit(1)
+		}
+		pem = PemWrap(lblOprfPriv, seq)
 
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
@@ -1995,6 +2018,152 @@ func cmdTwk(args []string) {
 	}
 }
 
+// ── oprf-blind / oprf-eval / oprf-unblind  (TODO #80) ────────────────────────
+
+func cmdOprfBlind(args []string) {
+	fs    := flag.NewFlagSet("oprf-blind", flag.ExitOnError)
+	inF   := fs.String("in", "", "Input bytes file (- for stdin)")
+	outF  := fs.String("out", "-", "Output OPRF CLIENT STATE PEM")
+	fs.Parse(args)
+	if *inF == "" {
+		fmt.Fprintln(os.Stderr, "oprf-blind: --in required")
+		os.Exit(1)
+	}
+	data, err := readFile(*inF)
+	if err != nil {
+		die("oprf-blind", err)
+	}
+	r, alpha, err := OprfBlind(data, 256)
+	if err != nil {
+		die("oprf-blind", err)
+	}
+	rDer, e1    := derIntBig(r, 32)
+	aDer, e2    := derIntBig(alpha, 32)
+	nDer, e3    := derIntSmall(256)
+	if e1 != nil || e2 != nil || e3 != nil {
+		fmt.Fprintln(os.Stderr, "oprf-blind: DER encode error")
+		os.Exit(1)
+	}
+	seq, e4 := DerSeqEnc(rDer, aDer, nDer)
+	if e4 != nil {
+		die("oprf-blind", e4)
+	}
+	if err := writeString(*outF, PemWrap(lblOprfState, seq)); err != nil {
+		die("oprf-blind", err)
+	}
+}
+
+func cmdOprfEval(args []string) {
+	fs    := flag.NewFlagSet("oprf-eval", flag.ExitOnError)
+	keyF  := fs.String("key", "", "OPRF PRIVATE KEY PEM (server key)")
+	inF   := fs.String("in", "", "OPRF CLIENT STATE PEM")
+	outF  := fs.String("out", "-", "Output OPRF EVALUATION PEM")
+	fs.Parse(args)
+	if *keyF == "" {
+		fmt.Fprintln(os.Stderr, "oprf-eval: --key required")
+		os.Exit(1)
+	}
+	if *inF == "" {
+		fmt.Fprintln(os.Stderr, "oprf-eval: --in required")
+		os.Exit(1)
+	}
+	/* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+	kLabel, kInts, err := readPEMInts(*keyF)
+	if err != nil {
+		die("oprf-eval", err)
+	}
+	if kLabel != lblOprfPriv {
+		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF PRIVATE KEY PEM, got %q\n", kLabel)
+		os.Exit(1)
+	}
+	if len(kInts) < 1 {
+		fmt.Fprintln(os.Stderr, "oprf-eval: malformed OPRF private key")
+		os.Exit(1)
+	}
+	k := new(big.Int).SetBytes(kInts[0])
+
+	/* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+	sLabel, sInts, err := readPEMInts(*inF)
+	if err != nil {
+		die("oprf-eval", err)
+	}
+	if sLabel != lblOprfState {
+		fmt.Fprintf(os.Stderr, "oprf-eval: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
+		os.Exit(1)
+	}
+	if len(sInts) < 2 {
+		fmt.Fprintln(os.Stderr, "oprf-eval: malformed CLIENT STATE PEM")
+		os.Exit(1)
+	}
+	alpha := new(big.Int).SetBytes(sInts[1])
+
+	beta := OprfEval(alpha, k, 256)
+	bDer, e1 := derIntBig(beta, 32)
+	nDer, e2 := derIntSmall(256)
+	if e1 != nil || e2 != nil {
+		fmt.Fprintln(os.Stderr, "oprf-eval: DER encode error")
+		os.Exit(1)
+	}
+	seq, e3 := DerSeqEnc(bDer, nDer)
+	if e3 != nil {
+		die("oprf-eval", e3)
+	}
+	if err := writeString(*outF, PemWrap(lblOprfEval, seq)); err != nil {
+		die("oprf-eval", err)
+	}
+}
+
+func cmdOprfUnblind(args []string) {
+	fs     := flag.NewFlagSet("oprf-unblind", flag.ExitOnError)
+	stateF := fs.String("state", "", "OPRF CLIENT STATE PEM")
+	evalF  := fs.String("eval",  "", "OPRF EVALUATION PEM")
+	outF   := fs.String("out", "-", "Output PRF hex")
+	fs.Parse(args)
+	if *stateF == "" {
+		fmt.Fprintln(os.Stderr, "oprf-unblind: --state required")
+		os.Exit(1)
+	}
+	if *evalF == "" {
+		fmt.Fprintln(os.Stderr, "oprf-unblind: --eval required")
+		os.Exit(1)
+	}
+	/* CLIENT STATE: (r, alpha, nbits) */
+	sLabel, sInts, err := readPEMInts(*stateF)
+	if err != nil {
+		die("oprf-unblind", err)
+	}
+	if sLabel != lblOprfState {
+		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF CLIENT STATE PEM, got %q\n", sLabel)
+		os.Exit(1)
+	}
+	if len(sInts) < 1 {
+		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed CLIENT STATE PEM")
+		os.Exit(1)
+	}
+	r := new(big.Int).SetBytes(sInts[0])
+
+	/* EVALUATION: (beta, nbits) */
+	eLabel, eInts, err := readPEMInts(*evalF)
+	if err != nil {
+		die("oprf-unblind", err)
+	}
+	if eLabel != lblOprfEval {
+		fmt.Fprintf(os.Stderr, "oprf-unblind: expected OPRF EVALUATION PEM, got %q\n", eLabel)
+		os.Exit(1)
+	}
+	if len(eInts) < 1 {
+		fmt.Fprintln(os.Stderr, "oprf-unblind: malformed EVALUATION PEM")
+		os.Exit(1)
+	}
+	beta := new(big.Int).SetBytes(eInts[0])
+
+	F := OprfUnblind(beta, r, 256)
+	hex := fmt.Sprintf("%064x\n", F)
+	if err := writeString(*outF, hex); err != nil {
+		die("oprf-unblind", err)
+	}
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 func die(prefix string, err error) {
@@ -2059,6 +2228,12 @@ func main() {
 		cmdFpe(rest)
 	case "twk":
 		cmdTwk(rest)
+	case "oprf-blind":
+		cmdOprfBlind(rest)
+	case "oprf-eval":
+		cmdOprfEval(rest)
+	case "oprf-unblind":
+		cmdOprfUnblind(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()

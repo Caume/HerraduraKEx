@@ -2509,4 +2509,201 @@ static inline void ratchet_erase(BitArray *state)
     explicit_bzero(state->b, KEYBYTES);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 80 — Oblivious PRF (OPRF) over GF(2^KEYBITS)*  (TODO #80)
+ * Protocol: 2HashDH — F(k, x) = gf_pow(H(x), k)
+ *   Client blinds: alpha = H(x)^r   (r random, gcd(r, ORD) == 1)
+ *   Server evals:  beta  = alpha^k
+ *   Client unblinds: F   = beta^{r^{-1} mod ORD}
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* ba_cmp256: return -1, 0, +1 for a<b, a==b, a>b (big-endian). */
+static int ba_cmp256(const BitArray *a, const BitArray *b)
+{
+    int i;
+    for (i = 0; i < KEYBYTES; i++) {
+        if (a->b[i] < b->b[i]) return -1;
+        if (a->b[i] > b->b[i]) return  1;
+    }
+    return 0;
+}
+
+/* 33-byte (257-bit) big-endian integer helpers used only by ba_modinv_ord. */
+static int _ba33_cmp(const uint8_t *a, const uint8_t *b)
+{
+    int i;
+    for (i = 0; i < 33; i++) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return  1;
+    }
+    return 0;
+}
+static int _ba33_iszero(const uint8_t *a)
+{
+    int i;
+    for (i = 0; i < 33; i++) if (a[i]) return 0;
+    return 1;
+}
+
+/* ba_modinv_ord: compute dst = a^{-1} mod (2^KEYBITS-1) via binary extended GCD.
+   Requires gcd(a, ORD) == 1; result is undefined if gcd != 1.
+   ORD = 2^256-1 is all-0xFF bytes.
+   Uses 33-byte (257-bit) big-endian arrays for the Bezout coefficients to
+   avoid overflow when adding ORD to make them positive. */
+static void ba_modinv_ord(BitArray *dst, const BitArray *a)
+{
+    static const uint8_t ORD33[33] = {
+        0x00,
+        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF
+    };
+    /* 257-bit big-endian unsigned arithmetic helpers (inline, avoiding recursion) */
+#define ADD33(dst33, a33, b33) do { \
+        uint16_t _c = 0; int _i; \
+        for (_i = 32; _i >= 0; _i--) { \
+            uint16_t _s = (uint16_t)(a33)[_i] + (b33)[_i] + _c; \
+            (dst33)[_i] = (uint8_t)_s; _c = _s >> 8; \
+        } \
+    } while(0)
+#define SUB33(dst33, a33, b33) do { \
+        int16_t _bor = 0; int _i; \
+        for (_i = 32; _i >= 0; _i--) { \
+            int16_t _s = (int16_t)(a33)[_i] - (int16_t)(b33)[_i] - _bor; \
+            (dst33)[_i] = (uint8_t)_s; _bor = (_s < 0) ? 1 : 0; \
+        } \
+    } while(0)
+#define SHR1_33(arr) do { \
+        int _i; \
+        for (_i = 32; _i > 0; _i--) \
+            (arr)[_i] = (uint8_t)(((arr)[_i] >> 1) | ((arr)[_i-1] << 7)); \
+        (arr)[0] >>= 1; \
+    } while(0)
+#define IS_ODD33(arr)  ((arr)[32] & 1u)
+
+    /* non-macro helpers for CMP33 and IS_ZERO33 to avoid GNU statement-expr */
+#define CMP33(a33, b33) _ba33_cmp(a33, b33)
+#define IS_ZERO33(arr)  _ba33_iszero(arr)
+
+
+    /* u, v: 33-byte big-endian integers (u = a, v = ORD) */
+    uint8_t u[33], v[33], x1[33], x2[33], tmp[33];
+    int i;
+
+    /* u = a (zero-extend to 33 bytes) */
+    u[0] = 0;
+    memcpy(u + 1, a->b, KEYBYTES);
+    /* v = ORD */
+    memcpy(v, ORD33, 33);
+    /* x1 = 1, x2 = 0 */
+    memset(x1, 0, 33); x1[32] = 1;
+    memset(x2, 0, 33);
+
+    /* Binary extended GCD: invariant a*x1 ≡ u (mod ORD), a*x2 ≡ v (mod ORD) */
+    for (i = 0; i < 2 * KEYBITS + 64; i++) {
+        if (IS_ZERO33(u)) break;
+
+        if (!IS_ODD33(u)) {
+            SHR1_33(u);
+            if (IS_ODD33(x1)) { ADD33(tmp, x1, ORD33); memcpy(x1, tmp, 33); }
+            SHR1_33(x1);
+            continue;
+        }
+        if (!IS_ODD33(v)) {
+            SHR1_33(v);
+            if (IS_ODD33(x2)) { ADD33(tmp, x2, ORD33); memcpy(x2, tmp, 33); }
+            SHR1_33(x2);
+            continue;
+        }
+        if (CMP33(u, v) >= 0) {
+            SUB33(u, u, v);
+            /* x1 = (x1 - x2) mod ORD: if x1 < x2, add ORD first */
+            if (CMP33(x1, x2) < 0) { ADD33(tmp, x1, ORD33); memcpy(x1, tmp, 33); }
+            SUB33(x1, x1, x2);
+        } else {
+            SUB33(v, v, u);
+            if (CMP33(x2, x1) < 0) { ADD33(tmp, x2, ORD33); memcpy(x2, tmp, 33); }
+            SUB33(x2, x2, x1);
+        }
+    }
+    /* At exit: if u != 0, gcd was found via u; coefficient is x1.
+       Otherwise v == gcd (should be 1) and x2 is the inverse. */
+    if (!IS_ZERO33(u))
+        memcpy(dst->b, u + 1, KEYBYTES);  /* fallback: shouldn't happen if gcd==1 */
+    else
+        memcpy(dst->b, x2 + 1, KEYBYTES);
+
+    /* Reduce mod ORD: if result is all-0xFF (== ORD), set to 0
+       (ORD ≡ 0 mod ORD; this can't be a valid inverse of any element != 0) */
+    { int all_ff = 1;
+      for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
+      if (all_ff) memset(dst->b, 0, KEYBYTES);
+    }
+
+#undef ADD33
+#undef SUB33
+#undef SHR1_33
+#undef CMP33
+#undef IS_ZERO33
+#undef IS_ODD33
+}
+
+/* oprf_hash_to_field: HFSCX-256(data) → non-zero element of GF(2^KEYBITS)*. */
+static void oprf_hash_to_field(BitArray *dst, const uint8_t *data, size_t dlen)
+{
+    hfscx_256(data, dlen, NULL, dst->b);
+    if (ba_is_zero(dst))
+        dst->b[KEYBYTES - 1] = 1;   /* map 0 → 1 (negligible probability) */
+}
+
+/* oprf_keygen: fill key with a random element of [2, 2^KEYBITS-2].
+   urnd must be an open handle to /dev/urandom (or equivalent). */
+static void oprf_keygen(BitArray *key, FILE *urnd)
+{
+    do { ba_rand(key, urnd); } while (ba_is_zero(key) || ba_cmp256(key, &ONE_BA) == 0);
+}
+
+/* oprf_blind: client step — hash x and blind with random scalar r.
+   Outputs r (blinding scalar, keep secret) and alpha = H(x)^r.
+   gcd(r, ORD) == 1 is ensured by verifying r * r^{-1} == 1 mod ORD and retrying.
+   ORD = 2^256-1 factors include 3, 5, 17, 257, 641 — ~50% of random values are coprime.
+   Expected retries: ~2 attempts on average. */
+static void oprf_blind(const uint8_t *x, size_t xlen,
+                       BitArray *r_out, BitArray *alpha_out, FILE *urnd)
+{
+    BitArray hx, r_inv, check;
+    oprf_hash_to_field(&hx, x, xlen);
+    do {
+        ba_rand(r_out, urnd);
+        if (ba_is_zero(r_out) || ba_cmp256(r_out, &ONE_BA) == 0) continue;
+        /* verify gcd(r, ORD) == 1 by checking r * r^{-1} == 1 mod ORD */
+        ba_modinv_ord(&r_inv, r_out);
+        ba_mul_mod_ord(&check, r_out, &r_inv);
+    } while (ba_cmp256(&check, &ONE_BA) != 0);
+    gf_pow_ba(alpha_out, &hx, r_out);
+}
+
+/* oprf_eval: server step — compute beta = alpha^k. */
+static void oprf_eval(BitArray *beta, const BitArray *alpha, const BitArray *k)
+{
+    gf_pow_ba(beta, alpha, k);
+}
+
+/* oprf_unblind: client step — recover F(k,x) = beta^{r^{-1} mod ORD}. */
+static void oprf_unblind(BitArray *F, const BitArray *beta, const BitArray *r)
+{
+    BitArray r_inv;
+    ba_modinv_ord(&r_inv, r);
+    gf_pow_ba(F, beta, &r_inv);
+}
+
+/* oprf_direct: direct PRF evaluation F(k, x) = H(x)^k (server-only, not oblivious). */
+static void oprf_direct(BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
+{
+    BitArray hx;
+    oprf_hash_to_field(&hx, x, xlen);
+    gf_pow_ba(F, &hx, k);
+}
+
 #endif /* HERRADURA_H */

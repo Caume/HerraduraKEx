@@ -758,6 +758,24 @@ int main(void)
 #undef RING_K
     }
 
+    /* 80 — OPRF demo (blind / eval / unblind round-trip) */
+    puts("*** OPRF (80) — 2HashDH over GF(2^256)*");
+    {
+        BitArray oprf_k, oprf_r, oprf_alpha, oprf_beta, oprf_F, oprf_check;
+        const char *oprf_msg = "oprf-demo-input";
+        oprf_keygen(&oprf_k, urnd);
+        oprf_blind((const uint8_t*)oprf_msg, strlen(oprf_msg), &oprf_r, &oprf_alpha, urnd);
+        oprf_eval(&oprf_beta, &oprf_alpha, &oprf_k);
+        oprf_unblind(&oprf_F, &oprf_beta, &oprf_r);
+        oprf_direct(&oprf_check, (const uint8_t*)oprf_msg, strlen(oprf_msg), &oprf_k);
+        if (memcmp(oprf_F.b, oprf_check.b, KEYBYTES) == 0)
+            puts("- OPRF blind/eval/unblind round-trip correct");
+        else
+            puts("+ OPRF round-trip failed!");
+        explicit_bzero(&oprf_k, sizeof(oprf_k));
+        explicit_bzero(&oprf_r, sizeof(oprf_r));
+    }
+
     fclose(urnd);
     /* SA-09: clear private key material from stack before return */
     explicit_bzero(&a,         sizeof(a));

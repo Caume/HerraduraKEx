@@ -5146,7 +5146,7 @@ stdin/stdout (similar to how `kex` outputs the session key).
 
 ---
 
-#### Batch 2 — OPRF: C (`herradura.h` + `herradura_cli.c`)
+#### Batch 2 — OPRF: C (`herradura.h` + `herradura_cli.c`) ✅ DONE v1.9.25
 
 **`herradura.h` functions:**
 
@@ -5174,7 +5174,7 @@ void oprf_direct(const uint8_t *x, size_t xlen, const BitArray *k, BitArray *F);
 
 ---
 
-#### Batch 3 — OPRF: Go (`herradura/herradura.go` + `herradura_cli.go`)
+#### Batch 3 — OPRF: Go (`herradura/herradura.go` + `herradura_cli.go`) ✅ DONE v1.9.25
 
 **Package functions:**
 
@@ -5251,7 +5251,7 @@ message. n=32 GF(2^32)* CDH is trivially brute-forcible.
 
 ---
 
-#### Batch 6 — CLI integration tests (`CliTest/`)
+#### Batch 6 — CLI integration tests (`CliTest/`) ✅ DONE v1.9.25
 
 New test scripts:
 - `CliTest/test_oprf.sh` — Python CLI keygen + blind + eval + unblind round-trip
@@ -5271,4 +5271,4 @@ New test scripts:
 5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
-Status: **Batch 1 DONE v1.9.24** — Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind` subcommands, `genpkey --algo oprf`) + `HerraduraCli/primitives.py` exports + `CliTest/test_oprf.sh` (8/8 passing). TODO
+Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). TODO (Batch 4 aPAKE, Batch 5 Assembly)

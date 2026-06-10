@@ -2033,6 +2033,85 @@ var ratchetDomain = func() *BitArray {
 	return NewBitArray(256, new(big.Int).SetBytes(d[:32]))
 }()
 
+// ── 80 — Oblivious PRF (OPRF) over GF(2^n)*  ─────────────────────────────────
+// Protocol: 2HashDH — F(k, x) = GfPow(H(x), k)
+//   Client blinds: alpha = H(x)^r  (r random, gcd(r, ord) == 1)
+//   Server evals:  beta  = alpha^k
+//   Client unblinds: F   = beta^{r^{-1} mod ord}
+
+func oprfOrd(n int) *big.Int {
+	return new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+}
+
+func oprfHashToField(data []byte, n int) *big.Int {
+	h   := Hfscx256(data, nil)
+	v   := new(big.Int).SetBytes(h)
+	v.And(v, oprfOrd(n))
+	if v.Sign() == 0 {
+		v.SetInt64(1)
+	}
+	return v
+}
+
+// OprfKeygen returns a random OPRF server key in [2, 2^n-2].
+func OprfKeygen(n int) (*big.Int, error) {
+	ord := oprfOrd(n)
+	for {
+		k, err := rand.Int(rand.Reader, ord)
+		if err != nil {
+			return nil, err
+		}
+		if k.Cmp(big.NewInt(1)) > 0 {
+			return k, nil
+		}
+	}
+}
+
+// OprfBlind hashes x to GF(2^n)* and blinds with a random coprime scalar r.
+// Returns (r, alpha) where alpha = H(x)^r.
+func OprfBlind(x []byte, n int) (r, alpha *big.Int, err error) {
+	ord  := oprfOrd(n)
+	poly := GfPoly[n]
+	hx   := oprfHashToField(x, n)
+	for {
+		rCand, e := rand.Int(rand.Reader, ord)
+		if e != nil {
+			return nil, nil, e
+		}
+		if rCand.Cmp(big.NewInt(1)) <= 0 {
+			continue
+		}
+		rInv := new(big.Int).ModInverse(rCand, ord)
+		if rInv == nil {
+			continue // gcd(r, ord) != 1
+		}
+		r = rCand
+		alpha = GfPow(hx, r, poly, n)
+		return r, alpha, nil
+	}
+}
+
+// OprfEval computes beta = alpha^k in GF(2^n)*.
+func OprfEval(alpha, k *big.Int, n int) *big.Int {
+	return GfPow(alpha, k, GfPoly[n], n)
+}
+
+// OprfUnblind recovers F(k, x) = beta^{r^{-1} mod ord}.
+func OprfUnblind(beta, r *big.Int, n int) *big.Int {
+	ord  := oprfOrd(n)
+	rInv := new(big.Int).ModInverse(r, ord)
+	if rInv == nil {
+		return big.NewInt(0) // should not happen if r came from OprfBlind
+	}
+	return GfPow(beta, rInv, GfPoly[n], n)
+}
+
+// OprfDirect computes F(k, x) = H(x)^k directly (server-only, not oblivious).
+func OprfDirect(x []byte, k *big.Int, n int) *big.Int {
+	hx := oprfHashToField(x, n)
+	return GfPow(hx, k, GfPoly[n], n)
+}
+
 // RatchetInit derives an initial ratchet state from seed via Hfscx256(seed||0x02).
 func RatchetInit(seed []byte) *BitArray {
 	buf := append(append([]byte(nil), seed...), 0x02)
