@@ -153,6 +153,7 @@
         rnl_sigma_sign, rnl_sigma_verify  (ZKP-RNL: Ring-LWR Σ-protocol)
         zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify  (ZKP-NL: NL-FSCX ZKBoo)
         oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct  (OPRF: 2HashDH over GF(2^n)*)
+        hpake_register, hpake_login_demo  (aPAKE: HKEX-RNL + ZKBoo + OPRF augmented PAKE)
 
     Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
         RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
@@ -1845,6 +1846,105 @@ def oprf_direct(x: bytes, k: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 80 — aPAKE (augmented PAKE) over HKEX-RNL + ZKBoo + OPRF  (TODO #80 Batch 4)
+# OPRF upgrade: server record stores OPRF output F(oprf_key, password) instead
+# of a plain password hash, preventing offline dictionary attacks even if the
+# server database is compromised (attacker cannot evaluate F without oprf_key).
+# ---------------------------------------------------------------------------
+
+_HPAKE_ZKP_N       = 32     # ZKBoo witness width (demo; production: 256)
+_HPAKE_ROUNDS      = 16     # ZKBoo rounds (soundness (2/3)^16 ≈ 0.15%; production: 219)
+_HPAKE_ZKP_A_LABEL = b"ZKP-A"
+_HPAKE_AUTH_LABEL  = b"PAKE-AUTH-v1"
+_HPAKE_SESSION_LBL = b"PAKE-SESSION-v1"
+
+
+def _hpake_derive_zkp_witness(pw_oprf_output: bytes) -> int:
+    """Domain-separate a _HPAKE_ZKP_N-bit ZKBoo witness from the OPRF output."""
+    mask = (1 << _HPAKE_ZKP_N) - 1
+    return int.from_bytes(hfscx_256(pw_oprf_output + _HPAKE_ZKP_A_LABEL), 'big') & mask
+
+
+def _hpake_rnl_kdf(K_raw: 'BitArray') -> bytes:
+    """HKEX-RNL session KDF (matches suite demo pattern)."""
+    sk = nl_fscx_revolve_v1(
+        BitArray(KEYBITS, K_raw.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
+        K_raw, KEYBITS // 4)
+    return sk.bytes
+
+
+def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
+    """
+    aPAKE registration.  Returns a server record containing (username, salt, B, y).
+    The OPRF output is used as the password hash — server cannot offline-attack
+    passwords without the oprf_key.
+    username: client identifier (stored in record for lookup).
+    password: raw password bytes.
+    oprf_key: server OPRF private key (integer from oprf_keygen()).
+    """
+    salt           = os.urandom(32)
+    pw_oprf_out    = oprf_direct(password, oprf_key)
+    pw_oprf_bytes  = pw_oprf_out.to_bytes(KEYBITS // 8, 'big')
+    zkp_A          = _hpake_derive_zkp_witness(pw_oprf_bytes)
+    mask           = (1 << _HPAKE_ZKP_N) - 1
+    B              = int.from_bytes(os.urandom(_HPAKE_ZKP_N // 8), 'big') & mask
+    y              = nl_fscx_v1(BitArray(_HPAKE_ZKP_N, zkp_A),
+                                 BitArray(_HPAKE_ZKP_N, B)).uint
+    return {'username': username, 'salt': salt, 'B': B, 'y': y}
+
+
+def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | None':
+    """
+    aPAKE login (both-sides demo — client and server in one call).
+    Performs the full 3-message HKEX-RNL + ZKBoo exchange and returns the
+    shared session key on success, or None if the password is wrong.
+    record:   server record from hpake_register().
+    password: raw password bytes (client-side input).
+    oprf_key: server OPRF private key (same key used during registration).
+    """
+    salt, B, y = record['salt'], record['B'], record['y']
+
+    # Client: OPRF evaluation to derive pw_oprf_out
+    pw_oprf_out   = oprf_direct(password, oprf_key)
+    pw_oprf_bytes = pw_oprf_out.to_bytes(KEYBITS // 8, 'big')
+    zkp_A         = _hpake_derive_zkp_witness(pw_oprf_bytes)
+
+    # Fast local verifier check (aborts before ZKBoo if wrong password)
+    mask    = (1 << _HPAKE_ZKP_N) - 1
+    y_check = nl_fscx_v1(BitArray(_HPAKE_ZKP_N, zkp_A),
+                          BitArray(_HPAKE_ZKP_N, B)).uint
+    if y_check != y:
+        return None
+
+    # Client: ephemeral HKEX-RNL keypair
+    m_base  = _rnl_m_poly(KEYBITS)
+    a_rand  = _rnl_rand_poly(KEYBITS, RNLQ)
+    m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
+    s_c, C_c = _rnl_keygen(m_blind, KEYBITS, RNLQ, RNLP, RNLB)
+
+    # Server: ephemeral HKEX-RNL keypair (uses client's m_blind)
+    s_s, C_s = _rnl_keygen(m_blind, KEYBITS, RNLQ, RNLP, RNLB)
+
+    # Client: HKEX-RNL reconciliation (generates hint)
+    K_raw_c, hint = _rnl_agree(s_c, C_s, RNLQ, RNLP, RNLPP, KEYBITS, KEYBITS)
+
+    # Server: HKEX-RNL reconciliation (uses hint)
+    K_raw_s = _rnl_agree(s_s, C_c, RNLQ, RNLP, RNLPP, KEYBITS, KEYBITS, hint)
+
+    # Client: ZKBoo proof of knowledge of zkp_A bound to session key
+    auth_msg = K_raw_c.bytes + _HPAKE_AUTH_LABEL
+    proof    = zkp_nl_prove(zkp_A, B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg)
+
+    # Server: ZKBoo verification
+    auth_msg_s = K_raw_s.bytes + _HPAKE_AUTH_LABEL
+    if not zkp_nl_verify(B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg_s, proof):
+        return None
+
+    # Session key: hfscx_256(KDF(K_raw) ‖ label)
+    return hfscx_256(_hpake_rnl_kdf(K_raw_c) + _HPAKE_SESSION_LBL)
+
+
+# ---------------------------------------------------------------------------
 # Protocol documentation
 # ---------------------------------------------------------------------------
 '''
@@ -2369,6 +2469,21 @@ def main():
         print("- OPRF aPAKE: pw_key derived from OPRF output is deterministic")
     else:
         print("+ OPRF aPAKE pw_key mismatch!")
+
+    # 80 — aPAKE demo (register + login with correct password + wrong password)
+    print("*** aPAKE (80) — HKEX-RNL + ZKBoo + OPRF augmented PAKE")
+    _pake_key     = oprf_keygen()
+    _pake_record  = hpake_register("alice", b"s3cr3t-pw", _pake_key)
+    _pake_sk      = hpake_login_demo(_pake_record, b"s3cr3t-pw", _pake_key)
+    if _pake_sk is not None:
+        print("- aPAKE login with correct password: session key established")
+    else:
+        print("+ aPAKE login with correct password: FAILED!")
+    _pake_sk_bad  = hpake_login_demo(_pake_record, b"wrong-pw", _pake_key)
+    if _pake_sk_bad is None:
+        print("- aPAKE login with wrong password: correctly rejected")
+    else:
+        print("+ aPAKE login with wrong password: ACCEPTED (security failure)!")
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)

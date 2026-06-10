@@ -59,6 +59,7 @@ from primitives import (
     fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
     haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
     oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct,
+    hpake_register, hpake_login_demo,
 )
 from primitives import _s as _suite_mod
 
@@ -93,6 +94,7 @@ _LABEL_ZKP_RNL     = 'HERRADURA ZKP-RNL PROOF'
 _LABEL_ZKP_NL      = 'HERRADURA ZKP-NL PROOF'
 _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — client keeps this
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
+_LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
@@ -1201,6 +1203,68 @@ def cmd_oprf_unblind(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-commands: pake-register, pake-demo  (TODO #80 Batch 4)
+# ---------------------------------------------------------------------------
+
+def cmd_pake_register(args):
+    """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
+    oprf_key, _nbits = _load_oprf_key(args.key)
+    username = args.username or "user"
+    if args.password:
+        password = args.password.encode()
+    else:
+        import getpass
+        password = getpass.getpass(f"Password for {username!r}: ").encode()
+    record  = hpake_register(username, password, oprf_key)
+    salt_b  = record['salt']
+    B_int   = record['B']
+    y_int   = record['y']
+    # Encode: SEQUENCE(INTEGER(salt), INTEGER(B), INTEGER(y))
+    # salt as 32-byte big-endian integer; B and y as 4-byte (32-bit demo params)
+    der = der_seq(
+        der_int(int.from_bytes(salt_b, 'big'), 32),
+        der_int(B_int, 4),
+        der_int(y_int, 4),
+    )
+    _write_file(args.out, pem_wrap(_LABEL_PAKE_RECORD, der))
+
+
+def _load_pake_record(path):
+    """Return a record dict {'username', 'salt', 'B', 'y'} from PAKE RECORD PEM."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_PAKE_RECORD:
+        sys.exit(f"Expected PAKE RECORD PEM, got {label!r}")
+    salt_int, B_int, y_int = ints
+    return {
+        'username': '',            # not stored in the PEM for simplicity
+        'salt':     salt_int.to_bytes(32, 'big'),
+        'B':        B_int,
+        'y':        y_int,
+    }
+
+
+def cmd_pake_demo(args):
+    """aPAKE demo: run full registration + login on both sides and show session key."""
+    oprf_key, _nbits = _load_oprf_key(args.key)
+    username  = args.username or "demo-user"
+    password  = (args.password or "demo-password").encode()
+    record    = hpake_register(username, password, oprf_key)
+    sk        = hpake_login_demo(record, password, oprf_key)
+    if sk is not None:
+        print(f"- aPAKE login succeeded; session key: {sk.hex()}")
+    else:
+        print("+ aPAKE login failed!")
+        sys.exit(1)
+    # Also test wrong password
+    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key)
+    if wrong_sk is None:
+        print("- aPAKE correctly rejects wrong password")
+    else:
+        print("+ aPAKE accepted wrong password! (security failure)")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1368,6 +1432,28 @@ def build_parser():
     ou.add_argument('--out', default='-',
                     help='PRF output as hex (default: stdout)')
 
+    # pake-register (80)
+    pr = sub.add_parser('pake-register',
+                        help='aPAKE: register user and output server record PEM (TODO #80 Batch 4)')
+    pr.add_argument('--key',      required=True,
+                    help='OPRF PRIVATE KEY PEM (server OPRF key)')
+    pr.add_argument('--username', default='user',
+                    help='Username to register (default: "user")')
+    pr.add_argument('--password', default=None,
+                    help='Password (omit to prompt interactively)')
+    pr.add_argument('--out', default='-',
+                    help='PAKE RECORD PEM output')
+
+    # pake-demo (80)
+    pd = sub.add_parser('pake-demo',
+                        help='aPAKE: run full register+login demo (both sides) (TODO #80 Batch 4)')
+    pd.add_argument('--key',      required=True,
+                    help='OPRF PRIVATE KEY PEM')
+    pd.add_argument('--username', default='demo-user',
+                    help='Demo username (default: "demo-user")')
+    pd.add_argument('--password', default='demo-password',
+                    help='Demo password (default: "demo-password")')
+
     return p
 
 
@@ -1384,9 +1470,11 @@ _DISPATCH = {
     'dgst':    cmd_dgst,
     'fpe':          cmd_fpe,
     'twk':          cmd_twk,
-    'oprf-blind':   cmd_oprf_blind,
-    'oprf-eval':    cmd_oprf_eval,
-    'oprf-unblind': cmd_oprf_unblind,
+    'oprf-blind':     cmd_oprf_blind,
+    'oprf-eval':      cmd_oprf_eval,
+    'oprf-unblind':   cmd_oprf_unblind,
+    'pake-register':  cmd_pake_register,
+    'pake-demo':      cmd_pake_demo,
 }
 
 

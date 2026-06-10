@@ -5195,7 +5195,7 @@ BitArray/`[32]byte` type for GF elements alpha, beta, F.
 
 ---
 
-#### Batch 4 — aPAKE: Python/C/Go suite + CLI
+#### Batch 4 — aPAKE: Python suite + Python CLI ✅ DONE v1.9.26 (C/Go deferred)
 
 **Dependency:** Batches 1–3 (OPRF) must be complete first.
 
@@ -5271,4 +5271,4 @@ New test scripts:
 5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
-Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). TODO (Batch 4 aPAKE, Batch 5 Assembly)
+Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.26 (Python only) · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). TODO (Batch 4 aPAKE, Batch 5 Assembly)

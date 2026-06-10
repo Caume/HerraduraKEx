@@ -97,3 +97,7 @@ oprf_blind           = _s.oprf_blind
 oprf_eval            = _s.oprf_eval
 oprf_unblind         = _s.oprf_unblind
 oprf_direct          = _s.oprf_direct
+
+# ── 80 aPAKE ─────────────────────────────────────────────────────────────────
+hpake_register       = _s.hpake_register
+hpake_login_demo     = _s.hpake_login_demo

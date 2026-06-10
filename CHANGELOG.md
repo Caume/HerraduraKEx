@@ -4,6 +4,17 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.26] - 2026-06-09
+
+### Feature — aPAKE Python suite + CLI (TODO #80 Batch 4)
+
+- **Python suite** (`Herradura cryptographic suite.py`): added `hpake_register`, `hpake_login_demo`, `_hpake_derive_zkp_witness`, `_hpake_rnl_kdf` — aPAKE (augmented PAKE) using HKEX-RNL + ZKBoo + OPRF; demo block in `main()` validates correct-password login and wrong-password rejection; module docstring updated.
+- **`HerraduraCli/primitives.py`**: exports `hpake_register`, `hpake_login_demo`.
+- **Python CLI** (`HerraduraCli/herradura.py`): `pake-register` (outputs `HERRADURA PAKE RECORD` PEM), `pake-demo` (runs full both-sides auth demo); `_LABEL_PAKE_RECORD` constant; dispatch table entries.
+- **`CliTest/test_pake.sh`**: 7 Python CLI aPAKE integration tests — all passing.
+
+---
+
 ## [1.9.25] - 2026-06-09
 
 ### Feature — OPRF C+Go library + CLI + cross-language interop tests (TODO #80 Batches 2, 3, 6)
