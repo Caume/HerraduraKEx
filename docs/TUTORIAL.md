@@ -11,6 +11,8 @@ The suite implements four protocol families plus a hash primitive:
 | Schnorr signature | HPKS | HPKS-NL | HPKS-Stern-F |
 | El Gamal encryption | HPKE | HPKE-NL | HPKE-Stern-F |
 | Hash / MAC | — | HFSCX-256 | — |
+| OPRF | — | 2HashDH over GF(2^256) | — |
+| aPAKE | — | HKEX-RNL + ZKBoo + OPRF | — |
 
 **Security note:** The classical protocols (HKEX-GF, HSKE, HPKS, HPKE) are vulnerable to quantum
 attacks. Use the NL/PQC or code-based variants for new deployments. See [Security notes](#security-notes).
@@ -28,9 +30,10 @@ with toy examples and verified references.
 2. [Go integration](#go-integration)
 3. [Python integration](#python-integration)
 4. [ZKP Protocols](#zkp-protocols)
-5. [Protocol reference](#protocol-reference)
-6. [Parameter reference](#parameter-reference)
-7. [Security notes](#security-notes)
+5. [OPRF and aPAKE](#oprf-and-apake)
+6. [Protocol reference](#protocol-reference)
+7. [Parameter reference](#parameter-reference)
+8. [Security notes](#security-notes)
 
 ---
 
@@ -209,6 +212,42 @@ for (int i = 0; i < KEYBYTES; i++)
 hfscx_256(msg, sizeof msg - 1, mac_iv, digest);
 ```
 
+### OPRF (2HashDH oblivious PRF)
+
+The OPRF protocol lets a client evaluate `F(k, x) = gf_pow(H(x), k)` without
+revealing `x` to the server or `k` to the client.
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+BitArray oprf_k, oprf_r, oprf_alpha, oprf_beta, oprf_F, oprf_check;
+
+/* Key generation (server side) */
+oprf_keygen(&oprf_k, urnd);
+
+/* Blinding (client side) */
+const char *input = "my-password";
+oprf_blind((const uint8_t *)input, strlen(input), &oprf_r, &oprf_alpha, urnd);
+
+/* Evaluation (server side) */
+oprf_eval(&oprf_beta, &oprf_alpha, &oprf_k);
+
+/* Unblinding (client side): yields F(k, input) */
+oprf_unblind(&oprf_F, &oprf_beta, &oprf_r);
+
+/* Direct evaluation (server, no blinding) — result matches */
+oprf_direct(&oprf_check, (const uint8_t *)input, strlen(input), &oprf_k);
+/* memcmp(oprf_F.b, oprf_check.b, KEYBYTES) == 0 */
+```
+
+`oprf_blind` retries internally until the random blinding factor `r` is coprime
+to ORD = 2^256−1 (expected two attempts on average, since ORD has small factors
+3, 5, 17, 257, 641).
+
+All OPRF functions are declared in `herradura.h`; the PEM wire format for OPRF
+keys is identical across C, Go, and Python CLIs.
+
 ### Complete runnable example
 
 See [`docs/examples/c/hello_herradura.c`](examples/c/hello_herradura.c).
@@ -346,6 +385,31 @@ for i := range macIV {
 mac := Hfscx256(data, macIV)
 ```
 
+### OPRF (2HashDH oblivious PRF)
+
+```go
+import "herradurakex"
+
+// Key generation (server side)
+k, _ := herradurakex.OprfKeygen(256)
+
+// Blinding (client side)
+r, alpha, _ := herradurakex.OprfBlind([]byte("my-password"), 256)
+
+// Evaluation (server side)
+beta := herradurakex.OprfEval(alpha, k, 256)
+
+// Unblinding (client side): yields F(k, input)
+F := herradurakex.OprfUnblind(beta, r, 256)
+
+// Direct evaluation — result matches
+check := herradurakex.OprfDirect([]byte("my-password"), k, 256)
+// F.Cmp(check) == 0
+```
+
+`OprfBlind` retries internally until `r` is coprime to ORD = 2^256−1.
+All return values are `*big.Int`.
+
 ### Complete runnable example
 
 ```bash
@@ -468,6 +532,59 @@ digest = h.hfscx_256(data)
 mac_iv = h.BitArray(n, alice_shared.uint ^ int.from_bytes(h._HFSCX256_IV_BYTES, 'big'))
 mac = h.hfscx_256(data, iv=mac_iv)
 ```
+
+### OPRF (2HashDH oblivious PRF)
+
+```python
+# Key generation (server side)
+k = h.oprf_keygen()                      # random element of GF(2^256)*
+
+# Blinding (client side)
+r, alpha = h.oprf_blind(b"my-password")  # alpha = H(x)^r
+
+# Evaluation (server side)
+beta = h.oprf_eval(alpha, k)             # beta = alpha^k
+
+# Unblinding (client side): yields F(k, x) = H(x)^k
+F = h.oprf_unblind(beta, r)             # F = beta^{r^{-1}}
+
+# Direct evaluation (same result, no blinding)
+check = h.oprf_direct(b"my-password", k)
+assert F == check
+```
+
+`oprf_blind` retries internally until `r` is coprime to ORD = 2^256−1.
+All scalars are Python `int`; the hash-to-field function is `HFSCX-256`.
+
+### aPAKE (augmented password-authenticated key exchange)
+
+The aPAKE construction combines HKEX-RNL (Ring-LWR channel), ZKBoo (zero-knowledge
+proof of password knowledge), and OPRF (server-side augmentation).  The server
+database stores an OPRF output — not a password hash — so a stolen database cannot
+be attacked offline without also compromising the OPRF key.
+
+```python
+# --- Registration (server side) ---
+oprf_key = h.oprf_keygen()
+record = h.hpake_register("alice", "s3cr3t", oprf_key)
+# record = {"salt": <int>, "B": <int>, "y": <int>}
+# Store record in your user database; oprf_key stays on the server.
+
+# --- Login (both sides) ---
+session_key = h.hpake_login_demo(record, "s3cr3t", oprf_key)
+# Returns 32-byte session key on success, None on failure.
+assert session_key is not None
+
+wrong_pw = h.hpake_login_demo(record, "wrong", oprf_key)
+assert wrong_pw is None
+```
+
+`hpake_register` and `hpake_login_demo` are defined in
+`Herradura cryptographic suite.py`.  The Python CLI (`herradura.py`) exposes the
+same flow via `pake-register` and `pake-demo` subcommands — see the
+[OPRF and aPAKE](#oprf-and-apake) section for CLI examples.
+
+Demo parameters: `_HPAKE_ZKP_N = 32`, `_HPAKE_ROUNDS = 16`.
 
 ### NumPy acceleration
 
@@ -666,6 +783,85 @@ For NL-FSCX witness statements, ZKP-NL is the only applicable construction.
 
 ---
 
+## OPRF and aPAKE
+
+### OPRF overview
+
+The **2HashDH OPRF** (Oblivious Pseudo-Random Function) lets a client compute
+`F(k, x) = gf_pow(H(x), k)` without learning the server key `k` and without
+the server learning the input `x`.
+
+```
+client                           server
+------                           ------
+r ← coprime random scalar
+alpha = H(x)^r          ─── alpha ──►   beta = alpha^k
+F = beta^{r^{-1}}       ◄── beta ────
+```
+
+`H` maps arbitrary bytes to a non-zero GF(2^256)* element via HFSCX-256.
+The blinding factor `r` must be coprime to ORD = 2^256−1; all three
+implementations retry automatically (expected two attempts on average).
+
+### OPRF CLI usage (Python, C, Go)
+
+All three CLIs share the same subcommands and PEM wire format:
+
+```bash
+# --- Python CLI ---
+# 1. Generate OPRF server key
+python3 HerraduraCli/herradura.py genpkey --algo oprf --out server.pem
+
+# 2. Client blinds its input
+python3 HerraduraCli/herradura.py oprf-blind --input "my-password" --out state.pem
+
+# 3. Server evaluates (state.pem contains alpha; server.pem contains k)
+python3 HerraduraCli/herradura.py oprf-eval --key server.pem --in state.pem --out eval.pem
+
+# 4. Client unblinds to obtain F(k, x) as 64-char hex
+python3 HerraduraCli/herradura.py oprf-unblind --state state.pem --eval eval.pem
+
+# --- C CLI (identical subcommands) ---
+./HerraduraCli/herradura_cli genpkey   --algo oprf --out server.pem
+./HerraduraCli/herradura_cli oprf-blind  --input "my-password" --out state.pem
+./HerraduraCli/herradura_cli oprf-eval   --key server.pem --in state.pem --out eval.pem
+./HerraduraCli/herradura_cli oprf-unblind --state state.pem --eval eval.pem
+
+# --- Go CLI (identical subcommands) ---
+./HerraduraCli/herradura_cli_go genpkey    --algo oprf --out server.pem
+./HerraduraCli/herradura_cli_go oprf-blind  --input "my-password" --out state.pem
+./HerraduraCli/herradura_cli_go oprf-eval   --key server.pem --in state.pem --out eval.pem
+./HerraduraCli/herradura_cli_go oprf-unblind --state state.pem --eval eval.pem
+```
+
+PEM files produced by any implementation are byte-for-byte compatible with the
+others.  See `CliTest/test_oprf_interop.sh` for a 6-way cross-language
+interop test (Python/C/Go key × blind × eval × unblind).
+
+### aPAKE CLI usage (Python CLI)
+
+The aPAKE flow requires the Python CLI.  The C and Go CLIs support OPRF
+but not the full aPAKE registration/login flow.
+
+```bash
+# 1. Generate OPRF server key (one time)
+python3 HerraduraCli/herradura.py genpkey --algo oprf --out server.pem
+
+# 2. Register a user (stores PAKE RECORD PEM — no plaintext password)
+python3 HerraduraCli/herradura.py pake-register \
+    --key server.pem --username alice --password s3cr3t --out record.pem
+
+# 3. Demo login (runs both sides in one command for testing)
+python3 HerraduraCli/herradura.py pake-demo \
+    --key server.pem --username alice --password s3cr3t
+```
+
+`pake-demo` reads the record generated by the most recent `pake-register` for
+the given username and prints the session key on success, or reports rejection
+for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
+
+---
+
 ## Protocol reference
 
 ### Classical protocols
@@ -700,6 +896,18 @@ For NL-FSCX witness statements, ZKP-NL is the only applicable construction.
 |---|---|---|---|---|
 | ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 1,056 B (n=256) |
 | ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 35.5 KB (n=8, R=219) |
+
+### OPRF and aPAKE
+
+| Protocol | Key type | Hard problem | Availability |
+|----------|----------|--------------|--------------|
+| OPRF (2HashDH) | `oprf` | DLP in GF(2^256) | C, Go, Python, all CLIs |
+| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | Python suite + Python CLI |
+
+The OPRF output is `F(k, x) = gf_pow(H(x), k)` where `H` is HFSCX-256 hash-to-field.
+The aPAKE protocol uses HKEX-RNL for the key exchange channel, ZKBoo for the
+zero-knowledge proof of password knowledge, and the OPRF to augment the server
+record (demo parameters: `_HPAKE_ZKP_N = 32`, `_HPAKE_ROUNDS = 16`).
 
 ### Hash primitive
 
@@ -738,6 +946,14 @@ void hpks_stern_f_sign   (SternSig *sig, const BitArray *msg, const BitArray *e,
                            const BitArray *seed, FILE *urnd);
 int  hpks_stern_f_verify (const SternSig *sig, const BitArray *msg,
                            const BitArray *seed, const uint8_t *syndr);
+
+/* OPRF (2HashDH) */
+void oprf_keygen (BitArray *k, FILE *urnd);
+void oprf_blind  (const uint8_t *x, size_t xlen,
+                  BitArray *r, BitArray *alpha, FILE *urnd);
+void oprf_eval   (BitArray *beta, const BitArray *alpha, const BitArray *k);
+void oprf_unblind(BitArray *F, const BitArray *beta, const BitArray *r);
+void oprf_direct (BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k);
 ```
 
 ---
@@ -758,6 +974,9 @@ int  hpks_stern_f_verify (const SternSig *sig, const BitArray *msg,
 | Stern ZKP rounds (demo) | `SDF_ROUNDS` | `SdfRounds` | `SDFR` | 32 (N=256) |
 | GF generator | `GF_GEN` (BitArray) | `GfGen = 3` | `GF_GEN = 3` | 3 |
 | HFSCX-256 domain IV | `_HFSCX256_IV[32]` | `Hfscx256IV` | `_HFSCX256_IV_BYTES` | `b'HFSCX-256/HERRADURA-SUITE\x00…'` |
+| OPRF field order | `ORD` (2^256−1) | computed from `n=256` | computed from `KEYBITS` | 2^256−1 |
+| aPAKE ZKBoo width | — | — | `_HPAKE_ZKP_N` | 32 (demo) |
+| aPAKE ZKP rounds | — | — | `_HPAKE_ROUNDS` | 16 (demo) |
 
 Stern-F parameters scale with N: T = N/16, rows = N/4.  C/Go/Python support
 N ∈ {32, 64, 128, 256}; assembly and Arduino targets are fixed at N=32 (T=2, rounds=4).
@@ -804,6 +1023,26 @@ models that exclude quantum adversaries.
   Production requires `rounds ≥ 219` for 128-bit soundness.
 - **HPKE-Stern-F decapsulation** in the demo uses a known error vector (`e'`).
   A production deployment requires a QC-MDPC or similar decoder.
+
+### OPRF and aPAKE
+
+- **OPRF security** rests on the DLP in GF(2^256)* — the same assumption as
+  HKEX-GF.  It is **not** quantum-resistant; a quantum adversary who breaks DLP
+  can recover the server key `k` from any blinded query.
+- **ORD = 2^256−1 is composite** with small factors (3, 5, 17, 257, 641, …).
+  Roughly 50% of random 256-bit scalars share a factor with ORD and cannot be
+  inverted.  All three implementations retry until `gcd(r, ORD) = 1`.  Never
+  supply a static or low-entropy blinding factor; always generate `r` from a
+  cryptographic RNG.
+- **OPRF blinding factor leakage:** The client's blinding factor `r` must be kept
+  secret.  If `r` is leaked, the server can recover `x` from `alpha = H(x)^r`.
+- **aPAKE demo parameters** (`_HPAKE_ZKP_N = 32`, `_HPAKE_ROUNDS = 16`) are for
+  testing only.  The ZKBoo soundness error with these parameters is not suitable
+  for production — use `_HPAKE_ROUNDS ≥ 219` for 128-bit soundness.
+- **aPAKE OPRF key compromise:** If the OPRF key `k` is stolen, an attacker can
+  compute `F(k, pw)` for any guessed password offline.  The aPAKE record stores
+  the OPRF output, not the raw password hash, to prevent offline dictionary attacks
+  on a stolen database *alone* — but the OPRF key must still be protected.
 
 ### Constant-time status
 
