@@ -50,6 +50,9 @@
 #define PEM_ZKP_NL_PRIV     "HERRADURA ZKP-NL PRIVATE KEY"
 #define PEM_ZKP_NL_PUB      "HERRADURA ZKP-NL PUBLIC KEY"
 #define PEM_ZKP_NL_PROOF    "HERRADURA ZKP-NL PROOF"
+#define PEM_OPRF_PRIV       "HERRADURA OPRF PRIVATE KEY"
+#define PEM_OPRF_STATE      "HERRADURA OPRF CLIENT STATE"
+#define PEM_OPRF_EVAL       "HERRADURA OPRF EVALUATION"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros

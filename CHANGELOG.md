@@ -4,6 +4,43 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.26] - 2026-06-09
+
+### Feature — aPAKE Python suite + CLI (TODO #80 Batch 4)
+
+- **Python suite** (`Herradura cryptographic suite.py`): added `hpake_register`, `hpake_login_demo`, `_hpake_derive_zkp_witness`, `_hpake_rnl_kdf` — aPAKE (augmented PAKE) using HKEX-RNL + ZKBoo + OPRF; demo block in `main()` validates correct-password login and wrong-password rejection; module docstring updated.
+- **`HerraduraCli/primitives.py`**: exports `hpake_register`, `hpake_login_demo`.
+- **Python CLI** (`HerraduraCli/herradura.py`): `pake-register` (outputs `HERRADURA PAKE RECORD` PEM), `pake-demo` (runs full both-sides auth demo); `_LABEL_PAKE_RECORD` constant; dispatch table entries.
+- **`CliTest/test_pake.sh`**: 7 Python CLI aPAKE integration tests — all passing.
+
+---
+
+## [1.9.25] - 2026-06-09
+
+### Feature — OPRF C+Go library + CLI + cross-language interop tests (TODO #80 Batches 2, 3, 6)
+
+- **`herradura.h`**: added `ba_cmp256`, `_ba33_cmp`, `_ba33_iszero`, `ba_modinv_ord` (binary extended GCD mod 2^256-1 with coprimality retry), `oprf_hash_to_field`, `oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`; OPRF demo block added to `Herradura cryptographic suite.c` `main()`.
+- **`HerraduraCli/herradura_codec.h`**: added `PEM_OPRF_PRIV`, `PEM_OPRF_STATE`, `PEM_OPRF_EVAL` label constants.
+- **`HerraduraCli/herradura_cli.c`**: `genpkey --algo oprf`, `oprf-blind`, `oprf-eval`, `oprf-unblind` subcommands; `ba_from_der_item` helper; usage text updated.
+- **`herradura/herradura.go`**: added `OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`, `oprfOrd`, `oprfHashToField`; OPRF demo block added to `Herradura cryptographic suite.go` `main()`.
+- **`HerraduraCli/herradura_cli.go`**: `lblOprfPriv`/`lblOprfState`/`lblOprfEval` constants; `genpkey --algo oprf`; `cmdOprfBlind`, `cmdOprfEval`, `cmdOprfUnblind` functions; dispatch cases.
+- **`CliTest/test_c_oprf.sh`**: 7 C CLI integration tests — all passing.
+- **`CliTest/test_go_oprf.sh`**: 7 Go CLI integration tests — all passing.
+- **`CliTest/test_oprf_interop.sh`**: 8 cross-language interop tests (Python/C/Go key × blind × eval × unblind) — all passing.
+
+---
+
+## [1.9.24] - 2026-06-09
+
+### Feature — OPRF library + Python CLI (TODO #80 Batch 1)
+
+- **Python suite** (`Herradura cryptographic suite.py`): added 2HashDH OPRF over GF(2^256)* — `oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`; demo block in `main()` validates blind/eval/unblind round-trip and aPAKE pw_key derivation.
+- **`HerraduraCli/primitives.py`**: exports all five `oprf_*` symbols.
+- **Python CLI** (`HerraduraCli/herradura.py`): `genpkey --algo oprf` generates OPRF server key (PEM label `HERRADURA OPRF PRIVATE KEY`); `oprf-blind` (client blinding → `HERRADURA OPRF CLIENT STATE`), `oprf-eval` (server evaluation → `HERRADURA OPRF EVALUATION`), `oprf-unblind` (client unblinding → PRF output hex).
+- **`CliTest/test_oprf.sh`**: 8 Python CLI integration tests — keygen, blind, eval, unblind, determinism, different-input, different-key, pkey inspect — all passing.
+
+---
+
 ## [1.9.23] - 2026-06-09
 
 ### Research — Non-Abelian KEX analysis: orbit sweep, non-abelianness, Ko-Lee viability (TODO #78.E)

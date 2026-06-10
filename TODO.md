@@ -5074,3 +5074,201 @@ was generating files that were already incompatible with Go and Python.
 their respective test suites without errors.
 
 Status: **DONE v1.9.18** — 79.A: all ZKP-NL types promoted to `uint64_t`, `ZKP_NL_MAX_N` bumped to 64; 79.B: `ba_rnl_kdf_seed` substituted for `ba_rol_k` in both `cmd_encfile` and `cmd_decfile`; stale comment at `herradura.h:633` updated.  All C tests pass (test [22] n=64 PASS); all encfile interop tests pass (4/4 C↔Python, 10/10 Go↔C↔Python).
+
+---
+
+### 80. Promote OPRF and PAKE to suite library and CLI (Feature, High)
+
+**Context:** TODO #78 produced two SecurityProofsCode demo scripts whose core functions are
+ready for promotion to the main library and CLI:
+
+- `SecurityProofsCode/oprf_demo.py` (`oprf_blind/eval/unblind/direct`) — 2HashDH OPRF over
+  GF(2^n)* using the existing `gf_pow` primitive.  Self-contained, clean API.
+- `SecurityProofsCode/hkex_pake_demo.py` (`pake_register/client_msg*/server_*`) — 3-message
+  PAKE using HKEX-RNL + ZKBoo + HFSCX-256.  Depends on OPRF for aPAKE upgrade.
+
+The following SecurityProofsCode scripts are **NOT** suitable for promotion:
+- `vdf_demo.py` — FSCX VDF broken by matrix attack; NL-FSCX v1 VDF lacks efficient verification.
+- `nl_fscx_v2_kex.py` / `nl_fscx_v2_orbit.py` — no working non-abelian protocol; research only.
+
+---
+
+#### Batch 1 — OPRF: Python suite (`Herradura cryptographic suite.py`) + CLI (`herradura.py`) ✅ DONE v1.9.24
+
+**Suite functions to add** (prefix `oprf_`, following suite naming conventions):
+
+```python
+def oprf_keygen(n: int = KEYBITS) -> int:
+    """Random OPRF server key in [2, 2^n − 2]."""
+
+def oprf_blind(x: bytes, n: int = KEYBITS) -> tuple[int, int]:
+    """Client: hash x to GF(2^n)* and blind with random exponent r.
+    Returns (r, alpha) where alpha = H(x)^r.  r is the unblinding scalar."""
+
+def oprf_eval(alpha: int, k: int, n: int = KEYBITS) -> int:
+    """Server: evaluate alpha^k in GF(2^n)*  (one gf_pow call)."""
+
+def oprf_unblind(beta: int, r: int, n: int = KEYBITS) -> int:
+    """Client: recover F(k, x) = H(x)^k from beta = H(x)^{kr} by computing beta^{r^{-1}}."""
+
+def oprf_direct(x: bytes, k: int, n: int = KEYBITS) -> int:
+    """Direct PRF evaluation F(k, x) = H(x)^k (server-side only; not oblivious)."""
+```
+
+**Internal helper** (not exported):
+```python
+def _oprf_hash_to_field(data: bytes, n: int) -> int:
+    """HFSCX-256(data) → non-zero element of GF(2^n)."""
+```
+
+**Suite `main()` demo block** — show a complete blind/eval/unblind round-trip and the
+aPAKE use case (pw_key via OPRF instead of direct hash).
+
+**CLI subcommands** to add to `herradura.py`:
+
+```
+# Generate OPRF server private key
+herradura oprf-keygen [--algo oprf-gf256] > server_oprf.pem
+
+# Client: hash and blind input; outputs (r_scalar.hex, alpha.hex) to stdout
+herradura oprf-blind --input "password_or_bytes" > blind_out.txt
+
+# Server: evaluate blinded input with OPRF key
+herradura oprf-eval --key server_oprf.pem --alpha <hex> > beta.hex
+
+# Client: unblind server response to recover PRF output
+herradura oprf-unblind --alpha <hex> --beta <hex> --scalar <r_hex> > prf_out.hex
+```
+
+PEM label: `OPRF PRIVATE KEY` for the server key.
+The blinded value `alpha`, scalar `r`, and evaluation `beta` are passed as hex on
+stdin/stdout (similar to how `kex` outputs the session key).
+
+---
+
+#### Batch 2 — OPRF: C (`herradura.h` + `herradura_cli.c`) ✅ DONE v1.9.25
+
+**`herradura.h` functions:**
+
+```c
+/* OPRF server key: random integer in [2, 2^KEYBITS - 2] stored in a BitArray. */
+void oprf_keygen(BitArray *key);
+
+/* Client blind: H(x,xlen) → GF(2^n) element, multiply by random exponent r.
+   Writes r_scalar (unblinding key) and alpha (blinded value) into caller-provided BitArrays. */
+void oprf_blind(const uint8_t *x, size_t xlen, BitArray *r_scalar, BitArray *alpha);
+
+/* Server eval: beta = alpha^k in GF(2^n)*. */
+void oprf_eval(const BitArray *alpha, const BitArray *k, BitArray *beta);
+
+/* Client unblind: F = beta^{r_inv} = H(x)^k. */
+void oprf_unblind(const BitArray *beta, const BitArray *r_scalar, BitArray *F);
+
+/* Direct PRF (server-side, non-oblivious): F = H(x)^k. */
+void oprf_direct(const uint8_t *x, size_t xlen, const BitArray *k, BitArray *F);
+```
+
+**`herradura_cli.c`** — add `cmd_oprf_keygen`, `cmd_oprf_blind`, `cmd_oprf_eval`,
+`cmd_oprf_unblind` and register them in the dispatch table.  PEM codec reuse from
+`herradura_codec.h`.
+
+---
+
+#### Batch 3 — OPRF: Go (`herradura/herradura.go` + `herradura_cli.go`) ✅ DONE v1.9.25
+
+**Package functions:**
+
+```go
+func OprfKeygen() *big.Int                          // server key
+func OprfBlind(x []byte) (r, alpha *big.Int)        // client blind
+func OprfEval(alpha, k *big.Int) *big.Int            // server eval
+func OprfUnblind(beta, r *big.Int) *big.Int          // client unblind
+func OprfDirect(x []byte, k *big.Int) *big.Int       // direct PRF (non-oblivious)
+```
+
+**`herradura_cli.go`** — add `cmdOprfKeygen`, `cmdOprfBlind`, `cmdOprfEval`,
+`cmdOprfUnblind` and register them.
+
+**Note on `*big.Int` vs `BitArray`:** OPRF scalars are integers mod GF_ORDER = 2^n − 1,
+not GF(2^n) field elements.  Use `*big.Int` for scalars r and k; use the existing
+BitArray/`[32]byte` type for GF elements alpha, beta, F.
+
+---
+
+#### Batch 4 — aPAKE: Python suite + Python CLI ✅ DONE v1.9.26 (C/Go deferred)
+
+**Dependency:** Batches 1–3 (OPRF) must be complete first.
+
+**Protocol** (3-message aPAKE using HKEX-RNL + OPRF + ZKBoo):
+
+```
+Registration (one-time, client-server):
+    client → server: alpha = oprf_blind(password)
+    server → client: beta  = oprf_eval(alpha, k_s)
+    client: pw_oprf = oprf_unblind(beta, r); pw_key = hfscx_256(pw_oprf ‖ salt)
+    client: zkp_A = hfscx_256(pw_key ‖ "ZKP-A") & mask; B = random; y = nl_fscx_v1(zkp_A, B)
+    server stores: (username, salt, B, y)   [no password, no H(password)]
+
+Login (3 messages):
+    msg1 client→server: HKEX-RNL C_client
+    msg2 server→client: HKEX-RNL C_server + alpha_r = oprf_blind(password)  ← OPRF blind
+                        NOTE: server cannot compute alpha_r itself (client-only step)
+    [actually 4-message for aPAKE — see note below]
+```
+
+**Protocol note:** Full aPAKE requires the client to blind the password and send alpha to
+the server for OPRF evaluation, then unblind.  This adds one extra round-trip vs. the
+plain PAKE in `hkex_pake_demo.py`.  The CLI demo mode runs both sides in a single process
+(like `kex` with `--our`/`--their`).
+
+**Suite functions** (prefix `hpake_`):
+```python
+def hpake_register(username, password, oprf_key) -> dict  # server record
+def hpake_login_demo(record, password, oprf_key) -> bytes | None  # full 4-msg demo
+```
+
+**CLI:**
+```
+herradura pake register --oprf-key server_oprf.pem --username alice > record.pem  # reads pw from stdin
+herradura pake login   --oprf-key server_oprf.pem --record record.pem             # reads pw from stdin
+herradura pake demo    --oprf-key server_oprf.pem  # runs both sides, shows session key match
+```
+
+**ZKBoo performance caveat:** In Python, ZKBoo at n=256 requires C/Go extensions or
+reduced rounds.  The Python suite will use n=32 demo parameters with a visible warning;
+C and Go will use n=256.
+
+---
+
+#### Batch 5 — Assembly/Arduino n=32 OPRF demo (Low priority)
+
+`gf_pow` at n=32 already exists in ARM Thumb-2, NASM i386, and Arduino targets.  A minimal
+n=32 OPRF demo block (blind/eval/unblind) can be added to each, following the pattern of
+the FPE/Tweakable demos added in TODO #78.
+
+**Security advisory required:** Output a clear `[DEMO n=32 — NOT PRODUCTION SECURE]`
+message. n=32 GF(2^32)* CDH is trivially brute-forcible.
+
+---
+
+#### Batch 6 — CLI integration tests (`CliTest/`) ✅ DONE v1.9.25
+
+New test scripts:
+- `CliTest/test_oprf.sh` — Python CLI keygen + blind + eval + unblind round-trip
+- `CliTest/test_c_oprf.sh` — C CLI equivalent
+- `CliTest/test_go_oprf.sh` — Go CLI equivalent
+- `CliTest/test_oprf_interop.sh` — cross-language: Python key, C eval, Go unblind (and permutations)
+- `CliTest/test_pake.sh` — Python CLI aPAKE register + login demo
+
+---
+
+#### Priority order
+
+1. **Batch 1** (Python OPRF) — unblocks aPAKE and is the simplest starting point.
+2. **Batch 2** (C OPRF) — adds `herradura.h` exports; enables C CLI and interop tests.
+3. **Batch 3** (Go OPRF) — completes the three-language tier.
+4. **Batch 6** (CLI tests) — validates interop; run after each language batch.
+5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
+6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
+
+Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.26 (Python only) · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). TODO (Batch 4 aPAKE, Batch 5 Assembly)

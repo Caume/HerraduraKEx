@@ -58,6 +58,8 @@ from primitives import (
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
     fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
     haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
+    oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct,
+    hpake_register, hpake_login_demo,
 )
 from primitives import _s as _suite_mod
 
@@ -75,6 +77,7 @@ _PRIV_ALGOS = {
     'hpks-stern':  'HERRADURA HPKS-STERN PRIVATE KEY',
     'hpke-stern':  'HERRADURA HPKE-STERN PRIVATE KEY',
     'hpks-zkp-nl': 'HERRADURA ZKP-NL PRIVATE KEY',
+    'oprf':        'HERRADURA OPRF PRIVATE KEY',
 }
 
 _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
@@ -89,6 +92,9 @@ _LABEL_CT          = 'HERRADURA CIPHERTEXT'
 _LABEL_DIGEST      = 'HERRADURA DIGEST'
 _LABEL_ZKP_RNL     = 'HERRADURA ZKP-RNL PROOF'
 _LABEL_ZKP_NL      = 'HERRADURA ZKP-NL PROOF'
+_LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — client keeps this
+_LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
+_LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
@@ -519,6 +525,11 @@ def cmd_genpkey(args):
         n = bits if bits != KEYBITS else _ZKP_NL_DEFAULT_N
         A, B, y = zkp_nl_keygen(n)
         pem_out = encode_zkp_nl_privkey(A, B, y, n)
+
+    elif algo == 'oprf':
+        k   = oprf_keygen()
+        der = der_seq(der_int(k, bits // 8), der_int(bits))
+        pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
@@ -1137,6 +1148,123 @@ def cmd_twk(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-commands: oprf-blind, oprf-eval, oprf-unblind  (TODO #80)
+# ---------------------------------------------------------------------------
+
+def _load_oprf_key(path):
+    """Return (k_int, nbits) from an OPRF PRIVATE KEY PEM."""
+    label, ints = _read_pem_ints(path)
+    if label != _PRIV_ALGOS['oprf']:
+        sys.exit(f"Expected OPRF PRIVATE KEY PEM, got {label!r}")
+    k_int, nbits = ints
+    return k_int, nbits
+
+
+def cmd_oprf_blind(args):
+    """Client step 1: hash input and blind with random scalar r.
+    Writes OPRF CLIENT STATE PEM (r + alpha) to --out; alpha is sent to server."""
+    in_bytes = _read_file(getattr(args, 'in'))
+    r, alpha = oprf_blind(in_bytes)
+    nbits    = KEYBITS
+    der      = der_seq(der_int(r,     nbits // 8),
+                       der_int(alpha, nbits // 8),
+                       der_int(nbits))
+    pem_out  = pem_wrap(_LABEL_OPRF_STATE, der)
+    _write_file(args.out, pem_out)
+
+
+def cmd_oprf_eval(args):
+    """Server step: evaluate alpha^k and write OPRF EVALUATION PEM to --out."""
+    k_int, nbits = _load_oprf_key(args.key)
+    label, ints  = _read_pem_ints(getattr(args, 'in'))
+    if label != _LABEL_OPRF_STATE:
+        sys.exit(f"Expected OPRF CLIENT STATE PEM, got {label!r}")
+    _r, alpha, _nb = ints
+    beta  = oprf_eval(alpha, k_int)
+    der   = der_seq(der_int(beta, nbits // 8), der_int(nbits))
+    _write_file(args.out, pem_wrap(_LABEL_OPRF_EVAL, der))
+
+
+def cmd_oprf_unblind(args):
+    """Client step 2: recover F(k, x) = H(x)^k and print hex to stdout (or --out)."""
+    label_s, ints_s = _read_pem_ints(args.state)
+    if label_s != _LABEL_OPRF_STATE:
+        sys.exit(f"Expected OPRF CLIENT STATE PEM, got {label_s!r}")
+    r, alpha, nbits = ints_s
+
+    label_e, ints_e = _read_pem_ints(getattr(args, 'eval'))
+    if label_e != _LABEL_OPRF_EVAL:
+        sys.exit(f"Expected OPRF EVALUATION PEM, got {label_e!r}")
+    beta, _nb = ints_e
+
+    F      = oprf_unblind(beta, r)
+    F_hex  = F.to_bytes(nbits // 8, 'big').hex()
+    _write_file(args.out, F_hex + '\n')
+
+
+# ---------------------------------------------------------------------------
+# Sub-commands: pake-register, pake-demo  (TODO #80 Batch 4)
+# ---------------------------------------------------------------------------
+
+def cmd_pake_register(args):
+    """Register a new user for aPAKE.  Outputs HERRADURA PAKE RECORD PEM."""
+    oprf_key, _nbits = _load_oprf_key(args.key)
+    username = args.username or "user"
+    if args.password:
+        password = args.password.encode()
+    else:
+        import getpass
+        password = getpass.getpass(f"Password for {username!r}: ").encode()
+    record  = hpake_register(username, password, oprf_key)
+    salt_b  = record['salt']
+    B_int   = record['B']
+    y_int   = record['y']
+    # Encode: SEQUENCE(INTEGER(salt), INTEGER(B), INTEGER(y))
+    # salt as 32-byte big-endian integer; B and y as 4-byte (32-bit demo params)
+    der = der_seq(
+        der_int(int.from_bytes(salt_b, 'big'), 32),
+        der_int(B_int, 4),
+        der_int(y_int, 4),
+    )
+    _write_file(args.out, pem_wrap(_LABEL_PAKE_RECORD, der))
+
+
+def _load_pake_record(path):
+    """Return a record dict {'username', 'salt', 'B', 'y'} from PAKE RECORD PEM."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_PAKE_RECORD:
+        sys.exit(f"Expected PAKE RECORD PEM, got {label!r}")
+    salt_int, B_int, y_int = ints
+    return {
+        'username': '',            # not stored in the PEM for simplicity
+        'salt':     salt_int.to_bytes(32, 'big'),
+        'B':        B_int,
+        'y':        y_int,
+    }
+
+
+def cmd_pake_demo(args):
+    """aPAKE demo: run full registration + login on both sides and show session key."""
+    oprf_key, _nbits = _load_oprf_key(args.key)
+    username  = args.username or "demo-user"
+    password  = (args.password or "demo-password").encode()
+    record    = hpake_register(username, password, oprf_key)
+    sk        = hpake_login_demo(record, password, oprf_key)
+    if sk is not None:
+        print(f"- aPAKE login succeeded; session key: {sk.hex()}")
+    else:
+        print("+ aPAKE login failed!")
+        sys.exit(1)
+    # Also test wrong password
+    wrong_sk  = hpake_login_demo(record, b"wrong-password", oprf_key)
+    if wrong_sk is None:
+        print("- aPAKE correctly rejects wrong password")
+    else:
+        print("+ aPAKE accepted wrong password! (security failure)")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -1276,6 +1404,56 @@ def build_parser():
     tw_mode.add_argument('--encrypt', action='store_true')
     tw_mode.add_argument('--decrypt', action='store_true')
 
+    # oprf-blind (80)
+    ob = sub.add_parser('oprf-blind',
+                        help='OPRF client step 1: hash input and blind (TODO #80)')
+    ob.add_argument('--in',  required=True, dest='in',
+                    help='Input bytes to blind (file or - for stdin)')
+    ob.add_argument('--out', default='-',
+                    help='OPRF CLIENT STATE PEM output (keep secret; contains r + alpha)')
+
+    # oprf-eval (80)
+    oe = sub.add_parser('oprf-eval',
+                        help='OPRF server step: evaluate blinded input with OPRF key (TODO #80)')
+    oe.add_argument('--key', required=True,
+                    help='OPRF PRIVATE KEY PEM (server key)')
+    oe.add_argument('--in',  required=True, dest='in',
+                    help='OPRF CLIENT STATE PEM (from oprf-blind)')
+    oe.add_argument('--out', default='-',
+                    help='OPRF EVALUATION PEM output')
+
+    # oprf-unblind (80)
+    ou = sub.add_parser('oprf-unblind',
+                        help='OPRF client step 2: unblind server response to get PRF output (TODO #80)')
+    ou.add_argument('--state', required=True,
+                    help='OPRF CLIENT STATE PEM (from oprf-blind)')
+    ou.add_argument('--eval',  required=True,
+                    help='OPRF EVALUATION PEM (from oprf-eval)')
+    ou.add_argument('--out', default='-',
+                    help='PRF output as hex (default: stdout)')
+
+    # pake-register (80)
+    pr = sub.add_parser('pake-register',
+                        help='aPAKE: register user and output server record PEM (TODO #80 Batch 4)')
+    pr.add_argument('--key',      required=True,
+                    help='OPRF PRIVATE KEY PEM (server OPRF key)')
+    pr.add_argument('--username', default='user',
+                    help='Username to register (default: "user")')
+    pr.add_argument('--password', default=None,
+                    help='Password (omit to prompt interactively)')
+    pr.add_argument('--out', default='-',
+                    help='PAKE RECORD PEM output')
+
+    # pake-demo (80)
+    pd = sub.add_parser('pake-demo',
+                        help='aPAKE: run full register+login demo (both sides) (TODO #80 Batch 4)')
+    pd.add_argument('--key',      required=True,
+                    help='OPRF PRIVATE KEY PEM')
+    pd.add_argument('--username', default='demo-user',
+                    help='Demo username (default: "demo-user")')
+    pd.add_argument('--password', default='demo-password',
+                    help='Demo password (default: "demo-password")')
+
     return p
 
 
@@ -1290,8 +1468,13 @@ _DISPATCH = {
     'encfile': cmd_encfile,
     'decfile': cmd_decfile,
     'dgst':    cmd_dgst,
-    'fpe':     cmd_fpe,
-    'twk':     cmd_twk,
+    'fpe':          cmd_fpe,
+    'twk':          cmd_twk,
+    'oprf-blind':     cmd_oprf_blind,
+    'oprf-eval':      cmd_oprf_eval,
+    'oprf-unblind':   cmd_oprf_unblind,
+    'pake-register':  cmd_pake_register,
+    'pake-demo':      cmd_pake_demo,
 }
 
 

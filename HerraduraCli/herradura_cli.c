@@ -375,6 +375,21 @@ static void cmd_genpkey(int argc, char **argv)
         free(body); fclose(urnd); return;
     }
 
+    /* OPRF server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    if (strcmp(algo, "oprf") == 0) {
+        BitArray k;
+        oprf_keygen(&k, urnd);
+        uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8];
+        size_t lk, ln;
+        der_i32(k.b, ik, &lk);
+        der_i_n256(in, &ln);
+        const uint8_t *it[2] = {ik, in};
+        size_t il[2] = {lk, ln};
+        seq_and_write(it, il, 2, PEM_OPRF_PRIV, out);
+        explicit_bzero(&k, sizeof(k));
+        fclose(urnd); return;
+    }
+
     fclose(urnd);
     dief("genpkey: unsupported algorithm: %s", algo);
 }
@@ -1707,6 +1722,128 @@ static void cmd_twk(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * oprf-blind / oprf-eval / oprf-unblind  (TODO #80)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_oprf_blind(int argc, char **argv)
+{
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!in_path) die("oprf-blind: --in required");
+
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+
+    BitArray r, alpha;
+    oprf_blind(in_buf, in_len, &r, &alpha, urnd);
+    free(in_buf);
+    fclose(urnd);
+
+    /* CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    uint8_t ir[DER_INT_LEN(KEYBYTES)], ialpha[DER_INT_LEN(KEYBYTES)], in[8];
+    size_t lr, lalpha, ln;
+    der_i32(r.b, ir, &lr);
+    der_i32(alpha.b, ialpha, &lalpha);
+    der_i_n256(in, &ln);
+    const uint8_t *it[3] = {ir, ialpha, in};
+    size_t il[3] = {lr, lalpha, ln};
+    seq_and_write(it, il, 3, PEM_OPRF_STATE, out_path);
+
+    explicit_bzero(&r, sizeof(r));
+}
+
+static void ba_from_der_item(BitArray *dst, const uint8_t *val, size_t vlen)
+{
+    /* DER INTEGER may have a leading 0x00 pad byte (sign bit); skip it. */
+    if (vlen > 0 && val[0] == 0x00) { val++; vlen--; }
+    size_t copy = vlen < KEYBYTES ? vlen : KEYBYTES;
+    memset(dst->b, 0, KEYBYTES);
+    memcpy(dst->b + KEYBYTES - copy, val, copy);
+}
+
+static void cmd_oprf_eval(int argc, char **argv)
+{
+    const char *key_path = get_arg(argc, argv, "--key");
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!key_path) die("oprf-eval: --key required");
+    if (!in_path)  die("oprf-eval: --in required");
+
+    /* Load server key: SEQUENCE(INTEGER(k), INTEGER(256)) */
+    PemKey kpem; pem_key_load(&kpem, key_path);
+    if (strcmp(kpem.label, PEM_OPRF_PRIV) != 0)
+        dief("oprf-eval: expected OPRF PRIVATE KEY PEM, got '%s'", kpem.label);
+    if (kpem.n_items < 1) die("oprf-eval: malformed OPRF private key");
+    BitArray k;
+    ba_from_der_item(&k, kpem.vals[0], kpem.vlens[0]);
+    pem_key_free(&kpem);
+
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    PemKey spem; pem_key_load(&spem, in_path);
+    if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
+        dief("oprf-eval: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
+    if (spem.n_items < 2) die("oprf-eval: malformed CLIENT STATE PEM");
+    BitArray alpha;
+    ba_from_der_item(&alpha, spem.vals[1], spem.vlens[1]);
+    pem_key_free(&spem);
+
+    BitArray beta;
+    oprf_eval(&beta, &alpha, &k);
+    explicit_bzero(&k, sizeof(k));
+
+    /* EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    uint8_t ibeta[DER_INT_LEN(KEYBYTES)], in[8];
+    size_t lbeta, ln;
+    der_i32(beta.b, ibeta, &lbeta);
+    der_i_n256(in, &ln);
+    const uint8_t *it[2] = {ibeta, in};
+    size_t il[2] = {lbeta, ln};
+    seq_and_write(it, il, 2, PEM_OPRF_EVAL, out_path);
+}
+
+static void cmd_oprf_unblind(int argc, char **argv)
+{
+    const char *state_path = get_arg(argc, argv, "--state");
+    const char *eval_path  = get_arg(argc, argv, "--eval");
+    const char *out_path   = get_arg(argc, argv, "--out");
+    if (!state_path) die("oprf-unblind: --state required");
+    if (!eval_path)  die("oprf-unblind: --eval required");
+
+    /* Load CLIENT STATE: SEQUENCE(INTEGER(r), INTEGER(alpha), INTEGER(256)) */
+    PemKey spem; pem_key_load(&spem, state_path);
+    if (strcmp(spem.label, PEM_OPRF_STATE) != 0)
+        dief("oprf-unblind: expected OPRF CLIENT STATE PEM, got '%s'", spem.label);
+    if (spem.n_items < 1) die("oprf-unblind: malformed CLIENT STATE PEM");
+    BitArray r;
+    ba_from_der_item(&r, spem.vals[0], spem.vlens[0]);
+    pem_key_free(&spem);
+
+    /* Load EVALUATION: SEQUENCE(INTEGER(beta), INTEGER(256)) */
+    PemKey epem; pem_key_load(&epem, eval_path);
+    if (strcmp(epem.label, PEM_OPRF_EVAL) != 0)
+        dief("oprf-unblind: expected OPRF EVALUATION PEM, got '%s'", epem.label);
+    if (epem.n_items < 1) die("oprf-unblind: malformed EVALUATION PEM");
+    BitArray beta;
+    ba_from_der_item(&beta, epem.vals[0], epem.vlens[0]);
+    pem_key_free(&epem);
+
+    BitArray F;
+    oprf_unblind(&F, &beta, &r);
+    explicit_bzero(&r, sizeof(r));
+
+    /* Output: hex string (+ newline) */
+    int i;
+    char hex[KEYBYTES * 2 + 2];
+    for (i = 0; i < KEYBYTES; i++) sprintf(hex + 2*i, "%02x", F.b[i]);
+    hex[KEYBYTES * 2] = '\n';
+    hex[KEYBYTES * 2 + 1] = '\0';
+    write_binary_file(out_path, (const uint8_t*)hex, strlen(hex));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1768,6 +1905,17 @@ static void usage(void)
 "    Tweakable wide-block cipher (78.B).  Unique tweak per (sector, block-index).\n"
 "    Key: HERRADURA SESSION KEY PEM.\n"
 "\n"
+"  oprf-blind --in FILE [--out FILE]\n"
+"    OPRF client step 1: hash input and blind with random scalar r.\n"
+"    Outputs HERRADURA OPRF CLIENT STATE PEM; send alpha field to server.\n"
+"\n"
+"  oprf-eval --key OPRF_KEY --in STATE_PEM [--out FILE]\n"
+"    OPRF server step: evaluate alpha^k and output HERRADURA OPRF EVALUATION PEM.\n"
+"    Key: HERRADURA OPRF PRIVATE KEY PEM.\n"
+"\n"
+"  oprf-unblind --state STATE_PEM --eval EVAL_PEM [--out FILE]\n"
+"    OPRF client step 2: recover F(k,x) and output as 64-char hex.\n"
+"\n"
 "PEM output goes to stdout when --out is absent or '-'.\n"
 "All keys are 256-bit.\n"
     );
@@ -1794,8 +1942,11 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "dgst")    == 0) { cmd_dgst(argc, argv);    return 0; }
     if (strcmp(cmd, "encfile") == 0) { cmd_encfile(argc, argv); return 0; }
     if (strcmp(cmd, "decfile") == 0) { cmd_decfile(argc, argv); return 0; }
-    if (strcmp(cmd, "fpe")     == 0) { cmd_fpe(argc, argv);     return 0; }
-    if (strcmp(cmd, "twk")     == 0) { cmd_twk(argc, argv);     return 0; }
+    if (strcmp(cmd, "fpe")          == 0) { cmd_fpe(argc, argv);          return 0; }
+    if (strcmp(cmd, "twk")          == 0) { cmd_twk(argc, argv);          return 0; }
+    if (strcmp(cmd, "oprf-blind")   == 0) { cmd_oprf_blind(argc, argv);   return 0; }
+    if (strcmp(cmd, "oprf-eval")    == 0) { cmd_oprf_eval(argc, argv);    return 0; }
+    if (strcmp(cmd, "oprf-unblind") == 0) { cmd_oprf_unblind(argc, argv); return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;

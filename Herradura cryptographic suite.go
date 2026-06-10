@@ -511,4 +511,28 @@ func main() {
 			fmt.Println("+ Ratchet: duplicate message keys!")
 		}
 	}
+
+	// ── 80 — OPRF demo ───────────────────────────────────────────────────────
+	fmt.Println("\n*** OPRF (80) — 2HashDH over GF(2^256)*")
+	{
+		oprfMsg := []byte("oprf-demo-input")
+		k, err := OprfKeygen(256)
+		if err != nil {
+			fmt.Println("+ OprfKeygen error:", err)
+		} else {
+			r, alpha, err2 := OprfBlind(oprfMsg, 256)
+			if err2 != nil {
+				fmt.Println("+ OprfBlind error:", err2)
+			} else {
+				beta   := OprfEval(alpha, k, 256)
+				F      := OprfUnblind(beta, r, 256)
+				Fdirect := OprfDirect(oprfMsg, k, 256)
+				if F.Cmp(Fdirect) == 0 {
+					fmt.Println("- OPRF blind/eval/unblind round-trip correct")
+				} else {
+					fmt.Println("+ OPRF round-trip failed!")
+				}
+			}
+		}
+	}
 }
