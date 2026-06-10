@@ -4,6 +4,17 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.28] - 2026-06-10
+
+### Security — Fix three vulnerabilities identified in security review (TODO #81, #82, #83)
+
+- **`HerraduraCli/herradura_codec.h`** (TODO #81): added `PEM_LABEL_MAX 79` macro; `pem_unwrap` now rejects any PEM label longer than `PEM_LABEL_MAX` characters with `return -1` before the `memcpy`, preventing stack and heap buffer overflows when callers supply an 80-byte `label_out` buffer; self-test section 7 added — asserts that an 80-character label causes `pem_unwrap` to return `-1`.
+- **`HerraduraCli/herradura_cli.c`** (TODO #82): `zkp_nl_unpack_proof` now validates `n` (`1 ≤ n ≤ ZKP_NL_MAX_N`) and `rounds` (`1 ≤ rounds ≤ 4096`) immediately after decoding from the proof buffer, before any allocation; prevents integer-overflow-induced undersized heap allocation on 32-bit targets.
+- **`herradura.h`** (TODO #82): `zkp_nl_verify` entry guard added — returns 0 immediately if `n` or `rounds` are out of range, providing defence-in-depth for callers that use the header directly.
+- **`herradura.h`** (TODO #83): added `ct_eq32` (32-byte) and `ct_eq_keybytes` (KEYBYTES-byte) constant-time equality helpers alongside `ba_equal`; replaced `memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)` in `zkp_nl_verify` with `ct_eq32`; replaced `memcmp(cur, root, KEYBYTES)` in `haccum_verify` with `ct_eq_keybytes`, eliminating timing side-channels in ZKP-NL and Merkle-accumulator verification.
+
+---
+
 ## [1.9.27] - 2026-06-09
 
 ### Feature — aPAKE C+Go library + CLI (TODO #80 Batch 4-C/Go)

@@ -5272,3 +5272,177 @@ New test scripts:
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
 Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.27 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 4: `herradura.h` (`HpakeRecord`, `hpake_register`, `hpake_login_demo`) + C suite demo + `herradura_cli.c` (`pake-register`, `pake-demo`) + `herradura/herradura.go` (`HpakeRecord`, `HpakeRegister`, `HpakeLoginDemo`) + Go suite demo + `herradura_cli.go` (`cmdPakeRegister`, `cmdPakeDemo`) + `test_c_pake.sh` (7/7) + `test_go_pake.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). Batch 5 (Assembly n=32) remains open — low priority.
+
+---
+
+## Security Fixes — Identified 2026-06-10
+
+### 81. Fix stack/heap buffer overflow in `pem_unwrap` — oversized PEM label (Security, Critical)
+
+**Discovered:** Security review 2026-06-10.
+
+**Affected files:** `HerraduraCli/herradura_codec.h:297-300`, `HerraduraCli/herradura_cli.c:173,186`
+
+**Root cause:** `pem_unwrap()` copies the PEM `BEGIN` label into a caller-provided buffer
+with no length check:
+
+```c
+size_t ll = (size_t)(p - ls);
+memcpy(label_out, ls, ll);   /* no bound check — overflows if ll > 79 */
+label_out[ll] = '\0';
+```
+
+All callers supply an 80-byte buffer (`char label[80]`).  A malicious PEM file whose label
+exceeds 79 bytes overflows that buffer.  The two highest-risk call sites are both reachable
+from untrusted input:
+
+- `pem_key_load()` (`herradura_cli.c:173`) — called for signature files in `cmd_verify`,
+  `cmd_dec`, and `cmd_encfile` / `cmd_decfile`.  `PemKey` is a stack-local struct; overflow
+  writes past `label[80]` into the adjacent `der` pointer, `der_len`, `vals[]`, and
+  ultimately past the struct into other stack data and the saved return address.
+- `zkp_raw_pem_read()` (`herradura_cli.c:186`) — `label[80]` is a plain stack local;
+  overflow is similarly unbounded.
+
+**Fix plan:**
+
+1. Add a length guard inside `pem_unwrap` in `herradura_codec.h` before the `memcpy`:
+
+   ```c
+   size_t ll = (size_t)(p - ls);
+   if (ll >= 80) return -1;     /* label too long — reject */
+   memcpy(label_out, ls, ll);
+   label_out[ll] = '\0';
+   ```
+
+   The constant `80` should be replaced with a named macro (e.g., `PEM_LABEL_MAX 80`)
+   shared between the codec header and all callers so future buffer-size changes stay in
+   sync.
+
+2. Verify that every caller checks the return value of `pem_unwrap` / `pem_read_file` and
+   propagates the error rather than continuing with a potentially corrupted buffer.
+
+3. Add a regression test in `herradura_codec.h`'s self-test (`HERRADURA_CODEC_SELFTEST`)
+   that passes a PEM with an 80-character label and asserts `pem_unwrap` returns `-1`.
+
+Status: **DONE v1.9.28** — `PEM_LABEL_MAX 79` macro added to `herradura_codec.h` buffer-size section; `pem_unwrap` rejects labels with `ll > PEM_LABEL_MAX` before the memcpy; self-test section 7 added with an 80-character label that asserts `pem_unwrap` returns `-1`.
+
+---
+
+### 82. Add upper-bound validation for `rounds` in ZKP-NL proof deserialization (Security, Medium)
+
+**Discovered:** Security review 2026-06-10.
+
+**Affected files:** `HerraduraCli/herradura_cli.c:247-250`
+
+**Root cause:** `zkp_nl_unpack_proof()` reads `rounds` from the first 8 bytes of an
+attacker-supplied proof buffer and uses it directly as the malloc count, with no upper-bound
+check:
+
+```c
+int rounds = (int)(((uint32_t)buf[4]<<24)|((uint32_t)buf[5]<<16)|
+                   ((uint32_t)buf[6]<<8)|buf[7]);          /* fully attacker-controlled */
+
+ZkpNlRound *proof = (ZkpNlRound *)malloc((size_t)rounds * sizeof(ZkpNlRound));
+```
+
+On 64-bit hosts this produces an OOM failure for absurdly large values (no RCE).  However,
+`herradura.h` is a single-include header intended to be compiled into arbitrary C projects,
+including 32-bit targets (i386 and ARM Thumb-2 builds exist in this repo).  On a 32-bit
+system, a crafted `rounds` value can make `(size_t)rounds * sizeof(ZkpNlRound)` wrap to a
+small number, causing `malloc` to return a tiny buffer that the subsequent fill-loop
+overflows — heap corruption → RCE.
+
+A second, independent issue: casting `uint32_t → int` is undefined behaviour when the
+high bit is set; a negative `rounds` passed to `zkp_nl_verify` as `(size_t)negative_int`
+wraps to a near-`SIZE_MAX` value in the `ch_len` multiplication at `herradura.h:2154`,
+again a potential overflow.
+
+**Fix plan:**
+
+1. Immediately after reading `rounds` (and `n`) in `zkp_nl_unpack_proof`, add explicit
+   range validation before any allocation:
+
+   ```c
+   if (rounds <= 0 || rounds > 4096)
+       die("ZKP-NL proof: rounds out of range");
+   if (n <= 0 || n > ZKP_NL_MAX_N)
+       die("ZKP-NL proof: n out of range");
+   ```
+
+   `4096` is a safe ceiling — production use is `ZKP_NL_PROD_ROUNDS` (a small constant);
+   adjust the upper bound to match the highest legitimate value if it changes.
+
+2. Keep `rounds` and `n` as `int` but enforce the bounds before any arithmetic that feeds
+   `size_t` multiplications.
+
+3. In `herradura.h:zkp_nl_verify`, assert `rounds > 0` at entry so callers that use the
+   header directly are also protected.
+
+4. Add a test case in `CryptosuiteTests/Herradura_tests.c` that calls
+   `zkp_nl_unpack_proof` with a minimally crafted buffer setting `rounds = 0xFFFFFFFF`
+   and verifies the function calls `die()` / returns an error rather than crashing.
+
+Status: **DONE v1.9.28** — `herradura_cli.c:zkp_nl_unpack_proof` now validates `n` and `rounds` immediately after decoding (rejects `n <= 0 || n > ZKP_NL_MAX_N` or `rounds <= 0 || rounds > 4096`); `herradura.h:zkp_nl_verify` also guards its entry with the same range check and returns 0 on invalid parameters.
+
+---
+
+### 83. Replace `memcmp` with constant-time comparison in ZKP-NL verification (Security, Medium)
+
+**Discovered:** Security review 2026-06-10.
+
+**Affected files:** `herradura.h:2187`
+
+**Root cause:** ZKP-NL proof verification uses the standard `memcmp` to compare 32-byte
+recomputed commitment hashes against the proof's stored commitments:
+
+```c
+if (memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)) return 0;
+```
+
+`memcmp` implementations are permitted (and in practice do) short-circuit on the first
+differing byte.  A timing oracle over many verification calls lets an attacker learn how
+many leading bytes of the expected commitment hash match their crafted value, recovering
+the commitment byte-by-byte.  Knowing a commitment before the Fiat-Shamir challenge is
+selected undermines the hiding property of the commitment scheme and weakens the soundness
+argument of the ZKP.
+
+Note: the `ba_equal` function used elsewhere in the file (`herradura.h:91-98`) already
+uses a correct constant-time XOR-accumulation pattern; the `memcmp` at line 2187 is an
+inconsistency.
+
+**Fix plan:**
+
+1. Add a local 32-byte constant-time comparison helper near the top of `herradura.h`
+   (alongside `ba_equal`):
+
+   ```c
+   static int ct_eq32(const uint8_t *a, const uint8_t *b)
+   {
+       uint8_t diff = 0;
+       int i;
+       for (i = 0; i < 32; i++) diff |= a[i] ^ b[i];
+       return diff == 0;
+   }
+   ```
+
+2. Replace the `memcmp` calls at `herradura.h:2187`:
+
+   ```c
+   /* Before */
+   if (memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)) return 0;
+
+   /* After */
+   if (!ct_eq32(c_p1, coms[p1]) || !ct_eq32(c_p2, coms[p2])) return 0;
+   ```
+
+3. Audit all other `memcmp` calls in `herradura.h` and `herradura_cli.c` for similar
+   patterns where the compared value is security-sensitive (shared secrets, MACs, hashes
+   used in authentication).  `herradura.h:2307` (`memcmp(cur, root, KEYBYTES)` in the
+   Merkle path verifier) is a candidate for the same treatment.
+
+4. Add a comment above `ct_eq32` noting that the compiler must not optimise it away;
+   on compilers that support it, annotate the loop with a memory barrier or use
+   `__attribute__((optimize("O0")))` as a precaution, or prefer `memcmp_s` /
+   `CRYPTO_memcmp` if a suitable library is already linked.
+
+Status: **DONE v1.9.28** — `ct_eq32` and `ct_eq_keybytes` constant-time helpers added to `herradura.h` alongside `ba_equal`; `memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)` at line 2187 replaced with `ct_eq32`; `memcmp(cur, root, KEYBYTES)` in `haccum_verify` at line 2307 replaced with `ct_eq_keybytes`.
