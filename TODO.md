@@ -5446,3 +5446,73 @@ inconsistency.
    `CRYPTO_memcmp` if a suitable library is already linked.
 
 Status: **DONE v1.9.28** — `ct_eq32` and `ct_eq_keybytes` constant-time helpers added to `herradura.h` alongside `ba_equal`; `memcmp(c_p1, coms[p1], 32) || memcmp(c_p2, coms[p2], 32)` at line 2187 replaced with `ct_eq32`; `memcmp(cur, root, KEYBYTES)` in `haccum_verify` at line 2307 replaced with `ct_eq_keybytes`.
+
+---
+
+## Pre-existing Failures — Identified 2026-06-10
+
+### 84. Investigate and fix flaky Masked HSKE round-trip failure in Python test suite (Test Quality, Medium)
+
+**Discovered:** Full-suite run during security-review session 2026-06-10.
+
+**Affected files:** `CryptosuiteTests/Herradura_tests.py:1820-1849` (`test_masked_hske`),
+`CryptosuiteTests/Herradura_tests.py:431-436` (`fscx_revolve_masked_test`),
+`Herradura cryptographic suite.py:1743-1749` (`fscx_revolve_masked`)
+
+**Symptom:** Test [25] `Masked HSKE (78.H)` reports `round-trips=192/200 [FAIL]` when run as
+part of the full test suite with `-r 200`.  Running the masked round-trip logic in isolation
+yields 0 failures in 2000 trials, confirming the failure is intermittent and context-dependent.
+
+**Not caused by v1.9.28 security fixes** — `git show 63a8aea --stat` confirms zero Python
+files were modified in that commit.  The failure pre-dates the security-fix batch.
+
+**What the test checks:**
+
+```python
+ct  = fscx_revolve_masked_test(pt,  key, mask, _I_VALUE)   # 64 steps
+rec = fscx_revolve_masked_test(ct,  key, mask, _R_VALUE)   # 192 steps
+assert rec.uint == pt.uint
+```
+
+where `fscx_revolve_masked_test(A, B, mask, n)` computes:
+
+```python
+am = A ⊕ mask
+fm = fscx_revolve(am, B, n)
+fz = fscx_revolve(mask, 0, n)
+return fm ⊕ fz
+```
+
+**Mathematical analysis:** By GF(2)-linearity of `fscx_revolve` in its first argument,
+`fm ⊕ fz = fscx_revolve(A, B, n)` exactly — the mask cancels out.  The round-trip therefore
+reduces to `fscx_revolve(pt, key, 256) == pt`, which holds whenever the orbit period divides
+256.  Since all 256-bit FSCX orbits have period dividing 256 (period ∈ {128, 256}), the
+round-trip should hold unconditionally.
+
+**Hypothesis:** The failure may be caused by shared mutable state elsewhere in the test
+suite — for example, a `BitArray` instance whose `_val` or `_mask` field is mutated in-place
+by a preceding test (via the `.rol()` / `.ror()` mutating methods or a direct `_val` write),
+inadvertently affecting a cached value that ends up reused in this test.  Alternatively, a
+Python `random` / `os.urandom` interaction could be involved if `BitArray.random` is shadowed
+or patched by another test.
+
+**Fix plan:**
+
+1. Add `print` diagnostics (temporarily) to `test_masked_hske` to log the `(pt, key, mask)`
+   triple whenever a round-trip fails, to capture failing inputs.
+
+2. Re-run the full suite multiple times and collect failing triples.  Verify that the failing
+   inputs also fail in isolation; if they do not, the bug is a state-mutation side-effect.
+
+3. Audit all uses of the in-place `BitArray.rol()` / `BitArray.ror()` methods and any direct
+   `_val` assignments in the test suite; replace with the immutable `rotated()` form where
+   the result is later read as if it were unmodified.
+
+4. If isolation runs also fail for the captured inputs, inspect `fscx_revolve` for an
+   off-by-one in the step count or a bitwidth mismatch (e.g., `_KEYBITS` vs `KEYBITS`).
+
+5. Once root cause is confirmed, apply the minimal fix (mutability guard, step-count
+   correction, or similar), and add a deterministic regression test that runs the specific
+   failing inputs.
+
+Status: **Open**
