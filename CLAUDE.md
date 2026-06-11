@@ -124,22 +124,21 @@ x86_64-linux-gnu-ld -m elf_i386 -o CryptosuiteTests/Herradura_tests_i386 tests32
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-# C — tests [1]–[18] (security) + benchmarks [19]–[28]
+# C/Go/Python — security tests [1]–[27] + benchmarks [28]–[39]
+# (C also runs one C-only unlabeled test between [20] and [21])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s
 HTEST_ROUNDS=200 HTEST_TIME=1.5 ./CryptosuiteTests/Herradura_tests_c  # env-var equivalents
 
-# Go — tests [1]–[16] + benchmarks [17]–[28]
 cd CryptosuiteTests && go run Herradura_tests.go
 cd CryptosuiteTests && go run Herradura_tests.go -r 500 -t 2.0
 
-# Python — tests [1]–[19] (security) + benchmarks [20]–[29]
 python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
 # Assembly — build first (see Build Commands), then run:
-# ARM/NASM: tests [1]–[12]
+# ARM/NASM: tests [1]–[13]
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ```
