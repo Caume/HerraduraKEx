@@ -4,6 +4,14 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.30] - 2026-06-10
+
+### Fix — C test [25] Accumulator tamper-rejection incorrect for n=1 empty-proof case
+
+- **`CryptosuiteTests/Herradura_tests.c`**: `test_accumulator_correctness` now correctly counts the n=1 (single-leaf, depth=0) case as a tamper-rejected trial, matching the Go and Python implementations. When `depth == 0` the proof is empty and there is nothing to tamper — Go and Python both already incremented `ok_reject` unconditionally for this case. The C test was skipping the increment, causing a deterministic `tamper_reject=30/31 [FAIL]`. Fixed by restructuring the tamper branch to `if (depth > 0) { flip, check, count } else { count unconditionally }`.
+
+---
+
 ## [1.9.29] - 2026-06-10
 
 ### Fix — Spurious FAIL in Python test [25] Masked HSKE under time-limited runs (TODO #84)

@@ -3866,9 +3866,13 @@ static void test_accumulator_correctness(void)
             if (haccum_verify(root, leaves[si], proof, depth, (size_t)si))
                 ok_valid++;
             /* tamper: flip a byte in the proof */
-            if (depth > 0) proof[0] ^= 0xFF;
-            if (!haccum_verify(root, leaves[si], proof, depth, (size_t)si))
-                ok_reject++;
+            if (depth > 0) {
+                proof[0] ^= 0xFF;
+                if (!haccum_verify(root, leaves[si], proof, depth, (size_t)si))
+                    ok_reject++;
+            } else {
+                ok_reject++;  /* n=1: empty proof — tamper not applicable */
+            }
             free(proof);
         }
         free(leaves);
