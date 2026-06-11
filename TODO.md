@@ -5459,7 +5459,7 @@ Status: **DONE v1.9.28** — `ct_eq32` and `ct_eq_keybytes` constant-time helper
 `CryptosuiteTests/Herradura_tests.py:431-436` (`fscx_revolve_masked_test`),
 `Herradura cryptographic suite.py:1743-1749` (`fscx_revolve_masked`)
 
-**Symptom:** Test [25] `Masked HSKE (78.H)` reports `round-trips=192/200 [FAIL]` when run as
+**Symptom:** Test [26] `Masked HSKE (78.H)` reports `round-trips=192/200 [FAIL]` when run as
 part of the full test suite with `-r 200`.  Running the masked round-trip logic in isolation
 yields 0 failures in 2000 trials, confirming the failure is intermittent and context-dependent.
 
@@ -5550,3 +5550,55 @@ This is explicitly documented in `CLAUDE.md` and `README.md`: "Production decap 
 **No fix required.** The failure rate is a known property of the demo decoder. Go and Python use `known-e'` paths that always pass; C exposes the brute-force limitation explicitly.
 
 Status: **ACKNOWLEDGED** — Expected intermittent FAIL by design. No action required.
+
+---
+
+### 87. Unify test numbering across C, Go, and Python — eliminate benchmark/security collisions (Test Quality, Medium)
+
+**Discovered:** Cross-language consistency review 2026-06-11.
+
+**Affected files:**
+`CryptosuiteTests/Herradura_tests.c`, `CryptosuiteTests/Herradura_tests.go`,
+`CryptosuiteTests/Herradura_tests.py`, `CLAUDE.md`
+
+**Problems identified:**
+
+1. **CLAUDE.md severely outdated** — claims C has [1]–[18] security + [19]–[28] benchmarks; actual counts are [1]–[27] security + [28]–[39] benchmarks (after fix). Same discrepancy for Go and Python. Assembly listed as [1]–[12]; actual is [1]–[13].
+
+2. **Benchmark numbers collide with security test numbers** — when tests [22]–[27] (FPE, TWK, Accumulator, Masked HSKE, Ratchet) were added, the benchmarks were not renumbered. A run of any language produces duplicate `[N]` lines in output: `[25]` means both "Masked HSKE correctness" and "HSKE throughput benchmark".
+
+3. **Go [17]/[18]/[19] order inverted vs C/Python** — Go: HFSCX-256=[17], HPKS-Stern-F=[18], HPKE-Stern-F=[19]; C and Python: HPKS-Stern-F=[17], HPKE-Stern-F=[18], HFSCX-256=[19].
+
+4. **HPKS-Stern-Ring is [28] in C but [27] in Go/Python** — caused by C-only test `[20] F_stern range`, which shifts all subsequent C numbers by 1 relative to Go/Python.
+
+5. **Non-sequential output in all three languages** — Go/Python print `[27] HPKS-Stern-Ring` before `[19]–[26]` because `testHpksSternRingCorrectness` is called before HFSCX-256 and ZKP tests in `main()`. C similarly prints `[20]` and `[28]` before `[19]`.
+
+**Fix plan:**
+
+Establish unified security test numbering [1]–[27] identical across C, Go, and Python:
+
+| # | Test | Change required |
+|---|------|-----------------|
+| [17] | HPKS-Stern-F correctness | Go: reorder (currently [18]) |
+| [18] | HPKE-Stern-F correctness | Go: reorder (currently [19]) |
+| [19] | HFSCX-256-DM known-answer | Go: reorder (currently [17]); C/Py: fix call order |
+| [20] | HPKS-Stern-Ring | C: renumber [28]→[20]; Go/Py: renumber [27]→[20] |
+| [21] | ZKP-RNL completeness | Go/Py: renumber [20]→[21]; C: unchanged |
+| [22] | ZKP-NL completeness | Go/Py: renumber [21]→[22]; C: unchanged |
+| [23] | FPE (78.A) | Go/Py: renumber [22]→[23]; C: unchanged |
+| [24] | TWK (78.B) | Go/Py: renumber [23]→[24]; C: unchanged |
+| [25] | Accumulator (78.J) | Go/Py: renumber [24]→[25]; C: unchanged |
+| [26] | Masked HSKE (78.H) | Go/Py: renumber [25]→[26]; C: unchanged |
+| [27] | Ratchet (78.C) | Go/Py: renumber [26]→[27]; C: unchanged |
+
+C-only `F_stern range at n=32` (currently [20]): remove the `[N]` label from its output header; test still runs but is no longer numbered (appears between [20] and [21] in call order).
+
+Renumber benchmarks to [28]–[39] in all three languages (currently [22]–[33] in Go, [25]–[36] in Python, [26]–[37] in C), eliminating all collisions.
+
+Fix `main()` call order in all three so output is strictly monotone: [1]–[27] then [28]–[39].
+
+Update CLAUDE.md testing section to reflect actual counts.
+
+Update TODO #84 reference: Python test `[25]` → `[26]` (Masked HSKE renumbered).
+
+Status: **DONE v1.9.31**

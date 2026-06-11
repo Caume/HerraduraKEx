@@ -602,11 +602,11 @@ func testHpkeNlCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Security test — HFSCX-256 hash known-answer vectors [17]
+// Security test — HFSCX-256 hash known-answer vectors [19]
 // ---------------------------------------------------------------------------
 
 func testHfscx256KAV() {
-	fmt.Println("[17] HFSCX-256-DM known-answer vectors  [NL-FSCX HASH]")
+	fmt.Println("[19] HFSCX-256-DM known-answer vectors  [NL-FSCX HASH]")
 	expEmpty := []byte{
 		0xe7, 0x08, 0x2e, 0x7f, 0x03, 0x8a, 0x6e, 0x32,
 		0xe4, 0x80, 0xb5, 0xf1, 0xd9, 0x69, 0xea, 0x2c,
@@ -650,11 +650,11 @@ func testHfscx256KAV() {
 }
 
 // ---------------------------------------------------------------------------
-// Security tests — Code-Based PQC (Stern-F) [18-19]
+// Security tests — Code-Based PQC (Stern-F) [17-18]
 // ---------------------------------------------------------------------------
 
 func testHpksSternFCorrectness() {
-	fmt.Printf("[18] HPKS-Stern-F correctness: sign+verify  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[17] HPKS-Stern-F correctness: sign+verify  (N=256, t=16, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	N := testRounds(3)
 	ok := 0
 	t0 := time.Now()
@@ -673,7 +673,7 @@ func testHpksSternFCorrectness() {
 }
 
 func testHpkeSternFCorrectness() {
-	fmt.Println("[19] HPKE-Stern-F correctness: encap+decap  (n=32, t=2, brute-force)  [CODE-BASED PQC]")
+	fmt.Println("[18] HPKE-Stern-F correctness: encap+decap  (n=32, t=2, brute-force)  [CODE-BASED PQC]")
 	N := testRounds(20)
 	ok := 0
 	t0 := time.Now()
@@ -695,7 +695,7 @@ func testHpkeSternFCorrectness() {
 }
 
 func testHpksSternRingCorrectness() {
-	fmt.Printf("[27] HPKS-Stern-Ring correctness: OR-composition, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
+	fmt.Printf("[20] HPKS-Stern-Ring correctness: OR-composition, k=3, N=256, rounds=%d  [CODE-BASED RING SIG]\n", sdfTestRounds)
 	N  := testRounds(3)
 	ok := 0
 	t0 := time.Now()
@@ -720,11 +720,11 @@ func testHpksSternRingCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks [22-33]
+// Performance benchmarks [28-39]
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[22] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[28] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -738,7 +738,7 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[23] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[29] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -753,7 +753,7 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[24] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[30] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -772,7 +772,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[25] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[31] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		rv   := rVal(size)
@@ -791,7 +791,7 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[26] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[32] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g    := big.NewInt(GfGen)
@@ -817,7 +817,7 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[27] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[33] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		a  := randBA(size)
@@ -828,7 +828,7 @@ func benchNlFscxRevolve() {
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[27b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+	fmt.Println("[33b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		rv := rVal(size)
 		a  := randBA(size)
@@ -844,7 +844,7 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[28] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[34] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		sink := randBA(size)
@@ -864,7 +864,7 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[29] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	fmt.Println("[35] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
 	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
@@ -881,7 +881,7 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[30] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Println("[36] HKEX-RNL handshake throughput  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := RnlMPoly(nRnl)
@@ -900,7 +900,7 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[31] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[37] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
@@ -915,14 +915,14 @@ func benchHpksSternF() {
 }
 
 // ---------------------------------------------------------------------------
-// Security tests [20]-[21]: ZKP-RNL and ZKP-NL
+// Security tests [21]-[22]: ZKP-RNL and ZKP-NL
 // ---------------------------------------------------------------------------
 
 var zkpMsg  = []byte("Herradura ZKP test")
 var zkpMsg2 = []byte("Herradura ZKP tamper")
 
 func testZkpRnlCorrectness() {
-	fmt.Println("[20] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
+	fmt.Println("[21] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
 	zkpRnlSizes := []int{32, 256}
 	for _, n := range zkpRnlSizes {
 		N := testRounds(5)
@@ -952,7 +952,7 @@ func testZkpRnlCorrectness() {
 }
 
 func testZkpNlCorrectness() {
-	fmt.Println("[21] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
+	fmt.Println("[22] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
 	zkpNlSizes  := []int{32, 64}
 	zkpNlRounds := 16
 	for _, n := range zkpNlSizes {
@@ -983,12 +983,12 @@ func testZkpNlCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks [32]-[33]: ZKP
+// Performance benchmarks [38]-[39]: ZKP
 // ---------------------------------------------------------------------------
 
 func benchZkpRnl() {
 	const n = 256
-	fmt.Printf("[32] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
+	fmt.Printf("[38] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
 	mBase  := RnlMPoly(n)
 	aRand  := RnlRandPoly(n, RnlQ)
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1009,7 +1009,7 @@ func benchZkpNl() {
 		n      = 32
 		rounds = 16
 	)
-	fmt.Printf("[33] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
+	fmt.Printf("[39] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
 	A, B, y, _ := ZkpNlKeygen(n)
 	ops, elapsed := bench("", func() {
 		proof, err := ZkpNlProve(A, B, y, n, rounds, zkpMsg)
@@ -1023,11 +1023,11 @@ func benchZkpNl() {
 }
 
 // ---------------------------------------------------------------------------
-// Security tests [22]-[24]: FPE / Tweakable / Accumulator (78.A/B/J)
+// Security tests [23]-[25]: FPE / Tweakable / Accumulator (78.A/B/J)
 // ---------------------------------------------------------------------------
 
 func testFpeCorrectness() {
-	fmt.Println("[22] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
+	fmt.Println("[23] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
 	N := testRounds(1000)
 	ok := 0
 	t0 := time.Now()
@@ -1051,7 +1051,7 @@ func testFpeCorrectness() {
 }
 
 func testTwkCorrectness() {
-	fmt.Println("[23] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
+	fmt.Println("[24] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
 	N := testRounds(1000)
 	ok := 0
 	t0 := time.Now()
@@ -1076,7 +1076,7 @@ func testTwkCorrectness() {
 }
 
 func testAccumulatorCorrectness() {
-	fmt.Println("[24] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
+	fmt.Println("[25] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
 	sizes  := []int{1, 2, 4, 8, 16}
 	total, okValid, okReject := 0, 0, 0
 	for _, n := range sizes {
@@ -1113,11 +1113,11 @@ func testAccumulatorCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Security tests [25]-[26]: Masking / Ratchet (78.H/C)
+// Security tests [26]-[27]: Masking / Ratchet (78.H/C)
 // ---------------------------------------------------------------------------
 
 func testMaskedHske() {
-	fmt.Println("[25] Masked HSKE (78.H) — GF(2)-linearity masking  [NEW]")
+	fmt.Println("[26] Masked HSKE (78.H) — GF(2)-linearity masking  [NEW]")
 	N := testRounds(200)
 	okRt, okLin := 0, 0
 	for i := 0; i < N; i++ {
@@ -1148,7 +1148,7 @@ func testMaskedHske() {
 }
 
 func testRatchetForwardSecrecy() {
-	fmt.Println("[26] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
+	fmt.Println("[27] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
 	steps := testRounds(10); if steps > 10 { steps = 10 }
 	okUniq, okDiv := true, true
 
@@ -1225,7 +1225,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.15 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.31 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1258,12 +1258,14 @@ func main() {
 	testHpksNlCorrectness()
 	testHpkeNlCorrectness()
 
-	fmt.Println("--- Security Tests: HFSCX-256 Hash ---\n")
-	testHfscx256KAV()
-
 	fmt.Println("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
 	testHpksSternFCorrectness()
 	testHpkeSternFCorrectness()
+
+	fmt.Println("--- Security Tests: Hash (HFSCX-256) ---\n")
+	testHfscx256KAV()
+
+	fmt.Println("--- Security Tests: Code-Based PQC (Ring Signatures) ---\n")
 	testHpksSternRingCorrectness()
 
 	fmt.Println("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")

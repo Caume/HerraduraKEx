@@ -4,6 +4,18 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.31] - 2026-06-11
+
+### Housekeeping — Unify test numbering across C, Go, and Python (TODO #87)
+
+- **`CryptosuiteTests/Herradura_tests.c`**: Security tests are now [1]–[27], identical to Go and Python. HPKS-Stern-Ring renumbered [28]→[20]. The C-only F_stern range test loses its `[N]` label (runs between [20] and [21]). The main() call order is restructured so [17]→[18]→[19] print sequentially: Stern-F section, then Hash (HFSCX-256), then Ring Signatures. Benchmarks shifted from [26]–[37] → [28]–[39] to eliminate collision with security tests [26]–[27]. New sections: "Code-Based PQC (Ring Signatures)" splits off from the Stern-F section. File header updated to v1.9.31 with accurate test index.
+- **`CryptosuiteTests/Herradura_tests.go`**: HFSCX-256-DM reordered [17]→[19]; HPKS-Stern-F [18]→[17]; HPKE-Stern-F [19]→[18] (now matches C and Python). HPKS-Stern-Ring [27]→[20]. ZKP/FPE/TWK/Accumulator/Masked/Ratchet security tests shifted +1 ([20]–[26]→[21]–[27]). Benchmarks shifted from [22]–[33] → [28]–[39]. main() call order updated so Stern-F and HFSCX-256 execute before Ring test. Version banner updated to v1.9.31.
+- **`CryptosuiteTests/Herradura_tests.py`**: HPKS-Stern-Ring [27]→[20]. ZKP/FPE/TWK/Accumulator/Masked/Ratchet security tests shifted +1 ([20]–[26]→[21]–[27]). Benchmarks shifted from [25]–[36] → [28]–[39]. main() call order fixed: HFSCX-256 now executes before Ring test, giving sequential output. Version banner updated to v1.9.31.
+- **`CLAUDE.md`**: Testing section now accurately documents [1]–[27] security tests + [28]–[39] benchmarks for C/Go/Python; assembly count corrected [1]–[12]→[1]–[13].
+- **`TODO.md`**: TODO #84 symptom updated to reference test [26] (was [25]) following Masked HSKE renumbering.
+
+---
+
 ## [1.9.30] - 2026-06-10
 
 ### Fix — C test [25] Accumulator tamper-rejection incorrect for n=1 empty-proof case

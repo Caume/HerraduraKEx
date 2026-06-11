@@ -1,5 +1,7 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.11
+    Herradura KEx — Security & Performance Tests (Python) v1.9.31
+    v1.9.31: Unified test numbering [1]–[27] across C/Go/Python; benchmarks [28]–[39] (TODO #87).
+            HPKS-Stern-Ring [27]→[20]; ZKP/FPE/TWK/Acc/Masked/Ratchet shifted +1; benchmarks shifted +3.
     v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
             benchmarks renumbered [22]-[33].
     v1.8.7: 32-bit benchmark columns; bench_hpks_stern_f loops over all sizes (TODO #61 extension).
@@ -1596,7 +1598,7 @@ def test_hpke_stern_f_correctness():
 
 def test_hpks_stern_ring_correctness():
     N_SDF = 32; SDF_RING_ROUNDS = 4; RING_K = 3
-    print(f"[27] HPKS-Stern-Ring correctness: OR-composition, k={RING_K}, N={N_SDF}, rounds={SDF_RING_ROUNDS}  [CODE-BASED RING SIG]")
+    print(f"[20] HPKS-Stern-Ring correctness: OR-composition, k={RING_K}, N={N_SDF}, rounds={SDF_RING_ROUNDS}  [CODE-BASED RING SIG]")
     n_run = _iters(3); ok = 0
     for i in _trange(n_run):
         ring_keys = []; ring_errors = []
@@ -1703,7 +1705,7 @@ ZKP_MSG2 = b"Herradura ZKP tamper"
 
 
 def test_zkp_rnl_correctness():
-    print("[20] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
+    print("[21] ZKP-RNL Sigma-protocol completeness + tamper-rejection  [PQC-EXT]")
     for n in [32, 256]:
         N = _iters(5)
         ok_verify = 0; ok_tamper = 0; n_run = 0
@@ -1728,7 +1730,7 @@ def test_zkp_rnl_correctness():
 
 
 def test_zkp_nl_correctness():
-    print("[21] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
+    print("[22] ZKP-NL (ZKBoo) completeness + tamper-rejection  [PQC-EXT]")
     zkp_nl_rounds = 16
     for n in [32, 64]:
         N = _iters(5)
@@ -1757,7 +1759,7 @@ def test_zkp_nl_correctness():
 # ---------------------------------------------------------------------------
 
 def test_fpe_correctness():
-    print("[22] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
+    print("[23] FPE (78.A) encrypt→decrypt round-trip  [NEW]")
     N = _iters(1000); ok = 0; n_run = 0
     for _ in _trange(N):
         n_run += 1
@@ -1774,7 +1776,7 @@ def test_fpe_correctness():
 
 
 def test_twk_correctness():
-    print("[23] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
+    print("[24] Tweakable wide-block cipher (78.B) encrypt→decrypt round-trip  [NEW]")
     N = _iters(1000); ok = 0; n_run = 0
     for _ in _trange(N):
         n_run += 1
@@ -1792,7 +1794,7 @@ def test_twk_correctness():
 
 
 def test_accumulator_correctness():
-    print("[24] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
+    print("[25] Cryptographic Accumulator (78.J) — Merkle proof  [NEW]")
     sizes = [1, 2, 4, 8, 16]
     total = ok_valid = ok_reject = 0
     for n in sizes:
@@ -1818,7 +1820,7 @@ def test_accumulator_correctness():
 
 
 def test_masked_hske():
-    print("[25] Masked HSKE (78.H) — GF(2)-linearity masking correctness  [NEW]")
+    print("[26] Masked HSKE (78.H) — GF(2)-linearity masking correctness  [NEW]")
     N = _iters(200)
     ok = 0; n_run = 0
     for _ in _trange(N):
@@ -1851,7 +1853,7 @@ def test_masked_hske():
 
 
 def test_ratchet_forward_secrecy():
-    print("[26] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
+    print("[27] Ratchet (78.C) — forward secrecy & key uniqueness  [NEW]")
     steps = min(_iters(20), 20)
     seeds_tested = 5; all_ok = True
     for trial in range(seeds_tested):
@@ -1900,7 +1902,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[25] FSCX throughput  [CLASSICAL]")
+    print("[28] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -1910,7 +1912,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[26] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[29] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -1920,7 +1922,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[27] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[30] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -1933,7 +1935,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[28] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[31] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -1945,7 +1947,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[29] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[32] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -1962,13 +1964,13 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[30] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[33] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[27b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+    print("[33b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
@@ -1978,7 +1980,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[31] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[34] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -1994,7 +1996,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[32] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    print("[35] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -2008,7 +2010,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[33] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[36] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -2024,7 +2026,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[34] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    print("[37] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
     rounds = 4; sink = [True]
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
@@ -2038,7 +2040,7 @@ def bench_hpks_stern_f():
 
 def bench_zkp_rnl():
     n = 256
-    print(f"[35] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
+    print(f"[38] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
     m_base  = _rnl_m_poly(n)
     a_rand  = _rnl_rand_poly(n, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -2055,7 +2057,7 @@ def bench_zkp_rnl():
 
 def bench_zkp_nl():
     n = 32; rounds = 16
-    print(f"[36] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
+    print(f"[39] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
     A, B, y = _zkp_nl_keygen(n)
     def fn():
         proof = _zkp_nl_prove(A, B, y, n, rounds, ZKP_MSG)
@@ -2130,10 +2132,12 @@ if __name__ == '__main__':
     print("--- Security Tests: Code-Based PQC (Stern-F) ---\n")
     test_hpks_stern_f_correctness()
     test_hpke_stern_f_correctness()
-    test_hpks_stern_ring_correctness()
 
-    print("--- Security Tests: HFSCX-256 Hash ---\n")
+    print("--- Security Tests: Hash (HFSCX-256) ---\n")
     test_hfscx_256()
+
+    print("--- Security Tests: Code-Based PQC (Ring Signatures) ---\n")
+    test_hpks_stern_ring_correctness()
 
     print("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n")
     test_zkp_rnl_correctness()

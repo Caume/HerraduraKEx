@@ -4,16 +4,18 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.11
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.31
+    v1.9.31: Unified test numbering [1]–[27] across C/Go/Python; benchmarks [28]–[39] (TODO #87).
+            HPKS-Stern-Ring [28]→[20]; F_stern range unlabeled (C-only); benchmarks shifted +2.
     v1.9.11: ZKP-RNL + ZKP-NL security tests [21][22] and benchmarks [33][34] (TODO #77 Batch 7);
             benchmarks renumbered [23]-[34].
     v1.8.7: 32-bit benchmark columns added; N=128 HPKS-Stern-F implemented (TODO #61 extension).
     v1.8.0: KDF domain constant — ba_rnl_kdf_seed replaces ba_rol_k at all HSKE-NL-A1/HKEX-RNL seed sites (TODO #38).
     v1.6.1: stern_hash_ba DS parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: stern_hash_ba + stern_hash_64 HFSCX-256 finalizer (TODO #43).
-    v1.5.43: F_stern range compression HyperLogLog test [20] (TODO #42 Step 1);
-             benchmarks renumbered [21]-[30] (now [23]-[34]).
-    v1.5.25: herradura.h shared library + HFSCX-256 KAV test [19]; benchmarks renumbered [20]-[29].
+    v1.5.43: F_stern range compression HyperLogLog test (TODO #42 Step 1);
+             benchmarks renumbered.
+    v1.5.25: herradura.h shared library + HFSCX-256 KAV test [19]; benchmarks renumbered.
     v1.5.23: HerraduraCli OpenSSL-style CLI (TODO #25); CliTest shell test suite.
     v1.5.20: 256-bit NL-FSCX v2 BitArray functions; tests expanded to full multi-size:
             Batch 2 — tests [10]–[13] loop {64,128,256}; adds ba_sub256, ba_mul256,
@@ -26,15 +28,13 @@
             Batch 5 — HPKS/HPKE-Stern-F N=32/64; test [17] loops {32,64,256}; [18] adds N=64.
             Batch 6 — bn_* parameterised arithmetic layer (Groups A–E); tests [7],[8],[15]
             extended from {32,64,128} to {32,64,128,256} using bn_mul_mod_ord_n/bn_sub_mod_ord_n.
-    v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18] + bench [28].
-            Benchmarks renumbered [17]–[25] → [19]–[27] to make room for new tests.
+    v1.5.18: HPKS-Stern-F + HPKE-Stern-F code-based PQC tests [17][18].
     v1.5.13: HSKE-NL-A1 seed fix — seed=ROL(base,n/8) breaks counter=0 step-1 degeneracy.
     v1.5.10: HKEX-RNL KDF seed fix — seed=ROL(K,n/8) breaks step-1 degeneracy.
     v1.5.9: nl_fscx_revolve_v2_inv_{32,64,128} precompute delta(B) once — eliminates per-step multiply.
     v1.5.7: m_inv_32/64/128 use precomputed rotation tables (0x6DB6DB6D / constants).
     v1.5.6: rnl_rand_coeff bias fix — 3-byte rejection sampling (threshold=16711935).
-    v1.5.5: added PQC benchmarks [22]–[25] matching Python/Go; aligned test output labels
-            ([CLASSICAL]/[PQC-EXT]) and section headers; fixed version banner.
+    v1.5.5: added PQC benchmarks; aligned test output labels ([CLASSICAL]/[PQC-EXT]) and section headers.
             Phase 3 — multi-size loops [1],[5]–[9],[14]–[16]: 64-bit GF(2^64) and
             64-bit NL-FSCX; tests [1],[5],[6] loop {32,64,256}; [7]–[9],[14]–[16]
             loop {32,64}; key-sensitivity PASS criterion aligned to mean >= n/4.
@@ -47,37 +47,51 @@
     v1.5.4: NTT-based negacyclic polynomial multiplication (O(n log n)).
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
-      Tests [1],[5],[6]: HKEX-GF (32/64/256-bit); [7]–[9],[14]–[16]: 32/64-bit loops.
+
+    Security tests [1]–[27] (unified with Go and Python):
       [1]  HKEX-GF correctness: g^{ab}==g^{ba} (32/64/256-bit GF).
-      [7]  HPKS Schnorr correctness: g^s * C^e == R  (32/64/128/256-bit GF).
-      [8]  HPKS Schnorr Eve resistance: random forgery fails (32/64/128/256-bit GF).
-      [9]  HPKE El Gamal correctness: D == P (32/64-bit GF).
-      [10] NL-FSCX v1 non-linearity and aperiodicity (32-bit).
-      [11] NL-FSCX v2 bijectivity and exact inverse (32-bit).
-      [12] HSKE-NL-A1 counter-mode correctness: D == P (32-bit).
-      [13] HSKE-NL-A2 revolve-mode correctness: D == P (32-bit).
-      [14] HKEX-RNL key agreement: K_A == K_B (n=32/64, Ring-LWR).
-      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge, 32/64/128/256-bit GF).
-      [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt, 32/64-bit GF).
-      [17] HPKS-Stern-F correctness: sign+verify, N=256, t=16, rounds=4  [CODE-BASED PQC].
-      [18] HPKE-Stern-F correctness: encap+decap, N=32, t=2 (brute-force)  [CODE-BASED PQC].
-      [19] HFSCX-256 known-answer vectors  [PQC-EXT].
-      [20] F_stern(K,·) range compression at n=32 (HyperLogLog, TODO #42 Step 1)  [CODE-BASED PQC].
+      [2]  FSCX single-step linear diffusion (exactly 3 bits per flip).
+      [3]  Orbit period: FSCX_REVOLVE cycles back to A.
+      [4]  Bit-frequency bias (expected FAIL — FSCX is not a PRF).
+      [5]  HKEX-GF key sensitivity: flip 1 bit of a, measure HD of sk change.
+      [6]  HKEX-GF Eve resistance: S_op(C^C2, r) != sk.
+      [7]  HPKS Schnorr correctness: g^s * C^e == R.
+      [8]  HPKS Schnorr Eve resistance: random forgery fails.
+      [9]  HPKE El Gamal correctness: D == P.
+      [10] NL-FSCX v1 non-linearity and aperiodicity.
+      [11] NL-FSCX v2 bijectivity and exact inverse.
+      [12] HSKE-NL-A1 counter-mode correctness: D == P.
+      [13] HSKE-NL-A2 revolve-mode correctness: D == P.
+      [14] HKEX-RNL key agreement: K_A == K_B (Ring-LWR).
+      [15] HPKS-NL correctness: g^s * C^e == R (NL-FSCX v1 challenge).
+      [16] HPKE-NL correctness: D == P (NL-FSCX v2 encrypt/decrypt).
+      [17] HPKS-Stern-F correctness: sign+verify  [CODE-BASED PQC].
+      [18] HPKE-Stern-F correctness: encap+decap (brute-force for n=32)  [CODE-BASED PQC].
+      [19] HFSCX-256-DM known-answer vectors  [HASH].
+      [20] HPKS-Stern-Ring (78.I): OR-composition, k=3, N=256  [CODE-BASED RING SIG].
       [21] ZKP-RNL completeness + tamper-rejection (n=32, 256)  [PQC-EXT].
       [22] ZKP-NL completeness + tamper-rejection (n=32, 64)  [PQC-EXT].
-      [23] FSCX throughput (256-bit).
-      [24] HKEX-GF gf_pow throughput (32-bit).
-      [25] HKEX-GF full handshake (32-bit).
-      [26] HSKE round-trip (256-bit).
-      [27] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
-      [28] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
-      [28b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
-      [29] HSKE-NL-A1 counter-mode throughput (32-bit).
-      [30] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
-      [31] HKEX-RNL full handshake throughput (n=32).
-      [32] HPKS-Stern-F sign+verify throughput (N=256, t=16, rounds=4)  [CODE-BASED PQC].
-      [33] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
-      [34] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
+      [23] FPE (78.A) encrypt->decrypt round-trip  [NEW].
+      [24] Tweakable wide-block cipher (78.B) round-trip  [NEW].
+      [25] Cryptographic Accumulator (78.J) Merkle proof  [NEW].
+      [26] Masked HSKE (78.H) GF(2)-linearity masking  [NEW].
+      [27] Ratchet (78.C) forward secrecy & key uniqueness  [NEW].
+      C-only (unlabeled): F_stern(K,·) range compression at n=32 (HyperLogLog, TODO #42).
+
+    Performance benchmarks [28]–[39] (unified with Go and Python):
+      [28] FSCX throughput (256-bit).
+      [29] HKEX-GF gf_pow throughput (32-bit).
+      [30] HKEX-GF full handshake (32-bit).
+      [31] HSKE round-trip (256-bit).
+      [32] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      [33] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
+      [33b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
+      [34] HSKE-NL-A1 counter-mode throughput (32-bit).
+      [35] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
+      [36] HKEX-RNL full handshake throughput (n=32).
+      [37] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
+      [38] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
+      [39] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -3416,8 +3430,8 @@ static void test_fstern_range_n32(void)
     struct timespec t0, t1;
     int k, all_ok = 1;
 
-    printf("[20] F_stern(K,x)=NL-FSCX_v1^8(x^K,ROL(K,4)) range at n=32"
-           "  [CODE-BASED PQC]\n");
+    printf("F_stern(K,x)=NL-FSCX_v1^8(x^K,ROL(K,4)) range at n=32"
+           "  [C-only, CODE-BASED PQC]\n");
     printf("     HyperLogLog m=%d, std-err ~0.81%%; random-fn expected: 63.2%%\n",
            HLL_M);
 
@@ -3467,7 +3481,7 @@ static void test_hpks_stern_ring_correctness(void)
 #define RING_K 3
     struct timespec t0;
     int N, ok = 0, i;
-    printf("[28] HPKS-Stern-Ring (78.I): OR-composition, k=%d, N=256, rounds=%d"
+    printf("[20] HPKS-Stern-Ring (78.I): OR-composition, k=%d, N=256, rounds=%d"
            "  [CODE-BASED RING SIG]\n", RING_K, SDF_TEST_ROUNDS);
     N = TEST_ROUNDS(3);
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -3499,14 +3513,14 @@ static void test_hpks_stern_ring_correctness(void)
 #undef RING_K
 }
 
-/* [32] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
+/* [37] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
 static void bench_hpks_stern_f(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[35] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
+    printf("[37] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
     /* N=32 */
     { static SternSig32T bsig32;
       uint32_t seed32 = stern32_rand_seed(), e32 = stern32_rand_error(), msg32;
@@ -3586,7 +3600,7 @@ static void bench_hpks_stern_f(void)
 static const uint8_t zkp_msg[]  = "Herradura ZKP test";
 static const uint8_t zkp_msg2[] = "Herradura ZKP tamper";
 
-/* [33] ZKP-RNL sign+verify throughput (n=256) */
+/* [38] ZKP-RNL sign+verify throughput (n=256) */
 static void bench_zkp_rnl(void)
 {
     struct timespec t0, t1;
@@ -3597,7 +3611,7 @@ static void bench_zkp_rnl(void)
     int32_t s[256], C[256];
     int32_t w[256], c_poly[256], z[256];
     int i;
-    printf("[36] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
+    printf("[38] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
     rnl_m_poly_n(m_base, n);
     rnl_rand_poly_n(a_rand, n);
     rnl_poly_add_n(m_blind, m_base, a_rand, n);
@@ -3624,7 +3638,7 @@ static void bench_zkp_rnl(void)
     putchar('\n');
 }
 
-/* [34] ZKP-NL prove+verify throughput (n=32, rounds=16) */
+/* [39] ZKP-NL prove+verify throughput (n=32, rounds=16) */
 static void bench_zkp_nl(void)
 {
     struct timespec t0, t1;
@@ -3635,7 +3649,7 @@ static void bench_zkp_nl(void)
     uint64_t A, B, y;
     ZkpNlRound *proof;
     int i;
-    printf("[37] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
+    printf("[39] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
            n, rounds);
     zkp_nl_keygen(n, urnd_fp, &A, &B, &y);
     /* warm-up */
@@ -3971,7 +3985,7 @@ static void bench_fscx_throughput(void)
     long long ops;
     double secs;
     int i;
-    printf("[26] FSCX throughput  [CLASSICAL]\n");
+    printf("[28] FSCX throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32(), tmp;
       for (i = 0; i < 10; i++) { tmp = fscx32(a, b); a = tmp; }
@@ -4015,7 +4029,7 @@ static void bench_gf_pow_throughput(void)
     long long ops;
     double secs;
     int i;
-    printf("[27] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
+    printf("[29] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t base = rand32() | 1, exp = rand32() | 1, tmp;
       for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -4060,7 +4074,7 @@ static void bench_hkex_gf_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[28] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
+    printf("[30] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, b = rand32()|1, C, C2, skA, skB;
       for (i = 0; i < 5; i++) {
@@ -4126,7 +4140,7 @@ static void bench_hske_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[29] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
+    printf("[31] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t pt, key, enc, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4193,7 +4207,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[30] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
+    printf("[32] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, r = rand32()|1, pt = rand32();
       uint32_t C = gf_pow_32(GF_GEN32, a), R, ek, E, dk;
@@ -4278,7 +4292,7 @@ static void bench_nl_fscx_revolve(void)
     long long ops;
     double secs;
     int i;
-    printf("[31] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
+    printf("[33] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32();
       for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
@@ -4314,7 +4328,7 @@ static void bench_nl_fscx_revolve(void)
       printf("    bits=256  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 
-    printf("[28b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
+    printf("[33b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32(), E;
       for (i = 0; i < 5; i++) {
@@ -4372,7 +4386,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[32] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
+    printf("[34] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K, P, ks, sink = 0;
       K = rand32(); P = rand32();
@@ -4458,7 +4472,7 @@ static void bench_hske_nl_a2_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[33] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
+    printf("[35] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K = rand32(), P = rand32(), E, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4520,7 +4534,7 @@ static void bench_hkex_rnl_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[34] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
+    printf("[36] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
     /* n=32 (rnl32 fast path) */
     { rnl32_poly_t m_base, a_rand, m_blind;
       int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
@@ -4678,11 +4692,13 @@ int main(int argc, char *argv[])
     puts("--- Security Tests: Code-Based PQC (Stern-F) ---\n");
     test_hpks_stern_f_correctness();
     test_hpke_stern_f_correctness();
-    test_fstern_range_n32();
-    test_hpks_stern_ring_correctness();
 
     puts("--- Security Tests: Hash (HFSCX-256) ---\n");
     test_hfscx_256_kav();
+
+    puts("--- Security Tests: Code-Based PQC (Ring Signatures) ---\n");
+    test_fstern_range_n32();
+    test_hpks_stern_ring_correctness();
 
     puts("--- Security Tests: ZKP (Ring-LWR Sigma + NL-FSCX ZKBoo) ---\n");
     test_zkp_rnl_correctness();
