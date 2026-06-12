@@ -4,6 +4,17 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.32] - 2026-06-12
+
+### Security/Proofs — ZKP-RNL Σ-protocol relaxed special soundness + structured cheat tests (TODO #94, items 1–2)
+
+- **`SecurityProofs-3.md` §11.10.2**: The soundness argument is restated as **relaxed special soundness** (Lyubashevsky 2012). The previous sketch extracted (z−z')·(c−c')⁻¹, implicitly assuming challenge differences are invertible in R_q — unjustified for the suite parameters: q = 65537 gives 2n | q−1 for all power-of-two n ≤ 256, so x^n+1 splits into linear factors over F_q and R_q has zero divisors. Measured: 3/2000 random challenge pairs at n=32 yield nonzero non-invertible differences. The extractor now outputs the pair (z−z', c−c') as a relaxed witness (norm bounds stated) without inversion; the factor-2 norm relaxation is flagged for the open formal-reduction work (§11.10.6 item 1). Empirical-results table extended with the new cheat tests.
+- **`SecurityProofsCode/zkp_pqc_exploration.py`**: new §2.4b structured cheating provers — wrong-key witness (honest prover run with fresh s′ ≠ s), tampered commitment w (Fiat-Shamir check), perturbed response z (residual-norm check), and bounded challenge grinding (64 attempts/trial); all 0 passes. New §2.6 challenge-difference invertibility scan: evaluates c−c' at the n roots of x^n+1 over F_q (CRT split), empirically confirming non-invertible differences exist and motivating the relaxed formulation.
+- **`CryptosuiteTests/Herradura_tests.py`** test [21]: ZKP-RNL now also checks wrong-key rejection, tampered-w rejection, and perturbed-z rejection at n=32 and n=256 against the deployed `_rnl_sigma_sign`/`_rnl_sigma_verify`. (C/Go test extension deferred.)
+- **`TODO.md`**: #94 items 1–2 done; #92 gains a related finding — §11.4.3's claim that x^256+1 "does not split into degree-1 factors over F_65537 since 512 ∤ q−1" is arithmetically wrong (512 | 65536; the ring splits fully). KaTeX pipeline validator: SecurityProofs-3.md 158 OK, 0 FAIL.
+
+---
+
 ## [1.9.31] - 2026-06-11
 
 ### Housekeeping — Unify test numbering across C, Go, and Python (TODO #87)

@@ -1,5 +1,6 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.31
+    Herradura KEx — Security & Performance Tests (Python) v1.9.32
+    v1.9.32: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection (TODO #94).
     v1.9.31: Unified test numbering [1]–[27] across C/Go/Python; benchmarks [28]–[39] (TODO #87).
             HPKS-Stern-Ring [27]→[20]; ZKP/FPE/TWK/Acc/Masked/Ratchet shifted +1; benchmarks shifted +3.
     v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
@@ -1709,6 +1710,7 @@ def test_zkp_rnl_correctness():
     for n in [32, 256]:
         N = _iters(5)
         ok_verify = 0; ok_tamper = 0; n_run = 0
+        ok_wrongkey = 0; ok_wtamper = 0; ok_ztamper = 0
         m_base = _rnl_m_poly(n)
         for _ in _trange(N):
             n_run += 1
@@ -1723,8 +1725,32 @@ def test_zkp_rnl_correctness():
                 ok_verify += 1
             if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG2, w, c, z):
                 ok_tamper += 1
-        status = "PASS" if (ok_verify == n_run and ok_tamper == n_run) else "FAIL"
+            # Structured cheats (TODO #94):
+            # (a) wrong-key witness: honest signer algorithm run with a fresh
+            #     s' != s against the original public key C — must not verify.
+            s2, _C2 = _rnl_keygen(m_blind, n, RNLQ, RNLP)
+            try:
+                w2, c2, z2 = _rnl_sigma_sign(s2, m_blind, C, n, ZKP_MSG)
+                if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w2, c2, z2):
+                    ok_wrongkey += 1
+            except RuntimeError:
+                ok_wrongkey += 1   # rejection-limit on a wrong key is also a reject
+            # (b) tampered commitment w — must fail Fiat-Shamir re-derivation.
+            w_t = list(w); w_t[0] += 1
+            if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w_t, c, z):
+                ok_wtamper += 1
+            # (c) perturbed response z (FS check still passes; the residual
+            #     norm check must catch it).
+            z_t = list(z); z_t[0] += 1
+            if not _rnl_sigma_verify(m_blind, C, n, ZKP_MSG, w, c, z_t):
+                ok_ztamper += 1
+        all_ok = (ok_verify == n_run and ok_tamper == n_run and
+                  ok_wrongkey == n_run and ok_wtamper == n_run and
+                  ok_ztamper == n_run)
+        status = "PASS" if all_ok else "FAIL"
         print(f"    n={n:3d}  verify={ok_verify}/{n_run}  tamper_reject={ok_tamper}/{n_run}"
+              f"  wrongkey_reject={ok_wrongkey}/{n_run}"
+              f"  w_tamper={ok_wtamper}/{n_run}  z_tamper={ok_ztamper}/{n_run}"
               f"  [{status}]")
     print()
 
@@ -2073,7 +2099,7 @@ def bench_zkp_nl():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.9.16 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.32 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -2101,7 +2127,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.16 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.32 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

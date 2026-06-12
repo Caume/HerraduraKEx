@@ -5602,3 +5602,217 @@ Update CLAUDE.md testing section to reflect actual counts.
 Update TODO #84 reference: Python test `[25]` → `[26]` (Masked HSKE renumbered).
 
 Status: **DONE v1.9.31**
+
+---
+
+## PQC Security Proofs Review — Identified 2026-06-12
+
+Review scope: SecurityProofs-2.md §11–§11.9 (NL-FSCX, HKEX-RNL, Stern-F, HFSCX-256-DM)
+and SecurityProofs-3.md §11.10 (ZKP extensions), cross-checked against the deployed
+Python suite implementation.
+
+### 88. Apply HFSCX-256-DM finalization to `_stern_matrix_row` — F_stern-v2 fix only partially deployed (Security, High)
+
+**Affected files:** all six language targets (suite + `herradura.h` + Go package +
+assembly/Arduino n=32 demos), `SecurityProofs-2.md` §11.8.4, test files.
+
+**Problem.** SecurityProofs-2.md §11.8.4 ("Fix (TODO #43)") specifies that the range
+compression of F_stern is eliminated by composing with HFSCX-256-DM, and states "One
+HFSCX-256-DM call is added **per row of H** and per hash step in the commitment scheme."
+TODO #43 (DONE v1.6.0) applied the finalization to `_stern_hash` only.  The public
+parity-matrix row generator still uses raw NL-FSCX v1:
+
+```python
+def _stern_matrix_row(seed_int, row, n):
+    seed = BitArray(n, seed_int)
+    A0   = BitArray(n, seed_int ^ row).rotated(n // 8)
+    return nl_fscx_revolve_v1(A0, seed, n // 4)   # no HFSCX finalization
+```
+
+Consequence: rows of H are drawn from a range-compressed distribution (~21–28% distinct
+at n=32 per TODO #42 measurements; predicted <10^-4 distinct fraction at n=256 per
+§11.8.4 §10 extrapolation).  H is therefore distinguishable from a uniformly random
+binary matrix by collision counting, and duplicate/correlated rows reduce rank(H),
+weakening the SD(N,t) instance below its nominal hardness.  This contradicts the PRF
+premise of Theorem 17 (ε_PRF term) for the matrix-generation use, which §11.8.4
+presents as fixed.
+
+**Fix:** route each row through HFSCX-256-DM before truncation to n bits, exactly as
+`_stern_hash` does, in all six targets.  Wire-format breaking: public keys, syndromes,
+signatures, and KEM ciphertexts all change (H changes).  Update §11.8.4 to record
+deployment, update interop tests, bump version.
+
+Status: **PENDING**
+
+---
+
+### 89. HKEX-RNL: unauthenticated unilateral blinding polynomial enables parameter-substitution downgrade (Security, High)
+
+**Affected files:** suite (all targets), `HerraduraCli` kex flows, `SecurityProofs-2.md`
+§11.4.2–§11.4.3.
+
+**Problem.** §11.4.2: "One party (e.g. Alice) draws a_rand ← R_q uniformly and transmits
+it in the clear."  The security argument (§11.4.3) requires m_blind = m + a_rand to be
+uniformly random in R_q, and notes blinding is **required** for the Ring-LWR reduction.
+Two gaps:
+
+1. **Active substitution.** A MITM (or a malicious peer) can replace a_rand with a chosen
+   value, e.g. a_rand = −m(x) + e for small e, making m_blind sparse/structured.  The
+   protocol then degenerates toward the unblinded case that §11.4.3 explicitly warns is
+   open to lattice-reduction leverage; in the extreme m_blind = 0 all public keys become
+   rounding of 0.  Nothing in the wire format or code validates a_rand.
+2. **Non-contributory randomness.** Even passively, the proof's "uniform m_blind" premise
+   rests entirely on one party's RNG; a backdoored or weak RNG on one side silently
+   weakens both.
+
+**Fix plan:**
+- Make the blinding contributory: both parties send nonces n_A, n_B and derive
+  a_rand = XOF(n_A ‖ n_B) by expanding HFSCX-256-DM in counter mode to n coefficients
+  mod q (rejection-sample to keep uniformity).  This fits the existing two-round
+  HKEX-RNL message flow without adding a round.
+- At minimum (non-breaking interim): receiver-side sanity validation of a_rand
+  (reject if m_blind has low Hamming weight / low coefficient entropy) plus a
+  documented caveat in §11.4.3 that the uniformity assumption is trust-on-first-use.
+- Update SecurityProofs-2.md §11.4.2/§11.4.3 with the active-adversary model.
+
+Status: **PENDING**
+
+---
+
+### 90. HKEX-RNL: define an upgraded parameter set reaching ≥128-bit Core-SVP (Security, Medium)
+
+**Affected files:** suite (all targets), `SecurityProofs-2.md` §11.4.3/§11.6/§11.7.
+
+**Problem.** The TODO #71 landscape review (§11.4.3) places the deployed parameters
+(n=256, q=65537, p=4096, η=1) at ~105–115 classical / ~95–105 quantum Core-SVP bits —
+below the 128-bit ML-KEM-768 target.  The documents state this but no remediation path
+is planned.
+
+**Fix plan (analysis first, then optional deployment):**
+1. Run the LWE estimator over candidate upgrades: (a) η=2 CBD secrets (Kyber-512
+   baseline), (b) module rank k=2 over n=256 (Module-LWR, doubles key material),
+   (c) smaller q (e.g. 3329) with retuned p and re-verified Peikert reconciliation
+   margin (max per-coeff error vs q/8).
+2. Verify m(x) invertibility and reconciliation failure rate = 0 at the chosen set
+   (extend `hkex_rnl_failure_rate.py`).
+3. Document the selected set as `HKEX-RNL-128`; keep the current set as the default
+   wire format until a major version, or version-tag the PEM header.
+
+Status: **PENDING**
+
+---
+
+### 91. Stern-F: plan production-security parameter path (N ≥ 17000 QC-MDPC) or enforce demo-only status (Security, Medium)
+
+**Affected files:** suite (C/Go/Python), `HerraduraCli`, `docs/TUTORIAL.md`,
+`SecurityProofs-2.md` §11.8.4.
+
+**Problem.** §11.7/§11.8.4 (TODO #71 review) put HPKS-Stern-F / HPKE-Stern-F at the
+deployed (N=256, k=128, t=16) at only ~2^56–2^60 classical and ~2^30–2^40 quantum ISD
+operations — "demo only".  Yet §11.10.5 lists HPKS-Stern-F as "Production-ready,
+v1.5.18", and the CLI signs/encrypts with it without any warning.  The 78 KB proof size
+quoted everywhere also corresponds to the demo parameters.
+
+**Fix plan:**
+1. Immediate (docs/UX): reconcile §11.10.5 wording with the §11.8.4 caveat; add a
+   CLI warning (or `--i-know-this-is-demo` style acknowledgement) when Stern-F is used
+   at N=256; state demo status in TUTORIAL.md.
+2. Research: evaluate a QC-MDPC instantiation (BIKE-style, N≈24646, t=134) using the
+   NL-FSCX v1 PRF for seed expansion as already sketched in §11.8.4; requires a
+   QC-MDPC bit-flipping decoder (currently absent — decap uses known-e′/brute force).
+   Estimate signature/key sizes and decide go/no-go for implementation.
+
+Status: **PENDING**
+
+---
+
+### 92. Reconcile assumption A2's classical preimage bound with §11.9.4/§11.9.11 claims (Documentation/Proof consistency, Medium)
+
+**Affected files:** `SecurityProofs-2.md` §11.9.2, §11.9.4, §11.9.8, §11.9.11.
+
+**Problem.** Assumption A2 (§11.9.2) states that inverting F_1^64 "requires
+Ω(2^{n/2}) = Ω(2^{128}) **classical** operations and Ω(2^{n/2}) quantum queries".  But
+§11.9.4 and the §11.9.11 summary claim **2^256 classical** preimage and second-preimage
+resistance "under A2" — a bound A2 as written cannot deliver.  Either A2 understates the
+conjectured classical hardness (it should be Ω(2^n) classical / Ω(2^{n/2}) quantum,
+consistent with Corollary 2's brute-force bound), or the §11.9.4/§11.9.11 rows overstate
+it.  Theorem 18 and §11.9.8 item 1 also cite Ω(2^{n/2}) from A2 and should be re-checked
+once A2 is restated.
+
+**Fix:** restate A2 with separate classical (2^n) and quantum (2^{n/2}, Grover) bounds,
+then audit every downstream citation (§11.9.3–§11.9.11) for consistency, and re-run the
+KaTeX validator per CLAUDE.md before pushing.
+
+**Related finding (added 2026-06-12 during TODO #94 work):** §11.4.3 states that
+$x^{256}+1$ "does not split into degree-1 factors over F_65537 since 512 ∤ q−1".
+This is arithmetically wrong: q−1 = 65536 = 2^16 and 512 = 2^9 divides it, so 2n | q−1
+for every power-of-two n ≤ 256 and the ring splits **completely** into linear factors
+(empirically confirmed in `zkp_pqc_exploration.py` §2.6 at n=32).  Fully-splitting
+rings are standard for lattice schemes (Dilithium uses one), so this does not by
+itself invalidate the Ring-LWR hardness claim, but the stated justification for
+ruling out subfield/NTRU-style attacks must be corrected and the attack-surface
+discussion re-checked when fixing this TODO.
+
+Status: **PENDING**
+
+---
+
+### 93. HFSCX-256-DM open hardenings: per-call-site domain tags, HMAC mode, assembly per-slot DS (Security, Low)
+
+**Affected files:** suite (all targets), `HerraduraCli`, `SecurityProofs-2.md`
+§11.9.6/§11.9.7/§11.9.9/§11.9.11.
+
+Consolidates the three "open hardenings" already noted in §11.9.11 plus the assembly
+gap in §11.9.9, none of which has a TODO entry:
+
+1. **1-byte domain-tag prefix** per call site (0x01 dgst, 0x02 sign-pre-hash,
+   0x03 AEAD-MAC), introduced as a versioned wire-format option `HFSCX-256-DS`
+   (§11.9.7).  Removes the reliance on collision-resistance reasoning for
+   domain separation between `dgst` and sign pre-hash (which currently share IV).
+2. **HMAC-HFSCX-256-DM** construction available in the library, and required whenever
+   one long-term key is reused across modes (§11.9.6); current raw keyed-IV MAC stays
+   the AEAD default.
+3. **Assembly/Arduino n=32:** add per-slot DS tags to `stern_hash1_32`/`stern_hash2_32`
+   (currently only structural distinctness; §11.9.9 calls this "a future hardening
+   item").
+
+Status: **PENDING**
+
+---
+
+### 94. ZKP-RNL Σ-protocol: formal soundness gaps — challenge-difference invertibility, stronger cheat tests, and §11.10.6 follow-ups (Research, Medium)
+
+**Affected files:** `SecurityProofs-3.md` §11.10, `SecurityProofsCode/zkp_pqc_exploration.py`,
+suite ZKP-RNL implementations.
+
+**Problems identified in review of §11.10.2:**
+
+1. **Special soundness uses (c − c′)^{-1} without an invertibility argument.**  For
+   sparse ternary challenges in Z_q[x]/(x^n+1) the difference of two challenges is not
+   guaranteed invertible; standard Lyubashevsky-style proofs choose the challenge space
+   specifically so that differences are invertible (or work with relaxed soundness
+   extracting 2s-type witnesses).  §11.10.2's soundness sketch glosses over this.
+2. **Soundness testing is weak:** the only cheat tested is "random z, no s"
+   (200 trials).  Add structured cheats: z forged from a different key s′, replayed
+   transcripts with modified w, boundary-norm z, and challenge-grinding within
+   rejection-sampling limits.
+3. **§11.10.6 open directions** have no TODO tracking: (a) formal Ring-LWR reduction
+   quantifying the rounding-slack term, (b) NTT-accelerated Σ-protocol (prover/verifier
+   currently O(n²) schoolbook), (c) ZKB++ decomposition to cut ZKP-NL proofs from
+   920 KB to ~180 KB, (d) hybrid Ring-LWR + Stern-F credential.
+
+**Fix plan:** address item 1 in the proof text (restate as relaxed special soundness or
+restrict the challenge space and prove difference invertibility); implement item 2 in
+`zkp_pqc_exploration.py` and the suite test files; items 3(a)–(d) prioritized
+afterwards, with 3(b) (NTT) the cheapest concrete win.
+
+Status: **Items 1–2 DONE v1.9.32** — §11.10.2 restated as relaxed special soundness
+(extractor outputs (z−z', c−c') without inversion; norm bounds stated).  Empirical
+confirmation added (`zkp_pqc_exploration.py` §2.6): x^n+1 splits into n linear factors
+over F_65537 (since 2n | q−1), and 3/2000 random challenge pairs at n=32 have nonzero
+non-invertible differences — strict special soundness is genuinely false at these
+parameters.  Structured cheats implemented in `zkp_pqc_exploration.py` §2.4b
+(wrong-key witness, tampered-w, perturbed-z, 64-attempt grinding; 0 cheat passes) and
+in the Python suite test [21] at n=32/256 (wrong-key / w-tamper / z-tamper rejection).
+C/Go test-[21] extension deferred as a cross-language parity follow-up.  Items
+3(a)–(d) remain **OPEN**; 3(b) NTT acceleration is the recommended next step.
