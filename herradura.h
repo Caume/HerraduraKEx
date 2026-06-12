@@ -764,6 +764,105 @@ static int hske_nl_aead_decrypt(const BitArray *key, const BitArray *nonce,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HDRBG: forward-secure deterministic random bit generator (TODO #96)
+ *
+ * Fast-key-erasure pattern (Bernstein 2017) over the NL-FSCX v1 OWF:
+ *   state_0     = HFSCX-256("DRBG-INIT" || len(entropy)_be8 || entropy || pers)
+ *   output_i    = HFSCX-256(state_i || i_be8 || "DRBG-OUT")
+ *   state_{i+1} = nl_fscx_revolve_v1(state_i, DRBG_DOMAIN, n/4)
+ *   reseed      : state = HFSCX-256("DRBG-RESEED" || state || len_be8 || entropy)
+ *
+ * Backtracking resistance rests on the same OWF conjecture as the #78.C
+ * ratchet (Theorem 16, SecurityProofs-2 §11.8.3); the superseded state is
+ * erased with explicit_bzero after every block.  Collision risk of the
+ * non-bijective state walk: SecurityProofsCode/nl_fscx_v1_ratchet_collision.py.
+ *
+ * NON-GOALS: not a NIST SP 800-90A validated DRBG — no health tests, no
+ * prediction resistance, no entropy-source assessment.  It deterministically
+ * expands seed material that is already full-entropy.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static const uint8_t _DRBG_DOMAIN_BYTES[KEYBYTES] = {
+    'N','L','-','F','S','C','X','-','D','R','B','G','-','V','1',0,
+    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0
+};
+
+#define DRBG_MAX_BLOCKS (1ULL << 20)  /* output blocks per (re)seed (32 MiB) */
+
+typedef struct {
+    BitArray state;
+    uint64_t blocks;
+} HDrbg;
+
+static void _drbg_be64(uint8_t *dst, uint64_t v)
+{
+    int j;
+    for (j = 0; j < 8; j++) dst[j] = (uint8_t)((v >> (56 - 8 * j)) & 0xFF);
+}
+
+/* Instantiate from full-entropy seed material (>= 32 bytes recommended). */
+static void drbg_seed(HDrbg *d, const uint8_t *entropy, size_t entropy_len,
+                      const uint8_t *pers, size_t pers_len)
+{
+    size_t len = 9 + 8 + entropy_len + pers_len;
+    uint8_t *buf = (uint8_t *)malloc(len);
+    if (!buf) { fprintf(stderr, "drbg_seed: out of memory\n"); exit(1); }
+    memcpy(buf, "DRBG-INIT", 9);
+    _drbg_be64(buf + 9, (uint64_t)entropy_len);
+    if (entropy_len) memcpy(buf + 17, entropy, entropy_len);
+    if (pers_len) memcpy(buf + 17 + entropy_len, pers, pers_len);
+    hfscx_256(buf, len, NULL, d->state.b);
+    explicit_bzero(buf, len);
+    free(buf);
+    d->blocks = 0;
+}
+
+/* Generate n_bytes of output, ratcheting (and erasing) the state once per
+ * 32-byte block.  Returns 1, or 0 if DRBG_MAX_BLOCKS would be exceeded
+ * (reseed required; no output is produced). */
+static int drbg_generate(HDrbg *d, uint8_t *out, size_t n_bytes)
+{
+    BitArray dom, next;
+    uint8_t buf[KEYBYTES + 8 + 8], block[32];
+    size_t off, blk;
+    uint64_t n_blocks = (n_bytes + KEYBYTES - 1) / KEYBYTES;
+
+    if (d->blocks + n_blocks > DRBG_MAX_BLOCKS) return 0;
+    memcpy(dom.b, _DRBG_DOMAIN_BYTES, KEYBYTES);
+    for (off = 0; off < n_bytes; off += KEYBYTES) {
+        memcpy(buf, d->state.b, KEYBYTES);
+        _drbg_be64(buf + KEYBYTES, d->blocks);
+        memcpy(buf + KEYBYTES + 8, "DRBG-OUT", 8);
+        hfscx_256(buf, KEYBYTES + 8 + 8, NULL, block);
+        blk = (n_bytes - off < KEYBYTES) ? n_bytes - off : KEYBYTES;
+        memcpy(out + off, block, blk);
+        nl_fscx_revolve_v1_ba(&next, &d->state, &dom, I_VALUE);
+        explicit_bzero(d->state.b, KEYBYTES);   /* fast key erasure */
+        d->state = next;
+        d->blocks++;
+    }
+    explicit_bzero(buf, sizeof buf);
+    explicit_bzero(block, sizeof block);
+    return 1;
+}
+
+/* Mix fresh entropy into the state and reset the output-block counter. */
+static void drbg_reseed(HDrbg *d, const uint8_t *entropy, size_t entropy_len)
+{
+    size_t len = 11 + KEYBYTES + 8 + entropy_len;
+    uint8_t *buf = (uint8_t *)malloc(len);
+    if (!buf) { fprintf(stderr, "drbg_reseed: out of memory\n"); exit(1); }
+    memcpy(buf, "DRBG-RESEED", 11);
+    memcpy(buf + 11, d->state.b, KEYBYTES);
+    _drbg_be64(buf + 11 + KEYBYTES, (uint64_t)entropy_len);
+    if (entropy_len) memcpy(buf + 11 + KEYBYTES + 8, entropy, entropy_len);
+    hfscx_256(buf, len, NULL, d->state.b);
+    explicit_bzero(buf, len);
+    free(buf);
+    d->blocks = 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * HKEX-RNL: Ring-LWR key exchange helpers (n=256, negacyclic Z_q[x]/(x^n+1))
  * ───────────────────────────────────────────────────────────────────────────── */
 

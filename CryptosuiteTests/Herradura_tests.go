@@ -1,4 +1,6 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.33
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.34
+    v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
+            benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
             benchmarks renumbered [29]–[40].
     v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
@@ -30,6 +32,7 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	"math/bits"
 	mrand "math/rand"
 	"os"
 	"strconv"
@@ -726,7 +729,7 @@ func testHpksSternRingCorrectness() {
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[29] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[30] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -740,7 +743,7 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[30] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[31] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -755,7 +758,7 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[31] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[32] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -774,7 +777,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[32] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[33] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		rv   := rVal(size)
@@ -793,7 +796,7 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[33] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[34] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g    := big.NewInt(GfGen)
@@ -819,7 +822,7 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[34] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[35] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		a  := randBA(size)
@@ -830,7 +833,7 @@ func benchNlFscxRevolve() {
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[34b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+	fmt.Println("[35b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		rv := rVal(size)
 		a  := randBA(size)
@@ -846,7 +849,7 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[35] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[36] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		sink := randBA(size)
@@ -866,7 +869,7 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[36] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	fmt.Println("[37] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
 	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
@@ -883,7 +886,7 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[37] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Println("[38] HKEX-RNL handshake throughput  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := RnlMPoly(nRnl)
@@ -902,7 +905,7 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[38] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[39] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
@@ -985,12 +988,12 @@ func testZkpNlCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks [39]-[40]: ZKP
+// Performance benchmarks [40]-[41]: ZKP
 // ---------------------------------------------------------------------------
 
 func benchZkpRnl() {
 	const n = 256
-	fmt.Printf("[39] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
+	fmt.Printf("[40] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
 	mBase  := RnlMPoly(n)
 	aRand  := RnlRandPoly(n, RnlQ)
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1011,7 +1014,7 @@ func benchZkpNl() {
 		n      = 32
 		rounds = 16
 	)
-	fmt.Printf("[40] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
+	fmt.Printf("[41] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
 	A, B, y, _ := ZkpNlKeygen(n)
 	ops, elapsed := bench("", func() {
 		proof, err := ZkpNlProve(A, B, y, n, rounds, zkpMsg)
@@ -1247,6 +1250,73 @@ func testHskeNlAead() {
 		katStr, okRt, trials, okTamper, trials, status)
 }
 
+func testHdrbg() {
+	fmt.Println("[29] HDRBG (TODO #96) — KAT, determinism, reseed separation, block limit, monobit  [NEW]")
+
+	// Cross-language KAT (must match C/Go/Python suite outputs)
+	ent := make([]byte, 32)
+	for i := range ent {
+		ent[i] = byte(i)
+	}
+	d := DrbgSeed(ent, []byte("HDRBG-KAT"))
+	out, _ := d.DrbgGenerate(80)
+	okKat := fmt.Sprintf("%x", out) ==
+		"cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23"+
+			"90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e"+
+			"089ea95dc62208133b3475fadb10ef6d"
+	re := make([]byte, 16)
+	for i := range re {
+		re[i] = 0xa5
+	}
+	d.DrbgReseed(re)
+	out2, _ := d.DrbgGenerate(32)
+	okKat = okKat && fmt.Sprintf("%x", out2) ==
+		"bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf"
+
+	// Determinism + personalization divergence + reseed separation
+	d1 := DrbgSeed([]byte("ent-A"), []byte("p1"))
+	d2 := DrbgSeed([]byte("ent-A"), []byte("p1"))
+	d3 := DrbgSeed([]byte("ent-A"), []byte("p2"))
+	s1, _ := d1.DrbgGenerate(64)
+	s2, _ := d2.DrbgGenerate(64)
+	s3, _ := d3.DrbgGenerate(64)
+	okDet := bytes.Equal(s1, s2) && !bytes.Equal(s1, s3)
+	d2.DrbgReseed([]byte("fresh"))
+	s4, _ := d2.DrbgGenerate(64)
+	s5, _ := d1.DrbgGenerate(64)
+	okDet = okDet && !bytes.Equal(s4, s5)
+
+	// Block-limit enforcement: 2 blocks requested with 1 remaining
+	d4 := DrbgSeed([]byte("ent-limit"), nil)
+	d4.Blocks = DrbgMaxBlocks - 1
+	_, okOver := d4.DrbgGenerate(64)
+	_, okLast := d4.DrbgGenerate(32)
+	okLimit := !okOver && okLast
+
+	// Monobit sanity on 8 KiB of output
+	d5 := DrbgSeed([]byte("ent-monobit"), nil)
+	stream, _ := d5.DrbgGenerate(8192)
+	ones := 0
+	for _, b := range stream {
+		ones += bits.OnesCount8(b)
+	}
+	frac := float64(ones) / float64(8192*8)
+	okMono := frac >= 0.48 && frac <= 0.52
+
+	status := "PASS"
+	if !okKat || !okDet || !okLimit || !okMono {
+		status = "FAIL"
+	}
+	p := func(b bool) string {
+		if b {
+			return "PASS"
+		}
+		return "FAIL"
+	}
+	fmt.Printf("    kat=%s  determinism=%s  block_limit=%s  monobit=%.2f%%  [%s]\n\n",
+		p(okKat), p(okDet), p(okLimit), frac*100, status)
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -1288,7 +1358,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.33 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.34 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1344,6 +1414,7 @@ func main() {
 	testMaskedHske()
 	testRatchetForwardSecrecy()
 	testHskeNlAead()
+	testHdrbg()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()

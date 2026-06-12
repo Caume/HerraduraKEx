@@ -148,6 +148,7 @@
         nl_fscx_v2, nl_fscx_v2_inv, nl_fscx_revolve_v2, nl_fscx_revolve_v2_inv
         hfscx_256
         hske_nl_aead_encrypt, hske_nl_aead_decrypt  (HSKE-NL-AEAD, TODO #95)
+        drbg_seed, drbg_generate, drbg_reseed  (HDRBG forward-secure DRBG, TODO #96)
         stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
         hpke_stern_f_encap, hpke_stern_f_decap
         hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
@@ -1792,6 +1793,76 @@ def ratchet_advance(state: BitArray) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# 96 — HDRBG: forward-secure deterministic random bit generator (TODO #96)
+#
+# Fast-key-erasure pattern (Bernstein 2017) over the NL-FSCX v1 OWF:
+#   state_0     = HFSCX-256(b'DRBG-INIT' || len(entropy)_be8 || entropy || pers)
+#   output_i    = HFSCX-256(state_i || i_be8 || b'DRBG-OUT')
+#   state_{i+1} = nl_fscx_revolve_v1(state_i, DRBG_DOMAIN, n/4)
+#   reseed      : state = HFSCX-256(b'DRBG-RESEED' || state || len(entropy)_be8 || entropy)
+#
+# Backtracking resistance rests on the same OWF conjecture as the #78.C ratchet
+# (Theorem 16, SecurityProofs-2 §11.8.3): erasing state_i makes output_i
+# irrecoverable from state_{i+1}.  The caller must discard old state objects;
+# Python cannot guarantee erasure of immutable ints — for hard erasure
+# guarantees use the C implementation.
+#
+# State-walk collision risk (nl_fscx_v1 is non-bijective) is characterised in
+# SecurityProofsCode/nl_fscx_v1_ratchet_collision.py; the per-seed output limit
+# DRBG_MAX_BLOCKS keeps walks far below the measured collision distances.
+#
+# NON-GOALS: this is not a NIST SP 800-90A validated DRBG — no health tests,
+# no prediction-resistance requests, no entropy-source assessment.  It is a
+# deterministic expander for seeds that are already full-entropy.
+# ---------------------------------------------------------------------------
+
+_DRBG_DOMAIN = BitArray(
+    KEYBITS,
+    int.from_bytes(b'NL-FSCX-DRBG-V1\x00'.ljust(KEYBITS // 8, b'\x00'), 'big')
+)
+DRBG_MAX_BLOCKS = 1 << 20   # output blocks per seed/reseed (32 MiB) before reseed required
+
+
+class HDrbg:
+    """Forward-secure DRBG state: 256-bit state + output-block counter."""
+    __slots__ = ('state', 'blocks')
+
+    def __init__(self, state: BitArray, blocks: int = 0):
+        self.state = state
+        self.blocks = blocks
+
+
+def drbg_seed(entropy: bytes, personalization: bytes = b'') -> HDrbg:
+    """Instantiate from full-entropy seed material (>= 32 bytes recommended)."""
+    h = hfscx_256(b'DRBG-INIT' + len(entropy).to_bytes(8, 'big')
+                  + entropy + personalization)
+    return HDrbg(BitArray(KEYBITS, int.from_bytes(h, 'big')))
+
+
+def drbg_generate(drbg: HDrbg, n_bytes: int) -> bytes:
+    """Generate n_bytes of output, ratcheting the state once per 32-byte block.
+    Raises RuntimeError once DRBG_MAX_BLOCKS is exhausted (reseed required)."""
+    n_blocks = (n_bytes + KEYBITS // 8 - 1) // (KEYBITS // 8)
+    if drbg.blocks + n_blocks > DRBG_MAX_BLOCKS:
+        raise RuntimeError("drbg_generate: output limit reached — call drbg_reseed")
+    out = bytearray()
+    while len(out) < n_bytes:
+        out += hfscx_256(drbg.state.bytes + drbg.blocks.to_bytes(8, 'big')
+                         + b'DRBG-OUT')
+        drbg.state = nl_fscx_revolve_v1(drbg.state, _DRBG_DOMAIN, I_VALUE)
+        drbg.blocks += 1
+    return bytes(out[:n_bytes])
+
+
+def drbg_reseed(drbg: HDrbg, entropy: bytes) -> None:
+    """Mix fresh entropy into the state and reset the output-block counter."""
+    h = hfscx_256(b'DRBG-RESEED' + drbg.state.bytes
+                  + len(entropy).to_bytes(8, 'big') + entropy)
+    drbg.state = BitArray(KEYBITS, int.from_bytes(h, 'big'))
+    drbg.blocks = 0
+
+
+# ---------------------------------------------------------------------------
 # 95 — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95)
 #
 # Encrypt-then-MAC over the HSKE-NL-A1 CTR keystream:
@@ -2497,6 +2568,18 @@ def main():
         print("- Masked HSKE encrypt/decrypt correct")
     else:
         print("+ Masked HSKE encrypt/decrypt failed!")
+
+    # 96 — HDRBG demo: determinism + reseed separation + forward ratchet
+    d1 = drbg_seed(b'demo-entropy-96', b'pers')
+    d2 = drbg_seed(b'demo-entropy-96', b'pers')
+    out1 = drbg_generate(d1, 64)
+    out2 = drbg_generate(d2, 64)
+    drbg_reseed(d2, b'fresh-entropy')
+    out3 = drbg_generate(d2, 64)
+    if out1 == out2 and out3 != drbg_generate(d1, 64) and len(out1) == 64:
+        print("- HDRBG determinism + reseed separation correct")
+    else:
+        print("+ HDRBG failed!")
 
     # 95 — HSKE-NL-AEAD demo: round-trip + tamper rejection
     aead_key = BitArray.random(KEYBITS)

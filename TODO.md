@@ -5912,7 +5912,17 @@ limit) should be part of the design.
 collision-distance analysis script; statistical tests (reuse test [4] machinery);
 document non-goals (not a NIST-validated DRBG).
 
-Status: **OPEN**
+Status: **DONE v1.9.34** — `drbg_seed`/`drbg_generate`/`drbg_reseed` in the Python suite
+(`HDrbg`), `herradura.h` (`HDrbg` struct, `explicit_bzero` fast key erasure), and
+`herradura/herradura.go` (`DrbgSeed`/`DrbgGenerate`/`DrbgReseed`); byte-for-byte
+interoperable (shared KAT).  Per-seed output limit `DRBG_MAX_BLOCKS = 2^20` enforced.
+Collision prerequisite met: `nl_fscx_v1_ratchet_collision.py` §5 (new) characterises the
+revolve-64 walk — composed image extrapolates to 2^218.8 at n=256, E[walk collision]
+≈ 2^109.7 blocks, P(collision within 2^20-block limit) ≈ 2^-180 (≤ 2^-128 target: SAFE);
+also fixed a float-underflow bug in the script's `safe_steps` for tiny probabilities.
+Security test [29] in C/Go/Python (KAT, determinism, personalization divergence, reseed
+separation, block-limit enforcement, monobit sanity).  Non-goals documented in code and
+SecurityProofs-2.md §11.9.6 (not a NIST SP 800-90A validated DRBG).
 
 ---
 

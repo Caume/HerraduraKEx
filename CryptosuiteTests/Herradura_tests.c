@@ -4,7 +4,9 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.33
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.34
+    v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
+            benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
             benchmarks renumbered [29]–[40].
     v1.9.31: Unified test numbering [1]–[27] across C/Go/Python; benchmarks [28]–[39] (TODO #87).
@@ -50,7 +52,7 @@
     v1.5.3: HKEX-RNL secret sampler upgraded to CBD(eta=1); zero-mean distribution.
     v1.5.0: HKEX-GF; Schnorr HPKS; El Gamal HPKE; NL-FSCX non-linear extension; PQC.
 
-    Security tests [1]–[28] (unified with Go and Python):
+    Security tests [1]–[29] (unified with Go and Python):
       [1]  HKEX-GF correctness: g^{ab}==g^{ba} (32/64/256-bit GF).
       [2]  FSCX single-step linear diffusion (exactly 3 bits per flip).
       [3]  Orbit period: FSCX_REVOLVE cycles back to A.
@@ -79,22 +81,23 @@
       [26] Masked HSKE (78.H) GF(2)-linearity masking  [NEW].
       [27] Ratchet (78.C) forward secrecy & key uniqueness  [NEW].
       [28] HSKE-NL-AEAD (TODO #95) round-trip, tamper rejection, cross-language KAT  [NEW].
+      [29] HDRBG (TODO #96) KAT, determinism, reseed separation, block limit  [NEW].
       C-only (unlabeled): F_stern(K,·) range compression at n=32 (HyperLogLog, TODO #42).
 
-    Performance benchmarks [29]–[40] (unified with Go and Python):
-      [29] FSCX throughput (256-bit).
-      [30] HKEX-GF gf_pow throughput (32-bit).
-      [31] HKEX-GF full handshake (32-bit).
-      [32] HSKE round-trip (256-bit).
-      [33] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
-      [34] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
-      [34b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
-      [35] HSKE-NL-A1 counter-mode throughput (32-bit).
-      [36] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
-      [37] HKEX-RNL full handshake throughput (n=32).
-      [38] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
-      [39] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
-      [40] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
+    Performance benchmarks [30]–[41] (unified with Go and Python):
+      [30] FSCX throughput (256-bit).
+      [31] HKEX-GF gf_pow throughput (32-bit).
+      [32] HKEX-GF full handshake (32-bit).
+      [33] HSKE round-trip (256-bit).
+      [34] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      [35] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
+      [35b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
+      [36] HSKE-NL-A1 counter-mode throughput (32-bit).
+      [37] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
+      [38] HKEX-RNL full handshake throughput (n=32).
+      [39] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
+      [40] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
+      [41] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -3516,14 +3519,14 @@ static void test_hpks_stern_ring_correctness(void)
 #undef RING_K
 }
 
-/* [38] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
+/* [39] HPKS-Stern-F sign+verify throughput (N=32/64/256) */
 static void bench_hpks_stern_f(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[38] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
+    printf("[39] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
     /* N=32 */
     { static SternSig32T bsig32;
       uint32_t seed32 = stern32_rand_seed(), e32 = stern32_rand_error(), msg32;
@@ -3603,7 +3606,7 @@ static void bench_hpks_stern_f(void)
 static const uint8_t zkp_msg[]  = "Herradura ZKP test";
 static const uint8_t zkp_msg2[] = "Herradura ZKP tamper";
 
-/* [39] ZKP-RNL sign+verify throughput (n=256) */
+/* [40] ZKP-RNL sign+verify throughput (n=256) */
 static void bench_zkp_rnl(void)
 {
     struct timespec t0, t1;
@@ -3614,7 +3617,7 @@ static void bench_zkp_rnl(void)
     int32_t s[256], C[256];
     int32_t w[256], c_poly[256], z[256];
     int i;
-    printf("[39] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
+    printf("[40] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
     rnl_m_poly_n(m_base, n);
     rnl_rand_poly_n(a_rand, n);
     rnl_poly_add_n(m_blind, m_base, a_rand, n);
@@ -3641,7 +3644,7 @@ static void bench_zkp_rnl(void)
     putchar('\n');
 }
 
-/* [40] ZKP-NL prove+verify throughput (n=32, rounds=16) */
+/* [41] ZKP-NL prove+verify throughput (n=32, rounds=16) */
 static void bench_zkp_nl(void)
 {
     struct timespec t0, t1;
@@ -3652,7 +3655,7 @@ static void bench_zkp_nl(void)
     uint64_t A, B, y;
     ZkpNlRound *proof;
     int i;
-    printf("[40] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
+    printf("[41] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
            n, rounds);
     zkp_nl_keygen(n, urnd_fp, &A, &B, &y);
     /* warm-up */
@@ -3902,7 +3905,7 @@ static void test_accumulator_correctness(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Security Tests: Masking / Ratchet / AEAD [26]-[28]                 */
+/* Security Tests: Masking / Ratchet / AEAD / DRBG [26]-[29]          */
 /* ------------------------------------------------------------------ */
 
 /* [26] Masked HSKE (78.H) GF(2)-linearity masking correctness */
@@ -4040,18 +4043,90 @@ static void test_hske_nl_aead(void)
     putchar('\n');
 }
 
+/* [29] HDRBG (TODO #96) KAT, determinism, reseed separation, block limit, monobit */
+static void test_hdrbg(void)
+{
+    /* Cross-language KAT — must match the C/Go/Python suite outputs */
+    static const uint8_t kat80[80] = {
+        0xcd,0x3e,0x57,0x6b,0xee,0x89,0x50,0x1a,0x37,0x60,0xfb,0x96,
+        0xfc,0x05,0xb6,0xa3,0x02,0x9c,0x26,0xf4,0x05,0xe8,0x66,0x7c,
+        0x71,0xf3,0x11,0xfc,0x39,0xab,0x1b,0x23,0x90,0x62,0x0f,0x26,
+        0x41,0xa2,0xa2,0xda,0xbf,0x28,0xcf,0x35,0xae,0x99,0x1d,0x6b,
+        0x9f,0xc2,0x54,0x50,0x9a,0x77,0x20,0xde,0x24,0xcb,0xd9,0xc6,
+        0x03,0xcd,0x71,0x8e,0x08,0x9e,0xa9,0x5d,0xc6,0x22,0x08,0x13,
+        0x3b,0x34,0x75,0xfa,0xdb,0x10,0xef,0x6d
+    };
+    static const uint8_t kat_reseed32[32] = {
+        0xbd,0x53,0x24,0xb0,0x39,0xa9,0x81,0x72,0xfa,0xe2,0x14,0x39,
+        0x0f,0xe9,0xbc,0xc9,0x28,0xf3,0xbd,0x65,0x23,0x12,0x13,0xef,
+        0xd9,0x16,0x26,0x64,0xb5,0xe7,0x56,0xbf
+    };
+    HDrbg d, d1, d2, d3;
+    uint8_t ent[32], re[16], out[80], s1[64], s2[64], s3[64], s4[64], s5[64];
+    uint8_t stream[8192];
+    int i, ok_kat, ok_det, ok_limit, ok_mono;
+    long ones = 0;
+    double frac;
+
+    printf("[29] HDRBG (TODO #96) — KAT, determinism, reseed separation, "
+           "block limit, monobit  [NEW]\n");
+
+    for (i = 0; i < 32; i++) ent[i] = (uint8_t)i;
+    drbg_seed(&d, ent, 32, (const uint8_t *)"HDRBG-KAT", 9);
+    drbg_generate(&d, out, 80);
+    ok_kat = (memcmp(out, kat80, 80) == 0);
+    memset(re, 0xa5, 16);
+    drbg_reseed(&d, re, 16);
+    drbg_generate(&d, out, 32);
+    ok_kat = ok_kat && (memcmp(out, kat_reseed32, 32) == 0);
+
+    /* Determinism + personalization divergence + reseed separation */
+    drbg_seed(&d1, (const uint8_t *)"ent-A", 5, (const uint8_t *)"p1", 2);
+    drbg_seed(&d2, (const uint8_t *)"ent-A", 5, (const uint8_t *)"p1", 2);
+    drbg_seed(&d3, (const uint8_t *)"ent-A", 5, (const uint8_t *)"p2", 2);
+    drbg_generate(&d1, s1, 64);
+    drbg_generate(&d2, s2, 64);
+    drbg_generate(&d3, s3, 64);
+    ok_det = (memcmp(s1, s2, 64) == 0 && memcmp(s1, s3, 64) != 0);
+    drbg_reseed(&d2, (const uint8_t *)"fresh", 5);
+    drbg_generate(&d2, s4, 64);
+    drbg_generate(&d1, s5, 64);
+    ok_det = ok_det && (memcmp(s4, s5, 64) != 0);
+
+    /* Block-limit enforcement: 2 blocks requested with 1 remaining */
+    drbg_seed(&d, (const uint8_t *)"ent-limit", 9, NULL, 0);
+    d.blocks = DRBG_MAX_BLOCKS - 1;
+    ok_limit = (!drbg_generate(&d, out, 64) && drbg_generate(&d, out, 32));
+
+    /* Monobit sanity on 8 KiB of output */
+    drbg_seed(&d, (const uint8_t *)"ent-monobit", 11, NULL, 0);
+    drbg_generate(&d, stream, sizeof stream);
+    for (i = 0; i < (int)sizeof stream; i++) {
+        uint8_t b = stream[i];
+        while (b) { ones += b & 1; b >>= 1; }
+    }
+    frac = (double)ones / (8192.0 * 8.0);
+    ok_mono = (frac >= 0.48 && frac <= 0.52);
+
+    printf("    kat=%s  determinism=%s  block_limit=%s  monobit=%.2f%%  [%s]\n",
+           ok_kat ? "PASS" : "FAIL", ok_det ? "PASS" : "FAIL",
+           ok_limit ? "PASS" : "FAIL", frac * 100.0,
+           (ok_kat && ok_det && ok_limit && ok_mono) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [29]-[40]                                    */
+/* Performance benchmarks [30]-[41]                                    */
 /* ------------------------------------------------------------------ */
 
-/* [29] FSCX throughput (64/128/256-bit) */
+/* [30] FSCX throughput (64/128/256-bit) */
 static void bench_fscx_throughput(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[29] FSCX throughput  [CLASSICAL]\n");
+    printf("[30] FSCX throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32(), tmp;
       for (i = 0; i < 10; i++) { tmp = fscx32(a, b); a = tmp; }
@@ -4095,7 +4170,7 @@ static void bench_gf_pow_throughput(void)
     long long ops;
     double secs;
     int i;
-    printf("[30] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
+    printf("[31] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t base = rand32() | 1, exp = rand32() | 1, tmp;
       for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -4140,7 +4215,7 @@ static void bench_hkex_gf_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[31] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
+    printf("[32] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, b = rand32()|1, C, C2, skA, skB;
       for (i = 0; i < 5; i++) {
@@ -4206,7 +4281,7 @@ static void bench_hske_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[32] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
+    printf("[33] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t pt, key, enc, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4273,7 +4348,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[33] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
+    printf("[34] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, r = rand32()|1, pt = rand32();
       uint32_t C = gf_pow_32(GF_GEN32, a), R, ek, E, dk;
@@ -4348,17 +4423,17 @@ static void bench_hpke_el_gamal_roundtrip(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [34]-[37]: PQC extension                    */
+/* Performance benchmarks [35]-[38]: PQC extension                    */
 /* ------------------------------------------------------------------ */
 
-/* [34] NL-FSCX v1 revolve (64/128/256-bit) + [34b] v2 enc+dec (64/128/256-bit) */
+/* [35] NL-FSCX v1 revolve (64/128/256-bit) + [35b] v2 enc+dec (64/128/256-bit) */
 static void bench_nl_fscx_revolve(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[34] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
+    printf("[35] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32();
       for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
@@ -4394,7 +4469,7 @@ static void bench_nl_fscx_revolve(void)
       printf("    bits=256  v1 n/4 steps  "); print_rate(ops, secs); putchar('\n'); }
     putchar('\n');
 
-    printf("[34b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
+    printf("[35b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32(), E;
       for (i = 0; i < 5; i++) {
@@ -4452,7 +4527,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[35] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
+    printf("[36] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K, P, ks, sink = 0;
       K = rand32(); P = rand32();
@@ -4531,14 +4606,14 @@ static void bench_hske_nl_a1_roundtrip(void)
     putchar('\n');
 }
 
-/* [36] HSKE-NL-A2 revolve-mode round-trip throughput (64/128/256-bit) */
+/* [37] HSKE-NL-A2 revolve-mode round-trip throughput (64/128/256-bit) */
 static void bench_hske_nl_a2_roundtrip(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[36] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
+    printf("[37] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K = rand32(), P = rand32(), E, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4600,7 +4675,7 @@ static void bench_hkex_rnl_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[37] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
+    printf("[38] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
     /* n=32 (rnl32 fast path) */
     { rnl32_poly_t m_base, a_rand, m_blind;
       int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
@@ -4724,7 +4799,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.9.33 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.9.34 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);
@@ -4779,6 +4854,7 @@ int main(int argc, char *argv[])
     test_masked_hske();
     test_ratchet_forward_secrecy();
     test_hske_nl_aead();
+    test_hdrbg();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();
