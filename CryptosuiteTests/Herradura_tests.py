@@ -1,5 +1,7 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.33
+    Herradura KEx — Security & Performance Tests (Python) v1.9.34
+    v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
+            benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
             benchmarks renumbered [29]–[40].
     v1.9.32: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection (TODO #94).
@@ -1982,6 +1984,73 @@ def test_hske_nl_aead():
     print()
 
 
+def test_hdrbg():
+    print("[29] HDRBG (TODO #96) — KAT, determinism, reseed separation, "
+          "block limit, monobit  [NEW]")
+    n = 256
+    DOMAIN = BitArray(n, int.from_bytes(b'NL-FSCX-DRBG-V1\x00'.ljust(32, b'\x00'), 'big'))
+    MAX_BLOCKS = 1 << 20
+
+    def seed(entropy, pers=b''):
+        h = hfscx_256(b'DRBG-INIT' + len(entropy).to_bytes(8, 'big') + entropy + pers)
+        return [BitArray(n, int.from_bytes(h, 'big')), 0]   # [state, blocks]
+
+    def generate(d, n_bytes):
+        n_blocks = (n_bytes + 31) // 32
+        if d[1] + n_blocks > MAX_BLOCKS:
+            return None   # reseed required
+        out = bytearray()
+        while len(out) < n_bytes:
+            out += hfscx_256(d[0].uint.to_bytes(32, 'big')
+                             + d[1].to_bytes(8, 'big') + b'DRBG-OUT')
+            d[0] = nl_fscx_revolve_v1(d[0], DOMAIN, n // 4)
+            d[1] += 1
+        return bytes(out[:n_bytes])
+
+    def reseed(d, entropy):
+        h = hfscx_256(b'DRBG-RESEED' + d[0].uint.to_bytes(32, 'big')
+                      + len(entropy).to_bytes(8, 'big') + entropy)
+        d[0] = BitArray(n, int.from_bytes(h, 'big'))
+        d[1] = 0
+
+    # Cross-language KAT (must match C/Go/Python suite outputs)
+    d = seed(bytes(range(32)), b'HDRBG-KAT')
+    kat_ok = (generate(d, 80).hex() ==
+              'cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23'
+              '90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e'
+              '089ea95dc62208133b3475fadb10ef6d')
+    reseed(d, b'\xa5' * 16)
+    kat_ok = kat_ok and (generate(d, 32).hex() ==
+              'bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf')
+
+    # Determinism + personalization divergence + reseed separation
+    d1, d2 = seed(b'ent-A', b'p1'), seed(b'ent-A', b'p1')
+    d3 = seed(b'ent-A', b'p2')
+    s1, s2, s3 = generate(d1, 64), generate(d2, 64), generate(d3, 64)
+    det_ok = (s1 == s2) and (s1 != s3)
+    reseed(d2, b'fresh')
+    det_ok = det_ok and generate(d2, 64) != generate(d1, 64)
+
+    # Block-limit enforcement: 2 blocks requested with 1 remaining
+    d4 = seed(b'ent-limit')
+    d4[1] = MAX_BLOCKS - 1
+    limit_ok = generate(d4, 64) is None and generate(d4, 32) is not None
+
+    # Monobit sanity on 8 KiB of output
+    d5 = seed(b'ent-monobit')
+    stream = generate(d5, 8192)
+    ones = sum(bin(b).count('1') for b in stream)
+    frac = ones / (8192 * 8)
+    mono_ok = 0.48 <= frac <= 0.52
+
+    status = "PASS" if kat_ok and det_ok and limit_ok and mono_ok else "FAIL"
+    print(f"    kat={'PASS' if kat_ok else 'FAIL'}  "
+          f"determinism={'PASS' if det_ok else 'FAIL'}  "
+          f"block_limit={'PASS' if limit_ok else 'FAIL'}  "
+          f"monobit={frac*100:.2f}%  [{status}]")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Performance benchmarks
 # ---------------------------------------------------------------------------
@@ -2003,7 +2072,7 @@ def _bench(label: str, fn):
 
 
 def bench_fscx():
-    print("[29] FSCX throughput  [CLASSICAL]")
+    print("[30] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -2013,7 +2082,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[30] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[31] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -2023,7 +2092,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[31] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[32] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -2036,7 +2105,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[32] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[33] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -2048,7 +2117,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[33] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[34] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -2065,13 +2134,13 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[34] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[35] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
             nonlocal a; a = nl_fscx_revolve_v1(a, b, iv)
         _bench(f"bits={size:3d}  v1 n/4 steps", fn)
-    print("[34b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+    print("[35b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn(size=size, rv=rv, b=b):
@@ -2081,7 +2150,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[35] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[36] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -2097,7 +2166,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[36] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    print("[37] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -2111,7 +2180,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[37] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[38] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -2127,7 +2196,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[38] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    print("[39] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
     rounds = 4; sink = [True]
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
@@ -2141,7 +2210,7 @@ def bench_hpks_stern_f():
 
 def bench_zkp_rnl():
     n = 256
-    print(f"[39] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
+    print(f"[40] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
     m_base  = _rnl_m_poly(n)
     a_rand  = _rnl_rand_poly(n, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -2158,7 +2227,7 @@ def bench_zkp_rnl():
 
 def bench_zkp_nl():
     n = 32; rounds = 16
-    print(f"[40] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
+    print(f"[41] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
     A, B, y = _zkp_nl_keygen(n)
     def fn():
         proof = _zkp_nl_prove(A, B, y, n, rounds, ZKP_MSG)
@@ -2174,7 +2243,7 @@ def bench_zkp_nl():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.9.33 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.34 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -2202,7 +2271,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.33 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.34 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
@@ -2253,6 +2322,7 @@ if __name__ == '__main__':
     test_masked_hske()
     test_ratchet_forward_secrecy()
     test_hske_nl_aead()
+    test_hdrbg()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

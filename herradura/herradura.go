@@ -520,6 +520,88 @@ func HskeNlAeadDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) 
 }
 
 // ---------------------------------------------------------------------------
+// HDRBG: forward-secure deterministic random bit generator (TODO #96)
+//
+// Fast-key-erasure pattern (Bernstein 2017) over the NL-FSCX v1 OWF:
+//   state_0     = HFSCX-256("DRBG-INIT" || len(entropy)_be8 || entropy || pers)
+//   output_i    = HFSCX-256(state_i || i_be8 || "DRBG-OUT")
+//   state_{i+1} = NlFscxRevolveV1(state_i, DRBG_DOMAIN, n/4)
+//   reseed      : state = HFSCX-256("DRBG-RESEED" || state || len_be8 || entropy)
+//
+// Backtracking resistance rests on the same OWF conjecture as the #78.C
+// ratchet (Theorem 16, SecurityProofs-2 §11.8.3).  Go cannot guarantee
+// erasure of big.Int internals; for hard erasure guarantees use the C
+// implementation.  Collision risk of the non-bijective state walk:
+// SecurityProofsCode/nl_fscx_v1_ratchet_collision.py.
+//
+// NON-GOALS: not a NIST SP 800-90A validated DRBG — no health tests, no
+// prediction resistance, no entropy-source assessment.  It deterministically
+// expands seed material that is already full-entropy.
+// ---------------------------------------------------------------------------
+
+var drbgDomain = func() *BitArray {
+	b := make([]byte, 32)
+	copy(b, "NL-FSCX-DRBG-V1\x00")
+	return NewBitArray(256, new(big.Int).SetBytes(b))
+}()
+
+// DrbgMaxBlocks is the output-block limit per (re)seed (32 MiB).
+const DrbgMaxBlocks = 1 << 20
+
+// HDrbg is a forward-secure DRBG state: 256-bit state + output-block counter.
+type HDrbg struct {
+	state *BitArray
+	// Blocks is the output-block counter (read/set externally only for
+	// limit testing; DrbgGenerate refuses once Blocks reaches DrbgMaxBlocks).
+	Blocks uint64
+}
+
+// DrbgSeed instantiates from full-entropy seed material (>= 32 bytes recommended).
+func DrbgSeed(entropy, personalization []byte) *HDrbg {
+	buf := make([]byte, 0, 9+8+len(entropy)+len(personalization))
+	buf = append(buf, "DRBG-INIT"...)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(len(entropy)))
+	buf = append(buf, entropy...)
+	buf = append(buf, personalization...)
+	h := Hfscx256(buf, nil)
+	return &HDrbg{state: NewBitArray(256, new(big.Int).SetBytes(h))}
+}
+
+// DrbgGenerate produces n bytes of output, ratcheting the state once per
+// 32-byte block.  Returns (nil, false) once DrbgMaxBlocks would be exceeded
+// (reseed required).
+func (d *HDrbg) DrbgGenerate(n int) ([]byte, bool) {
+	nBlocks := uint64((n + 31) / 32)
+	if d.Blocks+nBlocks > DrbgMaxBlocks {
+		return nil, false
+	}
+	out := make([]byte, 0, n+31)
+	buf := make([]byte, 0, 32+8+8)
+	for len(out) < n {
+		buf = buf[:0]
+		buf = append(buf, d.state.Bytes()...)
+		buf = binary.BigEndian.AppendUint64(buf, d.Blocks)
+		buf = append(buf, "DRBG-OUT"...)
+		out = append(out, Hfscx256(buf, nil)...)
+		d.state = NlFscxRevolveV1(d.state, drbgDomain, 64)
+		d.Blocks++
+	}
+	return out[:n], true
+}
+
+// DrbgReseed mixes fresh entropy into the state and resets the block counter.
+func (d *HDrbg) DrbgReseed(entropy []byte) {
+	buf := make([]byte, 0, 11+32+8+len(entropy))
+	buf = append(buf, "DRBG-RESEED"...)
+	buf = append(buf, d.state.Bytes()...)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(len(entropy)))
+	buf = append(buf, entropy...)
+	h := Hfscx256(buf, nil)
+	d.state = NewBitArray(256, new(big.Int).SetBytes(h))
+	d.Blocks = 0
+}
+
+// ---------------------------------------------------------------------------
 // HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 // ---------------------------------------------------------------------------
 

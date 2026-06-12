@@ -124,7 +124,7 @@ x86_64-linux-gnu-ld -m elf_i386 -o CryptosuiteTests/Herradura_tests_i386 tests32
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-# C/Go/Python — security tests [1]–[28] + benchmarks [29]–[40]
+# C/Go/Python — security tests [1]–[29] + benchmarks [30]–[41]
 # (C also runs one C-only unlabeled test between [20] and [21])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations

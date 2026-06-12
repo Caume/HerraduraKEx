@@ -29,11 +29,21 @@ KEY FINDINGS (§11.X of SecurityProofs-2.md):
         Maximum safe number of steps before re-keying is required,
         at collision probability ≤ 2^{-k} for k ∈ {64, 80, 128}.
 
-Runtime: ~30 s on a modest CPU (n=32 sweep is the bottleneck).
-Set FULL_SWEEP=False to skip n=32 and use extrapolated values only.
+  §5  HDRBG walk characterisation (TODO #96)
+        The DRBG advances via a full revolve F^(n/4) per output block.
+        (a) composed-image contraction: |Im(F^64)| extrapolates to ≈ 2^218.8
+            at n=256 (vs 2^243.8 for a single step).
+        (b) Brent rho+cycle of the revolve walk tracks sqrt-of-image scaling
+            (n=16: median 64; n=20: median 785; n=24: median 2,873).
+        (c) With DRBG_MAX_BLOCKS = 2^20: E[walk collision] ≈ 2^109.7 blocks;
+            P(collision within the limit) ≈ 2^-180  →  SAFE (≤ 2^-128 target).
+
+Runtime: minutes-to-hours with the n=32 sweep on slow hosts.
+Set env FULL_SWEEP=0 to skip n=32 and use extrapolated values only.
 """
 
 import math
+import os
 import random
 import time
 
@@ -88,6 +98,9 @@ def safe_steps(image_size: int, prob: float) -> int:
     => k <= sqrt(-2 * image_size * ln(1 - prob))"""
     if prob >= 1.0:
         return image_size
+    if prob < 1e-12:
+        # ln(1-p) underflows to 0 in float64 for tiny p; use ln(1-p) ≈ -p
+        return int(math.sqrt(2.0 * image_size * prob))
     return int(math.sqrt(-2.0 * image_size * math.log(1.0 - prob)))
 
 # ---------------------------------------------------------------------------
@@ -120,10 +133,124 @@ def extrapolate_image_size(fractions: list[tuple[int, float]]) -> float:
     return math.exp(log_frac_256)
 
 # ---------------------------------------------------------------------------
+# §5  HDRBG walk characterisation (TODO #96)
+# ---------------------------------------------------------------------------
+# The HDRBG (suite drbg_seed/drbg_generate, TODO #96) advances state once per
+# 32-byte output block via a full revolve, not a single step:
+#     state_{i+1} = nl_fscx_revolve_v1(state_i, DRBG_DOMAIN, n/4)
+# At reduced width n we use steps = n/4 (the same I_VALUE scaling the suite
+# applies).  Two questions:
+#   (a) how much does composing n/4 steps shrink the image beyond one step?
+#   (b) what are the rho (tail) and cycle lengths of the walk x -> F^(n/4)(x)?
+# The DRBG output limit DRBG_MAX_BLOCKS = 2^20 must sit far below the walk's
+# expected collision distance at n=256.
+
+def revolve_v1(a: int, b: int, steps: int, n: int) -> int:
+    for _ in range(steps):
+        a = nl_fscx_v1(a, b, n)
+    return a
+
+def revolve_image_fraction(n: int, domain: int) -> float:
+    """Exhaustive |Im(F^(n/4))| / 2^n for small n."""
+    steps = n // 4
+    seen = set()
+    for x in range(1 << n):
+        seen.add(revolve_v1(x, domain, steps, n))
+    return len(seen) / (1 << n)
+
+def brent_rho_cycle(n: int, domain: int, start: int, cap: int) -> tuple[int, int]:
+    """Brent's algorithm on x -> F^(n/4)(x).  Returns (tail_len, cycle_len);
+    (-1, -1) if no cycle found within cap evaluations."""
+    steps = n // 4
+    power = lam = 1
+    tortoise = start
+    hare = revolve_v1(start, domain, steps, n)
+    evals = 1
+    while tortoise != hare:
+        if power == lam:
+            tortoise = hare
+            power *= 2
+            lam = 0
+        hare = revolve_v1(hare, domain, steps, n)
+        lam += 1
+        evals += 1
+        if evals > cap:
+            return -1, -1
+    # find tail length mu
+    tortoise = hare = start
+    for _ in range(lam):
+        hare = revolve_v1(hare, domain, steps, n)
+    mu = 0
+    while tortoise != hare:
+        tortoise = revolve_v1(tortoise, domain, steps, n)
+        hare = revolve_v1(hare, domain, steps, n)
+        mu += 1
+        if mu > cap:
+            return -1, lam
+    return mu, lam
+
+def section5_drbg_walk():
+    print("§5  HDRBG walk characterisation (TODO #96): x -> F^(n/4)(x)")
+    DRBG_DOMAIN_BYTES = b'NL-FSCX-DRBG-V1\x00' + b'\x00' * 16
+    drbg_domains = {n: int.from_bytes(DRBG_DOMAIN_BYTES[:n // 8], 'big')
+                    for n in (8, 16, 24)}
+    # 20-bit domain: truncate the 32-bit prefix bitwise
+    drbg_domains[20] = int.from_bytes(DRBG_DOMAIN_BYTES[:4], 'big') >> 12
+
+    # (a) composed-image contraction, exhaustive at n=8,16
+    print("    (a) image fraction after one revolve (n/4 composed steps):")
+    rev_fractions = []
+    for n in (8, 16):
+        t0 = time.perf_counter()
+        frac = revolve_image_fraction(n, drbg_domains[n])
+        rev_fractions.append((n, frac))
+        print(f"        n={n:>2}  |Im(F^{n//4})|/2^{n} = {frac:.6f}"
+              f"  ({time.perf_counter() - t0:.2f}s)")
+    frac256 = extrapolate_image_size(rev_fractions)
+    print(f"        extrapolated to n=256: |Im(F^64)| ≈ 2^{256 + math.log2(frac256):.2f}")
+
+    # (b) rho/cycle lengths via Brent
+    print("    (b) Brent rho/cycle lengths of the revolve walk (random starts):")
+    rng = random.Random(0xD2B6)
+    for n, starts, cap in ((16, 100, 1 << 18), (20, 60, 1 << 19), (24, 30, 1 << 20)):
+        mus, lams, censored = [], [], 0
+        t0 = time.perf_counter()
+        for _ in range(starts):
+            mu, lam = brent_rho_cycle(n, drbg_domains[n], rng.getrandbits(n), cap)
+            if mu < 0 or lam < 0:
+                censored += 1
+            else:
+                mus.append(mu)
+                lams.append(lam)
+        if mus:
+            mus.sort(); lams.sort()
+            tot = [m + l for m, l in zip(mus, lams)]; tot.sort()
+            print(f"        n={n:>2}  rho+cycle: min={tot[0]:>7,}  "
+                  f"median={tot[len(tot)//2]:>7,}  max={tot[-1]:>7,}  "
+                  f"(censored>{cap:,}: {censored}/{starts}; "
+                  f"sqrt(2^n)={int(math.sqrt(1 << n)):,})  "
+                  f"({time.perf_counter() - t0:.1f}s)")
+        else:
+            print(f"        n={n:>2}  all {starts} walks exceeded cap={cap:,} "
+                  f"(rho+cycle > cap; sqrt(2^n)={int(math.sqrt(1 << n)):,})")
+
+    # (c) DRBG_MAX_BLOCKS check against birthday bound at n=256
+    print("    (c) DRBG_MAX_BLOCKS=2^20 vs extrapolated collision distance at n=256:")
+    im256 = frac256 * (2.0 ** 256)
+    exp_collision = collision_distance(im256)
+    p_at_limit = (2.0 ** 20) ** 2 / (2.0 * im256)
+    print(f"        E[walk collision] ≈ 2^{math.log2(exp_collision):.1f} blocks")
+    print(f"        P(collision within 2^20 blocks) ≈ 2^{math.log2(p_at_limit):.1f}")
+    verdict = "SAFE" if p_at_limit < 2.0 ** -128 else "REVIEW"
+    print(f"        verdict: {verdict} (limit must keep probability ≤ 2^-128)")
+    print()
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
-FULL_SWEEP = True  # set False to skip n=32 exhaustive scan (~20 s)
+# Set env FULL_SWEEP=0 to skip the n=32 exhaustive scan (slow on small hosts).
+FULL_SWEEP = os.environ.get('FULL_SWEEP', '1') != '0'
 
 def main():
     print("=" * 68)
@@ -200,6 +327,9 @@ def main():
     elapsed = time.perf_counter() - t0
     print(f"    n=64  coverage estimate: {frac64:.6f}  ({elapsed:.2f}s)")
     print()
+
+    # ── §5  HDRBG walk (TODO #96) ────────────────────────────────────────────
+    section5_drbg_walk()
 
     # ── Summary ──────────────────────────────────────────────────────────────
     print("SUMMARY")

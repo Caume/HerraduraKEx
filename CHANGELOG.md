@@ -4,6 +4,18 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.34] - 2026-06-12
+
+### Feature — HDRBG: forward-secure deterministic random bit generator (TODO #96)
+
+- **`Herradura cryptographic suite.py` / `herradura.h` / `herradura/herradura.go`**: new `drbg_seed` / `drbg_generate` / `drbg_reseed` (Go: `DrbgSeed`/`DrbgGenerate`/`DrbgReseed`) — fast-key-erasure DRBG over the NL-FSCX v1 OWF. Output block i = HFSCX-256(state ‖ i_be8 ‖ `DRBG-OUT`); state advances one-way via `nl_fscx_revolve_v1(state, DRBG-domain, 64)`; reseed mixes fresh entropy via HFSCX-256 with the `DRBG-RESEED` domain prefix. Backtracking resistance reduces to the Theorem 16 OWF conjecture; C erases superseded state with `explicit_bzero`. Per-seed output limit `DRBG_MAX_BLOCKS = 2^20` enforced (generate refuses past it; reseed resets). All three implementations byte-for-byte interoperable (shared KAT). Non-goals documented: not a NIST SP 800-90A validated DRBG.
+- **`SecurityProofsCode/nl_fscx_v1_ratchet_collision.py`**: new §5 — HDRBG walk characterisation: composed-image contraction of the 64-step revolve (extrapolates to 2^218.8 at n=256 vs 2^243.8 single-step), Brent rho/cycle lengths at n=16/20/24 (sqrt-of-image scaling), and DRBG_MAX_BLOCKS validation: E[walk collision] ≈ 2^109.7 blocks, P(collision within 2^20) ≈ 2^-180 — SAFE vs the 2^-128 target. Also fixed `safe_steps` float underflow for tiny probabilities (§4 previously printed "safe ≤ 2^0.0 steps") and made the n=32 exhaustive sweep opt-out via `FULL_SWEEP=0`.
+- **`CryptosuiteTests`**: new security test [29] (C/Go/Python) — cross-language KAT, determinism, personalization divergence, reseed separation, block-limit enforcement, monobit sanity. Benchmarks renumbered [30]–[41].
+- **`SecurityProofs-2.md` §11.9.6**: HDRBG note — construction, collision analysis summary, non-goals.
+- **`CLAUDE.md`**: test numbering updated to [1]–[29] / [30]–[41].
+
+---
+
 ## [1.9.33] - 2026-06-12
 
 ### Feature — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95 option 1)
