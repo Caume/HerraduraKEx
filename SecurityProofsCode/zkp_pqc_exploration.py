@@ -18,7 +18,11 @@ This script covers the two NOT-yet-implemented pillars:
       §2.2  Protocol: commit / challenge / respond / verify
       §2.3  Completeness — 1 000 honest-prover trials (expect 0 failures)
       §2.4  Soundness   — 200 cheating-prover trials  (expect ≈0 passes)
+      §2.4b Structured cheats (TODO #94): wrong-key witness, tampered w,
+            perturbed z, bounded challenge grinding
       §2.5  Proof-size analysis
+      §2.6  Challenge-difference invertibility in R_q (relaxed soundness
+            motivation: x^n+1 splits over F_q since 2n | q-1)
   §3  NL-FSCX ZKP via MPC-in-the-head (ZKBoo, 3-party Boolean circuit)
       §3.1  NL-FSCX v1 bit-level circuit (n=8 toy)
       §3.2  ZKBoo 3-party evaluation with per-AND-gate commitments
@@ -315,6 +319,73 @@ def section2_soundness():
     print(f"  Time         : {elapsed:.2f} s")
 
 
+# ── §2.4b  Structured cheating provers (TODO #94 item 2) ─────────────────────
+
+def section2_structured_cheats():
+    print(SEP2)
+    print(f"§2.4b Ring-LWR Σ-protocol — Structured cheats ({SOUND} trials each, n={_N})")
+    t0 = time.time()
+
+    # Cheat B — wrong-key witness: run the honest prover algorithm with a
+    # freshly sampled s' != s against the original public key C.
+    wrong_key = 0
+    for _ in range(SOUND):
+        m, s, C = rnl_keygen()
+        s2 = _cbd_poly(_N, _Q)
+        try:
+            w, c, z = rnl_prove(m, s2, C)
+        except RuntimeError:
+            continue
+        if rnl_verify(m, C, w, c, z):
+            wrong_key += 1
+
+    # Cheat C — tampered commitment: take an honest transcript, perturb one
+    # coefficient of w, keep (c, z).  Must fail the Fiat-Shamir re-derivation.
+    tamper_w = 0
+    # Cheat D — perturbed response: keep (w, c), add 1 to one coefficient of z.
+    # FS check still passes (w unchanged); the residual-norm check must catch it.
+    tamper_z = 0
+    for _ in range(SOUND):
+        m, s, C = rnl_keygen()
+        try:
+            w, c, z = rnl_prove(m, s, C)
+        except RuntimeError:
+            continue
+        w2 = list(w); w2[0] += 1
+        if rnl_verify(m, C, w2, c, z):
+            tamper_w += 1
+        z2 = list(z); z2[0] += 1
+        if rnl_verify(m, C, w, c, z2):
+            tamper_z += 1
+
+    # Cheat E — bounded challenge grinding: the §2.4 cheat (choose z first,
+    # set w = m·z) repeated G times per trial, accepting if any attempt
+    # verifies.  Per-attempt success requires ||c·lift(C)||_inf <= slack,
+    # i.e. n coefficients simultaneously small: Pr ≈ ((2·slack+1)/q)^n ≈ 0.
+    GRIND = 64
+    grind = 0
+    for _ in range(SOUND):
+        m, s, C = rnl_keygen()
+        ok = False
+        for _ in range(GRIND):
+            w, c, z = _cheat_prove_rnl(m, C)
+            if rnl_verify(m, C, w, c, z):
+                ok = True
+                break
+        if ok:
+            grind += 1
+
+    elapsed = time.time() - t0
+    total_bad = wrong_key + tamper_w + tamper_z + grind
+    status = "PASS" if total_bad == 0 else "FAIL"
+    print(f"  Wrong-key witness s' passes      : {wrong_key}/{SOUND}")
+    print(f"  Tampered w passes (FS check)     : {tamper_w}/{SOUND}")
+    print(f"  Perturbed z passes (residual)    : {tamper_z}/{SOUND}")
+    print(f"  Grinding passes ({GRIND} att/trial)   : {grind}/{SOUND}")
+    print(f"  Overall: {total_bad} cheat acceptances  [{status}]")
+    print(f"  Time   : {elapsed:.2f} s")
+
+
 # ── §2.5  Proof size ──────────────────────────────────────────────────────────
 
 def section2_proofsize():
@@ -335,6 +406,56 @@ def section2_proofsize():
     print("  Compare: ML-DSA-44 sig = 2420 B; ML-DSA-65 = 3309 B; ML-DSA-87 = 4627 B.")
 
 
+# ── §2.6  Challenge-difference invertibility in R_q (TODO #94 item 1) ────────
+
+def section2_invertibility():
+    """
+    Special soundness extracts (z-z')·(c-c')^{-1}; this requires c-c' to be a
+    unit in R_q = Z_q[x]/(x^n+1).  For q = 65537 (q-1 = 2^16) and power-of-two
+    n, 2n | q-1, so x^n+1 splits into n LINEAR factors over F_q and R_q is
+    CRT-isomorphic to F_q^n.  A nonzero difference d = c-c' is invertible iff
+    d(r) != 0 at every root r of x^n+1.  This section measures the
+    non-invertible fraction empirically — any nonzero rate means strict
+    special soundness fails and the relaxed formulation (§11.10.2) is required.
+    """
+    print(SEP2)
+    PAIRS = 2000
+    print(f"§2.6  Challenge-difference invertibility in R_q ({PAIRS} pairs, n={_N})")
+    q, n = _Q, _N
+    assert (q - 1) % (2 * n) == 0, "x^n+1 does not split fully; adapt test"
+    # 3 generates F_65537^*; omega = 3^((q-1)/2n) is a primitive 2n-th root of
+    # unity; the roots of x^n+1 are the odd powers omega^(2i+1).
+    omega = pow(3, (q - 1) // (2 * n), q)
+    roots = [pow(omega, 2 * i + 1, q) for i in range(n)]
+
+    def _eval(poly, x):
+        acc = 0
+        for coef in reversed(poly):
+            acc = (acc * x + coef) % q
+        return acc
+
+    zero_diff = non_inv = 0
+    for _ in range(PAIRS):
+        c1 = _challenge(os.urandom(16), n, _T)
+        c2 = _challenge(os.urandom(16), n, _T)
+        d = [(a - b) % q for a, b in zip(c1, c2)]
+        if all(x == 0 for x in d):
+            zero_diff += 1
+            continue
+        if any(_eval(d, r) == 0 for r in roots):
+            non_inv += 1
+    frac = non_inv / PAIRS
+    # Heuristic expectation: each of n roots vanishes w.p. ~1/q for a "random"
+    # nonzero difference → union bound ≈ n/q.
+    print(f"  Identical challenge pairs        : {zero_diff}/{PAIRS}")
+    print(f"  Nonzero but NON-invertible diffs : {non_inv}/{PAIRS} ({frac:.4%})")
+    print(f"  Heuristic expectation n/q        : {n / q:.4%}")
+    print("  Conclusion: non-invertible differences exist (or cannot be excluded),")
+    print("  so the soundness argument uses RELAXED special soundness (§11.10.2):")
+    print("  the extractor outputs (z-z', c-c') as a relaxed witness; no inverse")
+    print("  of c-c' is taken.")
+
+
 def section2():
     print()
     print(SEP)
@@ -344,7 +465,9 @@ def section2():
           f"bound={_G - _MAX_CS}, slack={_T * (_Q // (2 * _P) + 1)}")
     section2_completeness()
     section2_soundness()
+    section2_structured_cheats()
     section2_proofsize()
+    section2_invertibility()
 
 
 # =============================================================================

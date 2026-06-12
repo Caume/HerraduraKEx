@@ -1,4 +1,6 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.11
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.33
+    v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
+            benchmarks renumbered [29]–[40].
     v1.9.11: ZKP-RNL + ZKP-NL security tests [20][21] and benchmarks [32][33] (TODO #77 Batch 7);
             benchmarks renumbered [22]-[33].
     v1.8.7: 32-bit benchmark columns; benchHpksSternF loops over all sizes (TODO #61 extension).
@@ -724,7 +726,7 @@ func testHpksSternRingCorrectness() {
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[28] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[29] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -738,7 +740,7 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[29] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[30] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -753,7 +755,7 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[30] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[31] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -772,7 +774,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[31] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[32] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		rv   := rVal(size)
@@ -791,7 +793,7 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[32] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[33] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g    := big.NewInt(GfGen)
@@ -817,7 +819,7 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[33] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[34] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		a  := randBA(size)
@@ -828,7 +830,7 @@ func benchNlFscxRevolve() {
 		fmt.Printf("    bits=%3d  v1 n/4 steps             : %s  (%d ops in %.2fs)\n",
 			size, fmtRate(ops, elapsed), ops, elapsed.Seconds())
 	}
-	fmt.Println("[33b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
+	fmt.Println("[34b] NL-FSCX v2 revolve+inv throughput (r_val steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		rv := rVal(size)
 		a  := randBA(size)
@@ -844,7 +846,7 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[34] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[35] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		sink := randBA(size)
@@ -864,7 +866,7 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[35] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	fmt.Println("[36] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
 	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
@@ -881,7 +883,7 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[36] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Println("[37] HKEX-RNL handshake throughput  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := RnlMPoly(nRnl)
@@ -900,7 +902,7 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[37] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[38] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
@@ -983,12 +985,12 @@ func testZkpNlCorrectness() {
 }
 
 // ---------------------------------------------------------------------------
-// Performance benchmarks [38]-[39]: ZKP
+// Performance benchmarks [39]-[40]: ZKP
 // ---------------------------------------------------------------------------
 
 func benchZkpRnl() {
 	const n = 256
-	fmt.Printf("[38] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
+	fmt.Printf("[39] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
 	mBase  := RnlMPoly(n)
 	aRand  := RnlRandPoly(n, RnlQ)
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1009,7 +1011,7 @@ func benchZkpNl() {
 		n      = 32
 		rounds = 16
 	)
-	fmt.Printf("[39] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
+	fmt.Printf("[40] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
 	A, B, y, _ := ZkpNlKeygen(n)
 	ops, elapsed := bench("", func() {
 		proof, err := ZkpNlProve(A, B, y, n, rounds, zkpMsg)
@@ -1184,6 +1186,67 @@ func testRatchetForwardSecrecy() {
 		uniqStr, divStr, status)
 }
 
+func testHskeNlAead() {
+	fmt.Println("[28] HSKE-NL-AEAD (TODO #95) — round-trip, tamper rejection, cross-language KAT  [NEW]")
+
+	// Cross-language known-answer test (must match C/Go/Python suite outputs)
+	kb := make([]byte, 32)
+	nb := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		kb[i] = byte(i)
+		nb[i] = byte(0xA0 ^ i)
+	}
+	katKey := NewBitArray(256, new(big.Int).SetBytes(kb))
+	katNonce := NewBitArray(256, new(big.Int).SetBytes(nb))
+	katPt := []byte("HSKE-NL-AEAD cross-language vector, 41 bytes!")
+	katCt, katTag := HskeNlAeadEncrypt(katKey, katNonce, []byte("hdr"), katPt)
+	okKat := fmt.Sprintf("%x", katCt) ==
+		"75fe38c5204d65381fc11f084181ee0cce44940c4b62b697ab85178f20022ce4cfbad25099f9e16d5ad7abf73d" &&
+		fmt.Sprintf("%x", katTag) ==
+			"b9bc7eb9cf31ec444a50ef670750d62a189f4518908a42d16ec6872eb710d022"
+
+	// Round-trip + tamper rejection over random inputs of irregular lengths
+	trials := testRounds(50)
+	if trials > 50 {
+		trials = 50
+	}
+	okRt, okTamper := 0, 0
+	for t := 0; t < trials; t++ {
+		key := NewRandBitArray(256)
+		nonce := NewRandBitArray(256)
+		pt := make([]byte, 1+(t*7)%97)
+		ad := make([]byte, t%17)
+		mrand.Read(pt)
+		mrand.Read(ad)
+		ct, tag := HskeNlAeadEncrypt(key, nonce, ad, pt)
+		if rec, ok := HskeNlAeadDecrypt(key, nonce, ad, ct, tag); ok && bytes.Equal(rec, pt) {
+			okRt++
+		}
+		badCt := append([]byte{ct[0] ^ 1}, ct[1:]...)
+		badTag := append([]byte{tag[0] ^ 1}, tag[1:]...)
+		badNonce := NewBitArray(256, new(big.Int).Xor(&nonce.Val, big.NewInt(1)))
+		badKey := NewBitArray(256, new(big.Int).Xor(&key.Val, big.NewInt(1)))
+		_, r1 := HskeNlAeadDecrypt(key, nonce, ad, badCt, tag)
+		_, r2 := HskeNlAeadDecrypt(key, nonce, ad, ct, badTag)
+		_, r3 := HskeNlAeadDecrypt(key, nonce, append(append([]byte{}, ad...), 'x'), ct, tag)
+		_, r4 := HskeNlAeadDecrypt(key, badNonce, ad, ct, tag)
+		_, r5 := HskeNlAeadDecrypt(badKey, nonce, ad, ct, tag)
+		if !r1 && !r2 && !r3 && !r4 && !r5 {
+			okTamper++
+		}
+	}
+	status := "PASS"
+	if !okKat || okRt != trials || okTamper != trials {
+		status = "FAIL"
+	}
+	katStr := "PASS"
+	if !okKat {
+		katStr = "FAIL"
+	}
+	fmt.Printf("    kat=%s  roundtrip=%d/%d  tamper_reject=%d/%d  [%s]\n\n",
+		katStr, okRt, trials, okTamper, trials, status)
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -1225,7 +1288,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.31 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.33 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:
@@ -1280,6 +1343,7 @@ func main() {
 	fmt.Println("--- Security Tests: Masking / Ratchet (78.H/C) ---\n")
 	testMaskedHske()
 	testRatchetForwardSecrecy()
+	testHskeNlAead()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()

@@ -4,6 +4,30 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.33] - 2026-06-12
+
+### Feature — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95 option 1)
+
+- **`Herradura cryptographic suite.py` / `herradura.h` / `herradura/herradura.go`**: new `hske_nl_aead_encrypt` / `hske_nl_aead_decrypt` (Go: `HskeNlAeadEncrypt`/`HskeNlAeadDecrypt`) — byte-level encrypt-then-MAC AEAD over the HSKE-NL-A1 CTR keystream. Tag = keyed HFSCX-256-DM over `HSKE-NL-AEAD-v1` DS prefix ‖ nonce ‖ len-framed AD ‖ len-framed ciphertext; MAC key uses the existing domain-separated `mac_key` schedule, DS-prefix-separated from the `.hkx` encfile MAC. Key-committing (the tag binds the MAC key through the collision-resistant keyed chain — a property AES-GCM lacks). Verify-then-decrypt with constant-time tag comparison (`hmac.compare_digest` / `ct_eq32` / `crypto/subtle`). All three implementations are byte-for-byte interoperable (shared KAT).
+- **`HerraduraCli` (Python/C/Go)**: `enc --algo hske-nla1 --aead [--ad STR]` emits ciphertext PEM format tag 2 — `SEQ(2, nonce, E, tag, nbits)`; `dec` auto-detects format tag 2, verifies (optionally with `--ad`) before decrypting, and fails closed on tag mismatch. PEM outputs are cross-CLI compatible.
+- **`CryptosuiteTests`**: new security test [28] (C/Go/Python) — cross-language KAT, round-trip over irregular lengths, and tamper rejection (ciphertext, tag, AD, nonce, key). Benchmarks renumbered [28]–[39] → [29]–[40]; stale C benchmark comments fixed to current labels.
+- **`CliTest/test_aead.sh`**: new — all 9 producer/consumer CLI pairs, wrong-AD and wrong-key rejection (19 checks).
+- **`SecurityProofs-2.md` §11.9.6**: HSKE-NL-AEAD note — construction, key-commitment argument, and TODO #95 option 2 (NL-FSCX v2 sponge/duplex AEAD) recorded as open research gated on TODO #99.
+- **`CLAUDE.md`**: test numbering updated to [1]–[28] / [29]–[40].
+
+---
+
+## [1.9.32] - 2026-06-12
+
+### Security/Proofs — ZKP-RNL Σ-protocol relaxed special soundness + structured cheat tests (TODO #94, items 1–2)
+
+- **`SecurityProofs-3.md` §11.10.2**: The soundness argument is restated as **relaxed special soundness** (Lyubashevsky 2012). The previous sketch extracted (z−z')·(c−c')⁻¹, implicitly assuming challenge differences are invertible in R_q — unjustified for the suite parameters: q = 65537 gives 2n | q−1 for all power-of-two n ≤ 256, so x^n+1 splits into linear factors over F_q and R_q has zero divisors. Measured: 3/2000 random challenge pairs at n=32 yield nonzero non-invertible differences. The extractor now outputs the pair (z−z', c−c') as a relaxed witness (norm bounds stated) without inversion; the factor-2 norm relaxation is flagged for the open formal-reduction work (§11.10.6 item 1). Empirical-results table extended with the new cheat tests.
+- **`SecurityProofsCode/zkp_pqc_exploration.py`**: new §2.4b structured cheating provers — wrong-key witness (honest prover run with fresh s′ ≠ s), tampered commitment w (Fiat-Shamir check), perturbed response z (residual-norm check), and bounded challenge grinding (64 attempts/trial); all 0 passes. New §2.6 challenge-difference invertibility scan: evaluates c−c' at the n roots of x^n+1 over F_q (CRT split), empirically confirming non-invertible differences exist and motivating the relaxed formulation.
+- **`CryptosuiteTests/Herradura_tests.py`** test [21]: ZKP-RNL now also checks wrong-key rejection, tampered-w rejection, and perturbed-z rejection at n=32 and n=256 against the deployed `_rnl_sigma_sign`/`_rnl_sigma_verify`. (C/Go test extension deferred.)
+- **`TODO.md`**: #94 items 1–2 done; #92 gains a related finding — §11.4.3's claim that x^256+1 "does not split into degree-1 factors over F_65537 since 512 ∤ q−1" is arithmetically wrong (512 | 65536; the ring splits fully). KaTeX pipeline validator: SecurityProofs-3.md 158 OK, 0 FAIL.
+
+---
+
 ## [1.9.31] - 2026-06-11
 
 ### Housekeeping — Unify test numbering across C, Go, and Python (TODO #87)

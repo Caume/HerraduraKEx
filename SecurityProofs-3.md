@@ -47,7 +47,9 @@ Primary use case for §11.10.2: **anonymous credentials** — prove knowledge of
 
 **Completeness proof sketch.** $m \cdot z = m \cdot y + c \cdot (m \cdot s) = w + c \cdot \text{lift}(C) + c \cdot \varepsilon$, where $\varepsilon = m \cdot s - \text{lift}(C)$ satisfies $\|\varepsilon\|_\infty \leq q/(2p)$ by the definition of rounding.  Hence $\|m \cdot z - w - c \cdot \text{lift}(C)\|_\infty \leq t \cdot q/(2p)$.
 
-**Soundness.** Under the Fiat-Shamir ROM assumption, one round suffices for computational soundness.  Special soundness: given two accepting transcripts $(w, c, z)$ and $(w, c', z')$ with $c \neq c'$, the response difference $(z - z') \cdot (c - c')^{-1} \approx s$ in the ring, contradicting Ring-LWR hardness.
+**Soundness (relaxed special soundness, TODO #94).** Under the Fiat-Shamir ROM assumption, one round suffices for computational soundness.  An earlier version of this argument extracted $(z - z') \cdot (c - c')^{-1} \approx s$, implicitly assuming the challenge difference is invertible in $\mathcal{R}_q$.  That assumption is **not justified** for the suite parameters: $q = 65537$ gives $q - 1 = 2^{16}$, so $2n \mid q - 1$ for every power-of-two $n \leq 256$ and $x^n + 1$ splits into $n$ linear factors over $\mathbb{F}_q$.  The ring $\mathcal{R}_q \cong \mathbb{F}_q^n$ (CRT) therefore contains zero divisors, and a nonzero sparse ternary difference $c - c'$ is non-invertible whenever it vanishes at one of the $n$ roots of $x^n + 1$.  Empirically (`zkp_pqc_exploration.py` §2.6): 3 of 2000 random challenge pairs at $n = 32$ produced a nonzero non-invertible difference (heuristic expectation $n/q \approx 0.0005$, i.e. 0.05 %), so strict special soundness fails with small but nonzero probability.
+
+The argument is therefore restated in the standard *relaxed* form [Lyubashevsky 2012]: given two accepting transcripts $(w, c, z)$ and $(w, c', z')$ with $c \neq c'$, the extractor outputs the pair $(\bar{z}, \bar{c}) = (z - z', c - c')$ **without inverting** $\bar{c}$.  This pair satisfies $\bar{c} \neq 0$ with $\lVert \bar{c} \rVert_\infty \leq 2$ and at most $2t$ nonzero coefficients, $\lVert \bar{z} \rVert_\infty \leq 2(\gamma - t)$, and (subtracting the two verification equations) $\lVert m \cdot \bar{z} - \bar{c} \cdot \text{lift}(C) \rVert_\infty \leq 2t \lceil q/(2p) \rceil$ — a *relaxed witness* for the statement $(m, C)$.  Producing such a short relaxed witness without knowledge of $s$ would distinguish $C$ from rounding noise, contradicting Ring-LWR hardness; the honest witness $s$ itself yields one via $\bar{z} = \bar{c} \cdot s$.  The relaxation widens the extracted-witness norm by a factor of 2, which is accounted for in the security margin discussion (open direction 1, §11.10.6).
 
 **Zero-knowledge.** Rejection sampling ensures $z$ is statistically close to $\text{Unif}([-\gamma+t, \gamma-t]^n)$, independent of $s$.  The triple $(w, c, z)$ can be simulated without $s$ by choosing $z$ uniformly and setting $w = m \cdot z - c \cdot \text{lift}(C)$.
 
@@ -57,6 +59,15 @@ Primary use case for §11.10.2: **anonymous credentials** — prove knowledge of
 |---|---|---|
 | Completeness (honest prover) | 1 000 | 0 failures [PASS] |
 | Soundness (naive cheat: random $z$, no $s$) | 200 | 0 passes [PASS] |
+| Soundness (wrong-key witness $s' \neq s$, §2.4b) | 200 | 0 passes [PASS] |
+| Soundness (tampered $w$ — Fiat-Shamir check, §2.4b) | 200 | 0 passes [PASS] |
+| Soundness (perturbed $z$ — residual-norm check, §2.4b) | 200 | 0 passes [PASS] |
+| Soundness (challenge grinding, 64 attempts/trial, §2.4b) | 200 | 0 passes [PASS] |
+| Challenge-difference invertibility in $\mathcal{R}_q$ (§2.6) | 2 000 pairs | 3 nonzero non-invertible differences — strict special soundness fails; relaxed form required |
+
+The wrong-key, tampered- $w$, perturbed- $z$, and grinding cheats are also exercised in the
+language test suites (`CryptosuiteTests/Herradura_tests.py` test [21]) against the deployed
+`_rnl_sigma_sign` / `_rnl_sigma_verify` implementation at both $n = 32$ and $n = 256$.
 
 **Proof sizes:**
 
