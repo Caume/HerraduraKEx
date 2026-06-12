@@ -147,6 +147,7 @@
         nl_fscx_v1, nl_fscx_revolve_v1
         nl_fscx_v2, nl_fscx_v2_inv, nl_fscx_revolve_v2, nl_fscx_revolve_v2_inv
         hfscx_256
+        hske_nl_aead_encrypt, hske_nl_aead_decrypt  (HSKE-NL-AEAD, TODO #95)
         stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
         hpke_stern_f_encap, hpke_stern_f_decap
         hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
@@ -161,6 +162,7 @@
     See docs/TUTORIAL.md for complete per-protocol code examples.
 '''
 
+import hmac
 import itertools
 import math
 import os
@@ -1790,6 +1792,82 @@ def ratchet_advance(state: BitArray) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# 95 — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95)
+#
+# Encrypt-then-MAC over the HSKE-NL-A1 CTR keystream:
+#   base    = K XOR nonce
+#   seed    = ROL(base, n/8) XOR RNL_KDF_DC          (KDF degeneracy guard, #38)
+#   ks_i    = nl_fscx_revolve_v1(seed, base XOR i, n/4)
+#   ct      = pt XOR ks                              (keystream truncated to len(pt))
+#   mac_key = nl_fscx_revolve_v1(ROL(seed, n/4), base, n/4)   (domain-separated)
+#   tag     = HFSCX-256-MAC(mac_key XOR IV,
+#                 DS || nonce || len(ad)_be8 || ad || len(ct)_be8 || ct)
+#
+# Key-committing: the tag binds mac_key (hence K and nonce) through the
+# collision-resistant keyed HFSCX-256-DM, so a ciphertext cannot verify under
+# two different keys — a property AES-GCM lacks.  The DS prefix domain-separates
+# the tag from the encfile/decfile .hkx MAC, which shares the mac_key schedule.
+# Decryption is verify-then-decrypt with a constant-time tag comparison.
+# ---------------------------------------------------------------------------
+
+_AEAD_DS = b'HSKE-NL-AEAD-v1'
+
+
+def _hske_nl_aead_streams(key: BitArray, nonce: BitArray) -> tuple:
+    """Derive (base, seed, mac_iv) for one (key, nonce) pair."""
+    base    = BitArray(KEYBITS, key.uint ^ nonce.uint)
+    seed    = BitArray(KEYBITS, base.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256)
+    mac_key = nl_fscx_revolve_v1(seed.rotated(KEYBITS // 4), base, I_VALUE)
+    mac_iv  = BitArray(KEYBITS, mac_key.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
+    return base, seed, mac_iv
+
+
+def _hske_nl_aead_xor_keystream(seed: BitArray, base: BitArray, data: bytes) -> bytes:
+    """XOR data with the HSKE-NL-A1 CTR keystream (truncated to len(data))."""
+    blen = KEYBITS // 8
+    out  = bytearray()
+    for i in range((len(data) + blen - 1) // blen):
+        chunk = data[i * blen:(i + 1) * blen]
+        ks    = nl_fscx_revolve_v1(seed, BitArray(KEYBITS, base.uint ^ i), I_VALUE)
+        out  += bytes(d ^ k for d, k in zip(chunk, ks.uint.to_bytes(blen, 'big')))
+    return bytes(out)
+
+
+def _hske_nl_aead_tag(mac_iv: BitArray, nonce: BitArray, ad: bytes, ct: bytes) -> bytes:
+    """Auth tag over DS || nonce || len(ad) || ad || len(ct) || ct."""
+    data = (_AEAD_DS + nonce.uint.to_bytes(KEYBITS // 8, 'big')
+            + len(ad).to_bytes(8, 'big') + ad
+            + len(ct).to_bytes(8, 'big') + ct)
+    return hfscx_256(data, iv=mac_iv)
+
+
+def hske_nl_aead_encrypt(key: BitArray, pt: bytes, ad: bytes = b'',
+                         nonce: 'BitArray | None' = None) -> tuple:
+    """AEAD-encrypt pt under key with associated data ad.
+
+    Returns (nonce, ct, tag): nonce is a fresh random 256-bit BitArray unless
+    supplied (never reuse a (key, nonce) pair), ct is len(pt) bytes, tag is
+    32 bytes."""
+    if nonce is None:
+        nonce = BitArray.random(KEYBITS)
+    base, seed, mac_iv = _hske_nl_aead_streams(key, nonce)
+    ct  = _hske_nl_aead_xor_keystream(seed, base, pt)
+    tag = _hske_nl_aead_tag(mac_iv, nonce, ad, ct)
+    return nonce, ct, tag
+
+
+def hske_nl_aead_decrypt(key: BitArray, nonce: BitArray, ct: bytes, tag: bytes,
+                         ad: bytes = b'') -> 'bytes | None':
+    """Verify-then-decrypt.  Returns the plaintext, or None if the tag does not
+    authenticate (ct, ad) under (key, nonce).  Tag comparison is constant-time."""
+    base, seed, mac_iv = _hske_nl_aead_streams(key, nonce)
+    expected = _hske_nl_aead_tag(mac_iv, nonce, ad, ct)
+    if not hmac.compare_digest(bytes(tag), expected):
+        return None
+    return _hske_nl_aead_xor_keystream(seed, base, ct)
+
+
+# ---------------------------------------------------------------------------
 # 80 — Oblivious PRF (OPRF) over GF(2^n)*  (TODO #80)
 #
 # F(k, x) = gf_pow(H(x), k)  where  H = HFSCX-256 hash-to-field.
@@ -2419,6 +2497,21 @@ def main():
         print("- Masked HSKE encrypt/decrypt correct")
     else:
         print("+ Masked HSKE encrypt/decrypt failed!")
+
+    # 95 — HSKE-NL-AEAD demo: round-trip + tamper rejection
+    aead_key = BitArray.random(KEYBITS)
+    aead_pt  = b"HSKE-NL-AEAD demo plaintext (arbitrary length, 47 B)"
+    aead_ad  = b"header-v1"
+    aead_nonce, aead_ct, aead_tag = hske_nl_aead_encrypt(aead_key, aead_pt, aead_ad)
+    aead_dec = hske_nl_aead_decrypt(aead_key, aead_nonce, aead_ct, aead_tag, aead_ad)
+    aead_bad = hske_nl_aead_decrypt(aead_key, aead_nonce,
+                                    bytes([aead_ct[0] ^ 1]) + aead_ct[1:],
+                                    aead_tag, aead_ad)
+    aead_bad_ad = hske_nl_aead_decrypt(aead_key, aead_nonce, aead_ct, aead_tag, b"header-v2")
+    if aead_dec == aead_pt and aead_bad is None and aead_bad_ad is None:
+        print("- HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
+    else:
+        print("+ HSKE-NL-AEAD failed!")
 
     # 78.C — Ratchet demo (5 steps)
     ratchet_seed = b"demo-seed-78c"

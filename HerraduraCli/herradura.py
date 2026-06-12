@@ -46,6 +46,7 @@ from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
     hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
+    hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -314,9 +315,15 @@ def _decode_rnl_response(path):
 # Ciphertext serialization (symmetric)
 # ---------------------------------------------------------------------------
 
-def _encode_sym_ct(algo, E_int, nbits, nonce_int=None):
+def _encode_sym_ct(algo, E_int, nbits, nonce_int=None, tag_int=None):
     nbytes = nbits // 8
-    if algo == 'hske-nla1' and nonce_int is not None:
+    if algo == 'hske-nla1' and nonce_int is not None and tag_int is not None:
+        der = der_seq(der_int(2),               # format tag 2: NLA1 AEAD (TODO #95)
+                      der_int(nonce_int, nbytes),
+                      der_int(E_int, nbytes),
+                      der_int(tag_int, 32),
+                      der_int(nbits))
+    elif algo == 'hske-nla1' and nonce_int is not None:
         der = der_seq(der_int(1),               # format tag 1: NLA1 with nonce
                       der_int(nonce_int, nbytes),
                       der_int(E_int, nbytes),
@@ -329,17 +336,20 @@ def _encode_sym_ct(algo, E_int, nbits, nonce_int=None):
 
 
 def _decode_sym_ct(path):
-    """Return (E_int, nbits, nonce_int_or_None)."""
+    """Return (E_int, nbits, nonce_int_or_None, tag_int_or_None)."""
     label, ints = _read_pem_ints(path)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
     fmt = ints[0]
-    if fmt == 1:
+    if fmt == 2:
+        _, nonce_int, E_int, tag_int, nbits = ints
+        return E_int, nbits, nonce_int, tag_int
+    elif fmt == 1:
         _, nonce_int, E_int, nbits = ints
-        return E_int, nbits, nonce_int
+        return E_int, nbits, nonce_int, None
     else:
         _, E_int, nbits = ints
-        return E_int, nbits, None
+        return E_int, nbits, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +693,18 @@ def cmd_enc(args):
 
         elif algo == 'hske-nla1':
             N_nonce = BitArray.random(nbits)
+            if getattr(args, 'aead', False):
+                # HSKE-NL-AEAD (TODO #95): format tag 2 with auth tag
+                if nbits != 256:
+                    sys.exit("enc: --aead requires a 256-bit key")
+                ad = (args.ad or '').encode()
+                _, ct, tag = hske_nl_aead_encrypt(K, in_padded, ad, nonce=N_nonce)
+                _write_file(out_path, _encode_sym_ct(
+                    'hske-nla1', int.from_bytes(ct, 'big'), nbits,
+                    nonce_int=N_nonce.uint, tag_int=int.from_bytes(tag, 'big')))
+                return
+            if args.ad:
+                sys.exit("enc: --ad requires --aead")
             base    = BitArray(nbits, K.uint ^ N_nonce.uint)
             seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
             ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
@@ -751,8 +773,20 @@ def cmd_dec(args):
         key_int, nbits = _load_key(key_path)
         K = BitArray(nbits, key_int)
 
-        E_int, _nbits, nonce_int = _decode_sym_ct(getattr(args, 'in'))
+        E_int, _nbits, nonce_int, tag_int = _decode_sym_ct(getattr(args, 'in'))
         E = BitArray(nbits, E_int)
+
+        if algo == 'hske-nla1' and tag_int is not None:
+            # HSKE-NL-AEAD (TODO #95): verify-then-decrypt
+            ad = (getattr(args, 'ad', None) or '').encode()
+            pt = hske_nl_aead_decrypt(K, BitArray(nbits, nonce_int),
+                                      E_int.to_bytes(nbits // 8, 'big'),
+                                      tag_int.to_bytes(32, 'big'), ad)
+            if pt is None:
+                sys.exit("dec: authentication tag mismatch — "
+                         "ciphertext corrupt, wrong key, or wrong --ad")
+            _write_file(out_path, pt)
+            return
 
         if algo == 'hske':
             D = fscx_revolve(E, K, 3 * nbits // 4)
@@ -1307,6 +1341,10 @@ def build_parser():
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
     en.add_argument('--out', required=True)
+    en.add_argument('--aead', action='store_true',
+                    help='HSKE-NL-AEAD authenticated encryption (hske-nla1 only)')
+    en.add_argument('--ad', default=None,
+                    help='associated data bound into the AEAD tag (requires --aead)')
 
     # dec
     de = sub.add_parser('dec', help='Decrypt')
@@ -1315,6 +1353,8 @@ def build_parser():
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
+    de.add_argument('--ad', default=None,
+                    help='associated data for AEAD ciphertexts (must match enc --ad)')
 
     # sign
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')

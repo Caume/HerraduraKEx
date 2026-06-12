@@ -19,6 +19,7 @@ package herradura
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -446,6 +447,76 @@ func HskeNla1KsBlock(seed, base *BitArray, i uint32) *BitArray {
 func HskeNla1MacKey(seed, base *BitArray) *BitArray {
 	seed2 := seed.RotateLeft(64) // ROL(seed, n/4)
 	return NlFscxRevolveV1(seed2, base, 64)
+}
+
+// ---------------------------------------------------------------------------
+// HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95)
+//
+// Encrypt-then-MAC over the HSKE-NL-A1 CTR keystream:
+//   base = K XOR nonce; seed = RnlKdfSeed(base)
+//   ct   = pt XOR ks   (HskeNla1KsBlock, truncated to len(pt))
+//   tag  = HFSCX-256-MAC(mac_key XOR IV,
+//              DS || nonce || ad_len_be8 || ad || ct_len_be8 || ct)
+// Key-committing: the tag binds mac_key (hence K and nonce) through the keyed
+// HFSCX-256-DM.  The DS prefix domain-separates the tag from the .hkx file
+// MAC, which shares the mac_key schedule.  Decryption is verify-then-decrypt
+// with a constant-time tag comparison.  Never reuse a (key, nonce) pair.
+// ---------------------------------------------------------------------------
+
+const hskeNlAeadDS = "HSKE-NL-AEAD-v1"
+
+func hskeNlAeadXorKs(seed, base *BitArray, in []byte) []byte {
+	out := make([]byte, len(in))
+	for off, i := 0, uint32(0); off < len(in); off, i = off+32, i+1 {
+		ks := HskeNla1KsBlock(seed, base, i).Bytes()
+		end := off + 32
+		if end > len(in) {
+			end = len(in)
+		}
+		for j := off; j < end; j++ {
+			out[j] = in[j] ^ ks[j-off]
+		}
+	}
+	return out
+}
+
+func hskeNlAeadTag(macKey, nonce *BitArray, ad, ct []byte) []byte {
+	macIV := macKey.Bytes()
+	for i := range macIV {
+		macIV[i] ^= Hfscx256IV[i]
+	}
+	buf := make([]byte, 0, len(hskeNlAeadDS)+32+8+len(ad)+8+len(ct))
+	buf = append(buf, hskeNlAeadDS...)
+	buf = append(buf, nonce.Bytes()...)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(len(ad)))
+	buf = append(buf, ad...)
+	buf = binary.BigEndian.AppendUint64(buf, uint64(len(ct)))
+	buf = append(buf, ct...)
+	return Hfscx256(buf, macIV)
+}
+
+// HskeNlAeadEncrypt AEAD-encrypts pt under (key, nonce) with associated data
+// ad.  Returns (ct, tag): ct is len(pt) bytes, tag is 32 bytes.  The caller
+// supplies a fresh random 256-bit nonce (e.g. NewRandBitArray(256)).
+func HskeNlAeadEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
+	base := NewBitArray(key.Size(), new(big.Int).Xor(&key.Val, &nonce.Val))
+	seed := RnlKdfSeed(base)
+	ct := hskeNlAeadXorKs(seed, base, pt)
+	tag := hskeNlAeadTag(HskeNla1MacKey(seed, base), nonce, ad, ct)
+	return ct, tag
+}
+
+// HskeNlAeadDecrypt verifies then decrypts.  Returns (pt, true) on success or
+// (nil, false) if the tag does not authenticate (ct, ad) under (key, nonce).
+// The tag comparison is constant-time.
+func HskeNlAeadDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) {
+	base := NewBitArray(key.Size(), new(big.Int).Xor(&key.Val, &nonce.Val))
+	seed := RnlKdfSeed(base)
+	expected := hskeNlAeadTag(HskeNla1MacKey(seed, base), nonce, ad, ct)
+	if subtle.ConstantTimeCompare(tag, expected) != 1 {
+		return nil, false
+	}
+	return hskeNlAeadXorKs(seed, base, ct), true
 }
 
 // ---------------------------------------------------------------------------

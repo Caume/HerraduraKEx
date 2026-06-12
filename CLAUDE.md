@@ -124,7 +124,7 @@ x86_64-linux-gnu-ld -m elf_i386 -o CryptosuiteTests/Herradura_tests_i386 tests32
 No automated test framework. Tests are manual: run each program and verify console output.
 
 ```bash
-# C/Go/Python — security tests [1]–[27] + benchmarks [28]–[39]
+# C/Go/Python — security tests [1]–[28] + benchmarks [29]–[40]
 # (C also runs one C-only unlabeled test between [20] and [21])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
@@ -157,6 +157,7 @@ bash CliTest/test_sign.sh
 bash CliTest/test_encrypt.sh
 bash CliTest/test_encfile.sh
 bash CliTest/test_signfile.sh
+bash CliTest/test_aead.sh      # HSKE-NL-AEAD enc/dec --aead, 9-way cross-CLI interop (needs C+Go CLIs built)
 
 # C CLI — requires HerraduraCli/herradura_cli (build_c.sh)
 bash CliTest/test_c_keygen.sh

@@ -981,11 +981,37 @@ static void cmd_enc(int argc, char **argv)
             seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
 
         } else if (strcmp(algo, "hske-nla1") == 0) {
+            int aead = has_flag(argc, argv, "--aead");
+            const char *ad = get_arg(argc, argv, "--ad");
             FILE *urnd = fopen("/dev/urandom", "rb");
             if (!urnd) die("cannot open /dev/urandom");
-            BitArray N_nonce, base, seed, ks, E;
+            BitArray N_nonce;
             ba_rand(&N_nonce, urnd);
             fclose(urnd);
+            if (ad && !aead) die("enc: --ad requires --aead");
+
+            if (aead) {
+                /* AEAD format tag 2: SEQ(2, nonce, E, tag, nbits) — TODO #95 */
+                uint8_t ct_buf[KEYBYTES], tag[32];
+                hske_nl_aead_encrypt(&K, &N_nonce,
+                                     (const uint8_t *)(ad ? ad : ""),
+                                     ad ? strlen(ad) : 0,
+                                     P.b, KEYBYTES, ct_buf, tag);
+                uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itE[DER_INT_LEN(KEYBYTES)];
+                uint8_t itt[DER_INT_LEN(KEYBYTES)], itnb[8];
+                size_t l0, ln, lE, lt, lnb;
+                der_i_byte(2, it0, &l0);
+                der_i32(N_nonce.b, itn, &ln);
+                der_i32(ct_buf, itE, &lE);
+                der_i32(tag, itt, &lt);
+                der_i_n256(itnb, &lnb);
+                const uint8_t *it[5] = {it0, itn, itE, itt, itnb};
+                size_t il[5] = {l0, ln, lE, lt, lnb};
+                seq_and_write(it, il, 5, PEM_CIPHERTEXT, out_path);
+                return;
+            }
+
+            BitArray base, seed, ks, E;
             ba_xor(&base, &K, &N_nonce);
             ba_rnl_kdf_seed(&seed, &base);
             nl_fscx_revolve_v1_ba(&ks, &seed, &base, I_VALUE);
@@ -1104,6 +1130,24 @@ static void cmd_dec(int argc, char **argv)
         BitArray E, D;
 
         if (strcmp(algo, "hske-nla1") == 0) {
+            if (fmt == 2) {
+                /* AEAD format tag 2: SEQ(2, nonce, E, tag, nbits) — TODO #95 */
+                const char *ad = get_arg(argc, argv, "--ad");
+                BitArray N_nonce, E_ba, tag_ba;
+                if (ct.n_items < 5) die("dec: bad hske-nla1 AEAD ciphertext");
+                ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
+                ba_from_ra(&E_ba,    ct.vals[2], ct.vlens[2]);
+                ba_from_ra(&tag_ba,  ct.vals[3], ct.vlens[3]);
+                pem_key_free(&ct);
+                if (!hske_nl_aead_decrypt(&K, &N_nonce,
+                                          (const uint8_t *)(ad ? ad : ""),
+                                          ad ? strlen(ad) : 0,
+                                          E_ba.b, KEYBYTES, tag_ba.b, D.b))
+                    die("dec: authentication tag mismatch — "
+                        "ciphertext corrupt, wrong key, or wrong --ad");
+                write_binary_file(out_path, D.b, KEYBYTES);
+                return;
+            }
             if (fmt != 1 || ct.n_items < 4) die("dec: bad hske-nla1 ciphertext");
             BitArray N_nonce, base, seed, ks;
             ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
@@ -1969,12 +2013,15 @@ static void usage(void)
 "    --kdf hfscx-256: post-hash the raw shared secret with HFSCX-256.\n"
 "    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
-"  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE]\n"
+"  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE] [--aead [--ad STR]]\n"
 "    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2\n"
 "    Asymmetric (--pubkey): hpke hpke-nl hpke-stern\n"
+"    --aead (hske-nla1 only): HSKE-NL-AEAD authenticated encryption; --ad binds\n"
+"    optional associated data into the tag (must match at dec).\n"
 "\n"
-"  dec --algo ALGO --key KEY --in CT_FILE [--out FILE]\n"
+"  dec --algo ALGO --key KEY --in CT_FILE [--out FILE] [--ad STR]\n"
 "    Decrypt.  Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"
+"    AEAD ciphertexts (format tag 2) are verified before decryption.\n"
 "\n"
 "  encfile --algo hske-nla1 --key SK --in FILE --out FILE.hkx\n"
 "    Stream-encrypt an arbitrary-size file (HSKE-NL-A1 CTR-AEAD).\n"

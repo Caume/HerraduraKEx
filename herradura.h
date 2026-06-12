@@ -672,6 +672,98 @@ static void hske_nla1_mac_key(const BitArray *seed, const BitArray *base,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95)
+ *
+ * Encrypt-then-MAC over the HSKE-NL-A1 CTR keystream:
+ *   base = K XOR nonce; seed = ba_rnl_kdf_seed(base);
+ *   ct   = pt XOR ks   (hske_nla1_ks_block, truncated to pt_len);
+ *   tag  = HFSCX-256-MAC(mac_key XOR IV,
+ *              DS || nonce || ad_len_be8 || ad || ct_len_be8 || ct)
+ * Key-committing: the tag binds mac_key (hence K and nonce) through the keyed
+ * HFSCX-256-DM.  The DS prefix domain-separates the tag from the .hkx file MAC,
+ * which shares the mac_key schedule.  Decryption is verify-then-decrypt with a
+ * constant-time tag comparison.  Never reuse a (key, nonce) pair.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define _AEAD_DS     "HSKE-NL-AEAD-v1"
+#define _AEAD_DS_LEN 15
+
+static void _hske_nl_aead_be64(uint8_t *dst, uint64_t v)
+{
+    int j;
+    for (j = 0; j < 8; j++) dst[j] = (uint8_t)((v >> (56 - 8 * j)) & 0xFF);
+}
+
+static void _hske_nl_aead_tag(const BitArray *mac_key, const BitArray *nonce,
+                              const uint8_t *ad, size_t ad_len,
+                              const uint8_t *ct, size_t ct_len,
+                              uint8_t tag_out[32])
+{
+    uint8_t mac_iv[32];
+    size_t len = _AEAD_DS_LEN + KEYBYTES + 8 + ad_len + 8 + ct_len, off;
+    uint8_t *buf = (uint8_t *)malloc(len);
+    int j;
+    if (!buf) { fprintf(stderr, "hske_nl_aead: out of memory\n"); exit(1); }
+    for (j = 0; j < 32; j++) mac_iv[j] = mac_key->b[j] ^ _HFSCX256_IV[j];
+    memcpy(buf, _AEAD_DS, _AEAD_DS_LEN);
+    off = _AEAD_DS_LEN;
+    memcpy(buf + off, nonce->b, KEYBYTES);          off += KEYBYTES;
+    _hske_nl_aead_be64(buf + off, (uint64_t)ad_len); off += 8;
+    if (ad_len) memcpy(buf + off, ad, ad_len);
+    off += ad_len;
+    _hske_nl_aead_be64(buf + off, (uint64_t)ct_len); off += 8;
+    if (ct_len) memcpy(buf + off, ct, ct_len);
+    hfscx_256(buf, len, mac_iv, tag_out);
+    free(buf);
+}
+
+static void _hske_nl_aead_xor_ks(const BitArray *seed, const BitArray *base,
+                                 const uint8_t *in, size_t len, uint8_t *out)
+{
+    BitArray ks;
+    size_t off, blk, j;
+    uint32_t i = 0;
+    for (off = 0; off < len; off += KEYBYTES, i++) {
+        blk = (len - off < KEYBYTES) ? len - off : KEYBYTES;
+        hske_nla1_ks_block(seed, base, i, &ks);
+        for (j = 0; j < blk; j++) out[off + j] = in[off + j] ^ ks.b[j];
+    }
+}
+
+/* AEAD-encrypt pt_len bytes into ct_out (same length) and tag_out (32 bytes).
+ * Caller supplies a fresh random 256-bit nonce (e.g. via ba_rand). */
+static void hske_nl_aead_encrypt(const BitArray *key, const BitArray *nonce,
+                                 const uint8_t *ad, size_t ad_len,
+                                 const uint8_t *pt, size_t pt_len,
+                                 uint8_t *ct_out, uint8_t tag_out[32])
+{
+    BitArray base, seed, mac_key;
+    ba_xor(&base, key, nonce);
+    ba_rnl_kdf_seed(&seed, &base);
+    _hske_nl_aead_xor_ks(&seed, &base, pt, pt_len, ct_out);
+    hske_nla1_mac_key(&seed, &base, &mac_key);
+    _hske_nl_aead_tag(&mac_key, nonce, ad, ad_len, ct_out, pt_len, tag_out);
+}
+
+/* Verify-then-decrypt.  Returns 1 and writes ct_len bytes to pt_out on
+ * success; returns 0 (pt_out untouched) if the tag does not authenticate. */
+static int hske_nl_aead_decrypt(const BitArray *key, const BitArray *nonce,
+                                const uint8_t *ad, size_t ad_len,
+                                const uint8_t *ct, size_t ct_len,
+                                const uint8_t tag[32], uint8_t *pt_out)
+{
+    BitArray base, seed, mac_key;
+    uint8_t expected[32];
+    ba_xor(&base, key, nonce);
+    ba_rnl_kdf_seed(&seed, &base);
+    hske_nla1_mac_key(&seed, &base, &mac_key);
+    _hske_nl_aead_tag(&mac_key, nonce, ad, ad_len, ct, ct_len, expected);
+    if (!ct_eq32(tag, expected)) return 0;
+    _hske_nl_aead_xor_ks(&seed, &base, ct, ct_len, pt_out);
+    return 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * HKEX-RNL: Ring-LWR key exchange helpers (n=256, negacyclic Z_q[x]/(x^n+1))
  * ───────────────────────────────────────────────────────────────────────────── */
 

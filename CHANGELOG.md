@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.33] - 2026-06-12
+
+### Feature — HSKE-NL-AEAD: authenticated encryption with associated data (TODO #95 option 1)
+
+- **`Herradura cryptographic suite.py` / `herradura.h` / `herradura/herradura.go`**: new `hske_nl_aead_encrypt` / `hske_nl_aead_decrypt` (Go: `HskeNlAeadEncrypt`/`HskeNlAeadDecrypt`) — byte-level encrypt-then-MAC AEAD over the HSKE-NL-A1 CTR keystream. Tag = keyed HFSCX-256-DM over `HSKE-NL-AEAD-v1` DS prefix ‖ nonce ‖ len-framed AD ‖ len-framed ciphertext; MAC key uses the existing domain-separated `mac_key` schedule, DS-prefix-separated from the `.hkx` encfile MAC. Key-committing (the tag binds the MAC key through the collision-resistant keyed chain — a property AES-GCM lacks). Verify-then-decrypt with constant-time tag comparison (`hmac.compare_digest` / `ct_eq32` / `crypto/subtle`). All three implementations are byte-for-byte interoperable (shared KAT).
+- **`HerraduraCli` (Python/C/Go)**: `enc --algo hske-nla1 --aead [--ad STR]` emits ciphertext PEM format tag 2 — `SEQ(2, nonce, E, tag, nbits)`; `dec` auto-detects format tag 2, verifies (optionally with `--ad`) before decrypting, and fails closed on tag mismatch. PEM outputs are cross-CLI compatible.
+- **`CryptosuiteTests`**: new security test [28] (C/Go/Python) — cross-language KAT, round-trip over irregular lengths, and tamper rejection (ciphertext, tag, AD, nonce, key). Benchmarks renumbered [28]–[39] → [29]–[40]; stale C benchmark comments fixed to current labels.
+- **`CliTest/test_aead.sh`**: new — all 9 producer/consumer CLI pairs, wrong-AD and wrong-key rejection (19 checks).
+- **`SecurityProofs-2.md` §11.9.6**: HSKE-NL-AEAD note — construction, key-commitment argument, and TODO #95 option 2 (NL-FSCX v2 sponge/duplex AEAD) recorded as open research gated on TODO #99.
+- **`CLAUDE.md`**: test numbering updated to [1]–[28] / [29]–[40].
+
+---
+
 ## [1.9.32] - 2026-06-12
 
 ### Security/Proofs — ZKP-RNL Σ-protocol relaxed special soundness + structured cheat tests (TODO #94, items 1–2)

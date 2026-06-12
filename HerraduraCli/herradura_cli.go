@@ -820,8 +820,27 @@ func loadKey(path string) (*big.Int, int, error) {
 // For HSKE-NL-A1 pass nonce != nil to include format tag 1 + nonce field;
 // all other algos use format tag 0 (no nonce).
 func encodeSymCT(algo string, E *big.Int, n int, nonce *big.Int) (string, error) {
+	return encodeSymCTTag(algo, E, n, nonce, nil)
+}
+
+// encodeSymCTTag: authTag != nil selects AEAD format tag 2 (TODO #95):
+// SEQ(2, nonce, E, tag, nbits).
+func encodeSymCTTag(algo string, E *big.Int, n int, nonce, authTag *big.Int) (string, error) {
 	nb := n / 8
 	var items [][]byte
+	if algo == "hske-nla1" && nonce != nil && authTag != nil {
+		tag, _ := derIntSmall(2)
+		nd, _  := derIntBig(nonce, nb)
+		ed, _  := derIntBig(E, nb)
+		td, _  := derIntBig(authTag, 32)
+		nn, _  := derIntSmall(n)
+		items = [][]byte{tag, nd, ed, td, nn}
+		seq, err := DerSeqEnc(items...)
+		if err != nil {
+			return "", err
+		}
+		return PemWrap(lblCT, seq), nil
+	}
 	if algo == "hske-nla1" && nonce != nil {
 		tag, _ := derIntSmall(1)
 		nd, _  := derIntBig(nonce, nb)
@@ -1210,6 +1229,8 @@ func cmdEnc(args []string) {
 	pubkey := fs.String("pubkey", "", "Recipient public key file (asymmetric algos)")
 	in     := fs.String("in", "-", "Plaintext input file")
 	out    := fs.String("out", "-", "Ciphertext output PEM file")
+	aead   := fs.Bool("aead", false, "HSKE-NL-AEAD authenticated encryption (hske-nla1 only)")
+	ad     := fs.String("ad", "", "Associated data bound into the AEAD tag (requires --aead)")
 	fs.Parse(args)
 
 	if *algo == "" {
@@ -1245,6 +1266,21 @@ func cmdEnc(args []string) {
 			pem, err = encodeSymCT("hske", &E.Val, n, nil)
 		case "hske-nla1":
 			nonce := NewRandBitArray(n)
+			if *aead {
+				// HSKE-NL-AEAD (TODO #95): format tag 2 with auth tag
+				if n != 256 {
+					fmt.Fprintln(os.Stderr, "enc: --aead requires a 256-bit key")
+					os.Exit(1)
+				}
+				ct, authTag := HskeNlAeadEncrypt(K, nonce, []byte(*ad), msgPad(inBytes, nb))
+				pem, err = encodeSymCTTag("hske-nla1", new(big.Int).SetBytes(ct), n,
+					&nonce.Val, new(big.Int).SetBytes(authTag))
+				break
+			}
+			if *ad != "" {
+				fmt.Fprintln(os.Stderr, "enc: --ad requires --aead")
+				os.Exit(1)
+			}
 			base  := NewBitArray(n, new(big.Int).Xor(&K.Val, &nonce.Val))
 			seed  := RnlKdfSeed(base)
 			ks    := NlFscxRevolveV1(seed, base, n/4)
@@ -1334,6 +1370,7 @@ func cmdDec(args []string) {
 	key  := fs.String("key", "", "Key or private key file")
 	in   := fs.String("in", "-", "Ciphertext PEM input file")
 	out  := fs.String("out", "-", "Plaintext output file")
+	ad   := fs.String("ad", "", "Associated data for AEAD ciphertexts (must match enc --ad)")
 	fs.Parse(args)
 
 	if *algo == "" {
@@ -1355,8 +1392,31 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
-		// ctInts[0] = fmt tag; tag 1 → nonce present
+		// ctInts[0] = fmt tag; tag 1 → nonce present; tag 2 → AEAD (TODO #95)
 		fmtTag := bytesToInt(ctInts[0])
+		if fmtTag == 2 {
+			if *algo != "hske-nla1" {
+				fmt.Fprintln(os.Stderr, "dec: AEAD ciphertext requires --algo hske-nla1")
+				os.Exit(1)
+			}
+			n := bytesToInt(ctInts[4])
+			K := NewBitArray(n, keyInt)
+			nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+			ct := make([]byte, n/8)
+			new(big.Int).SetBytes(ctInts[2]).FillBytes(ct)
+			authTag := make([]byte, 32)
+			new(big.Int).SetBytes(ctInts[3]).FillBytes(authTag)
+			pt, ok := HskeNlAeadDecrypt(K, nonce, []byte(*ad), ct, authTag)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "dec: authentication tag mismatch — "+
+					"ciphertext corrupt, wrong key, or wrong --ad")
+				os.Exit(1)
+			}
+			if err := writeBytes(*out, pt); err != nil {
+				die("dec", err)
+			}
+			return
+		}
 		var EInt, nonceInt *big.Int
 		var n int
 		if fmtTag == 1 {

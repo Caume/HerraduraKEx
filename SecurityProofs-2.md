@@ -833,6 +833,8 @@ Both follow from A1 + A2.  HMAC adds resistance against extension and key-recove
 
 **Recommendation.**  The current single-purpose AEAD use is well-served by raw keyed-IV.  For protocols intending to reuse the same long-term key across multiple algorithms or modes (e.g. derive both an encryption key and a MAC key from one master), HMAC-HFSCX-256-DM should be preferred.  This is captured as a future TODO item once such cross-protocol reuse is introduced.
 
+**HSKE-NL-AEAD (v1.9.33, TODO #95 option 1).**  The keyed-IV MAC mode is now also deployed as the tag of a general-purpose AEAD, `hske_nl_aead_encrypt` / `hske_nl_aead_decrypt` (C/Go/Python suites; CLI `enc`/`dec --aead`).  The construction is encrypt-then-MAC over the HSKE-NL-A1 CTR keystream with associated-data support: the tag is computed over the domain-separation prefix `HSKE-NL-AEAD-v1`, the nonce, and length-framed AD and ciphertext, with the MAC key derived from the same per-(key, nonce) schedule as the `.hkx` file format but separated from it by the DS prefix.  Because the tag binds the MAC key through the collision-resistant keyed chain, the scheme is *key-committing*: a ciphertext/tag pair cannot verify under two distinct keys without a keyed collision, ruled out by A2 — a property AES-GCM lacks.  Verification is constant-time and decrypt-after-verify.  A single-pass alternative — a MonkeyDuplex-style sponge AEAD using the bijective NL-FSCX v2 family as the duplex permutation (TODO #95 option 2) — remains open research; it requires the differential/linear characterisation of the v2 permutation tracked in TODO #99 before any deployment claim.
+
 ### 11.9.7 Domain separation across suite call sites
 
 | Site | Role | Effective domain marker |

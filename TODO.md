@@ -5816,3 +5816,198 @@ parameters.  Structured cheats implemented in `zkp_pqc_exploration.py` §2.4b
 in the Python suite test [21] at n=32/256 (wrong-key / w-tamper / z-tamper rejection).
 C/Go test-[21] extension deferred as a cross-language parity follow-up.  Items
 3(a)–(d) remain **OPEN**; 3(b) NTT acceleration is the recommended next step.
+
+---
+
+## Core Primitive Review — New Uses and Cryptographic Advantages — Identified 2026-06-12
+
+A focused review of the unique core algorithms (FSCX / FSCX_REVOLVE and the NL-FSCX
+family) identified five application directions that are **not** covered by the TODO #78
+catalogue.  Each item below records the primitive property exploited, the cryptographic
+advantage that makes the construction natural to this suite, and a concrete
+implementation plan.
+
+Properties recap driving these items:
+
+- **FSCX is GF(2)-linear and circulant** — `M = I XOR ROL XOR ROR` is a 3-tap circulant
+  matrix; rotation-only, branch-free, constant-time on every target including Arduino
+  and ARM Thumb-2.  Order of M is n/2, so `M^{-1} = M^{n/2-1}` is a precomputable
+  rotation table (`_m_inv`).
+- **NL-FSCX v2 is a keyed permutation family** — bijective in A for every B, with a
+  closed-form O(n)-rotation inverse.  Suitable wherever a tweakable PRP is needed.
+- **NL-FSCX v1 is a conjectured OWF** (Theorem 16, SecurityProofs-2 §11.8.3) — usable
+  for one-way state evolution (ratchets, hash chains, key erasure).
+- **HPKS Schnorr signing is linear in the secret exponent** — `s = (k − a·e) mod (2^n−1)`
+  is an affine function of both a and k, the property that enables threshold and
+  aggregate variants in classical Schnorr.
+
+---
+
+### 95. HSKE-NL-AEAD — authenticated encryption mode with key commitment (Feature, High)
+
+**Primitive exploited:** NL-FSCX v1 keystream (HSKE-NL-A1) + HFSCX-256-DM compression.
+
+**Gap:** The suite has no authenticated encryption.  HSKE, HSKE-NL-A1, and HSKE-NL-A2
+are malleable: an attacker can flip ciphertext bits (A1: bit-flips pass through to
+plaintext; A2: controlled corruption) without detection.  Every modern protocol use of
+the suite (CLI `enc`/`encfile`, PAKE session channel from #78.D, ratchet from #78.C)
+needs AEAD, and currently none exists.
+
+**Cryptographic advantage:** All components are native — no external MAC import needed.
+Two design options to evaluate:
+
+1. **Encrypt-then-MAC:** `C = HSKE-NL-A1(K_enc, nonce, P)`;
+   `tag = hfscx_256(K_mac || nonce || AD || C)` with `K_enc, K_mac` derived from a master
+   key via domain-separated HFSCX-256 calls.  This is also *key-committing* for free
+   (the tag binds K_mac through a collision-resistant hash), a property AES-GCM lacks.
+2. **Duplex/sponge mode over the NL-FSCX v2 permutation:** use `nl_fscx_revolve_v2`
+   as the sponge permutation (bijectivity gives the required permutation property),
+   absorbing AD and plaintext blocks and squeezing the tag — a MonkeyDuplex-style
+   single-pass AEAD.  Research-grade: requires analysis of v2's differential/linear
+   profile as a sponge permutation before deployment.
+
+**Plan:** implement option 1 (`hske_nl_aead_encrypt` / `hske_nl_aead_decrypt`) in
+C/Go/Python with constant-time tag comparison (reuse #83 helper); wire into CLI
+`enc`/`dec`/`encfile`/`decfile` behind an `--aead` flag; add tamper-rejection tests;
+document option 2 as a follow-up research note in SecurityProofs.
+
+Status: **Option 1 DONE v1.9.33** — `hske_nl_aead_encrypt`/`decrypt` in the Python suite,
+`herradura.h`, and `herradura/herradura.go` (byte-for-byte interoperable, shared KAT);
+CLI `enc`/`dec --aead [--ad]` with PEM format tag 2 in all three CLIs (`encfile`/`decfile`
+were already always-AEAD via the `.hkx` MAC — no flag needed there); security test [28]
+(KAT + roundtrip + ciphertext/tag/AD/nonce/key tamper rejection) in C/Go/Python;
+`CliTest/test_aead.sh` (9 interop pairs + rejection); SecurityProofs-2.md §11.9.6 note.
+Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD) remains **OPEN** as research,
+gated on the #99 diffusion characterisation.
+
+---
+
+### 96. Forward-secure DRBG — fast-key-erasure RNG from the NL-FSCX v1 ratchet (Feature, Medium)
+
+**Primitive exploited:** NL-FSCX v1 one-wayness (same assumption as #78.C ratchet).
+
+**Gap:** The suite consumes randomness from `os.urandom`/`/dev/urandom` everywhere but
+provides no deterministic expansion of its own.  Embedded targets (Arduino) have weak
+entropy sources; a seedable, forward-secure DRBG built from suite primitives would let
+all targets share one audited generator.
+
+**Construction (fast-key-erasure pattern, Bernstein 2017):**
+```
+state_{i+1} = nl_fscx_revolve_v1(state_i, DOMAIN_DRBG, n/4)
+output_i    = hfscx_256(state_i || counter || b'DRBG-OUT')
+```
+Erasing `state_i` after each advance makes prior outputs irrecoverable from a
+compromised state (backtracking resistance) under the same OWF conjecture as Theorem 16.
+
+**Cryptographic advantage:** identical security assumption set as the rest of the suite
+(no new hardness assumptions); rotation/XOR/add-only inner loop runs on AVR.
+
+**Prerequisite:** the same state-collision bound as #78.C — the v1 map is non-bijective,
+so expected cycle length of the state walk must be characterised
+(`SecurityProofsCode/nl_fscx_v1_ratchet_collision.py`, still unwritten) before
+production use.  NIST SP 800-90A health-test analogues (reseed counter, output-block
+limit) should be part of the design.
+
+**Plan:** add `drbg_seed` / `drbg_generate` / `drbg_reseed` to C/Go/Python suites;
+collision-distance analysis script; statistical tests (reuse test [4] machinery);
+document non-goals (not a NIST-validated DRBG).
+
+Status: **OPEN**
+
+---
+
+### 97. HPKS-XMSS-F — stateful many-time hash signature from WOTS-F chains + the #78.J Merkle tree (Feature, Medium)
+
+**Primitives exploited:** NL-FSCX v1 hash chain `h(x) = F^{n/4}(ROL(x, n/8), x)`
+(Theorem 16 / HPKS-WOTS-F, currently *proof-only* — no suite implementation exists) and
+the HFSCX-256 Merkle accumulator already implemented under #78.J.
+
+**Gap:** HPKS-WOTS-F is analysed in SecurityProofs-2 §11.8.3 and stress-tested in
+`nl_fscx_rot_analysis.py` (TODO #75), but never landed as code.  A one-time signature
+alone is operationally fragile; combining W-OTS chains with the existing Merkle tree
+gives an XMSS-style many-time signature — the only suite signature whose security rests
+purely on the OWF/collision assumptions (no DLP, no Ring-LWR, no syndrome decoding).
+
+**Cryptographic advantage:** hash-based signatures are the most conservative PQC class
+(SPHINCS+/XMSS are already NIST/RFC standards); this variant would be the suite's
+highest-assurance signature, with both building blocks already analysed.  The known
+two-sided rotational distinguisher on the WOTS chain (p ≈ 0.42/r power law, TODO #75)
+does not break the OWF-based proof but must be restated in the design rationale.
+
+**Plan:** implement `hpks_wots_keygen/sign/verify` (Winternitz parameter w=16),
+then `hpks_xmss_*` wrapping 2^h leaves (h=10 default) with the #78.J tree; state-file
+handling for leaf-index tracking in the CLI (`sign --algo hpks-xmss`); tests for
+one-time-reuse rejection and tamper rejection; SecurityProofs-2 §11.8.3 extension.
+
+Status: **OPEN**
+
+---
+
+### 98. Threshold and aggregate HPKS — exploiting Schnorr exponent linearity over GF(2^n)* (Research/Feature, Medium)
+
+**Primitive exploited:** linearity of HPKS signing in the secret:
+`s = (k − a·e) mod (2^n − 1)`.  If `a = a_1 + a_2 + ... + a_t mod (2^n − 1)` is
+additively shared, each party computes `s_j = (k_j − a_j·e) mod (2^n − 1)` with its own
+nonce share, and `s = Σ s_j`, `R = Π R_j` verify against the combined public key
+`C = Π C_j = g^{Σ a_j}` — the same algebra that powers FROST/MuSig2 in prime-order
+groups, transplanted to GF(2^n)*.
+
+**Cryptographic advantages:**
+- n-of-n distributed signing and key generation with zero new primitives — only
+  `gf_mul`/`gf_pow` and the existing HPKS challenge derivation.
+- Key-aggregation (MuSig-style) gives multi-party signatures the size of one HPKS
+  signature.
+- t-of-n follows with Shamir sharing over Z_{2^n−1}; note 2^n−1 is composite for the
+  suite sizes, so the sharing modulus and invertibility conditions need explicit
+  treatment (CRT over the factorisation, or restrict to n-of-n first).
+
+**Known hazards to address (research portion):** rogue-key attacks (require MuSig2-style
+nonce/key coefficient binding via HFSCX-256), nonce-reuse across signers, and the
+challenge function — HPKS uses `fscx_revolve(R, msg, i)` (linear) while HPKS-NL uses
+NL-FSCX v1; the threshold variant must use the NL challenge to avoid the known linear
+challenge weakness.
+
+**Plan:** analysis script `SecurityProofsCode/hpks_threshold_demo.py` first (n-of-n
+2-party demo, rogue-key counterexample, composite-modulus discussion); promote to suite
+functions only after the rogue-key binding design is fixed.
+
+Status: **OPEN**
+
+---
+
+### 99. FSCX as a standalone linear diffusion layer — branch-number characterisation and SPN construction study (Research, Medium)
+
+**Primitive exploited:** the circulant GF(2)-linear map `M = I XOR ROL XOR ROR` itself —
+the one core property no #78 item examines directly.
+
+**Observation:** modern lightweight ciphers (ASCON, Xoodoo, GIFT) are built as SPNs
+alternating a cheap non-linear layer with a rotation-based linear diffusion layer.
+FSCX's M is exactly such a layer: 3-tap circulant, XOR/rotate-only, constant-time,
+self-similar across word sizes, with known algebraic structure (order n/2, precomputable
+inverse).  The suite already pairs it with a non-linear step (integer-add carry chain in
+NL-FSCX v1/v2) — i.e. NL-FSCX is implicitly a 1-round ARX-style SPN, but its diffusion
+quality has never been quantified.
+
+**Work items:**
+1. Compute the differential and linear **branch number** of M (and of `M^k` for small k)
+   at n = 32, 64, 256; compare against ASCON's Σ functions (also 3-tap circulants —
+   `x XOR ROR(x,a) XOR ROR(x,b)`); FSCX's two-operand form `M(A) XOR M(B)` is a
+   structural sibling.
+2. Measure full-diffusion depth: minimum revolve steps until every output bit depends on
+   every input bit of A and B (avalanche matrix), at each suite size.
+3. From 1–2, derive a recommended round count for NL-FSCX-based keystreams independent
+   of the current heuristic `i = n/4`, and document whether `n/4` over- or
+   under-provisions diffusion.
+4. Sketch an explicit SPN ("FSCX-SPN") — alternate `nl_fscx_v1` non-linear step with an
+   independently-keyed round constant schedule — as the analysable successor to the
+   ad-hoc revolve constructions, feeding the sponge-permutation option of #95.
+
+**Cryptographic advantage:** turns the suite's signature primitive from a folklore
+construction into one with standard, comparable diffusion metrics, and creates the
+analysis foundation that #95 option 2 (sponge AEAD) and #96 (DRBG) depend on.
+
+**Plan:** `SecurityProofsCode/fscx_branch_number.py` (exhaustive at n=16/32, sampled at
+n=64/256); results into SecurityProofs-1 §3 (FSCX algebraic analysis); follow-up
+SecurityProofs note for the SPN sketch.
+
+Status: **OPEN**
