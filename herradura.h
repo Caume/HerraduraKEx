@@ -1173,13 +1173,18 @@ static void stern_hash(BitArray *out, const BitArray *items, int n_items, unsign
     *out = h;
 }
 
-/* H[row] = NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed) */
+/* H[row] = HFSCX-256(NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed)) truncated to
+ * n bits.  HFSCX-256-DM finalization removes the NL-FSCX range compression so H
+ * is indistinguishable from a uniform binary matrix (TODO #88, v1.9.35). */
 static void stern_matrix_row(BitArray *out, const BitArray *seed, int row)
 {
     BitArray sxr = *seed, a0;
+    uint8_t digest[32];
     sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
     ba_rol_k(&a0, &sxr, KEYBITS / 8);
     nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
+    hfscx_256(out->b, KEYBYTES, NULL, digest);
+    memcpy(out->b, digest, KEYBYTES);
 }
 
 /* Build all SDF_N_ROWS rows of parity-check matrix H from seed.

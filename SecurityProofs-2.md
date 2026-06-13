@@ -527,9 +527,9 @@ Option B reduces security to **syndrome decoding**, which is NP-complete [Berlek
 
 **Public matrix generation.**  For an $(N, k, t)$-code, generate the $(N-k) \times N$ binary parity matrix $H$ row by row:
 
-$$H_i = F_1^{n/4}\bigl(\mathrm{ROL}(\mathrm{seed} \oplus i, n/8), \mathrm{seed}\bigr), \qquad i = 0, \ldots, N-k-1.$$
+$$H_i = \text{HFSCX-256-DM}\bigl(F_1^{n/4}(\mathrm{ROL}(\mathrm{seed} \oplus i, n/8), \mathrm{seed})\bigr) \bmod 2^n, \qquad i = 0, \ldots, N-k-1.$$
 
-Under the PRF assumption for NL-FSCX v1 (implied by the OWF assumption via the GGM PRG-to-PRF construction [Goldreich-Goldwasser-Micali 1986]), $H$ is computationally indistinguishable from a uniformly random binary matrix.
+The outer HFSCX-256-DM finalization (deployed in v1.9.35, TODO #88) removes the NL-FSCX range compression documented below, so each row is drawn from the full digest range.  Under the PRF assumption for NL-FSCX v1 (implied by the OWF assumption via the GGM PRG-to-PRF construction [Goldreich-Goldwasser-Micali 1986]), $H$ is computationally indistinguishable from a uniformly random binary matrix.
 
 **PRF Verification — Algebraic and Experimental Evidence.**
 
@@ -614,6 +614,8 @@ The range compression does **not** shrink as n grows.  `nl_fscx_prf_analysis.py`
 $$F_{\text{stern-v2}}(K, i) = \text{HFSCX-256-DM}\bigl(F_1^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)\bigr) \bmod 2^n$$
 
 One HFSCX-256-DM call is added per row of H and per hash step in the commitment scheme.  After the fix, no known collision-counting distinguisher applies to F_stern-v2.  This is a wire-format breaking change; old and new HPKS-Stern-F signatures are incompatible.
+
+**Deployment status.**  The hash-step composition (`_stern_hash`) was deployed in v1.6.0 (TODO #43).  The per-row matrix finalization (`_stern_matrix_row`) was deployed in v1.9.35 (TODO #88) across all six language targets — Python/C/Go at n = 256, and the C/ARM/i386/Arduino n = 32 demos via HFSCX-32-DM — completing the F_stern-v2 fix as specified above.  Public keys, syndromes, signatures, and KEM ciphertexts generated before v1.9.35 are incompatible with the finalized matrix.
 
 **Key generation.**
 - Private key: $\mathbf{e} \xleftarrow{R} \{\mathbf{v} \in \{0,1\}^N : \mathrm{wt}(\mathbf{v}) = t\}$.

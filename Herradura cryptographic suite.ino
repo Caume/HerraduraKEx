@@ -372,7 +372,8 @@ static uint32 stern_hash2_32(uint32 ds, uint32 a, uint32 b) {
 }
 
 static uint32 stern_matrix_row_32(uint32 seed, int row) {
-    return nl_fscx_revolve_v1(_rol32(seed ^ (uint32)row, 4), seed, I_VALUE);
+    /* HFSCX-32 finalization removes range compression (TODO #88, v1.9.35) */
+    return hfscx_32(nl_fscx_revolve_v1(_rol32(seed ^ (uint32)row, 4), seed, I_VALUE));
 }
 
 static uint32 stern_syndrome_32(uint32 seed, uint32 e) {

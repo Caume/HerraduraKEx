@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.35] - 2026-06-12
+
+### Security — HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88)
+
+- **`Herradura cryptographic suite.py` / `herradura.h` / `herradura/herradura.go`**: `_stern_matrix_row` / `stern_matrix_row` / `SternMatrixRow` now route the raw NL-FSCX v1 row output through HFSCX-256-DM before truncation to n bits, exactly as `_stern_hash` has done since v1.6.0 (TODO #43). This completes the F_stern-v2 fix specified in `SecurityProofs-2.md` §11.8.4: rows of the public parity-check matrix H were previously drawn from a range-compressed distribution (~21–28% distinct at n=32; predicted <10^-4 distinct fraction at n=256), making H distinguishable from a uniform random binary matrix by collision counting and weakening the SD(N,t) instance via reduced rank(H). Row outputs verified byte-identical across Python, C, and Go.
+- **n=32 demos**: `stern32_matrix_row` (C suite, HFSCX-256 truncated to 32 bits) and `stern_matrix_row_32` (ARM Thumb-2 and NASM i386 — suite and test files — and Arduino suite) finalized via `hfscx_32`, matching their v1.6.0 `stern_hash*_32` pattern. The 256-bit test helper `stern_matrix_row_ba` in `CryptosuiteTests/Herradura_tests.c` updated to match the library. The un-finalized self-contained helpers in `CryptosuiteTests/Herradura_tests.ino` and the 64/128-bit C test variants are unchanged, per the TODO #43 precedent.
+- **Wire-format breaking**: H changes, so HPKS-Stern-F public keys, syndromes, signatures, and HPKE-Stern-F KEM ciphertexts generated before v1.9.35 are incompatible with v1.9.35+ implementations.
+- **`SecurityProofs-2.md` §11.8.4**: matrix-generation formula restated with the HFSCX-256-DM outer call; deployment-status paragraph added (hash step v1.6.0, matrix rows v1.9.35).
+- **Known pre-existing issue (neither introduced nor fixed here)**: cross-language HPKS-Stern-F CLI signature interop (e.g. Python-signed, C/Go-verified) also fails at the pre-change baseline — matrix rows and `_stern_hash` are byte-identical across languages, so the divergence is elsewhere in the CLI sign/verify pipeline; tracked as TODO #100.
+- **Test fix — `CryptosuiteTests/Herradura_tests.py` test [20]**: PASS condition compared `ok` against the requested iteration count instead of the actual iterations run, so a `-t` wall-clock early stop reported a spurious FAIL (e.g. `64 / 100 [FAIL]` with all 64 passing) — same `_trange` artifact fixed for `test_masked_hske` in v1.9.29; now counts actual iterations.
+
+---
+
 ## [1.9.34] - 2026-06-12
 
 ### Feature — HDRBG: forward-secure deterministic random bit generator (TODO #96)

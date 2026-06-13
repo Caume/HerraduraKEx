@@ -1921,8 +1921,9 @@ stern_matrix_row_32:
     ror     r0, r0, #28
     mov     r1, r4
     mov     r2, #8
-    pop     {r4, lr}
-    b       nl_fscx_revolve_v1
+    bl      nl_fscx_revolve_v1
+    bl      hfscx_32            @ finalize (TODO #88)
+    pop     {r4, pc}
 
     .ltorg
 

@@ -1,5 +1,6 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.34
+    Herradura KEx — Security & Performance Tests (Python) v1.9.35
+    v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
             benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
@@ -473,7 +474,9 @@ def _stern_hash(n: int, *items, ds: int = 0) -> 'BitArray':
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
     seed = BitArray(n, seed_int)
     A0   = BitArray(n, seed_int ^ row).rotated(n // 8)
-    return nl_fscx_revolve_v1(A0, seed, n // 4)
+    raw  = nl_fscx_revolve_v1(A0, seed, n // 4)
+    digest = hfscx_256(raw.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 def _stern_syndrome(seed_int: int, e_int: int, n: int, n_rows: int) -> int:
     s = 0
@@ -1604,8 +1607,9 @@ def test_hpke_stern_f_correctness():
 def test_hpks_stern_ring_correctness():
     N_SDF = 32; SDF_RING_ROUNDS = 4; RING_K = 3
     print(f"[20] HPKS-Stern-Ring correctness: OR-composition, k={RING_K}, N={N_SDF}, rounds={SDF_RING_ROUNDS}  [CODE-BASED RING SIG]")
-    n_run = _iters(3); ok = 0
-    for i in _trange(n_run):
+    n_req = _iters(3); ok = 0; n_run = 0
+    for i in _trange(n_req):
+        n_run += 1
         ring_keys = []; ring_errors = []
         for ki in range(RING_K):
             seed_i, e_i, syn_i = stern_f_keygen(N_SDF)
@@ -2243,7 +2247,7 @@ def bench_zkp_nl():
 if __name__ == '__main__':
     # --- Arg parsing (CLI overrides env vars) ---
     parser = argparse.ArgumentParser(
-        description="Herradura KEx v1.9.34 — Security & Performance Tests (Python)",
+        description="Herradura KEx v1.9.35 — Security & Performance Tests (Python)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Env vars: HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env)")
     parser.add_argument('-r', '--rounds', type=int, default=0,
@@ -2271,7 +2275,7 @@ if __name__ == '__main__':
         g_bench_sec  = args.time_limit
         g_time_limit = args.time_limit
 
-    print("=== Herradura KEx v1.9.34 \u2014 Security & Performance Tests (Python) ===")
+    print("=== Herradura KEx v1.9.35 \u2014 Security & Performance Tests (Python) ===")
     if g_rounds > 0 or g_time_limit > 0:
         parts = []
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")

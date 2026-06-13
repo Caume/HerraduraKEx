@@ -895,11 +895,16 @@ func SternHash(ds int, items ...*BitArray) *BitArray {
 	return result
 }
 
-// SternMatrixRow generates row i of the parity-check matrix.
+// SternMatrixRow generates row i of the parity-check matrix, finalized with
+// HFSCX-256 to remove range compression (TODO #88, v1.9.35).
 func SternMatrixRow(seed *BitArray, row int) *BitArray {
 	n := seed.size
 	sxr := seed.Xor(NewBitArray(n, big.NewInt(int64(row&0xFF))))
-	return NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
+	raw := NlFscxRevolveV1(sxr.RotateLeft(n/8), seed, n/4)
+	digest := Hfscx256(raw.Bytes(), nil)
+	result := &BitArray{size: n}
+	result.Val.SetBytes(digest[:n/8])
+	return result
 }
 
 // SternBuildH precomputes all n/2 rows of the parity-check matrix.

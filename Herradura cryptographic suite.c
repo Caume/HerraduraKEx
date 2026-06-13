@@ -129,7 +129,13 @@ static uint32_t stern32_matrix_row(uint32_t seed, int row)
 {
     uint32_t sxr = seed ^ (uint32_t)row;
     uint32_t a0  = (sxr << 4) | (sxr >> 28);  /* ROL by n/8 = 4 bits */
-    return s32_nl_revolve(a0, seed, 8);        /* I = n/4 = 8 steps   */
+    uint32_t raw = s32_nl_revolve(a0, seed, 8); /* I = n/4 = 8 steps  */
+    uint8_t buf[4], digest[32];
+    buf[0]=(uint8_t)(raw>>24); buf[1]=(uint8_t)(raw>>16);
+    buf[2]=(uint8_t)(raw>> 8); buf[3]=(uint8_t)(raw);
+    hfscx_256(buf, 4, NULL, digest);           /* TODO #88: remove range compression */
+    return ((uint32_t)digest[0]<<24)|((uint32_t)digest[1]<<16)|
+           ((uint32_t)digest[2]<< 8)| (uint32_t)digest[3];
 }
 
 static uint16_t stern32_syndrome(uint32_t seed, uint32_t e)
