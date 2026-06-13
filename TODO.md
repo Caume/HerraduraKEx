@@ -5642,7 +5642,16 @@ presents as fixed.
 signatures, and KEM ciphertexts all change (H changes).  Update §11.8.4 to record
 deployment, update interop tests, bump version.
 
-Status: **PENDING**
+Status: **DONE v1.9.35** — HFSCX-256-DM finalization deployed to `_stern_matrix_row`
+(Python suite + tests), `stern_matrix_row` (`herradura.h`) + `stern_matrix_row_ba`
+(C tests), `SternMatrixRow` (Go package), and — via `hfscx_32` / truncated HFSCX-256 —
+the n=32 demos (`stern32_matrix_row` in the C suite; `stern_matrix_row_32` in ARM/i386
+suite+test assembly and the Arduino suite).  Row outputs verified byte-identical across
+Python/C/Go; all per-language Stern tests pass (C/Go/Py suites + tests, qemu-arm,
+qemu-i386); §11.8.4 updated with the finalized formula and a deployment-status
+paragraph.  During verification a separate pre-existing failure was found: cross-language
+HPKS-Stern-F CLI signature interop fails at the pre-change baseline too — see the new
+TODO entry below (#100).
 
 ---
 
@@ -6021,3 +6030,36 @@ n=64/256); results into SecurityProofs-1 §3 (FSCX algebraic analysis); follow-u
 SecurityProofs note for the SPN sketch.
 
 Status: **OPEN**
+
+---
+
+### 100. Cross-language HPKS-Stern-F CLI signature interop is broken (pre-existing) (Bug, Medium)
+
+**Discovered:** 2026-06-12 during TODO #88 verification, and confirmed present at the
+pre-#88 baseline (git stash test), so it is not caused by the matrix-row finalization.
+
+**Affected files:** `HerraduraCli/herradura.py`, `HerraduraCli/herradura_cli.c`,
+`HerraduraCli/herradura_cli.go` (sign/verify `--algo hpks-stern` paths), possibly the
+suite `hpks_stern_f_sign`/`verify` implementations.
+
+**Symptom matrix** (sign → verify, `--algo hpks-stern`):
+- Python → Python, C → C, Go → Go: **OK** (all CliTest self-tests pass)
+- Python → Go at bits=32: **OK**; at bits=256: **FAILED**
+- Python → C at bits=32 and bits=256: **FAILED**
+- C → Python/Go, Go → Python/C at bits=256: **FAILED**
+
+**What is already ruled out:** `_stern_matrix_row` / `stern_matrix_row` /
+`SternMatrixRow` produce byte-identical rows across all three languages (verified
+post-#88), `_stern_hash` interops (PEM keygen/kex interop tests pass), and all three
+CLIs build the message BitArray identically (first n/8 bytes, zero-padded right).
+The divergence is therefore elsewhere in the Fiat-Shamir sign/verify pipeline —
+candidate suspects: per-round permutation generation, commitment serialization order,
+challenge derivation over the flattened commitment list, or signature PEM
+pack/unpack field layout.  The size-dependent Py→Go behaviour (32 OK, 256 fails)
+suggests at least two distinct bugs.
+
+**Note:** no CliTest script covers cross-language Stern sign/verify (test_c_interop.sh
+and test_go_interop.sh cover classical/RNL algorithms only), which is how this went
+unnoticed.  Fix should add a `test_stern_interop.sh` with the 6-direction matrix.
+
+Status: **PENDING**

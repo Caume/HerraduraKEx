@@ -1,4 +1,5 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.34
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.35
+    v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
             benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
@@ -1358,7 +1359,7 @@ func main() {
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
 
-	fmt.Println("=== Herradura KEx v1.9.34 — Security & Performance Tests (Go) ===")
+	fmt.Println("=== Herradura KEx v1.9.35 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
 		switch {
 		case gRounds > 0 && gTimeLimit > 0:

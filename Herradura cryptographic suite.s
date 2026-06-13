@@ -2384,7 +2384,8 @@ stern_hash2_32:
 
 /* ------------------------------------------------------------------ */
 /* stern_matrix_row_32: r0=seed, r1=row -> r0=H[row]                  */
-/* H[row] = nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8)             */
+/* H[row] = hfscx_32(nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8))   */
+/* HFSCX-32 finalize removes range compression (TODO #88, v1.9.35)   */
 /* ------------------------------------------------------------------ */
     .thumb_func
 stern_matrix_row_32:
@@ -2394,8 +2395,9 @@ stern_matrix_row_32:
     ror     r0, r0, #28         @ base = ROL(seed XOR row, 4)
     mov     r1, r4              @ B = seed
     mov     r2, #8
-    pop     {r4, lr}
-    b       nl_fscx_revolve_v1  @ tail call
+    bl      nl_fscx_revolve_v1  @ r0 = raw row
+    bl      hfscx_32            @ finalize (TODO #88)
+    pop     {r4, pc}
 
     .ltorg
 

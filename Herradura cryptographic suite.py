@@ -794,10 +794,13 @@ def _stern_hash(n: int, *items: 'BitArray', ds: int = 0) -> 'BitArray':
 
 
 def _stern_matrix_row(seed_int: int, row: int, n: int) -> 'BitArray':
-    """Row *row* of public parity-check matrix H: F_seed(row) via NL-FSCX v1 PRF."""
+    """Row *row* of public parity-check matrix H: F_seed(row) via NL-FSCX v1 PRF,
+    finalized with HFSCX-256 to remove range compression (TODO #88, v1.9.35)."""
     seed = BitArray(n, seed_int)
     A0   = BitArray(n, seed_int ^ row).rotated(n // 8)
-    return nl_fscx_revolve_v1(A0, seed, n // 4)
+    raw  = nl_fscx_revolve_v1(A0, seed, n // 4)
+    digest = hfscx_256(raw.bytes)
+    return BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
 
 
 def _stern_build_H(seed_int: int, n: int, n_rows: int) -> list:

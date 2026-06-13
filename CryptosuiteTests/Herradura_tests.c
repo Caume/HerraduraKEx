@@ -4,7 +4,8 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.34
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.35
+    v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
             benchmarks renumbered [30]–[41].
     v1.9.33: HSKE-NL-AEAD test [28] — round-trip, tamper rejection, cross-language KAT (TODO #95);
@@ -2423,13 +2424,16 @@ static void stern_hash_ba(BitArray *out, const BitArray *items, int n_items, uns
     *out = h;
 }
 
-/* H[row] = NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed) */
+/* H[row] = HFSCX-256(NL-FSCX_v1^I(ROL(seed XOR row, n/8), seed)) (TODO #88) */
 static void stern_matrix_row_ba(BitArray *out, const BitArray *seed, int row)
 {
     BitArray sxr = *seed, a0;
+    uint8_t digest[32];
     sxr.b[KEYBYTES - 1] ^= (uint8_t)(row & 0xFF);
     ba_rol_k(&a0, &sxr, KEYBITS / 8);
     nl_fscx_revolve_v1_ba(out, &a0, seed, I_VALUE);
+    hfscx_256(out->b, KEYBYTES, NULL, digest);
+    memcpy(out->b, digest, KEYBYTES);
 }
 
 /* n_rows-bit syndrome = H*e^T mod 2. */
@@ -4799,7 +4803,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    printf("=== Herradura KEx v1.9.34 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
+    printf("=== Herradura KEx v1.9.35 \xe2\x80\x94 Security & Performance Tests (C) ===\n");
     if (g_rounds > 0 || g_time_limit > 0.0) {
         if (g_rounds > 0 && g_time_limit > 0.0)
             printf("    Config: rounds=%d  time_limit=%.2fs\n", g_rounds, g_time_limit);

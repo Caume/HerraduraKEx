@@ -2563,7 +2563,8 @@ stern_hash2_32:
 
 ; ============================================================
 ; stern_matrix_row_32: EAX=seed, EBX=row -> EAX=H[row]
-; H[row] = nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8)
+; H[row] = hfscx_32(nl_fscx_revolve_v1(ROL(seed^row,4), seed, 8))
+; HFSCX-32 finalize removes range compression (TODO #88, v1.9.35)
 ; ============================================================
 stern_matrix_row_32:
     push ecx
@@ -2576,7 +2577,7 @@ stern_matrix_row_32:
     call nl_fscx_revolve_v1
     pop  esi
     pop  ecx
-    ret
+    jmp  hfscx_32           ; finalize (TODO #88); preserves ECX/ESI
 
 ; ============================================================
 ; stern_syndrome_32: EAX=seed, EBX=e -> EAX=syndrome (16-bit)
