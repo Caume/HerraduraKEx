@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.36] - 2026-06-13
+
+### Bug fix — HPKS-Stern-F CLI cross-language sign/verify interop (TODO #100)
+
+Two bugs prevented Python, C, and Go CLI implementations from verifying each other's HPKS-Stern-F signatures:
+
+1. **Python challenge derivation (`Herradura cryptographic suite.py`)** — `hpks_stern_f_sign`, `hpks_stern_f_verify`, `stern_ring_sign`, and `stern_ring_verify` used `ch_st.uint % 3` (full 256-bit integer mod 3) to extract each Fiat-Shamir challenge from the NL-FSCX v1 chain state. C and Go extract the low 32 bits of the state first (`uint32(state) % 3`). Fixed by changing to `(ch_st.uint & 0xFFFFFFFF) % 3`, matching C's `((uint32_t)ch_st.b[KEYBYTES-4..KEYBYTES-1]) % 3` and Go's `uint32(chSt.Val.Uint64()) % 3`.
+
+2. **C syndrome-to-BitArray byte ordering (`herradura.h`, `HerraduraCli/herradura_cli.c`)** — `syndr_to_ba` stored syndrome byte `k` at `out->b[KEYBYTES/2 + k]`, putting syndrome bit `i` at integer bit `(15 - i/8)*8 + i%8` (reversed within each 8-bit group). Python and Go store syndrome bit `i` at integer bit `i` (big.Int / Python int convention). Fixed by changing `syndr_to_ba` to store `syndr[k]` at `out->b[KEYBYTES - 1 - k]`, so that syndrome bit `i` lands at integer bit `i`. The public key serialization in `herradura_cli.c` (pkey `--pubout`) and deserialization (verify) were updated to apply the same byte-reversal, so C-generated public keys are now wire-compatible with Python and Go.
+
+- **New interop test** — `CliTest/test_stern_interop.sh` covers all 9 sign→verify combinations (Python→Python, Python→C, Python→Go, C→Python, C→C, C→Go, Go→Python, Go→C, Go→Go) and verifies all pass.
+- **Wire-format breaking**: HPKS-Stern-F signatures generated with v1.9.35 and earlier are not verifiable with v1.9.36+ across language boundaries (Python→C/Go or C/Go→Python would have always failed; within a single language boundary no new breakage was introduced for self-tests).
+
+---
+
 ## [1.9.35] - 2026-06-12
 
 ### Security — HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88)

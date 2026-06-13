@@ -994,7 +994,7 @@ def hpks_stern_f_sign(msg: 'BitArray', e_int: int, seed: 'BitArray',
     challenges = []
     for i in range(rounds):
         ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
-        challenges.append(ch_st.uint % 3)
+        challenges.append((ch_st.uint & 0xFFFFFFFF) % 3)
 
     responses = []
     for i, (r_int, y_int, pi_seed, _Hr, sr, sy) in enumerate(round_data):
@@ -1020,7 +1020,7 @@ def hpks_stern_f_verify(msg: 'BitArray', sig, seed: 'BitArray',
     ch_st = _stern_hash(n, *flat)
     for i, b in enumerate(challenges):
         ch_st = nl_fscx_v1(ch_st, BitArray(n, i))
-        if ch_st.uint % 3 != b:
+        if (ch_st.uint & 0xFFFFFFFF) % 3 != b:
             return False
 
     # Build H once: only needed for b ∈ {1, 2} branches but the seed is fixed.
@@ -1188,7 +1188,7 @@ def hpks_stern_ring_sign(msg: 'BitArray', e_int: int, j: int,
     # Step 4 — assign real signer's per-round challenge via challenge splitting
     for r in range(rounds):
         ch_st   = nl_fscx_v1(ch_st, BitArray(n, r))
-        joint_b = ch_st.uint % 3
+        joint_b = (ch_st.uint & 0xFFFFFFFF) % 3
         sim_sum = sum(all_challenges[i][r] for i in range(k) if i != j) % 3
         all_challenges[j][r] = (joint_b - sim_sum) % 3
 
@@ -1226,7 +1226,7 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
     # Check challenge consistency: sum_i b_ir ≡ joint_b_r (mod 3) for all r
     for r in range(rounds):
         ch_st   = nl_fscx_v1(ch_st, BitArray(n, r))
-        joint_b = ch_st.uint % 3
+        joint_b = (ch_st.uint & 0xFFFFFFFF) % 3
         if sum(all_challenges[i][r] for i in range(k)) % 3 != joint_b:
             return False
 
