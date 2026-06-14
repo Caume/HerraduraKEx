@@ -3064,4 +3064,194 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
     return 1;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97/#102)
+ *
+ * Hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)
+ * Winternitz w=16: ℓ_msg=64 nibbles, ℓ_cs=3, ℓ=67 total chains.
+ * XMSS: 2^H Merkle leaves; leaf = haccum_leaf(pk_0 || … || pk_{ℓ-1}).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+#define WOTS_W     16
+#define WOTS_LOG2W  4
+#define WOTS_L1    64   /* KEYBITS / log2(W) = 256/4 */
+#define WOTS_L2     3   /* checksum digits in base-16 */
+#define WOTS_L     67   /* total chain count */
+
+/* Single hash-chain step: h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4). */
+static inline void _wots_h_ba(BitArray *out, const BitArray *x)
+{
+    BitArray rotx;
+    ba_rol_k(&rotx, x, KEYBITS / 8);
+    nl_fscx_revolve_v1_ba(out, &rotx, x, KEYBITS / 4);
+}
+
+/* Apply _wots_h_ba `steps` times in-place. */
+static inline void _wots_chain_ba(BitArray *x, int steps)
+{
+    BitArray tmp;
+    for (int i = 0; i < steps; i++) { _wots_h_ba(&tmp, x); *x = tmp; }
+}
+
+/* Derive WOTS SK chain seed from master_seed (32 bytes), leaf_idx, chain_idx. */
+static inline void _wots_leaf_seed(BitArray *out,
+                                   const uint8_t master_seed[KEYBYTES],
+                                   uint32_t leaf_idx, uint16_t chain_idx)
+{
+    uint8_t buf[KEYBYTES + 6], h[KEYBYTES];
+    memcpy(buf, master_seed, KEYBYTES);
+    buf[KEYBYTES+0] = (leaf_idx >> 24) & 0xFF;
+    buf[KEYBYTES+1] = (leaf_idx >> 16) & 0xFF;
+    buf[KEYBYTES+2] = (leaf_idx >>  8) & 0xFF;
+    buf[KEYBYTES+3] =  leaf_idx        & 0xFF;
+    buf[KEYBYTES+4] = (chain_idx >> 8) & 0xFF;
+    buf[KEYBYTES+5] =  chain_idx       & 0xFF;
+    hfscx_256(buf, sizeof buf, NULL, h);
+    memcpy(out->b, h, KEYBYTES);
+}
+
+/* WOTS-F keygen: fills sk[WOTS_L] and pk[WOTS_L]. */
+static inline void hpks_wots_keygen(BitArray sk[WOTS_L], BitArray pk[WOTS_L],
+                                    const uint8_t master_seed[KEYBYTES],
+                                    uint32_t leaf_idx)
+{
+    for (int i = 0; i < WOTS_L; i++) {
+        _wots_leaf_seed(&sk[i], master_seed, leaf_idx, (uint16_t)i);
+        pk[i] = sk[i];
+        _wots_chain_ba(&pk[i], WOTS_W - 1);
+    }
+}
+
+/* Encode 32-byte msg_hash as WOTS_L base-16 digits with checksum. */
+static inline void _wots_msg_to_digits(int digits[WOTS_L],
+                                        const uint8_t msg_hash[KEYBYTES])
+{
+    for (int i = 0; i < WOTS_L1; i++)
+        digits[i] = (msg_hash[i/2] >> (4 * (1 - (i%2)))) & 0xF;
+    int cs = 0;
+    for (int i = 0; i < WOTS_L1; i++) cs += (WOTS_W - 1 - digits[i]);
+    for (int i = 0; i < WOTS_L2; i++)
+        digits[WOTS_L1 + i] = (cs >> (4 * (WOTS_L2 - 1 - i))) & 0xF;
+}
+
+/* WOTS-F sign: sig[i] = h^(w-1-d_i)(sk[i]). */
+static inline void hpks_wots_sign(BitArray sig[WOTS_L],
+                                   const uint8_t msg[/* any */], size_t mlen,
+                                   const uint8_t master_seed[KEYBYTES],
+                                   uint32_t leaf_idx)
+{
+    uint8_t msg_hash[KEYBYTES];
+    hfscx_256(msg, mlen, NULL, msg_hash);
+    int digits[WOTS_L];
+    _wots_msg_to_digits(digits, msg_hash);
+    BitArray sk[WOTS_L], pk_unused[WOTS_L];
+    hpks_wots_keygen(sk, pk_unused, master_seed, leaf_idx);
+    for (int i = 0; i < WOTS_L; i++) {
+        sig[i] = sk[i];
+        _wots_chain_ba(&sig[i], WOTS_W - 1 - digits[i]);
+    }
+}
+
+/* Recover WOTS pk from (msg, sig): pk_i = h^{d_i}(sig_i). */
+static inline void hpks_wots_recover_pk(BitArray recovered[WOTS_L],
+                                         const uint8_t msg[], size_t mlen,
+                                         const BitArray sig[WOTS_L])
+{
+    uint8_t msg_hash[KEYBYTES];
+    hfscx_256(msg, mlen, NULL, msg_hash);
+    int digits[WOTS_L];
+    _wots_msg_to_digits(digits, msg_hash);
+    for (int i = 0; i < WOTS_L; i++) {
+        recovered[i] = sig[i];
+        _wots_chain_ba(&recovered[i], digits[i]);
+    }
+}
+
+/* WOTS-F verify: 1 if h^{d_i}(sig_i) == pk_i for all i. */
+static inline int hpks_wots_verify(const uint8_t msg[], size_t mlen,
+                                    const BitArray sig[WOTS_L],
+                                    const BitArray pk[WOTS_L])
+{
+    BitArray recovered[WOTS_L];
+    hpks_wots_recover_pk(recovered, msg, mlen, sig);
+    for (int i = 0; i < WOTS_L; i++)
+        if (!ba_equal(&recovered[i], &pk[i])) return 0;
+    return 1;
+}
+
+/* Serialise WOTS pk to byte array (WOTS_L * KEYBYTES bytes). */
+static inline void _wots_pk_bytes(uint8_t *out, const BitArray pk[WOTS_L])
+{
+    for (int i = 0; i < WOTS_L; i++)
+        memcpy(out + i * KEYBYTES, pk[i].b, KEYBYTES);
+}
+
+/* HPKS-XMSS-F signature. auth_path is a flat malloc'd buffer: depth*KEYBYTES. */
+typedef struct {
+    uint32_t  leaf_idx;
+    BitArray  wots_sig[WOTS_L];
+    uint8_t  *auth_path;   /* depth * KEYBYTES contiguous sibling hashes */
+    int       depth;
+} HpksXmssSig;
+
+/* XMSS-F keygen: builds 2^h leaf hashes from master_seed.
+ * Outputs: root[KEYBYTES], flat_leaves (2^h * KEYBYTES, caller frees), num_leaves.
+ * flat_leaves is used as the contiguous array required by haccum_prove/verify. */
+static void hpks_xmss_keygen(uint8_t root[KEYBYTES],
+                              uint8_t **flat_leaves_out, size_t *num_leaves_out,
+                              const uint8_t master_seed[KEYBYTES], int h)
+{
+    size_t num = (size_t)1 << h;
+    uint8_t (*flat)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc(num * KEYBYTES);
+    if (!flat) { fprintf(stderr, "hpks_xmss_keygen: oom\n"); exit(1); }
+    for (size_t idx = 0; idx < num; idx++) {
+        BitArray sk[WOTS_L], pk[WOTS_L];
+        hpks_wots_keygen(sk, pk, master_seed, (uint32_t)idx);
+        uint8_t pk_bytes[WOTS_L * KEYBYTES];
+        _wots_pk_bytes(pk_bytes, pk);
+        haccum_leaf(pk_bytes, WOTS_L * KEYBYTES, flat[idx]);
+    }
+    haccum_root(flat, num, root);
+    *flat_leaves_out = (uint8_t *)flat;
+    *num_leaves_out  = num;
+}
+
+/* XMSS-F sign: fills sig. sig->auth_path is malloc'd inside (caller frees via
+ * hpks_xmss_sig_free). flat_leaves is the array returned by hpks_xmss_keygen. */
+static void hpks_xmss_sign(HpksXmssSig *sig,
+                             const uint8_t msg[], size_t mlen,
+                             const uint8_t master_seed[KEYBYTES],
+                             const uint8_t *flat_leaves, size_t num_leaves,
+                             uint32_t leaf_idx)
+{
+    sig->leaf_idx  = leaf_idx;
+    hpks_wots_sign(sig->wots_sig, msg, mlen, master_seed, leaf_idx);
+    int depth;
+    sig->auth_path = haccum_prove((const uint8_t (*)[KEYBYTES])flat_leaves,
+                                   num_leaves, (size_t)leaf_idx, &depth);
+    sig->depth     = depth;
+}
+
+/* Free auth_path inside an HpksXmssSig. */
+static inline void hpks_xmss_sig_free(HpksXmssSig *sig)
+{
+    free(sig->auth_path);
+    sig->auth_path = NULL;
+}
+
+/* XMSS-F verify: 1 if valid. */
+static int hpks_xmss_verify(const uint8_t msg[], size_t mlen,
+                              const HpksXmssSig *sig,
+                              const uint8_t root[KEYBYTES])
+{
+    BitArray recovered[WOTS_L];
+    hpks_wots_recover_pk(recovered, msg, mlen, sig->wots_sig);
+    uint8_t pk_bytes[WOTS_L * KEYBYTES];
+    _wots_pk_bytes(pk_bytes, recovered);
+    uint8_t leaf_hash[KEYBYTES];
+    haccum_leaf(pk_bytes, WOTS_L * KEYBYTES, leaf_hash);
+    return haccum_verify(root, leaf_hash, sig->auth_path, sig->depth,
+                         (size_t)sig->leaf_idx);
+}
+
 #endif /* HERRADURA_H */

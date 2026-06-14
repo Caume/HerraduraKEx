@@ -4,7 +4,8 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.35
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.42
+    v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
             benchmarks renumbered [30]–[41].
@@ -83,22 +84,23 @@
       [27] Ratchet (78.C) forward secrecy & key uniqueness  [NEW].
       [28] HSKE-NL-AEAD (TODO #95) round-trip, tamper rejection, cross-language KAT  [NEW].
       [29] HDRBG (TODO #96) KAT, determinism, reseed separation, block limit  [NEW].
+      [30] HPKS-WOTS-F / HPKS-XMSS-F sign+verify (h=3, 2 leaves, tamper/reuse rejection)  [PQC].
       C-only (unlabeled): F_stern(K,·) range compression at n=32 (HyperLogLog, TODO #42).
 
-    Performance benchmarks [30]–[41] (unified with Go and Python):
-      [30] FSCX throughput (256-bit).
-      [31] HKEX-GF gf_pow throughput (32-bit).
-      [32] HKEX-GF full handshake (32-bit).
-      [33] HSKE round-trip (256-bit).
-      [34] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
-      [35] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
-      [35b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
-      [36] HSKE-NL-A1 counter-mode throughput (32-bit).
-      [37] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
-      [38] HKEX-RNL full handshake throughput (n=32).
-      [39] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
-      [40] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
-      [41] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
+    Performance benchmarks [31]–[42] (unified with Go and Python):
+      [31] FSCX throughput (256-bit).
+      [32] HKEX-GF gf_pow throughput (32-bit).
+      [33] HKEX-GF full handshake (32-bit).
+      [34] HSKE round-trip (256-bit).
+      [35] HPKE El Gamal encrypt+decrypt round-trip (32-bit).
+      [36] NL-FSCX v1 revolve throughput (32-bit, n/4 steps).
+      [36b] NL-FSCX v2 revolve+inv throughput (32-bit, r_val steps).
+      [37] HSKE-NL-A1 counter-mode throughput (32-bit).
+      [38] HSKE-NL-A2 revolve-mode round-trip throughput (32-bit).
+      [39] HKEX-RNL full handshake throughput (n=32).
+      [40] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
+      [41] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
+      [42] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -3530,7 +3532,7 @@ static void bench_hpks_stern_f(void)
     long long ops;
     double secs;
     int i;
-    printf("[39] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
+    printf("[40] HPKS-Stern-F sign+verify  (N=n, rounds=8)  [CODE-BASED PQC]\n");
     /* N=32 */
     { static SternSig32T bsig32;
       uint32_t seed32 = stern32_rand_seed(), e32 = stern32_rand_error(), msg32;
@@ -3621,7 +3623,7 @@ static void bench_zkp_rnl(void)
     int32_t s[256], C[256];
     int32_t w[256], c_poly[256], z[256];
     int i;
-    printf("[40] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
+    printf("[41] ZKP-RNL sign+verify throughput  (n=256)  [PQC-EXT]\n");
     rnl_m_poly_n(m_base, n);
     rnl_rand_poly_n(a_rand, n);
     rnl_poly_add_n(m_blind, m_base, a_rand, n);
@@ -3659,7 +3661,7 @@ static void bench_zkp_nl(void)
     uint64_t A, B, y;
     ZkpNlRound *proof;
     int i;
-    printf("[41] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
+    printf("[42] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n",
            n, rounds);
     zkp_nl_keygen(n, urnd_fp, &A, &B, &y);
     /* warm-up */
@@ -4120,17 +4122,61 @@ static void test_hdrbg(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Performance benchmarks [30]-[41]                                    */
+/* Security Test [30]: HPKS-WOTS-F / HPKS-XMSS-F                     */
 /* ------------------------------------------------------------------ */
 
-/* [30] FSCX throughput (64/128/256-bit) */
+static void test_wots_xmss(void)
+{
+    static const int xmss_h = 3;  /* 8 leaves; fast for tests */
+    int N = TEST_ROUNDS(3), i, ok_sign = 0, ok_tamper = 0, ok_reuse = 0;
+    struct timespec t0;
+    printf("[30] HPKS-WOTS-F / HPKS-XMSS-F sign+verify (h=%d)  [PQC]\n", xmss_h);
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    for (i = 0; i < N; i++) {
+        uint8_t seed[KEYBYTES];
+        if (fread(seed, 1, KEYBYTES, urnd_fp) != KEYBYTES) break;
+        uint8_t root[KEYBYTES];
+        uint8_t *leaves; size_t num_leaves;
+        hpks_xmss_keygen(root, &leaves, &num_leaves, seed, xmss_h);
+
+        const uint8_t msg[]  = "HPKS-XMSS-F security test";
+        const uint8_t bad[]  = "tampered message";
+        const uint8_t diff[] = "different message";
+        HpksXmssSig sig0, sig1;
+        hpks_xmss_sign(&sig0, msg, sizeof(msg)-1, seed, leaves, num_leaves, 0);
+        hpks_xmss_sign(&sig1, msg, sizeof(msg)-1, seed, leaves, num_leaves, 1);
+
+        if (hpks_xmss_verify(msg,  sizeof(msg)-1,  &sig0, root) &&
+            hpks_xmss_verify(msg,  sizeof(msg)-1,  &sig1, root))
+            ok_sign++;
+        if (!hpks_xmss_verify(bad,  sizeof(bad)-1,  &sig0, root))
+            ok_tamper++;
+        if (!hpks_xmss_verify(diff, sizeof(diff)-1, &sig0, root))
+            ok_reuse++;
+
+        hpks_xmss_sig_free(&sig0);
+        hpks_xmss_sig_free(&sig1);
+        free(leaves);
+        if (time_exceeded(&t0)) { N = i + 1; break; }
+    }
+    printf("    sign_ok=%d/%d  tamper_reject=%d/%d  reuse_reject=%d/%d  [%s]\n",
+           ok_sign, N, ok_tamper, N, ok_reuse, N,
+           (ok_sign == N && ok_tamper == N && ok_reuse == N) ? "PASS" : "FAIL");
+    putchar('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Performance benchmarks [31]-[42]                                    */
+/* ------------------------------------------------------------------ */
+
+/* [31] FSCX throughput (64/128/256-bit) */
 static void bench_fscx_throughput(void)
 {
     struct timespec t0, t1;
     long long ops;
     double secs;
     int i;
-    printf("[30] FSCX throughput  [CLASSICAL]\n");
+    printf("[31] FSCX throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32(), tmp;
       for (i = 0; i < 10; i++) { tmp = fscx32(a, b); a = tmp; }
@@ -4174,7 +4220,7 @@ static void bench_gf_pow_throughput(void)
     long long ops;
     double secs;
     int i;
-    printf("[31] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
+    printf("[32] HKEX-GF gf_pow throughput  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t base = rand32() | 1, exp = rand32() | 1, tmp;
       for (i = 0; i < 5; i++) { tmp = gf_pow_32(base, exp); base = tmp | 1; }
@@ -4219,7 +4265,7 @@ static void bench_hkex_gf_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[32] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
+    printf("[33] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, b = rand32()|1, C, C2, skA, skB;
       for (i = 0; i < 5; i++) {
@@ -4285,7 +4331,7 @@ static void bench_hske_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[33] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
+    printf("[34] HSKE round-trip: encrypt+decrypt  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t pt, key, enc, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4352,7 +4398,7 @@ static void bench_hpke_el_gamal_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[34] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
+    printf("[35] HPKE El Gamal encrypt+decrypt round-trip  [CLASSICAL]\n");
     /* 32-bit */
     { uint32_t a = rand32()|1, r = rand32()|1, pt = rand32();
       uint32_t C = gf_pow_32(GF_GEN32, a), R, ek, E, dk;
@@ -4437,7 +4483,7 @@ static void bench_nl_fscx_revolve(void)
     long long ops;
     double secs;
     int i;
-    printf("[35] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
+    printf("[36] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t a = rand32(), b = rand32();
       for (i = 0; i < 10; i++) a = nl_fscx_revolve_v1_32(a, b, NL_I32);
@@ -4531,7 +4577,7 @@ static void bench_hske_nl_a1_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[36] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
+    printf("[37] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K, P, ks, sink = 0;
       K = rand32(); P = rand32();
@@ -4617,7 +4663,7 @@ static void bench_hske_nl_a2_roundtrip(void)
     long long ops;
     double secs;
     int i;
-    printf("[37] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
+    printf("[38] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]\n");
     /* 32-bit */
     { uint32_t K = rand32(), P = rand32(), E, sink = 0;
       for (i = 0; i < 5; i++) {
@@ -4679,7 +4725,7 @@ static void bench_hkex_rnl_handshake(void)
     long long ops;
     double secs;
     int i;
-    printf("[38] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
+    printf("[39] HKEX-RNL handshake throughput  (NTT O(n log n))  [PQC-EXT]\n");
     /* n=32 (rnl32 fast path) */
     { rnl32_poly_t m_base, a_rand, m_blind;
       int32_t s_A[RNL_N32], c_A[RNL_N32], s_B[RNL_N32], c_B[RNL_N32];
@@ -4859,6 +4905,7 @@ int main(int argc, char *argv[])
     test_ratchet_forward_secrecy();
     test_hske_nl_aead();
     test_hdrbg();
+    test_wots_xmss();
 
     puts("--- Performance Benchmarks ---\n");
     bench_fscx_throughput();

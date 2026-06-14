@@ -4,6 +4,37 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.42] - 2026-06-14
+
+### Consistency — HPKS-WOTS-F / HPKS-XMSS-F ported to C and Go (TODO #102)
+
+Ports the HPKS-WOTS-F / HPKS-XMSS-F hash-based signature scheme from the Python suite
+(added in TODO #97, v1.9.39) to C (`herradura.h`), Go (`herradura/herradura.go`), the
+C and Go suite demo files, and all three C/Go/Python test files.  Security test [30] is
+added across all targets; performance benchmarks shift from [30]–[41] to [31]–[42].
+
+- **`herradura.h`**: adds `WOTS_W/L/L1/L2` constants, `_wots_h_ba`, `_wots_chain_ba`,
+  `_wots_leaf_seed`, `_wots_msg_to_digits`, `hpks_wots_keygen`, `hpks_wots_sign`,
+  `hpks_wots_recover_pk`, `hpks_wots_verify`, `_wots_pk_bytes`, `HpksXmssSig` struct,
+  `hpks_xmss_keygen`, `hpks_xmss_sign`, `hpks_xmss_sig_free`, `hpks_xmss_verify`.
+  Chain step: `h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)`, w=16, ℓ=67 chains.
+- **`herradura/herradura.go`**: adds `HpksWotsKeygen`, `HpksWotsSign`, `HpksWotsRecoverPk`,
+  `HpksWotsVerify`, `HpksXmssKeypair`, `HpksXmssKeygen`, `HpksXmssSig`,
+  `HpksXmssSign`, `HpksXmssVerify`.
+- **`Herradura cryptographic suite.c`**: adds HPKS-XMSS-F demo block (h=3, 2 leaves,
+  tamper + OTS-reuse rejection).
+- **`Herradura cryptographic suite.go`**: adds matching demo block; adds `crypto/rand` import.
+- **`CryptosuiteTests/Herradura_tests.c`**: adds `test_wots_xmss()` → security test [30]
+  (3 random seeds × 8-leaf tree × sign/tamper/reuse checks); benchmarks renumbered [31]–[42].
+- **`CryptosuiteTests/Herradura_tests.go`**: adds `testWotsXmss()` → security test [30];
+  benchmarks renumbered [31]–[42].
+- **`CryptosuiteTests/Herradura_tests.py`**: adds self-contained WOTS/XMSS helpers and
+  `test_wots_xmss()` → security test [30]; benchmarks renumbered [31]–[42].
+
+Assembly and Arduino targets are out of scope (WOTS chain length too large for 32-bit targets).
+
+---
+
 ## [1.9.41] - 2026-06-14
 
 ### Consistency — FPE (78.A), Tweakable cipher (78.B), Accumulator (78.J) ported to ARM and NASM (TODO #104)
