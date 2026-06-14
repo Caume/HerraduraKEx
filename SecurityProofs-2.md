@@ -230,6 +230,28 @@ uniformly random in $\mathcal{R}_q$.  The key-exchange problem then reduces to t
 Ring-LWE/LWR instance over a power-of-two cyclotomic ring — the same structure as Kyber.
 This is believed post-quantum hard; no polynomial-time quantum algorithm is known.
 
+**Active-adversary caveat (TODO #89).** The security argument above assumes $m_\text{blind}$
+arrives unmodified.  A MITM or malicious peer can substitute $a_\text{rand}$ with a chosen
+value (e.g., $a_\text{rand} = -m(x)$, forcing $m_\text{blind} = 0$), steering the
+protocol toward the unblinded case where the sparse fixed structure of $m(x)$ enables
+lattice-reduction leverage.  In the extreme case $m_\text{blind} = 0$, both public keys
+$C_A$ and $C_B$ become rounding of the zero polynomial, leaking the shared key immediately.
+
+**Mitigation (v1.9.37).** The receiver (Bob, step 1) validates the incoming $m_\text{blind}$
+before use via two heuristic checks: (1) at least $n/4$ non-zero coefficients (a truly
+random polynomial over $\mathbb{Z}_{65537}$ has $\approx n$ non-zero coefficients); and
+(2) coefficient range $\max - \min \geq q/4$ (a clustered or constant polynomial has a
+small range).  These checks catch zero-polynomial and sparse-polynomial attacks while
+accepting any legitimate uniformly random blinding.  The check is implemented in
+`rnl_validate_m_blind` (C/`herradura.h`), `_rnl_validate_m_blind` (Python CLI), and
+`RnlValidateMBlind` (Go package); all three CLIs reject on failure with an explicit error.
+
+**Remaining gap.** The blinding is still non-contributory: the uniformity of $m_\text{blind}$
+rests entirely on Alice's RNG.  A backdoored or weak RNG on Alice's side silently weakens
+both parties even if the receiver-side validation passes.  The full fix — making $a_\text{rand}$
+a function of nonces from both parties ($a_\text{rand} = \text{XOF}(n_A \| n_B)$) — requires
+a protocol change and is tracked as the open portion of TODO #89.
+
 **Security estimate (2026 landscape review, TODO #71).** For the deployed parameters
 $(n=256, q=65537, p=4096, \eta=1)$, BKZ-based lattice reduction (the best known classical
 attack via the Ring-LWR-to-Ring-LWE reduction) is estimated at approximately **105–115

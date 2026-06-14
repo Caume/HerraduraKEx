@@ -4,6 +4,34 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.37] - 2026-06-13
+
+### Security — HKEX-RNL m_blind substitution-attack mitigation (TODO #89)
+
+A MITM or malicious peer could replace `a_rand` in Alice's public PEM with a chosen
+value (e.g., `a_rand = -m(x)`, forcing `m_blind = 0`), degrading the Ring-LWR hardness
+guarantee or leaking the shared key directly.
+
+- **`herradura.h`**: added `rnl_validate_m_blind(poly, n)` — rejects a peer-supplied
+  blinding polynomial if it has fewer than `n/4` non-zero coefficients or a coefficient
+  range smaller than `q/4`. A legitimately uniform polynomial over Z_65537 passes both
+  checks with overwhelming probability.
+- **`herradura/herradura.go`**: added `RnlValidateMBlind(poly []int, q int) bool` with
+  the same two checks.
+- **`HerraduraCli/herradura_cli.c`**: Bob (step 1) calls `rnl_validate_m_blind` after
+  unpacking `m_A`; exits with an error on failure.
+- **`HerraduraCli/herradura.py`**: added `_rnl_validate_m_blind`; Bob (step 1) calls it
+  and exits with a descriptive error on failure.
+- **`HerraduraCli/herradura_cli.go`**: Bob (step 1) calls `RnlValidateMBlind`; exits
+  with an error on failure.
+- **`SecurityProofs-2.md` §11.4.3**: added "Active-adversary caveat" paragraph
+  documenting the substitution attack, the v1.9.37 mitigation, and the remaining gap
+  (non-contributory blinding — full fix deferred to a future protocol revision).
+- **No wire-format change**: validation is receiver-side only; all existing keys and
+  PEM files remain compatible.
+
+---
+
 ## [1.9.36] - 2026-06-13
 
 ### Bug fix — HPKS-Stern-F CLI cross-language sign/verify interop (TODO #100)

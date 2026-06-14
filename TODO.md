@@ -5684,7 +5684,12 @@ Two gaps:
   documented caveat in §11.4.3 that the uniformity assumption is trust-on-first-use.
 - Update SecurityProofs-2.md §11.4.2/§11.4.3 with the active-adversary model.
 
-Status: **PENDING**
+Status: **DONE v1.9.37** — Interim non-breaking fix: `rnl_validate_m_blind` added to
+`herradura.h` (C) and `RnlValidateMBlind` to `herradura/herradura.go`; both check
+non-zero coefficient count ≥ n/4 and coefficient range ≥ q/4; called in C, Python, and
+Go CLIs at Bob step 1 before `m_blind` is used for keygen.  SecurityProofs-2.md §11.4.3
+updated with active-adversary model, the substitution attack, and the remaining gap (non-
+contributory blinding).  Full contributory fix (XOF(n_A‖n_B) blinding) remains open.
 
 ---
 

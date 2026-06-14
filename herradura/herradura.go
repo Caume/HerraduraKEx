@@ -763,6 +763,27 @@ func RnlMPoly(n int) []int {
 	return p
 }
 
+// RnlValidateMBlind returns true if poly looks like a uniform-random element of Z_q^n.
+// Rejects sparse polys (non-zero count < n/4) and clustered polys (range < q/4).
+// Call this before using a peer-supplied m_blind to detect substitution attacks.
+func RnlValidateMBlind(poly []int, q int) bool {
+	n := len(poly)
+	nz := 0
+	mn, mx := poly[0], poly[0]
+	for _, c := range poly {
+		if c != 0 {
+			nz++
+		}
+		if c < mn {
+			mn = c
+		}
+		if c > mx {
+			mx = c
+		}
+	}
+	return nz >= n/4 && mx-mn >= q/4
+}
+
 // RnlRandPoly samples n uniform coefficients from Z_q using rejection sampling.
 func RnlRandPoly(n, q int) []int {
 	p := make([]int, n)
