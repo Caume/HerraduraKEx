@@ -783,6 +783,127 @@ For NL-FSCX witness statements, ZKP-NL is the only applicable construction.
 
 ---
 
+## Threshold Signing (HPKS-T)
+
+HPKS-T is an n-of-n MuSig2-style threshold Schnorr signature over GF(2^256)*.
+All n signers must participate in each round; the resulting signature is identical
+in size to a single-party HPKS-NL signature and verifiable with the same code.
+
+Keys are standard `hpks` or `hpks-nl` private key PEMs.  The workflow is a
+4-phase interactive protocol driven by a coordinator (any party).
+
+### 4-phase CLI workflow
+
+**Phase 1 — Each signer generates a nonce and commitment:**
+
+```bash
+# signer Alice
+python3 herradura.py threshold-commit \
+  --key alice.pem --commit-out alice_commit.pem --nonce-out alice_nonce.pem
+
+# signer Bob
+python3 herradura.py threshold-commit \
+  --key bob.pem --commit-out bob_commit.pem --nonce-out bob_nonce.pem
+```
+
+Alice shares `alice_commit.pem` with the coordinator.  `alice_nonce.pem` is secret
+and must be kept private until phase 3, then securely deleted.
+
+**Phase 2 — Coordinator aggregates commitments and broadcasts challenge:**
+
+```bash
+python3 herradura.py threshold-aggregate \
+  --commits alice_commit.pem bob_commit.pem \
+  --in message.bin \
+  --out aggregate.pem
+```
+
+The coordinator broadcasts `aggregate.pem` to all signers.
+
+**Phase 3 — Each signer produces a partial signature scalar:**
+
+```bash
+# Alice
+python3 herradura.py threshold-respond \
+  --key alice.pem \
+  --commits alice_commit.pem bob_commit.pem \
+  --aggregate aggregate.pem \
+  --nonce alice_nonce.pem \
+  --out alice_partial.pem
+
+# Bob
+python3 herradura.py threshold-respond \
+  --key bob.pem \
+  --commits alice_commit.pem bob_commit.pem \
+  --aggregate aggregate.pem \
+  --nonce bob_nonce.pem \
+  --out bob_partial.pem
+```
+
+**Phase 4 — Coordinator combines partial sigs into the final signature:**
+
+```bash
+python3 herradura.py threshold-combine \
+  --aggregate aggregate.pem \
+  --partials alice_partial.pem bob_partial.pem \
+  --out final_sig.pem
+```
+
+**Verify:**
+
+```bash
+python3 herradura.py verify --algo hpks-t --in message.bin --sig final_sig.pem
+```
+
+No `--pubkey` flag is needed: the aggregate public key C_agg is embedded in
+`final_sig.pem` (HPKST SIGNATURE PEM).
+
+### C CLI equivalent
+
+The C CLI uses repeated `--commit` / `--partial` flags instead of `nargs+`:
+
+```bash
+herradura_cli threshold-commit --key alice.pem \
+  --commit-out alice_commit.pem --nonce-out alice_nonce.pem
+
+herradura_cli threshold-aggregate \
+  --commit alice_commit.pem --commit bob_commit.pem \
+  --in message.bin --out aggregate.pem
+
+herradura_cli threshold-respond --key alice.pem \
+  --commit alice_commit.pem --commit bob_commit.pem \
+  --aggregate aggregate.pem --nonce alice_nonce.pem --out alice_partial.pem
+
+herradura_cli threshold-combine \
+  --aggregate aggregate.pem \
+  --partial alice_partial.pem --partial bob_partial.pem \
+  --out final_sig.pem
+
+herradura_cli verify --algo hpks-t --in message.bin --sig final_sig.pem
+```
+
+The Go CLI (`herradura_cli_go`) uses the same `--commit` / `--partial` repeated-flag
+convention as the C CLI.
+
+### Cross-language interoperability
+
+Commitment, aggregate, partial, and signature PEMs produced by any CLI are byte-for-byte
+compatible with all other CLIs.  The test `CliTest/test_threshold_interop.sh` verifies
+9 combinations (3 sign-CLIs × 3 verify-CLIs, plus a mixed-phase scenario).
+
+### Security notes
+
+- **Nonce reuse is catastrophic.** A nonce file must never be used twice with the
+  same private key.  Securely delete `*_nonce.pem` after phase 3.
+- **Rogue-key protection.** The μ_j coefficient binds each signer's public key to the
+  full set L via HFSCX-256(L ‖ C_j), preventing a rogue-key attack.
+- **n-of-n only.** HPKS-T requires all n signers; threshold-of-n (t < n) is not
+  supported.
+- **NL-FSCX challenge.** The challenge hash uses `nl_fscx_revolve_v1(R, msg, n/4)`,
+  giving the same security properties as HPKS-NL single-party signing.
+
+---
+
 ## OPRF and aPAKE
 
 ### OPRF overview

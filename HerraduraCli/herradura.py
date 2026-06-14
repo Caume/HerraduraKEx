@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.8.8)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.9.44)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -41,7 +41,12 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
                    encode_zkp_rnl_proof, decode_zkp_rnl_proof,
                    encode_zkp_nl_privkey, decode_zkp_nl_privkey,
                    encode_zkp_nl_pubkey, decode_zkp_nl_pubkey,
-                   encode_zkp_nl_proof, decode_zkp_nl_proof)
+                   encode_zkp_nl_proof, decode_zkp_nl_proof,
+                   encode_hpkst_commit, decode_hpkst_commit,
+                   encode_hpkst_nonce, decode_hpkst_nonce,
+                   encode_hpkst_aggregate, decode_hpkst_aggregate,
+                   encode_hpkst_partial, decode_hpkst_partial,
+                   encode_hpkst_sig, decode_hpkst_sig)
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
@@ -64,6 +69,7 @@ from primitives import (
     hpks_wots_keygen, hpks_wots_sign, hpks_wots_verify,
     hpks_xmss_keygen, hpks_xmss_sign, hpks_xmss_verify,
     _WOTS_L, _wots_pk_bytes,
+    hpkst_aggregate_pubkeys, hpkst_sign, hpkst_verify,
 )
 from primitives import _s as _suite_mod
 
@@ -1051,6 +1057,119 @@ def cmd_sign(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-commands: threshold signing phases (TODO #106)
+# ---------------------------------------------------------------------------
+
+def _load_hpks_privkey_for_threshold(key_path):
+    """Load an hpks or hpks-nl private key; return (priv_int, pub_int, nbits)."""
+    algo, ints = _decode_privkey(key_path)
+    if algo not in ('hpks', 'hpks-nl'):
+        sys.exit(f"threshold: expected hpks or hpks-nl key, got {algo!r}")
+    return ints  # (priv_int, pub_int, nbits)
+
+
+def cmd_threshold_commit(args):
+    """Phase 1: generate nonce k_j, write commitment PEM and nonce PEM."""
+    priv_int, pub_int, nbits = _load_hpks_privkey_for_threshold(args.key)
+    poly = GF_POLY.get(nbits, GF_POLY[256])
+    k_j  = BitArray.random(nbits)
+    R_j  = BitArray(nbits, gf_pow(GF_GEN, k_j.uint, poly, nbits))
+    _write_file(args.commit_out, encode_hpkst_commit(R_j.uint, pub_int, nbits).encode())
+    _write_file(args.nonce_out,  encode_hpkst_nonce(k_j.uint, nbits).encode())
+
+
+def cmd_threshold_aggregate(args):
+    """Phase 2 (coordinator): read all commitment PEMs + message, write aggregate PEM."""
+    commit_paths = args.commits
+    R_parts = []
+    pubkeys  = []
+    nbits    = None
+    for cp in commit_paths:
+        text = _read_file(cp).decode('ascii')
+        R_j, C_j, n = decode_hpkst_commit(text)
+        if nbits is None:
+            nbits = n
+        elif nbits != n:
+            sys.exit("aggregate: commitment n mismatch")
+        R_parts.append(BitArray(n, R_j))
+        pubkeys.append(BitArray(n, C_j))
+
+    in_bytes = _read_file(getattr(args, 'in'))
+    if args.digest == 'hfscx-256':
+        in_bytes = hfscx_256(in_bytes)
+
+    poly  = GF_POLY.get(nbits, GF_POLY[256])
+    R_val = 1
+    for Rj in R_parts:
+        R_val = gf_mul(R_val, Rj.uint, poly, nbits)
+
+    R     = BitArray(nbits, R_val)
+    msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
+    e     = nl_fscx_revolve_v1(R, msg, nbits // 4)
+
+    C_agg, _coeffs = hpkst_aggregate_pubkeys(pubkeys)
+    _write_file(args.out, encode_hpkst_aggregate(R.uint, C_agg.uint, e.uint, nbits).encode())
+
+
+def cmd_threshold_respond(args):
+    """Phase 3: each signer reads aggregate PEM + nonce PEM, writes partial sig PEM."""
+    priv_int, pub_int, nbits = _load_hpks_privkey_for_threshold(args.key)
+
+    # Load all commit PEMs to recompute mu_j
+    commit_paths = args.commits
+    pubkeys      = []
+    for cp in commit_paths:
+        text = _read_file(cp).decode('ascii')
+        _R_j, C_j, n = decode_hpkst_commit(text)
+        pubkeys.append(BitArray(n, C_j))
+
+    # Load aggregate PEM
+    agg_text       = _read_file(args.aggregate).decode('ascii')
+    R_val, C_agg_val, e_val, n2 = decode_hpkst_aggregate(agg_text)
+    if n2 != nbits:
+        sys.exit("respond: aggregate n mismatch with key")
+
+    # Load nonce PEM
+    nonce_text     = _read_file(args.nonce).decode('ascii')
+    k_j_val, n3   = decode_hpkst_nonce(nonce_text)
+    if n3 != nbits:
+        sys.exit("respond: nonce n mismatch with key")
+
+    # Compute mu_j for this signer
+    _C_agg_computed, coeffs = hpkst_aggregate_pubkeys(pubkeys)
+    # Find our pubkey index
+    our_pub = BitArray(nbits, pub_int)
+    try:
+        idx = next(i for i, pk in enumerate(pubkeys) if pk.uint == our_pub.uint)
+    except StopIteration:
+        sys.exit("respond: our public key not found in commit list")
+    mu_j = coeffs[idx]
+
+    ord_n = (1 << nbits) - 1
+    e_ba  = BitArray(nbits, e_val)
+    s_j   = (k_j_val - priv_int * mu_j * e_val) % ord_n
+    _write_file(args.out, encode_hpkst_partial(s_j, nbits).encode())
+
+
+def cmd_threshold_combine(args):
+    """Phase 4 (coordinator): read all partial PEMs, write final HPKST SIGNATURE PEM."""
+    # Load aggregate PEM for R and C_agg
+    agg_text           = _read_file(args.aggregate).decode('ascii')
+    R_val, C_agg_val, _e_val, nbits = decode_hpkst_aggregate(agg_text)
+
+    ord_n  = (1 << nbits) - 1
+    s_acc  = 0
+    for pp in args.partials:
+        text = _read_file(pp).decode('ascii')
+        s_j, n = decode_hpkst_partial(text)
+        if n != nbits:
+            sys.exit("combine: partial n mismatch")
+        s_acc = (s_acc + s_j) % ord_n
+
+    _write_file(args.out, encode_hpkst_sig(C_agg_val, R_val, s_acc, nbits).encode())
+
+
+# ---------------------------------------------------------------------------
 # Sub-command: verify
 # ---------------------------------------------------------------------------
 
@@ -1062,6 +1181,23 @@ def cmd_verify(args):
         in_bytes = hfscx_256(in_bytes)   # pre-hash: verify against 32-byte digest
     sig_path    = args.sig
 
+    if algo == 'hpks-t':
+        sig_text       = _read_file(sig_path).decode('ascii')
+        C_agg_val, R_val, s_val, nbits = decode_hpkst_sig(sig_text)
+        msg   = BitArray(nbits, int.from_bytes(in_bytes[:nbits // 8].ljust(nbits // 8, b'\x00'), 'big'))
+        C_agg = BitArray(nbits, C_agg_val)
+        R     = BitArray(nbits, R_val)
+        s     = BitArray(nbits, s_val)
+        ok    = hpkst_verify(C_agg, R, s, msg)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    if not pubkey_path:
+        sys.exit("verify: --pubkey required for this algorithm")
     their_algo, their_ints = _decode_pubkey(pubkey_path)
 
     if algo in ('hpks', 'hpks-nl'):
@@ -1464,7 +1600,7 @@ def cmd_pake_demo(args):
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.5.24',
+        description='Herradura Cryptographic Suite CLI v1.9.44',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
@@ -1533,12 +1669,50 @@ def build_parser():
     # verify
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
     vf.add_argument('--algo', required=True,
-                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo', 'hpks-xmss'])
-    vf.add_argument('--pubkey', required=True)
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
+                             'hpks-xmss', 'hpks-t'])
+    vf.add_argument('--pubkey', default=None)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
     vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
                     help='Pre-hash algorithm: must match the value used during signing')
+
+    # threshold-commit
+    tc = sub.add_parser('threshold-commit',
+                        help='HPKS-T phase 1: generate nonce and commitment PEMs')
+    tc.add_argument('--key',        required=True, help='hpks or hpks-nl private key PEM')
+    tc.add_argument('--commit-out', required=True, dest='commit_out',
+                    help='Output commitment PEM (share with coordinator)')
+    tc.add_argument('--nonce-out',  required=True, dest='nonce_out',
+                    help='Output nonce PEM (keep secret; delete after phase 3)')
+
+    # threshold-aggregate
+    ta = sub.add_parser('threshold-aggregate',
+                        help='HPKS-T phase 2 (coordinator): build aggregate PEM from commitments')
+    ta.add_argument('--commits', required=True, nargs='+',
+                    help='One or more commitment PEM files (one per signer)')
+    ta.add_argument('--in',  required=True, dest='in', help='Message file to sign')
+    ta.add_argument('--out', required=True, help='Output aggregate PEM (broadcast to all signers)')
+    ta.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
+                    help='Pre-hash: must match the value used during combine/verify')
+
+    # threshold-respond
+    tr = sub.add_parser('threshold-respond',
+                        help='HPKS-T phase 3: produce partial signature PEM')
+    tr.add_argument('--key',       required=True, help='hpks or hpks-nl private key PEM')
+    tr.add_argument('--commits',   required=True, nargs='+',
+                    help='All commitment PEMs (same list used in threshold-aggregate)')
+    tr.add_argument('--aggregate', required=True, help='Aggregate PEM from coordinator')
+    tr.add_argument('--nonce',     required=True, help='Nonce PEM from threshold-commit')
+    tr.add_argument('--out',       required=True, help='Output partial signature PEM')
+
+    # threshold-combine
+    tb = sub.add_parser('threshold-combine',
+                        help='HPKS-T phase 4 (coordinator): combine partial sigs into final sig')
+    tb.add_argument('--aggregate', required=True, help='Aggregate PEM from threshold-aggregate')
+    tb.add_argument('--partials',  required=True, nargs='+',
+                    help='One or more partial signature PEM files (one per signer)')
+    tb.add_argument('--out', required=True, help='Output HPKST SIGNATURE PEM')
 
     # encfile
     ef = sub.add_parser('encfile',
@@ -1676,6 +1850,10 @@ _DISPATCH = {
     'oprf-unblind':   cmd_oprf_unblind,
     'pake-register':  cmd_pake_register,
     'pake-demo':      cmd_pake_demo,
+    'threshold-commit':    cmd_threshold_commit,
+    'threshold-aggregate': cmd_threshold_aggregate,
+    'threshold-respond':   cmd_threshold_respond,
+    'threshold-combine':   cmd_threshold_combine,
 }
 
 

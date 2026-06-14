@@ -4,6 +4,38 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.44] - 2026-06-14
+
+### Feature — CLI multi-party threshold signing for HPKS-T (TODO #106)
+
+Extends `HerraduraCli/` (Python, C, Go) with a 4-phase interactive HPKS-T workflow:
+`threshold-commit`, `threshold-aggregate`, `threshold-respond`, `threshold-combine`.
+Signatures are verifiable with `verify --algo hpks-t` (no `--pubkey` needed; C_agg
+is embedded in the HPKST SIGNATURE PEM). Cross-language interoperability is complete:
+any CLI can produce and any CLI can verify.
+
+- **`HerraduraCli/herradura_codec.h`**: adds PEM label defines for `HPKST COMMITMENT`,
+  `HPKST NONCE`, `HPKST AGGREGATE`, `HPKST PARTIAL`, `HPKST SIGNATURE`.
+- **`HerraduraCli/codec.py`**: adds `encode_hpkst_commit/nonce/aggregate/partial/sig`
+  and corresponding `decode_*` functions.
+- **`HerraduraCli/primitives.py`**: exports `hpkst_aggregate_pubkeys`, `hpkst_sign`,
+  `hpkst_verify` from the suite.
+- **`HerraduraCli/herradura.py`**: adds `threshold-commit`, `threshold-aggregate`,
+  `threshold-respond`, `threshold-combine` subcommands; extends `verify` to accept
+  `--algo hpks-t` (no `--pubkey` required).
+- **`HerraduraCli/herradura_cli.c`**: adds `cmd_threshold_commit/aggregate/respond/combine`
+  and `cmd_threshold_verify`; extends `verify --algo hpks-t`.
+- **`HerraduraCli/herradura_cli.go`**: adds `cmdThresholdCommit/Aggregate/Respond/Combine`
+  and `cmdThresholdVerify`; extends `cmdVerify` for `hpks-t`; adds HPKST PEM label
+  constants and encode/decode helpers.
+- **`CliTest/test_threshold_sign.sh`**: Python 3-of-3 threshold sign + verify + tamper test.
+- **`CliTest/test_threshold_interop.sh`**: 9-way cross-language interop (Python/C/Go sign ×
+  Python/C/Go verify) plus a mixed-phase scenario.
+- **`docs/TUTORIAL.md`**: new "Threshold Signing (HPKS-T)" section with 4-phase workflow,
+  C/Go CLI equivalents, interop notes, and security notes.
+
+---
+
 ## [1.9.43] - 2026-06-14
 
 ### Feature — HPKS-T: n-of-n Threshold Aggregate Schnorr over GF(2^n)* (TODO #98)

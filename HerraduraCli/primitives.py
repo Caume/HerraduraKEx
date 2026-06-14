@@ -104,6 +104,11 @@ oprf_direct          = _s.oprf_direct
 hpake_register       = _s.hpake_register
 hpake_login_demo     = _s.hpake_login_demo
 
+# ── 98 HPKS-T threshold Schnorr ──────────────────────────────────────────────
+hpkst_aggregate_pubkeys = _s.hpkst_aggregate_pubkeys
+hpkst_sign              = _s.hpkst_sign
+hpkst_verify            = _s.hpkst_verify
+
 # ── 97 HPKS-XMSS-F ───────────────────────────────────────────────────────────
 hpks_wots_keygen     = _s.hpks_wots_keygen
 hpks_wots_sign       = _s.hpks_wots_sign
