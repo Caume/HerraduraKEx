@@ -6068,3 +6068,88 @@ and test_go_interop.sh cover classical/RNL algorithms only), which is how this w
 unnoticed.  Fix should add a `test_stern_interop.sh` with the 6-direction matrix.
 
 Status: **DONE v1.9.36**
+
+---
+
+### 101. Go suite demo file lags behind C/Python — missing HSKE-NL-AEAD and HDRBG demo blocks (Consistency, Small)
+
+**Discovered:** cross-language consistency audit, 2026-06-14.
+
+**Version gap:** `Herradura cryptographic suite.go` is at v1.8.8; C and Python suites are at v1.9.16.  The Go *package* (`herradura/herradura.go`) implements and tests HSKE-NL-AEAD (TODO #95) and HDRBG (TODO #96), but neither appears as a demo block in the `main()` of the Go suite file.  C and Python both show these demo sections.
+
+**Missing demo blocks** (add to `Herradura cryptographic suite.go` `main()`, immediately after the existing HDRBG TODO #96 note or at the matching position relative to C/Python):
+1. `--- HSKE-NL-AEAD` — call `HskeNlAeadEncrypt` / `HskeNlAeadDecrypt` and print the outcome (mirror the C `--- HSKE-NL-AEAD` block in `Herradura cryptographic suite.c`).
+2. `--- HDRBG` — seed, generate a few outputs, reseed, generate again (mirror the C `--- HDRBG` block).
+
+**Acceptance:** both blocks print correctly; `go vet` and `go build` pass; version banner bumped to match the current suite version.
+
+Status: **DONE v1.9.40**
+
+---
+
+### 102. HPKS-WOTS-F / HPKS-XMSS-F missing from C and Go (Consistency, Medium)
+
+**Discovered:** cross-language consistency audit, 2026-06-14.
+
+**Current state:** TODO #97 added HPKS-WOTS-F and HPKS-XMSS-F to the Python suite (v1.9.39).  Neither C (`herradura.h`) nor Go (`herradura/herradura.go`) have the implementation.
+
+**Work items:**
+1. Port `hpks_wots_f_*` functions to `herradura.h` (C).  The Python reference is at `Herradura cryptographic suite.py` lines 1706+.  Parameters: `_WOTS_W = 16`, `_WOTS_LOG2W = 4`, chain length `n / log2(W)`, hash `h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)`.
+2. Port `hpks_xmss_f_*` (Merkle tree keygen + sign + verify) to `herradura.h`.
+3. Mirror both in Go (`herradura/herradura.go`), following existing Go naming conventions.
+4. Add demo blocks to `Herradura cryptographic suite.c` and `Herradura cryptographic suite.go` `main()`.
+5. Add test cases to `CryptosuiteTests/Herradura_tests.c` and `CryptosuiteTests/Herradura_tests.go`.
+
+**Assembly/Arduino scope:** out of scope — the WOTS chain length and Merkle tree are too large for the 32-bit demo targets.
+
+Status: **OPEN**
+
+---
+
+### 103. ZKP-NL missing from ARM Thumb-2 and NASM i386 targets (Consistency, Small)
+
+**Discovered:** cross-language consistency audit, 2026-06-14.
+
+**Current state:** ZKP-NL (n=8, R=4 rounds) is implemented in C, Go, Python, and Arduino.  The ARM Thumb-2 (`Herradura cryptographic suite.s`) and NASM i386 (`Herradura cryptographic suite.asm`) suite files and their test files do not include it.
+
+**Work items:**
+1. Add `zkp_nl_prove` / `zkp_nl_verify` routines to `Herradura cryptographic suite.s` (ARM, n=8, R=4 — matching Arduino).
+2. Add the same routines to `Herradura cryptographic suite.asm` (NASM i386).
+3. Add a `[asm-14]` test in `CryptosuiteTests/Herradura_tests.s` and `CryptosuiteTests/Herradura_tests.asm`.
+
+**Reference:** Arduino implementation in `Herradura cryptographic suite.ino`; C reference in `herradura.h` (`nl_zkp_prove` / `nl_zkp_verify`).
+
+Status: **DONE v1.9.40**
+
+---
+
+### 104. FPE, Tweakable cipher, and Accumulator (#78.A/B/J) missing from ARM and NASM targets (Consistency, Medium)
+
+**Discovered:** cross-language consistency audit, 2026-06-14.
+
+**Current state:** all three constructions (Format-Preserving Encryption #78.A, Tweakable block cipher #78.B, HFSCX-256-based Merkle accumulator #78.J) are implemented in C, Go, Python, and Arduino (32-bit).  The ARM Thumb-2 and NASM i386 suite files do not include them.
+
+**Work items:**
+1. Port FPE (#78.A, 32-bit) to ARM Thumb-2 (`Herradura cryptographic suite.s`) and NASM i386 (`Herradura cryptographic suite.asm`).  Reference: Arduino `Herradura cryptographic suite.ino` (32-bit version).
+2. Port Tweakable cipher (#78.B, 32-bit) to both assembly targets.
+3. Port Accumulator (#78.J, 32-bit) to both assembly targets.
+4. Add demo calls for each in ARM/NASM `main` sections.
+5. Add tests `[asm-15]`, `[asm-16]`, `[asm-17]` to `CryptosuiteTests/Herradura_tests.s` and `CryptosuiteTests/Herradura_tests.asm`.
+
+**Note:** HFSCX-256 (#78.J's Merkle hash) is inherently 256-bit; the Arduino/32-bit accumulator demo uses it at full 256-bit width internally — the assembly port should do the same.
+
+Status: **DONE v1.9.41**
+
+---
+
+### 105. ZKP-RNL n-size inconsistency: C uses n=256, Go/Python/ASM use n=32 in demos (Consistency, Small)
+
+**Discovered:** cross-language consistency audit, 2026-06-14.
+
+**Current state:** `Herradura cryptographic suite.c` runs ZKP-RNL at n=256 (matching KEYBITS).  `Herradura cryptographic suite.go` (line 300) and the Python suite run it at n=32, labelled "n=32".  ARM/NASM suite demos use n=32.  None of the assembly test files include a dedicated ZKP-RNL test assertion.
+
+**Work items:**
+1. Decide the canonical demo size: either align all high-level suite demos to n=256 (to match C) or add an `n=32` note to the C demo for transparency.  Recommended: promote Go and Python to n=256 (one additional revolve call, negligible perf impact) so all three high-level implementations run identical parameters.
+2. Add a `[asm-14]` (or next available number after TODO #103) dedicated ZKP-RNL test assertion to `CryptosuiteTests/Herradura_tests.s` and `CryptosuiteTests/Herradura_tests.asm` (both currently run ZKP-RNL in the demo flow but have no test file assertion).
+
+Status: **DONE v1.9.40**

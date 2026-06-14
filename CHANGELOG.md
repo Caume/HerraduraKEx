@@ -4,6 +4,64 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.41] - 2026-06-14
+
+### Consistency — FPE (78.A), Tweakable cipher (78.B), Accumulator (78.J) ported to ARM and NASM (TODO #104)
+
+Ports the three 32-bit constructions that existed in C, Go, Python, and Arduino to the
+ARM Thumb-2 and NASM i386 assembly targets.  All logic is inlined in `main()` using the
+existing `hfscx_32`, `nl_fscx_revolve_v2`, and `nl_fscx_revolve_v2_inv` helpers — no
+new subroutines needed.
+
+- **`Herradura cryptographic suite.s`** (ARM): adds 9 format strings and three demo
+  blocks (`FPE 78.A`, `Tweakable 78.B`, `Accumulator 78.J`) inserted before exit.
+  Accumulator computes a 4-leaf Merkle tree and verifies a membership proof for index 2.
+- **`Herradura cryptographic suite.asm`** (NASM i386): same three demo blocks in NASM
+  syntax with cdecl register conventions; scratch variables added to `section .data`.
+- **`CryptosuiteTests/Herradura_tests.s`** (ARM): adds tests `[15] FPE` (3 random
+  round-trips), `[16] Tweakable` (3 random round-trips), `[17] Accumulator` (fixed
+  4-leaf Merkle proof); all 17 tests pass under qemu-arm.
+- **`CryptosuiteTests/Herradura_tests.asm`** (NASM i386): matching tests [15]–[17].
+
+NASM i386 source-level correctness mirrors the ARM implementation; build-time
+verification on this ARM64 host is blocked by the known elf_i386 linker limitation
+(documented in CLAUDE.md).
+
+---
+
+## [1.9.40] - 2026-06-14
+
+### Consistency — ZKP-NL ARM/NASM port; Go suite demos; ZKP-RNL n-size unification (TODOs #101, #103, #105)
+
+Cross-language consistency audit (2026-06-14) identified three gaps; all fixed in this release.
+
+**TODO #101 — Go suite demo lags behind C/Python (HSKE-NL-AEAD and HDRBG missing):**
+- **`Herradura cryptographic suite.go`** (v1.8.8 → v1.9.40): adds `--- HDRBG` demo block
+  (determinism + reseed separation) and `--- HSKE-NL-AEAD` demo block (round-trip +
+  tamper/AD rejection) matching the equivalent blocks in the C and Python suite files.
+  Adds `"bytes"` import. Protocol implementations live in `herradura/herradura.go`
+  (unchanged); only the demo `main()` was updated.
+
+**TODO #103 — ZKP-NL (NL-FSCX ZKBoo) missing from ARM Thumb-2 and NASM i386:**
+- **`Herradura cryptographic suite.s`** (ARM): adds `zkp_nl_prg_bit_8`, `zkp_nl_commit_8`,
+  `zkp_nl_prove_8`, `zkp_nl_verify_8` functions and their BSS scratch storage;
+  adds ZKP-NL demo call in `main()`. Parameters: n=8, R=4, using `hfscx_32` for PRG
+  and commitments, matching the Arduino reference implementation.
+- **`Herradura cryptographic suite.asm`** (NASM i386): same additions in NASM syntax
+  and cdecl calling convention.
+- **`CryptosuiteTests/Herradura_tests.s`** (ARM): adds test `[14] ZKP-NL prove+verify
+  (3 trials, n=8, R=4)`; all 14 tests pass under qemu-arm.
+- **`CryptosuiteTests/Herradura_tests.asm`** (NASM i386): same test [14] in NASM syntax.
+
+**TODO #105 — ZKP-RNL demo n-size: C=256, Go/Python=32 (inconsistent):**
+- **`Herradura cryptographic suite.go`**: changes `zkpN := 32` → `zkpN := n` (256) and
+  updates the demo header to print the actual n value dynamically.
+- **`Herradura cryptographic suite.py`**: changes `_zkprnl_n = 32` → `_zkprnl_n = KEYBITS`
+  (256) and updates the header format string accordingly.
+- ARM/NASM assembly targets keep n=32 (32-bit architecture parameter constraint, intentional).
+
+---
+
 ## [1.9.39] - 2026-06-14
 
 ### Feature — HPKS-WOTS-F / HPKS-XMSS-F hash-based many-time signature (TODO #97)

@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.8.8
+/*  Herradura Cryptographic Suite v1.9.40
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -42,6 +42,7 @@ package main
 
 import (
 	. "herradurakex/herradura"
+	"bytes"
 	"fmt"
 	"math/big"
 )
@@ -297,9 +298,9 @@ func main() {
 	}
 
 	// ── ZKP-RNL: Ring-LWR Σ-protocol ────────────────────────────────────────
-	fmt.Println("\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n=32]")
+	fmt.Printf("\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n=%d]\n", n)
 	{
-		zkpN := 32
+		zkpN := n
 		zkpQ := RnlQ
 		zkpP := RnlP
 		zkpM := RnlMPoly(zkpN)
@@ -340,6 +341,43 @@ func main() {
 					fmt.Println("- ZKP-NL verify FAILED")
 				}
 			}
+		}
+	}
+
+	// ── HDRBG ────────────────────────────────────────────────────────────────────
+	fmt.Println("\n--- HDRBG [FORWARD-SECURE DRBG — NL-FSCX v1 ratchet, fast-key-erasure]")
+	{
+		d1 := DrbgSeed([]byte("demo-entropy-96"), []byte("pers"))
+		d2 := DrbgSeed([]byte("demo-entropy-96"), []byte("pers"))
+		out1, _ := d1.DrbgGenerate(64)
+		out2, _ := d2.DrbgGenerate(64)
+		d2.DrbgReseed([]byte("fresh-entropy"))
+		out3, _ := d2.DrbgGenerate(64)
+		out4, _ := d1.DrbgGenerate(64)
+		if bytes.Equal(out1, out2) && !bytes.Equal(out3, out4) && len(out1) == 64 {
+			fmt.Println("- HDRBG determinism + reseed separation correct")
+		} else {
+			fmt.Println("+ HDRBG failed!")
+		}
+	}
+
+	// ── HSKE-NL-AEAD ─────────────────────────────────────────────────────────────
+	fmt.Println("\n--- HSKE-NL-AEAD [AEAD — NL-FSCX v1 keystream + HFSCX-256 MAC]")
+	{
+		aeadKey   := NewRandBitArray(n)
+		aeadNonce := NewRandBitArray(n)
+		aeadPt    := []byte("HSKE-NL-AEAD demo plaintext (arbitrary length, 47 B)")
+		aeadAd    := []byte("header-v1")
+		aeadCt, aeadTag := HskeNlAeadEncrypt(aeadKey, aeadNonce, aeadAd, aeadPt)
+		aeadDec, aeadOk := HskeNlAeadDecrypt(aeadKey, aeadNonce, aeadAd, aeadCt, aeadTag)
+		badCt := append(append([]byte{}, aeadCt...), []byte{}...)
+		badCt[0] ^= 1
+		_, badOk   := HskeNlAeadDecrypt(aeadKey, aeadNonce, aeadAd, badCt, aeadTag)
+		_, badAdOk := HskeNlAeadDecrypt(aeadKey, aeadNonce, []byte("header-v2"), aeadCt, aeadTag)
+		if aeadOk && bytes.Equal(aeadDec, aeadPt) && !badOk && !badAdOk {
+			fmt.Println("- HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
+		} else {
+			fmt.Println("+ HSKE-NL-AEAD failed!")
 		}
 	}
 

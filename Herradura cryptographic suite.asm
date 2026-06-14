@@ -249,6 +249,43 @@ section .data
     ratch_fail     db "+ Ratchet: duplicate message keys!", 10
     ratch_fail_l   equ $-ratch_fail
     ; 78.I ring signature strings
+    zkp_nl_hdr     db 10, "-- ZKP-NL [NL-FSCX ZKBoo; n=8, R=4] --", 10
+    zkp_nl_hdr_l   equ $-zkp_nl_hdr
+    zkp_nl_ok      db "+ ZKP-NL proof verified", 10
+    zkp_nl_ok_l    equ $-zkp_nl_ok
+    zkp_nl_fail    db "- ZKP-NL verify FAILED", 10
+    zkp_nl_fail_l  equ $-zkp_nl_fail
+    fpe_hdr        db 10, "--- FPE (78.A) [format-preserving encrypt/decrypt; 32-bit]", 10
+    fpe_hdr_l      equ $-fpe_hdr
+    fpe_ok         db "+ FPE round-trip correct", 10
+    fpe_ok_l       equ $-fpe_ok
+    fpe_fail       db "- FPE round-trip FAILED", 10
+    fpe_fail_l     equ $-fpe_fail
+    twk_hdr        db 10, "--- Tweakable cipher (78.B) [sector/block tweak; 32-bit]", 10
+    twk_hdr_l      equ $-twk_hdr
+    twk_ok         db "+ Tweakable cipher correct", 10
+    twk_ok_l       equ $-twk_ok
+    twk_fail       db "- Tweakable cipher FAILED", 10
+    twk_fail_l     equ $-twk_fail
+    acc_hdr        db 10, "--- Accumulator (78.J) [Merkle root + membership; 32-bit]", 10
+    acc_hdr_l      equ $-acc_hdr
+    acc_ok         db "+ Accumulator proof correct", 10
+    acc_ok_l       equ $-acc_ok
+    acc_fail       db "- Accumulator proof FAILED", 10
+    acc_fail_l     equ $-acc_fail
+    ; scratch for FPE/Twk/Acc demos
+    val_fpe_plain  dd 0
+    val_fpe_B      dd 0
+    val_fpe_ct     dd 0
+    val_twk_plain  dd 0
+    val_twk_B      dd 0
+    val_twk_ct     dd 0
+    acc_leaf0      dd 0
+    acc_leaf1      dd 0
+    acc_leaf2      dd 0
+    acc_leaf3      dd 0
+    acc_n01        dd 0
+    acc_root       dd 0
     ring_hdr       db 10, "--- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG -- OR-composed Stern, k=2]", 10
     ring_hdr_l     equ $-ring_hdr
     ring_ok        db "+ HPKS-Stern-Ring signature verified (k=2, signer=1)", 10
@@ -322,6 +359,40 @@ section .bss
     sigma_liftc_tmp resd RNL_N
     sigma_mz_tmp    resd RNL_N
     sigma_cw_tmp    resd RNL_N
+
+    ; ZKP-NL scratch (NL-FSCX ZKBoo; n=8, R=4)
+    zkp_all_sh   resd 12
+    zkp_all_tp   resd 12
+    zkp_all_out  resd 12
+    zkp_all_gv   resb 84
+    zkp_coms     resd 12
+    zkp_e        resb 4
+    zkp_sh1      resd 4
+    zkp_tp1      resd 4
+    zkp_out1     resd 4
+    zkp_sh2      resd 4
+    zkp_tp2      resd 4
+    zkp_out2     resd 4
+    zkp_gv1      resb 28
+    zkp_gv2      resb 28
+    zkp_ev_sh    resd 3
+    zkp_ev_tp    resd 3
+    zkp_ev_B     resd 1
+    zkp_ev_out   resd 3
+    zkp_ev_ci    resd 3
+    zkp_ev_ss    resd 3
+    zkp_ev_ri    resd 3
+    zkp_ev_ao    resd 3
+    zkp_arg_A    resd 1
+    zkp_arg_B    resd 1
+    zkp_arg_y    resd 1
+    zkp_arg_msg  resd 1
+    zkp_scr0     resd 1
+    zkp_scr1     resd 1
+    zkp_scr2     resd 1
+    zkp_scr3     resd 1
+    zkp_scr4     resd 1
+    zkp_scr5     resd 1
 
 section .text
 global _start
@@ -1297,10 +1368,792 @@ _start:
     call print_str
 .ratch_done:
 
+    ; ------------------------------------------------------------------ ZKP-NL demo
+    mov  eax, zkp_nl_hdr
+    mov  ecx, zkp_nl_hdr_l
+    call print_str
+    call prng_next
+    and  eax, 0xFF
+    mov  [zkp_arg_A], eax
+    call prng_next
+    and  eax, 0xFF
+    mov  [zkp_arg_B], eax
+    call prng_next
+    and  eax, 0xFF
+    mov  [zkp_arg_msg], eax
+    ; y = nl_fscx_v1(A,B) & 0xFF
+    mov  eax, [zkp_arg_A]
+    mov  ebx, [zkp_arg_B]
+    call nl_fscx_v1
+    and  eax, 0xFF
+    mov  [zkp_arg_y], eax
+    call zkp_nl_prove_8
+    call zkp_nl_verify_8
+    cmp  eax, 1
+    jne  .zkp_nl_fail
+    mov  eax, zkp_nl_ok
+    mov  ecx, zkp_nl_ok_l
+    call print_str
+    jmp  .zkp_nl_done
+.zkp_nl_fail:
+    mov  eax, zkp_nl_fail
+    mov  ecx, zkp_nl_fail_l
+    call print_str
+.zkp_nl_done:
+
+    ; ── FPE (78.A): B = hfscx_32(hfscx_32(key) ^ ctx); enc/dec via nl_fscx_revolve_v2
+    mov  eax, fpe_hdr
+    mov  ecx, fpe_hdr_l
+    call print_str
+    call prng_next
+    mov  [val_fpe_plain], eax       ; plain (random)
+    mov  eax, 0xABCD1234            ; key
+    call hfscx_32
+    xor  eax, 0x42                  ; ^ context
+    call hfscx_32
+    mov  [val_fpe_B], eax           ; B
+    mov  eax, [val_fpe_plain]
+    mov  ebx, [val_fpe_B]
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2
+    mov  [val_fpe_ct], eax          ; ct
+    mov  eax, [val_fpe_ct]
+    mov  ebx, [val_fpe_B]
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2_inv
+    cmp  eax, [val_fpe_plain]
+    jne  .fpe_fail
+    mov  eax, fpe_ok
+    mov  ecx, fpe_ok_l
+    call print_str
+    jmp  .fpe_done
+.fpe_fail:
+    mov  eax, fpe_fail
+    mov  ecx, fpe_fail_l
+    call print_str
+.fpe_done:
+
+    ; ── Tweakable cipher (78.B): B = hfscx_32(hfscx_32(key^sector) ^ bidx)
+    mov  eax, twk_hdr
+    mov  ecx, twk_hdr_l
+    call print_str
+    call prng_next
+    mov  [val_twk_plain], eax       ; block (random)
+    mov  eax, 0x12345678            ; key
+    xor  eax, 7                     ; ^ sector
+    call hfscx_32
+    xor  eax, 3                     ; ^ bidx
+    call hfscx_32
+    mov  [val_twk_B], eax           ; B
+    mov  eax, [val_twk_plain]
+    mov  ebx, [val_twk_B]
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2
+    mov  [val_twk_ct], eax          ; ct
+    mov  eax, [val_twk_ct]
+    mov  ebx, [val_twk_B]
+    mov  ecx, I_VALUE
+    call nl_fscx_revolve_v2_inv
+    cmp  eax, [val_twk_plain]
+    jne  .twk_fail
+    mov  eax, twk_ok
+    mov  ecx, twk_ok_l
+    call print_str
+    jmp  .twk_done
+.twk_fail:
+    mov  eax, twk_fail
+    mov  ecx, twk_fail_l
+    call print_str
+.twk_done:
+
+    ; ── Accumulator (78.J): leaf = hfscx_32(data); node = hfscx_32(hfscx_32(0x01000000^L)^R)
+    mov  eax, acc_hdr
+    mov  ecx, acc_hdr_l
+    call print_str
+    ; compute 4 leaves
+    mov  eax, 0xAAAAAAAA
+    call hfscx_32
+    mov  [acc_leaf0], eax
+    mov  eax, 0xBBBBBBBB
+    call hfscx_32
+    mov  [acc_leaf1], eax
+    mov  eax, 0xCCCCCCCC
+    call hfscx_32
+    mov  [acc_leaf2], eax
+    mov  eax, 0xDDDDDDDD
+    call hfscx_32
+    mov  [acc_leaf3], eax
+    ; n01 = hfscx_32(hfscx_32(0x01000000 ^ leaf0) ^ leaf1)
+    mov  eax, 0x01000000
+    xor  eax, [acc_leaf0]
+    call hfscx_32
+    xor  eax, [acc_leaf1]
+    call hfscx_32
+    mov  [acc_n01], eax
+    ; n23 = hfscx_32(hfscx_32(0x01000000 ^ leaf2) ^ leaf3)
+    mov  eax, 0x01000000
+    xor  eax, [acc_leaf2]
+    call hfscx_32
+    xor  eax, [acc_leaf3]
+    call hfscx_32
+    mov  ebx, eax                   ; n23 in ebx
+    ; root = hfscx_32(hfscx_32(0x01000000 ^ n01) ^ n23)
+    mov  eax, 0x01000000
+    xor  eax, [acc_n01]
+    call hfscx_32
+    xor  eax, ebx
+    call hfscx_32
+    mov  [acc_root], eax
+    ; proof for index 2: cur=node(leaf2,leaf3)=n23, then node(n01,cur)=root
+    ; n23 already in ebx; recompute it and then the second level
+    mov  eax, 0x01000000
+    xor  eax, [acc_leaf2]
+    call hfscx_32
+    xor  eax, [acc_leaf3]
+    call hfscx_32
+    mov  ebx, eax                   ; cur = node(leaf2,leaf3)
+    mov  eax, 0x01000000
+    xor  eax, [acc_n01]
+    call hfscx_32
+    xor  eax, ebx
+    call hfscx_32                   ; reconstructed root
+    cmp  eax, [acc_root]
+    jne  .acc_fail
+    mov  eax, acc_ok
+    mov  ecx, acc_ok_l
+    call print_str
+    jmp  .acc_done
+.acc_fail:
+    mov  eax, acc_fail
+    mov  ecx, acc_fail_l
+    call print_str
+.acc_done:
+
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
     xor  ebx, ebx
     int  0x80
+
+; ============================================================
+; ZKP-NL (NL-FSCX ZKBoo; n=8, R=4) — concept demo
+; ============================================================
+
+; zkp_nl_prg_bit_8: EAX=tape, EBX=gate -> EAX = hfscx_32(tape^gate)&1
+zkp_nl_prg_bit_8:
+    xor  eax, ebx
+    call hfscx_32
+    and  eax, 1
+    ret
+
+; zkp_nl_commit_8: EAX=tape, EBX=share, ECX=out_share, EDX=gv_ptr(7B)
+; h=hfscx_32(tape^share^out_share); for i 0..6 h=hfscx_32(h^gv[i])
+zkp_nl_commit_8:
+    push esi
+    push edi
+    push ebp
+    mov  edi, edx           ; gv ptr
+    xor  eax, ebx
+    xor  eax, ecx
+    call hfscx_32           ; eax = h
+    mov  esi, eax           ; esi = h
+    mov  ebp, 7
+.zkc8_loop:
+    movzx eax, byte [edi]
+    inc  edi
+    xor  eax, esi
+    call hfscx_32
+    mov  esi, eax
+    dec  ebp
+    jnz  .zkc8_loop
+    mov  eax, esi
+    pop  ebp
+    pop  edi
+    pop  esi
+    ret
+
+; zkp_nl_eval_8: EDX = gv base ptr (3 rows of 7 bytes)
+; inputs: zkp_ev_sh[3], zkp_ev_tp[3], zkp_ev_B
+; outputs: zkp_ev_out[3], gv[p][i] bit views
+zkp_nl_eval_8:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    mov  edi, edx           ; gv base
+    ; zero ci[], ss[]
+    xor  eax, eax
+    mov  [zkp_ev_ci], eax
+    mov  [zkp_ev_ci+4], eax
+    mov  [zkp_ev_ci+8], eax
+    mov  [zkp_ev_ss], eax
+    mov  [zkp_ev_ss+4], eax
+    mov  [zkp_ev_ss+8], eax
+    xor  esi, esi           ; esi = bit index i
+.zke8_bit:
+    ; ri[p] = prg_bit(tp[p], i)
+    xor  ebp, ebp
+.zke8_ri:
+    mov  eax, [zkp_ev_tp + ebp*4]
+    mov  ebx, esi
+    call zkp_nl_prg_bit_8
+    mov  [zkp_ev_ri + ebp*4], eax
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zke8_ri
+    ; sum bit: sb[p] = ((sh[p]>>i)&1) ^ Bi ^ ci[p]; ss[p] |= sb<<i
+    ; Bi computed inline using cl=i
+    xor  ebp, ebp
+.zke8_sum:
+    mov  eax, [zkp_ev_sh + ebp*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1             ; ai
+    mov  edx, [zkp_ev_B]
+    shr  edx, cl
+    and  edx, 1             ; Bi
+    xor  eax, edx
+    mov  edx, [zkp_ev_ci + ebp*4]
+    xor  eax, edx           ; sb
+    shl  eax, cl            ; sb<<i
+    or   [zkp_ev_ss + ebp*4], eax
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zke8_sum
+    ; gate only for i<7
+    cmp  esi, 7
+    je   .zke8_after
+    ; ---- compute ao[p] for all p (read old carries) ----
+    xor  ebp, ebp
+.zke8_gate:
+    ; ai[p]
+    mov  eax, [zkp_ev_sh + ebp*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1             ; eax = ai (= ai_p)
+    mov  ebx, eax           ; ebx = ai_p  (keep)
+    ; p1 = (p+1)%3
+    lea  edx, [ebp+1]
+    cmp  edx, 3
+    jne  .zke8_p1ok
+    xor  edx, edx
+.zke8_p1ok:
+    ; ai[p1]
+    mov  eax, [zkp_ev_sh + edx*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1             ; eax = ai_p1
+    ; ao = (ai&ci) ^ (ai&ci1) ^ (ai1&ci) ^ ri ^ ri1
+    ; ai_p=ebx, ai_p1=eax, p1=ecx
+    mov  ecx, edx                    ; ecx = p1
+    ; acc = ai_p & ci_p
+    mov  edx, [zkp_ev_ci + ebp*4]
+    and  edx, ebx
+    mov  [zkp_scr0], edx
+    ; + ai_p & ci_p1
+    mov  edx, [zkp_ev_ci + ecx*4]
+    and  edx, ebx
+    xor  edx, [zkp_scr0]
+    mov  [zkp_scr0], edx
+    ; + ai_p1 & ci_p
+    mov  edx, [zkp_ev_ci + ebp*4]
+    and  edx, eax
+    xor  edx, [zkp_scr0]
+    ; ^ ri_p ^ ri_p1
+    xor  edx, [zkp_ev_ri + ebp*4]
+    xor  edx, [zkp_ev_ri + ecx*4]
+    and  edx, 1                      ; edx = ao_p
+    mov  [zkp_ev_ao + ebp*4], edx
+    ; gv[p][i] = ai_p | (ci_p<<1) | (ao<<2)
+    mov  eax, [zkp_ev_ci + ebp*4]
+    shl  eax, 1
+    or   eax, ebx                    ; | ai_p
+    mov  ecx, edx
+    shl  ecx, 2
+    or   eax, ecx                    ; | ao<<2
+    ; addr = edi + ebp*7 + esi
+    mov  ecx, ebp
+    lea  ecx, [ecx + ecx*2]          ; ebp*3
+    lea  ecx, [ecx + ebp*4]          ; + ebp*4 -> ebp*7
+    add  ecx, edi
+    add  ecx, esi
+    mov  [ecx], al
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zke8_gate
+    ; ---- update carries using saved ao and old ci ----
+    xor  ebp, ebp
+.zke8_carry:
+    mov  eax, [zkp_ev_sh + ebp*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1             ; ai_p
+    mov  ebx, eax           ; ebx = ai_p
+    mov  edx, [zkp_ev_B]
+    shr  edx, cl
+    and  edx, 1             ; Bi
+    ; carry = (Bi&ai) ^ ao ^ (Bi&ci)
+    mov  eax, edx
+    and  eax, ebx           ; Bi&ai
+    xor  eax, [zkp_ev_ao + ebp*4]
+    mov  ecx, [zkp_ev_ci + ebp*4]
+    and  ecx, edx           ; Bi&ci
+    xor  eax, ecx
+    mov  [zkp_ev_ci + ebp*4], eax
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zke8_carry
+.zke8_after:
+    inc  esi
+    cmp  esi, 8
+    jne  .zke8_bit
+    ; ---- linear combine ----
+    ; Bc = (B ^ ROL8(B,1) ^ ROR8(B,1)) & 0xFF
+    mov  eax, [zkp_ev_B]
+    and  eax, 0xFF
+    mov  ebx, eax
+    mov  edx, eax
+    shl  edx, 1
+    mov  ecx, eax
+    shr  ecx, 7
+    or   edx, ecx
+    and  edx, 0xFF          ; ROL8(B,1)
+    xor  ebx, edx
+    mov  edx, eax
+    shr  edx, 1
+    mov  ecx, eax
+    shl  ecx, 7
+    or   edx, ecx
+    and  edx, 0xFF          ; ROR8(B,1)
+    xor  ebx, edx
+    and  ebx, 0xFF
+    mov  [zkp_scr0], ebx    ; Bc
+    xor  ebp, ebp
+.zke8_out:
+    mov  eax, [zkp_ev_sh + ebp*4]
+    and  eax, 0xFF
+    mov  ebx, eax           ; sh
+    ; lin = sh ^ ROL8(sh,1) ^ ROR8(sh,1)
+    mov  edx, eax
+    shl  edx, 1
+    mov  ecx, eax
+    shr  ecx, 7
+    or   edx, ecx
+    and  edx, 0xFF
+    xor  ebx, edx           ; ^ROL8
+    mov  edx, eax
+    shr  edx, 1
+    mov  ecx, eax
+    shl  ecx, 7
+    or   edx, ecx
+    and  edx, 0xFF
+    xor  ebx, edx           ; ^ROR8
+    and  ebx, 0xFF          ; lin
+    ; if p==0: lin ^= Bc
+    test ebp, ebp
+    jnz  .zke8_norot
+    mov  edx, [zkp_scr0]
+    xor  ebx, edx
+.zke8_norot:
+    ; rot = ROL8(ss[p],2)&0xFF
+    mov  eax, [zkp_ev_ss + ebp*4]
+    and  eax, 0xFF
+    mov  edx, eax
+    shl  edx, 2
+    mov  ecx, eax
+    shr  ecx, 6
+    or   edx, ecx
+    and  edx, 0xFF
+    xor  ebx, edx
+    and  ebx, 0xFF
+    mov  [zkp_ev_out + ebp*4], ebx
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zke8_out
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; zkp_nl_prove_8: reads zkp_arg_A/B/y/msg
+zkp_nl_prove_8:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    xor  edi, edi           ; edi = round j
+.zkp_pr_round:
+    ; shares
+    call prng_next
+    and  eax, 0xFF
+    mov  ebx, eax           ; s0
+    call prng_next
+    and  eax, 0xFF
+    mov  ecx, eax           ; s1
+    mov  eax, [zkp_arg_A]
+    xor  eax, ebx
+    xor  eax, ecx
+    and  eax, 0xFF          ; s2
+    ; index base = j*3
+    lea  esi, [edi + edi*2] ; j*3
+    mov  [zkp_all_sh + esi*4], ebx
+    mov  [zkp_all_sh + esi*4 + 4], ecx
+    mov  [zkp_all_sh + esi*4 + 8], eax
+    mov  [zkp_ev_sh], ebx
+    mov  [zkp_ev_sh+4], ecx
+    mov  [zkp_ev_sh+8], eax
+    ; tapes
+    call prng_next
+    mov  ebx, eax
+    call prng_next
+    mov  ecx, eax
+    call prng_next
+    ; eax=t2, ebx=t0, ecx=t1
+    lea  esi, [edi + edi*2]
+    mov  [zkp_all_tp + esi*4], ebx
+    mov  [zkp_all_tp + esi*4 + 4], ecx
+    mov  [zkp_all_tp + esi*4 + 8], eax
+    mov  [zkp_ev_tp], ebx
+    mov  [zkp_ev_tp+4], ecx
+    mov  [zkp_ev_tp+8], eax
+    ; B low 8
+    mov  eax, [zkp_arg_B]
+    and  eax, 0xFF
+    mov  [zkp_ev_B], eax
+    ; gv base = zkp_all_gv + j*21
+    mov  eax, edi
+    shl  eax, 4              ; 16j
+    lea  eax, [eax + edi*4]  ; 20j
+    add  eax, edi            ; 21j
+    mov  edx, zkp_all_gv
+    add  edx, eax
+    call zkp_nl_eval_8
+    ; copy out[3]
+    lea  esi, [edi + edi*2]
+    mov  eax, [zkp_ev_out]
+    mov  [zkp_all_out + esi*4], eax
+    mov  eax, [zkp_ev_out+4]
+    mov  [zkp_all_out + esi*4 + 4], eax
+    mov  eax, [zkp_ev_out+8]
+    mov  [zkp_all_out + esi*4 + 8], eax
+    ; commitments
+    xor  ebp, ebp           ; p
+.zkp_pr_com:
+    lea  esi, [edi + edi*2]
+    add  esi, ebp           ; j*3+p
+    mov  eax, [zkp_all_tp + esi*4]
+    mov  ebx, [zkp_all_sh + esi*4]
+    mov  ecx, [zkp_all_out + esi*4]
+    ; gv ptr = zkp_all_gv + j*21 + p*7
+    mov  edx, edi
+    shl  edx, 4              ; 16j
+    lea  edx, [edx + edi*4]  ; 20j
+    add  edx, edi            ; j*21
+    push esi
+    lea  esi, [ebp + ebp*2]
+    lea  esi, [esi + ebp*4]  ; p*7
+    add  edx, esi
+    pop  esi
+    add  edx, zkp_all_gv
+    call zkp_nl_commit_8
+    mov  [zkp_coms + esi*4], eax
+    inc  ebp
+    cmp  ebp, 3
+    jne  .zkp_pr_com
+    inc  edi
+    cmp  edi, 4
+    jne  .zkp_pr_round
+    ; ---- Fiat-Shamir ----
+    mov  eax, [zkp_arg_msg]
+    xor  eax, [zkp_arg_B]
+    xor  eax, [zkp_arg_y]
+    call hfscx_32
+    mov  esi, eax           ; h
+    xor  edi, edi
+.zkp_pr_h1:
+    mov  eax, [zkp_coms + edi*4]
+    xor  eax, esi
+    call hfscx_32
+    mov  esi, eax
+    inc  edi
+    cmp  edi, 12
+    jne  .zkp_pr_h1
+    xor  edi, edi
+.zkp_pr_e:
+    mov  eax, edi
+    xor  eax, esi
+    call hfscx_32
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx                ; edx = h%3
+    mov  [zkp_e + edi], dl
+    inc  edi
+    cmp  edi, 4
+    jne  .zkp_pr_e
+    ; ---- store revealed shares ----
+    xor  edi, edi
+.zkp_pr_rev:
+    movzx ecx, byte [zkp_e + edi]   ; e
+    lea  ebx, [ecx+1]
+    cmp  ebx, 3
+    jl   .zkp_pr_p1ok
+    sub  ebx, 3
+.zkp_pr_p1ok:                       ; ebx = p1
+    lea  ebp, [ecx+2]
+    cmp  ebp, 3
+    jl   .zkp_pr_p2ok
+    sub  ebp, 3
+.zkp_pr_p2ok:                       ; ebp = p2
+    ; idx1 = j*3+p1, idx2 = j*3+p2
+    lea  esi, [edi + edi*2]
+    add  ebx, esi           ; ebx = idx1
+    add  ebp, esi           ; ebp = idx2
+    ; sh1/tp1/out1
+    mov  eax, [zkp_all_sh + ebx*4]
+    mov  [zkp_sh1 + edi*4], eax
+    mov  eax, [zkp_all_tp + ebx*4]
+    mov  [zkp_tp1 + edi*4], eax
+    mov  eax, [zkp_all_out + ebx*4]
+    mov  [zkp_out1 + edi*4], eax
+    mov  eax, [zkp_all_sh + ebp*4]
+    mov  [zkp_sh2 + edi*4], eax
+    mov  eax, [zkp_all_tp + ebp*4]
+    mov  [zkp_tp2 + edi*4], eax
+    mov  eax, [zkp_all_out + ebp*4]
+    mov  [zkp_out2 + edi*4], eax
+    ; gv1 copy: src = all_gv + idx1*7, dst = gv1 + j*7
+    push edi
+    push esi
+    lea  ecx, [ebx + ebx*2]
+    lea  ecx, [ecx + ebx*4]  ; idx1*7
+    mov  esi, zkp_all_gv
+    add  esi, ecx            ; src1
+    lea  ecx, [edi + edi*2]
+    lea  ecx, [ecx + edi*4]  ; j*7
+    mov  edx, zkp_gv1
+    add  edx, ecx            ; dst1
+    xor  ecx, ecx
+.zkp_pr_gv1:
+    mov  al, [esi+ecx]
+    mov  [edx+ecx], al
+    inc  ecx
+    cmp  ecx, 7
+    jne  .zkp_pr_gv1
+    ; gv2: src = all_gv + idx2*7, dst = gv2 + j*7
+    lea  ecx, [ebp + ebp*2]
+    lea  ecx, [ecx + ebp*4]  ; idx2*7
+    mov  esi, zkp_all_gv
+    add  esi, ecx
+    lea  ecx, [edi + edi*2]
+    lea  ecx, [ecx + edi*4]
+    mov  edx, zkp_gv2
+    add  edx, ecx
+    xor  ecx, ecx
+.zkp_pr_gv2:
+    mov  al, [esi+ecx]
+    mov  [edx+ecx], al
+    inc  ecx
+    cmp  ecx, 7
+    jne  .zkp_pr_gv2
+    pop  esi
+    pop  edi
+    inc  edi
+    cmp  edi, 4
+    jne  .zkp_pr_rev
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
+
+; zkp_nl_verify_8: reads zkp_arg_B/y/msg -> EAX 1 accept / 0 reject
+zkp_nl_verify_8:
+    push ebx
+    push esi
+    push edi
+    push ebp
+    ; recompute challenge, check e[j]
+    mov  eax, [zkp_arg_msg]
+    xor  eax, [zkp_arg_B]
+    xor  eax, [zkp_arg_y]
+    call hfscx_32
+    mov  esi, eax
+    xor  edi, edi
+.zkp_v_h1:
+    mov  eax, [zkp_coms + edi*4]
+    xor  eax, esi
+    call hfscx_32
+    mov  esi, eax
+    inc  edi
+    cmp  edi, 12
+    jne  .zkp_v_h1
+    xor  edi, edi
+.zkp_v_e:
+    mov  eax, edi
+    xor  eax, esi
+    call hfscx_32
+    mov  esi, eax
+    xor  edx, edx
+    mov  ecx, 3
+    div  ecx                ; edx = h%3
+    movzx eax, byte [zkp_e + edi]
+    cmp  eax, edx
+    jne  .zkp_v_reject
+    inc  edi
+    cmp  edi, 4
+    jne  .zkp_v_e
+    ; per-round checks
+    xor  edi, edi           ; j
+.zkp_v_round:
+    movzx ecx, byte [zkp_e + edi]
+    lea  ebx, [ecx+1]
+    cmp  ebx, 3
+    jl   .zkp_v_p1ok
+    sub  ebx, 3
+.zkp_v_p1ok:                ; ebx = p1
+    lea  ebp, [ecx+2]
+    cmp  ebp, 3
+    jl   .zkp_v_p2ok
+    sub  ebp, 3
+.zkp_v_p2ok:                ; ebp = p2
+    ; commit1
+    mov  eax, [zkp_tp1 + edi*4]
+    mov  ebx, [zkp_sh1 + edi*4]   ; reuse ebx (p1 saved below via recompute)
+    ; NOTE ebx now overwritten; recompute p1/p2 after. Save coms indices first.
+    ; --- to keep it simple, recompute indices from e each time ---
+    mov  ecx, [zkp_out1 + edi*4]
+    lea  edx, [edi + edi*2]
+    lea  edx, [edx + edi*4]       ; j*7
+    add  edx, zkp_gv1
+    call zkp_nl_commit_8
+    mov  esi, eax                 ; commit1 result
+    ; coms[j*3+p1]
+    movzx ecx, byte [zkp_e + edi]
+    lea  ebx, [ecx+1]
+    cmp  ebx, 3
+    jl   .zkp_v_p1b
+    sub  ebx, 3
+.zkp_v_p1b:
+    lea  eax, [edi + edi*2]
+    add  eax, ebx                 ; j*3+p1
+    mov  eax, [zkp_coms + eax*4]
+    cmp  esi, eax
+    jne  .zkp_v_reject
+    ; commit2
+    mov  eax, [zkp_tp2 + edi*4]
+    mov  ebx, [zkp_sh2 + edi*4]
+    mov  ecx, [zkp_out2 + edi*4]
+    lea  edx, [edi + edi*2]
+    lea  edx, [edx + edi*4]
+    add  edx, zkp_gv2
+    call zkp_nl_commit_8
+    mov  esi, eax
+    movzx ecx, byte [zkp_e + edi]
+    lea  ebp, [ecx+2]
+    cmp  ebp, 3
+    jl   .zkp_v_p2b
+    sub  ebp, 3
+.zkp_v_p2b:
+    lea  eax, [edi + edi*2]
+    add  eax, ebp                 ; j*3+p2
+    mov  eax, [zkp_coms + eax*4]
+    cmp  esi, eax
+    jne  .zkp_v_reject
+    ; ---- gate consistency ----
+    ; c1,c2 in [zkp_scr1],[zkp_scr2]; i in esi
+    mov  dword [zkp_scr1], 0      ; c1
+    mov  dword [zkp_scr2], 0      ; c2
+    xor  esi, esi                 ; i
+.zkp_v_gate:
+    ; r1 = prg_bit(tp1, i)
+    mov  eax, [zkp_tp1 + edi*4]
+    mov  ebx, esi
+    call zkp_nl_prg_bit_8
+    mov  [zkp_scr3], eax          ; r1
+    mov  eax, [zkp_tp2 + edi*4]
+    mov  ebx, esi
+    call zkp_nl_prg_bit_8
+    mov  [zkp_scr4], eax          ; r2
+    ; Bi
+    mov  eax, [zkp_arg_B]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1
+    mov  [zkp_scr5], eax          ; Bi
+    ; a1
+    mov  eax, [zkp_sh1 + edi*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1
+    mov  ebx, eax                 ; ebx = a1
+    ; a2
+    mov  eax, [zkp_sh2 + edi*4]
+    mov  ecx, esi
+    shr  eax, cl
+    and  eax, 1
+    mov  ebp, eax                 ; ebp = a2
+    ; exp_ao1 = (a1&c1)^(a1&c2)^(a2&c1)^r1^r2
+    mov  eax, ebx
+    and  eax, [zkp_scr1]          ; a1&c1
+    mov  ecx, ebx
+    and  ecx, [zkp_scr2]          ; a1&c2
+    xor  eax, ecx
+    mov  ecx, ebp
+    and  ecx, [zkp_scr1]          ; a2&c1
+    xor  eax, ecx
+    xor  eax, [zkp_scr3]
+    xor  eax, [zkp_scr4]          ; eax = exp_ao1
+    ; check gv1[i]>>2 &1 == exp_ao1
+    lea  ecx, [edi + edi*2]
+    lea  ecx, [ecx + edi*4]       ; j*7
+    add  ecx, zkp_gv1
+    movzx edx, byte [ecx + esi]
+    shr  edx, 2
+    and  edx, 1
+    cmp  edx, eax
+    jne  .zkp_v_reject
+    ; c1 = (Bi&a1) ^ exp_ao1 ^ (Bi&c1)
+    mov  ecx, [zkp_scr5]
+    mov  edx, ecx
+    and  edx, ebx                 ; Bi&a1
+    xor  edx, eax                 ; ^ exp_ao1
+    mov  eax, ecx
+    and  eax, [zkp_scr1]          ; Bi&c1
+    xor  edx, eax
+    mov  [zkp_scr1], edx          ; new c1
+    ; ao2 = gv2[i]>>2 &1
+    lea  ecx, [edi + edi*2]
+    lea  ecx, [ecx + edi*4]
+    add  ecx, zkp_gv2
+    movzx eax, byte [ecx + esi]
+    shr  eax, 2
+    and  eax, 1                   ; ao2
+    ; c2 = (Bi&a2) ^ ao2 ^ (Bi&c2)
+    mov  ecx, [zkp_scr5]
+    mov  edx, ecx
+    and  edx, ebp                 ; Bi&a2
+    xor  edx, eax
+    mov  eax, ecx
+    and  eax, [zkp_scr2]          ; Bi&c2
+    xor  edx, eax
+    mov  [zkp_scr2], edx          ; new c2
+    inc  esi
+    cmp  esi, 7
+    jne  .zkp_v_gate
+    inc  edi
+    cmp  edi, 4
+    jne  .zkp_v_round
+    mov  eax, 1
+    jmp  .zkp_v_done
+.zkp_v_reject:
+    xor  eax, eax
+.zkp_v_done:
+    pop  ebp
+    pop  edi
+    pop  esi
+    pop  ebx
+    ret
 
 ; ============================================================
 ; prng_next: LCG state = state * 1664525 + 1013904223
