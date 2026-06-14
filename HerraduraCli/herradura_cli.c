@@ -649,6 +649,9 @@ static void cmd_kex(int argc, char **argv)
             poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
             pem_key_free(&our); pem_key_free(&their);
 
+            if (!rnl_validate_m_blind(m_A, RNL_N))
+                die("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
+
             /* Derive C_B = round_p(m_A * s_B) */
             rnl_poly_mul(ms, m_A, s_B);
             rnl_round(C_B, ms, RNL_Q, RNL_P);

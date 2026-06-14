@@ -1070,6 +1070,26 @@ static void rnl_bits_to_ba(BitArray *out, const int32_t *bits_poly)
     }
 }
 
+/* Validate that m_blind plausibly came from a uniform-random draw over Z_q^n.
+ * Returns 1 if valid, 0 if the polynomial looks attacker-substituted.
+ * Two checks (either failing → reject):
+ *   (1) non-zero coefficient count >= n/4  — catches sparse/zero-polynomial attacks
+ *   (2) coefficient range (max-min) >= q/4 — catches clustered/small-value attacks
+ * A truly random poly over Z_65537 has ~n nonzero coefficients and range ~q. */
+static int rnl_validate_m_blind(const rnl_poly_t poly, int n)
+{
+    int i, nz = 0;
+    int32_t mn = poly[0], mx = poly[0];
+    for (i = 0; i < n; i++) {
+        if (poly[i] != 0) nz++;
+        if (poly[i] < mn) mn = poly[i];
+        if (poly[i] > mx) mx = poly[i];
+    }
+    if (nz < n / 4) return 0;
+    if (mx - mn < (int32_t)(RNL_Q / 4)) return 0;
+    return 1;
+}
+
 /* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
 static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                        const rnl_poly_t m_blind, FILE *urnd)

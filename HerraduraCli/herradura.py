@@ -199,6 +199,19 @@ def _rnl_derive_C(m_poly, s_poly, n):
     return _suite_mod._rnl_round(ms, RNLQ, RNLP)
 
 
+def _rnl_validate_m_blind(poly, q=RNLQ):
+    """Return True if poly looks like a uniform-random element of Z_q^n.
+    Rejects sparse polys (nz < n/4) and clustered polys (range < q/4)."""
+    n = len(poly)
+    nz = sum(1 for c in poly if c != 0)
+    if nz < n // 4:
+        return False
+    span = max(poly) - min(poly)
+    if span < q // 4:
+        return False
+    return True
+
+
 def _encode_stern_privkey(e_int, seed, n, algo):
     nbytes = n // 8
     der = der_seq(der_int(e_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
@@ -640,6 +653,8 @@ def cmd_kex(args):
             C_A, m_A, n_their = _decode_rnl_pubkey(their_ints)
             if n != n_their:
                 sys.exit(f"Ring size mismatch: ours n={n}, theirs n={n_their}")
+            if not _rnl_validate_m_blind(m_A):
+                sys.exit("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
             C_B    = _rnl_derive_C(m_A, s_B, n)
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
             K_B_int = _apply_kdf(K_B.uint, n)

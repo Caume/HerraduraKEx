@@ -670,6 +670,11 @@ func cmdKex(args []string) {
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
 
+			if !RnlValidateMBlind(m_A, RnlQ) {
+				fmt.Fprintln(os.Stderr, "kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
+				os.Exit(1)
+			}
+
 			// Derive C_B = round_p(m_A * s_B)
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
