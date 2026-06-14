@@ -369,6 +369,31 @@ func main() {
 		}
 	}
 
+	// ── HPKS-T ───────────────────────────────────────────────────────────────────
+	fmt.Println("\n--- HPKS-T [THRESHOLD — n-of-n MuSig2-style aggregate Schnorr over GF(2^n)*]")
+	{
+		tN     := 3
+		gGen   := big.NewInt(3)
+		poly256 := GfPoly[n]
+		tSecrets := make([]*big.Int, tN)
+		tPubkeys := make([]*big.Int, tN)
+		for j := 0; j < tN; j++ {
+			kb := make([]byte, 32)
+			rand.Read(kb)
+			tSecrets[j] = new(big.Int).SetBytes(kb)
+			tPubkeys[j] = GfPow(gGen, tSecrets[j], poly256, n)
+		}
+		tMsg  := []byte("HPKS-T threshold signature test")
+		tCAgg, tR, tS := HpkstSign(tSecrets, tPubkeys, tMsg)
+		tOk  := HpkstVerify(tCAgg, tR, tS, tMsg)
+		tBad := HpkstVerify(tCAgg, tR, new(big.Int).Xor(tS, big.NewInt(1)), tMsg)
+		if tOk && !tBad {
+			fmt.Printf("- HPKS-T %d-of-%d sign/verify correct, tamper rejected\n", tN, tN)
+		} else {
+			fmt.Printf("+ HPKS-T FAILED: ok=%v bad=%v\n", tOk, tBad)
+		}
+	}
+
 	// ── HDRBG ────────────────────────────────────────────────────────────────────
 	fmt.Println("\n--- HDRBG [FORWARD-SECURE DRBG — NL-FSCX v1 ratchet, fast-key-erasure]")
 	{

@@ -4,6 +4,41 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.43] - 2026-06-14
+
+### Feature — HPKS-T: n-of-n Threshold Aggregate Schnorr over GF(2^n)* (TODO #98)
+
+Implements HPKS-T (MuSig2-style threshold Schnorr) in Python, C, and Go, adds security
+test [31] across all three targets, renumbers benchmarks to [32]–[43], and adds TODO #106
+tracking the CLI multi-party signing capability.
+
+**Protocol:** μ_j = HFSCX-256(L ∥ C_j) mod ord (rogue-key binding);
+C_agg = Π C_j^{μ_j}; R = Π g^{k_j};
+e = nl_fscx_revolve_v1(R, msg, n/4); s_j = (k_j − a_j·μ_j·e) mod ord;
+s = Σ s_j mod ord. Verify: g^s · C_agg^e == R (identical to single-party HPKS-NL).
+
+- **`herradura.h`**: adds `ba_add_mod_ord`, `GF_GEN_BA` macro, `_ba_mod_{add,sub,mul}_ord`
+  aliases; adds `_hpkst_mu_coeff`, `_hpkst_aggregate`, `_hpkst_build_L`, `hpkst_sign`,
+  `hpkst_verify`.
+- **`herradura/herradura.go`**: adds `HpkstAggregatePublickeys`, `HpkstSign`, `HpkstVerify`
+  (all using `*big.Int` GF arithmetic consistent with the existing package API).
+- **`Herradura cryptographic suite.py`**: adds module-level `hpkst_aggregate_pubkeys`,
+  `hpkst_sign`, `hpkst_verify`; demo block (3-of-3, tamper rejection).
+- **`Herradura cryptographic suite.c`**: adds HPKS-T demo block (3-of-3, tamper rejection).
+- **`Herradura cryptographic suite.go`**: adds HPKS-T demo block.
+- **`CryptosuiteTests/Herradura_tests.c`**: adds `test_hpkst()` → security test [31];
+  benchmarks renumbered [32]–[43].
+- **`CryptosuiteTests/Herradura_tests.go`**: adds `testHpkst()` → security test [31];
+  benchmarks renumbered [32]–[43].
+- **`CryptosuiteTests/Herradura_tests.py`**: adds `test_hpkst()` → security test [31];
+  benchmarks renumbered [32]–[43].
+- **`SecurityProofsCode/hpks_threshold_demo.py`**: standalone analysis script (n=32,
+  rogue-key attack demo, coefficient-binding fix, 2-of-2 and 3-of-3 correctness).
+- **`TODO.md`**: TODO #98 marked DONE v1.9.43; TODO #106 added for CLI multi-party
+  threshold signing capability (commit/aggregate/respond/combine 4-phase protocol).
+
+---
+
 ## [1.9.42] - 2026-06-14
 
 ### Consistency — HPKS-WOTS-F / HPKS-XMSS-F ported to C and Go (TODO #102)

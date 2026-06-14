@@ -616,6 +616,27 @@ int main(void)
         free(xmss_leaves);
     }
 
+    puts("\n*** HPKS-T \xe2\x80\x94 n-of-n threshold aggregate Schnorr over GF(2^n)*");
+    {
+        enum { T_N = 3 };
+        BitArray t_secrets[T_N], t_pubkeys[T_N];
+        for (int j = 0; j < T_N; j++) {
+            ba_rand(&t_secrets[j], urnd);
+            gf_pow_ba(&t_pubkeys[j], &GF_GEN, &t_secrets[j]);
+        }
+        BitArray t_cagg, t_R, t_s;
+        hpkst_sign(t_secrets, t_pubkeys, T_N, &plaintext, NULL, &t_cagg, &t_R, &t_s, urnd);
+        int t_ok  = hpkst_verify(&t_cagg, &t_R, &t_s, &plaintext);
+        BitArray t_s_bad;
+        memcpy(t_s_bad.b, t_s.b, KEYBYTES);
+        t_s_bad.b[KEYBYTES-1] ^= 1;
+        int t_bad = hpkst_verify(&t_cagg, &t_R, &t_s_bad, &plaintext);
+        if (t_ok && !t_bad)
+            printf("+ HPKS-T %d-of-%d sign/verify correct, tamper rejected\n", T_N, T_N);
+        else
+            printf("+ HPKS-T FAILED: ok=%d bad=%d\n", t_ok, t_bad);
+    }
+
     /* *** EVE bypass TESTS *** */
     printf("\n\n*** EVE bypass TESTS\n");
 

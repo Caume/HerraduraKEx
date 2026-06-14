@@ -5995,7 +5995,7 @@ challenge weakness.
 2-party demo, rogue-key counterexample, composite-modulus discussion); promote to suite
 functions only after the rogue-key binding design is fixed.
 
-Status: **OPEN**
+Status: **DONE v1.9.43**
 
 ---
 
@@ -6155,3 +6155,49 @@ Status: **DONE v1.9.41**
 2. Add a `[asm-14]` (or next available number after TODO #103) dedicated ZKP-RNL test assertion to `CryptosuiteTests/Herradura_tests.s` and `CryptosuiteTests/Herradura_tests.asm` (both currently run ZKP-RNL in the demo flow but have no test file assertion).
 
 Status: **DONE v1.9.40**
+
+---
+
+### 106. CLI multi-party threshold signature capability for files (CLI Extension, Medium)
+
+**Discovered:** TODO #98 implementation plan, 2026-06-14.
+
+**Goal:** Extend `HerraduraCli/` (Python, C, Go) to support n-of-n threshold (HPKS-T) signing and verification of files, following the same PEM wire format as single-party `sign`/`verify`.
+
+**Design:**
+
+The threshold workflow is a 3-phase protocol over files:
+
+1. **Phase 1 — Commitment round** (`sign --threshold commit`):
+   - Each signer generates a fresh nonce k_j, computes R_j = g^{k_j}, writes a "commitment PEM" (`HPKST COMMITMENT`).
+   - Output: `{signer}_commit.pem` containing R_j (public nonce) and the signer's public key C_j.
+   - Private nonce k_j is saved to `{signer}_nonce.pem` (`HPKST NONCE`, kept secret, deleted after signing).
+
+2. **Phase 2 — Aggregation** (`sign --threshold aggregate`):
+   - A coordinator collects all commitment PEMs and the file to sign.
+   - Computes R = Π R_j, C_agg = Π C_j^{μ_j}, e = NL-FSCX(R, msg_hash).
+   - Broadcasts an "aggregate PEM" (`HPKST AGGREGATE`) containing R, C_agg, e to all signers.
+
+3. **Phase 3 — Response round** (`sign --threshold respond`):
+   - Each signer reads aggregate PEM and their nonce PEM, computes s_j = (k_j − a_j·μ_j·e) mod ord.
+   - Writes a "partial signature PEM" (`HPKST PARTIAL`).
+
+4. **Final — Combine** (`sign --threshold combine`):
+   - Coordinator collects all partial PEMs, computes s = Σ s_j mod ord.
+   - Writes final signature file (`HPKST SIGNATURE`) containing C_agg, R, s.
+   - Identical format to `HPKS SIGNATURE` — can be verified with `verify`.
+
+5. **Verify** (`verify --algo hpks-t`):
+   - Reads `HPKST SIGNATURE`, verifies g^s · C_agg^e == R (same as single-party verify).
+
+**Work items:**
+1. Define PEM types: `HPKST COMMITMENT`, `HPKST NONCE`, `HPKST AGGREGATE`, `HPKST PARTIAL`, `HPKST SIGNATURE` in `HerraduraCli/herradura_codec.h` and `HerraduraCli/codec.py`.
+2. Add `sign --threshold commit/aggregate/respond/combine` subcommand flow to Python CLI (`HerraduraCli/herradura.py`).
+3. Add same to C CLI (`HerraduraCli/herradura_cli.c`).
+4. Add same to Go CLI (`HerraduraCli/herradura_cli.go`).
+5. Add CLI integration tests to `CliTest/test_threshold_sign.sh` and `CliTest/test_threshold_interop.sh` (cross-language: Python commits + Go responds + C combines).
+6. Document in `docs/TUTORIAL.md` under a new "Threshold Signing" section.
+
+**Note:** The `hpkst_sign`/`HpkstSign` library functions perform all rounds internally (for demos/tests). The CLI must expose the individual rounds so that different parties can run different phases on different machines.
+
+Status: OPEN

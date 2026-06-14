@@ -2562,3 +2562,125 @@ func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
 	next    := NlFscxRevolveV1(state, ratchetDomain, 1)
 	return next, msgKey
 }
+
+// ---------------------------------------------------------------------------
+// 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
+//
+// n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+// μ_j = HFSCX-256(L || C_j_bytes) mod ord  (rogue-key binding)
+// C_agg = Π C_j^{μ_j}
+// Sign:   R = Π R_j;  e = NlFscxRevolveV1(R, msg, n/4);
+//         s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j mod ord
+// Verify: g^s · C_agg^e == R
+// ---------------------------------------------------------------------------
+
+var hpkstOrd  = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)) // 2^256-1
+var hpkstPoly = GfPoly[256]
+const hpkstN  = 256
+
+func hpkstMuCoeff(lBytes []byte, cj *big.Int) *big.Int {
+	cjB := make([]byte, 32)
+	cj.FillBytes(cjB)
+	buf := append(append([]byte(nil), lBytes...), cjB...)
+	h   := Hfscx256(buf, nil)
+	mu  := new(big.Int).SetBytes(h)
+	mu.Mod(mu, hpkstOrd)
+	if mu.Sign() == 0 {
+		mu.SetInt64(1)
+	}
+	return mu
+}
+
+func hpkstBuildL(pubkeys []*big.Int) []byte {
+	sorted := make([][]byte, len(pubkeys))
+	for i, pk := range pubkeys {
+		b := make([]byte, 32)
+		pk.FillBytes(b)
+		sorted[i] = b
+	}
+	for i := 1; i < len(sorted); i++ {
+		for j := i; j > 0 && bytes.Compare(sorted[j-1], sorted[j]) > 0; j-- {
+			sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
+		}
+	}
+	var out []byte
+	for _, b := range sorted {
+		out = append(out, b...)
+	}
+	return out
+}
+
+// HpkstAggregatePublickeys computes C_agg = Π C_j^{μ_j} and returns (C_agg, μ coefficients).
+// pubkeys are GF elements (big.Int values).
+func HpkstAggregatePublickeys(pubkeys []*big.Int) (*big.Int, []*big.Int) {
+	lBytes := hpkstBuildL(pubkeys)
+	coeffs := make([]*big.Int, len(pubkeys))
+	for i, pk := range pubkeys {
+		coeffs[i] = hpkstMuCoeff(lBytes, pk)
+	}
+	agg := big.NewInt(1)
+	for i, pk := range pubkeys {
+		pkMu := GfPow(pk, coeffs[i], hpkstPoly, hpkstN)
+		agg   = GfMul(agg, pkMu, hpkstPoly, hpkstN)
+	}
+	return agg, coeffs
+}
+
+// HpkstSign produces a threshold signature over msg.
+// secrets and pubkeys are GF scalars and elements (big.Int).
+// Returns (C_agg, R, s) as BitArrays for use with NlFscxRevolveV1.
+func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *big.Int) {
+	n    := len(secrets)
+	gGen := big.NewInt(3)
+	cAgg, coeffs := HpkstAggregatePublickeys(pubkeys)
+
+	nonces := make([]*big.Int, n)
+	for j := range nonces {
+		k := make([]byte, 32)
+		rand.Read(k) //nolint:errcheck
+		nonces[j] = new(big.Int).SetBytes(k)
+	}
+
+	// R = Π g^{k_j}
+	R := big.NewInt(1)
+	for j := 0; j < n; j++ {
+		Rj := GfPow(gGen, nonces[j], hpkstPoly, hpkstN)
+		R   = GfMul(R, Rj, hpkstPoly, hpkstN)
+	}
+
+	// e = NlFscxRevolveV1(R_ba, msg_ba, 64)
+	RBa   := NewBitArray(256, R)
+	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
+	eBa   := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBig  := new(big.Int).SetBytes(eBa.Bytes())
+
+	// s = Σ (k_j - a_j·μ_j·e) mod ord
+	sAcc := big.NewInt(0)
+	for j := 0; j < n; j++ {
+		ame := new(big.Int).Mul(secrets[j], coeffs[j])
+		ame.Mul(ame, eBig)
+		ame.Mod(ame, hpkstOrd)
+		sj := new(big.Int).Sub(nonces[j], ame)
+		sj.Mod(sj, hpkstOrd)
+		if sj.Sign() < 0 {
+			sj.Add(sj, hpkstOrd)
+		}
+		sAcc.Add(sAcc, sj)
+		sAcc.Mod(sAcc, hpkstOrd)
+	}
+
+	return cAgg, R, sAcc
+}
+
+// HpkstVerify checks g^s · C_agg^e == R.
+func HpkstVerify(cAgg, R, s *big.Int, msg []byte) bool {
+	gGen  := big.NewInt(3)
+	RBa   := NewBitArray(256, R)
+	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
+	eBa   := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBig  := new(big.Int).SetBytes(eBa.Bytes())
+	gs    := GfPow(gGen, s, hpkstPoly, hpkstN)
+	Ce    := GfPow(cAgg, eBig, hpkstPoly, hpkstN)
+	lhs   := GfMul(gs, Ce, hpkstPoly, hpkstN)
+	return lhs.Cmp(R) == 0
+}

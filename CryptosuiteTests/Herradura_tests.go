@@ -1,4 +1,5 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.42
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.43
+    v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
     v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
@@ -731,7 +732,7 @@ func testHpksSternRingCorrectness() {
 // ---------------------------------------------------------------------------
 
 func benchFscx() {
-	fmt.Println("[31] FSCX throughput  [CLASSICAL]")
+	fmt.Println("[32] FSCX throughput  [CLASSICAL]")
 	for _, size := range sizes {
 		a := randBA(size)
 		b := randBA(size)
@@ -745,7 +746,7 @@ func benchFscx() {
 }
 
 func benchHkexGFPow() {
-	fmt.Println("[32] HKEX-GF gf_pow throughput  [CLASSICAL]")
+	fmt.Println("[33] HKEX-GF gf_pow throughput  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -760,7 +761,7 @@ func benchHkexGFPow() {
 }
 
 func benchHkexHandshake() {
-	fmt.Println("[33] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
+	fmt.Println("[34] HKEX-GF full handshake (4 GfPow calls)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g := big.NewInt(GfGen)
@@ -779,7 +780,7 @@ func benchHkexHandshake() {
 }
 
 func benchHskeRoundTrip() {
-	fmt.Println("[34] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+	fmt.Println("[35] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		rv   := rVal(size)
@@ -798,7 +799,7 @@ func benchHskeRoundTrip() {
 }
 
 func benchHpkeRoundTrip() {
-	fmt.Println("[35] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
+	fmt.Println("[36] HPKE encrypt+decrypt round-trip (El Gamal + FscxRevolve)  [CLASSICAL]")
 	for _, size := range gfSizes {
 		poly := GfPoly[size]
 		g    := big.NewInt(GfGen)
@@ -824,7 +825,7 @@ func benchHpkeRoundTrip() {
 }
 
 func benchNlFscxRevolve() {
-	fmt.Println("[36] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+	fmt.Println("[37] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
 	for _, size := range sizes {
 		iv := iVal(size)
 		a  := randBA(size)
@@ -851,7 +852,7 @@ func benchNlFscxRevolve() {
 }
 
 func benchHskeNlA1RoundTrip() {
-	fmt.Println("[37] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+	fmt.Println("[38] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
 	for _, size := range sizes {
 		iv   := iVal(size)
 		sink := randBA(size)
@@ -871,7 +872,7 @@ func benchHskeNlA1RoundTrip() {
 }
 
 func benchHskeNlA2RoundTrip() {
-	fmt.Println("[38] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+	fmt.Println("[39] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
 	for _, size := range sizes {
 		rv   := rVal(size)
 		sink := randBA(size)
@@ -888,7 +889,7 @@ func benchHskeNlA2RoundTrip() {
 }
 
 func benchHkexRnlHandshake() {
-	fmt.Println("[39] HKEX-RNL handshake throughput  [PQC-EXT]")
+	fmt.Println("[40] HKEX-RNL handshake throughput  [PQC-EXT]")
 	fmt.Printf("     (ring sizes %v; NTT O(n log n) per exchange)\n", rnlSizes)
 	for _, nRnl := range rnlSizes {
 		mBase := RnlMPoly(nRnl)
@@ -907,7 +908,7 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[40] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[41] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
@@ -995,7 +996,7 @@ func testZkpNlCorrectness() {
 
 func benchZkpRnl() {
 	const n = 256
-	fmt.Printf("[41] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
+	fmt.Printf("[42] ZKP-RNL sign+verify throughput  (n=%d)  [PQC-EXT]\n", n)
 	mBase  := RnlMPoly(n)
 	aRand  := RnlRandPoly(n, RnlQ)
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1016,7 +1017,7 @@ func benchZkpNl() {
 		n      = 32
 		rounds = 16
 	)
-	fmt.Printf("[42] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
+	fmt.Printf("[43] ZKP-NL prove+verify throughput  (n=%d, rounds=%d)  [PQC-EXT]\n", n, rounds)
 	A, B, y, _ := ZkpNlKeygen(n)
 	ops, elapsed := bench("", func() {
 		proof, err := ZkpNlProve(A, B, y, n, rounds, zkpMsg)
@@ -1349,6 +1350,40 @@ func testWotsXmss() {
 		okSign, N, okTamper, N, okReuse, N, status)
 }
 
+func testHpkst() {
+	const tN = 3
+	N := testRounds(3)
+	okSign, okTamper := 0, 0
+	fmt.Printf("[31] HPKS-T  %d-of-%d threshold Schnorr over GF(2^n)*  [CLASSICAL]\n", tN, tN)
+	t0 := time.Now()
+	msg := []byte("HPKS-T threshold security test!")
+	for i := 0; i < N; i++ {
+		secrets := make([]*big.Int, tN)
+		pubkeys := make([]*big.Int, tN)
+		gGen    := big.NewInt(3)
+		poly    := GfPoly[256]
+		for j := 0; j < tN; j++ {
+			kb := make([]byte, 32)
+			for k := range kb { kb[k] = byte(mrand.Intn(256)) }
+			secrets[j] = new(big.Int).SetBytes(kb)
+			pubkeys[j] = GfPow(gGen, secrets[j], poly, 256)
+		}
+		cAgg, R, s := HpkstSign(secrets, pubkeys, msg)
+		if HpkstVerify(cAgg, R, s, msg) {
+			okSign++
+		}
+		sBad := new(big.Int).Xor(s, big.NewInt(1))
+		if !HpkstVerify(cAgg, R, sBad, msg) {
+			okTamper++
+		}
+		if timeExceeded(t0) { N = i + 1; break }
+	}
+	status := "PASS"
+	if okSign != N || okTamper != N { status = "FAIL" }
+	fmt.Printf("    sign_ok=%d/%d  tamper_reject=%d/%d  [%s]\n\n",
+		okSign, N, okTamper, N, status)
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -1448,6 +1483,7 @@ func main() {
 	testHskeNlAead()
 	testHdrbg()
 	testWotsXmss()
+	testHpkst()
 
 	fmt.Println("--- Performance Benchmarks ---\n")
 	benchFscx()

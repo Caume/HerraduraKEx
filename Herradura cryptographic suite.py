@@ -1703,6 +1703,81 @@ def haccum_verify(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
+#
+# n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+# Rogue-key binding: μ_j = H(L || C_j) mod ord  where L = sorted pubkeys.
+# Aggregate key:     C_agg = Π C_j^{μ_j}
+# Sign:              R = Π R_j;  e = NL-FSCX v1(R, msg);
+#                    s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j
+# Verify:            g^s · C_agg^e == R  (identical to single-party verify)
+# ---------------------------------------------------------------------------
+
+def _hpkst_mu_coeff(L_bytes: bytes, C_j: 'BitArray') -> int:
+    """μ_j = HFSCX-256(L || C_j_bytes) as integer mod ord."""
+    raw = hfscx_256(L_bytes + C_j.uint.to_bytes(KEYBITS // 8, 'big'))
+    return int.from_bytes(raw, 'big') % ORD or 1
+
+
+def hpkst_aggregate_pubkeys(pubkeys: 'list[BitArray]') -> 'tuple[BitArray, list[int]]':
+    """
+    Compute (C_agg, coefficients) with MuSig2 key-aggregation.
+    L = sorted pubkeys byte-strings concatenated.
+    C_agg = Π C_j^{μ_j}
+    Returns (C_agg BitArray, [μ_j ints]).
+    """
+    _poly = GF_POLY[KEYBITS]
+    L_bytes = b''.join(sorted(pk.uint.to_bytes(KEYBITS // 8, 'big') for pk in pubkeys))
+    coeffs  = [_hpkst_mu_coeff(L_bytes, pk) for pk in pubkeys]
+    agg_val = 1
+    for C_j, mu_j in zip(pubkeys, coeffs):
+        agg_val = gf_mul(agg_val,
+                         gf_pow(C_j.uint, mu_j, _poly, KEYBITS),
+                         _poly, KEYBITS)
+    return BitArray(KEYBITS, agg_val), coeffs
+
+
+def hpkst_sign(secrets: 'list[int]', pubkeys: 'list[BitArray]', msg: 'BitArray') -> 'tuple[BitArray, BitArray, BitArray]':
+    """
+    n-of-n threshold HPKS-NL sign.
+
+    secrets: [a_j ints] — private scalars for each signer
+    pubkeys: [C_j BitArrays] — public keys for each signer
+    msg:     BitArray — message (used as second input to NL-FSCX challenge)
+
+    Returns (C_agg, R, s) — the aggregate public key, nonce, and signature scalar.
+    Challenge e is implicit (re-derived during verify from R and msg).
+    """
+    _poly   = GF_POLY[KEYBITS]
+    C_agg, coeffs = hpkst_aggregate_pubkeys(pubkeys)
+    nonces  = [BitArray.random(KEYBITS) for _ in secrets]
+    R_parts = [BitArray(KEYBITS, gf_pow(GF_GEN, k.uint, _poly, KEYBITS)) for k in nonces]
+    R_val   = 1
+    for R_j in R_parts:
+        R_val = gf_mul(R_val, R_j.uint, _poly, KEYBITS)
+    R = BitArray(KEYBITS, R_val)
+    e = nl_fscx_revolve_v1(R, msg, I_VALUE)
+    s_val = 0
+    for a_j, k_j, mu_j in zip(secrets, nonces, coeffs):
+        s_j = (k_j.uint - a_j * mu_j * e.uint) % ORD
+        s_val = (s_val + s_j) % ORD
+    return C_agg, R, BitArray(KEYBITS, s_val)
+
+
+def hpkst_verify(C_agg: 'BitArray', R: 'BitArray', s: 'BitArray', msg: 'BitArray') -> bool:
+    """
+    Verify a threshold HPKS-NL signature.  Identical to single-party HPKS-NL verify:
+    g^s · C_agg^e == R   where e = nl_fscx_revolve_v1(R, msg, I_VALUE).
+    """
+    _poly = GF_POLY[KEYBITS]
+    e   = nl_fscx_revolve_v1(R, msg, I_VALUE)
+    lhs = gf_mul(gf_pow(GF_GEN, s.uint, _poly, KEYBITS),
+                 gf_pow(C_agg.uint, e.uint, _poly, KEYBITS),
+                 _poly, KEYBITS)
+    return lhs == R.uint
+
+
+# ---------------------------------------------------------------------------
 # 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97)
 #
 # Hash chain:  h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)
@@ -2494,6 +2569,18 @@ def main():
         print(f"  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
     else:
         print(f"  [Bob,verify] : - HPKS-NL verification failed!")
+
+    print("\n--- HPKS-T [THRESHOLD — n-of-n MuSig2-style aggregate Schnorr over GF(2^n)*]")
+    _t_n = 3  # 3-of-3 demo
+    _t_secrets = [BitArray.random(KEYBITS).uint for _ in range(_t_n)]
+    _t_pubkeys  = [BitArray(KEYBITS, gf_pow(GF_GEN, a_j, poly, KEYBITS)) for a_j in _t_secrets]
+    _t_cagg, _t_R, _t_s = hpkst_sign(_t_secrets, _t_pubkeys, plaintext)
+    _t_ok   = hpkst_verify(_t_cagg, _t_R, _t_s, plaintext)
+    _t_bad  = hpkst_verify(_t_cagg, _t_R, BitArray(KEYBITS, (_t_s.uint ^ 1)), plaintext)
+    if _t_ok and not _t_bad:
+        print(f"+ HPKS-T {_t_n}-of-{_t_n} sign/verify correct, tamper rejected")
+    else:
+        print(f"- HPKS-T FAILED: ok={_t_ok} bad={_t_bad}")
 
     print("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
     print("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")

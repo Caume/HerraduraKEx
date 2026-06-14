@@ -1,5 +1,6 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.42
+    Herradura KEx — Security & Performance Tests (Python) v1.9.43
+    v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
     v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
     v1.9.34: HDRBG test [29] — KAT, determinism, reseed separation, block limit (TODO #96);
@@ -2172,8 +2173,74 @@ def test_wots_xmss():
     print(f"    sign_ok={ok_sign}/{N}  tamper_reject={ok_tamper}/{N}  reuse_reject={ok_reuse}/{N}  [{status}]\n")
 
 
+def _hpkst_mu_t(L_bytes: bytes, C_j_val: int) -> int:
+    cjb = C_j_val.to_bytes(_KEYBITS // 8, 'big')
+    h   = hfscx_256(L_bytes + cjb)
+    mu  = int.from_bytes(h, 'big') % (2**_KEYBITS - 1)
+    return mu or 1
+
+def _hpkst_aggregate_t(pubkeys: list[int]) -> tuple[int, list[int]]:
+    _poly = GF_POLY[_KEYBITS]
+    bkeys = sorted(pk.to_bytes(_KEYBITS // 8, 'big') for pk in pubkeys)
+    L_bytes = b''.join(bkeys)
+    coeffs  = [_hpkst_mu_t(L_bytes, pk) for pk in pubkeys]
+    agg = 1
+    for pk, mu in zip(pubkeys, coeffs):
+        agg = gf_mul(agg, gf_pow(pk, mu, _poly, _KEYBITS), _poly, _KEYBITS)
+    return agg, coeffs
+
+def _hpkst_sign_t(secrets: list[int], pubkeys: list[int], msg: bytes) -> tuple[int, int, int]:
+    _poly = GF_POLY[_KEYBITS]; _ord = 2**_KEYBITS - 1
+    cagg, coeffs = _hpkst_aggregate_t(pubkeys)
+    nonces = [random.randrange(1, _ord) for _ in secrets]
+    R = 1
+    for k in nonces:
+        R = gf_mul(R, gf_pow(GF_GEN, k, _poly, _KEYBITS), _poly, _KEYBITS)
+    msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
+    e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
+    e_val = e._val
+    s = 0
+    for a_j, k_j, mu_j in zip(secrets, nonces, coeffs):
+        s_j = (k_j - a_j * mu_j * e_val) % _ord
+        s = (s + s_j) % _ord
+    return cagg, R, s
+
+def _hpkst_verify_t(cagg: int, R: int, s: int, msg: bytes) -> bool:
+    _poly = GF_POLY[_KEYBITS]
+    msg_ba = BitArray(_KEYBITS, int.from_bytes(msg[:_KEYBITS//8].ljust(_KEYBITS//8, b'\x00'), 'big'))
+    e = nl_fscx_revolve_v1(BitArray(_KEYBITS, R), msg_ba, _KEYBITS // 4)
+    e_val = e._val
+    lhs = gf_mul(gf_pow(GF_GEN, s, _poly, _KEYBITS),
+                 gf_pow(cagg, e_val, _poly, _KEYBITS), _poly, _KEYBITS)
+    return lhs == R
+
+def test_hpkst():
+    T_N = 3
+    N = g_rounds if g_rounds > 0 else 3
+    ok_sign = ok_tamper = done = 0
+    print(f"[31] HPKS-T  {T_N}-of-{T_N} threshold Schnorr over GF(2^n)*  [CLASSICAL]")
+    t0 = time.perf_counter()
+    _poly = GF_POLY[_KEYBITS]; _ord = 2**_KEYBITS - 1
+    for _ in range(N):
+        if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
+            break
+        secrets = [random.randrange(1, _ord) for _ in range(T_N)]
+        pubkeys = [gf_pow(GF_GEN, a, _poly, _KEYBITS) for a in secrets]
+        msg = b"HPKS-T threshold security test!"
+        cagg, R, s = _hpkst_sign_t(secrets, pubkeys, msg)
+        if _hpkst_verify_t(cagg, R, s, msg):
+            ok_sign += 1
+        if not _hpkst_verify_t(cagg, R, s ^ 1, msg):
+            ok_tamper += 1
+        done += 1
+    N = done
+    status = "PASS" if N > 0 and ok_sign == N and ok_tamper == N else (
+             "SKIP" if N == 0 else "FAIL")
+    print(f"    sign_ok={ok_sign}/{N}  tamper_reject={ok_tamper}/{N}  [{status}]\n")
+
+
 def bench_fscx():
-    print("[31] FSCX throughput  [CLASSICAL]")
+    print("[32] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
         a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -2183,7 +2250,7 @@ def bench_fscx():
 
 
 def bench_hkex_gf_pow():
-    print("[32] HKEX-GF gf_pow throughput  [CLASSICAL]")
+    print("[33] HKEX-GF gf_pow throughput  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); a = BitArray.random(size)
         def fn(a=a, poly=poly, size=size):
@@ -2193,7 +2260,7 @@ def bench_hkex_gf_pow():
 
 
 def bench_hkex_handshake():
-    print("[33] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
+    print("[34] HKEX-GF full handshake (4 gf_pow calls)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425)
         def fn():
@@ -2206,7 +2273,7 @@ def bench_hkex_handshake():
 
 
 def bench_hske_roundtrip():
-    print("[34] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
+    print("[35] HSKE round-trip: encrypt+decrypt  [CLASSICAL]")
     for size in SIZES:
         iv = i_val(size); rv = r_val(size); sink = BitArray(size, 0)
         def fn():
@@ -2218,7 +2285,7 @@ def bench_hske_roundtrip():
 
 
 def bench_hpke_roundtrip():
-    print("[35] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
+    print("[36] HPKE encrypt+decrypt round-trip (El Gamal + fscx_revolve)  [CLASSICAL]")
     for size in GF_SIZES:
         poly = GF_POLY.get(size, 0x00000425); iv = i_val(size); rv = r_val(size)
         sink = BitArray(size, 0)
@@ -2235,7 +2302,7 @@ def bench_hpke_roundtrip():
 
 
 def bench_nl_fscx_revolve():
-    print("[36] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
+    print("[37] NL-FSCX v1 revolve throughput (n/4 steps)  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); a = BitArray.random(size); b = BitArray.random(size)
         def fn():
@@ -2251,7 +2318,7 @@ def bench_nl_fscx_revolve():
 
 
 def bench_hske_nl_a1_roundtrip():
-    print("[37] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
+    print("[38] HSKE-NL-A1 counter-mode throughput  [PQC-EXT]")
     for size in SIZES:
         iv = i_val(size); sink = BitArray(size, 0)
         def fn(size=size, iv=iv):
@@ -2267,7 +2334,7 @@ def bench_hske_nl_a1_roundtrip():
 
 
 def bench_hske_nl_a2_roundtrip():
-    print("[38] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
+    print("[39] HSKE-NL-A2 revolve-mode round-trip  [PQC-EXT]")
     for size in SIZES:
         rv = r_val(size); sink = BitArray(size, 0)
         def fn(size=size, rv=rv):
@@ -2281,7 +2348,7 @@ def bench_hske_nl_a2_roundtrip():
 
 def bench_hkex_rnl_handshake():
     # Uses RNL_SIZES for speed; production uses n=256.
-    print("[39] HKEX-RNL handshake throughput  [PQC-EXT]")
+    print("[40] HKEX-RNL handshake throughput  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; n^2 poly-mul — O(n^2) per exchange)")
     for n_rnl in RNL_SIZES:
         m_base = _rnl_m_poly(n_rnl)
@@ -2297,7 +2364,7 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[40] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
+    print("[41] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
     rounds = 4; sink = [True]
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
@@ -2311,7 +2378,7 @@ def bench_hpks_stern_f():
 
 def bench_zkp_rnl():
     n = 256
-    print(f"[41] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
+    print(f"[42] ZKP-RNL sign+verify throughput  (n={n})  [PQC-EXT]")
     m_base  = _rnl_m_poly(n)
     a_rand  = _rnl_rand_poly(n, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -2328,7 +2395,7 @@ def bench_zkp_rnl():
 
 def bench_zkp_nl():
     n = 32; rounds = 16
-    print(f"[42] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
+    print(f"[43] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
     A, B, y = _zkp_nl_keygen(n)
     def fn():
         proof = _zkp_nl_prove(A, B, y, n, rounds, ZKP_MSG)
@@ -2425,6 +2492,7 @@ if __name__ == '__main__':
     test_hske_nl_aead()
     test_hdrbg()
     test_wots_xmss()
+    test_hpkst()
 
     print("--- Performance Benchmarks ---\n")
     bench_fscx()

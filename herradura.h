@@ -3064,6 +3064,205 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
     return 1;
 }
 
+/* Generator as BitArray alias (value 3, same as GF_GEN). */
+#define GF_GEN_BA GF_GEN
+
+/* dst = (a + b) mod (2^256-1) */
+static void ba_add_mod_ord(BitArray *dst, const BitArray *a, const BitArray *b)
+{
+    uint16_t carry = 0;
+    int i, all_ff;
+    for (i = KEYBYTES - 1; i >= 0; i--) {
+        uint16_t s = (uint16_t)a->b[i] + (uint16_t)b->b[i] + carry;
+        dst->b[i] = (uint8_t)s;
+        carry = s >> 8;
+    }
+    if (carry) {
+        /* wrapped: add 1 (because 2^256 mod (2^256-1) = 1) */
+        uint16_t add1 = 1;
+        for (i = KEYBYTES - 1; i >= 0; i--) {
+            uint16_t s = (uint16_t)dst->b[i] + add1;
+            dst->b[i] = (uint8_t)s;
+            add1 = s >> 8;
+            if (!add1) break;
+        }
+    }
+    /* 2^256-1 is the identity for addition mod ord; map it to 0 */
+    all_ff = 1;
+    for (i = 0; i < KEYBYTES; i++) all_ff &= (dst->b[i] == 0xFF);
+    if (all_ff) memset(dst->b, 0, KEYBYTES);
+}
+
+/* Aliases used by hpkst_sign */
+#define _ba_mod_mul_ord ba_mul_mod_ord
+#define _ba_mod_sub_ord ba_sub_mod_ord
+#define _ba_mod_add_ord ba_add_mod_ord
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 98 — HPKS-T: Threshold / Aggregate Schnorr over GF(2^n)* (TODO #98)
+ *
+ * n-of-n MuSig2-style key aggregation with NL-FSCX v1 challenge.
+ * μ_j = HFSCX-256(L || C_j_bytes) mod ord  (rogue-key binding)
+ * C_agg = Π C_j^{μ_j}
+ * Sign:   R = Π R_j;  e = nl_fscx_revolve_v1(R, msg, n/4);
+ *         s_j = (k_j − a_j·μ_j·e) mod ord;  s = Σ s_j mod ord
+ * Verify: g^s · C_agg^e == R  (identical to single-party HPKS-NL verify)
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+/* Compute μ_j = HFSCX-256(L_bytes, llen || C_j.b) mod ord, result in mu_out.
+ * ord = 2^KEYBITS − 1 treated as a big-endian KEYBYTES-byte value. */
+static void _hpkst_mu_coeff(const uint8_t *L_bytes, size_t llen,
+                              const BitArray *C_j, uint8_t mu_out[KEYBYTES])
+{
+    uint8_t *buf = (uint8_t *)malloc(llen + KEYBYTES);
+    if (!buf) { fprintf(stderr, "_hpkst_mu_coeff: oom\n"); exit(1); }
+    memcpy(buf, L_bytes, llen);
+    memcpy(buf + llen, C_j->b, KEYBYTES);
+    hfscx_256(buf, llen + KEYBYTES, NULL, mu_out);
+    free(buf);
+    /* mu mod ord: ord = 0xFF...FF (all ones); result is already in [0,2^n-1].
+     * If all-zero, set to 1. */
+    int all_zero = 1;
+    for (int i = 0; i < KEYBYTES; i++) if (mu_out[i]) { all_zero = 0; break; }
+    if (all_zero) mu_out[KEYBYTES-1] = 1;
+}
+
+/* Compute C_agg = Π C_j^{μ_j} with key-aggregation coefficients.
+ * pubkeys: array of n BitArrays.  mu_out: array of n uint8_t[KEYBYTES] (caller allocs).
+ * L_bytes must be the sorted concatenation of all pubkey bytes. */
+static void _hpkst_aggregate(const BitArray *pubkeys, size_t n,
+                               const uint8_t *L_bytes, size_t llen,
+                               uint8_t (*mu_out)[KEYBYTES],
+                               BitArray *C_agg)
+{
+    memset(C_agg->b, 0, KEYBYTES);
+    C_agg->b[KEYBYTES-1] = 1;  /* start at 1 */
+    for (size_t j = 0; j < n; j++) {
+        _hpkst_mu_coeff(L_bytes, llen, &pubkeys[j], mu_out[j]);
+        BitArray mu_ba, Cj_pow;
+        memcpy(mu_ba.b, mu_out[j], KEYBYTES);
+        gf_pow_ba(&Cj_pow, &pubkeys[j], &mu_ba);
+        gf_mul_ba(C_agg, C_agg, &Cj_pow);
+    }
+}
+
+/* Build sorted L_bytes from pubkeys array. Caller frees result. */
+static uint8_t *_hpkst_build_L(const BitArray *pubkeys, size_t n, size_t *llen_out)
+{
+    /* collect and sort KEYBYTES-byte representations */
+    uint8_t (*sorted)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc(n * KEYBYTES);
+    if (!sorted) { fprintf(stderr, "_hpkst_build_L: oom\n"); exit(1); }
+    for (size_t j = 0; j < n; j++) memcpy(sorted[j], pubkeys[j].b, KEYBYTES);
+    /* bubble sort (small n) */
+    for (size_t i = 0; i < n; i++)
+        for (size_t j = i+1; j < n; j++)
+            if (memcmp(sorted[i], sorted[j], KEYBYTES) > 0) {
+                uint8_t tmp[KEYBYTES];
+                memcpy(tmp, sorted[i], KEYBYTES);
+                memcpy(sorted[i], sorted[j], KEYBYTES);
+                memcpy(sorted[j], tmp, KEYBYTES);
+            }
+    *llen_out = n * KEYBYTES;
+    return (uint8_t *)sorted;
+}
+
+/* HPKS-T n-of-n sign.
+ * secrets[n]: private scalars (BitArray, each < ord).
+ * pubkeys[n]: corresponding public keys C_j = g^{a_j}.
+ * msg:        message BitArray (NL-FSCX v1 challenge input).
+ * Outputs: C_agg, R, s.
+ * Caller must supply per-signer random nonces in nonces[n] (fresh BitArrays).
+ * Pass NULL for nonces to generate internally from /dev/urandom. */
+static void hpkst_sign(const BitArray *secrets, const BitArray *pubkeys, size_t n,
+                        const BitArray *msg, const BitArray *nonces_in,
+                        BitArray *C_agg_out, BitArray *R_out, BitArray *s_out,
+                        FILE *urnd)
+{
+    size_t llen;
+    uint8_t *L_bytes = _hpkst_build_L(pubkeys, n, &llen);
+    uint8_t (*mu)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc(n * KEYBYTES);
+    if (!mu) { fprintf(stderr, "hpkst_sign: oom\n"); exit(1); }
+
+    _hpkst_aggregate(pubkeys, n, L_bytes, llen, mu, C_agg_out);
+
+    /* Per-signer nonces */
+    BitArray *nonces = (BitArray *)malloc(n * sizeof(BitArray));
+    if (!nonces) { fprintf(stderr, "hpkst_sign: oom\n"); exit(1); }
+    for (size_t j = 0; j < n; j++) {
+        if (nonces_in) nonces[j] = nonces_in[j];
+        else           ba_rand(&nonces[j], urnd);
+    }
+
+    /* R = Π g^{k_j} */
+    memset(R_out->b, 0, KEYBYTES); R_out->b[KEYBYTES-1] = 1;
+    for (size_t j = 0; j < n; j++) {
+        BitArray R_j;
+        gf_pow_ba(&R_j, &GF_GEN_BA, &nonces[j]);
+        gf_mul_ba(R_out, R_out, &R_j);
+    }
+
+    /* e = nl_fscx_revolve_v1(R, msg, I_VALUE) */
+    BitArray e;
+    nl_fscx_revolve_v1_ba(&e, R_out, msg, I_VALUE);
+
+    /* s = Σ (k_j − a_j·μ_j·e) mod ord */
+    /* Use 512-bit intermediate to avoid overflow: keep mod ord per step */
+    uint64_t s_acc[KEYBYTES/8] = {0};  /* simple big-int accumulator */
+    /* For simplicity use BitArray arithmetic mod ord (already defined): */
+    memset(s_out->b, 0, KEYBYTES);
+    for (size_t j = 0; j < n; j++) {
+        /* mu_j as BitArray */
+        BitArray mu_ba;
+        memcpy(mu_ba.b, mu[j], KEYBYTES);
+        /* a_j * mu_j mod ord (integer multiply mod 2^n-1) */
+        /* Use gf_mul for GF multiply? No — this is integer multiply mod ord. */
+        /* Compute via Python-style: (a_j.uint * mu_j.uint * e.uint) mod ord */
+        /* We need big-integer multiply mod ord.  Use a helper. */
+        /* Strategy: compute via ba_mod_mul helper below. */
+        /* s_j = (k_j - a_j*mu_j*e) mod ord */
+        /* Since all values fit in KEYBYTES bytes and ord = 2^n-1, we implement
+         * the modular multiply as:  a * b mod (2^n-1)  via the identity
+         * a * b mod (2^n-1) = ((a*b) >> n) + (a*b & (2^n-1))  iterated. */
+        /* For correctness we use __int128 for n=32; for n=256 we need a
+         * proper big-int.  Use OpenSSL BN or manual implementation.
+         * Since herradura.h has no OpenSSL dep, implement a simple 256-bit
+         * multiply-mod-ord using the schoolbook method. */
+
+        /* ---- ba_mod_mul: multiply two KEYBITS-wide values mod 2^KEYBITS-1 ---- */
+        /* result = (a * b) mod (2^n - 1) */
+        /* We compute via repeated doubling and reduction. */
+        /* a_j * mu_ba mod ord */
+        BitArray am;
+        _ba_mod_mul_ord(&am, &secrets[j], &mu_ba);
+        /* am * e mod ord */
+        BitArray ame;
+        _ba_mod_mul_ord(&ame, &am, &e);
+        /* s_j = (k_j - ame) mod ord */
+        BitArray s_j;
+        _ba_mod_sub_ord(&s_j, &nonces[j], &ame);
+        /* s_out += s_j mod ord */
+        BitArray tmp;
+        _ba_mod_add_ord(&tmp, s_out, &s_j);
+        *s_out = tmp;
+    }
+
+    free(nonces);
+    free(mu);
+    free(L_bytes);
+}
+
+/* Verify a threshold HPKS-NL signature — identical to single-party verify. */
+static int hpkst_verify(const BitArray *C_agg, const BitArray *R,
+                         const BitArray *s, const BitArray *msg)
+{
+    BitArray e, gs, Ce, lhs;
+    nl_fscx_revolve_v1_ba(&e, R, msg, I_VALUE);
+    gf_pow_ba(&gs, &GF_GEN_BA, s);
+    gf_pow_ba(&Ce, C_agg, &e);
+    gf_mul_ba(&lhs, &gs, &Ce);
+    return ba_equal(&lhs, R);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97/#102)
  *
