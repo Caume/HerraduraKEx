@@ -4,6 +4,46 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.39] - 2026-06-14
+
+### Feature — HPKS-WOTS-F / HPKS-XMSS-F hash-based many-time signature (TODO #97)
+
+Implements the HPKS-WOTS-F one-time signature and HPKS-XMSS-F stateful many-time
+signature specified in SecurityProofs-2 §11.8.3 (Theorem 16).
+
+- **`Herradura cryptographic suite.py`**:
+  - `hpks_wots_keygen(master_seed, leaf_idx)` — derives ℓ=67 SK/PK chains via
+    HFSCX-256(seed‖idx‖j); pk_i = h^15(sk_i).
+  - `hpks_wots_sign(msg, master_seed, leaf_idx)` — Winternitz sign; w=16, ℓ=67 chains.
+  - `hpks_wots_verify(msg, sig, pk)` — apply h^{d_i}(sig_i) and compare to pk.
+  - `hpks_wots_recover_pk(msg, sig)` — recover pk from sig for standalone verify.
+  - `_wots_pk_bytes(pk)` — serialise WOTS pk to bytes.
+  - `hpks_xmss_keygen(master_seed, h=10)` — build 2^h-leaf Merkle tree of WOTS pks.
+  - `hpks_xmss_sign(msg, master_seed, leaf_hashes, leaf_idx)` — sign at given leaf;
+    returns `{leaf_idx, wots_sig, auth_path}` (pk NOT stored; recovered on verify).
+  - `hpks_xmss_verify(msg, sig, root)` — recover pk from sig, hash leaf, verify path.
+  - Demo (h=3, 8 leaves): sign/verify, tamper rejection, OTS reuse rejection.
+  - Eve bypass tests: random-sig forgery rejected; index-swap rejected.
+  - Added `import secrets` (was missing).
+- **`HerraduraCli/primitives.py`**: exports all new WOTS/XMSS symbols.
+- **`HerraduraCli/herradura.py`**:
+  - `genpkey --algo hpks-xmss [--xmss-height N]` — generates master seed + full tree.
+  - `pkey --pubout` — extracts 32-byte Merkle root as public key PEM.
+  - `sign --algo hpks-xmss --key K --in MSG --out SIG` — signs using next unused leaf;
+    state tracked in `<key>.pem.idx` sidecar file; prints leaves remaining.
+  - `verify --algo hpks-xmss --pubkey PUB --in MSG --sig SIG` — standalone verify
+    (no private key or seed needed; pk recovered from sig).
+  - `_encode_xmss_privkey` / `_decode_xmss_privkey` / `_encode_xmss_pubkey` /
+    `_decode_xmss_pubkey` / `_pack_xmss_sig` / `_unpack_xmss_sig` helpers.
+  - State management: `_xmss_read_idx` / `_xmss_write_idx`.
+- **`SecurityProofs-2.md §11.8.3`**: added HPKS-XMSS-F implementation note with
+  parameters (w=16, ℓ=67, h=10), sign/verify algorithm, state-management rationale,
+  and security bound ($\Pr[\text{forge}] \leq 2^h \cdot \ell \cdot \Pr[\text{invert}(h)]
+  + \Pr[\text{collision in HFSCX-256}]$).
+  KaTeX validation: 910 OK, 0 FAIL.
+
+---
+
 ## [1.9.38] - 2026-06-14
 
 ### Research — FSCX branch-number characterisation and SPN construction study (TODO #99)

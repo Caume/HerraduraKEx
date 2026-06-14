@@ -541,6 +541,22 @@ where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \
 
 *Conclusion.* The rotational NOTE from TODO #74 is now fully characterised: it is a polynomial-query random-oracle distinguisher against the WOTS hash chain that does **not** affect the current security proofs.  It is a design concern only for future constructions requiring $h$ to behave as a random oracle.
 
+**HPKS-XMSS-F implementation (v1.9.39, TODO #97).** The HPKS-WOTS-F and HPKS-XMSS-F constructions are now implemented in the suite (Python) and CLI.
+
+*Parameters.* $w = 16$ (Winternitz), $\ell_1 = 64$ message digits, $\ell_2 = 3$ checksum digits (max checksum $64 \times 15 = 960 < 16^3$), $\ell = 67$ chains total. Tree height $h = 10$ by default ($2^{10} = 1024$ leaves per key pair).
+
+*Hash chain.* $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8),\, x)$ at $n = 256$, identical to Theorem 16.
+
+*Keygen.* Leaf seed $\text{sk}_{i,j} = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx}_{32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}_{i,j} = h^{w-1}(\text{sk}_{i,j})$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}_{i,0} \mathbin\| \cdots \mathbin\| \text{pk}_{i,\ell-1})$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
+
+*Sign.* Encode $\text{HFSCX-256}(\text{msg})$ as 64 base-16 digits; append 3-digit checksum. Release $\sigma_j = h^{w-1-d_j}(\text{sk}_j)$ per chain. Include Merkle authentication path for the leaf.
+
+*Verify.* Recover $\text{pk}_j = h^{d_j}(\sigma_j)$ for all $j$; compute leaf hash from recovered pk; verify Merkle path against root. No stored public key needed in the signature: the pk is fully determined by $(\text{msg}, \sigma)$.
+
+*State management.* Each signing operation consumes one leaf. The CLI tracks the next leaf index in a sidecar file `<key>.idx`. Exhaustion of all $2^h$ leaves is detected and rejected with an error. Re-use of the same leaf with a different message would allow an attacker to compute the SK from two partial chain openings (standard WOTS forgery); the state file prevents this in normal operation.
+
+*Security.* Inherits Theorem 16 (EUF-CMA under NL-FSCX v1 OWF) and the standard Merkle-tree argument: forging an XMSS signature requires either (a) forging a WOTS signature on some leaf, or (b) finding a collision in HFSCX-256 (used as the Merkle hash). Bound: $\Pr[\text{forge}] \leq 2^h \cdot \ell \cdot \Pr[\text{invert}(h)] + \Pr[\text{collision in HFSCX-256}]$.
+
 ---
 
 ### 11.8.4 Option B — HPKS-Stern-F and HPKE-Stern-F (Code-Based via FSCX PRF)
