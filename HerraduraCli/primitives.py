@@ -103,3 +103,14 @@ oprf_direct          = _s.oprf_direct
 # ── 80 aPAKE ─────────────────────────────────────────────────────────────────
 hpake_register       = _s.hpake_register
 hpake_login_demo     = _s.hpake_login_demo
+
+# ── 97 HPKS-XMSS-F ───────────────────────────────────────────────────────────
+hpks_wots_keygen     = _s.hpks_wots_keygen
+hpks_wots_sign       = _s.hpks_wots_sign
+hpks_wots_verify     = _s.hpks_wots_verify
+hpks_wots_recover_pk = _s.hpks_wots_recover_pk
+hpks_xmss_keygen     = _s.hpks_xmss_keygen
+hpks_xmss_sign       = _s.hpks_xmss_sign
+hpks_xmss_verify     = _s.hpks_xmss_verify
+_WOTS_L              = _s._WOTS_L
+_wots_pk_bytes       = _s._wots_pk_bytes

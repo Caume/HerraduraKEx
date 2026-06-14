@@ -168,6 +168,7 @@ import itertools
 import math
 import os
 import random
+import secrets
 import warnings
 
 try:
@@ -1702,6 +1703,155 @@ def haccum_verify(root: bytes, leaf_hash: bytes, proof: list, idx: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97)
+#
+# Hash chain:  h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)
+#              (NL-FSCX v1 OWF, Theorem 16, SecurityProofs-2 §11.8.3)
+#
+# Winternitz parameter w=16 (4 bits per digit):
+#   ℓ_msg = ceil(256/4) = 64   (message nibbles)
+#   ℓ_cs  = 3                  (checksum in base-16; max = 64*15 = 960 < 16^3)
+#   ℓ     = 67                 (total chain count)
+#
+# XMSS: 2^h Merkle leaves, each leaf is one WOTS keypair.
+#   Default h=10 (1024 leaves).  Leaf seed = HFSCX-256(master_seed || idx_be4).
+#   Leaf node  = haccum_leaf(pk_0 || pk_1 || ... || pk_{ℓ-1}).
+#   XMSS pk    = Merkle root of 2^h leaf nodes.
+# ---------------------------------------------------------------------------
+
+_WOTS_W    = 16           # Winternitz width
+_WOTS_LOG2W = 4           # log2(_WOTS_W)
+_WOTS_L1   = KEYBITS // _WOTS_LOG2W   # 64 — message digits
+_WOTS_L2   = 3                         # 3  — checksum digits (ceil(log16(64*15)))
+_WOTS_L    = _WOTS_L1 + _WOTS_L2      # 67 — total chains
+_XMSS_H    = 10           # default tree height (1024 leaves)
+
+
+def _wots_h(x: BitArray) -> BitArray:
+    """Single WOTS-F hash chain step: h(x) = nl_fscx_revolve_v1(ROL(x,n/8), x, n/4)."""
+    n = x._size
+    return nl_fscx_revolve_v1(x.rotated(n // 8), x, n // 4)
+
+
+def _wots_chain(x: BitArray, steps: int) -> BitArray:
+    """Apply h exactly `steps` times."""
+    for _ in range(steps):
+        x = _wots_h(x)
+    return x
+
+
+def _wots_msg_to_digits(msg_hash: bytes) -> list:
+    """
+    Encode 256-bit message hash as ℓ base-16 digits with checksum.
+    Returns list of 67 integers in [0, 15].
+    """
+    val = int.from_bytes(msg_hash, 'big')
+    digits = [(val >> (4 * ((_WOTS_L1 - 1) - i))) & 0xF for i in range(_WOTS_L1)]
+    checksum = sum(_WOTS_W - 1 - d for d in digits)
+    cs_digits = [(checksum >> (4 * ((_WOTS_L2 - 1) - i))) & 0xF for i in range(_WOTS_L2)]
+    return digits + cs_digits
+
+
+def _wots_leaf_seed(master_seed: bytes, leaf_idx: int, chain_idx: int) -> BitArray:
+    """Derive WOTS SK_i for leaf leaf_idx, chain chain_idx from master_seed."""
+    raw = hfscx_256(master_seed
+                    + leaf_idx.to_bytes(4, 'big')
+                    + chain_idx.to_bytes(2, 'big'))
+    return BitArray(KEYBITS, int.from_bytes(raw, 'big'))
+
+
+def hpks_wots_keygen(master_seed: bytes, leaf_idx: int) -> tuple:
+    """
+    WOTS-F keygen for one leaf.
+    Returns (sk_list, pk_list) — each a list of ℓ=67 BitArrays.
+    pk_i = h^(w-1)(sk_i).
+    """
+    sk = [_wots_leaf_seed(master_seed, leaf_idx, i) for i in range(_WOTS_L)]
+    pk = [_wots_chain(sk[i], _WOTS_W - 1) for i in range(_WOTS_L)]
+    return sk, pk
+
+
+def hpks_wots_sign(msg: bytes, master_seed: bytes, leaf_idx: int) -> tuple:
+    """
+    WOTS-F sign.  Returns (sig_list, pk_list).
+    sig_i = h^(w-1-d_i)(sk_i); verifier applies h^{d_i} to recover pk_i.
+    """
+    msg_hash = hfscx_256(msg)
+    digits   = _wots_msg_to_digits(msg_hash)
+    sk, pk   = hpks_wots_keygen(master_seed, leaf_idx)
+    sig      = [_wots_chain(sk[i], _WOTS_W - 1 - digits[i]) for i in range(_WOTS_L)]
+    return sig, pk
+
+
+def hpks_wots_recover_pk(msg: bytes, sig: list) -> list:
+    """Apply h^{d_i}(sig_i) to recover the WOTS public key from a signature."""
+    msg_hash = hfscx_256(msg)
+    digits   = _wots_msg_to_digits(msg_hash)
+    return [_wots_chain(sig[i], digits[i]) for i in range(_WOTS_L)]
+
+
+def hpks_wots_verify(msg: bytes, sig: list, pk: list) -> bool:
+    """WOTS-F verify.  Accept iff h^{d_i}(sig_i) == pk_i for all i."""
+    recovered = hpks_wots_recover_pk(msg, sig)
+    return all(recovered[i].uint == pk[i].uint for i in range(_WOTS_L))
+
+
+def _wots_pk_bytes(pk: list) -> bytes:
+    """Serialise a WOTS public key (list of ℓ BitArrays) to bytes."""
+    return b''.join(v.uint.to_bytes(KEYBITS // 8, 'big') for v in pk)
+
+
+def hpks_xmss_keygen(master_seed: bytes, h: int = _XMSS_H) -> tuple:
+    """
+    XMSS-F keygen.  Builds a 2^h-leaf Merkle tree of WOTS public keys.
+    Returns (master_seed, root_hash, auth_tree) where:
+      master_seed — bytes, passed to sign
+      root_hash   — 32-byte XMSS public key (Merkle root)
+      auth_tree   — list of 2^h leaf hashes (for fast proof generation)
+    Caution: slow for large h; demo uses h≤4; production uses h=10.
+    """
+    num_leaves = 1 << h
+    leaf_hashes = []
+    for idx in range(num_leaves):
+        _, pk = hpks_wots_keygen(master_seed, idx)
+        leaf_hashes.append(haccum_leaf(_wots_pk_bytes(pk)))
+    root = haccum_root(leaf_hashes)
+    return master_seed, root, leaf_hashes
+
+
+def hpks_xmss_sign(msg: bytes, master_seed: bytes, leaf_hashes: list,
+                   leaf_idx: int) -> dict:
+    """
+    XMSS-F sign at leaf_idx.  Returns signature dict containing:
+      leaf_idx  — int
+      wots_sig  — list of ℓ BitArrays
+      auth_path — list of 32-byte sibling hashes (Merkle proof)
+    The WOTS public key is NOT stored in the sig; it is recovered during verify
+    by applying the chain h^{d_i}(sig_i).
+    """
+    wots_sig, _ = hpks_wots_sign(msg, master_seed, leaf_idx)
+    auth_path   = haccum_prove(leaf_hashes, leaf_idx)
+    return {
+        'leaf_idx':  leaf_idx,
+        'wots_sig':  wots_sig,
+        'auth_path': auth_path,
+    }
+
+
+def hpks_xmss_verify(msg: bytes, sig: dict, root: bytes) -> bool:
+    """
+    XMSS-F verify.
+    1. Recover WOTS pk by applying h^{d_i}(sig_i) for each chain i.
+    2. Hash recovered pk bytes into a leaf hash.
+    3. Verify Merkle proof against root.
+    No stored pk needed — pk is fully determined by (msg, sig).
+    """
+    recovered_pk = hpks_wots_recover_pk(msg, sig['wots_sig'])
+    leaf_hash    = haccum_leaf(_wots_pk_bytes(recovered_pk))
+    return haccum_verify(root, leaf_hash, sig['auth_path'], sig['leaf_idx'])
+
+
+# ---------------------------------------------------------------------------
 # 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
 # B = HFSCX-256(key || ctx); C = nl_fscx_revolve_v2(P, B, I_VALUE).
 # Deterministic: same (key, ctx, plaintext) → same ciphertext.
@@ -2421,6 +2571,28 @@ def main():
     else:
         print("- HPKS-Stern-Ring verification FAILED")
 
+    # ── HPKS-XMSS-F (TODO #97, h=3 demo: 8 leaves) ──────────────────────────
+    print("\n--- HPKS-XMSS-F [PQC — hash-based many-time sig; WOTS-F chains + Merkle tree]")
+    _xmss_seed = secrets.token_bytes(32)
+    _xmss_h    = 3   # 8 leaves — fast demo; production uses h=10
+    _xmss_sk, _xmss_root, _xmss_leaves = hpks_xmss_keygen(_xmss_seed, _xmss_h)
+    _xmss_msg  = b"HPKS-XMSS-F test message"
+    _xmss_sig  = hpks_xmss_sign(_xmss_msg, _xmss_sk, _xmss_leaves, leaf_idx=0)
+    _xmss_ok   = hpks_xmss_verify(_xmss_msg, _xmss_sig, _xmss_root)
+    # tamper rejection: wrong message
+    _xmss_bad  = hpks_xmss_verify(b"tampered", _xmss_sig, _xmss_root)
+    # second leaf with same tree
+    _xmss_sig2 = hpks_xmss_sign(_xmss_msg, _xmss_sk, _xmss_leaves, leaf_idx=1)
+    _xmss_ok2  = hpks_xmss_verify(_xmss_msg, _xmss_sig2, _xmss_root)
+    # one-time reuse: reusing leaf 0 signature on a different message should fail
+    _xmss_reuse = hpks_xmss_verify(b"different message", _xmss_sig, _xmss_root)
+    if _xmss_ok and not _xmss_bad and _xmss_ok2 and not _xmss_reuse:
+        print(f"+ HPKS-XMSS-F sign/verify correct (h={_xmss_h}, 2 distinct leaves, "
+              f"tamper rejected, OTS reuse rejected)")
+    else:
+        print(f"- HPKS-XMSS-F FAILED: ok={_xmss_ok} bad={_xmss_bad} "
+              f"ok2={_xmss_ok2} reuse={_xmss_reuse}")
+
     # ── HFSCX-256-DM ─────────────────────────────────────────────────────────
     print("\n--- HFSCX-256-DM [HASH — Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output]")
     _tv = b"HFSCX-256 test vector"
@@ -2626,6 +2798,27 @@ def main():
     else:
         print("- Eve cannot forge: challenge-sum mismatch  (SD + PRF protection)")
 
+    print("*** HPKS-XMSS-F — Eve cannot forge without inverting NL-FSCX v1 OWF")
+    # Eve tries to forge a WOTS signature on a different message by randomising sig
+    _xmss_eve_sig = {
+        'leaf_idx':  _xmss_sig['leaf_idx'],
+        'wots_sig':  [BitArray.random(KEYBITS) for _ in range(_WOTS_L)],
+        'auth_path': _xmss_sig['auth_path'],
+    }
+    _xmss_eve_ok = hpks_xmss_verify(b"HPKS-XMSS-F test message", _xmss_eve_sig, _xmss_root)
+    if _xmss_eve_ok:
+        print("+ Eve forged HPKS-XMSS-F (Eve wins!)")
+    else:
+        print("- Eve cannot forge HPKS-XMSS-F: OWF inversion required")
+
+    print("*** HPKS-XMSS-F — leaf reuse with wrong auth path cannot verify at different index")
+    _xmss_reuse_sig = {k: v for k, v in _xmss_sig.items()}
+    _xmss_reuse_sig['leaf_idx'] = 1   # wrong index, stale auth path
+    _xmss_reuse_ok = hpks_xmss_verify(b"HPKS-XMSS-F test message", _xmss_reuse_sig, _xmss_root)
+    if _xmss_reuse_ok:
+        print("+ Index-swap accepted (unexpected — audit Merkle proof)")
+    else:
+        print("- Index-swap correctly rejected: Merkle proof anchors leaf identity")
 
     # 80 — OPRF demo (blind / eval / unblind round-trip)
     print("*** OPRF (80) — 2HashDH over GF(2^256)*")

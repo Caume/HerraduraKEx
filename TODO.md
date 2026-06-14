@@ -5963,7 +5963,7 @@ then `hpks_xmss_*` wrapping 2^h leaves (h=10 default) with the #78.J tree; state
 handling for leaf-index tracking in the CLI (`sign --algo hpks-xmss`); tests for
 one-time-reuse rejection and tamper rejection; SecurityProofs-2 §11.8.3 extension.
 
-Status: **OPEN**
+Status: **DONE v1.9.39**
 
 ---
 

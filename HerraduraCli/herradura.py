@@ -61,6 +61,9 @@ from primitives import (
     haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
     oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct,
     hpake_register, hpake_login_demo,
+    hpks_wots_keygen, hpks_wots_sign, hpks_wots_verify,
+    hpks_xmss_keygen, hpks_xmss_sign, hpks_xmss_verify,
+    _WOTS_L, _wots_pk_bytes,
 )
 from primitives import _s as _suite_mod
 
@@ -79,6 +82,7 @@ _PRIV_ALGOS = {
     'hpke-stern':  'HERRADURA HPKE-STERN PRIVATE KEY',
     'hpks-zkp-nl': 'HERRADURA ZKP-NL PRIVATE KEY',
     'oprf':        'HERRADURA OPRF PRIVATE KEY',
+    'hpks-xmss':   'HERRADURA HPKS-XMSS PRIVATE KEY',
 }
 
 _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
@@ -222,6 +226,106 @@ def _encode_stern_pubkey(syn_int, seed, n, algo):
     nbytes = n // 8
     der = der_seq(der_int(syn_int, nbytes), der_int(seed.uint, nbytes), der_int(n))
     return pem_wrap(_PUB_ALGOS[algo], der)
+
+
+def _encode_xmss_privkey(master_seed: bytes, h: int, next_idx: int,
+                         leaf_hashes: list) -> str:
+    """
+    XMSS private key PEM.
+    DER: SEQUENCE { seed(32B), h(int), next_idx(int), leaf_hashes_blob(bytes) }
+    leaf_hashes_blob = 32 * 2^h bytes (concatenated 32-byte leaf hashes).
+    """
+    blob = b''.join(leaf_hashes)
+    der = der_seq(
+        der_int(int.from_bytes(master_seed, 'big'), 32),
+        der_int(h),
+        der_int(next_idx),
+        der_int(int.from_bytes(blob, 'big'), len(blob)),
+    )
+    return pem_wrap(_PRIV_ALGOS['hpks-xmss'], der)
+
+
+def _decode_xmss_privkey(path):
+    """Returns (master_seed, h, next_idx, leaf_hashes, root)."""
+    label, der = _read_pem(path)
+    ints = der_parse_seq(der)
+    seed_int, h_int, next_idx, blob_int = ints
+    master_seed = seed_int.to_bytes(32, 'big')
+    h = int(h_int)
+    num_leaves = 1 << h
+    blob = blob_int.to_bytes(32 * num_leaves, 'big')
+    leaf_hashes = [blob[i*32:(i+1)*32] for i in range(num_leaves)]
+    from primitives import haccum_root as _haccum_root
+    root = _haccum_root(leaf_hashes)
+    return master_seed, h, int(next_idx), leaf_hashes, root
+
+
+def _encode_xmss_pubkey(root: bytes, h: int) -> str:
+    """XMSS public key PEM: just the 32-byte Merkle root + h."""
+    der = der_seq(der_int(int.from_bytes(root, 'big'), 32), der_int(h))
+    return pem_wrap(_PUB_ALGOS['hpks-xmss'], der)
+
+
+def _decode_xmss_pubkey(path):
+    """Returns (root, h)."""
+    label, der = _read_pem(path)
+    root_int, h_int = der_parse_seq(der)
+    return root_int.to_bytes(32, 'big'), int(h_int)
+
+
+def _pack_xmss_sig(sig: dict, n: int) -> str:
+    """
+    PEM-encode an XMSS signature.
+    DER: SEQUENCE { leaf_idx, wots_sig_blob, auth_path_blob }
+    wots_sig_blob = ℓ × (n//8) bytes; auth_path_blob = h × 32 bytes.
+    """
+    leaf_idx  = sig['leaf_idx']
+    sig_blob  = b''.join(v.uint.to_bytes(n // 8, 'big') for v in sig['wots_sig'])
+    path_blob = b''.join(sig['auth_path'])
+    h         = len(sig['auth_path'])
+    der = der_seq(
+        der_int(leaf_idx),
+        der_int(int.from_bytes(sig_blob, 'big'), len(sig_blob)),
+        der_int(int.from_bytes(path_blob, 'big'), len(path_blob)),
+        der_int(h),
+        der_int(n),
+    )
+    return pem_wrap('HERRADURA HPKS-XMSS SIGNATURE', der)
+
+
+def _unpack_xmss_sig(path: str):
+    """Returns sig dict for hpks_xmss_verify (pk is recovered during verify)."""
+    label, der = _read_pem(path)
+    leaf_idx, sig_int, path_int, h_int, n_int = der_parse_seq(der)
+    leaf_idx  = int(leaf_idx)
+    n         = int(n_int)
+    h         = int(h_int)
+    nbytes    = n // 8
+    sig_blob  = sig_int.to_bytes(_WOTS_L * nbytes, 'big')
+    path_blob = path_int.to_bytes(h * 32, 'big')
+    wots_sig  = [BitArray(n, int.from_bytes(sig_blob[i*nbytes:(i+1)*nbytes], 'big'))
+                 for i in range(_WOTS_L)]
+    auth_path = [path_blob[i*32:(i+1)*32] for i in range(h)]
+    return {'leaf_idx': leaf_idx, 'wots_sig': wots_sig, 'auth_path': auth_path}
+
+
+def _xmss_state_path(key_path: str) -> str:
+    """State file path: <key>.idx — stores next leaf index (one integer per line)."""
+    return key_path + '.idx'
+
+
+def _xmss_read_idx(key_path: str, h: int) -> int:
+    sp = _xmss_state_path(key_path)
+    if os.path.exists(sp):
+        try:
+            return int(open(sp).read().strip())
+        except Exception:
+            pass
+    return 0
+
+
+def _xmss_write_idx(key_path: str, next_idx: int):
+    open(_xmss_state_path(key_path), 'w').write(str(next_idx) + '\n')
 
 
 def _load_zkp_nl_privkey(path):
@@ -554,6 +658,19 @@ def cmd_genpkey(args):
         der = der_seq(der_int(k, bits // 8), der_int(bits))
         pem_out = pem_wrap(_PRIV_ALGOS['oprf'], der)
 
+    elif algo == 'hpks-xmss':
+        import secrets as _sec
+        h_val = getattr(args, 'xmss_height', None) or 10
+        master_seed = _sec.token_bytes(32)
+        print(f"Generating XMSS tree (h={h_val}, {1<<h_val} leaves) — may take a moment…",
+              file=sys.stderr)
+        sk_seed, root, leaf_hashes = hpks_xmss_keygen(master_seed, h_val)
+        pem_out = _encode_xmss_privkey(master_seed, h_val, 0, leaf_hashes)
+        # Write state file alongside output if output is a named file
+        out_path = args.out
+        if out_path and out_path != '-':
+            _xmss_write_idx(out_path, 0)
+
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
@@ -584,6 +701,9 @@ def cmd_pkey(args):
         elif algo in _ZKP_NL_ALGOS:
             A, B, y, n = ints
             pem_out = encode_zkp_nl_pubkey(B, y, n)
+        elif algo == 'hpks-xmss':
+            master_seed, h, _, leaf_hashes, root = _decode_xmss_privkey(in_path)
+            pem_out = _encode_xmss_pubkey(root, h)
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -913,6 +1033,19 @@ def cmd_sign(args):
         pem_out = encode_zkp_nl_proof(proof_rounds, n)
         _write_file(args.out, pem_out)
 
+    elif algo == 'hpks-xmss':
+        master_seed, h, stored_idx, leaf_hashes, root = _decode_xmss_privkey(key_path)
+        leaf_idx = _xmss_read_idx(key_path, h)
+        num_leaves = 1 << h
+        if leaf_idx >= num_leaves:
+            sys.exit(f"sign: XMSS key exhausted ({num_leaves} leaves used). Generate a new key.")
+        sig  = hpks_xmss_sign(in_bytes, master_seed, leaf_hashes, leaf_idx)
+        pem_out = _pack_xmss_sig(sig, KEYBITS)
+        _write_file(args.out, pem_out)
+        _xmss_write_idx(key_path, leaf_idx + 1)
+        print(f"XMSS leaf {leaf_idx} used; {num_leaves - leaf_idx - 1} leaves remaining.",
+              file=sys.stderr)
+
     else:
         sys.exit(f"sign: unsupported algorithm {algo!r}")
 
@@ -987,6 +1120,17 @@ def cmd_verify(args):
         proof_rounds, _n = decode_zkp_nl_proof(sig_pem)
         rounds = len(proof_rounds)
         ok = zkp_nl_verify(B, y, n, rounds, in_bytes, proof_rounds)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    elif algo == 'hpks-xmss':
+        root, h = _decode_xmss_pubkey(pubkey_path)
+        sig = _unpack_xmss_sig(sig_path)
+        ok  = hpks_xmss_verify(in_bytes, sig, root)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -1329,6 +1473,8 @@ def build_parser():
     gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS))
     gp.add_argument('--bits', type=int, default=None,
                     help='Key size in bits (default 256; Stern: matrix dimension N)')
+    gp.add_argument('--xmss-height', type=int, default=10, dest='xmss_height',
+                    help='XMSS tree height (default 10 → 1024 leaves)')
     gp.add_argument('--out', default='-')
 
     # pkey
@@ -1374,7 +1520,7 @@ def build_parser():
     # sign
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
     sg.add_argument('--algo', required=True,
-                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo'])
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo', 'hpks-xmss'])
     sg.add_argument('--key',  required=True)
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
@@ -1387,7 +1533,7 @@ def build_parser():
     # verify
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
     vf.add_argument('--algo', required=True,
-                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo'])
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo', 'hpks-xmss'])
     vf.add_argument('--pubkey', required=True)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
