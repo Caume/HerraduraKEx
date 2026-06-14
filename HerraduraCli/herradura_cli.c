@@ -559,10 +559,13 @@ static void cmd_pkey(int argc, char **argv)
             stern_syndrome(syndr, &seed, &e);
 
             /* Syndrome is SDF_SYNBYTES (16) bytes; encode as 32-byte DER INTEGER
-             * matching Python: der_int(syn_int, nbytes) where nbytes=n//8=32. */
-            uint8_t syn32[KEYBYTES];
+             * where syndrome bit i (= row i parity) occupies integer bit i.
+             * syndr[k] holds rows k*8..k*8+7 as bits 0-7, so syndr[k] goes to
+             * byte KEYBYTES-1-k (integer bits k*8..k*8+7) — matching Python/Go. */
+            uint8_t syn32[KEYBYTES]; int _sk;
             memset(syn32, 0, KEYBYTES);
-            memcpy(syn32 + KEYBYTES - SDF_SYNBYTES, syndr, SDF_SYNBYTES);
+            for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
+                syn32[KEYBYTES - 1 - _sk] = syndr[_sk];
 
             uint8_t isyn[DER_INT_LEN(KEYBYTES)], is[DER_INT_LEN(KEYBYTES)], in[8];
             size_t lsyn, ls, ln;
@@ -1457,12 +1460,15 @@ static void cmd_verify(int argc, char **argv)
     } else if (strcmp(algo, "hpks-stern") == 0) {
         if (pub_k.n_items < 2) die("verify: malformed Stern public key");
 
-        /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned). */
-        uint8_t syn32[KEYBYTES], syndr[SDF_SYNBYTES];
+        /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned).
+         * The public key stores syndr[k] at byte KEYBYTES-1-k so that syndrome
+         * bit i occupies integer bit i (matching Python/Go convention). */
+        uint8_t syn32[KEYBYTES], syndr[SDF_SYNBYTES]; int _sk;
         memset(syn32, 0, KEYBYTES);
         { size_t cl = pub_k.vlens[0] < KEYBYTES ? pub_k.vlens[0] : KEYBYTES;
           memcpy(syn32 + KEYBYTES - cl, pub_k.vals[0], cl); }
-        memcpy(syndr, syn32 + KEYBYTES - SDF_SYNBYTES, SDF_SYNBYTES);
+        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
+            syndr[_sk] = syn32[KEYBYTES - 1 - _sk];
 
         BitArray seed_ba;
         ba_from_ra(&seed_ba, pub_k.vals[1], pub_k.vlens[1]);

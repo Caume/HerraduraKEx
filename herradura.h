@@ -1224,8 +1224,12 @@ static void stern_syndrome(uint8_t *syndr, const BitArray *seed,
 /* Pack syndrome into lower half of a BitArray (upper bytes = 0). */
 static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
 {
+    int k;
     memset(out->b, 0, KEYBYTES);
-    memcpy(out->b + KEYBYTES / 2, syndr, SDF_SYNBYTES);
+    /* Store syndr[k] (rows k*8..k*8+7) at byte KEYBYTES-1-k so that syndrome
+     * bit i lands at integer bit i, matching Python/Go's big.Int convention. */
+    for (k = 0; k < SDF_SYNBYTES; k++)
+        out->b[KEYBYTES - 1 - k] = syndr[k];
 }
 
 /* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.

@@ -6062,4 +6062,4 @@ suggests at least two distinct bugs.
 and test_go_interop.sh cover classical/RNL algorithms only), which is how this went
 unnoticed.  Fix should add a `test_stern_interop.sh` with the 6-direction matrix.
 
-Status: **PENDING**
+Status: **DONE v1.9.36**
