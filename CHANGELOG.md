@@ -4,6 +4,31 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.38] - 2026-06-14
+
+### Research — FSCX branch-number characterisation and SPN construction study (TODO #99)
+
+Characterises M = I XOR ROL XOR ROR as a GF(2)-linear diffusion layer and quantifies
+its diffusion properties as a foundation for NL-FSCX security arguments and future
+SPN-based constructions (#95, #96).
+
+- **`SecurityProofsCode/fscx_branch_number.py`** (new): exhaustive/sampled branch-number
+  computation for M^k (k=1..6) at n=16,32,64; avalanche trajectory of A-influence (M^t)
+  and B-influence (S_t = M+...+M^t); ASCON Σ0/Σ1 comparison; FSCX-SPN round-count
+  recommendation.  Key findings:
+  - M is self-transposed (Bn_d = Bn_l for all n, all powers).
+  - Bn(M) ≥ 36 at n=64, comparable to ASCON Σ0 (34) and Σ1 (38).
+  - S_t collapses to 0 at t = n/2 (proven: M has order n/2); complete B-diffusion is
+    never achievable.
+  - A,B half-coverage threshold: t_{1/2}(n) = n/2 − 1; suite heuristic i=n/4 sits at
+    the midpoint before S_t collapse, providing ~25–30% mean B-activation per output bit.
+- **`SecurityProofs-1.md` §3.7** (new): Theorem 11 (M self-transposed, Bn_d = Bn_l),
+  measured branch-number table, Theorem 12 (S_{n/2} = 0 periodicity), Corollary 3
+  (complete B-diffusion unachievable), diffusion trajectory table, assessment of i=n/4,
+  and FSCX-SPN round-count sketch feeding #95/#96.
+
+---
+
 ## [1.9.37] - 2026-06-13
 
 ### Security — HKEX-RNL m_blind substitution-attack mitigation (TODO #89)

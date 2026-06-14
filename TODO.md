@@ -6034,7 +6034,7 @@ analysis foundation that #95 option 2 (sponge AEAD) and #96 (DRBG) depend on.
 n=64/256); results into SecurityProofs-1 §3 (FSCX algebraic analysis); follow-up
 SecurityProofs note for the SPN sketch.
 
-Status: **OPEN**
+Status: **DONE v1.9.38**
 
 ---
 
