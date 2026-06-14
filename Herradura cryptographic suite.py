@@ -2606,8 +2606,8 @@ def main():
           else "- keyed == bare (unexpected!)")
 
     # ── ZKP-RNL: Ring-LWR Σ-protocol ────────────────────────────────────────
-    print("\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n=32]")
-    _zkprnl_n = 32
+    print(f"\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n={KEYBITS}]")
+    _zkprnl_n = KEYBITS
     _zkprnl_q = RNLQ
     _zkprnl_p = RNLP
     _zkprnl_m_base = _rnl_m_poly(_zkprnl_n)

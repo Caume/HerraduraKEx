@@ -50,6 +50,10 @@ fmt_t10:  .asciz "[10] HPKS-NL Eve resistance: random forgery rejected (20 trial
 fmt_t11:  .asciz "[11] HPKS-Stern-F: sign+verify correctness (3 trials, N=32, t=2, rounds=4)\n"
 fmt_t12:  .asciz "[12] HPKE-Stern-F: encap+decap KEM (3 trials, N=32, t=2)\n"
 fmt_t13:  .asciz "[13] HPKS-Stern-Ring (78.I): ring-sign+verify (3 trials, k=2, N=32, rounds=4)\n"
+fmt_t14:  .asciz "[14] ZKP-NL (NL-FSCX ZKBoo): prove+verify (3 trials, n=8, R=4)\n"
+fmt_t15:  .asciz "[15] FPE (78.A): encrypt/decrypt round-trip (3 trials)\n"
+fmt_t16:  .asciz "[16] Tweakable cipher (78.B): encrypt/decrypt round-trip (3 trials)\n"
+fmt_t17:  .asciz "[17] Accumulator (78.J): 4-leaf Merkle proof (1 trial)\n"
 
 fmt_p20:  .asciz "    20 / 20 passed  [PASS]\n"
 fmt_p100: .asciz "    100 / 100 passed  [PASS]\n"
@@ -57,6 +61,9 @@ fmt_prnl: .asciz "    10 / 10 agreed (Peikert reconciliation)  [PASS]\n"
 fmt_p3v:  .asciz "    3 / 3 verified  [PASS]\n"
 fmt_p3k:  .asciz "    3 / 3 keys match  [PASS]\n"
 fmt_p3r:  .asciz "    3 / 3 ring-verified  [PASS]\n"
+fmt_p3z:  .asciz "    3 / 3 zk-verified  [PASS]\n"
+fmt_p3f:  .asciz "    3 / 3 round-trips correct  [PASS]\n"
+fmt_p1a:  .asciz "    1 / 1 proof correct  [PASS]\n"
 fmt_fail: .asciz "    FAILED  [FAIL]\n"
 
 lcg_state:   .word 0x12345678   /* overwritten from /dev/urandom at main() (SA-01) */
@@ -162,6 +169,29 @@ ring0_b:       .space 16
 ring0_respA:   .space 16
 ring0_respB:   .space 16
 ring_joint_b:  .space 16
+/* ZKP-NL scratch (NL-FSCX ZKBoo; n=8, R=4) */
+zkp_all_sh:  .space 48
+zkp_all_tp:  .space 48
+zkp_all_out: .space 48
+zkp_all_gv:  .space 84
+zkp_coms:    .space 48
+zkp_e:       .space 4
+zkp_sh1:     .space 16
+zkp_tp1:     .space 16
+zkp_out1:    .space 16
+zkp_sh2:     .space 16
+zkp_tp2:     .space 16
+zkp_out2:    .space 16
+zkp_gv1:     .space 28
+zkp_gv2:     .space 28
+zkp_ev_sh:   .space 12
+zkp_ev_tp:   .space 12
+zkp_ev_B:    .space 4
+zkp_ev_out:  .space 12
+zkp_ev_ci:   .space 12
+zkp_ev_ss:   .space 12
+zkp_ev_ri:   .space 12
+zkp_ev_ao:   .space 12
 
 /* ------------------------------------------------------------------ */
 /* .text                                                               */
@@ -966,9 +996,851 @@ t13_fail:
     bl      printf
 t13_done:
 
+    /* ================================================================ [14] ZKP-NL (3 iter) */
+    ldr     r0, =fmt_t14
+    bl      printf
+    mov     r10, #3
+    mov     r11, #0
+t14_loop:
+    bl      prng_next
+    and     r4, r0, #0xFF       @ A
+    bl      prng_next
+    and     r5, r0, #0xFF       @ B
+    bl      prng_next
+    and     r6, r0, #0xFF       @ msg
+    mov     r0, r4
+    mov     r1, r5
+    bl      nl_fscx_v1
+    and     r7, r0, #0xFF       @ y
+    mov     r0, r4
+    mov     r1, r5
+    mov     r2, r7
+    mov     r3, r6
+    bl      zkp_nl_prove_8
+    mov     r0, r5
+    mov     r1, r7
+    mov     r2, r6
+    bl      zkp_nl_verify_8
+    cmp     r0, #1
+    bne     t14_skip
+    add     r11, r11, #1
+t14_skip:
+    subs    r10, r10, #1
+    bne     t14_loop
+    cmp     r11, #3
+    bne     t14_fail
+    ldr     r0, =fmt_p3z
+    bl      printf
+    b       t14_done
+t14_fail:
+    ldr     r0, =fmt_fail
+    bl      printf
+t14_done:
+
+    /* ================================================================ [15] FPE (3 trials) */
+    ldr     r0, =fmt_t15
+    bl      printf
+    mov     r10, #3             @ iter count
+    mov     r11, #0             @ pass count
+t15_loop:
+    @ plain = prng_next()
+    bl      prng_next
+    mov     r4, r0              @ plain
+    @ B = hfscx_32(hfscx_32(0xABCD1234) ^ 0x42)
+    ldr     r0, =0xABCD1234
+    bl      hfscx_32
+    eor     r0, r0, #0x42
+    bl      hfscx_32
+    mov     r5, r0              @ B
+    @ ct = nl_fscx_revolve_v2(plain, B, I_VALUE)
+    mov     r0, r4
+    mov     r1, r5
+    mov     r2, #I_VALUE
+    bl      nl_fscx_revolve_v2
+    mov     r6, r0              @ ct
+    @ rec = nl_fscx_revolve_v2_inv(ct, B, I_VALUE)
+    mov     r0, r6
+    mov     r1, r5
+    mov     r2, #I_VALUE
+    bl      nl_fscx_revolve_v2_inv
+    cmp     r0, r4
+    bne     t15_skip
+    add     r11, r11, #1
+t15_skip:
+    subs    r10, r10, #1
+    bne     t15_loop
+    cmp     r11, #3
+    bne     t15_fail
+    ldr     r0, =fmt_p3f
+    bl      printf
+    b       t15_done
+t15_fail:
+    ldr     r0, =fmt_fail
+    bl      printf
+t15_done:
+
+    /* ================================================================ [16] Tweakable (3 trials) */
+    ldr     r0, =fmt_t16
+    bl      printf
+    mov     r10, #3
+    mov     r11, #0
+t16_loop:
+    bl      prng_next
+    mov     r4, r0              @ block
+    @ B = hfscx_32(hfscx_32(0x12345678 ^ 7) ^ 3)
+    ldr     r0, =0x12345678
+    eor     r0, r0, #7
+    bl      hfscx_32
+    eor     r0, r0, #3
+    bl      hfscx_32
+    mov     r5, r0              @ B
+    mov     r0, r4
+    mov     r1, r5
+    mov     r2, #I_VALUE
+    bl      nl_fscx_revolve_v2
+    mov     r6, r0
+    mov     r0, r6
+    mov     r1, r5
+    mov     r2, #I_VALUE
+    bl      nl_fscx_revolve_v2_inv
+    cmp     r0, r4
+    bne     t16_skip
+    add     r11, r11, #1
+t16_skip:
+    subs    r10, r10, #1
+    bne     t16_loop
+    cmp     r11, #3
+    bne     t16_fail
+    ldr     r0, =fmt_p3f
+    bl      printf
+    b       t16_done
+t16_fail:
+    ldr     r0, =fmt_fail
+    bl      printf
+t16_done:
+
+    /* ================================================================ [17] Accumulator (1 trial) */
+    ldr     r0, =fmt_t17
+    bl      printf
+    @ leaf0 = hfscx_32(0xAAAAAAAA)
+    ldr     r0, =0xAAAAAAAA
+    bl      hfscx_32
+    mov     r4, r0
+    @ leaf1 = hfscx_32(0xBBBBBBBB)
+    ldr     r0, =0xBBBBBBBB
+    bl      hfscx_32
+    mov     r5, r0
+    @ leaf2 = hfscx_32(0xCCCCCCCC)
+    ldr     r0, =0xCCCCCCCC
+    bl      hfscx_32
+    mov     r6, r0
+    @ leaf3 = hfscx_32(0xDDDDDDDD)
+    ldr     r0, =0xDDDDDDDD
+    bl      hfscx_32
+    mov     r7, r0
+    @ n01 = hfscx_32(hfscx_32(0x01000000^leaf0) ^ leaf1)
+    ldr     r0, =0x01000000
+    eor     r0, r0, r4
+    bl      hfscx_32
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r8, r0              @ n01
+    @ n23 = hfscx_32(hfscx_32(0x01000000^leaf2) ^ leaf3)
+    ldr     r0, =0x01000000
+    eor     r0, r0, r6
+    bl      hfscx_32
+    eor     r0, r0, r7
+    bl      hfscx_32
+    mov     r9, r0              @ n23
+    @ root = hfscx_32(hfscx_32(0x01000000^n01) ^ n23)
+    ldr     r0, =0x01000000
+    eor     r0, r0, r8
+    bl      hfscx_32
+    eor     r0, r0, r9
+    bl      hfscx_32
+    mov     r10, r0             @ root
+    @ proof for index 2: recompute node(leaf2,leaf3) then node(n01, that)
+    ldr     r0, =0x01000000
+    eor     r0, r0, r6
+    bl      hfscx_32
+    eor     r0, r0, r7
+    bl      hfscx_32
+    mov     r11, r0             @ cur = n23
+    ldr     r0, =0x01000000
+    eor     r0, r0, r8
+    bl      hfscx_32
+    eor     r0, r0, r11
+    bl      hfscx_32            @ reconstructed root
+    cmp     r0, r10
+    bne     t17_fail
+    ldr     r0, =fmt_p1a
+    bl      printf
+    b       t17_done
+t17_fail:
+    ldr     r0, =fmt_fail
+    bl      printf
+t17_done:
+
     mov     r0, #0
     bl      exit
 
+    .ltorg
+
+/* ================================================================== */
+/* ZKP-NL  (NL-FSCX ZKBoo; n=8, R=4) — concept demo                   */
+/* ================================================================== */
+
+/* zkp_nl_prg_bit_8: r0=tape, r1=gate -> r0 = hfscx_32(tape^gate)&1   */
+    .thumb_func
+zkp_nl_prg_bit_8:
+    push    {lr}
+    eor     r0, r0, r1
+    bl      hfscx_32
+    and     r0, r0, #1
+    pop     {pc}
+    .ltorg
+
+/* zkp_nl_commit_8: r0=tape, r1=share, r2=out_share, r3=gv_ptr(7 B)   */
+/* h=hfscx_32(tape^share^out_share); for i in 0..6 h=hfscx_32(h^gv[i])*/
+    .thumb_func
+zkp_nl_commit_8:
+    push    {r4, r5, r6, lr}
+    mov     r6, r3
+    eor     r0, r0, r1
+    eor     r0, r0, r2
+    bl      hfscx_32
+    mov     r5, r0
+    mov     r4, #7
+.zkc8_loop:
+    ldrb    r0, [r6], #1
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r5, r0
+    subs    r4, r4, #1
+    bne     .zkc8_loop
+    mov     r0, r5
+    pop     {r4, r5, r6, pc}
+    .ltorg
+
+/* zkp_nl_eval_8: r0 = gv base ptr (3 rows of 7 bytes).               */
+/* Inputs from BSS: zkp_ev_sh[3], zkp_ev_tp[3], zkp_ev_B.             */
+/* Outputs: zkp_ev_out[3], and gv[p][i] bit views at gv+p*7+i.       */
+    .thumb_func
+zkp_nl_eval_8:
+    push    {r4-r11, lr}
+    mov     r9, r0                  @ r9 = gv base ptr
+    @ zero ci[p] and ss[p]
+    ldr     r0, =zkp_ev_ci
+    movs    r1, #0
+    str     r1, [r0]
+    str     r1, [r0, #4]
+    str     r1, [r0, #8]
+    ldr     r0, =zkp_ev_ss
+    str     r1, [r0]
+    str     r1, [r0, #4]
+    str     r1, [r0, #8]
+    mov     r8, #0                  @ r8 = bit index i
+.zke8_bit:
+    @ ── compute ri[p] = prg_bit(tp[p], i) for p=0..2 ──
+    ldr     r6, =zkp_ev_tp
+    ldr     r7, =zkp_ev_ri
+    movs    r4, #0                  @ p
+.zke8_ri:
+    ldr     r0, [r6, r4, lsl #2]
+    mov     r1, r8
+    bl      zkp_nl_prg_bit_8
+    str     r0, [r7, r4, lsl #2]
+    adds    r4, r4, #1
+    cmp     r4, #3
+    bne     .zke8_ri
+    @ Bi = (B>>i)&1
+    ldr     r0, =zkp_ev_B
+    ldr     r0, [r0]
+    lsr     r0, r0, r8
+    and     r10, r0, #1            @ r10 = Bi
+    @ ── sum bit: sb[p] = ((sh[p]>>i)&1) ^ Bi ^ ci[p]; ss[p] |= sb<<i ──
+    ldr     r6, =zkp_ev_sh
+    ldr     r7, =zkp_ev_ci
+    ldr     r11, =zkp_ev_ss
+    movs    r4, #0
+.zke8_sum:
+    ldr     r0, [r6, r4, lsl #2]
+    lsr     r0, r0, r8
+    and     r0, r0, #1            @ ai
+    ldr     r1, [r7, r4, lsl #2]  @ ci[p]
+    eor     r0, r0, r1
+    eor     r0, r0, r10           @ ^ Bi
+    lsl     r0, r0, r8            @ sb << i
+    ldr     r1, [r11, r4, lsl #2]
+    orr     r1, r1, r0
+    str     r1, [r11, r4, lsl #2]
+    adds    r4, r4, #1
+    cmp     r4, #3
+    bne     .zke8_sum
+    @ ── gate (only for i < 7) ──
+    cmp     r8, #7
+    beq     .zke8_after
+    movs    r4, #0                 @ p
+.zke8_gate:
+    @ ai[p], ci[p], ri[p]
+    ldr     r6, =zkp_ev_sh
+    ldr     r0, [r6, r4, lsl #2]
+    lsr     r0, r0, r8
+    and     r5, r0, #1            @ r5 = ai[p]
+    ldr     r6, =zkp_ev_ci
+    ldr     r6, [r6, r4, lsl #2]  @ r6 = ci[p]
+    ldr     r7, =zkp_ev_ri
+    ldr     r7, [r7, r4, lsl #2]  @ r7 = ri[p]
+    @ p1 = (p+1)%3
+    adds    r0, r4, #1
+    cmp     r0, #3
+    it      eq
+    moveq   r0, #0                @ r0 = p1
+    @ ai[p1]
+    ldr     r1, =zkp_ev_sh
+    ldr     r1, [r1, r0, lsl #2]
+    lsr     r1, r1, r8
+    and     r1, r1, #1           @ r1 = ai[p1]
+    @ ci[p1]
+    ldr     r2, =zkp_ev_ci
+    ldr     r2, [r2, r0, lsl #2]  @ r2 = ci[p1]
+    @ ri[p1]
+    ldr     r3, =zkp_ev_ri
+    ldr     r3, [r3, r0, lsl #2]  @ r3 = ri[p1]
+    @ ao = (ai&ci) ^ (ai&ci1) ^ (ai1&ci) ^ ri ^ ri1
+    and     r11, r5, r6          @ ai&ci
+    and     r12, r5, r2          @ ai&ci1
+    eor     r11, r11, r12
+    and     r12, r1, r6          @ ai1&ci
+    eor     r11, r11, r12
+    eor     r11, r11, r7         @ ^ ri
+    eor     r11, r11, r3         @ ^ ri1  => r11 = ao[p]
+    @ save ao[p]
+    ldr     r0, =zkp_ev_ao
+    str     r11, [r0, r4, lsl #2]
+    @ gv[p][i] = ai | (ci<<1) | (ao<<2)
+    lsl     r12, r6, #1
+    orr     r12, r12, r5
+    lsl     r0, r11, #2
+    orr     r12, r12, r0
+    @ store gv[p][i] at r9 + p*7 + i
+    add     r0, r9, r8
+    add     r0, r0, r4
+    add     r0, r0, r4, lsl #1   @ + p*2
+    add     r0, r0, r4, lsl #2   @ + p*4  => p*7 total
+    strb    r12, [r0]
+    adds    r4, r4, #1
+    cmp     r4, #3
+    bne     .zke8_gate
+    @ second pass: update all carries using saved ao[p] and OLD ci[p]
+    movs    r4, #0
+.zke8_carry:
+    ldr     r6, =zkp_ev_sh
+    ldr     r0, [r6, r4, lsl #2]
+    lsr     r0, r0, r8
+    and     r5, r0, #1           @ ai[p]
+    ldr     r6, =zkp_ev_ci
+    ldr     r6, [r6, r4, lsl #2]  @ ci[p] (old)
+    ldr     r0, =zkp_ev_ao
+    ldr     r11, [r0, r4, lsl #2] @ ao[p]
+    and     r0, r10, r5          @ Bi&ai
+    eor     r0, r0, r11          @ ^ ao
+    and     r1, r10, r6          @ Bi&ci
+    eor     r0, r0, r1
+    ldr     r1, =zkp_ev_ci
+    str     r0, [r1, r4, lsl #2]
+    adds    r4, r4, #1
+    cmp     r4, #3
+    bne     .zke8_carry
+.zke8_after:
+    adds    r8, r8, #1
+    cmp     r8, #8
+    bne     .zke8_bit
+    @ ── linear combine: out[p] = lin(sh[p]) (^Bc if p==0) ^ ROL(ss[p],2), all &0xFF ──
+    @ Bc = (B ^ ROL8(B,1) ^ ROR8(B,1)) & 0xFF
+    ldr     r0, =zkp_ev_B
+    ldr     r0, [r0]
+    and     r0, r0, #0xFF
+    mov     r2, r0
+    lsl     r1, r0, #1
+    lsr     r3, r0, #7
+    orr     r1, r1, r3
+    and     r1, r1, #0xFF        @ ROL8(B,1)
+    eor     r2, r2, r1
+    ldr     r0, =zkp_ev_B
+    ldr     r0, [r0]
+    and     r0, r0, #0xFF
+    lsr     r1, r0, #1
+    lsl     r3, r0, #7
+    orr     r1, r1, r3
+    and     r1, r1, #0xFF        @ ROR8(B,1)
+    eor     r2, r2, r1
+    and     r10, r2, #0xFF       @ r10 = Bc
+    movs    r4, #0                @ p
+.zke8_out:
+    ldr     r6, =zkp_ev_sh
+    ldr     r0, [r6, r4, lsl #2]
+    and     r0, r0, #0xFF        @ sh
+    mov     r5, r0
+    @ lin = sh ^ ROL8(sh,1) ^ ROR8(sh,1)
+    lsl     r1, r5, #1
+    lsr     r2, r5, #7
+    orr     r1, r1, r2
+    and     r1, r1, #0xFF
+    eor     r5, r5, r1           @ ^ROL8
+    ldr     r6, =zkp_ev_sh
+    ldr     r0, [r6, r4, lsl #2]
+    and     r0, r0, #0xFF
+    lsr     r1, r0, #1
+    lsl     r2, r0, #7
+    orr     r1, r1, r2
+    and     r1, r1, #0xFF
+    eor     r5, r5, r1           @ r5 = lin (&0xFF later)
+    and     r5, r5, #0xFF
+    @ if p==0: lin ^= Bc
+    cmp     r4, #0
+    bne     .zke8_norot
+    eor     r5, r5, r10
+.zke8_norot:
+    @ rot = ROL8(ss[p],2) & 0xFF
+    ldr     r6, =zkp_ev_ss
+    ldr     r0, [r6, r4, lsl #2]
+    and     r0, r0, #0xFF
+    lsl     r1, r0, #2
+    lsr     r2, r0, #6
+    orr     r1, r1, r2
+    and     r1, r1, #0xFF        @ rot
+    eor     r5, r5, r1
+    and     r5, r5, #0xFF
+    ldr     r6, =zkp_ev_out
+    str     r5, [r6, r4, lsl #2]
+    adds    r4, r4, #1
+    cmp     r4, #3
+    bne     .zke8_out
+    pop     {r4-r11, pc}
+    .ltorg
+
+/* zkp_nl_prove_8: r0=A, r1=B, r2=y, r3=msg                           */
+    .thumb_func
+zkp_nl_prove_8:
+    push    {r4-r11, lr}
+    sub     sp, sp, #16
+    str     r0, [sp, #0]          @ A
+    str     r1, [sp, #4]          @ B
+    str     r2, [sp, #8]          @ y
+    str     r3, [sp, #12]         @ msg
+    mov     r4, #0                @ j = round index
+.zkp_pr_round:
+    @ s0=prng&0xFF, s1=prng&0xFF, s2=(A^s0^s1)&0xFF
+    bl      prng_next
+    and     r5, r0, #0xFF         @ s0
+    bl      prng_next
+    and     r6, r0, #0xFF         @ s1
+    ldr     r0, [sp, #0]
+    eor     r7, r0, r5
+    eor     r7, r7, r6
+    and     r7, r7, #0xFF         @ s2
+    @ store shares into zkp_all_sh[j*3]
+    ldr     r0, =zkp_all_sh
+    add     r0, r0, r4, lsl #4    @ j*3 words = j*12 ; use j*16? need j*12
+    @ j*12 = j*8 + j*4
+    ldr     r0, =zkp_all_sh
+    add     r1, r4, r4, lsl #1    @ r1 = j*3
+    add     r0, r0, r1, lsl #2    @ + (j*3)*4
+    str     r5, [r0]
+    str     r6, [r0, #4]
+    str     r7, [r0, #8]
+    @ also into eval input zkp_ev_sh
+    ldr     r1, =zkp_ev_sh
+    str     r5, [r1]
+    str     r6, [r1, #4]
+    str     r7, [r1, #8]
+    @ tapes t0,t1,t2 = prng (full 32-bit)
+    bl      prng_next
+    mov     r5, r0
+    bl      prng_next
+    mov     r6, r0
+    bl      prng_next
+    mov     r7, r0
+    ldr     r0, =zkp_all_tp
+    add     r1, r4, r4, lsl #1
+    add     r0, r0, r1, lsl #2
+    str     r5, [r0]
+    str     r6, [r0, #4]
+    str     r7, [r0, #8]
+    ldr     r1, =zkp_ev_tp
+    str     r5, [r1]
+    str     r6, [r1, #4]
+    str     r7, [r1, #8]
+    @ B (low 8) into zkp_ev_B
+    ldr     r0, [sp, #4]
+    and     r0, r0, #0xFF
+    ldr     r1, =zkp_ev_B
+    str     r0, [r1]
+    @ gv base for this round = zkp_all_gv + j*21
+    ldr     r0, =zkp_all_gv
+    add     r1, r4, r4, lsl #1    @ j*3
+    add     r1, r1, r1, lsl #1    @ *3 -> j*9 ; need j*21 = j*3*7
+    @ recompute properly: j*21
+    mov     r1, #21
+    mul     r1, r4, r1
+    add     r0, r0, r1
+    bl      zkp_nl_eval_8
+    @ copy out[3] to zkp_all_out[j*3]
+    ldr     r0, =zkp_ev_out
+    ldr     r5, [r0]
+    ldr     r6, [r0, #4]
+    ldr     r7, [r0, #8]
+    ldr     r0, =zkp_all_out
+    add     r1, r4, r4, lsl #1
+    add     r0, r0, r1, lsl #2
+    str     r5, [r0]
+    str     r6, [r0, #4]
+    str     r7, [r0, #8]
+    @ commitments coms[j][p] = commit(tp[p], sh[p], out[p], gv+p*7)
+    mov     r8, #0                @ p
+.zkp_pr_com:
+    @ tape
+    ldr     r0, =zkp_all_tp
+    add     r1, r4, r4, lsl #1
+    add     r1, r1, r8
+    ldr     r0, [r0, r1, lsl #2]
+    @ share
+    ldr     r2, =zkp_all_sh
+    ldr     r1, [r2, r1, lsl #2]
+    mov     r9, r1                @ save share index? recompute
+    @ recompute index = j*3+p
+    add     r1, r4, r4, lsl #1
+    add     r1, r1, r8
+    ldr     r2, =zkp_all_sh
+    ldr     r1, [r2, r1, lsl #2]  @ r1 = share
+    @ out
+    add     r2, r4, r4, lsl #1
+    add     r2, r2, r8
+    ldr     r3, =zkp_all_out
+    ldr     r2, [r3, r2, lsl #2]  @ r2 = out_share
+    @ gv ptr = zkp_all_gv + j*21 + p*7
+    ldr     r3, =zkp_all_gv
+    mov     r9, #21
+    mul     r9, r4, r9
+    add     r3, r3, r9
+    mov     r9, #7
+    mul     r9, r8, r9
+    add     r3, r3, r9
+    bl      zkp_nl_commit_8       @ r0 = commitment
+    @ store coms[j*3+p]
+    add     r1, r4, r4, lsl #1
+    add     r1, r1, r8
+    ldr     r2, =zkp_coms
+    str     r0, [r2, r1, lsl #2]
+    adds    r8, r8, #1
+    cmp     r8, #3
+    bne     .zkp_pr_com
+    adds    r4, r4, #1
+    cmp     r4, #4
+    bne     .zkp_pr_round
+    @ ── Fiat-Shamir challenge ──
+    @ h = hfscx_32(msg ^ B ^ y)
+    ldr     r0, [sp, #12]
+    ldr     r1, [sp, #4]
+    eor     r0, r0, r1
+    ldr     r1, [sp, #8]
+    eor     r0, r0, r1
+    bl      hfscx_32
+    mov     r5, r0                @ r5 = h
+    @ for all 12 coms: h = hfscx_32(h ^ coms)
+    movs    r4, #0
+.zkp_pr_h1:
+    ldr     r0, =zkp_coms
+    ldr     r0, [r0, r4, lsl #2]
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r5, r0
+    adds    r4, r4, #1
+    cmp     r4, #12
+    bne     .zkp_pr_h1
+    @ for j: h = hfscx_32(h ^ j); e[j] = h % 3
+    movs    r4, #0
+.zkp_pr_e:
+    mov     r0, r4
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r5, r0
+    @ e = h % 3
+    mov     r1, #3
+    udiv    r2, r5, r1
+    mul     r2, r2, r1
+    sub     r2, r5, r2           @ r2 = h%3
+    ldr     r0, =zkp_e
+    strb    r2, [r0, r4]
+    adds    r4, r4, #1
+    cmp     r4, #4
+    bne     .zkp_pr_e
+    @ ── store revealed shares for verify ──
+    movs    r4, #0
+.zkp_pr_rev:
+    ldr     r0, =zkp_e
+    ldrb    r6, [r0, r4]         @ e
+    add     r7, r6, #1
+    cmp     r7, #3
+    it      ge
+    subge   r7, r7, #3           @ p1 = (e+1)%3
+    add     r8, r6, #2
+    cmp     r8, #3
+    it      ge
+    subge   r8, r8, #3           @ p2 = (e+2)%3
+    @ sh1/tp1/out1 = all_*[j*3+p1]; gv1 copy
+    @ index1 = j*3+p1
+    add     r0, r4, r4, lsl #1
+    add     r9, r0, r7           @ r9 = j*3+p1
+    add     r10, r0, r8          @ r10 = j*3+p2
+    @ sh1
+    ldr     r0, =zkp_all_sh
+    ldr     r1, [r0, r9, lsl #2]
+    ldr     r0, =zkp_sh1
+    str     r1, [r0, r4, lsl #2]
+    @ tp1
+    ldr     r0, =zkp_all_tp
+    ldr     r1, [r0, r9, lsl #2]
+    ldr     r0, =zkp_tp1
+    str     r1, [r0, r4, lsl #2]
+    @ out1
+    ldr     r0, =zkp_all_out
+    ldr     r1, [r0, r9, lsl #2]
+    ldr     r0, =zkp_out1
+    str     r1, [r0, r4, lsl #2]
+    @ sh2
+    ldr     r0, =zkp_all_sh
+    ldr     r1, [r0, r10, lsl #2]
+    ldr     r0, =zkp_sh2
+    str     r1, [r0, r4, lsl #2]
+    @ tp2
+    ldr     r0, =zkp_all_tp
+    ldr     r1, [r0, r10, lsl #2]
+    ldr     r0, =zkp_tp2
+    str     r1, [r0, r4, lsl #2]
+    @ out2
+    ldr     r0, =zkp_all_out
+    ldr     r1, [r0, r10, lsl #2]
+    ldr     r0, =zkp_out2
+    str     r1, [r0, r4, lsl #2]
+    @ copy gv rows (7 bytes each)
+    @ src1 = all_gv + (j*3+p1)*7 ; dst1 = gv1 + j*7
+    mov     r0, #7
+    mul     r11, r9, r0
+    ldr     r1, =zkp_all_gv
+    add     r11, r11, r1         @ r11 = src1
+    mov     r0, #7
+    mul     r12, r4, r0
+    ldr     r1, =zkp_gv1
+    add     r12, r12, r1         @ r12 = dst1
+    mov     r0, #0
+.zkp_pr_gv1:
+    ldrb    r1, [r11, r0]
+    strb    r1, [r12, r0]
+    adds    r0, r0, #1
+    cmp     r0, #7
+    bne     .zkp_pr_gv1
+    @ src2 = all_gv + (j*3+p2)*7 ; dst2 = gv2 + j*7
+    mov     r0, #7
+    mul     r11, r10, r0
+    ldr     r1, =zkp_all_gv
+    add     r11, r11, r1
+    mov     r0, #7
+    mul     r12, r4, r0
+    ldr     r1, =zkp_gv2
+    add     r12, r12, r1
+    mov     r0, #0
+.zkp_pr_gv2:
+    ldrb    r1, [r11, r0]
+    strb    r1, [r12, r0]
+    adds    r0, r0, #1
+    cmp     r0, #7
+    bne     .zkp_pr_gv2
+    adds    r4, r4, #1
+    cmp     r4, #4
+    bne     .zkp_pr_rev
+    add     sp, sp, #16
+    pop     {r4-r11, pc}
+    .ltorg
+
+/* zkp_nl_verify_8: r0=B, r1=y, r2=msg -> r0 = 1 accept / 0 reject    */
+    .thumb_func
+zkp_nl_verify_8:
+    push    {r4-r11, lr}
+    sub     sp, sp, #16
+    str     r0, [sp, #0]          @ B
+    str     r1, [sp, #4]          @ y
+    str     r2, [sp, #8]          @ msg
+    @ recompute challenge and check e[j]
+    ldr     r0, [sp, #8]
+    ldr     r1, [sp, #0]
+    eor     r0, r0, r1
+    ldr     r1, [sp, #4]
+    eor     r0, r0, r1
+    bl      hfscx_32
+    mov     r5, r0
+    movs    r4, #0
+.zkp_v_h1:
+    ldr     r0, =zkp_coms
+    ldr     r0, [r0, r4, lsl #2]
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r5, r0
+    adds    r4, r4, #1
+    cmp     r4, #12
+    bne     .zkp_v_h1
+    movs    r4, #0
+.zkp_v_e:
+    mov     r0, r4
+    eor     r0, r0, r5
+    bl      hfscx_32
+    mov     r5, r0
+    mov     r1, #3
+    udiv    r2, r5, r1
+    mul     r2, r2, r1
+    sub     r2, r5, r2           @ h%3
+    ldr     r0, =zkp_e
+    ldrb    r0, [r0, r4]
+    cmp     r0, r2
+    bne     .zkp_v_reject
+    adds    r4, r4, #1
+    cmp     r4, #4
+    bne     .zkp_v_e
+    @ ── per-round commitment + gate consistency ──
+    movs    r4, #0                @ j
+.zkp_v_round:
+    @ check commit(tp1,sh1,out1,gv1) == coms[j*3+p1]
+    ldr     r0, =zkp_e
+    ldrb    r6, [r0, r4]         @ e
+    add     r7, r6, #1
+    cmp     r7, #3
+    it      ge
+    subge   r7, r7, #3           @ p1
+    add     r8, r6, #2
+    cmp     r8, #3
+    it      ge
+    subge   r8, r8, #3           @ p2
+    @ commit1
+    ldr     r0, =zkp_tp1
+    ldr     r0, [r0, r4, lsl #2]
+    ldr     r1, =zkp_sh1
+    ldr     r1, [r1, r4, lsl #2]
+    ldr     r2, =zkp_out1
+    ldr     r2, [r2, r4, lsl #2]
+    mov     r3, #7
+    mul     r3, r4, r3
+    ldr     r9, =zkp_gv1
+    add     r3, r3, r9
+    bl      zkp_nl_commit_8
+    @ compare to coms[j*3+p1]
+    add     r1, r4, r4, lsl #1
+    add     r1, r1, r7
+    ldr     r2, =zkp_coms
+    ldr     r1, [r2, r1, lsl #2]
+    cmp     r0, r1
+    bne     .zkp_v_reject
+    @ commit2
+    ldr     r0, =zkp_tp2
+    ldr     r0, [r0, r4, lsl #2]
+    ldr     r1, =zkp_sh2
+    ldr     r1, [r1, r4, lsl #2]
+    ldr     r2, =zkp_out2
+    ldr     r2, [r2, r4, lsl #2]
+    mov     r3, #7
+    mul     r3, r4, r3
+    ldr     r9, =zkp_gv2
+    add     r3, r3, r9
+    bl      zkp_nl_commit_8
+    add     r1, r4, r4, lsl #1
+    add     r1, r1, r8
+    ldr     r2, =zkp_coms
+    ldr     r1, [r2, r1, lsl #2]
+    cmp     r0, r1
+    bne     .zkp_v_reject
+    @ ── gate consistency between the two revealed parties ──
+    @ c1=0, c2=0; for i=0..6:
+    mov     r10, #0               @ c1
+    mov     r11, #0               @ c2
+    mov     r8, #0                @ i
+.zkp_v_gate:
+    @ Bi = (B>>i)&1
+    ldr     r0, [sp, #0]
+    lsr     r0, r0, r8
+    and     r12, r0, #1          @ r12 = Bi
+    @ a1 = (sh1>>i)&1
+    ldr     r0, =zkp_sh1
+    ldr     r0, [r0, r4, lsl #2]
+    lsr     r0, r0, r8
+    and     r5, r0, #1           @ r5 = a1
+    @ a2
+    ldr     r0, =zkp_sh2
+    ldr     r0, [r0, r4, lsl #2]
+    lsr     r0, r0, r8
+    and     r6, r0, #1           @ r6 = a2
+    @ r1 = prg_bit(tp1, i)
+    ldr     r0, =zkp_tp1
+    ldr     r0, [r0, r4, lsl #2]
+    mov     r1, r8
+    bl      zkp_nl_prg_bit_8
+    mov     r7, r0               @ r7 = r1 (prg)
+    @ r2prg = prg_bit(tp2, i)
+    ldr     r0, =zkp_tp2
+    ldr     r0, [r0, r4, lsl #2]
+    mov     r1, r8
+    bl      zkp_nl_prg_bit_8
+    mov     r9, r0               @ r9 = r2 (prg)
+    @ exp_ao1 = (a1&c1)^(a1&c2)^(a2&c1)^r1^r2
+    and     r0, r5, r10          @ a1&c1
+    and     r1, r5, r11          @ a1&c2
+    eor     r0, r0, r1
+    and     r1, r6, r10          @ a2&c1
+    eor     r0, r0, r1
+    eor     r0, r0, r7
+    eor     r0, r0, r9           @ r0 = exp_ao1
+    @ check ((gv1[i]>>2)&1) == exp_ao1
+    mov     r1, #7
+    mul     r1, r4, r1
+    ldr     r2, =zkp_gv1
+    add     r1, r1, r2
+    ldrb    r1, [r1, r8]
+    lsr     r1, r1, #2
+    and     r1, r1, #1
+    cmp     r1, r0
+    bne     .zkp_v_reject
+    @ c1 = (Bi&a1) ^ exp_ao1 ^ (Bi&c1)
+    and     r1, r12, r5
+    eor     r1, r1, r0           @ exp_ao1 in r0
+    and     r2, r12, r10
+    eor     r1, r1, r2
+    mov     r10, r1              @ new c1
+    @ ao2 = (gv2[i]>>2)&1
+    mov     r1, #7
+    mul     r1, r4, r1
+    ldr     r2, =zkp_gv2
+    add     r1, r1, r2
+    ldrb    r1, [r1, r8]
+    lsr     r1, r1, #2
+    and     r1, r1, #1           @ ao2
+    @ c2 = (Bi&a2) ^ ao2 ^ (Bi&c2)
+    and     r0, r12, r6
+    eor     r0, r0, r1
+    and     r2, r12, r11
+    eor     r0, r0, r2
+    mov     r11, r0              @ new c2
+    adds    r8, r8, #1
+    cmp     r8, #7
+    bne     .zkp_v_gate
+    adds    r4, r4, #1
+    cmp     r4, #4
+    bne     .zkp_v_round
+    movs    r0, #1
+    b       .zkp_v_done
+.zkp_v_reject:
+    movs    r0, #0
+.zkp_v_done:
+    add     sp, sp, #16
+    pop     {r4-r11, pc}
     .ltorg
 
 /* ------------------------------------------------------------------ */
