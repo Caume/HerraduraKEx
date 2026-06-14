@@ -580,6 +580,42 @@ int main(void)
         puts(ok ? "+ ZKP-NL proof verified" : "- ZKP-NL verification FAILED");
     }
 
+    puts("\n*** HPKS-WOTS-F / HPKS-XMSS-F \xe2\x80\x94 hash-based many-time signatures");
+    {
+        uint8_t xmss_seed[KEYBYTES];
+        if (fread(xmss_seed, 1, KEYBYTES, urnd) != KEYBYTES) exit(1);
+        int xmss_h = 3;  /* 8 leaves; production uses h=10 */
+        uint8_t xmss_root[KEYBYTES];
+        uint8_t *xmss_leaves;
+        size_t   xmss_num;
+        hpks_xmss_keygen(xmss_root, &xmss_leaves, &xmss_num, xmss_seed, xmss_h);
+
+        const uint8_t xmss_msg[] = "HPKS-XMSS-F test message";
+        HpksXmssSig sig0, sig1;
+        hpks_xmss_sign(&sig0, xmss_msg, sizeof(xmss_msg)-1,
+                        xmss_seed, xmss_leaves, xmss_num, 0);
+        hpks_xmss_sign(&sig1, xmss_msg, sizeof(xmss_msg)-1,
+                        xmss_seed, xmss_leaves, xmss_num, 1);
+
+        int ok0   = hpks_xmss_verify(xmss_msg, sizeof(xmss_msg)-1, &sig0, xmss_root);
+        int ok1   = hpks_xmss_verify(xmss_msg, sizeof(xmss_msg)-1, &sig1, xmss_root);
+        const uint8_t bad_msg[] = "tampered";
+        int bad   = hpks_xmss_verify(bad_msg, sizeof(bad_msg)-1, &sig0, xmss_root);
+        const uint8_t diff_msg[] = "different message";
+        int reuse = hpks_xmss_verify(diff_msg, sizeof(diff_msg)-1, &sig0, xmss_root);
+
+        if (ok0 && ok1 && !bad && !reuse)
+            printf("- HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n",
+                   xmss_h);
+        else
+            printf("+ HPKS-XMSS-F FAILED: ok0=%d ok1=%d bad=%d reuse=%d\n",
+                   ok0, ok1, bad, reuse);
+
+        hpks_xmss_sig_free(&sig0);
+        hpks_xmss_sig_free(&sig1);
+        free(xmss_leaves);
+    }
+
     /* *** EVE bypass TESTS *** */
     printf("\n\n*** EVE bypass TESTS\n");
 

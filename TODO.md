@@ -6102,7 +6102,9 @@ Status: **DONE v1.9.40**
 
 **Assembly/Arduino scope:** out of scope — the WOTS chain length and Merkle tree are too large for the 32-bit demo targets.
 
-Status: **OPEN**
+**Note on Python:** The Python suite already had HPKS-WOTS-F / HPKS-XMSS-F from TODO #97 (v1.9.39). This TODO adds the missing C, Go, and test-file coverage.
+
+Status: **DONE v1.9.42**
 
 ---
 

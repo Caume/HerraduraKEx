@@ -2165,6 +2165,164 @@ func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray 
 }
 
 // ---------------------------------------------------------------------------
+// 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97/#102)
+//
+// Hash chain step: h(x) = NlFscxRevolveV1(ROL(x, n/8), x, n/4)
+// Winternitz w=16: ℓ_msg=64 nibbles, ℓ_cs=3, ℓ=67 total chains.
+// ---------------------------------------------------------------------------
+
+const (
+	WotsW    = 16
+	WotsLog2W = 4
+	WotsL1   = 64 // 256 / log2(16)
+	WotsL2   = 3  // checksum digits base-16
+	WotsL    = 67
+)
+
+// wotsH applies one hash-chain step: h(x) = NlFscxRevolveV1(ROL(x,n/8), x, n/4).
+func wotsH(x *BitArray) *BitArray {
+	n := x.Size()
+	return NlFscxRevolveV1(x.RotateLeft(n/8), x, n/4)
+}
+
+// wotsChain applies wotsH exactly steps times.
+func wotsChain(x *BitArray, steps int) *BitArray {
+	for i := 0; i < steps; i++ {
+		x = wotsH(x)
+	}
+	return x
+}
+
+// wotsMsgToDigits encodes a 32-byte hash as WotsL base-16 digits with checksum.
+func wotsMsgToDigits(msgHash []byte) []int {
+	digits := make([]int, WotsL)
+	for i := 0; i < WotsL1; i++ {
+		digits[i] = int((msgHash[i/2] >> (4 * uint(1-(i%2)))) & 0xF)
+	}
+	cs := 0
+	for i := 0; i < WotsL1; i++ {
+		cs += WotsW - 1 - digits[i]
+	}
+	for i := 0; i < WotsL2; i++ {
+		digits[WotsL1+i] = (cs >> (4 * uint(WotsL2-1-i))) & 0xF
+	}
+	return digits
+}
+
+// wotsLeafSeed derives the WOTS SK for (leafIdx, chainIdx) from masterSeed.
+func wotsLeafSeed(masterSeed []byte, leafIdx uint32, chainIdx uint16) *BitArray {
+	buf := make([]byte, len(masterSeed)+6)
+	copy(buf, masterSeed)
+	buf[len(masterSeed)+0] = byte(leafIdx >> 24)
+	buf[len(masterSeed)+1] = byte(leafIdx >> 16)
+	buf[len(masterSeed)+2] = byte(leafIdx >> 8)
+	buf[len(masterSeed)+3] = byte(leafIdx)
+	buf[len(masterSeed)+4] = byte(chainIdx >> 8)
+	buf[len(masterSeed)+5] = byte(chainIdx)
+	h := Hfscx256(buf, nil)
+	return NewBitArray(256, new(big.Int).SetBytes(h))
+}
+
+// HpksWotsKeygen generates (sk, pk) for one WOTS leaf — each WotsL BitArrays.
+func HpksWotsKeygen(masterSeed []byte, leafIdx uint32) ([WotsL]*BitArray, [WotsL]*BitArray) {
+	var sk, pk [WotsL]*BitArray
+	for i := 0; i < WotsL; i++ {
+		sk[i] = wotsLeafSeed(masterSeed, leafIdx, uint16(i))
+		pk[i] = wotsChain(sk[i], WotsW-1)
+	}
+	return sk, pk
+}
+
+// HpksWotsSign returns sig[i] = h^(w-1-d_i)(sk[i]).
+func HpksWotsSign(msg, masterSeed []byte, leafIdx uint32) [WotsL]*BitArray {
+	msgHash := Hfscx256(msg, nil)
+	digits  := wotsMsgToDigits(msgHash)
+	sk, _   := HpksWotsKeygen(masterSeed, leafIdx)
+	var sig [WotsL]*BitArray
+	for i := 0; i < WotsL; i++ {
+		sig[i] = wotsChain(sk[i], WotsW-1-digits[i])
+	}
+	return sig
+}
+
+// HpksWotsRecoverPk recovers the WOTS public key from (msg, sig).
+func HpksWotsRecoverPk(msg []byte, sig [WotsL]*BitArray) [WotsL]*BitArray {
+	msgHash := Hfscx256(msg, nil)
+	digits  := wotsMsgToDigits(msgHash)
+	var recovered [WotsL]*BitArray
+	for i := 0; i < WotsL; i++ {
+		recovered[i] = wotsChain(sig[i], digits[i])
+	}
+	return recovered
+}
+
+// HpksWotsVerify returns true iff h^{d_i}(sig[i]) == pk[i] for all i.
+func HpksWotsVerify(msg []byte, sig, pk [WotsL]*BitArray) bool {
+	recovered := HpksWotsRecoverPk(msg, sig)
+	for i := 0; i < WotsL; i++ {
+		if recovered[i].Val.Cmp(&pk[i].Val) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// wotsPkBytes serialises a WOTS pk to a byte slice (WotsL * 32 bytes).
+func wotsPkBytes(pk [WotsL]*BitArray) []byte {
+	out := make([]byte, WotsL*32)
+	for i := 0; i < WotsL; i++ {
+		b := pk[i].Bytes()
+		copy(out[i*32:], b)
+	}
+	return out
+}
+
+// HpksXmssKeypair holds the public root and the leaf-hash tree.
+type HpksXmssKeypair struct {
+	MasterSeed []byte
+	Root       []byte   // 32-byte XMSS public key (Merkle root)
+	LeafHashes [][]byte // 2^H leaf hashes for proof generation
+}
+
+// HpksXmssKeygen builds a 2^h-leaf Merkle tree from masterSeed.
+func HpksXmssKeygen(masterSeed []byte, h int) *HpksXmssKeypair {
+	num := 1 << h
+	leafHashes := make([][]byte, num)
+	for idx := 0; idx < num; idx++ {
+		_, pk := HpksWotsKeygen(masterSeed, uint32(idx))
+		leafHashes[idx] = HaccumLeaf(wotsPkBytes(pk))
+	}
+	return &HpksXmssKeypair{
+		MasterSeed: masterSeed,
+		Root:       HaccumRoot(leafHashes),
+		LeafHashes: leafHashes,
+	}
+}
+
+// HpksXmssSig holds an XMSS-F signature.
+type HpksXmssSig struct {
+	LeafIdx  int
+	WotsSig  [WotsL]*BitArray
+	AuthPath [][]byte
+}
+
+// HpksXmssSign signs msg at leafIdx using the pre-built keypair.
+func HpksXmssSign(msg []byte, kp *HpksXmssKeypair, leafIdx int) *HpksXmssSig {
+	return &HpksXmssSig{
+		LeafIdx:  leafIdx,
+		WotsSig:  HpksWotsSign(msg, kp.MasterSeed, uint32(leafIdx)),
+		AuthPath: HaccumProve(kp.LeafHashes, leafIdx),
+	}
+}
+
+// HpksXmssVerify verifies an XMSS-F signature against root.
+func HpksXmssVerify(msg []byte, sig *HpksXmssSig, root []byte) bool {
+	recovered := HpksWotsRecoverPk(msg, sig.WotsSig)
+	leafHash  := HaccumLeaf(wotsPkBytes(recovered))
+	return HaccumVerify(root, leafHash, sig.AuthPath, sig.LeafIdx)
+}
+
+// ---------------------------------------------------------------------------
 // 78.H — Masking-Friendly FSCX (Boolean masking via GF(2) linearity)
 //
 // FSCX(A⊕r, B, steps) ⊕ FSCX(r, 0, steps) = FSCX(A, B, steps)
