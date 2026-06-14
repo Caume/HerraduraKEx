@@ -6200,4 +6200,4 @@ The threshold workflow is a 3-phase protocol over files:
 
 **Note:** The `hpkst_sign`/`HpkstSign` library functions perform all rounds internally (for demos/tests). The CLI must expose the individual rounds so that different parties can run different phases on different machines.
 
-Status: OPEN
+Status: **DONE v1.9.44**

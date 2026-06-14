@@ -279,6 +279,99 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# HPKS-T (threshold) PEM encode/decode — TODO #106
+#
+# Wire formats (all DER SEQUENCE of INTEGERs):
+#   HPKST COMMITMENT  — [R_j, C_j, n]  (public nonce + signer pubkey)
+#   HPKST NONCE       — [k_j, n]        (secret nonce; delete after use)
+#   HPKST AGGREGATE   — [R, C_agg, e, n] (broadcast by coordinator)
+#   HPKST PARTIAL     — [s_j, n]        (per-signer response)
+#   HPKST SIGNATURE   — [C_agg, R, s, n] (final verifiable signature)
+# ---------------------------------------------------------------------------
+
+_HPKST_COMMIT_LBL    = "HERRADURA HPKST COMMITMENT"
+_HPKST_NONCE_LBL     = "HERRADURA HPKST NONCE"
+_HPKST_AGGREGATE_LBL = "HERRADURA HPKST AGGREGATE"
+_HPKST_PARTIAL_LBL   = "HERRADURA HPKST PARTIAL"
+_HPKST_SIG_LBL       = "HERRADURA HPKST SIGNATURE"
+
+
+def encode_hpkst_commit(R_j: int, C_j: int, n: int) -> str:
+    nb = n // 8
+    der = der_seq(der_int(R_j, nb), der_int(C_j, nb), der_int(n, 4))
+    return pem_wrap(_HPKST_COMMIT_LBL, der)
+
+
+def decode_hpkst_commit(pem_text: str) -> tuple:
+    """Returns (R_j, C_j, n)."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HPKST_COMMIT_LBL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    R_j, C_j, n = der_parse_seq(data)
+    return R_j, C_j, n
+
+
+def encode_hpkst_nonce(k_j: int, n: int) -> str:
+    nb = n // 8
+    der = der_seq(der_int(k_j, nb), der_int(n, 4))
+    return pem_wrap(_HPKST_NONCE_LBL, der)
+
+
+def decode_hpkst_nonce(pem_text: str) -> tuple:
+    """Returns (k_j, n)."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HPKST_NONCE_LBL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    k_j, n = der_parse_seq(data)
+    return k_j, n
+
+
+def encode_hpkst_aggregate(R: int, C_agg: int, e: int, n: int) -> str:
+    nb = n // 8
+    der = der_seq(der_int(R, nb), der_int(C_agg, nb), der_int(e, nb), der_int(n, 4))
+    return pem_wrap(_HPKST_AGGREGATE_LBL, der)
+
+
+def decode_hpkst_aggregate(pem_text: str) -> tuple:
+    """Returns (R, C_agg, e, n)."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HPKST_AGGREGATE_LBL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    R, C_agg, e, n = der_parse_seq(data)
+    return R, C_agg, e, n
+
+
+def encode_hpkst_partial(s_j: int, n: int) -> str:
+    nb = n // 8
+    der = der_seq(der_int(s_j, nb), der_int(n, 4))
+    return pem_wrap(_HPKST_PARTIAL_LBL, der)
+
+
+def decode_hpkst_partial(pem_text: str) -> tuple:
+    """Returns (s_j, n)."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HPKST_PARTIAL_LBL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    s_j, n = der_parse_seq(data)
+    return s_j, n
+
+
+def encode_hpkst_sig(C_agg: int, R: int, s: int, n: int) -> str:
+    nb = n // 8
+    der = der_seq(der_int(C_agg, nb), der_int(R, nb), der_int(s, nb), der_int(n, 4))
+    return pem_wrap(_HPKST_SIG_LBL, der)
+
+
+def decode_hpkst_sig(pem_text: str) -> tuple:
+    """Returns (C_agg, R, s, n)."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HPKST_SIG_LBL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    C_agg, R, s, n = der_parse_seq(data)
+    return C_agg, R, s, n
+
+
+# ---------------------------------------------------------------------------
 # Self-test (runs when imported as __main__ only)
 # ---------------------------------------------------------------------------
 if __name__ == '__main__':

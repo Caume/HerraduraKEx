@@ -1,5 +1,5 @@
 // HerraduraCli/herradura_cli.go — Go CLI for the Herradura Cryptographic Suite
-// v1.8.8
+// v1.9.44
 //
 // Usage:
 //   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem
@@ -67,6 +67,12 @@ const (
 	lblOprfState  = "HERRADURA OPRF CLIENT STATE"
 	lblOprfEval   = "HERRADURA OPRF EVALUATION"
 	lblPakeRecord = "HERRADURA PAKE RECORD"
+
+	lblHpkstCommit    = "HERRADURA HPKST COMMITMENT"
+	lblHpkstNonce     = "HERRADURA HPKST NONCE"
+	lblHpkstAggregate = "HERRADURA HPKST AGGREGATE"
+	lblHpkstPartial   = "HERRADURA HPKST PARTIAL"
+	lblHpkstSig       = "HERRADURA HPKST SIGNATURE"
 )
 
 var privToAlgo = map[string]string{
@@ -1653,8 +1659,12 @@ func cmdVerify(args []string) {
 	sig    := fs.String("sig", "", "Signature PEM file")
 	fs.Parse(args)
 
-	if *algo == "" || *pubkey == "" || *sig == "" {
-		fmt.Fprintln(os.Stderr, "verify: --algo, --pubkey, --sig required")
+	if *algo == "" || *sig == "" {
+		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
+		os.Exit(1)
+	}
+	if *algo != "hpks-t" && *pubkey == "" {
+		fmt.Fprintln(os.Stderr, "verify: --pubkey required")
 		os.Exit(1)
 	}
 
@@ -1664,6 +1674,15 @@ func cmdVerify(args []string) {
 	}
 	if *digest == "hfscx-256" {
 		inBytes = Hfscx256(inBytes, nil)
+	}
+
+	// hpks-t: C_agg is embedded in sig — no pubkey file needed.
+	if *algo == "hpks-t" {
+		// Pass --in, --sig, --digest directly from parsed values.
+		tvArgs := []string{"--sig", *sig, "--in", *in}
+		if *digest != "" { tvArgs = append(tvArgs, "--digest", *digest) }
+		cmdThresholdVerify(tvArgs)
+		return
 	}
 
 	// ZKP-NL: raw binary PEM — must not call readPEMInts
@@ -2349,6 +2368,360 @@ Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
 `)
 }
 
+// ── HPKS-T threshold signing (TODO #106) ─────────────────────────────────────
+
+// loadHpksPrivForThreshold loads hpks or hpks-nl private key; returns (priv, pub, n).
+func loadHpksPrivForThreshold(path string) (*big.Int, *big.Int, int) {
+	label, ints, err := readPEMInts(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "threshold: cannot read key %s: %v\n", path, err)
+		os.Exit(1)
+	}
+	if label != lblHpksPriv && label != lblHpksNLPriv {
+		fmt.Fprintf(os.Stderr, "threshold: expected hpks or hpks-nl key, got %q\n", label)
+		os.Exit(1)
+	}
+	priv := new(big.Int).SetBytes(ints[0])
+	pub  := new(big.Int).SetBytes(ints[1])
+	n    := bytesToInt(ints[2])
+	return priv, pub, n
+}
+
+// encodeHpkstCommit encodes (R_j, C_j, n) as HPKST COMMITMENT PEM.
+func encodeHpkstCommit(Rj, Cj *big.Int, n int) (string, error) {
+	nb := n / 8
+	a, e1 := derIntBig(Rj, nb)
+	b, e2 := derIntBig(Cj, nb)
+	c, e3 := derIntSmall(n)
+	if e1 != nil || e2 != nil || e3 != nil {
+		return "", fmt.Errorf("encodeHpkstCommit: DER error")
+	}
+	seq, err := DerSeqEnc(a, b, c)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHpkstCommit, seq), nil
+}
+
+// encodeHpkstNonce encodes (k_j, n) as HPKST NONCE PEM.
+func encodeHpkstNonce(kj *big.Int, n int) (string, error) {
+	nb := n / 8
+	a, e1 := derIntBig(kj, nb)
+	b, e2 := derIntSmall(n)
+	if e1 != nil || e2 != nil {
+		return "", fmt.Errorf("encodeHpkstNonce: DER error")
+	}
+	seq, err := DerSeqEnc(a, b)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHpkstNonce, seq), nil
+}
+
+// encodeHpkstAggregate encodes (R, C_agg, e, n) as HPKST AGGREGATE PEM.
+func encodeHpkstAggregate(R, Cagg, e *big.Int, n int) (string, error) {
+	nb := n / 8
+	a, e1 := derIntBig(R, nb)
+	b, e2 := derIntBig(Cagg, nb)
+	c, e3 := derIntBig(e, nb)
+	d, e4 := derIntSmall(n)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return "", fmt.Errorf("encodeHpkstAggregate: DER error")
+	}
+	seq, err := DerSeqEnc(a, b, c, d)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHpkstAggregate, seq), nil
+}
+
+// encodeHpkstPartial encodes (s_j, n) as HPKST PARTIAL PEM.
+func encodeHpkstPartial(sj *big.Int, n int) (string, error) {
+	nb := n / 8
+	a, e1 := derIntBig(sj, nb)
+	b, e2 := derIntSmall(n)
+	if e1 != nil || e2 != nil {
+		return "", fmt.Errorf("encodeHpkstPartial: DER error")
+	}
+	seq, err := DerSeqEnc(a, b)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHpkstPartial, seq), nil
+}
+
+// encodeHpkstSig encodes (C_agg, R, s, n) as HPKST SIGNATURE PEM.
+func encodeHpkstSig(Cagg, R, s *big.Int, n int) (string, error) {
+	nb := n / 8
+	a, e1 := derIntBig(Cagg, nb)
+	b, e2 := derIntBig(R, nb)
+	c, e3 := derIntBig(s, nb)
+	d, e4 := derIntSmall(n)
+	if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+		return "", fmt.Errorf("encodeHpkstSig: DER error")
+	}
+	seq, err := DerSeqEnc(a, b, c, d)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHpkstSig, seq), nil
+}
+
+// stringFlags collects all occurrences of a flag name from args (e.g. "--commit").
+func stringFlags(args []string, name string) []string {
+	var out []string
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == name {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func cmdThresholdCommit(args []string) {
+	fs      := flag.NewFlagSet("threshold-commit", flag.ExitOnError)
+	key     := fs.String("key", "", "hpks or hpks-nl private key PEM")
+	commitOut := fs.String("commit-out", "", "Output commitment PEM")
+	nonceOut  := fs.String("nonce-out",  "", "Output nonce PEM")
+	fs.Parse(args)
+	if *key == "" || *commitOut == "" || *nonceOut == "" {
+		fmt.Fprintln(os.Stderr, "threshold-commit: --key, --commit-out, --nonce-out required")
+		os.Exit(1)
+	}
+	_, pub, n := loadHpksPrivForThreshold(*key)
+	kj        := NewRandBitArray(n)
+	gGen      := new(big.Int).SetInt64(GfGen)
+	poly      := GfPoly[n]
+	if poly == nil { poly = GfPoly[256] }
+	Rj        := GfPow(gGen, &kj.Val, poly, n)
+
+	commitPEM, err := encodeHpkstCommit(Rj, pub, n)
+	if err != nil { die("threshold-commit", err) }
+	noncePEM, err  := encodeHpkstNonce(&kj.Val, n)
+	if err != nil { die("threshold-commit", err) }
+	if err := writeString(*commitOut, commitPEM); err != nil { die("threshold-commit", err) }
+	if err := writeString(*nonceOut, noncePEM); err != nil { die("threshold-commit", err) }
+}
+
+func cmdThresholdAggregate(args []string) {
+	commitPaths := stringFlags(args, "--commit")
+
+	fs     := flag.NewFlagSet("threshold-aggregate", flag.ExitOnError)
+	in     := fs.String("in", "-", "Message input file")
+	out    := fs.String("out", "-", "Output aggregate PEM")
+	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	fs.Parse(filterMultiFlags(args, "--commit"))
+	if len(commitPaths) == 0 {
+		fmt.Fprintln(os.Stderr, "threshold-aggregate: at least one --commit required")
+		os.Exit(1)
+	}
+
+	inBytes, err := readFile(*in)
+	if err != nil { die("threshold-aggregate", err) }
+	if *digest == "hfscx-256" { inBytes = Hfscx256(inBytes, nil) }
+
+	n     := 256
+	poly  := GfPoly[n]
+	R     := big.NewInt(1)
+	pubs  := make([]*big.Int, len(commitPaths))
+	for i, cp := range commitPaths {
+		label, ints, cerr := readPEMInts(cp)
+		if cerr != nil { die("threshold-aggregate", cerr) }
+		if label != lblHpkstCommit || len(ints) < 2 {
+			fmt.Fprintf(os.Stderr, "threshold-aggregate: invalid commitment PEM: %s\n", cp)
+			os.Exit(1)
+		}
+		Rj := new(big.Int).SetBytes(ints[0])
+		R   = GfMul(R, Rj, poly, n)
+		pubs[i] = new(big.Int).SetBytes(ints[1])
+	}
+
+	msg   := msgPad(inBytes, n/8)
+	RBa   := NewBitArray(n, R)
+	msgBa := NewBitArray(n, new(big.Int).SetBytes(msg))
+	eBa   := NlFscxRevolveV1(RBa, msgBa, n/4)
+	eBig  := new(big.Int).SetBytes(eBa.Bytes())
+
+	Cagg, _ := HpkstAggregatePublickeys(pubs)
+
+	pemOut, err := encodeHpkstAggregate(R, Cagg, eBig, n)
+	if err != nil { die("threshold-aggregate", err) }
+	if err := writeString(*out, pemOut); err != nil { die("threshold-aggregate", err) }
+}
+
+// filterMultiFlags removes occurrences of "--flag value" pairs from args
+// so the remaining args can be parsed by flag.FlagSet without unknown-flag errors.
+func filterMultiFlags(args []string, flag string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == flag && i+1 < len(args) {
+			i++ // skip value
+		} else {
+			out = append(out, args[i])
+		}
+	}
+	return out
+}
+
+func cmdThresholdRespond(args []string) {
+	commitPaths := stringFlags(args, "--commit")
+	rest        := filterMultiFlags(args, "--commit")
+
+	fs        := flag.NewFlagSet("threshold-respond", flag.ExitOnError)
+	key       := fs.String("key", "", "hpks or hpks-nl private key PEM")
+	aggregate := fs.String("aggregate", "", "Aggregate PEM from coordinator")
+	nonce     := fs.String("nonce", "", "Nonce PEM from threshold-commit")
+	out       := fs.String("out", "-", "Output partial signature PEM")
+	fs.Parse(rest)
+	if *key == "" || *aggregate == "" || *nonce == "" {
+		fmt.Fprintln(os.Stderr, "threshold-respond: --key, --aggregate, --nonce required")
+		os.Exit(1)
+	}
+	if len(commitPaths) == 0 {
+		fmt.Fprintln(os.Stderr, "threshold-respond: at least one --commit required")
+		os.Exit(1)
+	}
+
+	priv, ourPub, n := loadHpksPrivForThreshold(*key)
+
+	// Load aggregate PEM
+	aggLabel, aggInts, err := readPEMInts(*aggregate)
+	if err != nil { die("threshold-respond", err) }
+	if aggLabel != lblHpkstAggregate || len(aggInts) < 3 {
+		fmt.Fprintln(os.Stderr, "threshold-respond: invalid aggregate PEM")
+		os.Exit(1)
+	}
+	eBig := new(big.Int).SetBytes(aggInts[2])
+
+	// Load nonce PEM
+	nonceLabel, nonceInts, err := readPEMInts(*nonce)
+	if err != nil { die("threshold-respond", err) }
+	if nonceLabel != lblHpkstNonce || len(nonceInts) < 1 {
+		fmt.Fprintln(os.Stderr, "threshold-respond: invalid nonce PEM")
+		os.Exit(1)
+	}
+	kj := new(big.Int).SetBytes(nonceInts[0])
+
+	// Load pubkeys from commitments
+	pubs := make([]*big.Int, len(commitPaths))
+	for i, cp := range commitPaths {
+		label, ints, cerr := readPEMInts(cp)
+		if cerr != nil { die("threshold-respond", cerr) }
+		if label != lblHpkstCommit || len(ints) < 2 {
+			fmt.Fprintf(os.Stderr, "threshold-respond: invalid commitment PEM: %s\n", cp)
+			os.Exit(1)
+		}
+		pubs[i] = new(big.Int).SetBytes(ints[1])
+	}
+
+	// Compute mu_j
+	_, coeffs := HpkstAggregatePublickeys(pubs)
+	ourIdx := -1
+	for i, p := range pubs {
+		if p.Cmp(ourPub) == 0 { ourIdx = i; break }
+	}
+	if ourIdx < 0 {
+		fmt.Fprintln(os.Stderr, "threshold-respond: our public key not found in commits")
+		os.Exit(1)
+	}
+	mu := coeffs[ourIdx]
+
+	// s_j = (k_j - priv * mu_j * e) mod ord
+	ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+	ame := new(big.Int).Mul(priv, mu)
+	ame.Mul(ame, eBig)
+	ame.Mod(ame, ord)
+	sj := new(big.Int).Sub(kj, ame)
+	sj.Mod(sj, ord)
+	if sj.Sign() < 0 { sj.Add(sj, ord) }
+
+	pemOut, err := encodeHpkstPartial(sj, n)
+	if err != nil { die("threshold-respond", err) }
+	if err := writeString(*out, pemOut); err != nil { die("threshold-respond", err) }
+}
+
+func cmdThresholdCombine(args []string) {
+	partialPaths := stringFlags(args, "--partial")
+	rest         := filterMultiFlags(args, "--partial")
+
+	fs        := flag.NewFlagSet("threshold-combine", flag.ExitOnError)
+	aggregate := fs.String("aggregate", "", "Aggregate PEM")
+	out       := fs.String("out", "-", "Output HPKST SIGNATURE PEM")
+	fs.Parse(rest)
+	if *aggregate == "" {
+		fmt.Fprintln(os.Stderr, "threshold-combine: --aggregate required")
+		os.Exit(1)
+	}
+	if len(partialPaths) == 0 {
+		fmt.Fprintln(os.Stderr, "threshold-combine: at least one --partial required")
+		os.Exit(1)
+	}
+
+	aggLabel, aggInts, err := readPEMInts(*aggregate)
+	if err != nil { die("threshold-combine", err) }
+	if aggLabel != lblHpkstAggregate || len(aggInts) < 2 {
+		fmt.Fprintln(os.Stderr, "threshold-combine: invalid aggregate PEM")
+		os.Exit(1)
+	}
+	R    := new(big.Int).SetBytes(aggInts[0])
+	Cagg := new(big.Int).SetBytes(aggInts[1])
+	n    := 256
+	ord  := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1))
+
+	sAcc := big.NewInt(0)
+	for _, pp := range partialPaths {
+		label, ints, perr := readPEMInts(pp)
+		if perr != nil { die("threshold-combine", perr) }
+		if label != lblHpkstPartial || len(ints) < 1 {
+			fmt.Fprintf(os.Stderr, "threshold-combine: invalid partial PEM: %s\n", pp)
+			os.Exit(1)
+		}
+		sj := new(big.Int).SetBytes(ints[0])
+		sAcc.Add(sAcc, sj)
+		sAcc.Mod(sAcc, ord)
+	}
+
+	pemOut, err := encodeHpkstSig(Cagg, R, sAcc, n)
+	if err != nil { die("threshold-combine", err) }
+	if err := writeString(*out, pemOut); err != nil { die("threshold-combine", err) }
+}
+
+func cmdThresholdVerify(args []string) {
+	fs     := flag.NewFlagSet("threshold-verify", flag.ExitOnError)
+	in     := fs.String("in", "-", "Message input file")
+	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
+	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
+	fs.Parse(args)
+	if *sig == "" {
+		fmt.Fprintln(os.Stderr, "threshold-verify: --sig required")
+		os.Exit(1)
+	}
+
+	inBytes, err := readFile(*in)
+	if err != nil { die("threshold-verify", err) }
+	if *digest == "hfscx-256" { inBytes = Hfscx256(inBytes, nil) }
+
+	sigLabel, sigInts, err := readPEMInts(*sig)
+	if err != nil { die("threshold-verify", err) }
+	if sigLabel != lblHpkstSig || len(sigInts) < 3 {
+		fmt.Fprintln(os.Stderr, "threshold-verify: invalid HPKST SIGNATURE PEM")
+		os.Exit(1)
+	}
+	Cagg := new(big.Int).SetBytes(sigInts[0])
+	R    := new(big.Int).SetBytes(sigInts[1])
+	s    := new(big.Int).SetBytes(sigInts[2])
+	n    := 256
+
+	msg := msgPad(inBytes, n/8)
+	if HpkstVerify(Cagg, R, s, msg) {
+		fmt.Println("Signature OK")
+		os.Exit(0)
+	} else {
+		fmt.Println("Verification FAILED")
+		os.Exit(1)
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -2391,6 +2764,14 @@ func main() {
 		cmdPakeRegister(rest)
 	case "pake-demo":
 		cmdPakeDemo(rest)
+	case "threshold-commit":
+		cmdThresholdCommit(rest)
+	case "threshold-aggregate":
+		cmdThresholdAggregate(os.Args[2:])
+	case "threshold-respond":
+		cmdThresholdRespond(os.Args[2:])
+	case "threshold-combine":
+		cmdThresholdCombine(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()

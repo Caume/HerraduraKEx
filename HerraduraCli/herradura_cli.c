@@ -1217,6 +1217,302 @@ static void cmd_dec(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * threshold signing phases — HPKS-T (TODO #106)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Collect all occurrences of --flag in argv into paths[0..count-1].
+ * Returns the count. paths must be large enough (caller provides max). */
+static int get_arg_multi(int argc, char **argv, const char *flag,
+                         const char **paths, int max)
+{
+    int n = 0;
+    for (int i = 1; i < argc - 1 && n < max; i++)
+        if (strcmp(argv[i], flag) == 0) paths[n++] = argv[i + 1];
+    return n;
+}
+
+/* Load hpks or hpks-nl private key; fill priv, pub, return nbits. */
+static int load_hpks_priv_for_threshold(const char *key_path,
+                                         BitArray *priv_out, BitArray *pub_out)
+{
+    PemKey k;
+    pem_key_load(&k, key_path);
+    int is_hpks    = strcmp(k.label, PEM_HPKS_PRIV)    == 0;
+    int is_hpks_nl = strcmp(k.label, PEM_HPKS_NL_PRIV) == 0;
+    if (!is_hpks && !is_hpks_nl)
+        dief("threshold: expected hpks or hpks-nl key; got label '%s'", k.label);
+    if (k.n_items < 3) die("threshold: malformed private key (< 3 integers)");
+    ba_from_ra(priv_out, k.vals[0], k.vlens[0]);
+    ba_from_ra(pub_out,  k.vals[1], k.vlens[1]);
+    int nbits = pem_key_get_n(&k, 2);
+    pem_key_free(&k);
+    return nbits;
+}
+
+/* Phase 1: commit — generate nonce k_j, write commitment + nonce PEMs. */
+static void cmd_threshold_commit(int argc, char **argv)
+{
+    const char *key_path    = get_arg(argc, argv, "--key");
+    const char *commit_out  = get_arg(argc, argv, "--commit-out");
+    const char *nonce_out   = get_arg(argc, argv, "--nonce-out");
+    if (!key_path)   die("threshold-commit: --key required");
+    if (!commit_out) die("threshold-commit: --commit-out required");
+    if (!nonce_out)  die("threshold-commit: --nonce-out required");
+
+    BitArray priv, pub;
+    load_hpks_priv_for_threshold(key_path, &priv, &pub);  /* nbits always 256 */
+
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+    BitArray k_j, R_j;
+    ba_rand(&k_j, urnd);
+    fclose(urnd);
+    gf_pow_ba(&R_j, &GF_GEN_BA, &k_j);
+
+    /* commitment: DER seq(R_j, C_j, n=256) */
+    uint8_t iR[DER_INT_LEN(KEYBYTES)], iC[DER_INT_LEN(KEYBYTES)], in[8];
+    size_t  lR, lC, ln;
+    der_i32(R_j.b, iR, &lR);
+    der_i32(pub.b,  iC, &lC);
+    der_i_n256(in, &ln);
+    { const uint8_t *it[3] = {iR, iC, in}; size_t il[3] = {lR, lC, ln};
+      seq_and_write(it, il, 3, PEM_HPKST_COMMIT, commit_out); }
+
+    /* nonce: DER seq(k_j, n=256) */
+    uint8_t ik[DER_INT_LEN(KEYBYTES)]; size_t lk;
+    der_i32(k_j.b, ik, &lk);
+    { const uint8_t *it[2] = {ik, in}; size_t il[2] = {lk, ln};
+      seq_and_write(it, il, 2, PEM_HPKST_NONCE, nonce_out); }
+}
+
+/* Phase 2: aggregate — read all commitment PEMs + message, write aggregate PEM. */
+static void cmd_threshold_aggregate(int argc, char **argv)
+{
+    const char *in_path     = get_arg(argc, argv, "--in");
+    const char *out_path    = get_arg(argc, argv, "--out");
+    const char *digest      = get_arg(argc, argv, "--digest");
+    if (!in_path)  die("threshold-aggregate: --in required");
+    if (!out_path) die("threshold-aggregate: --out required");
+
+    const char *commit_paths[64];
+    int n_signers = get_arg_multi(argc, argv, "--commit", commit_paths, 64);
+    if (n_signers < 1) die("threshold-aggregate: at least one --commit required");
+
+    /* Load message */
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    uint8_t msg_bytes[KEYBYTES];
+    if (digest && strcmp(digest, "hfscx-256") == 0) {
+        hfscx_256(in_buf, in_len, NULL, msg_bytes);
+    } else {
+        memset(msg_bytes, 0, KEYBYTES);
+        size_t cp = in_len < KEYBYTES ? in_len : KEYBYTES;
+        memcpy(msg_bytes, in_buf, cp);
+    }
+    free(in_buf);
+    BitArray msg; memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    /* Load all commitment PEMs */
+    BitArray *R_parts = (BitArray *)malloc((size_t)n_signers * sizeof(BitArray));
+    BitArray *pubkeys  = (BitArray *)malloc((size_t)n_signers * sizeof(BitArray));
+    if (!R_parts || !pubkeys) die("threshold-aggregate: oom");
+    for (int j = 0; j < n_signers; j++) {
+        PemKey ck; pem_key_load(&ck, commit_paths[j]);
+        if (strcmp(ck.label, PEM_HPKST_COMMIT) != 0 || ck.n_items < 2)
+            dief("threshold-aggregate: invalid commitment PEM: %s", commit_paths[j]);
+        ba_from_ra(&R_parts[j], ck.vals[0], ck.vlens[0]);
+        ba_from_ra(&pubkeys[j], ck.vals[1], ck.vlens[1]);
+        pem_key_free(&ck);
+    }
+
+    /* R = Π R_j */
+    BitArray R;
+    memset(R.b, 0, KEYBYTES); R.b[KEYBYTES-1] = 1;
+    for (int j = 0; j < n_signers; j++) {
+        BitArray tmp; gf_mul_ba(&tmp, &R, &R_parts[j]); R = tmp;
+    }
+
+    /* e = nl_fscx_revolve_v1(R, msg, I_VALUE) */
+    BitArray e; nl_fscx_revolve_v1_ba(&e, &R, &msg, I_VALUE);
+
+    /* C_agg via _hpkst helpers */
+    size_t llen;
+    uint8_t *L_bytes = _hpkst_build_L(pubkeys, (size_t)n_signers, &llen);
+    uint8_t (*mu)[KEYBYTES] = (uint8_t (*)[KEYBYTES])malloc((size_t)n_signers * KEYBYTES);
+    if (!mu) die("threshold-aggregate: oom");
+    BitArray C_agg;
+    _hpkst_aggregate(pubkeys, (size_t)n_signers, L_bytes, llen, mu, &C_agg);
+    free(L_bytes); free(mu); free(R_parts); free(pubkeys);
+
+    /* Write aggregate PEM: seq(R, C_agg, e, n=256) */
+    uint8_t iR[DER_INT_LEN(KEYBYTES)], iC[DER_INT_LEN(KEYBYTES)];
+    uint8_t ie[DER_INT_LEN(KEYBYTES)], in[8];
+    size_t  lR, lC, le, ln;
+    der_i32(R.b,     iR, &lR);
+    der_i32(C_agg.b, iC, &lC);
+    der_i32(e.b,     ie, &le);
+    der_i_n256(in, &ln);
+    { const uint8_t *it[4] = {iR, iC, ie, in}; size_t il[4] = {lR, lC, le, ln};
+      seq_and_write(it, il, 4, PEM_HPKST_AGGREGATE, out_path); }
+}
+
+/* Phase 3: respond — each signer computes s_j and writes partial PEM. */
+static void cmd_threshold_respond(int argc, char **argv)
+{
+    const char *key_path  = get_arg(argc, argv, "--key");
+    const char *agg_path  = get_arg(argc, argv, "--aggregate");
+    const char *nonce_path = get_arg(argc, argv, "--nonce");
+    const char *out_path  = get_arg(argc, argv, "--out");
+    if (!key_path)   die("threshold-respond: --key required");
+    if (!agg_path)   die("threshold-respond: --aggregate required");
+    if (!nonce_path) die("threshold-respond: --nonce required");
+    if (!out_path)   die("threshold-respond: --out required");
+
+    const char *commit_paths[64];
+    int n_signers = get_arg_multi(argc, argv, "--commit", commit_paths, 64);
+    if (n_signers < 1) die("threshold-respond: at least one --commit required");
+
+    BitArray priv, our_pub;
+    load_hpks_priv_for_threshold(key_path, &priv, &our_pub);
+
+    /* Load aggregate PEM: R, C_agg, e, n */
+    PemKey ak; pem_key_load(&ak, agg_path);
+    if (strcmp(ak.label, PEM_HPKST_AGGREGATE) != 0 || ak.n_items < 3)
+        die("threshold-respond: invalid aggregate PEM");
+    BitArray R_agg, C_agg_unused, e_agg;
+    ba_from_ra(&R_agg,        ak.vals[0], ak.vlens[0]);
+    ba_from_ra(&C_agg_unused, ak.vals[1], ak.vlens[1]);
+    ba_from_ra(&e_agg,        ak.vals[2], ak.vlens[2]);
+    pem_key_free(&ak);
+
+    /* Load nonce PEM: k_j, n */
+    PemKey nk; pem_key_load(&nk, nonce_path);
+    if (strcmp(nk.label, PEM_HPKST_NONCE) != 0 || nk.n_items < 1)
+        die("threshold-respond: invalid nonce PEM");
+    BitArray k_j;
+    ba_from_ra(&k_j, nk.vals[0], nk.vlens[0]);
+    pem_key_free(&nk);
+
+    /* Load all pubkeys from commitments */
+    BitArray *pubkeys = (BitArray *)malloc((size_t)n_signers * sizeof(BitArray));
+    if (!pubkeys) die("threshold-respond: oom");
+    for (int j = 0; j < n_signers; j++) {
+        PemKey ck; pem_key_load(&ck, commit_paths[j]);
+        if (strcmp(ck.label, PEM_HPKST_COMMIT) != 0 || ck.n_items < 2)
+            dief("threshold-respond: invalid commitment PEM: %s", commit_paths[j]);
+        ba_from_ra(&pubkeys[j], ck.vals[1], ck.vlens[1]);
+        pem_key_free(&ck);
+    }
+
+    /* Compute mu_j for our signer */
+    size_t llen;
+    uint8_t *L_bytes = _hpkst_build_L(pubkeys, (size_t)n_signers, &llen);
+    /* Find our index */
+    int our_idx = -1;
+    for (int j = 0; j < n_signers; j++)
+        if (memcmp(pubkeys[j].b, our_pub.b, KEYBYTES) == 0) { our_idx = j; break; }
+    if (our_idx < 0) die("threshold-respond: our public key not in commit list");
+
+    uint8_t mu_j[KEYBYTES];
+    _hpkst_mu_coeff(L_bytes, llen, &our_pub, mu_j);
+    free(L_bytes); free(pubkeys);
+
+    /* s_j = (k_j - priv * mu_j * e) mod ord */
+    BitArray mu_ba, am, ame, s_j;
+    memcpy(mu_ba.b, mu_j, KEYBYTES);
+    _ba_mod_mul_ord(&am,  &priv, &mu_ba);
+    _ba_mod_mul_ord(&ame, &am,   &e_agg);
+    _ba_mod_sub_ord(&s_j, &k_j, &ame);
+
+    /* Write partial PEM: seq(s_j, n=256) */
+    uint8_t is[DER_INT_LEN(KEYBYTES)], in[8]; size_t ls, ln;
+    der_i32(s_j.b, is, &ls);
+    der_i_n256(in, &ln);
+    { const uint8_t *it[2] = {is, in}; size_t il[2] = {ls, ln};
+      seq_and_write(it, il, 2, PEM_HPKST_PARTIAL, out_path); }
+}
+
+/* Phase 4: combine — sum all partial s_j, write final HPKST SIGNATURE PEM. */
+static void cmd_threshold_combine(int argc, char **argv)
+{
+    const char *agg_path = get_arg(argc, argv, "--aggregate");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!agg_path) die("threshold-combine: --aggregate required");
+    if (!out_path) die("threshold-combine: --out required");
+
+    const char *partial_paths[64];
+    int n_parts = get_arg_multi(argc, argv, "--partial", partial_paths, 64);
+    if (n_parts < 1) die("threshold-combine: at least one --partial required");
+
+    /* Load aggregate PEM for R and C_agg */
+    PemKey ak; pem_key_load(&ak, agg_path);
+    if (strcmp(ak.label, PEM_HPKST_AGGREGATE) != 0 || ak.n_items < 2)
+        die("threshold-combine: invalid aggregate PEM");
+    BitArray R_agg, C_agg;
+    ba_from_ra(&R_agg, ak.vals[0], ak.vlens[0]);
+    ba_from_ra(&C_agg, ak.vals[1], ak.vlens[1]);
+    pem_key_free(&ak);
+
+    /* s = Σ s_j mod ord */
+    BitArray s_acc; memset(s_acc.b, 0, KEYBYTES);
+    for (int j = 0; j < n_parts; j++) {
+        PemKey pk; pem_key_load(&pk, partial_paths[j]);
+        if (strcmp(pk.label, PEM_HPKST_PARTIAL) != 0 || pk.n_items < 1)
+            dief("threshold-combine: invalid partial PEM: %s", partial_paths[j]);
+        BitArray s_j; ba_from_ra(&s_j, pk.vals[0], pk.vlens[0]);
+        pem_key_free(&pk);
+        BitArray tmp; _ba_mod_add_ord(&tmp, &s_acc, &s_j); s_acc = tmp;
+    }
+
+    /* Write HPKST SIGNATURE: seq(C_agg, R, s, n=256) */
+    uint8_t iC[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
+    uint8_t is[DER_INT_LEN(KEYBYTES)], in[8];
+    size_t  lC, lR, ls, ln;
+    der_i32(C_agg.b, iC, &lC);
+    der_i32(R_agg.b, iR, &lR);
+    der_i32(s_acc.b, is, &ls);
+    der_i_n256(in, &ln);
+    { const uint8_t *it[4] = {iC, iR, is, in}; size_t il[4] = {lC, lR, ls, ln};
+      seq_and_write(it, il, 4, PEM_HPKST_SIG, out_path); }
+}
+
+/* Verify HPKST signature — C_agg, R, s embedded in sig file. */
+static void cmd_threshold_verify(int argc, char **argv)
+{
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *sig_path = get_arg(argc, argv, "--sig");
+    const char *digest   = get_arg(argc, argv, "--digest");
+    if (!in_path)  die("threshold-verify: --in required");
+    if (!sig_path) die("threshold-verify: --sig required");
+
+    size_t in_len;
+    uint8_t *in_buf = read_binary_file(in_path, &in_len);
+    uint8_t msg_bytes[KEYBYTES];
+    if (digest && strcmp(digest, "hfscx-256") == 0) {
+        hfscx_256(in_buf, in_len, NULL, msg_bytes);
+    } else {
+        memset(msg_bytes, 0, KEYBYTES);
+        size_t cp = in_len < KEYBYTES ? in_len : KEYBYTES;
+        memcpy(msg_bytes, in_buf, cp);
+    }
+    free(in_buf);
+    BitArray msg; memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    PemKey sk; pem_key_load(&sk, sig_path);
+    if (strcmp(sk.label, PEM_HPKST_SIG) != 0 || sk.n_items < 3)
+        die("threshold-verify: invalid HPKST SIGNATURE PEM");
+    BitArray C_agg, R, s;
+    ba_from_ra(&C_agg, sk.vals[0], sk.vlens[0]);
+    ba_from_ra(&R,     sk.vals[1], sk.vlens[1]);
+    ba_from_ra(&s,     sk.vals[2], sk.vlens[2]);
+    pem_key_free(&sk);
+
+    int ok = hpkst_verify(&C_agg, &R, &s, &msg);
+    if (ok) { puts("Signature OK");        exit(0); }
+    else    { puts("Verification FAILED"); exit(1); }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * sign
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1378,10 +1674,11 @@ static void cmd_verify(int argc, char **argv)
     const char *in_path     = get_arg(argc, argv, "--in");
     const char *sig_path    = get_arg(argc, argv, "--sig");
     const char *digest      = get_arg(argc, argv, "--digest");
-    if (!algo)        die("verify: --algo required");
-    if (!pubkey_path) die("verify: --pubkey required");
-    if (!in_path)     die("verify: --in required");
-    if (!sig_path)    die("verify: --sig required");
+    if (!algo)    die("verify: --algo required");
+    if (!in_path) die("verify: --in required");
+    if (!sig_path) die("verify: --sig required");
+    if (!pubkey_path && strcmp(algo, "hpks-t") != 0)
+        die("verify: --pubkey required");
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
@@ -1398,6 +1695,12 @@ static void cmd_verify(int argc, char **argv)
 
     BitArray msg;
     memcpy(msg.b, msg_bytes, KEYBYTES);
+
+    /* hpks-t: C_agg is embedded in the sig — no pubkey file needed. */
+    if (strcmp(algo, "hpks-t") == 0) {
+        cmd_threshold_verify(argc, argv);
+        return;  /* cmd_threshold_verify exits via exit() — this is a safeguard */
+    }
 
     /* nl-zkboo uses raw binary PEM — handle before pem_key_load. */
     if (strcmp(algo, "nl-zkboo") == 0) {
@@ -2003,7 +2306,7 @@ static void cmd_pake_demo(int argc, char **argv)
 static void usage(void)
 {
     puts(
-"Herradura Cryptographic Suite CLI v1.5.26\n"
+"Herradura Cryptographic Suite CLI v1.9.44\n"
 "\n"
 "Usage: herradura_cli <command> [options]\n"
 "\n"
@@ -2044,10 +2347,25 @@ static void usage(void)
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
 "\n"
-"  verify --algo ALGO --pubkey PUB --in FILE --sig SIG [--digest hfscx-256]\n"
+"  verify --algo ALGO [--pubkey PUB] --in FILE --sig SIG [--digest hfscx-256]\n"
 "    Verify signature.  Exits 0 on OK, 1 on failure.\n"
 "    rnl-sigma: pubkey = hkex-rnl public key; sig = ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
+"    hpks-t:    --pubkey not required; C_agg is embedded in the signature.\n"
+"\n"
+"  threshold-commit --key PRIV --commit-out COMMIT.pem --nonce-out NONCE.pem\n"
+"    HPKS-T phase 1: generate per-signer nonce and commitment PEMs.\n"
+"\n"
+"  threshold-aggregate --commit C1.pem [--commit C2.pem ...] --in FILE --out AGG.pem\n"
+"    HPKS-T phase 2 (coordinator): aggregate commitments and compute challenge.\n"
+"\n"
+"  threshold-respond --key PRIV --commit C1.pem [--commit C2.pem ...]\n"
+"      --aggregate AGG.pem --nonce NONCE.pem --out PARTIAL.pem\n"
+"    HPKS-T phase 3: each signer produces a partial signature scalar.\n"
+"\n"
+"  threshold-combine --aggregate AGG.pem --partial P1.pem [--partial P2.pem ...] --out SIG.pem\n"
+"    HPKS-T phase 4 (coordinator): combine partial sigs into HPKST SIGNATURE PEM.\n"
+"    Verify with: verify --algo hpks-t --in FILE --sig SIG.pem\n"
 "\n"
 "  dgst --in FILE [--algo hfscx-256] [--out FILE]\n"
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"
@@ -2105,6 +2423,10 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "oprf-unblind")  == 0) { cmd_oprf_unblind(argc, argv);  return 0; }
     if (strcmp(cmd, "pake-register") == 0) { cmd_pake_register(argc, argv); return 0; }
     if (strcmp(cmd, "pake-demo")     == 0) { cmd_pake_demo(argc, argv);     return 0; }
+    if (strcmp(cmd, "threshold-commit")    == 0) { cmd_threshold_commit(argc, argv);    return 0; }
+    if (strcmp(cmd, "threshold-aggregate") == 0) { cmd_threshold_aggregate(argc, argv); return 0; }
+    if (strcmp(cmd, "threshold-respond")   == 0) { cmd_threshold_respond(argc, argv);   return 0; }
+    if (strcmp(cmd, "threshold-combine")   == 0) { cmd_threshold_combine(argc, argv);   return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;
