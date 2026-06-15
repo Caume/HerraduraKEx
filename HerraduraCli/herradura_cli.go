@@ -243,7 +243,7 @@ func encodeClassicalPub(pub *big.Int, nbits int, algo string) (string, error) {
 	return PemWrap(algoToPubLbl[algo], seq), nil
 }
 
-func encodeRNLPriv(s, mBlind []int, n int) (string, error) {
+func encodeRNLPriv(s, mBlind []int, n int, nA []byte) (string, error) {
 	sDer, err := DerIntEnc(packPoly(s, 4))
 	if err != nil {
 		return "", err
@@ -256,14 +256,25 @@ func encodeRNLPriv(s, mBlind []int, n int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	seq, err := DerSeqEnc(sDer, mDer, nn)
+	if nA == nil {
+		seq, err := DerSeqEnc(sDer, mDer, nn)
+		if err != nil {
+			return "", err
+		}
+		return PemWrap(lblHkexRNLPriv, seq), nil
+	}
+	naDer, err := DerIntEnc(nA)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(sDer, mDer, nn, naDer)
 	if err != nil {
 		return "", err
 	}
 	return PemWrap(lblHkexRNLPriv, seq), nil
 }
 
-func encodeRNLPub(C, mBlind []int, n int) (string, error) {
+func encodeRNLPub(C, mBlind []int, n int, nA []byte) (string, error) {
 	cDer, err := DerIntEnc(packPoly(C, 2))
 	if err != nil {
 		return "", err
@@ -276,7 +287,18 @@ func encodeRNLPub(C, mBlind []int, n int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	seq, err := DerSeqEnc(cDer, mDer, nn)
+	if nA == nil {
+		seq, err := DerSeqEnc(cDer, mDer, nn)
+		if err != nil {
+			return "", err
+		}
+		return PemWrap(lblHkexRNLPub, seq), nil
+	}
+	naDer, err := DerIntEnc(nA)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(cDer, mDer, nn, naDer)
 	if err != nil {
 		return "", err
 	}
@@ -345,9 +367,10 @@ func encodeSessionKey(key *BitArray, nbits int) (string, error) {
 }
 
 // encodeRNLResponse encodes Bob's HKEX-RNL step-1 response.
-// hint is Go's native packed hint (2-bit per coeff: hint[i/4] bits (i%4)*2..(i%4)*2+1 = coeff i hint).
+// hint is Go's native packed hint (2-bit per coeff).
 // Bytes are reversed before DER encoding to match Python's big-endian convention.
-func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int) (string, error) {
+// nB is Bob's 32-byte contributory nonce; pass nil to omit (old format).
+func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int, nB []byte) (string, error) {
 	// K_B: minimum-width big-endian encoding
 	nb := (K_B.Val.BitLen() + 7) / 8
 	if nb < 1 {
@@ -383,11 +406,49 @@ func encodeRNLResponse(K_B *BitArray, C_B []int, hint []byte, n int) (string, er
 		return "", err
 	}
 
-	seq, err := DerSeqEnc(kDer, cDer, hDer, nDer, hlDer)
+	if nB == nil {
+		seq, err := DerSeqEnc(kDer, cDer, hDer, nDer, hlDer)
+		if err != nil {
+			return "", err
+		}
+		return PemWrap(lblRnlResp, seq), nil
+	}
+	nbDer, err := DerIntEnc(nB)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(kDer, cDer, hDer, nDer, hlDer, nbDer)
 	if err != nil {
 		return "", err
 	}
 	return PemWrap(lblRnlResp, seq), nil
+}
+
+// padLeftN pads src with leading zero bytes to exactly n bytes.
+func padLeftN(src []byte, n int) []byte {
+	if len(src) >= n {
+		return src[len(src)-n:]
+	}
+	out := make([]byte, n)
+	copy(out[n-len(src):], src)
+	return out
+}
+
+// rnlContributoryKDF derives the final HKEX-RNL session key.
+// Returns HFSCX-256(kRaw || nA || nB); nA and nB must each be 32 bytes.
+// Pass make([]byte, 32) for zero nonces when interoperating with old peers.
+func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
+	raw := kRaw.Bytes()
+	// Left-pad raw to n/8 bytes
+	nb := n / 8
+	padded := make([]byte, nb)
+	if len(raw) > nb {
+		raw = raw[len(raw)-nb:]
+	}
+	copy(padded[nb-len(raw):], raw)
+	payload := append(append(padded, nA...), nB...)
+	digest := Hfscx256(payload, nil)
+	return NewBitArray(n, new(big.Int).SetBytes(digest))
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -426,7 +487,8 @@ func cmdGenpkey(args []string) {
 		aRand  := RnlRandPoly(n, RnlQ)
 		mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
 		s, _   := RnlKeygen(mBlind, n, RnlQ, RnlP)
-		pem, err = encodeRNLPriv(s, mBlind, n)
+		nA     := NewRandBitArray(256).Bytes()  // Alice's contributory nonce (32 bytes)
+		pem, err = encodeRNLPriv(s, mBlind, n, nA)
 
 	case sternAlgos[*algo]:
 		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
@@ -549,7 +611,11 @@ func cmdPkey(args []string) {
 			mBlind := unpackPolyRaw(ints[1], n, 4)
 			ms     := RnlPolyMul(mBlind, s, RnlQ, n)
 			C      := RnlRound(ms, RnlQ, RnlP)
-			pem, err = encodeRNLPub(C, mBlind, n)
+			var nA []byte
+			if len(ints) >= 4 {
+				nA = padLeftN(ints[3], 32)
+			}
+			pem, err = encodeRNLPub(C, mBlind, n, nA)
 
 		case sternAlgos[algo]:
 			n    := bytesToInt(ints[2])
@@ -589,6 +655,9 @@ func cmdPkey(args []string) {
 		fmt.Printf("n         : %d\n", n)
 		fmt.Printf("s_packed  : %x\n", packPoly(s, 4))
 		fmt.Printf("C_packed  : %x\n", packPoly(C, 2))
+		if len(ints) >= 4 {
+			fmt.Printf("n_A       : %x\n", padLeftN(ints[3], 32))
+		}
 
 	case sternAlgos[algo]:
 		n    := bytesToInt(ints[2])
@@ -677,6 +746,14 @@ func cmdKex(args []string) {
 			C_A := unpackPolyRaw(theirInts[0], n, 2)
 			m_A := unpackPolyRaw(theirInts[1], n, 4)
 
+			// Extract Alice's contributory nonce n_A (field 3 of her public key)
+			var n_A []byte
+			if len(theirInts) >= 4 {
+				n_A = padLeftN(theirInts[3], 32)
+			} else {
+				n_A = make([]byte, 32)
+			}
+
 			if !RnlValidateMBlind(m_A, RnlQ) {
 				fmt.Fprintln(os.Stderr, "kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
 				os.Exit(1)
@@ -686,11 +763,17 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
-			// Compute K_B and reconciliation hint; apply KDF to K_B if requested.
-			K_B, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+			// Compute K_B and reconciliation hint
+			K_B_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+
+			// Bob's contributory nonce n_B
+			n_B := NewRandBitArray(256).Bytes()
+
+			// Contributory KDF: final_key = HFSCX-256(K_B_raw || n_A || n_B)
+			K_B := rnlContributoryKDF(K_B_raw, n, n_A, n_B)
 			K_B = applyKDF(K_B, n)
 
-			pem, err := encodeRNLResponse(K_B, C_B, hint, n)
+			pem, err := encodeRNLResponse(K_B, C_B, hint, n, n_B)
 			if err != nil {
 				die("kex", err)
 			}
@@ -708,6 +791,22 @@ func cmdKex(args []string) {
 			s_A := unpackPolyRaw(ourInts[0], n, 4)
 			C_B := unpackPolyRaw(theirInts[1], n, 2)
 
+			// Extract Alice's n_A from her private key (field 3)
+			var n_A []byte
+			if len(ourInts) >= 4 {
+				n_A = padLeftN(ourInts[3], 32)
+			} else {
+				n_A = make([]byte, 32)
+			}
+
+			// Extract Bob's n_B from RESPONSE (field 5)
+			var n_B []byte
+			if len(theirInts) >= 6 {
+				n_B = padLeftN(theirInts[5], 32)
+			} else {
+				n_B = make([]byte, 32)
+			}
+
 			// Decode hint: DER bytes are big-endian (Python compat);
 			// right-align to n/8 bytes then reverse to Go LSB-first order.
 			hintRaw := theirInts[2]
@@ -721,7 +820,10 @@ func cmdKex(args []string) {
 				hintBuf[i], hintBuf[j] = hintBuf[j], hintBuf[i]
 			}
 
-			K_A, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintBuf)
+			K_A_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintBuf)
+
+			// Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B)
+			K_A := rnlContributoryKDF(K_A_raw, n, n_A, n_B)
 			K_A = applyKDF(K_A, n)
 			pem, err := encodeSessionKey(K_A, n)
 			if err != nil {

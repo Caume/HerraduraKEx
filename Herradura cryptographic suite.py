@@ -2559,21 +2559,23 @@ def main():
     m_blind  = _rnl_poly_add(m_base, a_rand, RNLQ) # blinded polynomial
     s_A, C_A = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
     s_B, C_B = _rnl_keygen(m_blind, n_rnl, RNLQ, RNLP, RNLB)
+    n_A              = os.urandom(KEYBITS // 8)   # Alice's contributory nonce
+    n_B              = os.urandom(KEYBITS // 8)   # Bob's contributory nonce
     K_raw_A, hint_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS)
     K_raw_B          = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n_rnl, KEYBITS, hint_A)
-    sk_rnl_A = nl_fscx_revolve_v1(
-        BitArray(KEYBITS, K_raw_A.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
-        K_raw_A, KEYBITS // 4)
-    sk_rnl_B = nl_fscx_revolve_v1(
-        BitArray(KEYBITS, K_raw_B.rotated(KEYBITS // 8).uint ^ _RNL_KDF_DC_256),
-        K_raw_B, KEYBITS // 4)
+    sk_rnl_A = BitArray(KEYBITS, int.from_bytes(
+        hfscx_256(K_raw_A.uint.to_bytes(KEYBITS // 8, 'big') + n_A + n_B), 'big'))
+    sk_rnl_B = BitArray(KEYBITS, int.from_bytes(
+        hfscx_256(K_raw_B.uint.to_bytes(KEYBITS // 8, 'big') + n_A + n_B), 'big'))
+    print(f"n_A       : {n_A.hex()}")
+    print(f"n_B       : {n_B.hex()}")
     print(f"sk (Alice): {sk_rnl_A.hex}")
     print(f"sk (Bob)  : {sk_rnl_B.hex}")
-    if K_raw_A == K_raw_B:
-        print("+ raw key bits agree; shared session key established!")
+    if sk_rnl_A == sk_rnl_B:
+        print("+ contributory KDF session keys agree!")
     else:
-        bits_diff = bin(K_raw_A.uint ^ K_raw_B.uint).count('1')
-        print(f"- raw key disagrees ({bits_diff} bit(s)) — reconciliation failed!")
+        bits_diff = bin(sk_rnl_A.uint ^ sk_rnl_B.uint).count('1')
+        print(f"- session key disagrees ({bits_diff} bit(s)) — reconciliation failed!")
 
     print("\n--- HPKS-NL [NL-hardened Schnorr — NL-FSCX v1 challenge]")
     print("    (GF DLP still present; NL hardens linear challenge preimage)")

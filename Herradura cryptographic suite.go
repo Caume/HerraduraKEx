@@ -176,17 +176,24 @@ func main() {
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
 	sA, CA := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
 	sB, CB := RnlKeygen(mBlind, nRnl, RnlQ, RnlP)
+	nA := NewRandBitArray(n).Bytes() // Alice's contributory nonce
+	nB := NewRandBitArray(n).Bytes() // Bob's contributory nonce
 	kRawA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, nRnl, n, nil)
 	kRawB, _     := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, nRnl, n, hintA)
-	skRnlA := NlFscxRevolveV1(RnlKdfSeed(kRawA), kRawA, n/4)
-	skRnlB := NlFscxRevolveV1(RnlKdfSeed(kRawB), kRawB, n/4)
+	padTo := func(b []byte, sz int) []byte { p := make([]byte, sz); copy(p[sz-len(b):], b); return p }
+	kBytesA := padTo(kRawA.Bytes(), n/8)
+	kBytesB := padTo(kRawB.Bytes(), n/8)
+	skRnlA := NewBitArray(n, new(big.Int).SetBytes(Hfscx256(append(append(kBytesA, nA...), nB...), nil)))
+	skRnlB := NewBitArray(n, new(big.Int).SetBytes(Hfscx256(append(append(kBytesB, nA...), nB...), nil)))
+	fmt.Printf("n_A       : %x\n", nA)
+	fmt.Printf("n_B       : %x\n", nB)
 	fmt.Printf("sk (Alice): %x\n", skRnlA)
 	fmt.Printf("sk (Bob)  : %x\n", skRnlB)
-	if kRawA.Equal(kRawB) {
-		fmt.Println("+ raw key bits agree; shared session key established!")
+	if skRnlA.Equal(skRnlB) {
+		fmt.Println("+ contributory KDF session keys agree!")
 	} else {
-		diffBits := new(big.Int).Xor(&kRawA.Val, &kRawB.Val)
-		fmt.Printf("- raw key disagrees (%d bit(s)) — reconciliation failed!\n",
+		diffBits := new(big.Int).Xor(&skRnlA.Val, &skRnlB.Val)
+		fmt.Printf("- session key disagrees (%d bit(s)) — reconciliation failed!\n",
 			CountBits(diffBits))
 	}
 

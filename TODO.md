@@ -5684,12 +5684,18 @@ Two gaps:
   documented caveat in §11.4.3 that the uniformity assumption is trust-on-first-use.
 - Update SecurityProofs-2.md §11.4.2/§11.4.3 with the active-adversary model.
 
-Status: **DONE v1.9.37** — Interim non-breaking fix: `rnl_validate_m_blind` added to
-`herradura.h` (C) and `RnlValidateMBlind` to `herradura/herradura.go`; both check
-non-zero coefficient count ≥ n/4 and coefficient range ≥ q/4; called in C, Python, and
-Go CLIs at Bob step 1 before `m_blind` is used for keygen.  SecurityProofs-2.md §11.4.3
-updated with active-adversary model, the substitution attack, and the remaining gap (non-
-contributory blinding).  Full contributory fix (XOF(n_A‖n_B) blinding) remains open.
+Status: **DONE v1.9.49** — Full contributory fix implemented.  `rnl_contributory_kdf` added
+to `herradura.h`; Alice generates nonce n_A at `genpkey`, stored as 4th field in private and
+public key PEM; Bob generates nonce n_B at kex step 1, stored as 6th field in RESPONSE PEM.
+Final session key = HFSCX-256(K_raw_big_endian ‖ n_A ‖ n_B).  Implemented in C
+(`herradura_cli.c`), Python (`herradura.py`), and Go (`herradura_cli.go`) CLIs; backward-
+compatible (old keys without n_A/n_B use zero nonces).  Suite demos updated in
+`Herradura cryptographic suite.{py,go}` to show contributory KDF.  Pre-existing cross-
+language hint encoding bug (Python encoded 256 coefficients vs C/Go's 128) fixed in
+`_encode_rnl_response` — all 9 cross-language kex pairs now agree.  Interim v1.9.37 fix
+(`rnl_validate_m_blind`) retained.  The XOF(n_A‖n_B) m_blind derivation variant was
+determined structurally infeasible in two rounds (n_B is unknown to Alice when she computes
+C_A); contributory KDF at the session key level achieves the same security property.
 
 ---
 

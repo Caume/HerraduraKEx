@@ -327,22 +327,29 @@ static void cmd_genpkey(int argc, char **argv)
         rnl_poly_add(m_blind, m_base, a_rand);
         rnl_keygen(s_poly, C_poly, m_blind, urnd);
 
+        /* Alice's contributory nonce n_A */
+        uint8_t n_A[KEYBYTES];
+        if (fread(n_A, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+
         uint8_t s_buf[RNL_N * 4], m_buf[RNL_N * 4];
         poly_pack(s_buf, s_poly, 4);
         poly_pack(m_buf, m_blind, 4);
 
         size_t is_sz = DER_INT_LEN(sizeof s_buf);
         size_t im_sz = DER_INT_LEN(sizeof m_buf);
-        uint8_t *is_der = malloc(is_sz), *im_der = malloc(im_sz);
-        uint8_t in_der[8]; size_t ls, lm, ln;
-        if (!is_der || !im_der) die("out of memory");
+        size_t ina_sz = DER_INT_LEN(KEYBYTES);
+        uint8_t *is_der = malloc(is_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
+        uint8_t in_der[8]; size_t ls, lm, ln, lna;
+        if (!is_der || !im_der || !ina_der) die("out of memory");
         der_int_enc(s_buf, sizeof s_buf, is_der, &ls);
         der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
         der_i_n256(in_der, &ln);
-        const uint8_t *it[3] = {is_der, im_der, in_der};
-        size_t il[3] = {ls, lm, ln};
-        seq_and_write(it, il, 3, PEM_HKEX_RNL_PRIV, out);
-        free(is_der); free(im_der);
+        der_int_enc(n_A, KEYBYTES, ina_der, &lna);
+        const uint8_t *it[4] = {is_der, im_der, in_der, ina_der};
+        size_t il[4] = {ls, lm, ln, lna};
+        seq_and_write(it, il, 4, PEM_HKEX_RNL_PRIV, out);
+        explicit_bzero(n_A, KEYBYTES);
+        free(is_der); free(im_der); free(ina_der);
         fclose(urnd); return;
     }
 
@@ -507,10 +514,16 @@ static void cmd_pkey(int argc, char **argv)
 
     /* ── HKEX-RNL ─── */
     else if (kind == 0) {
-        if (k.n_items != 3) die("pkey: malformed RNL private key");
+        if (k.n_items < 3) die("pkey: malformed RNL private key");
         rnl_poly_t s_poly, m_poly, C_poly;
         poly_unpack(s_poly, k.vals[0], k.vlens[0], 4);
         poly_unpack(m_poly, k.vals[1], k.vlens[1], 4);
+
+        /* Extract Alice's nonce n_A (index 3); zero if absent (old key format) */
+        uint8_t n_A[KEYBYTES];
+        memset(n_A, 0, KEYBYTES);
+        if (k.n_items >= 4 && k.vlens[3] <= KEYBYTES)
+            memcpy(n_A + KEYBYTES - k.vlens[3], k.vals[3], k.vlens[3]);
 
         if (text) {
             uint8_t s_buf[RNL_N * 4];
@@ -532,16 +545,19 @@ static void cmd_pkey(int argc, char **argv)
 
             size_t ic_sz = DER_INT_LEN(sizeof C_buf);
             size_t im_sz = DER_INT_LEN(sizeof m_buf);
-            uint8_t *ic_der = malloc(ic_sz), *im_der = malloc(im_sz);
-            uint8_t in_der[8]; size_t lc, lm, ln;
-            if (!ic_der || !im_der) die("out of memory");
+            size_t ina_sz = DER_INT_LEN(KEYBYTES);
+            uint8_t *ic_der = malloc(ic_sz), *im_der = malloc(im_sz), *ina_der = malloc(ina_sz);
+            uint8_t in_der[8]; size_t lc, lm, ln, lna;
+            if (!ic_der || !im_der || !ina_der) die("out of memory");
             der_int_enc(C_buf, sizeof C_buf, ic_der, &lc);
             der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
             der_i_n256(in_der, &ln);
-            const uint8_t *it[3] = {ic_der, im_der, in_der};
-            size_t il[3] = {lc, lm, ln};
-            seq_and_write(it, il, 3, PEM_HKEX_RNL_PUB, out_path);
-            free(ic_der); free(im_der);
+            der_int_enc(n_A, KEYBYTES, ina_der, &lna);
+            const uint8_t *it[4] = {ic_der, im_der, in_der, ina_der};
+            size_t il[4] = {lc, lm, ln, lna};
+            seq_and_write(it, il, 4, PEM_HKEX_RNL_PUB, out_path);
+            explicit_bzero(n_A, KEYBYTES);
+            free(ic_der); free(im_der); free(ina_der);
         }
     }
 
@@ -650,6 +666,13 @@ static void cmd_kex(int argc, char **argv)
             poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
             poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
             poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+
+            /* Extract Alice's contributory nonce n_A (field 3 of pub key) */
+            uint8_t n_A[KEYBYTES];
+            memset(n_A, 0, KEYBYTES);
+            if (their.n_items >= 4 && their.vlens[3] <= KEYBYTES)
+                memcpy(n_A + KEYBYTES - their.vlens[3], their.vals[3], their.vlens[3]);
+
             pem_key_free(&our); pem_key_free(&their);
 
             if (!rnl_validate_m_blind(m_A, RNL_N))
@@ -664,46 +687,63 @@ static void cmd_kex(int argc, char **argv)
             uint8_t hint[RNL_N / 8];
             rnl_agree(&K_B, s_B, C_A, NULL, hint);
 
-            /* Encode RESPONSE: K_B, C_B_packed, hint, n, hint_len */
+            /* Bob's contributory nonce n_B */
+            uint8_t n_B[KEYBYTES];
+            if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+
+            /* rnl_agree output is LSB-first; reverse to big-endian before KDF */
+            uint8_t K_B_rev_raw[KEYBYTES]; int ri_kb;
+            for (ri_kb = 0; ri_kb < KEYBYTES; ri_kb++)
+                K_B_rev_raw[ri_kb] = K_B.b[KEYBYTES-1-ri_kb];
+
+            /* Contributory KDF: final_key = HFSCX-256(K_B_big_endian || n_A || n_B) */
+            uint8_t K_B_kdf[KEYBYTES];
+            rnl_contributory_kdf(K_B_kdf, K_B_rev_raw, n_A, n_B);
+            explicit_bzero(K_B_rev_raw, KEYBYTES);
+            explicit_bzero(n_A, KEYBYTES);
+            explicit_bzero(&K_B, sizeof(K_B));
+
+            /* Encode RESPONSE: K_B, C_B_packed, hint, n, hint_len, n_B */
             uint8_t C_B_buf[RNL_N * 2];
             poly_pack(C_B_buf, C_B, 2);
 
-            /* rnl_reconcile_bits packs bit i into b[i/8] bit(i%8) — LSB-first byte
-             * order.  Python's BitArray is big-endian, so byte 0 = bits 248-255.
-             * Reverse both K and hint bytes before DER encoding to match Python. */
-            BitArray K_B_rev; int ri_k;
-            for (ri_k = 0; ri_k < KEYBYTES; ri_k++)
-                K_B_rev.b[ri_k] = K_B.b[KEYBYTES-1-ri_k];
+            /* K_B_kdf is already big-endian (HFSCX-256 output); encode directly.
+             * hint is LSB-first (rnl_reconcile_bits) — reverse for Python compat. */
 
-            /* Apply KDF if requested: K_B_rev = HFSCX-256(K_B_rev) */
+            /* Apply optional extra KDF if requested */
             if (kdf) {
-                uint8_t kdf_out[32];
-                hfscx_256(K_B_rev.b, KEYBYTES, NULL, kdf_out);
-                memcpy(K_B_rev.b, kdf_out, 32);
+                uint8_t kdf_out[KEYBYTES];
+                hfscx_256(K_B_kdf, KEYBYTES, NULL, kdf_out);
+                memcpy(K_B_kdf, kdf_out, KEYBYTES);
                 explicit_bzero(kdf_out, sizeof(kdf_out));
             }
 
             uint8_t hint_rev[RNL_N / 8];
             { int ri; for (ri = 0; ri < RNL_N/8; ri++) hint_rev[ri] = hint[RNL_N/8-1-ri]; }
 
-            const uint8_t *kb_start; size_t kb_len;
-            ba_min_bytes(&K_B_rev, &kb_start, &kb_len);
+            /* Minimum-width encoding for the session key */
+            size_t kb_len = KEYBYTES;
+            const uint8_t *kb_start = K_B_kdf;
+            while (kb_len > 1 && *kb_start == 0) { kb_start++; kb_len--; }
 
             uint8_t ik[DER_INT_LEN(KEYBYTES)];
             size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
-            uint8_t *ic_der = malloc(ic_sz);
+            size_t inb_sz = DER_INT_LEN(KEYBYTES);
+            uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
             uint8_t ih[DER_INT_LEN(RNL_N / 8)], in1[8], in2[8];
-            size_t lk, lc, lh, ln1, ln2;
-            if (!ic_der) die("out of memory");
-            der_int_enc(kb_start,   kb_len,          ik,    &lk);
-            der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der, &lc);
-            der_int_enc(hint_rev,  sizeof hint_rev,  ih,    &lh);
+            size_t lk, lc, lh, ln1, ln2, lnb;
+            if (!ic_der || !inb_der) die("out of memory");
+            der_int_enc(kb_start,          kb_len,          ik,      &lk);
+            der_int_enc(C_B_buf,    sizeof C_B_buf,  ic_der,  &lc);
+            der_int_enc(hint_rev,   sizeof hint_rev,  ih,      &lh);
             der_i_n256(in1, &ln1);
             der_i_n256(in2, &ln2);  /* len(hint) == n == 256 */
-            const uint8_t *it[5] = {ik, ic_der, ih, in1, in2};
-            size_t il[5] = {lk, lc, lh, ln1, ln2};
-            seq_and_write(it, il, 5, PEM_RNL_RESPONSE, out_path);
-            free(ic_der);
+            der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
+            const uint8_t *it[6] = {ik, ic_der, ih, in1, in2, inb_der};
+            size_t il[6] = {lk, lc, lh, ln1, ln2, lnb};
+            seq_and_write(it, il, 6, PEM_RNL_RESPONSE, out_path);
+            explicit_bzero(n_B, KEYBYTES);
+            free(ic_der); free(inb_der);
 
         } else if (strcmp(their.label, PEM_RNL_RESPONSE) == 0) {
             /* ── Step 2: Alice completes the handshake ── */
@@ -714,6 +754,18 @@ static void cmd_kex(int argc, char **argv)
             rnl_poly_t s_A, C_B;
             poly_unpack(s_A, our.vals[0],   our.vlens[0],   4);
             poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+
+            /* Extract Alice's n_A from her private key (field 3) */
+            uint8_t n_A[KEYBYTES];
+            memset(n_A, 0, KEYBYTES);
+            if (our.n_items >= 4 && our.vlens[3] <= KEYBYTES)
+                memcpy(n_A + KEYBYTES - our.vlens[3], our.vals[3], our.vlens[3]);
+
+            /* Extract Bob's n_B from RESPONSE (field 5) */
+            uint8_t n_B[KEYBYTES];
+            memset(n_B, 0, KEYBYTES);
+            if (their.n_items >= 6 && their.vlens[5] <= KEYBYTES)
+                memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
 
             /* Unpack hint: DER is big-endian (Python: hint[31]=bits0-7 at LSB).
              * Right-align into hint_rev, then reverse to C byte order. */
@@ -730,25 +782,36 @@ static void cmd_kex(int argc, char **argv)
             rnl_agree(&K_A, s_A, C_B, hint, NULL);
 
             /* rnl_agree output is LSB-first; reverse to big-endian for Python compat */
-            BitArray K_A_rev; int ri_ka;
+            uint8_t K_A_raw_rev[KEYBYTES]; int ri_ka;
             for (ri_ka = 0; ri_ka < KEYBYTES; ri_ka++)
-                K_A_rev.b[ri_ka] = K_A.b[KEYBYTES-1-ri_ka];
+                K_A_raw_rev[ri_ka] = K_A.b[KEYBYTES-1-ri_ka];
+            explicit_bzero(&K_A, sizeof(K_A));
 
-            /* Apply KDF if requested: K_A_rev = HFSCX-256(K_A_rev) */
+            /* Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B) */
+            uint8_t K_A_kdf[KEYBYTES];
+            rnl_contributory_kdf(K_A_kdf, K_A_raw_rev, n_A, n_B);
+            explicit_bzero(K_A_raw_rev, KEYBYTES);
+            explicit_bzero(n_A, KEYBYTES);
+            explicit_bzero(n_B, KEYBYTES);
+
+            /* Apply optional extra KDF if requested */
             if (kdf) {
-                uint8_t kdf_out[32];
-                hfscx_256(K_A_rev.b, KEYBYTES, NULL, kdf_out);
-                memcpy(K_A_rev.b, kdf_out, 32);
+                uint8_t kdf_out[KEYBYTES];
+                hfscx_256(K_A_kdf, KEYBYTES, NULL, kdf_out);
+                memcpy(K_A_kdf, kdf_out, KEYBYTES);
                 explicit_bzero(kdf_out, sizeof(kdf_out));
             }
 
-            const uint8_t *ka_start; size_t ka_len;
-            ba_min_bytes(&K_A_rev, &ka_start, &ka_len);
+            /* Minimum-width big-endian for session key */
+            size_t ka_len = KEYBYTES;
+            const uint8_t *ka_start = K_A_kdf;
+            while (ka_len > 1 && *ka_start == 0) { ka_start++; ka_len--; }
             uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8]; size_t lk, ln;
             der_int_enc(ka_start, ka_len, ik, &lk);
             der_i_n256(in, &ln);
             const uint8_t *it[2] = {ik, in}; size_t il[2] = {lk, ln};
             seq_and_write(it, il, 2, PEM_SESSION_KEY, out_path);
+            explicit_bzero(K_A_kdf, KEYBYTES);
 
         } else {
             pem_key_free(&their);
