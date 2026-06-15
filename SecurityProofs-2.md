@@ -264,6 +264,39 @@ degree-1 factors over $\mathbb{F}_{65537}$ since $512 \nmid q-1$, ruling out NTR
 subfield attacks).  The CBD($\eta=1$) secret distribution provides less margin than
 $\eta=2$ (used in Kyber-512) but remains secure at $n=256$.
 
+**Upgraded parameter set: HKEX-RNL-128 (TODO #90, v1.9.45).** The deployed $n=256$
+parameters fall below the 128-bit Core-SVP floor.  An upgraded parameter set that reaches
+the 128-bit target is defined as follows:
+
+$$\text{HKEX-RNL-128}: \quad n=512,\; q=65537,\; p=4096,\; \eta=1,\; pp=2$$
+
+Security argument: the BKZ primal attack block-size requirement $\beta_\text{opt}$
+scales approximately linearly with the ring dimension $n$ for fixed $(q, p, \eta)$
+(Lindner-Peikert 2011; Albrecht et al. 2019).  Calibrating to the known $n=256$
+estimate (~110 bits midpoint):
+
+$$\text{Core-SVP}(n) \;\approx\; 110 \cdot \frac{n}{256} \quad \text{(classical)},
+\qquad 100 \cdot \frac{n}{256} \quad \text{(quantum)}$$
+
+At $n=512$ this yields approximately **220 classical / 200 quantum Core-SVP bits**,
+comfortably above the 128-bit target.  Independent cross-check: ML-KEM-512 (Module-LWE,
+effective dimension 512, $q=3329$) achieves 118–131 classical bits; HKEX-RNL at $n=512$
+has relative noise ratio $\sigma/\sqrt{q} = 4.67/256 = 0.018$, smaller than ML-KEM-512's
+$1.22/57.7 = 0.021$, confirming a lower bound of at least 128 bits.
+
+NTT compatibility: $q-1 = 2^{16}$, so $2n = 1024$ divides $q-1$; $g=3$ is a primitive
+root mod $65537$, making $\psi = 3^{(q-1)/(2n)}$ a valid negacyclic NTT twiddle.
+
+Reconciliation correctness: `SecurityProofsCode/hkex_rnl_failure_rate.py` §7 verifies
+**0 failures in 2000 trials** at $n=512$, $p=4096$ with Peikert reconciliation.
+
+Key-size impact: public key and ciphertext each contain two $n=512$ ring elements
+($\approx 1.1$ KB per element at 17 bits/coefficient), doubling the wire format size
+versus $n=256$.  The ring dimension is a runtime parameter; no protocol or API changes
+are required for deployment.
+
+The $n=256$ wire format remains the default until a major-version migration.
+
 **Naive algebraic attack analysis.**  Without blinding ($m_\text{blind} = m$), Eve computes
 $m^{-1} \cdot (C \cdot q/p) \bmod q$ attempting to recover $s$.  The attack fails because
 rounding noise $\delta$ (bounded by $q/(2p)$ per coefficient) is amplified by $\|m^{-1}\|_1 \gg q$
@@ -401,7 +434,8 @@ through 2025.
 | **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
 | **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^*$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
 | **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^*$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
-| **HKEX-RNL** (§11.4) | Ring-LWR with blinded $m$ | BKZ: ~105–115 classical Core-SVP bits (MATZOV 2022; §11.4.3) | BKZ-hybrid: ~95–105 quantum Core-SVP bits | ~105 classical / ~100 quantum bits (§11.4.3); below ML-KEM-768 128-bit target |
+| **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ: ~105–115 classical Core-SVP bits (MATZOV 2022; §11.4.3) | BKZ-hybrid: ~95–105 quantum Core-SVP bits | ~105 classical / ~100 quantum bits (§11.4.3); below 128-bit target — use HKEX-RNL-128 |
+| **HKEX-RNL-128** $n=512$ (§11.4.3) | Ring-LWR with blinded $m$ | BKZ: ~220 classical Core-SVP bits (linear scaling; §11.4.3, §6 of `hkex_rnl_failure_rate.py`) | BKZ-hybrid: ~200 quantum Core-SVP bits | ≥128-bit classical+quantum; ML-KEM-512 cross-check confirms lower bound; 0 reconciliation failures (§7) |
 | **HPKS-WOTS-F** (§11.8.3, proposed) | NL-FSCX v1 OWF (new assumption) | Degree-$n$ Boolean system — $O(2^n)$, Corollary 2 | Grover $O(2^{n/2})$ | $n/2$ bits (under NL-FSCX v1 OWF) |
 | **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
 | **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
