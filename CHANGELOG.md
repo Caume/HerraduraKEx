@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.59] - 2026-06-15
+
+### Documentation — HDRBG tutorial examples (TODO #110)
+
+- **`docs/TUTORIAL.md`:** added `### HDRBG (forward-secure DRBG)` subsections
+  to C, Go, and Python integration sections, inserted after the existing
+  `### HFSCX-256 hash and MAC` subsection.  Each snippet shows seed, generate,
+  and reseed usage.  Added a note in the C integration section intro that
+  `HDrbg` can substitute for `/dev/urandom` on embedded targets without a
+  filesystem.
+
+---
+
 ## [1.9.58] - 2026-06-15
 
 ### Documentation — HPKE-Stern-F KEM tutorial examples (TODO #117)

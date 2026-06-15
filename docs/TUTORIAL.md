@@ -160,6 +160,10 @@ Copy `herradura.h` into your project (or keep it in the repo and use `-I`) then:
 
 No additional source files, no link flags, no build system changes.
 
+On embedded targets without `/dev/urandom`, seed `HDrbg` from any available
+hardware entropy source (ADC noise, TRNG peripheral, etc.) and use
+`drbg_generate` in place of `fopen("/dev/urandom", "rb")` throughout.
+
 ### Build
 
 ```bash
@@ -450,6 +454,42 @@ uint8_t mac_iv[KEYBYTES];
 for (int i = 0; i < KEYBYTES; i++)
     mac_iv[i] = alice_shared.b[i] ^ _HFSCX256_IV[i];
 hfscx_256(msg, sizeof msg - 1, mac_iv, digest);
+```
+
+### HDRBG (forward-secure DRBG)
+
+Fast-key-erasure DRBG built on NL-FSCX v1.  Suitable for constrained targets
+where `/dev/urandom` is unavailable, or for deterministic test vectors.
+Seed from a full-entropy source (≥ 32 bytes recommended); reseed after at most
+`DRBG_MAX_BLOCKS` (2^20) output blocks.
+
+```c
+#include "herradura.h"
+
+HDrbg drbg;
+
+/* Seed from OS entropy (or any full-entropy source). */
+uint8_t seed_bytes[32];
+FILE *urnd2 = fopen("/dev/urandom", "rb");
+fread(seed_bytes, 1, sizeof seed_bytes, urnd2);
+fclose(urnd2);
+
+drbg_seed(&drbg,
+          seed_bytes, sizeof seed_bytes,  /* entropy */
+          NULL, 0);                        /* personalization (optional) */
+
+/* Generate output. */
+uint8_t out[64];
+int ok = drbg_generate(&drbg, out, sizeof out);   /* 1 on success */
+/* ok == 0 means DRBG_MAX_BLOCKS reached — call drbg_reseed first. */
+
+/* Reseed with fresh entropy to forward-securely advance the state. */
+uint8_t fresh[32];
+/* ... fill fresh from entropy source ... */
+drbg_reseed(&drbg, fresh, sizeof fresh);
+
+explicit_bzero(seed_bytes, sizeof seed_bytes);
+explicit_bzero(fresh, sizeof fresh);
 ```
 
 ### OPRF (2HashDH oblivious PRF)
@@ -752,6 +792,28 @@ for i := range macIV {
 mac := Hfscx256(data, macIV)
 ```
 
+### HDRBG (forward-secure DRBG)
+
+```go
+import h "herradurakex/herradura"
+import "crypto/rand"
+
+// Seed from OS entropy.
+entropy := make([]byte, 32)
+rand.Read(entropy)
+
+d := h.DrbgSeed(entropy, nil) // nil personalization
+
+// Generate output.
+out, ok := d.DrbgGenerate(64) // ok == false if DRBG_MAX_BLOCKS exceeded
+_ = ok
+
+// Reseed to forward-securely advance the state.
+fresh := make([]byte, 32)
+rand.Read(fresh)
+d.DrbgReseed(fresh)
+```
+
 ### OPRF (2HashDH oblivious PRF)
 
 ```go
@@ -986,6 +1048,24 @@ digest = h.hfscx_256(data)
 # Keyed MAC: iv = key XOR IV
 mac_iv = h.BitArray(n, alice_shared.uint ^ int.from_bytes(h._HFSCX256_IV_BYTES, 'big'))
 mac = h.hfscx_256(data, iv=mac_iv)
+```
+
+### HDRBG (forward-secure DRBG)
+
+```python
+import importlib, importlib.util, pathlib, os
+
+# Seed from OS entropy.
+entropy = os.urandom(32)
+
+d = h.drbg_seed(entropy, personalization=None)
+
+# Generate output.
+out = h.drbg_generate(d, 64)
+
+# Reseed to forward-securely advance the state.
+fresh = os.urandom(32)
+h.drbg_reseed(d, fresh)
 ```
 
 ### OPRF (2HashDH oblivious PRF)

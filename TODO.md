@@ -6273,7 +6273,7 @@ Status: **DONE v1.9.54**
 
 **Reference:** `herradura.h` `drbg_seed`, `drbg_generate`, `drbg_reseed`; Python equivalents in the suite file.
 
-Status: Open
+Status: **DONE v1.9.59**
 
 ---
 
