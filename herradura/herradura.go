@@ -429,6 +429,35 @@ func Hfscx256(data []byte, iv []byte) []byte {
 	return state.Bytes()
 }
 
+// Hfscx256DS is the domain-separated variant of Hfscx256 (HFSCX-256-DS).
+// It prepends a 1-byte domain tag before hashing.
+// ds=0x01 for generic digest, 0x02 for sign pre-hash, 0x03 for AEAD-MAC.
+// Wire-format option (§11.9.7 future hardening, TODO #93).
+func Hfscx256DS(ds byte, data []byte, iv []byte) []byte {
+	buf := make([]byte, 1+len(data))
+	buf[0] = ds
+	copy(buf[1:], data)
+	return Hfscx256(buf, iv)
+}
+
+// HmacHfscx256 is the HMAC-HFSCX-256-DM construction (§11.9.6).
+// Recommended for cross-protocol key reuse.
+// HMAC(K, D) = HFSCX-256((K^opad) || HFSCX-256((K^ipad) || D))
+// ipad = 0x36 repeated, opad = 0x5C repeated, key must be 32 bytes.
+func HmacHfscx256(key, data []byte) []byte {
+	if len(key) != 32 {
+		panic("HmacHfscx256: key must be 32 bytes")
+	}
+	ipadKey := make([]byte, 32)
+	opadKey := make([]byte, 32)
+	for i := range key {
+		ipadKey[i] = key[i] ^ 0x36
+		opadKey[i] = key[i] ^ 0x5C
+	}
+	inner := Hfscx256(append(ipadKey, data...), nil)
+	return Hfscx256(append(opadKey, inner...), nil)
+}
+
 // ---------------------------------------------------------------------------
 // HSKE-NL-A1 CTR-mode streaming helpers
 // ---------------------------------------------------------------------------

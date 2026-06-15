@@ -4,6 +4,34 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.48] - 2026-06-14
+
+### Security — HFSCX-256-DS and HMAC-HFSCX-256-DM hardenings (TODO #93)
+
+- **`herradura.h`:** added `hfscx_256_ds(ds, data, len, iv, out)` — domain-separated
+  variant of `hfscx_256` that prepends a 1-byte tag before hashing (§11.9.7 HFSCX-256-DS).
+  Suggested tags: 0x01 for generic digest, 0x02 for sign pre-hash, 0x03 for AEAD-MAC.
+- **`herradura.h`:** added `hmac_hfscx_256(key, data, len, out)` — HMAC-HFSCX-256-DM
+  construction (§11.9.6) for cross-protocol key reuse scenarios.
+- **`Herradura cryptographic suite.py`:** added `hfscx_256_ds(ds, data)` and
+  `hmac_hfscx_256(key, data)` with identical semantics and byte-for-byte compatible output.
+- **`herradura/herradura.go`:** added `Hfscx256DS(ds, data, iv)` and
+  `HmacHfscx256(key, data)` — Go equivalents, producing identical output to C and Python.
+- **`HerraduraCli/herradura.py`**, **`herradura_cli.c`**, **`herradura_cli.go`:** wired
+  `dgst --algo hfscx-256-ds` in all three CLIs (uses ds=0x01 internally).
+- **`HerraduraCli/primitives.py`:** exported `hfscx_256_ds` and `hmac_hfscx_256`.
+- **`SecurityProofs-2.md` §11.9.6:** noted HMAC-HFSCX-256-DM is now available in the
+  library; existing AEAD call site unchanged.
+- **`SecurityProofs-2.md` §11.9.7:** updated from "Future hardening" to reflect that
+  `hfscx_256_ds` is now available as opt-in HFSCX-256-DS; existing protocol call sites
+  unchanged (backwards-compatible opt-in only).
+- **`SecurityProofs-2.md` §11.9.9:** corrected the assembly DS-tag status — both ARM
+  Thumb-2 and NASM i386 `stern_hash1_32`/`stern_hash2_32` already carry per-slot DS tags
+  (ds=1/2/3/4); the prior "future hardening" note was inaccurate.
+- **`SecurityProofs-2.md` §11.9.11:** marked all three open hardenings as done.
+
+---
+
 ## [1.9.47] - 2026-06-14
 
 ### Docs — Reconcile A2 classical bound and §11.4.3 ring-splitting claim (TODO #92)

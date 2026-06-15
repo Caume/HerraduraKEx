@@ -583,6 +583,30 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
     return state.uint.to_bytes(blen, 'big')
 
 
+def hfscx_256_ds(ds: int, data: bytes, *, iv: 'BitArray | None' = None) -> bytes:
+    """HFSCX-256-DS: domain-separated variant — prepends a 1-byte tag before hashing.
+
+    ds=0x01 for generic digest, 0x02 for sign pre-hash, 0x03 for AEAD-MAC.
+    Wire-format option (§11.9.7 future hardening, TODO #93).
+    """
+    return hfscx_256(bytes([ds & 0xFF]) + data, iv=iv)
+
+
+def hmac_hfscx_256(key: bytes, data: bytes) -> bytes:
+    """HMAC-HFSCX-256-DM: HMAC construction over HFSCX-256-DM (§11.9.6).
+
+    Recommended for cross-protocol key reuse.
+    HMAC(K, D) = HFSCX-256((K^opad) || HFSCX-256((K^ipad) || D))
+    ipad = 0x36 * 32, opad = 0x5C * 32.  Key must be exactly 32 bytes.
+    """
+    if len(key) != 32:
+        raise ValueError("hmac_hfscx_256: key must be 32 bytes")
+    ipad = bytes(b ^ 0x36 for b in key)
+    opad = bytes(b ^ 0x5C for b in key)
+    inner = hfscx_256(ipad + data)
+    return hfscx_256(opad + inner)
+
+
 # ---------------------------------------------------------------------------
 # HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 # ---------------------------------------------------------------------------

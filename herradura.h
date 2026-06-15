@@ -649,6 +649,45 @@ static void hfscx_256(const uint8_t *data, size_t len,
     free(padded);
 }
 
+/* HFSCX-256-DS: domain-separated variant — prepends a 1-byte tag before hashing.
+ * ds=0x01 for generic digest, 0x02 for sign pre-hash, 0x03 for AEAD-MAC.
+ * Wire-format option HFSCX-256-DS (§11.9.7 future hardening, TODO #93). */
+static void hfscx_256_ds(uint8_t ds, const uint8_t *data, size_t len,
+                          const uint8_t *iv, uint8_t out[32])
+{
+    uint8_t *buf = (uint8_t *)malloc(1 + len);
+    if (!buf) { fprintf(stderr, "hfscx_256_ds: out of memory\n"); exit(1); }
+    buf[0] = ds;
+    if (len) memcpy(buf + 1, data, len);
+    hfscx_256(buf, 1 + len, iv, out);
+    free(buf);
+}
+
+/* HMAC-HFSCX-256-DM: HMAC construction over HFSCX-256-DM (§11.9.6).
+ * Recommended for cross-protocol key reuse.
+ * HMAC(K, D) = HFSCX-256((K^opad) || HFSCX-256((K^ipad) || D))
+ * ipad = 0x36 repeated 32 bytes, opad = 0x5C repeated 32 bytes. */
+static void hmac_hfscx_256(const uint8_t key[32], const uint8_t *data, size_t len,
+                             uint8_t out[32])
+{
+    uint8_t ipad_key[32], opad_key[32], inner[32], obuf[64];
+    uint8_t *ibuf;
+    int i;
+    for (i = 0; i < 32; i++) {
+        ipad_key[i] = key[i] ^ 0x36;
+        opad_key[i] = key[i] ^ 0x5C;
+    }
+    ibuf = (uint8_t *)malloc(32 + len);
+    if (!ibuf) { fprintf(stderr, "hmac_hfscx_256: out of memory\n"); exit(1); }
+    memcpy(ibuf, ipad_key, 32);
+    if (len) memcpy(ibuf + 32, data, len);
+    hfscx_256(ibuf, 32 + len, NULL, inner);
+    free(ibuf);
+    memcpy(obuf, opad_key, 32);
+    memcpy(obuf + 32, inner, 32);
+    hfscx_256(obuf, 64, NULL, out);
+}
+
 /* HSKE-NL-A1 CTR-mode AEAD helpers for encfile/decfile.
  * Caller computes: base = K XOR nonce; seed = ba_rnl_kdf_seed(base).
  * Block counter i is XOR'd into the four least-significant bytes of base. */

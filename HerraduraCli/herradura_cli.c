@@ -928,13 +928,16 @@ static void cmd_dgst(int argc, char **argv)
     if (!algo) algo = "hfscx-256";
     if (!in_path) die("dgst: --in required");
 
-    if (strcmp(algo, "hfscx-256") != 0)
+    if (strcmp(algo, "hfscx-256") != 0 && strcmp(algo, "hfscx-256-ds") != 0)
         dief("dgst: unsupported algorithm: %s", algo);
 
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
     uint8_t digest[32];
-    hfscx_256(in_buf, in_len, NULL, digest);
+    if (strcmp(algo, "hfscx-256-ds") == 0)
+        hfscx_256_ds(0x01, in_buf, in_len, NULL, digest);
+    else
+        hfscx_256(in_buf, in_len, NULL, digest);
     free(in_buf);
 
     if (!out_path || strcmp(out_path, "-") == 0) {
@@ -2382,7 +2385,7 @@ static void usage(void)
 "    HPKS-T phase 4 (coordinator): combine partial sigs into HPKST SIGNATURE PEM.\n"
 "    Verify with: verify --algo hpks-t --in FILE --sig SIG.pem\n"
 "\n"
-"  dgst --in FILE [--algo hfscx-256] [--out FILE]\n"
+"  dgst --in FILE [--algo hfscx-256|hfscx-256-ds] [--out FILE]\n"
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"
 "    With --out FILE: HERRADURA DIGEST PEM.\n"
 "\n"
