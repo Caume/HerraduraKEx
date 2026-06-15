@@ -774,7 +774,7 @@ for a 14-way cross-language interop test.
 | HPKS | 64 B | DLP in GF(2^256) — quantum-broken | Fastest |
 | ZKP-RNL (n=256) | **1,056 B** | Ring-LWR (heuristic) | Best lattice compactness |
 | ML-DSA-44 (reference) | 2,420 B | Module-LWE | NIST standard |
-| HPKS-Stern-F (rounds=219) | 78 KB | SD(N,t) + NL-FSCX v1 PRF | Production code-based PQC |
+| HPKS-Stern-F (rounds=219) | 78 KB | SD(N,t) + NL-FSCX v1 PRF | **Demo params** (N=256, ~30–40 bits); 128-bit needs N≥17000 |
 | ZKP-NL (n=8, R=219) | 35.5 KB | NL-FSCX OWF | CLI default; toy parameters |
 | ZKP-NL (n=256, R=219) | 920 KB | NL-FSCX OWF | Awaits ZKB++ (~180 KB est.) |
 

@@ -347,6 +347,9 @@ static void cmd_genpkey(int argc, char **argv)
     }
 
     if (strcmp(algo, "hpks-stern") == 0 || strcmp(algo, "hpke-stern") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
         const char *label = (strcmp(algo,"hpks-stern")==0)
                              ? PEM_HPKS_STERN_PRIV : PEM_HPKE_STERN_PRIV;
         BitArray seed, e;
@@ -1072,6 +1075,9 @@ static void cmd_enc(int argc, char **argv)
         seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
         /* vals[0]=syn32 (32 bytes), vals[1]=seed (32 bytes), vals[2]=n */
         if (pub_k.n_items < 2) die("enc: malformed Stern public key");
         BitArray seed_ba, K_ba, e_p, E;
@@ -1198,6 +1204,9 @@ static void cmd_dec(int argc, char **argv)
         write_binary_file(out_path, D.b, KEYBYTES);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
         /* CT: vals[0]=ct_syn, vals[1]=e_p, vals[2]=K_int, vals[3]=E_int */
         if (ct.n_items < 4) die("dec: malformed HPKE-Stern ciphertext");
         if (priv_k.n_items < 2) die("dec: malformed Stern private key");
@@ -1605,6 +1614,9 @@ static void cmd_sign(int argc, char **argv)
         seq_and_write(it, il, 4, PEM_SIGNATURE, out_path);
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
         if (priv_k.n_items < 2) die("sign: malformed Stern private key");
         BitArray e_ba, seed_ba;
         ba_from_ra(&e_ba,    priv_k.vals[0], priv_k.vlens[0]);
@@ -1764,6 +1776,9 @@ static void cmd_verify(int argc, char **argv)
         else                    { puts("Verification FAILED");   exit(1); }
 
     } else if (strcmp(algo, "hpks-stern") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
         if (pub_k.n_items < 2) die("verify: malformed Stern public key");
 
         /* Extract syndr (16 bytes) from syn32 (32 bytes, right-aligned).
