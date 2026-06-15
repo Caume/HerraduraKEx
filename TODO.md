@@ -6288,7 +6288,7 @@ Status: **DONE v1.9.59**
 2. Add both constructions to the code-based PQC protocol reference table (or create a new "Hash-based PQC" table row).
 3. Include a security note on statefulness: a WOTS-F key must never be used twice; XMSS-F tracks the leaf index and is the recommended multi-use variant.
 
-Status: Open
+Status: **DONE v1.9.60**
 
 ---
 

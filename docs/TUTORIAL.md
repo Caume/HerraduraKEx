@@ -435,6 +435,52 @@ hpke_stern_f_decap_known(&K_dec, &e_prime, &seed2);
 /* Production: recover e_prime from ct using a QC-MDPC decoder first. */
 ```
 
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant — it tracks the Merkle tree so each signing call advances the leaf
+> counter automatically.
+
+**WOTS-F** (one-time, single leaf):
+
+```c
+#include "herradura.h"
+
+/* Keygen: master_seed is the long-term secret; leaf_idx=0 for a one-time key. */
+uint8_t master_seed[KEYBYTES];
+ba_rand_bytes(master_seed, KEYBYTES, urnd);
+
+BitArray sk[WOTS_L], pk[WOTS_L];
+hpks_wots_keygen(sk, pk, master_seed, /*leaf_idx=*/0);
+
+const uint8_t msg[] = "hello world";
+BitArray sig[WOTS_L];
+hpks_wots_sign(sig, msg, sizeof msg - 1, master_seed, /*leaf_idx=*/0);
+
+int ok = hpks_wots_verify(msg, sizeof msg - 1, sig, pk);   /* 1 = valid */
+/* Do NOT reuse leaf_idx=0 — use a fresh leaf_idx for every message. */
+```
+
+**XMSS-F** (multi-signature, Merkle tree):
+
+```c
+/* Keygen: h=4 builds a tree with 2^4=16 leaves (16 one-time slots). */
+uint8_t root[KEYBYTES];
+uint8_t *flat_leaves;
+size_t   num_leaves;
+hpks_xmss_keygen(root, &flat_leaves, &num_leaves, master_seed, /*h=*/4);
+
+/* Sign at leaf_idx=0, then 1, 2, … (never repeat an index). */
+HpksXmssSig sig0;
+hpks_xmss_sign(&sig0, msg, sizeof msg - 1, master_seed,
+                flat_leaves, num_leaves, /*leaf_idx=*/0);
+
+int ok2 = hpks_xmss_verify(msg, sizeof msg - 1, &sig0, root); /* 1 = valid */
+hpks_xmss_sig_free(&sig0);   /* frees auth_path */
+free(flat_leaves);
+```
+
 ### HFSCX-256 hash and MAC
 
 Merkle-Damgård hash built on NL-FSCX v1; returns 32 bytes.  Pass `iv = NULL`
@@ -775,6 +821,35 @@ Kdec := HpkeSternFDecapKnown(ePrime, seed2)
 _ = ct2
 ```
 
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant; advance the leaf counter monotonically across restarts.
+
+```go
+import h "herradurakex/herradura"
+import "crypto/rand"
+
+masterSeed := make([]byte, 32)
+rand.Read(masterSeed)
+
+msg := []byte("hello world")
+
+// --- WOTS-F (one-time) ---
+_, pk0 := h.HpksWotsKeygen(masterSeed, 0)     // sk, pk for leaf 0
+sig0   := h.HpksWotsSign(msg, masterSeed, 0)
+ok     := h.HpksWotsVerify(msg, sig0, pk0)    // true
+// Never call HpksWotsSign again with the same masterSeed and leaf index 0.
+
+// --- XMSS-F (multi-signature, h=4 → 16 one-time slots) ---
+kp    := h.HpksXmssKeygen(masterSeed, 4)     // builds 2^4-leaf Merkle tree
+xsig  := h.HpksXmssSign(msg, kp, 0)          // sign at leaf 0
+ok2   := h.HpksXmssVerify(msg, xsig, kp.Root)
+_ = ok; _ = ok2
+// Next signing call uses HpksXmssSign(msg2, kp, 1), then leaf 2, etc.
+```
+
 ### HFSCX-256 hash and MAC
 
 ```go
@@ -1035,6 +1110,31 @@ K_dec = h.hpke_stern_f_decap(ct2, e_prime, seed2, n)
 assert K_enc == K_dec
 # Production: recover e_prime from ct2 with a QC-MDPC decoder, then call
 # hpke_stern_f_decap(ct2, e_prime, seed2, n).
+```
+
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant; persist the next unused leaf index across restarts.
+
+```python
+import os
+
+master_seed = os.urandom(32)
+msg = b"hello world"
+
+# --- WOTS-F (one-time, single leaf) ---
+sk0, pk0 = h.hpks_wots_keygen(master_seed, leaf_idx=0)
+sig0, _  = h.hpks_wots_sign(msg, master_seed, leaf_idx=0)
+ok       = h.hpks_wots_verify(msg, sig0, pk0)   # True
+# Never call hpks_wots_sign with the same master_seed and leaf_idx=0 again.
+
+# --- XMSS-F (multi-signature, h=4 → 16 one-time slots) ---
+ms, root, leaf_hashes = h.hpks_xmss_keygen(master_seed, h=4)
+xsig = h.hpks_xmss_sign(msg, ms, leaf_hashes, leaf_idx=0)
+ok2  = h.hpks_xmss_verify(msg, xsig, root)      # True
+# Next message: hpks_xmss_sign(msg2, ms, leaf_hashes, leaf_idx=1), etc.
 ```
 
 ### HFSCX-256 hash and MAC
@@ -1697,6 +1797,13 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 |----------|----------|--------|
 | HPKS-Stern-F | SD(N,t) + NL-FSCX v1 PRF | Demo params (rounds=32); production needs rounds≥219 |
 | HPKE-Stern-F | SD(N,t) | Demo only; decap requires QC-MDPC decoder for production |
+
+### Hash-based stateful signatures
+
+| Protocol | Hard problem | Availability | Notes |
+|----------|-------------|--------------|-------|
+| HPKS-WOTS-F | Second-preimage of HFSCX-256 | C, Go, Python | One-time: one message per leaf index; reuse breaks security |
+| HPKS-XMSS-F | Second-preimage of HFSCX-256 | C, Go, Python | Multi-use: 2^h slots per master seed; persist leaf counter |
 
 ### ZKP protocols
 

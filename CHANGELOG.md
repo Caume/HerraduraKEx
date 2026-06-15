@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.60] - 2026-06-15
+
+### Documentation — HPKS-WOTS-F / HPKS-XMSS-F tutorial examples (TODO #111)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS-WOTS-F / HPKS-XMSS-F (hash-based
+  stateful signatures)` subsections to C, Go, and Python integration sections,
+  inserted after the `### HPKE-Stern-F KEM` subsection.  Each snippet shows
+  keygen, sign, and verify for both WOTS-F (one-time) and XMSS-F (multi-use
+  Merkle tree) with a prominent statefulness warning.
+- Added a `### Hash-based stateful signatures` table to the protocol reference
+  section listing both constructions, their hard problem, and their
+  single-use/multi-use characterisation.
+
+---
+
 ## [1.9.59] - 2026-06-15
 
 ### Documentation — HDRBG tutorial examples (TODO #110)
