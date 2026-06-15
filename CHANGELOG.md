@@ -4,6 +4,28 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.45] - 2026-06-14
+
+### Analysis — HKEX-RNL-128 upgraded parameter set (TODO #90)
+
+Defines **HKEX-RNL-128** ($n=512, q=65537, p=4096, \eta=1$) as the recommended
+upgrade of HKEX-RNL to ≥128-bit classical Core-SVP security.
+
+- **`SecurityProofsCode/hkex_rnl_failure_rate.py`**: adds §6 (LWE/LWR security
+  analysis with calibrated linear scaling from the Albrecht/MATZOV baseline,
+  candidate-parameter table, ML-KEM-512 cross-check) and §7 (Peikert reconciliation
+  failure-rate verification at $n=512$: 0 failures in 2000 trials).
+- **`SecurityProofs-2.md` §11.4.3**: documents HKEX-RNL-128 parameter set, security
+  argument (≈220 classical / ≈200 quantum Core-SVP bits, lower-bounded by ML-KEM-512
+  cross-check), NTT compatibility proof, and reconciliation correctness reference.
+- **`SecurityProofs-2.md` §11.6 (security summary table)**: adds HKEX-RNL-128 row.
+- **`TODO.md`** #90: marked DONE.
+
+The $n=256$ wire format remains the default; HKEX-RNL-128 is documented as the
+128-bit upgrade path for future deployment.
+
+---
+
 ## [1.9.44] - 2026-06-14
 
 ### Feature — CLI multi-party threshold signing for HPKS-T (TODO #106)

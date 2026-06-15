@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.44)
+# Herradura Cryptographic Suite (v1.9.45)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 

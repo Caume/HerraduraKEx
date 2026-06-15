@@ -5712,7 +5712,7 @@ is planned.
 3. Document the selected set as `HKEX-RNL-128`; keep the current set as the default
    wire format until a major version, or version-tag the PEM header.
 
-Status: **PENDING**
+Status: **DONE v1.9.45**
 
 ---
 
