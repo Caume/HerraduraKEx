@@ -26,14 +26,126 @@ with toy examples and verified references.
 
 ## Contents
 
-1. [C integration](#c-integration)
-2. [Go integration](#go-integration)
-3. [Python integration](#python-integration)
-4. [ZKP Protocols](#zkp-protocols)
-5. [OPRF and aPAKE](#oprf-and-apake)
-6. [Protocol reference](#protocol-reference)
-7. [Parameter reference](#parameter-reference)
-8. [Security notes](#security-notes)
+1. [CLI quickstart](#cli-quickstart)
+2. [C integration](#c-integration)
+3. [Go integration](#go-integration)
+4. [Python integration](#python-integration)
+5. [ZKP Protocols](#zkp-protocols)
+6. [OPRF and aPAKE](#oprf-and-apake)
+7. [Protocol reference](#protocol-reference)
+8. [Parameter reference](#parameter-reference)
+9. [Security notes](#security-notes)
+
+---
+
+## CLI quickstart
+
+The three CLIs (`herradura.py`, `herradura_cli`, `herradura_cli_go`) share identical
+subcommands and PEM wire formats.  PEM files produced by one implementation are
+byte-for-byte compatible with all others.  The Python CLI requires no build step and
+is the easiest starting point.
+
+```bash
+CLI="python3 HerraduraCli/herradura.py"
+# C CLI:  ./HerraduraCli/herradura_cli
+# Go CLI: ./HerraduraCli/herradura_cli_go
+```
+
+### Key generation and inspection
+
+```bash
+# Generate a private key (hkex-gf, hpks, hpke, hkex-rnl, hpks-stern, …)
+$CLI genpkey --algo hkex-gf --out alice.pem
+$CLI genpkey --algo hkex-gf --out bob.pem
+
+# Extract the public key
+$CLI pkey --in alice.pem --pubout --out alice_pub.pem
+
+# Print key parameters in human-readable form
+$CLI pkey --in alice.pem --text
+```
+
+### Key exchange (HKEX-GF)
+
+```bash
+$CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem   --out alice_sk.pem
+$CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
+# alice_sk.pem and bob_sk.pem contain the same 256-bit session key.
+```
+
+### Symmetric encryption / decryption (HSKE)
+
+```bash
+echo -n "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" > msg.bin   # 32-byte (256-bit) message
+
+$CLI enc --algo hske --key alice_sk.pem --in msg.bin       --out ct.pem
+$CLI dec --algo hske --key alice_sk.pem --in ct.pem        --out recovered.bin
+# cmp msg.bin recovered.bin  →  identical
+```
+
+Use `--algo hske-nla1` or `--algo hske-nla2` for the unauthenticated NL/PQC modes.
+
+### Authenticated encryption (HSKE-NL-AEAD)
+
+Add `--aead` to any `hske-nla1` enc/dec command.  The `--ad` flag supplies
+associated data (authenticated but not encrypted).
+
+```bash
+# Encrypt with AEAD (nonce embedded in ct.pem alongside ciphertext and tag)
+$CLI enc --algo hske-nla1 --aead --ad "header-v1" \
+         --key alice_sk.pem --in msg.bin --out ct_aead.pem
+
+# Decrypt (--ad must match exactly; fails if ct, tag, or AD is tampered with)
+$CLI dec --algo hske-nla1 --ad "header-v1" \
+         --key alice_sk.pem --in ct_aead.pem --out recovered.bin
+# cmp msg.bin recovered.bin  →  identical
+```
+
+The C and Go CLIs accept the same `--aead` and `--ad` flags.  AEAD PEMs are
+cross-language compatible — see `CliTest/test_aead.sh` for a 9-way interop test.
+
+### Signing and verification (HPKS)
+
+```bash
+$CLI genpkey --algo hpks --out sign_key.pem
+$CLI pkey    --in sign_key.pem --pubout --out sign_pub.pem
+
+$CLI sign   --algo hpks --key sign_key.pem --in msg.bin --out sig.pem
+$CLI verify --algo hpks --pubkey sign_pub.pem --in msg.bin --sig sig.pem
+# Prints: Signature OK
+```
+
+### El Gamal encryption (HPKE)
+
+```bash
+$CLI genpkey --algo hpke --out enc_key.pem
+$CLI pkey    --in enc_key.pem --pubout --out enc_pub.pem
+
+$CLI enc --algo hpke --key enc_pub.pem  --in msg.bin --out ct.pem
+$CLI dec --algo hpke --key enc_key.pem  --in ct.pem  --out recovered.bin
+```
+
+### Key exchange (HKEX-RNL, PQC, two rounds)
+
+HKEX-RNL requires two steps: Bob responds first, then Alice completes.
+
+```bash
+$CLI genpkey --algo hkex-rnl --out alice_rnl.pem
+$CLI pkey    --in alice_rnl.pem --pubout --out alice_rnl_pub.pem
+$CLI genpkey --algo hkex-rnl --out bob_rnl.pem
+
+# Round 1 — Bob sees Alice's public key and produces a RESPONSE PEM
+$CLI kex --algo hkex-rnl --our bob_rnl.pem --their alice_rnl_pub.pem \
+         --out bob_resp.pem
+
+# Round 2 — Alice sees Bob's response and derives the session key
+$CLI kex --algo hkex-rnl --our alice_rnl.pem --their bob_resp.pem \
+         --out alice_sk_rnl.pem
+# Both bob_resp.pem and alice_sk_rnl.pem hold the same session key.
+```
+
+See `CliTest/` for full integration test scripts covering all algorithms
+and cross-language interoperability.
 
 ---
 
@@ -47,6 +159,10 @@ Copy `herradura.h` into your project (or keep it in the repo and use `-I`) then:
 ```
 
 No additional source files, no link flags, no build system changes.
+
+On embedded targets without `/dev/urandom`, seed `HDrbg` from any available
+hardware entropy source (ADC noise, TRNG peripheral, etc.) and use
+`drbg_generate` in place of `fopen("/dev/urandom", "rb")` throughout.
 
 ### Build
 
@@ -116,6 +232,59 @@ hpke_encrypt(&plaintext,  &alice_pub,  &R_ephem, &ciphertext, urnd);
 hpke_decrypt(&ciphertext, &R_ephem, &alice_priv, &recovered);
 ```
 
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The only difference is the challenge hash: NL-FSCX v1
+replaces the linear FSCX revolve, hardening the challenge against preimage attacks.
+The public key is still a GF(2^256)* element; DLP protection is unchanged.
+
+```c
+BitArray msg_nl, k_nl, R_nl, e_nl, s_nl;
+ba_rand(&msg_nl, urnd);
+ba_rand(&k_nl,   urnd);                              /* per-signature nonce */
+
+gf_pow_ba(&R_nl, &GF_GEN, &k_nl);                   /* R = g^k             */
+nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &msg_nl, I_VALUE); /* NL challenge e   */
+ba_mul_mod_ord(&(BitArray){0}, &alice_priv, &e_nl);  /* ae = a·e            */
+BitArray ae_nl, s_nl2;
+ba_mul_mod_ord(&ae_nl, &alice_priv, &e_nl);
+ba_sub_mod_ord(&s_nl2, &k_nl, &ae_nl);              /* s = k - a·e mod ord */
+
+/* Verify: g^s · C^e == R (same check as HPKS; challenge recomputed with NL) */
+BitArray e_v, gs, Ce, lhs;
+nl_fscx_revolve_v1_ba(&e_v, &R_nl, &msg_nl, I_VALUE);
+gf_pow_ba(&gs, &GF_GEN, &s_nl2);
+gf_pow_ba(&Ce, &alice_pub, &e_v);
+gf_mul_ba(&lhs, &gs, &Ce);
+int ok_nl = ba_equal(&lhs, &R_nl);  /* 1 if valid */
+
+explicit_bzero(&k_nl,  sizeof(k_nl));
+explicit_bzero(&ae_nl, sizeof(ae_nl));
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric sub-protocol uses NL-FSCX v2 (bijective)
+instead of the linear FSCX revolve, hardening the ciphertext against key recovery.
+
+```c
+BitArray r_nl, R_nl2, enc_nl, ct_nl, dec_nl, pt_nl;
+ba_rand(&r_nl, urnd);
+
+gf_pow_ba(&R_nl2,  &GF_GEN,      &r_nl);    /* ephemeral R = g^r          */
+gf_pow_ba(&enc_nl, &alice_pub,   &r_nl);    /* enc key = C^r              */
+nl_fscx_revolve_v2_ba(&ct_nl, &plaintext, &enc_nl, I_VALUE);  /* encrypt  */
+
+gf_pow_ba(&dec_nl, &R_nl2, &alice_priv);    /* dec key = R^a              */
+nl_fscx_revolve_v2_inv_ba(&pt_nl, &ct_nl, &dec_nl, I_VALUE);  /* decrypt  */
+/* ba_equal(&pt_nl, &plaintext) == 1 */
+/* Transmit R_nl2 alongside ct_nl; Alice decrypts with her private key. */
+
+explicit_bzero(&r_nl,   sizeof(r_nl));
+explicit_bzero(&enc_nl, sizeof(enc_nl));
+explicit_bzero(&dec_nl, sizeof(dec_nl));
+```
+
 ### HSKE-NL-A1 counter-mode encryption (NL/PQC)
 
 Counter-mode stream cipher based on NL-FSCX v1.  A fresh random nonce must be
@@ -141,6 +310,52 @@ ba_xor(&recovered,  &ciphertext, &ks);      /* decrypt */
 
 explicit_bzero(&seed_a1, sizeof(seed_a1));
 explicit_bzero(&base_a1, sizeof(base_a1));
+```
+
+### HSKE-NL-A2 symmetric encryption (NL/PQC)
+
+Bijective revolve-mode encryption based on NL-FSCX v2.  Unlike A1, no nonce is
+needed — the same key encrypts and decrypts via a dedicated inverse function.
+
+```c
+BitArray key2, plaintext2, ciphertext2, recovered2;
+
+ba_rand(&key2,       urnd);
+ba_rand(&plaintext2, urnd);
+
+nl_fscx_revolve_v2_ba    (&ciphertext2, &plaintext2, &key2, R_VALUE);  /* encrypt */
+nl_fscx_revolve_v2_inv_ba(&recovered2,  &ciphertext2, &key2, R_VALUE); /* decrypt */
+/* ba_equal(&plaintext2, &recovered2) == 1 */
+```
+
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  A fresh
+random 256-bit nonce must be generated for every encryption; the 32-byte tag
+authenticates both the ciphertext and the associated data (AD).  Decryption is
+verify-then-decrypt and returns 0 if the tag does not match.
+
+```c
+#include "herradura.h"
+#include <string.h>
+
+BitArray aead_key, aead_nonce;
+ba_rand(&aead_key,   urnd);
+ba_rand(&aead_nonce, urnd);   /* must never be reused with the same key */
+
+const uint8_t *pt  = (const uint8_t *)"hello AEAD";
+size_t         pt_len = 10;
+const uint8_t *ad  = (const uint8_t *)"header-v1";
+size_t         ad_len = 9;
+
+uint8_t ct[10], tag[32], recovered[10];
+
+hske_nl_aead_encrypt(&aead_key, &aead_nonce, ad, ad_len, pt, pt_len, ct, tag);
+
+int ok = hske_nl_aead_decrypt(&aead_key, &aead_nonce,
+                               ad, ad_len, ct, pt_len, tag, recovered);
+/* ok == 1 and memcmp(pt, recovered, pt_len) == 0 */
+/* ok == 0 if ct, tag, ad, or nonce is tampered with */
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
@@ -191,6 +406,81 @@ hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);           /* sign   */
 int ok = hpks_stern_f_verify(&sig, &msg, &seed, syndr);   /* verify */
 ```
 
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: the ciphertext is a syndrome `H·e'^T`; the session key is
+`hash(seed, e')`.  Decapsulation requires recovering `e'` from the syndrome —
+this is the syndrome decoding problem.  The demo uses `hpke_stern_f_decap_known`
+which takes the plaintext error vector directly; **production requires a
+QC-MDPC or similar decoder** to recover `e'` from the syndrome.
+
+```c
+#include "herradura.h"
+
+/* Keygen: same as HPKS-Stern-F — seed is private, syndrome is public. */
+BitArray seed2, e2;
+uint8_t  syndr2[SDF_SYNBYTES];
+stern_f_keygen(&seed2, &e2, syndr2, urnd);
+
+/* Encapsulate: generate fresh error e', compute ct = H·e'^T, derive K. */
+BitArray K_enc, e_prime;
+uint8_t  ct[SDF_SYNBYTES];
+hpke_stern_f_encap(&K_enc, ct, &e_prime, &seed2, urnd);
+/* Send ct to the recipient; keep e_prime secret (demo only). */
+
+/* Decapsulate (demo — known e'): re-derive K from seed and e'. */
+BitArray K_dec;
+hpke_stern_f_decap_known(&K_dec, &e_prime, &seed2);
+/* ba_equal(&K_enc, &K_dec) == 1 */
+/* Production: recover e_prime from ct using a QC-MDPC decoder first. */
+```
+
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant — it tracks the Merkle tree so each signing call advances the leaf
+> counter automatically.
+
+**WOTS-F** (one-time, single leaf):
+
+```c
+#include "herradura.h"
+
+/* Keygen: master_seed is the long-term secret; leaf_idx=0 for a one-time key. */
+uint8_t master_seed[KEYBYTES];
+ba_rand_bytes(master_seed, KEYBYTES, urnd);
+
+BitArray sk[WOTS_L], pk[WOTS_L];
+hpks_wots_keygen(sk, pk, master_seed, /*leaf_idx=*/0);
+
+const uint8_t msg[] = "hello world";
+BitArray sig[WOTS_L];
+hpks_wots_sign(sig, msg, sizeof msg - 1, master_seed, /*leaf_idx=*/0);
+
+int ok = hpks_wots_verify(msg, sizeof msg - 1, sig, pk);   /* 1 = valid */
+/* Do NOT reuse leaf_idx=0 — use a fresh leaf_idx for every message. */
+```
+
+**XMSS-F** (multi-signature, Merkle tree):
+
+```c
+/* Keygen: h=4 builds a tree with 2^4=16 leaves (16 one-time slots). */
+uint8_t root[KEYBYTES];
+uint8_t *flat_leaves;
+size_t   num_leaves;
+hpks_xmss_keygen(root, &flat_leaves, &num_leaves, master_seed, /*h=*/4);
+
+/* Sign at leaf_idx=0, then 1, 2, … (never repeat an index). */
+HpksXmssSig sig0;
+hpks_xmss_sign(&sig0, msg, sizeof msg - 1, master_seed,
+                flat_leaves, num_leaves, /*leaf_idx=*/0);
+
+int ok2 = hpks_xmss_verify(msg, sizeof msg - 1, &sig0, root); /* 1 = valid */
+hpks_xmss_sig_free(&sig0);   /* frees auth_path */
+free(flat_leaves);
+```
+
 ### HFSCX-256 hash and MAC
 
 Merkle-Damgård hash built on NL-FSCX v1; returns 32 bytes.  Pass `iv = NULL`
@@ -210,6 +500,42 @@ uint8_t mac_iv[KEYBYTES];
 for (int i = 0; i < KEYBYTES; i++)
     mac_iv[i] = alice_shared.b[i] ^ _HFSCX256_IV[i];
 hfscx_256(msg, sizeof msg - 1, mac_iv, digest);
+```
+
+### HDRBG (forward-secure DRBG)
+
+Fast-key-erasure DRBG built on NL-FSCX v1.  Suitable for constrained targets
+where `/dev/urandom` is unavailable, or for deterministic test vectors.
+Seed from a full-entropy source (≥ 32 bytes recommended); reseed after at most
+`DRBG_MAX_BLOCKS` (2^20) output blocks.
+
+```c
+#include "herradura.h"
+
+HDrbg drbg;
+
+/* Seed from OS entropy (or any full-entropy source). */
+uint8_t seed_bytes[32];
+FILE *urnd2 = fopen("/dev/urandom", "rb");
+fread(seed_bytes, 1, sizeof seed_bytes, urnd2);
+fclose(urnd2);
+
+drbg_seed(&drbg,
+          seed_bytes, sizeof seed_bytes,  /* entropy */
+          NULL, 0);                        /* personalization (optional) */
+
+/* Generate output. */
+uint8_t out[64];
+int ok = drbg_generate(&drbg, out, sizeof out);   /* 1 on success */
+/* ok == 0 means DRBG_MAX_BLOCKS reached — call drbg_reseed first. */
+
+/* Reseed with fresh entropy to forward-securely advance the state. */
+uint8_t fresh[32];
+/* ... fill fresh from entropy source ... */
+drbg_reseed(&drbg, fresh, sizeof fresh);
+
+explicit_bzero(seed_bytes, sizeof seed_bytes);
+explicit_bzero(fresh, sizeof fresh);
 ```
 
 ### OPRF (2HashDH oblivious PRF)
@@ -323,11 +649,79 @@ recovered  := FscxRevolve(ciphertext, aliceShared, rValue)
 /* plaintext.Equal(recovered) */
 ```
 
-### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+### HPKS Schnorr signature (classical)
 
 ```go
 import "math/big"
 
+ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1)) /* 2^n - 1 */
+
+msg := NewRandBitArray(n)
+kS  := NewRandBitArray(n)                                         /* per-signature nonce */
+RS  := NewBitArray(n, GfPow(g, &kS.Val, poly, n))                /* commitment R = g^k  */
+eS  := FscxRevolve(RS, msg, n/4)                                  /* challenge e         */
+sS  := new(big.Int).Mod(new(big.Int).Sub(&kS.Val,
+           new(big.Int).Mul(&alicePriv.Val, &eS.Val)), ord)       /* response s = k-a·e  */
+
+/* Verify: g^s · C^e == R */
+lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&alicePub.Val, &eS.Val, poly, n), poly, n)
+ok  := lhs.Cmp(&RS.Val) == 0
+```
+
+### HPKE El Gamal encryption (classical)
+
+```go
+rHpke  := NewRandBitArray(n)                                         /* ephemeral scalar   */
+RHpke  := NewBitArray(n, GfPow(g, &rHpke.Val, poly, n))             /* ephemeral pubkey   */
+encKey := NewBitArray(n, GfPow(&alicePub.Val, &rHpke.Val, poly, n)) /* enc key = C^r      */
+ct     := FscxRevolve(plaintext, encKey, n/4)                        /* ciphertext         */
+
+decKey := NewBitArray(n, GfPow(&RHpke.Val, &alicePriv.Val, poly, n)) /* dec key = R^a     */
+dec    := FscxRevolve(ct, decKey, 3*n/4)                              /* recovered = P      */
+/* dec.Equal(plaintext) */
+/* Transmit RHpke alongside ct; Alice decrypts with her private key. */
+```
+
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The challenge hash uses `NlFscxRevolveV1` instead of
+`FscxRevolve`, hardening the challenge against preimage attacks.
+
+```go
+msgNl := NewRandBitArray(n)
+kNl   := NewRandBitArray(n)                                          /* per-signature nonce */
+
+RNl  := NewBitArray(n, GfPow(g, &kNl.Val, poly, n))                 /* R = g^k             */
+eNl  := NlFscxRevolveV1(RNl, msgNl, n/4)                            /* NL challenge e      */
+sNl  := new(big.Int).Mod(new(big.Int).Sub(&kNl.Val,
+            new(big.Int).Mul(&alicePriv.Val, &eNl.Val)), ord)        /* s = k - a·e         */
+
+/* Verify: g^s · C^e == R */
+eV  := NlFscxRevolveV1(RNl, msgNl, n/4)
+lhs := GfMul(GfPow(g, sNl, poly, n), GfPow(&alicePub.Val, &eV.Val, poly, n), poly, n)
+okNl := lhs.Cmp(&RNl.Val) == 0
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric sub-protocol uses `NlFscxRevolveV2`
+(bijective) instead of `FscxRevolve`, hardening ciphertext against key recovery.
+
+```go
+rNl    := NewRandBitArray(n)
+RNl2   := NewBitArray(n, GfPow(g, &rNl.Val, poly, n))               /* ephemeral R = g^r  */
+encNl  := NewBitArray(n, GfPow(&alicePub.Val, &rNl.Val, poly, n))   /* enc key = C^r      */
+ctNl   := NlFscxRevolveV2(plaintext, encNl, n/4)                     /* encrypt            */
+
+decNl  := NewBitArray(n, GfPow(&RNl2.Val, &alicePriv.Val, poly, n)) /* dec key = R^a      */
+ptNl   := NlFscxRevolveV2Inv(ctNl, decNl, n/4)                      /* decrypt            */
+/* ptNl.Equal(plaintext) */
+/* Transmit RNl2 alongside ctNl; Alice decrypts with her private key. */
+```
+
+### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+
+```go
 key       := NewRandBitArray(n)
 plaintext := NewRandBitArray(n)
 
@@ -339,6 +733,42 @@ ct     := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ks.Val))
 dec    := NewBitArray(n, new(big.Int).Xor(&ct.Val, &ks.Val))
 /* dec.Equal(plaintext) */
 /* Transmit nA1 alongside ct so the recipient can reproduce the keystream. */
+```
+
+### HSKE-NL-A2 symmetric encryption (NL/PQC)
+
+Bijective revolve-mode encryption based on NL-FSCX v2.  Unlike A1, no nonce is
+needed — the same key encrypts and decrypts via a dedicated inverse function.
+
+```go
+key2       := NewRandBitArray(n)
+plaintext2 := NewRandBitArray(n)
+
+ct2  := NlFscxRevolveV2(plaintext2, key2, 3*n/4)    /* encrypt (R_VALUE = 3n/4) */
+dec2 := NlFscxRevolveV2Inv(ct2, key2, 3*n/4)        /* decrypt */
+/* dec2.Equal(plaintext2) */
+```
+
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  Returns
+`(ct []byte, tag []byte)` on encrypt; returns `(pt []byte, ok bool)` on decrypt.
+Decryption is verify-then-decrypt; `ok` is false if the tag does not match.
+
+```go
+import h "herradurakex/herradura"
+
+aeadKey   := h.NewRandBitArray(n)
+aeadNonce := h.NewRandBitArray(n)   // must never be reused with the same key
+
+pt := []byte("hello AEAD")
+ad := []byte("header-v1")
+
+ct, tag := h.HskeNlAeadEncrypt(aeadKey, aeadNonce, ad, pt)
+
+recovered, ok := h.HskeNlAeadDecrypt(aeadKey, aeadNonce, ad, ct, tag)
+// ok == true and bytes.Equal(pt, recovered)
+// ok == false if ct, tag, ad, or nonce is tampered with
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
@@ -368,6 +798,58 @@ sig := HpksSternFSign(msg, e, seed, SdfRounds)
 ok  := HpksSternFVerify(msg, sig, seed, syn)
 ```
 
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: ciphertext is a syndrome; session key is `hash(seed, e')`.
+**Production requires a QC-MDPC decoder** to recover `e'` from the syndrome.
+`HpkeSternFEncap` also returns `ePrime` for the demo decapsulation path.
+
+```go
+// Keygen: same as HPKS-Stern-F
+seed2, _, _ := SternFKeygen(n)
+
+// Encapsulate: returns (K, ct, ePrime)
+//   K      — session key
+//   ct     — syndrome *big.Int (send to recipient)
+//   ePrime — plaintext error (keep secret; needed for demo decap)
+Kenc, ct2, ePrime := HpkeSternFEncap(seed2, n)
+
+// Decapsulate (demo — known ePrime)
+Kdec := HpkeSternFDecapKnown(ePrime, seed2)
+// bytes.Equal(Kenc.Bytes(), Kdec.Bytes())
+// Production: recover ePrime from ct2 with a QC-MDPC decoder first.
+_ = ct2
+```
+
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant; advance the leaf counter monotonically across restarts.
+
+```go
+import h "herradurakex/herradura"
+import "crypto/rand"
+
+masterSeed := make([]byte, 32)
+rand.Read(masterSeed)
+
+msg := []byte("hello world")
+
+// --- WOTS-F (one-time) ---
+_, pk0 := h.HpksWotsKeygen(masterSeed, 0)     // sk, pk for leaf 0
+sig0   := h.HpksWotsSign(msg, masterSeed, 0)
+ok     := h.HpksWotsVerify(msg, sig0, pk0)    // true
+// Never call HpksWotsSign again with the same masterSeed and leaf index 0.
+
+// --- XMSS-F (multi-signature, h=4 → 16 one-time slots) ---
+kp    := h.HpksXmssKeygen(masterSeed, 4)     // builds 2^4-leaf Merkle tree
+xsig  := h.HpksXmssSign(msg, kp, 0)          // sign at leaf 0
+ok2   := h.HpksXmssVerify(msg, xsig, kp.Root)
+_ = ok; _ = ok2
+// Next signing call uses HpksXmssSign(msg2, kp, 1), then leaf 2, etc.
+```
+
 ### HFSCX-256 hash and MAC
 
 ```go
@@ -385,25 +867,47 @@ for i := range macIV {
 mac := Hfscx256(data, macIV)
 ```
 
+### HDRBG (forward-secure DRBG)
+
+```go
+import h "herradurakex/herradura"
+import "crypto/rand"
+
+// Seed from OS entropy.
+entropy := make([]byte, 32)
+rand.Read(entropy)
+
+d := h.DrbgSeed(entropy, nil) // nil personalization
+
+// Generate output.
+out, ok := d.DrbgGenerate(64) // ok == false if DRBG_MAX_BLOCKS exceeded
+_ = ok
+
+// Reseed to forward-securely advance the state.
+fresh := make([]byte, 32)
+rand.Read(fresh)
+d.DrbgReseed(fresh)
+```
+
 ### OPRF (2HashDH oblivious PRF)
 
 ```go
-import "herradurakex"
+import h "herradurakex/herradura"
 
 // Key generation (server side)
-k, _ := herradurakex.OprfKeygen(256)
+k, _ := h.OprfKeygen(256)
 
 // Blinding (client side)
-r, alpha, _ := herradurakex.OprfBlind([]byte("my-password"), 256)
+r, alpha, _ := h.OprfBlind([]byte("my-password"), 256)
 
 // Evaluation (server side)
-beta := herradurakex.OprfEval(alpha, k, 256)
+beta := h.OprfEval(alpha, k, 256)
 
 // Unblinding (client side): yields F(k, input)
-F := herradurakex.OprfUnblind(beta, r, 256)
+F := h.OprfUnblind(beta, r, 256)
 
 // Direct evaluation — result matches
-check := herradurakex.OprfDirect([]byte("my-password"), k, 256)
+check := h.OprfDirect([]byte("my-password"), k, 256)
 // F.Cmp(check) == 0
 ```
 
@@ -465,6 +969,46 @@ recovered  = h.fscx_revolve(ciphertext, alice_shared, h.R_VALUE)
 assert plaintext == recovered
 ```
 
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The challenge uses `nl_fscx_revolve_v1` instead of
+`fscx_revolve`, hardening against challenge preimage attacks.
+
+```python
+poly = h.GF_POLY[n]
+ord_ = (1 << n) - 1                              # group order 2^n - 1
+
+msg_nl = h.BitArray.random(n)
+k_nl   = h.BitArray.random(n)                    # per-signature nonce
+
+R_nl   = h.BitArray(n, h.gf_pow(h.GF_GEN, k_nl.uint, poly, n))   # R = g^k
+e_nl   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)            # NL challenge
+s_nl   = (k_nl.uint - alice_priv.uint * e_nl.uint) % ord_         # s = k - a·e
+
+# Verify: g^s · C^e == R
+e_v   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)
+lhs   = h.gf_mul(h.gf_pow(h.GF_GEN, s_nl, poly, n),
+                 h.gf_pow(alice_pub.uint, e_v.uint, poly, n), poly, n)
+assert lhs == R_nl.uint
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric layer uses `nl_fscx_revolve_v2` (bijective)
+instead of the linear FSCX revolve, hardening ciphertext against key recovery.
+
+```python
+r_nl    = h.BitArray.random(n)
+R_nl2   = h.BitArray(n, h.gf_pow(h.GF_GEN, r_nl.uint, poly, n))   # R = g^r
+enc_nl  = h.BitArray(n, h.gf_pow(alice_pub.uint, r_nl.uint, poly, n))  # C^r
+ct_nl   = h.nl_fscx_revolve_v2(plaintext, enc_nl, h.I_VALUE)       # encrypt
+
+dec_nl  = h.BitArray(n, h.gf_pow(R_nl2.uint, alice_priv.uint, poly, n))  # R^a
+pt_nl   = h.nl_fscx_revolve_v2_inv(ct_nl, dec_nl, h.I_VALUE)       # decrypt
+assert pt_nl == plaintext
+# Transmit R_nl2 alongside ct_nl; Alice decrypts with her private key.
+```
+
 ### HSKE-NL-A1 counter-mode encryption (NL/PQC)
 
 ```python
@@ -490,6 +1034,29 @@ plaintext = h.BitArray.random(n)
 ciphertext = h.nl_fscx_revolve_v2(plaintext, key, h.R_VALUE)
 recovered  = h.nl_fscx_revolve_v2_inv(ciphertext, key, h.R_VALUE)
 assert plaintext == recovered
+```
+
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  Returns
+`(nonce, ct, tag)` on encrypt; returns the plaintext or `None` on decrypt.
+Decryption is verify-then-decrypt using `hmac.compare_digest`.
+
+```python
+aead_key = h.BitArray.random(n)
+pt = b"hello AEAD"
+ad = b"header-v1"
+
+# encrypt — nonce is generated internally if not supplied
+nonce, ct, tag = h.hske_nl_aead_encrypt(aead_key, pt, ad)
+
+# decrypt — returns plaintext or None if tag/ct/ad/nonce is tampered with
+recovered = h.hske_nl_aead_decrypt(aead_key, nonce, ct, tag, ad)
+assert recovered == pt
+
+# tamper detection
+assert h.hske_nl_aead_decrypt(aead_key, nonce,
+                               bytes([ct[0] ^ 1]) + ct[1:], tag, ad) is None
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
@@ -520,6 +1087,56 @@ sig = h.hpks_stern_f_sign(msg, e_int, seed, syndrome, n)
 ok  = h.hpks_stern_f_verify(msg, sig, seed, syndrome, n)
 ```
 
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: ciphertext is a syndrome; session key is `hash(seed, e')`.
+`hpke_stern_f_encap_with_e` returns the plaintext error for the demo
+decapsulation path.  **Production requires a QC-MDPC decoder** to recover
+`e'` from the syndrome; `hpke_stern_f_decap(ct, 0, seed)` attempts brute-force
+but refuses if `C(n, t) > 2^32`.
+
+```python
+# Keygen: same as HPKS-Stern-F — seed private, syndrome public.
+seed2, _, _ = h.stern_f_keygen(n)
+
+# Encapsulate — returns (K, ct, e_prime)
+#   K       — session key (BitArray)
+#   ct      — syndrome int (send to recipient)
+#   e_prime — plaintext error int (keep secret; needed for demo decap)
+K_enc, ct2, e_prime = h.hpke_stern_f_encap_with_e(seed2, n)
+
+# Decapsulate (demo — known e_prime)
+K_dec = h.hpke_stern_f_decap(ct2, e_prime, seed2, n)
+assert K_enc == K_dec
+# Production: recover e_prime from ct2 with a QC-MDPC decoder, then call
+# hpke_stern_f_decap(ct2, e_prime, seed2, n).
+```
+
+### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signatures)
+
+> **Statefulness warning:** A WOTS-F leaf key must **never** be reused.  Sign
+> only one message per leaf index.  XMSS-F is the recommended multi-signature
+> variant; persist the next unused leaf index across restarts.
+
+```python
+import os
+
+master_seed = os.urandom(32)
+msg = b"hello world"
+
+# --- WOTS-F (one-time, single leaf) ---
+sk0, pk0 = h.hpks_wots_keygen(master_seed, leaf_idx=0)
+sig0, _  = h.hpks_wots_sign(msg, master_seed, leaf_idx=0)
+ok       = h.hpks_wots_verify(msg, sig0, pk0)   # True
+# Never call hpks_wots_sign with the same master_seed and leaf_idx=0 again.
+
+# --- XMSS-F (multi-signature, h=4 → 16 one-time slots) ---
+ms, root, leaf_hashes = h.hpks_xmss_keygen(master_seed, h=4)
+xsig = h.hpks_xmss_sign(msg, ms, leaf_hashes, leaf_idx=0)
+ok2  = h.hpks_xmss_verify(msg, xsig, root)      # True
+# Next message: hpks_xmss_sign(msg2, ms, leaf_hashes, leaf_idx=1), etc.
+```
+
 ### HFSCX-256 hash and MAC
 
 ```python
@@ -531,6 +1148,24 @@ digest = h.hfscx_256(data)
 # Keyed MAC: iv = key XOR IV
 mac_iv = h.BitArray(n, alice_shared.uint ^ int.from_bytes(h._HFSCX256_IV_BYTES, 'big'))
 mac = h.hfscx_256(data, iv=mac_iv)
+```
+
+### HDRBG (forward-secure DRBG)
+
+```python
+import importlib, importlib.util, pathlib, os
+
+# Seed from OS entropy.
+entropy = os.urandom(32)
+
+d = h.drbg_seed(entropy, personalization=None)
+
+# Generate output.
+out = h.drbg_generate(d, 64)
+
+# Reseed to forward-securely advance the state.
+fresh = os.urandom(32)
+h.drbg_reseed(d, fresh)
 ```
 
 ### OPRF (2HashDH oblivious PRF)
@@ -580,8 +1215,9 @@ assert wrong_pw is None
 ```
 
 `hpake_register` and `hpake_login_demo` are defined in
-`Herradura cryptographic suite.py`.  The Python CLI (`herradura.py`) exposes the
-same flow via `pake-register` and `pake-demo` subcommands — see the
+`Herradura cryptographic suite.py`.  Equivalent library APIs exist in C and Go
+(see below).  The Python CLI (`herradura.py`) exposes the same flow via
+`pake-register` and `pake-demo` subcommands — see the
 [OPRF and aPAKE](#oprf-and-apake) section for CLI examples.
 
 Demo parameters: `_HPAKE_ZKP_N = 32`, `_HPAKE_ROUNDS = 16`.
@@ -902,6 +1538,89 @@ compatible with all other CLIs.  The test `CliTest/test_threshold_interop.sh` ve
 - **NL-FSCX challenge.** The challenge hash uses `nl_fscx_revolve_v1(R, msg, n/4)`,
   giving the same security properties as HPKS-NL single-party signing.
 
+### Library API
+
+The all-in-one library functions collapse all four CLI phases into a single call
+and are intended for demos, tests, and single-process multi-party simulations.
+For real multi-party deployments use the CLI phases so each signer runs
+independently.
+
+#### C
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+
+/* Key pairs: each signer holds a private scalar and its GF public key. */
+BitArray secrets[3], pubkeys[3];
+for (int j = 0; j < 3; j++) {
+    ba_rand(&secrets[j], urnd);
+    gf_pow_ba(&pubkeys[j], &GF_GEN_BA, &secrets[j]);
+}
+
+BitArray msg;
+ba_rand(&msg, urnd);
+
+/* Sign: all secrets and pubkeys known to the coordinator in a demo. */
+BitArray C_agg, R, s;
+hpkst_sign(secrets, pubkeys, 3, &msg, NULL /* auto-generate nonces */, &C_agg, &R, &s, urnd);
+
+/* Verify: identical to single-party HPKS-NL verify. */
+int ok = hpkst_verify(&C_agg, &R, &s, &msg);  /* 1 if valid */
+
+fclose(urnd);
+```
+
+#### Go
+
+```go
+import (
+    "math/big"
+    h "herradurakex/herradura"
+)
+
+n   := 3
+g   := big.NewInt(h.GfGen)
+poly := h.GfPoly[256]
+
+secrets := make([]*big.Int, n)
+pubkeys := make([]*big.Int, n)
+for j := range secrets {
+    k := h.NewRandBitArray(256)
+    secrets[j] = &k.Val
+    pubkeys[j]  = h.GfPow(g, secrets[j], poly, 256)
+}
+
+msg := h.NewRandBitArray(256)
+
+// Sign (returns aggregate pubkey, nonce, scalar)
+cAgg, R, s := h.HpkstSign(secrets, pubkeys, msg.Bytes())
+
+// Verify (identical to single-party HPKS-NL verify)
+ok := h.HpkstVerify(cAgg, R, s, msg.Bytes())
+```
+
+#### Python
+
+```python
+n_sig = 3
+poly  = h.GF_POLY[n]
+
+secrets = [h.BitArray.random(n).uint for _ in range(n_sig)]
+pubkeys = [h.BitArray(n, h.gf_pow(h.GF_GEN, a_j, poly, n)) for a_j in secrets]
+
+msg = h.BitArray.random(n)
+
+# Sign — returns (C_agg, R, s) BitArrays
+C_agg, R, s = h.hpkst_sign(secrets, pubkeys, msg)
+
+# Verify — identical to single-party HPKS-NL verify
+ok  = h.hpkst_verify(C_agg, R, s, msg)
+bad = h.hpkst_verify(C_agg, R, h.BitArray(n, s.uint ^ 1), msg)  # tamper → False
+assert ok and not bad
+```
+
 ---
 
 ## OPRF and aPAKE
@@ -959,10 +1678,77 @@ PEM files produced by any implementation are byte-for-byte compatible with the
 others.  See `CliTest/test_oprf_interop.sh` for a 6-way cross-language
 interop test (Python/C/Go key × blind × eval × unblind).
 
+### aPAKE library API (C)
+
+The C library exposes `hpake_register` and `hpake_login_demo` in `herradura.h`.
+The `HpakeRecord` struct (32-byte salt, two `uint32_t` ZKBoo values) is the
+server-side record; store it in your database alongside the OPRF key.
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+BitArray oprf_key;
+oprf_keygen(&oprf_key, urnd);         /* server OPRF key — keep secret */
+
+/* Registration (server side) */
+HpakeRecord rec;
+hpake_register(&rec,
+               (const uint8_t *)"s3cr3t", 6,
+               &oprf_key, urnd);
+/* Store rec and oprf_key on the server; never store the password. */
+
+/* Login (both sides — demo collapses into one call) */
+uint8_t session_key[KEYBYTES];
+int ok = hpake_login_demo(session_key, &rec,
+                           (const uint8_t *)"s3cr3t", 6,
+                           &oprf_key, urnd);
+/* ok == 1 and session_key holds the 32-byte derived key */
+
+int bad = hpake_login_demo(session_key, &rec,
+                            (const uint8_t *)"wrong", 5,
+                            &oprf_key, urnd);
+/* bad == 0 — wrong password rejected */
+
+fclose(urnd);
+```
+
+Demo parameters: `HPAKE_ZKP_N = 32`, `HPAKE_ROUNDS = 16`.
+
+### aPAKE library API (Go)
+
+The Go package exposes `HpakeRegister` and `HpakeLoginDemo`.  `HpakeRecord` is
+the server-side record type; `OprfKeygen` produces the server OPRF key.
+
+```go
+import (
+    "fmt"
+    h "herradurakex/herradura"
+)
+
+// Key generation (server side, one time)
+oprfKey, _ := h.OprfKeygen(256)
+
+// Registration (server side)
+rec, _ := h.HpakeRegister([]byte("s3cr3t"), oprfKey)
+// Store rec (*HpakeRecord) in your database; keep oprfKey secret.
+
+// Login (both sides — demo collapses into one call)
+sessionKey, _ := h.HpakeLoginDemo(rec, []byte("s3cr3t"), oprfKey)
+// sessionKey is a 32-byte slice on success, nil on wrong password.
+fmt.Printf("session key: %x\n", sessionKey)
+
+wrongKey, _ := h.HpakeLoginDemo(rec, []byte("wrong"), oprfKey)
+// wrongKey == nil — wrong password rejected
+```
+
+Demo parameters: `HpakeZkpN = 32`, `HpakeRounds = 16`.
+
 ### aPAKE CLI usage (Python CLI)
 
-The aPAKE flow requires the Python CLI.  The C and Go CLIs support OPRF
-but not the full aPAKE registration/login flow.
+The aPAKE CLI flow requires the Python CLI.  The C and Go CLIs support OPRF
+but not the `pake-register` / `pake-demo` subcommands; use the library APIs
+above for C and Go aPAKE integration.
 
 ```bash
 # 1. Generate OPRF server key (one time)
@@ -1000,6 +1786,7 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 |----------|-----------|-----------|
 | HSKE-NL-A1 | `nl_fscx_revolve_v1` | counter-mode (one-way) |
 | HSKE-NL-A2 | `nl_fscx_revolve_v2` / `_inv` | revolve-mode (invertible) |
+| HSKE-NL-AEAD | HSKE-NL-A1 + HFSCX-256 MAC | authenticated encryption (recommended) |
 | HKEX-RNL | Ring-LWR polynomial arithmetic | key exchange |
 | HPKS-NL | `nl_fscx_revolve_v1` as Schnorr challenge | signature |
 | HPKE-NL | `nl_fscx_revolve_v2` / `_inv` | El Gamal encryption |
@@ -1010,6 +1797,13 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 |----------|----------|--------|
 | HPKS-Stern-F | SD(N,t) + NL-FSCX v1 PRF | Demo params (rounds=32); production needs rounds≥219 |
 | HPKE-Stern-F | SD(N,t) | Demo only; decap requires QC-MDPC decoder for production |
+
+### Hash-based stateful signatures
+
+| Protocol | Hard problem | Availability | Notes |
+|----------|-------------|--------------|-------|
+| HPKS-WOTS-F | Second-preimage of HFSCX-256 | C, Go, Python | One-time: one message per leaf index; reuse breaks security |
+| HPKS-XMSS-F | Second-preimage of HFSCX-256 | C, Go, Python | Multi-use: 2^h slots per master seed; persist leaf counter |
 
 ### ZKP protocols
 
@@ -1023,7 +1817,7 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 | Protocol | Key type | Hard problem | Availability |
 |----------|----------|--------------|--------------|
 | OPRF (2HashDH) | `oprf` | DLP in GF(2^256) | C, Go, Python, all CLIs |
-| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | Python suite + Python CLI |
+| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | C, Go, Python (library); Python CLI only |
 
 The OPRF output is `F(k, x) = gf_pow(H(x), k)` where `H` is HFSCX-256 hash-to-field.
 The aPAKE protocol uses HKEX-RNL for the key exchange channel, ZKBoo for the
@@ -1134,6 +1928,16 @@ models that exclude quantum adversaries.
 - **HPKS-NL and HPKE-NL** still use GF(2^256)* DLP for the public key; the NL
   extension hardens only the symmetric sub-protocol.  They are not fully PQC.
 - **HSKE-NL-A1/A2** are symmetric-only and do not depend on any public-key assumption.
+- **HSKE-NL-AEAD nonce reuse is catastrophic.**  Reusing a (key, nonce) pair with
+  different plaintexts exposes the XOR of the two plaintexts and invalidates all
+  confidentiality guarantees.  Always generate the nonce from a cryptographic RNG;
+  in library code `BitArray.random(256)` / `NewRandBitArray(256)` / `ba_rand` do
+  this.  The Python `hske_nl_aead_encrypt` function auto-generates the nonce when
+  none is supplied.
+- **HSKE-NL-AEAD does not provide key commitment** in the standard sense — a
+  malicious server holding a different key cannot be distinguished from a MAC
+  failure.  For applications requiring key commitment (e.g. OPAQUE/aPAKE), apply
+  an additional commitment step or use the OPRF-based aPAKE construction instead.
 
 ### Code-based PQC (HPKS-Stern-F, HPKE-Stern-F)
 

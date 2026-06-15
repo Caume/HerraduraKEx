@@ -4,6 +4,157 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.60] - 2026-06-15
+
+### Documentation — HPKS-WOTS-F / HPKS-XMSS-F tutorial examples (TODO #111)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS-WOTS-F / HPKS-XMSS-F (hash-based
+  stateful signatures)` subsections to C, Go, and Python integration sections,
+  inserted after the `### HPKE-Stern-F KEM` subsection.  Each snippet shows
+  keygen, sign, and verify for both WOTS-F (one-time) and XMSS-F (multi-use
+  Merkle tree) with a prominent statefulness warning.
+- Added a `### Hash-based stateful signatures` table to the protocol reference
+  section listing both constructions, their hard problem, and their
+  single-use/multi-use characterisation.
+
+---
+
+## [1.9.59] - 2026-06-15
+
+### Documentation — HDRBG tutorial examples (TODO #110)
+
+- **`docs/TUTORIAL.md`:** added `### HDRBG (forward-secure DRBG)` subsections
+  to C, Go, and Python integration sections, inserted after the existing
+  `### HFSCX-256 hash and MAC` subsection.  Each snippet shows seed, generate,
+  and reseed usage.  Added a note in the C integration section intro that
+  `HDrbg` can substitute for `/dev/urandom` on embedded targets without a
+  filesystem.
+
+---
+
+## [1.9.58] - 2026-06-15
+
+### Documentation — HPKE-Stern-F KEM tutorial examples (TODO #117)
+
+- **`docs/TUTORIAL.md`:** added `### HPKE-Stern-F KEM (code-based PQC, demo)`
+  subsections to C, Go, and Python integration sections, inserted after the
+  existing HPKS-Stern-F subsection.  Each snippet shows keygen (shared with
+  HPKS-Stern-F), encapsulation (`hpke_stern_f_encap` / `HpkeSternFEncap` /
+  `hpke_stern_f_encap_with_e`), and demo decapsulation using the known error
+  vector (`hpke_stern_f_decap_known` / `HpkeSternFDecapKnown` /
+  `hpke_stern_f_decap`).  Each snippet includes a prominent note that
+  production decapsulation requires a QC-MDPC decoder to recover `e'` from
+  the syndrome.
+
+---
+
+## [1.9.57] - 2026-06-15
+
+### Documentation — threshold signing library API (TODO #115)
+
+- **`docs/TUTORIAL.md`:** added `### Library API` subsection to
+  `## Threshold Signing (HPKS-T)`, before the closing `---`.  Shows
+  `hpkst_sign` / `hpkst_verify` in C, `HpkstSign` / `HpkstVerify` in Go,
+  and `hpkst_sign` / `hpkst_verify` in Python, each with a 3-of-3 demo.
+  The subsection intro clearly distinguishes the all-in-one library call
+  (for demos/tests/single-process simulations) from the 4-phase CLI workflow
+  (for real multi-party deployments where signers run independently).
+
+---
+
+## [1.9.56] - 2026-06-15
+
+### Documentation — aPAKE C and Go library API (TODO #116)
+
+- **`docs/TUTORIAL.md`:** added `### aPAKE library API (C)` and `### aPAKE library
+  API (Go)` subsections to the `## OPRF and aPAKE` section, before the existing
+  Python CLI usage subsection.  C snippet shows `HpakeRecord`, `hpake_register`,
+  and `hpake_login_demo` from `herradura.h`.  Go snippet shows `HpakeRegister` and
+  `HpakeLoginDemo` from the `herradura` package.  Updated the aPAKE CLI note and
+  the OPRF/aPAKE reference table to reflect that the library API is available in
+  C, Go, and Python, while the CLI flow is Python-only.  Updated the Python
+  integration section note accordingly.
+
+---
+
+## [1.9.55] - 2026-06-15
+
+### Documentation — HPKS-NL and HPKE-NL tutorial examples (TODO #107)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS-NL Schnorr signature (NL/PQC)` and
+  `### HPKE-NL El Gamal encryption (NL/PQC)` subsections to the C, Go, and
+  Python integration sections, inserted after the classical HPKE subsection and
+  before HSKE-NL-A1.  Each snippet notes that the public key is a GF(2^256)*
+  element (same as HPKS/HPKE) and that only the challenge (HPKS-NL) or symmetric
+  sub-protocol (HPKE-NL) is hardened with NL-FSCX.
+
+---
+
+## [1.9.54] - 2026-06-15
+
+### Documentation — HSKE-NL-AEAD tutorial coverage (TODO #109)
+
+- **`docs/TUTORIAL.md`:** added `### HSKE-NL-AEAD authenticated encryption (NL/PQC)`
+  subsections to C, Go, and Python integration sections showing encrypt/decrypt
+  with associated data (AAD) and nonce handling.  Added `### Authenticated
+  encryption (HSKE-NL-AEAD)` subsection to the CLI quickstart covering the
+  `--aead` and `--ad` flags with a cross-reference to `CliTest/test_aead.sh`.
+  Added HSKE-NL-AEAD row to the NL/PQC protocol reference table.  Added security
+  notes on nonce reuse and key commitment to the NL/PQC security section.
+
+---
+
+## [1.9.53] - 2026-06-15
+
+### Documentation — HSKE-NL-A2 C and Go tutorial examples (TODO #108)
+
+- **`docs/TUTORIAL.md`:** added `### HSKE-NL-A2 symmetric encryption (NL/PQC)`
+  subsections to both the C and Go integration sections, immediately after the
+  existing HSKE-NL-A1 subsection.  C snippet uses `nl_fscx_revolve_v2_ba` /
+  `nl_fscx_revolve_v2_inv_ba` from `herradura.h`; Go snippet uses
+  `NlFscxRevolveV2` / `NlFscxRevolveV2Inv` from the `herradura` package.
+  Both include a brief note that A2 is bijective and requires no nonce.
+
+---
+
+## [1.9.52] - 2026-06-15
+
+### Documentation — CLI quickstart section (TODO #112)
+
+- **`docs/TUTORIAL.md`:** added `## CLI quickstart` as the first major section
+  (before the language integration sections), with subsections covering:
+  key generation and inspection (`genpkey`, `pkey --text`), HKEX-GF key exchange
+  (`kex`), HSKE encryption/decryption (`enc`/`dec`), HPKS sign/verify, HPKE
+  El Gamal encryption, and the two-round HKEX-RNL workflow.  Notes that all three
+  CLIs share identical subcommands and cross-references `CliTest/` for full
+  integration tests.  Contents list updated to include the new section as item 1.
+
+---
+
+## [1.9.51] - 2026-06-15
+
+### Documentation — Go tutorial HPKS and HPKE examples (TODO #113)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS Schnorr signature (classical)` and
+  `### HPKE El Gamal encryption (classical)` subsections to the Go integration
+  section, between `### HSKE symmetric encryption` and `### HSKE-NL-A1`.
+  Both snippets use the same primitives (`GfPow`, `GfMul`, `FscxRevolve`) as the
+  existing Go HKEX-GF and HSKE examples, and mirror the structure of the C section.
+
+---
+
+## [1.9.50] - 2026-06-15
+
+### Documentation fix — Go OPRF tutorial import path (TODO #114)
+
+- **`docs/TUTORIAL.md`:** corrected the Go OPRF snippet import from `"herradurakex"` to
+  `import h "herradurakex/herradura"` and updated all call sites to use the `h.` prefix.
+  The OPRF functions (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`)
+  live in the `herradura` package, not the root module; the previous import would fail
+  to compile.
+
+---
+
 ## [1.9.49] - 2026-06-15
 
 ### Security — HKEX-RNL contributory KDF (TODO #89)
