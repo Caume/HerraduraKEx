@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.53] - 2026-06-15
+
+### Documentation — HSKE-NL-A2 C and Go tutorial examples (TODO #108)
+
+- **`docs/TUTORIAL.md`:** added `### HSKE-NL-A2 symmetric encryption (NL/PQC)`
+  subsections to both the C and Go integration sections, immediately after the
+  existing HSKE-NL-A1 subsection.  C snippet uses `nl_fscx_revolve_v2_ba` /
+  `nl_fscx_revolve_v2_inv_ba` from `herradura.h`; Go snippet uses
+  `NlFscxRevolveV2` / `NlFscxRevolveV2Inv` from the `herradura` package.
+  Both include a brief note that A2 is bijective and requires no nonce.
+
+---
+
 ## [1.9.52] - 2026-06-15
 
 ### Documentation — CLI quickstart section (TODO #112)

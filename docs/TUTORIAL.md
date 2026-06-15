@@ -236,6 +236,22 @@ explicit_bzero(&seed_a1, sizeof(seed_a1));
 explicit_bzero(&base_a1, sizeof(base_a1));
 ```
 
+### HSKE-NL-A2 symmetric encryption (NL/PQC)
+
+Bijective revolve-mode encryption based on NL-FSCX v2.  Unlike A1, no nonce is
+needed — the same key encrypts and decrypts via a dedicated inverse function.
+
+```c
+BitArray key2, plaintext2, ciphertext2, recovered2;
+
+ba_rand(&key2,       urnd);
+ba_rand(&plaintext2, urnd);
+
+nl_fscx_revolve_v2_ba    (&ciphertext2, &plaintext2, &key2, R_VALUE);  /* encrypt */
+nl_fscx_revolve_v2_inv_ba(&recovered2,  &ciphertext2, &key2, R_VALUE); /* decrypt */
+/* ba_equal(&plaintext2, &recovered2) == 1 */
+```
+
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
 
 ```c
@@ -463,6 +479,20 @@ ct     := NewBitArray(n, new(big.Int).Xor(&plaintext.Val, &ks.Val))
 dec    := NewBitArray(n, new(big.Int).Xor(&ct.Val, &ks.Val))
 /* dec.Equal(plaintext) */
 /* Transmit nA1 alongside ct so the recipient can reproduce the keystream. */
+```
+
+### HSKE-NL-A2 symmetric encryption (NL/PQC)
+
+Bijective revolve-mode encryption based on NL-FSCX v2.  Unlike A1, no nonce is
+needed — the same key encrypts and decrypts via a dedicated inverse function.
+
+```go
+key2       := NewRandBitArray(n)
+plaintext2 := NewRandBitArray(n)
+
+ct2  := NlFscxRevolveV2(plaintext2, key2, 3*n/4)    /* encrypt (R_VALUE = 3n/4) */
+dec2 := NlFscxRevolveV2Inv(ct2, key2, 3*n/4)        /* decrypt */
+/* dec2.Equal(plaintext2) */
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)

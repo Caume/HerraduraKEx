@@ -6241,7 +6241,7 @@ Status: Open
 
 **Reference:** Python snippet at `docs/TUTORIAL.md` line 484; `herradura.h` `nl_fscx_revolve_v2` / `nl_fscx_revolve_v2_inv`.
 
-Status: Open
+Status: **DONE v1.9.53**
 
 ---
 
