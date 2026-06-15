@@ -6373,4 +6373,4 @@ Status: **DONE v1.9.56**
 1. Add a `### HPKE-Stern-F KEM (code-based PQC, demo)` subsection to the C, Go, and Python integration sections showing keygen, encapsulate, and decapsulate (with a comment that the demo uses a known error vector).
 2. Add a security note explaining the QC-MDPC decoder requirement and that the demo should not be used in production.
 
-Status: Open
+Status: **DONE v1.9.58**

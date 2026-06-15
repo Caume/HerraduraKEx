@@ -4,6 +4,22 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.58] - 2026-06-15
+
+### Documentation — HPKE-Stern-F KEM tutorial examples (TODO #117)
+
+- **`docs/TUTORIAL.md`:** added `### HPKE-Stern-F KEM (code-based PQC, demo)`
+  subsections to C, Go, and Python integration sections, inserted after the
+  existing HPKS-Stern-F subsection.  Each snippet shows keygen (shared with
+  HPKS-Stern-F), encapsulation (`hpke_stern_f_encap` / `HpkeSternFEncap` /
+  `hpke_stern_f_encap_with_e`), and demo decapsulation using the known error
+  vector (`hpke_stern_f_decap_known` / `HpkeSternFDecapKnown` /
+  `hpke_stern_f_decap`).  Each snippet includes a prominent note that
+  production decapsulation requires a QC-MDPC decoder to recover `e'` from
+  the syndrome.
+
+---
+
 ## [1.9.57] - 2026-06-15
 
 ### Documentation — threshold signing library API (TODO #115)

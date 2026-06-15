@@ -402,6 +402,35 @@ hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);           /* sign   */
 int ok = hpks_stern_f_verify(&sig, &msg, &seed, syndr);   /* verify */
 ```
 
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: the ciphertext is a syndrome `H·e'^T`; the session key is
+`hash(seed, e')`.  Decapsulation requires recovering `e'` from the syndrome —
+this is the syndrome decoding problem.  The demo uses `hpke_stern_f_decap_known`
+which takes the plaintext error vector directly; **production requires a
+QC-MDPC or similar decoder** to recover `e'` from the syndrome.
+
+```c
+#include "herradura.h"
+
+/* Keygen: same as HPKS-Stern-F — seed is private, syndrome is public. */
+BitArray seed2, e2;
+uint8_t  syndr2[SDF_SYNBYTES];
+stern_f_keygen(&seed2, &e2, syndr2, urnd);
+
+/* Encapsulate: generate fresh error e', compute ct = H·e'^T, derive K. */
+BitArray K_enc, e_prime;
+uint8_t  ct[SDF_SYNBYTES];
+hpke_stern_f_encap(&K_enc, ct, &e_prime, &seed2, urnd);
+/* Send ct to the recipient; keep e_prime secret (demo only). */
+
+/* Decapsulate (demo — known e'): re-derive K from seed and e'. */
+BitArray K_dec;
+hpke_stern_f_decap_known(&K_dec, &e_prime, &seed2);
+/* ba_equal(&K_enc, &K_dec) == 1 */
+/* Production: recover e_prime from ct using a QC-MDPC decoder first. */
+```
+
 ### HFSCX-256 hash and MAC
 
 Merkle-Damgård hash built on NL-FSCX v1; returns 32 bytes.  Pass `iv = NULL`
@@ -683,6 +712,29 @@ sig := HpksSternFSign(msg, e, seed, SdfRounds)
 ok  := HpksSternFVerify(msg, sig, seed, syn)
 ```
 
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: ciphertext is a syndrome; session key is `hash(seed, e')`.
+**Production requires a QC-MDPC decoder** to recover `e'` from the syndrome.
+`HpkeSternFEncap` also returns `ePrime` for the demo decapsulation path.
+
+```go
+// Keygen: same as HPKS-Stern-F
+seed2, _, _ := SternFKeygen(n)
+
+// Encapsulate: returns (K, ct, ePrime)
+//   K      — session key
+//   ct     — syndrome *big.Int (send to recipient)
+//   ePrime — plaintext error (keep secret; needed for demo decap)
+Kenc, ct2, ePrime := HpkeSternFEncap(seed2, n)
+
+// Decapsulate (demo — known ePrime)
+Kdec := HpkeSternFDecapKnown(ePrime, seed2)
+// bytes.Equal(Kenc.Bytes(), Kdec.Bytes())
+// Production: recover ePrime from ct2 with a QC-MDPC decoder first.
+_ = ct2
+```
+
 ### HFSCX-256 hash and MAC
 
 ```go
@@ -896,6 +948,31 @@ seed, e_int, syndrome = h.stern_f_keygen(n)
 msg = h.BitArray.random(n)
 sig = h.hpks_stern_f_sign(msg, e_int, seed, syndrome, n)
 ok  = h.hpks_stern_f_verify(msg, sig, seed, syndrome, n)
+```
+
+### HPKE-Stern-F KEM (code-based PQC, demo)
+
+Niederreiter KEM: ciphertext is a syndrome; session key is `hash(seed, e')`.
+`hpke_stern_f_encap_with_e` returns the plaintext error for the demo
+decapsulation path.  **Production requires a QC-MDPC decoder** to recover
+`e'` from the syndrome; `hpke_stern_f_decap(ct, 0, seed)` attempts brute-force
+but refuses if `C(n, t) > 2^32`.
+
+```python
+# Keygen: same as HPKS-Stern-F — seed private, syndrome public.
+seed2, _, _ = h.stern_f_keygen(n)
+
+# Encapsulate — returns (K, ct, e_prime)
+#   K       — session key (BitArray)
+#   ct      — syndrome int (send to recipient)
+#   e_prime — plaintext error int (keep secret; needed for demo decap)
+K_enc, ct2, e_prime = h.hpke_stern_f_encap_with_e(seed2, n)
+
+# Decapsulate (demo — known e_prime)
+K_dec = h.hpke_stern_f_decap(ct2, e_prime, seed2, n)
+assert K_enc == K_dec
+# Production: recover e_prime from ct2 with a QC-MDPC decoder, then call
+# hpke_stern_f_decap(ct2, e_prime, seed2, n).
 ```
 
 ### HFSCX-256 hash and MAC
