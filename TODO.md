@@ -6225,7 +6225,7 @@ Status: **DONE v1.9.44**
 
 **Reference:** `herradura.h` (`hpks_nl_sign`, `hpks_nl_verify`, `hpke_nl_encrypt`, `hpke_nl_decrypt`), Go equivalents, Python equivalents.
 
-Status: Open
+Status: **DONE v1.9.55**
 
 ---
 

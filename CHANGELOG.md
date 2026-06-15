@@ -4,6 +4,19 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.55] - 2026-06-15
+
+### Documentation — HPKS-NL and HPKE-NL tutorial examples (TODO #107)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS-NL Schnorr signature (NL/PQC)` and
+  `### HPKE-NL El Gamal encryption (NL/PQC)` subsections to the C, Go, and
+  Python integration sections, inserted after the classical HPKE subsection and
+  before HSKE-NL-A1.  Each snippet notes that the public key is a GF(2^256)*
+  element (same as HPKS/HPKE) and that only the challenge (HPKS-NL) or symmetric
+  sub-protocol (HPKE-NL) is hardened with NL-FSCX.
+
+---
+
 ## [1.9.54] - 2026-06-15
 
 ### Documentation — HSKE-NL-AEAD tutorial coverage (TODO #109)

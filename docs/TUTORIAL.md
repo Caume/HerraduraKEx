@@ -228,6 +228,59 @@ hpke_encrypt(&plaintext,  &alice_pub,  &R_ephem, &ciphertext, urnd);
 hpke_decrypt(&ciphertext, &R_ephem, &alice_priv, &recovered);
 ```
 
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The only difference is the challenge hash: NL-FSCX v1
+replaces the linear FSCX revolve, hardening the challenge against preimage attacks.
+The public key is still a GF(2^256)* element; DLP protection is unchanged.
+
+```c
+BitArray msg_nl, k_nl, R_nl, e_nl, s_nl;
+ba_rand(&msg_nl, urnd);
+ba_rand(&k_nl,   urnd);                              /* per-signature nonce */
+
+gf_pow_ba(&R_nl, &GF_GEN, &k_nl);                   /* R = g^k             */
+nl_fscx_revolve_v1_ba(&e_nl, &R_nl, &msg_nl, I_VALUE); /* NL challenge e   */
+ba_mul_mod_ord(&(BitArray){0}, &alice_priv, &e_nl);  /* ae = a·e            */
+BitArray ae_nl, s_nl2;
+ba_mul_mod_ord(&ae_nl, &alice_priv, &e_nl);
+ba_sub_mod_ord(&s_nl2, &k_nl, &ae_nl);              /* s = k - a·e mod ord */
+
+/* Verify: g^s · C^e == R (same check as HPKS; challenge recomputed with NL) */
+BitArray e_v, gs, Ce, lhs;
+nl_fscx_revolve_v1_ba(&e_v, &R_nl, &msg_nl, I_VALUE);
+gf_pow_ba(&gs, &GF_GEN, &s_nl2);
+gf_pow_ba(&Ce, &alice_pub, &e_v);
+gf_mul_ba(&lhs, &gs, &Ce);
+int ok_nl = ba_equal(&lhs, &R_nl);  /* 1 if valid */
+
+explicit_bzero(&k_nl,  sizeof(k_nl));
+explicit_bzero(&ae_nl, sizeof(ae_nl));
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric sub-protocol uses NL-FSCX v2 (bijective)
+instead of the linear FSCX revolve, hardening the ciphertext against key recovery.
+
+```c
+BitArray r_nl, R_nl2, enc_nl, ct_nl, dec_nl, pt_nl;
+ba_rand(&r_nl, urnd);
+
+gf_pow_ba(&R_nl2,  &GF_GEN,      &r_nl);    /* ephemeral R = g^r          */
+gf_pow_ba(&enc_nl, &alice_pub,   &r_nl);    /* enc key = C^r              */
+nl_fscx_revolve_v2_ba(&ct_nl, &plaintext, &enc_nl, I_VALUE);  /* encrypt  */
+
+gf_pow_ba(&dec_nl, &R_nl2, &alice_priv);    /* dec key = R^a              */
+nl_fscx_revolve_v2_inv_ba(&pt_nl, &ct_nl, &dec_nl, I_VALUE);  /* decrypt  */
+/* ba_equal(&pt_nl, &plaintext) == 1 */
+/* Transmit R_nl2 alongside ct_nl; Alice decrypts with her private key. */
+
+explicit_bzero(&r_nl,   sizeof(r_nl));
+explicit_bzero(&enc_nl, sizeof(enc_nl));
+explicit_bzero(&dec_nl, sizeof(dec_nl));
+```
+
 ### HSKE-NL-A1 counter-mode encryption (NL/PQC)
 
 Counter-mode stream cipher based on NL-FSCX v1.  A fresh random nonce must be
@@ -514,6 +567,43 @@ dec    := FscxRevolve(ct, decKey, 3*n/4)                              /* recover
 /* Transmit RHpke alongside ct; Alice decrypts with her private key. */
 ```
 
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The challenge hash uses `NlFscxRevolveV1` instead of
+`FscxRevolve`, hardening the challenge against preimage attacks.
+
+```go
+msgNl := NewRandBitArray(n)
+kNl   := NewRandBitArray(n)                                          /* per-signature nonce */
+
+RNl  := NewBitArray(n, GfPow(g, &kNl.Val, poly, n))                 /* R = g^k             */
+eNl  := NlFscxRevolveV1(RNl, msgNl, n/4)                            /* NL challenge e      */
+sNl  := new(big.Int).Mod(new(big.Int).Sub(&kNl.Val,
+            new(big.Int).Mul(&alicePriv.Val, &eNl.Val)), ord)        /* s = k - a·e         */
+
+/* Verify: g^s · C^e == R */
+eV  := NlFscxRevolveV1(RNl, msgNl, n/4)
+lhs := GfMul(GfPow(g, sNl, poly, n), GfPow(&alicePub.Val, &eV.Val, poly, n), poly, n)
+okNl := lhs.Cmp(&RNl.Val) == 0
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric sub-protocol uses `NlFscxRevolveV2`
+(bijective) instead of `FscxRevolve`, hardening ciphertext against key recovery.
+
+```go
+rNl    := NewRandBitArray(n)
+RNl2   := NewBitArray(n, GfPow(g, &rNl.Val, poly, n))               /* ephemeral R = g^r  */
+encNl  := NewBitArray(n, GfPow(&alicePub.Val, &rNl.Val, poly, n))   /* enc key = C^r      */
+ctNl   := NlFscxRevolveV2(plaintext, encNl, n/4)                     /* encrypt            */
+
+decNl  := NewBitArray(n, GfPow(&RNl2.Val, &alicePriv.Val, poly, n)) /* dec key = R^a      */
+ptNl   := NlFscxRevolveV2Inv(ctNl, decNl, n/4)                      /* decrypt            */
+/* ptNl.Equal(plaintext) */
+/* Transmit RNl2 alongside ctNl; Alice decrypts with her private key. */
+```
+
 ### HSKE-NL-A1 counter-mode encryption (NL/PQC)
 
 ```go
@@ -688,6 +778,46 @@ plaintext  = h.BitArray.random(n)
 ciphertext = h.fscx_revolve(plaintext,  alice_shared, h.I_VALUE)
 recovered  = h.fscx_revolve(ciphertext, alice_shared, h.R_VALUE)
 assert plaintext == recovered
+```
+
+### HPKS-NL Schnorr signature (NL/PQC)
+
+Same key type as HPKS.  The challenge uses `nl_fscx_revolve_v1` instead of
+`fscx_revolve`, hardening against challenge preimage attacks.
+
+```python
+poly = h.GF_POLY[n]
+ord_ = (1 << n) - 1                              # group order 2^n - 1
+
+msg_nl = h.BitArray.random(n)
+k_nl   = h.BitArray.random(n)                    # per-signature nonce
+
+R_nl   = h.BitArray(n, h.gf_pow(h.GF_GEN, k_nl.uint, poly, n))   # R = g^k
+e_nl   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)            # NL challenge
+s_nl   = (k_nl.uint - alice_priv.uint * e_nl.uint) % ord_         # s = k - a·e
+
+# Verify: g^s · C^e == R
+e_v   = h.nl_fscx_revolve_v1(R_nl, msg_nl, h.I_VALUE)
+lhs   = h.gf_mul(h.gf_pow(h.GF_GEN, s_nl, poly, n),
+                 h.gf_pow(alice_pub.uint, e_v.uint, poly, n), poly, n)
+assert lhs == R_nl.uint
+```
+
+### HPKE-NL El Gamal encryption (NL/PQC)
+
+Same key type as HPKE.  The symmetric layer uses `nl_fscx_revolve_v2` (bijective)
+instead of the linear FSCX revolve, hardening ciphertext against key recovery.
+
+```python
+r_nl    = h.BitArray.random(n)
+R_nl2   = h.BitArray(n, h.gf_pow(h.GF_GEN, r_nl.uint, poly, n))   # R = g^r
+enc_nl  = h.BitArray(n, h.gf_pow(alice_pub.uint, r_nl.uint, poly, n))  # C^r
+ct_nl   = h.nl_fscx_revolve_v2(plaintext, enc_nl, h.I_VALUE)       # encrypt
+
+dec_nl  = h.BitArray(n, h.gf_pow(R_nl2.uint, alice_priv.uint, poly, n))  # R^a
+pt_nl   = h.nl_fscx_revolve_v2_inv(ct_nl, dec_nl, h.I_VALUE)       # decrypt
+assert pt_nl == plaintext
+# Transmit R_nl2 alongside ct_nl; Alice decrypts with her private key.
 ```
 
 ### HSKE-NL-A1 counter-mode encryption (NL/PQC)
