@@ -259,9 +259,14 @@ classical Core-SVP bits** and **95–105 quantum Core-SVP bits** (MATZOV Report 
 Albrecht et al. LWE estimator 2023 updates).  This is below the 128-bit target of NIST
 ML-KEM-768 (which uses Module-LWE with $k=3$ rings at $n=256$, $q=3329$) but comfortably
 above the 100-bit floor.  No new algebraic attack on Ring-LWR exploiting the Fermat prime
-$q=65537$ has been published through 2025 (the polynomial $x^{256}+1$ does not split into
-degree-1 factors over $\mathbb{F}_{65537}$ since $512 \nmid q-1$, ruling out NTRU-style
-subfield attacks).  The CBD($\eta=1$) secret distribution provides less margin than
+$q=65537$ has been published through 2025.  The ring $\mathbb{Z}_{65537}[x]/(x^{256}+1)$ is
+fully NTT-friendly: $q-1 = 2^{16}$ is divisible by $2n = 512$, so $x^{256}+1$ splits
+completely into 256 linear factors over $\mathbb{F}_{65537}$ (this is precisely what enables
+the negacyclic NTT used in Dilithium and other lattice schemes).  Fully-splitting rings do
+not by themselves enable NTRU-style subfield attacks; those attacks require a short secret
+polynomial exploitable via the subring structure.  In HKEX-RNL the secret is a randomly-sampled
+blinding mask $m$ whose distribution is not concentrated in any proper subring, so
+subfield-attack preconditions do not hold.  The CBD($\eta=1$) secret distribution provides less margin than
 $\eta=2$ (used in Kyber-512) but remains secure at $n=256$.
 
 **Upgraded parameter set: HKEX-RNL-128 (TODO #90, v1.9.45).** The deployed $n=256$
@@ -843,7 +848,7 @@ The security claims for HFSCX-256-DM are conditional on assumptions already used
 
 **A1 (NL-FSCX v1 PRF, §11.8.4).**  For random key $K$, the function $i \mapsto F_1^{64}(K \oplus i, K)$ is computationally indistinguishable from a uniformly random function $\{0,1\}^n \to \{0,1\}^n$ against polynomial-time distinguishers.
 
-**A2 (NL-FSCX v1 OWF, §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^{n/2}) = \Omega(2^{128})$ classical operations and $\Omega(2^{n/2})$ quantum queries (Grover lower bound, supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result).
+**A2 (NL-FSCX v1 OWF, §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^n) = \Omega(2^{256})$ classical operations and $\Omega(2^{n/2}) = \Omega(2^{128})$ quantum queries (Grover lower bound; the classical bound is supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result, which show no sub-exponential classical solver exists for the resulting degree-$n$ Boolean system).
 
 **A3 (Symmetric structure).**  $F_1(A, B) = F_1(B, A)$, since
 
@@ -874,7 +879,7 @@ A plain Merkle-Damgård hash without finalization admits the extension attack: g
 
 HFSCX-256-DM's finalization block makes the published digest $s_k = C_{\text{DM}}(s_{k-1}, \mathit{fin})$, where $s_{k-1}$ is the state after processing the real message blocks but before finalization.  The attacker is given $s_k$, not $s_{k-1}$.
 
-**Theorem 18 — Length extension is infeasible under A2.**  Any extension attacker who, given $\text{HFSCX-256-DM}(D)$ alone, produces $\text{HFSCX-256-DM}(D \| X)$ for an attacker-chosen $X$ must recover $s_{k-1}$ from $s_k = C_{\text{DM}}(s_{k-1}, \mathit{fin})$ — an inversion of $C_{\text{DM}}$ that requires $\Omega(2^{n/2})$ work under A2. $\blacksquare$
+**Theorem 18 — Length extension is infeasible under A2.**  Any extension attacker who, given $\text{HFSCX-256-DM}(D)$ alone, produces $\text{HFSCX-256-DM}(D \| X)$ for an attacker-chosen $X$ must recover $s_{k-1}$ from $s_k = C_{\text{DM}}(s_{k-1}, \mathit{fin})$ — an inversion of $C_{\text{DM}}$ that requires $\Omega(2^n)$ classical work (or $\Omega(2^{n/2})$ quantum work) under A2. $\blacksquare$
 
 **Empirical confirmation.**  `hfscx_256_analysis.py` §5: 0 successful naive forgeries in 200 trials (the naive forgery treats $h_M$ directly as a chain state and processes one extension block using $C_{\text{DM}}$; this never matches the true digest of $D \| X$).
 
@@ -932,7 +937,7 @@ As of v1.9.0 the compression function is the Davies-Meyer variant $C_{\text{DM}}
 
 **Benefits gained.**
 
-1. **Fixed-point hardness.**  $C_{\text{DM}}(s, m) = s$ requires $F_1^{64}(s, m) = 0$, which under A2 requires $\Omega(2^{n/2})$ work (preimage of zero under A2).  Before v1.9.0, fixed points were orbit-period-64 points of $F_1(\cdot, m)$; no formal lower bound existed, only empirical absence.
+1. **Fixed-point hardness.**  $C_{\text{DM}}(s, m) = s$ requires $F_1^{64}(s, m) = 0$, which under A2 requires $\Omega(2^n)$ classical work (preimage of zero under A2).  Before v1.9.0, fixed points were orbit-period-64 points of $F_1(\cdot, m)$; no formal lower bound existed, only empirical absence.
 2. **Free-start collision hardness.**  As argued in §11.9.3, the Davies-Meyer structure rules out a structural speed-up from the non-bijectivity of $F_1$.
 3. **PGV-1 alignment.**  $C_{\text{DM}}$ is one of the 12 provably-secure PGV compression functions [BRS 2002, PGV 1993].
 
@@ -963,7 +968,7 @@ Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0
 | §4 Collision sanity, $2^{17}$ trials (`--full`) | not run by default — birthday bound $2^{128}$ | Skipped: any observable collision below $2^{60}$ would falsify A1. |
 | §5 Length-extension naive forgery, 200 trials | 0 / 200 successful | Confirms Theorem 18: finalization block defeats trivial extension. |
 | §6 Domain separation (unkeyed vs keyed), 1 000 trials | 1000 / 1000 differ | Keyed mode distinct from unkeyed for all non-zero $K$. |
-| §7 Fixed-point search (DM), 200 random $(s, m)$ pairs | 0 with $F_1^{64}(s,m)=0$, 0 near-zero | Fixed-point condition is preimage of zero under A2; no instances found, consistent with $\Omega(2^{128})$ hardness (§11.9.8). |
+| §7 Fixed-point search (DM), 200 random $(s, m)$ pairs | 0 with $F_1^{64}(s,m)=0$, 0 near-zero | Fixed-point condition is preimage of zero under A2; no instances found, consistent with $\Omega(2^{256})$ classical hardness (§11.9.8). |
 
 These tests rule out trivial weaknesses (low diffusion, biased output, length-extension, accidental key collisions, structural fixed points).  They do **not** constitute a formal proof: collision and preimage hardness rest on A1 + A2.
 
@@ -976,7 +981,7 @@ HFSCX-256-DM provides:
 | Collision resistance | $2^{128}$ classical / $2^{85}$ quantum (BHT) | A1 |
 | Preimage resistance | $2^{256}$ classical / $2^{128}$ quantum (Grover) | A2 |
 | Second-preimage resistance | $2^{256}$ classical | A1 (collision implies 2nd-preimage) |
-| Length-extension resistance | $2^{128}$ classical (Theorem 18) | A2 |
+| Length-extension resistance | $2^{256}$ classical / $2^{128}$ quantum (Theorem 18) | A2 |
 | MAC unforgeability (raw keyed-IV) | $2^{128}$ classical / $2^{128}$ quantum | A1 (full-chain PRF) |
 | MAC unforgeability (HMAC, recommended for cross-protocol reuse) | as raw, plus related-key resistance | A1 + A2 [Bellare 2006] |
 

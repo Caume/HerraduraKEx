@@ -5769,7 +5769,7 @@ itself invalidate the Ring-LWR hardness claim, but the stated justification for
 ruling out subfield/NTRU-style attacks must be corrected and the attack-surface
 discussion re-checked when fixing this TODO.
 
-Status: **PENDING**
+Status: **DONE v1.9.47**
 
 ---
 

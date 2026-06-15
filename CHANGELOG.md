@@ -4,6 +4,38 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.47] - 2026-06-14
+
+### Docs — Reconcile A2 classical bound and §11.4.3 ring-splitting claim (TODO #92)
+
+- **`SecurityProofs-2.md` §11.9.2 (A2):** restated the NL-FSCX v1 OWF assumption with
+  separate classical ($\Omega(2^n) = \Omega(2^{256})$) and quantum ($\Omega(2^{n/2}) =
+  \Omega(2^{128})$ Grover) bounds.  The old statement conflated both as $\Omega(2^{n/2})$,
+  which understated the classical hardness and created a gap with the $2^{256}$ classical
+  bounds claimed in §11.9.4 and §11.9.11.
+- **`SecurityProofs-2.md` §11.9.4 (preimage/second-preimage):** the "Reduction to A2"
+  sentence already stated the correct $\Theta(2^n)$ generic classical bound; no change
+  needed there, but the A2 fix now makes the reduction logically sound.
+- **`SecurityProofs-2.md` §11.9.5 Theorem 18:** updated bound from $\Omega(2^{n/2})$ to
+  $\Omega(2^n)$ classical / $\Omega(2^{n/2})$ quantum under A2.
+- **`SecurityProofs-2.md` §11.9.8 item 1 (fixed-point hardness):** updated
+  $\Omega(2^{n/2})$ to $\Omega(2^n)$ classical.
+- **`SecurityProofs-2.md` §11.9.10 table §7:** updated empirical consistency note from
+  $\Omega(2^{128})$ to $\Omega(2^{256})$ classical.
+- **`SecurityProofs-2.md` §11.9.11 summary table:** length-extension row updated from
+  "$2^{128}$ classical" to "$2^{256}$ classical / $2^{128}$ quantum".
+- **`SecurityProofs-2.md` §11.4.3:** corrected the false claim that $x^{256}+1$ does not
+  split into degree-1 factors over $\mathbb{F}_{65537}$ because $512 \nmid q-1$.  In
+  fact $q-1 = 2^{16}$ and $512 = 2^9$ divides it exactly, so the ring splits completely
+  (it is NTT-friendly, as exploited by Dilithium).  Replaced with the correct analysis:
+  fully-splitting rings do not enable NTRU-style subfield attacks because those attacks
+  require a short secret concentrated in a proper subring; in HKEX-RNL the secret is a
+  randomly-sampled blinding mask $m$ with no such subring concentration.
+
+KaTeX validation: 941 OK, 0 FAIL (3 pre-existing PIPE-FAIL at line 587, unchanged).
+
+---
+
 ## [1.9.46] - 2026-06-14
 
 ### UX/Docs — Stern-F demo-only status enforcement (TODO #91)
