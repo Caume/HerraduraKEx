@@ -1,5 +1,5 @@
 // HerraduraCli/herradura_cli.go — Go CLI for the Herradura Cryptographic Suite
-// v1.9.44
+// v1.9.48
 //
 // Usage:
 //   herradura_cli_go genpkey  --algo hkex-gf  --bits 256 --out alice.pem
@@ -762,6 +762,8 @@ func cmdDgst(args []string) {
 	switch *algo {
 	case "hfscx-256":
 		digest = Hfscx256(data, nil)
+	case "hfscx-256-ds":
+		digest = Hfscx256DS(0x01, data, nil)
 	default:
 		fmt.Fprintf(os.Stderr, "dgst: unsupported algorithm %q\n", *algo)
 		os.Exit(1)

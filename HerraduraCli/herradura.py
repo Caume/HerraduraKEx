@@ -50,7 +50,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
-    hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
+    hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
@@ -1428,6 +1428,8 @@ def cmd_dgst(args):
 
     if algo == 'hfscx-256':
         digest = hfscx_256(in_bytes)
+    elif algo == 'hfscx-256-ds':
+        digest = hfscx_256_ds(0x01, in_bytes)
     else:
         sys.exit(f"dgst: unsupported algorithm {algo!r}")
 
@@ -1751,7 +1753,7 @@ def build_parser():
 
     # dgst
     dg = sub.add_parser('dgst', help='Compute a digest (default: HFSCX-256, hex to stdout)')
-    dg.add_argument('--algo', default='hfscx-256', choices=['hfscx-256'],
+    dg.add_argument('--algo', default='hfscx-256', choices=['hfscx-256', 'hfscx-256-ds'],
                     help='Hash algorithm (default: hfscx-256)')
     dg.add_argument('--in',  required=True, dest='in',
                     help='Input file (use - for stdin)')

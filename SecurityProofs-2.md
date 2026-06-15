@@ -910,7 +910,7 @@ with $\mathit{ipad} = \mathtt{0x36}$ repeated and $\mathit{opad} = \mathtt{0x5C}
 
 Both follow from A1 + A2.  HMAC adds resistance against extension and key-recovery attacks even if the compression has minor structural weaknesses, at the cost of one extra hash invocation per MAC.
 
-**Recommendation.**  The current single-purpose AEAD use is well-served by raw keyed-IV.  For protocols intending to reuse the same long-term key across multiple algorithms or modes (e.g. derive both an encryption key and a MAC key from one master), HMAC-HFSCX-256-DM should be preferred.  This is captured as a future TODO item once such cross-protocol reuse is introduced.
+**Recommendation.**  The current single-purpose AEAD use is well-served by raw keyed-IV.  For protocols intending to reuse the same long-term key across multiple algorithms or modes (e.g. derive both an encryption key and a MAC key from one master), HMAC-HFSCX-256-DM should be preferred.  As of v1.9.48 (TODO #93), `hmac_hfscx_256(key, data)` / `HmacHfscx256` is available in the C, Go, and Python libraries; no existing call site is changed.
 
 **HSKE-NL-AEAD (v1.9.33, TODO #95 option 1).**  The keyed-IV MAC mode is now also deployed as the tag of a general-purpose AEAD, `hske_nl_aead_encrypt` / `hske_nl_aead_decrypt` (C/Go/Python suites; CLI `enc`/`dec --aead`).  The construction is encrypt-then-MAC over the HSKE-NL-A1 CTR keystream with associated-data support: the tag is computed over the domain-separation prefix `HSKE-NL-AEAD-v1`, the nonce, and length-framed AD and ciphertext, with the MAC key derived from the same per-(key, nonce) schedule as the `.hkx` file format but separated from it by the DS prefix.  Because the tag binds the MAC key through the collision-resistant keyed chain, the scheme is *key-committing*: a ciphertext/tag pair cannot verify under two distinct keys without a keyed collision, ruled out by A2 — a property AES-GCM lacks.  Verification is constant-time and decrypt-after-verify.  A single-pass alternative — a MonkeyDuplex-style sponge AEAD using the bijective NL-FSCX v2 family as the duplex permutation (TODO #95 option 2) — remains open research; it requires the differential/linear characterisation of the v2 permutation tracked in TODO #99 before any deployment claim.
 
@@ -929,7 +929,7 @@ The `dgst` and pre-hash flows share the same effective IV.  This is acceptable w
 
 The AEAD tag uses a distinct effective IV via the per-session key.  Cross-flow collision would require either a second-preimage on $\text{HFSCX-256-DM}(\cdot, K)$ for some $K$ (ruled out by collision resistance), or $K = 0$ (ruled out by the AEAD key-derivation step which produces $K$ from a Ring-LWR shared secret with negligible probability of $K = 0$).
 
-**Future hardening.**  For a fully rigorous domain-separation argument that does not depend on collision-resistance reasoning, prefix every input with a 1-byte domain tag: e.g. `0x01` for `dgst`, `0x02` for sign-pre-hash, `0x03` for AEAD-MAC.  This is a backwards-compatible change if introduced as a versioned wire-format option (HFSCX-256-DS); it is not urgent.
+**Hardening (v1.9.48, TODO #93).**  A domain-separated variant `hfscx_256_ds(ds, data)` is now available in the C, Go, and Python libraries.  The CLI exposes it as `dgst --algo hfscx-256-ds` with ds=0x01.  For a fully rigorous domain-separation argument that does not depend on collision-resistance reasoning, the suggested prefixes are: `0x01` for `dgst`, `0x02` for sign-pre-hash, `0x03` for AEAD-MAC.  Adoption at existing protocol call sites is a backwards-incompatible wire-format change and remains opt-in.
 
 ### 11.9.8 Davies-Meyer compression — DONE v1.9.0 (TODO #72)
 
@@ -953,7 +953,7 @@ Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0
 
 **QRO argument.** Under the ROM on HFSCX-256-DM (§11.9.2, assumption A1), distinct per-slot ds values guarantee that c0, c1, c2, and the KEM key each invoke an independent random oracle.  By Unruh's composition theorem [Unruh 2015], this satisfies the QROM requirement for Theorem 17's Fiat-Shamir transform.  The range compression gap from TODO #42 (F_stern maps only ~24% of 2^32 inputs to distinct outputs at n=32) is resolved: the HFSCX-256-DM finalization maps the chained state through a full 256-bit hash before truncation, restoring the ~63.2% distinct-output fraction expected of a random function.
 
-**Assembly/Arduino (n=32 toy demo).** The 32-bit `hfscx_32` finalizer and the KEM call with ds=4 provide the same QRO property for the KEM slot.  The sign/verify `stern_hash1_32`/`stern_hash2_32` in the n=32 demo do not yet carry per-slot DS tags; structural distinctness (different item counts) limits same-slot collision probability to at most 2^(-32) — negligible at toy parameters.  Full per-slot DS for assembly is a future hardening item.
+**Assembly/Arduino (n=32 toy demo).** The 32-bit `hfscx_32` finalizer and the KEM call with ds=4 provide the same QRO property for the KEM slot.  As of v1.9.48 (TODO #93), `stern_hash1_32`/`stern_hash2_32` carry explicit per-slot DS tags (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key) in both the ARM Thumb-2 and NASM i386 implementations — the same tags as the C/Go/Python suite.  This satisfies the full QRO property at the assembly level and removes the prior reliance on structural distinctness.
 
 ### 11.9.10 Empirical evidence
 
@@ -988,7 +988,8 @@ HFSCX-256-DM provides:
 **Open hardenings** (not security-critical at current parameters):
 
 1. ~~Switch to Davies-Meyer compression $C \oplus s$ at next major version (§11.9.8).~~ **DONE v1.9.0.**
-2. Add 1-byte domain-tag prefix per call site (§11.9.7).
-3. Switch the AEAD tag to HMAC-HFSCX-256-DM if the same $K$ is ever reused for non-MAC purposes (§11.9.6).
+2. ~~Add 1-byte domain-tag prefix per call site (§11.9.7).~~ **DONE v1.9.48** — `hfscx_256_ds(ds, data)` added to C, Go, Python libraries; `dgst --algo hfscx-256-ds` wired in all three CLIs (ds=0x01). Existing call sites unchanged (backward-compatible opt-in).
+3. ~~Add HMAC-HFSCX-256-DM to the library (§11.9.6).~~ **DONE v1.9.48** — `hmac_hfscx_256(key, data)` / `HmacHfscx256` added to C, Go, Python libraries. Recommended when the same long-term key is reused across MAC and non-MAC modes; the current AEAD-only use retains the raw keyed-IV MAC.
+4. ~~Assembly/Arduino per-slot DS tags on `stern_hash1_32`/`stern_hash2_32` (§11.9.9).~~ **DONE** — ARM Thumb-2 and NASM i386 implementations already carry ds=1/2/3/4 at all call sites (verified v1.9.48).
 
 ---

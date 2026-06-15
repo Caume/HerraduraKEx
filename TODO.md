@@ -5792,7 +5792,7 @@ gap in §11.9.9, none of which has a TODO entry:
    (currently only structural distinctness; §11.9.9 calls this "a future hardening
    item").
 
-Status: **PENDING**
+Status: **DONE v1.9.48**
 
 ---
 
