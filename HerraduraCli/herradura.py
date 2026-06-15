@@ -180,39 +180,72 @@ def _rnl_privkey_fields(n, s_poly, m_poly):
     return s_packed, s_nb, m_packed, m_nb
 
 
-def _encode_rnl_privkey(s_poly, m_poly, n):
+def _encode_rnl_privkey(s_poly, m_poly, n, n_a: bytes = None):
+    """Encode HKEX-RNL private key with optional Alice nonce n_a (32 bytes)."""
     s_packed, s_nb, m_packed, m_nb = _rnl_privkey_fields(n, s_poly, m_poly)
-    der = der_seq(der_int(s_packed, s_nb), der_int(m_packed, m_nb), der_int(n))
+    if n_a is None:
+        der = der_seq(der_int(s_packed, s_nb), der_int(m_packed, m_nb), der_int(n))
+    else:
+        na_int = int.from_bytes(n_a, 'big')
+        der = der_seq(der_int(s_packed, s_nb), der_int(m_packed, m_nb),
+                      der_int(n), der_int(na_int, len(n_a)))
     return pem_wrap(_PRIV_ALGOS['hkex-rnl'], der)
 
 
-def _encode_rnl_pubkey(C_poly, m_poly, n):
+def _encode_rnl_pubkey(C_poly, m_poly, n, n_a: bytes = None):
+    """Encode HKEX-RNL public key with optional Alice nonce n_a (32 bytes)."""
     C_packed, C_nb = pack_poly(C_poly, 2)   # Z_p coeff → 2 bytes (p = 4096)
     m_packed, m_nb = pack_poly(m_poly, 4)
-    der = der_seq(der_int(C_packed, C_nb), der_int(m_packed, m_nb), der_int(n))
+    if n_a is None:
+        der = der_seq(der_int(C_packed, C_nb), der_int(m_packed, m_nb), der_int(n))
+    else:
+        na_int = int.from_bytes(n_a, 'big')
+        der = der_seq(der_int(C_packed, C_nb), der_int(m_packed, m_nb),
+                      der_int(n), der_int(na_int, len(n_a)))
     return pem_wrap(_PUB_ALGOS['hkex-rnl'], der)
 
 
 def _decode_rnl_privkey(ints):
-    """Return (s_poly, m_poly, n) from parsed private key integers."""
-    s_packed, m_packed, n = ints
+    """Return (s_poly, m_poly, n, n_a_bytes) from parsed private key integers."""
+    if len(ints) >= 4:
+        s_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
+        n_a = na_int.to_bytes(32, 'big')
+    else:
+        s_packed, m_packed, n = ints[0], ints[1], ints[2]
+        n_a = bytes(32)
     s_poly = unpack_poly(s_packed, n, 4)
     m_poly = unpack_poly(m_packed, n, 4)
-    return s_poly, m_poly, n
+    return s_poly, m_poly, n, n_a
 
 
 def _decode_rnl_pubkey(ints):
-    """Return (C_poly, m_poly, n) from parsed public key integers."""
-    C_packed, m_packed, n = ints
+    """Return (C_poly, m_poly, n, n_a_bytes) from parsed public key integers."""
+    if len(ints) >= 4:
+        C_packed, m_packed, n, na_int = ints[0], ints[1], ints[2], ints[3]
+        n_a = na_int.to_bytes(32, 'big')
+    else:
+        C_packed, m_packed, n = ints[0], ints[1], ints[2]
+        n_a = bytes(32)
     C_poly = unpack_poly(C_packed, n, 2)
     m_poly = unpack_poly(m_packed, n, 4)
-    return C_poly, m_poly, n
+    return C_poly, m_poly, n, n_a
 
 
 def _rnl_derive_C(m_poly, s_poly, n):
     """Compute C = round_p(m_blind * s) given m_blind and s (both as Z_q polys)."""
     ms = _rnl_poly_mul(m_poly, s_poly, RNLQ, n)
     return _suite_mod._rnl_round(ms, RNLQ, RNLP)
+
+
+def _rnl_contributory_kdf(k_raw_int: int, n_bits: int, n_a: bytes, n_b: bytes) -> int:
+    """Derive final HKEX-RNL session key via contributory KDF.
+
+    Returns int: HFSCX-256(K_raw_bytes || n_A || n_B)
+    n_a and n_b must each be 32 bytes; use bytes(32) for old-format peers.
+    """
+    k_bytes = k_raw_int.to_bytes(n_bits // 8, 'big')
+    payload = k_bytes + n_a + n_b
+    return int.from_bytes(hfscx_256(payload), 'big')
 
 
 def _rnl_validate_m_blind(poly, q=RNLQ):
@@ -395,23 +428,31 @@ def _encode_session_key(key_int, nbits):
     return pem_wrap(_LABEL_SESSION, der)
 
 
-def _encode_rnl_response(K_int, C_B_poly, hint, n):
-    """Encode Bob's HKEX-RNL response: (K_B, C_B, hint, n, hint_len).
+def _encode_rnl_response(K_int, C_B_poly, hint, n, n_b: bytes = None):
+    """Encode Bob's HKEX-RNL response: (K_B, C_B, hint, n, hint_len[, n_B]).
 
     K_B is Bob's session key (stored so enc/dec can use this file directly).
     C_B and hint are the public parts Alice uses to complete the handshake.
+    n_b (32 bytes) is Bob's contributory nonce; omitted for old-format output.
     """
     K_nb    = max(1, (K_int.bit_length() + 7) // 8)
     C_packed, C_nb = pack_poly(C_B_poly, 2)
+    # Only the first n//2 coefficients are used in reconciliation; cap to match
+    # C's hint[RNL_N/8] buffer (n//4 bytes = n//2 coefficients × 2 bits).
+    hint_used = hint[:n // 2]
     hint_int = 0
-    for i, b in enumerate(hint):
-        hint_int |= (b & 3) << (2 * i)   # 2 bits per coeff; matches decoder's (hint_int>>(2*i))&3
-    hint_nb = max(1, (2 * len(hint) + 7) // 8)
-    der = der_seq(der_int(K_int,    K_nb),
-                  der_int(C_packed, C_nb),
-                  der_int(hint_int, hint_nb),
-                  der_int(n),
-                  der_int(len(hint)))
+    for i, b in enumerate(hint_used):
+        hint_int |= (b & 3) << (2 * i)
+    hint_nb = max(1, (2 * len(hint_used) + 7) // 8)
+    fields = [der_int(K_int,    K_nb),
+              der_int(C_packed, C_nb),
+              der_int(hint_int, hint_nb),
+              der_int(n),
+              der_int(len(hint_used))]
+    if n_b is not None:
+        nb_int = int.from_bytes(n_b, 'big')
+        fields.append(der_int(nb_int, len(n_b)))
+    der = der_seq(*fields)
     return pem_wrap(_LABEL_RNL_RESP, der)
 
 
@@ -422,22 +463,24 @@ def _decode_session_key(path):
         key_int, nbits = ints
         return key_int, nbits
     elif label == _LABEL_RNL_RESP:
-        # K_B is the first field — usable directly for enc/dec
-        K_int, _, _, n, _ = ints
+        # K_B (already contributory-KDF-derived) is the first field
+        K_int = ints[0]
+        n = ints[3]
         return K_int, n
     else:
         raise ValueError(f"Expected SESSION KEY or RNL RESPONSE PEM, got {label!r}")
 
 
 def _decode_rnl_response(path):
-    """Return (K_int, C_B_poly, hint, n) from a HKEX-RNL RESPONSE PEM."""
+    """Return (K_int, C_B_poly, hint, n, n_b_bytes) from a HKEX-RNL RESPONSE PEM."""
     label, ints = _read_pem_ints(path)
     if label != _LABEL_RNL_RESP:
         raise ValueError(f"Expected HKEX-RNL RESPONSE PEM, got {label!r}")
-    K_int, C_packed, hint_int, n, hint_len = ints
+    K_int, C_packed, hint_int, n, hint_len = ints[0], ints[1], ints[2], ints[3], ints[4]
     C_B_poly = unpack_poly(C_packed, n, 2)
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
-    return K_int, C_B_poly, hint, n
+    n_b = ints[5].to_bytes(32, 'big') if len(ints) >= 6 else bytes(32)
+    return K_int, C_B_poly, hint, n, n_b
 
 
 # ---------------------------------------------------------------------------
@@ -654,7 +697,8 @@ def cmd_genpkey(args):
         a_rand  = _rnl_rand_poly(n, RNLQ)
         m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # randomised m_blind
         s, C    = _rnl_keygen(m_blind, n, RNLQ, RNLP, RNLB)
-        pem_out = _encode_rnl_privkey(s, m_blind, n)
+        n_a     = os.urandom(32)                          # Alice's contributory nonce
+        pem_out = _encode_rnl_privkey(s, m_blind, n, n_a)
 
     elif algo in _STERN_ALGOS:
         print(_STERN_DEMO_WARNING, file=sys.stderr)
@@ -703,9 +747,9 @@ def cmd_pkey(args):
             priv_int, pub_int, nbits = ints
             pem_out = _encode_classical_pubkey(pub_int, nbits, algo)
         elif algo == 'hkex-rnl':
-            s_poly, m_poly, n = _decode_rnl_privkey(ints)
+            s_poly, m_poly, n, n_a = _decode_rnl_privkey(ints)
             C_poly  = _rnl_derive_C(m_poly, s_poly, n)
-            pem_out = _encode_rnl_pubkey(C_poly, m_poly, n)
+            pem_out = _encode_rnl_pubkey(C_poly, m_poly, n, n_a)
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
             syn   = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
@@ -729,7 +773,7 @@ def cmd_pkey(args):
             print(f"private   : {priv_int:0{nbits//4}x}")
             print(f"public    : {pub_int:0{nbits//4}x}")
         elif algo == 'hkex-rnl':
-            s_poly, m_poly, n = _decode_rnl_privkey(ints)
+            s_poly, m_poly, n, n_a = _decode_rnl_privkey(ints)
             C_poly = _rnl_derive_C(m_poly, s_poly, n)
             C_packed, _ = pack_poly(C_poly, 2)
             s_packed, _ = pack_poly(s_poly, 4)
@@ -737,6 +781,7 @@ def cmd_pkey(args):
             print(f"n         : {n}")
             print(f"s_packed  : {s_packed:0{n}x}")
             print(f"C_packed  : {C_packed:0{n//2}x}")
+            print(f"n_A       : {n_a.hex()}")
         elif algo in _STERN_ALGOS:
             e_int, seed_int, n = ints
             print(f"algorithm : {algo}")
@@ -780,30 +825,34 @@ def cmd_kex(args):
             # ── STEP 1: Bob responds to Alice's public key ──────────────────
             # Bob has: s_B (private), reads C_A and m_A from Alice's pubkey.
             # Re-derives C_B = round_p(m_A * s_B) using Alice's m_blind.
-            # Generates (K_B, hint) and writes RESPONSE PEM.
+            # Generates n_B, applies contributory KDF, writes RESPONSE PEM.
             our_algo, our_ints = _decode_privkey(our_path)
-            s_B, _, n = _decode_rnl_privkey(our_ints)
-            C_A, m_A, n_their = _decode_rnl_pubkey(their_ints)
+            s_B, _, n, _ = _decode_rnl_privkey(our_ints)
+            C_A, m_A, n_their, n_a = _decode_rnl_pubkey(their_ints)
             if n != n_their:
                 sys.exit(f"Ring size mismatch: ours n={n}, theirs n={n_their}")
             if not _rnl_validate_m_blind(m_A):
                 sys.exit("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
-            C_B    = _rnl_derive_C(m_A, s_B, n)
+            C_B       = _rnl_derive_C(m_A, s_B, n)
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
-            K_B_int = _apply_kdf(K_B.uint, n)
-            _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n))
+            n_b       = os.urandom(32)
+            K_B_int   = _rnl_contributory_kdf(K_B.uint, n, n_a, n_b)
+            K_B_int   = _apply_kdf(K_B_int, n)
+            _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n, n_b))
 
         elif their_label == _LABEL_RNL_RESP:
             # ── STEP 2: Alice completes the handshake ───────────────────────
-            # Alice has: s_A (private), reads K_B, C_B, hint from Bob's response.
-            # Computes K_A = _rnl_agree(s_A, C_B, ..., hint).
+            # Alice has: s_A (private), reads C_B, hint, n_B from Bob's response.
+            # Applies contributory KDF with her n_A and Bob's n_B.
             our_algo, our_ints = _decode_privkey(our_path)
-            s_A, m_A, n = _decode_rnl_privkey(our_ints)
-            _, C_B, hint, n_resp = _decode_rnl_response(their_path)
+            s_A, m_A, n, n_a = _decode_rnl_privkey(our_ints)
+            _, C_B, hint, n_resp, n_b = _decode_rnl_response(their_path)
             if n != n_resp:
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
-            K_A = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint)
-            _write_file(args.out, _encode_session_key(_apply_kdf(K_A.uint, n), n))
+            K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint)
+            K_A_int = _rnl_contributory_kdf(K_A.uint, n, n_a, n_b)
+            K_A_int = _apply_kdf(K_A_int, n)
+            _write_file(args.out, _encode_session_key(K_A_int, n))
 
         else:
             sys.exit(
@@ -1033,7 +1082,7 @@ def cmd_sign(args):
         # Sign using an HKEX-RNL private key: proves knowledge of s s.t. C = round_p(m·s)
         if our_algo != 'hkex-rnl':
             sys.exit(f"rnl-sigma sign: expected hkex-rnl key, got {our_algo!r}")
-        s_poly, m_poly, n = _decode_rnl_privkey(our_ints)
+        s_poly, m_poly, n, _ = _decode_rnl_privkey(our_ints)
         C_poly = _rnl_derive_C(m_poly, s_poly, n)
         w, c, z = rnl_sigma_sign(s_poly, m_poly, C_poly, n, in_bytes)
         pem_out = encode_zkp_rnl_proof(w, c, z, n)
@@ -1247,7 +1296,7 @@ def cmd_verify(args):
         # Verify using an HKEX-RNL public key
         if their_algo != 'hkex-rnl':
             sys.exit(f"rnl-sigma verify: expected hkex-rnl pubkey, got {their_algo!r}")
-        C_poly, m_poly, n = _decode_rnl_pubkey(their_ints)
+        C_poly, m_poly, n, _ = _decode_rnl_pubkey(their_ints)
         sig_pem = _read_file(sig_path).decode('ascii')
         w, c, z, _n = decode_zkp_rnl_proof(sig_pem)
         ok = rnl_sigma_verify(m_poly, C_poly, n, in_bytes, w, c, z)

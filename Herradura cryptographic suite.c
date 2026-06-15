@@ -373,20 +373,26 @@ int main(void)
         rnl_m_poly(m_base);
         rnl_rand_poly(a_rand_poly, urnd);
         rnl_poly_add(m_blind, m_base, a_rand_poly);
+        /* Contributory nonces: Alice generates n_A, Bob generates n_B */
+        uint8_t rnl_n_A[KEYBYTES], rnl_n_B[KEYBYTES];
+        ba_rand((BitArray *)rnl_n_A, urnd);
+        ba_rand((BitArray *)rnl_n_B, urnd);
         uint8_t hint_A[RNL_N / 8];
         rnl_keygen(s_A_poly, C_A, m_blind, urnd);
         rnl_keygen(s_B_poly, C_B, m_blind, urnd);
         rnl_agree(&KA, s_A_poly, C_B, NULL, hint_A);   /* Alice: reconciler */
         rnl_agree(&KB, s_B_poly, C_A, hint_A, NULL);   /* Bob: receiver */
-        BitArray seedA, seedB;
-        ba_rnl_kdf_seed(&seedA, &KA);              /* ROL(K,n/8) XOR DC          */
-        nl_fscx_revolve_v1_ba(&skA_nl, &seedA, &KA, I_VALUE);
-        ba_rnl_kdf_seed(&seedB, &KB);
-        nl_fscx_revolve_v1_ba(&skB_nl, &seedB, &KB, I_VALUE);
+        /* Apply contributory KDF: final_key = HFSCX-256(K_raw || n_A || n_B) */
+        uint8_t kdfA[KEYBYTES], kdfB[KEYBYTES];
+        rnl_contributory_kdf(kdfA, KA.b, rnl_n_A, rnl_n_B);
+        rnl_contributory_kdf(kdfB, KB.b, rnl_n_A, rnl_n_B);
+        memcpy(skA_nl.b, kdfA, KEYBYTES);
+        memcpy(skB_nl.b, kdfB, KEYBYTES);
+        explicit_bzero(kdfA, KEYBYTES); explicit_bzero(kdfB, KEYBYTES);
         ba_print_hex("sk (Alice): ", &skA_nl);
         ba_print_hex("sk (Bob)  : ", &skB_nl);
-        if (ba_equal(&KA, &KB)) {
-            puts("+ raw key bits agree; shared session key established!");
+        if (ba_equal(&skA_nl, &skB_nl)) {
+            puts("+ session keys agree; contributory KDF established!");
         } else {
             ba_xor(&diff_ba, &KA, &KB);
             bits_diff = 0;
@@ -396,10 +402,10 @@ int main(void)
                    bits_diff);
         }
         sk_rnl_A_saved = skA_nl;
-        explicit_bzero(&KA,     sizeof(KA));
-        explicit_bzero(&KB,     sizeof(KB));
-        explicit_bzero(&seedA,  sizeof(seedA));
-        explicit_bzero(&seedB,  sizeof(seedB));
+        explicit_bzero(&KA, sizeof(KA));
+        explicit_bzero(&KB, sizeof(KB));
+        explicit_bzero(rnl_n_A, KEYBYTES);
+        explicit_bzero(rnl_n_B, KEYBYTES);
     }
 
     /* --- HPKS-NL [NL-hardened Schnorr -- NL-FSCX v1 challenge] */

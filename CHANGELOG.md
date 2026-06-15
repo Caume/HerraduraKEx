@@ -4,6 +4,34 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.49] - 2026-06-15
+
+### Security — HKEX-RNL contributory KDF (TODO #89)
+
+- **`herradura.h`:** added `rnl_contributory_kdf(out, k_raw_be, n_A, n_B)` — derives the
+  final HKEX-RNL session key as HFSCX-256(K_raw_big_endian ‖ n_A ‖ n_B), ensuring both
+  parties' randomness contributes to the shared secret even if one party's RNG is weak.
+- **`HerraduraCli/herradura_cli.c`:** `genpkey hkex-rnl` generates Alice's nonce n_A from
+  urandom and stores it as the 4th DER field of the private key; `pkey --pubout` propagates
+  n_A to the 4th field of the public key; `kex` step 1 (Bob) generates n_B, applies
+  `rnl_contributory_kdf`, and stores n_B as the 6th field of the RESPONSE PEM; `kex` step 2
+  (Alice) reads n_A from her private key and n_B from the response, applies the same KDF.
+- **`HerraduraCli/herradura.py`:** same contributory nonce protocol — `genpkey` adds n_A,
+  `pkey --pubout` propagates it, Bob step 1 adds n_B and applies `_rnl_contributory_kdf`,
+  Alice step 2 applies the same KDF.  Fixed hint encoding to use only n//2 coefficients
+  (128 for n=256), resolving a pre-existing cross-language interoperability bug where Python
+  encoded 256 coefficients but C/Go only read 32 bytes.
+- **`HerraduraCli/herradura_cli.go`:** same contributory nonce protocol — added `padLeftN`,
+  `rnlContributoryKDF`, updated `encodeRNLPriv`, `encodeRNLPub`, `encodeRNLResponse`, and
+  both kex steps.
+- **`Herradura cryptographic suite.{py,go}`:** suite demos updated to generate n_A/n_B and
+  apply HFSCX-256(K_raw ‖ n_A ‖ n_B) as the session key.
+- All PEM formats backward-compatible: peers without the n_A/n_B fields use zero nonces.
+- All 9 cross-language HKEX-RNL kex combinations (C/Python/Go × C/Python/Go) verified to
+  produce identical session keys.
+
+---
+
 ## [1.9.48] - 2026-06-14
 
 ### Security — HFSCX-256-DS and HMAC-HFSCX-256-DM hardenings (TODO #93)

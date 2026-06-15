@@ -1129,6 +1129,24 @@ static int rnl_validate_m_blind(const rnl_poly_t poly, int n)
     return 1;
 }
 
+/* Derive the HKEX-RNL session key via contributory KDF.
+ * final_key = HFSCX-256(K_raw || n_A || n_B) where n_A and n_B are
+ * the per-session nonces contributed by Alice and Bob respectively.
+ * Both nonces must be KEYBYTES (32) bytes. Zero-valued nonces are
+ * accepted (they arise when talking to older implementations). */
+static void rnl_contributory_kdf(uint8_t out[KEYBYTES],
+                                  const uint8_t k_raw[KEYBYTES],
+                                  const uint8_t n_a[KEYBYTES],
+                                  const uint8_t n_b[KEYBYTES])
+{
+    uint8_t buf[3 * KEYBYTES];
+    memcpy(buf,                k_raw, KEYBYTES);
+    memcpy(buf +     KEYBYTES, n_a,   KEYBYTES);
+    memcpy(buf + 2 * KEYBYTES, n_b,   KEYBYTES);
+    hfscx_256(buf, sizeof buf, NULL, out);
+    explicit_bzero(buf, sizeof buf);
+}
+
 /* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
 static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                        const rnl_poly_t m_blind, FILE *urnd)
@@ -3067,7 +3085,7 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
     if ((uint32_t)zkp_nl_f1((uint64_t)zkp_A, (uint64_t)rec->B, HPAKE_ZKP_N) != rec->y)
         return 0;
 
-    /* Ephemeral HKEX-RNL */
+    /* Ephemeral HKEX-RNL with contributory nonces (n_A from client, n_B from server) */
     rnl_poly_t m_base, a_rand, m_blind, s_c, C_c, s_s, C_s;
     rnl_m_poly(m_base);
     rnl_rand_poly(a_rand, urnd);
@@ -3075,15 +3093,24 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
     rnl_keygen(s_c, C_c, m_blind, urnd);
     rnl_keygen(s_s, C_s, m_blind, urnd);
 
+    uint8_t pake_n_A[KEYBYTES], pake_n_B[KEYBYTES];
+    if (fread(pake_n_A, 1, KEYBYTES, urnd) != KEYBYTES) return 0;
+    if (fread(pake_n_B, 1, KEYBYTES, urnd) != KEYBYTES) return 0;
+
     BitArray K_raw_c, K_raw_s;
     uint8_t hint[RNL_N / 8];
     rnl_agree(&K_raw_c, s_c, C_s, NULL, hint);  /* client: reconciler */
     rnl_agree(&K_raw_s, s_s, C_c, hint, NULL);  /* server: receiver  */
 
+    /* Apply contributory KDF to both sides */
+    uint8_t K_kdf_c[KEYBYTES], K_kdf_s[KEYBYTES];
+    rnl_contributory_kdf(K_kdf_c, K_raw_c.b, pake_n_A, pake_n_B);
+    rnl_contributory_kdf(K_kdf_s, K_raw_s.b, pake_n_A, pake_n_B);
+
     /* ZKBoo: client proves knowledge of zkp_A bound to session channel */
     uint8_t auth_c[KEYBYTES + 12], auth_s[KEYBYTES + 12];
-    memcpy(auth_c, K_raw_c.b, KEYBYTES);  memcpy(auth_c + KEYBYTES, "PAKE-AUTH-v1", 12);
-    memcpy(auth_s, K_raw_s.b, KEYBYTES);  memcpy(auth_s + KEYBYTES, "PAKE-AUTH-v1", 12);
+    memcpy(auth_c, K_kdf_c, KEYBYTES);  memcpy(auth_c + KEYBYTES, "PAKE-AUTH-v1", 12);
+    memcpy(auth_s, K_kdf_s, KEYBYTES);  memcpy(auth_s + KEYBYTES, "PAKE-AUTH-v1", 12);
 
     ZkpNlRound *proof = zkp_nl_prove((uint64_t)zkp_A, (uint64_t)rec->B, (uint64_t)rec->y,
                                       HPAKE_ZKP_N, HPAKE_ROUNDS,
@@ -3094,9 +3121,12 @@ static int hpake_login_demo(uint8_t session_key[KEYBYTES],
     zkp_nl_proof_free(proof, HPAKE_ROUNDS);
     if (!ok) return 0;
 
-    /* Session key: hfscx_256(kdf(K_raw_c) || "PAKE-SESSION-v1") */
+    /* Session key: hfscx_256(kdf(K_kdf_c) || "PAKE-SESSION-v1") */
     uint8_t kdf_bytes[KEYBYTES], sk_in[KEYBYTES + 15];
-    _hpake_rnl_kdf(kdf_bytes, &K_raw_c);
+    BitArray K_kdf_c_ba; memcpy(K_kdf_c_ba.b, K_kdf_c, KEYBYTES);
+    _hpake_rnl_kdf(kdf_bytes, &K_kdf_c_ba);
+    explicit_bzero(pake_n_A, KEYBYTES); explicit_bzero(pake_n_B, KEYBYTES);
+    explicit_bzero(K_kdf_c, KEYBYTES); explicit_bzero(K_kdf_s, KEYBYTES);
     memcpy(sk_in, kdf_bytes, KEYBYTES);
     memcpy(sk_in + KEYBYTES, "PAKE-SESSION-v1", 15);
     hfscx_256(sk_in, sizeof sk_in, NULL, session_key);
