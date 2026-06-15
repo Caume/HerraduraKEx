@@ -6344,7 +6344,7 @@ Status: **DONE v1.9.50**
 1. Add a `### Library API` subsection to the Threshold Signing section with C, Go, and Python code snippets showing the per-round function calls.
 2. Note which functions are "all-in-one" (for demos/tests) vs. which expose individual rounds (for multi-party scenarios).
 
-Status: Open
+Status: **DONE v1.9.57**
 
 ---
 

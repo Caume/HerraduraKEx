@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.57] - 2026-06-15
+
+### Documentation — threshold signing library API (TODO #115)
+
+- **`docs/TUTORIAL.md`:** added `### Library API` subsection to
+  `## Threshold Signing (HPKS-T)`, before the closing `---`.  Shows
+  `hpkst_sign` / `hpkst_verify` in C, `HpkstSign` / `HpkstVerify` in Go,
+  and `hpkst_sign` / `hpkst_verify` in Python, each with a 3-of-3 demo.
+  The subsection intro clearly distinguishes the all-in-one library call
+  (for demos/tests/single-process simulations) from the 4-phase CLI workflow
+  (for real multi-party deployments where signers run independently).
+
+---
+
 ## [1.9.56] - 2026-06-15
 
 ### Documentation — aPAKE C and Go library API (TODO #116)

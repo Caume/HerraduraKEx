@@ -1281,6 +1281,89 @@ compatible with all other CLIs.  The test `CliTest/test_threshold_interop.sh` ve
 - **NL-FSCX challenge.** The challenge hash uses `nl_fscx_revolve_v1(R, msg, n/4)`,
   giving the same security properties as HPKS-NL single-party signing.
 
+### Library API
+
+The all-in-one library functions collapse all four CLI phases into a single call
+and are intended for demos, tests, and single-process multi-party simulations.
+For real multi-party deployments use the CLI phases so each signer runs
+independently.
+
+#### C
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+
+/* Key pairs: each signer holds a private scalar and its GF public key. */
+BitArray secrets[3], pubkeys[3];
+for (int j = 0; j < 3; j++) {
+    ba_rand(&secrets[j], urnd);
+    gf_pow_ba(&pubkeys[j], &GF_GEN_BA, &secrets[j]);
+}
+
+BitArray msg;
+ba_rand(&msg, urnd);
+
+/* Sign: all secrets and pubkeys known to the coordinator in a demo. */
+BitArray C_agg, R, s;
+hpkst_sign(secrets, pubkeys, 3, &msg, NULL /* auto-generate nonces */, &C_agg, &R, &s, urnd);
+
+/* Verify: identical to single-party HPKS-NL verify. */
+int ok = hpkst_verify(&C_agg, &R, &s, &msg);  /* 1 if valid */
+
+fclose(urnd);
+```
+
+#### Go
+
+```go
+import (
+    "math/big"
+    h "herradurakex/herradura"
+)
+
+n   := 3
+g   := big.NewInt(h.GfGen)
+poly := h.GfPoly[256]
+
+secrets := make([]*big.Int, n)
+pubkeys := make([]*big.Int, n)
+for j := range secrets {
+    k := h.NewRandBitArray(256)
+    secrets[j] = &k.Val
+    pubkeys[j]  = h.GfPow(g, secrets[j], poly, 256)
+}
+
+msg := h.NewRandBitArray(256)
+
+// Sign (returns aggregate pubkey, nonce, scalar)
+cAgg, R, s := h.HpkstSign(secrets, pubkeys, msg.Bytes())
+
+// Verify (identical to single-party HPKS-NL verify)
+ok := h.HpkstVerify(cAgg, R, s, msg.Bytes())
+```
+
+#### Python
+
+```python
+n_sig = 3
+poly  = h.GF_POLY[n]
+
+secrets = [h.BitArray.random(n).uint for _ in range(n_sig)]
+pubkeys = [h.BitArray(n, h.gf_pow(h.GF_GEN, a_j, poly, n)) for a_j in secrets]
+
+msg = h.BitArray.random(n)
+
+# Sign — returns (C_agg, R, s) BitArrays
+C_agg, R, s = h.hpkst_sign(secrets, pubkeys, msg)
+
+# Verify — identical to single-party HPKS-NL verify
+ok  = h.hpkst_verify(C_agg, R, s, msg)
+bad = h.hpkst_verify(C_agg, R, h.BitArray(n, s.uint ^ 1), msg)  # tamper → False
+assert ok and not bad
+```
+
 ---
 
 ## OPRF and aPAKE
