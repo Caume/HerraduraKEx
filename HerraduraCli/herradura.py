@@ -155,6 +155,12 @@ def _read_pem_ints(path):
 _CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl'}
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
 
+_STERN_DEMO_WARNING = (
+    "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+    "(demo parameters). 128-bit security requires N>=17000. "
+    "Do not use for production."
+)
+
 
 def _encode_classical_privkey(priv_int, pub_int, nbits, algo):
     der = der_seq(der_int(priv_int, nbits // 8),
@@ -651,6 +657,7 @@ def cmd_genpkey(args):
         pem_out = _encode_rnl_privkey(s, m_blind, n)
 
     elif algo in _STERN_ALGOS:
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
         seed, e_int, syn = stern_f_keygen(bits)
         pem_out = _encode_stern_privkey(e_int, seed, bits, algo)
 
@@ -886,6 +893,7 @@ def cmd_enc(args):
         _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
 
     elif algo == 'hpke-stern':
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
         seed    = BitArray(n, seed_int)
         nbytes  = n // 8
@@ -970,6 +978,7 @@ def cmd_dec(args):
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
 
     elif algo == 'hpke-stern':
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
         ct_syn, e_p, K_int, E_int, _n = _decode_stern_ct(getattr(args, 'in'))
         seed    = BitArray(n, seed_int)
@@ -1012,6 +1021,7 @@ def cmd_sign(args):
         _write_file(args.out, _encode_schnorr_sig(s, R.uint, e.uint, nbits))
 
     elif algo == 'hpks-stern':
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
         seed = BitArray(n, seed_int)
         syn  = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
@@ -1219,6 +1229,7 @@ def cmd_verify(args):
             sys.exit(1)
 
     elif algo == 'hpks-stern':
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
         seed = BitArray(n, seed_int)
         msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))

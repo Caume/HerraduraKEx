@@ -4,6 +4,27 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.46] - 2026-06-14
+
+### UX/Docs — Stern-F demo-only status enforcement (TODO #91)
+
+Reconciles the "Production-ready" claim in §11.10.5 with the §11.8.4 "demo only"
+caveat, and adds runtime warnings to all three CLIs.
+
+- **`SecurityProofs-3.md` §11.10.5**: changed HPKS-Stern-F recommendation note from
+  "Production-ready, v1.5.18" to "Demo parameters (N=256, ~30–40 bits security);
+  128-bit requires N≥17000".
+- **`docs/TUTORIAL.md`** proof-size table: changed HPKS-Stern-F note from
+  "Production code-based PQC" to "Demo params (N=256, ~30–40 bits); 128-bit needs N≥17000".
+- **`HerraduraCli/herradura.py`**: emits a stderr warning when any Stern-F operation
+  (genpkey, enc, dec, sign, verify) is invoked, noting demo-parameter security level.
+- **`HerraduraCli/herradura_cli.c`**: same warning via `fprintf(stderr, ...)` at each
+  Stern-F dispatch point (genpkey, enc, dec, sign, verify).
+- **`HerraduraCli/herradura_cli.go`**: same warning via `fmt.Fprintln(os.Stderr, ...)`
+  at each Stern-F dispatch point.
+
+---
+
 ## [1.9.45] - 2026-06-14
 
 ### Analysis — HKEX-RNL-128 upgraded parameter set (TODO #90)

@@ -5736,7 +5736,9 @@ quoted everywhere also corresponds to the demo parameters.
    QC-MDPC bit-flipping decoder (currently absent — decap uses known-e′/brute force).
    Estimate signature/key sizes and decide go/no-go for implementation.
 
-Status: **PENDING**
+Status: **DONE v1.9.46** — Fix 1 (docs/UX) completed: §11.10.5 wording corrected,
+TUTORIAL.md updated, and demo-parameter warnings added to all three CLIs (Python/C/Go).
+Fix 2 (QC-MDPC research) remains future work.
 
 ---
 
