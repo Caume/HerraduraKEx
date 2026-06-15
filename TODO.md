@@ -6359,7 +6359,7 @@ Status: Open
 2. Add Go snippet for `HpakeRegister` / `HpakeLoginDemo` to the Go integration section.
 3. Update the aPAKE CLI note to clarify that the library API is available in all three languages even though the CLI flow is Python-only.
 
-Status: Open
+Status: **DONE v1.9.56**
 
 ---
 

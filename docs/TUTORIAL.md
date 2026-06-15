@@ -958,8 +958,9 @@ assert wrong_pw is None
 ```
 
 `hpake_register` and `hpake_login_demo` are defined in
-`Herradura cryptographic suite.py`.  The Python CLI (`herradura.py`) exposes the
-same flow via `pake-register` and `pake-demo` subcommands — see the
+`Herradura cryptographic suite.py`.  Equivalent library APIs exist in C and Go
+(see below).  The Python CLI (`herradura.py`) exposes the same flow via
+`pake-register` and `pake-demo` subcommands — see the
 [OPRF and aPAKE](#oprf-and-apake) section for CLI examples.
 
 Demo parameters: `_HPAKE_ZKP_N = 32`, `_HPAKE_ROUNDS = 16`.
@@ -1337,10 +1338,77 @@ PEM files produced by any implementation are byte-for-byte compatible with the
 others.  See `CliTest/test_oprf_interop.sh` for a 6-way cross-language
 interop test (Python/C/Go key × blind × eval × unblind).
 
+### aPAKE library API (C)
+
+The C library exposes `hpake_register` and `hpake_login_demo` in `herradura.h`.
+The `HpakeRecord` struct (32-byte salt, two `uint32_t` ZKBoo values) is the
+server-side record; store it in your database alongside the OPRF key.
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+BitArray oprf_key;
+oprf_keygen(&oprf_key, urnd);         /* server OPRF key — keep secret */
+
+/* Registration (server side) */
+HpakeRecord rec;
+hpake_register(&rec,
+               (const uint8_t *)"s3cr3t", 6,
+               &oprf_key, urnd);
+/* Store rec and oprf_key on the server; never store the password. */
+
+/* Login (both sides — demo collapses into one call) */
+uint8_t session_key[KEYBYTES];
+int ok = hpake_login_demo(session_key, &rec,
+                           (const uint8_t *)"s3cr3t", 6,
+                           &oprf_key, urnd);
+/* ok == 1 and session_key holds the 32-byte derived key */
+
+int bad = hpake_login_demo(session_key, &rec,
+                            (const uint8_t *)"wrong", 5,
+                            &oprf_key, urnd);
+/* bad == 0 — wrong password rejected */
+
+fclose(urnd);
+```
+
+Demo parameters: `HPAKE_ZKP_N = 32`, `HPAKE_ROUNDS = 16`.
+
+### aPAKE library API (Go)
+
+The Go package exposes `HpakeRegister` and `HpakeLoginDemo`.  `HpakeRecord` is
+the server-side record type; `OprfKeygen` produces the server OPRF key.
+
+```go
+import (
+    "fmt"
+    h "herradurakex/herradura"
+)
+
+// Key generation (server side, one time)
+oprfKey, _ := h.OprfKeygen(256)
+
+// Registration (server side)
+rec, _ := h.HpakeRegister([]byte("s3cr3t"), oprfKey)
+// Store rec (*HpakeRecord) in your database; keep oprfKey secret.
+
+// Login (both sides — demo collapses into one call)
+sessionKey, _ := h.HpakeLoginDemo(rec, []byte("s3cr3t"), oprfKey)
+// sessionKey is a 32-byte slice on success, nil on wrong password.
+fmt.Printf("session key: %x\n", sessionKey)
+
+wrongKey, _ := h.HpakeLoginDemo(rec, []byte("wrong"), oprfKey)
+// wrongKey == nil — wrong password rejected
+```
+
+Demo parameters: `HpakeZkpN = 32`, `HpakeRounds = 16`.
+
 ### aPAKE CLI usage (Python CLI)
 
-The aPAKE flow requires the Python CLI.  The C and Go CLIs support OPRF
-but not the full aPAKE registration/login flow.
+The aPAKE CLI flow requires the Python CLI.  The C and Go CLIs support OPRF
+but not the `pake-register` / `pake-demo` subcommands; use the library APIs
+above for C and Go aPAKE integration.
 
 ```bash
 # 1. Generate OPRF server key (one time)
@@ -1402,7 +1470,7 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 | Protocol | Key type | Hard problem | Availability |
 |----------|----------|--------------|--------------|
 | OPRF (2HashDH) | `oprf` | DLP in GF(2^256) | C, Go, Python, all CLIs |
-| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | Python suite + Python CLI |
+| aPAKE | `oprf` | DLP + Ring-LWR + NL-FSCX OWF | C, Go, Python (library); Python CLI only |
 
 The OPRF output is `F(k, x) = gf_pow(H(x), k)` where `H` is HFSCX-256 hash-to-field.
 The aPAKE protocol uses HKEX-RNL for the key exchange channel, ZKBoo for the

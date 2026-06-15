@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.56] - 2026-06-15
+
+### Documentation — aPAKE C and Go library API (TODO #116)
+
+- **`docs/TUTORIAL.md`:** added `### aPAKE library API (C)` and `### aPAKE library
+  API (Go)` subsections to the `## OPRF and aPAKE` section, before the existing
+  Python CLI usage subsection.  C snippet shows `HpakeRecord`, `hpake_register`,
+  and `hpake_login_demo` from `herradura.h`.  Go snippet shows `HpakeRegister` and
+  `HpakeLoginDemo` from the `herradura` package.  Updated the aPAKE CLI note and
+  the OPRF/aPAKE reference table to reflect that the library API is available in
+  C, Go, and Python, while the CLI flow is Python-only.  Updated the Python
+  integration section note accordingly.
+
+---
+
 ## [1.9.55] - 2026-06-15
 
 ### Documentation — HPKS-NL and HPKE-NL tutorial examples (TODO #107)
