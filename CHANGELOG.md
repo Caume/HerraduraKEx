@@ -4,6 +4,18 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.51] - 2026-06-15
+
+### Documentation — Go tutorial HPKS and HPKE examples (TODO #113)
+
+- **`docs/TUTORIAL.md`:** added `### HPKS Schnorr signature (classical)` and
+  `### HPKE El Gamal encryption (classical)` subsections to the Go integration
+  section, between `### HSKE symmetric encryption` and `### HSKE-NL-A1`.
+  Both snippets use the same primitives (`GfPow`, `GfMul`, `FscxRevolve`) as the
+  existing Go HKEX-GF and HSKE examples, and mirror the structure of the C section.
+
+---
+
 ## [1.9.50] - 2026-06-15
 
 ### Documentation fix — Go OPRF tutorial import path (TODO #114)

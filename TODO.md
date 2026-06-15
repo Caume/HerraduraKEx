@@ -6316,7 +6316,7 @@ Status: Open
 **Work items:**
 1. Add `### HPKS Schnorr signature (classical)` and `### HPKE El Gamal encryption (classical)` subsections to the Go integration section, mirroring the C section structure.
 
-Status: Open
+Status: **DONE v1.9.51**
 
 ---
 

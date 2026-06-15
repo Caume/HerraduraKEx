@@ -323,11 +323,42 @@ recovered  := FscxRevolve(ciphertext, aliceShared, rValue)
 /* plaintext.Equal(recovered) */
 ```
 
-### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+### HPKS Schnorr signature (classical)
 
 ```go
 import "math/big"
 
+ord := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(n)), big.NewInt(1)) /* 2^n - 1 */
+
+msg := NewRandBitArray(n)
+kS  := NewRandBitArray(n)                                         /* per-signature nonce */
+RS  := NewBitArray(n, GfPow(g, &kS.Val, poly, n))                /* commitment R = g^k  */
+eS  := FscxRevolve(RS, msg, n/4)                                  /* challenge e         */
+sS  := new(big.Int).Mod(new(big.Int).Sub(&kS.Val,
+           new(big.Int).Mul(&alicePriv.Val, &eS.Val)), ord)       /* response s = k-a·e  */
+
+/* Verify: g^s · C^e == R */
+lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&alicePub.Val, &eS.Val, poly, n), poly, n)
+ok  := lhs.Cmp(&RS.Val) == 0
+```
+
+### HPKE El Gamal encryption (classical)
+
+```go
+rHpke  := NewRandBitArray(n)                                         /* ephemeral scalar   */
+RHpke  := NewBitArray(n, GfPow(g, &rHpke.Val, poly, n))             /* ephemeral pubkey   */
+encKey := NewBitArray(n, GfPow(&alicePub.Val, &rHpke.Val, poly, n)) /* enc key = C^r      */
+ct     := FscxRevolve(plaintext, encKey, n/4)                        /* ciphertext         */
+
+decKey := NewBitArray(n, GfPow(&RHpke.Val, &alicePriv.Val, poly, n)) /* dec key = R^a     */
+dec    := FscxRevolve(ct, decKey, 3*n/4)                              /* recovered = P      */
+/* dec.Equal(plaintext) */
+/* Transmit RHpke alongside ct; Alice decrypts with her private key. */
+```
+
+### HSKE-NL-A1 counter-mode encryption (NL/PQC)
+
+```go
 key       := NewRandBitArray(n)
 plaintext := NewRandBitArray(n)
 
