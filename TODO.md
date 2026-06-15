@@ -6209,3 +6209,168 @@ The threshold workflow is a 3-phase protocol over files:
 **Note:** The `hpkst_sign`/`HpkstSign` library functions perform all rounds internally (for demos/tests). The CLI must expose the individual rounds so that different parties can run different phases on different machines.
 
 Status: **DONE v1.9.44**
+
+---
+
+### 107. Tutorial gap: HPKS-NL and HPKE-NL have no code examples (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** Both `HPKS-NL` and `HPKE-NL` appear in the protocol table at the top of `docs/TUTORIAL.md` and in the NL/PQC protocol reference table (§"NL/PQC protocols"), but neither has a code snippet in the C, Go, or Python integration sections.  A reader cannot use either protocol from the docs alone.
+
+**Work items:**
+1. Add `### HPKS-NL Schnorr signature (NL/PQC)` subsection to C, Go, and Python integration sections with minimal sign/verify snippets using the NL-FSCX challenge.
+2. Add `### HPKE-NL El Gamal encryption (NL/PQC)` subsection to C, Go, and Python integration sections with encrypt/decrypt snippets.
+3. Note in each snippet that the public key is still a GF(2^256)* element (same as HPKS/HPKE) and that only the symmetric sub-protocol is hardened.
+
+**Reference:** `herradura.h` (`hpks_nl_sign`, `hpks_nl_verify`, `hpke_nl_encrypt`, `hpke_nl_decrypt`), Go equivalents, Python equivalents.
+
+Status: Open
+
+---
+
+### 108. Tutorial gap: HSKE-NL-A2 missing from C and Go sections (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The Python integration section has a `### HSKE-NL-A2 symmetric encryption (NL/PQC)` subsection with an encrypt/decrypt snippet.  The C and Go integration sections have no equivalent subsection despite `nl_fscx_revolve_v2` / `nl_fscx_revolve_v2_inv` being present in both `herradura.h` and `herradura.go`.
+
+**Work items:**
+1. Add `### HSKE-NL-A2 symmetric encryption (NL/PQC)` to the C integration section.
+2. Add the same subsection to the Go integration section.
+
+**Reference:** Python snippet at `docs/TUTORIAL.md` line 484; `herradura.h` `nl_fscx_revolve_v2` / `nl_fscx_revolve_v2_inv`.
+
+Status: Open
+
+---
+
+### 109. Tutorial gap: HSKE-NL-AEAD entirely absent (Documentation, Medium)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** `hske_nl_aead_encrypt`/`hske_nl_aead_decrypt` were added in v1.9.33 (TODO #95) to C, Go, and Python as the recommended authenticated encryption mode.  The tutorial has no mention of HSKE-NL-AEAD anywhere — no subsection, no CLI example, no entry in the protocol table or parameter reference.
+
+**Work items:**
+1. Add `### HSKE-NL-AEAD authenticated encryption (NL/PQC)` to C, Go, and Python integration sections with encrypt/decrypt snippets showing AAD and nonce usage.
+2. Add `HSKE-NL-AEAD` to the NL/PQC protocol reference table.
+3. Add a CLI usage block showing `--aead` flag with `enc`/`dec` subcommands.
+4. Add a security note distinguishing AEAD from the unauthenticated A1/A2 modes.
+
+Status: Open
+
+---
+
+### 110. Tutorial gap: HDRBG (forward-secure DRBG) entirely absent (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** `drbg_seed`/`drbg_generate`/`drbg_reseed` were added in v1.9.34 (TODO #96).  The tutorial has no mention of HDRBG — no subsection, no use-case guidance, no note that it can substitute for `/dev/urandom` in constrained or deterministic-test contexts.
+
+**Work items:**
+1. Add a `### HDRBG (forward-secure DRBG)` subsection to the C and Python integration sections (and Go if implemented) showing seed/generate/reseed usage.
+2. Add a note in the C integration intro that HDRBG can be used instead of `FILE *urnd = fopen("/dev/urandom", "rb")` when `/dev/urandom` is unavailable (e.g. embedded targets).
+
+**Reference:** `herradura.h` `drbg_seed`, `drbg_generate`, `drbg_reseed`; Python equivalents in the suite file.
+
+Status: Open
+
+---
+
+### 111. Tutorial gap: HPKS-WOTS-F and HPKS-XMSS-F entirely absent (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** Hash-based stateful signatures (`hpks_wots_f_sign`, `hpks_xmss_f_sign`, and their verify counterparts) were added in TODO #97 (v1.9.39) for Python and TODO #102 (v1.9.42) for C and Go.  The tutorial has no mention of either construction.
+
+**Work items:**
+1. Add a `### HPKS-WOTS-F / HPKS-XMSS-F (hash-based stateful signature)` subsection to C, Go, and Python integration sections with keygen/sign/verify snippets.
+2. Add both constructions to the code-based PQC protocol reference table (or create a new "Hash-based PQC" table row).
+3. Include a security note on statefulness: a WOTS-F key must never be used twice; XMSS-F tracks the leaf index and is the recommended multi-use variant.
+
+Status: Open
+
+---
+
+### 112. Tutorial gap: no CLI quickstart for classical protocols (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The ZKP, OPRF/aPAKE, and Threshold sections all include CLI usage blocks, but the C/Go/Python integration sections for HKEX-GF, HSKE, HPKS, and HPKE show only library-API snippets.  A first-time user wanting to test key exchange or signing from the command line must infer the subcommand names from the CLI source code.
+
+**Work items:**
+1. Add a `### CLI quickstart` subsection to the C integration section (or a top-level `## CLI quickstart` section before the language sections) demonstrating: `genpkey`, `pkey --pubout`, `kex`, `sign`, `verify`, `enc`, `dec` for the classical protocols using the Python CLI (simplest for getting started).
+2. Note that the C and Go CLIs accept identical subcommands.
+3. Cross-reference `CliTest/` integration test scripts for further examples.
+
+Status: Open
+
+---
+
+### 113. Tutorial gap: Go section skips HPKS and HPKE examples (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The C integration section has `### HPKS Schnorr signature (classical)` and `### HPKE El Gamal encryption (classical)` subsections.  The Go integration section skips from `### HSKE symmetric encryption (classical)` directly to `### HSKE-NL-A1 counter-mode encryption (NL/PQC)`, leaving HPKS and HPKE undocumented for Go.
+
+**Work items:**
+1. Add `### HPKS Schnorr signature (classical)` and `### HPKE El Gamal encryption (classical)` subsections to the Go integration section, mirroring the C section structure.
+
+Status: Open
+
+---
+
+### 114. Tutorial bug: Go OPRF example uses wrong import path (Documentation/Bug, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The Go OPRF snippet at `docs/TUTORIAL.md` (OPRF section, Go integration) begins with `import "herradurakex"` and calls `herradurakex.OprfKeygen(256)`.  Every other Go snippet in the tutorial imports `"herradurakex/herradura"` (the `herradura` package).  The OPRF functions (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) live in the `herradura` package, not the root module, so this import is incorrect.
+
+**Work items:**
+1. Fix the import in the Go OPRF snippet to `import h "herradurakex/herradura"` and update the call sites to use the `h.` prefix (or dot-import), consistent with the rest of the Go section.
+2. Verify the corrected snippet compiles against the actual Go package.
+
+Status: **DONE v1.9.50**
+
+---
+
+### 115. Tutorial gap: threshold signing library API not documented (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The Threshold Signing section (`## Threshold Signing (HPKS-T)`) covers only the CLI workflow (4-phase `threshold-commit/aggregate/respond/combine`).  The library functions that allow embedding threshold signing in C/Go/Python code (e.g. `hpkst_commit`, `hpkst_aggregate`, `hpkst_respond`, `hpkst_combine` or the all-in-one `hpkst_sign`) are not shown.
+
+**Work items:**
+1. Add a `### Library API` subsection to the Threshold Signing section with C, Go, and Python code snippets showing the per-round function calls.
+2. Note which functions are "all-in-one" (for demos/tests) vs. which expose individual rounds (for multi-party scenarios).
+
+Status: Open
+
+---
+
+### 116. Tutorial gap: aPAKE C and Go library API not documented (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** The aPAKE CLI usage section notes "The C and Go CLIs support OPRF but not the full aPAKE registration/login flow."  However, `HpakeRecord`, `HpakeRegister`, and `HpakeLoginDemo` were added to both `herradura.h` and `herradura.go` as part of TODO #80 batch 4.  The tutorial Python library section documents `hpake_register`/`hpake_login_demo`; there are no equivalent C or Go snippets.
+
+**Work items:**
+1. Add C snippet for `hpake_register` / `hpake_login_demo` to the C integration section (or to the aPAKE section alongside the Python example).
+2. Add Go snippet for `HpakeRegister` / `HpakeLoginDemo` to the Go integration section.
+3. Update the aPAKE CLI note to clarify that the library API is available in all three languages even though the CLI flow is Python-only.
+
+Status: Open
+
+---
+
+### 117. Tutorial gap: HPKE-Stern-F not documented (Documentation, Small)
+
+**Discovered:** tutorial review, 2026-06-15.
+
+**Current state:** `HPKE-Stern-F` appears in the code-based PQC reference table with `Status: Demo only; decap requires QC-MDPC decoder for production`, but has no subsection, no code example, and no CLI usage anywhere in the tutorial.
+
+**Work items:**
+1. Add a `### HPKE-Stern-F KEM (code-based PQC, demo)` subsection to the C, Go, and Python integration sections showing keygen, encapsulate, and decapsulate (with a comment that the demo uses a known error vector).
+2. Add a security note explaining the QC-MDPC decoder requirement and that the demo should not be used in production.
+
+Status: Open

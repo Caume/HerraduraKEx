@@ -388,22 +388,22 @@ mac := Hfscx256(data, macIV)
 ### OPRF (2HashDH oblivious PRF)
 
 ```go
-import "herradurakex"
+import h "herradurakex/herradura"
 
 // Key generation (server side)
-k, _ := herradurakex.OprfKeygen(256)
+k, _ := h.OprfKeygen(256)
 
 // Blinding (client side)
-r, alpha, _ := herradurakex.OprfBlind([]byte("my-password"), 256)
+r, alpha, _ := h.OprfBlind([]byte("my-password"), 256)
 
 // Evaluation (server side)
-beta := herradurakex.OprfEval(alpha, k, 256)
+beta := h.OprfEval(alpha, k, 256)
 
 // Unblinding (client side): yields F(k, input)
-F := herradurakex.OprfUnblind(beta, r, 256)
+F := h.OprfUnblind(beta, r, 256)
 
 // Direct evaluation — result matches
-check := herradurakex.OprfDirect([]byte("my-password"), k, 256)
+check := h.OprfDirect([]byte("my-password"), k, 256)
 // F.Cmp(check) == 0
 ```
 

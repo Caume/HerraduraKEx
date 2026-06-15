@@ -4,6 +4,18 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.50] - 2026-06-15
+
+### Documentation fix — Go OPRF tutorial import path (TODO #114)
+
+- **`docs/TUTORIAL.md`:** corrected the Go OPRF snippet import from `"herradurakex"` to
+  `import h "herradurakex/herradura"` and updated all call sites to use the `h.` prefix.
+  The OPRF functions (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`)
+  live in the `herradura` package, not the root module; the previous import would fail
+  to compile.
+
+---
+
 ## [1.9.49] - 2026-06-15
 
 ### Security — HKEX-RNL contributory KDF (TODO #89)
