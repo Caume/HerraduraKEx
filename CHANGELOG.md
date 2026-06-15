@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.54] - 2026-06-15
+
+### Documentation — HSKE-NL-AEAD tutorial coverage (TODO #109)
+
+- **`docs/TUTORIAL.md`:** added `### HSKE-NL-AEAD authenticated encryption (NL/PQC)`
+  subsections to C, Go, and Python integration sections showing encrypt/decrypt
+  with associated data (AAD) and nonce handling.  Added `### Authenticated
+  encryption (HSKE-NL-AEAD)` subsection to the CLI quickstart covering the
+  `--aead` and `--ad` flags with a cross-reference to `CliTest/test_aead.sh`.
+  Added HSKE-NL-AEAD row to the NL/PQC protocol reference table.  Added security
+  notes on nonce reuse and key commitment to the NL/PQC security section.
+
+---
+
 ## [1.9.53] - 2026-06-15
 
 ### Documentation — HSKE-NL-A2 C and Go tutorial examples (TODO #108)

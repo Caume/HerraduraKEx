@@ -83,7 +83,26 @@ $CLI dec --algo hske --key alice_sk.pem --in ct.pem        --out recovered.bin
 # cmp msg.bin recovered.bin  →  identical
 ```
 
-Use `--algo hske-nla1` or `--algo hske-nla2` for the NL/PQC encryption modes.
+Use `--algo hske-nla1` or `--algo hske-nla2` for the unauthenticated NL/PQC modes.
+
+### Authenticated encryption (HSKE-NL-AEAD)
+
+Add `--aead` to any `hske-nla1` enc/dec command.  The `--ad` flag supplies
+associated data (authenticated but not encrypted).
+
+```bash
+# Encrypt with AEAD (nonce embedded in ct.pem alongside ciphertext and tag)
+$CLI enc --algo hske-nla1 --aead --ad "header-v1" \
+         --key alice_sk.pem --in msg.bin --out ct_aead.pem
+
+# Decrypt (--ad must match exactly; fails if ct, tag, or AD is tampered with)
+$CLI dec --algo hske-nla1 --ad "header-v1" \
+         --key alice_sk.pem --in ct_aead.pem --out recovered.bin
+# cmp msg.bin recovered.bin  →  identical
+```
+
+The C and Go CLIs accept the same `--aead` and `--ad` flags.  AEAD PEMs are
+cross-language compatible — see `CliTest/test_aead.sh` for a 9-way interop test.
 
 ### Signing and verification (HPKS)
 
@@ -250,6 +269,36 @@ ba_rand(&plaintext2, urnd);
 nl_fscx_revolve_v2_ba    (&ciphertext2, &plaintext2, &key2, R_VALUE);  /* encrypt */
 nl_fscx_revolve_v2_inv_ba(&recovered2,  &ciphertext2, &key2, R_VALUE); /* decrypt */
 /* ba_equal(&plaintext2, &recovered2) == 1 */
+```
+
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  A fresh
+random 256-bit nonce must be generated for every encryption; the 32-byte tag
+authenticates both the ciphertext and the associated data (AD).  Decryption is
+verify-then-decrypt and returns 0 if the tag does not match.
+
+```c
+#include "herradura.h"
+#include <string.h>
+
+BitArray aead_key, aead_nonce;
+ba_rand(&aead_key,   urnd);
+ba_rand(&aead_nonce, urnd);   /* must never be reused with the same key */
+
+const uint8_t *pt  = (const uint8_t *)"hello AEAD";
+size_t         pt_len = 10;
+const uint8_t *ad  = (const uint8_t *)"header-v1";
+size_t         ad_len = 9;
+
+uint8_t ct[10], tag[32], recovered[10];
+
+hske_nl_aead_encrypt(&aead_key, &aead_nonce, ad, ad_len, pt, pt_len, ct, tag);
+
+int ok = hske_nl_aead_decrypt(&aead_key, &aead_nonce,
+                               ad, ad_len, ct, pt_len, tag, recovered);
+/* ok == 1 and memcmp(pt, recovered, pt_len) == 0 */
+/* ok == 0 if ct, tag, ad, or nonce is tampered with */
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
@@ -495,6 +544,28 @@ dec2 := NlFscxRevolveV2Inv(ct2, key2, 3*n/4)        /* decrypt */
 /* dec2.Equal(plaintext2) */
 ```
 
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  Returns
+`(ct []byte, tag []byte)` on encrypt; returns `(pt []byte, ok bool)` on decrypt.
+Decryption is verify-then-decrypt; `ok` is false if the tag does not match.
+
+```go
+import h "herradurakex/herradura"
+
+aeadKey   := h.NewRandBitArray(n)
+aeadNonce := h.NewRandBitArray(n)   // must never be reused with the same key
+
+pt := []byte("hello AEAD")
+ad := []byte("header-v1")
+
+ct, tag := h.HskeNlAeadEncrypt(aeadKey, aeadNonce, ad, pt)
+
+recovered, ok := h.HskeNlAeadDecrypt(aeadKey, aeadNonce, ad, ct, tag)
+// ok == true and bytes.Equal(pt, recovered)
+// ok == false if ct, tag, ad, or nonce is tampered with
+```
+
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
 
 ```go
@@ -644,6 +715,29 @@ plaintext = h.BitArray.random(n)
 ciphertext = h.nl_fscx_revolve_v2(plaintext, key, h.R_VALUE)
 recovered  = h.nl_fscx_revolve_v2_inv(ciphertext, key, h.R_VALUE)
 assert plaintext == recovered
+```
+
+### HSKE-NL-AEAD authenticated encryption (NL/PQC)
+
+Authenticated encryption with associated data built on HSKE-NL-A1.  Returns
+`(nonce, ct, tag)` on encrypt; returns the plaintext or `None` on decrypt.
+Decryption is verify-then-decrypt using `hmac.compare_digest`.
+
+```python
+aead_key = h.BitArray.random(n)
+pt = b"hello AEAD"
+ad = b"header-v1"
+
+# encrypt — nonce is generated internally if not supplied
+nonce, ct, tag = h.hske_nl_aead_encrypt(aead_key, pt, ad)
+
+# decrypt — returns plaintext or None if tag/ct/ad/nonce is tampered with
+recovered = h.hske_nl_aead_decrypt(aead_key, nonce, ct, tag, ad)
+assert recovered == pt
+
+# tamper detection
+assert h.hske_nl_aead_decrypt(aead_key, nonce,
+                               bytes([ct[0] ^ 1]) + ct[1:], tag, ad) is None
 ```
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
@@ -1154,6 +1248,7 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 |----------|-----------|-----------|
 | HSKE-NL-A1 | `nl_fscx_revolve_v1` | counter-mode (one-way) |
 | HSKE-NL-A2 | `nl_fscx_revolve_v2` / `_inv` | revolve-mode (invertible) |
+| HSKE-NL-AEAD | HSKE-NL-A1 + HFSCX-256 MAC | authenticated encryption (recommended) |
 | HKEX-RNL | Ring-LWR polynomial arithmetic | key exchange |
 | HPKS-NL | `nl_fscx_revolve_v1` as Schnorr challenge | signature |
 | HPKE-NL | `nl_fscx_revolve_v2` / `_inv` | El Gamal encryption |
@@ -1288,6 +1383,16 @@ models that exclude quantum adversaries.
 - **HPKS-NL and HPKE-NL** still use GF(2^256)* DLP for the public key; the NL
   extension hardens only the symmetric sub-protocol.  They are not fully PQC.
 - **HSKE-NL-A1/A2** are symmetric-only and do not depend on any public-key assumption.
+- **HSKE-NL-AEAD nonce reuse is catastrophic.**  Reusing a (key, nonce) pair with
+  different plaintexts exposes the XOR of the two plaintexts and invalidates all
+  confidentiality guarantees.  Always generate the nonce from a cryptographic RNG;
+  in library code `BitArray.random(256)` / `NewRandBitArray(256)` / `ba_rand` do
+  this.  The Python `hske_nl_aead_encrypt` function auto-generates the nonce when
+  none is supplied.
+- **HSKE-NL-AEAD does not provide key commitment** in the standard sense — a
+  malicious server holding a different key cannot be distinguished from a MAC
+  failure.  For applications requiring key commitment (e.g. OPAQUE/aPAKE), apply
+  an additional commitment step or use the OPRF-based aPAKE construction instead.
 
 ### Code-based PQC (HPKS-Stern-F, HPKE-Stern-F)
 

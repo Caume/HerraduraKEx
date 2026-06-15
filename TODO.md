@@ -6257,7 +6257,7 @@ Status: **DONE v1.9.53**
 3. Add a CLI usage block showing `--aead` flag with `enc`/`dec` subcommands.
 4. Add a security note distinguishing AEAD from the unauthenticated A1/A2 modes.
 
-Status: Open
+Status: **DONE v1.9.54**
 
 ---
 
