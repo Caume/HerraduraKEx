@@ -4,6 +4,20 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.52] - 2026-06-15
+
+### Documentation — CLI quickstart section (TODO #112)
+
+- **`docs/TUTORIAL.md`:** added `## CLI quickstart` as the first major section
+  (before the language integration sections), with subsections covering:
+  key generation and inspection (`genpkey`, `pkey --text`), HKEX-GF key exchange
+  (`kex`), HSKE encryption/decryption (`enc`/`dec`), HPKS sign/verify, HPKE
+  El Gamal encryption, and the two-round HKEX-RNL workflow.  Notes that all three
+  CLIs share identical subcommands and cross-references `CliTest/` for full
+  integration tests.  Contents list updated to include the new section as item 1.
+
+---
+
 ## [1.9.51] - 2026-06-15
 
 ### Documentation — Go tutorial HPKS and HPKE examples (TODO #113)

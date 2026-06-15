@@ -26,14 +26,107 @@ with toy examples and verified references.
 
 ## Contents
 
-1. [C integration](#c-integration)
-2. [Go integration](#go-integration)
-3. [Python integration](#python-integration)
-4. [ZKP Protocols](#zkp-protocols)
-5. [OPRF and aPAKE](#oprf-and-apake)
-6. [Protocol reference](#protocol-reference)
-7. [Parameter reference](#parameter-reference)
-8. [Security notes](#security-notes)
+1. [CLI quickstart](#cli-quickstart)
+2. [C integration](#c-integration)
+3. [Go integration](#go-integration)
+4. [Python integration](#python-integration)
+5. [ZKP Protocols](#zkp-protocols)
+6. [OPRF and aPAKE](#oprf-and-apake)
+7. [Protocol reference](#protocol-reference)
+8. [Parameter reference](#parameter-reference)
+9. [Security notes](#security-notes)
+
+---
+
+## CLI quickstart
+
+The three CLIs (`herradura.py`, `herradura_cli`, `herradura_cli_go`) share identical
+subcommands and PEM wire formats.  PEM files produced by one implementation are
+byte-for-byte compatible with all others.  The Python CLI requires no build step and
+is the easiest starting point.
+
+```bash
+CLI="python3 HerraduraCli/herradura.py"
+# C CLI:  ./HerraduraCli/herradura_cli
+# Go CLI: ./HerraduraCli/herradura_cli_go
+```
+
+### Key generation and inspection
+
+```bash
+# Generate a private key (hkex-gf, hpks, hpke, hkex-rnl, hpks-stern, …)
+$CLI genpkey --algo hkex-gf --out alice.pem
+$CLI genpkey --algo hkex-gf --out bob.pem
+
+# Extract the public key
+$CLI pkey --in alice.pem --pubout --out alice_pub.pem
+
+# Print key parameters in human-readable form
+$CLI pkey --in alice.pem --text
+```
+
+### Key exchange (HKEX-GF)
+
+```bash
+$CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem   --out alice_sk.pem
+$CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
+# alice_sk.pem and bob_sk.pem contain the same 256-bit session key.
+```
+
+### Symmetric encryption / decryption (HSKE)
+
+```bash
+echo -n "ABCDEFGHIJKLMNOPQRSTUVWXYZ012345" > msg.bin   # 32-byte (256-bit) message
+
+$CLI enc --algo hske --key alice_sk.pem --in msg.bin       --out ct.pem
+$CLI dec --algo hske --key alice_sk.pem --in ct.pem        --out recovered.bin
+# cmp msg.bin recovered.bin  →  identical
+```
+
+Use `--algo hske-nla1` or `--algo hske-nla2` for the NL/PQC encryption modes.
+
+### Signing and verification (HPKS)
+
+```bash
+$CLI genpkey --algo hpks --out sign_key.pem
+$CLI pkey    --in sign_key.pem --pubout --out sign_pub.pem
+
+$CLI sign   --algo hpks --key sign_key.pem --in msg.bin --out sig.pem
+$CLI verify --algo hpks --pubkey sign_pub.pem --in msg.bin --sig sig.pem
+# Prints: Signature OK
+```
+
+### El Gamal encryption (HPKE)
+
+```bash
+$CLI genpkey --algo hpke --out enc_key.pem
+$CLI pkey    --in enc_key.pem --pubout --out enc_pub.pem
+
+$CLI enc --algo hpke --key enc_pub.pem  --in msg.bin --out ct.pem
+$CLI dec --algo hpke --key enc_key.pem  --in ct.pem  --out recovered.bin
+```
+
+### Key exchange (HKEX-RNL, PQC, two rounds)
+
+HKEX-RNL requires two steps: Bob responds first, then Alice completes.
+
+```bash
+$CLI genpkey --algo hkex-rnl --out alice_rnl.pem
+$CLI pkey    --in alice_rnl.pem --pubout --out alice_rnl_pub.pem
+$CLI genpkey --algo hkex-rnl --out bob_rnl.pem
+
+# Round 1 — Bob sees Alice's public key and produces a RESPONSE PEM
+$CLI kex --algo hkex-rnl --our bob_rnl.pem --their alice_rnl_pub.pem \
+         --out bob_resp.pem
+
+# Round 2 — Alice sees Bob's response and derives the session key
+$CLI kex --algo hkex-rnl --our alice_rnl.pem --their bob_resp.pem \
+         --out alice_sk_rnl.pem
+# Both bob_resp.pem and alice_sk_rnl.pem hold the same session key.
+```
+
+See `CliTest/` for full integration test scripts covering all algorithms
+and cross-language interoperability.
 
 ---
 

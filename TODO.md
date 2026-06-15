@@ -6303,7 +6303,7 @@ Status: Open
 2. Note that the C and Go CLIs accept identical subcommands.
 3. Cross-reference `CliTest/` integration test scripts for further examples.
 
-Status: Open
+Status: **DONE v1.9.52**
 
 ---
 
