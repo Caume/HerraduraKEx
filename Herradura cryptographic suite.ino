@@ -964,6 +964,32 @@ static uint32 haccum_root_32(const uint32 *leaves, int n) {
 }
 
 /* ------------------------------------------------------------------ */
+/* OPRF (80) — 2HashDH OPRF over GF(2^32)* (DEMO n=32, TODO #80)     */
+/* ORD = 2^32-1; r=7 coprime to ORD; r_inv = 7^{-1} mod ORD          */
+/* ------------------------------------------------------------------ */
+
+static uint32 oprf_hash_to_field_32(uint32 x) {
+    uint32 h = hfscx_32(x);
+    return h ? h : 1;   /* zero-guard: 0 -> 1 (negligible probability) */
+}
+/* Client blind: alpha = H(x)^r.  r_scalar returned so caller can unblind. */
+static uint32 oprf_blind_32(uint32 x, uint32 r_scalar) {
+    return gf_pow_32(oprf_hash_to_field_32(x), r_scalar);
+}
+/* Server eval: beta = alpha^k. */
+static uint32 oprf_eval_32(uint32 alpha, uint32 k) {
+    return gf_pow_32(alpha, k);
+}
+/* Client unblind: F = beta^{r_inv}.  r_inv must be r^{-1} mod (2^32-1). */
+static uint32 oprf_unblind_32(uint32 beta, uint32 r_inv) {
+    return gf_pow_32(beta, r_inv);
+}
+/* Direct PRF (server-side, non-oblivious): F = H(x)^k. */
+static uint32 oprf_direct_32(uint32 x, uint32 k) {
+    return gf_pow_32(oprf_hash_to_field_32(x), k);
+}
+
+/* ------------------------------------------------------------------ */
 /* Arduino entry points                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1376,6 +1402,33 @@ void loop() {
         }
         Serial.println(unique ? "- Ratchet: 5 distinct message keys"
                               : "+ Ratchet: duplicate message keys!");
+    }
+    Serial.println();
+
+    /* OPRF (80) — blind / eval / unblind round-trip                     */
+    /* ---------------------------------------------------------------- */
+    Serial.println("--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]");
+    {
+        /* Fixed params: x = 0x50415353 ("PASS"), k = 0x13579BDF,        */
+        /*               r = 7, r_inv = 0x49249249 = 7^{-1} mod 2^32-1  */
+        const uint32 oprf_x     = 0x50415353UL;
+        const uint32 oprf_k     = 0x13579BDFUL;
+        const uint32 oprf_r     = 7UL;
+        const uint32 oprf_r_inv = 0x49249249UL;
+
+        uint32 hx     = oprf_hash_to_field_32(oprf_x);
+        uint32 alpha  = oprf_blind_32(oprf_x,  oprf_r);
+        uint32 beta   = oprf_eval_32(alpha,     oprf_k);
+        uint32 F      = oprf_unblind_32(beta,   oprf_r_inv);
+        uint32 F_direct = oprf_direct_32(oprf_x, oprf_k);
+
+        printHexLine("H(x)  : ", hx);
+        printHexLine("alpha : ", alpha);
+        printHexLine("beta  : ", beta);
+        printHexLine("F     : ", F);
+        Serial.println(F == F_direct
+            ? "+ OPRF blind/eval/unblind correct"
+            : "- OPRF round-trip FAILED");
     }
     Serial.println();
 

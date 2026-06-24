@@ -148,6 +148,7 @@
         nl_fscx_v2, nl_fscx_v2_inv, nl_fscx_revolve_v2, nl_fscx_revolve_v2_inv
         hfscx_256
         hske_nl_aead_encrypt, hske_nl_aead_decrypt  (HSKE-NL-AEAD, TODO #95)
+        hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt  (HSKE-NL-V2-Duplex, TODO #95 Option 2)
         drbg_seed, drbg_generate, drbg_reseed  (HDRBG forward-secure DRBG, TODO #96)
         stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
         hpke_stern_f_encap, hpke_stern_f_decap
@@ -2190,6 +2191,140 @@ def hske_nl_aead_decrypt(key: BitArray, nonce: BitArray, ct: bytes, tag: bytes,
     return _hske_nl_aead_xor_keystream(seed, base, ct)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 95 Option 2 — HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD
+#
+# Sponge permutation: nl_fscx_revolve_v2(state, tweak, I_VALUE)
+#   state: 256-bit, rate=128 bits (first 16 bytes), capacity=128 bits (last 16 bytes)
+#   tweak: HFSCX-256("NL-V2-DUPLEX-TWEAK" || key || nonce) — fixed per (key,nonce)
+#
+# RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
+# Security relies on bijectivity of nl_fscx_revolve_v2 (proven) and the
+# branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+# The differential/linear profile of nl_fscx_v2 as a standalone sponge
+# permutation has not yet been rigorously analysed (see TODO #95/#99).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_V2DPLEX_DS_INIT  = b'NL-V2-DUPLEX-INIT'
+_V2DPLEX_DS_TWEAK = b'NL-V2-DUPLEX-TWEAK'
+_V2DPLEX_DS_TAG   = b'NL-V2-DUPLEX-TAG'
+_V2DPLEX_RATE     = 16   # bytes = 128 bits
+
+
+def _v2_dplex_perm_bytes(state_b: bytearray, tweak_ba: 'BitArray') -> bytearray:
+    """Apply one permutation round: nl_fscx_revolve_v2(state, tweak, I_VALUE)."""
+    sa = BitArray(KEYBITS, int.from_bytes(state_b, 'big'))
+    r  = nl_fscx_revolve_v2(sa, tweak_ba, I_VALUE)
+    return bytearray(r.uint.to_bytes(KEYBITS // 8, 'big'))
+
+
+def _v2_dplex_init(key: 'BitArray', nonce: 'BitArray') -> tuple:
+    """Returns (state: bytearray, tweak: BitArray)."""
+    kb = key.uint.to_bytes(KEYBITS // 8, 'big')
+    nb = nonce.uint.to_bytes(KEYBITS // 8, 'big')
+    state_b = bytearray(hfscx_256(_V2DPLEX_DS_INIT + kb + nb))
+    tweak_b = hfscx_256(_V2DPLEX_DS_TWEAK + kb + nb)
+    tweak_ba = BitArray(KEYBITS, int.from_bytes(tweak_b, 'big'))
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    return state_b, tweak_ba
+
+
+def _v2_dplex_absorb_ad(state_b: bytearray, tweak_ba: 'BitArray',
+                         ad: bytes) -> bytearray:
+    """Absorb associated data (length-prefixed, padded) + domain separator."""
+    R = _V2DPLEX_RATE
+    ad_prefixed = len(ad).to_bytes(8, 'big') + ad
+    # Pad to next multiple of R using 0x80 || 0x00...
+    rem = len(ad_prefixed) % R
+    if rem != 0:
+        ad_prefixed += bytes([0x80]) + bytes(R - 1 - rem)
+    else:
+        ad_prefixed += bytes([0x80]) + bytes(R - 1)
+    for i in range(0, len(ad_prefixed), R):
+        block = ad_prefixed[i:i + R]
+        for j in range(R):
+            state_b[j] ^= block[j]
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    state_b[R] ^= 0x01          # domain separator: end of AD
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    return state_b
+
+
+def _v2_dplex_enc(state_b: bytearray, tweak_ba: 'BitArray',
+                   pt: bytes) -> tuple:
+    """Duplex-encrypt pt.  Returns (ct: bytes, state_b: bytearray)."""
+    R, ct = _V2DPLEX_RATE, bytearray()
+    if not pt:
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        return bytes(ct), state_b
+    for off in range(0, len(pt), R):
+        block = pt[off:off + R]
+        L = len(block)
+        ct += bytes(state_b[j] ^ block[j] for j in range(L))
+        for j in range(L):
+            state_b[j] ^= block[j]
+        if L < R:
+            state_b[L] ^= 0x80
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    return bytes(ct), state_b
+
+
+def _v2_dplex_dec(state_b: bytearray, tweak_ba: 'BitArray',
+                   ct: bytes) -> tuple:
+    """Duplex-decrypt ct.  Returns (pt: bytes, state_b: bytearray)."""
+    R, pt = _V2DPLEX_RATE, bytearray()
+    if not ct:
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        return bytes(pt), state_b
+    for off in range(0, len(ct), R):
+        block = ct[off:off + R]
+        L = len(block)
+        pt_block = bytes(state_b[j] ^ block[j] for j in range(L))
+        pt += pt_block
+        for j in range(L):
+            state_b[j] ^= pt_block[j]
+        if L < R:
+            state_b[L] ^= 0x80
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    return bytes(pt), state_b
+
+
+def _v2_dplex_finalize(state_b: bytearray, tweak_ba: 'BitArray') -> bytes:
+    """Apply PT domain separator, final permutation, squeeze 32-byte tag."""
+    state_b[_V2DPLEX_RATE] ^= 0x02
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    return hfscx_256(bytes(state_b) + _V2DPLEX_DS_TAG)
+
+
+def hske_nl_v2_duplex_encrypt(key: 'BitArray', pt: bytes, ad: bytes = b'',
+                               nonce: 'BitArray | None' = None) -> tuple:
+    """HSKE-NL-V2-Duplex AEAD encrypt (RESEARCH CONSTRUCTION).
+
+    Returns (nonce, ct, tag).  Never reuse (key, nonce)."""
+    if nonce is None:
+        nonce = BitArray.random(KEYBITS)
+    state_b, tweak_ba = _v2_dplex_init(key, nonce)
+    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad)
+    ct, state_b = _v2_dplex_enc(state_b, tweak_ba, pt)
+    tag = _v2_dplex_finalize(state_b, tweak_ba)
+    return nonce, ct, tag
+
+
+def hske_nl_v2_duplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
+                               tag: bytes, ad: bytes = b'') -> 'bytes | None':
+    """HSKE-NL-V2-Duplex AEAD decrypt (RESEARCH CONSTRUCTION).
+
+    Returns plaintext or None if tag authentication fails."""
+    state_b, tweak_ba = _v2_dplex_init(key, nonce)
+    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad)
+    pt, state_b = _v2_dplex_dec(state_b, tweak_ba, ct)
+    expected = _v2_dplex_finalize(state_b, tweak_ba)
+    if not hmac.compare_digest(bytes(tag), expected):
+        return None
+    return pt
+
+
 # ---------------------------------------------------------------------------
 # 80 — Oblivious PRF (OPRF) over GF(2^n)*  (TODO #80)
 #
@@ -2883,6 +3018,24 @@ def main():
         print("- HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
     else:
         print("+ HSKE-NL-AEAD failed!")
+
+    # 95 Option 2 — HSKE-NL-V2-Duplex demo (RESEARCH CONSTRUCTION)
+    dplex_key   = BitArray.random(KEYBITS)
+    dplex_pt    = b"HSKE-NL-V2-Duplex demo plaintext (47 B)"
+    dplex_ad    = b"duplex-header-v1"
+    dplex_nonce, dplex_ct, dplex_tag = hske_nl_v2_duplex_encrypt(
+        dplex_key, dplex_pt, dplex_ad)
+    dplex_dec = hske_nl_v2_duplex_decrypt(
+        dplex_key, dplex_nonce, dplex_ct, dplex_tag, dplex_ad)
+    dplex_bad = hske_nl_v2_duplex_decrypt(
+        dplex_key, dplex_nonce,
+        bytes([dplex_ct[0] ^ 1]) + dplex_ct[1:], dplex_tag, dplex_ad)
+    dplex_bad_ad = hske_nl_v2_duplex_decrypt(
+        dplex_key, dplex_nonce, dplex_ct, dplex_tag, b"duplex-header-v2")
+    if dplex_dec == dplex_pt and dplex_bad is None and dplex_bad_ad is None:
+        print("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
+    else:
+        print("+ HSKE-NL-V2-Duplex FAILED!")
 
     # 78.C — Ratchet demo (5 steps)
     ratchet_seed = b"demo-seed-78c"

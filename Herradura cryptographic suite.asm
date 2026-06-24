@@ -273,6 +273,26 @@ section .data
     acc_ok_l       equ $-acc_ok
     acc_fail       db "- Accumulator proof FAILED", 10
     acc_fail_l     equ $-acc_fail
+    oprf_hdr       db 10, "--- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE]", 10
+    oprf_hdr_l     equ $-oprf_hdr
+    oprf_ok        db "+ OPRF blind/eval/unblind correct", 10
+    oprf_ok_l      equ $-oprf_ok
+    oprf_fail      db "- OPRF round-trip FAILED", 10
+    oprf_fail_l    equ $-oprf_fail
+    lbl_oprf_hx    db "H(x)   : "
+    lbl_oprf_hx_l  equ $-lbl_oprf_hx
+    lbl_oprf_alpha db "alpha  : "
+    lbl_oprf_al_l  equ $-lbl_oprf_alpha
+    lbl_oprf_beta  db "beta   : "
+    lbl_oprf_be_l  equ $-lbl_oprf_beta
+    lbl_oprf_F     db "F      : "
+    lbl_oprf_F_l   equ $-lbl_oprf_F
+    ; scratch for OPRF demo
+    val_oprf_hx    dd 0   ; H(x)
+    val_oprf_alpha dd 0   ; H(x)^r (blinded)
+    val_oprf_beta  dd 0   ; alpha^k (evaluated)
+    val_oprf_F     dd 0   ; beta^r_inv (unblinded)
+    val_oprf_Fd    dd 0   ; H(x)^k (direct, for check)
     ; scratch for FPE/Twk/Acc demos
     val_fpe_plain  dd 0
     val_fpe_B      dd 0
@@ -1528,6 +1548,77 @@ _start:
     mov  ecx, acc_fail_l
     call print_str
 .acc_done:
+
+    ; ── OPRF (80) demo — blind/eval/unblind, n=32 ─────────────────────
+    ; Key k=0x13579BDF; blinding scalar r=7; r_inv=0x49249249 (7^{-1} mod 2^32-1)
+    mov  eax, oprf_hdr
+    mov  ecx, oprf_hdr_l
+    call print_str
+
+    ; H(x) = hfscx_32(0x50415353)  ["PASS" as 32-bit word]
+    mov  eax, 0x50415353
+    call hfscx_32
+    test eax, eax
+    jnz  .oprf_hx_ok
+    mov  eax, 1                     ; zero-guard
+.oprf_hx_ok:
+    mov  [val_oprf_hx], eax
+    mov  eax, lbl_oprf_hx
+    mov  ecx, lbl_oprf_hx_l
+    call print_str
+    mov  eax, [val_oprf_hx]
+    call print_hex32
+
+    ; alpha = H(x)^r,  r = 7  (client blind)
+    mov  eax, [val_oprf_hx]
+    mov  ebx, 7
+    call gf_pow_32
+    mov  [val_oprf_alpha], eax
+    mov  eax, lbl_oprf_alpha
+    mov  ecx, lbl_oprf_al_l
+    call print_str
+    mov  eax, [val_oprf_alpha]
+    call print_hex32
+
+    ; beta = alpha^k,  k = 0x13579BDF  (server eval)
+    mov  eax, [val_oprf_alpha]
+    mov  ebx, 0x13579BDF
+    call gf_pow_32
+    mov  [val_oprf_beta], eax
+    mov  eax, lbl_oprf_beta
+    mov  ecx, lbl_oprf_be_l
+    call print_str
+    mov  eax, [val_oprf_beta]
+    call print_hex32
+
+    ; F = beta^r_inv,  r_inv = 0x49249249 = 7^{-1} mod (2^32-1)  (client unblind)
+    mov  eax, [val_oprf_beta]
+    mov  ebx, 0x49249249
+    call gf_pow_32
+    mov  [val_oprf_F], eax
+    mov  eax, lbl_oprf_F
+    mov  ecx, lbl_oprf_F_l
+    call print_str
+    mov  eax, [val_oprf_F]
+    call print_hex32
+
+    ; F_direct = H(x)^k  (should equal F — verifies correctness)
+    mov  eax, [val_oprf_hx]
+    mov  ebx, 0x13579BDF
+    call gf_pow_32
+    mov  [val_oprf_Fd], eax
+
+    cmp  eax, [val_oprf_F]
+    jne  .oprf_fail
+    mov  eax, oprf_ok
+    mov  ecx, oprf_ok_l
+    call print_str
+    jmp  .oprf_done
+.oprf_fail:
+    mov  eax, oprf_fail
+    mov  ecx, oprf_fail_l
+    call print_str
+.oprf_done:
 
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT

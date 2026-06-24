@@ -5271,7 +5271,7 @@ New test scripts:
 5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
-Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.27 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 4: `herradura.h` (`HpakeRecord`, `hpake_register`, `hpake_login_demo`) + C suite demo + `herradura_cli.c` (`pake-register`, `pake-demo`) + `herradura/herradura.go` (`HpakeRecord`, `HpakeRegister`, `HpakeLoginDemo`) + Go suite demo + `herradura_cli.go` (`cmdPakeRegister`, `cmdPakeDemo`) + `test_c_pake.sh` (7/7) + `test_go_pake.sh` (7/7). Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations). Batch 5 (Assembly n=32) remains open — low priority.
+Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.27 · Batch 5 DONE v1.9.61 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 4: `herradura.h` (`HpakeRecord`, `hpake_register`, `hpake_login_demo`) + C suite demo + `herradura_cli.c` (`pake-register`, `pake-demo`) + `herradura/herradura.go` (`HpakeRecord`, `HpakeRegister`, `HpakeLoginDemo`) + Go suite demo + `herradura_cli.go` (`cmdPakeRegister`, `cmdPakeDemo`) + `test_c_pake.sh` (7/7) + `test_go_pake.sh` (7/7). Batch 5 DONE v1.9.61: ARM Thumb-2 (`Herradura cryptographic suite.s`) and NASM i386 (`Herradura cryptographic suite.asm`) each add an OPRF blind/eval/unblind demo block using fixed inputs (x=0x50415353, k=0x13579BDF, r=7, r_inv=0x49249249=7^{-1} mod 2^32-1); Arduino (`Herradura cryptographic suite.ino`) adds `oprf_hash_to_field_32`, `oprf_blind_32`, `oprf_eval_32`, `oprf_unblind_32`, `oprf_direct_32` helpers and a `loop()` demo block; all three targets output `+ OPRF blind/eval/unblind correct` and match F_direct; `[DEMO n=32 -- NOT PRODUCTION SECURE]` warning displayed. Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations).
 
 ---
 
@@ -5899,8 +5899,10 @@ CLI `enc`/`dec --aead [--ad]` with PEM format tag 2 in all three CLIs (`encfile`
 were already always-AEAD via the `.hkx` MAC — no flag needed there); security test [28]
 (KAT + roundtrip + ciphertext/tag/AD/nonce/key tamper rejection) in C/Go/Python;
 `CliTest/test_aead.sh` (9 interop pairs + rejection); SecurityProofs-2.md §11.9.6 note.
-Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD) remains **OPEN** as research,
-gated on the #99 diffusion characterisation.
+Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD): **DONE v1.9.62** —
+`hske_nl_v2_duplex_encrypt`/`decrypt` in `herradura.h`, Python suite, and Go package;
+demo blocks in all three suite main files; research disclaimer noting differential/linear
+profile of nl_fscx_v2 as a standalone sponge permutation is not yet rigorously analysed.
 
 ---
 

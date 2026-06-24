@@ -4,6 +4,58 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.62] - 2026-06-24
+
+### Feature — HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)
+
+- **`herradura.h` (C):** added `_V2DState` struct and internal helpers (`_v2dplex_perm`,
+  `_v2dplex_init`, `_v2dplex_absorb_ad`, `_v2dplex_squeeze_tag`) plus public API
+  `hske_nl_v2_duplex_encrypt` / `hske_nl_v2_duplex_decrypt`.
+- **`Herradura cryptographic suite.py` (Python):** added private helpers (`_v2_dplex_perm_bytes`,
+  `_v2_dplex_init`, `_v2_dplex_absorb_ad`, `_v2_dplex_enc`, `_v2_dplex_dec`, `_v2_dplex_finalize`)
+  and public `hske_nl_v2_duplex_encrypt` / `hske_nl_v2_duplex_decrypt`; updated module docstring.
+- **`herradura/herradura.go` (Go):** added `v2dplexPerm`, `v2dplexInit`, `v2dplexAbsorbAD`,
+  `v2dplexEnc`, `v2dplexDec`, `v2dplexFinalizeTag`, `HskeNlV2DuplexEncrypt`, `HskeNlV2DuplexDecrypt`.
+- **Demo blocks:** added to `Herradura cryptographic suite.{py,c,go}` — round-trip +
+  ciphertext tamper + AD mismatch rejection; all three print pass.
+- **Design:** sponge state 256 bits, rate 128 bits, capacity 128 bits; permutation
+  `nl_fscx_revolve_v2(state, tweak, I_VALUE)` with tweak fixed per (key, nonce); AD
+  length-prefixed and padded; 32-byte tag via `HFSCX-256(state || "NL-V2-DUPLEX-TAG")`.
+- **Research disclaimer** present in all three headers: differential/linear profile of
+  nl_fscx_v2 as a standalone sponge permutation not yet rigorously analysed.
+
+---
+
+## [1.9.61] - 2026-06-24
+
+### Feature — OPRF n=32 demo block in ARM Thumb-2, NASM i386, and Arduino (TODO #80 Batch 5)
+
+- **`Herradura cryptographic suite.s` (ARM Thumb-2):** added OPRF blind/eval/unblind demo
+  block to `main()`, after the Accumulator (78.J) block and before `exit`.  Uses fixed
+  inputs (x=`0x50415353` "PASS", OPRF key k=`0x13579BDF`, blinding scalar r=7,
+  r_inv=`0x49249249` = 7^{-1} mod 2^32−1); computes H(x)=`hfscx_32(x)` (zero-guarded),
+  alpha=H(x)^r, beta=alpha^k, F=beta^r_inv, then verifies F==H(x)^k (direct).  New
+  string literals `fmt_oprf_hdr/ok/fail` and label strings `lbl_oprf_hx/alpha/beta/F`
+  added to `.data`; scratch variables `val_oprf_hx/alpha/beta/F/Fd` added.  Outputs
+  `+ OPRF blind/eval/unblind correct` on success.
+- **`Herradura cryptographic suite.asm` (NASM i386):** equivalent OPRF demo block added
+  before the `SYS_EXIT` call in `_start`.  Same fixed parameters as ARM; uses existing
+  `gf_pow_32` (EAX=base, EBX=exp) and `print_str`/`print_hex32` helpers; label strings
+  `lbl_oprf_hx/alpha/beta/F` and scratch dwords `val_oprf_hx/alpha/beta/F/Fd` added to
+  `section .data`.  Output values are byte-for-byte identical to ARM (both produce
+  H(x)=`0xad726aa1`, F=`0x6e2da1a3`).
+- **`Herradura cryptographic suite.ino` (Arduino):** added five helper functions
+  `oprf_hash_to_field_32`, `oprf_blind_32`, `oprf_eval_32`, `oprf_unblind_32`,
+  `oprf_direct_32` (above `setup()`); added OPRF demo block to `loop()` before
+  `delay(10000)` showing the full blind/eval/unblind round-trip with the same fixed
+  parameters and a `Serial.println` pass/fail outcome.
+- **Security advisory:** all three targets print `[DEMO n=32 -- NOT PRODUCTION SECURE]`
+  in the section header; n=32 GF(2^32)* CDH is trivially brute-forcible.  r_inv is
+  hardcoded (7^{-1} mod 2^32−1 = `0x49249249`) because the assembly targets have no
+  extended-GCD routine; this is acceptable for a fixed-parameter demo.
+
+---
+
 ## [1.9.60] - 2026-06-15
 
 ### Documentation — HPKS-WOTS-F / HPKS-XMSS-F tutorial examples (TODO #111)
