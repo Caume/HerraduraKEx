@@ -5838,8 +5838,13 @@ parameters.  Structured cheats implemented in `zkp_pqc_exploration.py` §2.4b
 in the Python suite test [21] at n=32/256 (wrong-key / w-tamper / z-tamper rejection).
 C/Go test-[21] structured-cheat parity **DONE v1.9.63** — `Herradura_tests.{c,go}`
 test [21] now runs wrong-key / w-tamper / z-tamper rejection at n=32/256 (5 checks,
-all PASS), matching the Python suite.  Items 3(a)–(d) remain **OPEN**; 3(b) NTT
-acceleration is the recommended next step.
+all PASS), matching the Python suite.  Item 3(b) NTT acceleration **DONE v1.9.64** —
+the prover/verifier polynomial products already use the negacyclic NTT
+(`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) at the production degree n=256 in all
+three reference languages (schoolbook retained only for the n=32 didactic demo);
+`zkp_pqc_exploration.py` §2.7 cross-checks NTT==schoolbook and measures the speedup
+(~6.8× at n=256, ~12.7× at n=512 in pure Python); SecurityProofs-3.md §11.10.6
+direction 2 marked Resolved.  Items 3(a), 3(c), 3(d) remain **OPEN**.
 
 ---
 

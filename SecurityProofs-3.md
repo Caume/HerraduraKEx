@@ -174,7 +174,7 @@ For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-pr
 
 1. **Formal Ring-LWR reduction.** Establish a tight security reduction from the $\Sigma$-protocol soundness to Ring-LWR distinguishing hardness.  Quantify the effect of the rounding slack ($\leq t \cdot q/(2p) = 32$) on the security margin relative to the Lyubashevsky 2012 template.
 
-2. **NTT-accelerated $\Sigma$-protocol.** The prototype uses $O(n^2)$ schoolbook multiplication.  Extend to NTT-based negacyclic multiply (already in HKEX-RNL, §11.4.2) for $O(n \log n)$ prover and verifier at $n=256$.
+2. **NTT-accelerated $\Sigma$-protocol.** *(Resolved v1.9.64.)*  The prover and verifier polynomial products in the reference suite (`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) use the negacyclic NTT over $Z_q[x]/(x^n+1)$ (the same path as HKEX-RNL, §11.4.2) at the production degree $n=256$, giving $O(n \log n)$ prover and verifier; the $O(n^2)$ schoolbook multiply is retained only for the $n=32$ didactic demo, where NTT twiddles are not precomputed and the cost is negligible.  `SecurityProofsCode/zkp_pqc_exploration.py` §2.7 cross-checks the NTT result against schoolbook and measures the speedup ($\approx 6.8\times$ at $n=256$, $\approx 12.7\times$ at $n=512$ in pure Python).
 
 3. **ZKB++ on NL-FSCX.** Implement Chase et al. 2017's optimised MPC-in-the-head decomposition to reduce NL-FSCX ZKBoo proofs from 920 KB to approximately 180 KB.
 

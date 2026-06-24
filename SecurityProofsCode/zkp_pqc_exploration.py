@@ -23,6 +23,8 @@ This script covers the two NOT-yet-implemented pillars:
       §2.5  Proof-size analysis
       §2.6  Challenge-difference invertibility in R_q (relaxed soundness
             motivation: x^n+1 splits over F_q since 2n | q-1)
+      §2.7  NTT-accelerated multiply vs O(n²) schoolbook (TODO #94 item 2):
+            self-checking correctness + measured speedup at n=256/512
   §3  NL-FSCX ZKP via MPC-in-the-head (ZKBoo, 3-party Boolean circuit)
       §3.1  NL-FSCX v1 bit-level circuit (n=8 toy)
       §3.2  ZKBoo 3-party evaluation with per-AND-gate commitments
@@ -456,6 +458,85 @@ def section2_invertibility():
     print("  of c-c' is taken.")
 
 
+# ── §2.7  NTT-accelerated Σ-protocol multiply (TODO #94 item 2) ──────────────
+
+def _ntt_inplace(a, omega, q, n):
+    """Iterative in-place Cooley-Tukey NTT.  omega: primitive n-th root of 1."""
+    j = 0
+    for i in range(1, n):                       # bit-reversal permutation
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j ^= bit
+        if i < j:
+            a[i], a[j] = a[j], a[i]
+    length = 2
+    while length <= n:
+        wlen = pow(omega, n // length, q)
+        for i in range(0, n, length):
+            w = 1
+            half = length >> 1
+            for k in range(i, i + half):
+                u = a[k]
+                v = a[k + half] * w % q
+                a[k] = (u + v) % q
+                a[k + half] = (u - v) % q
+                w = w * wlen % q
+        length <<= 1
+
+
+def _poly_mul_ntt(f, g, q, n):
+    """Negacyclic multiply in Z_q[x]/(x^n+1) via NTT.  O(n log n).
+
+    Requires n a power of two with 2n | q-1.  Mirrors the suite's
+    negacyclic-NTT path (rnl_poly_mul / _rnl_poly_mul / RnlPolyMul):
+    pre-twist by psi^i, length-n cyclic NTT with omega=psi^2, pointwise
+    product, inverse NTT, post-twist by psi^{-i} and scale by n^{-1}."""
+    assert (q - 1) % (2 * n) == 0, "x^n+1 does not split fully over Z_q"
+    psi     = pow(3, (q - 1) // (2 * n), q)      # primitive 2n-th root (psi^n=-1)
+    psi_inv = pow(psi, q - 2, q)
+    n_inv   = pow(n, q - 2, q)
+    omega   = psi * psi % q                      # primitive n-th root
+    fa = [f[i] * pow(psi, i, q) % q for i in range(n)]
+    ga = [g[i] * pow(psi, i, q) % q for i in range(n)]
+    _ntt_inplace(fa, omega, q, n)
+    _ntt_inplace(ga, omega, q, n)
+    ha = [fa[i] * ga[i] % q for i in range(n)]
+    _ntt_inplace(ha, pow(omega, q - 2, q), q, n)
+    return [ha[i] * n_inv % q * pow(psi_inv, i, q) % q for i in range(n)]
+
+
+def section2_ntt_benchmark():
+    """Empirically confirm the suite's NTT path: same result as schoolbook,
+    measurably faster at the production degree n=256.  TODO #94 item 2."""
+    print(SEP2)
+    print("§2.7  NTT-accelerated Σ-protocol multiply (vs O(n²) schoolbook)")
+    q = _Q
+    for n, reps in [(256, 200), (512, 100)]:
+        if (q - 1) % (2 * n) != 0:
+            continue
+        fs = [_rand_poly(n, q) for _ in range(reps)]
+        gs = [_rand_poly(n, q) for _ in range(reps)]
+        # correctness: NTT must equal schoolbook on the first sample
+        assert _poly_mul_ntt(fs[0], gs[0], q, n) == _poly_mul(fs[0], gs[0], q, n), \
+            "NTT multiply disagrees with schoolbook"
+        t0 = time.perf_counter()
+        for i in range(reps):
+            _poly_mul(fs[i], gs[i], q, n)
+        t_school = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        for i in range(reps):
+            _poly_mul_ntt(fs[i], gs[i], q, n)
+        t_ntt = time.perf_counter() - t0
+        speedup = t_school / t_ntt if t_ntt > 0 else float('inf')
+        print(f"  n={n:4d} ({reps} mults): schoolbook={t_school*1e3:8.1f} ms  "
+              f"NTT={t_ntt*1e3:8.1f} ms  speedup={speedup:5.1f}x  [results match]")
+    print("  The reference suite (rnl_poly_mul / _rnl_poly_mul / RnlPolyMul) uses")
+    print("  this negacyclic-NTT path for prover and verifier at the production")
+    print("  degree n=256; schoolbook is retained only for the n=32 didactic demo.")
+
+
 def section2():
     print()
     print(SEP)
@@ -468,6 +549,7 @@ def section2():
     section2_structured_cheats()
     section2_proofsize()
     section2_invertibility()
+    section2_ntt_benchmark()
 
 
 # =============================================================================

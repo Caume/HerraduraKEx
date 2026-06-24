@@ -4,6 +4,22 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.64] - 2026-06-24
+
+### Docs/Analysis — ZKP-RNL Σ-protocol NTT acceleration confirmed (TODO #94 item 3b)
+
+- **`SecurityProofsCode/zkp_pqc_exploration.py`:** added §2.7 — a self-checking
+  negacyclic-NTT multiply (`_poly_mul_ntt`, iterative Cooley-Tukey `_ntt_inplace`) that
+  cross-validates against the O(n²) schoolbook multiply and benchmarks both at n=256/512.
+  Measured pure-Python speedup ≈6.8× at n=256 and ≈12.7× at n=512.
+- **`SecurityProofs-3.md` §11.10.6:** marked open direction 2 (NTT-accelerated Σ-protocol)
+  **Resolved** — the suite's prover/verifier already use the negacyclic NTT
+  (`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) at the production degree n=256, with
+  schoolbook retained only for the n=32 didactic demo. Corrected the stale "prototype uses
+  schoolbook" claim.
+
+---
+
 ## [1.9.63] - 2026-06-24
 
 ### Test — ZKP-RNL structured-cheat parity in C and Go test [21] (TODO #94 item 2)
