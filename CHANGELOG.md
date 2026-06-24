@@ -4,6 +4,27 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.67] - 2026-06-24
+
+### Docs/Design — Hybrid Ring-LWR + Stern-F credential design sketch (TODO #94 item 3d; closes #94)
+
+- **`SecurityProofs-3.md` §11.10.8 (new):** design sketch for a compound zero-knowledge
+  credential proving knowledge of a Ring-LWR secret `s` matching public key `C` AND a
+  code-based credential bound to `s`. AND-composition of the §11.10.2 Ring-LWR Σ-protocol
+  and the Stern identification protocol (§11.8.4), glued by a binding commitment to `s`
+  with a single Fiat-Shamir challenge. States completeness, soundness (extractor recovers
+  both witnesses; commitment binding forces a consistent `s`), and zero-knowledge under
+  parallel composition. Estimated proof size ≈80 KB (Stern-F-dominated). Identifies the
+  open crux: the binding map φ relating the ternary ring secret to the fixed-weight binary
+  Stern witness with a cheap gadget.
+- **`SecurityProofs-3.md` §11.10.6:** marked open direction 4 Scoped.
+- **TODO #94 closed** — items 1–2 and research directions 3(a)–(d) all addressed at the
+  analysis/proof/design level; two open-ended implementation follow-ups (full ZKB++
+  encoder + sparse circuit; hybrid-credential gadget) recorded as future work.
+- KaTeX validated (315 OK, 0 FAIL, 0 PIPE-FAIL).
+
+---
+
 ## [1.9.66] - 2026-06-24
 
 ### Docs/Analysis — ZKB++ proof-size breakdown corrects 180 KB estimate (TODO #94 item 3c)

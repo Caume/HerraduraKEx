@@ -5856,7 +5856,19 @@ size breakdown; corrected the over-optimistic "5×/180 KB" claim to the realisti
 the 2×→1× online-party term helps; reaching ~180 KB needs a sparse LowMC-like circuit
 redesign).  SecurityProofs-3.md §11.10.4/§11.10.6 direction 3 updated.  A full ZKB++
 *implementation* (and the sparse-circuit redesign) remain open as future work.  Item
-3(d) hybrid Ring-LWR + Stern-F credential remains **OPEN**.
+3(d) hybrid Ring-LWR + Stern-F credential **DONE v1.9.67** (design sketch) —
+SecurityProofs-3.md §11.10.8 specifies the AND-composition of the Ring-LWR Σ-protocol
+and the Stern identification protocol, glued by a binding commitment to s with a single
+Fiat-Shamir challenge; completeness/soundness/ZK argued, proof size estimated ≈80 KB
+(Stern-F-dominated); the unresolved crux is the binding map φ relating the ternary ring
+secret to the fixed-weight binary Stern witness with a cheap gadget.
+
+**Overall #94 status: DONE v1.9.67** — items 1–2 (relaxed soundness + structured cheats,
+C/Go parity) and the §11.10.6 research directions 3(a)–(d) are all addressed at the
+analysis/proof/design level.  Two open-ended *implementation* follow-ups remain as future
+work and may be split into their own TODO entries: (i) a full ZKB++ transcript encoder
+plus a sparse LowMC-like NL-FSCX circuit to approach ~180 KB, and (ii) the
+hybrid-credential binding gadget φ and a working compound-proof implementation.
 
 ---
 

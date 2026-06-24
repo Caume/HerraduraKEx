@@ -179,7 +179,7 @@ For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-pr
 
 3. **ZKB++ on NL-FSCX.** *(Scoped v1.9.66 — see §11.10.4 and `zkp_pqc_exploration.py` §3.7.)*  Implement Chase et al. 2017's optimised MPC-in-the-head decomposition.  A first-principles size accounting shows ZKB++ reduces the $n=256$ proof from 920 KB to **≈457 KB ($2.0\times$)**, not the generic 180 KB — the NL-FSCX circuit is AND-gate-broadcast-dominated, so only the $2\times{\to}1\times$ online-party term helps.  Reaching ~180 KB additionally requires a sparse (LowMC-like) circuit to cut the AND-gate count; that circuit redesign remains open.
 
-4. **Hybrid credential scheme.** Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a Stern-F signature valid under $s$" — enabling privacy-preserving authentication with a single compound proof.
+4. **Hybrid credential scheme.** *(Scoped v1.9.67 — design sketch in §11.10.8.)*  Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a code-based credential bound to $s$" — an AND-composition glued by a binding commitment to $s$, single Fiat-Shamir challenge, estimated proof size $\approx 80$ KB (Stern-F-dominated).  The unresolved crux is the binding map $\phi$ relating the ternary ring secret to the fixed-weight binary Stern witness with a cheap gadget; until that is settled the scheme stays a design sketch.
 
 ### 11.10.7 Conditional Reduction of Relaxed Soundness to Ring-LWR (TODO #94 item 3a)
 
@@ -214,6 +214,32 @@ In both cases a successful cheating prover breaks R-LWR, up to the forking loss 
 $$\mu = 4t \lceil q/(2p) \rceil = 4t \lceil 65537/8192 \rceil = 4t \cdot 9 = 36t.$$
 
 Numerically $\mu = 144$ at $t = 4$ ($n = 32$) and $\mu = 576$ at $t = 16$ ($n = 256$), against $q = 65537$.  The ratio $\mu/q$ is 0.22% and 0.88% respectively — the extracted relation $m \cdot v$ is genuinely short relative to $q$, so the aR-SIS instance is non-trivial (a random $v$ of norm $\beta = 2\gamma$ would give $\lVert m \cdot v \rVert_\infty \approx q/2$).  Relative to the Lyubashevsky 2012 template — prime $q$ and a challenge ring chosen so that $\bar{c}$ is always invertible, yielding an *exact* ($\mu = 0$) inhomogeneous-SIS witness — the suite trades exactness for the rounding slack $\mu = 36t$.  This is the precise quantitative gap requested by open direction 1; it scales linearly in the challenge weight $t$ and is independent of $n$, so wider challenges (stronger soundness per round) cost proportionally more slack.
+
+### 11.10.8 Hybrid Ring-LWR + Stern-F Credential — Design Sketch (TODO #94 item 3d)
+
+This subsection scopes open direction 4: a single compound zero-knowledge proof asserting *"I hold a Ring-LWR secret $s$ matching public key $C$ **and** a code-based credential bound to $s$,"* without revealing $s$ or the credential.  The construction is an AND-composition of the two $\Sigma$-protocols the suite already provides — the §11.10.2 Ring-LWR protocol and the Stern identification protocol underlying HPKS-Stern-F (§11.8.4) — glued by a commitment that forces both to speak about the same secret.
+
+**Statement and witness.**
+
+- *Public:* the Ring-LWR pair $(m, C)$ with $C = \text{round-p}(m \cdot s)$; a binary parity-check matrix $H \in \mathbb{F}_2^{(N-k) \times N}$ and a syndrome $y = H e^{\top}$ (the Stern statement).
+- *Witness:* the ternary $s \in \{-1,0,1\}^n$ and a low-weight $e \in \mathbb{F}_2^N$ with $\text{wt}(e) = t_{\text{S}}$, subject to a binding relation $e = \phi(s)$ for a fixed public map $\phi$ (below).
+
+**Binding the two witnesses.**  The two relations live in different algebras — $s$ is ternary in $\mathcal{R}_q$, $e$ is binary in $\mathbb{F}_2^N$ — so "the same $s$" must be enforced explicitly.  The design commits to $s$ once with a binding commitment $\text{cmt}(s; r)$ (a BDLOP-style lattice commitment, or a hash commitment to the bit-decomposition of $s$) and runs both sub-protocols against that single commitment:
+
+1. the Ring-LWR $\Sigma$-protocol proves $C = \text{round-p}(m \cdot s)$ for the committed $s$;
+2. a bit-decomposition gadget proves $e = \phi(s)$ (e.g. $\phi$ maps the sign pattern of $s$ to a fixed-weight binary word) for the committed $s$, after which the Stern protocol proves $H e^{\top} = y$ with $\text{wt}(e) = t_{\text{S}}$.
+
+**AND-composition (non-interactive).**  Run both sub-protocols in parallel with independent prover randomness and derive a single Fiat-Shamir challenge $\text{ch} = H_{\text{FS}}(\text{cmt}(s), \text{transcript}_{\text{RLWR}}, \text{transcript}_{\text{Stern}}, m, C, H, y)$, then split $\text{ch}$ into the per-protocol challenges.  Hashing both commitment phases together binds the two proofs to one prover and one $s$.
+
+**Security.**
+
+- *Completeness* follows from the completeness of each sub-protocol.
+- *Soundness:* AND-composition of two sound $\Sigma$-protocols is sound — an extractor that rewinds the shared challenge recovers a relaxed Ring-LWR witness (§11.10.7) **and** a Stern witness; the binding of $\text{cmt}(s)$ forces the extracted $s$ to be consistent across both, so a prover lacking either secret fails one branch.  Soundness error is the max of the two per-round errors; both are driven to $2^{-128}$ by their existing round counts ($R = 219$ for Stern; one relaxed FS round for Ring-LWR).
+- *Zero-knowledge:* parallel composition with independent randomness preserves honest-verifier ZK; the commitment is hiding, so $\text{cmt}(s)$ leaks nothing.
+
+**Proof size (estimate).**  Additive minus the shared commitment: ZKP-RNL ($\approx 1.03$ KB at $n=256$, §11.10.2) $+$ Stern-F ($\approx 78$ KB at $N=256$, $R=219$) $+$ the bit-decomposition gadget and commitment ($\approx 1$–2 KB) $\approx$ **80 KB**, dominated by the Stern-F component.
+
+**Open problem.**  The crux is the binding map $\phi$ and its gadget: a sound, ZK proof that a committed ternary ring element and a committed fixed-weight binary word are related requires either (a) an arithmetic-circuit proof of the bit-decomposition (expensive), or (b) choosing $\phi$ so the relation is linear over a common ring (restrictive).  Designing $\phi$ so that $\text{wt}(\phi(s)) = t_{\text{S}}$ holds for honest $s$ while keeping the gadget cheap is the main unresolved question; until it is settled the scheme remains a design sketch rather than an implementation.
 
 **References.**
 - Lyubashevsky 2012. *Lattice Signatures Without Trapdoors*. Eurocrypt 2012, LNCS 7237, pp. 738–755.
