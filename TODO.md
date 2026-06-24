@@ -6407,3 +6407,132 @@ Status: **DONE v1.9.56**
 2. Add a security note explaining the QC-MDPC decoder requirement and that the demo should not be used in production.
 
 Status: **DONE v1.9.58**
+
+---
+
+## CLI Capability Review — Suite Features Not Yet Exposed in the CLI — Identified 2026-06-24
+
+A review of suite functionality added since the last CLI extension (TODO #106) against the
+`HerraduraCli/` subcommand surface (Python `herradura.py`, C `herradura_cli.c`, Go
+`herradura_cli_go`) found four primitives that are fully implemented in the library across
+all three CLI languages but have no CLI entry point.  Each item below records the suite API,
+the natural CLI surface, and the PEM/wire-format work needed for byte-for-byte cross-language
+compatibility (the standing CLI invariant).
+
+---
+
+### 118. CLI: expose HSKE-NL-V2-Duplex single-pass AEAD in `enc`/`dec` (CLI Extension, Medium)
+
+**Discovered:** CLI capability review, 2026-06-24.
+
+**Current state:** the MonkeyDuplex-style single-pass AEAD `hske_nl_v2_duplex_encrypt` /
+`hske_nl_v2_duplex_decrypt` (TODO #95 Option 2, v1.9.62) is implemented and byte-for-byte
+interoperable in `herradura.h` (C), `Herradura cryptographic suite.py` (Python), and
+`herradura/herradura.go` (Go), with demo blocks and round-trip/tamper tests.  The CLI `enc`/`dec`
+subcommands support `hske`, `hske-nla1` (with `--aead`), `hske-nla2`, `hpke`, `hpke-nl`, and
+`hpke-stern`, but not the V2-Duplex AEAD.
+
+**Goal:** add `enc --algo hske-duplex` and `dec --algo hske-duplex` (with `--ad` associated-data
+support), producing a PEM ciphertext object carrying nonce, ciphertext, and 32-byte tag.
+
+**Work items:**
+1. Define a PEM/DER ciphertext object (e.g. label `HERRADURA HSKE-DUPLEX CIPHERTEXT`) encoding
+   `{nonce (KEYBYTES), ciphertext (variable), tag (32)}`; reuse the existing AEAD codec pattern
+   from `hske-nla1 --aead`.
+2. Wire `hske-duplex` into the `enc`/`dec` `--algo` choices and dispatch in the Python CLI
+   (`cmd_enc`/`cmd_dec`), C CLI, and Go CLI.
+3. Require a 256-bit key (as with `hske-nla1 --aead`); error clearly otherwise.
+4. Add `CliTest/test_duplex.sh` — round-trip, tamper rejection (ciphertext/tag/AD), and a
+   9-way cross-CLI interop matrix (Python/C/Go encrypt × decrypt), mirroring `test_aead.sh`.
+5. Document the subcommand in the CLI usage header and `docs/TUTORIAL.md`.
+
+Status: **DONE v1.9.68** — `enc`/`dec --algo hske-duplex` implemented in the Python
+(`herradura.py`), C (`herradura_cli.c`), and Go (`herradura_cli_go`) CLIs with `--ad`
+support and a 256-bit-key requirement.  New PEM ciphertext format tag 3
+(`SEQ(3, nonce, ct_len, ct, tag, nbits)`) stores the variable-length ciphertext
+length-prefixed so arbitrary-length plaintext (not just one 32-byte block) is supported.
+`CliTest/test_duplex.sh` exercises the 9-way producer/consumer interop matrix, wrong-AD /
+wrong-key / mutated-ciphertext rejection, and empty-plaintext round-trip (23/23 pass).
+Documented in the three CLI usage headers and `docs/TUTORIAL.md`.
+
+---
+
+### 119. CLI: `rand` command for HDRBG forward-secure deterministic byte generation (CLI Extension, Medium)
+
+**Discovered:** CLI capability review, 2026-06-24.
+
+**Current state:** the forward-secure DRBG (`drbg_seed` / `drbg_generate` / `drbg_reseed`,
+TODO #96, v1.9.34) is implemented in all three CLI languages (`drbg_generate` in C and Go,
+`drbg_seed`/`generate`/`reseed` in Python) but has no CLI entry point.  There is no way to
+generate deterministic random bytes from a seed via the CLI.
+
+**Goal:** add a `rand` subcommand that seeds an HDRBG from a file/PEM seed and emits a requested
+number of deterministic bytes, with optional reseed.
+
+**Work items:**
+1. Add `rand --seed <file> --bytes N [--personalization STR] [--out FILE]` to the Python, C, and
+   Go CLIs; default output is raw bytes to stdout (or `--out` file), with a `--hex` option.
+2. Define an optional persistent DRBG-state PEM object (e.g. `HERRADURA HDRBG STATE`) so a
+   caller can checkpoint and resume a stream across invocations; include a `--reseed <file>`
+   flag that folds new entropy into a saved state.
+3. Ensure identical seed + personalization + byte count produces byte-identical output across
+   the three CLIs (cross-language KAT).
+4. Add `CliTest/test_rand.sh` — determinism, cross-CLI KAT, reseed-changes-stream, and
+   distinct-personalization-separation checks.
+5. Document the subcommand and note it is a deterministic DRBG (not an OS entropy source).
+
+Status: **OPEN**
+
+---
+
+### 120. CLI: HPKS-WOTS-F one-time signatures in `genpkey`/`sign`/`verify` (CLI Extension, Medium)
+
+**Discovered:** CLI capability review, 2026-06-24.
+
+**Current state:** the many-time XMSS wrapper is already exposed as `sign/verify --algo hpks-xmss`,
+but the underlying HPKS-WOTS-F one-time signature primitive (`hpks_wots_keygen` / `hpks_wots_sign`
+/ `hpks_wots_verify` / `hpks_wots_recover_pk`, present in C, Go, and Python) has no standalone CLI
+surface.  A one-time signature is useful on its own (e.g. constrained-device single-use tokens).
+
+**Goal:** add `genpkey --algo hpks-wots`, `sign --algo hpks-wots`, and `verify --algo hpks-wots`.
+
+**Work items:**
+1. Define WOTS-F private/public key PEM objects (master seed + leaf index for the private key;
+   the WOTS public-key chain endpoints for the public key).
+2. Wire `hpks-wots` into `genpkey`, `sign`, and `verify` `--algo` dispatch in the Python, C, and
+   Go CLIs, packing/unpacking the signature (the WOTS chain values) in a shared PEM format.
+3. Enforce one-time semantics: refuse to sign twice with the same key (track/burn the leaf index,
+   as the XMSS CLI does with its index file), with a clear error on reuse.
+4. Add `CliTest/test_wots.sh` — keygen, sign/verify round-trip, reuse-refusal, tamper rejection,
+   and cross-CLI interop (Python sign → C/Go verify and vice versa).
+5. Document the one-time constraint prominently in the CLI help and `docs/TUTORIAL.md`.
+
+Status: **OPEN**
+
+---
+
+### 121. CLI: HPKS-Stern-Ring ring signatures in `sign`/`verify` (CLI Extension, Medium)
+
+**Discovered:** CLI capability review, 2026-06-24.
+
+**Current state:** the code-based ring signature `hpks_stern_ring_sign` / `hpks_stern_ring_verify`
+(#78.I) is implemented in the Python and Go suites and exercised by security test [20], but is
+**not** present in `herradura.h` (C) and has no CLI surface in any language.  A ring signature lets
+one member of an ad-hoc group sign anonymously on behalf of the group.
+
+**Goal:** add `sign --algo hpks-ring` (signer key + a list of ring public-key PEMs) and
+`verify --algo hpks-ring` (same ring) to the Python and Go CLIs.
+
+**Work items:**
+1. **Dependency:** port `hpks_stern_ring_sign`/`hpks_stern_ring_verify` to `herradura.h` so the C
+   CLI can participate; until then, scope the CLI to Python + Go and note the C gap (or split the
+   C suite port into its own sub-item).
+2. Define a ring-signature PEM object encoding the ring size, the per-member challenge/response
+   data, and the key-image/linking tag if applicable.
+3. Add a `--ring <pem1,pem2,...>` argument (ordered list of member public keys) to `sign`/`verify`
+   and wire `hpks-ring` into the `--algo` dispatch.
+4. Add `CliTest/test_ring.sh` — sign-by-member / verify-by-ring success, non-member rejection,
+   tamper rejection, and Python↔Go interop.
+5. Document the anonymity property and ring-membership semantics in the CLI help and tutorial.
+
+Status: **OPEN**
