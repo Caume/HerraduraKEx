@@ -4,6 +4,36 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.61] - 2026-06-24
+
+### Feature — OPRF n=32 demo block in ARM Thumb-2, NASM i386, and Arduino (TODO #80 Batch 5)
+
+- **`Herradura cryptographic suite.s` (ARM Thumb-2):** added OPRF blind/eval/unblind demo
+  block to `main()`, after the Accumulator (78.J) block and before `exit`.  Uses fixed
+  inputs (x=`0x50415353` "PASS", OPRF key k=`0x13579BDF`, blinding scalar r=7,
+  r_inv=`0x49249249` = 7^{-1} mod 2^32−1); computes H(x)=`hfscx_32(x)` (zero-guarded),
+  alpha=H(x)^r, beta=alpha^k, F=beta^r_inv, then verifies F==H(x)^k (direct).  New
+  string literals `fmt_oprf_hdr/ok/fail` and label strings `lbl_oprf_hx/alpha/beta/F`
+  added to `.data`; scratch variables `val_oprf_hx/alpha/beta/F/Fd` added.  Outputs
+  `+ OPRF blind/eval/unblind correct` on success.
+- **`Herradura cryptographic suite.asm` (NASM i386):** equivalent OPRF demo block added
+  before the `SYS_EXIT` call in `_start`.  Same fixed parameters as ARM; uses existing
+  `gf_pow_32` (EAX=base, EBX=exp) and `print_str`/`print_hex32` helpers; label strings
+  `lbl_oprf_hx/alpha/beta/F` and scratch dwords `val_oprf_hx/alpha/beta/F/Fd` added to
+  `section .data`.  Output values are byte-for-byte identical to ARM (both produce
+  H(x)=`0xad726aa1`, F=`0x6e2da1a3`).
+- **`Herradura cryptographic suite.ino` (Arduino):** added five helper functions
+  `oprf_hash_to_field_32`, `oprf_blind_32`, `oprf_eval_32`, `oprf_unblind_32`,
+  `oprf_direct_32` (above `setup()`); added OPRF demo block to `loop()` before
+  `delay(10000)` showing the full blind/eval/unblind round-trip with the same fixed
+  parameters and a `Serial.println` pass/fail outcome.
+- **Security advisory:** all three targets print `[DEMO n=32 -- NOT PRODUCTION SECURE]`
+  in the section header; n=32 GF(2^32)* CDH is trivially brute-forcible.  r_inv is
+  hardcoded (7^{-1} mod 2^32−1 = `0x49249249`) because the assembly targets have no
+  extended-GCD routine; this is acceptable for a fixed-parameter demo.
+
+---
+
 ## [1.9.60] - 2026-06-15
 
 ### Documentation — HPKS-WOTS-F / HPKS-XMSS-F tutorial examples (TODO #111)

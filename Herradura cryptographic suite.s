@@ -103,6 +103,13 @@ fmt_twk_fail:   .asciz "- Tweakable cipher FAILED\n"
 fmt_acc_hdr:    .asciz "\n-- Accumulator (78.J) [Merkle root + membership; 32-bit] --\n"
 fmt_acc_ok:     .asciz "+ Accumulator proof correct\n"
 fmt_acc_fail:   .asciz "- Accumulator proof FAILED\n"
+fmt_oprf_hdr:   .asciz "\n-- OPRF (80) [DEMO n=32 -- NOT PRODUCTION SECURE] --\n"
+fmt_oprf_ok:    .asciz "+ OPRF blind/eval/unblind correct\n"
+fmt_oprf_fail:  .asciz "- OPRF round-trip FAILED\n"
+lbl_oprf_hx:    .asciz "H(x)   "
+lbl_oprf_alpha: .asciz "alpha  "
+lbl_oprf_beta:  .asciz "beta   "
+lbl_oprf_F:     .asciz "F      "
 fmt_ring_hdr:    .asciz "\n-- HPKS-Stern-Ring (78.I) [CODE-BASED RING SIG -- OR-composed Stern, k=2] --\n"
 fmt_ring_ok:     .asciz "+ HPKS-Stern-Ring signature verified (k=2, signer=1)\n"
 fmt_ring_fail:   .asciz "- HPKS-Stern-Ring verification FAILED\n"
@@ -203,6 +210,12 @@ val_KA:      .word 0
 val_KB:      .word 0
 val_hint_A:  .word 0
 val_sk_rnl:  .word 0
+/* OPRF (80) scratch */
+val_oprf_hx:    .word 0    @ H(x)
+val_oprf_alpha: .word 0    @ H(x)^r (blinded)
+val_oprf_beta:  .word 0    @ alpha^k (evaluated)
+val_oprf_F:     .word 0    @ beta^r_inv (unblinded)
+val_oprf_Fd:    .word 0    @ H(x)^k (direct, for check)
 /* Stern-F (code-based PQC) storage */
 val_sdf_seed:    .word 0    @ parity check seed (public)
 val_sdf_syn:     .word 0    @ syndrome H·e^T (public)
@@ -1539,6 +1552,78 @@ acc_suite_ok:
     ldr     r0, =fmt_acc_ok
     bl      printf
 acc_suite_done:
+
+    /* ── OPRF (80) demo — blind/eval/unblind, n=32 ──────────────────── */
+    /* Key k=0x13579BDF; blinding scalar r=7; r_inv=0x49249249 (7^{-1} mod 2^32-1) */
+    ldr     r0, =fmt_oprf_hdr
+    bl      printf
+
+    @ H(x) = hfscx_32(0x50415353)  ["PASS" as 32-bit word]
+    ldr     r0, =0x50415353
+    bl      hfscx_32
+    cmp     r0, #0
+    it      eq
+    moveq   r0, #1                  @ zero-guard
+    mov     r4, r0                  @ r4 = H(x)
+    ldr     r3, =val_oprf_hx
+    str     r4, [r3]
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_oprf_hx
+    mov     r2, r4
+    bl      printf
+
+    @ alpha = H(x)^r,  r = 7  (client blind)
+    mov     r0, r4
+    mov     r1, #7
+    bl      gf_pow_32
+    mov     r5, r0                  @ r5 = alpha
+    ldr     r3, =val_oprf_alpha
+    str     r5, [r3]
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_oprf_alpha
+    mov     r2, r5
+    bl      printf
+
+    @ beta = alpha^k,  k = 0x13579BDF  (server eval)
+    mov     r0, r5
+    ldr     r1, =0x13579BDF
+    bl      gf_pow_32
+    mov     r6, r0                  @ r6 = beta
+    ldr     r3, =val_oprf_beta
+    str     r6, [r3]
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_oprf_beta
+    mov     r2, r6
+    bl      printf
+
+    @ F = beta^r_inv,  r_inv = 0x49249249 = 7^{-1} mod (2^32-1)  (client unblind)
+    mov     r0, r6
+    ldr     r1, =0x49249249
+    bl      gf_pow_32
+    mov     r7, r0                  @ r7 = F
+    ldr     r3, =val_oprf_F
+    str     r7, [r3]
+    ldr     r0, =fmt_hex
+    ldr     r1, =lbl_oprf_F
+    mov     r2, r7
+    bl      printf
+
+    @ F_direct = H(x)^k  (should equal F — verifies blind/eval/unblind correctness)
+    mov     r0, r4
+    ldr     r1, =0x13579BDF
+    bl      gf_pow_32
+    ldr     r3, =val_oprf_Fd
+    str     r0, [r3]
+
+    cmp     r0, r7
+    beq     oprf_suite_ok
+    ldr     r0, =fmt_oprf_fail
+    bl      printf
+    b       oprf_suite_done
+oprf_suite_ok:
+    ldr     r0, =fmt_oprf_ok
+    bl      printf
+oprf_suite_done:
 
     mov     r0, #0
     bl      exit
