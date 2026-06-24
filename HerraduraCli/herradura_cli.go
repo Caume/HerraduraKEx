@@ -13,6 +13,7 @@
 //   herradura_cli_go verify   --algo hpks      --pubkey pub.pem --in msg.bin --sig sig.pem
 //   herradura_cli_go dgst     --in file.bin                       # hex to stdout
 //   herradura_cli_go dgst     --algo hfscx-256 --in file.bin --out d.pem
+//   herradura_cli_go rand     --seed seed.bin --bytes 64 --hex     # deterministic bytes
 //
 // HKEX-RNL (2-round):
 //   herradura_cli_go kex --algo hkex-rnl --our bob.pem --their alice_pub.pem --out resp.pem
@@ -59,6 +60,7 @@ const (
 	lblCT      = "HERRADURA CIPHERTEXT"
 	lblSig     = "HERRADURA SIGNATURE"
 	lblDigest  = "HERRADURA DIGEST"
+	lblHdrbg   = "HERRADURA HDRBG STATE"
 
 	lblZkpRnlProof = "HERRADURA ZKP-RNL PROOF"
 	lblZkpNlPriv   = "HERRADURA ZKP-NL PRIVATE KEY"
@@ -890,6 +892,101 @@ func cmdDgst(args []string) {
 	pem := PemWrap(lblDigest, seq)
 	if err := writeString(*out, pem); err != nil {
 		die("dgst", err)
+	}
+}
+
+// ── rand — HDRBG deterministic byte generation (TODO #119) ───────────────────
+//
+// Deterministic DRBG (NOT an OS entropy source): identical seed +
+// personalization + byte count yield byte-identical output across the
+// Python, C, and Go CLIs.  State can be checkpointed to a
+// 'HERRADURA HDRBG STATE' PEM (state[32], blocks) and resumed.
+
+func encodeHdrbgState(d *HDrbg) string {
+	sd, _ := derIntBig(new(big.Int).SetBytes(d.DrbgState()), 32)
+	bd, _ := derIntSmall(int(d.Blocks))
+	seq, _ := DerSeqEnc(sd, bd)
+	return PemWrap(lblHdrbg, seq)
+}
+
+func loadHdrbgState(path string) *HDrbg {
+	label, ints, err := readPEMInts(path)
+	if err != nil {
+		die("rand", err)
+	}
+	if label != lblHdrbg {
+		fmt.Fprintf(os.Stderr, "rand: expected HDRBG STATE PEM, got %q\n", label)
+		os.Exit(1)
+	}
+	if len(ints) < 2 {
+		fmt.Fprintln(os.Stderr, "rand: malformed HDRBG state")
+		os.Exit(1)
+	}
+	state := make([]byte, 32)
+	new(big.Int).SetBytes(ints[0]).FillBytes(state)
+	return DrbgFromState(state, uint64(bytesToInt(ints[1])))
+}
+
+func cmdRand(args []string) {
+	fs := flag.NewFlagSet("rand", flag.ExitOnError)
+	seed   := fs.String("seed", "", "Seed/entropy file to instantiate the DRBG")
+	state  := fs.String("state", "", "HDRBG STATE PEM to resume from and/or update")
+	pers   := fs.String("personalization", "", "Personalization string (with --seed only)")
+	reseed := fs.String("reseed", "", "Entropy file to fold into the state before generating")
+	nbytes := fs.Int("bytes", -1, "Number of output bytes to generate")
+	asHex  := fs.Bool("hex", false, "Hex-encode the output instead of raw bytes")
+	out    := fs.String("out", "-", "Output file (default: - = stdout)")
+	fs.Parse(args)
+
+	var d *HDrbg
+	switch {
+	case *seed != "":
+		sbuf, err := readFile(*seed)
+		if err != nil {
+			die("rand", err)
+		}
+		d = DrbgSeed(sbuf, []byte(*pers))
+	case *state != "":
+		d = loadHdrbgState(*state)
+	default:
+		fmt.Fprintln(os.Stderr, "rand: one of --seed or --state is required")
+		os.Exit(1)
+	}
+
+	if *reseed != "" {
+		rbuf, err := readFile(*reseed)
+		if err != nil {
+			die("rand", err)
+		}
+		d.DrbgReseed(rbuf)
+	}
+
+	if *nbytes >= 0 {
+		outBytes, ok := d.DrbgGenerate(*nbytes)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "rand: output limit reached — reseed required")
+			os.Exit(1)
+		}
+		var data []byte
+		if *asHex {
+			data = []byte(hex.EncodeToString(outBytes) + "\n")
+		} else {
+			data = outBytes
+		}
+		if *out == "-" {
+			os.Stdout.Write(data)
+		} else if err := writeBytes(*out, data); err != nil {
+			die("rand", err)
+		}
+	} else if *reseed == "" {
+		fmt.Fprintln(os.Stderr, "rand: nothing to do (specify --bytes and/or --reseed)")
+		os.Exit(1)
+	}
+
+	if *state != "" {
+		if err := writeString(*state, encodeHdrbgState(d)); err != nil {
+			die("rand", err)
+		}
 	}
 }
 
@@ -2554,6 +2651,7 @@ Commands:
   encfile  --key FILE --in FILE --out FILE
   decfile  --key FILE --in FILE --out FILE
   dgst     [--algo hfscx-256] --in FILE [--out FILE]
+  rand     (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N] [--hex] [--out FILE]
 
 Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl
 Algorithms (kex):           hkex-gf hkex-rnl
@@ -2947,6 +3045,8 @@ func main() {
 		cmdDecfile(rest)
 	case "dgst":
 		cmdDgst(rest)
+	case "rand":
+		cmdRand(rest)
 	case "fpe":
 		cmdFpe(rest)
 	case "twk":

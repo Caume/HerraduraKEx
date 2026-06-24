@@ -32,6 +32,10 @@ hske_nl_aead_encrypt   = _s.hske_nl_aead_encrypt
 hske_nl_aead_decrypt   = _s.hske_nl_aead_decrypt
 hske_nl_v2_duplex_encrypt = _s.hske_nl_v2_duplex_encrypt
 hske_nl_v2_duplex_decrypt = _s.hske_nl_v2_duplex_decrypt
+HDrbg                  = _s.HDrbg
+drbg_seed              = _s.drbg_seed
+drbg_generate          = _s.drbg_generate
+drbg_reseed            = _s.drbg_reseed
 _HFSCX256_IV_BYTES     = _s._HFSCX256_IV_BYTES
 _RNL_KDF_DC_256        = _s._RNL_KDF_DC_256
 
