@@ -4,6 +4,23 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.66] - 2026-06-24
+
+### Docs/Analysis — ZKB++ proof-size breakdown corrects 180 KB estimate (TODO #94 item 3c)
+
+- **`SecurityProofsCode/zkp_pqc_exploration.py`:** added §3.7 — a first-principles ZKB++
+  (Chase et al. 2017) vs basic ZKBoo size accounting from the NL-FSCX circuit parameters.
+  Itemises the four ZKB++ encodings (seed-derived input shares, single online-party AND
+  broadcast, hidden-party-only commitment) and computes both totals at n=8/32/256.
+- **`SecurityProofs-3.md` §11.10.4 / §11.10.6 direction 3:** corrected the over-optimistic
+  "5×/180 KB" ZKB++ estimate. The NL-FSCX circuit is AND-gate-broadcast-dominated
+  (2 040 B/round vs ~224 B overhead at n=256), so ZKB++ yields only **≈457 KB (2.0×)**,
+  governed by the 2×→1× online-party gate term. Reaching ~180 KB additionally requires a
+  sparse (LowMC-like) circuit to cut the AND-gate count — a separate circuit redesign,
+  now recorded as such. KaTeX validated (258 OK, 0 FAIL).
+
+---
+
 ## [1.9.65] - 2026-06-24
 
 ### Docs/Proof — Conditional Ring-LWR reduction for ZKP-RNL soundness (TODO #94 item 3a)

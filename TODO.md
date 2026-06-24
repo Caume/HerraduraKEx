@@ -5849,7 +5849,14 @@ SecurityProofs-3.md §11.10.7 gives a conditional reduction of relaxed Σ-protoc
 soundness to Ring-LWR via an intermediate approximate Ring-SIS step, with the rounding
 slack quantified as the SIS modulus 4t⌈q/(2p)⌉ = 36t (144 at n=32, 576 at n=256); the
 reduction remains conditional on aR-SIS hardness for the HKEX-RNL m, so it is not a fully
-tight standard-model reduction (recorded honestly).  Items 3(c), 3(d) remain **OPEN**.
+tight standard-model reduction (recorded honestly).  Item 3(c) ZKB++ size analysis
+**DONE v1.9.66** — `zkp_pqc_exploration.py` §3.7 gives a first-principles ZKB++-vs-ZKBoo
+size breakdown; corrected the over-optimistic "5×/180 KB" claim to the realistic
+**≈457 KB (2.0×)** at n=256 (the NL-FSCX circuit is AND-gate-broadcast-dominated, so only
+the 2×→1× online-party term helps; reaching ~180 KB needs a sparse LowMC-like circuit
+redesign).  SecurityProofs-3.md §11.10.4/§11.10.6 direction 3 updated.  A full ZKB++
+*implementation* (and the sparse-circuit redesign) remain open as future work.  Item
+3(d) hybrid Ring-LWR + Stern-F credential remains **OPEN**.
 
 ---
 

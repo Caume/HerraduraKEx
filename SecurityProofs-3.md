@@ -122,7 +122,7 @@ The Fiat-Shamir seed includes $y$; a cheating prover supplying wrong $A$ (so $F_
 | 32 | 248 | 49.2 KB | — |
 | 256, $r=64$ | 16 320 | **920 KB** | 78 KB (Stern-F) |
 
-At production parameters ($n=256$, $R=219$), basic ZKBoo yields approximately 920 KB.  ZKB++ (Chase et al. 2017) achieves roughly $5\times$ reduction through an optimised decomposition, yielding approximately 180 KB — larger than Stern-F but applicable to NL-FSCX witness statements where Stern does not apply.
+At production parameters ($n=256$, $R=219$), basic ZKBoo yields approximately 920 KB.  ZKB++ (Chase et al. 2017) re-encodes each round — input shares from 16-byte seeds, a single online party's AND-gate broadcast (the dominant term drops from $2\times$ to $1\times$), and only the hidden party's commitment.  The often-quoted $5\times$ reduction assumes the per-round *overhead* (commitments, tapes) dominates; for the NL-FSCX circuit the AND-gate broadcast dominates instead (2 040 B/round vs ~224 B overhead/round at $n=256$), so the realistic reduction is governed by the $2\times{\to}1\times$ gate term.  A first-principles accounting (`zkp_pqc_exploration.py` §3.7) gives **≈457 KB at $n=256$, a $2.0\times$ reduction** — not 180 KB.  Reaching ~180 KB would require reducing the AND-gate count itself (e.g. a LowMC-like sparse circuit), a circuit redesign separate from the ZKB++ transcript encoding.
 
 **Honest limitation.** The NL-FSCX OWF assumption (§11.8.3) must hold.  The rotational-structure open concern (§11.8.3, TODO #75) affects two-sided rotation only (WOTS hash chain); one-sided rotation (all PRF uses, including the carry-chain circuit) gives coincidence probability $\approx 0$, so the ZKBoo construction is unaffected.
 
@@ -155,7 +155,7 @@ ARM Thumb-2 and NASM i386 targets implement ZKP-RNL only (`rnl_sigma_sign_32`, `
 
 ZKP-RNL at n=256 produces a 1,056-byte proof — smaller than both HPKS-Stern-F (78 KB) and the NIST reference scheme ML-DSA-44 (2,420 bytes).  It is therefore the most compact PQC signing option in the suite for Ring-LWR keys, at the cost of heuristic rather than tight security.
 
-ZKP-NL at n=256 and R=219 yields 920 KB, which exceeds practical limits for most use cases.  The CLI defaults to n=8 (35.5 KB) for this reason.  The ZKB++ optimisation (§11.10.6 open direction 3) would reduce the n=256 proof to approximately 180 KB.
+ZKP-NL at n=256 and R=219 yields 920 KB, which exceeds practical limits for most use cases.  The CLI defaults to n=8 (35.5 KB) for this reason.  The ZKB++ optimisation (§11.10.6 open direction 3) would reduce the n=256 proof to approximately 457 KB ($2.0\times$, gate-broadcast-dominated — see §11.10.4 size breakdown), not the generic $5\times$/180 KB.
 
 CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-language interop is verified by `CliTest/test_zkp_interop.sh` (14-way test: 6 signing directions per protocol, plus 2 tamper-rejection checks).
 
@@ -166,7 +166,8 @@ CLI integration is documented in `docs/TUTORIAL.md §ZKP Protocols`.  Cross-lang
 | PQC signature | HPKS-Stern-F (§11.8.4) | 78 KB | **Demo parameters** ($N=256$, ~30–40 bits security); 128-bit requires $N \geq 17000$ |
 | Ring-LWR key proof / anonymous cred | Ring-LWR $\Sigma$-protocol (§11.10.2) | 1 KB | Implemented v1.9.x; heuristic security |
 | NL-FSCX witness proof | ZKBoo (§11.10.3) | 920 KB | Implemented v1.9.x; CLI defaults to n=8 |
-| NL-FSCX with circuit optimisation | ZKB++ / Picnic variant | ~180 KB (est.) | Future work |
+| NL-FSCX with ZKB++ encoding | ZKB++ / Picnic variant | ~457 KB ($2.0\times$, est.) | Future work |
+| NL-FSCX with sparse circuit | ZKB++ + LowMC-like circuit | ~180 KB (est.) | Future work (circuit redesign) |
 
 For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-protocol is the most practical option: its 1 KB proof size is competitive with ML-DSA-44 (2.4 KB).
 
@@ -176,7 +177,7 @@ For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-pr
 
 2. **NTT-accelerated $\Sigma$-protocol.** *(Resolved v1.9.64.)*  The prover and verifier polynomial products in the reference suite (`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) use the negacyclic NTT over $Z_q[x]/(x^n+1)$ (the same path as HKEX-RNL, §11.4.2) at the production degree $n=256$, giving $O(n \log n)$ prover and verifier; the $O(n^2)$ schoolbook multiply is retained only for the $n=32$ didactic demo, where NTT twiddles are not precomputed and the cost is negligible.  `SecurityProofsCode/zkp_pqc_exploration.py` §2.7 cross-checks the NTT result against schoolbook and measures the speedup ($\approx 6.8\times$ at $n=256$, $\approx 12.7\times$ at $n=512$ in pure Python).
 
-3. **ZKB++ on NL-FSCX.** Implement Chase et al. 2017's optimised MPC-in-the-head decomposition to reduce NL-FSCX ZKBoo proofs from 920 KB to approximately 180 KB.
+3. **ZKB++ on NL-FSCX.** *(Scoped v1.9.66 — see §11.10.4 and `zkp_pqc_exploration.py` §3.7.)*  Implement Chase et al. 2017's optimised MPC-in-the-head decomposition.  A first-principles size accounting shows ZKB++ reduces the $n=256$ proof from 920 KB to **≈457 KB ($2.0\times$)**, not the generic 180 KB — the NL-FSCX circuit is AND-gate-broadcast-dominated, so only the $2\times{\to}1\times$ online-party term helps.  Reaching ~180 KB additionally requires a sparse (LowMC-like) circuit to cut the AND-gate count; that circuit redesign remains open.
 
 4. **Hybrid credential scheme.** Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a Stern-F signature valid under $s$" — enabling privacy-preserving authentication with a single compound proof.
 

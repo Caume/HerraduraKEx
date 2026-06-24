@@ -32,6 +32,8 @@ This script covers the two NOT-yet-implemented pillars:
       §3.4  Completeness — 1 000 honest-prover trials
       §3.5  Soundness   — 200 cheating-prover trials
       §3.6  Proof-size analysis and scaling to n=256
+      §3.7  ZKB++ size breakdown vs basic ZKBoo (TODO #94 item 3c):
+            realistic ~2.0× (≈457 KB at n=256), not the generic 5×/180 KB
   §4  Parameter comparison vs NIST PQC standards
   §5  Summary and open construction paths
 
@@ -941,6 +943,59 @@ def section3_proofsize():
     print("  can reduce proof size 5-10× vs basic ZKBoo.")
 
 
+# ── §3.7  ZKB++ size breakdown (TODO #94 item 3c) ─────────────────────────────
+
+def section3_zkbpp_size():
+    """First-principles ZKB++ (Chase et al. 2017) vs ZKBoo size accounting.
+
+    ZKB++ applies four encodings to each round of ZKBoo:
+      (1) input shares of 2 parties are PRG-derived from 16-byte seeds, so only
+          seeds (not full n-bit shares) are sent for them;
+      (2) the third party's input "offset" share is sent once (ceil(n/8) B);
+      (3) only the single 'online' revealed party broadcasts its AND-gate output
+          bits — the other revealed party is recomputed offline from its seed,
+          so the dominant gate-bit term drops from 2x to 1x;
+      (4) only the hidden party's commitment is sent (32 B); the two opened
+          commitments are recomputed by the verifier.
+
+    The generic '5x' figure assumes the per-round overhead (commitments, tapes)
+    dominates.  For NL-FSCX the AND-gate broadcast dominates, so the realistic
+    reduction is governed by the 2x->1x gate term — quantified below."""
+    print(SEP2)
+    print("§3.7  NL-FSCX ZKB++ proof-size breakdown (vs basic ZKBoo)")
+    print()
+    SEED = 16                                   # 128-bit PRG seed
+    COM  = 32                                   # 256-bit commitment hash
+    prod_R = 219                                # 128-bit soundness
+    for n, label in [(_ZK_N, 'toy (n=8)'), (32, 'n=32'), (256, 'n=256, r=64')]:
+        r_steps   = max(1, n // 4)
+        and_total = r_steps * (n - 1)
+        share_b   = math.ceil(n / 8)
+        gate_b    = math.ceil(and_total / 8)
+
+        # ZKBoo per-round: 3 commitments + 2 full views (share+tape+gate each)
+        zkboo_pr  = 3 * COM + 2 * (share_b + COM + gate_b)
+        # ZKB++ per-round: 2 seeds + 1 input-offset share + 1x gate broadcast
+        #                  + 1 hidden-party commitment
+        zkbpp_pr  = 2 * SEED + share_b + gate_b + COM
+
+        zkboo_tot = prod_R * zkboo_pr
+        zkbpp_tot = prod_R * zkbpp_pr
+        factor    = zkboo_tot / zkbpp_tot
+
+        print(f"  {label}:  AND gates = {and_total}, gate-bits/round = {gate_b} B")
+        print(f"    ZKBoo (R={prod_R}) : {zkboo_tot:8,} B ({zkboo_tot/1024:7.1f} KB)")
+        print(f"    ZKB++ (R={prod_R}) : {zkbpp_tot:8,} B ({zkbpp_tot/1024:7.1f} KB)"
+              f"   reduction = {factor:.2f}x")
+    print()
+    print("  Finding: at n=256 the AND-gate broadcast (2040 B/round) dominates the")
+    print("  fixed overhead (~224 B/round), so ZKB++'s single-online-party encoding")
+    print("  yields only ~2.0x (≈457 KB), NOT the generic 5x (~180 KB) quoted for")
+    print("  overhead-dominated circuits.  Reaching ~180 KB requires reducing the")
+    print("  AND-gate count itself (e.g. a LowMC-like sparse circuit), which is a")
+    print("  circuit redesign separate from the ZKB++ transcript encoding.")
+
+
 def section3():
     print()
     print(SEP)
@@ -953,6 +1008,7 @@ def section3():
     section3_completeness()
     section3_soundness()
     section3_proofsize()
+    section3_zkbpp_size()
 
 
 # =============================================================================
