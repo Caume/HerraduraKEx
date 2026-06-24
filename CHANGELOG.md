@@ -4,6 +4,93 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.67] - 2026-06-24
+
+### Docs/Design — Hybrid Ring-LWR + Stern-F credential design sketch (TODO #94 item 3d; closes #94)
+
+- **`SecurityProofs-3.md` §11.10.8 (new):** design sketch for a compound zero-knowledge
+  credential proving knowledge of a Ring-LWR secret `s` matching public key `C` AND a
+  code-based credential bound to `s`. AND-composition of the §11.10.2 Ring-LWR Σ-protocol
+  and the Stern identification protocol (§11.8.4), glued by a binding commitment to `s`
+  with a single Fiat-Shamir challenge. States completeness, soundness (extractor recovers
+  both witnesses; commitment binding forces a consistent `s`), and zero-knowledge under
+  parallel composition. Estimated proof size ≈80 KB (Stern-F-dominated). Identifies the
+  open crux: the binding map φ relating the ternary ring secret to the fixed-weight binary
+  Stern witness with a cheap gadget.
+- **`SecurityProofs-3.md` §11.10.6:** marked open direction 4 Scoped.
+- **TODO #94 closed** — items 1–2 and research directions 3(a)–(d) all addressed at the
+  analysis/proof/design level; two open-ended implementation follow-ups (full ZKB++
+  encoder + sparse circuit; hybrid-credential gadget) recorded as future work.
+- KaTeX validated (315 OK, 0 FAIL, 0 PIPE-FAIL).
+
+---
+
+## [1.9.66] - 2026-06-24
+
+### Docs/Analysis — ZKB++ proof-size breakdown corrects 180 KB estimate (TODO #94 item 3c)
+
+- **`SecurityProofsCode/zkp_pqc_exploration.py`:** added §3.7 — a first-principles ZKB++
+  (Chase et al. 2017) vs basic ZKBoo size accounting from the NL-FSCX circuit parameters.
+  Itemises the four ZKB++ encodings (seed-derived input shares, single online-party AND
+  broadcast, hidden-party-only commitment) and computes both totals at n=8/32/256.
+- **`SecurityProofs-3.md` §11.10.4 / §11.10.6 direction 3:** corrected the over-optimistic
+  "5×/180 KB" ZKB++ estimate. The NL-FSCX circuit is AND-gate-broadcast-dominated
+  (2 040 B/round vs ~224 B overhead at n=256), so ZKB++ yields only **≈457 KB (2.0×)**,
+  governed by the 2×→1× online-party gate term. Reaching ~180 KB additionally requires a
+  sparse (LowMC-like) circuit to cut the AND-gate count — a separate circuit redesign,
+  now recorded as such. KaTeX validated (258 OK, 0 FAIL).
+
+---
+
+## [1.9.65] - 2026-06-24
+
+### Docs/Proof — Conditional Ring-LWR reduction for ZKP-RNL soundness (TODO #94 item 3a)
+
+- **`SecurityProofs-3.md` §11.10.7 (new):** formal conditional reduction of the relaxed
+  $\Sigma$-protocol soundness to Ring-LWR, routed through an intermediate approximate
+  Ring-SIS step. The forked relaxed witness $(\bar z, \bar c)$ yields a short vector
+  $v = \bar z - \bar c\cdot s$ with $\lVert m\cdot v\rVert_\infty \le 4t\lceil q/(2p)\rceil$;
+  either $v\ne 0$ (an approximate Ring-SIS solution for $m$) or $v=0$ (recovers a ring
+  multiple $\bar c\cdot s$ of the secret, contradicting pseudorandomness of $C$). The
+  rounding slack is quantified as the SIS modulus $\mu = 36t$ (144 at $n{=}32$, 576 at
+  $n{=}256$; ratios 0.22% / 0.88% of $q$), the precise gap vs the exact-witness
+  Lyubashevsky 2012 template. Marked open direction 1 Addressed (still conditional on
+  aR-SIS hardness for the HKEX-RNL $m$).
+- KaTeX validated (246 OK, 0 FAIL, 0 PIPE-FAIL).
+
+---
+
+## [1.9.64] - 2026-06-24
+
+### Docs/Analysis — ZKP-RNL Σ-protocol NTT acceleration confirmed (TODO #94 item 3b)
+
+- **`SecurityProofsCode/zkp_pqc_exploration.py`:** added §2.7 — a self-checking
+  negacyclic-NTT multiply (`_poly_mul_ntt`, iterative Cooley-Tukey `_ntt_inplace`) that
+  cross-validates against the O(n²) schoolbook multiply and benchmarks both at n=256/512.
+  Measured pure-Python speedup ≈6.8× at n=256 and ≈12.7× at n=512.
+- **`SecurityProofs-3.md` §11.10.6:** marked open direction 2 (NTT-accelerated Σ-protocol)
+  **Resolved** — the suite's prover/verifier already use the negacyclic NTT
+  (`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) at the production degree n=256, with
+  schoolbook retained only for the n=32 didactic demo. Corrected the stale "prototype uses
+  schoolbook" claim.
+
+---
+
+## [1.9.63] - 2026-06-24
+
+### Test — ZKP-RNL structured-cheat parity in C and Go test [21] (TODO #94 item 2)
+
+- **`CryptosuiteTests/Herradura_tests.c` / `.go`:** extended security test [21] with the
+  three structured-cheat rejections already present in the Python suite — wrong-key witness
+  (honest signer run with a fresh `s' != s` against the original `C`), tampered commitment
+  `w` (must fail Fiat-Shamir re-derivation), and perturbed response `z` (must be caught by
+  the residual-norm check).  Runs at n=32 and n=256; output now reports
+  `wrongkey_reject`, `w_tamper`, and `z_tamper` columns alongside `verify`/`tamper_reject`.
+  All five checks PASS in both languages.  Closes the cross-language parity follow-up
+  deferred at v1.9.32.
+
+---
+
 ## [1.9.62] - 2026-06-24
 
 ### Feature — HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)

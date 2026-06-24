@@ -4,7 +4,9 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.43
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.63
+    v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
+            (C/Go parity with Python, TODO #94 item 2).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
     v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
@@ -3751,12 +3753,16 @@ static void test_zkp_rnl_correctness(void)
         int n = zkp_rnl_sizes[si];
         int N = g_rounds > 0 ? g_rounds : 5;
         int ok_verify = 0, ok_tamper = 0, i;
+        int ok_wrongkey = 0, ok_wtamper = 0, ok_ztamper = 0;
         struct timespec t0;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         for (i = 0; i < N; i++) {
             int32_t m_base[256], a_rand[256], m_blind[256];
             int32_t s[256], C[256];
             int32_t w[256], c_poly[256], z[256];
+            int32_t s2[256], C2[256];
+            int32_t w2[256], c2[256], z2[256];
+            int32_t w_t[256], z_t[256];
             rnl_m_poly_n(m_base, n);
             rnl_rand_poly_n(a_rand, n);
             rnl_poly_add_n(m_blind, m_base, a_rand, n);
@@ -3775,11 +3781,40 @@ static void test_zkp_rnl_correctness(void)
             } else {
                 N = i + 1; break;
             }
+            /* Structured cheats (TODO #94 item 2 — C/Go parity):           */
+            /* (a) wrong-key witness: honest signer run with a fresh s' != s */
+            /*     against the original public key C — must not verify.      */
+            rnl_keygen_n(s2, C2, m_blind, n);
+            if (rnl_sigma_sign(s2, m_blind, C, n,
+                               zkp_msg, sizeof(zkp_msg) - 1, urnd_fp,
+                               w2, c2, z2) == 0) {
+                if (!rnl_sigma_verify(m_blind, C, n,
+                                      zkp_msg, sizeof(zkp_msg) - 1, w2, c2, z2))
+                    ok_wrongkey++;
+            } else {
+                ok_wrongkey++;   /* rejection-limit on a wrong key is a reject */
+            }
+            /* (b) tampered commitment w — must fail Fiat-Shamir re-derivation. */
+            memcpy(w_t, w, (size_t)n * sizeof(int32_t));
+            w_t[0] += 1;
+            if (!rnl_sigma_verify(m_blind, C, n,
+                                  zkp_msg, sizeof(zkp_msg) - 1, w_t, c_poly, z))
+                ok_wtamper++;
+            /* (c) perturbed response z (FS check still passes; the residual */
+            /*     norm check must catch it).                                */
+            memcpy(z_t, z, (size_t)n * sizeof(int32_t));
+            z_t[0] += 1;
+            if (!rnl_sigma_verify(m_blind, C, n,
+                                  zkp_msg, sizeof(zkp_msg) - 1, w, c_poly, z_t))
+                ok_ztamper++;
             if (g_time_limit > 0.0 && time_exceeded(&t0)) { N = i + 1; break; }
         }
-        printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d  [%s]\n",
+        printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d"
+               "  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
                n, ok_verify, N, ok_tamper, N,
-               (ok_verify == N && ok_tamper == N) ? "PASS" : "FAIL");
+               ok_wrongkey, N, ok_wtamper, N, ok_ztamper, N,
+               (ok_verify == N && ok_tamper == N && ok_wrongkey == N &&
+                ok_wtamper == N && ok_ztamper == N) ? "PASS" : "FAIL");
     }
     putchar('\n');
 }

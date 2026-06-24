@@ -5836,8 +5836,39 @@ non-invertible differences — strict special soundness is genuinely false at th
 parameters.  Structured cheats implemented in `zkp_pqc_exploration.py` §2.4b
 (wrong-key witness, tampered-w, perturbed-z, 64-attempt grinding; 0 cheat passes) and
 in the Python suite test [21] at n=32/256 (wrong-key / w-tamper / z-tamper rejection).
-C/Go test-[21] extension deferred as a cross-language parity follow-up.  Items
-3(a)–(d) remain **OPEN**; 3(b) NTT acceleration is the recommended next step.
+C/Go test-[21] structured-cheat parity **DONE v1.9.63** — `Herradura_tests.{c,go}`
+test [21] now runs wrong-key / w-tamper / z-tamper rejection at n=32/256 (5 checks,
+all PASS), matching the Python suite.  Item 3(b) NTT acceleration **DONE v1.9.64** —
+the prover/verifier polynomial products already use the negacyclic NTT
+(`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) at the production degree n=256 in all
+three reference languages (schoolbook retained only for the n=32 didactic demo);
+`zkp_pqc_exploration.py` §2.7 cross-checks NTT==schoolbook and measures the speedup
+(~6.8× at n=256, ~12.7× at n=512 in pure Python); SecurityProofs-3.md §11.10.6
+direction 2 marked Resolved.  Item 3(a) formal Ring-LWR reduction **DONE v1.9.65** —
+SecurityProofs-3.md §11.10.7 gives a conditional reduction of relaxed Σ-protocol
+soundness to Ring-LWR via an intermediate approximate Ring-SIS step, with the rounding
+slack quantified as the SIS modulus 4t⌈q/(2p)⌉ = 36t (144 at n=32, 576 at n=256); the
+reduction remains conditional on aR-SIS hardness for the HKEX-RNL m, so it is not a fully
+tight standard-model reduction (recorded honestly).  Item 3(c) ZKB++ size analysis
+**DONE v1.9.66** — `zkp_pqc_exploration.py` §3.7 gives a first-principles ZKB++-vs-ZKBoo
+size breakdown; corrected the over-optimistic "5×/180 KB" claim to the realistic
+**≈457 KB (2.0×)** at n=256 (the NL-FSCX circuit is AND-gate-broadcast-dominated, so only
+the 2×→1× online-party term helps; reaching ~180 KB needs a sparse LowMC-like circuit
+redesign).  SecurityProofs-3.md §11.10.4/§11.10.6 direction 3 updated.  A full ZKB++
+*implementation* (and the sparse-circuit redesign) remain open as future work.  Item
+3(d) hybrid Ring-LWR + Stern-F credential **DONE v1.9.67** (design sketch) —
+SecurityProofs-3.md §11.10.8 specifies the AND-composition of the Ring-LWR Σ-protocol
+and the Stern identification protocol, glued by a binding commitment to s with a single
+Fiat-Shamir challenge; completeness/soundness/ZK argued, proof size estimated ≈80 KB
+(Stern-F-dominated); the unresolved crux is the binding map φ relating the ternary ring
+secret to the fixed-weight binary Stern witness with a cheap gadget.
+
+**Overall #94 status: DONE v1.9.67** — items 1–2 (relaxed soundness + structured cheats,
+C/Go parity) and the §11.10.6 research directions 3(a)–(d) are all addressed at the
+analysis/proof/design level.  Two open-ended *implementation* follow-ups remain as future
+work and may be split into their own TODO entries: (i) a full ZKB++ transcript encoder
+plus a sparse LowMC-like NL-FSCX circuit to approach ~180 KB, and (ii) the
+hybrid-credential binding gadget φ and a working compound-proof implementation.
 
 ---
 

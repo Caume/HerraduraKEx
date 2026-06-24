@@ -23,6 +23,8 @@ This script covers the two NOT-yet-implemented pillars:
       §2.5  Proof-size analysis
       §2.6  Challenge-difference invertibility in R_q (relaxed soundness
             motivation: x^n+1 splits over F_q since 2n | q-1)
+      §2.7  NTT-accelerated multiply vs O(n²) schoolbook (TODO #94 item 2):
+            self-checking correctness + measured speedup at n=256/512
   §3  NL-FSCX ZKP via MPC-in-the-head (ZKBoo, 3-party Boolean circuit)
       §3.1  NL-FSCX v1 bit-level circuit (n=8 toy)
       §3.2  ZKBoo 3-party evaluation with per-AND-gate commitments
@@ -30,6 +32,8 @@ This script covers the two NOT-yet-implemented pillars:
       §3.4  Completeness — 1 000 honest-prover trials
       §3.5  Soundness   — 200 cheating-prover trials
       §3.6  Proof-size analysis and scaling to n=256
+      §3.7  ZKB++ size breakdown vs basic ZKBoo (TODO #94 item 3c):
+            realistic ~2.0× (≈457 KB at n=256), not the generic 5×/180 KB
   §4  Parameter comparison vs NIST PQC standards
   §5  Summary and open construction paths
 
@@ -456,6 +460,85 @@ def section2_invertibility():
     print("  of c-c' is taken.")
 
 
+# ── §2.7  NTT-accelerated Σ-protocol multiply (TODO #94 item 2) ──────────────
+
+def _ntt_inplace(a, omega, q, n):
+    """Iterative in-place Cooley-Tukey NTT.  omega: primitive n-th root of 1."""
+    j = 0
+    for i in range(1, n):                       # bit-reversal permutation
+        bit = n >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j ^= bit
+        if i < j:
+            a[i], a[j] = a[j], a[i]
+    length = 2
+    while length <= n:
+        wlen = pow(omega, n // length, q)
+        for i in range(0, n, length):
+            w = 1
+            half = length >> 1
+            for k in range(i, i + half):
+                u = a[k]
+                v = a[k + half] * w % q
+                a[k] = (u + v) % q
+                a[k + half] = (u - v) % q
+                w = w * wlen % q
+        length <<= 1
+
+
+def _poly_mul_ntt(f, g, q, n):
+    """Negacyclic multiply in Z_q[x]/(x^n+1) via NTT.  O(n log n).
+
+    Requires n a power of two with 2n | q-1.  Mirrors the suite's
+    negacyclic-NTT path (rnl_poly_mul / _rnl_poly_mul / RnlPolyMul):
+    pre-twist by psi^i, length-n cyclic NTT with omega=psi^2, pointwise
+    product, inverse NTT, post-twist by psi^{-i} and scale by n^{-1}."""
+    assert (q - 1) % (2 * n) == 0, "x^n+1 does not split fully over Z_q"
+    psi     = pow(3, (q - 1) // (2 * n), q)      # primitive 2n-th root (psi^n=-1)
+    psi_inv = pow(psi, q - 2, q)
+    n_inv   = pow(n, q - 2, q)
+    omega   = psi * psi % q                      # primitive n-th root
+    fa = [f[i] * pow(psi, i, q) % q for i in range(n)]
+    ga = [g[i] * pow(psi, i, q) % q for i in range(n)]
+    _ntt_inplace(fa, omega, q, n)
+    _ntt_inplace(ga, omega, q, n)
+    ha = [fa[i] * ga[i] % q for i in range(n)]
+    _ntt_inplace(ha, pow(omega, q - 2, q), q, n)
+    return [ha[i] * n_inv % q * pow(psi_inv, i, q) % q for i in range(n)]
+
+
+def section2_ntt_benchmark():
+    """Empirically confirm the suite's NTT path: same result as schoolbook,
+    measurably faster at the production degree n=256.  TODO #94 item 2."""
+    print(SEP2)
+    print("§2.7  NTT-accelerated Σ-protocol multiply (vs O(n²) schoolbook)")
+    q = _Q
+    for n, reps in [(256, 200), (512, 100)]:
+        if (q - 1) % (2 * n) != 0:
+            continue
+        fs = [_rand_poly(n, q) for _ in range(reps)]
+        gs = [_rand_poly(n, q) for _ in range(reps)]
+        # correctness: NTT must equal schoolbook on the first sample
+        assert _poly_mul_ntt(fs[0], gs[0], q, n) == _poly_mul(fs[0], gs[0], q, n), \
+            "NTT multiply disagrees with schoolbook"
+        t0 = time.perf_counter()
+        for i in range(reps):
+            _poly_mul(fs[i], gs[i], q, n)
+        t_school = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        for i in range(reps):
+            _poly_mul_ntt(fs[i], gs[i], q, n)
+        t_ntt = time.perf_counter() - t0
+        speedup = t_school / t_ntt if t_ntt > 0 else float('inf')
+        print(f"  n={n:4d} ({reps} mults): schoolbook={t_school*1e3:8.1f} ms  "
+              f"NTT={t_ntt*1e3:8.1f} ms  speedup={speedup:5.1f}x  [results match]")
+    print("  The reference suite (rnl_poly_mul / _rnl_poly_mul / RnlPolyMul) uses")
+    print("  this negacyclic-NTT path for prover and verifier at the production")
+    print("  degree n=256; schoolbook is retained only for the n=32 didactic demo.")
+
+
 def section2():
     print()
     print(SEP)
@@ -468,6 +551,7 @@ def section2():
     section2_structured_cheats()
     section2_proofsize()
     section2_invertibility()
+    section2_ntt_benchmark()
 
 
 # =============================================================================
@@ -859,6 +943,59 @@ def section3_proofsize():
     print("  can reduce proof size 5-10× vs basic ZKBoo.")
 
 
+# ── §3.7  ZKB++ size breakdown (TODO #94 item 3c) ─────────────────────────────
+
+def section3_zkbpp_size():
+    """First-principles ZKB++ (Chase et al. 2017) vs ZKBoo size accounting.
+
+    ZKB++ applies four encodings to each round of ZKBoo:
+      (1) input shares of 2 parties are PRG-derived from 16-byte seeds, so only
+          seeds (not full n-bit shares) are sent for them;
+      (2) the third party's input "offset" share is sent once (ceil(n/8) B);
+      (3) only the single 'online' revealed party broadcasts its AND-gate output
+          bits — the other revealed party is recomputed offline from its seed,
+          so the dominant gate-bit term drops from 2x to 1x;
+      (4) only the hidden party's commitment is sent (32 B); the two opened
+          commitments are recomputed by the verifier.
+
+    The generic '5x' figure assumes the per-round overhead (commitments, tapes)
+    dominates.  For NL-FSCX the AND-gate broadcast dominates, so the realistic
+    reduction is governed by the 2x->1x gate term — quantified below."""
+    print(SEP2)
+    print("§3.7  NL-FSCX ZKB++ proof-size breakdown (vs basic ZKBoo)")
+    print()
+    SEED = 16                                   # 128-bit PRG seed
+    COM  = 32                                   # 256-bit commitment hash
+    prod_R = 219                                # 128-bit soundness
+    for n, label in [(_ZK_N, 'toy (n=8)'), (32, 'n=32'), (256, 'n=256, r=64')]:
+        r_steps   = max(1, n // 4)
+        and_total = r_steps * (n - 1)
+        share_b   = math.ceil(n / 8)
+        gate_b    = math.ceil(and_total / 8)
+
+        # ZKBoo per-round: 3 commitments + 2 full views (share+tape+gate each)
+        zkboo_pr  = 3 * COM + 2 * (share_b + COM + gate_b)
+        # ZKB++ per-round: 2 seeds + 1 input-offset share + 1x gate broadcast
+        #                  + 1 hidden-party commitment
+        zkbpp_pr  = 2 * SEED + share_b + gate_b + COM
+
+        zkboo_tot = prod_R * zkboo_pr
+        zkbpp_tot = prod_R * zkbpp_pr
+        factor    = zkboo_tot / zkbpp_tot
+
+        print(f"  {label}:  AND gates = {and_total}, gate-bits/round = {gate_b} B")
+        print(f"    ZKBoo (R={prod_R}) : {zkboo_tot:8,} B ({zkboo_tot/1024:7.1f} KB)")
+        print(f"    ZKB++ (R={prod_R}) : {zkbpp_tot:8,} B ({zkbpp_tot/1024:7.1f} KB)"
+              f"   reduction = {factor:.2f}x")
+    print()
+    print("  Finding: at n=256 the AND-gate broadcast (2040 B/round) dominates the")
+    print("  fixed overhead (~224 B/round), so ZKB++'s single-online-party encoding")
+    print("  yields only ~2.0x (≈457 KB), NOT the generic 5x (~180 KB) quoted for")
+    print("  overhead-dominated circuits.  Reaching ~180 KB requires reducing the")
+    print("  AND-gate count itself (e.g. a LowMC-like sparse circuit), which is a")
+    print("  circuit redesign separate from the ZKB++ transcript encoding.")
+
+
 def section3():
     print()
     print(SEP)
@@ -871,6 +1008,7 @@ def section3():
     section3_completeness()
     section3_soundness()
     section3_proofsize()
+    section3_zkbpp_size()
 
 
 # =============================================================================
