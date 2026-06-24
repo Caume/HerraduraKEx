@@ -803,6 +803,153 @@ static int hske_nl_aead_decrypt(const BitArray *key, const BitArray *nonce,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)
+ *
+ * Sponge permutation: nl_fscx_revolve_v2(state, tweak, I_VALUE)
+ * State: 256 bits; rate = KEYBYTES/2 = 16 bytes; capacity = 16 bytes.
+ * tweak = HFSCX-256("NL-V2-DUPLEX-TWEAK" || key || nonce) — fixed per session.
+ *
+ * RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
+ * Security relies on bijectivity of nl_fscx_revolve_v2 (proven) and the
+ * branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+ * The differential/linear profile of nl_fscx_v2 as a standalone sponge
+ * permutation has not yet been rigorously analysed (see TODO #95/#99).
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define _V2DPLEX_RATE       16
+#define _V2DPLEX_DS_INIT    "NL-V2-DUPLEX-INIT"
+#define _V2DPLEX_DS_TWEAK   "NL-V2-DUPLEX-TWEAK"
+#define _V2DPLEX_DS_TAG     "NL-V2-DUPLEX-TAG"
+#define _V2DPLEX_DS_INIT_L  17
+#define _V2DPLEX_DS_TWEAK_L 18
+#define _V2DPLEX_DS_TAG_L   16
+
+typedef struct { uint8_t s[KEYBYTES]; BitArray tw; } _V2DState;
+
+static void _v2dplex_perm(_V2DState *d)
+{
+    BitArray sa, out;
+    memcpy(sa.b, d->s, KEYBYTES);
+    nl_fscx_revolve_v2_ba(&out, &sa, &d->tw, I_VALUE);
+    memcpy(d->s, out.b, KEYBYTES);
+}
+
+static void _v2dplex_init(_V2DState *d, const BitArray *key, const BitArray *nonce)
+{
+    uint8_t buf[_V2DPLEX_DS_TWEAK_L + KEYBYTES + KEYBYTES];
+    /* state = HFSCX-256(DS_INIT || key || nonce) */
+    memcpy(buf, _V2DPLEX_DS_INIT, _V2DPLEX_DS_INIT_L);
+    memcpy(buf + _V2DPLEX_DS_INIT_L, key->b, KEYBYTES);
+    memcpy(buf + _V2DPLEX_DS_INIT_L + KEYBYTES, nonce->b, KEYBYTES);
+    hfscx_256(buf, (size_t)(_V2DPLEX_DS_INIT_L + 2 * KEYBYTES), NULL, d->s);
+    /* tweak = HFSCX-256(DS_TWEAK || key || nonce) */
+    memcpy(buf, _V2DPLEX_DS_TWEAK, _V2DPLEX_DS_TWEAK_L);
+    memcpy(buf + _V2DPLEX_DS_TWEAK_L, key->b, KEYBYTES);
+    memcpy(buf + _V2DPLEX_DS_TWEAK_L + KEYBYTES, nonce->b, KEYBYTES);
+    hfscx_256(buf, (size_t)(_V2DPLEX_DS_TWEAK_L + 2 * KEYBYTES), NULL, d->tw.b);
+    _v2dplex_perm(d);
+    _v2dplex_perm(d);
+}
+
+static void _v2dplex_absorb_ad(_V2DState *d, const uint8_t *ad, size_t ad_len)
+{
+    size_t total, padded_len, off;
+    size_t i;
+    uint8_t *padded;
+    uint8_t len_buf[8];
+    size_t orig_ad_len = ad_len;
+
+    _hske_nl_aead_be64(len_buf, (uint64_t)orig_ad_len);
+    total = 8 + orig_ad_len;
+    /* round up to next multiple of rate, always add at least one padding block */
+    padded_len = ((total / _V2DPLEX_RATE) + 1) * _V2DPLEX_RATE;
+    padded = (uint8_t *)malloc(padded_len);
+    if (!padded) { fprintf(stderr, "v2_duplex: out of memory\n"); exit(1); }
+    memset(padded, 0, padded_len);
+    memcpy(padded, len_buf, 8);
+    if (orig_ad_len) memcpy(padded + 8, ad, orig_ad_len);
+    padded[total] = 0x80;   /* padding byte */
+
+    for (off = 0; off < padded_len; off += _V2DPLEX_RATE) {
+        for (i = 0; i < (size_t)_V2DPLEX_RATE; i++) d->s[i] ^= padded[off + i];
+        _v2dplex_perm(d);
+    }
+    free(padded);
+    d->s[_V2DPLEX_RATE] ^= 0x01;   /* domain separator: end of AD */
+    _v2dplex_perm(d);
+}
+
+static void _v2dplex_squeeze_tag(_V2DState *d, uint8_t tag[32])
+{
+    uint8_t buf[KEYBYTES + _V2DPLEX_DS_TAG_L];
+    d->s[_V2DPLEX_RATE] ^= 0x02;   /* domain separator: end of PT */
+    _v2dplex_perm(d);
+    memcpy(buf, d->s, KEYBYTES);
+    memcpy(buf + KEYBYTES, _V2DPLEX_DS_TAG, _V2DPLEX_DS_TAG_L);
+    hfscx_256(buf, KEYBYTES + _V2DPLEX_DS_TAG_L, NULL, tag);
+}
+
+/* AEAD-encrypt pt_len bytes into ct_out (same length) and tag_out (32 bytes).
+ * Caller supplies a fresh random 256-bit nonce (e.g. via ba_rand). */
+static void hske_nl_v2_duplex_encrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *pt, size_t pt_len,
+    uint8_t *ct_out, uint8_t tag_out[32])
+{
+    _V2DState d;
+    size_t off, blk, j;
+    _v2dplex_init(&d, key, nonce);
+    _v2dplex_absorb_ad(&d, ad, ad_len);
+    if (!pt_len) {
+        _v2dplex_perm(&d);
+    } else {
+        for (off = 0; off < pt_len; off += _V2DPLEX_RATE) {
+            blk = (pt_len - off < (size_t)_V2DPLEX_RATE) ? pt_len - off : _V2DPLEX_RATE;
+            for (j = 0; j < blk; j++) ct_out[off + j] = d.s[j] ^ pt[off + j];
+            for (j = 0; j < blk; j++) d.s[j] ^= pt[off + j];
+            if (blk < (size_t)_V2DPLEX_RATE) d.s[blk] ^= 0x80;
+            _v2dplex_perm(&d);
+        }
+    }
+    _v2dplex_squeeze_tag(&d, tag_out);
+}
+
+/* Verify-then-decrypt.  Returns 1 on success, 0 on auth failure (pt_out untouched). */
+static int hske_nl_v2_duplex_decrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *ct, size_t ct_len,
+    const uint8_t tag[32], uint8_t *pt_out)
+{
+    _V2DState d;
+    uint8_t expected[32];
+    uint8_t *tmp;
+    size_t off, blk, j;
+
+    _v2dplex_init(&d, key, nonce);
+    _v2dplex_absorb_ad(&d, ad, ad_len);
+    tmp = ct_len ? (uint8_t *)malloc(ct_len) : NULL;
+    if (ct_len && !tmp) { fprintf(stderr, "v2_duplex: out of memory\n"); exit(1); }
+
+    if (!ct_len) {
+        _v2dplex_perm(&d);
+    } else {
+        for (off = 0; off < ct_len; off += _V2DPLEX_RATE) {
+            blk = (ct_len - off < (size_t)_V2DPLEX_RATE) ? ct_len - off : _V2DPLEX_RATE;
+            for (j = 0; j < blk; j++) tmp[off + j] = d.s[j] ^ ct[off + j];  /* pt */
+            for (j = 0; j < blk; j++) d.s[j] ^= tmp[off + j];               /* absorb pt */
+            if (blk < (size_t)_V2DPLEX_RATE) d.s[blk] ^= 0x80;
+            _v2dplex_perm(&d);
+        }
+    }
+    _v2dplex_squeeze_tag(&d, expected);
+    if (!ct_eq32(tag, expected)) { free(tmp); return 0; }
+    if (tmp) { memcpy(pt_out, tmp, ct_len); free(tmp); }
+    return 1;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * HDRBG: forward-secure deterministic random bit generator (TODO #96)
  *
  * Fast-key-erasure pattern (Bernstein 2017) over the NL-FSCX v1 OWF:

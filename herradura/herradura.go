@@ -549,6 +549,178 @@ func HskeNlAeadDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) 
 }
 
 // ---------------------------------------------------------------------------
+// HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)
+//
+// Sponge permutation: NlFscxRevolveV2(state, tweak, I_VALUE)
+// State: 256 bits; rate = 16 bytes (first half); capacity = 16 bytes (second half).
+// tweak = Hfscx256("NL-V2-DUPLEX-TWEAK" || key || nonce) — fixed per session.
+//
+// RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
+// Security relies on bijectivity of NlFscxRevolveV2 (proven) and the
+// branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+// The differential/linear profile of nl_fscx_v2 as a standalone sponge
+// permutation has not yet been rigorously analysed (see TODO #95/#99).
+// ---------------------------------------------------------------------------
+
+const v2dplexRate = 16
+
+var (
+	v2dplexDSInit  = []byte("NL-V2-DUPLEX-INIT")
+	v2dplexDSTweak = []byte("NL-V2-DUPLEX-TWEAK")
+	v2dplexDSTag   = []byte("NL-V2-DUPLEX-TAG")
+)
+
+func v2dplexPerm(state []byte, tw *BitArray) []byte {
+	n := tw.Size()
+	sa := NewBitArray(n, new(big.Int).SetBytes(state))
+	r := NlFscxRevolveV2(sa, tw, n/4)
+	b := r.Val.Bytes()
+	out := make([]byte, n/8)
+	copy(out[n/8-len(b):], b)
+	return out
+}
+
+func v2dplexInit(key, nonce *BitArray) ([]byte, *BitArray) {
+	n := key.Size()
+	keyb := make([]byte, n/8)
+	kb := key.Val.Bytes()
+	copy(keyb[n/8-len(kb):], kb)
+	nb := make([]byte, n/8)
+	nbb := nonce.Val.Bytes()
+	copy(nb[n/8-len(nbb):], nbb)
+
+	stateSrc := append(append(append([]byte{}, v2dplexDSInit...), keyb...), nb...)
+	state := Hfscx256(stateSrc, nil)
+
+	tweakSrc := append(append(append([]byte{}, v2dplexDSTweak...), keyb...), nb...)
+	tweakB := Hfscx256(tweakSrc, nil)
+	tw := NewBitArray(n, new(big.Int).SetBytes(tweakB))
+
+	state = v2dplexPerm(state, tw)
+	state = v2dplexPerm(state, tw)
+	return state, tw
+}
+
+func v2dplexAbsorbAD(state []byte, tw *BitArray, ad []byte) []byte {
+	R := v2dplexRate
+	lenEnc := make([]byte, 8)
+	l := uint64(len(ad))
+	for j := 7; j >= 0; j-- {
+		lenEnc[j] = byte(l & 0xFF)
+		l >>= 8
+	}
+	adPrefixed := append(append([]byte{}, lenEnc...), ad...)
+	rem := len(adPrefixed) % R
+	if rem != 0 {
+		adPrefixed = append(adPrefixed, 0x80)
+		adPrefixed = append(adPrefixed, make([]byte, R-1-rem)...)
+	} else {
+		adPrefixed = append(adPrefixed, 0x80)
+		adPrefixed = append(adPrefixed, make([]byte, R-1)...)
+	}
+	for off := 0; off < len(adPrefixed); off += R {
+		block := adPrefixed[off : off+R]
+		for j := 0; j < R; j++ {
+			state[j] ^= block[j]
+		}
+		state = v2dplexPerm(state, tw)
+	}
+	state[R] ^= 0x01 // domain separator: end of AD
+	state = v2dplexPerm(state, tw)
+	return state
+}
+
+func v2dplexEnc(state []byte, tw *BitArray, pt []byte) ([]byte, []byte) {
+	R := v2dplexRate
+	ct := make([]byte, 0, len(pt))
+	if len(pt) == 0 {
+		state = v2dplexPerm(state, tw)
+		return ct, state
+	}
+	for off := 0; off < len(pt); off += R {
+		end := off + R
+		if end > len(pt) {
+			end = len(pt)
+		}
+		block := pt[off:end]
+		L := len(block)
+		for j := 0; j < L; j++ {
+			ct = append(ct, state[j]^block[j])
+		}
+		for j := 0; j < L; j++ {
+			state[j] ^= block[j]
+		}
+		if L < R {
+			state[L] ^= 0x80
+		}
+		state = v2dplexPerm(state, tw)
+	}
+	return ct, state
+}
+
+func v2dplexDec(state []byte, tw *BitArray, ct []byte) ([]byte, []byte) {
+	R := v2dplexRate
+	pt := make([]byte, 0, len(ct))
+	if len(ct) == 0 {
+		state = v2dplexPerm(state, tw)
+		return pt, state
+	}
+	for off := 0; off < len(ct); off += R {
+		end := off + R
+		if end > len(ct) {
+			end = len(ct)
+		}
+		block := ct[off:end]
+		L := len(block)
+		ptBlock := make([]byte, L)
+		for j := 0; j < L; j++ {
+			ptBlock[j] = state[j] ^ block[j]
+		}
+		pt = append(pt, ptBlock...)
+		for j := 0; j < L; j++ {
+			state[j] ^= ptBlock[j]
+		}
+		if L < R {
+			state[L] ^= 0x80
+		}
+		state = v2dplexPerm(state, tw)
+	}
+	return pt, state
+}
+
+func v2dplexFinalizeTag(state []byte, tw *BitArray) []byte {
+	state[v2dplexRate] ^= 0x02
+	state = v2dplexPerm(state, tw)
+	return Hfscx256(append(append([]byte{}, state...), v2dplexDSTag...), nil)
+}
+
+// HskeNlV2DuplexEncrypt AEAD-encrypts pt under (key, nonce) with associated
+// data ad.  Returns (ct, tag): ct is len(pt) bytes, tag is 32 bytes.  Caller
+// supplies a fresh random 256-bit nonce (e.g. NewRandBitArray(256)).
+// RESEARCH CONSTRUCTION — not for production use.
+func HskeNlV2DuplexEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
+	state, tw := v2dplexInit(key, nonce)
+	state = v2dplexAbsorbAD(state, tw, ad)
+	ct, state := v2dplexEnc(state, tw, pt)
+	tag := v2dplexFinalizeTag(state, tw)
+	return ct, tag
+}
+
+// HskeNlV2DuplexDecrypt verifies then decrypts.  Returns (pt, true) on success
+// or (nil, false) if the tag does not authenticate.  Tag comparison is
+// constant-time.  RESEARCH CONSTRUCTION — not for production use.
+func HskeNlV2DuplexDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) {
+	state, tw := v2dplexInit(key, nonce)
+	state = v2dplexAbsorbAD(state, tw, ad)
+	pt, state := v2dplexDec(state, tw, ct)
+	expected := v2dplexFinalizeTag(state, tw)
+	if subtle.ConstantTimeCompare(tag, expected) != 1 {
+		return nil, false
+	}
+	return pt, true
+}
+
+// ---------------------------------------------------------------------------
 // HDRBG: forward-secure deterministic random bit generator (TODO #96)
 //
 // Fast-key-erasure pattern (Bernstein 2017) over the NL-FSCX v1 OWF:

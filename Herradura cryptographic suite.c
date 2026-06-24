@@ -522,6 +522,48 @@ int main(void)
             puts("- HPKE-Stern-F key agreement FAILED (N=256)");
     }
 
+    /* --- HSKE-NL-V2-Duplex [AEAD -- MonkeyDuplex-style, nl_fscx_revolve_v2 sponge] */
+    printf("\n--- HSKE-NL-V2-Duplex [AEAD \xe2\x80\x94 MonkeyDuplex, nl_fscx_revolve_v2 sponge] [RESEARCH]\n");
+    {
+        BitArray dplex_key, dplex_nonce;
+        static const uint8_t dplex_pt[]  = "HSKE-NL-V2-Duplex demo plaintext (47 B)";
+        static const uint8_t dplex_ad[]  = "duplex-header-v1";
+        uint8_t dplex_ct[sizeof(dplex_pt) - 1];
+        uint8_t dplex_rec[sizeof(dplex_pt) - 1];
+        uint8_t dplex_tag[32];
+        size_t pt_len = sizeof(dplex_pt) - 1;
+        size_t ad_len = sizeof(dplex_ad) - 1;
+        ba_rand(&dplex_key,   urnd);
+        ba_rand(&dplex_nonce, urnd);
+        hske_nl_v2_duplex_encrypt(&dplex_key, &dplex_nonce,
+                                   dplex_ad, ad_len,
+                                   dplex_pt, pt_len,
+                                   dplex_ct, dplex_tag);
+        int ok = hske_nl_v2_duplex_decrypt(&dplex_key, &dplex_nonce,
+                                            dplex_ad, ad_len,
+                                            dplex_ct, pt_len,
+                                            dplex_tag, dplex_rec);
+        /* tamper check: flip one ciphertext byte */
+        uint8_t dplex_ct_bad[sizeof(dplex_pt) - 1];
+        memcpy(dplex_ct_bad, dplex_ct, pt_len);
+        dplex_ct_bad[0] ^= 1;
+        int bad_ct = hske_nl_v2_duplex_decrypt(&dplex_key, &dplex_nonce,
+                                                dplex_ad, ad_len,
+                                                dplex_ct_bad, pt_len,
+                                                dplex_tag, dplex_rec);
+        /* tamper check: wrong AD */
+        static const uint8_t dplex_ad_bad[] = "duplex-header-v2";
+        int bad_ad = hske_nl_v2_duplex_decrypt(&dplex_key, &dplex_nonce,
+                                                dplex_ad_bad, ad_len,
+                                                dplex_ct, pt_len,
+                                                dplex_tag, dplex_rec);
+        if (ok && memcmp(dplex_rec, dplex_pt, pt_len) == 0 && !bad_ct && !bad_ad)
+            puts("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]");
+        else
+            puts("+ HSKE-NL-V2-Duplex FAILED!");
+        explicit_bzero(&dplex_key, sizeof(dplex_key));
+    }
+
     /* --- HFSCX-256-DM [HASH -- Merkle-Damgård over NL-FSCX v1, Davies-Meyer; 256-bit output] */
     printf("\n--- HFSCX-256-DM [HASH \xe2\x80\x94 Merkle-Damg\xc3\xa5rd over NL-FSCX v1, Davies-Meyer; 256-bit output]\n");
     {

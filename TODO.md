@@ -5899,8 +5899,10 @@ CLI `enc`/`dec --aead [--ad]` with PEM format tag 2 in all three CLIs (`encfile`
 were already always-AEAD via the `.hkx` MAC — no flag needed there); security test [28]
 (KAT + roundtrip + ciphertext/tag/AD/nonce/key tamper rejection) in C/Go/Python;
 `CliTest/test_aead.sh` (9 interop pairs + rejection); SecurityProofs-2.md §11.9.6 note.
-Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD) remains **OPEN** as research,
-gated on the #99 diffusion characterisation.
+Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD): **DONE v1.9.62** —
+`hske_nl_v2_duplex_encrypt`/`decrypt` in `herradura.h`, Python suite, and Go package;
+demo blocks in all three suite main files; research disclaimer noting differential/linear
+profile of nl_fscx_v2 as a standalone sponge permutation is not yet rigorously analysed.
 
 ---
 

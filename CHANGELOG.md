@@ -4,6 +4,28 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.62] - 2026-06-24
+
+### Feature — HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)
+
+- **`herradura.h` (C):** added `_V2DState` struct and internal helpers (`_v2dplex_perm`,
+  `_v2dplex_init`, `_v2dplex_absorb_ad`, `_v2dplex_squeeze_tag`) plus public API
+  `hske_nl_v2_duplex_encrypt` / `hske_nl_v2_duplex_decrypt`.
+- **`Herradura cryptographic suite.py` (Python):** added private helpers (`_v2_dplex_perm_bytes`,
+  `_v2_dplex_init`, `_v2_dplex_absorb_ad`, `_v2_dplex_enc`, `_v2_dplex_dec`, `_v2_dplex_finalize`)
+  and public `hske_nl_v2_duplex_encrypt` / `hske_nl_v2_duplex_decrypt`; updated module docstring.
+- **`herradura/herradura.go` (Go):** added `v2dplexPerm`, `v2dplexInit`, `v2dplexAbsorbAD`,
+  `v2dplexEnc`, `v2dplexDec`, `v2dplexFinalizeTag`, `HskeNlV2DuplexEncrypt`, `HskeNlV2DuplexDecrypt`.
+- **Demo blocks:** added to `Herradura cryptographic suite.{py,c,go}` — round-trip +
+  ciphertext tamper + AD mismatch rejection; all three print pass.
+- **Design:** sponge state 256 bits, rate 128 bits, capacity 128 bits; permutation
+  `nl_fscx_revolve_v2(state, tweak, I_VALUE)` with tweak fixed per (key, nonce); AD
+  length-prefixed and padded; 32-byte tag via `HFSCX-256(state || "NL-V2-DUPLEX-TAG")`.
+- **Research disclaimer** present in all three headers: differential/linear profile of
+  nl_fscx_v2 as a standalone sponge permutation not yet rigorously analysed.
+
+---
+
 ## [1.9.61] - 2026-06-24
 
 ### Feature — OPRF n=32 demo block in ARM Thumb-2, NASM i386, and Arduino (TODO #80 Batch 5)

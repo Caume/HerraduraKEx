@@ -438,6 +438,26 @@ func main() {
 		}
 	}
 
+	// ── HSKE-NL-V2-Duplex ───────────────────────────────────────────────────
+	fmt.Println("\n--- HSKE-NL-V2-Duplex [AEAD — MonkeyDuplex, nl_fscx_revolve_v2 sponge] [RESEARCH]")
+	{
+		dpKey   := NewRandBitArray(n)
+		dpNonce := NewRandBitArray(n)
+		dpPt    := []byte("HSKE-NL-V2-Duplex demo plaintext (47 B)")
+		dpAd    := []byte("duplex-header-v1")
+		dpCt, dpTag := HskeNlV2DuplexEncrypt(dpKey, dpNonce, dpAd, dpPt)
+		dpDec, dpOk := HskeNlV2DuplexDecrypt(dpKey, dpNonce, dpAd, dpCt, dpTag)
+		badCt2 := append(append([]byte{}, dpCt...), []byte{}...)
+		badCt2[0] ^= 1
+		_, badCtOk  := HskeNlV2DuplexDecrypt(dpKey, dpNonce, dpAd, badCt2, dpTag)
+		_, badAdOk2 := HskeNlV2DuplexDecrypt(dpKey, dpNonce, []byte("duplex-header-v2"), dpCt, dpTag)
+		if dpOk && bytes.Equal(dpDec, dpPt) && !badCtOk && !badAdOk2 {
+			fmt.Println("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
+		} else {
+			fmt.Println("+ HSKE-NL-V2-Duplex FAILED!")
+		}
+	}
+
 	// ── Eve bypass tests ─────────────────────────────────────────────────────
 	fmt.Println("\n\n*** EVE bypass TESTS")
 
