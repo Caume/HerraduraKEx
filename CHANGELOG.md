@@ -4,6 +4,21 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.63] - 2026-06-24
+
+### Test — ZKP-RNL structured-cheat parity in C and Go test [21] (TODO #94 item 2)
+
+- **`CryptosuiteTests/Herradura_tests.c` / `.go`:** extended security test [21] with the
+  three structured-cheat rejections already present in the Python suite — wrong-key witness
+  (honest signer run with a fresh `s' != s` against the original `C`), tampered commitment
+  `w` (must fail Fiat-Shamir re-derivation), and perturbed response `z` (must be caught by
+  the residual-norm check).  Runs at n=32 and n=256; output now reports
+  `wrongkey_reject`, `w_tamper`, and `z_tamper` columns alongside `verify`/`tamper_reject`.
+  All five checks PASS in both languages.  Closes the cross-language parity follow-up
+  deferred at v1.9.32.
+
+---
+
 ## [1.9.62] - 2026-06-24
 
 ### Feature — HSKE-NL-V2-Duplex: MonkeyDuplex-style single-pass AEAD (TODO #95 Option 2)

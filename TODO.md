@@ -5836,8 +5836,10 @@ non-invertible differences — strict special soundness is genuinely false at th
 parameters.  Structured cheats implemented in `zkp_pqc_exploration.py` §2.4b
 (wrong-key witness, tampered-w, perturbed-z, 64-attempt grinding; 0 cheat passes) and
 in the Python suite test [21] at n=32/256 (wrong-key / w-tamper / z-tamper rejection).
-C/Go test-[21] extension deferred as a cross-language parity follow-up.  Items
-3(a)–(d) remain **OPEN**; 3(b) NTT acceleration is the recommended next step.
+C/Go test-[21] structured-cheat parity **DONE v1.9.63** — `Herradura_tests.{c,go}`
+test [21] now runs wrong-key / w-tamper / z-tamper rejection at n=32/256 (5 checks,
+all PASS), matching the Python suite.  Items 3(a)–(d) remain **OPEN**; 3(b) NTT
+acceleration is the recommended next step.
 
 ---
 

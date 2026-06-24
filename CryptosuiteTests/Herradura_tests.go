@@ -1,4 +1,6 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.43
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.63
+    v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
+            (C/Go parity with Python, TODO #94 item 2).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
     v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
@@ -935,6 +937,7 @@ func testZkpRnlCorrectness() {
 	for _, n := range zkpRnlSizes {
 		N := testRounds(5)
 		okVerify, okTamper := 0, 0
+		okWrongkey, okWtamper, okZtamper := 0, 0, 0
 		t0 := time.Now()
 		mBase := RnlMPoly(n)
 		for i := 0; i < N; i++ {
@@ -949,12 +952,38 @@ func testZkpRnlCorrectness() {
 			if !RnlSigmaVerify(mBlind, C, n, zkpMsg2, w, c, z) {
 				okTamper++
 			}
+			// Structured cheats (TODO #94 item 2 — C/Go parity):
+			// (a) wrong-key witness: honest signer run with a fresh s' != s
+			//     against the original public key C — must not verify.
+			s2, _ := RnlKeygen(mBlind, n, RnlQ, RnlP)
+			w2, c2, z2, err2 := RnlSigmaSign(s2, mBlind, C, n, zkpMsg)
+			if err2 != nil {
+				okWrongkey++ // rejection-limit on a wrong key is also a reject
+			} else if !RnlSigmaVerify(mBlind, C, n, zkpMsg, w2, c2, z2) {
+				okWrongkey++
+			}
+			// (b) tampered commitment w — must fail Fiat-Shamir re-derivation.
+			wT := append([]int(nil), w...)
+			wT[0]++
+			if !RnlSigmaVerify(mBlind, C, n, zkpMsg, wT, c, z) {
+				okWtamper++
+			}
+			// (c) perturbed response z (FS check still passes; the residual
+			//     norm check must catch it).
+			zT := append([]int(nil), z...)
+			zT[0]++
+			if !RnlSigmaVerify(mBlind, C, n, zkpMsg, w, c, zT) {
+				okZtamper++
+			}
 			if timeExceeded(t0) { N = i + 1; break }
 		}
 		status := "PASS"
-		if okVerify != N || okTamper != N { status = "FAIL" }
-		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d  [%s]\n",
-			n, okVerify, N, okTamper, N, status)
+		if okVerify != N || okTamper != N || okWrongkey != N ||
+			okWtamper != N || okZtamper != N { status = "FAIL" }
+		fmt.Printf("    n=%3d  verify=%d/%d  tamper_reject=%d/%d"+
+			"  wrongkey_reject=%d/%d  w_tamper=%d/%d  z_tamper=%d/%d  [%s]\n",
+			n, okVerify, N, okTamper, N, okWrongkey, N, okWtamper, N,
+			okZtamper, N, status)
 	}
 	fmt.Println()
 }
