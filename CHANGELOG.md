@@ -4,6 +4,24 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.65] - 2026-06-24
+
+### Docs/Proof — Conditional Ring-LWR reduction for ZKP-RNL soundness (TODO #94 item 3a)
+
+- **`SecurityProofs-3.md` §11.10.7 (new):** formal conditional reduction of the relaxed
+  $\Sigma$-protocol soundness to Ring-LWR, routed through an intermediate approximate
+  Ring-SIS step. The forked relaxed witness $(\bar z, \bar c)$ yields a short vector
+  $v = \bar z - \bar c\cdot s$ with $\lVert m\cdot v\rVert_\infty \le 4t\lceil q/(2p)\rceil$;
+  either $v\ne 0$ (an approximate Ring-SIS solution for $m$) or $v=0$ (recovers a ring
+  multiple $\bar c\cdot s$ of the secret, contradicting pseudorandomness of $C$). The
+  rounding slack is quantified as the SIS modulus $\mu = 36t$ (144 at $n{=}32$, 576 at
+  $n{=}256$; ratios 0.22% / 0.88% of $q$), the precise gap vs the exact-witness
+  Lyubashevsky 2012 template. Marked open direction 1 Addressed (still conditional on
+  aR-SIS hardness for the HKEX-RNL $m$).
+- KaTeX validated (246 OK, 0 FAIL, 0 PIPE-FAIL).
+
+---
+
 ## [1.9.64] - 2026-06-24
 
 ### Docs/Analysis — ZKP-RNL Σ-protocol NTT acceleration confirmed (TODO #94 item 3b)

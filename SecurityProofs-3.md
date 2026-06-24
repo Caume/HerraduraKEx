@@ -172,13 +172,47 @@ For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-pr
 
 ### 11.10.6 Open Research Directions
 
-1. **Formal Ring-LWR reduction.** Establish a tight security reduction from the $\Sigma$-protocol soundness to Ring-LWR distinguishing hardness.  Quantify the effect of the rounding slack ($\leq t \cdot q/(2p) = 32$) on the security margin relative to the Lyubashevsky 2012 template.
+1. **Formal Ring-LWR reduction.** *(Addressed v1.9.65 — conditional reduction in §11.10.7.)*  A reduction from relaxed $\Sigma$-protocol soundness to Ring-LWR is given via an intermediate approximate Ring-SIS step; the rounding slack enters as the SIS modulus $4t \lceil q/(2p) \rceil$ (= $36t$ for the suite's $q, p$).  It remains conditional on the hardness of approximate Ring-SIS for the HKEX-RNL blinding polynomial $m$ (itself implied by Ring-LWR for $m$), so it is not yet a fully tight standard-model reduction.
 
 2. **NTT-accelerated $\Sigma$-protocol.** *(Resolved v1.9.64.)*  The prover and verifier polynomial products in the reference suite (`rnl_poly_mul` / `_rnl_poly_mul` / `RnlPolyMul`) use the negacyclic NTT over $Z_q[x]/(x^n+1)$ (the same path as HKEX-RNL, §11.4.2) at the production degree $n=256$, giving $O(n \log n)$ prover and verifier; the $O(n^2)$ schoolbook multiply is retained only for the $n=32$ didactic demo, where NTT twiddles are not precomputed and the cost is negligible.  `SecurityProofsCode/zkp_pqc_exploration.py` §2.7 cross-checks the NTT result against schoolbook and measures the speedup ($\approx 6.8\times$ at $n=256$, $\approx 12.7\times$ at $n=512$ in pure Python).
 
 3. **ZKB++ on NL-FSCX.** Implement Chase et al. 2017's optimised MPC-in-the-head decomposition to reduce NL-FSCX ZKBoo proofs from 920 KB to approximately 180 KB.
 
 4. **Hybrid credential scheme.** Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a Stern-F signature valid under $s$" — enabling privacy-preserving authentication with a single compound proof.
+
+### 11.10.7 Conditional Reduction of Relaxed Soundness to Ring-LWR (TODO #94 item 3a)
+
+This subsection makes open direction 1 concrete: it reduces the relaxed special soundness of the §11.10.2 $\Sigma$-protocol to the hardness of Ring-LWR, routing through an intermediate *approximate Ring-SIS* problem, and quantifies exactly how the rounding slack enters the security margin.  The reduction is conditional (stated assumptions below) rather than a fully tight standard-model reduction, matching the honest limitation already recorded in §11.10.2.
+
+**Hardness assumptions.**  Work in $\mathcal{R}_q = \mathbb{Z}_q[x]/(x^n+1)$ with $q = 65537$, $p = 4096$.
+
+- **(R-LWR) Decision Ring-LWR with rounding.**  For $m \xleftarrow{R} \mathcal{R}_q$ and ternary $s \xleftarrow{R} \{-1,0,1\}^n$, the pair $(m, \text{round-p}(m \cdot s))$ is computationally indistinguishable from $(m, u)$ with $u \xleftarrow{R} \mathbb{Z}_p^n$.  Write the distinguishing advantage bound as $\epsilon_{\text{RLWR}}$.
+- **(aR-SIS) Approximate Ring-SIS for the suite modulus.**  Given $m \xleftarrow{R} \mathcal{R}_q$, it is hard to find a nonzero $v \in \mathcal{R}_q$ with $\lVert v \rVert_\infty \leq \beta$ and $\lVert m \cdot v \rVert_\infty \leq \mu$ for the parameters $(\beta, \mu)$ derived below.  For $m$ sampled as in HKEX-RNL this is implied by R-LWR (a short kernel-like relation for a pseudorandom $m$ would itself distinguish $m \cdot s$ from uniform).
+
+**Extracted relaxed witness (from §11.10.2).**  Forking a cheating prover that succeeds with probability $\delta$ over $Q_H$ random-oracle queries yields, with probability at least $\delta^2/Q_H - \text{negl}$, two accepting transcripts $(w, c, z)$ and $(w, c', z')$ with $c \neq c'$.  Setting $\bar{z} = z - z'$ and $\bar{c} = c - c'$, subtracting the two third verification equations gives
+
+$$\lVert m \cdot \bar{z} - \bar{c} \cdot \text{lift}(C) \rVert_\infty \leq 2t \lceil q/(2p) \rceil, \quad \bar{c} \neq 0, \quad \lVert \bar{z} \rVert_\infty \leq 2(\gamma - t).$$
+
+**Reduction to aR-SIS.**  By definition of rounding, $\text{lift}(C) = m \cdot s - \varepsilon$ with $\lVert \varepsilon \rVert_\infty \leq \lceil q/(2p) \rceil$.  Substitute:
+
+$$m \cdot \bar{z} - \bar{c} \cdot \text{lift}(C) = m \cdot \bar{z} - \bar{c} \cdot (m \cdot s - \varepsilon) = m \cdot (\bar{z} - \bar{c} \cdot s) + \bar{c} \cdot \varepsilon.$$
+
+Let $v = \bar{z} - \bar{c} \cdot s$.  Then $\lVert m \cdot v \rVert_\infty \leq 2t \lceil q/(2p) \rceil + \lVert \bar{c} \cdot \varepsilon \rVert_\infty$.  Since $\bar{c}$ has at most $2t$ nonzero coefficients each of magnitude $\leq 2$ and $\lVert \varepsilon \rVert_\infty \leq \lceil q/(2p) \rceil$, we have $\lVert \bar{c} \cdot \varepsilon \rVert_\infty \leq 2t \lceil q/(2p) \rceil$, hence
+
+$$\lVert m \cdot v \rVert_\infty \leq 4t \lceil q/(2p) \rceil =: \mu, \qquad \lVert v \rVert_\infty \leq 2(\gamma - t) + 2t = 2\gamma =: \beta.$$
+
+**Two cases.**
+
+- **$v \neq 0$:** the pair $v$ is a valid aR-SIS solution for $m$ with slack $\mu$ and norm $\beta$ — directly contradicting (aR-SIS), hence (by the stated implication) R-LWR.
+- **$v = 0$:** then $\bar{z} = \bar{c} \cdot s$, so the extractor has recovered a nonzero ring multiple $\bar{c} \cdot s$ of the secret from public data alone.  Recovering a $\bar{c}$-multiple of $s$ given only $(m, C)$ contradicts the pseudorandomness of $C$ under R-LWR (a simulator that learns $\bar{c} \cdot s$ for known sparse $\bar{c}$ can test it against $C$ and so distinguish $C$ from uniform).
+
+In both cases a successful cheating prover breaks R-LWR, up to the forking loss $\delta \mapsto \delta^2/Q_H$ and the $2\times$ witness-norm widening inherent to relaxed soundness.
+
+**Rounding-slack quantification.**  The slack modulus is
+
+$$\mu = 4t \lceil q/(2p) \rceil = 4t \lceil 65537/8192 \rceil = 4t \cdot 9 = 36t.$$
+
+Numerically $\mu = 144$ at $t = 4$ ($n = 32$) and $\mu = 576$ at $t = 16$ ($n = 256$), against $q = 65537$.  The ratio $\mu/q$ is 0.22% and 0.88% respectively — the extracted relation $m \cdot v$ is genuinely short relative to $q$, so the aR-SIS instance is non-trivial (a random $v$ of norm $\beta = 2\gamma$ would give $\lVert m \cdot v \rVert_\infty \approx q/2$).  Relative to the Lyubashevsky 2012 template — prime $q$ and a challenge ring chosen so that $\bar{c}$ is always invertible, yielding an *exact* ($\mu = 0$) inhomogeneous-SIS witness — the suite trades exactness for the rounding slack $\mu = 36t$.  This is the precise quantitative gap requested by open direction 1; it scales linearly in the challenge weight $t$ and is independent of $n$, so wider challenges (stronger soundness per round) cost proportionally more slack.
 
 **References.**
 - Lyubashevsky 2012. *Lattice Signatures Without Trapdoors*. Eurocrypt 2012, LNCS 7237, pp. 738–755.

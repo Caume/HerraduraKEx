@@ -5844,7 +5844,12 @@ the prover/verifier polynomial products already use the negacyclic NTT
 three reference languages (schoolbook retained only for the n=32 didactic demo);
 `zkp_pqc_exploration.py` §2.7 cross-checks NTT==schoolbook and measures the speedup
 (~6.8× at n=256, ~12.7× at n=512 in pure Python); SecurityProofs-3.md §11.10.6
-direction 2 marked Resolved.  Items 3(a), 3(c), 3(d) remain **OPEN**.
+direction 2 marked Resolved.  Item 3(a) formal Ring-LWR reduction **DONE v1.9.65** —
+SecurityProofs-3.md §11.10.7 gives a conditional reduction of relaxed Σ-protocol
+soundness to Ring-LWR via an intermediate approximate Ring-SIS step, with the rounding
+slack quantified as the SIS modulus 4t⌈q/(2p)⌉ = 36t (144 at n=32, 576 at n=256); the
+reduction remains conditional on aR-SIS hardness for the HKEX-RNL m, so it is not a fully
+tight standard-model reduction (recorded honestly).  Items 3(c), 3(d) remain **OPEN**.
 
 ---
 
