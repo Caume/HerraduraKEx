@@ -7,6 +7,8 @@
 //   herradura_cli_go kex      --algo hkex-gf   --our alice.pem --their bob_pub.pem --out sk.pem
 //   herradura_cli_go enc      --algo hske      --key sk.pem --in msg.bin --out ct.pem
 //   herradura_cli_go dec      --algo hske      --key sk.pem --in ct.pem  --out plain.bin
+//   herradura_cli_go enc      --algo hske-duplex --key sk.pem --in msg.bin --ad hdr --out ct.pem
+//   herradura_cli_go dec      --algo hske-duplex --key sk.pem --in ct.pem  --ad hdr --out plain.bin
 //   herradura_cli_go sign     --algo hpks      --key priv.pem --in msg.bin --out sig.pem
 //   herradura_cli_go verify   --algo hpks      --pubkey pub.pem --in msg.bin --sig sig.pem
 //   herradura_cli_go dgst     --in file.bin                       # hex to stdout
@@ -976,6 +978,28 @@ func encodeSymCTTag(algo string, E *big.Int, n int, nonce, authTag *big.Int) (st
 	return PemWrap(lblCT, seq), nil
 }
 
+// encodeDuplexCT: HSKE-NL-V2-Duplex AEAD, format tag 3 (TODO #118):
+// SEQ(3, nonce, ct_len, ct, tag, nbits) with variable-length ciphertext.
+func encodeDuplexCT(nonce *big.Int, ct []byte, tag *big.Int, n int) (string, error) {
+	nb := n / 8
+	ctLen := len(ct)
+	ctWidth := ctLen
+	if ctWidth == 0 {
+		ctWidth = 1
+	}
+	t3, _ := derIntSmall(3)
+	nd, _ := derIntBig(nonce, nb)
+	ld, _ := derIntSmall(ctLen)
+	ed, _ := derIntBig(new(big.Int).SetBytes(ct), ctWidth)
+	td, _ := derIntBig(tag, 32)
+	nn, _ := derIntSmall(n)
+	seq, err := DerSeqEnc(t3, nd, ld, ed, td, nn)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblCT, seq), nil
+}
+
 func encodeAsymCT(R, E *big.Int, n int) (string, error) {
 	nb := n / 8
 	rd, err := derIntBig(R, nb)
@@ -1362,6 +1386,31 @@ func cmdEnc(args []string) {
 	gen := new(big.Int).SetInt64(GfGen)
 
 	switch *algo {
+	case "hske-duplex":
+		// HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118
+		if *key == "" {
+			fmt.Fprintln(os.Stderr, "enc: --key required for hske-duplex")
+			os.Exit(1)
+		}
+		keyInt, n, err := loadKey(*key)
+		if err != nil {
+			die("enc", err)
+		}
+		if n != 256 {
+			fmt.Fprintln(os.Stderr, "enc: hske-duplex requires a 256-bit key")
+			os.Exit(1)
+		}
+		K := NewBitArray(n, keyInt)
+		nonce := NewRandBitArray(n)
+		ct, authTag := HskeNlV2DuplexEncrypt(K, nonce, []byte(*ad), inBytes)
+		pem, err := encodeDuplexCT(&nonce.Val, ct, new(big.Int).SetBytes(authTag), n)
+		if err != nil {
+			die("enc", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("enc", err)
+		}
+
 	case "hske", "hske-nla1", "hske-nla2":
 		if *key == "" {
 			fmt.Fprintf(os.Stderr, "enc: --key required for %s\n", *algo)
@@ -1496,6 +1545,45 @@ func cmdDec(args []string) {
 	}
 
 	switch *algo {
+	case "hske-duplex":
+		// HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118
+		if *key == "" {
+			fmt.Fprintln(os.Stderr, "dec: --key required for hske-duplex")
+			os.Exit(1)
+		}
+		keyInt, _, err := loadKey(*key)
+		if err != nil {
+			die("dec", err)
+		}
+		_, ctInts, err := readPEMInts(*in)
+		if err != nil {
+			die("dec", err)
+		}
+		if len(ctInts) < 6 || bytesToInt(ctInts[0]) != 3 {
+			fmt.Fprintln(os.Stderr, "dec: not a V2-Duplex (format 3) ciphertext")
+			os.Exit(1)
+		}
+		n := bytesToInt(ctInts[5])
+		K := NewBitArray(n, keyInt)
+		nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
+		ctLen := bytesToInt(ctInts[2])
+		ct := make([]byte, ctLen)
+		if ctLen > 0 {
+			new(big.Int).SetBytes(ctInts[3]).FillBytes(ct)
+		}
+		authTag := make([]byte, 32)
+		new(big.Int).SetBytes(ctInts[4]).FillBytes(authTag)
+		pt, ok := HskeNlV2DuplexDecrypt(K, nonce, []byte(*ad), ct, authTag)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "dec: authentication tag mismatch — "+
+				"ciphertext corrupt, wrong key, or wrong --ad")
+			os.Exit(1)
+		}
+		if err := writeBytes(*out, pt); err != nil {
+			die("dec", err)
+		}
+		return
+
 	case "hske", "hske-nla1", "hske-nla2":
 		if *key == "" {
 			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
@@ -2469,7 +2557,7 @@ Commands:
 
 Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl
 Algorithms (kex):           hkex-gf hkex-rnl
-Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hpke hpke-nl hpke-stern
+Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-duplex hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
   fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]

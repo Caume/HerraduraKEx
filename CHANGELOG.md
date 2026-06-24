@@ -4,6 +4,25 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.68] - 2026-06-24
+
+### Feature — CLI: HSKE-NL-V2-Duplex single-pass AEAD in `enc`/`dec` (TODO #118)
+
+- **`HerraduraCli/herradura.py`, `herradura_cli.c`, `herradura_cli.go`:** added
+  `enc --algo hske-duplex` / `dec --algo hske-duplex`, exposing the MonkeyDuplex sponge
+  AEAD (`hske_nl_v2_duplex_encrypt`/`decrypt`, v1.9.62) on the CLI. Supports `--ad`
+  associated data and requires a 256-bit key.
+- **Wire format:** new CIPHERTEXT PEM format tag 3 — `SEQ(3, nonce, ct_len, ct, tag, nbits)` —
+  storing the ciphertext length-prefixed so **arbitrary-length** plaintext is supported
+  (unlike the single-block `hske-nla1 --aead`). Byte-for-byte interoperable across the three
+  CLIs.
+- **`HerraduraCli/primitives.py`:** re-export `hske_nl_v2_duplex_encrypt`/`decrypt`.
+- **`CliTest/test_duplex.sh` (new):** 9-way producer/consumer interop matrix, wrong-AD /
+  wrong-key / mutated-ciphertext rejection, and empty-plaintext round-trip (23/23 pass).
+- **`docs/TUTORIAL.md`** and the three CLI usage headers document the new algorithm.
+
+---
+
 ## [1.9.67] - 2026-06-24
 
 ### Docs/Design — Hybrid Ring-LWR + Stern-F credential design sketch (TODO #94 item 3d; closes #94)

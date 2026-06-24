@@ -8,6 +8,8 @@
 #   python3 herradura.py kex     --algo hkex-gf  --our alice.pem --their bob_pub.pem --kdf hfscx-256 --out sk.pem
 #   python3 herradura.py enc     --algo hske      --key sk.pem --in msg.bin --out cipher.pem
 #   python3 herradura.py dec     --algo hske      --key sk.pem --in cipher.pem --out plain.bin
+#   python3 herradura.py enc     --algo hske-duplex --key sk.pem --in msg.bin --ad hdr --out cipher.pem
+#   python3 herradura.py dec     --algo hske-duplex --key sk.pem --in cipher.pem --ad hdr --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
 #   python3 herradura.py sign    --algo hpks-nl   --key sig.pem --in large.bin --digest hfscx-256 --out s.pem
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
@@ -52,6 +54,7 @@ from primitives import (
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
     hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
+    hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -525,6 +528,38 @@ def _decode_sym_ct(path):
 
 
 # ---------------------------------------------------------------------------
+# Ciphertext serialization (HSKE-NL-V2-Duplex AEAD — TODO #118)
+#
+# Unlike the single-block sym formats above, the duplex AEAD handles
+# arbitrary-length plaintext, so the ciphertext is stored length-prefixed:
+#   format tag 3, nonce (KEYBYTES), ct_len, ct (ct_len bytes), tag (32), nbits.
+# ---------------------------------------------------------------------------
+
+def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits):
+    nbytes = nbits // 8
+    ct_len = len(ct_bytes)
+    der = der_seq(der_int(3),                       # format tag 3: V2-Duplex AEAD
+                  der_int(nonce_int, nbytes),
+                  der_int(ct_len),
+                  der_int(int.from_bytes(ct_bytes, 'big'), max(1, ct_len)),
+                  der_int(tag_int, 32),
+                  der_int(nbits))
+    return pem_wrap(_LABEL_CT, der)
+
+
+def _decode_duplex_ct(path):
+    """Return (nonce_int, ct_bytes, tag_int, nbits)."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_CT:
+        raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
+    if ints[0] != 3:
+        raise ValueError(f"Expected V2-Duplex ciphertext (format 3), got {ints[0]}")
+    _, nonce_int, ct_len, ct_int, tag_int, nbits = ints
+    ct_bytes = ct_int.to_bytes(ct_len, 'big') if ct_len else b''
+    return nonce_int, ct_bytes, tag_int, nbits
+
+
+# ---------------------------------------------------------------------------
 # Ciphertext serialization (asymmetric HPKE / HPKE-NL)
 # ---------------------------------------------------------------------------
 
@@ -873,6 +908,21 @@ def cmd_enc(args):
     in_bytes = _read_file(getattr(args, 'in'))
     out_path = args.out
 
+    # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
+    if algo == 'hske-duplex':
+        key_path = args.key
+        if not key_path:
+            sys.exit(f"--key required for {algo}")
+        key_int, nbits = _load_key(key_path)
+        if nbits != 256:
+            sys.exit("enc: hske-duplex requires a 256-bit key")
+        K = BitArray(nbits, key_int)
+        ad = (args.ad or '').encode()
+        nonce, ct, tag = hske_nl_v2_duplex_encrypt(K, in_bytes, ad)
+        _write_file(out_path, _encode_duplex_ct(
+            nonce.uint, ct, int.from_bytes(tag, 'big'), nbits))
+        return
+
     # ── Symmetric algos ─────────────────────────────────────────────────────
     if algo in ('hske', 'hske-nla1', 'hske-nla2'):
         key_path = args.key
@@ -962,6 +1012,25 @@ def cmd_enc(args):
 def cmd_dec(args):
     algo     = args.algo
     out_path = args.out
+
+    # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
+    if algo == 'hske-duplex':
+        key_path = args.key
+        if not key_path:
+            sys.exit(f"--key required for {algo}")
+        key_int, nbits = _load_key(key_path)
+        if nbits != 256:
+            sys.exit("dec: hske-duplex requires a 256-bit key")
+        K = BitArray(nbits, key_int)
+        nonce_int, ct_bytes, tag_int, _nb = _decode_duplex_ct(getattr(args, 'in'))
+        ad = (getattr(args, 'ad', None) or '').encode()
+        pt = hske_nl_v2_duplex_decrypt(K, BitArray(nbits, nonce_int), ct_bytes,
+                                       tag_int.to_bytes(32, 'big'), ad)
+        if pt is None:
+            sys.exit("dec: authentication tag mismatch — "
+                     "ciphertext corrupt, wrong key, or wrong --ad")
+        _write_file(out_path, pt)
+        return
 
     # ── Symmetric algos ─────────────────────────────────────────────────────
     if algo in ('hske', 'hske-nla1', 'hske-nla2'):
@@ -1695,7 +1764,8 @@ def build_parser():
     # enc
     en = sub.add_parser('enc', help='Encrypt')
     en.add_argument('--algo', required=True,
-                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hpke', 'hpke-nl', 'hpke-stern'])
+                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
+                             'hpke', 'hpke-nl', 'hpke-stern'])
     en.add_argument('--key',    default=None)
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
@@ -1708,7 +1778,8 @@ def build_parser():
     # dec
     de = sub.add_parser('dec', help='Decrypt')
     de.add_argument('--algo', required=True,
-                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hpke', 'hpke-nl', 'hpke-stern'])
+                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
+                             'hpke', 'hpke-nl', 'hpke-stern'])
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)

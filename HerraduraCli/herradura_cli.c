@@ -134,6 +134,28 @@ static int der_i32(const uint8_t bytes[KEYBYTES], uint8_t *out, size_t *olen)
 static int der_i_n256(uint8_t *out, size_t *olen)
 { static const uint8_t n[2] = {0x01, 0x00}; return der_int_enc(n, 2, out, olen); }
 
+/* DER INTEGER for an unsigned value, minimal big-endian width (matches Python der_int).
+ * Used for the variable ciphertext length in the HSKE-NL-V2-Duplex format. */
+static int der_i_uint(uint64_t v, uint8_t *out, size_t *olen)
+{
+    uint8_t tmp[8]; int n = 0;
+    if (v == 0) { tmp[0] = 0; n = 1; }
+    else {
+        uint8_t b[8]; int i = 0, j;
+        while (v) { b[i++] = (uint8_t)(v & 0xFF); v >>= 8; }
+        for (j = i - 1; j >= 0; j--) tmp[n++] = b[j];
+    }
+    return der_int_enc(tmp, (size_t)n, out, olen);
+}
+
+/* Parse a big-endian unsigned integer from DER value bytes (small lengths only). */
+static uint64_t parse_be_uint(const uint8_t *p, size_t l)
+{
+    uint64_t v = 0; size_t i;
+    for (i = 0; i < l; i++) v = (v << 8) | p[i];
+    return v;
+}
+
 /* Wrap items into SEQUENCE DER, then PEM-wrap and write. */
 static void seq_and_write(const uint8_t **it, const size_t *il, int ni,
                           const char *label, const char *out_path)
@@ -1034,6 +1056,45 @@ static void cmd_enc(int argc, char **argv)
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
 
+    /* ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118 ── */
+    if (strcmp(algo, "hske-duplex") == 0) {
+        if (!key_path) die("enc: --key required for hske-duplex");
+        BitArray K, N_nonce;
+        load_sym_key(&K, key_path);
+        const char *ad = get_arg(argc, argv, "--ad");
+        FILE *urnd = fopen("/dev/urandom", "rb");
+        if (!urnd) die("cannot open /dev/urandom");
+        ba_rand(&N_nonce, urnd);
+        fclose(urnd);
+
+        uint8_t *ct_buf = malloc(in_len ? in_len : 1);
+        if (!ct_buf) die("enc: out of memory");
+        uint8_t tag[32];
+        hske_nl_v2_duplex_encrypt(&K, &N_nonce,
+                                  (const uint8_t *)(ad ? ad : ""),
+                                  ad ? strlen(ad) : 0,
+                                  in_buf, in_len, ct_buf, tag);
+
+        /* format tag 3: SEQ(3, nonce, ct_len, ct, tag, nbits) */
+        uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itl[DER_INT_LEN(8)];
+        uint8_t itt[DER_INT_LEN(KEYBYTES)], itnb[8];
+        uint8_t *itE = malloc(DER_INT_LEN(in_len ? in_len : 1));
+        if (!itE) die("enc: out of memory");
+        size_t l0, ln, ll, lE, lt, lnb;
+        der_i_byte(3, it0, &l0);
+        der_i32(N_nonce.b, itn, &ln);
+        der_i_uint((uint64_t)in_len, itl, &ll);
+        if (in_len) der_int_enc(ct_buf, in_len, itE, &lE);
+        else { static const uint8_t z = 0; der_int_enc(&z, 1, itE, &lE); }
+        der_i32(tag, itt, &lt);
+        der_i_n256(itnb, &lnb);
+        const uint8_t *it[6] = {it0, itn, itl, itE, itt, itnb};
+        size_t il[6] = {l0, ln, ll, lE, lt, lnb};
+        seq_and_write(it, il, 6, PEM_CIPHERTEXT, out_path);
+        free(itE); free(ct_buf); free(in_buf);
+        return;
+    }
+
     /* Plaintext BitArray: input left-aligned into big-endian block, zero-padded. */
     BitArray P;
     make_msg_ba(&P, in_buf, in_len);
@@ -1195,6 +1256,43 @@ static void cmd_dec(int argc, char **argv)
     pem_key_load(&ct, in_path);
     if (strcmp(ct.label, PEM_CIPHERTEXT) != 0)
         dief("dec: expected CIPHERTEXT PEM, got: %s", ct.label);
+
+    /* ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118 ── */
+    if (strcmp(algo, "hske-duplex") == 0) {
+        if (!key_path) die("dec: --key required for hske-duplex");
+        BitArray K, N_nonce;
+        load_sym_key(&K, key_path);
+        if (ct.n_items < 6 || ct.vlens[0] < 1 || ct.vals[0][0] != 3)
+            die("dec: not a V2-Duplex (format 3) ciphertext");
+        const char *ad = get_arg(argc, argv, "--ad");
+        ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
+        size_t ct_len = (size_t)parse_be_uint(ct.vals[2], ct.vlens[2]);
+        /* Right-align the parsed ct value into a zero-padded ct_len buffer
+         * (integer encoding may have dropped leading zero bytes). */
+        uint8_t *ct_buf = calloc(ct_len ? ct_len : 1, 1);
+        uint8_t *pt_buf = malloc(ct_len ? ct_len : 1);
+        if (!ct_buf || !pt_buf) die("dec: out of memory");
+        size_t vl = ct.vlens[3];
+        if (vl > ct_len) vl = ct_len;   /* defensive */
+        memcpy(ct_buf + (ct_len - vl), ct.vals[3], vl);
+        uint8_t tag_buf[32];
+        BitArray tag_ba;
+        ba_from_ra(&tag_ba, ct.vals[4], ct.vlens[4]);
+        memcpy(tag_buf, tag_ba.b, 32);
+        int ok = hske_nl_v2_duplex_decrypt(&K, &N_nonce,
+                                           (const uint8_t *)(ad ? ad : ""),
+                                           ad ? strlen(ad) : 0,
+                                           ct_buf, ct_len, tag_buf, pt_buf);
+        pem_key_free(&ct);
+        if (!ok) {
+            free(ct_buf); free(pt_buf);
+            die("dec: authentication tag mismatch — "
+                "ciphertext corrupt, wrong key, or wrong --ad");
+        }
+        write_binary_file(out_path, pt_buf, ct_len);
+        free(ct_buf); free(pt_buf);
+        return;
+    }
 
     /* ── Symmetric algos ── */
     if (strcmp(algo, "hske") == 0 || strcmp(algo, "hske-nla1") == 0 ||
@@ -2407,10 +2505,11 @@ static void usage(void)
 "    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE] [--aead [--ad STR]]\n"
-"    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2\n"
+"    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2 hske-duplex\n"
 "    Asymmetric (--pubkey): hpke hpke-nl hpke-stern\n"
 "    --aead (hske-nla1 only): HSKE-NL-AEAD authenticated encryption; --ad binds\n"
 "    optional associated data into the tag (must match at dec).\n"
+"    hske-duplex: arbitrary-length single-pass AEAD (256-bit key; --ad supported).\n"
 "\n"
 "  dec --algo ALGO --key KEY --in CT_FILE [--out FILE] [--ad STR]\n"
 "    Decrypt.  Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"

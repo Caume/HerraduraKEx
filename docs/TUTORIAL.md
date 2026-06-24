@@ -104,6 +104,24 @@ $CLI dec --algo hske-nla1 --ad "header-v1" \
 The C and Go CLIs accept the same `--aead` and `--ad` flags.  AEAD PEMs are
 cross-language compatible — see `CliTest/test_aead.sh` for a 9-way interop test.
 
+`hske-nla1 --aead` operates on a single 32-byte block.  For **arbitrary-length**
+single-pass authenticated encryption, use the `hske-duplex` algorithm (a
+MonkeyDuplex sponge AEAD over `nl_fscx_revolve_v2`):
+
+```bash
+# Encrypt arbitrary-length input; nonce, ciphertext, and 32-byte tag in ct.pem
+$CLI enc --algo hske-duplex --ad "header-v1" \
+         --key alice_sk.pem --in large_msg.bin --out ct_duplex.pem
+
+# Decrypt (--ad must match; fails on any ciphertext / tag / AD tampering)
+$CLI dec --algo hske-duplex --ad "header-v1" \
+         --key alice_sk.pem --in ct_duplex.pem --out recovered.bin
+```
+
+`hske-duplex` requires a 256-bit key and is supported identically by the
+Python, C, and Go CLIs — see `CliTest/test_duplex.sh` for the 9-way interop
+matrix (plus empty-plaintext and tamper-rejection cases).
+
 ### Signing and verification (HPKS)
 
 ```bash
