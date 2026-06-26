@@ -1096,6 +1096,124 @@ static int stern_sig_load(const char *path, SternSig *sig)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HPKS-Stern-Ring signature CLI helpers (TODO #121)
+ *
+ * Wire format matches the Python/Go CLIs: SEQ(k, rounds, n, blob) where blob is
+ * member-major / round-major: c0||c1||c2||b(1 byte)||resp_a||resp_b per entry.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define RING_MAX_K 64
+
+/* Parse comma-separated hpks-stern public-key PEM paths.  Fills seeds[k] and
+ * syndrs_flat[k*SDF_SYNBYTES].  Returns k (>=2). */
+static int ring_load_members(const char *ring_arg, BitArray *seeds,
+                             uint8_t *syndrs_flat)
+{
+    char buf[8192];
+    size_t al = strlen(ring_arg);
+    if (al >= sizeof buf) die("hpks-ring: --ring too long");
+    memcpy(buf, ring_arg, al + 1);
+    int k = 0;
+    char *save = NULL;
+    char *tok = strtok_r(buf, ",", &save);
+    while (tok) {
+        if (*tok) {
+            if (k >= RING_MAX_K) die("hpks-ring: too many ring members");
+            PemKey pub;
+            pem_key_load(&pub, tok);
+            if (strcmp(pub.label, PEM_HPKS_STERN_PUB) != 0) {
+                fprintf(stderr, "hpks-ring: ring member %s is %s, expected "
+                                "hpks-stern public key\n", tok, pub.label);
+                exit(1);
+            }
+            /* pubkey: vals[0]=syndrome(32B int), vals[1]=seed, vals[2]=n */
+            BitArray syn_ba;
+            ba_from_ra(&seeds[k], pub.vals[1], pub.vlens[1]);
+            ba_from_ra(&syn_ba,   pub.vals[0], pub.vlens[0]);
+            /* syndrome integer stores syndr[j] at byte KEYBYTES-1-j (see pkey). */
+            { int j; for (j = 0; j < SDF_SYNBYTES; j++)
+                syndrs_flat[k * SDF_SYNBYTES + j] = syn_ba.b[KEYBYTES - 1 - j]; }
+            pem_key_free(&pub);
+            k++;
+        }
+        tok = strtok_r(NULL, ",", &save);
+    }
+    if (k < 2) die("hpks-ring: --ring needs at least 2 member public keys");
+    return k;
+}
+
+static void ring_sig_pack_and_write(const SternRingSig *sig, const char *out_path)
+{
+    int k = sig->k, rounds = sig->rounds;
+    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    size_t blen  = (size_t)k * rounds * entry;
+    uint8_t *blob = (uint8_t *)malloc(blen);
+    if (!blob) die("out of memory");
+    size_t off = 0;
+    int i, r;
+    for (i = 0; i < k; i++) {
+        for (r = 0; r < rounds; r++) {
+            int idx = i * rounds + r;
+            memcpy(blob + off, sig->c0[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->c1[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->c2[idx].b, KEYBYTES); off += KEYBYTES;
+            blob[off++] = (uint8_t)(sig->b[idx] & 0xFF);
+            memcpy(blob + off, sig->resp_a[idx].b, KEYBYTES); off += KEYBYTES;
+            memcpy(blob + off, sig->resp_b[idx].b, KEYBYTES); off += KEYBYTES;
+        }
+    }
+    uint8_t ik[DER_INT_LEN(8)], ir[DER_INT_LEN(8)], in[8];
+    size_t lk, lr, ln, lb;
+    uint8_t *ib = (uint8_t *)malloc(DER_INT_LEN(blen));
+    if (!ib) die("out of memory");
+    der_i_uint((uint64_t)k, ik, &lk);
+    der_i_uint((uint64_t)rounds, ir, &lr);
+    der_i_n256(in, &ln);
+    der_int_enc(blob, blen, ib, &lb);
+    const uint8_t *it[4] = {ik, ir, in, ib};
+    size_t il[4] = {lk, lr, ln, lb};
+    seq_and_write(it, il, 4, PEM_HPKS_RING_SIG, out_path);
+    free(blob); free(ib);
+}
+
+/* Load a ring signature into an allocated SternRingSig.  Caller frees via
+ * stern_ring_free.  Returns k. */
+static int ring_sig_load(const char *path, SternRingSig *sig)
+{
+    PemKey pk;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items < 4)
+        dief("verify: expected HPKS-RING SIGNATURE PEM, got: %s", pk.label);
+    int k      = (int)parse_be_uint(pk.vals[0], pk.vlens[0]);
+    int rounds = (int)parse_be_uint(pk.vals[1], pk.vlens[1]);
+    size_t entry = 5 * (size_t)KEYBYTES + 1;
+    size_t blen  = (size_t)k * rounds * entry;
+    uint8_t *blob = (uint8_t *)calloc(blen ? blen : 1, 1);
+    if (!blob) die("out of memory");
+    size_t vl = pk.vlens[3];
+    if (vl > blen) vl = blen;
+    memcpy(blob + (blen - vl), pk.vals[3], vl);   /* right-align */
+    pem_key_free(&pk);
+
+    stern_ring_alloc(sig, k, rounds);
+    size_t off = 0;
+    int i, r;
+    for (i = 0; i < k; i++) {
+        for (r = 0; r < rounds; r++) {
+            int idx = i * rounds + r;
+            memcpy(sig->c0[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            memcpy(sig->c1[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            memcpy(sig->c2[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            sig->b[idx] = blob[off++];
+            memcpy(sig->resp_a[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+            memcpy(sig->resp_b[idx].b, blob + off, KEYBYTES); off += KEYBYTES;
+        }
+    }
+    free(blob);
+    return k;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * dgst
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -2016,6 +2134,36 @@ static void cmd_sign(int argc, char **argv)
         hpks_stern_f_sign(&sig, &msg, &e_ba, &seed_ba, urnd);
         stern_sig_pack_and_write(&sig, out_path);
 
+    } else if (strcmp(algo, "hpks-ring") == 0) {
+        fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                        "(demo parameters). 128-bit security requires N>=17000. "
+                        "Do not use for production.\n");
+        const char *ring_arg = get_arg(argc, argv, "--ring");
+        if (!ring_arg) die("hpks-ring sign: --ring (comma-separated member public keys) required");
+        if (priv_k.n_items < 2) die("sign: malformed Stern private key");
+        BitArray e_ba, signer_seed;
+        ba_from_ra(&e_ba,        priv_k.vals[0], priv_k.vlens[0]);
+        ba_from_ra(&signer_seed, priv_k.vals[1], priv_k.vlens[1]);
+        pem_key_free(&priv_k);
+
+        BitArray seeds[RING_MAX_K];
+        uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
+        int k = ring_load_members(ring_arg, seeds, syndrs);
+
+        int j = -1, i;
+        for (i = 0; i < k; i++)
+            if (ba_equal(&seeds[i], &signer_seed)) { j = i; break; }
+        if (j < 0)
+            die("hpks-ring sign: signer's public key is not in --ring "
+                "(run pkey --pubout on the signer key and include it)");
+
+        SternRingSig rsig;
+        stern_ring_alloc(&rsig, k, SDF_ROUNDS);
+        stern_ring_sign(&rsig, &msg, &e_ba, j, seeds, syndrs, urnd);
+        ring_sig_pack_and_write(&rsig, out_path);
+        stern_ring_free(&rsig);
+        fprintf(stderr, "Ring signature created (k=%d); signer index is hidden.\n", k);
+
     } else if (strcmp(algo, "rnl-sigma") == 0) {
         /* ZKP-RNL: uses hkex-rnl private key, n must equal RNL_N */
         if (priv_k.n_items < 3) die("sign: malformed hkex-rnl private key");
@@ -2078,7 +2226,7 @@ static void cmd_verify(int argc, char **argv)
     if (!algo)    die("verify: --algo required");
     if (!in_path) die("verify: --in required");
     if (!sig_path) die("verify: --sig required");
-    if (!pubkey_path && strcmp(algo, "hpks-t") != 0)
+    if (!pubkey_path && strcmp(algo, "hpks-t") != 0 && strcmp(algo, "hpks-ring") != 0)
         die("verify: --pubkey required");
 
     size_t in_len;
@@ -2130,6 +2278,27 @@ static void cmd_verify(int argc, char **argv)
     if (strcmp(algo, "hpks-t") == 0) {
         cmd_threshold_verify(argc, argv);
         return;  /* cmd_threshold_verify exits via exit() — this is a safeguard */
+    }
+
+    /* hpks-ring: anonymous verification against --ring members. */
+    if (strcmp(algo, "hpks-ring") == 0) {
+        const char *ring_arg = get_arg(argc, argv, "--ring");
+        if (!ring_arg) die("hpks-ring verify: --ring (comma-separated member public keys) required");
+        BitArray seeds[RING_MAX_K];
+        uint8_t  syndrs[RING_MAX_K * SDF_SYNBYTES];
+        int k = ring_load_members(ring_arg, seeds, syndrs);
+        SternRingSig rsig;
+        int sig_k = ring_sig_load(sig_path, &rsig);
+        if (sig_k != k) {
+            stern_ring_free(&rsig);
+            fprintf(stderr, "hpks-ring verify: signature ring size %d != %d "
+                            "provided members\n", sig_k, k);
+            exit(1);
+        }
+        int ok = stern_ring_verify(&rsig, &msg, seeds, syndrs);
+        stern_ring_free(&rsig);
+        if (ok) { puts("Signature OK");        exit(0); }
+        else    { puts("Verification FAILED"); exit(1); }
     }
 
     /* nl-zkboo uses raw binary PEM — handle before pem_key_load. */
@@ -2775,17 +2944,19 @@ static void usage(void)
 "  decfile --algo hske-nla1 --key SK --in FILE.hkx --out FILE\n"
 "    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
-"  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256]\n"
-"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots\n"
+"  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256] [--ring P0,P1,...]\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots hpks-ring\n"
 "    rnl-sigma: key = hkex-rnl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"
+"    hpks-ring: anonymous ring signature; key = an hpks-stern key in --ring (member pubkeys).\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
 "\n"
-"  verify --algo ALGO [--pubkey PUB] --in FILE --sig SIG [--digest hfscx-256]\n"
+"  verify --algo ALGO [--pubkey PUB | --ring P0,P1,...] --in FILE --sig SIG [--digest hfscx-256]\n"
 "    Verify signature.  Exits 0 on OK, 1 on failure.\n"
 "    rnl-sigma: pubkey = hkex-rnl public key; sig = ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
+"    hpks-ring: --ring = member public keys; verifies anonymously (no signer revealed).\n"
 "    hpks-t:    --pubkey not required; C_agg is embedded in the signature.\n"
 "\n"
 "  threshold-commit --key PRIV --commit-out COMMIT.pem --nonce-out NONCE.pem\n"
