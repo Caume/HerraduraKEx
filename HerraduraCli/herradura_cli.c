@@ -310,6 +310,56 @@ static int pem_key_get_n(const PemKey *k, int idx)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HPKS-WOTS-F one-time signature helpers (TODO #120)
+ *
+ * One-time use is enforced via a `<key>.idx` state file (0 = unused, 1 = burned),
+ * mirroring the Python CLI.  A WOTS public key / signature is ℓ=WOTS_L chain
+ * values, serialised as a single (WOTS_L * KEYBYTES)-byte DER INTEGER blob.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void wots_idx_path(const char *key_path, char *buf, size_t buflen)
+{
+    snprintf(buf, buflen, "%s.idx", key_path);
+}
+
+static int wots_is_used(const char *key_path)
+{
+    char p[4096]; wots_idx_path(key_path, p, sizeof p);
+    FILE *f = fopen(p, "r");
+    if (!f) return 0;
+    int v = 0;
+    if (fscanf(f, "%d", &v) != 1) v = 0;
+    fclose(f);
+    return v != 0;
+}
+
+static void wots_write_idx(const char *key_path, int val)
+{
+    char p[4096]; wots_idx_path(key_path, p, sizeof p);
+    FILE *f = fopen(p, "w");
+    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+}
+
+/* Serialise ℓ WOTS chain values into a flat (WOTS_L * KEYBYTES)-byte blob. */
+static void wots_blob_pack(uint8_t *blob, const BitArray vals[WOTS_L])
+{
+    for (int i = 0; i < WOTS_L; i++)
+        memcpy(blob + (size_t)i * KEYBYTES, vals[i].b, KEYBYTES);
+}
+
+/* Recover ℓ BitArrays from a parsed DER value (right-aligned into the blob,
+ * since integer encoding may have dropped leading zero bytes). */
+static void wots_blob_unpack(BitArray vals[WOTS_L], const uint8_t *v, size_t vl)
+{
+    uint8_t blob[WOTS_L * KEYBYTES];
+    memset(blob, 0, sizeof blob);
+    if (vl > sizeof blob) vl = sizeof blob;
+    memcpy(blob + (sizeof blob - vl), v, vl);
+    for (int i = 0; i < WOTS_L; i++)
+        ba_from_ra(&vals[i], blob + (size_t)i * KEYBYTES, KEYBYTES);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * genpkey
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -426,6 +476,22 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
+    /* HPKS-WOTS-F one-time key: SEQUENCE(INTEGER(seed,32), INTEGER(leaf_idx=0)) */
+    if (strcmp(algo, "hpks-wots") == 0) {
+        uint8_t seed[KEYBYTES];
+        if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+        uint8_t is[DER_INT_LEN(KEYBYTES)], il0[DER_INT_LEN(8)];
+        size_t ls, ll;
+        der_i32(seed, is, &ls);
+        der_i_uint(0, il0, &ll);
+        const uint8_t *it[2] = {is, il0}; size_t ill[2] = {ls, ll};
+        seq_and_write(it, ill, 2, PEM_HPKS_WOTS_PRIV, out);
+        if (out && strcmp(out, "-") != 0) wots_write_idx(out, 0);
+        fprintf(stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.\n");
+        explicit_bzero(seed, KEYBYTES);
+        fclose(urnd); return;
+    }
+
     fclose(urnd);
     dief("genpkey: unsupported algorithm: %s", algo);
 }
@@ -502,6 +568,7 @@ static void cmd_pkey(int argc, char **argv)
         { PEM_HKEX_RNL_PRIV,   PEM_HKEX_RNL_PUB,   "hkex-rnl",   0 },
         { PEM_HPKS_STERN_PRIV, PEM_HPKS_STERN_PUB, "hpks-stern", 2 },
         { PEM_HPKE_STERN_PRIV, PEM_HPKE_STERN_PUB, "hpke-stern", 2 },
+        { PEM_HPKS_WOTS_PRIV,  PEM_HPKS_WOTS_PUB,  "hpks-wots",  3 },
         { NULL, NULL, NULL, 0 }
     };
 
@@ -580,6 +647,33 @@ static void cmd_pkey(int argc, char **argv)
             seq_and_write(it, il, 4, PEM_HKEX_RNL_PUB, out_path);
             explicit_bzero(n_A, KEYBYTES);
             free(ic_der); free(im_der); free(ina_der);
+        }
+    }
+
+    /* ── HPKS-WOTS-F one-time ─── */
+    else if (kind == 3) {
+        if (k.n_items < 1) die("pkey: malformed WOTS private key");
+        BitArray seed_ba;
+        ba_from_ra(&seed_ba, k.vals[0], k.vlens[0]);
+        uint32_t leaf_idx = (k.n_items >= 2)
+            ? (uint32_t)parse_be_uint(k.vals[1], k.vlens[1]) : 0;
+        BitArray sk[WOTS_L], pk[WOTS_L];
+        hpks_wots_keygen(sk, pk, seed_ba.b, leaf_idx);
+        if (text) {
+            printf("%-10s: %s\n", "algorithm", algo);
+            printf("%-10s: one-time\n", "type");
+        } else {
+            uint8_t blob[WOTS_L * KEYBYTES];
+            wots_blob_pack(blob, pk);
+            uint8_t *ib = (uint8_t *)malloc(DER_INT_LEN(sizeof blob));
+            uint8_t iell[DER_INT_LEN(8)];
+            size_t lb, lell;
+            if (!ib) die("out of memory");
+            der_int_enc(blob, sizeof blob, ib, &lb);
+            der_i_uint(WOTS_L, iell, &lell);
+            const uint8_t *it[2] = {ib, iell}; size_t il[2] = {lb, lell};
+            seq_and_write(it, il, 2, PEM_HPKS_WOTS_PUB, out_path);
+            free(ib);
         }
     }
 
@@ -1793,6 +1887,48 @@ static void cmd_sign(int argc, char **argv)
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
     uint8_t msg_bytes[KEYBYTES];
 
+    /* HPKS-WOTS-F signs the full message (hashed internally), not a truncated
+     * 256-bit block — handle it before the block-truncation logic below. */
+    if (strcmp(algo, "hpks-wots") == 0) {
+        PemKey wk;
+        pem_key_load(&wk, key_path);
+        if (strcmp(wk.label, PEM_HPKS_WOTS_PRIV) != 0)
+            dief("sign: expected HPKS-WOTS private key, got: %s", wk.label);
+        if (wots_is_used(key_path))
+            die("sign: this HPKS-WOTS key was already used — WOTS keys are ONE-TIME. "
+                "Generate a fresh key (genpkey --algo hpks-wots).");
+        BitArray seed_ba;
+        ba_from_ra(&seed_ba, wk.vals[0], wk.vlens[0]);
+        uint32_t leaf_idx = (wk.n_items >= 2)
+            ? (uint32_t)parse_be_uint(wk.vals[1], wk.vlens[1]) : 0;
+        pem_key_free(&wk);
+
+        const uint8_t *wmsg; size_t wmlen; uint8_t wdig[KEYBYTES];
+        if (digest && strcmp(digest, "hfscx-256") == 0) {
+            hfscx_256(in_buf, in_len, NULL, wdig);
+            wmsg = wdig; wmlen = KEYBYTES;
+        } else {
+            wmsg = in_buf; wmlen = in_len;
+        }
+        BitArray sig[WOTS_L];
+        hpks_wots_sign(sig, wmsg, wmlen, seed_ba.b, leaf_idx);
+        free(in_buf);
+
+        uint8_t blob[WOTS_L * KEYBYTES];
+        wots_blob_pack(blob, sig);
+        uint8_t *ib = (uint8_t *)malloc(DER_INT_LEN(sizeof blob));
+        uint8_t iell[DER_INT_LEN(8)]; size_t lb, lell;
+        if (!ib) die("out of memory");
+        der_int_enc(blob, sizeof blob, ib, &lb);
+        der_i_uint(WOTS_L, iell, &lell);
+        const uint8_t *it[2] = {ib, iell}; size_t il[2] = {lb, lell};
+        seq_and_write(it, il, 2, PEM_HPKS_WOTS_SIG, out_path);
+        free(ib);
+        wots_write_idx(key_path, 1);
+        fprintf(stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.\n");
+        return;
+    }
+
     if (digest && strcmp(digest, "hfscx-256") == 0) {
         /* Pre-hash: sign the 32-byte digest. */
         hfscx_256(in_buf, in_len, NULL, msg_bytes);
@@ -1948,6 +2084,35 @@ static void cmd_verify(int argc, char **argv)
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
     uint8_t msg_bytes[KEYBYTES];
+
+    /* HPKS-WOTS-F verifies against the full message (hashed internally). */
+    if (strcmp(algo, "hpks-wots") == 0) {
+        const uint8_t *wmsg; size_t wmlen; uint8_t wdig[KEYBYTES];
+        if (digest && strcmp(digest, "hfscx-256") == 0) {
+            hfscx_256(in_buf, in_len, NULL, wdig);
+            wmsg = wdig; wmlen = KEYBYTES;
+        } else {
+            wmsg = in_buf; wmlen = in_len;
+        }
+        PemKey pubk; pem_key_load(&pubk, pubkey_path);
+        if (strcmp(pubk.label, PEM_HPKS_WOTS_PUB) != 0)
+            dief("verify: expected HPKS-WOTS public key, got: %s", pubk.label);
+        BitArray pk[WOTS_L];
+        wots_blob_unpack(pk, pubk.vals[0], pubk.vlens[0]);
+        pem_key_free(&pubk);
+
+        PemKey sigk; pem_key_load(&sigk, sig_path);
+        if (strcmp(sigk.label, PEM_HPKS_WOTS_SIG) != 0)
+            dief("verify: expected HPKS-WOTS signature, got: %s", sigk.label);
+        BitArray sig[WOTS_L];
+        wots_blob_unpack(sig, sigk.vals[0], sigk.vlens[0]);
+        pem_key_free(&sigk);
+
+        int ok = hpks_wots_verify(wmsg, wmlen, sig, pk);
+        free(in_buf);
+        if (ok) { puts("Signature OK");        exit(0); }
+        else    { puts("Verification FAILED"); exit(1); }
+    }
 
     if (digest && strcmp(digest, "hfscx-256") == 0) {
         hfscx_256(in_buf, in_len, NULL, msg_bytes);
@@ -2611,9 +2776,10 @@ static void usage(void)
 "    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256]\n"
-"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots\n"
 "    rnl-sigma: key = hkex-rnl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
+"    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
 "\n"
 "  verify --algo ALGO [--pubkey PUB] --in FILE --sig SIG [--digest hfscx-256]\n"

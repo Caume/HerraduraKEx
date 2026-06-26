@@ -60,6 +60,9 @@
 #define PEM_HPKST_PARTIAL   "HERRADURA HPKST PARTIAL"
 #define PEM_HPKST_SIG       "HERRADURA HPKST SIGNATURE"
 #define PEM_HDRBG_STATE     "HERRADURA HDRBG STATE"
+#define PEM_HPKS_WOTS_PRIV  "HERRADURA HPKS-WOTS PRIVATE KEY"
+#define PEM_HPKS_WOTS_PUB   "HERRADURA HPKS-WOTS PUBLIC KEY"
+#define PEM_HPKS_WOTS_SIG   "HERRADURA HPKS-WOTS SIGNATURE"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros

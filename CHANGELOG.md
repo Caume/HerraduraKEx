@@ -4,6 +4,28 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.70] - 2026-06-26
+
+### Feature — CLI: HPKS-WOTS-F one-time signatures in genpkey/sign/verify (TODO #120)
+
+- **`HerraduraCli/herradura.py`, `herradura_cli.c`, `herradura_cli.go`:** added
+  `genpkey --algo hpks-wots`, `sign --algo hpks-wots`, and `verify --algo hpks-wots`,
+  exposing the standalone Winternitz one-time signature (the primitive underlying the
+  existing `hpks-xmss` wrapper).
+- **Wire format:** new PEM objects `HERRADURA HPKS-WOTS PRIVATE KEY`
+  (`SEQ(seed[32], leaf_idx)`), `… PUBLIC KEY` and `… SIGNATURE`
+  (`SEQ(blob[ℓ·32], ℓ)` with ℓ=67 chain values). Byte-for-byte interoperable across the
+  three CLIs.
+- **One-time enforcement:** signing burns the key via a `<key>.idx` state file
+  (0 = unused, 1 = burned); a second `sign` is refused with a clear error. WOTS signs the
+  full message (hashed internally), bypassing the single-block truncation other sign algos use.
+- **`CliTest/test_wots.sh` (new):** 9-way sign/verify interop matrix, per-language reuse
+  refusal, tampered-message rejection, and wrong-public-key rejection (18/18 pass).
+- **`docs/TUTORIAL.md`** and the three CLI usage headers document the algorithm with a
+  prominent one-time-reuse warning.
+
+---
+
 ## [1.9.69] - 2026-06-24
 
 ### Feature — CLI: `rand` command for HDRBG deterministic byte generation (TODO #119)

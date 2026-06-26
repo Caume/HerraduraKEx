@@ -12,6 +12,8 @@
 #   python3 herradura.py dec     --algo hske-duplex --key sk.pem --in cipher.pem --ad hdr --out plain.bin
 #   python3 herradura.py sign    --algo hpks      --key sig.pem --in msg.bin --out s.pem
 #   python3 herradura.py sign    --algo hpks-nl   --key sig.pem --in large.bin --digest hfscx-256 --out s.pem
+#   python3 herradura.py genpkey --algo hpks-wots --out otk.pem            # ONE-TIME key
+#   python3 herradura.py sign    --algo hpks-wots --key otk.pem --in msg.bin --out s.pem  # signs once
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
 #   python3 herradura.py verify  --algo hpks-nl   --pubkey pub.pem --in large.bin --digest hfscx-256 --sig s.pem
 #   python3 herradura.py dgst                     --in file.bin               # hex to stdout
@@ -95,6 +97,7 @@ _PRIV_ALGOS = {
     'hpks-zkp-nl': 'HERRADURA ZKP-NL PRIVATE KEY',
     'oprf':        'HERRADURA OPRF PRIVATE KEY',
     'hpks-xmss':   'HERRADURA HPKS-XMSS PRIVATE KEY',
+    'hpks-wots':   'HERRADURA HPKS-WOTS PRIVATE KEY',
 }
 
 _PUB_ALGOS = {k: v.replace('PRIVATE', 'PUBLIC') for k, v in _PRIV_ALGOS.items()}
@@ -378,6 +381,90 @@ def _xmss_read_idx(key_path: str, h: int) -> int:
 
 def _xmss_write_idx(key_path: str, next_idx: int):
     open(_xmss_state_path(key_path), 'w').write(str(next_idx) + '\n')
+
+
+# ---------------------------------------------------------------------------
+# HPKS-WOTS-F one-time signature codec (TODO #120)
+#
+# A WOTS-F key signs EXACTLY ONCE.  The private key is (master_seed, leaf_idx);
+# the public key is the list of ℓ=67 chain endpoints.  One-time use is enforced
+# via a `.idx` state file alongside the private key (0 = unused, 1 = burned).
+# ---------------------------------------------------------------------------
+
+_LABEL_WOTS_SIG = 'HERRADURA HPKS-WOTS SIGNATURE'
+
+
+def _encode_wots_privkey(master_seed: bytes, leaf_idx: int) -> str:
+    der = der_seq(der_int(int.from_bytes(master_seed, 'big'), 32),
+                  der_int(leaf_idx))
+    return pem_wrap(_PRIV_ALGOS['hpks-wots'], der)
+
+
+def _decode_wots_privkey(path):
+    """Returns (master_seed, leaf_idx)."""
+    label, der = _read_pem(path)
+    if label != _PRIV_ALGOS['hpks-wots']:
+        raise ValueError(f"Expected HPKS-WOTS private key, got {label!r}")
+    seed_int, leaf_idx = der_parse_seq(der)
+    return seed_int.to_bytes(32, 'big'), int(leaf_idx)
+
+
+def _encode_wots_pubkey(pk: list) -> str:
+    """Public key PEM: the ℓ chain endpoints (ℓ × 32 bytes) + ℓ."""
+    nbytes = KEYBITS // 8
+    blob = b''.join(v.uint.to_bytes(nbytes, 'big') for v in pk)
+    der = der_seq(der_int(int.from_bytes(blob, 'big'), len(blob)),
+                  der_int(len(pk)))
+    return pem_wrap(_PUB_ALGOS['hpks-wots'], der)
+
+
+def _decode_wots_pubkey(path):
+    """Returns pk as a list of ℓ BitArrays."""
+    label, der = _read_pem(path)
+    if label != _PUB_ALGOS['hpks-wots']:
+        raise ValueError(f"Expected HPKS-WOTS public key, got {label!r}")
+    blob_int, ell = der_parse_seq(der)
+    ell = int(ell)
+    nbytes = KEYBITS // 8
+    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
+            for i in range(ell)]
+
+
+def _pack_wots_sig(sig: list) -> str:
+    """Signature PEM: the ℓ chain values (ℓ × 32 bytes) + ℓ."""
+    nbytes = KEYBITS // 8
+    blob = b''.join(v.uint.to_bytes(nbytes, 'big') for v in sig)
+    der = der_seq(der_int(int.from_bytes(blob, 'big'), len(blob)),
+                  der_int(len(sig)))
+    return pem_wrap(_LABEL_WOTS_SIG, der)
+
+
+def _unpack_wots_sig(path: str):
+    """Returns the signature as a list of ℓ BitArrays."""
+    label, der = _read_pem(path)
+    if label != _LABEL_WOTS_SIG:
+        raise ValueError(f"Expected HPKS-WOTS signature, got {label!r}")
+    blob_int, ell = der_parse_seq(der)
+    ell = int(ell)
+    nbytes = KEYBITS // 8
+    blob = blob_int.to_bytes(ell * nbytes, 'big')
+    return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
+            for i in range(ell)]
+
+
+def _wots_is_used(key_path: str) -> bool:
+    sp = _xmss_state_path(key_path)   # reuse <key>.idx convention
+    if os.path.exists(sp):
+        try:
+            return int(open(sp).read().strip()) != 0
+        except Exception:
+            pass
+    return False
+
+
+def _wots_mark_used(key_path: str):
+    open(_xmss_state_path(key_path), 'w').write('1\n')
 
 
 def _load_zkp_nl_privkey(path):
@@ -767,6 +854,16 @@ def cmd_genpkey(args):
         if out_path and out_path != '-':
             _xmss_write_idx(out_path, 0)
 
+    elif algo == 'hpks-wots':
+        import secrets as _sec
+        master_seed = _sec.token_bytes(32)
+        pem_out = _encode_wots_privkey(master_seed, 0)
+        out_path = args.out
+        if out_path and out_path != '-':
+            _xmss_write_idx(out_path, 0)   # 0 = unused (one-time key)
+        print("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.",
+              file=sys.stderr)
+
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
@@ -800,6 +897,10 @@ def cmd_pkey(args):
         elif algo == 'hpks-xmss':
             master_seed, h, _, leaf_hashes, root = _decode_xmss_privkey(in_path)
             pem_out = _encode_xmss_pubkey(root, h)
+        elif algo == 'hpks-wots':
+            master_seed, leaf_idx = _decode_wots_privkey(in_path)
+            _sk, pk = hpks_wots_keygen(master_seed, leaf_idx)
+            pem_out = _encode_wots_pubkey(pk)
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -1184,6 +1285,19 @@ def cmd_sign(args):
         print(f"XMSS leaf {leaf_idx} used; {num_leaves - leaf_idx - 1} leaves remaining.",
               file=sys.stderr)
 
+    elif algo == 'hpks-wots':
+        if our_algo != 'hpks-wots':
+            sys.exit(f"hpks-wots sign: expected hpks-wots key, got {our_algo!r}")
+        if _wots_is_used(key_path):
+            sys.exit("sign: this HPKS-WOTS key was already used — WOTS keys are "
+                     "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
+        master_seed, leaf_idx = _decode_wots_privkey(key_path)
+        sig, _pk = hpks_wots_sign(in_bytes, master_seed, leaf_idx)
+        _write_file(args.out, _pack_wots_sig(sig))
+        _wots_mark_used(key_path)
+        print("HPKS-WOTS key burned (one-time use); do not sign again with it.",
+              file=sys.stderr)
+
     else:
         sys.exit(f"sign: unsupported algorithm {algo!r}")
 
@@ -1400,6 +1514,17 @@ def cmd_verify(args):
         root, h = _decode_xmss_pubkey(pubkey_path)
         sig = _unpack_xmss_sig(sig_path)
         ok  = hpks_xmss_verify(in_bytes, sig, root)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    elif algo == 'hpks-wots':
+        pk  = _decode_wots_pubkey(pubkey_path)
+        sig = _unpack_wots_sig(sig_path)
+        ok  = hpks_wots_verify(in_bytes, sig, pk)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -1852,7 +1977,8 @@ def build_parser():
     # sign
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
     sg.add_argument('--algo', required=True,
-                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo', 'hpks-xmss'])
+                    choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
+                             'hpks-xmss', 'hpks-wots'])
     sg.add_argument('--key',  required=True)
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
@@ -1866,7 +1992,7 @@ def build_parser():
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
     vf.add_argument('--algo', required=True,
                     choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
-                             'hpks-xmss', 'hpks-t'])
+                             'hpks-xmss', 'hpks-wots', 'hpks-t'])
     vf.add_argument('--pubkey', default=None)
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)

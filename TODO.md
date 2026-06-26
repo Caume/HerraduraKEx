@@ -6518,7 +6518,16 @@ surface.  A one-time signature is useful on its own (e.g. constrained-device sin
    and cross-CLI interop (Python sign → C/Go verify and vice versa).
 5. Document the one-time constraint prominently in the CLI help and `docs/TUTORIAL.md`.
 
-Status: **OPEN**
+Status: **DONE v1.9.70** — `genpkey`/`sign`/`verify --algo hpks-wots` added to the Python
+(`herradura.py`), C (`herradura_cli.c`), and Go (`herradura_cli_go`) CLIs.  New PEM objects
+`HERRADURA HPKS-WOTS PRIVATE KEY` (`SEQ(seed[32], leaf_idx)`),
+`… PUBLIC KEY` and `… SIGNATURE` (`SEQ(blob[ℓ·32], ℓ)`), byte-for-byte interoperable.
+One-time use is enforced via a `<key>.idx` burn file (0=unused, 1=burned); a second sign
+is refused with a clear error.  WOTS signs the full message (hashed internally), bypassing
+the single-block truncation used by the other sign algos.  `CliTest/test_wots.sh` covers the
+9-way sign/verify interop matrix, per-language reuse refusal, tampered-message rejection, and
+wrong-public-key rejection (18/18 pass).  Documented in the three CLI usage headers and
+`docs/TUTORIAL.md` (with a prominent one-time-reuse warning).
 
 ---
 

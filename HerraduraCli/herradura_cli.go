@@ -55,6 +55,10 @@ const (
 	lblHpksSternPub = "HERRADURA HPKS-STERN PUBLIC KEY"
 	lblHpkeSternPub = "HERRADURA HPKE-STERN PUBLIC KEY"
 
+	lblHpksWotsPriv = "HERRADURA HPKS-WOTS PRIVATE KEY"
+	lblHpksWotsPub  = "HERRADURA HPKS-WOTS PUBLIC KEY"
+	lblHpksWotsSig  = "HERRADURA HPKS-WOTS SIGNATURE"
+
 	lblSession = "HERRADURA SESSION KEY"
 	lblRnlResp = "HERRADURA HKEX-RNL RESPONSE"
 	lblCT      = "HERRADURA CIPHERTEXT"
@@ -88,6 +92,7 @@ var privToAlgo = map[string]string{
 	lblHpkeNLPriv:    "hpke-nl",
 	lblHpksSternPriv: "hpks-stern",
 	lblHpkeSternPriv: "hpke-stern",
+	lblHpksWotsPriv:  "hpks-wots",
 }
 
 var algoToPrivLbl = map[string]string{
@@ -99,6 +104,7 @@ var algoToPrivLbl = map[string]string{
 	"hpke-nl":    lblHpkeNLPriv,
 	"hpks-stern": lblHpksSternPriv,
 	"hpke-stern": lblHpkeSternPriv,
+	"hpks-wots":  lblHpksWotsPriv,
 }
 
 var algoToPubLbl = map[string]string{
@@ -110,6 +116,7 @@ var algoToPubLbl = map[string]string{
 	"hpke-nl":    lblHpkeNLPub,
 	"hpks-stern": lblHpksSternPub,
 	"hpke-stern": lblHpkeSternPub,
+	"hpks-wots":  lblHpksWotsPub,
 }
 
 var classicalAlgos = map[string]bool{
@@ -455,6 +462,56 @@ func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
 	return NewBitArray(n, new(big.Int).SetBytes(digest))
 }
 
+// ── HPKS-WOTS-F one-time signature helpers (TODO #120) ───────────────────────
+//
+// One-time use is enforced via a `<key>.idx` state file (0 = unused, 1 = burned).
+// A WOTS public key / signature is WotsL chain values, serialised as a single
+// (WotsL * 32)-byte DER INTEGER blob.
+
+func wotsIdxPath(keyPath string) string { return keyPath + ".idx" }
+
+func wotsIsUsed(keyPath string) bool {
+	b, err := os.ReadFile(wotsIdxPath(keyPath))
+	if err != nil {
+		return false
+	}
+	v := strings.TrimSpace(string(b))
+	return v != "" && v != "0"
+}
+
+func wotsWriteIdx(keyPath string, val int) {
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+}
+
+func wotsBlobPack(vals [WotsL]*BitArray) []byte {
+	blob := make([]byte, WotsL*32)
+	for i := 0; i < WotsL; i++ {
+		vals[i].Val.FillBytes(blob[i*32 : (i+1)*32])
+	}
+	return blob
+}
+
+func wotsBlobUnpack(v []byte) [WotsL]*BitArray {
+	blob := make([]byte, WotsL*32)
+	if len(v) > len(blob) {
+		v = v[len(v)-len(blob):]
+	}
+	copy(blob[len(blob)-len(v):], v)
+	var out [WotsL]*BitArray
+	for i := 0; i < WotsL; i++ {
+		out[i] = NewBitArray(256, new(big.Int).SetBytes(blob[i*32:(i+1)*32]))
+	}
+	return out
+}
+
+func encodeWotsBlobPEM(vals [WotsL]*BitArray, label string) string {
+	blob := wotsBlobPack(vals)
+	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
+	ed, _ := derIntSmall(WotsL)
+	seq, _ := DerSeqEnc(bd, ed)
+	return PemWrap(label, seq)
+}
+
 // ── genpkey ──────────────────────────────────────────────────────────────────
 
 func cmdGenpkey(args []string) {
@@ -525,6 +582,25 @@ func cmdGenpkey(args []string) {
 			os.Exit(1)
 		}
 		pem = PemWrap(lblOprfPriv, seq)
+
+	case *algo == "hpks-wots":
+		seed := NewRandBitArray(256).Bytes() // 32-byte master seed
+		sd, e1 := derIntBig(new(big.Int).SetBytes(seed), 32)
+		ld, e2 := derIntSmall(0) // leaf_idx = 0
+		if e1 != nil || e2 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER encode error")
+			os.Exit(1)
+		}
+		seq, e3 := DerSeqEnc(sd, ld)
+		if e3 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER seq error")
+			os.Exit(1)
+		}
+		pem = PemWrap(lblHpksWotsPriv, seq)
+		if *out != "-" {
+			wotsWriteIdx(*out, 0)
+		}
+		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
 
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
@@ -627,6 +703,16 @@ func cmdPkey(args []string) {
 			seed := NewBitArray(n, new(big.Int).SetBytes(ints[1]))
 			syn  := SternSyndrome(seed, e)
 			pem, err = encodeSternPub(syn, seed, n, algo)
+
+		case algo == "hpks-wots":
+			seed := make([]byte, 32)
+			new(big.Int).SetBytes(ints[0]).FillBytes(seed)
+			var leafIdx uint32
+			if len(ints) >= 2 {
+				leafIdx = uint32(bytesToInt(ints[1]))
+			}
+			_, pk := HpksWotsKeygen(seed, leafIdx)
+			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
 		}
 
 		if err != nil {
@@ -1935,6 +2021,26 @@ func cmdSign(args []string) {
 			die("sign", err)
 		}
 
+	case "hpks-wots":
+		if wotsIsUsed(*key) {
+			fmt.Fprintln(os.Stderr, "sign: this HPKS-WOTS key was already used — WOTS keys "+
+				"are ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).")
+			os.Exit(1)
+		}
+		seed := make([]byte, 32)
+		new(big.Int).SetBytes(ourInts[0]).FillBytes(seed)
+		var leafIdx uint32
+		if len(ourInts) >= 2 {
+			leafIdx = uint32(bytesToInt(ourInts[1]))
+		}
+		sig := HpksWotsSign(inBytes, seed, leafIdx)
+		pem := encodeWotsBlobPEM(sig, lblHpksWotsSig)
+		if err := writeString(*out, pem); err != nil {
+			die("sign", err)
+		}
+		wotsWriteIdx(*key, 1)
+		fmt.Fprintln(os.Stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.")
+
 	default:
 		fmt.Fprintf(os.Stderr, "sign: unsupported algorithm %q\n", *algo)
 		os.Exit(1)
@@ -2092,6 +2198,21 @@ func cmdVerify(args []string) {
 			die("verify", err)
 		}
 		if HpksSternFVerify(msg, sternSig, seed, synInt) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+
+	case "hpks-wots":
+		pk := wotsBlobUnpack(theirInts[0])
+		_, sigInts, serr := readPEMInts(*sig)
+		if serr != nil {
+			die("verify", serr)
+		}
+		sigArr := wotsBlobUnpack(sigInts[0])
+		if HpksWotsVerify(inBytes, sigArr, pk) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {
@@ -2657,7 +2778,7 @@ Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern
 Algorithms (kex):           hkex-gf hkex-rnl
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-duplex hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
-Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo
+Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time)
   fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]
   twk      --encrypt|--decrypt --key SK [--sector N] [--bidx N] --in FILE [--out FILE]
 `)

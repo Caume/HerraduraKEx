@@ -133,6 +133,30 @@ $CLI verify --algo hpks --pubkey sign_pub.pem --in msg.bin --sig sig.pem
 # Prints: Signature OK
 ```
 
+#### One-time signatures (HPKS-WOTS-F)
+
+`hpks-wots` is a hash-based **one-time** signature (Winternitz OTS over HFSCX-256).
+A WOTS key may sign **exactly one** message; the CLI burns the key after signing
+(tracked in a `<key>.idx` file next to the private key) and refuses any reuse.
+
+```bash
+$CLI genpkey --algo hpks-wots --out otk.pem          # ONE-TIME key
+$CLI pkey    --in otk.pem --pubout --out otk_pub.pem
+
+$CLI sign   --algo hpks-wots --key otk.pem --in msg.bin --out sig.pem   # burns otk.pem
+$CLI verify --algo hpks-wots --pubkey otk_pub.pem --in msg.bin --sig sig.pem
+# Prints: Signature OK
+
+$CLI sign   --algo hpks-wots --key otk.pem --in msg.bin --out sig2.pem
+# Error: this HPKS-WOTS key was already used — WOTS keys are ONE-TIME.
+```
+
+> **Reusing a WOTS key to sign a second message catastrophically breaks its
+> security.** Generate a fresh key per message, or use the many-time `hpks-xmss`
+> wrapper (library API) which manages a tree of WOTS leaves.  Signatures are
+> byte-for-byte interoperable across the Python, C, and Go CLIs
+> (`CliTest/test_wots.sh`).
+
 ### El Gamal encryption (HPKE)
 
 ```bash
