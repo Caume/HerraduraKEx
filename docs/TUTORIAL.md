@@ -162,6 +162,31 @@ $CLI kex --algo hkex-rnl --our alice_rnl.pem --their bob_resp.pem \
 # Both bob_resp.pem and alice_sk_rnl.pem hold the same session key.
 ```
 
+### Deterministic random bytes (HDRBG)
+
+The `rand` command exposes the forward-secure HDRBG.  It is a **deterministic**
+DRBG, *not* an OS entropy source: identical seed + personalization + byte count
+produce byte-identical output across the Python, C, and Go CLIs.
+
+```bash
+# Generate 64 deterministic bytes from a seed (hex to stdout)
+$CLI rand --seed seed.bin --bytes 64 --hex
+
+# Domain-separate two streams from the same seed with --personalization
+$CLI rand --seed seed.bin --personalization "stream-A" --bytes 32 --out a.bin
+
+# Checkpoint/resume: --state writes (and later resumes) a DRBG STATE PEM, so a
+# long stream can be produced across several invocations without repetition.
+$CLI rand --seed seed.bin --state drbg.pem --bytes 32 --out part1.bin
+$CLI rand --state drbg.pem               --bytes 32 --out part2.bin   # continues
+
+# Fold fresh entropy into a saved state with --reseed (forward-secure advance)
+$CLI rand --state drbg.pem --reseed more_entropy.bin --bytes 32 --out part3.bin
+```
+
+`--out` defaults to stdout; `--hex` hex-encodes the output.  See
+`CliTest/test_rand.sh` for the cross-language KAT and state-resume matrix.
+
 See `CliTest/` for full integration test scripts covering all algorithms
 and cross-language interoperability.
 

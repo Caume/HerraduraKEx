@@ -802,6 +802,16 @@ func (d *HDrbg) DrbgReseed(entropy []byte) {
 	d.Blocks = 0
 }
 
+// DrbgState returns the raw 32-byte internal state, for checkpointing the
+// DRBG between invocations (see the CLI `rand --state` flow, TODO #119).
+func (d *HDrbg) DrbgState() []byte { return d.state.Bytes() }
+
+// DrbgFromState reconstructs a DRBG from a checkpointed 32-byte state and the
+// output-block counter.  Inverse of DrbgState + .Blocks.
+func DrbgFromState(state []byte, blocks uint64) *HDrbg {
+	return &HDrbg{state: NewBitArray(256, new(big.Int).SetBytes(state)), Blocks: blocks}
+}
+
 // ---------------------------------------------------------------------------
 // HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 // ---------------------------------------------------------------------------

@@ -6481,7 +6481,18 @@ number of deterministic bytes, with optional reseed.
    distinct-personalization-separation checks.
 5. Document the subcommand and note it is a deterministic DRBG (not an OS entropy source).
 
-Status: **OPEN**
+Status: **DONE v1.9.69** — `rand` subcommand added to the Python (`herradura.py`), C
+(`herradura_cli.c`), and Go (`herradura_cli_go`) CLIs:
+`rand (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N]
+[--hex] [--out FILE]`.  Output defaults to raw bytes on stdout; `--hex` hex-encodes.
+A `HERRADURA HDRBG STATE` PEM (`SEQ(state[32], blocks)`) checkpoints/resumes the DRBG
+across invocations, and `--reseed` folds fresh entropy into a saved state.  The Go package
+gained exported `DrbgState()` / `DrbgFromState()` accessors (the `state` field was
+unexported) for state persistence.  `CliTest/test_rand.sh` verifies determinism, 3-language
+byte-identical KAT, personalization separation, reseed-changes-stream, and the full 9-way
+cross-language state checkpoint/resume matrix (20/20 pass).  Documented in the three CLI
+usage headers and `docs/TUTORIAL.md` (with the "deterministic DRBG, not an OS entropy
+source" caveat).
 
 ---
 

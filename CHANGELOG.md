@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.69] - 2026-06-24
+
+### Feature — CLI: `rand` command for HDRBG deterministic byte generation (TODO #119)
+
+- **`HerraduraCli/herradura.py`, `herradura_cli.c`, `herradura_cli.go`:** added a `rand`
+  subcommand exposing the forward-secure HDRBG —
+  `rand (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N]
+  [--hex] [--out FILE]`. Deterministic DRBG (not an OS entropy source); identical
+  seed/personalization/byte-count is byte-identical across the three CLIs.
+- **State checkpoint/resume:** new `HERRADURA HDRBG STATE` PEM (`SEQ(state[32], blocks)`)
+  lets a stream be produced across invocations via `--state`; `--reseed` folds fresh
+  entropy into a saved state.
+- **`herradura/herradura.go`:** exported `DrbgState()` and `DrbgFromState()` accessors so
+  the Go CLI can checkpoint/restore the (previously unexported) DRBG state.
+- **`HerraduraCli/primitives.py`:** re-export `HDrbg` / `drbg_seed` / `drbg_generate` /
+  `drbg_reseed`.
+- **`CliTest/test_rand.sh` (new):** determinism, 3-language KAT, personalization separation,
+  reseed-changes-stream, and the full 9-way cross-language state checkpoint/resume matrix
+  (20/20 pass).
+- **`docs/TUTORIAL.md`** and the three CLI usage headers document the command.
+
+---
+
 ## [1.9.68] - 2026-06-24
 
 ### Feature — CLI: HSKE-NL-V2-Duplex single-pass AEAD in `enc`/`dec` (TODO #118)

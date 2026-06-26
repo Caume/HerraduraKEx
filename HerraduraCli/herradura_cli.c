@@ -1040,6 +1040,95 @@ static void cmd_dgst(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * rand — HDRBG deterministic byte generation (TODO #119)
+ *
+ * Deterministic DRBG (NOT an OS entropy source): identical seed +
+ * personalization + byte count yield byte-identical output across the
+ * Python, C, and Go CLIs.  State can be checkpointed to a
+ * 'HERRADURA HDRBG STATE' PEM (state[32], blocks) and resumed.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void write_hdrbg_state(const HDrbg *d, const char *path)
+{
+    uint8_t is[DER_INT_LEN(KEYBYTES)], ib[DER_INT_LEN(8)];
+    size_t ls, lb;
+    der_int_enc(d->state.b, KEYBYTES, is, &ls);
+    der_i_uint(d->blocks, ib, &lb);
+    const uint8_t *it[2] = {is, ib}; size_t il[2] = {ls, lb};
+    seq_and_write(it, il, 2, PEM_HDRBG_STATE, path);
+}
+
+static void load_hdrbg_state(HDrbg *d, const char *path)
+{
+    PemKey k;
+    pem_key_load(&k, path);
+    if (strcmp(k.label, PEM_HDRBG_STATE) != 0)
+        dief("rand: expected HDRBG STATE PEM, got: %s", k.label);
+    if (k.n_items < 2) die("rand: malformed HDRBG state");
+    BitArray st;
+    ba_from_ra(&st, k.vals[0], k.vlens[0]);
+    d->state = st;
+    d->blocks = parse_be_uint(k.vals[1], k.vlens[1]);
+    pem_key_free(&k);
+}
+
+static void cmd_rand(int argc, char **argv)
+{
+    const char *seed_path   = get_arg(argc, argv, "--seed");
+    const char *state_path  = get_arg(argc, argv, "--state");
+    const char *pers        = get_arg(argc, argv, "--personalization");
+    const char *reseed_path = get_arg(argc, argv, "--reseed");
+    const char *bytes_arg   = get_arg(argc, argv, "--bytes");
+    const char *out_path    = get_arg(argc, argv, "--out");
+    int hex = has_flag(argc, argv, "--hex");
+
+    HDrbg d;
+    if (seed_path) {
+        size_t slen, plen = pers ? strlen(pers) : 0;
+        uint8_t *sbuf = read_binary_file(seed_path, &slen);
+        drbg_seed(&d, sbuf, slen, (const uint8_t *)(pers ? pers : ""), plen);
+        free(sbuf);
+    } else if (state_path) {
+        load_hdrbg_state(&d, state_path);
+    } else {
+        die("rand: one of --seed or --state is required");
+    }
+
+    if (reseed_path) {
+        size_t rlen;
+        uint8_t *rbuf = read_binary_file(reseed_path, &rlen);
+        drbg_reseed(&d, rbuf, rlen);
+        free(rbuf);
+    }
+
+    if (bytes_arg) {
+        long n = strtol(bytes_arg, NULL, 10);
+        if (n < 0) die("rand: --bytes must be non-negative");
+        uint8_t *out = (uint8_t *)malloc((size_t)n ? (size_t)n : 1);
+        if (!out) die("rand: out of memory");
+        if (!drbg_generate(&d, out, (size_t)n))
+            die("rand: output limit reached — reseed required");
+        if (!out_path || strcmp(out_path, "-") == 0) {
+            if (hex) { long i; for (i = 0; i < n; i++) printf("%02x", out[i]); putchar('\n'); }
+            else fwrite(out, 1, (size_t)n, stdout);
+        } else if (hex) {
+            char *hbuf = (char *)malloc((size_t)n * 2 + 2);
+            long i; for (i = 0; i < n; i++) sprintf(hbuf + i * 2, "%02x", out[i]);
+            hbuf[n * 2] = '\n';
+            write_binary_file(out_path, (uint8_t *)hbuf, (size_t)n * 2 + 1);
+            free(hbuf);
+        } else {
+            write_binary_file(out_path, out, (size_t)n);
+        }
+        free(out);
+    } else if (!reseed_path) {
+        die("rand: nothing to do (specify --bytes and/or --reseed)");
+    }
+
+    if (state_path) write_hdrbg_state(&d, state_path);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * enc
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -2551,6 +2640,12 @@ static void usage(void)
 "    Compute HFSCX-256 digest.  Without --out: hex to stdout.\n"
 "    With --out FILE: HERRADURA DIGEST PEM.\n"
 "\n"
+"  rand (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE]\n"
+"       [--bytes N] [--hex] [--out FILE]\n"
+"    HDRBG deterministic byte generation (NOT an OS entropy source).\n"
+"    --seed instantiates; --state resumes/checkpoints a HERRADURA HDRBG STATE PEM.\n"
+"    Same seed+personalization+N is byte-identical across the Python/C/Go CLIs.\n"
+"\n"
 "  fpe (--encrypt|--decrypt) --key SK --context CTX --in FILE [--out FILE]\n"
 "    Format-preserving encrypt/decrypt a 32-byte block (78.A).\n"
 "    Key: HERRADURA SESSION KEY PEM.  CTX: arbitrary context string.\n"
@@ -2594,6 +2689,7 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "sign")    == 0) { cmd_sign(argc, argv);    return 0; }
     if (strcmp(cmd, "verify")  == 0) { cmd_verify(argc, argv);  return 0; }
     if (strcmp(cmd, "dgst")    == 0) { cmd_dgst(argc, argv);    return 0; }
+    if (strcmp(cmd, "rand")    == 0) { cmd_rand(argc, argv);    return 0; }
     if (strcmp(cmd, "encfile") == 0) { cmd_encfile(argc, argv); return 0; }
     if (strcmp(cmd, "decfile") == 0) { cmd_decfile(argc, argv); return 0; }
     if (strcmp(cmd, "fpe")          == 0) { cmd_fpe(argc, argv);          return 0; }

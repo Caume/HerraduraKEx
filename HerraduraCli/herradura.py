@@ -16,6 +16,8 @@
 #   python3 herradura.py verify  --algo hpks-nl   --pubkey pub.pem --in large.bin --digest hfscx-256 --sig s.pem
 #   python3 herradura.py dgst                     --in file.bin               # hex to stdout
 #   python3 herradura.py dgst    --algo hfscx-256 --in file.bin --out d.pem   # PEM digest file
+#   python3 herradura.py rand    --seed seed.bin  --bytes 64 --hex            # deterministic bytes
+#   python3 herradura.py rand    --state st.pem   --bytes 64 --out r.bin      # resume DRBG stream
 #   python3 herradura.py encfile --algo hske-nla1 --key sk.pem --in large.bin --out cipher.hkx
 #   python3 herradura.py decfile --algo hske-nla1 --key sk.pem --in cipher.hkx --out plain.bin
 #
@@ -55,6 +57,7 @@ from primitives import (
     hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
+    HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
@@ -109,6 +112,7 @@ _LABEL_ZKP_NL      = 'HERRADURA ZKP-NL PROOF'
 _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — client keeps this
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
+_LABEL_HDRBG_STATE = 'HERRADURA HDRBG STATE'         # (state[32], blocks) — DRBG checkpoint (TODO #119)
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
@@ -1561,6 +1565,65 @@ def cmd_dgst(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-command: rand — HDRBG deterministic byte generation (TODO #119)
+#
+# Deterministic DRBG (NOT an OS entropy source): identical seed +
+# personalization + byte count yield byte-identical output across the
+# Python, C, and Go CLIs.  A DRBG state can be checkpointed to a
+# 'HERRADURA HDRBG STATE' PEM (state[32], blocks) and resumed later.
+# ---------------------------------------------------------------------------
+
+def _encode_hdrbg_state(drbg):
+    der = der_seq(der_int(drbg.state.uint, KEYBITS // 8),
+                  der_int(drbg.blocks))
+    return pem_wrap(_LABEL_HDRBG_STATE, der)
+
+
+def _decode_hdrbg_state(path):
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_HDRBG_STATE:
+        raise ValueError(f"Expected HDRBG STATE PEM, got {label!r}")
+    state_int, blocks = ints
+    return HDrbg(BitArray(KEYBITS, state_int), blocks)
+
+
+def cmd_rand(args):
+    # Obtain the DRBG: fresh from --seed, or resumed from --state.
+    if args.seed:
+        pers = (args.personalization or '').encode()
+        drbg = drbg_seed(_read_file(args.seed), pers)
+    elif args.state:
+        drbg = _decode_hdrbg_state(args.state)
+    else:
+        sys.exit("rand: one of --seed or --state is required")
+
+    if getattr(args, 'reseed', None):
+        drbg_reseed(drbg, _read_file(args.reseed))
+
+    if args.bytes is not None:
+        if args.bytes < 0:
+            sys.exit("rand: --bytes must be non-negative")
+        try:
+            out = drbg_generate(drbg, args.bytes)
+        except RuntimeError as e:
+            sys.exit(f"rand: {e}")
+        if args.hex:
+            data = (out.hex() + '\n').encode()
+        else:
+            data = out
+        if args.out == '-':
+            sys.stdout.buffer.write(data)
+        else:
+            _write_file(args.out, data)
+    elif not getattr(args, 'reseed', None):
+        sys.exit("rand: nothing to do (specify --bytes and/or --reseed)")
+
+    # Persist the (advanced/reseeded) state if a state file was given.
+    if args.state:
+        _write_file(args.state, _encode_hdrbg_state(drbg))
+
+
+# ---------------------------------------------------------------------------
 # Sub-command: fpe (78.A)
 # ---------------------------------------------------------------------------
 
@@ -1880,6 +1943,24 @@ def build_parser():
     dg.add_argument('--out', default='-',
                     help='Output: - prints hex to stdout (default); file path writes PEM digest')
 
+    # rand (HDRBG — deterministic byte generation, TODO #119)
+    rd = sub.add_parser('rand',
+                        help='Generate deterministic bytes from an HDRBG seed/state')
+    rd.add_argument('--seed', default=None,
+                    help='Seed/entropy file to instantiate the DRBG')
+    rd.add_argument('--state', default=None,
+                    help='HDRBG STATE PEM to resume from and/or update (checkpoint)')
+    rd.add_argument('--personalization', default=None,
+                    help='Personalization string (with --seed only)')
+    rd.add_argument('--reseed', default=None,
+                    help='Entropy file to fold into the state before generating')
+    rd.add_argument('--bytes', type=int, default=None,
+                    help='Number of output bytes to generate')
+    rd.add_argument('--hex', action='store_true',
+                    help='Hex-encode the output instead of raw bytes')
+    rd.add_argument('--out', default='-',
+                    help='Output file (default: - = stdout)')
+
     # fpe (78.A)
     fp = sub.add_parser('fpe',
                         help='Format-preserving encrypt/decrypt a 256-bit block (78.A)')
@@ -1976,6 +2057,7 @@ _DISPATCH = {
     'encfile': cmd_encfile,
     'decfile': cmd_decfile,
     'dgst':    cmd_dgst,
+    'rand':         cmd_rand,
     'fpe':          cmd_fpe,
     'twk':          cmd_twk,
     'oprf-blind':     cmd_oprf_blind,

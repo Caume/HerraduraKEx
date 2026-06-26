@@ -59,6 +59,7 @@
 #define PEM_HPKST_AGGREGATE "HERRADURA HPKST AGGREGATE"
 #define PEM_HPKST_PARTIAL   "HERRADURA HPKST PARTIAL"
 #define PEM_HPKST_SIG       "HERRADURA HPKST SIGNATURE"
+#define PEM_HDRBG_STATE     "HERRADURA HDRBG STATE"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros
