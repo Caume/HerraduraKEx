@@ -157,6 +157,38 @@ $CLI sign   --algo hpks-wots --key otk.pem --in msg.bin --out sig2.pem
 > byte-for-byte interoperable across the Python, C, and Go CLIs
 > (`CliTest/test_wots.sh`).
 
+#### Anonymous ring signatures (HPKS-Stern-Ring)
+
+`hpks-ring` is a code-based **ring signature** (#78.I): one member of an ad-hoc
+group signs on behalf of the whole group, and a verifier confirms *some* member
+signed without learning **which** one.  Each ring member is an ordinary
+`hpks-stern` keypair; the ring is the ordered list of their public keys.
+
+```bash
+# Three members each generate an hpks-stern keypair and publish their public key
+for m in 0 1 2; do
+  $CLI genpkey --algo hpks-stern --out m$m.pem
+  $CLI pkey    --in m$m.pem --pubout --out m${m}_pub.pem
+done
+RING=m0_pub.pem,m1_pub.pem,m2_pub.pem
+
+# Member 1 signs anonymously on behalf of the ring (its index is hidden)
+$CLI sign   --algo hpks-ring --key m1.pem --ring "$RING" --in msg.bin --out sig.pem
+
+# Anyone verifies against the ring; the signer's identity is not revealed
+$CLI verify --algo hpks-ring --ring "$RING" --in msg.bin --sig sig.pem
+# Prints: Signature OK
+```
+
+The signer must be a member of `--ring` (its public key present), else signing is
+refused.  Verification is anonymous: it succeeds for a signature from *any* ring
+member and fails for non-members, a tampered message, or a different ring.
+Signatures are byte-for-byte interoperable across the Python, C, and Go CLIs
+(`CliTest/test_ring.sh`).
+
+> **Demo parameters.** Like `hpks-stern`, the ring signature uses N=256 / 32
+> Fiat-Shamir rounds, a low-soundness demo configuration — not for production use.
+
 ### El Gamal encryption (HPKE)
 
 ```bash

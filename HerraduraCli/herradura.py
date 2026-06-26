@@ -14,6 +14,8 @@
 #   python3 herradura.py sign    --algo hpks-nl   --key sig.pem --in large.bin --digest hfscx-256 --out s.pem
 #   python3 herradura.py genpkey --algo hpks-wots --out otk.pem            # ONE-TIME key
 #   python3 herradura.py sign    --algo hpks-wots --key otk.pem --in msg.bin --out s.pem  # signs once
+#   python3 herradura.py sign    --algo hpks-ring --key m1.pem --ring m0_pub.pem,m1_pub.pem,m2_pub.pem --in msg.bin --out s.pem
+#   python3 herradura.py verify  --algo hpks-ring --ring m0_pub.pem,m1_pub.pem,m2_pub.pem --in msg.bin --sig s.pem
 #   python3 herradura.py verify  --algo hpks      --pubkey sig.pem --in msg.bin --sig s.pem
 #   python3 herradura.py verify  --algo hpks-nl   --pubkey pub.pem --in large.bin --digest hfscx-256 --sig s.pem
 #   python3 herradura.py dgst                     --in file.bin               # hex to stdout
@@ -63,6 +65,7 @@ from primitives import (
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
+    hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
     rnl_sigma_sign, rnl_sigma_verify,
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
@@ -116,6 +119,7 @@ _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — cli
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 _LABEL_HDRBG_STATE = 'HERRADURA HDRBG STATE'         # (state[32], blocks) — DRBG checkpoint (TODO #119)
+_LABEL_RING_SIG    = 'HERRADURA HPKS-RING SIGNATURE'  # (k, rounds, n, blob) — ring signature (TODO #121)
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
@@ -789,6 +793,88 @@ def _unpack_stern_sig(path):
 
 
 # ---------------------------------------------------------------------------
+# HPKS-Stern-Ring signature codec (TODO #121)
+#
+# Member-major, round-major flat blob; per (member, round) entry:
+#   c0 || c1 || c2 || b(1 byte) || resp_a || resp_b   (each n-bit value = n/8 B).
+# resp_a is a BitArray when b != 0 (pi_seed), else an integer (sr); resp_b is
+# always an integer.  PEM: SEQ(k, rounds, n, blob).
+# ---------------------------------------------------------------------------
+
+def _pack_ring_sig(sig, n):
+    all_commits, all_challenges, all_responses = sig
+    k      = len(all_challenges)
+    rounds = len(all_challenges[0])
+    nbytes = n // 8
+
+    def _vb(v):
+        iv = v.uint if isinstance(v, BitArray) else int(v)
+        return iv.to_bytes(nbytes, 'big')
+
+    blob = bytearray()
+    for i in range(k):
+        for r in range(rounds):
+            c0, c1, c2 = all_commits[i][r]
+            ra, rb     = all_responses[i][r]
+            blob += _vb(c0) + _vb(c1) + _vb(c2)
+            blob += bytes([all_challenges[i][r] & 0xFF])
+            blob += _vb(ra) + _vb(rb)
+
+    der = der_seq(der_int(k), der_int(rounds), der_int(n),
+                  der_int(int.from_bytes(blob, 'big'), len(blob)))
+    return pem_wrap(_LABEL_RING_SIG, der)
+
+
+def _unpack_ring_sig(path):
+    """Return (sig, k, rounds, n) — sig = (all_commits, all_challenges, all_responses)."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_RING_SIG:
+        raise ValueError(f"Expected HPKS-RING SIGNATURE PEM, got {label!r}")
+    k, rounds, n, blob_int = (int(ints[0]), int(ints[1]), int(ints[2]), ints[3])
+    nbytes = n // 8
+    entry  = 5 * nbytes + 1
+    blob   = blob_int.to_bytes(k * rounds * entry, 'big')
+
+    all_commits    = [[None] * rounds for _ in range(k)]
+    all_challenges = [[0]    * rounds for _ in range(k)]
+    all_responses  = [[None] * rounds for _ in range(k)]
+    off = 0
+    for i in range(k):
+        for r in range(rounds):
+            c0 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
+            c1 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
+            c2 = BitArray(n, int.from_bytes(blob[off:off+nbytes], 'big')); off += nbytes
+            b  = blob[off]; off += 1
+            ra = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
+            rb = int.from_bytes(blob[off:off+nbytes], 'big'); off += nbytes
+            all_commits[i][r]    = (c0, c1, c2)
+            all_challenges[i][r] = b
+            all_responses[i][r]  = ((ra if b == 0 else BitArray(n, ra)), rb)
+    return (all_commits, all_challenges, all_responses), k, rounds, n
+
+
+def _load_ring_pubkeys(ring_arg):
+    """Parse a comma-separated list of hpks-stern public-key PEM paths.
+
+    Returns (ring_keys, n) where ring_keys[i] = (seed BitArray, syndrome int)."""
+    paths = [p for p in ring_arg.split(',') if p]
+    if len(paths) < 2:
+        sys.exit("hpks-ring: --ring needs at least 2 member public keys")
+    ring_keys, ring_n = [], None
+    for p in paths:
+        algo_i, ints_i = _decode_pubkey(p)
+        if algo_i != 'hpks-stern':
+            sys.exit(f"hpks-ring: ring member {p!r} is {algo_i!r}, expected hpks-stern")
+        syn_i, seed_i, n_i = ints_i
+        if ring_n is None:
+            ring_n = n_i
+        elif n_i != ring_n:
+            sys.exit("hpks-ring: all ring members must share the same n")
+        ring_keys.append((BitArray(n_i, seed_i), syn_i))
+    return ring_keys, ring_n
+
+
+# ---------------------------------------------------------------------------
 # Key-loading helper for enc/dec (accepts both SESSION KEY and RNL RESPONSE)
 # ---------------------------------------------------------------------------
 
@@ -1252,6 +1338,28 @@ def cmd_sign(args):
         sig  = hpks_stern_f_sign(msg, e_int, seed, syn, n)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
+    elif algo == 'hpks-ring':
+        print(_STERN_DEMO_WARNING, file=sys.stderr)
+        if our_algo != 'hpks-stern':
+            sys.exit(f"hpks-ring sign: signer key must be hpks-stern, got {our_algo!r}")
+        if not getattr(args, 'ring', None):
+            sys.exit("hpks-ring sign: --ring (comma-separated member public keys) required")
+        e_int, seed_int, n = our_ints
+        ring_keys, ring_n = _load_ring_pubkeys(args.ring)
+        if ring_n != n:
+            sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
+        # Locate the signer's own index in the ring (matched by seed).
+        j = next((idx for idx, (sd, _sy) in enumerate(ring_keys)
+                  if sd.uint == seed_int), None)
+        if j is None:
+            sys.exit("hpks-ring sign: signer's public key is not in --ring "
+                     "(run pkey --pubout on the signer key and include it)")
+        msg = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, SDFR)
+        _write_file(args.out, _pack_ring_sig(sig, n))
+        print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
+              file=sys.stderr)
+
     elif algo == 'rnl-sigma':
         # Sign using an HKEX-RNL private key: proves knowledge of s s.t. C = round_p(m·s)
         if our_algo != 'hkex-rnl':
@@ -1435,6 +1543,25 @@ def cmd_verify(args):
         R     = BitArray(nbits, R_val)
         s     = BitArray(nbits, s_val)
         ok    = hpkst_verify(C_agg, R, s, msg)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    if algo == 'hpks-ring':
+        if not getattr(args, 'ring', None):
+            sys.exit("hpks-ring verify: --ring (comma-separated member public keys) required")
+        ring_keys, n = _load_ring_pubkeys(args.ring)
+        sig, k, rounds, sig_n = _unpack_ring_sig(sig_path)
+        if sig_n != n:
+            sys.exit(f"hpks-ring verify: signature n={sig_n} != ring n={n}")
+        if k != len(ring_keys):
+            sys.exit(f"hpks-ring verify: signature ring size {k} != "
+                     f"{len(ring_keys)} provided members")
+        msg = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        ok  = hpks_stern_ring_verify(msg, sig, ring_keys, n)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -1978,8 +2105,10 @@ def build_parser():
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
     sg.add_argument('--algo', required=True,
                     choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
-                             'hpks-xmss', 'hpks-wots'])
+                             'hpks-xmss', 'hpks-wots', 'hpks-ring'])
     sg.add_argument('--key',  required=True)
+    sg.add_argument('--ring', default=None,
+                    help='hpks-ring: comma-separated member public-key PEM paths')
     sg.add_argument('--in',  required=True, dest='in')
     sg.add_argument('--out', required=True)
     sg.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
@@ -1992,8 +2121,10 @@ def build_parser():
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
     vf.add_argument('--algo', required=True,
                     choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
-                             'hpks-xmss', 'hpks-wots', 'hpks-t'])
+                             'hpks-xmss', 'hpks-wots', 'hpks-ring', 'hpks-t'])
     vf.add_argument('--pubkey', default=None)
+    vf.add_argument('--ring', default=None,
+                    help='hpks-ring: comma-separated member public-key PEM paths')
     vf.add_argument('--in',  required=True, dest='in')
     vf.add_argument('--sig', required=True)
     vf.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
