@@ -6555,4 +6555,14 @@ one member of an ad-hoc group sign anonymously on behalf of the group.
    tamper rejection, and Python↔Go interop.
 5. Document the anonymity property and ring-membership semantics in the CLI help and tutorial.
 
-Status: **OPEN**
+Status: **DONE v1.9.71** — `sign`/`verify --algo hpks-ring` added to the Python, Go, **and**
+C CLIs (all three, not just Python+Go).  Work item 1 (C suite port) was already satisfied:
+`stern_ring_sign`/`stern_ring_verify` have been in `herradura.h` since v1.9.16 (TODO #78.I)
+and pass security test [20] — the TODO's "not present in herradura.h" premise was outdated.
+New `HERRADURA HPKS-RING SIGNATURE` PEM: `SEQ(k, rounds, n, blob)` with a member-major /
+round-major flat blob (`c0||c1||c2||b||resp_a||resp_b` per entry), byte-for-byte interoperable
+across the three CLIs.  `--ring <p0,p1,...>` supplies the ordered member public keys; the signer
+(an `hpks-stern` key) is located by seed match and kept hidden.  `CliTest/test_ring.sh` covers
+the 9-way sign/verify interop matrix, anonymity (any member signs), non-member sign refusal,
+tampered-message rejection, and wrong-ring rejection (21/21 pass).  Documented in the three CLI
+usage headers and `docs/TUTORIAL.md` (anonymity + demo-parameter caveat).

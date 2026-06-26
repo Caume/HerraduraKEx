@@ -4,6 +4,32 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.71] - 2026-06-26
+
+### Feature — CLI: HPKS-Stern-Ring anonymous ring signatures in sign/verify (TODO #121)
+
+- **`HerraduraCli/herradura.py`, `herradura_cli.go`, `herradura_cli.c`:** added
+  `sign --algo hpks-ring --key SIGNER --ring P0,P1,...` and
+  `verify --algo hpks-ring --ring P0,P1,...`, exposing the code-based ring signature
+  (`hpks_stern_ring_sign`/`verify`, #78.I) on all three CLIs. One member of an ad-hoc
+  group signs anonymously; verification confirms a ring member signed without revealing
+  which one.
+- **Wire format:** new `HERRADURA HPKS-RING SIGNATURE` PEM — `SEQ(k, rounds, n, blob)`
+  with a member-major / round-major flat blob (`c0||c1||c2||b||resp_a||resp_b` per
+  (member, round)). Byte-for-byte interoperable across the three CLIs.
+- **Signer privacy:** the signer supplies an `hpks-stern` private key whose public key is
+  in `--ring`; its index is located by seed match and kept hidden in the output. Non-members
+  are refused at signing time.
+- **C suite port:** already present — `stern_ring_sign`/`verify` have shipped in `herradura.h`
+  since v1.9.16 (TODO #78.I) and pass security test [20]; only the CLI surface was missing.
+- **`CliTest/test_ring.sh` (new):** 9-way sign/verify interop matrix, anonymity (any member
+  signs), non-member sign refusal, tampered-message and wrong-ring rejection (21/21 pass).
+- **`HerraduraCli/primitives.py`:** re-export `hpks_stern_ring_sign`/`verify`.
+- **`docs/TUTORIAL.md`** and the three CLI usage headers document the anonymity property
+  and the demo-parameter caveat.
+
+---
+
 ## [1.9.70] - 2026-06-26
 
 ### Feature — CLI: HPKS-WOTS-F one-time signatures in genpkey/sign/verify (TODO #120)
