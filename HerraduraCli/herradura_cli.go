@@ -58,6 +58,7 @@ const (
 	lblHpksWotsPriv = "HERRADURA HPKS-WOTS PRIVATE KEY"
 	lblHpksWotsPub  = "HERRADURA HPKS-WOTS PUBLIC KEY"
 	lblHpksWotsSig  = "HERRADURA HPKS-WOTS SIGNATURE"
+	lblRingSig      = "HERRADURA HPKS-RING SIGNATURE"
 
 	lblSession = "HERRADURA SESSION KEY"
 	lblRnlResp = "HERRADURA HKEX-RNL RESPONSE"
@@ -510,6 +511,114 @@ func encodeWotsBlobPEM(vals [WotsL]*BitArray, label string) string {
 	ed, _ := derIntSmall(WotsL)
 	seq, _ := DerSeqEnc(bd, ed)
 	return PemWrap(label, seq)
+}
+
+// ── HPKS-Stern-Ring signature helpers (TODO #121) ────────────────────────────
+//
+// Wire format matches the Python/C CLIs: SEQ(k, rounds, n, blob) where blob is a
+// member-major / round-major flat layout of c0||c1||c2||b(1 byte)||respA||respB
+// (each n-bit value = n/8 bytes) per (member, round).
+
+func loadRingPubkeys(ringArg string) ([]RingKeypair, int) {
+	paths := strings.Split(ringArg, ",")
+	var ring []RingKeypair
+	ringN := -1
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		label, ints, err := readPEMInts(p)
+		if err != nil {
+			die("hpks-ring", err)
+		}
+		if label != lblHpksSternPub {
+			fmt.Fprintf(os.Stderr, "hpks-ring: ring member %q is %q, expected hpks-stern public key\n", p, label)
+			os.Exit(1)
+		}
+		n := bytesToInt(ints[2])
+		if ringN < 0 {
+			ringN = n
+		} else if n != ringN {
+			fmt.Fprintln(os.Stderr, "hpks-ring: all ring members must share the same n")
+			os.Exit(1)
+		}
+		ring = append(ring, RingKeypair{
+			Seed:     NewBitArray(n, new(big.Int).SetBytes(ints[1])),
+			Syndrome: new(big.Int).SetBytes(ints[0]),
+		})
+	}
+	if len(ring) < 2 {
+		fmt.Fprintln(os.Stderr, "hpks-ring: --ring needs at least 2 member public keys")
+		os.Exit(1)
+	}
+	return ring, ringN
+}
+
+func encodeRingSig(sig *SternRingSig, n int) string {
+	nb := n / 8
+	blob := make([]byte, 0, sig.K*sig.Rounds*(5*nb+1))
+	put := func(ba *BitArray) {
+		b := make([]byte, nb)
+		ba.Val.FillBytes(b)
+		blob = append(blob, b...)
+	}
+	for i := 0; i < sig.K; i++ {
+		for r := 0; r < sig.Rounds; r++ {
+			rd := sig.Members[i].Rounds[r]
+			put(rd.C0)
+			put(rd.C1)
+			put(rd.C2)
+			blob = append(blob, byte(rd.B))
+			put(rd.RespA)
+			put(rd.RespB)
+		}
+	}
+	kd, _ := derIntSmall(sig.K)
+	rdd, _ := derIntSmall(sig.Rounds)
+	nd, _ := derIntSmall(n)
+	bd, _ := derIntBig(new(big.Int).SetBytes(blob), len(blob))
+	seq, _ := DerSeqEnc(kd, rdd, nd, bd)
+	return PemWrap(lblRingSig, seq)
+}
+
+func decodeRingSig(path string) (*SternRingSig, int) {
+	label, ints, err := readPEMInts(path)
+	if err != nil {
+		die("verify", err)
+	}
+	if label != lblRingSig {
+		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING SIGNATURE PEM, got %q\n", label)
+		os.Exit(1)
+	}
+	k := bytesToInt(ints[0])
+	rounds := bytesToInt(ints[1])
+	n := bytesToInt(ints[2])
+	nb := n / 8
+	entry := 5*nb + 1
+	blob := make([]byte, k*rounds*entry)
+	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
+
+	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
+	off := 0
+	take := func() *BitArray {
+		v := NewBitArray(n, new(big.Int).SetBytes(blob[off:off+nb]))
+		off += nb
+		return v
+	}
+	for i := 0; i < k; i++ {
+		sig.Members[i].Rounds = make([]SternRound, rounds)
+		for r := 0; r < rounds; r++ {
+			c0 := take()
+			c1 := take()
+			c2 := take()
+			b := int(blob[off])
+			off++
+			ra := take()
+			rb := take()
+			sig.Members[i].Rounds[r] = SternRound{C0: c0, C1: c1, C2: c2, B: b, RespA: ra, RespB: rb}
+		}
+	}
+	return sig, n
 }
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
@@ -1913,6 +2022,7 @@ func cmdSign(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
 	out    := fs.String("out", "-", "Signature PEM output file")
+	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	fs.Parse(args)
 
 	if *algo == "" || *key == "" {
@@ -2021,6 +2131,40 @@ func cmdSign(args []string) {
 			die("sign", err)
 		}
 
+	case "hpks-ring":
+		fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). 128-bit security requires N>=17000. Do not use for production.")
+		if *ring == "" {
+			fmt.Fprintln(os.Stderr, "hpks-ring sign: --ring (comma-separated member public keys) required")
+			os.Exit(1)
+		}
+		n := bytesToInt(ourInts[2])
+		e := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
+		signerSeed := new(big.Int).SetBytes(ourInts[1])
+		ringKeys, ringN := loadRingPubkeys(*ring)
+		if ringN != n {
+			fmt.Fprintf(os.Stderr, "hpks-ring sign: signer n=%d != ring n=%d\n", n, ringN)
+			os.Exit(1)
+		}
+		j := -1
+		for idx := range ringKeys {
+			if ringKeys[idx].Seed.Val.Cmp(signerSeed) == 0 {
+				j = idx
+				break
+			}
+		}
+		if j < 0 {
+			fmt.Fprintln(os.Stderr, "hpks-ring sign: signer's public key is not in --ring "+
+				"(run pkey --pubout on the signer key and include it)")
+			os.Exit(1)
+		}
+		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		sig := HpksSternRingSign(msg, e, j, ringKeys, SdfRounds)
+		pem := encodeRingSig(sig, n)
+		if err := writeString(*out, pem); err != nil {
+			die("sign", err)
+		}
+		fmt.Fprintf(os.Stderr, "Ring signature created (k=%d); signer index is hidden.\n", len(ringKeys))
+
 	case "hpks-wots":
 		if wotsIsUsed(*key) {
 			fmt.Fprintln(os.Stderr, "sign: this HPKS-WOTS key was already used — WOTS keys "+
@@ -2056,13 +2200,14 @@ func cmdVerify(args []string) {
 	in     := fs.String("in", "-", "Message input file")
 	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
 	sig    := fs.String("sig", "", "Signature PEM file")
+	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	fs.Parse(args)
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
 		os.Exit(1)
 	}
-	if *algo != "hpks-t" && *pubkey == "" {
+	if *algo != "hpks-t" && *algo != "hpks-ring" && *pubkey == "" {
 		fmt.Fprintln(os.Stderr, "verify: --pubkey required")
 		os.Exit(1)
 	}
@@ -2073,6 +2218,32 @@ func cmdVerify(args []string) {
 	}
 	if *digest == "hfscx-256" {
 		inBytes = Hfscx256(inBytes, nil)
+	}
+
+	// hpks-ring: anonymous ring verification against --ring members.
+	if *algo == "hpks-ring" {
+		if *ring == "" {
+			fmt.Fprintln(os.Stderr, "hpks-ring verify: --ring (comma-separated member public keys) required")
+			os.Exit(1)
+		}
+		ringKeys, n := loadRingPubkeys(*ring)
+		rsig, sigN := decodeRingSig(*sig)
+		if sigN != n {
+			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature n=%d != ring n=%d\n", sigN, n)
+			os.Exit(1)
+		}
+		if rsig.K != len(ringKeys) {
+			fmt.Fprintf(os.Stderr, "hpks-ring verify: signature ring size %d != %d provided members\n",
+				rsig.K, len(ringKeys))
+			os.Exit(1)
+		}
+		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
+		if HpksSternRingVerify(msg, rsig, ringKeys) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		}
+		fmt.Println("Verification FAILED")
+		os.Exit(1)
 	}
 
 	// hpks-t: C_agg is embedded in sig — no pubkey file needed.
@@ -2778,7 +2949,8 @@ Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern
 Algorithms (kex):           hkex-gf hkex-rnl
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-duplex hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
-Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time)
+Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time) hpks-ring (anonymous)
+  sign/verify --algo hpks-ring --ring p0_pub.pem,p1_pub.pem,... : code-based ring signature
   fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]
   twk      --encrypt|--decrypt --key SK [--sector N] [--bidx N] --in FILE [--out FILE]
 `)
