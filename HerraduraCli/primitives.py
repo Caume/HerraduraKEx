@@ -54,6 +54,8 @@ _rnl_poly_mul       = _s._rnl_poly_mul
 stern_f_keygen            = _s.stern_f_keygen
 hpks_stern_f_sign         = _s.hpks_stern_f_sign
 hpks_stern_f_verify       = _s.hpks_stern_f_verify
+hpks_stern_ring_sign      = _s.hpks_stern_ring_sign
+hpks_stern_ring_verify    = _s.hpks_stern_ring_verify
 hpke_stern_f_encap_with_e = _s.hpke_stern_f_encap_with_e
 hpke_stern_f_decap        = _s.hpke_stern_f_decap
 
