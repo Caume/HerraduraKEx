@@ -2969,6 +2969,8 @@ correct output when run under `simavr`.
 - [x] ATmega2560 variant headers present (`…/variants/mega/`)
 - [x] `simavr` present (`/usr/bin/simavr`)
 
+Status: **DONE** — all prerequisites confirmed (2026-05-20).
+
 ### Batch 2 — Build (DONE 2026-05-20)
 - [x] `build_arduino.sh` compiles suite → `Herradura cryptographic suite_avr.elf` (43586 text + 2100 data + 2687 bss = 48373 bytes)
 - [x] `build_arduino.sh` compiles tests → `CryptosuiteTests/Herradura_tests_avr.elf` (46098 text + 1048 data + 2719 bss = 49865 bytes)
@@ -2990,7 +2992,7 @@ correct output when run under `simavr`.
 - [x] **Tests `rnl_rand_poly` missing rejection sampling:** replaced bare `% RNL_Q` with 3-byte threshold guard (threshold=`0xFF00FFu`) matching suite
 
 
-**Status:** **DONE** (v1.5.38) — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
+Status: **DONE v1.5.38** — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
 
 ---
 
@@ -3012,6 +3014,8 @@ Run language-appropriate scanners across all source files and capture output:
 | Go | `gosec` | `gosec ./...` from repo root |
 | Assembly (ARM + NASM) | grep | `grep -n 'rand\|srand\|memcpy\|strcpy' "Herradura cryptographic suite.s" "Herradura cryptographic suite.asm"` |
 
+Status: **DONE** — findings logged in Audit notes (SA-01 through SA-09; all resolved v1.7.4).
+
 ### Step 2 — CSPRNG audit
 
 Verify every random-number call draws from a cryptographically secure source.
@@ -3023,6 +3027,8 @@ Go `math/rand`, any seeded PRNG used for key material.
 - **Python:** confirm `os.urandom` everywhere; flag `random.randint` / missing `secrets` usage.
 - **Assembly:** ARM reads `/dev/urandom`; NASM uses the C PRNG only for fixed test vectors — verify this boundary.
 - **Arduino:** `random()` is seeded from `analogRead` (not a CSPRNG); document as a known limitation.
+
+Status: **DONE** — findings in SA-01, SA-07; all resolved v1.7.4.
 
 ### Step 3 — Constant-time audit
 
@@ -3041,6 +3047,8 @@ Highest-risk functions (audit first):
 - `hpks_verify` / `hpks_nl_verify` — final key-equality comparison
 - `rnl_agree` / `rnl_hint` / `rnl_reconcile_bits` — session key derivation and comparison
 
+Status: **DONE** — findings in SA-02 through SA-06; all resolved v1.7.4.
+
 ### Step 4 — Key material hygiene
 
 Check that private keys and session secrets are cleared from memory after use:
@@ -3050,12 +3058,16 @@ Check that private keys and session secrets are cleared from memory after use:
 - **Python:** `bytearray` can be zeroed; `int` and `bytes` are immutable and cannot — document any places where clearing is not possible.
 - **Assembly:** verify that callee-saved registers holding key material are cleared before `pop`/`bx lr`.
 
+Status: **DONE** — findings in SA-09; resolved v1.7.4. Go/Python zeroing limitations documented.
+
 ### Step 5 — Buffer bounds and integer overflow (C and assembly)
 
 - **C:** verify all fixed-size arrays (`uint8_t hint[RNL_N]`, `uint32_t poly[RNL_N]`) are indexed only within declared bounds; flag any index derived from an untrusted length.
 - **C:** check `rnl_ntt` butterfly index `k + len/2` does not exceed `n` for all valid `len` values.
 - **NASM i386:** re-audit stack frame sizes in `rnl_poly_mul`, `rnl_hint`, `rnl_reconcile_bits` — the v1.5.3 wrong-offset bug (TODO A2) was a stack read error; verify no similar issues remain after Peikert additions.
 - **ARM Thumb-2:** verify `udiv` in `rnl_hint` does not divide by zero for degenerate inputs.
+
+Status: **DONE** — no buffer overflows found; NTT index bounds verified; NASM stack audit clean after TODO A2 fix.
 
 ### Step 6 — Hardcoded test vectors vs. production code paths
 
@@ -3069,6 +3081,8 @@ grep -rn 'DEADBEEF\|CAFEBABF\|a_priv\|b_priv\|known_e\|test_e' \
 ```
 
 Flag any occurrence outside a clearly demarcated `/* demo */` or `#ifdef TEST` block.
+
+Status: **DONE** — hardcoded constants confirmed in demo/test paths only; no production key-gen paths affected.
 
 ### Step 7 — Compile findings into a remediation table
 
@@ -3088,6 +3102,8 @@ After steps 1–6, add a table here with columns:
 
 Severity levels: **Critical** (direct key recovery), **High** (timing/side-channel),
 **Medium** (theoretical/implementation gap), **Low** (hygiene/documentation).
+
+Status: **DONE** — remediation table (SA-01 through SA-09) complete; all items resolved v1.7.4.
 
 ### Audit notes
 
@@ -4839,6 +4855,43 @@ n=32 but unresolved for n=256 (production).  Obstacles 1 and 3 remain open.
   Ko-Lee reduction is available; obstacle deepened by §3 results.
 - Obstacle 2: n=256 orbit safety — empirically untestable at production scale.
 - Obstacle 3: structured commuting-subgroup construction needed for Ko-Lee KEX instantiation.
+
+**Research plan (phased — Phase 0 is a decision gate).**
+
+The `nl_fscx_v2_kex.py` §3 result (0/300 commuting pairs) is the pivot: a Ko-Lee /
+AAG-style KEX *requires* two commuting subgroups, so before any reduction work we must
+settle whether the `{pi_K}` family has ANY exploitable algebraic structure, or is
+structurally hostile to non-abelian KEX.  Likely outcome: 78.E resolves as a documented
+NEGATIVE result, which is a legitimate completion.
+
+- **Phase 0 — decision gate: is there exploitable structure?**  Script
+  `SecurityProofsCode/nl_fscx_v2_csp.py`.  Two structural probes at small n (n=8,12,16):
+  1. *Centralizer search* — solve Theorem 15's commutativity condition
+     `delta(K1) - delta(K2) == M(K1 XOR K2) (mod 2^n)` exhaustively; is C(pi_K1)
+     generically trivial, or is there hidden coset structure?
+  2. *Subgroup-order growth* — order of `<pi_K1,...,pi_Km>` vs |Sym(2^n)|; does the
+     family generate the full symmetric group (no usable quotient) or land in a
+     structured subgroup?
+  GATE: if centralizers are trivial AND the family generates Sym(2^n), Ko-Lee/AAG is
+  provably dead → pivot to a Stickel-type two-sided KEX (`E = pi_K1 . A . pi_K2`, no
+  commutativity needed) OR close 78.E as a documented impossibility.
+
+- **Phase 1 — Obstacle 2 (orbit/order lower bound).**  Extend `nl_fscx_v2_orbit.py` to
+  compute (not sample) `|<pi_K>|` at n=8..16; fit a growth law; state n=256 scope limit.
+  Converts Obstacle 2 from "open" to "conditionally resolved."
+
+- **Phase 2 — Obstacle 1 (black-box → circuit-model transfer).**  Run Gröbner/XL on the
+  Theorem-14 carry-structure MQ system for the conjugacy recovery `v = g u g^{-1}` at
+  n=8,12; measure D_reg.  An algebraic shortcut → Option C broken (clean negative);
+  otherwise record measured complexity as circuit-model hardness evidence.
+
+- **Phase 3 — Obstacle 3 (reduction), only if Phases 0–2 survive.**  If Phase 0 yields a
+  Stickel-type construction, target a reduction to the decisional matrix-conjugacy /
+  semigroup-action problem (Maze-Monico-Rosenthal group-action framework — NOT braid
+  groups); ship KEX + attack-evidence harness.
+
+Exit criteria: Phase 0 negative → **DONE (negative result)**; Phase 2 break → **DONE
+(broken)**; all phases survive → **DONE (candidate)**, deployment still gated.
 
 ---
 

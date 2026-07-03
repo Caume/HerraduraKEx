@@ -49,6 +49,26 @@ All notable changes are documented in `CHANGELOG.md` only.  Do **not** add versi
 
 Work items are tracked in `TODO.md` as numbered entries (#1–#N) with a `Status:` line.  When completing a TODO, update its `Status:` line to `**DONE vX.Y.Z**` with the release version, then add the corresponding `CHANGELOG.md` entry.  Version numbers follow `MAJOR.MINOR.PATCH`; each TODO completion is typically one PATCH bump.
 
+### TODO.md Status line standard
+
+Every `### ` section in `TODO.md` must end with exactly one `Status:` line using one of these keywords:
+
+| Keyword | Meaning | Format example |
+|---|---|---|
+| `DONE` | Implemented and shipped | `Status: **DONE vX.Y.Z** — one-line summary.` |
+| `OPEN` | Pending — not yet started or in progress | `Status: **OPEN**` |
+| `DEPRECATED` | Will not be fixed; reason documented | `Status: **DEPRECATED** — reason.` |
+| `ACKNOWLEDGED` | Known issue, accepted by design, no action planned | `Status: **ACKNOWLEDGED** — reason.` |
+
+Rules:
+- The `Status:` keyword starts at column 0 with no leading `**`.
+- The keyword (`DONE`, `OPEN`, etc.) is bold: `**KEYWORD**`.
+- For `DONE`, append the version tag and a dash-separated summary: `**DONE vX.Y.Z** — summary.`
+- No item should be left without a `Status:` line.  A missing Status line means "open" only by convention; always add an explicit `Status: **OPEN**` when creating a new item.
+- When parsing programmatically, match `^Status: \*\*` at the start of a line within the section.
+
+**Quick check:** `python3 -c "import re,sys; [print(m.group()) for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open('TODO.md').read()) if 'Status:' not in m.group()]"` — prints any `###` section that is missing a Status line.
+
 ## Build Commands
 
 Use the build scripts when building everything; they apply the correct flags, output names, and dependency checks.
