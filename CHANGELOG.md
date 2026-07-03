@@ -4,6 +4,24 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.72] - 2026-07-03
+
+### Fix — SecurityProofs KaTeX rendering: remaining `^*` emphasis breakage (TODO #57–#60)
+
+- **`SecurityProofs-1.md`:** replaced all 23 remaining `^*` occurrences inside math spans
+  with `^{\ast}` (global pass). Prior fixes (v1.8.4–v1.8.6) addressed the specific sections
+  cited in TODOs #57 and #58 but left residual `^*` in other paragraphs and table cells
+  throughout §9.2 and §10.6; this pass eliminates every remaining instance.
+- **`SecurityProofs-2.md`:** replaced all 5 `\mathbb{GF}(2^n)^*` occurrences inside math spans
+  with `^{\ast}` (TODO #59 residual; table rows §11.2, §11.8). Converted inline
+  `\mathrm{ROL}_{n/4}(...)` in the Theorem 14 proof paragraph to function notation
+  `\mathrm{ROL}(..., n/4)`, eliminating the Rule 11 `}_{` opener that paired with
+  `k_j`/`k_\ell` subscripts in the same paragraph (TODO #60 residual).
+- **Validation:** `validate_katex.js` reports 859 OK / 0 FAIL (SecurityProofs-1.md) and
+  943 OK / 0 FAIL (SecurityProofs-2.md).
+
+---
+
 ## [1.9.71] - 2026-06-26
 
 ### Feature — CLI: HPKS-Stern-Ring anonymous ring signatures in sign/verify (TODO #121)

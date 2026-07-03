@@ -147,7 +147,7 @@ the same key.
 
 ### 11.4 HKEX-RNL: PQC Key Exchange (B2)
 
-HKEX-GF relies on the DLP in $\mathbb{GF}(2^n)^*$, which Shor's algorithm solves in polynomial time
+HKEX-GF relies on the DLP in $\mathbb{GF}(2^n)^{\ast}$, which Shor's algorithm solves in polynomial time
 on a quantum computer.  The following replacement is proposed.
 
 #### 11.4.1 Ring structure
@@ -431,14 +431,14 @@ through 2025.
 | **HKEX-GF** | DLP in $\mathbb{GF}(2^n)^{\ast}$ | FFS $L[1/3]$: ~80–90 bits at $n=256$ (§9.2.4; deprecated NIST/ENISA); GKZ quasi-poly asymptotic for composite-degree fields | Shor's DLP | **None** |
 | **HSKE** (key-only) | Exhaustive search | Brute force $2^n$ | Grover $2^{n/2}$ | $n/2$ bits |
 | **HSKE** (known-plaintext) | — | 1 KPT pair → full $c_K$, $O(n^2)$ | BV: 1 query | **None** |
-| **HPKS** | DLP in $\mathbb{GF}(2^n)^*$ + non-ROM challenge | Quasi-polynomial DLP | Shor's DLP | **None** |
-| **HPKE** | CDH in $\mathbb{GF}(2^n)^*$ | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
+| **HPKS** | DLP in $\mathbb{GF}(2^n)^{\ast}$ + non-ROM challenge | Quasi-polynomial DLP | Shor's DLP | **None** |
+| **HPKE** | CDH in $\mathbb{GF}(2^n)^{\ast}$ | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
 | **HSKE-NL-A1** (§11.3.1, key-only) | NL-FSCX v1 PRF | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
 | **HSKE-NL-A1** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
 | **HSKE-NL-A2** (§11.3.2, key-only) | NL-FSCX v2 bijection | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
 | **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
-| **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^*$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
-| **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^*$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
+| **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^{\ast}$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
+| **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^{\ast}$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
 | **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ: ~105–115 classical Core-SVP bits (MATZOV 2022; §11.4.3) | BKZ-hybrid: ~95–105 quantum Core-SVP bits | ~105 classical / ~100 quantum bits (§11.4.3); below 128-bit target — use HKEX-RNL-128 |
 | **HKEX-RNL-128** $n=512$ (§11.4.3) | Ring-LWR with blinded $m$ | BKZ: ~220 classical Core-SVP bits (linear scaling; §11.4.3, §6 of `hkex_rnl_failure_rate.py`) | BKZ-hybrid: ~200 quantum Core-SVP bits | ≥128-bit classical+quantum; ML-KEM-512 cross-check confirms lower bound; 0 reconciliation failures (§7) |
 | **HPKS-WOTS-F** (§11.8.3, proposed) | NL-FSCX v1 OWF (new assumption) | Degree-$n$ Boolean system — $O(2^n)$, Corollary 2 | Grover $O(2^{n/2})$ | $n/2$ bits (under NL-FSCX v1 OWF) |
@@ -510,7 +510,7 @@ Given a single evaluation pair $(G, Y)$ with $Y = F_2(G, K)$ for unknown $K$, re
 
 $$M(K) + \delta(K) \equiv \bigl(Y \oplus M(G)\bigr) \pmod{2^n}.$$
 
-The left side: $M(K)$ contributes degree-1 linear terms in the bits of $K$ over $\mathbb{GF}(2)$.  The term $\delta(K) = \mathrm{ROL}_{n/4}(K \cdot \lfloor(K+1)/2\rfloor \bmod 2^n)$ introduces degree-2 terms, since $K \cdot \lfloor(K+1)/2\rfloor$ in integer arithmetic produces products $k_j \cdot k_\ell$ of bit pairs (degree 2) before carry propagation.  The full system is therefore a **Multivariate Quadratic (MQ) problem** over $\mathbb{GF}(2)$ with $n$ unknowns.  With $m > n$ evaluation pairs the system becomes overdetermined, exactly the regime in which MQ is NP-complete [Garey-Johnson 1979]. $\blacksquare$
+The left side: $M(K)$ contributes degree-1 linear terms in the bits of $K$ over $\mathbb{GF}(2)$.  The term $\delta(K) = \mathrm{ROL}(K \cdot \lfloor(K+1)/2\rfloor \bmod 2^n, n/4)$ introduces degree-2 terms, since $K \cdot \lfloor(K+1)/2\rfloor$ in integer arithmetic produces products $k_j \cdot k_\ell$ of bit pairs (degree 2) before carry propagation.  The full system is therefore a **Multivariate Quadratic (MQ) problem** over $\mathbb{GF}(2)$ with $n$ unknowns.  With $m > n$ evaluation pairs the system becomes overdetermined, exactly the regime in which MQ is NP-complete [Garey-Johnson 1979]. $\blacksquare$
 
 **Theorem 15 — Non-Commutativity of $F_2$ Permutations.**
 
