@@ -6720,18 +6720,29 @@ This item tracks promotion from research prototype to suite implementation.
   with the issuer's Stern-F signature over H(m‖C‖seed_H‖y) as the anchor.
   Verified: completeness 20/20; replay/wrong-syndrome/wrong-key/tamper/
   overweight all rejected.
-- **Batch 2 — BDLOP witness linkage + KKW size optimization.**  Same-s binding
-  across the two branches (collusion-splitting resistance — the Batch-1 honest
-  limitation) via a shared commitment; replace the ZKBoo-(2,3) gadget transcript
-  with KKW (64 parties, τ=22) to cut proof size ≈ 20×.  Add a security test to
-  `CryptosuiteTests/Herradura_tests.py`.
-- **Batch 3 — C (`herradura.h`) and Go ports** of the Batch-1/2 functions.
-- **Batch 4 — Wire format + CLI.**  PEM types for credential and presentation
+- **Batch 2 — unified circuit: same-s linkage without BDLOP (shipped v1.9.75).**
+  The Ring-LWR relation moved inside the MPCitH circuit: m·s is linear in the
+  s-wires (m public), so C = round_p(m·s) costs only 5 rounding-error witness
+  bits per coefficient (δ² = δ; [m·s]_i − Σ2^t·δ = lift(C)_i − 16; honest
+  |ε| ≤ 8, relaxed bound 15).  The separate ZKP-RNL branch is removed — one
+  proof, one witness, same-s linkage BY CONSTRUCTION; BDLOP is no longer
+  needed.  Circuit: 2n + (n/2)⌈log₂(n+1)⌉ + 5n mult gates (4224 at n=256).
+  Verified: completeness 20/20 + n=256 end-to-end; split-witness prove
+  attempts (s₂ vs y₁, s₁ vs C₂) refused.  Note: shipping only the unopened
+  party's outputs was evaluated and is UNSOUND (FS must bind all three
+  output-share sets pre-challenge) — KKW is the only sound size path.
+- **Batch 3 — KKW size optimization.**  Replace the ZKBoo-(2,3) transcript
+  encoding with KKW preprocessing-model MPCitH (64 parties, τ=22 for 2^-128)
+  to cut proof size ≈ 20×.
+- **Batch 4 — C (`herradura.h`) and Go ports** + unified security test added
+  to all three test files simultaneously (single-language addition would
+  desynchronize the #87 unified test numbering).
+- **Batch 5 — Wire format + CLI.**  PEM types for credential and presentation
   proof; `cred-issue`/`cred-prove`/`cred-verify` subcommands; `CliTest/`
   cross-language interop.
-- **Batch 5 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
+- **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batch 1 shipped in v1.9.74; Batches 2–5 pending.
+Status: **OPEN** — Batches 1–2 shipped in v1.9.74/v1.9.75; Batches 3–6 pending.
 
 ---
 

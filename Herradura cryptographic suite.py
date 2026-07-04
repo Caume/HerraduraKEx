@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.9.74
+    Herradura Cryptographic Suite v1.9.75
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.9.75: HCRED unified circuit — in-circuit Ring-LWR check, same-s linkage (TODO #128 Batch 2) ---
     --- v1.9.74: HCRED — hybrid Ring-LWR + Stern-F credential, Batch 1 (TODO #128) ---
     --- v1.9.16: HPKS-Stern-Ring — OR-composed Stern ring signature (TODO #78.I) ---
     --- v1.8.0: KDF domain constant — seed = ROL(K,n/8) XOR _RNL_KDF_DC_256 for HSKE-NL-A1 and HKEX-RNL (TODO #38) ---
@@ -1690,33 +1691,42 @@ def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
 # Witness   : s ∈ {-1,0,1}^n with C = round_p(m·s) and H·φ(s)^T = y,
 #             where φ(s)_i = [s_i = +1] (§11.10.9 positive-support bitmap).
 #
-# Architecture (two branches, sequential Fiat-Shamir binding):
-#   Branch 1 — ZKP-RNL Σ-protocol (rnl_sigma_sign) proves knowledge of s
-#              for C; its FS challenge binds the branch-2 commitments.
-#   Branch 2 — MPC-in-the-head (ZKBoo-(2,3) over Z_q) proves, WITHOUT
-#              revealing e = φ(s):
-#                 s_i^3 = s_i                     (ternary membership)
-#                 e_i   = (s_i^2 + s_i)·2^{-1}    (support extraction, internal)
-#                 Σ_i e_i = W                     (revealed weight, W ≤ w_max)
-#                 Σ_i H[r,i]·e_i = Σ_t 2^t·β_{r,t}  (syndrome row sums)
-#                 β_{r,t}^2 = β_{r,t},  β_{r,0} = y_r  (parity extraction)
-#              e-wires are internal linear wires — never opened; the aux
-#              witness bits β (bit-decomposition of the integer row sums,
-#              no wraparound since n < q) carry the mod-2 reduction.
-#   Issuer   — the credential is an HPKS-Stern-F signature over
-#              H(m ‖ C ‖ seed_H ‖ y): forging a presentation for an issued
-#              pair requires finding s' satisfying BOTH relations — the
-#              §11.10.9 many-solutions attack does not apply.
+# Architecture (Batch 2, v1.9.75 — single unified MPCitH circuit):
+#   ONE ZKBoo-(2,3) proof over Z_q covers the whole compound statement, so
+#   both relations are proved for the SAME witness s by construction
+#   (no cross-branch linkage problem).  The circuit, per coefficient:
+#     s_i^3 = s_i                       (ternary membership; 2n mult gates)
+#     e_i   = (s_i^2 + s_i)·2^{-1}      (support extraction — internal linear
+#                                        wire; e = φ(s) is NEVER opened)
+#     Σ_i e_i = W                       (revealed weight, 1 ≤ W ≤ w_max)
+#     Σ_i H[r,i]·e_i = Σ_t 2^t·β_{r,t}  (integer syndrome row sums, < q)
+#     β_{r,t}^2 = β_{r,t},  β_{r,0} = y_r   (mod-2 reduction via aux bits)
+#     [m·s]_i − Σ_t 2^t·δ_{i,t} = lift(C)_i − 16   (Ring-LWR rounding check:
+#                                        m·s is LINEAR in the s-wires since m
+#                                        is public, so the entire Ring-LWR
+#                                        relation costs only the 5 ε-range
+#                                        bits δ per coefficient)
+#     δ_{i,t}^2 = δ_{i,t}               (ε_i = Σ 2^t δ_{i,t} − 16 ∈ [−16, 15];
+#                                        honest |ε_i| ≤ ⌈q/(2p)⌉ = 8)
+#   Total multiplication gates: 2n + (n/2)·⌈log2(n+1)⌉ + 5n
+#   (= 4224 at n = 256, 384 at n = 32).
+#   Issuer — the credential is an HPKS-Stern-F signature over
+#   H(m ‖ C ‖ seed_H ‖ y): forging a presentation for an issued pair
+#   requires finding an s satisfying BOTH relations — the §11.10.9
+#   many-solutions attack does not apply.
 #
-# Batch-1 caveats (SecurityProofs-3.md §11.10.10): the two branches share
-# the FS transcript but not a witness commitment — collusion-splitting
-# resistance (same-s linkage) requires the BDLOP commitment planned for a
-# later batch.  Soundness per branch-2 round is 2/3; production requires
-# R = 219 (_ZKP_NL_PROD_ROUNDS).  Demo default n = 32.
+# Soundness note: the in-circuit rounding check is RELAXED — it proves
+# ||m·s − lift(C)||∞ ≤ 15 rather than exact re-rounding (|ε| ≤ 8), the
+# standard LWR-proof relaxation (cf. the ZKP-RNL slack t·⌈q/(2p)⌉).
+# Per-round soundness is 2/3; production requires R = 219
+# (_ZKP_NL_PROD_ROUNDS).  Demo default n = 32.  See SecurityProofs-3.md
+# §11.10.10 for the design evolution (Batch 1 used a two-branch form).
 # ---------------------------------------------------------------------------
 
 _HCRED_DEFAULT_N      = 32   # demo bit-width (n=256 supported; slow in Python)
 _HCRED_DEMO_ROUNDS    = 4    # demo MPCitH repetitions; production: 219
+_HCRED_EPS_BITS       = 5    # range bits per rounding error ε_i
+_HCRED_EPS_OFF        = 16   # ε_i = Σ 2^t δ_{i,t} − 16  →  ε ∈ [−16, 15]
 
 
 def _hcred_params(n):
@@ -1792,27 +1802,33 @@ class _HcredTape:
         return [self.draw() for _ in range(k)]
 
 
-def _hcred_mpc_round(s_poly, beta_bits, H_rows, n, rows, row_bits):
-    """One MPCitH execution of the branch-2 circuit.
+def _hcred_mpc_round(s_poly, beta_bits, delta_bits, m_poly, H_rows,
+                     n, rows, row_bits):
+    """One MPCitH execution of the unified HCRED circuit.
 
-    beta_bits: flat list of rows*row_bits aux witness bits (β values).
-    Returns (seeds, sh_s, sh_B, a, b, g, outs) where outs is a dict of
-    per-party output-share vectors."""
+    beta_bits : flat list of rows*row_bits syndrome aux bits (β values).
+    delta_bits: flat list of n*_HCRED_EPS_BITS rounding-error bits (δ values).
+    Returns (seeds, sh_s, sh_B, sh_D, a, b, g, h, outs)."""
     q    = RNLQ
     nb   = rows * row_bits
+    nd   = n * _HCRED_EPS_BITS
     seeds = [os.urandom(32) for _ in range(3)]
     tp    = [_HcredTape(sd) for sd in seeds]
     sh_s  = [tp[0].draws(n), tp[1].draws(n), None]
     sh_s[2] = [(s_poly[i] - sh_s[0][i] - sh_s[1][i]) % q for i in range(n)]
     sh_B  = [tp[0].draws(nb), tp[1].draws(nb), None]
     sh_B[2] = [(beta_bits[i] - sh_B[0][i] - sh_B[1][i]) % q for i in range(nb)]
+    sh_D  = [tp[0].draws(nd), tp[1].draws(nd), None]
+    sh_D[2] = [(delta_bits[i] - sh_D[0][i] - sh_D[1][i]) % q for i in range(nd)]
     R1 = [t.draws(n) for t in tp]
     R2 = [t.draws(n) for t in tp]
     R3 = [t.draws(nb) for t in tp]
+    R4 = [t.draws(nd) for t in tp]
 
     a = [[0] * n for _ in range(3)]
     b = [[0] * n for _ in range(3)]
     g = [[0] * nb for _ in range(3)]
+    h = [[0] * nd for _ in range(3)]
     for j in range(3):
         k = (j + 1) % 3
         for i in range(n):
@@ -1826,20 +1842,28 @@ def _hcred_mpc_round(s_poly, beta_bits, H_rows, n, rows, row_bits):
         for i in range(nb):
             g[j][i] = (sh_B[j][i] * sh_B[j][i] + sh_B[k][i] * sh_B[j][i]
                        + sh_B[j][i] * sh_B[k][i] + R3[j][i] - R3[k][i]) % q
+        for i in range(nd):
+            h[j][i] = (sh_D[j][i] * sh_D[j][i] + sh_D[k][i] * sh_D[j][i]
+                       + sh_D[j][i] * sh_D[k][i] + R4[j][i] - R4[k][i]) % q
 
-    outs = _hcred_outputs(sh_s, sh_B, a, b, g, H_rows, n, rows, row_bits)
-    return seeds, sh_s, sh_B, a, b, g, outs
+    outs = _hcred_outputs(sh_s, sh_B, sh_D, a, b, g, h, m_poly, H_rows,
+                          n, rows, row_bits)
+    return seeds, sh_s, sh_B, sh_D, a, b, g, h, outs
 
 
-def _hcred_outputs(sh_s, sh_B, a, b, g, H_rows, n, rows, row_bits):
-    """Per-party linear output shares of the branch-2 circuit."""
+def _hcred_outputs(sh_s, sh_B, sh_D, a, b, g, h, m_poly, H_rows,
+                   n, rows, row_bits):
+    """Per-party linear output shares of the unified HCRED circuit."""
     q    = RNLQ
     inv2 = (q + 1) // 2
-    outs = {'ter': [], 'bit': [], 'W': [], 'S': [], 'y': []}
+    eb   = _HCRED_EPS_BITS
+    outs = {'ter': [], 'bit': [], 'del': [], 'W': [], 'S': [], 'y': [],
+            'rnd': []}
     for j in range(3):
         e_j   = [((a[j][i] + sh_s[j][i]) * inv2) % q for i in range(n)]
         o_ter = [(b[j][i] - sh_s[j][i]) % q for i in range(n)]
         o_bit = [(g[j][i] - sh_B[j][i]) % q for i in range(rows * row_bits)]
+        o_del = [(h[j][i] - sh_D[j][i]) % q for i in range(n * eb)]
         o_W   = sum(e_j) % q
         o_S, o_y = [], []
         for r in range(rows):
@@ -1852,23 +1876,36 @@ def _hcred_outputs(sh_s, sh_B, a, b, g, H_rows, n, rows, row_bits):
                 dec += (1 << t) * sh_B[j][r * row_bits + t]
             o_S.append((acc - dec) % q)
             o_y.append(sh_B[j][r * row_bits] % q)
+        # Ring-LWR rounding check: m·s is linear in the s-wires (m public).
+        ms_j  = _rnl_poly_mul(m_poly, sh_s[j], q, n)
+        o_rnd = []
+        for i in range(n):
+            dec = 0
+            for t in range(eb):
+                dec += (1 << t) * sh_D[j][i * eb + t]
+            o_rnd.append((ms_j[i] - dec) % q)
         outs['ter'].append(o_ter)
         outs['bit'].append(o_bit)
+        outs['del'].append(o_del)
         outs['W'].append(o_W)
         outs['S'].append(o_S)
         outs['y'].append(o_y)
+        outs['rnd'].append(o_rnd)
     return outs
 
 
-def _hcred_commit(j, seed, aux_s, aux_B, a_j, b_j, g_j, outs, r_idx):
+def _hcred_commit(j, seed, aux_s, aux_B, aux_D, a_j, b_j, g_j, h_j,
+                  outs, r_idx):
     """Commitment to party j's view in round r_idx."""
-    aux = (_hcred_ser(aux_s) + _hcred_ser(aux_B)) if j == 2 else b''
+    aux = ((_hcred_ser(aux_s) + _hcred_ser(aux_B) + _hcred_ser(aux_D))
+           if j == 2 else b'')
     return hfscx_256(b'HCRED-com' + bytes([j]) + r_idx.to_bytes(2, 'big')
                      + seed + aux + _hcred_ser(a_j) + _hcred_ser(b_j)
-                     + _hcred_ser(g_j)
+                     + _hcred_ser(g_j) + _hcred_ser(h_j)
                      + _hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
+                     + _hcred_ser(outs['del'][j])
                      + _hcred_ser([outs['W'][j]]) + _hcred_ser(outs['S'][j])
-                     + _hcred_ser(outs['y'][j]))
+                     + _hcred_ser(outs['y'][j]) + _hcred_ser(outs['rnd'][j]))
 
 
 def _hcred_outputs_ser(outs):
@@ -1876,8 +1913,9 @@ def _hcred_outputs_ser(outs):
     buf = b''
     for j in range(3):
         buf += (_hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
+                + _hcred_ser(outs['del'][j])
                 + _hcred_ser([outs['W'][j]]) + _hcred_ser(outs['S'][j])
-                + _hcred_ser(outs['y'][j]))
+                + _hcred_ser(outs['y'][j]) + _hcred_ser(outs['rnd'][j]))
     return buf
 
 
@@ -1890,10 +1928,10 @@ def _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes):
                      + msg_bytes)
 
 
-def _hcred_challenges(stmt, b1_ser, coms_ser, outs_ser, rounds):
-    """Branch-2 FS challenge trits, bound to the statement, the branch-1
-    transcript, and every branch-2 commitment and output share."""
-    seed = hfscx_256(b'HCRED-ch' + stmt + b1_ser + coms_ser + outs_ser)
+def _hcred_challenges(stmt, coms_ser, outs_ser, rounds):
+    """FS challenge trits, bound to the statement and every commitment and
+    cleartext output share."""
+    seed = hfscx_256(b'HCRED-ch' + stmt + coms_ser + outs_ser)
     out, ctr = [], 0
     while len(out) < rounds:
         blk = hfscx_256(b'HCRED-trit' + seed + ctr.to_bytes(4, 'big'))
@@ -1906,15 +1944,18 @@ def _hcred_challenges(stmt, b1_ser, coms_ser, outs_ser, rounds):
 
 def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
                 rounds=None, msg_bytes=b''):
-    """Produce a compound credential-presentation proof.
+    """Produce a credential-presentation proof (single unified MPCitH).
 
-    Returns a dict: {'W', 'b1': (w, c, z), 'rounds': [round dicts]}.
-    e = φ(s) is never revealed; only its weight W is public.
+    Returns a dict: {'W', 'rounds': [round dicts]}.
+    e = φ(s) is never revealed; only its weight W is public.  Both the
+    Ring-LWR relation (C = round_p(m·s), relaxed to ||m·s − lift(C)||∞ ≤ 15)
+    and the syndrome relation are proved for the SAME s inside one circuit.
     Production soundness requires rounds ≥ 219 (_ZKP_NL_PROD_ROUNDS)."""
     if n is None:      n = _HCRED_DEFAULT_N
     if rounds is None: rounds = _HCRED_DEMO_ROUNDS
     rows, row_bits, w_max = _hcred_params(n)
-    q = RNLQ
+    q, hq = RNLQ, RNLQ // 2
+    eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
 
     e_int  = hcred_phi(s_poly)
     W      = bin(e_int).count('1')
@@ -1927,45 +1968,57 @@ def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
         for t in range(row_bits):
             beta.append((S_r >> t) & 1)
 
+    # Rounding-error witness bits: ε = m·s − lift(C), centered; δ = ε + 16.
+    ms   = _rnl_poly_mul(m_poly, s_poly, q, n)
+    lift = _rnl_lift(C_poly, RNLP, q)
+    delta = []
+    for i in range(n):
+        d = (ms[i] - lift[i]) % q
+        d = d - q if d > hq else d
+        v = d + off
+        if not (0 <= v < (1 << eb)):
+            raise ValueError("hcred_prove: witness does not match public key C")
+        for t in range(eb):
+            delta.append((v >> t) & 1)
+
     stmt  = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
-    execs = [_hcred_mpc_round(s_poly, beta, H_rows, n, rows, row_bits)
+    execs = [_hcred_mpc_round(s_poly, beta, delta, m_poly, H_rows,
+                              n, rows, row_bits)
              for _ in range(rounds)]
-    coms  = [[_hcred_commit(j, ex[0][j], ex[1][2], ex[2][2],
-                            ex[3][j], ex[4][j], ex[5][j], ex[6], ri)
+    coms  = [[_hcred_commit(j, ex[0][j], ex[1][2], ex[2][2], ex[3][2],
+                            ex[4][j], ex[5][j], ex[6][j], ex[7][j],
+                            ex[8], ri)
               for j in range(3)] for ri, ex in enumerate(execs)]
     coms_ser = b''.join(b''.join(c) for c in coms)
-    outs_ser = b''.join(_hcred_outputs_ser(ex[6]) for ex in execs)
+    outs_ser = b''.join(_hcred_outputs_ser(ex[8]) for ex in execs)
 
-    # Branch 1: ZKP-RNL proof, challenge bound to the branch-2 commitments.
-    b1_msg = stmt + hfscx_256(b'HCRED-b1' + coms_ser + outs_ser)
-    w1, c1, z1 = rnl_sigma_sign(s_poly, m_poly, C_poly, n, b1_msg)
-    b1_ser = (_hcred_ser([x % q for x in w1]) + _hcred_ser(c1)
-              + _hcred_ser([x % q for x in z1]))
-
-    chals = _hcred_challenges(stmt, b1_ser, coms_ser, outs_ser, rounds)
+    chals = _hcred_challenges(stmt, coms_ser, outs_ser, rounds)
     proof_rounds = []
     for ri, ex in enumerate(execs):
-        seeds, sh_s, sh_B, a, b, g, outs = ex
+        seeds, sh_s, sh_B, sh_D, a, b, g, h, outs = ex
         c   = chals[ri]
         cp1 = (c + 1) % 3
         rd  = dict(coms=coms[ri], outs=outs,
                    seed_c=seeds[c], seed_c1=seeds[cp1],
-                   a1=a[cp1], b1=b[cp1], g1=g[cp1],
+                   a1=a[cp1], b1=b[cp1], g1=g[cp1], h1=h[cp1],
                    aux_s=sh_s[2] if 2 in (c, cp1) else None,
-                   aux_B=sh_B[2] if 2 in (c, cp1) else None)
+                   aux_B=sh_B[2] if 2 in (c, cp1) else None,
+                   aux_D=sh_D[2] if 2 in (c, cp1) else None)
         proof_rounds.append(rd)
-    return {'W': W, 'b1': (w1, c1, z1), 'rounds': proof_rounds}
+    return {'W': W, 'rounds': proof_rounds}
 
 
 def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
                  rounds=None, msg_bytes=b''):
-    """Verify a compound credential-presentation proof."""
+    """Verify a credential-presentation proof (single unified MPCitH)."""
     if n is None:      n = _HCRED_DEFAULT_N
     if rounds is None: rounds = _HCRED_DEMO_ROUNDS
     rows, row_bits, w_max = _hcred_params(n)
     q    = RNLQ
     inv2 = (q + 1) // 2
+    eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
     nb   = rows * row_bits
+    nd   = n * eb
 
     W = proof['W']
     if not (1 <= W <= w_max):
@@ -1978,16 +2031,9 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
     outs_ser = b''.join(_hcred_outputs_ser(rd['outs'])
                         for rd in proof['rounds'])
 
-    # Branch 1: ZKP-RNL with the bound challenge message.
-    w1, c1, z1 = proof['b1']
-    b1_msg = stmt + hfscx_256(b'HCRED-b1' + coms_ser + outs_ser)
-    if not rnl_sigma_verify(m_poly, C_poly, n, b1_msg, w1, c1, z1):
-        return False
-    b1_ser = (_hcred_ser([x % q for x in w1]) + _hcred_ser(c1)
-              + _hcred_ser([x % q for x in z1]))
-
     H_rows = _stern_build_H(seed_H.uint, n, rows)
-    chals  = _hcred_challenges(stmt, b1_ser, coms_ser, outs_ser, rounds)
+    lift   = _rnl_lift(C_poly, RNLP, q)
+    chals  = _hcred_challenges(stmt, coms_ser, outs_ser, rounds)
 
     for ri, rd in enumerate(proof['rounds']):
         c    = chals[ri]
@@ -2000,6 +2046,9 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
         for i in range(nb):
             if (outs['bit'][0][i] + outs['bit'][1][i] + outs['bit'][2][i]) % q:
                 return False
+        for i in range(nd):
+            if (outs['del'][0][i] + outs['del'][1][i] + outs['del'][2][i]) % q:
+                return False
         if (outs['W'][0] + outs['W'][1] + outs['W'][2]) % q != W:
             return False
         for r in range(rows):
@@ -2008,16 +2057,25 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
             if ((outs['y'][0][r] + outs['y'][1][r] + outs['y'][2][r]) % q
                     != ((y_synd >> r) & 1)):
                 return False
+        for i in range(n):
+            if ((outs['rnd'][0][i] + outs['rnd'][1][i] + outs['rnd'][2][i])
+                    % q != (lift[i] - off) % q):
+                return False
         # 2. Rebuild the two opened parties' tapes and input shares.
-        if 2 in (c, cp1) and (rd['aux_s'] is None or rd['aux_B'] is None):
+        if 2 in (c, cp1) and (rd['aux_s'] is None or rd['aux_B'] is None
+                              or rd['aux_D'] is None):
             return False
         t_c, t_c1 = _HcredTape(rd['seed_c']), _HcredTape(rd['seed_c1'])
         sh_s_c  = t_c.draws(n)  if c   != 2 else list(rd['aux_s'])
         sh_B_c  = t_c.draws(nb) if c   != 2 else list(rd['aux_B'])
+        sh_D_c  = t_c.draws(nd) if c   != 2 else list(rd['aux_D'])
         sh_s_c1 = t_c1.draws(n)  if cp1 != 2 else list(rd['aux_s'])
         sh_B_c1 = t_c1.draws(nb) if cp1 != 2 else list(rd['aux_B'])
-        R1_c,  R2_c,  R3_c  = t_c.draws(n),  t_c.draws(n),  t_c.draws(nb)
-        R1_c1, R2_c1, R3_c1 = t_c1.draws(n), t_c1.draws(n), t_c1.draws(nb)
+        sh_D_c1 = t_c1.draws(nd) if cp1 != 2 else list(rd['aux_D'])
+        R1_c,  R2_c  = t_c.draws(n),  t_c.draws(n)
+        R3_c,  R4_c  = t_c.draws(nb), t_c.draws(nd)
+        R1_c1, R2_c1 = t_c1.draws(n), t_c1.draws(n)
+        R3_c1, R4_c1 = t_c1.draws(nb), t_c1.draws(nd)
         # 3. Recompute party c's gates using party c+1's wires.
         a_c = [(sh_s_c[i] * sh_s_c[i] + sh_s_c1[i] * sh_s_c[i]
                 + sh_s_c[i] * sh_s_c1[i] + R1_c[i] - R1_c1[i]) % q
@@ -2028,21 +2086,27 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
         g_c = [(sh_B_c[i] * sh_B_c[i] + sh_B_c1[i] * sh_B_c[i]
                 + sh_B_c[i] * sh_B_c1[i] + R3_c[i] - R3_c1[i]) % q
                for i in range(nb)]
-        sh_s3 = [None] * 3; sh_B3 = [None] * 3
+        h_c = [(sh_D_c[i] * sh_D_c[i] + sh_D_c1[i] * sh_D_c[i]
+                + sh_D_c[i] * sh_D_c1[i] + R4_c[i] - R4_c1[i]) % q
+               for i in range(nd)]
+        sh_s3 = [None] * 3; sh_B3 = [None] * 3; sh_D3 = [None] * 3
         sh_s3[c], sh_s3[cp1] = sh_s_c, sh_s_c1
         sh_B3[c], sh_B3[cp1] = sh_B_c, sh_B_c1
-        a3 = [None] * 3; b3 = [None] * 3; g3 = [None] * 3
+        sh_D3[c], sh_D3[cp1] = sh_D_c, sh_D_c1
+        a3 = [None] * 3; b3 = [None] * 3; g3 = [None] * 3; h3 = [None] * 3
         a3[c], a3[cp1] = a_c, rd['a1']
         b3[c], b3[cp1] = b_c, rd['b1']
         g3[c], g3[cp1] = g_c, rd['g1']
+        h3[c], h3[cp1] = h_c, rd['h1']
         # 4. Recompute both opened parties' outputs and commitments.
         for j in (c, cp1):
             e_j   = [((a3[j][i] + sh_s3[j][i]) * inv2) % q for i in range(n)]
             o_ter = [(b3[j][i] - sh_s3[j][i]) % q for i in range(n)]
             o_bit = [(g3[j][i] - sh_B3[j][i]) % q for i in range(nb)]
+            o_del = [(h3[j][i] - sh_D3[j][i]) % q for i in range(nd)]
             o_W   = sum(e_j) % q
             if o_ter != outs['ter'][j] or o_bit != outs['bit'][j] \
-                    or o_W != outs['W'][j]:
+                    or o_del != outs['del'][j] or o_W != outs['W'][j]:
                 return False
             for r in range(rows):
                 acc = 0
@@ -2056,17 +2120,27 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
                     return False
                 if sh_B3[j][r * row_bits] % q != outs['y'][j][r]:
                     return False
-            aux = ((_hcred_ser(rd['aux_s']) + _hcred_ser(rd['aux_B']))
-                   if j == 2 else b'')
+            ms_j = _rnl_poly_mul(m_poly, sh_s3[j], q, n)
+            for i in range(n):
+                dec = 0
+                for t in range(eb):
+                    dec += (1 << t) * sh_D3[j][i * eb + t]
+                if (ms_j[i] - dec) % q != outs['rnd'][j][i]:
+                    return False
+            aux = ((_hcred_ser(rd['aux_s']) + _hcred_ser(rd['aux_B'])
+                    + _hcred_ser(rd['aux_D'])) if j == 2 else b'')
             seed_j = rd['seed_c'] if j == c else rd['seed_c1']
             com = hfscx_256(b'HCRED-com' + bytes([j]) + ri.to_bytes(2, 'big')
                             + seed_j + aux + _hcred_ser(a3[j])
                             + _hcred_ser(b3[j]) + _hcred_ser(g3[j])
+                            + _hcred_ser(h3[j])
                             + _hcred_ser(outs['ter'][j])
                             + _hcred_ser(outs['bit'][j])
+                            + _hcred_ser(outs['del'][j])
                             + _hcred_ser([outs['W'][j]])
                             + _hcred_ser(outs['S'][j])
-                            + _hcred_ser(outs['y'][j]))
+                            + _hcred_ser(outs['y'][j])
+                            + _hcred_ser(outs['rnd'][j]))
             if com != rd['coms'][j]:
                 return False
     return True
@@ -3336,13 +3410,14 @@ def main():
           f"y=0x{_hc_y:0{_hc_n // 8}x}")
     print(f"+ issuer credential (Stern-F over (m,C,seed_H,y)) verified"
           if _hc_cok else "- issuer credential verify FAILED")
-    print(f"+ HCRED presentation proof verified (e never revealed)"
+    print(f"+ HCRED presentation proof verified (unified circuit: Ring-LWR "
+          f"rounding + syndrome for the SAME s; e never revealed)"
           if _hc_ok else "- HCRED presentation verify FAILED")
     print(f"+ HCRED replay under different nonce rejected"
           if not _hc_replay else "- HCRED replay NOT rejected")
     print(f"  (demo uses R={_HCRED_DEMO_ROUNDS}; production requires "
-          f"R={_ZKP_NL_PROD_ROUNDS}; same-witness linkage across branches "
-          f"requires the BDLOP batch — see §11.10.10)")
+          f"R={_ZKP_NL_PROD_ROUNDS}; rounding check is relaxed to "
+          f"||m*s - lift(C)||inf <= 15 — see §11.10.10)")
 
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")

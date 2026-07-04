@@ -4,6 +4,36 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.75] - 2026-07-03
+
+### Feature — HCRED unified circuit: same-witness linkage without BDLOP (TODO #128 Batch 2)
+
+- **`Herradura cryptographic suite.py`:** the Ring-LWR relation moves INSIDE the MPCitH
+  circuit, closing the Batch-1 collusion-splitting gap.  Key observation: m·s is linear
+  in the s-wires (m public), so C = round_p(m·s) costs only a range check on the rounding
+  error — ε_i = Σ 2^t·δ_{i,t} − 16 with 5 witness bits per coefficient (honest |ε| ≤ 8),
+  bit checks δ² = δ, and the linear output [m·s]_i − Σ 2^t·δ_{i,t} = lift(C)_i − 16.
+  Total circuit: 2n + (n/2)·⌈log₂(n+1)⌉ + 5n multiplication gates (4224 at n=256, 384
+  at n=32).
+- **Architecture simplification:** the separate ZKP-RNL Σ-protocol branch is REMOVED —
+  the whole compound statement is one proof with one witness, so same-s linkage holds by
+  construction and no BDLOP commitment is needed.  Proof dict no longer carries 'b1'.
+- **Relaxed rounding soundness (documented §11.10.10):** the 5-bit range admits
+  ||m·s − lift(C)||∞ ≤ 15 vs honest 8 — the standard LWR-proof relaxation, tighter than
+  the ZKP-RNL Σ-protocol's own aggregate slack (144 at t=16).
+- **Soundness note:** shipping only the unopened party's output shares was evaluated and
+  is UNSOUND (the FS challenge must bind all three output-share sets pre-challenge; the
+  verifier cannot reconstruct opened outputs before knowing the challenge).  Transcript
+  format unchanged; KKW remains the size-optimization path (now Batch 3).
+- **Verified:** completeness 20/20 (n=32) and end-to-end at n=256; replay, wrong
+  syndrome, wrong key, tampered rounding share, overweight W all rejected; NEW
+  split-witness tests — prove with s₂ against (C₂, y₁) and with s₁ against (C₂, y₁)
+  both refused.
+- **Batch plan revised:** tests-file entry moves to the ports batch (adding a
+  Python-only test would desynchronize the unified C/Go/Python test numbering, TODO #87).
+
+---
+
 ## [1.9.74] - 2026-07-03
 
 ### Feature — HCRED: hybrid Ring-LWR + Stern-F credential, Python suite (TODO #128 Batch 1)
