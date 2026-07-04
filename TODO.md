@@ -6706,23 +6706,32 @@ fixed-weight variant (≈ 5.5× gadget).  (4) Implementation promotion split off
 (hash-only, ≈ 40 KB) with the credential issued as an issuer signature over (C, y).
 This item tracks promotion from research prototype to suite implementation.
 
-**Work items:**
+**Batch plan (revised after Batch 1; design refinements in `SecurityProofs-3.md` §11.10.10):**
 
-1. **KKW gadget implementation.** Replace the ZKBoo-(2,3) prototype
-   (`hybrid_credential_phi.py` §5) with the KKW preprocessing-model MPCitH for the
-   512-gate φ_A circuit (64 parties, τ = 22 executions for 2^-128 soundness).
-2. **Compound prover/verifier.** AND-composition per §11.10.8: single Fiat-Shamir
-   challenge over (cmt(s), Ring-LWR transcript, Stern transcript, gadget transcript);
-   port to the Python suite first, then C (`herradura.h`) and Go.
-3. **Issuer binding.** Define the credential object as an HPKS-Stern-F signature over
-   the serialized (C, y) pair; verification checks the issuer signature before the
-   compound proof (mitigates the §11.10.9 many-solutions forgery).
-4. **Wire format + CLI.** New PEM types for the credential and the compound proof;
-   CLI subcommands (e.g. `cred-issue`, `cred-prove`, `cred-verify`); cross-language
-   interop test in `CliTest/`.
-5. **Docs.** TUTORIAL section + SecurityProofs-3.md implementation notes.
+- **Batch 1 — Python suite library + demo (shipped v1.9.74).**  `hcred_phi`,
+  `hcred_user_keygen`, `hcred_syndrome`, `hcred_issue`, `hcred_cred_verify`,
+  `hcred_prove`, `hcred_verify` + suite demo block (n=32, R=4).  Two design
+  refinements vs the original sketch: (a) e = φ(s) must stay SECRET in a
+  presentation, so the φ-gadget and syndrome check are merged into one
+  ZKBoo-(2,3) MPCitH circuit over Z_q with internal e-wires and per-row
+  bit-decomposition witness bits for the mod-2 reduction — this removes the
+  standalone Stern branch and its linkable-commitment gadget; (b) sequential
+  FS binding (branch-1 challenge binds branch-2 commitments and vice versa)
+  with the issuer's Stern-F signature over H(m‖C‖seed_H‖y) as the anchor.
+  Verified: completeness 20/20; replay/wrong-syndrome/wrong-key/tamper/
+  overweight all rejected.
+- **Batch 2 — BDLOP witness linkage + KKW size optimization.**  Same-s binding
+  across the two branches (collusion-splitting resistance — the Batch-1 honest
+  limitation) via a shared commitment; replace the ZKBoo-(2,3) gadget transcript
+  with KKW (64 parties, τ=22) to cut proof size ≈ 20×.  Add a security test to
+  `CryptosuiteTests/Herradura_tests.py`.
+- **Batch 3 — C (`herradura.h`) and Go ports** of the Batch-1/2 functions.
+- **Batch 4 — Wire format + CLI.**  PEM types for credential and presentation
+  proof; `cred-issue`/`cred-prove`/`cred-verify` subcommands; `CliTest/`
+  cross-language interop.
+- **Batch 5 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN**
+Status: **OPEN** — Batch 1 shipped in v1.9.74; Batches 2–5 pending.
 
 ---
 

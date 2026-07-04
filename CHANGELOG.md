@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.74] - 2026-07-03
+
+### Feature — HCRED: hybrid Ring-LWR + Stern-F credential, Python suite (TODO #128 Batch 1)
+
+- **`Herradura cryptographic suite.py`:** new HCRED section implementing the §11.10.8
+  credential with the §11.10.9 binding map φ_A: `hcred_phi`, `hcred_user_keygen`,
+  `hcred_syndrome`, `hcred_issue`, `hcred_cred_verify`, `hcred_prove`, `hcred_verify`.
+- **Design refinement (documented in new `SecurityProofs-3.md` §11.10.10):** because
+  e = φ(s) must stay secret in a presentation (it reveals the positive support of s),
+  the φ-gadget and the syndrome check are merged into ONE ZKBoo-(2,3) MPC-in-the-head
+  circuit over Z_q — e-wires are internal and never opened; the mod-2 syndrome reduction
+  runs through per-row bit-decomposition witness bits (β² = β, β₀ = y_r).  This
+  eliminates the standalone Stern branch and its linkable-commitment gadget entirely
+  (2n + (n/2)·⌈log₂(n+1)⌉ = 1664 multiplication gates at n=256).
+- **Compound binding:** sequential Fiat-Shamir — the ZKP-RNL branch-1 challenge binds
+  all branch-2 commitments; branch-2 trits bind the branch-1 transcript.  The credential
+  is an HPKS-Stern-F issuer signature over H(m‖C‖seed_H‖y), defeating the §11.10.9
+  self-registered-key forgery.  Weight bound W ≤ ⌊n/4 + 4√(3n/16)⌋ replaces Stern's
+  exact-weight check.
+- **Verified:** completeness 20/20; replay (different nonce), wrong syndrome, wrong
+  public key, tampered output share, and overweight W all rejected; wrong witness
+  refused at prove time.  Demo block added to the suite main (n=32, R=4).
+- **Batch-1 caveat (§11.10.10):** branches share the FS transcript but not a witness
+  commitment — collusion-splitting resistance needs the BDLOP batch.  Remaining #128
+  batches: KKW gadget + tests-file entry, C/Go ports, CLI (`cred-issue`/`cred-prove`/
+  `cred-verify`) + interop tests, tutorial.
+
+---
+
 ## [1.9.73] - 2026-07-03
 
 ### Research — Hybrid credential binding map φ resolved (TODO #123)

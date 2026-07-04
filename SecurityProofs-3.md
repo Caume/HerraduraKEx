@@ -275,6 +275,22 @@ Hybrid credential totals: $\approx 81$ KB with the BDLOP gadget (matching the §
 
 **Conclusion.**  The open problem of §11.10.8 is resolved: $\phi = \phi_A$ with issuer-bound $(C, y)$ and a KKW (hash-only) or BDLOP gadget.  Promotion to a suite implementation — the compound prover/verifier, the linkable commitment, and CLI surface — is tracked as TODO #128.
 
+### 11.10.10 HCRED Implementation Notes (TODO #128, Batch 1 — v1.9.74)
+
+The Python suite implements the credential as `hcred_phi`, `hcred_user_keygen`, `hcred_syndrome`, `hcred_issue`, `hcred_cred_verify`, `hcred_prove`, and `hcred_verify`.  Two design refinements emerged during implementation, both departing from the §11.10.8 sketch in ways worth recording.
+
+**Refinement 1 — the Stern sub-protocol is replaced by a single MPC-in-the-head circuit.**  The §11.10.9 gadget prototype treated $e = \phi_A(s)$ as *public*, but in the credential $e$ must stay secret: it reveals the positive support of $s$, halving the secret entropy from 384 to 192 bits.  Rather than proving $e = \phi_A(s)$ against a committed $e$ and separately running Stern on the same commitment (the linkable-commitment problem §11.10.8 deferred to BDLOP), Batch 1 merges the gadget and the syndrome check into one ZKBoo-(2,3) arithmetic circuit over $\mathbb{Z}_q$ in which the $e$-wires are internal linear wires that are never opened:
+
+- ternary membership and support extraction as in §11.10.9 ($2n$ multiplication gates);
+- the revealed weight $W = \sum_i e_i$ (linear output, verifier checks $1 \leq W \leq w_{\max}$ with $w_{\max} = \lfloor n/4 + 4\sqrt{3n/16} \rfloor$, i.e. 91 at $n = 256$);
+- the syndrome rows as *integer* sums $S_r = \sum_i H_{ri} e_i \leq n < q$ (no wraparound), reduced mod 2 through auxiliary witness bits: $S_r = \sum_t 2^t \beta_{r,t}$ with $\beta_{r,t}^2 = \beta_{r,t}$ ($\lceil \log_2(n{+}1) \rceil$ bit-check gates per row — 1152 gates at $n = 256$) and the public output $\beta_{r,0} = y_r$.
+
+Total: $2n + (n/2)\lceil \log_2(n{+}1) \rceil$ multiplication gates (1664 at $n = 256$).  The mod-2 reduction via bit decomposition is the only structural cost the merge adds over the §11.10.9 gadget, and it eliminates both the standalone Stern branch (78 KB) and its linkage gadget.  The weight bound replaces Stern's exact-weight check; at the demo code $(N{=}256, k{=}128)$, forging a syndrome preimage of weight $\leq 91$ costs roughly $2^{24}$ by multiplicity-adjusted Prange — the same order as the deployed Stern-F demo parameters, and production still requires the longer codes of TODO #91/#126.
+
+**Refinement 2 — sequential Fiat-Shamir binding, issuer signature as the anchor.**  Branch 1 (the §11.10.2 Ring-LWR $\Sigma$-protocol, `rnl_sigma_sign`) receives as its challenge message the statement hash plus a hash of every branch-2 commitment and output share; branch 2's challenge trits are then derived from the statement, the full branch-1 transcript, and the branch-2 commitments.  The credential itself is an HPKS-Stern-F signature over $H(m \Vert C \Vert \text{seed-H} \Vert y)$, which is what defeats the §11.10.9 self-registered-key forgery.
+
+**Honest limitation (Batch 1).**  The two branches share the Fiat-Shamir transcript but not a witness commitment: a compound proof demonstrates knowledge of *some* $s'$ for $C$ and *some* $s''$ with $H \phi_A(s'')^{\top} = y$.  For an issuer-bound pair both conditions are individually hard for an outsider, but two colluding parties each holding one witness could jointly produce a presentation (credential splitting).  Same-witness linkage requires running the $\Sigma$-protocol against a BDLOP-style commitment shared with the MPCitH branch — tracked as the remaining #128 work.  Demo parameters are $n = 32$, $R = 4$ ($R = 219$ for $2^{-128}$ soundness); the presentation nonce (`msg_bytes`) is bound into the statement hash, so transcripts do not replay across contexts.
+
 **References.**
 - Lyubashevsky 2012. *Lattice Signatures Without Trapdoors*. Eurocrypt 2012, LNCS 7237, pp. 738–755.
 - Giacomelli, Madsen, Orlandi 2016. *ZKBoo: Faster Zero-Knowledge for Boolean Circuits*. USENIX Security 2016, pp. 1069–1083.
