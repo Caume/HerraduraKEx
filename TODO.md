@@ -6683,6 +6683,45 @@ algebras, Z_q[x]/(x^n+1) vs F_2^N).
 **References:** §11.10.8 design sketch; BDLOP (Baum et al. 2018, SCN 2018); Lyubashevsky 2012
 (Eurocrypt 2012).
 
+Status: **DONE v1.9.73** — resolved by `SecurityProofsCode/hybrid_credential_phi.py` and
+`SecurityProofs-3.md` §11.10.9.  The §11.10.8 dichotomy was a false choice: φ_A(s)_i = [s_i = +1]
+(positive-support bitmap) makes the binding relation algebraic of degree ≤ 3 over Z_q —
+s_i³ = s_i and e_i = (s_i²+s_i)/2 — 512 multiplication gates at n=256, no bit decomposition.
+Work items: (1) survey done — candidates A/B/C/D analysed, A selected; (2) gadget cost
+quantified — BDLOP ≈ 2 KB, KKW ≈ 40 KB (hash-only, recommended), boolean-PRF route 1.8 MB
+rejected; (3) φ_A prototyped as a ZKBoo-(2,3) MPCitH gadget over Z_q — completeness 30/30,
+cheats rejected 500/500, corrupted-view survival matches (1/3)^R; the non-fixed weight
+(w ≈ 64, leak 4.84 bits = 1.3%) is characterised, and a NEW finding — self-registered-key
+forgery in the many-solutions regime (≈ 2^75.6 solutions, ≈ 2^3.8 effective Prange) —
+requires the credential to be an issuer signature over (C, y) (zero cost) or the φ_D
+fixed-weight variant (≈ 5.5× gadget).  (4) Implementation promotion split off as TODO #128.
+
+---
+
+### 128. Implement the hybrid Ring-LWR + Stern-F credential (compound prover/verifier + CLI) (Feature, Medium)
+
+**Background:** TODO #123 resolved the binding map φ for the §11.10.8 hybrid credential
+(see `SecurityProofs-3.md` §11.10.9): φ_A = positive-support bitmap, binding gadget =
+512 Z_q multiplication gates, recommended proof system = KKW 64-party MPC-in-the-head
+(hash-only, ≈ 40 KB) with the credential issued as an issuer signature over (C, y).
+This item tracks promotion from research prototype to suite implementation.
+
+**Work items:**
+
+1. **KKW gadget implementation.** Replace the ZKBoo-(2,3) prototype
+   (`hybrid_credential_phi.py` §5) with the KKW preprocessing-model MPCitH for the
+   512-gate φ_A circuit (64 parties, τ = 22 executions for 2^-128 soundness).
+2. **Compound prover/verifier.** AND-composition per §11.10.8: single Fiat-Shamir
+   challenge over (cmt(s), Ring-LWR transcript, Stern transcript, gadget transcript);
+   port to the Python suite first, then C (`herradura.h`) and Go.
+3. **Issuer binding.** Define the credential object as an HPKS-Stern-F signature over
+   the serialized (C, y) pair; verification checks the issuer signature before the
+   compound proof (mitigates the §11.10.9 many-solutions forgery).
+4. **Wire format + CLI.** New PEM types for the credential and the compound proof;
+   CLI subcommands (e.g. `cred-issue`, `cred-prove`, `cred-verify`); cross-language
+   interop test in `CliTest/`.
+5. **Docs.** TUTORIAL section + SecurityProofs-3.md implementation notes.
+
 Status: **OPEN**
 
 ---

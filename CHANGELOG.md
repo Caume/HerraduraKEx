@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.73] - 2026-07-03
+
+### Research — Hybrid credential binding map φ resolved (TODO #123)
+
+- **`SecurityProofsCode/hybrid_credential_phi.py` (new):** resolves the open problem of
+  `SecurityProofs-3.md` §11.10.8 — the binding map φ relating the ternary Ring-LWR secret
+  to the binary Stern witness.  Key result: choosing φ as the positive-support bitmap
+  (φ(s)_i = 1 iff s_i = +1) makes the binding relation purely algebraic of degree ≤ 3 over
+  Z_q — s_i³ = s_i (ternary check) and e_i = (s_i² + s_i)/2 (support extraction) — i.e.
+  512 multiplication gates at n=256 with **no bit decomposition**, falsifying the §11.10.8
+  dichotomy (expensive circuit vs restrictive linear map).
+- **New security finding:** at the φ_A weight w ≈ 64 the SDP instance has ≈ 2^75.6 solutions
+  and finding one takes ≈ 2^3.8 Prange iterations, enabling a self-registered-key forgery.
+  Mitigation: the credential must be an issuer signature over the pair (C, y) (zero cost),
+  or use the fixed-weight φ_D variant (≈ 5.5× gadget).
+- **Prototype:** ZKBoo-(2,3) MPC-in-the-head gadget over Z_q with Fiat-Shamir — completeness
+  30/30 (n=32) and end-to-end at n=256; false-statement and non-ternary cheats rejected
+  500/500; corrupted-view survival matches the (1/3)^R soundness error (24 vs 18.5 expected).
+- **Cost at 2^-128 soundness (n=256):** BDLOP ≈ 2 KB, KKW ≈ 40 KB (hash-only, recommended),
+  prototype ZKBoo-Z_q ≈ 850 KB, boolean-PRF route ≈ 1.8 MB (rejected).  Hybrid credential
+  totals ≈ 81 KB (BDLOP) / ≈ 120 KB (KKW), Stern-F-dominated.
+- **`SecurityProofs-3.md`:** new §11.10.9 documenting the resolution; §11.10.6 direction 4
+  and the §11.10.8 "Open problem" paragraph annotated as resolved; KKW and Prange references
+  added.  Validator: 376 OK / 0 FAIL.
+- **`TODO.md`:** #123 marked DONE; implementation promotion (compound prover/verifier,
+  linkable commitment, CLI surface) split off as new TODO #128.
+
+---
+
 ## [1.9.72] - 2026-07-03
 
 ### Fix — SecurityProofs KaTeX rendering: remaining `^*` emphasis breakage (TODO #57–#60)

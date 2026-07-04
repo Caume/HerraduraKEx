@@ -179,7 +179,7 @@ For anonymous credential applications on HKEX-RNL keys, the Ring-LWR $\Sigma$-pr
 
 3. **ZKB++ on NL-FSCX.** *(Scoped v1.9.66 — see §11.10.4 and `zkp_pqc_exploration.py` §3.7.)*  Implement Chase et al. 2017's optimised MPC-in-the-head decomposition.  A first-principles size accounting shows ZKB++ reduces the $n=256$ proof from 920 KB to **≈457 KB ($2.0\times$)**, not the generic 180 KB — the NL-FSCX circuit is AND-gate-broadcast-dominated, so only the $2\times{\to}1\times$ online-party term helps.  Reaching ~180 KB additionally requires a sparse (LowMC-like) circuit to cut the AND-gate count; that circuit redesign remains open.
 
-4. **Hybrid credential scheme.** *(Scoped v1.9.67 — design sketch in §11.10.8.)*  Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a code-based credential bound to $s$" — an AND-composition glued by a binding commitment to $s$, single Fiat-Shamir challenge, estimated proof size $\approx 80$ KB (Stern-F-dominated).  The unresolved crux is the binding map $\phi$ relating the ternary ring secret to the fixed-weight binary Stern witness with a cheap gadget; until that is settled the scheme stays a design sketch.
+4. **Hybrid credential scheme.** *(Scoped v1.9.67 — design sketch in §11.10.8; binding map resolved v1.9.73 — §11.10.9.)*  Combine the Ring-LWR $\Sigma$-protocol with HPKS-Stern-F to prove "I hold a Ring-LWR private key $s$ matching public key $C$ AND a code-based credential bound to $s$" — an AND-composition glued by a binding commitment to $s$, single Fiat-Shamir challenge, estimated proof size $\approx 80$ KB (Stern-F-dominated).  The formerly unresolved crux — the binding map $\phi$ relating the ternary ring secret to the low-weight binary Stern witness with a cheap gadget — is resolved in §11.10.9: the positive-support bitmap makes the binding relation algebraic of degree 3 over $\mathbb{Z}_q$ (512 multiplication gates at $n=256$, no bit decomposition).  Implementation promotion is tracked as TODO #128.
 
 ### 11.10.7 Conditional Reduction of Relaxed Soundness to Ring-LWR (TODO #94 item 3a)
 
@@ -239,7 +239,41 @@ This subsection scopes open direction 4: a single compound zero-knowledge proof 
 
 **Proof size (estimate).**  Additive minus the shared commitment: ZKP-RNL ($\approx 1.03$ KB at $n=256$, §11.10.2) $+$ Stern-F ($\approx 78$ KB at $N=256$, $R=219$) $+$ the bit-decomposition gadget and commitment ($\approx 1$–2 KB) $\approx$ **80 KB**, dominated by the Stern-F component.
 
-**Open problem.**  The crux is the binding map $\phi$ and its gadget: a sound, ZK proof that a committed ternary ring element and a committed fixed-weight binary word are related requires either (a) an arithmetic-circuit proof of the bit-decomposition (expensive), or (b) choosing $\phi$ so the relation is linear over a common ring (restrictive).  Designing $\phi$ so that $\text{wt}(\phi(s)) = t_{\text{S}}$ holds for honest $s$ while keeping the gadget cheap is the main unresolved question; until it is settled the scheme remains a design sketch rather than an implementation.
+**Open problem.**  *(Resolved v1.9.73 — see §11.10.9.)*  The crux is the binding map $\phi$ and its gadget: a sound, ZK proof that a committed ternary ring element and a committed fixed-weight binary word are related requires either (a) an arithmetic-circuit proof of the bit-decomposition (expensive), or (b) choosing $\phi$ so the relation is linear over a common ring (restrictive).  Designing $\phi$ so that $\text{wt}(\phi(s)) = t_{\text{S}}$ holds for honest $s$ while keeping the gadget cheap is the main unresolved question; §11.10.9 shows the dichotomy was a false choice — a third route (polynomial identities over $\mathbb{Z}_q$) is both cheap and exact.
+
+### 11.10.9 Resolution of the Binding Map φ (TODO #123)
+
+The dichotomy posed in §11.10.8 — bit-decomposition circuit (expensive) versus common-ring linearity (restrictive) — omits a third route that is both cheap and exact.  Choose the **positive-support bitmap**
+
+$$\phi_A(s)_i = 1 \iff s_i = +1.$$
+
+For ternary $s_i \in \{-1, 0, 1\}$ the entire binding relation is then a system of *polynomial identities over the Ring-LWR base field* $\mathbb{Z}_q$, requiring no bit decomposition at all:
+
+$$s_i^3 - s_i = 0 \qquad \text{(ternary membership)}, \qquad e_i = (s_i^2 + s_i) \cdot 2^{-1} \bmod q \qquad \text{(support extraction)}.$$
+
+Both constraints follow from evaluating the polynomials at the three ternary points: $s_i^3 = s_i$ holds exactly on $\{-1,0,1\}$, and $(s_i^2+s_i)/2$ equals $1$ at $s_i = 1$ and $0$ at $s_i \in \{0,-1\}$.  The gadget circuit is two multiplication gates per coefficient ($a_i = s_i \cdot s_i$, $b_i = a_i \cdot s_i$) — **512 multiplication gates at $n = 256$**, all native $\mathbb{Z}_q$ arithmetic, directly compatible with any MPC-in-the-head proof system or lattice product argument over the same modulus.
+
+**Weight leakage.**  Under $\phi_A$ the Stern witness weight becomes $w = \text{wt}_+(s) \sim \text{Binomial}(256, 1/4)$ — mean 64, standard deviation 6.93 — and is revealed to the verifier.  The exact entropy of the weight is 4.84 bits against the 384-bit secret entropy of $s$ (256 coefficients at 1.5 bits each): a 1.3% leak, negligible.  Empirical confirmation over 100 000 CBD(1) samples: mean 64.00, observed range $\lbrack 37, 96 \rbrack$ (`hybrid_credential_phi.py` §2).
+
+**Many-solutions regime — a new security finding.**  Raising the Stern weight from the deployed $t = 16$ to $w \approx 64$ moves the SDP instance from the unique-solution regime into a many-solutions regime.  For the $(N{=}256, k{=}128)$ demo code the expected solution count per syndrome is $2^{203.6 - 128} \approx 2^{75.6}$, and Prange's per-iteration success probability is multiplied by that count: finding *some* weight-64 solution of $H e^{\top} = y$ takes $\approx 2^{3.8}$ iterations.  This enables a **self-registered-key forgery**: an attacker finds any weight-64 solution $e'$, sets $s' = e'$ (which is valid ternary with $\phi_A(s') = e'$), registers $C' = \text{round-p}(m \cdot s')$, and proves the compound statement honestly.  Two mitigations, either sufficient:
+
+1. **Issuer-bound pair** (recommended, zero cost): the credential is an issuer *signature over* $(C, y)$, so a forger must match an existing issued pair — find $s'$ satisfying both $\text{round-p}(m \cdot s') = C$ and $H \phi_A(s')^{\top} = y$ simultaneously, a 128-bit targeted preimage condition on top of Ring-LWR key recovery.  Credentials are issuer-signed in any deployment of §11.10.8, so this constraint is free.
+2. **Fixed-weight variant $\phi_D$** (first-16-positives selection): keeps $w = t_{\text{S}} = 16$ and the unique-solution regime, at the cost of a prefix-sum selection circuit ($\approx 2{,}800$ additional Boolean AND gates, $\approx 5.5\times$ the $\phi_A$ gadget).  $\Pr\lbrack \text{wt}_+(s) < 16 \rbrack = 2^{-50.6}$, so the selection never fails for honest keys.
+
+**Gadget cost at $n = 256$, $2^{-128}$ soundness** (`hybrid_credential_phi.py` §4):
+
+| Proof system for the 512-gate gadget | Size | Assumptions |
+|---|---|---|
+| BDLOP product argument | $\approx 2$ KB | lattice commitment (new primitive for the suite) |
+| KKW 64-party MPC-in-the-head, $\tau = 22$ | $\approx 40$ KB | hash-only — **recommended** |
+| ZKBoo-(2,3) over $\mathbb{Z}_q$ (prototype) | $\approx 850$ KB | hash-only, unoptimised transcript |
+| Boolean-PRF route (candidate B, two NL-FSCX circuits) | $\approx 1.8$ MB | rejected |
+
+Hybrid credential totals: $\approx 81$ KB with the BDLOP gadget (matching the §11.10.8 estimate) or $\approx 120$ KB with the hash-only KKW gadget — Stern-F-dominated either way.
+
+**Prototype verification.**  `SecurityProofsCode/hybrid_credential_phi.py` §5 implements the $\phi_A$ gadget as a ZKBoo-style (2,3)-decomposition over $\mathbb{Z}_q$ with Fiat-Shamir challenges: completeness 30/30 at $n=32$ and end-to-end at $n=256$; false statements ($e \neq \phi_A(s)$) and non-ternary witnesses rejected 500/500 each (unconditional output-sum check); corrupted-view cheating survives at the expected $(1/3)^R$ rate (24 observed vs 18.5 expected at $R=3$ over 500 trials).
+
+**Conclusion.**  The open problem of §11.10.8 is resolved: $\phi = \phi_A$ with issuer-bound $(C, y)$ and a KKW (hash-only) or BDLOP gadget.  Promotion to a suite implementation — the compound prover/verifier, the linkable commitment, and CLI surface — is tracked as TODO #128.
 
 **References.**
 - Lyubashevsky 2012. *Lattice Signatures Without Trapdoors*. Eurocrypt 2012, LNCS 7237, pp. 738–755.
@@ -247,3 +281,5 @@ This subsection scopes open direction 4: a single compound zero-knowledge proof 
 - Chase et al. 2017. *Post-Quantum Zero-Knowledge and Signatures from Symmetric-Key Primitives*. CCS 2017, pp. 1825–1842. (ZKB++)
 - Baum, Damgård, Lyubashevsky, Oechsner, Peikert 2018. *More Efficient Commitments from Structured Lattice Assumptions*. SCN 2018, LNCS 11035, pp. 368–385. (BDLOP)
 - NIST FIPS 204 (ML-DSA / Dilithium, 2024). NIST FIPS 205 (SLH-DSA / SPHINCS+, 2024).
+- Katz, Kolesnikov, Wang 2018. *Improved Non-Interactive Zero Knowledge with Applications to Post-Quantum Signatures*. CCS 2018, pp. 525–537. (KKW)
+- Prange 1962. *The Use of Information Sets in Decoding Cyclic Codes*. IRE Trans. IT-8, pp. 5–9.
