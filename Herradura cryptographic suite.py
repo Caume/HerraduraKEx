@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.9.75
+    Herradura Cryptographic Suite v1.9.76
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.9.76: HCRED-KKW — preprocessing-model MPCitH transcript, ~11x smaller (TODO #128 Batch 3) ---
     --- v1.9.75: HCRED unified circuit — in-circuit Ring-LWR check, same-s linkage (TODO #128 Batch 2) ---
     --- v1.9.74: HCRED — hybrid Ring-LWR + Stern-F credential, Batch 1 (TODO #128) ---
     --- v1.9.16: HPKS-Stern-Ring — OR-composed Stern ring signature (TODO #78.I) ---
@@ -1942,6 +1943,36 @@ def _hcred_challenges(stmt, coms_ser, outs_ser, rounds):
     return out
 
 
+def _hcred_witness(s_poly, m_poly, C_poly, H_rows, y_synd, n, rows, row_bits):
+    """Prepare the full circuit witness: (W, beta_bits, delta_bits).
+
+    Raises ValueError if s does not match the syndrome y or the key C."""
+    q, hq = RNLQ, RNLQ // 2
+    eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
+    e_int = hcred_phi(s_poly)
+    W     = bin(e_int).count('1')
+    beta  = []
+    for r in range(rows):
+        S_r = bin(H_rows[r] & e_int).count('1')
+        if (S_r & 1) != ((y_synd >> r) & 1):
+            raise ValueError("hcred witness does not match syndrome y")
+        for t in range(row_bits):
+            beta.append((S_r >> t) & 1)
+    # Rounding-error witness bits: ε = m·s − lift(C), centered; δ = ε + 16.
+    ms   = _rnl_poly_mul(m_poly, s_poly, q, n)
+    lift = _rnl_lift(C_poly, RNLP, q)
+    delta = []
+    for i in range(n):
+        d = (ms[i] - lift[i]) % q
+        d = d - q if d > hq else d
+        v = d + off
+        if not (0 <= v < (1 << eb)):
+            raise ValueError("hcred witness does not match public key C")
+        for t in range(eb):
+            delta.append((v >> t) & 1)
+    return W, beta, delta
+
+
 def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
                 rounds=None, msg_bytes=b''):
     """Produce a credential-presentation proof (single unified MPCitH).
@@ -1954,32 +1985,10 @@ def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
     if n is None:      n = _HCRED_DEFAULT_N
     if rounds is None: rounds = _HCRED_DEMO_ROUNDS
     rows, row_bits, w_max = _hcred_params(n)
-    q, hq = RNLQ, RNLQ // 2
-    eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
 
-    e_int  = hcred_phi(s_poly)
-    W      = bin(e_int).count('1')
     H_rows = _stern_build_H(seed_H.uint, n, rows)
-    beta   = []
-    for r in range(rows):
-        S_r = bin(H_rows[r] & e_int).count('1')
-        if (S_r & 1) != ((y_synd >> r) & 1):
-            raise ValueError("hcred_prove: witness does not match syndrome y")
-        for t in range(row_bits):
-            beta.append((S_r >> t) & 1)
-
-    # Rounding-error witness bits: ε = m·s − lift(C), centered; δ = ε + 16.
-    ms   = _rnl_poly_mul(m_poly, s_poly, q, n)
-    lift = _rnl_lift(C_poly, RNLP, q)
-    delta = []
-    for i in range(n):
-        d = (ms[i] - lift[i]) % q
-        d = d - q if d > hq else d
-        v = d + off
-        if not (0 <= v < (1 << eb)):
-            raise ValueError("hcred_prove: witness does not match public key C")
-        for t in range(eb):
-            delta.append((v >> t) & 1)
+    W, beta, delta = _hcred_witness(s_poly, m_poly, C_poly, H_rows,
+                                    y_synd, n, rows, row_bits)
 
     stmt  = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
     execs = [_hcred_mpc_round(s_poly, beta, delta, m_poly, H_rows,
@@ -2143,6 +2152,452 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
                             + _hcred_ser(outs['rnd'][j]))
             if com != rd['coms'][j]:
                 return False
+    return True
+
+
+# ── HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3) ────
+#
+# Same circuit and statement as hcred_prove/hcred_verify, encoded with the
+# KKW (Katz-Kolesnikov-Wang 2018) N-party preprocessing paradigm instead of
+# ZKBoo-(2,3):
+#   * Preprocessing: every wire w carries a mask λ_w additively shared by N
+#     parties; for each mult gate z = x·y the parties also share λ_x·λ_y.
+#     All of party i's shares derive from a seed (binary seed tree per
+#     emulation) except party N−1's product-share corrections ("aux").
+#   * Cut-and-choose: M emulations are committed; a Fiat-Shamir challenge
+#     opens M−τ of them completely (root seed only — the verifier recomputes
+#     aux and all commitments), which is what forces aux to be honest.
+#   * Online (τ emulations): masked inputs ẑ_w = w + λ_w are published; per
+#     mult gate each party broadcasts
+#       t_i = −ẑ_x·[λ_y]_i − ẑ_y·[λ_x]_i + [λ_xy]_i + [λ_z]_i  (+ ẑ_x·ẑ_y
+#     for party 0), and ẑ_z = Σ t_i.  A second challenge hides ONE party per
+#     emulation; the proof ships the N−1 other seeds (log2 N tree nodes),
+#     the hidden party's broadcasts, and aux when the aux party is opened.
+#   * Batched output check: all K output wires are folded into one random
+#     linear combination (FS-derived ρ ∈ Z_q^K after the broadcasts are
+#     bound), so each party broadcasts a single combined mask share u_i —
+#     the per-exec escape probability gains only 1/q ≈ 2^-16, negligible
+#     against the 1/N party-hiding term.
+#   * Soundness: a prover cheating in k preprocessing emulations survives
+#     with probability C(M−k, M−τ)/C(M, M−τ) · (1/N)^(τ−k); production
+#     parameters N=64, M=343, τ=27 give 2^-128 (Picnic2 parameter set).
+#     Demo defaults N=4, M=8, τ=4 (illustration only).
+#
+# Size note: at n=256 the unified circuit has 4224 mult gates, so KKW at
+# production parameters is ≈ 0.9 MB — an ≈ 11× cut over the ZKBoo path
+# (≈ 9.9 MB at R=219), not the 20× projected in TODO #123 for the original
+# 512-gate φ-only gadget (§11.10.10).
+# ----------------------------------------------------------------------------
+
+_HCRED_KKW_DEMO_N   = 4    # demo parties;      production: 64
+_HCRED_KKW_DEMO_M   = 8    # demo emulations;   production: 343
+_HCRED_KKW_DEMO_TAU = 4    # demo online execs; production: 27
+
+
+def _hcred_kkw_gates(n, nb, nd):
+    """Mult-gate wiring: (x_kind, x_idx, y_kind, y_idx, z_idx) per gate.
+    Input wires: [0,n) = s, [n,n+nb) = β, [n+nb,n+nb+nd) = δ.
+    Z wires:     [0,n) = a, [n,2n) = b, [2n,2n+nb) = g, then h."""
+    gates = []
+    for i in range(n):
+        gates.append(('in', i, 'in', i, i))                       # a = s²
+    for i in range(n):
+        gates.append(('z', i, 'in', i, n + i))                    # b = a·s
+    for i in range(nb):
+        gates.append(('in', n + i, 'in', n + i, 2 * n + i))       # g = β²
+    for i in range(nd):
+        gates.append(('in', n + nb + i, 'in', n + nb + i,
+                      2 * n + nb + i))                            # h = δ²
+    return gates
+
+
+def _hcred_kkw_tree(root, N):
+    """Expand a binary seed tree; returns (leaves list, nodes dict)."""
+    levels = N.bit_length() - 1
+    nodes = {(0, 0): root}
+    for l in range(levels):
+        for i in range(1 << l):
+            par = nodes[(l, i)]
+            nodes[(l + 1, 2 * i)]     = hfscx_256(b'HCRED-tree0' + par)
+            nodes[(l + 1, 2 * i + 1)] = hfscx_256(b'HCRED-tree1' + par)
+    return [nodes[(levels, i)] for i in range(N)], nodes
+
+
+def _hcred_kkw_tree_open(nodes, N, hide):
+    """Sibling path revealing every leaf except `hide` (log2 N nodes)."""
+    levels = N.bit_length() - 1
+    out, idx = [], hide
+    for l in range(levels, 0, -1):
+        out.append(((l, idx ^ 1), nodes[(l, idx ^ 1)]))
+        idx >>= 1
+    return out
+
+
+def _hcred_kkw_tree_recover(path, N):
+    """Rebuild all leaves covered by a sibling path (all except the hidden)."""
+    levels = N.bit_length() - 1
+    leaves = {}
+    for (l, i), node in path:
+        cur = {i: node}
+        for _ in range(l, levels):
+            nxt = {}
+            for ii, nd in cur.items():
+                nxt[2 * ii]     = hfscx_256(b'HCRED-tree0' + nd)
+                nxt[2 * ii + 1] = hfscx_256(b'HCRED-tree1' + nd)
+            cur = nxt
+        leaves.update(cur)
+    return leaves
+
+
+def _hcred_kkw_party(seed, I, G):
+    """Derive one party's preprocessing shares from its seed.
+    Draw order: λ_in (I), λ_z (G), λ_xy (G)."""
+    tp = _HcredTape(seed)
+    return tp.draws(I), tp.draws(G), tp.draws(G)
+
+
+def _hcred_kkw_pre(root, N, I, G, gates):
+    """One preprocessing emulation from its root seed.
+    Returns (nodes, lam_in, lam_z, lam_xy, aux) — lam_xy[N−1] already
+    corrected by aux so that Σ_i [λ_xy]_i = λ_x·λ_y per gate."""
+    q = RNLQ
+    leaves, nodes = _hcred_kkw_tree(root, N)
+    lam_in, lam_z, lam_xy = [], [], []
+    for i in range(N):
+        li, lz, lxy = _hcred_kkw_party(leaves[i], I, G)
+        lam_in.append(li); lam_z.append(lz); lam_xy.append(lxy)
+    tin = [sum(lam_in[i][w] for i in range(N)) % q for w in range(I)]
+    tz  = [sum(lam_z[i][w] for i in range(N)) % q for w in range(G)]
+    aux = []
+    for gidx, (xk, xi, yk, yi, _) in enumerate(gates):
+        lx = tin[xi] if xk == 'in' else tz[xi]
+        ly = tin[yi] if yk == 'in' else tz[yi]
+        cor = (lx * ly - sum(lam_xy[i][gidx] for i in range(N))) % q
+        aux.append(cor)
+        lam_xy[N - 1][gidx] = (lam_xy[N - 1][gidx] + cor) % q
+    return nodes, lam_in, lam_z, lam_xy, aux
+
+
+def _hcred_kkw_state_com(e, j, seed, aux):
+    """Commitment to party j's preprocessing state in emulation e."""
+    return hfscx_256(b'HCRED-kkwst' + e.to_bytes(2, 'big') + bytes([j])
+                     + seed + (_hcred_ser(aux) if aux is not None else b''))
+
+
+def _hcred_kkw_outmap(vec_in, vec_z, m_poly, H_rows, n, rows, row_bits):
+    """Apply the (linear) output map of the unified circuit to a wire
+    valuation — used both for masked values ẑ and per-party mask shares."""
+    q    = RNLQ
+    inv2 = (q + 1) // 2
+    eb   = _HCRED_EPS_BITS
+    nb   = rows * row_bits
+    s_ = vec_in[:n]; B_ = vec_in[n:n + nb]; D_ = vec_in[n + nb:]
+    a_ = vec_z[:n];  b_ = vec_z[n:2 * n]
+    g_ = vec_z[2 * n:2 * n + nb]; h_ = vec_z[2 * n + nb:]
+    out = []
+    out += [(b_[i] - s_[i]) % q for i in range(n)]
+    out += [(g_[i] - B_[i]) % q for i in range(nb)]
+    out += [(h_[i] - D_[i]) % q for i in range(len(D_))]
+    out.append(sum((a_[i] + s_[i]) * inv2 for i in range(n)) % q)
+    for r in range(rows):
+        acc = sum((a_[i] + s_[i]) * inv2 for i in range(n)
+                  if (H_rows[r] >> i) & 1)
+        dec = sum((1 << t) * B_[r * row_bits + t] for t in range(row_bits))
+        out.append((acc - dec) % q)
+    out += [B_[r * row_bits] % q for r in range(rows)]
+    ms = _rnl_poly_mul(m_poly, [x % q for x in s_], q, n)
+    for i in range(n):
+        dec = sum((1 << t) * D_[i * eb + t] for t in range(eb))
+        out.append((ms[i] - dec) % q)
+    return out
+
+
+def _hcred_kkw_targets(W, y_synd, C_poly, n, rows, row_bits):
+    """Public output values v_o, in _hcred_kkw_outmap order."""
+    q   = RNLQ
+    off = _HCRED_EPS_OFF
+    nb  = rows * row_bits
+    nd  = n * _HCRED_EPS_BITS
+    lift = _rnl_lift(C_poly, RNLP, q)
+    v = [0] * (n + nb + nd) + [W % q] + [0] * rows
+    v += [(y_synd >> r) & 1 for r in range(rows)]
+    v += [(lift[i] - off) % q for i in range(n)]
+    return v
+
+
+def _hcred_kkw_fs_ints(tag, material, count, modulus, distinct=False):
+    """FS integers in [0, modulus) via rejection from an HFSCX stream.
+    Uses 1-byte windows for modulus ≤ 256, 2-byte windows above."""
+    width = 1 if modulus <= 256 else 2
+    space = 1 << (8 * width)
+    lim   = (space // modulus) * modulus
+    out, ctr = [], 0
+    while len(out) < count:
+        blk = hfscx_256(b'HCRED-kkw' + tag + material
+                        + ctr.to_bytes(4, 'big'))
+        ctr += 1
+        for w in range(0, 32 - width + 1, width):
+            v = int.from_bytes(blk[w:w + width], 'big')
+            if v < lim and len(out) < count:
+                v %= modulus
+                if distinct and v in out:
+                    continue
+                out.append(v)
+    return out
+
+
+def hcred_prove_kkw(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
+                    N_par=None, M=None, tau=None, msg_bytes=b''):
+    """KKW-encoded credential-presentation proof (same statement/circuit as
+    hcred_prove).  Returns {'W', 'params', 'pre', 'online'}.
+    Production soundness needs (N, M, τ) = (64, 343, 27) for 2^-128."""
+    if n is None:     n = _HCRED_DEFAULT_N
+    if N_par is None: N_par = _HCRED_KKW_DEMO_N
+    if M is None:     M = _HCRED_KKW_DEMO_M
+    if tau is None:   tau = _HCRED_KKW_DEMO_TAU
+    if N_par & (N_par - 1):
+        raise ValueError("N_par must be a power of two")
+    rows, row_bits, w_max = _hcred_params(n)
+    q  = RNLQ
+    nb = rows * row_bits
+    nd = n * _HCRED_EPS_BITS
+    I, G = n + nb + nd, 2 * n + nb + nd
+    gates = _hcred_kkw_gates(n, nb, nd)
+
+    H_rows = _stern_build_H(seed_H.uint, n, rows)
+    W, beta, delta = _hcred_witness(s_poly, m_poly, C_poly, H_rows,
+                                    y_synd, n, rows, row_bits)
+    w_in = [x % q for x in s_poly] + beta + delta
+    stmt = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
+
+    # ── Preprocessing: M emulations, commit ─────────────────────────────────
+    roots, pre, h_es = [], [], []
+    for e in range(M):
+        root = os.urandom(32)
+        nodes, lam_in, lam_z, lam_xy, aux = _hcred_kkw_pre(
+            root, N_par, I, G, gates)
+        coms = [_hcred_kkw_state_com(
+                    e, j, nodes[(N_par.bit_length() - 1, j)],
+                    aux if j == N_par - 1 else None)
+                for j in range(N_par)]
+        h_es.append(hfscx_256(b'HCRED-kkwem' + e.to_bytes(2, 'big')
+                              + b''.join(coms)))
+        roots.append(root)
+        pre.append((nodes, lam_in, lam_z, lam_xy, aux, coms))
+    h_pre = hfscx_256(b'HCRED-kkwpre' + stmt + b''.join(h_es))
+
+    # ── Challenge 1: cut-and-choose subset ──────────────────────────────────
+    subset = sorted(_hcred_kkw_fs_ints(b'c1', h_pre, tau, M, distinct=True))
+
+    # ── Online phase for the τ selected emulations ──────────────────────────
+    online = {}
+    for e in subset:
+        nodes, lam_in, lam_z, lam_xy, aux, coms = pre[e]
+        tin = [sum(lam_in[i][w] for i in range(N_par)) % q for w in range(I)]
+        zin = [(w_in[w] + tin[w]) % q for w in range(I)]
+        tvec = [[0] * len(gates) for _ in range(N_par)]
+        zz   = [0] * G
+        for gidx, (xk, xi, yk, yi, zi) in enumerate(gates):
+            zx = zin[xi] if xk == 'in' else zz[xi]
+            zy = zin[yi] if yk == 'in' else zz[yi]
+            acc = 0
+            for j in range(N_par):
+                lx = lam_in[j][xi] if xk == 'in' else lam_z[j][xi]
+                ly = lam_in[j][yi] if yk == 'in' else lam_z[j][yi]
+                t = (-zx * ly - zy * lx + lam_xy[j][gidx]
+                     + lam_z[j][zi]) % q
+                if j == 0:
+                    t = (t + zx * zy) % q
+                tvec[j][gidx] = t
+                acc += t
+            zz[zi] = acc % q
+        online[e] = dict(zin=zin, tvec=tvec, zz=zz,
+                         nodes=pre[e][0], lam_in=lam_in, lam_z=lam_z,
+                         aux=aux, coms=coms)
+
+    # ── Batched output check ─────────────────────────────────────────────────
+    msk_parts = []
+    for e in subset:
+        msk_parts.append(_hcred_ser(online[e]['zin']))
+        for j in range(N_par):
+            msk_parts.append(_hcred_ser(online[e]['tvec'][j]))
+    h_msk = hfscx_256(b'HCRED-kkwmsk' + b''.join(msk_parts))
+    K = I + 1 + 2 * rows + n                    # number of output wires
+    rho_tp = _HcredTape(hfscx_256(b'HCRED-kkwrho' + stmt + h_pre + h_msk))
+    rho = rho_tp.draws(K)
+    com_ons = []
+    for e in subset:
+        us = []
+        for j in range(N_par):
+            lo = _hcred_kkw_outmap(online[e]['lam_in'][j],
+                                   online[e]['lam_z'][j],
+                                   m_poly, H_rows, n, rows, row_bits)
+            us.append(sum(rho[k] * lo[k] for k in range(K)) % q)
+        online[e]['us'] = us
+        for j in range(N_par):
+            com_ons.append(hfscx_256(
+                b'HCRED-kkwon' + e.to_bytes(2, 'big') + bytes([j])
+                + _hcred_ser(online[e]['tvec'][j])
+                + _hcred_ser([us[j]])))
+    h_on = hfscx_256(b'HCRED-kkwhon' + b''.join(com_ons))
+
+    # ── Challenge 2: hidden party per online emulation ──────────────────────
+    pbars = _hcred_kkw_fs_ints(b'c2', h_pre + h_msk + h_on, tau, N_par)
+
+    # ── Assemble proof ───────────────────────────────────────────────────────
+    proof_pre = {e: roots[e] for e in range(M) if e not in subset}
+    proof_on  = {}
+    for k, e in enumerate(subset):
+        pb = pbars[k]
+        od = online[e]
+        proof_on[e] = dict(
+            path=_hcred_kkw_tree_open(od['nodes'], N_par, pb),
+            com_h=od['coms'][pb], pbar=pb,
+            aux=od['aux'] if pb != N_par - 1 else None,
+            zin=od['zin'], t=od['tvec'][pb], u=od['us'][pb])
+    return {'W': W, 'params': (N_par, M, tau),
+            'pre': proof_pre, 'online': proof_on}
+
+
+def hcred_verify_kkw(m_poly, C_poly, seed_H, y_synd, proof, n=None,
+                     msg_bytes=b''):
+    """Verify a KKW-encoded credential-presentation proof."""
+    if n is None: n = _HCRED_DEFAULT_N
+    rows, row_bits, w_max = _hcred_params(n)
+    q  = RNLQ
+    nb = rows * row_bits
+    nd = n * _HCRED_EPS_BITS
+    I, G = n + nb + nd, 2 * n + nb + nd
+    N_par, M, tau = proof['params']
+    if N_par & (N_par - 1) or not (1 <= tau <= M):
+        return False
+    W = proof['W']
+    if not (1 <= W <= w_max):
+        return False
+    if len(proof['pre']) != M - tau or len(proof['online']) != tau:
+        return False
+    gates  = _hcred_kkw_gates(n, nb, nd)
+    H_rows = _stern_build_H(seed_H.uint, n, rows)
+    stmt   = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
+    lvl    = N_par.bit_length() - 1
+
+    # ── Recompute every emulation hash ───────────────────────────────────────
+    h_es = [None] * M
+    on_leaves = {}
+    for e, root in proof['pre'].items():
+        nodes, lam_in, lam_z, lam_xy, aux = _hcred_kkw_pre(
+            root, N_par, I, G, gates)
+        coms = [_hcred_kkw_state_com(
+                    e, j, nodes[(lvl, j)],
+                    aux if j == N_par - 1 else None)
+                for j in range(N_par)]
+        h_es[e] = hfscx_256(b'HCRED-kkwem' + e.to_bytes(2, 'big')
+                            + b''.join(coms))
+    for e, od in proof['online'].items():
+        pb = od['pbar']
+        if not (0 <= pb < N_par):
+            return False
+        if pb != N_par - 1 and od['aux'] is None:
+            return False
+        leaves = _hcred_kkw_tree_recover(od['path'], N_par)
+        if set(leaves) != set(range(N_par)) - {pb}:
+            return False
+        on_leaves[e] = leaves
+        coms = []
+        for j in range(N_par):
+            if j == pb:
+                coms.append(od['com_h'])
+            else:
+                coms.append(_hcred_kkw_state_com(
+                    e, j, leaves[j],
+                    od['aux'] if j == N_par - 1 else None))
+        h_es[e] = hfscx_256(b'HCRED-kkwem' + e.to_bytes(2, 'big')
+                            + b''.join(coms))
+    if any(h is None for h in h_es):
+        return False
+    h_pre = hfscx_256(b'HCRED-kkwpre' + stmt + b''.join(h_es))
+
+    # ── Challenge-1 consistency ──────────────────────────────────────────────
+    subset = sorted(_hcred_kkw_fs_ints(b'c1', h_pre, tau, M, distinct=True))
+    if subset != sorted(proof['online'].keys()):
+        return False
+
+    # ── Re-emulate opened parties online ─────────────────────────────────────
+    emu = {}
+    for e in subset:
+        od = proof['online'][e]
+        pb = od['pbar']
+        zin = od['zin']
+        if len(zin) != I or len(od['t']) != len(gates):
+            return False
+        shares = {}
+        for j, seed in on_leaves[e].items():
+            li, lz, lxy = _hcred_kkw_party(seed, I, G)
+            if j == N_par - 1:
+                lxy = [(lxy[g] + od['aux'][g]) % q for g in range(G)]
+            shares[j] = (li, lz, lxy)
+        tvec = {j: [0] * len(gates) for j in shares}
+        zz   = [0] * G
+        for gidx, (xk, xi, yk, yi, zi) in enumerate(gates):
+            zx = zin[xi] if xk == 'in' else zz[xi]
+            zy = zin[yi] if yk == 'in' else zz[yi]
+            acc = od['t'][gidx]
+            for j, (li, lz, lxy) in shares.items():
+                lx = li[xi] if xk == 'in' else lz[xi]
+                ly = li[yi] if yk == 'in' else lz[yi]
+                t = (-zx * ly - zy * lx + lxy[gidx] + lz[zi]) % q
+                if j == 0:
+                    t = (t + zx * zy) % q
+                tvec[j][gidx] = t
+                acc += t
+            zz[zi] = acc % q
+        emu[e] = dict(shares=shares, tvec=tvec, zz=zz)
+
+    # ── Batched output check + challenge-2 consistency ──────────────────────
+    msk_parts = []
+    for e in subset:
+        od = proof['online'][e]
+        msk_parts.append(_hcred_ser(od['zin']))
+        for j in range(N_par):
+            msk_parts.append(_hcred_ser(
+                od['t'] if j == od['pbar'] else emu[e]['tvec'][j]))
+    h_msk = hfscx_256(b'HCRED-kkwmsk' + b''.join(msk_parts))
+    K = I + 1 + 2 * rows + n
+    rho = _HcredTape(hfscx_256(b'HCRED-kkwrho' + stmt + h_pre
+                               + h_msk)).draws(K)
+    targets = _hcred_kkw_targets(W, y_synd, C_poly, n, rows, row_bits)
+    com_ons = []
+    for e in subset:
+        od = proof['online'][e]
+        pb = od['pbar']
+        usum = od['u'] % q
+        for j in sorted(emu[e]['shares']):
+            li, lz, _ = emu[e]['shares'][j]
+            lo = _hcred_kkw_outmap(li, lz, m_poly, H_rows,
+                                   n, rows, row_bits)
+            usum = (usum + sum(rho[k] * lo[k] for k in range(K))) % q
+        # combined check: Σρ(ẑ_o − v_o) == Σ_j u_j
+        zo = _hcred_kkw_outmap(od['zin'], emu[e]['zz'], m_poly, H_rows,
+                               n, rows, row_bits)
+        lhs = sum(rho[k] * ((zo[k] - targets[k]) % q) for k in range(K)) % q
+        if lhs != usum:
+            return False
+        for j in range(N_par):
+            tv = od['t'] if j == pb else emu[e]['tvec'][j]
+            uj = od['u'] if j == pb else None
+            if uj is None:
+                li, lz, _ = emu[e]['shares'][j]
+                lo = _hcred_kkw_outmap(li, lz, m_poly, H_rows,
+                                       n, rows, row_bits)
+                uj = sum(rho[k] * lo[k] for k in range(K)) % q
+            com_ons.append(hfscx_256(
+                b'HCRED-kkwon' + e.to_bytes(2, 'big') + bytes([j])
+                + _hcred_ser(tv) + _hcred_ser([uj])))
+    h_on = hfscx_256(b'HCRED-kkwhon' + b''.join(com_ons))
+    pbars = _hcred_kkw_fs_ints(b'c2', h_pre + h_msk + h_on, tau, N_par)
+    for k, e in enumerate(subset):
+        if proof['online'][e]['pbar'] != pbars[k]:
+            return False
     return True
 
 
@@ -3418,6 +3873,16 @@ def main():
     print(f"  (demo uses R={_HCRED_DEMO_ROUNDS}; production requires "
           f"R={_ZKP_NL_PROD_ROUNDS}; rounding check is relaxed to "
           f"||m*s - lift(C)||inf <= 15 — see §11.10.10)")
+    _hc_kkw = hcred_prove_kkw(_hc_s, _hc_m, _hc_C, _hc_seedH, _hc_y, _hc_n,
+                              N_par=4, M=4, tau=2,
+                              msg_bytes=b"HCRED demo nonce")
+    _hc_kok = hcred_verify_kkw(_hc_m, _hc_C, _hc_seedH, _hc_y, _hc_kkw,
+                               _hc_n, b"HCRED demo nonce")
+    print(f"+ HCRED-KKW presentation proof verified (preprocessing MPCitH; "
+          f"demo N=4, M=4, tau=2)"
+          if _hc_kok else "- HCRED-KKW verify FAILED")
+    print(f"  (production KKW: N=64, M=343, tau=27 for 2^-128 — "
+          f"~11x smaller than the ZKBoo transcript at R=219)")
 
     # ── Eve bypass tests ─────────────────────────────────────────────────────
     print(f"\n\n*** EVE bypass TESTS")

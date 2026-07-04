@@ -6731,9 +6731,19 @@ This item tracks promotion from research prototype to suite implementation.
   attempts (s₂ vs y₁, s₁ vs C₂) refused.  Note: shipping only the unopened
   party's outputs was evaluated and is UNSOUND (FS must bind all three
   output-share sets pre-challenge) — KKW is the only sound size path.
-- **Batch 3 — KKW size optimization.**  Replace the ZKBoo-(2,3) transcript
-  encoding with KKW preprocessing-model MPCitH (64 parties, τ=22 for 2^-128)
-  to cut proof size ≈ 20×.
+- **Batch 3 — KKW transcript encoding (shipped v1.9.76).**
+  `hcred_prove_kkw`/`hcred_verify_kkw`: N-party preprocessing MPCitH with
+  per-emulation seed trees, cut-and-choose over M emulations (opened roots
+  force aux honesty), one FS-hidden party per online emulation, and a
+  batched output check (one FS-ρ linear combination → one mask share per
+  party; +1/q ≈ 2^-16 escape, negligible vs 1/N).  Production (N,M,τ) =
+  (64,343,27) → 2^-128 (Picnic2 set); demo (4,8,4).  HONEST SIZE REVISION:
+  the #123 "≈40 KB (20×)" figure was for the pre-unification 512-gate
+  gadget; at the 4224-gate unified circuit KKW ≈ 0.9 MB at production
+  parameters ≈ 11× under ZKBoo (9.2 MB); demo-scale measured 11.7 KB vs
+  18.9 KB.  Further size cuts need a circuit-level change (fewer mult
+  gates), not transcript work.  Tamper battery (7 classes) + completeness
+  verified.
 - **Batch 4 — C (`herradura.h`) and Go ports** + unified security test added
   to all three test files simultaneously (single-language addition would
   desynchronize the #87 unified test numbering).
@@ -6742,7 +6752,7 @@ This item tracks promotion from research prototype to suite implementation.
   cross-language interop.
 - **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batches 1–2 shipped in v1.9.74/v1.9.75; Batches 3–6 pending.
+Status: **OPEN** — Batches 1–3 shipped in v1.9.74–v1.9.76; Batches 4–6 pending.
 
 ---
 

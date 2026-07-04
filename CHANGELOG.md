@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.76] - 2026-07-04
+
+### Feature — HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3)
+
+- **`Herradura cryptographic suite.py`:** new `hcred_prove_kkw` / `hcred_verify_kkw`
+  encode the unified HCRED circuit in the KKW (Katz-Kolesnikov-Wang 2018) paradigm:
+  N-party additive masking with per-emulation binary seed trees, cut-and-choose over M
+  preprocessing emulations (opened root seeds force the product-share aux corrections
+  to be honest), online broadcasts for τ emulations with one FS-hidden party each, and
+  a batched output check (all K output wires fold into one FS-derived random linear
+  combination — one combined mask share per party instead of K values; the 1/q ≈ 2^-16
+  escape term is negligible against 1/N).
+- **Soundness:** cheating in k preprocessing emulations survives with probability
+  C(M−k,M−τ)/C(M,M−τ)·(1/N)^(τ−k); production (N,M,τ) = (64,343,27) (Picnic2 set)
+  gives 2^-128.  Demo defaults (4,8,4).
+- **Honest size revision (documented §11.10.10):** TODO #123's "≈40 KB (20×)" estimate
+  was for the pre-unification 512-gate gadget; at the unified 4224-gate circuit KKW is
+  ≈0.9 MB at production parameters — an ≈11× cut over ZKBoo (≈9.2 MB at R=219).
+  Measured at demo scale (n=32): KKW 11.7 KB vs ZKBoo 18.9 KB.  Further reduction
+  requires a circuit-level change, not a transcript encoding.
+- **Verified:** completeness 5/5 + main path; tamper battery — different nonce, wrong
+  syndrome, wrong key, tampered W, tampered hidden broadcast, tampered masked input,
+  tampered preprocessing root — all rejected; split-witness prove refused.
+- Shared witness preparation factored into `_hcred_witness` (used by both the ZKBoo
+  and KKW paths); FS integer sampler handles moduli > 256 (production M=343).
+- Suite demo extended with an HCRED-KKW block (N=4, M=4, τ=2).
+
+---
+
 ## [1.9.75] - 2026-07-03
 
 ### Feature — HCRED unified circuit: same-witness linkage without BDLOP (TODO #128 Batch 2)
