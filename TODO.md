@@ -6773,7 +6773,7 @@ This item tracks promotion from research prototype to suite implementation.
   for byte-parity with C `stern_syndrome_H`.
 - **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batches 1–5 shipped in v1.9.74–v1.9.79; Batch 6 pending.
+Status: **DONE v1.9.80** — Batches 1–5 shipped in v1.9.74–v1.9.79; Batch 6 shipped v1.9.80: TUTORIAL §HCRED added to CLI quickstart, C/Go/Python integration sections, protocol reference, parameter reference, and security notes; INTRODUCTION Part 10.4 concepts paragraph + protocol table row + decision tree entry.
 
 ---
 

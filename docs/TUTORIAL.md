@@ -189,6 +189,60 @@ Signatures are byte-for-byte interoperable across the Python, C, and Go CLIs
 > **Demo parameters.** Like `hpks-stern`, the ring signature uses N=256 / 32
 > Fiat-Shamir rounds, a low-soundness demo configuration — not for production use.
 
+#### HCRED — hybrid Ring-LWR + code-based credential
+
+`hcred` is a **hybrid ZKP credential** combining Ring-LWR (lattice hardness) and a
+code syndrome (SDP hardness) in a single MPCitH (ZKBoo-(2,3)) circuit.  A user
+proves knowledge of a Ring-LWR secret `s` that satisfies *both* `C ≈ round(m·s)`
+*and* the code relation `H·φ(s)^T = y mod 2` — without revealing `s`.  An issuer
+(any `hpks-stern` key) can additionally sign the user's public statement, binding
+the credential to a specific institution.
+
+```bash
+# ── User key generation ──────────────────────────────────────────────────────
+$CLI genpkey --algo hcred --out user.pem          # default n=32 (Python demo)
+$CLI genpkey --algo hcred --bits 256 --out u256.pem  # n=256 for C interop
+
+# Extract public key (C and A receive this to verify/issue)
+$CLI pkey --in user.pem --pubout --out user_pub.pem
+$CLI pkey --in user.pem --text    # prints n, seed_H, syndr, φ(s) weight
+
+# ── Issuer key (any hpks-stern keypair) ──────────────────────────────────────
+$CLI genpkey --algo hpks-stern --out issuer.pem
+$CLI pkey    --in issuer.pem --pubout --out issuer_pub.pem
+
+# ── Issue credential (issuer signs user's public key binding) ────────────────
+$CLI cred-issue --our issuer.pem --in user_pub.pem \
+                --out cred.pem
+# cred.pem = HERRADURA HCRED CREDENTIAL (Stern-F sig over the public statement)
+
+# ── Generate presentation proof ──────────────────────────────────────────────
+$CLI cred-prove --in user.pem --msg "session-nonce-42" \
+                --out proof.pem
+# proof.pem = HERRADURA HCRED PROOF (ZKBoo MPCitH, ~18 KB for n=32 / R=219)
+
+# ── Verify proof (anyone with user public key) ───────────────────────────────
+$CLI cred-verify --proof proof.pem --pubkey user_pub.pem \
+                 --msg "session-nonce-42"
+# Prints: Proof OK
+
+# ── Verify proof + issuer binding ────────────────────────────────────────────
+$CLI cred-verify --proof proof.pem  --pubkey user_pub.pem \
+                 --cred  cred.pem   --issuer issuer_pub.pem \
+                 --msg   "session-nonce-42"
+# Prints: Credential OK / Proof OK
+```
+
+The proof convinces a verifier that the prover knows `s` satisfying the public
+relations bound to `(C, m, seed_H, y)` *and* the presentation nonce `--msg` — but
+nothing else.  A proof generated for one nonce cannot be replayed under a different
+nonce.  PEM files are byte-for-byte interoperable between the Python and C CLIs at
+n=256 (`CliTest/test_cred_interop.sh`).
+
+> **Demo parameters.** Default n=32 in the Python CLI; n=256 in the C CLI.  Both
+> use `SDF_ROUNDS = 32` Fiat-Shamir rounds for `cred-issue` — a sub-128-bit demo
+> configuration.  Production soundness requires R ≥ 219 rounds.
+
 ### El Gamal encryption (HPKE)
 
 ```bash
@@ -580,6 +634,65 @@ hpks_xmss_sig_free(&sig0);   /* frees auth_path */
 free(flat_leaves);
 ```
 
+### HCRED — hybrid Ring-LWR + code-based credential (C)
+
+`hcred` proves knowledge of a Ring-LWR secret `s` satisfying both the LWR relation
+and a code syndrome, via ZKBoo-(2,3) MPCitH.  Fixed at `n = HCRED_N = 256` in C.
+
+```c
+#include "herradura.h"
+
+FILE *urnd = fopen("/dev/urandom", "rb");
+
+/* ── User key generation ─────────────────────────────────────────────────── */
+int32_t m_poly[HCRED_N], s_poly[HCRED_N], c_poly[HCRED_N];
+rnl_sample_m(m_poly, urnd);                    /* public module polynomial */
+hcred_user_keygen(s_poly, c_poly, m_poly, urnd);
+
+BitArray seed_H;
+ba_rand(&seed_H, urnd);                        /* public matrix seed */
+
+uint8_t syndr[SDF_SYNBYTES];
+hcred_syndrome(syndr, &seed_H, s_poly);        /* public syndrome */
+
+/* ── Issue credential (issuer = any hpks-stern key) ─────────────────────── */
+BitArray issuer_seed, issuer_e;
+uint8_t  issuer_syndr[SDF_SYNBYTES];
+stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);
+
+SternSig cred;
+hcred_issue(&cred, m_poly, c_poly, &seed_H, syndr,
+             &issuer_e, &issuer_seed, urnd);
+
+/* ── Prove ──────────────────────────────────────────────────────────────── */
+const uint8_t nonce[] = "session-nonce-42";
+HcredProof proof;
+memset(&proof, 0, sizeof proof);
+int proved = hcred_prove(&proof, s_poly, m_poly, c_poly, &seed_H, syndr,
+                          HCRED_DEMO_ROUNDS, nonce, sizeof nonce - 1, urnd);
+/* proved == 1 on success */
+
+/* ── Verify proof ───────────────────────────────────────────────────────── */
+int ok = hcred_verify(m_poly, c_poly, &seed_H, syndr,
+                       &proof, HCRED_DEMO_ROUNDS, nonce, sizeof nonce - 1);
+/* ok == 1 */
+
+/* ── Verify proof + issuer credential ──────────────────────────────────── */
+int ok2 = hcred_cred_verify(m_poly, c_poly, &seed_H, syndr,
+                              &cred, &issuer_seed, issuer_syndr);
+/* ok2 == 1 */
+
+hcred_proof_free(&proof);
+fclose(urnd);
+```
+
+`hcred_proof_serialize` / `hcred_proof_deserialize` convert `HcredProof` to/from
+the `HERRADURA HCRED PROOF` PEM wire format.  The CLI subcommands `cred-issue`,
+`cred-prove`, `cred-verify` wrap this API (see CLI quickstart).
+
+> **Demo parameters.** `HCRED_DEMO_ROUNDS = 4` (sub-128-bit soundness).  Production
+> use requires R ≥ 219 (`_HCRED_CLI_ROUNDS` in the CLI).
+
 ### HFSCX-256 hash and MAC
 
 Merkle-Damgård hash built on NL-FSCX v1; returns 32 bytes.  Pass `iv = NULL`
@@ -949,6 +1062,48 @@ _ = ok; _ = ok2
 // Next signing call uses HpksXmssSign(msg2, kp, 1), then leaf 2, etc.
 ```
 
+### HCRED — hybrid Ring-LWR + code-based credential (Go)
+
+> **Note.** The Go CLI (`herradura_cli_go`) does not yet expose `cred-issue`,
+> `cred-prove`, `cred-verify` subcommands — use the Python or C CLI for those.
+> The underlying protocol functions are available via the `herradura` package.
+
+```go
+import (
+    h "herradurakex/herradura"
+    "crypto/rand"
+)
+
+n := 256
+
+// ── User key generation ───────────────────────────────────────────────────
+mPoly  := h.RnlSampleM(n)
+sPoly, cPoly := h.HcredUserKeygen(mPoly, n)
+seedH  := h.NewRandBitArray(n)
+syndr  := h.HcredSyndrome(seedH, sPoly, n)   // []byte, len = n/16
+
+// ── Issue credential (issuer = any hpks-stern key) ────────────────────────
+issSeed, issE, issSyndr := h.SternFKeygen(n)
+cred := h.HcredIssue(mPoly, cPoly, seedH, syndr,
+                      issE, issSeed, n)
+
+// ── Prove ─────────────────────────────────────────────────────────────────
+nonce := []byte("session-nonce-42")
+rounds := 4  // demo soundness; use 219 for production
+proof, err := h.HcredProve(sPoly, mPoly, cPoly, seedH, syndr, rounds, nonce, n)
+// err == nil on success
+
+// ── Verify proof ──────────────────────────────────────────────────────────
+ok := h.HcredVerify(mPoly, cPoly, seedH, syndr, proof, rounds, nonce, n)
+// ok == true
+
+// ── Verify proof + issuer credential ─────────────────────────────────────
+ok2 := h.HcredCredVerify(mPoly, cPoly, seedH, syndr,
+                           cred, issSeed, issSyndr, n)
+// ok2 == true
+_ = ok; _ = ok2; _ = issSeed; _ = issSyndr; _ = cred; _ = err; _ = proof
+```
+
 ### HFSCX-256 hash and MAC
 
 ```go
@@ -1235,6 +1390,50 @@ xsig = h.hpks_xmss_sign(msg, ms, leaf_hashes, leaf_idx=0)
 ok2  = h.hpks_xmss_verify(msg, xsig, root)      # True
 # Next message: hpks_xmss_sign(msg2, ms, leaf_hashes, leaf_idx=1), etc.
 ```
+
+### HCRED — hybrid Ring-LWR + code-based credential (Python)
+
+```python
+from primitives import (hcred_phi, hcred_user_keygen, hcred_syndrome,
+                         hcred_prove, hcred_verify, hcred_issue,
+                         hcred_cred_verify, _HCRED_DEFAULT_N)
+import os
+
+n = _HCRED_DEFAULT_N    # 32 (demo); use 256 for C interop
+
+# ── User key generation ───────────────────────────────────────────────────
+m_poly, s_poly, c_poly, seed_H, syndr = hcred_user_keygen(n)
+# m_poly  — public module polynomial (Ring-LWR modulus)
+# s_poly  — private secret
+# c_poly  — public LWR commitment  (≈ round(m·s))
+# seed_H  — public matrix seed (BitArray)
+# syndr   — public syndrome (int, n/16 bytes wide)
+
+# ── Issue credential (issuer = any stern_f keypair) ───────────────────────
+from primitives import stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
+iss_seed, iss_e, iss_syndr = stern_f_keygen(n)
+cred = hcred_issue(iss_e, iss_seed, m_poly, c_poly, seed_H, syndr,
+                    rounds=4, n=n)    # SternSig over the public statement
+
+# ── Prove ─────────────────────────────────────────────────────────────────
+nonce = b"session-nonce-42"
+rounds = 4             # demo; use _HCRED_CLI_ROUNDS (219) for production
+proof = hcred_prove(s_poly, m_poly, c_poly, seed_H, syndr,
+                     rounds, nonce, n)
+
+# ── Verify proof ──────────────────────────────────────────────────────────
+ok = hcred_verify(m_poly, c_poly, seed_H, syndr, proof, rounds, nonce, n)
+assert ok
+
+# ── Verify proof + issuer credential ─────────────────────────────────────
+ok2 = hcred_cred_verify(m_poly, c_poly, seed_H, syndr,
+                          cred, iss_seed, iss_syndr, n=n)
+assert ok2
+```
+
+The CLI subcommands (`cred-issue`, `cred-prove`, `cred-verify`) wrap this API and
+write/read the `HERRADURA HCRED {PRIVATE KEY,PUBLIC KEY,CREDENTIAL,PROOF}` PEM
+types.  See the CLI quickstart section for the one-liner workflow.
 
 ### HFSCX-256 hash and MAC
 
@@ -1910,6 +2109,7 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 |---|---|---|---|---|
 | ZKP-RNL (Ring-LWR Σ-protocol) | `hkex-rnl` | `rnl_sigma_sign` | `rnl_sigma_verify` | 1,056 B (n=256) |
 | ZKP-NL (NL-FSCX ZKBoo) | `hpks-zkp-nl` | `zkp_nl_prove` | `zkp_nl_verify` | 35.5 KB (n=8, R=219) |
+| HCRED (Ring-LWR + SDP hybrid) | `hcred` | `hcred_prove` / `cred-prove` | `hcred_verify` / `cred-verify` | ~18 KB (n=32, R=219); ~4 KB (R=4 demo) |
 
 ### OPRF and aPAKE
 
@@ -1991,6 +2191,10 @@ void oprf_direct (BitArray *F, const uint8_t *x, size_t xlen, const BitArray *k)
 | OPRF field order | `ORD` (2^256−1) | computed from `n=256` | computed from `KEYBITS` | 2^256−1 |
 | aPAKE ZKBoo width | — | — | `_HPAKE_ZKP_N` | 32 (demo) |
 | aPAKE ZKP rounds | — | — | `_HPAKE_ROUNDS` | 16 (demo) |
+| HCRED default n (Python) | — | — | `_HCRED_DEFAULT_N` | 32 (demo) |
+| HCRED CLI rounds | — | — | `_HCRED_CLI_ROUNDS` | 219 |
+| HCRED demo rounds | `HCRED_DEMO_ROUNDS` | — | `_HCRED_DEMO_ROUNDS` | 4 |
+| HCRED n (C, fixed) | `HCRED_N` | — | — | 256 |
 
 Stern-F parameters scale with N: T = N/16, rows = N/4.  C/Go/Python support
 N ∈ {32, 64, 128, 256}; assembly and Arduino targets are fixed at N=32 (T=2, rounds=4).
@@ -2047,6 +2251,28 @@ models that exclude quantum adversaries.
   Production requires `rounds ≥ 219` for 128-bit soundness.
 - **HPKE-Stern-F decapsulation** in the demo uses a known error vector (`e'`).
   A production deployment requires a QC-MDPC or similar decoder.
+
+### HCRED — hybrid Ring-LWR + code-based credential
+
+- **Soundness** relies on both Ring-LWR hardness (same as HKEX-RNL) and the
+  Syndrome Decoding Problem (SD(N,t), same as HPKS-Stern-F).  Breaking HCRED
+  requires breaking *both* hard problems simultaneously.
+- **Zero-knowledge** is statistical ZKBoo-(2,3) soundness: a cheating prover
+  passes with probability at most (2/3) per round.  For 128-bit soundness,
+  `rounds ≥ 219` is required.  The CLI default (`_HCRED_CLI_ROUNDS = 219`) is
+  sufficient; the C demo constant (`HCRED_DEMO_ROUNDS = 4`) and the default
+  Python CLI value for `cred-issue` (`SDF_ROUNDS = 32`) are not.
+- **Issuer binding** is a standard Stern-F signature over the user's public
+  statement `(C, m, seed_H, y)`.  The credential proves that an issuer with the
+  given syndrome verified the user's public key at issuance time.  A credential
+  does **not** bind to the presentation proof or nonce; it is reusable.
+- **Proof nonce uniqueness:** `cred-prove --msg` must be a per-session nonce
+  (e.g. a server challenge).  Proofs do **not** commit to identity beyond the
+  public key — if the same proof is accepted by multiple verifiers, unlinkability
+  holds only if different nonces are used.
+- **Demo parameter interop:** C is fixed at `HCRED_N = 256`.  Python defaults to
+  `n = 32`.  Cross-language interop requires `--bits 256` in Python `genpkey` and
+  `--rounds 32` in Python `cred-issue` (to match C's `SDF_ROUNDS = 32`).
 
 ### OPRF and aPAKE
 

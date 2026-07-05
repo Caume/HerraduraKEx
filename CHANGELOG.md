@@ -4,6 +4,26 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.80] - 2026-07-05
+
+### Documentation — HCRED tutorial and introduction (TODO #128 Batch 6)
+
+- **`docs/TUTORIAL.md`:** HCRED added to CLI quickstart (§HCRED anonymous quickstart
+  with `genpkey/pkey/cred-issue/cred-prove/cred-verify` examples and demo-parameter
+  warning), C integration (`hcred_prove`/`hcred_verify`/`hcred_issue`/`hcred_cred_verify`
+  with full struct usage), Go integration (library API note + function signatures), Python
+  integration (`hcred_prove`/`hcred_verify` via `primitives.py`), ZKP protocols reference
+  table row, Parameter reference table rows (`_HCRED_DEFAULT_N`, `_HCRED_CLI_ROUNDS`,
+  `HCRED_DEMO_ROUNDS`, `HCRED_N`), and Security notes subsection (soundness, ZK, issuer
+  binding, nonce uniqueness, demo-parameter interop caveats).
+- **`docs/INTRODUCTION.md`:** New Part 10.4 "HCRED: a credential that relies on two hard
+  problems at once" explaining the hybrid Ring-LWR + SDP design, ZKBoo-(2,3) MPCitH proof
+  system, and issuer binding model. Protocol reference table row added (SP3 §11.10).
+  Decision tree entry: "Need a credential / ZKP that proves knowledge of a secret satisfying
+  two independent hard problems simultaneously? → HCRED".
+
+---
+
 ## [1.9.79] - 2026-07-05
 
 ### Feature — HCRED CLI: PEM wire format + cred-issue/prove/verify (TODO #128 Batch 5)
