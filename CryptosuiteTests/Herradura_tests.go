@@ -1,4 +1,5 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.63
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.77
+    v1.9.77: HCRED test [44] — completeness, tamper/replay/split-witness rejection, issuer binding (TODO #128 Batch 4a).
     v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
             (C/Go parity with Python, TODO #94 item 2).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
@@ -1527,4 +1528,70 @@ func main() {
 	benchHpksSternF()
 	benchZkpRnl()
 	benchZkpNl()
+	testHcred()
+}
+
+// Security test [44]: HCRED hybrid credential.  Appended after the benchmarks
+// to avoid renumbering [32]-[43] across all three languages (TODO #128
+// Batch 4); same number and checks in C, Go, and Python.
+func testHcred() {
+	fmt.Println("[44] HCRED hybrid credential: completeness + tamper/replay rejection  [PQC-EXT]")
+	n := 32
+	N := testRounds(3)
+	R := 4
+	okVerify, okReplay, okSynd, okKey, okSplit, okCred := 0, 0, 0, 0, 0, 0
+	t0 := time.Now()
+	mBase := RnlMPoly(n)
+	for i := 0; i < N; i++ {
+		aRand := RnlRandPoly(n, RnlQ)
+		mB := RnlPolyAdd(mBase, aRand, RnlQ)
+		seedH := NewRandBitArray(n)
+		s, C, e := HcredUserKeygen(mB, n)
+		y := HcredSyndrome(seedH, e, n)
+		proof, err := HcredProve(s, mB, C, seedH, y, n, R, zkpMsg)
+		if err != nil {
+			N = i + 1
+			break
+		}
+		if HcredVerify(mB, C, seedH, y, proof, n, R, zkpMsg) {
+			okVerify++
+		}
+		if !HcredVerify(mB, C, seedH, y, proof, n, R, zkpMsg2) {
+			okReplay++
+		}
+		yBad := new(big.Int).Xor(y, big.NewInt(1))
+		if !HcredVerify(mB, C, seedH, yBad, proof, n, R, zkpMsg) {
+			okSynd++
+		}
+		s2, C2, _ := HcredUserKeygen(mB, n)
+		_ = s2
+		if !HcredVerify(mB, C2, seedH, y, proof, n, R, zkpMsg) {
+			okKey++
+		}
+		// Split witness: s2 satisfies C2 but not this y — prove must refuse.
+		if _, err2 := HcredProve(s2, mB, C2, seedH, y, n, R, zkpMsg); err2 != nil {
+			okSplit++
+		}
+		// Issuer binding round-trip (Stern-F signature over (m,C,seed_H,y)).
+		isd, ie, isyn := SternFKeygen(n)
+		cred := HcredIssue(mB, C, seedH, y, n, ie, isd, 8)
+		if HcredCredVerify(mB, C, seedH, y, n, cred, isd, isyn) {
+			okCred++
+		}
+		if timeExceeded(t0) {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if okVerify != N || okReplay != N || okSynd != N || okKey != N ||
+		okSplit != N || okCred != N {
+		status = "FAIL"
+	}
+	fmt.Printf("    n=%d R=%d  verify=%d/%d  replay_reject=%d/%d"+
+		"  synd_reject=%d/%d  key_reject=%d/%d  split_refuse=%d/%d"+
+		"  cred=%d/%d  [%s]\n",
+		n, R, okVerify, N, okReplay, N, okSynd, N, okKey, N,
+		okSplit, N, okCred, N, status)
+	fmt.Println()
 }

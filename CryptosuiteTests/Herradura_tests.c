@@ -4,7 +4,9 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.63
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.78
+    v1.9.78: HCRED test [44] — completeness, replay/tamper/split-witness rejection, issuer
+            binding (TODO #128 Batch 4b).
     v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
             (C/Go parity with Python, TODO #94 item 2).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
@@ -105,6 +107,9 @@
       [41] HPKS-Stern-F sign+verify throughput  [CODE-BASED PQC].
       [42] ZKP-RNL sign+verify throughput (n=256)  [PQC-EXT].
       [43] ZKP-NL prove+verify throughput (n=32, rounds=16)  [PQC-EXT].
+
+    Security test [44] appended after benchmarks to preserve [32]–[43] numbering:
+      [44] HCRED hybrid credential: completeness + tamper/replay rejection  [PQC-EXT].
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -4988,6 +4993,103 @@ int main(int argc, char *argv[])
     bench_hpks_stern_f();
     bench_zkp_rnl();
     bench_zkp_nl();
+
+    /* ------------------------------------------------------------------ */
+    /* Security test [44]: HCRED hybrid credential.  Appended after        */
+    /* benchmarks to avoid renumbering [32]-[43] (TODO #128 Batch 4b).    */
+    /* ------------------------------------------------------------------ */
+    {
+        static const uint8_t hcred_msg[]  = "Herradura ZKP test";
+        static const uint8_t hcred_msg2[] = "Herradura ZKP tamper";
+        int N = g_rounds > 0 ? g_rounds : 3;
+        int R = HCRED_DEMO_ROUNDS;
+        int ok_verify = 0, ok_replay = 0, ok_synd = 0, ok_key = 0;
+        int ok_split = 0, ok_cred = 0;
+        int i;
+        struct timespec ts0;
+        clock_gettime(CLOCK_MONOTONIC, &ts0);
+
+        printf("[44] HCRED hybrid credential: completeness + tamper/replay rejection  [PQC-EXT]\n");
+
+        for (i = 0; i < N; i++) {
+            int32_t m_base[RNL_N], a_rand[RNL_N], m_b[RNL_N];
+            int32_t s[RNL_N], c_poly[RNL_N];
+            int32_t s2[RNL_N], c2_poly[RNL_N];
+            BitArray seed_H, e_ba, e2_ba;
+            uint8_t syndr[SDF_SYNBYTES], syndr_bad[SDF_SYNBYTES];
+            BitArray iseed, ie_ba;
+            uint8_t isyndr[SDF_SYNBYTES];
+            HcredProof proof, proof2;
+            SternSig cred_sig;
+            int pok, pok2;
+
+            rnl_m_poly(m_base);
+            rnl_rand_poly(a_rand, urnd_fp);
+            rnl_poly_add(m_b, m_base, a_rand);
+            ba_rand(&seed_H, urnd_fp);
+
+            hcred_user_keygen(s, c_poly, &e_ba, m_b, urnd_fp);
+            hcred_syndrome(syndr, &seed_H, &e_ba);
+
+            proof.rd = NULL;
+            pok = hcred_prove(&proof, s, m_b, c_poly, &seed_H, syndr,
+                              R, hcred_msg, sizeof(hcred_msg)-1, urnd_fp);
+            if (pok != 0) { N = i + 1; break; }
+
+            /* completeness */
+            if (hcred_verify(m_b, c_poly, &seed_H, syndr, &proof, R,
+                             hcred_msg, sizeof(hcred_msg)-1))
+                ok_verify++;
+
+            /* replay: different message should fail */
+            if (!hcred_verify(m_b, c_poly, &seed_H, syndr, &proof, R,
+                              hcred_msg2, sizeof(hcred_msg2)-1))
+                ok_replay++;
+
+            /* syndrome tamper: flip bit 0 */
+            memcpy(syndr_bad, syndr, SDF_SYNBYTES);
+            syndr_bad[0] ^= 1;
+            if (!hcred_verify(m_b, c2_poly, &seed_H, syndr_bad, &proof, R,
+                              hcred_msg, sizeof(hcred_msg)-1))
+                ok_synd++;
+
+            /* key tamper: use a different C */
+            hcred_user_keygen(s2, c2_poly, &e2_ba, m_b, urnd_fp);
+            if (!hcred_verify(m_b, c2_poly, &seed_H, syndr, &proof, R,
+                              hcred_msg, sizeof(hcred_msg)-1))
+                ok_key++;
+
+            /* split witness: s2 satisfies C2 but not syndr — prove must refuse */
+            proof2.rd = NULL;
+            pok2 = hcred_prove(&proof2, s2, m_b, c2_poly, &seed_H, syndr,
+                               R, hcred_msg, sizeof(hcred_msg)-1, urnd_fp);
+            if (pok2 != 0)
+                ok_split++;
+            if (proof2.rd) hcred_proof_free(&proof2);
+
+            /* issuer credential binding (HPKS-Stern-F over (m, C, seed_H, y)) */
+            stern_f_keygen(&iseed, &ie_ba, isyndr, urnd_fp);
+            hcred_issue(&cred_sig, m_b, c_poly, &seed_H, syndr,
+                        &ie_ba, &iseed, urnd_fp);
+            if (hcred_cred_verify(m_b, c_poly, &seed_H, syndr,
+                                  &cred_sig, &iseed, isyndr))
+                ok_cred++;
+
+            hcred_proof_free(&proof);
+            if (g_time_limit > 0.0 && time_exceeded(&ts0)) { N = i + 1; break; }
+        }
+        {
+            const char *status = (ok_verify == N && ok_replay == N && ok_synd == N
+                                  && ok_key == N && ok_split == N && ok_cred == N)
+                                 ? "PASS" : "FAIL";
+            printf("    n=%d R=%d  verify=%d/%d  replay_reject=%d/%d"
+                   "  synd_reject=%d/%d  key_reject=%d/%d  split_refuse=%d/%d"
+                   "  cred=%d/%d  [%s]\n\n",
+                   HCRED_N, R,
+                   ok_verify, N, ok_replay, N, ok_synd, N,
+                   ok_key, N, ok_split, N, ok_cred, N, status);
+        }
+    }
 
     fclose(urnd_fp);
     return 0;

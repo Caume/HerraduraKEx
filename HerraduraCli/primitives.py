@@ -129,3 +129,14 @@ hpks_xmss_sign       = _s.hpks_xmss_sign
 hpks_xmss_verify     = _s.hpks_xmss_verify
 _WOTS_L              = _s._WOTS_L
 _wots_pk_bytes       = _s._wots_pk_bytes
+
+# ── 128 HCRED hybrid credential ───────────────────────────────────────────────
+hcred_phi            = _s.hcred_phi
+hcred_user_keygen    = _s.hcred_user_keygen
+hcred_syndrome       = _s.hcred_syndrome
+hcred_prove          = _s.hcred_prove
+hcred_verify         = _s.hcred_verify
+hcred_issue          = _s.hcred_issue
+hcred_cred_verify    = _s.hcred_cred_verify
+_HCRED_DEFAULT_N     = _s._HCRED_DEFAULT_N
+_HCRED_DEMO_ROUNDS   = _s._HCRED_DEMO_ROUNDS

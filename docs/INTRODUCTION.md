@@ -1016,6 +1016,40 @@ For a modern code-based signature, see NIST FIPS 205 (SLH-DSA / SPHINCS+), 2024.
 
 ---
 
+## Part 10.4 — HCRED: a credential that relies on two hard problems at once
+
+The protocols described so far each rest on a single hard assumption: HKEX-RNL
+on Ring-LWR, HPKS-Stern-F on SDP.  **HCRED** combines both in a single
+zero-knowledge credential.
+
+The idea is to take the user's Ring-LWR secret `s` (the same value that creates
+the LWR commitment `C ≈ round(m·s)`) and additionally demand that `s` satisfies a
+code syndrome equation `H·φ(s)^T = y mod 2`, where `φ` maps ring coefficients to
+binary vectors and `H` is a random parity-check matrix derived from a public seed.
+A user who knows `s` can prove in zero-knowledge that they know a value satisfying
+*both* constraints simultaneously — without revealing `s`.
+
+The proof system is **ZKBoo-(2,3) MPCitH** (Multi-Party Computation in the Head):
+the prover mentally simulates a 3-party secure computation of the combined circuit,
+then reveals two of the three views.  A verifier checks consistency of the revealed
+views.  Repeating for `R` rounds drives the cheating probability to $(2/3)^R$.
+
+A third party (the *issuer*, holding an `hpks-stern` key) can sign the user's
+public statement `(C, m, seed_H, y)`, binding the credential to an institution.
+At presentation time, the user generates a fresh proof bound to a session nonce
+chosen by the verifier — preventing replay across sessions.
+
+**Why does binding two hard problems help?**  An adversary who can forge a HCRED
+presentation must either break Ring-LWR (to forge a valid `(C, m)` pair) *or*
+break SDP (to forge a valid syndrome `y`) *and* then prove knowledge of the secret
+via the ZKBoo circuit.  The credential is only as weak as whichever problem falls
+first — but an adversary must solve both to completely break the system.
+
+The CLI exposes this via `cred-issue`, `cred-prove`, and `cred-verify` subcommands.
+See the TUTORIAL §HCRED section for wire-format details and integration examples.
+
+---
+
 ## Part 11 — The suite at a glance
 
 ### 11.1 Protocol reference table
@@ -1033,6 +1067,7 @@ For a modern code-based signature, see NIST FIPS 205 (SLH-DSA / SPHINCS+), 2024.
 | HPKE-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP1 §11.8 | §HPKE-NL |
 | HPKS-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8 | §HPKS-Stern |
 | HPKE-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8.2 | §HPKE-Stern |
+| HCRED | Hybrid (Ring-LWR + SDP) | Ring-LWR AND SD(N,t) — both must be broken | Conjectured quantum-hard | SP3 §11.10 | §HCRED |
 | HFSCX-256 | Hash / MAC | NL-FSCX v1 one-wayness | Grover only (halves collision resistance) | SP2 §11.2 | §HFSCX-256 |
 
 ### 11.2 Decision tree: which protocol should I use?
@@ -1061,6 +1096,10 @@ Need public-key (asymmetric) encryption?
 
 Need to hash data or authenticate a message?
 └── HFSCX-256 (bare digest) or HFSCX-256-MAC (keyed: iv = key XOR IV)
+
+Need a credential / ZKP that proves knowledge of a secret satisfying two
+independent hard problems simultaneously?
+└── HCRED (Ring-LWR + SDP hybrid, ZKBoo-(2,3) MPCitH, CLI: cred-issue/prove/verify)
 ```
 
 ### 11.3 What the security proofs prove vs. what they assume

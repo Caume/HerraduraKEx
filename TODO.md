@@ -2969,6 +2969,8 @@ correct output when run under `simavr`.
 - [x] ATmega2560 variant headers present (`…/variants/mega/`)
 - [x] `simavr` present (`/usr/bin/simavr`)
 
+Status: **DONE** — all prerequisites confirmed (2026-05-20).
+
 ### Batch 2 — Build (DONE 2026-05-20)
 - [x] `build_arduino.sh` compiles suite → `Herradura cryptographic suite_avr.elf` (43586 text + 2100 data + 2687 bss = 48373 bytes)
 - [x] `build_arduino.sh` compiles tests → `CryptosuiteTests/Herradura_tests_avr.elf` (46098 text + 1048 data + 2719 bss = 49865 bytes)
@@ -2990,7 +2992,7 @@ correct output when run under `simavr`.
 - [x] **Tests `rnl_rand_poly` missing rejection sampling:** replaced bare `% RNL_Q` with 3-byte threshold guard (threshold=`0xFF00FFu`) matching suite
 
 
-**Status:** **DONE** (v1.5.38) — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
+Status: **DONE v1.5.38** — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
 
 ---
 
@@ -3012,6 +3014,8 @@ Run language-appropriate scanners across all source files and capture output:
 | Go | `gosec` | `gosec ./...` from repo root |
 | Assembly (ARM + NASM) | grep | `grep -n 'rand\|srand\|memcpy\|strcpy' "Herradura cryptographic suite.s" "Herradura cryptographic suite.asm"` |
 
+Status: **DONE** — findings logged in Audit notes (SA-01 through SA-09; all resolved v1.7.4).
+
 ### Step 2 — CSPRNG audit
 
 Verify every random-number call draws from a cryptographically secure source.
@@ -3023,6 +3027,8 @@ Go `math/rand`, any seeded PRNG used for key material.
 - **Python:** confirm `os.urandom` everywhere; flag `random.randint` / missing `secrets` usage.
 - **Assembly:** ARM reads `/dev/urandom`; NASM uses the C PRNG only for fixed test vectors — verify this boundary.
 - **Arduino:** `random()` is seeded from `analogRead` (not a CSPRNG); document as a known limitation.
+
+Status: **DONE** — findings in SA-01, SA-07; all resolved v1.7.4.
 
 ### Step 3 — Constant-time audit
 
@@ -3041,6 +3047,8 @@ Highest-risk functions (audit first):
 - `hpks_verify` / `hpks_nl_verify` — final key-equality comparison
 - `rnl_agree` / `rnl_hint` / `rnl_reconcile_bits` — session key derivation and comparison
 
+Status: **DONE** — findings in SA-02 through SA-06; all resolved v1.7.4.
+
 ### Step 4 — Key material hygiene
 
 Check that private keys and session secrets are cleared from memory after use:
@@ -3050,12 +3058,16 @@ Check that private keys and session secrets are cleared from memory after use:
 - **Python:** `bytearray` can be zeroed; `int` and `bytes` are immutable and cannot — document any places where clearing is not possible.
 - **Assembly:** verify that callee-saved registers holding key material are cleared before `pop`/`bx lr`.
 
+Status: **DONE** — findings in SA-09; resolved v1.7.4. Go/Python zeroing limitations documented.
+
 ### Step 5 — Buffer bounds and integer overflow (C and assembly)
 
 - **C:** verify all fixed-size arrays (`uint8_t hint[RNL_N]`, `uint32_t poly[RNL_N]`) are indexed only within declared bounds; flag any index derived from an untrusted length.
 - **C:** check `rnl_ntt` butterfly index `k + len/2` does not exceed `n` for all valid `len` values.
 - **NASM i386:** re-audit stack frame sizes in `rnl_poly_mul`, `rnl_hint`, `rnl_reconcile_bits` — the v1.5.3 wrong-offset bug (TODO A2) was a stack read error; verify no similar issues remain after Peikert additions.
 - **ARM Thumb-2:** verify `udiv` in `rnl_hint` does not divide by zero for degenerate inputs.
+
+Status: **DONE** — no buffer overflows found; NTT index bounds verified; NASM stack audit clean after TODO A2 fix.
 
 ### Step 6 — Hardcoded test vectors vs. production code paths
 
@@ -3069,6 +3081,8 @@ grep -rn 'DEADBEEF\|CAFEBABF\|a_priv\|b_priv\|known_e\|test_e' \
 ```
 
 Flag any occurrence outside a clearly demarcated `/* demo */` or `#ifdef TEST` block.
+
+Status: **DONE** — hardcoded constants confirmed in demo/test paths only; no production key-gen paths affected.
 
 ### Step 7 — Compile findings into a remediation table
 
@@ -3088,6 +3102,8 @@ After steps 1–6, add a table here with columns:
 
 Severity levels: **Critical** (direct key recovery), **High** (timing/side-channel),
 **Medium** (theoretical/implementation gap), **Low** (hygiene/documentation).
+
+Status: **DONE** — remediation table (SA-01 through SA-09) complete; all items resolved v1.7.4.
 
 ### Audit notes
 
@@ -4840,6 +4856,43 @@ n=32 but unresolved for n=256 (production).  Obstacles 1 and 3 remain open.
 - Obstacle 2: n=256 orbit safety — empirically untestable at production scale.
 - Obstacle 3: structured commuting-subgroup construction needed for Ko-Lee KEX instantiation.
 
+**Research plan (phased — Phase 0 is a decision gate).**
+
+The `nl_fscx_v2_kex.py` §3 result (0/300 commuting pairs) is the pivot: a Ko-Lee /
+AAG-style KEX *requires* two commuting subgroups, so before any reduction work we must
+settle whether the `{pi_K}` family has ANY exploitable algebraic structure, or is
+structurally hostile to non-abelian KEX.  Likely outcome: 78.E resolves as a documented
+NEGATIVE result, which is a legitimate completion.
+
+- **Phase 0 — decision gate: is there exploitable structure?**  Script
+  `SecurityProofsCode/nl_fscx_v2_csp.py`.  Two structural probes at small n (n=8,12,16):
+  1. *Centralizer search* — solve Theorem 15's commutativity condition
+     `delta(K1) - delta(K2) == M(K1 XOR K2) (mod 2^n)` exhaustively; is C(pi_K1)
+     generically trivial, or is there hidden coset structure?
+  2. *Subgroup-order growth* — order of `<pi_K1,...,pi_Km>` vs |Sym(2^n)|; does the
+     family generate the full symmetric group (no usable quotient) or land in a
+     structured subgroup?
+  GATE: if centralizers are trivial AND the family generates Sym(2^n), Ko-Lee/AAG is
+  provably dead → pivot to a Stickel-type two-sided KEX (`E = pi_K1 . A . pi_K2`, no
+  commutativity needed) OR close 78.E as a documented impossibility.
+
+- **Phase 1 — Obstacle 2 (orbit/order lower bound).**  Extend `nl_fscx_v2_orbit.py` to
+  compute (not sample) `|<pi_K>|` at n=8..16; fit a growth law; state n=256 scope limit.
+  Converts Obstacle 2 from "open" to "conditionally resolved."
+
+- **Phase 2 — Obstacle 1 (black-box → circuit-model transfer).**  Run Gröbner/XL on the
+  Theorem-14 carry-structure MQ system for the conjugacy recovery `v = g u g^{-1}` at
+  n=8,12; measure D_reg.  An algebraic shortcut → Option C broken (clean negative);
+  otherwise record measured complexity as circuit-model hardness evidence.
+
+- **Phase 3 — Obstacle 3 (reduction), only if Phases 0–2 survive.**  If Phase 0 yields a
+  Stickel-type construction, target a reduction to the decisional matrix-conjugacy /
+  semigroup-action problem (Maze-Monico-Rosenthal group-action framework — NOT braid
+  groups); ship KEX + attack-evidence harness.
+
+Exit criteria: Phase 0 negative → **DONE (negative result)**; Phase 2 break → **DONE
+(broken)**; all phases survive → **DONE (candidate)**, deployment still gated.
+
 ---
 
 #### 78.F — Verifiable Delay Function (VDF) — limited model (Low / Research)
@@ -6566,3 +6619,306 @@ across the three CLIs.  `--ring <p0,p1,...>` supplies the ordered member public 
 the 9-way sign/verify interop matrix, anonymity (any member signs), non-member sign refusal,
 tampered-message rejection, and wrong-ring rejection (21/21 pass).  Documented in the three CLI
 usage headers and `docs/TUTORIAL.md` (anonymity + demo-parameter caveat).
+
+---
+
+## Open Research Items (2026-07-03)
+
+---
+
+### 122. ZKB++ optimized MPC-in-the-head for NL-FSCX ZKBoo (Research/Feature, High)
+
+**Background:** `SecurityProofs-3.md` §11.10.6 open direction 3 (scoped v1.9.66) gives a
+first-principles size accounting showing that Chase et al. 2017's ZKB++ decomposition reduces
+the n=256 ZKBoo proof from 920 KB to approximately **457 KB** (2.0× reduction).  The gain is
+smaller than the generic 5× because the NL-FSCX circuit is AND-gate-broadcast-dominated: the
+carry-chain circuit contributes $O(n^2)$ AND gates, so only the $2\times{\to}1\times$
+online-party term in ZKB++ helps.  Reaching the ~180 KB target (the SPHINCS+/Picnic range)
+additionally requires cutting the AND-gate count — which means a sparse LowMC-like circuit
+variant of NL-FSCX v1.
+
+**Work items:**
+
+1. **Implement ZKB++ encoding** for the existing ZKBoo circuit in `SecurityProofsCode/zkp_pqc_exploration.py` §3.7 and the Python suite `hpks_zkp_nl_sign`/`hpks_zkp_nl_verify`. The ZKBoo circuit already separates AND gates from XOR/linear gates; ZKB++ replaces the 3-party view with a 2-party online + 1-party offline share and eliminates one of the three per-gate broadcasts.
+2. **Verify the 457 KB estimate** empirically at n=256 by benchmarking the new encoding vs. the current ZKBoo implementation.
+3. **Design a sparse NL-FSCX v1 circuit** to reduce the AND-gate count toward the LowMC-like range: explore reducing the carry-chain to a fixed-depth approximation (trading algebraic degree for circuit size), or substituting the full adder with a 2-input gate that preserves the OWF hardness argument (Theorem 13).
+4. **Characterize the security impact** of any circuit approximation: verify that Theorem 13 (degree-saturation) still holds for the modified circuit; add analysis to `SecurityProofs-2.md` §11.8.2.
+
+**References:** Chase et al. 2017 (ZKB++, CCS 2017); Giacomelli et al. 2016 (ZKBoo, USENIX Security 2016); Albrecht et al. 2016 (LowMC).
+
+Status: **OPEN**
+
+---
+
+### 123. Hybrid Ring-LWR + Stern-F credential: resolve the binding map φ (Research, High)
+
+**Background:** `SecurityProofs-3.md` §11.10.8 gives a complete design sketch for an AND-composed
+ZKP that proves "I hold a Ring-LWR private key $s$ matching public key $C$ AND a code-based
+credential bound to $s$" — combining the §11.10.2 Ring-LWR Σ-protocol with HPKS-Stern-F under
+a single Fiat-Shamir challenge, with estimated proof size ~80 KB (Stern-F-dominated, 1 KB
+Ring-LWR + 78 KB Stern-F + ~1 KB binding gadget).  The scheme is fully specified except for the
+binding map φ: a function from the ternary ring secret s ∈ {-1,0,1}^n to a fixed-weight binary
+word e ∈ {0,1}^N with wt(e) = t_S, accompanied by a cheap zero-knowledge gadget proving
+φ(s) = e without revealing s.
+
+**The open problem (from §11.10.8):** a sound ZK gadget for "committed ternary ring element s
+maps to committed fixed-weight binary word e = φ(s)" requires either (a) an arithmetic-circuit
+proof of the bit-decomposition (expensive: adds O(n log n) AND gates), or (b) a φ that makes
+the relation linear over a common ring (highly restrictive — the two relations live in different
+algebras, Z_q[x]/(x^n+1) vs F_2^N).
+
+**Work items:**
+
+1. **Survey commitment-compatible binding maps.** Examine whether BDLOP-style lattice
+   commitments can bind s and e simultaneously in a common ring, or whether a hash commitment
+   with an arithmetic-circuit gadget is the only sound option.
+2. **Quantify the circuit cost** of the bit-decomposition gadget at n=256, t_S=16 (the deployed
+   Stern-F parameters): estimate the AND-gate count increase and the resulting proof-size blowup.
+3. **Prototype the simplest sound φ** (e.g. take the positive-support bitmap of s: φ(s)_i = 1 iff
+   s_i > 0, giving wt(φ(s)) = wt_+(s) which is not fixed but bounded) and characterize the
+   soundness error from the non-fixed weight.
+4. **Promote to implementation** once a φ with acceptable gadget cost is found; add to CLI as
+   a new proof type (e.g. `sign --algo hybrid-rlwr-stern`).
+
+**References:** §11.10.8 design sketch; BDLOP (Baum et al. 2018, SCN 2018); Lyubashevsky 2012
+(Eurocrypt 2012).
+
+Status: **DONE v1.9.73** — resolved by `SecurityProofsCode/hybrid_credential_phi.py` and
+`SecurityProofs-3.md` §11.10.9.  The §11.10.8 dichotomy was a false choice: φ_A(s)_i = [s_i = +1]
+(positive-support bitmap) makes the binding relation algebraic of degree ≤ 3 over Z_q —
+s_i³ = s_i and e_i = (s_i²+s_i)/2 — 512 multiplication gates at n=256, no bit decomposition.
+Work items: (1) survey done — candidates A/B/C/D analysed, A selected; (2) gadget cost
+quantified — BDLOP ≈ 2 KB, KKW ≈ 40 KB (hash-only, recommended), boolean-PRF route 1.8 MB
+rejected; (3) φ_A prototyped as a ZKBoo-(2,3) MPCitH gadget over Z_q — completeness 30/30,
+cheats rejected 500/500, corrupted-view survival matches (1/3)^R; the non-fixed weight
+(w ≈ 64, leak 4.84 bits = 1.3%) is characterised, and a NEW finding — self-registered-key
+forgery in the many-solutions regime (≈ 2^75.6 solutions, ≈ 2^3.8 effective Prange) —
+requires the credential to be an issuer signature over (C, y) (zero cost) or the φ_D
+fixed-weight variant (≈ 5.5× gadget).  (4) Implementation promotion split off as TODO #128.
+
+---
+
+### 128. Implement the hybrid Ring-LWR + Stern-F credential (compound prover/verifier + CLI) (Feature, Medium)
+
+**Background:** TODO #123 resolved the binding map φ for the §11.10.8 hybrid credential
+(see `SecurityProofs-3.md` §11.10.9): φ_A = positive-support bitmap, binding gadget =
+512 Z_q multiplication gates, recommended proof system = KKW 64-party MPC-in-the-head
+(hash-only, ≈ 40 KB) with the credential issued as an issuer signature over (C, y).
+This item tracks promotion from research prototype to suite implementation.
+
+**Batch plan (revised after Batch 1; design refinements in `SecurityProofs-3.md` §11.10.10):**
+
+- **Batch 1 — Python suite library + demo (shipped v1.9.74).**  `hcred_phi`,
+  `hcred_user_keygen`, `hcred_syndrome`, `hcred_issue`, `hcred_cred_verify`,
+  `hcred_prove`, `hcred_verify` + suite demo block (n=32, R=4).  Two design
+  refinements vs the original sketch: (a) e = φ(s) must stay SECRET in a
+  presentation, so the φ-gadget and syndrome check are merged into one
+  ZKBoo-(2,3) MPCitH circuit over Z_q with internal e-wires and per-row
+  bit-decomposition witness bits for the mod-2 reduction — this removes the
+  standalone Stern branch and its linkable-commitment gadget; (b) sequential
+  FS binding (branch-1 challenge binds branch-2 commitments and vice versa)
+  with the issuer's Stern-F signature over H(m‖C‖seed_H‖y) as the anchor.
+  Verified: completeness 20/20; replay/wrong-syndrome/wrong-key/tamper/
+  overweight all rejected.
+- **Batch 2 — unified circuit: same-s linkage without BDLOP (shipped v1.9.75).**
+  The Ring-LWR relation moved inside the MPCitH circuit: m·s is linear in the
+  s-wires (m public), so C = round_p(m·s) costs only 5 rounding-error witness
+  bits per coefficient (δ² = δ; [m·s]_i − Σ2^t·δ = lift(C)_i − 16; honest
+  |ε| ≤ 8, relaxed bound 15).  The separate ZKP-RNL branch is removed — one
+  proof, one witness, same-s linkage BY CONSTRUCTION; BDLOP is no longer
+  needed.  Circuit: 2n + (n/2)⌈log₂(n+1)⌉ + 5n mult gates (4224 at n=256).
+  Verified: completeness 20/20 + n=256 end-to-end; split-witness prove
+  attempts (s₂ vs y₁, s₁ vs C₂) refused.  Note: shipping only the unopened
+  party's outputs was evaluated and is UNSOUND (FS must bind all three
+  output-share sets pre-challenge) — KKW is the only sound size path.
+- **Batch 3 — KKW transcript encoding (shipped v1.9.76).**
+  `hcred_prove_kkw`/`hcred_verify_kkw`: N-party preprocessing MPCitH with
+  per-emulation seed trees, cut-and-choose over M emulations (opened roots
+  force aux honesty), one FS-hidden party per online emulation, and a
+  batched output check (one FS-ρ linear combination → one mask share per
+  party; +1/q ≈ 2^-16 escape, negligible vs 1/N).  Production (N,M,τ) =
+  (64,343,27) → 2^-128 (Picnic2 set); demo (4,8,4).  HONEST SIZE REVISION:
+  the #123 "≈40 KB (20×)" figure was for the pre-unification 512-gate
+  gadget; at the 4224-gate unified circuit KKW ≈ 0.9 MB at production
+  parameters ≈ 11× under ZKBoo (9.2 MB); demo-scale measured 11.7 KB vs
+  18.9 KB.  Further size cuts need a circuit-level change (fewer mult
+  gates), not transcript work.  Tamper battery (7 classes) + completeness
+  verified.
+- **Batch 4a — Go port (shipped v1.9.77).**  `herradura/herradura.go`: full
+  ZKBoo-path port (HcredParams/Phi/UserKeygen/Syndrome/Prove/Verify/BindMsg/
+  Issue/CredVerify + proof types).  Go suite demo block + security test **[44]**
+  in Herradura_tests.go.  Test [44] is appended after benchmarks [32]–[43]
+  rather than inserted as [32]: automated renumbering is risky in C where
+  "[32]" collides with array-size syntax; C and Python get the same [44] in
+  Batch 4b, restoring #87 numbering parity.  KKW variant remains Python-only
+  (research encoding).  CROSS-LANGUAGE INTEROP VERIFIED: a proof produced by
+  the Python suite verifies under Go `HcredVerify` (and is rejected under a
+  swapped nonce).  CORRECTNESS FIX (both langs): the statement hash is now
+  bound into every per-round commitment, so replay/wrong-key/wrong-syndrome
+  are rejected deterministically instead of at the (1/3)^R challenge-collision
+  chance (was 1/81 at demo R=4) — verified 0 false-accepts in 40 fresh R=4
+  trials.  KKW path was already deterministic (stmt-bound cut-and-choose).
+- **Batch 4b — C port (shipped v1.9.78).**  `herradura.h`: full C port at n=256
+  fixed (RNL_N/KEYBITS); `int64_t` for Z_q products; syndrome byte-order aligned
+  to Python/Go big-endian serialization; public API `hcred_prove`/`hcred_verify`/
+  `hcred_issue`/`hcred_cred_verify`.  C suite demo block + C test [44] (3 iters,
+  n=256, R=4; completeness/replay/syndrome/key/split/cred all PASS).  Python test
+  [44] mirror added to Herradura_tests.py (n=32, R=4; same six checks).
+- **Batch 5 — Wire format + CLI (shipped v1.9.79).**  PEM types for credential and
+  presentation proof (`HERRADURA HCRED PRIVATE/PUBLIC KEY`, `HERRADURA HCRED CREDENTIAL`,
+  `HERRADURA HCRED PROOF`); codec.py encode/decode helpers; `cred-issue`/`cred-prove`/
+  `cred-verify` in Python CLI + C CLI (n=256); `hcred_proof_serialize/deserialize` in
+  herradura.h; `CliTest/test_cred.sh`, `test_c_cred.sh`, `test_cred_interop.sh` (10-way
+  C↔Python interop, all PASS).  Syndr endianness fix: little-endian (LSB-first) storage
+  for byte-parity with C `stern_syndrome_H`.
+- **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
+
+Status: **DONE v1.9.80** — Batches 1–5 shipped in v1.9.74–v1.9.79; Batch 6 shipped v1.9.80: TUTORIAL §HCRED added to CLI quickstart, C/Go/Python integration sections, protocol reference, parameter reference, and security notes; INTRODUCTION Part 10.4 concepts paragraph + protocol table row + decision tree entry.
+
+---
+
+### 124. NL-FSCX v2 cipher-stream problem (CSP) hardness characterization (Research, Medium)
+
+**Background:** `SecurityProofs-2.md` §11.8.5 (Option C) lists the NL-FSCX v2 Cipher-Stream
+Problem — recovering the key K from a sequence of outputs nl_fscx_revolve_v2(P_i, K, r) for
+known plaintexts P_i — as an open conjecture.  Unlike NL-FSCX v1 (which has Theorem 13 degree
+saturation and the Walsh-spectrum analysis of TODO #35), NL-FSCX v2 has only the MQ-hardness
+argument of Theorem 14 (Theorem 14 proves key recovery is an MQ problem; it does not rule out
+attacks that exploit v2's structure more deeply).
+
+**Open questions:**
+
+1. **Differential / algebraic analysis of nl_fscx_revolve_v2.** NL-FSCX v2 adds the
+   key-dependent offset δ(K) = ROL(K·⌊(K+1)/2⌋ mod 2^n, n/4) at each step. Unlike the v1
+   integer-add carry chain, δ(K) depends only on K and not on A — does this fixed-per-key
+   structure enable a related-key differential distinguisher?
+2. **Inversion feasibility at small n.** At n=8 and n=12, can nl_fscx_revolve_v2 be
+   inverted faster than brute force using the Gröbner basis approach (Theorem 14's bound is
+   asymptotic; small-n experiments would show the gap)?
+3. **CSP vs. OWF comparison.** NL-FSCX v1's OWF hardness (Assumption A2, TODO #74) has
+   independent cryptanalysis from the Walsh spectrum scan (TODO #35) and the rotational
+   analysis (TODO #75). NL-FSCX v2 has neither. Run the equivalent analyses:
+   - Exhaustive Walsh spectrum at n=8/12 for the v2 function.
+   - Rotational differential rate at n=32 for v2 (compare to v1's 1–6%).
+   - Degree-saturation test for v2 at small n (verify Theorem 14's MQ claim experimentally).
+4. **SecurityProofs-2.md §11.8.5 update.** Add a "v2 CSP cryptanalysis status" subsection
+   once items 1–3 are complete, analogous to §11.8.3's treatment of v1 OWF assumptions.
+
+**Affected files:** `SecurityProofsCode/nl_fscx_owf_analysis.py` (extend with v2 sections),
+`SecurityProofsCode/nl_fscx_rot_analysis.py` (extend with v2 rotational tests),
+`SecurityProofs-2.md` §11.8.5.
+
+Status: **OPEN**
+
+---
+
+### 125. Sparse-input rotational differential characterization of NL-FSCX v1 at large n (Research, Medium)
+
+**Background:** `SecurityProofs-2.md` §11.8.2 (Theorem 13 proof, "Open concerns") notes:
+
+> *"(1) Sparse-bit B values exhibit elevated MDP at n=8; large-n behavior is uncharacterised."*
+
+The TODO #75 rotational analysis (`SecurityProofsCode/nl_fscx_rot_analysis.py`) measured
+overall rotational-equivariance rates of 1–6% at n=32 across all tested (A, B) pairs
+uniformly — but did not isolate the sparse-B regime.  At n=8, exhaustive enumeration in
+the Walsh scan (TODO #35) showed max_bias ≈ 1.0 for degenerate (r=2-step) runs, which is
+plausibly related to sparse-B degeneracy (low-weight B makes the carry chain short).
+
+**Open questions:**
+
+1. **Sparse-B differential rate at n=32.** In `nl_fscx_rot_analysis.py`, stratify the
+   sampled (A, B) pairs by Hamming weight of B and measure the rotational-equivariance
+   rate per stratum: wt(B) ∈ {1, 2, 4, 8, 16, 32}. If sparse B elevates the rate beyond
+   6%, quantify by how much.
+2. **Threshold weight.** Identify the minimum wt(B) at n=32 above which the equivariance
+   rate drops to the uniform-B baseline (~1–6%). Document as a safe-use lower bound on B
+   density for PRF applications.
+3. **Impact on HFSCX-256-DM.** The HFSCX-256-DM compression function uses fixed-key iteration
+   F_1^{64}(s, m) with m = message block and s = chaining value. If sparse message blocks
+   elevate the rotational rate, adversarial messages could bias the compression output.
+   Quantify whether 64 rounds of iteration suppress the sparse-B elevation (and verify
+   experimentally at n=32 with wt(m) ∈ {1,2,4}).
+4. **Update SecurityProofs-2.md §11.8.2** with the characterization once complete.
+
+**Affected files:** `SecurityProofsCode/nl_fscx_rot_analysis.py` (stratified sparse-B tests),
+`SecurityProofs-2.md` §11.8.2 "Open concerns."
+
+Status: **OPEN**
+
+---
+
+### 126. QC-MDPC decoding trapdoor for production HPKE-Stern-F / Niederreiter KEM (Research, High)
+
+**Background:** `SecurityProofs-2.md` §11.8.5 outlines a production path for HPKE-Stern-F's
+Niederreiter KEM component:
+
+> *"For efficient decapsulation, e must embed a structured decoding trapdoor. A direct application:
+> derive the seed for a quasi-cyclic moderate-density parity-check (QC-MDPC) code (the BIKE design)
+> via the NL-FSCX v1 PRF instead of a standard hash. The security argument is unchanged; hardness
+> remains quasi-cyclic syndrome decoding."*
+
+The current `hpke_stern_f_decap` uses brute-force search (TODO #33), which is exponential in the
+error weight t. At the demo parameters (N=256, t=16) this takes ~seconds; at production parameters
+(N≥17000, t≈200 for BIKE-128) it is infeasible without a polynomial-time decoder.
+
+**Work items:**
+
+1. **Survey QC-MDPC decoding algorithms.** Review the BIKE specification (Aragon et al. 2022)
+   and the Black-Gray-Flip and BGF-decoder literature; understand the key-equation attack
+   mitigations built into BIKE's parameter choices.
+2. **Design the NL-FSCX PRF seeding layer.** Instead of a SHA-3 seed as in BIKE, use
+   F_1^{n/4}(ROL(seed, n/8), seed) (the HFSCX-256-DM KDF path) to derive the QC-MDPC parity
+   check matrix H. Verify that the PRF-seeded H distribution matches the random-looking H
+   assumption underlying BIKE's syndrome-decoding hardness claim.
+3. **Prototype the decoder** at small parameters (N=512, t=20) in Python using the BGF algorithm;
+   measure decapsulation failure rate and compare to BIKE's targets.
+4. **Define production parameter sets** consistent with ≥128-bit classical security (BIKE-128 uses
+   N≈24646; characterize the NL-FSCX PRF-seeded analog).
+5. **Extend CLI `dec --algo hpke-stern`** to call the QC-MDPC decoder when available; document
+   the demo-only limitation prominently until production decoder is present.
+
+**References:** BIKE specification v5.2 (Aragon et al. 2022); Tillich-Zemor BGF decoder (2018);
+SecurityProofs-2.md §11.8.5 (Option C roadmap).
+
+Status: **OPEN**
+
+---
+
+### 127. Post-deprecation successor group for HKEX-GF, HPKS, and HPKE (Research, Medium)
+
+**Background:** `SecurityProofs-1.md` §9.2.4 documents that NIST SP 800-57 Rev. 5 (2020) and
+ENISA (2022) both **deprecate** GF(2^n)* for new designs; at n=256 the best classical attack
+(function field sieve) gives only ~80–90 bits, not 128.  HKEX-GF, HPKS, and HPKE are therefore
+not suitable for production use at any deployed n.  The suite documents this prominently as a
+known limitation and positions these protocols as proof-of-concept / pedagogical constructs.
+
+The research question is: **what is the minimal-change upgrade path** that preserves the suite's
+Schnorr-algebra structure (so that HPKS threshold/aggregation from TODO #98 and ring signatures
+from TODO #78.I continue to apply) while replacing GF(2^n)* with a group that meets 128-bit
+classical and quantum-resistant security margins?
+
+**Candidate groups:**
+
+| Group | Classical hardness | Quantum hardness | Notes |
+|---|---|---|---|
+| NIST P-256 (secp256r1) | ~128-bit ECDLP | Shor's breaks it | Most familiar; same Schnorr algebra; no suite advantage |
+| Ristretto255 (Ed25519 quotient) | ~128-bit ECDLP | Shor's breaks it | Cleaner cofactor handling; same quantum vulnerability |
+| GF(2^n)* at larger n (n=4096) | Sub-exponential, ~128-bit at n=4096 | Shor's breaks it | Enormous key sizes; impractical |
+| CSIDH / SQIsign | ~64-bit post-quantum | Conjectured quantum-resistant | Different algebra; Schnorr analogy breaks down |
+
+**Work items:**
+
+1. **Evaluate ristretto255 as a drop-in.** The group order is a large prime ℓ ≈ 2^{252}; the
+   Schnorr signing equation s = (k − a·e) mod ℓ maps directly onto the existing HPKS structure
+   with `ba_mul_mod_ord` replaced by scalar multiplication in ristretto255. Prototype in Python
+   using the `ristretto255` library; check that HPKS-Stern-Ring and threshold signing (TODO #98)
+   transfer without modification.
+2. **Document the migration impact.** List every suite function and PEM field that changes;
+   estimate wire-format compatibility with the existing CLI.
+3. **Assess post-quantum relevance.** If the goal is a fully PQC suite, elliptic curve groups
+   are also broken by Shor's algorithm; document whether the intended use case is
+   classical-security-only (ristretto255 fine) or post-quantum (must use HKEX-RNL + Stern-F
+   exclusively, no HKEX-GF/HPKS/HPKE upgrade exists).
+4. **Add a SecurityProofs-1.md §9.2.5** "Migration path" subsection summarizing the trade-offs.
+
+Status: **OPEN**

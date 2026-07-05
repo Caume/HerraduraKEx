@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.9.40
+/*  Herradura Cryptographic Suite v1.9.77
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -350,6 +350,49 @@ func main() {
 				}
 			}
 		}
+	}
+
+	// ── HCRED: Hybrid Ring-LWR + Stern-F credential ─────────────────────────
+	fmt.Printf("\n--- HCRED [CREDENTIAL — Ring-LWR + code syndrome via φ, MPCitH; n=%d, R=%d]\n", 32, 4)
+	{
+		hcN := 32
+		hcM := RnlMPoly(hcN)
+		hcR := RnlRandPoly(hcN, RnlQ)
+		for i := range hcM {
+			hcM[i] = (hcM[i] + hcR[i]) % RnlQ
+		}
+		hcSeedH := NewRandBitArray(hcN)
+		hcS, hcC, hcE := HcredUserKeygen(hcM, hcN)
+		hcY := HcredSyndrome(hcSeedH, hcE, hcN)
+		hcIsd, hcIe, hcIsyn := SternFKeygen(hcN)
+		hcCred := HcredIssue(hcM, hcC, hcSeedH, hcY, hcN, hcIe, hcIsd, 8)
+		if HcredCredVerify(hcM, hcC, hcSeedH, hcY, hcN, hcCred, hcIsd, hcIsyn) {
+			fmt.Println("+ issuer credential (Stern-F over (m,C,seed_H,y)) verified")
+		} else {
+			fmt.Println("- issuer credential verify FAILED")
+		}
+		hcProof, hcErr := HcredProve(hcS, hcM, hcC, hcSeedH, hcY, hcN, 4,
+			[]byte("HCRED demo nonce"))
+		if hcErr != nil {
+			fmt.Println("- HCRED prove error:", hcErr)
+		} else {
+			fmt.Printf("enrolment: W=%d (weight of hidden e=φ(s))\n", hcProof.W)
+			if HcredVerify(hcM, hcC, hcSeedH, hcY, hcProof, hcN, 4,
+				[]byte("HCRED demo nonce")) {
+				fmt.Println("+ HCRED presentation proof verified (unified circuit: " +
+					"Ring-LWR rounding + syndrome for the SAME s; e never revealed)")
+			} else {
+				fmt.Println("- HCRED presentation verify FAILED")
+			}
+			if !HcredVerify(hcM, hcC, hcSeedH, hcY, hcProof, hcN, 4,
+				[]byte("other nonce")) {
+				fmt.Println("+ HCRED replay under different nonce rejected")
+			} else {
+				fmt.Println("- HCRED replay NOT rejected")
+			}
+		}
+		fmt.Println("  (demo uses R=4; production requires R=219; rounding check" +
+			" relaxed to ||m*s - lift(C)||inf <= 15 — see §11.10.10)")
 	}
 
 	// ── HPKS-WOTS-F / HPKS-XMSS-F ───────────────────────────────────────────────

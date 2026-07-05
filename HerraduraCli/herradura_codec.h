@@ -64,6 +64,10 @@
 #define PEM_HPKS_WOTS_PUB   "HERRADURA HPKS-WOTS PUBLIC KEY"
 #define PEM_HPKS_WOTS_SIG   "HERRADURA HPKS-WOTS SIGNATURE"
 #define PEM_HPKS_RING_SIG   "HERRADURA HPKS-RING SIGNATURE"
+#define PEM_HCRED_PRIV      "HERRADURA HCRED PRIVATE KEY"
+#define PEM_HCRED_PUB       "HERRADURA HCRED PUBLIC KEY"
+#define PEM_HCRED_CRED      "HERRADURA HCRED CREDENTIAL"
+#define PEM_HCRED_PROOF     "HERRADURA HCRED PROOF"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Buffer-size macros

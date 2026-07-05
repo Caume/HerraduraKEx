@@ -1,4 +1,5 @@
-/*  package herradura — Herradura Cryptographic Suite shared library v1.8.8
+/*  package herradura — Herradura Cryptographic Suite shared library v1.9.77
+    v1.9.77: HCRED hybrid credential — unified MPCitH prove/verify + issuer binding (TODO #128 Batch 4a).
     v1.8.0: KDF domain constant — RnlKdfSeed: ROL(k,n/8) XOR RnlKdfDC (TODO #38).
     v1.6.1: SternHash ds parameter — closes QRO gap for Theorem 17 (TODO #36).
     v1.6.0: SternHash HFSCX-256 finalizer — eliminates range compression (TODO #43).
@@ -23,6 +24,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"math/big"
 	"math/bits"
 	"sync"
@@ -1058,7 +1060,7 @@ func RnlHint(kPoly []int, q int) []byte {
 	hint := make([]byte, (n+7)/8) // n/2 coeffs × 2 bits = n bits = n/8 bytes
 	for i := 0; i < n/2; i++ {
 		c := kPoly[i]
-		r := (8*c+q/4)/q % 4
+		r := (8*c + q/4) / q % 4
 		hint[i/4] |= byte(r << uint((i%4)*2))
 	}
 	return hint
@@ -1071,7 +1073,7 @@ func RnlReconcileBits(kPoly []int, hint []byte, q, pp, keyBits int) *BitArray {
 	for i := 0; i < keyBits/2 && i < len(kPoly); i++ {
 		c := kPoly[i]
 		h := int((hint[i/4] >> uint((i%4)*2)) & 3)
-		b := (4*c+(2*h+1)*qq)/q % pp // pp=4 → b ∈ {0,1,2,3}
+		b := (4*c + (2*h+1)*qq) / q % pp // pp=4 → b ∈ {0,1,2,3}
 		val.Or(val, new(big.Int).Lsh(big.NewInt(int64(b)), uint(2*i)))
 	}
 	ba := &BitArray{size: keyBits}
@@ -1102,10 +1104,10 @@ func RnlAgree(s, cOther []int, q, p, pp, n, keyBits int, hintIn []byte) (*BitArr
 
 // Stern-F default parameters for full-security targets (C/Go/Python suite).
 const (
-	SdfNRows          = 256 / 2  // 128 parity-check rows
-	SdfT              = 256 / 16 // 16 error weight
-	SdfRounds         = 32       // ZKP rounds (soundness (2/3)^32; demo only)
-	SdfProductionRounds = 219    // rounds required for 128-bit soundness
+	SdfNRows            = 256 / 2  // 128 parity-check rows
+	SdfT                = 256 / 16 // 16 error weight
+	SdfRounds           = 32       // ZKP rounds (soundness (2/3)^32; demo only)
+	SdfProductionRounds = 219      // rounds required for 128-bit soundness
 )
 
 // SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,
@@ -1279,7 +1281,7 @@ func sternFsChallenges(rounds int, msg *BitArray, c0, c1, c2 []*BitArray) []int 
 
 // SternRound holds one round of a Stern ZKP signature.
 type SternRound struct {
-	C0, C1, C2  *BitArray
+	C0, C1, C2   *BitArray
 	B            int
 	RespA, RespB *BitArray
 }
@@ -1428,8 +1430,8 @@ func HpkeSternFDecapKnown(ePrime, seed *BitArray) *BitArray {
 
 // SternRingSig is a ring signature over k HPKS-Stern-F public keys.
 type SternRingSig struct {
-	K      int            // ring size
-	Rounds int            // rounds per member
+	K      int // ring size
+	Rounds int // rounds per member
 	// Members[i].Rounds[r] holds the (c0,c1,c2,b,respA,respB) for member i round r
 	Members []SternSig
 }
@@ -1454,7 +1456,9 @@ func sternRingChallenges(rounds, k int, msg *BitArray,
 	for i := 0; i < k; i++ {
 		for r := 0; r < rounds; r++ {
 			rnd := members[i].Rounds[r]
-			sfs(rnd.C0); sfs(rnd.C1); sfs(rnd.C2)
+			sfs(rnd.C0)
+			sfs(rnd.C1)
+			sfs(rnd.C2)
 		}
 	}
 	digest := Hfscx256(chSt.Bytes(), nil)
@@ -1489,7 +1493,7 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 	case 1:
 		// c0 = hash(pi, H·r^T), c1 = hash(σ(r)), c2 dummy (unchecked for b=1)
 		pi := NewRandBitArray(n)
-		r  := SternRandError(n, t)
+		r := SternRandError(n, t)
 		perm := SternGenPerm(pi, n)
 		hr := SyndrToBA(n, sternSyndromeH(H, r))
 		sr := SternApplyPerm(perm, r)
@@ -1502,7 +1506,7 @@ func sternSimulateRound(b int, H []*BitArray, syndrome *big.Int, n int) SternRou
 	default: // b == 2
 		// c0 = hash(pi, H·y^T ⊕ s), c2 = hash(σ(y)), c1 dummy (unchecked for b=2)
 		pi := NewRandBitArray(n)
-		y  := NewRandBitArray(n)
+		y := NewRandBitArray(n)
 		perm := SternGenPerm(pi, n)
 		hy := sternSyndromeH(H, y)
 		hys := new(big.Int).Xor(hy, syndrome)
@@ -1548,17 +1552,17 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 
 	// Step 2: commit for real signer j
 	Hj := SternBuildH(ring[j].Seed)
-	t  := n / 16
+	t := n / 16
 	type rtmp struct{ r, y, pi, sr, sy *BitArray }
 	tmp := make([]rtmp, rounds)
 	for r := 0; r < rounds; r++ {
-		rv   := SternRandError(n, t)
-		yv   := e.Xor(rv)
-		pi   := NewRandBitArray(n)
+		rv := SternRandError(n, t)
+		yv := e.Xor(rv)
+		pi := NewRandBitArray(n)
 		perm := SternGenPerm(pi, n)
 		hrBA := SyndrToBA(n, sternSyndromeH(Hj, rv))
-		sr   := SternApplyPerm(perm, rv)
-		sy   := SternApplyPerm(perm, yv)
+		sr := SternApplyPerm(perm, rv)
+		sy := SternApplyPerm(perm, yv)
 		sig.Members[j].Rounds[r].C0 = SternHash(1, pi, hrBA)
 		sig.Members[j].Rounds[r].C1 = SternHash(2, sr)
 		sig.Members[j].Rounds[r].C2 = SternHash(3, sy)
@@ -1576,7 +1580,7 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 				simSum += sig.Members[i].Rounds[r].B
 			}
 		}
-		sig.Members[j].Rounds[r].B = ((joint[r] - simSum) % 3 + 3) % 3
+		sig.Members[j].Rounds[r].B = ((joint[r]-simSum)%3 + 3) % 3
 	}
 
 	// Step 5: complete real signer's responses
@@ -1599,10 +1603,10 @@ func HpksSternRingSign(msg, e *BitArray, j int, ring []RingKeypair, rounds int) 
 
 // HpksSternRingVerify verifies a ring signature. Returns true iff valid.
 func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) bool {
-	k      := sig.K
+	k := sig.K
 	rounds := sig.Rounds
-	n      := msg.size
-	t      := n / 16
+	n := msg.size
+	t := n / 16
 
 	// Re-derive joint challenges
 	joint := sternRingChallenges(rounds, k, msg, sig.Members)
@@ -1713,8 +1717,10 @@ func sigmaPolyMulN(f, g []int, n, q int) []int {
 // Returns a []int of length n in {0, 1, q-1} with exactly t nonzero entries.
 func sigmaChallenge(mPoly, cPoly, wPoly []int, n, q, t int, msg []byte) []int {
 	buf := make([]byte, 4)
-	buf[0] = byte(n >> 24); buf[1] = byte(n >> 16)
-	buf[2] = byte(n >> 8);  buf[3] = byte(n)
+	buf[0] = byte(n >> 24)
+	buf[1] = byte(n >> 16)
+	buf[2] = byte(n >> 8)
+	buf[3] = byte(n)
 	data := make([]byte, 0, 4+len(mPoly)*12+len(msg))
 	data = append(data, buf...)
 	data = append(data, sigmaPolyBytes(mPoly)...)
@@ -1856,7 +1862,7 @@ func RnlSigmaVerify(mPoly, cpoly []int, n int, msg []byte, wPoly, cPoly, zPoly [
 		wQ[i] = ((wi % q) + q) % q
 	}
 	for i := range mz {
-		d := ((mz[i] - ct[i] - wQ[i]) % q + q) % q
+		d := ((mz[i]-ct[i]-wQ[i])%q + q) % q
 		dc := d
 		if dc > half {
 			dc = dc - q
@@ -1933,14 +1939,14 @@ func zkpNlEvalCircuit(shares [3]uint32, tapes [3][]byte, B uint32, n int) ([3]ui
 		var andOut [3]int
 		for p := 0; p < 3; p++ {
 			p1 := (p + 1) % 3
-			andOut[p] = (ai[p]&ci[p])^(ai[p]&ci[p1])^(ai[p1]&ci[p])^ri[p]^ri[p1]
+			andOut[p] = (ai[p] & ci[p]) ^ (ai[p] & ci[p1]) ^ (ai[p1] & ci[p]) ^ ri[p] ^ ri[p1]
 		}
 		for p := 0; p < 3; p++ {
 			gateViews[p][i] = byte(ai[p] | (ci[p] << 1) | (andOut[p] << 2))
 		}
 		// c_{i+1} = Bi*ai XOR andOut XOR Bi*ci
 		for p := 0; p < 3; p++ {
-			cNext := (Bi*ai[p])^andOut[p]^(Bi*ci[p])
+			cNext := (Bi * ai[p]) ^ andOut[p] ^ (Bi * ci[p])
 			if cNext == 1 {
 				carry[p] |= 1 << uint(i+1)
 			} else {
@@ -2148,12 +2154,14 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 	nBuf := make([]byte, nb)
 	bVal := B
 	for i := nb - 1; i >= 0; i-- {
-		nBuf[i] = byte(bVal); bVal >>= 8
+		nBuf[i] = byte(bVal)
+		bVal >>= 8
 	}
 	yBuf := make([]byte, nb)
 	yVal := y
 	for i := nb - 1; i >= 0; i-- {
-		yBuf[i] = byte(yVal); yVal >>= 8
+		yBuf[i] = byte(yVal)
+		yVal >>= 8
 	}
 	chSeed := zkpNlH(comBlock, nBuf, yBuf, msg)
 
@@ -2172,7 +2180,8 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 	osBuf := func(v uint32) []byte {
 		b := make([]byte, nb)
 		for i := nb - 1; i >= 0; i-- {
-			b[i] = byte(v); v >>= 8
+			b[i] = byte(v)
+			v >>= 8
 		}
 		return b
 	}
@@ -2207,21 +2216,29 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 			aiP2 := int((shareP2 >> uint(i)) & 1)
 			ciP1 := int((carryP1 >> uint(i)) & 1)
 			ciP2 := int((carryP2 >> uint(i)) & 1)
-			Bi   := int((B >> uint(i)) & 1)
+			Bi := int((B >> uint(i)) & 1)
 
 			riP1 := zkpNlPrgBit(tapeP1, i)
 			riP2 := zkpNlPrgBit(tapeP2, i)
 
-			expAndP1 := (aiP1&ciP1) ^ (aiP1&ciP2) ^ (aiP2&ciP1) ^ riP1 ^ riP2
+			expAndP1 := (aiP1 & ciP1) ^ (aiP1 & ciP2) ^ (aiP2 & ciP1) ^ riP1 ^ riP2
 			if int((gvP1[i]>>2)&1) != expAndP1 {
 				return false
 			}
 			andOutP2 := int((gvP2[i] >> 2) & 1)
 
-			cNextP1 := (Bi*aiP1) ^ expAndP1 ^ (Bi * ciP1)
-			if cNextP1 == 1 { carryP1 |= 1 << uint(i+1) } else { carryP1 &^= 1 << uint(i+1) }
-			cNextP2 := (Bi*aiP2) ^ andOutP2 ^ (Bi * ciP2)
-			if cNextP2 == 1 { carryP2 |= 1 << uint(i+1) } else { carryP2 &^= 1 << uint(i+1) }
+			cNextP1 := (Bi * aiP1) ^ expAndP1 ^ (Bi * ciP1)
+			if cNextP1 == 1 {
+				carryP1 |= 1 << uint(i+1)
+			} else {
+				carryP1 &^= 1 << uint(i+1)
+			}
+			cNextP2 := (Bi * aiP2) ^ andOutP2 ^ (Bi * ciP2)
+			if cNextP2 == 1 {
+				carryP2 |= 1 << uint(i+1)
+			} else {
+				carryP2 &^= 1 << uint(i+1)
+			}
 		}
 	}
 	return true
@@ -2230,9 +2247,12 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 // comAt returns the commitment for party p (0, 1, or 2).
 func (r *ZkpNlRound) comAt(p int) [32]byte {
 	switch p {
-	case 0: return r.Com0
-	case 1: return r.Com1
-	default: return r.Com2
+	case 0:
+		return r.Com0
+	case 1:
+		return r.Com1
+	default:
+		return r.Com2
 	}
 }
 
@@ -2383,11 +2403,11 @@ func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray 
 // ---------------------------------------------------------------------------
 
 const (
-	WotsW    = 16
+	WotsW     = 16
 	WotsLog2W = 4
-	WotsL1   = 64 // 256 / log2(16)
-	WotsL2   = 3  // checksum digits base-16
-	WotsL    = 67
+	WotsL1    = 64 // 256 / log2(16)
+	WotsL2    = 3  // checksum digits base-16
+	WotsL     = 67
 )
 
 // wotsH applies one hash-chain step: h(x) = NlFscxRevolveV1(ROL(x,n/8), x, n/4).
@@ -2447,8 +2467,8 @@ func HpksWotsKeygen(masterSeed []byte, leafIdx uint32) ([WotsL]*BitArray, [WotsL
 // HpksWotsSign returns sig[i] = h^(w-1-d_i)(sk[i]).
 func HpksWotsSign(msg, masterSeed []byte, leafIdx uint32) [WotsL]*BitArray {
 	msgHash := Hfscx256(msg, nil)
-	digits  := wotsMsgToDigits(msgHash)
-	sk, _   := HpksWotsKeygen(masterSeed, leafIdx)
+	digits := wotsMsgToDigits(msgHash)
+	sk, _ := HpksWotsKeygen(masterSeed, leafIdx)
 	var sig [WotsL]*BitArray
 	for i := 0; i < WotsL; i++ {
 		sig[i] = wotsChain(sk[i], WotsW-1-digits[i])
@@ -2459,7 +2479,7 @@ func HpksWotsSign(msg, masterSeed []byte, leafIdx uint32) [WotsL]*BitArray {
 // HpksWotsRecoverPk recovers the WOTS public key from (msg, sig).
 func HpksWotsRecoverPk(msg []byte, sig [WotsL]*BitArray) [WotsL]*BitArray {
 	msgHash := Hfscx256(msg, nil)
-	digits  := wotsMsgToDigits(msgHash)
+	digits := wotsMsgToDigits(msgHash)
 	var recovered [WotsL]*BitArray
 	for i := 0; i < WotsL; i++ {
 		recovered[i] = wotsChain(sig[i], digits[i])
@@ -2529,7 +2549,7 @@ func HpksXmssSign(msg []byte, kp *HpksXmssKeypair, leafIdx int) *HpksXmssSig {
 // HpksXmssVerify verifies an XMSS-F signature against root.
 func HpksXmssVerify(msg []byte, sig *HpksXmssSig, root []byte) bool {
 	recovered := HpksWotsRecoverPk(msg, sig.WotsSig)
-	leafHash  := HaccumLeaf(wotsPkBytes(recovered))
+	leafHash := HaccumLeaf(wotsPkBytes(recovered))
 	return HaccumVerify(root, leafHash, sig.AuthPath, sig.LeafIdx)
 }
 
@@ -2545,9 +2565,9 @@ func HpksXmssVerify(msg []byte, sig *HpksXmssSig, root []byte) bool {
 // mask must be a uniform random BitArray.
 func FscxRevolveMasked(A, B, mask *BitArray, steps int) *BitArray {
 	zero := NewBitArray(256, new(big.Int))
-	am   := A.Xor(mask)
-	fm   := FscxRevolve(am,   B,    steps)
-	fz   := FscxRevolve(mask, zero, steps)
+	am := A.Xor(mask)
+	fm := FscxRevolve(am, B, steps)
+	fz := FscxRevolve(mask, zero, steps)
 	return fm.Xor(fz)
 }
 
@@ -2555,14 +2575,14 @@ func FscxRevolveMasked(A, B, mask *BitArray, steps int) *BitArray {
 // Returns (ciphertext, mask).  Caller should zero mask after use.
 func HskeEncryptMasked(pt, key *BitArray) (*BitArray, *BitArray) {
 	mask := NewRandBitArray(256)
-	ct   := FscxRevolveMasked(pt, key, mask, 64) // I_VALUE = 64
+	ct := FscxRevolveMasked(pt, key, mask, 64) // I_VALUE = 64
 	return ct, mask
 }
 
 // HskeDecryptMasked decrypts ct with key using a fresh random mask.
 func HskeDecryptMasked(ct, key *BitArray) (*BitArray, *BitArray) {
 	mask := NewRandBitArray(256)
-	pt   := FscxRevolveMasked(ct, key, mask, 192) // R_VALUE = 192
+	pt := FscxRevolveMasked(ct, key, mask, 192) // R_VALUE = 192
 	return pt, mask
 }
 
@@ -2592,8 +2612,8 @@ func oprfOrd(n int) *big.Int {
 }
 
 func oprfHashToField(data []byte, n int) *big.Int {
-	h   := Hfscx256(data, nil)
-	v   := new(big.Int).SetBytes(h)
+	h := Hfscx256(data, nil)
+	v := new(big.Int).SetBytes(h)
 	v.And(v, oprfOrd(n))
 	if v.Sign() == 0 {
 		v.SetInt64(1)
@@ -2618,9 +2638,9 @@ func OprfKeygen(n int) (*big.Int, error) {
 // OprfBlind hashes x to GF(2^n)* and blinds with a random coprime scalar r.
 // Returns (r, alpha) where alpha = H(x)^r.
 func OprfBlind(x []byte, n int) (r, alpha *big.Int, err error) {
-	ord  := oprfOrd(n)
+	ord := oprfOrd(n)
 	poly := GfPoly[n]
-	hx   := oprfHashToField(x, n)
+	hx := oprfHashToField(x, n)
 	for {
 		rCand, e := rand.Int(rand.Reader, ord)
 		if e != nil {
@@ -2646,7 +2666,7 @@ func OprfEval(alpha, k *big.Int, n int) *big.Int {
 
 // OprfUnblind recovers F(k, x) = beta^{r^{-1} mod ord}.
 func OprfUnblind(beta, r *big.Int, n int) *big.Int {
-	ord  := oprfOrd(n)
+	ord := oprfOrd(n)
 	rInv := new(big.Int).ModInverse(r, ord)
 	if rInv == nil {
 		return big.NewInt(0) // should not happen if r came from OprfBlind
@@ -2761,16 +2781,16 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 // RatchetInit derives an initial ratchet state from seed via Hfscx256(seed||0x02).
 func RatchetInit(seed []byte) *BitArray {
 	buf := append(append([]byte(nil), seed...), 0x02)
-	h   := Hfscx256(buf, nil)
+	h := Hfscx256(buf, nil)
 	return NewBitArray(256, new(big.Int).SetBytes(h))
 }
 
 // RatchetAdvance returns (nextState, msgKey).
 // Caller MUST zero the previous state immediately after this call.
 func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
-	buf     := append(state.Bytes(), 0x01)
-	msgKey  := Hfscx256(buf, nil)
-	next    := NlFscxRevolveV1(state, ratchetDomain, 1)
+	buf := append(state.Bytes(), 0x01)
+	msgKey := Hfscx256(buf, nil)
+	next := NlFscxRevolveV1(state, ratchetDomain, 1)
 	return next, msgKey
 }
 
@@ -2785,16 +2805,17 @@ func RatchetAdvance(state *BitArray) (*BitArray, []byte) {
 // Verify: g^s · C_agg^e == R
 // ---------------------------------------------------------------------------
 
-var hpkstOrd  = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)) // 2^256-1
+var hpkstOrd = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1)) // 2^256-1
 var hpkstPoly = GfPoly[256]
-const hpkstN  = 256
+
+const hpkstN = 256
 
 func hpkstMuCoeff(lBytes []byte, cj *big.Int) *big.Int {
 	cjB := make([]byte, 32)
 	cj.FillBytes(cjB)
 	buf := append(append([]byte(nil), lBytes...), cjB...)
-	h   := Hfscx256(buf, nil)
-	mu  := new(big.Int).SetBytes(h)
+	h := Hfscx256(buf, nil)
+	mu := new(big.Int).SetBytes(h)
 	mu.Mod(mu, hpkstOrd)
 	if mu.Sign() == 0 {
 		mu.SetInt64(1)
@@ -2832,7 +2853,7 @@ func HpkstAggregatePublickeys(pubkeys []*big.Int) (*big.Int, []*big.Int) {
 	agg := big.NewInt(1)
 	for i, pk := range pubkeys {
 		pkMu := GfPow(pk, coeffs[i], hpkstPoly, hpkstN)
-		agg   = GfMul(agg, pkMu, hpkstPoly, hpkstN)
+		agg = GfMul(agg, pkMu, hpkstPoly, hpkstN)
 	}
 	return agg, coeffs
 }
@@ -2841,7 +2862,7 @@ func HpkstAggregatePublickeys(pubkeys []*big.Int) (*big.Int, []*big.Int) {
 // secrets and pubkeys are GF scalars and elements (big.Int).
 // Returns (C_agg, R, s) as BitArrays for use with NlFscxRevolveV1.
 func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *big.Int) {
-	n    := len(secrets)
+	n := len(secrets)
 	gGen := big.NewInt(3)
 	cAgg, coeffs := HpkstAggregatePublickeys(pubkeys)
 
@@ -2856,14 +2877,14 @@ func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *bi
 	R := big.NewInt(1)
 	for j := 0; j < n; j++ {
 		Rj := GfPow(gGen, nonces[j], hpkstPoly, hpkstN)
-		R   = GfMul(R, Rj, hpkstPoly, hpkstN)
+		R = GfMul(R, Rj, hpkstPoly, hpkstN)
 	}
 
 	// e = NlFscxRevolveV1(R_ba, msg_ba, 64)
-	RBa   := NewBitArray(256, R)
+	RBa := NewBitArray(256, R)
 	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
-	eBa   := NlFscxRevolveV1(RBa, msgBa, 64)
-	eBig  := new(big.Int).SetBytes(eBa.Bytes())
+	eBa := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBig := new(big.Int).SetBytes(eBa.Bytes())
 
 	// s = Σ (k_j - a_j·μ_j·e) mod ord
 	sAcc := big.NewInt(0)
@@ -2885,13 +2906,641 @@ func HpkstSign(secrets, pubkeys []*big.Int, msg []byte) (*big.Int, *big.Int, *bi
 
 // HpkstVerify checks g^s · C_agg^e == R.
 func HpkstVerify(cAgg, R, s *big.Int, msg []byte) bool {
-	gGen  := big.NewInt(3)
-	RBa   := NewBitArray(256, R)
+	gGen := big.NewInt(3)
+	RBa := NewBitArray(256, R)
 	msgBa := NewBitArray(256, new(big.Int).SetBytes(msg))
-	eBa   := NlFscxRevolveV1(RBa, msgBa, 64)
-	eBig  := new(big.Int).SetBytes(eBa.Bytes())
-	gs    := GfPow(gGen, s, hpkstPoly, hpkstN)
-	Ce    := GfPow(cAgg, eBig, hpkstPoly, hpkstN)
-	lhs   := GfMul(gs, Ce, hpkstPoly, hpkstN)
+	eBa := NlFscxRevolveV1(RBa, msgBa, 64)
+	eBig := new(big.Int).SetBytes(eBa.Bytes())
+	gs := GfPow(gGen, s, hpkstPoly, hpkstN)
+	Ce := GfPow(cAgg, eBig, hpkstPoly, hpkstN)
+	lhs := GfMul(gs, Ce, hpkstPoly, hpkstN)
 	return lhs.Cmp(R) == 0
+}
+
+// ---------------------------------------------------------------------------
+// HCRED — Hybrid Ring-LWR + Stern-F credential (TODO #128 Batch 4 port)
+// SecurityProofs-3.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
+// (implementation notes).  Byte-compatible with the Python suite: identical
+// serialization (3 B/coeff), HFSCX-256 domains, tape expansion, and
+// Fiat-Shamir challenge derivation.
+//
+// Single unified ZKBoo-(2,3) MPCitH circuit over Z_q proving, for ONE
+// witness s ∈ {-1,0,1}^n:
+//   s_i³ = s_i;  e = φ(s) internal (never opened);  Σe_i = W ≤ w_max;
+//   integer syndrome row sums bit-decomposed via β (β² = β, β_{r,0} = y_r);
+//   [m·s]_i − Σ 2^t δ_{i,t} = lift(C)_i − 16 with δ² = δ (Ring-LWR rounding,
+//   relaxed to ||m·s − lift(C)||∞ ≤ 15).
+// ---------------------------------------------------------------------------
+
+const (
+	HcredEpsBits = 5  // range bits per rounding error ε_i
+	HcredEpsOff  = 16 // ε_i = Σ 2^t δ_{i,t} − 16 → ε ∈ [−16, 15]
+)
+
+// HcredParams returns (rows, rowBits, wMax) for HCRED at bit-width n.
+func HcredParams(n int) (int, int, int) {
+	rows := n / 2
+	rowBits := bits.Len(uint(n)) // ceil(log2(n+1))
+	wMax := int(float64(n)/4 + 4*math.Sqrt(float64(n)*3/16))
+	return rows, rowBits, wMax
+}
+
+// HcredPhi returns the positive-support bitmap of a ternary polynomial:
+// bit i is set iff sPoly[i] == 1 (coefficients mod q; −1 is q−1).
+func HcredPhi(sPoly []int) *big.Int {
+	e := new(big.Int)
+	for i, c := range sPoly {
+		if c == 1 {
+			e.SetBit(e, i, 1)
+		}
+	}
+	return e
+}
+
+// HcredUserKeygen returns (s, C, e=φ(s)) for enrolment.
+func HcredUserKeygen(mPoly []int, n int) ([]int, []int, *big.Int) {
+	s, c := RnlKeygen(mPoly, n, RnlQ, RnlP)
+	return s, c, HcredPhi(s)
+}
+
+// HcredSyndrome computes the credential code syndrome y = H·e^T mod 2.
+func HcredSyndrome(seedH *BitArray, e *big.Int, n int) *big.Int {
+	eBA := &BitArray{size: n}
+	eBA.Val.Set(e)
+	return sternSyndromeH(SternBuildH(seedH), eBA)
+}
+
+func hcredSer(vec []int) []byte {
+	out := make([]byte, 3*len(vec))
+	for i, v := range vec {
+		w := ((v % RnlQ) + RnlQ) % RnlQ
+		out[3*i] = byte(w >> 16)
+		out[3*i+1] = byte(w >> 8)
+		out[3*i+2] = byte(w)
+	}
+	return out
+}
+
+// hcredTape is a counter-mode HFSCX-256 expander of uniform Z_q draws
+// (17-bit windows, rejection-sampled) — mirrors the Python _HcredTape.
+type hcredTape struct {
+	seed []byte
+	ctr  uint32
+	buf  []byte
+	pos  int
+}
+
+func (t *hcredTape) draw() int {
+	for {
+		if t.pos+3 > len(t.buf) {
+			msg := make([]byte, 0, 10+len(t.seed)+4)
+			msg = append(msg, []byte("HCRED-tape")...)
+			msg = append(msg, t.seed...)
+			msg = append(msg, byte(t.ctr>>24), byte(t.ctr>>16),
+				byte(t.ctr>>8), byte(t.ctr))
+			t.buf = Hfscx256(msg, nil)
+			t.ctr++
+			t.pos = 0
+		}
+		v := (int(t.buf[t.pos])<<16 | int(t.buf[t.pos+1])<<8 |
+			int(t.buf[t.pos+2])) & 0x1FFFF
+		t.pos += 3
+		if v < RnlQ {
+			return v
+		}
+	}
+}
+
+func (t *hcredTape) draws(k int) []int {
+	out := make([]int, k)
+	for i := range out {
+		out[i] = t.draw()
+	}
+	return out
+}
+
+func hcredStmtHash(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	n int, msg []byte) []byte {
+	rows := n / 2
+	yb := make([]byte, (rows+7)/8)
+	y.FillBytes(yb)
+	buf := make([]byte, 0, 64)
+	buf = append(buf, []byte("HCRED-stmt")...)
+	buf = append(buf, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+	buf = append(buf, hcredSer(mPoly)...)
+	buf = append(buf, hcredSer(cPoly)...)
+	buf = append(buf, seedH.Bytes()...)
+	buf = append(buf, yb...)
+	buf = append(buf, msg...)
+	return Hfscx256(buf, nil)
+}
+
+// hcredWitness prepares (W, beta, delta); errors if s mismatches y or C.
+func hcredWitness(sPoly, mPoly, cPoly []int, H []*BitArray, y *big.Int,
+	n, rows, rowBits int) (int, []int, []int, error) {
+	q, hq := RnlQ, RnlQ/2
+	e := HcredPhi(sPoly)
+	W := 0
+	for i := 0; i < n; i++ {
+		if e.Bit(i) == 1 {
+			W++
+		}
+	}
+	beta := make([]int, 0, rows*rowBits)
+	for r := 0; r < rows; r++ {
+		dot := new(big.Int).And(&H[r].Val, e)
+		sr := CountBits(dot)
+		if uint(sr&1) != y.Bit(r) {
+			return 0, nil, nil, fmt.Errorf("hcred witness does not match syndrome y")
+		}
+		for t := 0; t < rowBits; t++ {
+			beta = append(beta, (sr>>t)&1)
+		}
+	}
+	ms := RnlPolyMul(mPoly, sPoly, q, n)
+	lift := RnlLift(cPoly, RnlP, q)
+	delta := make([]int, 0, n*HcredEpsBits)
+	for i := 0; i < n; i++ {
+		d := ((ms[i]-lift[i])%q + q) % q
+		if d > hq {
+			d -= q
+		}
+		v := d + HcredEpsOff
+		if v < 0 || v >= (1<<HcredEpsBits) {
+			return 0, nil, nil, fmt.Errorf("hcred witness does not match public key C")
+		}
+		for t := 0; t < HcredEpsBits; t++ {
+			delta = append(delta, (v>>t)&1)
+		}
+	}
+	return W, beta, delta, nil
+}
+
+// HcredOuts holds the three parties' cleartext output-share vectors.
+type HcredOuts struct {
+	Ter, Bit, Del [3][]int
+	Wsh           [3]int
+	S, Y, Rnd     [3][]int
+}
+
+// HcredRound is one MPCitH repetition of an HCRED proof.
+type HcredRound struct {
+	Coms             [3][]byte
+	Outs             HcredOuts
+	SeedC, SeedC1    []byte
+	A1, B1, G1, H1   []int
+	AuxS, AuxB, AuxD []int // non-nil only when party 2 is opened
+}
+
+// HcredProof is a credential-presentation proof.
+type HcredProof struct {
+	W      int
+	Rounds []HcredRound
+}
+
+func hcredOutputs(shS, shB, shD, a, b, g, h [3][]int, mPoly []int,
+	H []*BitArray, n, rows, rowBits int) HcredOuts {
+	q := RnlQ
+	inv2 := (q + 1) / 2
+	eb := HcredEpsBits
+	var outs HcredOuts
+	for j := 0; j < 3; j++ {
+		eJ := make([]int, n)
+		for i := 0; i < n; i++ {
+			eJ[i] = (a[j][i] + shS[j][i]) * inv2 % q
+		}
+		ter := make([]int, n)
+		for i := 0; i < n; i++ {
+			ter[i] = ((b[j][i]-shS[j][i])%q + q) % q
+		}
+		bit := make([]int, rows*rowBits)
+		for i := range bit {
+			bit[i] = ((g[j][i]-shB[j][i])%q + q) % q
+		}
+		del := make([]int, n*eb)
+		for i := range del {
+			del[i] = ((h[j][i]-shD[j][i])%q + q) % q
+		}
+		wsh := 0
+		for i := 0; i < n; i++ {
+			wsh = (wsh + eJ[i]) % q
+		}
+		S := make([]int, rows)
+		Y := make([]int, rows)
+		for r := 0; r < rows; r++ {
+			acc := 0
+			for i := 0; i < n; i++ {
+				if H[r].Val.Bit(i) == 1 {
+					acc = (acc + eJ[i]) % q
+				}
+			}
+			dec := 0
+			for t := 0; t < rowBits; t++ {
+				dec = (dec + (1<<t)*shB[j][r*rowBits+t]) % q
+			}
+			S[r] = ((acc-dec)%q + q) % q
+			Y[r] = shB[j][r*rowBits] % q
+		}
+		msJ := RnlPolyMul(mPoly, shS[j], q, n)
+		rnd := make([]int, n)
+		for i := 0; i < n; i++ {
+			dec := 0
+			for t := 0; t < eb; t++ {
+				dec = (dec + (1<<t)*shD[j][i*eb+t]) % q
+			}
+			rnd[i] = ((msJ[i]-dec)%q + q) % q
+		}
+		outs.Ter[j], outs.Bit[j], outs.Del[j] = ter, bit, del
+		outs.Wsh[j], outs.S[j], outs.Y[j], outs.Rnd[j] = wsh, S, Y, rnd
+	}
+	return outs
+}
+
+// hcredCommit binds the statement hash `stmt` into every commitment so that a
+// proof replayed against a different statement (nonce, key, or syndrome) fails
+// deterministically at the opened-party commitment recomputation — replay
+// resistance no longer relies on the (1/3)^R challenge-coincidence chance.
+func hcredCommit(j, ri int, stmt, seed []byte, auxS, auxB, auxD, aJ, bJ, gJ, hJ []int,
+	outs *HcredOuts) []byte {
+	buf := make([]byte, 0, 256)
+	buf = append(buf, []byte("HCRED-com")...)
+	buf = append(buf, stmt...)
+	buf = append(buf, byte(j), byte(ri>>8), byte(ri))
+	buf = append(buf, seed...)
+	if j == 2 {
+		buf = append(buf, hcredSer(auxS)...)
+		buf = append(buf, hcredSer(auxB)...)
+		buf = append(buf, hcredSer(auxD)...)
+	}
+	buf = append(buf, hcredSer(aJ)...)
+	buf = append(buf, hcredSer(bJ)...)
+	buf = append(buf, hcredSer(gJ)...)
+	buf = append(buf, hcredSer(hJ)...)
+	buf = append(buf, hcredSer(outs.Ter[j])...)
+	buf = append(buf, hcredSer(outs.Bit[j])...)
+	buf = append(buf, hcredSer(outs.Del[j])...)
+	buf = append(buf, hcredSer([]int{outs.Wsh[j]})...)
+	buf = append(buf, hcredSer(outs.S[j])...)
+	buf = append(buf, hcredSer(outs.Y[j])...)
+	buf = append(buf, hcredSer(outs.Rnd[j])...)
+	return Hfscx256(buf, nil)
+}
+
+func hcredOutputsSer(outs *HcredOuts) []byte {
+	buf := make([]byte, 0, 1024)
+	for j := 0; j < 3; j++ {
+		buf = append(buf, hcredSer(outs.Ter[j])...)
+		buf = append(buf, hcredSer(outs.Bit[j])...)
+		buf = append(buf, hcredSer(outs.Del[j])...)
+		buf = append(buf, hcredSer([]int{outs.Wsh[j]})...)
+		buf = append(buf, hcredSer(outs.S[j])...)
+		buf = append(buf, hcredSer(outs.Y[j])...)
+		buf = append(buf, hcredSer(outs.Rnd[j])...)
+	}
+	return buf
+}
+
+func hcredChallenges(stmt, comsSer, outsSer []byte, rounds int) []int {
+	seed := Hfscx256(append(append(append([]byte("HCRED-ch"), stmt...),
+		comsSer...), outsSer...), nil)
+	out := make([]int, 0, rounds)
+	for ctr := uint32(0); len(out) < rounds; ctr++ {
+		msg := append(append([]byte("HCRED-trit"), seed...),
+			byte(ctr>>24), byte(ctr>>16), byte(ctr>>8), byte(ctr))
+		blk := Hfscx256(msg, nil)
+		for _, b := range blk {
+			if b < 252 && len(out) < rounds {
+				out = append(out, int(b)%3)
+			}
+		}
+	}
+	return out
+}
+
+// HcredProve produces a credential-presentation proof for the compound
+// statement (Ring-LWR key C + code syndrome y for the SAME s).
+// Production soundness requires rounds ≥ 219.
+func HcredProve(sPoly, mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	n, rounds int, msg []byte) (*HcredProof, error) {
+	rows, rowBits, _ := HcredParams(n)
+	q := RnlQ
+	nb, nd := rows*rowBits, n*HcredEpsBits
+
+	H := SternBuildH(seedH)
+	W, beta, delta, err := hcredWitness(sPoly, mPoly, cPoly, H, y,
+		n, rows, rowBits)
+	if err != nil {
+		return nil, err
+	}
+	stmt := hcredStmtHash(mPoly, cPoly, seedH, y, n, msg)
+
+	type exec struct {
+		seeds      [3][]byte
+		shS, shB   [3][]int
+		shD        [3][]int
+		a, b, g, h [3][]int
+		outs       HcredOuts
+	}
+	execs := make([]exec, rounds)
+	for ri := range execs {
+		ex := &execs[ri]
+		var tp [3]*hcredTape
+		for j := 0; j < 3; j++ {
+			sd := make([]byte, 32)
+			if _, err := rand.Read(sd); err != nil {
+				return nil, err
+			}
+			ex.seeds[j] = sd
+			tp[j] = &hcredTape{seed: sd}
+		}
+		for j := 0; j < 2; j++ {
+			ex.shS[j] = tp[j].draws(n)
+			ex.shB[j] = tp[j].draws(nb)
+			ex.shD[j] = tp[j].draws(nd)
+		}
+		ex.shS[2] = make([]int, n)
+		for i := 0; i < n; i++ {
+			ex.shS[2][i] = ((sPoly[i]-ex.shS[0][i]-ex.shS[1][i])%q + q) % q
+		}
+		ex.shB[2] = make([]int, nb)
+		for i := 0; i < nb; i++ {
+			ex.shB[2][i] = ((beta[i]-ex.shB[0][i]-ex.shB[1][i])%q + q) % q
+		}
+		ex.shD[2] = make([]int, nd)
+		for i := 0; i < nd; i++ {
+			ex.shD[2][i] = ((delta[i]-ex.shD[0][i]-ex.shD[1][i])%q + q) % q
+		}
+		var R1, R2, R3, R4 [3][]int
+		for j := 0; j < 3; j++ {
+			R1[j] = tp[j].draws(n)
+			R2[j] = tp[j].draws(n)
+			R3[j] = tp[j].draws(nb)
+			R4[j] = tp[j].draws(nd)
+		}
+		for j := 0; j < 3; j++ {
+			k := (j + 1) % 3
+			ex.a[j] = make([]int, n)
+			for i := 0; i < n; i++ {
+				ex.a[j][i] = ((ex.shS[j][i]*ex.shS[j][i]+
+					ex.shS[k][i]*ex.shS[j][i]+ex.shS[j][i]*ex.shS[k][i]+
+					R1[j][i]-R1[k][i])%q + q) % q
+			}
+		}
+		for j := 0; j < 3; j++ {
+			k := (j + 1) % 3
+			ex.b[j] = make([]int, n)
+			for i := 0; i < n; i++ {
+				ex.b[j][i] = ((ex.a[j][i]*ex.shS[j][i]+
+					ex.a[k][i]*ex.shS[j][i]+ex.a[j][i]*ex.shS[k][i]+
+					R2[j][i]-R2[k][i])%q + q) % q
+			}
+			ex.g[j] = make([]int, nb)
+			for i := 0; i < nb; i++ {
+				ex.g[j][i] = ((ex.shB[j][i]*ex.shB[j][i]+
+					ex.shB[k][i]*ex.shB[j][i]+ex.shB[j][i]*ex.shB[k][i]+
+					R3[j][i]-R3[k][i])%q + q) % q
+			}
+			ex.h[j] = make([]int, nd)
+			for i := 0; i < nd; i++ {
+				ex.h[j][i] = ((ex.shD[j][i]*ex.shD[j][i]+
+					ex.shD[k][i]*ex.shD[j][i]+ex.shD[j][i]*ex.shD[k][i]+
+					R4[j][i]-R4[k][i])%q + q) % q
+			}
+		}
+		ex.outs = hcredOutputs(ex.shS, ex.shB, ex.shD, ex.a, ex.b, ex.g,
+			ex.h, mPoly, H, n, rows, rowBits)
+	}
+
+	var comsSer, outsSer []byte
+	coms := make([][3][]byte, rounds)
+	for ri := range execs {
+		ex := &execs[ri]
+		for j := 0; j < 3; j++ {
+			coms[ri][j] = hcredCommit(j, ri, stmt, ex.seeds[j],
+				ex.shS[2], ex.shB[2], ex.shD[2],
+				ex.a[j], ex.b[j], ex.g[j], ex.h[j], &ex.outs)
+			comsSer = append(comsSer, coms[ri][j]...)
+		}
+		outsSer = append(outsSer, hcredOutputsSer(&ex.outs)...)
+	}
+	chals := hcredChallenges(stmt, comsSer, outsSer, rounds)
+
+	proof := &HcredProof{W: W, Rounds: make([]HcredRound, rounds)}
+	for ri := range execs {
+		ex := &execs[ri]
+		c := chals[ri]
+		cp1 := (c + 1) % 3
+		rd := &proof.Rounds[ri]
+		rd.Coms = coms[ri]
+		rd.Outs = ex.outs
+		rd.SeedC, rd.SeedC1 = ex.seeds[c], ex.seeds[cp1]
+		rd.A1, rd.B1, rd.G1, rd.H1 = ex.a[cp1], ex.b[cp1], ex.g[cp1], ex.h[cp1]
+		if c == 2 || cp1 == 2 {
+			rd.AuxS, rd.AuxB, rd.AuxD = ex.shS[2], ex.shB[2], ex.shD[2]
+		}
+	}
+	return proof, nil
+}
+
+// HcredVerify checks a credential-presentation proof.
+func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	proof *HcredProof, n, rounds int, msg []byte) bool {
+	rows, rowBits, wMax := HcredParams(n)
+	q := RnlQ
+	inv2 := (q + 1) / 2
+	eb := HcredEpsBits
+	nb, nd := rows*rowBits, n*eb
+
+	if proof.W < 1 || proof.W > wMax || len(proof.Rounds) != rounds {
+		return false
+	}
+	stmt := hcredStmtHash(mPoly, cPoly, seedH, y, n, msg)
+	var comsSer, outsSer []byte
+	for ri := range proof.Rounds {
+		for j := 0; j < 3; j++ {
+			comsSer = append(comsSer, proof.Rounds[ri].Coms[j]...)
+		}
+		outsSer = append(outsSer, hcredOutputsSer(&proof.Rounds[ri].Outs)...)
+	}
+	H := SternBuildH(seedH)
+	lift := RnlLift(cPoly, RnlP, q)
+	chals := hcredChallenges(stmt, comsSer, outsSer, rounds)
+
+	for ri := range proof.Rounds {
+		rd := &proof.Rounds[ri]
+		c := chals[ri]
+		cp1 := (c + 1) % 3
+		outs := &rd.Outs
+		for i := 0; i < n; i++ {
+			if (outs.Ter[0][i]+outs.Ter[1][i]+outs.Ter[2][i])%q != 0 {
+				return false
+			}
+		}
+		for i := 0; i < nb; i++ {
+			if (outs.Bit[0][i]+outs.Bit[1][i]+outs.Bit[2][i])%q != 0 {
+				return false
+			}
+		}
+		for i := 0; i < nd; i++ {
+			if (outs.Del[0][i]+outs.Del[1][i]+outs.Del[2][i])%q != 0 {
+				return false
+			}
+		}
+		if (outs.Wsh[0]+outs.Wsh[1]+outs.Wsh[2])%q != proof.W%q {
+			return false
+		}
+		for r := 0; r < rows; r++ {
+			if (outs.S[0][r]+outs.S[1][r]+outs.S[2][r])%q != 0 {
+				return false
+			}
+			if uint((outs.Y[0][r]+outs.Y[1][r]+outs.Y[2][r])%q) != y.Bit(r) {
+				return false
+			}
+		}
+		for i := 0; i < n; i++ {
+			want := ((lift[i]-HcredEpsOff)%q + q) % q
+			if (outs.Rnd[0][i]+outs.Rnd[1][i]+outs.Rnd[2][i])%q != want {
+				return false
+			}
+		}
+		if (c == 2 || cp1 == 2) &&
+			(rd.AuxS == nil || rd.AuxB == nil || rd.AuxD == nil) {
+			return false
+		}
+		tC := &hcredTape{seed: rd.SeedC}
+		tC1 := &hcredTape{seed: rd.SeedC1}
+		var shSC, shBC, shDC, shSC1, shBC1, shDC1 []int
+		if c != 2 {
+			shSC, shBC, shDC = tC.draws(n), tC.draws(nb), tC.draws(nd)
+		} else {
+			shSC, shBC, shDC = rd.AuxS, rd.AuxB, rd.AuxD
+		}
+		if cp1 != 2 {
+			shSC1, shBC1, shDC1 = tC1.draws(n), tC1.draws(nb), tC1.draws(nd)
+		} else {
+			shSC1, shBC1, shDC1 = rd.AuxS, rd.AuxB, rd.AuxD
+		}
+		R1C, R2C := tC.draws(n), tC.draws(n)
+		R3C, R4C := tC.draws(nb), tC.draws(nd)
+		R1C1, R2C1 := tC1.draws(n), tC1.draws(n)
+		R3C1, R4C1 := tC1.draws(nb), tC1.draws(nd)
+
+		aC := make([]int, n)
+		for i := 0; i < n; i++ {
+			aC[i] = ((shSC[i]*shSC[i]+shSC1[i]*shSC[i]+shSC[i]*shSC1[i]+
+				R1C[i]-R1C1[i])%q + q) % q
+		}
+		bC := make([]int, n)
+		for i := 0; i < n; i++ {
+			bC[i] = ((aC[i]*shSC[i]+rd.A1[i]*shSC[i]+aC[i]*shSC1[i]+
+				R2C[i]-R2C1[i])%q + q) % q
+		}
+		gC := make([]int, nb)
+		for i := 0; i < nb; i++ {
+			gC[i] = ((shBC[i]*shBC[i]+shBC1[i]*shBC[i]+shBC[i]*shBC1[i]+
+				R3C[i]-R3C1[i])%q + q) % q
+		}
+		hC := make([]int, nd)
+		for i := 0; i < nd; i++ {
+			hC[i] = ((shDC[i]*shDC[i]+shDC1[i]*shDC[i]+shDC[i]*shDC1[i]+
+				R4C[i]-R4C1[i])%q + q) % q
+		}
+		var shS3, shB3, shD3, a3, b3, g3, h3 [3][]int
+		shS3[c], shS3[cp1] = shSC, shSC1
+		shB3[c], shB3[cp1] = shBC, shBC1
+		shD3[c], shD3[cp1] = shDC, shDC1
+		a3[c], a3[cp1] = aC, rd.A1
+		b3[c], b3[cp1] = bC, rd.B1
+		g3[c], g3[cp1] = gC, rd.G1
+		h3[c], h3[cp1] = hC, rd.H1
+		for _, j := range []int{c, cp1} {
+			eJ := make([]int, n)
+			for i := 0; i < n; i++ {
+				eJ[i] = (a3[j][i] + shS3[j][i]) * inv2 % q
+			}
+			for i := 0; i < n; i++ {
+				if ((b3[j][i]-shS3[j][i])%q+q)%q != outs.Ter[j][i] {
+					return false
+				}
+			}
+			for i := 0; i < nb; i++ {
+				if ((g3[j][i]-shB3[j][i])%q+q)%q != outs.Bit[j][i] {
+					return false
+				}
+			}
+			for i := 0; i < nd; i++ {
+				if ((h3[j][i]-shD3[j][i])%q+q)%q != outs.Del[j][i] {
+					return false
+				}
+			}
+			wsh := 0
+			for i := 0; i < n; i++ {
+				wsh = (wsh + eJ[i]) % q
+			}
+			if wsh != outs.Wsh[j] {
+				return false
+			}
+			for r := 0; r < rows; r++ {
+				acc := 0
+				for i := 0; i < n; i++ {
+					if H[r].Val.Bit(i) == 1 {
+						acc = (acc + eJ[i]) % q
+					}
+				}
+				dec := 0
+				for t := 0; t < rowBits; t++ {
+					dec = (dec + (1<<t)*shB3[j][r*rowBits+t]) % q
+				}
+				if ((acc-dec)%q+q)%q != outs.S[j][r] {
+					return false
+				}
+				if shB3[j][r*rowBits]%q != outs.Y[j][r] {
+					return false
+				}
+			}
+			msJ := RnlPolyMul(mPoly, shS3[j], q, n)
+			for i := 0; i < n; i++ {
+				dec := 0
+				for t := 0; t < eb; t++ {
+					dec = (dec + (1<<t)*shD3[j][i*eb+t]) % q
+				}
+				if ((msJ[i]-dec)%q+q)%q != outs.Rnd[j][i] {
+					return false
+				}
+			}
+			seedJ := rd.SeedC
+			if j == cp1 {
+				seedJ = rd.SeedC1
+			}
+			com := hcredCommit(j, ri, stmt, seedJ, rd.AuxS, rd.AuxB, rd.AuxD,
+				a3[j], b3[j], g3[j], h3[j], outs)
+			if !bytes.Equal(com, rd.Coms[j]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// HcredBindMsg derives the issuer-signature message binding (m, C, seed_H, y).
+func HcredBindMsg(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	n, issuerN int) *BitArray {
+	digest := hcredStmtHash(mPoly, cPoly, seedH, y, n, []byte("HCRED-issue"))
+	v := new(big.Int).SetBytes(digest)
+	v.Rsh(v, uint(256-issuerN))
+	return NewBitArray(issuerN, v)
+}
+
+// HcredIssue signs the credential pair (m, C, seed_H, y) with HPKS-Stern-F.
+func HcredIssue(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
+	issuerE, issuerSeed *BitArray, rounds int) *SternSig {
+	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.size)
+	return HpksSternFSign(msg, issuerE, issuerSeed, rounds)
+}
+
+// HcredCredVerify checks the issuer's signature over (m, C, seed_H, y).
+func HcredCredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
+	credSig *SternSig, issuerSeed *BitArray, issuerSyn *big.Int) bool {
+	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.size)
+	return HpksSternFVerify(msg, credSig, issuerSeed, issuerSyn)
 }

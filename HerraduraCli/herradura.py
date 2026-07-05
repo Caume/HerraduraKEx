@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.9.44)
+# HerraduraCli/herradura.py — OpenSSL-style CLI for the Herradura Cryptographic Suite (v1.9.79)
 #
 # Usage examples:
 #   python3 herradura.py genpkey --algo hkex-gf  --bits 256 --out alice.pem
@@ -54,7 +54,11 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
                    encode_hpkst_nonce, decode_hpkst_nonce,
                    encode_hpkst_aggregate, decode_hpkst_aggregate,
                    encode_hpkst_partial, decode_hpkst_partial,
-                   encode_hpkst_sig, decode_hpkst_sig)
+                   encode_hpkst_sig, decode_hpkst_sig,
+                   encode_hcred_privkey, decode_hcred_privkey,
+                   encode_hcred_pubkey, decode_hcred_pubkey,
+                   encode_hcred_credential, decode_hcred_credential,
+                   encode_hcred_proof, decode_hcred_proof)
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
@@ -81,6 +85,9 @@ from primitives import (
     hpks_xmss_keygen, hpks_xmss_sign, hpks_xmss_verify,
     _WOTS_L, _wots_pk_bytes,
     hpkst_aggregate_pubkeys, hpkst_sign, hpkst_verify,
+    hcred_phi, hcred_user_keygen, hcred_syndrome,
+    hcred_prove, hcred_verify, hcred_issue, hcred_cred_verify,
+    _HCRED_DEFAULT_N, _HCRED_DEMO_ROUNDS,
 )
 from primitives import _s as _suite_mod
 
@@ -120,6 +127,11 @@ _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server 
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
 _LABEL_HDRBG_STATE = 'HERRADURA HDRBG STATE'         # (state[32], blocks) — DRBG checkpoint (TODO #119)
 _LABEL_RING_SIG    = 'HERRADURA HPKS-RING SIGNATURE'  # (k, rounds, n, blob) — ring signature (TODO #121)
+_LABEL_HCRED_PRIV  = 'HERRADURA HCRED PRIVATE KEY'
+_LABEL_HCRED_PUB   = 'HERRADURA HCRED PUBLIC KEY'
+_LABEL_HCRED_CRED  = 'HERRADURA HCRED CREDENTIAL'
+_LABEL_HCRED_PROOF = 'HERRADURA HCRED PROOF'
+_HCRED_CLI_ROUNDS  = 219   # production rounds (128-bit soundness); demo=4
 
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
@@ -494,6 +506,8 @@ def _decode_privkey(path):
     if label == _PRIV_ALGOS.get('hpks-zkp-nl'):
         A, B, y, n = decode_zkp_nl_privkey(raw)
         return 'hpks-zkp-nl', (A, B, y, n)
+    if label == _LABEL_HCRED_PRIV:
+        return 'hcred', decode_hcred_privkey(raw)
     label2, ints = _read_pem_ints(path)
     algo = _LABEL_TO_ALGO.get(label2)
     if algo is None:
@@ -508,6 +522,8 @@ def _decode_pubkey(path):
     if label == _PUB_ALGOS.get('hpks-zkp-nl'):
         B, y, n = decode_zkp_nl_pubkey(raw)
         return 'hpks-zkp-nl', (B, y, n)
+    if label == _LABEL_HCRED_PUB:
+        return 'hcred', decode_hcred_pubkey(raw)
     label2, ints = _read_pem_ints(path)
     algo = _LABEL_TO_ALGO.get(label2)
     if algo is None:
@@ -950,6 +966,18 @@ def cmd_genpkey(args):
         print("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.",
               file=sys.stderr)
 
+    elif algo == 'hcred':
+        # args.bits is None when --bits is omitted → use _HCRED_DEFAULT_N (32, demo speed).
+        # --bits N uses N directly, including --bits 256 for C interop.
+        n = args.bits if args.bits is not None else _HCRED_DEFAULT_N
+        m_base  = _suite_mod._rnl_m_poly(n)
+        a_rand  = _suite_mod._rnl_rand_poly(n, RNLQ)
+        m_blind = [(m_base[i] + a_rand[i]) % RNLQ for i in range(n)]
+        s, C, e_int = hcred_user_keygen(m_blind, n)
+        seed_H = BitArray.random(n)
+        syndr  = hcred_syndrome(seed_H, e_int, n)
+        pem_out = encode_hcred_privkey(s, C, m_blind, seed_H.uint, syndr, n)
+
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
@@ -987,6 +1015,9 @@ def cmd_pkey(args):
             master_seed, leaf_idx = _decode_wots_privkey(in_path)
             _sk, pk = hpks_wots_keygen(master_seed, leaf_idx)
             pem_out = _encode_wots_pubkey(pk)
+        elif algo == 'hcred':
+            s, C, m, seed_H_int, syndr, n = ints
+            pem_out = encode_hcred_pubkey(C, m, seed_H_int, syndr, n)
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -1014,6 +1045,13 @@ def cmd_pkey(args):
             print(f"n         : {n}")
             print(f"e_int     : {e_int:0{n//4}x}")
             print(f"seed      : {seed_int:0{n//4}x}")
+        elif algo == 'hcred':
+            s, C, m, seed_H_int, syndr, n = ints
+            print(f"algorithm : hcred")
+            print(f"n         : {n}")
+            print(f"seed_H    : {seed_H_int:0{n//4}x}")
+            print(f"syndr     : {syndr:0{n//8}x}")
+            print(f"W (weight): {bin(hcred_phi(s)).count('1')}")
     else:
         sys.exit("Specify --pubout or --text")
 
@@ -2040,19 +2078,130 @@ def cmd_pake_demo(args):
 
 
 # ---------------------------------------------------------------------------
+# Sub-commands: cred-issue, cred-prove, cred-verify (TODO #128 Batch 5)
+# ---------------------------------------------------------------------------
+
+_HCRED_SIGN_ROUNDS = 219   # Stern-F rounds for issuer credential (prod soundness)
+
+
+def _load_hcred_pubkey(path):
+    """Return (C_poly, m_poly, seed_H_BitArray, syndr_int, n) from HCRED PUBLIC KEY PEM."""
+    raw = _read_file(path).decode('ascii')
+    label, _ = pem_unwrap(raw)
+    if label == _LABEL_HCRED_PRIV:
+        s, C, m, seed_H_int, syndr, n = decode_hcred_privkey(raw)
+        return C, m, BitArray(n, seed_H_int), syndr, n
+    if label != _LABEL_HCRED_PUB:
+        sys.exit(f"Expected HCRED PUBLIC KEY (or PRIVATE KEY), got {label!r}")
+    C, m, seed_H_int, syndr, n = decode_hcred_pubkey(raw)
+    return C, m, BitArray(n, seed_H_int), syndr, n
+
+
+def cmd_cred_issue(args):
+    """Issue an HCRED credential: Stern-F signature over (m, C, seed_H, y)."""
+    # Load user's HCRED public key
+    C, m, seed_H, syndr, n = _load_hcred_pubkey(getattr(args, 'in'))
+    # Load issuer's hpks-stern private key
+    our_algo, ints = _decode_privkey(args.our)
+    if our_algo not in ('hpks-stern', 'hpke-stern'):
+        sys.exit(f"cred-issue: --our must be an hpks-stern private key, got {our_algo!r}")
+    e_int, seed_int, issuer_n = ints
+    issuer_seed = BitArray(issuer_n, seed_int)
+    issuer_syn  = _suite_mod._stern_syndrome(seed_int, e_int, issuer_n, issuer_n // 2)
+
+    rounds = getattr(args, 'rounds', None) or _HCRED_SIGN_ROUNDS
+    print(_STERN_DEMO_WARNING, file=sys.stderr)
+    cred_sig = hcred_issue(m, C, seed_H, syndr, n,
+                           e_int, issuer_seed, issuer_syn,
+                           issuer_n=issuer_n, rounds=rounds)
+    pem_out = encode_hcred_credential(cred_sig, issuer_n)
+    _write_file(args.out or '-', pem_out)
+
+
+def cmd_cred_prove(args):
+    """Generate an HCRED presentation proof (ZKBoo MPCitH)."""
+    raw = _read_file(getattr(args, 'in')).decode('ascii')
+    label, _ = pem_unwrap(raw)
+    if label != _LABEL_HCRED_PRIV:
+        sys.exit(f"cred-prove: --in must be an HCRED PRIVATE KEY PEM, got {label!r}")
+    s, C, m, seed_H_int, syndr, n = decode_hcred_privkey(raw)
+    seed_H  = BitArray(n, seed_H_int)
+    msg     = (args.msg or '').encode()
+    rounds  = getattr(args, 'rounds', None) or _HCRED_CLI_ROUNDS
+    try:
+        proof = hcred_prove(s, m, C, seed_H, syndr, n=n, rounds=rounds,
+                            msg_bytes=msg)
+    except ValueError as exc:
+        sys.exit(f"cred-prove: {exc}")
+    pem_out = encode_hcred_proof(proof, n)
+    _write_file(args.out or '-', pem_out)
+
+
+def cmd_cred_verify(args):
+    """Verify an HCRED presentation proof and optionally the issuer credential."""
+    # Load proof
+    raw_proof = _read_file(args.proof).decode('ascii')
+    proof, proof_n = decode_hcred_proof(raw_proof)
+
+    # Load user's public key
+    C, m, seed_H, syndr, pub_n = _load_hcred_pubkey(args.pubkey)
+    if proof_n != pub_n:
+        sys.exit(f"cred-verify: proof n={proof_n} does not match public key n={pub_n}")
+
+    msg    = (args.msg or '').encode()
+    rounds = len(proof['rounds'])
+
+    ok_proof = hcred_verify(m, C, seed_H, syndr, proof, n=pub_n,
+                            rounds=rounds, msg_bytes=msg)
+    if not ok_proof:
+        print("Verification FAILED (proof)")
+        sys.exit(1)
+
+    # Optional issuer credential check
+    if args.cred:
+        raw_cred = _read_file(args.cred).decode('ascii')
+        commits_raw, challenges, responses, issuer_n = decode_hcred_credential(raw_cred)
+        # Wrap commit integers as BitArrays for hpks_stern_f_verify
+        commits = [(BitArray(issuer_n, c0), BitArray(issuer_n, c1), BitArray(issuer_n, c2))
+                   for c0, c1, c2 in commits_raw]
+        responses2 = []
+        for i, (v0, v1) in enumerate(responses):
+            b = challenges[i]
+            responses2.append((v0 if b == 0 else BitArray(issuer_n, v0), v1))
+        cred_sig = (commits, challenges, responses2)
+
+        # Load issuer's public key (hpks-stern pub)
+        issuer_algo, issuer_ints = _decode_pubkey(args.issuer)
+        if issuer_algo not in ('hpks-stern', 'hpke-stern'):
+            sys.exit(f"cred-verify: --issuer must be an hpks-stern public key, got {issuer_algo!r}")
+        issuer_syn_int, issuer_seed_int, _ = issuer_ints
+        issuer_seed = BitArray(issuer_n, issuer_seed_int)
+
+        ok_cred = hcred_cred_verify(m, C, seed_H, syndr, pub_n,
+                                    cred_sig, issuer_seed, issuer_syn_int,
+                                    issuer_n=issuer_n)
+        if not ok_cred:
+            print("Verification FAILED (credential)")
+            sys.exit(1)
+        print("Credential OK")
+
+    print("Proof OK")
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
 def build_parser():
     p = argparse.ArgumentParser(
         prog='herradura',
-        description='Herradura Cryptographic Suite CLI v1.9.44',
+        description='Herradura Cryptographic Suite CLI v1.9.79',
     )
     sub = p.add_subparsers(dest='cmd', required=True)
 
     # genpkey
     gp = sub.add_parser('genpkey', help='Generate a private key')
-    gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS))
+    gp.add_argument('--algo', required=True, choices=list(_PRIV_ALGOS) + ['hcred'])
     gp.add_argument('--bits', type=int, default=None,
                     help='Key size in bits (default 256; Stern: matrix dimension N)')
     gp.add_argument('--xmss-height', type=int, default=10, dest='xmss_height',
@@ -2300,6 +2449,44 @@ def build_parser():
     pd.add_argument('--password', default='demo-password',
                     help='Demo password (default: "demo-password")')
 
+    # cred-issue (128)
+    ci = sub.add_parser('cred-issue',
+                        help='HCRED: issue a credential (Stern-F sig over user public key) (TODO #128 Batch 5)')
+    ci.add_argument('--our',    required=True,
+                    help='Issuer hpks-stern PRIVATE KEY PEM')
+    ci.add_argument('--in',     required=True, dest='in',
+                    help='User HCRED PUBLIC KEY (or PRIVATE KEY) PEM')
+    ci.add_argument('--rounds', type=int, default=None,
+                    help=f'Stern-F rounds (default: {_HCRED_SIGN_ROUNDS} for 128-bit soundness)')
+    ci.add_argument('--out',    default='-',
+                    help='HCRED CREDENTIAL PEM output')
+
+    # cred-prove (128)
+    cp = sub.add_parser('cred-prove',
+                        help='HCRED: generate a presentation proof (ZKBoo MPCitH) (TODO #128 Batch 5)')
+    cp.add_argument('--in',     required=True, dest='in',
+                    help='User HCRED PRIVATE KEY PEM')
+    cp.add_argument('--msg',    default='',
+                    help='Presentation nonce / message (default: empty)')
+    cp.add_argument('--rounds', type=int, default=None,
+                    help=f'ZKBoo rounds (default: {_HCRED_CLI_ROUNDS} for 128-bit soundness)')
+    cp.add_argument('--out',    default='-',
+                    help='HCRED PROOF PEM output')
+
+    # cred-verify (128)
+    cv = sub.add_parser('cred-verify',
+                        help='HCRED: verify a presentation proof (and optional credential) (TODO #128 Batch 5)')
+    cv.add_argument('--proof',   required=True,
+                    help='HCRED PROOF PEM')
+    cv.add_argument('--pubkey',  required=True,
+                    help='User HCRED PUBLIC KEY (or PRIVATE KEY) PEM')
+    cv.add_argument('--cred',    default=None,
+                    help='HCRED CREDENTIAL PEM (optional; verify issuer binding)')
+    cv.add_argument('--issuer',  default=None,
+                    help='Issuer hpks-stern PUBLIC KEY PEM (required with --cred)')
+    cv.add_argument('--msg',     default='',
+                    help='Presentation nonce / message (must match cred-prove --msg)')
+
     return p
 
 
@@ -2326,6 +2513,9 @@ _DISPATCH = {
     'threshold-aggregate': cmd_threshold_aggregate,
     'threshold-respond':   cmd_threshold_respond,
     'threshold-combine':   cmd_threshold_combine,
+    'cred-issue':  cmd_cred_issue,
+    'cred-prove':  cmd_cred_prove,
+    'cred-verify': cmd_cred_verify,
 }
 
 

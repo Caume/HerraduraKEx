@@ -1,4 +1,4 @@
-# HerraduraCli/codec.py — PEM and minimal DER codec (v1.5.23)
+# HerraduraCli/codec.py — PEM and minimal DER codec (v1.9.79)
 # No external dependencies; uses only base64 from stdlib.
 import base64
 
@@ -276,6 +276,312 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
         rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
                        'e': e, 'view_p1': vp1, 'view_p2': vp2})
     return rounds, n
+
+
+# ---------------------------------------------------------------------------
+# HCRED keypair, credential, and proof encode/decode — TODO #128 Batch 5
+#
+# Wire formats (raw binary, no DER):
+#   HCRED PRIVATE KEY  (label "HERRADURA HCRED PRIVATE KEY"):
+#     4B n | n×3B s_poly (Z_q) | n×2B C_poly (Z_p) | n×3B m_poly (Z_q)
+#     | (n/8)B seed_H | (n/16)B syndr
+#   HCRED PUBLIC KEY   (label "HERRADURA HCRED PUBLIC KEY"):
+#     4B n | n×2B C_poly (Z_p) | n×3B m_poly (Z_q)
+#     | (n/8)B seed_H | (n/16)B syndr
+#   HCRED CREDENTIAL   (label "HERRADURA HCRED CREDENTIAL"):
+#     Same binary layout as HERRADURA SIGNATURE (Stern-F signature):
+#     DER SEQ(n_issuer, rounds, c_int, ch_int, r_int)
+#   HCRED PROOF        (label "HERRADURA HCRED PROOF"):
+#     4B n | 4B W | 4B rounds |
+#     for each round:
+#       96B coms (3 × 32B) | outs_bytes (variable, 9 × 3-B/coeff per party)
+#       | 32B seed_c | 32B seed_c1
+#       | n×3B a1 | n×3B b1 | nb×3B g1 | nd×3B h1
+#       | 1B has_aux
+#       | if has_aux: n×3B aux_s | nb×3B aux_B | nd×3B aux_D
+#   where nb = (n/2) × ⌈log₂(n+1)⌉, nd = n × 5
+# ---------------------------------------------------------------------------
+
+_HCRED_PRIV_LBL  = "HERRADURA HCRED PRIVATE KEY"
+_HCRED_PUB_LBL   = "HERRADURA HCRED PUBLIC KEY"
+_HCRED_CRED_LBL  = "HERRADURA HCRED CREDENTIAL"
+_HCRED_PROOF_LBL = "HERRADURA HCRED PROOF"
+
+
+def _hcred_ser3(vec):
+    """Serialize a Z_q vector at 3 bytes/coeff (big-endian)."""
+    return b''.join((int(c) % 65537).to_bytes(3, 'big') for c in vec)
+
+
+def _hcred_deser3(data, off, count):
+    """Deserialize `count` Z_q values at 3 bytes/coeff from data[off:]."""
+    result = []
+    for _ in range(count):
+        result.append(int.from_bytes(data[off:off + 3], 'big'))
+        off += 3
+    return result, off
+
+
+def _hcred_ser2(vec):
+    """Serialize a Z_p vector at 2 bytes/coeff (big-endian)."""
+    return b''.join((int(c) % 4096).to_bytes(2, 'big') for c in vec)
+
+
+def _hcred_deser2(data, off, count):
+    """Deserialize `count` Z_p values at 2 bytes/coeff from data[off:]."""
+    result = []
+    for _ in range(count):
+        result.append(int.from_bytes(data[off:off + 2], 'big'))
+        off += 2
+    return result, off
+
+
+def _hcred_nb_nd(n):
+    """Return (nb, nd, rows, row_bits) for HCRED at n bits."""
+    import math
+    rows     = n // 2
+    row_bits = int(math.ceil(math.log2(n + 1))) if n > 0 else 1
+    row_bits = n.bit_length()   # same as ceil(log2(n+1)) for power-of-2 n+1 edge
+    nb = rows * row_bits
+    nd = n * 5  # HCRED_EPS_BITS = 5
+    return nb, nd, rows, row_bits
+
+
+def _hcred_outs_to_bytes(outs, n):
+    """Serialize HcredOuts dict to bytes (3 B/coeff per party per vector)."""
+    nb, nd, rows, _ = _hcred_nb_nd(n)
+    buf = b''
+    for j in range(3):
+        buf += _hcred_ser3(outs['ter'][j])
+        buf += _hcred_ser3(outs['bit'][j])
+        buf += _hcred_ser3(outs['del'][j])
+        buf += _hcred_ser3([outs['W'][j]])
+        buf += _hcred_ser3(outs['S'][j])
+        buf += _hcred_ser3(outs['y'][j])
+        buf += _hcred_ser3(outs['rnd'][j])
+    return buf
+
+
+def _hcred_outs_from_bytes(data, off, n):
+    """Deserialize HcredOuts dict from data[off:].  Returns (outs, new_off)."""
+    nb, nd, rows, _ = _hcred_nb_nd(n)
+    outs = {'ter': [], 'bit': [], 'del': [], 'W': [], 'S': [], 'y': [], 'rnd': []}
+    for j in range(3):
+        ter, off = _hcred_deser3(data, off, n);    outs['ter'].append(ter)
+        bit, off = _hcred_deser3(data, off, nb);   outs['bit'].append(bit)
+        dl,  off = _hcred_deser3(data, off, nd);   outs['del'].append(dl)
+        W,   off = _hcred_deser3(data, off, 1);    outs['W'].append(W[0])
+        S,   off = _hcred_deser3(data, off, rows); outs['S'].append(S)
+        y,   off = _hcred_deser3(data, off, rows); outs['y'].append(y)
+        rnd, off = _hcred_deser3(data, off, n);    outs['rnd'].append(rnd)
+    return outs, off
+
+
+def encode_hcred_privkey(s_poly, C_poly, m_poly, seed_H_int, syndr_int, n):
+    """Encode HCRED user private key as PEM."""
+    seed_nb  = n // 8
+    syndr_nb = (n // 2 + 7) // 8
+    body = (n.to_bytes(4, 'big')
+            + _hcred_ser3(s_poly)
+            + _hcred_ser2(C_poly)
+            + _hcred_ser3(m_poly)
+            + seed_H_int.to_bytes(seed_nb, 'big')
+            + syndr_int.to_bytes(syndr_nb, 'little'))
+    return pem_wrap(_HCRED_PRIV_LBL, body)
+
+
+def decode_hcred_privkey(pem_text):
+    """Decode HCRED user private key PEM. Returns (s_poly, C_poly, m_poly, seed_H_int, syndr_int, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != _HCRED_PRIV_LBL:
+        raise ValueError(f"Expected {_HCRED_PRIV_LBL!r}, got {label!r}")
+    off  = 0
+    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    seed_nb  = n // 8
+    syndr_nb = (n // 2 + 7) // 8
+    s,   off = _hcred_deser3(body, off, n)
+    C,   off = _hcred_deser2(body, off, n)
+    m,   off = _hcred_deser3(body, off, n)
+    seed_H   = int.from_bytes(body[off:off + seed_nb], 'big'); off += seed_nb
+    # syndr stored little-endian (matches C's LSB-first syndrome byte layout)
+    syndr    = int.from_bytes(body[off:off + syndr_nb], 'little')
+    return s, C, m, seed_H, syndr, n
+
+
+def encode_hcred_pubkey(C_poly, m_poly, seed_H_int, syndr_int, n):
+    """Encode HCRED user public key as PEM."""
+    seed_nb  = n // 8
+    syndr_nb = (n // 2 + 7) // 8
+    body = (n.to_bytes(4, 'big')
+            + _hcred_ser2(C_poly)
+            + _hcred_ser3(m_poly)
+            + seed_H_int.to_bytes(seed_nb, 'big')
+            + syndr_int.to_bytes(syndr_nb, 'little'))
+    return pem_wrap(_HCRED_PUB_LBL, body)
+
+
+def decode_hcred_pubkey(pem_text):
+    """Decode HCRED user public key PEM. Returns (C_poly, m_poly, seed_H_int, syndr_int, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != _HCRED_PUB_LBL:
+        raise ValueError(f"Expected {_HCRED_PUB_LBL!r}, got {label!r}")
+    off  = 0
+    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    seed_nb  = n // 8
+    syndr_nb = (n // 2 + 7) // 8
+    C,   off = _hcred_deser2(body, off, n)
+    m,   off = _hcred_deser3(body, off, n)
+    seed_H   = int.from_bytes(body[off:off + seed_nb], 'big'); off += seed_nb
+    # syndr stored little-endian (matches C's LSB-first syndrome byte layout)
+    syndr    = int.from_bytes(body[off:off + syndr_nb], 'little')
+    return C, m, seed_H, syndr, n
+
+
+def encode_hcred_credential(sig, issuer_n):
+    """Encode HCRED issuer credential (Stern-F sig) as PEM.
+
+    sig = (commits, challenges, responses) as returned by hpks_stern_f_sign.
+    Uses same binary layout as encode_stern_sig but with HCRED CREDENTIAL label."""
+    commits, challenges, responses = sig
+    rounds  = len(commits)
+    nbytes  = issuer_n // 8
+
+    def _ba_int(v):
+        return v.uint if hasattr(v, 'uint') else int(v)
+
+    commits_ba = bytearray()
+    for c0, c1, c2 in commits:
+        commits_ba += _ba_int(c0).to_bytes(nbytes, 'big')
+        commits_ba += _ba_int(c1).to_bytes(nbytes, 'big')
+        commits_ba += _ba_int(c2).to_bytes(nbytes, 'big')
+
+    chal_bytes = bytearray((rounds + 3) // 4)
+    for i, b in enumerate(challenges):
+        chal_bytes[i // 4] |= (b & 3) << ((i % 4) * 2)
+
+    resp_ba = bytearray()
+    for resp in responses:
+        v0 = _ba_int(resp[0])
+        v1 = _ba_int(resp[1])
+        resp_ba += v0.to_bytes(nbytes, 'big')
+        resp_ba += v1.to_bytes(nbytes, 'big')
+
+    c_int  = int.from_bytes(commits_ba, 'big')
+    ch_int = int.from_bytes(chal_bytes,  'big')
+    r_int  = int.from_bytes(resp_ba,    'big')
+    der    = der_seq(der_int(issuer_n),
+                     der_int(rounds),
+                     der_int(c_int,  len(commits_ba)),
+                     der_int(ch_int, len(chal_bytes)),
+                     der_int(r_int,  len(resp_ba)))
+    return pem_wrap(_HCRED_CRED_LBL, der)
+
+
+def decode_hcred_credential(pem_text):
+    """Decode HCRED issuer credential PEM.
+
+    Returns (commits, challenges, responses, issuer_n) — same layout as
+    _unpack_stern_sig, compatible with hpks_stern_f_verify."""
+    label, data = pem_unwrap(pem_text)
+    if label != _HCRED_CRED_LBL:
+        raise ValueError(f"Expected {_HCRED_CRED_LBL!r}, got {label!r}")
+    ints = der_parse_seq(data)
+    issuer_n, rounds, c_int, ch_int, r_int = (int(ints[0]), int(ints[1]),
+                                               ints[2], ints[3], ints[4])
+    nbytes = issuer_n // 8
+
+    commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
+    commits = []
+    for i in range(rounds):
+        off = i * 3 * nbytes
+        c0 = int.from_bytes(commits_ba[off:off + nbytes], 'big')
+        c1 = int.from_bytes(commits_ba[off + nbytes:off + 2*nbytes], 'big')
+        c2 = int.from_bytes(commits_ba[off + 2*nbytes:off + 3*nbytes], 'big')
+        commits.append((c0, c1, c2))
+
+    chal_nb    = (rounds + 3) // 4
+    chal_bytes = ch_int.to_bytes(chal_nb, 'big')
+    challenges = [(chal_bytes[i // 4] >> ((i % 4) * 2)) & 3 for i in range(rounds)]
+
+    resp_ba   = r_int.to_bytes(2 * rounds * nbytes, 'big')
+    responses = []
+    for i in range(rounds):
+        off = i * 2 * nbytes
+        v0  = int.from_bytes(resp_ba[off:off + nbytes], 'big')
+        v1  = int.from_bytes(resp_ba[off + nbytes:off + 2*nbytes], 'big')
+        # b == 0: (sr:int, sy:int); b != 0: (pi_seed:int, sy:int) — caller wraps
+        responses.append((v0, v1))
+
+    # Return commits as plain ints; caller wraps in BitArray as needed.
+    return commits, challenges, responses, issuer_n
+
+
+def encode_hcred_proof(proof, n):
+    """Encode an HCRED presentation proof dict as PEM.
+
+    proof = {'W': int, 'rounds': [round_dict, ...]}  as returned by hcred_prove."""
+    nb, nd, rows, _ = _hcred_nb_nd(n)
+    W      = proof['W']
+    rounds = proof['rounds']
+    R      = len(rounds)
+    body   = n.to_bytes(4, 'big') + W.to_bytes(4, 'big') + R.to_bytes(4, 'big')
+    for rd in rounds:
+        # commitments: 3 × 32 B
+        for com in rd['coms']:
+            body += bytes(com) if not isinstance(com, (bytes, bytearray)) else bytes(com)
+        # output shares
+        body += _hcred_outs_to_bytes(rd['outs'], n)
+        # seeds
+        body += bytes(rd['seed_c']) + bytes(rd['seed_c1'])
+        # linear masks
+        body += _hcred_ser3(rd['a1'])
+        body += _hcred_ser3(rd['b1'])
+        body += _hcred_ser3(rd['g1'])
+        body += _hcred_ser3(rd['h1'])
+        # optional aux shares
+        has_aux = rd['aux_s'] is not None
+        body += bytes([1 if has_aux else 0])
+        if has_aux:
+            body += _hcred_ser3(rd['aux_s'])
+            body += _hcred_ser3(rd['aux_B'])
+            body += _hcred_ser3(rd['aux_D'])
+    return pem_wrap(_HCRED_PROOF_LBL, body)
+
+
+def decode_hcred_proof(pem_text):
+    """Decode an HCRED presentation proof PEM. Returns (proof, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != _HCRED_PROOF_LBL:
+        raise ValueError(f"Expected {_HCRED_PROOF_LBL!r}, got {label!r}")
+    off  = 0
+    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    W    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    R    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    nb, nd, rows, _ = _hcred_nb_nd(n)
+    rounds = []
+    for _ in range(R):
+        coms = []
+        for _ in range(3):
+            coms.append(bytes(body[off:off + 32])); off += 32
+        outs, off = _hcred_outs_from_bytes(body, off, n)
+        seed_c  = bytes(body[off:off + 32]); off += 32
+        seed_c1 = bytes(body[off:off + 32]); off += 32
+        a1, off = _hcred_deser3(body, off, n)
+        b1, off = _hcred_deser3(body, off, n)
+        g1, off = _hcred_deser3(body, off, nb)
+        h1, off = _hcred_deser3(body, off, nd)
+        has_aux = body[off]; off += 1
+        if has_aux:
+            aux_s, off = _hcred_deser3(body, off, n)
+            aux_B, off = _hcred_deser3(body, off, nb)
+            aux_D, off = _hcred_deser3(body, off, nd)
+        else:
+            aux_s = aux_B = aux_D = None
+        rounds.append({'coms': coms, 'outs': outs,
+                       'seed_c': seed_c, 'seed_c1': seed_c1,
+                       'a1': a1, 'b1': b1, 'g1': g1, 'h1': h1,
+                       'aux_s': aux_s, 'aux_B': aux_B, 'aux_D': aux_D})
+    return {'W': W, 'rounds': rounds}, n
 
 
 # ---------------------------------------------------------------------------

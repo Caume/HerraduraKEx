@@ -4,6 +4,254 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.80] - 2026-07-05
+
+### Documentation — HCRED tutorial and introduction (TODO #128 Batch 6)
+
+- **`docs/TUTORIAL.md`:** HCRED added to CLI quickstart (§HCRED anonymous quickstart
+  with `genpkey/pkey/cred-issue/cred-prove/cred-verify` examples and demo-parameter
+  warning), C integration (`hcred_prove`/`hcred_verify`/`hcred_issue`/`hcred_cred_verify`
+  with full struct usage), Go integration (library API note + function signatures), Python
+  integration (`hcred_prove`/`hcred_verify` via `primitives.py`), ZKP protocols reference
+  table row, Parameter reference table rows (`_HCRED_DEFAULT_N`, `_HCRED_CLI_ROUNDS`,
+  `HCRED_DEMO_ROUNDS`, `HCRED_N`), and Security notes subsection (soundness, ZK, issuer
+  binding, nonce uniqueness, demo-parameter interop caveats).
+- **`docs/INTRODUCTION.md`:** New Part 10.4 "HCRED: a credential that relies on two hard
+  problems at once" explaining the hybrid Ring-LWR + SDP design, ZKBoo-(2,3) MPCitH proof
+  system, and issuer binding model. Protocol reference table row added (SP3 §11.10).
+  Decision tree entry: "Need a credential / ZKP that proves knowledge of a secret satisfying
+  two independent hard problems simultaneously? → HCRED".
+
+---
+
+## [1.9.79] - 2026-07-05
+
+### Feature — HCRED CLI: PEM wire format + cred-issue/prove/verify (TODO #128 Batch 5)
+
+- **`HerraduraCli/codec.py`:** HCRED PEM encode/decode helpers — `encode/decode_hcred_privkey`,
+  `encode/decode_hcred_pubkey`, `encode/decode_hcred_credential`, `encode/decode_hcred_proof`.
+  Wire formats: private key (`4B n | s×3B | C×2B | m×3B | seed_H | syndr`), public key
+  (`4B n | C×2B | m×3B | seed_H | syndr`), credential (DER SEQ matching `HERRADURA SIGNATURE`),
+  proof (raw binary, per-round: `coms | outs | seeds | a1/b1/g1/h1 | has_aux | [aux]`).
+  Syndrome stored little-endian (LSB-first) for byte-parity with C.
+- **`HerraduraCli/primitives.py`:** exports `hcred_phi`, `hcred_user_keygen`, `hcred_syndrome`,
+  `hcred_prove`, `hcred_verify`, `hcred_issue`, `hcred_cred_verify`, `_HCRED_DEFAULT_N`,
+  `_HCRED_DEMO_ROUNDS`.
+- **`HerraduraCli/herradura.py`:** `genpkey --algo hcred` (default n=32, `--bits N` for custom),
+  `pkey --pubout/--text` for HCRED keys, `cred-issue`, `cred-prove`, `cred-verify` subcommands.
+- **`herradura.h`:** `hcred_proof_serialize` / `hcred_proof_deserialize` — heap-allocated
+  round-trip serialization matching the Python/C PEM wire format.
+- **`HerraduraCli/herradura_codec.h`:** `PEM_HCRED_PRIV`, `PEM_HCRED_PUB`, `PEM_HCRED_CRED`,
+  `PEM_HCRED_PROOF` label constants.
+- **`HerraduraCli/herradura_cli.c`:** `genpkey --algo hcred`, `pkey --pubout/--text` for HCRED,
+  `cred-issue`, `cred-prove`, `cred-verify` subcommands (n=256 fixed).
+- **`CliTest/test_cred.sh`:** Python CLI cred-issue/prove/verify tests (5 checks).
+- **`CliTest/test_c_cred.sh`:** C CLI cred-issue/prove/verify tests (5 checks).
+- **`CliTest/test_cred_interop.sh`:** C↔Python cross-language interop at n=256 (10 checks):
+  all four prove→verify combinations and all four cred→verify combinations pass;
+  wrong-message rejection verified in both implementations.
+
+---
+
+## [1.9.78] - 2026-07-05
+
+### Feature — HCRED C port: herradura.h, suite demo, test [44] (TODO #128 Batch 4b)
+
+- **`herradura.h`:** full C port of HCRED — constants (`HCRED_N`, `HCRED_ROWS`,
+  `HCRED_ROW_BITS`, `HCRED_NB`, `HCRED_EPS_BITS`, `HCRED_EPS_OFF`, `HCRED_ND`,
+  `HCRED_W_MAX`, `HCRED_DEMO_ROUNDS`, `HCRED_ROUND_OUTS_SER`), types
+  (`HcredOuts`, `HcredRound`, `HcredProof`, `HcredTape`, `_HcredExec`), and
+  public API: `hcred_ser`, `hcred_tape_init/draw/draws`, `hcred_stmt_hash`,
+  `hcred_phi`, `hcred_user_keygen`, `hcred_syndrome`, `hcred_prove`,
+  `hcred_verify`, `hcred_proof_free`, `hcred_issue`, `hcred_cred_verify`.
+  Fixed at `n = RNL_N = 256`; `int64_t` used for all Z_q products to avoid
+  overflow; syndrome byte-order aligned to Python/Go big-endian serialization.
+- **`Herradura cryptographic suite.c`:** HCRED demo block (`n=256, R=4`) — issuer
+  credential, presentation proof, replay rejection.
+- **`CryptosuiteTests/Herradura_tests.c`:** security test **[44]** — completeness,
+  replay/wrong-syndrome/wrong-key rejection, split-witness prove refusal, issuer
+  binding round-trip (3 iterations, `n=256, R=4`).
+- **`CryptosuiteTests/Herradura_tests.py`:** security test **[44]** mirror — same
+  six checks, `n=32, R=4`; self-contained HCRED helper section added to test file.
+- **All three languages:** test [44] appended after benchmarks [32]–[43] to preserve
+  existing numbering across C/Go/Python.
+
+---
+
+## [1.9.77] - 2026-07-04
+
+### Feature — HCRED Go port: package, suite demo, test [44] (TODO #128 Batch 4a)
+
+- **`herradura/herradura.go`:** full Go port of the HCRED ZKBoo path — `HcredParams`,
+  `HcredPhi`, `HcredUserKeygen`, `HcredSyndrome`, `HcredProve`, `HcredVerify`,
+  `HcredBindMsg`, `HcredIssue`, `HcredCredVerify` plus the `HcredProof`/`HcredRound`/
+  `HcredOuts` types.  Byte-compatible with the Python suite: identical 3 B/coeff
+  serialization, HFSCX-256 domain strings, counter-mode tape expansion (17-bit
+  rejection), statement hash, and Fiat-Shamir trit derivation — verified by a
+  cross-language parity check (identical statement hashes and tape draw sequences
+  on fixed inputs).
+- **`Herradura cryptographic suite.go`:** HCRED demo block (n=32, R=4) — issuer
+  credential, presentation proof, replay rejection.
+- **`CryptosuiteTests/Herradura_tests.go`:** security test **[44]** — completeness,
+  replay/wrong-syndrome/wrong-key rejection, split-witness prove refusal, issuer
+  binding round-trip.  Appended after benchmarks [32]–[43] to avoid a three-language
+  renumbering ("[32]" collides with C array-size syntax, making automated renumber
+  risky); C and Python receive the same [44] in Batch 4b.
+- **Functional verification (Go):** n=32 and n=256 end-to-end; wrong nonce/syndrome/
+  key rejected; split-witness refused; issuer credential verified.
+- **Correctness fix (ZKBoo path, both languages):** the statement hash is now bound
+  into every per-round commitment (`_hcred_commit` / `hcredCommit`), not only into the
+  Fiat-Shamir challenge.  Previously a proof replayed against a different statement
+  (nonce, key, or syndrome) was caught only when the re-derived challenge differed —
+  a (1/3)^R soundness-error chance of false-accept at low R (1/81 at the demo R=4).
+  With the statement in the commitment domain, replay/wrong-key/wrong-syndrome are
+  rejected deterministically at any R (verified: 0 false-accepts in 40 fresh R=4
+  trials).  The KKW path was already deterministic (its cut-and-choose subset derives
+  from a stmt-bound hash).  Statement-hash and tape-draw byte-parity with Python are
+  preserved.
+- **Cross-language interop verified:** a proof produced by the Python suite verifies
+  under the Go `HcredVerify` (and is rejected under a swapped nonce) — the byte-for-byte
+  compatibility that Batch 5's CLI interop will build on.
+- **Batch 4b (pending):** C port into `herradura.h` + C suite demo + C test [44] +
+  Python test [44]; KKW variant remains Python-only.
+
+---
+
+## [1.9.76] - 2026-07-04
+
+### Feature — HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3)
+
+- **`Herradura cryptographic suite.py`:** new `hcred_prove_kkw` / `hcred_verify_kkw`
+  encode the unified HCRED circuit in the KKW (Katz-Kolesnikov-Wang 2018) paradigm:
+  N-party additive masking with per-emulation binary seed trees, cut-and-choose over M
+  preprocessing emulations (opened root seeds force the product-share aux corrections
+  to be honest), online broadcasts for τ emulations with one FS-hidden party each, and
+  a batched output check (all K output wires fold into one FS-derived random linear
+  combination — one combined mask share per party instead of K values; the 1/q ≈ 2^-16
+  escape term is negligible against 1/N).
+- **Soundness:** cheating in k preprocessing emulations survives with probability
+  C(M−k,M−τ)/C(M,M−τ)·(1/N)^(τ−k); production (N,M,τ) = (64,343,27) (Picnic2 set)
+  gives 2^-128.  Demo defaults (4,8,4).
+- **Honest size revision (documented §11.10.10):** TODO #123's "≈40 KB (20×)" estimate
+  was for the pre-unification 512-gate gadget; at the unified 4224-gate circuit KKW is
+  ≈0.9 MB at production parameters — an ≈11× cut over ZKBoo (≈9.2 MB at R=219).
+  Measured at demo scale (n=32): KKW 11.7 KB vs ZKBoo 18.9 KB.  Further reduction
+  requires a circuit-level change, not a transcript encoding.
+- **Verified:** completeness 5/5 + main path; tamper battery — different nonce, wrong
+  syndrome, wrong key, tampered W, tampered hidden broadcast, tampered masked input,
+  tampered preprocessing root — all rejected; split-witness prove refused.
+- Shared witness preparation factored into `_hcred_witness` (used by both the ZKBoo
+  and KKW paths); FS integer sampler handles moduli > 256 (production M=343).
+- Suite demo extended with an HCRED-KKW block (N=4, M=4, τ=2).
+
+---
+
+## [1.9.75] - 2026-07-03
+
+### Feature — HCRED unified circuit: same-witness linkage without BDLOP (TODO #128 Batch 2)
+
+- **`Herradura cryptographic suite.py`:** the Ring-LWR relation moves INSIDE the MPCitH
+  circuit, closing the Batch-1 collusion-splitting gap.  Key observation: m·s is linear
+  in the s-wires (m public), so C = round_p(m·s) costs only a range check on the rounding
+  error — ε_i = Σ 2^t·δ_{i,t} − 16 with 5 witness bits per coefficient (honest |ε| ≤ 8),
+  bit checks δ² = δ, and the linear output [m·s]_i − Σ 2^t·δ_{i,t} = lift(C)_i − 16.
+  Total circuit: 2n + (n/2)·⌈log₂(n+1)⌉ + 5n multiplication gates (4224 at n=256, 384
+  at n=32).
+- **Architecture simplification:** the separate ZKP-RNL Σ-protocol branch is REMOVED —
+  the whole compound statement is one proof with one witness, so same-s linkage holds by
+  construction and no BDLOP commitment is needed.  Proof dict no longer carries 'b1'.
+- **Relaxed rounding soundness (documented §11.10.10):** the 5-bit range admits
+  ||m·s − lift(C)||∞ ≤ 15 vs honest 8 — the standard LWR-proof relaxation, tighter than
+  the ZKP-RNL Σ-protocol's own aggregate slack (144 at t=16).
+- **Soundness note:** shipping only the unopened party's output shares was evaluated and
+  is UNSOUND (the FS challenge must bind all three output-share sets pre-challenge; the
+  verifier cannot reconstruct opened outputs before knowing the challenge).  Transcript
+  format unchanged; KKW remains the size-optimization path (now Batch 3).
+- **Verified:** completeness 20/20 (n=32) and end-to-end at n=256; replay, wrong
+  syndrome, wrong key, tampered rounding share, overweight W all rejected; NEW
+  split-witness tests — prove with s₂ against (C₂, y₁) and with s₁ against (C₂, y₁)
+  both refused.
+- **Batch plan revised:** tests-file entry moves to the ports batch (adding a
+  Python-only test would desynchronize the unified C/Go/Python test numbering, TODO #87).
+
+---
+
+## [1.9.74] - 2026-07-03
+
+### Feature — HCRED: hybrid Ring-LWR + Stern-F credential, Python suite (TODO #128 Batch 1)
+
+- **`Herradura cryptographic suite.py`:** new HCRED section implementing the §11.10.8
+  credential with the §11.10.9 binding map φ_A: `hcred_phi`, `hcred_user_keygen`,
+  `hcred_syndrome`, `hcred_issue`, `hcred_cred_verify`, `hcred_prove`, `hcred_verify`.
+- **Design refinement (documented in new `SecurityProofs-3.md` §11.10.10):** because
+  e = φ(s) must stay secret in a presentation (it reveals the positive support of s),
+  the φ-gadget and the syndrome check are merged into ONE ZKBoo-(2,3) MPC-in-the-head
+  circuit over Z_q — e-wires are internal and never opened; the mod-2 syndrome reduction
+  runs through per-row bit-decomposition witness bits (β² = β, β₀ = y_r).  This
+  eliminates the standalone Stern branch and its linkable-commitment gadget entirely
+  (2n + (n/2)·⌈log₂(n+1)⌉ = 1664 multiplication gates at n=256).
+- **Compound binding:** sequential Fiat-Shamir — the ZKP-RNL branch-1 challenge binds
+  all branch-2 commitments; branch-2 trits bind the branch-1 transcript.  The credential
+  is an HPKS-Stern-F issuer signature over H(m‖C‖seed_H‖y), defeating the §11.10.9
+  self-registered-key forgery.  Weight bound W ≤ ⌊n/4 + 4√(3n/16)⌋ replaces Stern's
+  exact-weight check.
+- **Verified:** completeness 20/20; replay (different nonce), wrong syndrome, wrong
+  public key, tampered output share, and overweight W all rejected; wrong witness
+  refused at prove time.  Demo block added to the suite main (n=32, R=4).
+- **Batch-1 caveat (§11.10.10):** branches share the FS transcript but not a witness
+  commitment — collusion-splitting resistance needs the BDLOP batch.  Remaining #128
+  batches: KKW gadget + tests-file entry, C/Go ports, CLI (`cred-issue`/`cred-prove`/
+  `cred-verify`) + interop tests, tutorial.
+
+---
+
+## [1.9.73] - 2026-07-03
+
+### Research — Hybrid credential binding map φ resolved (TODO #123)
+
+- **`SecurityProofsCode/hybrid_credential_phi.py` (new):** resolves the open problem of
+  `SecurityProofs-3.md` §11.10.8 — the binding map φ relating the ternary Ring-LWR secret
+  to the binary Stern witness.  Key result: choosing φ as the positive-support bitmap
+  (φ(s)_i = 1 iff s_i = +1) makes the binding relation purely algebraic of degree ≤ 3 over
+  Z_q — s_i³ = s_i (ternary check) and e_i = (s_i² + s_i)/2 (support extraction) — i.e.
+  512 multiplication gates at n=256 with **no bit decomposition**, falsifying the §11.10.8
+  dichotomy (expensive circuit vs restrictive linear map).
+- **New security finding:** at the φ_A weight w ≈ 64 the SDP instance has ≈ 2^75.6 solutions
+  and finding one takes ≈ 2^3.8 Prange iterations, enabling a self-registered-key forgery.
+  Mitigation: the credential must be an issuer signature over the pair (C, y) (zero cost),
+  or use the fixed-weight φ_D variant (≈ 5.5× gadget).
+- **Prototype:** ZKBoo-(2,3) MPC-in-the-head gadget over Z_q with Fiat-Shamir — completeness
+  30/30 (n=32) and end-to-end at n=256; false-statement and non-ternary cheats rejected
+  500/500; corrupted-view survival matches the (1/3)^R soundness error (24 vs 18.5 expected).
+- **Cost at 2^-128 soundness (n=256):** BDLOP ≈ 2 KB, KKW ≈ 40 KB (hash-only, recommended),
+  prototype ZKBoo-Z_q ≈ 850 KB, boolean-PRF route ≈ 1.8 MB (rejected).  Hybrid credential
+  totals ≈ 81 KB (BDLOP) / ≈ 120 KB (KKW), Stern-F-dominated.
+- **`SecurityProofs-3.md`:** new §11.10.9 documenting the resolution; §11.10.6 direction 4
+  and the §11.10.8 "Open problem" paragraph annotated as resolved; KKW and Prange references
+  added.  Validator: 376 OK / 0 FAIL.
+- **`TODO.md`:** #123 marked DONE; implementation promotion (compound prover/verifier,
+  linkable commitment, CLI surface) split off as new TODO #128.
+
+---
+
+## [1.9.72] - 2026-07-03
+
+### Fix — SecurityProofs KaTeX rendering: remaining `^*` emphasis breakage (TODO #57–#60)
+
+- **`SecurityProofs-1.md`:** replaced all 23 remaining `^*` occurrences inside math spans
+  with `^{\ast}` (global pass). Prior fixes (v1.8.4–v1.8.6) addressed the specific sections
+  cited in TODOs #57 and #58 but left residual `^*` in other paragraphs and table cells
+  throughout §9.2 and §10.6; this pass eliminates every remaining instance.
+- **`SecurityProofs-2.md`:** replaced all 5 `\mathbb{GF}(2^n)^*` occurrences inside math spans
+  with `^{\ast}` (TODO #59 residual; table rows §11.2, §11.8). Converted inline
+  `\mathrm{ROL}_{n/4}(...)` in the Theorem 14 proof paragraph to function notation
+  `\mathrm{ROL}(..., n/4)`, eliminating the Rule 11 `}_{` opener that paired with
+  `k_j`/`k_\ell` subscripts in the same paragraph (TODO #60 residual).
+- **Validation:** `validate_katex.js` reports 859 OK / 0 FAIL (SecurityProofs-1.md) and
+  943 OK / 0 FAIL (SecurityProofs-2.md).
+
+---
+
 ## [1.9.71] - 2026-06-26
 
 ### Feature — CLI: HPKS-Stern-Ring anonymous ring signatures in sign/verify (TODO #121)
