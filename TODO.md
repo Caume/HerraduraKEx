@@ -6758,15 +6758,18 @@ This item tracks promotion from research prototype to suite implementation.
   are rejected deterministically instead of at the (1/3)^R challenge-collision
   chance (was 1/81 at demo R=4) — verified 0 false-accepts in 40 fresh R=4
   trials.  KKW path was already deterministic (stmt-bound cut-and-choose).
-- **Batch 4b — C port.**  HCRED into `herradura.h` (n=256 fixed via RNL_N/
-  KEYBITS) + C suite demo + C test [44] + Python test [44] mirror in
-  Herradura_tests.py.
+- **Batch 4b — C port (shipped v1.9.78).**  `herradura.h`: full C port at n=256
+  fixed (RNL_N/KEYBITS); `int64_t` for Z_q products; syndrome byte-order aligned
+  to Python/Go big-endian serialization; public API `hcred_prove`/`hcred_verify`/
+  `hcred_issue`/`hcred_cred_verify`.  C suite demo block + C test [44] (3 iters,
+  n=256, R=4; completeness/replay/syndrome/key/split/cred all PASS).  Python test
+  [44] mirror added to Herradura_tests.py (n=32, R=4; same six checks).
 - **Batch 5 — Wire format + CLI.**  PEM types for credential and presentation
   proof; `cred-issue`/`cred-prove`/`cred-verify` subcommands; `CliTest/`
   cross-language interop (byte-parity groundwork done in 4a).
 - **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batches 1–3 + 4a shipped in v1.9.74–v1.9.77; Batches 4b–6 pending.
+Status: **OPEN** — Batches 1–4b shipped in v1.9.74–v1.9.78; Batches 5–6 pending.
 
 ---
 

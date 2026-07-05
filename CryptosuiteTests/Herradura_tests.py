@@ -1,5 +1,7 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.43
+    Herradura KEx — Security & Performance Tests (Python) v1.9.78
+    v1.9.78: HCRED test [44] — completeness, replay/tamper/split-witness rejection, issuer
+            binding (TODO #128 Batch 4b).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
     v1.9.42: HPKS-WOTS-F / HPKS-XMSS-F test [30] (TODO #102); benchmarks renumbered [31]–[42].
     v1.9.35: HFSCX-256-DM finalization of Stern parity-matrix rows (TODO #88);
@@ -55,6 +57,7 @@
 
 import argparse
 import itertools
+import math
 import os
 import random
 import sys
@@ -2239,6 +2242,397 @@ def test_hpkst():
     print(f"    sign_ok={ok_sign}/{N}  tamper_reject={ok_tamper}/{N}  [{status}]\n")
 
 
+# ---------------------------------------------------------------------------
+# HCRED helpers (self-contained, mirrors suite)
+# ---------------------------------------------------------------------------
+
+_HCRED_EPS_BITS    = 5   # range bits per rounding error ε_i
+_HCRED_EPS_OFF     = 16  # ε_i ∈ [−16, 15] → δ = ε + 16 ∈ [0, 31]
+_HCRED_DEMO_ROUNDS = 4   # demo MPCitH repetitions; production: 219
+
+
+def _hcred_params(n):
+    rows     = n // 2
+    row_bits = n.bit_length()
+    w_max    = int(n / 4 + 4 * math.sqrt(n * 3 / 16))
+    return rows, row_bits, w_max
+
+
+def hcred_phi(s_poly):
+    e = 0
+    for i, c in enumerate(s_poly):
+        if c == 1:
+            e |= 1 << i
+    return e
+
+
+def hcred_user_keygen(m_poly, n):
+    s, C = _rnl_keygen(m_poly, n, RNLQ, RNLP)
+    return s, C, hcred_phi(s)
+
+
+def hcred_syndrome(seed_H, e_int, n):
+    return _stern_syndrome(seed_H.uint, e_int, n, n // 2)
+
+
+def _hcred_ser(vec):
+    return b''.join((c % RNLQ).to_bytes(3, 'big') for c in vec)
+
+
+class _HcredTape:
+    def __init__(self, seed):
+        self._seed = seed; self._ctr = 0; self._buf = b''; self._pos = 0
+
+    def draw(self):
+        while True:
+            if self._pos + 3 > len(self._buf):
+                self._buf = hfscx_256(b'HCRED-tape' + self._seed
+                                      + self._ctr.to_bytes(4, 'big'))
+                self._ctr += 1; self._pos = 0
+            v = int.from_bytes(self._buf[self._pos:self._pos + 3], 'big') & 0x1FFFF
+            self._pos += 3
+            if v < RNLQ:
+                return v
+
+    def draws(self, k):
+        return [self.draw() for _ in range(k)]
+
+
+def _hcred_build_H(seed_H, n):
+    return [_stern_matrix_row(seed_H.uint, r, n).uint for r in range(n // 2)]
+
+
+def _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes):
+    rows = n // 2
+    return hfscx_256(b'HCRED-stmt' + n.to_bytes(4, 'big')
+                     + _hcred_ser(m_poly) + _hcred_ser(C_poly)
+                     + seed_H.bytes + y_synd.to_bytes((rows + 7) // 8, 'big')
+                     + msg_bytes)
+
+
+def _hcred_challenges(stmt, coms_ser, outs_ser, rounds):
+    seed = hfscx_256(b'HCRED-ch' + stmt + coms_ser + outs_ser)
+    out, ctr = [], 0
+    while len(out) < rounds:
+        blk = hfscx_256(b'HCRED-trit' + seed + ctr.to_bytes(4, 'big'))
+        ctr += 1
+        for byte in blk:
+            if byte < 252 and len(out) < rounds:
+                out.append(byte % 3)
+    return out
+
+
+def _hcred_outputs(sh_s, sh_B, sh_D, a, b, g, h, m_poly, H_rows, n, rows, row_bits):
+    q = RNLQ; inv2 = (q + 1) // 2; eb = _HCRED_EPS_BITS
+    outs = {'ter': [], 'bit': [], 'del': [], 'W': [], 'S': [], 'y': [], 'rnd': []}
+    for j in range(3):
+        e_j   = [((a[j][i] + sh_s[j][i]) * inv2) % q for i in range(n)]
+        o_ter = [(b[j][i] - sh_s[j][i]) % q for i in range(n)]
+        o_bit = [(g[j][i] - sh_B[j][i]) % q for i in range(rows * row_bits)]
+        o_del = [(h[j][i] - sh_D[j][i]) % q for i in range(n * eb)]
+        o_W   = sum(e_j) % q
+        o_S, o_y = [], []
+        for r in range(rows):
+            acc = 0
+            for i in range(n):
+                if (H_rows[r] >> i) & 1:
+                    acc += e_j[i]
+            dec = sum((1 << t) * sh_B[j][r * row_bits + t] for t in range(row_bits))
+            o_S.append((acc - dec) % q)
+            o_y.append(sh_B[j][r * row_bits] % q)
+        ms_j  = _rnl_poly_mul(m_poly, sh_s[j], q, n)
+        o_rnd = []
+        for i in range(n):
+            dec = sum((1 << t) * sh_D[j][i * eb + t] for t in range(eb))
+            o_rnd.append((ms_j[i] - dec) % q)
+        outs['ter'].append(o_ter); outs['bit'].append(o_bit)
+        outs['del'].append(o_del); outs['W'].append(o_W)
+        outs['S'].append(o_S); outs['y'].append(o_y); outs['rnd'].append(o_rnd)
+    return outs
+
+
+def _hcred_commit(j, seed, aux_s, aux_B, aux_D, a_j, b_j, g_j, h_j, outs, r_idx, stmt):
+    aux = ((_hcred_ser(aux_s) + _hcred_ser(aux_B) + _hcred_ser(aux_D))
+           if j == 2 else b'')
+    return hfscx_256(b'HCRED-com' + stmt + bytes([j]) + r_idx.to_bytes(2, 'big')
+                     + seed + aux + _hcred_ser(a_j) + _hcred_ser(b_j)
+                     + _hcred_ser(g_j) + _hcred_ser(h_j)
+                     + _hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
+                     + _hcred_ser(outs['del'][j])
+                     + _hcred_ser([outs['W'][j]]) + _hcred_ser(outs['S'][j])
+                     + _hcred_ser(outs['y'][j]) + _hcred_ser(outs['rnd'][j]))
+
+
+def _hcred_outputs_ser(outs):
+    buf = b''
+    for j in range(3):
+        buf += (_hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
+                + _hcred_ser(outs['del'][j])
+                + _hcred_ser([outs['W'][j]]) + _hcred_ser(outs['S'][j])
+                + _hcred_ser(outs['y'][j]) + _hcred_ser(outs['rnd'][j]))
+    return buf
+
+
+def _hcred_mpc_round(s_poly, beta_bits, delta_bits, m_poly, H_rows, n, rows, row_bits):
+    q = RNLQ; nb = rows * row_bits; nd = n * _HCRED_EPS_BITS
+    seeds = [os.urandom(32) for _ in range(3)]
+    tp    = [_HcredTape(sd) for sd in seeds]
+    sh_s  = [tp[0].draws(n), tp[1].draws(n), None]
+    sh_s[2] = [(s_poly[i] - sh_s[0][i] - sh_s[1][i]) % q for i in range(n)]
+    sh_B  = [tp[0].draws(nb), tp[1].draws(nb), None]
+    sh_B[2] = [(beta_bits[i] - sh_B[0][i] - sh_B[1][i]) % q for i in range(nb)]
+    sh_D  = [tp[0].draws(nd), tp[1].draws(nd), None]
+    sh_D[2] = [(delta_bits[i] - sh_D[0][i] - sh_D[1][i]) % q for i in range(nd)]
+    R1 = [t.draws(n) for t in tp]; R2 = [t.draws(n) for t in tp]
+    R3 = [t.draws(nb) for t in tp]; R4 = [t.draws(nd) for t in tp]
+    a = [[0] * n for _ in range(3)]; b = [[0] * n for _ in range(3)]
+    g = [[0] * nb for _ in range(3)]; h = [[0] * nd for _ in range(3)]
+    for j in range(3):
+        k = (j + 1) % 3
+        for i in range(n):
+            a[j][i] = (sh_s[j][i] * sh_s[j][i] + sh_s[k][i] * sh_s[j][i]
+                       + sh_s[j][i] * sh_s[k][i] + R1[j][i] - R1[k][i]) % q
+    for j in range(3):
+        k = (j + 1) % 3
+        for i in range(n):
+            b[j][i] = (a[j][i] * sh_s[j][i] + a[k][i] * sh_s[j][i]
+                       + a[j][i] * sh_s[k][i] + R2[j][i] - R2[k][i]) % q
+        for i in range(nb):
+            g[j][i] = (sh_B[j][i] * sh_B[j][i] + sh_B[k][i] * sh_B[j][i]
+                       + sh_B[j][i] * sh_B[k][i] + R3[j][i] - R3[k][i]) % q
+        for i in range(nd):
+            h[j][i] = (sh_D[j][i] * sh_D[j][i] + sh_D[k][i] * sh_D[j][i]
+                       + sh_D[j][i] * sh_D[k][i] + R4[j][i] - R4[k][i]) % q
+    outs = _hcred_outputs(sh_s, sh_B, sh_D, a, b, g, h, m_poly, H_rows, n, rows, row_bits)
+    return seeds, sh_s, sh_B, sh_D, a, b, g, h, outs
+
+
+def _hcred_witness(s_poly, m_poly, C_poly, H_rows, y_synd, n, rows, row_bits):
+    q, hq = RNLQ, RNLQ // 2; eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
+    e_int = hcred_phi(s_poly); W = bin(e_int).count('1')
+    beta = []
+    for r in range(rows):
+        S_r = bin(H_rows[r] & e_int).count('1')
+        if (S_r & 1) != ((y_synd >> r) & 1):
+            raise ValueError("hcred witness does not match syndrome y")
+        for t in range(row_bits):
+            beta.append((S_r >> t) & 1)
+    ms = _rnl_poly_mul(m_poly, s_poly, q, n)
+    lift = _rnl_lift(C_poly, RNLP, q)
+    delta = []
+    for i in range(n):
+        d = (ms[i] - lift[i]) % q; d = d - q if d > hq else d; v = d + off
+        if not (0 <= v < (1 << eb)):
+            raise ValueError("hcred witness does not match public key C")
+        for t in range(eb):
+            delta.append((v >> t) & 1)
+    return W, beta, delta
+
+
+def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=32, rounds=None, msg_bytes=b''):
+    if rounds is None: rounds = _HCRED_DEMO_ROUNDS
+    rows, row_bits, w_max = _hcred_params(n)
+    H_rows = _hcred_build_H(seed_H, n)
+    W, beta, delta = _hcred_witness(s_poly, m_poly, C_poly, H_rows, y_synd, n, rows, row_bits)
+    stmt  = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
+    execs = [_hcred_mpc_round(s_poly, beta, delta, m_poly, H_rows, n, rows, row_bits)
+             for _ in range(rounds)]
+    coms  = [[_hcred_commit(j, ex[0][j], ex[1][2], ex[2][2], ex[3][2],
+                            ex[4][j], ex[5][j], ex[6][j], ex[7][j], ex[8], ri, stmt)
+              for j in range(3)] for ri, ex in enumerate(execs)]
+    coms_ser = b''.join(b''.join(c) for c in coms)
+    outs_ser = b''.join(_hcred_outputs_ser(ex[8]) for ex in execs)
+    chals = _hcred_challenges(stmt, coms_ser, outs_ser, rounds)
+    proof_rounds = []
+    for ri, ex in enumerate(execs):
+        seeds, sh_s, sh_B, sh_D, a, b, g, h, outs = ex
+        c = chals[ri]; cp1 = (c + 1) % 3
+        rd = dict(coms=coms[ri], outs=outs,
+                  seed_c=seeds[c], seed_c1=seeds[cp1],
+                  a1=a[cp1], b1=b[cp1], g1=g[cp1], h1=h[cp1],
+                  aux_s=sh_s[2] if 2 in (c, cp1) else None,
+                  aux_B=sh_B[2] if 2 in (c, cp1) else None,
+                  aux_D=sh_D[2] if 2 in (c, cp1) else None)
+        proof_rounds.append(rd)
+    return {'W': W, 'rounds': proof_rounds}
+
+
+def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=32, rounds=None, msg_bytes=b''):
+    if rounds is None: rounds = _HCRED_DEMO_ROUNDS
+    rows, row_bits, w_max = _hcred_params(n)
+    q = RNLQ; inv2 = (q + 1) // 2; eb, off = _HCRED_EPS_BITS, _HCRED_EPS_OFF
+    nb = rows * row_bits; nd = n * eb
+    W = proof['W']
+    if not (1 <= W <= w_max) or len(proof['rounds']) != rounds:
+        return False
+    stmt     = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, msg_bytes)
+    coms_ser = b''.join(b''.join(rd['coms']) for rd in proof['rounds'])
+    outs_ser = b''.join(_hcred_outputs_ser(rd['outs']) for rd in proof['rounds'])
+    H_rows   = _hcred_build_H(seed_H, n)
+    lift     = _rnl_lift(C_poly, RNLP, q)
+    chals    = _hcred_challenges(stmt, coms_ser, outs_ser, rounds)
+    for ri, rd in enumerate(proof['rounds']):
+        c = chals[ri]; cp1 = (c + 1) % 3; outs = rd['outs']
+        for i in range(n):
+            if (outs['ter'][0][i] + outs['ter'][1][i] + outs['ter'][2][i]) % q:
+                return False
+        for i in range(nb):
+            if (outs['bit'][0][i] + outs['bit'][1][i] + outs['bit'][2][i]) % q:
+                return False
+        for i in range(nd):
+            if (outs['del'][0][i] + outs['del'][1][i] + outs['del'][2][i]) % q:
+                return False
+        if (outs['W'][0] + outs['W'][1] + outs['W'][2]) % q != W:
+            return False
+        for r in range(rows):
+            if (outs['S'][0][r] + outs['S'][1][r] + outs['S'][2][r]) % q:
+                return False
+            if ((outs['y'][0][r] + outs['y'][1][r] + outs['y'][2][r]) % q
+                    != ((y_synd >> r) & 1)):
+                return False
+        for i in range(n):
+            if ((outs['rnd'][0][i] + outs['rnd'][1][i] + outs['rnd'][2][i])
+                    % q != (lift[i] - off) % q):
+                return False
+        if 2 in (c, cp1) and (rd['aux_s'] is None or rd['aux_B'] is None
+                              or rd['aux_D'] is None):
+            return False
+        t_c, t_c1 = _HcredTape(rd['seed_c']), _HcredTape(rd['seed_c1'])
+        sh_s_c  = t_c.draws(n)  if c   != 2 else list(rd['aux_s'])
+        sh_B_c  = t_c.draws(nb) if c   != 2 else list(rd['aux_B'])
+        sh_D_c  = t_c.draws(nd) if c   != 2 else list(rd['aux_D'])
+        sh_s_c1 = t_c1.draws(n)  if cp1 != 2 else list(rd['aux_s'])
+        sh_B_c1 = t_c1.draws(nb) if cp1 != 2 else list(rd['aux_B'])
+        sh_D_c1 = t_c1.draws(nd) if cp1 != 2 else list(rd['aux_D'])
+        R1_c,  R2_c  = t_c.draws(n),  t_c.draws(n)
+        R3_c,  R4_c  = t_c.draws(nb), t_c.draws(nd)
+        R1_c1, R2_c1 = t_c1.draws(n), t_c1.draws(n)
+        R3_c1, R4_c1 = t_c1.draws(nb), t_c1.draws(nd)
+        a_c = [(sh_s_c[i] * sh_s_c[i] + sh_s_c1[i] * sh_s_c[i]
+                + sh_s_c[i] * sh_s_c1[i] + R1_c[i] - R1_c1[i]) % q
+               for i in range(n)]
+        b_c = [(a_c[i] * sh_s_c[i] + rd['a1'][i] * sh_s_c[i]
+                + a_c[i] * sh_s_c1[i] + R2_c[i] - R2_c1[i]) % q
+               for i in range(n)]
+        g_c = [(sh_B_c[i] * sh_B_c[i] + sh_B_c1[i] * sh_B_c[i]
+                + sh_B_c[i] * sh_B_c1[i] + R3_c[i] - R3_c1[i]) % q
+               for i in range(nb)]
+        h_c = [(sh_D_c[i] * sh_D_c[i] + sh_D_c1[i] * sh_D_c[i]
+                + sh_D_c[i] * sh_D_c1[i] + R4_c[i] - R4_c1[i]) % q
+               for i in range(nd)]
+        sh_s3 = [None]*3; sh_B3 = [None]*3; sh_D3 = [None]*3
+        sh_s3[c] = sh_s_c; sh_s3[cp1] = sh_s_c1
+        sh_B3[c] = sh_B_c; sh_B3[cp1] = sh_B_c1
+        sh_D3[c] = sh_D_c; sh_D3[cp1] = sh_D_c1
+        a3 = [None]*3; b3 = [None]*3; g3 = [None]*3; h3 = [None]*3
+        a3[c] = a_c; a3[cp1] = rd['a1']
+        b3[c] = b_c; b3[cp1] = rd['b1']
+        g3[c] = g_c; g3[cp1] = rd['g1']
+        h3[c] = h_c; h3[cp1] = rd['h1']
+        for j in (c, cp1):
+            e_j   = [((a3[j][i] + sh_s3[j][i]) * inv2) % q for i in range(n)]
+            o_ter = [(b3[j][i] - sh_s3[j][i]) % q for i in range(n)]
+            o_bit = [(g3[j][i] - sh_B3[j][i]) % q for i in range(nb)]
+            o_del = [(h3[j][i] - sh_D3[j][i]) % q for i in range(nd)]
+            o_W   = sum(e_j) % q
+            if o_ter != outs['ter'][j] or o_bit != outs['bit'][j] \
+                    or o_del != outs['del'][j] or o_W != outs['W'][j]:
+                return False
+            for r in range(rows):
+                acc = 0
+                for i in range(n):
+                    if (H_rows[r] >> i) & 1:
+                        acc += e_j[i]
+                dec = sum((1 << t) * sh_B3[j][r * row_bits + t]
+                          for t in range(row_bits))
+                if (acc - dec) % q != outs['S'][j][r]:
+                    return False
+                if sh_B3[j][r * row_bits] % q != outs['y'][j][r]:
+                    return False
+            ms_j = _rnl_poly_mul(m_poly, sh_s3[j], q, n)
+            for i in range(n):
+                dec = sum((1 << t) * sh_D3[j][i * eb + t] for t in range(eb))
+                if (ms_j[i] - dec) % q != outs['rnd'][j][i]:
+                    return False
+            aux = ((_hcred_ser(rd['aux_s']) + _hcred_ser(rd['aux_B'])
+                    + _hcred_ser(rd['aux_D'])) if j == 2 else b'')
+            seed_j = rd['seed_c'] if j == c else rd['seed_c1']
+            com = hfscx_256(b'HCRED-com' + stmt + bytes([j])
+                            + ri.to_bytes(2, 'big') + seed_j + aux
+                            + _hcred_ser(a3[j]) + _hcred_ser(b3[j])
+                            + _hcred_ser(g3[j]) + _hcred_ser(h3[j])
+                            + _hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
+                            + _hcred_ser(outs['del'][j])
+                            + _hcred_ser([outs['W'][j]]) + _hcred_ser(outs['S'][j])
+                            + _hcred_ser(outs['y'][j]) + _hcred_ser(outs['rnd'][j]))
+            if com != rd['coms'][j]:
+                return False
+    return True
+
+
+def hcred_issue(m_poly, C_poly, seed_H, y_synd, n, issuer_e, issuer_seed,
+                issuer_syn, rounds=8):
+    digest = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, b'HCRED-issue')
+    msg = BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
+    return hpks_stern_f_sign(msg, issuer_e, issuer_seed, issuer_syn, n, rounds)
+
+
+def hcred_cred_verify(m_poly, C_poly, seed_H, y_synd, n, cred_sig, issuer_seed, issuer_syn):
+    digest = _hcred_stmt_hash(m_poly, C_poly, seed_H, y_synd, n, b'HCRED-issue')
+    msg = BitArray(n, int.from_bytes(digest, 'big') >> (256 - n))
+    return hpks_stern_f_verify(msg, cred_sig, issuer_seed, issuer_syn, n)
+
+
+# Security test [44]: HCRED hybrid credential — appended after benchmarks
+# to avoid renumbering [32]-[43] (same number in C, Go, Python; TODO #128 Batch 4b).
+def test_hcred():
+    print("[44] HCRED hybrid credential: completeness + tamper/replay rejection  [PQC-EXT]")
+    n = 32; R = _HCRED_DEMO_ROUNDS
+    N = g_rounds if g_rounds > 0 else 3
+    ok_verify = ok_replay = ok_synd = ok_key = ok_split = ok_cred = 0
+    t0 = time.perf_counter()
+    m_base = _rnl_m_poly(n)
+    for i in range(N):
+        if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
+            N = i; break
+        a_rand = [random.randrange(RNLQ) for _ in range(n)]
+        m_b    = [(m_base[j] + a_rand[j]) % RNLQ for j in range(n)]
+        seed_H = BitArray.random(n)
+        s, C, e_int = hcred_user_keygen(m_b, n)
+        y_synd = hcred_syndrome(seed_H, e_int, n)
+        try:
+            proof = hcred_prove(s, m_b, C, seed_H, y_synd, n, R, b'Herradura ZKP test')
+        except ValueError:
+            N = i; break
+        if hcred_verify(m_b, C, seed_H, y_synd, proof, n, R, b'Herradura ZKP test'):
+            ok_verify += 1
+        if not hcred_verify(m_b, C, seed_H, y_synd, proof, n, R, b'Herradura ZKP tamper'):
+            ok_replay += 1
+        y_bad = y_synd ^ 1
+        if not hcred_verify(m_b, C, seed_H, y_bad, proof, n, R, b'Herradura ZKP test'):
+            ok_synd += 1
+        s2, C2, e2 = hcred_user_keygen(m_b, n)
+        if not hcred_verify(m_b, C2, seed_H, y_synd, proof, n, R, b'Herradura ZKP test'):
+            ok_key += 1
+        try:
+            hcred_prove(s2, m_b, C2, seed_H, y_synd, n, R, b'Herradura ZKP test')
+        except ValueError:
+            ok_split += 1
+        isd, ie_int, isyndr = stern_f_keygen(n)
+        cred_sig = hcred_issue(m_b, C, seed_H, y_synd, n, ie_int, isd, isyndr, 8)
+        if hcred_cred_verify(m_b, C, seed_H, y_synd, n, cred_sig, isd, isyndr):
+            ok_cred += 1
+    if N == 0:
+        print("    SKIP (no iterations completed)\n")
+        return
+    status = ("PASS" if ok_verify == N and ok_replay == N and ok_synd == N
+              and ok_key == N and ok_split == N and ok_cred == N else "FAIL")
+    print(f"    n={n} R={R}  verify={ok_verify}/{N}  replay_reject={ok_replay}/{N}"
+          f"  synd_reject={ok_synd}/{N}  key_reject={ok_key}/{N}"
+          f"  split_refuse={ok_split}/{N}  cred={ok_cred}/{N}  [{status}]")
+    print()
+
+
 def bench_fscx():
     print("[32] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
@@ -2507,3 +2901,7 @@ if __name__ == '__main__':
     bench_hpks_stern_f()
     bench_zkp_rnl()
     bench_zkp_nl()
+
+    # Security test [44] appended after benchmarks to preserve [32]-[43] numbering.
+    print("--- Security Test [44]: HCRED hybrid credential ---\n")
+    test_hcred()

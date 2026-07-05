@@ -1,4 +1,4 @@
-/*  Herradura Cryptographic Suite v1.9.16
+/*  Herradura Cryptographic Suite v1.9.78
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -626,6 +626,64 @@ int main(void)
                                zkn_msg, sizeof(zkn_msg)-1, zkn_proof);
         zkp_nl_proof_free(zkn_proof, ZKP_NL_DEMO_ROUNDS);
         puts(ok ? "+ ZKP-NL proof verified" : "- ZKP-NL verification FAILED");
+    }
+
+    /* --- HCRED [CREDENTIAL — Ring-LWR + code syndrome via φ, MPCitH] */
+    printf("\n--- HCRED [CREDENTIAL — Ring-LWR + code syndrome via φ, MPCitH; n=%d, R=%d]\n",
+           HCRED_N, HCRED_DEMO_ROUNDS);
+    {
+        int32_t hc_m[RNL_N], hc_rand[RNL_N];
+        int32_t hc_s[RNL_N], hc_c[RNL_N];
+        BitArray hc_seed_H, hc_e_ba;
+        uint8_t  hc_syndr[SDF_SYNBYTES];
+        BitArray hc_isd, hc_ie;
+        uint8_t  hc_isyndr[SDF_SYNBYTES];
+        SternSig hc_cred;
+        HcredProof hc_proof;
+
+        rnl_m_poly(hc_m);
+        rnl_rand_poly(hc_rand, urnd);
+        rnl_poly_add(hc_m, hc_m, hc_rand);
+        ba_rand(&hc_seed_H, urnd);
+
+        hcred_user_keygen(hc_s, hc_c, &hc_e_ba, hc_m, urnd);
+        hcred_syndrome(hc_syndr, &hc_seed_H, &hc_e_ba);
+
+        stern_f_keygen(&hc_isd, &hc_ie, hc_isyndr, urnd);
+        hcred_issue(&hc_cred, hc_m, hc_c, &hc_seed_H, hc_syndr,
+                    &hc_ie, &hc_isd, urnd);
+        if (hcred_cred_verify(hc_m, hc_c, &hc_seed_H, hc_syndr,
+                              &hc_cred, &hc_isd, hc_isyndr))
+            puts("+ issuer credential (Stern-F over (m,C,seed_H,y)) verified");
+        else
+            puts("- issuer credential verify FAILED");
+
+        static const uint8_t hcred_nonce[]  = "HCRED demo nonce";
+        static const uint8_t hcred_nonce2[] = "other nonce";
+        hc_proof.rd = NULL;
+        if (hcred_prove(&hc_proof, hc_s, hc_m, hc_c, &hc_seed_H, hc_syndr,
+                        HCRED_DEMO_ROUNDS,
+                        hcred_nonce, sizeof(hcred_nonce)-1, urnd) != 0) {
+            puts("- HCRED prove error");
+        } else {
+            printf("enrolment: W=%d (weight of hidden e=φ(s))\n", hc_proof.W);
+            if (hcred_verify(hc_m, hc_c, &hc_seed_H, hc_syndr, &hc_proof,
+                             HCRED_DEMO_ROUNDS,
+                             hcred_nonce, sizeof(hcred_nonce)-1))
+                puts("+ HCRED presentation proof verified (unified circuit: "
+                     "Ring-LWR rounding + syndrome for the SAME s; e never revealed)");
+            else
+                puts("- HCRED presentation verify FAILED");
+            if (!hcred_verify(hc_m, hc_c, &hc_seed_H, hc_syndr, &hc_proof,
+                              HCRED_DEMO_ROUNDS,
+                              hcred_nonce2, sizeof(hcred_nonce2)-1))
+                puts("+ HCRED replay under different nonce rejected");
+            else
+                puts("- HCRED replay NOT rejected");
+            hcred_proof_free(&hc_proof);
+        }
+        puts("  (demo uses R=4; production requires R=219; rounding check"
+             " relaxed to ||m*s - lift(C)||inf <= 15 — see §11.10.10)");
     }
 
     puts("\n*** HPKS-WOTS-F / HPKS-XMSS-F \xe2\x80\x94 hash-based many-time signatures");

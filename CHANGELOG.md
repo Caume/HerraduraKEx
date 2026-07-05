@@ -4,6 +4,31 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.78] - 2026-07-05
+
+### Feature — HCRED C port: herradura.h, suite demo, test [44] (TODO #128 Batch 4b)
+
+- **`herradura.h`:** full C port of HCRED — constants (`HCRED_N`, `HCRED_ROWS`,
+  `HCRED_ROW_BITS`, `HCRED_NB`, `HCRED_EPS_BITS`, `HCRED_EPS_OFF`, `HCRED_ND`,
+  `HCRED_W_MAX`, `HCRED_DEMO_ROUNDS`, `HCRED_ROUND_OUTS_SER`), types
+  (`HcredOuts`, `HcredRound`, `HcredProof`, `HcredTape`, `_HcredExec`), and
+  public API: `hcred_ser`, `hcred_tape_init/draw/draws`, `hcred_stmt_hash`,
+  `hcred_phi`, `hcred_user_keygen`, `hcred_syndrome`, `hcred_prove`,
+  `hcred_verify`, `hcred_proof_free`, `hcred_issue`, `hcred_cred_verify`.
+  Fixed at `n = RNL_N = 256`; `int64_t` used for all Z_q products to avoid
+  overflow; syndrome byte-order aligned to Python/Go big-endian serialization.
+- **`Herradura cryptographic suite.c`:** HCRED demo block (`n=256, R=4`) — issuer
+  credential, presentation proof, replay rejection.
+- **`CryptosuiteTests/Herradura_tests.c`:** security test **[44]** — completeness,
+  replay/wrong-syndrome/wrong-key rejection, split-witness prove refusal, issuer
+  binding round-trip (3 iterations, `n=256, R=4`).
+- **`CryptosuiteTests/Herradura_tests.py`:** security test **[44]** mirror — same
+  six checks, `n=32, R=4`; self-contained HCRED helper section added to test file.
+- **All three languages:** test [44] appended after benchmarks [32]–[43] to preserve
+  existing numbering across C/Go/Python.
+
+---
+
 ## [1.9.77] - 2026-07-04
 
 ### Feature — HCRED Go port: package, suite demo, test [44] (TODO #128 Batch 4a)
