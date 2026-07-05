@@ -492,6 +492,51 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
+    /* HCRED user keypair (demo parameters, N=256) */
+    if (strcmp(algo, "hcred") == 0) {
+        fprintf(stderr, "WARNING: HCRED at N=256 is a demonstration parameter set.\n");
+        rnl_poly_t m_base, a_rand, m_blind;
+        rnl_m_poly(m_base);
+        rnl_rand_poly(a_rand, urnd);
+        rnl_poly_add(m_blind, m_base, a_rand);
+
+        int32_t s_poly[HCRED_N], C_poly[HCRED_N], m_poly[HCRED_N];
+        int k;
+        for (k = 0; k < HCRED_N; k++) m_poly[k] = m_blind[k];
+        BitArray e_ba;
+        hcred_user_keygen(s_poly, C_poly, &e_ba, m_poly, urnd);
+
+        uint8_t seed_H_raw[KEYBYTES];
+        if (fread(seed_H_raw, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+        BitArray seed_H_ba;
+        memcpy(seed_H_ba.b, seed_H_raw, KEYBYTES);
+        uint8_t syndr[SDF_SYNBYTES];
+        hcred_syndrome(syndr, &seed_H_ba, &e_ba);
+
+        /* privkey: 4B n | n×3B s | n×2B C | n×3B m | KEYBYTES seed_H | SDF_SYNBYTES syndr */
+        size_t blen = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
+                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+        uint8_t *body = (uint8_t *)malloc(blen);
+        if (!body) die("out of memory");
+        body[0]=(uint8_t)(HCRED_N>>24); body[1]=(uint8_t)(HCRED_N>>16);
+        body[2]=(uint8_t)(HCRED_N>>8);  body[3]=(uint8_t)HCRED_N;
+        size_t off = 4;
+        hcred_ser(body + off, s_poly, HCRED_N); off += (size_t)3*HCRED_N;
+        for (k = 0; k < HCRED_N; k++) {
+            uint16_t v = (uint16_t)((uint32_t)C_poly[k] & 0xFFFFu);
+            body[off + 2*k]   = (uint8_t)(v >> 8);
+            body[off + 2*k+1] = (uint8_t)(v);
+        }
+        off += (size_t)2*HCRED_N;
+        hcred_ser(body + off, m_poly, HCRED_N); off += (size_t)3*HCRED_N;
+        memcpy(body + off, seed_H_raw, KEYBYTES); off += KEYBYTES;
+        memcpy(body + off, syndr, SDF_SYNBYTES);
+        if (pem_write_file(out ? out : "-", PEM_HCRED_PRIV, body, blen) != 0)
+            die("cannot write HCRED private key");
+        free(body);
+        fclose(urnd); return;
+    }
+
     fclose(urnd);
     dief("genpkey: unsupported algorithm: %s", algo);
 }
@@ -551,6 +596,56 @@ static void cmd_pkey(int argc, char **argv)
                     die("cannot write ZKP-NL public key");
                 free(pub);
             }
+            return;
+        }
+        /* HCRED keys also use raw binary PEM. */
+        if (strcmp(peek, PEM_HCRED_PRIV) == 0) {
+            size_t blen;
+            uint8_t *body = zkp_raw_pem_read(in_path, PEM_HCRED_PRIV, &blen);
+            if (!body || blen < 4) die("pkey: malformed HCRED private key");
+            int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+                          ((uint32_t)body[2]<<8)|body[3]);
+            if (n != HCRED_N) die("pkey: unsupported HCRED n (expected 256)");
+            /* layout: 4 | n×3 s | n×2 C | n×3 m | (n/8) seed_H | (n/16) syndr */
+            size_t expected = 4 + (size_t)n*3 + (size_t)n*2 + (size_t)n*3
+                              + (size_t)n/8 + (size_t)n/16;
+            if (blen < expected) die("pkey: truncated HCRED private key");
+            size_t off = 4;
+            off += (size_t)n*3;         /* skip s_poly */
+            /* C_poly: n×2 bytes */
+            size_t c_off = off; off += (size_t)n*2;
+            /* m_poly: n×3 bytes */
+            size_t m_off = off; off += (size_t)n*3;
+            /* seed_H: n/8 bytes */
+            size_t sh_off = off; off += (size_t)n/8;
+            /* syndr: n/16 bytes */
+            size_t sy_off = off;
+            if (text) {
+                printf("%-10s: %s\n", "algorithm", "hcred");
+                printf("%-10s: %d\n", "n", n);
+                /* print seed_H as hex */
+                printf("%-10s: ", "seed_H");
+                for (int j = 0; j < n/8; j++) printf("%02x", body[sh_off+j]);
+                printf("\n");
+                printf("%-10s: ", "syndr");
+                for (int j = 0; j < n/16; j++) printf("%02x", body[sy_off+j]);
+                printf("\n");
+            } else {
+                /* pubkey: 4B n | n×2B C | n×3B m | n/8 seed_H | n/16 syndr */
+                size_t pub_len = 4 + (size_t)n*2 + (size_t)n*3 + (size_t)n/8 + (size_t)n/16;
+                uint8_t *pub = (uint8_t *)malloc(pub_len);
+                if (!pub) die("out of memory");
+                pub[0]=(uint8_t)(n>>24); pub[1]=(uint8_t)(n>>16);
+                pub[2]=(uint8_t)(n>>8);  pub[3]=(uint8_t)n;
+                memcpy(pub+4,                body+c_off, (size_t)n*2);
+                memcpy(pub+4+(size_t)n*2,    body+m_off, (size_t)n*3);
+                memcpy(pub+4+(size_t)n*5,    body+sh_off,(size_t)n/8);
+                memcpy(pub+4+(size_t)n*5+(size_t)n/8, body+sy_off, (size_t)n/16);
+                if (pem_write_file(out_path ? out_path : "-", PEM_HCRED_PUB, pub, pub_len) != 0)
+                    die("cannot write HCRED public key");
+                free(pub);
+            }
+            free(body);
             return;
         }
     }
@@ -2902,6 +2997,375 @@ static void cmd_pake_demo(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HCRED helpers: raw-PEM key parsing
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Parse HCRED private-key raw bytes into polys and key material.
+ * Returns 0 on success, -1 on bad size/n. */
+static int hcred_parse_privkey(const uint8_t *body, size_t blen,
+                                int32_t s_poly[HCRED_N], int32_t C_poly[HCRED_N],
+                                int32_t m_poly[HCRED_N],
+                                BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
+{
+    int k;
+    size_t expected = 4 + (size_t)3*HCRED_N + (size_t)2*HCRED_N
+                        + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    if (blen < expected) return -1;
+    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+                  ((uint32_t)body[2]<<8)|body[3]);
+    if (n != HCRED_N) return -1;
+    size_t off = 4;
+    for (k = 0; k < HCRED_N; k++) {
+        s_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
+        off += 3;
+    }
+    for (k = 0; k < HCRED_N; k++) {
+        C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
+        off += 2;
+    }
+    for (k = 0; k < HCRED_N; k++) {
+        m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
+        off += 3;
+    }
+    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
+    memcpy(syndr, body + off, SDF_SYNBYTES);
+    return 0;
+}
+
+/* Parse HCRED public-key raw bytes. Returns 0 on success, -1 on error. */
+static int hcred_parse_pubkey(const uint8_t *body, size_t blen,
+                               int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
+                               BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
+{
+    int k;
+    size_t expected = 4 + (size_t)2*HCRED_N + (size_t)3*HCRED_N + KEYBYTES + SDF_SYNBYTES;
+    if (blen < expected) return -1;
+    int n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
+                  ((uint32_t)body[2]<<8)|body[3]);
+    if (n != HCRED_N) return -1;
+    size_t off = 4;
+    for (k = 0; k < HCRED_N; k++) {
+        C_poly[k] = (int32_t)(((uint32_t)body[off]<<8)|body[off+1]);
+        off += 2;
+    }
+    for (k = 0; k < HCRED_N; k++) {
+        m_poly[k] = (int32_t)(((uint32_t)body[off]<<16)|((uint32_t)body[off+1]<<8)|body[off+2]);
+        off += 3;
+    }
+    memcpy(seed_H_ba->b, body + off, KEYBYTES); off += KEYBYTES;
+    memcpy(syndr, body + off, SDF_SYNBYTES);
+    return 0;
+}
+
+/* Load HCRED public info from either a PRIV or PUB PEM file.
+ * Fills C_poly, m_poly, seed_H_ba, syndr.  Returns 0 on success. */
+static int hcred_load_pubinfo(const char *path,
+                               int32_t C_poly[HCRED_N], int32_t m_poly[HCRED_N],
+                               BitArray *seed_H_ba, uint8_t syndr[SDF_SYNBYTES])
+{
+    size_t blen;
+    /* Try PUB label first */
+    uint8_t *body = NULL;
+    { char lbl[80] = {0};
+      zkp_pem_peek_label(path, lbl);
+      if (strcmp(lbl, PEM_HCRED_PUB) == 0) {
+          body = zkp_raw_pem_read(path, PEM_HCRED_PUB, &blen);
+          if (hcred_parse_pubkey(body, blen, C_poly, m_poly, seed_H_ba, syndr) != 0) {
+              free(body); return -1;
+          }
+          free(body); return 0;
+      }
+    }
+    /* Fall back to PRIV label */
+    int32_t s_poly[HCRED_N];
+    body = zkp_raw_pem_read(path, PEM_HCRED_PRIV, &blen);
+    if (hcred_parse_privkey(body, blen, s_poly, C_poly, m_poly, seed_H_ba, syndr) != 0) {
+        free(body); return -1;
+    }
+    free(body);
+    return 0;
+}
+
+/* Write a SternSig to PEM under the given label (generic version of
+ * stern_sig_pack_and_write that accepts any PEM label). */
+static void stern_sig_write_label(const SternSig *sig, const char *label,
+                                   const char *out_path)
+{
+    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
+    uint8_t chal[STERN_CHAL_BYTES];
+    uint8_t *resp    = malloc(STERN_RESP_BYTES);
+    if (!commits || !resp) die("out of memory");
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 3 * KEYBYTES;
+          memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
+          memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
+          memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
+      }
+    }
+    { int i;
+      memset(chal, 0, STERN_CHAL_BYTES);
+      for (i = 0; i < SDF_ROUNDS; i++)
+          chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
+    }
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 2 * KEYBYTES;
+          memcpy(resp + off,           sig->resp_a[i].b, KEYBYTES);
+          memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
+      }
+    }
+    uint8_t in_der[8], ir_der[8];
+    size_t ln, lr;
+    size_t ic_sz  = DER_INT_LEN(STERN_COMMITS_BYTES);
+    size_t ich_sz = DER_INT_LEN(STERN_CHAL_BYTES);
+    size_t irs_sz = DER_INT_LEN(STERN_RESP_BYTES);
+    uint8_t *ic_der  = malloc(ic_sz);
+    uint8_t *ich_der = malloc(ich_sz);
+    uint8_t *irs_der = malloc(irs_sz);
+    if (!ic_der || !ich_der || !irs_der) die("out of memory");
+    size_t lc, lch, lrs;
+    der_i_n256(in_der, &ln);
+    der_i_byte(SDF_ROUNDS, ir_der, &lr);
+    der_int_enc(commits, STERN_COMMITS_BYTES, ic_der,  &lc);
+    der_int_enc(chal,    STERN_CHAL_BYTES,    ich_der, &lch);
+    der_int_enc(resp,    STERN_RESP_BYTES,    irs_der, &lrs);
+    const uint8_t *it[5] = {in_der, ir_der, ic_der, ich_der, irs_der};
+    size_t         il[5] = {ln,     lr,     lc,     lch,     lrs};
+    seq_and_write(it, il, 5, label, out_path);
+    free(commits); free(resp); free(ic_der); free(ich_der); free(irs_der);
+}
+
+/* Load a SternSig from a PEM file with an expected label. Returns 0 on success. */
+static int stern_sig_load_label(const char *path, const char *label, SternSig *sig)
+{
+    PemKey pk;
+    pem_key_load(&pk, path);
+    if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
+        { pem_key_free(&pk); return -1; }
+    { int i, r = 0;
+      for (i = 0; i < (int)pk.vlens[1]; i++) r = (r << 8) | pk.vals[1][i];
+      if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
+    }
+    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
+    uint8_t chal[STERN_CHAL_BYTES];
+    uint8_t *resp    = malloc(STERN_RESP_BYTES);
+    if (!commits || !resp) die("out of memory");
+#define _RA2(dst, dlen, vp, vl) do { \
+    size_t _l = (vl) < (dlen) ? (vl) : (dlen); \
+    memset(dst, 0, dlen); \
+    memcpy((uint8_t *)(dst) + (dlen) - _l, vp, _l); \
+} while(0)
+    _RA2(commits, STERN_COMMITS_BYTES, pk.vals[2], pk.vlens[2]);
+    _RA2(chal,    STERN_CHAL_BYTES,    pk.vals[3], pk.vlens[3]);
+    _RA2(resp,    STERN_RESP_BYTES,    pk.vals[4], pk.vlens[4]);
+#undef _RA2
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 3 * KEYBYTES;
+          memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
+          memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
+          memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
+      }
+    }
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++)
+          sig->b[i] = (chal[i / 4] >> ((i % 4) * 2)) & 3;
+    }
+    { int i;
+      for (i = 0; i < SDF_ROUNDS; i++) {
+          int off = i * 2 * KEYBYTES;
+          memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
+          memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
+      }
+    }
+    free(commits); free(resp);
+    pem_key_free(&pk);
+    return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * cred-issue / cred-prove / cred-verify  (TODO #128 Batch 5)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static void cmd_cred_issue(int argc, char **argv)
+{
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *our_path = get_arg(argc, argv, "--our");
+    const char *out_path = get_arg(argc, argv, "--out");
+    if (!in_path)  die("cred-issue: --in (HCRED public/private key) required");
+    if (!our_path) die("cred-issue: --our (hpks-stern private key) required");
+
+    fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
+                    "(demo parameters). Do not use for production.\n");
+
+    /* Load HCRED public info from --in */
+    int32_t C_poly[HCRED_N], m_poly[HCRED_N];
+    BitArray seed_H_ba;
+    uint8_t syndr[SDF_SYNBYTES];
+    if (hcred_load_pubinfo(in_path, C_poly, m_poly, &seed_H_ba, syndr) != 0)
+        die("cred-issue: cannot parse HCRED key from --in");
+
+    /* Load issuer hpks-stern private key from --our */
+    PemKey issuer_k;
+    pem_key_load(&issuer_k, our_path);
+    if (strcmp(issuer_k.label, PEM_HPKS_STERN_PRIV) != 0 &&
+        strcmp(issuer_k.label, PEM_HPKE_STERN_PRIV) != 0)
+        die("cred-issue: --our must be an hpks-stern or hpke-stern private key");
+    if (issuer_k.n_items < 2) die("cred-issue: malformed Stern private key");
+    BitArray issuer_e_ba, issuer_seed_ba;
+    ba_from_ra(&issuer_e_ba,   issuer_k.vals[0], issuer_k.vlens[0]);
+    ba_from_ra(&issuer_seed_ba, issuer_k.vals[1], issuer_k.vlens[1]);
+    pem_key_free(&issuer_k);
+
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    SternSig sig;
+    hcred_issue(&sig, m_poly, C_poly, &seed_H_ba, syndr,
+                &issuer_e_ba, &issuer_seed_ba, urnd);
+    fclose(urnd);
+
+    stern_sig_write_label(&sig, PEM_HCRED_CRED, out_path);
+}
+
+static void cmd_cred_prove(int argc, char **argv)
+{
+    const char *in_path  = get_arg(argc, argv, "--in");
+    const char *out_path = get_arg(argc, argv, "--out");
+    const char *msg_arg  = get_arg(argc, argv, "--msg");
+    const char *rnd_arg  = get_arg(argc, argv, "--rounds");
+    if (!in_path) die("cred-prove: --in (HCRED private key) required");
+
+    int rounds = HCRED_DEMO_ROUNDS;
+    if (rnd_arg) rounds = atoi(rnd_arg);
+    if (rounds < 1) die("cred-prove: --rounds must be >= 1");
+
+    size_t blen;
+    uint8_t *body = zkp_raw_pem_read(in_path, PEM_HCRED_PRIV, &blen);
+
+    int32_t s_poly[HCRED_N], C_poly[HCRED_N], m_poly[HCRED_N];
+    BitArray seed_H_ba;
+    uint8_t syndr[SDF_SYNBYTES];
+    if (hcred_parse_privkey(body, blen, s_poly, C_poly, m_poly, &seed_H_ba, syndr) != 0) {
+        free(body);
+        die("cred-prove: cannot parse HCRED private key");
+    }
+    free(body);
+
+    const uint8_t *msg     = msg_arg ? (const uint8_t *)msg_arg : (const uint8_t *)"";
+    size_t          msg_len = msg_arg ? strlen(msg_arg) : 0;
+
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+
+    HcredProof proof;
+    memset(&proof, 0, sizeof(proof));
+    int r = hcred_prove(&proof, s_poly, m_poly, C_poly, &seed_H_ba, syndr,
+                         rounds, msg, msg_len, urnd);
+    fclose(urnd);
+
+    if (r == -1) die("cred-prove: hcred_prove failed (memory)");
+    if (r == -2) die("cred-prove: hcred_prove failed (witness check: bad key or syndrome)");
+    if (r != 0)  die("cred-prove: hcred_prove failed");
+
+    size_t plen;
+    uint8_t *pbuf = hcred_proof_serialize(&proof, &plen);
+    hcred_proof_free(&proof);
+    if (!pbuf) die("cred-prove: proof serialization failed (out of memory)");
+
+    if (pem_write_file(out_path ? out_path : "-", PEM_HCRED_PROOF, pbuf, plen) != 0)
+        die("cred-prove: cannot write proof");
+    free(pbuf);
+}
+
+static void cmd_cred_verify(int argc, char **argv)
+{
+    const char *proof_path  = get_arg(argc, argv, "--proof");
+    const char *pubkey_path = get_arg(argc, argv, "--pubkey");
+    const char *cred_path   = get_arg(argc, argv, "--cred");
+    const char *issuer_path = get_arg(argc, argv, "--issuer");
+    const char *msg_arg     = get_arg(argc, argv, "--msg");
+    const char *rnd_arg     = get_arg(argc, argv, "--rounds");
+    if (!proof_path)  die("cred-verify: --proof required");
+    if (!pubkey_path) die("cred-verify: --pubkey required");
+
+    /* Load proof */
+    size_t plen;
+    uint8_t *pbuf = zkp_raw_pem_read(proof_path, PEM_HCRED_PROOF, &plen);
+    HcredProof proof;
+    memset(&proof, 0, sizeof(proof));
+    if (hcred_proof_deserialize(&proof, pbuf, plen) != 0) {
+        free(pbuf);
+        die("cred-verify: cannot deserialize proof");
+    }
+    free(pbuf);
+
+    int rounds = proof.rounds;
+    if (rnd_arg) rounds = atoi(rnd_arg);
+
+    /* Load public key */
+    int32_t C_poly[HCRED_N], m_poly[HCRED_N];
+    BitArray seed_H_ba;
+    uint8_t syndr[SDF_SYNBYTES];
+    if (hcred_load_pubinfo(pubkey_path, C_poly, m_poly, &seed_H_ba, syndr) != 0) {
+        hcred_proof_free(&proof);
+        die("cred-verify: cannot parse public key from --pubkey");
+    }
+
+    const uint8_t *msg     = msg_arg ? (const uint8_t *)msg_arg : (const uint8_t *)"";
+    size_t          msg_len = msg_arg ? strlen(msg_arg) : 0;
+
+    int ok_proof = hcred_verify(m_poly, C_poly, &seed_H_ba, syndr,
+                                &proof, rounds, msg, msg_len);
+    hcred_proof_free(&proof);
+
+    if (!ok_proof) {
+        puts("Verification FAILED (proof)");
+        exit(1);
+    }
+
+    /* Optional issuer credential check */
+    if (cred_path) {
+        if (!issuer_path) die("cred-verify: --cred requires --issuer (hpks-stern public key)");
+
+        SternSig cred_sig;
+        if (stern_sig_load_label(cred_path, PEM_HCRED_CRED, &cred_sig) != 0)
+            die("cred-verify: cannot load credential from --cred");
+
+        /* Load issuer hpks-stern public key: DER SEQ(syndr_int, seed, n) */
+        PemKey iss_k;
+        pem_key_load(&iss_k, issuer_path);
+        if (strcmp(iss_k.label, PEM_HPKS_STERN_PUB) != 0 &&
+            strcmp(iss_k.label, PEM_HPKE_STERN_PUB) != 0)
+            die("cred-verify: --issuer must be an hpks-stern or hpke-stern public key");
+        if (iss_k.n_items < 2) die("cred-verify: malformed issuer public key");
+
+        /* Unpack syndrome (32-byte DER int, reversed) */
+        uint8_t iss_syn32[KEYBYTES], issuer_syndr[SDF_SYNBYTES]; int _sk;
+        memset(iss_syn32, 0, KEYBYTES);
+        { size_t cl = iss_k.vlens[0] < KEYBYTES ? iss_k.vlens[0] : KEYBYTES;
+          memcpy(iss_syn32 + KEYBYTES - cl, iss_k.vals[0], cl); }
+        for (_sk = 0; _sk < SDF_SYNBYTES; _sk++)
+            issuer_syndr[_sk] = iss_syn32[KEYBYTES - 1 - _sk];
+
+        BitArray issuer_seed_ba;
+        ba_from_ra(&issuer_seed_ba, iss_k.vals[1], iss_k.vlens[1]);
+        pem_key_free(&iss_k);
+
+        int ok_cred = hcred_cred_verify(m_poly, C_poly, &seed_H_ba, syndr,
+                                         &cred_sig, &issuer_seed_ba, issuer_syndr);
+        if (!ok_cred) {
+            puts("Verification FAILED (credential)");
+            exit(1);
+        }
+        puts("Credential OK");
+    }
+
+    puts("Proof OK");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Usage
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -3040,6 +3504,9 @@ int main(int argc, char **argv)
     if (strcmp(cmd, "threshold-aggregate") == 0) { cmd_threshold_aggregate(argc, argv); return 0; }
     if (strcmp(cmd, "threshold-respond")   == 0) { cmd_threshold_respond(argc, argv);   return 0; }
     if (strcmp(cmd, "threshold-combine")   == 0) { cmd_threshold_combine(argc, argv);   return 0; }
+    if (strcmp(cmd, "cred-issue")  == 0) { cmd_cred_issue(argc, argv);  return 0; }
+    if (strcmp(cmd, "cred-prove")  == 0) { cmd_cred_prove(argc, argv);  return 0; }
+    if (strcmp(cmd, "cred-verify") == 0) { cmd_cred_verify(argc, argv); return 0; }
 
     dief("unknown command: %s", cmd);
     return 1;

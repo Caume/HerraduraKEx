@@ -6764,12 +6764,16 @@ This item tracks promotion from research prototype to suite implementation.
   `hcred_issue`/`hcred_cred_verify`.  C suite demo block + C test [44] (3 iters,
   n=256, R=4; completeness/replay/syndrome/key/split/cred all PASS).  Python test
   [44] mirror added to Herradura_tests.py (n=32, R=4; same six checks).
-- **Batch 5 — Wire format + CLI.**  PEM types for credential and presentation
-  proof; `cred-issue`/`cred-prove`/`cred-verify` subcommands; `CliTest/`
-  cross-language interop (byte-parity groundwork done in 4a).
+- **Batch 5 — Wire format + CLI (shipped v1.9.79).**  PEM types for credential and
+  presentation proof (`HERRADURA HCRED PRIVATE/PUBLIC KEY`, `HERRADURA HCRED CREDENTIAL`,
+  `HERRADURA HCRED PROOF`); codec.py encode/decode helpers; `cred-issue`/`cred-prove`/
+  `cred-verify` in Python CLI + C CLI (n=256); `hcred_proof_serialize/deserialize` in
+  herradura.h; `CliTest/test_cred.sh`, `test_c_cred.sh`, `test_cred_interop.sh` (10-way
+  C↔Python interop, all PASS).  Syndr endianness fix: little-endian (LSB-first) storage
+  for byte-parity with C `stern_syndrome_H`.
 - **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batches 1–4b shipped in v1.9.74–v1.9.78; Batches 5–6 pending.
+Status: **OPEN** — Batches 1–5 shipped in v1.9.74–v1.9.79; Batch 6 pending.
 
 ---
 

@@ -4512,4 +4512,148 @@ static int hcred_cred_verify(const int32_t m_poly[HCRED_N],
     return hpks_stern_f_verify(sig, &msg, issuer_seed, issuer_syndr);
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * HCRED proof serialization / deserialization
+ *
+ * Wire format (matches Python codec.py encode_hcred_proof / decode_hcred_proof):
+ *   4B n(BE) | 4B W(BE) | 4B rounds(BE)
+ *   per round:
+ *     3×KEYBYTES   coms
+ *     HCRED_ROUND_OUTS_SER   outs
+ *     KEYBYTES     seed_c
+ *     KEYBYTES     seed_c1
+ *     HCRED_N×3    a1
+ *     HCRED_N×3    b1
+ *     HCRED_NB×3   g1
+ *     HCRED_ND×3   h1
+ *     1B           has_aux
+ *     [if has_aux: HCRED_N×3 aux_s | HCRED_NB×3 aux_b | HCRED_ND×3 aux_d]
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Serialize an HcredProof to a heap-allocated byte buffer.
+ * Returns the buffer (caller must free()) and sets *out_len on success.
+ * Returns NULL on allocation failure. */
+static uint8_t *hcred_proof_serialize(const HcredProof *proof, size_t *out_len)
+{
+    int ri, j;
+    size_t per_fixed = (size_t)3*KEYBYTES + HCRED_ROUND_OUTS_SER + 2*KEYBYTES
+                     + (size_t)3*(HCRED_N + HCRED_N + HCRED_NB + HCRED_ND) + 1;
+    size_t per_aux   = (size_t)3*(HCRED_N + HCRED_NB + HCRED_ND);
+    size_t total = 12;
+    for (ri = 0; ri < proof->rounds; ri++)
+        total += per_fixed + (proof->rd[ri].has_aux ? per_aux : 0);
+
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (!buf) return NULL;
+
+    size_t off = 0;
+    buf[off++] = (uint8_t)(HCRED_N >> 24); buf[off++] = (uint8_t)(HCRED_N >> 16);
+    buf[off++] = (uint8_t)(HCRED_N >> 8);  buf[off++] = (uint8_t)(HCRED_N);
+    buf[off++] = (uint8_t)(proof->W >> 24); buf[off++] = (uint8_t)(proof->W >> 16);
+    buf[off++] = (uint8_t)(proof->W >> 8);  buf[off++] = (uint8_t)(proof->W);
+    buf[off++] = (uint8_t)(proof->rounds >> 24); buf[off++] = (uint8_t)(proof->rounds >> 16);
+    buf[off++] = (uint8_t)(proof->rounds >> 8);  buf[off++] = (uint8_t)(proof->rounds);
+
+    for (ri = 0; ri < proof->rounds; ri++) {
+        const HcredRound *rd = &proof->rd[ri];
+        /* commitments */
+        for (j = 0; j < 3; j++) { memcpy(buf + off, rd->coms[j], KEYBYTES); off += KEYBYTES; }
+        /* output shares */
+        _hcred_outs_ser(buf + off, &rd->outs); off += HCRED_ROUND_OUTS_SER;
+        /* seeds */
+        memcpy(buf + off, rd->seed_c,  KEYBYTES); off += KEYBYTES;
+        memcpy(buf + off, rd->seed_c1, KEYBYTES); off += KEYBYTES;
+        /* linear masks */
+        hcred_ser(buf + off, rd->a1, HCRED_N);  off += (size_t)3*HCRED_N;
+        hcred_ser(buf + off, rd->b1, HCRED_N);  off += (size_t)3*HCRED_N;
+        hcred_ser(buf + off, rd->g1, HCRED_NB); off += (size_t)3*HCRED_NB;
+        hcred_ser(buf + off, rd->h1, HCRED_ND); off += (size_t)3*HCRED_ND;
+        /* optional aux shares */
+        buf[off++] = rd->has_aux ? 1 : 0;
+        if (rd->has_aux) {
+            hcred_ser(buf + off, rd->aux_s, HCRED_N);  off += (size_t)3*HCRED_N;
+            hcred_ser(buf + off, rd->aux_b, HCRED_NB); off += (size_t)3*HCRED_NB;
+            hcred_ser(buf + off, rd->aux_d, HCRED_ND); off += (size_t)3*HCRED_ND;
+        }
+    }
+    *out_len = off;
+    return buf;
+}
+
+/* Deserialize an HcredProof from bytes.
+ * Returns 0 on success; -1 on truncation or n mismatch.
+ * On success, proof->rd is heap-allocated; free with hcred_proof_free(). */
+static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_t data_len)
+{
+    int ri, j, ii;
+    if (data_len < 12) return -1;
+    int n      = (int)(((uint32_t)data[0]<<24)|((uint32_t)data[1]<<16)|
+                       ((uint32_t)data[2]<<8)|data[3]);
+    int W      = (int)(((uint32_t)data[4]<<24)|((uint32_t)data[5]<<16)|
+                       ((uint32_t)data[6]<<8)|data[7]);
+    int rounds = (int)(((uint32_t)data[8]<<24)|((uint32_t)data[9]<<16)|
+                       ((uint32_t)data[10]<<8)|data[11]);
+    if (n != HCRED_N || rounds < 1) return -1;
+
+    proof->W      = W;
+    proof->rounds = rounds;
+    proof->rd     = (HcredRound *)calloc((size_t)rounds, sizeof(HcredRound));
+    if (!proof->rd) return -1;
+
+    size_t off = 12;
+
+#define _HPSER_NEED(x) do { \
+    if (off + (size_t)(x) > data_len) { hcred_proof_free(proof); return -1; } \
+} while(0)
+#define _HPSER_D3(vec, cnt) do { \
+    _HPSER_NEED(3*(size_t)(cnt)); \
+    for (ii = 0; ii < (cnt); ii++) { \
+        (vec)[ii] = (int32_t)(((uint32_t)data[off]<<16) | \
+                              ((uint32_t)data[off+1]<<8) | \
+                               (uint32_t)data[off+2]); \
+        off += 3; \
+    } \
+} while(0)
+
+    for (ri = 0; ri < rounds; ri++) {
+        HcredRound *rd = &proof->rd[ri];
+        /* commitments */
+        for (j = 0; j < 3; j++) {
+            _HPSER_NEED(KEYBYTES);
+            memcpy(rd->coms[j], data + off, KEYBYTES); off += KEYBYTES;
+        }
+        /* output shares */
+        for (j = 0; j < 3; j++) {
+            _HPSER_D3(rd->outs.ter[j],    HCRED_N);
+            _HPSER_D3(rd->outs.bit[j],    HCRED_NB);
+            _HPSER_D3(rd->outs.del_sh[j], HCRED_ND);
+            _HPSER_D3(&rd->outs.wsh[j],   1);
+            _HPSER_D3(rd->outs.s_out[j],  HCRED_ROWS);
+            _HPSER_D3(rd->outs.y_out[j],  HCRED_ROWS);
+            _HPSER_D3(rd->outs.rnd[j],    HCRED_N);
+        }
+        /* seeds */
+        _HPSER_NEED(2*KEYBYTES);
+        memcpy(rd->seed_c,  data + off, KEYBYTES); off += KEYBYTES;
+        memcpy(rd->seed_c1, data + off, KEYBYTES); off += KEYBYTES;
+        /* linear masks */
+        _HPSER_D3(rd->a1, HCRED_N);
+        _HPSER_D3(rd->b1, HCRED_N);
+        _HPSER_D3(rd->g1, HCRED_NB);
+        _HPSER_D3(rd->h1, HCRED_ND);
+        /* optional aux shares */
+        _HPSER_NEED(1);
+        rd->has_aux = data[off++];
+        if (rd->has_aux) {
+            _HPSER_D3(rd->aux_s, HCRED_N);
+            _HPSER_D3(rd->aux_b, HCRED_NB);
+            _HPSER_D3(rd->aux_d, HCRED_ND);
+        }
+    }
+
+#undef _HPSER_NEED
+#undef _HPSER_D3
+    return 0;
+}
+
 #endif /* HERRADURA_H */

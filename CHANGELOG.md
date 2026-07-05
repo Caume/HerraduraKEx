@@ -4,6 +4,35 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.79] - 2026-07-05
+
+### Feature — HCRED CLI: PEM wire format + cred-issue/prove/verify (TODO #128 Batch 5)
+
+- **`HerraduraCli/codec.py`:** HCRED PEM encode/decode helpers — `encode/decode_hcred_privkey`,
+  `encode/decode_hcred_pubkey`, `encode/decode_hcred_credential`, `encode/decode_hcred_proof`.
+  Wire formats: private key (`4B n | s×3B | C×2B | m×3B | seed_H | syndr`), public key
+  (`4B n | C×2B | m×3B | seed_H | syndr`), credential (DER SEQ matching `HERRADURA SIGNATURE`),
+  proof (raw binary, per-round: `coms | outs | seeds | a1/b1/g1/h1 | has_aux | [aux]`).
+  Syndrome stored little-endian (LSB-first) for byte-parity with C.
+- **`HerraduraCli/primitives.py`:** exports `hcred_phi`, `hcred_user_keygen`, `hcred_syndrome`,
+  `hcred_prove`, `hcred_verify`, `hcred_issue`, `hcred_cred_verify`, `_HCRED_DEFAULT_N`,
+  `_HCRED_DEMO_ROUNDS`.
+- **`HerraduraCli/herradura.py`:** `genpkey --algo hcred` (default n=32, `--bits N` for custom),
+  `pkey --pubout/--text` for HCRED keys, `cred-issue`, `cred-prove`, `cred-verify` subcommands.
+- **`herradura.h`:** `hcred_proof_serialize` / `hcred_proof_deserialize` — heap-allocated
+  round-trip serialization matching the Python/C PEM wire format.
+- **`HerraduraCli/herradura_codec.h`:** `PEM_HCRED_PRIV`, `PEM_HCRED_PUB`, `PEM_HCRED_CRED`,
+  `PEM_HCRED_PROOF` label constants.
+- **`HerraduraCli/herradura_cli.c`:** `genpkey --algo hcred`, `pkey --pubout/--text` for HCRED,
+  `cred-issue`, `cred-prove`, `cred-verify` subcommands (n=256 fixed).
+- **`CliTest/test_cred.sh`:** Python CLI cred-issue/prove/verify tests (5 checks).
+- **`CliTest/test_c_cred.sh`:** C CLI cred-issue/prove/verify tests (5 checks).
+- **`CliTest/test_cred_interop.sh`:** C↔Python cross-language interop at n=256 (10 checks):
+  all four prove→verify combinations and all four cred→verify combinations pass;
+  wrong-message rejection verified in both implementations.
+
+---
+
 ## [1.9.78] - 2026-07-05
 
 ### Feature — HCRED C port: herradura.h, suite demo, test [44] (TODO #128 Batch 4b)
