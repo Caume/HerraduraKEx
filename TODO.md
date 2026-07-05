@@ -6744,15 +6744,29 @@ This item tracks promotion from research prototype to suite implementation.
   18.9 KB.  Further size cuts need a circuit-level change (fewer mult
   gates), not transcript work.  Tamper battery (7 classes) + completeness
   verified.
-- **Batch 4 — C (`herradura.h`) and Go ports** + unified security test added
-  to all three test files simultaneously (single-language addition would
-  desynchronize the #87 unified test numbering).
+- **Batch 4a — Go port (shipped v1.9.77).**  `herradura/herradura.go`: full
+  ZKBoo-path port (HcredParams/Phi/UserKeygen/Syndrome/Prove/Verify/BindMsg/
+  Issue/CredVerify + proof types).  Go suite demo block + security test **[44]**
+  in Herradura_tests.go.  Test [44] is appended after benchmarks [32]–[43]
+  rather than inserted as [32]: automated renumbering is risky in C where
+  "[32]" collides with array-size syntax; C and Python get the same [44] in
+  Batch 4b, restoring #87 numbering parity.  KKW variant remains Python-only
+  (research encoding).  CROSS-LANGUAGE INTEROP VERIFIED: a proof produced by
+  the Python suite verifies under Go `HcredVerify` (and is rejected under a
+  swapped nonce).  CORRECTNESS FIX (both langs): the statement hash is now
+  bound into every per-round commitment, so replay/wrong-key/wrong-syndrome
+  are rejected deterministically instead of at the (1/3)^R challenge-collision
+  chance (was 1/81 at demo R=4) — verified 0 false-accepts in 40 fresh R=4
+  trials.  KKW path was already deterministic (stmt-bound cut-and-choose).
+- **Batch 4b — C port.**  HCRED into `herradura.h` (n=256 fixed via RNL_N/
+  KEYBITS) + C suite demo + C test [44] + Python test [44] mirror in
+  Herradura_tests.py.
 - **Batch 5 — Wire format + CLI.**  PEM types for credential and presentation
   proof; `cred-issue`/`cred-prove`/`cred-verify` subcommands; `CliTest/`
-  cross-language interop.
+  cross-language interop (byte-parity groundwork done in 4a).
 - **Batch 6 — Docs.**  TUTORIAL section; INTRODUCTION concepts entry.
 
-Status: **OPEN** — Batches 1–3 shipped in v1.9.74–v1.9.76; Batches 4–6 pending.
+Status: **OPEN** — Batches 1–3 + 4a shipped in v1.9.74–v1.9.77; Batches 4b–6 pending.
 
 ---
 

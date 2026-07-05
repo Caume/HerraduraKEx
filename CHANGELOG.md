@@ -4,6 +4,45 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.77] - 2026-07-04
+
+### Feature — HCRED Go port: package, suite demo, test [44] (TODO #128 Batch 4a)
+
+- **`herradura/herradura.go`:** full Go port of the HCRED ZKBoo path — `HcredParams`,
+  `HcredPhi`, `HcredUserKeygen`, `HcredSyndrome`, `HcredProve`, `HcredVerify`,
+  `HcredBindMsg`, `HcredIssue`, `HcredCredVerify` plus the `HcredProof`/`HcredRound`/
+  `HcredOuts` types.  Byte-compatible with the Python suite: identical 3 B/coeff
+  serialization, HFSCX-256 domain strings, counter-mode tape expansion (17-bit
+  rejection), statement hash, and Fiat-Shamir trit derivation — verified by a
+  cross-language parity check (identical statement hashes and tape draw sequences
+  on fixed inputs).
+- **`Herradura cryptographic suite.go`:** HCRED demo block (n=32, R=4) — issuer
+  credential, presentation proof, replay rejection.
+- **`CryptosuiteTests/Herradura_tests.go`:** security test **[44]** — completeness,
+  replay/wrong-syndrome/wrong-key rejection, split-witness prove refusal, issuer
+  binding round-trip.  Appended after benchmarks [32]–[43] to avoid a three-language
+  renumbering ("[32]" collides with C array-size syntax, making automated renumber
+  risky); C and Python receive the same [44] in Batch 4b.
+- **Functional verification (Go):** n=32 and n=256 end-to-end; wrong nonce/syndrome/
+  key rejected; split-witness refused; issuer credential verified.
+- **Correctness fix (ZKBoo path, both languages):** the statement hash is now bound
+  into every per-round commitment (`_hcred_commit` / `hcredCommit`), not only into the
+  Fiat-Shamir challenge.  Previously a proof replayed against a different statement
+  (nonce, key, or syndrome) was caught only when the re-derived challenge differed —
+  a (1/3)^R soundness-error chance of false-accept at low R (1/81 at the demo R=4).
+  With the statement in the commitment domain, replay/wrong-key/wrong-syndrome are
+  rejected deterministically at any R (verified: 0 false-accepts in 40 fresh R=4
+  trials).  The KKW path was already deterministic (its cut-and-choose subset derives
+  from a stmt-bound hash).  Statement-hash and tape-draw byte-parity with Python are
+  preserved.
+- **Cross-language interop verified:** a proof produced by the Python suite verifies
+  under the Go `HcredVerify` (and is rejected under a swapped nonce) — the byte-for-byte
+  compatibility that Batch 5's CLI interop will build on.
+- **Batch 4b (pending):** C port into `herradura.h` + C suite demo + C test [44] +
+  Python test [44]; KKW variant remains Python-only.
+
+---
+
 ## [1.9.76] - 2026-07-04
 
 ### Feature — HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3)

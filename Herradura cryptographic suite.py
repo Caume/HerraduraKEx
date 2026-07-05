@@ -1,5 +1,5 @@
 '''
-    Herradura Cryptographic Suite v1.9.76
+    Herradura Cryptographic Suite v1.9.77
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
 
@@ -18,6 +18,7 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+    --- v1.9.77: HCRED commit binds statement hash — deterministic replay rejection (TODO #128 Batch 4a) ---
     --- v1.9.76: HCRED-KKW — preprocessing-model MPCitH transcript, ~11x smaller (TODO #128 Batch 3) ---
     --- v1.9.75: HCRED unified circuit — in-circuit Ring-LWR check, same-s linkage (TODO #128 Batch 2) ---
     --- v1.9.74: HCRED — hybrid Ring-LWR + Stern-F credential, Batch 1 (TODO #128) ---
@@ -1896,11 +1897,17 @@ def _hcred_outputs(sh_s, sh_B, sh_D, a, b, g, h, m_poly, H_rows,
 
 
 def _hcred_commit(j, seed, aux_s, aux_B, aux_D, a_j, b_j, g_j, h_j,
-                  outs, r_idx):
-    """Commitment to party j's view in round r_idx."""
+                  outs, r_idx, stmt):
+    """Commitment to party j's view in round r_idx.
+
+    The statement hash `stmt` is bound into every commitment so that a proof
+    replayed against a different statement (nonce, key, or syndrome) fails
+    deterministically when the verifier recomputes an opened party's
+    commitment — replay resistance no longer depends on the (1/3)^R chance
+    that the re-derived challenge coincides."""
     aux = ((_hcred_ser(aux_s) + _hcred_ser(aux_B) + _hcred_ser(aux_D))
            if j == 2 else b'')
-    return hfscx_256(b'HCRED-com' + bytes([j]) + r_idx.to_bytes(2, 'big')
+    return hfscx_256(b'HCRED-com' + stmt + bytes([j]) + r_idx.to_bytes(2, 'big')
                      + seed + aux + _hcred_ser(a_j) + _hcred_ser(b_j)
                      + _hcred_ser(g_j) + _hcred_ser(h_j)
                      + _hcred_ser(outs['ter'][j]) + _hcred_ser(outs['bit'][j])
@@ -1996,7 +2003,7 @@ def hcred_prove(s_poly, m_poly, C_poly, seed_H, y_synd, n=None,
              for _ in range(rounds)]
     coms  = [[_hcred_commit(j, ex[0][j], ex[1][2], ex[2][2], ex[3][2],
                             ex[4][j], ex[5][j], ex[6][j], ex[7][j],
-                            ex[8], ri)
+                            ex[8], ri, stmt)
               for j in range(3)] for ri, ex in enumerate(execs)]
     coms_ser = b''.join(b''.join(c) for c in coms)
     outs_ser = b''.join(_hcred_outputs_ser(ex[8]) for ex in execs)
@@ -2139,7 +2146,8 @@ def hcred_verify(m_poly, C_poly, seed_H, y_synd, proof, n=None,
             aux = ((_hcred_ser(rd['aux_s']) + _hcred_ser(rd['aux_B'])
                     + _hcred_ser(rd['aux_D'])) if j == 2 else b'')
             seed_j = rd['seed_c'] if j == c else rd['seed_c1']
-            com = hfscx_256(b'HCRED-com' + bytes([j]) + ri.to_bytes(2, 'big')
+            com = hfscx_256(b'HCRED-com' + stmt + bytes([j])
+                            + ri.to_bytes(2, 'big')
                             + seed_j + aux + _hcred_ser(a3[j])
                             + _hcred_ser(b3[j]) + _hcred_ser(g3[j])
                             + _hcred_ser(h3[j])
