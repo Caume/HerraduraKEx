@@ -34,6 +34,8 @@ This script covers the two NOT-yet-implemented pillars:
       §3.6  Proof-size analysis and scaling to n=256
       §3.7  ZKB++ size breakdown vs basic ZKBoo (TODO #94 item 3c):
             realistic ~2.0× (≈457 KB at n=256), not the generic 5×/180 KB
+      §3.8  ZKB++ empirical implementation (TODO #122 Batch 1):
+            zkbpp_prove/zkbpp_verify + measured per-round transcript sizes
   §4  Parameter comparison vs NIST PQC standards
   §5  Summary and open construction paths
 
@@ -996,6 +998,212 @@ def section3_zkbpp_size():
     print("  circuit redesign separate from the ZKB++ transcript encoding.")
 
 
+# ── §3.8  ZKB++ empirical implementation (TODO #122 Batch 1) ──────────────────
+#
+# Self-contained ZKB++ (Chase et al. 2017) encoding of the §3 ZKBoo proof:
+#   (1) parties 0/1 input shares PRG-derived from 16-byte seeds;
+#   (2) party 2's offset share sent explicitly only when opened;
+#   (3) only party e+2 broadcasts its AND-gate bits (bit-packed);
+#       party e+1's gates are recomputed by the verifier;
+#   (4) only the hidden party's commitment is sent; the Fiat-Shamir hash over
+#       (commitments ‖ output shares ‖ B ‖ y) must reproduce the challenges.
+
+_ZKPP_SEED = 16   # 128-bit per-party seed
+
+
+def _zkpp_derive(seed, n):
+    mask = (1 << n) - 1
+    share = int.from_bytes(_H(seed, b'share')[:(n + 7) // 8], 'big') & mask
+    return share, _H(seed, b'tape')
+
+
+def _zkpp_pack(bits):
+    out = bytearray((len(bits) + 7) // 8)
+    for k, b in enumerate(bits):
+        out[k >> 3] |= (b & 1) << (k & 7)
+    return bytes(out)
+
+
+def _zkpp_out_share(p, share, carries, B, n):
+    """Linear tail of _evaluate_circuit for a single party."""
+    mask = (1 << n) - 1
+    s = 0
+    for i in range(n):
+        s ^= (((share >> i) & 1) ^ ((B >> i) & 1) ^ carries[i]) << i
+    lin = (share ^ _rol(share, 1, n) ^ _rol(share, n - 1, n)) & mask
+    if p == 0:
+        lin ^= (B ^ _rol(B, 1, n) ^ _rol(B, n - 1, n)) & mask
+    return (lin ^ _rol(s, n // 4, n)) & mask
+
+
+def _zkpp_com(j, p, seed, share2_b, gate_b, out, nb):
+    return _H(j.to_bytes(4, 'big'), bytes([p]), seed, share2_b, gate_b,
+              out.to_bytes(nb, 'big'))
+
+
+def zkbpp_prove(A, B, n=_ZK_N, rounds=_ZK_R):
+    """ZKB++ prover for the §3 statement F1(A,B) = y."""
+    mask, nb = (1 << n) - 1, (n + 7) // 8
+    y = _f1(A, B, n)
+    staged, com_block, out_block = [], b'', b''
+
+    for j in range(rounds):
+        seeds = [os.urandom(_ZKPP_SEED) for _ in range(3)]
+        s0, t0 = _zkpp_derive(seeds[0], n)
+        s1, t1 = _zkpp_derive(seeds[1], n)
+        s2 = (A ^ s0 ^ s1) & mask
+        t2 = _H(seeds[2], b'tape')
+        outs, gvs = _evaluate_circuit([s0, s1, s2], [t0, t1, t2], B, n)
+        gate_b = [_zkpp_pack([g[2] for g in gvs[p]]) for p in range(3)]
+        s2_b = s2.to_bytes(nb, 'big')
+        coms = [_zkpp_com(j, p, seeds[p], s2_b if p == 2 else b'',
+                          gate_b[p], outs[p], nb) for p in range(3)]
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
+        staged.append((seeds, s2_b, gate_b, outs, coms))
+
+    ch_seed = _H(com_block, out_block, B.to_bytes(nb, 'big'),
+                 y.to_bytes(nb, 'big'))
+    rounds_out = []
+    for j in range(rounds):
+        e = _H(ch_seed, j.to_bytes(4, 'big'))[0] % 3
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        seeds, s2_b, gate_b, outs, coms = staged[j]
+        rounds_out.append({
+            'com_e': coms[e], 'e': e,
+            'out_e': outs[e].to_bytes(nb, 'big'),
+            'seed_p1': seeds[p1], 'seed_p2': seeds[p2],
+            'gates_p2': gate_b[p2],
+            'share2': b'' if e == 2 else s2_b,
+        })
+    return {'y': y, 'B': B, 'n': n, 'rounds': rounds_out}
+
+
+def zkbpp_verify(proof):
+    """ZKB++ verifier; True iff accepting."""
+    y, B, n = proof['y'], proof['B'], proof['n']
+    mask, nb = (1 << n) - 1, (n + 7) // 8
+    com_block, out_block = b'', b''
+
+    for j, resp in enumerate(proof['rounds']):
+        e = resp['e']
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+
+        def _open(p, seed):
+            if p == 2:
+                return int.from_bytes(resp['share2'], 'big') & mask, \
+                       _H(seed, b'tape')
+            return _zkpp_derive(seed, n)
+
+        sh1, tp1 = _open(p1, resp['seed_p1'])
+        sh2, tp2 = _open(p2, resp['seed_p2'])
+        g2 = [(resp['gates_p2'][k >> 3] >> (k & 7)) & 1 for k in range(n - 1)]
+
+        gates1, car1, car2 = [], [0] * n, [0] * n
+        c1 = c2 = 0
+        for i in range(n - 1):
+            a1, a2 = (sh1 >> i) & 1, (sh2 >> i) & 1
+            Bi = (B >> i) & 1
+            g = ((a1 & c1) ^ (a1 & c2) ^ (a2 & c1)
+                 ^ _prg_bit(tp1, i) ^ _prg_bit(tp2, i))
+            gates1.append(g)
+            c1 = (Bi * a1) ^ g ^ (Bi * c1)
+            c2 = (Bi * a2) ^ g2[i] ^ (Bi * c2)
+            car1[i + 1], car2[i + 1] = c1, c2
+
+        o1 = _zkpp_out_share(p1, sh1, car1, B, n)
+        o2 = _zkpp_out_share(p2, sh2, car2, B, n)
+        oe = int.from_bytes(resp['out_e'], 'big') & mask
+        if (oe ^ o1 ^ o2) & mask != y:
+            return False
+
+        c_p1 = _zkpp_com(j, p1, resp['seed_p1'],
+                         resp['share2'] if p1 == 2 else b'',
+                         _zkpp_pack(gates1), o1, nb)
+        c_p2 = _zkpp_com(j, p2, resp['seed_p2'],
+                         resp['share2'] if p2 == 2 else b'',
+                         resp['gates_p2'], o2, nb)
+        coms = [None] * 3
+        coms[e], coms[p1], coms[p2] = resp['com_e'], c_p1, c_p2
+        outs = [None] * 3
+        outs[e], outs[p1], outs[p2] = oe, o1, o2
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
+
+    ch_seed = _H(com_block, out_block, B.to_bytes(nb, 'big'),
+                 y.to_bytes(nb, 'big'))
+    return all(_H(ch_seed, j.to_bytes(4, 'big'))[0] % 3 == r['e']
+               for j, r in enumerate(proof['rounds']))
+
+
+def _zkbpp_round_bytes(r):
+    return (len(r['com_e']) + 1 + len(r['out_e']) + len(r['seed_p1'])
+            + len(r['seed_p2']) + len(r['gates_p2']) + len(r['share2']))
+
+
+def section3_zkbpp_empirical():
+    print(SEP2)
+    print("§3.8  ZKB++ empirical implementation (TODO #122 Batch 1)")
+    print()
+    # Completeness + soundness spot-check at toy size
+    t0 = time.time()
+    fail = 0
+    mask = (1 << _ZK_N) - 1
+    for _ in range(TRIALS):
+        A = int.from_bytes(os.urandom(1), 'big') & mask
+        B = int.from_bytes(os.urandom(1), 'big') & mask
+        if not zkbpp_verify(zkbpp_prove(A, B)):
+            fail += 1
+    print(f"  Completeness (n={_ZK_N}, R={_ZK_R}, {TRIALS} trials): "
+          f"{TRIALS - fail}/{TRIALS}  "
+          f"[{'PASS' if fail == 0 else 'FAIL'}]  ({time.time()-t0:.2f} s)")
+
+    cheat = 0
+    for _ in range(SOUND):
+        A = int.from_bytes(os.urandom(1), 'big') & mask
+        B = int.from_bytes(os.urandom(1), 'big') & mask
+        pf = zkbpp_prove((A ^ 0xFF) & mask, B)
+        pf['y'] = _f1(A, B, _ZK_N)     # claim the true y with a wrong witness
+        if zkbpp_verify(pf):
+            cheat += 1
+    print(f"  Soundness ({SOUND} cheating trials): {cheat} accepted  "
+          f"[{'PASS' if cheat <= int((1/3)**_ZK_R * SOUND * 4) + 2 else 'FAIL'}]")
+    print()
+
+    # Empirical per-round sizes; extrapolate to production R=219
+    prod_R = 219
+    print("  Empirical transcript sizes (per-round measured, R=219 extrapolated):")
+    for n in (8, 32, 256):
+        mask_n = (1 << n) - 1
+        nbytes = (n + 7) // 8
+        A = int.from_bytes(os.urandom(nbytes), 'big') & mask_n
+        B = int.from_bytes(os.urandom(nbytes), 'big') & mask_n
+        pf_pp  = zkbpp_prove(A, B, n, 2)
+        pp_pr  = sum(_zkbpp_round_bytes(r) for r in pf_pp['rounds']) / 2
+        # basic-ZKBoo per-round (bit-packed gates, same accounting as §3.7)
+        gate_b = math.ceil((n - 1) / 8)
+        boo_pr = 3 * 32 + 2 * (nbytes + 32 + gate_b)
+        print(f"    n={n:3d} (single F1, {n-1} AND gates): "
+              f"ZKBoo {boo_pr:4.0f} B/rd → ZKB++ {pp_pr:4.0f} B/rd "
+              f"({boo_pr/pp_pr:.2f}x); prod {prod_R*boo_pr/1024:6.1f} KB → "
+              f"{prod_R*pp_pr/1024:5.1f} KB")
+    print()
+    # Revolve-circuit extrapolation: gate term scales ×(n/4) steps; the
+    # fixed per-round overhead does not.
+    n = 256
+    steps  = n // 4
+    gate_b = math.ceil(steps * (n - 1) / 8)
+    boo_pr = 3 * 32 + 2 * ((n // 8) + 32 + gate_b)
+    pp_pr  = 32 + 1 + (n // 8) + 2 * _ZKPP_SEED + gate_b + (n // 8)
+    print(f"  Revolve-circuit extrapolation (n=256, r={steps}, "
+          f"{steps*(n-1)} AND gates):")
+    print(f"    ZKBoo : {prod_R*boo_pr:9,} B ({prod_R*boo_pr/1024:.0f} KB)")
+    print(f"    ZKB++ : {prod_R*pp_pr:9,} B ({prod_R*pp_pr/1024:.0f} KB)"
+          f"   reduction = {boo_pr/pp_pr:.2f}x")
+    print(f"    → confirms the §3.7 analytic estimate (~457 KB, ~2x): the")
+    print(f"      gate broadcast dominates, so ZKB++ alone cannot reach 180 KB.")
+
+
 def section3():
     print()
     print(SEP)
@@ -1009,6 +1217,7 @@ def section3():
     section3_soundness()
     section3_proofsize()
     section3_zkbpp_size()
+    section3_zkbpp_empirical()
 
 
 # =============================================================================

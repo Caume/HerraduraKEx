@@ -6644,9 +6644,25 @@ variant of NL-FSCX v1.
 3. **Design a sparse NL-FSCX v1 circuit** to reduce the AND-gate count toward the LowMC-like range: explore reducing the carry-chain to a fixed-depth approximation (trading algebraic degree for circuit size), or substituting the full adder with a 2-input gate that preserves the OWF hardness argument (Theorem 13).
 4. **Characterize the security impact** of any circuit approximation: verify that Theorem 13 (degree-saturation) still holds for the modified circuit; add analysis to `SecurityProofs-2.md` §11.8.2.
 
+**Batch plan:**
+
+- **Batch 1 — ZKB++ encoding + empirical validation (items 1–2).**  Shipped v1.9.81:
+  `zkp_nl_prove_pp`/`zkp_nl_verify_pp` in the Python suite (all four ZKB++ transcript
+  optimisations: seed-derived shares, explicit party-2 offset, single-online-party
+  bit-packed gate broadcast, hidden-commitment-only + Picnic-style challenge
+  recomputation); suite `main()` demo block; self-contained `zkbpp_prove`/`zkbpp_verify`
+  + §3.8 empirical section in `zkp_pqc_exploration.py`.  Empirical results: revolve
+  circuit (n=256, r=64) 920 KB → 464 KB (1.98×), confirming the §3.7 analytic ≈457 KB;
+  implemented single-step circuit 170.9 KB → 31.0 KB (5.5×) at n=256/R=219 (overhead-
+  dominated, byte-packed ZKBoo baseline).
+- **Batch 2 — C/Go ports + CLI wire format (future).**  `herradura.h` + Go package
+  ZKB++ functions; `sign --algo nl-zkbpp` in the three CLIs; interop test script.
+- **Batch 3 — Sparse circuit research (items 3–4, future).**  LowMC-like NL-FSCX v1
+  circuit variant + Theorem 13 degree-saturation re-analysis; targets ~180 KB.
+
 **References:** Chase et al. 2017 (ZKB++, CCS 2017); Giacomelli et al. 2016 (ZKBoo, USENIX Security 2016); Albrecht et al. 2016 (LowMC).
 
-Status: **OPEN**
+Status: **OPEN** — Batch 1 shipped v1.9.81; Batches 2–3 pending.
 
 ---
 

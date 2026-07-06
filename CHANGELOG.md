@@ -4,6 +4,36 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.81] - 2026-07-05
+
+### Feature — ZKB++ compact encoding for the NL-FSCX ZKBoo proof (TODO #122 Batch 1)
+
+- **`Herradura cryptographic suite.py`:** `zkp_nl_prove_pp` / `zkp_nl_verify_pp` — ZKB++
+  (Chase et al. 2017) transcript encoding of the ZKP-NL proof with all four optimisations:
+  (1) input shares of parties 0/1 PRG-derived from 16-byte seeds, (2) party 2's explicit
+  offset share sent only when opened, (3) single-online-party AND-gate broadcast
+  (bit-packed), (4) hidden-commitment-only transmission with Picnic-style Fiat-Shamir
+  challenge recomputation over (commitments ‖ output shares ‖ B ‖ y ‖ msg).  Helpers:
+  `_zkpp_derive`, `_zkpp_pack_bits`, `_zkpp_unpack_bits`, `_zkpp_out_share`,
+  `_zkpp_commit`, `zkp_nl_proof_size_pp`.  Suite `main()` gains a ZKP-NL-PP demo block
+  printing the measured size reduction.
+- **`SecurityProofsCode/zkp_pqc_exploration.py`:** self-contained `zkbpp_prove` /
+  `zkbpp_verify` + new §3.8 empirical section — completeness (200/200) and soundness
+  (0 cheat passes) at toy parameters, measured per-round transcript sizes at
+  n ∈ {8, 32, 256}, and revolve-circuit extrapolation.
+- **Empirical results (item 2 of TODO #122):** the n=256, r=64 revolve circuit drops
+  920 KB → 464 KB (1.98×), confirming the §3.7 analytic estimate of ≈457 KB (the circuit
+  is AND-gate-broadcast-dominated, so only the 2×→1× online-party term helps).  For the
+  implemented single-step circuit (255 AND gates, overhead-dominated) the measured
+  reduction is 170.9 KB → 31.0 KB (5.5×) at n=256, R=219.
+- **`SecurityProofs-3.md`:** §11.10.5 comparison table row updated to "Implemented
+  v1.9.81 (Python)"; §11.10.6 open direction 3 rewritten with implementation status and
+  empirical numbers (472 math spans, 0 KaTeX failures).
+- Sparse LowMC-like circuit (TODO #122 items 3–4, ~180 KB target) and C/Go/CLI ports
+  remain open as Batches 2–3.
+
+---
+
 ## [1.9.80] - 2026-07-05
 
 ### Documentation — HCRED tutorial and introduction (TODO #128 Batch 6)
