@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.84] - 2026-07-06
+
+### Research — QC-MDPC decoding trapdoor prototype, NL-FSCX PRF-seeded (TODO #126 Batch 1)
+
+- **`SecurityProofsCode/qc_mdpc_bgf_prototype.py`** — end-to-end toy-scale prototype of
+  the BIKE-style Niederreiter path for HPKE-Stern-F (work items 1–4):
+  - GF(2)[x]/(x^r−1) arithmetic (sparse/dense multiply, extended-Euclid inverse);
+  - QC-MDPC keygen (h = h1·h0^{-1}), encapsulation (s = e0 + e1·h);
+  - Black-Gray-Flip decoder (Drucker-Gueron-Kostic 2019 / BIKE v5) with a tuned
+    two-phase threshold schedule — 0/300 decoding failures at r=523, d=15, t=18
+    (0/500 across 5 keys during tuning); decap ≈9 ms vs brute-force ≈2^124;
+  - NL-FSCX v1 counter-mode XOF (HFSCX-256-DM path) for seed expansion, with
+    chi-square uniformity verification of the derived sparse supports (PASS);
+  - production parameter discussion (BIKE-128/192/256 carry over unchanged).
+- **`SecurityProofs-2.md §11.8.5`** — added "QC-MDPC trapdoor prototype" paragraph with
+  the empirical results and remaining production gaps (constant-time C port, weak-key
+  rejection, CLI integration).
+- **`TODO.md` #126** — work items 1–4 prototyped; item 5 (CLI `dec --algo hpke-stern`
+  decoder integration, requires the C port) remains open.
+
+---
+
 ## [1.9.83] - 2026-07-05
 
 ### Research — Sparse NL-FSCX v1 circuit analysis (TODO #122 Batch 3)
