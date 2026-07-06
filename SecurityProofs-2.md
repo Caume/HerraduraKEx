@@ -596,7 +596,7 @@ where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \
 
 *Hash chain.* $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8),\, x)$ at $n = 256$, identical to Theorem 16.
 
-*Keygen.* Leaf seed $\text{sk}_{i,j} = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx}_{32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}_{i,j} = h^{w-1}(\text{sk}_{i,j})$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}_{i,0} \mathbin\| \cdots \mathbin\| \text{pk}_{i,\ell-1})$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
+*Keygen.* Leaf seed $\text{sk}(i,j) = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx-32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}(i,j) = h^{w-1}(\text{sk}(i,j))$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}(i,0) \mathbin\| \cdots \mathbin\| \text{pk}(i,\ell-1))$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
 
 *Sign.* Encode $\text{HFSCX-256}(\text{msg})$ as 64 base-16 digits; append 3-digit checksum. Release $\sigma_j = h^{w-1-d_j}(\text{sk}_j)$ per chain. Include Merkle authentication path for the leaf.
 
@@ -746,6 +746,8 @@ for $q_H$ quantum hash queries.
 - **Decapsulate.**  Recover $\mathbf{e}'$ from $\mathbf{c} = H(\mathbf{e}')^\top$ using the private key $\mathbf{e}$ as a syndrome-decoding trapdoor.  Recompute $K = \mathcal{H}(\mathbf{e}')$.
 
 For efficient decapsulation, $\mathbf{e}$ must embed a structured decoding trapdoor.  A direct application: derive the seed for a quasi-cyclic moderate-density parity-check (QC-MDPC) code (the BIKE design [Aragon et al. 2022]) via the NL-FSCX v1 PRF instead of a standard hash.  The security argument is unchanged; hardness remains quasi-cyclic syndrome decoding.
+
+**QC-MDPC trapdoor prototype (TODO #126, v1.9.84).**  `SecurityProofsCode/qc_mdpc_bgf_prototype.py` implements this path end-to-end at toy scale: private sparse polynomials of odd weight $d$ over $\mathbb{GF}(2)\lbrack x\rbrack/(x^r - 1)$ with supports $h_0, h_1$; public key $h = h_1 \cdot h_0^{-1}$; syndrome $s = e_0 + e_1 \cdot h$; and a Black-Gray-Flip (BGF) decoder [Drucker-Gueron-Kostic 2019, adopted in BIKE v5].  The seed-expansion XOF is the HFSCX-256-DM counter-mode PRF — block $i$ is $F_1^{n/4}(\mathrm{ROL}(\text{seed} \oplus i, n/8), \text{seed} \oplus i)$ at $n = 256$ — with 16-bit rejection sampling to uniform indices.  Empirical results at $r = 523$, $d = 15$ ($w = 30$), $t = 18$: support-distribution chi-square consistent with uniform over 400 keygens; decoding failure rate 0/300 (0/500 across 5 keys during threshold tuning) with a two-phase threshold schedule; decapsulation ≈ 9 ms in Python versus a brute-force search of $\binom{1046}{18} \approx 2^{124}$ candidates.  The PRF substitution leaves the QCSD instance unchanged, so BIKE's production parameters carry over directly ($r = 12323$, $w = 142$, $t = 134$ for 128-bit security with extrapolated DFR $\leq 2^{-128}$).  Remaining for production: a constant-time C port of the rotation/popcount kernels, BIKE's weak-key rejection tests, and CLI integration.
 
 **Quantum analysis for Option B.**
 

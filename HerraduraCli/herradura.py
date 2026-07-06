@@ -72,6 +72,9 @@ from primitives import (
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
+    qcmdpc_keygen, qcmdpc_encap, qcmdpc_decap_bgf, qcmdpc_bgf_decode,
+    _QCMDPC_R, _QCMDPC_D, _QCMDPC_T,
+    _qcp_inv, _qcp_mul,
     rnl_sigma_sign, rnl_sigma_verify,
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
     zkp_nl_prove_pp, zkp_nl_verify_pp,
@@ -105,7 +108,8 @@ _PRIV_ALGOS = {
     'hpke':        'HERRADURA HPKE PRIVATE KEY',
     'hpke-nl':     'HERRADURA HPKE-NL PRIVATE KEY',
     'hpks-stern':  'HERRADURA HPKS-STERN PRIVATE KEY',
-    'hpke-stern':  'HERRADURA HPKE-STERN PRIVATE KEY',
+    'hpke-stern':     'HERRADURA HPKE-STERN PRIVATE KEY',
+    'hpke-stern-kem': 'HERRADURA HPKE-STERN-KEM PRIVATE KEY',
     'hpks-zkp-nl': 'HERRADURA ZKP-NL PRIVATE KEY',
     'oprf':        'HERRADURA OPRF PRIVATE KEY',
     'hpks-xmss':   'HERRADURA HPKS-XMSS PRIVATE KEY',
@@ -714,6 +718,84 @@ def _decode_stern_ct(path):
     return ct_syn, e_p, K_int, E_int, n
 
 
+_LABEL_KEM_PRIV = 'HERRADURA HPKE-STERN-KEM PRIVATE KEY'
+_LABEL_KEM_PUB  = 'HERRADURA HPKE-STERN-KEM PUBLIC KEY'
+_QCMDPC_RBYTES  = (_QCMDPC_R + 7) // 8  # 66
+
+
+def _encode_kem_privkey(sup0, sup1, h0, h1):
+    """HPKE-Stern-KEM private key: SEQUENCE(h0, h1, sup0_bytes, sup1_bytes, r, d)."""
+    rb = _QCMDPC_RBYTES
+    d  = _QCMDPC_D
+    h0b = h0.to_bytes(rb, 'little')
+    h1b = h1.to_bytes(rb, 'little')
+    s0b = b''.join(int(p).to_bytes(2, 'big') for p in sorted(sup0))
+    s1b = b''.join(int(p).to_bytes(2, 'big') for p in sorted(sup1))
+    der = der_seq(der_int(int.from_bytes(h0b, 'big'), rb),
+                  der_int(int.from_bytes(h1b, 'big'), rb),
+                  der_int(int.from_bytes(s0b, 'big'), d * 2),
+                  der_int(int.from_bytes(s1b, 'big'), d * 2),
+                  der_int(_QCMDPC_R),
+                  der_int(d))
+    return pem_wrap(_LABEL_KEM_PRIV, der)
+
+
+def _decode_kem_privkey(path):
+    """Returns (sup0 set, sup1 set, h0 int, h1 int)."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_KEM_PRIV:
+        raise ValueError(f"Expected HPKE-Stern-KEM private key, got {label!r}")
+    h0_int, h1_int, s0_int, s1_int, r, d = ints
+    rb = (r + 7) // 8
+    h0 = int.from_bytes(h0_int.to_bytes(rb, 'big'), 'little')
+    h1 = int.from_bytes(h1_int.to_bytes(rb, 'big'), 'little')
+    s0b = s0_int.to_bytes(d * 2, 'big')
+    s1b = s1_int.to_bytes(d * 2, 'big')
+    sup0 = {int.from_bytes(s0b[k*2:k*2+2], 'big') for k in range(d)}
+    sup1 = {int.from_bytes(s1b[k*2:k*2+2], 'big') for k in range(d)}
+    return sup0, sup1, h0, h1
+
+
+def _encode_kem_pubkey(h_pub):
+    """HPKE-Stern-KEM public key: SEQUENCE(h_pub, r)."""
+    rb = _QCMDPC_RBYTES
+    hpb = int.from_bytes(h_pub.to_bytes(rb, 'little'), 'big')
+    der = der_seq(der_int(hpb, rb), der_int(_QCMDPC_R))
+    return pem_wrap(_LABEL_KEM_PUB, der)
+
+
+def _decode_kem_pubkey(path):
+    """Returns (h_pub int, r int)."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_KEM_PUB:
+        raise ValueError(f"Expected HPKE-Stern-KEM public key, got {label!r}")
+    hpb_int, r = ints
+    rb = (r + 7) // 8
+    h_pub = int.from_bytes(hpb_int.to_bytes(rb, 'big'), 'little')
+    return h_pub, r
+
+
+def _encode_kem_ct(syn, E_int):
+    """HPKE-Stern-KEM ciphertext: SEQUENCE(syn, E, r).  No e' — BGF decodes."""
+    rb = _QCMDPC_RBYTES
+    syn_int = int.from_bytes(syn.to_bytes(rb, 'little'), 'big')
+    der = der_seq(der_int(syn_int, rb),
+                  der_int(E_int, KEYBITS // 8),
+                  der_int(_QCMDPC_R))
+    return pem_wrap(_LABEL_CT, der)
+
+
+def _decode_kem_ct(path):
+    """Returns (syn int, E_int int, r int)."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_CT:
+        raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
+    syn_int, E_int, r = ints
+    rb = (r + 7) // 8
+    syn = int.from_bytes(syn_int.to_bytes(rb, 'big'), 'little')
+    return syn, E_int, r
+
+
 # ---------------------------------------------------------------------------
 # Signature serialization (HPKS / HPKS-NL — Schnorr)
 # ---------------------------------------------------------------------------
@@ -981,6 +1063,10 @@ def cmd_genpkey(args):
         syndr  = hcred_syndrome(seed_H, e_int, n)
         pem_out = encode_hcred_privkey(s, C, m_blind, seed_H.uint, syndr, n)
 
+    elif algo == 'hpke-stern-kem':
+        sup0, sup1, h0, h1, h_pub = qcmdpc_keygen()
+        pem_out = _encode_kem_privkey(sup0, sup1, h0, h1)
+
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
@@ -1021,6 +1107,11 @@ def cmd_pkey(args):
         elif algo == 'hcred':
             s, C, m, seed_H_int, syndr, n = ints
             pem_out = encode_hcred_pubkey(C, m, seed_H_int, syndr, n)
+        elif algo == 'hpke-stern-kem':
+            sup0, sup1, h0, h1 = _decode_kem_privkey(in_path)
+            h0_inv = _qcp_inv(h0, _QCMDPC_R)
+            h_pub  = _qcp_mul(h1, h0_inv, _QCMDPC_R)
+            pem_out = _encode_kem_pubkey(h_pub)
         else:
             sys.exit(f"Unknown algorithm: {algo!r}")
         _write_file(args.out or '-', pem_out)
@@ -1233,6 +1324,15 @@ def cmd_enc(args):
         E       = fscx_revolve(P, K, n // 4)
         _write_file(out_path, _encode_stern_ct(ct_syn, e_p, K.uint, E.uint, n))
 
+    elif algo == 'hpke-stern-kem':
+        h_pub, r = _decode_kem_pubkey(pubkey_path)
+        nbytes = KEYBITS // 8
+        P = BitArray(KEYBITS, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
+        syn, K_int = qcmdpc_encap(h_pub)
+        K = BitArray(KEYBITS, K_int)
+        E = fscx_revolve(P, K, I_VALUE)
+        _write_file(out_path, _encode_kem_ct(syn, E.uint))
+
     else:
         sys.exit(f"enc: unsupported algorithm {algo!r}")
 
@@ -1338,6 +1438,18 @@ def cmd_dec(args):
         E       = BitArray(n, E_int)
         D       = fscx_revolve(E, K_dec, 3 * n // 4)
         _write_file(out_path, D.uint.to_bytes(n // 8, 'big'))
+
+    elif algo == 'hpke-stern-kem':
+        key_path = args.key
+        sup0, sup1, h0, h1 = _decode_kem_privkey(key_path)
+        syn, E_int, r = _decode_kem_ct(getattr(args, 'in'))
+        K_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
+        if K_int is None:
+            sys.exit("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)")
+        K = BitArray(KEYBITS, K_int)
+        E = BitArray(KEYBITS, E_int)
+        D = fscx_revolve(E, K, R_VALUE)
+        _write_file(out_path, D.uint.to_bytes(KEYBITS // 8, 'big'))
 
     else:
         sys.exit(f"dec: unsupported algorithm {algo!r}")
@@ -2262,7 +2374,7 @@ def build_parser():
     en = sub.add_parser('enc', help='Encrypt')
     en.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
-                             'hpke', 'hpke-nl', 'hpke-stern'])
+                             'hpke', 'hpke-nl', 'hpke-stern', 'hpke-stern-kem'])
     en.add_argument('--key',    default=None)
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
@@ -2276,7 +2388,7 @@ def build_parser():
     de = sub.add_parser('dec', help='Decrypt')
     de.add_argument('--algo', required=True,
                     choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
-                             'hpke', 'hpke-nl', 'hpke-stern'])
+                             'hpke', 'hpke-nl', 'hpke-stern', 'hpke-stern-kem'])
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)

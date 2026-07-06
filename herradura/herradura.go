@@ -3858,3 +3858,332 @@ func HcredCredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
 	msg := HcredBindMsg(mPoly, cPoly, seedH, y, n, issuerSeed.size)
 	return HpksSternFVerify(msg, credSig, issuerSeed, issuerSyn)
 }
+
+// ---------------------------------------------------------------------------
+// QC-MDPC Niederreiter KEM (HPKE-Stern-KEM) — BGF decoder
+// Parameters r=523, d=15, t=18.  Polynomials are big.Int coefficient vectors
+// in GF(2)[x]/(x^r - 1); supports are ascending index slices in [0, r).
+// ---------------------------------------------------------------------------
+
+const (
+	QcMdpcR      = 523
+	QcMdpcD      = 15
+	QcMdpcT      = 18
+	QcMdpcNbIter = 20
+	QcMdpcRBytes = (QcMdpcR + 7) / 8 // 66
+)
+
+// qcMdpcPrf is an NL-FSCX-based deterministic bit generator.
+type qcMdpcPrf struct {
+	seed *big.Int // 256-bit
+	ctr  uint64
+	buf  []int
+}
+
+func newQcMdpcPrf(seed *big.Int) *qcMdpcPrf {
+	m := bitArrayMask(256)
+	return &qcMdpcPrf{seed: new(big.Int).And(seed, m)}
+}
+
+func (p *qcMdpcPrf) word16() int {
+	if len(p.buf) == 0 {
+		x := NewBitArray(256, new(big.Int).Xor(p.seed, new(big.Int).SetUint64(p.ctr)))
+		rolx := x.RotateLeft(256 / 8)              // 32
+		block := NlFscxRevolveV1(rolx, x, 256/4)   // 64
+		bval := &block.Val
+		words := make([]int, 16)
+		for k := 0; k < 16; k++ {
+			w := new(big.Int).Rsh(bval, uint(16*k))
+			words[k] = int(new(big.Int).And(w, big.NewInt(0xFFFF)).Int64())
+		}
+		p.buf = words
+		p.ctr++
+	}
+	// pop last (matches Python list.pop())
+	i := len(p.buf) - 1
+	v := p.buf[i]
+	p.buf = p.buf[:i]
+	return v
+}
+
+func (p *qcMdpcPrf) uniformIdx(r int) int {
+	lim := (0x10000 / r) * r
+	for {
+		w := p.word16()
+		if w < lim {
+			return w % r
+		}
+	}
+}
+
+func (p *qcMdpcPrf) sparseSupport(r, d int, exclude map[int]bool) []int {
+	seen := make(map[int]bool)
+	sup := make([]int, 0, d)
+	for len(sup) < d {
+		i := p.uniformIdx(r)
+		if seen[i] || (exclude != nil && exclude[i]) {
+			continue
+		}
+		seen[i] = true
+		sup = append(sup, i)
+	}
+	return sup
+}
+
+// qcpRotate returns dense * x^j mod (x^r - 1).
+func qcpRotate(dense *big.Int, j, r int) *big.Int {
+	mask := bitArrayMask(r)
+	left := new(big.Int).Lsh(dense, uint(j))
+	res := new(big.Int).And(left, mask)
+	if j > 0 {
+		right := new(big.Int).Rsh(dense, uint(r-j))
+		res.Xor(res, new(big.Int).And(right, mask))
+	}
+	return res
+}
+
+// qcpMulSparse returns dense * (sum_{j in sup} x^j) mod (x^r - 1).
+func qcpMulSparse(dense *big.Int, sup []int, r int) *big.Int {
+	acc := new(big.Int)
+	for _, j := range sup {
+		acc.Xor(acc, qcpRotate(dense, j, r))
+	}
+	return acc
+}
+
+// QcMdpcMul returns a * b mod (x^r - 1).
+func QcMdpcMul(a, b *big.Int) *big.Int {
+	r := QcMdpcR
+	acc := new(big.Int)
+	bb := new(big.Int).Set(b)
+	for bb.Sign() != 0 {
+		j := lowestSetBit(bb)
+		bb.SetBit(bb, j, 0)
+		acc.Xor(acc, qcpRotate(a, j, r))
+	}
+	return acc
+}
+
+func lowestSetBit(x *big.Int) int {
+	for i := 0; ; i++ {
+		if x.Bit(i) == 1 {
+			return i
+		}
+	}
+}
+
+// QcMdpcInv returns h^{-1} mod (x^r - 1) via extended Euclid in GF(2)[x].
+func QcMdpcInv(h *big.Int) (*big.Int, bool) {
+	r := QcMdpcR
+	mod := new(big.Int).SetBit(big.NewInt(1), r, 1) // x^r + 1
+	a := new(big.Int).Set(mod)
+	b := new(big.Int).Set(h)
+	u0 := big.NewInt(0)
+	u1 := big.NewInt(1)
+	for b.Sign() != 0 {
+		da := a.BitLen() - 1
+		db := b.BitLen() - 1
+		if da < db {
+			a, b = b, a
+			u0, u1 = u1, u0
+			da, db = db, da
+		}
+		sh := da - db
+		a.Xor(a, new(big.Int).Lsh(b, uint(sh)))
+		u0.Xor(u0, new(big.Int).Lsh(u1, uint(sh)))
+	}
+	if a.Cmp(big.NewInt(1)) != 0 {
+		return nil, false
+	}
+	// reduce u0 mod (x^r - 1)
+	for i := u0.BitLen() - 1; i >= r; i-- {
+		if u0.Bit(i) == 1 {
+			u0.SetBit(u0, i, 0)
+			u0.SetBit(u0, i-r, u0.Bit(i-r)^1)
+		}
+	}
+	return u0, true
+}
+
+// QcMdpcKeygen generates a QC-MDPC key pair.  seed==nil uses OS randomness.
+func QcMdpcKeygen(seed []byte) (sup0, sup1 []int, h0, h1, hPub *big.Int) {
+	r, d := QcMdpcR, QcMdpcD
+	var seedInt *big.Int
+	if seed == nil {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("QcMdpcKeygen: %s", err)
+		}
+		seedInt = new(big.Int).SetBytes(buf)
+	} else {
+		seedInt = new(big.Int).SetBytes(seed)
+	}
+	prf := newQcMdpcPrf(seedInt)
+	for {
+		sup0 = prf.sparseSupport(r, d, nil)
+		sup1 = prf.sparseSupport(r, d, nil)
+		h0 = supportToPoly(sup0)
+		h1 = supportToPoly(sup1)
+		inv, ok := QcMdpcInv(h0)
+		if !ok {
+			continue
+		}
+		hPub = QcMdpcMul(h1, inv)
+		return sup0, sup1, h0, h1, hPub
+	}
+}
+
+func supportToPoly(sup []int) *big.Int {
+	p := new(big.Int)
+	for _, j := range sup {
+		p.SetBit(p, j, 1)
+	}
+	return p
+}
+
+// QcMdpcEncap samples a weight-t error and returns (syndrome, K).
+func QcMdpcEncap(hPub *big.Int, seed []byte) (syn *big.Int, K []byte) {
+	r, t := QcMdpcR, QcMdpcT
+	var seedInt *big.Int
+	if seed == nil {
+		buf := make([]byte, 32)
+		if _, err := rand.Read(buf); err != nil {
+			log.Fatalf("QcMdpcEncap: %s", err)
+		}
+		seedInt = new(big.Int).SetBytes(buf)
+	} else {
+		seedInt = new(big.Int).SetBytes(seed)
+	}
+	prf := newQcMdpcPrf(seedInt)
+	supE := prf.sparseSupport(2*r, t, nil)
+	e0 := new(big.Int)
+	e1 := new(big.Int)
+	for _, j := range supE {
+		if j < r {
+			e0.SetBit(e0, j, 1)
+		} else {
+			e1.SetBit(e1, j-r, 1)
+		}
+	}
+	syn = new(big.Int).Xor(e0, QcMdpcMul(e1, hPub))
+	K = qcMdpcKfromE(e0, e1)
+	return syn, K
+}
+
+func qcMdpcKfromE(e0, e1 *big.Int) []byte {
+	rb := QcMdpcRBytes
+	ebuf := make([]byte, 2*rb)
+	putLE(ebuf[:rb], e0)
+	putLE(ebuf[rb:], e1)
+	return Hfscx256(ebuf, nil)
+}
+
+// putLE writes v as little-endian into buf (len(buf) bytes).
+func putLE(buf []byte, v *big.Int) {
+	be := v.Bytes()
+	for i := 0; i < len(be); i++ {
+		buf[i] = be[len(be)-1-i]
+	}
+}
+
+// QcMdpcBgfDecode runs the Black-Gray-Flip decoder.  Returns (e0, e1, ok).
+func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, bool) {
+	r, d, nbIter := QcMdpcR, QcMdpcD, QcMdpcNbIter
+	s := qcpMulSparse(synPub, sup0, r)
+	e0 := new(big.Int)
+	e1 := new(big.Int)
+	thFloor := (d+1)/2 + 2
+
+	computeUpc := func(sup []int) []int {
+		upc := make([]int, r)
+		for j := 0; j < r; j++ {
+			cnt := 0
+			for _, k := range sup {
+				if s.Bit((j+k)%r) == 1 {
+					cnt++
+				}
+			}
+			upc[j] = cnt
+		}
+		return upc
+	}
+	flipCol := func(j int, sup []int) {
+		for _, k := range sup {
+			pos := (j + k) % r
+			s.SetBit(s, pos, s.Bit(pos)^1)
+		}
+	}
+
+	for it := 0; it < nbIter; it++ {
+		if s.Sign() == 0 {
+			break
+		}
+		var th int
+		if it < 7 {
+			th = int(math.Ceil(0.66 * float64(d)))
+			if thFloor > th {
+				th = thFloor
+			}
+		} else {
+			th = thFloor - 1
+			if th < 8 {
+				th = 8
+			}
+		}
+		upc0 := computeUpc(sup0)
+		upc1 := computeUpc(sup1)
+		var black0, black1, gray0, gray1 []int
+		for j := 0; j < r; j++ {
+			if upc0[j] >= th {
+				black0 = append(black0, j)
+			} else if upc0[j] >= th-2 {
+				gray0 = append(gray0, j)
+			}
+			if upc1[j] >= th {
+				black1 = append(black1, j)
+			} else if upc1[j] >= th-2 {
+				gray1 = append(gray1, j)
+			}
+		}
+		for _, j := range black0 {
+			e0.SetBit(e0, j, e0.Bit(j)^1)
+			flipCol(j, sup0)
+		}
+		for _, j := range black1 {
+			e1.SetBit(e1, j, e1.Bit(j)^1)
+			flipCol(j, sup1)
+		}
+		if it == 0 {
+			groups := [][2][]int{{black0, black1}, {gray0, gray1}}
+			for _, g := range groups {
+				u0 := computeUpc(sup0)
+				u1 := computeUpc(sup1)
+				for _, j := range g[0] {
+					if u0[j] >= thFloor {
+						e0.SetBit(e0, j, e0.Bit(j)^1)
+						flipCol(j, sup0)
+					}
+				}
+				for _, j := range g[1] {
+					if u1[j] >= thFloor {
+						e1.SetBit(e1, j, e1.Bit(j)^1)
+						flipCol(j, sup1)
+					}
+				}
+			}
+		}
+	}
+	if s.Sign() != 0 {
+		return nil, nil, false
+	}
+	return e0, e1, true
+}
+
+// QcMdpcDecapBgf decapsulates using the BGF decoder.  Returns (K, ok).
+func QcMdpcDecapBgf(syn *big.Int, sup0, sup1 []int) ([]byte, bool) {
+	e0, e1, ok := QcMdpcBgfDecode(syn, sup0, sup1)
+	if !ok {
+		return nil, false
+	}
+	return qcMdpcKfromE(e0, e1), true
+}

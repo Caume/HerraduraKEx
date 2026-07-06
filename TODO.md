@@ -6901,10 +6901,20 @@ error weight t. At the demo parameters (N=256, t=16) this takes ~seconds; at pro
 5. **Extend CLI `dec --algo hpke-stern`** to call the QC-MDPC decoder when available; document
    the demo-only limitation prominently until production decoder is present.
 
-**References:** BIKE specification v5.2 (Aragon et al. 2022); Tillich-Zemor BGF decoder (2018);
+**Batch 1 — prototype + PRF seeding + parameters (v1.9.84).**  `SecurityProofsCode/qc_mdpc_bgf_prototype.py`
+covers work items 1–4: (1) decoder survey implemented as BGF (Drucker-Gueron-Kostic 2019, BIKE v5's
+decoder) with GJS reaction-attack and weak-key notes; (2) NL-FSCX v1 counter-mode XOF
+(HFSCX-256-DM path) replaces SHA-3 for seed expansion — chi-square uniformity of derived sparse
+supports PASSES (z within noise over 400 keygens), so the QCSD hardness assumption is unaffected;
+(3) BGF prototype at r=523, d=15, t=18 decodes with 0/300 failures (0/500 across 5 keys during
+threshold tuning), decap ≈9 ms vs brute-force C(1046,18) ≈ 2^124; (4) production parameters are
+BIKE's unchanged (r=12323, w=142, t=134 for 128-bit, DFR ≤ 2^-128).  SecurityProofs-2.md §11.8.5
+updated with the prototype paragraph.
+
+**References:** BIKE specification v5.2 (Aragon et al. 2022); Drucker-Gueron-Kostic BGF decoder (2019);
 SecurityProofs-2.md §11.8.5 (Option C roadmap).
 
-Status: **OPEN**
+Status: **DONE v1.9.86** — Batch 1 (items 1–4) shipped v1.9.84; Batch 2 (C+Python CLIs) shipped v1.9.85; Batch 3 (Go CLI + 9-way interop test) shipped v1.9.86. Production gaps (constant-time C, weak-key rejection) documented in SecurityProofs-2.md §11.8.5.
 
 ---
 

@@ -55,6 +55,9 @@ const (
 	lblHpksSternPub = "HERRADURA HPKS-STERN PUBLIC KEY"
 	lblHpkeSternPub = "HERRADURA HPKE-STERN PUBLIC KEY"
 
+	lblKemPriv = "HERRADURA HPKE-STERN-KEM PRIVATE KEY"
+	lblKemPub  = "HERRADURA HPKE-STERN-KEM PUBLIC KEY"
+
 	lblHpksWotsPriv = "HERRADURA HPKS-WOTS PRIVATE KEY"
 	lblHpksWotsPub  = "HERRADURA HPKS-WOTS PUBLIC KEY"
 	lblHpksWotsSig  = "HERRADURA HPKS-WOTS SIGNATURE"
@@ -94,6 +97,7 @@ var privToAlgo = map[string]string{
 	lblHpkeNLPriv:    "hpke-nl",
 	lblHpksSternPriv: "hpks-stern",
 	lblHpkeSternPriv: "hpke-stern",
+	lblKemPriv:       "hpke-stern-kem",
 	lblHpksWotsPriv:  "hpks-wots",
 }
 
@@ -666,6 +670,10 @@ func cmdGenpkey(args []string) {
 		seed, e, _ := SternFKeygen(n)
 		pem, err = encodeSternPriv(e, seed, n, *algo)
 
+	case *algo == "hpke-stern-kem":
+		sup0, sup1, h0, h1, _ := QcMdpcKeygen(nil)
+		pem, err = encodeKemPriv(sup0, sup1, h0, h1)
+
 	case *algo == "hpks-zkp-nl":
 		A, B, y, kerr := ZkpNlKeygen(ZkpNlDefaultN)
 		if kerr != nil {
@@ -823,6 +831,15 @@ func cmdPkey(args []string) {
 			}
 			_, pk := HpksWotsKeygen(seed, leafIdx)
 			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
+
+		case algo == "hpke-stern-kem":
+			_, _, h0, h1 := decodeKemPriv(ints)
+			inv, ok := QcMdpcInv(h0)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "pkey: h0 not invertible")
+				os.Exit(1)
+			}
+			pem, err = encodeKemPub(QcMdpcMul(h1, inv))
 		}
 
 		if err != nil {
@@ -1372,6 +1389,131 @@ func encodeSchnorrSig(s, R, e *big.Int, n int) (string, error) {
 	return PemWrap(lblSig, seq), nil
 }
 
+// ── HPKE-Stern-KEM (QC-MDPC Niederreiter) DER helpers ────────────────────────
+
+func reverseBytes(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i := range b {
+		out[i] = b[len(b)-1-i]
+	}
+	return out
+}
+
+// polyToDerInt returns the DER-INTEGER value for a little-endian poly: the
+// poly's width-byte little-endian representation reinterpreted as big-endian.
+func polyToDerInt(poly *big.Int, width int) *big.Int {
+	be := make([]byte, width)
+	poly.FillBytes(be) // big-endian
+	return new(big.Int).SetBytes(reverseBytes(be))
+}
+
+// polyFromDerInt inverts polyToDerInt.
+func polyFromDerInt(v *big.Int, width int) *big.Int {
+	le := make([]byte, width)
+	v.FillBytes(le) // this is the little-endian byte view of the poly
+	return new(big.Int).SetBytes(reverseBytes(le))
+}
+
+func supToDerInt(sup []int, d int) *big.Int {
+	s := append([]int(nil), sup...)
+	// insertion sort ascending (d is tiny)
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
+	}
+	buf := make([]byte, d*2)
+	for i, p := range s {
+		buf[i*2] = byte(p >> 8)
+		buf[i*2+1] = byte(p)
+	}
+	return new(big.Int).SetBytes(buf)
+}
+
+func supFromDerInt(v *big.Int, d int) []int {
+	buf := make([]byte, d*2)
+	v.FillBytes(buf)
+	sup := make([]int, d)
+	for i := 0; i < d; i++ {
+		sup[i] = int(buf[i*2])<<8 | int(buf[i*2+1])
+	}
+	return sup
+}
+
+func encodeKemPriv(sup0, sup1 []int, h0, h1 *big.Int) (string, error) {
+	rb, d := QcMdpcRBytes, QcMdpcD
+	h0d, e1 := derIntBig(polyToDerInt(h0, rb), rb)
+	h1d, e2 := derIntBig(polyToDerInt(h1, rb), rb)
+	s0d, e3 := derIntBig(supToDerInt(sup0, d), d*2)
+	s1d, e4 := derIntBig(supToDerInt(sup1, d), d*2)
+	rd, e5 := derIntSmall(QcMdpcR)
+	dd, e6 := derIntSmall(d)
+	for _, e := range []error{e1, e2, e3, e4, e5, e6} {
+		if e != nil {
+			return "", e
+		}
+	}
+	seq, err := DerSeqEnc(h0d, h1d, s0d, s1d, rd, dd)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblKemPriv, seq), nil
+}
+
+func decodeKemPriv(ints [][]byte) (sup0, sup1 []int, h0, h1 *big.Int) {
+	rb := QcMdpcRBytes
+	d := bytesToInt(ints[5])
+	h0 = polyFromDerInt(new(big.Int).SetBytes(ints[0]), rb)
+	h1 = polyFromDerInt(new(big.Int).SetBytes(ints[1]), rb)
+	sup0 = supFromDerInt(new(big.Int).SetBytes(ints[2]), d)
+	sup1 = supFromDerInt(new(big.Int).SetBytes(ints[3]), d)
+	return sup0, sup1, h0, h1
+}
+
+func encodeKemPub(hPub *big.Int) (string, error) {
+	rb := QcMdpcRBytes
+	hd, e1 := derIntBig(polyToDerInt(hPub, rb), rb)
+	rd, e2 := derIntSmall(QcMdpcR)
+	if e1 != nil {
+		return "", e1
+	}
+	if e2 != nil {
+		return "", e2
+	}
+	seq, err := DerSeqEnc(hd, rd)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblKemPub, seq), nil
+}
+
+func decodeKemPub(ints [][]byte) *big.Int {
+	return polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
+}
+
+func encodeKemCT(syn *big.Int, E *big.Int) (string, error) {
+	rb := QcMdpcRBytes
+	sd, e1 := derIntBig(polyToDerInt(syn, rb), rb)
+	ed, e2 := derIntBig(E, 32)
+	rd, e3 := derIntSmall(QcMdpcR)
+	for _, e := range []error{e1, e2, e3} {
+		if e != nil {
+			return "", e
+		}
+	}
+	seq, err := DerSeqEnc(sd, ed, rd)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblCT, seq), nil
+}
+
+func decodeKemCT(ints [][]byte) (syn, E *big.Int) {
+	syn = polyFromDerInt(new(big.Int).SetBytes(ints[0]), QcMdpcRBytes)
+	E = new(big.Int).SetBytes(ints[1])
+	return syn, E
+}
+
 // packSternSig serialises a *SternSig to the HERRADURA SIGNATURE PEM format,
 // matching Python's _pack_stern_sig and C's pack_stern_sig exactly.
 func packSternSig(sig *SternSig, n int) (string, error) {
@@ -1885,6 +2027,28 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 
+	case "hpke-stern-kem":
+		if *pubkey == "" {
+			fmt.Fprintln(os.Stderr, "enc: --pubkey required for hpke-stern-kem")
+			os.Exit(1)
+		}
+		_, theirInts, err := readPEMInts(*pubkey)
+		if err != nil {
+			die("enc", err)
+		}
+		hPub := decodeKemPub(theirInts)
+		P := NewBitArray(256, new(big.Int).SetBytes(msgPad(inBytes, 32)))
+		syn, K := QcMdpcEncap(hPub, nil)
+		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
+		E := FscxRevolve(P, Kba, 64)
+		pem, err := encodeKemCT(syn, &E.Val)
+		if err != nil {
+			die("enc", err)
+		}
+		if err := writeString(*out, pem); err != nil {
+			die("enc", err)
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "enc: unsupported algorithm %q\n", *algo)
 		os.Exit(1)
@@ -2074,6 +2238,33 @@ func cmdDec(args []string) {
 		K_dec   := HpkeSternFDecapKnown(ePrime, seed)
 		E       := NewBitArray(n, EInt)
 		D       := FscxRevolve(E, K_dec, 3*n/4)
+		if err := writeBytes(*out, D.Bytes()); err != nil {
+			die("dec", err)
+		}
+
+	case "hpke-stern-kem":
+		if *key == "" {
+			fmt.Fprintln(os.Stderr, "dec: --key required for hpke-stern-kem")
+			os.Exit(1)
+		}
+		_, ourInts, err := readPEMInts(*key)
+		if err != nil {
+			die("dec", err)
+		}
+		_, ctInts, err := readPEMInts(*in)
+		if err != nil {
+			die("dec", err)
+		}
+		sup0, sup1, _, _ := decodeKemPriv(ourInts)
+		syn, EInt := decodeKemCT(ctInts)
+		K, ok := QcMdpcDecapBgf(syn, sup0, sup1)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)")
+			os.Exit(1)
+		}
+		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
+		E := NewBitArray(256, EInt)
+		D := FscxRevolve(E, Kba, 192)
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
