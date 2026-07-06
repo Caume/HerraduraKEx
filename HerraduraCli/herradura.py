@@ -50,6 +50,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
                    encode_zkp_nl_privkey, decode_zkp_nl_privkey,
                    encode_zkp_nl_pubkey, decode_zkp_nl_pubkey,
                    encode_zkp_nl_proof, decode_zkp_nl_proof,
+                   encode_zkp_nl_pp_proof, decode_zkp_nl_pp_proof,
                    encode_hpkst_commit, decode_hpkst_commit,
                    encode_hpkst_nonce, decode_hpkst_nonce,
                    encode_hpkst_aggregate, decode_hpkst_aggregate,
@@ -73,6 +74,7 @@ from primitives import (
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
     rnl_sigma_sign, rnl_sigma_verify,
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
+    zkp_nl_prove_pp, zkp_nl_verify_pp,
     KEYBITS, GF_POLY, GF_GEN, ORD,
     RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, SDFT, SDFNR, SDFR,
@@ -122,6 +124,7 @@ _LABEL_CT          = 'HERRADURA CIPHERTEXT'
 _LABEL_DIGEST      = 'HERRADURA DIGEST'
 _LABEL_ZKP_RNL     = 'HERRADURA ZKP-RNL PROOF'
 _LABEL_ZKP_NL      = 'HERRADURA ZKP-NL PROOF'
+_LABEL_ZKP_NL_PP   = 'HERRADURA ZKP-NL-PP SIGNATURE'
 _LABEL_OPRF_STATE  = 'HERRADURA OPRF CLIENT STATE'   # (r, alpha, nbits) — client keeps this
 _LABEL_OPRF_EVAL   = 'HERRADURA OPRF EVALUATION'     # (beta, nbits) — server response
 _LABEL_PAKE_RECORD = 'HERRADURA PAKE RECORD'         # (salt, B, y) — server-side aPAKE record
@@ -1418,6 +1421,18 @@ def cmd_sign(args):
         pem_out = encode_zkp_nl_proof(proof_rounds, n)
         _write_file(args.out, pem_out)
 
+    elif algo == 'nl-zkbpp':
+        # ZKB++ compact encoding (Chase et al. 2017) of the same statement
+        if our_algo != 'hpks-zkp-nl':
+            sys.exit(f"nl-zkbpp sign: expected hpks-zkp-nl key, got {our_algo!r}")
+        A, B, y, n = our_ints
+        rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
+        # Pad/truncate to 32 bytes to match C/Go behavior
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        proof_rounds = zkp_nl_prove_pp(A, B, y, n, rounds, msg)
+        pem_out = encode_zkp_nl_pp_proof(proof_rounds, n)
+        _write_file(args.out, pem_out)
+
     elif algo == 'hpks-xmss':
         master_seed, h, stored_idx, leaf_hashes, root = _decode_xmss_privkey(key_path)
         leaf_idx = _xmss_read_idx(key_path, h)
@@ -1668,6 +1683,24 @@ def cmd_verify(args):
         proof_rounds, _n = decode_zkp_nl_proof(sig_pem)
         rounds = len(proof_rounds)
         ok = zkp_nl_verify(B, y, n, rounds, in_bytes, proof_rounds)
+        if ok:
+            print("Signature OK")
+            sys.exit(0)
+        else:
+            print("Verification FAILED")
+            sys.exit(1)
+
+    elif algo == 'nl-zkbpp':
+        # ZKB++ verify
+        if their_algo != 'hpks-zkp-nl':
+            sys.exit(f"nl-zkbpp verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
+        B, y, n = their_ints
+        sig_pem = _read_file(sig_path).decode('ascii')
+        proof_rounds, _n = decode_zkp_nl_pp_proof(sig_pem)
+        rounds = len(proof_rounds)
+        # Pad/truncate to 32 bytes to match C/Go behavior
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        ok = zkp_nl_verify_pp(B, y, n, rounds, msg, proof_rounds)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -2254,7 +2287,7 @@ def build_parser():
     sg = sub.add_parser('sign', help='Sign a message or generate a ZKP')
     sg.add_argument('--algo', required=True,
                     choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
-                             'hpks-xmss', 'hpks-wots', 'hpks-ring'])
+                             'nl-zkbpp', 'hpks-xmss', 'hpks-wots', 'hpks-ring'])
     sg.add_argument('--key',  required=True)
     sg.add_argument('--ring', default=None,
                     help='hpks-ring: comma-separated member public-key PEM paths')
@@ -2270,7 +2303,7 @@ def build_parser():
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')
     vf.add_argument('--algo', required=True,
                     choices=['hpks', 'hpks-nl', 'hpks-stern', 'rnl-sigma', 'nl-zkboo',
-                             'hpks-xmss', 'hpks-wots', 'hpks-ring', 'hpks-t'])
+                             'nl-zkbpp', 'hpks-xmss', 'hpks-wots', 'hpks-ring', 'hpks-t'])
     vf.add_argument('--pubkey', default=None)
     vf.add_argument('--ring', default=None,
                     help='hpks-ring: comma-separated member public-key PEM paths')

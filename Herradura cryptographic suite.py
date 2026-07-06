@@ -159,7 +159,6 @@
         hkex_rnl_keygen, hkex_rnl_agree  (public aliases added in v1.7.4)
         rnl_sigma_sign, rnl_sigma_verify  (ZKP-RNL: Ring-LWR Σ-protocol)
         zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify  (ZKP-NL: NL-FSCX ZKBoo)
-        zkp_nl_prove_pp, zkp_nl_verify_pp  (ZKP-NL-PP: ZKB++ compact encoding)
         hcred_phi, hcred_user_keygen, hcred_syndrome, hcred_issue,
         hcred_cred_verify, hcred_prove, hcred_verify  (HCRED hybrid credential, TODO #128)
         oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct  (OPRF: 2HashDH over GF(2^n)*)
@@ -1683,26 +1682,8 @@ def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
 
 
 # ---------------------------------------------------------------------------
-# ZKP-NL-PP: ZKB++ encoding of the NL-FSCX ZKBoo proof (TODO #122 Batch 1)
+# ZKP-NL-PP: ZKB++ encoding of the NL-FSCX ZKBoo proof (TODO #122 Batch 2)
 # Chase et al. 2017 (CCS) applied to the §11.10.3 circuit.
-# ---------------------------------------------------------------------------
-#
-# Same statement, witness, circuit, and soundness as zkp_nl_prove/verify.
-# Four transcript optimizations over basic ZKBoo:
-#   (1) input shares of parties 0 and 1 are PRG-derived from 16-byte seeds —
-#       only the seeds are sent when those parties are opened;
-#   (2) party 2's input share is the explicit offset A ^ s0 ^ s1 — sent only
-#       when party 2 is opened;
-#   (3) only party p2 = e+2 broadcasts its AND-gate output bits (bit-packed);
-#       party p1 = e+1's gate outputs are recomputed by the verifier from the
-#       two opened views, exactly as in the basic-ZKBoo consistency check;
-#   (4) only the hidden party's commitment is sent; the two opened
-#       commitments are recomputed and the Fiat-Shamir challenge re-derived
-#       over (commitments ‖ output shares ‖ B ‖ y ‖ msg) must reproduce the
-#       claimed challenge sequence (Picnic-style challenge check).
-#
-# Per-round transmission: com_e (32) + out_e (nb) + 2 seeds (32) +
-# gates_p2 (⌈(n−1)/8⌉) + share2 (nb, only when party 2 is opened).
 # ---------------------------------------------------------------------------
 
 _ZKPP_SEED_BYTES = 16   # 128-bit per-party PRG seed
@@ -1744,8 +1725,7 @@ def _zkpp_out_share(p, share, carries, B, n):
 
 
 def _zkpp_commit(j, p, seed, share2_bytes, gate_bits, out_share, nb):
-    """ZKB++ view commitment: binds seed, explicit share (party 2 only),
-    bit-packed AND-gate outputs, and the output share."""
+    """ZKB++ view commitment."""
     return _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]), seed,
                      share2_bytes, gate_bits, out_share.to_bytes(nb, 'big'))
 
@@ -1753,10 +1733,9 @@ def _zkpp_commit(j, p, seed, share2_bytes, gate_bits, out_share, nb):
 def zkp_nl_prove_pp(A, B, y, n, rounds, msg_bytes):
     """ZKB++ prover: prove knowledge of A s.t. nl_fscx_v1(A, B) = y.
 
-    Same statement and soundness as zkp_nl_prove; transcript is the compact
-    ZKB++ encoding.  Returns a list of `rounds` dicts with keys:
+    Returns a list of `rounds` dicts with keys:
       com_e    — hidden party's 32-byte commitment
-      e        — hidden party index ∈ {0, 1, 2}
+      e        — hidden party index in {0, 1, 2}
       out_e    — hidden party's output share (nb bytes)
       seed_p1, seed_p2 — 16-byte seeds of the two opened parties
       gates_p2 — bit-packed AND-gate outputs of party e+2
@@ -1827,7 +1806,6 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
             return False
         p1, p2 = (e + 1) % 3, (e + 2) % 3
 
-        # Rebuild the two opened parties' shares and tapes.
         share2_b = resp['share2']
         if e != 2 and len(share2_b) != nb:
             return False
@@ -1845,7 +1823,6 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
         if len(resp['gates_p2']) != (n - 1 + 7) // 8:
             return False
 
-        # Recompute p1's AND gates; track both parties' carry chains.
         gates_p1  = []
         carries_1 = [0] * n
         carries_2 = [0] * n
@@ -1869,7 +1846,6 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
         if (out_e ^ out_p1 ^ out_p2) & mask != y:
             return False
 
-        # Recompute the two opened commitments.
         gb_p1 = _zkpp_pack_bits(gates_p1)
         com_p1 = _zkpp_commit(j, p1, resp['seed_p1'],
                               share2_b if p1 == 2 else b'', gb_p1, out_p1, nb)
@@ -1885,22 +1861,12 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
         com_block += b''.join(coms)
         out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
 
-    # Re-derive Fiat-Shamir challenges over the reconstructed transcript.
     ch_seed = _zkp_nl_h(com_block, out_block,
                         B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes)
     for j, resp in enumerate(proof_rounds):
         if _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))[0] % 3 != resp['e']:
             return False
     return True
-
-
-def zkp_nl_proof_size_pp(proof_rounds):
-    """Total transmitted bytes of a ZKB++ proof (1 byte per challenge index)."""
-    total = 0
-    for r in proof_rounds:
-        total += (len(r['com_e']) + 1 + len(r['out_e']) + len(r['seed_p1'])
-                  + len(r['seed_p2']) + len(r['gates_p2']) + len(r['share2']))
-    return total
 
 
 # ---------------------------------------------------------------------------
@@ -4068,23 +4034,6 @@ def main():
           f"view size: {len(_zkpnl_proof[0]['view_p1'])} bytes each")
     print(f"+ ZKP-NL proof verified" if _zkpnl_ok else "- ZKP-NL verify FAILED")
     print(f"  (demo uses R={_ZKP_NL_DEMO_ROUNDS}; production requires R={_ZKP_NL_PROD_ROUNDS} for 128-bit soundness)")
-
-    # ── ZKP-NL-PP: ZKB++ compact encoding of the same proof ────────────────
-    print(f"\n--- ZKP-NL-PP [PROOF — ZKB++ encoding, Chase et al. 2017; "
-          f"n={_ZKP_NL_DEFAULT_N}, R={_ZKP_NL_DEMO_ROUNDS}]")
-    _zkpp_proof = zkp_nl_prove_pp(
-        _zkpnl_A, _zkpnl_B, _zkpnl_y,
-        _ZKP_NL_DEFAULT_N, _ZKP_NL_DEMO_ROUNDS, _zkpnl_msg)
-    _zkpp_ok = zkp_nl_verify_pp(
-        _zkpnl_B, _zkpnl_y, _ZKP_NL_DEFAULT_N,
-        _ZKP_NL_DEMO_ROUNDS, _zkpnl_msg, _zkpp_proof)
-    _zkboo_bytes = sum(3 * 32 + len(r['view_p1']) + len(r['view_p2']) + 1
-                       for r in _zkpnl_proof)
-    _zkpp_bytes  = zkp_nl_proof_size_pp(_zkpp_proof)
-    print(f"proof size: ZKBoo {_zkboo_bytes} B → ZKB++ {_zkpp_bytes} B "
-          f"({_zkboo_bytes / _zkpp_bytes:.2f}x reduction)")
-    print(f"+ ZKP-NL-PP proof verified" if _zkpp_ok
-          else "- ZKP-NL-PP verify FAILED")
 
     # ── HCRED: Hybrid Ring-LWR + Stern-F credential ─────────────────────────
     _hc_n = _HCRED_DEFAULT_N

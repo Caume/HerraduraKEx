@@ -64,9 +64,11 @@ rnl_sigma_sign   = _s.rnl_sigma_sign
 rnl_sigma_verify = _s.rnl_sigma_verify
 
 # ── ZKP-NL: NL-FSCX ZKBoo ────────────────────────────────────────────────────
-zkp_nl_keygen = _s.zkp_nl_keygen
-zkp_nl_prove  = _s.zkp_nl_prove
-zkp_nl_verify = _s.zkp_nl_verify
+zkp_nl_keygen    = _s.zkp_nl_keygen
+zkp_nl_prove     = _s.zkp_nl_prove
+zkp_nl_verify    = _s.zkp_nl_verify
+zkp_nl_prove_pp  = _s.zkp_nl_prove_pp
+zkp_nl_verify_pp = _s.zkp_nl_verify_pp
 
 # ── Module-level constants ───────────────────────────────────────────────────
 KEYBITS = _s.KEYBITS          # default key width (256)

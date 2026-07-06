@@ -4,6 +4,29 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ---
 
+## [1.9.82] - 2026-07-05
+
+### Feature — ZKB++ C/Go ports + CLI wire format + interop (TODO #122 Batch 2)
+
+- **`herradura.h`:** `ZKPP_SEED_BYTES`, `ZkpNlPpRound` struct, `zkp_nl_pp_prove`,
+  `zkp_nl_pp_verify`, `zkp_nl_pp_proof_free`, and helpers `zkpp_derive`, `zkpp_commit`,
+  `zkpp_out_share`, `zkpp_pack_gate_bits`/`zkpp_get_gate_bit`.  Commitment preimage and
+  Fiat-Shamir construction identical to the Python reference.
+- **`herradura/herradura.go`:** `ZkpNlPpRound`, `ZkpNlProvepp`, `ZkpNlVerifypp` with
+  equivalent logic.
+- **`HerraduraCli/herradura_codec.h`:** `PEM_ZKP_NL_PP_SIG "HERRADURA ZKP-NL-PP SIGNATURE"`.
+- **`HerraduraCli/codec.py`:** `encode_zkp_nl_pp_proof`/`decode_zkp_nl_pp_proof` — binary
+  wire format: `4B n | 4B rounds | per-round: 32B com_e | 1B e | nb B out_e | 16B seed_p1 |
+  16B seed_p2 | 1B gates_len | gates_p2 | 1B has_share2 | [nb B share2]`.
+- **`HerraduraCli/primitives.py`:** re-exports `zkp_nl_prove_pp`/`zkp_nl_verify_pp`.
+- **`HerraduraCli/herradura.py`:** `sign/verify --algo nl-zkbpp` subcommands.
+- **`HerraduraCli/herradura_cli.c`:** `nl-zkbpp` sign/verify paths, `zkp_nl_pp_pack_proof`/
+  `zkp_nl_pp_unpack_proof` binary serialisation.
+- **`HerraduraCli/herradura_cli.go`:** equivalent Go CLI paths.
+- **`CliTest/test_zkbpp.sh`:** 10-way C↔Go↔Python interop test (all PASS).
+
+---
+
 ## [1.9.81] - 2026-07-05
 
 ### Feature — ZKB++ compact encoding for the NL-FSCX ZKBoo proof (TODO #122 Batch 1)

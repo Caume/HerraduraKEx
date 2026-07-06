@@ -6655,14 +6655,16 @@ variant of NL-FSCX v1.
   circuit (n=256, r=64) 920 KB → 464 KB (1.98×), confirming the §3.7 analytic ≈457 KB;
   implemented single-step circuit 170.9 KB → 31.0 KB (5.5×) at n=256/R=219 (overhead-
   dominated, byte-packed ZKBoo baseline).
-- **Batch 2 — C/Go ports + CLI wire format (future).**  `herradura.h` + Go package
-  ZKB++ functions; `sign --algo nl-zkbpp` in the three CLIs; interop test script.
+- **Batch 2 — C/Go ports + CLI wire format.**  Shipped v1.9.82: `ZkpNlPpRound` struct
+  and `zkp_nl_pp_prove`/`zkp_nl_pp_verify` in `herradura.h`; `ZkpNlProvepp`/
+  `ZkpNlVerifypp` in Go package; `nl-zkbpp` sign/verify in all three CLIs (Python, C,
+  Go); binary PEM wire format; `CliTest/test_zkbpp.sh` (10/10 PASS, C↔Go↔Python).
 - **Batch 3 — Sparse circuit research (items 3–4, future).**  LowMC-like NL-FSCX v1
   circuit variant + Theorem 13 degree-saturation re-analysis; targets ~180 KB.
 
 **References:** Chase et al. 2017 (ZKB++, CCS 2017); Giacomelli et al. 2016 (ZKBoo, USENIX Security 2016); Albrecht et al. 2016 (LowMC).
 
-Status: **OPEN** — Batch 1 shipped v1.9.81; Batches 2–3 pending.
+Status: **OPEN** — Batch 1 shipped v1.9.81; Batch 2 shipped v1.9.82; Batch 3 (sparse circuit) pending.
 
 ---
 
