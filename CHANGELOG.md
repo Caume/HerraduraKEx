@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.83] - 2026-07-05
+
+### Research — Sparse NL-FSCX v1 circuit analysis (TODO #122 Batch 3)
+
+- **`SecurityProofsCode/nl_fscx_sparse_circuit.py`** — new standalone analysis script:
+  prefix-adder ($k$-bit carry, $k-1$ AND gates), degree verification (Theorem 13),
+  differential MDP, revolve-circuit proof sizes, and conclusion.
+- **`SecurityProofs-2.md §11.8.2`** — sparse-circuit note added: prefix adder $k\geq 4$
+  preserves Theorem 13; ZKB++ shrinks revolve proof from 464 KB to ~29 KB (1.6×);
+  per-party share dominates; 180 KB target requires IOP proof system (Ligero/Picnic-FS).
+- **`TODO.md #122`** — Batch 3 analysed; items 3–4 revised to IOP direction.
+
 ---
 
 ## [1.9.82] - 2026-07-05

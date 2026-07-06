@@ -6659,12 +6659,18 @@ variant of NL-FSCX v1.
   and `zkp_nl_pp_prove`/`zkp_nl_pp_verify` in `herradura.h`; `ZkpNlProvepp`/
   `ZkpNlVerifypp` in Go package; `nl-zkbpp` sign/verify in all three CLIs (Python, C,
   Go); binary PEM wire format; `CliTest/test_zkbpp.sh` (10/10 PASS, C↔Go↔Python).
-- **Batch 3 — Sparse circuit research (items 3–4, future).**  LowMC-like NL-FSCX v1
-  circuit variant + Theorem 13 degree-saturation re-analysis; targets ~180 KB.
+- **Batch 3 — Sparse circuit analysis (v1.9.83).**  `SecurityProofsCode/nl_fscx_sparse_circuit.py`
+  implements the prefix-adder variant (k-bit carry, k-1 AND gates) and confirms: (a) Theorem 13
+  degree-saturation is preserved for k≥4 with wt(B[0..k-1])≥2; (b) proof size is dominated by
+  the 32-byte per-party share, not AND-gate count — reducing AND gates from 16,320 to near-zero
+  saves only ~15% of ZKB++ bytes for the revolve circuit; (c) the 180 KB target requires an
+  IOP-based ZKP scheme (Ligero/Picnic-FS) that avoids per-bit sharing.  Items 3–4 revised:
+  the sparse-circuit approach is analysed and documented; the open sub-item is now "IOP-based
+  ZKP for NL-FSCX" as a longer-term research direction.  SecurityProofs-2.md §11.8.2 updated.
 
 **References:** Chase et al. 2017 (ZKB++, CCS 2017); Giacomelli et al. 2016 (ZKBoo, USENIX Security 2016); Albrecht et al. 2016 (LowMC).
 
-Status: **OPEN** — Batch 1 shipped v1.9.81; Batch 2 shipped v1.9.82; Batch 3 (sparse circuit) pending.
+Status: **OPEN** — Batch 1 shipped v1.9.81; Batch 2 shipped v1.9.82; Batch 3 shipped v1.9.83 (sparse analysis); IOP direction remains open.
 
 ---
 

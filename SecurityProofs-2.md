@@ -524,6 +524,16 @@ $$\pi_{K_2}(\pi_{K_1}(0)) = M\bigl((M(K_1) + \delta(K_1)) \oplus K_2\bigr) + \de
 
 Since $M$ is GF(2)-linear, $M(X \oplus K_2) = M(X) \oplus M(K_2)$; however, $X = M(K_1) + \delta(K_1)$ is an integer-addition result, so $X \oplus K_2$ mixes carry terms with GF(2) XOR in a way that is asymmetric under $K_1 \leftrightarrow K_2$ exchange.  Commutativity would require $\delta(K_1) - \delta(K_2) \equiv M(K_1 \oplus K_2) \pmod{2^n}$ as integers for all $(K_1, K_2)$; since $\delta$ is quadratic (Theorem 14) and $M$ is linear, this equation has at most a measure-zero set of solutions. $\blacksquare$
 
+**Sparse-circuit analysis for ZKBoo/ZKB++ proof-size reduction (TODO #122 Batch 3).**  A natural question is whether replacing the full ripple-carry adder $(A + B) \bmod 2^n$ (with $n-1$ AND gates in the ZKBoo circuit model, since $b_i$ is a public constant so only $a_i \cdot c_{i-1}$ is nonlinear) with a "prefix adder" of length $k \ll n$ (retaining full carry only for bits $0..k-1$; XOR-only for higher bits) could reduce the ZKBoo/ZKB++ proof to the ~180 KB target.
+
+Empirical analysis (`SecurityProofsCode/nl_fscx_sparse_circuit.py`) shows:
+
+- *AND-gate count:* the prefix adder uses $k-1$ AND gates per $F_1$ application, versus $n-1 = 255$ for the full adder.  For the revolve circuit ($r = 64$ steps), total AND gates $= r(k-1)$.
+- *Degree preservation:* Theorem 13 is satisfied for prefix $k \geq 4$ provided $\mathrm{wt}(B_{0..k-1}) \geq 2$ (a keygen constraint, analogous to the existing $\mathrm{wt}(B) \geq 2$ requirement).  Empirically confirmed for $n \leq 32$.
+- *Proof-size bottleneck:* despite eliminating nearly all AND gates ($k=2$ gives 1 AND gate per step), ZKB++ proof size for the $n=256$ revolve circuit only shrinks from 464 KB to ~29 KB — a $1.6\times$ reduction, not the $\approx 2.5\times$ needed to reach 180 KB.  The bottleneck is the 32-byte per-party secret share (fixed for any $n=256$ circuit) plus 32-byte commitments, which together contribute ~87% of bytes at $k=2$.
+
+The conclusion is that **sparse/prefix-adder circuit design cannot by itself reach 180 KB at $n=256, R=219$**.  Reducing the proof further requires either (a) working at smaller $n$ with a field-extension composition argument, or (b) replacing ZKBoo/ZKB++ with an IOP-based proof (Ligero, Picnic-FS) that achieves $O(n \cdot R \cdot \log n)$ bytes, avoiding the per-bit sharing cost.  This is documented as the revised open direction for TODO #122 items 3–4.
+
 ---
 
 ### 11.8.3 Option A — HPKS-WOTS-F: Winternitz OTS with NL-FSCX v1
