@@ -1133,6 +1133,197 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     return None
 
 
+# ---------------------------------------------------------------------------
+# QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
+#
+# Toy parameters: r=523, d=15, t=18.  PRF: NL-FSCX v1 counter-mode XOF.
+# Hardness: quasi-cyclic syndrome decoding (QCSD).
+# ---------------------------------------------------------------------------
+
+_QCMDPC_R = 523
+_QCMDPC_D = 15
+_QCMDPC_T = 18
+_QCMDPC_NB_ITER = 20
+_QCMDPC_MASK = (1 << KEYBITS) - 1  # convenience alias
+
+
+def _qcprf_refill(seed_int: int, ctr: int):
+    """block_i = nl_fscx_revolve_v1(ROL(seed⊕ctr, n/8), seed⊕ctr, n/4)  (n=256)."""
+    x = BitArray(KEYBITS, (seed_int ^ ctr) & _QCMDPC_MASK)
+    rolx = x.rotated(KEYBITS // 8)
+    block = nl_fscx_revolve_v1(rolx, x, KEYBITS // 4)
+    bval = block.uint
+    words = [(bval >> (16 * k)) & 0xFFFF for k in range(16)]
+    return words
+
+
+class _QcMdpcPrf:
+    def __init__(self, seed_int: int):
+        self._seed = seed_int & _QCMDPC_MASK
+        self._ctr = 0
+        self._buf = []
+
+    def word16(self):
+        if not self._buf:
+            self._buf = _qcprf_refill(self._seed, self._ctr)
+            self._ctr += 1
+        return self._buf.pop()
+
+    def uniform_idx(self, r: int):
+        lim = (0x10000 // r) * r
+        while True:
+            w = self.word16()
+            if w < lim:
+                return w % r
+
+    def sparse_support(self, r: int, d: int, exclude=()):
+        s = set()
+        while len(s) < d:
+            i = self.uniform_idx(r)
+            if i not in exclude:
+                s.add(i)
+        return s
+
+
+def _qcp_mul_sparse(dense: int, sup: set, r: int) -> int:
+    """dense · Σ x^j (j in sup) mod (x^r − 1)."""
+    full = (1 << r) - 1
+    acc = 0
+    for j in sup:
+        acc ^= ((dense << j) | (dense >> (r - j))) & full
+    return acc
+
+
+def _qcp_mul(a: int, b: int, r: int) -> int:
+    """a · b mod (x^r − 1)."""
+    full = (1 << r) - 1
+    acc = 0
+    while b:
+        j = (b & -b).bit_length() - 1
+        b &= b - 1
+        acc ^= ((a << j) | (a >> (r - j))) & full
+    return acc
+
+
+def _qcp_inv(h: int, r: int) -> int:
+    """h^{-1} mod (x^r − 1) via extended Euclid in GF(2)[x].
+    Raises ValueError if not invertible."""
+    mod = (1 << r) | 1
+    a, b = mod, h
+    u0, u1 = 0, 1
+    while b:
+        da, db = a.bit_length() - 1, b.bit_length() - 1
+        if da < db:
+            a, b = b, a
+            u0, u1 = u1, u0
+            da, db = db, da
+        sh = da - db
+        a ^= b << sh
+        u0 ^= u1 << sh
+    if a != 1:
+        raise ValueError("h not invertible mod x^r − 1")
+    # reduce u0 mod (x^r − 1)
+    for i in range(r, u0.bit_length()):
+        if (u0 >> i) & 1:
+            u0 ^= (1 << i) ^ (1 << (i - r))
+    return u0
+
+
+def qcmdpc_keygen(seed_int: int | None = None):
+    """Generate QC-MDPC private/public key pair.
+
+    Returns (sup0, sup1, h0, h1, h_pub) where sup0/sup1 are sets of positions
+    in [0, r), h0/h1 are polynomial ints, and h_pub = h1·h0^{-1} mod (x^r−1).
+    """
+    import os
+    if seed_int is None:
+        seed_int = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & _QCMDPC_MASK
+    prf = _QcMdpcPrf(seed_int)
+    r, d = _QCMDPC_R, _QCMDPC_D
+    while True:
+        sup0 = prf.sparse_support(r, d)
+        sup1 = prf.sparse_support(r, d)
+        h0 = sum(1 << j for j in sup0)
+        h1 = sum(1 << j for j in sup1)
+        try:
+            h0_inv = _qcp_inv(h0, r)
+        except ValueError:
+            continue
+        h_pub = _qcp_mul(h1, h0_inv, r)
+        return sup0, sup1, h0, h1, h_pub
+
+
+def qcmdpc_encap(h_pub: int, seed_int: int | None = None):
+    """Encapsulate: sample error e=(e0,e1) of weight t; return (syndrome, K).
+
+    K = hfscx_256(e0||e1).  No e' transmitted — BGF decoder recovers it.
+    """
+    import os
+    if seed_int is None:
+        seed_int = int.from_bytes(os.urandom(KEYBITS // 8), 'big') & _QCMDPC_MASK
+    prf = _QcMdpcPrf(seed_int)
+    r, t = _QCMDPC_R, _QCMDPC_T
+    sup_e = prf.sparse_support(2 * r, t)
+    e0 = sum(1 << j for j in sup_e if j < r)
+    e1 = sum(1 << (j - r) for j in sup_e if j >= r)
+    syn = e0 ^ _qcp_mul(e1, h_pub, r)
+    rb = (r + 7) // 8
+    ebuf = e0.to_bytes(rb, 'little') + e1.to_bytes(rb, 'little')
+    K_bytes = hfscx_256(ebuf)
+    K_int = int.from_bytes(K_bytes, 'big')
+    return syn, K_int
+
+
+def qcmdpc_bgf_decode(syn_pub: int, h0: int, sup0: set, sup1: set) -> tuple | None:
+    """Black-Gray-Flip decoder.  Returns (e0, e1) or None on failure."""
+    r, d, nb_iter = _QCMDPC_R, _QCMDPC_D, _QCMDPC_NB_ITER
+    s = _qcp_mul_sparse(syn_pub, sup0, r)
+    e0 = e1 = 0
+    th_floor = (d + 1) // 2 + 2
+
+    for it in range(nb_iter):
+        if s == 0:
+            break
+        th = max(math.ceil(0.66 * d), th_floor) if it < 7 else max(th_floor - 1, 8)
+        upc0 = [sum(1 for k in sup0 if (s >> ((j + k) % r)) & 1) for j in range(r)]
+        upc1 = [sum(1 for k in sup1 if (s >> ((j + k) % r)) & 1) for j in range(r)]
+        black = ([j for j in range(r) if upc0[j] >= th],
+                 [j for j in range(r) if upc1[j] >= th])
+        gray  = ([j for j in range(r) if th - 2 <= upc0[j] < th],
+                 [j for j in range(r) if th - 2 <= upc1[j] < th])
+        for j in black[0]:
+            e0 ^= 1 << j
+            s  ^= _qcp_mul_sparse(1 << j, sup0, r)
+        for j in black[1]:
+            e1 ^= 1 << j
+            s  ^= _qcp_mul_sparse(1 << j, sup1, r)
+        if it == 0:
+            for group in (black, gray):
+                upc0 = [sum(1 for k in sup0 if (s >> ((j + k) % r)) & 1) for j in range(r)]
+                upc1 = [sum(1 for k in sup1 if (s >> ((j + k) % r)) & 1) for j in range(r)]
+                for j in group[0]:
+                    if upc0[j] >= th_floor:
+                        e0 ^= 1 << j
+                        s  ^= _qcp_mul_sparse(1 << j, sup0, r)
+                for j in group[1]:
+                    if upc1[j] >= th_floor:
+                        e1 ^= 1 << j
+                        s  ^= _qcp_mul_sparse(1 << j, sup1, r)
+    return (e0, e1) if s == 0 else None
+
+
+def qcmdpc_decap_bgf(syn: int, sup0: set, sup1: set, h0: int) -> int | None:
+    """Decapsulate using BGF decoder.  Returns K (int) or None on DFR."""
+    result = qcmdpc_bgf_decode(syn, h0, sup0, sup1)
+    if result is None:
+        return None
+    e0, e1 = result
+    rb = (_QCMDPC_R + 7) // 8
+    ebuf = e0.to_bytes(rb, 'little') + e1.to_bytes(rb, 'little')
+    K_bytes = hfscx_256(ebuf)
+    return int.from_bytes(K_bytes, 'big')
+
+
 def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):
     """Like hpke_stern_f_encap but also returns the plaintext error e_p."""
     if n is None: n = KEYBITS

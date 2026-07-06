@@ -142,3 +142,14 @@ hcred_issue          = _s.hcred_issue
 hcred_cred_verify    = _s.hcred_cred_verify
 _HCRED_DEFAULT_N     = _s._HCRED_DEFAULT_N
 _HCRED_DEMO_ROUNDS   = _s._HCRED_DEMO_ROUNDS
+
+# ── QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2) ──────────────
+qcmdpc_keygen        = _s.qcmdpc_keygen
+qcmdpc_encap         = _s.qcmdpc_encap
+qcmdpc_bgf_decode    = _s.qcmdpc_bgf_decode
+qcmdpc_decap_bgf     = _s.qcmdpc_decap_bgf
+_QCMDPC_R            = _s._QCMDPC_R
+_QCMDPC_D            = _s._QCMDPC_D
+_QCMDPC_T            = _s._QCMDPC_T
+_qcp_inv             = _s._qcp_inv
+_qcp_mul             = _s._qcp_mul

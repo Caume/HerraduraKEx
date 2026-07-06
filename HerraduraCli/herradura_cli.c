@@ -156,6 +156,17 @@ static uint64_t parse_be_uint(const uint8_t *p, size_t l)
     return v;
 }
 
+/* Right-align src (big-endian DER integer, leading zeros stripped) into dst[dst_len].
+   Pads with leading zeros if src_len < dst_len. */
+static void der_right_align(uint8_t *dst, size_t dst_len,
+                             const uint8_t *src, size_t src_len) {
+    memset(dst, 0, dst_len);
+    if (src_len >= dst_len)
+        memcpy(dst, src + src_len - dst_len, dst_len);
+    else
+        memcpy(dst + dst_len - src_len, src, src_len);
+}
+
 /* Wrap items into SEQUENCE DER, then PEM-wrap and write. */
 static void seq_and_write(const uint8_t **it, const size_t *il, int ni,
                           const char *label, const char *out_path)
@@ -627,6 +638,47 @@ static void cmd_genpkey(int argc, char **argv)
         fclose(urnd); return;
     }
 
+    /* HPKE-Stern-KEM: QC-MDPC Niederreiter KEM with BGF decoder (TODO #126, Batch 2) */
+    if (strcmp(algo, "hpke-stern-kem") == 0) {
+        uint8_t seed_bytes[KEYBYTES];
+        if (fread(seed_bytes, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+        QcMdpcPrf prf;
+        qcprf_init(&prf, seed_bytes);
+        QcMdpcPriv priv;
+        QcMdpcPub  pub_k;
+        qcmdpc_keygen(&priv, &pub_k, &prf);
+        /* Encode: h0[66], h1[66], sup0[30], sup1[30], r, d */
+        int i, k;
+        uint8_t h0b[QCMDPC_RBYTES], h1b[QCMDPC_RBYTES];
+        uint8_t s0b[QCMDPC_D * 2],  s1b[QCMDPC_D * 2];
+        memset(h0b, 0, sizeof(h0b)); memset(h1b, 0, sizeof(h1b));
+        for (i = 0; i < QCMDPC_RWORDS; i++) {
+            for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++) {
+                h0b[i*8+k] = (uint8_t)(priv.h0.w[i] >> (k * 8));
+                h1b[i*8+k] = (uint8_t)(priv.h1.w[i] >> (k * 8));
+            }
+        }
+        for (k = 0; k < QCMDPC_D; k++) {
+            s0b[k*2]   = (uint8_t)(priv.sup0[k] >> 8); s0b[k*2+1] = (uint8_t)priv.sup0[k];
+            s1b[k*2]   = (uint8_t)(priv.sup1[k] >> 8); s1b[k*2+1] = (uint8_t)priv.sup1[k];
+        }
+        uint8_t ih0[DER_INT_LEN(QCMDPC_RBYTES)], ih1[DER_INT_LEN(QCMDPC_RBYTES)];
+        uint8_t is0[DER_INT_LEN(QCMDPC_D*2)],    is1[DER_INT_LEN(QCMDPC_D*2)];
+        uint8_t ir[8], id[8];
+        size_t lh0, lh1, ls0, ls1, lr, ld;
+        der_int_enc(h0b, QCMDPC_RBYTES, ih0, &lh0);
+        der_int_enc(h1b, QCMDPC_RBYTES, ih1, &lh1);
+        der_int_enc(s0b, (size_t)QCMDPC_D*2, is0, &ls0);
+        der_int_enc(s1b, (size_t)QCMDPC_D*2, is1, &ls1);
+        der_i_uint(QCMDPC_R, ir, &lr);
+        der_i_uint(QCMDPC_D, id, &ld);
+        const uint8_t *it[6] = {ih0, ih1, is0, is1, ir, id};
+        size_t il[6] = {lh0, lh1, ls0, ls1, lr, ld};
+        seq_and_write(it, il, 6, PEM_HPKE_STERN_KEM_PRIV, out);
+        explicit_bzero(&priv, sizeof(priv));
+        fclose(urnd); return;
+    }
+
     fclose(urnd);
     dief("genpkey: unsupported algorithm: %s", algo);
 }
@@ -736,6 +788,68 @@ static void cmd_pkey(int argc, char **argv)
                 free(pub);
             }
             free(body);
+            return;
+        }
+    }
+
+    /* HPKE-Stern-KEM: DER-based private key, special pkey handling */
+    {
+        char peek[80];
+        zkp_pem_peek_label(in_path, peek);
+        if (strcmp(peek, PEM_HPKE_STERN_KEM_PRIV) == 0) {
+            PemKey pk; pem_key_load(&pk, in_path);
+            if (pk.n_items < 6) die("pkey: malformed HPKE-Stern-KEM private key");
+            /* items: h0[66], h1[66], sup0[30], sup1[30], r, d */
+            int i, k2;
+            if (text) {
+                printf("%-10s: %s\n", "algorithm", "hpke-stern-kem");
+                printf("%-10s: %llu\n", "r", (unsigned long long)parse_be_uint(pk.vals[4], pk.vlens[4]));
+                printf("%-10s: %llu\n", "d", (unsigned long long)parse_be_uint(pk.vals[5], pk.vlens[5]));
+                printf("%-10s: ", "h0"); for (i=0;i<(int)pk.vlens[0];i++) printf("%02x",pk.vals[0][i]); printf("\n");
+                printf("%-10s: ", "h1"); for (i=0;i<(int)pk.vlens[1];i++) printf("%02x",pk.vals[1][i]); printf("\n");
+            } else {
+                /* Public key: SEQUENCE(h_pub[66], r) */
+                /* Reconstruct QcMdpcPriv, derive pub from priv */
+                QcMdpcPriv priv;
+                QcMdpcPub  pub_k;
+                uint8_t buf66[QCMDPC_RBYTES];
+                der_right_align(buf66, QCMDPC_RBYTES, pk.vals[0], pk.vlens[0]);
+                qcp_zero(&priv.h0);
+                for (i = 0; i < QCMDPC_RWORDS; i++)
+                    for (k2 = 0; k2 < 8 && i*8+k2 < QCMDPC_RBYTES; k2++)
+                        priv.h0.w[i] |= (uint64_t)buf66[i*8+k2] << (k2 * 8);
+                der_right_align(buf66, QCMDPC_RBYTES, pk.vals[1], pk.vlens[1]);
+                qcp_zero(&priv.h1);
+                for (i = 0; i < QCMDPC_RWORDS; i++)
+                    for (k2 = 0; k2 < 8 && i*8+k2 < QCMDPC_RBYTES; k2++)
+                        priv.h1.w[i] |= (uint64_t)buf66[i*8+k2] << (k2 * 8);
+                int d = (int)parse_be_uint(pk.vals[5], pk.vlens[5]);
+                uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
+                der_right_align(s0b, (size_t)d*2, pk.vals[2], pk.vlens[2]);
+                der_right_align(s1b, (size_t)d*2, pk.vals[3], pk.vlens[3]);
+                for (k2 = 0; k2 < d && k2 < QCMDPC_D; k2++) {
+                    priv.sup0[k2] = (uint16_t)(((uint16_t)s0b[k2*2]<<8)|s0b[k2*2+1]);
+                    priv.sup1[k2] = (uint16_t)(((uint16_t)s1b[k2*2]<<8)|s1b[k2*2+1]);
+                }
+                /* Recompute h_pub = h1 * h0^{-1} */
+                QcPoly h0_inv;
+                if (!qcp_inv(&h0_inv, &priv.h0)) die("pkey: HPKE-Stern-KEM h0 not invertible");
+                qcp_mul(&pub_k.h_pub, &priv.h1, &h0_inv);
+                /* Encode public key */
+                uint8_t hpb[QCMDPC_RBYTES];
+                memset(hpb, 0, sizeof(hpb));
+                for (i = 0; i < QCMDPC_RWORDS; i++)
+                    for (k2 = 0; k2 < 8 && i*8+k2 < QCMDPC_RBYTES; k2++)
+                        hpb[i*8+k2] = (uint8_t)(pub_k.h_pub.w[i] >> (k2*8));
+                uint8_t ihp[DER_INT_LEN(QCMDPC_RBYTES)], ir[8];
+                size_t lhp, lr;
+                der_int_enc(hpb, QCMDPC_RBYTES, ihp, &lhp);
+                der_i_uint(QCMDPC_R, ir, &lr);
+                const uint8_t *it[2] = {ihp, ir}; size_t il[2] = {lhp, lr};
+                seq_and_write(it, il, 2, PEM_HPKE_STERN_KEM_PUB, out_path ? out_path : "-");
+                explicit_bzero(&priv, sizeof(priv));
+            }
+            pem_key_free(&pk);
             return;
         }
     }
@@ -1687,6 +1801,49 @@ static void cmd_enc(int argc, char **argv)
         const uint8_t *it[3] = {iR, iE, in}; size_t il[3] = {lR, lE, ln};
         seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
 
+    } else if (strcmp(algo, "hpke-stern-kem") == 0) {
+        /* QC-MDPC Niederreiter KEM + BGF (TODO #126). Public key: SEQUENCE(h_pub[66], r). */
+        if (pub_k.n_items < 2) die("enc: malformed HPKE-Stern-KEM public key");
+        QcMdpcPub pub_kem;
+        int i, k;
+        {   uint8_t hpb[QCMDPC_RBYTES];
+            der_right_align(hpb, QCMDPC_RBYTES, pub_k.vals[0], pub_k.vlens[0]);
+            qcp_zero(&pub_kem.h_pub);
+            for (i = 0; i < QCMDPC_RWORDS; i++)
+                for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++)
+                    pub_kem.h_pub.w[i] |= (uint64_t)hpb[i*8+k] << (k*8);
+        }
+        pem_key_free(&pub_k);
+
+        FILE *urnd = fopen("/dev/urandom", "rb");
+        if (!urnd) die("cannot open /dev/urandom");
+        uint8_t seed_bytes[KEYBYTES];
+        if (fread(seed_bytes, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+        fclose(urnd);
+        QcMdpcPrf prf;
+        qcprf_init(&prf, seed_bytes);
+        QcPoly syn;
+        BitArray K_ba;
+        qcmdpc_encap(&syn, &K_ba, &pub_kem, &prf);
+
+        /* E = fscx_revolve(P, K, R_VALUE) */
+        BitArray E;
+        ba_fscx_revolve(&E, &P, &K_ba, I_VALUE);
+
+        /* CT: SEQUENCE(syn_bytes[66], E[32], r) with label PEM_HPKE_STERN_KEM_CT */
+        uint8_t syn_b[QCMDPC_RBYTES];
+        memset(syn_b, 0, sizeof(syn_b));
+        for (i = 0; i < QCMDPC_RWORDS; i++)
+            for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++)
+                syn_b[i*8+k] = (uint8_t)(syn.w[i] >> (k*8));
+        uint8_t isyn[DER_INT_LEN(QCMDPC_RBYTES)], iE[DER_INT_LEN(KEYBYTES)], ir[8];
+        size_t lsyn, lE, lr;
+        der_int_enc(syn_b, QCMDPC_RBYTES, isyn, &lsyn);
+        der_i32(E.b, iE, &lE);
+        der_i_uint(QCMDPC_R, ir, &lr);
+        const uint8_t *it2[3] = {isyn, iE, ir}; size_t il2[3] = {lsyn, lE, lr};
+        seq_and_write(it2, il2, 3, PEM_CIPHERTEXT, out_path);
+
     } else if (strcmp(algo, "hpke-stern") == 0) {
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
                         "(demo parameters). 128-bit security requires N>=17000. "
@@ -1851,6 +2008,47 @@ static void cmd_dec(int argc, char **argv)
             ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
         else
             nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
+        write_binary_file(out_path, D.b, KEYBYTES);
+
+    } else if (strcmp(algo, "hpke-stern-kem") == 0) {
+        /* CT: SEQUENCE(syn[66], E[32], r).  Priv: SEQUENCE(h0,h1,sup0,sup1,r,d). */
+        if (ct.n_items < 3) die("dec: malformed HPKE-Stern-KEM ciphertext");
+        if (priv_k.n_items < 6) die("dec: malformed HPKE-Stern-KEM private key");
+        int i, k;
+        QcMdpcPriv priv;
+        {   uint8_t h0b[QCMDPC_RBYTES], h1b[QCMDPC_RBYTES];
+            der_right_align(h0b, QCMDPC_RBYTES, priv_k.vals[0], priv_k.vlens[0]);
+            der_right_align(h1b, QCMDPC_RBYTES, priv_k.vals[1], priv_k.vlens[1]);
+            qcp_zero(&priv.h0); qcp_zero(&priv.h1);
+            for (i = 0; i < QCMDPC_RWORDS; i++)
+                for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++) {
+                    priv.h0.w[i] |= (uint64_t)h0b[i*8+k] << (k*8);
+                    priv.h1.w[i] |= (uint64_t)h1b[i*8+k] << (k*8);
+                }
+        }
+        int d = (int)parse_be_uint(priv_k.vals[5], priv_k.vlens[5]);
+        {   uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
+            der_right_align(s0b, (size_t)d*2, priv_k.vals[2], priv_k.vlens[2]);
+            der_right_align(s1b, (size_t)d*2, priv_k.vals[3], priv_k.vlens[3]);
+            for (k = 0; k < d && k < QCMDPC_D; k++) {
+                priv.sup0[k] = (uint16_t)(((uint16_t)s0b[k*2]<<8)|s0b[k*2+1]);
+                priv.sup1[k] = (uint16_t)(((uint16_t)s1b[k*2]<<8)|s1b[k*2+1]);
+            }
+        }
+        QcPoly syn;
+        {   uint8_t synb[QCMDPC_RBYTES];
+            der_right_align(synb, QCMDPC_RBYTES, ct.vals[0], ct.vlens[0]);
+            qcp_zero(&syn);
+            for (i = 0; i < QCMDPC_RWORDS; i++)
+                for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++)
+                    syn.w[i] |= (uint64_t)synb[i*8+k] << (k*8);
+        }
+        BitArray E_ba, K_dec, D;
+        ba_from_ra(&E_ba, ct.vals[1], ct.vlens[1]);
+        pem_key_free(&ct); pem_key_free(&priv_k);
+        if (!qcmdpc_decap_bgf(&K_dec, &syn, &priv))
+            die("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)");
+        ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
         write_binary_file(out_path, D.b, KEYBYTES);
 
     } else if (strcmp(algo, "hpke-stern") == 0) {
@@ -3522,7 +3720,7 @@ static void usage(void)
 "Commands:\n"
 "  genpkey --algo ALGO [--out FILE]\n"
 "    Generate a private key.  Algorithms: hkex-gf hkex-rnl hpks hpks-nl\n"
-"    hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl\n"
+"    hpke hpke-nl hpks-stern hpke-stern hpke-stern-kem hpks-zkp-nl\n"
 "\n"
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
 "    Extract public key (--pubout) or print fields in hex (--text).\n"
@@ -3536,7 +3734,7 @@ static void usage(void)
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE] [--aead [--ad STR]]\n"
 "    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2 hske-duplex\n"
-"    Asymmetric (--pubkey): hpke hpke-nl hpke-stern\n"
+"    Asymmetric (--pubkey): hpke hpke-nl hpke-stern hpke-stern-kem\n"
 "    --aead (hske-nla1 only): HSKE-NL-AEAD authenticated encryption; --ad binds\n"
 "    optional associated data into the tag (must match at dec).\n"
 "    hske-duplex: arbitrary-length single-pass AEAD (256-bit key; --ad supported).\n"

@@ -6914,8 +6914,7 @@ updated with the prototype paragraph.
 **References:** BIKE specification v5.2 (Aragon et al. 2022); Drucker-Gueron-Kostic BGF decoder (2019);
 SecurityProofs-2.md §11.8.5 (Option C roadmap).
 
-Status: **OPEN** — Batch 1 (work items 1–4) shipped v1.9.84; item 5 (CLI decoder integration via
-constant-time C port + weak-key rejection) remains open.
+Status: **DONE v1.9.86** — Batch 1 (items 1–4) shipped v1.9.84; Batch 2 (C+Python CLIs) shipped v1.9.85; Batch 3 (Go CLI + 9-way interop test) shipped v1.9.86. Production gaps (constant-time C, weak-key rejection) documented in SecurityProofs-2.md §11.8.5.
 
 ---
 

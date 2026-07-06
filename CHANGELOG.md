@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.86] - 2026-07-06
+
+### CLI — `hpke-stern-kem`: QC-MDPC Niederreiter KEM in Go CLI (TODO #126 Batch 3)
+
+- **`herradura/herradura.go`** — QC-MDPC BGF Go package: `QcMdpcKeygen`, `QcMdpcEncap`,
+  `QcMdpcBgfDecode`, `QcMdpcDecapBgf`; NL-FSCX PRF; GF(2)[x]/(x^523−1) arithmetic;
+  extended-Euclid inversion. Constants: `QcMdpcR`, `QcMdpcD`, `QcMdpcT`, `QcMdpcRBytes`.
+- **`HerraduraCli/herradura_cli.go`** — `genpkey/pkey/enc/dec` for `--algo hpke-stern-kem`;
+  DER encode/decode helpers for private key (6-item), public key (2-item), and ciphertext
+  (3-item SEQUENCE); right-alignment for DER leading-zero stripping; I_VALUE enc / R_VALUE dec.
+- **`CliTest/test_stern_kem.sh`** — extended to 9-way interop (Python/C/Go all combinations).
+- Closes TODO #126 item 5: QC-MDPC BGF decoder available in all three CLIs.
+
+## [1.9.85] - 2026-07-06
+
+### CLI — `hpke-stern-kem`: QC-MDPC Niederreiter KEM in C + Python CLIs (TODO #126 Batch 2)
+
+- **`herradura.h`** — full QC-MDPC BGF implementation at r=523, d=15, t=18:
+  - `QcPoly` (9×uint64 LE bit array), `QcMdpcPriv` / `QcMdpcPub` structures;
+  - `qcp_*` polynomial ops: zero/copy/xor/popcount/xor_rol/mul_sparse/mul/inv
+    (extended-Euclid inversion in GF(2)[x]/(x^r−1));
+  - `QcMdpcPrf` — NL-FSCX v1 counter-mode XOF (32-byte seed → uniform uint16 stream
+    via `nl_fscx_revolve_v1`);
+  - `qcmdpc_keygen`, `qcmdpc_encap`, `qcmdpc_bgf_decode`, `qcmdpc_decap_bgf`.
+- **`HerraduraCli/herradura_codec.h`** — added PEM labels `PEM_HPKE_STERN_KEM_PRIV`,
+  `PEM_HPKE_STERN_KEM_PUB`, `PEM_HPKE_STERN_KEM_CT`.
+- **`HerraduraCli/herradura_cli.c`** — `genpkey/pkey/enc/dec` for `--algo hpke-stern-kem`;
+  private key: 6-item DER SEQUENCE (h0,h1,sup0,sup1,r,d); public key: 2-item SEQUENCE (h_pub,r);
+  ciphertext: 3-item SEQUENCE (syn,E,r) with PEM label `HERRADURA CIPHERTEXT`.
+- **`Herradura cryptographic suite.py`** — QC-MDPC functions: `_QcMdpcPrf`, `_qcp_mul`,
+  `_qcp_inv`, `qcmdpc_keygen`, `qcmdpc_encap`, `qcmdpc_bgf_decode`, `qcmdpc_decap_bgf`.
+- **`HerraduraCli/herradura.py`** — `genpkey/pkey/enc/dec` for `hpke-stern-kem`.
+- **`HerraduraCli/primitives.py`** — exports QC-MDPC symbols.
+- **`CliTest/test_stern_kem.sh`** — integration test: Python↔C self and cross-language
+  round-trips (4 combinations; Go interop auto-detected when binary supports the algo).
+
 ## [1.9.84] - 2026-07-06
 
 ### Research — QC-MDPC decoding trapdoor prototype, NL-FSCX PRF-seeded (TODO #126 Batch 1)

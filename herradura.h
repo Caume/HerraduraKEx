@@ -5029,4 +5029,381 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
     return 0;
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
+ *
+ * Toy parameters: r=523, d=15 (w=30), t=18.
+ * PRF seeding:    NL-FSCX v1 counter-mode XOF (HFSCX-256-DM path).
+ * Hardness:       Quasi-cyclic syndrome decoding (QCSD).
+ * Production:     BIKE-128 r=12323, w=142, t=134 (scales linearly, C only).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define QCMDPC_R       523
+#define QCMDPC_D       15
+#define QCMDPC_T       18
+#define QCMDPC_W       (2 * QCMDPC_D)
+#define QCMDPC_RBYTES  ((QCMDPC_R + 7) / 8)       /* 66 */
+#define QCMDPC_RWORDS  ((QCMDPC_R + 63) / 64)     /* 9  */
+#define QCMDPC_NB_ITER 20
+
+/* r-bit polynomial: QCMDPC_RWORDS uint64_t, little-endian (bit i = word[i>>6] bit i&63) */
+typedef struct { uint64_t w[QCMDPC_RWORDS]; } QcPoly;
+
+typedef struct {
+    QcPoly   h0, h1;
+    uint16_t sup0[QCMDPC_D], sup1[QCMDPC_D];
+} QcMdpcPriv;
+
+typedef struct { QcPoly h_pub; } QcMdpcPub;
+
+/* ── Polynomial bit operations ── */
+
+static inline int qcp_get(const QcPoly *p, int j) {
+    return (int)((p->w[j >> 6] >> (j & 63)) & 1);
+}
+static inline void qcp_set(QcPoly *p, int j) {
+    p->w[j >> 6] |= (uint64_t)1 << (j & 63);
+}
+static inline void qcp_flip(QcPoly *p, int j) {
+    p->w[j >> 6] ^= (uint64_t)1 << (j & 63);
+}
+static void qcp_zero(QcPoly *p) { memset(p->w, 0, sizeof(p->w)); }
+static void qcp_copy(QcPoly *dst, const QcPoly *src) { *dst = *src; }
+static void qcp_xor(QcPoly *a, const QcPoly *b) {
+    int i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) a->w[i] ^= b->w[i];
+}
+static int qcp_popcount(const QcPoly *p) {
+    int i, n = 0;
+    for (i = 0; i < QCMDPC_RWORDS; i++) n += __builtin_popcountll(p->w[i]);
+    return n;
+}
+static int qcp_is_zero(const QcPoly *p) {
+    int i;
+    for (i = 0; i < QCMDPC_RWORDS; i++) if (p->w[i]) return 0;
+    return 1;
+}
+
+/* dst ^= ROL(src, j) mod (x^r - 1): bit i of src goes to bit (i+j)%r of dst */
+static void qcp_xor_rol(QcPoly *dst, const QcPoly *src, int j) {
+    int i;
+    for (i = 0; i < QCMDPC_R; i++) {
+        if (qcp_get(src, i))
+            qcp_flip(dst, (i + j) % QCMDPC_R);
+    }
+}
+
+/* dst = src · Σ_{k∈sup} x^k  mod (x^r - 1) */
+static void qcp_mul_sparse(QcPoly *dst, const QcPoly *src,
+                            const uint16_t *sup, int d) {
+    int k;
+    qcp_zero(dst);
+    for (k = 0; k < d; k++) qcp_xor_rol(dst, src, sup[k]);
+}
+
+/* dst = a · b mod (x^r - 1) — generic, used once in keygen */
+static void qcp_mul(QcPoly *dst, const QcPoly *a, const QcPoly *b) {
+    int j;
+    qcp_zero(dst);
+    for (j = 0; j < QCMDPC_R; j++)
+        if (qcp_get(b, j)) qcp_xor_rol(dst, a, j);
+}
+
+/* ── Extended Euclid in GF(2)[x]: h^{-1} mod (x^r - 1) ── */
+/* Uses byte arrays sized to hold polynomials up to degree 2r. */
+
+#define _QCEUC_BYTES (2 * QCMDPC_RBYTES + 2)  /* 134 — fits degree 2r */
+
+static int _qceuc_deg(const uint8_t *p, int bytes) {
+    int i;
+    for (i = bytes - 1; i >= 0; i--)
+        if (p[i]) return i * 8 + (31 - __builtin_clz(p[i]));
+    return -1;
+}
+
+static void _qceuc_xorsh(uint8_t *a, const uint8_t *b, int sh, int bytes) {
+    int bsh = sh >> 3, ksh = sh & 7, i;
+    if (ksh == 0) {
+        for (i = 0; i + bsh < bytes; i++) a[i + bsh] ^= b[i];
+    } else {
+        int rsh = 8 - ksh;
+        for (i = 0; i + bsh < bytes; i++) {
+            a[i + bsh] ^= (uint8_t)(b[i] << ksh);
+            if (i + bsh + 1 < bytes) a[i + bsh + 1] ^= b[i] >> rsh;
+        }
+    }
+}
+
+/* Returns 1 on success, 0 if h not invertible mod (x^r - 1). */
+static int qcp_inv(QcPoly *inv_out, const QcPoly *h) {
+    uint8_t a[_QCEUC_BYTES], b[_QCEUC_BYTES], u0[_QCEUC_BYTES], u1[_QCEUC_BYTES];
+    uint8_t tmp[_QCEUC_BYTES];
+    int i, k, da, db, sh;
+    memset(a, 0, _QCEUC_BYTES); memset(b, 0, _QCEUC_BYTES);
+    memset(u0, 0, _QCEUC_BYTES); memset(u1, 0, _QCEUC_BYTES);
+    /* a = x^r + 1 (modulus) */
+    a[QCMDPC_R >> 3] |= (uint8_t)(1u << (QCMDPC_R & 7));
+    a[0] = 1;
+    /* b = h: convert QcPoly (uint64_t words, LE) to byte array */
+    for (i = 0; i < QCMDPC_RWORDS; i++) {
+        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++)
+            b[i * 8 + k] = (uint8_t)(h->w[i] >> (8 * k));
+    }
+    u1[0] = 1;
+
+    for (;;) {
+        db = _qceuc_deg(b, _QCEUC_BYTES);
+        if (db < 0) break;
+        da = _qceuc_deg(a, _QCEUC_BYTES);
+        if (da < db) {
+            memcpy(tmp, a, _QCEUC_BYTES); memcpy(a, b, _QCEUC_BYTES); memcpy(b, tmp, _QCEUC_BYTES);
+            memcpy(tmp, u0, _QCEUC_BYTES); memcpy(u0, u1, _QCEUC_BYTES); memcpy(u1, tmp, _QCEUC_BYTES);
+            da = _qceuc_deg(a, _QCEUC_BYTES);
+            db = _qceuc_deg(b, _QCEUC_BYTES);
+        }
+        sh = da - db;
+        _qceuc_xorsh(a, b, sh, _QCEUC_BYTES);
+        _qceuc_xorsh(u0, u1, sh, _QCEUC_BYTES);
+    }
+    if (_qceuc_deg(a, _QCEUC_BYTES) != 0 || !(a[0] & 1)) return 0;
+
+    /* Reduce u0 mod (x^r - 1): fold bits >= r back to bit (i-r) */
+    for (i = QCMDPC_R; i < _QCEUC_BYTES * 8; i++) {
+        if ((u0[i >> 3] >> (i & 7)) & 1) {
+            u0[i >> 3] ^= (uint8_t)(1u << (i & 7));
+            u0[(i - QCMDPC_R) >> 3] ^= (uint8_t)(1u << ((i - QCMDPC_R) & 7));
+        }
+    }
+    /* Convert back to QcPoly */
+    qcp_zero(inv_out);
+    for (i = 0; i < QCMDPC_RBYTES; i++)
+        inv_out->w[i >> 3] |= (uint64_t)u0[i] << ((i & 7) * 8);
+    return 1;
+}
+
+/* ── NL-FSCX PRF — counter-mode XOF for QC-MDPC seeding ── */
+/* block_i = nl_fscx_revolve_v1(ROL(seed⊕i, n/8), seed⊕i, n/4)  (n=256) */
+
+typedef struct {
+    BitArray seed;
+    uint32_t ctr;
+    uint16_t buf[16];
+    int      pos;
+} QcMdpcPrf;
+
+static void qcprf_init(QcMdpcPrf *prf, const uint8_t seed[KEYBYTES]) {
+    memcpy(prf->seed.b, seed, KEYBYTES);
+    prf->ctr = 0;
+    prf->pos = 16;
+}
+
+static void qcprf_refill(QcMdpcPrf *prf) {
+    BitArray x, rolx, block;
+    int k;
+    /* x = seed XOR ctr (ctr in top 4 bytes, big-endian) */
+    x = prf->seed;
+    x.b[0] ^= (uint8_t)(prf->ctr >> 24);
+    x.b[1] ^= (uint8_t)(prf->ctr >> 16);
+    x.b[2] ^= (uint8_t)(prf->ctr >>  8);
+    x.b[3] ^= (uint8_t) prf->ctr;
+    prf->ctr++;
+    ba_rol_k(&rolx, &x, KEYBYTES);          /* ROL by n/8 = 32 bits */
+    nl_fscx_revolve_v1_ba(&block, &rolx, &x, I_VALUE);  /* n/4 = 64 steps */
+    for (k = 0; k < 16; k++)
+        prf->buf[k] = (uint16_t)(((uint16_t)block.b[k * 2] << 8) | block.b[k * 2 + 1]);
+    prf->pos = 0;
+}
+
+static uint16_t qcprf_word16(QcMdpcPrf *prf) {
+    if (prf->pos >= 16) qcprf_refill(prf);
+    return prf->buf[prf->pos++];
+}
+
+static uint16_t qcprf_uniform_idx(QcMdpcPrf *prf, int r) {
+    uint16_t lim = (uint16_t)(((uint32_t)0x10000 / (uint32_t)r) * (uint32_t)r);
+    uint16_t w;
+    do { w = qcprf_word16(prf); } while (w >= lim);
+    return (uint16_t)(w % (uint16_t)r);
+}
+
+/* Sample d distinct positions in [0, r) — partial rejection sampling. */
+static void qcprf_sparse_support(QcMdpcPrf *prf, int r, int d, uint16_t *out) {
+    int n = 0, k;
+    while (n < d) {
+        uint16_t idx = qcprf_uniform_idx(prf, r);
+        int dup = 0;
+        for (k = 0; k < n; k++) if (out[k] == idx) { dup = 1; break; }
+        if (!dup) out[n++] = idx;
+    }
+}
+
+/* ── QC-MDPC keygen ── */
+
+static void qcmdpc_keygen(QcMdpcPriv *priv, QcMdpcPub *pub, QcMdpcPrf *prf) {
+    int k;
+    for (;;) {
+        qcprf_sparse_support(prf, QCMDPC_R, QCMDPC_D, priv->sup0);
+        qcprf_sparse_support(prf, QCMDPC_R, QCMDPC_D, priv->sup1);
+        qcp_zero(&priv->h0); qcp_zero(&priv->h1);
+        for (k = 0; k < QCMDPC_D; k++) {
+            qcp_set(&priv->h0, priv->sup0[k]);
+            qcp_set(&priv->h1, priv->sup1[k]);
+        }
+        QcPoly h0_inv;
+        if (!qcp_inv(&h0_inv, &priv->h0)) continue;
+        qcp_mul(&pub->h_pub, &priv->h1, &h0_inv);
+        return;
+    }
+}
+
+/* ── QC-MDPC encapsulate ── */
+/* syn_out = e0 + e1·h_pub;  K_out = hfscx_256(e0||e1);  no e' in ciphertext. */
+
+static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
+                          const QcMdpcPub *pub, QcMdpcPrf *prf) {
+    uint16_t sup_e[QCMDPC_T];
+    QcPoly e0, e1, e1h;
+    uint8_t ebuf[2 * QCMDPC_RBYTES];
+    int k, i;
+    qcprf_sparse_support(prf, 2 * QCMDPC_R, QCMDPC_T, sup_e);
+    qcp_zero(&e0); qcp_zero(&e1);
+    for (k = 0; k < QCMDPC_T; k++) {
+        if (sup_e[k] < QCMDPC_R) qcp_set(&e0, sup_e[k]);
+        else                       qcp_set(&e1, sup_e[k] - QCMDPC_R);
+    }
+    qcp_mul(&e1h, &e1, &pub->h_pub);
+    qcp_copy(syn_out, &e0);
+    qcp_xor(syn_out, &e1h);
+    /* K = hfscx_256(e0 || e1) */
+    memset(ebuf, 0, sizeof(ebuf));
+    for (i = 0; i < QCMDPC_RWORDS; i++) {
+        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++) {
+            ebuf[i * 8 + k]              = (uint8_t)(e0.w[i] >> (k * 8));
+            ebuf[QCMDPC_RBYTES + i*8 + k] = (uint8_t)(e1.w[i] >> (k * 8));
+        }
+    }
+    hfscx_256(ebuf, 2 * QCMDPC_RBYTES, NULL, K_out->b);
+}
+
+/* ── BGF decoder ── */
+/* Recovers (e0, e1) from syn_pub using the private sparse supports.
+   Returns 1 on success, 0 if syndrome weight nonzero after NB_ITER. */
+
+static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
+                              const QcPoly *syn_pub,
+                              const QcMdpcPriv *priv) {
+    QcPoly s, e0, e1;
+    uint8_t upc0[QCMDPC_R], upc1[QCMDPC_R];
+    uint16_t black0[QCMDPC_R], black1[QCMDPC_R];
+    uint16_t gray0[QCMDPC_R],  gray1[QCMDPC_R];
+    int nb0, nb1, ng0, ng1, it, bi, j, k;
+    int th_floor = (QCMDPC_D + 1) / 2 + 2;  /* = 10 */
+
+    /* Private syndrome: s = syn_pub · h0 */
+    qcp_mul_sparse(&s, syn_pub, priv->sup0, QCMDPC_D);
+    qcp_zero(&e0); qcp_zero(&e1);
+
+    for (it = 0; it < QCMDPC_NB_ITER; it++) {
+        if (qcp_is_zero(&s)) break;
+
+        int th;
+        if (it < 7) {
+            th = (int)(0.66 * QCMDPC_D + 0.999);
+            if (th < th_floor) th = th_floor;
+        } else {
+            th = th_floor - 1;
+            if (th < 8) th = 8;
+        }
+
+        /* Compute UPC: upc_b[j] = Σ_{k∈sup_b} s[(j+k) % r] */
+        memset(upc0, 0, QCMDPC_R); memset(upc1, 0, QCMDPC_R);
+        for (k = 0; k < QCMDPC_D; k++) {
+            for (j = 0; j < QCMDPC_R; j++) {
+                upc0[j] += (uint8_t)qcp_get(&s, (j + priv->sup0[k]) % QCMDPC_R);
+                upc1[j] += (uint8_t)qcp_get(&s, (j + priv->sup1[k]) % QCMDPC_R);
+            }
+        }
+
+        /* Partition into black (≥th) and gray (≥th-2) sets */
+        nb0 = nb1 = ng0 = ng1 = 0;
+        for (j = 0; j < QCMDPC_R; j++) {
+            if      (upc0[j] >= (uint8_t)th)     black0[nb0++] = (uint16_t)j;
+            else if (upc0[j] >= (uint8_t)(th - 2)) gray0[ng0++] = (uint16_t)j;
+            if      (upc1[j] >= (uint8_t)th)     black1[nb1++] = (uint16_t)j;
+            else if (upc1[j] >= (uint8_t)(th - 2)) gray1[ng1++] = (uint16_t)j;
+        }
+        /* Apply black flips */
+        for (bi = 0; bi < nb0; bi++) {
+            j = black0[bi];
+            qcp_flip(&e0, j);
+            for (k = 0; k < QCMDPC_D; k++)
+                qcp_flip(&s, (priv->sup0[k] + j) % QCMDPC_R);
+        }
+        for (bi = 0; bi < nb1; bi++) {
+            j = black1[bi];
+            qcp_flip(&e1, j);
+            for (k = 0; k < QCMDPC_D; k++)
+                qcp_flip(&s, (priv->sup1[k] + j) % QCMDPC_R);
+        }
+
+        if (it == 0) {
+            /* BGF: re-check black then gray with th_floor */
+            int pass;
+            for (pass = 0; pass < 2; pass++) {
+                memset(upc0, 0, QCMDPC_R); memset(upc1, 0, QCMDPC_R);
+                for (k = 0; k < QCMDPC_D; k++) {
+                    for (j = 0; j < QCMDPC_R; j++) {
+                        upc0[j] += (uint8_t)qcp_get(&s, (j + priv->sup0[k]) % QCMDPC_R);
+                        upc1[j] += (uint8_t)qcp_get(&s, (j + priv->sup1[k]) % QCMDPC_R);
+                    }
+                }
+                int nb_b0 = (pass == 0) ? nb0 : ng0;
+                int nb_b1 = (pass == 0) ? nb1 : ng1;
+                uint16_t *blk0 = (pass == 0) ? black0 : gray0;
+                uint16_t *blk1 = (pass == 0) ? black1 : gray1;
+                for (bi = 0; bi < nb_b0; bi++) {
+                    j = blk0[bi];
+                    if (upc0[j] >= (uint8_t)th_floor) {
+                        qcp_flip(&e0, j);
+                        for (k = 0; k < QCMDPC_D; k++)
+                            qcp_flip(&s, (priv->sup0[k] + j) % QCMDPC_R);
+                    }
+                }
+                for (bi = 0; bi < nb_b1; bi++) {
+                    j = blk1[bi];
+                    if (upc1[j] >= (uint8_t)th_floor) {
+                        qcp_flip(&e1, j);
+                        for (k = 0; k < QCMDPC_D; k++)
+                            qcp_flip(&s, (priv->sup1[k] + j) % QCMDPC_R);
+                    }
+                }
+            }
+        }
+    }
+
+    if (!qcp_is_zero(&s)) return 0;
+    *e0_out = e0; *e1_out = e1;
+    return 1;
+}
+
+/* ── QC-MDPC decapsulate ── */
+/* Decodes syndrome using BGF; returns 1 on success, 0 on failure. */
+
+static int qcmdpc_decap_bgf(BitArray *K_out, const QcPoly *syn,
+                              const QcMdpcPriv *priv) {
+    QcPoly e0, e1;
+    uint8_t ebuf[2 * QCMDPC_RBYTES];
+    int i, k;
+    if (!qcmdpc_bgf_decode(&e0, &e1, syn, priv)) return 0;
+    memset(ebuf, 0, sizeof(ebuf));
+    for (i = 0; i < QCMDPC_RWORDS; i++) {
+        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++) {
+            ebuf[i * 8 + k]              = (uint8_t)(e0.w[i] >> (k * 8));
+            ebuf[QCMDPC_RBYTES + i*8 + k] = (uint8_t)(e1.w[i] >> (k * 8));
+        }
+    }
+    hfscx_256(ebuf, 2 * QCMDPC_RBYTES, NULL, K_out->b);
+    return 1;
+}
+
 #endif /* HERRADURA_H */
