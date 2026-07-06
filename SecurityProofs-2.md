@@ -596,7 +596,7 @@ where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \
 
 *Hash chain.* $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8),\, x)$ at $n = 256$, identical to Theorem 16.
 
-*Keygen.* Leaf seed $\text{sk}_{i,j} = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx}_{32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}_{i,j} = h^{w-1}(\text{sk}_{i,j})$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}_{i,0} \mathbin\| \cdots \mathbin\| \text{pk}_{i,\ell-1})$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
+*Keygen.* Leaf seed $\text{sk}(i,j) = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx-32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}(i,j) = h^{w-1}(\text{sk}(i,j))$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}(i,0) \mathbin\| \cdots \mathbin\| \text{pk}(i,\ell-1))$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
 
 *Sign.* Encode $\text{HFSCX-256}(\text{msg})$ as 64 base-16 digits; append 3-digit checksum. Release $\sigma_j = h^{w-1-d_j}(\text{sk}_j)$ per chain. Include Merkle authentication path for the leaf.
 
