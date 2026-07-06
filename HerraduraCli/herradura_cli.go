@@ -71,6 +71,7 @@ const (
 	lblZkpNlPriv   = "HERRADURA ZKP-NL PRIVATE KEY"
 	lblZkpNlPub    = "HERRADURA ZKP-NL PUBLIC KEY"
 	lblZkpNlProof  = "HERRADURA ZKP-NL PROOF"
+	lblZkpNlPpSig  = "HERRADURA ZKP-NL-PP SIGNATURE"
 
 	lblOprfPriv   = "HERRADURA OPRF PRIVATE KEY"
 	lblOprfState  = "HERRADURA OPRF CLIENT STATE"
@@ -1652,6 +1653,76 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 	return
 }
 
+// encodeZkpNlPpProof: Wire format:
+// 4B n | 4B rounds | per-round:
+//   32B com_e | 1B e | nb B out_e | 16B seed_p1 | 16B seed_p2
+//   | 1B gates_len | gates_p2 | 1B has_share2 | [nb B share2 if has_share2]
+func encodeZkpNlPpProof(proof []ZkpNlPpRound, n int) string {
+	R := len(proof)
+	nb := (n + 7) / 8
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	binary.BigEndian.PutUint32(buf[4:], uint32(R))
+	for _, r := range proof {
+		buf = append(buf, r.ComE[:]...)
+		buf = append(buf, byte(r.E))
+		buf = append(buf, r.OutE...)
+		buf = append(buf, r.SeedP1[:]...)
+		buf = append(buf, r.SeedP2[:]...)
+		buf = append(buf, byte(len(r.GatesP2)))
+		buf = append(buf, r.GatesP2...)
+		if r.Share2 != nil {
+			buf = append(buf, 1)
+			buf = append(buf, r.Share2...)
+		} else {
+			buf = append(buf, 0)
+		}
+	}
+	_ = nb
+	return PemWrap(lblZkpNlPpSig, buf)
+}
+
+func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
+	if len(body) < 8 {
+		return nil, 0, fmt.Errorf("ZKP-NL-PP proof too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	R := int(binary.BigEndian.Uint32(body[4:8]))
+	nb := (n + 7) / 8
+	off := 8
+	proof = make([]ZkpNlPpRound, R)
+	for j := 0; j < R; j++ {
+		minLen := 32 + 1 + nb + 16 + 16
+		if off+minLen > len(body) {
+			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated", j)
+		}
+		copy(proof[j].ComE[:], body[off:off+32]); off += 32
+		proof[j].E = int(body[off]); off++
+		proof[j].OutE = make([]byte, nb)
+		copy(proof[j].OutE, body[off:off+nb]); off += nb
+		copy(proof[j].SeedP1[:], body[off:off+16]); off += 16
+		copy(proof[j].SeedP2[:], body[off:off+16]); off += 16
+		if off >= len(body) {
+			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates_len)", j)
+		}
+		gl := int(body[off]); off++
+		if off+gl+1 > len(body) {
+			return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (gates)", j)
+		}
+		proof[j].GatesP2 = make([]byte, gl)
+		copy(proof[j].GatesP2, body[off:off+gl]); off += gl
+		hasShare2 := int(body[off]); off++
+		if hasShare2 != 0 {
+			if off+nb > len(body) {
+				return nil, 0, fmt.Errorf("ZKP-NL-PP proof round %d truncated (share2)", j)
+			}
+			proof[j].Share2 = make([]byte, nb)
+			copy(proof[j].Share2, body[off:off+nb]); off += nb
+		}
+	}
+	return
+}
+
 // ── enc ───────────────────────────────────────────────────────────────────────
 
 func cmdEnc(args []string) {
@@ -2060,6 +2131,28 @@ func cmdSign(args []string) {
 		return
 	}
 
+	// ZKB++: compact ZKP-NL encoding
+	if *algo == "nl-zkbpp" {
+		body, rerr := readRawPEM(*key, lblZkpNlPriv)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "sign nl-zkbpp: %v\n", rerr)
+			os.Exit(1)
+		}
+		A, B, y, zkpN, derr := decodeZkpNlPriv(body)
+		if derr != nil {
+			die("sign", derr)
+		}
+		proof, perr := ZkpNlProvepp(A, B, y, zkpN, ZkpNlDemoRounds, msgPad(inBytes, 32))
+		if perr != nil {
+			die("sign", perr)
+		}
+		pem := encodeZkpNlPpProof(proof, zkpN)
+		if werr := writeString(*out, pem); werr != nil {
+			die("sign", werr)
+		}
+		return
+	}
+
 	_, ourInts, err := readPEMInts(*key)
 	if err != nil {
 		die("sign", err)
@@ -2276,6 +2369,35 @@ func cmdVerify(args []string) {
 			die("verify", uerr)
 		}
 		if ZkpNlVerify(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+	}
+
+	// ZKB++: compact ZKP-NL verify
+	if *algo == "nl-zkbpp" {
+		pubBody, rerr := readRawPEM(*pubkey, lblZkpNlPub)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "verify nl-zkbpp: %v\n", rerr)
+			os.Exit(1)
+		}
+		B, y, zkpN, derr := decodeZkpNlPub(pubBody)
+		if derr != nil {
+			die("verify", derr)
+		}
+		proofBody, perr := readRawPEM(*sig, lblZkpNlPpSig)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "verify nl-zkbpp: %v\n", perr)
+			os.Exit(1)
+		}
+		proof, _, uerr := decodeZkpNlPpProof(proofBody)
+		if uerr != nil {
+			die("verify", uerr)
+		}
+		if ZkpNlVerifypp(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {

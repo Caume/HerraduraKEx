@@ -279,6 +279,74 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# ZKP-NL-PP (ZKB++) proof encode/decode — TODO #122 Batch 2
+#
+# Wire format (binary, no DER):
+#   4B n | 4B rounds | per-round:
+#     32B com_e | 1B e | nb B out_e | 16B seed_p1 | 16B seed_p2
+#     | 1B gates_len | gates_p2 | 1B has_share2 | [nb B share2 if has_share2]
+# ---------------------------------------------------------------------------
+
+_ZKPP_SEED_BYTES = 16
+_ZKPP_LABEL      = "HERRADURA ZKP-NL-PP SIGNATURE"
+
+
+def encode_zkp_nl_pp_proof(proof_rounds: list, n: int) -> str:
+    """Encode a ZKB++ proof list as PEM (label HERRADURA ZKP-NL-PP SIGNATURE).
+
+    proof_rounds: list of dicts with keys:
+      com_e, e, out_e, seed_p1, seed_p2, gates_p2, share2 (b'' when e==2).
+    """
+    nb   = (n + 7) // 8
+    R    = len(proof_rounds)
+    body = n.to_bytes(4, 'big') + R.to_bytes(4, 'big')
+    for rnd in proof_rounds:
+        body += rnd['com_e']
+        body += bytes([rnd['e']])
+        body += rnd['out_e']
+        body += rnd['seed_p1']
+        body += rnd['seed_p2']
+        gl    = len(rnd['gates_p2'])
+        body += bytes([gl])
+        body += rnd['gates_p2']
+        s2    = rnd['share2']
+        has   = 1 if s2 else 0
+        body += bytes([has])
+        if has:
+            body += s2
+    return pem_wrap(_ZKPP_LABEL, body)
+
+
+def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
+    """Decode a ZKB++ PEM proof block. Returns (proof_rounds, n)."""
+    label, body = pem_unwrap(pem_text)
+    if label != _ZKPP_LABEL:
+        raise ValueError(f"Unexpected PEM label: {label!r}")
+    off = 0
+    n   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    R   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    nb  = (n + 7) // 8
+    rounds = []
+    for _ in range(R):
+        com_e   = body[off:off + 32];      off += 32
+        e       = body[off];               off += 1
+        out_e   = body[off:off + nb];      off += nb
+        seed_p1 = body[off:off + _ZKPP_SEED_BYTES]; off += _ZKPP_SEED_BYTES
+        seed_p2 = body[off:off + _ZKPP_SEED_BYTES]; off += _ZKPP_SEED_BYTES
+        gl      = body[off];               off += 1
+        gates_p2 = body[off:off + gl];    off += gl
+        has_s2  = body[off];               off += 1
+        if has_s2:
+            share2 = body[off:off + nb]; off += nb
+        else:
+            share2 = b''
+        rounds.append({'com_e': com_e, 'e': e, 'out_e': out_e,
+                       'seed_p1': seed_p1, 'seed_p2': seed_p2,
+                       'gates_p2': gates_p2, 'share2': share2})
+    return rounds, n
+
+
+# ---------------------------------------------------------------------------
 # HCRED keypair, credential, and proof encode/decode — TODO #128 Batch 5
 #
 # Wire formats (raw binary, no DER):

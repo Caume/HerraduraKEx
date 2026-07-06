@@ -1682,6 +1682,194 @@ def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
 
 
 # ---------------------------------------------------------------------------
+# ZKP-NL-PP: ZKB++ encoding of the NL-FSCX ZKBoo proof (TODO #122 Batch 2)
+# Chase et al. 2017 (CCS) applied to the §11.10.3 circuit.
+# ---------------------------------------------------------------------------
+
+_ZKPP_SEED_BYTES = 16   # 128-bit per-party PRG seed
+
+
+def _zkpp_derive(seed, nb, mask):
+    """Derive (share, tape) for one party from its 16-byte seed."""
+    share = int.from_bytes(_zkp_nl_h(seed, b'share')[:nb], 'big') & mask
+    tape  = _zkp_nl_h(seed, b'tape')
+    return share, tape
+
+
+def _zkpp_pack_bits(bits):
+    """Bit-pack a list of 0/1 ints, LSB-first within each byte."""
+    out = bytearray((len(bits) + 7) // 8)
+    for k, b in enumerate(bits):
+        out[k >> 3] |= (b & 1) << (k & 7)
+    return bytes(out)
+
+
+def _zkpp_unpack_bits(data, count):
+    """Inverse of _zkpp_pack_bits."""
+    return [(data[k >> 3] >> (k & 7)) & 1 for k in range(count)]
+
+
+def _zkpp_out_share(p, share, carries, B, n):
+    """Recompute party p's circuit output share from its input share and
+    per-position carry bits (the linear tail of _zkp_nl_evaluate_circuit)."""
+    mask = (1 << n) - 1
+    sum_share = 0
+    for i in range(n):
+        bit_i = ((share >> i) & 1) ^ ((B >> i) & 1) ^ carries[i]
+        sum_share ^= bit_i << i
+    rot = _zkp_nl_rol(sum_share, n // 4, n)
+    lin = (share ^ _zkp_nl_rol(share, 1, n) ^ _zkp_nl_rol(share, n - 1, n)) & mask
+    if p == 0:   # public constant absorbed into party 0 only
+        lin ^= (B ^ _zkp_nl_rol(B, 1, n) ^ _zkp_nl_rol(B, n - 1, n)) & mask
+    return (lin ^ rot) & mask
+
+
+def _zkpp_commit(j, p, seed, share2_bytes, gate_bits, out_share, nb):
+    """ZKB++ view commitment."""
+    return _zkp_nl_h(j.to_bytes(4, 'big'), bytes([p]), seed,
+                     share2_bytes, gate_bits, out_share.to_bytes(nb, 'big'))
+
+
+def zkp_nl_prove_pp(A, B, y, n, rounds, msg_bytes):
+    """ZKB++ prover: prove knowledge of A s.t. nl_fscx_v1(A, B) = y.
+
+    Returns a list of `rounds` dicts with keys:
+      com_e    — hidden party's 32-byte commitment
+      e        — hidden party index in {0, 1, 2}
+      out_e    — hidden party's output share (nb bytes)
+      seed_p1, seed_p2 — 16-byte seeds of the two opened parties
+      gates_p2 — bit-packed AND-gate outputs of party e+2
+      share2   — party 2's explicit input share (b'' when party 2 is hidden)
+    """
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+
+    all_rounds = []
+    com_block  = b''
+    out_block  = b''
+
+    for j in range(rounds):
+        seeds = [os.urandom(_ZKPP_SEED_BYTES) for _ in range(3)]
+        s0, t0 = _zkpp_derive(seeds[0], nb, mask)
+        s1, t1 = _zkpp_derive(seeds[1], nb, mask)
+        s2 = (A ^ s0 ^ s1) & mask
+        t2 = _zkp_nl_h(seeds[2], b'tape')
+        shares, tapes = [s0, s1, s2], [t0, t1, t2]
+
+        out_shares, gate_views = _zkp_nl_evaluate_circuit(shares, tapes, B, n)
+        gate_bits = [_zkpp_pack_bits([gv[2] for gv in gate_views[p]])
+                     for p in range(3)]
+
+        s2_bytes = s2.to_bytes(nb, 'big')
+        coms = [_zkpp_commit(j, p, seeds[p], s2_bytes if p == 2 else b'',
+                             gate_bits[p], out_shares[p], nb)
+                for p in range(3)]
+
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in out_shares)
+        all_rounds.append((seeds, s2_bytes, gate_bits, out_shares, coms))
+
+    # Fiat-Shamir: bind commitments, output shares, B, y, msg
+    ch_seed = _zkp_nl_h(com_block, out_block,
+                        B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes)
+
+    proof_rounds = []
+    for j in range(rounds):
+        e = _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))[0] % 3
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+        seeds, s2_bytes, gate_bits, out_shares, coms = all_rounds[j]
+        proof_rounds.append({
+            'com_e':    coms[e],
+            'e':        e,
+            'out_e':    out_shares[e].to_bytes(nb, 'big'),
+            'seed_p1':  seeds[p1],
+            'seed_p2':  seeds[p2],
+            'gates_p2': gate_bits[p2],
+            'share2':   b'' if e == 2 else s2_bytes,
+        })
+    return proof_rounds
+
+
+def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
+    """ZKB++ verifier for zkp_nl_prove_pp proofs.  Returns True iff valid."""
+    mask = (1 << n) - 1
+    nb   = (n + 7) // 8
+    if len(proof_rounds) != rounds:
+        return False
+
+    com_block = b''
+    out_block = b''
+
+    for j, resp in enumerate(proof_rounds):
+        e = resp['e']
+        if e not in (0, 1, 2):
+            return False
+        p1, p2 = (e + 1) % 3, (e + 2) % 3
+
+        share2_b = resp['share2']
+        if e != 2 and len(share2_b) != nb:
+            return False
+
+        def _open(p, seed):
+            if p == 2:
+                return int.from_bytes(share2_b, 'big') & mask, \
+                       _zkp_nl_h(seed, b'tape')
+            return _zkpp_derive(seed, nb, mask)
+
+        share_p1, tape_p1 = _open(p1, resp['seed_p1'])
+        share_p2, tape_p2 = _open(p2, resp['seed_p2'])
+
+        gates_p2 = _zkpp_unpack_bits(resp['gates_p2'], n - 1)
+        if len(resp['gates_p2']) != (n - 1 + 7) // 8:
+            return False
+
+        gates_p1  = []
+        carries_1 = [0] * n
+        carries_2 = [0] * n
+        c1 = c2 = 0
+        for i in range(n - 1):
+            a1 = (share_p1 >> i) & 1
+            a2 = (share_p2 >> i) & 1
+            Bi = (B >> i) & 1
+            r1 = _zkp_nl_prg_bit(tape_p1, i)
+            r2 = _zkp_nl_prg_bit(tape_p2, i)
+            and_p1 = (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2
+            gates_p1.append(and_p1)
+            c1 = (Bi * a1) ^ and_p1 ^ (Bi * c1)
+            c2 = (Bi * a2) ^ gates_p2[i] ^ (Bi * c2)
+            carries_1[i + 1] = c1
+            carries_2[i + 1] = c2
+
+        out_p1 = _zkpp_out_share(p1, share_p1, carries_1, B, n)
+        out_p2 = _zkpp_out_share(p2, share_p2, carries_2, B, n)
+        out_e  = int.from_bytes(resp['out_e'], 'big') & mask
+        if (out_e ^ out_p1 ^ out_p2) & mask != y:
+            return False
+
+        gb_p1 = _zkpp_pack_bits(gates_p1)
+        com_p1 = _zkpp_commit(j, p1, resp['seed_p1'],
+                              share2_b if p1 == 2 else b'', gb_p1, out_p1, nb)
+        com_p2 = _zkpp_commit(j, p2, resp['seed_p2'],
+                              share2_b if p2 == 2 else b'',
+                              resp['gates_p2'], out_p2, nb)
+
+        coms = [None, None, None]
+        coms[e], coms[p1], coms[p2] = resp['com_e'], com_p1, com_p2
+        outs = [None, None, None]
+        outs[e], outs[p1], outs[p2] = out_e, out_p1, out_p2
+
+        com_block += b''.join(coms)
+        out_block += b''.join(o.to_bytes(nb, 'big') for o in outs)
+
+    ch_seed = _zkp_nl_h(com_block, out_block,
+                        B.to_bytes(nb, 'big'), y.to_bytes(nb, 'big'), msg_bytes)
+    for j, resp in enumerate(proof_rounds):
+        if _zkp_nl_h(ch_seed, j.to_bytes(4, 'big'))[0] % 3 != resp['e']:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # HCRED — Hybrid Ring-LWR + Stern-F credential (TODO #128 Batch 1)
 # SecurityProofs-3.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
 # (implementation notes).

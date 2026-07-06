@@ -2257,6 +2257,320 @@ func (r *ZkpNlRound) comAt(p int) [32]byte {
 }
 
 // ---------------------------------------------------------------------------
+// ZKB++ compact encoding (Chase et al. 2017)
+// ---------------------------------------------------------------------------
+
+const zkppSeedBytes = 16
+
+// ZkpNlPpRound holds one round of a ZKB++ proof.
+type ZkpNlPpRound struct {
+	ComE    [32]byte
+	E       int
+	OutE    []byte // nb bytes
+	SeedP1  [zkppSeedBytes]byte
+	SeedP2  [zkppSeedBytes]byte
+	GatesP2 []byte // bit-packed AND-gate outputs of party p2
+	Share2  []byte // party 2's offset share (nil when E == 2)
+}
+
+func zkppDerive(seed []byte, nb int) (share uint32, tape []byte) {
+	h := zkpNlH(seed, []byte("share"))
+	share = 0
+	for i := 0; i < nb; i++ {
+		share = (share << 8) | uint32(h[i])
+	}
+	tape = zkpNlH(seed, []byte("tape"))
+	return
+}
+
+func zkppCommit(j, party int, seed []byte, share2Bytes []byte, gateBits []byte,
+	outShare uint32, nb int) []byte {
+	jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+	pBuf := []byte{byte(party)}
+	osBuf := make([]byte, nb)
+	v := outShare
+	for i := nb - 1; i >= 0; i-- {
+		osBuf[i] = byte(v)
+		v >>= 8
+	}
+	return zkpNlH(jBuf, pBuf, seed, share2Bytes, gateBits, osBuf)
+}
+
+func zkppOutShare(party int, share uint32, carries []int, B uint32, n int) uint32 {
+	mask := uint32((1 << uint(n)) - 1)
+	sumS := uint32(0)
+	for i := 0; i < n; i++ {
+		bit := int((share>>uint(i))&1) ^ int((B>>uint(i))&1) ^ carries[i]
+		sumS ^= uint32(bit) << uint(i)
+	}
+	rot := zkpNlRol(sumS, n/4, n)
+	lin := (share ^ zkpNlRol(share, 1, n) ^ zkpNlRol(share, n-1, n)) & mask
+	if party == 0 {
+		Bc := (B ^ zkpNlRol(B, 1, n) ^ zkpNlRol(B, n-1, n)) & mask
+		lin ^= Bc
+	}
+	return (lin ^ rot) & mask
+}
+
+func zkppPackGateBits(gv []byte, nGates int) []byte {
+	out := make([]byte, (nGates+7)/8)
+	for k := 0; k < nGates; k++ {
+		bit := int((gv[k] >> 2) & 1)
+		out[k>>3] |= byte(bit << uint(k&7))
+	}
+	return out
+}
+
+func zkppGetGateBit(packed []byte, k int) int {
+	return int((packed[k>>3] >> uint(k&7)) & 1)
+}
+
+// ZkpNlProvepp produces a ZKB++ proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
+func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, error) {
+	mask := uint32((1 << uint(n)) - 1)
+	nb := (n + 7) / 8
+	gatesLen := (n - 1 + 7) / 8
+	if n <= 1 {
+		gatesLen = 1
+	}
+
+	type roundData struct {
+		seeds     [3][zkppSeedBytes]byte
+		shares    [3]uint32
+		tapes     [3][]byte
+		outShares [3]uint32
+		gateViews [3][]byte
+		gateBits  [3][]byte
+		s2Bytes   []byte
+		coms      [3][]byte
+	}
+	allData := make([]roundData, rounds)
+	var comBlock, outBlock []byte
+
+	for j := 0; j < rounds; j++ {
+		var rd roundData
+		// Generate seeds
+		for p := 0; p < 3; p++ {
+			if _, err := rand.Read(rd.seeds[p][:]); err != nil {
+				return nil, err
+			}
+		}
+		s0, t0 := zkppDerive(rd.seeds[0][:], nb)
+		s1, t1 := zkppDerive(rd.seeds[1][:], nb)
+		s0 &= mask; s1 &= mask
+		s2 := (A ^ s0 ^ s1) & mask
+		t2 := zkpNlH(rd.seeds[2][:], []byte("tape"))
+		rd.shares = [3]uint32{s0, s1, s2}
+		rd.tapes  = [3][]byte{t0, t1, t2}
+
+		outShares, gateViews := zkpNlEvalCircuit(rd.shares, rd.tapes, B, n)
+		rd.outShares = outShares
+		rd.gateViews = [3][]byte{gateViews[0], gateViews[1], gateViews[2]}
+
+		for p := 0; p < 3; p++ {
+			rd.gateBits[p] = zkppPackGateBits(gateViews[p], n-1)
+		}
+
+		rd.s2Bytes = make([]byte, nb)
+		v := s2
+		for i := nb - 1; i >= 0; i-- {
+			rd.s2Bytes[i] = byte(v)
+			v >>= 8
+		}
+
+		for p := 0; p < 3; p++ {
+			var s2b []byte
+			if p == 2 {
+				s2b = rd.s2Bytes
+			}
+			h := zkppCommit(j, p, rd.seeds[p][:], s2b, rd.gateBits[p], outShares[p], nb)
+			rd.coms[p] = h
+			comBlock = append(comBlock, h...)
+		}
+		for p := 0; p < 3; p++ {
+			osBuf := make([]byte, nb)
+			v := outShares[p]
+			for i := nb - 1; i >= 0; i-- {
+				osBuf[i] = byte(v)
+				v >>= 8
+			}
+			outBlock = append(outBlock, osBuf...)
+		}
+		allData[j] = rd
+	}
+
+	// Fiat-Shamir challenge
+	nBuf := make([]byte, nb)
+	v := B
+	for i := nb - 1; i >= 0; i-- { nBuf[i] = byte(v); v >>= 8 }
+	yBuf := make([]byte, nb)
+	v = y
+	for i := nb - 1; i >= 0; i-- { yBuf[i] = byte(v); v >>= 8 }
+	chSeed := zkpNlH(comBlock, outBlock, nBuf, yBuf, msg)
+
+	result := make([]ZkpNlPpRound, rounds)
+	for j := 0; j < rounds; j++ {
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		h := zkpNlH(chSeed, jBuf)
+		e := int(h[0]) % 3
+		p1 := (e + 1) % 3
+		p2 := (e + 2) % 3
+		rd := allData[j]
+
+		result[j].E = e
+		copy(result[j].ComE[:], rd.coms[e])
+
+		result[j].OutE = make([]byte, nb)
+		ov := rd.outShares[e]
+		for i := nb - 1; i >= 0; i-- { result[j].OutE[i] = byte(ov); ov >>= 8 }
+
+		copy(result[j].SeedP1[:], rd.seeds[p1][:])
+		copy(result[j].SeedP2[:], rd.seeds[p2][:])
+		result[j].GatesP2 = rd.gateBits[p2]
+		_ = gatesLen
+		if e != 2 {
+			result[j].Share2 = rd.s2Bytes
+		}
+	}
+	return result, nil
+}
+
+// ZkpNlVerifypp verifies a ZKB++ proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
+func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound) bool {
+	if n <= 0 || n > ZkpNlMaxN || rounds <= 0 || rounds > 4096 || len(proof) != rounds {
+		return false
+	}
+	mask := uint32((1 << uint(n)) - 1)
+	nb := (n + 7) / 8
+
+	var comBlock, outBlock []byte
+
+	osBufFrom := func(v uint32) []byte {
+		b := make([]byte, nb)
+		for i := nb - 1; i >= 0; i-- { b[i] = byte(v); v >>= 8 }
+		return b
+	}
+
+	for j, r := range proof {
+		e := r.E
+		if e < 0 || e > 2 {
+			return false
+		}
+		p1 := (e + 1) % 3
+		p2 := (e + 2) % 3
+
+		var shareP1, shareP2 uint32
+		var tapeP1, tapeP2 []byte
+
+		openParty := func(p int, seed []byte) (uint32, []byte) {
+			if p == 2 {
+				if r.Share2 == nil {
+					return 0, nil
+				}
+				s := uint32(0)
+				for _, b := range r.Share2 {
+					s = (s << 8) | uint32(b)
+				}
+				return s & mask, zkpNlH(seed, []byte("tape"))
+			}
+			s, t := zkppDerive(seed, nb)
+			return s & mask, t
+		}
+
+		var okP1, okP2 bool
+		shareP1, tapeP1 = openParty(p1, r.SeedP1[:])
+		shareP2, tapeP2 = openParty(p2, r.SeedP2[:])
+		okP1 = (p1 != 2 || r.Share2 != nil)
+		okP2 = (p2 != 2 || r.Share2 != nil)
+		if !okP1 || !okP2 || tapeP1 == nil || tapeP2 == nil {
+			return false
+		}
+
+		// Recompute p1's AND gates; track both carry chains
+		gatesP2 := r.GatesP2
+		nGates := n - 1
+		if nGates < 0 {
+			nGates = 0
+		}
+		if len(gatesP2) < (nGates+7)/8 {
+			return false
+		}
+		gatesP1 := make([]byte, (nGates+7)/8)
+		carriesP1 := make([]int, n+1)
+		carriesP2 := make([]int, n+1)
+		c1, c2 := 0, 0
+		for i := 0; i < nGates; i++ {
+			a1 := int((shareP1 >> uint(i)) & 1)
+			a2 := int((shareP2 >> uint(i)) & 1)
+			Bi := int((B >> uint(i)) & 1)
+			r1 := zkpNlPrgBit(tapeP1, i)
+			r2 := zkpNlPrgBit(tapeP2, i)
+			andP1 := (a1 & c1) ^ (a1 & c2) ^ (a2 & c1) ^ r1 ^ r2
+			gateP2Bit := zkppGetGateBit(gatesP2, i)
+			gatesP1[i>>3] |= byte(andP1 << uint(i&7))
+			c1 = (Bi*a1) ^ andP1 ^ (Bi*c1)
+			c2 = (Bi*a2) ^ gateP2Bit ^ (Bi*c2)
+			carriesP1[i+1] = c1
+			carriesP2[i+1] = c2
+		}
+
+		outP1 := zkppOutShare(p1, shareP1, carriesP1, B, n)
+		outP2 := zkppOutShare(p2, shareP2, carriesP2, B, n)
+		outEVal := uint32(0)
+		for _, b := range r.OutE {
+			outEVal = (outEVal << 8) | uint32(b)
+		}
+		outEVal &= mask
+
+		if ((outEVal ^ outP1 ^ outP2) & mask) != (y & mask) {
+			return false
+		}
+
+		// Recompute opened commitments
+		var s2b []byte
+		if r.Share2 != nil {
+			s2b = r.Share2
+		}
+		comP1 := zkppCommit(j, p1, r.SeedP1[:], func() []byte {
+			if p1 == 2 { return s2b }; return nil
+		}(), gatesP1, outP1, nb)
+		comP2 := zkppCommit(j, p2, r.SeedP2[:], func() []byte {
+			if p2 == 2 { return s2b }; return nil
+		}(), gatesP2, outP2, nb)
+
+		coms := [3][]byte{nil, nil, nil}
+		coms[e] = r.ComE[:]
+		coms[p1] = comP1
+		coms[p2] = comP2
+		outs := [3]uint32{0, 0, 0}
+		outs[e] = outEVal; outs[p1] = outP1; outs[p2] = outP2
+
+		for pp := 0; pp < 3; pp++ {
+			comBlock = append(comBlock, coms[pp]...)
+			outBlock = append(outBlock, osBufFrom(outs[pp])...)
+		}
+	}
+
+	// Recompute Fiat-Shamir challenge
+	nBuf := make([]byte, nb)
+	v := B
+	for i := nb - 1; i >= 0; i-- { nBuf[i] = byte(v); v >>= 8 }
+	yBuf := make([]byte, nb)
+	v = y
+	for i := nb - 1; i >= 0; i-- { yBuf[i] = byte(v); v >>= 8 }
+	chSeed := zkpNlH(comBlock, outBlock, nBuf, yBuf, msg)
+
+	for j, r := range proof {
+		jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
+		h := zkpNlH(chSeed, jBuf)
+		if int(h[0])%3 != r.E {
+			return false
+		}
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
 // 78.J — Cryptographic Accumulator (Merkle tree on HFSCX-256) (TODO #78.J)
 //
 // Domain separation follows RFC 6962: 0x00 prefix for leaves, 0x01 for nodes.

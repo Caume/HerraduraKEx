@@ -298,6 +298,96 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
     return proof;
 }
 
+/* Serialize ZkpNlPpRound[] to raw bytes (ZKB++ wire format).
+ * Format: 4B n | 4B rounds | per-round:
+ *   32B com_e | 1B e | nb B out_e | 16B seed_p1 | 16B seed_p2
+ *   | 1B gates_len | gates_p2 | 1B has_share2 | [nb B share2 if has_share2]
+ */
+static uint8_t *zkp_nl_pp_pack_proof(const ZkpNlPpRound *proof, int rounds, int n, size_t *olen)
+{
+    int nb = (n + 7) / 8, j;
+    /* Compute exact size */
+    size_t total = 8;
+    for (j = 0; j < rounds; j++) {
+        total += 32 + 1 + (size_t)nb + ZKPP_SEED_BYTES + ZKPP_SEED_BYTES
+               + 1 + proof[j].gates_len
+               + 1 + (proof[j].has_share2 ? (size_t)nb : 0);
+    }
+    uint8_t *buf = (uint8_t *)malloc(total);
+    uint8_t *p;
+    if (!buf) die("out of memory");
+    buf[0]=(uint8_t)(n>>24);      buf[1]=(uint8_t)(n>>16);
+    buf[2]=(uint8_t)(n>>8);       buf[3]=(uint8_t)n;
+    buf[4]=(uint8_t)(rounds>>24); buf[5]=(uint8_t)(rounds>>16);
+    buf[6]=(uint8_t)(rounds>>8);  buf[7]=(uint8_t)rounds;
+    p = buf + 8;
+    for (j = 0; j < rounds; j++) {
+        int k;
+        memcpy(p, proof[j].com_e, 32); p += 32;
+        *p++ = proof[j].e;
+        for (k = 0; k < nb; k++) *p++ = proof[j].out_e[k];
+        memcpy(p, proof[j].seed_p1, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
+        memcpy(p, proof[j].seed_p2, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
+        *p++ = (uint8_t)proof[j].gates_len;
+        memcpy(p, proof[j].gates_p2, proof[j].gates_len); p += proof[j].gates_len;
+        *p++ = (uint8_t)proof[j].has_share2;
+        if (proof[j].has_share2) {
+            for (k = 0; k < nb; k++) *p++ = proof[j].share2[k];
+        }
+    }
+    *olen = total;
+    return buf;
+}
+
+/* Deserialize ZkpNlPpRound[] from raw bytes. */
+static ZkpNlPpRound *zkp_nl_pp_unpack_proof(const uint8_t *buf, size_t blen,
+                                              int *n_out, int *rounds_out)
+{
+    int n, rounds, nb, j;
+    ZkpNlPpRound *proof;
+    const uint8_t *p;
+    if (blen < 8) die("ZKP-NL-PP proof too short");
+    n      = (int)(((uint32_t)buf[0]<<24)|((uint32_t)buf[1]<<16)|
+                   ((uint32_t)buf[2]<<8)|buf[3]);
+    rounds = (int)(((uint32_t)buf[4]<<24)|((uint32_t)buf[5]<<16)|
+                   ((uint32_t)buf[6]<<8)|buf[7]);
+    if (n <= 0 || n > ZKP_NL_MAX_N)
+        die("ZKP-NL-PP proof: n out of range");
+    if (rounds <= 0 || rounds > 4096)
+        die("ZKP-NL-PP proof: rounds out of range");
+    *n_out = n; *rounds_out = rounds;
+    nb = (n + 7) / 8;
+    proof = (ZkpNlPpRound *)malloc((size_t)rounds * sizeof(ZkpNlPpRound));
+    if (!proof) die("out of memory");
+    p = buf + 8;
+    for (j = 0; j < rounds; j++) {
+        int k;
+        size_t gl;
+        if (p + 32 + 1 + nb + ZKPP_SEED_BYTES + ZKPP_SEED_BYTES > buf + blen)
+            die("truncated ZKP-NL-PP proof");
+        memcpy(proof[j].com_e, p, 32); p += 32;
+        proof[j].e = *p++;
+        for (k = 0; k < nb; k++) proof[j].out_e[k] = *p++;
+        memcpy(proof[j].seed_p1, p, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
+        memcpy(proof[j].seed_p2, p, ZKPP_SEED_BYTES); p += ZKPP_SEED_BYTES;
+        if (p >= buf + blen) die("truncated ZKP-NL-PP proof (gates_len)");
+        gl = *p++;
+        if (p + gl + 1 > buf + blen) die("truncated ZKP-NL-PP proof (gates)");
+        proof[j].gates_p2 = (uint8_t *)malloc(gl ? gl : 1);
+        if (!proof[j].gates_p2) die("out of memory");
+        memcpy(proof[j].gates_p2, p, gl); p += gl;
+        proof[j].gates_len = gl;
+        proof[j].has_share2 = *p++;
+        if (proof[j].has_share2) {
+            if (p + nb > buf + blen) die("truncated ZKP-NL-PP proof (share2)");
+            for (k = 0; k < nb; k++) proof[j].share2[k] = *p++;
+        } else {
+            memset(proof[j].share2, 0, sizeof(proof[j].share2));
+        }
+    }
+    return proof;
+}
+
 /* Get integer n=256 from a val. Returns 0 on success. */
 static int pem_key_get_n(const PemKey *k, int idx)
 {
@@ -2185,6 +2275,34 @@ static void cmd_sign(int argc, char **argv)
         return;
     }
 
+    /* nl-zkbpp: ZKB++ compact encoding of the same ZKP-NL statement */
+    if (strcmp(algo, "nl-zkbpp") == 0) {
+        FILE *urnd2 = fopen("/dev/urandom", "rb");
+        if (!urnd2) die("cannot open /dev/urandom");
+        size_t kblen;
+        uint8_t *kbody = zkp_raw_pem_read(key_path, PEM_ZKP_NL_PRIV, &kblen);
+        if (kblen < 4) die("sign: malformed ZKP-NL private key");
+        int nl_n = (int)(((uint32_t)kbody[0]<<24)|((uint32_t)kbody[1]<<16)|
+                         ((uint32_t)kbody[2]<<8)|kbody[3]);
+        int nb = (nl_n+7)/8;
+        if ((int)kblen < 4+3*nb) die("sign: malformed ZKP-NL private key (short)");
+        uint64_t zkA=0, zkB=0, zky=0; int ki;
+        for (ki=0;ki<nb;ki++) zkA=(zkA<<8)|kbody[4+ki];
+        for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|kbody[4+nb+ki];
+        for (ki=0;ki<nb;ki++) zky=(zky<<8)|kbody[4+2*nb+ki];
+        free(kbody);
+        ZkpNlPpRound *pp_proof = zkp_nl_pp_prove(zkA, zkB, zky, nl_n, ZKP_NL_PROD_ROUNDS,
+                                                  msg_bytes, KEYBYTES, urnd2);
+        fclose(urnd2);
+        size_t pack_len;
+        uint8_t *pack = zkp_nl_pp_pack_proof(pp_proof, ZKP_NL_PROD_ROUNDS, nl_n, &pack_len);
+        zkp_nl_pp_proof_free(pp_proof, ZKP_NL_PROD_ROUNDS);
+        if (pem_write_file(out_path ? out_path : "-", PEM_ZKP_NL_PP_SIG, pack, pack_len) != 0)
+            die("cannot write ZKP-NL-PP signature");
+        free(pack);
+        return;
+    }
+
     PemKey priv_k;
     pem_key_load(&priv_k, key_path);
 
@@ -2417,6 +2535,31 @@ static void cmd_verify(int argc, char **argv)
         if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
         int ok = zkp_nl_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, zk_proof);
         zkp_nl_proof_free(zk_proof, prf_rounds);
+        if (ok) { puts("Signature OK");         exit(0); }
+        else    { puts("Verification FAILED");  exit(1); }
+    }
+
+    /* nl-zkbpp: ZKB++ compact encoding verify */
+    if (strcmp(algo, "nl-zkbpp") == 0) {
+        size_t pkblen;
+        uint8_t *pkbody = zkp_raw_pem_read(pubkey_path, PEM_ZKP_NL_PUB, &pkblen);
+        if (pkblen < 4) die("verify: malformed ZKP-NL public key");
+        int nl_n = (int)(((uint32_t)pkbody[0]<<24)|((uint32_t)pkbody[1]<<16)|
+                         ((uint32_t)pkbody[2]<<8)|pkbody[3]);
+        int nb = (nl_n+7)/8;
+        if ((int)pkblen < 4+2*nb) die("verify: malformed ZKP-NL public key (short)");
+        uint64_t zkB=0, zky=0; int ki;
+        for (ki=0;ki<nb;ki++) zkB=(zkB<<8)|pkbody[4+ki];
+        for (ki=0;ki<nb;ki++) zky=(zky<<8)|pkbody[4+nb+ki];
+        free(pkbody);
+        size_t prflen;
+        uint8_t *prfbuf = zkp_raw_pem_read(sig_path, PEM_ZKP_NL_PP_SIG, &prflen);
+        int prf_n, prf_rounds;
+        ZkpNlPpRound *pp_proof = zkp_nl_pp_unpack_proof(prfbuf, prflen, &prf_n, &prf_rounds);
+        free(prfbuf);
+        if (prf_n != nl_n) die("verify: proof n mismatch with pubkey n");
+        int ok = zkp_nl_pp_verify(zkB, zky, nl_n, prf_rounds, msg.b, KEYBYTES, pp_proof);
+        zkp_nl_pp_proof_free(pp_proof, prf_rounds);
         if (ok) { puts("Signature OK");         exit(0); }
         else    { puts("Verification FAILED");  exit(1); }
     }
@@ -3409,9 +3552,10 @@ static void usage(void)
 "    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256] [--ring P0,P1,...]\n"
-"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots hpks-ring\n"
-"    rnl-sigma: key = hkex-rnl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-wots hpks-ring\n"
+"    rnl-sigma: key = hpks-zkp-nl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
+"    nl-zkbpp:  key = hpks-zkp-nl private key;      produces ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"
 "    hpks-ring: anonymous ring signature; key = an hpks-stern key in --ring (member pubkeys).\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
@@ -3420,6 +3564,7 @@ static void usage(void)
 "    Verify signature.  Exits 0 on OK, 1 on failure.\n"
 "    rnl-sigma: pubkey = hkex-rnl public key; sig = ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL PROOF PEM.\n"
+"    nl-zkbpp:  pubkey = hpks-zkp-nl public key; sig = ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-ring: --ring = member public keys; verifies anonymously (no signer revealed).\n"
 "    hpks-t:    --pubkey not required; C_agg is embedded in the signature.\n"
 "\n"
