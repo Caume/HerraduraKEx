@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.87] - 2026-07-06
+
+### Research — Ligero-lite IOP-based ZKP for NL-FSCX (TODO #122 Batch 4, closes #122)
+
+- **`SecurityProofsCode/nl_fscx_ligero.py`** — self-contained Ligero-style argument of
+  knowledge for y = F1^r(A,B) (A secret, B/y public), the ZKP-NL statement family:
+  - GF(2^16) arithmetic (log/exp tables); XOR/rotation arithmetize as **linear** maps,
+    so only the carry-chain AND gates and input booleanity are quadratic constraints;
+  - sparse constraint system with explicit per-state-bit variables (O(1) terms per
+    linear constraint — avoids the O(n²r²) affine-form blowup);
+  - Reed-Solomon-encoded, Merkle-committed witness matrix; proximity, linear, and
+    quadratic tests checked at t sampled columns (conservative e < d/3 regime of
+    Ligero Thm 4.2) with σ = ⌈λ/16⌉ algebraic-combo repetitions — **no parallel
+    repetition**, removing the cost that dominates ZKBoo/ZKB++;
+  - completeness + 3 soundness tests (wrong output, tampered carry, non-boolean
+    input) all PASS; byte-exact size-model validation at two scales, including a
+    real λ=128 proof at n=64, r=8 (102 KB; prove 2.1 s, verify 7.0 s pure Python).
+- **Result:** at n=256, r=64, λ=128 the proof is **219 KB unpruned / 163 KB with
+  Merkle path pruning** — below the 180 KB Picnic-range target and 2.1–2.8×
+  under ZKB++'s 464 KB; the single-step statement drops to 96 KB (39 KB pruned).
+- **`SecurityProofs-3.md`** — §11.10.4 prose, §11.10.5 comparison table (sparse-circuit
+  row updated to "ruled out", new Ligero-lite row), §11.10.6 direction 3 closed with
+  the Batch 4 results and remaining production gaps (ZK randomizer rows, hardened
+  soundness analysis, constant-time implementation).
+- TODO #122 marked DONE (all four batches shipped).
+
 ## [1.9.86] - 2026-07-06
 
 ### CLI — `hpke-stern-kem`: QC-MDPC Niederreiter KEM in Go CLI (TODO #126 Batch 3)
