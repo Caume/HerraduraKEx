@@ -6667,10 +6667,19 @@ variant of NL-FSCX v1.
   IOP-based ZKP scheme (Ligero/Picnic-FS) that avoids per-bit sharing.  Items 3–4 revised:
   the sparse-circuit approach is analysed and documented; the open sub-item is now "IOP-based
   ZKP for NL-FSCX" as a longer-term research direction.  SecurityProofs-2.md §11.8.2 updated.
+- **Batch 4 — Ligero-lite IOP prototype (v1.9.87).**  `SecurityProofsCode/nl_fscx_ligero.py`
+  implements a self-contained Ligero-style argument of knowledge for y = F1^r(A,B) over
+  GF(2^16): XOR/ROL are linear, only carry-chain ANDs + input booleanity are quadratic;
+  one RS-encoded Merkle-committed witness matrix, t column queries (e < d/3 regime) +
+  σ = ⌈λ/16⌉ algebraic-combo repetitions — no parallel repetition.  Completeness + 3
+  soundness tests pass; size model validated byte-exact at two scales including a real
+  λ=128 proof (n=64, r=8: 102 KB, prove 2.1 s / verify 7.0 s).  At n=256, r=64, λ=128:
+  **219 KB unpruned / 163 KB pruned** (vs ZKB++ 464 KB; target 180 KB reached with
+  pruning); single-step 96/39 KB.  SecurityProofs-3.md §11.10.4–.6 updated.
 
 **References:** Chase et al. 2017 (ZKB++, CCS 2017); Giacomelli et al. 2016 (ZKBoo, USENIX Security 2016); Albrecht et al. 2016 (LowMC).
 
-Status: **OPEN** — Batch 1 shipped v1.9.81; Batch 2 shipped v1.9.82; Batch 3 shipped v1.9.83 (sparse analysis); IOP direction remains open.
+Status: **DONE v1.9.87** — Batch 1 (ZKB++ encoding) v1.9.81; Batch 2 (C/Go ports + CLI) v1.9.82; Batch 3 (sparse-circuit analysis) v1.9.83; Batch 4 (Ligero-lite IOP prototype, `SecurityProofsCode/nl_fscx_ligero.py`) v1.9.87 — 219 KB unpruned / 163 KB pruned at n=256, r=64, λ=128 (vs 464 KB ZKB++, 180 KB target); production hardening (ZK randomizer rows, tight soundness, constant-time) would be a new item.
 
 ---
 
