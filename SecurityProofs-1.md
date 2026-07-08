@@ -882,6 +882,16 @@ FSCX, fscx\_revolve, and all symmetric protocols (HSKE, HPKS, HPKE) are **unchan
 
 **Verified experimentally:** `fscx_revolve(fscx_revolve(P, K, i), K, r) = P` for $i + r = n$ holds at 4000/4000 trials across $n \in \{32, 64\}$ (Section I-D of `hkex_nl_proposal.py`).
 
+#### 9.2.6 Migration path — successor group for HKEX-GF, HPKS, and HPKE (TODO #127, v1.9.90)
+
+Given the deprecation documented in §9.2.4, the question is the minimal-change upgrade that preserves the suite's Schnorr algebra — the signing equation `s = (k - a*e) mod ord` and verification `g^s * C^e == R` — so that threshold signing (TODO #98) and Schnorr ring signatures (TODO #78.I) continue to apply.  `SecurityProofsCode/hpks_ristretto_migration.py` evaluates **ristretto255** (RFC 9496, the prime-order quotient of Curve25519, order approximately `2^252`, roughly 128-bit ECDLP) as that successor, using a self-contained pure-Python implementation validated against the RFC 9496 generator test vector.
+
+**Drop-in verification.**  The prototype re-implements HPKS signing verbatim over ristretto255 — only `gf_pow(g, a)` becomes scalar multiplication `a*G` and `gf_mul` becomes point addition; the challenge function is algebra-agnostic and stays HFSCX-256-DM.  Results: 50/50 sign/verify round-trips; tampered message, tampered scalar, and wrong-key signatures all rejected; 3-of-3 additive threshold aggregation verifies against the summed public key; AOS Schnorr ring signatures close for every ring member and reject substituted members.  Notably, the **prime group order removes the order-divisor caveats** that GF(2^n)-star required (BSGS in §9.2.4 recovers non-unique exponent representatives precisely because `g = 3` is non-primitive; in a prime-order group every non-identity element generates the full group).
+
+**Migration impact.**  Group elements are 32 bytes on both sides, so existing PEM/DER SEQUENCE layouts carry over unchanged; only a new algorithm tag (for example `genpkey --algo hpks-r255`) is required.  Scalars re-range from `mod 2^n - 1` to `mod ell`.  Keys are not interoperable between the two groups.  HSKE and the symmetric halves of HPKE are untouched — the derived secret enters them as a pre-shared key exactly as today.
+
+**Post-quantum assessment.**  Ristretto255 is a **classical-security-only** upgrade: Shor's algorithm breaks ECDLP exactly as it breaks GF(2^n)-star DLP.  Migration fixes the FFS shortfall (roughly 80–90 bits up to 128 bits classically) but provides nothing against quantum adversaries.  No quantum-resistant successor group exists for this protocol family: the Schnorr algebra fundamentally requires a group with hard DLP, and every such group is Shor-vulnerable.  The post-quantum path for the suite therefore remains HKEX-RNL (Ring-LWR, §11.4) plus HPKS-Stern-F / HPKE-Stern-KEM (code-based, §11.8.4) exclusively.  Recommendation: document ristretto255 as the classical upgrade path but keep implementation effort on the PQC track.
+
 ---
 
 ### 9.3 FSCX-CY — Carry-Injection FSCX (Experimental)

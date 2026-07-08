@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.90] - 2026-07-08
+
+### Added
+- **Ristretto255 migration-path evaluation (TODO #127).**
+  New `SecurityProofsCode/hpks_ristretto_migration.py` — self-contained
+  pure-Python ristretto255 (RFC 9496, validated against the RFC generator
+  test vector) evaluating the successor group for HKEX-GF/HPKS/HPKE:
+  - HPKS Schnorr equation s = (k - a*e) mod ell is a verbatim drop-in;
+    50/50 sign/verify, all tamper cases rejected.
+  - 3-of-3 additive threshold aggregation (TODO #98) and AOS Schnorr ring
+    signatures (TODO #78.I) transfer with zero structural change; the prime
+    group order removes GF(2^n)* order-divisor caveats.
+  - Migration impact: 32-byte group elements on both sides — PEM/DER layouts
+    carry over; only a new algorithm tag is needed.
+  - PQ assessment: classical-only upgrade (Shor breaks ECDLP); the PQC path
+    remains HKEX-RNL + Stern-F/Stern-KEM exclusively.
+
+### Changed
+- `SecurityProofs-1.md`: new §9.2.6 "Migration path" subsection (written with
+  zero new math spans; document stays at 859 spans, 0 FAIL).
+
 ## [1.9.89] - 2026-07-08
 
 ### Added
