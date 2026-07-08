@@ -2,6 +2,30 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.89] - 2026-07-08
+
+### Added
+- **NL-FSCX v2 cipher-stream-problem cryptanalysis (TODO #124).**
+  New `SecurityProofsCode/nl_fscx_v2_csp_analysis.py` — the v1-equivalent
+  cryptanalysis battery (TODO #74/#75/#35 analogues) for the v2 key-recovery
+  problem:
+  - delta(K) offset structure: ~2-to-1 (image ~0.55·2^n at n=8/12/16).
+  - Related-key differential at n=32: FLAT at every round count including
+    r=1 — the constant-add carry word fully disperses dK in one step.
+  - Exhaustive ANF at n=8/12: key-map degree >= n-2 from r=1 (Theorem 14's
+    MQ claim is conservative; the system is dense near-maximal degree).
+  - Key-recovery information: 1 known-plaintext pair leaves <2.1 consistent
+    keys at r=3n/4; 2 pairs unique >=99.5%.
+  - Carry guess-and-determine: only ~2x over brute force at r=1 (guess space
+    is the delta image), breaks entirely at r>=2.
+  - Walsh key-map bias within random-function bound from r=4.
+  - Rotational rate exactly 0 (one- and two-sided) at n=32, r=8 versus v1's
+    1-6% — the multiplication inside delta destroys rotational equivariance.
+
+### Changed
+- `SecurityProofs-2.md` §11.8.5: new "v2 cipher-stream-problem cryptanalysis
+  status (TODO #124, v1.9.89)" block. KaTeX: 1095 OK, 0 FAIL, 0 PIPE-FAIL.
+
 ## [1.9.88] - 2026-07-07
 
 ### Added

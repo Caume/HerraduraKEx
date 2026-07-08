@@ -800,6 +800,24 @@ for a fixed public base point $G$.  Given $(C, \pi_{K_2})$, recovering $K_1$ is 
 
 This option is documented as a future research direction.
 
+**v2 cipher-stream-problem cryptanalysis status (TODO #124, v1.9.89).**  Independent of the conjugacy question above, the *cipher-stream problem* for NL-FSCX v2 — recovering $K$ from known-plaintext samples $C_i = F_2^r(P_i, K)$ — previously rested on Theorem 14's MQ argument alone, with none of the empirical cryptanalysis that v1 received (TODO #74/#75/#35).  `SecurityProofsCode/nl_fscx_v2_csp_analysis.py` closes that gap with the v1-equivalent battery:
+
+*Offset structure.*  $\delta(K) = \mathrm{ROL}(K(K+1)/2 \bmod 2^n, n/4)$ is roughly 2-to-1: the image covers $\approx 0.55 \cdot 2^n$ values at $n \in \{8, 12, 16\}$ (140/256, 2220/4096, 35500/65536).  $\delta$-collision related-key pairs therefore exist, but no exploitable bias was found (next item).
+
+*Related-key differential.*  At $n = 32$ with 50 000 trials per configuration, the output-difference distribution $F_2^r(A, K) \oplus F_2^r(A, K \oplus dK)$ is **flat at every round count tested, including $r = 1$** (top difference frequency within the uniform max-of-samples range, $\log_2 p \leq -13.3$), for $dK$ spanning low-bit, adjacent-bit, mid-bit, and end-around patterns.  Although the XOR layer propagates $dK$ linearly, the two independent constant-add carry words fully disperse the difference in a single step.  No related-key distinguisher exists at $n = 32$ even at one round.
+
+*Algebraic degree (Theorem 14 verification).*  Exhaustive ANF over all keys at $n \in \{8, 12\}$: the key-to-output map has degree $\geq n - 2$ from $r = 1$ onward (mean degree $7.25$ of max $8$ at $n = 8$; $11.25$ of $12$ at $n = 12$).  Theorem 14's MQ claim is conservative — the actual system is dense and near-maximal-degree immediately, not merely quadratic.
+
+*Key-recovery information.*  At $r = 3n/4$ (HSKE-A2 round count), a single known-plaintext pair leaves on average fewer than $2.1$ consistent keys ($40\%$ uniquely determined); two pairs determine $K$ uniquely in $\geq 99.5\%$ of trials.  The MQ system is heavily over-determined, as Theorem 14's $n$-equations-in-$n$-unknowns view predicts.
+
+*Carry guess-and-determine.*  The only structural shortcut found: at $r = 1$, guessing the combined offset-plus-carry word collapses the step to a GF(2)-linear system in $K$.  Measured at $n = 12$, the guess space is the $\delta$-image ($\approx 2^{n-1}$), yielding only a $\approx 2\times$ speedup over brute force — and the linearization fails entirely at $r \geq 2$ because carries compose non-linearly across steps.  All deployed uses have $r \geq n/4 \geq 64$.
+
+*Walsh spectrum of the key map.*  Exhaustive max linear bias of $K \mapsto F_2^r(P, K)$ at $n \in \{8, 12\}$: above the Bernstein random-function bound at $r \leq 2$, within range from $r = 4$ onward ($0.0952$ vs bound $0.0901$ at $n = 12$, $r = 4$; $0.0693$ at $r = 9$).  No exploitable linear structure at protocol round counts.
+
+*Rotational rate.*  At $n = 32$, $r = 8$, 100 000 trials: both one-sided and two-sided rotational-equivariance rates are $0$ (no hits) for all $k \in \{1,2,4,8,16\}$ — versus v1's $1$–$6\%$ two-sided rate.  The integer multiplication inside $\delta(K)$ is not rotation-equivariant and destroys the FSCX base's rotational structure entirely; **v2 is strictly stronger than v1 rotationally**.
+
+*Status.*  Cipher-stream-problem hardness for v2 remains a conjecture, but v2 now has the same empirical coverage as v1's OWF assumption, with no attack found beyond the $\approx 2\times$ single-round guess-and-determine.  Independent expert cryptanalysis is still required before treating it as a standard assumption.
+
 ---
 
 ### 11.8.6 Comparison and Recommendation
