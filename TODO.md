@@ -6876,7 +6876,7 @@ plausibly related to sparse-B degeneracy (low-weight B makes the carry chain sho
 **Affected files:** `SecurityProofsCode/nl_fscx_rot_analysis.py` (stratified sparse-B tests),
 `SecurityProofs-2.md` §11.8.2 "Open concerns."
 
-Status: **OPEN**
+Status: **DONE v1.9.88** — `nl_fscx_rot_analysis.py` §6–§8 (50 000 trials/stratum, n=32): (Q1) sparse B massively elevates the two-sided rotational rate — 86% at wt(B)=1, r=8, k=1 (64× over the 5.8% uniform baseline), decaying monotonically (50× at wt=2, 30× at 4, 10× at 8, baseline at 16); (Q2) threshold weight wt(B) ≥ 16 = n/2 (2.7× at wt=12, 0.8× at 16) — safe-use bound: B density ≥ 1/2, satisfied by uniform keys w.h.p.; (Q3) HFSCX-256-DM one-sided rate in s stays ≈ 0 (≤ 4·10⁻⁵ at r=64) even for wt(m) ∈ {1,2,4} — per-call PRF safety is weight-independent — but the two-sided related-message rate is NOT suppressed by 64 rounds (77% at wt=1, k=1), documented as a related-message property unrealisable against the MD chain (fixed IV breaks s-alignment); (Q4) SecurityProofs-2.md §11.8.2 updated with a "Sparse-B rotational characterisation" block and the open-concern list amended.
 
 ---
 
