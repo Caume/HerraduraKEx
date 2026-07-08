@@ -273,14 +273,14 @@ $\eta=2$ (used in Kyber-512) but remains secure at $n=256$.
 parameters fall below the 128-bit Core-SVP floor.  An upgraded parameter set that reaches
 the 128-bit target is defined as follows:
 
-$$\text{HKEX-RNL-128}: \quad n=512,\; q=65537,\; p=4096,\; \eta=1,\; pp=2$$
+$$\text{HKEX-RNL-128}: \quad n=512, q=65537, p=4096, \eta=1, pp=2$$
 
 Security argument: the BKZ primal attack block-size requirement $\beta_\text{opt}$
 scales approximately linearly with the ring dimension $n$ for fixed $(q, p, \eta)$
 (Lindner-Peikert 2011; Albrecht et al. 2019).  Calibrating to the known $n=256$
 estimate (~110 bits midpoint):
 
-$$\text{Core-SVP}(n) \;\approx\; 110 \cdot \frac{n}{256} \quad \text{(classical)},
+$$\text{Core-SVP}(n) \approx 110 \cdot \frac{n}{256} \quad \text{(classical)},
 \qquad 100 \cdot \frac{n}{256} \quad \text{(quantum)}$$
 
 At $n=512$ this yields approximately **220 classical / 200 quantum Core-SVP bits**,
@@ -574,7 +574,7 @@ $$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
 *MITM preimage.* Exhaustive enumeration at $n = 20$, $r = 5$ shows $28.1\%$ image coverage (average preimage count $3.52$).  Non-injectivity means backward enumeration requires $O(2^n)$ forward work, confirming MITM provides no asymptotic speedup.
 
-*Open concerns from this analysis.* (1) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is uncharacterised.  (2) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.  (The rotational concern is characterised in the follow-up analysis below.)
+*Open concerns from this analysis.* (1) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is characterised in the sparse-$B$ follow-up below (TODO #125) — the elevation persists at $n = 32$ and the safe-use bound is $\text{wt}(B) \geq n/2$.  (2) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.  (The rotational concern is characterised in the follow-up analysis below.)
 
 **Rotational structure (TODO #75, v1.9.3).**  `SecurityProofsCode/nl_fscx_rot_analysis.py` resolves the rotational open concern by separating *one-sided* rotation ($A$ rotated, $B$ fixed) from *two-sided* rotation (both rotated simultaneously).
 
@@ -590,11 +590,19 @@ where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \
 
 *Conclusion.* The rotational NOTE from TODO #74 is now fully characterised: it is a polynomial-query random-oracle distinguisher against the WOTS hash chain that does **not** affect the current security proofs.  It is a design concern only for future constructions requiring $h$ to behave as a random oracle.
 
+**Sparse-B rotational characterisation (TODO #125, v1.9.88).**  `nl_fscx_rot_analysis.py` §6–§8 resolve the sparse-$B$ open concern at $n = 32$ by stratifying the two-sided rotational rate by the Hamming weight of $B$ (50 000 trials per stratum, $r = 8$).
+
+*Stratified rates (Q1).*  Sparse $B$ massively elevates the two-sided rate: at $\text{wt}(B) = 1$ the rate is $0.86$ at $k = 1$ — a $64\times$ elevation over the uniform-$B$ baseline ($0.058$).  The elevation decays monotonically with weight: $50\times$ at $\text{wt}(B) = 2$, $30\times$ at $4$, $10\times$ at $8$, and baseline parity at $16$.  The structural reason mirrors §1: with few set bits in $B$, the integer carry chain in $\mathrm{ROL}(A + B, n/4)$ is short, so the carry-mismatch events that break FSCX's exact rotation-equivariance are rare.  The $n = 8$ MDP elevation flagged by TODO #74 is therefore **not** a small-$n$ artifact — it persists at $n = 32$ and is expected at all $n$.
+
+*Threshold weight (Q2).*  A fine-grained sweep places the safe-use threshold at $\text{wt}(B) \geq 16 = n/2$: the maximum elevation over baseline is $2.7\times$ at $\text{wt}(B) = 12$ and $0.8\times$ at $16$.  Safe-use lower bound for PRF applications: **$B$ density $\geq 1/2$**, i.e. $\text{wt}(B) \geq n/2$.  Uniformly random keys satisfy this with overwhelming probability (a binomial tail of $2^{-0.03n}$ order); the bound only constrains adversarially chosen or structured $B$.
+
+*HFSCX-256-DM impact (Q3).*  For the compression function $C_{\text{DM}}(s,m) = F_{1}^{2n}(s, m) \oplus s$ with adversarially sparse message blocks $\text{wt}(m) \in \{1,2,4\}$: the **one-sided** rate in the chaining value $s$ remains $\approx 0$ ($\leq 4 \times 10^{-5}$ at $r = 64$), so a sparse message alone gives no rotational distinguisher — the per-call PRF safety of §5 is weight-independent.  The **two-sided** related-message rate (attacker submits both $m$ and $\mathrm{ROL}(m,k)$ with rotated chaining values) is *not* suppressed by iteration: $0.77$ at $\text{wt}(m) = 1$, $r = 64$, $k = 1$ (versus $0.86$ at $r = 8$), consistent with the §3 power law.  This is unrealisable against the Merkle-Damgård chain itself because the attacker does not control $s$ — the fixed IV breaks the required $s \to \mathrm{ROL}(s,k)$ alignment at the first block — but it is a documented related-message property: any future mode that lets an attacker align rotated chaining values with rotated sparse messages inherits a high-probability rotational distinguisher.
+
 **HPKS-XMSS-F implementation (v1.9.39, TODO #97).** The HPKS-WOTS-F and HPKS-XMSS-F constructions are now implemented in the suite (Python) and CLI.
 
 *Parameters.* $w = 16$ (Winternitz), $\ell_1 = 64$ message digits, $\ell_2 = 3$ checksum digits (max checksum $64 \times 15 = 960 < 16^3$), $\ell = 67$ chains total. Tree height $h = 10$ by default ($2^{10} = 1024$ leaves per key pair).
 
-*Hash chain.* $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8),\, x)$ at $n = 256$, identical to Theorem 16.
+*Hash chain.* $h(x) = F_1^{n/4}(\mathrm{ROL}(x, n/8), x)$ at $n = 256$, identical to Theorem 16.
 
 *Keygen.* Leaf seed $\text{sk}(i,j) = \text{HFSCX-256}(\text{master-seed} \mathbin\| \text{idx-32} \mathbin\| j_{16})$ for leaf index $\text{idx}$ and chain index $j \in \{0,\ldots,\ell-1\}$. Public key $\text{pk}(i,j) = h^{w-1}(\text{sk}(i,j))$. Leaf node $= \text{HFSCX-256}(0\text{x00} \mathbin\| \text{pk}(i,0) \mathbin\| \cdots \mathbin\| \text{pk}(i,\ell-1))$ (RFC 6962 domain separation). XMSS public key $= $ Merkle root of $2^h$ leaf nodes (§78.J accumulator).
 

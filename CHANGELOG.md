@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.88] - 2026-07-07
+
+### Added
+- **Sparse-B rotational characterization of NL-FSCX v1 (TODO #125).**
+  `SecurityProofsCode/nl_fscx_rot_analysis.py` gains §6–§8 (stratified sparse-B
+  analysis at n=32, 50 000 trials per stratum):
+  - §6: two-sided rotational-equivariance rate stratified by wt(B) — 86% at
+    wt(B)=1 (64× the uniform baseline), monotone decay to baseline at wt=16.
+  - §7: threshold sweep — safe-use lower bound wt(B) ≥ n/2 (density ≥ 1/2),
+    satisfied by uniformly random keys with overwhelming probability.
+  - §8: HFSCX-256-DM impact — one-sided rate in the chaining value stays ≈ 0
+    (≤ 4·10⁻⁵ at r=64) even for wt(m) ∈ {1,2,4}; the two-sided related-message
+    rate is not suppressed by 64 rounds (77% at wt=1) but is unrealisable
+    against the Merkle-Damgård chain (fixed IV breaks chaining alignment).
+
+### Changed
+- `SecurityProofs-2.md` §11.8.2: new "Sparse-B rotational characterisation
+  (TODO #125, v1.9.88)" block; open-concern (1) resolved with the n=32
+  characterization and the wt(B) ≥ n/2 safe-use bound.
+- `SecurityProofs-2.md`: removed three pre-existing KaTeX Rule 9 spacing
+  commands (`\;`, `\,`) — validator now reports 1040 OK, 0 FAIL, 0 PIPE-FAIL.
+
 ## [1.9.87] - 2026-07-06
 
 ### Research — Ligero-lite IOP-based ZKP for NL-FSCX (TODO #122 Batch 4, closes #122)

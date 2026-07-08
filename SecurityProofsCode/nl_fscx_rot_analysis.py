@@ -301,6 +301,137 @@ def section5():
     print("    open design concern for any future ROM-based security argument, but")
     print("    does not affect the current OWF-based security proofs.")
 
+# ─── §6: Sparse-B stratified rotational rate (TODO #125, Q1) ─────────────────
+
+def rand_weight(w, n):
+    """Random n-bit value of exact Hamming weight w."""
+    bits = random.sample(range(n), w)
+    v = 0
+    for b in bits:
+        v |= 1 << b
+    return v
+
+def two_sided_rate(k, r, n, trials, wt=None):
+    """Two-sided rotational-equivariance rate; B uniform (wt=None) or wt(B)=wt."""
+    hits = 0
+    for _ in range(trials):
+        A = random.randrange(1 << n)
+        B = rand_weight(wt, n) if wt is not None else random.randrange(1, 1 << n)
+        if nl_fscx_r(rol(A,k,n), rol(B,k,n), r, n) == rol(nl_fscx_r(A, B, r, n), k, n):
+            hits += 1
+    return hits / trials
+
+def section6():
+    print(SEP)
+    print("§6 — Sparse-B Stratified Rotational Rate at n=32 (TODO #125, Q1)")
+    print(SEP)
+    print("  Two-sided rate at r=8, stratified by wt(B); uniform-B baseline last row.")
+    print()
+
+    n, r, trials = 32, 8, 50_000
+    weights = [1, 2, 4, 8, 16, 24, 32]
+    print(f"  n={n}, r={r}, {trials} trials per (wt, k)")
+    print(f"  {'wt(B)':>7}  {'k=1':>10}  {'k=2':>10}  {'k=4':>10}  {'k=8':>10}")
+    results = {}
+    for w in weights:
+        row = {k: two_sided_rate(k, r, n, trials, wt=w) for k in [1, 2, 4, 8]}
+        results[w] = row
+        print(f"  {w:>7}  {row[1]:>10.4f}  {row[2]:>10.4f}  {row[4]:>10.4f}  {row[8]:>10.4f}")
+        sys.stdout.flush()
+    base = {k: two_sided_rate(k, r, n, trials) for k in [1, 2, 4, 8]}
+    print(f"  {'unif':>7}  {base[1]:>10.4f}  {base[2]:>10.4f}  {base[4]:>10.4f}  {base[8]:>10.4f}")
+    print()
+    for w in weights:
+        elev = max(results[w][k] / base[k] if base[k] > 0 else float('inf')
+                   for k in [1, 2, 4, 8])
+        flag = "  <-- ELEVATED" if elev > 2.0 else ""
+        print(f"  wt={w:<3} max elevation over uniform baseline: {elev:5.1f}x{flag}")
+    return results, base
+
+# ─── §7: Threshold weight for safe-use bound (TODO #125, Q2) ──────────────────
+
+def section7(results, base):
+    print(SEP)
+    print("§7 — Threshold Weight: Safe-Use Lower Bound on wt(B) (TODO #125, Q2)")
+    print(SEP)
+    print("  Minimum wt(B) at which every k-stratum is within 2x of the uniform")
+    print("  baseline (fine-grained sweep around the transition).")
+    print()
+
+    n, r, trials = 32, 8, 50_000
+    fine = {}
+    print(f"  {'wt(B)':>7}  {'k=1':>10}  {'k=8':>10}  {'max elev':>10}")
+    threshold = None
+    for w in [1, 2, 3, 4, 5, 6, 8, 12, 16]:
+        row = results.get(w) or {k: two_sided_rate(k, r, n, trials, wt=w) for k in [1, 8]}
+        fine[w] = row
+        elev = max(row[k] / base[k] if base[k] > 0 else float('inf')
+                   for k in row if k in base)
+        print(f"  {w:>7}  {row[1]:>10.4f}  {row[8]:>10.4f}  {elev:>9.1f}x")
+        if threshold is None and elev <= 2.0:
+            threshold = w
+        sys.stdout.flush()
+    print()
+    print(f"  THRESHOLD: wt(B) >= {threshold} keeps the two-sided rate within 2x of")
+    print(f"  the uniform-B baseline at n=32.  Documented as the safe-use lower")
+    print(f"  bound on B density for PRF applications (scales as wt >= {threshold}·n/32).")
+    return threshold
+
+# ─── §8: Sparse-message impact on HFSCX-256-DM (TODO #125, Q3) ────────────────
+
+def section8():
+    print(SEP)
+    print("§8 — Sparse-Message Impact on HFSCX-256-DM Compression (TODO #125, Q3)")
+    print(SEP)
+    print("  C_DM(s,m) = F1^{2n}(s, m) XOR s with B=m fixed per call (one-sided in s).")
+    print("  Adversarial sparse m: does wt(m) in {1,2,4} enable (a) a one-sided")
+    print("  rotational distinguisher in s, or (b) a two-sided distinguisher when")
+    print("  the attacker also submits ROL(m,k)?  Model at n=32, r=64 rounds.")
+    print()
+
+    n, r, trials = 32, 64, 50_000
+    m_all = (1 << n) - 1
+
+    print(f"  (a) ONE-SIDED in s (m fixed sparse), n={n}, r={r}, {trials} trials:")
+    print(f"  {'wt(m)':>7}  {'k=1':>10}  {'k=8':>10}")
+    for w in [1, 2, 4]:
+        row = {}
+        for k in [1, 8]:
+            hits = 0
+            for _ in range(trials):
+                m = rand_weight(w, n)
+                s = random.randrange(1 << n)
+                ya = nl_fscx_r(s, m, r, n) ^ s
+                yb = nl_fscx_r(rol(s,k,n), m, r, n) ^ rol(s,k,n)
+                if yb == rol(ya, k, n):
+                    hits += 1
+            row[k] = hits / trials
+        print(f"  {w:>7}  {row[1]:>10.5f}  {row[8]:>10.5f}")
+        sys.stdout.flush()
+    print()
+
+    print(f"  (b) TWO-SIDED (attacker submits m and ROL(m,k)), r=64 vs r=8:")
+    print(f"  {'wt(m)':>7}  {'r':>4}  {'k=1':>10}  {'k=8':>10}")
+    for w in [1, 2, 4]:
+        for r_test in [8, 64]:
+            row = {}
+            for k in [1, 8]:
+                hits = 0
+                for _ in range(trials // 5):
+                    m = rand_weight(w, n)
+                    s = random.randrange(1 << n)
+                    ya = nl_fscx_r(s, m, r_test, n) ^ s
+                    yb = nl_fscx_r(rol(s,k,n), rol(m,k,n), r_test, n) ^ rol(s,k,n)
+                    if yb == rol(ya, k, n):
+                        hits += 1
+                row[k] = hits / (trials // 5)
+            print(f"  {w:>7}  {r_test:>4}  {row[1]:>10.5f}  {row[8]:>10.5f}")
+            sys.stdout.flush()
+    print()
+    print("  Interpretation: the DM feed-forward XOR s breaks exact equivariance")
+    print("  unless F1^r itself is equivariant AND the XOR aligns; residual rates")
+    print("  quantify how much of the sparse-B elevation survives 64 rounds.")
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -317,6 +448,12 @@ def main():
     section4()
     print(); sys.stdout.flush()
     section5()
+    print(); sys.stdout.flush()
+    res6, base6 = section6()
+    print(); sys.stdout.flush()
+    section7(res6, base6)
+    print(); sys.stdout.flush()
+    section8()
     print()
     print(SEP)
     print(f"Total runtime: {time.monotonic()-t_total:.1f} s")
