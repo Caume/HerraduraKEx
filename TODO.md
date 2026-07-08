@@ -6841,7 +6841,7 @@ attacks that exploit v2's structure more deeply).
 `SecurityProofsCode/nl_fscx_rot_analysis.py` (extend with v2 rotational tests),
 `SecurityProofs-2.md` §11.8.5.
 
-Status: **OPEN**
+Status: **DONE v1.9.89** — Implemented as a standalone script `SecurityProofsCode/nl_fscx_v2_csp_analysis.py` (self-contained, matching the one-script-per-analysis repo pattern) rather than extending the two v1 scripts.  Results: (Q1) delta(K) is ~2-to-1 (image ~0.55·2^n at n=8/12/16) but the related-key output-difference distribution at n=32 is FLAT at every r including r=1 (log2 p ≤ −13.3, uniform range) — no related-key distinguisher; (Q2) one (P,C) pair leaves <2.1 consistent keys at r=3n/4, two pairs unique ≥99.5%; the only shortcut is a carry guess-and-determine at r=1 over the delta image (~2× over brute force, fails at r≥2); (Q3) exhaustive ANF degree ≥ n−2 from r=1 (Theorem 14 conservative — system is dense near-maximal degree, not merely quadratic); Walsh key-map bias within the Bernstein random-function bound from r=4; rotational rate exactly 0 both-sided at n=32, r=8 (vs v1's 1–6%) — the multiplication in delta destroys rotational equivariance, v2 strictly stronger than v1 rotationally; (Q4) SecurityProofs-2.md §11.8.5 gains a "v2 cipher-stream-problem cryptanalysis status" block.
 
 ---
 
