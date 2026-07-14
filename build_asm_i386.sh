@@ -43,7 +43,9 @@ find_i386_linker() {
     )
     for ld_bin in "${candidates[@]}"; do
         if command -v "${ld_bin}" &>/dev/null; then
-            if "${ld_bin}" --help 2>&1 | grep -q 'elf_i386'; then
+            local help_output
+            help_output="$("${ld_bin}" --help 2>&1)"
+            if grep -q 'elf_i386' <<<"${help_output}"; then
                 echo "${ld_bin}"
                 return 0
             fi
