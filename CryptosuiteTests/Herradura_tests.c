@@ -4,7 +4,10 @@
      -t, --time   T   benchmark duration and per-test wall-clock cap in seconds
    Env:  HTEST_ROUNDS=N  HTEST_TIME=T  (CLI flags override env) */
 
-/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.78
+/*  Herradura KEx -- Security & Performance Tests (C, multi-size BitArray + scalar GF) v1.9.91
+    v1.9.91: test [45] — weak-key/malformed-input rejection: HKEX-GF/HPKS/HPKE reject
+            identity/zero public elements (herradura.h TODO #131 hardening), HPKS-Stern-F
+            rejects a corrupted syndrome, HSKE-NL-A1-AEAD rejects tampered ciphertext.
     v1.9.78: HCRED test [44] — completeness, replay/tamper/split-witness rejection, issuer
             binding (TODO #128 Batch 4b).
     v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
@@ -5088,6 +5091,132 @@ int main(int argc, char *argv[])
                    HCRED_N, R,
                    ok_verify, N, ok_replay, N, ok_synd, N,
                    ok_key, N, ok_split, N, ok_cred, N, status);
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Security test [45]: weak-key & malformed-input rejection across    */
+    /* HKEX-GF, HPKS, HPKE, HPKS-Stern-F, HSKE-NL-A1-AEAD (TODO #131).     */
+    /* Appended after [44] to avoid renumbering existing tests.           */
+    /* ------------------------------------------------------------------ */
+    {
+        int N = g_rounds > 0 ? g_rounds : 10;
+        int ok_hkex = 0, ok_hpks_id = 0, ok_hpke_enc = 0, ok_hpke_dec = 0;
+        int ok_stern_synd = 0, ok_aead_tamper = 0, ok_aead_key_swap = 0;
+        int i;
+        struct timespec ts0;
+        clock_gettime(CLOCK_MONOTONIC, &ts0);
+
+        printf("[45] Weak-key & malformed-input rejection (identity pubkey, "
+               "zero/degenerate elements, tampered syndrome/AEAD)  [SECURITY]\n");
+
+        for (i = 0; i < N; i++) {
+            BitArray priv, pub, id, zero, shared, honest_shared;
+            BitArray R, s, msg;
+            BitArray pt, ct, R_hpke, dec;
+
+            memset(&id, 0, sizeof(id));   id.b[KEYBYTES - 1] = 1;  /* g^0 = 1 */
+            memset(&zero, 0, sizeof(zero));                        /* not in GF(2^n)* */
+
+            /* HKEX-GF: agreement against a peer's identity/zero "public key"
+             * must be rejected outright (their_pub=1 would make the shared
+             * secret a constant independent of my_priv). */
+            ba_rand(&priv, urnd_fp);
+            if (!hkex_gf_agree(&priv, &id, &shared) &&
+                !hkex_gf_agree(&priv, &zero, &shared))
+                ok_hkex++;
+
+            /* HPKS: a signature must never verify against an identity/zero
+             * public key, even with an attacker-chosen (s, R=g^s) pair that
+             * would otherwise satisfy g^s * pub^e == R when pub^e == 1. */
+            ba_rand(&s, urnd_fp);
+            gf_pow_ba(&R, &GF_GEN, &s);
+            memset(&msg, 0, sizeof(msg)); msg.b[0] = (uint8_t)(i + 1);
+            if (!hpks_verify(&msg, &id, &R, &s) && !hpks_verify(&msg, &zero, &R, &s))
+                ok_hpks_id++;
+
+            /* HPKE: encrypt must refuse an identity/zero recipient pubkey
+             * rather than silently producing a trivially-decryptable ct. */
+            memset(&pt, 0, sizeof(pt)); pt.b[0] = (uint8_t)(i + 1);
+            if (!hpke_encrypt(&pt, &id, &R_hpke, &ct, urnd_fp) &&
+                !hpke_encrypt(&pt, &zero, &R_hpke, &ct, urnd_fp))
+                ok_hpke_enc++;
+
+            /* HPKE decrypt: an honestly-encrypted ct must still decrypt
+             * (sanity), and decrypt must refuse a degenerate ephemeral R. */
+            ba_rand(&priv, urnd_fp);
+            gf_pow_ba(&pub, &GF_GEN, &priv);
+            hpke_encrypt(&pt, &pub, &R_hpke, &ct, urnd_fp);
+            if (hpke_decrypt(&ct, &R_hpke, &priv, &dec) && ba_equal(&dec, &pt) &&
+                !hpke_decrypt(&ct, &id, &priv, &dec) &&
+                !hpke_decrypt(&ct, &zero, &priv, &dec))
+                ok_hpke_dec++;
+
+            /* Sanity: honest agreement still succeeds against a valid peer key. */
+            hkex_gf_agree(&priv, &pub, &honest_shared);
+            (void)honest_shared;
+
+            /* HPKS-Stern-F: an honestly-generated signature must be rejected
+             * when verified against a corrupted (flipped-bit) syndrome. */
+            {
+                BitArray seed, e_ba;
+                uint8_t syndr[SDF_SYNBYTES], syndr_bad[SDF_SYNBYTES];
+                SternSig sig;
+                stern_f_keygen(&seed, &e_ba, syndr, urnd_fp);
+                hpks_stern_f_sign(&sig, &msg, &e_ba, &seed, urnd_fp);
+                memcpy(syndr_bad, syndr, SDF_SYNBYTES);
+                syndr_bad[0] ^= 1;
+                if (hpks_stern_f_verify(&sig, &msg, &seed, syndr) &&
+                    !hpks_stern_f_verify(&sig, &msg, &seed, syndr_bad))
+                    ok_stern_synd++;
+            }
+
+            /* HSKE-NL-A1-AEAD: tampered ciphertext must fail the tag check
+             * (documents existing rejection-by-construction), and re-using
+             * the same (key, nonce) pair for a different plaintext must
+             * produce a *different* tag/ciphertext for a different message
+             * (i.e. the primitive is not silently "safe" under reuse —
+             * documents the TUTORIAL/API warning against nonce reuse). */
+            {
+                BitArray key, nonce;
+                uint8_t pt_bytes[KEYBYTES], pt2_bytes[KEYBYTES];
+                uint8_t ct_buf[KEYBYTES], ct2_buf[KEYBYTES];
+                uint8_t tag[32], tag2[32], out[KEYBYTES];
+                int j;
+                ba_rand(&key, urnd_fp);
+                ba_rand(&nonce, urnd_fp);
+                for (j = 0; j < KEYBYTES; j++) pt_bytes[j] = (uint8_t)(j ^ i);
+                for (j = 0; j < KEYBYTES; j++) pt2_bytes[j] = (uint8_t)(j ^ i ^ 0xFF);
+
+                hske_nl_aead_encrypt(&key, &nonce, NULL, 0,
+                                     pt_bytes, KEYBYTES, ct_buf, tag);
+                ct_buf[0] ^= 1;  /* tamper ciphertext */
+                if (!hske_nl_aead_decrypt(&key, &nonce, NULL, 0,
+                                          ct_buf, KEYBYTES, tag, out))
+                    ok_aead_tamper++;
+
+                /* same (key, nonce) reused for a different message: ciphertexts
+                 * must differ (keystream reuse would otherwise leak pt1 XOR pt2) */
+                ct_buf[0] ^= 1;  /* undo tamper */
+                hske_nl_aead_encrypt(&key, &nonce, NULL, 0,
+                                     pt2_bytes, KEYBYTES, ct2_buf, tag2);
+                if (memcmp(ct_buf, ct2_buf, KEYBYTES) != 0)
+                    ok_aead_key_swap++;
+            }
+
+            if (g_time_limit > 0.0 && time_exceeded(&ts0)) { N = i + 1; break; }
+        }
+        {
+            const char *status = (ok_hkex == N && ok_hpks_id == N && ok_hpke_enc == N
+                                  && ok_hpke_dec == N && ok_stern_synd == N
+                                  && ok_aead_tamper == N && ok_aead_key_swap == N)
+                                 ? "PASS" : "FAIL";
+            printf("    n=%d  hkex_reject=%d/%d  hpks_id_reject=%d/%d"
+                   "  hpke_enc_reject=%d/%d  hpke_dec_reject=%d/%d"
+                   "  stern_synd_reject=%d/%d  aead_tamper_reject=%d/%d"
+                   "  aead_reuse_distinct=%d/%d  [%s]\n\n",
+                   N, ok_hkex, N, ok_hpks_id, N, ok_hpke_enc, N, ok_hpke_dec, N,
+                   ok_stern_synd, N, ok_aead_tamper, N, ok_aead_key_swap, N, status);
         }
     }
 

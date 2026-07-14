@@ -1,4 +1,7 @@
-/*  Herradura KEx — Security & Performance Tests (Go) v1.9.77
+/*  Herradura KEx — Security & Performance Tests (Go) v1.9.91
+    v1.9.91: test [45] — weak-key/malformed-input rejection: gfPubIsValid rejects the
+            GF(2^n)* identity/zero element in HKEX-GF/HPKS/HPKE-style checked helpers, and
+            HPKS-Stern-F rejects a corrupted syndrome (TODO #131).
     v1.9.77: HCRED test [44] — completeness, tamper/replay/split-witness rejection, issuer binding (TODO #128 Batch 4a).
     v1.9.63: ZKP-RNL test [21] structured cheats — wrong-key, tampered-w, perturbed-z rejection
             (C/Go parity with Python, TODO #94 item 2).
@@ -1529,6 +1532,7 @@ func main() {
 	benchZkpRnl()
 	benchZkpNl()
 	testHcred()
+	testWeakKeyRejection()
 }
 
 // Security test [44]: HCRED hybrid credential.  Appended after the benchmarks
@@ -1593,5 +1597,112 @@ func testHcred() {
 		"  cred=%d/%d  [%s]\n",
 		n, R, okVerify, N, okReplay, N, okSynd, N, okKey, N,
 		okSplit, N, okCred, N, status)
+	fmt.Println()
+}
+
+// gfPubIsValid rejects the additive zero and the multiplicative identity
+// (g^0=1): a degenerate GF(2^n)* public element that collapses
+// HKEX-GF/HPKS/HPKE to trivially forgeable/decryptable cases (TODO #131;
+// mirrors herradura.h's gf_pub_is_valid).
+func gfPubIsValid(pub *big.Int) bool {
+	return pub.Sign() != 0 && pub.Cmp(big.NewInt(1)) != 0
+}
+
+// hpksVerifyChecked mirrors herradura.h's hardened HpksVerify (TODO #131):
+// rejects a degenerate pub before evaluating the raw Schnorr equation,
+// since pub=1 would make pub^e == 1 for any e -- any (s, R=g^s) pair would
+// otherwise trivially verify against any message.
+func hpksVerifyChecked(msg *BitArray, pub, rInt, sInt, poly *big.Int, size int) bool {
+	if !gfPubIsValid(pub) {
+		return false
+	}
+	g := big.NewInt(GfGen)
+	rB := newBA(size, rInt)
+	e := FscxRevolve(rB, msg, iVal(size))
+	lhs := GfMul(GfPow(g, sInt, poly, size), GfPow(pub, &e.Val, poly, size), poly, size)
+	return lhs.Cmp(rInt) == 0
+}
+
+// hpkeEncryptChecked mirrors herradura.h's hardened HpkeEncrypt (TODO
+// #131): refuses a degenerate recipient pub rather than silently
+// producing ciphertext whose encKey = pub^r would be a constant
+// independent of r.
+func hpkeEncryptChecked(pt, pub, poly *big.Int, size int) (*BitArray, *BitArray, bool) {
+	if !gfPubIsValid(pub) {
+		return nil, nil, false
+	}
+	g := big.NewInt(GfGen)
+	r := randBA(size)
+	rVal2 := GfPow(g, &r.Val, poly, size)
+	encKey := newBA(size, GfPow(pub, &r.Val, poly, size))
+	ptBA := newBA(size, pt)
+	E := FscxRevolve(ptBA, encKey, iVal(size))
+	return newBA(size, rVal2), E, true
+}
+
+// Security test [45]: weak-key & malformed-input rejection.  Appended
+// after [44] to avoid renumbering (same number in C/Go/Python; TODO #131).
+func testWeakKeyRejection() {
+	fmt.Println("[45] Weak-key & malformed-input rejection (identity pubkey, " +
+		"zero/degenerate elements, tampered syndrome)  [SECURITY]")
+	size := 256
+	poly := GfPoly[size]
+	sternN := 32
+	N := testRounds(10)
+	okHkex, okHpks, okHpke, okStern := 0, 0, 0, 0
+	t0 := time.Now()
+	zero := big.NewInt(0)
+	one := big.NewInt(1)
+	for i := 0; i < N; i++ {
+		// HKEX-GF: a peer public key of 0 or 1 (identity) must be refused
+		// before agreement -- either collapses the shared secret to a
+		// constant independent of the caller's own private key.
+		if !gfPubIsValid(zero) && !gfPubIsValid(one) {
+			okHkex++
+		}
+
+		// HPKS: an attacker who picks s at random and sets R=g^s can make
+		// any (msg, pub=identity) triple satisfy the raw Schnorr equation.
+		// The hardened verifier must reject pub in {0, 1} regardless.
+		sForged := &randBA(size).Val
+		g := big.NewInt(GfGen)
+		rForged := GfPow(g, sForged, poly, size)
+		msg := randBA(size)
+		if !hpksVerifyChecked(msg, zero, rForged, sForged, poly, size) &&
+			!hpksVerifyChecked(msg, one, rForged, sForged, poly, size) {
+			okHpks++
+		}
+
+		// HPKE: encrypt must refuse an identity/zero recipient pubkey.
+		pt := &randBA(size).Val
+		if _, _, ok0 := hpkeEncryptChecked(pt, zero, poly, size); !ok0 {
+			if _, _, ok1 := hpkeEncryptChecked(pt, one, poly, size); !ok1 {
+				okHpke++
+			}
+		}
+
+		// HPKS-Stern-F: an honestly-generated signature must be rejected
+		// when verified against a corrupted (flipped-bit) syndrome.
+		seed, e, syndrome := SternFKeygen(sternN)
+		msgS := randBA(sternN)
+		sig := HpksSternFSign(msgS, e, seed, 8)
+		syndromeBad := new(big.Int).Xor(syndrome, big.NewInt(1))
+		if HpksSternFVerify(msgS, sig, seed, syndrome) &&
+			!HpksSternFVerify(msgS, sig, seed, syndromeBad) {
+			okStern++
+		}
+
+		if timeExceeded(t0) {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if okHkex != N || okHpks != N || okHpke != N || okStern != N {
+		status = "FAIL"
+	}
+	fmt.Printf("    n=%d  hkex_reject=%d/%d  hpks_id_reject=%d/%d"+
+		"  hpke_enc_reject=%d/%d  stern_synd_reject=%d/%d  [%s]\n",
+		N, okHkex, N, okHpks, N, okHpke, N, okStern, N, status)
 	fmt.Println()
 }

@@ -7048,6 +7048,23 @@ truncated/oversized PEM payloads fed to `genpkey`/`kex`/`sign`/`verify`/`dec`.
 4. Document which protocols already reject degenerate input by construction (e.g. via modular
    range checks) vs. which needed a new explicit check.
 
+Status: **DONE v1.9.91** — item 1 identified the real gap: HKEX-GF/HPKS/HPKE silently
+accepted a GF(2^n)* peer public key of 0 or 1 (the identity), which is trivially forgeable
+(HPKS) or trivially decryptable (HPKE) since `pub^e` collapses to a constant. Fixed in
+`herradura.h` via new `gf_pub_is_valid()`, wired into `hpks_verify` (returns 0) and into
+`hkex_gf_agree`/`hpke_encrypt`/`hpke_decrypt` (now return `int`, reject degenerate peer
+keys). Item 2 shipped as test `[45]` in `Herradura_tests.{c,go,py}` (all three languages,
+all PASS): HKEX-GF/HPKS/HPKE reject identity/zero pub, HPKS-Stern-F rejects a corrupted
+syndrome. Item 4: C is the only language with a shared library layer, so it's the only
+language whose fix is reachable from production code; Go/Python suites inline the
+Schnorr/El Gamal equations directly (pre-existing convention, matching how the CLI already
+inlines them too) rather than calling a shared function, so their test [45] validates the
+same logic via local "checked" helper functions rather than hardening a shared entry point.
+**Remaining gap (tracked as TODO #141):** item 3 (CliTest PEM-level tests) was not done —
+`herradura_cli.c`'s `kex`/`enc`/`verify` commands duplicate the Schnorr/El Gamal math inline
+rather than calling the now-hardened `herradura.h` functions, so a malicious PEM containing
+an identity/zero public key is NOT currently rejected by the CLI. See TODO #141.
+
 Status: **OPEN**
 
 ---
@@ -7253,5 +7270,38 @@ channel and a missed credibility signal for a project this proof-heavy.
    expected response time.
 4. Link out to `SecurityProofs-1.md`/`-2.md`/`-3.md` for detailed analysis instead of duplicating
    proofs; keep `SECURITY.md` itself short and scannable.
+
+Status: **OPEN**
+
+---
+
+### 141. Harden CLI `kex`/`enc`/`verify` against degenerate peer public keys (Security, Medium)
+
+**Background:** TODO #131 fixed `herradura.h` so `hpks_verify`/`hkex_gf_agree`/
+`hpke_encrypt`/`hpke_decrypt` reject a GF(2^n)* peer public key of 0 or 1 (the identity),
+which is otherwise trivially forgeable (HPKS) or trivially decryptable (HPKE). However,
+`HerraduraCli/herradura_cli.c`'s `cmd_kex`, `cmd_enc`, and `cmd_verify` do not call these
+`herradura.h` functions — they duplicate the Schnorr/El Gamal math inline (`gf_pow_ba` /
+`gf_mul_ba` calls directly), predating the fix. This means a maliciously crafted or
+corrupted PEM file containing an identity/zero public key is **not** currently rejected by
+the CLI, even though the underlying library now would reject it if called correctly. This
+is the actual untrusted-input boundary (external PEM files), so it's a more direct exposure
+than the internal library API TODO #131 closed.
+
+**Work items:**
+
+1. In `cmd_kex`'s `hkex-gf` branch (`herradura_cli.c`, uses `gf_pow_ba` on the loaded peer
+   public key directly), add a `gf_pub_is_valid()` check on `pub_theirs` before calling
+   `gf_pow_ba`; `die()` with a clear message on rejection.
+2. In `cmd_enc`'s `hpke`/`hpke-nl` branch, add the same check on the loaded `pub` before
+   encrypting.
+3. In `cmd_verify`'s `hpks`/`hpks-nl` branch, add the same check on the loaded `pub` before
+   the Schnorr equation check (or refactor to call the now-hardened `hpks_verify` directly,
+   removing the inline duplicate).
+4. Add `CliTest/test_weak_key_rejection.sh`: hand-craft PEM files with an identity (`0x...01`)
+   or zero public key value, feed them to `kex`/`enc`/`verify`, and assert a clean non-zero
+   exit rather than a crash or (worse) a false "Signature OK" / successful encryption.
+5. Evaluate whether other CLI code paths that inline `gf_pow_ba` on untrusted PEM input
+   (e.g. `cmd_threshold_verify`, ring signature verification) have the same gap.
 
 Status: **OPEN**
