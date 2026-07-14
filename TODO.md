@@ -7229,3 +7229,29 @@ container image that builds and runs all targets out of the box would materially
    auto-detection logic) rather than duplicating install instructions that could drift.
 
 Status: **OPEN**
+
+---
+
+### 140. Add `SECURITY.md` with a consolidated threat model and vulnerability disclosure policy (Docs, Medium)
+
+**Background:** Security status is currently scattered across protocol-specific notes — TODO
+#127's deprecation of GF(2^n)* for production use, #126's "demo-only until production decoder"
+caveat on HPKE-Stern-F, #131's still-open weak-key rejection gaps — with no single document
+telling a security researcher what the trust boundary is, which protocols are production-grade
+vs. demo-only/pedagogical, or where to privately report a vulnerability. GitHub surfaces
+`SECURITY.md` directly in a repo's Security tab; its absence is both a missing disclosure
+channel and a missed credibility signal for a project this proof-heavy.
+
+**Work items:**
+
+1. Add a protocol status table (production / demo-only / pedagogical) sourced from the existing
+   `SecurityProofs-*.md` deprecation notes — reference the authoritative section rather than
+   restating the proofs, so the table can't drift out of sync.
+2. Document supported versions and where patches land, consistent with the
+   MAJOR.MINOR.PATCH convention already defined in CLAUDE.md.
+3. Define a private disclosure channel (email or GitHub private vulnerability reporting) and
+   expected response time.
+4. Link out to `SecurityProofs-1.md`/`-2.md`/`-3.md` for detailed analysis instead of duplicating
+   proofs; keep `SECURITY.md` itself short and scannable.
+
+Status: **OPEN**
