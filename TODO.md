@@ -874,7 +874,7 @@ the reconciler call of `_rnl_agree` and consumed by the other call.
 - n=32: 4 bytes added to reconciler's message
 - n=256: 32 bytes added to reconciler's message
 
-Status: **COMPLETE** — Analysis in v1.5.15; Peikert reconciliation deployed in v1.5.16 across all 6 targets. Failure rate: 0%.
+Status: **DONE v1.5.16** — Analysis in v1.5.15; Peikert reconciliation deployed in v1.5.16 across all 6 targets. Failure rate: 0%.
 
 ---
 
@@ -2956,6 +2956,8 @@ This fix is documented in CLAUDE.md Rule 5 (per-page math expression limit).
 | v1.5.37 | Fixed `\begin{cases}` Rule 8 violation in §11.9 | Cascade still present |
 | v1.5.38 | Reverted to single-line `$$expr$$` format; split document | Cascade resolved |
 
+Status: **DONE v1.5.39** — Document split at §10/§11 boundary resolved the cascade.
+
 ---
 
 ## Arduino AVR Emulation Verification (2026-05-20)
@@ -2976,20 +2978,28 @@ Status: **DONE** — all prerequisites confirmed (2026-05-20).
 - [x] `build_arduino.sh` compiles tests → `CryptosuiteTests/Herradura_tests_avr.elf` (46098 text + 1048 data + 2719 bss = 49865 bytes)
 - [x] No compiler errors or warnings in either target
 
+Status: **DONE** — both ELF binaries built cleanly (2026-05-20).
+
 ### Batch 3 — Run suite under simavr (DONE 2026-05-20 — all pass)
 - [x] Output captured; runs one full iteration and loops correctly
 - [x] All protocol sections printed: HKEX-GF, HSKE, HPKS, HPKE, HSKE-NL-A1, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL, HPKS-Stern-F, HPKE-Stern-F
 - [x] All `+` pass markers present; no `-` failure markers; HKEX-RNL keys agreed on first try
 - [x] EVE bypass section: all 4 bypass attempts rejected (`- Eve …`)
 
+Status: **DONE** — suite runs correctly under simavr, all pass (2026-05-20).
+
 ### Batch 4 — Run tests under simavr (DONE 2026-05-20 — all pass)
 - [x] All 12 tests print `[PASS]` on every loop iteration
 - [x] Test [7] HKEX-RNL: 10/10 raw agree, 10/10 sk agree (100%; uses simpler PP=2 rounding)
+
+Status: **DONE** — tests run correctly under simavr, all pass (2026-05-20).
 
 ### Batch 5 — Known issues to address after verification
 - [x] **Version string stale:** suite `loop()` prints `v1.5.23` but file header is `v1.6.1` — fixed banner to `v1.6.1`
 - [x] **Tests use old HKEX-RNL reconciliation:** upgraded `RNL_PP=2`→`4`, added `rnl_hint`/`rnl_reconcile`, updated `rnl_agree` to hint-based signature, fixed `rnl_lift` to centered rounding, updated `test_hkex_rnl` call site — all 12 tests still `[PASS]`
 - [x] **Tests `rnl_rand_poly` missing rejection sampling:** replaced bare `% RNL_Q` with 3-byte threshold guard (threshold=`0xFF00FFu`) matching suite
+
+Status: **DONE** — all known issues fixed and reverified under simavr (2026-05-20).
 
 
 Status: **DONE v1.5.38** — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
