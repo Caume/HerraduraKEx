@@ -7060,12 +7060,11 @@ language whose fix is reachable from production code; Go/Python suites inline th
 Schnorr/El Gamal equations directly (pre-existing convention, matching how the CLI already
 inlines them too) rather than calling a shared function, so their test [45] validates the
 same logic via local "checked" helper functions rather than hardening a shared entry point.
-**Remaining gap (tracked as TODO #141):** item 3 (CliTest PEM-level tests) was not done —
-`herradura_cli.c`'s `kex`/`enc`/`verify` commands duplicate the Schnorr/El Gamal math inline
-rather than calling the now-hardened `herradura.h` functions, so a malicious PEM containing
-an identity/zero public key is NOT currently rejected by the CLI. See TODO #141.
-
-Status: **OPEN**
+Item 3's remaining gap — `herradura_cli.c`'s `kex`/`enc`/`verify` commands duplicated the
+Schnorr/El Gamal math inline instead of calling the now-hardened `herradura.h` functions,
+so a malicious PEM containing an identity/zero public key was not rejected by the CLI —
+was closed by TODO #141 (v1.9.92), which added `gf_pub_is_valid()` checks in
+`cmd_kex`/`cmd_enc`/`cmd_verify` and `CliTest/test_weak_key_rejection.sh`.
 
 ---
 
@@ -7304,4 +7303,9 @@ than the internal library API TODO #131 closed.
 5. Evaluate whether other CLI code paths that inline `gf_pow_ba` on untrusted PEM input
    (e.g. `cmd_threshold_verify`, ring signature verification) have the same gap.
 
-Status: **OPEN**
+Status: **DONE v1.9.92** — added `gf_pub_is_valid()` checks before the inline
+`gf_pow_ba` calls in `cmd_kex` (hkex-gf), `cmd_enc` (hpke/hpke-nl), and
+`cmd_verify` (hpks/hpks-nl), each `die()`ing on a degenerate (0/1) peer public
+key; `cmd_threshold_verify` already called the hardened `hpkst_verify` and
+needed no change, ring-signature verification is unaffected (Stern, not GF
+exponentiation); added `CliTest/test_weak_key_rejection.sh`.

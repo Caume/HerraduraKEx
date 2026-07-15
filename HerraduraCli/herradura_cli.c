@@ -1044,6 +1044,9 @@ static void cmd_kex(int argc, char **argv)
         BitArray priv, pub_theirs, sk;
         ba_from_ra(&priv,       our.vals[0],   our.vlens[0]);
         ba_from_ra(&pub_theirs, their.vals[0], their.vlens[0]);
+        if (!gf_pub_is_valid(&pub_theirs))
+            die("kex: their public key is the GF(2^n)* identity/zero element "
+                "(rejected: degenerate key)");
         gf_pow_ba(&sk, &pub_theirs, &priv);
         pem_key_free(&our); pem_key_free(&their);
 
@@ -1785,6 +1788,9 @@ static void cmd_enc(int argc, char **argv)
         BitArray pub, r, R, enc_key, E;
         ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
         pem_key_free(&pub_k);
+        if (!gf_pub_is_valid(&pub))
+            die("enc: public key is the GF(2^n)* identity/zero element "
+                "(rejected: degenerate key)");
 
         FILE *urnd = fopen("/dev/urandom", "rb");
         if (!urnd) die("cannot open /dev/urandom");
@@ -2770,6 +2776,9 @@ static void cmd_verify(int argc, char **argv)
         BitArray pub;
         ba_from_ra(&pub, pub_k.vals[0], pub_k.vlens[0]);
         pem_key_free(&pub_k);
+        if (!gf_pub_is_valid(&pub))
+            die("verify: public key is the GF(2^n)* identity/zero element "
+                "(rejected: degenerate key)");
 
         /* Load Schnorr sig: s, R, e, n */
         PemKey sig_k;

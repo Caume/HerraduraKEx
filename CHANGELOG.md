@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.92] - 2026-07-15
+
+### Fixed
+- **CLI-level weak-key rejection for `kex`/`enc`/`verify` (TODO #141).**
+  TODO #131 hardened `herradura.h`'s `hkex_gf_agree`/`hpke_encrypt`/`hpks_verify`
+  against a degenerate GF(2^n)* peer public key (0 or 1), but
+  `HerraduraCli/herradura_cli.c`'s `cmd_kex` (`hkex-gf`), `cmd_enc`
+  (`hpke`/`hpke-nl`), and `cmd_verify` (`hpks`/`hpks-nl`) call `gf_pow_ba`
+  directly on the loaded peer/recipient/signer public key instead of going
+  through those hardened functions, so a maliciously crafted or corrupted PEM
+  file was not actually rejected at the CLI boundary. Added a `gf_pub_is_valid()`
+  check before each inline `gf_pow_ba` call, with a `die()` on rejection.
+  `cmd_threshold_verify` was already routing through the hardened
+  `hpkst_verify` library call and needed no change; ring-signature verification
+  uses the Stern protocol, not GF exponentiation, so it is unaffected.
+  Added `CliTest/test_weak_key_rejection.sh`, hand-crafting PEM files with an
+  identity (1) or zero public-key value for `hkex-gf`/`hpke`/`hpks` and
+  asserting a clean non-zero exit from `kex`/`enc`/`verify`.
+
 ## [1.9.91] - 2026-07-14
 
 ### Fixed
