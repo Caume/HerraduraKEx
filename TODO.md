@@ -7016,7 +7016,26 @@ remains unaudited (Stern-F/Niederreiter permutation and error-vector handling, W
 hash chains) for a future batch — TODO #126's "production gap" note stays open until that
 Stern surface is covered.
 
-Status: **OPEN** — Batch 1 (core arithmetic + protocol entry points) done; Stern-F/WOTS/XMSS audit remains for a future batch.
+**Batch 2 — Stern-F permutation/error handling and WOTS/XMSS (v1.9.95).** Extended
+`dudect_timing_audit.c` with `stern_gen_perm`, `stern_apply_perm`, and `hpks_wots_sign`.
+`hpks_wots_sign` is clean (`|t|=0.06`) — WOTS chain-iteration counts derive from the public
+message hash, not secret key material, matching the published WOTS design; `hpks_xmss_*`
+adds nothing beyond that plus the already-audited `haccum_*` accumulator (TODO #83).
+`stern_gen_perm` shows a real, large leak (`|t|=180.85` — fixed-seed mean 5195.6 ns vs.
+random-seed mean 5886.2 ns, ~12% difference): its Fisher-Yates rejection sampling has a
+PRNG-stream-dependent loop count keyed on the secret `pi_seed`. `stern_apply_perm` inherits
+the same wall-clock signal (it calls `stern_gen_perm` internally) and separately has a
+`perm[i]`-dependent memory-access pattern that a wall-clock t-test cannot characterize
+(needs cache-timing tooling, out of scope this batch). `pi_seed` is ephemeral and revealed
+in 2 of 3 Stern response branches anyway, so this doesn't expose the long-term private key
+directly, but it is a genuine open finding, not benign rejection-sampling noise. A fix
+(Lemire multiply-shift, removing the rejection loop) is scoped but *not* applied this batch:
+`stern_gen_perm` must stay bit-identical between C/Go/Python and between signer/verifier for
+signatures to verify at all, so the fix requires synchronized changes across all three
+language suites plus a 9-way interop re-test — tracked for Batch 3. Documented in
+SecurityProofs-3.md §11.11.
+
+Status: **OPEN** — Batch 1 (core arithmetic + protocol entry points) and Batch 2 (Stern-F permutation/WOTS/XMSS) done. Batch 2 found a real timing leak in `stern_gen_perm`/`stern_apply_perm`; the fix needs synchronized C/Go/Python changes + interop re-test and is scoped for Batch 3.
 
 ---
 

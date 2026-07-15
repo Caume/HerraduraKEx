@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.95] - 2026-07-15
+
+### Fixed
+- **Constant-time audit, Batch 2 — Stern-F timing leak found (TODO #129).** Extended
+  `SecurityProofsCode/dudect_timing_audit.c` to `stern_gen_perm`, `stern_apply_perm`, and
+  `hpks_wots_sign`. `hpks_wots_sign`/WOTS-F/XMSS-F are clean (`|t|=0.06`) — chain-iteration
+  counts derive from the public message hash, not secret key material. `stern_gen_perm`
+  shows a real, statistically significant leak (`|t|=180.85`, ~12% mean timing difference
+  between fixed and random `pi_seed`): its Fisher-Yates rejection sampling has a
+  PRNG-stream-dependent loop count keyed on the secret seed. `stern_apply_perm` inherits the
+  same wall-clock signal and separately has a permutation-index-dependent memory-access
+  pattern outside this batch's scope (needs cache-timing tooling). `pi_seed` is ephemeral
+  and revealed in 2 of 3 Stern response branches, so this doesn't expose the long-term
+  private key directly, but it's a genuine finding. A fix (Lemire multiply-shift sampling)
+  is scoped in SecurityProofs-3.md §11.11 but not applied yet — it requires synchronized
+  changes across the C/Go/Python suites plus a 9-way interop re-test to avoid breaking
+  cross-language signature verification, tracked for TODO #129 Batch 3.
+
 ## [1.9.94] - 2026-07-15
 
 ### Added

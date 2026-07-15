@@ -358,16 +358,71 @@ only whether a public input was malformed, so these are not leaks. Every call in
 constant-time primitives above uses private key material as the documented secret operand,
 with no additional branching in between.
 
-**Not yet audited — deferred to a later batch.** `stern_`/`hpks_stern_f_*`/`hpke_stern_f_*`
-(Stern ZKP and Niederreiter KEM — permutation and error-vector handling in
-`stern_apply_perm`/`stern_gen_perm`/`stern_rand_error` is a plausible leak surface since it
-walks secret-indexed arrays), `hpks_wots_*`/`hpks_xmss_*` (hash-chain iteration counts are
-public in WOTS/XMSS by design, but the chain values themselves are not), and the
-`SecurityProofsCode/*.py` prototypes (`nl_fscx_*`, `hkex_rnl_*`) which are explicitly
-non-constant-time reference code (CHANGELOG.md: "the Python reference implementation is
-intentionally not constant-time") and out of scope for a C-level timing audit. TODO #126's
-"production gaps" note for the Stern-F/BIKE path remains open until the Stern surface above
-is covered by a future batch.
+**Not yet audited at the end of Batch 1 — deferred.** `stern_`/`hpks_stern_f_*`/
+`hpke_stern_f_*` (Stern ZKP and Niederreiter KEM) and `hpks_wots_*`/`hpks_xmss_*` were
+flagged here as plausible leak surfaces and picked up in Batch 2 below, with one confirmed
+finding. The `SecurityProofsCode/*.py` prototypes (`nl_fscx_*`, `hkex_rnl_*`) remain out of
+scope: they are explicitly non-constant-time reference code (CHANGELOG.md: "the Python
+reference implementation is intentionally not constant-time").
+
+**Batch 2 — Stern-F permutation/error handling and WOTS/XMSS (v1.9.95).** Extends
+`dudect_timing_audit.c` with three more targets and confirms one real leak:
+
+| Function | Secret-dependent input | \|t\| | Verdict |
+|---|---|---|---|
+| `hpks_wots_sign` | `master_seed` | 0.06 | clean |
+| `stern_gen_perm` | `pi_seed` | 180.85 | **leak confirmed** |
+| `stern_apply_perm` (incl. `stern_gen_perm`) | `pi_seed` | 177.26 | **leak confirmed** |
+
+**WOTS-F/XMSS-F — audited and clean.** `_wots_chain_ba`'s iteration count is
+`WOTS_W - 1 - digits[i]`, and `digits[]` comes from `_wots_msg_to_digits(msg_hash)` — the
+*message* hash, which is public in both sign and verify by construction (the verifier must
+know it to recompute the same digits). The chain-hash values themselves never branch or
+index memory by secret data (`_wots_h_ba` is a fixed `nl_fscx_revolve_v1_ba` call). So the
+data-dependent loop count here leaks only public information, consistent with WOTS's
+published design, not the earlier "plausible leak surface" concern this section flagged for
+it in Batch 1. `hpks_xmss_sign`/`hpks_xmss_verify` call only `hpks_wots_sign`/
+`hpks_wots_recover_pk` plus the already-constant-time-audited `haccum_*` accumulator
+(TODO #83, CHANGELOG.md), so no separate finding.
+
+**Stern-F — confirmed leak in `stern_gen_perm`.** The function draws 32-bit words from an
+NL-FSCX-keyed PRNG stream and rejects any draw `>= threshold` before reducing mod `range`
+(Fisher-Yates with rejection sampling for exact uniformity). The number of state advances
+and rejected draws is a function of the PRNG output stream, which is keyed on the *secret*
+`pi_seed` — so the number of loop iterations, and hence wall-clock time, varies with
+`pi_seed`. The measured effect is large and systematic (fixed all-zero seed: 5195.6 ns;
+random seed: 5886.2 ns; a ~12% difference, `|t| = 180.85`, far past the 4.5 threshold) —
+this is a real, exploitable-in-principle timing channel, not benign rejection-sampling
+noise. `stern_apply_perm` inherits the same signal because every call in the signature
+path first regenerates `perm` via `stern_gen_perm`; `stern_apply_perm`'s own body remains
+branchless (confirmed by inspection — `herradura.h`'s existing comment on the function),
+but it addresses `out->b[]` at a `perm[i]`-dependent byte offset for every `i`, which is a
+*memory-access-pattern* leak (cache-timing) that a wall-clock t-test cannot characterise or
+rule out either way — that requires cache-timing instrumentation (e.g. `libFLUSH+RELOAD` or
+a cache-simulator harness), which is out of scope for this batch.
+
+**Severity in context.** `pi_seed` is a fresh, ephemeral per-round value, not the signer's
+long-term secret error vector `e` — and in the `b ∈ {1,2}` response branches it is revealed
+in the signature anyway (`resp_a[i] = pi[i]`), so this specific leak does not expose the
+long-term Stern-F private key directly. It could still let a *local* or *co-located*
+attacker distinguish signing rounds or bias timing-based side-channel attacks against the
+challenge/response protocol during signing, and HPKS-Stern-F is already flagged demo-only
+at N=256 (SecurityProofs-2.md §11.7) pending TODO #126's production decoder — but "demo
+only for cryptanalytic reasons" is a different claim than "the C implementation is
+side-channel safe," so this is recorded as a genuine, open finding rather than downgraded.
+
+**Fix scoped, not applied this batch.** The standard fix is to replace the rejection-sampled
+modulo reduction with a fixed-cost, single-draw multiply-shift map (Lemire's method:
+`j = ((uint64_t)v * range) >> 32`), which removes the `do { } while` entirely — loop count
+becomes a fixed function of `N` only, at the cost of a relative modulo bias
+`< range / 2^32`, negligible at `range <= 256`. This is *not* applied in this batch because
+`stern_gen_perm` (or its Go/Python equivalents) must stay bit-for-bit identical between
+signer and verifier, and between all three CLI language implementations, for a signature to
+verify at all — changing the sampling algorithm in `herradura.h` alone would silently break
+cross-language interop (`CliTest/test_c_interop.sh`, `test_go_interop.sh`) until the same
+change lands in the Go and Python suites simultaneously and the 9-way interop tests are
+re-run. Tracked as follow-up scope for TODO #129 Batch 3, alongside the `stern_apply_perm`
+memory-access-pattern question.
 
 **Reproduce:**
 ```bash

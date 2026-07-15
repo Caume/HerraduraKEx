@@ -105,6 +105,33 @@ static void op_mul_mod_ord(const BitArray *secret, const BitArray *pub)
 static void op_fscx_revolve(const BitArray *secret, const BitArray *pub)
 { BitArray d; ba_fscx_revolve(&d, pub, secret, I_VALUE); }
 
+/* Batch 2 (TODO #129): Stern-F permutation generation/application and
+ * WOTS-F signing. stern_gen_perm's Fisher-Yates draws are rejection-sampled
+ * from a PRNG keyed on the (per-round, ephemeral) pi_seed, so its loop count
+ * is secret-dependent by construction; stern_apply_perm's *memory access
+ * pattern* (not its instruction path — it is already branchless) is
+ * secret-permutation-dependent, which a wall-clock t-test cannot detect
+ * (it requires cache-timing instrumentation) — see SecurityProofs-3.md
+ * §11.11 for the structural discussion. These two tests characterise the
+ * wall-clock-visible component only. */
+static void op_stern_gen_perm(const BitArray *secret, const BitArray *pub)
+{ (void)pub; uint8_t perm[KEYBITS]; stern_gen_perm(perm, secret, KEYBITS); }
+
+static void op_stern_apply_perm(const BitArray *secret, const BitArray *pub)
+{
+    uint8_t perm[KEYBITS];
+    BitArray out;
+    stern_gen_perm(perm, secret, KEYBITS);
+    stern_apply_perm(&out, perm, pub, KEYBITS);
+}
+
+static void op_wots_sign(const BitArray *secret, const BitArray *pub)
+{
+    BitArray sig[WOTS_L];
+    static const uint8_t msg[] = "TODO #129 dudect fixed message";
+    hpks_wots_sign(sig, msg, sizeof msg, secret->b, pub->b[0]);
+}
+
 int main(int argc, char **argv)
 {
     int rounds = (argc > 1) ? atoi(argv[1]) : 4000;
@@ -118,6 +145,9 @@ int main(int argc, char **argv)
     run_test("gf_pow_ba (secret=exponent)",        rounds, setup_zero, setup_rand, op_gf_pow,        urnd);
     run_test("ba_mul_mod_ord (secret=operand a)",  rounds, setup_zero, setup_rand, op_mul_mod_ord,   urnd);
     run_test("ba_fscx_revolve (secret=key operand)", rounds, setup_zero, setup_rand, op_fscx_revolve, urnd);
+    run_test("stern_gen_perm (secret=pi_seed)",      rounds, setup_zero, setup_rand, op_stern_gen_perm,   urnd);
+    run_test("stern_apply_perm (secret=pi_seed)",    rounds, setup_zero, setup_rand, op_stern_apply_perm, urnd);
+    run_test("hpks_wots_sign (secret=master_seed)",  rounds, setup_zero, setup_rand, op_wots_sign,        urnd);
 
     fclose(urnd);
     return 0;
