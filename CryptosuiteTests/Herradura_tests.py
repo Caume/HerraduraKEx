@@ -1,5 +1,8 @@
 '''
-    Herradura KEx — Security & Performance Tests (Python) v1.9.78
+    Herradura KEx — Security & Performance Tests (Python) v1.9.91
+    v1.9.91: test [45] — weak-key/malformed-input rejection: gf_pub_is_valid rejects the
+            GF(2^n)* identity/zero element in HKEX-GF/HPKS/HPKE-style checked helpers, and
+            HPKS-Stern-F rejects a corrupted syndrome (TODO #131).
     v1.9.78: HCRED test [44] — completeness, replay/tamper/split-witness rejection, issuer
             binding (TODO #128 Batch 4b).
     v1.9.43: HPKS-T threshold Schnorr test [31] (TODO #98); benchmarks renumbered [32]–[43].
@@ -2633,6 +2636,100 @@ def test_hcred():
     print()
 
 
+def gf_pub_is_valid(pub_int: int) -> bool:
+    """Rejects the additive zero and the multiplicative identity (g^0=1):
+    a degenerate GF(2^n)* public element that collapses HKEX-GF/HPKS/HPKE
+    to trivially forgeable/decryptable cases (TODO #131; mirrors
+    herradura.h's gf_pub_is_valid)."""
+    return pub_int not in (0, 1)
+
+
+def hpks_verify_checked(msg: 'BitArray', pub_int: int, R_int: int, s_int: int,
+                         poly: int, size: int) -> bool:
+    """Mirrors herradura.h's hardened hpks_verify (TODO #131): rejects a
+    degenerate pub before evaluating the raw Schnorr equation, since
+    pub=1 would make pub^e == 1 for any e — any (s, R=g^s) pair would
+    otherwise trivially verify against any message."""
+    if not gf_pub_is_valid(pub_int):
+        return False
+    e = fscx_revolve(BitArray(size, R_int), msg, _I_VALUE).uint
+    lhs = gf_mul(gf_pow(GF_GEN, s_int, poly, size),
+                 gf_pow(pub_int, e, poly, size), poly, size)
+    return lhs == R_int
+
+
+def hpke_encrypt_checked(pt: 'BitArray', pub_int: int, poly: int, size: int):
+    """Mirrors herradura.h's hardened hpke_encrypt (TODO #131): refuses a
+    degenerate recipient pub rather than silently producing ciphertext
+    whose enc_key = pub^r would be a constant independent of r."""
+    if not gf_pub_is_valid(pub_int):
+        return None
+    r = BitArray.random(size).uint
+    R = gf_pow(GF_GEN, r, poly, size)
+    enc_key = gf_pow(pub_int, r, poly, size)
+    ct = fscx_revolve(pt, BitArray(size, enc_key), _I_VALUE)
+    return R, ct
+
+
+# Security test [45]: weak-key & malformed-input rejection — appended after
+# [44] to avoid renumbering (same number in C/Go/Python; TODO #131).
+def test_weak_key_rejection():
+    print("[45] Weak-key & malformed-input rejection (identity pubkey, "
+          "zero/degenerate elements, tampered syndrome)  [SECURITY]")
+    size = 256
+    poly = GF_POLY[size]
+    stern_n = 32
+    N = g_rounds if g_rounds > 0 else 10
+    ok_hkex = ok_hpks = ok_hpke = ok_stern = 0
+    t0 = time.perf_counter()
+    for i in range(N):
+        if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
+            N = i; break
+
+        # HKEX-GF: a peer public key of 0 or 1 (identity) must be refused
+        # before agreement -- either collapses the shared secret to a
+        # constant independent of the caller's own private key.
+        if not gf_pub_is_valid(0) and not gf_pub_is_valid(1):
+            ok_hkex += 1
+
+        # HPKS: an attacker who picks s at random and sets R=g^s can make
+        # any (msg, pub=identity) triple satisfy the raw Schnorr equation
+        # (pub^e == 1 regardless of e). The hardened verifier must reject
+        # pub in {0, 1} regardless of the forged s/R/msg.
+        s_forged = BitArray.random(size).uint
+        R_forged = gf_pow(GF_GEN, s_forged, poly, size)
+        msg = BitArray.random(size)
+        if (not hpks_verify_checked(msg, 0, R_forged, s_forged, poly, size)
+                and not hpks_verify_checked(msg, 1, R_forged, s_forged, poly, size)):
+            ok_hpks += 1
+
+        # HPKE: encrypt must refuse an identity/zero recipient pubkey.
+        pt = BitArray.random(size)
+        if (hpke_encrypt_checked(pt, 0, poly, size) is None
+                and hpke_encrypt_checked(pt, 1, poly, size) is None):
+            ok_hpke += 1
+
+        # HPKS-Stern-F: an honestly-generated signature must be rejected
+        # when verified against a corrupted (flipped-bit) syndrome.
+        seed, e_int, syndrome = stern_f_keygen(stern_n)
+        msg_s = BitArray.random(stern_n)
+        sig = hpks_stern_f_sign(msg_s, e_int, seed, syndrome, stern_n, 8)
+        syndrome_bad = syndrome ^ 1
+        if (hpks_stern_f_verify(msg_s, sig, seed, syndrome, stern_n)
+                and not hpks_stern_f_verify(msg_s, sig, seed, syndrome_bad, stern_n)):
+            ok_stern += 1
+
+    if N == 0:
+        print("    SKIP (no iterations completed)\n")
+        return
+    status = ("PASS" if ok_hkex == N and ok_hpks == N and ok_hpke == N
+              and ok_stern == N else "FAIL")
+    print(f"    n={N}  hkex_reject={ok_hkex}/{N}  hpks_id_reject={ok_hpks}/{N}"
+          f"  hpke_enc_reject={ok_hpke}/{N}  stern_synd_reject={ok_stern}/{N}"
+          f"  [{status}]")
+    print()
+
+
 def bench_fscx():
     print("[32] FSCX throughput  [CLASSICAL]")
     for size in SIZES:
@@ -2905,3 +3002,6 @@ if __name__ == '__main__':
     # Security test [44] appended after benchmarks to preserve [32]-[43] numbering.
     print("--- Security Test [44]: HCRED hybrid credential ---\n")
     test_hcred()
+
+    # Security test [45] appended after [44] to avoid renumbering (TODO #131).
+    test_weak_key_rejection()

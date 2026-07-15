@@ -6975,3 +6975,337 @@ classical and quantum-resistant security margins?
 4. **Add a SecurityProofs-1.md §9.2.5** "Migration path" subsection summarizing the trade-offs.
 
 Status: **DONE v1.9.90** — `SecurityProofsCode/hpks_ristretto_migration.py`: self-contained pure-Python ristretto255 (RFC 9496; validated against the RFC generator test vector, ell·G = identity, encode/decode round-trips) with the HPKS Schnorr equation verbatim.  (1) Drop-in confirmed: 50/50 sign/verify, all tamper cases rejected; 3-of-3 additive threshold (TODO #98) and AOS Schnorr ring signatures (TODO #78.I) transfer with zero structural change — and the prime group order removes the order-divisor caveats GF(2^n)* required.  (2) Migration impact: 32-byte elements both sides, PEM/DER layouts carry over, new algo tag needed (e.g. hpks-r255); scalars re-range to mod ell; keys not interoperable; HSKE/HPKE symmetric halves untouched.  (3) PQ assessment: classical-only upgrade — Shor breaks ECDLP too; no quantum-resistant successor group exists for Schnorr algebra; PQC path remains HKEX-RNL + Stern-F/Stern-KEM exclusively.  (4) Documented as SecurityProofs-1.md §9.2.6 (a §9.2.5 already existed; zero new math spans added — the document is at 859, above the ~750 GitHub cascade threshold).
+
+---
+
+### 129. Constant-time audit of core arithmetic primitives (Security, High)
+
+**Background:** TODO #126's status note explicitly flags "production gaps (constant-time C,
+weak-key rejection)" as unresolved for the Stern-F/BIKE path, but the same class of gap likely
+exists across `herradura.h` more broadly: `gf_mul`, `gf_pow`, `ba_mul_mod_ord`, and the FSCX
+rotation/XOR chain have never been audited for data-dependent branches or variable-time loops.
+Timing side-channels are typically the first thing a real security review finds, ahead of any
+algebraic weakness — the math can be sound while the C implementation leaks the key.
+
+**Work items:**
+
+1. Run `dudect` (or an equivalent statistical timing-leakage tool) against `gf_mul`, `gf_pow`,
+   `ba_mul_mod_ord`, and `fscx_revolve` in `herradura.h`, comparing fixed-key vs. random-key
+   timing distributions.
+2. Audit for secret-dependent branches (`if`, early-`return`) and secret-dependent memory
+   access (table lookups indexed by key material) across `hkex_`, `hske_`, `hpks_`, `hpke_`,
+   and `stern_` functions.
+3. Where a leak is found, document the fix (bitmask select instead of branch, constant-time
+   modular reduction) and re-run `dudect` to confirm the leak is closed.
+4. Record which functions were audited-and-clean vs. audited-and-fixed vs. not-yet-audited in a
+   new SecurityProofs subsection, so the "production gap" note in #126 can eventually be closed
+   or narrowed.
+
+Status: **OPEN**
+
+---
+
+### 130. Fuzzing harness for PEM/DER codec and CLI argument parsing (Security, Medium)
+
+**Background:** All of the suite's adversarial testing so far targets the cryptographic
+protocols (tamper batteries, replay, wrong-key rejection). The PEM/DER codec
+(`HerraduraCli/herradura_codec.h`, `codec.py`) and CLI argument parsers are untested against
+malformed or adversarial input, despite being the most common real-world vulnerability surface
+in cryptographic tooling (parser bugs, not algebra, are what usually get CVEs).
+
+**Work items:**
+
+1. Add a libFuzzer (or AFL) harness for the C codec's PEM/DER decode paths in
+   `herradura_codec.h`.
+2. Add a `go-fuzz`/native Go 1.18+ fuzz target for the Go CLI's PEM decode path.
+3. Add an `atheris` (or hypothesis-based) fuzz target for `codec.py`.
+4. Fuzz CLI argument parsing directly (malformed flags, truncated files, oversized inputs) for
+   all three CLI implementations.
+5. Wire a short fuzzing run (time-boxed) into CI if one exists, or document a manual
+   `make fuzz` / script-based invocation otherwise.
+
+Status: **OPEN**
+
+---
+
+### 131. Weak-key and malformed-input rejection tests across all protocols (Security, Medium)
+
+**Background:** Current CLI and suite tests (`CliTest/`, `Herradura_tests.*`) verify
+correctness — that honest keygen/kex/sign/verify round-trips succeed. They do not
+systematically verify that adversarial or degenerate inputs are *rejected*: small-subgroup
+elements, the identity element, zero/duplicate nonces, degenerate Stern syndromes, or
+truncated/oversized PEM payloads fed to `genpkey`/`kex`/`sign`/`verify`/`dec`.
+
+**Work items:**
+
+1. Enumerate degenerate inputs per protocol: identity/small-order elements for HKEX-GF/HPKS/
+   HPKE; zero-weight or all-ones syndromes for Stern-F/Stern-KEM; zero nonce/counter for
+   HSKE-NL-A1.
+2. Add negative-path tests to `Herradura_tests.*` (one new labeled test per protocol family)
+   asserting rejection rather than crash or silent acceptance.
+3. Add corresponding CLI-level tests in `CliTest/` feeding malformed PEM files to each
+   subcommand and asserting a clean error exit rather than a crash.
+4. Document which protocols already reject degenerate input by construction (e.g. via modular
+   range checks) vs. which needed a new explicit check.
+
+Status: **DONE v1.9.91** — item 1 identified the real gap: HKEX-GF/HPKS/HPKE silently
+accepted a GF(2^n)* peer public key of 0 or 1 (the identity), which is trivially forgeable
+(HPKS) or trivially decryptable (HPKE) since `pub^e` collapses to a constant. Fixed in
+`herradura.h` via new `gf_pub_is_valid()`, wired into `hpks_verify` (returns 0) and into
+`hkex_gf_agree`/`hpke_encrypt`/`hpke_decrypt` (now return `int`, reject degenerate peer
+keys). Item 2 shipped as test `[45]` in `Herradura_tests.{c,go,py}` (all three languages,
+all PASS): HKEX-GF/HPKS/HPKE reject identity/zero pub, HPKS-Stern-F rejects a corrupted
+syndrome. Item 4: C is the only language with a shared library layer, so it's the only
+language whose fix is reachable from production code; Go/Python suites inline the
+Schnorr/El Gamal equations directly (pre-existing convention, matching how the CLI already
+inlines them too) rather than calling a shared function, so their test [45] validates the
+same logic via local "checked" helper functions rather than hardening a shared entry point.
+Item 3's remaining gap — `herradura_cli.c`'s `kex`/`enc`/`verify` commands duplicated the
+Schnorr/El Gamal math inline instead of calling the now-hardened `herradura.h` functions,
+so a malicious PEM containing an identity/zero public key was not rejected by the CLI —
+was closed by TODO #141 (v1.9.92), which added `gf_pub_is_valid()` checks in
+`cmd_kex`/`cmd_enc`/`cmd_verify` and `CliTest/test_weak_key_rejection.sh`.
+
+---
+
+### 132. Formal verification spec for one core primitive (Security, Medium)
+
+**Background:** `SecurityProofs-*.md` already carries an unusually large body of hand-written
+mathematical proofs for a project of this size. A machine-checked formal spec for at least one
+primitive would be a strong, differentiated credibility signal — most small crypto projects have
+zero formal verification, and the suite is already proof-heavy enough that the next step is
+natural.
+
+**Work items:**
+
+1. Pick one primitive with the tightest, most self-contained correctness statement — FSCX_REVOLVE
+   periodicity (order of M = n/2) is the best first candidate given §-level proofs already exist
+   in `SecurityProofs-1.md`.
+2. Write a Cryptol or F* specification of FSCX and FSCX_REVOLVE and mechanically verify the
+   periodicity claim against the existing hand proof.
+3. If feasible, extend to the Schnorr verification equation (g^s · C^e == R) as a second target.
+4. Document the verified claims and toolchain in a new SecurityProofs subsection, distinct from
+   the hand-proved sections, so readers can see which claims are machine-checked.
+
+Status: **OPEN**
+
+---
+
+### 133. Machine-readable protocol specification (JSON/YAML schema) (Feature, Medium)
+
+**Background:** The suite already maintains strict parameter/wire-format parity across six
+languages by convention and documentation (CLAUDE.md, TUTORIAL.md). There is no single
+machine-readable source of truth for protocol parameters, wire format, and security level that a
+tool or LLM could consume directly to generate a correct client without parsing prose across
+multiple files.
+
+**Work items:**
+
+1. Define a JSON Schema (or YAML) covering, per protocol (HKEX-GF, HSKE, HPKS, HPKE, NL/PQC
+   variants, Stern-F/Stern-KEM, HCRED): parameter names and sizes, PEM block type strings,
+   algo tags accepted by the CLI `--algo` flag, and the claimed security level/status
+   (production / demo-only / pedagogical, matching TODO #127's deprecation notes).
+2. Generate the spec from a single source (e.g. a Python script reading suite constants) so it
+   cannot drift from the actual implementations.
+3. Add a CI or pre-commit check that flags when a new `--algo` value or PEM block type is added
+   to a CLI without a corresponding schema update.
+4. Reference the schema file from README.md and TUTORIAL.md as the canonical parameter source.
+
+Status: **OPEN**
+
+---
+
+### 134. MCP server exposing the CLI as agent-callable tools (Feature, Medium)
+
+**Background:** AI coding agents (Claude Code and similar) increasingly need callable
+cryptographic primitives for agentic workflows — signing artifacts, deriving shared secrets
+between agents, encrypting intermediate state. Very few crypto libraries ship an MCP interface,
+so this is a genuine differentiator, not just a nice-to-have, and it plugs directly into the
+suite's existing OpenSSL-style CLI without requiring new crypto code.
+
+**Work items:**
+
+1. Design an MCP server (Python, wrapping `HerraduraCli/herradura.py` or calling the built CLI
+   binaries) exposing `genpkey`, `kex`, `sign`, `verify`, `enc`, `dec`, `dgst` as MCP tools.
+2. Keep private-key material handling explicit and opt-in (e.g. tool operates on file paths the
+   caller supplies, never generates or stores keys silently) — document the trust model clearly
+   since this exposes cryptographic operations to an LLM-driven caller.
+3. Add usage examples to `docs/examples/` showing an agent using the MCP server to complete a
+   HKEX-GF key exchange or HPKS signature end-to-end.
+4. Document setup in README.md / TUTORIAL.md.
+
+Status: **OPEN**
+
+---
+
+### 135. Condensed agent-facing API reference (llms.txt / AGENTS.md) (Docs, Low)
+
+**Background:** CLAUDE.md is thorough for Claude Code contributors working *inside* this repo,
+but there is no compact reference for external tools or agents that want to integrate
+HerraduraKEx as a dependency (e.g. an agent generating code that calls `herradura.h` or the CLI
+from another project). The convention of an `llms.txt` (or `AGENTS.md`) at the repo root is
+emerging specifically to fill this gap.
+
+**Work items:**
+
+1. Write a condensed `llms.txt` at the repo root: protocol list, function signatures per
+   language, CLI subcommand summary, and links to `docs/TUTORIAL.md` for detail — optimized for
+   token-efficient consumption, not human narrative.
+2. Keep it derived from/consistent with CLAUDE.md and TUTORIAL.md rather than duplicating
+   prose; note explicitly which document is authoritative for which content.
+3. Add a note to README.md pointing external integrators at `llms.txt`.
+
+Status: **OPEN**
+
+---
+
+### 136. Cross-language property-based interop fuzz generator (Testing, Medium)
+
+**Background:** `CliTest/test_vectors.sh` and friends check a fixed set of interop cases across
+Python/C/Go/ASM. There is no generator that produces large numbers of randomized inputs, runs
+them through all language implementations, and diffs outputs — the kind of test an AI agent can
+write and maintain well, and the kind that catches subtle cross-language divergence (endianness,
+modular-reduction edge cases) that fixed vectors miss.
+
+**Work items:**
+
+1. Write a generator script (Python) that produces randomized valid inputs per protocol
+   (keys, nonces, messages) and feeds them through the Python, C, and Go CLIs (and ASM suite
+   binaries where applicable).
+2. Diff outputs (ciphertexts, signatures, shared secrets) across languages for each generated
+   case; fail loudly on any divergence.
+3. Run a few thousand cases per protocol as a soak test; document expected runtime and how to
+   invoke it (e.g. `bash CliTest/test_fuzz_interop.sh`).
+4. Wire a small, fast subset into the existing `CliTest/` suite; keep the large soak run as an
+   opt-in script.
+
+Status: **OPEN**
+
+---
+
+### 137. FFI bindings for Python and Go around the C implementation (Feature, Low)
+
+**Background:** The suite currently ships parallel native implementations per language rather
+than bindings, which is good for pedagogical parity but means Python/Go users don't get C's
+performance without hand-porting. A `ctypes`-based Python wrapper and a `cgo`-based Go wrapper
+around `herradura.h` would give performance-sensitive users a fast path while leaving the
+existing native implementations untouched as the reference/pedagogical versions.
+
+**Work items:**
+
+1. Build a `ctypes` (or `cffi`) Python wrapper exposing `herradura.h`'s `ba_`/`gf_`/`hkex_`/etc.
+   functions, packaged separately from `primitives.py` so it's opt-in.
+2. Build a `cgo` Go wrapper around the same header, packaged separately from the native Go
+   suite.
+3. Add correctness tests confirming the bindings produce identical output to the native
+   Python/Go implementations for the same inputs.
+4. Document performance delta and when to prefer bindings vs. native implementation in
+   README.md.
+
+Status: **OPEN**
+
+---
+
+### 138. Benchmark comparison against established libraries (Docs, Low)
+
+**Background:** The suite's benchmarks (`Herradura_tests.*` tests [30]-[41]) measure absolute
+performance but never compare against familiar, established libraries, so a reader can't easily
+judge whether HerraduraKEx's FSCX-based approach is competitive or where its real advantage
+(multi-language parity, simplicity, PQC options) actually lies relative to something they know.
+
+**Work items:**
+
+1. Add a benchmark comparison table (README.md or a new `docs/BENCHMARKS.md`) against libsodium
+   Ed25519 for HPKS and liboqs Kyber/Dilithium for the NL/PQC and Stern-F protocols, on the same
+   hardware.
+2. Be explicit about apples-to-oranges caveats (production-hardened C vs. this suite's
+   proof-of-concept status per TODO #127) so the comparison doesn't overstate readiness.
+3. Keep the comparison script in `SecurityProofsCode/` or a new `benchmarks/` directory so it's
+   reproducible rather than a one-time snapshot.
+
+Status: **OPEN**
+
+---
+
+### 139. Docker quickstart for the full build matrix (Docs, Low)
+
+**Background:** The six-language, cross-compiler, qemu-based build matrix (`build_c.sh`,
+`build_go.sh`, `build_arm.sh`, `build_asm_i386.sh`) is a real strength but also a real barrier —
+a new user has to install ARM/i386 cross-toolchains and qemu just to try the project. A
+container image that builds and runs all targets out of the box would materially increase
+"try it now" conversion without changing any build script's behavior.
+
+**Work items:**
+
+1. Write a `Dockerfile` that installs all cross-compilers/qemu dependencies documented in
+   CLAUDE.md's Build Commands section and runs all four build scripts.
+2. Provide a `docker run` quickstart in README.md that builds everything and runs the C/Go/
+   Python test suites plus one CLI integration test as a smoke test.
+3. Keep the Dockerfile in sync with CLAUDE.md's dependency notes (e.g. the i386 linker
+   auto-detection logic) rather than duplicating install instructions that could drift.
+
+Status: **OPEN**
+
+---
+
+### 140. Add `SECURITY.md` with a consolidated threat model and vulnerability disclosure policy (Docs, Medium)
+
+**Background:** Security status is currently scattered across protocol-specific notes — TODO
+#127's deprecation of GF(2^n)* for production use, #126's "demo-only until production decoder"
+caveat on HPKE-Stern-F, #131's still-open weak-key rejection gaps — with no single document
+telling a security researcher what the trust boundary is, which protocols are production-grade
+vs. demo-only/pedagogical, or where to privately report a vulnerability. GitHub surfaces
+`SECURITY.md` directly in a repo's Security tab; its absence is both a missing disclosure
+channel and a missed credibility signal for a project this proof-heavy.
+
+**Work items:**
+
+1. Add a protocol status table (production / demo-only / pedagogical) sourced from the existing
+   `SecurityProofs-*.md` deprecation notes — reference the authoritative section rather than
+   restating the proofs, so the table can't drift out of sync.
+2. Document supported versions and where patches land, consistent with the
+   MAJOR.MINOR.PATCH convention already defined in CLAUDE.md.
+3. Define a private disclosure channel (email or GitHub private vulnerability reporting) and
+   expected response time.
+4. Link out to `SecurityProofs-1.md`/`-2.md`/`-3.md` for detailed analysis instead of duplicating
+   proofs; keep `SECURITY.md` itself short and scannable.
+
+Status: **OPEN**
+
+---
+
+### 141. Harden CLI `kex`/`enc`/`verify` against degenerate peer public keys (Security, Medium)
+
+**Background:** TODO #131 fixed `herradura.h` so `hpks_verify`/`hkex_gf_agree`/
+`hpke_encrypt`/`hpke_decrypt` reject a GF(2^n)* peer public key of 0 or 1 (the identity),
+which is otherwise trivially forgeable (HPKS) or trivially decryptable (HPKE). However,
+`HerraduraCli/herradura_cli.c`'s `cmd_kex`, `cmd_enc`, and `cmd_verify` do not call these
+`herradura.h` functions — they duplicate the Schnorr/El Gamal math inline (`gf_pow_ba` /
+`gf_mul_ba` calls directly), predating the fix. This means a maliciously crafted or
+corrupted PEM file containing an identity/zero public key is **not** currently rejected by
+the CLI, even though the underlying library now would reject it if called correctly. This
+is the actual untrusted-input boundary (external PEM files), so it's a more direct exposure
+than the internal library API TODO #131 closed.
+
+**Work items:**
+
+1. In `cmd_kex`'s `hkex-gf` branch (`herradura_cli.c`, uses `gf_pow_ba` on the loaded peer
+   public key directly), add a `gf_pub_is_valid()` check on `pub_theirs` before calling
+   `gf_pow_ba`; `die()` with a clear message on rejection.
+2. In `cmd_enc`'s `hpke`/`hpke-nl` branch, add the same check on the loaded `pub` before
+   encrypting.
+3. In `cmd_verify`'s `hpks`/`hpks-nl` branch, add the same check on the loaded `pub` before
+   the Schnorr equation check (or refactor to call the now-hardened `hpks_verify` directly,
+   removing the inline duplicate).
+4. Add `CliTest/test_weak_key_rejection.sh`: hand-craft PEM files with an identity (`0x...01`)
+   or zero public key value, feed them to `kex`/`enc`/`verify`, and assert a clean non-zero
+   exit rather than a crash or (worse) a false "Signature OK" / successful encryption.
+5. Evaluate whether other CLI code paths that inline `gf_pow_ba` on untrusted PEM input
+   (e.g. `cmd_threshold_verify`, ring signature verification) have the same gap.
+
+Status: **DONE v1.9.92** — added `gf_pub_is_valid()` checks before the inline
+`gf_pow_ba` calls in `cmd_kex` (hkex-gf), `cmd_enc` (hpke/hpke-nl), and
+`cmd_verify` (hpks/hpks-nl), each `die()`ing on a degenerate (0/1) peer public
+key; `cmd_threshold_verify` already called the hardened `hpkst_verify` and
+needed no change, ring-signature verification is unaffected (Stern, not GF
+exponentiation); added `CliTest/test_weak_key_rejection.sh`.

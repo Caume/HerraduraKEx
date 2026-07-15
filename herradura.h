@@ -290,6 +290,22 @@ static void gf_pow_ba(BitArray *dst, const BitArray *base, const BitArray *exp)
     *dst = r;
 }
 
+/* Returns 1 if pub is a valid, non-degenerate GF(2^KEYBITS)* public element:
+ * neither the additive zero (not a group element at all) nor the
+ * multiplicative identity g^0 = 1.  A pub of 1 collapses HKEX-GF/HPKS/HPKE
+ * to trivially forgeable/decryptable degenerate cases — e.g. hpks_verify's
+ * pub^e term becomes 1 regardless of e, so any (s, R=g^s) pair verifies
+ * against any message (TODO #131). */
+static int gf_pub_is_valid(const BitArray *pub)
+{
+    BitArray one;
+    memset(one.b, 0, KEYBYTES);
+    one.b[KEYBYTES - 1] = 1;
+    if (ba_is_zero(pub)) return 0;
+    if (ba_equal(pub, &one)) return 0;
+    return 1;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * 256-bit integer helpers (needed for NL-FSCX v2 and Schnorr arithmetic)
  * ───────────────────────────────────────────────────────────────────────────── */
@@ -2058,12 +2074,17 @@ static inline void hkex_gf_pubkey(const BitArray *priv, BitArray *pub)
     gf_pow_ba(pub, &GF_GEN, priv);
 }
 
-/* HKEX-GF: derive shared secret shared = their_pub^my_priv in GF(2^KEYBITS)*. */
-static inline void hkex_gf_agree(const BitArray *my_priv,
-                                   const BitArray *their_pub,
-                                   BitArray *shared)
+/* HKEX-GF: derive shared secret shared = their_pub^my_priv in GF(2^KEYBITS)*.
+ * Returns 0 and leaves *shared unset if their_pub is the identity or zero
+ * element (TODO #131: such a peer key collapses the shared secret to a
+ * constant independent of my_priv). Returns 1 on success. */
+static inline int hkex_gf_agree(const BitArray *my_priv,
+                                  const BitArray *their_pub,
+                                  BitArray *shared)
 {
+    if (!gf_pub_is_valid(their_pub)) return 0;
     gf_pow_ba(shared, their_pub, my_priv);
+    return 1;
 }
 
 /* HSKE: encrypt pt -> ct using key (I_VALUE steps). */
@@ -2095,11 +2116,14 @@ static inline void hpks_sign(const BitArray *msg, const BitArray *priv,
 }
 
 /* HPKS: verify Schnorr signature (R, s) on msg under public key pub.
- * Returns 1 if valid, 0 otherwise. */
+ * Returns 1 if valid, 0 otherwise. Rejects a degenerate pub (identity/zero)
+ * outright: pub=1 would make pub^e == 1 for any e, so any (s, R=g^s) pair
+ * would trivially verify against any message (TODO #131). */
 static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
                                 const BitArray *R, const BitArray *s)
 {
     BitArray e, gs, Ce, lhs;
+    if (!gf_pub_is_valid(pub)) return 0;
     ba_fscx_revolve(&e, R, msg, I_VALUE);
     gf_pow_ba(&gs, &GF_GEN, s);
     gf_pow_ba(&Ce, pub, &e);
@@ -2108,24 +2132,33 @@ static inline int hpks_verify(const BitArray *msg, const BitArray *pub,
 }
 
 /* HPKE: encrypt pt for the holder of private key corresponding to pub.
- * Outputs ephemeral R (send alongside ciphertext) and ciphertext ct. */
-static inline void hpke_encrypt(const BitArray *pt, const BitArray *pub,
-                                  BitArray *R_out, BitArray *ct_out, FILE *urnd)
+ * Outputs ephemeral R (send alongside ciphertext) and ciphertext ct.
+ * Returns 0 and writes nothing if pub is the identity/zero element (TODO
+ * #131: enc_key = pub^r would be a constant independent of r, making the
+ * ciphertext trivially decryptable by anyone). Returns 1 on success. */
+static inline int hpke_encrypt(const BitArray *pt, const BitArray *pub,
+                                 BitArray *R_out, BitArray *ct_out, FILE *urnd)
 {
     BitArray r, enc_key;
+    if (!gf_pub_is_valid(pub)) return 0;
     ba_rand(&r, urnd);
     gf_pow_ba(R_out, &GF_GEN, &r);
     gf_pow_ba(&enc_key, pub, &r);
     ba_fscx_revolve(ct_out, pt, &enc_key, I_VALUE);
+    return 1;
 }
 
-/* HPKE: decrypt ciphertext ct using private key priv and sender's ephemeral R. */
-static inline void hpke_decrypt(const BitArray *ct, const BitArray *R,
-                                  const BitArray *priv, BitArray *pt_out)
+/* HPKE: decrypt ciphertext ct using private key priv and sender's ephemeral R.
+ * Returns 0 and writes nothing if R is the identity/zero element (same
+ * degenerate-key rationale as hpke_encrypt, TODO #131). Returns 1 on success. */
+static inline int hpke_decrypt(const BitArray *ct, const BitArray *R,
+                                 const BitArray *priv, BitArray *pt_out)
 {
     BitArray dec_key;
+    if (!gf_pub_is_valid(R)) return 0;
     gf_pow_ba(&dec_key, R, priv);
     ba_fscx_revolve(pt_out, ct, &dec_key, R_VALUE);
+    return 1;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

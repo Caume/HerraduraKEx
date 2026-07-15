@@ -2,6 +2,55 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.92] - 2026-07-15
+
+### Fixed
+- **CLI-level weak-key rejection for `kex`/`enc`/`verify` (TODO #141).**
+  TODO #131 hardened `herradura.h`'s `hkex_gf_agree`/`hpke_encrypt`/`hpks_verify`
+  against a degenerate GF(2^n)* peer public key (0 or 1), but
+  `HerraduraCli/herradura_cli.c`'s `cmd_kex` (`hkex-gf`), `cmd_enc`
+  (`hpke`/`hpke-nl`), and `cmd_verify` (`hpks`/`hpks-nl`) call `gf_pow_ba`
+  directly on the loaded peer/recipient/signer public key instead of going
+  through those hardened functions, so a maliciously crafted or corrupted PEM
+  file was not actually rejected at the CLI boundary. Added a `gf_pub_is_valid()`
+  check before each inline `gf_pow_ba` call, with a `die()` on rejection.
+  `cmd_threshold_verify` was already routing through the hardened
+  `hpkst_verify` library call and needed no change; ring-signature verification
+  uses the Stern protocol, not GF exponentiation, so it is unaffected.
+  Added `CliTest/test_weak_key_rejection.sh`, hand-crafting PEM files with an
+  identity (1) or zero public-key value for `hkex-gf`/`hpke`/`hpks` and
+  asserting a clean non-zero exit from `kex`/`enc`/`verify`.
+
+## [1.9.91] - 2026-07-14
+
+### Fixed
+- **Weak-key rejection for HKEX-GF/HPKS/HPKE (TODO #131).**
+  `herradura.h` gained `gf_pub_is_valid()`, rejecting the GF(2^n)* additive
+  zero and multiplicative identity (g^0=1) as public elements. Wired into
+  `hpks_verify` (returns 0), and into `hkex_gf_agree`/`hpke_encrypt`/
+  `hpke_decrypt` (now return `int`, 0 on a degenerate peer key, output
+  otherwise unset). Without this check, a public key of 1 made
+  `pub^e == 1` for any challenge `e`, so any attacker-chosen `(s, R=g^s)`
+  pair verified against any message under HPKS, and `enc_key = pub^r`
+  under HPKE collapsed to a constant independent of the ephemeral `r`,
+  making the ciphertext trivially decryptable. Genuine keypairs generated
+  by `genpkey` are never degenerate (probability ~2^-256), so this hardens
+  against a maliciously crafted or corrupted peer public key, not normal
+  use.
+- **Security test [45]** added to the C, Go, and Python test suites
+  (`CryptosuiteTests/Herradura_tests.{c,go,py}`), verifying: HKEX-GF/HPKS/
+  HPKE reject identity/zero public keys; HPKS-Stern-F rejects a corrupted
+  (flipped-bit) syndrome. All three languages pass. C is the only
+  language with a shared library layer (`herradura.h`), so it is the only
+  language whose fix is reachable from production code paths; the Go/
+  Python tests validate the same logic via local "checked" helper
+  functions, since those suites inline the Schnorr/El Gamal equations
+  directly (matching the existing test-file convention) rather than
+  calling a shared library. CLI (`herradura_cli.c`) hardening and Python/
+  Go suite-file (non-test) wiring remain open — the CLI currently
+  duplicates the unchecked math inline rather than calling the
+  `herradura.h` functions patched here.
+
 ## [1.9.90] - 2026-07-08
 
 ### Added
