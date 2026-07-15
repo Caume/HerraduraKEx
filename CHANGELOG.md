@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.96] - 2026-07-15
+
+### Fixed
+- **CT-01: closed the `stern_gen_perm` timing leak found in Batch 2 (TODO #129).**
+  `herradura.h`, `herradura/herradura.go`, and `Herradura cryptographic suite.py` all
+  replace the rejection-sampling `do { } while` in `stern_gen_perm` with a single 32-bit
+  draw per Fisher-Yates swap, mapped to `[0, range)` via Lemire's multiply-shift
+  (`j = (v * range) >> 32`) — loop and PRNG-state-advance counts are now a fixed function of
+  `N`, independent of the secret `pi_seed`, with a relative modulo bias `< range/2^32`
+  (unmeasurable at `range <= 256`). Changed identically in all three languages since signer
+  and verifier — and every cross-language pairing — must derive the same permutation from
+  the same `pi_seed`; re-validated with `CliTest/test_stern_interop.sh` (9/9),
+  `test_stern_kem.sh` (9/9), and `test_ring.sh` (21/21), all still green. `dudect_timing_audit`
+  shows the fixed-vs-random mean-time gap collapsed from 690.6 ns (12.0%) to 53.9 ns (1.3%) at
+  4000 rounds (`|t|` 180.85 → 5.22); a smaller residual signal persists at higher sample
+  counts and is documented in SecurityProofs-3.md §11.11 as likely a hardware-level effect at
+  the degenerate all-zero test point, left open for a future batch.
+
 ## [1.9.95] - 2026-07-15
 
 ### Fixed

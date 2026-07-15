@@ -871,7 +871,13 @@ def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
 
     Counter-mode extraction: all n/8 bytes of each state block are consumed as
     sequential 32-bit draws before advancing the state (no entropy wasted).
-    Rejection sampling (threshold = 2^32 - 2^32%range) eliminates modular bias.
+    CT-01 (TODO #129 Batch 3): draws exactly one 32-bit word per swap and maps
+    it to [0, range) via Lemire's multiply-shift (k = (v * range) >> 32)
+    instead of rejection sampling, so the loop/state-advance count no longer
+    depends on pi_seed -- closes the timing leak dudect measured in the C
+    implementation's prior rejection-sampling version (SecurityProofs-3.md
+    S11.11). Relative modulo bias is < range/2^32, negligible at range <=
+    KEYBITS. Must stay bit-identical with the C and Go implementations.
     """
     n       = pi_seed._size
     nb      = n // 8
@@ -881,18 +887,14 @@ def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
     buf     = b'\x00' * nb
     cursor  = nb                               # force state advance on first draw
     for i in range(N - 1, 0, -1):
-        range_    = i + 1
-        threshold = (1 << 32) - (1 << 32) % range_
-        while True:
-            if cursor + 4 > nb:
-                st     = nl_fscx_v1(st, key)
-                buf    = st.bytes
-                cursor = 0
-            v       = int.from_bytes(buf[cursor:cursor + 4], 'big')
-            cursor += 4
-            if v < threshold:
-                break
-        k = v % range_
+        range_ = i + 1
+        if cursor + 4 > nb:
+            st     = nl_fscx_v1(st, key)
+            buf    = st.bytes
+            cursor = 0
+        v       = int.from_bytes(buf[cursor:cursor + 4], 'big')
+        cursor += 4
+        k = (v * range_) >> 32
         perm[i], perm[k] = perm[k], perm[i]
     return perm
 

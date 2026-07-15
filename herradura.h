@@ -1476,8 +1476,15 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
 /* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.
    Counter-mode extraction: all KEYBYTES of each state block are consumed as
    sequential 32-bit draws before the state is advanced, so no entropy is wasted.
-   Rejection sampling (threshold = 2^32 - 2^32%range, kept as uint64 to avoid
-   truncating to 0 when range divides 2^32) eliminates modular bias. */
+   CT-01 (TODO #129 Batch 3): draws exactly one 32-bit word per swap and maps it
+   to [0, range) via Lemire's multiply-shift (j = (v * range) >> 32) instead of
+   rejection sampling. Loop count and state-advance count are now a fixed
+   function of N only, independent of pi_seed -- closes the wall-clock timing
+   leak dudect measured in the prior rejection-sampling version (|t|=180.85;
+   SecurityProofs-3.md SS11.11). Relative modulo bias is < range/2^32, negligible
+   at range <= KEYBITS. This mapping must stay bit-identical with the Go and
+   Python implementations of stern_gen_perm -- signer and verifier (in any
+   language) must derive the same permutation from the same pi_seed. */
 static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 {
     BitArray key, st;
@@ -1487,23 +1494,19 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
     st = *pi_seed;
     cursor = KEYBYTES;                          /* force state advance on first draw */
     for (i = N - 1; i > 0; i--) {
-        uint64_t range     = (uint64_t)(i + 1);
-        uint64_t threshold = UINT64_C(0x100000000) -
-                             (UINT64_C(0x100000000) % range);
+        uint64_t range = (uint64_t)(i + 1);
         uint32_t v;
         int j;
-        do {
-            if (cursor + 4 > KEYBYTES) {
-                nl_fscx_v1_ba(&st, &st, &key);
-                cursor = 0;
-            }
-            v = ((uint32_t)st.b[cursor    ] << 24) |
-                ((uint32_t)st.b[cursor + 1] << 16) |
-                ((uint32_t)st.b[cursor + 2] <<  8) |
-                 (uint32_t)st.b[cursor + 3];
-            cursor += 4;
-        } while ((uint64_t)v >= threshold);
-        j = (int)(v % (uint32_t)range);
+        if (cursor + 4 > KEYBYTES) {
+            nl_fscx_v1_ba(&st, &st, &key);
+            cursor = 0;
+        }
+        v = ((uint32_t)st.b[cursor    ] << 24) |
+            ((uint32_t)st.b[cursor + 1] << 16) |
+            ((uint32_t)st.b[cursor + 2] <<  8) |
+             (uint32_t)st.b[cursor + 3];
+        cursor += 4;
+        j = (int)(((uint64_t)v * range) >> 32);
         { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
     }
 }

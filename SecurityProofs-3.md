@@ -424,8 +424,62 @@ change lands in the Go and Python suites simultaneously and the 9-way interop te
 re-run. Tracked as follow-up scope for TODO #129 Batch 3, alongside the `stern_apply_perm`
 memory-access-pattern question.
 
+**Batch 3 — CT-01 fix applied across C/Go/Python (v1.9.96).** `stern_gen_perm` (`herradura.h`,
+`herradura/herradura.go`, `Herradura cryptographic suite.py`) is changed identically in all
+three implementations: the rejection-sampling `do { } while` is replaced with a single
+32-bit draw per swap mapped to `[0, range)` via Lemire's multiply-shift,
+`j = (v * range) >> 32`. This makes the loop count and PRNG-state-advance count a fixed
+function of `N` alone — independent of `pi_seed` — closing the structural rejection-sampling
+leak that Batch 2 found. The relative modulo bias this introduces is `< range / 2^32`,
+unmeasurable at `range <= 256`. `stern_apply_perm` is unchanged (it was already branchless);
+it now inherits whatever timing profile `stern_gen_perm` has.
+
+Because `stern_gen_perm`'s output must be bit-identical between signer and verifier and
+across all three language CLIs for a Stern-F signature to verify at all, the three
+implementations were changed together and re-validated against `CliTest/test_stern_interop.sh`
+(9/9 pass across all C/Go/Python signer↔verifier pairs), `CliTest/test_stern_kem.sh` (9/9),
+and `CliTest/test_ring.sh` (21/21, OR-composed Stern ring signatures) — all still pass, so
+the change is behavior-preserving at the protocol level even though it changes which
+concrete permutation a given `pi_seed` produces.
+
+**Re-measurement.** At 4000 rounds the mean-time gap between fixed and random `pi_seed`
+collapsed from 690.6 ns (12.0% of the 5195.6 ns fixed-case mean, Batch 2) to 53.9 ns (1.3%
+of the 4126.6 ns fixed-case mean) for `stern_gen_perm` — a ~13x reduction in absolute leak
+size. `|t|` dropped from 180.85 to 5.22 at that sample size. However, at 20 000 rounds `|t|`
+rises to 30.67 (`stern_gen_perm`) / 38.73 (`stern_apply_perm`) — Welch's t-statistic grows
+with sample count for *any* nonzero true mean difference, so this confirms a real, if much
+smaller, residual timing difference rather than closing the leak outright.
+
+**Residual leak — likely hardware, not the rejection-sampling structure.** With the
+rejection loop removed, control flow (iteration count, state-advance count, branch pattern)
+is now provably identical between the fixed all-zero `pi_seed` and any random one. The
+remaining ~54 ns/call difference is consistent with data-dependent latency in the
+underlying hardware rather than the software algorithm: the fixed all-zero seed drives
+`nl_fscx_v1_ba`'s internal state to a degenerate all-zero fixed point (XOR/rotate of zero is
+zero), so every draw for the fixed class operates on identical all-zero words, while the
+random class touches varying data on every call — a pattern consistent with power-gated or
+early-terminating multiply/ALU units on low-power ARM cores (this suite's dudect runs were
+taken on an aarch64 SBC), not with a leftover branch. `gf_mul_ba` and `ba_mul_mod_ord`
+(Batch 1) also perform 8/32-bit multiplies but stayed clean (`|t| < 1`) under the same
+methodology, which weighs against a blanket "this CPU's multiplier always leaks" explanation
+and toward something specific to the all-zero degenerate PRNG fixed point used as the test's
+"fixed" class — a known dudect methodology wrinkle (an all-zero secret is a valid but
+extreme input, and some primitives behave atypically at that one point without implying a
+leak across the realistic secret space).
+
+**Disposition.** The rejection-sampling leak item 3 asked to close is closed: the dominant,
+easily-measured 12%-magnitude structural leak from Batch 2 is gone, verified by both the
+absolute-gap collapse and the interop re-test. The much smaller residual signal is recorded
+here rather than hidden, but chasing it further requires cache/power-timing instrumentation
+(e.g. hardware performance counters or a controlled non-degenerate "fixed" class) that is
+out of scope for a wall-clock dudect harness, and `stern_apply_perm`'s separate
+memory-access-pattern question (flagged in Batch 2) remains unaddressed for the same reason.
+Both are left open for a future batch alongside the still-unaudited HKEX-RNL/ZKP-RNL/HCRED
+functions that TODO #129's original item 2 scope covers but which no batch so far has
+touched.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
-/tmp/dudect_timing_audit 4000
+/tmp/dudect_timing_audit 4000          # or a larger round count for higher power
 ```

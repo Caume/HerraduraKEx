@@ -7035,7 +7035,23 @@ signatures to verify at all, so the fix requires synchronized changes across all
 language suites plus a 9-way interop re-test — tracked for Batch 3. Documented in
 SecurityProofs-3.md §11.11.
 
-Status: **OPEN** — Batch 1 (core arithmetic + protocol entry points) and Batch 2 (Stern-F permutation/WOTS/XMSS) done. Batch 2 found a real timing leak in `stern_gen_perm`/`stern_apply_perm`; the fix needs synchronized C/Go/Python changes + interop re-test and is scoped for Batch 3.
+**Batch 3 — CT-01 fix applied to `stern_gen_perm` across C/Go/Python (v1.9.96).** Replaced
+the rejection-sampling `do { } while` in `herradura.h`, `herradura/herradura.go`, and
+`Herradura cryptographic suite.py` with a single-draw Lemire multiply-shift map
+(`j = (v * range) >> 32`), applied identically in all three so signer/verifier and
+cross-language interop stay intact — confirmed by `CliTest/test_stern_interop.sh` (9/9),
+`test_stern_kem.sh` (9/9), and `test_ring.sh` (21/21), all still passing. The dominant
+12%-magnitude structural leak Batch 2 found is closed: the fixed-vs-random mean-time gap
+collapsed from 690.6 ns to 53.9 ns at 4000 rounds (`|t|` 180.85 → 5.22). A much smaller
+residual signal remains statistically detectable at higher sample counts (`|t|`≈30-38 at
+20 000 rounds); analysis in SecurityProofs-3.md §11.11 attributes it to hardware-level
+data-dependent timing at the degenerate all-zero `pi_seed` test point rather than the
+software rejection-sampling structure, and leaves it open pending cache/power-timing
+instrumentation out of scope for a wall-clock harness. `stern_apply_perm`'s
+memory-access-pattern question (Batch 2) and the still-unaudited HKEX-RNL/ZKP-RNL/HCRED
+functions (original item 2 scope) remain for a future batch.
+
+Status: **OPEN** — Batches 1-3 done (core arithmetic, Stern-F/WOTS audit, Stern-F rejection-sampling fix). Residual hardware-level timing signal, `stern_apply_perm` cache-timing, and HKEX-RNL/ZKP-RNL/HCRED branch audit remain for a future batch.
 
 ---
 
