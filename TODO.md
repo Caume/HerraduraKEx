@@ -7004,7 +7004,19 @@ algebraic weakness — the math can be sound while the C implementation leaks th
    new SecurityProofs subsection, so the "production gap" note in #126 can eventually be closed
    or narrowed.
 
-Status: **OPEN**
+**Batch 1 — core arithmetic + protocol entry points (v1.9.94).**
+`SecurityProofsCode/dudect_timing_audit.c` implements a simplified dudect (Reparaz et al.
+2017) fixed-vs-random Welch's t-test. `gf_mul_ba`, `gf_pow_ba`, `ba_mul_mod_ord` (already
+hardened as SA-02/03/04 in the v1.7.4 manual audit) and `ba_fscx_revolve` all show `|t| < 1`
+at 4000 rounds — well under the 4.5 leak threshold. The eight `hkex_`/`hske_`/`hpks_`/`hpke_`
+protocol entry points were audited by inspection: their only branches are the TODO #131
+`gf_pub_is_valid()` rejection and `hpks_verify`'s final equality check, both on public
+values, not secret key material. Documented in SecurityProofs-3.md §11.11, including what
+remains unaudited (Stern-F/Niederreiter permutation and error-vector handling, WOTS/XMSS
+hash chains) for a future batch — TODO #126's "production gap" note stays open until that
+Stern surface is covered.
+
+Status: **OPEN** — Batch 1 (core arithmetic + protocol entry points) done; Stern-F/WOTS/XMSS audit remains for a future batch.
 
 ---
 

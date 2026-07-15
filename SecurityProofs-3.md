@@ -312,3 +312,65 @@ Total: $2n + (n/2)\lceil \log_2(n{+}1) \rceil$ multiplication gates (1664 at $n 
 - NIST FIPS 204 (ML-DSA / Dilithium, 2024). NIST FIPS 205 (SLH-DSA / SPHINCS+, 2024).
 - Katz, Kolesnikov, Wang 2018. *Improved Non-Interactive Zero Knowledge with Applications to Post-Quantum Signatures*. CCS 2018, pp. 525–537. (KKW)
 - Prange 1962. *The Use of Information Sets in Decoding Cyclic Codes*. IRE Trans. IT-8, pp. 5–9.
+
+---
+
+### 11.11 Constant-Time Audit of Core Arithmetic Primitives (TODO #129)
+
+**Background.** TODO #126's status note flagged "production gaps (constant-time C, weak-key
+rejection)" for the Stern-F/BIKE path specifically. This item extends the check to
+`herradura.h` broadly and puts it on empirical footing with a statistical timing-leakage
+test rather than code inspection alone. A prior manual audit (SA-01 through SA-09, v1.7.4 —
+CHANGELOG.md) already replaced the variable-time `gf_mul_ba`/`gf_pow_ba`/`ba_mul_mod_ord`
+with bitmask-select constant-time versions and fixed a `memcmp` early-exit in `ba_equal`;
+this section confirms those fixes empirically and extends coverage to `ba_fscx_revolve` and
+the protocol entry points.
+
+**Method (Batch 1 — v1.9.94).** `SecurityProofsCode/dudect_timing_audit.c` implements a
+simplified dudect (Reparaz et al. 2017) fixed-vs-random test: for each primitive, the
+secret-position operand is either held fixed (all-zero) or freshly randomized on every call;
+timings are interleaved (fixed/random order alternates per round, both measured every round
+to cancel drift) with a 50-call warmup discarded, and a Welch's t-test is computed over the
+two distributions. `|t| >= 4.5` is dudect's standard leak-detection threshold.
+
+**Results — audited and clean (empirically confirmed, no timing leak detected at 4000 rounds):**
+
+| Function | Secret-dependent input | \|t\| | Verdict |
+|---|---|---|---|
+| `gf_mul_ba` | operand `a` (private key material in `gf_pow_ba`) | 0.16 | clean |
+| `gf_pow_ba` | exponent (private key / nonce) | 0.63 | clean |
+| `ba_mul_mod_ord` | operand `a` (Schnorr scalar) | 0.13 | clean |
+| `ba_fscx_revolve` | key operand `b` (HSKE/HPKE/HPKS symmetric key) | 0.55 | clean |
+
+All four are branchless: `gf_mul_ba`/`gf_pow_ba`/`ba_mul_mod_ord` use bitmask select (SA-02
+through SA-04), and `ba_fscx` itself (the per-step body of `ba_fscx_revolve`) is a fixed
+sequence of XOR/rotate operations with no data-dependent control flow or memory access by
+construction — there is no branch to make constant-time in the first place.
+
+**Audited and clean by inspection — protocol entry points (`hkex_`, `hske_`, `hpks_`,
+`hpke_` core four).** `hkex_gf_pubkey`, `hkex_gf_agree`, `hske_encrypt`, `hske_decrypt`,
+`hpks_sign`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt` (herradura.h) contain exactly one
+class of branch each: the TODO #131 `gf_pub_is_valid()` degenerate-key rejection in
+`hkex_gf_agree`/`hpke_encrypt`/`hpke_decrypt`, and the final `ba_equal` comparison in
+`hpks_verify`. Both branch on **public** values (the peer's public key; the recomputed
+commitment vs. the received one) — a timing difference here reveals no private key material,
+only whether a public input was malformed, so these are not leaks. Every call into the
+constant-time primitives above uses private key material as the documented secret operand,
+with no additional branching in between.
+
+**Not yet audited — deferred to a later batch.** `stern_`/`hpks_stern_f_*`/`hpke_stern_f_*`
+(Stern ZKP and Niederreiter KEM — permutation and error-vector handling in
+`stern_apply_perm`/`stern_gen_perm`/`stern_rand_error` is a plausible leak surface since it
+walks secret-indexed arrays), `hpks_wots_*`/`hpks_xmss_*` (hash-chain iteration counts are
+public in WOTS/XMSS by design, but the chain values themselves are not), and the
+`SecurityProofsCode/*.py` prototypes (`nl_fscx_*`, `hkex_rnl_*`) which are explicitly
+non-constant-time reference code (CHANGELOG.md: "the Python reference implementation is
+intentionally not constant-time") and out of scope for a C-level timing audit. TODO #126's
+"production gaps" note for the Stern-F/BIKE path remains open until the Stern surface above
+is covered by a future batch.
+
+**Reproduce:**
+```bash
+gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
+/tmp/dudect_timing_audit 4000
+```

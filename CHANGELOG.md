@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.94] - 2026-07-15
+
+### Added
+- **Statistical constant-time audit of core arithmetic primitives, Batch 1 (TODO #129).**
+  `SecurityProofsCode/dudect_timing_audit.c` runs a simplified dudect (Reparaz et al. 2017)
+  fixed-vs-random Welch's t-test against `gf_mul_ba`, `gf_pow_ba`, `ba_mul_mod_ord`, and
+  `ba_fscx_revolve`; all four show `|t| < 1` at 4000 rounds (threshold 4.5), empirically
+  confirming the v1.7.4 SA-02/03/04 constant-time fixes and `ba_fscx`'s branchless-by-design
+  structure. The eight `hkex_`/`hske_`/`hpks_`/`hpke_` protocol entry points were audited by
+  inspection: their only branches are on public values (TODO #131's `gf_pub_is_valid()`
+  rejection, `hpks_verify`'s equality check), not secret key material. Documented in
+  SecurityProofs-3.md §11.11 along with what remains for a later batch: Stern-F/Niederreiter
+  permutation and error-vector handling, and WOTS/XMSS hash-chain values.
+
 ## [1.9.93] - 2026-07-15
 
 ### Added
