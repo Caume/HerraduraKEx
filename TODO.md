@@ -7273,7 +7273,7 @@ channel and a missed credibility signal for a project this proof-heavy.
 4. Link out to `SecurityProofs-1.md`/`-2.md`/`-3.md` for detailed analysis instead of duplicating
    proofs; keep `SECURITY.md` itself short and scannable.
 
-Status: **OPEN**
+Status: **DONE v1.9.93** — Added `SECURITY.md` with a protocol status table (production-track vs. demo-only/pedagogical, each row linked to its `SecurityProofs-*.md` section), a supported-versions statement tied to the `MAJOR.MINOR.PATCH` convention, GitHub private vulnerability reporting as the disclosure channel with a response-time commitment, and an out-of-scope section.
 
 ---
 

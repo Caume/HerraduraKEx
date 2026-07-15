@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.93] - 2026-07-15
+
+### Added
+- **`SECURITY.md` with a consolidated threat model and disclosure policy (TODO #140).**
+  Adds a protocol status table (production-track vs. demo-only/pedagogical) for every
+  protocol in the suite, each row linked to its authoritative `SecurityProofs-1.md`/`-2.md`
+  section rather than restating the proof; a supported-versions statement consistent with
+  the `MAJOR.MINOR.PATCH` convention in `CLAUDE.md`; GitHub private vulnerability reporting
+  as the disclosure channel with a 5-business-day acknowledgment / 14-day triage target; and
+  an out-of-scope section for already-documented weaknesses in demo-only protocols and for
+  the `SecurityProofsCode/`/test-harness code.
+
 ## [1.9.92] - 2026-07-15
 
 ### Fixed
