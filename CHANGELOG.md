@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.97] - 2026-07-16
+
+### Added
+- **Constant-time audit, Batch 4 — HKEX-RNL/ZKP-RNL/HCRED audited by inspection (TODO #129).**
+  `rnl_keygen`, `rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and the CBD(η=1) secret sampler
+  `rnl_cbd_poly` audited clean — no branch on secret polynomial coefficients.
+  `rnl_sigma_sign`'s variable Fiat-Shamir retry count is Lyubashevsky's
+  rejection-sampling-with-aborts design (2012), matching the ML-DSA/Dilithium reference
+  implementation's own accepted behavior — not a new leak. Found one low-severity item:
+  `_hcred_witness`'s per-row early-return on syndrome mismatch has the same shape as the
+  already-fixed SA-08 finding, but runs once on the prover's own internally-consistent
+  secret witness rather than on externally-timeable input, so there's no remote timing
+  oracle; deferred as low-cost future cleanup. Documented in SecurityProofs-3.md §11.11.
+
 ## [1.9.96] - 2026-07-15
 
 ### Fixed

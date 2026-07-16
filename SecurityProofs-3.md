@@ -478,6 +478,56 @@ Both are left open for a future batch alongside the still-unaudited HKEX-RNL/ZKP
 functions that TODO #129's original item 2 scope covers but which no batch so far has
 touched.
 
+**Batch 4 — HKEX-RNL / ZKP-RNL / HCRED audited by inspection (v1.9.97).** Covers the
+remaining item-2 scope: the Ring-LWR key-exchange and ZKP layers, and the HCRED hybrid
+credential.
+
+*Audited and clean.* `rnl_keygen`, `rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and
+`rnl_cbd_poly` (the CBD(eta=1) secret sampler) contain no branch on secret polynomial
+coefficients — `rnl_cbd_poly` derives each coefficient from two fresh random bits via
+arithmetic only (`(a - b + RNL_Q) % RNL_Q`), and `rnl_agree`'s only branch
+(`hint_in == NULL`) selects the *public* reconciler-vs-receiver protocol role, not secret
+data.
+
+*Rejection sampling by design — not a new finding.* `rnl_sigma_sign` (the ZKP-RNL
+Fiat-Shamir Σ-protocol prover) retries with a variable number of `attempt` iterations
+(bounded by `SIGMA_MAX_ATTEMPTS`) until the response `z` falls inside the public rejection
+bound — this is Lyubashevsky's Fiat-Shamir-with-aborts construction (2012), the same
+abort-and-retry pattern used by the ML-DSA/Dilithium reference implementation, and it is
+accepted practice in the lattice-signature literature: the masking value `y` is drawn fresh
+per attempt and the accept/reject decision is designed so the *distribution* of accepted
+transcripts is (statistically close to) independent of the secret `s`, which is the whole
+point of the rejection step. The per-coefficient `do { } while` sampling `y[i]` uniformly in
+`[-gamma, gamma]` draws from `/dev/urandom` only, with no dependence on `s`. Recorded here as
+audited, not flagged as a leak to close, because "fewer/more Fiat-Shamir aborts" is the
+scheme's designed behavior, not an implementation bug — matching how NIST's own ML-DSA
+reference code is treated.
+
+*Low-severity finding — `_hcred_witness`'s early-return on syndrome mismatch.*
+`herradura.h:4278`, `if ((sr & 1) != syndr_bit) return -1;` inside the per-row syndrome
+consistency loop, breaks out as soon as a row disagrees — a data-dependent (secret-witness
+dependent) iteration count, structurally the same shape as the SA-08 `ba_equal` finding
+this suite already fixed elsewhere. Unlike SA-08, though, `_hcred_witness` is called exactly
+once, at the very start of `hcred_prove` (`herradura.h:4484`), directly on the *prover's own*
+long-term-valid witness — never on attacker-supplied or externally-timeable input. In
+honest operation the syndrome always matches (it is the prover's own consistent secret), so
+the early-return path is an assertion against a corrupted local witness, not a check any
+other party can trigger or observe the timing of across a trust boundary — there is no
+remote or co-tenant oracle here the way there is for, say, `hpks_stern_f_verify`'s
+commitment checks. Recorded as a low-severity finding rather than fixed in this batch: fixing
+it (unconditional accumulation instead of early return) is low-cost and can be folded into a
+future batch's cleanup pass, but it does not block closing #126's "production gap" note the
+way the Stern-F permutation leak did.
+
+**Cumulative status after Batch 4.** All eight core `hkex_`/`hske_`/`hpks_`/`hpke_` entry
+points, the four core arithmetic primitives, WOTS-F/XMSS-F, and the HKEX-RNL/ZKP-RNL/HCRED
+layer are now audited (clean, or — for `_hcred_witness` — a documented low-severity finding).
+The Stern-F permutation's structural rejection-sampling leak is closed (Batch 3); the
+residual hardware-level signal on `stern_gen_perm`/`stern_apply_perm` and the
+memory-access-pattern question for `stern_apply_perm` remain open pending cache/power-timing
+instrumentation, which is out of scope for a wall-clock harness. TODO #126's Stern-F
+"production gap" note can be narrowed to that residual/cache-timing scope specifically.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm

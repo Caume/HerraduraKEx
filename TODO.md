@@ -7051,7 +7051,21 @@ instrumentation out of scope for a wall-clock harness. `stern_apply_perm`'s
 memory-access-pattern question (Batch 2) and the still-unaudited HKEX-RNL/ZKP-RNL/HCRED
 functions (original item 2 scope) remain for a future batch.
 
-Status: **OPEN** — Batches 1-3 done (core arithmetic, Stern-F/WOTS audit, Stern-F rejection-sampling fix). Residual hardware-level timing signal, `stern_apply_perm` cache-timing, and HKEX-RNL/ZKP-RNL/HCRED branch audit remain for a future batch.
+**Batch 4 — HKEX-RNL/ZKP-RNL/HCRED audited by inspection (v1.9.97).** `rnl_keygen`,
+`rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and `rnl_cbd_poly` (CBD(η=1) secret sampler)
+audited clean — no branch on secret polynomial coefficients; `rnl_agree`'s one branch
+selects the public reconciler-vs-receiver role. `rnl_sigma_sign`'s variable Fiat-Shamir
+attempt count is Lyubashevsky's rejection-sampling-with-aborts design (2012), the same
+pattern used by the ML-DSA/Dilithium reference implementation — recorded as audited, not as
+a leak to fix, since a variable abort count is the scheme's intended behavior, not an
+implementation bug. Found one low-severity item: `_hcred_witness`'s
+`if ((sr & 1) != syndr_bit) return -1;` early-exits per row on the prover's own witness —
+same shape as the already-fixed SA-08 finding, but called once on the prover's own
+internally-consistent secret rather than on attacker-supplied or externally-timeable input,
+so there's no remote/co-tenant timing oracle; deferred as low-cost future cleanup rather
+than fixed now. Documented in SecurityProofs-3.md §11.11.
+
+Status: **OPEN** — Batches 1-4 done (core arithmetic + protocol entry points; Stern-F/WOTS audit; Stern-F rejection-sampling fix; HKEX-RNL/ZKP-RNL/HCRED audit). Remaining: `_hcred_witness`'s low-severity early-return cleanup, the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal, and `stern_apply_perm`'s memory-access-pattern (cache-timing) question — all deferred to a future batch pending either a low-cost code fix or cache/power-timing instrumentation.
 
 ---
 
