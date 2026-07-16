@@ -528,6 +528,31 @@ memory-access-pattern question for `stern_apply_perm` remain open pending cache/
 instrumentation, which is out of scope for a wall-clock harness. TODO #126's Stern-F
 "production gap" note can be narrowed to that residual/cache-timing scope specifically.
 
+**Batch 5 — CT-02: `_hcred_witness` early-return cleanup fixed (v1.9.98).** The two
+secret-witness-dependent early returns flagged in Batch 4
+(`if ((sr & 1) != syndr_bit) return -1;` and `if (v < 0 || v >= (1 << HCRED_EPS_BITS)) return
+-2;`) are replaced with unconditional-iteration loops that accumulate `syndrome_ok`/
+`range_ok` flags checked once after each loop completes, so both loops always run to their
+full `HCRED_ROWS`/`HCRED_N` length regardless of the witness. The `v` used for the
+bit-decomposition into `delta[]` is clamped into `[0, 2^HCRED_EPS_BITS)` when out of range so
+the shift/store never goes out of bounds; the caller discards `delta[]` on a nonzero return
+code, so the clamped bits are never used. `d = ms[i] - lift_c[i]`'s sign-reduction branch
+(`if (d > hq) d -= q;`) is unchanged — it is a fixed-cost per-iteration select, not an
+early-loop-exit, so it doesn't change the *iteration count*, only which of two O(1) paths one
+iteration takes; left as a possible future micro-hardening item rather than folded into this
+fix. Re-verified with `CliTest/test_cred.sh` (5/5) and the suite's `[44]`/`[45]` HCRED and
+weak-key rejection tests (both `[PASS]`, including the `synd_reject`/`key_reject` paths that
+exercise this exact function's error returns) — behavior is unchanged for all inputs, only
+the timing profile of the rejection path changes.
+
+**Cumulative status after Batch 5.** All eight core `hkex_`/`hske_`/`hpks_`/`hpke_` entry
+points, the four core arithmetic primitives, WOTS-F/XMSS-F, HKEX-RNL/ZKP-RNL, and HCRED are
+audited and either clean or fixed. Two items remain open, both requiring cache/power-timing
+instrumentation rather than a code change: the residual hardware-level timing signal on
+`stern_gen_perm`/`stern_apply_perm` (Batch 3) and `stern_apply_perm`'s
+permutation-index-dependent memory-access pattern (Batch 2). TODO #126's Stern-F "production
+gap" note narrows to exactly that scope.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm

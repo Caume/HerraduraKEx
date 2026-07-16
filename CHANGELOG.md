@@ -2,6 +2,21 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.98] - 2026-07-16
+
+### Fixed
+- **CT-02: closed `_hcred_witness`'s secret-dependent early-return (TODO #129 Batch 5).**
+  `herradura.h`'s `_hcred_witness` had two early returns (`return -1` on a syndrome-row
+  mismatch, `return -2` on an out-of-range coefficient) whose loops therefore ran for a
+  variable number of iterations depending on the (secret) HCRED witness — the same shape as
+  the already-fixed SA-08 finding. Replaced with unconditional-iteration loops that
+  accumulate `syndrome_ok`/`range_ok` flags checked once at the end, so both loops always
+  run their full `HCRED_ROWS`/`HCRED_N` length; the out-of-range coefficient value is
+  clamped before bit-decomposition so the store never goes out of bounds (the caller
+  discards `delta[]` on a nonzero return anyway). Re-verified with `CliTest/test_cred.sh`
+  (5/5) and the suite's HCRED/weak-key rejection tests `[44]`/`[45]` (both `[PASS]`) —
+  behavior is unchanged for every input, only the rejection path's timing profile changes.
+
 ## [1.9.97] - 2026-07-16
 
 ### Added

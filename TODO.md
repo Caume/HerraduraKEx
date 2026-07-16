@@ -7065,7 +7065,15 @@ internally-consistent secret rather than on attacker-supplied or externally-time
 so there's no remote/co-tenant timing oracle; deferred as low-cost future cleanup rather
 than fixed now. Documented in SecurityProofs-3.md §11.11.
 
-Status: **OPEN** — Batches 1-4 done (core arithmetic + protocol entry points; Stern-F/WOTS audit; Stern-F rejection-sampling fix; HKEX-RNL/ZKP-RNL/HCRED audit). Remaining: `_hcred_witness`'s low-severity early-return cleanup, the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal, and `stern_apply_perm`'s memory-access-pattern (cache-timing) question — all deferred to a future batch pending either a low-cost code fix or cache/power-timing instrumentation.
+**Batch 5 — CT-02: `_hcred_witness` early-return cleanup (v1.9.98).** Replaced the two
+secret-witness-dependent early returns flagged in Batch 4 with unconditional-iteration loops
+that accumulate a pass/fail flag checked once after the loop, so both loops in
+`_hcred_witness` now always run their full length regardless of the witness. Re-verified
+with `CliTest/test_cred.sh` (5/5) and suite tests `[44]`/`[45]` (HCRED completeness/tamper
+rejection and weak-key/malformed-input rejection, both `[PASS]`) — behavior unchanged, only
+the rejection path's timing profile changes. Documented in SecurityProofs-3.md §11.11.
+
+Status: **OPEN** — Batches 1-5 done (core arithmetic + protocol entry points; Stern-F/WOTS audit; Stern-F rejection-sampling fix; HKEX-RNL/ZKP-RNL/HCRED audit + fix). Remaining: the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal and `stern_apply_perm`'s memory-access-pattern (cache-timing) question — both require cache/power-timing instrumentation out of scope for a wall-clock harness, not a further code fix.
 
 ---
 
