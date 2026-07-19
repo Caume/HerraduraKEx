@@ -1180,8 +1180,13 @@ func SyndrToBA(n int, syn *big.Int) *BitArray {
 // SternGenPerm derives a Fisher-Yates permutation deterministically from piSeed.
 // Counter-mode extraction: all n/8 bytes of each state block are consumed as
 // sequential 32-bit draws before advancing the state (no entropy wasted).
-// Rejection sampling (threshold = 2^32 - 2^32%range, as uint64 to avoid truncation
-// when range divides 2^32) eliminates modular bias.
+// CT-01 (TODO #129 Batch 3): draws exactly one 32-bit word per swap and maps
+// it to [0, range) via Lemire's multiply-shift (j = (v * range) >> 32)
+// instead of rejection sampling, so the loop/state-advance count no longer
+// depends on piSeed -- closes the timing leak dudect measured in the C
+// implementation's prior rejection-sampling version (SecurityProofs-3.md
+// SS11.11). Relative modulo bias is < range/2^32, negligible at range <=
+// KEYBITS. Must stay bit-identical with the C and Python implementations.
 func SternGenPerm(piSeed *BitArray, N int) []int {
 	n := piSeed.size
 	nb := n / 8
@@ -1195,22 +1200,15 @@ func SternGenPerm(piSeed *BitArray, N int) []int {
 	cursor := nb // force state advance on first draw
 	for i := N - 1; i > 0; i-- {
 		range_ := uint64(i + 1)
-		threshold := uint64(0x100000000) - uint64(0x100000000)%range_
-		var v uint32
-		for {
-			if cursor+4 > nb {
-				st = NlFscxV1(st, key)
-				stBytes = st.Bytes()
-				cursor = 0
-			}
-			v = uint32(stBytes[cursor])<<24 | uint32(stBytes[cursor+1])<<16 |
-				uint32(stBytes[cursor+2])<<8 | uint32(stBytes[cursor+3])
-			cursor += 4
-			if uint64(v) < threshold {
-				break
-			}
+		if cursor+4 > nb {
+			st = NlFscxV1(st, key)
+			stBytes = st.Bytes()
+			cursor = 0
 		}
-		j := int(v % uint32(range_))
+		v := uint32(stBytes[cursor])<<24 | uint32(stBytes[cursor+1])<<16 |
+			uint32(stBytes[cursor+2])<<8 | uint32(stBytes[cursor+3])
+		cursor += 4
+		j := int((uint64(v) * range_) >> 32)
 		perm[i], perm[j] = perm[j], perm[i]
 	}
 	return perm

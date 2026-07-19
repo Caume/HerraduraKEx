@@ -997,7 +997,7 @@ demonstrate production-grade security margins.
 - C `__uint128_t`: available on GCC/Clang for 128-bit carryless multiply; not available in assembly targets
 - Assembly and Arduino targets stay at N=32 (resource constrained); no changes planned
 
-Status: **Batches 1-6 DONE (v1.5.20)**
+Status: **DONE v1.5.20** — Batches 1-6 complete (see per-batch checkmarks above).
 
 ---
 
@@ -3000,9 +3000,6 @@ Status: **DONE** — tests run correctly under simavr, all pass (2026-05-20).
 - [x] **Tests `rnl_rand_poly` missing rejection sampling:** replaced bare `% RNL_Q` with 3-byte threshold guard (threshold=`0xFF00FFu`) matching suite
 
 Status: **DONE** — all known issues fixed and reverified under simavr (2026-05-20).
-
-
-Status: **DONE v1.5.38** — resolved by splitting the document; per-page expression limit documented in CLAUDE.md Rule 5.
 
 ---
 
@@ -5010,7 +5007,12 @@ node = lambda l, r: hfscx_256(b'\x01' + l + r)
 4. **78.C** Ratchet — gated on collision-probability analysis.
 5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
 
-Status: **78.A DONE v1.9.14 · 78.B DONE v1.9.14 · 78.J DONE v1.9.14 · 78.H DONE v1.9.15 · 78.C DONE v1.9.15 · 78.I DONE v1.9.16 · 78.D DONE v1.9.20 · 78.F DONE v1.9.21 · 78.G DONE v1.9.22** — Sub-items 78.A (FPE), 78.B (Tweakable), 78.J (Accumulator), 78.H (Masking), 78.C (Ratchet), 78.I (Ring Signature), 78.D (PAKE-ZKBoo), 78.F (VDF), and 78.G (OPRF) all have demo scripts and analysis.  Sub-item 78.E (Non-Abelian KEx) remains open — orbit length bound and CSP reduction are research-blocked.
+Status: **OPEN** — 9 of 10 sub-items complete: 78.A DONE v1.9.14, 78.B DONE v1.9.14,
+78.J DONE v1.9.14, 78.H DONE v1.9.15, 78.C DONE v1.9.15, 78.I DONE v1.9.16, 78.D DONE
+v1.9.20, 78.F DONE v1.9.21, 78.G DONE v1.9.22 (FPE, Tweakable, Accumulator, Masking,
+Ratchet, Ring Signature, PAKE-ZKBoo, VDF, and OPRF all have demo scripts and analysis).
+Sub-item 78.E (Non-Abelian KEx) remains open — orbit length bound and CSP reduction are
+research-blocked; see item 5 above.
 
 ---
 
@@ -5334,7 +5336,8 @@ New test scripts:
 5. **Batch 4** (aPAKE) — higher complexity; schedule after OPRF stabilises.
 6. **Batch 5** (Assembly/Arduino demo) — lowest priority; n=32 only.
 
-Status: **Batch 1 DONE v1.9.24 · Batch 2 DONE v1.9.25 · Batch 3 DONE v1.9.25 · Batch 4 DONE v1.9.27 · Batch 5 DONE v1.9.61 · Batch 6 DONE v1.9.25** — Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 4: `herradura.h` (`HpakeRecord`, `hpake_register`, `hpake_login_demo`) + C suite demo + `herradura_cli.c` (`pake-register`, `pake-demo`) + `herradura/herradura.go` (`HpakeRecord`, `HpakeRegister`, `HpakeLoginDemo`) + Go suite demo + `herradura_cli.go` (`cmdPakeRegister`, `cmdPakeDemo`) + `test_c_pake.sh` (7/7) + `test_go_pake.sh` (7/7). Batch 5 DONE v1.9.61: ARM Thumb-2 (`Herradura cryptographic suite.s`) and NASM i386 (`Herradura cryptographic suite.asm`) each add an OPRF blind/eval/unblind demo block using fixed inputs (x=0x50415353, k=0x13579BDF, r=7, r_inv=0x49249249=7^{-1} mod 2^32-1); Arduino (`Herradura cryptographic suite.ino`) adds `oprf_hash_to_field_32`, `oprf_blind_32`, `oprf_eval_32`, `oprf_unblind_32`, `oprf_direct_32` helpers and a `loop()` demo block; all three targets output `+ OPRF blind/eval/unblind correct` and match F_direct; `[DEMO n=32 -- NOT PRODUCTION SECURE]` warning displayed. Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations).
+Status: **DONE v1.9.61** — all 6 batches complete (Batch 1 v1.9.24, Batch 2 v1.9.25,
+Batch 3 v1.9.25, Batch 4 v1.9.27, Batch 5 v1.9.61, Batch 6 v1.9.25). Batch 1: Python suite (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`) + Python CLI (`oprf-blind`, `oprf-eval`, `oprf-unblind`, `genpkey --algo oprf`) + `primitives.py` exports + `test_oprf.sh` (8/8). Batch 2: `herradura.h` OPRF functions (`oprf_keygen`, `oprf_blind`, `oprf_eval`, `oprf_unblind`, `oprf_direct`, `ba_modinv_ord`) + C suite demo + `herradura_cli.c` + `herradura_codec.h` PEM labels + `test_c_oprf.sh` (7/7). Batch 3: `herradura/herradura.go` (`OprfKeygen`, `OprfBlind`, `OprfEval`, `OprfUnblind`, `OprfDirect`) + Go suite demo + `herradura_cli.go` + `test_go_oprf.sh` (7/7). Batch 4: `herradura.h` (`HpakeRecord`, `hpake_register`, `hpake_login_demo`) + C suite demo + `herradura_cli.c` (`pake-register`, `pake-demo`) + `herradura/herradura.go` (`HpakeRecord`, `HpakeRegister`, `HpakeLoginDemo`) + Go suite demo + `herradura_cli.go` (`cmdPakeRegister`, `cmdPakeDemo`) + `test_c_pake.sh` (7/7) + `test_go_pake.sh` (7/7). Batch 5 DONE v1.9.61: ARM Thumb-2 (`Herradura cryptographic suite.s`) and NASM i386 (`Herradura cryptographic suite.asm`) each add an OPRF blind/eval/unblind demo block using fixed inputs (x=0x50415353, k=0x13579BDF, r=7, r_inv=0x49249249=7^{-1} mod 2^32-1); Arduino (`Herradura cryptographic suite.ino`) adds `oprf_hash_to_field_32`, `oprf_blind_32`, `oprf_eval_32`, `oprf_unblind_32`, `oprf_direct_32` helpers and a `loop()` demo block; all three targets output `+ OPRF blind/eval/unblind correct` and match F_direct; `[DEMO n=32 -- NOT PRODUCTION SECURE]` warning displayed. Batch 6: `test_oprf_interop.sh` (8/8 cross-language combinations).
 
 ---
 
@@ -5891,7 +5894,7 @@ restrict the challenge space and prove difference invertibility); implement item
 `zkp_pqc_exploration.py` and the suite test files; items 3(a)–(d) prioritized
 afterwards, with 3(b) (NTT) the cheapest concrete win.
 
-Status: **Items 1–2 DONE v1.9.32** — §11.10.2 restated as relaxed special soundness
+Items 1–2 DONE v1.9.32 — §11.10.2 restated as relaxed special soundness
 (extractor outputs (z−z', c−c') without inversion; norm bounds stated).  Empirical
 confirmation added (`zkp_pqc_exploration.py` §2.6): x^n+1 splits into n linear factors
 over F_65537 (since 2n | q−1), and 3/2000 random challenge pairs at n=32 have nonzero
@@ -5926,7 +5929,7 @@ Fiat-Shamir challenge; completeness/soundness/ZK argued, proof size estimated �
 (Stern-F-dominated); the unresolved crux is the binding map φ relating the ternary ring
 secret to the fixed-weight binary Stern witness with a cheap gadget.
 
-**Overall #94 status: DONE v1.9.67** — items 1–2 (relaxed soundness + structured cheats,
+Status: **DONE v1.9.67** — items 1–2 (relaxed soundness + structured cheats,
 C/Go parity) and the §11.10.6 research directions 3(a)–(d) are all addressed at the
 analysis/proof/design level.  Two open-ended *implementation* follow-ups remain as future
 work and may be split into their own TODO entries: (i) a full ZKB++ transcript encoder
@@ -5987,13 +5990,13 @@ C/Go/Python with constant-time tag comparison (reuse #83 helper); wire into CLI
 `enc`/`dec`/`encfile`/`decfile` behind an `--aead` flag; add tamper-rejection tests;
 document option 2 as a follow-up research note in SecurityProofs.
 
-Status: **Option 1 DONE v1.9.33** — `hske_nl_aead_encrypt`/`decrypt` in the Python suite,
-`herradura.h`, and `herradura/herradura.go` (byte-for-byte interoperable, shared KAT);
-CLI `enc`/`dec --aead [--ad]` with PEM format tag 2 in all three CLIs (`encfile`/`decfile`
-were already always-AEAD via the `.hkx` MAC — no flag needed there); security test [28]
-(KAT + roundtrip + ciphertext/tag/AD/nonce/key tamper rejection) in C/Go/Python;
-`CliTest/test_aead.sh` (9 interop pairs + rejection); SecurityProofs-2.md §11.9.6 note.
-Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD): **DONE v1.9.62** —
+Status: **DONE v1.9.62** — Option 1 DONE v1.9.33: `hske_nl_aead_encrypt`/`decrypt` in the
+Python suite, `herradura.h`, and `herradura/herradura.go` (byte-for-byte interoperable,
+shared KAT); CLI `enc`/`dec --aead [--ad]` with PEM format tag 2 in all three CLIs
+(`encfile`/`decfile` were already always-AEAD via the `.hkx` MAC — no flag needed there);
+security test [28] (KAT + roundtrip + ciphertext/tag/AD/nonce/key tamper rejection) in
+C/Go/Python; `CliTest/test_aead.sh` (9 interop pairs + rejection); SecurityProofs-2.md
+§11.9.6 note. Option 2 (NL-FSCX v2 sponge/duplex single-pass AEAD) DONE v1.9.62 —
 `hske_nl_v2_duplex_encrypt`/`decrypt` in `herradura.h`, Python suite, and Go package;
 demo blocks in all three suite main files; research disclaimer noting differential/linear
 profile of nl_fscx_v2 as a standalone sponge permutation is not yet rigorously analysed.
@@ -7001,7 +7004,76 @@ algebraic weakness — the math can be sound while the C implementation leaks th
    new SecurityProofs subsection, so the "production gap" note in #126 can eventually be closed
    or narrowed.
 
-Status: **OPEN**
+**Batch 1 — core arithmetic + protocol entry points (v1.9.94).**
+`SecurityProofsCode/dudect_timing_audit.c` implements a simplified dudect (Reparaz et al.
+2017) fixed-vs-random Welch's t-test. `gf_mul_ba`, `gf_pow_ba`, `ba_mul_mod_ord` (already
+hardened as SA-02/03/04 in the v1.7.4 manual audit) and `ba_fscx_revolve` all show `|t| < 1`
+at 4000 rounds — well under the 4.5 leak threshold. The eight `hkex_`/`hske_`/`hpks_`/`hpke_`
+protocol entry points were audited by inspection: their only branches are the TODO #131
+`gf_pub_is_valid()` rejection and `hpks_verify`'s final equality check, both on public
+values, not secret key material. Documented in SecurityProofs-3.md §11.11, including what
+remains unaudited (Stern-F/Niederreiter permutation and error-vector handling, WOTS/XMSS
+hash chains) for a future batch — TODO #126's "production gap" note stays open until that
+Stern surface is covered.
+
+**Batch 2 — Stern-F permutation/error handling and WOTS/XMSS (v1.9.95).** Extended
+`dudect_timing_audit.c` with `stern_gen_perm`, `stern_apply_perm`, and `hpks_wots_sign`.
+`hpks_wots_sign` is clean (`|t|=0.06`) — WOTS chain-iteration counts derive from the public
+message hash, not secret key material, matching the published WOTS design; `hpks_xmss_*`
+adds nothing beyond that plus the already-audited `haccum_*` accumulator (TODO #83).
+`stern_gen_perm` shows a real, large leak (`|t|=180.85` — fixed-seed mean 5195.6 ns vs.
+random-seed mean 5886.2 ns, ~12% difference): its Fisher-Yates rejection sampling has a
+PRNG-stream-dependent loop count keyed on the secret `pi_seed`. `stern_apply_perm` inherits
+the same wall-clock signal (it calls `stern_gen_perm` internally) and separately has a
+`perm[i]`-dependent memory-access pattern that a wall-clock t-test cannot characterize
+(needs cache-timing tooling, out of scope this batch). `pi_seed` is ephemeral and revealed
+in 2 of 3 Stern response branches anyway, so this doesn't expose the long-term private key
+directly, but it is a genuine open finding, not benign rejection-sampling noise. A fix
+(Lemire multiply-shift, removing the rejection loop) is scoped but *not* applied this batch:
+`stern_gen_perm` must stay bit-identical between C/Go/Python and between signer/verifier for
+signatures to verify at all, so the fix requires synchronized changes across all three
+language suites plus a 9-way interop re-test — tracked for Batch 3. Documented in
+SecurityProofs-3.md §11.11.
+
+**Batch 3 — CT-01 fix applied to `stern_gen_perm` across C/Go/Python (v1.9.96).** Replaced
+the rejection-sampling `do { } while` in `herradura.h`, `herradura/herradura.go`, and
+`Herradura cryptographic suite.py` with a single-draw Lemire multiply-shift map
+(`j = (v * range) >> 32`), applied identically in all three so signer/verifier and
+cross-language interop stay intact — confirmed by `CliTest/test_stern_interop.sh` (9/9),
+`test_stern_kem.sh` (9/9), and `test_ring.sh` (21/21), all still passing. The dominant
+12%-magnitude structural leak Batch 2 found is closed: the fixed-vs-random mean-time gap
+collapsed from 690.6 ns to 53.9 ns at 4000 rounds (`|t|` 180.85 → 5.22). A much smaller
+residual signal remains statistically detectable at higher sample counts (`|t|`≈30-38 at
+20 000 rounds); analysis in SecurityProofs-3.md §11.11 attributes it to hardware-level
+data-dependent timing at the degenerate all-zero `pi_seed` test point rather than the
+software rejection-sampling structure, and leaves it open pending cache/power-timing
+instrumentation out of scope for a wall-clock harness. `stern_apply_perm`'s
+memory-access-pattern question (Batch 2) and the still-unaudited HKEX-RNL/ZKP-RNL/HCRED
+functions (original item 2 scope) remain for a future batch.
+
+**Batch 4 — HKEX-RNL/ZKP-RNL/HCRED audited by inspection (v1.9.97).** `rnl_keygen`,
+`rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and `rnl_cbd_poly` (CBD(η=1) secret sampler)
+audited clean — no branch on secret polynomial coefficients; `rnl_agree`'s one branch
+selects the public reconciler-vs-receiver role. `rnl_sigma_sign`'s variable Fiat-Shamir
+attempt count is Lyubashevsky's rejection-sampling-with-aborts design (2012), the same
+pattern used by the ML-DSA/Dilithium reference implementation — recorded as audited, not as
+a leak to fix, since a variable abort count is the scheme's intended behavior, not an
+implementation bug. Found one low-severity item: `_hcred_witness`'s
+`if ((sr & 1) != syndr_bit) return -1;` early-exits per row on the prover's own witness —
+same shape as the already-fixed SA-08 finding, but called once on the prover's own
+internally-consistent secret rather than on attacker-supplied or externally-timeable input,
+so there's no remote/co-tenant timing oracle; deferred as low-cost future cleanup rather
+than fixed now. Documented in SecurityProofs-3.md §11.11.
+
+**Batch 5 — CT-02: `_hcred_witness` early-return cleanup (v1.9.98).** Replaced the two
+secret-witness-dependent early returns flagged in Batch 4 with unconditional-iteration loops
+that accumulate a pass/fail flag checked once after the loop, so both loops in
+`_hcred_witness` now always run their full length regardless of the witness. Re-verified
+with `CliTest/test_cred.sh` (5/5) and suite tests `[44]`/`[45]` (HCRED completeness/tamper
+rejection and weak-key/malformed-input rejection, both `[PASS]`) — behavior unchanged, only
+the rejection path's timing profile changes. Documented in SecurityProofs-3.md §11.11.
+
+Status: **OPEN** — Batches 1-5 done (core arithmetic + protocol entry points; Stern-F/WOTS audit; Stern-F rejection-sampling fix; HKEX-RNL/ZKP-RNL/HCRED audit + fix). Remaining: the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal and `stern_apply_perm`'s memory-access-pattern (cache-timing) question — both require cache/power-timing instrumentation out of scope for a wall-clock harness, not a further code fix.
 
 ---
 
@@ -7270,7 +7342,7 @@ channel and a missed credibility signal for a project this proof-heavy.
 4. Link out to `SecurityProofs-1.md`/`-2.md`/`-3.md` for detailed analysis instead of duplicating
    proofs; keep `SECURITY.md` itself short and scannable.
 
-Status: **OPEN**
+Status: **DONE v1.9.93** — Added `SECURITY.md` with a protocol status table (production-track vs. demo-only/pedagogical, each row linked to its `SecurityProofs-*.md` section), a supported-versions statement tied to the `MAJOR.MINOR.PATCH` convention, GitHub private vulnerability reporting as the disclosure channel with a response-time commitment, and an out-of-scope section.
 
 ---
 

@@ -2,6 +2,97 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.98] - 2026-07-16
+
+### Fixed
+- **CT-02: closed `_hcred_witness`'s secret-dependent early-return (TODO #129 Batch 5).**
+  `herradura.h`'s `_hcred_witness` had two early returns (`return -1` on a syndrome-row
+  mismatch, `return -2` on an out-of-range coefficient) whose loops therefore ran for a
+  variable number of iterations depending on the (secret) HCRED witness — the same shape as
+  the already-fixed SA-08 finding. Replaced with unconditional-iteration loops that
+  accumulate `syndrome_ok`/`range_ok` flags checked once at the end, so both loops always
+  run their full `HCRED_ROWS`/`HCRED_N` length; the out-of-range coefficient value is
+  clamped before bit-decomposition so the store never goes out of bounds (the caller
+  discards `delta[]` on a nonzero return anyway). Re-verified with `CliTest/test_cred.sh`
+  (5/5) and the suite's HCRED/weak-key rejection tests `[44]`/`[45]` (both `[PASS]`) —
+  behavior is unchanged for every input, only the rejection path's timing profile changes.
+
+## [1.9.97] - 2026-07-16
+
+### Added
+- **Constant-time audit, Batch 4 — HKEX-RNL/ZKP-RNL/HCRED audited by inspection (TODO #129).**
+  `rnl_keygen`, `rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and the CBD(η=1) secret sampler
+  `rnl_cbd_poly` audited clean — no branch on secret polynomial coefficients.
+  `rnl_sigma_sign`'s variable Fiat-Shamir retry count is Lyubashevsky's
+  rejection-sampling-with-aborts design (2012), matching the ML-DSA/Dilithium reference
+  implementation's own accepted behavior — not a new leak. Found one low-severity item:
+  `_hcred_witness`'s per-row early-return on syndrome mismatch has the same shape as the
+  already-fixed SA-08 finding, but runs once on the prover's own internally-consistent
+  secret witness rather than on externally-timeable input, so there's no remote timing
+  oracle; deferred as low-cost future cleanup. Documented in SecurityProofs-3.md §11.11.
+
+## [1.9.96] - 2026-07-15
+
+### Fixed
+- **CT-01: closed the `stern_gen_perm` timing leak found in Batch 2 (TODO #129).**
+  `herradura.h`, `herradura/herradura.go`, and `Herradura cryptographic suite.py` all
+  replace the rejection-sampling `do { } while` in `stern_gen_perm` with a single 32-bit
+  draw per Fisher-Yates swap, mapped to `[0, range)` via Lemire's multiply-shift
+  (`j = (v * range) >> 32`) — loop and PRNG-state-advance counts are now a fixed function of
+  `N`, independent of the secret `pi_seed`, with a relative modulo bias `< range/2^32`
+  (unmeasurable at `range <= 256`). Changed identically in all three languages since signer
+  and verifier — and every cross-language pairing — must derive the same permutation from
+  the same `pi_seed`; re-validated with `CliTest/test_stern_interop.sh` (9/9),
+  `test_stern_kem.sh` (9/9), and `test_ring.sh` (21/21), all still green. `dudect_timing_audit`
+  shows the fixed-vs-random mean-time gap collapsed from 690.6 ns (12.0%) to 53.9 ns (1.3%) at
+  4000 rounds (`|t|` 180.85 → 5.22); a smaller residual signal persists at higher sample
+  counts and is documented in SecurityProofs-3.md §11.11 as likely a hardware-level effect at
+  the degenerate all-zero test point, left open for a future batch.
+
+## [1.9.95] - 2026-07-15
+
+### Fixed
+- **Constant-time audit, Batch 2 — Stern-F timing leak found (TODO #129).** Extended
+  `SecurityProofsCode/dudect_timing_audit.c` to `stern_gen_perm`, `stern_apply_perm`, and
+  `hpks_wots_sign`. `hpks_wots_sign`/WOTS-F/XMSS-F are clean (`|t|=0.06`) — chain-iteration
+  counts derive from the public message hash, not secret key material. `stern_gen_perm`
+  shows a real, statistically significant leak (`|t|=180.85`, ~12% mean timing difference
+  between fixed and random `pi_seed`): its Fisher-Yates rejection sampling has a
+  PRNG-stream-dependent loop count keyed on the secret seed. `stern_apply_perm` inherits the
+  same wall-clock signal and separately has a permutation-index-dependent memory-access
+  pattern outside this batch's scope (needs cache-timing tooling). `pi_seed` is ephemeral
+  and revealed in 2 of 3 Stern response branches, so this doesn't expose the long-term
+  private key directly, but it's a genuine finding. A fix (Lemire multiply-shift sampling)
+  is scoped in SecurityProofs-3.md §11.11 but not applied yet — it requires synchronized
+  changes across the C/Go/Python suites plus a 9-way interop re-test to avoid breaking
+  cross-language signature verification, tracked for TODO #129 Batch 3.
+
+## [1.9.94] - 2026-07-15
+
+### Added
+- **Statistical constant-time audit of core arithmetic primitives, Batch 1 (TODO #129).**
+  `SecurityProofsCode/dudect_timing_audit.c` runs a simplified dudect (Reparaz et al. 2017)
+  fixed-vs-random Welch's t-test against `gf_mul_ba`, `gf_pow_ba`, `ba_mul_mod_ord`, and
+  `ba_fscx_revolve`; all four show `|t| < 1` at 4000 rounds (threshold 4.5), empirically
+  confirming the v1.7.4 SA-02/03/04 constant-time fixes and `ba_fscx`'s branchless-by-design
+  structure. The eight `hkex_`/`hske_`/`hpks_`/`hpke_` protocol entry points were audited by
+  inspection: their only branches are on public values (TODO #131's `gf_pub_is_valid()`
+  rejection, `hpks_verify`'s equality check), not secret key material. Documented in
+  SecurityProofs-3.md §11.11 along with what remains for a later batch: Stern-F/Niederreiter
+  permutation and error-vector handling, and WOTS/XMSS hash-chain values.
+
+## [1.9.93] - 2026-07-15
+
+### Added
+- **`SECURITY.md` with a consolidated threat model and disclosure policy (TODO #140).**
+  Adds a protocol status table (production-track vs. demo-only/pedagogical) for every
+  protocol in the suite, each row linked to its authoritative `SecurityProofs-1.md`/`-2.md`
+  section rather than restating the proof; a supported-versions statement consistent with
+  the `MAJOR.MINOR.PATCH` convention in `CLAUDE.md`; GitHub private vulnerability reporting
+  as the disclosure channel with a 5-business-day acknowledgment / 14-day triage target; and
+  an out-of-scope section for already-documented weaknesses in demo-only protocols and for
+  the `SecurityProofsCode/`/test-harness code.
+
 ## [1.9.92] - 2026-07-15
 
 ### Fixed

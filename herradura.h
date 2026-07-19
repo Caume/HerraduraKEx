@@ -1476,8 +1476,15 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
 /* Fisher-Yates shuffle [0..N-1] driven by NL-FSCX v1 PRNG.
    Counter-mode extraction: all KEYBYTES of each state block are consumed as
    sequential 32-bit draws before the state is advanced, so no entropy is wasted.
-   Rejection sampling (threshold = 2^32 - 2^32%range, kept as uint64 to avoid
-   truncating to 0 when range divides 2^32) eliminates modular bias. */
+   CT-01 (TODO #129 Batch 3): draws exactly one 32-bit word per swap and maps it
+   to [0, range) via Lemire's multiply-shift (j = (v * range) >> 32) instead of
+   rejection sampling. Loop count and state-advance count are now a fixed
+   function of N only, independent of pi_seed -- closes the wall-clock timing
+   leak dudect measured in the prior rejection-sampling version (|t|=180.85;
+   SecurityProofs-3.md SS11.11). Relative modulo bias is < range/2^32, negligible
+   at range <= KEYBITS. This mapping must stay bit-identical with the Go and
+   Python implementations of stern_gen_perm -- signer and verifier (in any
+   language) must derive the same permutation from the same pi_seed. */
 static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 {
     BitArray key, st;
@@ -1487,23 +1494,19 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
     st = *pi_seed;
     cursor = KEYBYTES;                          /* force state advance on first draw */
     for (i = N - 1; i > 0; i--) {
-        uint64_t range     = (uint64_t)(i + 1);
-        uint64_t threshold = UINT64_C(0x100000000) -
-                             (UINT64_C(0x100000000) % range);
+        uint64_t range = (uint64_t)(i + 1);
         uint32_t v;
         int j;
-        do {
-            if (cursor + 4 > KEYBYTES) {
-                nl_fscx_v1_ba(&st, &st, &key);
-                cursor = 0;
-            }
-            v = ((uint32_t)st.b[cursor    ] << 24) |
-                ((uint32_t)st.b[cursor + 1] << 16) |
-                ((uint32_t)st.b[cursor + 2] <<  8) |
-                 (uint32_t)st.b[cursor + 3];
-            cursor += 4;
-        } while ((uint64_t)v >= threshold);
-        j = (int)(v % (uint32_t)range);
+        if (cursor + 4 > KEYBYTES) {
+            nl_fscx_v1_ba(&st, &st, &key);
+            cursor = 0;
+        }
+        v = ((uint32_t)st.b[cursor    ] << 24) |
+            ((uint32_t)st.b[cursor + 1] << 16) |
+            ((uint32_t)st.b[cursor + 2] <<  8) |
+             (uint32_t)st.b[cursor + 3];
+        cursor += 4;
+        j = (int)(((uint64_t)v * range) >> 32);
         { uint8_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp; }
     }
 }
@@ -4259,6 +4262,8 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
     const int32_t q = RNL_Q, hq = (int32_t)(RNL_Q / 2);
     int i, r, t, W = 0;
 
+    int syndrome_ok = 1, range_ok = 1;
+
     hcred_phi(&e_ba, s_poly);
     for (i = 0; i < HCRED_N; i++)
         if (s_poly[i] == 1) W++;
@@ -4267,24 +4272,40 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
     rnl_poly_mul(ms, m_poly, s_poly);
     rnl_lift(lift_c, c_poly, RNL_P, RNL_Q);
 
+    /* CT-02 (TODO #129 Batch 5): both loops below always run to completion
+     * instead of returning as soon as a row/coefficient fails -- a failure
+     * accumulates into a flag checked once after the loop. The prior
+     * early-return made the iteration count depend on the (secret) witness
+     * s_poly/e_ba, the same shape as the already-fixed SA-08 finding
+     * (SecurityProofs-3.md SS11.11 records it as a low-severity finding since
+     * this function only ever runs on the prover's own internally-consistent
+     * witness, never on externally-timeable input, but fixing it is cheap). */
     for (r = 0; r < HCRED_ROWS; r++) {
         int sr = 0, kb, syndr_bit;
         for (kb = 0; kb < KEYBYTES; kb++)
             sr += __builtin_popcount(H[r].b[kb] & e_ba.b[kb]);
         syndr_bit = (syndr[r/8] >> (r%8)) & 1;
-        if ((sr & 1) != syndr_bit) return -1;
+        syndrome_ok &= ((sr & 1) == syndr_bit);
         for (t = 0; t < HCRED_ROW_BITS; t++)
             beta[r * HCRED_ROW_BITS + t] = (sr >> t) & 1;
     }
+    if (!syndrome_ok) return -1;
+
     for (i = 0; i < HCRED_N; i++) {
         int32_t d = (int32_t)((((int64_t)ms[i] - lift_c[i]) % q + q) % q);
         int32_t v;
         if (d > hq) d -= q;
         v = d + HCRED_EPS_OFF;
-        if (v < 0 || v >= (1 << HCRED_EPS_BITS)) return -2;
+        range_ok &= (v >= 0 && v < (1 << HCRED_EPS_BITS));
+        /* Clamp so the bit-decomposition below never shifts/indexes an
+         * out-of-range v; delta[] is discarded by the caller when
+         * range_ok is false, so the clamped bits are never used. */
+        if (v < 0) v = 0;
+        if (v >= (1 << HCRED_EPS_BITS)) v = (1 << HCRED_EPS_BITS) - 1;
         for (t = 0; t < HCRED_EPS_BITS; t++)
             delta[i * HCRED_EPS_BITS + t] = (v >> t) & 1;
     }
+    if (!range_ok) return -2;
     return 0;
 }
 

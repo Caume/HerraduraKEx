@@ -312,3 +312,249 @@ Total: $2n + (n/2)\lceil \log_2(n{+}1) \rceil$ multiplication gates (1664 at $n 
 - NIST FIPS 204 (ML-DSA / Dilithium, 2024). NIST FIPS 205 (SLH-DSA / SPHINCS+, 2024).
 - Katz, Kolesnikov, Wang 2018. *Improved Non-Interactive Zero Knowledge with Applications to Post-Quantum Signatures*. CCS 2018, pp. 525–537. (KKW)
 - Prange 1962. *The Use of Information Sets in Decoding Cyclic Codes*. IRE Trans. IT-8, pp. 5–9.
+
+---
+
+### 11.11 Constant-Time Audit of Core Arithmetic Primitives (TODO #129)
+
+**Background.** TODO #126's status note flagged "production gaps (constant-time C, weak-key
+rejection)" for the Stern-F/BIKE path specifically. This item extends the check to
+`herradura.h` broadly and puts it on empirical footing with a statistical timing-leakage
+test rather than code inspection alone. A prior manual audit (SA-01 through SA-09, v1.7.4 —
+CHANGELOG.md) already replaced the variable-time `gf_mul_ba`/`gf_pow_ba`/`ba_mul_mod_ord`
+with bitmask-select constant-time versions and fixed a `memcmp` early-exit in `ba_equal`;
+this section confirms those fixes empirically and extends coverage to `ba_fscx_revolve` and
+the protocol entry points.
+
+**Method (Batch 1 — v1.9.94).** `SecurityProofsCode/dudect_timing_audit.c` implements a
+simplified dudect (Reparaz et al. 2017) fixed-vs-random test: for each primitive, the
+secret-position operand is either held fixed (all-zero) or freshly randomized on every call;
+timings are interleaved (fixed/random order alternates per round, both measured every round
+to cancel drift) with a 50-call warmup discarded, and a Welch's t-test is computed over the
+two distributions. `|t| >= 4.5` is dudect's standard leak-detection threshold.
+
+**Results — audited and clean (empirically confirmed, no timing leak detected at 4000 rounds):**
+
+| Function | Secret-dependent input | \|t\| | Verdict |
+|---|---|---|---|
+| `gf_mul_ba` | operand `a` (private key material in `gf_pow_ba`) | 0.16 | clean |
+| `gf_pow_ba` | exponent (private key / nonce) | 0.63 | clean |
+| `ba_mul_mod_ord` | operand `a` (Schnorr scalar) | 0.13 | clean |
+| `ba_fscx_revolve` | key operand `b` (HSKE/HPKE/HPKS symmetric key) | 0.55 | clean |
+
+All four are branchless: `gf_mul_ba`/`gf_pow_ba`/`ba_mul_mod_ord` use bitmask select (SA-02
+through SA-04), and `ba_fscx` itself (the per-step body of `ba_fscx_revolve`) is a fixed
+sequence of XOR/rotate operations with no data-dependent control flow or memory access by
+construction — there is no branch to make constant-time in the first place.
+
+**Audited and clean by inspection — protocol entry points (`hkex_`, `hske_`, `hpks_`,
+`hpke_` core four).** `hkex_gf_pubkey`, `hkex_gf_agree`, `hske_encrypt`, `hske_decrypt`,
+`hpks_sign`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt` (herradura.h) contain exactly one
+class of branch each: the TODO #131 `gf_pub_is_valid()` degenerate-key rejection in
+`hkex_gf_agree`/`hpke_encrypt`/`hpke_decrypt`, and the final `ba_equal` comparison in
+`hpks_verify`. Both branch on **public** values (the peer's public key; the recomputed
+commitment vs. the received one) — a timing difference here reveals no private key material,
+only whether a public input was malformed, so these are not leaks. Every call into the
+constant-time primitives above uses private key material as the documented secret operand,
+with no additional branching in between.
+
+**Not yet audited at the end of Batch 1 — deferred.** `stern_`/`hpks_stern_f_*`/
+`hpke_stern_f_*` (Stern ZKP and Niederreiter KEM) and `hpks_wots_*`/`hpks_xmss_*` were
+flagged here as plausible leak surfaces and picked up in Batch 2 below, with one confirmed
+finding. The `SecurityProofsCode/*.py` prototypes (`nl_fscx_*`, `hkex_rnl_*`) remain out of
+scope: they are explicitly non-constant-time reference code (CHANGELOG.md: "the Python
+reference implementation is intentionally not constant-time").
+
+**Batch 2 — Stern-F permutation/error handling and WOTS/XMSS (v1.9.95).** Extends
+`dudect_timing_audit.c` with three more targets and confirms one real leak:
+
+| Function | Secret-dependent input | \|t\| | Verdict |
+|---|---|---|---|
+| `hpks_wots_sign` | `master_seed` | 0.06 | clean |
+| `stern_gen_perm` | `pi_seed` | 180.85 | **leak confirmed** |
+| `stern_apply_perm` (incl. `stern_gen_perm`) | `pi_seed` | 177.26 | **leak confirmed** |
+
+**WOTS-F/XMSS-F — audited and clean.** `_wots_chain_ba`'s iteration count is
+`WOTS_W - 1 - digits[i]`, and `digits[]` comes from `_wots_msg_to_digits(msg_hash)` — the
+*message* hash, which is public in both sign and verify by construction (the verifier must
+know it to recompute the same digits). The chain-hash values themselves never branch or
+index memory by secret data (`_wots_h_ba` is a fixed `nl_fscx_revolve_v1_ba` call). So the
+data-dependent loop count here leaks only public information, consistent with WOTS's
+published design, not the earlier "plausible leak surface" concern this section flagged for
+it in Batch 1. `hpks_xmss_sign`/`hpks_xmss_verify` call only `hpks_wots_sign`/
+`hpks_wots_recover_pk` plus the already-constant-time-audited `haccum_*` accumulator
+(TODO #83, CHANGELOG.md), so no separate finding.
+
+**Stern-F — confirmed leak in `stern_gen_perm`.** The function draws 32-bit words from an
+NL-FSCX-keyed PRNG stream and rejects any draw `>= threshold` before reducing mod `range`
+(Fisher-Yates with rejection sampling for exact uniformity). The number of state advances
+and rejected draws is a function of the PRNG output stream, which is keyed on the *secret*
+`pi_seed` — so the number of loop iterations, and hence wall-clock time, varies with
+`pi_seed`. The measured effect is large and systematic (fixed all-zero seed: 5195.6 ns;
+random seed: 5886.2 ns; a ~12% difference, `|t| = 180.85`, far past the 4.5 threshold) —
+this is a real, exploitable-in-principle timing channel, not benign rejection-sampling
+noise. `stern_apply_perm` inherits the same signal because every call in the signature
+path first regenerates `perm` via `stern_gen_perm`; `stern_apply_perm`'s own body remains
+branchless (confirmed by inspection — `herradura.h`'s existing comment on the function),
+but it addresses `out->b[]` at a `perm[i]`-dependent byte offset for every `i`, which is a
+*memory-access-pattern* leak (cache-timing) that a wall-clock t-test cannot characterise or
+rule out either way — that requires cache-timing instrumentation (e.g. `libFLUSH+RELOAD` or
+a cache-simulator harness), which is out of scope for this batch.
+
+**Severity in context.** `pi_seed` is a fresh, ephemeral per-round value, not the signer's
+long-term secret error vector `e` — and in the `b ∈ {1,2}` response branches it is revealed
+in the signature anyway (`resp_a[i] = pi[i]`), so this specific leak does not expose the
+long-term Stern-F private key directly. It could still let a *local* or *co-located*
+attacker distinguish signing rounds or bias timing-based side-channel attacks against the
+challenge/response protocol during signing, and HPKS-Stern-F is already flagged demo-only
+at N=256 (SecurityProofs-2.md §11.7) pending TODO #126's production decoder — but "demo
+only for cryptanalytic reasons" is a different claim than "the C implementation is
+side-channel safe," so this is recorded as a genuine, open finding rather than downgraded.
+
+**Fix scoped, not applied this batch.** The standard fix is to replace the rejection-sampled
+modulo reduction with a fixed-cost, single-draw multiply-shift map (Lemire's method:
+`j = ((uint64_t)v * range) >> 32`), which removes the `do { } while` entirely — loop count
+becomes a fixed function of `N` only, at the cost of a relative modulo bias
+`< range / 2^32`, negligible at `range <= 256`. This is *not* applied in this batch because
+`stern_gen_perm` (or its Go/Python equivalents) must stay bit-for-bit identical between
+signer and verifier, and between all three CLI language implementations, for a signature to
+verify at all — changing the sampling algorithm in `herradura.h` alone would silently break
+cross-language interop (`CliTest/test_c_interop.sh`, `test_go_interop.sh`) until the same
+change lands in the Go and Python suites simultaneously and the 9-way interop tests are
+re-run. Tracked as follow-up scope for TODO #129 Batch 3, alongside the `stern_apply_perm`
+memory-access-pattern question.
+
+**Batch 3 — CT-01 fix applied across C/Go/Python (v1.9.96).** `stern_gen_perm` (`herradura.h`,
+`herradura/herradura.go`, `Herradura cryptographic suite.py`) is changed identically in all
+three implementations: the rejection-sampling `do { } while` is replaced with a single
+32-bit draw per swap mapped to `[0, range)` via Lemire's multiply-shift,
+`j = (v * range) >> 32`. This makes the loop count and PRNG-state-advance count a fixed
+function of `N` alone — independent of `pi_seed` — closing the structural rejection-sampling
+leak that Batch 2 found. The relative modulo bias this introduces is `< range / 2^32`,
+unmeasurable at `range <= 256`. `stern_apply_perm` is unchanged (it was already branchless);
+it now inherits whatever timing profile `stern_gen_perm` has.
+
+Because `stern_gen_perm`'s output must be bit-identical between signer and verifier and
+across all three language CLIs for a Stern-F signature to verify at all, the three
+implementations were changed together and re-validated against `CliTest/test_stern_interop.sh`
+(9/9 pass across all C/Go/Python signer↔verifier pairs), `CliTest/test_stern_kem.sh` (9/9),
+and `CliTest/test_ring.sh` (21/21, OR-composed Stern ring signatures) — all still pass, so
+the change is behavior-preserving at the protocol level even though it changes which
+concrete permutation a given `pi_seed` produces.
+
+**Re-measurement.** At 4000 rounds the mean-time gap between fixed and random `pi_seed`
+collapsed from 690.6 ns (12.0% of the 5195.6 ns fixed-case mean, Batch 2) to 53.9 ns (1.3%
+of the 4126.6 ns fixed-case mean) for `stern_gen_perm` — a ~13x reduction in absolute leak
+size. `|t|` dropped from 180.85 to 5.22 at that sample size. However, at 20 000 rounds `|t|`
+rises to 30.67 (`stern_gen_perm`) / 38.73 (`stern_apply_perm`) — Welch's t-statistic grows
+with sample count for *any* nonzero true mean difference, so this confirms a real, if much
+smaller, residual timing difference rather than closing the leak outright.
+
+**Residual leak — likely hardware, not the rejection-sampling structure.** With the
+rejection loop removed, control flow (iteration count, state-advance count, branch pattern)
+is now provably identical between the fixed all-zero `pi_seed` and any random one. The
+remaining ~54 ns/call difference is consistent with data-dependent latency in the
+underlying hardware rather than the software algorithm: the fixed all-zero seed drives
+`nl_fscx_v1_ba`'s internal state to a degenerate all-zero fixed point (XOR/rotate of zero is
+zero), so every draw for the fixed class operates on identical all-zero words, while the
+random class touches varying data on every call — a pattern consistent with power-gated or
+early-terminating multiply/ALU units on low-power ARM cores (this suite's dudect runs were
+taken on an aarch64 SBC), not with a leftover branch. `gf_mul_ba` and `ba_mul_mod_ord`
+(Batch 1) also perform 8/32-bit multiplies but stayed clean (`|t| < 1`) under the same
+methodology, which weighs against a blanket "this CPU's multiplier always leaks" explanation
+and toward something specific to the all-zero degenerate PRNG fixed point used as the test's
+"fixed" class — a known dudect methodology wrinkle (an all-zero secret is a valid but
+extreme input, and some primitives behave atypically at that one point without implying a
+leak across the realistic secret space).
+
+**Disposition.** The rejection-sampling leak item 3 asked to close is closed: the dominant,
+easily-measured 12%-magnitude structural leak from Batch 2 is gone, verified by both the
+absolute-gap collapse and the interop re-test. The much smaller residual signal is recorded
+here rather than hidden, but chasing it further requires cache/power-timing instrumentation
+(e.g. hardware performance counters or a controlled non-degenerate "fixed" class) that is
+out of scope for a wall-clock dudect harness, and `stern_apply_perm`'s separate
+memory-access-pattern question (flagged in Batch 2) remains unaddressed for the same reason.
+Both are left open for a future batch alongside the still-unaudited HKEX-RNL/ZKP-RNL/HCRED
+functions that TODO #129's original item 2 scope covers but which no batch so far has
+touched.
+
+**Batch 4 — HKEX-RNL / ZKP-RNL / HCRED audited by inspection (v1.9.97).** Covers the
+remaining item-2 scope: the Ring-LWR key-exchange and ZKP layers, and the HCRED hybrid
+credential.
+
+*Audited and clean.* `rnl_keygen`, `rnl_agree`, `rnl_hint`, `rnl_reconcile_bits`, and
+`rnl_cbd_poly` (the CBD(eta=1) secret sampler) contain no branch on secret polynomial
+coefficients — `rnl_cbd_poly` derives each coefficient from two fresh random bits via
+arithmetic only (`(a - b + RNL_Q) % RNL_Q`), and `rnl_agree`'s only branch
+(`hint_in == NULL`) selects the *public* reconciler-vs-receiver protocol role, not secret
+data.
+
+*Rejection sampling by design — not a new finding.* `rnl_sigma_sign` (the ZKP-RNL
+Fiat-Shamir Σ-protocol prover) retries with a variable number of `attempt` iterations
+(bounded by `SIGMA_MAX_ATTEMPTS`) until the response `z` falls inside the public rejection
+bound — this is Lyubashevsky's Fiat-Shamir-with-aborts construction (2012), the same
+abort-and-retry pattern used by the ML-DSA/Dilithium reference implementation, and it is
+accepted practice in the lattice-signature literature: the masking value `y` is drawn fresh
+per attempt and the accept/reject decision is designed so the *distribution* of accepted
+transcripts is (statistically close to) independent of the secret `s`, which is the whole
+point of the rejection step. The per-coefficient `do { } while` sampling `y[i]` uniformly in
+`[-gamma, gamma]` draws from `/dev/urandom` only, with no dependence on `s`. Recorded here as
+audited, not flagged as a leak to close, because "fewer/more Fiat-Shamir aborts" is the
+scheme's designed behavior, not an implementation bug — matching how NIST's own ML-DSA
+reference code is treated.
+
+*Low-severity finding — `_hcred_witness`'s early-return on syndrome mismatch.*
+`herradura.h:4278`, `if ((sr & 1) != syndr_bit) return -1;` inside the per-row syndrome
+consistency loop, breaks out as soon as a row disagrees — a data-dependent (secret-witness
+dependent) iteration count, structurally the same shape as the SA-08 `ba_equal` finding
+this suite already fixed elsewhere. Unlike SA-08, though, `_hcred_witness` is called exactly
+once, at the very start of `hcred_prove` (`herradura.h:4484`), directly on the *prover's own*
+long-term-valid witness — never on attacker-supplied or externally-timeable input. In
+honest operation the syndrome always matches (it is the prover's own consistent secret), so
+the early-return path is an assertion against a corrupted local witness, not a check any
+other party can trigger or observe the timing of across a trust boundary — there is no
+remote or co-tenant oracle here the way there is for, say, `hpks_stern_f_verify`'s
+commitment checks. Recorded as a low-severity finding rather than fixed in this batch: fixing
+it (unconditional accumulation instead of early return) is low-cost and can be folded into a
+future batch's cleanup pass, but it does not block closing #126's "production gap" note the
+way the Stern-F permutation leak did.
+
+**Cumulative status after Batch 4.** All eight core `hkex_`/`hske_`/`hpks_`/`hpke_` entry
+points, the four core arithmetic primitives, WOTS-F/XMSS-F, and the HKEX-RNL/ZKP-RNL/HCRED
+layer are now audited (clean, or — for `_hcred_witness` — a documented low-severity finding).
+The Stern-F permutation's structural rejection-sampling leak is closed (Batch 3); the
+residual hardware-level signal on `stern_gen_perm`/`stern_apply_perm` and the
+memory-access-pattern question for `stern_apply_perm` remain open pending cache/power-timing
+instrumentation, which is out of scope for a wall-clock harness. TODO #126's Stern-F
+"production gap" note can be narrowed to that residual/cache-timing scope specifically.
+
+**Batch 5 — CT-02: `_hcred_witness` early-return cleanup fixed (v1.9.98).** The two
+secret-witness-dependent early returns flagged in Batch 4
+(`if ((sr & 1) != syndr_bit) return -1;` and `if (v < 0 || v >= (1 << HCRED_EPS_BITS)) return
+-2;`) are replaced with unconditional-iteration loops that accumulate `syndrome_ok`/
+`range_ok` flags checked once after each loop completes, so both loops always run to their
+full `HCRED_ROWS`/`HCRED_N` length regardless of the witness. The `v` used for the
+bit-decomposition into `delta[]` is clamped into `[0, 2^HCRED_EPS_BITS)` when out of range so
+the shift/store never goes out of bounds; the caller discards `delta[]` on a nonzero return
+code, so the clamped bits are never used. `d = ms[i] - lift_c[i]`'s sign-reduction branch
+(`if (d > hq) d -= q;`) is unchanged — it is a fixed-cost per-iteration select, not an
+early-loop-exit, so it doesn't change the *iteration count*, only which of two O(1) paths one
+iteration takes; left as a possible future micro-hardening item rather than folded into this
+fix. Re-verified with `CliTest/test_cred.sh` (5/5) and the suite's `[44]`/`[45]` HCRED and
+weak-key rejection tests (both `[PASS]`, including the `synd_reject`/`key_reject` paths that
+exercise this exact function's error returns) — behavior is unchanged for all inputs, only
+the timing profile of the rejection path changes.
+
+**Cumulative status after Batch 5.** All eight core `hkex_`/`hske_`/`hpks_`/`hpke_` entry
+points, the four core arithmetic primitives, WOTS-F/XMSS-F, HKEX-RNL/ZKP-RNL, and HCRED are
+audited and either clean or fixed. Two items remain open, both requiring cache/power-timing
+instrumentation rather than a code change: the residual hardware-level timing signal on
+`stern_gen_perm`/`stern_apply_perm` (Batch 3) and `stern_apply_perm`'s
+permutation-index-dependent memory-access pattern (Batch 2). TODO #126's Stern-F "production
+gap" note narrows to exactly that scope.
+
+**Reproduce:**
+```bash
+gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
+/tmp/dudect_timing_audit 4000          # or a larger round count for higher power
+```
