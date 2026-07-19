@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.99] - 2026-07-19
+
+### Fixed
+- **CT-03: made `stern_apply_perm` memory-access-oblivious (TODO #129 Batch 6).**
+  `herradura.h`'s `stern_apply_perm` used to write each output bit at address `perm[i]` —
+  every byte was touched exactly once, but the address sequence depended on the secret
+  permutation, a cache-timing surface a wall-clock harness can't measure. Replaced with an
+  `O(N^2)` scan: for every input bit, every candidate output position `j` is visited and
+  written under a constant-time `j == perm[i]` mask, so the address sequence touched is
+  always the full `[0, KEYBYTES) x N` grid regardless of the permutation (`<= 65536` masked
+  writes at `N = 256`, negligible next to a Stern-F round). Output is byte-identical to
+  before, so no Go/Python changes were needed — verified with `CliTest/test_stern_interop.sh`
+  (9/9), `test_stern_kem.sh` (9/9), and `test_ring.sh` (21/21). `dudect_timing_audit` shows
+  `stern_apply_perm`'s own signal now tracks `stern_gen_perm`'s inherited residual instead of
+  exceeding it, consistent with its independent memory-access leak being closed.
+
 ## [1.9.98] - 2026-07-16
 
 ### Fixed

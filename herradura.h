@@ -1512,20 +1512,36 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
 }
 
 /* Apply permutation: out[perm[i]] = v[i] for N bits.
-   Branchless: mask = -(v_bit) is 0x00 or 0xFF; no branch on secret bits. */
+ * CT-03 (TODO #129 Batch 6): the write address `out->b[ob]` used to be
+ * `perm[i]`-dependent -- every byte was touched exactly once, but in an
+ * order and at addresses that varied with the (secret) permutation, a
+ * cache/memory-access-pattern side channel dudect's wall-clock harness
+ * cannot see (SecurityProofs-3.md SS11.11 Batch 2). This version instead
+ * scans every candidate output position j for every input bit i and writes
+ * into it with a constant-time "j == perm[i]" mask, so the sequence of
+ * memory addresses touched is always [0, KEYBYTES) x N regardless of
+ * perm[] or v -- fully oblivious at the cost of O(N^2) instead of O(N)
+ * byte touches (N <= KEYBITS = 256, so <= 65536 masked writes per call,
+ * negligible next to the surrounding Stern-F round cost). */
 static void stern_apply_perm(BitArray *out, const uint8_t *perm,
                               const BitArray *v, int N)
 {
-    int i;
+    int i, j;
     memset(out->b, 0, KEYBYTES);
     for (i = 0; i < N; i++) {
-        int byt     = KEYBYTES - 1 - i / 8;
-        int bit     = i % 8;
-        uint8_t vb  = (v->b[byt] >> bit) & 1u;
-        uint8_t mask = (uint8_t)(-(int8_t)vb);  /* 0x00 or 0xFF */
-        int ob  = KEYBYTES - 1 - perm[i] / 8;
-        int obb = perm[i] % 8;
-        out->b[ob] |= mask & (uint8_t)(1u << obb);
+        int byt      = KEYBYTES - 1 - i / 8;
+        int bit      = i % 8;
+        uint8_t vb   = (v->b[byt] >> bit) & 1u;
+        uint8_t vmask = (uint8_t)(-(int8_t)vb);   /* 0x00 or 0xFF */
+        uint8_t pi   = perm[i];
+        for (j = 0; j < N; j++) {
+            uint32_t d       = (uint32_t)(pi ^ (uint8_t)j);
+            uint32_t iszero  = ((d | (0u - d)) >> 31) ^ 1u;   /* 1 if d==0 */
+            uint8_t eq       = (uint8_t)(0u - iszero);        /* 0xFF or 0x00 */
+            int ob  = KEYBYTES - 1 - j / 8;
+            int obb = j % 8;
+            out->b[ob] |= eq & vmask & (uint8_t)(1u << obb);
+        }
     }
 }
 

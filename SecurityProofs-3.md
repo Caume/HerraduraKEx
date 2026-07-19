@@ -553,6 +553,46 @@ instrumentation rather than a code change: the residual hardware-level timing si
 permutation-index-dependent memory-access pattern (Batch 2). TODO #126's Stern-F "production
 gap" note narrows to exactly that scope.
 
+**Batch 6 — CT-03: `stern_apply_perm` made memory-access-oblivious (v1.9.99).** Closes the
+memory-access-pattern question Batch 2 flagged as out of a wall-clock harness's reach, with
+a structural code fix rather than measurement. The old implementation touched every output
+byte exactly once, at address `perm[i]`, for each input bit `i` — the *addresses*, and their
+order, varied with the secret permutation. The new implementation instead scans every
+candidate output position `j` in `[0, N)` for every input bit `i` and writes into it under a
+constant-time `j == perm[i]` mask (`d = pi ^ j; iszero = ((d | (0 - d)) >> 31) ^ 1`, a
+standard 8-bit-in-32-bit zero test), so the address sequence touched is always the full
+`[0, KEYBYTES) x N` grid regardless of `perm[]` or `v` — fully oblivious, at the cost of
+`O(N^2)` instead of `O(N)` masked writes (`<= 65536` at `N = KEYBITS = 256`, negligible next
+to the surrounding Stern-F round cost — `test_stern_interop.sh` still exercises 9/9
+signer/verifier pairs and `test_ring.sh` 21/21 OR-composed rounds with no observable slowdown
+in the demo-parameter benchmarks). This is a pure implementation change: the byte-level
+`out` value for any given `(perm, v)` is identical to before, so — unlike the `stern_gen_perm`
+fix in Batch 3 — this did **not** need synchronized Go/Python changes for interop; verified
+directly with `CliTest/test_stern_interop.sh` (9/9), `test_stern_kem.sh` (9/9), and
+`test_ring.sh` (21/21), all unchanged.
+
+**Re-measurement.** At 4000 rounds, `stern_apply_perm`'s own `|t|` (which calls
+`stern_gen_perm` internally, so it always carries that residual too) converges onto
+`stern_gen_perm`'s number rather than exceeding it: `16.75` vs. `stern_gen_perm`'s `16.65`
+(previously `11.78` vs. `5.22` in Batch 3 — a visibly larger apply-specific gap). At 20 000
+rounds the same pattern holds: `stern_apply_perm` `|t| = 24.76` against `stern_gen_perm`'s
+own `|t| = 44.74` — `stern_apply_perm` no longer shows a *larger* signal than the function it
+wraps, consistent with its own memory-access-pattern contribution having been eliminated and
+only the inherited `stern_gen_perm` residual (Batch 3, attributed to hardware-level timing at
+the degenerate all-zero test point) remaining.
+
+**Status after Batch 6.** Of the two items left open after Batch 5, one — `stern_apply_perm`'s
+memory-access-pattern leak — is now closed by a real code fix, confirmed by both the address
+argument above and by the disappearance of its independent wall-clock signal. The other —
+the hardware-level residual shared by `stern_gen_perm`/`stern_apply_perm` — remains open;
+it is intrinsic to `stern_gen_perm`'s PRNG draws hitting a degenerate all-zero fixed point
+under the dudect harness's "fixed" test class, not a control-flow or addressing bug, and
+closing it further would need cache/power-timing instrumentation (hardware performance
+counters, or a non-degenerate "fixed" class methodology) rather than another code change.
+TODO #126's Stern-F "production gap" note narrows accordingly: constant-time C is now
+addressed at the control-flow and memory-access level; what remains is a documented,
+small-magnitude, hardware-attributed residual.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
