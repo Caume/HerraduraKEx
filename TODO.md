@@ -7073,7 +7073,19 @@ with `CliTest/test_cred.sh` (5/5) and suite tests `[44]`/`[45]` (HCRED completen
 rejection and weak-key/malformed-input rejection, both `[PASS]`) — behavior unchanged, only
 the rejection path's timing profile changes. Documented in SecurityProofs-3.md §11.11.
 
-Status: **OPEN** — Batches 1-5 done (core arithmetic + protocol entry points; Stern-F/WOTS audit; Stern-F rejection-sampling fix; HKEX-RNL/ZKP-RNL/HCRED audit + fix). Remaining: the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal and `stern_apply_perm`'s memory-access-pattern (cache-timing) question — both require cache/power-timing instrumentation out of scope for a wall-clock harness, not a further code fix.
+**Batch 6 — CT-03: `stern_apply_perm` made memory-access-oblivious (v1.9.99).** Replaced the
+`perm[i]`-addressed byte write with an `O(N^2)` scan over every candidate output position
+under a constant-time equality mask, so the memory-access pattern no longer depends on the
+secret permutation at all (address sequence is always the full grid regardless of `perm[]`).
+Pure implementation change — output is byte-identical to before, so no Go/Python changes
+were needed; verified via `CliTest/test_stern_interop.sh` (9/9), `test_stern_kem.sh` (9/9),
+`test_ring.sh` (21/21). `stern_apply_perm`'s own wall-clock signal now tracks
+`stern_gen_perm`'s inherited residual instead of exceeding it (`|t|` 24.76 vs. 44.74 at
+20 000 rounds, `stern_apply_perm` no longer larger) — consistent with its independent
+memory-access-pattern leak being closed, leaving only the Batch 3 hardware-attributed
+residual shared by both functions. Documented in SecurityProofs-3.md §11.11.
+
+Status: **OPEN** — Batches 1-6 done. `stern_apply_perm`'s memory-access-pattern leak (Batch 2) is now closed by a code fix (Batch 6). What remains is the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal (Batch 3), attributed to PRNG behavior at a degenerate all-zero test point rather than a control-flow or addressing bug — closing it further needs cache/power-timing instrumentation, not another code change.
 
 ---
 
