@@ -165,6 +165,31 @@ For $k = n$ this is $S_n \cdot \delta N = 0$, so nonce changes are fully absorbe
 
 ---
 
+### 1.5 Machine-Checked Verification (Z3/SMT)
+
+The proofs in §1.1–§1.4 are hand-written. This subsection reports **mechanically verified** confirmation of the two central claims — FSCX periodicity (Theorems 2–4, Corollary 1) and the HPKS Schnorr verification identity (§2.3) — using the Z3 SMT solver. These are separate, distinct checks from the hand proofs above: they do not replace the algebraic argument, but they close the gap between "the algebra says this holds" and "a solver confirmed no counterexample exists at the bit level, for the exact rotate/XOR/field operations the C implementation uses."
+
+**Toolchain note:** Cryptol and F\* (the more typical formal-verification languages for this kind of claim) do not ship prebuilt binaries for aarch64 Linux and were not installed. Z3's Python bindings (`python3-z3`) are packaged for `arm64` and were used directly instead — the claims below are expressed as bitvector satisfiability queries (`UNSAT` of the negation of the claim over free symbolic variables, which establishes validity for *every* input at that bit width, not a sampled subset).
+
+**FSCX periodicity — `SecurityProofsCode/fscx_periodicity_z3.py`.** Encodes $M(x) = x \oplus \text{ROL}(x,1) \oplus \text{ROR}(x,1)$ directly as Z3 bitvector rotations and proves, for every power-of-two width $n \in \{8, 16, 32, 64, 128, 256\}$ — including the deployed $n = 256$ — via `UNSAT` of the negation over a free symbolic bitvector:
+
+- Theorem 2 ($M$ invertible): $M(x) = 0 \implies x = 0$, for all $x$.
+- Theorem 3 ($M$ has order $n/2$): $M^{n/2}(x) = x$, for all $x$.
+- Corollary 1 ($S_n = 0$): $\bigoplus_{j=0}^{n-1} M^j(x) = 0$, for all $x$.
+- Theorem 4 (period divides $n$): iterating `FSCX_REVOLVE`$(A, B, n)$ returns $A$, for all $A, B$.
+
+All twenty-four queries (four theorems times six widths) return `PROVED`. A supplementary empirical pass measures the *minimal* orbit period for random $(A, B)$ pairs at each width and confirms it is always exactly $n$ or $n/2$ — this narrower claim (stated as an empirical observation, not a proof, in §1.3) is not given a formal proof here either; only Theorem 4's weaker "period divides $n$" bound is machine-proved.
+
+**HPKS Schnorr identity — `SecurityProofsCode/hpks_schnorr_z3.py`.** Encodes `gf_mul`/`gf_pow` (§2.1's square-and-multiply, same structure as `SecurityProofsCode/hkex_gf_test.py`) as Z3 bitvector circuits and checks $g^s \cdot C^e = R$ where $C = g^a$, $R = g^k$, $s = (k - a \cdot e) \bmod \text{ord}$:
+
+- **$n = 4$:** fully symbolic `UNSAT` proof — holds for every $(a, k, e)$ triple at this width.
+- **$n = 8$:** the fully symbolic query does not terminate in reasonable time (the modular exponent reduction is nonlinear bitvector arithmetic that blows up general-purpose SMT search); instead every $(a, e)$ pair is enumerated by direct computation against six representative $k$ values (0, 1, near-midpoint, near-max, max) — 393,216 cases, all pass.
+- **$n \in \{32, 64, 256\}$:** 200 random $(a, k, e)$ triples each, including the deployed $n = 256$ with `herradura.h`'s actual `GF_POLY` — all pass.
+
+Only the $n = 4$ result is a formal SMT proof in the strict sense; the $n = 8$ pass is complete enumeration over $(a,e)$ (not full case enumeration including $k$), and the $n \geq 32$ passes are randomized sampling, not exhaustive. The identity itself is a property of exponent arithmetic in any group of order $\text{ord}$ (it holds independent of field size once $g^{\text{ord}} = 1$, which follows from Lagrange's theorem), so the $n=4$ proof and the larger-width spot checks together corroborate that the same code path behaves consistently from the fully-verified case up to the deployed width.
+
+---
+
 ## 2. Protocol Analysis
 
 ### 2.1 HKEX — Key Exchange

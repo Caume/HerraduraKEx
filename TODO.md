@@ -7171,7 +7171,12 @@ natural.
 4. Document the verified claims and toolchain in a new SecurityProofs subsection, distinct from
    the hand-proved sections, so readers can see which claims are machine-checked.
 
-Status: **OPEN**
+Status: **DONE v1.9.100** — Cryptol/F* unavailable on this aarch64 host (no prebuilt
+binaries); used Z3 (`python3-z3`, packaged for arm64) instead. `fscx_periodicity_z3.py`
+proves M invertible, order n/2, S_n=0, and FSCX_REVOLVE(A,B,n)=A for every input at
+n=8..256 (incl. deployed 256) via SMT UNSAT-of-negation. `hpks_schnorr_z3.py` proves the
+Schnorr identity g^s * C^e == R fully symbolically at n=4, by complete (a,e) enumeration
+at n=8, and by random sampling at n=32/64/256. Documented in `SecurityProofs-1.md` §1.5.
 
 ---
 
