@@ -241,6 +241,9 @@ func DerParseSeq(der []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("DER INTEGER length: %w", err)
 		}
 		offset += c
+		if vlen > end-offset {
+			return nil, errors.New("DER: INTEGER length exceeds SEQUENCE body")
+		}
 		vp := der[offset : offset+vlen]
 		// strip leading 0x00 sign byte
 		if len(vp) > 1 && vp[0] == 0x00 {

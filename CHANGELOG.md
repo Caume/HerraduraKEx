@@ -2,6 +2,43 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.101] - 2026-07-22
+
+### Added
+- **Fuzzing harness for the PEM/DER codec and CLI argument parsing across all three
+  language targets (TODO #130).** `Fuzz/` adds: libFuzzer targets for the C codec
+  (`fuzz_b64_decode.c`, `fuzz_der_parse_seq.c`, `fuzz_pem_unwrap.c` against
+  `herradura_codec.h`); native Go fuzz targets (`herradura/codec_fuzz_test.go`:
+  `FuzzPemUnwrap`, `FuzzDerParseSeq`); a Hypothesis-based property suite for
+  `HerraduraCli/codec.py` (`fuzz_codec_py.py`, using `python3-hypothesis` since
+  `atheris` has no working build path here); and a black-box argv fuzzer exercising
+  all three CLI binaries with malformed flags/files (`fuzz_cli_args.py`). No CI exists
+  in this repo, so `Fuzz/run_fuzz.sh` is the documented manual invocation point
+  (`Fuzz/README.md`).
+
+### Fixed
+- **Stack buffer overflow in `b64_decode`/`pem_unwrap` (C, `herradura_codec.h`),
+  found while building the above harness.** Neither function bounded its output
+  writes against the caller's buffer capacity, despite the documented API contract
+  already claiming one; `herradura_cli.c`'s `zkp_pem_peek_label` passed a fixed
+  4096-byte stack buffer that a crafted PEM file's oversized base64 body could
+  overflow. Both functions now take an explicit capacity parameter and reject
+  (return -1) rather than overflow; all call sites updated.
+- **Out-of-bounds read in `der_parse_seq` (C, `herradura_codec.h`) and an
+  equivalent slice-bounds panic in `DerParseSeq` (Go, `herradura/codec.go`).**
+  Neither validated a claimed DER length field (SEQUENCE body or nested INTEGER)
+  against the actual buffer size before indexing into it; a 2-byte input
+  (`30 40`) was enough to trigger the C OOB read. Both now bounds-check every
+  claimed length before use.
+- **`der_parse_seq`/`pem_unwrap` (Python, `HerraduraCli/codec.py`) could raise
+  `IndexError` instead of `ValueError`** on truncated length fields or empty PEM
+  text, an inconsistent error contract versus the C/Go implementations (not
+  memory-unsafe in Python, but hardened to always raise `ValueError`).
+- **Pre-existing `herradura_codec_selftest` buffer overflow**, unrelated to the
+  above but caught incidentally by ASan while validating the fixes: the
+  DER-INTEGER known-answer test reused a 16-byte stack buffer for a 35-byte
+  encode result.
+
 ## [1.9.100] - 2026-07-20
 
 ### Added

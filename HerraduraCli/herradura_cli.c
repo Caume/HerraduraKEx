@@ -203,7 +203,7 @@ static void pem_key_load(PemKey *k, const char *path)
     size_t der_cap = raw_len;  /* base64 expands ≤ raw, so DER ≤ raw_len */
     k->der = malloc(der_cap);
     if (!k->der) die("out of memory");
-    if (pem_unwrap((char *)raw, raw_len, k->label, k->der, &k->der_len) != 0)
+    if (pem_unwrap((char *)raw, raw_len, k->label, k->der, der_cap, &k->der_len) != 0)
         dief("cannot parse PEM from: %s", path);
     free(raw);
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
@@ -222,8 +222,10 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
     if (!buf) die("out of memory");
     /* pem_read_file opens the file itself; raw is only for sizing */
     free(raw);
-    if (pem_read_file(path, label, buf, &cap) != 0)
+    size_t written;
+    if (pem_read_file(path, label, buf, cap, &written) != 0)
         dief("cannot parse PEM from: %s", path);
+    cap = written;
     if (expect_label && strcmp(label, expect_label) != 0) {
         free(buf);
         fprintf(stderr, "expected PEM label '%s', got '%s'\n", expect_label, label);
@@ -236,10 +238,10 @@ static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, siz
 /* Peek at a PEM label without DER-parsing the body. */
 static void zkp_pem_peek_label(const char *path, char label_out[80])
 {
-    size_t dummy_len = 4096;
+    size_t dummy_len;
     uint8_t dummy[4096];
     memset(label_out, 0, 80);
-    pem_read_file(path, label_out, dummy, &dummy_len);
+    pem_read_file(path, label_out, dummy, sizeof(dummy), &dummy_len);
 }
 
 /* Serialize ZkpNlRound[] to raw bytes (matches Python encode_zkp_nl_proof). */

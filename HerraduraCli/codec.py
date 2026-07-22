@@ -50,18 +50,33 @@ def der_seq(*items: bytes) -> bytes:
 
 
 def der_parse_seq(data: bytes) -> list:
-    """Decode a DER SEQUENCE of INTEGERs; return list of Python ints."""
+    """Decode a DER SEQUENCE of INTEGERs; return list of Python ints.
+
+    Raises ValueError on any malformed input (never lets an IndexError
+    escape from an attacker-controlled length field)."""
+    if not data:
+        raise ValueError("Empty DER input")
     if data[0] != 0x30:
         raise ValueError(f"Expected SEQUENCE tag 0x30, got 0x{data[0]:02x}")
     offset = 1
-    length, offset = _read_length(data, offset)
+    try:
+        length, offset = _read_length(data, offset)
+    except IndexError:
+        raise ValueError("DER: truncated SEQUENCE length field")
     end = offset + length
+    if end > len(data):
+        raise ValueError("DER: SEQUENCE body truncated")
     results = []
     while offset < end:
         if data[offset] != 0x02:
             raise ValueError(f"Expected INTEGER tag 0x02, got 0x{data[offset]:02x}")
         offset += 1
-        vlen, offset = _read_length(data, offset)
+        try:
+            vlen, offset = _read_length(data, offset)
+        except IndexError:
+            raise ValueError("DER: truncated INTEGER length field")
+        if vlen > end - offset:
+            raise ValueError("DER: INTEGER length exceeds SEQUENCE body")
         val_bytes = data[offset:offset + vlen]
         offset += vlen
         # Strip optional leading zero byte used as positive sign indicator
@@ -108,13 +123,21 @@ def pem_wrap(label: str, data: bytes) -> str:
 
 
 def pem_unwrap(pem_text: str) -> tuple:
-    """Unwrap a PEM block; return (label, binary_data)."""
+    """Unwrap a PEM block; return (label, binary_data).
+
+    Raises ValueError on any malformed input."""
     lines = pem_text.strip().splitlines()
-    if not (lines[0].startswith('-----BEGIN ') and lines[-1].startswith('-----END ')):
+    if not lines:
         raise ValueError("Not a valid PEM block")
-    label = lines[0][11:-5]
+    if not (lines[0].startswith('-----BEGIN ') and lines[0].endswith('-----')
+            and lines[-1].startswith('-----END ') and lines[-1].endswith('-----')):
+        raise ValueError("Not a valid PEM block")
+    label = lines[0][len('-----BEGIN '):-len('-----')]
     b64 = ''.join(lines[1:-1])
-    return label, base64.b64decode(b64)
+    try:
+        return label, base64.b64decode(b64)
+    except Exception as e:
+        raise ValueError(f"PEM: base64 decode failed: {e}")
 
 
 # ---------------------------------------------------------------------------
