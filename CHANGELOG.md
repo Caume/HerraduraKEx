@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.100] - 2026-07-20
+
+### Added
+- **Machine-checked (Z3/SMT) verification of FSCX periodicity and the HPKS Schnorr
+  identity (TODO #132).** Cryptol and F* have no aarch64-Linux prebuilt binaries and were
+  not installed; `python3-z3` (packaged for `arm64`) was used instead.
+  `SecurityProofsCode/fscx_periodicity_z3.py` encodes the FSCX linear map `M` as Z3
+  bitvector rotations and proves — via UNSAT of the negation over free symbolic bitvectors,
+  i.e. valid for every input at that width, not sampled — that `M` is invertible, has order
+  `n/2`, that `S_n = 0`, and that `FSCX_REVOLVE(A,B,n) = A`, at every power-of-two width from
+  8 to the deployed 256 (Theorems 2-4, Corollary 1 in `SecurityProofs-1.md` §1).
+  `SecurityProofsCode/hpks_schnorr_z3.py` encodes `gf_mul`/`gf_pow` as Z3 circuits and checks
+  the Schnorr verification identity `g^s * C^e == R`: fully symbolic SMT proof at n=4 (where
+  the query is tractable), complete `(a,e)` enumeration at n=8 (the fully symbolic query
+  does not terminate there), and randomized sampling at n=32/64/256 including `herradura.h`'s
+  actual `GF_POLY`. Findings documented in a new `SecurityProofs-1.md` §1.5, distinct from the
+  hand-proved sections.
+
 ## [1.9.99] - 2026-07-19
 
 ### Fixed
