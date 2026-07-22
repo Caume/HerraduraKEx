@@ -1,0 +1,6 @@
+herradura_cli_asan
+fuzz_b64_decode
+fuzz_der_parse_seq
+fuzz_pem_unwrap
+corpus/*/*
+crash-*

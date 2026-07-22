@@ -146,11 +146,12 @@ static int _b64_val(char c)
     return -1; /* whitespace, '=', or invalid — skip */
 }
 
-/* Decode base64 (whitespace and '=' padding ignored).
- * Returns 0 on success, -1 on bad input.
- * *out_len is set to the number of bytes written. */
+/* Decode base64 (whitespace and '=' padding ignored) into out, which holds at
+ * most out_cap bytes. Returns 0 on success, -1 on bad input or if the decoded
+ * output would exceed out_cap (nothing beyond out[0..out_cap-1] is written).
+ * *out_len is set to the number of bytes written (only on success). */
 static int b64_decode(const char *in, size_t in_len,
-                      uint8_t *out, size_t *out_len)
+                      uint8_t *out, size_t out_cap, size_t *out_len)
 {
     uint32_t acc = 0;
     int bits = 0;
@@ -162,6 +163,7 @@ static int b64_decode(const char *in, size_t in_len,
         bits += 6;
         if (bits >= 8) {
             bits -= 8;
+            if (n >= out_cap) return -1;
             out[n++] = (uint8_t)((acc >> bits) & 0xFF);
         }
     }
@@ -254,12 +256,19 @@ static int der_parse_seq(const uint8_t *der, size_t len,
     offset = 1;
     if (_der_dec_len(der + offset, len - offset, &body_len, &consumed) < 0) return -1;
     offset += consumed;
+    /* Reject a claimed SEQUENCE body that runs past the actual buffer --
+     * without this check `end` is attacker-controlled and every access below
+     * (der[offset], vp[0], etc.) can read out of bounds. */
+    if (body_len > len - offset) return -1;
     size_t end = offset + body_len;
     while (offset < end && n < max_items) {
         if (der[offset] != 0x02) return -1;
         offset++;
+        if (offset > end) return -1;
         if (_der_dec_len(der + offset, end - offset, &vlen, &consumed) < 0) return -1;
         offset += consumed;
+        /* Reject a claimed INTEGER length that runs past the SEQUENCE body. */
+        if (vlen > end - offset) return -1;
         const uint8_t *vp = der + offset;
         size_t vl = vlen;
         /* strip leading 0x00 sign byte (matches Python der_parse_seq) */
@@ -299,11 +308,13 @@ static int pem_wrap(const char *label, const uint8_t *der, size_t der_len,
 /* Parse a PEM block.
  * label_out: caller-allocated buffer of at least PEM_LABEL_MAX+1 bytes; receives
  *   NUL-terminated label.  Returns -1 if the label exceeds PEM_LABEL_MAX characters.
- * der_out / *der_len: caller-provided buffer and its capacity on input;
- *   receives decoded DER bytes and byte count on output.
- * Returns 0 on success, -1 on malformed PEM, oversized label, or buffer too small. */
+ * der_out / der_cap: caller-provided buffer and its capacity.
+ * *der_len: receives the decoded byte count on success.
+ * Returns 0 on success, -1 on malformed PEM, oversized label, or buffer too small
+ * (der_cap exceeded -- nothing beyond der_out[0..der_cap-1] is ever written). */
 static int pem_unwrap(const char *pem, size_t pem_len,
-                      char *label_out, uint8_t *der_out, size_t *der_len)
+                      char *label_out, uint8_t *der_out, size_t der_cap,
+                      size_t *der_len)
 {
     const char *p = pem, *end = pem + pem_len;
 
@@ -336,15 +347,16 @@ static int pem_unwrap(const char *pem, size_t pem_len,
     }
     if (!foot) return -1;
 
-    return b64_decode(body, (size_t)(foot - body), der_out, der_len);
+    return b64_decode(body, (size_t)(foot - body), der_out, der_cap, der_len);
 }
 
 /* Read a PEM file from path.
  * label_out: caller-allocated >= 80 bytes.
- * der_out / *der_len: buffer + capacity (updated to actual bytes on return).
- * Returns 0 on success, -1 on I/O or parse error. */
+ * der_out / der_cap: buffer + capacity; *der_len receives the actual byte
+ *   count on success.
+ * Returns 0 on success, -1 on I/O, parse error, or buffer too small. */
 static int pem_read_file(const char *path, char *label_out,
-                         uint8_t *der_out, size_t *der_len)
+                         uint8_t *der_out, size_t der_cap, size_t *der_len)
 {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
@@ -357,7 +369,7 @@ static int pem_read_file(const char *path, char *label_out,
     size_t rd = fread(buf, 1, (size_t)sz, f);
     fclose(f);
     buf[rd] = '\0';
-    int r = pem_unwrap(buf, rd, label_out, der_out, der_len);
+    int r = pem_unwrap(buf, rd, label_out, der_out, der_cap, der_len);
     free(buf);
     return r;
 }
@@ -399,8 +411,19 @@ static int herradura_codec_selftest(void)
         size_t b64_len, dec_len;
 
         b64_encode(orig, 6, b64, &b64_len);
-        assert(b64_decode(b64, b64_len, dec, &dec_len) == 0);
+        assert(b64_decode(b64, b64_len, dec, sizeof(dec), &dec_len) == 0);
         assert(dec_len == 6 && memcmp(orig, dec, 6) == 0);
+    }
+
+    /* ── 1b. b64_decode rejects output that would exceed the capacity ──────── */
+    {
+        static const uint8_t orig[] = {0x00,0x01,0x02,0x03,0x04,0x05};
+        char b64[B64_ENC_LEN(6)];
+        uint8_t dec[3]; /* too small for the 6 decoded bytes */
+        size_t b64_len;
+
+        b64_encode(orig, 6, b64, &b64_len);
+        assert(b64_decode(b64, b64_len, dec, sizeof(dec), NULL) == -1);
     }
 
     /* ── 2. Base64 known-answer (Python base64.b64encode(b'\x00\x01\x02\x03')
@@ -414,7 +437,7 @@ static int herradura_codec_selftest(void)
 
     /* ── 3. DER INTEGER known-answers ───────────────────────────────────────── */
     {
-        uint8_t out[16];
+        uint8_t out[DER_INT_LEN(32)]; /* must fit the 32-byte-input case below */
         size_t olen;
 
         /* der_int(42) == 02 01 2a */
@@ -487,9 +510,21 @@ static int herradura_codec_selftest(void)
         char label[80];
         uint8_t der2[32];
         size_t der2_len;
-        assert(pem_unwrap(pem, pem_len, label, der2, &der2_len) == 0);
+        assert(pem_unwrap(pem, pem_len, label, der2, sizeof(der2), &der2_len) == 0);
         assert(strcmp(label, "TEST") == 0);
         assert(der2_len == 9 && memcmp(der, der2, 9) == 0);
+    }
+
+    /* ── 5b. pem_unwrap rejects DER output that would exceed der_cap ────────── */
+    {
+        static const uint8_t der[] = {0x30,0x07,0x02,0x01,0x2a,0x02,0x02,0x01,0x00};
+        char pem[PEM_WRAP_LEN(9, 4)];
+        size_t pem_len;
+        assert(pem_wrap("TEST", der, 9, pem, &pem_len) == 0);
+
+        char label[80];
+        uint8_t der2[4]; /* too small for the 9-byte DER payload */
+        assert(pem_unwrap(pem, pem_len, label, der2, sizeof(der2), NULL) == -1);
     }
 
     /* ── 6. PEM label constants (spot-check) ────────────────────────────────── */
@@ -515,8 +550,8 @@ static int herradura_codec_selftest(void)
 
         char lout[PEM_LABEL_MAX + 1];
         uint8_t dout[32];
-        size_t dlen = sizeof(dout);
-        assert(pem_unwrap(bad_pem, (size_t)bp, lout, dout, &dlen) == -1);
+        size_t dlen;
+        assert(pem_unwrap(bad_pem, (size_t)bp, lout, dout, sizeof(dout), &dlen) == -1);
     }
 
     return 1;

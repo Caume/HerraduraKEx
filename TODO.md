@@ -7108,7 +7108,16 @@ in cryptographic tooling (parser bugs, not algebra, are what usually get CVEs).
 5. Wire a short fuzzing run (time-boxed) into CI if one exists, or document a manual
    `make fuzz` / script-based invocation otherwise.
 
-Status: **OPEN**
+Status: **DONE v1.9.101** — `Fuzz/` adds libFuzzer targets for the C codec
+(b64_decode/der_parse_seq/pem_unwrap), native Go fuzz targets for the Go codec, a
+Hypothesis-based suite for the Python codec (atheris has no working build path here),
+and a black-box argv fuzzer across all three CLIs. No CI exists in this repo, so
+`Fuzz/run_fuzz.sh` + `Fuzz/README.md` document the manual invocation. Found and fixed
+5 bugs in the process: a stack buffer overflow in C `b64_decode`/`pem_unwrap`, an OOB
+read in C `der_parse_seq`, an equivalent slice-panic in Go `DerParseSeq`, inconsistent
+exception types in Python `codec.py`, and an unrelated pre-existing self-test overflow.
+All four fuzz surfaces ran clean (15M+ C execs, 4M+ Go execs, 60k Hypothesis examples,
+1300+ CLI trials) after the fixes.
 
 ---
 
