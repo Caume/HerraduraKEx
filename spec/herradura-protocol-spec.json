@@ -1,0 +1,898 @@
+{
+  "suite": "HerraduraKEx",
+  "spec_version": "1.0.0",
+  "generated_from": [
+    "HerraduraCli/herradura.py (_PRIV_ALGOS dict, argparse choices=)",
+    "HerraduraCli/herradura_codec.h (PEM_* constants)",
+    "herradura.h (protocol parameter #define constants)",
+    "herradura/herradura.go (Stern-F parameter const block)"
+  ],
+  "protocols": [
+    {
+      "id": "hcred",
+      "name": "HCRED (hybrid credential)",
+      "kind": "credential",
+      "pem_labels": {
+        "private_key": "HERRADURA HCRED PRIVATE KEY",
+        "public_key": "HERRADURA HCRED PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": false,
+        "python": true
+      },
+      "security": {
+        "status": "research",
+        "quantum_resistant": "conjectured",
+        "notes": "Hybrid credential construction (Stern-based); Python and C CLI only, not in Go."
+      }
+    },
+    {
+      "id": "hfscx-256",
+      "name": "HFSCX-256 (Merkle-Damgard hash)",
+      "kind": "hash",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Merkle-Damgard hash built on NL-FSCX v1, with Davies-Meyer feed-forward."
+      }
+    },
+    {
+      "id": "hfscx-256-ds",
+      "name": "HFSCX-256-DS (domain-separated variant)",
+      "kind": "hash",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "hfscx-256 with an explicit domain-separation parameter."
+      }
+    },
+    {
+      "id": "hkex-gf",
+      "name": "HKEX-GF (Diffie-Hellman over GF(2^n)*)",
+      "kind": "kex",
+      "pem_labels": {
+        "private_key": "HERRADURA HKEX-GF PRIVATE KEY",
+        "public_key": "HERRADURA HKEX-GF PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "pedagogical",
+        "quantum_resistant": false,
+        "classical_security_bits": "~80-90 (n=256)",
+        "notes": "GF(2^n)* Diffie-Hellman. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) deprecate GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
+        "source": [
+          "TODO.md #127 (6943-6949)"
+        ]
+      }
+    },
+    {
+      "id": "hkex-rnl",
+      "name": "HKEX-RNL (Ring-LWR key exchange)",
+      "kind": "kex",
+      "pem_labels": {
+        "private_key": "HERRADURA HKEX-RNL PRIVATE KEY",
+        "public_key": "HERRADURA HKEX-RNL PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Ring-LWR key exchange; conjectured quantum-resistant (lattice-based).",
+        "source": [
+          "CLAUDE.md (206)"
+        ]
+      }
+    },
+    {
+      "id": "hpke",
+      "name": "HPKE (El Gamal encryption over GF(2^n)*)",
+      "kind": "encryption",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKE PRIVATE KEY",
+        "public_key": "HERRADURA HPKE PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "pedagogical",
+        "quantum_resistant": false,
+        "classical_security_bits": "~80-90 (n=256)",
+        "notes": "El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf.",
+        "source": [
+          "TODO.md #127"
+        ]
+      }
+    },
+    {
+      "id": "hpke-nl",
+      "name": "HPKE-NL (NL-FSCX-hardened El Gamal, classical only)",
+      "kind": "encryption",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKE-NL PRIVATE KEY",
+        "public_key": "HERRADURA HPKE-NL PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "deprecated",
+        "quantum_resistant": false,
+        "notes": "NL-FSCX-hardened classical El Gamal variant; NOT quantum-resistant; PQC claim deprecated, no lattice-based replacement planned.",
+        "source": [
+          "TODO.md #5 (2901)",
+          "TODO.md (351)"
+        ]
+      }
+    },
+    {
+      "id": "hpke-stern",
+      "name": "HPKE-Stern-F (Niederreiter KEM)",
+      "kind": "kem",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKE-STERN PRIVATE KEY",
+        "public_key": "HERRADURA HPKE-STERN PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "notes": "Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production requires an actual QC-MDPC syndrome decoder, not yet implemented.",
+        "source": [
+          "CLAUDE.md:228",
+          "TODO.md #126 (6896-6924)"
+        ]
+      }
+    },
+    {
+      "id": "hpke-stern-kem",
+      "name": "HPKE-Stern-KEM (Niederreiter KEM, alternate encoding)",
+      "kind": "kem",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKE-STERN-KEM PRIVATE KEY",
+        "public_key": "HERRADURA HPKE-STERN-KEM PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "notes": "Same demo-decap caveat as hpke-stern.",
+        "source": [
+          "TODO.md (6469)"
+        ]
+      }
+    },
+    {
+      "id": "hpks",
+      "name": "HPKS (Schnorr signature over GF(2^n)*)",
+      "kind": "signature",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKS PRIVATE KEY",
+        "public_key": "HERRADURA HPKS PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "pedagogical",
+        "quantum_resistant": false,
+        "classical_security_bits": "~80-90 (n=256)",
+        "notes": "Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf.",
+        "source": [
+          "TODO.md #127"
+        ]
+      }
+    },
+    {
+      "id": "hpks-nl",
+      "name": "HPKS-NL (NL-FSCX-hardened Schnorr, classical only)",
+      "kind": "signature",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKS-NL PRIVATE KEY",
+        "public_key": "HERRADURA HPKS-NL PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "deprecated",
+        "quantum_resistant": false,
+        "notes": "NL-FSCX-hardened classical Schnorr variant; NOT quantum-resistant despite the 'NL' naming suggesting a PQC upgrade -- PQC claim deprecated, no lattice-based replacement planned.",
+        "source": [
+          "TODO.md #5 (2901)",
+          "TODO.md (351)"
+        ]
+      }
+    },
+    {
+      "id": "hpks-ring",
+      "name": "HPKS-Ring (anonymous ring signature)",
+      "kind": "signature",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "notes": "Anonymous ring signature built on hpks-stern keys; inherits hpks-stern's demo-rounds soundness caveat.",
+        "source": [
+          "herradura.h SDF_* constants"
+        ]
+      }
+    },
+    {
+      "id": "hpks-stern",
+      "name": "HPKS-Stern-F (Fiat-Shamir signature from Stern ZKID)",
+      "kind": "signature",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKS-STERN PRIVATE KEY",
+        "public_key": "HERRADURA HPKS-STERN PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "classical_security_bits": "~56-60 at shipped SDF_ROUNDS=32 (production requires SDF_PRODUCTION_ROUNDS=219 for 128-bit soundness)",
+        "notes": "Fiat-Shamir signature from the Stern identification protocol (syndrome decoding). Shipped SDF_ROUNDS=32 is a demo parameter; herradura.h emits a #pragma message warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS.",
+        "source": [
+          "herradura.h:1383-1392",
+          "herradura/herradura.go:1108-1110"
+        ]
+      }
+    },
+    {
+      "id": "hpks-t",
+      "name": "HPKS-T (threshold Schnorr signature)",
+      "kind": "signature",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Threshold HPKS-T signing (commit/aggregate/respond/combine phases); verify-only algo tag -- signing goes through the separate threshold-* subcommands, not `sign`."
+      }
+    },
+    {
+      "id": "hpks-wots",
+      "name": "HPKS-WOTS (Winternitz one-time signature)",
+      "kind": "signature",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKS-WOTS PRIVATE KEY",
+        "public_key": "HERRADURA HPKS-WOTS PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Winternitz one-time signature (hash-based). Strictly one-time -- reuse of a WOTS key is refused by the CLI.",
+        "source": [
+          "herradura.h WOTS_* constants"
+        ]
+      }
+    },
+    {
+      "id": "hpks-xmss",
+      "name": "HPKS-XMSS (hash-based, Python-only prototype)",
+      "kind": "signature",
+      "pem_labels": {
+        "private_key": "HERRADURA HPKS-XMSS PRIVATE KEY",
+        "public_key": "HERRADURA HPKS-XMSS PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": false,
+        "go": false,
+        "python": true
+      },
+      "security": {
+        "status": "pedagogical",
+        "quantum_resistant": "conjectured",
+        "notes": "Python-only prototype; not implemented in the C or Go CLI, not cross-language wire-compatible with anything else in the suite.",
+        "source": [
+          "HerraduraCli/herradura.py (Python-only)"
+        ]
+      }
+    },
+    {
+      "id": "hpks-zkp-nl",
+      "name": "HPKS-ZKP-NL (keygen for ZKBoo/ZKB++)",
+      "kind": "zkp",
+      "pem_labels": {
+        "private_key": "HERRADURA ZKP-NL PRIVATE KEY",
+        "public_key": "HERRADURA ZKP-NL PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols (nl-zkboo, nl-zkbpp).",
+        "source": [
+          "herradura.h ZKP_NL_* constants"
+        ]
+      }
+    },
+    {
+      "id": "hske",
+      "name": "HSKE (classical symmetric encryption)",
+      "kind": "encryption",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": false,
+        "notes": "Classical symmetric encryption via FSCX_REVOLVE; not quantum-resistant by design (a symmetric primitive, not a PQC construction)."
+      }
+    },
+    {
+      "id": "hske-duplex",
+      "name": "HSKE-Duplex (single-pass AEAD)",
+      "kind": "aead",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Arbitrary-length single-pass AEAD construction."
+      }
+    },
+    {
+      "id": "hske-nla1",
+      "name": "HSKE-NL-A1 (NL-FSCX counter-mode AEAD)",
+      "kind": "aead",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "NL-FSCX v1 counter-mode; supports --aead authenticated encryption."
+      }
+    },
+    {
+      "id": "hske-nla2",
+      "name": "HSKE-NL-A2 (NL-FSCX revolve-mode encryption)",
+      "kind": "encryption",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "NL-FSCX v2 revolve-mode symmetric encryption."
+      }
+    },
+    {
+      "id": "nl-zkboo",
+      "name": "ZKBoo (NL-FSCX preimage proof)",
+      "kind": "zkp",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "notes": "ZKBoo MPC-in-the-head proof of NL-FSCX preimage knowledge. Shipped default rounds is a demo parameter (ZKP_NL_DEMO_ROUNDS=4); production requires ZKP_NL_PROD_ROUNDS=219 for (2/3)^R soundness at 128 bits.",
+        "source": [
+          "herradura.h:2386-2392"
+        ]
+      }
+    },
+    {
+      "id": "nl-zkbpp",
+      "name": "ZKB++ (NL-FSCX preimage proof)",
+      "kind": "zkp",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "notes": "ZKB++ variant of the same construction; same demo-rounds caveat as nl-zkboo.",
+        "source": [
+          "herradura.h:2386-2392"
+        ]
+      }
+    },
+    {
+      "id": "oprf",
+      "name": "OPRF (2HashDH oblivious PRF over GF(2^n)*)",
+      "kind": "oprf",
+      "pem_labels": {
+        "private_key": "HERRADURA OPRF PRIVATE KEY",
+        "public_key": "HERRADURA OPRF PUBLIC KEY"
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": false,
+        "notes": "2HashDH OPRF over GF(2^n)*; inherits GF(2^n)* classical-only security."
+      }
+    },
+    {
+      "id": "rnl-sigma",
+      "name": "ZKP-RNL Sigma-protocol",
+      "kind": "zkp",
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "production",
+        "quantum_resistant": "conjectured",
+        "notes": "Sigma-protocol proof of knowledge of an HKEX-RNL private key.",
+        "source": [
+          "CLAUDE.md",
+          "SecurityProofs-3.md"
+        ]
+      }
+    }
+  ],
+  "wire_format_labels": {
+    "PEM_CIPHERTEXT": "HERRADURA CIPHERTEXT",
+    "PEM_DIGEST": "HERRADURA DIGEST",
+    "PEM_HCRED_CRED": "HERRADURA HCRED CREDENTIAL",
+    "PEM_HCRED_PROOF": "HERRADURA HCRED PROOF",
+    "PEM_HDRBG_STATE": "HERRADURA HDRBG STATE",
+    "PEM_HPKE_STERN_KEM_CT": "HERRADURA HPKE-STERN-KEM CIPHERTEXT",
+    "PEM_HPKST_AGGREGATE": "HERRADURA HPKST AGGREGATE",
+    "PEM_HPKST_COMMIT": "HERRADURA HPKST COMMITMENT",
+    "PEM_HPKST_NONCE": "HERRADURA HPKST NONCE",
+    "PEM_HPKST_PARTIAL": "HERRADURA HPKST PARTIAL",
+    "PEM_HPKST_SIG": "HERRADURA HPKST SIGNATURE",
+    "PEM_HPKS_RING_SIG": "HERRADURA HPKS-RING SIGNATURE",
+    "PEM_HPKS_WOTS_SIG": "HERRADURA HPKS-WOTS SIGNATURE",
+    "PEM_OPRF_EVAL": "HERRADURA OPRF EVALUATION",
+    "PEM_OPRF_STATE": "HERRADURA OPRF CLIENT STATE",
+    "PEM_PAKE_RECORD": "HERRADURA PAKE RECORD",
+    "PEM_RNL_RESPONSE": "HERRADURA HKEX-RNL RESPONSE",
+    "PEM_SESSION_KEY": "HERRADURA SESSION KEY",
+    "PEM_SIGNATURE": "HERRADURA SIGNATURE",
+    "PEM_ZKP_NL_PP_SIG": "HERRADURA ZKP-NL-PP SIGNATURE",
+    "PEM_ZKP_NL_PROOF": "HERRADURA ZKP-NL PROOF",
+    "PEM_ZKP_RNL_PROOF": "HERRADURA ZKP-RNL PROOF"
+  },
+  "cli_subcommands": {
+    "kex": {
+      "has_algo_flag": true,
+      "algos": {
+        "hkex-gf": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hkex-rnl": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "enc": {
+      "has_algo_flag": true,
+      "algos": {
+        "hske": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-nla1": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-nla2": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-duplex": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern-kem": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "dec": {
+      "has_algo_flag": true,
+      "algos": {
+        "hske": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-nla1": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-nla2": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hske-duplex": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern-kem": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "sign": {
+      "has_algo_flag": true,
+      "algos": {
+        "hpks": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "rnl-sigma": [
+          "c",
+          "go",
+          "python"
+        ],
+        "nl-zkboo": [
+          "c",
+          "go",
+          "python"
+        ],
+        "nl-zkbpp": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-xmss": [
+          "python"
+        ],
+        "hpks-wots": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-ring": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "verify": {
+      "has_algo_flag": true,
+      "algos": {
+        "hpks": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "rnl-sigma": [
+          "c",
+          "go",
+          "python"
+        ],
+        "nl-zkboo": [
+          "c",
+          "go",
+          "python"
+        ],
+        "nl-zkbpp": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-xmss": [
+          "python"
+        ],
+        "hpks-wots": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-ring": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-t": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "encfile": {
+      "has_algo_flag": true,
+      "algos": {
+        "hske-nla1": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "decfile": {
+      "has_algo_flag": true,
+      "algos": {
+        "hske-nla1": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "dgst": {
+      "has_algo_flag": true,
+      "algos": {
+        "hfscx-256": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hfscx-256-ds": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "genpkey": {
+      "has_algo_flag": true,
+      "algos": {
+        "hkex-gf": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hkex-rnl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern-kem": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-wots": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-xmss": [
+          "python"
+        ],
+        "hpks-zkp-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "oprf": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    }
+  },
+  "cross_implementation_gaps": [
+    {
+      "feature": "hpks-xmss algo tag",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go"
+      ],
+      "note": "No C/Go equivalent; not wire-compatible with anything else in the suite."
+    },
+    {
+      "feature": "hcred keygen + cred-issue/cred-prove/cred-verify subcommands",
+      "present_in": [
+        "c",
+        "python"
+      ],
+      "missing_from": [
+        "go"
+      ],
+      "note": null
+    },
+    {
+      "feature": "genpkey --help text completeness",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go"
+      ],
+      "note": "C's usage() omits oprf/hcred from the genpkey line despite dispatching both; Go's banner omits hpke-stern-kem, nl-zkbpp, oprf, hpks-t despite dispatching all. This spec's algo enumeration is sourced from dispatch/choices logic, not --help text."
+    }
+  ],
+  "parameters": {
+    "classical": {
+      "keybits": 256
+    },
+    "stern_f": {
+      "n_rows": 128,
+      "t": 16,
+      "rounds_demo": 32,
+      "rounds_production": 219,
+      "syndrome_bytes": 16
+    },
+    "zkp_nl": {
+      "n_default": 8,
+      "rounds_demo": 4,
+      "rounds_production": 219,
+      "n_max": 64
+    },
+    "wots": {
+      "log2_w": 4,
+      "l1": 64,
+      "l2": 3,
+      "l_total": 67
+    },
+    "hkex_rnl": {
+      "n": 256
+    },
+    "_note": "Assembly/Arduino targets use reduced demo parameters: Stern-F N=32 t=2 rounds=4 (vs. the C/Go/Python values above), GF arithmetic on 32-bit operands instead of 256-bit. See CLAUDE.md 'Protocol Stack' and TODO.md #133."
+  }
+}

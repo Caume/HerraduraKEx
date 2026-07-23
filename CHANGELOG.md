@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.102] - 2026-07-22
+
+### Added
+- **Machine-readable protocol specification (TODO #133).** `spec/herradura-protocol-spec.json`
+  (validated by `spec/herradura-protocol-spec.schema.json`, JSON Schema draft 2020-12) is a
+  single machine-readable source of truth for protocol parameters, PEM wire-format block
+  labels, CLI `--algo` tags, and per-protocol security-level classification (production /
+  demo-only / pedagogical / deprecated / broken / research) across all three CLI
+  implementations. `spec/generate_spec.py` generates it by regex-extracting the algo-tag/PEM-label
+  mapping, per-subcommand `--algo` choices, and protocol parameter constants directly from
+  `HerraduraCli/herradura.py`, `HerraduraCli/herradura_codec.h`, and `herradura.h`, so those
+  fields cannot silently drift from what the CLIs actually implement; `spec/generate_spec.py --check`
+  fails if the checked-in JSON is stale (a new, renamed, or removed algo tag or PEM label always
+  changes the generated output). Security-status classification is curated (documented with
+  file:line citations) since it requires judgment the source can't express mechanically, but is
+  cross-checked against the extracted algo-tag set at generation time so a stale reference to a
+  renamed/removed tag fails loudly. `spec/README.md` documents the mechanical-vs-curated split;
+  `docs/TUTORIAL.md`'s Protocol reference section and `README.md`'s repository structure now
+  point to it as the canonical source.
+
 ## [1.9.101] - 2026-07-22
 
 ### Added

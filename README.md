@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.101)
+# Herradura Cryptographic Suite (v1.9.102)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
@@ -200,6 +200,10 @@ CryptosuiteTests/
   Herradura_tests.{c,go,py,s,asm,ino}              — security tests & benchmarks
   go.mod
 HerraduraCli/                                       — Python CLI (genpkey/pkey/kex/enc/dec/sign/verify)
+spec/                                                — machine-readable protocol spec (JSON Schema):
+                                                      parameters, PEM wire-format labels, CLI --algo
+                                                      tags, and security-level classification per
+                                                      protocol — the canonical source for tooling/LLMs
 SecurityProofsCode/                                 — standalone Python proof and analysis scripts
 SecurityProofs-1.md                                 — formal analysis §1–§10 (algebraic foundations,
                                                       protocol security, quantum attack analysis,
