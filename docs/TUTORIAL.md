@@ -2069,6 +2069,14 @@ for a wrong password.  See `CliTest/test_pake.sh` for the full integration test.
 
 ## Protocol reference
 
+**Machine-readable version:** [`spec/herradura-protocol-spec.json`](../spec/herradura-protocol-spec.json)
+(validated by [`spec/herradura-protocol-spec.schema.json`](../spec/herradura-protocol-spec.schema.json))
+is the canonical source for every `--algo` tag, PEM wire-format label, and per-protocol security
+classification (production / demo-only / pedagogical / deprecated / broken / research) across all
+three CLI implementations — generated directly from source (`spec/generate_spec.py`) so it can't
+drift from what the CLIs actually accept. The tables below are a human-readable summary; when a
+tool or script needs the exact wire-format string or algo tag, read the JSON, not this table.
+
 ### Classical protocols
 
 | Protocol | Key exchange | Encryption | Signature |
