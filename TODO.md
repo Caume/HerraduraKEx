@@ -7239,7 +7239,15 @@ suite's existing OpenSSL-style CLI without requiring new crypto code.
    HKEX-GF key exchange or HPKS signature end-to-end.
 4. Document setup in README.md / TUTORIAL.md.
 
-Status: **OPEN**
+Status: **DONE v1.9.103** — `Mcp/herradura_mcp_server.py`: stdlib-only (no `mcp`
+SDK/pip dependency) MCP stdio server wrapping `HerraduraCli/herradura.py`, exposing
+genpkey/pkey/kex/enc/dec/sign/verify/dgst as tools. Every tool takes only
+caller-supplied file paths (no default key dir, no cross-call state); private-key
+file contents are never echoed in a tool response (`Mcp/test_server.py` has a
+regression check for this); no network I/O. `docs/examples/mcp/hello_herradura_mcp.py`
+demonstrates an end-to-end HKEX-GF exchange + HPKS sign/verify via MCP tool calls.
+Documented in `Mcp/README.md` and referenced from `README.md` and a new
+`docs/TUTORIAL.md` "MCP server" section.
 
 ---
 
