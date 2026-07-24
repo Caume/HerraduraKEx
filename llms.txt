@@ -1,0 +1,163 @@
+# HerraduraKEx
+
+> Cryptographic suite implementing classical, NL/PQC, and code-based-PQC protocols
+> on the FSCX (Full Surroundings Cyclic XOR) primitive and GF(2^n)* Diffie-Hellman
+> arithmetic. Implementations in C, Go, Python, ARM Thumb-2 asm, NASM i386 asm, Arduino.
+> This file is a condensed, agent/tool-facing API index. It is generated from and must
+> stay consistent with CLAUDE.md (build/test/architecture) and docs/TUTORIAL.md
+> (worked examples) — those are the authoritative documents for anything not covered
+> here. Do not treat this file as authoritative for build commands or protocol math;
+> see README.md and SecurityProofs-{1,2,3}.md for the formal definitions.
+
+## Authoritative docs (read these for detail, not this file)
+- CLAUDE.md — repo layout, build/test commands, protocol stack overview
+- README.md — protocol descriptions with math (KaTeX)
+- docs/TUTORIAL.md — API usage guide per protocol and language, with worked examples
+- docs/INTRODUCTION.md — lay-audience primer
+- SecurityProofs.md (+ -1/-2/-3.md) — formal security analysis
+- docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples
+
+## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming
+## convention for functions in every language binding)
+Key exchange:     hkex-gf, hkex-rnl
+Symmetric enc:    hske, hske-nla1, hske-nla2, hske-duplex
+Asymmetric enc:   hpke, hpke-nl, hpke-stern, hpke-stern-kem
+Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
+                  hpks-zkp-nl (genpkey) / nl-zkboo, nl-zkbpp (sign/verify), rnl-sigma,
+                  hpks-t (threshold, via threshold-* subcommands)
+Other primitives: oprf (OPRF/aPAKE), hcred (anonymous credentials), hfscx-256,
+                  hfscx-256-ds (digest), fpe, twk (format-preserving / tweakable enc),
+                  rand (HDRBG)
+
+Not every identifier is valid for every subcommand — see the CLI section below for the
+exact choices list per subcommand.
+
+## Core protocol summaries
+- HKEX-GF: classical DH over GF(2^n)*, generator g=3. pub = g^priv; shared = their_pub^priv.
+- HKEX-RNL: post-quantum Ring-LWR key exchange. Two-round: responder (Bob) replies to
+  initiator's (Alice's) public key first; Alice completes using Bob's response PEM.
+- HSKE / HSKE-NLA1 / HSKE-NLA2 / HSKE-duplex: symmetric encryption via
+  FSCX_REVOLVE(plaintext, key, i) forward / FSCX_REVOLVE(ciphertext, key, r) inverse
+  (r = n - i mod period); NL variants use NL-FSCX v1 (counter-mode keystream) or v2
+  (invertible revolve) primitives instead of classical FSCX, and add AEAD framing.
+- HPKS / HPKS-NL: Schnorr-style signature over GF(2^n)*, challenge hashed via
+  (NL-)FSCX_REVOLVE of the commitment and message.
+- HPKE / HPKE-NL: El Gamal-style encryption; shared enc/dec key derived via DH, payload
+  encrypted with (NL-)FSCX_REVOLVE.
+- HPKS-Stern-F / HPKE-Stern(-KEM): Stern zero-knowledge identification protocol
+  (code-based, syndrome decoding) turned into a Fiat-Shamir signature / Niederreiter KEM.
+- HPKS-ring: ring signature built on HPKS-Stern-F.
+- rnl-sigma / nl-zkboo / nl-zkbpp: Sigma-protocol and ZKBoo/ZKB++ MPC-in-the-head proofs
+  over Ring-LWR / NL-FSCX statements.
+- HPKS-t: threshold Schnorr signature (4-phase protocol: commit, aggregate, respond,
+  combine — see threshold-* CLI subcommands).
+- HPKS-WOTS / HPKS-XMSS: hash-based one-time / stateful many-time signatures.
+- OPRF / aPAKE (HPAKE): 2HashDH oblivious PRF, used to build an augmented PAKE.
+- HCRED: anonymous credentials (Stern-F signature issuance + ZKBoo presentation proof).
+- FPE / TWK: format-preserving and tweakable-wide-block encryption of a single 256-bit
+  block, keyed by a session key.
+- HDRBG (rand): deterministic byte generator seeded from entropy, with checkpointable
+  state PEMs.
+- HAccum: Merkle-style cryptographic accumulator (leaf/node/root/prove/verify).
+- Ratchet: simple forward-secret key ratchet (init/advance).
+- QC-MDPC: KEM keygen/encap/BGF-decode primitives (production needs a full decoder).
+
+## herradura.h — C header-only library
+Single-include; all exported symbols prefixed ba_, gf_, nl_, rnl_, hkex_, hske_,
+hpks_, hpke_, stern_, hpks_stern_/hpke_stern_, zkp_, hcred_, hpkst_, oprf_, hpake_,
+drbg_, haccum_, ratchet_, fpe_, twk_, qcmdpc_. Key public entry points:
+
+  void hkex_gf_pubkey(const BitArray *priv, BitArray *pub);
+  int  hkex_gf_agree(const BitArray *priv, const BitArray *their_pub, BitArray *shared);
+  void hske_encrypt(const BitArray *pt, const BitArray *key, BitArray *ct);
+  void hske_decrypt(const BitArray *ct, const BitArray *key, BitArray *pt);
+  void hpks_sign(const BitArray *msg, const BitArray *priv, BitArray *R, BitArray *s, FILE *urnd);
+  int  hpks_verify(const BitArray *msg, const BitArray *pub, const BitArray *R, const BitArray *s);
+  int  hpke_encrypt(const BitArray *pt, const BitArray *pub, BitArray *R, BitArray *ct, FILE *urnd);
+  int  hpke_decrypt(const BitArray *ct, const BitArray *R, const BitArray *priv, BitArray *pt);
+  void hske_nl_aead_encrypt(...); int hske_nl_aead_decrypt(...);
+  void hske_nl_v2_duplex_encrypt(...); int hske_nl_v2_duplex_decrypt(...);
+  void hpks_stern_f_sign(SternSig *sig, ...); int hpks_stern_f_verify(const SternSig *sig, ...);
+  void hpke_stern_f_encap(...); void hpke_stern_f_decap_known(...);
+  void hpks_wots_keygen/sign/verify(...); void hpks_xmss_keygen/sign/verify(...);
+
+Read herradura.h directly for full signatures of NL-FSCX, Ring-LWR (rnl_*), Stern-ring,
+ZKP-NL, HCRED, HPKST, OPRF/HPAKE, FPE/TWK, HDRBG, HAccum, ratchet, and QC-MDPC —
+grep the prefixes above.
+
+## Go — package herradura (herradura/herradura.go, herradura/codec.go)
+Import path: herradurakex/herradura (module herradurakex; see go.mod / replace directives
+for HerraduraCli). NOTE: the root "Herradura cryptographic suite.go" is `package main`
+(CLI demo only) — the reusable library lives under herradura/.
+
+Representative exported names (CamelCase mirrors the C/Python snake_case identifiers,
+e.g. hkex_gf_agree -> corresponding Go call in the kex flow):
+  Fscx, FscxRevolve, GfMul, GfPow, NewBitArray, NewRandBitArray, NewFromBytes
+  NlFscxV1/V2/V2Inv, NlFscxRevolveV1/V2/V2Inv
+  Hfscx256, Hfscx256DS, HmacHfscx256
+  RnlKeygen, RnlAgree, RnlHint, RnlReconcileBits
+  SternFKeygen, HpksSternFSign/Verify, HpkeSternFEncap/DecapKnown, HpksSternRingSign/Verify
+  RnlSigmaSign/Verify, ZkpNlKeygen/Prove/Verify
+  HpksWotsKeygen/Sign/Verify, HpksXmssKeygen/Sign/Verify
+  HcredUserKeygen/Prove/Verify, HcredIssue/CredVerify
+  HpkstAggregatePublickeys/Sign/Verify
+  OprfKeygen/Blind/Eval/Unblind/Direct, HpakeRegister/LoginDemo
+  FpeEncrypt/Decrypt, TwkEncrypt/Decrypt, DrbgSeed/FromState
+  HaccumLeaf/Node/Root/Prove/Verify, RatchetInit/Advance
+  PemWrap/Unwrap, DerIntEnc/SeqEnc, DerParseSeq (codec.go)
+
+## Python — "Herradura cryptographic suite.py"
+Filename contains spaces: load via importlib (see docs/examples/python/hello_herradura.py
+and HerraduraCli/primitives.py for the exact pattern). Function names are snake_case and
+match the C API 1:1 (fscx, fscx_revolve, gf_mul, gf_pow, nl_fscx_v1/v2/v2_inv,
+hfscx_256, hfscx_256_ds, hmac_hfscx_256, stern_f_keygen, hpks_stern_f_sign/verify,
+hpke_stern_f_encap/decap, hcred_*, hpkst_*, oprf_*, hpake_*, fpe_encrypt/decrypt,
+twk_encrypt/decrypt, haccum_*, ratchet_init/advance, qcmdpc_*). BitArray is the core
+class (BitArray.random(n)). Notable constants: KEYBITS, GF_POLY, GF_GEN, I_VALUE,
+R_VALUE.
+
+## HerraduraCli — OpenSSL-style CLI (herradura.py / herradura_cli.c / herradura_cli_go)
+All three implementations share one PEM wire format and subcommand interface;
+PEM files from any one are byte-for-byte readable by the others.
+
+  genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
+    <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpks-stern,
+             hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
+  pkey --in FILE [--pubout] [--text] [--out FILE]
+  kex --algo {hkex-gf,hkex-rnl} --our FILE --their FILE --out FILE [--kdf {none,hfscx-256}]
+    hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
+  enc/dec --algo {hske,hske-nla1,hske-nla2,hske-duplex,hpke,hpke-nl,hpke-stern,hpke-stern-kem}
+           --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
+    --aead/--ad apply to hske-nla1 (and hske-duplex is inherently AEAD).
+  sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
+       --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
+       [--digest {none,hfscx-256}] [--rounds N]
+  verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
+         [--digest {none,hfscx-256}]
+  threshold-commit --key FILE --commit-out FILE --nonce-out FILE
+  threshold-aggregate --commits FILE... --in FILE --out FILE [--digest ...]
+  threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
+  threshold-combine --aggregate FILE --partials FILE... --out FILE
+    (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine)
+  encfile/decfile --algo hske-nla1 --key FILE --in FILE --out FILE   (streaming, .hkx)
+  dgst --algo {hfscx-256,hfscx-256-ds} --in FILE [--out FILE]
+  rand [--seed FILE|--state FILE] [--personalization STR] [--reseed FILE]
+       --bytes N [--hex] [--out FILE]
+  fpe/twk --key FILE (--encrypt|--decrypt) --in FILE --out FILE [--context STR | --sector N --bidx N]
+  oprf-blind --in FILE --out FILE
+  oprf-eval --key FILE --in FILE --out FILE
+  oprf-unblind --state FILE --eval FILE --out FILE
+  pake-register --key FILE --username U [--password P] --out FILE
+  pake-demo --key FILE [--username U] [--password P]
+  cred-issue --our FILE --in FILE [--rounds N] --out FILE
+  cred-prove --in FILE [--msg STR] [--rounds N] --out FILE
+  cred-verify (see docs/TUTORIAL.md for full HCRED flow)
+
+## Language-specific notes for integrators
+- C: `#include "herradura.h"` directly; no separate compilation unit needed.
+- Go: import "herradurakex/herradura" (add a `replace` directive if vendoring outside
+  this module, mirroring HerraduraCli/go.mod).
+- Python: the suite/CLI filenames contain spaces — use importlib.util.spec_from_file_location,
+  not a normal `import` statement (see HerraduraCli/primitives.py).
+- Cross-language interop is verified by CliTest/test_*_interop.sh — consult those scripts
+  for concrete byte-compatible PEM examples if debugging wire-format issues.
