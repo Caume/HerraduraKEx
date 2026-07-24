@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.103] - 2026-07-23
+
+### Added
+- **MCP server exposing the CLI as agent-callable tools (TODO #134).**
+  `Mcp/herradura_mcp_server.py` wraps `HerraduraCli/herradura.py` and exposes
+  `genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, `verify`, `dgst` as MCP tools over
+  stdio. It's a from-scratch, stdlib-only implementation of the MCP stdio transport
+  (newline-delimited JSON-RPC 2.0: `initialize`, `tools/list`, `tools/call`, `ping`) —
+  no `mcp` SDK, no pip dependency, consistent with the zero-external-dependency
+  convention followed everywhere else in this repo. Every tool operates only on
+  file paths the caller explicitly supplies (no default key directory, no state
+  between calls); private-key file *contents* are never echoed back in a tool
+  response (only success/failure and the output path); the server performs no
+  network I/O — each call is one local subprocess invocation of the already-tested
+  CLI. `Mcp/test_server.py` regression-checks the protocol surface and the
+  no-key-leakage trust-model guarantee. `docs/examples/mcp/hello_herradura_mcp.py`
+  demonstrates an end-to-end HKEX-GF key exchange and HPKS sign/verify driven
+  entirely through MCP tool calls. Documented in `Mcp/README.md` (trust model,
+  setup, tool reference) and referenced from `README.md`'s repository structure
+  and a new `docs/TUTORIAL.md` "MCP server" section.
+
 ## [1.9.102] - 2026-07-22
 
 ### Added
