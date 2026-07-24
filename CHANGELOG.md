@@ -2,6 +2,17 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.104] - 2026-07-23
+
+### Added
+- **Condensed agent-facing API reference, `llms.txt` (TODO #135).** A token-efficient
+  index at the repo root for external tools/agents integrating HerraduraKEx as a
+  dependency: protocol summaries, `herradura.h` C entry points, Go (`herradura/`
+  package) and Python exported-function inventories, and the full CLI subcommand/
+  `--algo` identifier reference (verified directly against `HerraduraCli/herradura.py`'s
+  argparse definitions). Points to CLAUDE.md/README.md/docs/TUTORIAL.md as authoritative
+  for anything not covered. README.md now links to it for external integrators.
+
 ## [1.9.103] - 2026-07-23
 
 ### Added

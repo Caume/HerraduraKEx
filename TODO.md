@@ -7268,7 +7268,9 @@ emerging specifically to fill this gap.
    prose; note explicitly which document is authoritative for which content.
 3. Add a note to README.md pointing external integrators at `llms.txt`.
 
-Status: **OPEN**
+Status: **DONE v1.9.104** — added `llms.txt` (protocol summaries, herradura.h/Go/Python
+API inventory, full CLI subcommand + `--algo` reference verified against argparse defs);
+README.md links to it.
 
 ---
 
