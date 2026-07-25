@@ -93,6 +93,16 @@ static double run_test(const char *name, int rounds, setup_fn setup_fixed,
 static void setup_zero(BitArray *a, FILE *urnd) { (void)urnd; memset(a->b, 0, KEYBYTES); }
 static void setup_rand(BitArray *a, FILE *urnd) { rand_ba(a, urnd); }
 
+/* Batch 7 (TODO #129): Batch 3's residual stern_gen_perm/stern_apply_perm
+ * signal was attributed to hardware-level timing at the *degenerate
+ * all-zero* pi_seed test point, not to the (already fixed-loop-count,
+ * data-independent-branch) Lemire-map algorithm itself. If that attribution
+ * is right, swapping the fixed secret for a non-zero, non-degenerate bit
+ * pattern should make the residual |t| collapse; if the leak is structural
+ * it should persist regardless of which fixed value is used. */
+static void setup_pattern(BitArray *a, FILE *urnd)
+{ (void)urnd; memset(a->b, 0xA5, KEYBYTES); }
+
 static void op_gf_mul(const BitArray *secret, const BitArray *pub)
 { BitArray d; gf_mul_ba(&d, secret, pub); }
 
@@ -147,6 +157,8 @@ int main(int argc, char **argv)
     run_test("ba_fscx_revolve (secret=key operand)", rounds, setup_zero, setup_rand, op_fscx_revolve, urnd);
     run_test("stern_gen_perm (secret=pi_seed)",      rounds, setup_zero, setup_rand, op_stern_gen_perm,   urnd);
     run_test("stern_apply_perm (secret=pi_seed)",    rounds, setup_zero, setup_rand, op_stern_apply_perm, urnd);
+    run_test("stern_gen_perm (fixed=0xA5 pattern)",   rounds, setup_pattern, setup_rand, op_stern_gen_perm,   urnd);
+    run_test("stern_apply_perm (fixed=0xA5 pattern)", rounds, setup_pattern, setup_rand, op_stern_apply_perm, urnd);
     run_test("hpks_wots_sign (secret=master_seed)",  rounds, setup_zero, setup_rand, op_wots_sign,        urnd);
 
     fclose(urnd);

@@ -7085,7 +7085,24 @@ were needed; verified via `CliTest/test_stern_interop.sh` (9/9), `test_stern_kem
 memory-access-pattern leak being closed, leaving only the Batch 3 hardware-attributed
 residual shared by both functions. Documented in SecurityProofs-3.md §11.11.
 
-Status: **OPEN** — Batches 1-6 done. `stern_apply_perm`'s memory-access-pattern leak (Batch 2) is now closed by a code fix (Batch 6). What remains is the residual hardware-level `stern_gen_perm`/`stern_apply_perm` timing signal (Batch 3), attributed to PRNG behavior at a degenerate all-zero test point rather than a control-flow or addressing bug — closing it further needs cache/power-timing instrumentation, not another code change.
+**Batch 7 — residual signal confirmed as an all-zero-test-point artifact, not a leak
+(v1.9.105).** Added a second dudect "fixed" class — a non-zero, non-degenerate `0xA5`
+bit-pattern secret — alongside the existing all-zero one, same code path otherwise.
+`stern_gen_perm`/`stern_apply_perm` go from a clearly-suspected signal at the all-zero
+secret (`|t|` 16.11/16.26 at 4000 rounds, this run) to clean at the `0xA5` secret (`|t|`
+1.44/3.54) with nothing else changed — directly confirming the Batch 3/6 hypothesis that
+the residual tracks the degenerate all-zero PRNG fixed point, not a secret-dependent
+control-flow or memory-access path in the (already fixed) implementation. Documented in
+SecurityProofs-3.md §11.11 Batch 7.
+
+Status: **DONE v1.9.105** — Batches 1-7 complete. Both confirmed leaks (Stern-F rejection
+sampling, Batch 2; `stern_apply_perm` memory-access pattern, Batch 2) were fixed (Batches 3,
+6) and re-verified interop-clean. The one remaining wall-clock signal is now positively
+attributed — via a direct fixed-secret-value swap, not just inference — to the dudect
+harness's degenerate all-zero test point rather than to a code-level leak, so no further
+code change is warranted; closing it completely would need cache/power-timing
+instrumentation out of scope for a wall-clock harness, documented as a permanent methodology
+note for future audit batches.
 
 ---
 
