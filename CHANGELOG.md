@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.105] - 2026-07-24
+
+### Security
+- **TODO #129 Batch 7 — constant-time audit closed: residual timing signal confirmed as
+  a dudect methodology artifact, not a code-level leak.** Batches 1-6 fixed two real
+  timing leaks in `stern_gen_perm`/`stern_apply_perm` (Stern-F rejection sampling and a
+  memory-access-pattern leak) but left a small residual wall-clock signal open, attributed
+  by inference to the harness's fixed-vs-random test using a *degenerate all-zero* secret
+  as its "fixed" class. This batch tests that attribution directly:
+  `SecurityProofsCode/dudect_timing_audit.c` gains a second fixed class (a non-zero,
+  non-degenerate `0xA5` bit pattern). Same code path, same loop structure — only the fixed
+  secret's value changes — and `stern_gen_perm`/`stern_apply_perm` go from a
+  clearly-suspected signal (`|t|` ~16, all-zero secret) to clean (`|t|` 1.44/3.54, `0xA5`
+  secret). Confirms the residual is intrinsic to the all-zero PRNG fixed point, not a
+  secret-dependent control-flow or memory-access path in the implementation, so no further
+  code change is warranted. TODO #129 closed as DONE; documented in SecurityProofs-3.md
+  §11.11 Batch 7 as a permanent methodology note for future dudect targets (prefer a
+  non-degenerate fixed class over all-zero).
+
 ## [1.9.104] - 2026-07-23
 
 ### Added

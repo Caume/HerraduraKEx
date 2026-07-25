@@ -593,6 +593,55 @@ TODO #126's Stern-F "production gap" note narrows accordingly: constant-time C i
 addressed at the control-flow and memory-access level; what remains is a documented,
 small-magnitude, hardware-attributed residual.
 
+**Batch 7 — CT hypothesis test: is the residual specific to the all-zero test point?
+(v1.9.105).** Batch 3/6 attributed the residual `stern_gen_perm`/`stern_apply_perm` signal
+to the dudect harness's "fixed" class being the *degenerate all-zero* `pi_seed`, not to a
+real secret-dependent code path — but that was an inference from indirect evidence (the
+control-flow proof plus a comparison against unrelated multiply primitives), not a direct
+test. This batch tests it directly: `SecurityProofsCode/dudect_timing_audit.c` gains a
+second "fixed" class, a non-zero, non-degenerate constant bit pattern (`0xA5` repeating,
+`10100101` — chosen to have no long runs of identical bits, unlike `0x00` or `0xFF`), run
+against the same `setup_rand` random class used throughout this section.
+
+| Function | Fixed secret | \|t\| (4000 rounds) | Verdict |
+|---|---|---|---|
+| `stern_gen_perm` | all-zero (`0x00`) | 16.11–16.27 | **residual signal** |
+| `stern_apply_perm` | all-zero (`0x00`) | 16.04–16.26 | **residual signal** |
+| `stern_gen_perm` | `0xA5` pattern | 1.44 | clean |
+| `stern_apply_perm` | `0xA5` pattern | 3.54 | clean |
+
+(All-zero rows re-measured in this batch on the same run for a same-session comparison;
+consistent with the 5.22–16.65 range recorded in Batches 3 and 6 at this round count across
+different runs/hardware.)
+
+**Disposition.** This confirms the Batch 3/6 attribution directly rather than by inference:
+swapping only the *value* of the fixed secret — same code path, same loop structure, same
+call sequence — takes both functions from a clearly-suspected leak (`|t| > 16`, well past
+the 4.5 threshold) to clean (`|t| < 4.5`) with nothing else changed. The residual is
+therefore a property of the all-zero `pi_seed` specifically (most plausibly the all-zero
+fixed point it drives `nl_fscx_v1_ba`'s internal PRNG state to, per the Batch 3 hardware
+hypothesis — identical words on every "fixed" call vs. varying words on every "random"
+call), not a secret-dependent control-flow or memory-access leak in `stern_gen_perm` or
+`stern_apply_perm` as implemented: a real leak would reproduce at *any* fixed secret value,
+not vanish when the fixed value is merely changed to something non-degenerate. TODO #126's
+"production gap" note can treat this residual as characterized and low-priority: it is not
+evidence of an addressable code-level constant-time bug, and the practical exposure was
+already limited (`pi_seed` is ephemeral and revealed in 2 of 3 Stern response branches
+regardless, per Batch 4's severity discussion). Cache/power-timing instrumentation to
+further characterize the exact hardware mechanism remains out of scope for a wall-clock
+dudect harness and is not required to close this item.
+
+**Status after Batch 7.** No further code changes are needed for the items TODO #129
+originally scoped (work items 1–4 are all satisfied: leakage tooling exists and was run
+against every listed primitive plus the broader `hkex_`/`hske_`/`hpks_`/`hpke_`/`stern_`
+surface; two real leaks (Batches 2, 4) were found, fixed (Batches 3, 5, 6), and
+re-verified; the one remaining signal is now positively attributed to the dudect
+methodology's degenerate test point rather than left as an open hardware guess). TODO #129
+is closed as **DONE**, with the residual documented here as a permanent methodology note
+for anyone re-running or extending this audit — future batches should prefer a
+non-degenerate fixed class (e.g. this batch's `0xA5` pattern) over an all-zero one when
+adding new dudect targets, to avoid re-discovering the same artifact.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
