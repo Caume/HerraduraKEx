@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.108] - 2026-07-27
+
+### Added
+- **Cross-language property-based interop fuzz generator (TODO #136).**
+  `CliTest/fuzz_interop.py` generates randomized cases (message sizes, private keys drawn by
+  each CLI's own RNG) for HKEX-GF key agreement, HSKE symmetric enc/dec, HPKS sign/verify,
+  and HPKE asymmetric enc/dec, running every ordered pair of the Python, C, and Go CLIs and
+  diffing outputs — catching cross-language divergence that fixed vectors in `CliTest/*.sh`
+  miss. `--seed` reproduces a specific run for debugging a failure.
+  `CliTest/test_fuzz_interop.sh` wires a fast 8-case-per-protocol subset (seed=0) into the
+  regular suite; a several-thousand-case soak run is documented as an opt-in invocation.
+
 ## [1.9.107] - 2026-07-24
 
 ### Added
