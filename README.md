@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.105)
+# Herradura Cryptographic Suite (v1.9.107)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
@@ -67,6 +67,32 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. Production decap requires a QC-MDPC syndrome decoder; demo uses known $e'$.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
+
+---
+
+# FFI Bindings (C-backed, opt-in)
+
+`bindings/ffi/` provides a `ctypes`-based Python wrapper and a `cgo`-based Go wrapper around `herradura.h`'s classical v1.4.0 quartet (HKEX-GF, HSKE, HPKS, HPKE), for performance-sensitive callers who want C's speed without hand-porting. The native Python and Go suites are untouched and remain the pedagogical reference implementations; the bindings are opt-in and packaged separately (`herradura_ffi.py` is independent of `HerraduraCli/primitives.py`; the Go package lives at `bindings/ffi/go`, separate from the root `herradura` package).
+
+Build the shared library once, then use either wrapper:
+
+```bash
+bash bindings/ffi/build.sh          # builds bindings/ffi/libherradura_ffi.so
+
+python3 bindings/ffi/python/test_ffi_correctness.py   # FFI vs. native Python, byte-for-byte
+cd bindings/ffi/go && CGO_ENABLED=1 go test ./...      # FFI vs. native Go, byte-for-byte
+```
+
+Measured on this repo's dev hardware (aarch64), `hske_encrypt` (a single `FscxRevolve` call, 64 FSCX rounds):
+
+| Path | ns/op | vs. native |
+|---|---|---|
+| Native Python (`fscx_revolve`) | ~322,000 | 1× |
+| Python via FFI (`ctypes` → C) | ~8,900 | ~36× faster |
+| Native Go (`FscxRevolve`) | ~254,700 | 1× |
+| Go via FFI (`cgo` → C) | ~19,000 | ~13× faster |
+
+The gap narrows for Go because native Go is already compiled; the FFI number there mostly reflects saved big-integer/allocation overhead plus cgo call cost. Prefer the bindings when running many operations in Python or when Go's `math/big`-based `BitArray` arithmetic is a bottleneck; prefer the native implementations for portability (no C toolchain/cgo dependency), for reading/teaching the algorithms, or when only the assembly/Arduino targets are relevant. Scope: only the classical quartet is bound — NL/PQC and Stern-F protocols are not exposed through this FFI layer (TODO #137).
 
 ---
 

@@ -7334,7 +7334,17 @@ existing native implementations untouched as the reference/pedagogical versions.
 4. Document performance delta and when to prefer bindings vs. native implementation in
    README.md.
 
-Status: **OPEN**
+Status: **DONE v1.9.106** — `bindings/ffi/`: `herradura_shim.c`/`.h` expose the classical
+v1.4.0 quartet (HKEX-GF, HSKE, HPKS, HPKE) from `herradura.h` as extern-linkage byte-buffer
+functions, built into `libherradura_ffi.so` via `bindings/ffi/build.sh`. Python wrapper
+(`bindings/ffi/python/herradura_ffi.py`, `ctypes`, opt-in and separate from `primitives.py`)
+and Go wrapper (`bindings/ffi/go`, `cgo`, separate package/module from the root `herradura`
+package). Correctness verified byte-for-byte against native Python
+(`bindings/ffi/python/test_ffi_correctness.py`) and native Go
+(`bindings/ffi/go/herradura_ffi_native_test.go`). Measured ~36× (Python) / ~13× (Go) speedup
+over native for `hske_encrypt`; documented in README.md § FFI Bindings along with when to
+prefer bindings vs. native. Scope: classical quartet only — NL/PQC and Stern-F protocols are
+not exposed through this binding.
 
 ---
 
@@ -7355,7 +7365,14 @@ judge whether HerraduraKEx's FSCX-based approach is competitive or where its rea
 3. Keep the comparison script in `SecurityProofsCode/` or a new `benchmarks/` directory so it's
    reproducible rather than a one-time snapshot.
 
-Status: **OPEN**
+Status: **DONE v1.9.107** — `docs/BENCHMARKS.md` with a comparison table, plus reproducible
+scripts in `benchmarks/`: `compare_hpks_ed25519.py` (HPKS via FFI vs. libsodium Ed25519 via
+`ctypes`, measured: ~60x/~40x slower sign/verify) and `compare_stern_f_dilithium.py`
+(HPKS-Stern-F via CLI vs. liboqs Dilithium3 via `ctypes`, gracefully skips and prints install
+instructions when liboqs is absent — liboqs was not installed in the environment this was
+written in, so that half was not exercised end-to-end). HKEX-RNL vs. Kyber not implemented in
+this pass; noted as follow-up in docs/BENCHMARKS.md. Caveats about proof-of-concept status
+(TODO #127) documented alongside every table per the work item.
 
 ---
 
