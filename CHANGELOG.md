@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.107] - 2026-07-24
+
+### Added
+- **Benchmark comparison against established libraries (TODO #138).** `docs/BENCHMARKS.md`
+  plus reproducible scripts in `benchmarks/`: `compare_hpks_ed25519.py` benchmarks HPKS (via
+  the TODO #137 FFI bindings) against libsodium's Ed25519 (via `ctypes`, no `libsodium-dev`
+  headers required) — measured ~60x/~40x slower sign/verify on this repo's dev hardware.
+  `compare_stern_f_dilithium.py` benchmarks HPKS-Stern-F (via the C CLI) against liboqs's
+  Dilithium3 (via `ctypes`), skipping gracefully with install instructions when liboqs isn't
+  present, as it wasn't in the environment this was written in. Every table is paired with
+  explicit apples-to-oranges caveats (proof-of-concept status per TODO #127, demo vs.
+  production parameters, implementation-maturity gap) so the comparison doesn't overstate
+  readiness. HKEX-RNL vs. Kyber is left as a documented follow-up.
+
+## [1.9.106] - 2026-07-24
+
+### Added
+- **FFI bindings for Python and Go around the C implementation (TODO #137).**
+  `bindings/ffi/herradura_shim.c`/`.h` expose `herradura.h`'s classical v1.4.0 quartet
+  (HKEX-GF, HSKE, HPKS, HPKE) — normally `static inline` for header-only, single-TU use —
+  as extern-linkage byte-buffer functions, built into `libherradura_ffi.so` via
+  `bindings/ffi/build.sh`. `bindings/ffi/python/herradura_ffi.py` is a `ctypes` wrapper,
+  opt-in and packaged separately from `HerraduraCli/primitives.py`. `bindings/ffi/go` is a
+  `cgo` wrapper, a separate Go module/package from the root `herradura` package. Both are
+  verified byte-for-byte identical to the native implementations
+  (`bindings/ffi/python/test_ffi_correctness.py`,
+  `bindings/ffi/go/herradura_ffi_native_test.go`) and measured ~36× (Python) / ~13× (Go)
+  faster than native for `hske_encrypt`; performance delta and when to prefer bindings vs.
+  native documented in README.md § FFI Bindings. Scope: classical quartet only — NL/PQC and
+  Stern-F protocols are not exposed through this binding.
+
 ## [1.9.105] - 2026-07-24
 
 ### Security
