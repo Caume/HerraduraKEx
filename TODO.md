@@ -7311,7 +7311,15 @@ modular-reduction edge cases) that fixed vectors miss.
 4. Wire a small, fast subset into the existing `CliTest/` suite; keep the large soak run as an
    opt-in script.
 
-Status: **OPEN**
+Status: **DONE v1.9.108** — `CliTest/fuzz_interop.py`: randomized-case generator covering
+HKEX-GF key agreement, HSKE symmetric enc/dec (arbitrary length via encfile/decfile), HPKS
+sign/verify, and HPKE asymmetric enc/dec, run across every ordered pair of the Python, C, and
+Go CLIs (`--protocols`/`--cases`/`--seed` flags; `--seed` reproduces a specific run). ASM/
+Arduino targets are suite binaries with inline tests, not full CLIs (no `genpkey`/`kex`/`enc`
+subcommands — see `HerraduraCli/`), so they are out of scope for this CLI-driven fuzzer.
+`CliTest/test_fuzz_interop.sh` wires an 8-case-per-protocol subset (fast, seed=0) into the
+regular suite; a soak run (`python3 CliTest/fuzz_interop.py --cases 2000`) is documented as
+opt-in given per-case CLI subprocess spawn overhead.
 
 ---
 
