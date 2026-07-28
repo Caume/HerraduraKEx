@@ -7650,7 +7650,12 @@ decrypt/exchange keys (same root cause as #131).
    rejection sub-checks already covered by C's test `[45]` (see TODO #146.A for the related
    gap in that test's own cross-language parity).
 
-Status: **OPEN**
+Status: **DONE v1.9.114** — added `GfPubIsValid`/`HkexGfAgree`/`HpksVerify`/`HpkeEncrypt`/
+`HpkeDecrypt` to `herradura/herradura.go` and `gf_pub_is_valid`/`hkex_gf_agree`/
+`hpks_verify`/`hpke_encrypt`/`hpke_decrypt` to `Herradura cryptographic suite.py`, wired
+into both `main()` demos, and updated Go's `[45]` test to call the new library functions
+(Python's `[45]` test stays self-contained per the file's existing convention and already
+covered the same sub-checks).
 
 ---
 
@@ -7700,7 +7705,11 @@ AI agent using `llms.txt` as a condensed reference to decide what to try.
    number or CLI subcommand) rather than only at major version bumps — this class of drift
    accumulates silently otherwise.
 
-Status: **OPEN**
+Status: **DONE v1.9.115** — corrected CLAUDE.md's test-number ranges ([1]-[45] for C/Go/Python,
+[1]-[17] for ARM/NASM) and the stale [20]/[21] unlabeled-test note; added
+build_arduino.sh/run_arduino.sh to Build Commands; llms.txt already scopes hpks-xmss as
+Python-only (hcred is no longer Python/C-only as of TODO #143's Go CLI wiring, so it needed
+no scoping note); added a periodic-recheck reminder to CLAUDE.md's Testing section.
 
 ---
 

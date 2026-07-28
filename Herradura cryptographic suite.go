@@ -66,8 +66,11 @@ func main() {
 	// HKEX-GF key exchange
 	C     := NewBitArray(n, GfPow(g, &a.Val, poly, n))
 	C2    := NewBitArray(n, GfPow(g, &b.Val, poly, n))
-	sk    := NewBitArray(n, GfPow(&C2.Val, &a.Val, poly, n))
-	skBob := NewBitArray(n, GfPow(&C.Val, &b.Val, poly, n))
+	sk, okSk := HkexGfAgree(a, C2, poly, n)
+	skBob, okSkBob := HkexGfAgree(b, C, poly, n)
+	if !okSk || !okSkBob {
+		fmt.Println("- HKEX-GF agreement refused a degenerate peer public key!")
+	}
 
 	fmt.Printf("a         : %x\n", a)
 	fmt.Printf("b         : %x\n", b)
@@ -106,15 +109,13 @@ func main() {
 	kS := NewRandBitArray(n)
 	RS := NewBitArray(n, GfPow(g, &kS.Val, poly, n))
 	eS := FscxRevolve(RS, plaintext, iValue)
-	sS := new(big.Int).Mod(new(big.Int).Sub(&kS.Val, new(big.Int).Mul(&a.Val, &eS.Val)), ord)
-	eV := FscxRevolve(RS, plaintext, iValue)
-	lhs := GfMul(GfPow(g, sS, poly, n), GfPow(&C.Val, &eV.Val, poly, n), poly, n)
+	sS := NewBitArray(n, new(big.Int).Mod(new(big.Int).Sub(&kS.Val, new(big.Int).Mul(&a.Val, &eS.Val)), ord))
+	verified := HpksVerify(plaintext, C, RS, sS, poly, n)
 	fmt.Printf("P (msg)        : %x\n", plaintext)
 	fmt.Printf("R [Alice,sign] : %x\n", RS)
 	fmt.Printf("e [Alice,sign] : %x\n", eS)
-	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, sS)
-	fmt.Printf("  [Bob,verify] : g^s·C^e = %0*x\n", n/4, lhs)
-	if lhs.Cmp(&RS.Val) == 0 {
+	fmt.Printf("s [Alice,sign] : %0*x\n", n/4, &sS.Val)
+	if verified {
 		fmt.Println("  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
 	} else {
 		fmt.Println("  [Bob,verify] : - Schnorr verification failed!")
@@ -122,16 +123,12 @@ func main() {
 
 	fmt.Println("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
 	fmt.Println("    (El Gamal + FscxRevolve)")
-	rHpke  := NewRandBitArray(n)
-	RHpke  := NewBitArray(n, GfPow(g, &rHpke.Val, poly, n))
-	encKey := NewBitArray(n, GfPow(&C.Val, &rHpke.Val, poly, n))
-	eHpke  := FscxRevolve(plaintext, encKey, iValue)
-	decKey := NewBitArray(n, GfPow(&RHpke.Val, &a.Val, poly, n))
-	dHpke  := FscxRevolve(eHpke, decKey, rValue)
+	RHpke, eHpke, okEnc := HpkeEncrypt(plaintext, C, poly, n)
+	dHpke, okDec := HpkeDecrypt(eHpke, RHpke, a, poly, n)
 	fmt.Printf("P (plain) : %x\n", plaintext)
 	fmt.Printf("E (Bob)   : %x\n", eHpke)
 	fmt.Printf("D (Alice) : %x\n", dHpke)
-	if dHpke.Equal(plaintext) {
+	if okEnc && okDec && dHpke.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
 		fmt.Println("- decryption failed!")

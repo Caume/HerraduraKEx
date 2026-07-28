@@ -233,6 +233,74 @@ func GfPow(base, exp *big.Int, poly *big.Int, n int) *big.Int {
 }
 
 // ---------------------------------------------------------------------------
+// Guarded classical protocol API (TODO #144; mirrors herradura.h's
+// gf_pub_is_valid + hkex_gf_agree/hpks_verify/hpke_encrypt/hpke_decrypt,
+// TODO #131). Downstream callers should use these instead of the raw
+// GfPow/FscxRevolve math directly, since they reject a degenerate
+// GF(2^n)* public element (additive zero or the multiplicative identity
+// g^0=1) that would otherwise let an attacker trivially forge Schnorr
+// signatures or decrypt/exchange keys.
+// ---------------------------------------------------------------------------
+
+// GfPubIsValid rejects the additive zero and the multiplicative identity
+// (g^0=1): a degenerate GF(2^n)* public element that collapses
+// HKEX-GF/HPKS/HPKE to trivially forgeable/decryptable cases.
+func GfPubIsValid(pub *big.Int) bool {
+	return pub.Sign() != 0 && pub.Cmp(big.NewInt(1)) != 0
+}
+
+// HkexGfAgree computes the HKEX-GF shared secret theirPub^myPriv, rejecting
+// a degenerate peer public key before agreement. Returns (shared, ok).
+func HkexGfAgree(myPriv, theirPub *BitArray, poly *big.Int, n int) (*BitArray, bool) {
+	if !GfPubIsValid(&theirPub.Val) {
+		return nil, false
+	}
+	return NewBitArray(n, GfPow(&theirPub.Val, &myPriv.Val, poly, n)), true
+}
+
+// HpksVerify verifies an HPKS Schnorr signature (R, s) on msg under pub,
+// rejecting a degenerate pub before evaluating the raw Schnorr equation
+// (pub=1 would make pub^e == 1 for any e, letting an attacker-chosen
+// (s, R=g^s) pair verify trivially against any message).
+func HpksVerify(msg, pub, R, s *BitArray, poly *big.Int, n int) bool {
+	if !GfPubIsValid(&pub.Val) {
+		return false
+	}
+	g := big.NewInt(GfGen)
+	e := FscxRevolve(R, msg, n/4)
+	lhs := GfMul(GfPow(g, &s.Val, poly, n), GfPow(&pub.Val, &e.Val, poly, n), poly, n)
+	return lhs.Cmp(&R.Val) == 0
+}
+
+// HpkeEncrypt performs HPKE (El Gamal + FscxRevolve) encryption of pt under
+// the recipient's public key pub, rejecting a degenerate pub rather than
+// silently producing ciphertext whose encKey = pub^r would be a constant
+// independent of r. Returns (R, ct, ok).
+func HpkeEncrypt(pt, pub *BitArray, poly *big.Int, n int) (*BitArray, *BitArray, bool) {
+	if !GfPubIsValid(&pub.Val) {
+		return nil, nil, false
+	}
+	g := big.NewInt(GfGen)
+	r := NewRandBitArray(n)
+	R := NewBitArray(n, GfPow(g, &r.Val, poly, n))
+	encKey := NewBitArray(n, GfPow(&pub.Val, &r.Val, poly, n))
+	ct := FscxRevolve(pt, encKey, n/4)
+	return R, ct, true
+}
+
+// HpkeDecrypt performs HPKE decryption of ct using the ephemeral R and the
+// recipient's private key priv, rejecting a degenerate R rather than
+// deriving a decKey = R^priv that is a constant independent of priv.
+func HpkeDecrypt(ct, R, priv *BitArray, poly *big.Int, n int) (*BitArray, bool) {
+	if !GfPubIsValid(&R.Val) {
+		return nil, false
+	}
+	decKey := NewBitArray(n, GfPow(&R.Val, &priv.Val, poly, n))
+	pt := FscxRevolve(ct, decKey, 3*n/4)
+	return pt, true
+}
+
+// ---------------------------------------------------------------------------
 // NL-FSCX primitives (v1.5.0 — non-linear)
 // ---------------------------------------------------------------------------
 

@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.115] - 2026-07-28
+
+### Fixed
+- **CLAUDE.md/llms.txt documentation drift corrected (TODO #145).** CLAUDE.md's `## Testing`
+  section previously claimed C/Go/Python security tests run `[1]`-`[29]` + benchmarks
+  `[30]`-`[41]`, undercounting the actual `[1]`-`[45]` range (`[44]` HCRED, `[45]` weak-key/
+  malformed-input rejection). It also undercounted ARM/NASM at `[1]`-`[13]` (actually
+  `[1]`-`[17]`) and mischaracterized test `[19]` ("HFSCX-256-DM known-answer vectors") as an
+  unlabeled C-only test running between `[20]`/`[21]`, when it's a fully labeled test running
+  out of sequence in all three languages. `build_arduino.sh`/`run_arduino.sh` were missing
+  from the `## Build Commands` list despite being referenced elsewhere in the file. Added a
+  reminder to re-check this section after any TODO that adds/removes a test number or CLI
+  subcommand.
+
+## [1.9.114] - 2026-07-28
+
+### Added
+- **Guarded protocol-level API ported to the Go and Python suite files (TODO #144).**
+  `herradura.h`'s `gf_pub_is_valid()` degenerate-public-key rejection (TODO #131) — refusing
+  a GF(2^n)* public element that is the additive zero or the multiplicative identity `g^0=1`,
+  which would otherwise let an attacker trivially forge Schnorr signatures or decrypt/exchange
+  keys — had no equivalent in `herradura/herradura.go` or `Herradura cryptographic suite.py`;
+  those files only had unguarded inline demo math. Added `GfPubIsValid`, `HkexGfAgree`,
+  `HpksVerify`, `HpkeEncrypt`, `HpkeDecrypt` to `herradura/herradura.go`, and
+  `gf_pub_is_valid`, `hkex_gf_agree`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt` to
+  `Herradura cryptographic suite.py`, mirroring `herradura.h`'s hardened API shape and
+  rejection semantics (reject pub in {0, 1}). Both languages' `main()` demos now call the
+  new guarded functions instead of raw `GfPow`/`gf_pow` math, doubling as usage examples.
+  `CryptosuiteTests/Herradura_tests.go`'s existing `[45]` weak-key-rejection test was updated
+  to exercise the new library functions directly (replacing local test-only duplicates);
+  `CryptosuiteTests/Herradura_tests.py`'s `[45]` test remains self-contained by the file's
+  existing "do not import from other files" convention and already covered equivalent
+  sub-checks. Verified via standalone Go/Python scripts exercising both the degenerate-key
+  rejection and legitimate-key round-trips for all four functions, plus a clean C build/test
+  run for cross-language parity.
+
 ## [1.9.113] - 2026-07-28
 
 ### Added
