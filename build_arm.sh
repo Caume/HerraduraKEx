@@ -5,7 +5,10 @@
 #
 # Dependencies (build):
 #   arm-linux-gnueabi-gcc + ARM sysroot
-#     sudo apt-get install -y gcc-arm-linux-gnueabi libc6-armel-cross
+#     sudo apt-get install -y gcc-arm-linux-gnueabi libc6-dev-armel-cross
+#   (libc6-armel-cross alone is runtime-only — no crt1.o/headers to link
+#    against; libc6-dev-armel-cross is the actual cross-dev package, found
+#    via TODO #139's Docker quickstart work)
 #
 # Dependencies (run — see run_arm.sh):
 #   qemu-arm
@@ -32,7 +35,7 @@ fi
 
 if [ ! -f "${ARM_SYSROOT_LIB}/crt1.o" ]; then
     echo "ERROR: ARM sysroot not found at ${ARM_SYSROOT_LIB}/crt1.o"
-    echo "  Install: sudo apt-get install -y libc6-armel-cross"
+    echo "  Install: sudo apt-get install -y libc6-dev-armel-cross"
     exit 1
 fi
 
