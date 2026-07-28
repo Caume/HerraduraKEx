@@ -5007,12 +5007,21 @@ node = lambda l, r: hfscx_256(b'\x01' + l + r)
 4. **78.C** Ratchet — gated on collision-probability analysis.
 5. **78.E** Non-Abelian KEx — start with `nl_fscx_v2_orbit.py`.
 
-Status: **OPEN** — 9 of 10 sub-items complete: 78.A DONE v1.9.14, 78.B DONE v1.9.14,
+Status: **DONE v1.9.111** — all 10 sub-items resolved: 78.A DONE v1.9.14, 78.B DONE v1.9.14,
 78.J DONE v1.9.14, 78.H DONE v1.9.15, 78.C DONE v1.9.15, 78.I DONE v1.9.16, 78.D DONE
 v1.9.20, 78.F DONE v1.9.21, 78.G DONE v1.9.22 (FPE, Tweakable, Accumulator, Masking,
 Ratchet, Ring Signature, PAKE-ZKBoo, VDF, and OPRF all have demo scripts and analysis).
-Sub-item 78.E (Non-Abelian KEx) remains open — orbit length bound and CSP reduction are
-research-blocked; see item 5 above.
+78.E (Non-Abelian KEx) resolved as **DONE (negative result)** per its own phased research
+plan's exit criteria: `SecurityProofsCode/nl_fscx_v2_csp.py`'s Phase 0 decision gate ran all
+three structural probes (centralizer search, Theorem-15 necessary-condition solution count,
+subgroup-order growth) and found VERDICT (a) — centralizers are generically trivial, the
+necessary condition admits essentially no partner keys, and a handful of generators already
+reach the full/near-full symmetric group. Ko-Lee/AAG-style non-abelian KEX is **not
+instantiable** on the `{pi_K}` permutation family; Phases 1-3 (orbit lower bound,
+circuit-model CSP transfer, formal reduction) are moot for that construction. Documented in
+SecurityProofs-2.md §11.8.5. A Stickel-type two-sided construction (`E = pi_K1 . A . pi_K2`,
+no commutativity required) remains a distinct, unexplored direction if Option C is
+revisited — out of scope for this closure.
 
 ---
 
