@@ -2285,6 +2285,7 @@ func cmdSign(args []string) {
 	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
+	rounds := fs.Int("rounds", 0, "ZKBoo rounds (nl-zkboo/nl-zkbpp only; default: 219 for 128-bit soundness)")
 	fs.Parse(args)
 
 	if *algo == "" || *key == "" {
@@ -2300,6 +2301,11 @@ func cmdSign(args []string) {
 		inBytes = Hfscx256(inBytes, nil)
 	}
 
+	zkpRounds := ZkpNlProdRounds
+	if *rounds > 0 {
+		zkpRounds = *rounds
+	}
+
 	// ZKP-NL: raw binary PEM — must not call readPEMInts
 	if *algo == "nl-zkboo" {
 		body, rerr := readRawPEM(*key, lblZkpNlPriv)
@@ -2311,7 +2317,7 @@ func cmdSign(args []string) {
 		if derr != nil {
 			die("sign", derr)
 		}
-		proof, perr := ZkpNlProve(A, B, y, zkpN, ZkpNlDemoRounds, msgPad(inBytes, 32))
+		proof, perr := ZkpNlProve(A, B, y, zkpN, zkpRounds, msgPad(inBytes, 32))
 		if perr != nil {
 			die("sign", perr)
 		}
@@ -2333,7 +2339,7 @@ func cmdSign(args []string) {
 		if derr != nil {
 			die("sign", derr)
 		}
-		proof, perr := ZkpNlProvepp(A, B, y, zkpN, ZkpNlDemoRounds, msgPad(inBytes, 32))
+		proof, perr := ZkpNlProvepp(A, B, y, zkpN, zkpRounds, msgPad(inBytes, 32))
 		if perr != nil {
 			die("sign", perr)
 		}

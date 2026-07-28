@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.112] - 2026-07-28
+
+### Security
+- **Go CLI's `nl-zkboo`/`nl-zkbpp` signing defaulted to demo-strength ZKBoo rounds with no
+  way to reach production strength (TODO #142).** `herradura_cli.go`'s `sign` hardcoded
+  `ZkpNlDemoRounds` (4 rounds, `(2/3)^4 ≈ 20%` forgery probability per attempt) instead of
+  `ZkpNlProdRounds` (219 rounds, ~128-bit soundness) that Python and C use by default, and
+  exposed no `--rounds` flag to opt into production strength. Fixed: Go's `sign` now
+  defaults to 219 rounds and accepts `--rounds` to override, matching Python's existing
+  flag. Added `CliTest/test_zkp_default_rounds.sh`, which decodes the round count directly
+  from each CLI's default-parameter proof PEM header and asserts 219 for all three CLIs and
+  both `nl-zkboo`/`nl-zkbpp`, so this class of regression is now caught mechanically.
+
 ## [1.9.111] - 2026-07-28
 
 ### Security
