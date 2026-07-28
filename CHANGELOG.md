@@ -2,6 +2,17 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.110] - 2026-07-28
+
+### Fixed
+- **`build_arm.sh` documented the wrong cross-toolchain package (TODO #139 follow-up).**
+  `libc6-armel-cross` is runtime-only (shared libraries only) and was never actually
+  sufficient to link the ARM Thumb-2 targets — it has no `crt1.o` or headers. The correct
+  package is `libc6-dev-armel-cross`, now fixed in both `build_arm.sh`'s comment/error message
+  and the Docker quickstart's `Dockerfile`, and confirmed to place `crt1.o` correctly by
+  actually building the amd64 image under QEMU emulation on an arm64 host. Discovered while
+  validating TODO #139's Docker image end-to-end on the pinned `linux/amd64` platform.
+
 ## [1.9.109] - 2026-07-27
 
 ### Added
