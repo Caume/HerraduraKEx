@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.109] - 2026-07-27
+
+### Added
+- **Docker quickstart for the full build matrix (TODO #139).** `Dockerfile` installs the exact
+  dependencies each `build_*.sh` script's own header comments document and defers to those
+  scripts rather than duplicating install logic, so the two can't drift apart silently.
+  `docker-entrypoint.sh` builds C, Go, ARM Thumb-2, and NASM i386, then runs the C/Go/Python
+  test suites plus `CliTest/test_c_interop.sh` as a smoke test. README.md gains a "Docker
+  quickstart" subsection: `docker build -t herradurakex .` / `docker run --rm -it
+  herradurakex`. Pinned to `linux/amd64` (the pairing `build_arm.sh`'s cross-toolchain
+  packages were documented against); non-amd64 Docker hosts need QEMU binfmt_misc emulation
+  registered to build the image, noted inline in the Dockerfile.
+
 ## [1.9.108] - 2026-07-27
 
 ### Added

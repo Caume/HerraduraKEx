@@ -1,0 +1,17 @@
+.git
+__pycache__
+*.pyc
+.hypothesis
+bindings/ffi/libherradura_ffi.so
+bindings/ffi/python/__pycache__
+Herradura cryptographic suite_c
+Herradura cryptographic suite_go
+Herradura cryptographic suite_arm
+Herradura cryptographic suite_i386
+Herradura cryptographic suite_avr.elf
+CryptosuiteTests/Herradura_tests_c
+CryptosuiteTests/Herradura_tests_go
+CryptosuiteTests/Herradura_tests_arm
+CryptosuiteTests/Herradura_tests_i386
+HerraduraCli/herradura_cli
+HerraduraCli/herradura_cli_go

@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.108)
+# Herradura Cryptographic Suite (v1.9.109)
 
 The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
 
@@ -97,6 +97,23 @@ The gap narrows for Go because native Go is already compiled; the FFI number the
 ---
 
 # Build & Run Instructions
+
+## Docker quickstart
+
+The full six-language build matrix needs a gcc, a Go toolchain, an ARM Thumb-2 cross-compiler,
+a NASM/i386-capable linker, and qemu — a real barrier for a first look. The included
+`Dockerfile` installs exactly what `build_c.sh`/`build_go.sh`/`build_arm.sh`/
+`build_asm_i386.sh`'s own header comments document, builds every host-portable target (C, Go,
+ARM Thumb-2, NASM i386 — Arduino needs a physical/simulated board target and is out of scope),
+and runs the C/Go/Python test suites plus one CLI integration test as a smoke test:
+
+```bash
+docker build -t herradurakex .
+docker run --rm -it herradurakex
+```
+
+No local cross-toolchain installation required; everything happens inside the container. See
+`docker-entrypoint.sh` for exactly what runs.
 
 ## C
 

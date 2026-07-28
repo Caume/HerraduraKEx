@@ -7401,7 +7401,20 @@ container image that builds and runs all targets out of the box would materially
 3. Keep the Dockerfile in sync with CLAUDE.md's dependency notes (e.g. the i386 linker
    auto-detection logic) rather than duplicating install instructions that could drift.
 
-Status: **OPEN**
+Status: **DONE v1.9.109** — `Dockerfile` (Ubuntu 24.04 base) installs the exact packages each
+`build_*.sh` script's own header comments document, then defers to those scripts rather than
+duplicating install logic (item 3). `docker-entrypoint.sh` runs all four build scripts, then
+the C/Go/Python test suites and `CliTest/test_c_interop.sh` as a smoke test. README.md gains a
+"Docker quickstart" subsection with the two-command `docker build`/`docker run` flow. Validated
+in this session: C build+tests pass, Go build succeeds and tests execute correctly (256-bit
+GF(2^n)* benchmarks are simply slow without hardware bignum accel — verified identical
+behavior outside Docker, not a packaging defect), NASM i386 build+tests pass, and
+`test_c_interop.sh` passes 4/4. The ARM Thumb-2 leg (`build_arm.sh`) cannot be validated on an
+arm64 Docker host: Ubuntu's arm64 apt repos carry no arm64→armel cross-toolchain package (only
+amd64→armel, the pairing `build_arm.sh`'s own comments were written against), so the
+Dockerfile pins `FROM --platform=linux/amd64` and documents that non-amd64 Docker hosts need
+QEMU binfmt_misc emulation registered to build the image — the same category of qemu
+dependency this project's own ARM/i386 targets already require, just at the image level.
 
 ---
 
