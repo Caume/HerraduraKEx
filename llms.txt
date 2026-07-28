@@ -118,11 +118,12 @@ R_VALUE.
 
 ## HerraduraCli — OpenSSL-style CLI (herradura.py / herradura_cli.c / herradura_cli_go)
 All three implementations share one PEM wire format and subcommand interface;
-PEM files from any one are byte-for-byte readable by the others.
+PEM files from any one are byte-for-byte readable by the others, EXCEPT hpks-xmss
+which is Python-only (see note below — no C or Go CLI support, TODO #143).
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
     <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpks-stern,
-             hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss, hpks-wots, hcred
+             hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss (Python-only), hpks-wots, hcred
   pkey --in FILE [--pubout] [--text] [--out FILE]
   kex --algo {hkex-gf,hkex-rnl} --our FILE --their FILE --out FILE [--kdf {none,hfscx-256}]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
@@ -132,13 +133,19 @@ PEM files from any one are byte-for-byte readable by the others.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {none,hfscx-256}] [--rounds N]
+    hpks-xmss is Python-only (herradura.py); not implemented in herradura_cli.c or
+    herradura_cli_go even though the underlying primitive exists in herradura.h /
+    herradura/herradura.go — see TODO #143.
   verify --algo {sign algos + hpks-t} --pubkey FILE [--ring ...] --in FILE --sig FILE
          [--digest {none,hfscx-256}]
   threshold-commit --key FILE --commit-out FILE --nonce-out FILE
   threshold-aggregate --commits FILE... --in FILE --out FILE [--digest ...]
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
-    (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine)
+  threshold-verify --sig FILE --in FILE [--digest {none,hfscx-256}]
+    (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify;
+     threshold-verify is a directly-invokable subcommand in C and Go; Python only
+     exposes the equivalent check via `verify --algo hpks-t`.)
   encfile/decfile --algo hske-nla1 --key FILE --in FILE --out FILE   (streaming, .hkx)
   dgst --algo {hfscx-256,hfscx-256-ds} --in FILE [--out FILE]
   rand [--seed FILE|--state FILE] [--personalization STR] [--reseed FILE]
