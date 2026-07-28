@@ -7535,7 +7535,19 @@ demo strength, never exercising any CLI's actual default.
 4. Audit whether any other Go CLI signing path (e.g. `hpks-ring`, `hpks-t`) has a similar
    hardcoded-demo-parameter-with-no-override pattern.
 
-Status: **OPEN**
+Status: **DONE v1.9.112** — `herradura_cli.go`'s `sign --algo nl-zkboo`/`nl-zkbpp` now
+default to `ZkpNlProdRounds` (219) and expose `--rounds` to override (mirroring Python's
+existing flag); verified the default now takes ~9.5s (219 rounds) vs. ~0.15s with an
+explicit `--rounds 4`, and that both `nl-zkboo` and `nl-zkbpp` still verify correctly at
+both round counts. Added `CliTest/test_zkp_default_rounds.sh`, which mechanically decodes
+the round count from each CLI's default-parameter proof PEM (the wire format's 8-byte
+header encodes it directly, no full ZKBoo verification needed) and asserts it's 219 for
+all three CLIs and both algorithms (6/6 pass); confirmed the existing
+`CliTest/test_zkp_interop.sh` still passes unchanged (14/14). Audited `hpks-ring`/
+`hpks-stern` (item 4): both already use `SdfRounds`=32, the same constant C/Python use,
+with an explicit printed security warning at every invocation — not the same silent-
+default-with-no-override pattern; `hpks-t` takes no round-count parameter at all. No other
+instance of the anti-pattern found.
 
 ---
 
