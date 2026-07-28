@@ -78,6 +78,7 @@ Use the build scripts when building everything; they apply the correct flags, ou
 ./build_go.sh         # compiles suite, tests, and HerraduraCli/herradura_cli_go
 ./build_arm.sh        # ARM Thumb-2 suite + tests (requires arm-linux-gnueabi-gcc)
 ./build_asm_i386.sh   # NASM i386 suite + tests (auto-detects elf_i386-capable linker)
+./build_arduino.sh    # Arduino/AVR suite + tests; run_arduino.sh runs them under simulation
 ```
 
 ### C
@@ -121,9 +122,13 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 
 No automated test framework. Tests are manual: run each program and verify console output.
 
+Whenever a TODO adds or removes a test number or CLI subcommand, re-check this section (and `llms.txt`'s CLI section) for drift rather than waiting for the next major-version doc audit — see TODO #145.
+
 ```bash
 # C/Go/Python — security tests [1]–[29] + benchmarks [30]–[41]
-# (C also runs one C-only unlabeled test between [20] and [21])
+# ([44] HCRED, [45] weak-key/malformed-input rejection appended after the
+#  benchmarks to avoid renumbering; all three languages also run test [19]
+#  "HFSCX-256-DM known-answer vectors" out of strict numeric sequence)
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s
@@ -136,7 +141,7 @@ python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
 # Assembly — build first (see Build Commands), then run:
-# ARM/NASM: tests [1]–[13]
+# ARM/NASM: tests [1]–[17]
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ```
