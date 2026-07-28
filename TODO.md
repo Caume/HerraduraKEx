@@ -7609,7 +7609,14 @@ that the Go subcommand itself is dead.
    `threshold-verify` directly (not just `verify --algo hpks-t`) for every CLI that has it, so
    these three gaps are mechanically re-detectable rather than requiring another manual audit.
 
-Status: **OPEN**
+Status: **DONE v1.9.113** — Item 1 (HCRED wired into `herradura_cli.go`: `genpkey --algo
+hcred`, `cred-issue`/`cred-prove`/`cred-verify`, byte-for-byte PEM interop with Python/C
+confirmed via `CliTest/test_cred_interop.sh`) and item 4 (`CLI_GO` coverage added to
+`test_cred_interop.sh`, 20/20 checks passing including Go-as-producer and Go-as-consumer
+cross-language cases) completed in this pass. Items 2 (hpks-xmss scoped as Python-only in
+`llms.txt`) and 3 (`threshold-verify` dispatch case wired in `herradura_cli.go`'s `main()`)
+were already done by prior work in this session — confirmed present and passing
+`CliTest/test_threshold_interop.sh`. All four work items now complete.
 
 ---
 

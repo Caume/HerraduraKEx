@@ -86,6 +86,11 @@ const (
 	lblHpkstAggregate = "HERRADURA HPKST AGGREGATE"
 	lblHpkstPartial   = "HERRADURA HPKST PARTIAL"
 	lblHpkstSig       = "HERRADURA HPKST SIGNATURE"
+
+	lblHcredPriv  = "HERRADURA HCRED PRIVATE KEY"
+	lblHcredPub   = "HERRADURA HCRED PUBLIC KEY"
+	lblHcredCred  = "HERRADURA HCRED CREDENTIAL"
+	lblHcredProof = "HERRADURA HCRED PROOF"
 )
 
 var privToAlgo = map[string]string{
@@ -630,7 +635,7 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
-	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpks-stern|hpke-stern)")
+	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpks-stern|hpke-stern|hcred)")
 	bits := fs.Int("bits", 256, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	fs.Parse(args)
@@ -673,6 +678,16 @@ func cmdGenpkey(args []string) {
 	case *algo == "hpke-stern-kem":
 		sup0, sup1, h0, h1, _ := QcMdpcKeygen(nil)
 		pem, err = encodeKemPriv(sup0, sup1, h0, h1)
+
+	case *algo == "hcred":
+		fmt.Fprintln(os.Stderr, "WARNING: HCRED is a demonstration parameter set. Do not use for production.")
+		mBase := RnlMPoly(n)
+		aRand := RnlRandPoly(n, RnlQ)
+		mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
+		s, C, eInt := HcredUserKeygen(mBlind, n)
+		seedH := NewRandBitArray(n)
+		syndr := HcredSyndrome(seedH, eInt, n)
+		pem = encodeHcredPriv(s, C, mBlind, seedH, syndr, n)
 
 	case *algo == "hpks-zkp-nl":
 		A, B, y, kerr := ZkpNlKeygen(ZkpNlDefaultN)
@@ -779,6 +794,27 @@ func cmdPkey(args []string) {
 				fmt.Printf("A (priv)  : %0*x\n", nb*2, A)
 				fmt.Printf("B (pub)   : %0*x\n", nb*2, B)
 				fmt.Printf("y (pub)   : %0*x\n", nb*2, y)
+			}
+			return
+		}
+		if lbl == lblHcredPriv {
+			body, rerr := readRawPEM(*in, lblHcredPriv)
+			if rerr != nil {
+				die("pkey", rerr)
+			}
+			sPoly, cPoly, mPoly, seedH, syndr, hn, derr := decodeHcredPriv(body)
+			if derr != nil {
+				die("pkey", derr)
+			}
+			if *pubout {
+				pemOut := encodeHcredPub(cPoly, mPoly, seedH, syndr, hn)
+				if werr := writeString(*out, pemOut); werr != nil {
+					die("pkey", werr)
+				}
+			} else {
+				fmt.Printf("algorithm : hcred\n")
+				fmt.Printf("n         : %d\n", hn)
+				fmt.Printf("W (weight): %d\n", CountBits(HcredPhi(sPoly)))
 			}
 			return
 		}
@@ -1517,6 +1553,13 @@ func decodeKemCT(ints [][]byte) (syn, E *big.Int) {
 // packSternSig serialises a *SternSig to the HERRADURA SIGNATURE PEM format,
 // matching Python's _pack_stern_sig and C's pack_stern_sig exactly.
 func packSternSig(sig *SternSig, n int) (string, error) {
+	return packSternSigLabel(sig, n, lblSig)
+}
+
+// packSternSigLabel is packSternSig with a caller-supplied PEM label — used
+// to reuse the HERRADURA SIGNATURE wire layout under the
+// HERRADURA HCRED CREDENTIAL label.
+func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 	rounds := len(sig.Rounds)
 	nb := n / 8
 
@@ -1568,7 +1611,7 @@ func packSternSig(sig *SternSig, n int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return PemWrap(lblSig, seq), nil
+	return PemWrap(label, seq), nil
 }
 
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
@@ -1863,6 +1906,468 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 		}
 	}
 	return
+}
+
+// ── HCRED raw-binary PEM helpers ─────────────────────────────────────────────
+//
+// Wire formats (raw binary, no DER) — must match Python's codec.py
+// (_hcred_ser3/_hcred_ser2/encode_hcred_*) and C's hcred_ser/pack helpers
+// exactly:
+//   HCRED PRIVATE KEY:
+//     4B n | n×3B s_poly (Z_q) | n×2B C_poly (Z_p) | n×3B m_poly (Z_q)
+//     | (n/8)B seed_H (big-endian) | ceil(rows/8)B syndr (little-endian)
+//   HCRED PUBLIC KEY:
+//     4B n | n×2B C_poly (Z_p) | n×3B m_poly (Z_q)
+//     | (n/8)B seed_H (big-endian) | ceil(rows/8)B syndr (little-endian)
+//   HCRED CREDENTIAL: same binary layout as HERRADURA SIGNATURE (Stern-F sig)
+//   HCRED PROOF:
+//     4B n | 4B W | 4B rounds | per round:
+//       96B coms (3×32B) | outs_bytes | 32B seed_c | 32B seed_c1
+//       | n×3B a1 | n×3B b1 | nb×3B g1 | nd×3B h1
+//       | 1B has_aux | if has_aux: n×3B aux_s | nb×3B aux_B | nd×3B aux_D
+
+const (
+	hcredSignRounds = 219 // Stern-F rounds for issuer credential (prod soundness)
+	hcredCliRounds  = 219 // ZKBoo rounds for presentation proof (prod soundness)
+)
+
+// hcredSer3 serialises a Z_q (mod 65537) vector at 3 bytes/coeff, big-endian.
+func hcredSer3(vec []int) []byte {
+	out := make([]byte, 3*len(vec))
+	for i, v := range vec {
+		w := ((v % 65537) + 65537) % 65537
+		out[3*i] = byte(w >> 16)
+		out[3*i+1] = byte(w >> 8)
+		out[3*i+2] = byte(w)
+	}
+	return out
+}
+
+func hcredDeser3(data []byte, off, count int) ([]int, int) {
+	out := make([]int, count)
+	for i := 0; i < count; i++ {
+		out[i] = int(data[off])<<16 | int(data[off+1])<<8 | int(data[off+2])
+		off += 3
+	}
+	return out, off
+}
+
+// hcredSer2 serialises a Z_p (mod 4096) vector at 2 bytes/coeff, big-endian.
+func hcredSer2(vec []int) []byte {
+	out := make([]byte, 2*len(vec))
+	for i, v := range vec {
+		w := ((v % 4096) + 4096) % 4096
+		out[2*i] = byte(w >> 8)
+		out[2*i+1] = byte(w)
+	}
+	return out
+}
+
+func hcredDeser2(data []byte, off, count int) ([]int, int) {
+	out := make([]int, count)
+	for i := 0; i < count; i++ {
+		out[i] = int(data[off])<<8 | int(data[off+1])
+		off += 2
+	}
+	return out, off
+}
+
+// hcredNbNd returns (nb, nd, rows) for HCRED at n bits.
+func hcredNbNd(n int) (nb, nd, rows int) {
+	rows, rowBits, _ := HcredParams(n)
+	return rows * rowBits, n * HcredEpsBits, rows
+}
+
+func hcredOutsToBytes(outs *HcredOuts, n int) []byte {
+	var buf []byte
+	for j := 0; j < 3; j++ {
+		buf = append(buf, hcredSer3(outs.Ter[j])...)
+		buf = append(buf, hcredSer3(outs.Bit[j])...)
+		buf = append(buf, hcredSer3(outs.Del[j])...)
+		buf = append(buf, hcredSer3([]int{outs.Wsh[j]})...)
+		buf = append(buf, hcredSer3(outs.S[j])...)
+		buf = append(buf, hcredSer3(outs.Y[j])...)
+		buf = append(buf, hcredSer3(outs.Rnd[j])...)
+	}
+	return buf
+}
+
+func hcredOutsFromBytes(data []byte, off, n int) (HcredOuts, int) {
+	nb, nd, rows := hcredNbNd(n)
+	var outs HcredOuts
+	for j := 0; j < 3; j++ {
+		outs.Ter[j], off = hcredDeser3(data, off, n)
+		outs.Bit[j], off = hcredDeser3(data, off, nb)
+		outs.Del[j], off = hcredDeser3(data, off, nd)
+		var wv []int
+		wv, off = hcredDeser3(data, off, 1)
+		outs.Wsh[j] = wv[0]
+		outs.S[j], off = hcredDeser3(data, off, rows)
+		outs.Y[j], off = hcredDeser3(data, off, rows)
+		outs.Rnd[j], off = hcredDeser3(data, off, n)
+	}
+	return outs, off
+}
+
+func encodeHcredPriv(sPoly, cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int) string {
+	seedNb := n / 8
+	syndrNb := (n/2 + 7) / 8
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	buf = append(buf, hcredSer3(sPoly)...)
+	buf = append(buf, hcredSer2(cPoly)...)
+	buf = append(buf, hcredSer3(mPoly)...)
+	seedBuf := make([]byte, seedNb)
+	seedH.Val.FillBytes(seedBuf)
+	buf = append(buf, seedBuf...)
+	buf = append(buf, hcredLE(syndr, syndrNb)...)
+	return PemWrap(lblHcredPriv, buf)
+}
+
+func decodeHcredPriv(body []byte) (sPoly, cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int, err error) {
+	if len(body) < 4 {
+		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	off := 4
+	sPoly, off = hcredDeser3(body, off, n)
+	cPoly, off = hcredDeser2(body, off, n)
+	mPoly, off = hcredDeser3(body, off, n)
+	seedNb := n / 8
+	syndrNb := (n/2 + 7) / 8
+	if off+seedNb+syndrNb > len(body) {
+		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key truncated")
+	}
+	seedH = NewBitArray(n, new(big.Int).SetBytes(body[off:off+seedNb]))
+	off += seedNb
+	syndr = hcredFromLE(body[off:off+syndrNb])
+	return
+}
+
+func encodeHcredPub(cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int) string {
+	seedNb := n / 8
+	syndrNb := (n/2 + 7) / 8
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	buf = append(buf, hcredSer2(cPoly)...)
+	buf = append(buf, hcredSer3(mPoly)...)
+	seedBuf := make([]byte, seedNb)
+	seedH.Val.FillBytes(seedBuf)
+	buf = append(buf, seedBuf...)
+	buf = append(buf, hcredLE(syndr, syndrNb)...)
+	return PemWrap(lblHcredPub, buf)
+}
+
+func decodeHcredPub(body []byte) (cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int, err error) {
+	if len(body) < 4 {
+		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key too short")
+	}
+	n = int(binary.BigEndian.Uint32(body[0:4]))
+	off := 4
+	cPoly, off = hcredDeser2(body, off, n)
+	mPoly, off = hcredDeser3(body, off, n)
+	seedNb := n / 8
+	syndrNb := (n/2 + 7) / 8
+	if off+seedNb+syndrNb > len(body) {
+		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key truncated")
+	}
+	seedH = NewBitArray(n, new(big.Int).SetBytes(body[off:off+seedNb]))
+	off += seedNb
+	syndr = hcredFromLE(body[off:off+syndrNb])
+	return
+}
+
+// hcredLE encodes v as `nbytes` little-endian bytes (matches Python's/C's
+// LSB-first syndrome byte layout).
+func hcredLE(v *big.Int, nbytes int) []byte {
+	be := v.FillBytes(make([]byte, nbytes))
+	le := make([]byte, nbytes)
+	for i := 0; i < nbytes; i++ {
+		le[i] = be[nbytes-1-i]
+	}
+	return le
+}
+
+func hcredFromLE(le []byte) *big.Int {
+	be := make([]byte, len(le))
+	for i := range le {
+		be[i] = le[len(le)-1-i]
+	}
+	return new(big.Int).SetBytes(be)
+}
+
+// loadHcredPubinfo loads (C, m, seed_H, syndr, n) from either an HCRED
+// PUBLIC KEY or PRIVATE KEY PEM — mirrors Python's _load_hcred_pubkey and
+// C's hcred_load_pubinfo.
+func loadHcredPubinfo(path string) (cPoly, mPoly []int, seedH *BitArray, syndr *big.Int, n int, err error) {
+	lbl, lerr := peekPEMLabel(path)
+	if lerr != nil {
+		return nil, nil, nil, nil, 0, lerr
+	}
+	if lbl == lblHcredPriv {
+		body, rerr := readRawPEM(path, lblHcredPriv)
+		if rerr != nil {
+			return nil, nil, nil, nil, 0, rerr
+		}
+		_, cPoly, mPoly, seedH, syndr, n, err = decodeHcredPriv(body)
+		return cPoly, mPoly, seedH, syndr, n, err
+	}
+	if lbl != lblHcredPub {
+		return nil, nil, nil, nil, 0, fmt.Errorf("expected HCRED PUBLIC KEY (or PRIVATE KEY), got %q", lbl)
+	}
+	body, rerr := readRawPEM(path, lblHcredPub)
+	if rerr != nil {
+		return nil, nil, nil, nil, 0, rerr
+	}
+	return decodeHcredPub(body)
+}
+
+func encodeHcredProof(proof *HcredProof, n int) string {
+	W := proof.W
+	R := len(proof.Rounds)
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint32(buf[0:], uint32(n))
+	binary.BigEndian.PutUint32(buf[4:], uint32(W))
+	binary.BigEndian.PutUint32(buf[8:], uint32(R))
+	for _, rd := range proof.Rounds {
+		for _, c := range rd.Coms {
+			buf = append(buf, c...)
+		}
+		buf = append(buf, hcredOutsToBytes(&rd.Outs, n)...)
+		buf = append(buf, rd.SeedC...)
+		buf = append(buf, rd.SeedC1...)
+		buf = append(buf, hcredSer3(rd.A1)...)
+		buf = append(buf, hcredSer3(rd.B1)...)
+		buf = append(buf, hcredSer3(rd.G1)...)
+		buf = append(buf, hcredSer3(rd.H1)...)
+		if rd.AuxS != nil {
+			buf = append(buf, 1)
+			buf = append(buf, hcredSer3(rd.AuxS)...)
+			buf = append(buf, hcredSer3(rd.AuxB)...)
+			buf = append(buf, hcredSer3(rd.AuxD)...)
+		} else {
+			buf = append(buf, 0)
+		}
+	}
+	return PemWrap(lblHcredProof, buf)
+}
+
+func decodeHcredProof(body []byte) (*HcredProof, int, error) {
+	if len(body) < 12 {
+		return nil, 0, fmt.Errorf("HCRED proof too short")
+	}
+	n := int(binary.BigEndian.Uint32(body[0:4]))
+	W := int(binary.BigEndian.Uint32(body[4:8]))
+	R := int(binary.BigEndian.Uint32(body[8:12]))
+	nb, nd, _ := hcredNbNd(n)
+	off := 12
+	proof := &HcredProof{W: W, Rounds: make([]HcredRound, R)}
+	for j := 0; j < R; j++ {
+		var rd HcredRound
+		for k := 0; k < 3; k++ {
+			if off+32 > len(body) {
+				return nil, 0, fmt.Errorf("HCRED proof round %d truncated (coms)", j)
+			}
+			rd.Coms[k] = append([]byte(nil), body[off:off+32]...)
+			off += 32
+		}
+		rd.Outs, off = hcredOutsFromBytes(body, off, n)
+		if off+64 > len(body) {
+			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (seeds)", j)
+		}
+		rd.SeedC = append([]byte(nil), body[off:off+32]...)
+		off += 32
+		rd.SeedC1 = append([]byte(nil), body[off:off+32]...)
+		off += 32
+		rd.A1, off = hcredDeser3(body, off, n)
+		rd.B1, off = hcredDeser3(body, off, n)
+		rd.G1, off = hcredDeser3(body, off, nb)
+		rd.H1, off = hcredDeser3(body, off, nd)
+		if off >= len(body) {
+			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (has_aux)", j)
+		}
+		hasAux := body[off]
+		off++
+		if hasAux != 0 {
+			rd.AuxS, off = hcredDeser3(body, off, n)
+			rd.AuxB, off = hcredDeser3(body, off, nb)
+			rd.AuxD, off = hcredDeser3(body, off, nd)
+		}
+		proof.Rounds[j] = rd
+	}
+	return proof, n, nil
+}
+
+// ── cred-issue / cred-prove / cred-verify ────────────────────────────────────
+
+func cmdCredIssue(args []string) {
+	fs := flag.NewFlagSet("cred-issue", flag.ExitOnError)
+	in := fs.String("in", "", "User HCRED public (or private) key PEM")
+	our := fs.String("our", "", "Issuer hpks-stern/hpke-stern private key PEM")
+	out := fs.String("out", "-", "HCRED CREDENTIAL PEM output")
+	rounds := fs.Int("rounds", 0, "Stern-F rounds (default: 219 for 128-bit soundness)")
+	fs.Parse(args)
+
+	if *in == "" {
+		fmt.Fprintln(os.Stderr, "cred-issue: --in (HCRED public/private key) required")
+		os.Exit(1)
+	}
+	if *our == "" {
+		fmt.Fprintln(os.Stderr, "cred-issue: --our (hpks-stern private key) required")
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security (demo parameters). Do not use for production.")
+
+	cPoly, mPoly, seedH, syndr, n, lerr := loadHcredPubinfo(*in)
+	if lerr != nil {
+		die("cred-issue", lerr)
+	}
+
+	label, ourInts, err := readPEMInts(*our)
+	if err != nil {
+		die("cred-issue", err)
+	}
+	if label != lblHpksSternPriv && label != lblHpkeSternPriv {
+		fmt.Fprintf(os.Stderr, "cred-issue: --our must be an hpks-stern or hpke-stern private key, got %q\n", label)
+		os.Exit(1)
+	}
+	issuerN := bytesToInt(ourInts[2])
+	issuerE := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[0]))
+	issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(ourInts[1]))
+
+	r := hcredSignRounds
+	if *rounds > 0 {
+		r = *rounds
+	}
+
+	sig := HcredIssue(mPoly, cPoly, seedH, syndr, n, issuerE, issuerSeed, r)
+	pem, perr := packSternSigLabel(sig, issuerN, lblHcredCred)
+	if perr != nil {
+		die("cred-issue", perr)
+	}
+	if werr := writeString(*out, pem); werr != nil {
+		die("cred-issue", werr)
+	}
+}
+
+func cmdCredProve(args []string) {
+	fs := flag.NewFlagSet("cred-prove", flag.ExitOnError)
+	in := fs.String("in", "", "User HCRED PRIVATE KEY PEM")
+	out := fs.String("out", "-", "HCRED PROOF PEM output")
+	msg := fs.String("msg", "", "Message to bind into the proof")
+	rounds := fs.Int("rounds", 0, "ZKBoo rounds (default: 219 for 128-bit soundness)")
+	fs.Parse(args)
+
+	if *in == "" {
+		fmt.Fprintln(os.Stderr, "cred-prove: --in (HCRED private key) required")
+		os.Exit(1)
+	}
+
+	body, rerr := readRawPEM(*in, lblHcredPriv)
+	if rerr != nil {
+		die("cred-prove", rerr)
+	}
+	sPoly, cPoly, mPoly, seedH, syndr, n, derr := decodeHcredPriv(body)
+	if derr != nil {
+		die("cred-prove", derr)
+	}
+
+	r := hcredCliRounds
+	if *rounds > 0 {
+		r = *rounds
+	}
+
+	proof, perr := HcredProve(sPoly, mPoly, cPoly, seedH, syndr, n, r, []byte(*msg))
+	if perr != nil {
+		die("cred-prove", perr)
+	}
+
+	pem := encodeHcredProof(proof, n)
+	if werr := writeString(*out, pem); werr != nil {
+		die("cred-prove", werr)
+	}
+}
+
+func cmdCredVerify(args []string) {
+	fs := flag.NewFlagSet("cred-verify", flag.ExitOnError)
+	proofPath := fs.String("proof", "", "HCRED PROOF PEM")
+	pubkeyPath := fs.String("pubkey", "", "User HCRED PUBLIC (or PRIVATE) KEY PEM")
+	credPath := fs.String("cred", "", "HCRED CREDENTIAL PEM (optional; verify issuer binding)")
+	issuerPath := fs.String("issuer", "", "Issuer hpks-stern/hpke-stern public key PEM (required with --cred)")
+	msg := fs.String("msg", "", "Message bound into the proof")
+	rounds := fs.Int("rounds", 0, "Rounds to verify (default: proof's own round count)")
+	fs.Parse(args)
+
+	if *proofPath == "" {
+		fmt.Fprintln(os.Stderr, "cred-verify: --proof required")
+		os.Exit(1)
+	}
+	if *pubkeyPath == "" {
+		fmt.Fprintln(os.Stderr, "cred-verify: --pubkey required")
+		os.Exit(1)
+	}
+
+	body, rerr := readRawPEM(*proofPath, lblHcredProof)
+	if rerr != nil {
+		die("cred-verify", rerr)
+	}
+	proof, _, derr := decodeHcredProof(body)
+	if derr != nil {
+		die("cred-verify", derr)
+	}
+
+	r := len(proof.Rounds)
+	if *rounds > 0 {
+		r = *rounds
+	}
+
+	cPoly, mPoly, seedH, syndr, pubN, lerr := loadHcredPubinfo(*pubkeyPath)
+	if lerr != nil {
+		die("cred-verify", lerr)
+	}
+
+	msgBytes := []byte(*msg)
+	okProof := HcredVerify(mPoly, cPoly, seedH, syndr, proof, pubN, r, msgBytes)
+	if !okProof {
+		fmt.Println("Verification FAILED (proof)")
+		os.Exit(1)
+	}
+
+	if *credPath != "" {
+		if *issuerPath == "" {
+			fmt.Fprintln(os.Stderr, "cred-verify: --cred requires --issuer (hpks-stern public key)")
+			os.Exit(1)
+		}
+		_, credInts, cerr := readPEMInts(*credPath)
+		if cerr != nil {
+			die("cred-verify", cerr)
+		}
+		credSig, _, uerr := unpackSternSig(credInts)
+		if uerr != nil {
+			die("cred-verify", uerr)
+		}
+
+		issLabel, issInts, ierr := readPEMInts(*issuerPath)
+		if ierr != nil {
+			die("cred-verify", ierr)
+		}
+		if issLabel != lblHpksSternPub && issLabel != lblHpkeSternPub {
+			fmt.Fprintf(os.Stderr, "cred-verify: --issuer must be an hpks-stern or hpke-stern public key, got %q\n", issLabel)
+			os.Exit(1)
+		}
+		issuerN := bytesToInt(issInts[2])
+		issuerSyn := new(big.Int).SetBytes(issInts[0])
+		issuerSeed := NewBitArray(issuerN, new(big.Int).SetBytes(issInts[1]))
+
+		okCred := HcredCredVerify(mPoly, cPoly, seedH, syndr, pubN, credSig, issuerSeed, issuerSyn)
+		if !okCred {
+			fmt.Println("Verification FAILED (credential)")
+			os.Exit(1)
+		}
+		fmt.Println("Credential OK")
+	}
+
+	fmt.Println("Proof OK")
 }
 
 // ── enc ───────────────────────────────────────────────────────────────────────
@@ -3681,6 +4186,14 @@ func main() {
 		cmdThresholdRespond(os.Args[2:])
 	case "threshold-combine":
 		cmdThresholdCombine(os.Args[2:])
+	case "threshold-verify":
+		cmdThresholdVerify(rest)
+	case "cred-issue":
+		cmdCredIssue(rest)
+	case "cred-prove":
+		cmdCredProve(rest)
+	case "cred-verify":
+		cmdCredVerify(rest)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		usage()

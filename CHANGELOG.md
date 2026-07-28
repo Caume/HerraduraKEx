@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.113] - 2026-07-28
+
+### Added
+- **Go CLI now supports HCRED (TODO #143 items 1 and 4).** `herradura_cli.go` was missing
+  the entire HCRED credential/ZK-proof subsystem even though the underlying `herradura`
+  Go library (`HcredUserKeygen`, `HcredIssue`, `HcredProve`, `HcredVerify`,
+  `HcredCredVerify`) already implemented it. Added `genpkey --algo hcred`, and new
+  `cred-issue`/`cred-prove`/`cred-verify` subcommands, with `HERRADURA HCRED PRIVATE/PUBLIC
+  KEY`, `HERRADURA HCRED CREDENTIAL` (reusing the Stern-F signature wire layout), and
+  `HERRADURA HCRED PROOF` raw-binary PEM codecs byte-for-byte compatible with Python's
+  `herradura.py` and C's `herradura_cli.c`. `CliTest/test_cred_interop.sh` gained a guarded
+  `CLI_GO` path (skips gracefully if `herradura_cli_go` isn't built) exercising Go as both
+  producer and consumer against C and Python in every combination — 20/20 checks pass.
+- `herradura_cli.go`'s `pkey --pubout`/`--text` now handles `HERRADURA HCRED PRIVATE KEY`
+  PEMs (raw-binary, not DER `SEQUENCE`), matching the existing ZKP-NL raw-PEM handling
+  pattern.
+
+### Documentation
+- Noted that `herradura_cli.go`'s `threshold-verify` subcommand (implemented earlier this
+  session) and `hpks-xmss` being Python-only (`llms.txt`) round out TODO #143 — all four
+  work items in that TODO are now complete.
+
 ## [1.9.112] - 2026-07-28
 
 ### Security
