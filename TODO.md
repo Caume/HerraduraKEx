@@ -7497,3 +7497,270 @@ Status: **DONE v1.9.92** — added `gf_pub_is_valid()` checks before the inline
 key; `cmd_threshold_verify` already called the hardened `hpkst_verify` and
 needed no change, ring-signature verification is unaffected (Stern, not GF
 exponentiation); added `CliTest/test_weak_key_rejection.sh`.
+
+---
+
+### 142. `nl-zkboo`/`nl-zkbpp` proofs signed by the Go CLI use demo-strength rounds with no override (Security, High)
+
+**Background:** A full cross-language quality audit found that
+`HerraduraCli/herradura_cli.go`'s `sign --algo nl-zkboo`/`nl-zkbpp` paths hardcode
+`ZkpNlDemoRounds` (= 4, `herradura/herradura.go:1882`) at the call sites
+(`herradura_cli.go:2314`, `:2336`), and expose **no `--rounds` flag** to override it — the
+correct constant, `ZkpNlProdRounds = 219`, is defined right next to the demo one
+(`herradura/herradura.go:1883`) but is never referenced by the CLI. Python's equivalent
+`sign` path defaults to `_ZKP_NL_PROD_ROUNDS = 219` and exposes `--rounds` to override
+(`HerraduraCli/herradura.py:144,2412`); C hardcodes the same 219-round production constant
+(`herradura.h:2391` `ZKP_NL_PROD_ROUNDS`, used at `herradura_cli.c:2472,2476`). Soundness of
+the ZKBoo Fiat-Shamir proof is `(2/3)^rounds` — at 4 rounds a cheating prover succeeds with
+probability `(2/3)^4 ≈ 19.75%` per attempt, i.e. the proof is trivially forgeable. Because
+the wire format doesn't encode the round count and the PEM label/algo name are identical to
+the production-strength proofs Python and C produce, this is silently much weaker than a
+user would expect from the shared "byte-for-byte compatible" CLI framing (see TODO #144).
+`CliTest/test_zkp_interop.sh` cannot catch this: it deliberately passes `--rounds 4` on
+every CLI for test speed, so it only proves cross-language PEM-format compatibility at
+demo strength, never exercising any CLI's actual default.
+
+**Work items:**
+
+1. In `herradura_cli.go`, change the `nl-zkboo`/`nl-zkbpp` `sign` call sites
+   (`herradura_cli.go:2314,2336`) to default to `ZkpNlProdRounds` instead of
+   `ZkpNlDemoRounds`, matching Python/C's production default.
+2. Add a `--rounds` flag to Go's `sign`/`verify` dispatch for `nl-zkboo`/`nl-zkbpp`, mirroring
+   Python's `--rounds` (`herradura.py:2411`), so a caller can still opt into a faster
+   demo-strength proof explicitly rather than getting it silently by default.
+3. Extend `CliTest/test_zkp_interop.sh` (or add a new script) with a **separate**,
+   low-iteration-count check that each CLI's *default* round count is exactly 219 when
+   `--rounds` is omitted, so a regression here is caught mechanically instead of requiring
+   another manual audit.
+4. Audit whether any other Go CLI signing path (e.g. `hpks-ring`, `hpks-t`) has a similar
+   hardcoded-demo-parameter-with-no-override pattern.
+
+Status: **OPEN**
+
+---
+
+### 143. Go CLI is missing HCRED, `hpks-xmss`, and a reachable `threshold-verify` — "byte-for-byte compatible" CLI claim no longer holds (Feature/Interop, High)
+
+**Background:** A full cross-language quality audit compared `HerraduraCli/herradura.py`,
+`herradura_cli.c`, and `herradura_cli.go` subcommand-by-subcommand and found three real
+feature gaps in the Go CLI, on top of TODO #142's ZKP round-count bug. Since CLAUDE.md and
+`llms.txt` both claim the three CLIs "share the same PEM wire format and subcommand
+interface" and produce output "byte-for-byte compatible with the others" (CLAUDE.md §
+HerraduraCli), these gaps make that claim actively misleading — an agent or user reading
+`llms.txt`'s CLI section would reasonably try `herradura_cli_go genpkey --algo hcred` and be
+surprised it doesn't exist (see TODO #144 for the doc fix).
+
+**Confirmed gaps:**
+
+**A. HCRED subsystem entirely absent from the Go CLI.** Python (`herradura.py:2598-2632`,
+`genpkey --algo hcred` at `herradura.py:2349`) and C (`herradura_cli.c:3543-3862`,
+`genpkey --algo hcred`) both implement `cred-issue`/`cred-prove`/`cred-verify` and HCRED key
+generation. `herradura_cli.go` has no `hcred` case in `cmdGenpkey`'s algo switch and no
+`cred-issue`/`cred-prove`/`cred-verify` case in `main()`'s dispatch — despite the underlying
+Go *library* (`herradura/herradura.go`) fully implementing `HcredUserKeygen`, `HcredIssue`,
+`HcredProve`/`HcredCredVerify` (confirmed present, e.g. `HcredUserKeygen` at
+`herradura/herradura.go:3273`). This is a CLI wiring gap, not a missing primitive.
+`CliTest/test_cred_interop.sh` only defines `CLI_C`/`CLI_PY` and never references Go at all
+— it silently omits Go rather than catching the gap.
+
+**B. `hpks-xmss` exists only in the Python CLI.** Python implements `genpkey --algo
+hpks-xmss` (with `--xmss-height`), `sign`/`verify --algo hpks-xmss`, and the
+`HERRADURA HPKS-XMSS PRIVATE KEY`/`SIGNATURE` PEM labels (`herradura.py:2349-2353,2402,2418`
++ codec support). Neither C nor Go has any `xmss` reference at all — a Python-generated
+`hpks-xmss` PEM cannot be parsed by either. No `CliTest/test_xmss_interop.sh` exists to catch
+this (only a non-cross-language `test_wots.sh` exists, for the related but distinct WOTS
+scheme).
+
+**C. Go's `threshold-verify` subcommand is implemented but unreachable.** `cmdThresholdVerify`
+is fully coded (`herradura_cli.go:3590-3624`) but `main()`'s dispatch `switch`
+(`herradura_cli.go:3634-3676`) has no `case "threshold-verify":` — the function is only
+reachable internally from `verify --algo hpks-t`. Python has no `threshold-verify` at all (its
+dispatch table only has `threshold-commit/aggregate/respond/combine`). C's `threshold-verify`
+is a real, working, directly-invokable subcommand (`herradura_cli.c:2345`, dispatched near
+line 2698). `CliTest/test_threshold_interop.sh` uses the generic `verify --algo hpks-t`
+path for all three CLIs, so it never calls `$GO threshold-verify` directly and cannot reveal
+that the Go subcommand itself is dead.
+
+**Work items:**
+
+1. Wire `hcred` into `herradura_cli.go`'s `cmdGenpkey` and add `cred-issue`/`cred-prove`/
+   `cred-verify` dispatch cases, calling the already-implemented `Hcred*` library functions.
+2. Either implement `hpks-xmss` in the C and Go CLIs (the Go *library* already has
+   `HpksXmssKeygen`/`Sign`/`Verify` per `herradura/herradura.go:2831`; check C's `herradura.h`
+   for an equivalent), or explicitly scope `hpks-xmss` as Python-only in CLAUDE.md/llms.txt if
+   porting is out of scope — don't leave it silently undocumented either way.
+3. Add `case "threshold-verify":` to `herradura_cli.go`'s dispatch `switch`, wiring up the
+   already-coded `cmdThresholdVerify`. Add the same subcommand to Python for parity, or document
+   the asymmetry explicitly.
+4. Add `CLI_GO` coverage to `CliTest/test_cred_interop.sh` and a new
+   `CliTest/test_xmss_interop.sh`, and extend `CliTest/test_threshold_interop.sh` to call
+   `threshold-verify` directly (not just `verify --algo hpks-t`) for every CLI that has it, so
+   these three gaps are mechanically re-detectable rather than requiring another manual audit.
+
+Status: **OPEN**
+
+---
+
+### 144. `herradura.h`'s weak/degenerate public-key rejection (TODO #131) has no equivalent in the Go or Python suite files (Security, Medium)
+
+**Background:** TODO #131 added `gf_pub_is_valid()` and wired it into `herradura.h`'s
+`hkex_gf_agree`/`hpks_verify`/`hpke_encrypt`/`hpke_decrypt`, and TODO #141 propagated the
+same check into the C CLI. A cross-language audit found this hardening was never ported to
+the Go or Python **suite files** at all — and in fact those exported protocol-level
+functions don't exist there in the first place. `herradura/herradura.go` and
+`Herradura cryptographic suite.py` implement HKEX-GF/HPKS/HPKE only as unguarded inline code
+inside each language's `main()` demonstration (Go: `Herradura cryptographic suite.go:66-138`;
+Python: `Herradura cryptographic suite.py:3924-3994`), calling `GfPow`/`gf_pow` directly with
+no public-key validation and no reusable, hardened API a downstream caller could import.
+Anyone building on the Go or Python suite files as a library (as opposed to the CLI, which
+Python/C do harden at the `HerraduraCli/` layer per #141) gets no protection against a
+degenerate/identity public key, which lets an attacker forge Schnorr signatures or trivially
+decrypt/exchange keys (same root cause as #131).
+
+**Work items:**
+
+1. Add `GfPubIsValid`-equivalent guarded exported functions to `herradura/herradura.go`
+   (`HkexGfAgree`, `HpksVerify`, `HpkeEncrypt`, `HpkeDecrypt`), mirroring `herradura.h`'s
+   API shape so downstream Go code has a hardened entry point instead of only inline demo math.
+2. Add the equivalent guarded functions to `Herradura cryptographic suite.py`
+   (`hkex_gf_agree`, `hpks_verify`, `hpke_encrypt`, `hpke_decrypt`), reusing `gf_pub_is_valid`
+   semantics already present in `herradura.h`.
+3. Update each language's `main()` demo to call the new hardened functions instead of the raw
+   inline math, so the demo itself doubles as a usage example of the safe API.
+4. Add a test to `CryptosuiteTests/Herradura_tests.go`/`.py` mirroring the existing weak-key
+   rejection sub-checks already covered by C's test `[45]` (see TODO #146.A for the related
+   gap in that test's own cross-language parity).
+
+Status: **OPEN**
+
+---
+
+### 145. CLAUDE.md/README.md/llms.txt build and test documentation is stale against current code (Docs, Medium)
+
+**Background:** A documentation-vs-code audit found several stale claims in CLAUDE.md,
+compounding TODO #143's "byte-for-byte compatible" CLI framing issue with separate,
+independent inaccuracies:
+
+**A.** CLAUDE.md's `## Testing` section states `# C/Go/Python — security tests [1]–[29] +
+benchmarks [30]–[41]`, but all three `Herradura_tests.{c,go,py}` files actually implement
+tests up to `[45]` (`[44]` HCRED, `[45]` weak-key/malformed-input rejection are present and
+identically numbered in all three but never mentioned in CLAUDE.md).
+
+**B.** The same section's `# ARM/NASM: tests [1]–[13]` undercounts — both
+`Herradura_tests.s` and `Herradura_tests.asm` actually implement tests `[1]`–`[17]`
+(including Stern-Ring, ZKP-NL, FPE, Tweakable cipher, and Accumulator, all present despite
+the documented cutoff at `[13]`).
+
+**C.** CLAUDE.md's `(C also runs one C-only unlabeled test between [20] and [21])` note is
+inaccurate on two counts: the test in question is fully labeled (`"[19] HFSCX-256-DM
+known-answer vectors"`, `Herradura_tests.c:3729`) — it's test `[19]` running out of numeric
+sequence, not an unlabeled test — and this out-of-sequence execution isn't C-only either:
+Go and Python also invoke `[19]` out of order relative to `[17]`/`[18]`/`[20]`, just at
+different points in each language's own call order.
+
+**D.** `build_arduino.sh`/`run_arduino.sh` exist, are functional, and are referenced
+elsewhere in CLAUDE.md (e.g. the parameter tables), but are never listed in the `## Build
+Commands` code block alongside `build_c.sh`/`build_go.sh`/`build_arm.sh`/`build_asm_i386.sh`
+— a reader following that section would not discover the Arduino build path exists.
+
+**E.** `llms.txt`'s CLI section (`llms.txt:114-152`) lists `hcred`/`hpks-xmss`/`cred-issue`/
+`cred-prove`/`cred-verify` as part of the shared, "byte-for-byte readable" CLI interface
+without noting they are Python/C-only (see TODO #143) — misleading specifically for an
+AI agent using `llms.txt` as a condensed reference to decide what to try.
+
+**Work items:**
+
+1. Update CLAUDE.md's `## Testing` section to reflect the actual `[1]`–`[45]` range for
+   C/Go/Python and `[1]`–`[17]` for ARM/NASM, and correct or remove the "[20]/[21] unlabeled
+   test" note per finding C.
+2. Add `build_arduino.sh`/`run_arduino.sh` to CLAUDE.md's `## Build Commands` section.
+3. Scope `llms.txt`'s CLI subcommand list to note which of `hcred`/`hpks-xmss`/`cred-*` are
+   Python/C-only, once TODO #143's work items are resolved (or immediately, if #143 is not
+   picked up soon — don't leave the misleading claim standing in the meantime).
+4. Re-run this doc-vs-code check periodically (e.g. after any TODO that adds/removes a test
+   number or CLI subcommand) rather than only at major version bumps — this class of drift
+   accumulates silently otherwise.
+
+Status: **OPEN**
+
+---
+
+### 146. Cross-language test suites diverge in coverage/parameters under identically-numbered tests (Testing, Medium)
+
+**Background:** A test-suite parity audit found several places where `Herradura_tests.{c,go,py}`
+report the *same* test number/name across languages but actually validate different things —
+meaning a PASS in one language is not the same guarantee as a PASS in another, which defeats
+the purpose of shared test numbering as a cross-language contract.
+
+**A. Test `[45]` (weak-key/malformed-input rejection) checks fewer sub-conditions in Go/Python
+than C.** C checks 7 sub-conditions including HPKE-decrypt-refusal of a degenerate ephemeral
+key and HSKE-NL-A1-AEAD tamper/reuse rejection (`Herradura_tests.c:5098-5217`); Go and Python
+check only 4, omitting both the HPKE-decrypt check and the AEAD checks
+(`Herradura_tests.go:1645-1707`, `Herradura_tests.py:2677-2729`) — even their printed
+description strings differ (`"tampered syndrome/AEAD"` in C vs. `"tampered syndrome"` in
+Go/Python), confirming this was a scope decision, not an oversight in printing.
+
+**B. Test `[30]` (HPKS-WOTS-F/XMSS-F) validates a smaller tree in Python than C/Go.** C and Go
+both use XMSS height `h=3` (8 leaves); Python uses `h=2` (4 leaves,
+`Herradura_tests.py:2158-2159`, explicitly commented as a speed tradeoff) — a real reduction
+in what's exercised (fewer leaves, shorter auth path) under the same test number.
+
+**C. Test `[41]` (HPKS-Stern-F throughput benchmark) uses different round counts per language,**
+making the reported ops/sec not comparable: C uses `rounds=8` (`Herradura_tests.c:2418` etc.,
+printed `"rounds=8"`), Go uses `sdfTestRounds = 4` (`Herradura_tests.go:147`), Python
+hardcodes `rounds = 4` (`Herradura_tests.py:2858-2859`). Benchmark-only (no PASS/FAIL
+threshold), so this doesn't cause false passes, but the three languages' `[41]` numbers
+shouldn't be compared against each other as currently labeled.
+
+**Work items:**
+
+1. Extend Go's and Python's test `[45]` to include the HPKE-decrypt-refusal and HSKE-NL-A1-AEAD
+   tamper/reuse sub-checks C already has (or explicitly downgrade C's test name/number if the
+   extra coverage is intentionally C-specific — pick one, don't leave the numbers implying
+   parity that doesn't exist). This should be coordinated with TODO #144's work, since #144's
+   hardened Go/Python functions are a prerequisite for testing HPKE-decrypt-refusal there.
+2. Either raise Python's XMSS test `[30]` to `h=3` to match C/Go, or clearly print/name it as
+   a reduced-parameter variant so a reader doesn't assume identical coverage.
+3. Align `[41]`'s round count across C/Go/Python (either all 8 or all 4), or rename/relabel
+   the benchmark output per language to make clear the numbers aren't directly comparable as
+   currently printed.
+4. Update CLAUDE.md's test-count documentation per TODO #145 once these are resolved, since
+   the exact numbering/range may shift.
+
+Status: **OPEN**
+
+---
+
+### 147. Dead code in `Herradura cryptographic suite.asm`'s `fscx_single`; Arduino test suite lags ARM/NASM by 5 tests (Code Quality, Low)
+
+**Background:** An assembly/Arduino consistency audit found two code-quality issues distinct
+from the (correct, documented) reduced-parameter scope of these ports:
+
+**A.** `Herradura cryptographic suite.asm:2347-2360`'s `fscx_single` contains a dead first
+attempt at the FSCX computation — several xor/rol/ror instructions followed by a comment
+admitting the approach was wrong (`"Actually we need A intact for the B part. Let me redo
+with a copy."`), immediately followed by the real, correct computation at lines 2362-2381
+that overwrites the result. Register-balanced (push/pop nets to zero) so output is
+unaffected, but it's shipped debug/scratch code that should be removed for clarity.
+
+**B.** `CryptosuiteTests/Herradura_tests.ino` implements only tests `[1]`–`[12]`, while the
+sibling `Herradura_tests.s`/`.asm` files (added later, per file timestamps — June vs. the
+`.ino`'s May) implement `[1]`–`[17]`, adding Stern-Ring, ZKP-NL, FPE, Tweakable cipher, and
+the Accumulator. The Arduino test suite was never updated when tests `[13]`–`[17]` were added
+to the ARM/NASM suites, so Arduino now has the narrowest test coverage of the three assembly-
+adjacent targets despite being architecturally capable of the same 32-bit-parameter tests
+(HCRED is a legitimate C-only gap across all of `.s`/`.asm`/`.ino` and is out of scope here —
+see the Stern-F/HCRED parameter notes already in CLAUDE.md).
+
+**Work items:**
+
+1. Remove the dead first-attempt code in `Herradura cryptographic suite.asm`'s `fscx_single`
+   (lines ~2347-2360), keeping only the correct computation.
+2. Port tests `[13]`–`[17]` (Stern-Ring, ZKP-NL, FPE, Tweakable cipher, Accumulator) from
+   `Herradura_tests.s`/`.asm` to `Herradura_tests.ino`, at the same reduced 32-bit parameters
+   already used for Arduino's other tests.
+3. Update CLAUDE.md's Arduino/assembly test-count references once `.ino` reaches parity
+   (coordinate with TODO #145's doc-staleness fix so this isn't a second undercount left
+   behind).
+
+Status: **OPEN**
