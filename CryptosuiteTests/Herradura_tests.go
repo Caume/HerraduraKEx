@@ -1600,48 +1600,11 @@ func testHcred() {
 	fmt.Println()
 }
 
-// gfPubIsValid rejects the additive zero and the multiplicative identity
-// (g^0=1): a degenerate GF(2^n)* public element that collapses
-// HKEX-GF/HPKS/HPKE to trivially forgeable/decryptable cases (TODO #131;
-// mirrors herradura.h's gf_pub_is_valid).
-func gfPubIsValid(pub *big.Int) bool {
-	return pub.Sign() != 0 && pub.Cmp(big.NewInt(1)) != 0
-}
-
-// hpksVerifyChecked mirrors herradura.h's hardened HpksVerify (TODO #131):
-// rejects a degenerate pub before evaluating the raw Schnorr equation,
-// since pub=1 would make pub^e == 1 for any e -- any (s, R=g^s) pair would
-// otherwise trivially verify against any message.
-func hpksVerifyChecked(msg *BitArray, pub, rInt, sInt, poly *big.Int, size int) bool {
-	if !gfPubIsValid(pub) {
-		return false
-	}
-	g := big.NewInt(GfGen)
-	rB := newBA(size, rInt)
-	e := FscxRevolve(rB, msg, iVal(size))
-	lhs := GfMul(GfPow(g, sInt, poly, size), GfPow(pub, &e.Val, poly, size), poly, size)
-	return lhs.Cmp(rInt) == 0
-}
-
-// hpkeEncryptChecked mirrors herradura.h's hardened HpkeEncrypt (TODO
-// #131): refuses a degenerate recipient pub rather than silently
-// producing ciphertext whose encKey = pub^r would be a constant
-// independent of r.
-func hpkeEncryptChecked(pt, pub, poly *big.Int, size int) (*BitArray, *BitArray, bool) {
-	if !gfPubIsValid(pub) {
-		return nil, nil, false
-	}
-	g := big.NewInt(GfGen)
-	r := randBA(size)
-	rVal2 := GfPow(g, &r.Val, poly, size)
-	encKey := newBA(size, GfPow(pub, &r.Val, poly, size))
-	ptBA := newBA(size, pt)
-	E := FscxRevolve(ptBA, encKey, iVal(size))
-	return newBA(size, rVal2), E, true
-}
-
 // Security test [45]: weak-key & malformed-input rejection.  Appended
 // after [44] to avoid renumbering (same number in C/Go/Python; TODO #131).
+// Exercises the guarded protocol-level API (GfPubIsValid/HkexGfAgree/
+// HpksVerify/HpkeEncrypt/HpkeDecrypt) added to herradura/herradura.go by
+// TODO #144, rather than local test-only duplicates.
 func testWeakKeyRejection() {
 	fmt.Println("[45] Weak-key & malformed-input rejection (identity pubkey, " +
 		"zero/degenerate elements, tampered syndrome)  [SECURITY]")
@@ -1651,32 +1614,35 @@ func testWeakKeyRejection() {
 	N := testRounds(10)
 	okHkex, okHpks, okHpke, okStern := 0, 0, 0, 0
 	t0 := time.Now()
-	zero := big.NewInt(0)
-	one := big.NewInt(1)
+	zero := newBA(size, big.NewInt(0))
+	one := newBA(size, big.NewInt(1))
 	for i := 0; i < N; i++ {
 		// HKEX-GF: a peer public key of 0 or 1 (identity) must be refused
 		// before agreement -- either collapses the shared secret to a
 		// constant independent of the caller's own private key.
-		if !gfPubIsValid(zero) && !gfPubIsValid(one) {
-			okHkex++
+		myPriv := randBA(size)
+		if _, ok0 := HkexGfAgree(myPriv, zero, poly, size); !ok0 {
+			if _, ok1 := HkexGfAgree(myPriv, one, poly, size); !ok1 {
+				okHkex++
+			}
 		}
 
 		// HPKS: an attacker who picks s at random and sets R=g^s can make
 		// any (msg, pub=identity) triple satisfy the raw Schnorr equation.
 		// The hardened verifier must reject pub in {0, 1} regardless.
-		sForged := &randBA(size).Val
+		sForged := randBA(size)
 		g := big.NewInt(GfGen)
-		rForged := GfPow(g, sForged, poly, size)
+		rForged := newBA(size, GfPow(g, &sForged.Val, poly, size))
 		msg := randBA(size)
-		if !hpksVerifyChecked(msg, zero, rForged, sForged, poly, size) &&
-			!hpksVerifyChecked(msg, one, rForged, sForged, poly, size) {
+		if !HpksVerify(msg, zero, rForged, sForged, poly, size) &&
+			!HpksVerify(msg, one, rForged, sForged, poly, size) {
 			okHpks++
 		}
 
 		// HPKE: encrypt must refuse an identity/zero recipient pubkey.
-		pt := &randBA(size).Val
-		if _, _, ok0 := hpkeEncryptChecked(pt, zero, poly, size); !ok0 {
-			if _, _, ok1 := hpkeEncryptChecked(pt, one, poly, size); !ok1 {
+		pt := randBA(size)
+		if _, _, ok0 := HpkeEncrypt(pt, zero, poly, size); !ok0 {
+			if _, _, ok1 := HpkeEncrypt(pt, one, poly, size); !ok1 {
 				okHpke++
 			}
 		}

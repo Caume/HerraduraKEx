@@ -424,6 +424,70 @@ def gf_pow(base: int, exp: int, poly: int, n: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Guarded classical protocol API (TODO #144; mirrors herradura.h's
+# gf_pub_is_valid + hkex_gf_agree/hpks_verify/hpke_encrypt/hpke_decrypt,
+# TODO #131). Downstream callers should use these instead of the raw
+# gf_pow/fscx_revolve math directly, since they reject a degenerate
+# GF(2^n)* public element (additive zero or the multiplicative identity
+# g^0=1) that would otherwise let an attacker trivially forge Schnorr
+# signatures or decrypt/exchange keys.
+# ---------------------------------------------------------------------------
+
+def gf_pub_is_valid(pub: int) -> bool:
+    """Rejects the additive zero and the multiplicative identity (g^0=1):
+    a degenerate GF(2^n)* public element that collapses HKEX-GF/HPKS/HPKE
+    to trivially forgeable/decryptable cases."""
+    return pub not in (0, 1)
+
+
+def hkex_gf_agree(my_priv: int, their_pub: int, poly: int, n: int):
+    """Computes the HKEX-GF shared secret their_pub^my_priv, rejecting a
+    degenerate peer public key before agreement. Returns the shared secret
+    int, or None if their_pub is degenerate."""
+    if not gf_pub_is_valid(their_pub):
+        return None
+    return gf_pow(their_pub, my_priv, poly, n)
+
+
+def hpks_verify(msg: 'BitArray', pub: int, R: 'BitArray', s: int,
+                 poly: int, n: int) -> bool:
+    """Verifies an HPKS Schnorr signature (R, s) on msg under pub, rejecting
+    a degenerate pub before evaluating the raw Schnorr equation (pub=1
+    would make pub^e == 1 for any e, letting an attacker-chosen (s,
+    R=g^s) pair verify trivially against any message)."""
+    if not gf_pub_is_valid(pub):
+        return False
+    e = fscx_revolve(R, msg, n // 4).uint
+    lhs = gf_mul(gf_pow(GF_GEN, s, poly, n), gf_pow(pub, e, poly, n), poly, n)
+    return lhs == R.uint
+
+
+def hpke_encrypt(pt: 'BitArray', pub: int, poly: int, n: int):
+    """Performs HPKE (El Gamal + fscx_revolve) encryption of pt under the
+    recipient's public key pub, rejecting a degenerate pub rather than
+    silently producing ciphertext whose enc_key = pub^r would be a
+    constant independent of r. Returns (R, ct) as BitArrays, or None."""
+    if not gf_pub_is_valid(pub):
+        return None
+    r = BitArray.random(n).uint
+    R = gf_pow(GF_GEN, r, poly, n)
+    enc_key = gf_pow(pub, r, poly, n)
+    ct = fscx_revolve(pt, BitArray(n, enc_key), n // 4)
+    return BitArray(n, R), ct
+
+
+def hpke_decrypt(ct: 'BitArray', R: 'BitArray', priv: int, poly: int, n: int):
+    """Performs HPKE decryption of ct using the ephemeral R and the
+    recipient's private key priv, rejecting a degenerate R rather than
+    deriving a dec_key = R^priv that is a constant independent of priv.
+    Returns the plaintext BitArray, or None."""
+    if not gf_pub_is_valid(R.uint):
+        return None
+    dec_key = gf_pow(R.uint, priv, poly, n)
+    return fscx_revolve(ct, BitArray(n, dec_key), 3 * n // 4)
+
+
+# ---------------------------------------------------------------------------
 # NL-FSCX primitives (v1.5.0 — non-linear; for PQC-hardened protocols)
 # ---------------------------------------------------------------------------
 
@@ -3924,8 +3988,11 @@ def main():
     # HKEX-GF key exchange (classical)
     C  = BitArray(KEYBITS, gf_pow(GF_GEN, a.uint, poly, KEYBITS))
     C2 = BitArray(KEYBITS, gf_pow(GF_GEN, b.uint, poly, KEYBITS))
-    sk = BitArray(KEYBITS, gf_pow(C2.uint, a.uint, poly, KEYBITS))
-    sk_bob_val = gf_pow(C.uint, b.uint, poly, KEYBITS)
+    sk_val = hkex_gf_agree(a.uint, C2.uint, poly, KEYBITS)
+    sk_bob_val = hkex_gf_agree(b.uint, C.uint, poly, KEYBITS)
+    if sk_val is None or sk_bob_val is None:
+        print("- HKEX-GF agreement refused a degenerate peer public key!")
+    sk = BitArray(KEYBITS, sk_val)
 
     print(f"a         : {a.hex}")
     print(f"b         : {b.hex}")
@@ -3964,31 +4031,25 @@ def main():
     R_s   = BitArray(KEYBITS, gf_pow(GF_GEN, k_s.uint, poly, KEYBITS))
     e_s   = fscx_revolve(R_s, plaintext, I_VALUE)
     s_s   = (k_s.uint - a.uint * e_s.uint) % ORD
-    e_v   = fscx_revolve(R_s, plaintext, I_VALUE)
-    lhs   = gf_mul(gf_pow(GF_GEN, s_s, poly, KEYBITS),
-                   gf_pow(C.uint, e_v.uint, poly, KEYBITS), poly, KEYBITS)
+    verified = hpks_verify(plaintext, C.uint, R_s, s_s, poly, KEYBITS)
     print(f"P (msg)        : {plaintext.hex}")
     print(f"R [Alice,sign] : {R_s.hex}")
     print(f"e [Alice,sign] : {e_s.hex}")
     print(f"s [Alice,sign] : {s_s:0{KEYBITS//4}x}")
-    print(f"  [Bob,verify] : g^s·C^e = {lhs:0{KEYBITS//4}x}")
-    if lhs == R_s.uint:
+    if verified:
         print(f"  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
     else:
         print(f"  [Bob,verify] : - Schnorr verification failed!")
 
     print("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
     print("    (El Gamal + fscx_revolve)")
-    r_hpke   = BitArray.random(KEYBITS)
-    R_hpke   = BitArray(KEYBITS, gf_pow(GF_GEN, r_hpke.uint, poly, KEYBITS))
-    enc_key  = BitArray(KEYBITS, gf_pow(C.uint, r_hpke.uint, poly, KEYBITS))
-    E_hpke   = fscx_revolve(plaintext, enc_key, I_VALUE)
-    dec_key  = BitArray(KEYBITS, gf_pow(R_hpke.uint, a.uint, poly, KEYBITS))
-    D_hpke   = fscx_revolve(E_hpke, dec_key, R_VALUE)
+    enc_result = hpke_encrypt(plaintext, C.uint, poly, KEYBITS)
+    R_hpke, E_hpke = enc_result
+    D_hpke = hpke_decrypt(E_hpke, R_hpke, a.uint, poly, KEYBITS)
     print(f"P (plain) : {plaintext.hex}")
     print(f"E (Bob)   : {E_hpke.hex}")
     print(f"D (Alice) : {D_hpke.hex}")
-    if D_hpke == plaintext:
+    if D_hpke is not None and D_hpke == plaintext:
         print("+ plaintext correctly decrypted")
     else:
         print("- decryption failed!")
