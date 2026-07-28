@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.111] - 2026-07-28
+
+### Security
+- **TODO #78.E — Non-Abelian KEx Phase 0 decision gate resolved as a negative result,
+  closing TODO #78 (10/10 sub-items).** `SecurityProofsCode/nl_fscx_v2_csp.py`'s three
+  structural probes (centralizer search, Theorem-15 necessary-condition solution count,
+  subgroup-order growth) all agree: the NL-FSCX v2 permutation family's centralizers are
+  generically trivial, the necessary commutativity condition admits essentially no partner
+  keys beyond a key and itself, and a handful of generators already reach the full or
+  near-full symmetric group. Ko-Lee/Anshel-Anshel-Goldfeld-style non-abelian key exchange is
+  therefore **not instantiable** on this family — no two independent commuting subgroups
+  exist to draw from. Documented in SecurityProofs-2.md §11.8.5 and §11.8.6's comparison
+  table. Per the item's own phased research plan, a Phase 0 negative result is a legitimate
+  completion; Phases 1-3 are moot for the Ko-Lee/AAG construction specifically. A
+  Stickel-type two-sided construction remains open as a distinct, unexplored direction.
+
 ## [1.9.110] - 2026-07-28
 
 ### Fixed

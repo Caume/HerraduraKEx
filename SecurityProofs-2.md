@@ -800,6 +800,16 @@ for a fixed public base point $G$.  Given $(C, \pi_{K_2})$, recovering $K_1$ is 
 
 This option is documented as a future research direction.
 
+**Phase 0 decision gate — commuting-subgroup structure (TODO #78.E, v1.9.111).**  A Ko-Lee/Anshel-Anshel-Goldfeld (AAG) style key exchange over $\{\pi_K\}$ requires two independent commuting subgroups: Alice draws generators from one, Bob from the other, and correctness depends on the cross-commutators vanishing.  Before investing in the circuit-model CSP reduction (Obstacles 1 and 3 above), `SecurityProofsCode/nl_fscx_v2_csp.py` settles whether $\{\pi_K\}$ has any exploitable commuting structure at all, via three independent probes:
+
+*Centralizer search ($\S$1).*  Exhaustive full-permutation commutativity test $\pi_{K_2} \circ \pi_{K_1} = \pi_{K_1} \circ \pi_{K_2}$ at $n \in \{4, 6, 8\}$: the centralizer of every $K_1$ tested has size $1$-$2$ (only $K_1$ itself and, at $n = 4$, one other key), with $0$ of $256$ keys at $n = 8$ having a centralizer larger than $2$.
+
+*Theorem-15 necessary condition ($\S$2).*  The commutativity equation evaluated at $A = 0$, $\delta(K_1) - \delta(K_2) \equiv M(K_1 \oplus K_2) \pmod{2^n}$, is necessary but not sufficient for full commutativity, so its solution count upper-bounds $\S$1 and is cheap to compute exhaustively at larger $n$.  At $n \in \{8, 12\}$ (exhaustive) and $n = 16$ (sampled), the average solution count per $K_1$ stays flat near $1.9$-$2.0$ regardless of $n$ — meaning almost every $K_1$ has at most one non-trivial partner $K_2 \neq K_1$, not a growing coset.
+
+*Subgroup-order growth ($\S$3).*  At $n \in \{4, 6\}$, two or three random generators $\{\pi_{K_1}, \ldots, \pi_{K_m}\}$ already generate a subgroup order that hits the search cap ($> 500000$) or a large fraction of $|\mathrm{Sym}(2^n)|$ — there is no proper subgroup with room for a structured, samplable KEX instance.
+
+*Verdict.*  All three probes agree: centralizers are generically trivial, the necessary condition admits essentially no partner keys beyond $K_1$ itself, and a handful of generators already reach the full or near-full symmetric group.  This is decision-gate **VERDICT (a)**: Ko-Lee/AAG is **not instantiable** on $\{\pi_K\}$ — there are no two independent commuting subgroups to draw from.  Per the phased research plan's stated exit criteria, this is a **documented negative result** for the Ko-Lee/AAG instantiation of Option C; Phases 1-3 (orbit lower bound, circuit-model CSP transfer, formal reduction) are moot for that specific construction and are not pursued further.  A Stickel-type two-sided construction, $E = \pi_{K_1} \cdot A \cdot \pi_{K_2}$, does not require commutativity and remains a distinct, unexplored research direction if Option C is revisited.
+
 **v2 cipher-stream-problem cryptanalysis status (TODO #124, v1.9.89).**  Independent of the conjugacy question above, the *cipher-stream problem* for NL-FSCX v2 — recovering $K$ from known-plaintext samples $C_i = F_2^r(P_i, K)$ — previously rested on Theorem 14's MQ argument alone, with none of the empirical cryptanalysis that v1 received (TODO #74/#75/#35).  `SecurityProofsCode/nl_fscx_v2_csp_analysis.py` closes that gap with the v1-equivalent battery:
 
 *Offset structure.*  $\delta(K) = \mathrm{ROL}(K(K+1)/2 \bmod 2^n, n/4)$ is roughly 2-to-1: the image covers $\approx 0.55 \cdot 2^n$ values at $n \in \{8, 12, 16\}$ (140/256, 2220/4096, 35500/65536).  $\delta$-collision related-key pairs therefore exist, but no exploitable bias was found (next item).
@@ -826,7 +836,7 @@ This option is documented as a future research direction.
 |---|---|---|---|
 | Protocols addressed | HPKS | HPKS + HPKE | HPKS |
 | FSCX primitive | $F_1$ (v1) as OWF / hash | $F_1$ (v1) as PRF for matrix generation | $F_2$ (v2) permutation family |
-| Hardness basis | NL-FSCX v1 OWF (**new assumption**) | $\mathrm{SD}(N,t)$ (NP-complete) + NL-FSCX v1 PRF | Non-abelian CSP (**not yet proven**) |
+| Hardness basis | NL-FSCX v1 OWF (**new assumption**) | $\mathrm{SD}(N,t)$ (NP-complete) + NL-FSCX v1 PRF | Non-abelian CSP; Ko-Lee/AAG instantiation ruled out (**negative result**) |
 | Classical bound | $O(2^n)$ — Corollary 2 | $O(2^{0.054N})$ — ISD | Unknown |
 | Quantum bound | $O(2^{n/2})$ — Grover | $O(2^{0.042N})$ — quantum ISD | Unknown |
 | Reduction strength | Theorem 16: EUF-CMA $\leq$ OWF preimage | Theorem 17: EUF-CMA $\leq$ SD $\wedge$ PRF | No complete proof |
