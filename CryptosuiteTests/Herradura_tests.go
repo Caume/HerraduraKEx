@@ -146,6 +146,11 @@ func hpkeSternFBruteForce32(seed *BitArray, ct *big.Int) (*BitArray, bool) {
 
 const sdfTestRounds = 4
 
+// sdfBenchRounds matches C's SDF_TEST_ROUNDS=8 for benchmark [41] specifically,
+// so throughput numbers are comparable across languages (TODO #146.C); the
+// correctness tests [17]/[20] keep sdfTestRounds=4 for speed.
+const sdfBenchRounds = 8
+
 // ---------------------------------------------------------------------------
 // Security tests — classical protocols [1-9]
 // ---------------------------------------------------------------------------
@@ -914,12 +919,12 @@ func benchHkexRnlHandshake() {
 }
 
 func benchHpksSternF() {
-	fmt.Printf("[41] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfTestRounds)
+	fmt.Printf("[41] HPKS-Stern-F sign+verify throughput  (N=n, rounds=%d)  [CODE-BASED PQC]\n", sdfBenchRounds)
 	for _, size := range sizes {
 		seed, e, syn := SternFKeygen(size)
 		msg := randBA(size)
 		ops, elapsed := bench("", func() {
-			sig := HpksSternFSign(msg, e, seed, sdfTestRounds)
+			sig := HpksSternFSign(msg, e, seed, sdfBenchRounds)
 			HpksSternFVerify(msg, sig, seed, syn)
 		})
 		fmt.Printf("    bits=%3d  sign+verify              : %s  (%d ops in %.2fs)\n",
@@ -1607,12 +1612,13 @@ func testHcred() {
 // TODO #144, rather than local test-only duplicates.
 func testWeakKeyRejection() {
 	fmt.Println("[45] Weak-key & malformed-input rejection (identity pubkey, " +
-		"zero/degenerate elements, tampered syndrome)  [SECURITY]")
+		"zero/degenerate elements, tampered syndrome/AEAD)  [SECURITY]")
 	size := 256
 	poly := GfPoly[size]
 	sternN := 32
 	N := testRounds(10)
-	okHkex, okHpks, okHpke, okStern := 0, 0, 0, 0
+	okHkex, okHpks, okHpke, okHpkeDec, okStern := 0, 0, 0, 0, 0
+	okAeadTamper, okAeadKeySwap := 0, 0
 	t0 := time.Now()
 	zero := newBA(size, big.NewInt(0))
 	one := newBA(size, big.NewInt(1))
@@ -1647,6 +1653,18 @@ func testWeakKeyRejection() {
 			}
 		}
 
+		// HPKE decrypt: an honestly-encrypted ct must still decrypt (sanity),
+		// and decrypt must refuse a degenerate ephemeral R.
+		priv := randBA(size)
+		pub := newBA(size, GfPow(g, &priv.Val, poly, size))
+		Rhonest, ct, _ := HpkeEncrypt(pt, pub, poly, size)
+		dec, okDec := HpkeDecrypt(ct, Rhonest, priv, poly, size)
+		_, okDecZero := HpkeDecrypt(ct, zero, priv, poly, size)
+		_, okDecOne := HpkeDecrypt(ct, one, priv, poly, size)
+		if okDec && dec.Val.Cmp(&pt.Val) == 0 && !okDecZero && !okDecOne {
+			okHpkeDec++
+		}
+
 		// HPKS-Stern-F: an honestly-generated signature must be rejected
 		// when verified against a corrupted (flipped-bit) syndrome.
 		seed, e, syndrome := SternFKeygen(sternN)
@@ -1658,17 +1676,44 @@ func testWeakKeyRejection() {
 			okStern++
 		}
 
+		// HSKE-NL-A1-AEAD: tampered ciphertext must fail the tag check, and
+		// re-using the same (key, nonce) pair for a different plaintext must
+		// produce a different tag/ciphertext (no silent keystream reuse).
+		{
+			aeadKey := NewRandBitArray(256)
+			aeadNonce := NewRandBitArray(256)
+			ptBytes := make([]byte, 256/8)
+			pt2Bytes := make([]byte, 256/8)
+			for j := range ptBytes {
+				ptBytes[j] = byte(j ^ i)
+				pt2Bytes[j] = byte(j ^ i ^ 0xFF)
+			}
+			ctBuf, tag := HskeNlAeadEncrypt(aeadKey, aeadNonce, nil, ptBytes)
+			ctBad := append([]byte{ctBuf[0] ^ 1}, ctBuf[1:]...)
+			if _, ok := HskeNlAeadDecrypt(aeadKey, aeadNonce, nil, ctBad, tag); !ok {
+				okAeadTamper++
+			}
+			ct2Buf, _ := HskeNlAeadEncrypt(aeadKey, aeadNonce, nil, pt2Bytes)
+			if !bytes.Equal(ctBuf, ct2Buf) {
+				okAeadKeySwap++
+			}
+		}
+
 		if timeExceeded(t0) {
 			N = i + 1
 			break
 		}
 	}
 	status := "PASS"
-	if okHkex != N || okHpks != N || okHpke != N || okStern != N {
+	if okHkex != N || okHpks != N || okHpke != N || okHpkeDec != N || okStern != N ||
+		okAeadTamper != N || okAeadKeySwap != N {
 		status = "FAIL"
 	}
 	fmt.Printf("    n=%d  hkex_reject=%d/%d  hpks_id_reject=%d/%d"+
-		"  hpke_enc_reject=%d/%d  stern_synd_reject=%d/%d  [%s]\n",
-		N, okHkex, N, okHpks, N, okHpke, N, okStern, N, status)
+		"  hpke_enc_reject=%d/%d  hpke_dec_reject=%d/%d"+
+		"  stern_synd_reject=%d/%d  aead_tamper_reject=%d/%d"+
+		"  aead_reuse_distinct=%d/%d  [%s]\n",
+		N, okHkex, N, okHpks, N, okHpke, N, okHpkeDec, N,
+		okStern, N, okAeadTamper, N, okAeadKeySwap, N, status)
 	fmt.Println()
 }

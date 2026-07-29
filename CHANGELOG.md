@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.117] - 2026-07-29
+
+### Fixed
+- **Removed dead first-attempt code in `fscx_single` (TODO #147.A).** `Herradura
+  cryptographic suite.asm`'s `fscx_single` contained a debug/scratch first attempt
+  at the FSCX computation (ending in a comment admitting the approach was wrong),
+  immediately followed by the real, correct computation that overwrote its result.
+  Register-balanced so output was unaffected, but shipped dead code. Removed;
+  verified all 17 i386 tests still pass under qemu-i386.
+
+### Added
+- **Arduino test suite reaches parity with ARM/NASM at `[1]`-`[17]` (TODO #147.B).**
+  `Herradura_tests.ino` previously implemented only `[1]`-`[12]`, missing
+  Stern-Ring, ZKP-NL, FPE, Tweakable cipher, and the Accumulator that were added
+  to `Herradura_tests.s`/`.asm` later. Ported all five at the same reduced 32-bit
+  parameters already used for Arduino's other tests (k=2 Stern-Ring; n=8, R=4
+  ZKP-NL), substituting a 32-bit XOR/rotate commit and PRG for the 256-bit hash
+  the C/generic implementations use — the same reduction already applied to the
+  file's existing Stern-F tests. Verified with an avr-g++/avr-gcc build linked
+  against the Arduino core, run under simavr on an emulated ATmega2560: all 17
+  tests pass repeatably, and bss stays well under the 8KB SRAM budget. Added
+  Arduino to CLAUDE.md's `## Testing` assembly run commands, which previously
+  omitted it entirely.
+
+## [1.9.116] - 2026-07-29
+
+### Fixed
+- **Cross-language test-suite parity restored under identically-numbered tests (TODO #146).**
+  A PASS on test `[45]`/`[30]`/`[41]` previously meant different things in different languages
+  despite sharing a test number:
+  - Test `[45]` (weak-key/malformed-input rejection): Go and Python only checked 4 sub-conditions
+    vs. C's 7. Added the missing HPKE-decrypt-refusal-of-degenerate-ephemeral-key check and the
+    HSKE-NL-A1-AEAD tamper/reuse checks to `Herradura_tests.go`/`Herradura_tests.py`, using the
+    guarded `HpkeDecrypt`/`HpkeEncrypt` API from TODO #144. Both languages' `[45]` now report all
+    7 sub-checks with matching status-line fields.
+  - Test `[30]` (HPKS-WOTS-F/XMSS-F): Python exercised a smaller XMSS tree (`h=2`, 4 leaves) than
+    C/Go's `h=3` (8 leaves). Raised Python's `XMSS_H` to `3` to match.
+  - Test `[41]` (HPKS-Stern-F throughput benchmark): C used `rounds=8`, Go and Python used
+    `rounds=4`, making the reported ops/sec non-comparable across languages. Go gained a
+    dedicated `sdfBenchRounds=8` constant for this benchmark (its correctness tests `[17]`/`[20]`
+    keep `sdfTestRounds=4` for speed); Python's `bench_hpks_stern_f` now hardcodes `rounds=8`.
+
 ## [1.9.115] - 2026-07-28
 
 ### Fixed

@@ -141,9 +141,10 @@ python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
 # Assembly — build first (see Build Commands), then run:
-# ARM/NASM: tests [1]–[17]
+# ARM/NASM/Arduino: tests [1]–[17]
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
+./run_arduino.sh tests    # simavr; TIMEOUT env var, default 90s
 ```
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.

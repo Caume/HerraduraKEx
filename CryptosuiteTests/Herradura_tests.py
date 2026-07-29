@@ -1923,42 +1923,52 @@ def test_ratchet_forward_secrecy():
     print()
 
 
+_AEAD_N, _AEAD_BLEN, _AEAD_STEPS = 256, 32, 64
+_AEAD_DS = b'HSKE-NL-AEAD-v1'
+
+
+def _aead_parts(key, nonce):
+    n, steps = _AEAD_N, _AEAD_STEPS
+    base    = BitArray(n, key.uint ^ nonce.uint)
+    seed    = BitArray(n, base.rotated(n // 8).uint ^ _RNL_KDF_DC_256)
+    mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)
+    mac_iv  = BitArray(n, mac_key.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
+    return base, seed, mac_iv
+
+
+def _aead_xor_ks(seed, base, data):
+    blen, steps = _AEAD_BLEN, _AEAD_STEPS
+    out = bytearray()
+    for i in range((len(data) + blen - 1) // blen):
+        ks   = nl_fscx_revolve_v1(seed, BitArray(_AEAD_N, base.uint ^ i), steps)
+        out += bytes(d ^ k for d, k in zip(data[i*blen:(i+1)*blen],
+                                           ks.uint.to_bytes(blen, 'big')))
+    return bytes(out)
+
+
+def _aead_tag(mac_iv, nonce, ad, ct):
+    data = (_AEAD_DS + nonce.uint.to_bytes(_AEAD_BLEN, 'big')
+            + len(ad).to_bytes(8, 'big') + ad
+            + len(ct).to_bytes(8, 'big') + ct)
+    return hfscx_256(data, iv=mac_iv)
+
+
+def aead_encrypt(key, nonce, ad, pt):
+    base, seed, mac_iv = _aead_parts(key, nonce)
+    ct = _aead_xor_ks(seed, base, pt)
+    return ct, _aead_tag(mac_iv, nonce, ad, ct)
+
+
+def aead_decrypt(key, nonce, ad, ct, tag):
+    base, seed, mac_iv = _aead_parts(key, nonce)
+    if _aead_tag(mac_iv, nonce, ad, ct) != tag:
+        return None
+    return _aead_xor_ks(seed, base, ct)
+
+
 def test_hske_nl_aead():
     print("[28] HSKE-NL-AEAD (TODO #95) — round-trip, tamper rejection, cross-language KAT  [NEW]")
-    n, blen, steps = 256, 32, 64
-    DS = b'HSKE-NL-AEAD-v1'
-
-    def aead_parts(key, nonce):
-        base    = BitArray(n, key.uint ^ nonce.uint)
-        seed    = BitArray(n, base.rotated(n // 8).uint ^ _RNL_KDF_DC_256)
-        mac_key = nl_fscx_revolve_v1(seed.rotated(n // 4), base, steps)
-        mac_iv  = BitArray(n, mac_key.uint ^ int.from_bytes(_HFSCX256_IV_BYTES, 'big'))
-        return base, seed, mac_iv
-
-    def xor_ks(seed, base, data):
-        out = bytearray()
-        for i in range((len(data) + blen - 1) // blen):
-            ks   = nl_fscx_revolve_v1(seed, BitArray(n, base.uint ^ i), steps)
-            out += bytes(d ^ k for d, k in zip(data[i*blen:(i+1)*blen],
-                                               ks.uint.to_bytes(blen, 'big')))
-        return bytes(out)
-
-    def aead_tag(mac_iv, nonce, ad, ct):
-        data = (DS + nonce.uint.to_bytes(blen, 'big')
-                + len(ad).to_bytes(8, 'big') + ad
-                + len(ct).to_bytes(8, 'big') + ct)
-        return hfscx_256(data, iv=mac_iv)
-
-    def aead_encrypt(key, nonce, ad, pt):
-        base, seed, mac_iv = aead_parts(key, nonce)
-        ct = xor_ks(seed, base, pt)
-        return ct, aead_tag(mac_iv, nonce, ad, ct)
-
-    def aead_decrypt(key, nonce, ad, ct, tag):
-        base, seed, mac_iv = aead_parts(key, nonce)
-        if aead_tag(mac_iv, nonce, ad, ct) != tag:
-            return None
-        return xor_ks(seed, base, ct)
+    n = _AEAD_N
 
     # Cross-language known-answer test (must match C/Go/Python suite outputs)
     kat_key   = BitArray(n, int.from_bytes(bytes(range(32)), 'big'))
@@ -2153,7 +2163,7 @@ def _xmss_verify_t(msg: bytes, sig: dict, root: bytes) -> bool:
 
 
 def test_wots_xmss():
-    XMSS_H = 2  # 4 leaves; h=3 is too slow for default Python runs
+    XMSS_H = 3  # 8 leaves; matches C/Go's h=3 (TODO #146.B)
     N = g_rounds if g_rounds > 0 else 1
     ok_sign = ok_tamper = ok_reuse = done = 0
     print(f"[30] HPKS-WOTS-F / HPKS-XMSS-F sign+verify (h={XMSS_H})  [PQC]")
@@ -2671,16 +2681,27 @@ def hpke_encrypt_checked(pt: 'BitArray', pub_int: int, poly: int, size: int):
     return R, ct
 
 
+def hpke_decrypt_checked(ct: 'BitArray', R_int: int, priv: int, poly: int, size: int):
+    """Mirrors herradura.h's hardened hpke_decrypt (TODO #131): refuses a
+    degenerate ephemeral R rather than deriving a dec_key = R^priv that is
+    a constant independent of priv."""
+    if not gf_pub_is_valid(R_int):
+        return None
+    dec_key = gf_pow(R_int, priv, poly, size)
+    return fscx_revolve(ct, BitArray(size, dec_key), _R_VALUE)
+
+
 # Security test [45]: weak-key & malformed-input rejection — appended after
 # [44] to avoid renumbering (same number in C/Go/Python; TODO #131).
 def test_weak_key_rejection():
     print("[45] Weak-key & malformed-input rejection (identity pubkey, "
-          "zero/degenerate elements, tampered syndrome)  [SECURITY]")
+          "zero/degenerate elements, tampered syndrome/AEAD)  [SECURITY]")
     size = 256
     poly = GF_POLY[size]
     stern_n = 32
     N = g_rounds if g_rounds > 0 else 10
-    ok_hkex = ok_hpks = ok_hpke = ok_stern = 0
+    ok_hkex = ok_hpks = ok_hpke = ok_hpke_dec = ok_stern = 0
+    ok_aead_tamper = ok_aead_key_swap = 0
     t0 = time.perf_counter()
     for i in range(N):
         if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
@@ -2709,6 +2730,17 @@ def test_weak_key_rejection():
                 and hpke_encrypt_checked(pt, 1, poly, size) is None):
             ok_hpke += 1
 
+        # HPKE decrypt: an honestly-encrypted ct must still decrypt (sanity),
+        # and decrypt must refuse a degenerate ephemeral R.
+        priv = BitArray.random(size).uint
+        pub = gf_pow(GF_GEN, priv, poly, size)
+        R_honest, ct = hpke_encrypt_checked(pt, pub, poly, size)
+        dec = hpke_decrypt_checked(ct, R_honest, priv, poly, size)
+        if (dec is not None and dec.uint == pt.uint
+                and hpke_decrypt_checked(ct, 0, priv, poly, size) is None
+                and hpke_decrypt_checked(ct, 1, priv, poly, size) is None):
+            ok_hpke_dec += 1
+
         # HPKS-Stern-F: an honestly-generated signature must be rejected
         # when verified against a corrupted (flipped-bit) syndrome.
         seed, e_int, syndrome = stern_f_keygen(stern_n)
@@ -2719,14 +2751,31 @@ def test_weak_key_rejection():
                 and not hpks_stern_f_verify(msg_s, sig, seed, syndrome_bad, stern_n)):
             ok_stern += 1
 
+        # HSKE-NL-A1-AEAD: tampered ciphertext must fail the tag check, and
+        # re-using the same (key, nonce) pair for a different plaintext must
+        # produce a different tag/ciphertext (no silent keystream reuse).
+        aead_key = BitArray.random(256)
+        aead_nonce = BitArray.random(256)
+        pt_bytes = bytes((j ^ i) & 0xFF for j in range(32))
+        pt2_bytes = bytes((j ^ i ^ 0xFF) & 0xFF for j in range(32))
+        ct_buf, tag = aead_encrypt(aead_key, aead_nonce, b'', pt_bytes)
+        ct_bad = bytes([ct_buf[0] ^ 1]) + ct_buf[1:]
+        if aead_decrypt(aead_key, aead_nonce, b'', ct_bad, tag) is None:
+            ok_aead_tamper += 1
+        ct2_buf, _ = aead_encrypt(aead_key, aead_nonce, b'', pt2_bytes)
+        if ct_buf != ct2_buf:
+            ok_aead_key_swap += 1
+
     if N == 0:
         print("    SKIP (no iterations completed)\n")
         return
     status = ("PASS" if ok_hkex == N and ok_hpks == N and ok_hpke == N
-              and ok_stern == N else "FAIL")
+              and ok_hpke_dec == N and ok_stern == N
+              and ok_aead_tamper == N and ok_aead_key_swap == N else "FAIL")
     print(f"    n={N}  hkex_reject={ok_hkex}/{N}  hpks_id_reject={ok_hpks}/{N}"
-          f"  hpke_enc_reject={ok_hpke}/{N}  stern_synd_reject={ok_stern}/{N}"
-          f"  [{status}]")
+          f"  hpke_enc_reject={ok_hpke}/{N}  hpke_dec_reject={ok_hpke_dec}/{N}"
+          f"  stern_synd_reject={ok_stern}/{N}  aead_tamper_reject={ok_aead_tamper}/{N}"
+          f"  aead_reuse_distinct={ok_aead_key_swap}/{N}  [{status}]")
     print()
 
 
@@ -2855,8 +2904,8 @@ def bench_hkex_rnl_handshake():
 
 
 def bench_hpks_stern_f():
-    print("[41] HPKS-Stern-F sign+verify throughput (N=n, rounds=4)  [CODE-BASED PQC]")
-    rounds = 4; sink = [True]
+    print("[41] HPKS-Stern-F sign+verify throughput (N=n, rounds=8)  [CODE-BASED PQC]")
+    rounds = 8; sink = [True]  # matches C/Go's rounds=8 (TODO #146.C)
     for size in SIZES:
         sf_seed, sf_e, sf_syn = stern_f_keygen(size)
         msg = BitArray.random(size)

@@ -7755,7 +7755,12 @@ shouldn't be compared against each other as currently labeled.
 4. Update CLAUDE.md's test-count documentation per TODO #145 once these are resolved, since
    the exact numbering/range may shift.
 
-Status: **OPEN**
+Status: **DONE v1.9.116** — extended Go's/Python's `[45]` with the HPKE-decrypt-refusal
+and HSKE-NL-A1-AEAD tamper/reuse sub-checks C already had (now 7/7 sub-checks in all three);
+raised Python's XMSS test `[30]` to `h=3` to match C/Go; aligned `[41]`'s Stern-F benchmark
+to `rounds=8` in Go (new `sdfBenchRounds` constant, `[17]`/`[20]` correctness tests keep
+`sdfTestRounds=4`) and Python. CLAUDE.md's test-count documentation required no changes
+since no test numbers shifted.
 
 ---
 
@@ -7791,4 +7796,13 @@ see the Stern-F/HCRED parameter notes already in CLAUDE.md).
    (coordinate with TODO #145's doc-staleness fix so this isn't a second undercount left
    behind).
 
-Status: **OPEN**
+Status: **DONE v1.9.117** — removed the dead first-attempt code in `fscx_single`
+(`.asm`), keeping only the correct computation (verified: all 17 i386 tests still
+pass under qemu-i386). Ported tests `[13]`–`[17]` (Stern-Ring, ZKP-NL, FPE,
+Tweakable cipher, Accumulator) to `Herradura_tests.ino` at the same reduced
+32-bit parameters as the file's other tests, using 32-bit XOR/rotate commit
+and PRG substitutes for the 256-bit hash the C/generic versions use (same
+reduction already applied to the file's existing Stern-F tests); verified via
+avr-g++/avr-gcc build + simavr simulation on an emulated ATmega2560 — all 17
+tests pass, bss well under the 8KB SRAM budget. Added Arduino to CLAUDE.md's
+`## Testing` assembly run commands, which previously omitted it entirely.
