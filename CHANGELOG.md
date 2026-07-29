@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.116] - 2026-07-29
+
+### Fixed
+- **Cross-language test-suite parity restored under identically-numbered tests (TODO #146).**
+  A PASS on test `[45]`/`[30]`/`[41]` previously meant different things in different languages
+  despite sharing a test number:
+  - Test `[45]` (weak-key/malformed-input rejection): Go and Python only checked 4 sub-conditions
+    vs. C's 7. Added the missing HPKE-decrypt-refusal-of-degenerate-ephemeral-key check and the
+    HSKE-NL-A1-AEAD tamper/reuse checks to `Herradura_tests.go`/`Herradura_tests.py`, using the
+    guarded `HpkeDecrypt`/`HpkeEncrypt` API from TODO #144. Both languages' `[45]` now report all
+    7 sub-checks with matching status-line fields.
+  - Test `[30]` (HPKS-WOTS-F/XMSS-F): Python exercised a smaller XMSS tree (`h=2`, 4 leaves) than
+    C/Go's `h=3` (8 leaves). Raised Python's `XMSS_H` to `3` to match.
+  - Test `[41]` (HPKS-Stern-F throughput benchmark): C used `rounds=8`, Go and Python used
+    `rounds=4`, making the reported ops/sec non-comparable across languages. Go gained a
+    dedicated `sdfBenchRounds=8` constant for this benchmark (its correctness tests `[17]`/`[20]`
+    keep `sdfTestRounds=4` for speed); Python's `bench_hpks_stern_f` now hardcodes `rounds=8`.
+
 ## [1.9.115] - 2026-07-28
 
 ### Fixed
