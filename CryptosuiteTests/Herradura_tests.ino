@@ -1,6 +1,7 @@
-/*  Herradura KEx — Security Tests v1.8.0 (Arduino, 32-bit)
+/*  Herradura KEx — Security Tests (Arduino, 32-bit)
     HKEX-GF, HSKE, HPKS, HPKE, NL-FSCX, HSKE-NL-A2, HKEX-RNL, HPKS-NL, HPKE-NL,
-    HPKS-Stern-F, HPKE-Stern-F
+    HPKS-Stern-F, HPKE-Stern-F, HPKS-Stern-Ring, ZKP-NL, FPE, Tweakable cipher,
+    Accumulator
 
     Copyright (C) 2024-2026 Omar Alejandro Herrera Reyna
     MIT License / GPL v3.0 — choose either.
@@ -8,6 +9,13 @@
     Target: Any Arduino board with Serial support.
     Upload via Arduino IDE. Monitor at 9600 baud.
 
+    v1.9.117: ported tests [13]-[17] from Herradura_tests.s/.asm (TODO #147),
+    at the same reduced 32-bit parameters already used for the other tests.
+      - [13] HPKS-Stern-Ring (78.I) ring-sign+verify, k=2, N=32, rounds=4.
+      - [14] ZKP-NL (NL-FSCX ZKBoo) prove+verify, n=8, R=4.
+      - [15] FPE (78.A) encrypt/decrypt round-trip.
+      - [16] Tweakable cipher (78.B) encrypt/decrypt round-trip.
+      - [17] Accumulator (78.J) 4-leaf Merkle proof.
     v1.5.18: added Stern-F tests [11]-[12]. N=32, t=2, rounds=4.
       - [11] HPKS-Stern-F sign+verify correctness.
       - [12] HPKE-Stern-F encap+decap KEM correctness.
@@ -452,6 +460,391 @@ static uint32 hpke_stern_f_decap_32(uint32 seed, uint32 e_p) {
 }
 
 /* ------------------------------------------------------------------ */
+/* HPKS-Stern-Ring (78.I) helpers (k=2, N=32, rounds=4)                */
+/* OR-composition: sign as one ring member, simulate the other with a  */
+/* random challenge, then split the joint Fiat-Shamir challenge so the */
+/* two members' per-round challenges sum to it mod 3.                  */
+/* ------------------------------------------------------------------ */
+
+#define RING_K 2
+
+typedef struct {
+    uint32 c0[RING_K][SDF_ROUNDS], c1[RING_K][SDF_ROUNDS], c2[RING_K][SDF_ROUNDS];
+    int    b[RING_K][SDF_ROUNDS];
+    uint32 respA[RING_K][SDF_ROUNDS], respB[RING_K][SDF_ROUNDS];
+} SternRingSig32;
+
+static void stern_ring_challenges_32(int *joint, uint32 msg,
+                                       const uint32 c0[RING_K][SDF_ROUNDS],
+                                       const uint32 c1[RING_K][SDF_ROUNDS],
+                                       const uint32 c2[RING_K][SDF_ROUNDS]) {
+    uint32 h = nl_fscx_revolve_v1(msg, _rol32(msg, 4), I_VALUE);
+    for (int i = 0; i < RING_K; i++) {
+        for (int r = 0; r < SDF_ROUNDS; r++) {
+            h = nl_fscx_revolve_v1(h ^ c0[i][r], _rol32(c0[i][r], 4), I_VALUE);
+            h = nl_fscx_revolve_v1(h ^ c1[i][r], _rol32(c1[i][r], 4), I_VALUE);
+            h = nl_fscx_revolve_v1(h ^ c2[i][r], _rol32(c2[i][r], 4), I_VALUE);
+        }
+    }
+    for (int r = 0; r < SDF_ROUNDS; r++) {
+        h = nl_fscx_v1(h, (uint32)r);
+        joint[r] = (int)(h % 3);
+    }
+}
+
+static void stern_ring_simulate_32(SternRingSig32 *sig, int i, int r, int b,
+                                     uint32 seed, uint32 synd) {
+    static uint8_t perm[SDF_N];
+    if (b == 0) {
+        uint32 sr = stern_rand_error_32();
+        uint32 sy = prng_next();
+        sig->c0[i][r] = stern_hash2_32(0, 0);   /* dummy: not checked when b==0 */
+        sig->c1[i][r] = stern_hash1_32(sr);
+        sig->c2[i][r] = stern_hash1_32(sy);
+        sig->b[i][r] = 0; sig->respA[i][r] = sr; sig->respB[i][r] = sy;
+    } else if (b == 1) {
+        uint32 pi    = prng_next();
+        uint32 r_sim = stern_rand_error_32();
+        stern_gen_perm_32(perm, pi);
+        uint32 hr = stern_syndrome_32(seed, r_sim);
+        uint32 sr = stern_apply_perm_32(perm, r_sim);
+        uint32 sy = prng_next();
+        sig->c0[i][r] = stern_hash2_32(pi, hr);
+        sig->c1[i][r] = stern_hash1_32(sr);
+        sig->c2[i][r] = stern_hash1_32(sy);     /* dummy: not checked when b==1 */
+        sig->b[i][r] = 1; sig->respA[i][r] = pi; sig->respB[i][r] = r_sim;
+    } else {
+        uint32 pi    = prng_next();
+        uint32 y_sim = prng_next();
+        stern_gen_perm_32(perm, pi);
+        uint32 hy = stern_syndrome_32(seed, y_sim) ^ synd;
+        uint32 sy = stern_apply_perm_32(perm, y_sim);
+        uint32 sr = stern_rand_error_32();
+        sig->c0[i][r] = stern_hash2_32(pi, hy);
+        sig->c1[i][r] = stern_hash1_32(sr);      /* dummy: not checked when b==2 */
+        sig->c2[i][r] = stern_hash1_32(sy);
+        sig->b[i][r] = 2; sig->respA[i][r] = pi; sig->respB[i][r] = y_sim;
+    }
+}
+
+static void stern_ring_sign_32(SternRingSig32 *sig, uint32 msg, uint32 e, int j,
+                                 const uint32 *seeds, const uint32 *synds) {
+    static uint32 r_tmp[SDF_ROUNDS], y_tmp[SDF_ROUNDS];
+    static uint32 pi_tmp[SDF_ROUNDS], sr_tmp[SDF_ROUNDS], sy_tmp[SDF_ROUNDS];
+    static uint8_t perm[SDF_N];
+    int other = 1 - j;
+    int r;
+
+    /* simulate the other (non-signing) ring member with a random challenge */
+    for (r = 0; r < SDF_ROUNDS; r++) {
+        int b_pre = (int)(prng_next() % 3u);
+        stern_ring_simulate_32(sig, other, r, b_pre, seeds[other], synds[other]);
+    }
+
+    /* commit phase for the real signer j (challenge-independent) */
+    for (r = 0; r < SDF_ROUNDS; r++) {
+        uint32 rr = stern_rand_error_32();
+        uint32 yy = e ^ rr;
+        uint32 pi = prng_next();
+        stern_gen_perm_32(perm, pi);
+        uint32 hr = stern_syndrome_32(seeds[j], rr);
+        uint32 sr = stern_apply_perm_32(perm, rr);
+        uint32 sy = stern_apply_perm_32(perm, yy);
+        sig->c0[j][r] = stern_hash2_32(pi, hr);
+        sig->c1[j][r] = stern_hash1_32(sr);
+        sig->c2[j][r] = stern_hash1_32(sy);
+        r_tmp[r] = rr; y_tmp[r] = yy;
+        pi_tmp[r] = pi; sr_tmp[r] = sr; sy_tmp[r] = sy;
+    }
+
+    /* joint Fiat-Shamir challenge, split so b[0][r]+b[1][r] == joint[r] mod 3 */
+    int joint[SDF_ROUNDS];
+    stern_ring_challenges_32(joint, msg, sig->c0, sig->c1, sig->c2);
+    for (r = 0; r < SDF_ROUNDS; r++)
+        sig->b[j][r] = ((joint[r] - sig->b[other][r]) % 3 + 3) % 3;
+
+    /* finalize the real signer's responses for its assigned challenge */
+    for (r = 0; r < SDF_ROUNDS; r++) {
+        int bv = sig->b[j][r];
+        if      (bv == 0) { sig->respA[j][r] = sr_tmp[r]; sig->respB[j][r] = sy_tmp[r]; }
+        else if (bv == 1) { sig->respA[j][r] = pi_tmp[r]; sig->respB[j][r] = r_tmp[r];  }
+        else              { sig->respA[j][r] = pi_tmp[r]; sig->respB[j][r] = y_tmp[r];  }
+    }
+}
+
+static int stern_ring_verify_32(const SternRingSig32 *sig, uint32 msg,
+                                  const uint32 *seeds, const uint32 *synds) {
+    static uint8_t perm[SDF_N];
+    int joint[SDF_ROUNDS], r, i;
+    stern_ring_challenges_32(joint, msg, sig->c0, sig->c1, sig->c2);
+    for (r = 0; r < SDF_ROUNDS; r++) {
+        int s = (sig->b[0][r] + sig->b[1][r]) % 3;
+        if (s != joint[r]) return 0;
+    }
+    for (i = 0; i < RING_K; i++) {
+        for (r = 0; r < SDF_ROUNDS; r++) {
+            int bv = sig->b[i][r];
+            uint32 ra = sig->respA[i][r], rb = sig->respB[i][r];
+            if (bv == 0) {
+                if (stern_hash1_32(ra) != sig->c1[i][r]) return 0;
+                if (stern_hash1_32(rb) != sig->c2[i][r]) return 0;
+                uint32 v = ra; if (!v) return 0;
+                v &= v - 1; if (!v) return 0; v &= v - 1; if (v) return 0;
+            } else if (bv == 1) {
+                uint32 v = rb; if (!v) return 0;
+                v &= v - 1; if (!v) return 0; v &= v - 1; if (v) return 0;
+                uint32 hr = stern_syndrome_32(seeds[i], rb);
+                if (stern_hash2_32(ra, hr) != sig->c0[i][r]) return 0;
+                stern_gen_perm_32(perm, ra);
+                if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c1[i][r]) return 0;
+            } else {
+                uint32 hy = stern_syndrome_32(seeds[i], rb) ^ synds[i];
+                if (stern_hash2_32(ra, hy) != sig->c0[i][r]) return 0;
+                stern_gen_perm_32(perm, ra);
+                if (stern_hash1_32(stern_apply_perm_32(perm, rb)) != sig->c2[i][r]) return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* ZKP-NL (NL-FSCX ZKBoo) helpers (n=8, rounds=4)                      */
+/* 3-party MPC-in-the-head proof of knowledge of A s.t. F1(A,B) == y,  */
+/* with a 32-bit XOR/rotate commit + PRG substituted for HFSCX-256     */
+/* (same reduction already used by the Stern-F/Stern-Ring hashes).     */
+/* ------------------------------------------------------------------ */
+
+#define ZKPNL_N      8
+#define ZKPNL_ROUNDS 4
+#define ZKPNL_MASK   ((1UL << ZKPNL_N) - 1)
+
+static uint32 zkpnl_rol(uint32 x, int r) {
+    r = ((r % ZKPNL_N) + ZKPNL_N) % ZKPNL_N;
+    x &= ZKPNL_MASK;
+    return r ? ((x << r) | (x >> (ZKPNL_N - r))) & ZKPNL_MASK : x;
+}
+
+static uint32 zkpnl_commit_32(int j, int p, uint32 tape, uint32 out_share) {
+    uint32 h = (uint32)j ^ ((uint32)p << 16) ^ tape;
+    h = nl_fscx_revolve_v1(h, _rol32(tape, 4), I_VALUE);
+    return nl_fscx_revolve_v1(h ^ out_share, _rol32(out_share, 4), I_VALUE);
+}
+
+static int zkpnl_prg_bit(uint32 tape, int gate_id) {
+    uint32 h = nl_fscx_revolve_v1(tape ^ (uint32)gate_id,
+                                   _rol32(tape, 4) ^ (uint32)gate_id, I_VALUE);
+    return (int)(h & 1);
+}
+
+static uint32 zkpnl_f1(uint32 A, uint32 B) {
+    uint32 lin = (A ^ B ^ zkpnl_rol(A, 1) ^ zkpnl_rol(B, 1)
+                  ^ zkpnl_rol(A, ZKPNL_N - 1) ^ zkpnl_rol(B, ZKPNL_N - 1)) & ZKPNL_MASK;
+    return (lin ^ zkpnl_rol((A + B) & ZKPNL_MASK, ZKPNL_N / 4)) & ZKPNL_MASK;
+}
+
+static void zkpnl_keygen_32(uint32 *A_out, uint32 *B_out, uint32 *y_out) {
+    uint32 A = prng_next() & ZKPNL_MASK;
+    uint32 B = prng_next() & ZKPNL_MASK;
+    *A_out = A; *B_out = B; *y_out = zkpnl_f1(A, B);
+}
+
+/* 3-party ZKBoo evaluation of nl_fscx_v1(A, B) over the shares sh[0..2]. */
+static void zkpnl_eval_3p(uint32 s0, uint32 s1, uint32 s2,
+                           uint32 t0, uint32 t1, uint32 t2, uint32 B,
+                           uint32 *out0, uint32 *out1, uint32 *out2,
+                           uint8_t gv0[ZKPNL_N - 1], uint8_t gv1[ZKPNL_N - 1],
+                           uint8_t gv2[ZKPNL_N - 1]) {
+    uint32 sh[3] = { s0, s1, s2 };
+    uint32 tp[3] = { t0, t1, t2 };
+    uint8_t *gv[3] = { gv0, gv1, gv2 };
+    uint32 carry[ZKPNL_N][3];
+    int i, p;
+    memset(carry, 0, sizeof(carry));
+
+    for (i = 0; i < ZKPNL_N - 1; i++) {
+        int Bi = (int)((B >> i) & 1);
+        int ai[3], ci[3], ri[3], ao[3];
+        for (p = 0; p < 3; p++) {
+            ai[p] = (int)((sh[p] >> i) & 1); ci[p] = (int)carry[i][p];
+            ri[p] = zkpnl_prg_bit(tp[p], i);
+        }
+        for (p = 0; p < 3; p++) {
+            int p1 = (p + 1) % 3;
+            ao[p] = (ai[p] & ci[p]) ^ (ai[p] & ci[p1]) ^ (ai[p1] & ci[p]) ^ ri[p] ^ ri[p1];
+            gv[p][i] = (uint8_t)(ai[p] | (ci[p] << 1) | (ao[p] << 2));
+        }
+        for (p = 0; p < 3; p++)
+            carry[i + 1][p] = (uint32)((Bi & ai[p]) ^ ao[p] ^ (Bi & ci[p]));
+    }
+
+    uint32 sum_s[3] = { 0, 0, 0 };
+    for (i = 0; i < ZKPNL_N; i++) {
+        int Bi = (int)((B >> i) & 1);
+        for (p = 0; p < 3; p++) {
+            int sb = (int)((sh[p] >> i) & 1) ^ Bi ^ (int)carry[i][p];
+            sum_s[p] ^= (uint32)sb << i;
+        }
+    }
+
+    uint32 rot_s[3], lin_s[3];
+    uint32 Bc = (B ^ zkpnl_rol(B, 1) ^ zkpnl_rol(B, ZKPNL_N - 1)) & ZKPNL_MASK;
+    for (p = 0; p < 3; p++) {
+        rot_s[p] = zkpnl_rol(sum_s[p], ZKPNL_N / 4);
+        lin_s[p] = (sh[p] ^ zkpnl_rol(sh[p], 1) ^ zkpnl_rol(sh[p], ZKPNL_N - 1)) & ZKPNL_MASK;
+    }
+    lin_s[0] ^= Bc;
+
+    *out0 = (lin_s[0] ^ rot_s[0]) & ZKPNL_MASK;
+    *out1 = (lin_s[1] ^ rot_s[1]) & ZKPNL_MASK;
+    *out2 = (lin_s[2] ^ rot_s[2]) & ZKPNL_MASK;
+}
+
+typedef struct {
+    uint32  com0, com1, com2;
+    int     e;
+    uint32  sh_p1, sh_p2, tp_p1, tp_p2, out_p1, out_p2;
+    uint8_t gv_p1[ZKPNL_N - 1], gv_p2[ZKPNL_N - 1];
+} ZkpNlRound32;
+
+static void zkpnl_prove_32(ZkpNlRound32 *proof, uint32 A, uint32 B, uint32 y, uint32 msg) {
+    uint32 s0[ZKPNL_ROUNDS], s1[ZKPNL_ROUNDS], s2[ZKPNL_ROUNDS];
+    uint32 t0[ZKPNL_ROUNDS], t1[ZKPNL_ROUNDS], t2[ZKPNL_ROUNDS];
+    uint32 out0[ZKPNL_ROUNDS], out1[ZKPNL_ROUNDS], out2[ZKPNL_ROUNDS];
+    static uint8_t gv0[ZKPNL_ROUNDS][ZKPNL_N - 1], gv1[ZKPNL_ROUNDS][ZKPNL_N - 1],
+                   gv2[ZKPNL_ROUNDS][ZKPNL_N - 1];
+    uint32 com0[ZKPNL_ROUNDS], com1[ZKPNL_ROUNDS], com2[ZKPNL_ROUNDS];
+    int j;
+
+    for (j = 0; j < ZKPNL_ROUNDS; j++) {
+        s0[j] = prng_next() & ZKPNL_MASK;
+        s1[j] = prng_next() & ZKPNL_MASK;
+        s2[j] = (A ^ s0[j] ^ s1[j]) & ZKPNL_MASK;
+        t0[j] = prng_next(); t1[j] = prng_next(); t2[j] = prng_next();
+        zkpnl_eval_3p(s0[j], s1[j], s2[j], t0[j], t1[j], t2[j], B,
+                       &out0[j], &out1[j], &out2[j], gv0[j], gv1[j], gv2[j]);
+        com0[j] = zkpnl_commit_32(j, 0, t0[j], out0[j]);
+        com1[j] = zkpnl_commit_32(j, 1, t1[j], out1[j]);
+        com2[j] = zkpnl_commit_32(j, 2, t2[j], out2[j]);
+    }
+
+    /* Fiat-Shamir seed over all commitments + public statement + message */
+    uint32 seed = msg ^ B ^ y;
+    for (j = 0; j < ZKPNL_ROUNDS; j++) {
+        seed = nl_fscx_revolve_v1(seed ^ com0[j], _rol32(com0[j], 4), I_VALUE);
+        seed = nl_fscx_revolve_v1(seed ^ com1[j], _rol32(com1[j], 4), I_VALUE);
+        seed = nl_fscx_revolve_v1(seed ^ com2[j], _rol32(com2[j], 4), I_VALUE);
+    }
+
+    for (j = 0; j < ZKPNL_ROUNDS; j++) {
+        uint32 h = nl_fscx_v1(seed, (uint32)j);
+        int e = (int)(h % 3), p1 = (e + 1) % 3, p2 = (e + 2) % 3;
+        uint32 sh_arr[3]  = { s0[j], s1[j], s2[j] };
+        uint32 tp_arr[3]  = { t0[j], t1[j], t2[j] };
+        uint32 out_arr[3] = { out0[j], out1[j], out2[j] };
+        uint8_t *gv_arr[3] = { gv0[j], gv1[j], gv2[j] };
+
+        proof[j].com0 = com0[j]; proof[j].com1 = com1[j]; proof[j].com2 = com2[j];
+        proof[j].e = e;
+        proof[j].sh_p1  = sh_arr[p1];  proof[j].sh_p2  = sh_arr[p2];
+        proof[j].tp_p1  = tp_arr[p1];  proof[j].tp_p2  = tp_arr[p2];
+        proof[j].out_p1 = out_arr[p1]; proof[j].out_p2 = out_arr[p2];
+        memcpy(proof[j].gv_p1, gv_arr[p1], ZKPNL_N - 1);
+        memcpy(proof[j].gv_p2, gv_arr[p2], ZKPNL_N - 1);
+    }
+}
+
+static int zkpnl_verify_32(const ZkpNlRound32 *proof, uint32 B, uint32 y, uint32 msg) {
+    uint32 seed = msg ^ B ^ y;
+    int j;
+    for (j = 0; j < ZKPNL_ROUNDS; j++) {
+        seed = nl_fscx_revolve_v1(seed ^ proof[j].com0, _rol32(proof[j].com0, 4), I_VALUE);
+        seed = nl_fscx_revolve_v1(seed ^ proof[j].com1, _rol32(proof[j].com1, 4), I_VALUE);
+        seed = nl_fscx_revolve_v1(seed ^ proof[j].com2, _rol32(proof[j].com2, 4), I_VALUE);
+    }
+    for (j = 0; j < ZKPNL_ROUNDS; j++) {
+        uint32 h = nl_fscx_v1(seed, (uint32)j);
+        int e = (int)(h % 3);
+        if (e != proof[j].e) return 0;
+        int p1 = (e + 1) % 3, p2 = (e + 2) % 3;
+
+        uint32 c_p1 = zkpnl_commit_32(j, p1, proof[j].tp_p1, proof[j].out_p1);
+        uint32 c_p2 = zkpnl_commit_32(j, p2, proof[j].tp_p2, proof[j].out_p2);
+        uint32 coms[3] = { proof[j].com0, proof[j].com1, proof[j].com2 };
+        if (c_p1 != coms[p1] || c_p2 != coms[p2]) return 0;
+
+        int carry_p1 = 0, carry_p2 = 0, i;
+        for (i = 0; i < ZKPNL_N - 1; i++) {
+            int ai_p1 = (int)((proof[j].sh_p1 >> i) & 1), ai_p2 = (int)((proof[j].sh_p2 >> i) & 1);
+            int ci_p1 = carry_p1, ci_p2 = carry_p2;
+            int Bi    = (int)((B >> i) & 1);
+            int ri_p1 = zkpnl_prg_bit(proof[j].tp_p1, i), ri_p2 = zkpnl_prg_bit(proof[j].tp_p2, i);
+
+            int exp_ao_p1 = (ai_p1 & ci_p1) ^ (ai_p1 & ci_p2) ^ (ai_p2 & ci_p1) ^ ri_p1 ^ ri_p2;
+            if (((proof[j].gv_p1[i] >> 2) & 1) != exp_ao_p1) return 0;
+
+            carry_p1 = (Bi & ai_p1) ^ exp_ao_p1 ^ (Bi & ci_p1);
+            int ao_p2 = (proof[j].gv_p2[i] >> 2) & 1;
+            carry_p2 = (Bi & ai_p2) ^ ao_p2 ^ (Bi & ci_p2);
+        }
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/* FPE (78.A) helpers — bijective encryption via nl_fscx_revolve_v2    */
+/* with a tweak B derived from (key, context).                        */
+/* ------------------------------------------------------------------ */
+
+static uint32 fpe_derive_b_32(uint32 key, uint32 ctx) {
+    return nl_fscx_revolve_v1(key ^ ctx, _rol32(key, 4) ^ ctx, I_VALUE);
+}
+
+static uint32 fpe_encrypt_32(uint32 pt, uint32 key, uint32 ctx) {
+    uint32 B = fpe_derive_b_32(key, ctx);
+    return nl_fscx_revolve_v2(pt, B, I_VALUE);
+}
+
+static uint32 fpe_decrypt_32(uint32 ct, uint32 key, uint32 ctx) {
+    uint32 B = fpe_derive_b_32(key, ctx);
+    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE);
+}
+
+/* ------------------------------------------------------------------ */
+/* Tweakable wide-block cipher (78.B) helpers — per-(sector,block)     */
+/* tweak B, so identical plaintext blocks encrypt differently.        */
+/* ------------------------------------------------------------------ */
+
+static uint32 twk_derive_b_32(uint32 key, uint32 sector, uint32 bidx) {
+    uint32 mix = key ^ sector ^ _rol32(bidx, 4);
+    return nl_fscx_revolve_v1(mix, _rol32(mix, 4), I_VALUE);
+}
+
+static uint32 twk_encrypt_32(uint32 block, uint32 key, uint32 sector, uint32 bidx) {
+    uint32 B = twk_derive_b_32(key, sector, bidx);
+    return nl_fscx_revolve_v2(block, B, I_VALUE);
+}
+
+static uint32 twk_decrypt_32(uint32 ct, uint32 key, uint32 sector, uint32 bidx) {
+    uint32 B = twk_derive_b_32(key, sector, bidx);
+    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE);
+}
+
+/* ------------------------------------------------------------------ */
+/* Cryptographic Accumulator (78.J) helpers — 4-leaf Merkle tree with  */
+/* domain-separated leaf/node mixing (0x00/0x01, RFC 6962 convention). */
+/* ------------------------------------------------------------------ */
+
+static uint32 haccum_leaf_32(uint32 data) {
+    return nl_fscx_revolve_v1(data ^ 0x00u, _rol32(data, 4), I_VALUE);
+}
+
+static uint32 haccum_node_32(uint32 left, uint32 right) {
+    uint32 h = nl_fscx_revolve_v1(left ^ 0x01u, _rol32(left, 4), I_VALUE);
+    return nl_fscx_revolve_v1(h ^ right, _rol32(right, 4), I_VALUE);
+}
+
+/* ------------------------------------------------------------------ */
 /* Test functions — classical [1-4]                                    */
 /* ------------------------------------------------------------------ */
 
@@ -689,6 +1082,107 @@ void test_hpke_stern_f() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Test functions — Stern-Ring / ZKP-NL / FPE / Tweakable / Accum      */
+/* [13-17]                                                             */
+/* ------------------------------------------------------------------ */
+
+void test_hpks_stern_ring() {
+    Serial.println("[13] HPKS-Stern-Ring (78.I): ring-sign+verify (3 trials, k=2, N=32, rounds=4)  [PQC-STERN]");
+    int pass = 0;
+    for (int t = 0; t < 3; t++) {
+        uint32 seeds[RING_K], synds[RING_K], es[RING_K];
+        for (int i = 0; i < RING_K; i++) {
+            seeds[i] = prng_next();
+            es[i]    = stern_rand_error_32();
+            synds[i] = stern_syndrome_32(seeds[i], es[i]);
+        }
+        uint32 msg = prng_next();
+        int j = t % RING_K;
+        static SternRingSig32 rsig;
+        stern_ring_sign_32(&rsig, msg, es[j], j, seeds, synds);
+        if (stern_ring_verify_32(&rsig, msg, seeds, synds)) pass++;
+    }
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 3 ring-verified  [");
+    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
+void test_zkp_nl() {
+    Serial.println("[14] ZKP-NL (NL-FSCX ZKBoo): prove+verify (3 trials, n=8, R=4)  [PQC-EXT]");
+    int pass = 0;
+    for (int t = 0; t < 3; t++) {
+        uint32 A, B, y;
+        zkpnl_keygen_32(&A, &B, &y);
+        uint32 msg = prng_next();
+        static ZkpNlRound32 proof[ZKPNL_ROUNDS];
+        zkpnl_prove_32(proof, A, B, y, msg);
+        if (zkpnl_verify_32(proof, B, y, msg)) pass++;
+    }
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 3 zk-verified  [");
+    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
+void test_fpe() {
+    Serial.println("[15] FPE (78.A): encrypt/decrypt round-trip (3 trials)  [NEW]");
+    int pass = 0;
+    for (int t = 0; t < 3; t++) {
+        uint32 pt  = prng_next();
+        uint32 key = prng_next();
+        uint32 ctx = prng_next();
+        uint32 ct  = fpe_encrypt_32(pt, key, ctx);
+        uint32 dec = fpe_decrypt_32(ct, key, ctx);
+        if (dec == pt) pass++;
+    }
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 3 round-trips correct  [");
+    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
+void test_tweakable() {
+    Serial.println("[16] Tweakable cipher (78.B): encrypt/decrypt round-trip (3 trials)  [NEW]");
+    int pass = 0;
+    for (int t = 0; t < 3; t++) {
+        uint32 block  = prng_next();
+        uint32 key    = prng_next();
+        uint32 sector = prng_next();
+        uint32 bidx   = (uint32)t;
+        uint32 ct  = twk_encrypt_32(block, key, sector, bidx);
+        uint32 dec = twk_decrypt_32(ct, key, sector, bidx);
+        if (dec == block) pass++;
+    }
+    Serial.print("    "); Serial.print(pass); Serial.print(" / 3 round-trips correct  [");
+    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
+void test_accumulator() {
+    Serial.println("[17] Accumulator (78.J): 4-leaf Merkle proof (1 trial)  [NEW]");
+    uint32 leaves[4], leafh[4];
+    for (int i = 0; i < 4; i++) {
+        leaves[i] = prng_next();
+        leafh[i]  = haccum_leaf_32(leaves[i]);
+    }
+    uint32 n01  = haccum_node_32(leafh[0], leafh[1]);
+    uint32 n23  = haccum_node_32(leafh[2], leafh[3]);
+    uint32 root = haccum_node_32(n01, n23);
+
+    int idx = 2;                    /* prove membership of leaf 2 */
+    uint32 path[2] = { leafh[3], n01 };
+    uint32 cur = leafh[idx];
+    int cidx = idx;
+    for (int d = 0; d < 2; d++) {
+        cur = (cidx % 2 == 0) ? haccum_node_32(cur, path[d])
+                               : haccum_node_32(path[d], cur);
+        cidx >>= 1;
+    }
+    int ok = (cur == root);
+    Serial.print("    "); Serial.print(ok ? 1 : 0); Serial.print(" / 1 proof correct  [");
+    Serial.println(ok ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
+/* ------------------------------------------------------------------ */
 /* Arduino entry points                                                */
 /* ------------------------------------------------------------------ */
 
@@ -713,6 +1207,11 @@ void loop() {
     test_hpks_nl_eve();
     test_hpks_stern_f();
     test_hpke_stern_f();
+    test_hpks_stern_ring();
+    test_zkp_nl();
+    test_fpe();
+    test_tweakable();
+    test_accumulator();
 
     delay(30000);
 }

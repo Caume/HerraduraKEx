@@ -7796,4 +7796,13 @@ see the Stern-F/HCRED parameter notes already in CLAUDE.md).
    (coordinate with TODO #145's doc-staleness fix so this isn't a second undercount left
    behind).
 
-Status: **OPEN**
+Status: **DONE v1.9.117** — removed the dead first-attempt code in `fscx_single`
+(`.asm`), keeping only the correct computation (verified: all 17 i386 tests still
+pass under qemu-i386). Ported tests `[13]`–`[17]` (Stern-Ring, ZKP-NL, FPE,
+Tweakable cipher, Accumulator) to `Herradura_tests.ino` at the same reduced
+32-bit parameters as the file's other tests, using 32-bit XOR/rotate commit
+and PRG substitutes for the 256-bit hash the C/generic versions use (same
+reduction already applied to the file's existing Stern-F tests); verified via
+avr-g++/avr-gcc build + simavr simulation on an emulated ATmega2560 — all 17
+tests pass, bss well under the 8KB SRAM budget. Added Arduino to CLAUDE.md's
+`## Testing` assembly run commands, which previously omitted it entirely.

@@ -2347,20 +2347,6 @@ FSCX_revolve:
 fscx_single:
     push ecx
     push edx
-    mov  edx, eax
-    xor  edx, ebx
-    rol  eax, 1
-    xor  edx, eax
-    ror  eax, 2
-    xor  edx, eax
-    rol  eax, 1         ; restore EAX to original (undone: rol then ror 2 = ror 1; then rol 1 = back)
-    ; Actually we need A intact for the B part. Let me redo with a copy.
-    ; Use ECX as scratch copy of A
-    pop  edx
-    pop  ecx
-
-    push ecx
-    push edx
     push esi
     mov  ecx, eax           ; ecx = A (saved copy)
     mov  edx, eax
