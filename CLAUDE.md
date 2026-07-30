@@ -39,6 +39,20 @@ docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
   examples/{python,c,go}/   — hello_herradura.* integration examples
+Mcp/                                                 — MCP server exposing the CLI (genpkey/pkey/kex/
+                                                      enc/dec/sign/verify/dgst) as agent-callable tools
+                                                      over stdio; see Mcp/README.md for the trust model
+spec/                                                — machine-readable protocol spec (JSON Schema):
+                                                      parameters, PEM wire-format labels, CLI --algo
+                                                      tags, and security-level classification per
+                                                      protocol; generate_spec.py regenerates it
+bindings/ffi/                                        — opt-in ctypes/cgo FFI bindings around
+                                                      herradura.h's classical v1.4.0 quartet, for
+                                                      performance-sensitive Python/Go callers
+herradura/                                            — root-level Go package (herradura.go, codec.go)
+                                                      used by the FFI Go binding and its fuzz tests
+benchmarks/                                          — recorded benchmark output/history
+Fuzz/                                                — fuzzing harnesses (see TODO #130)
 ```
 
 Three `go.mod` files: root-level (`module herradurakex`), `CryptosuiteTests/` (`module herradurakex/tests`), and `HerraduraCli/` (`module herradurakex/cli`, uses `replace herradurakex => ../`). None has external dependencies.

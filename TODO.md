@@ -7840,3 +7840,156 @@ boilerplate that isn't specific to any one protocol. No example content was remo
 altered — only regrouped under new headers. `docs/examples/{python,c,go}/hello_herradura.*`
 remains the per-language entry point, referenced from "Getting started" instead of
 duplicated per-language chapter.
+
+---
+
+### 149. Stray untracked PEM/HCRED dump file `-` sitting in repo root (Code Quality, Low)
+
+**Background:** A repo-hygiene pass found an untracked file literally named `-` in the
+repo root (3221 lines, starting `-----BEGIN HERRADURA HCRED PROOF-----`). It looks like
+accidental output from a shell redirect (e.g. `... > -`) during a manual CLI test run,
+left behind rather than written to a real path. It shows up in every `git status` as
+noise and has no purpose in the tree.
+
+**Work items:**
+
+1. Confirm the file is disposable test output (not referenced by any script or doc).
+2. Delete it from the working tree.
+3. If any CliTest/build script is found to be responsible for producing it (e.g. a
+   missing `-o`/redirect target), fix that script so it can't recur.
+
+Status: **DONE v1.9.119** — confirmed the file was disposable manual-test output (not
+referenced by any script or doc) and deleted it. No CliTest/build script was found to
+produce it, so no script fix was needed.
+
+---
+
+### 150. `.gitignore` lists `TODO.md`, but `TODO.md` is tracked and committed every release (Code Quality, Low)
+
+**Background:** `.gitignore` contains a `TODO.md` entry, yet `TODO.md` is tracked in git
+and updated in nearly every commit per this project's own TODO/CHANGELOG policy
+(CLAUDE.md's "Changelog, README, and TODO Policy" section). The ignore rule is dead and
+misleading — it suggests to a reader (human or AI) that TODO.md is local-only scratch
+state, which is the opposite of how the project actually treats it.
+
+**Work items:**
+
+1. Remove the stale `TODO.md` line from `.gitignore`.
+2. Skim the rest of `.gitignore` for other entries that no longer match how the repo is
+   actually used, while touching the file.
+
+Status: **DONE v1.9.119** — removed the stale `TODO.md` line from `.gitignore`. Remaining
+entries (`.hypothesis/`, `__pycache__/`) still match real, current build/test artifacts.
+
+---
+
+### 151. Stray trailing line `OAHR` after the License section in README.md (Docs, Low)
+
+**Background:** `README.md` ends with:
+```
+# License
+
+Dual-licensed under GPL v3.0 and MIT. Users may choose either.
+
+OAHR
+```
+`OAHR` appears to be a leftover fragment (possibly stray initials or an artifact of an
+edit) with no defined meaning in the document. It reads as a documentation bug to anyone
+— human or AI — parsing the README as the canonical project description.
+
+**Work items:**
+
+1. Confirm with the author whether `OAHR` is meaningful (e.g. an intended attribution)
+   or accidental.
+2. Remove it if accidental, or replace it with its intended content (e.g. a proper
+   attribution line) if meaningful.
+
+Status: **DONE v1.9.119** — `git log -S"OAHR" -- README.md` showed a single commit
+introducing the line with no accompanying context, and no reference to it anywhere else
+in the repo; treated as accidental and removed.
+
+---
+
+### 152. CLAUDE.md's "Repository Structure" tree omits `Mcp/`, `spec/`, `bindings/`, `benchmarks/`, `Fuzz/`, `herradura/` (Docs, Medium)
+
+**Background:** CLAUDE.md's `## Repository Structure` section lists only a subset of the
+repo's real top-level directories. `Mcp/` (MCP server), `spec/` (machine-readable
+protocol spec), `bindings/` (FFI bindings), `benchmarks/`, `Fuzz/`, and `herradura/` all
+exist and are populated, but none appear in CLAUDE.md's tree. README.md's own
+"Repository Structure" section (added since) is more current and already lists `Mcp/`
+and `spec/`. Since CLAUDE.md is the primary orientation document loaded into every AI
+coding session on this repo, an agent reading only CLAUDE.md gets an incomplete map of
+the codebase. This is a distinct gap from TODO #145 (build/test command staleness) —
+this is about the structural directory listing specifically.
+
+**Work items:**
+
+1. Update CLAUDE.md's `## Repository Structure` tree to include `Mcp/`, `spec/`,
+   `bindings/`, `benchmarks/`, `Fuzz/`, and `herradura/` with one-line descriptions,
+   matching the style already used for other entries.
+2. Consider whether CLAUDE.md should keep a full independent copy of the tree or instead
+   point to README.md's copy as the canonical version, to avoid the two drifting apart
+   again in the future.
+
+Status: **DONE v1.9.119** — added `Mcp/`, `spec/`, `bindings/ffi/`, `herradura/`,
+`benchmarks/`, and `Fuzz/` to CLAUDE.md's Repository Structure tree with one-line
+descriptions matching the existing entries' style. Kept CLAUDE.md's tree as an
+independent copy (rather than a pointer to README.md's) since CLAUDE.md's version is
+scoped to what an AI session needs to know structurally, while README's is user-facing;
+revisit if the two drift again.
+
+---
+
+### 153. No CI — add a GitHub Actions build/test matrix (Testing/Infra, Medium)
+
+**Background:** The repo has no `.github/workflows` directory and no CI of any kind.
+TODO #130, #133, and #146 each mention "no CI exists in this repo" in passing while
+scoping other work (fuzzing, machine-readable spec drift checks, cross-language test
+divergence), but none of them actually adds one, and cross-language drift (TODO #146)
+and doc staleness (TODO #145) have both already happened silently in the absence of any
+automated check. The project already has correct, working build scripts
+(`build_c.sh`, `build_go.sh`, `build_arm.sh`, `build_asm_i386.sh`, `build_arduino.sh`)
+and test suites (`CryptosuiteTests/`, `CliTest/`) — CI would just need to invoke them.
+
+**Work items:**
+
+1. Add a GitHub Actions workflow that runs on push/PR: `build_c.sh` + C test suite,
+   `build_go.sh` + Go test suite, the Python suite + Python test suite, and the
+   `CliTest/` integration scripts for whichever CLIs were built.
+2. Add ARM (`build_arm.sh` + qemu-arm) and NASM i386 (`build_asm_i386.sh` + qemu-i386)
+   jobs, installing the cross-toolchain/linker packages CLAUDE.md's Build Commands
+   section already documents.
+3. Arduino (`build_arduino.sh` / `run_arduino.sh`) can be a best-effort/allowed-to-fail
+   job if `arduino-cli` setup in CI proves flaky, rather than blocking on it.
+4. Wire in the fuzzing harness from TODO #130 as a time-boxed CI job once that item
+   lands, per its own suggestion.
+5. Update CLAUDE.md/README.md to mention the CI workflow once added.
+
+Status: **OPEN**
+
+---
+
+### 154. Split `TODO.md` into an open-items file and a DONE archive (Docs, Medium)
+
+**Background:** `TODO.md` has grown to ~7800 lines / ~440KB with 166 DONE entries and
+only a handful still open. Every DONE entry carries a full background/work-items/status
+writeup (by design, per this project's own documentation standards), which is valuable
+history but means finding "what's actually left to do" requires scanning past hundreds
+of completed, historical entries. This is the same discoverability problem that
+motivated splitting `SecurityProofs.md` into `SecurityProofs-{1,2,3}.md`.
+
+**Work items:**
+
+1. Split `TODO.md` into open items only, and move DONE/DEPRECATED/ACKNOWLEDGED entries
+   to an archive file (e.g. `TODO_DONE.md`, or split by version range like the
+   SecurityProofs files).
+2. Leave a short index/redirect at the top of `TODO.md` pointing to the archive, mirroring
+   the pattern `SecurityProofs.md` already uses as a redirect to Parts 1–3.
+3. Update CLAUDE.md's TODO.md Status-line policy section and the "Quick check" regex
+   command to account for the new file(s), so the existing automated Status-line audit
+   still works across whichever file(s) end up holding open items.
+4. Preserve numbering — archived items keep their original `### N.` numbers so existing
+   cross-references (CHANGELOG entries, commit messages, other TODO items) that cite
+   `TODO #N` remain valid.
+
+Status: **OPEN**

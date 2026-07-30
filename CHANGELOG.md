@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.119] - 2026-07-30
+
+### Fixed
+- **Repo-hygiene cleanup pass (TODO #149-#152).** Removed a stray untracked file
+  named `-` from the repo root (a leftover 3221-line PEM/HCRED test dump, likely
+  from an accidental shell redirect during manual CLI testing). Removed the dead
+  `TODO.md` entry from `.gitignore` — `TODO.md` is tracked and updated every
+  release per this project's own TODO/CHANGELOG policy, so the ignore rule was
+  misleading. Removed a stray, contextless `OAHR` line trailing README.md's
+  License section (`git log -S` showed one commit introducing it with no
+  accompanying context or reference elsewhere in the repo).
+
+### Changed
+- **Synced CLAUDE.md's Repository Structure tree with the real top-level
+  layout (TODO #152).** The tree was missing `Mcp/` (MCP server), `spec/`
+  (machine-readable protocol spec), `bindings/ffi/` (FFI bindings), `herradura/`
+  (root Go package backing the FFI Go binding), `benchmarks/`, and `Fuzz/` — all
+  real, populated directories already listed in README.md's own (more current)
+  structure section. Added one-line descriptions for each, matching the existing
+  entries' style.
+
 ## [1.9.118] - 2026-07-29
 
 ### Changed
