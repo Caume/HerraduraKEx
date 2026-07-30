@@ -7829,4 +7829,14 @@ compatibility across C/Go/Python/ASM/Arduino).
 3. Keep `docs/examples/{python,c,go}/hello_herradura.*` as the per-language "getting
    started" entry point; the tutorial's reorganization should not duplicate that role.
 
-Status: **OPEN**
+Status: **DONE v1.9.118** — restructured `docs/TUTORIAL.md` into sections per protocol
+(Classical: HKEX-GF/HSKE/HPKS/HPKE; NL/PQC: HPKS-NL/HPKE-NL/HSKE-NL-A1/A2/AEAD/HKEX-RNL;
+Code-based PQC: HPKS-Stern-F/HPKE-Stern-F; hash-based stateful signatures: WOTS-F/XMSS-F;
+HCRED; hash primitive/DRBG: HFSCX-256/HDRBG), each with CLI, C, Go, and Python examples
+nested together in that order, matching the pattern already used by the ZKP-RNL/ZKP-NL,
+Threshold Signing, and OPRF/aPAKE sections (which were already function-organized and
+left as-is). Added a short "Getting started" section up front for build/import
+boilerplate that isn't specific to any one protocol. No example content was removed or
+altered — only regrouped under new headers. `docs/examples/{python,c,go}/hello_herradura.*`
+remains the per-language entry point, referenced from "Getting started" instead of
+duplicated per-language chapter.

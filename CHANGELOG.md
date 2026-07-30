@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.118] - 2026-07-29
+
+### Changed
+- **Reorganized `docs/TUTORIAL.md` around cryptographic function (TODO #148).**
+  The tutorial previously grouped examples by language (CLI quickstart, then
+  separate C/Go/Python integration chapters), splitting each protocol's steps
+  across sections. Restructured into per-protocol sections (Classical, NL/PQC,
+  Code-based PQC, hash-based stateful signatures, HCRED, hash primitive/DRBG),
+  each with CLI, C, Go, and Python examples together, matching the pattern
+  already used by the ZKP/Threshold/OPRF sections. No content was removed;
+  reference tables (Protocol reference, Parameter reference, Security notes)
+  and the MCP server section are unchanged.
+
 ## [1.9.117] - 2026-07-29
 
 ### Fixed
