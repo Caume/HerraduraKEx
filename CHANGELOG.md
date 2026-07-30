@@ -2,6 +2,34 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.121] - 2026-07-30
+
+### Changed
+- **Split `TODO.md` into open items + archive (TODO #154).** `TODO.md` had grown to
+  ~8000 lines / ~440KB, almost entirely `DONE` history, making it hard to see what
+  was actually left to do. Split into `TODO.md` (currently-`OPEN` entries only — none
+  at present — plus a short redirect note) and `TODO_DONE.md` (the archive of
+  `DONE`/`DEPRECATED`/`ACKNOWLEDGED` entries), mirroring the pattern already used by
+  `SecurityProofs.md`'s redirect to Parts 1-3. Item numbering is preserved exactly
+  across both files, so existing `TODO #N` references remain valid. Updated
+  CLAUDE.md's TODO Status-line policy section and its Quick-check regex to run
+  across both files.
+
+## [1.9.120] - 2026-07-30
+
+### Added
+- **CI: GitHub Actions build/test matrix (TODO #153).** Added
+  `.github/workflows/ci.yml`, running on every push/PR: a `native` job
+  (build_c.sh/build_go.sh, the C/Go/Python security test suites, and the
+  full 45-script `CliTest/` integration suite), an `arm-i386` job
+  (build_arm.sh/build_asm_i386.sh under qemu-arm/qemu-i386), and a
+  best-effort `arduino` job (build_arduino.sh under simavr). Mirrors the
+  existing `docker-entrypoint.sh` pattern of installing each build
+  script's own documented dependencies and then deferring to the scripts
+  themselves, so CI and the build scripts can't silently drift apart.
+  Added a CI status badge to README.md and updated CLAUDE.md's `## Testing`
+  section, which previously said no automated test framework existed.
+
 ## [1.9.119] - 2026-07-30
 
 ### Fixed

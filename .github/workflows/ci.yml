@@ -1,0 +1,92 @@
+name: CI
+
+# TODO #153: build/test matrix mirroring docker-entrypoint.sh's smoke run and
+# CLAUDE.md's Build/Testing sections. Intentionally does not duplicate build
+# logic: every job installs the dependencies each build_*.sh script's own
+# header comments document, then defers to those scripts for the rest, so CI
+# and the scripts can't silently drift apart (same rationale as the Dockerfile).
+
+on:
+  push:
+    branches: [master, devtest]
+  pull_request:
+    branches: [master, devtest]
+  workflow_dispatch:
+
+jobs:
+  native:
+    name: C / Go / Python (build + tests + CliTest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3
+
+      - name: Build C
+        run: ./build_c.sh
+
+      - name: Build Go
+        run: ./build_go.sh
+
+      - name: C test suite
+        run: ./CryptosuiteTests/Herradura_tests_c -t 2.0
+
+      - name: Go test suite
+        run: cd CryptosuiteTests && go run Herradura_tests.go -t 2.0
+
+      - name: Python test suite
+        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
+
+      - name: CliTest — Python/C/Go CLI integration
+        run: |
+          for f in CliTest/*.sh; do
+            echo "=== $f ==="
+            bash "$f"
+          done
+
+  arm-i386:
+    name: ARM Thumb-2 / NASM i386 (build + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabi libc6-dev-armel-cross \
+            nasm binutils-x86-64-linux-gnu \
+            qemu-user
+
+      - name: Build ARM Thumb-2
+        run: ./build_arm.sh
+
+      - name: Build NASM i386
+        run: ./build_asm_i386.sh
+
+      - name: ARM Thumb-2 test suite (qemu-arm)
+        run: ./run_arm.sh tests
+
+      - name: NASM i386 test suite (qemu-i386)
+        run: ./run_asm_i386.sh tests
+
+  arduino:
+    name: Arduino / AVR (build + simavr tests, best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-avr avr-libc arduino-core simavr
+
+      - name: Build Arduino/AVR
+        run: ./build_arduino.sh
+
+      - name: Arduino test suite (simavr)
+        run: ./run_arduino.sh tests

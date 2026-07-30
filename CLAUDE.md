@@ -61,11 +61,11 @@ Three `go.mod` files: root-level (`module herradurakex`), `CryptosuiteTests/` (`
 
 All notable changes are documented in `CHANGELOG.md` only.  Do **not** add version notes, release blurbs, or change summaries to `README.md`.  The README describes the current state of the project; the CHANGELOG tracks its history.  When a feature or fix is completed, add a new versioned entry to `CHANGELOG.md` and update the version number in the `README.md` title line — nothing else.
 
-Work items are tracked in `TODO.md` as numbered entries (#1–#N) with a `Status:` line.  When completing a TODO, update its `Status:` line to `**DONE vX.Y.Z**` with the release version, then add the corresponding `CHANGELOG.md` entry.  Version numbers follow `MAJOR.MINOR.PATCH`; each TODO completion is typically one PATCH bump.
+Work items are tracked as numbered entries (#1–#N) with a `Status:` line, split across two files (TODO #154): **`TODO.md`** holds only currently-`OPEN` entries; **`TODO_DONE.md`** archives everything else (`DONE`/`DEPRECATED`/`ACKNOWLEDGED`), in original numeric/chronological order. Numbering is global and never reused across the two files — an item keeps its `#N` forever, whichever file it currently lives in. When completing a TODO, update its `Status:` line to `**DONE vX.Y.Z**` with the release version, move the whole entry from `TODO.md` to the end of `TODO_DONE.md`, then add the corresponding `CHANGELOG.md` entry. Version numbers follow `MAJOR.MINOR.PATCH`; each TODO completion is typically one PATCH bump. When creating a new item, add it to `TODO.md` with `Status: **OPEN**`.
 
-### TODO.md Status line standard
+### TODO.md / TODO_DONE.md Status line standard
 
-Every `### ` section in `TODO.md` must end with exactly one `Status:` line using one of these keywords:
+Every `### ` section in `TODO.md` or `TODO_DONE.md` must end with exactly one `Status:` line using one of these keywords:
 
 | Keyword | Meaning | Format example |
 |---|---|---|
@@ -81,7 +81,7 @@ Rules:
 - No item should be left without a `Status:` line.  A missing Status line means "open" only by convention; always add an explicit `Status: **OPEN**` when creating a new item.
 - When parsing programmatically, match `^Status: \*\*` at the start of a line within the section.
 
-**Quick check:** `python3 -c "import re,sys; [print(m.group()) for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open('TODO.md').read()) if 'Status:' not in m.group()]"` — prints any `###` section that is missing a Status line.
+**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed.
 
 ## Build Commands
 
@@ -134,7 +134,11 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 
 ## Testing
 
-No automated test framework. Tests are manual: run each program and verify console output.
+No unit-test framework in the traditional sense — tests are pass/fail assertions printed
+to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs the
+full build+test matrix (C/Go/Python native, ARM Thumb-2/NASM i386 under qemu, Arduino/AVR
+under simavr as best-effort) on every push/PR (TODO #153); locally, run the same scripts
+by hand as described below.
 
 Whenever a TODO adds or removes a test number or CLI subcommand, re-check this section (and `llms.txt`'s CLI section) for drift rather than waiting for the next major-version doc audit — see TODO #145.
 
