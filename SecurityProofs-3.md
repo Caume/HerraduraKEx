@@ -708,3 +708,66 @@ is consistent with CryptanalysisBench's own observation that LLM cryptanalysis f
 are the exception rather than the rule; the point of this pass was to check whether the
 technique surfaces anything at all against this suite's own constructions, and on this
 first target, it did.
+
+## 11.13 Physical Side-Channel (Power/EM) Risk Register (TODO #160)
+
+**Scope.** §11.11 (TODO #129) covers *timing* side-channels only —
+`dudect_timing_audit.c` measures wall-clock leakage, which is testable on any host. Power
+and EM side-channels are a different physical-leakage channel entirely: they require
+either real target hardware and an oscilloscope/ChipWhisperer-class capture setup, or a
+cycle-accurate power simulator, neither of which this repo has. TODO #160 scopes what is
+actually achievable without that hardware: (1) a literature-grounded risk register mapping
+this suite's PQC operations to published power-analysis attacks against structurally
+similar operations elsewhere, and (2) a static-analysis check for the one class of bug
+that *would* be discoverable without physical measurement — secret-dependent branches or
+table lookups that create an unmistakable power/EM signature — as a cheap first filter
+before deciding whether a genuine hardware-in-the-loop side-channel effort is warranted.
+
+**Published attacks reviewed (2025-2026 review window).**
+
+| Attack | Target operation | Hardware/method | Result |
+|---|---|---|---|
+| CPA on ML-DSA [Azarderakhsh et al., HOST 2025, ieeexplore.org/document/11050056] | Modular reduction immediately following NTT-domain polynomial pointwise multiplication, in an industry-grade hardware root-of-trust (Caliptra) | Correlation power analysis against a specific reduction algorithm's leakage, aided by the register-zeroization step | First published side-channel break of an industry-grade (not academic-reference) PQC hardware implementation |
+| SPA on HQC [Velek-Rabas-Buček, arXiv:2601.07634] | Polynomial multiplication at the start of HQC decryption | Single-trace simple power analysis, ChipWhisperer-Lite | 99.69% private-key recovery over 10,000 attempts |
+| Single-trace attack on ML-KEM keygen ("Avengers assemble!", TCHES 2025) | CRYSTALS-Kyber/ML-KEM key generation (NTT-domain secret polynomial sampling/encoding) | Supervised learning + lattice reduction from one power trace | >96% average success rate across all three ML-KEM security levels |
+
+**Mapping to this suite's operations (work item 1).** All three attacks target the same
+structural pattern: an NTT-domain (or NTT-adjacent) arithmetic operation that processes a
+*secret* polynomial coefficient-by-coefficient, where each coefficient's power/EM trace
+leaks Hamming-weight or value information about the secret. HKEX-RNL's closest analogue is
+`rnl_ntt`/`rnl_poly_mul` (`herradura.h`): `rnl_poly_mul` computes `ms = m_blind * s` and
+`k_poly = s * c_lifted`, both NTT-domain products where `s` (or `s_out`) is the private
+CBD($\eta=1$) secret — structurally the same shape as the attacked ML-KEM/HQC
+polynomial-multiply step. HPKS/HPKE-Stern-F's closest analogue is the permutation/response
+machinery (`stern_gen_perm`, `stern_apply_perm`, the `stern_ring_simulate`/`stern_sign`
+response-selection branches) operating on the secret error vector `e`/`r` and permutation
+seed `pi_seed`.
+
+**Static-analysis check (work item 2, feasible-without-hardware scope) — no new pattern
+found (work item 4 not triggered).** `rnl_ntt`/`rnl_poly_mul`'s control flow (loop bounds,
+array indices, butterfly structure) depends only on the public size parameter `n` and
+loop counters — never on a secret coefficient's value — so there is no secret-dependent
+*branch* or *table-index* pattern to fix at the code level; the residual risk is purely
+in the physical power/EM trace of otherwise data-independent arithmetic (each multiply-
+accumulate's power draw still correlates with the operand's Hamming weight, which no
+amount of branch removal changes). The Stern-F permutation/response code was already
+carried through a dedicated constant-time pass under TODO #129 (§11.11, Batches 2-6):
+`stern_gen_perm`'s rejection-sampling loop was made branchless with a fixed loop/PRNG-
+advance count independent of `pi_seed`, and the `stern_sign`/`stern_ring_sign` response
+branches (`if (bv == 0) ... else if (bv == 1) ... else ...`) switch on the Stern
+*challenge* `b`, which is public (revealed as part of the signature/proof), not secret —
+so branching on it leaks nothing. No clearly-analogous secret-dependent-branch bug was
+found in either target; work item 4's conditional follow-up TODO is therefore not opened.
+
+**Residual risk and what remains genuinely open.** The three published attacks all
+required either real silicon or a ChipWhisperer-class capture rig running against an
+actual implementation — none are reproducible as a pure code-review finding, and this
+repo has no such hardware or simulator. The honest state of this risk is: HKEX-RNL's
+`rnl_poly_mul` (and, if implemented at production Stern-F parameters some day, any
+QC-MDPC polynomial arithmetic per TODO #91/#126) would need masking or blinding
+countermeasures before deployment on any platform where power/EM measurement is a
+realistic adversary capability (embedded/smart-card/IoT targets — less relevant for a
+server-side KEX, more relevant for the Arduino/ARM targets this suite also ships). No
+masking scheme is implemented in any language target today. This is recorded here as a
+known-risk register entry rather than closed with a fix, consistent with work item 3's
+instruction to document the risk even without implementing a countermeasure in this pass.

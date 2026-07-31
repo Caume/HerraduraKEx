@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.128] - 2026-07-31
+
+### Research
+- **Physical side-channel (power/EM) risk register for HKEX-RNL and Stern-F (TODO
+  #160).** Surveyed three 2025-2026 published power-analysis attacks against
+  structurally similar lattice/code-based PQC operations (ML-DSA CPA on NTT-domain
+  modular reduction, HQC single-trace SPA on polynomial multiplication, ML-KEM
+  single-trace keygen recovery) and mapped them onto HKEX-RNL's `rnl_ntt`/
+  `rnl_poly_mul` and Stern-F's permutation/response-selection code. Static analysis
+  found no secret-dependent branch or table-index pattern in either — both were
+  already control-flow-independent of secret data (Stern-F's constant-time work was
+  completed under TODO #129) — so the residual risk is purely physical (Hamming-weight
+  leakage inherent to unmasked arithmetic on secret coefficients), requiring hardware
+  this repo doesn't have to test further. Documented as a permanent risk register in
+  `SecurityProofs-3.md` §11.13 rather than left unaddressed or falsely marked resolved.
+
 ## [1.9.127] - 2026-07-31
 
 ### Fixed

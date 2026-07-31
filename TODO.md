@@ -233,42 +233,6 @@ HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for t
 
 Status: **OPEN**
 
-### 160. Physical side-channel (power/EM) resistance research for Stern-F and HKEX-RNL, beyond the existing timing-only `dudect` audit (Research/Security, Medium)
-
-**Background:** TODO #129's constant-time audit and `SecurityProofsCode/dudect_timing_audit.c`
-cover *timing* side-channels only. The review window produced several results showing
-that timing-safety is not sufficient for newly-standardized PQC schemes: single-trace
-power analysis recovering ML-KEM (Kyber) keygen material (TCHES 2025, per search
-results), a first correlation-power-analysis side-channel attack against an
-industry-grade ML-DSA implementation
-(https://ieeexplore.ieee.org/document/11050056/), and simple power analysis recovering
-HQC private keys from polynomial-multiplication power traces
-(https://arxiv.org/pdf/2601.07634). These are the same class of scheme (lattice/code-
-based KEM and signature) as HKEX-RNL and HPKS/HPKE-Stern-F, so the attack surface is
-directly analogous even though no attack has been published against this suite
-specifically.
-
-**Work items:**
-
-1. Survey which of HKEX-RNL's operations most resemble the attacked ones (NTT-based
-   polynomial multiplication is explicitly named in the HQC attack and is also core to
-   HKEX-RNL's `rnl_poly_mul`/NTT implementation per CLAUDE.md's protocol stack section) —
-   prioritize those for review first.
-2. Since power/EM side-channel testing requires physical hardware or a simulator this
-   repo doesn't currently have (unlike timing, which `dudect` can test on any host), scope
-   what's actually feasible here: e.g. static analysis for known-vulnerable patterns
-   (secret-dependent branching in NTT butterfly operations, non-uniform Hamming-weight
-   leakage in polynomial coefficient handling) versus a genuine power-trace capture setup
-   (would need real target hardware, likely out of scope for this repo alone).
-3. At minimum, document in `SecurityProofs-2.md` which of this suite's PQC operations
-   have published side-channel attacks against structurally similar operations elsewhere,
-   as a known-risk register, even if a full countermeasure (masking, blinding) isn't
-   implemented in this pass.
-4. If static analysis finds a clearly analogous secret-dependent-branch pattern in
-   `rnl_poly_mul`/`rnl_ntt` or the Stern-F permutation/response-selection code, open a
-   follow-up implementation TODO scoped to just that fix.
-
-Status: **OPEN**
 
 ### 161. Audit HKEX-RNL/HKEX-GF/Stern-F KEM usage against NIST SP 800-227 (September 2025) (Security/Docs, Medium)
 

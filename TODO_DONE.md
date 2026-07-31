@@ -8127,3 +8127,59 @@ value mod 3, bias ~$2^{-32}$) and needed no change. Re-verified: `CliTest/test_r
 21/21 pass (all C/Go/Python signer↔verifier pairs, anonymity, non-member/tamper/
 wrong-ring rejection), `CliTest/test_stern_interop.sh` 9/9 pass (Stern-F unaffected by
 the ring-specific fix), and a standalone Python sign→verify smoke test at n=32.
+
+---
+
+### 160. Physical side-channel (power/EM) resistance research for Stern-F and HKEX-RNL, beyond the existing timing-only `dudect` audit (Research/Security, Medium)
+
+**Background:** TODO #129's constant-time audit and `SecurityProofsCode/dudect_timing_audit.c`
+cover *timing* side-channels only. The review window produced several results showing
+that timing-safety is not sufficient for newly-standardized PQC schemes: single-trace
+power analysis recovering ML-KEM (Kyber) keygen material (TCHES 2025, per search
+results), a first correlation-power-analysis side-channel attack against an
+industry-grade ML-DSA implementation
+(https://ieeexplore.ieee.org/document/11050056/), and simple power analysis recovering
+HQC private keys from polynomial-multiplication power traces
+(https://arxiv.org/pdf/2601.07634). These are the same class of scheme (lattice/code-
+based KEM and signature) as HKEX-RNL and HPKS/HPKE-Stern-F, so the attack surface is
+directly analogous even though no attack has been published against this suite
+specifically.
+
+**Work items:**
+
+1. Survey which of HKEX-RNL's operations most resemble the attacked ones (NTT-based
+   polynomial multiplication is explicitly named in the HQC attack and is also core to
+   HKEX-RNL's `rnl_poly_mul`/NTT implementation per CLAUDE.md's protocol stack section) —
+   prioritize those for review first.
+2. Since power/EM side-channel testing requires physical hardware or a simulator this
+   repo doesn't currently have (unlike timing, which `dudect` can test on any host), scope
+   what's actually feasible here: e.g. static analysis for known-vulnerable patterns
+   (secret-dependent branching in NTT butterfly operations, non-uniform Hamming-weight
+   leakage in polynomial coefficient handling) versus a genuine power-trace capture setup
+   (would need real target hardware, likely out of scope for this repo alone).
+3. At minimum, document in `SecurityProofs-2.md` which of this suite's PQC operations
+   have published side-channel attacks against structurally similar operations elsewhere,
+   as a known-risk register, even if a full countermeasure (masking, blinding) isn't
+   implemented in this pass.
+4. If static analysis finds a clearly analogous secret-dependent-branch pattern in
+   `rnl_poly_mul`/`rnl_ntt` or the Stern-F permutation/response-selection code, open a
+   follow-up implementation TODO scoped to just that fix.
+
+Status: **DONE v1.9.128** — all four work items completed with a definitive (not just
+partial) conclusion. Item 1: surveyed and mapped three 2025-2026 published power-analysis
+attacks (ML-DSA CPA on NTT-domain modular reduction [HOST 2025], HQC single-trace SPA on
+decryption-time polynomial multiplication [arXiv:2601.07634], ML-KEM single-trace keygen
+recovery [TCHES 2025, "Avengers assemble!"]) onto HKEX-RNL's `rnl_ntt`/`rnl_poly_mul` and
+Stern-F's `stern_gen_perm`/response-selection code. Item 2: scoped to the feasible-without-
+hardware static-analysis check, since none of the three attacks are reproducible without
+real capture hardware this repo doesn't have. Item 3: documented as a permanent risk
+register in `SecurityProofs-3.md` §11.13 (new section, added right after §11.11's
+timing-only constant-time audit, which it explicitly extends). Item 4: static analysis
+found **no** clearly-analogous secret-dependent-branch pattern — `rnl_ntt`/`rnl_poly_mul`'s
+control flow depends only on the public size parameter and loop counters, never on a
+secret coefficient value, and Stern-F's response-selection branches switch on the public
+Stern challenge (not a secret) — so no follow-up implementation TODO was opened. The
+residual risk (power/EM leakage inherent to unmasked arithmetic on secret polynomial
+coefficients, requiring masking/blinding countermeasures not implemented in any language
+target) is recorded as an open, honestly-unresolved risk-register entry rather than
+falsely closed.
