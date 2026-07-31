@@ -8072,3 +8072,58 @@ link successfully and all 17 security tests still pass under `simavr`
 error: true`) is now expected to go green on the next run; kept `continue-on-error` as a
 safety net per the original work item 3 rationale rather than removing it, since a future
 static-RAM regression should not block merges by itself.
+
+---
+
+### 164. Fix modulo-3 bias in HPKS-Stern-Ring's non-signer challenge simulation — a same-ring-reuse anonymity leak (Security, Medium)
+
+**Background:** Found during TODO #159's LLM-assisted cryptanalysis stress-testing pass
+of HPKS-Stern-Ring's OR-composition (`SecurityProofsCode/stern_ring_challenge_bias.py`).
+
+`stern_ring_sign` (herradura.h) and `hpks_stern_ring_sign` (the Python suite) pick each
+non-signer ring member's per-round Stern challenge $b \in \{0,1,2\}$ by drawing a single
+random byte and reducing mod 3:
+
+```c
+b_pre = (int)(rnd1 % 3u);                              /* herradura.h */
+```
+```python
+b = int.from_bytes(os.urandom(1), 'big') % 3           # hpks_stern_ring_sign
+```
+
+256 is not divisible by 3, so this is biased: $\Pr[b=0] = 86/256 \approx 33.59\%$ versus
+$\Pr[b=1] = \Pr[b=2] = 85/256 \approx 33.20\%$ — a $\approx 0.39\%$ skew. The real
+signer's own displayed challenge is *not* drawn this way — it is forced by subtraction
+from the Fiat-Shamir joint challenge (`joint[r] - sum_{i≠j} b[i,r] mod 3`), which is
+hash-derived and effectively uniform independent of the non-signer draws. A uniform
+value minus anything, reduced mod 3, is itself exactly uniform — so the signer's slot
+has zero skew while every non-signer's slot carries the ~0.39% bias. An observer with
+per-round challenge-value access across many signatures from the **same ring** can in
+principle test each member-slot's empirical challenge distribution against ideal uniform
+and flag the unbiased slot as more likely to be the real signer — a statistical
+anonymity leak specific to long-lived/reused rings (anonymous credentials,
+whistleblowing channels — exactly where ring-signature anonymity matters most).
+`stern_ring_challenge_bias.py` estimates ~9,000+ same-ring signatures needed for
+3-sigma-confidence detection per slot at `SDF_ROUNDS=32`.
+
+Go's implementation is unaffected: it already reduces a full 32-bit random value mod 3
+(bias ~$2^{-32}$, negligible) rather than a single byte.
+
+**Fix:** apply the same rejection-sampling pattern already used for TODO #2's
+`_rnl_rand_poly` bias (draw a byte, reject the one out-of-range value — threshold 255,
+~0.4% rejection rate, exact uniformity), or simply widen the C/Python draw to match Go's
+32-bit-then-mod-3 pattern. Apply to both the C (`herradura.h`) and Python
+(`Herradura cryptographic suite.py`) `stern_ring_sign`/`hpks_stern_ring_sign`
+non-signer-challenge draws; re-run `CliTest/test_ring.sh` after the fix.
+
+Status: **DONE v1.9.127** — rejection sampling applied to both `herradura.h`'s
+`stern_ring_sign` (loop rereads a fresh byte if it draws 255, capped at 8 tries with a
+deterministic fallback matching the prior behavior if the entropy source is exhausted)
+and the Python suite's `hpks_stern_ring_sign` (unbounded reject-255 loop over
+`os.urandom(1)`), eliminating the ~0.39% per-residue skew (exact uniformity over the
+retained 255 values, which split 85/85/85 across the three residues). Go and the
+Arduino/`.ino` ring-signature code were already unaffected (both reduce a wide 32-bit
+value mod 3, bias ~$2^{-32}$) and needed no change. Re-verified: `CliTest/test_ring.sh`
+21/21 pass (all C/Go/Python signer↔verifier pairs, anonymity, non-member/tamper/
+wrong-ring rejection), `CliTest/test_stern_interop.sh` 9/9 pass (Stern-F unaffected by
+the ring-specific fix), and a standalone Python sign→verify smoke test at n=32.

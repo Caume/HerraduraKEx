@@ -2,6 +2,88 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.127] - 2026-07-31
+
+### Fixed
+- **Modulo-3 bias in HPKS-Stern-Ring's non-signer challenge simulation (TODO #164).**
+  `stern_ring_sign` (herradura.h) and `hpks_stern_ring_sign` (the Python suite) picked
+  each non-signer ring member's per-round Stern challenge by reducing a single random
+  byte mod 3 — biased (86/256 vs 85/256 per residue, ~0.39% skew) since 256 isn't
+  divisible by 3. Because the real signer's own challenge is forced by subtraction from
+  a hash-derived, effectively-uniform joint challenge rather than drawn the same way,
+  the signer's slot had zero skew while every non-signer's slot carried it — a
+  statistical anonymity leak for rings reused across many signatures (found during
+  TODO #159's LLM-assisted cryptanalysis pass). Both implementations now reject the one
+  out-of-range byte value (255) instead of reducing every byte mod 3, giving exact
+  85/85/85 uniformity. Go and the Arduino ring-signature code were already unaffected
+  (they draw a wide 32-bit value, bias ~2^-32). Verified: `CliTest/test_ring.sh` 21/21
+  and `CliTest/test_stern_interop.sh` 9/9 both pass after the fix.
+
+## [1.9.126] - 2026-07-31
+
+### Research
+- **First LLM-assisted cryptanalysis stress-testing pass (TODO #159): found a real
+  modulo-3 challenge bias in HPKS-Stern-Ring's OR-composition, filed as TODO #164.**
+  Reviewing `stern_ring_sign`'s non-signer challenge simulation (herradura.h and the
+  Python suite) against its own Fiat-Shamir soundness argument surfaced a genuine,
+  previously-undocumented statistical anonymity leak: the C and Python
+  implementations draw a single random byte and reduce mod 3 to pick each non-signer's
+  per-round challenge (256 not being divisible by 3 skews residue 0 to ~33.59% instead
+  of ~33.33%), while the real signer's own challenge is forced by subtraction from a
+  hash-derived, effectively-uniform joint challenge — giving the signer's slot an
+  exactly-uniform marginal and every non-signer's slot a small but real skew. Added
+  `SecurityProofsCode/stern_ring_challenge_bias.py`, confirming the bias analytically
+  and by Monte Carlo, and estimating ~9,000+ same-ring signatures needed for
+  3-sigma-confidence slot detection. Go's implementation is unaffected (already reduces
+  a wide 32-bit value, bias ~2^-32). Findings documented in `SecurityProofs-3.md` §11.12;
+  fix tracked separately as TODO #164 so it gets the same manual-verification treatment
+  as any other finding before being applied. TODO #159 stays **OPEN** — two of its three
+  scoped targets (NL-FSCX v2's CSP construction, the HFSCX-256-DM finalizer) remain
+  unreviewed.
+
+## [1.9.125] - 2026-07-31
+
+### Research
+- **2025 automated RX-differential search framework re-check against NL-FSCX v1
+  (TODO #158, partial).** The cited paper's full text is paywalled beyond its abstract.
+  Added `SecurityProofsCode/nl_fscx_rx_differential_2025.py`, a bounded hill-climbing
+  search over nonzero-XOR RX-differences for NL-FSCX v1's modular-addition step (the only
+  source of transition probability < 1, since FSCX's XOR-rotation linear part transmits
+  RX-differences with probability 1 regardless of XOR component). Found no configuration
+  beating the existing pure-rotational baseline from TODO #75/#125 at n=16/32 — no
+  evidence of a stronger characteristic. TODO #158 stays **OPEN**: this is local search,
+  not the paper's exhaustive SAT method, and only covers single-round transitions.
+  Findings documented in `SecurityProofs-2.md` §11.8.3.
+
+## [1.9.124] - 2026-07-31
+
+### Research
+- **2026 sparse-secret hybrid-decoding attack re-check against HKEX-RNL's CBD(η=1)
+  sampler (TODO #157, partial).** Reviewed the Hou-Jiang hybrid decoding attack
+  (eprint 2026/366, claims up to O(N) complexity improvement and 17x-114x speedups
+  "in sparse secret setting"). Its own PDF is Cloudflare-gated, but its five named FHE
+  target papers are classical sparse-secret-bootstrapping proposals with published
+  Hamming weights h ≈ 64-192 against N=2^15 (≤0.6% density) — HKEX-RNL's CBD(η=1)
+  sampler is ≈50% dense, over two orders of magnitude denser, so the attack's
+  guessing-space-reduction mechanism should not transfer. TODO #1's prior deprecation
+  of the sparse-secret concern stands unaffected on this evidence. TODO #157 stays
+  **OPEN** pending a direct read of the paper's formal sparsity definition; findings
+  documented in `SecurityProofs-2.md` §11.6.
+
+## [1.9.123] - 2026-07-31
+
+### Research
+- **2025-2026 ISD literature re-check against Stern-F's N ≥ 17000 production target
+  (TODO #156, partial).** Reviewed two post-2024 information-set-decoding papers
+  flagged as potentially affecting `SecurityProofs-2.md` §11.8.4's parameter margins.
+  Elbro-Weger's extension-field paper (eprint 2025/1402) gives a clean negative result —
+  extension-field structure doesn't speed up ISD and doesn't apply to Stern-F's plain
+  GF(2) construction anyway — so it doesn't move the N ≥ 17000 target. Furue-Aikawa's
+  improved Both-May paper (PQCrypto 2025) sits behind a paywall this review couldn't
+  clear; only its abstract-level framing (better time-memory trade-off, not necessarily
+  a lower time exponent) could be confirmed. TODO #156 stays **OPEN** pending full-text
+  access to the Both-May paper; findings documented in §11.8.4.
+
 ## [1.9.122] - 2026-07-31
 
 ### Fixed

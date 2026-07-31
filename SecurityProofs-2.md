@@ -422,6 +422,48 @@ the full analysis).  This is below the 128-bit target of NIST ML-KEM-768 but com
 above the 100-bit floor.  No new algebraic attack exploiting $q=65537$ has been published
 through 2025.
 
+**2026 sparse-secret hybrid-decoding re-check (TODO #157).**  "Careful with the Ring:
+Enhanced Hybrid Decoding Attacks against Module/Ring-LWE" [Hou-Jiang, eprint 2026/366]
+presents a ring-structure-accelerated hybrid meet-in-the-middle/lattice-decoding attack
+that the abstract reports as an $O(N)$ complexity improvement over the prior hybrid
+decoding attack "in sparse secret setting", with 17x-114x measured speedups on
+previously-broken benchmark instances, and up to 13-bit security-estimate reductions
+across 16 named FHE parameter sets (from [JM22], [CCKS23], [BCKS24], [CHKS25], [AKP25]),
+12 of which it moves below the 128-bit target.
+
+The full PDF sits behind a Cloudflare challenge this review could not clear, so the
+paper's own precise sparsity definition could not be read directly. However, all five
+cited target papers are established CKKS/BFV/BGV **sparse-secret bootstrapping**
+proposals, whose defining parameter is a Hamming weight $h$ deliberately kept far below
+the ring degree $N$ — published sparse-secret-encapsulation parameter sets use figures
+like $h \in \{64, 128, 192\}$ against $N = 2^{15} = 32768$ (density $h/N \approx
+0.2\%$–$0.6\%$), chosen specifically to shrink the noise growth during bootstrapping.
+This is the same "sparse" regime TODO #1 (now `DONE` in `TODO_DONE.md`, not `DEPRECATED`
+as an earlier draft of this item's background section stated — see below) originally
+flagged for HKEX-RNL's pre-v1.5.x uniform $\{0,1\}$ sampler.
+
+HKEX-RNL's deployed $\mathrm{CBD}(\eta=1)$ sampler (`SecurityProofs-2.md` above,
+$q=65537$, $n=256$) draws each coefficient as $a_0 - b_0$ for independent uniform bits
+$a_0, b_0$, giving $\Pr[s_i = 0] = 1/2$ and $\Pr[s_i = \pm1] = 1/4$ each — i.e. **roughly
+half the coefficients are nonzero**, an expected Hamming weight of $\approx 128$ out of
+$n=256$ ($\approx 50\%$ density). This is over **two orders of magnitude denser** than
+the $h/N \lesssim 0.6\%$ regime the cited FHE sparse-secret parameter sets (and, by
+inference, this paper's attack) target. Classical and prior hybrid attacks on sparse
+secrets (e.g. the Son-Cheon-style hybrid MITM lineage this paper builds on) gain their
+speedup specifically from a *reduced guessing space over the nonzero-coefficient
+positions* — an asymptotic gain that requires $h \ll N$ and vanishes as $h/N \to 1/2$,
+which is exactly HKEX-RNL's regime. "Small" (bounded-magnitude, CBD-style) and "sparse"
+(few-nonzero-position) secrets are therefore genuinely distinct properties at HKEX-RNL's
+parameters, and TODO #1's original deprecation of the sparse-secret concern (in favor of
+CBD) stands **unaffected** by this 2026 paper on current evidence.
+
+**Conclusion:** no revision to HKEX-RNL's 105–115-bit Core-SVP estimate is made. This
+finding rests on the paper's abstract and its five named target papers' published
+Hamming-weight parameters rather than a direct reading of the attack's formal sparsity
+definition (blocked by the Cloudflare-gated PDF) — re-open TODO #157 for a direct check
+against the formal definition if full-text access becomes available; the density-gap
+argument above should be treated as strong circumstantial evidence, not a closed proof.
+
 ---
 
 ### 11.7 Protocol-Level Quantum Security Summary
@@ -595,6 +637,41 @@ where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \
 *Stratified rates (Q1).*  Sparse $B$ massively elevates the two-sided rate: at $\text{wt}(B) = 1$ the rate is $0.86$ at $k = 1$ — a $64\times$ elevation over the uniform-$B$ baseline ($0.058$).  The elevation decays monotonically with weight: $50\times$ at $\text{wt}(B) = 2$, $30\times$ at $4$, $10\times$ at $8$, and baseline parity at $16$.  The structural reason mirrors §1: with few set bits in $B$, the integer carry chain in $\mathrm{ROL}(A + B, n/4)$ is short, so the carry-mismatch events that break FSCX's exact rotation-equivariance are rare.  The $n = 8$ MDP elevation flagged by TODO #74 is therefore **not** a small-$n$ artifact — it persists at $n = 32$ and is expected at all $n$.
 
 *Threshold weight (Q2).*  A fine-grained sweep places the safe-use threshold at $\text{wt}(B) \geq 16 = n/2$: the maximum elevation over baseline is $2.7\times$ at $\text{wt}(B) = 12$ and $0.8\times$ at $16$.  Safe-use lower bound for PRF applications: **$B$ density $\geq 1/2$**, i.e. $\text{wt}(B) \geq n/2$.  Uniformly random keys satisfy this with overwhelming probability (a binomial tail of $2^{-0.03n}$ order); the bound only constrains adversarially chosen or structured $B$.
+
+**2025 automated RX-differential search re-check (TODO #158).**  "An Automatic Search
+Framework for Rotational-XOR Differential Characteristics of ARX Ciphers" (2025,
+doi:10.1007/s10623-025-01571-6) proposes a CNF/SAT-based automated search over the full
+RX-difference space (rotation $k$ *and* an XOR-difference component, not just pure
+rotation) for ARX ciphers, finding longer characteristics for SPECK/CHAM/SPARX/Ballet
+than prior hand/semi-automated analysis. FSCX's linear map $M = I \oplus \mathrm{ROL}
+\oplus \mathrm{ROR}$ is pure XOR-rotation and commutes exactly with both operations, so
+it contributes probability $1$ to every RX-differential trail regardless of the
+XOR-difference component — all probability mass in an NL-FSCX v1 round comes from the
+$\mathrm{ROL}((A+B) \bmod 2^n, n/4)$ modular-addition term, which is exactly the kind of
+object the paper's addition-specific propagation rules describe. The paper's full text
+is paywalled beyond its abstract, so its exact CNF encoding could not be reproduced; TODO
+#75/#125 above only characterised the **pure-rotational** slice of RX-difference space
+(zero XOR component) via power-law decay, leaving open whether a nonzero-XOR RX-difference
+gives a higher single-round transition probability.
+
+`SecurityProofsCode/nl_fscx_rx_differential_2025.py` runs a bounded, non-exhaustive
+stand-in for that search: Monte Carlo-evaluated hill-climbing over $(da, db)$ at fixed
+rotation $k$, for $n \in \{16, 32\}$ and $k \in \{1, n/4\}$, comparing the best found
+single-round transition probability against the $da = db = 0$ baseline. Empirically, no
+configuration found a materially higher probability than the pure-rotational baseline
+(e.g. $n=32, k=8$: baseline $0.252$ vs. hill-climbed best $0.254$) — differences are
+within the noise of the $20{,}000$-trial Monte Carlo estimate, not a genuine improvement.
+This gives **no evidence** that a nonzero RX-difference beats the already-characterised
+pure-rotational trail for NL-FSCX v1's addition step, consistent with TODO #75/#125's
+conclusions standing unrevised.
+
+**Caveats.** This is local hill-climbing, not the paper's exhaustive SAT search — it
+cannot rule out a better trail outside its search neighborhood, and only checks
+single-round transitions rather than chained multi-round trails (the paper's stated
+advantage is specifically multi-round). Reproducing the paper's actual CNF/SAT encoding
+(behind its own SPECK/CHAM-specific propagation rules, adapted here for modular addition
+under an RX-difference model) would be needed to close this gap fully; that is deferred
+as future work rather than attempted here given the paywalled full text.
 
 *HFSCX-256-DM impact (Q3).*  For the compression function $C_{\text{DM}}(s,m) = F_{1}^{2n}(s, m) \oplus s$ with adversarially sparse message blocks $\text{wt}(m) \in \{1,2,4\}$: the **one-sided** rate in the chaining value $s$ remains $\approx 0$ ($\leq 4 \times 10^{-5}$ at $r = 64$), so a sparse message alone gives no rotational distinguisher — the per-call PRF safety of §5 is weight-independent.  The **two-sided** related-message rate (attacker submits both $m$ and $\mathrm{ROL}(m,k)$ with rotated chaining values) is *not* suppressed by iteration: $0.77$ at $\text{wt}(m) = 1$, $r = 64$, $k = 1$ (versus $0.86$ at $r = 8$), consistent with the §3 power law.  This is unrealisable against the Merkle-Damgård chain itself because the attacker does not control $s$ — the fixed IV breaks the required $s \to \mathrm{ROL}(s,k)$ alignment at the first block — but it is a documented related-message property: any future mode that lets an attacker align rotated chaining values with rotated sparse messages inherits a high-probability rotational distinguisher.
 
@@ -777,6 +854,44 @@ quantum ISD estimate of approximately $2^{30}$–$2^{40}$ operations (Kirshanova
 quantum security.  The 128-bit classical floor requires approximately $N \geq 17000$ at $t/N \approx
 0.0625$.  Until higher-$N$ parameters are adopted, HPKS-Stern-F and HPKE-Stern-F should be treated
 as proof-of-concept implementations.
+
+**2025–2026 ISD literature re-check (TODO #156).**  Two post-2024 ISD papers were reviewed
+against the $N \geq 17000$ production target above:
+
+1. *"An Improved Both-May Information Set Decoding Algorithm: Towards More Efficient
+   Time-Memory Trade-Offs"* [Furue-Aikawa, PQCrypto 2025, DOI 10.1007/978-3-031-86599-2_4].
+   The paper's own abstract frames its contribution as a **more efficient time-memory
+   trade-off curve** for the Both-May ISD family — i.e. less memory for a given running
+   time (or vice versa) — rather than a lower asymptotic time exponent at unbounded
+   memory. The full text sits behind a Springer paywall this review could not access, so
+   the concrete exponent improvement (if any) over the $O(2^{0.054N})$ classical figure
+   already cited above could not be extracted or plugged into the SDE-style worksheet.
+   **This sub-item is not resolved**; treat the $N \geq 17000$ figure as unconfirmed
+   against this specific paper until the full text (or a citing survey with its concrete
+   numbers) can be reviewed. Memory-side improvements matter most to attackers who are
+   memory-bound at the deployed demo parameters ($N=256$) — they do not, by the paper's
+   own framing, change the *time*-exponent baseline BIKE-128's $N \approx 24646$ was
+   chosen against.
+2. *"Can we Speed up Information Set Decoding by Using Extension Field Structure?"*
+   [Elbro-Weger, Cryptography and Communications 2025/2026, eprint 2025/1402]. This one
+   **was** fully reviewed (open eprint). Its conclusion is negative for attackers:
+   decoding over extension fields $\mathrm{GF}(2^m)$ is **not** easier than over prime
+   fields of comparable size — expansion-map, subfield-subcode, and trace-map
+   translation techniques were all checked and none produced a practical speedup, and
+   Meurer's convergence result (advanced ISD variants collapsing back to Prange's
+   exponent as parameters scale) was extended to this setting. HPKS-Stern-F/HPKE-Stern-F
+   use plain binary $\mathrm{GF}(2)$ parity-check matrices (not an extension-field
+   construction), so this paper's scope does not directly apply to the deployed
+   construction either way, and its negative result gives no reason to revise the
+   $N \geq 17000$ target.
+3. **TODO #126 cross-check:** the QC-MDPC/Niederreiter trapdoor prototype (above) is a
+   quasi-cyclic special case of ordinary binary syndrome decoding, not an extension-field
+   or memory-bound-specific construction, so neither paper's findings change its
+   $r = 12323$, $w = 142$, $t = 134$ BIKE-derived production parameters.
+
+**Net conclusion:** no revision to the $N \geq 17000$ / BIKE-128 parameter figures is
+made at this time. Item 1 above (Furue-Aikawa's concrete numbers) remains genuinely
+open and should be re-attempted if full-text access becomes available — see TODO #156.
 
 ---
 

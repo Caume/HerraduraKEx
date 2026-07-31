@@ -1917,9 +1917,16 @@ static void stern_ring_sign(SternRingSig *sig,
         if (i == j) continue;
         stern_build_H(H_mat_i, &seeds[i]);
         for (r = 0; r < rounds; r++) {
+            /* Rejection-sample a uniform trit: 256 is not divisible by 3, so a
+             * plain `byte % 3` is biased (86/256 vs 85/256 per residue, TODO
+             * #164). Reject the one out-of-range byte value (255) instead. */
             uint8_t rnd1;
             int b_pre;
-            if (fread(&rnd1, 1, 1, urnd) != 1) rnd1 = (uint8_t)(i ^ r);
+            int tries;
+            for (tries = 0; tries < 8; tries++) {
+                if (fread(&rnd1, 1, 1, urnd) != 1) { rnd1 = (uint8_t)(i ^ r); break; }
+                if (rnd1 != 255) break;
+            }
             b_pre = (int)(rnd1 % 3u);
             stern_ring_simulate(sig, i * rounds + r, b_pre,
                                  H_mat_i, syn_i, urnd);

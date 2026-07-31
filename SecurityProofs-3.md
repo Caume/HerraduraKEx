@@ -647,3 +647,64 @@ adding new dudect targets, to avoid re-discovering the same artifact.
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
 /tmp/dudect_timing_audit 4000          # or a larger round count for higher power
 ```
+
+## 11.12 LLM-Assisted Cryptanalysis Stress-Testing Pass (TODO #159)
+
+**Motivation.** TODO #159 records that LLM-driven cryptanalysis moved from a research
+curiosity to a credible methodology in 2026 (Claude's HAWK finding leading to that
+scheme's NIST-track withdrawal), distinct in kind from this repo's existing manual/
+scripted `SecurityProofsCode/` proofs. This section documents the first bounded pass:
+reading HPKS-Stern-Ring's OR-composition (herradura.h `stern_ring_sign`, the equivalent
+Python/Go suite code) — chosen as one of the "less battle-tested" constructions per work
+item 1 — against its own Fiat-Shamir soundness argument, looking for gaps the existing
+manual review missed.
+
+**Finding: modulo-3 bias breaks the signer-slot / non-signer-slot symmetry (now TODO
+#164).** The C and Python non-signer challenge simulators each draw one random byte and
+reduce mod 3 to choose $b \in \{0,1,2\}$ for every ring member other than the real
+signer. Since $256 \not\equiv 0 \pmod 3$, this draw is biased: $\Pr[b=0] = 86/256 \approx
+33.59\%$ versus $\Pr[b=1]=\Pr[b=2]=85/256\approx 33.20\%$. Crucially, the real signer's
+own displayed challenge is *not* drawn this way at all — the OR-composition forces it as
+$b_j = (\text{joint} - \sum_{i \neq j} b_i) \bmod 3$, where `joint` is the Fiat-Shamir
+hash-derived challenge (effectively uniform, independent of the simulator's random
+draws). A uniform value minus anything, reduced mod 3, is itself exactly uniform — so
+the signer's own slot has **zero** skew round to round, while every non-signer's slot
+carries the $\approx 0.39\%$ bias. This is not merely a "modulo bias" in the sense TODO
+#2 already fixed elsewhere (which only mattered for the uniformity of a secret value);
+here the asymmetry it creates between the signer's slot and every other slot is exactly
+the kind of statistical distinguisher a ring signature's anonymity property is supposed
+to rule out.
+
+`SecurityProofsCode/stern_ring_challenge_bias.py` confirms the exact $86/85/85$-out-of-
+$256$ distribution analytically and by $5{,}000{,}000$-trial Monte Carlo, and estimates
+the attack cost: at 3-sigma confidence, distinguishing a non-signer's biased slot from
+the signer's uniform slot requires on the order of $2.9 \times 10^5$ challenge draws for
+residue $0$ alone; at `SDF_ROUNDS = 32` per signature, that is roughly **9,000+
+signatures from the same ring**. This makes it a genuine but narrow anonymity concern:
+it does not threaten a single signature or even a handful, but it is a real,
+previously-undocumented leak for the long-lived/reused-ring use case (anonymous
+credentials, whistleblowing channels) that ring signatures specifically target. Go's own
+implementation is unaffected — it reduces a full 32-bit random value mod 3 (bias
+$\approx 2^{-32}$, negligible) rather than a single byte, so this is a C/Python-specific
+implementation gap, not a flaw in the OR-composition protocol design itself. The fix
+(rejection sampling, mirroring TODO #2's `_rnl_rand_poly` pattern, or simply widening the
+draw to match Go's approach) was tracked as TODO #164 rather than applied inline here,
+per TODO #159's own instruction to treat findings as leads requiring the same
+verification standard as any other TODO before being folded into a fix.
+
+**Fixed (TODO #164, v1.9.127).** Both `herradura.h`'s `stern_ring_sign` and the Python
+suite's `hpks_stern_ring_sign` now reject the single out-of-range byte value (255)
+instead of reducing every byte mod 3 — the retained 255 values split exactly 85/85/85
+across the three residues, eliminating the skew. Go and the Arduino ring-signature code
+needed no change (already draw a wide 32-bit value, bias $\approx 2^{-32}$).
+`CliTest/test_ring.sh` (21/21) and `CliTest/test_stern_interop.sh` (9/9) both re-verified
+passing after the fix.
+
+**Outcome for the remaining scope.** Work item 1 named three candidate targets; only
+HPKS-Stern-Ring's OR-composition has been passed over so far. NL-FSCX v2's CSP-based
+construction and the HFSCX-256-DM finalizer remain for a future pass — TODO #159 stays
+open for those two. A hit rate of one real (if narrow) finding out of one target reviewed
+is consistent with CryptanalysisBench's own observation that LLM cryptanalysis findings
+are the exception rather than the rule; the point of this pass was to check whether the
+technique surfaces anything at all against this suite's own constructions, and on this
+first target, it did.

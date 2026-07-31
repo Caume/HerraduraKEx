@@ -51,6 +51,18 @@ should be re-checked against it too.
    decoding-trapdoor scoping (HPKE-Stern-F's KEM side uses the same underlying SD
    assumption family).
 
+**Progress (2026-07-31):** `SecurityProofs-2.md` §11.8.4 now documents both papers.
+The Elbro-Weger extension-field paper (eprint 2025/1402, fully reviewed) is a clean
+negative result — extension-field structure does not speed up ISD, and doesn't apply
+to HPKS-Stern-F/HPKE-Stern-F's plain-$\mathrm{GF}(2)$ construction anyway, so it does
+not move the $N \geq 17000$ target. The Furue-Aikawa Both-May paper (PQCrypto 2025) sits
+behind a Springer paywall; only its abstract-level framing ("more efficient
+time-memory trade-offs", not a lower time exponent) could be confirmed, so work items
+1–2 remain unresolved for that paper specifically — the concrete exponent improvement
+was never extracted or plugged into the SDE worksheet. TODO #126's QC-MDPC parameters
+are unaffected by either finding (item 4 is otherwise complete). Re-open work items 1–2
+if full-text access to the Both-May paper becomes available.
+
 Status: **OPEN**
 
 ### 157. Re-evaluate HKEX-RNL's CBD($\eta=1$) secret distribution against the 2026 sparse-secret hybrid-decoding attack on Ring-LWE/Ring-LWR (Research/Security, Medium)
@@ -91,6 +103,22 @@ deprecation stands unaffected.
    the reasoning is traceable, and update TODO #1's `DEPRECATED` note in `TODO_DONE.md`
    with a forward-reference if the conclusion revises it.
 
+**Progress (2026-07-31):** `SecurityProofs-2.md` §11.6 (just before §11.7) now documents
+the finding: the paper's own PDF is Cloudflare-gated and couldn't be read directly, but
+its abstract names five target FHE papers ([JM22]/[CCKS23]/[BCKS24]/[CHKS25]/[AKP25])
+that are all classical sparse-secret-bootstrapping proposals with published Hamming
+weights $h \approx 64$–$192$ against $N=2^{15}$ (density $\lesssim 0.6\%$). HKEX-RNL's
+deployed CBD($\eta=1$) sampler has $\approx 50\%$ nonzero density at $n=256$ — over two
+orders of magnitude denser — so by the density-gap argument the attack's speedup
+mechanism (reduced guessing space over sparse nonzero positions) should not transfer,
+and TODO #1's deprecation stands unaffected. Note in passing: TODO #1's own status line
+in `TODO_DONE.md` reads `DONE (v1.5.x)`, not `DEPRECATED` as this item's background
+section (written before this review) stated — a small cross-reference slip, not a
+finding that needs its own action. Work item 3's forward-reference-to-TODO#1 is therefore
+not needed since no revision resulted. This item stays **OPEN** because the conclusion
+rests on indirect evidence (target-paper parameters), not the paper's own formal
+sparsity definition — re-close only after a direct read confirms it.
+
 Status: **OPEN**
 
 ### 158. Apply the 2025 automated rotational-XOR differential search framework to FSCX/NL-FSCX (Research, Medium)
@@ -127,6 +155,19 @@ non-linear step reintroduces addition-like mixing.
 4. Document results in `SecurityProofs-2.md` regardless of outcome, and add a
    `SecurityProofsCode/` script if new characteristics are found (following the existing
    naming convention, e.g. `nl_fscx_rx_differential_2025.py`).
+
+**Progress (2026-07-31):** paper's full text is paywalled beyond its abstract, so its
+exact CNF/SAT encoding couldn't be reproduced. Added
+`SecurityProofsCode/nl_fscx_rx_differential_2025.py`: a bounded, non-exhaustive
+hill-climbing stand-in that searches over nonzero-XOR RX-differences $(da,db)$ (not just
+the pure-rotation $da=db=0$ slice TODO #75/#125 already covered) for NL-FSCX v1's
+modular-addition step, since FSCX's XOR-rotation linear part transmits every RX-difference
+with probability 1 and contributes no search surface. Found no configuration with a
+materially higher single-round transition probability than the existing pure-rotational
+baseline at $n \in \{16,32\}$. Documented in `SecurityProofs-2.md` (end of the sparse-$B$
+subsection) with explicit caveats: this is local search, not exhaustive SAT, and only
+covers single-round (not chained multi-round) transitions. Stays **OPEN** — reproducing
+the paper's actual automated search is future work, deferred due to paywalled access.
 
 Status: **OPEN**
 
@@ -166,6 +207,29 @@ already passed multiple rounds of expert human review.
 4. Document the pass and its outcome (findings or a clean bill of health) in
    `SecurityProofs-2.md` or a new `SecurityProofsCode/` note, so this doesn't need
    re-justifying from scratch next time it comes up.
+
+**Progress (2026-07-31) — first pass complete, one real finding.** Scoped the pass to
+HPKS-Stern-Ring's OR-composition (herradura.h `stern_ring_sign`, the Python/Go suite
+equivalents) as the target — the "less battle-tested" construction named in work item 1.
+Reading `stern_ring_sign`'s non-signer challenge simulation against the joint
+Fiat-Shamir challenge derivation surfaced a genuine, previously-undocumented modulo-3
+bias: the C and Python implementations draw a single random byte and reduce mod 3 to
+pick each non-signer's per-round challenge (256 is not divisible by 3, so residue 0 is
+~0.39% overrepresented), while the real signer's own displayed challenge is forced by
+subtraction from a hash-derived, effectively-uniform joint challenge — meaning the
+signer's slot has an exactly-uniform marginal while every non-signer's slot carries the
+skew. This is a statistical anonymity leak under repeated use of the same ring (not a
+one-shot break): `SecurityProofsCode/stern_ring_challenge_bias.py` (added this pass)
+verifies the exact 86/85/85-out-of-256 distribution, confirms it by Monte Carlo, and
+estimates ~9,000+ same-ring signatures needed before the skew is statistically
+distinguishable per slot at 3-sigma confidence. Per work item 3, this is filed as its own
+actionable item — **TODO #164** — rather than treated as fixed here, since #159 is a
+process/tracking item, not a fix ticket. Go's own implementation already reduces a wide
+32-bit value mod 3 (bias ~2^-32, negligible), so this is a C/Python-specific gap, not a
+protocol-level design flaw.
+
+The other two candidate targets from work item 1 (NL-FSCX v2's CSP-based construction,
+HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for those two.
 
 Status: **OPEN**
 
@@ -300,3 +364,4 @@ actually is by 2026 standards.
    TODO #145's build/test doc staleness scope.
 
 Status: **OPEN**
+

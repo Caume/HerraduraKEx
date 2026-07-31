@@ -1441,7 +1441,14 @@ def hpks_stern_ring_sign(msg: 'BitArray', e_int: int, j: int,
         seed_i, syn_i = ring_keys[i]
         H_rows_i = _stern_build_H(seed_i.uint, n, n_rows)
         for r in range(rounds):
-            b = int.from_bytes(os.urandom(1), 'big') % 3
+            # Rejection-sample a uniform trit: 256 is not divisible by 3, so a
+            # plain `byte % 3` is biased (86/256 vs 85/256 per residue, TODO
+            # #164). Reject the one out-of-range byte value (255) instead.
+            while True:
+                v = os.urandom(1)[0]
+                if v != 255:
+                    break
+            b = v % 3
             all_challenges[i][r] = b
             c0, c1, c2, resp = _stern_simulate_round(b, syn_i, H_rows_i, n, t)
             all_commits[i][r]   = (c0, c1, c2)
