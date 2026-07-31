@@ -1259,7 +1259,7 @@ void loop() {
     /* ---------------------------------------------------------------- */
     Serial.println("--- HPKS-Stern-Ring [PQC -- OR-composition, k=2, N=32, rounds=4]");
     {
-        static SternRingSig2_32 rsig;
+        SternRingSig2_32 rsig;
         uint32 ring0_seed = lcg_next();
         uint32 ring0_e    = stern_rand_error_32();
         uint32 ring0_synd = stern_syndrome_32(ring0_seed, ring0_e);
@@ -1273,7 +1273,7 @@ void loop() {
 
     Serial.println("*** HPKS-Stern-Ring -- Eve forge (random ring sig fails challenge-sum check)");
     {
-        static SternRingSig2_32 eve_rsig;
+        SternRingSig2_32 eve_rsig;
         for (int i = 0; i < SDF_ROUNDS; i++) {
             eve_rsig.m0.c0[i] = lcg_next(); eve_rsig.m0.c1[i] = lcg_next();
             eve_rsig.m0.c2[i] = lcg_next(); eve_rsig.m0.b[i]  = lcg_next() % 3;

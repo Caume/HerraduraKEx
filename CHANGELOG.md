@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.122] - 2026-07-31
+
+### Fixed
+- **Arduino/AVR CI build fixed: `.bss` overflowed the ATmega2560's 8KB SRAM by
+  ~51 bytes (TODO #155).** The new CI workflow (TODO #153) reproducibly failed
+  its best-effort Arduino job at the link step. Root-caused to two oversized
+  `static` locals in `Herradura cryptographic suite.ino`'s `loop()` —
+  `SternRingSig2_32 rsig` and `eve_rsig` (208 bytes each), used only within
+  their own single-shot HPKS-Stern-Ring test blocks with no need to persist
+  across iterations. Removed `static` from both, moving them to the stack;
+  frees 416 bytes of permanent static RAM against the 51-byte overflow.
+  Verified both `.ino` targets link and all 17 security tests still pass
+  under `simavr`.
+
 ## [1.9.121] - 2026-07-30
 
 ### Changed
