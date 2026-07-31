@@ -2,6 +2,55 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.121] - 2026-07-30
+
+### Changed
+- **Split `TODO.md` into open items + archive (TODO #154).** `TODO.md` had grown to
+  ~8000 lines / ~440KB, almost entirely `DONE` history, making it hard to see what
+  was actually left to do. Split into `TODO.md` (currently-`OPEN` entries only — none
+  at present — plus a short redirect note) and `TODO_DONE.md` (the archive of
+  `DONE`/`DEPRECATED`/`ACKNOWLEDGED` entries), mirroring the pattern already used by
+  `SecurityProofs.md`'s redirect to Parts 1-3. Item numbering is preserved exactly
+  across both files, so existing `TODO #N` references remain valid. Updated
+  CLAUDE.md's TODO Status-line policy section and its Quick-check regex to run
+  across both files.
+
+## [1.9.120] - 2026-07-30
+
+### Added
+- **CI: GitHub Actions build/test matrix (TODO #153).** Added
+  `.github/workflows/ci.yml`, running on every push/PR: a `native` job
+  (build_c.sh/build_go.sh, the C/Go/Python security test suites, and the
+  full 45-script `CliTest/` integration suite), an `arm-i386` job
+  (build_arm.sh/build_asm_i386.sh under qemu-arm/qemu-i386), and a
+  best-effort `arduino` job (build_arduino.sh under simavr). Mirrors the
+  existing `docker-entrypoint.sh` pattern of installing each build
+  script's own documented dependencies and then deferring to the scripts
+  themselves, so CI and the build scripts can't silently drift apart.
+  Added a CI status badge to README.md and updated CLAUDE.md's `## Testing`
+  section, which previously said no automated test framework existed.
+
+## [1.9.119] - 2026-07-30
+
+### Fixed
+- **Repo-hygiene cleanup pass (TODO #149-#152).** Removed a stray untracked file
+  named `-` from the repo root (a leftover 3221-line PEM/HCRED test dump, likely
+  from an accidental shell redirect during manual CLI testing). Removed the dead
+  `TODO.md` entry from `.gitignore` — `TODO.md` is tracked and updated every
+  release per this project's own TODO/CHANGELOG policy, so the ignore rule was
+  misleading. Removed a stray, contextless `OAHR` line trailing README.md's
+  License section (`git log -S` showed one commit introducing it with no
+  accompanying context or reference elsewhere in the repo).
+
+### Changed
+- **Synced CLAUDE.md's Repository Structure tree with the real top-level
+  layout (TODO #152).** The tree was missing `Mcp/` (MCP server), `spec/`
+  (machine-readable protocol spec), `bindings/ffi/` (FFI bindings), `herradura/`
+  (root Go package backing the FFI Go binding), `benchmarks/`, and `Fuzz/` — all
+  real, populated directories already listed in README.md's own (more current)
+  structure section. Added one-line descriptions for each, matching the existing
+  entries' style.
+
 ## [1.9.118] - 2026-07-29
 
 ### Changed
