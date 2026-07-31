@@ -93,7 +93,7 @@ check_verify "Go rnl-sigma sign → C verify" \
 
 # ---------------------------------------------------------------------------
 # ZKP-NL interop — nl-zkboo: Python sign → C verify; C sign → Go verify
-# Use rounds=4 for speed; proof PEM format is shared
+# Use rounds=16 (soundness-safe for negative-test assertions; TODO #164 follow-up); proof PEM format is shared
 # ---------------------------------------------------------------------------
 
 # Python ZKP-NL keygen
@@ -102,7 +102,7 @@ $CLI_PY pkey    --in "$TMP/py_zkpnl.pem" --pubout --out "$TMP/py_zkpnl_pub.pem"
 
 # Python sign → C verify
 $CLI_PY sign  --algo nl-zkboo --key "$TMP/py_zkpnl.pem" \
-              --rounds 4 --in "$TMP/msg.bin" --out "$TMP/py_zkpnl_proof.pem"
+              --rounds 16 --in "$TMP/msg.bin" --out "$TMP/py_zkpnl_proof.pem"
 check_verify "Python nl-zkboo sign → C verify" \
     "$CLI_C" verify --algo nl-zkboo --pubkey "$TMP/py_zkpnl_pub.pem" \
     --in "$TMP/msg.bin" --sig "$TMP/py_zkpnl_proof.pem"

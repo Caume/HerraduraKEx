@@ -36,11 +36,11 @@ check_reject() {
 printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012345' > "$TMP/msg.bin"
 printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012346' > "$TMP/msg2.bin"
 
-# ── ZKP-NL (hpks-zkp-nl, rounds=4 for speed) ─────────────────────────────────
+# ── ZKP-NL (hpks-zkp-nl, rounds=16 — soundness-safe for negative-test assertions) ──
 $CLI genpkey --algo hpks-zkp-nl --out "$TMP/zkpnl.pem"
 $CLI pkey    --in "$TMP/zkpnl.pem" --pubout --out "$TMP/zkpnl_pub.pem"
 $CLI sign    --algo nl-zkboo --key "$TMP/zkpnl.pem" \
-             --rounds 4 --in "$TMP/msg.bin" --out "$TMP/zkpnl_proof.pem"
+             --rounds 16 --in "$TMP/msg.bin" --out "$TMP/zkpnl_proof.pem"
 
 check_verify "nl-zkboo verify correct msg" \
     $CLI verify --algo nl-zkboo --pubkey "$TMP/zkpnl_pub.pem" \

@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.129] - 2026-07-31
+
+### Fixed
+- **Flaky CI: negative-test assertions in HCRED/ZKP-NL CliTest scripts used
+  soundness-unsafe demo round counts.** `test_cred.sh`, `test_c_cred.sh`,
+  `test_cred_interop.sh`, `test_zkp_nl.sh`, and `test_zkp_interop.sh` all signed/proved
+  with `--rounds 4` "for speed," but several of their `check_fail`/`check_reject`
+  assertions (wrong-issuer, wrong-message, wrong-pubkey rejection) test Stern-F/ZKBoo
+  constructions whose per-round Fiat-Shamir challenge is derived independently of the
+  public key or message being checked against for at least one of the three challenge
+  branches — meaning a genuine, non-adversarial "should-reject" case can spuriously
+  pass whenever every round's derived challenge happens to land on that branch. At
+  `rounds=4` this is non-negligible (as high as ~20% for the ZKBoo-style branch,
+  ~1.2% for the narrower Stern-F "wrong issuer" case) rather than negligible,
+  causing intermittent, non-deterministic CI failures unrelated to any actual bug —
+  confirmed by two separate push-triggered CI runs (on unrelated commits) each
+  failing on a different one of these assertions while the identical commit's PR run
+  passed. Bumped all five scripts' `--rounds 4` to `--rounds 16` (soundness error
+  <1e-7 for the Stern-F case, <0.1% for ZKBoo), matching the precedent already set by
+  TODO #142's default-rounds hardening. Re-verified: all five scripts pass, including
+  the full 3-language `test_cred_interop.sh`/`test_zkp_interop.sh` matrices.
+
 ## [1.9.128] - 2026-07-31
 
 ### Research
