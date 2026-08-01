@@ -1180,7 +1180,7 @@ audit's checklist item on input validation folds into rather than duplicates.
 | 4 | Data at rest: private keys stored securely against leakage/modification | §3.2 | **Gap found.** Exported private-key PEM files (`genpkey --out priv.pem` across all three CLIs) are always written in cleartext with no passphrase-based encryption option, unlike OpenSSL's `-aes256`-style PEM encryption. Filed as **TODO #166**. |
 | 5 | Failures/aborts must not leak information about the cause outside the module | §3.3 | **Verified sound.** Checked the CLI's decrypt/AEAD-tag-mismatch paths (`HerraduraCli/herradura.py` `dec`/`decfile`): both use a single uniform `"authentication tag mismatch — file corrupt or wrong key"` message regardless of which specific check failed, rather than distinguishing sub-causes — the correct behavior per this requirement. HPKE-Stern-F has no adversarial-ciphertext decapsulation-failure path to audit yet, since its decoder is demo-only (known-`e'`, no real QC-MDPC decoder) — this is already tracked under TODO #91/#126, not a new finding. |
 | 6 | Side-channel protection (timing, memory leakage) | §3.3 | **Already tracked**: TODO #129 (timing, `dudect`) and TODO #160 (power/EM risk register). No new finding here. |
-| 7 | Key derivation via an approved KDM (SP 800-56C one-step/two-step); `OtherInput`/`FixedInfo` should include a domain separator, and combiners should bind ciphertexts/encapsulation keys/party identities | §4.5–§4.6 | **Partial gap found.** HKEX-RNL's `ba_rnl_kdf_seed` (`herradura.h`) already XORs a fixed domain constant (`_RNL_KDF_DC`, TODO #38) into the KDF input, but does **not** additionally bind the ciphertext, either party's encapsulation key, or a per-protocol context string the way SP 800-227's example combiner `H(K1, K2, c1, c2, ek1, ek2, domain_sep)` does — the domain constant differentiates HKEX-RNL's KDF from other suite call sites, but not one HKEX-RNL session from another beyond what's already carried in the raw shared secret. Filed as **TODO #165**. |
+| 7 | Key derivation via an approved KDM (SP 800-56C one-step/two-step); `OtherInput`/`FixedInfo` should include a domain separator, and combiners should bind ciphertexts/encapsulation keys/party identities | §4.5–§4.6 | **Gap found and closed (opt-in).** HKEX-RNL's default contributory KDF binds per-session nonces but not the public transcript. Filed and resolved as **TODO #165**: a new opt-in `--kdf sp800227` mode (§11.17) binds the full transcript ($C_A$, $m_A$, $C_B$, hint) per SP 800-227's example combiner shape, without changing the existing default's wire format. |
 | 8 | Composite/hybrid KEM key combiners should generically preserve IND-CCA if at least one component is IND-CCA (naive `KDF(K1,K2)` does **not** suffice per Giacon et al., cited in §4.6.3) | §4.6.2–§4.6.3 | **Directly relevant to TODO #162** (the hybrid HKEX+Stern-F combiner item next in the backlog) rather than this suite's current single-KEM constructions — cross-referenced there so #162's design work starts from SP 800-227's own recommended combiner shape (`H(K1, K2, c1, c2, ek1, ek2, domain_sep)`) instead of the naive concatenation form the standard explicitly warns against. |
 
 **Outcome.** Two genuine, previously-undocumented gaps were found and filed as their own
@@ -1266,5 +1266,53 @@ precedent for large CLI features (e.g. TODO #25 Python-first, followed by separa
 CLI items #27/#28), the Go and C ports are intentionally out of scope for this pass and
 should be filed as their own follow-up TODOs before this feature is considered
 interop-complete across all three language targets.
+
+---
+
+## 11.17 SP 800-227-Style Context Binding for Plain HKEX-RNL (TODO #165)
+
+**Gap addressed.** TODO #161's SP 800-227 audit (§11.15, item 7) found that HKEX-RNL's
+existing contributory KDF (`_rnl_contributory_kdf` = `HFSCX-256(K_raw \| n_A \| n_B)`,
+used by every plain `kex --algo hkex-rnl` session) binds the raw shared secret to both
+parties' per-session *nonces*, but not to the public *transcript* — the exchanged
+polynomials $C_A$, $m_A$, $C_B$, and reconciliation hint. SP 800-227 §4.5–§4.6
+recommends binding the KDF's `OtherInput` to the ciphertext/encapsulation-key material
+as well as a domain separator.
+
+**Construction.** A new opt-in `--kdf sp800227` mode (Python CLI, alongside the existing
+`none`/`hfscx-256` choices):
+
+$$K' = \mathrm{HFSCX\text{-}256\text{-}DS}\bigl(0x06,\ K \| C_A \| m_A \| C_B \| \mathrm{hint} \| \texttt{"HERRADURA-HKEX-RNL-SP800227-v1"}\bigr)$$
+
+applied after the existing contributory KDF, using the same `HFSCX-256-DS` domain-tag
+mechanism as TODO #162's hybrid combiner (§11.16) — tag `0x06`, distinct from the
+hybrid combiner's `0x05`. Both parties can independently reconstruct the identical
+$(C_A, m_A, C_B, \mathrm{hint})$ transcript before applying it: Bob has $C_A$/$m_A$ from
+Alice's public key and computes $C_B$/hint himself; Alice has $C_B$/hint from Bob's
+response and recomputes $C_A$ from her own private key via `_rnl_derive_C` (the same
+technique used in §11.16's hybrid combiner).
+
+**Design choice: opt-in, not a default-behavior change.** Rather than modifying
+`_rnl_contributory_kdf` itself (which would silently break wire-compatibility with every
+existing HKEX-RNL session and interop test), this is exposed as an explicit `--kdf`
+choice both parties must agree to use — matching the CLI's existing pattern for optional
+post-processing (`--kdf hfscx-256` already existed as an opt-in plain re-hash). `--kdf
+sp800227` is rejected cleanly on `--algo hkex-gf`, where it isn't defined.
+
+**Verification.** `CliTest/test_rnl_sp800227_kdf.sh` (4/4 pass): Alice and Bob derive
+the same session key when both opt into `--kdf sp800227` (verified via cross-party
+encrypt/decrypt round-trips in both directions); mismatched `--kdf` flags between the
+two parties produce genuinely different keys rather than silently agreeing (confirming
+this isn't a no-op); and `--kdf sp800227` is rejected on `hkex-gf`. No regressions in
+`test_vectors.sh`/`test_hybrid_kex.sh`.
+
+**Scope.** Implemented in the Python CLI only, matching TODO #162's own Python-first
+precedent (TODO #25). `herradura.h`'s `ba_rnl_kdf_seed`/`_RNL_KDF_DC` (used by HSKE-NL-A1/
+AEAD and HPAKE, not plain HKEX-RNL's own session-key derivation) is a separate, lower-level
+helper and was not in scope for this item — the actual target was `_rnl_contributory_kdf`
+in `herradura.h`/`Herradura cryptographic suite.py`/`herradura/herradura.go`, all of which
+still use the unmodified (nonce-only) contributory KDF as their default; `--kdf sp800227`
+exists in Python only, tracked as a Go/C follow-up if this construction is adopted more
+broadly.
 
 ---

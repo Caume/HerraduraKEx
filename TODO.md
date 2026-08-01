@@ -237,45 +237,6 @@ Status: **OPEN**
 
 
 
-### 165. Bind ciphertext/encapsulation-key/context into HKEX-RNL's KDF, per SP 800-227's key-derivation recommendations (Security, Medium)
-
-**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
-§11.15, item 7). SP 800-227 §4.5–§4.6 recommends that a KEM's key-derivation `OtherInput`/
-`FixedInfo` include not just a domain separator but also the ciphertext, either party's
-encapsulation key, and/or a context string — its example combiner is
-`H(K1, K2, c1, c2, ek1, ek2, domain_sep)` — both for cross-protocol domain separation and
-for "binding the final shared secret to the identities of the participating parties."
-
-HKEX-RNL's `ba_rnl_kdf_seed` (`herradura.h`, TODO #38) already XORs a fixed domain
-constant `_RNL_KDF_DC` into the KDF input, which correctly separates HKEX-RNL's KDF output
-from other suite call sites reusing the same underlying primitive. It does **not**
-additionally bind the ciphertext/public polynomial exchanged that session, either party's
-encapsulation key, or any other per-session context beyond what's already implicitly
-carried inside the raw shared secret itself. This is not a known attack against the
-current construction — HKEX-RNL is a direct DH-style NIKE, not a composite/hybrid KEM
-where SP 800-227 §4.6.3 shows this matters for IND-CCA preservation — but it falls short
-of the standard's recommended practice, and TODO #162's planned hybrid HKEX+Stern-F
-combiner will need exactly this kind of binding to satisfy §4.6.3's IND-CCA-preservation
-requirement regardless.
-
-**Work items:**
-
-1. Extend `ba_rnl_kdf_seed`'s input (or add a new KDF entry point) to additionally mix in
-   the session's public polynomials (`C_A`/`C_B` or equivalent ciphertext/encapsulation-key
-   material) and, if available, a caller-supplied context string — following SP 800-227's
-   example combiner shape rather than inventing a new one.
-2. Apply consistently across all three language targets (C/Go/Python) and, if reachable
-   from the CLI, the CLI's own `kex` KDF invocation.
-3. Update `SecurityProofs-1.md`'s KDF domain-constant discussion (§11.6-adjacent) and
-   `SecurityProofs-2.md` §11.15 to reflect the stronger binding once implemented.
-4. Re-run `CliTest/test_vectors.sh`/`test_go_keygen.sh` equivalents to confirm Alice/Bob
-   still derive the same session key after the change (both sides must feed identical
-   ciphertext/ek material into the KDF, not just their own).
-5. Coordinate with TODO #162: if that item's combiner design is done first, this item may
-   be substantially satisfied by it rather than needing separate implementation — check
-   before duplicating work.
-
-Status: **OPEN**
 
 ### 166. Optional passphrase-based encryption for exported private-key PEM files (Security/Feature, Low)
 

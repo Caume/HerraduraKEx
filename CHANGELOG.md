@@ -2,6 +2,21 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.133] - 2026-08-01
+
+### Added
+- **`kex --algo hkex-rnl --kdf sp800227`: SP 800-227-style context-bound KDF (TODO
+  #165, Python CLI).** A new opt-in KDF mode that binds HKEX-RNL's session key to the
+  full public transcript ($C_A$, $m_A$, $C_B$, reconciliation hint), not just each
+  party's per-session nonce, per SP 800-227 §4.5-4.6's recommended combiner shape —
+  found as a gap during TODO #161's audit. Deliberately opt-in (both parties must pass
+  the same `--kdf sp800227` flag) rather than a change to the existing default, to
+  avoid a breaking wire-format change to every existing HKEX-RNL session. Added
+  `CliTest/test_rnl_sp800227_kdf.sh` (4/4 pass): cross-party agreement, mismatched
+  `--kdf` flags correctly produce different keys, and clean rejection on `hkex-gf`
+  (where the mode isn't defined). Documented in `SecurityProofs-2.md` §11.17. Scoped to
+  the Python CLI for this pass, matching TODO #162's own Python-first precedent.
+
 ## [1.9.132] - 2026-08-01
 
 ### Documentation
