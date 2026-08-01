@@ -236,38 +236,6 @@ Status: **OPEN**
 
 
 
-### 163. Refresh SecurityProofs-1.md §6's quantum resource-estimate numbers with 2026 discrete-log qubit-count improvements (Documentation/Research, Low)
-
-**Background:** A paper scheduled for EUROCRYPT 2026 (Chevignard, Fouque, Schrottenloher)
-reduces the logical-qubit requirement for solving a 256-bit-curve discrete log via Shor's
-algorithm from a prior estimate of 2,124 logical qubits down to 1,098, via a
-space-optimized circuit (space complexity $3.12n$ for an $n$-bit curve) and output
-compression using a Legendre-symbol-based single-bit hash
-(https://quantumcomputingreport.com/resource-estimates-for-quantum-discrete-logarithm-computations-on-256-bit-elliptic-curves/).
-A follow-up distributed-quantum variant reportedly pushes the single-node requirement to
-1,080-1,140 qubits with no quantum communication between nodes
-(https://eprint.iacr.org/2026/1244). These figures are specifically for elliptic-curve
-DLP, not directly for HKEX-GF's $\mathbb{GF}(2^n)^\ast$ discrete log, but
-`SecurityProofs-1.md` §6's existing quantum attack analysis for HKEX-GF discusses Shor's
-algorithm's applicability in the same qubit-resource-estimate style, and citing stale
-qubit-count figures there undersells (or oversells) how close a practical quantum attack
-actually is by 2026 standards.
-
-**Work items:**
-
-1. Read `SecurityProofs-1.md` §6 and identify exactly which qubit-count/resource-estimate
-   figures it currently cites for Shor's-algorithm attacks relevant to HKEX-GF.
-2. Determine whether the Legendre-symbol output-compression technique (developed for
-   ECDLP) has a natural analogue for $\mathbb{GF}(2^n)^\ast$ discrete log, or whether the
-   qubit savings are ECDLP-specific and only useful here as a general "quantum resource
-   estimates keep improving" data point.
-3. Update §6 with the current-as-of-2026 qubit-count figures (citing both papers above),
-   making clear which apply directly to HKEX-GF's actual group and which are cited only
-   for context (e.g. RSA-3072 comparison point).
-4. No code changes expected — this is a documentation freshness item, distinct from
-   TODO #145's build/test doc staleness scope.
-
-Status: **OPEN**
 
 ### 165. Bind ciphertext/encapsulation-key/context into HKEX-RNL's KDF, per SP 800-227's key-derivation recommendations (Security, Medium)
 

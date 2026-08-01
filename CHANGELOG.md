@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.132] - 2026-08-01
+
+### Documentation
+- **Refreshed SecurityProofs-1.md's quantum discrete-log qubit-count figures for 2026
+  (TODO #163).** Added a concrete resource-estimate table to §10.8.4 covering the
+  EUROCRYPT 2026 Chevignard-Fouque-Schrottenloher ECDLP result (1193 logical qubits for
+  a 256-bit curve, down from a 2124-qubit baseline, via Residue-Number-System point
+  multiplication + Legendre-symbol single-bit compression) and its distributed-quantum
+  follow-up (eprint 2026/1244, 1094-1154 or 856-1098 qubits per node depending on
+  architecture). Confirmed the compression technique is ECDLP-specific — no analogue
+  for HKEX-GF's actual $\mathbb{GF}(2^n)^*$ group — so these figures are cited as
+  general "how close is a practical attack" context, not a revision to HKEX-GF's
+  existing $O(n^2 \log n)$ Shor bound. Also caught and flagged a real citation
+  discrepancy: some secondary coverage (and this TODO's own background text) cites
+  1098 qubits for the EUROCRYPT 2026 result, but the paper's current eprint abstract
+  states 1193 and carries an erratum noting a P-224/P-256 number swap in an earlier
+  draft — documented 1193 as authoritative per the primary source rather than silently
+  picking a number.
+
 ## [1.9.131] - 2026-08-01
 
 ### Added
