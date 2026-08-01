@@ -235,36 +235,6 @@ Status: **OPEN**
 
 
 
-### 162. Hybrid classical+PQC combiner mode for HKEX, beyond the existing hybrid Ring-LWR+Stern-F credential work (Feature/Research, Medium)
-
-**Background:** "Hybrid-by-default" is now the mainstream industry deployment pattern
-for the post-quantum transition: run a classical algorithm and a PQC algorithm in
-parallel so an attacker must break both (IETF/NIST-adjacent guidance per 2025-2026
-sources, e.g. https://postquantum.com/post-quantum/hybrid-cryptography-pqc/,
-https://neuraparse.com/blog/hybrid-post-quantum-tls-ml-kem-2026/). NIST's own March 2025
-selection of HQC specifically to diversify the KEM portfolio away from a single
-lattice-based assumption follows the same logic. TODO #123/#128 already scope a hybrid
-**Ring-LWR + Stern-F credential** (a specific compound proof/verifier construction), but
-that is narrower than a general-purpose hybrid **key exchange** combiner mode — this item
-is about combining HKEX-GF (or HKEX-RNL) with HPKE-Stern-F's Niederreiter KEM as parallel
-KEMs feeding one combined session key, independent of the credential/ZKP work in #123/#128.
-
-**Work items:**
-
-1. Decide a concrete combiner construction (e.g. concatenate-then-KDF vs. one of the
-   combiner constructions surveyed in current hybrid-PQC literature) and confirm it
-   satisfies the property that the combined key is secure if *either* input KEM is
-   secure (the standard hybrid-combiner security requirement).
-2. Add a `kex --algo hybrid-...` (or similar) CLI mode pairing HKEX-RNL (lattice-based)
-   with HPKE-Stern-F's KEM (code-based) as the two independent post-quantum assumptions,
-   matching the "diversify away from a single PQC assumption family" rationale NIST used
-   for HQC.
-3. Extend to all three CLI language targets per this repo's existing interop-parity
-   standard, with `CliTest/` coverage.
-4. Document the construction and its security argument in `SecurityProofs-2.md`,
-   distinguishing it clearly from TODO #123/#128's credential-specific hybrid work.
-
-Status: **OPEN**
 
 ### 163. Refresh SecurityProofs-1.md §6's quantum resource-estimate numbers with 2026 discrete-log qubit-count improvements (Documentation/Research, Low)
 
@@ -369,6 +339,38 @@ permissions, disk encryption) has no cryptographic protection on the key materia
 4. Add `CliTest/` coverage: round-trip encrypt/decrypt with correct passphrase, and
    confirm a wrong passphrase is rejected cleanly (not a crash or silent garbage key).
 5. Document in `docs/TUTORIAL.md` and `SecurityProofs-2.md` §11.15.
+
+Status: **OPEN**
+
+### 167. Port the `hybrid-rnl-stern` combiner (TODO #162) to the Go and C CLIs (Feature/Interop, Medium)
+
+**Background:** TODO #162 implemented a hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode
+(`kex --algo hybrid-rnl-stern`) and its SP 800-227 §4.6-style key-combiner construction
+(`SecurityProofs-2.md` §11.16), matching this repo's own precedent for large CLI features
+(TODO #25's "Python only (initial version)" scoping, later followed by separate C/Go
+items #27/#28). Only the Python CLI (`HerraduraCli/herradura.py`) and
+`CliTest/test_hybrid_kex.sh` exist so far; the Go (`herradura_cli.go`) and C
+(`herradura_cli.c`/`herradura.h`) CLIs have no equivalent, so this feature is not yet
+interop-complete across the three language targets this repo's other KEM/KEX modes
+maintain parity across.
+
+**Work items:**
+
+1. Port `_hybrid_rnl_stern_combine`'s exact byte layout (§11.16's formula: `HFSCX-256-DS`
+   with tag `0x05` over `K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
+   "HERRADURA-HYBRID-RNL-STERN-v1"`) to Go and C — bit-for-bit identical serialization is
+   required for cross-language interop, not just cross-language correctness.
+2. Add the `hybrid-rnl-stern` `kex` mode (with `--their-kem`/`--our-kem` flags mirroring
+   Python's) to both `herradura_cli.go` and `herradura_cli.c`, reusing each language's
+   existing `hkex-rnl` and `hpke-stern-kem`/QC-MDPC implementations exactly as the Python
+   version reuses `_rnl_agree`/`qcmdpc_encap`/`qcmdpc_decap_bgf` unmodified.
+3. Add a new `HYBRID-RNL-STERN RESPONSE` PEM label/encode/decode to each language's codec,
+   matching Python's DER field order exactly (`K, C_B, hint, n, hint_len, n_B, syn, r`).
+4. Extend `CliTest/test_hybrid_kex.sh` (or add a cross-language sibling matching the
+   `test_stern_kem.sh`/`test_vectors.sh` 3x3 interop-matrix convention) so Bob (any
+   language) and Alice (any language) derive the same session key regardless of which
+   CLI each party runs.
+5. Update `SecurityProofs-2.md` §11.16's "Implementation status" note once complete.
 
 Status: **OPEN**
 

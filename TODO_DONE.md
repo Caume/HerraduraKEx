@@ -8228,3 +8228,52 @@ decrypt/AEAD failure paths already use a single uniform error message regardless
 failure sub-cause (correct per §3.3's "don't leak why a failure occurred"), and confirmed
 the RNG sources (`os.urandom`, direct `/dev/urandom` reads) are sound in practice despite
 not being formally SP 800-90-validated DRBGs.
+
+---
+
+### 162. Hybrid classical+PQC combiner mode for HKEX, beyond the existing hybrid Ring-LWR+Stern-F credential work (Feature/Research, Medium)
+
+**Background:** "Hybrid-by-default" is now the mainstream industry deployment pattern
+for the post-quantum transition: run a classical algorithm and a PQC algorithm in
+parallel so an attacker must break both (IETF/NIST-adjacent guidance per 2025-2026
+sources, e.g. https://postquantum.com/post-quantum/hybrid-cryptography-pqc/,
+https://neuraparse.com/blog/hybrid-post-quantum-tls-ml-kem-2026/). NIST's own March 2025
+selection of HQC specifically to diversify the KEM portfolio away from a single
+lattice-based assumption follows the same logic. TODO #123/#128 already scope a hybrid
+**Ring-LWR + Stern-F credential** (a specific compound proof/verifier construction), but
+that is narrower than a general-purpose hybrid **key exchange** combiner mode — this item
+is about combining HKEX-GF (or HKEX-RNL) with HPKE-Stern-F's Niederreiter KEM as parallel
+KEMs feeding one combined session key, independent of the credential/ZKP work in #123/#128.
+
+**Work items:**
+
+1. Decide a concrete combiner construction (e.g. concatenate-then-KDF vs. one of the
+   combiner constructions surveyed in current hybrid-PQC literature) and confirm it
+   satisfies the property that the combined key is secure if *either* input KEM is
+   secure (the standard hybrid-combiner security requirement).
+2. Add a `kex --algo hybrid-...` (or similar) CLI mode pairing HKEX-RNL (lattice-based)
+   with HPKE-Stern-F's KEM (code-based) as the two independent post-quantum assumptions,
+   matching the "diversify away from a single PQC assumption family" rationale NIST used
+   for HQC.
+3. Extend to all three CLI language targets per this repo's existing interop-parity
+   standard, with `CliTest/` coverage.
+4. Document the construction and its security argument in `SecurityProofs-2.md`,
+   distinguishing it clearly from TODO #123/#128's credential-specific hybrid work.
+
+Status: **DONE v1.9.131 (Python)** — implemented items 1, 2, and 4 in full; item 3 scoped
+to Python only for this pass (see below), matching TODO #25's own precedent of an
+explicitly Python-first CLI feature later followed by separate C/Go items. Combiner
+construction (item 1): `K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint ||
+h_pub || syn || "HERRADURA-HYBRID-RNL-STERN-v1")`, following SP 800-227 §4.6's own
+worked-example shape (found applicable via TODO #161/#165) rather than the naive
+`KDF(K1,K2)` the standard explicitly warns does not generically preserve IND-CCA. `kex
+--algo hybrid-rnl-stern` (item 2) added to the Python CLI with `--their-kem`/`--our-kem`
+flags, reusing HKEX-RNL's and HPKE-Stern-KEM's existing keygen/agree/encap/decap
+unmodified — Alice holds persistent keypairs for both components, Bob is ephemeral per
+session matching HKEX-RNL's own two-round pattern. `CliTest/test_hybrid_kex.sh` (6/6
+pass): cross-party encrypt/decrypt round-trips prove key agreement both directions,
+missing-flag misuse and a wrong KEM private key are both rejected cleanly (decapsulation
+failure, not a silently-wrong key), and two independent runs produce different keys
+(freshness). No regressions in `test_vectors.sh`/`test_keygen.sh`/`test_stern_kem.sh`.
+Documented in `SecurityProofs-2.md` §11.16 (item 4), including the IND-CCA-preservation
+security argument. Go/C CLI ports (item 3's remaining scope) filed as **TODO #167**.

@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.131] - 2026-08-01
+
+### Added
+- **Hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode: `kex --algo hybrid-rnl-stern`
+  (TODO #162, Python CLI).** Combines the lattice-based HKEX-RNL key exchange with the
+  code-based HPKE-Stern-KEM (QC-MDPC/Niederreiter, TODO #126) as two independent PQC
+  assumptions feeding one session key — "diversify away from a single PQC assumption
+  family," matching NIST's own rationale for standardizing HQC alongside ML-KEM. The
+  combiner follows SP 800-227 §4.6's IND-CCA-preserving shape found applicable during
+  TODO #161's audit: `K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint ||
+  h_pub || syn || "HERRADURA-HYBRID-RNL-STERN-v1")`, binding both component shared
+  secrets to the full public transcript rather than the naive `KDF(K1,K2)` the standard
+  explicitly warns against. Reuses HKEX-RNL's and HPKE-Stern-KEM's existing keygen/
+  agree/encap/decap unmodified — no new key-generation algorithm or PEM key format.
+  Added `CliTest/test_hybrid_kex.sh` (6/6 pass): cross-party round-trips, missing-flag
+  rejection, wrong-KEM-key rejection (clean decapsulation failure), and freshness across
+  independent runs. Documented in `SecurityProofs-2.md` §11.16. Scoped to the Python CLI
+  for this pass, matching TODO #25's own Python-first precedent; Go/C CLI ports filed as
+  **TODO #167**.
+
 ## [1.9.130] - 2026-07-31
 
 ### Research
