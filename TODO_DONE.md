@@ -8072,3 +8072,114 @@ link successfully and all 17 security tests still pass under `simavr`
 error: true`) is now expected to go green on the next run; kept `continue-on-error` as a
 safety net per the original work item 3 rationale rather than removing it, since a future
 static-RAM regression should not block merges by itself.
+
+---
+
+### 164. Fix modulo-3 bias in HPKS-Stern-Ring's non-signer challenge simulation — a same-ring-reuse anonymity leak (Security, Medium)
+
+**Background:** Found during TODO #159's LLM-assisted cryptanalysis stress-testing pass
+of HPKS-Stern-Ring's OR-composition (`SecurityProofsCode/stern_ring_challenge_bias.py`).
+
+`stern_ring_sign` (herradura.h) and `hpks_stern_ring_sign` (the Python suite) pick each
+non-signer ring member's per-round Stern challenge $b \in \{0,1,2\}$ by drawing a single
+random byte and reducing mod 3:
+
+```c
+b_pre = (int)(rnd1 % 3u);                              /* herradura.h */
+```
+```python
+b = int.from_bytes(os.urandom(1), 'big') % 3           # hpks_stern_ring_sign
+```
+
+256 is not divisible by 3, so this is biased: $\Pr[b=0] = 86/256 \approx 33.59\%$ versus
+$\Pr[b=1] = \Pr[b=2] = 85/256 \approx 33.20\%$ — a $\approx 0.39\%$ skew. The real
+signer's own displayed challenge is *not* drawn this way — it is forced by subtraction
+from the Fiat-Shamir joint challenge (`joint[r] - sum_{i≠j} b[i,r] mod 3`), which is
+hash-derived and effectively uniform independent of the non-signer draws. A uniform
+value minus anything, reduced mod 3, is itself exactly uniform — so the signer's slot
+has zero skew while every non-signer's slot carries the ~0.39% bias. An observer with
+per-round challenge-value access across many signatures from the **same ring** can in
+principle test each member-slot's empirical challenge distribution against ideal uniform
+and flag the unbiased slot as more likely to be the real signer — a statistical
+anonymity leak specific to long-lived/reused rings (anonymous credentials,
+whistleblowing channels — exactly where ring-signature anonymity matters most).
+`stern_ring_challenge_bias.py` estimates ~9,000+ same-ring signatures needed for
+3-sigma-confidence detection per slot at `SDF_ROUNDS=32`.
+
+Go's implementation is unaffected: it already reduces a full 32-bit random value mod 3
+(bias ~$2^{-32}$, negligible) rather than a single byte.
+
+**Fix:** apply the same rejection-sampling pattern already used for TODO #2's
+`_rnl_rand_poly` bias (draw a byte, reject the one out-of-range value — threshold 255,
+~0.4% rejection rate, exact uniformity), or simply widen the C/Python draw to match Go's
+32-bit-then-mod-3 pattern. Apply to both the C (`herradura.h`) and Python
+(`Herradura cryptographic suite.py`) `stern_ring_sign`/`hpks_stern_ring_sign`
+non-signer-challenge draws; re-run `CliTest/test_ring.sh` after the fix.
+
+Status: **DONE v1.9.127** — rejection sampling applied to both `herradura.h`'s
+`stern_ring_sign` (loop rereads a fresh byte if it draws 255, capped at 8 tries with a
+deterministic fallback matching the prior behavior if the entropy source is exhausted)
+and the Python suite's `hpks_stern_ring_sign` (unbounded reject-255 loop over
+`os.urandom(1)`), eliminating the ~0.39% per-residue skew (exact uniformity over the
+retained 255 values, which split 85/85/85 across the three residues). Go and the
+Arduino/`.ino` ring-signature code were already unaffected (both reduce a wide 32-bit
+value mod 3, bias ~$2^{-32}$) and needed no change. Re-verified: `CliTest/test_ring.sh`
+21/21 pass (all C/Go/Python signer↔verifier pairs, anonymity, non-member/tamper/
+wrong-ring rejection), `CliTest/test_stern_interop.sh` 9/9 pass (Stern-F unaffected by
+the ring-specific fix), and a standalone Python sign→verify smoke test at n=32.
+
+---
+
+### 160. Physical side-channel (power/EM) resistance research for Stern-F and HKEX-RNL, beyond the existing timing-only `dudect` audit (Research/Security, Medium)
+
+**Background:** TODO #129's constant-time audit and `SecurityProofsCode/dudect_timing_audit.c`
+cover *timing* side-channels only. The review window produced several results showing
+that timing-safety is not sufficient for newly-standardized PQC schemes: single-trace
+power analysis recovering ML-KEM (Kyber) keygen material (TCHES 2025, per search
+results), a first correlation-power-analysis side-channel attack against an
+industry-grade ML-DSA implementation
+(https://ieeexplore.ieee.org/document/11050056/), and simple power analysis recovering
+HQC private keys from polynomial-multiplication power traces
+(https://arxiv.org/pdf/2601.07634). These are the same class of scheme (lattice/code-
+based KEM and signature) as HKEX-RNL and HPKS/HPKE-Stern-F, so the attack surface is
+directly analogous even though no attack has been published against this suite
+specifically.
+
+**Work items:**
+
+1. Survey which of HKEX-RNL's operations most resemble the attacked ones (NTT-based
+   polynomial multiplication is explicitly named in the HQC attack and is also core to
+   HKEX-RNL's `rnl_poly_mul`/NTT implementation per CLAUDE.md's protocol stack section) —
+   prioritize those for review first.
+2. Since power/EM side-channel testing requires physical hardware or a simulator this
+   repo doesn't currently have (unlike timing, which `dudect` can test on any host), scope
+   what's actually feasible here: e.g. static analysis for known-vulnerable patterns
+   (secret-dependent branching in NTT butterfly operations, non-uniform Hamming-weight
+   leakage in polynomial coefficient handling) versus a genuine power-trace capture setup
+   (would need real target hardware, likely out of scope for this repo alone).
+3. At minimum, document in `SecurityProofs-2.md` which of this suite's PQC operations
+   have published side-channel attacks against structurally similar operations elsewhere,
+   as a known-risk register, even if a full countermeasure (masking, blinding) isn't
+   implemented in this pass.
+4. If static analysis finds a clearly analogous secret-dependent-branch pattern in
+   `rnl_poly_mul`/`rnl_ntt` or the Stern-F permutation/response-selection code, open a
+   follow-up implementation TODO scoped to just that fix.
+
+Status: **DONE v1.9.128** — all four work items completed with a definitive (not just
+partial) conclusion. Item 1: surveyed and mapped three 2025-2026 published power-analysis
+attacks (ML-DSA CPA on NTT-domain modular reduction [HOST 2025], HQC single-trace SPA on
+decryption-time polynomial multiplication [arXiv:2601.07634], ML-KEM single-trace keygen
+recovery [TCHES 2025, "Avengers assemble!"]) onto HKEX-RNL's `rnl_ntt`/`rnl_poly_mul` and
+Stern-F's `stern_gen_perm`/response-selection code. Item 2: scoped to the feasible-without-
+hardware static-analysis check, since none of the three attacks are reproducible without
+real capture hardware this repo doesn't have. Item 3: documented as a permanent risk
+register in `SecurityProofs-3.md` §11.13 (new section, added right after §11.11's
+timing-only constant-time audit, which it explicitly extends). Item 4: static analysis
+found **no** clearly-analogous secret-dependent-branch pattern — `rnl_ntt`/`rnl_poly_mul`'s
+control flow depends only on the public size parameter and loop counters, never on a
+secret coefficient value, and Stern-F's response-selection branches switch on the public
+Stern challenge (not a secret) — so no follow-up implementation TODO was opened. The
+residual risk (power/EM leakage inherent to unmasked arithmetic on secret polynomial
+coefficients, requiring masking/blinding countermeasures not implemented in any language
+target) is recorded as an open, honestly-unresolved risk-register entry rather than
+falsely closed.

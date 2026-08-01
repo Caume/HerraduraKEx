@@ -40,7 +40,7 @@ check_fail() {
 "$CLI" pkey    --pubout --in "$TMP/issuer_priv.pem" --out "$TMP/issuer_pub.pem"
 
 # ── cred-prove / cred-verify (proof only) ──────────────────────────────────
-"$CLI" cred-prove --in "$TMP/user_priv.pem" --msg "hello" --rounds 4 \
+"$CLI" cred-prove --in "$TMP/user_priv.pem" --msg "hello" --rounds 16 \
                   --out "$TMP/proof.pem" 2>/dev/null
 
 check "proof verify (pubkey)"  "$CLI" cred-verify --proof "$TMP/proof.pem" \
@@ -53,7 +53,7 @@ check_fail "wrong-msg reject" "$CLI" cred-verify --proof "$TMP/proof.pem" \
 
 # ── cred-issue / cred-verify (credential) ──────────────────────────────────
 "$CLI" cred-issue --our "$TMP/issuer_priv.pem" --in "$TMP/user_pub.pem" \
-                  --rounds 4 --out "$TMP/cred.pem" 2>/dev/null
+                  --rounds 16 --out "$TMP/cred.pem" 2>/dev/null
 
 check "cred+proof verify" "$CLI" cred-verify --proof "$TMP/proof.pem" \
     --pubkey "$TMP/user_pub.pem" --msg "hello" \

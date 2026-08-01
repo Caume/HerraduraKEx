@@ -61,12 +61,12 @@ if [ "$HAVE_GO" -eq 1 ]; then
 fi
 
 # ── Proofs ──────────────────────────────────────────────────────────────────
-"$CLI_C" cred-prove --in "$TMP/c_user.pem"  --msg "interop" --rounds 4 \
+"$CLI_C" cred-prove --in "$TMP/c_user.pem"  --msg "interop" --rounds 16 \
                     --out "$TMP/c_proof.pem" 2>/dev/null
-$CLI_PY  cred-prove --in "$TMP/py_user.pem" --msg "interop" --rounds 4 \
+$CLI_PY  cred-prove --in "$TMP/py_user.pem" --msg "interop" --rounds 16 \
                     --out "$TMP/py_proof.pem" 2>/dev/null
 if [ "$HAVE_GO" -eq 1 ]; then
-    "$CLI_GO" cred-prove --in "$TMP/go_user.pem" --msg "interop" --rounds 4 \
+    "$CLI_GO" cred-prove --in "$TMP/go_user.pem" --msg "interop" --rounds 16 \
                     --out "$TMP/go_proof.pem" 2>/dev/null
 fi
 
