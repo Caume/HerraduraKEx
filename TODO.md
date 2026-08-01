@@ -234,36 +234,6 @@ HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for t
 Status: **OPEN**
 
 
-### 161. Audit HKEX-RNL/HKEX-GF/Stern-F KEM usage against NIST SP 800-227 (September 2025) (Security/Docs, Medium)
-
-**Background:** NIST finalized SP 800-227 in September 2025, providing guidance on how
-KEMs should actually be used in protocols — covering protocol composition, input
-validation, key derivation, failure behavior, randomness requirements, side-channel
-resistance, and key lifecycle controls, on the premise that a mathematically sound KEM
-primitive can still be broken by misuse at these layers
-(https://postquantum.com/post-quantum/cryptography-pqc-nist/, referencing SP 800-227).
-This repo already has related but narrower items — TODO #141 hardens the CLI against
-degenerate peer public keys, and TODO #144 covers weak-key rejection parity across
-language targets — but neither was scoped against this specific, now-finalized NIST
-guidance document, which is broader (implicit rejection semantics, KDF domain separation
-requirements, decapsulation failure handling) than either existing item.
-
-**Work items:**
-
-1. Read SP 800-227 in full and produce a checklist of its concrete requirements/
-   recommendations relevant to a KEM implementation and its calling protocol.
-2. Walk HKEX-RNL (the suite's actual KEM), and HKEX-GF/HPKE-Stern-F as the closest
-   analogues (DH-based and Niederreiter-KEM-based respectively), against that checklist:
-   implicit vs. explicit rejection on decapsulation failure, KDF domain separation
-   (`SecurityProofs-1.md`/§11.6's existing KDF domain constant work may already satisfy
-   some of this — verify rather than assume), randomness source requirements, and
-   failure-mode information leakage.
-3. File any gaps found as their own follow-up TODOs rather than fixing inline here, since
-   this item is scoped to the audit/checklist, not remediation.
-4. Cross-reference the result against TODO #141/#144 so overlapping scope is merged
-   rather than duplicated.
-
-Status: **OPEN**
 
 ### 162. Hybrid classical+PQC combiner mode for HKEX, beyond the existing hybrid Ring-LWR+Stern-F credential work (Feature/Research, Medium)
 
@@ -326,6 +296,79 @@ actually is by 2026 standards.
    for context (e.g. RSA-3072 comparison point).
 4. No code changes expected — this is a documentation freshness item, distinct from
    TODO #145's build/test doc staleness scope.
+
+Status: **OPEN**
+
+### 165. Bind ciphertext/encapsulation-key/context into HKEX-RNL's KDF, per SP 800-227's key-derivation recommendations (Security, Medium)
+
+**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
+§11.15, item 7). SP 800-227 §4.5–§4.6 recommends that a KEM's key-derivation `OtherInput`/
+`FixedInfo` include not just a domain separator but also the ciphertext, either party's
+encapsulation key, and/or a context string — its example combiner is
+`H(K1, K2, c1, c2, ek1, ek2, domain_sep)` — both for cross-protocol domain separation and
+for "binding the final shared secret to the identities of the participating parties."
+
+HKEX-RNL's `ba_rnl_kdf_seed` (`herradura.h`, TODO #38) already XORs a fixed domain
+constant `_RNL_KDF_DC` into the KDF input, which correctly separates HKEX-RNL's KDF output
+from other suite call sites reusing the same underlying primitive. It does **not**
+additionally bind the ciphertext/public polynomial exchanged that session, either party's
+encapsulation key, or any other per-session context beyond what's already implicitly
+carried inside the raw shared secret itself. This is not a known attack against the
+current construction — HKEX-RNL is a direct DH-style NIKE, not a composite/hybrid KEM
+where SP 800-227 §4.6.3 shows this matters for IND-CCA preservation — but it falls short
+of the standard's recommended practice, and TODO #162's planned hybrid HKEX+Stern-F
+combiner will need exactly this kind of binding to satisfy §4.6.3's IND-CCA-preservation
+requirement regardless.
+
+**Work items:**
+
+1. Extend `ba_rnl_kdf_seed`'s input (or add a new KDF entry point) to additionally mix in
+   the session's public polynomials (`C_A`/`C_B` or equivalent ciphertext/encapsulation-key
+   material) and, if available, a caller-supplied context string — following SP 800-227's
+   example combiner shape rather than inventing a new one.
+2. Apply consistently across all three language targets (C/Go/Python) and, if reachable
+   from the CLI, the CLI's own `kex` KDF invocation.
+3. Update `SecurityProofs-1.md`'s KDF domain-constant discussion (§11.6-adjacent) and
+   `SecurityProofs-2.md` §11.15 to reflect the stronger binding once implemented.
+4. Re-run `CliTest/test_vectors.sh`/`test_go_keygen.sh` equivalents to confirm Alice/Bob
+   still derive the same session key after the change (both sides must feed identical
+   ciphertext/ek material into the KDF, not just their own).
+5. Coordinate with TODO #162: if that item's combiner design is done first, this item may
+   be substantially satisfied by it rather than needing separate implementation — check
+   before duplicating work.
+
+Status: **OPEN**
+
+### 166. Optional passphrase-based encryption for exported private-key PEM files (Security/Feature, Low)
+
+**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
+§11.15, item 4). SP 800-227 §3.2 ("Data at rest") requires that private data (seeds,
+decapsulation/private keys) be "stored within the cryptographic module in a manner that
+is secure against both leakage and unauthorized modification," and that "the import and
+export of private data...needs to be performed in a secure manner." All three CLIs
+(`genpkey --out priv.pem`) always write private-key PEM files in cleartext with no
+passphrase-based encryption option, unlike OpenSSL's traditional `-aes256`/`-des3`
+PEM-encryption flags or PKCS#8 encrypted private-key format. Anyone who copies, backs up,
+or transmits an exported `.pem` file without independent OS-level protection (file
+permissions, disk encryption) has no cryptographic protection on the key material itself.
+
+**Work items:**
+
+1. Decide an encryption format: either a simple password-based scheme reusing this
+   suite's own primitives (e.g. HSKE-NL-A1 keystream over the PEM payload, keyed by a
+   password-derived key via a suite KDF with a random salt) or a more conventional
+   PBKDF2/scrypt-wrapped-AES approach if the goal is broader tooling compatibility —
+   document the tradeoff before picking one, since this suite doesn't currently implement
+   a password-based KDF (PBKDF2/Argon2-class) anywhere.
+2. Add a `--passphrase`/`--passin`/`--passout`-style flag to `genpkey` (and `pkey` for
+   re-encryption/decryption round-trips) across all three CLI language targets, mirroring
+   OpenSSL's flag naming where reasonable for user familiarity.
+3. Extend the PEM wire format with an encrypted-private-key variant label/header
+   (distinguishable from the existing cleartext label so old tooling fails closed rather
+   than silently misinterpreting encrypted bytes as a raw key).
+4. Add `CliTest/` coverage: round-trip encrypt/decrypt with correct passphrase, and
+   confirm a wrong passphrase is rejected cleanly (not a crash or silent garbage key).
+5. Document in `docs/TUTORIAL.md` and `SecurityProofs-2.md` §11.15.
 
 Status: **OPEN**
 

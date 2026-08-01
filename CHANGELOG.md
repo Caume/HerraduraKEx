@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.130] - 2026-07-31
+
+### Research
+- **NIST SP 800-227 audit of KEM usage (TODO #161).** Read the full published SP 800-227
+  PDF and produced an 8-item checklist walked against HKEX-RNL, HKEX-GF, and HPKE-Stern-F,
+  documented in `SecurityProofs-2.md` §11.15. Six of eight items matched already-tracked
+  work or are explicit non-goals for a non-FIPS-validated research suite. Filed two new
+  follow-up items for genuine gaps: **TODO #165** (HKEX-RNL's KDF doesn't bind
+  ciphertext/encapsulation-key/context material the way SP 800-227's recommended combiner
+  does) and **TODO #166** (exported private-key PEM files have no passphrase-encryption
+  option). Verified the CLI's decrypt/AEAD failure paths already use a uniform error
+  message regardless of failure sub-cause, matching SP 800-227 §3.3's requirement not to
+  leak why a failure occurred.
+
 ## [1.9.129] - 2026-07-31
 
 ### Fixed

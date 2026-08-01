@@ -8183,3 +8183,48 @@ residual risk (power/EM leakage inherent to unmasked arithmetic on secret polyno
 coefficients, requiring masking/blinding countermeasures not implemented in any language
 target) is recorded as an open, honestly-unresolved risk-register entry rather than
 falsely closed.
+
+---
+
+### 161. Audit HKEX-RNL/HKEX-GF/Stern-F KEM usage against NIST SP 800-227 (September 2025) (Security/Docs, Medium)
+
+**Background:** NIST finalized SP 800-227 in September 2025, providing guidance on how
+KEMs should actually be used in protocols — covering protocol composition, input
+validation, key derivation, failure behavior, randomness requirements, side-channel
+resistance, and key lifecycle controls, on the premise that a mathematically sound KEM
+primitive can still be broken by misuse at these layers
+(https://postquantum.com/post-quantum/cryptography-pqc-nist/, referencing SP 800-227).
+This repo already has related but narrower items — TODO #141 hardens the CLI against
+degenerate peer public keys, and TODO #144 covers weak-key rejection parity across
+language targets — but neither was scoped against this specific, now-finalized NIST
+guidance document, which is broader (implicit rejection semantics, KDF domain separation
+requirements, decapsulation failure handling) than either existing item.
+
+**Work items:**
+
+1. Read SP 800-227 in full and produce a checklist of its concrete requirements/
+   recommendations relevant to a KEM implementation and its calling protocol.
+2. Walk HKEX-RNL (the suite's actual KEM), and HKEX-GF/HPKE-Stern-F as the closest
+   analogues (DH-based and Niederreiter-KEM-based respectively), against that checklist:
+   implicit vs. explicit rejection on decapsulation failure, KDF domain separation
+   (`SecurityProofs-1.md`/§11.6's existing KDF domain constant work may already satisfy
+   some of this — verify rather than assume), randomness source requirements, and
+   failure-mode information leakage.
+3. File any gaps found as their own follow-up TODOs rather than fixing inline here, since
+   this item is scoped to the audit/checklist, not remediation.
+4. Cross-reference the result against TODO #141/#144 so overlapping scope is merged
+   rather than duplicated.
+
+Status: **DONE v1.9.130** — read the full published SP 800-227 PDF directly (not a
+secondary summary) and produced an 8-item checklist cross-referenced against this
+suite's actual code, documented in `SecurityProofs-2.md` §11.15. Six of eight checklist
+items either matched already-tracked work (TODO #91/#126/#129/#141/#144/#160) or were
+explicit, reasonable non-goals (FIPS-140/CAVP validation — this is a research suite, never
+claimed to be validated). Two genuine gaps were found and filed as their own follow-up
+items per work item 3: **TODO #165** (HKEX-RNL's KDF doesn't bind ciphertext/encapsulation-
+key/context material the way SP 800-227's example combiner does) and **TODO #166**
+(exported private-key PEM files have no passphrase-encryption option). Verified the CLI's
+decrypt/AEAD failure paths already use a single uniform error message regardless of
+failure sub-cause (correct per §3.3's "don't leak why a failure occurred"), and confirmed
+the RNG sources (`os.urandom`, direct `/dev/urandom` reads) are sound in practice despite
+not being formally SP 800-90-validated DRBGs.

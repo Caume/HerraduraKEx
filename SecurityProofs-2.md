@@ -1156,3 +1156,38 @@ HFSCX-256-DM provides:
 4. ~~Assembly/Arduino per-slot DS tags on `stern_hash1_32`/`stern_hash2_32` (§11.9.9).~~ **DONE** — ARM Thumb-2 and NASM i386 implementations already carry ds=1/2/3/4 at all call sites (verified v1.9.48).
 
 ---
+
+## 11.15 NIST SP 800-227 (September 2025) Audit of KEM Usage (TODO #161)
+
+**Scope.** NIST finalized SP 800-227 ("Recommendations for Key-Encapsulation
+Mechanisms") in September 2025, giving general implementation and usage guidance for any
+KEM — independent of, and broader than, algorithm-specific standards like FIPS 203
+(ML-KEM). This section walks HKEX-RNL (this suite's actual KEM), HKEX-GF (DH-based
+analogue), and HPKE-Stern-F (Niederreiter-KEM-based analogue) against SP 800-227's
+concrete recommendations, extracted directly from the published PDF
+(nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-227.pdf) rather than a summary.
+This repo already has narrower items in the same space — TODO #141 (CLI degenerate-key
+rejection) and TODO #144 (Go/Python library-level weak-key rejection) — both of which this
+audit's checklist item on input validation folds into rather than duplicates.
+
+**Checklist extracted from SP 800-227 §3–§4, with this suite's status against each.**
+
+| # | SP 800-227 requirement | Section | This suite's status |
+|---|---|---|---|
+| 1 | Approved cryptographic elements: RBGs per SP 800-90A/B/C; hash functions of adequate strength | §3.1 | **Out of scope by design.** This is a research suite using custom, non-NIST-approved primitives (FSCX/NL-FSCX, HFSCX-256) throughout — not a FIPS-140/CAVP-validated module, and not claiming to be one. RNG source itself is sound in practice: Python uses `os.urandom` (OS CSPRNG), C/Go read `/dev/urandom` directly — acceptable entropy quality even though not a "SP 800-90-approved" DRBG in the formal validation sense. |
+| 2 | Input checking on KeyGen/Encaps/Decaps; reject invalid/degenerate keys | §3.2 | **Covered by TODO #131/#141/#144** (degenerate/identity public-key rejection in `herradura.h`, the C CLI, and the Go/Python suite libraries). No new gap found beyond what those items already close. |
+| 3 | Destroy intermediate values (seeds, private randomness) as soon as unneeded | §3.2 | **Partial, language-dependent.** C explicitly reads directly from `/dev/urandom` per-use with no long-lived buffers to zero. Python and Go rely on garbage collection for `int`/big-number secrets — neither language offers a real zeroization guarantee (a known, generic limitation of managed-runtime crypto code, not specific to this suite). Not filing a new TODO: no practical fix exists in pure Python/Go without a C extension, and this matches the honest, already-documented tradeoff of implementing crypto in managed languages. |
+| 4 | Data at rest: private keys stored securely against leakage/modification | §3.2 | **Gap found.** Exported private-key PEM files (`genpkey --out priv.pem` across all three CLIs) are always written in cleartext with no passphrase-based encryption option, unlike OpenSSL's `-aes256`-style PEM encryption. Filed as **TODO #166**. |
+| 5 | Failures/aborts must not leak information about the cause outside the module | §3.3 | **Verified sound.** Checked the CLI's decrypt/AEAD-tag-mismatch paths (`HerraduraCli/herradura.py` `dec`/`decfile`): both use a single uniform `"authentication tag mismatch — file corrupt or wrong key"` message regardless of which specific check failed, rather than distinguishing sub-causes — the correct behavior per this requirement. HPKE-Stern-F has no adversarial-ciphertext decapsulation-failure path to audit yet, since its decoder is demo-only (known-`e'`, no real QC-MDPC decoder) — this is already tracked under TODO #91/#126, not a new finding. |
+| 6 | Side-channel protection (timing, memory leakage) | §3.3 | **Already tracked**: TODO #129 (timing, `dudect`) and TODO #160 (power/EM risk register). No new finding here. |
+| 7 | Key derivation via an approved KDM (SP 800-56C one-step/two-step); `OtherInput`/`FixedInfo` should include a domain separator, and combiners should bind ciphertexts/encapsulation keys/party identities | §4.5–§4.6 | **Partial gap found.** HKEX-RNL's `ba_rnl_kdf_seed` (`herradura.h`) already XORs a fixed domain constant (`_RNL_KDF_DC`, TODO #38) into the KDF input, but does **not** additionally bind the ciphertext, either party's encapsulation key, or a per-protocol context string the way SP 800-227's example combiner `H(K1, K2, c1, c2, ek1, ek2, domain_sep)` does — the domain constant differentiates HKEX-RNL's KDF from other suite call sites, but not one HKEX-RNL session from another beyond what's already carried in the raw shared secret. Filed as **TODO #165**. |
+| 8 | Composite/hybrid KEM key combiners should generically preserve IND-CCA if at least one component is IND-CCA (naive `KDF(K1,K2)` does **not** suffice per Giacon et al., cited in §4.6.3) | §4.6.2–§4.6.3 | **Directly relevant to TODO #162** (the hybrid HKEX+Stern-F combiner item next in the backlog) rather than this suite's current single-KEM constructions — cross-referenced there so #162's design work starts from SP 800-227's own recommended combiner shape (`H(K1, K2, c1, c2, ek1, ek2, domain_sep)`) instead of the naive concatenation form the standard explicitly warns against. |
+
+**Outcome.** Two genuine, previously-undocumented gaps were found and filed as their own
+follow-up items per this item's own instruction not to fix inline: **TODO #165** (KDF
+context binding) and **TODO #166** (private-key-at-rest encryption). Everything else
+checked either already has dedicated tracking (TODO #91/#126/#129/#141/#144/#160/#162) or
+is an explicit, reasonable non-goal for a research suite that has never claimed FIPS-140
+validation.
+
+---
