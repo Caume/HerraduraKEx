@@ -432,15 +432,15 @@ across 16 named FHE parameter sets (from [JM22], [CCKS23], [BCKS24], [CHKS25], [
 12 of which it moves below the 128-bit target.
 
 The full PDF sits behind a Cloudflare challenge this review could not clear, so the
-paper's own precise sparsity definition could not be read directly. However, all five
-cited target papers are established CKKS/BFV/BGV **sparse-secret bootstrapping**
-proposals, whose defining parameter is a Hamming weight $h$ deliberately kept far below
-the ring degree $N$ — published sparse-secret-encapsulation parameter sets use figures
-like $h \in \{64, 128, 192\}$ against $N = 2^{15} = 32768$ (density $h/N \approx
+paper's own precise sparsity definition could not be read directly. All five cited
+target papers are established CKKS/BFV/BGV **sparse-secret bootstrapping** proposals,
+whose defining parameter is a Hamming weight $h$ deliberately kept far below the ring
+degree $N$ — published sparse-secret-encapsulation parameter sets use figures like
+$h \in \{64, 128, 192\}$ against $N = 2^{15} = 32768$ (density $h/N \approx
 0.2\%$–$0.6\%$), chosen specifically to shrink the noise growth during bootstrapping.
 This is the same "sparse" regime TODO #1 (now `DONE` in `TODO_DONE.md`, not `DEPRECATED`
-as an earlier draft of this item's background section stated — see below) originally
-flagged for HKEX-RNL's pre-v1.5.x uniform $\{0,1\}$ sampler.
+as an earlier draft of this item's background section stated) originally flagged for
+HKEX-RNL's pre-v1.5.x uniform $\{0,1\}$ sampler.
 
 HKEX-RNL's deployed $\mathrm{CBD}(\eta=1)$ sampler (`SecurityProofs-2.md` above,
 $q=65537$, $n=256$) draws each coefficient as $a_0 - b_0$ for independent uniform bits
@@ -452,17 +452,51 @@ inference, this paper's attack) target. Classical and prior hybrid attacks on sp
 secrets (e.g. the Son-Cheon-style hybrid MITM lineage this paper builds on) gain their
 speedup specifically from a *reduced guessing space over the nonzero-coefficient
 positions* — an asymptotic gain that requires $h \ll N$ and vanishes as $h/N \to 1/2$,
-which is exactly HKEX-RNL's regime. "Small" (bounded-magnitude, CBD-style) and "sparse"
-(few-nonzero-position) secrets are therefore genuinely distinct properties at HKEX-RNL's
-parameters, and TODO #1's original deprecation of the sparse-secret concern (in favor of
-CBD) stands **unaffected** by this 2026 paper on current evidence.
+which is exactly HKEX-RNL's regime.
 
-**Conclusion:** no revision to HKEX-RNL's 105–115-bit Core-SVP estimate is made. This
-finding rests on the paper's abstract and its five named target papers' published
-Hamming-weight parameters rather than a direct reading of the attack's formal sparsity
-definition (blocked by the Cloudflare-gated PDF) — re-open TODO #157 for a direct check
-against the formal definition if full-text access becomes available; the density-gap
-argument above should be treated as strong circumstantial evidence, not a closed proof.
+**Threshold-independent resolution.**  Rather than rest on that comparison, the
+worksheet `SecurityProofsCode/hkex_rnl_sparse_hybrid_2026.py` removes the dependence on
+the paper's unreadable definition entirely, by sweeping *every* plausible threshold and
+asking how likely a deployed secret is to satisfy it at all.  Because each CBD($\eta=1$)
+coefficient is nonzero independently with probability exactly $1/2$, the Hamming weight
+of a deployed secret is exactly binomial — $\mathrm{HW} \sim \mathrm{Binomial}(n=256, p=1/2)$,
+with mean $E(\mathrm{HW}) = 128$ and standard deviation $\sigma = 8$, placing the mean
+$16$ standard deviations above zero.  Evaluating the exact lower tail
+$\Pr(\mathrm{HW} \leq h)$ across the sparse regime:
+
+| Threshold | Density | $\Pr(\mathrm{HW} \leq h)$ |
+|---|---|---|
+| $h \leq 1$ (the cited FHE regime, scaled to $n=256$) | $0.39\%$ | $2^{-248}$ |
+| $h \leq 8$ | $3.1\%$ | $2^{-207}$ |
+| $h \leq 16$ | $6.3\%$ | $2^{-173}$ |
+| $h \leq 29$ | $11.3\%$ | $2^{-129}$ |
+| $h \leq 64$ | $25\%$ | $2^{-52}$ |
+
+The loosest threshold whose escape probability still beats $2^{-128}$ is $h \leq 29$,
+i.e. a density of $11.3\%$.  **Any** sparsity definition set below roughly $12\%$ density
+is therefore escaped by a deployed HKEX-RNL secret except with probability below the
+$128$-bit security target itself — so the conclusion holds for any threshold the paper
+could reasonably be using, without needing to read it.  Empirically, over $1000$ secrets
+drawn from the deployed sampler the *minimum* Hamming weight observed was $104$.
+
+A second, independent check is the guessing-space entropy that the hybrid attack's
+speedup actually monetizes.  CBD($\eta=1$) carries $1.5$ bits of Shannon entropy per
+coefficient, or $384$ bits at $n=256$; a sparse ternary secret with $h=1$ nonzero
+occupies only $9$ bits, and even $h=16$ only $99$ bits.  The MITM/decoding split gains
+over pure lattice decoding precisely when some block is cheap to enumerate, and at
+$50\%$ density no such block exists — the attack degenerates to the primal lattice
+attack already accounted for in the Core-SVP estimate below.
+
+**Conclusion:** no revision to HKEX-RNL's 105–115-bit Core-SVP estimate is made.  The
+stakes were real — the paper's measured maximum improvement is 13 bits, which applied to
+HKEX-RNL would mean 92–102 bits — but the attack's precondition fails here by a margin
+that no reasonable reading of "sparse" can close.  Unlike the earlier draft of this
+re-check, the argument no longer depends on the Cloudflare-gated PDF: it quantifies over
+all thresholds rather than comparing against one, so full-text access would not change
+the outcome.  "Small" (bounded-magnitude, CBD-style) and "sparse" (few nonzero
+positions) are genuinely distinct properties at HKEX-RNL's parameters — the deployed
+secret is emphatically small but not sparse — and TODO #1's original deprecation of the
+sparse-secret concern (in favor of CBD) stands **unaffected**.
 
 ---
 
@@ -855,23 +889,46 @@ quantum security.  The 128-bit classical floor requires approximately $N \geq 17
 0.0625$.  Until higher-$N$ parameters are adopted, HPKS-Stern-F and HPKE-Stern-F should be treated
 as proof-of-concept implementations.
 
-**2025–2026 ISD literature re-check (TODO #156).**  Two post-2024 ISD papers were reviewed
-against the $N \geq 17000$ production target above:
+**2025–2026 ISD literature re-check (TODO #156).**  Three post-2024 ISD/syndrome-decoding
+papers were reviewed against the $N \geq 17000$ production target above, plus a
+cross-check against TODO #126's QC-MDPC parameters:
 
 1. *"An Improved Both-May Information Set Decoding Algorithm: Towards More Efficient
-   Time-Memory Trade-Offs"* [Furue-Aikawa, PQCrypto 2025, DOI 10.1007/978-3-031-86599-2_4].
-   The paper's own abstract frames its contribution as a **more efficient time-memory
-   trade-off curve** for the Both-May ISD family — i.e. less memory for a given running
-   time (or vice versa) — rather than a lower asymptotic time exponent at unbounded
-   memory. The full text sits behind a Springer paywall this review could not access, so
-   the concrete exponent improvement (if any) over the $O(2^{0.054N})$ classical figure
-   already cited above could not be extracted or plugged into the SDE-style worksheet.
-   **This sub-item is not resolved**; treat the $N \geq 17000$ figure as unconfirmed
-   against this specific paper until the full text (or a citing survey with its concrete
-   numbers) can be reviewed. Memory-side improvements matter most to attackers who are
-   memory-bound at the deployed demo parameters ($N=256$) — they do not, by the paper's
-   own framing, change the *time*-exponent baseline BIKE-128's $N \approx 24646$ was
-   chosen against.
+   Time-Memory Trade-Offs"* [Furue-Aikawa, PQCrypto 2025, LNCS 15577 pp. 104-128,
+   DOI 10.1007/978-3-031-86599-2_4]. The full text remains behind a Springer paywall,
+   but the question it raised is now **resolved** on three independent grounds that do
+   not require reading it:
+
+   **(a) Wrong decoding regime.** The Both-May family targets *full distance decoding*
+   (FDD) at high error rate — the setting of the original Both-May paper, *"Decoding
+   Linear Codes with High Error Rate and its Impact for LPN Security"* (Eurocrypt 2018).
+   In the FDD regime the best prior bound was BJMM's $2^{0.0953N}$, which Both-May
+   lowered to $2^{0.0951N}$. HPKS-Stern-F/HPKE-Stern-F's demo parameters sit at
+   $t/N = 16/256 = 0.0625$, and the QC-MDPC/BIKE production parameters at
+   $t/N = 134/24646 \approx 0.0054$ — both far below full distance, in the low-weight
+   regime governed instead by the half-distance exponent (May-Ozerov's $2^{0.0473N}$)
+   and the $O(2^{0.054N})$ figure already cited above. FDD improvements are not the
+   binding constraint for either construction.
+
+   **(b) A trade-off curve, not a lower time exponent.** The paper's contribution, per
+   its own title and abstract, is a more efficient asymptotic *time-memory trade-off*
+   for the Both-May family — less memory at a given running time — not a reduction of
+   the minimum-time exponent at unbounded memory. Even the family's headline FDD gain
+   is a $0.0002$ change in the exponent constant.
+
+   **(c) The underlying subroutine is galactic.** Both-May builds on the May-Ozerov
+   nearest-neighbour subroutine, and that subroutine was proven *galactic* in 2025
+   [Bouillaguet-Delaplace-Hamdad, *"The May-Ozerov Algorithm for Syndrome Decoding is
+   Galactic"*, IACR Communications in Cryptology 2:1 (2025)]: it improves on plain
+   Stern ISD only once the code length exceeds 1,874,400, at which point the attack
+   itself costs more than $2^{63489}$ operations. No member of this family constrains
+   concrete parameter selection anywhere in the $N \approx 17000$ to $24646$ range.
+
+   **Resolution:** work items 1-2 of TODO #156 are closed as a negative result — the
+   Furue-Aikawa improvement does not move the $N \geq 17000$ target, and no revision to
+   the SDE-style worksheet is warranted. Should full text access become available, the
+   figure to check is whether the improved trade-off lowers the *minimum-time* exponent
+   in the low-weight regime; by the paper's own framing it does not.
 2. *"Can we Speed up Information Set Decoding by Using Extension Field Structure?"*
    [Elbro-Weger, Cryptography and Communications 2025/2026, eprint 2025/1402]. This one
    **was** fully reviewed (open eprint). Its conclusion is negative for attackers:
@@ -888,10 +945,21 @@ against the $N \geq 17000$ production target above:
    quasi-cyclic special case of ordinary binary syndrome decoding, not an extension-field
    or memory-bound-specific construction, so neither paper's findings change its
    $r = 12323$, $w = 142$, $t = 134$ BIKE-derived production parameters.
+4. *"Refined Analysis of the Concrete Hardness of the Quasi-Cyclic Syndrome Decoding"*
+   [Narisada-Okada-Aikawa-Fukushima, IWSEC 2025]. Added to this review as the most
+   directly on-point QC-SD result: it re-estimates the concrete hardness of the syndrome
+   decoding instances underlying BIKE, HQC, and Classic McEliece using Narisada et al.'s
+   improved BJMM variant, with new record computations for the QC-3366, QC-3602, and
+   QC-3846 challenge instances. Its bit-security estimates **closely match NIST's
+   security requirements in most cases** — i.e. it *confirms* rather than erodes the
+   BIKE-derived parameter set TODO #126 adopts, using an attack from the BJMM family
+   that is genuinely practical (unlike the May-Ozerov/Both-May line in item 1).
 
 **Net conclusion:** no revision to the $N \geq 17000$ / BIKE-128 parameter figures is
-made at this time. Item 1 above (Furue-Aikawa's concrete numbers) remains genuinely
-open and should be re-attempted if full-text access becomes available — see TODO #156.
+made. All four work items of TODO #156 are now resolved: the two ISD advances that
+prompted the review are a negative result (item 2) and a non-binding, galactic-family
+trade-off improvement in the wrong decoding regime (item 1), while the best available
+concrete QC-SD re-analysis (item 4) independently corroborates the parameters in use.
 
 ---
 

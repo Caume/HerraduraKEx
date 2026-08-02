@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.137] - 2026-08-02
+
+### Added
+- **`SecurityProofsCode/hkex_rnl_sparse_hybrid_2026.py`** — concrete worksheet closing
+  TODO #157's re-check of HKEX-RNL's CBD(eta=1) secret distribution against the 2026
+  sparse-secret hybrid decoding attack ("Careful with the Ring", eprint 2026/366). Five
+  sections: CBD(eta=1) coefficient law (exact vs empirical, using the deployed sampler
+  copied verbatim), the exact Hamming-weight law at n=256, a threshold-independent
+  sparsity sweep, the hybrid attack's guessing-space entropy precondition, and the bit
+  budget against the 105-115-bit Core-SVP estimate.
+
+### Changed
+- **TODO #157 resolved without full-text access; HKEX-RNL's 105-115-bit Core-SVP
+  estimate unrevised.** The prior re-check rested on indirect evidence (the cited FHE
+  target papers' published Hamming weights) and was explicitly left open pending a direct
+  read of the Cloudflare-gated PDF. `SecurityProofs-2.md` §11.6 now removes that
+  dependency by quantifying over *all* sparsity thresholds instead of comparing against
+  one: since each CBD(eta=1) coefficient is nonzero independently with probability
+  exactly 1/2, a deployed secret's Hamming weight is exactly Binomial(n=256, p=1/2) --
+  mean 128, sigma 8, i.e. 16 standard deviations above zero. The exact lower tail gives
+  Pr[HW <= h] = 2^-248 at the cited FHE density scaled to n=256, 2^-173 at h <= 16, and
+  2^-129 at h <= 29, so any sparsity definition below roughly 12% density is escaped
+  except with probability below the 128-bit target itself. A second check confirms the
+  mechanism is absent: CBD(eta=1) carries 384 bits of entropy at n=256 against 9 bits for
+  a sparse ternary secret with h=1, so the hybrid MITM/decoding split has no cheap block
+  to enumerate and degenerates to the primal lattice attack already covered by the
+  estimate.
+
+## [1.9.136] - 2026-08-02
+
+### Changed
+- **2025-2026 ISD re-check completed; Stern-F's N >= 17000 production target confirmed
+  unchanged (TODO #156).** The previously-unresolved sub-item — Furue-Aikawa's "An
+  Improved Both-May Information Set Decoding Algorithm" (PQCrypto 2025), whose full text
+  is paywalled — is now closed as a negative result on three independent grounds recorded
+  in `SecurityProofs-2.md` §11.8.4: (a) the Both-May family targets *full distance
+  decoding* at high error rate (best prior bound 2^0.0953N, lowered by Both-May to
+  2^0.0951N), whereas HPKS-Stern-F/HPKE-Stern-F sit at t/N = 0.0625 and QC-MDPC/BIKE at
+  t/N ~ 0.0054 — the low-weight regime governed by the half-distance exponent
+  (2^0.0473N) and the O(2^0.054N) figure already cited, so full-distance gains are not
+  the binding constraint; (b) the paper improves a time-*memory* trade-off curve rather
+  than the minimum-time exponent; and (c) Both-May's May-Ozerov nearest-neighbour
+  subroutine was proven *galactic* (Bouillaguet-Delaplace-Hamdad, IACR CiC 2:1, 2025) —
+  it beats plain Stern ISD only above code length 1,874,400, where the attack itself
+  costs over 2^63489 operations.
+
+### Added
+- **Narisada-Okada-Aikawa-Fukushima, "Refined Analysis of the Concrete Hardness of the
+  Quasi-Cyclic Syndrome Decoding" (IWSEC 2025) added to `SecurityProofs-2.md` §11.8.4's
+  ISD review (TODO #156, item 4).** The most directly on-point QC-SD result available:
+  its BIKE/HQC/Classic McEliece bit-security estimates closely match NIST's requirements,
+  independently corroborating the BIKE-derived QC-MDPC parameters TODO #126 adopts.
+
 ## [1.9.135] - 2026-08-02
 
 ### Added
