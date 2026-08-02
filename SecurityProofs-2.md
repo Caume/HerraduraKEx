@@ -1156,3 +1156,163 @@ HFSCX-256-DM provides:
 4. ~~Assembly/Arduino per-slot DS tags on `stern_hash1_32`/`stern_hash2_32` (§11.9.9).~~ **DONE** — ARM Thumb-2 and NASM i386 implementations already carry ds=1/2/3/4 at all call sites (verified v1.9.48).
 
 ---
+
+## 11.15 NIST SP 800-227 (September 2025) Audit of KEM Usage (TODO #161)
+
+**Scope.** NIST finalized SP 800-227 ("Recommendations for Key-Encapsulation
+Mechanisms") in September 2025, giving general implementation and usage guidance for any
+KEM — independent of, and broader than, algorithm-specific standards like FIPS 203
+(ML-KEM). This section walks HKEX-RNL (this suite's actual KEM), HKEX-GF (DH-based
+analogue), and HPKE-Stern-F (Niederreiter-KEM-based analogue) against SP 800-227's
+concrete recommendations, extracted directly from the published PDF
+(nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-227.pdf) rather than a summary.
+This repo already has narrower items in the same space — TODO #141 (CLI degenerate-key
+rejection) and TODO #144 (Go/Python library-level weak-key rejection) — both of which this
+audit's checklist item on input validation folds into rather than duplicates.
+
+**Checklist extracted from SP 800-227 §3–§4, with this suite's status against each.**
+
+| # | SP 800-227 requirement | Section | This suite's status |
+|---|---|---|---|
+| 1 | Approved cryptographic elements: RBGs per SP 800-90A/B/C; hash functions of adequate strength | §3.1 | **Out of scope by design.** This is a research suite using custom, non-NIST-approved primitives (FSCX/NL-FSCX, HFSCX-256) throughout — not a FIPS-140/CAVP-validated module, and not claiming to be one. RNG source itself is sound in practice: Python uses `os.urandom` (OS CSPRNG), C/Go read `/dev/urandom` directly — acceptable entropy quality even though not a "SP 800-90-approved" DRBG in the formal validation sense. |
+| 2 | Input checking on KeyGen/Encaps/Decaps; reject invalid/degenerate keys | §3.2 | **Covered by TODO #131/#141/#144** (degenerate/identity public-key rejection in `herradura.h`, the C CLI, and the Go/Python suite libraries). No new gap found beyond what those items already close. |
+| 3 | Destroy intermediate values (seeds, private randomness) as soon as unneeded | §3.2 | **Partial, language-dependent.** C explicitly reads directly from `/dev/urandom` per-use with no long-lived buffers to zero. Python and Go rely on garbage collection for `int`/big-number secrets — neither language offers a real zeroization guarantee (a known, generic limitation of managed-runtime crypto code, not specific to this suite). Not filing a new TODO: no practical fix exists in pure Python/Go without a C extension, and this matches the honest, already-documented tradeoff of implementing crypto in managed languages. |
+| 4 | Data at rest: private keys stored securely against leakage/modification | §3.2 | **Gap found.** Exported private-key PEM files (`genpkey --out priv.pem` across all three CLIs) are always written in cleartext with no passphrase-based encryption option, unlike OpenSSL's `-aes256`-style PEM encryption. Filed as **TODO #166**. |
+| 5 | Failures/aborts must not leak information about the cause outside the module | §3.3 | **Verified sound.** Checked the CLI's decrypt/AEAD-tag-mismatch paths (`HerraduraCli/herradura.py` `dec`/`decfile`): both use a single uniform `"authentication tag mismatch — file corrupt or wrong key"` message regardless of which specific check failed, rather than distinguishing sub-causes — the correct behavior per this requirement. HPKE-Stern-F has no adversarial-ciphertext decapsulation-failure path to audit yet, since its decoder is demo-only (known-`e'`, no real QC-MDPC decoder) — this is already tracked under TODO #91/#126, not a new finding. |
+| 6 | Side-channel protection (timing, memory leakage) | §3.3 | **Already tracked**: TODO #129 (timing, `dudect`) and TODO #160 (power/EM risk register). No new finding here. |
+| 7 | Key derivation via an approved KDM (SP 800-56C one-step/two-step); `OtherInput`/`FixedInfo` should include a domain separator, and combiners should bind ciphertexts/encapsulation keys/party identities | §4.5–§4.6 | **Gap found and closed (opt-in).** HKEX-RNL's default contributory KDF binds per-session nonces but not the public transcript. Filed and resolved as **TODO #165**: a new opt-in `--kdf sp800227` mode (§11.17) binds the full transcript ($C_A$, $m_A$, $C_B$, hint) per SP 800-227's example combiner shape, without changing the existing default's wire format. |
+| 8 | Composite/hybrid KEM key combiners should generically preserve IND-CCA if at least one component is IND-CCA (naive `KDF(K1,K2)` does **not** suffice per Giacon et al., cited in §4.6.3) | §4.6.2–§4.6.3 | **Directly relevant to TODO #162** (the hybrid HKEX+Stern-F combiner item next in the backlog) rather than this suite's current single-KEM constructions — cross-referenced there so #162's design work starts from SP 800-227's own recommended combiner shape (`H(K1, K2, c1, c2, ek1, ek2, domain_sep)`) instead of the naive concatenation form the standard explicitly warns against. |
+
+**Outcome.** Two genuine, previously-undocumented gaps were found and filed as their own
+follow-up items per this item's own instruction not to fix inline: **TODO #165** (KDF
+context binding) and **TODO #166** (private-key-at-rest encryption). Everything else
+checked either already has dedicated tracking (TODO #91/#126/#129/#141/#144/#160/#162) or
+is an explicit, reasonable non-goal for a research suite that has never claimed FIPS-140
+validation.
+
+---
+
+## 11.16 Hybrid HKEX-RNL + HPKE-Stern-KEM Combiner (TODO #162)
+
+**Motivation.** "Hybrid-by-default" — running a lattice-based and a code-based PQC
+algorithm in parallel so an attacker must break both — is now the mainstream
+post-quantum deployment pattern, matching NIST's own March 2025 rationale for
+selecting HQC alongside ML-KEM to diversify away from a single PQC assumption family.
+This is distinct from TODO #123/#128's hybrid **Ring-LWR + Stern-F credential** (a
+compound ZKP/proof construction for anonymous credentials): this item combines
+**HKEX-RNL** (lattice-based key exchange) with **HPKE-Stern-KEM** (the QC-MDPC/Niederreiter
+KEM from TODO #126) as two independent KEMs feeding one combined session key, exposed
+as `kex --algo hybrid-rnl-stern` in the Python CLI.
+
+**Combiner construction.** TODO #161's SP 800-227 audit (§11.15, item 7/8) found that a
+naive `KDF(K1, K2)` combiner does **not** generically preserve IND-CCA security if only
+one component KEM is IND-CCA (Giacon et al., cited in SP 800-227 §4.6.2) — the combiner
+must bind the shared secrets to the full public transcript. This construction follows
+SP 800-227's own worked example shape directly:
+
+$$K = \mathrm{HFSCX\text{-}256\text{-}DS}\bigl(0x05,\ K_1 \| K_2 \| C_A \| m_A \| C_B \| \mathrm{hint} \| h_{\mathrm{pub}} \| \mathrm{syn} \| \texttt{"HERRADURA-HYBRID-RNL-STERN-v1"}\bigr)$$
+
+where $K_1$ is HKEX-RNL's own fully-processed session key (including its existing
+contributory-KDF step, §11.4 — reused unmodified, not just the raw DH-style output),
+$K_2$ is HPKE-Stern-KEM's shared secret from `qcmdpc_encap`/`qcmdpc_decap_bgf`, $(C_A,
+m_A)$ is Alice's HKEX-RNL public transcript, $C_B$/$\mathrm{hint}$ is Bob's HKEX-RNL
+response, and $(h_{\mathrm{pub}}, \mathrm{syn})$ are the KEM's public key and
+ciphertext. The `0x05` tag is a new `HFSCX-256-DS` domain-separation value (§11.9.7),
+distinguishing this combiner from every other suite call site that reuses the same
+underlying hash. Binding every public transcript element (not just $K_1, K_2$) is what
+gives the IND-CCA-preservation property SP 800-227 requires: an adversary who breaks one
+component KEM still cannot forge a consistent combined key without also controlling the
+corresponding transcript element, which the honest protocol run fixes independently for
+each party.
+
+**Protocol shape.** Alice holds *two* persistent keypairs — an existing HKEX-RNL keypair
+and an existing HPKE-Stern-KEM keypair (both from their own unmodified `genpkey`); no new
+key-generation algorithm or PEM key format was introduced. Bob is ephemeral per session
+(a fresh HKEX-RNL keypair, matching HKEX-RNL's own existing two-round pattern):
+
+1. **Bob** (`--our` = his HKEX-RNL private key, `--their` = Alice's HKEX-RNL public key,
+   `--their-kem` = Alice's HPKE-Stern-KEM public key): computes $K_1$ exactly as plain
+   `hkex-rnl` would, encapsulates against Alice's KEM public key to get $(K_2,
+   \mathrm{syn})$, combines, and writes a new `HYBRID-RNL-STERN RESPONSE` PEM containing
+   the combined session key (for his own local use, mirroring the existing
+   `HKEX-RNL RESPONSE` convention) plus the public transcript ($C_B$, hint, $\mathrm{syn}$)
+   Alice needs.
+2. **Alice** (`--our` = her HKEX-RNL private key, `--our-kem` = her HPKE-Stern-KEM
+   private key, `--their` = Bob's response): completes $K_1$ exactly as plain `hkex-rnl`
+   would, decapsulates $\mathrm{syn}$ with her KEM private key to recover $K_2$
+   (recomputing $h_{\mathrm{pub}} = h_1 \cdot h_0^{-1}$ from her stored private key
+   fields, matching `qcmdpc_keygen`'s own derivation — no separate own-pubkey file
+   needed), and combines identically.
+
+A KEM decapsulation failure (corrupt ciphertext or, in principle, a genuine QC-MDPC
+decoding-failure-rate event, §11.8.4) is rejected with a clean, distinct error rather than
+silently producing a divergent key — verified empirically (`CliTest/test_hybrid_kex.sh`)
+against both a wrong KEM private key and missing-flag misuse.
+
+**Security argument.** The combined scheme is secure if *either* HKEX-RNL or
+HPKE-Stern-KEM is secure, by the combiner construction above (SP 800-227 §4.6.2-style
+argument, modeling HFSCX-256 as a random oracle — the same modeling assumption this
+suite's other HFSCX-256-based reductions already use, e.g. Theorem 17). This gives the
+intended "diversify away from a single PQC assumption family" property: a break of
+Ring-LWR does not compromise sessions as long as syndrome decoding remains hard, and vice
+versa. HPKE-Stern-KEM's own concrete security still tracks TODO #126's QC-MDPC parameters
+(BIKE-derived $r=12323$, $w=142$, $t=134$ for 128-bit classical security) — the combiner
+adds diversity of assumption, not additional margin on either individual component.
+
+**Implementation status.** Implemented and tested in the Python CLI only
+(`HerraduraCli/herradura.py`, `CliTest/test_hybrid_kex.sh`, 6/6 passing, no regressions
+in `test_vectors.sh`/`test_keygen.sh`/`test_stern_kem.sh`). Matching this repo's own
+precedent for large CLI features (e.g. TODO #25 Python-first, followed by separate C/Go
+CLI items #27/#28), the Go and C ports are intentionally out of scope for this pass and
+should be filed as their own follow-up TODOs before this feature is considered
+interop-complete across all three language targets.
+
+---
+
+## 11.17 SP 800-227-Style Context Binding for Plain HKEX-RNL (TODO #165)
+
+**Gap addressed.** TODO #161's SP 800-227 audit (§11.15, item 7) found that HKEX-RNL's
+existing contributory KDF (`_rnl_contributory_kdf` = `HFSCX-256(K_raw \| n_A \| n_B)`,
+used by every plain `kex --algo hkex-rnl` session) binds the raw shared secret to both
+parties' per-session *nonces*, but not to the public *transcript* — the exchanged
+polynomials $C_A$, $m_A$, $C_B$, and reconciliation hint. SP 800-227 §4.5–§4.6
+recommends binding the KDF's `OtherInput` to the ciphertext/encapsulation-key material
+as well as a domain separator.
+
+**Construction.** A new opt-in `--kdf sp800227` mode (Python CLI, alongside the existing
+`none`/`hfscx-256` choices):
+
+$$K' = \mathrm{HFSCX\text{-}256\text{-}DS}\bigl(0x06,\ K \| C_A \| m_A \| C_B \| \mathrm{hint} \| \texttt{"HERRADURA-HKEX-RNL-SP800227-v1"}\bigr)$$
+
+applied after the existing contributory KDF, using the same `HFSCX-256-DS` domain-tag
+mechanism as TODO #162's hybrid combiner (§11.16) — tag `0x06`, distinct from the
+hybrid combiner's `0x05`. Both parties can independently reconstruct the identical
+$(C_A, m_A, C_B, \mathrm{hint})$ transcript before applying it: Bob has $C_A$/$m_A$ from
+Alice's public key and computes $C_B$/hint himself; Alice has $C_B$/hint from Bob's
+response and recomputes $C_A$ from her own private key via `_rnl_derive_C` (the same
+technique used in §11.16's hybrid combiner).
+
+**Design choice: opt-in, not a default-behavior change.** Rather than modifying
+`_rnl_contributory_kdf` itself (which would silently break wire-compatibility with every
+existing HKEX-RNL session and interop test), this is exposed as an explicit `--kdf`
+choice both parties must agree to use — matching the CLI's existing pattern for optional
+post-processing (`--kdf hfscx-256` already existed as an opt-in plain re-hash). `--kdf
+sp800227` is rejected cleanly on `--algo hkex-gf`, where it isn't defined.
+
+**Verification.** `CliTest/test_rnl_sp800227_kdf.sh` (4/4 pass): Alice and Bob derive
+the same session key when both opt into `--kdf sp800227` (verified via cross-party
+encrypt/decrypt round-trips in both directions); mismatched `--kdf` flags between the
+two parties produce genuinely different keys rather than silently agreeing (confirming
+this isn't a no-op); and `--kdf sp800227` is rejected on `hkex-gf`. No regressions in
+`test_vectors.sh`/`test_hybrid_kex.sh`.
+
+**Scope.** Implemented in the Python CLI only, matching TODO #162's own Python-first
+precedent (TODO #25). `herradura.h`'s `ba_rnl_kdf_seed`/`_RNL_KDF_DC` (used by HSKE-NL-A1/
+AEAD and HPAKE, not plain HKEX-RNL's own session-key derivation) is a separate, lower-level
+helper and was not in scope for this item — the actual target was `_rnl_contributory_kdf`
+in `herradura.h`/`Herradura cryptographic suite.py`/`herradura/herradura.go`, all of which
+still use the unmodified (nonce-only) contributory KDF as their default; `--kdf sp800227`
+exists in Python only, tracked as a Go/C follow-up if this construction is adopted more
+broadly.
+
+---

@@ -140,6 +140,13 @@ _LABEL_HCRED_CRED  = 'HERRADURA HCRED CREDENTIAL'
 _LABEL_HCRED_PROOF = 'HERRADURA HCRED PROOF'
 _HCRED_CLI_ROUNDS  = 219   # production rounds (128-bit soundness); demo=4
 
+# TODO #162: hybrid HKEX-RNL + HPKE-Stern-KEM combiner
+_LABEL_HYBRID_RESP  = 'HERRADURA HYBRID-RNL-STERN RESPONSE'
+_HYBRID_COMBINE_DS  = 0x05   # hfscx_256_ds tag for the hybrid key combiner (§11.9.7 tags)
+
+# TODO #165: SP 800-227-style context-bound KDF for plain (non-hybrid) HKEX-RNL
+_RNL_SP800227_DS    = 0x06   # hfscx_256_ds tag for --kdf sp800227
+
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
 
@@ -588,6 +595,11 @@ def _decode_session_key(path):
         K_int = ints[0]
         n = ints[3]
         return K_int, n
+    elif label == _LABEL_HYBRID_RESP:
+        # K (already combined) is the first field
+        K_int = ints[0]
+        n = ints[3]
+        return K_int, n
     else:
         raise ValueError(f"Expected SESSION KEY or RNL RESPONSE PEM, got {label!r}")
 
@@ -602,6 +614,99 @@ def _decode_rnl_response(path):
     hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
     n_b = ints[5].to_bytes(32, 'big') if len(ints) >= 6 else bytes(32)
     return K_int, C_B_poly, hint, n, n_b
+
+
+# ---------------------------------------------------------------------------
+# TODO #162: hybrid HKEX-RNL + HPKE-Stern-KEM combiner
+# ---------------------------------------------------------------------------
+
+def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, syn,
+                              n, r_qc):
+    """SP 800-227 §4.6-style IND-CCA-preserving key combiner (TODO #162, #165).
+
+    K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn || v1)
+
+    Binds both component shared secrets (K1 from HKEX-RNL, K2 from HPKE-Stern-KEM) to
+    the full public transcript — both parties' public polynomials, the reconciliation
+    hint, the KEM public key, and the KEM ciphertext — rather than naively hashing just
+    K1||K2. Per SP 800-227 §4.6.2 (citing Giacon et al.), the naive combiner does not
+    generically preserve IND-CCA security if only one component KEM is IND-CCA; this
+    shape (matching SP 800-227's own worked example) does.
+    """
+    C_A_packed, C_A_nb = pack_poly(C_A, 2)
+    m_A_packed, m_A_nb = pack_poly(m_A, 4)
+    C_B_packed, C_B_nb = pack_poly(C_B, 2)
+    rb = (r_qc + 7) // 8
+    data = (K1_int.to_bytes(n // 8, 'big')
+            + K2_int.to_bytes(KEYBITS // 8, 'big')
+            + C_A_packed.to_bytes(C_A_nb, 'big')
+            + m_A_packed.to_bytes(m_A_nb, 'big')
+            + C_B_packed.to_bytes(C_B_nb, 'big')
+            + bytes(hint_used)
+            + h_pub.to_bytes(rb, 'big')
+            + syn.to_bytes(rb, 'big')
+            + b'HERRADURA-HYBRID-RNL-STERN-v1')
+    return int.from_bytes(hfscx_256_ds(_HYBRID_COMBINE_DS, data), 'big')
+
+
+def _hkex_rnl_sp800227_kdf(K_int, n, C_A, m_A, C_B, hint_used):
+    """SP 800-227 §4.5-style context-bound KDF for plain (non-hybrid) HKEX-RNL
+    (TODO #165, `--kdf sp800227`).
+
+    K' = HFSCX-256-DS(0x06, K || C_A || m_A || C_B || hint || v1)
+
+    The contributory KDF (`_rnl_contributory_kdf`) already binds K to both parties'
+    per-session nonces, but not to the public polynomials/ciphertext exchanged that
+    session. This opt-in KDF variant additionally binds the full public transcript,
+    matching SP 800-227's own worked combiner example (§4.6) and TODO #162's hybrid
+    combiner's approach (§11.16) — applied here to the plain, non-hybrid case. Not the
+    default (`--kdf none`/`hfscx-256` are unaffected) to avoid a breaking wire-format
+    change to existing HKEX-RNL sessions; both sides must opt in with the same flag.
+    """
+    C_A_packed, C_A_nb = pack_poly(C_A, 2)
+    m_A_packed, m_A_nb = pack_poly(m_A, 4)
+    C_B_packed, C_B_nb = pack_poly(C_B, 2)
+    data = (K_int.to_bytes(n // 8, 'big')
+            + C_A_packed.to_bytes(C_A_nb, 'big')
+            + m_A_packed.to_bytes(m_A_nb, 'big')
+            + C_B_packed.to_bytes(C_B_nb, 'big')
+            + bytes(hint_used)
+            + b'HERRADURA-HKEX-RNL-SP800227-v1')
+    return int.from_bytes(hfscx_256_ds(_RNL_SP800227_DS, data), 'big')
+
+
+def _encode_hybrid_response(K_int, C_B_poly, hint_used, n, n_b, syn, r_qc):
+    """Encode Bob's hybrid-rnl-stern response: (K, C_B, hint, n, hint_len, n_B, syn, r)."""
+    C_packed, C_nb = pack_poly(C_B_poly, 2)
+    hint_int = 0
+    for i, b in enumerate(hint_used):
+        hint_int |= (b & 3) << (2 * i)
+    hint_nb = max(1, (2 * len(hint_used) + 7) // 8)
+    K_nb    = max(1, (K_int.bit_length() + 7) // 8)
+    nb_int  = int.from_bytes(n_b, 'big')
+    rb      = (r_qc + 7) // 8
+    der = der_seq(der_int(K_int,    K_nb),
+                  der_int(C_packed, C_nb),
+                  der_int(hint_int, hint_nb),
+                  der_int(n),
+                  der_int(len(hint_used)),
+                  der_int(nb_int, len(n_b)),
+                  der_int(syn, rb),
+                  der_int(r_qc))
+    return pem_wrap(_LABEL_HYBRID_RESP, der)
+
+
+def _decode_hybrid_response(path):
+    """Return (K_int, C_B_poly, hint, n, n_b_bytes, syn, r_qc) from a HYBRID RESPONSE PEM."""
+    label, ints = _read_pem_ints(path)
+    if label != _LABEL_HYBRID_RESP:
+        raise ValueError(f"Expected HYBRID-RNL-STERN RESPONSE PEM, got {label!r}")
+    (K_int, C_packed, hint_int, n, hint_len,
+     nb_int, syn, r_qc) = ints
+    C_B_poly = unpack_poly(C_packed, n, 2)
+    hint = [(hint_int >> (2 * i)) & 3 for i in range(hint_len)]
+    n_b = nb_int.to_bytes(32, 'big')
+    return K_int, C_B_poly, hint, n, n_b, syn, r_qc
 
 
 # ---------------------------------------------------------------------------
@@ -1155,13 +1260,15 @@ def cmd_pkey(args):
 # ---------------------------------------------------------------------------
 
 def cmd_kex(args):
-    algo       = args.algo
-    our_path   = args.our
+    algo     = args.algo
+    our_path = args.our
     their_path = args.their
-    use_kdf    = getattr(args, 'kdf', 'none') == 'hfscx-256'
+    kdf_mode = getattr(args, 'kdf', 'none')
+    if kdf_mode == 'sp800227' and algo != 'hkex-rnl':
+        sys.exit("kex: --kdf sp800227 is only defined for --algo hkex-rnl (TODO #165)")
 
     def _apply_kdf(k_int, nbits):
-        if not use_kdf:
+        if kdf_mode != 'hfscx-256':
             return k_int
         raw = k_int.to_bytes(nbits // 8, 'big')
         return int.from_bytes(hfscx_256(raw), 'big')
@@ -1195,7 +1302,10 @@ def cmd_kex(args):
             K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
             n_b       = os.urandom(32)
             K_B_int   = _rnl_contributory_kdf(K_B.uint, n, n_a, n_b)
-            K_B_int   = _apply_kdf(K_B_int, n)
+            if kdf_mode == 'sp800227':
+                K_B_int = _hkex_rnl_sp800227_kdf(K_B_int, n, C_A, m_A, C_B, hint[:n // 2])
+            else:
+                K_B_int = _apply_kdf(K_B_int, n)
             _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n, n_b))
 
         elif their_label == _LABEL_RNL_RESP:
@@ -1209,13 +1319,87 @@ def cmd_kex(args):
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
             K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint)
             K_A_int = _rnl_contributory_kdf(K_A.uint, n, n_a, n_b)
-            K_A_int = _apply_kdf(K_A_int, n)
+            if kdf_mode == 'sp800227':
+                C_A     = _rnl_derive_C(m_A, s_A, n)
+                K_A_int = _hkex_rnl_sp800227_kdf(K_A_int, n, C_A, m_A, C_B, hint[:n // 2])
+            else:
+                K_A_int = _apply_kdf(K_A_int, n)
             _write_file(args.out, _encode_session_key(K_A_int, n))
 
         else:
             sys.exit(
                 f"kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM "
                 f"(got label {their_label!r})"
+            )
+
+    elif algo == 'hybrid-rnl-stern':
+        # TODO #162: hybrid classical-PQC-diversity combiner — HKEX-RNL (lattice-based)
+        # + HPKE-Stern-KEM/QC-MDPC (code-based) as two independent PQC assumptions,
+        # combined per SP 800-227 §4.6's IND-CCA-preserving shape (TODO #165's finding).
+        their_label, their_ints = _read_pem_ints(their_path)
+
+        if their_label == _PUB_ALGOS['hkex-rnl']:
+            # ── STEP 1: Bob responds — encapsulator for both components ──────
+            if not args.their_kem:
+                sys.exit("kex hybrid-rnl-stern: --their-kem required "
+                         "(Alice's HPKE-Stern-KEM public key)")
+            our_algo, our_ints = _decode_privkey(our_path)
+            s_B, _, n, _ = _decode_rnl_privkey(our_ints)
+            C_A, m_A, n_their, n_a = _decode_rnl_pubkey(their_ints)
+            if n != n_their:
+                sys.exit(f"Ring size mismatch: ours n={n}, theirs n={n_their}")
+            if not _rnl_validate_m_blind(m_A):
+                sys.exit("kex hybrid-rnl-stern: peer m_blind failed entropy "
+                         "check — possible substitution attack")
+            h_pub, r_qc = _decode_kem_pubkey(args.their_kem)
+
+            C_B         = _rnl_derive_C(m_A, s_B, n)
+            K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
+            n_b         = os.urandom(32)
+            K1_int      = _rnl_contributory_kdf(K1.uint, n, n_a, n_b)
+            K1_int      = _apply_kdf(K1_int, n)
+
+            syn, K2_int = qcmdpc_encap(h_pub)
+
+            hint_used = hint[:n // 2]
+            K_int = _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B,
+                                              hint_used, h_pub, syn, n, r_qc)
+            _write_file(args.out, _encode_hybrid_response(
+                K_int, C_B, hint_used, n, n_b, syn, r_qc))
+
+        elif their_label == _LABEL_HYBRID_RESP:
+            # ── STEP 2: Alice completes — decapsulator for the KEM component ─
+            if not args.our_kem:
+                sys.exit("kex hybrid-rnl-stern: --our-kem required "
+                         "(Alice's own HPKE-Stern-KEM private key)")
+            our_algo, our_ints = _decode_privkey(our_path)
+            s_A, m_A, n, n_a = _decode_rnl_privkey(our_ints)
+            (_, C_B, hint_used, n_resp, n_b,
+             syn, r_qc) = _decode_hybrid_response(their_path)
+            if n != n_resp:
+                sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
+            sup0, sup1, h0, h1 = _decode_kem_privkey(args.our_kem)
+            h0_inv = _qcp_inv(h0, r_qc)
+            h_pub  = _qcp_mul(h1, h0_inv, r_qc)
+            C_A    = _rnl_derive_C(m_A, s_A, n)
+
+            K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint_used)
+            K1_int = _rnl_contributory_kdf(K1.uint, n, n_a, n_b)
+            K1_int = _apply_kdf(K1_int, n)
+
+            K2_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
+            if K2_int is None:
+                sys.exit("kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation "
+                         "failed (DFR event or corrupt ciphertext)")
+
+            K_int = _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B,
+                                              hint_used, h_pub, syn, n, r_qc)
+            _write_file(args.out, _encode_session_key(K_int, n))
+
+        else:
+            sys.exit(
+                f"kex hybrid-rnl-stern: --their must be an HKEX-RNL PUBLIC KEY or "
+                f"HYBRID-RNL-STERN RESPONSE PEM (got label {their_label!r})"
             )
 
     else:
@@ -2362,13 +2546,25 @@ def build_parser():
 
     # kex
     kx = sub.add_parser('kex', help='Key exchange')
-    kx.add_argument('--algo', required=True, choices=['hkex-gf', 'hkex-rnl'])
+    kx.add_argument('--algo', required=True,
+                    choices=['hkex-gf', 'hkex-rnl', 'hybrid-rnl-stern'])
     kx.add_argument('--our',   required=True)
     kx.add_argument('--their', required=True)
     kx.add_argument('--out',   required=True)
-    kx.add_argument('--kdf', default='none', choices=['none', 'hfscx-256'],
-                    help='Post-hash raw shared secret with HFSCX-256 (default: none). '
-                         'Both sides must use the same --kdf flag.')
+    kx.add_argument('--kdf', default='none',
+                    choices=['none', 'hfscx-256', 'sp800227'],
+                    help='Post-hash raw shared secret (default: none). "hfscx-256" '
+                         'plain-hashes the raw key; "sp800227" (hkex-rnl only) '
+                         'additionally binds the full public transcript (both '
+                         'parties\' public polynomials and reconciliation hint) per '
+                         'SP 800-227 Sec 4.5-4.6 (TODO #165). Both sides must use '
+                         'the same --kdf flag.')
+    kx.add_argument('--their-kem', default=None,
+                    help='hybrid-rnl-stern only: Bob step — Alice\'s HPKE-Stern-KEM '
+                         'public key (--their remains her HKEX-RNL public key).')
+    kx.add_argument('--our-kem', default=None,
+                    help='hybrid-rnl-stern only: Alice step — her own HPKE-Stern-KEM '
+                         'private key (--our remains her HKEX-RNL private key).')
 
     # enc
     en = sub.add_parser('enc', help='Encrypt')

@@ -234,98 +234,72 @@ HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for t
 Status: **OPEN**
 
 
-### 161. Audit HKEX-RNL/HKEX-GF/Stern-F KEM usage against NIST SP 800-227 (September 2025) (Security/Docs, Medium)
 
-**Background:** NIST finalized SP 800-227 in September 2025, providing guidance on how
-KEMs should actually be used in protocols — covering protocol composition, input
-validation, key derivation, failure behavior, randomness requirements, side-channel
-resistance, and key lifecycle controls, on the premise that a mathematically sound KEM
-primitive can still be broken by misuse at these layers
-(https://postquantum.com/post-quantum/cryptography-pqc-nist/, referencing SP 800-227).
-This repo already has related but narrower items — TODO #141 hardens the CLI against
-degenerate peer public keys, and TODO #144 covers weak-key rejection parity across
-language targets — but neither was scoped against this specific, now-finalized NIST
-guidance document, which is broader (implicit rejection semantics, KDF domain separation
-requirements, decapsulation failure handling) than either existing item.
+
+
+
+### 166. Optional passphrase-based encryption for exported private-key PEM files (Security/Feature, Low)
+
+**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
+§11.15, item 4). SP 800-227 §3.2 ("Data at rest") requires that private data (seeds,
+decapsulation/private keys) be "stored within the cryptographic module in a manner that
+is secure against both leakage and unauthorized modification," and that "the import and
+export of private data...needs to be performed in a secure manner." All three CLIs
+(`genpkey --out priv.pem`) always write private-key PEM files in cleartext with no
+passphrase-based encryption option, unlike OpenSSL's traditional `-aes256`/`-des3`
+PEM-encryption flags or PKCS#8 encrypted private-key format. Anyone who copies, backs up,
+or transmits an exported `.pem` file without independent OS-level protection (file
+permissions, disk encryption) has no cryptographic protection on the key material itself.
 
 **Work items:**
 
-1. Read SP 800-227 in full and produce a checklist of its concrete requirements/
-   recommendations relevant to a KEM implementation and its calling protocol.
-2. Walk HKEX-RNL (the suite's actual KEM), and HKEX-GF/HPKE-Stern-F as the closest
-   analogues (DH-based and Niederreiter-KEM-based respectively), against that checklist:
-   implicit vs. explicit rejection on decapsulation failure, KDF domain separation
-   (`SecurityProofs-1.md`/§11.6's existing KDF domain constant work may already satisfy
-   some of this — verify rather than assume), randomness source requirements, and
-   failure-mode information leakage.
-3. File any gaps found as their own follow-up TODOs rather than fixing inline here, since
-   this item is scoped to the audit/checklist, not remediation.
-4. Cross-reference the result against TODO #141/#144 so overlapping scope is merged
-   rather than duplicated.
+1. Decide an encryption format: either a simple password-based scheme reusing this
+   suite's own primitives (e.g. HSKE-NL-A1 keystream over the PEM payload, keyed by a
+   password-derived key via a suite KDF with a random salt) or a more conventional
+   PBKDF2/scrypt-wrapped-AES approach if the goal is broader tooling compatibility —
+   document the tradeoff before picking one, since this suite doesn't currently implement
+   a password-based KDF (PBKDF2/Argon2-class) anywhere.
+2. Add a `--passphrase`/`--passin`/`--passout`-style flag to `genpkey` (and `pkey` for
+   re-encryption/decryption round-trips) across all three CLI language targets, mirroring
+   OpenSSL's flag naming where reasonable for user familiarity.
+3. Extend the PEM wire format with an encrypted-private-key variant label/header
+   (distinguishable from the existing cleartext label so old tooling fails closed rather
+   than silently misinterpreting encrypted bytes as a raw key).
+4. Add `CliTest/` coverage: round-trip encrypt/decrypt with correct passphrase, and
+   confirm a wrong passphrase is rejected cleanly (not a crash or silent garbage key).
+5. Document in `docs/TUTORIAL.md` and `SecurityProofs-2.md` §11.15.
 
 Status: **OPEN**
 
-### 162. Hybrid classical+PQC combiner mode for HKEX, beyond the existing hybrid Ring-LWR+Stern-F credential work (Feature/Research, Medium)
+### 167. Port the `hybrid-rnl-stern` combiner (TODO #162) to the Go and C CLIs (Feature/Interop, Medium)
 
-**Background:** "Hybrid-by-default" is now the mainstream industry deployment pattern
-for the post-quantum transition: run a classical algorithm and a PQC algorithm in
-parallel so an attacker must break both (IETF/NIST-adjacent guidance per 2025-2026
-sources, e.g. https://postquantum.com/post-quantum/hybrid-cryptography-pqc/,
-https://neuraparse.com/blog/hybrid-post-quantum-tls-ml-kem-2026/). NIST's own March 2025
-selection of HQC specifically to diversify the KEM portfolio away from a single
-lattice-based assumption follows the same logic. TODO #123/#128 already scope a hybrid
-**Ring-LWR + Stern-F credential** (a specific compound proof/verifier construction), but
-that is narrower than a general-purpose hybrid **key exchange** combiner mode — this item
-is about combining HKEX-GF (or HKEX-RNL) with HPKE-Stern-F's Niederreiter KEM as parallel
-KEMs feeding one combined session key, independent of the credential/ZKP work in #123/#128.
+**Background:** TODO #162 implemented a hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode
+(`kex --algo hybrid-rnl-stern`) and its SP 800-227 §4.6-style key-combiner construction
+(`SecurityProofs-2.md` §11.16), matching this repo's own precedent for large CLI features
+(TODO #25's "Python only (initial version)" scoping, later followed by separate C/Go
+items #27/#28). Only the Python CLI (`HerraduraCli/herradura.py`) and
+`CliTest/test_hybrid_kex.sh` exist so far; the Go (`herradura_cli.go`) and C
+(`herradura_cli.c`/`herradura.h`) CLIs have no equivalent, so this feature is not yet
+interop-complete across the three language targets this repo's other KEM/KEX modes
+maintain parity across.
 
 **Work items:**
 
-1. Decide a concrete combiner construction (e.g. concatenate-then-KDF vs. one of the
-   combiner constructions surveyed in current hybrid-PQC literature) and confirm it
-   satisfies the property that the combined key is secure if *either* input KEM is
-   secure (the standard hybrid-combiner security requirement).
-2. Add a `kex --algo hybrid-...` (or similar) CLI mode pairing HKEX-RNL (lattice-based)
-   with HPKE-Stern-F's KEM (code-based) as the two independent post-quantum assumptions,
-   matching the "diversify away from a single PQC assumption family" rationale NIST used
-   for HQC.
-3. Extend to all three CLI language targets per this repo's existing interop-parity
-   standard, with `CliTest/` coverage.
-4. Document the construction and its security argument in `SecurityProofs-2.md`,
-   distinguishing it clearly from TODO #123/#128's credential-specific hybrid work.
-
-Status: **OPEN**
-
-### 163. Refresh SecurityProofs-1.md §6's quantum resource-estimate numbers with 2026 discrete-log qubit-count improvements (Documentation/Research, Low)
-
-**Background:** A paper scheduled for EUROCRYPT 2026 (Chevignard, Fouque, Schrottenloher)
-reduces the logical-qubit requirement for solving a 256-bit-curve discrete log via Shor's
-algorithm from a prior estimate of 2,124 logical qubits down to 1,098, via a
-space-optimized circuit (space complexity $3.12n$ for an $n$-bit curve) and output
-compression using a Legendre-symbol-based single-bit hash
-(https://quantumcomputingreport.com/resource-estimates-for-quantum-discrete-logarithm-computations-on-256-bit-elliptic-curves/).
-A follow-up distributed-quantum variant reportedly pushes the single-node requirement to
-1,080-1,140 qubits with no quantum communication between nodes
-(https://eprint.iacr.org/2026/1244). These figures are specifically for elliptic-curve
-DLP, not directly for HKEX-GF's $\mathbb{GF}(2^n)^\ast$ discrete log, but
-`SecurityProofs-1.md` §6's existing quantum attack analysis for HKEX-GF discusses Shor's
-algorithm's applicability in the same qubit-resource-estimate style, and citing stale
-qubit-count figures there undersells (or oversells) how close a practical quantum attack
-actually is by 2026 standards.
-
-**Work items:**
-
-1. Read `SecurityProofs-1.md` §6 and identify exactly which qubit-count/resource-estimate
-   figures it currently cites for Shor's-algorithm attacks relevant to HKEX-GF.
-2. Determine whether the Legendre-symbol output-compression technique (developed for
-   ECDLP) has a natural analogue for $\mathbb{GF}(2^n)^\ast$ discrete log, or whether the
-   qubit savings are ECDLP-specific and only useful here as a general "quantum resource
-   estimates keep improving" data point.
-3. Update §6 with the current-as-of-2026 qubit-count figures (citing both papers above),
-   making clear which apply directly to HKEX-GF's actual group and which are cited only
-   for context (e.g. RSA-3072 comparison point).
-4. No code changes expected — this is a documentation freshness item, distinct from
-   TODO #145's build/test doc staleness scope.
+1. Port `_hybrid_rnl_stern_combine`'s exact byte layout (§11.16's formula: `HFSCX-256-DS`
+   with tag `0x05` over `K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
+   "HERRADURA-HYBRID-RNL-STERN-v1"`) to Go and C — bit-for-bit identical serialization is
+   required for cross-language interop, not just cross-language correctness.
+2. Add the `hybrid-rnl-stern` `kex` mode (with `--their-kem`/`--our-kem` flags mirroring
+   Python's) to both `herradura_cli.go` and `herradura_cli.c`, reusing each language's
+   existing `hkex-rnl` and `hpke-stern-kem`/QC-MDPC implementations exactly as the Python
+   version reuses `_rnl_agree`/`qcmdpc_encap`/`qcmdpc_decap_bgf` unmodified.
+3. Add a new `HYBRID-RNL-STERN RESPONSE` PEM label/encode/decode to each language's codec,
+   matching Python's DER field order exactly (`K, C_B, hint, n, hint_len, n_B, syn, r`).
+4. Extend `CliTest/test_hybrid_kex.sh` (or add a cross-language sibling matching the
+   `test_stern_kem.sh`/`test_vectors.sh` 3x3 interop-matrix convention) so Bob (any
+   language) and Alice (any language) derive the same session key regardless of which
+   CLI each party runs.
+5. Update `SecurityProofs-2.md` §11.16's "Implementation status" note once complete.
 
 Status: **OPEN**
 

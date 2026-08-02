@@ -2,6 +2,74 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.133] - 2026-08-01
+
+### Added
+- **`kex --algo hkex-rnl --kdf sp800227`: SP 800-227-style context-bound KDF (TODO
+  #165, Python CLI).** A new opt-in KDF mode that binds HKEX-RNL's session key to the
+  full public transcript ($C_A$, $m_A$, $C_B$, reconciliation hint), not just each
+  party's per-session nonce, per SP 800-227 §4.5-4.6's recommended combiner shape —
+  found as a gap during TODO #161's audit. Deliberately opt-in (both parties must pass
+  the same `--kdf sp800227` flag) rather than a change to the existing default, to
+  avoid a breaking wire-format change to every existing HKEX-RNL session. Added
+  `CliTest/test_rnl_sp800227_kdf.sh` (4/4 pass): cross-party agreement, mismatched
+  `--kdf` flags correctly produce different keys, and clean rejection on `hkex-gf`
+  (where the mode isn't defined). Documented in `SecurityProofs-2.md` §11.17. Scoped to
+  the Python CLI for this pass, matching TODO #162's own Python-first precedent.
+
+## [1.9.132] - 2026-08-01
+
+### Documentation
+- **Refreshed SecurityProofs-1.md's quantum discrete-log qubit-count figures for 2026
+  (TODO #163).** Added a concrete resource-estimate table to §10.8.4 covering the
+  EUROCRYPT 2026 Chevignard-Fouque-Schrottenloher ECDLP result (1193 logical qubits for
+  a 256-bit curve, down from a 2124-qubit baseline, via Residue-Number-System point
+  multiplication + Legendre-symbol single-bit compression) and its distributed-quantum
+  follow-up (eprint 2026/1244, 1094-1154 or 856-1098 qubits per node depending on
+  architecture). Confirmed the compression technique is ECDLP-specific — no analogue
+  for HKEX-GF's actual $\mathbb{GF}(2^n)^*$ group — so these figures are cited as
+  general "how close is a practical attack" context, not a revision to HKEX-GF's
+  existing $O(n^2 \log n)$ Shor bound. Also caught and flagged a real citation
+  discrepancy: some secondary coverage (and this TODO's own background text) cites
+  1098 qubits for the EUROCRYPT 2026 result, but the paper's current eprint abstract
+  states 1193 and carries an erratum noting a P-224/P-256 number swap in an earlier
+  draft — documented 1193 as authoritative per the primary source rather than silently
+  picking a number.
+
+## [1.9.131] - 2026-08-01
+
+### Added
+- **Hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode: `kex --algo hybrid-rnl-stern`
+  (TODO #162, Python CLI).** Combines the lattice-based HKEX-RNL key exchange with the
+  code-based HPKE-Stern-KEM (QC-MDPC/Niederreiter, TODO #126) as two independent PQC
+  assumptions feeding one session key — "diversify away from a single PQC assumption
+  family," matching NIST's own rationale for standardizing HQC alongside ML-KEM. The
+  combiner follows SP 800-227 §4.6's IND-CCA-preserving shape found applicable during
+  TODO #161's audit: `K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint ||
+  h_pub || syn || "HERRADURA-HYBRID-RNL-STERN-v1")`, binding both component shared
+  secrets to the full public transcript rather than the naive `KDF(K1,K2)` the standard
+  explicitly warns against. Reuses HKEX-RNL's and HPKE-Stern-KEM's existing keygen/
+  agree/encap/decap unmodified — no new key-generation algorithm or PEM key format.
+  Added `CliTest/test_hybrid_kex.sh` (6/6 pass): cross-party round-trips, missing-flag
+  rejection, wrong-KEM-key rejection (clean decapsulation failure), and freshness across
+  independent runs. Documented in `SecurityProofs-2.md` §11.16. Scoped to the Python CLI
+  for this pass, matching TODO #25's own Python-first precedent; Go/C CLI ports filed as
+  **TODO #167**.
+
+## [1.9.130] - 2026-07-31
+
+### Research
+- **NIST SP 800-227 audit of KEM usage (TODO #161).** Read the full published SP 800-227
+  PDF and produced an 8-item checklist walked against HKEX-RNL, HKEX-GF, and HPKE-Stern-F,
+  documented in `SecurityProofs-2.md` §11.15. Six of eight items matched already-tracked
+  work or are explicit non-goals for a non-FIPS-validated research suite. Filed two new
+  follow-up items for genuine gaps: **TODO #165** (HKEX-RNL's KDF doesn't bind
+  ciphertext/encapsulation-key/context material the way SP 800-227's recommended combiner
+  does) and **TODO #166** (exported private-key PEM files have no passphrase-encryption
+  option). Verified the CLI's decrypt/AEAD failure paths already use a uniform error
+  message regardless of failure sub-cause, matching SP 800-227 §3.3's requirement not to
+  leak why a failure occurred.
+
 ## [1.9.129] - 2026-07-31
 
 ### Fixed

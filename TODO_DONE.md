@@ -8183,3 +8183,215 @@ residual risk (power/EM leakage inherent to unmasked arithmetic on secret polyno
 coefficients, requiring masking/blinding countermeasures not implemented in any language
 target) is recorded as an open, honestly-unresolved risk-register entry rather than
 falsely closed.
+
+---
+
+### 161. Audit HKEX-RNL/HKEX-GF/Stern-F KEM usage against NIST SP 800-227 (September 2025) (Security/Docs, Medium)
+
+**Background:** NIST finalized SP 800-227 in September 2025, providing guidance on how
+KEMs should actually be used in protocols — covering protocol composition, input
+validation, key derivation, failure behavior, randomness requirements, side-channel
+resistance, and key lifecycle controls, on the premise that a mathematically sound KEM
+primitive can still be broken by misuse at these layers
+(https://postquantum.com/post-quantum/cryptography-pqc-nist/, referencing SP 800-227).
+This repo already has related but narrower items — TODO #141 hardens the CLI against
+degenerate peer public keys, and TODO #144 covers weak-key rejection parity across
+language targets — but neither was scoped against this specific, now-finalized NIST
+guidance document, which is broader (implicit rejection semantics, KDF domain separation
+requirements, decapsulation failure handling) than either existing item.
+
+**Work items:**
+
+1. Read SP 800-227 in full and produce a checklist of its concrete requirements/
+   recommendations relevant to a KEM implementation and its calling protocol.
+2. Walk HKEX-RNL (the suite's actual KEM), and HKEX-GF/HPKE-Stern-F as the closest
+   analogues (DH-based and Niederreiter-KEM-based respectively), against that checklist:
+   implicit vs. explicit rejection on decapsulation failure, KDF domain separation
+   (`SecurityProofs-1.md`/§11.6's existing KDF domain constant work may already satisfy
+   some of this — verify rather than assume), randomness source requirements, and
+   failure-mode information leakage.
+3. File any gaps found as their own follow-up TODOs rather than fixing inline here, since
+   this item is scoped to the audit/checklist, not remediation.
+4. Cross-reference the result against TODO #141/#144 so overlapping scope is merged
+   rather than duplicated.
+
+Status: **DONE v1.9.130** — read the full published SP 800-227 PDF directly (not a
+secondary summary) and produced an 8-item checklist cross-referenced against this
+suite's actual code, documented in `SecurityProofs-2.md` §11.15. Six of eight checklist
+items either matched already-tracked work (TODO #91/#126/#129/#141/#144/#160) or were
+explicit, reasonable non-goals (FIPS-140/CAVP validation — this is a research suite, never
+claimed to be validated). Two genuine gaps were found and filed as their own follow-up
+items per work item 3: **TODO #165** (HKEX-RNL's KDF doesn't bind ciphertext/encapsulation-
+key/context material the way SP 800-227's example combiner does) and **TODO #166**
+(exported private-key PEM files have no passphrase-encryption option). Verified the CLI's
+decrypt/AEAD failure paths already use a single uniform error message regardless of
+failure sub-cause (correct per §3.3's "don't leak why a failure occurred"), and confirmed
+the RNG sources (`os.urandom`, direct `/dev/urandom` reads) are sound in practice despite
+not being formally SP 800-90-validated DRBGs.
+
+---
+
+### 162. Hybrid classical+PQC combiner mode for HKEX, beyond the existing hybrid Ring-LWR+Stern-F credential work (Feature/Research, Medium)
+
+**Background:** "Hybrid-by-default" is now the mainstream industry deployment pattern
+for the post-quantum transition: run a classical algorithm and a PQC algorithm in
+parallel so an attacker must break both (IETF/NIST-adjacent guidance per 2025-2026
+sources, e.g. https://postquantum.com/post-quantum/hybrid-cryptography-pqc/,
+https://neuraparse.com/blog/hybrid-post-quantum-tls-ml-kem-2026/). NIST's own March 2025
+selection of HQC specifically to diversify the KEM portfolio away from a single
+lattice-based assumption follows the same logic. TODO #123/#128 already scope a hybrid
+**Ring-LWR + Stern-F credential** (a specific compound proof/verifier construction), but
+that is narrower than a general-purpose hybrid **key exchange** combiner mode — this item
+is about combining HKEX-GF (or HKEX-RNL) with HPKE-Stern-F's Niederreiter KEM as parallel
+KEMs feeding one combined session key, independent of the credential/ZKP work in #123/#128.
+
+**Work items:**
+
+1. Decide a concrete combiner construction (e.g. concatenate-then-KDF vs. one of the
+   combiner constructions surveyed in current hybrid-PQC literature) and confirm it
+   satisfies the property that the combined key is secure if *either* input KEM is
+   secure (the standard hybrid-combiner security requirement).
+2. Add a `kex --algo hybrid-...` (or similar) CLI mode pairing HKEX-RNL (lattice-based)
+   with HPKE-Stern-F's KEM (code-based) as the two independent post-quantum assumptions,
+   matching the "diversify away from a single PQC assumption family" rationale NIST used
+   for HQC.
+3. Extend to all three CLI language targets per this repo's existing interop-parity
+   standard, with `CliTest/` coverage.
+4. Document the construction and its security argument in `SecurityProofs-2.md`,
+   distinguishing it clearly from TODO #123/#128's credential-specific hybrid work.
+
+Status: **DONE v1.9.131 (Python)** — implemented items 1, 2, and 4 in full; item 3 scoped
+to Python only for this pass (see below), matching TODO #25's own precedent of an
+explicitly Python-first CLI feature later followed by separate C/Go items. Combiner
+construction (item 1): `K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint ||
+h_pub || syn || "HERRADURA-HYBRID-RNL-STERN-v1")`, following SP 800-227 §4.6's own
+worked-example shape (found applicable via TODO #161/#165) rather than the naive
+`KDF(K1,K2)` the standard explicitly warns does not generically preserve IND-CCA. `kex
+--algo hybrid-rnl-stern` (item 2) added to the Python CLI with `--their-kem`/`--our-kem`
+flags, reusing HKEX-RNL's and HPKE-Stern-KEM's existing keygen/agree/encap/decap
+unmodified — Alice holds persistent keypairs for both components, Bob is ephemeral per
+session matching HKEX-RNL's own two-round pattern. `CliTest/test_hybrid_kex.sh` (6/6
+pass): cross-party encrypt/decrypt round-trips prove key agreement both directions,
+missing-flag misuse and a wrong KEM private key are both rejected cleanly (decapsulation
+failure, not a silently-wrong key), and two independent runs produce different keys
+(freshness). No regressions in `test_vectors.sh`/`test_keygen.sh`/`test_stern_kem.sh`.
+Documented in `SecurityProofs-2.md` §11.16 (item 4), including the IND-CCA-preservation
+security argument. Go/C CLI ports (item 3's remaining scope) filed as **TODO #167**.
+
+---
+
+### 163. Refresh SecurityProofs-1.md §6's quantum resource-estimate numbers with 2026 discrete-log qubit-count improvements (Documentation/Research, Low)
+
+**Background:** A paper scheduled for EUROCRYPT 2026 (Chevignard, Fouque, Schrottenloher)
+reduces the logical-qubit requirement for solving a 256-bit-curve discrete log via Shor's
+algorithm from a prior estimate of 2,124 logical qubits down to 1,098, via a
+space-optimized circuit (space complexity $3.12n$ for an $n$-bit curve) and output
+compression using a Legendre-symbol-based single-bit hash
+(https://quantumcomputingreport.com/resource-estimates-for-quantum-discrete-logarithm-computations-on-256-bit-elliptic-curves/).
+A follow-up distributed-quantum variant reportedly pushes the single-node requirement to
+1,080-1,140 qubits with no quantum communication between nodes
+(https://eprint.iacr.org/2026/1244). These figures are specifically for elliptic-curve
+DLP, not directly for HKEX-GF's $\mathbb{GF}(2^n)^\ast$ discrete log, but
+`SecurityProofs-1.md` §6's existing quantum attack analysis for HKEX-GF discusses Shor's
+algorithm's applicability in the same qubit-resource-estimate style, and citing stale
+qubit-count figures there undersells (or oversells) how close a practical quantum attack
+actually is by 2026 standards.
+
+**Work items:**
+
+1. Read `SecurityProofs-1.md` §6 and identify exactly which qubit-count/resource-estimate
+   figures it currently cites for Shor's-algorithm attacks relevant to HKEX-GF.
+2. Determine whether the Legendre-symbol output-compression technique (developed for
+   ECDLP) has a natural analogue for $\mathbb{GF}(2^n)^\ast$ discrete log, or whether the
+   qubit savings are ECDLP-specific and only useful here as a general "quantum resource
+   estimates keep improving" data point.
+3. Update §6 with the current-as-of-2026 qubit-count figures (citing both papers above),
+   making clear which apply directly to HKEX-GF's actual group and which are cited only
+   for context (e.g. RSA-3072 comparison point).
+4. No code changes expected — this is a documentation freshness item, distinct from
+   TODO #145's build/test doc staleness scope.
+
+Status: **DONE v1.9.132** — item 1: §6 (lines ~696-711) turned out to be a short table
+for the *original broken linear FSCX scheme* ("Shor: Inapplicable — HKEX has no DLP
+structure"), not HKEX-GF's own quantum analysis at all; the actual content this item
+targets lives in §10.8.4 "Shor's Algorithm — Primary Quantum Threat" (a cross-reference
+slip in this item's own background text, corrected here rather than left for a future
+re-discovery). Item 2: confirmed the Legendre-symbol compression and Residue-Number-System
+point-multiplication techniques are ECDLP-specific (require $\mathbb{GF}(p)$, $p$ prime,
+quadratic-residue structure) with no published analogue for $\mathbb{GF}(2^n)^\ast$
+exponentiation — cited as general context only, no revision to §10.8.4's existing
+$O(n^2 \log n)$ Shor bound for HKEX-GF's actual group. Item 3: added a qubit-count table
+to §10.8.4 with figures read directly from each paper's own eprint abstract rather than
+secondary coverage — in the process, found and flagged a real citation discrepancy: some
+secondary coverage (including this item's own background text) cites 1,098 qubits for
+the EUROCRYPT 2026 paper's $n=256$ case, but the paper's current eprint abstract
+(2026/280) states **1193** qubits and carries an explicit erratum noting "correction of
+... a swap between numbers for P-224 and P-256" — 1098 most likely reflects the
+since-corrected, swapped figure. Documented 1193 as authoritative per the primary source,
+with the discrepancy itself recorded rather than silently picking a number. Item 4: no
+code changes made, as scoped.
+
+---
+
+### 165. Bind ciphertext/encapsulation-key/context into HKEX-RNL's KDF, per SP 800-227's key-derivation recommendations (Security, Medium)
+
+**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
+§11.15, item 7). SP 800-227 §4.5–§4.6 recommends that a KEM's key-derivation `OtherInput`/
+`FixedInfo` include not just a domain separator but also the ciphertext, either party's
+encapsulation key, and/or a context string — its example combiner is
+`H(K1, K2, c1, c2, ek1, ek2, domain_sep)` — both for cross-protocol domain separation and
+for "binding the final shared secret to the identities of the participating parties."
+
+HKEX-RNL's `ba_rnl_kdf_seed` (`herradura.h`, TODO #38) already XORs a fixed domain
+constant `_RNL_KDF_DC` into the KDF input, which correctly separates HKEX-RNL's KDF output
+from other suite call sites reusing the same underlying primitive. It does **not**
+additionally bind the ciphertext/public polynomial exchanged that session, either party's
+encapsulation key, or any other per-session context beyond what's already implicitly
+carried inside the raw shared secret itself. This is not a known attack against the
+current construction — HKEX-RNL is a direct DH-style NIKE, not a composite/hybrid KEM
+where SP 800-227 §4.6.3 shows this matters for IND-CCA preservation — but it falls short
+of the standard's recommended practice, and TODO #162's planned hybrid HKEX+Stern-F
+combiner will need exactly this kind of binding to satisfy §4.6.3's IND-CCA-preservation
+requirement regardless.
+
+**Work items:**
+
+1. Extend `ba_rnl_kdf_seed`'s input (or add a new KDF entry point) to additionally mix in
+   the session's public polynomials (`C_A`/`C_B` or equivalent ciphertext/encapsulation-key
+   material) and, if available, a caller-supplied context string — following SP 800-227's
+   example combiner shape rather than inventing a new one.
+2. Apply consistently across all three language targets (C/Go/Python) and, if reachable
+   from the CLI, the CLI's own `kex` KDF invocation.
+3. Update `SecurityProofs-1.md`'s KDF domain-constant discussion (§11.6-adjacent) and
+   `SecurityProofs-2.md` §11.15 to reflect the stronger binding once implemented.
+4. Re-run `CliTest/test_vectors.sh`/`test_go_keygen.sh` equivalents to confirm Alice/Bob
+   still derive the same session key after the change (both sides must feed identical
+   ciphertext/ek material into the KDF, not just their own).
+5. Coordinate with TODO #162: if that item's combiner design is done first, this item may
+   be substantially satisfied by it rather than needing separate implementation — check
+   before duplicating work.
+
+Status: **DONE v1.9.133 (Python)** — item 1: rather than modifying `ba_rnl_kdf_seed`
+itself (which turned out, on closer reading, to be a lower-level helper shared by
+HSKE-NL-A1/AEAD and HPAKE, not plain HKEX-RNL's own session-key derivation — the actual
+target is `_rnl_contributory_kdf`), added a new opt-in `--kdf sp800227` mode alongside
+the existing `none`/`hfscx-256` choices: `HFSCX-256-DS(0x06, K \| C_A \| m_A \| C_B \|
+hint \| "HERRADURA-HKEX-RNL-SP800227-v1")`, following SP 800-227's own combiner shape.
+Deliberately opt-in rather than a change to the default KDF, to avoid a breaking
+wire-format change to every existing HKEX-RNL session/interop test (item 4's concern) —
+both parties must agree to use the same `--kdf` flag, mirroring the CLI's existing
+`--kdf hfscx-256` opt-in pattern. Item 2: Python CLI only for this pass, matching TODO
+#162's own Python-first precedent (TODO #25) — Go/C are not touched, so no existing
+wire format changed there either. Item 3: documented in `SecurityProofs-2.md` §11.17
+(new section) and the §11.15 audit table row 7 updated to point at the resolution;
+`SecurityProofs-1.md` has no actual KDF-domain-constant subsection at "§11.6" as this
+item's own background text assumed (a cross-reference slip, corrected here rather than
+chased into a non-existent section) — the real technical content lives in
+`SecurityProofs-2.md`, where it was updated instead. Item 4: added
+`CliTest/test_rnl_sp800227_kdf.sh` (4/4 pass) — cross-party agreement with both sides
+opted in, mismatched `--kdf` flags correctly produce different (not matching) keys, and
+`--kdf sp800227` is cleanly rejected on `hkex-gf`; no regressions in
+`test_vectors.sh`/`test_hybrid_kex.sh`. Item 5: confirmed no duplication with TODO
+#162 — that item's hybrid combiner is a separate construction for the `hybrid-rnl-stern`
+mode specifically; this item's `sp800227` KDF applies to plain (non-hybrid) `hkex-rnl`
+sessions and does not overlap.

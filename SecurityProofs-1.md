@@ -1217,6 +1217,49 @@ all practical parameter sizes.  At $n = 256$ the FFS gives approximately 80–90
 security (below the 128-bit target); Shor's algorithm reduces this to polynomial time on a
 fault-tolerant quantum computer.
 
+**Concrete qubit-count resource estimates (2026 landscape review, TODO #163).** The
+complexity classes above are asymptotic; the following gives concrete logical-qubit
+figures for context, drawn from 2026 quantum-resource-estimation literature for
+**elliptic-curve** DLP (ECDLP) — not $\mathbb{GF}(2^n)^{\ast}$ DLP directly, since no
+equivalent space-optimized circuit has been published for the characteristic-2 group
+HKEX-GF actually uses (see caveat below):
+
+| Source | Target | Logical qubits | Notes |
+|---|---|---|---|
+| Häner et al., PQCrypto 2020 | 256-bit ECDLP | 2124 | Prior baseline both papers below improve on |
+| Gidney, arXiv 2025 | 3072-bit RSA factoring | 2043 | Comparison point cited by Chevignard–Fouque–Schrottenloher — ECDLP at 256 bits is *more* qubit-expensive than RSA-3072 factoring under the old estimate |
+| Chevignard–Fouque–Schrottenloher, EUROCRYPT 2026 (eprint 2026/280) | 256-bit ECDLP | **1193** (space complexity $3.12n + o(n)$; $2^{38.98}$ Toffoli gates/run, 22 independent runs) | Residue-number-system point multiplication + Legendre-symbol single-bit compression, avoiding modular inversion; gate count rises from $O(n^3)$ to $\widetilde O(n^4)$ to buy the qubit reduction |
+| Follow-up distributed-quantum variant, eprint 2026/1244 | 256-bit ECDLP, per node | 1094–1154 (zero quantum-communication variant) or 856–1098 (sequential-communication variant, more nodes) | Splits the computation across cooperating quantum processing units rather than one monolithic device |
+
+**Figure-attribution caveat.** Some 2026 secondary coverage of the Chevignard–Fouque–
+Schrottenloher paper (e.g. quantumcomputingreport.com) cites **1098** logical qubits for
+the 256-bit case rather than 1193. The paper's own eprint page (2026/280) carries an
+explicit erratum note — "correction of another typo in the abstract (swap between
+numbers for P-224 and P-256)" — so 1098 most likely reflects a since-corrected, swapped
+P-224/P-256 attribution rather than a second independent figure; **1193 is the number
+this document treats as authoritative**, taken directly from the current eprint abstract
+text rather than secondary reporting. This is exactly the kind of slip a documentation
+pass citing only a press summary would silently propagate, so it is recorded here rather
+than picking a number without flagging the discrepancy.
+
+**Applicability to HKEX-GF specifically.** These figures are for ECDLP over
+$\mathbb{GF}(p)$ (prime-field elliptic curves), not HKEX-GF's actual group
+$\mathbb{GF}(2^n)^{\ast}$. The two constructions that make the qubit reduction work —
+representing point coordinates via a Residue Number System, and collapsing the
+point-multiplication result to one bit via the **Legendre symbol** (a quadratic-residue
+test specific to $\mathbb{GF}(p)$, $p$ prime) — do not have a published analogue for
+characteristic-2 exponentiation. $\mathbb{GF}(2^n)^{\ast}$'s Shor circuit is ordinary
+finite-field exponentiation (§10.8.4's $O(n^2 \log n)$ bound already covers it) without
+this paper's specific compression trick, so **no qubit-count revision to $O(n^2 \log n)$
+follows from this work** — these figures are cited here purely as a "how close is a
+practical quantum attack, in general" data point (the same role RSA-3072 comparisons
+already served in this section), not as a directly applicable resource estimate for
+HKEX-GF's own group. The qualitative conclusion is unchanged either way: Shor's algorithm
+in polynomial time breaks $\mathbb{GF}(2^n)^{\ast}$ DLP at every practical $n$, and continued
+qubit-count reductions for the ECDLP sibling problem only reinforce that a
+cryptographically-relevant fault-tolerant quantum computer is being actively engineered
+toward, not that HKEX-GF's own concrete threat model has changed.
+
 **HKEX-GF.** Given $(C, C_2) = (g^a, g^b)$, Shor's algorithm recovers $a$ (or $b$) in
 $O(n^2 \log n)$ quantum time; the shared secret $g^{ab} = C_2^a$ follows immediately.
 
