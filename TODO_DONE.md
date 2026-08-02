@@ -8455,3 +8455,53 @@ demo-appropriate 1,000 iterations (~3.5s) with `--kdf-iterations` exposed to opt
 the production-recommended floor at the cost of a multi-minute wait — matching this
 repo's existing demo-vs-production-parameter convention. Scoped to the Python CLI only,
 consistent with this item's own "Low" priority; no separate Go/C follow-up TODO filed.
+
+### 167. Port the `hybrid-rnl-stern` combiner (TODO #162) to the Go and C CLIs (Feature/Interop, Medium)
+
+**Background:** TODO #162 implemented a hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode
+(`kex --algo hybrid-rnl-stern`) and its SP 800-227 §4.6-style key-combiner construction
+(`SecurityProofs-2.md` §11.16), matching this repo's own precedent for large CLI features
+(TODO #25's "Python only (initial version)" scoping, later followed by separate C/Go
+items #27/#28). Only the Python CLI (`HerraduraCli/herradura.py`) and
+`CliTest/test_hybrid_kex.sh` exist so far; the Go (`herradura_cli.go`) and C
+(`herradura_cli.c`/`herradura.h`) CLIs have no equivalent, so this feature is not yet
+interop-complete across the three language targets this repo's other KEM/KEX modes
+maintain parity across.
+
+**Work items:**
+
+1. Port `_hybrid_rnl_stern_combine`'s exact byte layout (§11.16's formula: `HFSCX-256-DS`
+   with tag `0x05` over `K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
+   "HERRADURA-HYBRID-RNL-STERN-v1"`) to Go and C — bit-for-bit identical serialization is
+   required for cross-language interop, not just cross-language correctness.
+2. Add the `hybrid-rnl-stern` `kex` mode (with `--their-kem`/`--our-kem` flags mirroring
+   Python's) to both `herradura_cli.go` and `herradura_cli.c`, reusing each language's
+   existing `hkex-rnl` and `hpke-stern-kem`/QC-MDPC implementations exactly as the Python
+   version reuses `_rnl_agree`/`qcmdpc_encap`/`qcmdpc_decap_bgf` unmodified.
+3. Add a new `HYBRID-RNL-STERN RESPONSE` PEM label/encode/decode to each language's codec,
+   matching Python's DER field order exactly (`K, C_B, hint, n, hint_len, n_B, syn, r`).
+4. Extend `CliTest/test_hybrid_kex.sh` (or add a cross-language sibling matching the
+   `test_stern_kem.sh`/`test_vectors.sh` 3x3 interop-matrix convention) so Bob (any
+   language) and Alice (any language) derive the same session key regardless of which
+   CLI each party runs.
+5. Update `SecurityProofs-2.md` §11.16's "Implementation status" note once complete.
+
+Status: **DONE v1.9.135** — ported `_hybrid_rnl_stern_combine` bit-for-bit to
+`herradura_cli.go` (new `hybridRnlSternCombine`/`encodeHybridResponse`/
+`decodeHybridResponse`) and `herradura_cli.c`/`herradura_codec.h` (new
+`hybrid_rnl_stern_combine`/`PEM_HYBRID_RESPONSE`), both reusing each language's existing
+`hkex-rnl` and `hpke-stern-kem`/QC-MDPC primitives unmodified, with a new
+`kex --algo hybrid-rnl-stern` mode (`--their-kem`/`--our-kem` flags) in both CLIs.
+Fixed a serialization subtlety along the way: the C QC-MDPC primitives store `QcPoly`
+values in a fixed little-endian word layout requiring an explicit swap to match Python's
+plain (unswapped) `int.to_bytes(rb, 'big')` convention used specifically by the hybrid
+response's `syn` field and the combiner's `h_pub`/`syn` hash inputs — distinct from the
+byte-swapped convention the existing HPKE-Stern-KEM PUBLIC/PRIVATE KEY and CIPHERTEXT
+wire formats use; added dedicated `qcpoly_to_natural_be`/`qcpoly_from_natural_be` helpers
+for the former, keeping `qcpoly_to_be`/`qcpoly_from_be` for the latter. Verified with a
+full 3x3 cross-language matrix (`CliTest/test_hybrid_kex_interop.sh`, new) — every
+Bob/Alice language pairing (Python/Go/C x Python/Go/C) derives a byte-identical session
+key, confirmed by direct hash comparison and a cross-language HSKE encrypt/decrypt
+round-trip — plus the existing `CliTest/test_hybrid_kex.sh` (6/6, Python-only combiner
+behavior/edge-cases) with no regressions. Updated `SecurityProofs-2.md` §11.16's
+"Implementation status" note accordingly.

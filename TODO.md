@@ -241,35 +241,4 @@ Status: **OPEN**
 
 Status: **OPEN**
 
-### 167. Port the `hybrid-rnl-stern` combiner (TODO #162) to the Go and C CLIs (Feature/Interop, Medium)
-
-**Background:** TODO #162 implemented a hybrid HKEX-RNL + HPKE-Stern-KEM combiner mode
-(`kex --algo hybrid-rnl-stern`) and its SP 800-227 §4.6-style key-combiner construction
-(`SecurityProofs-2.md` §11.16), matching this repo's own precedent for large CLI features
-(TODO #25's "Python only (initial version)" scoping, later followed by separate C/Go
-items #27/#28). Only the Python CLI (`HerraduraCli/herradura.py`) and
-`CliTest/test_hybrid_kex.sh` exist so far; the Go (`herradura_cli.go`) and C
-(`herradura_cli.c`/`herradura.h`) CLIs have no equivalent, so this feature is not yet
-interop-complete across the three language targets this repo's other KEM/KEX modes
-maintain parity across.
-
-**Work items:**
-
-1. Port `_hybrid_rnl_stern_combine`'s exact byte layout (§11.16's formula: `HFSCX-256-DS`
-   with tag `0x05` over `K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
-   "HERRADURA-HYBRID-RNL-STERN-v1"`) to Go and C — bit-for-bit identical serialization is
-   required for cross-language interop, not just cross-language correctness.
-2. Add the `hybrid-rnl-stern` `kex` mode (with `--their-kem`/`--our-kem` flags mirroring
-   Python's) to both `herradura_cli.go` and `herradura_cli.c`, reusing each language's
-   existing `hkex-rnl` and `hpke-stern-kem`/QC-MDPC implementations exactly as the Python
-   version reuses `_rnl_agree`/`qcmdpc_encap`/`qcmdpc_decap_bgf` unmodified.
-3. Add a new `HYBRID-RNL-STERN RESPONSE` PEM label/encode/decode to each language's codec,
-   matching Python's DER field order exactly (`K, C_B, hint, n, hint_len, n_B, syn, r`).
-4. Extend `CliTest/test_hybrid_kex.sh` (or add a cross-language sibling matching the
-   `test_stern_kem.sh`/`test_vectors.sh` 3x3 interop-matrix convention) so Bob (any
-   language) and Alice (any language) derive the same session key regardless of which
-   CLI each party runs.
-5. Update `SecurityProofs-2.md` §11.16's "Implementation status" note once complete.
-
-Status: **OPEN**
 
