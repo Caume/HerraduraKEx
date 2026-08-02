@@ -14,62 +14,6 @@ differential analysis of NL-FSCX, QC-MDPC decoder trapdoors, and hybrid Ring-LWR
 credentials were already tracked as #41/#75/#83/#123/#125/#126/#128/#129 and are not
 re-opened).
 
-### 157. Re-evaluate HKEX-RNL's CBD($\eta=1$) secret distribution against the 2026 sparse-secret hybrid-decoding attack on Ring-LWE/Ring-LWR (Research/Security, Medium)
-
-**Background:** "Careful with the Ring: Enhanced Hybrid Decoding Attacks against
-Module/Ring-LWE" (2026; https://eprint.iacr.org/2026/366) presents a hybrid
-meet-in-the-middle/lattice-decoding attack that exploits the polynomial ring structure of
-$\mathbb{Z}_q[X]/(x^N+1)$ to accelerate guessing and decoding for **sparse-secret**
-instances, reporting a complexity improvement by a factor of $O(N)$ over prior hybrid
-decoding attacks and 17x-114x speedups on previously-broken sparse instances (mostly
-demonstrated against FHE parameter sets from 2022-2025 deployments, not HKEX-RNL's own
-parameters).
-
-TODO #1 (`RNLB=1 — sparse secrets`, now `DEPRECATED` in `TODO_DONE.md`) already flagged
-sparse-secret risk for an earlier, cruder uniform-small-Hamming-weight secret sampler and
-recorded that it was superseded by the CBD($\eta=1$) sampler (`SecurityProofs-2.md`
-§11.4.2/§11.6). CBD($\eta=1$) secrets are *small* (each coefficient in
-$\{-1,0,1\}$-ish range, per the centered binomial distribution) but not necessarily
-*sparse* in the specific structural sense this new hybrid attack exploits — the two
-properties are related but distinct, and TODO #1's deprecation reasoning predates this
-2026 paper. This item is to determine whether "small" (CBD) and "sparse" (attacked here)
-coincide closely enough at HKEX-RNL's own $(q=65537, n=256)$ parameters for the new
-attack's complexity bound to apply, or whether they're distinct enough that the existing
-deprecation stands unaffected.
-
-**Work items:**
-
-1. Read the paper's precise definition of "sparse" (e.g. Hamming weight / hint-supported
-   sparsity assumption) and compare it against HKEX-RNL's actual CBD($\eta=1$) secret
-   distribution at $n=256$ — are CBD-sampled secrets sparse under that definition, or only
-   "small"?
-2. If applicable, estimate the concrete complexity of the enhanced hybrid attack against
-   HKEX-RNL's deployed parameters (not just the FHE parameter sets the paper
-   demonstrates), following the same style of concrete-complexity worksheet already used
-   in `SecurityProofsCode/hkex_rnl_failure_rate.py`/§11.4-§11.6.
-3. Document the conclusion in `SecurityProofs-2.md` regardless of outcome (either "attack
-   does not apply because X" or "attack reduces estimated security margin by Y bits") so
-   the reasoning is traceable, and update TODO #1's `DEPRECATED` note in `TODO_DONE.md`
-   with a forward-reference if the conclusion revises it.
-
-**Progress (2026-07-31):** `SecurityProofs-2.md` §11.6 (just before §11.7) now documents
-the finding: the paper's own PDF is Cloudflare-gated and couldn't be read directly, but
-its abstract names five target FHE papers ([JM22]/[CCKS23]/[BCKS24]/[CHKS25]/[AKP25])
-that are all classical sparse-secret-bootstrapping proposals with published Hamming
-weights $h \approx 64$–$192$ against $N=2^{15}$ (density $\lesssim 0.6\%$). HKEX-RNL's
-deployed CBD($\eta=1$) sampler has $\approx 50\%$ nonzero density at $n=256$ — over two
-orders of magnitude denser — so by the density-gap argument the attack's speedup
-mechanism (reduced guessing space over sparse nonzero positions) should not transfer,
-and TODO #1's deprecation stands unaffected. Note in passing: TODO #1's own status line
-in `TODO_DONE.md` reads `DONE (v1.5.x)`, not `DEPRECATED` as this item's background
-section (written before this review) stated — a small cross-reference slip, not a
-finding that needs its own action. Work item 3's forward-reference-to-TODO#1 is therefore
-not needed since no revision resulted. This item stays **OPEN** because the conclusion
-rests on indirect evidence (target-paper parameters), not the paper's own formal
-sparsity definition — re-close only after a direct read confirms it.
-
-Status: **OPEN**
-
 ### 158. Apply the 2025 automated rotational-XOR differential search framework to FSCX/NL-FSCX (Research, Medium)
 
 **Background:** A 2025 paper proposes an automatic search framework for

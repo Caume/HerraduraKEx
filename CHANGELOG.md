@@ -2,6 +2,34 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.137] - 2026-08-02
+
+### Added
+- **`SecurityProofsCode/hkex_rnl_sparse_hybrid_2026.py`** — concrete worksheet closing
+  TODO #157's re-check of HKEX-RNL's CBD(eta=1) secret distribution against the 2026
+  sparse-secret hybrid decoding attack ("Careful with the Ring", eprint 2026/366). Five
+  sections: CBD(eta=1) coefficient law (exact vs empirical, using the deployed sampler
+  copied verbatim), the exact Hamming-weight law at n=256, a threshold-independent
+  sparsity sweep, the hybrid attack's guessing-space entropy precondition, and the bit
+  budget against the 105-115-bit Core-SVP estimate.
+
+### Changed
+- **TODO #157 resolved without full-text access; HKEX-RNL's 105-115-bit Core-SVP
+  estimate unrevised.** The prior re-check rested on indirect evidence (the cited FHE
+  target papers' published Hamming weights) and was explicitly left open pending a direct
+  read of the Cloudflare-gated PDF. `SecurityProofs-2.md` §11.6 now removes that
+  dependency by quantifying over *all* sparsity thresholds instead of comparing against
+  one: since each CBD(eta=1) coefficient is nonzero independently with probability
+  exactly 1/2, a deployed secret's Hamming weight is exactly Binomial(n=256, p=1/2) --
+  mean 128, sigma 8, i.e. 16 standard deviations above zero. The exact lower tail gives
+  Pr[HW <= h] = 2^-248 at the cited FHE density scaled to n=256, 2^-173 at h <= 16, and
+  2^-129 at h <= 29, so any sparsity definition below roughly 12% density is escaped
+  except with probability below the 128-bit target itself. A second check confirms the
+  mechanism is absent: CBD(eta=1) carries 384 bits of entropy at n=256 against 9 bits for
+  a sparse ternary secret with h=1, so the hybrid MITM/decoding split has no cheap block
+  to enumerate and degenerates to the primal lattice attack already covered by the
+  estimate.
+
 ## [1.9.136] - 2026-08-02
 
 ### Changed
