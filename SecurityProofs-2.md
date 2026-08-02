@@ -1491,3 +1491,84 @@ cleartext private-key export; porting this construction to them is future work i
 adopted, not filed as a separate TODO given this item's own "Low" priority.
 
 ---
+
+## 11.19 Carry-Degeneracy Pass over NL-FSCX v1/v2 Constructions (TODO #159)
+
+TODO #159's second stress-testing pass covered the two targets its work item 1 named but
+the first pass did not reach: HFSCX-256-DM's compression and NL-FSCX v2's CSP
+construction.  Both NL-FSCX variants buy their non-linearity from exactly one place — the
+carry chain of a modular addition; the FSCX map $M = I \oplus \mathrm{ROL} \oplus
+\mathrm{ROR}$, the rotations and the XORs are all GF(2)-linear.  That suggests one
+question to ask of each construction: **for which inputs does the addition stop producing
+carries?**  Wherever the answer is a non-negligible set, the round function collapses to
+an affine map.  Reproduced by
+`SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py`.
+
+### 11.19.1 HFSCX-256-DM under an all-zero message block — clean, but load-bearing
+
+With $B = 0$ the sum $A + 0$ produces no carries, so the Davies-Meyer inner function
+degenerates to the GF(2)-linear map $L^{n/4}$ with
+
+$$L = 1 + X + X^{n/4} + X^{n-1} \text{ over } \mathrm{GF}(2)[X]/(X^n + 1)$$
+
+Its rank is exactly $n/2$ at every size tested — so at the deployed $n = 256$ the inner
+"block cipher" crushes the 256-bit chaining value onto a $2^{128}$ subspace, a
+$2^{128}$-to-1 compression:
+
+| $n$ | 16 | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|---|
+| rank $F(\cdot, 0)$ | 8 | 16 | 32 | 64 | 128 |
+| rank $C_{\text{DM}}(\cdot, 0)$ | 16 | 32 | 64 | 128 | 256 |
+
+Collision resistance survives only because the Davies-Meyer feed-forward makes the
+compression $C_{\text{DM}}(s, 0) = L^{n/4}(s) \oplus s$, and **that** map is invertible.
+Proof: over GF(2), $X^n + 1 = (X+1)^n$, so writing $Y = X + 1$ the quotient ring is local
+with maximal ideal $(Y)$.  Expanding, $L = Y^2 u$ for a unit $u$; hence $L^{n/4} =
+Y^{n/2} u^{n/4}$, and $L^{n/4} + 1$ has constant term $1$ — a unit in a local ring, and
+therefore invertible.  The table above confirms full rank $n$ at every deployed size, and
+a brute-force check at $n=16$ finds $|\text{image } F(\cdot,0)| = 256$ against
+$|\text{image } C_{\text{DM}}(\cdot,0)| = 65536$.
+
+§11.9.8 already credits Davies-Meyer with ruling out "a structural speed-up from the
+non-bijectivity of $F_1$" in general terms.  This sharpens that to a concrete, verified
+statement: for the all-zero block the underlying keyed map is not merely non-bijective but
+*linear with a kernel of dimension $n/2$*, and the feed-forward is precisely what
+prevents cheap zero-block collisions.  **No weakness — but the feed-forward is
+load-bearing, and removing it would be catastrophic rather than merely unproven.**
+
+### 11.19.2 NL-FSCX v2 — an affine weak-key class (TODO #168)
+
+NL-FSCX v2's offset $\delta(K)$ enters as an additive **constant**:
+$\pi_K(A) = (M(A \oplus K) + \delta(K)) \bmod 2^n$.  Addition of a constant $c$ is
+GF(2)-affine for *every* input exactly when $c \in \{0, 2^{n-1}\}$ — for $c = 0$
+trivially, and for $c = 2^{n-1}$ because the top carry is discarded mod $2^n$, making the
+addition pure XOR.  Since $M$ is invertible at every power-of-two $n$, $M(A \oplus K)$ is
+a bijection, giving the exact characterisation
+
+$$\pi_K \text{ is GF(2)-affine} \iff \delta(K) \in \lbrace 0, 2^{n-1} \rbrace$$
+
+verified exhaustively at $n = 8$ and $n = 16$.  (At $n = 12$ the characterisation differs
+because $M$ is singular there, rank $10/12$ — but $n=12$ is outside the design regime;
+every deployed size is a power of two.)
+
+Such keys exist at the deployed size.  Since $\delta(K) = \mathrm{ROL}(K \lfloor (K+1)/2
+\rfloor \bmod 2^n, n/4)$, any even $K = 2^j K'$ with $K'$ odd gives $K \lfloor (K+1)/2
+\rfloor = 2^{2j-1} K'^2$, so $\delta(K) = 0$ whenever $2j - 1 \geq n$ — i.e. for **every
+$K$ divisible by $2^{129}$** at $n = 256$, a class of $2^{127}$ keys.  Separately
+$K = 2^{96}$ gives $\delta(K) = 2^{255}$.  For any such key HSKE-NL-A2 and HPKE-NL
+degenerate to an affine map, recoverable in full from a handful of known plaintexts by
+linear algebra alone — the script demonstrates this at $n = 16$, predicting 500/500
+random inputs from $16$ basis images plus a constant.
+
+**Severity.** The class density is about $2^{-129}$, so a uniformly random 256-bit key is
+not at risk and this is **not** a break of the deployed construction.  It is a genuine
+weak-key class that is currently unrejected, matters if keys are ever structured,
+low-entropy, or attacker-influenced, and costs one line to reject.  Per TODO #159 work
+item 3 this is filed as its own actionable item, **TODO #168**, rather than treated as
+fixed here.
+
+Note this is a strictly stronger statement than §11.8.5's existing $\delta$-injectivity
+measurement, which records that $\delta$ collides but does not identify the $\delta = 0$
+preimage as a class on which the construction's entire claimed non-linearity vanishes.
+
+---

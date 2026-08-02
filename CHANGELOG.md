@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.139] - 2026-08-02
+
+### Added
+- **`SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py`** — TODO #159's second
+  stress-testing pass, covering the two targets the first pass did not reach
+  (HFSCX-256-DM's compression, NL-FSCX v2's CSP construction). Framed around the question
+  the shared structure suggests: both NL-FSCX variants buy their non-linearity solely from
+  a modular addition's carry chain, so for which inputs does the addition stop producing
+  carries? Written up in `SecurityProofs-2.md` §11.19.
+- **TODO #168** filed: reject NL-FSCX v2 affine weak keys.
+
+### Changed
+- **HFSCX-256-DM: the Davies-Meyer feed-forward shown to be load-bearing (§11.19.1).**
+  With an all-zero message block, A + 0 has no carries, so the DM inner function
+  degenerates to the GF(2)-linear map L^(n/4) with L = 1 + X + X^(n/4) + X^(n-1) over
+  GF(2)[X]/(X^n + 1) -- of rank exactly n/2, i.e. at the deployed n=256 it compresses the
+  256-bit chaining value 2^128-to-1. The feed-forward is precisely what rescues it: over
+  GF(2), X^n + 1 = (X+1)^n, so with Y = X+1 the ring is local, L = Y^2 * u for a unit u,
+  and L^(n/4) + 1 has constant term 1 -- a unit, hence invertible. Verified full rank at
+  n in {16, 32, 64, 128, 256}. No weakness; §11.9.8 previously credited DM with handling
+  F_1's non-bijectivity only in general terms.
+
+### Security
+- **NL-FSCX v2 affine weak-key class identified (§11.19.2, TODO #168).** delta(K) enters
+  as an additive constant, and constant addition is GF(2)-affine for every input exactly
+  when the constant is 0 or 2^(n-1) (the top carry is discarded mod 2^n). Since M is
+  invertible at every power-of-two n, this gives the exact characterisation
+  "pi_K is affine <=> delta(K) in {0, 2^(n-1)}", verified exhaustively at n=8 and n=16.
+  Such keys exist at the deployed size: every K divisible by 2^129 gives delta(K)=0
+  (2^127 keys of 2^256), and K=2^96 gives delta(K)=2^255. For any of them HSKE-NL-A2 and
+  HPKE-NL collapse to an affine map recoverable from a handful of known plaintexts by
+  linear algebra. Class density is about 2^-129, so a uniformly random key is NOT at risk
+  and this is not a break of the deployed construction -- but it is an unrejected
+  weak-key class, and the guard costs one line. Filed as TODO #168 rather than fixed
+  here, per TODO #159 work item 3.
+
 ## [1.9.138] - 2026-08-02
 
 ### Added
