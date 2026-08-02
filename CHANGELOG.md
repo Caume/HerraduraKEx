@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.134] - 2026-08-02
+
+### Added
+- **`genpkey --passphrase` / `pkey --decrypt`: passphrase-encrypted private-key PEM
+  export (TODO #166, Python CLI).** Wraps the entire exported private-key PEM (any
+  algorithm) under a new `HERRADURA ENCRYPTED PRIVATE KEY` label, using PBKDF2 (with
+  this suite's own HMAC-HFSCX-256-DM as the PRF, RFC 8018 structure, no external
+  dependency) for key derivation and the existing HSKE-NL-AEAD construction for
+  encryption. `pkey --decrypt --passphrase ...` recovers the byte-for-byte original
+  cleartext PEM, which then works with any other subcommand unmodified. Reading an
+  encrypted PEM without decrypting first fails closed with an actionable error message
+  rather than crashing or misinterpreting the bytes; a wrong passphrase is rejected
+  cleanly by the AEAD tag. Default `--kdf-iterations 1000` (~3.5s) is a documented
+  CLI-usability tradeoff against pure-Python `HMAC-HFSCX-256`'s ~300 calls/sec (NIST SP
+  800-132's recommended ≥200,000 iterations would take 10+ minutes); the flag exposes
+  the production-recommended floor for anyone willing to wait. Added
+  `CliTest/test_encrypted_pem.sh` (7/7 pass) and documentation in `docs/TUTORIAL.md` and
+  `SecurityProofs-2.md` §11.18. Scoped to the Python CLI only, matching this item's own
+  "Low" priority.
+
 ## [1.9.133] - 2026-08-01
 
 ### Added

@@ -147,6 +147,18 @@ _HYBRID_COMBINE_DS  = 0x05   # hfscx_256_ds tag for the hybrid key combiner (§1
 # TODO #165: SP 800-227-style context-bound KDF for plain (non-hybrid) HKEX-RNL
 _RNL_SP800227_DS    = 0x06   # hfscx_256_ds tag for --kdf sp800227
 
+# TODO #166: optional passphrase-based encryption for exported private-key PEM files
+_LABEL_ENC_PRIV       = 'HERRADURA ENCRYPTED PRIVATE KEY'
+_PBKDF2_SALT_BYTES    = 16
+# NIST SP 800-132 guidance recommends >=200,000 PBKDF2 iterations as of 2026 — but a
+# pure-Python HFSCX-256 call runs at only ~300/sec (~3ms each), so 200,000 would take
+# roughly 10-12 minutes per genpkey/decrypt call. Demo default is deliberately much
+# lower for CLI responsiveness; --kdf-iterations lets a caller opt into the SP 800-132
+# floor (or higher) at the cost of a multi-minute wait, matching this repo's existing
+# demo-vs-production-parameter pattern (e.g. Stern-F rounds=32 demo / 219 production).
+_PBKDF2_HFSCX256_ITER_DEMO = 1_000
+_PBKDF2_HFSCX256_ITER_PROD = 200_000
+
 _ZKP_NL_ALGOS      = {'hpks-zkp-nl'}
 _ZKP_CLI_ROUNDS    = _ZKP_NL_PROD_ROUNDS   # CLI default: full 128-bit soundness
 
@@ -186,6 +198,79 @@ def _read_pem(path):
 def _read_pem_ints(path):
     label, der = _read_pem(path)
     return label, der_parse_seq(der)
+
+
+# ---------------------------------------------------------------------------
+# TODO #166: optional passphrase-based encryption for exported private keys
+# ---------------------------------------------------------------------------
+
+def _pbkdf2_hfscx256(password: bytes, salt: bytes, iterations: int,
+                     dklen: int = 32) -> bytes:
+    """PBKDF2 (RFC 8018) using HMAC-HFSCX-256-DM as the underlying PRF.
+
+    This suite has no PBKDF2/Argon2-class password KDF, so rather than invent an
+    unreviewed bespoke construction, this follows PBKDF2's well-studied iterated-PRF
+    structure exactly, swapping in the suite's own already-implemented HMAC-HFSCX-256
+    (§11.9.6) in place of HMAC-SHA256 — self-contained (no external dependency) while
+    keeping the KDF itself a standard, analyzed shape. Only single-block output
+    (dklen == 32, the PRF's native output size) is needed here.
+    """
+    if dklen != 32:
+        raise ValueError("_pbkdf2_hfscx256 only supports dklen=32 (single PRF block)")
+    # HMAC-HFSCX-256 requires an exactly-32-byte key; hash an arbitrary-length
+    # password down first, matching standard HMAC over-length-key handling.
+    key = hfscx_256(password)
+    u = hmac_hfscx_256(key, salt + (1).to_bytes(4, 'big'))
+    t = bytearray(u)
+    for _ in range(iterations - 1):
+        u = hmac_hfscx_256(key, u)
+        for j in range(32):
+            t[j] ^= u[j]
+    return bytes(t)
+
+
+def _encrypt_pem(pem_text: str, passphrase: str,
+                 iterations: int = _PBKDF2_HFSCX256_ITER_DEMO) -> str:
+    """Wrap an existing (cleartext) PEM's exact bytes in an AEAD-encrypted envelope.
+
+    Encrypts the whole PEM text (any algorithm) as opaque bytes under a
+    PBKDF2-HFSCX256-derived key, using the existing HSKE-NL-AEAD construction
+    (already implemented and tested for encfile/decfile). Recovering the passphrase
+    yields the byte-for-byte original PEM, so this composes with every existing
+    command that consumes a private-key PEM — decrypt first, then feed the result
+    to any other subcommand unmodified.
+    """
+    salt = os.urandom(_PBKDF2_SALT_BYTES)
+    key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
+    key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))
+    pt = pem_text.encode('utf-8')
+    nonce, ct, tag = hske_nl_aead_encrypt(key, pt)
+    der = der_seq(der_int(int.from_bytes(salt, 'big'), _PBKDF2_SALT_BYTES),
+                  der_int(iterations),
+                  der_int(nonce.uint, KEYBITS // 8),
+                  der_int(int.from_bytes(ct, 'big'), max(1, len(ct))),
+                  der_int(int.from_bytes(tag, 'big'), 32),
+                  der_int(len(pt)))
+    return pem_wrap(_LABEL_ENC_PRIV, der)
+
+
+def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
+    """Inverse of `_encrypt_pem`. Raises ValueError on a wrong passphrase or a
+    corrupted/tampered envelope (AEAD tag mismatch) — never returns garbage."""
+    label, der = pem_unwrap(enc_pem_text)
+    if label != _LABEL_ENC_PRIV:
+        raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
+    salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = der_parse_seq(der)
+    salt = salt_int.to_bytes(_PBKDF2_SALT_BYTES, 'big')
+    ct   = ct_int.to_bytes(pt_len, 'big') if pt_len else b''
+    tag  = tag_int.to_bytes(32, 'big')
+    key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
+    key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))
+    nonce = BitArray(KEYBITS, nonce_int)
+    pt = hske_nl_aead_decrypt(key, nonce, ct, tag)
+    if pt is None:
+        raise ValueError("wrong passphrase or corrupted/tampered file")
+    return pt.decode('utf-8')
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +602,11 @@ def _decode_privkey(path):
     """
     raw = _read_file(path).decode('ascii')
     label, _ = pem_unwrap(raw)
+    if label == _LABEL_ENC_PRIV:
+        raise ValueError(
+            f"{path!r} is a passphrase-encrypted private key (TODO #166) — "
+            f"decrypt it first with: pkey --decrypt --in {path} --passphrase ... --out plain.pem"
+        )
     if label == _PRIV_ALGOS.get('hpks-zkp-nl'):
         A, B, y, n = decode_zkp_nl_privkey(raw)
         return 'hpks-zkp-nl', (A, B, y, n)
@@ -1175,6 +1265,11 @@ def cmd_genpkey(args):
     else:
         sys.exit(f"Unknown algorithm: {algo!r}")
 
+    passphrase = getattr(args, 'passphrase', None)
+    if passphrase:
+        iterations = getattr(args, 'kdf_iterations', _PBKDF2_HFSCX256_ITER_DEMO)
+        pem_out = _encrypt_pem(pem_out, passphrase, iterations)
+
     _write_file(args.out or '-', pem_out)
 
 
@@ -1184,6 +1279,22 @@ def cmd_genpkey(args):
 
 def cmd_pkey(args):
     in_path = getattr(args, 'in')
+
+    if getattr(args, 'decrypt', False):
+        # TODO #166: recover the original cleartext PEM (any algorithm) from a
+        # passphrase-encrypted envelope. The result is byte-for-byte the original
+        # PEM, so it can be fed to any other subcommand unmodified.
+        passphrase = args.passphrase
+        if not passphrase:
+            sys.exit("pkey --decrypt: --passphrase required")
+        enc_text = _read_file(in_path).decode('ascii')
+        try:
+            plain_pem = _decrypt_pem(enc_text, passphrase)
+        except ValueError as e:
+            sys.exit(f"pkey --decrypt: {e}")
+        _write_file(args.out or '-', plain_pem)
+        return
+
     algo, ints = _decode_privkey(in_path)
 
     if args.pubout:
@@ -2536,12 +2647,26 @@ def build_parser():
     gp.add_argument('--xmss-height', type=int, default=10, dest='xmss_height',
                     help='XMSS tree height (default 10 → 1024 leaves)')
     gp.add_argument('--out', default='-')
+    gp.add_argument('--passphrase', default=None,
+                    help='Encrypt the exported private key PEM under this passphrase '
+                         '(TODO #166; PBKDF2-HFSCX256 + HSKE-NL-AEAD). Omit for the '
+                         'existing cleartext behavior.')
+    gp.add_argument('--kdf-iterations', type=int, default=_PBKDF2_HFSCX256_ITER_DEMO,
+                    help=f'PBKDF2-HFSCX256 iteration count for --passphrase (default '
+                         f'{_PBKDF2_HFSCX256_ITER_DEMO}, demo-speed; NIST SP 800-132 '
+                         f'recommends >={_PBKDF2_HFSCX256_ITER_PROD}, which takes '
+                         f'several minutes in this pure-Python CLI).')
 
     # pkey
     pk = sub.add_parser('pkey', help='Display or extract a key')
     pk.add_argument('--in', required=True, dest='in')
     pk.add_argument('--pubout', action='store_true')
     pk.add_argument('--text',   action='store_true')
+    pk.add_argument('--decrypt', action='store_true',
+                    help='Decrypt a --passphrase-protected private key PEM (TODO #166) '
+                         'back to cleartext; requires --passphrase.')
+    pk.add_argument('--passphrase', default=None,
+                    help='Passphrase for --decrypt.')
     pk.add_argument('--out', default='-')
 
     # kex

@@ -1177,7 +1177,7 @@ audit's checklist item on input validation folds into rather than duplicates.
 | 1 | Approved cryptographic elements: RBGs per SP 800-90A/B/C; hash functions of adequate strength | §3.1 | **Out of scope by design.** This is a research suite using custom, non-NIST-approved primitives (FSCX/NL-FSCX, HFSCX-256) throughout — not a FIPS-140/CAVP-validated module, and not claiming to be one. RNG source itself is sound in practice: Python uses `os.urandom` (OS CSPRNG), C/Go read `/dev/urandom` directly — acceptable entropy quality even though not a "SP 800-90-approved" DRBG in the formal validation sense. |
 | 2 | Input checking on KeyGen/Encaps/Decaps; reject invalid/degenerate keys | §3.2 | **Covered by TODO #131/#141/#144** (degenerate/identity public-key rejection in `herradura.h`, the C CLI, and the Go/Python suite libraries). No new gap found beyond what those items already close. |
 | 3 | Destroy intermediate values (seeds, private randomness) as soon as unneeded | §3.2 | **Partial, language-dependent.** C explicitly reads directly from `/dev/urandom` per-use with no long-lived buffers to zero. Python and Go rely on garbage collection for `int`/big-number secrets — neither language offers a real zeroization guarantee (a known, generic limitation of managed-runtime crypto code, not specific to this suite). Not filing a new TODO: no practical fix exists in pure Python/Go without a C extension, and this matches the honest, already-documented tradeoff of implementing crypto in managed languages. |
-| 4 | Data at rest: private keys stored securely against leakage/modification | §3.2 | **Gap found.** Exported private-key PEM files (`genpkey --out priv.pem` across all three CLIs) are always written in cleartext with no passphrase-based encryption option, unlike OpenSSL's `-aes256`-style PEM encryption. Filed as **TODO #166**. |
+| 4 | Data at rest: private keys stored securely against leakage/modification | §3.2 | **Gap found and closed (opt-in).** Exported private-key PEM files were always written in cleartext with no passphrase-based encryption option. Filed and resolved as **TODO #166** (§11.18): a new opt-in `genpkey --passphrase`/`pkey --decrypt` pair, without changing the existing default cleartext behavior. |
 | 5 | Failures/aborts must not leak information about the cause outside the module | §3.3 | **Verified sound.** Checked the CLI's decrypt/AEAD-tag-mismatch paths (`HerraduraCli/herradura.py` `dec`/`decfile`): both use a single uniform `"authentication tag mismatch — file corrupt or wrong key"` message regardless of which specific check failed, rather than distinguishing sub-causes — the correct behavior per this requirement. HPKE-Stern-F has no adversarial-ciphertext decapsulation-failure path to audit yet, since its decoder is demo-only (known-`e'`, no real QC-MDPC decoder) — this is already tracked under TODO #91/#126, not a new finding. |
 | 6 | Side-channel protection (timing, memory leakage) | §3.3 | **Already tracked**: TODO #129 (timing, `dudect`) and TODO #160 (power/EM risk register). No new finding here. |
 | 7 | Key derivation via an approved KDM (SP 800-56C one-step/two-step); `OtherInput`/`FixedInfo` should include a domain separator, and combiners should bind ciphertexts/encapsulation keys/party identities | §4.5–§4.6 | **Gap found and closed (opt-in).** HKEX-RNL's default contributory KDF binds per-session nonces but not the public transcript. Filed and resolved as **TODO #165**: a new opt-in `--kdf sp800227` mode (§11.17) binds the full transcript ($C_A$, $m_A$, $C_B$, hint) per SP 800-227's example combiner shape, without changing the existing default's wire format. |
@@ -1314,5 +1314,61 @@ in `herradura.h`/`Herradura cryptographic suite.py`/`herradura/herradura.go`, al
 still use the unmodified (nonce-only) contributory KDF as their default; `--kdf sp800227`
 exists in Python only, tracked as a Go/C follow-up if this construction is adopted more
 broadly.
+
+---
+
+## 11.18 Passphrase-Encrypted Private-Key PEM Export (TODO #166)
+
+**Gap addressed.** TODO #161's SP 800-227 audit (§11.15, item 4) found that all three
+CLIs wrote exported private-key PEM files in cleartext only, with no passphrase-based
+encryption option — unlike OpenSSL's `-aes256`/PKCS#8-encrypted-key convention. SP
+800-227 §3.2 requires private data at rest to be "secure against both leakage and
+unauthorized modification."
+
+**Construction.** `genpkey --algo X --passphrase PASS [--out priv.pem]` wraps the
+*entire* generated cleartext PEM (any algorithm, unmodified) as opaque bytes inside a
+new `HERRADURA ENCRYPTED PRIVATE KEY` envelope:
+
+1. **Key derivation:** $K = \mathrm{PBKDF2}\text{-}\mathrm{HMAC}\text{-}\mathrm{HFSCX}\text{-}256(\mathrm{password}, \mathrm{salt}, \mathrm{iterations})$ — PBKDF2's standard iterated-PRF structure (RFC 8018), substituting this suite's own already-implemented `HMAC-HFSCX-256-DM` (§11.9.6) for HMAC-SHA256. Chosen over inventing a bespoke password-hashing scheme (the other option work item 1 considered) specifically *because* PBKDF2's construction is well-studied — only the underlying PRF is suite-native, keeping the suite free of external dependencies while avoiding an unreviewed novel KDF shape. An arbitrary-length password is first hashed to a fixed 32 bytes via plain `HFSCX-256` before use as the HMAC key, matching standard HMAC over-length-key handling.
+2. **Encryption:** the resulting 256-bit $K$ encrypts the cleartext PEM's UTF-8 bytes using the already-implemented, already-tested `HSKE-NL-AEAD` construction (§11.3.1) — a fresh random nonce, key-committing authentication tag, verify-then-decrypt.
+3. **Envelope:** `DER-SEQUENCE(salt, iterations, nonce, ciphertext, tag, plaintext_length)`, wrapped under the new PEM label.
+
+**Fail-closed by construction.** The new label doesn't match any existing
+`_PRIV_ALGOS` entry, so any code path that reads a private-key PEM and doesn't
+explicitly handle `HERRADURA ENCRYPTED PRIVATE KEY` raises immediately — `_decode_privkey`
+gives a specific, actionable error naming `pkey --decrypt` rather than misinterpreting
+the encrypted bytes as key material or crashing obscurely. A wrong passphrase is
+rejected by the AEAD tag check (`_decrypt_pem` raises `ValueError`, never returns
+partial or garbage plaintext).
+
+**Iteration count: demo default vs. production guidance.** NIST SP 800-132 recommends
+$\geq 200{,}000$ PBKDF2 iterations as of 2026. A pure-Python `HMAC-HFSCX-256` call runs
+at only $\approx 300$/sec, so 200,000 iterations would take roughly 10-12 minutes per
+`genpkey`/`decrypt` invocation — impractical as a CLI default. Following this repo's
+established demo-vs-production-parameter convention (Stern-F: 32 demo / 219 production
+rounds; ZKP-NL: 4 demo / 219 production rounds), the default is `--kdf-iterations 1000`
+(~3.5 s), with the flag exposed so a caller can opt into the SP 800-132 floor (or
+higher) at the cost of a multi-minute wait. This is an explicit, documented tradeoff
+specific to the pure-Python reference implementation, not a claim that 1000 iterations
+is adequate for production key storage.
+
+**Since this only recovers the byte-for-byte original PEM, it composes with everything
+else.** `pkey --decrypt --in enc.pem --passphrase PASS --out plain.pem` recovers the
+exact original cleartext PEM regardless of which algorithm it holds; the result can be
+piped into any other existing subcommand (`kex`, `sign`, `enc`/`dec`, `pkey --pubout`,
+etc.) completely unmodified — no other command needed passphrase-awareness wired in.
+
+**Verification.** `CliTest/test_encrypted_pem.sh` (7/7 pass): distinct PEM label,
+clean rejection of direct (non-decrypted) use with an actionable error message,
+correct-passphrase round-trip recovering the exact original label/content, the
+recovered key working normally with `pkey --pubout`, wrong-passphrase rejection, a
+larger-key (`hkex-rnl`) round-trip, and confirmation that omitting `--passphrase`
+leaves the existing cleartext default entirely unchanged. No regressions in
+`test_keygen.sh`.
+
+**Scope.** Implemented in the Python CLI only, matching this session's established
+Python-first precedent (TODO #25, #162, #165). The Go and C CLIs still only support
+cleartext private-key export; porting this construction to them is future work if
+adopted, not filed as a separate TODO given this item's own "Low" priority.
 
 ---

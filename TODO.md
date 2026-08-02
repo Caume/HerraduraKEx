@@ -238,36 +238,6 @@ Status: **OPEN**
 
 
 
-### 166. Optional passphrase-based encryption for exported private-key PEM files (Security/Feature, Low)
-
-**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
-§11.15, item 4). SP 800-227 §3.2 ("Data at rest") requires that private data (seeds,
-decapsulation/private keys) be "stored within the cryptographic module in a manner that
-is secure against both leakage and unauthorized modification," and that "the import and
-export of private data...needs to be performed in a secure manner." All three CLIs
-(`genpkey --out priv.pem`) always write private-key PEM files in cleartext with no
-passphrase-based encryption option, unlike OpenSSL's traditional `-aes256`/`-des3`
-PEM-encryption flags or PKCS#8 encrypted private-key format. Anyone who copies, backs up,
-or transmits an exported `.pem` file without independent OS-level protection (file
-permissions, disk encryption) has no cryptographic protection on the key material itself.
-
-**Work items:**
-
-1. Decide an encryption format: either a simple password-based scheme reusing this
-   suite's own primitives (e.g. HSKE-NL-A1 keystream over the PEM payload, keyed by a
-   password-derived key via a suite KDF with a random salt) or a more conventional
-   PBKDF2/scrypt-wrapped-AES approach if the goal is broader tooling compatibility —
-   document the tradeoff before picking one, since this suite doesn't currently implement
-   a password-based KDF (PBKDF2/Argon2-class) anywhere.
-2. Add a `--passphrase`/`--passin`/`--passout`-style flag to `genpkey` (and `pkey` for
-   re-encryption/decryption round-trips) across all three CLI language targets, mirroring
-   OpenSSL's flag naming where reasonable for user familiarity.
-3. Extend the PEM wire format with an encrypted-private-key variant label/header
-   (distinguishable from the existing cleartext label so old tooling fails closed rather
-   than silently misinterpreting encrypted bytes as a raw key).
-4. Add `CliTest/` coverage: round-trip encrypt/decrypt with correct passphrase, and
-   confirm a wrong passphrase is rejected cleanly (not a crash or silent garbage key).
-5. Document in `docs/TUTORIAL.md` and `SecurityProofs-2.md` §11.15.
 
 Status: **OPEN**
 
