@@ -14,57 +14,6 @@ differential analysis of NL-FSCX, QC-MDPC decoder trapdoors, and hybrid Ring-LWR
 credentials were already tracked as #41/#75/#83/#123/#125/#126/#128/#129 and are not
 re-opened).
 
-### 156. Re-derive Stern-F/QC-MDPC security margins against 2025-2026 information-set-decoding improvements (Research/Security, Medium)
-
-**Background:** Two ISD advances published in the review window potentially shift the
-parameter margins TODO #91 and #126 already track:
-
-- An improved Both-May algorithm with more efficient time-memory trade-offs than prior
-  ISD variants (Both-May-style ISD, 2025;
-  https://link.springer.com/content/pdf/10.1007/978-3-031-86599-2_4.pdf?pdf=inline+link).
-- 2026 research on whether extension-field structure can further speed up ISD solvers for
-  the syndrome decoding problem underlying most code-based schemes
-  (https://link.springer.com/article/10.1007/s12095-025-00857-9).
-
-`HPKS-Stern-F`/`HPKE-Stern-F`'s $N=256$ demo parameters are already documented (README,
-TODO #91) as providing only ~30-40 bits of security, with $N \geq 17000$ named as the
-128-bit-security production target. That $N \geq 17000$ figure was derived against the
-ISD state of the art at the time it was set; if either 2025-2026 ISD improvement reduces
-the bit-security of a fixed $(N, t)$ pair, the production-target $N$ named in TODO #91/
-`SecurityProofs-2.md` may now be understated, and `SDF_PRODUCTION_ROUNDS`'s soundness
-target (referenced by `herradura.h`'s own build-time `#pragma message` in TODO #142)
-should be re-checked against it too.
-
-**Work items:**
-
-1. Read both papers in full and extract their concrete complexity-exponent improvements
-   over classical Prange/Stern/Dumer ISD (not just the abstract's headline numbers).
-2. Re-run or adapt `SecurityProofsCode`'s existing Stern-F parameter-selection reasoning
-   (wherever $N \geq 17000$ was derived — check `SecurityProofs-2.md` §11.x and TODO #91)
-   with the improved ISD cost model plugged in, for both the classical bit-security
-   estimate and any assumed quantum speedup.
-3. If the required $N$ for 128-bit security changes materially, update
-   `SecurityProofs-2.md`, TODO #91's own text, README's parameter table, and
-   `spec/herradura-protocol-spec.json`'s security-level classification for the Stern-F
-   protocols accordingly.
-4. Cross-check whether the same ISD improvements affect TODO #126's QC-MDPC/Niederreiter
-   decoding-trapdoor scoping (HPKE-Stern-F's KEM side uses the same underlying SD
-   assumption family).
-
-**Progress (2026-07-31):** `SecurityProofs-2.md` §11.8.4 now documents both papers.
-The Elbro-Weger extension-field paper (eprint 2025/1402, fully reviewed) is a clean
-negative result — extension-field structure does not speed up ISD, and doesn't apply
-to HPKS-Stern-F/HPKE-Stern-F's plain-$\mathrm{GF}(2)$ construction anyway, so it does
-not move the $N \geq 17000$ target. The Furue-Aikawa Both-May paper (PQCrypto 2025) sits
-behind a Springer paywall; only its abstract-level framing ("more efficient
-time-memory trade-offs", not a lower time exponent) could be confirmed, so work items
-1–2 remain unresolved for that paper specifically — the concrete exponent improvement
-was never extracted or plugged into the SDE worksheet. TODO #126's QC-MDPC parameters
-are unaffected by either finding (item 4 is otherwise complete). Re-open work items 1–2
-if full-text access to the Both-May paper becomes available.
-
-Status: **OPEN**
-
 ### 157. Re-evaluate HKEX-RNL's CBD($\eta=1$) secret distribution against the 2026 sparse-secret hybrid-decoding attack on Ring-LWE/Ring-LWR (Research/Security, Medium)
 
 **Background:** "Careful with the Ring: Enhanced Hybrid Decoding Attacks against
