@@ -683,29 +683,80 @@ it contributes probability $1$ to every RX-differential trail regardless of the
 XOR-difference component — all probability mass in an NL-FSCX v1 round comes from the
 $\mathrm{ROL}((A+B) \bmod 2^n, n/4)$ modular-addition term, which is exactly the kind of
 object the paper's addition-specific propagation rules describe. The paper's full text
-is paywalled beyond its abstract, so its exact CNF encoding could not be reproduced; TODO
-#75/#125 above only characterised the **pure-rotational** slice of RX-difference space
-(zero XOR component) via power-law decay, leaving open whether a nonzero-XOR RX-difference
-gives a higher single-round transition probability.
+is paywalled beyond its abstract, so its exact CNF encoding could not be reproduced.
 
-`SecurityProofsCode/nl_fscx_rx_differential_2025.py` runs a bounded, non-exhaustive
-stand-in for that search: Monte Carlo-evaluated hill-climbing over $(da, db)$ at fixed
-rotation $k$, for $n \in \{16, 32\}$ and $k \in \{1, n/4\}$, comparing the best found
-single-round transition probability against the $da = db = 0$ baseline. Empirically, no
-configuration found a materially higher probability than the pure-rotational baseline
-(e.g. $n=32, k=8$: baseline $0.252$ vs. hill-climbed best $0.254$) — differences are
-within the noise of the $20{,}000$-trial Monte Carlo estimate, not a genuine improvement.
-This gives **no evidence** that a nonzero RX-difference beats the already-characterised
-pure-rotational trail for NL-FSCX v1's addition step, consistent with TODO #75/#125's
-conclusions standing unrevised.
+**Reproducing it proved unnecessary.**  For NL-FSCX v1 the RX-difference search space
+collapses far enough to be solved *exactly*, which is strictly stronger than any
+heuristic SAT/SMT trail search the paper could run.
+`SecurityProofsCode/nl_fscx_rx_exact_search.py` carries this out and supersedes the
+earlier Monte-Carlo hill-climbing stand-in (`nl_fscx_rx_differential_2025.py`), whose
+estimates were within sampling noise and covered only single-round transitions.
 
-**Caveats.** This is local hill-climbing, not the paper's exhaustive SAT search — it
-cannot rule out a better trail outside its search neighborhood, and only checks
-single-round transitions rather than chained multi-round trails (the paper's stated
-advantage is specifically multi-round). Reproducing the paper's actual CNF/SAT encoding
-(behind its own SPECK/CHAM-specific propagation rules, adapted here for modular addition
-under an RX-difference model) would be needed to close this gap fully; that is deferred
-as future work rather than attempted here given the paywalled full text.
+*Reduction.*  Write the RX-relation with rotation offset $\gamma$ as $\bar{A} =
+\mathrm{ROTL}(A,\gamma) \oplus da$ and $\bar{B} = \mathrm{ROTL}(B,\gamma) \oplus db$, and
+put $dS = (\bar{A} + \bar{B}) \oplus \mathrm{ROTL}(A+B, \gamma)$.  Then the round's output
+RX-difference is exactly
+
+$$dY = M(da) \oplus M(db) \oplus \mathrm{ROL}(dS, n/4)$$
+
+verified over 4000 random $(n, \gamma, da, db, A, B)$ against the deployed round function.
+So $M$ contributes probability $1$, $dY$ is a *bijection* of $dS$, and the whole search
+space is the RX-differential of modular addition — no trail branching survives the linear
+layer at all.
+
+*Exact solver.*  Matching bit $i$ of the barred sum against bit $j = (i-\gamma) \bmod n$
+of the rotated unbarred sum gives, at every position, $\bar{c}_i \oplus c_j = da_i \oplus
+db_i \oplus dS_i$ for the two addition carry chains.  Hence $dS$ is fully determined by
+the carry pair, and an $O(n)$ dynamic program over states $(c_j, \bar{c}_i)$ computes the
+exact distribution (the unbarred chain wraps, so its entering carry is guessed and checked
+for consistency).  Validated against brute force over all $2^{2n}$ pairs at $n=8$: **0
+mismatches**.
+
+*Certified single-round optimum.*  Exhaustively enumerating **every** $(da, db, dS)$ and
+every $\gamma$ at $n=8$ — a certified optimum, not a sampled one — the best characteristic
+is $(da, db, dS) = (0,0,0)$ for all $\gamma$, i.e. exactly the pure-rotational slice
+TODO #75/#125 already measured:
+
+| $\gamma$ | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|
+| optimal $p$ | $0.3779$ | $0.3174$ | $0.2900$ | $0.2822$ | $0.2900$ | $0.3174$ | $0.3779$ |
+
+The probability is symmetric under $\gamma \mapsto n-\gamma$, is maximised at $\gamma=1$,
+and decreases toward $1/4$ at $\gamma = n/2$.  At $\gamma=1$ it converges to $3/8 =
+2^{-1.415}$ as $n$ grows ($0.37793$ at $n=8$, $0.37501$ at $n=16$) — reproducing the
+classical rotational probability of modular addition, an independent check on the solver.
+**The open question this item posed is therefore answered in the negative: no nonzero-XOR
+RX-difference beats the pure-rotational one.**
+
+*Multi-round.*  Building the full $2^n$-state transition graph and running a max-product
+DP over rounds (with $B$ held constant, as in `nl_fscx_revolve_v1`) gives the optimal
+$r$-round trail — the chained analysis the earlier stand-in could not perform.  For
+$db=0$ the optimum is again exactly the pure-rotational trail, decaying geometrically at
+$2^{-1.40}$ per round; nonzero $db$ is strictly worse.
+
+*The trail methodology is not tight here.*  Comparing that trail estimate against $p$
+measured **exactly** over all $2^{2n}$ pairs at $n=8$, $\gamma=1$:
+
+| $r$ | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| exact $p$ | $0.3779$ | $0.2134$ | $0.1463$ | $0.1156$ | $0.0999$ | $0.0915$ |
+| trail estimate | $0.3779$ | $0.1428$ | $0.0540$ | $0.0204$ | $0.0077$ | $0.0029$ |
+| understated by | $1.0\times$ | $1.5\times$ | $2.7\times$ | $5.7\times$ | $13\times$ | $31\times$ |
+
+The Markov/round-independence assumption underpinning *all* trail search — the paper's
+methodology included — understates the true probability by a factor that grows without
+bound, because $B$ is reused every round and successive rounds are strongly dependent.
+This is the structural reason TODO #75/#125 found power-law rather than geometric decay.
+Trail search therefore cannot be the binding analysis for NL-FSCX v1: it produces a bound
+that is not merely loose but increasingly so, and the **direct measurement** of
+TODO #75/#125 remains the operative characterisation.
+
+*Corroboration at $n=16$.*  An exact sweep over all $(da, db)$ of Hamming weight
+$\leq 2$ at $\gamma=1$ again finds the pure-rotational baseline optimal ($0.375011$,
+matched but never beaten), and the same Markov gap appears — sampled $p$ against the
+trail estimate runs $1.0\times$, $1.5\times$, $2.7\times$, $5.4\times$, $11.7\times$,
+$26.4\times$ over rounds 1–6.  Neither conclusion is an artefact of the small $n=8$
+instance where exhaustive certification is affordable.
 
 *HFSCX-256-DM impact (Q3).*  For the compression function $C_{\text{DM}}(s,m) = F_{1}^{2n}(s, m) \oplus s$ with adversarially sparse message blocks $\text{wt}(m) \in \{1,2,4\}$: the **one-sided** rate in the chaining value $s$ remains $\approx 0$ ($\leq 4 \times 10^{-5}$ at $r = 64$), so a sparse message alone gives no rotational distinguisher — the per-call PRF safety of §5 is weight-independent.  The **two-sided** related-message rate (attacker submits both $m$ and $\mathrm{ROL}(m,k)$ with rotated chaining values) is *not* suppressed by iteration: $0.77$ at $\text{wt}(m) = 1$, $r = 64$, $k = 1$ (versus $0.86$ at $r = 8$), consistent with the §3 power law.  This is unrealisable against the Merkle-Damgård chain itself because the attacker does not control $s$ — the fixed IV breaks the required $s \to \mathrm{ROL}(s,k)$ alignment at the first block — but it is a documented related-message property: any future mode that lets an attacker align rotated chaining values with rotated sparse messages inherits a high-probability rotational distinguisher.
 

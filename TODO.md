@@ -14,56 +14,6 @@ differential analysis of NL-FSCX, QC-MDPC decoder trapdoors, and hybrid Ring-LWR
 credentials were already tracked as #41/#75/#83/#123/#125/#126/#128/#129 and are not
 re-opened).
 
-### 158. Apply the 2025 automated rotational-XOR differential search framework to FSCX/NL-FSCX (Research, Medium)
-
-**Background:** A 2025 paper proposes an automatic search framework for
-rotational-XOR (RX) differential characteristics in ARX ciphers
-(https://link.springer.com/article/10.1007/s10623-025-01571-6), reporting characteristics
-covering more rounds than previously known for SPECK, CHAM, SPARX, and Ballet (e.g.
-17-24 round RX-differentials for SPECK variants, versus a prior best of 13 rounds).
-
-TODO #75 (`Formal rotational differential analysis of NL-FSCX v1`) and TODO #125
-(`Sparse-input rotational differential characterization of NL-FSCX v1 at large n`) are
-already `DONE`/tracked in `TODO_DONE.md` and cover rotational analysis of FSCX/NL-FSCX,
-but both predate this specific 2025 automated-search tool. FSCX's core operator
-$M = I \oplus \text{ROL} \oplus \text{ROR}$ is XOR-and-rotation (not full ARX — it has no
-modular addition), so the framework's addition-centric technique doesn't transfer
-directly, but its automated RX-characteristic-search *methodology* (as opposed to the
-addition-specific propagation rules) may still surface longer characteristics than the
-manual/semi-automated analysis TODO #75/#125 used, especially for NL-FSCX v1/v2 where the
-non-linear step reintroduces addition-like mixing.
-
-**Work items:**
-
-1. Read the paper closely to separate its ARX-modular-addition-specific propagation
-   rules from its general RX-characteristic search methodology (SAT/SMT or MILP-based
-   search, if that's what it uses).
-2. Determine whether the general search methodology can be adapted to FSCX's pure
-   XOR-rotation operator and to NL-FSCX v1/v2's added non-linear step, reusing
-   `SecurityProofsCode/fscx_periodicity_z3.py`'s existing Z3-based approach as a starting
-   point if the tooling is compatible.
-3. If adaptable, run the search against FSCX_N and NL-FSCX v1/v2 at the suite's actual
-   parameter sizes and compare any newly found characteristics against TODO #75/#125's
-   prior bounds.
-4. Document results in `SecurityProofs-2.md` regardless of outcome, and add a
-   `SecurityProofsCode/` script if new characteristics are found (following the existing
-   naming convention, e.g. `nl_fscx_rx_differential_2025.py`).
-
-**Progress (2026-07-31):** paper's full text is paywalled beyond its abstract, so its
-exact CNF/SAT encoding couldn't be reproduced. Added
-`SecurityProofsCode/nl_fscx_rx_differential_2025.py`: a bounded, non-exhaustive
-hill-climbing stand-in that searches over nonzero-XOR RX-differences $(da,db)$ (not just
-the pure-rotation $da=db=0$ slice TODO #75/#125 already covered) for NL-FSCX v1's
-modular-addition step, since FSCX's XOR-rotation linear part transmits every RX-difference
-with probability 1 and contributes no search surface. Found no configuration with a
-materially higher single-round transition probability than the existing pure-rotational
-baseline at $n \in \{16,32\}$. Documented in `SecurityProofs-2.md` (end of the sparse-$B$
-subsection) with explicit caveats: this is local search, not exhaustive SAT, and only
-covers single-round (not chained multi-round) transitions. Stays **OPEN** — reproducing
-the paper's actual automated search is future work, deferred due to paywalled access.
-
-Status: **OPEN**
-
 ### 159. LLM/AI-assisted cryptanalysis stress-testing pass across HerraduraKEx's primitives (Research/Security, Medium)
 
 **Background:** In the review window, LLM-driven cryptanalysis moved from a research
@@ -125,13 +75,3 @@ The other two candidate targets from work item 1 (NL-FSCX v2's CSP-based constru
 HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for those two.
 
 Status: **OPEN**
-
-
-
-
-
-
-
-Status: **OPEN**
-
-

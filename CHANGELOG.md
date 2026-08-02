@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.138] - 2026-08-02
+
+### Added
+- **`SecurityProofsCode/nl_fscx_rx_exact_search.py`** — exact RX-differential search for
+  NL-FSCX v1 (TODO #158), superseding the Monte-Carlo hill-climbing stand-in in
+  `nl_fscx_rx_differential_2025.py`. Six sections: the round reduction, an O(n) carry DP
+  for the RX-differential of modular addition with brute-force validation, a certified
+  exhaustive single-round search at n=8, an exact optimal multi-round trail search, the
+  Markov-assumption error measurement, and n=16 corroboration.
+
+### Changed
+- **TODO #158 resolved: the pure-rotational characteristic is certified optimal, and
+  trail search is shown not to be the binding analysis for NL-FSCX v1.** The 2025
+  automated RX-differential search paper's full text is still paywalled, but reproducing
+  its CNF encoding proved unnecessary — the search space collapses far enough to solve
+  exactly, which is strictly stronger than a heuristic SAT/SMT search. Verified over 4000
+  random cases that dY = M(da) XOR M(db) XOR ROL(dS, n/4), so the FSCX linear layer
+  transmits every RX-difference with probability 1 and dY is a bijection of dS, reducing
+  the whole problem to the RX-differential of modular addition. An O(n) carry DP solves
+  that exactly (0 mismatches against brute force over all 2^2n pairs at n=8; reproduces
+  the classical 3/8 = 2^-1.415 rotational probability of modular addition as n grows).
+  Exhaustive enumeration of every (da, db, dS) and every gamma at n=8 shows the optimum
+  is always (0,0,0) — the pure-rotational slice TODO #75/#125 already measured — settling
+  the open question in the negative; corroborated at n=16 over all weight-<=2 differences.
+  A full 2^n-state max-product DP additionally gives the optimal multi-round trail (the
+  chained analysis the stand-in lacked), again pure-rotational for db=0. Most
+  significantly, the Markov/round-independence assumption underlying all trail search
+  understates the true probability by 1.0x, 1.5x, 2.7x, 5.7x, 13x, 31x over rounds 1-6
+  and diverges thereafter, because B is reused every round — the structural reason
+  TODO #75/#125 found power-law rather than geometric decay, and the reason trail search
+  cannot bound this primitive. No security-estimate revision results.
+
+### Fixed
+- Removed an orphan `Status: **OPEN**` block in `TODO.md` that belonged to no work item.
+
 ## [1.9.137] - 2026-08-02
 
 ### Added

@@ -8652,3 +8652,89 @@ work item 3's forward-reference to TODO #1 remains unnecessary. Written up in
 `SecurityProofs-2.md` §11.6.
 
 Status: **DONE v1.9.137** — sparse-secret hybrid attack shown inapplicable to CBD($\eta=1$) for any sparsity threshold; no security-estimate revision.
+
+### 158. Apply the 2025 automated rotational-XOR differential search framework to FSCX/NL-FSCX (Research, Medium)
+
+**Background:** A 2025 paper proposes an automatic search framework for
+rotational-XOR (RX) differential characteristics in ARX ciphers
+(https://link.springer.com/article/10.1007/s10623-025-01571-6), reporting characteristics
+covering more rounds than previously known for SPECK, CHAM, SPARX, and Ballet (e.g.
+17-24 round RX-differentials for SPECK variants, versus a prior best of 13 rounds).
+
+TODO #75 (`Formal rotational differential analysis of NL-FSCX v1`) and TODO #125
+(`Sparse-input rotational differential characterization of NL-FSCX v1 at large n`) are
+already `DONE`/tracked in `TODO_DONE.md` and cover rotational analysis of FSCX/NL-FSCX,
+but both predate this specific 2025 automated-search tool. FSCX's core operator
+$M = I \oplus \text{ROL} \oplus \text{ROR}$ is XOR-and-rotation (not full ARX — it has no
+modular addition), so the framework's addition-centric technique doesn't transfer
+directly, but its automated RX-characteristic-search *methodology* (as opposed to the
+addition-specific propagation rules) may still surface longer characteristics than the
+manual/semi-automated analysis TODO #75/#125 used, especially for NL-FSCX v1/v2 where the
+non-linear step reintroduces addition-like mixing.
+
+**Work items:**
+
+1. Read the paper closely to separate its ARX-modular-addition-specific propagation
+   rules from its general RX-characteristic search methodology (SAT/SMT or MILP-based
+   search, if that's what it uses).
+2. Determine whether the general search methodology can be adapted to FSCX's pure
+   XOR-rotation operator and to NL-FSCX v1/v2's added non-linear step, reusing
+   `SecurityProofsCode/fscx_periodicity_z3.py`'s existing Z3-based approach as a starting
+   point if the tooling is compatible.
+3. If adaptable, run the search against FSCX_N and NL-FSCX v1/v2 at the suite's actual
+   parameter sizes and compare any newly found characteristics against TODO #75/#125's
+   prior bounds.
+4. Document results in `SecurityProofs-2.md` regardless of outcome, and add a
+   `SecurityProofsCode/` script if new characteristics are found (following the existing
+   naming convention, e.g. `nl_fscx_rx_differential_2025.py`).
+
+**Progress (2026-07-31):** paper's full text is paywalled beyond its abstract, so its
+exact CNF/SAT encoding couldn't be reproduced. Added
+`SecurityProofsCode/nl_fscx_rx_differential_2025.py`: a bounded, non-exhaustive
+hill-climbing stand-in that searches over nonzero-XOR RX-differences $(da,db)$ (not just
+the pure-rotation $da=db=0$ slice TODO #75/#125 already covered) for NL-FSCX v1's
+modular-addition step, since FSCX's XOR-rotation linear part transmits every RX-difference
+with probability 1 and contributes no search surface. Found no configuration with a
+materially higher single-round transition probability than the existing pure-rotational
+baseline at $n \in \{16,32\}$. Documented in `SecurityProofs-2.md` (end of the sparse-$B$
+subsection) with explicit caveats: this is local search, not exhaustive SAT, and only
+covers single-round (not chained multi-round) transitions. Stays **OPEN** — reproducing
+the paper's actual automated search is future work, deferred due to paywalled access.
+
+**Resolution (2026-08-02):** the paper's full text is still paywalled, but reproducing
+its CNF encoding turned out to be unnecessary — for NL-FSCX v1 the RX-difference search
+space collapses far enough to be solved **exactly**, which is strictly stronger than any
+heuristic SAT/SMT trail search. (Note: the earlier progress note's premise that this repo
+"has no SAT/SMT solver dependency" was also wrong — z3 is installed and
+`fscx_periodicity_z3.py`/`hpks_schnorr_z3.py` already import it — but the exact solution
+made a solver unnecessary anyway.) New script
+`SecurityProofsCode/nl_fscx_rx_exact_search.py` supersedes the Monte-Carlo stand-in:
+
+1. *Reduction (work item 2).* Verified over 4000 random cases that
+   $dY = M(da) \oplus M(db) \oplus \mathrm{ROL}(dS, n/4)$, so the FSCX linear layer
+   transmits every RX-difference with probability 1 and $dY$ is a **bijection** of $dS$ —
+   the entire search space is the RX-differential of modular addition.
+2. *Exact solver.* From the per-bit identity $\bar{c}_i \oplus c_j = da_i \oplus db_i
+   \oplus dS_i$ on the two carry chains, an $O(n)$ DP computes the exact distribution.
+   Validated against brute force over all $2^{2n}$ pairs at $n=8$: 0 mismatches. It
+   reproduces the classical $3/8 = 2^{-1.415}$ rotational probability of modular addition
+   as $n$ grows, an independent check.
+3. *Certified optimum (work item 3).* Exhaustive over **every** $(da, db, dS)$ and every
+   $\gamma$ at $n=8$: the optimum is always $(0,0,0)$, i.e. exactly the pure-rotational
+   slice TODO #75/#125 measured. This answers the open question in the negative — no
+   nonzero-XOR RX-difference beats it. Probability is symmetric under
+   $\gamma \mapsto n-\gamma$, maximal at $\gamma=1$. Corroborated at $n=16$ over all
+   weight-$\leq 2$ differences.
+4. *Multi-round.* Full $2^n$-state transition graph plus max-product DP gives the optimal
+   $r$-round trail — the chained analysis the stand-in explicitly lacked. For $db=0$ the
+   optimum is again the pure-rotational trail; nonzero $db$ is strictly worse.
+5. *Key finding.* The Markov/round-independence assumption underlying all trail search —
+   the paper's methodology included — is **not tight** here: measured exactly against the
+   trail estimate at $n=8$, it understates the true probability by $1.0\times$,
+   $1.5\times$, $2.7\times$, $5.7\times$, $13\times$, $31\times$ over rounds 1–6, a gap
+   that grows without bound because $B$ is reused every round. This is the structural
+   reason TODO #75/#125 found power-law rather than geometric decay, and it means trail
+   search cannot be the binding analysis for NL-FSCX v1; the direct measurement of
+   TODO #75/#125 remains operative. Documented in `SecurityProofs-2.md`.
+
+Status: **DONE v1.9.138** — RX search solved exactly; pure-rotational characteristic certified optimal, and trail methodology shown not tight for NL-FSCX v1.
