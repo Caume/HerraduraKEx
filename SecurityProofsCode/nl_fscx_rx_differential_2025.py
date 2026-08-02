@@ -25,6 +25,14 @@ so the *methodology* (search over (da, db, k) for the best single-round transiti
 chain rounds under the Markov assumption) transfers even though this repo has no
 SAT/SMT solver dependency to reproduce the paper's own CNF encoding.
 
+SUPERSEDED (TODO #158, v1.9.138)
+
+`nl_fscx_rx_exact_search.py` now answers the same question *exactly* — an O(n) carry DP
+for the RX-differential of modular addition (validated against brute force), an
+exhaustive certified-optimal single-round search at n=8, and an exact optimal
+multi-round trail search this script could not perform. Its findings supersede the
+Monte-Carlo estimates below, which are retained only as the original bounded stand-in.
+
 THIS SCRIPT
 
 Implements a bounded, empirical stand-in for that search (hill-climbing over (da, db)
