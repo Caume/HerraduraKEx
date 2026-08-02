@@ -2408,6 +2408,36 @@ models that exclude quantum adversaries.
   the OPRF output, not the raw password hash, to prevent offline dictionary attacks
   on a stolen database *alone* — but the OPRF key must still be protected.
 
+### Passphrase-encrypted private-key export (Python CLI only, TODO #166)
+
+```bash
+# Generate a passphrase-protected private key instead of the default cleartext PEM.
+$CLI genpkey --algo hkex-gf --passphrase "correct horse battery staple" --out alice_enc.pem
+
+# Using the encrypted file directly fails closed with an actionable error —
+# it is not silently misinterpreted as key material.
+$CLI pkey --pubout --in alice_enc.pem --out pub.pem   # error: decrypt it first
+
+# Recover the exact original cleartext PEM, then use it with any other subcommand.
+$CLI pkey --decrypt --in alice_enc.pem --passphrase "correct horse battery staple" \
+          --out alice.pem
+$CLI pkey --pubout --in alice.pem --out alice_pub.pem
+```
+
+- Wraps the *entire* generated PEM (any algorithm) under a new
+  `HERRADURA ENCRYPTED PRIVATE KEY` label, using PBKDF2 (HMAC-HFSCX-256 as the PRF)
+  for key derivation and this suite's own `HSKE-NL-AEAD` construction for encryption —
+  no external dependencies.
+- **Demo iteration count.** `--kdf-iterations` defaults to `1000` (~3.5 s) rather than
+  NIST SP 800-132's recommended `≥200000`, since pure-Python `HMAC-HFSCX-256` runs at
+  only ~300 calls/sec (200,000 iterations would take 10+ minutes). Pass a higher
+  `--kdf-iterations` for stronger (slower) protection; this default is a CLI-usability
+  tradeoff, not a production security recommendation.
+- A wrong `--passphrase` is rejected cleanly by the AEAD authentication tag — never a
+  crash or silently-wrong key.
+- Go and C CLIs do not yet support this — private keys exported from those CLIs remain
+  cleartext-only.
+
 ### Constant-time status
 
 - **C and assembly targets** implement branchless GF multiply, branchless

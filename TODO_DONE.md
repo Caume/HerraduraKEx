@@ -8395,3 +8395,63 @@ opted in, mismatched `--kdf` flags correctly produce different (not matching) ke
 #162 — that item's hybrid combiner is a separate construction for the `hybrid-rnl-stern`
 mode specifically; this item's `sp800227` KDF applies to plain (non-hybrid) `hkex-rnl`
 sessions and does not overlap.
+
+---
+
+### 166. Optional passphrase-based encryption for exported private-key PEM files (Security/Feature, Low)
+
+**Background:** Found during TODO #161's NIST SP 800-227 audit (`SecurityProofs-2.md`
+§11.15, item 4). SP 800-227 §3.2 ("Data at rest") requires that private data (seeds,
+decapsulation/private keys) be "stored within the cryptographic module in a manner that
+is secure against both leakage and unauthorized modification," and that "the import and
+export of private data...needs to be performed in a secure manner." All three CLIs
+(`genpkey --out priv.pem`) always write private-key PEM files in cleartext with no
+passphrase-based encryption option, unlike OpenSSL's traditional `-aes256`/`-des3`
+PEM-encryption flags or PKCS#8 encrypted private-key format. Anyone who copies, backs up,
+or transmits an exported `.pem` file without independent OS-level protection (file
+permissions, disk encryption) has no cryptographic protection on the key material itself.
+
+**Work items:**
+
+1. Decide an encryption format: either a simple password-based scheme reusing this
+   suite's own primitives (e.g. HSKE-NL-A1 keystream over the PEM payload, keyed by a
+   password-derived key via a suite KDF with a random salt) or a more conventional
+   PBKDF2/scrypt-wrapped-AES approach if the goal is broader tooling compatibility —
+   document the tradeoff before picking one, since this suite doesn't currently implement
+   a password-based KDF (PBKDF2/Argon2-class) anywhere.
+2. Add a `--passphrase`/`--passin`/`--passout`-style flag to `genpkey` (and `pkey` for
+   re-encryption/decryption round-trips) across all three CLI language targets, mirroring
+   OpenSSL's flag naming where reasonable for user familiarity.
+3. Extend the PEM wire format with an encrypted-private-key variant label/header
+   (distinguishable from the existing cleartext label so old tooling fails closed rather
+   than silently misinterpreting encrypted bytes as a raw key).
+4. Add `CliTest/` coverage: round-trip encrypt/decrypt with correct passphrase, and
+   confirm a wrong passphrase is rejected cleanly (not a crash or silent garbage key).
+5. Document in `docs/TUTORIAL.md` and `SecurityProofs-2.md` §11.15.
+
+Status: **DONE v1.9.134 (Python)** — item 1: chose PBKDF2's standard iterated-PRF
+structure (RFC 8018) over a bespoke scheme, substituting the suite's own already-
+implemented HMAC-HFSCX-256-DM for HMAC-SHA256 — self-contained (no external dependency)
+while keeping the KDF construction itself well-studied rather than novel/unreviewed;
+encryption reuses the existing, already-tested HSKE-NL-AEAD construction over the
+*entire* generated cleartext PEM (any algorithm) as opaque bytes, so no per-algorithm
+re-encoding is needed. Item 2: added `--passphrase` to `genpkey` and `--decrypt`/
+`--passphrase` to `pkey` (Python CLI); `pkey --decrypt` recovers the byte-for-byte
+original PEM, which then works with any other subcommand unmodified — a general
+PEM-level convert-in/convert-out step rather than passphrase-awareness wired into every
+key-consuming command. Item 3: new `HERRADURA ENCRYPTED PRIVATE KEY` PEM label; reading
+it through the normal `_decode_privkey` path raises a specific, actionable error naming
+`pkey --decrypt` rather than crashing obscurely or misinterpreting the bytes. Item 4:
+added `CliTest/test_encrypted_pem.sh` (7/7 pass) — distinct label, clean rejection of
+direct use, correct-passphrase round-trip (including a larger `hkex-rnl` key), the
+decrypted key working normally with `pkey --pubout`, wrong-passphrase rejection, and
+confirmation the existing cleartext default is unaffected when `--passphrase` is
+omitted; no regressions in `test_keygen.sh`. Item 5: documented in `docs/TUTORIAL.md`
+(new "Passphrase-encrypted private-key export" subsection) and `SecurityProofs-2.md`
+§11.18, including an explicit, documented tradeoff on iteration count: NIST SP 800-132
+recommends ≥200,000 PBKDF2 iterations, but pure-Python `HMAC-HFSCX-256` runs at only
+~300 calls/sec (200,000 iterations ≈ 10-12 minutes), so the CLI default is a
+demo-appropriate 1,000 iterations (~3.5s) with `--kdf-iterations` exposed to opt into
+the production-recommended floor at the cost of a multi-minute wait — matching this
+repo's existing demo-vs-production-parameter convention. Scoped to the Python CLI only,
+consistent with this item's own "Low" priority; no separate Go/C follow-up TODO filed.
