@@ -1018,6 +1018,150 @@ static void cmd_pkey(int argc, char **argv)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * TODO #167: hybrid HKEX-RNL + HPKE-Stern-KEM combiner (port of TODO #162)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Pack a QcPoly into QCMDPC_RBYTES big-endian bytes. */
+static void qcpoly_to_be(uint8_t out[QCMDPC_RBYTES], const QcPoly *p)
+{
+    int i, k;
+    memset(out, 0, QCMDPC_RBYTES);
+    for (i = 0; i < QCMDPC_RWORDS; i++)
+        for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++)
+            out[i*8+k] = (uint8_t)(p->w[i] >> (k*8));
+}
+
+/* Unpack QCMDPC_RBYTES big-endian bytes into a QcPoly. */
+static void qcpoly_from_be(QcPoly *p, const uint8_t in[QCMDPC_RBYTES])
+{
+    int i, k;
+    qcp_zero(p);
+    for (i = 0; i < QCMDPC_RWORDS; i++)
+        for (k = 0; k < 8 && i*8+k < QCMDPC_RBYTES; k++)
+            p->w[i] |= (uint64_t)in[i*8+k] << (k*8);
+}
+
+/* qcpoly_to_be/qcpoly_from_be produce/consume the little-endian-swapped byte
+ * layout used by the HPKE-Stern-KEM PUBLIC/PRIVATE KEY and CIPHERTEXT wire
+ * formats (matching Python's `int.from_bytes(x.to_bytes(rb,'little'),'big')`
+ * convention in _encode_kem_pubkey/_encode_kem_privkey/_encode_kem_ct).
+ *
+ * The hybrid-rnl-stern combiner (TODO #162 §11.16) and its RESPONSE PEM's
+ * `syn` field do NOT use that convention — Python's _hybrid_rnl_stern_combine
+ * and _encode_hybrid_response/_decode_hybrid_response serialize syn/h_pub via
+ * a plain `.to_bytes(rb, 'big')` on the natural (unswapped) integer. Use
+ * qcpoly_to_natural_be/qcpoly_from_natural_be for those instead. */
+static void qcpoly_to_natural_be(uint8_t out[QCMDPC_RBYTES], const QcPoly *p)
+{
+    uint8_t le[QCMDPC_RBYTES];
+    int i;
+    qcpoly_to_be(le, p);
+    for (i = 0; i < QCMDPC_RBYTES; i++) out[i] = le[QCMDPC_RBYTES - 1 - i];
+}
+
+static void qcpoly_from_natural_be(QcPoly *p, const uint8_t in[QCMDPC_RBYTES])
+{
+    uint8_t le[QCMDPC_RBYTES];
+    int i;
+    for (i = 0; i < QCMDPC_RBYTES; i++) le[i] = in[QCMDPC_RBYTES - 1 - i];
+    qcpoly_from_be(p, le);
+}
+
+/* Load a HPKE-Stern-KEM public key PEM (SEQUENCE(h_pub[66], r)) into pub. */
+static void kem_pub_load(QcMdpcPub *pub, const char *path)
+{
+    PemKey pk; pem_key_load(&pk, path);
+    if (strcmp(pk.label, PEM_HPKE_STERN_KEM_PUB) != 0)
+        dief("kex: --their-kem must be a HPKE-STERN-KEM PUBLIC KEY PEM (got %s)", pk.label);
+    if (pk.n_items < 2) die("kex: malformed HPKE-Stern-KEM public key");
+    uint8_t hpb[QCMDPC_RBYTES];
+    der_right_align(hpb, QCMDPC_RBYTES, pk.vals[0], pk.vlens[0]);
+    qcpoly_from_be(&pub->h_pub, hpb);
+    pem_key_free(&pk);
+}
+
+/* Load a HPKE-Stern-KEM private key PEM into priv (and derive pub). */
+static void kem_priv_load(QcMdpcPriv *priv, QcMdpcPub *pub, const char *path)
+{
+    PemKey pk; pem_key_load(&pk, path);
+    if (strcmp(pk.label, PEM_HPKE_STERN_KEM_PRIV) != 0)
+        dief("kex: --our-kem must be a HPKE-STERN-KEM PRIVATE KEY PEM (got %s)", pk.label);
+    if (pk.n_items < 6) die("kex: malformed HPKE-Stern-KEM private key");
+    uint8_t h0b[QCMDPC_RBYTES], h1b[QCMDPC_RBYTES];
+    der_right_align(h0b, QCMDPC_RBYTES, pk.vals[0], pk.vlens[0]);
+    der_right_align(h1b, QCMDPC_RBYTES, pk.vals[1], pk.vlens[1]);
+    qcpoly_from_be(&priv->h0, h0b);
+    qcpoly_from_be(&priv->h1, h1b);
+    int d = (int)parse_be_uint(pk.vals[5], pk.vlens[5]);
+    uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
+    der_right_align(s0b, (size_t)d*2, pk.vals[2], pk.vlens[2]);
+    der_right_align(s1b, (size_t)d*2, pk.vals[3], pk.vlens[3]);
+    int k2;
+    for (k2 = 0; k2 < d && k2 < QCMDPC_D; k2++) {
+        priv->sup0[k2] = (uint16_t)(((uint16_t)s0b[k2*2]<<8)|s0b[k2*2+1]);
+        priv->sup1[k2] = (uint16_t)(((uint16_t)s1b[k2*2]<<8)|s1b[k2*2+1]);
+    }
+    pem_key_free(&pk);
+    if (pub) {
+        QcPoly h0_inv;
+        if (!qcp_inv(&h0_inv, &priv->h0)) die("kex: --our-kem h0 not invertible");
+        qcp_mul(&pub->h_pub, &priv->h1, &h0_inv);
+    }
+}
+
+/* Unpack a packed 2-bit-per-coefficient hint (RNL_N/8 bytes) into RNL_N/2 raw
+ * per-coefficient bytes (values 0..3), matching Python's `hint_used` transcript
+ * representation used by the combiner (bytes(hint_used) in _hybrid_rnl_stern_combine). */
+static void rnl_hint_to_raw(uint8_t raw[RNL_N / 2], const uint8_t hint[RNL_N / 8])
+{
+    int i;
+    for (i = 0; i < RNL_N / 2; i++)
+        raw[i] = (hint[i / 4] >> ((i % 4) * 2)) & 3;
+}
+
+/* hybrid_rnl_stern_combine implements the SP 800-227 §4.6-style IND-CCA-preserving
+ * key combiner from TODO #162/§11.16, ported bit-for-bit from Python's
+ * _hybrid_rnl_stern_combine:
+ *   K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
+ *                     "HERRADURA-HYBRID-RNL-STERN-v1")
+ * K1 and K2 are each KEYBYTES (32) bytes, big-endian. */
+static void hybrid_rnl_stern_combine(uint8_t out[KEYBYTES],
+                                      const uint8_t K1[KEYBYTES], const uint8_t K2[KEYBYTES],
+                                      const rnl_poly_t C_A, const rnl_poly_t m_A,
+                                      const rnl_poly_t C_B, const uint8_t hint_used[RNL_N / 2],
+                                      const QcPoly *h_pub, const QcPoly *syn)
+{
+    static const char TAG[] = "HERRADURA-HYBRID-RNL-STERN-v1";
+    uint8_t C_A_buf[RNL_N * 2], m_A_buf[RNL_N * 4], C_B_buf[RNL_N * 2];
+    uint8_t h_pub_buf[QCMDPC_RBYTES], syn_buf[QCMDPC_RBYTES];
+    poly_pack(C_A_buf, C_A, 2);
+    poly_pack(m_A_buf, m_A, 4);
+    poly_pack(C_B_buf, C_B, 2);
+    qcpoly_to_natural_be(h_pub_buf, h_pub);
+    qcpoly_to_natural_be(syn_buf, syn);
+
+    size_t total = KEYBYTES + KEYBYTES + sizeof(C_A_buf) + sizeof(m_A_buf) +
+                   sizeof(C_B_buf) + (RNL_N / 2) + QCMDPC_RBYTES + QCMDPC_RBYTES +
+                   (sizeof(TAG) - 1);
+    uint8_t *data = malloc(total);
+    if (!data) die("out of memory");
+    size_t off = 0;
+    memcpy(data + off, K1, KEYBYTES);              off += KEYBYTES;
+    memcpy(data + off, K2, KEYBYTES);               off += KEYBYTES;
+    memcpy(data + off, C_A_buf, sizeof(C_A_buf));    off += sizeof(C_A_buf);
+    memcpy(data + off, m_A_buf, sizeof(m_A_buf));    off += sizeof(m_A_buf);
+    memcpy(data + off, C_B_buf, sizeof(C_B_buf));    off += sizeof(C_B_buf);
+    memcpy(data + off, hint_used, RNL_N / 2);        off += RNL_N / 2;
+    memcpy(data + off, h_pub_buf, QCMDPC_RBYTES);    off += QCMDPC_RBYTES;
+    memcpy(data + off, syn_buf, QCMDPC_RBYTES);      off += QCMDPC_RBYTES;
+    memcpy(data + off, TAG, sizeof(TAG) - 1);        off += sizeof(TAG) - 1;
+
+    hfscx_256_ds(0x05, data, off, NULL, out);
+    explicit_bzero(data, total);
+    free(data);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * kex
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1028,6 +1172,8 @@ static void cmd_kex(int argc, char **argv)
     const char *their_path = get_arg(argc, argv, "--their");
     const char *out_path   = get_arg(argc, argv, "--out");
     const char *kdf        = get_arg(argc, argv, "--kdf");
+    const char *their_kem  = get_arg(argc, argv, "--their-kem");
+    const char *our_kem    = get_arg(argc, argv, "--our-kem");
     if (!algo || !our_path || !their_path || !out_path)
         die("kex: --algo, --our, --their, --out required");
     if (kdf && strcmp(kdf, "hfscx-256") != 0)
@@ -1237,6 +1383,209 @@ static void cmd_kex(int argc, char **argv)
             pem_key_free(&their);
             dief("kex hkex-rnl: --their must be RNL PUBLIC KEY or RESPONSE PEM (got %s)",
                  their.label);
+        }
+        fclose(urnd); return;
+    }
+
+    /* ── hybrid-rnl-stern (TODO #167, port of TODO #162) ─── */
+    if (strcmp(algo, "hybrid-rnl-stern") == 0) {
+        PemKey their;
+        pem_key_load(&their, their_path);
+
+        if (strcmp(their.label, PEM_HKEX_RNL_PUB) == 0) {
+            /* ── Step 1: Bob responds — encapsulator for both components ── */
+            if (!their_kem)
+                die("kex hybrid-rnl-stern: --their-kem required (Alice's HPKE-Stern-KEM public key)");
+            PemKey our; pem_key_load(&our, our_path);
+            if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
+            if (their.n_items < 2) die("kex hybrid-rnl-stern: malformed their public key");
+
+            rnl_poly_t s_B, m_A, C_A, C_B, ms;
+            poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
+            poly_unpack(C_A, their.vals[0], their.vlens[0], 2);
+            poly_unpack(m_A, their.vals[1], their.vlens[1], 4);
+
+            uint8_t n_A[KEYBYTES];
+            memset(n_A, 0, KEYBYTES);
+            if (their.n_items >= 4 && their.vlens[3] <= KEYBYTES)
+                memcpy(n_A + KEYBYTES - their.vlens[3], their.vals[3], their.vlens[3]);
+
+            pem_key_free(&our); pem_key_free(&their);
+
+            if (!rnl_validate_m_blind(m_A, RNL_N))
+                die("kex hybrid-rnl-stern: peer m_blind failed entropy check — possible substitution attack");
+
+            QcMdpcPub pub_kem;
+            kem_pub_load(&pub_kem, their_kem);
+
+            rnl_poly_mul(ms, m_A, s_B);
+            rnl_round(C_B, ms, RNL_Q, RNL_P);
+
+            BitArray K1;
+            uint8_t hint[RNL_N / 8];
+            rnl_agree(&K1, s_B, C_A, NULL, hint);
+
+            uint8_t n_B[KEYBYTES];
+            if (fread(n_B, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+
+            uint8_t K1_rev[KEYBYTES]; int ri;
+            for (ri = 0; ri < KEYBYTES; ri++) K1_rev[ri] = K1.b[KEYBYTES-1-ri];
+            explicit_bzero(&K1, sizeof(K1));
+
+            uint8_t K1_kdf[KEYBYTES];
+            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
+            explicit_bzero(K1_rev, KEYBYTES);
+            explicit_bzero(n_A, KEYBYTES);
+            if (kdf) {
+                uint8_t kdf_out[KEYBYTES];
+                hfscx_256(K1_kdf, KEYBYTES, NULL, kdf_out);
+                memcpy(K1_kdf, kdf_out, KEYBYTES);
+                explicit_bzero(kdf_out, sizeof(kdf_out));
+            }
+
+            QcMdpcPrf prf;
+            uint8_t seed_bytes[KEYBYTES];
+            if (fread(seed_bytes, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+            qcprf_init(&prf, seed_bytes);
+            QcPoly syn;
+            BitArray K2;
+            qcmdpc_encap(&syn, &K2, &pub_kem, &prf);
+
+            uint8_t hint_used[RNL_N / 2];
+            rnl_hint_to_raw(hint_used, hint);
+
+            uint8_t K[KEYBYTES];
+            hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
+                                      &pub_kem.h_pub, &syn);
+            explicit_bzero(K1_kdf, KEYBYTES);
+            explicit_bzero(&K2, sizeof(K2));
+
+            /* Encode RESPONSE: K, C_B, hint, n, hint_len, n_B, syn, r */
+            uint8_t C_B_buf[RNL_N * 2];
+            poly_pack(C_B_buf, C_B, 2);
+            uint8_t hint_rev[RNL_N / 8];
+            { int rj; for (rj = 0; rj < RNL_N/8; rj++) hint_rev[rj] = hint[RNL_N/8-1-rj]; }
+            uint8_t syn_buf[QCMDPC_RBYTES];
+            qcpoly_to_natural_be(syn_buf, &syn);
+
+            size_t k_len = KEYBYTES;
+            const uint8_t *k_start = K;
+            while (k_len > 1 && *k_start == 0) { k_start++; k_len--; }
+
+            uint8_t ik[DER_INT_LEN(KEYBYTES)];
+            size_t ic_sz = DER_INT_LEN(sizeof C_B_buf);
+            size_t inb_sz = DER_INT_LEN(KEYBYTES);
+            uint8_t *ic_der = malloc(ic_sz), *inb_der = malloc(inb_sz);
+            if (!ic_der || !inb_der) die("out of memory");
+            uint8_t ih[DER_INT_LEN(RNL_N / 8)], in1[8], in2[8];
+            uint8_t isyn[DER_INT_LEN(QCMDPC_RBYTES)], ir[8];
+            size_t lk, lc, lh, ln1, ln2, lnb, lsyn, lr;
+            der_int_enc(k_start,   k_len,          ik,      &lk);
+            der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der,  &lc);
+            der_int_enc(hint_rev,  sizeof hint_rev, ih,      &lh);
+            der_i_n256(in1, &ln1);
+            der_i_uint(RNL_N / 2, in2, &ln2);
+            der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
+            der_int_enc(syn_buf, QCMDPC_RBYTES, isyn, &lsyn);
+            der_i_uint(QCMDPC_R, ir, &lr);
+            const uint8_t *it[8] = {ik, ic_der, ih, in1, in2, inb_der, isyn, ir};
+            size_t il[8] = {lk, lc, lh, ln1, ln2, lnb, lsyn, lr};
+            seq_and_write(it, il, 8, PEM_HYBRID_RESPONSE, out_path);
+            explicit_bzero(n_B, KEYBYTES);
+            explicit_bzero(K, KEYBYTES);
+            free(ic_der); free(inb_der);
+
+        } else if (strcmp(their.label, PEM_HYBRID_RESPONSE) == 0) {
+            /* ── Step 2: Alice completes — decapsulator for the KEM component ── */
+            if (!our_kem)
+                die("kex hybrid-rnl-stern: --our-kem required (Alice's own HPKE-Stern-KEM private key)");
+            PemKey our; pem_key_load(&our, our_path);
+            if (our.n_items < 2)   die("kex hybrid-rnl-stern: malformed our private key");
+            if (their.n_items < 8) die("kex hybrid-rnl-stern: malformed hybrid response");
+
+            rnl_poly_t s_A, m_A, C_A, C_B, ms;
+            poly_unpack(s_A, our.vals[0], our.vlens[0], 4);
+            poly_unpack(m_A, our.vals[1], our.vlens[1], 4);
+            poly_unpack(C_B, their.vals[1], their.vlens[1], 2);
+
+            uint8_t n_A[KEYBYTES];
+            memset(n_A, 0, KEYBYTES);
+            if (our.n_items >= 4 && our.vlens[3] <= KEYBYTES)
+                memcpy(n_A + KEYBYTES - our.vlens[3], our.vals[3], our.vlens[3]);
+
+            uint8_t n_B[KEYBYTES];
+            memset(n_B, 0, KEYBYTES);
+            if (their.vlens[5] <= KEYBYTES)
+                memcpy(n_B + KEYBYTES - their.vlens[5], their.vals[5], their.vlens[5]);
+
+            uint8_t hint[RNL_N / 8];
+            { uint8_t hint_rev[RNL_N / 8]; int ri;
+              memset(hint_rev, 0, sizeof hint_rev);
+              size_t hl = their.vlens[2];
+              if (hl > sizeof hint_rev) hl = sizeof hint_rev;
+              memcpy(hint_rev + sizeof hint_rev - hl, their.vals[2], hl);
+              for (ri = 0; ri < RNL_N/8; ri++) hint[ri] = hint_rev[RNL_N/8-1-ri]; }
+
+            QcPoly syn;
+            { uint8_t synb[QCMDPC_RBYTES];
+              der_right_align(synb, QCMDPC_RBYTES, their.vals[6], their.vlens[6]);
+              qcpoly_from_natural_be(&syn, synb); }
+
+            pem_key_free(&our);
+
+            QcMdpcPriv priv_kem;
+            QcMdpcPub  pub_kem;
+            kem_priv_load(&priv_kem, &pub_kem, our_kem);
+
+            rnl_poly_mul(ms, m_A, s_A);
+            rnl_round(C_A, ms, RNL_Q, RNL_P);
+
+            BitArray K1;
+            rnl_agree(&K1, s_A, C_B, hint, NULL);
+            uint8_t K1_rev[KEYBYTES]; int ri2;
+            for (ri2 = 0; ri2 < KEYBYTES; ri2++) K1_rev[ri2] = K1.b[KEYBYTES-1-ri2];
+            explicit_bzero(&K1, sizeof(K1));
+
+            uint8_t K1_kdf[KEYBYTES];
+            rnl_contributory_kdf(K1_kdf, K1_rev, n_A, n_B);
+            explicit_bzero(K1_rev, KEYBYTES);
+            explicit_bzero(n_A, KEYBYTES);
+            if (kdf) {
+                uint8_t kdf_out[KEYBYTES];
+                hfscx_256(K1_kdf, KEYBYTES, NULL, kdf_out);
+                memcpy(K1_kdf, kdf_out, KEYBYTES);
+                explicit_bzero(kdf_out, sizeof(kdf_out));
+            }
+
+            BitArray K2;
+            if (!qcmdpc_decap_bgf(&K2, &syn, &priv_kem))
+                die("kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation failed (DFR event or corrupt ciphertext)");
+            explicit_bzero(&priv_kem, sizeof(priv_kem));
+
+            uint8_t hint_used[RNL_N / 2];
+            rnl_hint_to_raw(hint_used, hint);
+
+            uint8_t K[KEYBYTES];
+            hybrid_rnl_stern_combine(K, K1_kdf, K2.b, C_A, m_A, C_B, hint_used,
+                                      &pub_kem.h_pub, &syn);
+            explicit_bzero(K1_kdf, KEYBYTES);
+            explicit_bzero(&K2, sizeof(K2));
+            pem_key_free(&their);
+
+            size_t k_len = KEYBYTES;
+            const uint8_t *k_start = K;
+            while (k_len > 1 && *k_start == 0) { k_start++; k_len--; }
+            uint8_t ik[DER_INT_LEN(KEYBYTES)], in[8]; size_t lk, ln;
+            der_int_enc(k_start, k_len, ik, &lk);
+            der_i_n256(in, &ln);
+            const uint8_t *it[2] = {ik, in}; size_t il[2] = {lk, ln};
+            seq_and_write(it, il, 2, PEM_SESSION_KEY, out_path);
+            explicit_bzero(K, KEYBYTES);
+
+        } else {
+            pem_key_free(&their);
+            dief("kex hybrid-rnl-stern: --their must be HKEX-RNL PUBLIC KEY or "
+                 "HYBRID-RNL-STERN RESPONSE PEM (got %s)", their.label);
         }
         fclose(urnd); return;
     }

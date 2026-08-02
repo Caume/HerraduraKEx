@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.135] - 2026-08-02
+
+### Added
+- **`kex --algo hybrid-rnl-stern` ported to the Go and C CLIs (TODO #167).** The hybrid
+  HKEX-RNL + HPKE-Stern-KEM/QC-MDPC key combiner (TODO #162, `SecurityProofs-2.md`
+  §11.16) is now interop-complete across all three CLI targets: `herradura_cli.go` gains
+  `hybridRnlSternCombine`/`encodeHybridResponse`/`decodeHybridResponse` and
+  `herradura_cli.c`/`herradura_codec.h` gain `hybrid_rnl_stern_combine`/
+  `PEM_HYBRID_RESPONSE`, both reusing each language's existing `hkex-rnl` and
+  `hpke-stern-kem`/QC-MDPC primitives unmodified, with the same `--their-kem`/`--our-kem`
+  flags as the Python CLI. Verified with a new full 3x3 cross-language interop matrix
+  (`CliTest/test_hybrid_kex_interop.sh`) — every Bob/Alice language pairing derives a
+  byte-identical session key.
+
 ## [1.9.134] - 2026-08-02
 
 ### Added

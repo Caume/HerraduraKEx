@@ -18,6 +18,12 @@
 // HKEX-RNL (2-round):
 //   herradura_cli_go kex --algo hkex-rnl --our bob.pem --their alice_pub.pem --out resp.pem
 //   herradura_cli_go kex --algo hkex-rnl --our alice.pem --their resp.pem    --out sk.pem
+//
+// hybrid-rnl-stern (2-round; TODO #167, port of TODO #162):
+//   herradura_cli_go kex --algo hybrid-rnl-stern --our bob.pem --their alice_pub.pem \
+//       --their-kem alice_kem_pub.pem --out resp.pem
+//   herradura_cli_go kex --algo hybrid-rnl-stern --our alice.pem --their resp.pem \
+//       --our-kem alice_kem.pem --out sk.pem
 package main
 
 import (
@@ -63,8 +69,9 @@ const (
 	lblHpksWotsSig  = "HERRADURA HPKS-WOTS SIGNATURE"
 	lblRingSig      = "HERRADURA HPKS-RING SIGNATURE"
 
-	lblSession = "HERRADURA SESSION KEY"
-	lblRnlResp = "HERRADURA HKEX-RNL RESPONSE"
+	lblSession    = "HERRADURA SESSION KEY"
+	lblRnlResp    = "HERRADURA HKEX-RNL RESPONSE"
+	lblHybridResp = "HERRADURA HYBRID-RNL-STERN RESPONSE"
 	lblCT      = "HERRADURA CIPHERTEXT"
 	lblSig     = "HERRADURA SIGNATURE"
 	lblDigest  = "HERRADURA DIGEST"
@@ -471,6 +478,139 @@ func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
 	payload := append(append(padded, nA...), nB...)
 	digest := Hfscx256(payload, nil)
 	return NewBitArray(n, new(big.Int).SetBytes(digest))
+}
+
+// ── TODO #167: hybrid HKEX-RNL + HPKE-Stern-KEM combiner (port of TODO #162) ─
+
+// rnlHintToBytes unpacks Go's native 2-bit-per-coefficient hint packing
+// (RnlHint/RnlAgree's []byte return) into one raw byte per coefficient
+// (value 0..3), matching Python's `hint` list representation used as the
+// combiner's `hint_used` transcript input (n/2 coefficients).
+func rnlHintToBytes(hint []byte, n int) []byte {
+	half := n / 2
+	out := make([]byte, half)
+	for i := 0; i < half; i++ {
+		out[i] = (hint[i/4] >> uint((i%4)*2)) & 3
+	}
+	return out
+}
+
+// hybridRnlSternCombine implements the SP 800-227 §4.6-style IND-CCA-preserving
+// key combiner from TODO #162/§11.16, ported bit-for-bit from Python's
+// _hybrid_rnl_stern_combine:
+//
+//	K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn ||
+//	                  "HERRADURA-HYBRID-RNL-STERN-v1")
+func hybridRnlSternCombine(K1 *big.Int, K2 []byte, C_A, m_A, C_B []int, hintUsed []byte,
+	hPub, syn *big.Int, n, rQC int) *big.Int {
+	K1Bytes := padLeftN(K1.Bytes(), n/8)
+	C_A_packed := packPoly(C_A, 2)
+	m_A_packed := packPoly(m_A, 4)
+	C_B_packed := packPoly(C_B, 2)
+	rb := (rQC + 7) / 8
+	hPubBytes := padLeftN(hPub.Bytes(), rb)
+	synBytes := padLeftN(syn.Bytes(), rb)
+
+	data := make([]byte, 0, len(K1Bytes)+len(K2)+len(C_A_packed)+len(m_A_packed)+
+		len(C_B_packed)+len(hintUsed)+len(hPubBytes)+len(synBytes)+32)
+	data = append(data, K1Bytes...)
+	data = append(data, K2...)
+	data = append(data, C_A_packed...)
+	data = append(data, m_A_packed...)
+	data = append(data, C_B_packed...)
+	data = append(data, hintUsed...)
+	data = append(data, hPubBytes...)
+	data = append(data, synBytes...)
+	data = append(data, []byte("HERRADURA-HYBRID-RNL-STERN-v1")...)
+
+	digest := Hfscx256DS(0x05, data, nil)
+	return new(big.Int).SetBytes(digest)
+}
+
+// encodeHybridResponse encodes Bob's hybrid-rnl-stern response:
+// (K, C_B, hint, n, hint_len, n_B, syn, r) — matching Python's
+// _encode_hybrid_response field order exactly.
+func encodeHybridResponse(K *big.Int, C_B []int, hintUsedLen int, hint []byte, n int,
+	nB []byte, syn *big.Int, rQC int) (string, error) {
+	Knb := (K.BitLen() + 7) / 8
+	if Knb < 1 {
+		Knb = 1
+	}
+	kDer, err := derIntBig(K, Knb)
+	if err != nil {
+		return "", err
+	}
+	cDer, err := DerIntEnc(packPoly(C_B, 2))
+	if err != nil {
+		return "", err
+	}
+
+	// Reverse hint bytes: Go LSB-first → Python/DER big-endian (matches
+	// encodeRNLResponse's convention).
+	hintRev := make([]byte, len(hint))
+	for i, j := 0, len(hint)-1; i <= j; i, j = i+1, j-1 {
+		hintRev[i], hintRev[j] = hint[j], hint[i]
+	}
+	hDer, err := DerIntEnc(hintRev)
+	if err != nil {
+		return "", err
+	}
+	nDer, err := derIntSmall(n)
+	if err != nil {
+		return "", err
+	}
+	hlDer, err := derIntSmall(hintUsedLen)
+	if err != nil {
+		return "", err
+	}
+	nbDer, err := DerIntEnc(nB)
+	if err != nil {
+		return "", err
+	}
+	rb := (rQC + 7) / 8
+	synDer, err := derIntBig(syn, rb)
+	if err != nil {
+		return "", err
+	}
+	rDer, err := derIntSmall(rQC)
+	if err != nil {
+		return "", err
+	}
+	seq, err := DerSeqEnc(kDer, cDer, hDer, nDer, hlDer, nbDer, synDer, rDer)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblHybridResp, seq), nil
+}
+
+// decodeHybridResponse returns (K, C_B, hintPacked (Go's native 2-bit-per-
+// coefficient packing, suitable as RnlAgree's hintIn), n, nB, syn, rQC) from
+// a HYBRID-RNL-STERN RESPONSE PEM's parsed DER ints. Use rnlHintToBytes on
+// the returned hintPacked to get the combiner's raw per-coefficient bytes.
+func decodeHybridResponse(ints [][]byte) (K *big.Int, C_B []int, hintPacked []byte,
+	n int, nB []byte, syn *big.Int, rQC int) {
+	K = new(big.Int).SetBytes(ints[0])
+	n = bytesToInt(ints[3])
+
+	C_B = unpackPolyRaw(ints[1], n, 2)
+
+	// Undo the encode-time byte reversal to recover Go's native packed hint.
+	hintN := n / 8
+	hintRaw := ints[2]
+	hintBuf := make([]byte, hintN)
+	if len(hintRaw) > hintN {
+		hintRaw = hintRaw[len(hintRaw)-hintN:]
+	}
+	copy(hintBuf[hintN-len(hintRaw):], hintRaw)
+	for i, j := 0, hintN-1; i < j; i, j = i+1, j-1 {
+		hintBuf[i], hintBuf[j] = hintBuf[j], hintBuf[i]
+	}
+
+	nB = padLeftN(ints[5], 32)
+	rQC = bytesToInt(ints[7])
+	rb := (rQC + 7) / 8
+	syn = new(big.Int).SetBytes(padLeftN(ints[6], rb))
+	return K, C_B, hintBuf, n, nB, syn, rQC
 }
 
 // ── HPKS-WOTS-F one-time signature helpers (TODO #120) ───────────────────────
@@ -927,11 +1067,13 @@ func cmdPkey(args []string) {
 
 func cmdKex(args []string) {
 	fs  := flag.NewFlagSet("kex", flag.ExitOnError)
-	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl)")
+	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hybrid-rnl-stern)")
 	our  := fs.String("our", "", "Our private key file")
 	their := fs.String("their", "", "Their public key or response file")
 	out  := fs.String("out", "-", "Output path")
 	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (hfscx-256)")
+	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
+	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
 	fs.Parse(args)
 
 	if *algo == "" || *our == "" || *their == "" {
@@ -1089,6 +1231,140 @@ func cmdKex(args []string) {
 		default:
 			fmt.Fprintf(os.Stderr,
 				"kex hkex-rnl: --their must be HKEX-RNL PUBLIC KEY or RESPONSE PEM (got %q)\n",
+				theirLabel)
+			os.Exit(1)
+		}
+
+	case "hybrid-rnl-stern":
+		// TODO #167 (port of TODO #162): hybrid HKEX-RNL (lattice) + HPKE-Stern-KEM/
+		// QC-MDPC (code-based) combiner, per SP 800-227 §4.6's IND-CCA-preserving shape.
+		theirLabel, theirInts, err := readPEMInts(*their)
+		if err != nil {
+			die("kex", err)
+		}
+
+		switch theirLabel {
+		case lblHkexRNLPub:
+			// ── Step 1: Bob responds — encapsulator for both components ──────
+			if *theirKem == "" {
+				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: --their-kem required (Alice's HPKE-Stern-KEM public key)")
+				os.Exit(1)
+			}
+			_, ourInts, err := readPEMInts(*our)
+			if err != nil {
+				die("kex", err)
+			}
+			n   := bytesToInt(ourInts[2])
+			s_B := unpackPolyRaw(ourInts[0], n, 4)
+			C_A := unpackPolyRaw(theirInts[0], n, 2)
+			m_A := unpackPolyRaw(theirInts[1], n, 4)
+
+			var n_A []byte
+			if len(theirInts) >= 4 {
+				n_A = padLeftN(theirInts[3], 32)
+			} else {
+				n_A = make([]byte, 32)
+			}
+
+			if !RnlValidateMBlind(m_A, RnlQ) {
+				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: peer m_blind failed entropy check — possible substitution attack")
+				os.Exit(1)
+			}
+
+			_, kemInts, err := readPEMInts(*theirKem)
+			if err != nil {
+				die("kex", err)
+			}
+			hPub := decodeKemPub(kemInts)
+			rQC  := QcMdpcR
+
+			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
+			C_B := RnlRound(ms, RnlQ, RnlP)
+
+			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+			n_B := NewRandBitArray(256).Bytes()
+			K1_ba := rnlContributoryKDF(K1_raw, n, n_A, n_B)
+			K1_ba = applyKDF(K1_ba, n)
+
+			syn, K2 := QcMdpcEncap(hPub, nil)
+
+			hintUsed := rnlHintToBytes(hint, n)
+			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
+
+			pem, err := encodeHybridResponse(K, C_B, n/2, hint, n, n_B, syn, rQC)
+			if err != nil {
+				die("kex", err)
+			}
+			if err := writeString(*out, pem); err != nil {
+				die("kex", err)
+			}
+
+		case lblHybridResp:
+			// ── Step 2: Alice completes — decapsulator for the KEM component ─
+			if *ourKem == "" {
+				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: --our-kem required (Alice's own HPKE-Stern-KEM private key)")
+				os.Exit(1)
+			}
+			_, ourInts, err := readPEMInts(*our)
+			if err != nil {
+				die("kex", err)
+			}
+			n   := bytesToInt(ourInts[2])
+			s_A := unpackPolyRaw(ourInts[0], n, 4)
+			m_A := unpackPolyRaw(ourInts[1], n, 4)
+
+			var n_A []byte
+			if len(ourInts) >= 4 {
+				n_A = padLeftN(ourInts[3], 32)
+			} else {
+				n_A = make([]byte, 32)
+			}
+
+			_, C_B, hintPacked, nResp, n_B, syn, rQC := decodeHybridResponse(theirInts)
+			if n != nResp {
+				fmt.Fprintf(os.Stderr, "Ring size mismatch: ours n=%d, response n=%d\n", n, nResp)
+				os.Exit(1)
+			}
+
+			_, kemInts, err := readPEMInts(*ourKem)
+			if err != nil {
+				die("kex", err)
+			}
+			sup0, sup1, h0, h1 := decodeKemPriv(kemInts)
+			h0Inv, ok := QcMdpcInv(h0)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: h0 not invertible")
+				os.Exit(1)
+			}
+			hPub := QcMdpcMul(h1, h0Inv)
+
+			ms  := RnlPolyMul(m_A, s_A, RnlQ, n)
+			C_A := RnlRound(ms, RnlQ, RnlP)
+
+			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintPacked)
+			K1_ba := rnlContributoryKDF(K1_raw, n, n_A, n_B)
+			K1_ba = applyKDF(K1_ba, n)
+
+			K2, ok := QcMdpcDecapBgf(syn, sup0, sup1)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation failed (DFR event or corrupt ciphertext)")
+				os.Exit(1)
+			}
+
+			hintUsed := rnlHintToBytes(hintPacked, n)
+			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
+
+			pem, err := encodeSessionKey(NewBitArray(256, K), n)
+			if err != nil {
+				die("kex", err)
+			}
+			if err := writeString(*out, pem); err != nil {
+				die("kex", err)
+			}
+
+		default:
+			fmt.Fprintf(os.Stderr,
+				"kex hybrid-rnl-stern: --their must be HKEX-RNL PUBLIC KEY or HYBRID-RNL-STERN RESPONSE PEM (got %q)\n",
 				theirLabel)
 			os.Exit(1)
 		}
@@ -3770,7 +4046,8 @@ Commands:
   rand     (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N] [--hex] [--out FILE]
 
 Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl
-Algorithms (kex):           hkex-gf hkex-rnl
+Algorithms (kex):           hkex-gf hkex-rnl hybrid-rnl-stern
+  kex --algo hybrid-rnl-stern --their-kem FILE (Bob step) | --our-kem FILE (Alice step)
 Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-duplex hpke hpke-nl hpke-stern
 Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time) hpks-ring (anonymous)

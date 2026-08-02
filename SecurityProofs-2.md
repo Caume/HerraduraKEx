@@ -1259,13 +1259,13 @@ versa. HPKE-Stern-KEM's own concrete security still tracks TODO #126's QC-MDPC p
 (BIKE-derived $r=12323$, $w=142$, $t=134$ for 128-bit classical security) — the combiner
 adds diversity of assumption, not additional margin on either individual component.
 
-**Implementation status.** Implemented and tested in the Python CLI only
-(`HerraduraCli/herradura.py`, `CliTest/test_hybrid_kex.sh`, 6/6 passing, no regressions
-in `test_vectors.sh`/`test_keygen.sh`/`test_stern_kem.sh`). Matching this repo's own
-precedent for large CLI features (e.g. TODO #25 Python-first, followed by separate C/Go
-CLI items #27/#28), the Go and C ports are intentionally out of scope for this pass and
-should be filed as their own follow-up TODOs before this feature is considered
-interop-complete across all three language targets.
+**Implementation status.** Implemented in all three CLI targets: Python
+(`HerraduraCli/herradura.py`, TODO #162) and, per TODO #167, Go (`herradura_cli.go`) and
+C (`herradura_cli.c`/`herradura_codec.h`), with bit-for-bit identical serialization
+across all three. Verified with `CliTest/test_hybrid_kex.sh` (Python-only combiner
+behavior, 6/6 passing) and `CliTest/test_hybrid_kex_interop.sh` (full 3x3 cross-language
+matrix — every Bob/Alice language pairing derives a byte-identical session key), with no
+regressions in `test_vectors.sh`/`test_keygen.sh`/`test_stern_kem.sh`.
 
 ---
 
