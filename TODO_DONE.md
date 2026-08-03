@@ -8898,9 +8898,11 @@ three languages.
 4. **Assembly/Arduino: guard needed in principle, not implemented — recorded.** Those
    targets do implement NL-FSCX v2 and HSKE-NL-A2, on 32-bit operands, where the class
    density is far worse: the $\delta = 0$ class is every $K$ divisible by
-   $2^{\lceil (n+1)/2 \rceil}$, giving density $2^{-\lceil (n+2)/2 \rceil}$ — i.e.
-   $2^{-17}$ at $n=32$ (about 1 key in $131{,}000$) against $2^{-129}$ at $n=256$,
-   verified by exhaustive count at $n \leq 24$. Those targets are explicitly demo-only,
+   $2^{\lceil (n+1)/2 \rceil}$ (density $2^{-\lceil (n+2)/2 \rceil}$), and the
+   $\delta = 2^{n-1}$ class is additionally non-empty whenever $8 \mid n$. Exhaustive
+   counts over the full key space at $n \leq 32$ give a total affine density of
+   $2^{-16.7}$ at $n=32$ (about 1 key in $105{,}000$) against $\approx 2^{-129}$ at
+   $n=256$, where the $\delta=0$ class dominates. Those targets are explicitly demo-only,
    and this host has no ARM cross-toolchain to build or test assembly changes against, so
    porting the guard was deliberately not attempted blind. Documented in
    `SecurityProofs-2.md` §11.19.2 as follow-up work.

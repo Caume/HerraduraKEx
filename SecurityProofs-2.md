@@ -1566,17 +1566,24 @@ is a genuine weak-key class that matters if keys are ever structured, low-entrop
 attacker-influenced, and costs one line to reject.
 
 **Density scales with word size.**  The $\delta = 0$ class is every $K$ divisible by
-$2^{\lceil (n+1)/2 \rceil}$, so its density is $2^{-\lceil (n+2)/2 \rceil}$ — verified by
-exhaustive count at $n \leq 24$:
+$2^{\lceil (n+1)/2 \rceil}$, giving density $2^{-\lceil (n+2)/2 \rceil}$.  The second class,
+$\delta = 2^{n-1}$, is non-empty exactly when $8 \mid n$ and is smaller but not always
+negligible.  Exhaustive counts over the full key space at $n \leq 32$:
 
-| $n$ | 16 | 20 | 24 | 32 | 256 |
-|---|---|---|---|---|---|
-| $\delta = 0$ keys | $2^{7}$ | $2^{9}$ | $2^{11}$ | $2^{15}$ | $2^{127}$ |
-| density | $2^{-9}$ | $2^{-11}$ | $2^{-13}$ | $2^{-17}$ | $2^{-129}$ |
+| $n$ | 16 | 20 | 24 | 28 | 32 | 256 |
+|---|---|---|---|---|---|---|
+| $\delta = 0$ keys | $128$ | $512$ | $2048$ | $8192$ | $32768$ | $2^{127}$ |
+| $\delta = 2^{n-1}$ keys | $128$ | $0$ | $1024$ | $0$ | $8192$ | $\approx 2^{97}$ |
+| total affine keys | $256$ | $512$ | $3072$ | $8192$ | $40960$ | $\approx 2^{127}$ |
+| affine density | $2^{-8.0}$ | $2^{-11.0}$ | $2^{-12.4}$ | $2^{-15.0}$ | $2^{-16.7}$ | $\approx 2^{-129}$ |
+
+At $n = 256$ the $\delta = 0$ class dominates ($2^{127}$ against $\approx 2^{97}$), so the
+deployed density is $\approx 2^{-129}$ either way.  At small $n$ the two classes are
+comparable and the total is what matters.
 
 This matters for the assembly and Arduino targets, which implement NL-FSCX v2 and
-HSKE-NL-A2 on **32-bit** operands: there the class density is $2^{-17}$ — roughly 1 key in
-$131{,}000$, far more reachable than the deployed 256-bit case.  Those targets are
+HSKE-NL-A2 on **32-bit** operands: there the affine density is $2^{-16.7}$ — roughly 1 key
+in $105{,}000$, far more reachable than the deployed 256-bit case.  Those targets are
 explicitly demo-only (§11.8.4 records the same $N=32$ toy scoping for Stern-F), so this is
 recorded rather than fixed; porting the guard into the ARM Thumb-2 and NASM sources is
 follow-up work, and was not attempted blind here because this host has no ARM
