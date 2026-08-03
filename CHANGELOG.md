@@ -2,6 +2,44 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.140] - 2026-08-02
+
+### Security
+- **NL-FSCX v2 affine weak-key rejection (TODO #168).** Adds `nl_v2_key_is_valid` to all
+  three suites (`Herradura cryptographic suite.py`, `herradura.h`,
+  `herradura/herradura.go`, plus `HerraduraCli/primitives.py`'s re-export), rejecting the
+  key class identified in TODO #159 for which NL-FSCX v2's permutation degenerates to
+  GF(2)-affine: delta(K) in {0, 2^(n-1)}. At n=256 that is every K divisible by 2^129
+  (2^127 keys) plus e.g. K=2^96; for such a key HSKE-NL-A2 and HPKE-NL collapse to a
+  linear map recoverable from a handful of known plaintexts.
+- Enforced in all three CLIs: `enc`/`dec --algo hske-nla2` and `dec --algo hpke-nl` reject
+  an affine key with a shared explanatory message. `enc --algo hpke-nl` instead resamples
+  its ephemeral r (up to 64 attempts) rather than failing, since that value is the
+  sender's own choice and an honest encryption should not error.
+- Test `[45]` (weak-key/malformed-input rejection) extended in C, Go, and Python with a
+  `v2_weak_key_reject` sub-check covering K in {0, 2^96, 2^129, 2^130} (rejected) and a
+  random odd key (accepted).
+
+### Changed
+- `SecurityProofs-2.md` §11.19.2 records that the class density scales with word size --
+  the delta=0 class is every K divisible by 2^ceil((n+1)/2), giving density
+  2^-ceil((n+2)/2), verified by exhaustive count at n <= 24. This is 2^-17 at n=32, so the
+  assembly/Arduino targets (which implement NL-FSCX v2 on 32-bit operands) are
+  substantially more exposed than the 256-bit deployment at 2^-129. Those targets are
+  demo-only and this host has no ARM cross-toolchain to build or test against, so the port
+  is documented as follow-up rather than attempted blind.
+
+### Notes
+- The guard is a predicate enforced at the protocol layer, not a rejection inside
+  `nl_fscx_v2`/`nl_fscx_revolve_v2`, mirroring the existing `gf_pub_is_valid` precedent
+  (which `hkex_gf_agree`/`hpks_verify` check while `gf_pow` does not). The primitive is
+  also invoked internally by the FPE, tweakable wide-block, and duplex-sponge
+  constructions with hash-derived keys, and the suite's own non-linearity tests call it
+  with degenerate operands, so a primitive-level rejection would change a total
+  function's contract in three languages for a 2^-129 event.
+- With #168 resolved, `TODO.md` has no open items; #1-#168 are all archived in
+  `TODO_DONE.md`.
+
 ## [1.9.139] - 2026-08-02
 
 ### Added

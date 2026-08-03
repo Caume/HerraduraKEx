@@ -22,6 +22,12 @@
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit(1); }
+
+/* NL-FSCX v2 affine weak-key class delta(K) in {0, 2^(n-1)} (TODO #168). */
+#define WEAK_V2_KEY_MSG \
+    "NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " \
+    "permutation GF(2)-affine and the ciphertext recoverable by linear algebra " \
+    "(SecurityProofs-2.md 11.19.2, TODO #168)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
 
@@ -2118,6 +2124,7 @@ static void cmd_enc(int argc, char **argv)
 
         } else { /* hske-nla2 */
             BitArray E;
+            if (!nl_v2_key_is_valid(&K)) die("enc hske-nla2: " WEAK_V2_KEY_MSG);
             nl_fscx_revolve_v2_ba(&E, &P, &K, R_VALUE);
             uint8_t it0[8], itE[DER_INT_LEN(KEYBYTES)], itn[8];
             size_t l0, lE, ln;
@@ -2145,9 +2152,20 @@ static void cmd_enc(int argc, char **argv)
 
         FILE *urnd = fopen("/dev/urandom", "rb");
         if (!urnd) die("cannot open /dev/urandom");
-        ba_rand(&r, urnd); fclose(urnd);
-        gf_pow_ba(&R, &GF_GEN, &r);
-        gf_pow_ba(&enc_key, &pub, &r);
+        /* r is ours to choose, so for hpke-nl resample past the ~2^-129 affine
+         * weak-key class (TODO #168) rather than failing an honest encryption. */
+        {
+            int attempt;
+            for (attempt = 0; attempt < 64; attempt++) {
+                ba_rand(&r, urnd);
+                gf_pow_ba(&R, &GF_GEN, &r);
+                gf_pow_ba(&enc_key, &pub, &r);
+                if (strcmp(algo, "hpke") == 0 || nl_v2_key_is_valid(&enc_key)) break;
+            }
+            if (attempt == 64)
+                die("enc hpke-nl: could not sample a non-degenerate ephemeral key");
+        }
+        fclose(urnd);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&E, &P, &enc_key, I_VALUE);
         else
@@ -2339,8 +2357,10 @@ static void cmd_dec(int argc, char **argv)
             pem_key_free(&ct);
             if (strcmp(algo, "hske") == 0)
                 ba_fscx_revolve(&D, &E, &K, R_VALUE);
-            else
+            else {
+                if (!nl_v2_key_is_valid(&K)) die("dec hske-nla2: " WEAK_V2_KEY_MSG);
                 nl_fscx_revolve_v2_inv_ba(&D, &E, &K, R_VALUE);
+            }
         }
         write_binary_file(out_path, D.b, KEYBYTES);
         return;
@@ -2363,8 +2383,10 @@ static void cmd_dec(int argc, char **argv)
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
-        else
+        else {
+            if (!nl_v2_key_is_valid(&dec_key)) die("dec hpke-nl: " WEAK_V2_KEY_MSG);
             nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
+        }
         write_binary_file(out_path, D.b, KEYBYTES);
 
     } else if (strcmp(algo, "hpke-stern-kem") == 0) {

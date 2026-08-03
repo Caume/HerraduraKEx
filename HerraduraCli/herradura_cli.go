@@ -30,6 +30,7 @@ import (
 	"crypto/subtle"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -2738,6 +2739,9 @@ func cmdEnc(args []string) {
 			E     := NewBitArray(n, new(big.Int).Xor(&P.Val, &ks.Val))
 			pem, err = encodeSymCT("hske-nla1", &E.Val, n, &nonce.Val)
 		case "hske-nla2":
+			if !NlV2KeyIsValid(K) {
+				die("enc hske-nla2", errWeakV2Key)
+			}
 			E := NlFscxRevolveV2(P, K, 3*n/4)
 			pem, err = encodeSymCT("hske-nla2", &E.Val, n, nil)
 		}
@@ -2765,9 +2769,23 @@ func cmdEnc(args []string) {
 		}
 		nb := n / 8
 		P := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, nb)))
-		r := NewRandBitArray(n)
-		R := GfPow(gen, &r.Val, poly, n)
-		encKey := NewBitArray(n, GfPow(pubInt, &r.Val, poly, n))
+		// r is ours to choose, so for hpke-nl resample past the ~2^-129 affine
+		// weak-key class (TODO #168) rather than failing an honest encryption.
+		var r *BitArray
+		var R *big.Int
+		var encKey *BitArray
+		for i := 0; i < 64; i++ {
+			r = NewRandBitArray(n)
+			R = GfPow(gen, &r.Val, poly, n)
+			encKey = NewBitArray(n, GfPow(pubInt, &r.Val, poly, n))
+			if *algo != "hpke-nl" || NlV2KeyIsValid(encKey) {
+				break
+			}
+			encKey = nil
+		}
+		if encKey == nil {
+			die("enc hpke-nl", errors.New("could not sample a non-degenerate ephemeral key"))
+		}
 
 		var pem string
 		if *algo == "hpke" {
@@ -2958,6 +2976,9 @@ func cmdDec(args []string) {
 			ks    := NlFscxRevolveV1(seed, base, n/4)
 			D      = NewBitArray(n, new(big.Int).Xor(&E.Val, &ks.Val))
 		case "hske-nla2":
+			if !NlV2KeyIsValid(K) {
+				die("dec hske-nla2", errWeakV2Key)
+			}
 			D = NlFscxRevolveV2Inv(E, K, 3*n/4)
 		}
 		if err := writeBytes(*out, D.Bytes()); err != nil {
@@ -2992,6 +3013,9 @@ func cmdDec(args []string) {
 		if *algo == "hpke" {
 			D = FscxRevolve(E, decKey, 3*n/4)
 		} else {
+			if !NlV2KeyIsValid(decKey) {
+				die("dec hpke-nl", errWeakV2Key)
+			}
 			D = NlFscxRevolveV2Inv(E, decKey, n/4)
 		}
 		if err := writeBytes(*out, D.Bytes()); err != nil {
@@ -4023,6 +4047,13 @@ func cmdPakeDemo(args []string) {
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
+
+// errWeakV2Key is returned when an NL-FSCX v2 key falls in the affine weak-key
+// class delta(K) in {0, 2^(n-1)} (SecurityProofs-2.md 11.19.2, TODO #168).
+var errWeakV2Key = errors.New(
+	"NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " +
+		"permutation GF(2)-affine and the ciphertext recoverable by linear algebra " +
+		"(SecurityProofs-2.md 11.19.2, TODO #168)")
 
 func die(prefix string, err error) {
 	fmt.Fprintln(os.Stderr, prefix+":", err)

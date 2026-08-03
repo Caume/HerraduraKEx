@@ -370,6 +370,30 @@ func nlFscxDeltaV2(b *BitArray) *BitArray {
 	return deltaBA.RotateLeft(n / 4)
 }
 
+// NlV2KeyIsValid rejects NL-FSCX v2 keys for which the permutation degenerates
+// to affine.
+//
+// delta(B) enters NlFscxV2 as an additive *constant*, and addition of a constant
+// c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
+// carry is discarded mod 2^n, making the addition pure XOR). Since M is invertible
+// at every power-of-two n, this gives the exact characterisation
+//
+//	pi_B(A) = (Fscx(A,B) + delta(B)) mod 2^n is GF(2)-affine
+//	    <=> delta(B) in {0, 2^(n-1)}
+//
+// For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from
+// a handful of known plaintexts by linear algebra. Class density is ~2^-129 at
+// n=256, so a random key is not at risk, but the check is one comparison.
+// See SecurityProofs-2.md 11.19.2 (TODO #159, #168).
+func NlV2KeyIsValid(b *BitArray) bool {
+	d := nlFscxDeltaV2(b)
+	if d.Val.Sign() == 0 {
+		return false
+	}
+	msb := new(big.Int).Lsh(big.NewInt(1), uint(b.size-1))
+	return d.Val.Cmp(msb) != 0
+}
+
 // NlFscxV2 computes (Fscx(A,B) + delta(B)) mod 2^n.
 // Bijective in A; exact inverse via NlFscxV2Inv.
 func NlFscxV2(a, b *BitArray) *BitArray {

@@ -1560,12 +1560,40 @@ degenerate to an affine map, recoverable in full from a handful of known plainte
 linear algebra alone — the script demonstrates this at $n = 16$, predicting 500/500
 random inputs from $16$ basis images plus a constant.
 
-**Severity.** The class density is about $2^{-129}$, so a uniformly random 256-bit key is
-not at risk and this is **not** a break of the deployed construction.  It is a genuine
-weak-key class that is currently unrejected, matters if keys are ever structured,
-low-entropy, or attacker-influenced, and costs one line to reject.  Per TODO #159 work
-item 3 this is filed as its own actionable item, **TODO #168**, rather than treated as
-fixed here.
+**Severity.** The class density is about $2^{-129}$ at $n = 256$, so a uniformly random
+256-bit key is not at risk and this is **not** a break of the deployed construction.  It
+is a genuine weak-key class that matters if keys are ever structured, low-entropy, or
+attacker-influenced, and costs one line to reject.
+
+**Density scales with word size.**  The $\delta = 0$ class is every $K$ divisible by
+$2^{\lceil (n+1)/2 \rceil}$, so its density is $2^{-\lceil (n+2)/2 \rceil}$ — verified by
+exhaustive count at $n \leq 24$:
+
+| $n$ | 16 | 20 | 24 | 32 | 256 |
+|---|---|---|---|---|---|
+| $\delta = 0$ keys | $2^{7}$ | $2^{9}$ | $2^{11}$ | $2^{15}$ | $2^{127}$ |
+| density | $2^{-9}$ | $2^{-11}$ | $2^{-13}$ | $2^{-17}$ | $2^{-129}$ |
+
+This matters for the assembly and Arduino targets, which implement NL-FSCX v2 and
+HSKE-NL-A2 on **32-bit** operands: there the class density is $2^{-17}$ — roughly 1 key in
+$131{,}000$, far more reachable than the deployed 256-bit case.  Those targets are
+explicitly demo-only (§11.8.4 records the same $N=32$ toy scoping for Stern-F), so this is
+recorded rather than fixed; porting the guard into the ARM Thumb-2 and NASM sources is
+follow-up work, and was not attempted blind here because this host has no ARM
+cross-toolchain to build or test it against.
+
+**Resolved (TODO #168, v1.9.140).**  A `nl_v2_key_is_valid` predicate is now exported by
+all three suites (Python, `herradura.h`, Go), following the repo's existing
+`gf_pub_is_valid` precedent: the predicate is enforced at the **protocol** layer, not
+inside the primitive.  That placement is deliberate — `nl_fscx_v2` is also invoked
+internally by the FPE, tweakable wide-block, and duplex-sponge constructions with
+hash-derived keys, and the suite's own non-linearity tests call it with degenerate
+operands, so a primitive-level rejection would change a total function's contract across
+three languages for a $2^{-129}$ event.  All three CLIs reject an affine key on
+`enc`/`dec --algo hske-nla2` and on `dec --algo hpke-nl`; `enc --algo hpke-nl` instead
+resamples its own ephemeral $r$, since that value is the sender's to choose and failing an
+honest encryption would be the wrong behaviour.  Test `[45]` covers the class in all three
+languages.
 
 Note this is a strictly stronger statement than §11.8.5's existing $\delta$-injectivity
 measurement, which records that $\delta$ collides but does not identify the $\delta = 0$

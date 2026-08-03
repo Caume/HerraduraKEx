@@ -5103,6 +5103,7 @@ int main(int argc, char *argv[])
         int N = g_rounds > 0 ? g_rounds : 10;
         int ok_hkex = 0, ok_hpks_id = 0, ok_hpke_enc = 0, ok_hpke_dec = 0;
         int ok_stern_synd = 0, ok_aead_tamper = 0, ok_aead_key_swap = 0;
+        int ok_v2_weak = 0;
         int i;
         struct timespec ts0;
         clock_gettime(CLOCK_MONOTONIC, &ts0);
@@ -5204,19 +5205,38 @@ int main(int argc, char *argv[])
                     ok_aead_key_swap++;
             }
 
+            /* NL-FSCX v2 (TODO #168): keys with delta(K) in {0, 2^(n-1)} make
+             * pi_K GF(2)-affine, collapsing HSKE-NL-A2/HPKE-NL to a linear map.
+             * At n=256 that is every K divisible by 2^129, plus e.g. K=2^96. */
+            {
+                BitArray w129, w130, w96, wzero, good;
+                memset(w129.b,  0, KEYBYTES); w129.b[KEYBYTES - 1 - 16] = 0x02; /* 2^129 */
+                memset(w130.b,  0, KEYBYTES); w130.b[KEYBYTES - 1 - 16] = 0x04; /* 2^130 */
+                memset(w96.b,   0, KEYBYTES); w96.b[KEYBYTES - 1 - 12] = 0x01;  /* 2^96  */
+                memset(wzero.b, 0, KEYBYTES);
+                ba_rand(&good, urnd_fp);
+                good.b[KEYBYTES - 1] |= 1;
+                if (!nl_v2_key_is_valid(&w129) && !nl_v2_key_is_valid(&w130)
+                    && !nl_v2_key_is_valid(&w96) && !nl_v2_key_is_valid(&wzero)
+                    && nl_v2_key_is_valid(&good))
+                    ok_v2_weak++;
+            }
+
             if (g_time_limit > 0.0 && time_exceeded(&ts0)) { N = i + 1; break; }
         }
         {
             const char *status = (ok_hkex == N && ok_hpks_id == N && ok_hpke_enc == N
                                   && ok_hpke_dec == N && ok_stern_synd == N
-                                  && ok_aead_tamper == N && ok_aead_key_swap == N)
+                                  && ok_aead_tamper == N && ok_aead_key_swap == N
+                                  && ok_v2_weak == N)
                                  ? "PASS" : "FAIL";
             printf("    n=%d  hkex_reject=%d/%d  hpks_id_reject=%d/%d"
                    "  hpke_enc_reject=%d/%d  hpke_dec_reject=%d/%d"
                    "  stern_synd_reject=%d/%d  aead_tamper_reject=%d/%d"
-                   "  aead_reuse_distinct=%d/%d  [%s]\n\n",
+                   "  aead_reuse_distinct=%d/%d  v2_weak_key_reject=%d/%d  [%s]\n\n",
                    N, ok_hkex, N, ok_hpks_id, N, ok_hpke_enc, N, ok_hpke_dec, N,
-                   ok_stern_synd, N, ok_aead_tamper, N, ok_aead_key_swap, N, status);
+                   ok_stern_synd, N, ok_aead_tamper, N, ok_aead_key_swap, N,
+                   ok_v2_weak, N, status);
         }
     }
 

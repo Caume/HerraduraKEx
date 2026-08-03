@@ -575,6 +575,31 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
     return result
 
 
+def nl_v2_key_is_valid(B: BitArray) -> bool:
+    """Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
+
+    delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
+    c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
+    carry is discarded mod 2^n, making the addition pure XOR).  Since M is invertible
+    at every power-of-two n, this gives the exact characterisation
+
+        pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n  is GF(2)-affine
+            <=>  delta(B) in {0, 2^(n-1)}
+
+    For such a key HSKE-NL-A2 and HPKE-NL collapse to an affine map recoverable in
+    full from a handful of known plaintexts by linear algebra.  At n=256 the class
+    is every B divisible by 2^129 (delta=0), plus e.g. B=2^96 (delta=2^255) — about
+    2^-129 of the key space, so a uniformly random key is not at risk, but the check
+    is cheap and the class is otherwise silently accepted.
+
+    See SecurityProofs-2.md §11.19.2 and
+    SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py (TODO #159, #168).
+    """
+    n     = B._size
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & B._mask).rotated(n // 4).uint
+    return delta not in (0, 1 << (n - 1))
+
+
 def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     """Invert nl_fscx_revolve_v2: apply nl_fscx_v2_inv *steps* times.
     delta(B) is precomputed once — B is constant throughout the revolve."""
