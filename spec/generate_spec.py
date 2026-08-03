@@ -136,7 +136,7 @@ SECURITY = {
                        source=["CLAUDE.md (206)"]),
     "rnl-sigma": dict(status="production", quantum_resistant="conjectured",
                        notes="Sigma-protocol proof of knowledge of an HKEX-RNL private key.",
-                       source=["CLAUDE.md", "SecurityProofs-3.md"]),
+                       source=["CLAUDE.md", "SecurityProofs-5.md"]),
     "hpks-stern": dict(status="demo-only", quantum_resistant="conjectured",
                         classical_security_bits="~56-60 at shipped SDF_ROUNDS=32 (production requires "
                                                   "SDF_PRODUCTION_ROUNDS=219 for 128-bit soundness)",

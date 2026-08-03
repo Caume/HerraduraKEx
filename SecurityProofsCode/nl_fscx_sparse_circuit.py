@@ -299,7 +299,7 @@ def section5_conclusion():
     print("      (b) Use Ligero/Picnic-style IOP-based proofs that avoid the per-bit")
     print("          sharing cost entirely and achieve ~O(n·R·log n) bytes.")
     print()
-    print("  (4) SecurityProofs-2.md §11.8.2 should note: the ZKB++ gate-reduction")
+    print("  (4) SecurityProofs-3.md §11.8.2 should note: the ZKB++ gate-reduction")
     print("      approach was analysed empirically; the bottleneck is share transmission,")
     print("      not AND-gate count; a prefix adder with k≥4 preserves Theorem 13;")
     print("      the 180 KB goal requires a different ZKP system beyond ZKBoo/ZKB++.")

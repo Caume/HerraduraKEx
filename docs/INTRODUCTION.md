@@ -11,7 +11,7 @@ and you know roughly what AES and SHA-256 do, you have enough background.
 **What this document is for**
 
 `docs/TUTORIAL.md` shows *how to call* the library.  The SecurityProofs documents
-(`SecurityProofs-1.md`, `SecurityProofs-2.md`) show *why* the protocols are secure —
+(`SecurityProofs-1.md` through `-5.md`) show *why* the protocols are secure —
 but they use graduate-level algebra.  This document sits in between: it explains
 every concept you need to follow both documents, with toy examples and plain English.
 
@@ -1244,5 +1244,5 @@ the C, Go, and Python implementations.
 
 *This document is part of the Herradura Cryptographic Suite.  For API usage see
 [docs/TUTORIAL.md](TUTORIAL.md).  For formal security proofs see
-[SecurityProofs-1.md](../SecurityProofs-1.md) and
-[SecurityProofs-2.md](../SecurityProofs-2.md).*
+[SecurityProofs-1.md](../SecurityProofs-1.md) through
+[SecurityProofs-5.md](../SecurityProofs-5.md).*

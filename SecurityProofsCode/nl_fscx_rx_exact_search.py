@@ -405,7 +405,7 @@ def main():
     section5(n=8, g=1)
     section6(n=16)
     print(SEP)
-    print("Done. See SecurityProofs-2.md (NL-FSCX rotational subsection) for the write-up.")
+    print("Done. See SecurityProofs-4.md (NL-FSCX rotational subsection) for the write-up.")
     print(SEP)
     print()
 

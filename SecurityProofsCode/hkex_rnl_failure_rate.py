@@ -440,7 +440,7 @@ def section5():
 # Background: the full Albrecht-Gopfert-Poeppelmann-Virdia LWE estimator (2019)
 # and its 2022-2023 updates give ~105–115 classical Core-SVP bits for the
 # current HKEX-RNL parameters (n=256, q=65537, p=4096, η=1) — see §11.4.3 of
-# SecurityProofs-2.md.  That estimate was produced externally; we cannot run
+# SecurityProofs-3.md.  That estimate was produced externally; we cannot run
 # the full estimator here.
 #
 # What we CAN compute is how security scales with the ring dimension n for

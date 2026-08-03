@@ -10,7 +10,7 @@ Because nl_fscx_v1 is non-bijective (onto but not one-to-one over {0,1}^n), two
 distinct states can map to the same next state — a "collision".  If any two ratchet
 positions share a state the secrecy guarantee breaks from that point onward.
 
-KEY FINDINGS (§11.X of SecurityProofs-2.md):
+KEY FINDINGS (§11.X of SecurityProofs-4.md):
 
   §1  Empirical output collision rate of a single nl_fscx_v1 step
         Measured fraction of inputs that share their output with another input.

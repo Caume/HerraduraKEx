@@ -2,6 +2,46 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.143] - 2026-08-03
+
+### Changed
+- **TODO #170:** re-split `SecurityProofs-*.md` from three parts to five, after
+  `SecurityProofs-1.md` (914 expressions) and `SecurityProofs-2.md` (1434 expressions)
+  grew back past GitHub's ~750-expression-per-page KaTeX rendering limit. New layout,
+  measured with `SecurityProofsCode/validate_katex.js` (0 FAIL on every part):
+  `SecurityProofs-1.md` §1–§8 (551 expressions), `SecurityProofs-2.md` §9–§10 (363
+  expressions), `SecurityProofs-3.md` §11–§11.8.2 (580 expressions), new
+  `SecurityProofs-4.md` §11.8.3–§11.9.11 (716 expressions), and new `SecurityProofs-5.md`
+  §11.10–§11.13 + §11.15–§11.19 (639 expressions). Pure cut-and-paste reorganization —
+  no prose or math was reworded. `SecurityProofs.md`'s split index, `CLAUDE.md`'s
+  repository-structure table, and every cross-reference to a moved section in
+  `README.md`, `SECURITY.md`, `llms.txt`, `docs/INTRODUCTION.md`, `docs/TUTORIAL.md`,
+  `spec/generate_spec.py`, and the `SecurityProofsCode/` script docstrings were updated
+  to point at the correct new part file. `SecurityProofsCode/validate_katex.js` now
+  prints a non-fatal WARNING when a file exceeds ~700 expressions, so future growth is
+  caught at authoring time instead of on GitHub.
+
+## [1.9.142] - 2026-08-03
+
+### Added
+- **TODO #169 filed:** port the NL-FSCX v2 affine weak-key guard (TODO #168) to the ARM
+  Thumb-2, NASM i386 and Arduino targets. Those targets implement NL-FSCX v2 on 32-bit
+  operands, where the total affine-key density is 2^-16.7 (about 1 key in 105,000)
+  against ~2^-129 at n=256. TODO #168 deliberately left them unguarded because the
+  development host has no ARM cross-toolchain to build or test assembly against;
+  `SecurityProofs-2.md` §11.19.2 now points at this item.
+- **TODO #170 filed:** re-split `SecurityProofs-*.md`. Measurement while filing found that
+  two of the three parts have grown back past the ~750-expression GitHub KaTeX limit
+  documented in `SecurityProofsCode/KATEX_RULES.md` -- `SecurityProofs-1.md` is at 914 and
+  `SecurityProofs-2.md` at 1434 (nearly 2x), so **both currently cascade-fail on GitHub**,
+  rendering every expression past the threshold as "Unable to render expression". The
+  local validator reports 0 FAIL because it checks per-expression syntax, not the per-page
+  count, so it cannot catch this class of defect. CLAUDE.md's structure table is also
+  stale on all three counts (~753 / ~873 / ~121 recorded against 914 / 1434 / 501
+  measured) and on part 2's section range. Item #170 covers the split, the reference
+  updates, and adding a per-page count warning to `validate_katex.js` so this cannot
+  regrow silently.
+
 ## [1.9.141] - 2026-08-02
 
 ### Fixed
