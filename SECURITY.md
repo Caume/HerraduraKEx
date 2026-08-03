@@ -10,15 +10,15 @@ any of these classifications.
 
 | Protocol | Status | Why | Details |
 |---|---|---|---|
-| **HKEX-GF** | Demo-only / pedagogical | DLP in GF(2^n)* is deprecated by NIST SP 800-57 Rev. 5 (2020) and ENISA (2022); ~80–90 bits at n=256, not 128 | SecurityProofs-1.md §9.2.4 |
-| **HPKS** | Demo-only / pedagogical | Same GF(2^n)* deprecation as HKEX-GF | SecurityProofs-1.md §9.2.4, §9.2.6 (ristretto255 migration path) |
-| **HPKE** | Demo-only / pedagogical | Same GF(2^n)* deprecation as HKEX-GF | SecurityProofs-1.md §9.2.4 |
-| **HPKS-NL / HPKE-NL** | Demo-only / pedagogical | NL-FSCX challenge/encryption layered on the same deprecated GF(2^n)* group | SecurityProofs-2.md §11.7 |
-| **HSKE** (key-only) | Conditionally usable | n/2-bit post-quantum security only if no plaintext is ever observed; not realistic in most deployments | SecurityProofs-2.md §11.7 |
-| **HSKE** (known-plaintext) / **HSKE-NL-A1/A2** | Not suitable for production | A single known-plaintext pair recovers the keystream | SecurityProofs-2.md §11.7 |
-| **HKEX-RNL** (n=256) | Below target, use HKEX-RNL-128 | ~105 classical / ~100 quantum Core-SVP bits — below the 128-bit target | SecurityProofs-2.md §11.4.3, §11.7 |
-| **HKEX-RNL-128** (n=512) | Production-track (conjectured PQ-resistant) | ≥128-bit classical and quantum Core-SVP bits; cross-checked against ML-KEM-512 | SecurityProofs-2.md §11.4.3 |
-| **HPKS-Stern-F / HPKE-Stern-F** | Demo-only | ~30–40 bits at deployed N=256; 128-bit classical security needs N ≥ 17000; decapsulation at production parameters needs the QC-MDPC decoder from TODO #126 | SecurityProofs-2.md §11.7, §11.8.5 |
+| **HKEX-GF** | Demo-only / pedagogical | DLP in GF(2^n)* is deprecated by NIST SP 800-57 Rev. 5 (2020) and ENISA (2022); ~80–90 bits at n=256, not 128 | SecurityProofs-2.md §9.2.4 |
+| **HPKS** | Demo-only / pedagogical | Same GF(2^n)* deprecation as HKEX-GF | SecurityProofs-2.md §9.2.4, §9.2.6 (ristretto255 migration path) |
+| **HPKE** | Demo-only / pedagogical | Same GF(2^n)* deprecation as HKEX-GF | SecurityProofs-2.md §9.2.4 |
+| **HPKS-NL / HPKE-NL** | Demo-only / pedagogical | NL-FSCX challenge/encryption layered on the same deprecated GF(2^n)* group | SecurityProofs-3.md §11.7 |
+| **HSKE** (key-only) | Conditionally usable | n/2-bit post-quantum security only if no plaintext is ever observed; not realistic in most deployments | SecurityProofs-3.md §11.7 |
+| **HSKE** (known-plaintext) / **HSKE-NL-A1/A2** | Not suitable for production | A single known-plaintext pair recovers the keystream | SecurityProofs-3.md §11.7 |
+| **HKEX-RNL** (n=256) | Below target, use HKEX-RNL-128 | ~105 classical / ~100 quantum Core-SVP bits — below the 128-bit target | SecurityProofs-3.md §11.4.3, §11.7 |
+| **HKEX-RNL-128** (n=512) | Production-track (conjectured PQ-resistant) | ≥128-bit classical and quantum Core-SVP bits; cross-checked against ML-KEM-512 | SecurityProofs-3.md §11.4.3 |
+| **HPKS-Stern-F / HPKE-Stern-F** | Demo-only | ~30–40 bits at deployed N=256; 128-bit classical security needs N ≥ 17000; decapsulation at production parameters needs the QC-MDPC decoder from TODO #126 | SecurityProofs-3.md §11.7, SecurityProofs-4.md §11.8.5 |
 
 **Rule of thumb:** if a protocol's status above is anything other than "production-track,"
 treat it as a proof-of-concept for the underlying math, not a component to deploy where
@@ -38,7 +38,7 @@ Please report suspected vulnerabilities privately using
 (repository **Security** tab → **Report a vulnerability**), rather than opening a public
 issue. This applies to implementation bugs (e.g. missing input validation, timing leaks,
 memory-safety issues) as well as cryptographic weaknesses not already documented in
-`SecurityProofs-1.md`/`-2.md`/`-3.md`.
+`SecurityProofs-1.md` through `-5.md`.
 
 Please include:
 
@@ -58,7 +58,7 @@ it helps us triage faster.
 
 - Findings against protocols already labeled demo-only/pedagogical above, when the finding
   merely reconfirms the documented weakness (e.g. "HKEX-GF's DLP is sub-128-bit" — already
-  tracked in SecurityProofs-1.md §9.2.4). Novel attacks that go beyond the documented
+  tracked in SecurityProofs-2.md §9.2.4). Novel attacks that go beyond the documented
   analysis are still in scope.
 - The `SecurityProofsCode/` analysis scripts and `CliTest/`/`CryptosuiteTests/` test
   harnesses are not part of the trust boundary; issues there can be filed as normal public

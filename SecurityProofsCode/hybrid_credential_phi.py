@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # hybrid_credential_phi.py — Resolving the binding map φ for the hybrid
-# Ring-LWR + Stern-F credential (TODO #123, SecurityProofs-3.md §11.10.8/§11.10.9)
+# Ring-LWR + Stern-F credential (TODO #123, SecurityProofs-5.md §11.10.8/§11.10.9)
 #
 # The §11.10.8 design sketch left one open problem: a map φ from the ternary
 # Ring-LWR secret s ∈ {-1,0,1}^n to a low-weight binary Stern witness
@@ -31,7 +31,7 @@
 #   §6  Summary and recommendation
 #
 # Self-contained (no imports from the suite); reproduces the analysis cited in
-# SecurityProofs-3.md §11.10.9.
+# SecurityProofs-5.md §11.10.9.
 #
 # Usage:  python3 hybrid_credential_phi.py [--fast]
 

@@ -8908,3 +8908,47 @@ three languages.
    `SecurityProofs-2.md` §11.19.2 as follow-up work.
 
 Status: **DONE v1.9.140** — nl_v2_key_is_valid added to all three suites and enforced in all three CLIs; test [45] extended; assembly/Arduino gap (density 2^-17 at n=32) documented rather than fixed.
+
+### 170. Re-split `SecurityProofs-*.md` — two of three parts now exceed GitHub's KaTeX limit (Documentation, High)
+
+**Background:** `SecurityProofsCode/KATEX_RULES.md` documents a hard GitHub constraint:
+past roughly **750 math expressions per page**, every expression beyond the threshold
+renders as "Unable to render expression" — a client-side cascade failure with no syntax
+fix. That limit is why `SecurityProofs.md` was split into three parts in the first place.
+
+Two of the three parts have since grown back past it. Measured with
+`SecurityProofsCode/validate_katex.js` (2026-08-03):
+
+| File | Expressions | Status |
+|---|---|---|
+| `SecurityProofs-1.md` | 914 | **over** the ~750 limit |
+| `SecurityProofs-2.md` | 1434 | **far over** — nearly 2x |
+| `SecurityProofs-3.md` | 501 | under |
+
+So both files currently render incorrectly on GitHub past their threshold, even though
+the local validator reports `0 FAIL` — the validator checks per-expression syntax, not
+the per-page count, so it cannot catch this. The recent research-review sections (§11.15
+through §11.19, added by TODO #161/#162/#165/#166/#159) are the bulk of part 2's growth.
+
+CLAUDE.md's own structure table is stale on all three counts (it records ~753 / ~873 /
+~121 against the measured 914 / 1434 / 501) and on part 2's section range (it says
+"§11–§11.9", but the file now also carries §11.15–§11.19).
+
+**Work items:**
+
+1. Split at section boundaries so every resulting part stays comfortably under ~750 — a
+   4-way split is the obvious shape, e.g. moving §11.15–§11.19 (the TODO-specific
+   research-review sections) into a new `SecurityProofs-4.md`, then re-checking whether
+   part 1 needs a further cut.
+2. Re-measure every part with `validate_katex.js` after splitting and record the actual
+   counts, rather than estimates.
+3. Update `SecurityProofs.md`'s split index, every cross-reference between parts, and the
+   `SecurityProofs-*.md` references in `README.md`, `SECURITY.md`, `CLAUDE.md`,
+   `llms.txt`, and the `SecurityProofsCode/` script docstrings that cite section numbers.
+4. Fix CLAUDE.md's structure table: correct all three expression counts and part 2's
+   section range.
+5. Add a guard against silent regrowth — e.g. teach `validate_katex.js` to warn when a
+   file exceeds ~700 expressions, so the next section added to a near-full part surfaces
+   the problem at authoring time instead of on GitHub.
+
+Status: **DONE v1.9.143** — re-split into five parts (§1–§8 / §9–§10 / §11–§11.8.2 / §11.8.3–§11.9.11 / §11.10–§11.13+§11.15–§11.19), measured at 551/363/580/716/639 expressions respectively (all under the ~750 limit, 0 FAIL); validate_katex.js now warns above ~700 expressions.

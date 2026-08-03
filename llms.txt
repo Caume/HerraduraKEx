@@ -7,14 +7,14 @@
 > stay consistent with CLAUDE.md (build/test/architecture) and docs/TUTORIAL.md
 > (worked examples) — those are the authoritative documents for anything not covered
 > here. Do not treat this file as authoritative for build commands or protocol math;
-> see README.md and SecurityProofs-{1,2,3}.md for the formal definitions.
+> see README.md and SecurityProofs-{1,2,3,4,5}.md for the formal definitions.
 
 ## Authoritative docs (read these for detail, not this file)
 - CLAUDE.md — repo layout, build/test commands, protocol stack overview
 - README.md — protocol descriptions with math (KaTeX)
 - docs/TUTORIAL.md — API usage guide per protocol and language, with worked examples
 - docs/INTRODUCTION.md — lay-audience primer
-- SecurityProofs.md (+ -1/-2/-3.md) — formal security analysis
+- SecurityProofs.md (+ -1/-2/-3/-4/-5.md) — formal security analysis
 - docs/examples/{python,c,go}/hello_herradura.* — minimal integration samples
 
 ## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming

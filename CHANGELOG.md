@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.143] - 2026-08-03
+
+### Changed
+- **TODO #170:** re-split `SecurityProofs-*.md` from three parts to five, after
+  `SecurityProofs-1.md` (914 expressions) and `SecurityProofs-2.md` (1434 expressions)
+  grew back past GitHub's ~750-expression-per-page KaTeX rendering limit. New layout,
+  measured with `SecurityProofsCode/validate_katex.js` (0 FAIL on every part):
+  `SecurityProofs-1.md` §1–§8 (551 expressions), `SecurityProofs-2.md` §9–§10 (363
+  expressions), `SecurityProofs-3.md` §11–§11.8.2 (580 expressions), new
+  `SecurityProofs-4.md` §11.8.3–§11.9.11 (716 expressions), and new `SecurityProofs-5.md`
+  §11.10–§11.13 + §11.15–§11.19 (639 expressions). Pure cut-and-paste reorganization —
+  no prose or math was reworded. `SecurityProofs.md`'s split index, `CLAUDE.md`'s
+  repository-structure table, and every cross-reference to a moved section in
+  `README.md`, `SECURITY.md`, `llms.txt`, `docs/INTRODUCTION.md`, `docs/TUTORIAL.md`,
+  `spec/generate_spec.py`, and the `SecurityProofsCode/` script docstrings were updated
+  to point at the correct new part file. `SecurityProofsCode/validate_katex.js` now
+  prints a non-fatal WARNING when a file exceeds ~700 expressions, so future growth is
+  caught at authoring time instead of on GitHub.
+
 ## [1.9.142] - 2026-08-03
 
 ### Added

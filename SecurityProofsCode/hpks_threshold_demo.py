@@ -45,7 +45,7 @@ Composite-modulus note (2^n − 1):
 
 References
 ----------
-    HPKS-NL protocol: SecurityProofs-1.md §8 (classical), §11.3 (NL extension)
+    HPKS-NL protocol: SecurityProofs-1.md §8 (classical), SecurityProofs-3.md §11.3 (NL extension)
     MuSig2: Nick, Ruffing, Seurin 2021 (https://eprint.iacr.org/2020/1261)
     Bellare–Neven multi-sig: https://cseweb.ucsd.edu/~mihir/papers/multisig.pdf
 """

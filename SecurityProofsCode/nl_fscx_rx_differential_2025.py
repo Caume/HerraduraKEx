@@ -129,7 +129,7 @@ def main():
     print("trail already characterised by TODO #75/#125 for NL-FSCX v1's addition step.")
     print("This does NOT rule out a better trail outside hill-climbing's reach; a full")
     print("SAT/SMT reproduction of the paper's exhaustive search is needed to close that")
-    print("gap (see SecurityProofs-2.md's TODO #158 note for scope/caveats).")
+    print("gap (see SecurityProofs-4.md's TODO #158 note for scope/caveats).")
 
 
 if __name__ == "__main__":

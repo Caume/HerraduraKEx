@@ -2,7 +2,7 @@
 (TODO #126, work items 1–4)
 
 Prototypes the production path for HPKE-Stern-F's Niederreiter KEM outlined in
-SecurityProofs-2.md §11.8.5: replace the brute-force decapsulation search
+SecurityProofs-4.md §11.8.5: replace the brute-force decapsulation search
 (exponential in error weight t) with a quasi-cyclic moderate-density
 parity-check (QC-MDPC) trapdoor and a Black-Gray-Flip (BGF) decoder — the BIKE
 design (Aragon et al. 2022) — with the private sparse support derived from an
@@ -85,7 +85,7 @@ def nl_fscx_revolve_v1(a, b, steps, n=N_BITS):
 class NlFscxPrf:
     """Counter-mode XOF over NL-FSCX v1: block_i = F1^{n/4}(ROL(seed ⊕ i, n/8), seed ⊕ i).
 
-    This is the HFSCX-256-DM KDF path of SecurityProofs-2.md §11.8.5 applied in
+    This is the HFSCX-256-DM KDF path of SecurityProofs-4.md §11.8.5 applied in
     counter mode; each 256-bit block yields sixteen 16-bit words.
     """
 

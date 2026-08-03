@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.142)
+# Herradura Cryptographic Suite (v1.9.143)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -255,12 +255,18 @@ spec/                                                — machine-readable protoc
                                                       tags, and security-level classification per
                                                       protocol — the canonical source for tooling/LLMs
 SecurityProofsCode/                                 — standalone Python proof and analysis scripts
-SecurityProofs-1.md                                 — formal analysis §1–§10 (algebraic foundations,
+SecurityProofs-1.md                                 — formal analysis §1–§8 (algebraic foundations,
                                                       protocol security, quantum attack analysis,
+                                                      experimental code index)
+SecurityProofs-2.md                                 — formal analysis §9–§10 (non-linear proposals,
                                                       v1.4.0 migration)
-SecurityProofs-2.md                                 — formal analysis §11–§11.9 (NL-FSCX,
-                                                      Ring-LWR, Stern-F, HFSCX-256 hash)
-SecurityProofs.md                                   — split index (redirects to the two files above)
+SecurityProofs-3.md                                 — formal analysis §11–§11.8.2 (non-linearity and
+                                                      post-quantum extensions, NL-FSCX v1/v2, HKEX-RNL)
+SecurityProofs-4.md                                 — formal analysis §11.8.3–§11.9.11 (PQ signature
+                                                      options, HFSCX-256-DM hash)
+SecurityProofs-5.md                                 — formal analysis §11.10–§11.13, §11.15–§11.19
+                                                      (ZKP extensions, research-review sections)
+SecurityProofs.md                                   — split index (redirects to the five files above)
 docs/
   INTRODUCTION.md                                   — plain-language cryptographic concepts primer
   TUTORIAL.md                                       — integration tutorial (C/Go/Python API recipes)

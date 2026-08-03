@@ -31,10 +31,12 @@ SecurityProofsCode/                                 — standalone Python proof/
   hkex_classical_break.py  — classical algebraic break proofs
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
-SecurityProofs.md                                   — split index (redirects to Parts 1–3; quantum analysis is in SecurityProofs-1.md §6)
-SecurityProofs-1.md                                 — §1–§10: Algebraic Foundations … v1.4.0 Migration (~753 math expressions)
-SecurityProofs-2.md                                 — §11–§11.9: NL-FSCX PQC extensions · HFSCX-256 (~873 math expressions)
-SecurityProofs-3.md                                 — §11.10: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo (~121 math expressions)
+SecurityProofs.md                                   — split index (redirects to Parts 1–5; quantum analysis is in SecurityProofs-1.md §6)
+SecurityProofs-1.md                                 — §1–§8: Algebraic Foundations … Experimental Code Index (551 math expressions)
+SecurityProofs-2.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (363 math expressions)
+SecurityProofs-3.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (580 math expressions)
+SecurityProofs-4.md                                 — §11.8.3–§11.9.11: PQ signature options · HFSCX-256-DM (716 math expressions)
+SecurityProofs-5.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (639 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

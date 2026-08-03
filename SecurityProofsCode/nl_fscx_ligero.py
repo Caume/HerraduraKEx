@@ -794,7 +794,7 @@ def section4_sizes(demo_proof):
               f"{t:>4} {sigma:>4} {b/1024:>8.1f} {bp/1024:>10.1f}")
 
     print()
-    print("  Reference points (SecurityProofs-3.md §11.10.6):")
+    print("  Reference points (SecurityProofs-5.md §11.10.6):")
     print("    ZKBoo  revolve n=256, r=64 : ~920 KB")
     print("    ZKB++  revolve n=256, r=64 : ~464 KB   (Batch 1, v1.9.81)")
     print("    target (SPHINCS+/Picnic)   : ~180 KB")

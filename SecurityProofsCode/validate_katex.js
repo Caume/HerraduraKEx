@@ -157,4 +157,7 @@ for (const s of spans) {
 }
 
 console.log(`\n${ok} OK, ${fail} FAIL, ${pipeFail} PIPE-FAIL`);
+if (ok > 700) {
+  console.log(`WARNING: ${ok} expressions — approaching GitHub's ~750/page KaTeX limit; consider splitting this file.`);
+}
 process.exit(fail > 0 ? 1 : 0);
