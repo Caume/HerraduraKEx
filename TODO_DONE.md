@@ -8738,3 +8738,96 @@ made a solver unnecessary anyway.) New script
    TODO #75/#125 remains operative. Documented in `SecurityProofs-2.md`.
 
 Status: **DONE v1.9.138** — RX search solved exactly; pure-rotational characteristic certified optimal, and trail methodology shown not tight for NL-FSCX v1.
+
+### 159. LLM/AI-assisted cryptanalysis stress-testing pass across HerraduraKEx's primitives (Research/Security, Medium)
+
+**Background:** In the review window, LLM-driven cryptanalysis moved from a research
+curiosity to a credible, NIST-adjacent methodology: Anthropic's Claude discovered a real
+vulnerability in HAWK, a lattice-based signature scheme that was under active
+consideration for NIST standardization, leading the HAWK team to withdraw it from
+consideration entirely (2026-07-28;
+https://www.govinfosecurity.com/claude-mythos-finds-new-cryptographic-algorithm-attacks-a-32360).
+Separately, `CryptanalysisBench` (2026; https://arxiv.org/html/2607.18538v1) benchmarks
+LLMs across 191 cryptanalysis tasks spanning six primitive families drawn from four NIST
+standardization competitions, and other 2025-2026 work evaluates LLM-assisted
+side-channel vulnerability discovery (https://arxiv.org/html/2505.24621) and automated
+cryptographic exploitation agents (https://arxiv.org/pdf/2601.09129). This is a
+meaningfully different validation channel from this repo's existing
+`SecurityProofsCode/` manual/scripted proofs — it found a real flaw in a scheme that had
+already passed multiple rounds of expert human review.
+
+**Work items:**
+
+1. Scope a bounded, well-defined stress-testing pass: pick 2-3 of HerraduraKEx's less
+   battle-tested constructions as targets (e.g. NL-FSCX v2's CSP-based construction,
+   HPKS-Stern-Ring's OR-composition, the HFSCX-256-DM finalizer) rather than attempting
+   to cover the whole suite at once.
+2. Define what "stress-testing" means concretely here given available tooling — this
+   could be as simple as posing the same kind of structured cryptanalysis prompts used in
+   `CryptanalysisBench`/the HAWK finding against this suite's own primitive definitions
+   and existing `SecurityProofsCode/` proof scripts, to see whether an LLM surfaces gaps
+   the existing manual proofs missed.
+3. Treat any finding as a lead requiring the same manual verification standard as any
+   other TODO in this file (a `SecurityProofsCode/` script reproducing it, not just an
+   LLM's claim) before it's considered confirmed — mirroring how CryptanalysisBench's own
+   authors note LLMs "fail comprehensively at algorithm-level cryptanalysis" in the
+   general case, so a hit rate of zero is an expected, valid outcome here too.
+4. Document the pass and its outcome (findings or a clean bill of health) in
+   `SecurityProofs-2.md` or a new `SecurityProofsCode/` note, so this doesn't need
+   re-justifying from scratch next time it comes up.
+
+**Progress (2026-07-31) — first pass complete, one real finding.** Scoped the pass to
+HPKS-Stern-Ring's OR-composition (herradura.h `stern_ring_sign`, the Python/Go suite
+equivalents) as the target — the "less battle-tested" construction named in work item 1.
+Reading `stern_ring_sign`'s non-signer challenge simulation against the joint
+Fiat-Shamir challenge derivation surfaced a genuine, previously-undocumented modulo-3
+bias: the C and Python implementations draw a single random byte and reduce mod 3 to
+pick each non-signer's per-round challenge (256 is not divisible by 3, so residue 0 is
+~0.39% overrepresented), while the real signer's own displayed challenge is forced by
+subtraction from a hash-derived, effectively-uniform joint challenge — meaning the
+signer's slot has an exactly-uniform marginal while every non-signer's slot carries the
+skew. This is a statistical anonymity leak under repeated use of the same ring (not a
+one-shot break): `SecurityProofsCode/stern_ring_challenge_bias.py` (added this pass)
+verifies the exact 86/85/85-out-of-256 distribution, confirms it by Monte Carlo, and
+estimates ~9,000+ same-ring signatures needed before the skew is statistically
+distinguishable per slot at 3-sigma confidence. Per work item 3, this is filed as its own
+actionable item — **TODO #164** — rather than treated as fixed here, since #159 is a
+process/tracking item, not a fix ticket. Go's own implementation already reduces a wide
+32-bit value mod 3 (bias ~2^-32, negligible), so this is a C/Python-specific gap, not a
+protocol-level design flaw.
+
+The other two candidate targets from work item 1 (NL-FSCX v2's CSP-based construction,
+HFSCX-256-DM's finalizer) have not yet been passed over — stays **OPEN** for those two.
+
+**Progress (2026-08-02) — second pass complete, both remaining targets covered, one real
+finding.** Framed both targets around a single question suggested by the shared structure:
+NL-FSCX v1 and v2 buy their non-linearity solely from a modular addition's carry chain
+(everything else — $M$, the rotations, the XORs — is GF(2)-linear), so *for which inputs
+does the addition stop producing carries?* Written up in `SecurityProofs-2.md` §11.19 and
+reproduced by `SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py`.
+
+1. **HFSCX-256-DM (clean, but a load-bearing detail now documented).** With an all-zero
+   message block $A + 0$ has no carries, so the Davies-Meyer inner function degenerates to
+   the linear map $L^{n/4}$, $L = 1 + X + X^{n/4} + X^{n-1}$ over
+   $\mathrm{GF}(2)[X]/(X^n+1)$ — of rank exactly $n/2$, i.e. at $n=256$ it compresses the
+   chaining value $2^{128}$-to-1. The Davies-Meyer feed-forward is exactly what rescues
+   it: over GF(2), $X^n+1 = (X+1)^n$, so with $Y = X+1$ the ring is local, $L = Y^2 u$ for
+   a unit $u$, and $L^{n/4} + 1$ has constant term 1 — a unit, hence invertible. Verified
+   full rank at $n \in \{16,32,64,128,256\}$. §11.9.8 credited DM in general terms with
+   handling $F_1$'s non-bijectivity; this makes the statement concrete and verified.
+2. **NL-FSCX v2 (a genuine finding).** $\delta(K)$ enters as an additive *constant*, and
+   constant addition is GF(2)-affine for all inputs exactly when the constant is $0$ or
+   $2^{n-1}$. Since $M$ is invertible at every power-of-two $n$, this gives the exact
+   characterisation $\pi_K$ affine $\iff \delta(K) \in \{0, 2^{n-1}\}$, verified
+   exhaustively at $n = 8, 16$. Such keys exist at $n=256$: every $K$ divisible by
+   $2^{129}$ ($2^{127}$ keys) plus e.g. $K = 2^{96}$. For them HSKE-NL-A2 / HPKE-NL
+   collapse to an affine map recoverable by linear algebra. Class density $\approx
+   2^{-129}$, so random keys are not at risk — not a break, but an unrejected weak-key
+   class. Per work item 3, filed as its own actionable item, **TODO #168**, rather than
+   fixed here.
+
+All three targets named in work item 1 have now been passed over (HPKS-Stern-Ring in the
+first pass, these two in the second), and work item 4's documentation requirement is met
+for both passes, so this process/tracking item is complete.
+
+Status: **DONE v1.9.139** — second pass covered both remaining targets; HFSCX-256-DM clean (DM feed-forward shown load-bearing), NL-FSCX v2 affine weak-key class found and filed as TODO #168.
