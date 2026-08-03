@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.142] - 2026-08-03
+
+### Added
+- **TODO #169 filed:** port the NL-FSCX v2 affine weak-key guard (TODO #168) to the ARM
+  Thumb-2, NASM i386 and Arduino targets. Those targets implement NL-FSCX v2 on 32-bit
+  operands, where the total affine-key density is 2^-16.7 (about 1 key in 105,000)
+  against ~2^-129 at n=256. TODO #168 deliberately left them unguarded because the
+  development host has no ARM cross-toolchain to build or test assembly against;
+  `SecurityProofs-2.md` §11.19.2 now points at this item.
+- **TODO #170 filed:** re-split `SecurityProofs-*.md`. Measurement while filing found that
+  two of the three parts have grown back past the ~750-expression GitHub KaTeX limit
+  documented in `SecurityProofsCode/KATEX_RULES.md` -- `SecurityProofs-1.md` is at 914 and
+  `SecurityProofs-2.md` at 1434 (nearly 2x), so **both currently cascade-fail on GitHub**,
+  rendering every expression past the threshold as "Unable to render expression". The
+  local validator reports 0 FAIL because it checks per-expression syntax, not the per-page
+  count, so it cannot catch this class of defect. CLAUDE.md's structure table is also
+  stale on all three counts (~753 / ~873 / ~121 recorded against 914 / 1434 / 501
+  measured) and on part 2's section range. Item #170 covers the split, the reference
+  updates, and adding a per-page count warning to `validate_katex.js` so this cannot
+  regrow silently.
+
 ## [1.9.141] - 2026-08-02
 
 ### Fixed

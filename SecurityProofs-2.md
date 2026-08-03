@@ -1585,9 +1585,9 @@ This matters for the assembly and Arduino targets, which implement NL-FSCX v2 an
 HSKE-NL-A2 on **32-bit** operands: there the affine density is $2^{-16.7}$ — roughly 1 key
 in $105{,}000$, far more reachable than the deployed 256-bit case.  Those targets are
 explicitly demo-only (§11.8.4 records the same $N=32$ toy scoping for Stern-F), so this is
-recorded rather than fixed; porting the guard into the ARM Thumb-2 and NASM sources is
-follow-up work, and was not attempted blind here because this host has no ARM
-cross-toolchain to build or test it against.
+recorded rather than fixed; porting the guard into the ARM Thumb-2, NASM i386 and Arduino
+sources is tracked as **TODO #169**, and was not attempted blind under TODO #168 because
+the development host has no ARM cross-toolchain to build or test it against.
 
 **Resolved (TODO #168, v1.9.140).**  A `nl_v2_key_is_valid` predicate is now exported by
 all three suites (Python, `herradura.h`, Go), following the repo's existing
