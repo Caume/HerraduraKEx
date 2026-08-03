@@ -2646,6 +2646,16 @@ def test_hcred():
     print()
 
 
+def nl_v2_key_is_valid(K_int: int, n: int) -> bool:
+    """NL-FSCX v2 affine weak-key check (mirrors the suite's nl_v2_key_is_valid).
+    pi_K is GF(2)-affine iff delta(K) in {0, 2^(n-1)} -- TODO #168."""
+    mask  = (1 << n) - 1
+    prod  = (K_int * ((K_int + 1) >> 1)) & mask
+    r     = n // 4
+    delta = ((prod << r) | (prod >> (n - r))) & mask
+    return delta not in (0, 1 << (n - 1))
+
+
 def gf_pub_is_valid(pub_int: int) -> bool:
     """Rejects the additive zero and the multiplicative identity (g^0=1):
     a degenerate GF(2^n)* public element that collapses HKEX-GF/HPKS/HPKE
@@ -2702,6 +2712,7 @@ def test_weak_key_rejection():
     N = g_rounds if g_rounds > 0 else 10
     ok_hkex = ok_hpks = ok_hpke = ok_hpke_dec = ok_stern = 0
     ok_aead_tamper = ok_aead_key_swap = 0
+    ok_v2_weak = 0
     t0 = time.perf_counter()
     for i in range(N):
         if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
@@ -2766,16 +2777,28 @@ def test_weak_key_rejection():
         if ct_buf != ct2_buf:
             ok_aead_key_swap += 1
 
+        # NL-FSCX v2 (TODO #168): keys with delta(K) in {0, 2^(n-1)} make
+        # pi_K GF(2)-affine, collapsing HSKE-NL-A2/HPKE-NL to a linear map.
+        # At n=256 that is every K divisible by 2^129, plus e.g. K=2^96.
+        if (not nl_v2_key_is_valid(1 << 129, 256)
+                and not nl_v2_key_is_valid(1 << 130, 256)
+                and not nl_v2_key_is_valid(1 << 96, 256)
+                and not nl_v2_key_is_valid(0, 256)
+                and nl_v2_key_is_valid(BitArray.random(256).uint | 1, 256)):
+            ok_v2_weak += 1
+
     if N == 0:
         print("    SKIP (no iterations completed)\n")
         return
     status = ("PASS" if ok_hkex == N and ok_hpks == N and ok_hpke == N
               and ok_hpke_dec == N and ok_stern == N
-              and ok_aead_tamper == N and ok_aead_key_swap == N else "FAIL")
+              and ok_aead_tamper == N and ok_aead_key_swap == N
+              and ok_v2_weak == N else "FAIL")
     print(f"    n={N}  hkex_reject={ok_hkex}/{N}  hpks_id_reject={ok_hpks}/{N}"
           f"  hpke_enc_reject={ok_hpke}/{N}  hpke_dec_reject={ok_hpke_dec}/{N}"
           f"  stern_synd_reject={ok_stern}/{N}  aead_tamper_reject={ok_aead_tamper}/{N}"
-          f"  aead_reuse_distinct={ok_aead_key_swap}/{N}  [{status}]")
+          f"  aead_reuse_distinct={ok_aead_key_swap}/{N}"
+          f"  v2_weak_key_reject={ok_v2_weak}/{N}  [{status}]")
     print()
 
 

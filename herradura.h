@@ -537,6 +537,31 @@ static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
     ba_rol64_256(delta, &prod);
 }
 
+/* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
+ *
+ * delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
+ * c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
+ * carry is discarded mod 2^n, making the addition pure XOR).  Since M is invertible
+ * at every power-of-two n:
+ *
+ *     pi_B(A) = (fscx(A,B) + delta(B)) mod 2^n  is GF(2)-affine
+ *         <=>  delta(B) in {0, 2^(n-1)}
+ *
+ * For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from a
+ * handful of known plaintexts by linear algebra.  Class density is ~2^-129 at
+ * n=256, so a random key is not at risk, but the check is one comparison.
+ * See SecurityProofs-2.md §11.19.2 (TODO #159, #168). */
+static int nl_v2_key_is_valid(const BitArray *b)
+{
+    BitArray d, msb;
+    nl_fscx_delta_v2_ba(&d, b);
+    if (ba_is_zero(&d)) return 0;
+    memset(msb.b, 0, KEYBYTES);
+    msb.b[0] = 0x80;                 /* 2^(n-1): b[0] is the most significant byte */
+    if (ba_equal(&d, &msb)) return 0;
+    return 1;
+}
+
 /* NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^n */
 static void nl_fscx_v2_ba(BitArray *result, const BitArray *a, const BitArray *b)
 {

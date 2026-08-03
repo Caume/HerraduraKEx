@@ -23,6 +23,7 @@ fscx_revolve           = _s.fscx_revolve
 nl_fscx_revolve_v1     = _s.nl_fscx_revolve_v1
 nl_fscx_revolve_v2     = _s.nl_fscx_revolve_v2
 nl_fscx_revolve_v2_inv = _s.nl_fscx_revolve_v2_inv
+nl_v2_key_is_valid     = _s.nl_v2_key_is_valid
 gf_mul                 = _s.gf_mul
 gf_pow                 = _s.gf_pow
 hfscx_256              = _s.hfscx_256

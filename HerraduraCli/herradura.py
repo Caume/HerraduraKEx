@@ -62,7 +62,7 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
                    encode_hcred_proof, decode_hcred_proof)
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
-    nl_fscx_revolve_v2_inv, gf_mul, gf_pow,
+    nl_fscx_revolve_v2_inv, nl_v2_key_is_valid, gf_mul, gf_pow,
     hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
@@ -276,6 +276,11 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
 # ---------------------------------------------------------------------------
 # Key serialization helpers
 # ---------------------------------------------------------------------------
+
+_WEAK_V2_KEY_MSG = (
+    "NL-FSCX v2 affine weak key — delta(K) is 0 or 2^(n-1), which makes the "
+    "permutation GF(2)-affine and the ciphertext recoverable by linear algebra "
+    "(SecurityProofs-2.md \u00a711.19.2, TODO #168)")
 
 _CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl'}
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
@@ -1577,6 +1582,8 @@ def cmd_enc(args):
             _write_file(out_path, _encode_sym_ct('hske-nla1', E.uint, nbits, nonce_int=N_nonce.uint))
 
         else:  # hske-nla2
+            if not nl_v2_key_is_valid(K):
+                sys.exit("enc hske-nla2: %s" % _WEAK_V2_KEY_MSG)
             E = nl_fscx_revolve_v2(P, K, 3 * nbits // 4)
             _write_file(out_path, _encode_sym_ct('hske-nla2', E.uint, nbits))
         return
@@ -1603,9 +1610,16 @@ def cmd_enc(args):
         poly    = GF_POLY.get(nbits, GF_POLY[256])
         nbytes  = nbits // 8
         P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
-        r       = BitArray.random(nbits)
-        R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))
-        enc_key = BitArray(nbits, gf_pow(pub_int, r.uint, poly, nbits))
+        # r is ours to choose, so resample past the ~2^-129 affine-weak-key class
+        # (TODO #168) rather than failing an honest encryption.
+        for _ in range(64):
+            r       = BitArray.random(nbits)
+            R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))
+            enc_key = BitArray(nbits, gf_pow(pub_int, r.uint, poly, nbits))
+            if nl_v2_key_is_valid(enc_key):
+                break
+        else:
+            sys.exit("enc hpke-nl: could not sample a non-degenerate ephemeral key")
         E       = nl_fscx_revolve_v2(P, enc_key, nbits // 4)
         _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
 
@@ -1693,6 +1707,8 @@ def cmd_dec(args):
             ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
             D       = BitArray(nbits, E.uint ^ ks.uint)
         else:  # hske-nla2
+            if not nl_v2_key_is_valid(K):
+                sys.exit("dec hske-nla2: %s" % _WEAK_V2_KEY_MSG)
             D = nl_fscx_revolve_v2_inv(E, K, 3 * nbits // 4)
 
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
@@ -1719,6 +1735,8 @@ def cmd_dec(args):
         R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
         E       = BitArray(nbits, E_int)
         dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
+        if not nl_v2_key_is_valid(dec_key):
+            sys.exit("dec hpke-nl: %s" % _WEAK_V2_KEY_MSG)
         D       = nl_fscx_revolve_v2_inv(E, dec_key, nbits // 4)
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
 

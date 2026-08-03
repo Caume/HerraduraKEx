@@ -8831,3 +8831,80 @@ first pass, these two in the second), and work item 4's documentation requiremen
 for both passes, so this process/tracking item is complete.
 
 Status: **DONE v1.9.139** — second pass covered both remaining targets; HFSCX-256-DM clean (DM feed-forward shown load-bearing), NL-FSCX v2 affine weak-key class found and filed as TODO #168.
+
+### 168. Reject NL-FSCX v2 affine weak keys (delta(K) in {0, 2^(n-1)}) (Security, Low)
+
+**Background:** TODO #159's second stress-testing pass (`SecurityProofs-2.md` §11.19.2,
+`SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py`) established the exact
+characterisation
+
+    pi_K is GF(2)-affine  <=>  delta(K) in {0, 2^(n-1)}
+
+for NL-FSCX v2's permutation $\pi_K(A) = (M(A \oplus K) + \delta(K)) \bmod 2^n$, verified
+exhaustively at $n = 8$ and $n = 16$ (the characterisation holds at every power-of-two $n$,
+where $M$ is invertible). Addition of a constant $c$ is affine over GF(2) for every input
+exactly when $c = 0$ or $c = 2^{n-1}$, the latter because the top carry is discarded mod
+$2^n$.
+
+Such keys exist at the deployed size: every $K$ divisible by $2^{129}$ gives
+$\delta(K) = 0$ at $n = 256$ (a class of $2^{127}$ keys), and $K = 2^{96}$ gives
+$\delta(K) = 2^{255}$. For any of them HSKE-NL-A2 and HPKE-NL collapse to an affine map
+that is fully recoverable from a handful of known plaintexts by linear algebra.
+
+**Severity:** class density is about $2^{-129}$, so a uniformly random 256-bit key is not
+at risk and this is **not** a break of the deployed construction. It matters only if keys
+are structured, low-entropy, or attacker-influenced — but the check is one line and the
+suite already performs weak-key rejection elsewhere (test `[45]`, TODO #141/#144), so the
+asymmetry is worth closing.
+
+**Work items:**
+
+1. Add a `delta(K) not in {0, 2^(n-1)}` guard to the NL-FSCX v2 entry points
+   (`nl_fscx_v2`, `nl_fscx_revolve_v2`, and the inverse variants) in the Python, C
+   (`herradura.h`), and Go suites, rejecting rather than silently proceeding.
+2. Mirror the guard at the CLI layer wherever an HSKE-NL-A2 / HPKE-NL key is loaded,
+   following the existing weak-key rejection precedent from TODO #141.
+3. Extend the existing weak-key/malformed-input rejection test `[45]` in
+   `CryptosuiteTests/Herradura_tests.{c,go,py}` with an NL-FSCX v2 affine-key case (e.g.
+   $K = 2^{129}$ and $K = 2^{96}$ at $n = 256$), keeping the three languages in parity.
+4. Cross-check whether the assembly/Arduino targets (which use 32-bit operands) need the
+   same guard, and record the answer either way.
+
+**Resolution (2026-08-02).** Implemented across all three suites and CLIs, following the
+repo's existing `gf_pub_is_valid` precedent.
+
+*Design note (deviation from work item 1's literal wording).* The guard is a
+`nl_v2_key_is_valid` predicate enforced at the **protocol** layer, not a rejection inside
+`nl_fscx_v2`/`nl_fscx_revolve_v2` themselves. Three reasons, all discovered while
+implementing: (a) it mirrors `gf_pub_is_valid`, which `hkex_gf_agree`/`hpks_verify` check
+while the underlying `gf_pow` does not; (b) `nl_fscx_v2` is invoked internally by the FPE,
+tweakable wide-block, and duplex-sponge constructions with hash-derived keys, which would
+all need new error paths for a $2^{-129}$ event; and (c) the suite's own non-linearity
+tests call the primitive with degenerate operands, and the C/Go primitives return values
+rather than error codes, so rejecting there would change a total function's contract in
+three languages.
+
+1. `nl_v2_key_is_valid` added to `Herradura cryptographic suite.py`, `herradura.h`, and
+   `herradura/herradura.go` (plus `HerraduraCli/primitives.py`'s re-export).
+2. Enforced in all three CLIs: `enc`/`dec --algo hske-nla2` and `dec --algo hpke-nl`
+   reject an affine key with a shared explanatory message. `enc --algo hpke-nl` instead
+   **resamples** its ephemeral $r$ (up to 64 attempts) rather than failing, since that
+   value is the sender's own choice and an honest encryption should not error. Verified:
+   all three CLIs reject $K = 2^{129}$ and $K = 2^{96}$ on both enc and dec, accept good
+   keys, and `hpke-nl` still round-trips in all three.
+3. Test `[45]` extended in `Herradura_tests.{c,go,py}` with a `v2_weak_key_reject`
+   sub-check covering $K \in \{0, 2^{96}, 2^{129}, 2^{130}\}$ (rejected) and a random
+   odd key (accepted), keeping the three languages at parity.
+4. **Assembly/Arduino: guard needed in principle, not implemented — recorded.** Those
+   targets do implement NL-FSCX v2 and HSKE-NL-A2, on 32-bit operands, where the class
+   density is far worse: the $\delta = 0$ class is every $K$ divisible by
+   $2^{\lceil (n+1)/2 \rceil}$ (density $2^{-\lceil (n+2)/2 \rceil}$), and the
+   $\delta = 2^{n-1}$ class is additionally non-empty whenever $8 \mid n$. Exhaustive
+   counts over the full key space at $n \leq 32$ give a total affine density of
+   $2^{-16.7}$ at $n=32$ (about 1 key in $105{,}000$) against $\approx 2^{-129}$ at
+   $n=256$, where the $\delta=0$ class dominates. Those targets are explicitly demo-only,
+   and this host has no ARM cross-toolchain to build or test assembly changes against, so
+   porting the guard was deliberately not attempted blind. Documented in
+   `SecurityProofs-2.md` §11.19.2 as follow-up work.
+
+Status: **DONE v1.9.140** — nl_v2_key_is_valid added to all three suites and enforced in all three CLIs; test [45] extended; assembly/Arduino gap (density 2^-17 at n=32) documented rather than fixed.

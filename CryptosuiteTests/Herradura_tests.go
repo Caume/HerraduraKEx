@@ -1619,6 +1619,7 @@ func testWeakKeyRejection() {
 	N := testRounds(10)
 	okHkex, okHpks, okHpke, okHpkeDec, okStern := 0, 0, 0, 0, 0
 	okAeadTamper, okAeadKeySwap := 0, 0
+	okV2Weak := 0
 	t0 := time.Now()
 	zero := newBA(size, big.NewInt(0))
 	one := newBA(size, big.NewInt(1))
@@ -1699,6 +1700,20 @@ func testWeakKeyRejection() {
 			}
 		}
 
+		// NL-FSCX v2 (TODO #168): keys with delta(K) in {0, 2^(n-1)} make
+		// pi_K GF(2)-affine, collapsing HSKE-NL-A2/HPKE-NL to a linear map.
+		// At n=256 that is every K divisible by 2^129, plus e.g. K=2^96.
+		weak129 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 129))
+		weak130 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 130))
+		weak96 := NewBitArray(256, new(big.Int).Lsh(big.NewInt(1), 96))
+		weakZero := NewBitArray(256, big.NewInt(0))
+		goodKey := NewBitArray(256, new(big.Int).Or(&NewRandBitArray(256).Val, big.NewInt(1)))
+		if !NlV2KeyIsValid(weak129) && !NlV2KeyIsValid(weak130) &&
+			!NlV2KeyIsValid(weak96) && !NlV2KeyIsValid(weakZero) &&
+			NlV2KeyIsValid(goodKey) {
+			okV2Weak++
+		}
+
 		if timeExceeded(t0) {
 			N = i + 1
 			break
@@ -1706,14 +1721,14 @@ func testWeakKeyRejection() {
 	}
 	status := "PASS"
 	if okHkex != N || okHpks != N || okHpke != N || okHpkeDec != N || okStern != N ||
-		okAeadTamper != N || okAeadKeySwap != N {
+		okAeadTamper != N || okAeadKeySwap != N || okV2Weak != N {
 		status = "FAIL"
 	}
 	fmt.Printf("    n=%d  hkex_reject=%d/%d  hpks_id_reject=%d/%d"+
 		"  hpke_enc_reject=%d/%d  hpke_dec_reject=%d/%d"+
 		"  stern_synd_reject=%d/%d  aead_tamper_reject=%d/%d"+
-		"  aead_reuse_distinct=%d/%d  [%s]\n",
+		"  aead_reuse_distinct=%d/%d  v2_weak_key_reject=%d/%d  [%s]\n",
 		N, okHkex, N, okHpks, N, okHpke, N, okHpkeDec, N,
-		okStern, N, okAeadTamper, N, okAeadKeySwap, N, status)
+		okStern, N, okAeadTamper, N, okAeadKeySwap, N, okV2Weak, N, status)
 	fmt.Println()
 }
