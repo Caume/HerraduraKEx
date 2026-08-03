@@ -2422,6 +2422,32 @@ nl_fscx_delta_v2:
     .ltorg
 
 /* ------------------------------------------------------------------ */
+/* nl_v2_key_is_valid: r0=B -> r0=1 if delta(B) not in {0,2^31}, else 0 */
+/* Rejects NL-FSCX v2 keys for which the permutation degenerates to    */
+/* affine (see herradura.h's nl_v2_key_is_valid, TODO #169).           */
+/* Failure-mode convention (item 3): no CLI/keygen boundary exists on  */
+/* this target, so this is a plain 0/1 predicate, uncalled from the    */
+/* nl_fscx_v2/revolve_v2 hot path -- same as C/Go/Python, which only   */
+/* call it from their CLI keygen. Exercised only by a visible          */
+/* test-harness assertion (Herradura_tests.s, item 4), like C's [45].  */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+nl_v2_key_is_valid:
+    push    {lr}
+    bl      nl_fscx_delta_v2
+    cbz     r0, kv_invalid
+    ldr     r1, =0x80000000
+    cmp     r0, r1
+    beq     kv_invalid
+    movs    r0, #1
+    pop     {pc}
+kv_invalid:
+    movs    r0, #0
+    pop     {pc}
+
+    .ltorg
+
+/* ------------------------------------------------------------------ */
 /* nl_fscx_v1: r0=A, r1=B -> r0=fscx(A,B) XOR ROL(A+B, 8)            */
 /* ------------------------------------------------------------------ */
     .thumb_func

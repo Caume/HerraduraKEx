@@ -138,6 +138,12 @@ uint32 nl_fscx_revolve_v1(uint32 a, uint32 b, int steps) {
     return a;
 }
 
+/* TODO #169 item 4 test copy of the suite's guard, item 2 */
+uint8_t nl_v2_key_is_valid(uint32 b) {
+    uint32 d = nl_fscx_delta_v2(b);
+    return d != 0 && d != 0x80000000UL;
+}
+
 uint32 nl_fscx_v2(uint32 a, uint32 b) {
     return fscx(a, b) + nl_fscx_delta_v2(b);
 }
@@ -1182,6 +1188,15 @@ void test_accumulator() {
     Serial.println();
 }
 
+void test_v2_weak_key_reject() {
+    Serial.println("[18] v2_weak_key_reject: NL-FSCX v2 affine weak-key guard (n=32, 1 trial)  [NEW]");
+    int ok = !nl_v2_key_is_valid(0x00020000UL)   /* 2^17: delta(K)=0 at n=32 (TODO #169) */
+             && nl_v2_key_is_valid(0x5A5A5A5AUL); /* ordinary key: must be accepted */
+    Serial.print("    "); Serial.print(ok ? 1 : 0); Serial.print(" / 1 weak-key checks correct  [");
+    Serial.println(ok ? "PASS]" : "FAIL]");
+    Serial.println();
+}
+
 /* ------------------------------------------------------------------ */
 /* Arduino entry points                                                */
 /* ------------------------------------------------------------------ */
@@ -1212,6 +1227,7 @@ void loop() {
     test_fpe();
     test_tweakable();
     test_accumulator();
+    test_v2_weak_key_reject();
 
     delay(30000);
 }

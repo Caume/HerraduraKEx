@@ -1086,10 +1086,10 @@ comparable and the total is what matters.
 This matters for the assembly and Arduino targets, which implement NL-FSCX v2 and
 HSKE-NL-A2 on **32-bit** operands: there the affine density is $2^{-16.7}$ — roughly 1 key
 in $105{,}000$, far more reachable than the deployed 256-bit case.  Those targets are
-explicitly demo-only (§11.8.4 records the same $N=32$ toy scoping for Stern-F), so this is
-recorded rather than fixed; porting the guard into the ARM Thumb-2, NASM i386 and Arduino
-sources is tracked as **TODO #169**, and was not attempted blind under TODO #168 because
-the development host has no ARM cross-toolchain to build or test it against.
+explicitly demo-only (§11.8.4 records the same $N=32$ toy scoping for Stern-F), which is
+why porting the guard was tracked separately as **TODO #169** rather than attempted blind
+under TODO #168 — the development host had no ARM cross-toolchain to build or test it
+against at the time.
 
 **Resolved (TODO #168, v1.9.140).**  A `nl_v2_key_is_valid` predicate is now exported by
 all three suites (Python, `herradura.h`, Go), following the repo's existing
@@ -1107,5 +1107,21 @@ languages.
 Note this is a strictly stronger statement than §11.8.5's existing $\delta$-injectivity
 measurement, which records that $\delta$ collides but does not identify the $\delta = 0$
 preimage as a class on which the construction's entire claimed non-linearity vanishes.
+
+**Resolved (TODO #169, v1.9.144).**  The ARM cross-toolchain (`arm-linux-gnueabi-gcc`,
+`qemu-arm`) was confirmed present on the development host, unblocking the port left open
+above.  A `nl_v2_key_is_valid` predicate matching `herradura.h`'s semantics exactly
+(returns invalid iff $\delta(K) \in \lbrace 0, 2^{31} \rbrace$ at $n = 32$) is now defined
+in `Herradura cryptographic suite.s`, `.asm`, and `.ino`, and duplicated in the
+corresponding `CryptosuiteTests/Herradura_tests.{s,asm,ino}` files, which have no shared
+header to import it from. Since these targets have no CLI — the enforcement boundary used
+by Python/C/Go — the predicate is a plain return-code function, uncalled from the
+`nl_fscx_v2`/`nl_fscx_revolve_v2` hot path, consistent with the reference suites (which
+likewise only invoke the guard from their CLI's `genpkey`, never from inside the
+primitive). It is exercised by a new test `[18]` (`v2_weak_key_reject`) in all three test
+harnesses, checking that $K = 2^{17}$ (which has $\delta = 0$ at $n = 32$, per the
+$2^{\lceil (n+1)/2 \rceil}$ divisibility rule above) is rejected while an ordinary key is
+accepted — verified passing under `qemu-arm`, `qemu-i386`, and `simavr` alongside the
+existing tests `[1]`–`[17]`.
 
 ---
