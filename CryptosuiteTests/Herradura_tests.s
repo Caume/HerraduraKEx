@@ -54,6 +54,7 @@ fmt_t14:  .asciz "[14] ZKP-NL (NL-FSCX ZKBoo): prove+verify (3 trials, n=8, R=4)
 fmt_t15:  .asciz "[15] FPE (78.A): encrypt/decrypt round-trip (3 trials)\n"
 fmt_t16:  .asciz "[16] Tweakable cipher (78.B): encrypt/decrypt round-trip (3 trials)\n"
 fmt_t17:  .asciz "[17] Accumulator (78.J): 4-leaf Merkle proof (1 trial)\n"
+fmt_t18:  .asciz "[18] v2_weak_key_reject: NL-FSCX v2 affine weak-key guard (n=32, 1 trial)\n"
 
 fmt_p20:  .asciz "    20 / 20 passed  [PASS]\n"
 fmt_p100: .asciz "    100 / 100 passed  [PASS]\n"
@@ -64,6 +65,7 @@ fmt_p3r:  .asciz "    3 / 3 ring-verified  [PASS]\n"
 fmt_p3z:  .asciz "    3 / 3 zk-verified  [PASS]\n"
 fmt_p3f:  .asciz "    3 / 3 round-trips correct  [PASS]\n"
 fmt_p1a:  .asciz "    1 / 1 proof correct  [PASS]\n"
+fmt_p1w:  .asciz "    1 / 1 weak-key checks correct  [PASS]\n"
 fmt_fail: .asciz "    FAILED  [FAIL]\n"
 
 lcg_state:   .word 0x12345678   /* overwritten from /dev/urandom at main() (SA-01) */
@@ -1181,6 +1183,25 @@ t17_fail:
     bl      printf
 t17_done:
 
+    /* ================================================================ [18] v2_weak_key_reject (1 trial) */
+    ldr     r0, =fmt_t18
+    bl      printf
+    ldr     r0, =0x00020000     @ 2^17: delta(K)=0 at n=32 (TODO #169)
+    bl      nl_v2_key_is_valid
+    cmp     r0, #0
+    bne     t18_fail
+    ldr     r0, =0x5A5A5A5A     @ ordinary key: must be accepted
+    bl      nl_v2_key_is_valid
+    cmp     r0, #1
+    bne     t18_fail
+    ldr     r0, =fmt_p1w
+    bl      printf
+    b       t18_done
+t18_fail:
+    ldr     r0, =fmt_fail
+    bl      printf
+t18_done:
+
     mov     r0, #0
     bl      exit
 
@@ -1969,6 +1990,25 @@ nl_fscx_delta_v2:
     mul     r0, r0, r4
     ror     r0, r0, #24
     pop     {r4, pc}
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* nl_v2_key_is_valid: r0=B -> r0=1 if delta(B) not in {0,2^31}, else 0 */
+/* (TODO #169 item 4 test copy of the suite's guard, item 2)          */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+nl_v2_key_is_valid:
+    push    {lr}
+    bl      nl_fscx_delta_v2
+    cbz     r0, kv_invalid
+    ldr     r1, =0x80000000
+    cmp     r0, r1
+    beq     kv_invalid
+    movs    r0, #1
+    pop     {pc}
+kv_invalid:
+    movs    r0, #0
+    pop     {pc}
     .ltorg
 
 /* ------------------------------------------------------------------ */

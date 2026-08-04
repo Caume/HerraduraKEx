@@ -103,6 +103,10 @@ section .data
     t16_hdr_l   equ $-t16_hdr
     t17_hdr     db "[17] Accumulator (78.J): 4-leaf Merkle proof (1 trial)", 10
     t17_hdr_l   equ $-t17_hdr
+    t18_hdr     db "[18] v2_weak_key_reject: NL-FSCX v2 affine weak-key guard (n=32, 1 trial)", 10
+    t18_hdr_l   equ $-t18_hdr
+    pass1w      db "    1 / 1 weak-key checks correct  [PASS]", 10
+    pass1w_l    equ $-pass1w
     pass3f      db "    3 / 3 round-trips correct  [PASS]", 10
     pass3f_l    equ $-pass3f
     pass1a      db "    1 / 1 proof correct  [PASS]", 10
@@ -1243,6 +1247,28 @@ _start:
     call print_str
 .t17_done:
 
+    ; ================================================================== [18] v2_weak_key_reject (1 trial)
+    mov  eax, t18_hdr
+    mov  ecx, t18_hdr_l
+    call print_str
+    mov  eax, 0x00020000        ; 2^17: delta(K)=0 at n=32 (TODO #169)
+    call nl_v2_key_is_valid
+    test eax, eax
+    jnz  .t18_fail
+    mov  eax, 0x5A5A5A5A        ; ordinary key: must be accepted
+    call nl_v2_key_is_valid
+    cmp  eax, 1
+    jne  .t18_fail
+    mov  eax, pass1w
+    mov  ecx, pass1w_l
+    call print_str
+    jmp  .t18_done
+.t18_fail:
+    mov  eax, fail_msg
+    mov  ecx, fail_msg_l
+    call print_str
+.t18_done:
+
     ; ------------------------------------------------------------------ exit
     mov  eax, SYS_EXIT
     xor  ebx, ebx
@@ -1960,6 +1986,22 @@ nl_fscx_delta_v2:
     rol  eax, 8
     pop  edx
     pop  ebx
+    ret
+
+; ============================================================
+; nl_v2_key_is_valid: EAX=B --> EAX=1 if delta(B) not in {0,2^31}, else 0
+; (TODO #169 item 4 test copy of the suite's guard, item 2)
+; ============================================================
+nl_v2_key_is_valid:
+    call nl_fscx_delta_v2   ; eax = delta(B)
+    test eax, eax
+    jz   .kv_invalid
+    cmp  eax, 0x80000000
+    je   .kv_invalid
+    mov  eax, 1
+    ret
+.kv_invalid:
+    xor  eax, eax
     ret
 
 ; ============================================================

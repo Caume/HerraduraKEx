@@ -2,6 +2,24 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.144] - 2026-08-03
+
+### Added
+- **TODO #169:** ported the NL-FSCX v2 affine weak-key guard (TODO #168) to the ARM
+  Thumb-2, NASM i386, and Arduino targets, which implement NL-FSCX v2 on 32-bit
+  operands where the affine-key density (2^-16.7, ~1 in 105,000) is far more
+  reachable than at the deployed 256-bit size (~2^-129). `nl_v2_key_is_valid` was
+  added to `Herradura cryptographic suite.{s,asm,ino}`, matching `herradura.h`'s
+  semantics exactly, plus test-only copies in
+  `CryptosuiteTests/Herradura_tests.{s,asm,ino}` since those files have no shared
+  header to import from. As these targets have no CLI/keygen boundary, the guard is
+  a plain return-code predicate — uncalled from the `nl_fscx_v2`/`nl_fscx_revolve_v2`
+  hot path, matching the reference (Python/C/Go) suites, which likewise only invoke
+  it from their CLI's `genpkey`. Enforcement is exercised by a new test `[18]`
+  (`v2_weak_key_reject`) in all three harnesses, verified passing under `qemu-arm`,
+  `qemu-i386`, and `simavr`. `SecurityProofs-5.md` §11.19.2 updated to record the
+  closure.
+
 ## [1.9.143] - 2026-08-03
 
 ### Changed

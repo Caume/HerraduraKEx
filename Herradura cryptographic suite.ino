@@ -166,6 +166,24 @@ uint32 nl_fscx_revolve_v1(uint32 a, uint32 b, int steps) {
     return a;
 }
 
+/* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine
+ * (delta(B) in {0, 2^31} — see herradura.h's nl_v2_key_is_valid, TODO #169).
+ *
+ * Failure-mode convention (TODO #169 item 3): this target has no CLI, so
+ * there is no keygen boundary to reject at. Mirroring the C/Go/Python
+ * suites — which never call the guard from inside nl_fscx_v2/nl_fscx_revolve_v2
+ * either, only from their CLI's keygen path — nl_v2_key_is_valid here is a
+ * plain 0/1 return-code predicate that the demo/protocol call sites do not
+ * invoke. It is exercised solely by a visible test-harness assertion
+ * (Herradura_tests.ino's v2_weak_key_reject check, item 4), identical in
+ * spirit to the C suite's test [45]. This keeps the convention consistent
+ * across all three unguarded targets without adding a new abort-in-hot-path
+ * behavior that doesn't exist even at the reference (C/Go/Python) layer. */
+uint8_t nl_v2_key_is_valid(uint32 b) {
+    uint32 d = nl_fscx_delta_v2(b);
+    return d != 0 && d != 0x80000000UL;
+}
+
 /* NL-FSCX v2: (fscx(A,B) + delta(B)) mod 2^32 */
 uint32 nl_fscx_v2(uint32 a, uint32 b) {
     return fscx(a, b) + nl_fscx_delta_v2(b);  /* mod 2^32 */

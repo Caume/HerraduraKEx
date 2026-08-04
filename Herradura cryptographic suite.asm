@@ -2383,6 +2383,28 @@ nl_fscx_delta_v2:
     ret
 
 ; ============================================================
+; nl_v2_key_is_valid: EAX=B --> EAX=1 if delta(B) not in {0,2^31}, else 0
+; Rejects NL-FSCX v2 keys for which the permutation degenerates to
+; affine (see herradura.h's nl_v2_key_is_valid, TODO #169).
+; Failure-mode convention (item 3): no CLI/keygen boundary exists on
+; this target, so this is a plain 0/1 predicate, uncalled from the
+; nl_fscx_v2/revolve_v2 hot path -- same as C/Go/Python, which only
+; call it from their CLI keygen. Exercised only by a visible
+; test-harness assertion (Herradura_tests.asm, item 4), like C's [45].
+; ============================================================
+nl_v2_key_is_valid:
+    call nl_fscx_delta_v2   ; eax = delta(B)
+    test eax, eax
+    jz   .kv_invalid
+    cmp  eax, 0x80000000
+    je   .kv_invalid
+    mov  eax, 1
+    ret
+.kv_invalid:
+    xor  eax, eax
+    ret
+
+; ============================================================
 ; nl_fscx_v1: EAX=A, EBX=B --> EAX=nl_v1(A,B)
 ; nl_v1(A,B) = fscx(A,B) XOR ROL32(A+B, 8)
 ; ============================================================
