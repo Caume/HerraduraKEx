@@ -36,7 +36,7 @@ SecurityProofs-1.md                                 — §1–§8: Algebraic Fou
 SecurityProofs-2.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (363 math expressions)
 SecurityProofs-3.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (580 math expressions)
 SecurityProofs-4.md                                 — §11.8.3–§11.9.11: PQ signature options · HFSCX-256-DM (716 math expressions)
-SecurityProofs-5.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (639 math expressions)
+SecurityProofs-5.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -161,7 +161,7 @@ python3 CryptosuiteTests/Herradura_tests.py
 python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 
 # Assembly — build first (see Build Commands), then run:
-# ARM/NASM/Arduino: tests [1]–[17]
+# ARM/NASM/Arduino: tests [1]–[18]
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ./run_arduino.sh tests    # simavr; TIMEOUT env var, default 90s
