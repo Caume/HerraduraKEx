@@ -9049,3 +9049,40 @@ those are spelled out in-line instead of linked). Added a mermaid sequence diagr
 the HKEX-GF Alice/Bob exchange plus a one-line note on why an eavesdropper can't recover
 the shared secret. Verified `SecurityProofsCode/validate_katex.js README.md` still
 passes (84 OK, 0 FAIL, 0 PIPE-FAIL) after the edits.
+
+### 173. docs/TUTORIAL.md — add motivation, quickstart, and core/advanced grouping (Documentation, Medium)
+
+`docs/TUTORIAL.md` is a well-organized cookbook (consistent CLI/C/Go/Python blocks per
+protocol) but reads as pure reference: each section jumps from its header straight to
+shell commands with no "what is this for / when would I use it" framing. There is no
+link to `docs/INTRODUCTION.md` Part 11.2's protocol-choice decision tree near the top,
+no minimal end-to-end quickstart a beginner can copy-paste, and objectively harder
+sections (ZKP, Threshold Signing, OPRF/aPAKE) carry the same visual weight as the basic
+classical protocols.
+
+**Work items:**
+
+1. Add 1-2 sentences of "what this is / when to use it" before the CLI block in each
+   major protocol section (starting with HKEX-GF and HSKE).
+2. Link `docs/INTRODUCTION.md`'s decision tree (Part 11.2) from the "Getting started"
+   section so a new integrator can pick a protocol before reading the full reference.
+3. Explain asymmetric protocol shapes where they aren't self-evident from the CLI
+   labels alone, e.g. why HKEX-RNL needs two rounds ("Round 1"/"Round 2") unlike the
+   single-round HKEX-GF.
+4. Add a single "5-minute quickstart" callout near the top: generate a keypair,
+   exchange, encrypt, decrypt, in one copy-pasteable block.
+5. Visually separate "core" protocols (classical, NL/PQC) from "advanced" ones (ZKP,
+   Threshold Signing, HCRED, OPRF/aPAKE) in the Contents list.
+
+Status: **DONE v1.9.147** — added a "what it's for" framing paragraph before the CLI
+block in HKEX-GF, HSKE, HPKS, HPKE, and HKEX-RNL, each cross-referencing the protocols
+it composes with. Linked `docs/INTRODUCTION.md` §11.2's decision tree from the top of
+"Getting started". Explained HKEX-RNL's two-round shape (Peikert reconciliation requires
+Bob to see Alice's public value before computing his hint) plus a mermaid sequence
+diagram, contrasted with HKEX-GF's simultaneous exchange. Added a copy-pasteable
+5-minute quickstart (keypair → exchange → encrypt → decrypt) using the classical
+protocols and Python CLI. Split the Contents list into Core / Advanced / Reference
+groups (switched to bullet lists rather than reusing the original numeric IDs, since
+CommonMark auto-increments ordered-list numbers and out-of-sequence literals would have
+rendered wrong). Verified `SecurityProofsCode/validate_katex.js docs/TUTORIAL.md` is a
+no-op (file has no `$…$` math spans).

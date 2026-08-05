@@ -6,32 +6,6 @@
 
 ## Open items
 
-### 173. docs/TUTORIAL.md — add motivation, quickstart, and core/advanced grouping (Documentation, Medium)
-
-`docs/TUTORIAL.md` is a well-organized cookbook (consistent CLI/C/Go/Python blocks per
-protocol) but reads as pure reference: each section jumps from its header straight to
-shell commands with no "what is this for / when would I use it" framing. There is no
-link to `docs/INTRODUCTION.md` Part 11.2's protocol-choice decision tree near the top,
-no minimal end-to-end quickstart a beginner can copy-paste, and objectively harder
-sections (ZKP, Threshold Signing, OPRF/aPAKE) carry the same visual weight as the basic
-classical protocols.
-
-**Work items:**
-
-1. Add 1-2 sentences of "what this is / when to use it" before the CLI block in each
-   major protocol section (starting with HKEX-GF and HSKE).
-2. Link `docs/INTRODUCTION.md`'s decision tree (Part 11.2) from the "Getting started"
-   section so a new integrator can pick a protocol before reading the full reference.
-3. Explain asymmetric protocol shapes where they aren't self-evident from the CLI
-   labels alone, e.g. why HKEX-RNL needs two rounds ("Round 1"/"Round 2") unlike the
-   single-round HKEX-GF.
-4. Add a single "5-minute quickstart" callout near the top: generate a keypair,
-   exchange, encrypt, decrypt, in one copy-pasteable block.
-5. Visually separate "core" protocols (classical, NL/PQC) from "advanced" ones (ZKP,
-   Threshold Signing, HCRED, OPRF/aPAKE) in the Contents list.
-
-Status: **OPEN**
-
 ### 174. docs/INTRODUCTION.md — numbering, notation consistency, and a chained worked example (Documentation, Medium)
 
 `docs/INTRODUCTION.md` is the most didactic document in the repo (reading-order table,

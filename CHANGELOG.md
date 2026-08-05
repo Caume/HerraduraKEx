@@ -2,6 +2,16 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.147] - 2026-08-05
+
+### Changed
+- **TODO #173:** made `docs/TUTORIAL.md` more didactic. Added a "what it's for / when
+  to use it" paragraph before each of HKEX-GF, HSKE, HPKS, HPKE, and HKEX-RNL's CLI
+  blocks; linked `docs/INTRODUCTION.md` §11.2's protocol decision tree from the top of
+  "Getting started"; explained why HKEX-RNL needs two rounds (Peikert reconciliation)
+  with a mermaid sequence diagram; added a copy-pasteable 5-minute quickstart; and split
+  the Contents list into Core / Advanced / Reference groups.
+
 ## [1.9.146] - 2026-08-05
 
 ### Changed
