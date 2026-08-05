@@ -2,6 +2,16 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.151] - 2026-08-05
+
+### Changed
+- **TODO #177:** made `SecurityProofs.md` more navigable. Added a callout at the top
+  pointing readers without prerequisite background to `docs/CRYPTOGRAPHY_BASICS.md`
+  and `docs/INTRODUCTION.md`; moved the dense version-history "Status"/"Last updated"
+  text into a collapsed `<details>` block below the five-file routing table, so the
+  index is the first thing seen. This closes out the documentation-review batch opened
+  by TODO #172–#177 (all six items now done).
+
 ## [1.9.150] - 2026-08-05
 
 ### Added

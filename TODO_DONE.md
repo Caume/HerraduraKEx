@@ -9186,3 +9186,32 @@ directory's `.pyc` file was a local build artifact only, already matched by the
 existing root `.gitignore`'s untargeted `__pycache__/` pattern, which applies at any
 depth) — the earlier review's "checked into the repo" description was inaccurate.
 Deleted the local stray directory for cleanliness; no `.gitignore` change was needed.
+
+### 177. SecurityProofs.md — back-link to beginner docs and declutter the index (Documentation, Low)
+
+`SecurityProofs.md` is a thin, honest index redirecting to the five `SecurityProofs-N.md`
+Part files (split due to GitHub's ~750-expression-per-page KaTeX limit), but it offers no
+path back to `docs/CRYPTOGRAPHY_BASICS.md`/`docs/INTRODUCTION.md` for a reader who lands
+here first (e.g. via search or citation) without the prerequisite background, even though
+those docs link forward to it. Its dense version-history "Status" text is also mixed
+into what should be a pure navigational index.
+
+**Work items:**
+
+1. Add one line near the top pointing readers without prerequisite background to
+   `docs/CRYPTOGRAPHY_BASICS.md` and `docs/INTRODUCTION.md`.
+2. Move the version-history "Status" paragraph out of the primary index view (e.g. into
+   a trailing footnote or a separate changelog-style subsection) so the file's routing
+   table is the first thing seen.
+
+Status: **DONE v1.9.151** — added a callout at the top pointing readers without the
+prerequisite background to `docs/CRYPTOGRAPHY_BASICS.md` and `docs/INTRODUCTION.md`
+(noting the latter links back into these same Part files at the point each concept is
+introduced). Moved the dense version-history "Status"/"Last updated" text into a
+collapsed `<details>` block below the routing table, so the five-file index is the
+first thing seen. Verified `SecurityProofsCode/validate_katex.js SecurityProofs.md`
+still passes (1 OK, 0 FAIL) with the `$\mathbb{Z}_{65537}$` span now inside the
+collapsed block.
+
+This closes out the documentation-review batch opened by TODO #172–#177 (all six now
+DONE); `TODO.md`'s Open items list is empty as of this entry.
