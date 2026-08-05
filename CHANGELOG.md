@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.149] - 2026-08-05
+
+### Changed
+- **TODO #175:** made `docs/CRYPTOGRAPHY_BASICS.md` more didactic. Added a TL;DR
+  paragraph (≈15-20 min estimate) naming the four core cryptographic properties;
+  added an ASCII diagram in §2 for Kerckhoffs's principle (public algorithm box vs.
+  secret key box); added a note after §2.3's factoring example clarifying that
+  factoring illustrates RSA-style one-way functions in general, while this codebase's
+  classical protocols actually rest on the discrete-log problem over GF(2^n)*; and
+  added a worked negligibility example (256-bit brute force vs. the age of the
+  universe) below the notation table's `negl(n)`/`poly(n)` rows.
+
 ## [1.9.148] - 2026-08-05
 
 ### Changed

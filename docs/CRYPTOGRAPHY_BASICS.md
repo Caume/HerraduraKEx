@@ -6,6 +6,14 @@ background beyond ordinary arithmetic. If you already know what AES, SHA-256, XO
 and finite fields are, skip straight to
 [docs/INTRODUCTION.md](INTRODUCTION.md), which is written for that audience.
 
+**TL;DR (≈15-20 min read):** Cryptography gives four guarantees — confidentiality,
+integrity, authentication, non-repudiation — over a channel anyone can read. It does
+this with a public **algorithm** plus a secret **key** (Kerckhoffs's principle), built
+on math problems that are fast to compute one way and infeasible to reverse without
+the key (**one-way functions**). This document builds up the vocabulary — bits,
+modular arithmetic, finite fields, notation, threat models — needed to read
+`docs/INTRODUCTION.md` and the formal `SecurityProofs-*.md` documents next.
+
 **Who this is for:** a recent graduate of *any* field — biology, law, business,
 history, engineering, or computer science — who wants to genuinely understand
 `docs/TUTORIAL.md`, `docs/INTRODUCTION.md`, and the `SecurityProofs-*.md` documents
@@ -66,6 +74,19 @@ principle**: *a cryptosystem should be secure even if everything about the syste
 except the key, is public knowledge.* It is the reason this entire codebase can be
 open-source while individual users' keys remain private.
 
+```
+┌─────────────────────────────┐      ┌─────────────────────┐
+│  ALGORITHM (public)         │      │  KEY (secret)       │
+│  e.g. "HKEX-GF: C = g^a"    │  +   │  e.g. a = 0x9F3C...  │  →  secure output
+│  anyone can read the code   │      │  known only to Alice │
+└─────────────────────────────┘      └─────────────────────┘
+     safe to publish on GitHub            never shared, never logged
+```
+
+Security lives entirely in the right-hand box. Publishing the left-hand box (as
+this whole repository does) costs nothing in security and buys independent
+review — the opposite of "security through obscurity."
+
 **Reference:** A. Kerckhoffs, "La Cryptographie Militaire," *Journal des Sciences
 Militaires*, vol. IX, pp. 5–38, 1883. English translation and discussion in
 F. L. Bauer, *Decrypted Secrets*, 4th ed., Springer, 2007, ch. 3.
@@ -124,6 +145,15 @@ Multiplying two very large prime numbers together is fast; factoring the huge
 result back into those two primes is (believed to be) extremely slow. Every
 security proof in this codebase ultimately rests on one such problem being
 computationally hard — see Part 4 below.
+
+**A note on which problem this codebase actually uses:** prime factoring above is
+the one-way function behind RSA — it's used here only as the most widely-known
+illustration of "hard to reverse." Herradura's own classical protocols (HKEX-GF,
+HPKS, HPKE) do not factor anything; they rest on a *different* one-way function,
+the **discrete logarithm problem** in `GF(2^n)*` — introduced in §3.3 below and
+formalized in §4.2. Both are one-way functions in the same general sense, but they
+are different math problems with different attacks and different post-quantum
+status.
 
 ---
 
@@ -195,6 +225,24 @@ table is a lookup reference — you do not need to memorize it before reading on
 | `O(f(n))` | "big-O of f(n)" | An upper bound on how an algorithm's running time or memory use grows as the input size n grows. `O(n²)` means roughly proportional to n squared. |
 | `H(·)`, `Hash(·)` | "hash of" | A one-way function producing a fixed-size, unpredictable-looking output from an input of any size. See §4.3. |
 | `π`, `σ` | "permutation" | A rearrangement of a list's order — used in zero-knowledge proofs (Stern protocol) to hide which element is which. |
+
+**What "negligible" means in practice:** breaking a 256-bit key by brute force means
+trying up to `2^256` possibilities. Suppose an attacker somehow builds a computer that
+tries a trillion (`10^12`) keys per second — far beyond anything that exists today.
+`2^256` is about `1.16 × 10^77`. Dividing:
+
+```
+1.16 × 10^77 keys ÷ 10^12 keys/sec ≈ 1.16 × 10^65 seconds
+```
+
+The universe is about `4.3 × 10^17` seconds old (≈13.8 billion years). The attacker's
+search would take roughly `10^47` times longer than the universe has existed so far —
+and that's with a computer far faster than any that exists. *That* gap between
+"technically possible" and "will never happen" is what `negl(n)` captures formally:
+as `n` (the key size) grows, the attacker's success probability shrinks faster than
+`1/poly(n)` for every polynomial, so past a modest `n` it is smaller than any
+probability that matters in practice — smaller, for instance, than the chance of
+guessing correctly which atom in the solar system a friend is currently thinking of.
 
 ### 4.1 Fields, in one paragraph
 

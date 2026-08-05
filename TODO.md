@@ -6,31 +6,6 @@
 
 ## Open items
 
-### 175. docs/CRYPTOGRAPHY_BASICS.md — TL;DR box, negligibility example, and factoring caveat (Documentation, Low)
-
-`docs/CRYPTOGRAPHY_BASICS.md` is close to ideal for its target reader but has three
-specific gaps: no TL;DR/time-estimate at the top for a reader deciding whether to commit
-to the full 324 lines; `negl(n)`/`poly(n)`/`Pr[event]` are introduced only as notation-
-table rows (§4) with no worked example, unlike §3.2's clock-arithmetic treatment; and
-§2.3's prime-factoring one-way-function example could read as what this codebase relies
-on, when the suite's actual hard problem is discrete log over GF(2^n), not factoring.
-
-**Work items:**
-
-1. Add a 2-3 sentence TL;DR/abstract box after the title, naming the four core
-   properties (confidentiality/integrity/authentication/non-repudiation) and an
-   estimated reading time.
-2. Add a short worked example directly below the notation table's `negl(n)`/`poly(n)`
-   rows (e.g. comparing 2^128 brute-force guesses against a fast attacker's guess rate)
-   so "negligible" is grounded the same way clock arithmetic was.
-3. In §2.3, explicitly flag that prime factoring is illustrative of one-way functions
-   in general (RSA), and separately name that this codebase's actual hard problem is
-   the discrete-log problem over GF(2^n).
-4. Add a small ASCII diagram for Kerckhoffs's principle (public algorithm box vs.
-   secret key box) in §2 to visually anchor the public/private split.
-
-Status: **OPEN**
-
 ### 176. docs/examples/ — add a local README and remove stray `__pycache__` (Documentation, Low)
 
 The four samples in `docs/examples/` (`c/hello_herradura.c`, `go/hello_herradura.go`,

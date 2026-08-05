@@ -9126,3 +9126,38 @@ encrypt/decrypt at n=32, with every value computed by actually running
 mermaid sequence diagrams for the Part 3.1 paint-mixing analogy and the Part 6.2 Schnorr
 identification protocol. Verified `SecurityProofsCode/validate_katex.js
 docs/INTRODUCTION.md` passes (2 OK, 0 FAIL) with the new KaTeX span included.
+
+### 175. docs/CRYPTOGRAPHY_BASICS.md — TL;DR box, negligibility example, and factoring caveat (Documentation, Low)
+
+`docs/CRYPTOGRAPHY_BASICS.md` is close to ideal for its target reader but has three
+specific gaps: no TL;DR/time-estimate at the top for a reader deciding whether to commit
+to the full 324 lines; `negl(n)`/`poly(n)`/`Pr[event]` are introduced only as notation-
+table rows (§4) with no worked example, unlike §3.2's clock-arithmetic treatment; and
+§2.3's prime-factoring one-way-function example could read as what this codebase relies
+on, when the suite's actual hard problem is discrete log over GF(2^n), not factoring.
+
+**Work items:**
+
+1. Add a 2-3 sentence TL;DR/abstract box after the title, naming the four core
+   properties (confidentiality/integrity/authentication/non-repudiation) and an
+   estimated reading time.
+2. Add a short worked example directly below the notation table's `negl(n)`/`poly(n)`
+   rows (e.g. comparing 2^128 brute-force guesses against a fast attacker's guess rate)
+   so "negligible" is grounded the same way clock arithmetic was.
+3. In §2.3, explicitly flag that prime factoring is illustrative of one-way functions
+   in general (RSA), and separately name that this codebase's actual hard problem is
+   the discrete-log problem over GF(2^n).
+4. Add a small ASCII diagram for Kerckhoffs's principle (public algorithm box vs.
+   secret key box) in §2 to visually anchor the public/private split.
+
+Status: **DONE v1.9.149** — added a TL;DR paragraph (with ≈15-20 min estimate) right
+after the intro, naming the four core properties and the algorithm/key/one-way-function
+setup. Added an ASCII box diagram in §2 contrasting the public ALGORITHM box against the
+secret KEY box for Kerckhoffs's principle. Added a "note on which problem this codebase
+actually uses" directly after §2.3's factoring example, clarifying factoring illustrates
+RSA-style one-way functions in general while Herradura's classical protocols rest on the
+discrete-log problem over GF(2^n)* instead. Added a worked negligibility example below
+the notation table (256-bit brute force at 10^12 keys/sec vs. the age of the universe,
+~10^47x gap) grounding `negl(n)`/`poly(n)` the same way §3.2 grounded modular
+arithmetic with clock time. File has no KaTeX math spans, so
+`SecurityProofsCode/validate_katex.js` is a no-op here (confirmed 0 OK/0 FAIL, unchanged).
