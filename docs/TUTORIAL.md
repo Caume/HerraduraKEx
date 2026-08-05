@@ -24,7 +24,9 @@ attacks. Use the NL/PQC or code-based variants for new deployments. See [Securit
 **Background reading:** If you are new to the cryptographic concepts used here (finite fields,
 Diffie-Hellman, lattices, zero-knowledge proofs, etc.), read
 [docs/INTRODUCTION.md](INTRODUCTION.md) first — it covers every prerequisite in plain language
-with toy examples and verified references.
+with toy examples and verified references. If you are new to cryptography and computing
+altogether, start with [docs/CRYPTOGRAPHY_BASICS.md](CRYPTOGRAPHY_BASICS.md), a fundamentals
+primer with formal notation aimed at recent graduates of any field.
 
 ---
 

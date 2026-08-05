@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.145] - 2026-08-05
+
+### Added
+- **TODO #171:** added `docs/CRYPTOGRAPHY_BASICS.md`, a from-scratch cryptography
+  fundamentals primer aimed at recent graduates of any field, not just CS/STEM. It
+  covers symmetric vs. asymmetric cryptography, Kerckhoffs's principle, one-way
+  functions, bits and modular ("clock") arithmetic, a formal-notation lookup table
+  matching the symbols used in `SecurityProofs-*.md` (⊕, ROL/ROR, mod, GF(2^n)*,
+  g^a, Pr[·], negl(n), O(f(n)), H(·), π/σ), threat models, and the rationale for
+  post-quantum resistance. It sits one level below `docs/INTRODUCTION.md` in the
+  reading order and is now linked from `docs/TUTORIAL.md`, `docs/INTRODUCTION.md`,
+  and `README.md`'s docs listing.
+
 ## [1.9.144] - 2026-08-03
 
 ### Added

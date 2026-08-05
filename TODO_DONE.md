@@ -8998,3 +8998,18 @@ Chose a plain return-code convention, enforced solely via a new test `[18]`
 Python/C/Go, which likewise never call the guard from inside the primitive, only from
 their CLI's keygen. Verified passing (tests `[1]`–`[18]`, 0 FAIL) under `qemu-arm`,
 `qemu-i386`, and `simavr`. `SecurityProofs-5.md` §11.19.2 updated to record the closure.
+
+### 171. Add `CRYPTOGRAPHY_BASICS.md` — cryptography fundamentals primer for recent graduates (Documentation, Medium)
+
+Create `docs/CRYPTOGRAPHY_BASICS.md` covering the cryptography concept basics and fundamentals underlying the suite's components (modular/finite-field arithmetic, GF(2^n)* structure, XOR/linear maps and periodic orbits, Diffie-Hellman key exchange, discrete-log hardness, symmetric vs. asymmetric encryption, digital signatures, Schnorr identification/signature scheme, El Gamal encryption, hash-based commitments, zero-knowledge proofs, lattice/LWE-style noise arguments, syndrome decoding/code-based cryptography), including formal notation used throughout `SecurityProofs-*.md` and `docs/TUTORIAL.md` (e.g. ⊕, ROL/ROR, g^a, mod (2^n − 1), Σ-protocol notation). The goal is a self-contained prerequisites document that prepares a recent graduate of most STEM/CS-adjacent backgrounds (not necessarily a cryptography specialist) to read and understand `docs/TUTORIAL.md`, `docs/INTRODUCTION.md`, and `SecurityProofs-1.md` through `SecurityProofs-5.md` without needing outside references. Link it from `docs/TUTORIAL.md` and `README.md`'s docs section once written. Follow `SecurityProofsCode/KATEX_RULES.md` for any math notation rendered as KaTeX.
+
+Status: **DONE v1.9.145** — added `docs/CRYPTOGRAPHY_BASICS.md`, a from-scratch primer
+(no prior programming/math background assumed) covering symmetric vs. asymmetric
+crypto, Kerckhoffs's principle, one-way functions, bits/modular ("clock") arithmetic,
+a formal-notation lookup table (⊕, ROL/ROR, mod, GF(2^n)*, g^a, Pr[·], negl(n),
+O(f(n)), H(·), π/σ, etc.), threat models (Alice/Bob/Eve/Mallory), and the
+quantum-resistance rationale — positioned as the layer beneath `docs/INTRODUCTION.md`
+in the reading order. Linked from `docs/TUTORIAL.md`'s background-reading note,
+`docs/INTRODUCTION.md`'s opening paragraph, and `README.md`'s docs-directory listing.
+No KaTeX math spans used (plain markdown/Unicode notation only), so
+`SecurityProofsCode/KATEX_RULES.md` did not apply.

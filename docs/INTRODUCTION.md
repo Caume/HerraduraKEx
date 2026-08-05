@@ -2,7 +2,10 @@
 
 This document explains the cryptographic ideas behind the Herradura suite in plain
 language.  No advanced mathematics is required.  If you can read a network diagram
-and you know roughly what AES and SHA-256 do, you have enough background.
+and you know roughly what AES and SHA-256 do, you have enough background.  If you
+don't yet have that background, start with
+[docs/CRYPTOGRAPHY_BASICS.md](CRYPTOGRAPHY_BASICS.md) first — it covers bits, keys,
+modular arithmetic, and the formal notation used here from scratch.
 
 ---
 

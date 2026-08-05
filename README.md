@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.144)
+# Herradura Cryptographic Suite (v1.9.145)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -268,6 +268,7 @@ SecurityProofs-5.md                                 — formal analysis §11.10�
                                                       (ZKP extensions, research-review sections)
 SecurityProofs.md                                   — split index (redirects to the five files above)
 docs/
+  CRYPTOGRAPHY_BASICS.md                            — cryptography fundamentals primer (no prior background required)
   INTRODUCTION.md                                   — plain-language cryptographic concepts primer
   TUTORIAL.md                                       — integration tutorial (C/Go/Python API recipes)
   examples/                                         — minimal runnable examples (C, Go, Python)
