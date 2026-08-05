@@ -9161,3 +9161,28 @@ the notation table (256-bit brute force at 10^12 keys/sec vs. the age of the uni
 ~10^47x gap) grounding `negl(n)`/`poly(n)` the same way §3.2 grounded modular
 arithmetic with clock time. File has no KaTeX math spans, so
 `SecurityProofsCode/validate_katex.js` is a no-op here (confirmed 0 OK/0 FAIL, unchanged).
+
+### 176. docs/examples/ — add a local README and remove stray `__pycache__` (Documentation, Low)
+
+The four samples in `docs/examples/` (`c/hello_herradura.c`, `go/hello_herradura.go`,
+`python/hello_herradura.py`, `mcp/hello_herradura_mcp.py`) are consistently linked from
+`README.md`, `llms.txt`, and `docs/TUTORIAL.md`, but the directory itself has no README
+explaining what each sample demonstrates or what order to try them in. A stray
+`docs/examples/mcp/__pycache__/` directory is also checked into the repo.
+
+**Work items:**
+
+1. Add `docs/examples/README.md` briefly describing each sample and a suggested
+   reading order (e.g. Python first as the reference implementation, then C/Go, then
+   the MCP example last since it depends on understanding the CLI surface).
+2. Remove the checked-in `__pycache__` directory and add `__pycache__/` to `.gitignore`
+   if not already covered.
+
+Status: **DONE v1.9.150** — added `docs/examples/README.md` with a one-line "why" per
+sample and a suggested order (Python reference implementation first, then C, then Go,
+then the MCP agent-integration example last). On the `__pycache__` item: `git ls-files`
+confirmed `docs/examples/mcp/__pycache__/` was never actually tracked by git (the
+directory's `.pyc` file was a local build artifact only, already matched by the
+existing root `.gitignore`'s untargeted `__pycache__/` pattern, which applies at any
+depth) — the earlier review's "checked into the repo" description was inaccurate.
+Deleted the local stray directory for cleanliness; no `.gitignore` change was needed.

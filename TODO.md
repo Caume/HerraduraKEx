@@ -6,24 +6,6 @@
 
 ## Open items
 
-### 176. docs/examples/ — add a local README and remove stray `__pycache__` (Documentation, Low)
-
-The four samples in `docs/examples/` (`c/hello_herradura.c`, `go/hello_herradura.go`,
-`python/hello_herradura.py`, `mcp/hello_herradura_mcp.py`) are consistently linked from
-`README.md`, `llms.txt`, and `docs/TUTORIAL.md`, but the directory itself has no README
-explaining what each sample demonstrates or what order to try them in. A stray
-`docs/examples/mcp/__pycache__/` directory is also checked into the repo.
-
-**Work items:**
-
-1. Add `docs/examples/README.md` briefly describing each sample and a suggested
-   reading order (e.g. Python first as the reference implementation, then C/Go, then
-   the MCP example last since it depends on understanding the CLI surface).
-2. Remove the checked-in `__pycache__` directory and add `__pycache__/` to `.gitignore`
-   if not already covered.
-
-Status: **OPEN**
-
 ### 177. SecurityProofs.md — back-link to beginner docs and declutter the index (Documentation, Low)
 
 `SecurityProofs.md` is a thin, honest index redirecting to the five `SecurityProofs-N.md`

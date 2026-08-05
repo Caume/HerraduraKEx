@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.150] - 2026-08-05
+
+### Added
+- **TODO #176:** added `docs/examples/README.md`, describing what each of the four
+  runnable samples demonstrates and a suggested reading order (Python reference
+  implementation first, then C, then Go, then the MCP agent-integration example last).
+
+### Fixed
+- Removed a stray local `docs/examples/mcp/__pycache__/` build artifact. It was never
+  actually tracked by git — already matched by the existing root `.gitignore`'s
+  untargeted `__pycache__/` pattern — so no repository history change was needed.
+
 ## [1.9.149] - 2026-08-05
 
 ### Changed
