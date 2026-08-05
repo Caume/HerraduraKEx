@@ -9086,3 +9086,43 @@ groups (switched to bullet lists rather than reusing the original numeric IDs, s
 CommonMark auto-increments ordered-list numbers and out-of-sequence literals would have
 rendered wrong). Verified `SecurityProofsCode/validate_katex.js docs/TUTORIAL.md` is a
 no-op (file has no `$…$` math spans).
+
+### 174. docs/INTRODUCTION.md — numbering, notation consistency, and a chained worked example (Documentation, Medium)
+
+`docs/INTRODUCTION.md` is the most didactic document in the repo (reading-order table,
+toy examples, historical citations, glossary, decision tree) but at 1251 lines has no
+progress markers, uses fractional Part numbers ("Part 4.5", "Part 10.4") that break the
+otherwise-integer sequence, and its GF(2^n)* notation doesn't match README.md's
+blackboard-bold `\mathbb{GF}(2^n)^*`. The Part 3.1 (paint-mixing DH) and Part 6.2
+(Schnorr identification) sections describe step-by-step message exchanges in prose only,
+with no diagram. There is also no single example that chains HKEX-GF's derived key
+into an actual HSKE encrypt/decrypt with small, hand-verifiable numbers.
+
+**Work items:**
+
+1. Add a per-Part estimated read time or a short progress indicator at each Part
+   heading so the document feels navigable.
+2. Resolve the fractional Part numbers ("Part 4.5", "Part 10.4") — either renumber the
+   sequence or explicitly label them as optional digressions.
+3. Standardize GF(2^n)* notation with README.md (pick blackboard-bold or plain, not
+   both) and add a one-time footnote noting they denote the same field.
+4. Add one end-to-end worked example late in Part 4 that chains the Part 3 DH numbers
+   into an HSKE encrypt/decrypt at a small bit-width, verifiable by hand.
+5. Convert the Part 3.1 paint-mixing and Part 6.2 Schnorr descriptions into mermaid
+   sequence diagrams (GitHub renders these natively) rather than prose-only.
+
+Status: **DONE v1.9.148** — added a "Parts at a glance" table to the Reading guide with
+a per-Part time estimate (≈65 min end to end). Kept Part 4.5 and Part 10.4's fractional
+numbering rather than renumbering the whole document (which would have broken several
+existing cross-references, including one just added to `docs/TUTORIAL.md` in TODO #173)
+and instead labeled both headings `(optional deep dive)`, with a note in the new table
+that they don't carry numbering forward. Added a one-time footnote at GF(2^n)*'s first
+use (Part 2.3) noting `README.md`/`SecurityProofs-*.md` render the same object as
+$\mathbb{GF}(2^n)^{\ast}$ in KaTeX — this document keeps plain text throughout rather
+than converting, since it's otherwise KaTeX-free by design. Added a "Putting it together"
+worked example after Part 4.4 chaining a real HKEX-GF handshake into an HSKE
+encrypt/decrypt at n=32, with every value computed by actually running
+`Herradura cryptographic suite.py`'s `gf_pow`/`fscx_revolve` (not hand-typed). Added
+mermaid sequence diagrams for the Part 3.1 paint-mixing analogy and the Part 6.2 Schnorr
+identification protocol. Verified `SecurityProofsCode/validate_katex.js
+docs/INTRODUCTION.md` passes (2 OK, 0 FAIL) with the new KaTeX span included.

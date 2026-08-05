@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.148] - 2026-08-05
+
+### Changed
+- **TODO #174:** made `docs/INTRODUCTION.md` more didactic. Added a "Parts at a
+  glance" table with per-Part reading-time estimates to the Reading guide; labeled
+  Part 4.5 and Part 10.4 `(optional deep dive)` rather than renumbering the sequence
+  (avoiding breakage of existing cross-references, including one added in TODO #173);
+  added a one-time footnote bridging this document's plain-text `GF(2^n)*` to
+  `README.md`/`SecurityProofs-*.md`'s KaTeX $\mathbb{GF}(2^n)^{\ast}$; added a "Putting
+  it together" worked example chaining a real HKEX-GF handshake into an HSKE
+  encrypt/decrypt at n=32 with values computed by actually running the suite; and added
+  mermaid sequence diagrams for the Part 3.1 paint-mixing analogy and the Part 6.2
+  Schnorr identification protocol.
+
 ## [1.9.147] - 2026-08-05
 
 ### Changed

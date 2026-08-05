@@ -6,32 +6,6 @@
 
 ## Open items
 
-### 174. docs/INTRODUCTION.md — numbering, notation consistency, and a chained worked example (Documentation, Medium)
-
-`docs/INTRODUCTION.md` is the most didactic document in the repo (reading-order table,
-toy examples, historical citations, glossary, decision tree) but at 1251 lines has no
-progress markers, uses fractional Part numbers ("Part 4.5", "Part 10.4") that break the
-otherwise-integer sequence, and its GF(2^n)* notation doesn't match README.md's
-blackboard-bold `\mathbb{GF}(2^n)^*`. The Part 3.1 (paint-mixing DH) and Part 6.2
-(Schnorr identification) sections describe step-by-step message exchanges in prose only,
-with no diagram. There is also no single example that chains HKEX-GF's derived key
-into an actual HSKE encrypt/decrypt with small, hand-verifiable numbers.
-
-**Work items:**
-
-1. Add a per-Part estimated read time or a short progress indicator at each Part
-   heading so the document feels navigable.
-2. Resolve the fractional Part numbers ("Part 4.5", "Part 10.4") — either renumber the
-   sequence or explicitly label them as optional digressions.
-3. Standardize GF(2^n)* notation with README.md (pick blackboard-bold or plain, not
-   both) and add a one-time footnote noting they denote the same field.
-4. Add one end-to-end worked example late in Part 4 that chains the Part 3 DH numbers
-   into an HSKE encrypt/decrypt at a small bit-width, verifiable by hand.
-5. Convert the Part 3.1 paint-mixing and Part 6.2 Schnorr descriptions into mermaid
-   sequence diagrams (GitHub renders these natively) rather than prose-only.
-
-Status: **OPEN**
-
 ### 175. docs/CRYPTOGRAPHY_BASICS.md — TL;DR box, negligibility example, and factoring caveat (Documentation, Low)
 
 `docs/CRYPTOGRAPHY_BASICS.md` is close to ideal for its target reader but has three
