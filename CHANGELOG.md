@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.146] - 2026-08-05
+
+### Changed
+- **TODO #172:** made `README.md` more didactic for human newcomers. Added a
+  plain-language "what this is / who it's for" intro paragraph and moved the
+  `docs/CRYPTOGRAPHY_BASICS.md` → `docs/INTRODUCTION.md` → `docs/TUTORIAL.md` reading
+  path up front, addressed to human readers rather than only agents/tools. Added a
+  framing sentence ahead of the FSCX formula block, grouped the 11-protocol list into
+  its three families (classical, NL-hardened, code-based PQC) each with a short
+  rationale, spelled out previously-bare jargon (`EUF-CMA`, `PRF`, `SD(n,t)`,
+  `FFS L[1/3]`), and added a mermaid sequence diagram for the HKEX-GF handshake.
+
 ## [1.9.145] - 2026-08-05
 
 ### Added

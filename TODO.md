@@ -6,31 +6,6 @@
 
 ## Open items
 
-### 172. README.md — didactic on-ramp for human newcomers (Documentation, Low)
-
-`README.md` currently opens straight into FSCX's LaTeX definition with no motivation,
-and its pointer to `docs/CRYPTOGRAPHY_BASICS.md`/`docs/INTRODUCTION.md` is phrased only
-for "external tools and agents," not human readers landing on the repo. The 11-protocol
-list (HKEX-GF, HSKE, HPKS, HPKE, and their NL/PQC/code-based variants) is a bare
-enumeration of formulas with undefined jargon (`FFS L[1/3]`, `EUF-CMA`, `SD(n,t)`), and
-there is no diagram anywhere in the file.
-
-**Work items:**
-
-1. Add a 2-3 sentence "what problem this solves / who this is for" paragraph before the
-   FSCX section, and move the `docs/CRYPTOGRAPHY_BASICS.md` → `docs/INTRODUCTION.md` →
-   `docs/TUTORIAL.md` pointer up to right after the title, addressed to human readers.
-2. Before the FSCX formula block, add one plain-English sentence framing it as the
-   mixing primitive everything else is built from, so the LaTeX isn't the first thing a
-   reader hits.
-3. Group the protocol list with short framing sentences per family (classical /
-   NL-PQC / code-based) and define or link abbreviations (`EUF-CMA`, `SD(n,t)`, `FFS`)
-   on first use, e.g. via the `docs/CRYPTOGRAPHY_BASICS.md` glossary.
-4. Add one small diagram (ASCII or mermaid) for HKEX-GF's Alice/Bob exchange, since it's
-   the simplest protocol and currently has no visual anywhere in the repo.
-
-Status: **OPEN**
-
 ### 173. docs/TUTORIAL.md — add motivation, quickstart, and core/advanced grouping (Documentation, Medium)
 
 `docs/TUTORIAL.md` is a well-organized cookbook (consistent CLI/C/Go/Python blocks per

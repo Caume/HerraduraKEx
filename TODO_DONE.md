@@ -9013,3 +9013,39 @@ in the reading order. Linked from `docs/TUTORIAL.md`'s background-reading note,
 `docs/INTRODUCTION.md`'s opening paragraph, and `README.md`'s docs-directory listing.
 No KaTeX math spans used (plain markdown/Unicode notation only), so
 `SecurityProofsCode/KATEX_RULES.md` did not apply.
+
+### 172. README.md — didactic on-ramp for human newcomers (Documentation, Low)
+
+`README.md` currently opens straight into FSCX's LaTeX definition with no motivation,
+and its pointer to `docs/CRYPTOGRAPHY_BASICS.md`/`docs/INTRODUCTION.md` is phrased only
+for "external tools and agents," not human readers landing on the repo. The 11-protocol
+list (HKEX-GF, HSKE, HPKS, HPKE, and their NL/PQC/code-based variants) is a bare
+enumeration of formulas with undefined jargon (`FFS L[1/3]`, `EUF-CMA`, `SD(n,t)`), and
+there is no diagram anywhere in the file.
+
+**Work items:**
+
+1. Add a 2-3 sentence "what problem this solves / who this is for" paragraph before the
+   FSCX section, and move the `docs/CRYPTOGRAPHY_BASICS.md` → `docs/INTRODUCTION.md` →
+   `docs/TUTORIAL.md` pointer up to right after the title, addressed to human readers.
+2. Before the FSCX formula block, add one plain-English sentence framing it as the
+   mixing primitive everything else is built from, so the LaTeX isn't the first thing a
+   reader hits.
+3. Group the protocol list with short framing sentences per family (classical /
+   NL-PQC / code-based) and define or link abbreviations (`EUF-CMA`, `SD(n,t)`, `FFS`)
+   on first use, e.g. via the `docs/CRYPTOGRAPHY_BASICS.md` glossary.
+4. Add one small diagram (ASCII or mermaid) for HKEX-GF's Alice/Bob exchange, since it's
+   the simplest protocol and currently has no visual anywhere in the repo.
+
+Status: **DONE v1.9.146** — added a "what this is / who it's for" intro paragraph and
+moved the `docs/CRYPTOGRAPHY_BASICS.md` → `docs/INTRODUCTION.md` → `docs/TUTORIAL.md`
+pointer up front, addressed to human readers (the existing agent-facing `llms.txt`
+pointer stays separate). Added a framing sentence before the FSCX formula block. Grouped
+the protocol list into its three families (classical / NL-hardened / code-based PQC)
+each with a short "what this family is/why" sentence, and expanded `EUF-CMA`, `SD(n,t)`,
+`PRF`, and the `FFS L[1/3]` security-level note inline rather than leaving them bare
+(the actual glossary in `docs/CRYPTOGRAPHY_BASICS.md` doesn't define EUF-CMA/PRF, so
+those are spelled out in-line instead of linked). Added a mermaid sequence diagram for
+the HKEX-GF Alice/Bob exchange plus a one-line note on why an eavesdropper can't recover
+the shared secret. Verified `SecurityProofsCode/validate_katex.js README.md` still
+passes (84 OK, 0 FAIL, 0 PIPE-FAIL) after the edits.
