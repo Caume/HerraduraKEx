@@ -2,6 +2,21 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.153] - 2026-08-06
+
+### Added
+- **TODO #178 (item 4):** added a MINOR/PATCH/MAJOR versioning-policy addendum to
+  CLAUDE.md's TODO Policy section, for use post-2.0.0: MINOR for new non-breaking
+  protocol/CLI surface, PATCH for everything else, MAJOR reserved for changes that
+  break the stable CLI/PEM/wire-format surface 2.0.0 establishes (requiring a
+  `MIGRATING.md` entry).
+
+### Verified
+- **TODO #178 (item 3):** rebuilt the C and Go CLIs fresh and re-ran
+  `CliTest/test_c_interop.sh` (4/4 PASS), `CliTest/test_go_interop.sh` (10/10 PASS),
+  and `CliTest/test_stern_interop.sh` (9/9 PASS) to confirm cross-language wire-format
+  compatibility ahead of freezing the CLI/PEM surface at v2.0.0.
+
 ## [1.9.152] - 2026-08-06
 
 ### Added
