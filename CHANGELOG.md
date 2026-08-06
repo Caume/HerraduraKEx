@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.152] - 2026-08-06
+
+### Added
+- **TODO #178 (items 1–2):** added `MIGRATING.md`, consolidating the three legitimate
+  breaking changes in the suite's 1.x history (HKEX→HKEX-GF at v1.4.0,
+  HFSCX-256→HFSCX-256-DM at v1.9.0, the Stern H-matrix finalization at v1.9.35) into
+  one migration reference with what's incompatible and how to regenerate affected
+  artifacts. Added a "Known Limitations" section to `README.md` covering HPKS-NL/
+  HPKE-NL's non-PQC status, HPKS-Stern-F/HPKE-Stern-F's demo-scale parameters, the two
+  ACKNOWLEDGED-by-design test FAILs, Arduino CI's best-effort status, and the
+  QC-MDPC/Ligero research prototypes — first two work items of TODO #178, the proposed
+  v2.0.0 promotion checklist.
+
 ## [1.9.151] - 2026-08-05
 
 ### Changed

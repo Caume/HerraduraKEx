@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v1.9.151)
+# Herradura Cryptographic Suite (v1.9.152)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -287,12 +287,49 @@ SecurityProofs-4.md                                 — formal analysis §11.8.3
 SecurityProofs-5.md                                 — formal analysis §11.10–§11.13, §11.15–§11.19
                                                       (ZKP extensions, research-review sections)
 SecurityProofs.md                                   — split index (redirects to the five files above)
+MIGRATING.md                                        — consolidated breaking-change history and
+                                                      upgrade notes
 docs/
   CRYPTOGRAPHY_BASICS.md                            — cryptography fundamentals primer (no prior background required)
   INTRODUCTION.md                                   — plain-language cryptographic concepts primer
   TUTORIAL.md                                       — integration tutorial (C/Go/Python API recipes)
   examples/                                         — minimal runnable examples (C, Go, Python)
 ```
+
+---
+
+# Known Limitations
+
+These are accepted, currently-shipping limitations — not bugs, and not blocking issues.
+Each is tracked and documented at the citation given; this section exists so they're
+visible without having to search `TODO_DONE.md`.
+
+- **HPKS-NL / HPKE-NL are not quantum-resistant.** They harden the classical Schnorr/El
+  Gamal constructions with the non-linear FSCX primitive, but remain built on the DLP
+  over `GF(2^n)*` — Shor's algorithm still breaks them. No lattice-based replacement is
+  planned for these two specifically; use HPKS-Stern-F/HPKE-Stern-F or the HKEX-RNL
+  quartet for genuine post-quantum security (TODO #5, `TODO_DONE.md` — deprecated by
+  design, not an open item).
+- **HPKS-Stern-F / HPKE-Stern-F ship at demo scale.** The default parameters (N = n =
+  256, t = 16, 32 Fiat-Shamir rounds) are a low-soundness demonstration configuration.
+  Production-grade parameters require N on the order of 17,000+ for 128-bit security —
+  a substantially larger, unimplemented configuration. Treat both protocols as
+  reference implementations of the Stern ZKP construction, not as production-ready code
+  signing or KEM at their current defaults.
+- **Two security tests are FAIL-by-design.** Test `[4]` (bit-frequency bias) and C test
+  `[18]` (HPKE-Stern-F brute-force decap) are expected to intermittently or consistently
+  report FAIL under the suite's own test harness — this is documented, acknowledged
+  behavior (`TODO_DONE.md` #85, #86), not a regression. Don't treat either as a build
+  gate.
+- **Arduino/AVR CI coverage is best-effort.** `.github/workflows/ci.yml`'s `arduino` job
+  runs with `continue-on-error: true` — it's exercised on every push but a failure there
+  does not block merges the way the native and ARM/i386 jobs do.
+- **The QC-MDPC BGF decoder and Ligero-lite IOP prototypes are research code**, not
+  wired into any CLI subcommand or production path (`SecurityProofsCode/`
+  `qc_mdpc_bgf_prototype.py`, `nl_fscx_ligero.py`).
+
+See [`MIGRATING.md`](MIGRATING.md) if you're upgrading from a version predating v1.9.36
+— three breaking changes in the suite's history are consolidated there.
 
 ---
 
