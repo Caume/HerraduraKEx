@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.0] - 2026-08-06
+
+### Release
+- **TODO #178 (item 5):** tagged `v2.0.0` (annotated tag on the `82793cb` merge commit)
+  and published the [GitHub release](https://github.com/Caume/HerraduraKEx/releases/tag/v2.0.0).
+  This release introduces **no new protocol, CLI, or wire-format changes of its own** —
+  it marks the CLI/PEM surface established through v1.9.153 as a stable baseline going
+  forward; see `MIGRATING.md` for the consolidated history of the three breaking
+  changes that predate this point (HKEX→HKEX-GF at v1.4.0, HFSCX-256→HFSCX-256-DM at
+  v1.9.0, the Stern H-matrix fix at v1.9.35) and CLAUDE.md's TODO Policy section for the
+  MINOR/PATCH/MAJOR versioning rules used from this release forward.
+- Pre-tag verification: GitHub Actions CI passed in full on master's merge commit
+  (native C/Go/Python build+tests+CliTest, ARM Thumb-2/NASM i386 under QEMU,
+  best-effort Arduino/AVR), and `test_c_interop.sh`/`test_go_interop.sh`/
+  `test_stern_interop.sh` were re-run fresh (23/23 PASS). A local `docker build &&
+  docker run` smoke test was attempted but abandoned as environment-limited (nested
+  QEMU emulation on an arm64 host crashed Go's runtime, an environment artifact
+  unrelated to the code); CI's native run served as the authoritative check instead.
+
 ## [1.9.153] - 2026-08-06
 
 ### Added
