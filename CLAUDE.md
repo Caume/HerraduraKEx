@@ -65,6 +65,27 @@ All notable changes are documented in `CHANGELOG.md` only.  Do **not** add versi
 
 Work items are tracked as numbered entries (#1–#N) with a `Status:` line, split across two files (TODO #154): **`TODO.md`** holds only currently-`OPEN` entries; **`TODO_DONE.md`** archives everything else (`DONE`/`DEPRECATED`/`ACKNOWLEDGED`), in original numeric/chronological order. Numbering is global and never reused across the two files — an item keeps its `#N` forever, whichever file it currently lives in. When completing a TODO, update its `Status:` line to `**DONE vX.Y.Z**` with the release version, move the whole entry from `TODO.md` to the end of `TODO_DONE.md`, then add the corresponding `CHANGELOG.md` entry. Version numbers follow `MAJOR.MINOR.PATCH`; each TODO completion is typically one PATCH bump. When creating a new item, add it to `TODO.md` with `Status: **OPEN**`.
 
+**MINOR vs. PATCH (post-2.0.0):** bump MINOR, not PATCH, for a TODO that adds a new
+protocol, CLI subcommand, or public API surface without breaking any existing one (e.g.
+a new `--algo` variant, a new language-target port of an existing protocol). Bump PATCH
+for everything else — bug fixes, documentation, internal refactors, parameter tuning,
+new tests. This mirrors ordinary semver practice; `TODO_DONE.md`'s pre-2.0.0 history
+used PATCH almost everywhere (matching this project's fast, incremental TODO cadence)
+and that history is not being renumbered retroactively.
+
+**MAJOR (post-2.0.0):** reserved for changes that break the stable CLI/PEM/wire-format
+surface 2.0.0 establishes — a PEM boundary label change, a CLI flag rename or removal,
+a change to what an existing `--algo` value produces or accepts, or any change that
+makes an existing key/ciphertext/signature file unreadable by a newer build. Any TODO
+that would require one of these must call it out explicitly in its own text (not just
+in the `Status:` line) and get a `MIGRATING.md` entry alongside the version bump —
+follow the format already used there. Internal changes with no effect on stored
+artifacts or the CLI surface (e.g. an internal hash construction upgrade that also
+changes wire format, like the HFSCX-256-DM and Stern H-matrix changes predating 2.0.0)
+are wire-format breaking but not necessarily MAJOR-worthy on their own; use judgment
+and err toward documenting in `MIGRATING.md` regardless of which version-component
+changes.
+
 ### TODO.md / TODO_DONE.md Status line standard
 
 Every `### ` section in `TODO.md` or `TODO_DONE.md` must end with exactly one `Status:` line using one of these keywords:
