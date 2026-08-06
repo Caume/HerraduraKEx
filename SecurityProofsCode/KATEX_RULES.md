@@ -98,11 +98,22 @@ CommonMark pairs the first opener with the first valid closer that follows, crea
 
 **Fix:** convert `\command{...}_{braced}` subscripts to function notation so the subscript `}_{` disappears entirely.  For example, `\mathrm{ROL}_{n/4}\bigl(x\bigr)` → `\mathrm{ROL}(x, n/4)`.  An unbraced single-character subscript `\command{...}_k` is also safe (left-flanking only, cannot close), but function notation is preferred for multi-character parameters.
 
-### Rule 12 — a bare `letter_letter` subscript can silently close an opener from an *earlier, unrelated* math span in the same paragraph
+### Rule 12 — `\text{...}`/`\command{...}`-adjacent subscripts and punctuation-braced subscripts can pair as opener+closer across unrelated math spans in the same paragraph
 
-This is the inverse hazard to Rule 11 and does not require any `\command{}` at all. `letter_\text{word}` (e.g. `m_\text{blind}`) is **left-flanking only** (the character after `_` is `\`, which is punctuation, so it fails the right-flanking test) — it can only *open* emphasis, never close it, and validators/pure-KaTeX checks correctly treat it as safe in isolation. But a later **unbraced single-letter-to-single-letter** subscript elsewhere in the *same paragraph*, such as `\mathbb{Z}_q` or `\rceil_p` (letter, `_`, letter — punctuation on neither side), is **both-flanking**: it can close. CommonMark pairs the first opener it saw with the first available closer, wrapping everything between — including the `$...$` boundaries — in `<em>`, so the earlier span(s) render as literal source text while a later, already-braced span (e.g. `\rceil_{p'}`) survives untouched. Per-span validators (including `validate_katex.js`) render each `$...$`/`$$...$$` span independently and **do not model this cross-span pairing**, so they report 0 FAIL even when GitHub visibly breaks the paragraph — always eyeball multi-span paragraphs on the live page after validating.
+This is the inverse hazard to Rule 11 and does not require a `\command{...}_{braced}` pair as such — it comes from CommonMark's underscore-specific intraword-emphasis rule, which is asymmetric and easy to get backwards:
 
-**Fix:** brace every subscript, including single-character ones — `\mathbb{Z}_{q}`, `\rceil_{p}` — not just multi-character ones. A braced subscript's `_` is followed by `{` (punctuation), which fails the right-flanking test, so it becomes opener-only like the `\text{...}` case, and no closer remains anywhere in the paragraph.
+- A run is **left-flanking** if not followed by whitespace, and (not followed by punctuation, OR (followed by punctuation AND preceded by whitespace/start/punctuation)).
+- A run is **right-flanking** if not preceded by whitespace, and (not preceded by punctuation, OR (preceded by punctuation AND followed by whitespace/end/punctuation)).
+- For `_` specifically: it can **open** only if left-flanking AND (not right-flanking OR preceded by punctuation). It can **close** only if right-flanking AND (not left-flanking OR followed by punctuation).
+
+Two concrete traps that follow from this:
+
+- **`letter_\text{word}`** (e.g. `m_\text{blind}`): preceded by a letter (non-punctuation), followed by `\` (punctuation). This makes it **right-flanking only** — i.e. it can *close* emphasis, not open it, which is the **opposite** of the intuitive guess. Safe when nothing precedes it as an opener, dangerous as a second occurrence later in the paragraph.
+- **`\mathbb{Z}_q` / `\mathbb{Z}_{q}`** (braced or not): the character before `_` is `}` (punctuation, from `\mathbb{Z}`). Bracing the subscript does **not** fix this — `\mathbb{Z}_{q}` has punctuation (`}` and `{`) on *both* sides of `_`, which satisfies both the left- and right-flanking punctuation-exception clauses, making it **both-flanking and able to open**. (Contrast with a bare `\mathcal R_q` or `\rceil_p` — letter immediately before and after `_`, punctuation on *neither* side — which is provably inert: fails both the open and close conditions above, so it is always safe.)
+
+So a paragraph containing `\mathbb{Z}_q[x]/...` followed later by a second `letter_\text{word}` occurrence opens emphasis at the former and closes it at the latter, swallowing every `$...$` boundary between them — even though each span validates individually. Per-span validators (including `validate_katex.js`) render each `$...$`/`$$...$$` span independently and **do not model this cross-span pairing**, so they report 0 FAIL even when GitHub visibly breaks the paragraph — always eyeball multi-span paragraphs on the live page after validating, not just re-run the validator.
+
+**Fix:** eliminate the punctuation-adjacent subscript rather than bracing it. Prefer a bare `letter_letter`/`letter_digit` subscript with no punctuation touching `_` on either side (`\mathcal R_q`, `\rceil_p`, `C_2`) — this is inert by construction. For `\mathbb{Z}_q`, replace it with the punctuation-free `\mathbb{Z}/q\mathbb{Z}` quotient notation (already used in `SecurityProofs-3.md`) or the `\mathcal R_q` ring shorthand instead of bracing the subscript.
 
 ### Correct patterns
 
@@ -128,7 +139,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
 | `\mathrm{ROL}_{n/4}\bigl(x\bigr)` in a paragraph that also has `c_{j-1}` | `\mathrm{ROL}(x, n/4)` — function notation removes `}_{` opener (Rule 11) |
-| `\mathbb{Z}_q` / `\rceil_p` in a paragraph that also has `letter_\text{word}` | `\mathbb{Z}_{q}` / `\rceil_{p}` — brace even single-char subscripts so `_` can't close (Rule 12) |
+| `\mathbb{Z}_q[x]/...` in a paragraph that also has a 2nd `letter_\text{word}` | `\mathbb{Z}/q\mathbb{Z}` or `\mathcal R_q` — punctuation-free subscript, provably inert (Rule 12) |
 | `$$\nexpr\n$$` (standalone `$$` delimiter lines) | `$$expr$$` or `$$first-line\n...\nlast-line$$` |
 | `\operatorname{rank}(\Phi)` | `\text{rank}(\Phi)` — `\operatorname` blocked by GitHub allowlist |
 | `\;` / `\!` / `\,` / `\:` in math | (omit — rely on KaTeX auto-spacing) |

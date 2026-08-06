@@ -79,7 +79,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 
 5. **HSKE-NL-A1** — counter-mode with NL-FSCX v1: $\mathit{ks} = \text{NL-FSCX-revolve-v1}(K, K \oplus \mathit{ctr}, i)$; $E = P \oplus \mathit{ks}$
 6. **HSKE-NL-A2** — revolve-mode with NL-FSCX v2: $E = \text{NL-FSCX-revolve-v2}(P, K, r)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, K, r)$
-7. **HKEX-RNL** — Ring-LWR key exchange (conjectured quantum-resistant): shared $m_\text{blind}$ in $\mathbb{Z}_{q}[x]/(x^n+1)$; parties derive $C = \lfloor m_\text{blind} \cdot s \rceil_{p}$; agreement $K = \lfloor s \cdot \text{lift}(C_2) \rceil_{p'}$
+7. **HKEX-RNL** — Ring-LWR key exchange (conjectured quantum-resistant): shared $m_\text{blind}$ in $\mathcal R_q = (\mathbb{Z}/q\mathbb{Z})[x]/(x^n+1)$; parties derive $C = \lfloor m_\text{blind} \cdot s \rceil_p$; agreement $K = \lfloor s \cdot \text{lift}(C_2) \rceil_{p'}$
 8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
 9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \text{enc-key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \text{dec-key}, i)$
 
