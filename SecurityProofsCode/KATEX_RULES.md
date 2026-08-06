@@ -98,6 +98,12 @@ CommonMark pairs the first opener with the first valid closer that follows, crea
 
 **Fix:** convert `\command{...}_{braced}` subscripts to function notation so the subscript `}_{` disappears entirely.  For example, `\mathrm{ROL}_{n/4}\bigl(x\bigr)` → `\mathrm{ROL}(x, n/4)`.  An unbraced single-character subscript `\command{...}_k` is also safe (left-flanking only, cannot close), but function notation is preferred for multi-character parameters.
 
+### Rule 12 — a bare `letter_letter` subscript can silently close an opener from an *earlier, unrelated* math span in the same paragraph
+
+This is the inverse hazard to Rule 11 and does not require any `\command{}` at all. `letter_\text{word}` (e.g. `m_\text{blind}`) is **left-flanking only** (the character after `_` is `\`, which is punctuation, so it fails the right-flanking test) — it can only *open* emphasis, never close it, and validators/pure-KaTeX checks correctly treat it as safe in isolation. But a later **unbraced single-letter-to-single-letter** subscript elsewhere in the *same paragraph*, such as `\mathbb{Z}_q` or `\rceil_p` (letter, `_`, letter — punctuation on neither side), is **both-flanking**: it can close. CommonMark pairs the first opener it saw with the first available closer, wrapping everything between — including the `$...$` boundaries — in `<em>`, so the earlier span(s) render as literal source text while a later, already-braced span (e.g. `\rceil_{p'}`) survives untouched. Per-span validators (including `validate_katex.js`) render each `$...$`/`$$...$$` span independently and **do not model this cross-span pairing**, so they report 0 FAIL even when GitHub visibly breaks the paragraph — always eyeball multi-span paragraphs on the live page after validating.
+
+**Fix:** brace every subscript, including single-character ones — `\mathbb{Z}_{q}`, `\rceil_{p}` — not just multi-character ones. A braced subscript's `_` is followed by `{` (punctuation), which fails the right-flanking test, so it becomes opener-only like the `\text{...}` case, and no closer remains anywhere in the paragraph.
+
 ### Correct patterns
 
 The only pattern that survives both rules is **dashes inside a single `\text{}` block** for compound names, and **explicit subscript syntax** when the visual is genuinely a subscript.
@@ -122,6 +128,7 @@ The only pattern that survives both rules is **dashes inside a single `\text{}` 
 | `$[N, k, t]$-code` (`[` right after `$`) | `$(N, k, t)$-code` (parentheses) or `[N, k, t]-code` (plain text) |
 | `\mathrm{IV}_{\text{const}}` repeated in 2+ rows of `\begin{cases}` | `\text{IV-const}` (no subscript, hyphen in text) |
 | `\mathrm{ROL}_{n/4}\bigl(x\bigr)` in a paragraph that also has `c_{j-1}` | `\mathrm{ROL}(x, n/4)` — function notation removes `}_{` opener (Rule 11) |
+| `\mathbb{Z}_q` / `\rceil_p` in a paragraph that also has `letter_\text{word}` | `\mathbb{Z}_{q}` / `\rceil_{p}` — brace even single-char subscripts so `_` can't close (Rule 12) |
 | `$$\nexpr\n$$` (standalone `$$` delimiter lines) | `$$expr$$` or `$$first-line\n...\nlast-line$$` |
 | `\operatorname{rank}(\Phi)` | `\text{rank}(\Phi)` — `\operatorname` blocked by GitHub allowlist |
 | `\;` / `\!` / `\,` / `\:` in math | (omit — rely on KaTeX auto-spacing) |
