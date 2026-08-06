@@ -667,7 +667,7 @@ sequenceDiagram
     participant Alice as Alice (prover)
     participant Verifier
     Note over Alice,Verifier: Alice's public key C = g^a is already known
-    Alice->>Alice: pick random nonce k; R = g^k
+    Alice->>Alice: pick random nonce k, compute R = g^k
     Alice->>Verifier: commit R
     Verifier->>Alice: challenge e (random)
     Alice->>Alice: s = (k - a*e) mod (2^n - 1)
