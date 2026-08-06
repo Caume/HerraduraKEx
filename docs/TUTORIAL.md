@@ -32,24 +32,61 @@ primer with formal notation aimed at recent graduates of any field.
 
 ## Contents
 
-1. [Getting started](#getting-started)
-2. [Classical protocols](#classical-protocols)
-3. [NL/PQC protocols](#nlpqc-protocols)
-4. [Code-based PQC](#code-based-pqc)
-5. [Hash-based stateful signatures](#hash-based-stateful-signatures)
-6. [HCRED — hybrid Ring-LWR + code-based credential](#hcred--hybrid-ring-lwr--code-based-credential)
-7. [Hash primitive and DRBG](#hash-primitive-and-drbg)
-8. [ZKP Protocols](#zkp-protocols)
-9. [Threshold Signing (HPKS-T)](#threshold-signing-hpks-t)
-10. [OPRF and aPAKE](#oprf-and-apake)
-11. [MCP server](#mcp-server)
-12. [Protocol reference](#protocol-reference)
-13. [Parameter reference](#parameter-reference)
-14. [Security notes](#security-notes)
+**Core — start here:**
+
+- [Getting started](#getting-started)
+- [Classical protocols](#classical-protocols)
+- [NL/PQC protocols](#nlpqc-protocols)
+- [Code-based PQC](#code-based-pqc)
+- [Hash primitive and DRBG](#hash-primitive-and-drbg)
+
+**Advanced — specialized protocols, read once the core is familiar:**
+
+- [Hash-based stateful signatures](#hash-based-stateful-signatures)
+- [HCRED — hybrid Ring-LWR + code-based credential](#hcred--hybrid-ring-lwr--code-based-credential)
+- [ZKP Protocols](#zkp-protocols)
+- [Threshold Signing (HPKS-T)](#threshold-signing-hpks-t)
+- [OPRF and aPAKE](#oprf-and-apake)
+- [MCP server](#mcp-server)
+
+**Reference:**
+
+- [Protocol reference](#protocol-reference)
+- [Parameter reference](#parameter-reference)
+- [Security notes](#security-notes)
 
 ---
 
 ## Getting started
+
+**Not sure which protocol to use?** [`docs/INTRODUCTION.md` §11.2, "Decision tree: which
+protocol should I use?"](INTRODUCTION.md#112-decision-tree-which-protocol-should-i-use)
+picks a protocol family from your requirements (need PQC? signatures vs. encryption?
+one-shot vs. session?) before you read the reference below.
+
+**5-minute quickstart** — generate a keypair, exchange a session key, encrypt, and
+decrypt, using only the classical protocols and the Python CLI:
+
+```bash
+CLI="python3 HerraduraCli/herradura.py"
+
+$CLI genpkey --algo hkex-gf --out alice.pem
+$CLI genpkey --algo hkex-gf --out bob.pem
+$CLI pkey --in alice.pem --pubout --out alice_pub.pem
+$CLI pkey --in bob.pem   --pubout --out bob_pub.pem
+
+$CLI kex --algo hkex-gf --our alice.pem --their bob_pub.pem --out alice_sk.pem
+$CLI kex --algo hkex-gf --our bob.pem   --their alice_pub.pem --out bob_sk.pem
+# alice_sk.pem and bob_sk.pem now hold the same 256-bit session key
+
+echo -n "hello herradura" > msg.bin
+$CLI enc --algo hske --key alice_sk.pem --in msg.bin --out ct.pem
+$CLI dec --algo hske --key bob_sk.pem   --in ct.pem  --out recovered.bin
+cmp msg.bin recovered.bin && echo "round-trip OK"
+```
+
+The sections below walk through this same flow (and its NL/PQC, code-based, and
+signature/encryption counterparts) in depth, in C, Go, and Python as well as the CLI.
 
 Every protocol section below shows the same operation four ways: the CLI (Python, C, and Go
 share identical subcommands and byte-for-byte compatible PEM files), and the C, Go, and Python
@@ -167,6 +204,11 @@ below reuse the same key types).
 
 ### HKEX-GF key exchange
 
+**What it's for:** two parties who have never met agree on a shared secret over a channel
+an eavesdropper can read — the "handshake" step every other classical protocol below
+builds on. Use this first; its output key feeds directly into HSKE (encryption), HPKS
+(signing), and HPKE (public-key encryption) in the sections that follow.
+
 Diffie-Hellman over GF(2^n)*: `C = g^a`, `C2 = g^b`, `sk = C2^a = C^b = g^{ab}`.
 
 #### CLI
@@ -259,6 +301,10 @@ assert alice_shared == bob_shared
 
 ### HSKE symmetric encryption
 
+**What it's for:** bulk-encrypting a message once both sides already hold the same
+secret key (e.g. the `sk` produced by HKEX-GF above). This is the "encrypt the actual
+data" step — fast, symmetric, and the direct analogue of AES-CTR in this suite.
+
 `E = fscx_revolve(P, key, I_VALUE)`; `D = fscx_revolve(E, key, R_VALUE) = P`.
 
 #### CLI
@@ -309,6 +355,10 @@ assert plaintext == recovered
 ```
 
 ### HPKS Schnorr signature
+
+**What it's for:** proving a message came from the holder of a specific private key
+(authenticity/integrity), without encrypting anything — the "sign and verify" step,
+independent of both HKEX-GF and HSKE above (it uses its own keypair, generated below).
 
 Schnorr over GF(2^n)*: `R = g^k`; `e = fscx_revolve(R, msg, i)`; `s = (k - a·e) mod (2^n-1)`;
 verify `g^s · C^e == R`.
@@ -410,6 +460,11 @@ Signatures are byte-for-byte interoperable across the Python, C, and Go CLIs
 > Fiat-Shamir rounds, a low-soundness demo configuration — not for production use.
 
 ### HPKE El Gamal encryption
+
+**What it's for:** encrypting a message directly to someone's *public* key, with no prior
+handshake — unlike HSKE above, the sender never needs to run HKEX-GF first. Use this
+when Alice wants to send Bob a message knowing only his public key, e.g. a one-shot
+message to someone she'll never talk to again.
 
 `enc_key = C^r = g^{ar}`; `E = fscx_revolve(P, enc_key, i)`; `dec_key = R^a = g^{ra}`;
 `D = fscx_revolve(E, dec_key, r) = P`.
@@ -818,7 +873,28 @@ assert h.hske_nl_aead_decrypt(aead_key, nonce,
 
 ### HKEX-RNL key exchange (Ring-LWR, PQC)
 
-HKEX-RNL requires two rounds: Bob responds first, then Alice completes.
+**What it's for:** the same job as HKEX-GF, but with a hardness assumption (Ring-LWR)
+believed to resist quantum attackers — use this instead of HKEX-GF for new deployments.
+
+HKEX-RNL requires two rounds, unlike HKEX-GF's single exchange of public values: Ring-LWR
+key agreement uses Peikert reconciliation, where one side (Bob) must compute a "hint"
+derived from his own noisy rounded value *and* Alice's already-published public key, and
+send that hint back to Alice so she can reconcile her side onto the same shared value.
+That hint can only be computed after seeing Alice's public key, so Bob must respond
+first — there's no way to make it a simultaneous, order-independent exchange the way
+`g^a`/`g^b` are in HKEX-GF.
+
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant Bob
+    Alice->>Alice: keygen -> alice_rnl.pem, alice_rnl_pub.pem
+    Alice->>Bob: alice_rnl_pub.pem
+    Note over Bob: Round 1 - keygen + reconciliation hint
+    Bob->>Alice: bob_resp.pem (public value + hint)
+    Note over Alice: Round 2 - reconcile using Bob's hint
+    Note over Alice,Bob: both now hold the same session key
+```
 
 #### CLI
 

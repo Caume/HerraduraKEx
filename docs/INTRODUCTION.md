@@ -32,6 +32,29 @@ every concept you need to follow both documents, with toy examples and plain Eng
 - "→ SP1 §2.1" means SecurityProofs-1.md, section 2.1.
 - "→ TUT §HKEX-GF" means docs/TUTORIAL.md, the HKEX-GF section.
 
+**Parts at a glance** (≈65 min end to end; skip around using the profile table above)
+
+| Part | Topic | Est. time |
+|---|---|---|
+| 1 | Bits, bytes, and the language of crypto | 4 min |
+| 2 | Finite fields without the algebra | 5 min |
+| 3 | Key exchange: the Diffie-Hellman idea | 6 min |
+| 4 | Symmetric encryption and FSCX (+ chained HKEX-GF/HSKE walkthrough) | 7 min |
+| 4.5 | *(optional deep dive)* HFSCX-256: a hash function from NL-FSCX | 5 min |
+| 5 | Non-linearity and why it matters | 3 min |
+| 6 | Digital signatures: proving without revealing | 5 min |
+| 7 | Public-key encryption: El Gamal | 3 min |
+| 8 | Quantum threats and why they matter now | 4 min |
+| 9 | Lattice-based crypto and Ring-LWR | 6 min |
+| 10 | Code-based crypto and the Stern protocol | 6 min |
+| 10.4 | *(optional deep dive)* HCRED: a credential relying on two hard problems at once | 2 min |
+| 11 | The suite at a glance (protocol table + decision tree) | 4 min |
+| 12 | Glossary | reference, look up as needed |
+
+Parts 4.5 and 10.4 are optional deep dives inserted between their neighboring integer
+Parts as each feature shipped — safe to skip on a first read and come back to later;
+they don't carry numbering forward (Part 5 follows Part 4.5, Part 11 follows Part 10.4).
+
 ---
 
 ## Part 1 — Bits, bytes, and the language of crypto
@@ -162,6 +185,9 @@ allow efficient implementation.
 **What this means in practice:** Multiplication in GF(2^n) is fast (XOR-based, no
 modular reduction with large primes), and the field has exactly 2^n−1 non-zero
 elements that form a **cyclic group** under multiplication — the group GF(2^n)*.
+(This document writes it in plain text throughout; `README.md` and the `SecurityProofs-*.md`
+files render the same group in KaTeX as $\mathbb{GF}(2^n)^{\ast}$ — same object, different
+typesetting.)
 
 **Reference:** R. Lidl & H. Niederreiter, *Introduction to Finite Fields and Their
 Applications*, Cambridge University Press, revised ed. 1994, chapters 1–2.
@@ -200,6 +226,23 @@ three-colour blend — their shared secret.
 This captures the essence of Diffie-Hellman (DH) key exchange: two parties derive
 a shared secret over a public channel without ever sending the secret itself, as
 long as "unmixing" (computing a discrete logarithm) is hard.
+
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant Eve as Eve (eavesdropper)
+    participant Bob
+    Note over Alice,Bob: agree publicly on a starting colour
+    Alice->>Alice: mix in secret colour A
+    Bob->>Bob: mix in secret colour B
+    Alice-->>Eve: sends mixture (start + A)
+    Alice->>Bob: mixture (start + A)
+    Bob-->>Eve: sends mixture (start + B)
+    Bob->>Alice: mixture (start + B)
+    Alice->>Alice: mix in A again -> start+A+B
+    Bob->>Bob: mix in B again -> start+A+B
+    Note over Alice,Bob: same 3-colour blend, unmixable by Eve
+```
 
 **Reference:** W. Diffie & M. Hellman, "New Directions in Cryptography," *IEEE
 Transactions on Information Theory* 22(6):644–654, 1976.  Open access via IEEE Xplore:
@@ -388,9 +431,41 @@ the NL-FSCX mixing step is added to break the linearity; see Part 5.
 **Reference:** D. Stinson, *Cryptography: Theory and Practice*, 4th ed., CRC Press,
 2018, chapter 2 (stream ciphers and pseudo-randomness).
 
+### Putting it together: HKEX-GF + HSKE, start to finish
+
+Parts 3 and 4 introduced key exchange and encryption separately.  Here they're chained
+into one real run, at the 32-bit demo size, with every value computed by the actual
+suite code (`Herradura cryptographic suite.py`, GF(2^32), `g = 3`) — you can reproduce
+this by running the same calls yourself.
+
+```
+Setup:  n = 32, poly = 0x400007, g = 3   (32-bit is demo-only; see README's security table)
+
+Step 1 — HKEX-GF key exchange (Part 3.3):
+  Alice: a  = 0xC5A1F32E (private)
+         C  = gf_pow(g, a)  = 0x092BD921   → broadcasts C
+  Bob:   b  = 0x37BE0912 (private)
+         C2 = gf_pow(g, b)  = 0x763178DF   → broadcasts C2
+
+  Alice: sk = gf_pow(C2, a) = 0x87B0C3CC
+  Bob:   sk = gf_pow(C,  b) = 0x87B0C3CC   ✓ same on both sides
+
+Step 2 — HSKE encryption (Part 4.4), Alice → Bob, using sk as the key:
+  plaintext  = 0x48454C50               ("HELP" as 4 bytes)
+  ciphertext = fscx_revolve(plaintext, sk, i=n/4=8)  = 0x1387BD38   → Alice sends this
+
+Step 3 — HSKE decryption, Bob's side:
+  recovered  = fscx_revolve(ciphertext, sk, r=3n/4=24) = 0x48454C50  ✓ matches plaintext
+```
+
+Eve, watching the channel, sees only `C`, `C2`, and `ciphertext` — never `a`, `b`, `sk`,
+or the plaintext directly. To recover the plaintext she would need to solve the discrete
+log problem in GF(2^32)* (Part 3.3) to obtain `sk` from `C`/`C2` — intractable at the
+production 256-bit size even though trivial to brute-force at this 32-bit demo size.
+
 ---
 
-## Part 4.5 — HFSCX-256: a hash function from NL-FSCX
+## Part 4.5 (optional deep dive) — HFSCX-256: a hash function from NL-FSCX
 
 ### 4.5.1 Why the suite needs a hash function
 
@@ -585,6 +660,19 @@ Step 3 — Respond:
 Verify:
   Verifier checks that  g^s · C^e == R.
   Proof: g^s · C^e = g^(k−ae) · g^(ae) = g^k = R ✓
+```
+
+```mermaid
+sequenceDiagram
+    participant Alice as Alice (prover)
+    participant Verifier
+    Note over Alice,Verifier: Alice's public key C = g^a is already known
+    Alice->>Alice: pick random nonce k; R = g^k
+    Alice->>Verifier: commit R
+    Verifier->>Alice: challenge e (random)
+    Alice->>Alice: s = (k - a*e) mod (2^n - 1)
+    Alice->>Verifier: response s
+    Verifier->>Verifier: check g^s * C^e == R
 ```
 
 **Why this proves knowledge of a without revealing a:** The verifier only sees R, e,
@@ -1019,7 +1107,7 @@ For a modern code-based signature, see NIST FIPS 205 (SLH-DSA / SPHINCS+), 2024.
 
 ---
 
-## Part 10.4 — HCRED: a credential that relies on two hard problems at once
+## Part 10.4 (optional deep dive) — HCRED: a credential that relies on two hard problems at once
 
 The protocols described so far each rest on a single hard assumption: HKEX-RNL
 on Ring-LWR, HPKS-Stern-F on SDP.  **HCRED** combines both in a single

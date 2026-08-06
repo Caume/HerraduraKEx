@@ -1,14 +1,18 @@
-# Herradura Cryptographic Suite (v1.9.145)
+# Herradura Cryptographic Suite (v1.9.151)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
-The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange.
+The Herradura Cryptographic Suite implements cryptographic protocols built on the FSCX (Full Surroundings Cyclic XOR) primitive, Diffie-Hellman key exchange over GF(2^n)*, and a post-quantum Ring-LWR key exchange. In short: it gives two parties a way to agree on a shared secret over an insecure channel, then use that secret to encrypt, sign, and verify messages — with both classical (pre-quantum) and post-quantum variants of each — implemented from scratch across six languages so the same protocols can be read, taught, and cross-checked in whichever one is most familiar.
+
+**New to cryptography, or just to this repo?** Start with [`docs/CRYPTOGRAPHY_BASICS.md`](docs/CRYPTOGRAPHY_BASICS.md) (no prior background assumed), then [`docs/INTRODUCTION.md`](docs/INTRODUCTION.md) (plain-language walkthrough of every concept below), then [`docs/TUTORIAL.md`](docs/TUTORIAL.md) (copy-pasteable API recipes per language). The rest of this file is a compact technical reference, not a tutorial.
 
 External tools and agents integrating HerraduraKEx as a dependency should start with [`llms.txt`](llms.txt) — a condensed, token-efficient API reference (function signatures, CLI subcommands, protocol identifiers) with pointers to the detailed docs.
 
 ---
 
 # FSCX — The Core Primitive
+
+FSCX is the mixing operation every protocol in this suite is built from: it takes two equal-size bitstrings and combines them by XOR-ing each with rotated copies of both, so that changing a single input bit flips bits throughout the output. Formally:
 
 Let $A$, $B$, $C$ be bitstrings of size $P$, where $A_i$ is the $i$-th bit (from left to right), and $i \in \{0,\ldots,P-1\}$. Let $\oplus$ denote bitwise XOR and let $\circlearrowleft$, $\circlearrowright$ denote 1-bit cyclic left and right rotations respectively.
 
@@ -35,27 +39,43 @@ HKEX-GF is a standard Diffie-Hellman key exchange over the multiplicative group 
 3. **Public values.** Alice publishes $C = g^a$; Bob publishes $C_2 = g^b$ (all arithmetic in $\mathbb{GF}(2^n)$).
 4. **Shared secret.** Alice computes $\mathit{sk} = C_2^a = g^{ab}$; Bob computes $\mathit{sk} = C^b = g^{ba}$. By commutativity of field multiplication, $g^{ab} = g^{ba}$.
 
+```mermaid
+sequenceDiagram
+    participant Alice
+    participant Bob
+    Note over Alice,Bob: agree on p(x), g = 3
+    Alice->>Alice: pick private a
+    Bob->>Bob: pick private b
+    Alice->>Bob: C = g^a
+    Bob->>Alice: C2 = g^b
+    Alice->>Alice: sk = C2^a = g^(ab)
+    Bob->>Bob: sk = C^b = g^(ba)
+    Note over Alice,Bob: both now hold the same sk
+```
+
+An eavesdropper who sees $C$ and $C_2$ still can't compute $a$, $b$, or $\mathit{sk}$ without solving the discrete log problem in $\mathbb{GF}(2^n)^{\ast}$ — see [`docs/CRYPTOGRAPHY_BASICS.md`](docs/CRYPTOGRAPHY_BASICS.md) for why that's believed hard.
+
 | $n$ | Primitive polynomial | Classical security |
 |-----|---------------------|-------------------|
 | 32  | $x^{32}+x^{22}+x^2+x+1$ (`0x00400007`) | demo only |
 | 64  | $x^{64}+x^4+x^3+x+1$ (`0x1B`) | ~40 bits |
 | 128 | $x^{128}+x^7+x^2+x+1$ (`0x87`) | ~60–80 bits |
-| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | ~80–90 bits (FFS L[1/3]; deprecated NIST/ENISA — see §9.2.4) |
+| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | ~80–90 bits (sub-exponential attack cost, function family FFS L[1/3]; deprecated by NIST/ENISA at this bit width — see §9.2.4) |
 
 ---
 
 # Herradura Cryptographic Suite
 
-The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FSCX extensions:
+The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FSCX extensions. There are three families, each giving the same basic toolkit — key exchange, symmetric encryption, signature, public-key encryption — under a different hardness assumption:
 
-**Classical (v1.4.0):**
+**Classical (v1.4.0)** — the baseline quartet, secure against classical (non-quantum) attackers, all built directly on HKEX-GF and FSCX_REVOLVE above:
 
 1. **HKEX-GF** — key exchange (DH over $\mathbb{GF}(2^n)^{\ast}$, as above)
 2. **HSKE** — symmetric encryption: $E = \text{FSCX-REVOLVE}(P, \mathit{key}, i)$; decrypt with $D = \text{FSCX-REVOLVE}(E, \mathit{key}, r)$
 3. **HPKS** — Schnorr-style public key signature: $R = g^k$; $e = \text{FSCX-REVOLVE}(R, P, i)$; $s = (k - a \cdot e) \bmod (2^n - 1)$; verify $g^s \cdot C^e = R$
 4. **HPKE** — El Gamal public key encryption: $R = g^r$; $\text{enc-key} = C^r$; $E = \text{FSCX-REVOLVE}(P, \text{enc-key}, i)$; Alice decrypts with $\text{dec-key} = R^a$
 
-**Post-quantum / NL-hardened (v1.5.0):**
+**Post-quantum / NL-hardened (v1.5.0)** — same four roles, but swap the classical building blocks for the non-linear FSCX variants (NL-FSCX) and a Ring-LWR key exchange, whose hardness is conjectured to survive a quantum attacker (see [`docs/CRYPTOGRAPHY_BASICS.md`](docs/CRYPTOGRAPHY_BASICS.md) §5.1, "Why quantum-resistant matters"):
 
 5. **HSKE-NL-A1** — counter-mode with NL-FSCX v1: $\mathit{ks} = \text{NL-FSCX-revolve-v1}(K, K \oplus \mathit{ctr}, i)$; $E = P \oplus \mathit{ks}$
 6. **HSKE-NL-A2** — revolve-mode with NL-FSCX v2: $E = \text{NL-FSCX-revolve-v2}(P, K, r)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, K, r)$
@@ -63,9 +83,9 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 8. **HPKS-NL** — NL-hardened Schnorr: $e = \text{NL-FSCX-revolve-v1}(R, P, i)$
 9. **HPKE-NL** — NL-hardened El Gamal: $E = \text{NL-FSCX-revolve-v2}(P, \text{enc-key}, i)$; $D = \text{NL-FSCX-revolve-v2-inv}(E, \text{dec-key}, i)$
 
-**Code-based PQC (v1.5.18):**
+**Code-based PQC (v1.5.18)** — the signature and KEM here rest on a different post-quantum hardness assumption, syndrome decoding (SD), via the Stern zero-knowledge identification protocol made non-interactive (Fiat-Shamir):
 
-10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature (EUF-CMA ≤ SD($n$,$t$) + NL-FSCX v1 PRF): commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (production default; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
+10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature. Security reduces to EUF-CMA ≤ SD($n$,$t$) + NL-FSCX v1 PRF — i.e. forging a signature ("EUF-CMA", existential unforgeability under chosen-message attack) would require either breaking syndrome decoding or the NL-FSCX v1 pseudorandom function ("PRF", an output indistinguishable from random without the key). Protocol: commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (production default; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
 11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. Production decap requires a QC-MDPC syndrome decoder; demo uses known $e'$.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).

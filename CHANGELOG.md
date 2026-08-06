@@ -2,6 +2,76 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [1.9.151] - 2026-08-05
+
+### Changed
+- **TODO #177:** made `SecurityProofs.md` more navigable. Added a callout at the top
+  pointing readers without prerequisite background to `docs/CRYPTOGRAPHY_BASICS.md`
+  and `docs/INTRODUCTION.md`; moved the dense version-history "Status"/"Last updated"
+  text into a collapsed `<details>` block below the five-file routing table, so the
+  index is the first thing seen. This closes out the documentation-review batch opened
+  by TODO #172–#177 (all six items now done).
+
+## [1.9.150] - 2026-08-05
+
+### Added
+- **TODO #176:** added `docs/examples/README.md`, describing what each of the four
+  runnable samples demonstrates and a suggested reading order (Python reference
+  implementation first, then C, then Go, then the MCP agent-integration example last).
+
+### Fixed
+- Removed a stray local `docs/examples/mcp/__pycache__/` build artifact. It was never
+  actually tracked by git — already matched by the existing root `.gitignore`'s
+  untargeted `__pycache__/` pattern — so no repository history change was needed.
+
+## [1.9.149] - 2026-08-05
+
+### Changed
+- **TODO #175:** made `docs/CRYPTOGRAPHY_BASICS.md` more didactic. Added a TL;DR
+  paragraph (≈15-20 min estimate) naming the four core cryptographic properties;
+  added an ASCII diagram in §2 for Kerckhoffs's principle (public algorithm box vs.
+  secret key box); added a note after §2.3's factoring example clarifying that
+  factoring illustrates RSA-style one-way functions in general, while this codebase's
+  classical protocols actually rest on the discrete-log problem over GF(2^n)*; and
+  added a worked negligibility example (256-bit brute force vs. the age of the
+  universe) below the notation table's `negl(n)`/`poly(n)` rows.
+
+## [1.9.148] - 2026-08-05
+
+### Changed
+- **TODO #174:** made `docs/INTRODUCTION.md` more didactic. Added a "Parts at a
+  glance" table with per-Part reading-time estimates to the Reading guide; labeled
+  Part 4.5 and Part 10.4 `(optional deep dive)` rather than renumbering the sequence
+  (avoiding breakage of existing cross-references, including one added in TODO #173);
+  added a one-time footnote bridging this document's plain-text `GF(2^n)*` to
+  `README.md`/`SecurityProofs-*.md`'s KaTeX $\mathbb{GF}(2^n)^{\ast}$; added a "Putting
+  it together" worked example chaining a real HKEX-GF handshake into an HSKE
+  encrypt/decrypt at n=32 with values computed by actually running the suite; and added
+  mermaid sequence diagrams for the Part 3.1 paint-mixing analogy and the Part 6.2
+  Schnorr identification protocol.
+
+## [1.9.147] - 2026-08-05
+
+### Changed
+- **TODO #173:** made `docs/TUTORIAL.md` more didactic. Added a "what it's for / when
+  to use it" paragraph before each of HKEX-GF, HSKE, HPKS, HPKE, and HKEX-RNL's CLI
+  blocks; linked `docs/INTRODUCTION.md` §11.2's protocol decision tree from the top of
+  "Getting started"; explained why HKEX-RNL needs two rounds (Peikert reconciliation)
+  with a mermaid sequence diagram; added a copy-pasteable 5-minute quickstart; and split
+  the Contents list into Core / Advanced / Reference groups.
+
+## [1.9.146] - 2026-08-05
+
+### Changed
+- **TODO #172:** made `README.md` more didactic for human newcomers. Added a
+  plain-language "what this is / who it's for" intro paragraph and moved the
+  `docs/CRYPTOGRAPHY_BASICS.md` → `docs/INTRODUCTION.md` → `docs/TUTORIAL.md` reading
+  path up front, addressed to human readers rather than only agents/tools. Added a
+  framing sentence ahead of the FSCX formula block, grouped the 11-protocol list into
+  its three families (classical, NL-hardened, code-based PQC) each with a short
+  rationale, spelled out previously-bare jargon (`EUF-CMA`, `PRF`, `SD(n,t)`,
+  `FFS L[1/3]`), and added a mermaid sequence diagram for the HKEX-GF handshake.
+
 ## [1.9.145] - 2026-08-05
 
 ### Added
