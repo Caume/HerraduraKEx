@@ -2,6 +2,14 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.1] - 2026-08-09
+
+### Added
+- TODO #179: CI now runs `SecurityProofsCode/validate_katex.js` against `README.md` and
+  all five `SecurityProofs-*.md` shards on every push/PR, catching KaTeX math-rendering
+  regressions before merge instead of after (a class of bug that took four post-tag
+  fixup commits to clean up around the v2.0.0 release).
+
 ## [2.0.0] - 2026-08-06
 
 ### Release

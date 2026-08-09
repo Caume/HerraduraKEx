@@ -73,6 +73,28 @@ jobs:
       - name: NASM i386 test suite (qemu-i386)
         run: ./run_asm_i386.sh tests
 
+  katex:
+    name: KaTeX math rendering validation (TODO #179)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install katex
+        run: npm install katex --no-save
+
+      - name: Validate math spans in README.md and SecurityProofs*.md
+        run: |
+          fail=0
+          for f in README.md SecurityProofs.md SecurityProofs-1.md SecurityProofs-2.md SecurityProofs-3.md SecurityProofs-4.md SecurityProofs-5.md; do
+            echo "=== $f ==="
+            node SecurityProofsCode/validate_katex.js "$f" || fail=1
+          done
+          exit $fail
+
   arduino:
     name: Arduino / AVR (build + simavr tests, best-effort)
     runs-on: ubuntu-latest

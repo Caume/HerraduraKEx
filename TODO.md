@@ -6,4 +6,14 @@
 
 ## Open items
 
-_None currently._
+### #180: Clean up stale `.claude/worktrees/agent-*` directories
+
+Four stale worktree directories from past subagent sessions were found on disk under `.claude/worktrees/` (`agent-a79dce1d3adb0a5db`, `agent-a93a3b1695502c474`, `agent-aab7c546c19c405cc`, `agent-aba29c6c0bc47c2d2`), no longer needed. Remove them via `git worktree remove` (or prune) to reclaim disk space and keep `git worktree list` output clean. Not a code change; purely local housekeeping — confirm none hold unmerged work before removing.
+
+Status: **OPEN**
+
+### #181: Audit stale in-source TODO/FIXME comments
+
+A repo-wide grep found ~180 TODO/FIXME comments scattered across source files (heaviest in `CryptosuiteTests/Herradura_tests.{c,py}` at 33/31, `HerraduraCli/herradura.py` at 40, and numerous `SecurityProofsCode/*.py` research scripts). Triage these for ones that are resolved-but-never-removed or otherwise stale, and either delete the cruft or promote genuinely open ones into tracked TODO.md entries with proper numbering.
+
+Status: **OPEN**
