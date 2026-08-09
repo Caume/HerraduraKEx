@@ -2,6 +2,14 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.2] - 2026-08-09
+
+### Fixed
+- TODO #180: removed four stale `.claude/worktrees/agent-*` directories left over from
+  past subagent sessions (all fully merged into `devtest`/`master`, none holding
+  unmerged work) and their orphaned local branches; purely local housekeeping, no
+  source or doc changes.
+
 ## [2.0.1] - 2026-08-09
 
 ### Added
