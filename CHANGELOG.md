@@ -2,6 +2,17 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.3] - 2026-08-09
+
+### Changed
+- TODO #181: audited all ~370 in-source `TODO`/`FIXME` comments across the suite, CLI,
+  tests, `SecurityProofsCode/`, and supporting directories. Confirmed the `TODO #NNN`
+  pattern used throughout is a deliberate cross-reference convention to the tracked
+  ledger (this file / `TODO.md`), not stale cruft — no source changes needed. Verified
+  the two comments that read as genuinely open work (`TODO #164` Stern-Ring challenge
+  bias, `TODO #106` threshold-signing t-of-n scope) are both already correctly resolved
+  or accurately self-documented as an accepted design limitation.
+
 ## [2.0.2] - 2026-08-09
 
 ### Fixed

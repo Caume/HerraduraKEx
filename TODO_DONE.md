@@ -9281,3 +9281,33 @@ now-orphaned local branches (`worktree-agent-a79dce1d3adb0a5db`,
 `worktree-agent-a93a3b1695502c474`, `worktree-agent-aab7c546c19c405cc`,
 `worktree-agent-aba29c6c0bc47c2d2`) with `git branch -d`. Removed the now-empty
 `.claude/worktrees/` directory. `git worktree list` shows only the primary checkout.
+
+### #181: Audit stale in-source TODO/FIXME comments
+
+A repo-wide grep found ~180 TODO/FIXME comments scattered across source files (heaviest in `CryptosuiteTests/Herradura_tests.{c,py}` at 33/31, `HerraduraCli/herradura.py` at 40, and numerous `SecurityProofsCode/*.py` research scripts). Triage these for ones that are resolved-but-never-removed or otherwise stale, and either delete the cruft or promote genuinely open ones into tracked TODO.md entries with proper numbering.
+
+Status: **DONE v2.0.3** — audited all ~370 `TODO`/`FIXME` hits (the earlier ~180 estimate
+undercounted; a full grep across `SecurityProofsCode/`, `CryptosuiteTests/`,
+`HerraduraCli/`, the suite files, `herradura/`, `bindings/ffi/`, `benchmarks/`, `Fuzz/`,
+`Mcp/`, `CliTest/`, and `spec/` found ~370). Finding: the overwhelming majority are not
+classic "fix this later" comments but a deliberate, working convention — `TODO #NNN`
+tags that cross-reference the tracked ledger in this file/`TODO.md`, attached to code
+that is already fully implemented immediately below the comment (e.g. `# QC-MDPC
+Niederreiter KEM + BGF decoder (TODO #126, Batch 2)` sitting directly above the
+implemented KEM). These are backward-reference citations, not stale cruft, and none
+warranted deletion.
+
+Checked the two comments that read as genuinely open work:
+- `SecurityProofsCode/stern_ring_challenge_bias.py` cites **TODO #164** (Stern-Ring
+  non-signer challenge modulo-3 bias) — already its own tracked entry above, `DONE
+  v1.9.127`. No action needed.
+- `SecurityProofsCode/hpks_threshold_demo.py:394` cites **TODO #106** for "t-of-n is
+  future work" — #106 (CLI multi-party threshold signing) is `DONE v1.9.44`, but scoped
+  to n-of-n by design (Shamir over a composite group order breaks Lagrange inversion for
+  general t-of-n; the demo's own inline output explains the three known workarounds and
+  why n-of-n was chosen). This is an accurately self-documented design limitation, not a
+  missed TODO — left as-is rather than opening a new tracked item, since no concrete plan
+  exists to embed a prime-field share space and the demo already explains why.
+
+No source changes were needed; this item closes as a clean bill of health for the
+TODO-comment convention.

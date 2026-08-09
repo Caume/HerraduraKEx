@@ -6,8 +6,4 @@
 
 ## Open items
 
-### #181: Audit stale in-source TODO/FIXME comments
-
-A repo-wide grep found ~180 TODO/FIXME comments scattered across source files (heaviest in `CryptosuiteTests/Herradura_tests.{c,py}` at 33/31, `HerraduraCli/herradura.py` at 40, and numerous `SecurityProofsCode/*.py` research scripts). Triage these for ones that are resolved-but-never-removed or otherwise stale, and either delete the cruft or promote genuinely open ones into tracked TODO.md entries with proper numbering.
-
-Status: **OPEN**
+_None currently._
