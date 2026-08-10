@@ -1,4 +1,5 @@
-/* TODO #129: constant-time audit of core arithmetic primitives.
+/* TODO #129 (extended by TODO #182 for HKEX-RNL reconciliation): constant-time
+ * audit of core arithmetic primitives.
  *
  * A simplified dudect-style leakage test: for each primitive, compare the
  * per-call timing distribution when the secret-position operand is held
@@ -142,6 +143,96 @@ static void op_wots_sign(const BitArray *secret, const BitArray *pub)
     hpks_wots_sign(sig, msg, sizeof msg, secret->b, pub->b[0]);
 }
 
+/* Batch 8 (TODO #182): HKEX-RNL Peikert reconciliation. Recent literature
+ * (single-trace power analysis on HQC decode; Ring-LWE/LWR template attacks
+ * via cyclic message rotation) targets exactly this step -- the arithmetic
+ * that turns a noisy shared ring element into agreed key bits. rnl_hint and
+ * rnl_reconcile_bits both operate on the *secret* K_poly (the raw shared
+ * secret polynomial, s*c_lifted); the RNL_N/8-byte hint itself is public
+ * (transmitted unauthenticated per herradura.h's own comment) so it is not
+ * tested as a secret operand here. Uses rnl_poly_t (int32_t[RNL_N]) secrets,
+ * not BitArray, so a parallel run_test_poly harness is used instead of
+ * run_test. */
+static uint8_t g_hint[RNL_N / 8];
+static int32_t g_c_other[RNL_N];
+
+static void poly_setup_zero(rnl_poly_t p, FILE *urnd)
+{ (void)urnd; memset(p, 0, sizeof(rnl_poly_t)); }
+
+/* Coefficients pinned exactly at rnl_hint's/rnl_reconcile_bits's rounding
+ * thresholds (multiples of q/4), the values most likely to expose a
+ * division/comparison that isn't actually constant-time despite RNL_Q being
+ * a compile-time constant -- same rationale as Batch 7's 0xA5 pattern test. */
+static void poly_setup_boundary(rnl_poly_t p, FILE *urnd)
+{ (void)urnd; int i; for (i = 0; i < RNL_N; i++) p[i] = RNL_Q / 4; }
+
+static void poly_setup_rand(rnl_poly_t p, FILE *urnd)
+{
+    int i;
+    for (i = 0; i < RNL_N; i++) {
+        uint16_t v = 0;
+        if (fread(&v, sizeof v, 1, urnd) != 1) v = 0;
+        p[i] = (int32_t)(v % RNL_Q);
+    }
+}
+
+static void op_rnl_hint(const rnl_poly_t secret)
+{ uint8_t hint[RNL_N / 8]; rnl_hint(hint, secret); }
+
+static void op_rnl_reconcile_bits(const rnl_poly_t secret)
+{ BitArray out; rnl_reconcile_bits(&out, secret, g_hint); }
+
+/* Exercises rnl_agree's reconciler path end to end (rnl_lift + rnl_poly_mul +
+ * rnl_hint + rnl_reconcile_bits together); secret is the private polynomial
+ * s, g_c_other stands in for the other party's received (public) c. */
+static void op_rnl_agree(const rnl_poly_t secret)
+{
+    BitArray out;
+    uint8_t hint_out[RNL_N / 8];
+    rnl_agree(&out, secret, g_c_other, NULL, hint_out);
+}
+
+static double run_test_poly(const char *name, int rounds,
+                             void (*setup_fixed)(rnl_poly_t, FILE *),
+                             void (*setup_random)(rnl_poly_t, FILE *),
+                             void (*op)(const rnl_poly_t), FILE *urnd)
+{
+    double *fixed_t = malloc(sizeof(double) * rounds);
+    double *rand_t  = malloc(sizeof(double) * rounds);
+    rnl_poly_t fixed_secret;
+    int i;
+    double t, ma, mb;
+
+    setup_fixed(fixed_secret, urnd);
+
+    for (i = 0; i < WARMUP; i++) op(fixed_secret);
+
+    for (i = 0; i < rounds; i++) {
+        uint64_t t0, t1;
+        int fixed_first = (i & 1);
+        rnl_poly_t rs;
+        setup_random(rs, urnd);
+
+        if (fixed_first) {
+            t0 = now_ns(); op(fixed_secret); t1 = now_ns();
+            fixed_t[i] = (double)(t1 - t0);
+            t0 = now_ns(); op(rs); t1 = now_ns();
+            rand_t[i] = (double)(t1 - t0);
+        } else {
+            t0 = now_ns(); op(rs); t1 = now_ns();
+            rand_t[i] = (double)(t1 - t0);
+            t0 = now_ns(); op(fixed_secret); t1 = now_ns();
+            fixed_t[i] = (double)(t1 - t0);
+        }
+    }
+
+    welch_t(fixed_t, rounds, rand_t, rounds, &t, &ma, &mb);
+    printf("%-28s  mean_fixed=%.1fns mean_random=%.1fns  |t|=%.2f  %s\n",
+           name, ma, mb, fabs(t), fabs(t) >= 4.5 ? "LEAK SUSPECTED" : "clean");
+    free(fixed_t); free(rand_t);
+    return t;
+}
+
 int main(int argc, char **argv)
 {
     int rounds = (argc > 1) ? atoi(argv[1]) : 4000;
@@ -160,6 +251,20 @@ int main(int argc, char **argv)
     run_test("stern_gen_perm (fixed=0xA5 pattern)",   rounds, setup_pattern, setup_rand, op_stern_gen_perm,   urnd);
     run_test("stern_apply_perm (fixed=0xA5 pattern)", rounds, setup_pattern, setup_rand, op_stern_apply_perm, urnd);
     run_test("hpks_wots_sign (secret=master_seed)",  rounds, setup_zero, setup_rand, op_wots_sign,        urnd);
+
+    /* Batch 8 (TODO #182): seed the public-side operands once (a fixed,
+     * plausible hint and received-c value; neither is secret, so fixing them
+     * doesn't affect the leak test) and audit the reconciliation path. */
+    {
+        int i;
+        for (i = 0; i < RNL_N / 8; i++) g_hint[i] = 0x55;
+        for (i = 0; i < RNL_N; i++)     g_c_other[i] = i % RNL_P;
+    }
+    run_test_poly("rnl_hint (secret=K_poly)",            rounds, poly_setup_zero,     poly_setup_rand, op_rnl_hint,           urnd);
+    run_test_poly("rnl_hint (fixed=q/4 boundary)",        rounds, poly_setup_boundary, poly_setup_rand, op_rnl_hint,           urnd);
+    run_test_poly("rnl_reconcile_bits (secret=K_poly)",   rounds, poly_setup_zero,     poly_setup_rand, op_rnl_reconcile_bits, urnd);
+    run_test_poly("rnl_reconcile_bits (fixed=q/4)",       rounds, poly_setup_boundary, poly_setup_rand, op_rnl_reconcile_bits, urnd);
+    run_test_poly("rnl_agree (secret=s)",                 rounds, poly_setup_zero,     poly_setup_rand, op_rnl_agree,          urnd);
 
     fclose(urnd);
     return 0;

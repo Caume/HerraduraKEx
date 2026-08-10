@@ -2,6 +2,15 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.4] - 2026-08-10
+
+### Added
+- TODO #182: extended `SecurityProofsCode/dudect_timing_audit.c`'s constant-time audit to
+  HKEX-RNL's Peikert reconciliation (`rnl_hint`, `rnl_reconcile_bits`, `rnl_agree`),
+  prompted by 2026 literature on single-trace power analysis and template attacks
+  against the LWE/LWR message-decoding step. No leak found (all new tests well under
+  the dudect 4.5 threshold); closes a coverage gap rather than fixing a bug.
+
 ## [2.0.3] - 2026-08-09
 
 ### Changed

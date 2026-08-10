@@ -9311,3 +9311,23 @@ Checked the two comments that read as genuinely open work:
 
 No source changes were needed; this item closes as a clean bill of health for the
 TODO-comment convention.
+
+### #182: Extend constant-time audit to HKEX-RNL reconciliation (`rnl_hint`/`rnl_reconcile_bits`)
+
+Prompted by a review of recent PQC literature (2026-07/08): several papers target the message-decoding/reconciliation step of LWE/LWR schemes with single-trace power analysis and template attacks (e.g. HQC SPA, Ring-LWE/LWR cyclic-message-rotation templates). `SecurityProofsCode/dudect_timing_audit.c` (TODO #129) covers `gf_mul`, `gf_pow`, `mul_mod_ord`, `fscx_revolve`, Stern permutation ops, and WOTS signing, but not HKEX-RNL's Peikert cross-rounding reconciliation (`rnl_hint`, `rnl_reconcile_bits`, `rnl_agree` in `herradura.h`) — exactly the operation this literature attacks. The code looks arithmetic-only (division/shift/mask, no visible secret-dependent branches), but that's an unverified assumption. Add dudect-style fixed-vs-random leak tests for these functions and fix any leak found.
+
+Status: **DONE v2.0.4** — added a "Batch 8" section to
+`SecurityProofsCode/dudect_timing_audit.c`: a parallel `run_test_poly` harness (the RNL
+secret operand is `rnl_poly_t` = `int32_t[RNL_N]`, not `BitArray`) auditing `rnl_hint`,
+`rnl_reconcile_bits`, and the reconciler path of `rnl_agree` end-to-end. Each function is
+tested against a zero secret and, for the two hint/reconcile functions, additionally
+against a fixed pattern with every coefficient pinned exactly at the `q/4` rounding
+threshold — the value most likely to expose a division/comparison the compiler didn't
+actually make branch-free, mirroring Batch 7's 0xA5-pattern rationale. At 3000 rounds,
+all five new tests report `|t|` between 0.20 and 2.13 — clean, well under the dudect 4.5
+leak threshold (`rnl_hint` 1.78/2.13, `rnl_reconcile_bits` 0.30/0.20, `rnl_agree` 0.61).
+No leak found, so no fix to `herradura.h` was needed — the deliverable here is the closed
+coverage gap. The pre-existing `stern_gen_perm`/`stern_apply_perm` LEAK SUSPECTED lines
+at the all-zero fixed point are Batch 7's already-documented, already-explained
+degenerate-value artifact (clean at the 0xA5 pattern), unrelated to this batch and not
+reopened by it.
