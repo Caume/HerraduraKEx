@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.3] - 2026-08-09
+
+### Changed
+- TODO #181: audited all ~370 in-source `TODO`/`FIXME` comments across the suite, CLI,
+  tests, `SecurityProofsCode/`, and supporting directories. Confirmed the `TODO #NNN`
+  pattern used throughout is a deliberate cross-reference convention to the tracked
+  ledger (this file / `TODO.md`), not stale cruft — no source changes needed. Verified
+  the two comments that read as genuinely open work (`TODO #164` Stern-Ring challenge
+  bias, `TODO #106` threshold-signing t-of-n scope) are both already correctly resolved
+  or accurately self-documented as an accepted design limitation.
+
+## [2.0.2] - 2026-08-09
+
+### Fixed
+- TODO #180: removed four stale `.claude/worktrees/agent-*` directories left over from
+  past subagent sessions (all fully merged into `devtest`/`master`, none holding
+  unmerged work) and their orphaned local branches; purely local housekeeping, no
+  source or doc changes.
+
+## [2.0.1] - 2026-08-09
+
+### Added
+- TODO #179: CI now runs `SecurityProofsCode/validate_katex.js` against `README.md` and
+  all five `SecurityProofs-*.md` shards on every push/PR, catching KaTeX math-rendering
+  regressions before merge instead of after (a class of bug that took four post-tag
+  fixup commits to clean up around the v2.0.0 release).
+
 ## [2.0.0] - 2026-08-06
 
 ### Release
