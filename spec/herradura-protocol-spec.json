@@ -185,11 +185,13 @@
         "python": true
       },
       "security": {
-        "status": "demo-only",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "Same demo-decap caveat as hpke-stern.",
+        "notes": "Niederreiter/QC-MDPC KEM with a real Black-Gray-Flip (BGF) syndrome decoder (qcmdpc_keygen/encap/decap_bgf) -- unlike hpke-stern, decap does not need the plaintext error vector. Toy parameters (r=523, d=15, t=18); DFR not yet measured at production security margins.",
         "source": [
-          "TODO.md (6469)"
+          "herradura.h QCMDPC_* / qcmdpc_decap_bgf",
+          "herradura/herradura.go QcMdpcDecapBgf",
+          "CliTest/test_stern_kem.sh"
         ]
       }
     },
@@ -492,7 +494,7 @@
         "notes": "Sigma-protocol proof of knowledge of an HKEX-RNL private key.",
         "source": [
           "CLAUDE.md",
-          "SecurityProofs-3.md"
+          "SecurityProofs-5.md"
         ]
       }
     }
@@ -511,6 +513,7 @@
     "PEM_HPKST_SIG": "HERRADURA HPKST SIGNATURE",
     "PEM_HPKS_RING_SIG": "HERRADURA HPKS-RING SIGNATURE",
     "PEM_HPKS_WOTS_SIG": "HERRADURA HPKS-WOTS SIGNATURE",
+    "PEM_HYBRID_RESPONSE": "HERRADURA HYBRID-RNL-STERN RESPONSE",
     "PEM_OPRF_EVAL": "HERRADURA OPRF EVALUATION",
     "PEM_OPRF_STATE": "HERRADURA OPRF CLIENT STATE",
     "PEM_PAKE_RECORD": "HERRADURA PAKE RECORD",
@@ -534,7 +537,8 @@
           "c",
           "go",
           "python"
-        ]
+        ],
+        "hybrid-rnl-stern": []
       }
     },
     "enc": {

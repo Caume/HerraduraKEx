@@ -96,9 +96,8 @@ jobs:
           exit $fail
 
   arduino:
-    name: Arduino / AVR (build + simavr tests, best-effort)
+    name: Arduino / AVR (build + simavr tests)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

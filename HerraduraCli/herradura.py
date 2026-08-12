@@ -1798,10 +1798,11 @@ def cmd_sign(args):
     elif algo == 'hpks-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         e_int, seed_int, n = our_ints
-        seed = BitArray(n, seed_int)
-        syn  = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
-        msg  = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        sig  = hpks_stern_f_sign(msg, e_int, seed, syn, n)
+        seed   = BitArray(n, seed_int)
+        syn    = _suite_mod._stern_syndrome(seed_int, e_int, n, n // 2)
+        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        rounds = getattr(args, 'rounds', None) or SDFR
+        sig    = hpks_stern_f_sign(msg, e_int, seed, syn, n, rounds)
         _write_file(args.out, _pack_stern_sig(sig, n))
 
     elif algo == 'hpks-ring':
@@ -1820,8 +1821,9 @@ def cmd_sign(args):
         if j is None:
             sys.exit("hpks-ring sign: signer's public key is not in --ring "
                      "(run pkey --pubout on the signer key and include it)")
-        msg = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
-        sig = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, SDFR)
+        msg    = BitArray(n, int.from_bytes(in_bytes[:n // 8].ljust(n // 8, b'\x00'), 'big'))
+        rounds = getattr(args, 'rounds', None) or SDFR
+        sig    = hpks_stern_ring_sign(msg, e_int, j, ring_keys, n, rounds)
         _write_file(args.out, _pack_ring_sig(sig, n))
         print(f"Ring signature created (k={len(ring_keys)}); signer index is hidden.",
               file=sys.stderr)
@@ -2748,7 +2750,9 @@ def build_parser():
                     help='Pre-hash: none=truncate input to block size (default), '
                          'hfscx-256=hash full input then sign the 32-byte digest')
     sg.add_argument('--rounds', type=int, default=None,
-                    help='ZKBoo rounds (nl-zkboo only; default: 219 for 128-bit soundness)')
+                    help='ZKP/Stern-F rounds (nl-zkboo, hpks-stern, hpks-ring; '
+                         'default: 32 demo for hpks-stern/hpks-ring, 219 for nl-zkboo; '
+                         'production soundness needs >= 219 for all three)')
 
     # verify
     vf = sub.add_parser('verify', help='Verify a signature or ZKP proof')

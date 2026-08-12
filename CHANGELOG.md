@@ -2,6 +2,71 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.7] - 2026-08-12
+
+### Changed
+- TODO #185: promoted the `arduino` CI job from `continue-on-error: true`
+  (best-effort, TODO #153) to required/blocking, matching the native and
+  ARM/i386 jobs. Investigated by reproducing the build+`simavr` test run
+  locally (clean build; 90/90 test-iteration passes with zero failures
+  across two full 90s runs of both `suite` and `tests` targets) and by
+  pulling the Arduino job's `conclusion` for all 79 CI runs on record via
+  `gh run list`/`gh run view`: exactly 5 failures, all four on
+  2026-07-30/07-31, all before the ATmega2560 SRAM-overflow fix (TODO
+  #155, v1.9.122, landed 2026-07-31T16:22 UTC) — 0 failures in the 74 runs
+  since. The root cause was already found and fixed; best-effort status
+  had become stale caution rather than a live hedge, and was silently
+  letting a real Arduino/AVR regression through CI undetected. Updated
+  `.github/workflows/ci.yml` (dropped `continue-on-error` and the
+  "best-effort" job name suffix), `CLAUDE.md`'s Testing section, and
+  README.md's Known Limitations entry accordingly.
+
+## [2.0.6] - 2026-08-12
+
+### Fixed
+- TODO #184: HPKS-Stern-F/HPKE-Stern-F's underlying `hpks_stern_f_sign` /
+  `HpksSternFSign` already accepted a `rounds` parameter in Python and Go, but
+  the CLIs never wired it through for the base `sign --algo hpks-stern` and
+  `hpks-ring` paths (Python's `--rounds` flag was silently ignored; Go's sign
+  command hardcoded `SdfRounds`=32). Both now honor `--rounds`/`-rounds` for
+  Stern-F and ring signatures, letting callers reach `SDF_PRODUCTION_ROUNDS`
+  (219, 128-bit Fiat-Shamir soundness) without a code change. The C CLI's
+  fixed-size signature layout makes rounds a compile-time constant; fixed a
+  bug where `herradura.h`'s unconditional `#define SDF_ROUNDS 32` silently
+  clobbered a caller's `-DSDF_ROUNDS=219`, making the header's own documented
+  workaround inert — it's now `#ifndef`-guarded so the command-line override
+  actually takes effect.
+- Found and fixed a matching real bug while testing the above: all three DER
+  codecs (`HerraduraCli/codec.py`, `HerraduraCli/herradura_codec.h`,
+  `herradura/codec.go`) capped length encoding at the 2-byte long form
+  (65 535 bytes), silently below what a 219-round ring signature produces
+  (~95 KB). Extended all three to the standard 3- and 4-byte DER long-form
+  length encodings (matching the decoders, which already supported them);
+  bumped C's `DER_INT_LEN`/`DER_SEQ_LEN` worst-case buffer-sizing macros and
+  their local `lbuf` stack buffers to match. Verified end-to-end at
+  `--rounds 219` for `hpks-stern` sign/verify and `hpks-ring` sign/verify in
+  all three languages, including a rebuilt-with-`-DSDF_ROUNDS=219` C binary;
+  full `CliTest/` regression suite re-run clean.
+- Benchmarked size/time at rounds=32 (demo) vs. 219 (production) across
+  C/Go/Python and recorded the results in `SecurityProofs-4.md` alongside
+  Theorem 17: 7 029 B -> 47 511 B signatures; C sign/verify 0.05s/0.06s vs.
+  Python/Go ~2s/~1.5s at 219 rounds (C's fixed-size-bitop inner loop avoids
+  interpreter/GC overhead present in Python and Go).
+
+## [2.0.5] - 2026-08-12
+
+### Fixed
+- TODO #183: found that `spec/generate_spec.py`, `README.md`, and `CLAUDE.md` all
+  documented the `hpke-stern-kem` CLI algo tag as sharing `hpke-stern`'s "demo uses
+  known e'" limitation. It doesn't — `hpke-stern-kem` already dispatches to a real
+  Black-Gray-Flip (BGF) QC-MDPC syndrome decoder (`qcmdpc_keygen`/`qcmdpc_encap`/
+  `qcmdpc_decap_bgf`, implemented in C, Go, and Python, exercised end-to-end by
+  `CliTest/test_stern_kem.sh`, 9/9 cross-language pass verified). Corrected the spec
+  entry's `status` from `demo-only` to `production` and its `notes`/`source` fields,
+  regenerated `spec/herradura-protocol-spec.json`, and updated README.md/CLAUDE.md to
+  distinguish the two algo tags explicitly. No code changes — this was a stale-doc bug,
+  not a missing decoder.
+
 ## [2.0.4] - 2026-08-10
 
 ### Added

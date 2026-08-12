@@ -9331,3 +9331,85 @@ coverage gap. The pre-existing `stern_gen_perm`/`stern_apply_perm` LEAK SUSPECTE
 at the all-zero fixed point are Batch 7's already-documented, already-explained
 degenerate-value artifact (clean at the 0xA5 pattern), unrelated to this batch and not
 reopened by it.
+
+### #183: Real QC-MDPC syndrome decoder for HPKE-Stern-F decap
+
+The Niederreiter KEM (`hpke_stern_*` in C/Go/Python) was believed to only
+return the known error vector `e'` alongside the ciphertext instead of
+recovering it from the syndrome via decoding, based on stale wording in
+README.md, CLAUDE.md, and `spec/generate_spec.py`. Scoped to implement a
+real QC-MDPC decoder.
+
+Status: **DONE v2.0.5** — investigation found the decoder already exists and
+is already wired up: the CLI's `hpke-stern-kem` algo tag (distinct from the
+intentionally-kept `hpke-stern` demo tag) dispatches to a real Black-Gray-Flip
+(BGF) QC-MDPC syndrome decoder — `qcmdpc_keygen`/`qcmdpc_encap`/
+`qcmdpc_decap_bgf`, implemented in full in C (`herradura.h`), Go
+(`herradura/herradura.go`), and Python (`Herradura cryptographic suite.py`),
+and exercised end-to-end by `CliTest/test_stern_kem.sh` (9/9 cross-language
+combinations pass, verified by rerunning). The actual defect was that
+`spec/generate_spec.py`'s `hpke-stern-kem` entry copied `hpke-stern`'s
+`status="demo-only"` / "same demo-decap caveat" text, and README.md/CLAUDE.md
+never distinguished the two algo tags at all. Corrected the spec entry to
+`status="production"` with accurate notes/sources, regenerated
+`spec/herradura-protocol-spec.json`, and updated README.md/CLAUDE.md to
+explicitly separate `hpke-stern` (demo, decap needs plaintext `e'`) from
+`hpke-stern-kem` (real BGF decoder, no `e'` needed) — noting the KEM's toy
+parameters (r=523, d=15, t=18) still lack a measured DFR at production
+security margins, which is a fair caveat to keep. No code changes; this was
+a stale-documentation bug, not a missing decoder.
+
+### #184: HPKS-Stern-F production-soundness round count
+
+`Herradura cryptographic suite.py` and `docs/TUTORIAL.md` both note demo
+params use `rounds=32` (soundness `(2/3)^32`), while 128-bit soundness
+needs `rounds >= 219`. Add a production-strength parameter mode (flag or
+named preset) to the C/Go/Python suites and benchmark the resulting
+signature size/time cost, documenting the tradeoff in SecurityProofs-4.md.
+
+Status: **DONE v2.0.6** — investigation found Python's `hpks_stern_f_sign`
+and Go's `HpksSternFSign` already accepted a `rounds` parameter, but neither
+CLI's `sign --algo hpks-stern`/`hpks-ring` path actually passed it through
+(Python's `--rounds` flag was defined but unused there; Go hardcoded
+`SdfRounds`=32). Wired `--rounds`/`-rounds` through both CLIs for both algo
+tags. C's fixed-size signature struct makes rounds a compile-time constant
+(`-DSDF_ROUNDS=219`); found and fixed a bug where `herradura.h`'s
+unconditional `#define SDF_ROUNDS 32` silently clobbered that override —
+now `#ifndef`-guarded. While verifying the fix at 219 rounds, hit and fixed
+a second real bug: all three DER codecs (Python `codec.py`, C
+`herradura_codec.h`, Go `herradura/codec.go`) capped length encoding at the
+2-byte long form (65 535 B), too small for a 219-round ring signature
+(~95 KB) — extended all three to the standard 3-/4-byte long forms (the
+decoders already supported them) and bumped C's `DER_INT_LEN`/`DER_SEQ_LEN`
+macros and local `lbuf` buffers to match. Verified `--rounds 219`
+sign/verify for both `hpks-stern` and `hpks-ring` in all three languages
+(including a `-DSDF_ROUNDS=219` C rebuild), full `CliTest/` regression
+suite re-run clean, and recorded a rounds=32-vs-219 size/time benchmark
+(7 029 B/0.85 s Python demo vs. 47 511 B/2.24 s Python production; C 15-40x
+faster than Python/Go at both) in `SecurityProofs-4.md` next to Theorem 17.
+
+### #185: Triage Arduino/AVR CI's best-effort status
+
+`.github/workflows/ci.yml`'s `arduino` job is allowed to fail without
+blocking CI. Investigate whether the remaining failures are due to flash
+size limits, simavr flakiness, or something fixable, and either resolve
+the root cause or document precisely why best-effort status is permanent
+(update CLAUDE.md's Testing section accordingly either way).
+
+Status: **DONE v2.0.7** — reproduced the build+`simavr` test run locally
+(clean `build_arduino.sh`; two full 90s `run_arduino.sh` passes of both
+`suite` and `tests` targets, 90/90 test-iteration `[PASS]`, zero failures)
+and pulled the Arduino job's `conclusion` across all 79 recorded CI runs
+via `gh run list`/`gh run view`: exactly 5 failures, all on 2026-07-30/
+07-31, all before the ATmega2560 `.bss` SRAM-overflow fix (TODO #155,
+v1.9.122, landed 2026-07-31T16:22 UTC) — 0 failures in the 74 runs since,
+including every run in the last two weeks of TODO work. The root cause
+was already found and fixed; "best-effort" had become stale caution that
+was silently letting a real Arduino/AVR regression pass CI undetected
+rather than a live hedge against ongoing flakiness. Promoted the job to
+required/blocking: dropped `continue-on-error: true` and the "best-effort"
+suffix from its name in `.github/workflows/ci.yml`, updated CLAUDE.md's
+Testing section and README.md's Known Limitations entry to match. If
+simavr flakiness specific to GitHub's runners (as opposed to local
+reproduction) surfaces later, `continue-on-error` can be reinstated with
+that evidence — none was found here.
