@@ -336,6 +336,25 @@ demo-scale N = 256 with real soundness — see the deployed-parameter caveat
 below for why N itself, independent of round count, still falls short of
 128-bit classical security.
 
+**Comparison against a NIST-standardized lattice signature (TODO #186,
+v2.0.8).** `benchmarks/compare_stern_f_dilithium.py` benchmarks HPKS-Stern-F
+(demo params, `rounds = 32`, driven through the C CLI) against liboqs's
+ML-DSA-65 (FIPS 204, NIST category 3, ~128-bit) — the current standardized
+name for what was submitted to the NIST PQC competition as Dilithium3, which
+the script also recognizes for older liboqs builds. Run end-to-end here
+against a from-source build of liboqs 0.16.0 (it was previously an
+unexercised stub, since liboqs was not installed in the environment the
+script was written in): HPKS-Stern-F sign/verify averaged ~39 ms / ~29 ms
+against ML-DSA-65's ~0.8 ms / ~0.2 ms over 5 runs at N = 30 — roughly 50x
+slower to sign and 130x slower to verify, at demo-scale N = 256 versus
+ML-DSA-65's production-grade 128-bit target. See `docs/BENCHMARKS.md` for
+the full table and caveats (CLI process-spawn overhead on the Stern-F side,
+apples-to-oranges security-level mismatch). This says nothing new about
+`SD(N,t)` hardness itself (Theorem 17, above) — it quantifies the
+implementation-maturity and parameter-scale gap between a reference-quality
+proof-of-concept and a production-hardened, NIST-standardized library, which
+is the honest comparison to make at this stage per TODO #127.
+
 *Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — `_stern_hash` outputs `HFSCX-256-DM(ds || chain(...))` where `ds` is a per-slot domain tag; under the ROM on HFSCX-256-DM, the per-slot outputs are independent random oracles, satisfying Unruh's QROM requirement.  EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
 
 **HPKE-Stern-F: Niederreiter-Style KEM.**  Use the same $(H, \mathbf{s} = H\mathbf{e}^\top)$ for key encapsulation:

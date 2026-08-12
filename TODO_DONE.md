@@ -9413,3 +9413,27 @@ Testing section and README.md's Known Limitations entry to match. If
 simavr flakiness specific to GitHub's runners (as opposed to local
 reproduction) surfaces later, `continue-on-error` can be reinstated with
 that evidence — none was found here.
+
+### #186: Exercise `benchmarks/compare_stern_f_dilithium.py` against real liboqs
+
+The script's OQS C API usage is flagged as "best-effort and has not been
+exercised end-to-end." If liboqs is installable in CI or dev environments,
+run the comparison for real, record actual HPKS-Stern-F vs. Dilithium
+numbers, and fold the results into the PQC signature discussion in
+SecurityProofs-4.md instead of leaving it as an unexercised stub.
+
+Status: **DONE v2.0.8** — built liboqs 0.16.0 from source (plain
+`cmake`/`make`, no options; network access and build tools were both
+available in this environment) and ran the comparison end-to-end. This
+surfaced a real bug: the script hardcoded `OQS_SIG_new(b"Dilithium3")`,
+but liboqs renamed that algorithm to its final NIST FIPS 204 identifier,
+`ML-DSA-65`, once ML-DSA was standardized — `OQS_SIG_new` silently
+returned NULL for the old name, so the comparison would have reported
+"algorithm not enabled" even with liboqs correctly installed. Fixed the
+script to try `ML-DSA-65` first, fall back to `Dilithium3` for older
+liboqs builds, and label output with whichever name actually loaded
+rather than a hardcoded string. Recorded real numbers (5-run average,
+N=30): HPKS-Stern-F ~39 ms sign / ~29 ms verify vs. ML-DSA-65's ~0.8 ms
+/ ~0.2 ms (~50x / ~130x slower) in `docs/BENCHMARKS.md` and
+`SecurityProofs-4.md` next to Theorem 17, replacing the "install liboqs
+to measure" placeholder both had carried since TODO #138.

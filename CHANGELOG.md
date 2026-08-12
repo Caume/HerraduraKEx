@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.8] - 2026-08-12
+
+### Fixed
+- TODO #186: `benchmarks/compare_stern_f_dilithium.py` (TODO #138) was an
+  unexercised stub — liboqs wasn't installed in the environment it was
+  written in, so its Dilithium3 side had never actually run. Built liboqs
+  0.16.0 from source (plain `cmake`/`make`, no options) and ran the
+  comparison end-to-end, which surfaced a real compatibility bug: this
+  liboqs build only registers signatures under their final NIST FIPS 204
+  names (`ML-DSA-65`, not the pre-standardization `Dilithium3` the script
+  hardcoded), so `OQS_SIG_new(b"Dilithium3")` silently returned NULL.
+  Fixed the script to try `ML-DSA-65` first, falling back to `Dilithium3`
+  for older liboqs builds, and to report whichever name actually loaded
+  rather than a hardcoded label. Recorded real numbers (5-run average,
+  N=30): HPKS-Stern-F ~39 ms sign / ~29 ms verify vs. ML-DSA-65's ~0.8 ms
+  / ~0.2 ms — roughly 50x/130x slower — in `docs/BENCHMARKS.md` and
+  `SecurityProofs-4.md` next to Theorem 17, replacing the "install liboqs
+  to measure" placeholder.
+
 ## [2.0.7] - 2026-08-12
 
 ### Changed

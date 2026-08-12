@@ -6,16 +6,6 @@
 
 ## Open items
 
-### #186: Exercise `benchmarks/compare_stern_f_dilithium.py` against real liboqs
-
-The script's OQS C API usage is flagged as "best-effort and has not been
-exercised end-to-end." If liboqs is installable in CI or dev environments,
-run the comparison for real, record actual HPKS-Stern-F vs. Dilithium
-numbers, and fold the results into the PQC signature discussion in
-SecurityProofs-4.md instead of leaving it as an unexercised stub.
-
-Status: **OPEN**
-
 ### #188: Add sanitizer/CI hardening (ASan/UBSan/valgrind)
 
 CI runs the build+test matrix but never compiles/runs the C suite,
