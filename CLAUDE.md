@@ -116,6 +116,7 @@ Use the build scripts when building everything; they apply the correct flags, ou
 ./build_arm.sh        # ARM Thumb-2 suite + tests (requires arm-linux-gnueabi-gcc)
 ./build_asm_i386.sh   # NASM i386 suite + tests (auto-detects elf_i386-capable linker)
 ./build_arduino.sh    # Arduino/AVR suite + tests; run_arduino.sh runs them under simulation
+./build_c_sanitize.sh # C suite/tests/CLI under ASan+UBSan (requires clang); see Testing
 ```
 
 ### C
@@ -158,12 +159,15 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 ## Testing
 
 No unit-test framework in the traditional sense — tests are pass/fail assertions printed
-to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs the
-full build+test matrix (C/Go/Python native, ARM Thumb-2/NASM i386 under qemu, Arduino/AVR
-under simavr) on every push/PR (TODO #153); all four jobs are required/blocking — the
-Arduino job ran `continue-on-error: true` until TODO #185 (v2.0.6) promoted it after
-confirming 100% pass history since its one known failure mode (an SRAM overflow) was
-fixed in TODO #155. Locally, run the same scripts by hand as described below.
+to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs six
+jobs on every push/PR, all required/blocking: `native` (C/Go/Python build+test+CliTest),
+`arm-i386` (ARM Thumb-2/NASM i386 under qemu), `katex` (math-rendering validation,
+TODO #179), `arduino` (Arduino/AVR under simavr — ran `continue-on-error: true` until
+TODO #185 promoted it after confirming 100% pass history since its one known failure mode,
+an SRAM overflow, was fixed in TODO #155), `fuzz-smoke` (30s/target libFuzzer/go-fuzz/
+Hypothesis/CLI-argv run, TODO #187), and `sanitizers` (C suite/tests/CLI under ASan+UBSan
+plus a bounded valgrind memcheck pass, TODO #188). Locally, run the same scripts by hand
+as described below.
 
 Whenever a TODO adds or removes a test number or CLI subcommand, re-check this section (and `llms.txt`'s CLI section) for drift rather than waiting for the next major-version doc audit — see TODO #145.
 
@@ -188,6 +192,17 @@ python3 CryptosuiteTests/Herradura_tests.py -r 500 -t 2.0
 qemu-arm -L /usr/arm-linux-gnueabi ./CryptosuiteTests/Herradura_tests_arm
 qemu-i386 ./CryptosuiteTests/Herradura_tests_i386
 ./run_arduino.sh tests    # simavr; TIMEOUT env var, default 90s
+
+# C sanitizers (TODO #188) — build first with build_c_sanitize.sh, then run:
+./build_c_sanitize.sh
+./CryptosuiteTests/Herradura_tests_asan -t 2.0   # ASan+UBSan; aborts on first issue found
+./HerraduraCli/herradura_cli_asan --help         # CLI under the same instrumentation
+
+# Valgrind memcheck (slow — use small -r/-t; a plain, non-sanitized debug build,
+# since ASan and valgrind's own instrumentation conflict):
+gcc -O0 -g -o /tmp/herr_tests_valgrind CryptosuiteTests/Herradura_tests.c
+valgrind --leak-check=full --show-leak-kinds=definite,indirect \
+  /tmp/herr_tests_valgrind -r 3 -t 0.2
 ```
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.

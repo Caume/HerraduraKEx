@@ -5052,7 +5052,7 @@ int main(int argc, char *argv[])
             /* syndrome tamper: flip bit 0 */
             memcpy(syndr_bad, syndr, SDF_SYNBYTES);
             syndr_bad[0] ^= 1;
-            if (!hcred_verify(m_b, c2_poly, &seed_H, syndr_bad, &proof, R,
+            if (!hcred_verify(m_b, c_poly, &seed_H, syndr_bad, &proof, R,
                               hcred_msg, sizeof(hcred_msg)-1))
                 ok_synd++;
 

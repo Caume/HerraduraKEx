@@ -131,3 +131,36 @@ jobs:
 
       - name: Run fuzz harness (30s/target smoke budget)
         run: ./Fuzz/run_fuzz.sh 30
+
+  sanitizers:
+    name: C sanitizers + valgrind (TODO #188)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang gcc libc6-dev python3 valgrind
+
+      - name: Build C suite/tests/CLI under ASan+UBSan
+        run: ./build_c_sanitize.sh
+
+      - name: Security test suite under ASan+UBSan
+        run: ./CryptosuiteTests/Herradura_tests_asan -t 2.0
+
+      - name: CLI integration tests against the ASan+UBSan CLI
+        run: |
+          cp HerraduraCli/herradura_cli_asan HerraduraCli/herradura_cli
+          for f in CliTest/test_c_*.sh; do
+            echo "=== $f ==="
+            bash "$f"
+          done
+
+      - name: Valgrind memcheck pass (plain debug build, tight bounds)
+        run: |
+          gcc -O0 -g -o /tmp/herr_tests_valgrind CryptosuiteTests/Herradura_tests.c
+          valgrind --error-exitcode=99 --leak-check=full \
+            --show-leak-kinds=definite,indirect \
+            /tmp/herr_tests_valgrind -r 3 -t 0.2

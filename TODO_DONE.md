@@ -9459,3 +9459,31 @@ target default (~3 min total), verified end-to-end locally at that exact
 budget before wiring it in, so future regressions in the codec/CLI-
 argument-parsing surface are caught automatically on every push/PR
 rather than depending on someone re-running this by hand.
+
+### #188: Add sanitizer/CI hardening (ASan/UBSan/valgrind)
+
+CI runs the build+test matrix but never compiles/runs the C suite,
+tests, or CLI under AddressSanitizer, UndefinedBehaviorSanitizer, or
+valgrind. Given the manual constant-time auditing already done (TODO
+#182), an automated sanitizer job would catch memory-safety and UB
+issues that manual review can't, and is standard practice in comparable
+C crypto projects (libsodium, BLAKE3, OpenSSL). Add a CI job (or local
+build-script variant) that builds with `-fsanitize=address,undefined`
+and runs the security tests, and/or a valgrind pass.
+
+Status: **DONE v2.0.10** — added `build_c_sanitize.sh` (ASan+UBSan build
+of the C suite/tests/CLI, `_asan`-suffixed outputs) and a `sanitizers`
+CI job running the security tests and the C `CliTest/` suite under that
+instrumentation, plus a bounded valgrind memcheck pass (`-r 3 -t 0.2`,
+~5 min locally) on a plain debug build. Running this locally surfaced a
+real bug: test `[44]`'s "syndrome tamper" case in `CryptosuiteTests/
+Herradura_tests.c` passed `c2_poly` — a variable not initialized until
+the next test case — into `hcred_verify`. ASan didn't catch it; valgrind
+did, 4 hits at `_hcred_challenges` traced back to this call site. Fixed
+to use `c_poly` (matching the already-correct Go/Python equivalents);
+`ok_synd`'s pass/fail outcome is unchanged, but the test now genuinely
+exercises what its name claims instead of reading uninitialized stack
+memory. Verified clean: `Herradura_tests_asan` 79/79 `[PASS]` markers
+with zero sanitizer hits, all 9 C `CliTest/test_c_*.sh` scripts 0 FAIL
+under ASan+UBSan, and a valgrind rerun showing `ERROR SUMMARY: 0 errors
+from 0 contexts`.

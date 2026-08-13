@@ -2,6 +2,36 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.10] - 2026-08-13
+
+### Added
+- TODO #188: added `build_c_sanitize.sh`, compiling the C suite/tests/CLI
+  under AddressSanitizer + UndefinedBehaviorSanitizer (`_asan`-suffixed
+  outputs, mirroring `build_c.sh`'s `_c` suffix convention). Added a
+  `sanitizers` CI job running the security tests and the `CliTest/`
+  C-CLI suite under this instrumentation, plus a bounded valgrind
+  memcheck pass (`-r 3 -t 0.2`, ~5 min on this repo's dev hardware) on a
+  plain debug build, since ASan and valgrind's own instrumentation
+  conflict.
+
+### Fixed
+- Running the above locally surfaced a real bug: `CryptosuiteTests/
+  Herradura_tests.c`'s test `[44]` (HCRED hybrid credential) "syndrome
+  tamper" case passed `c2_poly` to `hcred_verify` — a stack variable not
+  initialized until the *next* test case ("key tamper") two lines later.
+  ASan didn't catch it (uninitialized stack reads of concrete garbage
+  aren't its target), but valgrind's memcheck flagged the resulting
+  taint precisely, 4 hits at `_hcred_challenges` (`herradura.h:4509`),
+  traced back to this call site. Fixed to use `c_poly` (the valid key
+  already in scope from the completeness case above it), matching what
+  the Go and Python equivalents of this test already did correctly —
+  this was a C-only copy/paste bug. `ok_synd`'s pass/fail outcome is
+  unchanged (a tampered syndrome alone was already enough to trigger
+  rejection), but the test now genuinely exercises "valid key, bad
+  syndrome" instead of accidentally passing over uninitialized memory.
+  Verified with a valgrind rerun: `ERROR SUMMARY: 0 errors from 0
+  contexts`.
+
 ## [2.0.9] - 2026-08-13
 
 ### Added

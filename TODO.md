@@ -6,19 +6,6 @@
 
 ## Open items
 
-### #188: Add sanitizer/CI hardening (ASan/UBSan/valgrind)
-
-CI runs the build+test matrix but never compiles/runs the C suite,
-tests, or CLI under AddressSanitizer, UndefinedBehaviorSanitizer, or
-valgrind. Given the manual constant-time auditing already done (TODO
-#182), an automated sanitizer job would catch memory-safety and UB
-issues that manual review can't, and is standard practice in comparable
-C crypto projects (libsodium, BLAKE3, OpenSSL). Add a CI job (or local
-build-script variant) that builds with `-fsanitize=address,undefined`
-and runs the security tests, and/or a valgrind pass.
-
-Status: **OPEN**
-
 ### #189: Add CodeQL / static-analysis workflow
 
 No static-analysis workflow exists for the C/Go/Python sources. Add a
