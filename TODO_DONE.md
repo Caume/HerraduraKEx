@@ -9437,3 +9437,25 @@ N=30): HPKS-Stern-F ~39 ms sign / ~29 ms verify vs. ML-DSA-65's ~0.8 ms
 / ~0.2 ms (~50x / ~130x slower) in `docs/BENCHMARKS.md` and
 `SecurityProofs-4.md` next to Theorem 17, replacing the "install liboqs
 to measure" placeholder both had carried since TODO #138.
+
+### #187: Run fuzz harnesses under a real engine and record coverage
+
+`Fuzz/` has libFuzzer-style harnesses (b64/DER/PEM decode) and Python
+harnesses (CLI args, codec) but no on-record run history or coverage
+report — TODO #130 built the harnesses but didn't close the loop on
+actually fuzzing with them. Run `Fuzz/run_fuzz.sh` for a fixed time
+budget, record findings and coverage in `Fuzz/README.md`, and consider
+wiring a short smoke-fuzz job into CI.
+
+Status: **DONE v2.0.9** — ran `./Fuzz/run_fuzz.sh 300` (5 min/target,
+~35 min total): 3 C libFuzzer targets (~189M combined executions), 2 Go
+native fuzz targets (~75M combined executions), the Python Hypothesis
+suite (60,000 examples across 3 properties), and the CLI black-box argv
+fuzzer (6,510 trials across the C/Go/Python CLIs) — zero crashes, zero
+ASan/UBSan reports, zero leaks anywhere. Recorded the full per-target
+breakdown in a new "Run history" section of `Fuzz/README.md`. Added a
+`fuzz-smoke` job to `.github/workflows/ci.yml` at the script's own 30s/
+target default (~3 min total), verified end-to-end locally at that exact
+budget before wiring it in, so future regressions in the codec/CLI-
+argument-parsing surface are caught automatically on every push/PR
+rather than depending on someone re-running this by hand.

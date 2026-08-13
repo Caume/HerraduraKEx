@@ -2,6 +2,23 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.9] - 2026-08-13
+
+### Added
+- TODO #187: ran the `Fuzz/` harness (TODO #130) for a real time budget for
+  the first time since it was built — `./Fuzz/run_fuzz.sh 300` (5 min/target,
+  ~35 min total). Zero crashes, zero ASan/UBSan reports, zero leaks across
+  every target: 3 C libFuzzer targets (~189M combined executions), 2 Go
+  native fuzz targets (~75M combined executions), the Python Hypothesis
+  suite (60,000 examples), and the CLI black-box argv fuzzer (6,510 trials
+  across all three CLIs) — recorded in `Fuzz/README.md`'s new "Run history"
+  section. Added a `fuzz-smoke` job to `.github/workflows/ci.yml` (30s/target,
+  the script's own default, ~3 min total) so future regressions in the
+  codec/CLI-argument-parsing surface are caught automatically on every
+  push/PR rather than depending on someone re-running this by hand;
+  verified the exact 30s-budget invocation locally end-to-end before
+  wiring it in.
+
 ## [2.0.8] - 2026-08-12
 
 ### Fixed

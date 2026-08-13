@@ -88,13 +88,3 @@ to give adopters real performance context for the novel constructions.
 
 Status: **OPEN**
 
-### #187: Run fuzz harnesses under a real engine and record coverage
-
-`Fuzz/` has libFuzzer-style harnesses (b64/DER/PEM decode) and Python
-harnesses (CLI args, codec) but no on-record run history or coverage
-report — TODO #130 built the harnesses but didn't close the loop on
-actually fuzzing with them. Run `Fuzz/run_fuzz.sh` for a fixed time
-budget, record findings and coverage in `Fuzz/README.md`, and consider
-wiring a short smoke-fuzz job into CI.
-
-Status: **OPEN**

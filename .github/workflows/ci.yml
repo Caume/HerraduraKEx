@@ -111,3 +111,23 @@ jobs:
 
       - name: Arduino test suite (simavr)
         run: ./run_arduino.sh tests
+
+  fuzz-smoke:
+    name: Fuzz smoke test (TODO #187)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang gcc libc6-dev golang-go python3 python3-hypothesis
+
+      - name: Build C and Go CLIs (needed by the CLI-argv fuzz target)
+        run: |
+          ./build_c.sh
+          ./build_go.sh
+
+      - name: Run fuzz harness (30s/target smoke budget)
+        run: ./Fuzz/run_fuzz.sh 30
