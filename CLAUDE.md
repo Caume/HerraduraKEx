@@ -169,6 +169,10 @@ Hypothesis/CLI-argv run, TODO #187), and `sanitizers` (C suite/tests/CLI under A
 plus a bounded valgrind memcheck pass, TODO #188). Locally, run the same scripts by hand
 as described below.
 
+`.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
+matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
+surface under the repo's Security tab rather than as a required check.
+
 Whenever a TODO adds or removes a test number or CLI subcommand, re-check this section (and `llms.txt`'s CLI section) for drift rather than waiting for the next major-version doc audit — see TODO #145.
 
 ```bash

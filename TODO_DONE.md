@@ -9487,3 +9487,20 @@ memory. Verified clean: `Herradura_tests_asan` 79/79 `[PASS]` markers
 with zero sanitizer hits, all 9 C `CliTest/test_c_*.sh` scripts 0 FAIL
 under ASan+UBSan, and a valgrind rerun showing `ERROR SUMMARY: 0 errors
 from 0 contexts`.
+
+### #189: Add CodeQL / static-analysis workflow
+
+No static-analysis workflow exists for the C/Go/Python sources. Add a
+GitHub CodeQL workflow (free for public repos) covering C and Go at
+minimum, and a Python linter/analyzer pass if useful, wired into
+`.github/workflows/`.
+
+Status: **DONE v2.0.11** — added `.github/workflows/codeql.yml`, a
+CodeQL matrix covering C/C++ (`build-mode: manual`, compiling the suite,
+test harness, and CLI directly), Go (`autobuild`), and Python
+(`build-mode: none`). Runs on push/PR to `master`/`devtest`, a weekly
+schedule (Monday 03:17 UTC), and `workflow_dispatch`; kept as a separate
+workflow file from `ci.yml` so CodeQL alerts (which surface under the
+repo's Security tab) don't gate merges as a required status check.
+Validated the workflow YAML with `python3 -c "import yaml;
+yaml.safe_load(...)"`.
