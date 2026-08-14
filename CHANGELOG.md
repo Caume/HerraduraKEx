@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.12] - 2026-08-14
+
+### Added
+- TODO #190: added `KAT/` — fixed Known-Answer-Test vectors for the
+  classical (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE) at n=256 bits,
+  in the style of NIST CAVP `.rsp` files, for third-party
+  reimplementations to cross-validate against without depending on this
+  repo's own test harness. `KAT/classical_quartet.json` holds the
+  vectors; `KAT/generate_kat.py` is the deterministic Python reference
+  generator (`--check` verifies the checked-in file is current);
+  `KAT/verify_kat.go` independently recomputes every vector using the
+  Go `herradura` package and confirms byte-identical results. Wired into
+  `CliTest/test_kat_vectors.sh`, picked up automatically by the `native`
+  CI job's `for f in CliTest/*.sh` loop. NL/PQC and Stern-based variants
+  are left for a follow-up.
+
 ## [2.0.11] - 2026-08-13
 
 ### Added

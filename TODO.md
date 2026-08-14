@@ -6,19 +6,6 @@
 
 ## Open items
 
-### #190: Publish fixed KAT (Known-Answer-Test) vector files
-
-`CliTest/test_vectors.sh` exercises key-agreement correctness but there
-is no standalone, versioned Known-Answer-Test vector file (JSON/CSV, in
-the style of NIST CAVP `.rsp` files) that a third-party reimplementation
-could use to cross-validate against this suite's outputs independent of
-this repo's own test harness. Add a `KAT/` (or similar) directory with
-fixed input/output vectors for HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC
-variants, generated from the reference implementation and checked into
-the repo.
-
-Status: **OPEN**
-
 ### #191: Package-manager publishing (PyPI, Go module tagging, etc.)
 
 There is no `pyproject.toml`/`setup.py` for the Python suite/CLI, so

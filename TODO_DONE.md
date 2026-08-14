@@ -9504,3 +9504,30 @@ workflow file from `ci.yml` so CodeQL alerts (which surface under the
 repo's Security tab) don't gate merges as a required status check.
 Validated the workflow YAML with `python3 -c "import yaml;
 yaml.safe_load(...)"`.
+
+### #190: Publish fixed KAT (Known-Answer-Test) vector files
+
+`CliTest/test_vectors.sh` exercises key-agreement correctness but there
+is no standalone, versioned Known-Answer-Test vector file (JSON/CSV, in
+the style of NIST CAVP `.rsp` files) that a third-party reimplementation
+could use to cross-validate against this suite's outputs independent of
+this repo's own test harness. Add a `KAT/` (or similar) directory with
+fixed input/output vectors for HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC
+variants, generated from the reference implementation and checked into
+the repo.
+
+Status: **DONE v2.0.12** — added `KAT/classical_quartet.json` (HKEX-GF,
+HSKE, HPKS, HPKE at n=256, NIST-CAVP-`.rsp`-style: fixed hex inputs,
+deterministic hex outputs, no randomness anywhere). `KAT/generate_kat.py`
+is the deterministic Python reference generator (`--check` diffs its
+output against the checked-in file); `KAT/verify_kat.go` independently
+recomputes every vector using the Go `herradura` package and confirms
+byte-identical results, so the vectors are cross-language-verified, not
+merely self-consistent within the Python reference. Wired into
+`CliTest/test_kat_vectors.sh`, picked up automatically by the `native`
+CI job's `for f in CliTest/*.sh` loop. NL/PQC and Stern-based variants
+(HKEX-RNL, HSKE-NL, HPKS-NL/Stern-F, HPKE-NL/Stern-F/Stern-KEM) are
+deferred to a follow-up — their larger key/ciphertext material (Ring-LWR
+polynomials, QC-MDPC parity-check matrices, Stern commitments) needs a
+different, less compact vector representation than the classical
+quartet's fixed-width hex fields.
