@@ -6,15 +6,6 @@
 
 ## Open items
 
-### #189: Add CodeQL / static-analysis workflow
-
-No static-analysis workflow exists for the C/Go/Python sources. Add a
-GitHub CodeQL workflow (free for public repos) covering C and Go at
-minimum, and a Python linter/analyzer pass if useful, wired into
-`.github/workflows/`.
-
-Status: **OPEN**
-
 ### #190: Publish fixed KAT (Known-Answer-Test) vector files
 
 `CliTest/test_vectors.sh` exercises key-agreement correctness but there

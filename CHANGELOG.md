@@ -2,6 +2,19 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.0.11] - 2026-08-13
+
+### Added
+- TODO #189: added `.github/workflows/codeql.yml`, a CodeQL static-analysis
+  matrix covering C/C++, Go, and Python. Runs on every push/PR to
+  `master`/`devtest` plus a weekly schedule, and via `workflow_dispatch`;
+  alerts surface under the repo's Security tab rather than as a required
+  status check (kept separate from `ci.yml`'s blocking jobs so CodeQL
+  findings don't gate merges). C uses `build-mode: manual` (compiles the
+  suite, test harness, and CLI directly, since the suite filename's space
+  and `build_c.sh`'s custom flags don't suit CodeQL's autobuild); Go uses
+  `autobuild`; Python needs no build step.
+
 ## [2.0.10] - 2026-08-13
 
 ### Added

@@ -1,0 +1,59 @@
+name: CodeQL
+
+# TODO #189: static-analysis coverage for the C, Go, and Python sources,
+# separate from ci.yml's build/test matrix. Runs on push/PR to master and
+# devtest plus a weekly schedule so alerts surface even when no PR is open.
+
+on:
+  push:
+    branches: [master, devtest]
+  pull_request:
+    branches: [master, devtest]
+  schedule:
+    - cron: '17 3 * * 1'   # weekly, Monday 03:17 UTC
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: c-cpp
+            build-mode: manual
+          - language: go
+            build-mode: autobuild
+          - language: python
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # C has no autobuild story here (space in the suite filename, custom
+      # build_c.sh flags) — build just the sources CodeQL should scan.
+      - name: Manual build (C)
+        if: matrix.build-mode == 'manual'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev
+          gcc -O1 -g -c "Herradura cryptographic suite.c" -o /tmp/suite.o
+          gcc -O1 -g -c CryptosuiteTests/Herradura_tests.c -o /tmp/tests.o
+          gcc -O1 -g -c HerraduraCli/herradura_cli.c -o /tmp/cli.o
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
