@@ -308,6 +308,53 @@ $$\Pr[\mathrm{forge}] \leq \frac{q_H}{T_\mathrm{SD}} + \epsilon_\mathrm{PRF}$$
 
 for $q_H$ quantum hash queries.
 
+**Production round-count benchmark (TODO #184, v2.0.6).**  The soundness-error
+bound above is per round; the shipped default of `SDF_ROUNDS = 32` (soundness
+`(2/3)^32`, about 19 bits) is a demo parameter, while `SDF_PRODUCTION_ROUNDS =
+219` reaches the 128-bit soundness floor. All three suites already supported a
+runtime/compile-time round count, but the CLI didn't expose it end-to-end for
+the base `sign --algo hpks-stern` / `hpks-ring` paths, and the DER length
+encoder in `codec.py` / `herradura_codec.h` / `herradura/codec.go` was capped
+at a 2-byte length field (65535 bytes) — too small for a 219-round signature.
+Both were fixed (`--rounds` flag wired through in Python/Go; C reads
+`-DSDF_ROUNDS=219` at compile time via `#ifndef`; DER codecs extended to the
+standard 3- and 4-byte long-form length fields). Measured at N = 256 on the
+same machine, single-threaded, no batching:
+
+| Rounds | Sig. size | Python sign | Python verify | C sign | C verify | Go sign | Go verify |
+|---|---|---|---|---|---|---|---|
+| 32 (demo)  |  7 029 B | 0.85 s | — | 0.05 s | — | 0.49 s | — |
+| 219 (prod) | 47 511 B | 2.24 s | 1.55 s | 0.13 s | 0.06 s | 2.01 s | 1.56 s |
+
+Signature size and time both scale linearly in rounds, as expected from the
+protocol structure (independent per-round commit/response). C is 15-40x faster
+than Python/Go at this N because Stern-F's inner loop is dominated by
+fixed-size bit operations that the C implementation performs without
+interpreter or garbage-collector overhead; Python and Go track each other
+closely. The 47 KB / ~2 s cost at production rounds is the honest price of
+demo-scale N = 256 with real soundness — see the deployed-parameter caveat
+below for why N itself, independent of round count, still falls short of
+128-bit classical security.
+
+**Comparison against a NIST-standardized lattice signature (TODO #186,
+v2.0.8).** `benchmarks/compare_stern_f_dilithium.py` benchmarks HPKS-Stern-F
+(demo params, `rounds = 32`, driven through the C CLI) against liboqs's
+ML-DSA-65 (FIPS 204, NIST category 3, ~128-bit) — the current standardized
+name for what was submitted to the NIST PQC competition as Dilithium3, which
+the script also recognizes for older liboqs builds. Run end-to-end here
+against a from-source build of liboqs 0.16.0 (it was previously an
+unexercised stub, since liboqs was not installed in the environment the
+script was written in): HPKS-Stern-F sign/verify averaged ~39 ms / ~29 ms
+against ML-DSA-65's ~0.8 ms / ~0.2 ms over 5 runs at N = 30 — roughly 50x
+slower to sign and 130x slower to verify, at demo-scale N = 256 versus
+ML-DSA-65's production-grade 128-bit target. See `docs/BENCHMARKS.md` for
+the full table and caveats (CLI process-spawn overhead on the Stern-F side,
+apples-to-oranges security-level mismatch). This says nothing new about
+`SD(N,t)` hardness itself (Theorem 17, above) — it quantifies the
+implementation-maturity and parameter-scale gap between a reference-quality
+proof-of-concept and a production-hardened, NIST-standardized library, which
+is the honest comparison to make at this stage per TODO #127.
+
 *Proof.*  (i) **Completeness** — honest prover satisfies all three challenge cases by construction.  (ii) **Statistical zero-knowledge** — for each $b$, the revealed values $(\pi, \mathbf{y})$, $(\pi \circ \sigma_{\mathbf{e}}, \mathbf{y} \oplus \mathbf{e})$, $(\pi, \mathbf{y} \oplus \mathbf{e})$ are uniformly distributed over their respective domains independently of $\mathbf{e}$, since $\mathbf{y}$ and $\pi$ are fresh random.  (iii) **Soundness** — a prover that passes all three challenges can be rewound with challenges $b = 1$ and $b = 2$ on the same commitment, yielding two accepting transcripts from which $\mathbf{e}$ satisfying $H\mathbf{e}^\top = \mathbf{s}$ is extracted, solving $\mathrm{SD}(N,t)$.  (iv) **Fiat-Shamir in the QROM** — `_stern_hash` outputs `HFSCX-256-DM(ds || chain(...))` where `ds` is a per-slot domain tag; under the ROM on HFSCX-256-DM, the per-slot outputs are independent random oracles, satisfying Unruh's QROM requirement.  EUF-CMA security against quantum adversaries making $q_H$ quantum hash queries follows from [Unruh 2015, Theorem 5], with forgery probability bounded by $q_H/T_\mathrm{SD}$.  (v) **PRF reduction** — under the NL-FSCX v1 PRF assumption, $H$ is computationally indistinguishable from a random matrix; any distinguishing advantage contributes $\epsilon_\mathrm{PRF}$. $\blacksquare$
 
 **HPKE-Stern-F: Niederreiter-Style KEM.**  Use the same $(H, \mathbf{s} = H\mathbf{e}^\top)$ for key encapsulation:

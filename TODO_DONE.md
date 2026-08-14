@@ -9331,3 +9331,159 @@ coverage gap. The pre-existing `stern_gen_perm`/`stern_apply_perm` LEAK SUSPECTE
 at the all-zero fixed point are Batch 7's already-documented, already-explained
 degenerate-value artifact (clean at the 0xA5 pattern), unrelated to this batch and not
 reopened by it.
+
+### #183: Real QC-MDPC syndrome decoder for HPKE-Stern-F decap
+
+The Niederreiter KEM (`hpke_stern_*` in C/Go/Python) was believed to only
+return the known error vector `e'` alongside the ciphertext instead of
+recovering it from the syndrome via decoding, based on stale wording in
+README.md, CLAUDE.md, and `spec/generate_spec.py`. Scoped to implement a
+real QC-MDPC decoder.
+
+Status: **DONE v2.0.5** — investigation found the decoder already exists and
+is already wired up: the CLI's `hpke-stern-kem` algo tag (distinct from the
+intentionally-kept `hpke-stern` demo tag) dispatches to a real Black-Gray-Flip
+(BGF) QC-MDPC syndrome decoder — `qcmdpc_keygen`/`qcmdpc_encap`/
+`qcmdpc_decap_bgf`, implemented in full in C (`herradura.h`), Go
+(`herradura/herradura.go`), and Python (`Herradura cryptographic suite.py`),
+and exercised end-to-end by `CliTest/test_stern_kem.sh` (9/9 cross-language
+combinations pass, verified by rerunning). The actual defect was that
+`spec/generate_spec.py`'s `hpke-stern-kem` entry copied `hpke-stern`'s
+`status="demo-only"` / "same demo-decap caveat" text, and README.md/CLAUDE.md
+never distinguished the two algo tags at all. Corrected the spec entry to
+`status="production"` with accurate notes/sources, regenerated
+`spec/herradura-protocol-spec.json`, and updated README.md/CLAUDE.md to
+explicitly separate `hpke-stern` (demo, decap needs plaintext `e'`) from
+`hpke-stern-kem` (real BGF decoder, no `e'` needed) — noting the KEM's toy
+parameters (r=523, d=15, t=18) still lack a measured DFR at production
+security margins, which is a fair caveat to keep. No code changes; this was
+a stale-documentation bug, not a missing decoder.
+
+### #184: HPKS-Stern-F production-soundness round count
+
+`Herradura cryptographic suite.py` and `docs/TUTORIAL.md` both note demo
+params use `rounds=32` (soundness `(2/3)^32`), while 128-bit soundness
+needs `rounds >= 219`. Add a production-strength parameter mode (flag or
+named preset) to the C/Go/Python suites and benchmark the resulting
+signature size/time cost, documenting the tradeoff in SecurityProofs-4.md.
+
+Status: **DONE v2.0.6** — investigation found Python's `hpks_stern_f_sign`
+and Go's `HpksSternFSign` already accepted a `rounds` parameter, but neither
+CLI's `sign --algo hpks-stern`/`hpks-ring` path actually passed it through
+(Python's `--rounds` flag was defined but unused there; Go hardcoded
+`SdfRounds`=32). Wired `--rounds`/`-rounds` through both CLIs for both algo
+tags. C's fixed-size signature struct makes rounds a compile-time constant
+(`-DSDF_ROUNDS=219`); found and fixed a bug where `herradura.h`'s
+unconditional `#define SDF_ROUNDS 32` silently clobbered that override —
+now `#ifndef`-guarded. While verifying the fix at 219 rounds, hit and fixed
+a second real bug: all three DER codecs (Python `codec.py`, C
+`herradura_codec.h`, Go `herradura/codec.go`) capped length encoding at the
+2-byte long form (65 535 B), too small for a 219-round ring signature
+(~95 KB) — extended all three to the standard 3-/4-byte long forms (the
+decoders already supported them) and bumped C's `DER_INT_LEN`/`DER_SEQ_LEN`
+macros and local `lbuf` buffers to match. Verified `--rounds 219`
+sign/verify for both `hpks-stern` and `hpks-ring` in all three languages
+(including a `-DSDF_ROUNDS=219` C rebuild), full `CliTest/` regression
+suite re-run clean, and recorded a rounds=32-vs-219 size/time benchmark
+(7 029 B/0.85 s Python demo vs. 47 511 B/2.24 s Python production; C 15-40x
+faster than Python/Go at both) in `SecurityProofs-4.md` next to Theorem 17.
+
+### #185: Triage Arduino/AVR CI's best-effort status
+
+`.github/workflows/ci.yml`'s `arduino` job is allowed to fail without
+blocking CI. Investigate whether the remaining failures are due to flash
+size limits, simavr flakiness, or something fixable, and either resolve
+the root cause or document precisely why best-effort status is permanent
+(update CLAUDE.md's Testing section accordingly either way).
+
+Status: **DONE v2.0.7** — reproduced the build+`simavr` test run locally
+(clean `build_arduino.sh`; two full 90s `run_arduino.sh` passes of both
+`suite` and `tests` targets, 90/90 test-iteration `[PASS]`, zero failures)
+and pulled the Arduino job's `conclusion` across all 79 recorded CI runs
+via `gh run list`/`gh run view`: exactly 5 failures, all on 2026-07-30/
+07-31, all before the ATmega2560 `.bss` SRAM-overflow fix (TODO #155,
+v1.9.122, landed 2026-07-31T16:22 UTC) — 0 failures in the 74 runs since,
+including every run in the last two weeks of TODO work. The root cause
+was already found and fixed; "best-effort" had become stale caution that
+was silently letting a real Arduino/AVR regression pass CI undetected
+rather than a live hedge against ongoing flakiness. Promoted the job to
+required/blocking: dropped `continue-on-error: true` and the "best-effort"
+suffix from its name in `.github/workflows/ci.yml`, updated CLAUDE.md's
+Testing section and README.md's Known Limitations entry to match. If
+simavr flakiness specific to GitHub's runners (as opposed to local
+reproduction) surfaces later, `continue-on-error` can be reinstated with
+that evidence — none was found here.
+
+### #186: Exercise `benchmarks/compare_stern_f_dilithium.py` against real liboqs
+
+The script's OQS C API usage is flagged as "best-effort and has not been
+exercised end-to-end." If liboqs is installable in CI or dev environments,
+run the comparison for real, record actual HPKS-Stern-F vs. Dilithium
+numbers, and fold the results into the PQC signature discussion in
+SecurityProofs-4.md instead of leaving it as an unexercised stub.
+
+Status: **DONE v2.0.8** — built liboqs 0.16.0 from source (plain
+`cmake`/`make`, no options; network access and build tools were both
+available in this environment) and ran the comparison end-to-end. This
+surfaced a real bug: the script hardcoded `OQS_SIG_new(b"Dilithium3")`,
+but liboqs renamed that algorithm to its final NIST FIPS 204 identifier,
+`ML-DSA-65`, once ML-DSA was standardized — `OQS_SIG_new` silently
+returned NULL for the old name, so the comparison would have reported
+"algorithm not enabled" even with liboqs correctly installed. Fixed the
+script to try `ML-DSA-65` first, fall back to `Dilithium3` for older
+liboqs builds, and label output with whichever name actually loaded
+rather than a hardcoded string. Recorded real numbers (5-run average,
+N=30): HPKS-Stern-F ~39 ms sign / ~29 ms verify vs. ML-DSA-65's ~0.8 ms
+/ ~0.2 ms (~50x / ~130x slower) in `docs/BENCHMARKS.md` and
+`SecurityProofs-4.md` next to Theorem 17, replacing the "install liboqs
+to measure" placeholder both had carried since TODO #138.
+
+### #187: Run fuzz harnesses under a real engine and record coverage
+
+`Fuzz/` has libFuzzer-style harnesses (b64/DER/PEM decode) and Python
+harnesses (CLI args, codec) but no on-record run history or coverage
+report — TODO #130 built the harnesses but didn't close the loop on
+actually fuzzing with them. Run `Fuzz/run_fuzz.sh` for a fixed time
+budget, record findings and coverage in `Fuzz/README.md`, and consider
+wiring a short smoke-fuzz job into CI.
+
+Status: **DONE v2.0.9** — ran `./Fuzz/run_fuzz.sh 300` (5 min/target,
+~35 min total): 3 C libFuzzer targets (~189M combined executions), 2 Go
+native fuzz targets (~75M combined executions), the Python Hypothesis
+suite (60,000 examples across 3 properties), and the CLI black-box argv
+fuzzer (6,510 trials across the C/Go/Python CLIs) — zero crashes, zero
+ASan/UBSan reports, zero leaks anywhere. Recorded the full per-target
+breakdown in a new "Run history" section of `Fuzz/README.md`. Added a
+`fuzz-smoke` job to `.github/workflows/ci.yml` at the script's own 30s/
+target default (~3 min total), verified end-to-end locally at that exact
+budget before wiring it in, so future regressions in the codec/CLI-
+argument-parsing surface are caught automatically on every push/PR
+rather than depending on someone re-running this by hand.
+
+### #188: Add sanitizer/CI hardening (ASan/UBSan/valgrind)
+
+CI runs the build+test matrix but never compiles/runs the C suite,
+tests, or CLI under AddressSanitizer, UndefinedBehaviorSanitizer, or
+valgrind. Given the manual constant-time auditing already done (TODO
+#182), an automated sanitizer job would catch memory-safety and UB
+issues that manual review can't, and is standard practice in comparable
+C crypto projects (libsodium, BLAKE3, OpenSSL). Add a CI job (or local
+build-script variant) that builds with `-fsanitize=address,undefined`
+and runs the security tests, and/or a valgrind pass.
+
+Status: **DONE v2.0.10** — added `build_c_sanitize.sh` (ASan+UBSan build
+of the C suite/tests/CLI, `_asan`-suffixed outputs) and a `sanitizers`
+CI job running the security tests and the C `CliTest/` suite under that
+instrumentation, plus a bounded valgrind memcheck pass (`-r 3 -t 0.2`,
+~5 min locally) on a plain debug build. Running this locally surfaced a
+real bug: test `[44]`'s "syndrome tamper" case in `CryptosuiteTests/
+Herradura_tests.c` passed `c2_poly` — a variable not initialized until
+the next test case — into `hcred_verify`. ASan didn't catch it; valgrind
+did, 4 hits at `_hcred_challenges` traced back to this call site. Fixed
+to use `c_poly` (matching the already-correct Go/Python equivalents);
+`ok_synd`'s pass/fail outcome is unchanged, but the test now genuinely
+exercises what its name claims instead of reading uninitialized stack
+memory. Verified clean: `Herradura_tests_asan` 79/79 `[PASS]` markers
+with zero sanitizer hits, all 9 C `CliTest/test_c_*.sh` scripts 0 FAIL
+under ASan+UBSan, and a valgrind rerun showing `ERROR SUMMARY: 0 errors
+from 0 contexts`.

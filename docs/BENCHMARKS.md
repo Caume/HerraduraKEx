@@ -50,27 +50,38 @@ Caveats specific to this comparison:
 - Both are measured through this suite's FFI shim / libsodium's C API respectively — not a
   cross-language comparison.
 
-## HPKS-Stern-F vs. Dilithium3 (code-based PQC vs. lattice-based PQC signature)
+## HPKS-Stern-F vs. ML-DSA-65 (code-based PQC vs. lattice-based PQC signature)
 
-liboqs was not installed in the environment this page was written in, so the Dilithium3 side
-of this comparison has not been run end-to-end — `benchmarks/compare_stern_f_dilithium.py`
-will report it automatically once liboqs is available
-(`https://github.com/open-quantum-safe/liboqs`). What is measured:
+Measured end-to-end (TODO #186) against a from-source build of upstream liboqs 0.16.0
+(`https://github.com/open-quantum-safe/liboqs`, plain `cmake`/`make` build, no extra options)
+on this repo's dev hardware (aarch64), N=30 operations, averaged over 5 runs of
+`benchmarks/compare_stern_f_dilithium.py`:
 
 | | sign (ms/op) | verify (ms/op) |
 |---|---|---|
-| HPKS-Stern-F (this suite, CLI/C, demo params) | ~36 | ~31 |
-| Dilithium3 (liboqs) | — install liboqs to measure — |
+| HPKS-Stern-F (this suite, CLI/C, demo params) | ~39 | ~29 |
+| ML-DSA-65 (liboqs) | ~0.8 | ~0.2 |
+
+HPKS-Stern-F is roughly **50x slower to sign and 130x slower to verify** than ML-DSA-65 in
+this measurement — noisier than the sign ratio because ML-DSA-65 verify is sub-millisecond,
+so per-call timing jitter dominates at N=30.
+
+Note on naming: liboqs registers this algorithm as `ML-DSA-65`, its final NIST FIPS 204
+identifier, not the pre-standardization `Dilithium3` name this page and the script originally
+used — `compare_stern_f_dilithium.py` tries both, preferring `ML-DSA-65`. Older liboqs builds
+that predate the FIPS 204 rename may still only register `Dilithium3`; either way it's the
+same NIST security category 3 (~128-bit) parameter set.
 
 Caveats specific to this comparison:
 - HPKS-Stern-F's demo parameters (`N=256, t=16, 32 rounds`) give only ~30-40 bits of security
   per the CLI's own runtime warning; the code documents `N>=17000` for ~128-bit security,
-  which would be substantially slower again. Dilithium3 targets NIST level 3 (~128-bit)
+  which would be substantially slower again. ML-DSA-65 targets NIST category 3 (~128-bit)
   out of the box.
 - HPKS-Stern-F is measured through CLI process spawns (PEM encode/decode, file I/O per
   operation), not a direct library call — this adds fixed overhead a library-call benchmark
   wouldn't pay. A tighter comparison would extend `bindings/ffi/` to cover Stern-F and
-  benchmark through that instead (out of scope for TODO #138; see TODO #137's stated scope).
+  benchmark through that instead (out of scope for TODO #138/#186; see TODO #137's stated
+  scope).
 
 ## HKEX-RNL vs. Kyber (lattice-based PQC key exchange)
 

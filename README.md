@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.0.4)
+# Herradura Cryptographic Suite (v2.0.10)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -86,7 +86,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 **Code-based PQC (v1.5.18)** — the signature and KEM here rest on a different post-quantum hardness assumption, syndrome decoding (SD), via the Stern zero-knowledge identification protocol made non-interactive (Fiat-Shamir):
 
 10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature. Security reduces to EUF-CMA ≤ SD($n$, $t$) + NL-FSCX v1 PRF — i.e. forging a signature ("EUF-CMA", existential unforgeability under chosen-message attack) would require either breaking syndrome decoding or the NL-FSCX v1 pseudorandom function ("PRF", an output indistinguishable from random without the key). Protocol: commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (production default; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
-11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. Production decap requires a QC-MDPC syndrome decoder; demo uses known $e'$.
+11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. The CLI's `hpke-stern` algo tag is a demo that decaps from a known $e'$; the separate `hpke-stern-kem` algo tag uses a real Black-Gray-Flip (BGF) QC-MDPC syndrome decoder (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf` in all three suites) and does not need the plaintext error vector at decap.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
 
@@ -315,15 +315,25 @@ visible without having to search `TODO_DONE.md`.
   Production-grade parameters require N on the order of 17,000+ for 128-bit security —
   a substantially larger, unimplemented configuration. Treat both protocols as
   reference implementations of the Stern ZKP construction, not as production-ready code
-  signing or KEM at their current defaults.
+  signing or KEM at their current defaults. This caveat covers the `hpke-stern` CLI algo
+  tag specifically (its decap needs the plaintext error vector); the separate
+  `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
+  particular limitation, though its toy parameters (r = 523, d = 15, t = 18) haven't had
+  their decoding-failure rate (DFR) measured at production security margins either. The
+  round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
+  in the Python and Go CLIs accept `--rounds` (219 reaches 128-bit Fiat-Shamir soundness;
+  the C CLI takes the same value at compile time via `-DSDF_ROUNDS=219`), but raising
+  rounds alone does not fix the N = 256 SD-hardness shortfall above.
 - **Two security tests are FAIL-by-design.** Test `[4]` (bit-frequency bias) and C test
   `[18]` (HPKE-Stern-F brute-force decap) are expected to intermittently or consistently
   report FAIL under the suite's own test harness — this is documented, acknowledged
   behavior (`TODO_DONE.md` #85, #86), not a regression. Don't treat either as a build
   gate.
-- **Arduino/AVR CI coverage is best-effort.** `.github/workflows/ci.yml`'s `arduino` job
-  runs with `continue-on-error: true` — it's exercised on every push but a failure there
-  does not block merges the way the native and ARM/i386 jobs do.
+- **Arduino/AVR CI is a required, blocking job (TODO #185, v2.0.6).** It ran
+  `continue-on-error: true` from its introduction (TODO #153, v1.9.120) until the
+  ATmega2560 SRAM overflow behind its only failures was fixed (TODO #155, v1.9.122);
+  it has passed 100% of runs since (0 failures across 74 runs as of this review) and
+  now blocks merges like the native and ARM/i386 jobs.
 - **The QC-MDPC BGF decoder and Ligero-lite IOP prototypes are research code**, not
   wired into any CLI subcommand or production path (`SecurityProofsCode/`
   `qc_mdpc_bgf_prototype.py`, `nl_fscx_ligero.py`).

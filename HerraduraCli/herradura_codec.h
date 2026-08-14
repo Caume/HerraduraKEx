@@ -93,11 +93,11 @@
 #define PEM_WRAP_LEN(der_len, label_len) \
     (33 + 2 * (size_t)(label_len) + B64_ENC_LEN(der_len))
 
-/* Worst-case DER INTEGER output: tag(1) + len(3) + sign_byte(1) + val_len. */
-#define DER_INT_LEN(val_len)   ((size_t)(val_len) + 5)
+/* Worst-case DER INTEGER output: tag(1) + len(5) + sign_byte(1) + val_len. */
+#define DER_INT_LEN(val_len)   ((size_t)(val_len) + 7)
 
-/* Worst-case DER SEQUENCE output: tag(1) + len(3) + body_len. */
-#define DER_SEQ_LEN(body_len)  ((size_t)(body_len) + 4)
+/* Worst-case DER SEQUENCE output: tag(1) + len(5) + body_len. */
+#define DER_SEQ_LEN(body_len)  ((size_t)(body_len) + 6)
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Base64  (76-char lines, matching Python base64.encodebytes)
@@ -183,6 +183,18 @@ static int _der_enc_len(size_t n, uint8_t *out)
     if (n < 0x10000) {
         out[0] = 0x82; out[1] = (uint8_t)(n >> 8); out[2] = (uint8_t)n; return 3;
     }
+    if (n < 0x1000000) {
+        out[0] = 0x83; out[1] = (uint8_t)(n >> 16); out[2] = (uint8_t)(n >> 8);
+        out[3] = (uint8_t)n; return 4;
+    }
+#if SIZE_MAX > 0xffffffffu
+    if (n < 0x100000000ULL) {
+#else
+    {
+#endif
+        out[0] = 0x84; out[1] = (uint8_t)(n >> 24); out[2] = (uint8_t)(n >> 16);
+        out[3] = (uint8_t)(n >> 8); out[4] = (uint8_t)n; return 5;
+    }
     return -1; /* too large */
 }
 
@@ -208,7 +220,7 @@ static int _der_dec_len(const uint8_t *buf, size_t buf_len,
 static int der_int_enc(const uint8_t *val, size_t val_len,
                        uint8_t *out, size_t *out_len)
 {
-    uint8_t lbuf[3];
+    uint8_t lbuf[5];
     int sign = (val_len && (val[0] & 0x80)) ? 1 : 0;
     size_t content = val_len + (size_t)sign;
     int llen = _der_enc_len(content, lbuf);
@@ -227,7 +239,7 @@ static int der_int_enc(const uint8_t *val, size_t val_len,
 static int der_seq_enc(const uint8_t **items, const size_t *item_lens,
                        int n_items, uint8_t *out, size_t *out_len)
 {
-    uint8_t lbuf[3];
+    uint8_t lbuf[5];
     size_t body = 0; int i, llen;
     for (i = 0; i < n_items; i++) body += item_lens[i];
     llen = _der_enc_len(body, lbuf);

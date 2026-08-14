@@ -14,6 +14,11 @@ def _encode_length(n: int) -> bytes:
         return bytes([0x81, n])
     elif n < 0x10000:
         return bytes([0x82, n >> 8, n & 0xff])
+    elif n < 0x1000000:
+        return bytes([0x83, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff])
+    elif n < 0x100000000:
+        return bytes([0x84, (n >> 24) & 0xff, (n >> 16) & 0xff,
+                      (n >> 8) & 0xff, n & 0xff])
     else:
         raise ValueError(f"Length too large for DER: {n}")
 

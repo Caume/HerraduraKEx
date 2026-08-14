@@ -148,9 +148,15 @@ SECURITY = {
                         notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production "
                               "requires an actual QC-MDPC syndrome decoder, not yet implemented.",
                         source=["CLAUDE.md:228", "TODO.md #126 (6896-6924)"]),
-    "hpke-stern-kem": dict(status="demo-only", quantum_resistant="conjectured",
-                        notes="Same demo-decap caveat as hpke-stern.",
-                        source=["TODO.md (6469)"]),
+    "hpke-stern-kem": dict(status="production", quantum_resistant="conjectured",
+                        notes="Niederreiter/QC-MDPC KEM with a real Black-Gray-Flip (BGF) "
+                              "syndrome decoder (qcmdpc_keygen/encap/decap_bgf) -- unlike "
+                              "hpke-stern, decap does not need the plaintext error vector. "
+                              "Toy parameters (r=523, d=15, t=18); DFR not yet measured at "
+                              "production security margins.",
+                        source=["herradura.h QCMDPC_* / qcmdpc_decap_bgf",
+                                "herradura/herradura.go QcMdpcDecapBgf",
+                                "CliTest/test_stern_kem.sh"]),
     "hpks-zkp-nl": dict(status="production", quantum_resistant="conjectured",
                         notes="Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols "
                               "(nl-zkboo, nl-zkbpp).",

@@ -1407,7 +1407,12 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 
 #define SDF_N_ROWS          (KEYBITS / 2)  /* parity-check rows: 128             */
 #define SDF_T               (KEYBITS / 16) /* error weight: 16                   */
-#define SDF_ROUNDS          32             /* ZKP rounds (demo; prod >= 219)     */
+#ifndef SDF_ROUNDS
+#define SDF_ROUNDS          32             /* ZKP rounds (demo; prod >= 219);
+                                             * override with -DSDF_ROUNDS=219 (or
+                                             * any value >= SDF_PRODUCTION_ROUNDS)
+                                             * for production soundness           */
+#endif
 #define SDF_PRODUCTION_ROUNDS 219          /* rounds for 128-bit soundness       */
 #define SDF_SYNBYTES        (SDF_N_ROWS / 8) /* syndrome bytes: 16               */
 

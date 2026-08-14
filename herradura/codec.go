@@ -142,6 +142,10 @@ func derEncLen(n int) ([]byte, error) {
 		return []byte{0x81, byte(n)}, nil
 	case n < 0x10000:
 		return []byte{0x82, byte(n >> 8), byte(n)}, nil
+	case n < 0x1000000:
+		return []byte{0x83, byte(n >> 16), byte(n >> 8), byte(n)}, nil
+	case int64(n) < 0x100000000:
+		return []byte{0x84, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}, nil
 	default:
 		return nil, errors.New("DER: length too large to encode")
 	}

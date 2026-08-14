@@ -3090,7 +3090,9 @@ func cmdSign(args []string) {
 	digest := fs.String("digest", "", "Pre-hash algorithm (hfscx-256)")
 	out    := fs.String("out", "-", "Signature PEM output file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
-	rounds := fs.Int("rounds", 0, "ZKBoo rounds (nl-zkboo/nl-zkbpp only; default: 219 for 128-bit soundness)")
+	rounds := fs.Int("rounds", 0, "ZKP/Stern-F rounds (nl-zkboo, nl-zkbpp, hpks-stern, hpks-ring; "+
+		"default: 219 for nl-zkboo/nl-zkbpp, 32 demo for hpks-stern/hpks-ring; "+
+		"production soundness needs >= 219 for all)")
 	fs.Parse(args)
 
 	if *algo == "" || *key == "" {
@@ -3109,6 +3111,10 @@ func cmdSign(args []string) {
 	zkpRounds := ZkpNlProdRounds
 	if *rounds > 0 {
 		zkpRounds = *rounds
+	}
+	sternRounds := SdfRounds
+	if *rounds > 0 {
+		sternRounds = *rounds
 	}
 
 	// ZKP-NL: raw binary PEM — must not call readPEMInts
@@ -3217,7 +3223,7 @@ func cmdSign(args []string) {
 		e    := NewBitArray(n, new(big.Int).SetBytes(ourInts[0]))
 		seed := NewBitArray(n, new(big.Int).SetBytes(ourInts[1]))
 		msg  := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig  := HpksSternFSign(msg, e, seed, SdfRounds)
+		sig  := HpksSternFSign(msg, e, seed, sternRounds)
 		pem, err := packSternSig(sig, n)
 		if err != nil {
 			die("sign", err)
@@ -3253,7 +3259,7 @@ func cmdSign(args []string) {
 			os.Exit(1)
 		}
 		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
-		sig := HpksSternRingSign(msg, e, j, ringKeys, SdfRounds)
+		sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
 		pem := encodeRingSig(sig, n)
 		if err := writeString(*out, pem); err != nil {
 			die("sign", err)

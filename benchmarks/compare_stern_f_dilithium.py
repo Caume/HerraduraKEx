@@ -1,15 +1,18 @@
-"""TODO #138: benchmark HPKS-Stern-F (this suite's code-based PQC signature)
-against liboqs's Dilithium, on the same hardware.
+"""TODO #138 / #186: benchmark HPKS-Stern-F (this suite's code-based PQC
+signature) against liboqs's ML-DSA-65 (FIPS 204; formerly "Dilithium3" prior
+to standardization — this script tries both names, preferring the current
+one), on the same hardware.
 
 Drives the C CLI (HerraduraCli/herradura_cli, build with build_c.sh) for
 HPKS-Stern-F rather than the FFI shim, since bindings/ffi/ intentionally
 scopes out the Stern-F protocols (TODO #137).
 
 liboqs is loaded via ctypes against its stable C API (OQS_SIG_*) if present;
-this environment does not have liboqs installed, so this path is
-*best-effort and has not been exercised end-to-end here* — if liboqs is
-missing, the script reports the HPKS-Stern-F numbers alone and explains how
-to install liboqs to complete the comparison.
+if liboqs is missing, the script reports the HPKS-Stern-F numbers alone and
+explains how to install liboqs to complete the comparison. Exercised
+end-to-end (TODO #186) against a from-source build of upstream liboqs
+0.16.0 (https://github.com/open-quantum-safe/liboqs, commit-of-the-day as
+of 2026-08-12) — see docs/BENCHMARKS.md for the recorded numbers.
 
 Run:
     ./build_c.sh                                   # once
@@ -76,10 +79,18 @@ def try_load_liboqs():
         return None
 
 
-def bench_dilithium(lib, alg=b"Dilithium3"):
-    """Best-effort OQS_SIG C API usage; not exercised in this environment
-    since liboqs is not installed here. Verify against your local liboqs
-    docs/headers if results look wrong."""
+# liboqs renamed Dilithium3 to its final NIST FIPS 204 name, ML-DSA-65, once
+# ML-DSA was standardized (both are NIST security category 3). Newer liboqs
+# builds (TODO #186; confirmed against a from-source build of upstream HEAD,
+# liboqs 0.16.0) only register the new name; older installs may still only
+# have the pre-standardization "Dilithium3". Try both, preferring the current
+# standardized name.
+DILITHIUM3_ALG_NAMES = (b"ML-DSA-65", b"Dilithium3")
+
+
+def bench_dilithium(lib, alg_names=DILITHIUM3_ALG_NAMES):
+    """OQS_SIG C API usage, tried against each candidate algorithm identifier
+    in `alg_names` until one is enabled in the loaded liboqs build."""
 
     class OQS_SIG(ctypes.Structure):
         _fields_ = [
@@ -94,7 +105,11 @@ def bench_dilithium(lib, alg=b"Dilithium3"):
 
     lib.OQS_SIG_new.restype = ctypes.POINTER(OQS_SIG)
     lib.OQS_SIG_new.argtypes = [ctypes.c_char_p]
-    sig_obj = lib.OQS_SIG_new(alg)
+    sig_obj = None
+    for alg in alg_names:
+        sig_obj = lib.OQS_SIG_new(alg)
+        if sig_obj:
+            break
     if not sig_obj:
         return None
 
@@ -126,22 +141,23 @@ def bench_dilithium(lib, alg=b"Dilithium3"):
     t1 = time.perf_counter()
     verify_ms = (t1 - t0) / N * 1e3
 
+    used_alg = s.method_name.decode() if s.method_name else "?"
     lib.OQS_SIG_free(sig_obj)
-    return sign_ms, verify_ms
+    return sign_ms, verify_ms, used_alg
 
 
 CAVEATS = """
 Caveats (apples-to-oranges — see TODO #127 on this suite's proof-of-concept status):
   - HPKS-Stern-F here runs at demo parameters (N=256, t=16, 32 rounds, ~30-40 bit security
     per the CLI's own warning) rather than the production parameters the code documents
-    (N>=17000 for ~128-bit security); Dilithium is a NIST-standardized, 128+ bit-secure
-    scheme run through its reference/optimized implementation.
+    (N>=17000 for ~128-bit security); ML-DSA-65 is NIST-standardized (FIPS 204) at security
+    category 3 (roughly 128-bit), run through liboqs's reference/optimized implementation.
   - HPKS-Stern-F is driven through CLI process spawns (PEM parsing, file I/O) rather than a
-    direct library call, which adds fixed overhead Dilithium's library-call path doesn't pay.
+    direct library call, which adds fixed overhead ML-DSA's library-call path doesn't pay.
   - Treat the *ratio*, not the absolute numbers, as the signal, and re-run on your own
-    hardware. Dilithium's numbers above were not validated end-to-end in the environment
-    this script was written in (liboqs was not installed there) — sanity-check them against
-    liboqs's own benchmark suite before citing this comparison.
+    hardware — these were measured on this repo's aarch64 dev hardware against a
+    from-source build of liboqs 0.16.0 (TODO #186); sanity-check them against liboqs's own
+    benchmark suite before citing this comparison.
 """
 
 
@@ -155,20 +171,21 @@ def main():
 
     lib = try_load_liboqs()
     if lib is None:
-        print(f"{'Dilithium3 (liboqs)':24s}{'n/a':>16s}{'n/a':>18s}")
+        print(f"{'ML-DSA-65 (liboqs)':24s}{'n/a':>16s}{'n/a':>18s}")
         print("\nliboqs not found on this system — install it to complete this comparison:")
         print("  https://github.com/open-quantum-safe/liboqs  (cmake build, or your")
         print("  distro's liboqs-dev / liboqs package if available).")
     else:
         result = bench_dilithium(lib)
         if result is None:
-            print("liboqs loaded but OQS_SIG_new(\"Dilithium3\") failed "
-                  "(algorithm not enabled in this build).")
+            names = b", ".join(DILITHIUM3_ALG_NAMES).decode()
+            print(f"liboqs loaded but none of ({names}) are enabled in this build.")
         else:
-            ed_sign_ms, ed_verify_ms = result
-            print(f"{'Dilithium3 (liboqs)':24s}{ed_sign_ms:16.2f}{ed_verify_ms:18.2f}")
+            ed_sign_ms, ed_verify_ms, ed_alg = result
+            label = f"{ed_alg} (liboqs)"
+            print(f"{label:24s}{ed_sign_ms:16.2f}{ed_verify_ms:18.2f}")
             print(f"\nHPKS-Stern-F is {hpks_sign_ms / ed_sign_ms:.1f}x slower to sign, "
-                  f"{hpks_verify_ms / ed_verify_ms:.1f}x slower to verify, than Dilithium3.")
+                  f"{hpks_verify_ms / ed_verify_ms:.1f}x slower to verify, than {ed_alg}.")
 
     print(CAVEATS)
 

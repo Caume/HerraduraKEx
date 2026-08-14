@@ -67,6 +67,29 @@ crashes, the Go native fuzz targets ran 4M+ executions with zero crashes, the Hy
 suite ran 60,000 examples with zero unexpected exceptions, and the CLI argv fuzzer ran
 1,300+ trials across all three CLIs with zero crashes.
 
+## Run history
+
+**2026-08-12 (TODO #187) — `./Fuzz/run_fuzz.sh 300` (5 minutes/target, ~35 minutes total),
+liboqs/toolchain versions: clang 21.1.8, go1.26.0, hypothesis 6.151.5, aarch64 dev host.**
+Zero crashes, zero ASan/UBSan reports, zero leaks across every target:
+
+| Target | Executions / examples / trials | Result |
+|---|---|---|
+| `fuzz_b64_decode` (libFuzzer) | 61,582,864 in 301s | 0 crashes |
+| `fuzz_der_parse_seq` (libFuzzer) | 99,679,937 in 301s | 0 crashes |
+| `fuzz_pem_unwrap` (libFuzzer) | 28,037,708 in 301s | 0 crashes |
+| `FuzzPemUnwrap` (Go native) | 36,075,831 in 300s | PASS |
+| `FuzzDerParseSeq` (Go native) | 38,590,178 in 300s | PASS |
+| `fuzz_codec_py.py` (Hypothesis) | 60,000 examples (3 × 20,000) | 0 unexpected exceptions |
+| `fuzz_cli_args.py` (C/Go/Python CLIs) | 6,510 trials | 0 crashes |
+
+Combined C+Go executions alone: ~264M. This is the first run with a real (5-minute, not
+30-second-default) time budget per target since the harness was built (TODO #130); no new
+bugs were found, consistent with the fixes already made at build time (see above). A
+`fuzz-smoke` CI job (30s/target, the script's own default) was added in `ci.yml` off the
+back of this run so future regressions in the codec/CLI-argument-parsing surface are
+caught automatically rather than depending on someone re-running this by hand.
+
 ## Corpus
 
 `corpus/<target>/` holds interesting inputs discovered by libFuzzer across runs (not
