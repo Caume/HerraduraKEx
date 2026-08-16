@@ -71,3 +71,32 @@ the "DFR not yet measured" note in `TODO_DONE.md` (TODO #183/#186) and
 
 Status: **OPEN**
 
+### #196: Extend the Java port to a complete suite + CLI (beyond the classical quartet)
+
+TODO #192 added `bindings/java/herradurakex.Herradura`, a pure-Java port
+of only the classical (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE),
+matching `bindings/ffi/`'s intentionally narrow scope. The other five
+language targets (C, Go, Python, ARM Thumb-2, NASM i386, Arduino) all
+implement the full suite — NL/PQC (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL,
+HPKE-NL), Stern-F/Niederreiter (HPKS-Stern-F, HPKE-Stern-F,
+HPKE-Stern-KEM with the real BGF QC-MDPC decoder), HCRED, OPRF/aPAKE,
+XMSS/WOTS+, etc. — plus a `HerraduraCli`-equivalent OpenSSL-style CLI
+(`genpkey`/`pkey`/`kex`/`enc`/`dec`/`sign`/`verify`/`dgst`/`encfile`/
+`decfile`) with PEM/DER codec support matching `HerraduraCli/codec.py`
+/`herradura_codec.h`/`herradura/codec.go` byte-for-byte.
+
+Scope for this item: extend `bindings/java/herradurakex` from a
+quartet-only library into a complete port — every protocol variant the
+other language targets implement, a Java `HerraduraCli` mirroring the
+existing three (`genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`, `verify`,
+`dgst`, `encfile`, `decfile`), and a PEM/DER codec compatible with the
+existing wire format so keys/ciphertexts/signatures produced by any
+implementation are byte-for-byte interchangeable with the Java one (per
+CLAUDE.md's `HerraduraCli` cross-compatibility guarantee). Cross-verify
+against `KAT/classical_quartet.json` (extend the KAT set to the NL/PQC
+variants per TODO #190's deferred follow-up, if that lands first) and
+add `CliTest/test_java_*.sh` / `test_java_interop.sh` scripts mirroring
+the C/Go CLI test pattern.
+
+Status: **OPEN**
+
