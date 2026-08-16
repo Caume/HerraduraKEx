@@ -1,0 +1,45 @@
+{
+  "$schema": "HerraduraKEx classical-quartet KAT vectors (TODO #190)",
+  "suite_reference": "Herradura cryptographic suite.py",
+  "hkex_gf": {
+    "description": "HKEX-GF Diffie-Hellman key agreement over GF(2^256)*",
+    "n": 256,
+    "poly": "0000000000000000000000000000000000000000000000000000000000000425",
+    "g": 3,
+    "alice_priv": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    "bob_priv": "0fedcba9876543210fedcba9876543210fedcba9876543210fedcba987654321",
+    "alice_pub": "80c330d0984f3fbe3e3233dfad683d9043c2dadae34b0af674bec2ebaf5dbb85",
+    "bob_pub": "62589b04964782dd03ec06141c82b8529607208259d763551d1e5200cf267cb7",
+    "shared_secret": "6558e480ccaa737fcd380ab6fe9de2c9c4f4f2a342f7d5c45e78c3a2194efd0a"
+  },
+  "hske": {
+    "description": "HSKE symmetric encryption via fscx_revolve",
+    "n": 256,
+    "i_steps": 64,
+    "r_steps": 192,
+    "key": "cafebabedeadbeef0123456789abcdefcafebabedeadbeef0123456789abcdef",
+    "plaintext": "004865727261647572614b457820544f444f2023313930204b41542074657374",
+    "ciphertext": "c69785e881dbbcb1c999f1ebc487ffe58290c0b9c283e8e4f0b9ee8ec8c2d8de"
+  },
+  "hpks": {
+    "description": "HPKS Schnorr signature over GF(2^256)*",
+    "n": 256,
+    "priv": "777788889999aaaabbbbccccddddeeee777788889999aaaabbbbccccddddeeee",
+    "pub": "356086968ce82a800a591449603beb5a2d93acd1bfd139c9cc011f43ae4dcadb",
+    "ephemeral_k": "1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff",
+    "message": "004865727261647572614b457820544f444f20233139302048504b53206d7367",
+    "R": "2283b878e11eec83d95e33b53b373f88df174735328bcb0a80bdddbe12823c69",
+    "s": "8af659366ab1ca62f3b6e221cd2976f0137e3714e22941da6b2e599944a0ee66",
+    "verifies": true
+  },
+  "hpke": {
+    "description": "HPKE El Gamal + fscx_revolve hybrid encryption over GF(2^256)*",
+    "n": 256,
+    "recipient_priv": "2468ace02468ace02468ace02468ace02468ace02468ace02468ace02468ace0",
+    "recipient_pub": "b6f32c38ad4328b490dd48d8d456fb047df553b05b1755a40a7f8a877008a454",
+    "ephemeral_r": "13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf13579bdf",
+    "R": "b304ad5f889653a7f195dd0cad0dfdf87ddd8442e717b4d1182baa5d90171d61",
+    "plaintext": "004865727261647572614b457820544f444f20233139302048504b45206d7367",
+    "ciphertext": "53a0f42b9738a33271899be72fdfb214e8584e852b9f0898b4476418886d6ac3"
+  }
+}

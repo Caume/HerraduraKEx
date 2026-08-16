@@ -23,6 +23,11 @@ CliTest/
   test_keygen.sh  test_vectors.sh  test_sign.sh     — Python CLI integration tests
   test_encrypt.sh test_encfile.sh  test_signfile.sh
   test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
+  test_kat_vectors.sh                               — checks KAT/ is current + cross-verified (TODO #190)
+KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190):
+  classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
+  generate_kat.py            — deterministic reference generator (Python); --check verifies currency
+  verify_kat.go               — independent cross-check against the Go herradura package
 SecurityProofsCode/                                 — standalone Python proof/analysis scripts:
   hkex_gf_test.py          — HKEX-GF DH correctness + BSGS DLP illustration
   hkex_nl_verification.py  — NL-FSCX period analysis, Ring-LWR invertibility/noise, v2 bijectivity
