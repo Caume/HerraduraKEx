@@ -9531,3 +9531,33 @@ deferred to a follow-up — their larger key/ciphertext material (Ring-LWR
 polynomials, QC-MDPC parity-check matrices, Stern commitments) needs a
 different, less compact vector representation than the classical
 quartet's fixed-width hex fields.
+
+### #192: Java bindings
+
+The suite has implementations/bindings spanning C, Go, Python, ARM
+Thumb-2, NASM i386, and Arduino, plus a ctypes/cgo FFI layer
+(`bindings/ffi/`), but no Java binding — a common target for users
+integrating a crypto library into JVM-based applications. Evaluate JNI
+(around `herradura.h`) or a pure-Java port, following the pattern
+established by `bindings/ffi/`.
+
+Status: **DONE v2.1.0** — added `bindings/java/` (`herradurakex.Herradura`),
+a pure-Java port of the classical quartet (HKEX-GF, HSKE, HPKS, HPKE) at
+n=256 using `java.math.BigInteger`, following `bindings/ffi/`'s scope
+(classical quartet only). Chose a pure-Java port over JNI: no native
+compilation/platform-specific `.so`/`.dylib`/`.dll` step for JVM
+consumers, and `BigInteger` gives no constant-time guarantee regardless
+of how the bit tricks are written, so there was nothing to gain from
+porting `herradura.h`'s constant-time C tricks — mirrors the Python
+reference's `fscx`/`gf_*` functions and its guarded protocol API
+(degenerate-pubkey rejection, TODO #144/#131) instead. Verified two
+ways: `herradurakex.KatVerify` recomputes all four `KAT/
+classical_quartet.json` vectors (TODO #190) and confirms byte-identical
+results — a third independent cross-language check alongside the Python
+reference and `KAT/verify_kat.go` — and `herradurakex.SelfTest` runs a
+fresh-random-key round-trip smoke test (HKEX-GF agreement, HSKE
+round-trip, HPKS sign/verify + tamper rejection, HPKE round-trip), both
+passing. Wired into `CliTest/test_java_bindings.sh` (skips gracefully
+if no JDK is present); `native` CI job now installs
+`default-jdk-headless`. MINOR bump (2.0.12 → 2.1.0) per CLAUDE.md's
+semver rule for a new language-target port of an existing protocol.

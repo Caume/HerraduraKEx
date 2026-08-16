@@ -24,6 +24,7 @@ CliTest/
   test_encrypt.sh test_encfile.sh  test_signfile.sh
   test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
   test_kat_vectors.sh                               — checks KAT/ is current + cross-verified (TODO #190)
+  test_java_bindings.sh                             — builds + runs bindings/java/ (TODO #192)
 KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
   generate_kat.py            — deterministic reference generator (Python); --check verifies currency
@@ -56,6 +57,9 @@ spec/                                                — machine-readable protoc
 bindings/ffi/                                        — opt-in ctypes/cgo FFI bindings around
                                                       herradura.h's classical v1.4.0 quartet, for
                                                       performance-sensitive Python/Go callers
+bindings/java/                                       — pure-Java port of the classical v1.4.0 quartet
+                                                      (herradurakex.Herradura), for JVM integrations;
+                                                      cross-checked against KAT/classical_quartet.json
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history

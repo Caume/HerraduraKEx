@@ -16,17 +16,6 @@ rather than only `master`.
 
 Status: **OPEN**
 
-### #192: Java bindings
-
-The suite has implementations/bindings spanning C, Go, Python, ARM
-Thumb-2, NASM i386, and Arduino, plus a ctypes/cgo FFI layer
-(`bindings/ffi/`), but no Java binding — a common target for users
-integrating a crypto library into JVM-based applications. Evaluate JNI
-(around `herradura.h`) or a pure-Java port, following the pattern
-established by `bindings/ffi/`.
-
-Status: **OPEN**
-
 ### #193: RFC-style prose spec document
 
 `spec/herradura-protocol-spec.json` is a machine-readable JSON Schema
