@@ -53,3 +53,32 @@ to give adopters real performance context for the novel constructions.
 
 Status: **OPEN**
 
+### #195: QC-MDPC BGF decoder DFR causes intermittent CI failures in hybrid-KEM interop test
+
+`CliTest/test_hybrid_kex_interop.sh` generates fresh random keys on every
+run (no fixed seed) and exercises `hpke-stern-kem` (real Black-Gray-Flip
+QC-MDPC decoder, TODO #183) across all C/Go/Python CLI combinations. The
+decoder's Decoding Failure Rate (DFR) at its current toy parameters
+(r=523, d=15, t=18) has never been measured (noted as an open gap when
+the real decoder landed in TODO #183/#186) — so a small but nonzero
+fraction of runs hit a genuine decode failure rather than a bug,
+surfacing as `HPKE-Stern-KEM decapsulation failed (DFR event or corrupt
+ciphertext)`. Observed 2026-08-15: the `push`-triggered CI run for
+commit 91a00ee failed on 3 `bob=c` sub-cases while the `pull_request`-
+triggered run for the same commit passed cleanly — same code, different
+random draws, confirming this is decoder DFR flakiness rather than a
+regression (see PR #192 discussion).
+
+Fix options to evaluate: (a) measure the actual DFR at current
+parameters and, if too high for a CI test to tolerate, tune parameters
+(r/d/t) to push it low enough that intermittent CI failures become
+practically impossible; (b) add a small bounded retry in the test for
+this specific, identified error string, since DFR events are an
+expected (if rare) protocol outcome, not silently masking real bugs;
+(c) both — measure to confirm the retry bound is justified, then add
+retry as defense-in-depth. Whichever approach lands should also update
+the "DFR not yet measured" note in `TODO_DONE.md` (TODO #183/#186) and
+`spec/herradura-protocol-spec.json`'s `hpke-stern-kem` notes field.
+
+Status: **OPEN**
+
