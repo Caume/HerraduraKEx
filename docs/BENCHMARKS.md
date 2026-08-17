@@ -17,16 +17,18 @@ figures, and re-run the scripts on your own hardware before drawing conclusions.
 Reproducible comparison scripts live in `benchmarks/`:
 
 ```bash
-bash bindings/ffi/build.sh                          # once, needed by both scripts
+bash bindings/ffi/build.sh                          # once, needed by all four scripts
 python3 benchmarks/compare_hpks_ed25519.py          # HPKS vs. libsodium Ed25519
 python3 benchmarks/compare_stern_f_dilithium.py     # HPKS-Stern-F vs. liboqs Dilithium3
+python3 benchmarks/compare_hkex_x25519.py           # HKEX-GF vs. libsodium X25519
+python3 benchmarks/compare_hske_aead.py             # HSKE vs. libsodium AES-256-GCM/ChaCha20-Poly1305
 ```
 
-`compare_hpks_ed25519.py` uses the FFI bindings (`bindings/ffi/`, TODO #137) for HPKS and
-libsodium via `ctypes` (no `libsodium-dev` headers needed — only the runtime `.so`).
-`compare_stern_f_dilithium.py` drives `HerraduraCli/herradura_cli` (`build_c.sh`) for
-HPKS-Stern-F, since the FFI bindings intentionally scope out the Stern-F protocols, and loads
-liboqs via `ctypes` if present.
+`compare_hpks_ed25519.py`, `compare_hkex_x25519.py`, and `compare_hske_aead.py` use the FFI
+bindings (`bindings/ffi/`, TODO #137) for the HerraduraKEx side and libsodium via `ctypes` (no
+`libsodium-dev` headers needed — only the runtime `.so`). `compare_stern_f_dilithium.py`
+drives `HerraduraCli/herradura_cli` (`build_c.sh`) for HPKS-Stern-F, since the FFI bindings
+intentionally scope out the Stern-F protocols, and loads liboqs via `ctypes` if present.
 
 ## HPKS vs. Ed25519 (classical DLP-based signature)
 
@@ -82,6 +84,61 @@ Caveats specific to this comparison:
   wouldn't pay. A tighter comparison would extend `bindings/ffi/` to cover Stern-F and
   benchmark through that instead (out of scope for TODO #138/#186; see TODO #137's stated
   scope).
+
+## HKEX-GF vs. X25519 (classical DLP-based key exchange)
+
+Measured on this repo's dev hardware (aarch64), N=500 operations, averaged over 3 runs of
+`benchmarks/compare_hkex_x25519.py`:
+
+| | keygen (µs/op) | agree (µs/op) |
+|---|---|---|
+| HKEX-GF (this suite, FFI/C) | ~4,090 | ~8,180 |
+| X25519 (libsodium) | ~75 | ~365 |
+
+HKEX-GF is roughly **55x slower to generate a keypair and 22x slower to agree on a shared
+secret** than X25519 in this measurement.
+
+Caveats specific to this comparison:
+- X25519 uses a decade-audited, hand-optimized reference implementation; HKEX-GF runs through
+  this suite's general-purpose `BitArray`/`GF(2^n)` arithmetic and `gf_pow` (square-and-
+  multiply), not curve-specific optimized code — the same gap noted for HPKS vs. Ed25519 above,
+  since both share the same `GF(2^256)*` exponentiation machinery.
+- HKEX-GF's security is classical DLP over `GF(2^256)*` — broken by Shor's algorithm, and at
+  ~80-90 bits of classical security per the `GF(2^n)` table in the main README, below X25519's
+  128-bit target.
+- Both are measured through this suite's FFI shim / libsodium's C API respectively — not a
+  cross-language comparison.
+
+## HSKE vs. AES-256-GCM / ChaCha20-Poly1305 (symmetric encryption)
+
+Measured on this repo's dev hardware (aarch64, no AES-NI — AES-256-GCM is skipped when
+libsodium reports it unavailable on the host CPU; see the script's runtime check), N=2000
+operations on a 32-byte payload (HSKE's fixed block size), averaged over 3 runs of
+`benchmarks/compare_hske_aead.py`:
+
+| | encrypt (µs/op) | decrypt (µs/op) |
+|---|---|---|
+| HSKE (this suite, FFI/C) | ~8.0 | ~19.7 |
+| ChaCha20-Poly1305 (libsodium) | ~5.8 | ~5.95 |
+
+HSKE is roughly **1.4x slower to encrypt and 3.3x slower to decrypt** than ChaCha20-Poly1305 in
+this measurement — closer than the DLP-based comparisons above, since FSCX_REVOLVE is a cheap
+XOR/rotate transform rather than modular exponentiation.
+
+Caveats specific to this comparison:
+- This is not an apples-to-apples security comparison: AES-256-GCM and ChaCha20-Poly1305 are
+  AEAD ciphers with built-in integrity/authentication over associated data; HSKE provides
+  confidentiality only, with no tag or associated-data support. The numbers above are a raw
+  throughput reference point for the underlying transform, not a like-for-like protocol
+  comparison.
+- HSKE operates on a single fixed 32-byte block per call (this suite's `KEYBYTES`); the AEAD
+  ciphers are benchmarked on the same 32-byte payload for a like-for-like per-call figure, but
+  real-world AEAD usage typically amortizes setup cost over much larger messages, which this
+  micro-benchmark does not capture.
+- AES-256-GCM's relative speed depends heavily on AES-NI (or ARM Crypto Extensions) hardware
+  support; on a CPU without it, libsodium reports the primitive unavailable and the script
+  skips it rather than falling back to a slow software path — re-run on AES-NI-capable
+  hardware to get that comparison point.
 
 ## HKEX-RNL vs. Kyber (lattice-based PQC key exchange)
 
