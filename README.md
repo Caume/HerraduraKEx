@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.1.2)
+# Herradura Cryptographic Suite (v2.1.4)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -168,6 +168,30 @@ python3 "Herradura cryptographic suite.py"
 # Security & performance tests (in CryptosuiteTests/)
 python3 CryptosuiteTests/Herradura_tests.py
 ```
+
+### Package managers
+
+The `herradurakex` package (`pyproject.toml`, TODO #191) wraps the suite and
+`HerraduraCli` for distribution without duplicating either — it loads the
+same source files via `herradurakex/_vendor/` (symlinks into the checkout,
+bundled as package data in the wheel/sdist), so `pip install herradurakex`
+runs byte-identical code to a source checkout:
+
+```bash
+pip install herradurakex        # once published to PyPI
+python3 -c "import herradurakex as h; print(h.KEYBITS)"
+herradurakex genpkey --algo hkex-gf --out alice.pem   # console script
+```
+
+The Go module (`module herradurakex`, root `go.mod`) resolves via `go get`
+from any commit on `master`, but has no versioned releases yet — `go get`
+without a tag pulls the latest commit as a pseudo-version. To cut a real
+release: tag the commit (`git tag -s v2.1.3 -m "v2.1.3"`, GPG-signed;
+`git push origin v2.1.3`), then `go get herradurakex@v2.1.3` resolves it
+via the Go module proxy. The `HerraduraCli` and `herradura` (FFI) Go
+modules can be tagged independently with their own `vX.Y.Z` prefix per
+Go's multi-module-repo convention (e.g. `HerraduraCli/vX.Y.Z`) once they
+have external consumers.
 
 ## Assembly
 

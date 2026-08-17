@@ -1,6 +1,11 @@
 .hypothesis/
 __pycache__/
 
+# Python packaging build artifacts (TODO #191)
+/build/
+/dist/
+*.egg-info/
+
 # build_c_sanitize.sh (TODO #188) — ASan+UBSan build artifacts, not tracked
 # (mirrors the untracked plain _c/_go suite/test binaries)
 /Herradura cryptographic suite_asan

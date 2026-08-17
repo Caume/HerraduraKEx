@@ -9615,3 +9615,66 @@ encode/decode plus a DER sign-byte edge case;
 `CliTest/test_java_codec.sh` cross-checks both directions against the
 Python CLI (Python-`genpkey`-produced key decoded by Java, and a
 Java-encoded key decoded by `codec.py`).
+
+### #191: Package-manager publishing (PyPI, Go module tagging, etc.)
+
+There is no `pyproject.toml`/`setup.py` for the Python suite/CLI, so
+`pip install herradurakex` isn't possible — users must clone and run
+from source. Add packaging metadata for PyPI at minimum, and consider
+signed/tagged Go module releases so `go get` resolves versioned tags
+rather than only `master`.
+
+Status: **DONE v2.1.3** — added `pyproject.toml` (setuptools, PEP 621)
+defining the `herradurakex` distribution: console script `herradurakex`
+plus `import herradurakex` re-exporting the full suite surface
+(`KEYBITS`, `gf_mul`, `hkex_*`, `hske_*`, `hpks_*`, `hpke_*`, NL/PQC/
+Stern/XMSS/HCRED extensions, etc.). The package doesn't duplicate the
+suite/CLI sources — `herradurakex/_vendor/` holds symlinks into
+`Herradura cryptographic suite.py` and `HerraduraCli/{primitives,codec,
+herradura}.py`, mirroring their original relative layout so the
+existing `importlib`-based loading in `primitives.py` and the `import
+primitives`/`import codec` in `herradura.py` work unmodified; setuptools
+bundles the symlink targets as real files in the sdist/wheel via
+`[tool.setuptools.package-data]`. Verified end-to-end: built the wheel
+with `setuptools.build_meta.build_wheel` (no network/pip needed),
+unpacked it standalone, and confirmed `import herradurakex` plus a full
+`herradurakex genpkey`/`pkey`/`kex --algo hkex-gf` round trip (Alice and
+Bob derive the same shared secret) via the console script. Documented
+`pip install herradurakex` and the Go module tagging procedure (signed
+`git tag`, `go get herradurakex@vX.Y.Z`, per-module-directory tag
+prefixes for `HerraduraCli`/`herradura`) in `README.md`'s new "Package
+managers" section; actual PyPI publish and the first signed Go tag are
+left as a release-time action for the maintainer. PATCH bump — new
+packaging/distribution metadata, no CLI/PEM/wire-format surface change.
+
+### #193: RFC-style prose spec document
+
+`spec/herradura-protocol-spec.json` is a machine-readable JSON Schema
+(parameters, PEM labels, CLI `--algo` tags, security-level
+classification) but there is no prose specification document
+independent of any implementation, in the style of the Noise Protocol
+Framework or the `age` spec, that would let a third party reimplement
+the protocols from the spec alone rather than by reading source code.
+Draft an RFC-style `SPEC.md` (or similar) covering HKEX-GF, HSKE, HPKS,
+HPKE, and the NL/PQC/Stern variants.
+
+Status: **DONE v2.1.4** — added `SPEC.md`, an RFC-2119-style prose spec
+(§1 notation, §2 goals/non-goals, §3 FSCX + GF(2^n)* primitives, §4-7
+the classical quartet HKEX-GF/HSKE/HPKS/HPKE with full algorithm steps
+and correctness derivations, §8 NL-FSCX v1/v2 non-linear hardening
+primitives with exact formulas including the `delta(B)` function
+recovered from `herradura.h`'s `nl_fscx_delta_v2_ba`, §9 the NL/PQC
+variants HKEX-RNL (Ring-LWR key exchange, full 2-round protocol with
+CBD/rounding/reconciliation parameters) / HSKE-NL-A1/A2 / HPKS-NL /
+HPKE-NL, §10 the shared PEM/DER wire format, §11 a pointer into
+SecurityProofs-4/5 for the Stern ZKID family (HPKS-Stern-F/HPKE-Stern-F/
+HPKE-Stern-KEM — algorithmically distinct enough to warrant its own
+future document rather than a condensed section), §12 security
+considerations. Every correctness claim (HSKE round-trip, NL-FSCX v2
+forward/inverse round-trip, HPKS sign/verify) was independently checked
+by running the actual suite code rather than derived by inspection
+alone. Cross-references `spec/herradura-protocol-spec.json` (machine-
+readable companion), `SecurityProofs.md` (proofs), and
+`KAT/classical_quartet.json` (test vectors) rather than duplicating
+them. PATCH bump — new documentation, no CLI/PEM/wire-format surface
+change.
