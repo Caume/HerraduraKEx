@@ -2,6 +2,44 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.1.4] - 2026-08-17
+
+### Added
+- TODO #193: added `SPEC.md`, an RFC-2119-style prose protocol
+  specification covering the classical quartet (HKEX-GF, HSKE, HPKS,
+  HPKE) with full algorithm steps and correctness derivations, the
+  FSCX/GF(2^n)* and NL-FSCX v1/v2 primitives with exact formulas, and
+  the NL/PQC variants (HKEX-RNL Ring-LWR key exchange, HSKE-NL-A1/A2,
+  HPKS-NL, HPKE-NL) — independent of implementation source, in the
+  style of the Noise Protocol Framework/`age` spec, so a third party
+  can reimplement from prose alone. Points into `SecurityProofs-4.md`/
+  `-5.md` for the Stern ZKID family rather than duplicating it, and
+  cross-references `spec/herradura-protocol-spec.json`,
+  `SecurityProofs.md`, and `KAT/classical_quartet.json`. Every
+  correctness claim was checked against the running suite code (HSKE
+  round-trip, NL-FSCX v2 forward/inverse, HPKS sign/verify). PATCH
+  bump — new documentation, no CLI/PEM/wire-format surface change.
+
+## [2.1.3] - 2026-08-17
+
+### Added
+- TODO #191: added `pyproject.toml` packaging the Python suite/CLI as the
+  `herradurakex` PyPI distribution (setuptools, PEP 621) — `pip install
+  herradurakex` gets both `import herradurakex` (re-exporting the full
+  suite: `KEYBITS`, `gf_mul`, `hkex_*`, `hske_*`, `hpks_*`, `hpke_*`,
+  NL/PQC/Stern/XMSS/HCRED extensions) and a `herradurakex` console
+  script (the OpenSSL-style CLI). No source duplication: the new
+  `herradurakex/` package loads the canonical `Herradura cryptographic
+  suite.py`/`HerraduraCli/{primitives,codec,herradura}.py` via symlinks
+  under `herradurakex/_vendor/` that mirror their original relative
+  layout, bundled as real files in the wheel/sdist via
+  `[tool.setuptools.package-data]`. Verified with a from-scratch wheel
+  build and an installed-wheel HKEX-GF keygen/kex round trip. Documented
+  `pip install herradurakex` and the Go module tagging procedure (signed
+  `git tag` + per-module tag prefixes) in README's new "Package
+  managers" section. PATCH bump — new packaging/distribution metadata,
+  no CLI/PEM/wire-format surface change.
+
 ## [2.1.2] - 2026-08-16
 
 ### Added

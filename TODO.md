@@ -6,29 +6,6 @@
 
 ## Open items
 
-### #191: Package-manager publishing (PyPI, Go module tagging, etc.)
-
-There is no `pyproject.toml`/`setup.py` for the Python suite/CLI, so
-`pip install herradurakex` isn't possible — users must clone and run
-from source. Add packaging metadata for PyPI at minimum, and consider
-signed/tagged Go module releases so `go get` resolves versioned tags
-rather than only `master`.
-
-Status: **OPEN**
-
-### #193: RFC-style prose spec document
-
-`spec/herradura-protocol-spec.json` is a machine-readable JSON Schema
-(parameters, PEM labels, CLI `--algo` tags, security-level
-classification) but there is no prose specification document
-independent of any implementation, in the style of the Noise Protocol
-Framework or the `age` spec, that would let a third party reimplement
-the protocols from the spec alone rather than by reading source code.
-Draft an RFC-style `SPEC.md` (or similar) covering HKEX-GF, HSKE, HPKS,
-HPKE, and the NL/PQC/Stern variants.
-
-Status: **OPEN**
-
 ### #195: QC-MDPC BGF decoder DFR causes intermittent CI failures in hybrid-KEM interop test
 
 `CliTest/test_hybrid_kex_interop.sh` generates fresh random keys on every

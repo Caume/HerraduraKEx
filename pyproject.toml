@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "herradurakex"
+version = "2.1.3"
+description = "Herradura Cryptographic Suite — HKEX-GF, HSKE, HPKS, HPKE and PQC extensions built on the FSCX primitive"
+readme = "README.md"
+license = "GPL-3.0-or-later OR MIT"
+license-files = ["LICENSE", "LICENSE.gpl", "LICENSE.mit"]
+requires-python = ">=3.8"
+authors = [{ name = "Caume" }]
+keywords = [
+  "cryptography",
+  "key-exchange",
+  "post-quantum",
+  "fscx",
+  "diffie-hellman",
+  "schnorr",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security :: Cryptography",
+  "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/Caume/HerraduraKEx"
+Changelog = "https://github.com/Caume/HerraduraKEx/blob/master/CHANGELOG.md"
+"Security Proofs" = "https://github.com/Caume/HerraduraKEx/blob/master/SecurityProofs.md"
+
+[project.scripts]
+herradurakex = "herradurakex.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["herradurakex*"]
+
+[tool.setuptools.package-data]
+herradurakex = ["_vendor/*.py", "_vendor/HerraduraCli/*.py"]
