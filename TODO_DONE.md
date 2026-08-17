@@ -9561,3 +9561,57 @@ passing. Wired into `CliTest/test_java_bindings.sh` (skips gracefully
 if no JDK is present); `native` CI job now installs
 `default-jdk-headless`. MINOR bump (2.0.12 → 2.1.0) per CLAUDE.md's
 semver rule for a new language-target port of an existing protocol.
+
+### #194: Comparison/benchmark against standard primitives
+
+`benchmarks/` records HerraduraKEx's own performance history but has no
+head-to-head comparison against standard, widely-deployed primitives
+(Curve25519/X25519, AES-GCM, ChaCha20-Poly1305, Kyber/ML-KEM,
+Dilithium/ML-DSA — the latter two already partially covered by
+`benchmarks/compare_stern_f_dilithium.py`, see TODO #186). Add
+benchmark scripts/results comparing HKEX-GF/HKEX-RNL, HSKE, HPKS/HPKS-NL
+and HPKE/HPKE-NL against their closest standard-primitive equivalents,
+to give adopters real performance context for the novel constructions.
+
+Status: **DONE v2.1.2** — added `benchmarks/compare_hkex_x25519.py`
+(HKEX-GF vs. libsodium X25519, FFI/ctypes, same pattern as
+`compare_hpks_ed25519.py`: keygen + agree, N=500) and
+`benchmarks/compare_hske_aead.py` (HSKE vs. libsodium AES-256-GCM/
+ChaCha20-Poly1305, encrypt/decrypt on HSKE's fixed 32-byte block,
+N=2000; AES-256-GCM auto-skips when libsodium reports no AES-NI on the
+host). Recorded results and the same apples-to-oranges caveats used by
+the existing HPKS/Stern-F comparisons in `docs/BENCHMARKS.md`: HKEX-GF
+is ~55x slower to generate a keypair and ~22x slower to agree than
+X25519; HSKE is ~1.4x slower to encrypt and ~3.3x slower to decrypt
+than ChaCha20-Poly1305 (much closer than the DLP-based comparisons,
+since FSCX_REVOLVE is XOR/rotate rather than modular exponentiation).
+HKEX-RNL vs. Kyber, HPKS-NL/HPKE-NL, and HPKE vs. a
+X25519+AEAD hybrid remain unbenchmarked (liboqs unavailable in this
+environment for the Kyber side, matching the existing gap noted for
+HKEX-RNL vs. Kyber) — left as follow-up if a future pass wants full
+protocol-stack coverage. PATCH bump (2.1.1 → 2.1.2): new benchmark
+scripts and docs only, no CLI/PEM/wire-format surface change.
+
+### #197: Java PEM/DER codec for the classical quartet's wire format
+
+Part of the #196 breakdown. `bindings/java/herradurakex` currently only
+exchanges raw `BigInteger` values — no PEM/DER support, so it can't
+read/write key, ciphertext, or signature files produced by the
+Python/C/Go CLIs. Port `HerraduraCli/codec.py`/`herradura_codec.h`/
+`herradura/codec.go`'s DER encode/decode (including the long-form
+length fix from TODO #190's investigation, 0x81–0x84) and PEM
+boundary-label handling to Java, byte-for-byte compatible with the
+existing three implementations. Add a round-trip test plus a
+fixed-vector cross-check (an existing Python/C/Go-produced PEM file
+decoded correctly by the new Java codec, and vice versa).
+
+Status: **DONE v2.1.1** — added `bindings/java/herradurakex.Codec`, a
+byte-for-byte port of `HerraduraCli/codec.py`/`herradura_codec.h`/
+`herradura/codec.go`'s Base64/PEM/DER subset (including the long-form
+length encoding, 0x81-0x84), with encode/decode helpers for classical
+private/public keys, HPKE ciphertexts, HPKS signatures, HSKE session
+keys, and digests. `herradurakex.CodecTest` covers round-trip
+encode/decode plus a DER sign-byte edge case;
+`CliTest/test_java_codec.sh` cross-checks both directions against the
+Python CLI (Python-`genpkey`-produced key decoded by Java, and a
+Java-encoded key decoded by `codec.py`).

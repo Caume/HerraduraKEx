@@ -1,4 +1,4 @@
-# herradurakex — Java bindings (TODO #192)
+# herradurakex — Java bindings (TODO #192, #197)
 
 A pure-Java port of the classical (v1.4.0) HerraduraKEx quartet — HKEX-GF,
 HSKE, HPKS, HPKE — at n=256 bits, for JVM-based integrations. Values are
@@ -27,6 +27,17 @@ NL/PQC and Stern-F protocols are out of scope for this binding.
 - `herradurakex/SelfTest.java` — end-to-end round-trip smoke test with
   fresh random keys each run (HKEX-GF agreement, HSKE round-trip, HPKS
   sign/verify + tamper rejection, HPKE round-trip).
+- `herradurakex/Codec.java` (TODO #197) — PEM/DER codec for the classical
+  quartet's wire format: Base64 (76-char lines), PEM wrap/unwrap, and a
+  minimal DER (INTEGER 0x02 / SEQUENCE 0x30) subset, byte-for-byte
+  compatible with `HerraduraCli/codec.py` / `herradura_codec.h` /
+  `herradura/codec.go` (including the long-form length encoding,
+  0x81-0x84, TODO #190). Provides encode/decode helpers for classical
+  private/public keys, HPKE ciphertexts, HPKS signatures, HSKE session
+  keys, and digests.
+- `herradurakex/CodecTest.java` — round-trip test for `Codec` (also
+  doubles as a CLI-ish `decode-priv`/`decode-pub`/`encode-priv` tool used
+  by `CliTest/test_java_codec.sh` for cross-language checks).
 - `build.sh` — compiles the package with `javac`.
 
 ## Build and run
@@ -36,9 +47,11 @@ bash bindings/java/build.sh
 
 java -cp bindings/java herradurakex.KatVerify KAT/classical_quartet.json
 java -cp bindings/java herradurakex.SelfTest
+java -cp bindings/java herradurakex.CodecTest
 ```
 
-Both are also run by `CliTest/test_java_bindings.sh`.
+All three are also run by `CliTest/test_java_bindings.sh` /
+`CliTest/test_java_codec.sh`.
 
 ## Usage sketch
 
@@ -70,7 +83,8 @@ exchange values with the Python/C/Go/PEM-based CLI:
 byte[] bytes = value.toByteArray(); // may have a leading 0x00 sign byte or be short — normalize to 32 bytes
 ```
 
-This binding does not implement the PEM/DER codec (`HerraduraCli/codec.py`,
-`herradura_codec.h`, `herradura/codec.go`) — only the raw math. A future
-TODO could add PEM read/write if JVM consumers need direct CLI-key
-interop rather than exchanging raw values over an existing channel.
+`herradurakex.Codec` (TODO #197) now implements PEM/DER key, ciphertext,
+and signature read/write for the classical quartet, so JVM consumers can
+exchange key/ciphertext/signature files directly with the Python/C/Go
+CLIs (`CliTest/test_java_codec.sh` cross-checks both directions). A full
+Java `HerraduraCli` with subcommands is still open — TODO #198.

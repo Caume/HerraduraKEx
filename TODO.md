@@ -29,19 +29,6 @@ HPKE, and the NL/PQC/Stern variants.
 
 Status: **OPEN**
 
-### #194: Comparison/benchmark against standard primitives
-
-`benchmarks/` records HerraduraKEx's own performance history but has no
-head-to-head comparison against standard, widely-deployed primitives
-(Curve25519/X25519, AES-GCM, ChaCha20-Poly1305, Kyber/ML-KEM,
-Dilithium/ML-DSA — the latter two already partially covered by
-`benchmarks/compare_stern_f_dilithium.py`, see TODO #186). Add
-benchmark scripts/results comparing HKEX-GF/HKEX-RNL, HSKE, HPKS/HPKS-NL
-and HPKE/HPKE-NL against their closest standard-primitive equivalents,
-to give adopters real performance context for the novel constructions.
-
-Status: **OPEN**
-
 ### #195: QC-MDPC BGF decoder DFR causes intermittent CI failures in hybrid-KEM interop test
 
 `CliTest/test_hybrid_kex_interop.sh` generates fresh random keys on every
@@ -101,21 +88,6 @@ subcommands/interop tests):
   XMSS/WOTS+) + CLI subcommands + interop tests (needs #198)
 
 Close this umbrella once #197–#201 are all done.
-
-Status: **OPEN**
-
-### #197: Java PEM/DER codec for the classical quartet's wire format
-
-Part of the #196 breakdown. `bindings/java/herradurakex` currently only
-exchanges raw `BigInteger` values — no PEM/DER support, so it can't
-read/write key, ciphertext, or signature files produced by the
-Python/C/Go CLIs. Port `HerraduraCli/codec.py`/`herradura_codec.h`/
-`herradura/codec.go`'s DER encode/decode (including the long-form
-length fix from TODO #190's investigation, 0x81–0x84) and PEM
-boundary-label handling to Java, byte-for-byte compatible with the
-existing three implementations. Add a round-trip test plus a
-fixed-vector cross-check (an existing Python/C/Go-produced PEM file
-decoded correctly by the new Java codec, and vice versa).
 
 Status: **OPEN**
 

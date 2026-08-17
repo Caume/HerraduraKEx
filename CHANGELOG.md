@@ -2,6 +2,39 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.1.2] - 2026-08-16
+
+### Added
+- TODO #194: added `benchmarks/compare_hkex_x25519.py` (HKEX-GF vs.
+  libsodium X25519 keygen/agree) and `benchmarks/compare_hske_aead.py`
+  (HSKE vs. libsodium AES-256-GCM/ChaCha20-Poly1305 encrypt/decrypt),
+  following the FFI/ctypes pattern established by
+  `compare_hpks_ed25519.py`. Recorded results and caveats in
+  `docs/BENCHMARKS.md`: HKEX-GF is ~55x slower to generate a keypair
+  and ~22x slower to agree than X25519; HSKE is ~1.4x slower to
+  encrypt and ~3.3x slower to decrypt than ChaCha20-Poly1305. PATCH
+  bump — new benchmark scripts/docs, no CLI/PEM/wire-format surface
+  change.
+
+## [2.1.1] - 2026-08-16
+
+### Added
+- TODO #197: added `bindings/java/herradurakex.Codec` — a pure-Java
+  PEM/DER codec for the classical quartet's wire format, byte-for-byte
+  port of `HerraduraCli/codec.py` / `herradura_codec.h` /
+  `herradura/codec.go`'s Base64 (76-char lines), PEM wrap/unwrap, and
+  minimal DER (INTEGER 0x02 / SEQUENCE 0x30) subset, including the
+  long-form length encoding (0x81-0x84, TODO #190). Adds
+  encode/decode helpers for classical private/public keys, HPKE
+  ciphertexts, HPKS (Schnorr) signatures, HSKE session keys, and
+  digests. `herradurakex.CodecTest` covers round-trip encode/decode
+  plus a DER sign-byte edge case, and `CliTest/test_java_codec.sh`
+  cross-checks both directions against the Python CLI: a
+  Python-`genpkey`-produced key file decoded by the Java codec, and a
+  Java-encoded key file decoded by `codec.py` directly. PATCH bump —
+  extends an existing Java-port surface (TODO #192) rather than adding
+  a new one; the Java CLI itself is TODO #198.
+
 ## [2.1.0] - 2026-08-16
 
 ### Added

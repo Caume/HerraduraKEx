@@ -1,0 +1,390 @@
+package herradurakex;
+
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.List;
+
+/**
+ * TODO #197: pure-Java PEM/DER codec for the classical quartet's wire
+ * format — a byte-for-byte port of {@code HerraduraCli/codec.py} /
+ * {@code herradura_codec.h} / {@code herradura/codec.go}'s Base64, PEM, and
+ * minimal DER (INTEGER 0x02 / SEQUENCE 0x30) subset, including the
+ * long-form length fix (0x81-0x84) from TODO #190's investigation.
+ *
+ * Scope matches TODO #192/{@link Herradura}: the classical (v1.4.0) quartet
+ * only (HKEX-GF, HSKE, HPKS, HPKE). PEM label constants for the rest of the
+ * suite are included for parity with the Go/C label tables (harmless, and
+ * saves duplicated work for TODO #199-201), but no encode/decode helpers
+ * are provided beyond the classical quartet's key/ciphertext/signature/
+ * session-key/digest formats.
+ */
+public final class Codec {
+    private Codec() { }
+
+    // -----------------------------------------------------------------
+    // PEM label constants — must match Python herradura.py, herradura_codec.h,
+    // and herradura/codec.go
+    // -----------------------------------------------------------------
+
+    public static final String PEM_HKEX_GF_PRIV = "HERRADURA HKEX-GF PRIVATE KEY";
+    public static final String PEM_HKEX_GF_PUB = "HERRADURA HKEX-GF PUBLIC KEY";
+    public static final String PEM_HKEX_RNL_PRIV = "HERRADURA HKEX-RNL PRIVATE KEY";
+    public static final String PEM_HKEX_RNL_PUB = "HERRADURA HKEX-RNL PUBLIC KEY";
+    public static final String PEM_HPKS_PRIV = "HERRADURA HPKS PRIVATE KEY";
+    public static final String PEM_HPKS_PUB = "HERRADURA HPKS PUBLIC KEY";
+    public static final String PEM_HPKS_NL_PRIV = "HERRADURA HPKS-NL PRIVATE KEY";
+    public static final String PEM_HPKS_NL_PUB = "HERRADURA HPKS-NL PUBLIC KEY";
+    public static final String PEM_HPKE_PRIV = "HERRADURA HPKE PRIVATE KEY";
+    public static final String PEM_HPKE_PUB = "HERRADURA HPKE PUBLIC KEY";
+    public static final String PEM_HPKE_NL_PRIV = "HERRADURA HPKE-NL PRIVATE KEY";
+    public static final String PEM_HPKE_NL_PUB = "HERRADURA HPKE-NL PUBLIC KEY";
+    public static final String PEM_HPKS_STERN_PRIV = "HERRADURA HPKS-STERN PRIVATE KEY";
+    public static final String PEM_HPKS_STERN_PUB = "HERRADURA HPKS-STERN PUBLIC KEY";
+    public static final String PEM_HPKE_STERN_PRIV = "HERRADURA HPKE-STERN PRIVATE KEY";
+    public static final String PEM_HPKE_STERN_PUB = "HERRADURA HPKE-STERN PUBLIC KEY";
+    public static final String PEM_SESSION_KEY = "HERRADURA SESSION KEY";
+    public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
+    public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
+    public static final String PEM_CIPHERTEXT = "HERRADURA CIPHERTEXT";
+    public static final String PEM_DIGEST = "HERRADURA DIGEST";
+
+    public static final String PEM_ZKP_RNL_PROOF = "HERRADURA ZKP-RNL PROOF";
+    public static final String PEM_ZKP_NL_PRIV = "HERRADURA ZKP-NL PRIVATE KEY";
+    public static final String PEM_ZKP_NL_PUB = "HERRADURA ZKP-NL PUBLIC KEY";
+    public static final String PEM_ZKP_NL_PROOF = "HERRADURA ZKP-NL PROOF";
+
+    // -----------------------------------------------------------------
+    // Base64 (76-char lines, matching Python base64.encodebytes)
+    // -----------------------------------------------------------------
+
+    /** Encodes data as base64 with 76-char lines, each terminated by '\n'. */
+    static String b64Encode(byte[] data) {
+        String raw = Base64.getEncoder().encodeToString(data);
+        StringBuilder sb = new StringBuilder(raw.length() + raw.length() / 76 + 2);
+        int off = 0;
+        while (raw.length() - off > 76) {
+            sb.append(raw, off, off + 76).append('\n');
+            off += 76;
+        }
+        if (off < raw.length()) {
+            sb.append(raw, off, raw.length()).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** Strips whitespace then decodes standard base64. */
+    static byte[] b64Decode(String s) {
+        StringBuilder clean = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c != ' ' && c != '\n' && c != '\r' && c != '\t') {
+                clean.append(c);
+            }
+        }
+        return Base64.getDecoder().decode(clean.toString());
+    }
+
+    // -----------------------------------------------------------------
+    // PEM
+    // -----------------------------------------------------------------
+
+    /** Wraps der as a PEM block with the given label. */
+    public static String pemWrap(String label, byte[] der) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("-----BEGIN ").append(label).append("-----\n");
+        sb.append(b64Encode(der));
+        sb.append("-----END ").append(label).append("-----\n");
+        return sb.toString();
+    }
+
+    public static final class PemBlock {
+        public final String label;
+        public final byte[] der;
+        public PemBlock(String label, byte[] der) { this.label = label; this.der = der; }
+    }
+
+    /** Parses a single PEM block, returning its label and DER bytes. */
+    public static PemBlock pemUnwrap(String pem) {
+        final String beginMark = "-----BEGIN ";
+        int bi = pem.indexOf(beginMark);
+        if (bi < 0) throw new IllegalArgumentException("PEM: missing BEGIN marker");
+        String rest = pem.substring(bi + beginMark.length());
+
+        int ei = rest.indexOf("-----");
+        if (ei < 0) throw new IllegalArgumentException("PEM: malformed BEGIN line");
+        String label = rest.substring(0, ei);
+        rest = rest.substring(ei + 5);
+        int i = 0;
+        while (i < rest.length() && (rest.charAt(i) == '\r' || rest.charAt(i) == '\n')) i++;
+        rest = rest.substring(i);
+
+        int endIdx = rest.indexOf("-----END ");
+        if (endIdx < 0) throw new IllegalArgumentException("PEM: missing END marker");
+        byte[] der;
+        try {
+            der = b64Decode(rest.substring(0, endIdx));
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("PEM: base64 decode: " + e.getMessage(), e);
+        }
+        return new PemBlock(label, der);
+    }
+
+    // -----------------------------------------------------------------
+    // DER (minimal subset: INTEGER 0x02 and SEQUENCE 0x30)
+    // -----------------------------------------------------------------
+
+    private static byte[] derEncLen(int n) {
+        if (n < 0x80) {
+            return new byte[] { (byte) n };
+        } else if (n < 0x100) {
+            return new byte[] { (byte) 0x81, (byte) n };
+        } else if (n < 0x10000) {
+            return new byte[] { (byte) 0x82, (byte) (n >> 8), (byte) n };
+        } else if (n < 0x1000000) {
+            return new byte[] { (byte) 0x83, (byte) (n >> 16), (byte) (n >> 8), (byte) n };
+        } else {
+            return new byte[] { (byte) 0x84, (byte) (n >> 24), (byte) (n >> 16), (byte) (n >> 8), (byte) n };
+        }
+    }
+
+    private static final class Len {
+        final int length;
+        final int consumed;
+        Len(int length, int consumed) { this.length = length; this.consumed = consumed; }
+    }
+
+    private static Len derDecLen(byte[] buf, int off) {
+        if (off >= buf.length) throw new IllegalArgumentException("DER: empty length field");
+        int b = buf[off] & 0xff;
+        if (b < 0x80) return new Len(b, 1);
+        int nb = b & 0x7f;
+        if (nb > 4 || off + 1 + nb > buf.length) {
+            throw new IllegalArgumentException("DER: length field too large");
+        }
+        int v = 0;
+        for (int i = 0; i < nb; i++) {
+            v = (v << 8) | (buf[off + 1 + i] & 0xff);
+        }
+        return new Len(v, 1 + nb);
+    }
+
+    /**
+     * Encodes val as a DER INTEGER (tag 0x02). val is treated as an unsigned
+     * big-endian magnitude of the given byte width; a 0x00 sign byte is
+     * prepended when the high bit is set (matches Python der_int / C
+     * der_int_enc / Go DerIntEnc). Pass nbytes &lt; 0 to use the minimal
+     * non-zero byte width, matching der_int's default.
+     */
+    public static byte[] derInt(BigInteger value, int nbytes) {
+        if (value.signum() < 0) throw new IllegalArgumentException("Negative integers not supported");
+        if (nbytes < 0) {
+            nbytes = Math.max(1, (value.bitLength() + 7) / 8);
+        }
+        byte[] val = new byte[nbytes];
+        byte[] raw = value.toByteArray(); // two's-complement, may have leading 0x00
+        int rawStart = 0;
+        while (rawStart < raw.length - 1 && raw[rawStart] == 0) rawStart++;
+        int rawLen = raw.length - rawStart;
+        if (rawLen > nbytes) {
+            throw new IllegalArgumentException("DER: value does not fit in " + nbytes + " bytes");
+        }
+        System.arraycopy(raw, rawStart, val, nbytes - rawLen, rawLen);
+        return derInt(val);
+    }
+
+    /** Encodes val (big-endian unsigned integer bytes) as a DER INTEGER. */
+    public static byte[] derInt(byte[] val) {
+        boolean sign = val.length > 0 && (val[0] & 0x80) != 0;
+        int content = val.length + (sign ? 1 : 0);
+        byte[] lenb = derEncLen(content);
+        byte[] out = new byte[1 + lenb.length + content];
+        out[0] = 0x02;
+        System.arraycopy(lenb, 0, out, 1, lenb.length);
+        int off = 1 + lenb.length;
+        if (sign) {
+            out[off] = 0x00;
+            off++;
+        }
+        System.arraycopy(val, 0, out, off, val.length);
+        return out;
+    }
+
+    /** Wraps already-encoded DER items in a SEQUENCE (tag 0x30). */
+    public static byte[] derSeq(byte[]... items) {
+        int body = 0;
+        for (byte[] it : items) body += it.length;
+        byte[] lenb = derEncLen(body);
+        byte[] out = new byte[1 + lenb.length + body];
+        out[0] = 0x30;
+        System.arraycopy(lenb, 0, out, 1, lenb.length);
+        int off = 1 + lenb.length;
+        for (byte[] it : items) {
+            System.arraycopy(it, 0, out, off, it.length);
+            off += it.length;
+        }
+        return out;
+    }
+
+    /**
+     * Parses a DER SEQUENCE of INTEGERs into unsigned {@link BigInteger}
+     * values (leading 0x00 sign bytes stripped, matching Python
+     * der_parse_seq / C der_parse_seq / Go DerParseSeq).
+     */
+    public static List<BigInteger> derParseSeq(byte[] der) {
+        if (der.length == 0 || der[0] != 0x30) {
+            throw new IllegalArgumentException("DER: not a SEQUENCE");
+        }
+        Len l = derDecLen(der, 1);
+        int offset = 1 + l.consumed;
+        int end = offset + l.length;
+        if (end > der.length) throw new IllegalArgumentException("DER: SEQUENCE body truncated");
+
+        List<BigInteger> out = new ArrayList<>();
+        while (offset < end) {
+            if (der[offset] != 0x02) {
+                throw new IllegalArgumentException(
+                    String.format("DER: expected INTEGER tag at offset %d, got 0x%02x", offset, der[offset]));
+            }
+            offset++;
+            Len vl = derDecLen(der, offset);
+            offset += vl.consumed;
+            if (vl.length > end - offset) {
+                throw new IllegalArgumentException("DER: INTEGER length exceeds SEQUENCE body");
+            }
+            byte[] vp = new byte[vl.length];
+            System.arraycopy(der, offset, vp, 0, vl.length);
+            out.add(new BigInteger(1, vp)); // unsigned; matches sign-byte stripping
+            offset += vl.length;
+        }
+        return out;
+    }
+
+    // -----------------------------------------------------------------
+    // Classical quartet: key / ciphertext / signature / session-key /
+    // digest encode-decode (TODO #197)
+    // -----------------------------------------------------------------
+
+    private static final int NBYTES = Herradura.N / 8; // 32
+
+    /** Encodes a classical private key: SEQUENCE(priv, pub, nbits). */
+    public static String encodePrivKey(String label, BigInteger priv, BigInteger pub) {
+        byte[] der = derSeq(derInt(priv, NBYTES), derInt(pub, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(label, der);
+    }
+
+    public static final class PrivKey {
+        public final BigInteger priv;
+        public final BigInteger pub;
+        public final int nbits;
+        PrivKey(BigInteger priv, BigInteger pub, int nbits) { this.priv = priv; this.pub = pub; this.nbits = nbits; }
+    }
+
+    public static PrivKey decodePrivKey(String pem, String expectedLabel) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(expectedLabel)) {
+            throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new PrivKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes a classical public key: SEQUENCE(pub, nbits). */
+    public static String encodePubKey(String label, BigInteger pub) {
+        byte[] der = derSeq(derInt(pub, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(label, der);
+    }
+
+    public static final class PubKey {
+        public final BigInteger pub;
+        public final int nbits;
+        PubKey(BigInteger pub, int nbits) { this.pub = pub; this.nbits = nbits; }
+    }
+
+    public static PubKey decodePubKey(String pem, String expectedLabel) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(expectedLabel)) {
+            throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new PubKey(ints.get(0), ints.get(1).intValueExact());
+    }
+
+    /** Encodes an HPKE ciphertext: SEQUENCE(R, E, nbits). */
+    public static String encodeAsymCt(BigInteger r, BigInteger e, int nbits) {
+        byte[] der = derSeq(derInt(r, nbits / 8), derInt(e, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
+        return pemWrap(PEM_CIPHERTEXT, der);
+    }
+
+    public static final class AsymCt {
+        public final BigInteger r;
+        public final BigInteger e;
+        public final int nbits;
+        AsymCt(BigInteger r, BigInteger e, int nbits) { this.r = r; this.e = e; this.nbits = nbits; }
+    }
+
+    public static AsymCt decodeAsymCt(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_CIPHERTEXT)) {
+            throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new AsymCt(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes an HPKS (Schnorr) signature: SEQUENCE(s, R, e, nbits). */
+    public static String encodeSchnorrSig(BigInteger s, BigInteger r, BigInteger e, int nbits) {
+        int nbytes = nbits / 8;
+        byte[] der = derSeq(derInt(s, nbytes), derInt(r, nbytes), derInt(e, nbytes),
+                             derInt(BigInteger.valueOf(nbits), -1));
+        return pemWrap(PEM_SIGNATURE, der);
+    }
+
+    public static final class SchnorrSig {
+        public final BigInteger s;
+        public final BigInteger r;
+        public final BigInteger e;
+        public final int nbits;
+        SchnorrSig(BigInteger s, BigInteger r, BigInteger e, int nbits) {
+            this.s = s; this.r = r; this.e = e; this.nbits = nbits;
+        }
+    }
+
+    public static SchnorrSig decodeSchnorrSig(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_SIGNATURE)) {
+            throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
+    }
+
+    /** Encodes an HSKE session key: SEQUENCE(key, nbits). */
+    public static String encodeSessionKey(BigInteger key, int nbits) {
+        byte[] der = derSeq(derInt(key, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
+        return pemWrap(PEM_SESSION_KEY, der);
+    }
+
+    public static PubKey decodeSessionKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_SESSION_KEY)) {
+            throw new IllegalArgumentException("Expected " + PEM_SESSION_KEY + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new PubKey(ints.get(0), ints.get(1).intValueExact());
+    }
+
+    /** Encodes an HFSCX-256 digest: SEQUENCE(digest as 32-byte INTEGER). */
+    public static String encodeDigest(BigInteger digest) {
+        byte[] der = derSeq(derInt(digest, 32));
+        return pemWrap(PEM_DIGEST, der);
+    }
+
+    public static BigInteger decodeDigest(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_DIGEST)) {
+            throw new IllegalArgumentException("Expected " + PEM_DIGEST + ", got " + b.label);
+        }
+        return derParseSeq(b.der).get(0);
+    }
+}
