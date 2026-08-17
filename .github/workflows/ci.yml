@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
 
       - name: Build C
         run: ./build_c.sh

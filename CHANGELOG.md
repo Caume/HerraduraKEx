@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.1.0] - 2026-08-16
+
+### Added
+- TODO #192: added `bindings/java/` — a pure-Java port of the classical
+  (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE) at n=256 bits
+  (`herradurakex.Herradura`), for JVM-based integrations, following the
+  `bindings/ffi/` pattern (same scope: classical quartet only, NL/PQC and
+  Stern-F out of scope). Uses `java.math.BigInteger` and mirrors the
+  Python reference's `fscx`/`gf_*` functions and guarded protocol API
+  (`hkexGfAgree`/`hpksVerify`/`hpkeEncrypt`/`hpkeDecrypt` all reject a
+  degenerate GF(2^n)* public element, TODO #144/#131) rather than
+  `herradura.h`'s constant-time C implementation, since `BigInteger`
+  gives no constant-time guarantee regardless. `herradurakex.KatVerify`
+  recomputes every vector in `KAT/classical_quartet.json` (TODO #190)
+  and confirms byte-identical results — a third cross-language check
+  alongside the Python reference and `KAT/verify_kat.go`.
+  `herradurakex.SelfTest` adds a fresh-random-key round-trip smoke test.
+  Wired into `CliTest/test_java_bindings.sh` (skips gracefully if no JDK
+  is installed) and the `native` CI job now installs
+  `default-jdk-headless`. MINOR bump per CLAUDE.md's semver rule for a
+  new language-target port of an existing protocol.
+
 ## [2.0.12] - 2026-08-14
 
 ### Added
