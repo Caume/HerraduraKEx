@@ -51,13 +51,45 @@ cli_for() {
 }
 
 # ── Bob's key + response, one per language ──────────────────────────────────
+#
+# TODO #195: the QC-MDPC BGF decoder (hpke-stern-kem's KEM half of this
+# combiner) has a measured, nonzero Decoding Failure Rate at its current toy
+# parameters (r=523, d=15, t=18) — see
+# SecurityProofsCode/qcmdpc_bgf_failure_rate.py, ~0.2% per encapsulation. A
+# DFR event is an expected protocol outcome, not a bug, so instead of letting
+# a rare bad draw fail the whole CI run we retry with a *fresh* encapsulation
+# (new random error vector) a bounded number of times before falling through
+# to the real completion matrix below, which will then report a genuine
+# failure honestly if retries are exhausted or the error doesn't match the
+# known DFR signature (i.e. we never mask a real bug this way).
+MAX_DFR_RETRIES=3
+DFR_ERR_PATTERN='decapsulation failed \(DFR event or corrupt ciphertext\)'
 declare -A RESP
 for bob in $langs; do
     BOBCLI=$(cli_for "$bob")
-    $BOBCLI genpkey --algo hkex-rnl --out "$TMP/bob_$bob.pem"
-    $BOBCLI kex --algo hybrid-rnl-stern --our "$TMP/bob_$bob.pem" \
-                --their "$TMP/alice_rnl_pub.pem" --their-kem "$TMP/alice_kem_pub.pem" \
-                --out "$TMP/resp_$bob.pem"
+    attempt=1
+    while :; do
+        $BOBCLI genpkey --algo hkex-rnl --out "$TMP/bob_$bob.pem"
+        $BOBCLI kex --algo hybrid-rnl-stern --our "$TMP/bob_$bob.pem" \
+                    --their "$TMP/alice_rnl_pub.pem" --their-kem "$TMP/alice_kem_pub.pem" \
+                    --out "$TMP/resp_$bob.pem"
+        # Canary: have Alice (Python) complete against this response now, off
+        # to the side, purely to detect a DFR event before committing to it
+        # for the full py/c/go completion matrix below (decoding is
+        # deterministic given the ciphertext, so if Python's decoder fails
+        # here, C's and Go's would too — no need to canary all three).
+        if $CLI_PY kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" \
+                --our-kem "$TMP/alice_kem.pem" --their "$TMP/resp_$bob.pem" \
+                --out "$TMP/_canary_${bob}.pem" 2>"$TMP/_canary_err_${bob}.log"; then
+            break
+        fi
+        if grep -q "$DFR_ERR_PATTERN" "$TMP/_canary_err_${bob}.log" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+            echo "INFO bob=$bob: QC-MDPC BGF DFR event on attempt $attempt (TODO #195), retrying with a fresh encapsulation" >&2
+            attempt=$((attempt+1))
+            continue
+        fi
+        break  # not the known DFR signature, or retries exhausted — let the matrix below report it for real
+    done
     RESP[$bob]="$TMP/resp_$bob.pem"
 done
 
