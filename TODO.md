@@ -39,19 +39,6 @@ Close this umbrella once #197–#201 are all done.
 
 Status: **OPEN**
 
-### #199: Java port of NL/PQC quartet (HKEX-RNL, HSKE-NL, HPKS-NL, HPKE-NL)
-
-Part of the #196 breakdown; needs TODO #198 (CLI skeleton) for its
-`--algo` subcommand wiring, though the library-level primitives (NL-FSCX
-v1/v2, Ring-LWR) can be ported independently first. Extend
-`bindings/java/herradurakex` with HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, and
-HPKE-NL, plus their CLI subcommands and Python/C/Go interop tests. If
-TODO #190's KAT set has grown to cover NL/PQC vectors by then, cross-
-verify against those; otherwise cross-verify against the Go/Python
-suites directly (mirroring `KAT/verify_kat.go`'s approach).
-
-Status: **OPEN**
-
 ### #200: Java port of Stern-F/Niederreiter (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM)
 
 Part of the #196 breakdown; needs TODO #198. Extend

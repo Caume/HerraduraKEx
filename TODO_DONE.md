@@ -9767,3 +9767,51 @@ picked up automatically by `ci.yml`'s existing `for f in CliTest/*.sh`
 loop (no workflow change needed; `default-jdk-headless` was already
 installed for `test_java_bindings.sh`/`test_java_codec.sh`). Updated
 `bindings/java/README.md` and `CLAUDE.md`'s repository-structure section.
+
+### #199: Java port of NL/PQC quartet (HKEX-RNL, HSKE-NL, HPKS-NL, HPKE-NL)
+
+Part of the #196 breakdown; needs TODO #198 (CLI skeleton) for its
+`--algo` subcommand wiring, though the library-level primitives (NL-FSCX
+v1/v2, Ring-LWR) can be ported independently first. Extend
+`bindings/java/herradurakex` with HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, and
+HPKE-NL, plus their CLI subcommands and Python/C/Go interop tests. If
+TODO #190's KAT set has grown to cover NL/PQC vectors by then, cross-
+verify against those; otherwise cross-verify against the Go/Python
+suites directly (mirroring `KAT/verify_kat.go`'s approach).
+
+Status: **DONE v2.3.0** — added `bindings/java/herradurakex.HerraduraNl`,
+a byte-for-byte port of `"Herradura cryptographic suite.py"`'s NL-FSCX v2
+(`nlFscxV2`/`nlFscxV2Inv`/`nlFscxRevolveV2`/`nlFscxRevolveV2Inv`, with the
+same `M^{-1}` rotation-table bootstrap as the Python reference — reusing
+`Hfscx256`'s existing NL-FSCX v1 rather than duplicating it), the
+Ring-LWR ring arithmetic underlying HKEX-RNL (negacyclic Cooley-Tukey NTT
+over Z_65537, `rnlPolyMul`/`rnlRound`/`rnlLift`/`rnlKeygen`/`rnlAgree`/
+`rnlHint`/`rnlReconcileBits`, at RNLQ=65537/RNLP=4096/RNLPP=4/RNLB=1),
+and the four protocol entry points (`hkexRnlDeriveC`/
+`rnlContributoryKdf`, `hskeNlA1Encrypt`/`Decrypt`, `hskeNlA2Encrypt`/
+`Decrypt`, `hpksNlSign`/`Verify`, `hpkeNlEncrypt`/`Decrypt`). Extended
+`Codec` with HKEX-RNL polynomial packing (`packPoly`/`unpackPoly`) and
+private-key/public-key/response PEM encode-decode (reusing the
+already-present `PEM_HKEX_RNL_PRIV`/`PUB`/`PEM_RNL_RESPONSE` label
+constants from TODO #197). Extended `HerraduraCli` with `--algo
+hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/`hpke-nl` across `genpkey`,
+`pkey`, `kex`, `enc`, `dec`, `sign`, `verify` — `kex --algo hkex-rnl`
+mirrors the Python/C/Go CLIs' two-round handshake exactly (Bob responds
+first with an RNL RESPONSE PEM, then Alice completes into a plain
+SESSION KEY PEM). Every primitive was cross-checked against fixed inputs
+run through `"Herradura cryptographic suite.py"` directly (NL-FSCX v2,
+the negacyclic poly-mul, and the Schnorr/El-Gamal math all matched
+byte-for-byte; the first attempt at NL-FSCX v2's `delta(B)` used the
+docstring's `(B*(B+1))>>1` formula, which diverges from the suite's
+actual `B*((B+1)>>1)` code for even B — caught by the cross-check and
+fixed to match the literal Python behavior). Added
+`CliTest/test_java_nl_interop.sh`: Java↔Python interop for all four
+NL/PQC protocols in both directions, including HKEX-RNL's two-round
+handshake with each language playing both Alice and Bob (Bob's own
+embedded session-key field is compared byte-for-byte against Alice's
+completed SESSION KEY PEM via a `codec.py`-based check, since the two
+PEM shapes differ). Extended `SelfTest` with round-trip checks for all
+four NL/PQC protocols and updated `test_java_keygen.sh`'s "unsupported
+algo" probe (previously `hkex-rnl`, now genuinely out-of-scope
+`hpke-stern`) since `hkex-rnl` is no longer rejected. Updated
+`bindings/java/README.md`.

@@ -1,16 +1,19 @@
-# herradurakex — Java bindings (TODO #192, #197, #198)
+# herradurakex — Java bindings (TODO #192, #197, #198, #199)
 
 A pure-Java port of the classical (v1.4.0) HerraduraKEx quartet — HKEX-GF,
-HSKE, HPKS, HPKE — at n=256 bits, for JVM-based integrations. Values are
-represented as `java.math.BigInteger` (always non-negative, `< 2^256`),
-mirroring `"Herradura cryptographic suite.py"`'s `BitArray`/`fscx`/`gf_*`
-functions rather than `herradura.h`'s constant-time C implementation:
-`BigInteger` gives no constant-time guarantee regardless of how the bit
-tricks are written, so there's nothing to gain from porting the C
-branchless code, and the Python source is the more readable reference.
+HSKE, HPKS, HPKE — plus the NL/PQC (v1.5.0) quartet — HKEX-RNL (Ring-LWR
+key exchange), HSKE-NL-A1/A2, HPKS-NL, HPKE-NL — at n=256 bits, for
+JVM-based integrations. Values are represented as `java.math.BigInteger`
+(always non-negative, `< 2^256`), mirroring `"Herradura cryptographic
+suite.py"`'s `BitArray`/`fscx`/`gf_*`/`nl_fscx_*`/`_rnl_*` functions rather
+than `herradura.h`'s constant-time C implementation: `BigInteger` gives no
+constant-time guarantee regardless of how the bit tricks are written, so
+there's nothing to gain from porting the C branchless code, and the Python
+source is the more readable reference.
 
-Same scope as `bindings/ffi/` (TODO #137): the classical quartet only —
-NL/PQC and Stern-F protocols are out of scope for this binding.
+Stern-F code-based PQC, hybrid-rnl-stern, ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF,
+and HCRED remain out of scope for this binding (TODO #200/#201 and
+beyond).
 
 ## Files
 
@@ -40,15 +43,31 @@ NL/PQC and Stern-F protocols are out of scope for this binding.
   by `CliTest/test_java_codec.sh` for cross-language checks).
 - `herradurakex/Hfscx256.java` (TODO #198) — NL-FSCX v1 and the
   HFSCX-256-DM hash built on it, plus the HSKE-NL-A1 `.hkx` file
-  container, ported only far enough to give `HerraduraCli`'s `dgst` and
-  `encfile`/`decfile` subcommands wire-format parity with the other
-  three CLIs. Not a general NL-FSCX/NL-PQC port — that is TODO #199.
-- `herradurakex/HerraduraCli.java` (TODO #198) — a CLI mirroring
+  container, originally ported only far enough to give `HerraduraCli`'s
+  `dgst` and `encfile`/`decfile` subcommands wire-format parity with the
+  other three CLIs; `HerraduraNl` (TODO #199) reuses `nlFscxV1`/
+  `nlFscxRevolveV1` from here rather than duplicating them.
+- `herradurakex/HerraduraNl.java` (TODO #199) — the NL/PQC quartet: NL-FSCX
+  v2 (`nlFscxV2`/`nlFscxV2Inv`/`nlFscxRevolveV2`/`nlFscxRevolveV2Inv`,
+  bijective in A with an exact `M^{-1}`-based inverse), the Ring-LWR ring
+  arithmetic underlying HKEX-RNL (negacyclic NTT over Z_65537 —
+  `rnlPolyMul`/`rnlRound`/`rnlLift`/`rnlKeygen`/`rnlAgree`/`rnlHint`, at
+  RNLQ=65537, RNLP=4096, RNLPP=4, RNLB=1), and the four protocol-level
+  entry points (`hkexRnlDeriveC`/`rnlContributoryKdf` for HKEX-RNL,
+  `hskeNlA1Encrypt`/`Decrypt` for counter-mode, `hskeNlA2Encrypt`/`Decrypt`
+  for revolve-mode, `hpksNlSign`/`Verify`, `hpkeNlEncrypt`/`Decrypt`).
+- `herradurakex/HerraduraCli.java` (TODO #198, #199) — a CLI mirroring
   `HerraduraCli/herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s
   subcommand interface (`genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`,
   `verify`, `dgst`, `encfile`, `decfile`) for the classical quartet
-  (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec).
-  PEM/DER output is byte-for-byte identical to the other three CLIs.
+  (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec) and
+  the NL/PQC quartet (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/
+  `hpke-nl`). `kex --algo hkex-rnl` is two-round, matching the other
+  CLIs' convention: Bob responds first (`--our` his priv key, `--their`
+  Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
+  (`--our` her priv key, `--their` Bob's RNL RESPONSE PEM) into a plain
+  SESSION KEY PEM. PEM/DER output is byte-for-byte identical to the other
+  three CLIs.
 - `build.sh` — compiles the package with `javac`.
 
 ## Build and run
@@ -67,8 +86,9 @@ java -cp bindings/java herradurakex.HerraduraCli pkey --in alice.pem --pubout --
 
 These are also run by `CliTest/test_java_bindings.sh` /
 `CliTest/test_java_codec.sh` / `CliTest/test_java_keygen.sh` /
-`CliTest/test_java_interop.sh` (the latter two cross-check the CLI
-against the Python CLI in both directions).
+`CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh` (the
+last three cross-check the CLI against the Python CLI in both directions
+— `test_java_nl_interop.sh` covers the NL/PQC quartet, TODO #199).
 
 ## Usage sketch
 
@@ -104,6 +124,8 @@ byte[] bytes = value.toByteArray(); // may have a leading 0x00 sign byte or be s
 and signature read/write for the classical quartet, so JVM consumers can
 exchange key/ciphertext/signature files directly with the Python/C/Go
 CLIs (`CliTest/test_java_codec.sh` cross-checks both directions).
-`herradurakex.HerraduraCli` (TODO #198) is a full CLI on top of that —
-`CliTest/test_java_interop.sh` cross-checks it against the Python CLI in
-both directions for every subcommand.
+`herradurakex.HerraduraCli` (TODO #198, #199) is a full CLI on top of that
+— `CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh`
+cross-check it against the Python CLI in both directions for every
+subcommand, including HKEX-RNL's two-round handshake (Java responding to
+a Python initiator, and vice versa).

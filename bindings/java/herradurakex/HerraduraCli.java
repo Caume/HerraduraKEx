@@ -14,17 +14,26 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * TODO #198: Java CLI mirroring HerraduraCli/herradura.py / herradura_cli.c /
- * herradura_cli.go's subcommand interface, scoped to the classical quartet
- * (algo values hkex-gf, hpks, hpke, plus hske for symmetric enc/dec) —
- * matching {@link Herradura}'s scope. dgst and encfile/decfile additionally
- * need the NL-FSCX-based HFSCX-256 hash and HSKE-NL-A1 file container
- * ({@link Hfscx256}) purely for wire-format parity with the other CLIs;
- * the NL/PQC protocol family itself is TODO #199's scope.
+ * TODO #198/#199: Java CLI mirroring HerraduraCli/herradura.py /
+ * herradura_cli.c / herradura_cli.go's subcommand interface. Covers the
+ * classical quartet (algo values hkex-gf, hpks, hpke, plus hske for
+ * symmetric enc/dec — {@link Herradura}) and the NL/PQC quartet (hkex-rnl,
+ * hske-nla1, hske-nla2, hpks-nl, hpke-nl — {@link HerraduraNl}). dgst and
+ * encfile/decfile additionally use the NL-FSCX-based HFSCX-256 hash and
+ * HSKE-NL-A1 file container ({@link Hfscx256}) for wire-format parity with
+ * the other CLIs.
+ *
+ * Out of scope (TODO #200/#201 and beyond): Stern-F code-based PQC,
+ * hybrid-rnl-stern, rnl-sigma, ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF, HCRED, and
+ * the {@code --kdf}/{@code --aead} CLI options.
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
  * decfile. PEM/DER wire format is byte-for-byte compatible with the
- * Python/C/Go CLIs (via {@link Codec}).
+ * Python/C/Go CLIs (via {@link Codec}). HKEX-RNL's {@code kex} is
+ * two-round: Bob responds first ({@code --our} his priv key, {@code --their}
+ * Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
+ * ({@code --our} her priv key, {@code --their} Bob's RNL RESPONSE PEM) into
+ * a plain SESSION KEY PEM — matching the Python/C/Go CLIs' convention.
  */
 public final class HerraduraCli {
     private HerraduraCli() { }
@@ -105,29 +114,39 @@ public final class HerraduraCli {
 
     private static String privLabel(String algo) {
         switch (algo) {
-            case "hkex-gf": return Codec.PEM_HKEX_GF_PRIV;
-            case "hpks":    return Codec.PEM_HPKS_PRIV;
-            case "hpke":    return Codec.PEM_HPKE_PRIV;
+            case "hkex-gf":  return Codec.PEM_HKEX_GF_PRIV;
+            case "hpks":     return Codec.PEM_HPKS_PRIV;
+            case "hpks-nl":  return Codec.PEM_HPKS_NL_PRIV;
+            case "hpke":     return Codec.PEM_HPKE_PRIV;
+            case "hpke-nl":  return Codec.PEM_HPKE_NL_PRIV;
+            case "hkex-rnl": return Codec.PEM_HKEX_RNL_PRIV;
             default: throw new CliError("genpkey: unsupported --algo " + algo
-                + " (this Java CLI covers the classical quartet: hkex-gf, hpks, hpke)");
+                + " (this Java CLI covers the classical quartet plus hkex-rnl, "
+                + "hske-nla1/nla2, hpks-nl, hpke-nl)");
         }
     }
 
     private static String pubLabel(String algo) {
         switch (algo) {
-            case "hkex-gf": return Codec.PEM_HKEX_GF_PUB;
-            case "hpks":    return Codec.PEM_HPKS_PUB;
-            case "hpke":    return Codec.PEM_HPKE_PUB;
+            case "hkex-gf":  return Codec.PEM_HKEX_GF_PUB;
+            case "hpks":     return Codec.PEM_HPKS_PUB;
+            case "hpks-nl":  return Codec.PEM_HPKS_NL_PUB;
+            case "hpke":     return Codec.PEM_HPKE_PUB;
+            case "hpke-nl":  return Codec.PEM_HPKE_NL_PUB;
+            case "hkex-rnl": return Codec.PEM_HKEX_RNL_PUB;
             default: throw new CliError("unsupported --algo " + algo);
         }
     }
 
     private static String algoForPrivLabel(String label) {
-        if (label.equals(Codec.PEM_HKEX_GF_PRIV)) return "hkex-gf";
+        if (label.equals(Codec.PEM_HKEX_GF_PRIV))  return "hkex-gf";
         if (label.equals(Codec.PEM_HPKS_PRIV))     return "hpks";
+        if (label.equals(Codec.PEM_HPKS_NL_PRIV))  return "hpks-nl";
         if (label.equals(Codec.PEM_HPKE_PRIV))     return "hpke";
+        if (label.equals(Codec.PEM_HPKE_NL_PRIV))  return "hpke-nl";
         throw new CliError("unrecognized private-key label: " + label);
     }
+
 
     // -----------------------------------------------------------------
     // genpkey
@@ -136,10 +155,22 @@ public final class HerraduraCli {
     private static void cmdGenpkey(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
-        String label = privLabel(algo); // validates algo as a side effect
 
+        if (algo.equals("hkex-rnl")) {
+            int n = Herradura.N;
+            int[] mBase = HerraduraNl.rnlMPoly(n);
+            int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, RNG);
+            int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
+            HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(mBlind, n, HerraduraNl.RNLQ, HerraduraNl.RNLP, RNG);
+            byte[] nA = new byte[32];
+            RNG.nextBytes(nA);
+            writeString(out, Codec.encodeRnlPrivKey(kp.s, mBlind, n, nA));
+            return;
+        }
+
+        String label = privLabel(algo); // validates algo as a side effect
         BigInteger priv = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
-        BigInteger pub = Herradura.hkexGfPubkey(priv); // same keypair shape for all three algos
+        BigInteger pub = Herradura.hkexGfPubkey(priv); // same keypair shape for hkex-gf/hpks(-nl)/hpke(-nl)
         String pem = Codec.encodePrivKey(label, priv, pub);
         writeString(out, pem);
     }
@@ -153,6 +184,23 @@ public final class HerraduraCli {
         String out = opt.getOrDefault("out", "-");
         String pemIn = readString(in);
         Codec.PemBlock block = Codec.pemUnwrap(pemIn);
+
+        if (block.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
+            Codec.RnlPrivKey pk = Codec.decodeRnlPrivKey(pemIn);
+            int[] c = HerraduraNl.hkexRnlDeriveC(pk.mBlind, pk.s, pk.n);
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeRnlPubKey(c, pk.mBlind, pk.n, pk.nA));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hkex-rnl");
+                System.out.println("n         : " + pk.n);
+                System.out.println("s[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(pk.s, 5)));
+                System.out.println("C[0..4]   : " + java.util.Arrays.toString(java.util.Arrays.copyOf(c, 5)));
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
         String algo = algoForPrivLabel(block.label);
         Codec.PrivKey pk = Codec.decodePrivKey(pemIn, block.label);
 
@@ -176,8 +224,12 @@ public final class HerraduraCli {
 
     private static void cmdKex(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "kex");
+        if (algo.equals("hkex-rnl")) {
+            cmdKexRnl(opt);
+            return;
+        }
         if (!algo.equals("hkex-gf")) {
-            throw new CliError("kex: unsupported --algo " + algo + " (this Java CLI covers hkex-gf only)");
+            throw new CliError("kex: unsupported --algo " + algo + " (this Java CLI covers hkex-gf, hkex-rnl)");
         }
         String ourPath = req(opt, "our", "kex");
         String theirPath = req(opt, "their", "kex");
@@ -202,6 +254,56 @@ public final class HerraduraCli {
         writeString(out, pem);
     }
 
+    /** HKEX-RNL is two-round: Bob (our=Bob priv, their=Alice pub) responds
+     * first with an RNL RESPONSE PEM; Alice (our=Alice priv, their=Bob's
+     * RNL RESPONSE) completes the handshake into a plain SESSION KEY PEM. */
+    private static void cmdKexRnl(Map<String, String> opt) throws IOException {
+        String ourPath = req(opt, "our", "kex");
+        String theirPath = req(opt, "their", "kex");
+        String out = req(opt, "out", "kex");
+
+        String ourPem = readString(ourPath);
+        Codec.PemBlock ourBlock = Codec.pemUnwrap(ourPem);
+        if (!ourBlock.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
+            throw new CliError("kex hkex-rnl: --our must be an HKEX-RNL PRIVATE KEY, got " + ourBlock.label);
+        }
+        Codec.RnlPrivKey our = Codec.decodeRnlPrivKey(ourPem);
+
+        String theirPem = readString(theirPath);
+        Codec.PemBlock theirBlock = Codec.pemUnwrap(theirPem);
+
+        if (theirBlock.label.equals(Codec.PEM_HKEX_RNL_PUB)) {
+            // ── STEP 1: Bob responds to Alice's public key ──────────────
+            Codec.RnlPubKey their = Codec.decodeRnlPubKey(theirPem);
+            if (our.n != their.n) {
+                throw new CliError("kex hkex-rnl: ring size mismatch (ours=" + our.n + ", theirs=" + their.n + ")");
+            }
+            if (!HerraduraNl.rnlValidateMBlind(their.mBlind, HerraduraNl.RNLQ)) {
+                throw new CliError("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack");
+            }
+            int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
+                our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, our.n, our.n);
+            byte[] nB = new byte[32];
+            RNG.nextBytes(nB);
+            BigInteger kB = HerraduraNl.rnlContributoryKdf(agree.key, our.n, their.nA, nB);
+            writeString(out, Codec.encodeRnlResponse(kB, cB, agree.hint, our.n, nB));
+        } else if (theirBlock.label.equals(Codec.PEM_RNL_RESPONSE)) {
+            // ── STEP 2: Alice completes the handshake ────────────────────
+            Codec.RnlResponse resp = Codec.decodeRnlResponse(theirPem);
+            if (our.n != resp.n) {
+                throw new CliError("kex hkex-rnl: ring size mismatch (ours=" + our.n + ", response=" + resp.n + ")");
+            }
+            BigInteger kA = HerraduraNl.rnlAgree(
+                our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, our.n, our.n, resp.hint);
+            BigInteger kAInt = HerraduraNl.rnlContributoryKdf(kA, our.n, our.nA, resp.nB);
+            writeString(out, Codec.encodeSessionKey(kAInt, our.n));
+        } else {
+            throw new CliError("kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM, got "
+                + theirBlock.label);
+        }
+    }
+
     // -----------------------------------------------------------------
     // enc / dec (hske symmetric, hpke asymmetric)
     // -----------------------------------------------------------------
@@ -216,6 +318,18 @@ public final class HerraduraCli {
         return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
     }
 
+    /** Symmetric-ciphertext DER with a nonce, format tag 1 — matches
+     * HerraduraCli/herradura.py's _encode_sym_ct's hske-nla1 (non-AEAD) case. */
+    private static String encodeSymCtNonce(BigInteger e, BigInteger nonce, int nbits) {
+        byte[] der = Codec.derSeq(Codec.derInt(BigInteger.ONE, -1),
+                                   Codec.derInt(nonce, nbits / 8),
+                                   Codec.derInt(e, nbits / 8),
+                                   Codec.derInt(BigInteger.valueOf(nbits), -1));
+        return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
+    }
+
+    /** Returns {E, nbits, nonce_or_null} (format tag 0 or 1). Format tag 2
+     * (hske-nla1 AEAD) is out of this Java CLI's scope. */
     private static BigInteger[] decodeSymCt(String pem) {
         Codec.PemBlock b = Codec.pemUnwrap(pem);
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
@@ -223,11 +337,14 @@ public final class HerraduraCli {
         }
         List<BigInteger> ints = Codec.derParseSeq(b.der);
         int formatTag = ints.get(0).intValueExact();
-        if (formatTag != 0) {
+        if (formatTag == 0) {
+            return new BigInteger[] { ints.get(1), ints.get(2), null }; // E, nbits
+        } else if (formatTag == 1) {
+            return new BigInteger[] { ints.get(2), ints.get(3), ints.get(1) }; // E, nbits, nonce
+        } else {
             throw new CliError("hske ciphertext has format tag " + formatTag
-                + " (nonce/AEAD variants are out of this Java CLI's scope)");
+                + " (the AEAD variant is out of this Java CLI's scope)");
         }
-        return new BigInteger[] { ints.get(1), ints.get(2) }; // E, nbits
     }
 
     private static void cmdEnc(Map<String, String> opt) throws IOException {
@@ -242,6 +359,24 @@ public final class HerraduraCli {
             BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
             BigInteger e = Herradura.hskeEncrypt(p, key[0]);
             writeString(out, encodeSymCt(e, nbits));
+        } else if (algo.equals("hske-nla1")) {
+            BigInteger[] key = loadKey(req(opt, "key", "enc"));
+            int nbits = key[1].intValueExact();
+            int nbytes = nbits / 8;
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
+            BigInteger nonce = new BigInteger(nbits, RNG).and(Herradura.MASK);
+            BigInteger e = HerraduraNl.hskeNlA1Encrypt(p, key[0], nonce);
+            writeString(out, encodeSymCtNonce(e, nonce, nbits));
+        } else if (algo.equals("hske-nla2")) {
+            BigInteger[] key = loadKey(req(opt, "key", "enc"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key[0])) {
+                throw new CliError("enc hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
+            }
+            int nbytes = nbits / 8;
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
+            BigInteger e = HerraduraNl.hskeNlA2Encrypt(p, key[0]);
+            writeString(out, encodeSymCt(e, nbits));
         } else if (algo.equals("hpke")) {
             String pubPath = req(opt, "pubkey", "enc");
             String pubPem = readString(pubPath);
@@ -252,8 +387,19 @@ public final class HerraduraCli {
             Herradura.Ciphertext ct = Herradura.hpkeEncrypt(p, pub.pub, RNG);
             if (ct == null) throw new CliError("enc: recipient public key is degenerate");
             writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+        } else if (algo.equals("hpke-nl")) {
+            String pubPath = req(opt, "pubkey", "enc");
+            String pubPem = readString(pubPath);
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+            int nbytes = pub.nbits / 8;
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
+            Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, pub.pub, RNG);
+            if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
+            writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
         } else {
-            throw new CliError("enc: unsupported --algo " + algo + " (this Java CLI covers hske, hpke)");
+            throw new CliError("enc: unsupported --algo " + algo
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl)");
         }
     }
 
@@ -267,6 +413,22 @@ public final class HerraduraCli {
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             BigInteger d = Herradura.hskeDecrypt(ct[0], key[0]);
             writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hske-nla1")) {
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            if (ct[2] == null) throw new CliError("hske-nla1 ciphertext missing nonce");
+            BigInteger d = HerraduraNl.hskeNlA1Decrypt(ct[0], key[0], ct[2]);
+            writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hske-nla2")) {
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N || !HerraduraNl.nlV2KeyIsValid(key[0])) {
+                throw new CliError("dec hske-nla2: key is degenerate for NL-FSCX v2 (affine-weak class)");
+            }
+            BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            BigInteger d = HerraduraNl.hskeNlA2Decrypt(ct[0], key[0]);
+            writeBytes(out, toFixedBytes(d, nbits / 8));
         } else if (algo.equals("hpke")) {
             BigInteger[] key = loadKey(req(opt, "key", "dec"));
             int nbits = key[1].intValueExact();
@@ -274,8 +436,16 @@ public final class HerraduraCli {
             BigInteger d = Herradura.hpkeDecrypt(ct.e, ct.r, key[0]);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
             writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hpke-nl")) {
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            BigInteger d = HerraduraNl.hpkeNlDecrypt(ct.e, ct.r, key[0]);
+            if (d == null) throw new CliError("dec: ephemeral public value is degenerate or key is affine-weak");
+            writeBytes(out, toFixedBytes(d, nbits / 8));
         } else {
-            throw new CliError("dec: unsupported --algo " + algo + " (this Java CLI covers hske, hpke)");
+            throw new CliError("dec: unsupported --algo " + algo
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl)");
         }
     }
 
@@ -299,8 +469,8 @@ public final class HerraduraCli {
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
-        if (!algo.equals("hpks")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks only)");
+        if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
+            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -310,15 +480,21 @@ public final class HerraduraCli {
         Codec.PemBlock block = Codec.pemUnwrap(pem);
         Codec.PrivKey pk = Codec.decodePrivKey(pem, block.label);
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
-        Herradura.Signature sig = Herradura.hpksSign(msgInt, pk.priv, RNG);
-        writeString(out, Codec.encodeSchnorrSig(sig.s, sig.r,
-            Herradura.fscxRevolve(sig.r, msgInt, Herradura.I_STEPS), pk.nbits));
+        if (algo.equals("hpks")) {
+            Herradura.Signature sig = Herradura.hpksSign(msgInt, pk.priv, RNG);
+            writeString(out, Codec.encodeSchnorrSig(sig.s, sig.r,
+                Herradura.fscxRevolve(sig.r, msgInt, Herradura.I_STEPS), pk.nbits));
+        } else {
+            Herradura.Signature sig = HerraduraNl.hpksNlSign(msgInt, pk.priv, RNG);
+            writeString(out, Codec.encodeSchnorrSig(sig.s, sig.r,
+                Hfscx256.nlFscxRevolveV1(sig.r, msgInt, Herradura.I_STEPS), pk.nbits));
+        }
     }
 
     private static void cmdVerify(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "verify");
-        if (!algo.equals("hpks")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks only)");
+        if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));
@@ -330,7 +506,9 @@ public final class HerraduraCli {
         Codec.SchnorrSig sig = Codec.decodeSchnorrSig(readString(sigPath));
         BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
 
-        boolean ok = Herradura.hpksVerify(msgInt, pub.pub, sig.r, sig.s);
+        boolean ok = algo.equals("hpks")
+            ? Herradura.hpksVerify(msgInt, pub.pub, sig.r, sig.s)
+            : HerraduraNl.hpksNlVerify(msgInt, pub.pub, sig.r, sig.s);
         if (ok) {
             System.out.println("Signature OK");
         } else {

@@ -53,12 +53,22 @@ else
     FAIL=$((FAIL+1))
 fi
 
+# ── genpkey hkex-rnl (TODO #199): keygen + pkey --pubout round trip ────────
+if $CLI genpkey --algo hkex-rnl --out "$TMP/rnl.pem" \
+    && $CLI pkey --in "$TMP/rnl.pem" --pubout --out "$TMP/rnl_pub.pem"; then
+    check "genpkey hkex-rnl" "$TMP/rnl.pem" "HKEX-RNL PRIVATE KEY"
+    check "pkey pubout hkex-rnl" "$TMP/rnl_pub.pem" "HKEX-RNL PUBLIC KEY"
+else
+    echo "FAIL genpkey/pkey hkex-rnl"
+    FAIL=$((FAIL+1))
+fi
+
 # ── genpkey rejects unsupported algos honestly (no silent wrong output) ────
-if $CLI genpkey --algo hkex-rnl --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
-    echo "FAIL genpkey hkex-rnl should be rejected (out of this Java CLI's scope)"
+if $CLI genpkey --algo hpke-stern --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
+    echo "FAIL genpkey hpke-stern should be rejected (out of this Java CLI's scope)"
     FAIL=$((FAIL+1))
 else
-    echo "PASS genpkey hkex-rnl correctly rejected: $(cat "$TMP/err.log")"
+    echo "PASS genpkey hpke-stern correctly rejected: $(cat "$TMP/err.log")"
     PASS=$((PASS+1))
 fi
 

@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.3.0] - 2026-08-17
+
+### Added
+- TODO #199: extended `bindings/java/herradurakex` with the NL/PQC
+  quartet — HKEX-RNL (Ring-LWR key exchange, two-round), HSKE-NL-A1
+  (counter-mode), HSKE-NL-A2 (revolve-mode), HPKS-NL (Schnorr with
+  NL-FSCX v1 challenge), and HPKE-NL (El Gamal with NL-FSCX v2). Added
+  `herradurakex.HerraduraNl` (NL-FSCX v2 primitive, the negacyclic-NTT
+  Ring-LWR ring arithmetic behind HKEX-RNL, and all four protocols'
+  entry points), extended `herradurakex.Codec` with HKEX-RNL polynomial
+  packing and private-key/public-key/response PEM encode-decode, and
+  extended `herradurakex.HerraduraCli` with `--algo hkex-rnl`/
+  `hske-nla1`/`hske-nla2`/`hpks-nl`/`hpke-nl` across `genpkey`, `pkey`,
+  `kex`, `enc`, `dec`, `sign`, `verify` (`kex --algo hkex-rnl` mirrors
+  the Python/C/Go CLIs' two-round handshake). Added
+  `CliTest/test_java_nl_interop.sh` (Java↔Python interop for all four
+  protocols, both directions, including HKEX-RNL's two-round handshake
+  with each language playing both roles) and extended `SelfTest.java`
+  with round-trip checks for all four. See TODO #199 for details.
+
 ## [2.2.0] - 2026-08-17
 
 ### Added
