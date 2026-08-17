@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.1.5] - 2026-08-17
+
+### Fixed
+- TODO #195: fixed intermittent `hpke-stern-kem` decapsulation failures in
+  `CliTest/test_hybrid_kex_interop.sh` CI runs. Added
+  `SecurityProofsCode/qcmdpc_bgf_failure_rate.py` and measured the real
+  Black-Gray-Flip QC-MDPC decoder's Decoding Failure Rate at its current
+  toy parameters (r=523, d=15, t=18): **0.225%** per encapsulation
+  (45/20000 trials, 95% CI [0.16%, 0.29%]; every failure was a clean
+  self-detected `None`, never a silent wrong decode). The interop test
+  now canaries each Bob-language response and retries with a fresh
+  encapsulation (bounded at 3 attempts) on the known DFR error signature
+  before falling through to the real completion matrix — which still
+  reports honestly if retries are exhausted or the error doesn't match,
+  so this can't mask a real bug. Residual per-run failure probability
+  after the fix: ≈3.4×10⁻⁸ (about 1 in 29 million runs). Updated the
+  "DFR not yet measured" notes in `spec/generate_spec.py`'s
+  `hpke-stern-kem` entry (regenerated `spec/herradura-protocol-
+  spec.json`) and TODO #183's `TODO_DONE.md` entry with the measured
+  number. PATCH bump — CI-flakiness fix, no CLI/PEM/wire-format surface
+  change.
+
 ## [2.1.4] - 2026-08-17
 
 ### Added

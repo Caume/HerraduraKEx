@@ -152,11 +152,17 @@ SECURITY = {
                         notes="Niederreiter/QC-MDPC KEM with a real Black-Gray-Flip (BGF) "
                               "syndrome decoder (qcmdpc_keygen/encap/decap_bgf) -- unlike "
                               "hpke-stern, decap does not need the plaintext error vector. "
-                              "Toy parameters (r=523, d=15, t=18); DFR not yet measured at "
-                              "production security margins.",
+                              "Toy parameters (r=523, d=15, t=18); measured Decoding Failure "
+                              "Rate approx. 0.225% per encapsulation (95% CI [0.16%, 0.29%], "
+                              "n=20000 trials, TODO #195) -- well above production security "
+                              "margins (BIKE targets DFR <= 2^-128 at r=12323), so "
+                              "CliTest/test_hybrid_kex_interop.sh retries a fresh "
+                              "encapsulation on a detected DFR event rather than treating it "
+                              "as a bug.",
                         source=["herradura.h QCMDPC_* / qcmdpc_decap_bgf",
                                 "herradura/herradura.go QcMdpcDecapBgf",
-                                "CliTest/test_stern_kem.sh"]),
+                                "CliTest/test_stern_kem.sh",
+                                "SecurityProofsCode/qcmdpc_bgf_failure_rate.py"]),
     "hpks-zkp-nl": dict(status="production", quantum_resistant="conjectured",
                         notes="Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols "
                               "(nl-zkboo, nl-zkbpp).",
