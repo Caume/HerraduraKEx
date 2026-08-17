@@ -27,6 +27,9 @@ CliTest/
   test_java_bindings.sh                             — builds + runs bindings/java/ (TODO #192)
   test_java_codec.sh                                — Java PEM/DER codec cross-check vs
                                                        Python CLI, both directions (TODO #197)
+  test_java_keygen.sh                               — Java CLI genpkey/pkey smoke test (TODO #198)
+  test_java_interop.sh                              — Java <-> Python CLI cross-language interop
+                                                       for the classical quartet (TODO #198)
 KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
   generate_kat.py            — deterministic reference generator (Python); --check verifies currency
@@ -61,7 +64,11 @@ bindings/ffi/                                        — opt-in ctypes/cgo FFI b
                                                       performance-sensitive Python/Go callers
 bindings/java/                                       — pure-Java port of the classical v1.4.0 quartet
                                                       (herradurakex.Herradura), for JVM integrations;
-                                                      cross-checked against KAT/classical_quartet.json
+                                                      cross-checked against KAT/classical_quartet.json.
+                                                      herradurakex.HerraduraCli (TODO #198) mirrors
+                                                      HerraduraCli's genpkey/pkey/kex/enc/dec/sign/
+                                                      verify/dgst/encfile/decfile subcommand interface
+                                                      for --algo hkex-gf/hpks/hpke (plus hske)
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history

@@ -39,19 +39,6 @@ Close this umbrella once #197–#201 are all done.
 
 Status: **OPEN**
 
-### #198: Java `HerraduraCli` for the classical quartet
-
-Part of the #196 breakdown; needs TODO #197 (PEM/DER codec) first. Add
-a Java CLI mirroring `HerraduraCli/herradura.py`/`herradura_cli.c`/
-`herradura_cli.go`'s subcommand interface — `genpkey`, `pkey`, `kex`,
-`enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile` — for the
-classical quartet (`hkex-gf`, `hpks`, `hpke` `--algo` values). Add
-`CliTest/test_java_keygen.sh`/`test_java_interop.sh` (Python-generated
-keys consumed by the Java CLI and vice versa), mirroring
-`test_c_interop.sh`/`test_go_interop.sh`'s pattern.
-
-Status: **OPEN**
-
 ### #199: Java port of NL/PQC quartet (HKEX-RNL, HSKE-NL, HPKS-NL, HPKE-NL)
 
 Part of the #196 breakdown; needs TODO #198 (CLI skeleton) for its

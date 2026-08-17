@@ -9732,3 +9732,38 @@ measured number. Verified: `bash CliTest/test_hybrid_kex_interop.sh` run
 4x back-to-back, 19/19 PASS every time. PATCH bump — CI-flakiness fix
 plus a new measurement script/doc note, no CLI/PEM/wire-format surface
 change.
+
+### #198: Java `HerraduraCli` for the classical quartet
+
+Part of the #196 breakdown; needs TODO #197 (PEM/DER codec) first. Add
+a Java CLI mirroring `HerraduraCli/herradura.py`/`herradura_cli.c`/
+`herradura_cli.go`'s subcommand interface — `genpkey`, `pkey`, `kex`,
+`enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile` — for the
+classical quartet (`hkex-gf`, `hpks`, `hpke` `--algo` values). Add
+`CliTest/test_java_keygen.sh`/`test_java_interop.sh` (Python-generated
+keys consumed by the Java CLI and vice versa), mirroring
+`test_c_interop.sh`/`test_go_interop.sh`'s pattern.
+
+Status: **DONE v2.2.0** — added `bindings/java/herradurakex.HerraduraCli`
+implementing all ten subcommands on top of the existing `Herradura`/
+`Codec` classes (TODO #192/#197), scoped to `--algo hkex-gf`/`hpks`/
+`hpke` (plus `hske` for symmetric enc/dec) exactly like `Herradura`
+itself. `dgst` and `encfile`/`decfile` additionally needed NL-FSCX v1 and
+the HFSCX-256-DM hash and HSKE-NL-A1 `.hkx` container it depends on for
+wire-format parity with the other three CLIs (out of `Herradura`'s
+classical-quartet scope, so ported separately in a new
+`herradurakex.Hfscx256` rather than expanding `Herradura`'s stated
+scope) — every one of `Hfscx256`'s functions was verified byte-for-byte
+against the Python suite (three `hfscx_256` test vectors, and a
+deterministic-nonce `.hkx` container compared byte-for-byte against a
+hand-run of `Herradura cryptographic suite.py`'s encryption math). Added
+`CliTest/test_java_keygen.sh` (genpkey/pkey smoke test across all three
+algos, plus confirms out-of-scope algos like `hkex-rnl` are rejected
+rather than silently mishandled) and `CliTest/test_java_interop.sh`
+(Java↔Python cross-language interop, both directions, for every
+subcommand: hkex-gf key agreement, hske/hpke enc-dec, hpks sign-verify,
+dgst digest match, encfile/decfile round-trip) — both pass, and both are
+picked up automatically by `ci.yml`'s existing `for f in CliTest/*.sh`
+loop (no workflow change needed; `default-jdk-headless` was already
+installed for `test_java_bindings.sh`/`test_java_codec.sh`). Updated
+`bindings/java/README.md` and `CLAUDE.md`'s repository-structure section.

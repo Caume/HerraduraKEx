@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.2.0] - 2026-08-17
+
+### Added
+- TODO #198: added `bindings/java/herradurakex.HerraduraCli`, a Java CLI
+  mirroring `HerraduraCli/herradura.py`/`herradura_cli.c`/
+  `herradura_cli.go`'s subcommand interface (`genpkey`, `pkey`, `kex`,
+  `enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile`) for the
+  classical quartet (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for
+  symmetric enc/dec), built on the existing `herradurakex.Herradura`/
+  `Codec` classes (TODO #192/#197). PEM/DER output is byte-for-byte
+  identical to the other three CLIs. Added `herradurakex.Hfscx256` — a
+  NL-FSCX v1 + HFSCX-256-DM hash + HSKE-NL-A1 `.hkx` container port,
+  scoped only to what `dgst`/`encfile`/`decfile` need for wire-format
+  parity (verified byte-for-byte against the Python suite). Added
+  `CliTest/test_java_keygen.sh` and `CliTest/test_java_interop.sh`
+  (Java↔Python cross-language interop, both directions, every
+  subcommand) — both pass and run automatically in CI via the existing
+  `for f in CliTest/*.sh` loop. MINOR bump — new language-target CLI
+  port of an existing protocol surface, no existing CLI/PEM/wire-format
+  behavior changed.
+
 ## [2.1.5] - 2026-08-17
 
 ### Fixed
