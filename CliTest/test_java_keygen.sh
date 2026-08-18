@@ -75,6 +75,20 @@ check "genpkey hpke-stern-kem" "$TMP/kem.pem" "HPKE-STERN-KEM PRIVATE KEY"
 $CLI pkey --in "$TMP/kem.pem" --pubout --out "$TMP/kem_pub.pem"
 check "pkey pubout hpke-stern-kem" "$TMP/kem_pub.pem" "HPKE-STERN-KEM PUBLIC KEY"
 
+# ── genpkey oprf/hpks-wots/hpks-xmss (TODO #201) ────────────────────────────
+$CLI genpkey --algo oprf --out "$TMP/oprf.pem"
+check "genpkey oprf" "$TMP/oprf.pem" "OPRF PRIVATE KEY"
+
+$CLI genpkey --algo hpks-wots --out "$TMP/wots.pem" 2>/dev/null
+check "genpkey hpks-wots" "$TMP/wots.pem" "HPKS-WOTS PRIVATE KEY"
+$CLI pkey --in "$TMP/wots.pem" --pubout --out "$TMP/wots_pub.pem"
+check "pkey pubout hpks-wots" "$TMP/wots_pub.pem" "HPKS-WOTS PUBLIC KEY"
+
+$CLI genpkey --algo hpks-xmss --xmss-height 3 --out "$TMP/xmss.pem" 2>/dev/null
+check "genpkey hpks-xmss" "$TMP/xmss.pem" "HPKS-XMSS PRIVATE KEY"
+$CLI pkey --in "$TMP/xmss.pem" --pubout --out "$TMP/xmss_pub.pem"
+check "pkey pubout hpks-xmss" "$TMP/xmss_pub.pem" "HPKS-XMSS PUBLIC KEY"
+
 # ── genpkey rejects unsupported algos honestly (no silent wrong output) ────
 if $CLI genpkey --algo hcred --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
     echo "FAIL genpkey hcred should be rejected (out of this Java CLI's scope)"

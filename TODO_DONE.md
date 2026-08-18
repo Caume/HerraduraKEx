@@ -9889,3 +9889,66 @@ occasional legitimate DFR event across a small trial batch). Updated
 `bindings/java/README.md` and `CLAUDE.md`'s repository-structure
 section. The Stern-Ring OR-composition ring signature remains out of
 scope for this binding.
+
+### #201: Java port of remaining advanced protocols (HCRED, OPRF/aPAKE, XMSS/WOTS+)
+
+Part of the #196 breakdown; needs TODO #198. Extend
+`bindings/java/herradurakex` with the hybrid Ring-LWR + Stern-F
+credential (HCRED), OPRF/aPAKE, and the stateful hash-based signatures
+(XMSS/WOTS+). These are the suite's most complex remaining protocols
+(MPCitH transcripts, tree-based state management for XMSS) — expect this
+to be the largest of the child items; consider splitting further once
+scoped in detail. Add CLI subcommands and interop tests.
+
+Status: **DONE v2.5.0** — scoped down to OPRF and HPKS-WOTS-F/HPKS-XMSS-F
+per this entry's own note to split further once detailed; HCRED and
+aPAKE were split off as TODO #202/#203 (both need a substantial
+additional MPCitH/ZKBoo circuit port — HCRED its own unified
+Ring-LWR+Stern-F circuit, aPAKE the separate ZKBoo-over-NL-FSCX gadget
+— sized closer to TODO #200 in isolation than to a shared child item).
+
+Added `bindings/java/herradurakex.Oprf`: a byte-for-byte port of the
+2HashDH OPRF over GF(2^256)* (`keygen`/`blind`/`eval`/`unblind`/
+`direct`), reusing `Herradura`'s existing `gfPow`.
+
+Added `herradurakex.Wots`: HPKS-WOTS-F (the suite's own Winternitz
+one-time signature construction — a single deterministic NL-FSCX-v1
+hash chain, not RFC 8391 WOTS+'s ADRS/bitmask-randomized variant) —
+`chain`/`msgToDigits`/`keygen`/`sign`/`recoverPk`/`verify`, at the
+shipped w=16/L=67 parameters.
+
+Added `herradurakex.Xmss`: HPKS-XMSS-F — the RFC-6962-style Merkle
+accumulator (`haccumLeaf`/`Node`/`Root`/`Prove`/`Verify`) over WOTS-F
+leaves, `keygen`/`sign`/`verify`. Both classes are stateless (leaf index
+is an explicit parameter); leaf-index/one-time-use state lives in
+`HerraduraCli` as a `<keyfile>.idx` sidecar file, exactly mirroring the
+Python CLI's convention: XMSS persists the next-unused leaf index and
+hard-fails once `leafIdx >= 2^h`; WOTS persists a used/unused flag and
+refuses a second sign.
+
+Extended `Codec` with `PEM_OPRF_PRIV`/`STATE`/`EVAL` and
+`PEM_HPKS_WOTS_PRIV`/`PUB`/`SIG`/`PEM_HPKS_XMSS_PRIV`/`PUB`/`SIG` label
+constants plus their encode/decode helpers, matching
+`HerraduraCli/herradura.py`'s exact DER field order and blob-packing
+(including that XMSS's embedded `next_idx` DER field is vestigial —
+the `.idx` sidecar file is the authoritative counter, as it is in the
+Python CLI). Extended `HerraduraCli` with `oprf-blind`/`oprf-eval`/
+`oprf-unblind` and `--algo oprf`/`hpks-wots`/`hpks-xmss` across
+`genpkey`, `pkey` (`--pubout`/`--text`), `sign`, `verify`.
+
+Verified every new primitive byte-for-byte against the Python reference
+before writing any test files — WOTS chain values, the XMSS Merkle root
+and auth-path hashes, and the OPRF output all matched exactly for
+identical inputs — then verified full bidirectional Java↔Python CLI
+interop (OPRF client/server roles, WOTS/XMSS sign in one language and
+verify in the other, XMSS at two distinct leaves each). Added
+`CliTest/test_java_oprf_wots_interop.sh` (7 cross-language checks,
+including a numeric cross-check of the OPRF round trip against Python's
+`oprf_direct` rather than only checking the round trip didn't error) and
+extended `test_java_keygen.sh` and `SelfTest.java` (also fixing a
+pre-existing flaky assertion in `SelfTest`'s HPKS-Stern-F
+corrupted-syndrome check — TODO #200's `rounds=8` skips the only
+syndrome-checking challenge branch ~3.9% of the time by chance; bumped
+to `Stern.SDFR`=32 for `(2/3)^32 ≈ 0.008%` flake probability). Updated
+`bindings/java/README.md` and `CLAUDE.md`'s repository-structure
+section.
