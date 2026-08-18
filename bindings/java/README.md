@@ -1,4 +1,4 @@
-# herradurakex — Java bindings (TODO #192, #197, #198, #199)
+# herradurakex — Java bindings (TODO #192, #197, #198, #199, #200)
 
 A pure-Java port of the classical (v1.4.0) HerraduraKEx quartet — HKEX-GF,
 HSKE, HPKS, HPKE — plus the NL/PQC (v1.5.0) quartet — HKEX-RNL (Ring-LWR
@@ -11,9 +11,10 @@ constant-time guarantee regardless of how the bit tricks are written, so
 there's nothing to gain from porting the C branchless code, and the Python
 source is the more readable reference.
 
-Stern-F code-based PQC, hybrid-rnl-stern, ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF,
-and HCRED remain out of scope for this binding (TODO #200/#201 and
-beyond).
+HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM (TODO #200) round out the
+code-based PQC surface; hybrid-rnl-stern, ZKP-NL/ZKP-RNL, the
+Stern-Ring OR-composition signature, XMSS/WOTS, OPRF, and HCRED remain
+out of scope for this binding (TODO #201 and beyond).
 
 ## Files
 
@@ -56,13 +57,22 @@ beyond).
   entry points (`hkexRnlDeriveC`/`rnlContributoryKdf` for HKEX-RNL,
   `hskeNlA1Encrypt`/`Decrypt` for counter-mode, `hskeNlA2Encrypt`/`Decrypt`
   for revolve-mode, `hpksNlSign`/`Verify`, `hpkeNlEncrypt`/`Decrypt`).
-- `herradurakex/HerraduraCli.java` (TODO #198, #199) — a CLI mirroring
+- `herradurakex/Stern.java` (TODO #200) — HPKS-Stern-F/HPKE-Stern-F (Stern's
+  identification protocol Fiat-Shamir-compiled into a signature, plus its
+  demo Niederreiter KEM sharing the same keypair — `sternFKeygen`,
+  `hpksSternFSign`/`Verify`, `hpkeSternFEncapWithE`/`Decap`) and the real
+  QC-MDPC/BGF Niederreiter KEM (`qcmdpcKeygen`/`Encap`/`DecapBgf`, at the
+  shipped toy parameters r=523/d=15/t=18 — TODO #183/#195), fixed at
+  n=256. Reuses `Hfscx256`'s NL-FSCX v1 for every hash/PRF/PRNG in both
+  constructions.
+- `herradurakex/HerraduraCli.java` (TODO #198, #199, #200) — a CLI mirroring
   `HerraduraCli/herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s
   subcommand interface (`genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`,
   `verify`, `dgst`, `encfile`, `decfile`) for the classical quartet
-  (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec) and
-  the NL/PQC quartet (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/
-  `hpke-nl`). `kex --algo hkex-rnl` is two-round, matching the other
+  (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec), the
+  NL/PQC quartet (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/
+  `hpke-nl`), and the Stern-F family (`--algo hpks-stern`/`hpke-stern`/
+  `hpke-stern-kem`). `kex --algo hkex-rnl` is two-round, matching the other
   CLIs' convention: Bob responds first (`--our` his priv key, `--their`
   Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
   (`--our` her priv key, `--their` Bob's RNL RESPONSE PEM) into a plain
@@ -86,9 +96,12 @@ java -cp bindings/java herradurakex.HerraduraCli pkey --in alice.pem --pubout --
 
 These are also run by `CliTest/test_java_bindings.sh` /
 `CliTest/test_java_codec.sh` / `CliTest/test_java_keygen.sh` /
-`CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh` (the
-last three cross-check the CLI against the Python CLI in both directions
-— `test_java_nl_interop.sh` covers the NL/PQC quartet, TODO #199).
+`CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh` /
+`CliTest/test_java_stern_interop.sh` (the last four cross-check the CLI
+against the Python CLI in both directions — `test_java_nl_interop.sh`
+covers the NL/PQC quartet, TODO #199; `test_java_stern_interop.sh`
+covers HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM, TODO #200, and is
+DFR-retry-aware for the real BGF decoder).
 
 ## Usage sketch
 

@@ -23,9 +23,14 @@ import java.util.Map;
  * HSKE-NL-A1 file container ({@link Hfscx256}) for wire-format parity with
  * the other CLIs.
  *
- * Out of scope (TODO #200/#201 and beyond): Stern-F code-based PQC,
- * hybrid-rnl-stern, rnl-sigma, ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF, HCRED, and
- * the {@code --kdf}/{@code --aead} CLI options.
+ * Also covers HPKS-Stern-F/HPKE-Stern-F (demo Stern-F code-based PQC,
+ * {@code --algo hpks-stern}/{@code hpke-stern}) and HPKE-Stern-KEM (the
+ * real QC-MDPC/BGF Niederreiter KEM, {@code --algo hpke-stern-kem} —
+ * {@link Stern}, TODO #200).
+ *
+ * Out of scope (TODO #201 and beyond): hybrid-rnl-stern, rnl-sigma,
+ * ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF, HCRED, the Stern-Ring OR-composition
+ * signature, and the {@code --kdf}/{@code --aead} CLI options.
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
  * decfile. PEM/DER wire format is byte-for-byte compatible with the
@@ -156,6 +161,19 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
 
+        if (algo.equals("hpks-stern") || algo.equals("hpke-stern")) {
+            sternDemoWarning();
+            Stern.SternKeypair kp = Stern.sternFKeygen(RNG);
+            String label = algo.equals("hpks-stern") ? Codec.PEM_HPKS_STERN_PRIV : Codec.PEM_HPKE_STERN_PRIV;
+            writeString(out, Codec.encodeSternPrivKey(label, kp.e, kp.seed));
+            return;
+        }
+        if (algo.equals("hpke-stern-kem")) {
+            Stern.QcMdpcKeypair kp = Stern.qcmdpcKeygen(RNG);
+            writeString(out, Codec.encodeKemPrivKey(kp.h0, kp.h1, kp.sup0, kp.sup1));
+            return;
+        }
+
         if (algo.equals("hkex-rnl")) {
             int n = Herradura.N;
             int[] mBase = HerraduraNl.rnlMPoly(n);
@@ -175,6 +193,15 @@ public final class HerraduraCli {
         writeString(out, pem);
     }
 
+    /** Stern-F is demo/illustration-strength only at this binding's fixed
+     * n=256/t=16 parameters (SecurityProofs-4.md Sec.11.8.4) — mirrors the
+     * Python/C/Go CLIs' stderr warning on every stern genpkey/sign/verify/
+     * enc/dec call (not printed for hpke-stern-kem, which is production-shaped). */
+    private static void sternDemoWarning() {
+        System.err.println("warning: HPKS-Stern-F/HPKE-Stern-F are demo-strength illustrations of a "
+            + "code-based construction, not a production-hardened scheme at these parameters.");
+    }
+
     // -----------------------------------------------------------------
     // pkey
     // -----------------------------------------------------------------
@@ -184,6 +211,40 @@ public final class HerraduraCli {
         String out = opt.getOrDefault("out", "-");
         String pemIn = readString(in);
         Codec.PemBlock block = Codec.pemUnwrap(pemIn);
+
+        if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
+            sternDemoWarning();
+            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pemIn, block.label);
+            BigInteger syndrome = Stern.sternSyndrome(pk.seed, pk.e);
+            String pubLabel = block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? Codec.PEM_HPKS_STERN_PUB : Codec.PEM_HPKE_STERN_PUB;
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeSternPubKey(pubLabel, syndrome, pk.seed));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : " + (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) ? "hpks-stern" : "hpke-stern"));
+                System.out.println("bits      : " + pk.nbits);
+                System.out.println("seed      : " + hex(pk.seed, pk.nbits / 4));
+                System.out.println("syndrome  : " + hex(syndrome, pk.nbits / 8));
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
+        if (block.label.equals(Codec.PEM_HPKE_STERN_KEM_PRIV)) {
+            Codec.KemPrivKey pk = Codec.decodeKemPrivKey(pemIn);
+            BigInteger hPub = Stern.qcmdpcPubFromPriv(pk.h0, pk.h1);
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeKemPubKey(hPub));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hpke-stern-kem");
+                System.out.println("r         : " + pk.r);
+                System.out.println("d         : " + pk.d);
+                System.out.println("h_pub     : " + hPub.toString(16));
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
 
         if (block.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
             Codec.RnlPrivKey pk = Codec.decodeRnlPrivKey(pemIn);
@@ -397,9 +458,29 @@ public final class HerraduraCli {
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, pub.pub, RNG);
             if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
             writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+        } else if (algo.equals("hpke-stern")) {
+            sternDemoWarning();
+            String pubPem = readString(req(opt, "pubkey", "enc"));
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
+            Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(pub.seed, RNG);
+            BigInteger e = Herradura.fscxRevolve(p, enc.k, Herradura.I_STEPS);
+            writeString(out, Codec.encodeSternCt(enc.ct, enc.eP, enc.k, e));
+        } else if (algo.equals("hpke-stern-kem")) {
+            String pubPem = readString(req(opt, "pubkey", "enc"));
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            if (!pubBlock.label.equals(Codec.PEM_HPKE_STERN_KEM_PUB)) {
+                throw new CliError("enc hpke-stern-kem: --pubkey must be an HPKE-STERN-KEM PUBLIC KEY, got " + pubBlock.label);
+            }
+            Codec.KemPubKey pub = Codec.decodeKemPubKey(pubPem);
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
+            Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(pub.hPub, RNG);
+            BigInteger e = Herradura.fscxRevolve(p, enc.k, Herradura.I_STEPS);
+            writeString(out, Codec.encodeKemCt(enc.syn, e));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -443,9 +524,32 @@ public final class HerraduraCli {
             BigInteger d = HerraduraNl.hpkeNlDecrypt(ct.e, ct.r, key[0]);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate or key is affine-weak");
             writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hpke-stern")) {
+            sternDemoWarning();
+            String pem = readString(req(opt, "key", "dec"));
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
+            Codec.SternCt ct = Codec.decodeSternCt(readString(req(opt, "in", "dec")));
+            BigInteger k = Stern.hpkeSternFDecap(ct.eP, pk.seed);
+            BigInteger d = Herradura.fscxRevolve(ct.e, k, Herradura.R_STEPS);
+            writeBytes(out, toFixedBytes(d, pk.nbits / 8));
+        } else if (algo.equals("hpke-stern-kem")) {
+            String pem = readString(req(opt, "key", "dec"));
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HPKE_STERN_KEM_PRIV)) {
+                throw new CliError("dec hpke-stern-kem: --key must be an HPKE-STERN-KEM PRIVATE KEY, got " + block.label);
+            }
+            Codec.KemPrivKey pk = Codec.decodeKemPrivKey(pem);
+            Codec.KemCt ct = Codec.decodeKemCt(readString(req(opt, "in", "dec")));
+            BigInteger k = Stern.qcmdpcDecapBgf(ct.syn, pk.sup0, pk.sup1);
+            if (k == null) {
+                throw new CliError("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)");
+            }
+            BigInteger d = Herradura.fscxRevolve(ct.e, k, Herradura.R_STEPS);
+            writeBytes(out, toFixedBytes(d, Herradura.N / 8));
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -469,8 +573,23 @@ public final class HerraduraCli {
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
+        if (algo.equals("hpks-stern")) {
+            sternDemoWarning();
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+
+            String pem = readString(keyPath);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
+            Stern.SternSignature sig = Stern.hpksSternFSign(msgInt, pk.e, pk.seed, rounds, RNG);
+            writeString(out, Codec.encodeSternSig(sig));
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl)");
+            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -493,8 +612,29 @@ public final class HerraduraCli {
 
     private static void cmdVerify(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "verify");
+        if (algo.equals("hpks-stern")) {
+            sternDemoWarning();
+            String pubPath = req(opt, "pubkey", "verify");
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            String sigPath = req(opt, "sig", "verify");
+
+            String pubPem = readString(pubPath);
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            Codec.SternPubKey pub = Codec.decodeSternPubKey(pubPem, pubBlock.label);
+            Codec.SternSigDecoded sig = Codec.decodeSternSig(readString(sigPath));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pub.nbits / 8));
+
+            boolean ok = Stern.hpksSternFVerify(msgInt, sig.sig, pub.seed, pub.syndrome);
+            if (ok) {
+                System.out.println("Signature OK");
+            } else {
+                System.out.println("Verification FAILED");
+                System.exit(1);
+            }
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl)");
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));

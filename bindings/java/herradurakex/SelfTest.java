@@ -4,10 +4,12 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 /**
- * TODO #192/#199: end-to-end round-trip smoke test for the herradurakex
- * Java package, with fresh random keys each run — complements KatVerify's
- * fixed-vector cross-check. Covers the classical quartet ({@link Herradura})
- * and the NL/PQC quartet ({@link HerraduraNl}). Exits non-zero on any failure.
+ * TODO #192/#199/#200: end-to-end round-trip smoke test for the
+ * herradurakex Java package, with fresh random keys each run —
+ * complements KatVerify's fixed-vector cross-check. Covers the classical
+ * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
+ * and HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}). Exits
+ * non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -165,6 +167,64 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpke_nl round-trip");
+            }
+        }
+
+        // HPKS-Stern-F: sign/verify, tampered-message and corrupted-syndrome
+        // rejection (TODO #131 regression), at a small demo round count.
+        {
+            Stern.SternKeypair kp = Stern.sternFKeygen(rng);
+            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            Stern.SternSignature sig = Stern.hpksSternFSign(msg, kp.e, kp.seed, 8, rng);
+            boolean ok = Stern.hpksSternFVerify(msg, sig, kp.seed, kp.syndrome);
+            boolean rejectsTamper = !Stern.hpksSternFVerify(msg.xor(BigInteger.ONE), sig, kp.seed, kp.syndrome);
+            boolean rejectsCorruptSyn = !Stern.hpksSternFVerify(msg, sig, kp.seed, kp.syndrome.xor(BigInteger.ONE));
+            if (!ok || !rejectsTamper || !rejectsCorruptSyn) {
+                System.out.println("FAIL hpks_stern_f round-trip (verify=" + ok
+                    + " rejects_tamper=" + rejectsTamper + " rejects_corrupt_syn=" + rejectsCorruptSyn + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_stern_f round-trip");
+            }
+        }
+
+        // HPKE-Stern-F (demo Niederreiter KEM): decap(encap()) derives the
+        // same session key.
+        {
+            BigInteger seed = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(seed, rng);
+            BigInteger recovered = Stern.hpkeSternFDecap(enc.eP, seed);
+            if (!enc.k.equals(recovered)) {
+                System.out.println("FAIL hpke_stern_f round-trip");
+                fails++;
+            } else {
+                System.out.println("PASS hpke_stern_f round-trip");
+            }
+        }
+
+        // HPKE-Stern-KEM (real QC-MDPC/BGF): decap(encap()) derives the
+        // same session key. A small batch to keep the smoke test fast;
+        // dedicated DFR measurement lives in SecurityProofsCode (TODO #195).
+        {
+            Stern.QcMdpcKeypair kp = Stern.qcmdpcKeygen(rng);
+            boolean pubMatches = kp.hPub.equals(Stern.qcmdpcPubFromPriv(kp.h0, kp.h1));
+            boolean anyMismatch = false;
+            int trials = 20;
+            for (int i = 0; i < trials; i++) {
+                Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(kp.hPub, rng);
+                BigInteger recovered = Stern.qcmdpcDecapBgf(enc.syn, kp.sup0, kp.sup1);
+                // A null/mismatched result is a legitimate DFR event (~0.225%
+                // measured, TODO #195), not necessarily a bug — only flag it
+                // if it happens on every one of a small batch.
+                if (recovered != null && recovered.equals(enc.k)) { anyMismatch = false; break; }
+                anyMismatch = true;
+            }
+            if (!pubMatches || anyMismatch) {
+                System.out.println("FAIL hpke_stern_kem round-trip (pub_matches=" + pubMatches
+                    + " all_" + trials + "_trials_failed=" + anyMismatch + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpke_stern_kem round-trip");
             }
         }
 

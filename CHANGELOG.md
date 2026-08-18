@@ -2,6 +2,30 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.4.0] - 2026-08-17
+
+### Added
+- TODO #200: extended `bindings/java/herradurakex` with HPKS-Stern-F
+  (Fiat-Shamir signature over Stern's identification protocol),
+  HPKE-Stern-F (demo Niederreiter KEM), and HPKE-Stern-KEM (the real
+  QC-MDPC Niederreiter KEM with the BGF bit-flipping decoder, TODO
+  #183/#195), fixed at n=256 with the shipped toy QC-MDPC parameters
+  (r=523, d=15, t=18). Added `herradurakex.Stern` (the NL-FSCX-v1-chained
+  commitment/challenge/KEM-key hash, the Fisher-Yates permutation PRNG,
+  Stern's 3-move Sigma protocol Fiat-Shamir-compiled with demo
+  `rounds=32`/production `rounds>=219`, and the QC-MDPC/BGF KEM's GF(2)
+  [x]/(x^r-1) polynomial arithmetic and Black-Gray-Flip decoder),
+  extended `herradurakex.Codec` with the Stern-F key/ciphertext/
+  signature and HPKE-Stern-KEM key/ciphertext PEM/DER encode-decode
+  (preserving the wire format's little-endian byte-order quirk for
+  h0/h1/h_pub/syn), and extended `herradurakex.HerraduraCli` with
+  `--algo hpks-stern`/`hpke-stern`/`hpke-stern-kem` across `genpkey`,
+  `pkey`, `sign`, `verify`, `enc`, `dec`. Added
+  `CliTest/test_java_stern_interop.sh` (Java↔Python interop for all
+  three subcommand families, both directions, DFR-retry-aware for the
+  BGF KEM path) and extended `SelfTest.java`/`test_java_keygen.sh` with
+  round-trip and smoke checks. See TODO #200 for details.
+
 ## [2.3.0] - 2026-08-17
 
 ### Added

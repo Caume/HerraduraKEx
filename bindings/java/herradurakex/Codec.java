@@ -43,6 +43,8 @@ public final class Codec {
     public static final String PEM_HPKS_STERN_PUB = "HERRADURA HPKS-STERN PUBLIC KEY";
     public static final String PEM_HPKE_STERN_PRIV = "HERRADURA HPKE-STERN PRIVATE KEY";
     public static final String PEM_HPKE_STERN_PUB = "HERRADURA HPKE-STERN PUBLIC KEY";
+    public static final String PEM_HPKE_STERN_KEM_PRIV = "HERRADURA HPKE-STERN-KEM PRIVATE KEY";
+    public static final String PEM_HPKE_STERN_KEM_PUB = "HERRADURA HPKE-STERN-KEM PUBLIC KEY";
     public static final String PEM_SESSION_KEY = "HERRADURA SESSION KEY";
     public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
     public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
@@ -565,5 +567,300 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_DIGEST + ", got " + b.label);
         }
         return derParseSeq(b.der).get(0);
+    }
+
+    // -----------------------------------------------------------------
+    // HPKS-Stern-F / HPKE-Stern-F (TODO #200): key / ciphertext / signature
+    // encode-decode, byte-for-byte with HerraduraCli/herradura.py's
+    // _encode_stern_privkey/_encode_stern_pubkey/_encode_stern_ct/
+    // _pack_stern_sig / _unpack_stern_sig.
+    // -----------------------------------------------------------------
+
+    /** Encodes a Stern-F private key: SEQUENCE(e, seed, n). */
+    public static String encodeSternPrivKey(String label, BigInteger e, BigInteger seed) {
+        byte[] der = derSeq(derInt(e, NBYTES), derInt(seed, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(label, der);
+    }
+
+    public static final class SternPrivKey {
+        public final BigInteger e;
+        public final BigInteger seed;
+        public final int nbits;
+        SternPrivKey(BigInteger e, BigInteger seed, int nbits) { this.e = e; this.seed = seed; this.nbits = nbits; }
+    }
+
+    public static SternPrivKey decodeSternPrivKey(String pem, String expectedLabel) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(expectedLabel)) {
+            throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new SternPrivKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes a Stern-F public key: SEQUENCE(syndrome, seed, n). */
+    public static String encodeSternPubKey(String label, BigInteger syndrome, BigInteger seed) {
+        byte[] der = derSeq(derInt(syndrome, NBYTES), derInt(seed, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(label, der);
+    }
+
+    public static final class SternPubKey {
+        public final BigInteger syndrome;
+        public final BigInteger seed;
+        public final int nbits;
+        SternPubKey(BigInteger syndrome, BigInteger seed, int nbits) { this.syndrome = syndrome; this.seed = seed; this.nbits = nbits; }
+    }
+
+    public static SternPubKey decodeSternPubKey(String pem, String expectedLabel) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(expectedLabel)) {
+            throw new IllegalArgumentException("Expected " + expectedLabel + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new SternPubKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes an HPKE-Stern-F (demo) ciphertext: SEQUENCE(ct_syn, e_p, K, E, n). */
+    public static String encodeSternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e) {
+        byte[] der = derSeq(derInt(ctSyn, NBYTES), derInt(eP, NBYTES), derInt(k, NBYTES), derInt(e, NBYTES),
+                             derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(PEM_CIPHERTEXT, der);
+    }
+
+    public static final class SternCt {
+        public final BigInteger ctSyn;
+        public final BigInteger eP;
+        public final BigInteger k;
+        public final BigInteger e;
+        public final int nbits;
+        SternCt(BigInteger ctSyn, BigInteger eP, BigInteger k, BigInteger e, int nbits) {
+            this.ctSyn = ctSyn; this.eP = eP; this.k = k; this.e = e; this.nbits = nbits;
+        }
+    }
+
+    public static SternCt decodeSternCt(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_CIPHERTEXT)) {
+            throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new SternCt(ints.get(0), ints.get(1), ints.get(2), ints.get(3), ints.get(4).intValueExact());
+    }
+
+    /**
+     * Encodes an HPKS-Stern-F signature: SEQUENCE(n, rounds, commits_packed,
+     * challenges_packed, responses_packed). commits_packed is
+     * (c0||c1||c2) per round; challenges_packed is 2 bits/round packed
+     * 4-per-byte LSB-first; responses_packed is (resp0||resp1) per round.
+     */
+    public static String encodeSternSig(Stern.SternSignature sig) {
+        int rounds = sig.rounds();
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds);
+        byte[] challenges = packChallenges(sig.challenges);
+        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds);
+        byte[] der = derSeq(derInt(BigInteger.valueOf(Herradura.N), -1), derInt(BigInteger.valueOf(rounds), -1),
+                             derInt(commits), derInt(challenges), derInt(responses));
+        return pemWrap(PEM_SIGNATURE, der);
+    }
+
+    public static final class SternSigDecoded {
+        public final int nbits;
+        public final Stern.SternSignature sig;
+        SternSigDecoded(int nbits, Stern.SternSignature sig) { this.nbits = nbits; this.sig = sig; }
+    }
+
+    public static SternSigDecoded decodeSternSig(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_SIGNATURE)) {
+            throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int nbits = ints.get(0).intValueExact();
+        int rounds = ints.get(1).intValueExact();
+        int nbytes = nbits / 8;
+        byte[] commits = toFixedBytes(ints.get(2), 3 * rounds * nbytes);
+        byte[] challenges = toFixedBytes(ints.get(3), (rounds + 3) / 4);
+        byte[] responses = toFixedBytes(ints.get(4), 2 * rounds * nbytes);
+
+        BigInteger[] c0 = new BigInteger[rounds], c1 = new BigInteger[rounds], c2 = new BigInteger[rounds];
+        for (int i = 0; i < rounds; i++) {
+            c0[i] = new BigInteger(1, slice(commits, (3 * i) * nbytes, nbytes));
+            c1[i] = new BigInteger(1, slice(commits, (3 * i + 1) * nbytes, nbytes));
+            c2[i] = new BigInteger(1, slice(commits, (3 * i + 2) * nbytes, nbytes));
+        }
+        int[] ch = unpackChallenges(challenges, rounds);
+        BigInteger[] resp0 = new BigInteger[rounds], resp1 = new BigInteger[rounds];
+        for (int i = 0; i < rounds; i++) {
+            resp0[i] = new BigInteger(1, slice(responses, (2 * i) * nbytes, nbytes));
+            resp1[i] = new BigInteger(1, slice(responses, (2 * i + 1) * nbytes, nbytes));
+        }
+        return new SternSigDecoded(nbits, new Stern.SternSignature(c0, c1, c2, ch, resp0, resp1));
+    }
+
+    private static byte[] packSternTriples(BigInteger[] a, BigInteger[] b, BigInteger[] c, int rounds) {
+        int nbytes = NBYTES;
+        byte[] out = new byte[3 * rounds * nbytes];
+        for (int i = 0; i < rounds; i++) {
+            System.arraycopy(toFixedBytes(a[i], nbytes), 0, out, (3 * i) * nbytes, nbytes);
+            System.arraycopy(toFixedBytes(b[i], nbytes), 0, out, (3 * i + 1) * nbytes, nbytes);
+            System.arraycopy(toFixedBytes(c[i], nbytes), 0, out, (3 * i + 2) * nbytes, nbytes);
+        }
+        return out;
+    }
+
+    private static byte[] packSternPairs(BigInteger[] a, BigInteger[] b, int rounds) {
+        int nbytes = NBYTES;
+        byte[] out = new byte[2 * rounds * nbytes];
+        for (int i = 0; i < rounds; i++) {
+            System.arraycopy(toFixedBytes(a[i], nbytes), 0, out, (2 * i) * nbytes, nbytes);
+            System.arraycopy(toFixedBytes(b[i], nbytes), 0, out, (2 * i + 1) * nbytes, nbytes);
+        }
+        return out;
+    }
+
+    private static byte[] packChallenges(int[] challenges) {
+        byte[] out = new byte[(challenges.length + 3) / 4];
+        for (int i = 0; i < challenges.length; i++) {
+            out[i / 4] |= (byte) ((challenges[i] & 3) << ((i % 4) * 2));
+        }
+        return out;
+    }
+
+    private static int[] unpackChallenges(byte[] packed, int rounds) {
+        int[] out = new int[rounds];
+        for (int i = 0; i < rounds; i++) {
+            out[i] = (packed[i / 4] >> ((i % 4) * 2)) & 3;
+        }
+        return out;
+    }
+
+    private static byte[] slice(byte[] src, int off, int len) {
+        byte[] out = new byte[len];
+        System.arraycopy(src, off, out, 0, len);
+        return out;
+    }
+
+    // -----------------------------------------------------------------
+    // HPKE-Stern-KEM (TODO #200): real QC-MDPC/BGF Niederreiter KEM key /
+    // ciphertext encode-decode, byte-for-byte with HerraduraCli/herradura.py's
+    // _encode_kem_privkey/_encode_kem_pubkey/_encode_kem_ct. h0/h1/h_pub are
+    // serialized little-endian (unlike the rest of the suite's big-endian
+    // convention) — the DER INTEGER's raw content bytes ARE the little-endian
+    // byte string, per herradura.py's h0.to_bytes(rb,'little') reinterpreted
+    // as a big-endian DER integer.
+    // -----------------------------------------------------------------
+
+    private static final int QCMDPC_RB = (Stern.QCMDPC_R + 7) / 8; // 66
+
+    public static String encodeKemPrivKey(BigInteger h0, BigInteger h1, int[] sup0, int[] sup1) {
+        byte[] der = derSeq(
+            derInt(Stern.toFixedBytesLE(h0, QCMDPC_RB)),
+            derInt(Stern.toFixedBytesLE(h1, QCMDPC_RB)),
+            derInt(encodeSupportSet(sup0)),
+            derInt(encodeSupportSet(sup1)),
+            derInt(BigInteger.valueOf(Stern.QCMDPC_R), -1),
+            derInt(BigInteger.valueOf(Stern.QCMDPC_D), -1));
+        return pemWrap(PEM_HPKE_STERN_KEM_PRIV, der);
+    }
+
+    public static final class KemPrivKey {
+        public final BigInteger h0, h1;
+        public final int[] sup0, sup1;
+        public final int r, d;
+        KemPrivKey(BigInteger h0, BigInteger h1, int[] sup0, int[] sup1, int r, int d) {
+            this.h0 = h0; this.h1 = h1; this.sup0 = sup0; this.sup1 = sup1; this.r = r; this.d = d;
+        }
+    }
+
+    public static KemPrivKey decodeKemPrivKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKE_STERN_KEM_PRIV)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PRIV + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int r = ints.get(4).intValueExact();
+        int d = ints.get(5).intValueExact();
+        int rb = (r + 7) / 8;
+        BigInteger h0 = leReverseToInt(toFixedBytes(ints.get(0), rb));
+        BigInteger h1 = leReverseToInt(toFixedBytes(ints.get(1), rb));
+        int[] sup0 = decodeSupportSet(toFixedBytes(ints.get(2), d * 2), d);
+        int[] sup1 = decodeSupportSet(toFixedBytes(ints.get(3), d * 2), d);
+        return new KemPrivKey(h0, h1, sup0, sup1, r, d);
+    }
+
+    public static String encodeKemPubKey(BigInteger hPub) {
+        byte[] der = derSeq(derInt(Stern.toFixedBytesLE(hPub, QCMDPC_RB)), derInt(BigInteger.valueOf(Stern.QCMDPC_R), -1));
+        return pemWrap(PEM_HPKE_STERN_KEM_PUB, der);
+    }
+
+    public static final class KemPubKey {
+        public final BigInteger hPub;
+        public final int r;
+        KemPubKey(BigInteger hPub, int r) { this.hPub = hPub; this.r = r; }
+    }
+
+    public static KemPubKey decodeKemPubKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKE_STERN_KEM_PUB)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PUB + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int r = ints.get(1).intValueExact();
+        int rb = (r + 7) / 8;
+        BigInteger hPub = leReverseToInt(toFixedBytes(ints.get(0), rb));
+        return new KemPubKey(hPub, r);
+    }
+
+    /** Encodes an HPKE-Stern-KEM ciphertext: SEQUENCE(syn, E, r). */
+    public static String encodeKemCt(BigInteger syn, BigInteger e) {
+        byte[] der = derSeq(derInt(Stern.toFixedBytesLE(syn, QCMDPC_RB)), derInt(e, NBYTES),
+                             derInt(BigInteger.valueOf(Stern.QCMDPC_R), -1));
+        return pemWrap(PEM_CIPHERTEXT, der);
+    }
+
+    public static final class KemCt {
+        public final BigInteger syn;
+        public final BigInteger e;
+        public final int r;
+        KemCt(BigInteger syn, BigInteger e, int r) { this.syn = syn; this.e = e; this.r = r; }
+    }
+
+    public static KemCt decodeKemCt(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_CIPHERTEXT)) {
+            throw new IllegalArgumentException("Expected " + PEM_CIPHERTEXT + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int r = ints.get(2).intValueExact();
+        int rb = (r + 7) / 8;
+        BigInteger syn = leReverseToInt(toFixedBytes(ints.get(0), rb));
+        return new KemCt(syn, ints.get(1), r);
+    }
+
+    private static byte[] encodeSupportSet(int[] sup) {
+        int[] sorted = sup.clone();
+        java.util.Arrays.sort(sorted);
+        byte[] out = new byte[sorted.length * 2];
+        for (int i = 0; i < sorted.length; i++) {
+            out[2 * i] = (byte) (sorted[i] >> 8);
+            out[2 * i + 1] = (byte) sorted[i];
+        }
+        return out;
+    }
+
+    private static int[] decodeSupportSet(byte[] raw, int d) {
+        int[] out = new int[d];
+        for (int i = 0; i < d; i++) {
+            out[i] = ((raw[2 * i] & 0xff) << 8) | (raw[2 * i + 1] & 0xff);
+        }
+        return out;
+    }
+
+    /** Given bytes that ARE a little-endian serialization of some value,
+     * reverses them and reads big-endian to recover that value. */
+    private static BigInteger leReverseToInt(byte[] leBytes) {
+        byte[] rev = new byte[leBytes.length];
+        for (int i = 0; i < leBytes.length; i++) rev[i] = leBytes[leBytes.length - 1 - i];
+        return new BigInteger(1, rev);
     }
 }

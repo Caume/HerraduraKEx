@@ -9815,3 +9815,77 @@ four NL/PQC protocols and updated `test_java_keygen.sh`'s "unsupported
 algo" probe (previously `hkex-rnl`, now genuinely out-of-scope
 `hpke-stern`) since `hkex-rnl` is no longer rejected. Updated
 `bindings/java/README.md`.
+
+### #200: Java port of Stern-F/Niederreiter (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM)
+
+Part of the #196 breakdown; needs TODO #198. Extend
+`bindings/java/herradurakex` with the Stern identification protocol
+(Fiat-Shamir signature) and Niederreiter KEM, including the real BGF
+QC-MDPC decoder (`qcmdpc_keygen`/`encap`/`decap_bgf`, TODO #183) for
+`hpke-stern-kem` — not just the demo `hpke-stern` path. Note TODO #195's
+still-open QC-MDPC DFR flakiness when writing interop tests: a fresh
+random run can legitimately hit a decode failure, so tests should expect
+that rather than treating every failure as a bug. Add CLI subcommands
+and interop tests.
+
+Status: **DONE v2.4.0** — added `bindings/java/herradurakex.Stern`, a
+byte-for-byte port of `"Herradura cryptographic suite.py"`'s Stern
+identification protocol and Niederreiter KEM machinery, fixed at n=256
+(matching this binding's existing scope): the shared helpers
+(`csprngWeightT`, `sternHash` — the NL-FSCX-v1-chained, HFSCX-256-DM-
+finalized domain-separated hash used for commitments/challenges/KEM-key
+derivation, `sternMatrixRow`/`sternBuildH`/`sternSyndromeH`, and
+`sternGenPerm`/`sternApplyPerm` — the Lemire-multiply-shift Fisher-Yates
+permutation PRNG); `sternFKeygen`, `hpksSternFSign`/`hpksSternFVerify`
+(Stern's 3-move Sigma protocol, Fiat-Shamir-chained challenges, demo
+default `rounds=32`/production `rounds>=219` with the same non-fatal
+soundness warning as the Python CLI); `hpkeSternFEncapWithE`/
+`hpkeSternFDecap` (the demo Niederreiter KEM that transmits e' in the
+clear); and the real QC-MDPC/BGF Niederreiter KEM at the shipped toy
+parameters (r=523, d=15, t=18) — `qcpMulSparse`/`qcpMul`/`qcpInv` (GF(2)
+[x]/(x^r-1) polynomial arithmetic, extended-Euclid inverse),
+`QcMdpcPrf` (the NL-FSCX-v1 XOF, 16 words/block popped highest-word-
+first, exactly matching Python's list-as-stack consumption order),
+`qcmdpcKeygen`/`qcmdpcEncap`/`qcmdpcBgfDecode`/`qcmdpcDecapBgf` (the
+Black-Gray-Flip bit-flipping decoder, Drucker-Gueron-Kostic 2019), and
+`qcmdpcPubFromPriv` for `pkey --pubout`. Preserved every wire-format
+footgun found during porting: the little-endian byte serialization of
+`e0`/`e1`/`h0`/`h1`/`h_pub`/`syn` (versus the rest of the suite's
+big-endian convention), and the biased `mod 3` Fiat-Shamir challenge
+derivation (deliberately not rejection-sampled, since the verifier must
+be able to recompute it deterministically).
+
+Extended `Codec` with `PEM_HPKE_STERN_KEM_PRIV`/`PUB` label constants
+and `encode`/`decodeSternPrivKey`/`SternPubKey`/`SternCt`/`SternSig`
+(the packed-commits/packed-challenges/packed-responses signature DER
+shape) plus `encode`/`decodeKemPrivKey`/`KemPubKey`/`KemCt` (with the
+little-endian-bytes-as-DER-INTEGER-content round trip preserved exactly,
+including the sorted 2-byte-per-position support-set encoding).
+
+Extended `HerraduraCli` with `--algo hpks-stern`/`hpke-stern`/
+`hpke-stern-kem` across `genpkey`, `pkey` (`--pubout`/`--text`), `sign`/
+`verify` (`hpks-stern` only, `--rounds`), and `enc`/`dec` (`hpke-stern`/
+`hpke-stern-kem`, both reusing the classical linear `fscxRevolve` for
+payload encryption, matching HPKE's `I_STEPS`/`R_STEPS` construction) —
+printing the same demo-strength stderr warning as the Python/C/Go CLIs
+for `hpks-stern`/`hpke-stern` (not for the production-shaped
+`hpke-stern-kem`). `dec --algo hpke-stern-kem` reports a BGF decode
+failure with a message containing "DFR event or corrupt ciphertext",
+matching the retry-detection pattern already used by
+`test_hybrid_kex_interop.sh`.
+
+Verified full bidirectional Java↔Python CLI interop for all three
+subcommand families (sign in one language/verify in the other; encrypt
+in one/decrypt in the other, including the real BGF decoder) before
+writing any test files — not just internal self-consistency. Added
+`CliTest/test_java_stern_interop.sh` (6 cross-language round trips, DFR-
+retry-aware for the KEM path per TODO #195's measured ~0.225% DFR) and
+extended `CliTest/test_java_keygen.sh` (genpkey/pkey smoke test for all
+three new algos, with the "unsupported algo" probe moved to the now
+genuinely out-of-scope `hcred`) and `SelfTest` (HPKS-Stern-F sign/verify
+plus tamper- and corrupted-syndrome-rejection checks, HPKE-Stern-F demo
+KEM round trip, and an HPKE-Stern-KEM round trip tolerant of an
+occasional legitimate DFR event across a small trial batch). Updated
+`bindings/java/README.md` and `CLAUDE.md`'s repository-structure
+section. The Stern-Ring OR-composition ring signature remains out of
+scope for this binding.
