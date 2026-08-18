@@ -89,12 +89,18 @@ check "genpkey hpks-xmss" "$TMP/xmss.pem" "HPKS-XMSS PRIVATE KEY"
 $CLI pkey --in "$TMP/xmss.pem" --pubout --out "$TMP/xmss_pub.pem"
 check "pkey pubout hpks-xmss" "$TMP/xmss_pub.pem" "HPKS-XMSS PUBLIC KEY"
 
+# ── genpkey hcred (TODO #202) ────────────────────────────────────────────
+$CLI genpkey --algo hcred --out "$TMP/hcred.pem"
+check "genpkey hcred" "$TMP/hcred.pem" "HCRED PRIVATE KEY"
+$CLI pkey --in "$TMP/hcred.pem" --pubout --out "$TMP/hcred_pub.pem"
+check "pkey pubout hcred" "$TMP/hcred_pub.pem" "HCRED PUBLIC KEY"
+
 # ── genpkey rejects unsupported algos honestly (no silent wrong output) ────
-if $CLI genpkey --algo hcred --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
-    echo "FAIL genpkey hcred should be rejected (out of this Java CLI's scope)"
+if $CLI genpkey --algo hpks-zkp-nl --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
+    echo "FAIL genpkey hpks-zkp-nl should be rejected (out of this Java CLI's scope)"
     FAIL=$((FAIL+1))
 else
-    echo "PASS genpkey hcred correctly rejected: $(cat "$TMP/err.log")"
+    echo "PASS genpkey hpks-zkp-nl correctly rejected: $(cat "$TMP/err.log")"
     PASS=$((PASS+1))
 fi
 

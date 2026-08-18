@@ -4,13 +4,13 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 /**
- * TODO #192/#199/#200/#201: end-to-end round-trip smoke test for the
+ * TODO #192/#199/#200/#201/#202: end-to-end round-trip smoke test for the
  * herradurakex Java package, with fresh random keys each run —
  * complements KatVerify's fixed-vector cross-check. Covers the classical
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
- * ({@link Oprf}), and HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}).
- * Exits non-zero on any failure.
+ * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
+ * and HCRED ({@link Hcred}). Exits non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -284,6 +284,57 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpks_xmss_f round-trip");
+            }
+        }
+
+        // HCRED: prove/verify completeness, plus replay/tamper/wrong-key/
+        // split-witness rejection and an issuer credential round-trip.
+        // Uses the library's own demo round count (4) to keep the smoke
+        // test fast; CliTest/test_java_hcred_interop.sh exercises more
+        // rounds via the CLI.
+        {
+            int rounds = Hcred.DEMO_ROUNDS;
+            int[] mBase = HerraduraNl.rnlMPoly(Herradura.N);
+            int[] aRand = HerraduraNl.rnlRandPoly(Herradura.N, HerraduraNl.RNLQ, rng);
+            int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
+            Hcred.UserKeypair kp = Hcred.userKeygen(mBlind, rng);
+            BigInteger seedH = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BigInteger y = Hcred.syndrome(seedH, kp.e);
+            byte[] msg = "self-test hcred presentation".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] tamperMsg = "tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+            boolean ok, rejectsTamper, rejectsCorruptSyn, rejectsWrongKey, rejectsSplitWitness, credOk;
+            try {
+                Hcred.Proof proof = Hcred.prove(kp.s, mBlind, kp.c, seedH, y, rounds, msg, rng);
+                ok = Hcred.verify(mBlind, kp.c, seedH, y, proof, rounds, msg);
+                rejectsTamper = !Hcred.verify(mBlind, kp.c, seedH, y, proof, rounds, tamperMsg);
+                rejectsCorruptSyn = !Hcred.verify(mBlind, kp.c, seedH, y.xor(BigInteger.ONE), proof, rounds, msg);
+
+                Hcred.UserKeypair kp2 = Hcred.userKeygen(mBlind, rng);
+                rejectsWrongKey = !Hcred.verify(mBlind, kp2.c, seedH, y, proof, rounds, msg);
+
+                boolean splitCaught;
+                try {
+                    Hcred.prove(kp2.s, mBlind, kp2.c, seedH, y, rounds, msg, rng);
+                    splitCaught = false;
+                } catch (IllegalArgumentException e) {
+                    splitCaught = true;
+                }
+                rejectsSplitWitness = splitCaught;
+
+                Stern.SternKeypair isk = Stern.sternFKeygen(rng);
+                Stern.SternSignature credSig = Hcred.issue(mBlind, kp.c, seedH, y, Herradura.N, isk.e, isk.seed, 8, rng);
+                credOk = Hcred.credVerify(mBlind, kp.c, seedH, y, Herradura.N, credSig, isk.seed, isk.syndrome);
+            } catch (IllegalArgumentException e) {
+                ok = rejectsTamper = rejectsCorruptSyn = rejectsWrongKey = rejectsSplitWitness = credOk = false;
+            }
+            if (!ok || !rejectsTamper || !rejectsCorruptSyn || !rejectsWrongKey || !rejectsSplitWitness || !credOk) {
+                System.out.println("FAIL hcred round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
+                    + " rejects_corrupt_syn=" + rejectsCorruptSyn + " rejects_wrong_key=" + rejectsWrongKey
+                    + " rejects_split_witness=" + rejectsSplitWitness + " cred_verify=" + credOk + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hcred round-trip");
             }
         }
 

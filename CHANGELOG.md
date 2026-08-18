@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.6.0] - 2026-08-18
+
+### Added
+- TODO #202: extended `bindings/java/herradurakex` with HCRED, the
+  hybrid Ring-LWR + Stern-F credential — a single unified ZKBoo-(2,3)
+  MPCitH circuit that proves both the Ring-LWR rounding relation and the
+  Stern-F code-syndrome relation for the same witness in one proof.
+  Added `herradurakex.Hcred` (`userKeygen`/`syndrome`/`prove`/`verify`,
+  plus `issue`/`credVerify` for issuer credentials, a thin wrapper over
+  `Stern`'s existing HPKS-Stern-F signature — no separate signature
+  scheme needed), fixed at n=256 to reuse `Stern`'s existing 256-bit-only
+  parity-check-matrix PRF rather than porting a second, arbitrary-width
+  NL-FSCX v1 implementation. Extended `Codec` with the corresponding
+  PEM/DER encode-decode (matching `HerraduraCli/codec.py`'s unusual
+  flat/offset-parsed body format for the key and proof PEMs) and
+  `HerraduraCli` with `--algo hcred` and the `cred-issue`/`cred-prove`/
+  `cred-verify` subcommands. Verified full bidirectional Java<->Python
+  interop — including issuer-credential verification — before writing
+  any test files. Added `CliTest/test_java_hcred_interop.sh` and
+  extended `SelfTest.java`/`test_java_keygen.sh`. The KKW
+  preprocessing-model transcript variant remains out of scope. See TODO
+  #202 for details.
+
 ## [2.5.0] - 2026-08-18
 
 ### Added

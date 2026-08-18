@@ -27,14 +27,16 @@ import java.util.Map;
  * {@code --algo hpks-stern}/{@code hpke-stern}) and HPKE-Stern-KEM (the
  * real QC-MDPC/BGF Niederreiter KEM, {@code --algo hpke-stern-kem} —
  * {@link Stern}, TODO #200), the OPRF (2HashDH over GF(2^256)*, {@code
- * oprf-blind}/{@code oprf-eval}/{@code oprf-unblind} — {@link Oprf}), and
+ * oprf-blind}/{@code oprf-eval}/{@code oprf-unblind} — {@link Oprf}),
  * HPKS-WOTS-F/HPKS-XMSS-F (one-time and stateful multi-use hash-based
  * signatures, {@code --algo hpks-wots}/{@code hpks-xmss} — {@link Wots},
- * {@link Xmss}, TODO #201).
+ * {@link Xmss}, TODO #201), and HCRED (the hybrid Ring-LWR + Stern-F
+ * credential, {@code --algo hcred} plus {@code cred-issue}/
+ * {@code cred-prove}/{@code cred-verify} — {@link Hcred}, TODO #202).
  *
- * Out of scope (TODO #202/#203 and beyond): HCRED, aPAKE, rnl-sigma,
- * ZKP-NL/ZKP-RNL, hybrid-rnl-stern, the Stern-Ring OR-composition
- * signature, and the {@code --kdf}/{@code --aead} CLI options.
+ * Out of scope (TODO #203 and beyond): aPAKE, rnl-sigma, ZKP-NL/ZKP-RNL,
+ * hybrid-rnl-stern, the Stern-Ring OR-composition signature, and the
+ * {@code --kdf}/{@code --aead} CLI options.
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
  * decfile. PEM/DER wire format is byte-for-byte compatible with the
@@ -89,6 +91,9 @@ public final class HerraduraCli {
             case "oprf-blind":   cmdOprfBlind(opt);   break;
             case "oprf-eval":    cmdOprfEval(opt);    break;
             case "oprf-unblind": cmdOprfUnblind(opt); break;
+            case "cred-issue":   cmdCredIssue(opt);   break;
+            case "cred-prove":   cmdCredProve(opt);   break;
+            case "cred-verify":  cmdCredVerify(opt);  break;
             default: throw new CliError(cmd + ": unknown subcommand");
         }
     }
@@ -191,6 +196,16 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeWotsPrivKey(masterSeed, 0));
             writeIdxState(out, 0); // 0 = unused (one-time key)
             System.err.println("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.");
+            return;
+        }
+        if (algo.equals("hcred")) {
+            int[] mBase = HerraduraNl.rnlMPoly(Herradura.N);
+            int[] aRand = HerraduraNl.rnlRandPoly(Herradura.N, HerraduraNl.RNLQ, RNG);
+            int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
+            Hcred.UserKeypair kp = Hcred.userKeygen(mBlind, RNG);
+            BigInteger seedH = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
+            BigInteger syndr = Hcred.syndrome(seedH, kp.e);
+            writeString(out, Codec.encodeHcredPrivKey(kp.s, kp.c, mBlind, seedH, syndr));
             return;
         }
         if (algo.equals("hpks-xmss")) {
@@ -298,6 +313,20 @@ public final class HerraduraCli {
             } else if (opt.containsKey("text")) {
                 System.out.println("algorithm : hpks-wots");
                 System.out.println("leaf_idx  : " + pk.leafIdx);
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
+        if (block.label.equals(Codec.PEM_HCRED_PRIV)) {
+            Codec.HcredPrivKey pk = Codec.decodeHcredPrivKey(pemIn);
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeHcredPubKey(pk.c, pk.m, pk.seedH, pk.syndr));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hcred");
+                System.out.println("n         : " + pk.n);
+                System.out.println("W (weight): " + Hcred.phi(pk.s).bitCount());
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -854,6 +883,94 @@ public final class HerraduraCli {
         BigInteger f = Oprf.unblind(eval.pub, state.r);
         String out = opt.getOrDefault("out", "-");
         writeString(out, hexBytes(toFixedBytes(f, state.nbits / 8)) + "\n");
+    }
+
+    // -----------------------------------------------------------------
+    // cred-issue / cred-prove / cred-verify (HCRED, TODO #202)
+    // -----------------------------------------------------------------
+
+    /** Loads (c, m, seedH, syndr) from an HCRED PUBLIC or PRIVATE KEY PEM. */
+    private static Codec.HcredPubKey loadHcredPubkey(String path) throws IOException {
+        String pem = readString(path);
+        Codec.PemBlock block = Codec.pemUnwrap(pem);
+        if (block.label.equals(Codec.PEM_HCRED_PRIV)) {
+            Codec.HcredPrivKey pk = Codec.decodeHcredPrivKey(pem);
+            return new Codec.HcredPubKey(pk.c, pk.m, pk.seedH, pk.syndr, pk.n);
+        }
+        if (!block.label.equals(Codec.PEM_HCRED_PUB)) {
+            throw new CliError("Expected HCRED PUBLIC KEY (or PRIVATE KEY), got " + block.label);
+        }
+        return Codec.decodeHcredPubKey(pem);
+    }
+
+    private static final int HCRED_SIGN_ROUNDS = 219; // production Stern-F soundness
+    private static final int HCRED_CLI_ROUNDS = 219;  // production ZKBoo soundness
+
+    private static void cmdCredIssue(Map<String, String> opt) throws IOException {
+        Codec.HcredPubKey pub = loadHcredPubkey(req(opt, "in", "cred-issue"));
+        String ourPem = readString(req(opt, "our", "cred-issue"));
+        Codec.PemBlock ourBlock = Codec.pemUnwrap(ourPem);
+        if (!ourBlock.label.equals(Codec.PEM_HPKS_STERN_PRIV) && !ourBlock.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
+            throw new CliError("cred-issue: --our must be an hpks-stern private key, got " + ourBlock.label);
+        }
+        Codec.SternPrivKey issuer = Codec.decodeSternPrivKey(ourPem, ourBlock.label);
+        BigInteger issuerSyn = Stern.sternSyndrome(issuer.seed, issuer.e);
+
+        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_SIGN_ROUNDS;
+        System.err.println("warning: HPKS-Stern-F/HPKE-Stern-F are demo-strength illustrations of a "
+            + "code-based construction, not a production-hardened scheme at these parameters.");
+        Stern.SternSignature credSig = Hcred.issue(pub.m, pub.c, pub.seedH, pub.syndr, pub.n,
+            issuer.e, issuer.seed, rounds, RNG);
+        writeString(opt.getOrDefault("out", "-"), Codec.encodeHcredCredential(credSig));
+    }
+
+    private static void cmdCredProve(Map<String, String> opt) throws IOException {
+        String pem = readString(req(opt, "in", "cred-prove"));
+        Codec.PemBlock block = Codec.pemUnwrap(pem);
+        if (!block.label.equals(Codec.PEM_HCRED_PRIV)) {
+            throw new CliError("cred-prove: --in must be an HCRED PRIVATE KEY PEM, got " + block.label);
+        }
+        Codec.HcredPrivKey pk = Codec.decodeHcredPrivKey(pem);
+        byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : HCRED_CLI_ROUNDS;
+        Hcred.Proof proof;
+        try {
+            proof = Hcred.prove(pk.s, pk.m, pk.c, pk.seedH, pk.syndr, rounds, msg, RNG);
+        } catch (IllegalArgumentException e) {
+            throw new CliError("cred-prove: " + e.getMessage());
+        }
+        writeString(opt.getOrDefault("out", "-"), Codec.encodeHcredProof(proof));
+    }
+
+    private static void cmdCredVerify(Map<String, String> opt) throws IOException {
+        Hcred.Proof proof = Codec.decodeHcredProof(readString(req(opt, "proof", "cred-verify")));
+        Codec.HcredPubKey pub = loadHcredPubkey(req(opt, "pubkey", "cred-verify"));
+        byte[] msg = opt.getOrDefault("msg", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        int rounds = proof.rounds.size();
+
+        boolean okProof = Hcred.verify(pub.m, pub.c, pub.seedH, pub.syndr, proof, rounds, msg);
+        if (!okProof) {
+            System.out.println("Verification FAILED (proof)");
+            System.exit(1);
+        }
+
+        if (opt.containsKey("cred")) {
+            Codec.SternSigDecoded credSig = Codec.decodeHcredCredential(readString(opt.get("cred")));
+            String issuerPem = readString(req(opt, "issuer", "cred-verify"));
+            Codec.PemBlock issuerBlock = Codec.pemUnwrap(issuerPem);
+            if (!issuerBlock.label.equals(Codec.PEM_HPKS_STERN_PUB) && !issuerBlock.label.equals(Codec.PEM_HPKE_STERN_PUB)) {
+                throw new CliError("cred-verify: --issuer must be an hpks-stern public key, got " + issuerBlock.label);
+            }
+            Codec.SternPubKey issuerPub = Codec.decodeSternPubKey(issuerPem, issuerBlock.label);
+            boolean okCred = Hcred.credVerify(pub.m, pub.c, pub.seedH, pub.syndr, pub.n,
+                credSig.sig, issuerPub.seed, issuerPub.syndrome);
+            if (!okCred) {
+                System.out.println("Verification FAILED (credential)");
+                System.exit(1);
+            }
+            System.out.println("Credential OK");
+        }
+        System.out.println("Proof OK");
     }
 
     // -----------------------------------------------------------------
