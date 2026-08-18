@@ -45,6 +45,15 @@ public final class Codec {
     public static final String PEM_HPKE_STERN_PUB = "HERRADURA HPKE-STERN PUBLIC KEY";
     public static final String PEM_HPKE_STERN_KEM_PRIV = "HERRADURA HPKE-STERN-KEM PRIVATE KEY";
     public static final String PEM_HPKE_STERN_KEM_PUB = "HERRADURA HPKE-STERN-KEM PUBLIC KEY";
+    public static final String PEM_OPRF_PRIV = "HERRADURA OPRF PRIVATE KEY";
+    public static final String PEM_OPRF_STATE = "HERRADURA OPRF CLIENT STATE";
+    public static final String PEM_OPRF_EVAL = "HERRADURA OPRF EVALUATION";
+    public static final String PEM_HPKS_WOTS_PRIV = "HERRADURA HPKS-WOTS PRIVATE KEY";
+    public static final String PEM_HPKS_WOTS_PUB = "HERRADURA HPKS-WOTS PUBLIC KEY";
+    public static final String PEM_HPKS_WOTS_SIG = "HERRADURA HPKS-WOTS SIGNATURE";
+    public static final String PEM_HPKS_XMSS_PRIV = "HERRADURA HPKS-XMSS PRIVATE KEY";
+    public static final String PEM_HPKS_XMSS_PUB = "HERRADURA HPKS-XMSS PUBLIC KEY";
+    public static final String PEM_HPKS_XMSS_SIG = "HERRADURA HPKS-XMSS SIGNATURE";
     public static final String PEM_SESSION_KEY = "HERRADURA SESSION KEY";
     public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
     public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
@@ -862,5 +871,229 @@ public final class Codec {
         byte[] rev = new byte[leBytes.length];
         for (int i = 0; i < leBytes.length; i++) rev[i] = leBytes[leBytes.length - 1 - i];
         return new BigInteger(1, rev);
+    }
+
+    // -----------------------------------------------------------------
+    // OPRF (TODO #201): key / client-state / evaluation encode-decode,
+    // byte-for-byte with HerraduraCli/herradura.py's genpkey --algo oprf,
+    // cmd_oprf_blind/cmd_oprf_eval.
+    // -----------------------------------------------------------------
+
+    /** Encodes an OPRF private key: SEQUENCE(k, nbits) — same shape as a
+     * classical public key, so {@link #decodePubKey} reads it back too. */
+    public static String encodeOprfPrivKey(BigInteger k) {
+        return encodePubKey(PEM_OPRF_PRIV, k);
+    }
+
+    public static PubKey decodeOprfPrivKey(String pem) {
+        return decodePubKey(pem, PEM_OPRF_PRIV);
+    }
+
+    /** Encodes an OPRF client state: SEQUENCE(r, alpha, nbits). */
+    public static String encodeOprfState(BigInteger r, BigInteger alpha) {
+        byte[] der = derSeq(derInt(r, NBYTES), derInt(alpha, NBYTES), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(PEM_OPRF_STATE, der);
+    }
+
+    public static final class OprfState {
+        public final BigInteger r;
+        public final BigInteger alpha;
+        public final int nbits;
+        OprfState(BigInteger r, BigInteger alpha, int nbits) { this.r = r; this.alpha = alpha; this.nbits = nbits; }
+    }
+
+    public static OprfState decodeOprfState(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_OPRF_STATE)) {
+            throw new IllegalArgumentException("Expected " + PEM_OPRF_STATE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new OprfState(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes an OPRF evaluation: SEQUENCE(beta, nbits) — same shape as a
+     * classical public key. */
+    public static String encodeOprfEval(BigInteger beta) {
+        return encodePubKey(PEM_OPRF_EVAL, beta);
+    }
+
+    public static PubKey decodeOprfEval(String pem) {
+        return decodePubKey(pem, PEM_OPRF_EVAL);
+    }
+
+    // -----------------------------------------------------------------
+    // HPKS-WOTS-F (TODO #201): private key / public key / signature
+    // encode-decode, byte-for-byte with HerraduraCli/herradura.py's
+    // _encode_wots_privkey/_encode_wots_pubkey/_pack_wots_sig.
+    // -----------------------------------------------------------------
+
+    public static String encodeWotsPrivKey(byte[] masterSeed, int leafIdx) {
+        byte[] der = derSeq(derInt(masterSeed), derInt(BigInteger.valueOf(leafIdx), -1));
+        return pemWrap(PEM_HPKS_WOTS_PRIV, der);
+    }
+
+    public static final class WotsPrivKey {
+        public final byte[] masterSeed;
+        public final int leafIdx;
+        WotsPrivKey(byte[] masterSeed, int leafIdx) { this.masterSeed = masterSeed; this.leafIdx = leafIdx; }
+    }
+
+    public static WotsPrivKey decodeWotsPrivKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_WOTS_PRIV)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_PRIV + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        byte[] seed = toFixedBytes(ints.get(0), 32);
+        return new WotsPrivKey(seed, ints.get(1).intValueExact());
+    }
+
+    /** Public key PEM: the L=67 chain endpoints (L*32 bytes) + L. */
+    public static String encodeWotsPubKey(BigInteger[] pk) {
+        byte[] blob = Wots.pkBytes(pk);
+        byte[] der = derSeq(derInt(blob), derInt(BigInteger.valueOf(pk.length), -1));
+        return pemWrap(PEM_HPKS_WOTS_PUB, der);
+    }
+
+    public static BigInteger[] decodeWotsPubKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_WOTS_PUB)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_PUB + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int ell = ints.get(1).intValueExact();
+        int nbytes = Herradura.N / 8;
+        byte[] blob = toFixedBytes(ints.get(0), ell * nbytes);
+        return chunkToInts(blob, ell, nbytes);
+    }
+
+    /** Signature PEM: the L=67 chain values (L*32 bytes) + L. */
+    public static String encodeWotsSig(BigInteger[] sig) {
+        byte[] blob = Wots.pkBytes(sig);
+        byte[] der = derSeq(derInt(blob), derInt(BigInteger.valueOf(sig.length), -1));
+        return pemWrap(PEM_HPKS_WOTS_SIG, der);
+    }
+
+    public static BigInteger[] decodeWotsSig(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_WOTS_SIG)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_SIG + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int ell = ints.get(1).intValueExact();
+        int nbytes = Herradura.N / 8;
+        byte[] blob = toFixedBytes(ints.get(0), ell * nbytes);
+        return chunkToInts(blob, ell, nbytes);
+    }
+
+    // -----------------------------------------------------------------
+    // HPKS-XMSS-F (TODO #201): private key / public key / signature
+    // encode-decode, byte-for-byte with HerraduraCli/herradura.py's
+    // _encode_xmss_privkey/_encode_xmss_pubkey/_pack_xmss_sig. The next-
+    // unused leaf index is authoritative in the CLI's <keyfile>.idx sidecar
+    // file, not this PEM's embedded next_idx field (kept for wire-format
+    // parity with the Python/C/Go CLIs).
+    // -----------------------------------------------------------------
+
+    public static String encodeXmssPrivKey(byte[] masterSeed, int h, int nextIdx, List<byte[]> leafHashes) {
+        byte[] blob = concatAll(leafHashes);
+        byte[] der = derSeq(derInt(masterSeed), derInt(BigInteger.valueOf(h), -1),
+                             derInt(BigInteger.valueOf(nextIdx), -1), derInt(blob));
+        return pemWrap(PEM_HPKS_XMSS_PRIV, der);
+    }
+
+    public static final class XmssPrivKey {
+        public final byte[] masterSeed;
+        public final int h;
+        public final int nextIdx;
+        public final List<byte[]> leafHashes;
+        public final byte[] root;
+        XmssPrivKey(byte[] masterSeed, int h, int nextIdx, List<byte[]> leafHashes, byte[] root) {
+            this.masterSeed = masterSeed; this.h = h; this.nextIdx = nextIdx;
+            this.leafHashes = leafHashes; this.root = root;
+        }
+    }
+
+    public static XmssPrivKey decodeXmssPrivKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_XMSS_PRIV)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_PRIV + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        byte[] seed = toFixedBytes(ints.get(0), 32);
+        int h = ints.get(1).intValueExact();
+        int nextIdx = ints.get(2).intValueExact();
+        int numLeaves = 1 << h;
+        byte[] blob = toFixedBytes(ints.get(3), 32 * numLeaves);
+        List<byte[]> leafHashes = new ArrayList<>(numLeaves);
+        for (int i = 0; i < numLeaves; i++) leafHashes.add(slice(blob, i * 32, 32));
+        byte[] root = Xmss.haccumRoot(leafHashes);
+        return new XmssPrivKey(seed, h, nextIdx, leafHashes, root);
+    }
+
+    /** Public key PEM: just the 32-byte Merkle root + h. */
+    public static String encodeXmssPubKey(byte[] root, int h) {
+        byte[] der = derSeq(derInt(root), derInt(BigInteger.valueOf(h), -1));
+        return pemWrap(PEM_HPKS_XMSS_PUB, der);
+    }
+
+    public static final class XmssPubKey {
+        public final byte[] root;
+        public final int h;
+        XmssPubKey(byte[] root, int h) { this.root = root; this.h = h; }
+    }
+
+    public static XmssPubKey decodeXmssPubKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_XMSS_PUB)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_PUB + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new XmssPubKey(toFixedBytes(ints.get(0), 32), ints.get(1).intValueExact());
+    }
+
+    /** SEQUENCE(leaf_idx, wots_sig_blob, auth_path_blob, h, n). */
+    public static String encodeXmssSig(Xmss.Signature sig) {
+        byte[] sigBlob = Wots.pkBytes(sig.wotsSig);
+        byte[] pathBlob = concatAll(sig.authPath);
+        byte[] der = derSeq(derInt(BigInteger.valueOf(sig.leafIdx), -1), derInt(sigBlob), derInt(pathBlob),
+                             derInt(BigInteger.valueOf(sig.authPath.size()), -1), derInt(BigInteger.valueOf(Herradura.N), -1));
+        return pemWrap(PEM_HPKS_XMSS_SIG, der);
+    }
+
+    public static Xmss.Signature decodeXmssSig(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKS_XMSS_SIG)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_SIG + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int leafIdx = ints.get(0).intValueExact();
+        int h = ints.get(3).intValueExact();
+        int n = ints.get(4).intValueExact();
+        int nbytes = n / 8;
+        byte[] sigBlob = toFixedBytes(ints.get(1), Wots.L * nbytes);
+        byte[] pathBlob = toFixedBytes(ints.get(2), h * 32);
+        BigInteger[] wotsSig = chunkToInts(sigBlob, Wots.L, nbytes);
+        List<byte[]> authPath = new ArrayList<>(h);
+        for (int i = 0; i < h; i++) authPath.add(slice(pathBlob, i * 32, 32));
+        return new Xmss.Signature(leafIdx, wotsSig, authPath);
+    }
+
+    private static byte[] concatAll(List<byte[]> parts) {
+        int total = 0;
+        for (byte[] p : parts) total += p.length;
+        byte[] out = new byte[total];
+        int off = 0;
+        for (byte[] p : parts) {
+            System.arraycopy(p, 0, out, off, p.length);
+            off += p.length;
+        }
+        return out;
+    }
+
+    private static BigInteger[] chunkToInts(byte[] blob, int count, int chunkLen) {
+        BigInteger[] out = new BigInteger[count];
+        for (int i = 0; i < count; i++) out[i] = new BigInteger(1, slice(blob, i * chunkLen, chunkLen));
+        return out;
     }
 }

@@ -32,22 +32,56 @@ subcommands/interop tests):
 - TODO #200 — Stern-F/Niederreiter port (HPKS-Stern-F, HPKE-Stern-F,
   HPKE-Stern-KEM with the real BGF QC-MDPC decoder) + CLI subcommands +
   interop tests (needs #198)
-- TODO #201 — remaining advanced protocols (HCRED, OPRF/aPAKE,
-  XMSS/WOTS+) + CLI subcommands + interop tests (needs #198)
+- TODO #201 — OPRF and the stateful hash-based signatures (HPKS-WOTS-F,
+  HPKS-XMSS-F) + CLI subcommands + interop tests (needs #198)
+- TODO #202 — HCRED, the hybrid Ring-LWR + Stern-F credential (needs
+  #198, #200 for the Stern-F building blocks it reuses)
+- TODO #203 — aPAKE, augmented PAKE over HKEX-RNL + a ZKBoo-over-NL-FSCX
+  gadget + OPRF (needs #198, #199, #201's OPRF)
 
-Close this umbrella once #197–#201 are all done.
+Close this umbrella once #197–#203 are all done.
 
 Status: **OPEN**
 
-### #201: Java port of remaining advanced protocols (HCRED, OPRF/aPAKE, XMSS/WOTS+)
+### #202: Java port of HCRED (hybrid Ring-LWR + Stern-F credential)
 
-Part of the #196 breakdown; needs TODO #198. Extend
-`bindings/java/herradurakex` with the hybrid Ring-LWR + Stern-F
-credential (HCRED), OPRF/aPAKE, and the stateful hash-based signatures
-(XMSS/WOTS+). These are the suite's most complex remaining protocols
-(MPCitH transcripts, tree-based state management for XMSS) — expect this
-to be the largest of the child items; consider splitting further once
-scoped in detail. Add CLI subcommands and interop tests.
+Split off from #201 once scoped in detail (per that item's own note that
+it was likely to be the largest child item and should be split further).
+Extend `bindings/java/herradurakex` with HCRED: user/issuer keygen, the
+unified ZKBoo-(2,3) MPCitH circuit proving both the Ring-LWR rounding
+relation and the Stern-F code-syndrome relation for the same witness in
+one proof (`hcred_prove`/`hcred_verify`), and issuer credential
+issuance/verification (an HPKS-Stern-F signature over the credential
+statement, reusing TODO #200's `Stern` — no separate signature scheme
+needed). The KKW preprocessing-model transcript variant
+(`hcred_prove_kkw`/`hcred_verify_kkw`, ~11x smaller proofs at production
+parameters) is optional/secondary — the ZKBoo-(2,3) path is sufficient
+for interop and should land first. Add CLI subcommands and interop
+tests, including the completeness/replay/tamper/split-witness/issuer
+rejection cases exercised by `CryptosuiteTests/Herradura_tests.py` test
+`[44]`.
+
+Status: **OPEN**
+
+### #203: Java port of aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL)
+
+Split off from #201. Needs a Java port of the ZKBoo-over-NL-FSCX Sigma
+protocol (`zkp_nl_prove`/`zkp_nl_verify` in
+`"Herradura cryptographic suite.py"` — a bit-level 3-party MPC circuit
+proving knowledge of `A` such that `nl_fscx_v1(A, B) = y`, used here as
+the aPAKE's mutual-authentication proof bound to the HKEX-RNL session
+key) plus TODO #201's OPRF (the server's password record is
+`hfscx_256(OPRF(k_s, password) + salt)` rather than a plain password
+hash, closing offline dictionary attacks against a leaked server
+database). Extend `bindings/java/herradurakex` with `hpake_register`/
+`hpake_login_demo`'s three-message flow (or the CLI's split
+register/login subcommands, matching whichever the Python/C/Go CLIs
+expose). No dedicated KAT exists upstream for this protocol — coverage
+comes from CLI round-trip tests (correct/wrong password, cross-language
+interop) mirroring `CliTest/test_oprf.sh`/`test_pake.sh`'s pattern. Per
+the suite's own documentation this is a research-grade construction (no
+formal UC/SIM-BMP proof) — treat and document it as such, not as a
+hardened production aPAKE.
 
 Status: **OPEN**
 

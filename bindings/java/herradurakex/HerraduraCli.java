@@ -26,10 +26,14 @@ import java.util.Map;
  * Also covers HPKS-Stern-F/HPKE-Stern-F (demo Stern-F code-based PQC,
  * {@code --algo hpks-stern}/{@code hpke-stern}) and HPKE-Stern-KEM (the
  * real QC-MDPC/BGF Niederreiter KEM, {@code --algo hpke-stern-kem} —
- * {@link Stern}, TODO #200).
+ * {@link Stern}, TODO #200), the OPRF (2HashDH over GF(2^256)*, {@code
+ * oprf-blind}/{@code oprf-eval}/{@code oprf-unblind} — {@link Oprf}), and
+ * HPKS-WOTS-F/HPKS-XMSS-F (one-time and stateful multi-use hash-based
+ * signatures, {@code --algo hpks-wots}/{@code hpks-xmss} — {@link Wots},
+ * {@link Xmss}, TODO #201).
  *
- * Out of scope (TODO #201 and beyond): hybrid-rnl-stern, rnl-sigma,
- * ZKP-NL/ZKP-RNL, XMSS/WOTS, OPRF, HCRED, the Stern-Ring OR-composition
+ * Out of scope (TODO #202/#203 and beyond): HCRED, aPAKE, rnl-sigma,
+ * ZKP-NL/ZKP-RNL, hybrid-rnl-stern, the Stern-Ring OR-composition
  * signature, and the {@code --kdf}/{@code --aead} CLI options.
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
@@ -66,7 +70,8 @@ public final class HerraduraCli {
 
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
-            throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile> [options]");
+            throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
+                + "|oprf-blind|oprf-eval|oprf-unblind> [options]");
         }
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);
@@ -81,6 +86,9 @@ public final class HerraduraCli {
             case "dgst":    cmdDgst(opt);    break;
             case "encfile": cmdEncfile(opt); break;
             case "decfile": cmdDecfile(opt); break;
+            case "oprf-blind":   cmdOprfBlind(opt);   break;
+            case "oprf-eval":    cmdOprfEval(opt);    break;
+            case "oprf-unblind": cmdOprfUnblind(opt); break;
             default: throw new CliError(cmd + ": unknown subcommand");
         }
     }
@@ -173,6 +181,28 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemPrivKey(kp.h0, kp.h1, kp.sup0, kp.sup1));
             return;
         }
+        if (algo.equals("oprf")) {
+            writeString(out, Codec.encodeOprfPrivKey(Oprf.keygen(RNG)));
+            return;
+        }
+        if (algo.equals("hpks-wots")) {
+            byte[] masterSeed = new byte[32];
+            RNG.nextBytes(masterSeed);
+            writeString(out, Codec.encodeWotsPrivKey(masterSeed, 0));
+            writeIdxState(out, 0); // 0 = unused (one-time key)
+            System.err.println("HPKS-WOTS: ONE-TIME key — it may sign exactly one message.");
+            return;
+        }
+        if (algo.equals("hpks-xmss")) {
+            int h = opt.containsKey("xmss-height") ? Integer.parseInt(opt.get("xmss-height")) : Xmss.DEFAULT_H;
+            System.err.println("Generating XMSS tree (h=" + h + ", " + (1 << h) + " leaves) — may take a moment...");
+            byte[] masterSeed = new byte[32];
+            RNG.nextBytes(masterSeed);
+            Xmss.Keypair kp = Xmss.keygen(masterSeed, h);
+            writeString(out, Codec.encodeXmssPrivKey(masterSeed, h, 0, kp.leafHashes));
+            writeIdxState(out, 0);
+            return;
+        }
 
         if (algo.equals("hkex-rnl")) {
             int n = Herradura.N;
@@ -240,6 +270,34 @@ public final class HerraduraCli {
                 System.out.println("r         : " + pk.r);
                 System.out.println("d         : " + pk.d);
                 System.out.println("h_pub     : " + hPub.toString(16));
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
+        if (block.label.equals(Codec.PEM_HPKS_XMSS_PRIV)) {
+            Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(pemIn);
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeXmssPubKey(pk.root, pk.h));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hpks-xmss");
+                System.out.println("h         : " + pk.h + " (" + (1 << pk.h) + " leaves)");
+                System.out.println("root      : " + hexBytes(pk.root));
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
+        if (block.label.equals(Codec.PEM_HPKS_WOTS_PRIV)) {
+            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(pemIn);
+            if (opt.containsKey("pubout")) {
+                Wots.Keypair kp = Wots.keygen(pk.masterSeed, pk.leafIdx);
+                writeString(out, Codec.encodeWotsPubKey(kp.pk));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hpks-wots");
+                System.out.println("leaf_idx  : " + pk.leafIdx);
             } else {
                 throw new CliError("pkey: specify --pubout or --text");
             }
@@ -588,8 +646,39 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeSternSig(sig));
             return;
         }
+        if (algo.equals("hpks-xmss")) {
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(readString(keyPath));
+            int leafIdx = readIdxState(keyPath);
+            int numLeaves = 1 << pk.h;
+            if (leafIdx >= numLeaves) {
+                throw new CliError("sign: XMSS key exhausted (" + numLeaves + " leaves used). Generate a new key.");
+            }
+            Xmss.Signature sig = Xmss.sign(msg, pk.masterSeed, pk.leafHashes, leafIdx);
+            writeString(out, Codec.encodeXmssSig(sig));
+            writeIdxState(keyPath, leafIdx + 1);
+            System.err.println("XMSS leaf " + leafIdx + " used; " + (numLeaves - leafIdx - 1) + " leaves remaining.");
+            return;
+        }
+        if (algo.equals("hpks-wots")) {
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            if (readIdxState(keyPath) != 0) {
+                throw new CliError("sign: this HPKS-WOTS key was already used — WOTS keys are "
+                    + "ONE-TIME. Generate a fresh key (genpkey --algo hpks-wots).");
+            }
+            Codec.WotsPrivKey pk = Codec.decodeWotsPrivKey(readString(keyPath));
+            Wots.Signature sig = Wots.sign(msg, pk.masterSeed, pk.leafIdx);
+            writeString(out, Codec.encodeWotsSig(sig.sig));
+            writeIdxState(keyPath, 1);
+            System.err.println("HPKS-WOTS key burned (one-time use); do not sign again with it.");
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern)");
+            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -633,8 +722,24 @@ public final class HerraduraCli {
             }
             return;
         }
+        if (algo.equals("hpks-xmss")) {
+            Codec.XmssPubKey pub = Codec.decodeXmssPubKey(readString(req(opt, "pubkey", "verify")));
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            Xmss.Signature sig = Codec.decodeXmssSig(readString(req(opt, "sig", "verify")));
+            boolean ok = Xmss.verify(msg, sig, pub.root);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
+        if (algo.equals("hpks-wots")) {
+            BigInteger[] pub = Codec.decodeWotsPubKey(readString(req(opt, "pubkey", "verify")));
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            BigInteger[] sig = Codec.decodeWotsSig(readString(req(opt, "sig", "verify")));
+            boolean ok = Wots.verify(msg, sig, pub);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern)");
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));
@@ -726,6 +831,32 @@ public final class HerraduraCli {
     }
 
     // -----------------------------------------------------------------
+    // oprf-blind / oprf-eval / oprf-unblind
+    // -----------------------------------------------------------------
+
+    private static void cmdOprfBlind(Map<String, String> opt) throws IOException {
+        byte[] inBytes = readBytes(req(opt, "in", "oprf-blind"));
+        String out = req(opt, "out", "oprf-blind");
+        Oprf.Blinded b = Oprf.blind(inBytes, RNG);
+        writeString(out, Codec.encodeOprfState(b.r, b.alpha));
+    }
+
+    private static void cmdOprfEval(Map<String, String> opt) throws IOException {
+        Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "oprf-eval")));
+        Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "in", "oprf-eval")));
+        BigInteger beta = Oprf.eval(state.alpha, key.pub);
+        writeString(req(opt, "out", "oprf-eval"), Codec.encodeOprfEval(beta));
+    }
+
+    private static void cmdOprfUnblind(Map<String, String> opt) throws IOException {
+        Codec.OprfState state = Codec.decodeOprfState(readString(req(opt, "state", "oprf-unblind")));
+        Codec.PubKey eval = Codec.decodeOprfEval(readString(req(opt, "eval", "oprf-unblind")));
+        BigInteger f = Oprf.unblind(eval.pub, state.r);
+        String out = opt.getOrDefault("out", "-");
+        writeString(out, hexBytes(toFixedBytes(f, state.nbits / 8)) + "\n");
+    }
+
+    // -----------------------------------------------------------------
     // I/O helpers ('-' means stdin/stdout, matching the other CLIs)
     // -----------------------------------------------------------------
 
@@ -757,6 +888,26 @@ public final class HerraduraCli {
 
     private static void writeString(String path, String data) throws IOException {
         writeBytes(path, data.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+    }
+
+    // -----------------------------------------------------------------
+    // XMSS/WOTS state sidecar file (<keyfile>.idx), matching the Python
+    // CLI's convention: XMSS stores the next-unused leaf index; WOTS
+    // stores a 0/1 used flag (reusing the same file name convention).
+    // -----------------------------------------------------------------
+
+    private static void writeIdxState(String keyPath, int value) throws IOException {
+        if (keyPath == null || keyPath.equals("-")) return;
+        writeString(keyPath + ".idx", value + "\n");
+    }
+
+    private static int readIdxState(String keyPath) {
+        try {
+            String s = readString(keyPath + ".idx").trim();
+            return Integer.parseInt(s);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static byte[] padTrunc(byte[] data, int nbytes) {

@@ -2,6 +2,27 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.5.0] - 2026-08-18
+
+### Added
+- TODO #201: extended `bindings/java/herradurakex` with the OPRF
+  (2HashDH over GF(2^256)*) and the stateful hash-based signature
+  schemes HPKS-WOTS-F/HPKS-XMSS-F. Added `herradurakex.Oprf`
+  (`keygen`/`blind`/`eval`/`unblind`/`direct`), `herradurakex.Wots` (the
+  suite's own Winternitz one-time-signature hash chain — not RFC 8391
+  WOTS+), and `herradurakex.Xmss` (an RFC-6962-style Merkle accumulator
+  over WOTS-F leaves); both signature classes are stateless, with
+  leaf-index/one-time-use state kept in a `<keyfile>.idx` sidecar file
+  by `HerraduraCli`, mirroring the Python CLI exactly. Extended `Codec`
+  with the corresponding PEM/DER encode-decode and `HerraduraCli` with
+  `oprf-blind`/`oprf-eval`/`oprf-unblind` and `--algo oprf`/`hpks-wots`/
+  `hpks-xmss` across `genpkey`/`pkey`/`sign`/`verify`. Added
+  `CliTest/test_java_oprf_wots_interop.sh` and extended `SelfTest.java`/
+  `test_java_keygen.sh`. HCRED and aPAKE — the remaining, most complex
+  part of TODO #201's original scope — were split off as TODO #202/#203
+  per that item's own note to split further once detailed. See TODO
+  #201 for details.
+
 ## [2.4.0] - 2026-08-17
 
 ### Added

@@ -4,12 +4,13 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 /**
- * TODO #192/#199/#200: end-to-end round-trip smoke test for the
+ * TODO #192/#199/#200/#201: end-to-end round-trip smoke test for the
  * herradurakex Java package, with fresh random keys each run —
  * complements KatVerify's fixed-vector cross-check. Covers the classical
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
- * and HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}). Exits
- * non-zero on any failure.
+ * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
+ * ({@link Oprf}), and HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}).
+ * Exits non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -175,7 +176,13 @@ public final class SelfTest {
         {
             Stern.SternKeypair kp = Stern.sternFKeygen(rng);
             BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
-            Stern.SternSignature sig = Stern.hpksSternFSign(msg, kp.e, kp.seed, 8, rng);
+            // Use the full demo round count (not a smaller value): the
+            // corrupted-syndrome check below only fails deterministically on
+            // a round that draws challenge b=2 (only b=2 references the
+            // syndrome), so too few rounds makes this assertion flaky by
+            // Stern's own (2/3)^rounds soundness bound — e.g. 8 rounds
+            // skips b=2 entirely ~3.9% of the time by chance.
+            Stern.SternSignature sig = Stern.hpksSternFSign(msg, kp.e, kp.seed, Stern.SDFR, rng);
             boolean ok = Stern.hpksSternFVerify(msg, sig, kp.seed, kp.syndrome);
             boolean rejectsTamper = !Stern.hpksSternFVerify(msg.xor(BigInteger.ONE), sig, kp.seed, kp.syndrome);
             boolean rejectsCorruptSyn = !Stern.hpksSternFVerify(msg, sig, kp.seed, kp.syndrome.xor(BigInteger.ONE));
@@ -225,6 +232,58 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpke_stern_kem round-trip");
+            }
+        }
+
+        // OPRF: blind/eval/unblind must equal the direct (non-oblivious) evaluation.
+        {
+            BigInteger k = Oprf.keygen(rng);
+            byte[] x = "self-test oprf input".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Oprf.Blinded blinded = Oprf.blind(x, rng);
+            BigInteger beta = Oprf.eval(blinded.alpha, k);
+            BigInteger f1 = Oprf.unblind(beta, blinded.r);
+            BigInteger f2 = Oprf.direct(x, k);
+            if (!f1.equals(f2)) {
+                System.out.println("FAIL oprf round-trip: blind/eval/unblind != direct");
+                fails++;
+            } else {
+                System.out.println("PASS oprf round-trip");
+            }
+        }
+
+        // HPKS-WOTS-F: sign/verify plus a tampered-message rejection check.
+        {
+            byte[] seed = new byte[32];
+            rng.nextBytes(seed);
+            Wots.Keypair kp = Wots.keygen(seed, 0);
+            byte[] msg = "self-test wots message".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Wots.Signature sig = Wots.sign(msg, seed, 0);
+            boolean ok = Wots.verify(msg, sig.sig, kp.pk);
+            boolean rejectsTamper = !Wots.verify("tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), sig.sig, kp.pk);
+            if (!ok || !rejectsTamper) {
+                System.out.println("FAIL hpks_wots_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_wots_f round-trip");
+            }
+        }
+
+        // HPKS-XMSS-F: two distinct leaves both sign/verify against the same
+        // root, plus tampered-message rejection (small h for speed).
+        {
+            byte[] seed = new byte[32];
+            rng.nextBytes(seed);
+            Xmss.Keypair kp = Xmss.keygen(seed, 3);
+            byte[] msg = "self-test xmss message".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Xmss.Signature sig0 = Xmss.sign(msg, seed, kp.leafHashes, 0);
+            Xmss.Signature sig1 = Xmss.sign(msg, seed, kp.leafHashes, 1);
+            boolean ok = Xmss.verify(msg, sig0, kp.root) && Xmss.verify(msg, sig1, kp.root);
+            boolean rejectsTamper = !Xmss.verify("tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), sig0, kp.root);
+            if (!ok || !rejectsTamper) {
+                System.out.println("FAIL hpks_xmss_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_xmss_f round-trip");
             }
         }
 
