@@ -2,6 +2,30 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.0] - 2026-08-18
+
+### Added
+- TODO #203: extended `bindings/java/herradurakex` with aPAKE, the
+  augmented Password-Authenticated Key Exchange built on HKEX-RNL +
+  OPRF + a ZKBoo-over-NL-FSCX Sigma protocol. Added
+  `herradurakex.ZkpNl` (a byte-for-byte, genuinely n-parameterized port
+  of the ZKBoo 3-party MPC-in-the-head circuit proving knowledge of `A`
+  such that `nl_fscx_v1(A, B) = y`) and `herradurakex.Hpake`
+  (`register`/`loginDemo`, reusing `Oprf` and `HerraduraNl`'s existing
+  HKEX-RNL primitives — the server's password record stores the OPRF
+  output rather than a plain hash, closing offline dictionary attacks
+  against a leaked database). Extended `Codec` with `PEM_PAKE_RECORD`
+  encode-decode and `HerraduraCli` with `pake-register`/`pake-demo`.
+  Verified the ZKBoo circuit against the Python reference bit-for-bit,
+  then full aPAKE correctness and cross-language wire-format
+  compatibility, before writing any test files. Added
+  `CliTest/test_java_pake_interop.sh` and extended `SelfTest.java`.
+  **This closes TODO #196**, the Java-port-to-a-complete-suite umbrella:
+  `bindings/java/herradurakex` now covers the classical quartet, the
+  NL/PQC quartet, Stern-F/Niederreiter (demo and real QC-MDPC/BGF),
+  OPRF, HPKS-WOTS-F/HPKS-XMSS-F, HCRED, and aPAKE. See TODO #196/#203
+  for details.
+
 ## [2.6.0] - 2026-08-18
 
 ### Added

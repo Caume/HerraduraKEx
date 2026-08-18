@@ -30,13 +30,16 @@ import java.util.Map;
  * oprf-blind}/{@code oprf-eval}/{@code oprf-unblind} — {@link Oprf}),
  * HPKS-WOTS-F/HPKS-XMSS-F (one-time and stateful multi-use hash-based
  * signatures, {@code --algo hpks-wots}/{@code hpks-xmss} — {@link Wots},
- * {@link Xmss}, TODO #201), and HCRED (the hybrid Ring-LWR + Stern-F
+ * {@link Xmss}, TODO #201), HCRED (the hybrid Ring-LWR + Stern-F
  * credential, {@code --algo hcred} plus {@code cred-issue}/
- * {@code cred-prove}/{@code cred-verify} — {@link Hcred}, TODO #202).
+ * {@code cred-prove}/{@code cred-verify} — {@link Hcred}, TODO #202), and
+ * aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL,
+ * {@code pake-register}/{@code pake-demo} — {@link Hpake}, TODO #203).
  *
- * Out of scope (TODO #203 and beyond): aPAKE, rnl-sigma, ZKP-NL/ZKP-RNL,
- * hybrid-rnl-stern, the Stern-Ring OR-composition signature, and the
- * {@code --kdf}/{@code --aead} CLI options.
+ * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
+ * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
+ * OR-composition signature, and the {@code --kdf}/{@code --aead} CLI
+ * options.
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
  * decfile. PEM/DER wire format is byte-for-byte compatible with the
@@ -73,7 +76,8 @@ public final class HerraduraCli {
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
-                + "|oprf-blind|oprf-eval|oprf-unblind> [options]");
+                + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
+                + "|pake-register|pake-demo> [options]");
         }
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);
@@ -94,6 +98,8 @@ public final class HerraduraCli {
             case "cred-issue":   cmdCredIssue(opt);   break;
             case "cred-prove":   cmdCredProve(opt);   break;
             case "cred-verify":  cmdCredVerify(opt);  break;
+            case "pake-register": cmdPakeRegister(opt); break;
+            case "pake-demo":     cmdPakeDemo(opt);     break;
             default: throw new CliError(cmd + ": unknown subcommand");
         }
     }
@@ -971,6 +977,44 @@ public final class HerraduraCli {
             System.out.println("Credential OK");
         }
         System.out.println("Proof OK");
+    }
+
+    // -----------------------------------------------------------------
+    // pake-register / pake-demo (aPAKE, TODO #203)
+    // -----------------------------------------------------------------
+
+    private static void cmdPakeRegister(Map<String, String> opt) throws IOException {
+        Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-register")));
+        String username = opt.getOrDefault("username", "user");
+        String passwordOpt = opt.get("password");
+        if (passwordOpt == null) {
+            throw new CliError("pake-register: --password required (interactive prompting is not supported by this Java CLI)");
+        }
+        byte[] password = passwordOpt.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
+        writeString(opt.getOrDefault("out", "-"), Codec.encodePakeRecord(record.salt, record.b, record.y));
+    }
+
+    private static void cmdPakeDemo(Map<String, String> opt) throws IOException {
+        Codec.PubKey key = Codec.decodeOprfPrivKey(readString(req(opt, "key", "pake-demo")));
+        String username = opt.getOrDefault("username", "demo-user");
+        byte[] password = opt.getOrDefault("password", "demo-password").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        Hpake.Record record = Hpake.register(username, password, key.pub, RNG);
+        byte[] sk = Hpake.loginDemo(record, password, key.pub, RNG);
+        if (sk != null) {
+            System.out.println("- aPAKE login succeeded; session key: " + hexBytes(sk));
+        } else {
+            System.out.println("+ aPAKE login failed!");
+            System.exit(1);
+        }
+        byte[] wrongSk = Hpake.loginDemo(record, "wrong-password".getBytes(java.nio.charset.StandardCharsets.UTF_8), key.pub, RNG);
+        if (wrongSk == null) {
+            System.out.println("- aPAKE correctly rejects wrong password");
+        } else {
+            System.out.println("+ aPAKE accepted wrong password! (security failure)");
+            System.exit(1);
+        }
     }
 
     // -----------------------------------------------------------------

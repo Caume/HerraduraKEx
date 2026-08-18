@@ -1,23 +1,25 @@
-# herradurakex — Java bindings (TODO #192, #197, #198, #199, #200, #201, #202)
+# herradurakex — Java bindings (TODO #192, #197-#203)
 
-A pure-Java port of the classical (v1.4.0) HerraduraKEx quartet — HKEX-GF,
-HSKE, HPKS, HPKE — plus the NL/PQC (v1.5.0) quartet — HKEX-RNL (Ring-LWR
-key exchange), HSKE-NL-A1/A2, HPKS-NL, HPKE-NL — at n=256 bits, for
+A complete pure-Java port of the HerraduraKEx protocol suite — the
+classical (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE), the NL/PQC
+(v1.5.0) quartet (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, HPKE-NL),
+HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM (demo and the real QC-MDPC/BGF
+KEM), OPRF, the stateful hash-based signatures HPKS-WOTS-F/HPKS-XMSS-F,
+HCRED (the hybrid Ring-LWR + Stern-F credential), and aPAKE — at n=256
+bits (n=32 for aPAKE's ZKBoo gadget, see `ZkpNl.java` below), for
 JVM-based integrations. Values are represented as `java.math.BigInteger`
-(always non-negative, `< 2^256`), mirroring `"Herradura cryptographic
-suite.py"`'s `BitArray`/`fscx`/`gf_*`/`nl_fscx_*`/`_rnl_*` functions rather
-than `herradura.h`'s constant-time C implementation: `BigInteger` gives no
+(always non-negative), mirroring `"Herradura cryptographic suite.py"`'s
+`BitArray`/`fscx`/`gf_*`/`nl_fscx_*`/`_rnl_*` functions rather than
+`herradura.h`'s constant-time C implementation: `BigInteger` gives no
 constant-time guarantee regardless of how the bit tricks are written, so
-there's nothing to gain from porting the C branchless code, and the Python
-source is the more readable reference.
+there's nothing to gain from porting the C branchless code, and the
+Python source is the more readable reference.
 
-HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM (TODO #200) round out the
-code-based PQC surface; the OPRF and the stateful hash-based signatures
-HPKS-WOTS-F/HPKS-XMSS-F (TODO #201) add the remaining non-interactive
-primitives; HCRED (TODO #202), the hybrid Ring-LWR + Stern-F credential,
-adds the one MPCitH-proof-based construction. aPAKE (TODO #203),
-hybrid-rnl-stern, ZKP-NL/ZKP-RNL, and the Stern-Ring OR-composition
-signature remain out of scope for this binding.
+TODO #196, the umbrella that tracked porting this full surface, is now
+closed — #197-#203 below were its child items. hybrid-rnl-stern,
+ZKP-NL/ZKP-RNL's standalone signature scheme, HCRED's KKW transcript
+variant, and the Stern-Ring OR-composition signature remain out of
+scope for this binding.
 
 ## Files
 
@@ -89,27 +91,41 @@ signature remain out of scope for this binding.
   `Stern`'s HPKS-Stern-F signature). Fixed at n=256, reusing `Stern`'s
   existing 256-bit-only parity-check-matrix PRF. The KKW
   preprocessing-model transcript variant is out of scope.
-- `herradurakex/HerraduraCli.java` (TODO #198-#202) — a CLI mirroring
+- `herradurakex/ZkpNl.java` (TODO #203) — the ZKBoo (3-party
+  MPC-in-the-head) Sigma protocol proving knowledge of `A` such that
+  `nl_fscx_v1(A, B) = y` (`prove`/`verify`). Unlike every other class
+  here (fixed at n=256), this one is genuinely parameterized by
+  bit-width — its only consumer, `Hpake`, needs it at n=32.
+- `herradurakex/Hpake.java` (TODO #203) — aPAKE, augmented PAKE over
+  HKEX-RNL + `Oprf` + `ZkpNl` (`register`/`loginDemo`). The server's
+  password record stores the OPRF output rather than a plain hash,
+  closing offline dictionary attacks against a leaked database.
+  `loginDemo` runs both client and server sides in one call (a demo,
+  not a real 2-party network protocol, matching the Python reference).
+  Research-grade: no formal UC/SIM-BMP proof.
+- `herradurakex/HerraduraCli.java` (TODO #198-#203) — a CLI mirroring
   `HerraduraCli/herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s
   subcommand interface (`genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`,
   `verify`, `dgst`, `encfile`, `decfile`, `oprf-blind`, `oprf-eval`,
-  `oprf-unblind`, `cred-issue`, `cred-prove`, `cred-verify`) for the
-  classical quartet (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for
-  symmetric enc/dec), the NL/PQC quartet (`--algo hkex-rnl`/`hske-nla1`/
-  `hske-nla2`/`hpks-nl`/`hpke-nl`), the Stern-F family (`--algo
-  hpks-stern`/`hpke-stern`/`hpke-stern-kem`), OPRF/HPKS-WOTS-F/
-  HPKS-XMSS-F (`--algo oprf`/`hpks-wots`/`hpks-xmss`), and HCRED
-  (`--algo hcred`). `kex --algo hkex-rnl` is two-round, matching the
-  other CLIs' convention: Bob responds first (`--our` his priv key,
-  `--their` Alice's pub key) with an RNL RESPONSE PEM; Alice then
-  completes (`--our` her priv key, `--their` Bob's RNL RESPONSE PEM)
-  into a plain SESSION KEY PEM. `genpkey --algo hpks-wots`/`hpks-xmss`
-  additionally write a `<keyfile>.idx` sidecar file next to the
-  private-key PEM — XMSS's authoritative next-unused-leaf-index counter
-  (hard-fails once exhausted) or WOTS's used/unused flag (refuses a
-  second sign) — exactly mirroring the Python CLI's state-file
-  convention. PEM/DER output is byte-for-byte identical to the other
-  three CLIs.
+  `oprf-unblind`, `cred-issue`, `cred-prove`, `cred-verify`,
+  `pake-register`, `pake-demo`) for the classical quartet (`--algo
+  hkex-gf`/`hpks`/`hpke`, plus `hske` for symmetric enc/dec), the NL/PQC
+  quartet (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/
+  `hpke-nl`), the Stern-F family (`--algo hpks-stern`/`hpke-stern`/
+  `hpke-stern-kem`), OPRF/HPKS-WOTS-F/HPKS-XMSS-F (`--algo oprf`/
+  `hpks-wots`/`hpks-xmss`), HCRED (`--algo hcred`), and aPAKE. `kex
+  --algo hkex-rnl` is two-round, matching the other CLIs' convention:
+  Bob responds first (`--our` his priv key, `--their` Alice's pub key)
+  with an RNL RESPONSE PEM; Alice then completes (`--our` her priv key,
+  `--their` Bob's RNL RESPONSE PEM) into a plain SESSION KEY PEM.
+  `genpkey --algo hpks-wots`/`hpks-xmss` additionally write a
+  `<keyfile>.idx` sidecar file next to the private-key PEM — XMSS's
+  authoritative next-unused-leaf-index counter (hard-fails once
+  exhausted) or WOTS's used/unused flag (refuses a second sign) —
+  exactly mirroring the Python CLI's state-file convention.
+  `pake-register` requires `--password` explicitly (no interactive
+  `getpass` prompt fallback, unlike the Python CLI). PEM/DER output is
+  byte-for-byte identical to the other three CLIs.
 - `build.sh` — compiles the package with `javac`.
 
 ## Build and run
@@ -130,16 +146,20 @@ These are also run by `CliTest/test_java_bindings.sh` /
 `CliTest/test_java_codec.sh` / `CliTest/test_java_keygen.sh` /
 `CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh` /
 `CliTest/test_java_stern_interop.sh` / `CliTest/test_java_oprf_wots_interop.sh` /
-`CliTest/test_java_hcred_interop.sh` (the last six cross-check the CLI
-against the Python CLI in both directions — `test_java_nl_interop.sh`
-covers the NL/PQC quartet, TODO #199; `test_java_stern_interop.sh`
-covers HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM, TODO #200, and is
-DFR-retry-aware for the real BGF decoder; `test_java_oprf_wots_interop.sh`
-covers OPRF/HPKS-WOTS-F/HPKS-XMSS-F, TODO #201, and cross-checks the
-OPRF result numerically against Python's `oprf_direct`;
-`test_java_hcred_interop.sh` covers HCRED, TODO #202, cross-verifying
-full user/issuer/proof generation in both directions at `--rounds 8` for
-CI speed).
+`CliTest/test_java_hcred_interop.sh` / `CliTest/test_java_pake_interop.sh`
+(the last seven cross-check the CLI against the Python CLI in both
+directions — `test_java_nl_interop.sh` covers the NL/PQC quartet, TODO
+#199; `test_java_stern_interop.sh` covers HPKS-Stern-F/HPKE-Stern-F/
+HPKE-Stern-KEM, TODO #200, and is DFR-retry-aware for the real BGF
+decoder; `test_java_oprf_wots_interop.sh` covers OPRF/HPKS-WOTS-F/
+HPKS-XMSS-F, TODO #201, and cross-checks the OPRF result numerically
+against Python's `oprf_direct`; `test_java_hcred_interop.sh` covers
+HCRED, TODO #202, cross-verifying full user/issuer/proof generation in
+both directions at `--rounds 8` for CI speed; `test_java_pake_interop.sh`
+covers aPAKE, TODO #203, cross-checking wire-format compatibility of
+`pake-register` records both directions plus each CLI's own `pake-demo`
+correctness — there is no cross-language `pake-login` flow upstream to
+test beyond that).
 
 ## Usage sketch
 
@@ -171,12 +191,12 @@ exchange values with the Python/C/Go/PEM-based CLI:
 byte[] bytes = value.toByteArray(); // may have a leading 0x00 sign byte or be short — normalize to 32 bytes
 ```
 
-`herradurakex.Codec` (TODO #197) now implements PEM/DER key, ciphertext,
-and signature read/write for the classical quartet, so JVM consumers can
-exchange key/ciphertext/signature files directly with the Python/C/Go
-CLIs (`CliTest/test_java_codec.sh` cross-checks both directions).
-`herradurakex.HerraduraCli` (TODO #198, #199) is a full CLI on top of that
-— `CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh`
-cross-check it against the Python CLI in both directions for every
-subcommand, including HKEX-RNL's two-round handshake (Java responding to
-a Python initiator, and vice versa).
+`herradurakex.Codec` implements PEM/DER key, ciphertext, signature, and
+proof/credential read/write for the whole ported surface, so JVM
+consumers can exchange files directly with the Python/C/Go CLIs
+(`CliTest/test_java_codec.sh` cross-checks the classical quartet in both
+directions). `herradurakex.HerraduraCli` is a full CLI on top of that —
+the interop test scripts listed above cross-check it against the Python
+CLI in both directions for every subcommand, including HKEX-RNL's
+two-round handshake and HCRED's issuer-credential flow (Java responding
+to a Python initiator, and vice versa).

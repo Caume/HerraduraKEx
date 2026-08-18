@@ -10022,3 +10022,116 @@ plus replay/tamper/corrupted-syndrome/wrong-key/split-witness rejection
 and an issuer-credential round-trip, at the library's own demo round
 count) and `test_java_keygen.sh`. Updated `bindings/java/README.md` and
 `CLAUDE.md`'s repository-structure section.
+
+### #203: Java port of aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL)
+
+Split off from #201. Needs a Java port of the ZKBoo-over-NL-FSCX Sigma
+protocol (`zkp_nl_prove`/`zkp_nl_verify` in
+`"Herradura cryptographic suite.py"` — a bit-level 3-party MPC circuit
+proving knowledge of `A` such that `nl_fscx_v1(A, B) = y`, used here as
+the aPAKE's mutual-authentication proof bound to the HKEX-RNL session
+key) plus TODO #201's OPRF (the server's password record is
+`hfscx_256(OPRF(k_s, password) + salt)` rather than a plain password
+hash, closing offline dictionary attacks against a leaked server
+database). Extend `bindings/java/herradurakex` with `hpake_register`/
+`hpake_login_demo`'s three-message flow (or the CLI's split
+register/login subcommands, matching whichever the Python/C/Go CLIs
+expose). No dedicated KAT exists upstream for this protocol — coverage
+comes from CLI round-trip tests (correct/wrong password, cross-language
+interop) mirroring `CliTest/test_oprf.sh`/`test_pake.sh`'s pattern. Per
+the suite's own documentation this is a research-grade construction (no
+formal UC/SIM-BMP proof) — treat and document it as such, not as a
+hardened production aPAKE.
+
+Status: **DONE v2.7.0** — added `bindings/java/herradurakex.ZkpNl`, a
+byte-for-byte port of the ZKBoo (3-party MPC-in-the-head) circuit
+proving knowledge of `A` such that `nl_fscx_v1(A, B) = y`
+(`evaluateCircuit`'s ripple-carry-chain AND-gate simulation, `prove`/
+`verify`). Unlike every other protocol ported so far (all fixed at
+n=256), this circuit is genuinely parameterized by bit-width `n` — it
+has no dependency on `Herradura`'s fixed-256-bit primitives, and its
+only consumer here needs it at n=32 (matching the Python reference's
+aPAKE parameters), so genericity via `BigInteger` cost nothing extra.
+Added `bindings/java/herradurakex.Hpake` (`register`/`loginDemo`,
+plus `deriveZkpWitness`/`rnlKdf`), reusing `Oprf` (TODO #201) for the
+offline-dictionary-attack-resistant password record and `HerraduraNl`'s
+existing HKEX-RNL primitives (TODO #199) for the 3-message key
+exchange; `loginDemo` runs both the client and server sides in one call,
+matching the Python reference's own demo-only scope (no real 2-party
+network split). The ZKB++ transcript-encoding variant
+(`zkp_nl_prove_pp`/`zkp_nl_verify_pp`) and the standalone HPKS-ZKP-NL
+signature scheme remain out of scope — this port exists only to give
+`Hpake` its mutual-authentication proof.
+
+Extended `Codec` with `PEM_PAKE_RECORD` and `encode`/`decodePakeRecord`
+(the real-DER `SEQUENCE(salt, B, y)` shape, deliberately not including a
+username field, matching the Python reference exactly). Extended
+`HerraduraCli` with the `pake-register`/`pake-demo` subcommands, matching
+the Python CLI's exact flag names; `pake-register` requires `--password`
+explicitly (this Java CLI does not implement the Python CLI's
+interactive `getpass` prompt fallback).
+
+Verified the ZKBoo circuit's `nl_fscx_v1` output matched the Python
+reference bit-for-bit for fixed test inputs before writing any proof
+logic, then verified full aPAKE correctness (register + login with the
+right/wrong password) and cross-language wire-format compatibility (a
+`pake-register` record produced by either language decodes cleanly under
+the other — there is no cross-language `pake-login` flow upstream to
+test beyond that, since `pake-demo` is single-process both-sides-at-once
+in both the Python and Java CLIs). Added
+`CliTest/test_java_pake_interop.sh` (5 checks) and extended
+`SelfTest.java` (ZKP-NL prove/verify plus tamper/wrong-`y` rejection, and
+an aPAKE register/login round trip). Updated `bindings/java/README.md`
+and `CLAUDE.md`'s repository-structure section.
+
+This closes TODO #196, the Java-port-to-a-complete-suite umbrella:
+#197–#203 are all now DONE. `bindings/java/herradurakex` covers the
+classical quartet, the NL/PQC quartet, HPKS-Stern-F/HPKE-Stern-F/
+HPKE-Stern-KEM, OPRF, HPKS-WOTS-F/HPKS-XMSS-F, HCRED, and aPAKE — the
+same protocol surface as the C/Go/Python targets except HCRED's KKW
+transcript variant, the Stern-Ring OR-composition signature, and
+XMSS/WOTS's assembly/Arduino ports (explicitly out of scope throughout,
+per each protocol's own porting note).
+
+### #196: Extend the Java port to a complete suite + CLI (umbrella)
+
+TODO #192 added `bindings/java/herradurakex.Herradura`, a pure-Java port
+of only the classical (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE),
+matching `bindings/ffi/`'s intentionally narrow scope. The other five
+language targets (C, Go, Python, ARM Thumb-2, NASM i386, Arduino) all
+implement the full suite — NL/PQC, Stern-F/Niederreiter, HCRED,
+OPRF/aPAKE, XMSS/WOTS+, etc. — plus a `HerraduraCli`-equivalent
+OpenSSL-style CLI with PEM/DER codec support matching
+`HerraduraCli/codec.py`/`herradura_codec.h`/`herradura/codec.go`
+byte-for-byte.
+
+This item is an umbrella tracking the full gap; broken down into
+sequential, independently-completable child items so a session can pick
+off one milestone at a time rather than attempting the whole surface at
+once. Complete in roughly this order (each depends on the codec landing
+before the CLI, and on the protocol ports landing before their CLI
+subcommands/interop tests):
+
+- TODO #197 — PEM/DER codec (classical quartet's wire format)
+- TODO #198 — Java `HerraduraCli` for the classical quartet (needs #197)
+- TODO #199 — NL/PQC port (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, HPKE-NL) +
+  CLI subcommands + interop tests (needs #198)
+- TODO #200 — Stern-F/Niederreiter port (HPKS-Stern-F, HPKE-Stern-F,
+  HPKE-Stern-KEM with the real BGF QC-MDPC decoder) + CLI subcommands +
+  interop tests (needs #198)
+- TODO #201 — OPRF and the stateful hash-based signatures (HPKS-WOTS-F,
+  HPKS-XMSS-F) + CLI subcommands + interop tests (needs #198)
+- TODO #202 — HCRED, the hybrid Ring-LWR + Stern-F credential (needs
+  #198, #200 for the Stern-F building blocks it reuses)
+- TODO #203 — aPAKE, augmented PAKE over HKEX-RNL + a ZKBoo-over-NL-FSCX
+  gadget + OPRF (needs #198, #199, #201's OPRF)
+
+Close this umbrella once #197–#203 are all done.
+
+Status: **DONE v2.7.0** — #197–#203 all shipped (v2.1.1 through v2.7.0).
+`bindings/java/herradurakex` now ports the full HerraduraKEx protocol
+suite to the JVM: the classical quartet, NL/PQC quartet, Stern-F/
+Niederreiter (demo and real QC-MDPC/BGF), OPRF, HPKS-WOTS-F/HPKS-XMSS-F,
+HCRED, and aPAKE, each with byte-for-byte PEM/DER wire-format parity and
+verified bidirectional CLI interop against the Python reference. See the
+individual #197–#203 entries for what each child item covered.
