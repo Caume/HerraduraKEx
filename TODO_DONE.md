@@ -10135,3 +10135,133 @@ Niederreiter (demo and real QC-MDPC/BGF), OPRF, HPKS-WOTS-F/HPKS-XMSS-F,
 HCRED, and aPAKE, each with byte-for-byte PEM/DER wire-format parity and
 verified bidirectional CLI interop against the Python reference. See the
 individual #197–#203 entries for what each child item covered.
+
+### #205: Split the `native` CI job into separate C, Go, and Python jobs
+
+`.github/workflows/ci.yml`'s `native` job (TODO #153) used to build and
+test C, Go, and Python sequentially in one job, plus run every
+`CliTest/*.sh` script at the end regardless of which language(s) it
+exercised. This meant a failure in any one language's build/test/CLI step
+blocked visibility into the other two until fixed, and the three languages
+couldn't be inspected, re-run, or parallelized independently in the
+Actions UI.
+
+Split `native` into four jobs:
+- `native-c`, `native-go`, `native-python` — one per language, each with
+  its own dependency install, `build_*.sh` invocation (skipped for
+  Python), `CryptosuiteTests/Herradura_tests.*` run, and only the
+  `CliTest/*.sh` scripts that touch that language's own CLI
+  (`test_c_*.sh`/`test_weak_key_rejection.sh` for C, `test_go_*.sh` for
+  Go, the untagged Python-only scripts for Python).
+- `native-interop` — the `CliTest/*.sh` scripts that exercise two or more
+  CLIs at once (`test_aead.sh`, `test_c_interop.sh`, `test_go_interop.sh`,
+  and 15 others), which builds both C and Go. Also runs a coverage-guard
+  step that fails CI if any non-Java `CliTest/*.sh` script isn't claimed
+  by exactly one of the four `native-*` jobs, so the split can't silently
+  drift as new scripts are added.
+
+All four jobs are required/blocking, matching the old `native` job's
+status. Updated `CLAUDE.md`'s Testing section to describe the new job
+names.
+
+Status: **DONE v2.7.1** — `.github/workflows/ci.yml` now runs
+`native-c`/`native-go`/`native-python`/`native-interop` in place of the
+single `native` job, each independently inspectable/re-runnable, with a
+coverage guard preventing drift. CI-only change; no wire-format or CLI
+behavior change.
+
+### #206: Add a Java CI job
+
+`bindings/java/` (TODO #196 umbrella) has a full pure-Java port of the
+suite plus `herradurakex.HerraduraCli`, and `CliTest/test_java_*.sh`
+already cover Java-vs-Python interop and KAT cross-checks per-protocol-
+family, but there is no CI job that builds and runs any of it — the
+`native` job's dependency list installs `default-jdk-headless` but never
+invokes a Java build or test step, and `bindings/java/` has no coverage
+in `.github/workflows/ci.yml` at all.
+
+- Add a `native-java` CI job (see [[#205]] — land after or alongside that
+  split, so it follows the same one-job-per-language pattern rather than
+  being bolted onto a monolithic `native` job) that builds `bindings/java/`
+  and runs `CliTest/test_java_bindings.sh`, `test_java_codec.sh`,
+  `test_java_keygen.sh`, `test_java_interop.sh`, `test_java_nl_interop.sh`,
+  `test_java_stern_interop.sh`, `test_java_oprf_wots_interop.sh`,
+  `test_java_hcred_interop.sh`, and `test_java_pake_interop.sh`.
+- Fold the new job into the required/blocking set alongside `native-c`,
+  `native-go`, and `native-python`, and update `CLAUDE.md`'s Testing
+  section and CI job list once landed.
+
+This item covers building and running Java's own test suite in CI only.
+The question of whether Java's crypto output is actually compatible with
+C, Go, and Python (and whether C/Go are directly compatible with each
+other) is tracked separately in [[#207]], which owns its own independent
+CI job.
+
+Status: **DONE v2.7.2** — added a `native-java` job to
+`.github/workflows/ci.yml` that installs `default-jdk-headless` and runs
+all nine `CliTest/test_java_*.sh` scripts (`test_java_bindings.sh` builds
+`bindings/java/` itself). Folded into the required/blocking check set
+alongside `native-c`/`native-go`/`native-python`. Updated `CLAUDE.md`'s
+Testing section (nine jobs → ten). CI-only change; no wire-format or CLI
+behavior change.
+
+### #207: Independent CI job for a full 4-language (C/Go/Python/Java) crypto compatibility matrix
+
+The existing interop coverage across `CliTest/*.sh` is pairwise-against-
+Python, not a full matrix: `test_c_interop.sh` is C↔Python only,
+`test_go_interop.sh` is Go↔Python only, and `test_aead.sh` is the one
+genuinely multi-way (9-way cross-CLI) script but only for HSKE-NL-AEAD.
+There is currently no test proving C and Go are directly compatible on
+the rest of the protocol surface (HKEX-GF/HSKE/HPKS/HPKE and the
+NL/PQC/Stern/OPRF/HCRED/aPAKE families), and once Java lands in CI
+([[#206]]) its own `test_java_*.sh` scripts only check Java against
+Python, not against C or Go.
+
+This item tracks proving that the cryptographic algorithms themselves —
+key exchange, encryption, signing — interoperate correctly among all
+four language implementations, as a concern separate from "does each
+language's own build/test suite pass" (which [[#205]] and [[#206]]
+already cover).
+
+- Close the C↔Go gap: extend `test_c_interop.sh`/`test_go_interop.sh`
+  (or add a new `test_c_go_interop.sh`) so C and Go are checked directly
+  against each other, not only each against Python, across every
+  `--algo` value and subcommand both CLIs support.
+- Build a genuine 4-language compatibility matrix, not pairwise checks
+  against one anchor language: for every `--algo`/subcommand combination,
+  a key/ciphertext/signature produced by any one of C/Go/Python/Java's
+  CLI must be verified consumable by each of the other three (the
+  `test_aead.sh` 9-way pattern generalized to the full protocol surface,
+  extended to include Java). Add a new `CliTest/test_cross_lang_matrix.sh`
+  (or equivalent) rather than folding this into the existing per-language
+  interop scripts, so the matrix is one script with clear pass/fail
+  reporting per language-pair and per protocol family.
+- Confirm `KAT/classical_quartet.json` cross-checks the Java classical
+  quartet the same way `KAT/verify_kat.go` cross-checks Go's, as part of
+  the same matrix run.
+- Add this as its own CI job (e.g. `cross-lang-compat`), independent of
+  and running after `native-c`/`native-go`/`native-python`/`native-java`
+  (it needs all four CLIs built), required/blocking like the rest.
+  Update `CLAUDE.md`'s Testing section and CI job list once landed.
+
+Status: **DONE v2.7.3** — added `CliTest/test_cross_lang_matrix.sh`, a
+genuine 16-way (4x4) C/Go/Python/Java compatibility matrix generalizing
+`test_aead.sh`'s 9-way pattern (TODO #95): full NxN coverage for HKEX-GF/
+HKEX-RNL keygen+kex agreement, HSKE/HSKE-NL-A1/A2 symmetric enc/dec,
+HPKE/HPKE-NL/HPKE-Stern-F asymmetric enc/dec, HPKE-Stern-KEM encap/decap
+(DFR-retry-aware), HPKS/HPKS-NL/HPKS-Stern-F sign/verify, and HCRED
+issue/prove/verify; lighter N-way role-rotation coverage for the
+role-asymmetric OPRF and aPAKE protocols; and a joint KAT cross-check
+step running Go's and Java's independent verifiers against the same
+`KAT/classical_quartet.json` in the same run. Discovered and fixed two
+genuine parameter-mismatch bugs surfaced only by true 4-way testing (not
+caught by any pairwise-against-Python script): the C CLI hardcodes
+Stern-F signing/HCRED-issuing to its compile-time SDF_ROUNDS (32) with no
+`--rounds` override, and Python's `hcred genpkey` defaults to n=32 while
+the other three default to n=256 — both now pinned to matching values in
+the matrix. Added a `cross-lang-compat` CI job that builds all four CLIs
+and runs the matrix, required/blocking, after `native-c`/`native-go`/
+`native-python`/`native-java`. Updated `native-interop`'s coverage guard
+to exempt the new script (claimed by `cross-lang-compat` instead) and
+`CLAUDE.md`'s Testing section (ten jobs → eleven). CI/test-only — no
+wire-format or CLI behavior change.

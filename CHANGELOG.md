@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.3] - 2026-08-18
+
+### Added
+- TODO #207: added `CliTest/test_cross_lang_matrix.sh`, a genuine 4-language
+  (C/Go/Python/Java) cryptographic compatibility matrix, generalizing
+  `test_aead.sh`'s 9-way producer/consumer pattern (TODO #95) from 3
+  languages to 4 (16-way) across the classical quartet (HKEX-GF/HSKE/
+  HPKS/HPKE), the NL/PQC quartet (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL,
+  HPKE-NL), the Stern family (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM
+  — DFR-retry-aware), and HCRED, plus lighter N-way role-rotation coverage
+  for the role-asymmetric OPRF and aPAKE protocols. Proves C and Go
+  interoperate directly with each other for the first time (previously
+  only each was checked against Python), and that Java interoperates
+  directly with both, not only with Python. Added a `cross-lang-compat`
+  CI job (`.github/workflows/ci.yml`) that builds all four CLIs and runs
+  it, required/blocking, running after `native-c`/`native-go`/
+  `native-python`/`native-java`. Updated `native-interop`'s coverage guard
+  and `CLAUDE.md`'s Testing section (ten jobs → eleven) accordingly.
+  CI/test-only — no wire-format or CLI behavior change.
+
+## [2.7.2] - 2026-08-18
+
+### Added
+- TODO #206: added a `native-java` CI job to `.github/workflows/ci.yml`
+  that installs `default-jdk-headless`, then runs all nine
+  `CliTest/test_java_*.sh` scripts (`test_java_bindings.sh`,
+  `test_java_codec.sh`, `test_java_keygen.sh`, `test_java_interop.sh`,
+  `test_java_nl_interop.sh`, `test_java_stern_interop.sh`,
+  `test_java_oprf_wots_interop.sh`, `test_java_hcred_interop.sh`,
+  `test_java_pake_interop.sh`) — building `bindings/java/` and exercising
+  Java-vs-Python interop plus KAT cross-checks per protocol family. Folded
+  into the required/blocking check set alongside `native-c`, `native-go`,
+  and `native-python`. Updated `CLAUDE.md`'s Testing section (nine jobs →
+  ten). CI-only — no wire-format or CLI behavior change; whether Java's
+  crypto output matches C/Go/Python is tracked separately in TODO #207.
+
+## [2.7.1] - 2026-08-18
+
+### Changed
+- TODO #205: split `.github/workflows/ci.yml`'s combined `native`
+  (C/Go/Python build+test+CliTest) job into four jobs — `native-c`,
+  `native-go`, `native-python` (one per language, running only that
+  language's own `CliTest/*.sh` scripts) and `native-interop` (the
+  `CliTest/*.sh` scripts that exercise two or more CLIs at once, which
+  builds both C and Go). A failure in one language's build/test/CLI step
+  no longer blocks visibility into the others, and each can be re-run
+  independently in the Actions UI. Added a coverage-guard step to
+  `native-interop` that fails CI if any non-Java `CliTest/*.sh` script
+  isn't claimed by exactly one of the four `native-*` jobs, so the split
+  can't silently drift as scripts are added. All four jobs remain
+  required/blocking. Updated `CLAUDE.md`'s Testing section accordingly.
+  CI/CLI-surface only — no wire-format or CLI behavior change.
+
 ## [2.7.0] - 2026-08-18
 
 ### Added
