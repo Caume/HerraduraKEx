@@ -14,8 +14,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  native:
-    name: C / Go / Python (build + tests + CliTest)
+  # TODO #205: split from a single combined C/Go/Python job into one job per
+  # language, so a failure in one language doesn't block visibility into the
+  # others and each can be inspected/re-run independently. CliTest/*.sh
+  # scripts are split by which language(s)' CLI binaries they touch: the
+  # single-`c_`/`go_`-prefixed and untagged (Python-only) scripts run in
+  # their matching job; scripts that exercise two or more CLIs run in
+  # native-interop, which is the only job that builds both C and Go.
+  native-c:
+    name: C (build + tests + CliTest)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +30,82 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev
+
+      - name: Build C
+        run: ./build_c.sh
+
+      - name: C test suite
+        run: ./CryptosuiteTests/Herradura_tests_c -t 2.0
+
+      - name: CliTest — C CLI
+        run: |
+          for f in CliTest/test_c_*.sh CliTest/test_weak_key_rejection.sh; do
+            case "$(basename "$f")" in test_c_interop.sh) continue ;; esac
+            echo "=== $f ==="
+            bash "$f"
+          done
+
+  native-go:
+    name: Go (build + tests + CliTest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends golang-go
+
+      - name: Build Go
+        run: ./build_go.sh
+
+      - name: Go test suite
+        run: cd CryptosuiteTests && go run Herradura_tests.go -t 2.0
+
+      - name: CliTest — Go CLI
+        run: |
+          for f in CliTest/test_go_*.sh; do
+            case "$(basename "$f")" in test_go_interop.sh) continue ;; esac
+            echo "=== $f ==="
+            bash "$f"
+          done
+
+  native-python:
+    name: Python (tests + CliTest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
+
+      - name: Python test suite
+        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
+
+      - name: CliTest — Python CLI
+        run: |
+          for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \
+                   CliTest/test_encrypted_pem.sh CliTest/test_hybrid_kex.sh CliTest/test_keygen.sh \
+                   CliTest/test_oprf.sh CliTest/test_pake.sh CliTest/test_rnl_sp800227_kdf.sh \
+                   CliTest/test_sign.sh CliTest/test_signfile.sh CliTest/test_threshold_sign.sh \
+                   CliTest/test_vectors.sh CliTest/test_zkp_nl.sh CliTest/test_zkp_rnl.sh; do
+            echo "=== $f ==="
+            bash "$f"
+          done
+
+  native-interop:
+    name: C / Go / Python cross-CLI interop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3
 
       - name: Build C
         run: ./build_c.sh
@@ -31,21 +113,43 @@ jobs:
       - name: Build Go
         run: ./build_go.sh
 
-      - name: C test suite
-        run: ./CryptosuiteTests/Herradura_tests_c -t 2.0
-
-      - name: Go test suite
-        run: cd CryptosuiteTests && go run Herradura_tests.go -t 2.0
-
-      - name: Python test suite
-        run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
-
-      - name: CliTest — Python/C/Go CLI integration
+      - name: CliTest — cross-language interop (C + Go + Python)
         run: |
-          for f in CliTest/*.sh; do
+          for f in CliTest/test_aead.sh CliTest/test_c_interop.sh CliTest/test_go_interop.sh \
+                   CliTest/test_cred_interop.sh CliTest/test_oprf_interop.sh CliTest/test_stern_interop.sh \
+                   CliTest/test_zkp_interop.sh CliTest/test_hybrid_kex_interop.sh CliTest/test_threshold_interop.sh \
+                   CliTest/test_fuzz_interop.sh CliTest/test_kat_vectors.sh CliTest/test_duplex.sh \
+                   CliTest/test_rand.sh CliTest/test_ring.sh CliTest/test_stern_kem.sh CliTest/test_wots.sh \
+                   CliTest/test_zkbpp.sh CliTest/test_zkp_default_rounds.sh; do
             echo "=== $f ==="
             bash "$f"
           done
+
+      - name: Coverage guard — every non-Java CliTest/*.sh must be claimed by exactly one native-* job
+        run: |
+          declared="test_c_*.sh test_weak_key_rejection.sh \
+                    test_go_*.sh \
+                    test_cred.sh test_encfile.sh test_encrypt.sh test_encrypted_pem.sh test_hybrid_kex.sh \
+                    test_keygen.sh test_oprf.sh test_pake.sh test_rnl_sp800227_kdf.sh test_sign.sh \
+                    test_signfile.sh test_threshold_sign.sh test_vectors.sh test_zkp_nl.sh test_zkp_rnl.sh \
+                    test_aead.sh test_c_interop.sh test_go_interop.sh test_cred_interop.sh test_oprf_interop.sh \
+                    test_stern_interop.sh test_zkp_interop.sh test_hybrid_kex_interop.sh test_threshold_interop.sh \
+                    test_fuzz_interop.sh test_kat_vectors.sh test_duplex.sh test_rand.sh test_ring.sh \
+                    test_stern_kem.sh test_wots.sh test_zkbpp.sh test_zkp_default_rounds.sh"
+          cd CliTest
+          missing=0
+          for f in *.sh; do
+            case "$f" in test_java_*) continue ;; esac
+            claimed=0
+            for pattern in $declared; do
+              case "$f" in $pattern) claimed=1 ;; esac
+            done
+            if [ "$claimed" -eq 0 ]; then
+              echo "UNCLAIMED: $f is not run by any native-* CI job — update .github/workflows/ci.yml (TODO #205)"
+              missing=1
+            fi
+          done
+          exit $missing
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

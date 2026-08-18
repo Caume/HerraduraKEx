@@ -2,6 +2,23 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.1] - 2026-08-18
+
+### Changed
+- TODO #205: split `.github/workflows/ci.yml`'s combined `native`
+  (C/Go/Python build+test+CliTest) job into four jobs — `native-c`,
+  `native-go`, `native-python` (one per language, running only that
+  language's own `CliTest/*.sh` scripts) and `native-interop` (the
+  `CliTest/*.sh` scripts that exercise two or more CLIs at once, which
+  builds both C and Go). A failure in one language's build/test/CLI step
+  no longer blocks visibility into the others, and each can be re-run
+  independently in the Actions UI. Added a coverage-guard step to
+  `native-interop` that fails CI if any non-Java `CliTest/*.sh` script
+  isn't claimed by exactly one of the four `native-*` jobs, so the split
+  can't silently drift as scripts are added. All four jobs remain
+  required/blocking. Updated `CLAUDE.md`'s Testing section accordingly.
+  CI/CLI-surface only — no wire-format or CLI behavior change.
+
 ## [2.7.0] - 2026-08-18
 
 ### Added

@@ -45,39 +45,6 @@ parameter unless its findings justify a follow-up TODO to do so.
 
 Status: **OPEN**
 
-### #205: Split the `native` CI job into separate C, Go, and Python jobs
-
-`.github/workflows/ci.yml`'s `native` job (TODO #153) currently builds and
-tests C, Go, and Python sequentially in one job, plus runs every
-`CliTest/*.sh` script at the end regardless of which language(s) it
-exercises. This means a failure in any one language's build/test/CLI step
-blocks visibility into the other two until fixed, and the three languages
-can't be inspected, re-run, or parallelized independently in the Actions UI.
-
-Split `native` into three jobs — `native-c`, `native-go`, `native-python`
-(naming subject to keeping `native` as a job-group prefix for clarity) —
-each responsible for:
-- its own dependency install (only what that language's `build_*.sh`
-  needs, per the existing rationale in the workflow's header comment),
-- its own `build_*.sh` invocation (skip for Python, which has no build
-  step),
-- its own `CryptosuiteTests/Herradura_tests.*` run,
-- only the `CliTest/*.sh` scripts relevant to that language (the
-  language-tagged ones: `test_c_*.sh`/`test_c_interop.sh` for C,
-  `test_go_*.sh`/`test_go_interop.sh` for Go, and the untagged/Python
-  scripts plus any shared cross-language ones — decide a clear ownership
-  split so no script is silently dropped or duplicated across jobs; shared
-  interop scripts that need two languages' binaries, e.g. `test_c_interop.sh`
-  and `test_aead.sh`, should live with whichever job already builds every
-  binary they need, or become their own small interop job if that's
-  cleaner).
-
-Keep all three required/blocking, matching the current `native` job's
-status. Update this section of `CLAUDE.md`'s Testing section to describe
-the new job names once split.
-
-Status: **OPEN**
-
 ### #206: Add a Java CI job
 
 `bindings/java/` (TODO #196 umbrella) has a full pure-Java port of the

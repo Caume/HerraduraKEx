@@ -10135,3 +10135,37 @@ Niederreiter (demo and real QC-MDPC/BGF), OPRF, HPKS-WOTS-F/HPKS-XMSS-F,
 HCRED, and aPAKE, each with byte-for-byte PEM/DER wire-format parity and
 verified bidirectional CLI interop against the Python reference. See the
 individual #197–#203 entries for what each child item covered.
+
+### #205: Split the `native` CI job into separate C, Go, and Python jobs
+
+`.github/workflows/ci.yml`'s `native` job (TODO #153) used to build and
+test C, Go, and Python sequentially in one job, plus run every
+`CliTest/*.sh` script at the end regardless of which language(s) it
+exercised. This meant a failure in any one language's build/test/CLI step
+blocked visibility into the other two until fixed, and the three languages
+couldn't be inspected, re-run, or parallelized independently in the
+Actions UI.
+
+Split `native` into four jobs:
+- `native-c`, `native-go`, `native-python` — one per language, each with
+  its own dependency install, `build_*.sh` invocation (skipped for
+  Python), `CryptosuiteTests/Herradura_tests.*` run, and only the
+  `CliTest/*.sh` scripts that touch that language's own CLI
+  (`test_c_*.sh`/`test_weak_key_rejection.sh` for C, `test_go_*.sh` for
+  Go, the untagged Python-only scripts for Python).
+- `native-interop` — the `CliTest/*.sh` scripts that exercise two or more
+  CLIs at once (`test_aead.sh`, `test_c_interop.sh`, `test_go_interop.sh`,
+  and 15 others), which builds both C and Go. Also runs a coverage-guard
+  step that fails CI if any non-Java `CliTest/*.sh` script isn't claimed
+  by exactly one of the four `native-*` jobs, so the split can't silently
+  drift as new scripts are added.
+
+All four jobs are required/blocking, matching the old `native` job's
+status. Updated `CLAUDE.md`'s Testing section to describe the new job
+names.
+
+Status: **DONE v2.7.1** — `.github/workflows/ci.yml` now runs
+`native-c`/`native-go`/`native-python`/`native-interop` in place of the
+single `native` job, each independently inspectable/re-runnable, with a
+coverage guard preventing drift. CI-only change; no wire-format or CLI
+behavior change.
