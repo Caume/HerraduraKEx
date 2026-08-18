@@ -10265,3 +10265,60 @@ and runs the matrix, required/blocking, after `native-c`/`native-go`/
 to exempt the new script (claimed by `cross-lang-compat` instead) and
 `CLAUDE.md`'s Testing section (ten jobs → eleven). CI/test-only — no
 wire-format or CLI behavior change.
+
+### #204: Research efficiency/security of non-standard (non-multiple-of-8) key lengths
+
+Right now every implementation assumes bit widths that are multiples of 8
+(commonly 256), driven by the byte-oriented word types in C/Go/Python and
+by `herradura.h`'s fixed-width big-int backing. Investigate whether
+FSCX/GF(2^n)* parameters at non-byte-aligned widths (e.g. n=251, n=255,
+n=509 — primes or otherwise irregular sizes chosen for algebraic
+properties rather than byte convenience) offer a meaningful efficiency
+or security advantage over the current byte-aligned defaults:
+
+- **Algebraic analysis**: does choosing n prime (so GF(2^n)* has no small
+  subgroup structure beyond the trivial factors of `2^n - 1`) meaningfully
+  shrink the Pohlig-Hellman attack surface compared to today's composite
+  byte-multiple n? Does FSCX's linear map M = I ⊕ ROL ⊆ ROR's order
+  (n/2, or n for odd n where ROL/ROR don't pair up as involutions) change
+  the periodic-orbit structure exploited elsewhere in `SecurityProofs-*.md`
+  in a way that helps or hurts diffusion? Extend the analyses in
+  `SecurityProofsCode/hkex_gf_test.py` and the FSCX_N section of
+  `SecurityProofs-1.md` to non-byte-aligned n and document the results.
+- **Experimental testing**: benchmark FSCX/GF arithmetic implemented over
+  odd/non-byte n (bit-sliced or arbitrary-precision, since word-aligned
+  tricks no longer apply) against the current byte-aligned baseline for
+  throughput/memory, and run the existing statistical/avalanche test
+  batteries (`CryptosuiteTests/Herradura_tests.*`) parameterized at a
+  spread of non-standard widths to check whether security margins hold,
+  improve, or degrade.
+- **Deliverable**: a `SecurityProofsCode/` script (or new `SecurityProofs`
+  subsection) presenting the algebraic argument plus measured results,
+  and a recommendation on whether non-standard key lengths are worth
+  adding as a supported parameter choice in any language target, or
+  whether the byte-aligned status quo should stay as-is with the
+  analysis documented for the record either way.
+
+This is a research/analysis item, not an implementation commitment — it
+should not itself change any wire format, CLI surface, or default
+parameter unless its findings justify a follow-up TODO to do so.
+
+Status: **DONE v2.7.4** — added `SecurityProofsCode/hkex_non_byte_key_length_analysis.py`
+and `SecurityProofs-1.md` §1.2.1. Two findings sharpen Theorems 2–3: (1)
+Theorem 2's proof only actually needs gcd(3, n) = 1, not n = 2^k — so
+invertibility of M is NOT guaranteed for an arbitrary non-byte n; n=255
+(3×5×17, the most natural odd neighbor of the default n=256) leaves M
+singular, an undocumented footgun. (2) Theorem 3 (order(M) = n/2) is
+specific to n = 2^k via its Frobenius-exponent argument; for sampled
+invertible non-byte n the empirical order is n, not n/2 (or exceeds the
+script's search bound), so every downstream claim keyed to order(M)=n/2
+would need independent re-derivation per non-power-of-2 n. No offsetting
+diffusion or throughput advantage was found: avalanche differences at
+matched relative depth are an artifact of the order(M) mismatch, not an
+independent property of non-byte n, and every non-Python target's byte/
+word-aligned state representation would need bit-slicing or a bignum
+backend for non-byte n, strictly slower than and losing the
+single-instruction ROL/ROR compilation of today's word-aligned code.
+Recommendation: do not add non-byte-aligned key-length support; the
+byte-aligned status quo remains the only supported parameter family.
+Analysis-only — no wire-format, CLI, or default-parameter change.
