@@ -59,6 +59,7 @@ public final class Codec {
     public static final String PEM_HCRED_PUB = "HERRADURA HCRED PUBLIC KEY";
     public static final String PEM_HCRED_CRED = "HERRADURA HCRED CREDENTIAL";
     public static final String PEM_HCRED_PROOF = "HERRADURA HCRED PROOF";
+    public static final String PEM_PAKE_RECORD = "HERRADURA PAKE RECORD";
     public static final String PEM_SESSION_KEY = "HERRADURA SESSION KEY";
     public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
     public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
@@ -1376,5 +1377,28 @@ public final class Codec {
         Hcred.Proof proof = new Hcred.Proof();
         proof.W = w; proof.rounds = rds;
         return proof;
+    }
+
+    // -----------------------------------------------------------------
+    // aPAKE (TODO #203): server record encode-decode, byte-for-byte with
+    // HerraduraCli/herradura.py's cmd_pake_register / _load_pake_record.
+    // SEQUENCE(salt[32B], B[4B], y[4B]) — B/y are 4 bytes since
+    // Hpake.ZKP_N=32. Username is deliberately not part of the wire
+    // format, matching the Python reference exactly.
+    // -----------------------------------------------------------------
+
+    public static String encodePakeRecord(byte[] salt, BigInteger b, BigInteger y) {
+        byte[] der = derSeq(derInt(salt), derInt(b, 4), derInt(y, 4));
+        return pemWrap(PEM_PAKE_RECORD, der);
+    }
+
+    public static Hpake.Record decodePakeRecord(String pem) {
+        PemBlock block = pemUnwrap(pem);
+        if (!block.label.equals(PEM_PAKE_RECORD)) {
+            throw new IllegalArgumentException("Expected " + PEM_PAKE_RECORD + ", got " + block.label);
+        }
+        List<BigInteger> ints = derParseSeq(block.der);
+        byte[] salt = toFixedBytes(ints.get(0), 32);
+        return new Hpake.Record("", salt, ints.get(1), ints.get(2));
     }
 }

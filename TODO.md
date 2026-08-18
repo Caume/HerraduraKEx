@@ -6,62 +6,145 @@
 
 ## Open items
 
-### #196: Extend the Java port to a complete suite + CLI (umbrella)
+### #204: Research efficiency/security of non-standard (non-multiple-of-8) key lengths
 
-TODO #192 added `bindings/java/herradurakex.Herradura`, a pure-Java port
-of only the classical (v1.4.0) quartet (HKEX-GF, HSKE, HPKS, HPKE),
-matching `bindings/ffi/`'s intentionally narrow scope. The other five
-language targets (C, Go, Python, ARM Thumb-2, NASM i386, Arduino) all
-implement the full suite — NL/PQC, Stern-F/Niederreiter, HCRED,
-OPRF/aPAKE, XMSS/WOTS+, etc. — plus a `HerraduraCli`-equivalent
-OpenSSL-style CLI with PEM/DER codec support matching
-`HerraduraCli/codec.py`/`herradura_codec.h`/`herradura/codec.go`
-byte-for-byte.
+Right now every implementation assumes bit widths that are multiples of 8
+(commonly 256), driven by the byte-oriented word types in C/Go/Python and
+by `herradura.h`'s fixed-width big-int backing. Investigate whether
+FSCX/GF(2^n)* parameters at non-byte-aligned widths (e.g. n=251, n=255,
+n=509 — primes or otherwise irregular sizes chosen for algebraic
+properties rather than byte convenience) offer a meaningful efficiency
+or security advantage over the current byte-aligned defaults:
 
-This item is an umbrella tracking the full gap; broken down into
-sequential, independently-completable child items so a session can pick
-off one milestone at a time rather than attempting the whole surface at
-once. Complete in roughly this order (each depends on the codec landing
-before the CLI, and on the protocol ports landing before their CLI
-subcommands/interop tests):
+- **Algebraic analysis**: does choosing n prime (so GF(2^n)* has no small
+  subgroup structure beyond the trivial factors of `2^n - 1`) meaningfully
+  shrink the Pohlig-Hellman attack surface compared to today's composite
+  byte-multiple n? Does FSCX's linear map M = I ⊕ ROL ⊆ ROR's order
+  (n/2, or n for odd n where ROL/ROR don't pair up as involutions) change
+  the periodic-orbit structure exploited elsewhere in `SecurityProofs-*.md`
+  in a way that helps or hurts diffusion? Extend the analyses in
+  `SecurityProofsCode/hkex_gf_test.py` and the FSCX_N section of
+  `SecurityProofs-1.md` to non-byte-aligned n and document the results.
+- **Experimental testing**: benchmark FSCX/GF arithmetic implemented over
+  odd/non-byte n (bit-sliced or arbitrary-precision, since word-aligned
+  tricks no longer apply) against the current byte-aligned baseline for
+  throughput/memory, and run the existing statistical/avalanche test
+  batteries (`CryptosuiteTests/Herradura_tests.*`) parameterized at a
+  spread of non-standard widths to check whether security margins hold,
+  improve, or degrade.
+- **Deliverable**: a `SecurityProofsCode/` script (or new `SecurityProofs`
+  subsection) presenting the algebraic argument plus measured results,
+  and a recommendation on whether non-standard key lengths are worth
+  adding as a supported parameter choice in any language target, or
+  whether the byte-aligned status quo should stay as-is with the
+  analysis documented for the record either way.
 
-- TODO #197 — PEM/DER codec (classical quartet's wire format)
-- TODO #198 — Java `HerraduraCli` for the classical quartet (needs #197)
-- TODO #199 — NL/PQC port (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, HPKE-NL) +
-  CLI subcommands + interop tests (needs #198)
-- TODO #200 — Stern-F/Niederreiter port (HPKS-Stern-F, HPKE-Stern-F,
-  HPKE-Stern-KEM with the real BGF QC-MDPC decoder) + CLI subcommands +
-  interop tests (needs #198)
-- TODO #201 — OPRF and the stateful hash-based signatures (HPKS-WOTS-F,
-  HPKS-XMSS-F) + CLI subcommands + interop tests (needs #198)
-- TODO #202 — HCRED, the hybrid Ring-LWR + Stern-F credential (needs
-  #198, #200 for the Stern-F building blocks it reuses)
-- TODO #203 — aPAKE, augmented PAKE over HKEX-RNL + a ZKBoo-over-NL-FSCX
-  gadget + OPRF (needs #198, #199, #201's OPRF)
-
-Close this umbrella once #197–#203 are all done.
+This is a research/analysis item, not an implementation commitment — it
+should not itself change any wire format, CLI surface, or default
+parameter unless its findings justify a follow-up TODO to do so.
 
 Status: **OPEN**
 
-### #203: Java port of aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL)
+### #205: Split the `native` CI job into separate C, Go, and Python jobs
 
-Split off from #201. Needs a Java port of the ZKBoo-over-NL-FSCX Sigma
-protocol (`zkp_nl_prove`/`zkp_nl_verify` in
-`"Herradura cryptographic suite.py"` — a bit-level 3-party MPC circuit
-proving knowledge of `A` such that `nl_fscx_v1(A, B) = y`, used here as
-the aPAKE's mutual-authentication proof bound to the HKEX-RNL session
-key) plus TODO #201's OPRF (the server's password record is
-`hfscx_256(OPRF(k_s, password) + salt)` rather than a plain password
-hash, closing offline dictionary attacks against a leaked server
-database). Extend `bindings/java/herradurakex` with `hpake_register`/
-`hpake_login_demo`'s three-message flow (or the CLI's split
-register/login subcommands, matching whichever the Python/C/Go CLIs
-expose). No dedicated KAT exists upstream for this protocol — coverage
-comes from CLI round-trip tests (correct/wrong password, cross-language
-interop) mirroring `CliTest/test_oprf.sh`/`test_pake.sh`'s pattern. Per
-the suite's own documentation this is a research-grade construction (no
-formal UC/SIM-BMP proof) — treat and document it as such, not as a
-hardened production aPAKE.
+`.github/workflows/ci.yml`'s `native` job (TODO #153) currently builds and
+tests C, Go, and Python sequentially in one job, plus runs every
+`CliTest/*.sh` script at the end regardless of which language(s) it
+exercises. This means a failure in any one language's build/test/CLI step
+blocks visibility into the other two until fixed, and the three languages
+can't be inspected, re-run, or parallelized independently in the Actions UI.
+
+Split `native` into three jobs — `native-c`, `native-go`, `native-python`
+(naming subject to keeping `native` as a job-group prefix for clarity) —
+each responsible for:
+- its own dependency install (only what that language's `build_*.sh`
+  needs, per the existing rationale in the workflow's header comment),
+- its own `build_*.sh` invocation (skip for Python, which has no build
+  step),
+- its own `CryptosuiteTests/Herradura_tests.*` run,
+- only the `CliTest/*.sh` scripts relevant to that language (the
+  language-tagged ones: `test_c_*.sh`/`test_c_interop.sh` for C,
+  `test_go_*.sh`/`test_go_interop.sh` for Go, and the untagged/Python
+  scripts plus any shared cross-language ones — decide a clear ownership
+  split so no script is silently dropped or duplicated across jobs; shared
+  interop scripts that need two languages' binaries, e.g. `test_c_interop.sh`
+  and `test_aead.sh`, should live with whichever job already builds every
+  binary they need, or become their own small interop job if that's
+  cleaner).
+
+Keep all three required/blocking, matching the current `native` job's
+status. Update this section of `CLAUDE.md`'s Testing section to describe
+the new job names once split.
+
+Status: **OPEN**
+
+### #206: Add a Java CI job
+
+`bindings/java/` (TODO #196 umbrella) has a full pure-Java port of the
+suite plus `herradurakex.HerraduraCli`, and `CliTest/test_java_*.sh`
+already cover Java-vs-Python interop and KAT cross-checks per-protocol-
+family, but there is no CI job that builds and runs any of it — the
+`native` job's dependency list installs `default-jdk-headless` but never
+invokes a Java build or test step, and `bindings/java/` has no coverage
+in `.github/workflows/ci.yml` at all.
+
+- Add a `native-java` CI job (see [[#205]] — land after or alongside that
+  split, so it follows the same one-job-per-language pattern rather than
+  being bolted onto a monolithic `native` job) that builds `bindings/java/`
+  and runs `CliTest/test_java_bindings.sh`, `test_java_codec.sh`,
+  `test_java_keygen.sh`, `test_java_interop.sh`, `test_java_nl_interop.sh`,
+  `test_java_stern_interop.sh`, `test_java_oprf_wots_interop.sh`,
+  `test_java_hcred_interop.sh`, and `test_java_pake_interop.sh`.
+- Fold the new job into the required/blocking set alongside `native-c`,
+  `native-go`, and `native-python`, and update `CLAUDE.md`'s Testing
+  section and CI job list once landed.
+
+This item covers building and running Java's own test suite in CI only.
+The question of whether Java's crypto output is actually compatible with
+C, Go, and Python (and whether C/Go are directly compatible with each
+other) is tracked separately in [[#207]], which owns its own independent
+CI job.
+
+Status: **OPEN**
+
+### #207: Independent CI job for a full 4-language (C/Go/Python/Java) crypto compatibility matrix
+
+The existing interop coverage across `CliTest/*.sh` is pairwise-against-
+Python, not a full matrix: `test_c_interop.sh` is C↔Python only,
+`test_go_interop.sh` is Go↔Python only, and `test_aead.sh` is the one
+genuinely multi-way (9-way cross-CLI) script but only for HSKE-NL-AEAD.
+There is currently no test proving C and Go are directly compatible on
+the rest of the protocol surface (HKEX-GF/HSKE/HPKS/HPKE and the
+NL/PQC/Stern/OPRF/HCRED/aPAKE families), and once Java lands in CI
+([[#206]]) its own `test_java_*.sh` scripts only check Java against
+Python, not against C or Go.
+
+This item tracks proving that the cryptographic algorithms themselves —
+key exchange, encryption, signing — interoperate correctly among all
+four language implementations, as a concern separate from "does each
+language's own build/test suite pass" (which [[#205]] and [[#206]]
+already cover).
+
+- Close the C↔Go gap: extend `test_c_interop.sh`/`test_go_interop.sh`
+  (or add a new `test_c_go_interop.sh`) so C and Go are checked directly
+  against each other, not only each against Python, across every
+  `--algo` value and subcommand both CLIs support.
+- Build a genuine 4-language compatibility matrix, not pairwise checks
+  against one anchor language: for every `--algo`/subcommand combination,
+  a key/ciphertext/signature produced by any one of C/Go/Python/Java's
+  CLI must be verified consumable by each of the other three (the
+  `test_aead.sh` 9-way pattern generalized to the full protocol surface,
+  extended to include Java). Add a new `CliTest/test_cross_lang_matrix.sh`
+  (or equivalent) rather than folding this into the existing per-language
+  interop scripts, so the matrix is one script with clear pass/fail
+  reporting per language-pair and per protocol family.
+- Confirm `KAT/classical_quartet.json` cross-checks the Java classical
+  quartet the same way `KAT/verify_kat.go` cross-checks Go's, as part of
+  the same matrix run.
+- Add this as its own CI job (e.g. `cross-lang-compat`), independent of
+  and running after `native-c`/`native-go`/`native-python`/`native-java`
+  (it needs all four CLIs built), required/blocking like the rest.
+  Update `CLAUDE.md`'s Testing section and CI job list once landed.
 
 Status: **OPEN**
 

@@ -4,13 +4,14 @@ import java.math.BigInteger;
 import java.security.SecureRandom;
 
 /**
- * TODO #192/#199/#200/#201/#202: end-to-end round-trip smoke test for the
- * herradurakex Java package, with fresh random keys each run —
+ * TODO #192/#199/#200/#201/#202/#203: end-to-end round-trip smoke test
+ * for the herradurakex Java package, with fresh random keys each run —
  * complements KatVerify's fixed-vector cross-check. Covers the classical
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
- * and HCRED ({@link Hcred}). Exits non-zero on any failure.
+ * HCRED ({@link Hcred}), and aPAKE ({@link ZkpNl}, {@link Hpake}). Exits
+ * non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -335,6 +336,47 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hcred round-trip");
+            }
+        }
+
+        // ZKP-NL (the ZKBoo circuit underlying aPAKE's mutual-auth proof):
+        // prove/verify, plus tampered-message and wrong-y rejection.
+        {
+            int n = 32, rounds = 16;
+            BigInteger mask = BigInteger.ONE.shiftLeft(n).subtract(BigInteger.ONE);
+            BigInteger a = new BigInteger(n, rng).and(mask);
+            BigInteger b = new BigInteger(n, rng).and(mask);
+            BigInteger y = ZkpNl.nlFscxV1General(a, b, n);
+            byte[] msg = "self-test zkp-nl".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            java.util.List<ZkpNl.ProofRound> proof = ZkpNl.prove(a, b, y, n, rounds, msg, rng);
+            boolean ok = ZkpNl.verify(b, y, n, rounds, msg, proof);
+            boolean rejectsTamper = !ZkpNl.verify(b, y, n, rounds,
+                "tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), proof);
+            boolean rejectsWrongY = !ZkpNl.verify(b, y.xor(BigInteger.ONE), n, rounds, msg, proof);
+            if (!ok || !rejectsTamper || !rejectsWrongY) {
+                System.out.println("FAIL zkp_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
+                    + " rejects_wrong_y=" + rejectsWrongY + ")");
+                fails++;
+            } else {
+                System.out.println("PASS zkp_nl round-trip");
+            }
+        }
+
+        // aPAKE: register + login with the correct password succeeds and
+        // derives a session key; login with the wrong password fails.
+        {
+            BigInteger oprfKey = Oprf.keygen(rng);
+            byte[] password = "self-test pake password".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Hpake.Record record = Hpake.register("self-test-user", password, oprfKey, rng);
+            byte[] sk = Hpake.loginDemo(record, password, oprfKey, rng);
+            byte[] wrongSk = Hpake.loginDemo(record,
+                "wrong password".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, rng);
+            if (sk == null || wrongSk != null) {
+                System.out.println("FAIL hpake round-trip (correct_login=" + (sk != null)
+                    + " wrong_login_rejected=" + (wrongSk == null) + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpake round-trip");
             }
         }
 
