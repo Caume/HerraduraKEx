@@ -374,6 +374,185 @@ public final class Codec {
         return new PubKey(ints.get(0), ints.get(1).intValueExact());
     }
 
+    // -----------------------------------------------------------------
+    // HKEX-RNL (TODO #199): polynomial packing + key/response encode-decode.
+    // Mirrors HerraduraCli/codec.py's pack_poly/unpack_poly and
+    // herradura.py's _encode_rnl_privkey/_encode_rnl_pubkey/_encode_rnl_response.
+    // -----------------------------------------------------------------
+
+    /** Packs a coefficient array into one big integer (fixed bytesPerCoeff each,
+     * big-endian, concatenated) plus its total byte width. */
+    public static byte[] packPoly(int[] coeffs, int bytesPerCoeff) {
+        byte[] raw = new byte[coeffs.length * bytesPerCoeff];
+        for (int i = 0; i < coeffs.length; i++) {
+            int c = coeffs[i];
+            for (int j = 0; j < bytesPerCoeff; j++) {
+                raw[i * bytesPerCoeff + j] = (byte) (c >>> (8 * (bytesPerCoeff - 1 - j)));
+            }
+        }
+        return raw;
+    }
+
+    /** Inverse of {@link #packPoly}. */
+    public static int[] unpackPoly(BigInteger packed, int n, int bytesPerCoeff) {
+        int total = n * bytesPerCoeff;
+        byte[] raw = new byte[total];
+        byte[] src = packed.toByteArray();
+        int srcStart = 0;
+        while (srcStart < src.length - 1 && src[srcStart] == 0) srcStart++;
+        int copyLen = Math.min(total, src.length - srcStart);
+        System.arraycopy(src, src.length - copyLen, raw, total - copyLen, copyLen);
+        int[] out = new int[n];
+        for (int i = 0; i < n; i++) {
+            int v = 0;
+            for (int j = 0; j < bytesPerCoeff; j++) {
+                v = (v << 8) | (raw[i * bytesPerCoeff + j] & 0xff);
+            }
+            out[i] = v;
+        }
+        return out;
+    }
+
+    private static final int RNL_NA_BYTES = 32;
+
+    /** Encodes an HKEX-RNL private key: SEQUENCE(s_packed, m_blind_packed, n[, n_a]). */
+    public static String encodeRnlPrivKey(int[] s, int[] mBlind, int n, byte[] nA) {
+        byte[] sPacked = packPoly(s, 4);
+        byte[] mPacked = packPoly(mBlind, 4);
+        byte[] der;
+        if (nA == null) {
+            der = derSeq(derInt(sPacked), derInt(mPacked),
+                          derInt(BigInteger.valueOf(n), -1));
+        } else {
+            der = derSeq(derInt(sPacked), derInt(mPacked),
+                          derInt(BigInteger.valueOf(n), -1), derInt(nA));
+        }
+        return pemWrap(PEM_HKEX_RNL_PRIV, der);
+    }
+
+    public static final class RnlPrivKey {
+        public final int[] s;
+        public final int[] mBlind;
+        public final int n;
+        public final byte[] nA;
+        RnlPrivKey(int[] s, int[] mBlind, int n, byte[] nA) {
+            this.s = s; this.mBlind = mBlind; this.n = n; this.nA = nA;
+        }
+    }
+
+    public static RnlPrivKey decodeRnlPrivKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HKEX_RNL_PRIV)) {
+            throw new IllegalArgumentException("Expected " + PEM_HKEX_RNL_PRIV + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int n = ints.get(2).intValueExact();
+        int[] s = unpackPoly(ints.get(0), n, 4);
+        int[] mBlind = unpackPoly(ints.get(1), n, 4);
+        byte[] nA = (ints.size() >= 4) ? toFixedBytes(ints.get(3), RNL_NA_BYTES) : new byte[RNL_NA_BYTES];
+        return new RnlPrivKey(s, mBlind, n, nA);
+    }
+
+    /** Encodes an HKEX-RNL public key: SEQUENCE(C_packed, m_blind_packed, n[, n_a]). */
+    public static String encodeRnlPubKey(int[] c, int[] mBlind, int n, byte[] nA) {
+        byte[] cPacked = packPoly(c, 2);
+        byte[] mPacked = packPoly(mBlind, 4);
+        byte[] der;
+        if (nA == null) {
+            der = derSeq(derInt(cPacked), derInt(mPacked),
+                          derInt(BigInteger.valueOf(n), -1));
+        } else {
+            der = derSeq(derInt(cPacked), derInt(mPacked),
+                          derInt(BigInteger.valueOf(n), -1), derInt(nA));
+        }
+        return pemWrap(PEM_HKEX_RNL_PUB, der);
+    }
+
+    public static final class RnlPubKey {
+        public final int[] c;
+        public final int[] mBlind;
+        public final int n;
+        public final byte[] nA;
+        RnlPubKey(int[] c, int[] mBlind, int n, byte[] nA) {
+            this.c = c; this.mBlind = mBlind; this.n = n; this.nA = nA;
+        }
+    }
+
+    public static RnlPubKey decodeRnlPubKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HKEX_RNL_PUB)) {
+            throw new IllegalArgumentException("Expected " + PEM_HKEX_RNL_PUB + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        int n = ints.get(2).intValueExact();
+        int[] c = unpackPoly(ints.get(0), n, 2);
+        int[] mBlind = unpackPoly(ints.get(1), n, 4);
+        byte[] nA = (ints.size() >= 4) ? toFixedBytes(ints.get(3), RNL_NA_BYTES) : new byte[RNL_NA_BYTES];
+        return new RnlPubKey(c, mBlind, n, nA);
+    }
+
+    /** Encodes Bob's HKEX-RNL response: SEQUENCE(K_B, C_B_packed, hint_packed, n, hint_len[, n_b]). */
+    public static String encodeRnlResponse(BigInteger kB, int[] cB, int[] hint, int n, byte[] nB) {
+        byte[] cPacked = packPoly(cB, 2);
+        int hintLen = Math.min(hint.length, n / 2);
+        BigInteger hintInt = BigInteger.ZERO;
+        for (int i = 0; i < hintLen; i++) {
+            hintInt = hintInt.or(BigInteger.valueOf(hint[i] & 3).shiftLeft(2 * i));
+        }
+        byte[] fields0 = derInt(kB, Math.max(1, (kB.bitLength() + 7) / 8));
+        byte[] fields1 = derInt(cPacked);
+        byte[] fields2 = derInt(hintInt, Math.max(1, (2 * hintLen + 7) / 8));
+        byte[] fields3 = derInt(BigInteger.valueOf(n), -1);
+        byte[] fields4 = derInt(BigInteger.valueOf(hintLen), -1);
+        byte[] der;
+        if (nB == null) {
+            der = derSeq(fields0, fields1, fields2, fields3, fields4);
+        } else {
+            byte[] fields5 = derInt(nB);
+            der = derSeq(fields0, fields1, fields2, fields3, fields4, fields5);
+        }
+        return pemWrap(PEM_RNL_RESPONSE, der);
+    }
+
+    public static final class RnlResponse {
+        public final BigInteger k;
+        public final int[] cB;
+        public final int[] hint;
+        public final int n;
+        public final byte[] nB;
+        RnlResponse(BigInteger k, int[] cB, int[] hint, int n, byte[] nB) {
+            this.k = k; this.cB = cB; this.hint = hint; this.n = n; this.nB = nB;
+        }
+    }
+
+    public static RnlResponse decodeRnlResponse(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_RNL_RESPONSE)) {
+            throw new IllegalArgumentException("Expected " + PEM_RNL_RESPONSE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        BigInteger k = ints.get(0);
+        int n = ints.get(3).intValueExact();
+        int hintLen = ints.get(4).intValueExact();
+        int[] cB = unpackPoly(ints.get(1), n, 2);
+        BigInteger hintInt = ints.get(2);
+        int[] hint = new int[hintLen];
+        for (int i = 0; i < hintLen; i++) {
+            hint[i] = hintInt.shiftRight(2 * i).and(BigInteger.valueOf(3)).intValueExact();
+        }
+        byte[] nB = (ints.size() >= 6) ? toFixedBytes(ints.get(5), RNL_NA_BYTES) : new byte[RNL_NA_BYTES];
+        return new RnlResponse(k, cB, hint, n, nB);
+    }
+
+    private static byte[] toFixedBytes(BigInteger v, int nbytes) {
+        byte[] raw = v.toByteArray();
+        byte[] out = new byte[nbytes];
+        int rawStart = Math.max(0, raw.length - nbytes);
+        int copyLen = raw.length - rawStart;
+        System.arraycopy(raw, rawStart, out, nbytes - copyLen, copyLen);
+        return out;
+    }
+
     /** Encodes an HFSCX-256 digest: SEQUENCE(digest as 32-byte INTEGER). */
     public static String encodeDigest(BigInteger digest) {
         byte[] der = derSeq(derInt(digest, 32));

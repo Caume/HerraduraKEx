@@ -39,32 +39,6 @@ Close this umbrella once #197–#201 are all done.
 
 Status: **OPEN**
 
-### #198: Java `HerraduraCli` for the classical quartet
-
-Part of the #196 breakdown; needs TODO #197 (PEM/DER codec) first. Add
-a Java CLI mirroring `HerraduraCli/herradura.py`/`herradura_cli.c`/
-`herradura_cli.go`'s subcommand interface — `genpkey`, `pkey`, `kex`,
-`enc`, `dec`, `sign`, `verify`, `dgst`, `encfile`, `decfile` — for the
-classical quartet (`hkex-gf`, `hpks`, `hpke` `--algo` values). Add
-`CliTest/test_java_keygen.sh`/`test_java_interop.sh` (Python-generated
-keys consumed by the Java CLI and vice versa), mirroring
-`test_c_interop.sh`/`test_go_interop.sh`'s pattern.
-
-Status: **OPEN**
-
-### #199: Java port of NL/PQC quartet (HKEX-RNL, HSKE-NL, HPKS-NL, HPKE-NL)
-
-Part of the #196 breakdown; needs TODO #198 (CLI skeleton) for its
-`--algo` subcommand wiring, though the library-level primitives (NL-FSCX
-v1/v2, Ring-LWR) can be ported independently first. Extend
-`bindings/java/herradurakex` with HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL, and
-HPKE-NL, plus their CLI subcommands and Python/C/Go interop tests. If
-TODO #190's KAT set has grown to cover NL/PQC vectors by then, cross-
-verify against those; otherwise cross-verify against the Go/Python
-suites directly (mirroring `KAT/verify_kat.go`'s approach).
-
-Status: **OPEN**
-
 ### #200: Java port of Stern-F/Niederreiter (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM)
 
 Part of the #196 breakdown; needs TODO #198. Extend
