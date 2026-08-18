@@ -39,20 +39,6 @@ Close this umbrella once #197–#201 are all done.
 
 Status: **OPEN**
 
-### #200: Java port of Stern-F/Niederreiter (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM)
-
-Part of the #196 breakdown; needs TODO #198. Extend
-`bindings/java/herradurakex` with the Stern identification protocol
-(Fiat-Shamir signature) and Niederreiter KEM, including the real BGF
-QC-MDPC decoder (`qcmdpc_keygen`/`encap`/`decap_bgf`, TODO #183) for
-`hpke-stern-kem` — not just the demo `hpke-stern` path. Note TODO #195's
-still-open QC-MDPC DFR flakiness when writing interop tests: a fresh
-random run can legitimately hit a decode failure, so tests should expect
-that rather than treating every failure as a bug. Add CLI subcommands
-and interop tests.
-
-Status: **OPEN**
-
 ### #201: Java port of remaining advanced protocols (HCRED, OPRF/aPAKE, XMSS/WOTS+)
 
 Part of the #196 breakdown; needs TODO #198. Extend

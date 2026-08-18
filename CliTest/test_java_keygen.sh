@@ -63,12 +63,24 @@ else
     FAIL=$((FAIL+1))
 fi
 
+# ── genpkey hpks-stern/hpke-stern/hpke-stern-kem (TODO #200) ───────────────
+for algo in hpks-stern hpke-stern; do
+    $CLI genpkey --algo "$algo" --out "$TMP/${algo}.pem" 2>/dev/null
+    check "genpkey $algo" "$TMP/${algo}.pem" "PRIVATE KEY"
+    $CLI pkey --in "$TMP/${algo}.pem" --pubout --out "$TMP/${algo}_pub.pem" 2>/dev/null
+    check "pkey pubout $algo" "$TMP/${algo}_pub.pem" "PUBLIC KEY"
+done
+$CLI genpkey --algo hpke-stern-kem --out "$TMP/kem.pem"
+check "genpkey hpke-stern-kem" "$TMP/kem.pem" "HPKE-STERN-KEM PRIVATE KEY"
+$CLI pkey --in "$TMP/kem.pem" --pubout --out "$TMP/kem_pub.pem"
+check "pkey pubout hpke-stern-kem" "$TMP/kem_pub.pem" "HPKE-STERN-KEM PUBLIC KEY"
+
 # ── genpkey rejects unsupported algos honestly (no silent wrong output) ────
-if $CLI genpkey --algo hpke-stern --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
-    echo "FAIL genpkey hpke-stern should be rejected (out of this Java CLI's scope)"
+if $CLI genpkey --algo hcred --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
+    echo "FAIL genpkey hcred should be rejected (out of this Java CLI's scope)"
     FAIL=$((FAIL+1))
 else
-    echo "PASS genpkey hpke-stern correctly rejected: $(cat "$TMP/err.log")"
+    echo "PASS genpkey hcred correctly rejected: $(cat "$TMP/err.log")"
     PASS=$((PASS+1))
 fi
 
