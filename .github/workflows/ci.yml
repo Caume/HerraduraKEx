@@ -140,6 +140,7 @@ jobs:
           missing=0
           for f in *.sh; do
             case "$f" in test_java_*) continue ;; esac
+            case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
             claimed=0
             for pattern in $declared; do
               case "$f" in $pattern) claimed=1 ;; esac
@@ -172,6 +173,31 @@ jobs:
             echo "=== $f ==="
             bash "$f"
           done
+
+  # TODO #207: independent of the four native-* build/test jobs above —
+  # those prove each language's own suite/CLI passes its own tests; this
+  # proves the cryptographic algorithms themselves interoperate correctly
+  # *among* all four language CLIs (not just each against Python).
+  cross-lang-compat:
+    name: 4-language (C/Go/Python/Java) crypto compatibility matrix
+    needs: [native-c, native-go, native-python, native-java]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
+
+      - name: Build C
+        run: ./build_c.sh
+
+      - name: Build Go
+        run: ./build_go.sh
+
+      - name: Cross-language compatibility matrix
+        run: bash CliTest/test_cross_lang_matrix.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

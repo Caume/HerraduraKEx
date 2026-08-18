@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.3] - 2026-08-18
+
+### Added
+- TODO #207: added `CliTest/test_cross_lang_matrix.sh`, a genuine 4-language
+  (C/Go/Python/Java) cryptographic compatibility matrix, generalizing
+  `test_aead.sh`'s 9-way producer/consumer pattern (TODO #95) from 3
+  languages to 4 (16-way) across the classical quartet (HKEX-GF/HSKE/
+  HPKS/HPKE), the NL/PQC quartet (HKEX-RNL, HSKE-NL-A1/A2, HPKS-NL,
+  HPKE-NL), the Stern family (HPKS-Stern-F, HPKE-Stern-F, HPKE-Stern-KEM
+  — DFR-retry-aware), and HCRED, plus lighter N-way role-rotation coverage
+  for the role-asymmetric OPRF and aPAKE protocols. Proves C and Go
+  interoperate directly with each other for the first time (previously
+  only each was checked against Python), and that Java interoperates
+  directly with both, not only with Python. Added a `cross-lang-compat`
+  CI job (`.github/workflows/ci.yml`) that builds all four CLIs and runs
+  it, required/blocking, running after `native-c`/`native-go`/
+  `native-python`/`native-java`. Updated `native-interop`'s coverage guard
+  and `CLAUDE.md`'s Testing section (ten jobs → eleven) accordingly.
+  CI/test-only — no wire-format or CLI behavior change.
+
 ## [2.7.2] - 2026-08-18
 
 ### Added

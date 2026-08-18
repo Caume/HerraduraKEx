@@ -205,21 +205,26 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 ## Testing
 
 No unit-test framework in the traditional sense — tests are pass/fail assertions printed
-to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs ten
+to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs eleven
 jobs on every push/PR, all required/blocking: `native-c`, `native-go`, `native-python`
 (one job per language — build/no-build + suite tests + that language's own `CliTest/*.sh`
 scripts, split from a single combined `native` job in TODO #205), `native-interop`
 (the `CliTest/*.sh` scripts that exercise two or more CLIs at once — builds both C and Go —
-plus a coverage-guard step that fails if any non-Java `CliTest/*.sh` script isn't claimed
-by exactly one of these four `native-*` jobs), `native-java` (builds/runs the
-`bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python interop
-and KAT cross-checks per-protocol-family, TODO #206), `arm-i386` (ARM Thumb-2/NASM i386
-under qemu), `katex` (math-rendering validation, TODO #179), `arduino` (Arduino/AVR under
-simavr — ran `continue-on-error: true` until TODO #185 promoted it after confirming 100%
-pass history since its one known failure mode, an SRAM overflow, was fixed in TODO #155),
-`fuzz-smoke` (30s/target libFuzzer/go-fuzz/Hypothesis/CLI-argv run, TODO #187), and
-`sanitizers` (C suite/tests/CLI under ASan+UBSan plus a bounded valgrind memcheck pass,
-TODO #188). Locally, run the same scripts by hand as described below.
+plus a coverage-guard step that fails if any non-Java, non-cross-lang-matrix `CliTest/*.sh`
+script isn't claimed by exactly one of these four `native-*` jobs), `native-java` (builds/
+runs the `bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python
+interop and KAT cross-checks per-protocol-family, TODO #206), `cross-lang-compat` (builds
+all four CLIs and runs `CliTest/test_cross_lang_matrix.sh` — a genuine 4-way C/Go/Python/
+Java compatibility matrix across the classical quartet, the NL/PQC quartet, the Stern
+family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates directly
+rather than only each against Python; runs after the four `native-*` jobs, TODO #207),
+`arm-i386` (ARM Thumb-2/NASM i386 under qemu), `katex` (math-rendering validation, TODO
+#179), `arduino` (Arduino/AVR under simavr — ran `continue-on-error: true` until TODO #185
+promoted it after confirming 100% pass history since its one known failure mode, an SRAM
+overflow, was fixed in TODO #155), `fuzz-smoke` (30s/target libFuzzer/go-fuzz/Hypothesis/
+CLI-argv run, TODO #187), and `sanitizers` (C suite/tests/CLI under ASan+UBSan plus a
+bounded valgrind memcheck pass, TODO #188). Locally, run the same scripts by hand as
+described below.
 
 `.github/workflows/codeql.yml` runs a separate, non-blocking CodeQL static-analysis
 matrix (C/C++, Go, Python) on every push/PR plus a weekly schedule (TODO #189); alerts
