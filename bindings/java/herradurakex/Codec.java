@@ -2,6 +2,7 @@ package herradurakex;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 
@@ -54,6 +55,10 @@ public final class Codec {
     public static final String PEM_HPKS_XMSS_PRIV = "HERRADURA HPKS-XMSS PRIVATE KEY";
     public static final String PEM_HPKS_XMSS_PUB = "HERRADURA HPKS-XMSS PUBLIC KEY";
     public static final String PEM_HPKS_XMSS_SIG = "HERRADURA HPKS-XMSS SIGNATURE";
+    public static final String PEM_HCRED_PRIV = "HERRADURA HCRED PRIVATE KEY";
+    public static final String PEM_HCRED_PUB = "HERRADURA HCRED PUBLIC KEY";
+    public static final String PEM_HCRED_CRED = "HERRADURA HCRED CREDENTIAL";
+    public static final String PEM_HCRED_PROOF = "HERRADURA HCRED PROOF";
     public static final String PEM_SESSION_KEY = "HERRADURA SESSION KEY";
     public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
     public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
@@ -683,7 +688,13 @@ public final class Codec {
         if (!b.label.equals(PEM_SIGNATURE)) {
             throw new IllegalArgumentException("Expected " + PEM_SIGNATURE + ", got " + b.label);
         }
-        List<BigInteger> ints = derParseSeq(b.der);
+        return decodeSternSigDer(b.der);
+    }
+
+    /** Shared DER body parser for {@link #decodeSternSig} and
+     * {@link #decodeHcredCredential} (identical wire shape, different label). */
+    private static SternSigDecoded decodeSternSigDer(byte[] der) {
+        List<BigInteger> ints = derParseSeq(der);
         int nbits = ints.get(0).intValueExact();
         int rounds = ints.get(1).intValueExact();
         int nbytes = nbits / 8;
@@ -1079,6 +1090,10 @@ public final class Codec {
         return new Xmss.Signature(leafIdx, wotsSig, authPath);
     }
 
+    private static byte[] concat(byte[]... parts) {
+        return concatAll(Arrays.asList(parts));
+    }
+
     private static byte[] concatAll(List<byte[]> parts) {
         int total = 0;
         for (byte[] p : parts) total += p.length;
@@ -1095,5 +1110,271 @@ public final class Codec {
         BigInteger[] out = new BigInteger[count];
         for (int i = 0; i < count; i++) out[i] = new BigInteger(1, slice(blob, i * chunkLen, chunkLen));
         return out;
+    }
+
+    // -----------------------------------------------------------------
+    // HCRED (TODO #202): key / credential / proof encode-decode,
+    // byte-for-byte with HerraduraCli/codec.py's encode_hcred_privkey/
+    // encode_hcred_pubkey/encode_hcred_credential/encode_hcred_proof.
+    //
+    // Unlike every other format in this file, HCRED's private-key,
+    // public-key, and proof PEM bodies are NOT DER (no SEQUENCE/INTEGER
+    // tags) — they are a flat, offset-parsed byte layout, matching the
+    // Python reference exactly (only the credential uses real DER, via
+    // the same layout as {@link #encodeSternSig}). Fixed at n=256
+    // (Herradura.N) per this binding's scope — the wire format's `n`
+    // field is written as 256 for parity, not made variable.
+    // -----------------------------------------------------------------
+
+    private static final int HCRED_SEED_NB = Herradura.N / 8;                  // 32
+    private static final int HCRED_SYNDR_NB = (Herradura.N / 2 + 7) / 8;       // 16
+
+    private static byte[] ser3(int[] vec) {
+        byte[] out = new byte[vec.length * 3];
+        for (int i = 0; i < vec.length; i++) {
+            int c = ((vec[i] % 65537) + 65537) % 65537;
+            out[3 * i] = (byte) (c >> 16);
+            out[3 * i + 1] = (byte) (c >> 8);
+            out[3 * i + 2] = (byte) c;
+        }
+        return out;
+    }
+
+    private static int[] deser3(byte[] data, int off, int count) {
+        int[] out = new int[count];
+        for (int i = 0; i < count; i++) {
+            out[i] = ((data[off] & 0xff) << 16) | ((data[off + 1] & 0xff) << 8) | (data[off + 2] & 0xff);
+            off += 3;
+        }
+        return out;
+    }
+
+    private static byte[] ser2(int[] vec) {
+        byte[] out = new byte[vec.length * 2];
+        for (int i = 0; i < vec.length; i++) {
+            int c = ((vec[i] % 4096) + 4096) % 4096;
+            out[2 * i] = (byte) (c >> 8);
+            out[2 * i + 1] = (byte) c;
+        }
+        return out;
+    }
+
+    private static int[] deser2(byte[] data, int off, int count) {
+        int[] out = new int[count];
+        for (int i = 0; i < count; i++) {
+            out[i] = ((data[off] & 0xff) << 8) | (data[off + 1] & 0xff);
+            off += 2;
+        }
+        return out;
+    }
+
+    private static byte[] be32(int v) {
+        return new byte[] { (byte) (v >> 24), (byte) (v >> 16), (byte) (v >> 8), (byte) v };
+    }
+
+    private static int readBe32(byte[] data, int off) {
+        return ((data[off] & 0xff) << 24) | ((data[off + 1] & 0xff) << 16)
+             | ((data[off + 2] & 0xff) << 8) | (data[off + 3] & 0xff);
+    }
+
+    /** Little-endian fixed-width serialization — HCRED's syndrome field is
+     * stored little-endian (matching the C port's LSB-first byte layout),
+     * unlike every other integer in the suite's wire format. */
+    private static byte[] toFixedBytesLE(BigInteger v, int nbytes) {
+        byte[] be = toFixedBytes(v, nbytes);
+        byte[] le = new byte[nbytes];
+        for (int i = 0; i < nbytes; i++) le[i] = be[nbytes - 1 - i];
+        return le;
+    }
+
+    private static BigInteger fromLE(byte[] data, int off, int nbytes) {
+        byte[] rev = new byte[nbytes];
+        for (int i = 0; i < nbytes; i++) rev[i] = data[off + nbytes - 1 - i];
+        return new BigInteger(1, rev);
+    }
+
+    public static String encodeHcredPrivKey(int[] s, int[] c, int[] m, BigInteger seedH, BigInteger syndr) {
+        byte[] body = concat(be32(Herradura.N), ser3(s), ser2(c), ser3(m),
+                              toFixedBytes(seedH, HCRED_SEED_NB), toFixedBytesLE(syndr, HCRED_SYNDR_NB));
+        return pemWrap(PEM_HCRED_PRIV, body);
+    }
+
+    public static final class HcredPrivKey {
+        public final int[] s, c, m;
+        public final BigInteger seedH, syndr;
+        public final int n;
+        HcredPrivKey(int[] s, int[] c, int[] m, BigInteger seedH, BigInteger syndr, int n) {
+            this.s = s; this.c = c; this.m = m; this.seedH = seedH; this.syndr = syndr; this.n = n;
+        }
+    }
+
+    public static HcredPrivKey decodeHcredPrivKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HCRED_PRIV)) {
+            throw new IllegalArgumentException("Expected " + PEM_HCRED_PRIV + ", got " + b.label);
+        }
+        byte[] body = b.der;
+        int n = readBe32(body, 0);
+        int off = 4;
+        int[] s = deser3(body, off, n); off += n * 3;
+        int[] c = deser2(body, off, n); off += n * 2;
+        int[] m = deser3(body, off, n); off += n * 3;
+        BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
+        BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        return new HcredPrivKey(s, c, m, seedH, syndr, n);
+    }
+
+    public static String encodeHcredPubKey(int[] c, int[] m, BigInteger seedH, BigInteger syndr) {
+        byte[] body = concat(be32(Herradura.N), ser2(c), ser3(m),
+                              toFixedBytes(seedH, HCRED_SEED_NB), toFixedBytesLE(syndr, HCRED_SYNDR_NB));
+        return pemWrap(PEM_HCRED_PUB, body);
+    }
+
+    public static final class HcredPubKey {
+        public final int[] c, m;
+        public final BigInteger seedH, syndr;
+        public final int n;
+        HcredPubKey(int[] c, int[] m, BigInteger seedH, BigInteger syndr, int n) {
+            this.c = c; this.m = m; this.seedH = seedH; this.syndr = syndr; this.n = n;
+        }
+    }
+
+    public static HcredPubKey decodeHcredPubKey(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HCRED_PUB)) {
+            throw new IllegalArgumentException("Expected " + PEM_HCRED_PUB + ", got " + b.label);
+        }
+        byte[] body = b.der;
+        int n = readBe32(body, 0);
+        int off = 4;
+        int[] c = deser2(body, off, n); off += n * 2;
+        int[] m = deser3(body, off, n); off += n * 3;
+        BigInteger seedH = new BigInteger(1, slice(body, off, HCRED_SEED_NB)); off += HCRED_SEED_NB;
+        BigInteger syndr = fromLE(body, off, HCRED_SYNDR_NB);
+        return new HcredPubKey(c, m, seedH, syndr, n);
+    }
+
+    /** Same DER shape as {@link #encodeSternSig}/{@link #decodeSternSig}
+     * (SEQUENCE(n, rounds, commits, challenges, responses)), just under
+     * the HCRED CREDENTIAL label — the issuer credential is literally an
+     * HPKS-Stern-F signature over the credential statement. */
+    public static String encodeHcredCredential(Stern.SternSignature sig) {
+        int rounds = sig.rounds();
+        byte[] commits = packSternTriples(sig.c0, sig.c1, sig.c2, rounds);
+        byte[] challenges = packChallenges(sig.challenges);
+        byte[] responses = packSternPairs(sig.resp0, sig.resp1, rounds);
+        byte[] der = derSeq(derInt(BigInteger.valueOf(Herradura.N), -1), derInt(BigInteger.valueOf(rounds), -1),
+                             derInt(commits), derInt(challenges), derInt(responses));
+        return pemWrap(PEM_HCRED_CRED, der);
+    }
+
+    public static SternSigDecoded decodeHcredCredential(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HCRED_CRED)) {
+            throw new IllegalArgumentException("Expected " + PEM_HCRED_CRED + ", got " + b.label);
+        }
+        return decodeSternSigDer(b.der);
+    }
+
+    private static byte[] outsToBytes(Hcred.Outputs outs) {
+        byte[][] parts = new byte[3 * 7][];
+        int idx = 0;
+        for (int j = 0; j < 3; j++) {
+            parts[idx++] = ser3(outs.ter[j]);
+            parts[idx++] = ser3(outs.bit[j]);
+            parts[idx++] = ser3(outs.del[j]);
+            parts[idx++] = ser3(new int[] { outs.W[j] });
+            parts[idx++] = ser3(outs.S[j]);
+            parts[idx++] = ser3(outs.y[j]);
+            parts[idx++] = ser3(outs.rnd[j]);
+        }
+        return concat(parts);
+    }
+
+    private static final class OutsOffset { Hcred.Outputs outs; int off; }
+
+    private static OutsOffset outsFromBytes(byte[] data, int off, int n, int rows, int rowBits) {
+        int nb = rows * rowBits, nd = n * Hcred.EPS_BITS;
+        Hcred.Outputs outs = new Hcred.Outputs();
+        outs.ter = new int[3][]; outs.bit = new int[3][]; outs.del = new int[3][];
+        outs.W = new int[3]; outs.S = new int[3][]; outs.y = new int[3][]; outs.rnd = new int[3][];
+        for (int j = 0; j < 3; j++) {
+            outs.ter[j] = deser3(data, off, n); off += n * 3;
+            outs.bit[j] = deser3(data, off, nb); off += nb * 3;
+            outs.del[j] = deser3(data, off, nd); off += nd * 3;
+            outs.W[j] = deser3(data, off, 1)[0]; off += 3;
+            outs.S[j] = deser3(data, off, rows); off += rows * 3;
+            outs.y[j] = deser3(data, off, rows); off += rows * 3;
+            outs.rnd[j] = deser3(data, off, n); off += n * 3;
+        }
+        OutsOffset result = new OutsOffset();
+        result.outs = outs; result.off = off;
+        return result;
+    }
+
+    public static String encodeHcredProof(Hcred.Proof proof) {
+        int n = Herradura.N, rows = Hcred.ROWS, rowBits = Hcred.ROW_BITS;
+        int nb = rows * rowBits, nd = n * Hcred.EPS_BITS;
+        List<byte[]> parts = new ArrayList<>();
+        parts.add(be32(n));
+        parts.add(be32(proof.W));
+        parts.add(be32(proof.rounds.size()));
+        for (Hcred.ProofRound rd : proof.rounds) {
+            parts.add(rd.coms[0]); parts.add(rd.coms[1]); parts.add(rd.coms[2]);
+            parts.add(outsToBytes(rd.outs));
+            parts.add(rd.seedC); parts.add(rd.seedC1);
+            parts.add(ser3(rd.a1)); parts.add(ser3(rd.b1)); parts.add(ser3(rd.g1)); parts.add(ser3(rd.h1));
+            boolean hasAux = rd.auxS != null;
+            parts.add(new byte[] { (byte) (hasAux ? 1 : 0) });
+            if (hasAux) {
+                parts.add(ser3(rd.auxS));
+                parts.add(ser3(rd.auxB));
+                parts.add(ser3(rd.auxD));
+            }
+        }
+        byte[] body = concat(parts.toArray(new byte[0][]));
+        return pemWrap(PEM_HCRED_PROOF, body);
+    }
+
+    public static Hcred.Proof decodeHcredProof(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HCRED_PROOF)) {
+            throw new IllegalArgumentException("Expected " + PEM_HCRED_PROOF + ", got " + b.label);
+        }
+        byte[] body = b.der;
+        int n = readBe32(body, 0);
+        int w = readBe32(body, 4);
+        int rounds = readBe32(body, 8);
+        int rows = n / 2, rowBits = 9; // matches Hcred.ROW_BITS at n=256
+        int off = 12;
+        List<Hcred.ProofRound> rds = new ArrayList<>(rounds);
+        for (int i = 0; i < rounds; i++) {
+            byte[][] coms = new byte[3][];
+            for (int j = 0; j < 3; j++) { coms[j] = slice(body, off, 32); off += 32; }
+            OutsOffset oo = outsFromBytes(body, off, n, rows, rowBits);
+            off = oo.off;
+            byte[] seedC = slice(body, off, 32); off += 32;
+            byte[] seedC1 = slice(body, off, 32); off += 32;
+            int[] a1 = deser3(body, off, n); off += n * 3;
+            int[] b1 = deser3(body, off, n); off += n * 3;
+            int nb = rows * rowBits, nd = n * Hcred.EPS_BITS;
+            int[] g1 = deser3(body, off, nb); off += nb * 3;
+            int[] h1 = deser3(body, off, nd); off += nd * 3;
+            boolean hasAux = body[off] != 0; off += 1;
+            int[] auxS = null, auxB = null, auxD = null;
+            if (hasAux) {
+                auxS = deser3(body, off, n); off += n * 3;
+                auxB = deser3(body, off, nb); off += nb * 3;
+                auxD = deser3(body, off, nd); off += nd * 3;
+            }
+            Hcred.ProofRound rd = new Hcred.ProofRound();
+            rd.coms = coms; rd.outs = oo.outs; rd.seedC = seedC; rd.seedC1 = seedC1;
+            rd.a1 = a1; rd.b1 = b1; rd.g1 = g1; rd.h1 = h1;
+            rd.auxS = auxS; rd.auxB = auxB; rd.auxD = auxD;
+            rds.add(rd);
+        }
+        Hcred.Proof proof = new Hcred.Proof();
+        proof.W = w; proof.rounds = rds;
+        return proof;
     }
 }

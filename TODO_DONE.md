@@ -9952,3 +9952,73 @@ syndrome-checking challenge branch ~3.9% of the time by chance; bumped
 to `Stern.SDFR`=32 for `(2/3)^32 ≈ 0.008%` flake probability). Updated
 `bindings/java/README.md` and `CLAUDE.md`'s repository-structure
 section.
+
+### #202: Java port of HCRED (hybrid Ring-LWR + Stern-F credential)
+
+Split off from #201 once scoped in detail (per that item's own note that
+it was likely to be the largest child item and should be split further).
+Extend `bindings/java/herradurakex` with HCRED: user/issuer keygen, the
+unified ZKBoo-(2,3) MPCitH circuit proving both the Ring-LWR rounding
+relation and the Stern-F code-syndrome relation for the same witness in
+one proof (`hcred_prove`/`hcred_verify`), and issuer credential
+issuance/verification (an HPKS-Stern-F signature over the credential
+statement, reusing TODO #200's `Stern` — no separate signature scheme
+needed). The KKW preprocessing-model transcript variant
+(`hcred_prove_kkw`/`hcred_verify_kkw`, ~11x smaller proofs at production
+parameters) is optional/secondary — the ZKBoo-(2,3) path is sufficient
+for interop and should land first. Add CLI subcommands and interop
+tests, including the completeness/replay/tamper/split-witness/issuer
+rejection cases exercised by `CryptosuiteTests/Herradura_tests.py` test
+`[44]`.
+
+Status: **DONE v2.6.0** — added `bindings/java/herradurakex.Hcred`, a
+byte-for-byte port of the unified ZKBoo-(2,3) MPCitH circuit: `phi`
+(positive-support bitmap), `userKeygen`/`syndrome` (Ring-LWR keygen +
+Stern-F syndrome, reusing `HerraduraNl.rnlKeygen` and `Stern.sternBuildH`/
+`sternSyndromeH` directly), the counter-mode HFSCX-256 tape expander
+(`HcredTape`), the 3-party MPC gate simulation and per-round output-share
+computation, Fiat-Shamir statement/challenge hashing, witness preparation
+(with the same replay-binding-into-every-commitment fix as the upstream
+v1.9.77 hardening), and `prove`/`verify`. Issuer credentials
+(`issue`/`credVerify`) are a thin wrapper over `Stern.hpksSternFSign`/
+`hpksSternFVerify` — no separate signature machinery needed. Fixed at
+n=256 (this binding's existing scope) rather than the Python demo's
+n=32 default; n=256 is explicitly supported upstream
+(`--bits 256`) and lets this port reuse `Stern`'s existing 256-bit-only
+parity-check-matrix PRF directly instead of introducing a second,
+arbitrary-width NL-FSCX v1 implementation just for HCRED. The KKW
+preprocessing-model transcript variant remains out of scope, per this
+entry's own note that the ZKBoo-(2,3) path is sufficient for interop.
+
+Extended `Codec` with `PEM_HCRED_PRIV`/`PUB`/`CRED`/`PROOF` label
+constants and their encode/decode helpers — the private-key, public-key,
+and proof PEM bodies are byte-for-byte with `HerraduraCli/codec.py`'s
+own unusual convention of a flat, offset-parsed body rather than a real
+DER SEQUENCE (only the credential is real DER, and turned out to share
+`encodeSternSig`/`decodeSternSig`'s exact wire shape byte-for-byte, so
+`encodeHcredCredential`/`decodeHcredCredential` reuse that logic instead
+of duplicating it). Preserved the syndrome field's little-endian byte
+order (matching the C port's LSB-first layout) against the rest of the
+suite's big-endian convention.
+
+Extended `HerraduraCli` with `--algo hcred` (`genpkey`, `pkey
+--pubout`/`--text`) and the `cred-issue`/`cred-prove`/`cred-verify`
+subcommands, matching the Python CLI's exact flag names
+(`--our`/`--in`/`--rounds`/`--out` for `cred-issue`;
+`--in`/`--msg`/`--rounds`/`--out` for `cred-prove`;
+`--proof`/`--pubkey`/`--cred`/`--issuer`/`--msg` for `cred-verify`).
+
+Verified correctness in the strongest way available for a ZK proof
+scheme — not bit-identical intermediate values (infeasible; each side's
+MPCitH tape seeds are independently random) but full bidirectional
+library- and CLI-level interop: a Java-generated private/public
+key/proof decodes and verifies correctly under the Python reference
+(and vice versa), including issuer-credential verification, before any
+test file was written. Added `CliTest/test_java_hcred_interop.sh` (4
+checks: both user/issuer/proof-generation directions cross-verified,
+plus tamper-message-replay rejection in both directions, at
+`--rounds 8` for CI speed) and extended `SelfTest.java` (completeness
+plus replay/tamper/corrupted-syndrome/wrong-key/split-witness rejection
+and an issuer-credential round-trip, at the library's own demo round
+count) and `test_java_keygen.sh`. Updated `bindings/java/README.md` and
+`CLAUDE.md`'s repository-structure section.

@@ -1,4 +1,4 @@
-# herradurakex — Java bindings (TODO #192, #197, #198, #199, #200, #201)
+# herradurakex — Java bindings (TODO #192, #197, #198, #199, #200, #201, #202)
 
 A pure-Java port of the classical (v1.4.0) HerraduraKEx quartet — HKEX-GF,
 HSKE, HPKS, HPKE — plus the NL/PQC (v1.5.0) quartet — HKEX-RNL (Ring-LWR
@@ -14,9 +14,10 @@ source is the more readable reference.
 HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM (TODO #200) round out the
 code-based PQC surface; the OPRF and the stateful hash-based signatures
 HPKS-WOTS-F/HPKS-XMSS-F (TODO #201) add the remaining non-interactive
-primitives. HCRED (TODO #202), aPAKE (TODO #203), hybrid-rnl-stern,
-ZKP-NL/ZKP-RNL, and the Stern-Ring OR-composition signature remain out
-of scope for this binding.
+primitives; HCRED (TODO #202), the hybrid Ring-LWR + Stern-F credential,
+adds the one MPCitH-proof-based construction. aPAKE (TODO #203),
+hybrid-rnl-stern, ZKP-NL/ZKP-RNL, and the Stern-Ring OR-composition
+signature remain out of scope for this binding.
 
 ## Files
 
@@ -79,25 +80,36 @@ of scope for this binding.
   Merkle accumulator over `Wots` leaves (`keygen`/`sign`/`verify`).
   Stateless — `leafIdx` is an explicit parameter; see `HerraduraCli`'s
   `.idx` sidecar-file convention below for the stateful part.
-- `herradurakex/HerraduraCli.java` (TODO #198-#201) — a CLI mirroring
+- `herradurakex/Hcred.java` (TODO #202) — HCRED, the hybrid Ring-LWR +
+  Stern-F credential: a single unified ZKBoo-(2,3) MPCitH circuit
+  proving both the Ring-LWR rounding relation and the Stern-F
+  code-syndrome relation for the same witness in one proof
+  (`userKeygen`/`syndrome`/`prove`/`verify`), plus issuer credential
+  issuance/verification (`issue`/`credVerify`, a thin wrapper over
+  `Stern`'s HPKS-Stern-F signature). Fixed at n=256, reusing `Stern`'s
+  existing 256-bit-only parity-check-matrix PRF. The KKW
+  preprocessing-model transcript variant is out of scope.
+- `herradurakex/HerraduraCli.java` (TODO #198-#202) — a CLI mirroring
   `HerraduraCli/herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s
   subcommand interface (`genpkey`, `pkey`, `kex`, `enc`, `dec`, `sign`,
   `verify`, `dgst`, `encfile`, `decfile`, `oprf-blind`, `oprf-eval`,
-  `oprf-unblind`) for the classical quartet (`--algo hkex-gf`/`hpks`/
-  `hpke`, plus `hske` for symmetric enc/dec), the NL/PQC quartet
-  (`--algo hkex-rnl`/`hske-nla1`/`hske-nla2`/`hpks-nl`/`hpke-nl`), the
-  Stern-F family (`--algo hpks-stern`/`hpke-stern`/`hpke-stern-kem`), and
-  OPRF/HPKS-WOTS-F/HPKS-XMSS-F (`--algo oprf`/`hpks-wots`/`hpks-xmss`).
-  `kex --algo hkex-rnl` is two-round, matching the other CLIs' convention:
-  Bob responds first (`--our` his priv key, `--their` Alice's pub key)
-  with an RNL RESPONSE PEM; Alice then completes (`--our` her priv key,
-  `--their` Bob's RNL RESPONSE PEM) into a plain SESSION KEY PEM.
-  `genpkey --algo hpks-wots`/`hpks-xmss` additionally write a
-  `<keyfile>.idx` sidecar file next to the private-key PEM — XMSS's
-  authoritative next-unused-leaf-index counter (hard-fails once
-  exhausted) or WOTS's used/unused flag (refuses a second sign) —
-  exactly mirroring the Python CLI's state-file convention. PEM/DER
-  output is byte-for-byte identical to the other three CLIs.
+  `oprf-unblind`, `cred-issue`, `cred-prove`, `cred-verify`) for the
+  classical quartet (`--algo hkex-gf`/`hpks`/`hpke`, plus `hske` for
+  symmetric enc/dec), the NL/PQC quartet (`--algo hkex-rnl`/`hske-nla1`/
+  `hske-nla2`/`hpks-nl`/`hpke-nl`), the Stern-F family (`--algo
+  hpks-stern`/`hpke-stern`/`hpke-stern-kem`), OPRF/HPKS-WOTS-F/
+  HPKS-XMSS-F (`--algo oprf`/`hpks-wots`/`hpks-xmss`), and HCRED
+  (`--algo hcred`). `kex --algo hkex-rnl` is two-round, matching the
+  other CLIs' convention: Bob responds first (`--our` his priv key,
+  `--their` Alice's pub key) with an RNL RESPONSE PEM; Alice then
+  completes (`--our` her priv key, `--their` Bob's RNL RESPONSE PEM)
+  into a plain SESSION KEY PEM. `genpkey --algo hpks-wots`/`hpks-xmss`
+  additionally write a `<keyfile>.idx` sidecar file next to the
+  private-key PEM — XMSS's authoritative next-unused-leaf-index counter
+  (hard-fails once exhausted) or WOTS's used/unused flag (refuses a
+  second sign) — exactly mirroring the Python CLI's state-file
+  convention. PEM/DER output is byte-for-byte identical to the other
+  three CLIs.
 - `build.sh` — compiles the package with `javac`.
 
 ## Build and run
@@ -117,14 +129,17 @@ java -cp bindings/java herradurakex.HerraduraCli pkey --in alice.pem --pubout --
 These are also run by `CliTest/test_java_bindings.sh` /
 `CliTest/test_java_codec.sh` / `CliTest/test_java_keygen.sh` /
 `CliTest/test_java_interop.sh` / `CliTest/test_java_nl_interop.sh` /
-`CliTest/test_java_stern_interop.sh` / `CliTest/test_java_oprf_wots_interop.sh`
-(the last five cross-check the CLI against the Python CLI in both
-directions — `test_java_nl_interop.sh` covers the NL/PQC quartet, TODO
-#199; `test_java_stern_interop.sh` covers HPKS-Stern-F/HPKE-Stern-F/
-HPKE-Stern-KEM, TODO #200, and is DFR-retry-aware for the real BGF
-decoder; `test_java_oprf_wots_interop.sh` covers OPRF/HPKS-WOTS-F/
-HPKS-XMSS-F, TODO #201, and cross-checks the OPRF result numerically
-against Python's `oprf_direct`).
+`CliTest/test_java_stern_interop.sh` / `CliTest/test_java_oprf_wots_interop.sh` /
+`CliTest/test_java_hcred_interop.sh` (the last six cross-check the CLI
+against the Python CLI in both directions — `test_java_nl_interop.sh`
+covers the NL/PQC quartet, TODO #199; `test_java_stern_interop.sh`
+covers HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM, TODO #200, and is
+DFR-retry-aware for the real BGF decoder; `test_java_oprf_wots_interop.sh`
+covers OPRF/HPKS-WOTS-F/HPKS-XMSS-F, TODO #201, and cross-checks the
+OPRF result numerically against Python's `oprf_direct`;
+`test_java_hcred_interop.sh` covers HCRED, TODO #202, cross-verifying
+full user/issuer/proof generation in both directions at `--rounds 8` for
+CI speed).
 
 ## Usage sketch
 

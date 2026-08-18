@@ -43,26 +43,6 @@ Close this umbrella once #197–#203 are all done.
 
 Status: **OPEN**
 
-### #202: Java port of HCRED (hybrid Ring-LWR + Stern-F credential)
-
-Split off from #201 once scoped in detail (per that item's own note that
-it was likely to be the largest child item and should be split further).
-Extend `bindings/java/herradurakex` with HCRED: user/issuer keygen, the
-unified ZKBoo-(2,3) MPCitH circuit proving both the Ring-LWR rounding
-relation and the Stern-F code-syndrome relation for the same witness in
-one proof (`hcred_prove`/`hcred_verify`), and issuer credential
-issuance/verification (an HPKS-Stern-F signature over the credential
-statement, reusing TODO #200's `Stern` — no separate signature scheme
-needed). The KKW preprocessing-model transcript variant
-(`hcred_prove_kkw`/`hcred_verify_kkw`, ~11x smaller proofs at production
-parameters) is optional/secondary — the ZKBoo-(2,3) path is sufficient
-for interop and should land first. Add CLI subcommands and interop
-tests, including the completeness/replay/tamper/split-witness/issuer
-rejection cases exercised by `CryptosuiteTests/Herradura_tests.py` test
-`[44]`.
-
-Status: **OPEN**
-
 ### #203: Java port of aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL)
 
 Split off from #201. Needs a Java port of the ZKBoo-over-NL-FSCX Sigma

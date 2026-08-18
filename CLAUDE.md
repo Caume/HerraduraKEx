@@ -37,6 +37,8 @@ CliTest/
                                                        DFR-retry-aware for the BGF KEM (TODO #200)
   test_java_oprf_wots_interop.sh                    — Java <-> Python CLI cross-language interop
                                                        for OPRF/HPKS-WOTS-F/HPKS-XMSS-F (TODO #201)
+  test_java_hcred_interop.sh                        — Java <-> Python CLI cross-language interop
+                                                       for HCRED (TODO #202)
 KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
   generate_kat.py            — deterministic reference generator (Python); --check verifies currency
@@ -73,20 +75,23 @@ bindings/java/                                       — pure-Java port of the c
                                                       (herradurakex.Herradura), the NL/PQC quartet
                                                       (herradurakex.HerraduraNl, TODO #199),
                                                       HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM
-                                                      (herradurakex.Stern, TODO #200), and OPRF/
+                                                      (herradurakex.Stern, TODO #200), OPRF/
                                                       HPKS-WOTS-F/HPKS-XMSS-F (herradurakex.Oprf/
-                                                      Wots/Xmss, TODO #201), for JVM integrations;
-                                                      cross-checked against KAT/classical_quartet.json.
-                                                      herradurakex.HerraduraCli (TODO #198-#201) mirrors
+                                                      Wots/Xmss, TODO #201), and HCRED
+                                                      (herradurakex.Hcred, TODO #202), for JVM
+                                                      integrations; cross-checked against
+                                                      KAT/classical_quartet.json.
+                                                      herradurakex.HerraduraCli (TODO #198-#202) mirrors
                                                       HerraduraCli's genpkey/pkey/kex/enc/dec/sign/
                                                       verify/dgst/encfile/decfile/oprf-blind/oprf-eval/
-                                                      oprf-unblind subcommand interface for --algo
-                                                      hkex-gf/hpks/hpke (plus hske), hkex-rnl/
-                                                      hske-nla1/hske-nla2/hpks-nl/hpke-nl,
-                                                      hpks-stern/hpke-stern/hpke-stern-kem, and
+                                                      oprf-unblind/cred-issue/cred-prove/cred-verify
+                                                      subcommand interface for --algo hkex-gf/hpks/hpke
+                                                      (plus hske), hkex-rnl/hske-nla1/hske-nla2/hpks-nl/
+                                                      hpke-nl, hpks-stern/hpke-stern/hpke-stern-kem,
                                                       oprf/hpks-wots/hpks-xmss (the latter two use a
                                                       <keyfile>.idx sidecar file for one-time-use/
-                                                      leaf-index state, matching the Python CLI)
+                                                      leaf-index state, matching the Python CLI), and
+                                                      hcred
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history
