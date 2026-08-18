@@ -45,35 +45,6 @@ parameter unless its findings justify a follow-up TODO to do so.
 
 Status: **OPEN**
 
-### #206: Add a Java CI job
-
-`bindings/java/` (TODO #196 umbrella) has a full pure-Java port of the
-suite plus `herradurakex.HerraduraCli`, and `CliTest/test_java_*.sh`
-already cover Java-vs-Python interop and KAT cross-checks per-protocol-
-family, but there is no CI job that builds and runs any of it — the
-`native` job's dependency list installs `default-jdk-headless` but never
-invokes a Java build or test step, and `bindings/java/` has no coverage
-in `.github/workflows/ci.yml` at all.
-
-- Add a `native-java` CI job (see [[#205]] — land after or alongside that
-  split, so it follows the same one-job-per-language pattern rather than
-  being bolted onto a monolithic `native` job) that builds `bindings/java/`
-  and runs `CliTest/test_java_bindings.sh`, `test_java_codec.sh`,
-  `test_java_keygen.sh`, `test_java_interop.sh`, `test_java_nl_interop.sh`,
-  `test_java_stern_interop.sh`, `test_java_oprf_wots_interop.sh`,
-  `test_java_hcred_interop.sh`, and `test_java_pake_interop.sh`.
-- Fold the new job into the required/blocking set alongside `native-c`,
-  `native-go`, and `native-python`, and update `CLAUDE.md`'s Testing
-  section and CI job list once landed.
-
-This item covers building and running Java's own test suite in CI only.
-The question of whether Java's crypto output is actually compatible with
-C, Go, and Python (and whether C/Go are directly compatible with each
-other) is tracked separately in [[#207]], which owns its own independent
-CI job.
-
-Status: **OPEN**
-
 ### #207: Independent CI job for a full 4-language (C/Go/Python/Java) crypto compatibility matrix
 
 The existing interop coverage across `CliTest/*.sh` is pairwise-against-

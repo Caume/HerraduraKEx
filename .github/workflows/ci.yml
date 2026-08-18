@@ -151,6 +151,28 @@ jobs:
           done
           exit $missing
 
+  native-java:
+    name: Java (build + CliTest interop)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends default-jdk-headless python3
+
+      - name: CliTest — Java bindings + interop
+        run: |
+          for f in CliTest/test_java_bindings.sh CliTest/test_java_codec.sh \
+                   CliTest/test_java_keygen.sh CliTest/test_java_interop.sh \
+                   CliTest/test_java_nl_interop.sh CliTest/test_java_stern_interop.sh \
+                   CliTest/test_java_oprf_wots_interop.sh CliTest/test_java_hcred_interop.sh \
+                   CliTest/test_java_pake_interop.sh; do
+            echo "=== $f ==="
+            bash "$f"
+          done
+
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)
     runs-on: ubuntu-latest

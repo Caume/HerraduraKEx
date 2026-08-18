@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.2] - 2026-08-18
+
+### Added
+- TODO #206: added a `native-java` CI job to `.github/workflows/ci.yml`
+  that installs `default-jdk-headless`, then runs all nine
+  `CliTest/test_java_*.sh` scripts (`test_java_bindings.sh`,
+  `test_java_codec.sh`, `test_java_keygen.sh`, `test_java_interop.sh`,
+  `test_java_nl_interop.sh`, `test_java_stern_interop.sh`,
+  `test_java_oprf_wots_interop.sh`, `test_java_hcred_interop.sh`,
+  `test_java_pake_interop.sh`) — building `bindings/java/` and exercising
+  Java-vs-Python interop plus KAT cross-checks per protocol family. Folded
+  into the required/blocking check set alongside `native-c`, `native-go`,
+  and `native-python`. Updated `CLAUDE.md`'s Testing section (nine jobs →
+  ten). CI-only — no wire-format or CLI behavior change; whether Java's
+  crypto output matches C/Go/Python is tracked separately in TODO #207.
+
 ## [2.7.1] - 2026-08-18
 
 ### Changed
