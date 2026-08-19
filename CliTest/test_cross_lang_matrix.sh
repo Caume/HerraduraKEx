@@ -12,7 +12,8 @@
 # the protocol surface all four CLIs share: the classical quartet
 # (HKEX-GF/HSKE/HPKS/HPKE), the NL/PQC quartet (HKEX-RNL, HSKE-NL-A1/A2,
 # HPKS-NL, HPKE-NL), the Stern family (HPKS-Stern-F, HPKE-Stern-F,
-# HPKE-Stern-KEM), and HCRED. C and Go additionally cover more of the
+# HPKE-Stern-KEM), HCRED, and HPKS-XMSS-F (TODO #208; h=3 for speed).
+# C and Go additionally cover more of the
 # --algo surface (hpks-ring, hpks-t, hske-duplex, rnl-sigma,
 # hybrid-rnl-stern, nl-zkboo/zkbpp, hpks-zkp-nl) that Java's CLI does not
 # yet expose (see CLAUDE.md's bindings/java/ entry); that surface is
@@ -197,6 +198,26 @@ matrix_sign hpks-nl
 # SDF_ROUNDS (32) with no override (same constraint as hcred above), so all
 # signers must use 32 rounds for a C-verifiable (or C-produced) signature.
 matrix_sign hpks-stern --rounds 32
+
+# ── HPKS-XMSS-F sign/verify matrix (TODO #208) — h=3 (8 leaves) keeps
+#    4-language keygen fast; each signer uses leaf 0 only, so the matrix
+#    stays a simple NxN like matrix_sign above (a dedicated block, since
+#    genpkey needs --xmss-height and matrix_sign only forwards extra args
+#    to sign). ─────────────────────────────────────────────────────────────
+echo "=== hpks-xmss sign/verify matrix ==="
+for sg in "${LANGS[@]}"; do
+    ${CLI[$sg]} genpkey --algo hpks-xmss --xmss-height 3 \
+        --out "$TMP/xmss_${sg}.pem" >/dev/null 2>&1
+    ${CLI[$sg]} pkey --in "$TMP/xmss_${sg}.pem" --pubout \
+        --out "$TMP/xmss_${sg}_pub.pem" >/dev/null 2>&1
+    ${CLI[$sg]} sign --algo hpks-xmss --key "$TMP/xmss_${sg}.pem" --in "$TMP/msg.bin" \
+        --out "$TMP/xmss_sig_${sg}.pem" >/dev/null 2>&1
+    for vf in "${LANGS[@]}"; do
+        check_verify_ok "hpks-xmss $sg-sign -> $vf-verify" \
+            ${CLI[$vf]} verify --algo hpks-xmss --pubkey "$TMP/xmss_${sg}_pub.pem" \
+            --in "$TMP/msg.bin" --sig "$TMP/xmss_sig_${sg}.pem"
+    done
+done
 
 # ── HKEX-RNL: two-round handshake matrix — every (Alice-CLI, Bob-CLI) pair
 #    must reconcile to the same session key ─────────────────────────────────

@@ -10322,3 +10322,59 @@ single-instruction ROL/ROR compilation of today's word-aligned code.
 Recommendation: do not add non-byte-aligned key-length support; the
 byte-aligned status quo remains the only supported parameter family.
 Analysis-only — no wire-format, CLI, or default-parameter change.
+
+### #208: Close the `hpks-xmss` CLI/suite gap in C and Go
+
+A cross-language consistency audit (2026-08-18) found that `--algo
+hpks-xmss` (XMSS Merkle-tree signatures, added for Python/Java in
+[[#201]]) is implemented in the Python CLI (`herradura.py`) and the Java
+CLI (`bindings/java/.../HerraduraCli.java`, `herradurakex.Xmss`), but is
+entirely absent from the C and Go sides: `herradura_cli.c`,
+`herradura_cli.go`, `herradura.h`, and `Herradura cryptographic
+suite.{c,go}` have zero references to XMSS (only `hpks-wots` is
+supported there). This is not documented anywhere as an intentional
+Python/Java-only feature, so as it stands it reads as an unfinished
+port rather than a deliberate scope decision.
+
+- Confirm intent: either XMSS was meant to reach all four core languages
+  (C/Go/Python/Java) like the rest of the classical/NL/PQC quartets, or
+  it's deliberately Python/Java-only (e.g. because of tree-state/index
+  bookkeeping complexity) — decide before implementing.
+- If porting: implement XMSS keygen/sign/verify in `herradura.h` (and
+  the standalone `Herradura cryptographic suite.c`), mirroring the
+  existing `hpks-wots` structure and the Python/Java reference
+  behavior (leaf-index `.idx` sidecar state file, per CLAUDE.md's
+  bindings/java description). Do the same for the Go suite and
+  `herradura_cli.go`. Wire `--algo hpks-xmss` into both `genpkey`/`sign`/
+  `verify` subcommands in `herradura_cli.c` and `herradura_cli.go`,
+  matching Python/Java's PEM wire format exactly.
+- Add/extend `CryptosuiteTests/Herradura_tests.{c,go}` XMSS coverage to
+  match test [30] in the Python suite (per CLAUDE.md's test-numbering
+  note that [30] "WOTS/XMSS" already spans multiple languages).
+- Extend `CliTest/test_java_oprf_wots_interop.sh` (or add a C/Go
+  counterpart) and `CliTest/test_cross_lang_matrix.sh` ([[#207]]) so
+  `hpks-xmss` is cross-checked across all four languages once C/Go
+  support lands, the same way the rest of the protocol surface is.
+- If the decision instead is Python/Java-only by design, document that
+  explicitly in `CLAUDE.md`'s `bindings/java/` description and the HPKS
+  protocol-stack section, so future audits don't re-flag it.
+
+Status: **DONE v2.7.5** — confirmed intent was a straight 4-language
+port: the core `hpks_xmss_keygen`/`sign`/`verify` primitives (2^h-leaf
+Merkle tree of WOTS-F public keys) and `CryptosuiteTests/Herradura_tests.
+{c,go}` test [30] coverage already existed in `herradura.h` and
+`Herradura cryptographic suite.{c,go}` from an earlier pass — only CLI
+wiring was actually missing. Wired `--algo hpks-xmss` into
+`HerraduraCli/herradura_cli.c`'s and `herradura_cli.go`'s `genpkey`
+(new `--xmss-height` flag, default 10, matching Python's), `pkey`,
+`sign`, and `verify` subcommands, with a `<key>.idx` leaf-index sidecar
+(one-time-per-leaf, matching Python/Java exactly) and new
+`PEM_HPKS_XMSS_PRIV/PUB/SIG` labels in `herradura_codec.h`. Extended
+`CliTest/test_wots.sh` with a full HPKS-XMSS-F section (9-way C/Go/Python
+interop, multi-leaf signing, leaf exhaustion, tamper/wrong-key rejection
+— 27 new assertions) and added an `hpks-xmss` block to
+`CliTest/test_cross_lang_matrix.sh` covering all 16 C/Go/Python/Java
+producer/consumer pairs. Verified byte-for-byte PEM wire compatibility
+in both directions among all four languages; no Python/Java wire-format
+discrepancy was found. `CLAUDE.md`'s `bindings/java/` description did
+not claim WOTS/XMSS exclusivity, so no correction was needed there.

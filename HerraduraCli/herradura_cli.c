@@ -469,6 +469,43 @@ static void wots_blob_unpack(BitArray vals[WOTS_L], const uint8_t *v, size_t vl)
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * HPKS-XMSS-F helpers (TODO #208)
+ *
+ * Leaf-index one-time-use state is tracked in a `<key>.idx` sidecar file
+ * (0-based next-unused-leaf, one integer per line), mirroring the Python CLI's
+ * `_xmss_read_idx`/`_xmss_write_idx`.  The same `<key>.idx` convention is
+ * reused by HPKS-WOTS-F (see wots_idx_path above) for its 0/1 burned flag.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static int xmss_read_idx(const char *key_path)
+{
+    char p[4096]; wots_idx_path(key_path, p, sizeof p);
+    FILE *f = fopen(p, "r");
+    if (!f) return 0;
+    int v = 0;
+    if (fscanf(f, "%d", &v) != 1) v = 0;
+    fclose(f);
+    return v < 0 ? 0 : v;
+}
+
+static void xmss_write_idx(const char *key_path, int val)
+{
+    char p[4096]; wots_idx_path(key_path, p, sizeof p);
+    FILE *f = fopen(p, "w");
+    if (f) { fprintf(f, "%d\n", val); fclose(f); }
+}
+
+/* Right-align a variable-length DER integer value into a fixed-size buffer
+ * (generic version of wots_blob_unpack's alignment, for arbitrary blob sizes). */
+static void xmss_blob_align(uint8_t *dst, size_t dst_len,
+                             const uint8_t *src, size_t src_len)
+{
+    memset(dst, 0, dst_len);
+    if (src_len > dst_len) src_len = dst_len;
+    memcpy(dst + (dst_len - src_len), src, src_len);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * genpkey
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -597,6 +634,38 @@ static void cmd_genpkey(int argc, char **argv)
         seq_and_write(it, ill, 2, PEM_HPKS_WOTS_PRIV, out);
         if (out && strcmp(out, "-") != 0) wots_write_idx(out, 0);
         fprintf(stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.\n");
+        explicit_bzero(seed, KEYBYTES);
+        fclose(urnd); return;
+    }
+
+    /* HPKS-XMSS-F key: SEQUENCE(INTEGER(seed,32), INTEGER(h), INTEGER(next_idx=0),
+     * INTEGER(leaf_hashes_blob, 32*2^h)) — mirrors the Python CLI exactly. */
+    if (strcmp(algo, "hpks-xmss") == 0) {
+        const char *h_arg = get_arg(argc, argv, "--xmss-height");
+        int h_val = h_arg ? atoi(h_arg) : 10;
+        if (h_val < 1 || h_val > 20) die("genpkey: --xmss-height must be in [1,20]");
+        uint8_t seed[KEYBYTES];
+        if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
+        fprintf(stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
+                h_val, 1 << h_val);
+        uint8_t root[KEYBYTES];
+        uint8_t *flat = NULL; size_t num_leaves = 0;
+        hpks_xmss_keygen(root, &flat, &num_leaves, seed, h_val);
+
+        size_t blob_len = num_leaves * KEYBYTES;
+        uint8_t is[DER_INT_LEN(KEYBYTES)], ih[DER_INT_LEN(8)], iidx[DER_INT_LEN(8)];
+        uint8_t *ib = (uint8_t *)malloc(DER_INT_LEN(blob_len));
+        if (!ib) die("out of memory");
+        size_t ls, lh, lidx, lb;
+        der_i32(seed, is, &ls);
+        der_i_uint((uint64_t)h_val, ih, &lh);
+        der_i_uint(0, iidx, &lidx);
+        der_int_enc(flat, blob_len, ib, &lb);
+        const uint8_t *it[4] = {is, ih, iidx, ib};
+        size_t ill[4] = {ls, lh, lidx, lb};
+        seq_and_write(it, ill, 4, PEM_HPKS_XMSS_PRIV, out);
+        if (out && strcmp(out, "-") != 0) xmss_write_idx(out, 0);
+        free(ib); free(flat);
         explicit_bzero(seed, KEYBYTES);
         fclose(urnd); return;
     }
@@ -876,6 +945,7 @@ static void cmd_pkey(int argc, char **argv)
         { PEM_HPKS_STERN_PRIV, PEM_HPKS_STERN_PUB, "hpks-stern", 2 },
         { PEM_HPKE_STERN_PRIV, PEM_HPKE_STERN_PUB, "hpke-stern", 2 },
         { PEM_HPKS_WOTS_PRIV,  PEM_HPKS_WOTS_PUB,  "hpks-wots",  3 },
+        { PEM_HPKS_XMSS_PRIV,  PEM_HPKS_XMSS_PUB,  "hpks-xmss",  4 },
         { NULL, NULL, NULL, 0 }
     };
 
@@ -981,6 +1051,32 @@ static void cmd_pkey(int argc, char **argv)
             const uint8_t *it[2] = {ib, iell}; size_t il[2] = {lb, lell};
             seq_and_write(it, il, 2, PEM_HPKS_WOTS_PUB, out_path);
             free(ib);
+        }
+    }
+
+    /* ── HPKS-XMSS-F ─── */
+    else if (kind == 4) {
+        if (k.n_items < 4) die("pkey: malformed XMSS private key");
+        int h_val = (int)parse_be_uint(k.vals[1], k.vlens[1]);
+        size_t num_leaves = (size_t)1 << h_val;
+        size_t blob_len = num_leaves * KEYBYTES;
+        uint8_t *flat = (uint8_t *)malloc(blob_len);
+        if (!flat) die("out of memory");
+        xmss_blob_align(flat, blob_len, k.vals[3], k.vlens[3]);
+        uint8_t root[KEYBYTES];
+        haccum_root((const uint8_t (*)[KEYBYTES])flat, num_leaves, root);
+        free(flat);
+        if (text) {
+            printf("%-10s: %s\n", "algorithm", algo);
+            printf("%-10s: %d (%zu leaves)\n", "height", h_val, num_leaves);
+            print_hex_field("root", root, KEYBYTES);
+        } else {
+            uint8_t ir[DER_INT_LEN(KEYBYTES)], ih[DER_INT_LEN(8)];
+            size_t lr, lh;
+            der_i32(root, ir, &lr);
+            der_i_uint((uint64_t)h_val, ih, &lh);
+            const uint8_t *it[2] = {ir, ih}; size_t il[2] = {lr, lh};
+            seq_and_write(it, il, 2, PEM_HPKS_XMSS_PUB, out_path);
         }
     }
 
@@ -2809,6 +2905,68 @@ static void cmd_sign(int argc, char **argv)
         return;
     }
 
+    /* HPKS-XMSS-F signs the full message (hashed internally) at the next unused
+     * leaf, tracked in the `<key>.idx` sidecar. */
+    if (strcmp(algo, "hpks-xmss") == 0) {
+        PemKey xk;
+        pem_key_load(&xk, key_path);
+        if (strcmp(xk.label, PEM_HPKS_XMSS_PRIV) != 0)
+            dief("sign: expected HPKS-XMSS private key, got: %s", xk.label);
+        if (xk.n_items < 4) die("sign: malformed XMSS private key");
+        uint8_t seed[KEYBYTES];
+        xmss_blob_align(seed, KEYBYTES, xk.vals[0], xk.vlens[0]);
+        int h_val = (int)parse_be_uint(xk.vals[1], xk.vlens[1]);
+        size_t num_leaves = (size_t)1 << h_val;
+        size_t blob_len = num_leaves * KEYBYTES;
+        uint8_t *flat = (uint8_t *)malloc(blob_len);
+        if (!flat) die("out of memory");
+        xmss_blob_align(flat, blob_len, xk.vals[3], xk.vlens[3]);
+        pem_key_free(&xk);
+
+        uint32_t leaf_idx = (uint32_t)xmss_read_idx(key_path);
+        if (leaf_idx >= num_leaves) {
+            free(flat);
+            fprintf(stderr, "sign: XMSS key exhausted (%zu leaves used). "
+                    "Generate a new key.\n", num_leaves);
+            exit(1);
+        }
+
+        const uint8_t *wmsg; size_t wmlen; uint8_t wdig[KEYBYTES];
+        if (digest && strcmp(digest, "hfscx-256") == 0) {
+            hfscx_256(in_buf, in_len, NULL, wdig);
+            wmsg = wdig; wmlen = KEYBYTES;
+        } else {
+            wmsg = in_buf; wmlen = in_len;
+        }
+        HpksXmssSig sig;
+        hpks_xmss_sign(&sig, wmsg, wmlen, seed, flat, num_leaves, leaf_idx);
+        free(in_buf);
+        free(flat);
+
+        uint8_t sig_blob[WOTS_L * KEYBYTES];
+        wots_blob_pack(sig_blob, sig.wots_sig);
+        size_t path_len = (size_t)sig.depth * KEYBYTES;
+        uint8_t ileaf[DER_INT_LEN(8)], ih[DER_INT_LEN(8)], in256[DER_INT_LEN(8)];
+        uint8_t *isig  = (uint8_t *)malloc(DER_INT_LEN(sizeof sig_blob));
+        uint8_t *ipath = (uint8_t *)malloc(DER_INT_LEN(path_len));
+        if (!isig || !ipath) die("out of memory");
+        size_t lleaf, lsig, lpath, lh, ln256;
+        der_i_uint(leaf_idx, ileaf, &lleaf);
+        der_int_enc(sig_blob, sizeof sig_blob, isig, &lsig);
+        der_int_enc(sig.auth_path, path_len, ipath, &lpath);
+        der_i_uint((uint64_t)sig.depth, ih, &lh);
+        der_i_uint(KEYBITS, in256, &ln256);
+        const uint8_t *it[5] = {ileaf, isig, ipath, ih, in256};
+        size_t il[5] = {lleaf, lsig, lpath, lh, ln256};
+        seq_and_write(it, il, 5, PEM_HPKS_XMSS_SIG, out_path);
+        free(isig); free(ipath);
+        hpks_xmss_sig_free(&sig);
+        xmss_write_idx(key_path, (int)(leaf_idx + 1));
+        fprintf(stderr, "XMSS leaf %u used; %zu leaves remaining.\n",
+                leaf_idx, num_leaves - leaf_idx - 1);
+        return;
+    }
+
     if (digest && strcmp(digest, "hfscx-256") == 0) {
         /* Pre-hash: sign the 32-byte digest. */
         hfscx_256(in_buf, in_len, NULL, msg_bytes);
@@ -3047,6 +3205,47 @@ static void cmd_verify(int argc, char **argv)
         pem_key_free(&sigk);
 
         int ok = hpks_wots_verify(wmsg, wmlen, sig, pk);
+        free(in_buf);
+        if (ok) { puts("Signature OK");        exit(0); }
+        else    { puts("Verification FAILED"); exit(1); }
+    }
+
+    /* HPKS-XMSS-F verifies against the full message (hashed internally); no
+     * stored WOTS pk needed — it is recovered from (msg, sig) during verify. */
+    if (strcmp(algo, "hpks-xmss") == 0) {
+        const uint8_t *wmsg; size_t wmlen; uint8_t wdig[KEYBYTES];
+        if (digest && strcmp(digest, "hfscx-256") == 0) {
+            hfscx_256(in_buf, in_len, NULL, wdig);
+            wmsg = wdig; wmlen = KEYBYTES;
+        } else {
+            wmsg = in_buf; wmlen = in_len;
+        }
+        PemKey pubk; pem_key_load(&pubk, pubkey_path);
+        if (strcmp(pubk.label, PEM_HPKS_XMSS_PUB) != 0)
+            dief("verify: expected HPKS-XMSS public key, got: %s", pubk.label);
+        uint8_t root[KEYBYTES];
+        xmss_blob_align(root, KEYBYTES, pubk.vals[0], pubk.vlens[0]);
+        pem_key_free(&pubk);
+
+        PemKey sigk; pem_key_load(&sigk, sig_path);
+        if (strcmp(sigk.label, PEM_HPKS_XMSS_SIG) != 0)
+            dief("verify: expected HPKS-XMSS signature, got: %s", sigk.label);
+        if (sigk.n_items < 5) die("verify: malformed XMSS signature");
+        uint32_t leaf_idx = (uint32_t)parse_be_uint(sigk.vals[0], sigk.vlens[0]);
+        int depth = (int)parse_be_uint(sigk.vals[3], sigk.vlens[3]);
+
+        HpksXmssSig sig;
+        sig.leaf_idx = leaf_idx;
+        sig.depth    = depth;
+        wots_blob_unpack(sig.wots_sig, sigk.vals[1], sigk.vlens[1]);
+        size_t path_len = (size_t)depth * KEYBYTES;
+        sig.auth_path = (uint8_t *)malloc(path_len);
+        if (!sig.auth_path) die("out of memory");
+        xmss_blob_align(sig.auth_path, path_len, sigk.vals[2], sigk.vlens[2]);
+        pem_key_free(&sigk);
+
+        int ok = hpks_xmss_verify(wmsg, wmlen, &sig, root);
+        hpks_xmss_sig_free(&sig);
         free(in_buf);
         if (ok) { puts("Signature OK");        exit(0); }
         else    { puts("Verification FAILED"); exit(1); }
@@ -4102,7 +4301,8 @@ static void usage(void)
 "Commands:\n"
 "  genpkey --algo ALGO [--out FILE]\n"
 "    Generate a private key.  Algorithms: hkex-gf hkex-rnl hpks hpks-nl\n"
-"    hpke hpke-nl hpks-stern hpke-stern hpke-stern-kem hpks-zkp-nl\n"
+"    hpke hpke-nl hpks-stern hpke-stern hpke-stern-kem hpks-zkp-nl hpks-wots hpks-xmss\n"
+"    hpks-xmss: --xmss-height H (default 10) selects the 2^H-leaf tree height.\n"
 "\n"
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
 "    Extract public key (--pubout) or print fields in hex (--text).\n"
@@ -4132,11 +4332,13 @@ static void usage(void)
 "    Verify-then-decrypt a .hkx file.  Exits non-zero on auth failure.\n"
 "\n"
 "  sign --algo ALGO --key PRIV --in FILE --out SIG [--digest hfscx-256] [--ring P0,P1,...]\n"
-"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-wots hpks-ring\n"
+"    Sign.  Algorithms: hpks hpks-nl hpks-stern rnl-sigma nl-zkboo nl-zkbpp hpks-wots hpks-xmss hpks-ring\n"
 "    rnl-sigma: key = hpks-zkp-nl private key (n=256); produces ZKP-RNL PROOF PEM.\n"
 "    nl-zkboo:  key = hpks-zkp-nl private key;      produces ZKP-NL PROOF PEM.\n"
 "    nl-zkbpp:  key = hpks-zkp-nl private key;      produces ZKP-NL-PP SIGNATURE PEM (ZKB++).\n"
 "    hpks-wots: ONE-TIME signature — a WOTS key may sign exactly once (reuse refused).\n"
+"    hpks-xmss: MANY-TIME signature — 2^h leaves (see genpkey --xmss-height); each\n"
+"               leaf signs once, tracked in a <key>.idx sidecar (key exhausts at 2^h uses).\n"
 "    hpks-ring: anonymous ring signature; key = an hpks-stern key in --ring (member pubkeys).\n"
 "    --digest hfscx-256: pre-hash input before signing.\n"
 "\n"
