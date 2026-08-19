@@ -2,6 +2,20 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.6] - 2026-08-19
+
+### Fixed
+- TODO #209: fixed three cosmetic doc-drift items from the 2026-08-18
+  consistency audit. CLAUDE.md's TODO-status quick-check note now explains
+  that `TODO_DONE.md` sections predating the `Status:` line standard (TODO
+  #154) use inline `✓ DONE`/`DONE (vX...)` markers instead and are
+  grandfathered, so the quick-check flagging them is expected. The
+  `CliTest/` listing in CLAUDE.md's Repository Structure is now marked as a
+  representative sample (of 59 scripts) rather than an implied full index.
+  Added brief Repository Structure / Build Commands entries for `SPEC.md`,
+  `SECURITY.md`, `Dockerfile`, `docker-entrypoint.sh`, and `pyproject.toml`,
+  which existed but weren't documented in CLAUDE.md.
+
 ## [2.7.5] - 2026-08-18
 
 ### Added

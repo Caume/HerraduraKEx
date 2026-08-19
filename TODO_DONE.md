@@ -10378,3 +10378,36 @@ producer/consumer pairs. Verified byte-for-byte PEM wire compatibility
 in both directions among all four languages; no Python/Java wire-format
 discrepancy was found. `CLAUDE.md`'s `bindings/java/` description did
 not claim WOTS/XMSS exclusivity, so no correction was needed there.
+
+### #209: Fix cosmetic doc-drift found in the 2026-08-18 consistency audit
+
+The cross-language/doc/test consistency audit that led to [[#208]] also
+found three low-severity documentation-drift items, deferred at the
+time since they're cosmetic rather than functional:
+
+- `TODO_DONE.md` sections predating the `Status:` line standard
+  ([[#154]]) — `### 17`, `### 18`, `### 24`, `### 26`, `### 27`, `### 28`,
+  `### 42`, `### 56`, `### 69`, `### 70`, `### 77`–`### 80` — use inline
+  `✓ DONE`/`DONE (vX...)` markers instead of a standalone `Status:` line,
+  so they're flagged as false positives by CLAUDE.md's quick-check
+  one-liner. Either backfill a proper `Status:` line on each (without
+  disturbing their original historical wording) or note in the quick-check
+  section that pre-#154 entries are grandfathered and expected to show up.
+- CLAUDE.md's Repository Structure section lists only ~12 of the 59 actual
+  `CliTest/*.sh` scripts, with no indication the list is illustrative
+  rather than exhaustive (the real enforcement is `ci.yml`'s
+  `native-interop` coverage-guard step, which is complete and accurate).
+  Add a short note that the bullet list is a representative sample, not
+  a full index, so it doesn't keep getting flagged as stale.
+- Top-level `SPEC.md`, `SECURITY.md`, `Dockerfile`, `docker-entrypoint.sh`,
+  and `pyproject.toml` exist but aren't mentioned anywhere in CLAUDE.md's
+  Repository Structure or Build Commands sections. Add brief entries for
+  each (or fold Docker/pyproject usage into Build Commands) so CLAUDE.md
+  reflects the full top-level layout.
+
+Status: **DONE v2.7.6** — added a grandfathering note to CLAUDE.md's
+TODO-status quick-check section covering the 16 pre-#154 sections (rather
+than backfilling their historical wording); marked the `CliTest/` listing
+in Repository Structure as a representative sample of 59 scripts; added
+brief Repository Structure / Build Commands entries for `SPEC.md`,
+`SECURITY.md`, `Dockerfile`, `docker-entrypoint.sh`, and `pyproject.toml`.

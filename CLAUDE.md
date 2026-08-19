@@ -19,7 +19,10 @@ HerraduraCli/
   herradura_codec.h / codec.py                      — PEM/DER encode-decode helpers
   primitives.py                                     — suite import shim for Python CLI
   go.mod                                            — module herradurakex/cli (replaces ../go.mod)
-CliTest/
+CliTest/                                             (59 scripts; this list is a representative
+                                                      sample, not a full index — the real
+                                                      enforcement is ci.yml's native-interop
+                                                      coverage-guard step)
   test_keygen.sh  test_vectors.sh  test_sign.sh     — Python CLI integration tests
   test_encrypt.sh test_encfile.sh  test_signfile.sh
   test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
@@ -70,6 +73,15 @@ spec/                                                — machine-readable protoc
                                                       parameters, PEM wire-format labels, CLI --algo
                                                       tags, and security-level classification per
                                                       protocol; generate_spec.py regenerates it
+SPEC.md                                              — human-readable prose companion to
+                                                      spec/herradura-protocol-spec.json
+SECURITY.md                                          — security policy: protocol maturity levels,
+                                                      vulnerability reporting process
+Dockerfile / docker-entrypoint.sh                    — quickstart image building/smoke-testing the
+                                                      C/Go/Python/ARM/i386 targets (TODO #139); see
+                                                      Build Commands
+pyproject.toml                                       — packaging metadata for the Python CLI/suite
+                                                      (setuptools build backend, no runtime deps)
 bindings/ffi/                                        — opt-in ctypes/cgo FFI bindings around
                                                       herradura.h's classical v1.4.0 quartet, for
                                                       performance-sensitive Python/Go callers
@@ -150,7 +162,7 @@ Rules:
 - No item should be left without a `Status:` line.  A missing Status line means "open" only by convention; always add an explicit `Status: **OPEN**` when creating a new item.
 - When parsing programmatically, match `^Status: \*\*` at the start of a line within the section.
 
-**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed.
+**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed. Sections predating the `Status:` line standard (TODO #154) — e.g. `TODO_DONE.md`'s `### 17`, `### 18`, `### 24`, `### 26`–`### 28`, `### 42`, `### 56`, `### 69`, `### 70`, `### 77`–`### 80` — use inline `✓ DONE`/`DONE (vX...)` markers in their heading instead, and are grandfathered rather than backfilled, so the quick-check flagging them is expected and not itself a bug.
 
 ## Build Commands
 
@@ -164,6 +176,14 @@ Use the build scripts when building everything; they apply the correct flags, ou
 ./build_arduino.sh    # Arduino/AVR suite + tests; run_arduino.sh runs them under simulation
 ./build_c_sanitize.sh # C suite/tests/CLI under ASan+UBSan (requires clang); see Testing
 ```
+
+### Docker
+
+`docker build -t herradurakex .` builds a quickstart image (TODO #139) covering the
+C/Go/Python/ARM Thumb-2/NASM i386 targets (Arduino is excluded — needs `arduino-cli`
+and a board target). `docker-entrypoint.sh` builds every host-portable target and runs
+a smoke test (the C/Go/Python security test suites plus a CLI interop test) on
+container start.
 
 ### C
 
