@@ -2,6 +2,23 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.4] - 2026-08-18
+
+### Added
+- TODO #204: added `SecurityProofsCode/hkex_non_byte_key_length_analysis.py`
+  and `SecurityProofs-1.md` §1.2.1, researching whether a non-byte-aligned
+  n (e.g. n=251, 255, 509) offers any efficiency or security advantage
+  over the byte-aligned defaults (32/64/128/256/...). Found that
+  Theorem 2's invertibility proof only actually needs gcd(3, n) = 1, not
+  n = 2^k — so an arbitrary non-byte n is not guaranteed invertible (n=255
+  is a counterexample, singular since 3 | 255); and Theorem 3's order(M) =
+  n/2 is specific to n = 2^k, with sampled invertible non-byte n empirically
+  showing order(M) = n instead. No offsetting diffusion or throughput
+  advantage was found. Recommendation: do not add non-byte-aligned
+  key-length support; the byte-aligned status quo remains the only
+  supported parameter family. Analysis-only — no wire-format, CLI, or
+  default-parameter change.
+
 ## [2.7.3] - 2026-08-18
 
 ### Added

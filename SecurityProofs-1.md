@@ -92,6 +92,19 @@ $\blacksquare$
 
 ---
 
+#### 1.2.1 Non-Byte-Aligned $n$ (TODO #204)
+
+Every implementation in this suite assumes $n$ is a power of 2 (32/64/128/256/...), driven by byte-oriented word types in C/Go/Python and `herradura.h`'s fixed-width big-int backing. `SecurityProofsCode/hkex_non_byte_key_length_analysis.py` investigates whether a non-byte-aligned $n$ (e.g. $n=251$, $255$, $509$ — primes or other irregular sizes) offers any efficiency or security advantage. Two findings sharpen Theorems 2–3 above:
+
+- **Theorem 2 restated:** the proof only actually needs $\gcd(3, n) = 1$, not $n = 2^k$ specifically — but that means invertibility is **not** guaranteed for an arbitrary non-byte $n$. $n=255 = 3 \cdot 5 \cdot 17$ is divisible by 3, so $M$ is singular at $n=255$: FSCX is not even well-defined there, despite 255 being the most natural odd neighbor of the default $n=256$.
+- **Theorem 3 does not generalize:** its proof exponentiates by $t = n/2 = 2^{k-1}$ via the Frobenius identity, which requires $t$ itself to be a power of 2. For the invertible non-byte $n$ the script samples, the empirical order of $M$ is $n$, not $n/2$ (or exceeds the script's $8n$-iteration search bound entirely) — every downstream claim keyed to order$(M) = n/2$ would need independent re-derivation per non-power-of-2 $n$.
+
+The script's diffusion and throughput comparisons find no offsetting advantage: avalanche differences at matched relative depth are an artifact of the order$(M)$ mismatch above rather than an independent property of non-byte $n$, and every non-Python target's byte/word-aligned state representation would need bit-slicing or a bignum backend for a non-byte $n$ — strictly slower than, and losing the single-instruction ROL/ROR compilation of, today's word-aligned code.
+
+**Recommendation:** do not add non-byte-aligned key-length support; the byte-aligned status quo remains the only supported parameter family. This is a research/analysis conclusion, not itself a wire-format, CLI, or default-parameter change — see `TODO_DONE.md` #204.
+
+---
+
 ### 1.3 FSCX\_REVOLVE — Iterated Application
 
 **Definition:**
@@ -751,6 +764,7 @@ All experimental scripts are in `SecurityProofsCode/`:
 | `hkex_rnl_failure_rate.py` | HKEX-RNL key-agreement failure rate §11.5 Q2: 10K trials at $n=32, 256$; Peikert reconciliation 0/10K verification |
 | `nl_fscx_prf_analysis.py` | NL-FSCX v1 PRF tests §11.8.4: 2-query distinguisher, BLR, SAC, higher-order differentials, linear bias, key sensitivity, collisions, cross-key independence |
 | `hfscx_256_analysis.py` | HFSCX-256-DM hash empirical tests §11.9: SAC on input/key, output uniformity (chi²), length-extension forgery, domain separation, fixed-point search |
+| `hkex_non_byte_key_length_analysis.py` | Non-byte-aligned $n$ analysis §1.2.1 (TODO #204): $M$-invertibility via GF(2)[x] poly-gcd vs. the $\gcd(3,n)$ shortcut, empirical order$(M)$, avalanche diffusion, and throughput at sampled non-byte $n \in \{241, 251, 253, 255, 257, 509\}$ vs. byte-aligned baselines |
 
 ---
 
