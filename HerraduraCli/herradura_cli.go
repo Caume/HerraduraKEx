@@ -36,6 +36,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 
 	. "herradurakex/herradura"
@@ -68,6 +69,9 @@ const (
 	lblHpksWotsPriv = "HERRADURA HPKS-WOTS PRIVATE KEY"
 	lblHpksWotsPub  = "HERRADURA HPKS-WOTS PUBLIC KEY"
 	lblHpksWotsSig  = "HERRADURA HPKS-WOTS SIGNATURE"
+	lblHpksXmssPriv = "HERRADURA HPKS-XMSS PRIVATE KEY"
+	lblHpksXmssPub  = "HERRADURA HPKS-XMSS PUBLIC KEY"
+	lblHpksXmssSig  = "HERRADURA HPKS-XMSS SIGNATURE"
 	lblRingSig      = "HERRADURA HPKS-RING SIGNATURE"
 
 	lblSession    = "HERRADURA SESSION KEY"
@@ -112,6 +116,7 @@ var privToAlgo = map[string]string{
 	lblHpkeSternPriv: "hpke-stern",
 	lblKemPriv:       "hpke-stern-kem",
 	lblHpksWotsPriv:  "hpks-wots",
+	lblHpksXmssPriv:  "hpks-xmss",
 }
 
 var algoToPrivLbl = map[string]string{
@@ -124,6 +129,7 @@ var algoToPrivLbl = map[string]string{
 	"hpks-stern": lblHpksSternPriv,
 	"hpke-stern": lblHpkeSternPriv,
 	"hpks-wots":  lblHpksWotsPriv,
+	"hpks-xmss":  lblHpksXmssPriv,
 }
 
 var algoToPubLbl = map[string]string{
@@ -136,6 +142,7 @@ var algoToPubLbl = map[string]string{
 	"hpks-stern": lblHpksSternPub,
 	"hpke-stern": lblHpkeSternPub,
 	"hpks-wots":  lblHpksWotsPub,
+	"hpks-xmss":  lblHpksXmssPub,
 }
 
 var classicalAlgos = map[string]bool{
@@ -664,6 +671,39 @@ func encodeWotsBlobPEM(vals [WotsL]*BitArray, label string) string {
 	return PemWrap(label, seq)
 }
 
+// ── HPKS-XMSS-F helpers (TODO #208) ───────────────────────────────────────────
+//
+// Leaf-index one-time-use state is tracked in a `<key>.idx` sidecar file
+// (0-based next-unused-leaf), reusing the same convention as HPKS-WOTS-F's
+// 0/1 burned flag (wotsIdxPath above).
+
+func xmssReadIdx(keyPath string) int {
+	b, err := os.ReadFile(wotsIdxPath(keyPath))
+	if err != nil {
+		return 0
+	}
+	v, cerr := strconv.Atoi(strings.TrimSpace(string(b)))
+	if cerr != nil || v < 0 {
+		return 0
+	}
+	return v
+}
+
+func xmssWriteIdx(keyPath string, val int) {
+	_ = os.WriteFile(wotsIdxPath(keyPath), []byte(fmt.Sprintf("%d\n", val)), 0644)
+}
+
+// alignBlob right-aligns v into a dst_len-byte slice (generic version of
+// wotsBlobUnpack's alignment, for arbitrary blob sizes).
+func alignBlob(v []byte, dstLen int) []byte {
+	blob := make([]byte, dstLen)
+	if len(v) > dstLen {
+		v = v[len(v)-dstLen:]
+	}
+	copy(blob[dstLen-len(v):], v)
+	return blob
+}
+
 // ── HPKS-Stern-Ring signature helpers (TODO #121) ────────────────────────────
 //
 // Wire format matches the Python/C CLIs: SEQ(k, rounds, n, blob) where blob is a
@@ -776,9 +816,10 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
-	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpks-stern|hpke-stern|hcred)")
+	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
 	bits := fs.Int("bits", 256, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
+	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
 	fs.Parse(args)
 
 	if *algo == "" {
@@ -875,6 +916,38 @@ func cmdGenpkey(args []string) {
 			wotsWriteIdx(*out, 0)
 		}
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS: ONE-TIME key — it may sign exactly one message.")
+
+	case *algo == "hpks-xmss":
+		h := *xmssHeight
+		if h < 1 || h > 20 {
+			fmt.Fprintln(os.Stderr, "genpkey: --xmss-height must be in [1,20]")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
+			h, 1<<uint(h))
+		seed := NewRandBitArray(256).Bytes()
+		kp := HpksXmssKeygen(seed, h)
+		blob := make([]byte, 0, len(kp.LeafHashes)*32)
+		for _, lh := range kp.LeafHashes {
+			blob = append(blob, lh...)
+		}
+		sd, e1 := derIntBig(new(big.Int).SetBytes(seed), 32)
+		hd, e2 := derIntSmall(h)
+		id, e3 := derIntSmall(0) // next_idx = 0
+		bd, e4 := derIntBig(new(big.Int).SetBytes(blob), len(blob))
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER encode error")
+			os.Exit(1)
+		}
+		seq, e5 := DerSeqEnc(sd, hd, id, bd)
+		if e5 != nil {
+			fmt.Fprintln(os.Stderr, "genpkey: DER seq error")
+			os.Exit(1)
+		}
+		pem = PemWrap(lblHpksXmssPriv, seq)
+		if *out != "-" {
+			xmssWriteIdx(*out, 0)
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "genpkey: unknown algorithm %q\n", *algo)
@@ -1008,6 +1081,27 @@ func cmdPkey(args []string) {
 			}
 			_, pk := HpksWotsKeygen(seed, leafIdx)
 			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
+
+		case algo == "hpks-xmss":
+			h := int(bytesToInt(ints[1]))
+			numLeaves := 1 << uint(h)
+			blob := alignBlob(ints[3], numLeaves*32)
+			leafHashes := make([][]byte, numLeaves)
+			for i := 0; i < numLeaves; i++ {
+				leafHashes[i] = blob[i*32 : (i+1)*32]
+			}
+			root := HaccumRoot(leafHashes)
+			rd, e1 := derIntBig(new(big.Int).SetBytes(root), 32)
+			hd, e2 := derIntSmall(h)
+			if e1 != nil || e2 != nil {
+				fmt.Fprintln(os.Stderr, "pkey: DER encode error")
+				os.Exit(1)
+			}
+			seq, e3 := DerSeqEnc(rd, hd)
+			if e3 != nil {
+				die("pkey", e3)
+			}
+			pem = PemWrap(lblHpksXmssPub, seq)
 
 		case algo == "hpke-stern-kem":
 			_, _, h0, h1 := decodeKemPriv(ints)
@@ -3286,6 +3380,60 @@ func cmdSign(args []string) {
 		wotsWriteIdx(*key, 1)
 		fmt.Fprintln(os.Stderr, "HPKS-WOTS key burned (one-time use); do not sign again with it.")
 
+	case "hpks-xmss":
+		label, xmssInts, rerr := readPEMInts(*key)
+		if rerr != nil {
+			die("sign", rerr)
+		}
+		if label != lblHpksXmssPriv {
+			fmt.Fprintf(os.Stderr, "sign: expected HPKS-XMSS private key, got %q\n", label)
+			os.Exit(1)
+		}
+		seed := make([]byte, 32)
+		new(big.Int).SetBytes(xmssInts[0]).FillBytes(seed)
+		h := int(bytesToInt(xmssInts[1]))
+		numLeaves := 1 << uint(h)
+		blob := alignBlob(xmssInts[3], numLeaves*32)
+		leafHashes := make([][]byte, numLeaves)
+		for i := 0; i < numLeaves; i++ {
+			leafHashes[i] = blob[i*32 : (i+1)*32]
+		}
+		kp := &HpksXmssKeypair{MasterSeed: seed, Root: HaccumRoot(leafHashes), LeafHashes: leafHashes}
+
+		leafIdx := xmssReadIdx(*key)
+		if leafIdx >= numLeaves {
+			fmt.Fprintf(os.Stderr, "sign: XMSS key exhausted (%d leaves used). Generate a new key.\n",
+				numLeaves)
+			os.Exit(1)
+		}
+		sig := HpksXmssSign(inBytes, kp, leafIdx)
+
+		sigBlob := wotsBlobPack(sig.WotsSig)
+		pathBlob := make([]byte, 0, len(sig.AuthPath)*32)
+		for _, s := range sig.AuthPath {
+			pathBlob = append(pathBlob, s...)
+		}
+		ld, e1 := derIntSmall(leafIdx)
+		sd, e2 := derIntBig(new(big.Int).SetBytes(sigBlob), len(sigBlob))
+		pd, e3 := derIntBig(new(big.Int).SetBytes(pathBlob), len(pathBlob))
+		hd, e4 := derIntSmall(len(sig.AuthPath))
+		nd, e5 := derIntSmall(256)
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil || e5 != nil {
+			fmt.Fprintln(os.Stderr, "sign: DER encode error")
+			os.Exit(1)
+		}
+		seq, e6 := DerSeqEnc(ld, sd, pd, hd, nd)
+		if e6 != nil {
+			die("sign", e6)
+		}
+		pem := PemWrap(lblHpksXmssSig, seq)
+		if werr := writeString(*out, pem); werr != nil {
+			die("sign", werr)
+		}
+		xmssWriteIdx(*key, leafIdx+1)
+		fmt.Fprintf(os.Stderr, "XMSS leaf %d used; %d leaves remaining.\n",
+			leafIdx, numLeaves-leafIdx-1)
+
 	default:
 		fmt.Fprintf(os.Stderr, "sign: unsupported algorithm %q\n", *algo)
 		os.Exit(1)
@@ -3499,6 +3647,31 @@ func cmdVerify(args []string) {
 			die("verify", err)
 		}
 		if HpksSternFVerify(msg, sternSig, seed, synInt) {
+			fmt.Println("Signature OK")
+			os.Exit(0)
+		} else {
+			fmt.Println("Verification FAILED")
+			os.Exit(1)
+		}
+
+	case "hpks-xmss":
+		root := alignBlob(theirInts[0], 32)
+		_, sigInts, serr := readPEMInts(*sig)
+		if serr != nil {
+			die("verify", serr)
+		}
+		leafIdx := int(bytesToInt(sigInts[0]))
+		depth := int(bytesToInt(sigInts[3]))
+		sig := &HpksXmssSig{
+			LeafIdx:  leafIdx,
+			WotsSig:  wotsBlobUnpack(sigInts[1]),
+			AuthPath: make([][]byte, depth),
+		}
+		pathBlob := alignBlob(sigInts[2], depth*32)
+		for i := 0; i < depth; i++ {
+			sig.AuthPath[i] = pathBlob[i*32 : (i+1)*32]
+		}
+		if HpksXmssVerify(inBytes, sig, root) {
 			fmt.Println("Signature OK")
 			os.Exit(0)
 		} else {

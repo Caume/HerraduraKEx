@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.5] - 2026-08-18
+
+### Added
+- TODO #208: closed the `hpks-xmss` CLI/suite gap in C and Go. The core
+  `hpks_xmss_keygen`/`sign`/`verify` primitives (2^h-leaf Merkle tree of
+  WOTS-F public keys) already existed in `herradura.h`, `Herradura
+  cryptographic suite.{c,go}`, and `CryptosuiteTests/Herradura_tests.{c,go}`
+  test [30] from an earlier pass; what was missing was CLI wiring. Wired
+  `--algo hpks-xmss` into `HerraduraCli/herradura_cli.c`'s and
+  `herradura_cli.go`'s `genpkey` (with `--xmss-height`, default 10),
+  `pkey` (public-key/root derivation), `sign`, and `verify` subcommands,
+  including the `<key>.idx` leaf-index sidecar state file (one-time-per-leaf
+  use, matching the Python/Java CLIs' semantics exactly) and new
+  `PEM_HPKS_XMSS_PRIV/PUB/SIG` labels in `HerraduraCli/herradura_codec.h`.
+  Extended `CliTest/test_wots.sh` with a full HPKS-XMSS-F section (9-way
+  C/Go/Python interop, multi-leaf signing, leaf-exhaustion refusal, and
+  tamper/wrong-key rejection) and added an `hpks-xmss` sign/verify block to
+  `CliTest/test_cross_lang_matrix.sh` (TODO #207) covering all 16
+  producer/consumer C/Go/Python/Java pairs. Verified byte-for-byte PEM wire
+  compatibility across all four languages (keygen in any one language,
+  sign/verify in any other) with no discrepancies found between the Python
+  and Java reference implementations.
+
 ## [2.7.4] - 2026-08-18
 
 ### Added
