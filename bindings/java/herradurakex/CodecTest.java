@@ -19,6 +19,7 @@ import java.security.SecureRandom;
  *   java -cp bindings/java herradurakex.CodecTest decode-priv FILE # print priv,pub,nbits
  *   java -cp bindings/java herradurakex.CodecTest decode-pub  FILE # print pub,nbits
  *   java -cp bindings/java herradurakex.CodecTest encode-priv PRIV PUB FILE  # write PEM
+ *   java -cp bindings/java herradurakex.CodecTest encode-session KEY NBITS FILE # write PEM
  */
 public final class CodecTest {
     private CodecTest() { }
@@ -48,6 +49,16 @@ public final class CodecTest {
                 BigInteger priv = new BigInteger(args[1], 16);
                 BigInteger pub = new BigInteger(args[2], 16);
                 String pem = Codec.encodePrivKey(Codec.PEM_HKEX_GF_PRIV, priv, pub);
+                Files.write(Path.of(args[3]), pem.getBytes(StandardCharsets.US_ASCII));
+                break;
+            }
+            case "encode-session": {
+                // TODO #219: the session-key field is minimal-width, unlike the
+                // fixed-width private/public key fields; this mode lets
+                // CliTest/test_java_codec.sh compare the bytes against Python's.
+                BigInteger key = new BigInteger(args[1], 16);
+                int nbits = Integer.parseInt(args[2]);
+                String pem = Codec.encodeSessionKey(key, nbits);
                 Files.write(Path.of(args[3]), pem.getBytes(StandardCharsets.US_ASCII));
                 break;
             }

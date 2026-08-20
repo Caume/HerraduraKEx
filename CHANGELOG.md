@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.9] - 2026-08-20
+
+### Fixed
+- TODO #219: `bindings/java/herradurakex/Codec.java`'s `encodeSessionKey` padded
+  the key field to a fixed `nbits / 8` width. Every other implementation encodes
+  that one field at **minimal** width — `HerraduraCli/herradura.py`'s
+  `_encode_session_key`, `herradura_cli.go`'s `encodeSessionKey` ("Minimum byte
+  width matching Python"), and Java's own `encodeRnlResponse` in the same file.
+  Since neither DER encoder strips leading zeros, a session key whose top byte
+  is `0x00` and whose next byte is below `0x80` came out with a redundant
+  leading zero — `02 20 00 44 6f…` where the others emit `02 1F 44 6f…`. That is
+  non-canonical DER and breaks the byte-for-byte PEM compatibility CLAUDE.md
+  documents across implementations, for about **1 session key in 512**. The
+  value decoded identically either way, so only byte-comparison tests saw it:
+  it surfaced as a rare `cross-lang-compat` CI flake (`FAIL hkex-gf
+  go-alice/java-bob: session keys differ`), reproduced locally at 1 mismatch in
+  400 iterations. Fixed by passing the codec's existing minimal-width sentinel.
+  Private keys, public keys and symmetric ciphertexts are fixed-width in Python
+  too, so Java was already correct at those call sites and they are unchanged.
+
+### Added
+- TODO #219 regression coverage: an `encode-session` mode in
+  `herradurakex.CodecTest`, and a seven-vector section in
+  `CliTest/test_java_codec.sh` that compares Java's session-key PEM against
+  Python's byte for byte and checks the value still round-trips. The vectors hit
+  the trigger deterministically rather than waiting on a 1-in-512 random draw
+  (leading zero with next byte below `0x80`, two leading zeros, leading zero
+  with next byte at or above `0x80`, no leading zero with and without the high
+  bit set, a small value, and zero). Four of the seven fail against the old
+  encoder; all seven pass against the new one.
+
 ## [2.7.8] - 2026-08-20
 
 ### Security
