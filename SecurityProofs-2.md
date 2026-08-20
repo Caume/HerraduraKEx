@@ -99,7 +99,26 @@ CDH in $\mathbb{GF}(2^n)^{\ast}$ is believed hard for large $n$, under the assum
 | Index calculus (function field sieve) | $L_{2^n}[1/3, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^{\ast}$; better constant than GNFS for prime fields |
 | **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $n^{O(\log n)}$ | Specific to characteristic-2 fields; practical for highly composite $n$ |
 
-The **function field sieve (FFS)** is the practical binding constraint for $\mathbb{GF}(2^n)^{\ast}$
+**Correction (TODO #212): Pohlig–Hellman, not the FFS, is the binding constraint here.**
+The row above it in the table is the one that governs. $|\mathbb{GF}(2^n)^{\ast}| = 2^n - 1$ is
+never prime, and at every supported $n$ it factors into primes far below the field size, so a
+generic DLP algorithm run once per prime factor and recombined by CRT costs the square root of
+the *largest prime factor* rather than the square root of the group. At $n = 256$,
+
+$$2^{256} - 1 = 3 \cdot 5 \cdot 17 \cdot 257 \cdot 641 \cdot 65537 \cdot 274177 \cdot 6700417 \cdot 67280421310721 \cdot 59649589127497217 \cdot 5704689200685129054721$$
+
+whose largest prime factor has 73 bits, putting Pohlig–Hellman with Pollard rho at roughly
+$2^{36.5}$ group operations in constant memory — some 45 to 55 bits below the FFS figure quoted
+below, which was previously reported as the practical bound. `SecurityProofsCode/hkex_gf_pohlig_hellman.py`
+verifies the factorisation, computes $\text{ord}(g)$ at each supported $n$, and carries the attack
+through end to end at $n = 32$ and $n = 64$ — recovering the private exponent, the HKEX-GF shared
+secret, and a forged HPKS signature under the victim's public key. Note also that $g = 3$ is
+**primitive** at $n = 64$ and at the deployed $n = 256$, so there the recovered exponent is the
+private key itself rather than a representative.
+
+Everything from here to the end of this subsection describes the **function field sieve (FFS)**,
+which is the best *asymptotic* attack that does not exploit the factorisation of the group order,
+and which was previously presented as the practical binding constraint for $\mathbb{GF}(2^n)^{\ast}$
 at cryptographic sizes including $n = 256$.  Its complexity $L_{2^n}[1/3, c]$ is sub-exponential
 with a smaller constant $c$ than the number-field sieve for prime-field DLP, making binary-field
 DLP systematically weaker than an equal-bit-count prime-field DLP at the same $n$.
@@ -107,7 +126,8 @@ The **quasi-polynomial algorithm** (Granger–Kleinjung–Zumbrägel 2014–2016
 et al. 2013) achieves even better asymptotic complexity but has only been practically demonstrated
 for fields with highly composite extension degree (e.g. $\mathbb{GF}(2^{6120})$,
 $\mathbb{GF}(2^{9234})$).  For $\mathbb{GF}(2^{256})$ specifically, the FFS $L[1/3]$ remains the
-practical attack.  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is
+best of the *sieve* attacks — though not the best attack overall, which is Pohlig–Hellman
+at roughly $2^{36.5}$ (see the correction above).  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is
 $n \geq 3000$; NIST SP 800-57 Rev. 5 (2020) and ENISA "Algorithms, Key Sizes and Parameters"
 (2022) both **deprecate** $\mathbb{GF}(2^n)^{\ast}$ for new designs.
 
@@ -133,18 +153,39 @@ $\mathbb{GF}(2^{32})^{\ast}$: its order is a proper divisor of $2^{32}-1$.  Mult
 the same public key; BSGS finds the smallest representative.  The shared secret is nevertheless
 fully recovered because $g^{ab}$ is the same regardless of which representative is used.
 
+This last point is specific to $n = 32$ and should not be read as a general property (TODO #212):
+$g = 3$ **is** primitive at $n = 64$ and at the deployed $n = 256$, where the attack returns the
+private key itself.  `hkex_gf_pohlig_hellman.py` computes $\text{ord}(g)$ at each supported $n$ and
+demonstrates exact recovery at $n = 64$ in about 0.15 s, together with the HKEX-GF shared secret
+and an HPKS forgery derived from it.
+
 **Effective security:** $n = 32$ is broken in under 1 second.  The quasi-polynomial attack
 extends to all practical $n$ values.
 
 **Practical parameters (updated 2026 — TODO #71 landscape review):**
 
-| $n$ | Estimated classical security | Note |
-|-----|------------------------------|------|
-| 64  | ≪ 40 bits (demonstration only) | FFS $L[1/3]$ applies |
-| 128 | ≈ 50–60 bits | Below 80-bit floor; demos only |
-| 256 | ≈ 80–90 bits (**below 128-bit**) | FFS $L[1/3]$; NIST/ENISA deprecated |
-| 512 | ≈ 110–120 bits | Still below 128-bit target |
-| 1024 | ≈ 128–140 bits | Minimum for 128-bit security |
+| $n$ | FFS $L[1/3]$ estimate | Largest prime factor of $2^n - 1$ | Pohlig–Hellman + rho | Effective security |
+|-----|------|------|------|------|
+| 32  | ≪ 40 bits | 17 bits | $2^{8.5}$ | $2^{8.5}$ |
+| 64  | ≪ 40 bits | 23 bits | $2^{11.8}$ | $2^{11.8}$ |
+| 128 | ≈ 50–60 bits | 46 bits | $2^{23.3}$ | $2^{23.3}$ |
+| 256 | ≈ 80–90 bits | 73 bits | $2^{36.5}$ | $\mathbf{2^{36.5}}$ (**deployed**) |
+| 512 | ≈ 110–120 bits | 206 bits | $2^{103.3}$ | $2^{103.3}$ |
+| 1024 | ≈ 128–140 bits | 329 bits | $2^{164.5}$ | ≈ 128–140 bits (FFS binds) |
+
+The effective-security column is the smaller of the two attacks. Pohlig–Hellman is the binding
+constraint at every size up to and including $n = 512$; only at $n = 1024$ does its cost rise
+past the FFS and the FFS take over. The reason growing $n$ helps only slowly is structural: the
+group order is $2^n - 1$ by construction, so its factorisation rather than the field size sets
+the cost. The $n = 512$ and $n = 1024$ rows take their largest prime factor from the Fermat
+numbers $F_8 = 2^{256} + 1$ and $F_9 = 2^{512} + 1$ dividing $2^n - 1$; every factorisation in
+the table is verified for primality and divisibility by `hkex_gf_pohlig_hellman.py`.
+
+**Wall clock at the deployed parameters.** $2^{36.5}$ group operations at the $1.26 \times 10^5$
+multiplications per second measured for `herradura.h`'s `gf_mul_ba` (`-O2`, reference ARM64 host)
+is about nine days on a single core. Pollard rho uses constant memory and parallelises linearly,
+and a carryless-multiply field implementation on a desktop core is one to two orders of magnitude
+faster — so this is hours of commodity compute, not a margin.
 
 **2026 landscape update (TODO #71):** The entry $n = 256 \approx 128$ bits in earlier versions
 of this document was incorrect.  Under the FFS $L[1/3]$ attack, $\mathbb{GF}(2^{256})^{\ast}$ DLP
@@ -153,6 +194,13 @@ provides approximately 80–90 bits of classical security — well below the 128
 DH is needed for 128-bit security, not 256-bit).  NIST SP 800-57 Part 1 Rev. 5 (2020) and ENISA
 "Algorithms, Key Sizes and Parameters" (2022) deprecate $\mathbb{GF}(2^n)^{\ast}$ for new designs
 entirely; the correction here documents the concrete security shortfall at $n = 256$.
+
+**Second correction (TODO #212):** the 80–90 bit figure above is itself an over-estimate of the
+*effective* security, because it costs only the FFS. Pohlig–Hellman brings $n = 256$ down to about
+$2^{36.5}$, as derived at the top of this subsection. The TODO #71 conclusion — that
+$\mathbb{GF}(2^n)^{\ast}$ is unsuitable and the protocols built on it are demo-only — is unchanged
+and, if anything, understated: the shortfall is roughly 90 bits below the 128-bit target rather
+than 40.
 
 For production use, elliptic curve Diffie-Hellman over a prime-order curve (ECDH) provides better
 security-per-bit than any $\mathbb{GF}(2^n)^{\ast}$ construction.  HKEX-GF is a proof-of-concept
@@ -173,7 +221,7 @@ Given the deprecation documented in §9.2.4, the question is the minimal-change 
 
 **Migration impact.**  Group elements are 32 bytes on both sides, so existing PEM/DER SEQUENCE layouts carry over unchanged; only a new algorithm tag (for example `genpkey --algo hpks-r255`) is required.  Scalars re-range from `mod 2^n - 1` to `mod ell`.  Keys are not interoperable between the two groups.  HSKE and the symmetric halves of HPKE are untouched — the derived secret enters them as a pre-shared key exactly as today.
 
-**Post-quantum assessment.**  Ristretto255 is a **classical-security-only** upgrade: Shor's algorithm breaks ECDLP exactly as it breaks GF(2^n)-star DLP.  Migration fixes the FFS shortfall (roughly 80–90 bits up to 128 bits classically) but provides nothing against quantum adversaries.  No quantum-resistant successor group exists for this protocol family: the Schnorr algebra fundamentally requires a group with hard DLP, and every such group is Shor-vulnerable.  The post-quantum path for the suite therefore remains HKEX-RNL (Ring-LWR, §11.4) plus HPKS-Stern-F / HPKE-Stern-KEM (code-based, §11.8.4) exclusively.  Recommendation: document ristretto255 as the classical upgrade path but keep implementation effort on the PQC track.
+**Post-quantum assessment.**  Ristretto255 is a **classical-security-only** upgrade: Shor's algorithm breaks ECDLP exactly as it breaks GF(2^n)-star DLP.  Migration fixes the classical shortfall (from the roughly $2^{36.5}$ Pohlig–Hellman cost of §9.2.4 — or the 80–90 bits the FFS alone would suggest — up to 128 bits, since a prime-order group has no Pohlig–Hellman structure to exploit) but provides nothing against quantum adversaries.  No quantum-resistant successor group exists for this protocol family: the Schnorr algebra fundamentally requires a group with hard DLP, and every such group is Shor-vulnerable.  The post-quantum path for the suite therefore remains HKEX-RNL (Ring-LWR, §11.4) plus HPKS-Stern-F / HPKE-Stern-KEM (code-based, §11.8.4) exclusively.  Recommendation: document ristretto255 as the classical upgrade path but keep implementation effort on the PQC track.
 
 ---
 

@@ -112,16 +112,24 @@ def extract_const_int(src, name):
 # misspelled tag fails --check.
 
 SECURITY = {
-    "hkex-gf":   dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~80-90 (n=256)",
-                       notes="GF(2^n)* Diffie-Hellman. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) deprecate "
+    "hkex-gf":   dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
+                       notes="GF(2^n)* Diffie-Hellman. The binding classical attack is Pohlig-Hellman: the "
+                             "group order 2^256-1 has a 73-bit largest prime factor, so a discrete log costs "
+                             "about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-2.md "
+                             "9.2.4) -- days on a single core, not the ~80-90 bits the function field sieve "
+                             "would suggest. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) also deprecate "
                              "GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
-                       source=["TODO.md #127 (6943-6949)"]),
-    "hpks":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~80-90 (n=256)",
-                       notes="Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf.",
-                       source=["TODO.md #127"]),
-    "hpke":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~80-90 (n=256)",
-                       notes="El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf.",
-                       source=["TODO.md #127"]),
+                       source=["TODO.md #127 (6943-6949)", "TODO_DONE.md #212"]),
+    "hpks":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
+                       notes="Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
+                             "same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery.",
+                       source=["TODO.md #127", "TODO_DONE.md #212"]),
+    "hpke":      dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
+                       notes="El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf, and the "
+                             "same ~2^36.5 Pohlig-Hellman recovery of the decryption key. Independently, the "
+                             "FSCX encryption layer leaks 126 of 256 linear functionals of the plaintext from "
+                             "the ciphertext alone (TODO #210, SecurityProofs-1.md 1.3.1).",
+                       source=["TODO.md #127", "TODO_DONE.md #210", "TODO_DONE.md #212"]),
     "hpks-nl":   dict(status="deprecated", quantum_resistant=False,
                        notes="NL-FSCX-hardened classical Schnorr variant; NOT quantum-resistant despite the "
                              "'NL' naming suggesting a PQC upgrade -- PQC claim deprecated, no lattice-based "
@@ -190,9 +198,14 @@ SECURITY = {
     "hpks-t":    dict(status="production", quantum_resistant="conjectured",
                        notes="Threshold HPKS-T signing (commit/aggregate/respond/combine phases); verify-only "
                              "algo tag -- signing goes through the separate threshold-* subcommands, not `sign`."),
-    "hske":      dict(status="production", quantum_resistant=False,
+    "hske":      dict(status="pedagogical", quantum_resistant=False,
                        notes="Classical symmetric encryption via FSCX_REVOLVE; not quantum-resistant by design "
-                             "(a symmetric primitive, not a PQC construction)."),
+                             "(a symmetric primitive, not a PQC construction). Reclassified from production "
+                             "under TODO #210: the key enters fscx_revolve only through the singular map "
+                             "M*S_i, whose co-rank is 126 of 256 at the deployed i = n/4, so the ciphertext "
+                             "alone discloses 126 linear functionals of the plaintext for every key "
+                             "(SecurityProofs-1.md 1.3.1, W9). Use hske-nla1/hske-nla2 instead.",
+                       source=["TODO_DONE.md #210"]),
     "hske-nla1": dict(status="production", quantum_resistant="conjectured",
                        notes="NL-FSCX v1 counter-mode; supports --aead authenticated encryption."),
     "hske-nla2": dict(status="production", quantum_resistant="conjectured",

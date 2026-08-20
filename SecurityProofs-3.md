@@ -507,11 +507,11 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 
 | Protocol | Security assumption | Classical attack | Quantum attack | Post-quantum security |
 |----------|---------------------|------------------|----------------|-----------------------|
-| **HKEX-GF** | DLP in $\mathbb{GF}(2^n)^{\ast}$ | FFS $L[1/3]$: ~80–90 bits at $n=256$ (§9.2.4; deprecated NIST/ENISA); GKZ quasi-poly asymptotic for composite-degree fields | Shor's DLP | **None** |
-| **HSKE** (key-only) | Exhaustive search | Brute force $2^n$ | Grover $2^{n/2}$ | $n/2$ bits |
+| **HKEX-GF** | DLP in $\mathbb{GF}(2^n)^{\ast}$ | **Pohlig–Hellman: ~$2^{36.5}$ at $n=256$** — the group order $2^n - 1$ has a 73-bit largest prime factor (§9.2.4, TODO #212); FFS $L[1/3]$ would give ~80–90 bits but is not the binding attack | Shor's DLP | **None** |
+| **HSKE** (key-only) | Exhaustive search | Key search $2^n$; but 126 of 256 plaintext functionals leak from the ciphertext alone at $i = n/4$ — co-rank of the key map, SecurityProofs-1.md §1.3.1 / W9 | Grover $2^{n/2}$ on the key; the linear leak needs no quantum step | $n/2$ bits for the key; **none** for plaintext confidentiality |
 | **HSKE** (known-plaintext) | — | 1 KPT pair → full $c_K$, $O(n^2)$ | BV: 1 query | **None** |
-| **HPKS** | DLP in $\mathbb{GF}(2^n)^{\ast}$ + non-ROM challenge | Quasi-polynomial DLP | Shor's DLP | **None** |
-| **HPKE** | CDH in $\mathbb{GF}(2^n)^{\ast}$ | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
+| **HPKS** | DLP in $\mathbb{GF}(2^n)^{\ast}$ + non-ROM challenge | Pohlig–Hellman key recovery ~$2^{36.5}$ at $n=256$, then arbitrary forgery (§9.2.4, TODO #212); the signing scalar reduces modulo the same $2^n - 1$ | Shor's DLP | **None** |
+| **HPKE** | CDH in $\mathbb{GF}(2^n)^{\ast}$ | CDH $\leq$ DLP: Pohlig–Hellman ~$2^{36.5}$ at $n=256$ (§9.2.4, TODO #212); independently, the FSCX layer leaks 126 plaintext functionals per §1.3.1 / W9 | Shor's CDH | **None** |
 | **HSKE-NL-A1** (§11.3.1, key-only) | NL-FSCX v1 PRF | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
 | **HSKE-NL-A1** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
 | **HSKE-NL-A2** (§11.3.2, key-only) | NL-FSCX v2 bijection | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
@@ -524,15 +524,27 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 | **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
 | **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
 
-**HSKE key-only** provides $n/2$ bits of post-quantum security only when no plaintext
-is ever observed.  In any realistic deployment, plaintexts are available and this bound
-does not apply.  The NL-FSCX counter-mode and revolve-mode HSKE variants (§11.3) preserve
-the same KPT vulnerability; they harden against linear key-recovery but do not eliminate
-the 1-pair attack because the underlying structure remains affine.
+**HSKE key-only** provides $n/2$ bits of post-quantum security *for the key*, and only
+when no plaintext is ever observed.  In any realistic deployment, plaintexts are available
+and this bound does not apply.  The NL-FSCX counter-mode and revolve-mode HSKE variants
+(§11.3) preserve the same KPT vulnerability; they harden against linear key-recovery but do
+not eliminate the 1-pair attack because the underlying structure remains affine.
 
-**Note on concrete security estimates (2026 landscape review, TODO #71).**  The classical attack
-column for HKEX-GF now reflects the FFS $L[1/3]$ result (§9.2.4): at $n=256$ the best practical
-classical attack gives ~80–90 bits, not 128 bits.  Binary-field DLP is deprecated by NIST SP 800-57
+**Correction (TODO #210).**  The key-only column above was previously read as a
+*confidentiality* claim, and it is not one.  Theorem 4.1 (SecurityProofs-1.md §1.3.1) shows
+the classical key map $T_i = M \cdot S_i$ has co-rank $2(2^{v_2(i)} - 1)$, which is 126 out of
+256 at the deployed $i = n/4$.  Those 126 linear functionals of the plaintext are readable
+from the ciphertext with no known plaintext, no chosen plaintext and no key recovery, so
+classical HSKE and HPKE have no IND-CPA claim at any key size.  Only the *key search* bound
+is $n/2$ post-quantum bits.  This does not extend to HSKE-NL-A1/A2, whose carry
+non-linearity breaks the affine identity the argument depends on (see TODO #214 for the
+measurement of what, if anything, survives statistically).
+
+**Note on concrete security estimates (2026 landscape review, TODO #71; revised under TODO #212).**
+The classical attack column for HKEX-GF previously reflected the FFS $L[1/3]$ result (§9.2.4) at
+~80–90 bits, itself a correction from an earlier 128-bit claim.  The binding attack is instead
+Pohlig–Hellman at ~$2^{36.5}$, because the group order $2^{256}-1$ has a largest prime factor of
+only 73 bits.  Binary-field DLP is deprecated by NIST SP 800-57
 Rev. 5 (2020) and ENISA (2022).  HKEX-RNL estimates come from BKZ/MATZOV 2022 (§11.4.3).
 HPKS-Stern-F / HPKE-Stern-F concrete estimates use the SDE estimator (Becker-Joux-May-Meurer)
 for $(N=256, k=128, t=16)$; see §11.8.4.  All Stern-F rows are marked **demo only** at $N=256$;
