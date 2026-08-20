@@ -110,5 +110,75 @@ else
     check "java-produced private key decoded by Python" 1
 fi
 
+# ── Session-key DER width parity (TODO #219) ────────────────────────────────
+# The session-key field is MINIMAL-width in every implementation, unlike the
+# fixed-width private/public key fields. Java once padded it to nbits/8, which
+# emits a redundant leading 0x00 — non-canonical DER, and byte-different from
+# python/c/go — whenever the key's top byte is 0x00 and the next byte is below
+# 0x80. That is about 1 session key in 512, so random-key tests only caught it
+# as a rare cross-language CI flake. These vectors hit the case deterministically.
+#
+#   [0] top byte 0x00, next byte < 0x80  -> the regression trigger
+#   [1] two leading zero bytes
+#   [2] top byte 0x00, next byte >= 0x80 -> DER sign byte makes both agree
+#   [3] no leading zero, high bit set    -> both emit a sign byte
+#   [4] no leading zero, high bit clear  -> plain case
+#   [5] small value                      -> width shrinks to a few bytes
+#   [6] zero                             -> minimum width is 1, not 0
+SESSION_VECTORS=(
+    "002abbccddeeff00112233445566778899aabbccddeeff00112233445566778f"
+    "00002abbccddeeff00112233445566778899aabbccddeeff001122334455667f"
+    "00aabbccddeeff00112233445566778899aabbccddeeff00112233445566778f"
+    "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778f11"
+    "2abbccddeeff00112233445566778899aabbccddeeff00112233445566778f11"
+    "42"
+    "0"
+)
+
+PY_ENCODE_SESSION='
+import sys, importlib.util
+spec = importlib.util.spec_from_file_location("hcli", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+sys.modules["hcli"] = m
+try:
+    spec.loader.exec_module(m)
+except SystemExit:
+    pass
+sys.stdout.write(m._encode_session_key(int(sys.argv[2], 16), 256))
+'
+
+PY_DECODE_SESSION='
+import sys
+sys.path.insert(0, sys.argv[1])
+from codec import pem_unwrap, der_parse_seq
+label, der = pem_unwrap(open(sys.argv[2]).read())
+key, nbits = der_parse_seq(der)
+print(f"{key:x}", nbits)
+'
+
+for v in "${SESSION_VECTORS[@]}"; do
+    python3 -c "$PY_ENCODE_SESSION" "$ROOT/HerraduraCli/herradura.py" "$v" > "$TMP/py_session.pem"
+    java -cp "$ROOT/bindings/java" herradurakex.CodecTest encode-session "$v" 256 "$TMP/java_session.pem"
+
+    if cmp -s "$TMP/py_session.pem" "$TMP/java_session.pem"; then
+        check "session-key PEM byte-identical python/java (0x${v:0:8})" 0
+    else
+        echo "  python: $(grep -v -- '-----' "$TMP/py_session.pem" | tr -d '\n')"
+        echo "  java:   $(grep -v -- '-----' "$TMP/java_session.pem" | tr -d '\n')"
+        check "session-key PEM byte-identical python/java (0x${v:0:8})" 1
+    fi
+
+    # The value must still survive a Java-encode -> Python-decode round trip.
+    py_rt=$(python3 -c "$PY_DECODE_SESSION" "$ROOT/HerraduraCli" "$TMP/java_session.pem")
+    expect_rt=$(python3 -c 'import sys; print(f"{int(sys.argv[1], 16):x}", 256)' "$v")
+    if [ "$py_rt" = "$expect_rt" ]; then
+        check "java session key decodes unchanged in python (0x${v:0:8})" 0
+    else
+        echo "  expected: $expect_rt"
+        echo "  got:      $py_rt"
+        check "java session key decodes unchanged in python (0x${v:0:8})" 1
+    fi
+done
+
 echo "== test_java_codec.sh: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

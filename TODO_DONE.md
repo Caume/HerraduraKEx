@@ -10538,3 +10538,62 @@ docs/BENCHMARKS.md's two HPKS/HKEX-GF caveats, SPEC.md §2/§5.1/§12, and
 pedagogical under [[#210]]), regenerating `spec/herradura-protocol-spec.json`.
 Analysis + documentation only; these protocols were already demo-only, and no
 wire format, CLI surface, or parameter changed.
+
+### #219: Java `encodeSessionKey` pads the DER INTEGER, breaking byte-for-byte PEM parity
+
+`bindings/java/herradurakex/Codec.java`'s `encodeSessionKey` encoded the key
+field at a fixed `nbits / 8` width:
+
+```java
+byte[] der = derSeq(derInt(key, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
+```
+
+Every other implementation uses **minimal** width for this one field —
+`HerraduraCli/herradura.py`'s `_encode_session_key`
+(`nbytes = max(1, (key_int.bit_length() + 7) // 8)`), `herradura_cli.go`'s
+`encodeSessionKey` (whose comment reads "Minimum byte width matching Python"),
+and Java's own `encodeRnlResponse` a few lines below in the same file. The
+fixed/minimal split is deliberate elsewhere: private keys, public keys and
+symmetric ciphertexts *are* fixed-width in Python too, so Java matches there.
+The session key was the one field where it diverged.
+
+Neither DER encoder strips leading zeros — each emits the byte array it is
+given, adding a `0x00` only when the top bit is set. So whenever a session key's
+top byte is `0x00` **and** the next byte is below `0x80`, Java emitted a
+redundant leading zero:
+
+```
+python/c/go:  30 25 02 1F 44 6f …   INTEGER, 31 content bytes
+java:         30 26 02 20 00 44 6f… INTEGER, 32 content bytes
+```
+
+That is non-canonical DER, and it violates the byte-for-byte PEM compatibility
+CLAUDE.md documents across implementations. The value decodes identically either
+way, so only a byte-comparison test sees it — which is why it surfaced as a rare
+CI flake rather than an interop failure.
+
+**Rate:** P(top byte 0) x P(next byte < 0x80) = 1/256 x 1/2 = **1/512** per
+session key. `CliTest/test_cross_lang_matrix.sh` compares 16 HKEX-GF pairs per
+run, 6 of which are Java-against-another-language, so a run tripped roughly 1%
+of the time. Found when the `cross-lang-compat` job failed on PR #207 with
+`FAIL hkex-gf go-alice/java-bob: session keys differ` while the identical job on
+the same commit passed in the parallel workflow run; reproduced locally at 1
+mismatch in 400 `go-alice/java-bob` iterations.
+
+**Fix:** pass `-1` (the codec's existing minimal-width sentinel) instead of
+`nbits / 8`, with a comment recording why this field differs from its
+neighbours. Added an `encode-session` mode to `herradurakex.CodecTest` and a
+seven-vector regression section to `CliTest/test_java_codec.sh` that compares
+Java's session-key PEM against Python's byte for byte, and checks the value
+still round-trips. The vectors cover the trigger deterministically instead of
+waiting for a 1-in-512 random draw: leading zero with the next byte below
+`0x80`, two leading zeros, leading zero with the next byte at or above `0x80`
+(where the DER sign byte makes both agree), no leading zero with and without the
+high bit set, a small value, and zero. Four of the seven fail against the old
+encoder and all seven pass against the new one.
+
+Status: **DONE v2.7.9** — one-line encoder fix plus a deterministic regression
+test; no protocol, parameter, or CLI-surface change. Java-produced session-key
+PEMs are now byte-identical to python/c/go for every key, and previously written
+Java session-key PEMs still decode correctly (the padded form remains valid
+input, it was only non-canonical output).
