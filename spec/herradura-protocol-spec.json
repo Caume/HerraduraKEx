@@ -73,10 +73,11 @@
       "security": {
         "status": "pedagogical",
         "quantum_resistant": false,
-        "classical_security_bits": "~80-90 (n=256)",
-        "notes": "GF(2^n)* Diffie-Hellman. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) deprecate GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "GF(2^n)* Diffie-Hellman. The binding classical attack is Pohlig-Hellman: the group order 2^256-1 has a 73-bit largest prime factor, so a discrete log costs about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-2.md 9.2.4) -- days on a single core, not the ~80-90 bits the function field sieve would suggest. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) also deprecate GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
         "source": [
-          "TODO.md #127 (6943-6949)"
+          "TODO.md #127 (6943-6949)",
+          "TODO_DONE.md #212"
         ]
       }
     },
@@ -118,10 +119,12 @@
       "security": {
         "status": "pedagogical",
         "quantum_resistant": false,
-        "classical_security_bits": "~80-90 (n=256)",
-        "notes": "El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf.",
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "El Gamal encryption over GF(2^n)*; same group-choice caveat as hkex-gf, and the same ~2^36.5 Pohlig-Hellman recovery of the decryption key. Independently, the FSCX encryption layer leaks 126 of 256 linear functionals of the plaintext from the ciphertext alone (TODO #210, SecurityProofs-1.md 1.3.1).",
         "source": [
-          "TODO.md #127"
+          "TODO.md #127",
+          "TODO_DONE.md #210",
+          "TODO_DONE.md #212"
         ]
       }
     },
@@ -212,10 +215,11 @@
       "security": {
         "status": "pedagogical",
         "quantum_resistant": false,
-        "classical_security_bits": "~80-90 (n=256)",
-        "notes": "Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf.",
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "Schnorr signature over GF(2^n)*; same group-choice caveat as hkex-gf, and the same ~2^36.5 Pohlig-Hellman key recovery, which yields arbitrary forgery.",
         "source": [
-          "TODO.md #127"
+          "TODO.md #127",
+          "TODO_DONE.md #212"
         ]
       }
     },
@@ -375,9 +379,12 @@
         "python": true
       },
       "security": {
-        "status": "production",
+        "status": "pedagogical",
         "quantum_resistant": false,
-        "notes": "Classical symmetric encryption via FSCX_REVOLVE; not quantum-resistant by design (a symmetric primitive, not a PQC construction)."
+        "notes": "Classical symmetric encryption via FSCX_REVOLVE; not quantum-resistant by design (a symmetric primitive, not a PQC construction). Reclassified from production under TODO #210: the key enters fscx_revolve only through the singular map M*S_i, whose co-rank is 126 of 256 at the deployed i = n/4, so the ciphertext alone discloses 126 linear functionals of the plaintext for every key (SecurityProofs-1.md 1.3.1, W9). Use hske-nla1/hske-nla2 instead.",
+        "source": [
+          "TODO_DONE.md #210"
+        ]
       }
     },
     {
@@ -514,6 +521,7 @@
     "PEM_HPKST_SIG": "HERRADURA HPKST SIGNATURE",
     "PEM_HPKS_RING_SIG": "HERRADURA HPKS-RING SIGNATURE",
     "PEM_HPKS_WOTS_SIG": "HERRADURA HPKS-WOTS SIGNATURE",
+    "PEM_HPKS_XMSS_SIG": "HERRADURA HPKS-XMSS SIGNATURE",
     "PEM_HYBRID_RESPONSE": "HERRADURA HYBRID-RNL-STERN RESPONSE",
     "PEM_OPRF_EVAL": "HERRADURA OPRF EVALUATION",
     "PEM_OPRF_STATE": "HERRADURA OPRF CLIENT STATE",

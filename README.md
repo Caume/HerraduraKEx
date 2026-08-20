@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.7.6)
+# Herradura Cryptographic Suite (v2.7.8)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -57,10 +57,17 @@ An eavesdropper who sees $C$ and $C_2$ still can't compute $a$, $b$, or $\mathit
 
 | $n$ | Primitive polynomial | Classical security |
 |-----|---------------------|-------------------|
-| 32  | $x^{32}+x^{22}+x^2+x+1$ (`0x00400007`) | demo only |
-| 64  | $x^{64}+x^4+x^3+x+1$ (`0x1B`) | ~40 bits |
-| 128 | $x^{128}+x^7+x^2+x+1$ (`0x87`) | ~60–80 bits |
-| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | ~80–90 bits (sub-exponential attack cost, function family FFS L[1/3]; deprecated by NIST/ENISA at this bit width — see §9.2.4) |
+| 32  | $x^{32}+x^{22}+x^2+x+1$ (`0x00400007`) | demo only — $2^{8.5}$ |
+| 64  | $x^{64}+x^4+x^3+x+1$ (`0x1B`) | $2^{11.8}$ |
+| 128 | $x^{128}+x^7+x^2+x+1$ (`0x87`) | $2^{23.3}$ |
+| 256 | $x^{256}+x^{10}+x^5+x^2+1$ (`0x425`) | $2^{36.5}$ — days of single-core work; deprecated by NIST/ENISA at this bit width |
+
+The binding attack is Pohlig–Hellman, not the function field sieve: the order of
+$\mathbb{GF}(2^n)^{\ast}$ is $2^n - 1$, whose largest prime factor is only 73 bits at $n = 256$, so
+a discrete log costs the square root of *that* rather than of the field. The sub-exponential FFS
+$L[1/3]$ figure often quoted for these sizes (~80–90 bits at $n = 256$) is therefore not the
+practical bound — see SecurityProofs-2.md §9.2.4. Every protocol in the HKEX-GF family is
+demo-only for this reason; the post-quantum families below do not share the weakness.
 
 ---
 

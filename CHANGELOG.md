@@ -2,6 +2,91 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.8] - 2026-08-20
+
+### Security
+- TODO #212: corrected the classical security figure for every GF(2^n)*
+  protocol. `SecurityProofs-2.md` §9.2.4 listed Pohlig-Hellman among the known
+  attacks but never costed it, and quoted the function field sieve's ~80-90
+  bits at n=256 as the practical bound. Pohlig-Hellman is the binding attack:
+  the group order is `2^n - 1`, and at n=256 its largest prime factor is
+  5704689200685129054721 (73 bits), so a discrete log costs about **2^36.5**
+  group operations in constant memory via Pollard rho plus CRT — 45 to 55 bits
+  below the documented figure. At the 1.26e5 `gf_mul_ba`/s measured for
+  `herradura.h` (`-O2`, reference ARM64 host) that is roughly nine days on one
+  core, and rho parallelises linearly. HKEX-GF, HPKS, HPKE, HPKS-NL and
+  HPKE-NL are all affected; HPKS additionally reduces its signing scalar modulo
+  the same `2^n - 1`.
+
+  New `SecurityProofsCode/hkex_gf_pohlig_hellman.py` verifies each
+  factorisation (Miller-Rabin plus product check), computes `ord(g)` at every
+  supported n, tabulates the attack cost against the documented FFS estimates,
+  and carries the break through end to end: exact private-key recovery at n=32
+  and n=64 (0.15 s at n=64 in pure Python), the HKEX-GF shared secret rebuilt
+  from it, and a forged HPKS signature that verifies under the victim's public
+  key. Two nuances are now recorded: `g = 3` is primitive at n=64 and at the
+  deployed n=256, so recovery there returns the private key itself rather than
+  a representative (§9.2.4's n=32 BSGS narrative is correct at n=32, where
+  `ord(g) = (2^32 - 1)/15`, but does not generalise); and Pohlig-Hellman stays
+  the binding attack up to n=512, with the FFS overtaking it only at n=1024.
+
+### Changed
+- TODO #212 documentation corrections: SecurityProofs-2.md §9.2.4 (new
+  Pohlig-Hellman derivation, parameter table extended with largest-prime-factor
+  and PH-cost columns plus n=512/n=1024 rows, FFS re-framed as the best sieve
+  attack rather than the best attack), SecurityProofs-3.md §11.7 (HKEX-GF,
+  HPKS and HPKE rows, and the TODO #71 estimate note), SECURITY.md (all four
+  GF(2^n)* rows and the out-of-scope bullet), README.md's GF(2^n) parameter
+  table, docs/BENCHMARKS.md's HPKS-vs-Ed25519 and HKEX-GF-vs-X25519 caveats,
+  and SPEC.md §2, §5.1 and §12.
+- `spec/generate_spec.py`: `classical_security_bits` for `hkex-gf`, `hpks` and
+  `hpke` changed from "~80-90 (n=256)" to "~36.5 (n=256)" with the
+  Pohlig-Hellman rationale; `hske` reclassified from `production` to
+  `pedagogical` on the TODO #210 co-rank finding, pointing callers at
+  `hske-nla1`/`hske-nla2`. `spec/herradura-protocol-spec.json` regenerated
+  (`--check` clean). Analysis and documentation only: no wire format, CLI
+  surface, or default parameter changed.
+
+## [2.7.7] - 2026-08-20
+
+### Security
+- TODO #210: documented a key-independent plaintext leak in the classical
+  FSCX_REVOLVE constructions. `fscx_revolve(P, K, i)` is affine — it equals
+  `M^i . P XOR T_i . K` with `T_i = M . S_i` — so the key reaches the output
+  through one linear map, and anything outside that map's image is a
+  plaintext functional no key can mask. `T_i` is singular at every deployed
+  step count: its co-rank is `min(n, 2(2^v2(i) - 1))` for `n = 2^k`, which is
+  **126 out of 256** at the shipped `i = n/4 = 64` (encrypt) and `r = 3n/4 =
+  192` (decrypt). Consequently HSKE and HPKE ciphertexts disclose 126
+  independent GF(2)-linear functionals of the plaintext with no known
+  plaintext, no chosen plaintext, and no key recovery, and HPKS challenges
+  carry 130 bits of entropy rather than 256. The simplest instance is parity:
+  `M` has row weight 3, so an even step count leaves `parity(E) = parity(P)`
+  for every key. `T_i` is invertible exactly when `i` is odd, which is the
+  parameter question tracked as TODO #211.
+
+  New `SecurityProofsCode/fscx_revolve_corank.py` measures the rank directly
+  from the primitive, checks the closed form against 288 parameter pairs,
+  extracts the 126-dimensional left kernel and verifies its key-independence
+  over 200 random keys, and reports the co-rank of the nonce-augmented map of
+  SecurityProofs-1.md §2.2 (128) for comparison. New SecurityProofs-1.md
+  §1.3.1 gives Theorem 4.1 and its proof by (X+1)-adic valuation in the local
+  ring GF(2)[X]/(X^n+1).
+
+### Changed
+- TODO #210 documentation corrections. SecurityProofs-1.md: added weakness W9,
+  qualified §2.2's "Why HSKE remains secure" blockquote (a non-zero key offset
+  is necessary but not sufficient when it is confined to a proper subspace),
+  changed §5.1's IND-CPA cells for HSKE and HPKE from "Unproven" to "✗", and
+  corrected §5.2's "HSKE is correct and secure (pre-shared key model)" row.
+  SecurityProofs-3.md §11.7: qualified the HSKE key-only and HPKE rows and the
+  paragraph that read the key-only column as a confidentiality claim.
+  SECURITY.md: the **HSKE (key-only)** row moves from "Conditionally usable"
+  to "Not suitable for production" — its previous rationale ("only if no
+  plaintext is ever observed") does not describe the actual attack, which
+  needs no plaintext at all. Analysis and documentation only: no wire format,
+  CLI surface, or default parameter changed.
+
 ## [2.7.6] - 2026-08-19
 
 ### Fixed

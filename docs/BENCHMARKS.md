@@ -46,9 +46,9 @@ Caveats specific to this comparison:
 - Ed25519 uses a decade-audited, hand-optimized reference implementation (`ref10`); HPKS runs
   through this suite's general-purpose `BitArray`/`GF(2^n)` arithmetic, not curve-specific
   optimized code.
-- HPKS's security is classical DLP over `GF(2^256)*` — broken by Shor's algorithm, and at
-  ~80-90 bits of classical security per the `GF(2^n)` table in the main README, below
-  Ed25519's 128-bit target.
+- HPKS's security is classical DLP over `GF(2^256)*` — broken by Shor's algorithm, and
+  classically at about 2^36.5 operations via Pohlig-Hellman per the `GF(2^n)` table in the main
+  README, far below Ed25519's 128-bit target.
 - Both are measured through this suite's FFI shim / libsodium's C API respectively — not a
   cross-language comparison.
 
@@ -103,9 +103,9 @@ Caveats specific to this comparison:
   this suite's general-purpose `BitArray`/`GF(2^n)` arithmetic and `gf_pow` (square-and-
   multiply), not curve-specific optimized code — the same gap noted for HPKS vs. Ed25519 above,
   since both share the same `GF(2^256)*` exponentiation machinery.
-- HKEX-GF's security is classical DLP over `GF(2^256)*` — broken by Shor's algorithm, and at
-  ~80-90 bits of classical security per the `GF(2^n)` table in the main README, below X25519's
-  128-bit target.
+- HKEX-GF's security is classical DLP over `GF(2^256)*` — broken by Shor's algorithm, and
+  classically at about 2^36.5 operations via Pohlig-Hellman per the `GF(2^n)` table in the main
+  README, far below X25519's 128-bit target.
 - Both are measured through this suite's FFI shim / libsodium's C API respectively — not a
   cross-language comparison.
 

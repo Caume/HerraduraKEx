@@ -10411,3 +10411,130 @@ than backfilling their historical wording); marked the `CliTest/` listing
 in Repository Structure as a representative sample of 59 scripts; added
 brief Repository Structure / Build Commands entries for `SPEC.md`,
 `SECURITY.md`, `Dockerfile`, `docker-entrypoint.sh`, and `pyproject.toml`.
+
+### #210: Quantify the key-independent linear leak of `fscx_revolve` at i = n/4
+
+`fscx_revolve(A, B, i)` is affine: `E = M^i · P ⊕ T_i · K` with
+`T_i = M · S_i`, `S_i = Σ_{j=0}^{i-1} M^j`. Security of every classical
+FSCX construction therefore rests entirely on `T_i` having full rank —
+whatever `T_i` fails to cover is a plaintext functional that no key can
+mask. A rank computation over GF(2) at the deployed parameters shows it
+does **not**:
+
+| n | i | rank(T_i) | corank (leaked bits) |
+|---|---|---|---|
+| 64 | 16 | 34 | 30 |
+| 128 | 32 | 66 | 62 |
+| 256 | 64 (`i = n/4`) | 130 | **126** |
+| 256 | 192 (`r = 3n/4`) | 130 | **126** |
+| 256 | 65 (odd) | 256 | 0 |
+
+Concretely: at n=256 there are 126 linearly independent functionals λ with
+`λ·T_64 = 0`, so `λ·E = λ·M^64·P` holds for **every** key. Sampling 30
+random keys against a fixed plaintext gives a constant functional value, as
+predicted. The algebraic reason is that over GF(2)[x]/(x^n+1) with n=2^k
+everything is a power of (x+1); `m(x) = x^{n-1} + 1 + x` is a unit, and
+`m + 1 = x^{-1}(1+x)^2`, so for i a power of two `S_i` carries
+(1+x)-valuation `2i - 2` — rank deficiency grows with i rather than
+vanishing. The simplest visible case is parity: M has row weight 3, so
+`parity(fscx(A,B)) = parity(A) ⊕ parity(B)` and an even step count makes
+`parity(E) = parity(P)` unconditionally.
+
+Impact to assess and document:
+- **HSKE (key-only)** — `SECURITY.md` currently rates this "conditionally
+  usable, n/2-bit post-quantum security only if no plaintext is ever
+  observed". That claim is false as stated: 126 bits of `P` are readable
+  from `E` alone with no known plaintext and no key recovery. The row needs
+  rewording, and `SecurityProofs-1.md` §1.5's "Why HSKE remains secure"
+  note needs the corank qualifier.
+- **HPKE** — same `i = n/4` revolve over `enc_key`, so ciphertexts leak the
+  same 126 functionals of the plaintext.
+- **HPKS** — `e = fscx_revolve(R, msg, i)` lives in an affine subspace of
+  dimension 130, i.e. the Schnorr challenge carries 130 bits of entropy,
+  not 256, and 126 of its coordinates are a public function of `R`.
+- Check whether the NL replacements inherit any of it — a first pass
+  (400 samples, HSKE-NL-A2 at 64 steps) puts the same 126 functionals at
+  agreement 0.46–0.56, consistent with no bias, but see [[#214]] for the
+  measurement that would actually settle it.
+
+**Deliverable:** `SecurityProofsCode/fscx_revolve_corank.py` (rank/corank
+table, kernel extraction, key-independence check, the (1+x)-valuation
+derivation), a `SecurityProofs-1.md` subsection, and corrected rows in
+`SECURITY.md`. Analysis + documentation only; the parameter consequence is
+[[#211]].
+
+Status: **DONE v2.7.7** — added `SecurityProofsCode/fscx_revolve_corank.py` and
+SecurityProofs-1.md §1.3.1 (Theorem 4.1). The co-rank has a closed form:
+co-rank(T_i) = min(n, 2(2^{v2(i)} - 1)), where v2 is the 2-adic valuation —
+verified against the primitive at 288 parameter pairs, and 126 out of 256 at
+the deployed i = n/4 = 64 (and at r = 3n/4 = 192). Proof is a valuation
+argument in the local ring GF(2)[X]/(X^n+1) = GF(2)[Y]/(Y^n), Y = X+1: m(X) is
+a unit, v(m+1) = 2, and (M+I)S_i = M^i+I forces v(S_i) = 2^{v2(i)+1} - 2. The
+126-dimensional left kernel was extracted and each basis functional confirmed
+constant across 200 random keys; parity is the all-ones member. Documented as
+weakness W9, corrected §2.2's "Why HSKE remains secure" blockquote, §5.1's
+IND-CPA cells for HSKE/HPKE, §5.2's "HSKE is correct and secure" row,
+SecurityProofs-3.md §11.7's HSKE/HPKE rows and its key-only paragraph, and
+SECURITY.md's HSKE (key-only) row — which claimed "conditionally usable,
+n/2-bit post-quantum security only if no plaintext is ever observed" and is
+now "not suitable for production", since no plaintext observation is needed.
+Analysis + documentation only; no wire-format, CLI, or parameter change — the
+odd-i fix is [[#211]].
+
+### #212: Recompute GF(2^n)* security under Pohlig–Hellman — the n=256 figure is ~45 bits optimistic
+
+`SecurityProofs-2.md` §9.2.4 lists Pohlig–Hellman in its attack table but
+never applies it, and the headline row ("n = 256 ≈ 80–90 bits, FFS
+L[1/3]") is what `SECURITY.md` cites for HKEX-GF, HPKS, HPKE, HPKS-NL and
+HPKE-NL. Pohlig–Hellman is the binding constraint, not FFS:
+
+- `2^256 − 1 = 3·5·17·257·641·65537·274177·6700417·67280421310721·
+  59649589127497217·5704689200685129054721` — largest prime factor is
+  73 bits.
+- g = 3 with `GF_POLY[256] = 0x425` was checked to have full order
+  `2^256 − 1`, so the reachable subgroup buys nothing back.
+- Generic DLP cost is therefore `√(2^73) ≈ 2^36.5` group operations with
+  Pollard rho in constant memory — not 2^80–2^90.
+
+This is not theoretical: a Pohlig–Hellman + BSGS + CRT implementation
+recovers the **exact** private exponent (not merely a representative) at
+n=64 in 0.15 s in pure Python, and from it Eve reconstructs the HKEX-GF
+shared secret. §9.2.4's existing n=32 BSGS narrative — "the recovered
+a_rec ≠ A_PRIV because g = 3 is not primitive" — should be revisited in
+that light. Note the same modulus governs HPKS's `s = (k − a·e) mod
+(2^n − 1)`, so signature forgery inherits the bound.
+
+**Deliverable:** `SecurityProofsCode/hkex_gf_pohlig_hellman.py` (order of g
+per supported n, factorisation, per-n PH cost table, working end-to-end
+n=64 key recovery, n=128 cost estimate), a rewrite of §9.2.4's practical
+parameter table with the PH column added, and updated "Why" cells in
+`SECURITY.md`. Relates to [[#204]], which raised the prime-n question for
+Pohlig–Hellman but did not compute the cost at the deployed n. No
+protocol change — these protocols are already demo-only; the point is that
+the documented margin is wrong by ~45 bits.
+
+Status: **DONE v2.7.8** — added `SecurityProofsCode/hkex_gf_pohlig_hellman.py`
+and rewrote SecurityProofs-2.md §9.2.4 around the corrected bound. Confirmed:
+the largest prime factor of 2^256 - 1 is 5704689200685129054721 (73 bits), so
+Pohlig-Hellman with Pollard rho costs ~2^36.5 group operations in constant
+memory — 45 to 55 bits below the FFS figure §9.2.4 previously reported as the
+practical bound. At the 1.26e5 gf_mul_ba/s measured for `herradura.h` on the
+reference ARM64 host that is ~9 days on one core, and it parallelises linearly.
+The script verifies every factorisation (Miller-Rabin + product), computes
+ord(g) at each supported n, recovers exact private keys at n=32 and n=64
+(0.15 s at n=64), and derives from the recovered key both the HKEX-GF shared
+secret and a forged HPKS signature that verifies under the victim's public key.
+Two nuances worth recording: g = 3 is primitive at n=64 and at the deployed
+n=256 (so recovery returns the private key itself, not a representative),
+though not at n=32 or n=128 — §9.2.4's existing n=32 BSGS narrative is correct
+there but does not generalise; and Pohlig-Hellman remains the binding attack up
+to n=512, with the FFS taking over only at n=1024. Updated the §9.2.4 parameter
+table with largest-prime-factor and PH columns, SecurityProofs-3.md §11.7's
+HKEX-GF/HPKS/HPKE rows and its TODO #71 note, SECURITY.md's four GF(2^n)* rows
+and its out-of-scope bullet, README.md's GF(2^n) parameter table,
+docs/BENCHMARKS.md's two HPKS/HKEX-GF caveats, SPEC.md §2/§5.1/§12, and
+`spec/generate_spec.py` (hkex-gf/hpks/hpke `classical_security_bits` from
+"~80-90 (n=256)" to "~36.5 (n=256)", plus hske reclassified from production to
+pedagogical under [[#210]]), regenerating `spec/herradura-protocol-spec.json`.
+Analysis + documentation only; these protocols were already demo-only, and no
+wire format, CLI surface, or parameter changed.

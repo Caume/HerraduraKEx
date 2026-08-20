@@ -48,11 +48,15 @@ quantum adversaries, and §9 describes a code-based (Stern ZKID)
 signature and KEM family with an independent, better-studied hardness
 assumption.
 
-**Non-goals of the classical quartet (§4–§5):** HKEX-GF and HPKE rely on
-the discrete-log problem in GF(2^n)*, a group family NIST SP 800-57 Rev.5
-(2020) and ENISA (2022) deprecate for new designs regardless of `n`,
-because of the existence of sub-exponential index-calculus attacks
-specific to extension-field groups. **The classical quartet MUST NOT be
+**Non-goals of the classical quartet (§4–§5):** HKEX-GF, HPKS and HPKE
+rely on the discrete-log problem in GF(2^n)*, a group family NIST SP
+800-57 Rev.5 (2020) and ENISA (2022) deprecate for new designs regardless
+of `n`, because of the existence of sub-exponential index-calculus attacks
+specific to extension-field groups. The binding attack is cheaper still:
+the group order is `2^n − 1`, whose largest prime factor is 73 bits at
+`n = 256`, so Pohlig-Hellman recovers a private key in about `2^36.5`
+group operations (`SecurityProofs-2.md` §9.2.4). HSKE is pedagogical for
+an unrelated reason of its own — see §5.1. **The classical quartet MUST NOT be
 used for anything requiring real confidentiality or authenticity
 guarantees; it exists for pedagogy, cross-language testing, and as the
 substrate the NL/PQC variants build on.** Deployments SHOULD use
@@ -175,6 +179,15 @@ primitive (the CLI's `enc --algo hske` runs one block; see
 modes — HSKE itself provides no authentication and MUST NOT be used
 without a separate MAC in any setting where an active adversary is in
 scope).
+
+**Confidentiality note.** The key reaches `E` only through the linear map
+`M · S_i`, and at `i = n/4` that map is singular with co-rank 126 out of
+256: the ciphertext alone discloses 126 independent linear functionals of
+the plaintext, for every key and with no known plaintext
+(`SecurityProofs-1.md` §1.3.1). HSKE therefore offers no confidentiality
+claim at any key size and MUST NOT be used to protect data; implement it
+for cross-language conformance, and use `HSKE-NL-A1`/`HSKE-NL-A2` (§9.2)
+where encryption is actually required.
 
 ## 6. HPKS — Schnorr Signature over GF(2^n)*
 
@@ -455,8 +468,11 @@ so is safe for a given deployment — read `SecurityProofs.md` (index) and
 its parts before deploying any of these protocols, and note in
 particular:
 
-- The classical quartet (§4–§7) is pedagogical only (§2); it is broken by
-  index-calculus attacks on GF(2^n)* at any `n` this suite deploys.
+- The classical quartet (§4–§7) is pedagogical only (§2). Pohlig-Hellman
+  recovers a GF(2^n)* private key in about `2^36.5` group operations at
+  `n = 256` — cheaper than the index-calculus attacks that also apply —
+  and HSKE leaks 126 of 256 plaintext functionals independently of any of
+  that (§5.1).
 - HPKE-NL's PQC framing is deprecated (§9.4) — it is not quantum-
   resistant despite using NL-FSCX.
 - HKEX-RNL (§9.1) has a non-zero probabilistic decryption-failure rate;
