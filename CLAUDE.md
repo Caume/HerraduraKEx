@@ -56,10 +56,11 @@ SecurityProofsCode/                                 — standalone Python proof/
   hkex_classical_break.py  — classical algebraic break proofs
   fscx_revolve_corank.py   — co-rank of the classical FSCX_REVOLVE key map (TODO #210)
   hkex_gf_pohlig_hellman.py — Pohlig-Hellman cost/recovery vs. HKEX-GF/HPKS/HPKE (TODO #212)
+  hske_perfect_secrecy.py  — Shannon-perfect one-time HSKE at odd step counts (TODO #211)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
 SecurityProofs.md                                   — split index (redirects to Parts 1–5; quantum analysis is in SecurityProofs-1.md §6)
-SecurityProofs-1.md                                 — §1–§8: Algebraic Foundations … Experimental Code Index (676 math expressions)
+SecurityProofs-1.md                                 — §1–§8: Algebraic Foundations … Experimental Code Index (708 math expressions)
 SecurityProofs-2.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
 SecurityProofs-3.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
 SecurityProofs-4.md                                 — §11.8.3–§11.9.11: PQ signature options · HFSCX-256-DM (716 math expressions)

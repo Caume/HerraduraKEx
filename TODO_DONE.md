@@ -10597,3 +10597,77 @@ test; no protocol, parameter, or CLI-surface change. Java-produced session-key
 PEMs are now byte-identical to python/c/go for every key, and previously written
 Java session-key PEMs still decode correctly (the padded form remains valid
 input, it was only non-canonical output).
+
+### #211: Prove (and parameterise for) Shannon-perfect one-time HSKE at odd i
+
+Follow-on to [[#210]] and the closest this suite can get to a one-time-pad
+style unconditional proof, reachable **without touching FSCX or
+FSCX_REVOLVE** — only the step-count parameter moves.
+
+Since `E = M^i·P ⊕ T_i·K` is affine, a one-time uniform key K of full
+message width makes `T_i·K` uniform on the image of `T_i`. If `T_i` is
+invertible, `E` is uniform and independent of `P`, which is exactly
+Shannon's perfect-secrecy condition — `I(P; E) = 0`, the same statement
+the OTP satisfies, proved by counting rather than by assumption. The
+conjecture to formalise (verified numerically at n = 64/128/256) is:
+
+> For n = 2^k, `T_i = M · S_i` is invertible over GF(2) **iff i is odd**.
+
+Sketch: `x^n + 1 = (x+1)^n`, so invertibility ⟺ nonzero evaluation at
+x = 1; `m(1) = 3 ≡ 1`, hence `S_i(1) = i mod 2`. The deployed `i = n/4` is
+even for every supported n, which is precisely why [[#210]] finds a corank.
+Correctness is unaffected: decryption needs only `i + r ≡ 0 (mod n)`, and
+`i = 65, r = 191` round-trips (verified, 50/50 at n=256).
+
+Work items:
+- Write the theorem and proof (both directions) into `SecurityProofs-1.md`
+  next to Theorems 2–3, with the perfect-secrecy corollary stated in
+  Shannon's form and its hypotheses spelled out honestly: key uniform, key
+  width = message width, **key used once**. Key reuse remains an immediate
+  break — the affine structure means two ciphertexts under one key give
+  `E1 ⊕ E2 = M^i(P1 ⊕ P2)`, decipherable with no key at all, which the
+  write-up must state as prominently as the positive result.
+- Extend `SecurityProofsCode/` with the numeric verification: invertibility
+  vs parity of i across n ∈ {32…512}, round-trip at (i, r) = (65, 191), and
+  an empirical `I(P; E)` estimate at small n showing 0 for odd i and
+  log2-of-corank bits for even i.
+- Decide the parameter question separately: whether the suite should adopt
+  an odd i as the default (a wire-format break under the CLAUDE.md MAJOR
+  rules, requiring a `MIGRATING.md` entry), expose it as an opt-in
+  `--steps` choice, or document the odd-i variant as a proof-of-concept
+  only. Do not change the default inside this item.
+
+Status: **DONE v2.7.10** — added `SecurityProofsCode/hske_perfect_secrecy.py` and
+SecurityProofs-1.md §1.3.2 (Theorem 4.2, Corollary 4.3). The conjecture holds and
+sharpens into an identity that subsumes [[#210]]: for uniform independent P and K,
+I(P;E) = co-rank(T_i) = min(n, 2(2^{v2(i)} - 1)) bits exactly, so the 126-bit leak
+and the perfect secrecy are one quantity read at two parities. Proof is the coset
+argument — H(E) = n, H(E|P) = rank(T_i) — and it is confirmed by measuring the
+mutual information exhaustively over all 65 536 plaintext-key pairs at n=8, which
+matches the co-rank to floating-point error at every i (including the degenerate
+i = n, where T_n = 0, the ciphertext equals the plaintext, and the leak is the full
+n bits). Perfect secrecy holds iff i is odd. Correctness needs only i + r = n, so
+(65, 191) round-trips 500/500 and costs the identical 256 FSCX steps as the
+deployed (64, 192): odd i is not a trade-off, it is the same work for 126 fewer
+leaked bits.
+
+Documented the hypotheses as prominently as the result, per this item's text: key
+uniform, key as wide as the message, key used once — and the third fails
+catastrophically, not gracefully. E1 XOR E2 = M^i(P1 XOR P2) with M invertible
+recovers the plaintext XOR from two ciphertexts with no key material (200/200 at
+n=256, i=65), and HSKE has neither a nonce nor an integrity check to prevent or
+detect reuse.
+
+**Parameter decision: documented, not deployed.** Odd i does not beat a one-time
+pad, it ties it — at ~700x the cost in the reference Python and with the same
+key-as-long-as-the-message burden. The result is a ceiling on any construction of
+this shape, not a feature, so it does not justify a wire-format break on its own.
+Changing i changes what every existing HSKE/HPKE ciphertext decrypts to, and the
+symmetric-ciphertext PEM records a format tag and nbits but no step count, so an
+odd-i build would decrypt an old ciphertext to silent garbage with no integrity
+check to catch it. Adoption would need its own format tag (the tag mechanism
+already separates the plain, nonce-carrying and AEAD layouts) plus a MIGRATING.md
+entry, and belongs to a future major version. The opt-in `--steps` flag this item
+floated is rejected for the same reason: without a format tag it makes silent
+misdecryption a user-reachable footgun. No wire-format, CLI, or default-parameter
+change was made.

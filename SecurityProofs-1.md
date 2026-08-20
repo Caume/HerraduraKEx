@@ -189,7 +189,7 @@ Measured directly from the primitive by `SecurityProofsCode/fscx_revolve_corank.
 | 256 | 192 | 130 | **126** | $r = 3n/4$, the deployed decrypt parameter |
 | 256 | 65 | 256 | 0 | odd step count |
 
-Every supported parameter set uses $i = n/4$, which is even for all of them — hence the deployed configuration is never the invertible one. The consequence of choosing an odd $i$ instead, which is a Shannon-perfect one-time cipher, is TODO #211.
+Every supported parameter set uses $i = n/4$, which is even for all of them — hence the deployed configuration is never the invertible one. The other direction of the theorem is stronger than it looks: at odd $i$ the key map is invertible and one-time HSKE becomes Shannon-perfect. That is §1.3.2 (Theorem 4.2, TODO #211).
 
 **The visible special case is parity.** $M$ has row weight 3, so multiplication by $M$ preserves the parity (Hamming weight modulo 2) of its argument and
 
@@ -200,6 +200,34 @@ Iterating an even number of times cancels the key contribution: $\text{parity}(f
 **Consequences at $n = 256$.** HSKE ($E = f_K^{n/4}(P)$, `herradura.h`'s `hske_encrypt`) and HPKE ($E = f_{\text{enc-key}}^{n/4}(P)$) both disclose the same 126 independent linear functionals of the plaintext from the ciphertext alone — with no known plaintext, no chosen plaintext, and no key recovery. For HPKS the challenge $e = f_{\text{msg}}^{n/4}(R)$ lies in an affine subspace of dimension 130, so it carries 130 bits of entropy rather than 256 and its remaining 126 coordinates are a public function of $R$.
 
 The non-linear replacements are outside this argument entirely: NL-FSCX's carry chain breaks the affine identity that the whole derivation rests on. Whether any *statistical* remnant survives on the same subspace is a separate question, measured under TODO #214.
+
+---
+
+#### 1.3.2 Perfect Secrecy at Odd $i$ (TODO #211)
+
+Theorem 4.1 is usually read as a negative result, but its other direction is the strongest positive statement anywhere in this suite. An invertible key map is exactly the hypothesis Shannon's theorem needs, and Theorem 4.1 says precisely when we have one.
+
+**Theorem 4.2 — The leak is the mutual information:** Let $n = 2^k$, let $P$ and $K$ be independent and uniform on $\mathbb{GF}(2)^n$, and let $E = f_K^i(P)$. Then
+
+$$I(P; E) = \text{co-rank}(T_i) = \min(n, 2(2^{v_2(i)} - 1)) \text{ bits}$$
+
+*Proof.* $E = M^i \cdot P \oplus T_i \cdot K$. Since $M$ is a unit and $P$ is uniform, $E$ is uniform, so $H(E) = n$. For fixed $P = p$, the map $K \mapsto M^i p \oplus T_i K$ pushes the uniform distribution onto the uniform distribution on the coset $M^i p + \text{im}(T_i)$, which has $2^{\text{rank}(T_i)}$ elements, so $H(E \mid P) = \text{rank}(T_i)$. Then $I(P;E) = H(E) - H(E \mid P) = n - \text{rank}(T_i)$, and Theorem 4.1 evaluates that. $\blacksquare$
+
+**Corollary 4.3 — One-time HSKE is Shannon-perfect exactly when $i$ is odd:** Under the hypotheses of Theorem 4.2, $I(P;E) = 0$ if and only if $i$ is odd, in which case $E$ is uniform and statistically independent of $P$ — Shannon's condition for perfect secrecy, the same one the one-time pad satisfies.
+
+So the 126-bit leak of §1.3.1 and the perfect secrecy here are not two findings but one quantity read at two parities. `SecurityProofsCode/hske_perfect_secrecy.py` measures the mutual information exhaustively over all 65 536 plaintext-key pairs at `n = 8` and reproduces the co-rank exactly for every step count, including the degenerate $i = n$ where $T_n = 0$, the ciphertext equals the plaintext, and the mutual information is the full `n` bits.
+
+**The hypotheses are load-bearing, and one of them fails catastrophically.** Corollary 4.3 needs the key uniform, as wide as the message, and **used once**. The third is not a formality. Two messages under one key give
+
+$$E_1 \oplus E_2 = M^i \cdot (P_1 \oplus P_2)$$
+
+and $M$ is invertible with $M^{-i} = M^{n-i}$, so an eavesdropper recovers the XOR of the two plaintexts from the two ciphertexts with no key material whatsoever — the classical two-time-pad break, reproduced 200/200 at `n = 256`, `i = 65`. HSKE carries no nonce and no integrity check, so nothing in the wire format detects or prevents reuse.
+
+**What the result is worth.** An odd step count does not make HSKE stronger than a one-time pad; it makes it exactly as strong, at `n` rotate-XOR rounds instead of a single XOR (roughly 700 times the cost in the reference Python), and with the same key-as-long-as-the-message burden that makes the pad impractical. This is a ceiling, not a feature: a linear map over $\mathbb{GF}(2)$ applied to an independent uniform key cannot beat the pad, and Theorem 4.1 identifies which step counts fail even to match it.
+
+The usable conclusion is therefore about the parameter rather than the protocol. Correctness constrains only $i + r = n$, so the total work is the same at every choice — the deployed `(64, 192)` and the perfect `(65, 191)` both cost 256 steps and both round-trip 500/500. An even step count buys nothing anywhere in exchange for the bits it leaks; there is no setting in which it is the preferable choice.
+
+**Why this is documented rather than deployed.** Changing the step count changes what every existing HSKE and HPKE ciphertext decrypts to, which is a wire-format break under the versioning rules in `CLAUDE.md`. The symmetric-ciphertext PEM records a format tag and `nbits` but no step count, so a build using an odd step count would decrypt an old ciphertext to silent garbage — HSKE has no integrity check to catch it. Any adoption therefore needs its own format tag (the tag mechanism already distinguishes the plain, nonce-carrying, and AEAD layouts) plus a `MIGRATING.md` entry, and is left to a future major version rather than taken here.
 
 ---
 
@@ -758,6 +786,7 @@ identically in the key, so 126 independent linear functionals of the plaintext a
 | Single private nonce injection breaks correctness | **Proved** | Case (b), 2K trials |
 | No nonce (single or multi) can fix HKEX | **Proved** (Thms. 8, 9) | 10+8 strategies, all fail |
 | HSKE is correct; the pre-shared-key security claim does **not** hold as stated | **Corrected** (Thm. 4.1) | $T_i$ has co-rank 126 at $i = n/4$ — see W9 |
+| One-time HSKE is Shannon-perfect **iff** the step count is odd; mutual information equals co-rank | **Proved** (Thm. 4.2, Cor. 4.3) | Exhaustive $I(P;E)$ at `n=8`; 200/200 two-time-pad break at `i=65` |
 | HPKE is correct but publicly insecure | **Proved** | $sk = S_{r+1} \cdot \text{public}$ |
 | $n_A = A \oplus C$ gives correctness with probability $2^{-4}$ | **Proved** | Rank-4 condition matrix |
 | $N_j = M^j \cdot B$ collapses to $\Phi = 0$ (GF(2) even-sum) | **Proved** | $r$ even $\Rightarrow \Phi_r = 0$ |
@@ -830,6 +859,7 @@ All experimental scripts are in `SecurityProofsCode/`:
 | `nl_fscx_prf_analysis.py` | NL-FSCX v1 PRF tests §11.8.4: 2-query distinguisher, BLR, SAC, higher-order differentials, linear bias, key sensitivity, collisions, cross-key independence |
 | `hfscx_256_analysis.py` | HFSCX-256-DM hash empirical tests §11.9: SAC on input/key, output uniformity (chi²), length-extension forgery, domain separation, fixed-point search |
 | `hkex_gf_pohlig_hellman.py` | Pohlig–Hellman against HKEX-GF/HPKS/HPKE §9.2.4 (TODO #212): verified factorisation of $2^n - 1$ and $\text{ord}(g)$ per supported $n$, cost table against the documented FFS figures, end-to-end private-key recovery at $n = 32$ and $n = 64$, HKEX-GF shared-secret recovery and HPKS forgery from the recovered key, and the $n = 256$ wall-clock extrapolation |
+| `hske_perfect_secrecy.py` | Perfect secrecy at odd step counts §1.3.2 (TODO #211): key-map invertibility vs. parity of the step count for `n` from 32 to 512, round-trip correctness and equal step cost at `(i, r) = (65, 191)`, exhaustive mutual information over all 65 536 plaintext-key pairs at `n = 8` against the predicted co-rank, the Latin-square view, the two-time-pad break under key reuse, and a timing comparison against a literal one-time pad |
 | `fscx_revolve_corank.py` | Co-rank of the classical key map §1.3.1 (TODO #210): measured rank of $T_i = M \cdot S_i$ at $n \in \{64, 128, 256\}$, the closed form $2(2^{v_2(i)} - 1)$ checked against 288 parameter pairs, extraction of the 126-dimensional left kernel and its key-independence over 200 random keys, the parity special case, and the co-rank of the nonce-augmented map of §2.2 |
 | `hkex_non_byte_key_length_analysis.py` | Non-byte-aligned $n$ analysis §1.2.1 (TODO #204): $M$-invertibility via GF(2)[x] poly-gcd vs. the $\gcd(3,n)$ shortcut, empirical order$(M)$, avalanche diffusion, and throughput at sampled non-byte $n \in \{241, 251, 253, 255, 257, 509\}$ vs. byte-aligned baselines |
 
