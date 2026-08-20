@@ -376,9 +376,18 @@ public final class Codec {
         return new SchnorrSig(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
     }
 
-    /** Encodes an HSKE session key: SEQUENCE(key, nbits). */
+    /** Encodes an HSKE session key: SEQUENCE(key, nbits).
+     *
+     * The key field uses MINIMAL byte width, not the fixed nbits/8 used for
+     * private/public keys and symmetric ciphertexts. This matches
+     * HerraduraCli/herradura.py's _encode_session_key
+     * ("nbytes = max(1, (key_int.bit_length() + 7) // 8)"), herradura_cli.go's
+     * encodeSessionKey, and encodeRnlResponse below. Padding to a fixed width
+     * here emits a redundant leading 0x00 whenever the key's top byte is zero
+     * and the next byte is below 0x80 — non-canonical DER, and byte-different
+     * from every other implementation for about 1 session key in 512 (TODO #219). */
     public static String encodeSessionKey(BigInteger key, int nbits) {
-        byte[] der = derSeq(derInt(key, nbits / 8), derInt(BigInteger.valueOf(nbits), -1));
+        byte[] der = derSeq(derInt(key, -1), derInt(BigInteger.valueOf(nbits), -1));
         return pemWrap(PEM_SESSION_KEY, der);
     }
 
