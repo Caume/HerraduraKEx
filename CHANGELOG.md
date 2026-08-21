@@ -2,6 +2,44 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.13] - 2026-08-21
+
+### Changed
+- TODO #218: **HPKE-Stern-KEM is reclassified demo-only.** It had no `SECURITY.md` row at
+  all and carried `status: production` in `spec/generate_spec.py`; it now has a row stating
+  the measured DFR, the reaction-attack exposure, and the absent weak-key screen, and the
+  spec status matches. `SECURITY.md` also gains a note that `kex --algo hybrid-rnl-stern`
+  inherits the exposure on its KEM half. No code, wire format, or CLI behaviour changes —
+  this is a corrected classification of what already ships.
+- TODO #218: README's claim that the KEM's toy parameters "haven't had their decoding-failure
+  rate measured at production security margins either" is corrected — TODO #195 measured it
+  and this item extrapolates it.
+
+### Added
+- TODO #218: `SecurityProofs-4.md` §11.8.7 and `SecurityProofsCode/qcmdpc_dfr_weak_keys.py`
+  — the security half of the DFR fact that TODO #195/#221 handled as CI flakiness.
+  Measurements run on a bit-sliced reimplementation of the deployed BGF decoder, pinned
+  bit-exact against `qcmdpc_bgf_decode` on 200 suite-generated instances first.
+- TODO #218: DFR at the deployed parameters is 0.264% over 120 000 round trips, 95%
+  Clopper-Pearson [0.236%, 0.295%] — `2^-8.6`, where IND-CCA2 needs `2^-128`. Independently
+  confirms the 0.225% TODO #195 read from CI history.
+- TODO #218: Sendrier-Vasseur extrapolation. Moving `r` upward at fixed `d`, `t` (downward
+  saturates — 50% DFR by `r = 421`) fits `log2(DFR) = -0.0996·r + 43.69` (R² = 0.985), about
+  10 extra bits of `r` per bit of DFR, giving `r ~ 1723` for `2^-128` — 3.3x the deployed
+  523. Recorded as a lower bound: every point lies in the waterfall of a concave curve, and
+  `r` alone is not the design knob.
+- TODO #218: weak-key analysis. Distance-spectrum multiplicity drives DFR off a cliff
+  (~0.2% at 3, 2.3-3.2% at 6, 45.8% at 7, 94% at 9, 100% at 14), and keygen emits
+  multiplicity 6 often enough that roughly 1 key in 3 400 carries ~10x the average DFR.
+  Nothing screens it: `qcmdpc_keygen` retries only on a non-invertible `h0` in C, Go, and
+  Python alike, and the PEM decode path does not check imported keys.
+- TODO #218: the GJS reaction attack demonstrated to disjoint confidence intervals — errors
+  at distances in the key's spectrum fail at 0.158% [0.112%, 0.217%] against 0.433%
+  [0.354%, 0.525%] outside it (2.74x, 8 keys, 48 000 trials), putting private-key recovery
+  on the order of `10^6` chosen-ciphertext queries. The oracle is free: no FO transform
+  (decapsulation never re-encrypts) and no implicit rejection, with all three CLIs exiting
+  non-zero on a distinct message.
+
 ## [2.7.12] - 2026-08-20
 
 ### Fixed

@@ -123,33 +123,6 @@ case, but the bound should be derived rather than assumed.
 
 Status: **OPEN**
 
-### #218: DFR extrapolation and weak-key analysis for the QC-MDPC BGF decoder
-
-[[#195]] tracks BGF decoding failures as a CI flakiness problem; this item
-is the security half of the same fact. For a KEM, DFR is not a nuisance —
-IND-CCA2 requires DFR ≤ 2^-λ, and any measurable failure rate exposes the
-GJS-style reaction attack, where an attacker submits crafted ciphertexts,
-observes success/failure, and reconstructs the secret key's distance
-spectrum.
-
-- Apply the standard modelisation/simulation/extrapolation methodology
-  (Sendrier–Vasseur, as used for BIKE's IND-CCA argument) to
-  `qcmdpc_decap_bgf` at the deployed parameters: simulate DFR at
-  artificially weakened parameters, fit, extrapolate with a confidence
-  interval, and state the λ actually supported.
-- Run the weak-key analysis alongside it (the BIKE weak-key literature
-  gives the classes to test), and check the deployed key generation for
-  whether it can produce them.
-- Evaluate the current near-codeword-aware and "flip a failure into a
-  success" BGF variants (eprint 2026/1616 and successors) for whether they
-  close the gap at these parameters without a wire-format change.
-- Outcome either way feeds `SECURITY.md`: today's HPKE-Stern-KEM row says
-  nothing about DFR or reaction attacks, and it should — even for a
-  demo-only protocol, since a stated DFR is what tells a reader the
-  ciphertext-reuse threat model.
-
-Status: **OPEN**
-
 ### #220: `SecurityProofs-1.md` is approaching the ~750-expression KaTeX limit
 
 `SecurityProofsCode/validate_katex.js` now warns on `SecurityProofs-1.md`: it

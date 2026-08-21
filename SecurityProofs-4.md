@@ -536,6 +536,54 @@ This option is documented as a future research direction.
 
 **Recommendation.**  Option B provides the only complete algebraic chain to an established NP-hard problem.  The NL-FSCX v1 PRF assumption it requires is identical to the assumption already implicit in HSKE-NL-A1's security argument (§11.3.1) — both protocols stand or fall on the same primitive.  Option A is simpler to implement as a near-term replacement for HPKS-NL using the existing NL-FSCX v1 primitive; it should be treated as a stopgap until NL-FSCX v1 OWF has received dedicated cryptanalysis.  Option C is algebraically native to $F_2$ but is not ready for deployment.
 
+### 11.8.7 HPKE-Stern-KEM — DFR, weak keys, and reaction attacks (TODO #218)
+
+TODO #195 and #221 treat the QC-MDPC BGF decoder's decoding failures as a CI flakiness problem and solve them with a retry policy.  This section is the security half of the same fact.  For a KEM, a decoding failure is not a nuisance: IND-CCA2 requires the failure rate to be below `2^-lambda`, and any *observable* failure is the oracle the GJS reaction attack [Guo-Johansson-Stankovski 2016] consumes to recover the private key.  Backed by `SecurityProofsCode/qcmdpc_dfr_weak_keys.py`.
+
+Deployed parameters, identical in C (`herradura.h`), Go (`herradura/herradura.go`), and Python: `r = 523`, `d = 15`, `t = 18`, `NB_ITER = 20`.  The source calls them toy parameters.  BIKE-128, the closest standardised comparison, uses `r = 12323`, `d = 71`, `t = 134`.  (This section is written with code spans rather than math spans throughout: Part 4 is close to GitHub's ~750-expression KaTeX ceiling, cf. TODO #220.)
+
+**Measured DFR.**  120 000 encapsulate/decapsulate round trips with a fresh key each time give a DFR of **0.264%**, 95% Clopper-Pearson interval `[0.236%, 0.295%]` — that is `2^-8.6`, interval `[2^-8.7, 2^-8.4]`.  This is an independent confirmation of the 0.225% recorded in TODO #195 from CI history.  Read as a security parameter, a DFR of `2^-8.6` supports `lambda = 8.6` bits where IND-CCA2 wants 128.
+
+**Extrapolation (Sendrier-Vasseur).**  Holding `d` and `t` fixed and moving `r` upward from the deployed value (downward is useless — by `r = 421` the DFR is already 50% and by `r = 373` it saturates, so those points carry no slope):
+
+| `r` | trials | failures | DFR | `log2` DFR |
+|---|---|---|---|---|
+| 523 (deployed) | 20 000 | 60 | 0.300% | -8.38 |
+| 541 | 50 000 | 46 | 0.092% | -10.09 |
+| 557 | 120 000 | 26 | 0.0217% | -12.17 |
+| 571 | 250 000 | 31 | 0.0124% | -12.98 |
+
+A least-squares fit gives `log2(DFR) = -0.0996·r + 43.69` (R² = 0.985), i.e. about **10 extra bits of `r` per bit of DFR**, putting `r ≈ 1723` at `DFR = 2^-128` — 3.3x the deployed value.  Two caveats, both pointing the same way, so the figure is a **lower bound** rather than an estimate: a QC-MDPC DFR curve is concave (a steep waterfall followed by a flatter error floor) and every point above lies in the waterfall, so a straight line understates the `r` needed once the floor dominates; and the fit says nothing about whether `r` is the right knob at all, since BIKE-128 reaches its DFR through `r`, `d`, and `t` together.  What does not depend on the extrapolation: the deployed `r` is short by a large multiple and the measured DFR is nowhere near the target.
+
+**Weak keys.**  The BIKE weak-key classes (Drucker-Gueron-Kostic) are structural properties of the private polynomials; the one a bit-flipping decoder feels is multiplicity in the distance spectrum, where a recurring distance makes the parity checks covering it dependent and degrades the decoder's per-position estimates together.  Dialling multiplicity up by construction (part of `h0`'s support placed in an arithmetic progression, the rest random) produces a sharp cliff:
+
+| max spectrum multiplicity | DFR (4 000 trials each) |
+|---|---|
+| 3 | 0.20% – 0.25% |
+| 6 | 2.3% – 3.2% |
+| 7 | 45.8% |
+| 9 | 94.0% |
+| 14 | 100% |
+
+Above multiplicity 6 the key is not merely weak, it is non-functional.  Against that, the multiplicity that keygen actually emits, over 200 000 sampled polynomials at `d = 15`, `r = 523`: multiplicity 2 in 25.79%, 3 in 65.26%, 4 in 8.53%, 5 in 0.41%, 6 in 0.0145%, and 7 or above never observed.  Since a key carries two polynomials, roughly **1 key in 3 400 has a polynomial of multiplicity 6** and therefore a DFR around ten times the published average, while the total-failure classes are far out of reach of uniform sampling.
+
+The deployed key generation screens none of this.  `qcmdpc_keygen` retries only when `h0` is non-invertible — in C, Go, and Python alike — with no spectrum test, no multiplicity bound, and no weak-key rejection of any kind; the PEM decode path does not check an imported private key either.  The practical consequence is modest but real: a small fraction of users draw a materially worse key with no signal that anything is unusual, and a *supplied* key can be arbitrarily bad.
+
+**The GJS reaction attack is reachable.**  GJS observes that the failure probability depends on whether distances in the error support appear in the private key's distance spectrum; the spectrum then determines `h0` up to a cyclic shift, which is full private-key recovery.  Measured over 8 keys, with the error weight placed as pairs at chosen distances:
+
+| error distances | trials | failures | DFR | 95% CI |
+|---|---|---|---|---|
+| in the key's spectrum | 24 000 | 38 | 0.158% | `[0.112%, 0.217%]` |
+| not in the spectrum | 24 000 | 104 | 0.433% | `[0.354%, 0.525%]` |
+
+The intervals are **disjoint** — a 2.74x ratio, with failure *less* likely when the distance is in the spectrum.  At that effect size roughly 3 000 queries resolve one distance at 95% confidence and there are `r/2 = 261` distances to classify, so on the order of **10^6 chosen-ciphertext queries recover the private key**.  Nothing about this is exotic: the attacker picks the error, computes the syndrome from the *public* key, and submits it.
+
+**Why the oracle is free.**  The standard defence is implicit rejection — on decoding failure return a pseudorandom key derived from a secret and the ciphertext, so success and failure are indistinguishable.  BIKE does exactly this, which is why its DFR argument is about IND-CCA2 rather than about user experience.  The deployed KEM does the opposite at every layer: `qcmdpc_decap_bgf` returns `None` / `0` / `false`, and all three CLIs exit non-zero with a distinct message on `dec --algo hpke-stern-kem` and on `kex --algo hybrid-rnl-stern`.  There is no Fujisaki-Okamoto transform: decapsulation never re-encrypts to check that the ciphertext was honestly generated, so an attacker's chosen syndrome is processed exactly like a real one.  The oracle is not a side channel to be closed — it is the documented interface.
+
+**Assessment.**  These findings compound rather than trade off.  A DFR of `2^-128` would not make this KEM IND-CCA2 while decapsulation reports failure, and implicit rejection would not rescue a `2^-8.6` DFR.  Underneath both, the QC syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is itself far below any usable security level, so DFR is not even the binding constraint — the parameters have to move first, and moving them is what the `r ≈ 1723` lower bound above is about.  `HPKE-Stern-KEM` is therefore reclassified **demo-only** in `SECURITY.md` and in `spec/herradura-protocol-spec.json` (which had carried `status: production`), with the reaction-attack exposure stated explicitly rather than left implicit in a DFR number.
+
+**Not evaluated.**  TODO #218 also asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the gap without a wire-format change.  That question is left open here: it turns on decoder-design results the analysis in this section does not attempt to reproduce, and at parameters this far from the target the answer would not change the classification.  It is worth revisiting only alongside a parameter change, since a decoder improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.
+
 ---
 
 ## 11.9 HFSCX-256-DM — Hash function on NL-FSCX v1
