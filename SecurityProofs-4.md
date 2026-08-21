@@ -7,7 +7,7 @@
 > - **Part 1 — §1–§8** (SecurityProofs-1.md): Algebraic Foundations · Protocol Analysis · Security Analysis · Quantum Attack Analysis · Experimental Code Index
 > - **Part 2 — §9–§10** (SecurityProofs-2.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 3 — §11–§11.8.2** (SecurityProofs-3.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 4 — §11.8.3–§11.9.11** (this file): PQ Signature Options · HFSCX-256-DM
+> - **Part 4 — §11.8.3–§11.9.12** (this file): PQ Signature Options · HFSCX-256-DM
 > - **Part 5 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-5.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
@@ -600,7 +600,7 @@ A3 is structurally important: HFSCX-256-DM cannot claim ideal-cipher security fr
 
 **Preimage.**  Given target digest $h$, find any $D$ with $\text{HFSCX-256-DM}(D) = h$.  Generic bound: $\Theta(2^n)$ classical, $\Theta(2^{n/2})$ quantum (Grover).  Reduction to A2: any preimage attack must invert $C_{\text{DM}}$ on the final compression (else the digest cannot match), contradicting A2.
 
-**Second preimage.**  Given $D$, find $D' \neq D$ with the same digest.  Generic bound: $\Theta(2^n)$ classical (no birthday speed-up since one input is fixed).  Implied by collision resistance under standard hash arguments.
+**Second preimage.**  Given $D$, find $D' \neq D$ with the same digest.  For a *short* $D$ the bound is $\Theta(2^n)$ classical (no birthday speed-up, since one input is fixed), implied by collision resistance under standard hash arguments.  For a **long** $D$ this is not the right bound: like every Merkle-Damgard hash, HFSCX-256-DM admits the Kelsey-Schneier expandable-message attack, which costs about `k` · 2^(n/2+1) + 2^(n-k) against a `2^k`-block target — demonstrated end-to-end against this chain in §11.9.12 (TODO #215).  At n = 256 the corrected figure is ~2^216 for a 32 TiB target and never falls below ~2^200 at any realisable size, so the 128-bit target is unaffected; see §11.9.12 for the derivation and the per-size table.
 
 ### 11.9.5 Length-extension resistance via finalization
 
@@ -668,7 +668,7 @@ As of v1.9.0 the compression function is the Davies-Meyer variant $C_{\text{DM}}
 
 1. **Fixed-point hardness.**  $C_{\text{DM}}(s, m) = s$ requires $F_1^{64}(s, m) = 0$, which under A2 requires $\Omega(2^n)$ classical work (preimage of zero under A2).  Before v1.9.0, fixed points were orbit-period-64 points of $F_1(\cdot, m)$; no formal lower bound existed, only empirical absence.
 2. **Free-start collision hardness.**  As argued in §11.9.3, the Davies-Meyer structure rules out a structural speed-up from the non-bijectivity of $F_1$.
-3. **PGV-1 alignment.**  $C_{\text{DM}}$ is one of the 12 provably-secure PGV compression functions [BRS 2002, PGV 1993].
+3. ~~**PGV-1 alignment.**  $C_{\text{DM}}$ is one of the 12 provably-secure PGV compression functions [BRS 2002, PGV 1993].~~  **Retracted (TODO #215).**  The PGV/BRS results are proved in the ideal-*cipher* model and require the inner map to be a permutation for every block; `nl_fscx_v1` is non-bijective (A3, §11.9.2), so no PGV row applies to the compression.  Benefits 1 and 2 above are unaffected — they are concrete-structure arguments that do not invoke PGV.  §11.9.12 re-derives the bounds in the ideal-random-*function* model, which the construction does satisfy, and shows every figure in §11.9.11 survives.
 
 **Wire-format note.**  This is a breaking change: all pre-v1.9.0 HFSCX-256 digests, pre-hashed signatures, and AEAD tags are incompatible with HFSCX-256-DM.  The cost per block is one 256-bit XOR (negligible).
 
@@ -699,7 +699,7 @@ Per-slot tags: ds=1 for c0, ds=2 for c1, ds=3 for c2, ds=4 for the KEM key, ds=0
 | §6 Domain separation (unkeyed vs keyed), 1 000 trials | 1000 / 1000 differ | Keyed mode distinct from unkeyed for all non-zero $K$. |
 | §7 Fixed-point search (DM), 200 random $(s, m)$ pairs | 0 with $F_1^{64}(s,m)=0$, 0 near-zero | Fixed-point condition is preimage of zero under A2; no instances found, consistent with $\Omega(2^{256})$ classical hardness (§11.9.8). |
 
-These tests rule out trivial weaknesses (low diffusion, biased output, length-extension, accidental key collisions, structural fixed points).  They do **not** constitute a formal proof: collision and preimage hardness rest on A1 + A2.
+These tests rule out trivial weaknesses (low diffusion, biased output, length-extension, accidental key collisions, structural fixed points).  They do **not** constitute a formal proof: collision and preimage hardness rest on A1 + A2.  `SecurityProofsCode/hfscx_dm_rf_model.py` (TODO #215) adds the model-level companion to these: image-collapse propagation, Davies-Meyer fixed points under both inner maps, and working Joux / Kelsey-Schneier attacks against the chain — see §11.9.12.
 
 ### 11.9.11 Summary
 
@@ -709,7 +709,8 @@ HFSCX-256-DM provides:
 |---|---|---|
 | Collision resistance | $2^{128}$ classical / $2^{85}$ quantum (BHT) | A1 |
 | Preimage resistance | $2^{256}$ classical / $2^{128}$ quantum (Grover) | A2 |
-| Second-preimage resistance | $2^{256}$ classical | A1 (collision implies 2nd-preimage) |
+| Second-preimage resistance (short message) | $2^{256}$ classical | A1 (collision implies 2nd-preimage) |
+| Second-preimage resistance (`2^k`-block target) | `k` · 2^(n/2+1) + 2^(n-k) — ~2^216 at 32 TiB | Merkle-Damgard mode, unconditional (§11.9.12) |
 | Length-extension resistance | $2^{256}$ classical / $2^{128}$ quantum (Theorem 18) | A2 |
 | MAC unforgeability (raw keyed-IV) | $2^{128}$ classical / $2^{128}$ quantum | A1 (full-chain PRF) |
 | MAC unforgeability (HMAC, recommended for cross-protocol reuse) | as raw, plus related-key resistance | A1 + A2 [Bellare 2006] |
@@ -720,6 +721,47 @@ HFSCX-256-DM provides:
 2. ~~Add 1-byte domain-tag prefix per call site (§11.9.7).~~ **DONE v1.9.48** — `hfscx_256_ds(ds, data)` added to C, Go, Python libraries; `dgst --algo hfscx-256-ds` wired in all three CLIs (ds=0x01). Existing call sites unchanged (backward-compatible opt-in).
 3. ~~Add HMAC-HFSCX-256-DM to the library (§11.9.6).~~ **DONE v1.9.48** — `hmac_hfscx_256(key, data)` / `HmacHfscx256` added to C, Go, Python libraries. Recommended when the same long-term key is reused across MAC and non-MAC modes; the current AEAD-only use retains the raw keyed-IV MAC.
 4. ~~Assembly/Arduino per-slot DS tags on `stern_hash1_32`/`stern_hash2_32` (§11.9.9).~~ **DONE** — ARM Thumb-2 and NASM i386 implementations already carry ds=1/2/3/4 at all call sites (verified v1.9.48).
+
+
+### 11.9.12 The compression is not a block cipher — bound re-derived in the random-function model (TODO #215)
+
+§11.9.8 lists "PGV-1 alignment" among the benefits of the Davies-Meyer feed-forward, citing [BRS 2002, PGV 1993].  **That citation does not apply to this construction.**  The PGV/BRS provable-security results are proved in the ideal-*cipher* model: they require the block-indexed map to be a permutation for every message block.  Assumption A3 (§11.9.2) already records that `nl_fscx_v1` is non-bijective in either argument, so the deployed inner map is not a cipher and no PGV row is available to cite.  §11.9.2 draws the right conclusion in the abstract — "all hardness claims below are therefore PRF-based, not PRP-based" — but §11.9.8 then cites the PRP-based result anyway, and §11.9.4 states a second-preimage bound that no model supports.  This section replaces both with a derivation in the model the construction actually satisfies, and reports the structure search that model does not excuse.  Backed by `SecurityProofsCode/hfscx_dm_rf_model.py`.
+
+**The correct model, and why every number survives.**  Model the inner map as an ideal random function `f` (this is assumption A1, unchanged) and write the compression as `C_DM(s, m) = f(s, m) XOR s`.  For each fixed input pair the feed-forward XORs in a value determined by that input, so `C_DM` is a uniform, independent random value at every point: **`C_DM` is itself an ideal random function.**  Every ideal-random-function bound therefore transfers to it with no loss and no additional assumption.  The consequence is worth stating plainly in both directions — the bounds in the §11.9.11 table are sound, and the Davies-Meyer shape contributes nothing to them.  Its benefit is entirely in the concrete-structure claims of §11.9.8 items 1 and 2, which remain valid on their own terms.
+
+**Non-bijectivity does not propagate to the compression.**  The sharpest form of the objection is quantitative: iterating a non-bijective map contracts its image toward `2/r` of the space, so at the deployed `r = 64` the inner map reaches only about 3% of its range — roughly 5 bits of collapse per block.  Measured exhaustively at n = 16 over all 2^16 states:
+
+| `r` | image of `F_1^r` | image of `C_DM` | `2/r` |
+|---|---|---|---|
+| 4 | 0.3238 | 0.6342 | 0.5000 |
+| 16 | 0.1123 | 0.6311 | 0.1250 |
+| 64 (deployed) | 0.0318 | 0.6319 | 0.0312 |
+
+The inner map collapses exactly as the `2/r` law predicts, and the compression does not collapse at all: its image sits at `1 - 1/e = 0.6321`, the random-function value, at every step count.  The reason is structural rather than empirical — for fixed `m` the map `s -> s XOR c` is a bijection, so the feed-forward re-randomises over `s` even where `f` is many-to-one.  **The image collapse that motivates this item is confined to the inner map and is not inherited by the compression function.**
+
+**Bijectivity would make the construction worse, not better.**  The obvious repair — swap in the bijective `nl_fscx_v2` so that the PGV citation becomes literally true — is counterproductive, and this is the least obvious finding of the item.  Davies-Meyer over an *invertible* map has trivially computable fixed points: `s = E_m^{-1}(0)` yields `C_DM(s, m) = s` for any block `m`, which is precisely the structure Dean's 1999 expandable-message attack consumes.  Measured: with `v2` as the inner map, one fixed point per block value is produced by a single inversion in `O(r)` work, confirmed for four blocks at n = 16.  With the deployed `v1` the same question is a preimage-of-zero problem under A2, and the image collapse makes it *harder* still — exhaustively, three of four tested blocks have **no** fixed point at `r = 64`, because 0 simply is not in the image.  The non-bijectivity that breaks the citation is load-bearing for the property the citation would have certified.
+
+**Second preimage: the flat bound in §11.9.4 is wrong for long messages.**  §11.9.4 claims 2^256 classical second-preimage resistance with "no birthday speed-up since one input is fixed".  That reasoning fails against a long target in *any* Merkle-Damgård hash, independent of the compression function or its model: Kelsey-Schneier expandable messages reduce the cost against a `2^k`-block target to about `k` · 2^(n/2+1) + 2^(n-k).  This was demonstrated end-to-end against the deployed chain construction at n = 16 with k = 8 — a distinct message of *identical block length* (so it carries the same finalization block and the match survives padding) matching the target digest for ~3 900 compressions against a generic bound of 2^16, a 16.6x speed-up.  Joux multicollisions were confirmed on the same chain (16 messages sharing a digest for ~2^9.7 work against a generic 2^15).  Corrected figures at n = 256:
+
+| target size | `k` | corrected 2nd-preimage cost |
+|---|---|---|
+| 32 MiB | 20 | ~2^236 |
+| 32 GiB | 30 | ~2^226 |
+| 32 TiB | 40 | ~2^216 |
+| 32 PiB | 50 | ~2^206 |
+
+The `2^(n-k)` term dominates at every physically realisable size; the expandable message only becomes the bottleneck near `k = 120`, a 2^125-byte target.  The practical margin over the suite's 128-bit target is therefore never threatened — **this is a correction to a stated bound, not a break** — but the claim must read *2^n for short messages, `k` · 2^(n/2+1) + 2^(n-k) against a `2^k`-block target*, and §11.9.4 has been amended accordingly.  No suite call site is affected: the sign/verify pre-hash, the AEAD tag, and the Stern commitments all operate on inputs far below the sizes at which the term matters, and none of them offers an attacker a chosen long target with a fixed digest.
+
+**Recommendation: keep NL-FSCX v1; do not migrate.**  The `v2` swap is rejected on four grounds, in descending weight:
+
+1. It adds free Davies-Meyer fixed points (measured above), importing the Dean-1999 structure the current design denies.
+2. It trades a studied idealisation for an unstudied stronger one — "v1 is a PRF" (§11.8.3, §11.8.4, and the A2 one-wayness that every other suite protocol already rests on) becomes "v2 is an ideal cipher", a claim about a map whose differential/linear profile is still open (TODO #99, TODO #214).
+3. `v2` has a documented degenerate-key class (§11.19.2, `nl_v2_key_is_valid`) where the round collapses to affine.  In an inner-map role the *message block* occupies the key argument, so an attacker selects it freely, and the key-validity screen that protects HSKE-NL-A2 and HPKE-NL cannot be applied to a hash input at all.
+4. It breaks the wire format for every artifact carrying a digest — signatures, AEAD tags, Stern commitments, KDF outputs, HCRED proofs — for no bound that is not already available.
+
+Performance is not a factor either way (`v2` measures marginally faster than `v1` at n = 256, its per-key offset being hoisted out of the revolve loop).  Since no change is made, no `MIGRATING.md` entry is created; the migration this item was asked to draft is recorded here as **rejected**, with grounds 1-3 above as the reasons any future proposal to adopt `v2` as the inner map must answer first.
+
+**What remains open.**  The derivation above is conditional on A1 exactly as before, and A1 remains a conjecture about a concrete function rather than a theorem.  This item narrows what is being assumed — the assumption is now stated in the model the construction satisfies, with the empirical case that the inner map's one measurable deviation from ideal does not reach the compression — but it does not discharge it.  The differential/linear characterisation that would put A1 on firmer ground is TODO #214.
 
 ---
 

@@ -2,6 +2,54 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.12] - 2026-08-20
+
+### Fixed
+- TODO #215: `SecurityProofs-4.md` §11.9.8 cited the PGV/BRS provably-secure
+  compression-function result for HFSCX-256-DM's Davies-Meyer shape. That result
+  is proved in the ideal-*cipher* model and needs the inner map to be a
+  permutation per block; `nl_fscx_v1` is non-bijective (assumption A3, already
+  recorded in §11.9.2), so no PGV row applies. Benefit 3 of §11.9.8 is retracted;
+  benefits 1 and 2 stand on their own concrete-structure arguments.
+- TODO #215: §11.9.4 claimed a flat 2^n second-preimage bound with "no birthday
+  speed-up since one input is fixed". False for long messages in any
+  Merkle-Damgard hash: Kelsey-Schneier expandable messages cost about
+  `k`·2^(n/2+1) + 2^(n-k) against a `2^k`-block target, demonstrated end-to-end
+  against the deployed chain (n = 16, k = 8: a distinct message of identical block
+  length — so the finalization block matches and the collision survives padding —
+  at ~3 900 compressions vs. a generic 2^16, a 16.6x speed-up). At n = 256 the
+  corrected cost is ~2^216 against a 32 TiB target and never falls below ~2^200 at
+  any realisable size, so the 128-bit target is unaffected and no suite call site
+  is exposed. §11.9.4 and the §11.9.11 summary row are amended.
+
+### Added
+- TODO #215: `SecurityProofs-4.md` §11.9.12 — the bounds re-derived in the
+  ideal-random-function model the construction actually satisfies. Because the
+  feed-forward XORs in a value fixed by each input pair, `C_DM(s,m) = f(s,m) XOR s`
+  is *itself* an ideal random function, so every figure in the §11.9.11 table
+  transfers with no loss and no new assumption — the numbers were sound, the
+  citation was not.
+- TODO #215: `SecurityProofsCode/hfscx_dm_rf_model.py` — six-part analysis backing
+  §11.9.12. Exhaustively at n = 16: the inner map's image follows the `2/r` law
+  (0.0318 at the deployed r = 64, ~5 bits of collapse) while the compression's
+  image stays at `1 - 1/e` for every r, so the non-bijectivity does **not**
+  propagate past the feed-forward. Davies-Meyer fixed points are free under a
+  bijective inner map (v2: one per block in `O(r)` by inversion) and a
+  preimage-of-zero problem under v1, where the image collapse means 3 of 4 tested
+  blocks have *none* — the property the retracted citation would have certified is
+  the one non-bijectivity protects. Also includes working Joux multicollision and
+  Kelsey-Schneier second-preimage attacks against the chain, and the corrected
+  bound table at n = 256.
+- TODO #215: recommendation recorded — **keep NL-FSCX v1 as the inner map**. The
+  v2 swap that would make the PGV citation literally true is rejected: it adds the
+  Dean-1999 fixed-point structure, trades the studied "v1 is a PRF" idealisation
+  for the stronger and unstudied "v2 is an ideal cipher" (TODO #99, #214), carries
+  a degenerate-key class that is unscreenable in an inner-map role because the
+  attacker-chosen message block occupies the key argument, and breaks the wire
+  format for every digest-bearing artifact. No `MIGRATING.md` entry: the migration
+  this item asked to draft is recorded as rejected, with those grounds noted in
+  §11.9.12 as what any future v2 proposal must answer first.
+
 ## [2.7.11] - 2026-08-21
 
 ### Fixed

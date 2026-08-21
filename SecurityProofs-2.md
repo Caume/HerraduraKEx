@@ -7,7 +7,7 @@
 > - **Part 1 — §1–§8** (SecurityProofs-1.md): Algebraic Foundations · Protocol Analysis · Security Analysis · Quantum Attack Analysis · Experimental Code Index
 > - **Part 2 — §9–§10** (this file): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 3 — §11–§11.8.2** (SecurityProofs-3.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 4 — §11.8.3–§11.9.11** (SecurityProofs-4.md): PQ Signature Options · HFSCX-256-DM
+> - **Part 4 — §11.8.3–§11.9.12** (SecurityProofs-4.md): PQ Signature Options · HFSCX-256-DM
 > - **Part 5 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-5.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---

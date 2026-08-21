@@ -70,39 +70,6 @@ recommendation.
 
 Status: **OPEN**
 
-### #215: HFSCX-256-DM — the Davies–Meyer proof does not apply to a non-bijective inner map
-
-`hfscx_256` compresses with `state ← nl_fscx_revolve_v1(state, block, 64) ⊕
-state`. Davies–Meyer's collision/preimage bounds (Black–Rogaway–Shrimpton,
-PGV) are proved in the ideal-**cipher** model — they need `E_block(·)` to be
-a permutation for each block. `nl_fscx_v1` is explicitly documented as not
-bijective in A, so HFSCX-256-DM currently has a construction whose security
-argument is cited but not applicable, and everything downstream (HPKS-NL
-challenges, Stern H-matrix generation, HMAC-HFSCX-256, the KDFs) inherits
-that gap.
-
-Measured so far: iterating `nl_fscx_revolve_v1(·, B, 64)` at n = 12 and
-n = 16 exhaustively gives image fractions of 0.030–0.046, matching the
-~2/k expectation for a random function — so the map behaves like a random
-function rather than showing extra structure, but it is still ~5 bits of
-image collapse per block, and no permutation.
-
-Work items:
-- Re-derive the security bound in the ideal-random-function model that
-  actually fits the construction, and state what it gives (and does not)
-  for collision and preimage resistance.
-- Search for exploitable structure the random-function model would not
-  excuse: fixed points of the compression function, Joux multicollisions,
-  expandable messages / long-message second preimages against the MD chain,
-  and length-extension exposure of the bare (non-HMAC) hash.
-- Evaluate `nl_fscx_revolve_v2` as the inner map. It is bijective in A with
-  a closed-form inverse, which would make the ideal-cipher DM argument
-  apply as cited, at the cost of a wire-format break for every artifact
-  containing a digest — so this item should produce a recommendation and
-  a `MIGRATING.md` draft, not a change.
-
-Status: **OPEN**
-
 ### #216: Re-estimate HKEX-RNL against the 2026 lattice-attack landscape
 
 `SECURITY.md` puts HKEX-RNL (n=256) at ~105 classical / ~100 quantum
