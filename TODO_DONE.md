@@ -10801,3 +10801,79 @@ SecurityProofs-4.md §11.9.12.
    to adopt v2 must answer first.
 
 Status: **DONE v2.7.12** — the PGV/ideal-cipher citation is retracted and the bounds re-derived in the ideal-random-function model, where every figure in the §11.9.11 table survives; the v2 swap is evaluated and rejected.
+
+### #218: DFR extrapolation and weak-key analysis for the QC-MDPC BGF decoder
+
+[[#195]] tracks BGF decoding failures as a CI flakiness problem; this item
+is the security half of the same fact. For a KEM, DFR is not a nuisance —
+IND-CCA2 requires DFR ≤ 2^-λ, and any measurable failure rate exposes the
+GJS-style reaction attack, where an attacker submits crafted ciphertexts,
+observes success/failure, and reconstructs the secret key's distance
+spectrum.
+
+- Apply the standard modelisation/simulation/extrapolation methodology
+  (Sendrier–Vasseur, as used for BIKE's IND-CCA argument) to
+  `qcmdpc_decap_bgf` at the deployed parameters: simulate DFR at
+  artificially weakened parameters, fit, extrapolate with a confidence
+  interval, and state the λ actually supported.
+- Run the weak-key analysis alongside it (the BIKE weak-key literature
+  gives the classes to test), and check the deployed key generation for
+  whether it can produce them.
+- Evaluate the current near-codeword-aware and "flip a failure into a
+  success" BGF variants (eprint 2026/1616 and successors) for whether they
+  close the gap at these parameters without a wire-format change.
+- Outcome either way feeds `SECURITY.md`: today's HPKE-Stern-KEM row says
+  nothing about DFR or reaction attacks, and it should — even for a
+  demo-only protocol, since a stated DFR is what tells a reader the
+  ciphertext-reuse threat model.
+
+**Findings (v2.7.13).**  `SecurityProofsCode/qcmdpc_dfr_weak_keys.py`; written up as
+SecurityProofs-4.md §11.8.7.  Measurements use a bit-sliced reimplementation of the
+deployed BGF decoder, pinned bit-exact against `qcmdpc_bgf_decode` on 200 suite-generated
+instances before any number is taken.
+
+1. *DFR.*  0.264% over 120 000 round trips, 95% Clopper-Pearson `[0.236%, 0.295%]` —
+   `2^-8.6`, confirming the 0.225% TODO #195 read off CI history.  IND-CCA2 wants
+   `2^-128`; this supports lambda = 8.6 bits.
+
+2. *Extrapolation.*  Moving `r` upward at fixed `d`, `t` (downward saturates: 50% DFR by
+   `r = 421`) gives `r = 523 -> 2^-8.38`, `541 -> 2^-10.09`, `557 -> 2^-12.17`,
+   `571 -> 2^-12.98`; fit `log2(DFR) = -0.0996·r + 43.69`, R² = 0.985, about 10 extra
+   bits of `r` per bit of DFR, so `r ~ 1723` for `2^-128`.  A **lower bound**, twice
+   over: every point is in the waterfall and the curve is concave, and `r` alone is not
+   the design knob (BIKE-128 moves `r`, `d`, and `t` together).
+
+3. *Weak keys.*  Multiplicity in the distance spectrum drives DFR off a cliff:
+   ~0.2% at multiplicity 3, 2.3-3.2% at 6, 45.8% at 7, 94% at 9, 100% at 14.  Over
+   200 000 sampled polynomials keygen emits multiplicity 6 at 0.0145%, so about 1 key in
+   3 400 has ~10x the average DFR; multiplicity >= 7 was never observed, so the
+   total-failure classes matter only for *supplied* keys.  Nothing screens any of it —
+   `qcmdpc_keygen` retries only on non-invertible `h0` in C, Go, and Python alike, and
+   the PEM decode path does not check an imported key.
+
+4. *GJS reaction attack, and why it is reachable.*  Errors placed at distances **in** the
+   key's spectrum fail at 0.158% `[0.112%, 0.217%]` vs 0.433% `[0.354%, 0.525%]` for
+   distances outside it — disjoint intervals, 2.74x ratio, over 8 keys and 48 000 trials.
+   That is ~3 000 queries per distance and `r/2 = 261` distances, so on the order of
+   `10^6` chosen-ciphertext queries for the private key.  The oracle is free: there is no
+   FO transform (decap never re-encrypts, so a chosen syndrome is processed like an
+   honest one) and no implicit rejection — `qcmdpc_decap_bgf` returns `None`/`0`/`false`
+   and all three CLIs exit non-zero with a distinct message, on `dec --algo
+   hpke-stern-kem` and on `kex --algo hybrid-rnl-stern` alike.
+
+5. *Outcome.*  The three compound rather than trade off: `2^-128` DFR would not give
+   IND-CCA2 while failure is reported, and implicit rejection would not rescue `2^-8.6`.
+   Beneath both, the syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is far
+   below any usable level, so DFR is not the binding constraint.  `HPKE-Stern-KEM` gains
+   a `SECURITY.md` row (it had none) and moves from `status: production` to `demo-only`
+   in `spec/generate_spec.py`; `SECURITY.md` also gains a note that `hybrid-rnl-stern`
+   inherits the exposure on its KEM half, and README's stale "DFR not measured" claim is
+   corrected.
+
+6. *Left open.*  The near-codeword-aware and failure-recycling BGF variants asked about
+   in this item's third bullet are **not** evaluated: the question turns on decoder-design
+   results this analysis does not reproduce, and at parameters this far from target it
+   would not change the classification.  Worth revisiting only alongside a parameter
+   change — a decoder improvement that leaves `r = 523` cannot reach `2^-128` alone.
+
+Status: **DONE v2.7.13** — DFR measured and extrapolated, weak-key gradient characterised, GJS distinguisher demonstrated to disjoint confidence intervals; HPKE-Stern-KEM reclassified demo-only in SECURITY.md and the spec.

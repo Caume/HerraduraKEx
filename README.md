@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.7.12)
+# Herradura Cryptographic Suite (v2.7.13)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -349,8 +349,12 @@ visible without having to search `TODO_DONE.md`.
   signing or KEM at their current defaults. This caveat covers the `hpke-stern` CLI algo
   tag specifically (its decap needs the plaintext error vector); the separate
   `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
-  particular limitation, though its toy parameters (r = 523, d = 15, t = 18) haven't had
-  their decoding-failure rate (DFR) measured at production security margins either. The
+  particular limitation, but is demo-only for its own reasons (TODO #218): at its toy
+  parameters (r = 523, d = 15, t = 18) the measured decoding-failure rate is 0.264%
+  = 2^-8.6 where IND-CCA2 needs 2^-128, decapsulation reports failure explicitly with no
+  FO transform or implicit rejection — which is the oracle the GJS reaction attack needs
+  — and key generation applies no weak-key screen. See `SECURITY.md` and
+  `SecurityProofs-4.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
   in the Python and Go CLIs accept `--rounds` (219 reaches 128-bit Fiat-Shamir soundness;
   the C CLI takes the same value at compile time via `-DSDF_ROUNDS=219`), but raising

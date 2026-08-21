@@ -19,6 +19,14 @@ any of these classifications.
 | **HKEX-RNL** (n=256) | Below target, use HKEX-RNL-128 | ~105 classical / ~100 quantum Core-SVP bits — below the 128-bit target | SecurityProofs-3.md §11.4.3, §11.7 |
 | **HKEX-RNL-128** (n=512) | Production-track (conjectured PQ-resistant) | ≥128-bit classical and quantum Core-SVP bits; cross-checked against ML-KEM-512 | SecurityProofs-3.md §11.4.3 |
 | **HPKS-Stern-F / HPKE-Stern-F** | Demo-only | ~30–40 bits at deployed N=256; 128-bit classical security needs N ≥ 17000; decapsulation at production parameters needs the QC-MDPC decoder from TODO #126 | SecurityProofs-3.md §11.7, SecurityProofs-4.md §11.8.5 |
+| **HPKE-Stern-KEM** | Demo-only | Measured DFR 0.264% = 2^-8.6 at the deployed toy parameters (r=523, d=15, t=18), where IND-CCA2 needs 2^-128; decapsulation signals failure explicitly with no Fujisaki–Okamoto transform and no implicit rejection, so the GJS reaction attack recovers the private key in ~10^6 chosen-ciphertext queries; keygen applies no weak-key screen (~1 key in 3400 has ~10x the average DFR). Do not reuse a keypair across decapsulations you do not control | SecurityProofs-4.md §11.8.7 |
+
+**HYBRID-RNL-STERN note.** The hybrid combines HKEX-RNL with HPKE-Stern-KEM, so it
+inherits the KEM row's reaction-attack exposure on its KEM half: `kex --algo
+hybrid-rnl-stern` reports decapsulation failure with its own distinct message, which
+is the same oracle. The Ring-LWR half is unaffected, and an attacker who recovers the
+QC-MDPC private key still faces the HKEX-RNL contribution — but treat the hybrid's
+KEM half as demo-only for the same reasons.
 
 **Rule of thumb:** if a protocol's status above is anything other than "production-track,"
 treat it as a proof-of-concept for the underlying math, not a component to deploy where

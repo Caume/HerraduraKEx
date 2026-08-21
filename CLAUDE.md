@@ -61,6 +61,8 @@ SecurityProofsCode/                                 — standalone Python proof/
   hske_perfect_secrecy.py  — Shannon-perfect one-time HSKE at odd step counts (TODO #211)
   hfscx_dm_rf_model.py     — HFSCX-256-DM re-derived in the ideal-random-function
                              model; Joux/Kelsey-Schneier demos (TODO #215)
+  qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
+                             GJS reaction attack (TODO #218)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
 SecurityProofs.md                                   — split index (redirects to Parts 1–5; quantum analysis is in SecurityProofs-1.md §6)
