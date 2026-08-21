@@ -550,7 +550,7 @@ static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
  * For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from a
  * handful of known plaintexts by linear algebra.  Class density is ~2^-129 at
  * n=256, so a random key is not at risk, but the check is one comparison.
- * See SecurityProofs-2.md §11.19.2 (TODO #159, #168). */
+ * See SecurityProofs-7.md §11.19.2 (TODO #159, #168). */
 static int nl_v2_key_is_valid(const BitArray *b)
 {
     BitArray d, msb;
@@ -853,7 +853,7 @@ static int hske_nl_aead_decrypt(const BitArray *key, const BitArray *nonce,
  *
  * RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
  * Security relies on bijectivity of nl_fscx_revolve_v2 (proven) and the
- * branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+ * branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-2.md §3.4).
  * The differential/linear profile of nl_fscx_v2 as a standalone sponge
  * permutation has not yet been rigorously analysed (see TODO #95/#99).
  * ───────────────────────────────────────────────────────────────────────────── */
@@ -1001,7 +1001,7 @@ static int hske_nl_v2_duplex_decrypt(
  *   reseed      : state = HFSCX-256("DRBG-RESEED" || state || len_be8 || entropy)
  *
  * Backtracking resistance rests on the same OWF conjecture as the #78.C
- * ratchet (Theorem 16, SecurityProofs-2 §11.8.3); the superseded state is
+ * ratchet (Theorem 16, SecurityProofs-5 §11.8.3); the superseded state is
  * erased with explicit_bzero after every block.  Collision risk of the
  * non-bijective state walk: SecurityProofsCode/nl_fscx_v1_ratchet_collision.py.
  *
@@ -1401,7 +1401,7 @@ static void rnl_agree(BitArray *out, const int32_t s[RNL_N],
 /* ─────────────────────────────────────────────────────────────────────────────
  * CODE-BASED PQC: HPKS-Stern-F / HPKE-Stern-F  (v1.5.18)
  * Stern 3-challenge ZKP + Fiat-Shamir in QROM.
- * Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs-2.md §11.8.4).
+ * Security: EUF-CMA <= q_H/T_SD + eps_PRF  (Theorem 17, SecurityProofs-5.md §11.8.4).
  * N=KEYBITS=256, n_rows=128, t=16, rounds=32  (production: >=219).
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -1511,7 +1511,7 @@ static void syndr_to_ba(BitArray *out, const uint8_t *syndr)
    rejection sampling. Loop count and state-advance count are now a fixed
    function of N only, independent of pi_seed -- closes the wall-clock timing
    leak dudect measured in the prior rejection-sampling version (|t|=180.85;
-   SecurityProofs-3.md SS11.11). Relative modulo bias is < range/2^32, negligible
+   SecurityProofs-7.md SS11.11). Relative modulo bias is < range/2^32, negligible
    at range <= KEYBITS. This mapping must stay bit-identical with the Go and
    Python implementations of stern_gen_perm -- signer and verifier (in any
    language) must derive the same permutation from the same pi_seed. */
@@ -1546,7 +1546,7 @@ static void stern_gen_perm(uint8_t *perm, const BitArray *pi_seed, int N)
  * `perm[i]`-dependent -- every byte was touched exactly once, but in an
  * order and at addresses that varied with the (secret) permutation, a
  * cache/memory-access-pattern side channel dudect's wall-clock harness
- * cannot see (SecurityProofs-3.md SS11.11 Batch 2). This version instead
+ * cannot see (SecurityProofs-7.md SS11.11 Batch 2). This version instead
  * scans every candidate output position j for every input bit i and writes
  * into it with a constant-time "j == perm[i]" mask, so the sequence of
  * memory addresses touched is always [0, KEYBYTES) x N regardless of
@@ -2219,7 +2219,7 @@ static inline int hpke_decrypt(const BitArray *ct, const BitArray *R,
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * ZKP-RNL  Ring-LWR Σ-protocol (Lyubashevsky / Fiat-Shamir)
- * SecurityProofs-3.md §11.10.2
+ * SecurityProofs-7.md §11.10.2
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * A proof-of-knowledge for the relation { (m,C_p ; s) : C_p = round_p(m·s) }
@@ -2414,7 +2414,7 @@ vdone:
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * ZKP-NL  NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
- * SecurityProofs-3.md §11.10.3
+ * SecurityProofs-7.md §11.10.3
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * Proves knowledge of A s.t. nl_fscx_v1(A, B) = y (n ≤ ZKP_NL_MAX_N bits).
@@ -4134,7 +4134,7 @@ static int hpks_xmss_verify(const uint8_t msg[], size_t mlen,
 
 /* ===========================================================================
  * HCRED — Hybrid Ring-LWR + Stern-F credential   (TODO #128 Batch 4b)
- * SecurityProofs-3.md §11.10.8–§11.10.10
+ * SecurityProofs-7.md §11.10.8–§11.10.10
  *
  * Single unified ZKBoo-(2,3) MPCitH circuit over Z_q proving for ONE witness
  * s ∈ {-1,0,1}^n: ternary constraint, code-syndrome, and LWR rounding.
@@ -4330,7 +4330,7 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
      * accumulates into a flag checked once after the loop. The prior
      * early-return made the iteration count depend on the (secret) witness
      * s_poly/e_ba, the same shape as the already-fixed SA-08 finding
-     * (SecurityProofs-3.md SS11.11 records it as a low-severity finding since
+     * (SecurityProofs-7.md SS11.11 records it as a low-severity finding since
      * this function only ever runs on the prover's own internally-consistent
      * witness, never on externally-timeable input, but fixing it is cheap). */
     for (r = 0; r < HCRED_ROWS; r++) {

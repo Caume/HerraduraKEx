@@ -14,7 +14,7 @@ modular arithmetic, and the formal notation used here from scratch.
 **What this document is for**
 
 `docs/TUTORIAL.md` shows *how to call* the library.  The SecurityProofs documents
-(`SecurityProofs-1.md` through `-5.md`) show *why* the protocols are secure —
+(`SecurityProofs-1.md` through `-7.md`) show *why* the protocols are secure —
 but they use graduate-level algebra.  This document sits in between: it explains
 every concept you need to follow both documents, with toy examples and plain English.
 
@@ -23,13 +23,14 @@ every concept you need to follow both documents, with toy examples and plain Eng
 | You are … | Read first | Then |
 |---|---|---|
 | Developer who wants to use the library | TUTORIAL.md | Come back here for any concept that feels unfamiliar |
-| Security reviewer | Parts 0–3, 8 (quantum), 11 (table), then TUTORIAL.md | SecurityProofs-1 §1–§3 for formalism |
-| Researcher checking the proofs | Parts 1–10 quickly for notation | SecurityProofs-1 and -2 in full |
+| Security reviewer | Parts 0–3, 8 (quantum), 11 (table), then TUTORIAL.md | SecurityProofs-1 §1 and SecurityProofs-2 §2–§3 for formalism |
+| Researcher checking the proofs | Parts 1–10 quickly for notation | SecurityProofs-1 through -3 in full |
 | Student learning applied cryptography | This document end to end | TUTORIAL.md, then the SecurityProofs |
 
 **Cross-reference notation**
 
-- "→ SP1 §2.1" means SecurityProofs-1.md, section 2.1.
+- "→ SP2 §2.1" means SecurityProofs-2.md, section 2.1.  The part number tracks
+  wherever the section currently lives; `SecurityProofs.md` is the index.
 - "→ TUT §HKEX-GF" means docs/TUTORIAL.md, the HKEX-GF section.
 
 **Parts at a glance** (≈65 min end to end; skip around using the profile table above)
@@ -305,7 +306,7 @@ gf_pow(0x03, ?) = 0x8F — the discrete logarithm in GF(2^8).  (Easily done for
 - Broken by Shor's quantum algorithm at 256-bit parameters; use HKEX-RNL for new
   deployments.
 
-→ SP1 §3 for the formal security reduction.
+→ SP2 §3 for the formal security reduction.
 → TUT §HKEX-GF for API usage.
 → Part 8 of this document for the quantum threat.
 
@@ -426,7 +427,7 @@ IV plays in AES-CBC.  For the NL variant (HSKE-NL-A1, HSKE-NL-A2) a counter or
 the NL-FSCX mixing step is added to break the linearity; see Part 5.
 
 → TUT §HSKE for API usage.
-→ SP1 §2 for the formal encryption scheme definition.
+→ SP2 §2 for the formal encryption scheme definition.
 
 **Reference:** D. Stinson, *Cryptography: Theory and Practice*, 4th ed., CRC Press,
 2018, chapter 2 (stream ciphers and pseudo-randomness).
@@ -536,7 +537,7 @@ from other NL-FSCX v1 uses in the suite.
 The C, Go, and Python implementations share the same IV and chaining logic, so the
 same message produces byte-identical digests in all three languages.
 
-→ SP2 §11.2 for the NL-FSCX v1 one-wayness argument.
+→ SP4 §11.2 for the NL-FSCX v1 one-wayness argument.
 → TUT §HFSCX-256 for API usage (bare hash and keyed MAC examples).
 
 ### 4.5.4 Keyed MAC variant
@@ -587,7 +588,7 @@ who collects k pairs (plaintext, ciphertext) can set up k linear equations in th
 unknown key bits and solve for the key when k ≥ n.  For n=256 this requires 256
 pairs and takes milliseconds.
 
-→ SP1 §2 and §3 for the formal linearity attack proof against raw FSCX.
+→ SP2 §2 and §3 for the formal linearity attack proof against raw FSCX.
 
 ### 5.2 Non-linearity: breaking the linear structure
 
@@ -610,7 +611,7 @@ For the Herradura NL variants, non-linearity is introduced by **NL-FSCX**:
 random-looking function over GF(2)^n has degree close to n.  NL-FSCX v1 and v2
 have degree > 1, breaking the Gaussian-elimination attack.
 
-→ SP1 §11.1–§11.3 for the formal non-linearity definitions and measurements.
+→ SP4 §11.1–§11.3 for the formal non-linearity definitions and measurements.
 
 ### 5.3 Non-linearity and quantum resistance
 
@@ -712,7 +713,7 @@ Now the entire signature is (R, s) and anyone can verify offline using the same 
 serves as a hash-like mixing step.  **HPKS-NL** uses `nl_fscx_revolve_v1(R, msg, i)`
 to ensure the challenge computation is non-linear and harder to manipulate.
 
-→ SP1 §5–§6 for the formal Schnorr security proof and Fiat-Shamir reduction.
+→ SP2 §5–§6 for the formal Schnorr security proof and Fiat-Shamir reduction.
 → TUT §HPKS for API usage.
 
 **Reference:** C. P. Schnorr, "Efficient Signature Generation by Smart Cards,"
@@ -778,7 +779,7 @@ Decrypt:
 
 The NL variant (HPKE-NL) uses `nl_fscx_revolve_v2` for the symmetric step.
 
-→ SP1 §7 for the formal IND-CPA security analysis of HPKE.
+→ SP2 §7 for the formal IND-CPA security analysis of HPKE.
 → TUT §HPKE for API usage.
 
 ---
@@ -851,7 +852,7 @@ adds HKEX-RNL and the Stern protocols.
 Post-Quantum Cryptography Standardization Process," 2022.
 [(NIST IR 8413)](https://doi.org/10.6028/NIST.IR.8413-upd1)
 
-→ SP1 §6 for a detailed quantum algorithm analysis of each Herradura protocol.
+→ SP2 §6 for a detailed quantum algorithm analysis of each Herradura protocol.
 
 ---
 
@@ -979,7 +980,7 @@ well-defined, uniform 256-bit key: `sk = HFSCX-256(kA_bytes)`.  In the CLI, pass
 8642, pp. 197–219 (introduces the 1-bit reconciliation used here).
 [(Springer)](https://doi.org/10.1007/978-3-319-10879-7_11)
 
-→ SP1 §11.4–§11.6 for the full formal analysis of HKEX-RNL correctness and security.
+→ SP4 §11.4–§11.6 for the full formal analysis of HKEX-RNL correctness and security.
 → TUT §HKEX-RNL for API usage.
 
 ---
@@ -1045,7 +1046,7 @@ HPKE-Stern-F in the suite uses this construction: the ciphertext is the syndrome
 known e' (no decoder implemented); a production deployment would need a QC-MDPC or
 similar decoder.
 
-→ SP1 §8.2 for the formal Niederreiter description.
+→ SP2 §8.2 for the formal Niederreiter description.
 → TUT for HPKE-Stern-F API usage.
 
 **Reference for modern code-based KEM:** NIST BIKE and HQC alternate candidate
@@ -1095,7 +1096,7 @@ b = nl_fscx_revolve_v1(msg ‖ c₀ ‖ c₁ ‖ c₂, key, i) mod 3
 The NL-FSCX hash replaces SHA here, tying the signature security to the security of
 the Herradura NL primitive.
 
-→ SP1 §8 for the full ZKP soundness proof and security parameter analysis.
+→ SP2 §8 for the full ZKP soundness proof and security parameter analysis.
 → TUT for HPKS-Stern-F API usage (sign / verify).
 
 **Reference:** J. Stern, "A New Identification Scheme Based on Syndrome Decoding,"
@@ -1147,19 +1148,19 @@ See the TUTORIAL §HCRED section for wire-format details and integration example
 
 | Protocol | Variant | Hard problem | Quantum threat | SecurityProofs | TUTORIAL section |
 |---|---|---|---|---|---|
-| HKEX-GF | Classical | DLP in GF(2^n)* | Broken by Shor | SP1 §3 | §HKEX-GF |
-| HSKE | Classical | Symmetric key secrecy | Grover halves bits | SP1 §2 | §HSKE |
-| HPKS | Classical | DLP in GF(2^n)* | Broken by Shor | SP1 §5–§6 | §HPKS |
-| HPKE | Classical | DLP in GF(2^n)* | Broken by Shor | SP1 §7 | §HPKE |
-| HSKE-NL-A1 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP1 §11.1–§11.2 | §HSKE-NL |
-| HSKE-NL-A2 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP1 §11.3 | §HSKE-NL |
-| HKEX-RNL | NL/PQC | Ring-LWR (lattice) | Conjectured quantum-hard | SP1 §11.4–§11.6 | §HKEX-RNL |
-| HPKS-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP1 §11.7 | §HPKS-NL |
-| HPKE-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP1 §11.8 | §HPKE-NL |
-| HPKS-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8 | §HPKS-Stern |
-| HPKE-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP1 §8.2 | §HPKE-Stern |
-| HCRED | Hybrid (Ring-LWR + SDP) | Ring-LWR AND SD(N,t) — both must be broken | Conjectured quantum-hard | SP3 §11.10 | §HCRED |
-| HFSCX-256 | Hash / MAC | NL-FSCX v1 one-wayness | Grover only (halves collision resistance) | SP2 §11.2 | §HFSCX-256 |
+| HKEX-GF | Classical | DLP in GF(2^n)* | Broken by Shor | SP2 §3 | §HKEX-GF |
+| HSKE | Classical | Symmetric key secrecy | Grover halves bits | SP2 §2 | §HSKE |
+| HPKS | Classical | DLP in GF(2^n)* | Broken by Shor | SP2 §5–§6 | §HPKS |
+| HPKE | Classical | DLP in GF(2^n)* | Broken by Shor | SP2 §7 | §HPKE |
+| HSKE-NL-A1 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP4 §11.1–§11.2 | §HSKE-NL |
+| HSKE-NL-A2 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP4 §11.3 | §HSKE-NL |
+| HKEX-RNL | NL/PQC | Ring-LWR (lattice) | Conjectured quantum-hard | SP4 §11.4–§11.6 | §HKEX-RNL |
+| HPKS-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP4 §11.7 | §HPKS-NL |
+| HPKE-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP4 §11.8 | §HPKE-NL |
+| HPKS-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP2 §8 | §HPKS-Stern |
+| HPKE-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP2 §8.2 | §HPKE-Stern |
+| HCRED | Hybrid (Ring-LWR + SDP) | Ring-LWR AND SD(N,t) — both must be broken | Conjectured quantum-hard | SP7 §11.10 | §HCRED |
+| HFSCX-256 | Hash / MAC | NL-FSCX v1 one-wayness | Grover only (halves collision resistance) | SP4 §11.2 | §HFSCX-256 |
 
 ### 11.2 Decision tree: which protocol should I use?
 
@@ -1336,4 +1337,4 @@ the C, Go, and Python implementations.
 *This document is part of the Herradura Cryptographic Suite.  For API usage see
 [docs/TUTORIAL.md](TUTORIAL.md).  For formal security proofs see
 [SecurityProofs-1.md](../SecurityProofs-1.md) through
-[SecurityProofs-5.md](../SecurityProofs-5.md).*
+[SecurityProofs-7.md](../SecurityProofs-7.md).*

@@ -74,7 +74,7 @@
         "status": "pedagogical",
         "quantum_resistant": false,
         "classical_security_bits": "~36.5 (n=256)",
-        "notes": "GF(2^n)* Diffie-Hellman. The binding classical attack is Pohlig-Hellman: the group order 2^256-1 has a 73-bit largest prime factor, so a discrete log costs about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-2.md 9.2.4) -- days on a single core, not the ~80-90 bits the function field sieve would suggest. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) also deprecate GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
+        "notes": "GF(2^n)* Diffie-Hellman. The binding classical attack is Pohlig-Hellman: the group order 2^256-1 has a 73-bit largest prime factor, so a discrete log costs about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-3.md 9.2.4) -- days on a single core, not the ~80-90 bits the function field sieve would suggest. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) also deprecate GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
         "source": [
           "TODO.md #127 (6943-6949)",
           "TODO_DONE.md #212"
@@ -197,7 +197,7 @@
           "CliTest/test_stern_kem.sh",
           "SecurityProofsCode/qcmdpc_bgf_failure_rate.py",
           "SecurityProofsCode/qcmdpc_dfr_weak_keys.py",
-          "SecurityProofs-4.md 11.8.7"
+          "SecurityProofs-5.md 11.8.7"
         ]
       }
     },
@@ -504,7 +504,7 @@
         "notes": "Sigma-protocol proof of knowledge of an HKEX-RNL private key.",
         "source": [
           "CLAUDE.md",
-          "SecurityProofs-5.md"
+          "SecurityProofs-7.md"
         ]
       }
     }

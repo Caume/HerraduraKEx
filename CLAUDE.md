@@ -65,12 +65,14 @@ SecurityProofsCode/                                 — standalone Python proof/
                              GJS reaction attack (TODO #218)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
-SecurityProofs.md                                   — split index (redirects to Parts 1–5; quantum analysis is in SecurityProofs-1.md §6)
-SecurityProofs-1.md                                 — §1–§8: Algebraic Foundations … Experimental Code Index (708 math expressions)
-SecurityProofs-2.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-3.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
-SecurityProofs-4.md                                 — §11.8.3–§11.9.12: PQ signature options · HFSCX-256-DM (718 math expressions)
-SecurityProofs-5.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
+SecurityProofs.md                                   — split index (redirects to Parts 1–7; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
+SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (408 math expressions)
+SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
+SecurityProofs-5.md                                 — §11.8.3–§11.8.7: PQ signature options · HPKE-Stern-KEM (587 math expressions)
+SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

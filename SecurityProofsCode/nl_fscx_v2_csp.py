@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 nl_fscx_v2_csp.py — Phase 0 decision gate for the Non-Abelian Key Exchange
-(TODO #78.E, SecurityProofs-2 §11.8.5 "Option C / NASG").
+(TODO #78.E, SecurityProofs-5 §11.8.5 "Option C / NASG").
 
 THE QUESTION THIS SCRIPT ANSWERS
 --------------------------------
@@ -256,7 +256,7 @@ def section4():
           lower bound) and Phase 2 (circuit-model CSP transfer theorem).
 
   Read the printed §1-§3 numbers above against these criteria to record the verdict
-  in SecurityProofs-2 §11.8.5 and the TODO #78.E status line.""")
+  in SecurityProofs-5 §11.8.5 and the TODO #78.E status line.""")
     print()
 
 

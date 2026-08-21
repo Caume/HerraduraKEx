@@ -55,7 +55,7 @@ of `n`, because of the existence of sub-exponential index-calculus attacks
 specific to extension-field groups. The binding attack is cheaper still:
 the group order is `2^n − 1`, whose largest prime factor is 73 bits at
 `n = 256`, so Pohlig-Hellman recovers a private key in about `2^36.5`
-group operations (`SecurityProofs-2.md` §9.2.4). HSKE is pedagogical for
+group operations (`SecurityProofs-3.md` §9.2.4). HSKE is pedagogical for
 an unrelated reason of its own — see §5.1. **The classical quartet MUST NOT be
 used for anything requiring real confidentiality or authenticity
 guarantees; it exists for pedagogy, cross-language testing, and as the
@@ -98,7 +98,7 @@ have length dividing `n/2` (equivalently `n` for the affine map with the
 `M(B)` offset); the specific step counts `i = n/4` and `r = n − i = 3n/4`
 used by HSKE (§5) and HPKE (§5.4) are chosen so that encryption and
 decryption are each other's inverse — see §5.1 for the correctness
-argument, and `SecurityProofs-1.md` §2–3 for the full period analysis.
+argument, and `SecurityProofs-2.md` §2–3 for the full period analysis.
 
 ### 3.2. GF(2^n)* Arithmetic
 
@@ -170,7 +170,7 @@ D = FSCX_REVOLVE(E, K, r)      r = 3n/4  =  n − i
 composed with itself `i` times plus an offset that telescopes; running it
 a further `r = n − i` times completes the map's period (§3.1) back to the
 identity on `P`, canceling the `K`-dependent offset. See
-`SecurityProofs-1.md` §3 for the full derivation and `SecurityProofsCode/
+`SecurityProofs-2.md` §3 for the full derivation and `SecurityProofsCode/
 hkex_gf_test.py` for a runnable check.
 
 Multi-block messages MUST use a mode of operation on top of this
@@ -273,7 +273,7 @@ i.e. the affine FSCX combiner XORed with a 64-bit rotation of the
 chain is what breaks GF(2)-linearity. `NL_FSCX_REVOLVE_v1(A, B, steps)`
 iterates this the same way FSCX-REVOLVE does (§3.1). NL-FSCX v1 is
 one-way but not proven invertible in general; see
-`SecurityProofs-3.md` §11 for the non-linearity argument and
+`SecurityProofs-4.md` §11 for the non-linearity argument and
 `SecurityProofsCode/hkex_nl_verification.py` for a runnable check.
 
 ### 8.2. NL-FSCX v2 (used by HSKE-NL-A2, HPKE-NL)
@@ -299,7 +299,7 @@ since `M` is invertible — it has finite multiplicative order `n/2`).
 forward/inverse map `steps` times; a key `B` for which `A + delta(B)`
 would overflow the top bit is rejected by `nl_v2_key_is_valid` (see
 `herradura.h`) to keep the construction bijective — implementations
-**MUST** perform this check before use. See `SecurityProofs-3.md` §11.8
+**MUST** perform this check before use. See `SecurityProofs-4.md` §11.8
 for the bijectivity proof (v2 replaces v1's one-wayness with an explicit
 invertibility argument, at the cost of the extra validity check).
 
@@ -356,7 +356,7 @@ Implementers **MUST** reproduce the CBD sampler, rounding functions, and
 reconciliation bucket boundaries exactly — Ring-LWR key exchange is only
 correct (both parties derive the same final key) with overwhelming
 probability, not always; see `SecurityProofsCode/hkex_rnl_failure_rate.py`
-for the measured decryption-failure rate and `SecurityProofs-3.md` §11.5
+for the measured decryption-failure rate and `SecurityProofs-4.md` §11.5
 for the reconciliation proof.
 
 ### 9.2. HSKE-NL — Symmetric Encryption with NL-FSCX
@@ -453,8 +453,8 @@ rather than one. Their algorithm-level description (commit/challenge/
 response over a random `[N, N/2]` linear code, Fiat-Shamir transform for
 signing, Niederreiter framing for the KEM) is intricate enough to warrant
 its own document rather than a condensed section here; see
-`SecurityProofs-4.md` §11.8.3–11.9 for the full construction and
-`SecurityProofs-5.md` for the accompanying Σ-protocol/ZKBoo analysis.
+`SecurityProofs-5.md` §11.8.3–11.9 for the full construction and
+`SecurityProofs-7.md` for the accompanying Σ-protocol/ZKBoo analysis.
 This SPEC.md's §9 NL/PQC coverage and this pointer satisfy TODO #193's
 scope (HKEX-GF, HSKE, HPKS, HPKE, and the NL/PQC/Stern variants); a
 follow-up TODO MAY expand §11 into full Stern-F/Niederreiter algorithm

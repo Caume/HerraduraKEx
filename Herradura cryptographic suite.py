@@ -34,7 +34,7 @@
     Adds HPKS-Stern-F (Stern identification + Fiat-Shamir, §11.8.4) and HPKE-Stern-F
     (Niederreiter KEM). Security of HPKS-Stern-F reduces to SD(N,t) [NP-complete,
     BMvT 1978] plus NL-FSCX v1 PRF — the only complete chain to a studied hard
-    problem in the suite (Theorem 17, SecurityProofs-4.md §11.8.4).
+    problem in the suite (Theorem 17, SecurityProofs-5.md §11.8.4).
     Replaces the GF(2^n)* discrete-log base that Shor's algorithm breaks in HPKS-NL
     and HPKE-NL.  Parameters: N=n, n_rows=n/2, t=n/16 (16 at n=256), SDFR=32 rounds
     (demo; production requires ≥219 for 128-bit soundness).
@@ -258,7 +258,7 @@ I_VALUE = KEYBITS // 4       # 64  for 256-bit
 R_VALUE = 3 * KEYBITS // 4   # 192 for 256-bit
 ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmetic)
 
-# HKEX-RNL Ring-LWR parameters (see SecurityProofs-3.md §11.4)
+# HKEX-RNL Ring-LWR parameters (see SecurityProofs-4.md §11.4)
 # q=65537 (Fermat prime, fast arithmetic) gives lower noise-to-margin ratio than
 # q=3329 (Kyber), ensuring reliable single-block agreement at the cost of larger
 # keys.  2-bit Peikert reconciliation doubles extracted bits per coefficient.
@@ -267,7 +267,7 @@ RNLP  = 4096   # public-key rounding modulus
 RNLPP = 4      # reconciliation modulus (2 bits extracted per ring coefficient)
 RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
 
-# HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs-4.md §11.8.4)
+# HPKS-Stern-F / HPKE-Stern-F code-based PQC parameters (SecurityProofs-5.md §11.8.4)
 SDFNR = KEYBITS // 2           # parity-check rows (syndrome bits; [N, N/2, t] code, N=KEYBITS)
 SDFT  = max(2, KEYBITS // 16)  # error weight t (= 16 at n=256; ≥ 2 at all widths)
 SDFR  = 32                     # ⚠ DEMO ONLY: Fiat-Shamir rounds (~19-bit soundness).
@@ -276,12 +276,12 @@ SDFR  = 32                     # ⚠ DEMO ONLY: Fiat-Shamir rounds (~19-bit soun
                                # Signing emits a RuntimeWarning when called below
                                # the production threshold.
 
-# ZKP-RNL (Ring-LWR Σ-protocol) parameters (SecurityProofs-5.md §11.10.2)
+# ZKP-RNL (Ring-LWR Σ-protocol) parameters (SecurityProofs-7.md §11.10.2)
 _SIGMA_GAMMA        = {32: 4096, 64: 8192, 128: 8192, 256: 8192}  # mask bound γ per n
 _SIGMA_T            = {32: 4,    64: 8,    128: 12,   256: 16}     # challenge weight t per n
 _SIGMA_MAX_ATTEMPTS = 1000   # rejection-sampling attempts before RuntimeError
 
-# ZKBoo (NL-FSCX MPC-in-the-head) parameters (SecurityProofs-5.md §11.10.3)
+# ZKBoo (NL-FSCX MPC-in-the-head) parameters (SecurityProofs-7.md §11.10.3)
 _ZKP_NL_DEFAULT_N   = 8    # default bit-width for CLI (proof ≈35 KB at R=219)
 _ZKP_NL_DEMO_ROUNDS = 4    # illustration only: soundness ≈ (2/3)^4 ≈ 20%
 _ZKP_NL_PROD_ROUNDS = 219  # ⌈128 / log₂(3/2)⌉ — required for 128-bit soundness
@@ -592,7 +592,7 @@ def nl_v2_key_is_valid(B: BitArray) -> bool:
     2^-129 of the key space, so a uniformly random key is not at risk, but the check
     is cheap and the class is otherwise silently accepted.
 
-    See SecurityProofs-5.md §11.19.2 and
+    See SecurityProofs-7.md §11.19.2 and
     SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py (TODO #159, #168).
     """
     n     = B._size
@@ -964,7 +964,7 @@ def _stern_gen_perm(pi_seed: 'BitArray', N: int) -> list:
     it to [0, range) via Lemire's multiply-shift (k = (v * range) >> 32)
     instead of rejection sampling, so the loop/state-advance count no longer
     depends on pi_seed -- closes the timing leak dudect measured in the C
-    implementation's prior rejection-sampling version (SecurityProofs-5.md
+    implementation's prior rejection-sampling version (SecurityProofs-7.md
     S11.11). Relative modulo bias is < range/2^32, negligible at range <=
     KEYBITS. Must stay bit-identical with the C and Go implementations.
     """
@@ -1584,7 +1584,7 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
 
 # ---------------------------------------------------------------------------
 # ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
-# SecurityProofs-5.md §11.10.2
+# SecurityProofs-7.md §11.10.2
 # ---------------------------------------------------------------------------
 #
 # Statement : (m, C) — blinding poly m ∈ Z_q^n, public key C ∈ Z_p^n
@@ -1718,7 +1718,7 @@ def rnl_sigma_verify(m_poly, C_poly, n, msg_bytes, w_poly, c_poly, z_poly):
 
 # ---------------------------------------------------------------------------
 # ZKP-NL: NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
-# SecurityProofs-5.md §11.10.3
+# SecurityProofs-7.md §11.10.3
 # ---------------------------------------------------------------------------
 #
 # Statement : (B, y) — public; B, y ∈ {0,…,2^n-1}
@@ -2160,7 +2160,7 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
 
 # ---------------------------------------------------------------------------
 # HCRED — Hybrid Ring-LWR + Stern-F credential (TODO #128 Batch 1)
-# SecurityProofs-5.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
+# SecurityProofs-7.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
 # (implementation notes).
 # ---------------------------------------------------------------------------
 #
@@ -2198,7 +2198,7 @@ def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
 # ||m·s − lift(C)||∞ ≤ 15 rather than exact re-rounding (|ε| ≤ 8), the
 # standard LWR-proof relaxation (cf. the ZKP-RNL slack t·⌈q/(2p)⌉).
 # Per-round soundness is 2/3; production requires R = 219
-# (_ZKP_NL_PROD_ROUNDS).  Demo default n = 32.  See SecurityProofs-5.md
+# (_ZKP_NL_PROD_ROUNDS).  Demo default n = 32.  See SecurityProofs-7.md
 # §11.10.10 for the design evolution (Batch 1 used a two-branch form).
 # ---------------------------------------------------------------------------
 
@@ -3240,7 +3240,7 @@ def hpkst_verify(C_agg: 'BitArray', R: 'BitArray', s: 'BitArray', msg: 'BitArray
 # 97 — HPKS-WOTS-F / HPKS-XMSS-F — Hash-based signatures (TODO #97)
 #
 # Hash chain:  h(x) = nl_fscx_revolve_v1(ROL(x, n/8), x, n/4)
-#              (NL-FSCX v1 OWF, Theorem 16, SecurityProofs-2 §11.8.3)
+#              (NL-FSCX v1 OWF, Theorem 16, SecurityProofs-5 §11.8.3)
 #
 # Winternitz parameter w=16 (4 bits per digit):
 #   ℓ_msg = ceil(256/4) = 64   (message nibbles)
@@ -3489,7 +3489,7 @@ def ratchet_advance(state: BitArray) -> tuple:
 #   reseed      : state = HFSCX-256(b'DRBG-RESEED' || state || len(entropy)_be8 || entropy)
 #
 # Backtracking resistance rests on the same OWF conjecture as the #78.C ratchet
-# (Theorem 16, SecurityProofs-2 §11.8.3): erasing state_i makes output_i
+# (Theorem 16, SecurityProofs-5 §11.8.3): erasing state_i makes output_i
 # irrecoverable from state_{i+1}.  The caller must discard old state objects;
 # Python cannot guarantee erasure of immutable ints — for hard erasure
 # guarantees use the C implementation.
@@ -3634,7 +3634,7 @@ def hske_nl_aead_decrypt(key: BitArray, nonce: BitArray, ct: bytes, tag: bytes,
 #
 # RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
 # Security relies on bijectivity of nl_fscx_revolve_v2 (proven) and the
-# branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+# branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-2.md §3.4).
 # The differential/linear profile of nl_fscx_v2 as a standalone sponge
 # permutation has not yet been rigorously analysed (see TODO #95/#99).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3943,7 +3943,7 @@ HPKE (El Gamal + fscx_revolve, linear encryption):
   Break:   DLP recovers a; HSKE sub-protocol has linear key recovery.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs-3.md §11)
+PQC-HARDENED PROTOCOLS (v1.5.0, C3 hybrid — see SecurityProofs-4.md §11)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HSKE-NL-A1 (counter-mode HSKE with NL-FSCX v1):
@@ -3989,7 +3989,7 @@ HPKE-NL (El Gamal + NL-FSCX v2):
            sub-protocol linear key-recovery attack.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CODE-BASED PQC PROTOCOLS (v1.5.18 — Theorem 17, SecurityProofs-4.md §11.8.4)
+CODE-BASED PQC PROTOCOLS (v1.5.18 — Theorem 17, SecurityProofs-5.md §11.8.4)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 HPKS-Stern-F (Stern syndrome-decoding signature — replaces HPKS-NL):

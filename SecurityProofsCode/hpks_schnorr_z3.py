@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Machine-checked verification (Z3/SMT) of the HPKS Schnorr identity
-(SecurityProofs-1.md Section 2, "HPKS - Public Key Signature"):
+(SecurityProofs-2.md Section 2, "HPKS - Public Key Signature"):
 
     R = g^k              (commitment)
     e = <challenge>       (independent of k algebraically -- treated as a free
@@ -197,7 +197,7 @@ def check_width_random(n, poly, trials=200):
 
 def main():
     print("Mechanized (Z3/SMT) verification of the HPKS Schnorr identity")
-    print("(SecurityProofs-1.md Section 2: g^s * C^e == R)")
+    print("(SecurityProofs-2.md Section 2: g^s * C^e == R)")
     print("=" * 70)
     print("Symbolic SMT proof:")
     all_ok = check_width(4)

@@ -17,7 +17,7 @@ import java.util.List;
  * by construction — m*s is linear in s since m is public, so the Ring-LWR
  * rounding check folds cheaply into the same circuit as the Stern-F
  * syndrome check, closing the witness-splitting/self-registered-key
- * forgery a naive two-branch composition would allow (SecurityProofs-5.md
+ * forgery a naive two-branch composition would allow (SecurityProofs-7.md
  * Sec.11.10.9/11.10.10).
  *
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s hcred_phi /

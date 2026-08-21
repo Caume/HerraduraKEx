@@ -266,7 +266,7 @@ jobs:
       - name: Validate math spans in README.md and SecurityProofs*.md
         run: |
           fail=0
-          for f in README.md SecurityProofs.md SecurityProofs-1.md SecurityProofs-2.md SecurityProofs-3.md SecurityProofs-4.md SecurityProofs-5.md; do
+          for f in README.md SecurityProofs.md SecurityProofs-[0-9]*.md; do
             echo "=== $f ==="
             node SecurityProofsCode/validate_katex.js "$f" || fail=1
           done

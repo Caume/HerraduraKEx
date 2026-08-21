@@ -1480,7 +1480,7 @@ def test_hkex_rnl_correctness():
     # Protocol: one party generates a_rand and transmits it in the clear; both
     # derive the shared m_blind = m_base + a_rand and compute individual public keys
     # C = round_p(m_blind · s).  Agreement holds by ring commutativity:
-    # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-3.md.
+    # s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-4.md.
     print("[14] HKEX-RNL key agreement: K_raw_A == K_raw_B / sk_A == sk_B  [PQC-EXT]")
     print(f"     (ring sizes {RNL_SIZES}; Peikert reconciliation — expect 100% agreement)")
     for n_rnl in RNL_SIZES:

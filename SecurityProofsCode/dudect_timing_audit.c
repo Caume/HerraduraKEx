@@ -122,7 +122,7 @@ static void op_fscx_revolve(const BitArray *secret, const BitArray *pub)
  * is secret-dependent by construction; stern_apply_perm's *memory access
  * pattern* (not its instruction path — it is already branchless) is
  * secret-permutation-dependent, which a wall-clock t-test cannot detect
- * (it requires cache-timing instrumentation) — see SecurityProofs-3.md
+ * (it requires cache-timing instrumentation) — see SecurityProofs-7.md
  * §11.11 for the structural discussion. These two tests characterise the
  * wall-clock-visible component only. */
 static void op_stern_gen_perm(const BitArray *secret, const BitArray *pub)

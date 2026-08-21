@@ -15,7 +15,7 @@ import java.util.List;
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s
  * {@code _zkp_nl_rol}/{@code _zkp_nl_h}/{@code _zkp_nl_prg_bit}/
  * {@code _zkp_nl_evaluate_circuit}/{@code zkp_nl_prove}/
- * {@code zkp_nl_verify} — SecurityProofs-5.md Sec.11.10.3.
+ * {@code zkp_nl_verify} — SecurityProofs-7.md Sec.11.10.3.
  *
  * Unlike {@link Herradura}/{@link Stern}/{@link Hcred} (fixed at n=256),
  * this circuit is parameterized by bit-width {@code n} and ported

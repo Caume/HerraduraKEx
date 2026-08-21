@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 hpks_ristretto_migration.py — Ristretto255 drop-in evaluation for HPKS/HPKE/HKEX-GF
-(TODO #127, SecurityProofs-1 §9.2.6 "Migration path").
+(TODO #127, SecurityProofs-3 §9.2.6 "Migration path").
 
 THE QUESTION
 ------------
@@ -340,7 +340,7 @@ def section6():
      HKEX-RNL (Ring-LWR) + HPKS-Stern-F / HPKE-Stern-KEM (code-based).
      No GF(2^n)* successor group exists that is quantum-resistant.
   4. Recommendation: treat ristretto255 as the documented classical upgrade path
-     (SecurityProofs-1 §9.2.6) but keep implementation effort on the PQC track.
+     (SecurityProofs-3 §9.2.6) but keep implementation effort on the PQC track.
 """)
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

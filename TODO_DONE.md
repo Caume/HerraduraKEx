@@ -10877,3 +10877,75 @@ instances before any number is taken.
    change — a decoder improvement that leaves `r = 523` cannot reach `2^-128` alone.
 
 Status: **DONE v2.7.13** — DFR measured and extrapolated, weak-key gradient characterised, GJS distinguisher demonstrated to disjoint confidence intervals; HPKE-Stern-KEM reclassified demo-only in SECURITY.md and the spec.
+
+### #220: `SecurityProofs-1.md` is approaching the ~750-expression KaTeX limit
+
+`SecurityProofsCode/validate_katex.js` now warns on `SecurityProofs-1.md`: it
+holds 708 math expressions against GitHub's roughly 750-per-page client-side
+KaTeX limit, past which *every* expression on the page silently renders as
+"Unable to render expression" — a cascade failure with no syntax error to find.
+`SecurityProofs-4.md` sits at 718 with the same warning (716 when this item was
+filed; TODO #215 and #218 have since added to it). The warning threshold
+(700) exists precisely to catch this before it bites; TODO #170 already re-split
+these documents once for the same reason.
+
+Part 1 grew from 581 to 708 across TODO #210 and #211, both of which added
+material to §1.3 (the FSCX_REVOLVE subsections). §1.3.2's additions were trimmed
+back once already, converting prose-adjacent math to plain text to buy headroom,
+which is a stopgap rather than a fix. The remaining open analysis items — #213
+through #218 — will each want a subsection somewhere, and several of them belong
+in Parts 1 and 4.
+
+- Pick split points at section boundaries, as TODO #170 did, so each part lands
+  comfortably under the warning threshold rather than just under the hard limit.
+  Part 1's §1 (Algebraic Foundations) has grown enough to stand alone.
+- Update every cross-reference: `SecurityProofs.md`'s index, the "Continued in
+  Part N" footers, `CLAUDE.md`'s Repository Structure listing with its per-file
+  expression counts, `SecurityProofsCode/KATEX_RULES.md`'s split rationale, and
+  the many `SecurityProofs-N.md §X` citations scattered across `SECURITY.md`,
+  `SPEC.md`, `README.md` and the other parts.
+- Re-run the validator on every part afterwards and record the new counts in the
+  two places that track them.
+
+**Outcome.** Re-split five parts into seven, at section boundaries, and repaired
+every cross-reference against the new layout.
+
+| Part | Sections | Expressions | Was |
+|---|---|---|---|
+| 1 | §1 Algebraic Foundations | 300 | part of the 708-expression Part 1 |
+| 2 | §2–§8 | 408 | part of the 708-expression Part 1 |
+| 3 | §9–§10 | 409 | Part 2 |
+| 4 | §11–§11.8.2 | 593 | Part 3 |
+| 5 | §11.8.3–§11.8.7 | 587 | part of the 718-expression Part 4 |
+| 6 | §11.9 HFSCX-256-DM | 131 | part of the 718-expression Part 4 |
+| 7 | §11.10–§11.13, §11.15–§11.19 | 645 | Part 5 |
+
+Total is 3073 expressions before and after, so nothing was dropped or duplicated;
+a line-level diff of the concatenated bodies shows only the two `---` rules at the
+split points. Every part is now under the 700-expression warning threshold, and
+`validate_katex.js` reports 0 FAIL on all seven.
+
+**Cross-references.** References were repointed against *section ownership* read
+from the split files themselves rather than by a mechanical old-part → new-part
+shift, which also repaired references that were already stale: 25 `SPn §x`
+shorthand markers in `docs/INTRODUCTION.md` (many still naming the pre-TODO-#170
+layout), the §11.11 constant-time-audit citations in `herradura.h`,
+`herradura/herradura.go` and `dudect_timing_audit.c`, three §11.8.x/§11.7
+citations inside the proof documents themselves, and the §9.2.6 Ristretto
+citations. `CHANGELOG.md` and `TODO_DONE.md` were deliberately left alone — they
+record what the layout was at the time, as TODO #170 also did.
+
+A checker built for this item verifies that every live `SecurityProofs-N.md §X`
+citation names the part that actually contains §X; it passes on all 151
+section-bearing references, with one known false positive in `SPEC.md` §12 where
+the nearby `§9` belongs to SPEC.md itself.
+
+`.github/workflows/ci.yml` now globs `SecurityProofs-[0-9]*.md` instead of listing
+the parts, so a future split cannot leave a part unvalidated by CI.
+
+**Headroom note.** Parts 4 (593), 5 (587) and 7 (645) have less room than the
+others. TODO #214 would add to Part 4 and TODO #217 to Part 5; either may push a
+part back over the threshold, at which point the seam to cut is §11.8.4 out of
+Part 5 or §11.10 out of Part 7.
+
+Status: **DONE v2.7.14** — re-split into seven parts (300/408/409/593/587/131/645 expressions, all under the warning threshold, 0 FAIL), with every live cross-reference repointed by section ownership and verified mechanically.

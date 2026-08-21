@@ -384,7 +384,7 @@ func nlFscxDeltaV2(b *BitArray) *BitArray {
 // For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from
 // a handful of known plaintexts by linear algebra. Class density is ~2^-129 at
 // n=256, so a random key is not at risk, but the check is one comparison.
-// See SecurityProofs-2.md 11.19.2 (TODO #159, #168).
+// See SecurityProofs-7.md 11.19.2 (TODO #159, #168).
 func NlV2KeyIsValid(b *BitArray) bool {
 	d := nlFscxDeltaV2(b)
 	if d.Val.Sign() == 0 {
@@ -651,7 +651,7 @@ func HskeNlAeadDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) 
 //
 // RESEARCH CONSTRUCTION — not for production use without further cryptanalysis.
 // Security relies on bijectivity of NlFscxRevolveV2 (proven) and the
-// branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-1.md §3.4).
+// branch-number analysis Bn(M^k)>=36 at n=64 (SecurityProofs-2.md §3.4).
 // The differential/linear profile of nl_fscx_v2 as a standalone sponge
 // permutation has not yet been rigorously analysed (see TODO #95/#99).
 // ---------------------------------------------------------------------------
@@ -824,7 +824,7 @@ func HskeNlV2DuplexDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bo
 //   reseed      : state = HFSCX-256("DRBG-RESEED" || state || len_be8 || entropy)
 //
 // Backtracking resistance rests on the same OWF conjecture as the #78.C
-// ratchet (Theorem 16, SecurityProofs-2 §11.8.3).  Go cannot guarantee
+// ratchet (Theorem 16, SecurityProofs-5 §11.8.3).  Go cannot guarantee
 // erasure of big.Int internals; for hard erasure guarantees use the C
 // implementation.  Collision risk of the non-bijective state walk:
 // SecurityProofsCode/nl_fscx_v1_ratchet_collision.py.
@@ -910,7 +910,7 @@ func DrbgFromState(state []byte, blocks uint64) *HDrbg {
 // HKEX-RNL ring-arithmetic helpers (negacyclic Z_q[x]/(x^n+1))
 // ---------------------------------------------------------------------------
 
-// RNL protocol parameters (see SecurityProofs-2.md §11.4).
+// RNL protocol parameters (see SecurityProofs-4.md §11.4).
 const (
 	RnlQ   = 65537 // Fermat prime (2^16+1)
 	RnlP   = 4096  // public-key rounding modulus
@@ -1276,7 +1276,7 @@ func SyndrToBA(n int, syn *big.Int) *BitArray {
 // it to [0, range) via Lemire's multiply-shift (j = (v * range) >> 32)
 // instead of rejection sampling, so the loop/state-advance count no longer
 // depends on piSeed -- closes the timing leak dudect measured in the C
-// implementation's prior rejection-sampling version (SecurityProofs-3.md
+// implementation's prior rejection-sampling version (SecurityProofs-7.md
 // SS11.11). Relative modulo bias is < range/2^32, negligible at range <=
 // KEYBITS. Must stay bit-identical with the C and Python implementations.
 func SternGenPerm(piSeed *BitArray, N int) []int {
@@ -1759,7 +1759,7 @@ func HpksSternRingVerify(msg *BitArray, sig *SternRingSig, ring []RingKeypair) b
 
 // ---------------------------------------------------------------------------
 // ZKP-RNL: Ring-LWR Σ-protocol (Lyubashevsky-style, Fiat-Shamir compiled)
-// SecurityProofs-3.md §11.10.2
+// SecurityProofs-7.md §11.10.2
 // ---------------------------------------------------------------------------
 
 const sigmaMaxAttempts = 1000
@@ -1966,7 +1966,7 @@ func RnlSigmaVerify(mPoly, cpoly []int, n int, msg []byte, wPoly, cPoly, zPoly [
 
 // ---------------------------------------------------------------------------
 // ZKP-NL: NL-FSCX ZKBoo (MPC-in-the-head, 3-party Boolean circuit)
-// SecurityProofs-3.md §11.10.3
+// SecurityProofs-7.md §11.10.3
 // ---------------------------------------------------------------------------
 
 const (
@@ -3323,7 +3323,7 @@ func HpkstVerify(cAgg, R, s *big.Int, msg []byte) bool {
 
 // ---------------------------------------------------------------------------
 // HCRED — Hybrid Ring-LWR + Stern-F credential (TODO #128 Batch 4 port)
-// SecurityProofs-3.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
+// SecurityProofs-7.md §11.10.8 (design), §11.10.9 (binding map φ), §11.10.10
 // (implementation notes).  Byte-compatible with the Python suite: identical
 // serialization (3 B/coeff), HFSCX-256 domains, tape expansion, and
 // Fiat-Shamir challenge derivation.

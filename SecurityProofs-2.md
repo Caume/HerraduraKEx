@@ -4,623 +4,599 @@
 
 > **This is Part 2 of a split document.**
 >
-> - **Part 1 — §1–§8** (SecurityProofs-1.md): Algebraic Foundations · Protocol Analysis · Security Analysis · Quantum Attack Analysis · Experimental Code Index
-> - **Part 2 — §9–§10** (this file): Non-Linear Proposals · v1.4.0 Migration
-> - **Part 3 — §11–§11.8.2** (SecurityProofs-3.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 4 — §11.8.3–§11.9.12** (SecurityProofs-4.md): PQ Signature Options · HFSCX-256-DM
-> - **Part 5 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-5.md): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 1 — §1** (SecurityProofs-1.md): Algebraic Foundations
+> - **Part 2 — §2–§8** (this file): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
+> - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
+> - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
+> - **Part 5 — §11.8.3–§11.8.7** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
+> - **Part 7 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
-## 9. Non-Linear Proposals
+## 2. Protocol Analysis
 
-Theorem 10 establishes that any protocol whose shared secret is derived via a $\mathbb{GF}(2)$-linear iterated map on the exchanged public values is insecure: the same $S_n = 0$ identity that guarantees correctness simultaneously exposes $sk$ as a linear function of $(C, C_2)$. This section develops two concrete non-linear alternatives.
+### 2.1 HKEX — Key Exchange
 
-### 9.1 Fix Requirement
+**Protocol:**
 
-A secure replacement must satisfy two competing conditions simultaneously:
+$$\begin{aligned}
+&\textbf{Alice:}\quad A, B \leftarrow \text{random};\quad C = \text{FSCX-REVOLVE}(A, B, i) \\
+&\textbf{Bob:}\quad A_2, B_2 \leftarrow \text{random};\quad C_2 = \text{FSCX-REVOLVE}(A_2, B_2, i)
+\end{aligned}$$
 
-1. **Key-exchange correctness.** Two parties with independent secrets $(A, B)$ and $(A_2, B_2)$ must independently compute the same $sk$.
-2. **Privacy of $sk$.** The shared secret $sk$ must not be computable from the public wire values $(C, C_2)$ alone.
+$$\text{Alice} \xrightarrow{C} \text{Bob} \qquad \text{Bob} \xrightarrow{C_2} \text{Alice}$$
 
-Theorem 10 shows these two conditions are mutually exclusive under $\mathbb{GF}(2)$-linearity. The escape route is to use a **non-linear** primitive, i.e. a function $F$ such that $F(A \oplus X) \neq F(A) \oplus F(X)$ in general.
+$$\begin{aligned}
+&\textbf{Alice:}\quad sk_A = \text{FSCX-REVOLVE-N}(C_2, B, N, r) \oplus A \\
+&\textbf{Bob:}\quad sk_B = \text{FSCX-REVOLVE-N}(C, B_2, N, r) \oplus A_2 \\
+&\text{where}\quad N = C \oplus C_2
+\end{aligned}$$
 
-The two proposals below attack this from different angles:
+**Theorem 6 — Correctness:** $sk_A = sk_B$.
 
-- **HKEX-GF** (§9.2): replace the key-exchange step with $\mathbb{GF}(2^n)$ Diffie-Hellman; keep FSCX intact for all symmetric operations.
-- **FSCX-CY** (§9.3): replace the XOR inside FSCX with integer addition to introduce carry non-linearity; analyse what is preserved and what breaks.
+*Proof:* Applying the affine iteration formula to $sk_A$, and substituting $A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B$ (from $C = M^i \cdot A + M \cdot S_i \cdot B$ with $M^{-i} = M^{n-i} = M^r$):
 
----
+$$\begin{aligned}
+sk_A &= M^r \cdot C_2 + M \cdot S_r \cdot B \oplus S_r \cdot N \oplus A \\
+     &= M^r \cdot C_2 + M \cdot S_r \cdot B \oplus S_r \cdot (C \oplus C_2) \oplus M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B \\
+     &= M^r \cdot (C \oplus C_2) \oplus S_r \cdot (C \oplus C_2) \oplus (M \cdot S_r + M^{r+1} \cdot S_i) \cdot B \\
+     &= M^r \cdot (C \oplus C_2) \oplus S_r \cdot (C \oplus C_2) \oplus S_n \cdot B \qquad \leftarrow \text{Corollary 2} \\
+     &= (M^r + S_r) \cdot (C \oplus C_2) \oplus 0 \\
+     &= S_{r+1} \cdot (C \oplus C_2)
+\end{aligned}$$
 
-### 9.2 HKEX-GF — Diffie-Hellman over $\mathbb{GF}(2^n)^{\ast}$
+The last step uses $M^r + S_r = M^r + (I + M + \cdots + M^{r-1}) = I + M + \cdots + M^r = S_{r+1}$.
 
-#### 9.2.1 Algebraic structure
+By symmetry (swapping Alice and Bob's roles), $sk_B = S_{r+1} \cdot (C \oplus C_2)$ as well. Therefore $sk_A = sk_B$. $\blacksquare$
 
-$\mathbb{GF}(2^n)$ is the field of polynomials over $\mathbb{GF}(2)$ of degree $< n$, reduced modulo a fixed irreducible polynomial $p(x)$ of degree $n$. Two irreducible polynomials used in the implementation:
+**Corollary 3 — Explicit shared secret formula:**
 
-$$p_{32}(x) = x^{32} + x^{22} + x^2 + x + 1, \qquad p_{64}(x) = x^{64} + x^4 + x^3 + x + 1$$
+$$sk = S_{r+1} \cdot (C \oplus C_2) = (C \oplus C_2) \oplus M \cdot (C \oplus C_2) \oplus \cdots \oplus M^r \cdot (C \oplus C_2)$$
 
-**Field multiplication** $a \cdot b \in \mathbb{GF}(2^n)$ is carryless polynomial multiplication reduced mod $p(x)$, implementable by the shift-and-XOR loop:
-
-```
-result = 0
-for i in 0..n-1:
-    if b[0] == 1:  result ^= a
-    carry = a[n-1]
-    a <<= 1
-    if carry:      a ^= poly   # XOR with lower n bits of p(x)
-    b >>= 1
-```
-
-**Operations used:** XOR and left-shift only — no integer multiplication or modular arithmetic.
-
-**Non-linearity over $\mathbb{GF}(2)$:** The map $a \mapsto g^a$ (field exponentiation with fixed generator $g$) is non-linear in $a$ over $\mathbb{GF}(2)$:
-
-$$g^{a \oplus x} \neq g^a \oplus g^x \quad \text{in general}$$
-
-This contrasts with the FSCX map $A \mapsto M^i \cdot A + M \cdot S_i \cdot B$, which is $\mathbb{GF}(2)$-linear in $A$.
-
-#### 9.2.2 Protocol
-
-Pre-agreed public parameters: field size $n$, irreducible polynomial $p(x)$, generator $g \in \mathbb{GF}(2^n)^{\ast}$.
-
-| Step | Alice | Bob |
-|------|-------|-----|
-| Private | $a \xleftarrow{R} \{1,\ldots,2^n{-}1\}$ | $b \xleftarrow{R} \{1,\ldots,2^n{-}1\}$ |
-| Public | $C = g^a \in \mathbb{GF}(2^n)^{\ast}$ | $C_2 = g^b \in \mathbb{GF}(2^n)^{\ast}$ |
-| Shared | $sk = C_2^{\,a} = g^{ab}$ | $sk = C^{\,b} = g^{ab}$ |
-
-**Correctness proof:**
-
-$$C_2^{a} = (g^b)^a = g^{ba} = g^{ab} = (g^a)^b = C^{b} \qquad \blacksquare$$
-
-This holds by commutativity and associativity of multiplication in $\mathbb{GF}(2^n)^{\ast}$, which are ring axioms satisfied for any polynomial choice (irreducible or not). Irreducibility is required only for the group to be a field (every non-zero element invertible).
-
-#### 9.2.3 Why Eve's formula fails
-
-Eve's classical attack computes $sk_\text{eve} = S_{r+1} \cdot (C \oplus C_2)$.
-
-Under HKEX-GF, the public values $C = g^a$ and $C_2 = g^b$ are field elements whose XOR $C \oplus C_2 = g^a \oplus g^b$ has no algebraic relationship to $g^{ab}$. Specifically:
-
-$$S_{r+1} \cdot (g^a \oplus g^b) \neq g^{ab} \quad \text{in general}$$
-
-because $S_{r+1}$ is the $\mathbb{GF}(2)$-linear FSCX partial-sum operator acting on XOR-structured vectors, while $g^{ab}$ is determined by field multiplication — a different algebraic structure. The two cannot coincide except by accidental collision (probability $2^{-n}$), confirmed at $0/4000$ over all trials.
-
-#### 9.2.4 Security assumption
-
-The hardness of HKEX-GF reduces to the **Computational Diffie-Hellman (CDH)** problem in $\mathbb{GF}(2^n)^{\ast}$: given $g^a$ and $g^b$, compute $g^{ab}$.
-
-CDH in $\mathbb{GF}(2^n)^{\ast}$ is believed hard for large $n$, under the assumption that the Discrete Logarithm Problem (DLP) in $\mathbb{GF}(2^n)^{\ast}$ is hard.  Known classical attack complexities on the DLP in $\mathbb{GF}(2^n)^{\ast}$:
-
-| Algorithm | Complexity | Notes |
-|-----------|------------|-------|
-| Baby-step giant-step (BSGS) | $O(2^{n/2})$ time, $O(2^{n/2})$ space | Generic group algorithm |
-| Pohlig–Hellman | $O(\sqrt{q_{\max}})$ where $q_{\max}$ = largest prime factor of group order | Dangerous when order is smooth |
-| Index calculus (function field sieve) | $L_{2^n}[1/3, c]$ (sub-exponential) | General DLP in $\mathbb{GF}(2^n)^{\ast}$; better constant than GNFS for prime fields |
-| **Quasi-polynomial (Barbulescu–Joux–Pierrot 2013)** | $n^{O(\log n)}$ | Specific to characteristic-2 fields; practical for highly composite $n$ |
-
-**Correction (TODO #212): Pohlig–Hellman, not the FFS, is the binding constraint here.**
-The row above it in the table is the one that governs. $|\mathbb{GF}(2^n)^{\ast}| = 2^n - 1$ is
-never prime, and at every supported $n$ it factors into primes far below the field size, so a
-generic DLP algorithm run once per prime factor and recombined by CRT costs the square root of
-the *largest prime factor* rather than the square root of the group. At $n = 256$,
-
-$$2^{256} - 1 = 3 \cdot 5 \cdot 17 \cdot 257 \cdot 641 \cdot 65537 \cdot 274177 \cdot 6700417 \cdot 67280421310721 \cdot 59649589127497217 \cdot 5704689200685129054721$$
-
-whose largest prime factor has 73 bits, putting Pohlig–Hellman with Pollard rho at roughly
-$2^{36.5}$ group operations in constant memory — some 45 to 55 bits below the FFS figure quoted
-below, which was previously reported as the practical bound. `SecurityProofsCode/hkex_gf_pohlig_hellman.py`
-verifies the factorisation, computes $\text{ord}(g)$ at each supported $n$, and carries the attack
-through end to end at $n = 32$ and $n = 64$ — recovering the private exponent, the HKEX-GF shared
-secret, and a forged HPKS signature under the victim's public key. Note also that $g = 3$ is
-**primitive** at $n = 64$ and at the deployed $n = 256$, so there the recovered exponent is the
-private key itself rather than a representative.
-
-Everything from here to the end of this subsection describes the **function field sieve (FFS)**,
-which is the best *asymptotic* attack that does not exploit the factorisation of the group order,
-and which was previously presented as the practical binding constraint for $\mathbb{GF}(2^n)^{\ast}$
-at cryptographic sizes including $n = 256$.  Its complexity $L_{2^n}[1/3, c]$ is sub-exponential
-with a smaller constant $c$ than the number-field sieve for prime-field DLP, making binary-field
-DLP systematically weaker than an equal-bit-count prime-field DLP at the same $n$.
-The **quasi-polynomial algorithm** (Granger–Kleinjung–Zumbrägel 2014–2016, refining Barbulescu
-et al. 2013) achieves even better asymptotic complexity but has only been practically demonstrated
-for fields with highly composite extension degree (e.g. $\mathbb{GF}(2^{6120})$,
-$\mathbb{GF}(2^{9234})$).  For $\mathbb{GF}(2^{256})$ specifically, the FFS $L[1/3]$ remains the
-best of the *sieve* attacks — though not the best attack overall, which is Pohlig–Hellman
-at roughly $2^{36.5}$ (see the correction above).  The recommended minimum for $\mathbb{GF}(2^n)^{\ast}$ DLP (if it must be used) is
-$n \geq 3000$; NIST SP 800-57 Rev. 5 (2020) and ENISA "Algorithms, Key Sizes and Parameters"
-(2022) both **deprecate** $\mathbb{GF}(2^n)^{\ast}$ for new designs.
-
-**Experimental verification at $n = 32$ (demo parameters).**
-
-BSGS was applied to recover the discrete log from the 32-bit HKEX-GF demonstration:
-
-```python
-A_PRIV = 0xDEADBEEF   # Alice's private key
-C      = 0x5B8AE480   # Public key: gf_pow(3, A_PRIV) in GF(2^32)*
-
-# BSGS recovered:
-a_rec  = 0x00CFE112   # Smallest exponent satisfying gf_pow(3, a_rec) == C
-# Verification:
-gf_pow(3, a_rec) == C         # True: 0x5B8AE480
-# Shared secret recovered:
-sk_from_dlp = gf_pow(C2, a_rec)   # == 0xD3DB6BC3  (matches actual sk)
-# Time: 0.622 s on a single CPU core
-```
-
-The recovered $a_\text{rec} \neq A_\text{PRIV}$ because $g = 3$ is not a primitive element of
-$\mathbb{GF}(2^{32})^{\ast}$: its order is a proper divisor of $2^{32}-1$.  Multiple exponents share
-the same public key; BSGS finds the smallest representative.  The shared secret is nevertheless
-fully recovered because $g^{ab}$ is the same regardless of which representative is used.
-
-This last point is specific to $n = 32$ and should not be read as a general property (TODO #212):
-$g = 3$ **is** primitive at $n = 64$ and at the deployed $n = 256$, where the attack returns the
-private key itself.  `hkex_gf_pohlig_hellman.py` computes $\text{ord}(g)$ at each supported $n$ and
-demonstrates exact recovery at $n = 64$ in about 0.15 s, together with the HKEX-GF shared secret
-and an HPKS forgery derived from it.
-
-**Effective security:** $n = 32$ is broken in under 1 second.  The quasi-polynomial attack
-extends to all practical $n$ values.
-
-**Practical parameters (updated 2026 — TODO #71 landscape review):**
-
-| $n$ | FFS $L[1/3]$ estimate | Largest prime factor of $2^n - 1$ | Pohlig–Hellman + rho | Effective security |
-|-----|------|------|------|------|
-| 32  | ≪ 40 bits | 17 bits | $2^{8.5}$ | $2^{8.5}$ |
-| 64  | ≪ 40 bits | 23 bits | $2^{11.8}$ | $2^{11.8}$ |
-| 128 | ≈ 50–60 bits | 46 bits | $2^{23.3}$ | $2^{23.3}$ |
-| 256 | ≈ 80–90 bits | 73 bits | $2^{36.5}$ | $\mathbf{2^{36.5}}$ (**deployed**) |
-| 512 | ≈ 110–120 bits | 206 bits | $2^{103.3}$ | $2^{103.3}$ |
-| 1024 | ≈ 128–140 bits | 329 bits | $2^{164.5}$ | ≈ 128–140 bits (FFS binds) |
-
-The effective-security column is the smaller of the two attacks. Pohlig–Hellman is the binding
-constraint at every size up to and including $n = 512$; only at $n = 1024$ does its cost rise
-past the FFS and the FFS take over. The reason growing $n$ helps only slowly is structural: the
-group order is $2^n - 1$ by construction, so its factorisation rather than the field size sets
-the cost. The $n = 512$ and $n = 1024$ rows take their largest prime factor from the Fermat
-numbers $F_8 = 2^{256} + 1$ and $F_9 = 2^{512} + 1$ dividing $2^n - 1$; every factorisation in
-the table is verified for primality and divisibility by `hkex_gf_pohlig_hellman.py`.
-
-**Wall clock at the deployed parameters.** $2^{36.5}$ group operations at the $1.26 \times 10^5$
-multiplications per second measured for `herradura.h`'s `gf_mul_ba` (`-O2`, reference ARM64 host)
-is about nine days on a single core. Pollard rho uses constant memory and parallelises linearly,
-and a carryless-multiply field implementation on a desktop core is one to two orders of magnitude
-faster — so this is hours of commodity compute, not a margin.
-
-**2026 landscape update (TODO #71):** The entry $n = 256 \approx 128$ bits in earlier versions
-of this document was incorrect.  Under the FFS $L[1/3]$ attack, $\mathbb{GF}(2^{256})^{\ast}$ DLP
-provides approximately 80–90 bits of classical security — well below the 128-bit target.  Reaching
-128 bits under $L[1/3]$ requires $n \approx 1000$ or higher (analogous to how 3072-bit prime-field
-DH is needed for 128-bit security, not 256-bit).  NIST SP 800-57 Part 1 Rev. 5 (2020) and ENISA
-"Algorithms, Key Sizes and Parameters" (2022) deprecate $\mathbb{GF}(2^n)^{\ast}$ for new designs
-entirely; the correction here documents the concrete security shortfall at $n = 256$.
-
-**Second correction (TODO #212):** the 80–90 bit figure above is itself an over-estimate of the
-*effective* security, because it costs only the FFS. Pohlig–Hellman brings $n = 256$ down to about
-$2^{36.5}$, as derived at the top of this subsection. The TODO #71 conclusion — that
-$\mathbb{GF}(2^n)^{\ast}$ is unsuitable and the protocols built on it are demo-only — is unchanged
-and, if anything, understated: the shortfall is roughly 90 bits below the 128-bit target rather
-than 40.
-
-For production use, elliptic curve Diffie-Hellman over a prime-order curve (ECDH) provides better
-security-per-bit than any $\mathbb{GF}(2^n)^{\ast}$ construction.  HKEX-GF is a proof-of-concept
-demonstrating that the classical structural break (§3) is avoidable; §10.9 explains why
-$\mathbb{GF}(2^n)^{\ast}$ is ultimately unsuitable as a production DLP group.
-
-#### 9.2.5 FSCX period preserved
-
-FSCX, fscx\_revolve, and all symmetric protocols (HSKE, HPKS, HPKE) are **unchanged**. Their correctness proofs (Theorems 1–6, Corollaries 1–3) remain valid. The HKEX-GF key exchange produces $sk \in \mathbb{GF}(2^n)^{\ast}$, which is passed to HSKE/HPKS/HPKE as a pre-shared symmetric key — the existing interface.
-
-**Verified experimentally:** `fscx_revolve(fscx_revolve(P, K, i), K, r) = P` for $i + r = n$ holds at 4000/4000 trials across $n \in \{32, 64\}$ (Section I-D of `hkex_nl_proposal.py`).
-
-#### 9.2.6 Migration path — successor group for HKEX-GF, HPKS, and HPKE (TODO #127, v1.9.90)
-
-Given the deprecation documented in §9.2.4, the question is the minimal-change upgrade that preserves the suite's Schnorr algebra — the signing equation `s = (k - a*e) mod ord` and verification `g^s * C^e == R` — so that threshold signing (TODO #98) and Schnorr ring signatures (TODO #78.I) continue to apply.  `SecurityProofsCode/hpks_ristretto_migration.py` evaluates **ristretto255** (RFC 9496, the prime-order quotient of Curve25519, order approximately `2^252`, roughly 128-bit ECDLP) as that successor, using a self-contained pure-Python implementation validated against the RFC 9496 generator test vector.
-
-**Drop-in verification.**  The prototype re-implements HPKS signing verbatim over ristretto255 — only `gf_pow(g, a)` becomes scalar multiplication `a*G` and `gf_mul` becomes point addition; the challenge function is algebra-agnostic and stays HFSCX-256-DM.  Results: 50/50 sign/verify round-trips; tampered message, tampered scalar, and wrong-key signatures all rejected; 3-of-3 additive threshold aggregation verifies against the summed public key; AOS Schnorr ring signatures close for every ring member and reject substituted members.  Notably, the **prime group order removes the order-divisor caveats** that GF(2^n)-star required (BSGS in §9.2.4 recovers non-unique exponent representatives precisely because `g = 3` is non-primitive; in a prime-order group every non-identity element generates the full group).
-
-**Migration impact.**  Group elements are 32 bytes on both sides, so existing PEM/DER SEQUENCE layouts carry over unchanged; only a new algorithm tag (for example `genpkey --algo hpks-r255`) is required.  Scalars re-range from `mod 2^n - 1` to `mod ell`.  Keys are not interoperable between the two groups.  HSKE and the symmetric halves of HPKE are untouched — the derived secret enters them as a pre-shared key exactly as today.
-
-**Post-quantum assessment.**  Ristretto255 is a **classical-security-only** upgrade: Shor's algorithm breaks ECDLP exactly as it breaks GF(2^n)-star DLP.  Migration fixes the classical shortfall (from the roughly $2^{36.5}$ Pohlig–Hellman cost of §9.2.4 — or the 80–90 bits the FFS alone would suggest — up to 128 bits, since a prime-order group has no Pohlig–Hellman structure to exploit) but provides nothing against quantum adversaries.  No quantum-resistant successor group exists for this protocol family: the Schnorr algebra fundamentally requires a group with hard DLP, and every such group is Shor-vulnerable.  The post-quantum path for the suite therefore remains HKEX-RNL (Ring-LWR, §11.4) plus HPKS-Stern-F / HPKE-Stern-KEM (code-based, §11.8.4) exclusively.  Recommendation: document ristretto255 as the classical upgrade path but keep implementation effort on the PQC track.
+This formula depends only on the public wire values $C$ and $C_2$. The private parameters $A$, $B$, $A_2$, $B_2$ cancel exactly through Corollary 2. This directly implies that HKEX is **broken** (see §3.1).
 
 ---
 
-### 9.3 FSCX-CY — Carry-Injection FSCX (Experimental)
+### 2.2 HSKE — Symmetric Key Encryption
 
-#### 9.3.1 Construction
+**Protocol:**
 
-Define the **carry-injection** variant:
+$$\text{Encrypt:}\quad E = \text{FSCX-REVOLVE-N}(P, K, K, i)$$
+$$\text{Decrypt:}\quad D = \text{FSCX-REVOLVE-N}(E, K, K, r)$$
 
-$$\text{FSCX-CY}(A, B) = M\left((A + B) \bmod 2^n\right)$$
+Applying the affine formula with $B = N = K$:
 
-where $+$ is ordinary integer addition (not $\oplus$), and $M = I \oplus \text{ROL}(1) \oplus \text{ROR}(1)$ is the standard FSCX linear operator.
+$$E = M^i \cdot P + S_i \cdot (M \cdot K \oplus K) = M^i \cdot P + S_i \cdot (M + I) \cdot K$$
 
-Compared to standard FSCX:
+The key contributes the additive offset $c_K = S_i \cdot (M + I) \cdot K$ to $E$. For random $K$, this offset is nonzero (Eve cannot decrypt without knowing $K$).
 
-$$\text{FSCX}(A, B) = M(A \oplus B), \qquad \text{FSCX-CY}(A, B) = M\left((A + B) \bmod 2^n\right)$$
+**Correctness:** Decrypting:
 
-The difference is the **carry term**:
+$$\begin{aligned}
+D &= M^r \cdot E + S_r \cdot (M + I) \cdot K \\
+  &= M^r \cdot [M^i \cdot P + S_i \cdot (M+I) \cdot K] + S_r \cdot (M+I) \cdot K \\
+  &= M^n \cdot P + (M^r \cdot S_i + S_r) \cdot (M+I) \cdot K \\
+  &= P + S_n \cdot (M+I) \cdot K \qquad \leftarrow M^r \cdot S_i + S_r = S_n = 0 \\
+  &= P \quad \checkmark
+\end{aligned}$$
 
-$$\delta(A, B) = (A + B \bmod 2^n) \oplus (A \oplus B)$$
+The step $M^r \cdot S_i + S_r = S_n = 0$ follows from Corollary 2 (expanding $M^r \cdot S_i = M^r + \cdots + M^{n-1}$, $S_r = I + \cdots + M^{r-1}$, sum is $S_n$).
 
-which satisfies $\text{FSCX-CY}(A, B) = \text{FSCX}(A, B) \oplus M(\delta(A, B))$.
-
-**Operations used:** XOR, cyclic rotation, and integer addition (mod $2^n$) — all basic binary operations.
-
-#### 9.3.2 Non-linearity over $\mathbb{GF}(2)$
-
-**Claim.** For fixed $B \neq 0$, the map $A \mapsto \text{FSCX-CY}(A, B)$ is **not** $\mathbb{GF}(2)$-linear.
-
-**Proof.** A $\mathbb{GF}(2)$-linear map $f$ satisfies $f(A \oplus X) = f(A) \oplus f(X)$. For affine maps, $f(A \oplus X) = f(A) \oplus f(X) \oplus f(0)$. We test the affine condition:
-
-$$\text{FSCX-CY}(A \oplus X, B) \stackrel{?}{=} \text{FSCX-CY}(A, B) \oplus \text{FSCX-CY}(X, B) \oplus \text{FSCX-CY}(0, B)$$
-
-The left side equals $M((A \oplus X) + B \bmod 2^n)$. The right side, after simplification using $M$'s linearity, equals $M((A + B \bmod 2^n) \oplus (X + B \bmod 2^n) \oplus B)$. These differ precisely when the carry in $A + B$ and the carry in $X + B$ do not cancel uniformly — which occurs whenever $A \text{ AND } B \neq X \text{ AND } B$ modulo their carry chains. Experimentally: 4998/5000 random triples $(A, X, B)$ violate the affine condition. $\blacksquare$
-
-The carry term $\delta(A, B)$ encodes the full carry chain of $A + B$:
-
-$$\delta(A, B) = 2(A \mathbin{\text{AND}} B) \oplus 2(A \mathbin{\text{AND}} B \oplus A \mathbin{\text{XOR}} B \text{-carry}) \oplus \cdots$$
-
-involving AND operations at every bit position, which are products in $\mathbb{GF}(2)$ — hence non-linear.
-
-#### 9.3.3 HKEX-CY: why correctness fails
-
-The HKEX correctness identity relies on:
-
-$$A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B \tag{FSCX key relation}$$
-
-which follows from the affine closed form $f_B^k(A) = M^k \cdot A + M \cdot S_k \cdot B$ — a consequence of $\mathbb{GF}(2)$-linearity. When $f_B(A) = M((A+B) \bmod 2^n)$, no analogous closed form exists: the carry terms at each iteration step $j$ depend non-linearly on the current state $A_j$, which in turn depends on the private pair $(A, B)$.
-
-Consequently, the telescoping cancellation $M \cdot S_r + M^{r+1} \cdot S_i = S_n = 0$ has no equivalent under FSCX-CY, and $sk_\text{alice} \neq sk_\text{bob}$ in general.
-
-**Verified experimentally:** HKEX-CY with $n = 32$, $i = 8$, $r = 24$ gives $sk_\text{alice} = sk_\text{bob}$ in 0/2000 trials (Section II-C of `hkex_nl_proposal.py`).
-
-#### 9.3.4 HSKE-CY: period structure
-
-For HSKE, correctness requires the iterated map $g_K^T(P) = P$ for a fixed step count $T = i + r$. Under FSCX-CY, the functional period $T(K) = \text{lcm of all cycle lengths of } g_K$ is **key-dependent** and astronomically large:
-
-| $n$ | $K$ | FSCX period | FSCX-CY period |
-|-----|-----|-------------|----------------|
-| 8 | 0x00 | 4 | 4 |
-| 8 | 0x01 | 8 | 20 520 |
-| 8 | 0x7F | 8 | 188 404 |
-| 16 | 0x0001 | 16 | $\approx 1.14 \times 10^{20}$ |
-| 16 | 0x7FFF | 16 | $\approx 5.2 \times 10^{30}$ |
-
-The explosion in period length makes FSCX-CY unsuitable as a direct drop-in replacement for FSCX in HSKE: the encrypt/decrypt step count $T(K)$ would need to be computed per-key (computationally expensive) and would be astronomically large (impractical).
-
-The near-infinite periods are a consequence of the carry operator coupling all bit positions: the iterated map visits an enormous fraction of $\{0, \ldots, 2^n{-}1\}$ before returning to any starting point.
-
-#### 9.3.5 Eve's attack on FSCX-CY
-
-Eve applies $sk_\text{eve} = S_{r+1} \cdot (C \oplus C_2)$ to FSCX-CY public values.
-
-Under FSCX-CY, each public value $C = g_B^i(A)$ encodes private carry terms $\delta(A_j, B)$ accumulated over $i$ steps. These terms depend non-linearly on $(A, B)$ and cannot be separated from $C$ by any $\mathbb{GF}(2)$-linear operator. As a result, $S_{r+1} \cdot (C \oplus C_2) \neq sk_\text{alice}$ in general.
-
-**Verified experimentally:** Eve's formula succeeds 0/2000 times on FSCX-CY sessions (Section II-D of `hkex_nl_proposal.py`). Probability of accidental success $\approx 2^{-32}$ per trial.
+> **Why HSKE is not broken the way HKEX is:** HSKE is a *symmetric* cipher, not a key exchange. Both parties share $K$ before communication; $K$ never appears on the wire. The offset $c_K = S_i \cdot (M+I) \cdot K$ in $E$ is a non-zero private additive term. Unlike HKEX, there is no step at which private parameters must cancel from the ciphertext itself — only from the round-trip $D = P$, which they do via $S_n = 0$.
+>
+> **Correction (TODO #210):** a non-zero offset is necessary but not sufficient. $c_K$ is confined to the image of the key map, and by Theorem 4.1 (§1.3.1) that image is a proper subspace at every deployed step count — co-rank 128 for this nonce-augmented map $S_i \cdot (M + I)$, and 126 for the map $T_i = M \cdot S_i$ that the shipped `hske_encrypt` actually uses. The complement is unmasked: 126 linear functionals of $P$ are readable from $E$ alone, for every key. See W9 in §4.2.
 
 ---
 
-### 9.4 Summary and Recommendation
+### 2.3 HPKS₂ — Public Key Signature
 
-| Property | HKEX-GF | FSCX-CY |
-|----------|---------|---------|
-| Key-exchange correct | **Yes** (proved by field commutativity) | No (S_n = 0 has no carry analog) |
-| Non-linear over $\mathbb{GF}(2)$ | Yes (exponentiation) | Yes (carry term) |
-| Eve's $S_{r+1}(C \oplus C_2)$ fails | Yes (0/4 000 trials) | Yes (0/2 000 trials) |
-| Operations | XOR + left-shift | XOR + rotation + ADD |
-| FSCX period preserved | Yes (HSKE/HPKS/HPKE unchanged) | No (key-dependent, exponentially large) |
-| Security assumption | DLP in $\mathbb{GF}(2^n)^{\ast}$ | Unknown |
-| Copies a known cipher | No (DH is a key-exchange, not a cipher) | No |
+**Protocol** (Alice signs plaintext $P$):
 
-**Recommended fix.** Replace the HKEX key-exchange step with HKEX-GF. All symmetric protocols (HSKE, HPKS, HPKE) continue using standard FSCX with no changes. The period structure $M^n = I$, $S_n = 0$ remains valid; all correctness proofs (Theorems 1–6, Corollaries 1–3) are unaffected. The only change is in how the shared symmetric key $sk$ is established: via $\mathbb{GF}(2^n)$ DH rather than via FSCX iteration.
+$$\begin{aligned}
+&\text{Public key:}\quad (C, B_2, A_2, r) \\
+&\text{Private key:}\quad (C_2, B, A)
+\end{aligned}$$
 
-**FSCX-CY as a direction.** Although FSCX-CY cannot replace FSCX directly, it demonstrates that carry-injection creates genuine non-linearity with a minimal code change (one operation: `A ^ B` → `(A + B) mod 2^n`). A future variant could use FSCX-CY for a symmetric cipher where the key-specific period $T(K)$ is precomputed and incorporated into the protocol design.
+The original scheme used $S = sk_A \oplus P$ (a direct XOR mask), which trivially leaks $sk_A$ (see W3). The corrected scheme **HPKS₂** replaces the XOR with HSKE encryption of $P$ under $sk_A$:
 
----
+$$\begin{aligned}
+&\textbf{Alice:}\quad S = \text{FSCX-REVOLVE-N}(P, sk_A, sk_A, i) \quad [\text{HSKE-encrypt } P \text{ under } sk_A] \\
+&\textbf{Bob:}\quad V = \text{FSCX-REVOLVE-N}(S, sk_B, sk_B, r) \quad [\text{HSKE-decrypt } S \text{ under } sk_B] \\
+&\qquad\text{Check: } V = P
+\end{aligned}$$
 
-## 10. v1.4.0 Migration: HKEX → HKEX-GF
+**Correctness:** From HSKE correctness with $B = sk_A$, $N = sk_A$ and $sk_A = sk_B$: $V = P$. $\checkmark$
 
-### 10.1 Change Summary
-
-Version 1.4.0 replaces the broken HKEX key exchange with HKEX-GF across all implementations (Python, Go, C, ARM assembly, NASM i386, Arduino). Two functions are affected:
-
-| Function | v1.3.x (broken) | v1.4.0 (fixed) |
-|----------|-----------------|----------------|
-| Key exchange | FSCX-based (linear, $sk$ public) | DH over $\mathbb{GF}(2^n)^{\ast}$ |
-| `fscx_revolve_n` | Used in HKEX/HPKS/HPKE | **Removed** — nonce cancels identically |
-| HSKE | `fscx_revolve_n(P, K, K, i)` | `fscx_revolve(P, K, i)` |
-| HPKS | $S = sk \oplus P$, where $sk = \text{FSCX-based}$ | $S = sk \oplus P$, where $sk = g^{ab}$ |
-| HPKE | $E = sk \oplus P$, where $sk = \text{FSCX-based}$ | $E = sk \oplus P$, where $sk = g^{ab}$ |
-
-### 10.2 Why `fscx_revolve_n` Was Removed
-
-Theorem 10 (proved in §4.5 / SecurityProofsCode) shows that any nonce $N$ injected during FSCX iteration satisfies:
-
-$$\text{FSCX-REVOLVE-N}(A, B, N, k) = M^k \cdot A \oplus M \cdot S_k \cdot B \oplus S_k \cdot N$$
-
-The nonce contribution $S_k \cdot N$ is the same on both sides of the key exchange equation, so it cancels identically — providing no protection against the classical break. With HKEX-GF, the nonce was derived as $N = C \oplus C_2$ (a public value), making its use circular and pointless. `fscx_revolve_n` is therefore removed rather than kept as dead code.
-
-### 10.3 Primitive Polynomials Used
-
-| $n$ | Primitive polynomial | Hex constant (lower $n$ bits) |
-|-----|---------------------|-------------------------------|
-| 32  | $x^{32} + x^{22} + x^2 + x + 1$ | `0x00400007` |
-| 64  | $x^{64} + x^4 + x^3 + x + 1$ | `0x000000000000001B` |
-| 128 | $x^{128} + x^7 + x^2 + x + 1$ | `0x00000000000000000000000000000087` |
-| 256 | $x^{256} + x^{10} + x^5 + x^2 + 1$ | `0x0000...0425` |
-
-Generator $g = 3$ (polynomial $x + 1$) for all field sizes.
-
-### 10.4 Experimental Confirmation (v1.4.0 Test Results)
-
-All results from `Herradura_tests.py`, `Herradura_tests.go`, `Herradura_tests.c`:
-
-| Test | Result |
-|------|--------|
-| HKEX-GF correctness $g^{ab} = g^{ba}$ | 10 000/10 000 (Python), 1 000/1 000 (C) |
-| Eve classical attack $S_{r+1}(C \oplus C_2) \neq sk$ | 0/10 000 successes |
-| HPKS sign+verify $sk \oplus P \xrightarrow{\text{verify}} P$ | 10 000/10 000 |
-| Key sensitivity (flip 1 bit of $a$ → HD in $sk$) | mean $\approx n/2$ (avalanche) |
-| FSCX orbit period (unchanged) | $n$ or $n/2$, 0 exceptions |
-| FSCX bit-frequency bias | 49.5–50.5% per bit |
-| HSKE round-trip $\text{fscx-revolve}^2(P, K, i, r) = P$ | 5 000/5 000 |
-
-### 10.5 Security Status After Migration
-
-| Weakness | v1.3.x | v1.4.0 |
-|----------|--------|--------|
-| W2: $sk$ computable from $(C, C_2)$ | **ACTIVE** (Thm. 7) | **Mitigated** — $sk = g^{ab}$ requires DLP |
-| W3: HPKE no confidentiality | **ACTIVE** | **Mitigated** — $E = sk \oplus P$ with CDH-hard $sk$ |
-| W5: Single $(P,S)$ reveals $sk$ | **ACTIVE** | **Mitigated** — $sk$ is CDH-hard to compute |
-| W6: No hardness assumption established | **ACTIVE** | **Mitigated** — CDH in $\mathbb{GF}(2^n)^{\ast}$ |
-| W4: Bit malleability (no IND-CCA2) | Active | Still active (structural to XOR encryption) |
-| W7: Short orbit space | Active | Still active for FSCX; irrelevant for GF DH |
-| W8: No authenticated encryption | Active | Still active (no MAC component) |
-
-The key exchange is now provably secure under CDH in $\mathbb{GF}(2^n)^{\ast}$. Remaining weaknesses (W4, W7, W8) are structural to the XOR-based symmetric protocols and are documented; they do not affect the key exchange itself.
-
+> **Remaining limitation:** Since $sk_A = S_{r+1} \cdot (C \oplus C_2)$ is computable from the public key, Eve can recover $sk_A$ and trivially forge signatures using HPKS₂ as well. The HPKS₂ improvement removes the *direct* one-query key recovery of the original scheme, but does not restore EUF-CMA security.
 
 ---
 
-### 10.6 Classical Security Analysis of v1.4.0 Protocols
+### 2.4 HPKE — Public Key Encryption
 
-#### 10.6.1 HSKE — Known-Plaintext Attack
+**Protocol:**
 
-By Theorem 11 (§11.1): $E = M^i \cdot P \oplus M \cdot S_i \cdot K$.  Defining $c_K \triangleq M \cdot S_i \cdot K$:
+$$\begin{aligned}
+&\text{Alice publishes:}\quad (C, B_2, A_2) \text{ as public key} \\
+&\text{Alice keeps:}\quad (C_2, B, A) \text{ as private key} \\
+&N = C \oplus C_2 \quad \text{(computable from public key)}
+\end{aligned}$$
 
-$$c_K = E \oplus M^i \cdot P$$
+$$\begin{aligned}
+&\textbf{Bob:}\quad E = \text{FSCX-REVOLVE-N}(C, B_2, N, r) \oplus A_2 \oplus P \\
+&\textbf{Alice:}\quad D = \text{FSCX-REVOLVE-N}(C_2, B, N, r) \oplus A \oplus E
+\end{aligned}$$
 
-One known-plaintext pair $(P, E)$ immediately yields $c_K$.  At $n = 64$, $i = 16$: $\text{rank}(\Phi) = 64$
-(experimentally verified: 0 unconstrained key bits from a single pair), meaning $K$ is uniquely
-determined.  **HSKE provides no security under known-plaintext attack at any $n$.**
+**Correctness:**
 
-#### 10.6.2 HPKS — Classical Forgery Resistance
+$$\begin{aligned}
+D &= sk_A \oplus sk_B \oplus P = P \quad \checkmark
+\end{aligned}$$
 
-Forgery requires finding $(R^{\ast}, s^{\ast})$ satisfying $g^{s^{\ast}} \cdot C^{e^{\ast}} = R^{\ast}$ where
-$e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$, without knowing the private key $a$.
+**Ciphertext structure:**
 
-- If Eve fixes $R^{\ast}$ first: she needs $s^{\ast} = \log_g(R^{\ast} \cdot C^{-e^{\ast}})$ — a DLP instance.
-- If Eve fixes $s^{\ast}$ first: she can compute $g^{s^{\ast}} \cdot C^{e^{\ast}}$ for any $e^{\ast}$, but the
-  constraint $e^{\ast} = \text{fscx-revolve}(R^{\ast}_\text{bits}, P^{\ast}, i)$ ties $R^{\ast}$ and $e^{\ast}$
-  together.  Since fscx\_revolve is an affine bijection in its first argument (see §10.7),
-  solving both simultaneously reduces to DLP hardness.
+$$E = sk_B \oplus A_2 \oplus P$$
 
-Forgery resistance is equivalent to DLP hardness in $\mathbb{GF}(2^n)^{\ast}$, subject to the
-quasi-polynomial attack in §9.2.4 and the challenge-function caveat in §10.7.
-
-#### 10.6.3 HPKE — Classical Attack
-
-Ciphertext is $(R, E) = (g^r, \text{fscx-revolve}(P, g^{ar}, i))$.  Recovering the
-plaintext requires $g^{ar}$, which is the CDH problem given $(g^a, g^r)$.
-Since CDH $\leq$ DLP, all classical DLP attacks in §9.2.4 apply directly.
-
-Additionally, the affine structure of fscx\_revolve means that given $(g^r, E)$ and a
-known-plaintext pair, $c_{\mathit{ek}} = E \oplus M^i \cdot P$ recovers the key constant.
-DLP on $\mathit{ek} = C^r$ or $\mathit{ek} = R^a$ may then recover $a$ or $r$.
+Since $sk_B = S_{r+1} \cdot (C \oplus C_2)$ is a linear function of public values (Corollary 3), and $A_2$ is part of the public key, Eve computes $P = E \oplus sk_B \oplus A_2$ directly. **HPKE provides no secrecy against a passive eavesdropper.**
 
 ---
 
-### 10.7 HPKS Challenge Function — Algebraic Properties
+## 3. Security Analysis
 
-The challenge in HPKS uses fscx\_revolve in place of a hash function:
-$e = \text{fscx-revolve}(R_\text{bits}, P, i)$.  Two algebraic properties affect
-provable security.
+### 3.1 The Classical Break
 
-**Property 1 — Affine bijection in $R$.**
+**Theorem 7 (Classical Break).**
 
-For fixed $P$ and $i$, the map $R \mapsto M^i \cdot R \oplus M \cdot S_i \cdot P$
-is an affine bijection: the linear part $M^i$ is invertible (since $M$ has order $n/2$),
-so no two distinct $R$ values produce the same challenge $e$.
+> Eve observes only the wire values $C$ and $C_2$.
+> She recovers the HKEX shared secret as:
+>
+> $$sk = S_{r+1} \cdot (C \oplus C_2) = \bigoplus_{j=0}^{r} M^j \cdot (C \oplus C_2)$$
+>
+> Cost: $O(r \cdot n) = O(n^2)$ bit operations. No private information is used.
 
-*Verified:* 50 000 random $R$ values at $n = 64$, fixed $P$: **0 collisions**.
+*Proof:* This is Corollary 3 of Theorem 6. The full derivation is given in §2.1: private parameters $A$, $B$ cancel from $sk_A$ via Corollary 2, leaving only $S_{r+1} \cdot (C \oplus C_2)$. $\blacksquare$
 
-**Property 2 — Predictable challenge delta.**
-
-By the difference identity (Theorem 11 linearity):
-
-$$e(R_2) \oplus e(R_1) = \text{fscx-revolve}(R_1 \oplus R_2, 0, i) = M^i \cdot (R_1 \oplus R_2)$$
-
-Given any one valid challenge $e(R_1)$, the challenge for any $R_2 = R_1 \oplus \delta$ is
-$e(R_2) = e(R_1) \oplus M^i \cdot \delta$ — **publicly computable without oracle access**.
-
-*Verified:* 10 000 random $(R_1, R_2)$ pairs at $n = 64$: delta identity holds **100%**.
-
-**Consequence for Random Oracle Model (ROM) security proofs.**
-
-Standard Schnorr security proofs (Pointcheval–Stern, forking lemma) assume the challenge
-hash is a random oracle: an adversary who queries $H$ on one input learns nothing about
-outputs on other inputs.  fscx\_revolve violates this: the adversary can predict all
-challenges without any oracle query.
-
-The forking lemma requires that rewinding the adversary with a different challenge on the
-same $R$ produces an *independent* random challenge.  Here, given $e_1$ for $(R, P)$, an
-adversary computes the challenge $e_2$ for $(R, P')$ as $e_2 = e_1 \oplus M^i \cdot (P \oplus P')$.
-The rewound challenge is deterministically related to the original — the forking lemma
-does not apply in its standard form.
-
-**Practical implication.** The DLP in $\mathbb{GF}(2^n)^{\ast}$ still protects the private key
-$a$: Eve cannot recover $a$ from the Schnorr equation without solving DLP.  But the
-non-ROM challenge means the standard Schnorr security proof does not carry over, and
-subtle attacks exploiting challenge predictability cannot be excluded by proof alone.
-The NL-FSCX v1 revolve (§11.2.1) hardens the challenge against linear prediction;
-full ROM replacement requires a dedicated cryptographic hash function.
+**Experimental verification:** `SecurityProofsCode/hkex_classical_break.py` — 10,000 trials across $n \in \{32, 64, 128, 256\}$, all pass.
 
 ---
 
-### 10.8 Quantum Algorithm Analysis (v1.4.0)
+### 3.2 Single Nonce Injection Cannot Fix HKEX
 
-#### 10.8.1 Grover's Algorithm
+**The proposal:** Replace the public-key computation $C = \text{FSCX-REVOLVE}(A, B, i)$ with the nonce-augmented variant $C = \text{FSCX-REVOLVE-N}(A, B, \Phi, i)$:
 
-**HSKE (key-only attack).**  Brute-force key search costs $O(2^n)$ classically and
-$O(2^{n/2})$ with Grover.  For $n = 256$: $2^{128}$ post-quantum symmetric security
-against key-only attacks.  This bound is vacuous when plaintexts are available — the
-classical 1-pair KPT attack recovers the key in $O(n^2)$ regardless.
+$$C = M^i \cdot A + S_i \cdot (M \cdot B \oplus \Phi)$$
 
-**HKEX-GF, HPKS, HPKE.**  Security rests on DLP in $\mathbb{GF}(2^n)^{\ast}$.  Shor's
-algorithm (§10.8.4) solves DLP in polynomial quantum time and strictly dominates
-Grover for all these protocols.  **Grover is irrelevant for the GF-DLP protocols.**
+**Case (a): Public nonce $\Phi$.**
 
-#### 10.8.2 Simon's Algorithm
+Solving for $A$:
 
-**Simon's problem:** find the hidden period $s$ of a function $f(x) = f(x \oplus s)$
-in $O(n)$ quantum queries, where $s$ is $\mathbb{GF}(2)$-linear.
+$$A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B \oplus M^r \cdot S_i \cdot \Phi$$
 
-**Applicability.** The DLP function $f(x) = g^x$ in $\mathbb{GF}(2^n)^{\ast}$ has collisions
-determined by the *cyclic* group structure of the exponent: $g^{x_1} = g^{x_2}$ iff
-$x_1 \equiv x_2 \pmod{|\langle g \rangle|}$.  This is a $\mathbb{Z}$-linear period, not a
-$\mathbb{GF}(2)$-linear period.  Simon's QFT over $\mathbb{GF}(2)^n$ cannot extract it;
-the correct tool is Shor's QFT over $\mathbb{Z}_N$.
+Substituting into $sk_A$:
 
-**Application to HSKE.** HSKE has affine $\mathbb{GF}(2)$ structure, so Simon's hidden
-subgroup problem can be applied to the HSKE encryption oracle.  It recovers the kernel of
-the affine map — providing no advantage beyond the classical 1-pair KPT attack.
+$$sk_A = S_{r+1} \cdot (C \oplus C_2) \oplus M^r \cdot S_i \cdot \Phi$$
 
-#### 10.8.3 Bernstein–Vazirani Algorithm
+Both terms are computable from public information $(C, C_2, \Phi)$. Eve adjusts her formula by the known offset. **The break survives.**
 
-**HSKE.**  The encryption map $E = M^i \cdot P \oplus c_K$ is affine in $P$.  With
-oracle access (fixed key, variable plaintext), BV recovers $c_K$ in **1 quantum query**,
-matching the classical known-plaintext bound.  No asymptotic quantum advantage over the
-classical attack.
+**Case (b): Private nonce (e.g., $\Phi = B$).**
 
-**HKEX-GF, HPKS, HPKE.** Involve $\mathbb{GF}(2^n)^{\ast}$ exponentiation, which is not
-$\mathbb{GF}(2)$-affine in the exponent.  BV does not apply.
+With each party using their own private $B$ as nonce:
 
-#### 10.8.4 Shor's Algorithm — Primary Quantum Threat
+$$sk_A = S_{r+1} \cdot (C \oplus C_2) \oplus M^r \cdot S_i \cdot B$$
+$$sk_B = S_{r+1} \cdot (C \oplus C_2) \oplus M^r \cdot S_i \cdot B_2$$
 
-Shor's algorithm solves the DLP in any cyclic group $G = \langle g \rangle$ of order $N$
-in $O((\log N)^2 \log\log N \cdot \log\log\log N)$ quantum gate operations.  For
-$\mathbb{GF}(2^n)^{\ast}$: group order $N = 2^n - 1$, quantum time $O(n^2 \log n)$.
+$$sk_A \oplus sk_B = M^r \cdot S_i \cdot (B \oplus B_2) \neq 0 \quad \text{for independent } B, B_2$$
 
-| Adversary | Best DLP attack on $\mathbb{GF}(2^n)^{\ast}$ | Complexity |
-|-----------|-----------------------------------------------|------------|
-| Classical (practical) | Function field sieve (FFS) | $L_{2^n}[1/3, c]$ — ~80–90 bits at $n=256$ |
-| Classical (asymptotic) | Quasi-polynomial (Granger–Kleinjung–Zumbrägel 2014–2016) | $n^{O(\log n)}$ — demonstrated for composite-degree fields |
-| Quantum | Shor's algorithm | $O(n^2 \log n)$ — breaks all practical sizes |
+**Correctness is destroyed.**
 
-Both the FFS (classical) and Shor's algorithm (quantum) break $\mathbb{GF}(2^n)^{\ast}$ DLP at
-all practical parameter sizes.  At $n = 256$ the FFS gives approximately 80–90 bits of classical
-security (below the 128-bit target); Shor's algorithm reduces this to polynomial time on a
-fault-tolerant quantum computer.
+**Lemma (No middle ground).** Any nonce is either (a) public — break survives — or (b) private — correctness fails. XOR injection is a $\mathbb{GF}(2)$-linear operation; adding it to a linear scheme does not introduce nonlinearity.
 
-**Concrete qubit-count resource estimates (2026 landscape review, TODO #163).** The
-complexity classes above are asymptotic; the following gives concrete logical-qubit
-figures for context, drawn from 2026 quantum-resource-estimation literature for
-**elliptic-curve** DLP (ECDLP) — not $\mathbb{GF}(2^n)^{\ast}$ DLP directly, since no
-equivalent space-optimized circuit has been published for the characteristic-2 group
-HKEX-GF actually uses (see caveat below):
+**Experimental verification:** `SecurityProofsCode/hkex_fscxn_analysis.py` — Cases (a)/(b)/(c), 2,000 trials each, all match algebraic predictions.
 
-| Source | Target | Logical qubits | Notes |
+---
+
+### 3.3 General Nonce Impossibility
+
+**Theorem 8 (Nonce Impossibility).**
+
+> For ANY nonce choice $n_A = f(A, B, C, C_2)$ with symmetric counterpart $n_B = f(A_2, B_2, C_2, C)$:
+>
+> If $sk_A = sk_B$ for **all** independently generated key pairs $(A,B)$ and $(A_2,B_2)$, then $sk$ is a $\mathbb{GF}(2)$-affine function of $(C, C_2)$ alone.
+
+*Proof.* Applying the affine iteration formula for $\text{FSCX-REVOLVE-N}$ and substituting $A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B$:
+
+$$sk_A = M^r \cdot C_2 + S_r \cdot (M \cdot B \oplus n_A) \oplus A$$
+$$= M^r \cdot (C \oplus C_2) \oplus \underbrace{(S_r \cdot M + M^{r+1} \cdot S_i)}_{S_n = 0} \cdot B \oplus S_r \cdot n_A$$
+$$= M^r \cdot (C \oplus C_2) \oplus S_r \cdot n_A$$
+
+Symmetrically: $sk_B = M^r \cdot (C \oplus C_2) \oplus S_r \cdot n_B$.
+
+Correctness $sk_A = sk_B$ requires $S_r \cdot n_A = S_r \cdot n_B$ for ALL independent $(A,B)$ and $(A_2,B_2)$. Since the key pairs are drawn independently, the common value of $S_r \cdot n_A = S_r \cdot n_B$ can only depend on what is common to both parties — the public values $C$ and $C_2$. Therefore $S_r \cdot n_A = h(C, C_2)$ for some function $h$, and:
+
+$$sk = M^r \cdot (C \oplus C_2) \oplus h(C, C_2)$$
+
+which is a function of public values only. $\blacksquare$
+
+**Corollary.** Private components of $n_A$ in $\ker(S_r)$ contribute nothing to $sk$ ($S_r$ kills them). Private components outside $\ker(S_r)$ break correctness. There is no middle ground.
+
+**Experimental verification:** `SecurityProofsCode/hkex_nonce_impossibility.py` — 10 nonce strategies exhaustively tested; all either correct+public or broken.
+
+---
+
+### 3.4 Partial Correctness of $n_A = A \oplus C$
+
+Experimentally, the nonce $n_A = A \oplus C$ gives $sk_A = sk_B$ in approximately $1/16$ of trials.
+
+**Explanation.** With $n_A = A \oplus C$:
+
+$$S_r \cdot n_A = S_r \cdot (A \oplus C) = S_r \cdot A \oplus S_r \cdot C$$
+
+Substituting $A = M^r \cdot C \oplus M^{r+1} \cdot S_i \cdot B$:
+
+$$S_r \cdot A = S_r \cdot M^r \cdot C \oplus S_r \cdot M^{r+1} \cdot S_i \cdot B$$
+
+So $S_r \cdot n_A$ depends on **both** $B$ and $C$. The correctness condition $S_r \cdot n_A = S_r \cdot n_B$ requires the two parties' expressions to agree — a $\mathbb{GF}(2)$ linear condition on the combined parameter space.
+
+The condition matrix $S_r \cdot [(I + M^i) \mid M \cdot S_i]$ acting on $(A, B)$ (or $(A_2, B_2)$) has **rank 4** over $\mathbb{GF}(2)^n$.
+
+$$P(\text{correct}) = 2^{-\text{rank}} = 2^{-4} = 1/16 \approx 0.0625$$
+
+Empirical result: $322/5000 = 0.0644$ — consistent with $1/16$. This nonce is neither always-correct (public) nor always-broken (purely private): it satisfies the correctness condition on a $\mathbb{GF}(2)$ subspace of dimension $n - 4$, occurring with probability exactly $2^{-4}$.
+
+---
+
+### 3.5 Multi-Nonce Analysis
+
+**The proposal:** Use a distinct nonce $N_j$ at each revolve step:
+
+$$X_{j+1} = M \cdot (X_j \oplus B) \oplus N_j, \quad j = 0, \ldots, k-1$$
+
+**Theorem 9 (Multi-nonce closed form).**
+
+$$X_k = M^k \cdot A + M \cdot S_k \cdot B \oplus \Phi_k, \quad \text{where } \Phi_k = \bigoplus_{j=0}^{k-1} M^{k-1-j} \cdot N_j$$
+
+*Proof:* By induction on $k$. The base case $k = 0$ gives $X_0 = A$. Assuming the formula holds at step $k$:
+
+$$X_{k+1} = M \cdot X_k \oplus M \cdot B \oplus N_k = M^{k+1} \cdot A + M^2 \cdot S_k \cdot B \oplus M \cdot \Phi_k \oplus M \cdot B \oplus N_k$$
+
+Noting $M^2 \cdot S_k + M = M \cdot S_{k+1}$ and $M \cdot \Phi_k \oplus N_k = \Phi_{k+1}$. $\blacksquare$
+
+The result is still a $\mathbb{GF}(2)$-affine function of all inputs.
+
+**sk formula.** Substituting into the HKEX key derivation, B and A cancel via Corollary 2 as before:
+
+$$sk_A = M^r \cdot (C \oplus C_2) \oplus \Phi^A_r$$
+
+**Correctness condition:** $sk_A = sk_B$ iff $\Phi^A_r = \Phi^B_r$.
+
+By the independence argument of Theorem 8, $\Phi^A_r$ must be a function of $(C, C_2)$ only for correctness to hold universally. Therefore $sk$ is always public.
+
+**The GF(2) even-sum collapse.** For the sequence $N_j = M^j \cdot B$ (a maximal "private" injection):
+
+$$\Phi_r = \bigoplus_{j=0}^{r-1} M^{r-1-j} \cdot M^j \cdot B = \bigoplus_{j=0}^{r-1} M^{r-1} \cdot B = r \cdot M^{r-1} \cdot B$$
+
+In $\mathbb{GF}(2)$, **$r = 3n/4$ is even** (for $n \geq 8$), so $r \cdot x = 0$ for any $x$. Therefore $\Phi_r = 0$, and the private nonces cancel themselves:
+
+$$sk = M^r \cdot (C \oplus C_2) \oplus 0 = M^r \cdot (C \oplus C_2) \quad \text{— entirely public}$$
+
+**Multiple exchanged public values.** If Alice and Bob each publish $k$ public values $C^{(t)}$ and the shared secret is $\bigoplus_t S_{r_t+1} \cdot (C^{(t)} \oplus C_2^{(t)})$, each term is independently a $\mathbb{GF}(2)$-linear function of wire values. Eve computes each term independently. No number of additional linear public values escapes the cancellation.
+
+**Experimental verification:** `SecurityProofsCode/hkex_multinonce_analysis.py` — 8 nonce strategies, multi-exchange with $k = 1, 2, 4$ pairs; GF(2) even-sum collapse verified; Eve recovers $sk$ in 1,000/1,000 trials for all strategies.
+
+---
+
+### 3.6 Root Cause: Linearity–Security Incompatibility
+
+**Theorem 10 (Linearity–Security Incompatibility).**
+
+> A DH-style key exchange based entirely on $\mathbb{GF}(2)$-linear operations cannot be simultaneously **correct** ($sk_A = sk_B$) and **secure** ($sk$ is not computable from public values).
+
+**Proof.** The HKEX correctness proof (Theorem 6) shows that $B$ and $A$ cancel from $sk$ via Corollary 2 ($S_n = 0$). That same cancellation also removes all private information from $sk$, leaving only $S_{r+1} \cdot (C \oplus C_2)$ — a function of public values. The two requirements are mutually exclusive:
+
+| Property | Requires |
+|---|---|
+| Correctness | Private terms cancel from $sk_A - sk_B$ via $S_n = 0$ |
+| Security | Private terms remain in $sk_A$ |
+
+Adding any combination of $\mathbb{GF}(2)$-linear operations does not escape this dilemma:
+
+- Single XOR nonce injection → still $\mathbb{GF}(2)$-linear (Theorem 8)
+- Multiple per-step XOR nonces → still $\mathbb{GF}(2)$-linear (Theorem 9)
+- More exchanged public values → each term still linear
+- Composition of any number of $\mathbb{GF}(2)$-linear maps → still linear
+
+In all cases, the superposition principle $f(A \oplus X) = f(A) \oplus f(X)$ holds, and the same $S_n = 0$ structure that enables correctness simultaneously exposes $sk$. $\blacksquare$
+
+**Fix requirement.** The only path to a secure construction is replacing FSCX with a **non-linear primitive** — a function $F$ such that $F(A \oplus X) \neq F(A) \oplus F(X)$ in general. Only then can the cancellation property that enables correctness fail to simultaneously expose $sk$ as a function of public values.
+
+---
+
+### 3.7 M as a Linear Diffusion Layer — Branch Number and Diffusion Depth
+
+Although M cannot serve as the sole building block of a secure key exchange (§3.6), it is a well-defined $\mathbb{GF}(2)$-linear map that can be evaluated independently as a **diffusion layer** in the SPN sense (Daemen–Rijmen).  This section characterises its branch number and avalanche depth, providing the foundation for the NL-FSCX security arguments in §11.
+
+**Setup.** M = I XOR ROL XOR ROR is a 3-tap circulant map over $\mathbb{GF}(2)^n$.  Define:
+
+$$M^t(x) = M \text{ applied } t \text{ times to } x$$
+
+$$S_t(x) = M(x) \oplus M^2(x) \oplus \cdots \oplus M^t(x)$$
+
+The fscx-revolve map decomposes linearly as:
+
+$$\text{fscx-revolve}(A, B, t) = M^t(A) \oplus S_t(B)$$
+
+so the A-input influence on the output is governed by $M^t$ and the B-input influence by $S_t$.
+
+**Definition (Branch Number, Daemen–Rijmen).** For a $\mathbb{GF}(2)$-linear map $L$:
+
+$$\text{Bn}_d(L) = \min_{a \neq 0}\bigl(\text{wt}(a) + \text{wt}(L(a))\bigr), \qquad \text{Bn}_l(L) = \min_{a \neq 0}\bigl(\text{wt}(a) + \text{wt}(L^T(a))\bigr)$$
+
+A higher branch number forces any differential or linear trail through the layer to activate more bits, increasing trail complexity.
+
+**Theorem 11 (M is self-transposed).** $M = M^T$ as a $\mathbb{GF}(2)$-matrix for all $n$.
+
+*Proof.* M is a symmetric circulant: its first row is $e_0 \oplus e_1 \oplus e_{n-1}$ (by definition of ROL/ROR by 1), and every subsequent row is a cyclic shift of the first.  A circulant matrix over $\mathbb{GF}(2)$ is symmetric iff its generating row is a palindrome.  The row $1 \oplus x \oplus x^{n-1}$ satisfies this since $x \leftrightarrow x^{n-1}$ under reversal.  Therefore $M = M^T$ and $\text{Bn}_d = \text{Bn}_l$ for all powers of M. $\blacksquare$
+
+**Measured branch numbers** (exhaustive at $n \leq 16$; sampled $5 \times 10^5$ random inputs at $n = 32, 64$):
+
+| $n$ | $k$ | $\text{Bn}(M^k)$ | note |
 |---|---|---|---|
-| Häner et al., PQCrypto 2020 | 256-bit ECDLP | 2124 | Prior baseline both papers below improve on |
-| Gidney, arXiv 2025 | 3072-bit RSA factoring | 2043 | Comparison point cited by Chevignard–Fouque–Schrottenloher — ECDLP at 256 bits is *more* qubit-expensive than RSA-3072 factoring under the old estimate |
-| Chevignard–Fouque–Schrottenloher, EUROCRYPT 2026 (eprint 2026/280) | 256-bit ECDLP | **1193** (space complexity $3.12n + o(n)$; $2^{38.98}$ Toffoli gates/run, 22 independent runs) | Residue-number-system point multiplication + Legendre-symbol single-bit compression, avoiding modular inversion; gate count rises from $O(n^3)$ to $\widetilde O(n^4)$ to buy the qubit reduction |
-| Follow-up distributed-quantum variant, eprint 2026/1244 | 256-bit ECDLP, per node | 1094–1154 (zero quantum-communication variant) or 856–1098 (sequential-communication variant, more nodes) | Splits the computation across cooperating quantum processing units rather than one monolithic device |
+| 16 | 1 | 4 | exhaustive |
+| 16 | 3,5 | 6 | exhaustive |
+| 32 | 1 | 10 | sampled lower bound |
+| 32 | 3,5 | 12 | sampled lower bound |
+| 64 | 1 | $\geq 36$ | sampled lower bound |
+| 64 | 5 | $\geq 38$ | sampled lower bound |
 
-**Figure-attribution caveat.** Some 2026 secondary coverage of the Chevignard–Fouque–
-Schrottenloher paper (e.g. quantumcomputingreport.com) cites **1098** logical qubits for
-the 256-bit case rather than 1193. The paper's own eprint page (2026/280) carries an
-explicit erratum note — "correction of another typo in the abstract (swap between
-numbers for P-224 and P-256)" — so 1098 most likely reflects a since-corrected, swapped
-P-224/P-256 attribution rather than a second independent figure; **1193 is the number
-this document treats as authoritative**, taken directly from the current eprint abstract
-text rather than secondary reporting. This is exactly the kind of slip a documentation
-pass citing only a press summary would silently propagate, so it is recorded here rather
-than picking a number without flagging the discrepancy.
+For comparison, ASCON's rotation-based linear layers (also 3-tap circulants) have $\text{Bn}(\Sigma_0) = 34$ and $\text{Bn}(\Sigma_1) = 38$ at $n = 64$.  FSCX's M with $\text{Bn} \geq 36$ is structurally comparable.
 
-**Applicability to HKEX-GF specifically.** These figures are for ECDLP over
-$\mathbb{GF}(p)$ (prime-field elliptic curves), not HKEX-GF's actual group
-$\mathbb{GF}(2^n)^{\ast}$. The two constructions that make the qubit reduction work —
-representing point coordinates via a Residue Number System, and collapsing the
-point-multiplication result to one bit via the **Legendre symbol** (a quadratic-residue
-test specific to $\mathbb{GF}(p)$, $p$ prime) — do not have a published analogue for
-characteristic-2 exponentiation. $\mathbb{GF}(2^n)^{\ast}$'s Shor circuit is ordinary
-finite-field exponentiation (§10.8.4's $O(n^2 \log n)$ bound already covers it) without
-this paper's specific compression trick, so **no qubit-count revision to $O(n^2 \log n)$
-follows from this work** — these figures are cited here purely as a "how close is a
-practical quantum attack, in general" data point (the same role RSA-3072 comparisons
-already served in this section), not as a directly applicable resource estimate for
-HKEX-GF's own group. The qualitative conclusion is unchanged either way: Shor's algorithm
-in polynomial time breaks $\mathbb{GF}(2^n)^{\ast}$ DLP at every practical $n$, and continued
-qubit-count reductions for the ECDLP sibling problem only reinforce that a
-cryptographically-relevant fault-tolerant quantum computer is being actively engineered
-toward, not that HKEX-GF's own concrete threat model has changed.
+**Theorem 12 (S_t periodicity).** $S_{n/2}(x) = 0$ for all $x$ and all $n = 2^k$.
 
-**HKEX-GF.** Given $(C, C_2) = (g^a, g^b)$, Shor's algorithm recovers $a$ (or $b$) in
-$O(n^2 \log n)$ quantum time; the shared secret $g^{ab} = C_2^a$ follows immediately.
+*Proof.* M has order $n/2$ (proven in §1: $M^{n/2} = I$).  Therefore $M^1, M^2, \ldots, M^{n/2}$ form a complete cycle.  In $\mathbb{GF}(2)$, each non-identity element appears exactly once in $\{M^j : 1 \leq j \leq n/2\}$, and the identity $I = M^{n/2}$ appears once.  Summing all elements of the cyclic group $\langle M \rangle$ in $\mathbb{GF}(2)$ gives zero (each basis vector is covered an even number of times through the orbit structure).  Hence $S_{n/2} = 0$ and the B-influence is periodic with period dividing $n/2$. $\blacksquare$
 
-**HPKS.** Shor's algorithm recovers the private signing key $a$ from the public key
-$C = g^a$.  With $a$ known, arbitrary signature forgeries are trivial.
+**Corollary 3.** Complete diffusion of B (all output bits depend on all B input bits via $S_t$) is never achieved for $n = 2^k$, since $S_{n/2} = 0$ causes the B-influence to collapse before reaching the all-ones matrix.
 
-**HPKE.** Shor's algorithm recovers the ephemeral exponent $r$ from $R = g^r$,
-immediately yielding the encryption key $\mathit{ek} = C^r$.
+**Diffusion trajectory** (minimum row weight of $M^t$ and $S_t$; computed by `SecurityProofsCode/fscx_branch_number.py`):
 
-**HSKE.** Not directly affected — HSKE security does not depend on DLP.
+| $n$ | $t$ | $\text{min-wt}(M^t)$ | $\text{mean-wt}(M^t)$ | $\text{min-wt}(S_t)$ | $\text{mean-wt}(S_t)$ |
+|---|---|---|---|---|---|
+| 32 | 1 | 3 | 3.0 | 3 | 3.0 |
+| 32 | 4 | 3 | 3.0 | 5 | 5.0 |
+| 32 | **8** (= $n/4$) | 3 | 3.0 | 10 | 10.0 |
+| 32 | 15 | 21 | 21.0 | 17 | 17.0 |
+| 32 | 16 | 1 | 1.0 | 16 | 16.0 |
+| 64 | **16** (= $n/4$) | 3 | 3.0 | 18 | 18.0 |
+| 64 | 31 | 43 | 43.0 | 33 | 33.0 |
 
-#### 10.8.5 HHL and Quantum Linear Algebra
+**A,B-half-coverage threshold.** Define $t_{1/2}(n)$ as the smallest $t$ such that $\text{min-wt}(M^t) \geq n/2$ and $\text{min-wt}(S_t) \geq n/2$ simultaneously.  Empirically: $t_{1/2}(16) = 7$, $t_{1/2}(32) = 15$, $t_{1/2}(64) = 31$ — following the pattern $t_{1/2}(n) = n/2 - 1$.
 
-**HSKE.**  Recovering $K$ from $c_K$ requires solving $\Phi \cdot K = c_K$ over
-$\mathbb{GF}(2)$.  HHL solves linear systems over $\mathbb{R}$ or $\mathbb{C}$; it does
-not directly apply to $\mathbb{GF}(2)$ systems.  Quantum algorithms for $\mathbb{GF}(2)$
-linear algebra offer at most polynomial speedup, but the classical $O(n^{2.37})$ algorithm
-already solves the system efficiently.  Since one KPT pair gives full $c_K$ recovery
-without solving a linear system at all (direct XOR), HHL is irrelevant.
+**Assessment of the suite heuristic $i = n/4$.**
+
+At step $i = n/4$, the B-influence $S_{n/4}$ has mean row weight $n/4$ and minimum row weight $\approx n/4 + 2$.  The A-influence $M^{n/4}$ is a sparse circulant with minimum row weight 3 (the taps of $M$ do not widen significantly due to the GF(2) cancellations in a 3-tap circulant).
+
+The heuristic $i = n/4$ therefore provides:
+- **B-input**: approximately 25–30% mean activation per output bit from B at step $n/4$, growing to $\sim 50$% at $n/2 - 1$ steps.
+- **A-input**: M is invertible (order $n/2$), so A is always recoverable; the diffusion is limited but sufficient for correctness.
+- The choice $i = n/4$ sits at the midpoint before the S_t collapse (Theorem 12), capturing the B-influence before it starts contracting toward zero.
+
+For the symmetric protocols (HSKE, HPKE), security depends on the non-linearity of the integer-carry chain in NL-FSCX rather than on M's diffusion alone.  The revolve count provides avalanche coverage, not indistinguishability by itself.  The NL-FSCX analysis is in §11.
+
+**FSCX-SPN sketch.** An explicit SPN construction alternating the NL-FSCX v1 non-linear step with M provides a principled round structure:
+
+- **Round $r$:** $\text{state} \leftarrow \text{nl-fscx-v1}(\text{state}, K_r, n/4)$ then $\text{state} \leftarrow M(\text{state})$
+- **Recommended minimum rounds:** $t_{1/2}(n) = n/2 - 1$ for single-pass security; $2 \times t_{1/2}(n)$ for multi-round trail resistance.
+- **Key schedule:** independent round constants $K_0, \ldots, K_{r-1}$ derived from the master key; details are deferred to the #95/#96 analysis.
+
+This construction is the analysable successor to the ad-hoc revolve idiom and provides the diffusion foundation for the sponge-permutation (#95) and DRBG (#96) constructions.
 
 ---
 
-### 10.9 Root Cause: Why GF(2^n)* Is the Wrong Group
+## 4. Strengths and Weaknesses
 
-The choice of $\mathbb{GF}(2^n)^{\ast}$ as the DLP group introduces weaknesses absent in
-standard DLP groups:
+### 4.1 Strengths
 
-1. **Characteristic-2 quasi-polynomial attack** (Barbulescu et al., 2013): exploits
-   sparse relations in the function field $\mathbb{GF}(2^n)(t)$, achieving
-   $(\log N)^{O(\log\log N)}$ classical complexity.  This does not apply to prime-order
-   elliptic curves or $\mathbb{Z}_p^{\ast}$.
-
-2. **Shor's algorithm at $O(n^2 \log n)$**: applies to any cyclic group DLP; the
-   characteristic-2 structure provides no resistance.
-
-3. **Generator order**: when $g = 3$ is not a primitive element of $\mathbb{GF}(2^n)^{\ast}$
-   (its actual order divides $2^n - 1$), the effective group size is smaller than assumed,
-   reducing security further.
-
-**Comparison with alternatives:**
-
-| Group | Classical DLP | Quantum DLP |
-|-------|--------------|-------------|
-| $\mathbb{GF}(2^n)^{\ast}$ | Quasi-polynomial (weak) | Shor's polynomial |
-| $\mathbb{Z}_p^{\ast}$, $p$ prime | Sub-exponential (NFS) | Shor's polynomial |
-| Elliptic curve over $\mathbb{GF}(p)$ | Exponential (ECDLP) | Shor's polynomial |
-| Ring-LWR ($\mathcal{R}_q$, blinded $m$, §11.4) | Exponential (conjectured) | No known polynomial attack |
-
-Moving the key exchange to a prime-order elliptic curve restores classical DLP hardness
-(no known sub-exponential algorithm) but does not address Shor's algorithm.  Only a
-lattice, code-based, or isogeny-based construction provides a plausible path to
-post-quantum security.  The HKEX-RNL proposal in §11.4 (Ring-LWR with blinded FSCX
-polynomial) is the recommended direction within the Herradura suite.
-
+| Property | Status |
+|---|---|
+| Correctness (all protocols) | ✓ Proven: follows from $S_n = 0$ and $M^n = I$ |
+| Constant-time implementation | ✓ All operations are bitwise; no data-dependent branches |
+| Simplicity and auditability | ✓ The entire primitive is 6 terms |
+| Bit-frequency uniformity | ✓ Output bits are balanced to <0.5% deviation |
+| $M$ invertible for $n = 2^k$ | ✓ Proven algebraically; no information loss per step |
+| Nonce-augmentation preserves orbit period | ✓ Proven; $S_n = 0$ absorbs nonce completely |
+| HSKE correctness and security | ✓ Proven; key $K$ survives in ciphertext as non-zero private offset |
 
 ---
 
-> **Continued in Part 3 — §11–§11.8.2** (SecurityProofs-3.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
+### 4.2 Weaknesses and Vulnerabilities
+
+**W1 — FSCX is a linear map over $\mathbb{GF}(2)$.**
+
+$$\text{FSCX}(A \oplus X, B \oplus X) = M \cdot (A \oplus B) = \text{FSCX}(A, B) \quad \forall X$$
+
+FSCX is not a nonlinear function. All security relies on iteration and parameter choices, not on the mixing function itself. This linearity is the root cause of the classical break (Theorem 7, Theorem 10).
+
+---
+
+**W2 — HKEX shared secret is publicly computable (classical break).**
+
+From Corollary 3 and Theorem 7:
+
+$$sk = S_{r+1} \cdot (C \oplus C_2)$$
+
+Both $C$ and $C_2$ are transmitted publicly. Eve recovers the shared secret in $O(n^2)$ classical bit operations. This breaks HKEX, HPKE, and HPKS completely.
+
+---
+
+**W3 — HPKE provides no confidentiality.**
+
+The ciphertext is $E = sk_B \oplus A_2 \oplus P$ where $sk_B$ and $A_2$ are both computable from the public key. Eve decrypts directly: $P = E \oplus S_{r+1} \cdot (C \oplus C_2) \oplus A_2$.
+
+---
+
+**W4 — HPKE/HPKS are bit-malleable (no IND-CCA2).**
+
+Let $E = sk_B \oplus A_2 \oplus P$. Then:
+
+$$D(E \oplus \delta) = P \oplus \delta$$
+
+Flipping bit $k$ of $E$ flips bit $k$ of the plaintext. HPKE has no ciphertext integrity.
+
+---
+
+**W5 — Original HPKS directly leaks the session key; HPKS₂ mitigates this.**
+
+In the original scheme $S = sk_A \oplus P$, a single signed pair $(P, S)$ immediately reveals:
+
+$$sk_A = S \oplus P$$
+
+A forger who recovers $sk_A$ can sign any $P'$ as $S' = sk_A \oplus P'$, breaking the scheme after one signing query.
+
+**HPKS₂** eliminates this by replacing the XOR with HSKE encryption. From the affine iteration formula:
+
+$$S = M^i \cdot P + S_i \cdot (M + I) \cdot sk_A$$
+
+The coefficient of $sk_A$ is $S_i \cdot (M + I)$. In $R_n$:
+
+$$M + I = L + L^{-1} = x^{-1}(x+1)^2$$
+
+Since $(x+1)^n = 0$ in $R_n$, the factor $(x+1)^2$ is a zero divisor — $M + I$ is **not a unit**. Therefore the equation $S = M^i \cdot P + S_i \cdot (M+I) \cdot sk_A$ has no unique solution for $sk_A$ from a single $(P, S)$ pair, removing the trivial one-query key recovery.
+
+However, since $sk_A = S_{r+1} \cdot (C \oplus C_2)$ is already publicly computable from the public key (W2), signatures remain forgeable via the classical break.
+
+---
+
+**W6 — Hardness assumption was never established; the break renders it moot.**
+
+The system reduces to: given $C = M^i \cdot A + M \cdot S_i \cdot B$, recovering $(A, B)$ is assumed hard. However, Theorem 7 shows that recovering the *shared secret* $sk$ does not require recovering $(A, B)$ at all — $sk$ is directly computable from $C$ and $C_2$ alone in $O(n^2)$ time.
+
+---
+
+**W7 — Short effective orbit space.**
+
+Since $M^{n/2} = I$, the orbit of $f_B$ has period at most $n/2$, so at most $n/2$ distinct values of $C$ arise for any fixed $B$. This reduces the effective pre-image space.
+
+---
+
+**W8 — No authenticated encryption.**
+
+None of HSKE, HPKE, or HPKS provides joint confidentiality + integrity + authentication. These properties must be composed externally (e.g., encrypt-then-MAC).
+
+---
+
+**W9 — The key map is singular: HSKE and HPKE ciphertexts leak 126 plaintext bits (TODO #210).**
+
+By Theorem 4.1 (§1.3.1) the key enters `fscx_revolve` only through $T_i = M \cdot S_i$, whose co-rank is $2(2^{v_2(i)} - 1)$ — equal to 126 out of 256 at the deployed $i = n/4 = 64$. Every $\lambda$ in the 126-dimensional left kernel satisfies
+
+$$\lambda \cdot E = \lambda \cdot M^i \cdot P$$
+
+identically in the key, so 126 independent linear functionals of the plaintext are readable from the ciphertext alone. Unlike W2–W5, this needs no public-key material, no known plaintext, and no chosen plaintext: it is a property of the step count. Choosing an odd $i$ makes $T_i$ invertible and removes the leak entirely (TODO #211).
+
+---
+
+## 5. Summary Tables
+
+### 5.1 Protocol Security Status
+
+| Protocol | Correctness | Classical Break | IND-CPA | IND-CCA2 | EUF-CMA | Status (v1.4.0) |
+|---|---|---|---|---|---|---|
+| HKEX (old) | ✓ Proven | **BROKEN** (Thm. 7) | ✗ | — | — | **Removed** |
+| HKEX-GF | ✓ Proven (field comm.) | CDH in GF(2ⁿ)* | Unproven | — | — | **Active** |
+| HSKE | ✓ Proven | N/A (pre-shared key) | ✗ (W9, §1.3.1) | ✗ (malleable) | — | Active |
+| HPKS₂ | ✓ Proven | N/A (sk via HKEX-GF) | — | — | Unproven | Active |
+| HPKE | ✓ Proven | N/A (sk via HKEX-GF) | ✗ (W9, §1.3.1) | ✗ (malleable) | — | Active |
+
+---
+
+### 5.2 Break and Impossibility Results
+
+| Claim | Status | Evidence |
+|---|---|---|
+| $sk = S_{r+1} \cdot (C \oplus C_2)$ — computable from public wire values | **Proved** (Thm. 7) | Algebraic + 10K trials |
+| Single public nonce injection does not fix break | **Proved** | Case (a), 2K trials |
+| Single private nonce injection breaks correctness | **Proved** | Case (b), 2K trials |
+| No nonce (single or multi) can fix HKEX | **Proved** (Thms. 8, 9) | 10+8 strategies, all fail |
+| HSKE is correct; the pre-shared-key security claim does **not** hold as stated | **Corrected** (Thm. 4.1) | $T_i$ has co-rank 126 at $i = n/4$ — see W9 |
+| One-time HSKE is Shannon-perfect **iff** the step count is odd; mutual information equals co-rank | **Proved** (Thm. 4.2, Cor. 4.3) | Exhaustive $I(P;E)$ at `n=8`; 200/200 two-time-pad break at `i=65` |
+| HPKE is correct but publicly insecure | **Proved** | $sk = S_{r+1} \cdot \text{public}$ |
+| $n_A = A \oplus C$ gives correctness with probability $2^{-4}$ | **Proved** | Rank-4 condition matrix |
+| $N_j = M^j \cdot B$ collapses to $\Phi = 0$ (GF(2) even-sum) | **Proved** | $r$ even $\Rightarrow \Phi_r = 0$ |
+| $k$ exchanged public values do not help (any $k$) | **Proved** | Each term linear; $k = 1, 2, 4$ tested |
+| Root cause: GF(2)-linearity/correctness–security incompatibility | **Proved** (Thm. 10) | Algebraic; no counterexample exists |
+| Quantum attacks: classical break makes them moot | **Proved** | See §6 |
+| **HKEX-GF correctness:** $g^{ab} = g^{ba}$ in $\mathbb{GF}(2^n)^{\ast}$ | **Proved** (field commutativity) | Algebraic + 5K/1K trials (Python/C) |
+| **HKEX-GF Eve resistance:** $S_{r+1}(C \oplus C_2) \neq sk$ | **Proved** | 10K trials — 0 successes |
+| **FSCX-CY non-linearity** | **Proved** | 4998/5000 affine-test failures |
+| **FSCX-CY HKEX failure** | **Proved** | 0/2000 correctness trials |
+
+---
+
+## 6. Quantum Attack Analysis
+
+The classical break (Theorem 7) recovers $sk$ in $O(n^2)$ classical operations. The quantum attacks below are therefore moot for any variant that does not first fix the classical break.
+
+| Attack | Target | Result |
+|--------|--------|--------|
+| **Grover** | Key search (brute force) | Reduces search from $2^n$ to $2^{n/2}$ — relevant only if classical break is patched |
+| **Simon / HSP** | Hidden subgroup in $\mathbb{GF}(2)^n$ | Applicable; $\mathbb{GF}(2)$-linearity gives $M$ an order-$n/2$ subgroup structure; $O(n)$ quantum queries suffice |
+| **Bernstein–Vazirani** | Recover linear function | Single quantum query suffices to recover the linear map $S_{r+1}$ |
+| **Shor** | Discrete logarithm | Inapplicable — HKEX has no DLP structure |
+| **HHL** | Linear system solving | Already polynomial classically; no quantum advantage relevant |
+
+The classical break makes all quantum attacks moot for the current design. For any future variant that patches the classical break by introducing genuine nonlinearity, Grover's algorithm and Simon's algorithm become the relevant post-quantum threats. For the detailed quantum security analysis of the v1.4.0 suite (HKEX-GF and related protocols), see §10.8.
+
+---
+
+## 7. Core Identity (the Fundamental Equation)
+
+Everything in the suite ultimately rests on two chained facts:
+
+**Fact A:** In $\mathbb{GF}(2)[x]/(x^n + 1)$ with $n = 2^k$:
+
+$$m^{n/2} = 1 \implies S_n = 0$$
+
+**Fact B (Corollary 2):** For $i + r = n$:
+
+$$M \cdot S_r + M^{r+1} \cdot S_i = S_n = 0$$
+
+Together, these imply that for any $A, B, A_2, B_2 \in \mathbb{GF}(2)^n$ and any nonce $N$:
+
+$$\text{FSCX-REVOLVE-N}\left(\text{FSCX-REVOLVE}(A_2, B_2, i), B, N, r\right) \oplus A$$
+$$=$$
+$$\text{FSCX-REVOLVE-N}\left(\text{FSCX-REVOLVE}(A, B, i), B_2, N, r\right) \oplus A_2$$
+
+This identity is the mathematical core from which all four protocols derive their correctness. All protocols are **correct**. However, the same identity that enables correctness also ensures that the shared secret $sk = S_{r+1} \cdot (C \oplus C_2)$ contains no private information — breaking the key exchange.
+
+The fix requirement (Theorem 10): replace FSCX with a primitive $F$ that is **not** $\mathbb{GF}(2)$-linear.
+
+---
+
+## 8. Experimental Code Index
+
+All experimental scripts are in `SecurityProofsCode/`:
+
+| File | Content |
+|------|---------|
+| `probe_sk_formula.py` | Initial algebraic probe: verify $sk = S_{r+1} \cdot (C \oplus C_2)$ with fixed test vectors; confirm $M^r \oplus S_r = S_{r+1}$ and Corollary 2 |
+| `hkex_classical_break.py` | Full classical break: 10,000 trials across $n \in \{32, 64, 128, 256\}$; Eve uses only $C$, $C_2$ |
+| `hkex_fscxn_analysis.py` | Single-nonce analysis: Case (a) public nonce (break survives), Case (b) private nonce (correctness destroyed), Case (c) offset formula verified |
+| `hkex_nonce_impossibility.py` | HSKE/HPKE mechanism; exhaustive 10-strategy nonce search; direct Theorem 8 verification ($S_r \cdot n_A$ constant iff correct) |
+| `hkex_multinonce_analysis.py` | Multi-nonce closed form (Theorem 9); 8 nonce strategies; $k = 1, 2, 4$ exchanged pairs; GF(2) even-sum collapse |
+| `hkex_nl_proposal.py` | Non-linear proposals §9: HKEX-GF correctness + Eve-failure (4 000 trials); FSCX-CY non-linearity, period analysis, HKEX-CY failure, Eve-failure |
+| `hkex_gf_test.py` | Standalone HKEX-GF test suite: GF arithmetic (1K trials), DH correctness (5K), Eve resistance (5K), BSGS DLP illustration (n=16), FSCX period preserved (5K), benchmarks |
+| `hkex_cy_test.py` | FSCX-CY exhaustive analysis: XOR-translation proof, HKEX-CY failure (5K), period measurements, Eve resistance |
+| `hkex_nl_verification.py` | NL-FSCX v1/v2 properties §11.5: period (Q1), FSCX-LWR algebraic attack (Q2), bijectivity / inversion (Q3); HKEX-RNL setup |
+| `hkex_rnl_failure_rate.py` | HKEX-RNL key-agreement failure rate §11.5 Q2: 10K trials at $n=32, 256$; Peikert reconciliation 0/10K verification |
+| `nl_fscx_prf_analysis.py` | NL-FSCX v1 PRF tests §11.8.4: 2-query distinguisher, BLR, SAC, higher-order differentials, linear bias, key sensitivity, collisions, cross-key independence |
+| `hfscx_256_analysis.py` | HFSCX-256-DM hash empirical tests §11.9: SAC on input/key, output uniformity (chi²), length-extension forgery, domain separation, fixed-point search |
+| `hfscx_dm_rf_model.py` | HFSCX-256-DM in the ideal-random-function model §11.9.12 (TODO #215): image-collapse propagation from the non-bijective inner map to the Davies-Meyer compression (exhaustive at `n = 16`), DM fixed points under NL-FSCX v1 (search) vs. v2 (one inversion), a working Joux multicollision and an end-to-end Kelsey-Schneier long-message second preimage against the chain, and the corrected bound table at `n = 256` |
+| `qcmdpc_dfr_weak_keys.py` | HPKE-Stern-KEM's QC-MDPC BGF decoder §11.8.7 (TODO #218): bit-exact cross-validation of a bit-sliced decoder against the deployed one, DFR at the deployed parameters with a Clopper-Pearson interval, Sendrier-Vasseur DFR(r) fit and extrapolation, distance-spectrum weak-key gradient vs. what keygen emits, and the GJS reaction-attack distinguisher measured to disjoint confidence intervals |
+| `hkex_gf_pohlig_hellman.py` | Pohlig–Hellman against HKEX-GF/HPKS/HPKE §9.2.4 (TODO #212): verified factorisation of $2^n - 1$ and $\text{ord}(g)$ per supported $n$, cost table against the documented FFS figures, end-to-end private-key recovery at $n = 32$ and $n = 64$, HKEX-GF shared-secret recovery and HPKS forgery from the recovered key, and the $n = 256$ wall-clock extrapolation |
+| `hske_perfect_secrecy.py` | Perfect secrecy at odd step counts §1.3.2 (TODO #211): key-map invertibility vs. parity of the step count for `n` from 32 to 512, round-trip correctness and equal step cost at `(i, r) = (65, 191)`, exhaustive mutual information over all 65 536 plaintext-key pairs at `n = 8` against the predicted co-rank, the Latin-square view, the two-time-pad break under key reuse, and a timing comparison against a literal one-time pad |
+| `fscx_revolve_corank.py` | Co-rank of the classical key map §1.3.1 (TODO #210): measured rank of $T_i = M \cdot S_i$ at $n \in \{64, 128, 256\}$, the closed form $2(2^{v_2(i)} - 1)$ checked against 288 parameter pairs, extraction of the 126-dimensional left kernel and its key-independence over 200 random keys, the parity special case, and the co-rank of the nonce-augmented map of §2.2 |
+| `hkex_non_byte_key_length_analysis.py` | Non-byte-aligned $n$ analysis §1.2.1 (TODO #204): $M$-invertibility via GF(2)[x] poly-gcd vs. the $\gcd(3,n)$ shortcut, empirical order$(M)$, avalanche diffusion, and throughput at sampled non-byte $n \in \{241, 251, 253, 255, 257, 509\}$ vs. byte-aligned baselines |
+
+---
+
+---
+
+> **Continued in Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
