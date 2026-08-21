@@ -27,7 +27,7 @@ static void die(const char *msg) { fputs(msg, stderr); fputc('\n', stderr); exit
 #define WEAK_V2_KEY_MSG \
     "NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " \
     "permutation GF(2)-affine and the ciphertext recoverable by linear algebra " \
-    "(SecurityProofs-2.md 11.19.2, TODO #168)"
+    "(SecurityProofs-7.md 11.19.2, TODO #168)"
 static void dief(const char *fmt, const char *s)
 { fprintf(stderr, fmt, s); fputc('\n', stderr); exit(1); }
 

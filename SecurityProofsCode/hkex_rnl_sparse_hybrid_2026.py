@@ -2,7 +2,7 @@
 """
 hkex_rnl_sparse_hybrid_2026.py — Is HKEX-RNL's CBD(η=1) secret "sparse"? (TODO #157)
 
-Concrete worksheet backing SecurityProofs-3.md §11.6's re-check of
+Concrete worksheet backing SecurityProofs-4.md §11.6's re-check of
 
     "Careful with the Ring: Enhanced Hybrid Decoding Attacks against Module/Ring-LWE"
     [Hou-Jiang, eprint 2026/366]
@@ -39,7 +39,7 @@ ETA     = 1       # CBD(η=1): secret coefficients in {-1, 0, 1}
 N       = 256     # deployed ring degree
 TRIALS  = 20000   # empirical sample count for §1/§2
 
-# HKEX-RNL's current estimated security (SecurityProofs-3.md §11.6)
+# HKEX-RNL's current estimated security (SecurityProofs-4.md §11.6)
 CORE_SVP_LO, CORE_SVP_HI = 105, 115
 
 # The paper's own headline improvements
@@ -266,7 +266,7 @@ def main():
     section4()
     section5()
     print(SEP)
-    print("Done. See SecurityProofs-3.md §11.6 for the write-up.")
+    print("Done. See SecurityProofs-4.md §11.6 for the write-up.")
     print(SEP)
     print()
 

@@ -65,12 +65,14 @@ SecurityProofsCode/                                 — standalone Python proof/
                              GJS reaction attack (TODO #218)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
-SecurityProofs.md                                   — split index (redirects to Parts 1–5; quantum analysis is in SecurityProofs-1.md §6)
-SecurityProofs-1.md                                 — §1–§8: Algebraic Foundations … Experimental Code Index (708 math expressions)
-SecurityProofs-2.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-3.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
-SecurityProofs-4.md                                 — §11.8.3–§11.9.12: PQ signature options · HFSCX-256-DM (718 math expressions)
-SecurityProofs-5.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
+SecurityProofs.md                                   — split index (redirects to Parts 1–7; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
+SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (408 math expressions)
+SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
+SecurityProofs-5.md                                 — §11.8.3–§11.8.7: PQ signature options · HPKE-Stern-KEM (587 math expressions)
+SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -171,7 +173,7 @@ Rules:
 - No item should be left without a `Status:` line.  A missing Status line means "open" only by convention; always add an explicit `Status: **OPEN**` when creating a new item.
 - When parsing programmatically, match `^Status: \*\*` at the start of a line within the section.
 
-**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed. Sections predating the `Status:` line standard (TODO #154) — e.g. `TODO_DONE.md`'s `### 17`, `### 18`, `### 24`, `### 26`–`### 28`, `### 42`, `### 56`, `### 69`, `### 70`, `### 77`–`### 80` — use inline `✓ DONE`/`DONE (vX...)` markers in their heading instead, and are grandfathered rather than backfilled, so the quick-check flagging them is expected and not itself a bug.
+**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed. Sections predating the `Status:` line standard (TODO #154) — `TODO_DONE.md`'s `### 13`, `### 17`, `### 18`, `### 24`–`### 28`, `### 42`, `### 56`, `### 69`, `### 70`, `### 77`–`### 80` (16 sections in all) — carry no `Status:` line at all. Two of them (`### 13`, `### 26`) mark completion with an inline `✓ DONE`/`DONE (vX...)` marker in the heading; the other fourteen record it only by living in `TODO_DONE.md` and having a `CHANGELOG.md` entry. All 16 are grandfathered rather than backfilled, so the quick-check flagging them is expected and not itself a bug.
 
 ## Build Commands
 

@@ -115,7 +115,7 @@ SECURITY = {
     "hkex-gf":   dict(status="pedagogical", quantum_resistant=False, classical_security_bits="~36.5 (n=256)",
                        notes="GF(2^n)* Diffie-Hellman. The binding classical attack is Pohlig-Hellman: the "
                              "group order 2^256-1 has a 73-bit largest prime factor, so a discrete log costs "
-                             "about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-2.md "
+                             "about 2^36.5 group operations in constant memory (TODO #212, SecurityProofs-3.md "
                              "9.2.4) -- days on a single core, not the ~80-90 bits the function field sieve "
                              "would suggest. NIST SP 800-57 Rev.5 (2020) and ENISA (2022) also deprecate "
                              "GF(2^n)* groups for new designs; not suitable for production use at any deployed n.",
@@ -144,7 +144,7 @@ SECURITY = {
                        source=["CLAUDE.md (206)"]),
     "rnl-sigma": dict(status="production", quantum_resistant="conjectured",
                        notes="Sigma-protocol proof of knowledge of an HKEX-RNL private key.",
-                       source=["CLAUDE.md", "SecurityProofs-5.md"]),
+                       source=["CLAUDE.md", "SecurityProofs-7.md"]),
     "hpks-stern": dict(status="demo-only", quantum_resistant="conjectured",
                         classical_security_bits="~56-60 at shipped SDF_ROUNDS=32 (production requires "
                                                   "SDF_PRODUCTION_ROUNDS=219 for 128-bit soundness)",
@@ -180,7 +180,7 @@ SECURITY = {
                                 "CliTest/test_stern_kem.sh",
                                 "SecurityProofsCode/qcmdpc_bgf_failure_rate.py",
                                 "SecurityProofsCode/qcmdpc_dfr_weak_keys.py",
-                                "SecurityProofs-4.md 11.8.7"]),
+                                "SecurityProofs-5.md 11.8.7"]),
     "hpks-zkp-nl": dict(status="production", quantum_resistant="conjectured",
                         notes="Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols "
                               "(nl-zkboo, nl-zkbpp).",

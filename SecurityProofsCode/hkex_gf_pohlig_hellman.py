@@ -3,7 +3,7 @@
 hkex_gf_pohlig_hellman.py — TODO #212: what does Pohlig-Hellman actually cost
 against HKEX-GF, HPKS and HPKE?
 
-SecurityProofs-2.md §9.2.4 lists Pohlig-Hellman in its table of attacks on the DLP
+SecurityProofs-3.md §9.2.4 lists Pohlig-Hellman in its table of attacks on the DLP
 in GF(2^n)*, then quotes the function field sieve as "the practical binding
 constraint" and reports ~80-90 bits at n=256.  Pohlig-Hellman is never actually
 costed.  It should have been: the group order of GF(2^n)* is 2^n - 1, which is
@@ -77,7 +77,7 @@ FACTORS = {
           59649589127497217, 5704689200685129054721],
 }
 
-# Documented FFS estimates from SecurityProofs-2.md §9.2.4, for comparison.
+# Documented FFS estimates from SecurityProofs-3.md §9.2.4, for comparison.
 DOC_FFS = {32: "<< 40", 64: "<< 40", 128: "50-60", 256: "80-90", 512: "110-120",
            1024: "128-140"}
 
@@ -425,7 +425,7 @@ def main():
     print(SEP)
     print("Summary: the DLP behind HKEX-GF, HPKS and HPKE costs about 2^36.5 group")
     print("         operations at n=256 via Pohlig-Hellman — roughly 45 bits below")
-    print("         the FFS figure documented in SecurityProofs-2.md §9.2.4.")
+    print("         the FFS figure documented in SecurityProofs-3.md §9.2.4.")
     print(SEP)
     print()
 

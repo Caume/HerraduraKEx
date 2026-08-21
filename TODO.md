@@ -65,7 +65,7 @@ and small-n exhaustive search; this item asks for the bound.
   against the trail model.
 
 **Deliverable:** `SecurityProofsCode/nl_fscx_exact_trail_search.py` plus a
-`SecurityProofs-5.md` subsection with the bound table and the rotation
+`SecurityProofs-7.md` subsection with the bound table and the rotation
 recommendation.
 
 Status: **OPEN**
@@ -120,35 +120,5 @@ case, but the bound should be derived rather than assumed.
 - If the derived bound exceeds 219, update `_STERN_F_PRODUCTION_ROUNDS`,
   the `sign --rounds` guidance, and the C CLI's `-DSDF_ROUNDS` default
   across all language targets.
-
-Status: **OPEN**
-
-### #220: `SecurityProofs-1.md` is approaching the ~750-expression KaTeX limit
-
-`SecurityProofsCode/validate_katex.js` now warns on `SecurityProofs-1.md`: it
-holds 708 math expressions against GitHub's roughly 750-per-page client-side
-KaTeX limit, past which *every* expression on the page silently renders as
-"Unable to render expression" — a cascade failure with no syntax error to find.
-`SecurityProofs-4.md` sits at 716 with the same warning. The warning threshold
-(700) exists precisely to catch this before it bites; TODO #170 already re-split
-these documents once for the same reason.
-
-Part 1 grew from 581 to 708 across TODO #210 and #211, both of which added
-material to §1.3 (the FSCX_REVOLVE subsections). §1.3.2's additions were trimmed
-back once already, converting prose-adjacent math to plain text to buy headroom,
-which is a stopgap rather than a fix. The remaining open analysis items — #213
-through #218 — will each want a subsection somewhere, and several of them belong
-in Parts 1 and 4.
-
-- Pick split points at section boundaries, as TODO #170 did, so each part lands
-  comfortably under the warning threshold rather than just under the hard limit.
-  Part 1's §1 (Algebraic Foundations) has grown enough to stand alone.
-- Update every cross-reference: `SecurityProofs.md`'s index, the "Continued in
-  Part N" footers, `CLAUDE.md`'s Repository Structure listing with its per-file
-  expression counts, `SecurityProofsCode/KATEX_RULES.md`'s split rationale, and
-  the many `SecurityProofs-N.md §X` citations scattered across `SECURITY.md`,
-  `SPEC.md`, `README.md` and the other parts.
-- Re-run the validator on every part afterwards and record the new counts in the
-  two places that track them.
 
 Status: **OPEN**

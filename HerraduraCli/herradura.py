@@ -280,7 +280,7 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
 _WEAK_V2_KEY_MSG = (
     "NL-FSCX v2 affine weak key — delta(K) is 0 or 2^(n-1), which makes the "
     "permutation GF(2)-affine and the ciphertext recoverable by linear algebra "
-    "(SecurityProofs-5.md \u00a711.19.2, TODO #168)")
+    "(SecurityProofs-7.md \u00a711.19.2, TODO #168)")
 
 _CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl'}
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}

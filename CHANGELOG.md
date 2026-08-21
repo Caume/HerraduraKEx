@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.14] - 2026-08-21
+
+### Changed
+- TODO #220: **`SecurityProofs.md` re-split from five parts into seven.** Part 1 (708
+  expressions) and Part 4 (718) had both crossed `validate_katex.js`'s 700-expression
+  warning threshold, approaching GitHub's ~750-per-page KaTeX limit past which every
+  expression on the page silently fails to render. Split at section boundaries:
+
+  | Part | Sections | Expressions |
+  |---|---|---|
+  | 1 | §1 Algebraic Foundations | 300 |
+  | 2 | §2–§8 | 408 |
+  | 3 | §9–§10 | 409 |
+  | 4 | §11–§11.8.2 | 593 |
+  | 5 | §11.8.3–§11.8.7 | 587 |
+  | 6 | §11.9 HFSCX-256-DM | 131 |
+  | 7 | §11.10–§11.13, §11.15–§11.19 | 645 |
+
+  The total is 3073 expressions before and after, and every part is now under the
+  warning threshold with 0 FAIL. Prose is unchanged: a line-level diff of the
+  concatenated bodies differs only by the two `---` rules at the split points.
+
+### Fixed
+- TODO #220: cross-references were repointed by *section ownership* — which part
+  actually contains the cited section — rather than by a mechanical part-number shift.
+  That also repaired references stale since the TODO #170 re-split: 25 `SPn §x`
+  shorthand markers in `docs/INTRODUCTION.md`, the §11.11 constant-time-audit citations
+  in `herradura.h`, `herradura/herradura.go` and `SecurityProofsCode/dudect_timing_audit.c`,
+  and several §11.7/§11.8.x/§9.2.6 citations in the proof documents and analysis scripts.
+  `CHANGELOG.md` and `TODO_DONE.md` were left as-is, recording the layout of their time.
+- TODO #220: `.github/workflows/ci.yml` globs `SecurityProofs-[0-9]*.md` in the KaTeX
+  validation step instead of naming each part, so a future split cannot silently leave a
+  part unvalidated.
+
 ## [2.7.13] - 2026-08-21
 
 ### Changed

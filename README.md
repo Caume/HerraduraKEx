@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.7.13)
+# Herradura Cryptographic Suite (v2.7.14)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -66,7 +66,7 @@ The binding attack is Pohlig–Hellman, not the function field sieve: the order 
 $\mathbb{GF}(2^n)^{\ast}$ is $2^n - 1$, whose largest prime factor is only 73 bits at $n = 256$, so
 a discrete log costs the square root of *that* rather than of the field. The sub-exponential FFS
 $L[1/3]$ figure often quoted for these sizes (~80–90 bits at $n = 256$) is therefore not the
-practical bound — see SecurityProofs-2.md §9.2.4. Every protocol in the HKEX-GF family is
+practical bound — see SecurityProofs-3.md §9.2.4. Every protocol in the HKEX-GF family is
 demo-only for this reason; the post-quantum families below do not share the weakness.
 
 ---
@@ -306,18 +306,20 @@ spec/                                                — machine-readable protoc
                                                       tags, and security-level classification per
                                                       protocol — the canonical source for tooling/LLMs
 SecurityProofsCode/                                 — standalone Python proof and analysis scripts
-SecurityProofs-1.md                                 — formal analysis §1–§8 (algebraic foundations,
-                                                      protocol security, quantum attack analysis,
-                                                      experimental code index)
-SecurityProofs-2.md                                 — formal analysis §9–§10 (non-linear proposals,
+SecurityProofs-1.md                                 — formal analysis §1 (algebraic foundations)
+SecurityProofs-2.md                                 — formal analysis §2–§8 (protocol security,
+                                                      quantum attack analysis, experimental
+                                                      code index)
+SecurityProofs-3.md                                 — formal analysis §9–§10 (non-linear proposals,
                                                       v1.4.0 migration)
-SecurityProofs-3.md                                 — formal analysis §11–§11.8.2 (non-linearity and
+SecurityProofs-4.md                                 — formal analysis §11–§11.8.2 (non-linearity and
                                                       post-quantum extensions, NL-FSCX v1/v2, HKEX-RNL)
-SecurityProofs-4.md                                 — formal analysis §11.8.3–§11.9.12 (PQ signature
-                                                      options, HFSCX-256-DM hash)
-SecurityProofs-5.md                                 — formal analysis §11.10–§11.13, §11.15–§11.19
+SecurityProofs-5.md                                 — formal analysis §11.8.3–§11.8.7 (PQ signature
+                                                      options, HPKE-Stern-KEM)
+SecurityProofs-6.md                                 — formal analysis §11.9 (HFSCX-256-DM hash)
+SecurityProofs-7.md                                 — formal analysis §11.10–§11.13, §11.15–§11.19
                                                       (ZKP extensions, research-review sections)
-SecurityProofs.md                                   — split index (redirects to the five files above)
+SecurityProofs.md                                   — split index (redirects to the seven files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes
 docs/
@@ -354,7 +356,7 @@ visible without having to search `TODO_DONE.md`.
   = 2^-8.6 where IND-CCA2 needs 2^-128, decapsulation reports failure explicitly with no
   FO transform or implicit rejection — which is the oracle the GJS reaction attack needs
   — and key generation applies no weak-key screen. See `SECURITY.md` and
-  `SecurityProofs-4.md` §11.8.7. The
+  `SecurityProofs-5.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
   in the Python and Go CLIs accept `--rounds` (219 reaches 128-bit Fiat-Shamir soundness;
   the C CLI takes the same value at compile time via `-DSDF_ROUNDS=219`), but raising

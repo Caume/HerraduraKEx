@@ -53,7 +53,7 @@ When a `$$` block follows immediately after prose (e.g. `**Compression function.
 
 Inside numbered/bulleted lists, avoid `$$` display blocks — move them before or after the list, or use inline `$...$` inside the item.
 
-**CRITICAL — GitHub has a per-page math expression limit of approximately 750 expressions.**  Documents with more than ~750 math spans show a cascade failure: every math expression past the threshold renders as "Unable to render expression".  The root cause is a client-side rendering limit, not any specific syntax error.  The only fix is to split the document at a section boundary so that each part stays under ~750 math expressions.  SecurityProofs.md was split into five parts for this reason: SecurityProofs-1.md (§1–§8, 708 spans), SecurityProofs-2.md (§9–§10, 409 spans), SecurityProofs-3.md (§11–§11.8.2, 593 spans), SecurityProofs-4.md (§11.8.3–§11.9.12, 718 spans), and SecurityProofs-5.md (§11.10–§11.13, §11.15–§11.19, 645 spans).  (The original two-part split — SecurityProofs-1.md at §1–§10 and SecurityProofs-2.md at §11–§11.9 — grew back past the limit and was re-split under TODO #170; `validate_katex.js` now warns above ~700 expressions to catch regrowth earlier.)
+**CRITICAL — GitHub has a per-page math expression limit of approximately 750 expressions.**  Documents with more than ~750 math spans show a cascade failure: every math expression past the threshold renders as "Unable to render expression".  The root cause is a client-side rendering limit, not any specific syntax error.  The only fix is to split the document at a section boundary so that each part stays under ~750 math expressions.  SecurityProofs.md was split into seven parts for this reason: SecurityProofs-1.md (§1, 300 spans), SecurityProofs-2.md (§2–§8, 408 spans), SecurityProofs-3.md (§9–§10, 409 spans), SecurityProofs-4.md (§11–§11.8.2, 593 spans), SecurityProofs-5.md (§11.8.3–§11.8.7, 587 spans), SecurityProofs-6.md (§11.9, 131 spans), and SecurityProofs-7.md (§11.10–§11.13, §11.15–§11.19, 645 spans).  (The original two-part split — §1–§10 and §11–§11.9 — grew back past the limit and was re-split into five under TODO #170, and the five were re-split into seven under TODO #220 when Parts 1 and 4 crossed the warning threshold again; `validate_katex.js` warns above ~700 expressions to catch regrowth earlier.)
 
 ### Rule 6 — never place `$...$` directly after a non-space character
 
@@ -113,7 +113,7 @@ Two concrete traps that follow from this:
 
 So a paragraph containing `\mathbb{Z}_q[x]/...` followed later by a second `letter_\text{word}` occurrence opens emphasis at the former and closes it at the latter, swallowing every `$...$` boundary between them — even though each span validates individually. Per-span validators (including `validate_katex.js`) render each `$...$`/`$$...$$` span independently and **do not model this cross-span pairing**, so they report 0 FAIL even when GitHub visibly breaks the paragraph — always eyeball multi-span paragraphs on the live page after validating, not just re-run the validator.
 
-**Fix:** eliminate the punctuation-adjacent subscript rather than bracing it. Prefer a bare `letter_letter`/`letter_digit` subscript with no punctuation touching `_` on either side (`\mathcal R_q`, `\rceil_p`, `C_2`) — this is inert by construction. For `\mathbb{Z}_q`, replace it with the punctuation-free `\mathbb{Z}/q\mathbb{Z}` quotient notation (already used in `SecurityProofs-3.md`) or the `\mathcal R_q` ring shorthand instead of bracing the subscript.
+**Fix:** eliminate the punctuation-adjacent subscript rather than bracing it. Prefer a bare `letter_letter`/`letter_digit` subscript with no punctuation touching `_` on either side (`\mathcal R_q`, `\rceil_p`, `C_2`) — this is inert by construction. For `\mathbb{Z}_q`, replace it with the punctuation-free `\mathbb{Z}/q\mathbb{Z}` quotient notation (already used in `SecurityProofs-4.md`) or the `\mathcal R_q` ring shorthand instead of bracing the subscript.
 
 ### Correct patterns
 
@@ -160,7 +160,8 @@ NODE_PATH=/tmp/katex-validate/node_modules node \
 NODE_PATH=/tmp/katex-validate/node_modules node \
     /path/to/HerraduraKEx/SecurityProofsCode/validate_katex.js \
     /path/to/HerraduraKEx/SecurityProofs-2.md
-# Expect: "753 OK, 0 FAIL" and "724 OK, 0 FAIL" (counts vary as the documents grow)
+# Expect: "300 OK, 0 FAIL" and "408 OK, 0 FAIL" (counts vary as the documents grow;
+# Parts 3-7 are checked the same way)
 ```
 
 The validator at `SecurityProofsCode/validate_katex.js` extracts every `$...$` and `$$...$$` math span, applies CommonMark backslash escape resolution (all `\<ASCII-punctuation>` → bare character) to **both** inline and display spans — matching GitHub's actual pipeline — and then renders each through KaTeX in the correct display/inline mode.  It also flags `\;`/`\!`/`\,`/`\:` as PIPE-FAIL violations in both inline and display contexts.

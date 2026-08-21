@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 nl_fscx_v2_csp_analysis.py — Cryptanalysis of the NL-FSCX v2 Cipher-Stream Problem
-(TODO #124, SecurityProofs-2 §11.8.5).
+(TODO #124, SecurityProofs-5 §11.8.5).
 
 THE PROBLEM
 -----------

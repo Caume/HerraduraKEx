@@ -6,7 +6,7 @@ The deployed compression is Davies-Meyer over NL-FSCX v1:
 
     C_DM(s, m) = F_1^{64}(s, m) XOR s
 
-SecurityProofs-4.md §11.9.8 cites the PGV/BRS provable-security result for this
+SecurityProofs-6.md §11.9.8 cites the PGV/BRS provable-security result for this
 shape.  That result is proved in the ideal-CIPHER model: it requires E_m(.) to be
 a permutation for every block m.  F_1 is documented non-bijective in A (§11.5 Q3),
 so the citation does not apply as stated.  This script re-derives what the correct
@@ -362,7 +362,7 @@ def section5(bench: int = 400) -> None:
     print("    cannot be applied to a hash input")
     print("  - wire-format break for every artifact carrying a digest: signatures,")
     print("    AEAD tags, Stern commitments, KDF outputs, HCRED proofs")
-    print("\n  => Recommendation: do NOT swap.  See §6 and SecurityProofs-4.md §11.9.12.")
+    print("\n  => Recommendation: do NOT swap.  See §6 and SecurityProofs-6.md §11.9.12.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -4228,11 +4228,11 @@ func cmdPakeDemo(args []string) {
 // ── main ─────────────────────────────────────────────────────────────────────
 
 // errWeakV2Key is returned when an NL-FSCX v2 key falls in the affine weak-key
-// class delta(K) in {0, 2^(n-1)} (SecurityProofs-2.md 11.19.2, TODO #168).
+// class delta(K) in {0, 2^(n-1)} (SecurityProofs-7.md 11.19.2, TODO #168).
 var errWeakV2Key = errors.New(
 	"NL-FSCX v2 affine weak key - delta(K) is 0 or 2^(n-1), which makes the " +
 		"permutation GF(2)-affine and the ciphertext recoverable by linear algebra " +
-		"(SecurityProofs-2.md 11.19.2, TODO #168)")
+		"(SecurityProofs-7.md 11.19.2, TODO #168)")
 
 func die(prefix string, err error) {
 	fmt.Fprintln(os.Stderr, prefix+":", err)

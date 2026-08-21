@@ -245,7 +245,7 @@ public final class HerraduraCli {
     }
 
     /** Stern-F is demo/illustration-strength only at this binding's fixed
-     * n=256/t=16 parameters (SecurityProofs-4.md Sec.11.8.4) — mirrors the
+     * n=256/t=16 parameters (SecurityProofs-5.md Sec.11.8.4) — mirrors the
      * Python/C/Go CLIs' stderr warning on every stern genpkey/sign/verify/
      * enc/dec call (not printed for hpke-stern-kem, which is production-shaped). */
     private static void sternDemoWarning() {

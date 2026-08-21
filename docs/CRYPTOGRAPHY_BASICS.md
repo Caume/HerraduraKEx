@@ -29,7 +29,7 @@ docs/INTRODUCTION.md      — same ideas, in more depth, with toy walkthroughs
         ↓
 docs/TUTORIAL.md          — how to call the library
         ↓
-SecurityProofs-1.md … -5.md — formal proofs, graduate-level algebra
+SecurityProofs-1.md … -7.md — formal proofs, graduate-level algebra
 ```
 
 ---
@@ -369,4 +369,4 @@ and §5.
 of depth see [docs/INTRODUCTION.md](INTRODUCTION.md); for API usage see
 [docs/TUTORIAL.md](TUTORIAL.md); for formal security proofs see
 [SecurityProofs-1.md](../SecurityProofs-1.md) through
-[SecurityProofs-5.md](../SecurityProofs-5.md).*
+[SecurityProofs-7.md](../SecurityProofs-7.md).*

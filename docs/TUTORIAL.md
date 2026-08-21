@@ -1611,7 +1611,7 @@ Combined with the Fiat-Shamir heuristic they yield non-interactive signatures.
 - Use **HCRED** (see above) when the credential must bind two hard problems
   (Ring-LWR + SDP) at once.
 
-See `SecurityProofs-5.md §11.10` for completeness, soundness, and zero-knowledge
+See `SecurityProofs-7.md §11.10` for completeness, soundness, and zero-knowledge
 proofs of both constructions.
 
 ### ZKP-RNL (Ring-LWR Σ-protocol)
@@ -2437,7 +2437,7 @@ models that exclude quantum adversaries.
 ### Code-based PQC (HPKS-Stern-F, HPKE-Stern-F)
 
 - **HPKS-Stern-F** has a complete security reduction to SD(N,t) + NL-FSCX v1 PRF
-  (Theorem 17, `SecurityProofs-4.md §11.8.4`). SD(N,t) is NP-complete and believed
+  (Theorem 17, `SecurityProofs-5.md §11.8.4`). SD(N,t) is NP-complete and believed
   quantum-hard (BMvT 1978).
 - **Demo parameters** use `SDF_ROUNDS=32` (soundness error (2/3)^32 ≈ 2^-19).
   Production requires `rounds ≥ 219` for 128-bit soundness.

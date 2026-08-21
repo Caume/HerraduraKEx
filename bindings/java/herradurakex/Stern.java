@@ -19,7 +19,7 @@ import java.util.List;
  * fixed at n=256 (KEYBITS), matching this binding's existing scope
  * ({@link Herradura}, {@link HerraduraNl} are likewise fixed at 256 bits).
  *
- * Demo parameters (SecurityProofs-4.md Sec.11.8.4): N=256, t=16,
+ * Demo parameters (SecurityProofs-5.md Sec.11.8.4): N=256, t=16,
  * rounds=32 by default (~19-bit Fiat-Shamir soundness, illustration
  * only); production deployments need rounds &gt;= 219 for 128-bit
  * soundness. QC-MDPC toy parameters: r=523, d=15, t=18 (measured DFR

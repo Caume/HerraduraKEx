@@ -2221,7 +2221,7 @@ static void test_hske_nl_a2_correctness(void)
    Protocol: one party generates a_rand and transmits it in the clear; both derive
    the shared m_blind = m_base + a_rand and compute their individual public keys
    C = round_p(m_blind · s).  Agreement holds because the ring is commutative:
-   s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-2.md. */
+   s_A·(m_blind·s_B) = s_B·(m_blind·s_A).  See §11.4.2 of SecurityProofs-4.md. */
 static void test_hkex_rnl_correctness(void)
 {
     static const int rnl_sizes[] = {32, 64, 128, 256};

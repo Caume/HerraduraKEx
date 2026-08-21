@@ -20,7 +20,7 @@ It is not.  At the deployed i = n/4 the co-rank is 126 out of 256.
   §2  Closed form for the co-rank, and why it is a 2-adic valuation
   §3  The leak exhibited: 126 functionals that are constant across all keys
   §4  What each classical protocol loses
-  §5  The nonce-augmented map of SecurityProofs-1.md §2.2, for completeness
+  §5  The nonce-augmented map of SecurityProofs-2.md §2.2, for completeness
 
 RESULTS
 
@@ -53,7 +53,7 @@ RESULTS
     bits of entropy rather than 256, the other 126 coordinates being a public
     function of R.
 
-§5  The FSCX-REVOLVE-N map S_i . (M + I) analysed in SecurityProofs-1.md §2.2 is
+§5  The FSCX-REVOLVE-N map S_i . (M + I) analysed in SecurityProofs-2.md §2.2 is
     worse by exactly the valuation of M + I: co-rank 128 at the same parameters.
 
 Self-contained (no imports from the suite), per SecurityProofsCode convention; the
@@ -282,7 +282,7 @@ def section4():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# §5  The nonce-augmented map of SecurityProofs-1.md §2.2
+# §5  The nonce-augmented map of SecurityProofs-2.md §2.2
 # ─────────────────────────────────────────────────────────────────────────────
 
 def section5():
@@ -290,7 +290,7 @@ def section5():
     print("§5  FSCX-REVOLVE-N's key map S_i . (M + I), for completeness")
     print(SEP2)
     print()
-    print("  SecurityProofs-1.md §2.2 analyses HSKE in the nonce-augmented form with")
+    print("  SecurityProofs-2.md §2.2 analyses HSKE in the nonce-augmented form with")
     print("  B = N = K, giving key map S_i . (M + I) rather than T_i = M . S_i.")
     print("  v(M + I) = 2, so that map is worse by exactly two dimensions:")
     print()
