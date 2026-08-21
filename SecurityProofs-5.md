@@ -8,7 +8,7 @@
 > - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
 > - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 5 — §11.8.3–§11.8.7** (this file): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 5 — §11.8.3–§11.8.8** (this file): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
@@ -300,7 +300,7 @@ where $\sigma_{\mathbf{e}} \in S_N$ is a fixed permutation encoding the support 
 
    $b = 2$: reveal $(\pi, \mathbf{y} \oplus \mathbf{e})$; verifier checks $\mathrm{wt}(\pi(\mathbf{y} \oplus \mathbf{e})) = t$ and the syndrome relation.
 
-Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (§11.9.9) now finalizes through HFSCX-256-DM with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256-DM (§11.9), this provides the independent quantum random oracles required by Unruh's transform.
+Soundness error per round: $2/3$.  After $\lceil\lambda / \log_2(3/2)\rceil \approx 1.7\lambda$ rounds, soundness error $\leq 2^{-\lambda}$.  Fiat-Shamir in the quantum random oracle model [Unruh 2015] produces a non-interactive signature.  The commitment hash `_stern_hash` (SecurityProofs-6.md §11.9.9) now finalizes through HFSCX-256-DM with a per-slot domain-separation tag (ds=1 for $c_0$, ds=2 for $c_1$, ds=3 for $c_2$, ds=4 for the KEM key).  Under the ROM on HFSCX-256-DM (SecurityProofs-6.md §11.9), this provides the independent quantum random oracles required by Unruh's transform.
 
 **Theorem 17 — EUF-CMA of HPKS-Stern-F.**
 
@@ -585,6 +585,104 @@ The intervals are **disjoint** — a 2.74x ratio, with failure *less* likely whe
 **Assessment.**  These findings compound rather than trade off.  A DFR of `2^-128` would not make this KEM IND-CCA2 while decapsulation reports failure, and implicit rejection would not rescue a `2^-8.6` DFR.  Underneath both, the QC syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is itself far below any usable security level, so DFR is not even the binding constraint — the parameters have to move first, and moving them is what the `r ≈ 1723` lower bound above is about.  `HPKE-Stern-KEM` is therefore reclassified **demo-only** in `SECURITY.md` and in `spec/herradura-protocol-spec.json` (which had carried `status: production`), with the reaction-attack exposure stated explicitly rather than left implicit in a DFR number.
 
 **Not evaluated.**  TODO #218 also asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the gap without a wire-format change.  That question is left open here: it turns on decoder-design results the analysis in this section does not attempt to reproduce, and at parameters this far from the target the answer would not change the classification.  It is worth revisiting only alongside a parameter change, since a decoder improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.
+
+---
+
+### 11.8.8 HPKS-Stern-F round count under multi-round Fiat-Shamir (TODO #217)
+
+The production figure `_STERN_F_PRODUCTION_ROUNDS = 219` was carried over from the
+textbook parallel-repetition bound in §11.8.4 — soundness error `(2/3)^r`, so
+`r = ceil(128 / log2(3/2)) = 219`.  Recent work on multi-round Fiat-Shamir shows
+that this bound overstates security for several deployed schemes: the CROSS
+security revision presented at the 6th NIST PQC standardization conference, and
+the fixed-weight-repetition forgery improving on Kales-Zaverucha (KZ), report up
+to roughly 24% in the worst case.  This section derives the bound for the
+deployed construction rather than assuming it.  It is backed by
+`SecurityProofsCode/stern_f_multiround_fs.py`, which pins a fast reimplementation
+of the challenge expansion bit-exact against the deployed one before measuring
+anything.
+
+**Result: 219 is confirmed, and the multi-round discount does not apply here.**
+
+**Why the KZ lever is absent.**  KZ-style forgeries split the attacker's effort
+across challenge phases: keep the rounds that already came out favourably, regrind
+only the rest, and pay well below the naive `(3/2)^r`.  That needs the challenge
+for a given round to depend on less than the whole commitment set — either a
+per-round derivation, or the second challenge phase of a 5-pass scheme.
+HPKS-Stern-F has neither.  Every challenge comes from one hash of
+`msg || all commitments`, expanded by chaining `nl_fscx_v1` over the round index,
+so touching any single commitment re-randomises the entire challenge vector.
+Measured over 120 independent trials, flipping one bit of one commitment changes
+0.66716 of the 219 challenges against the 0.66667 that independent
+re-randomisation predicts — statistically indistinguishable, and matched by a
+control that feeds two independent seeds through the chain.  A forger therefore
+faces the one-shot game the `(3/2)^r` bound describes: commit to a full set, take
+the one challenge vector it yields, and start over if it falls outside the
+answerable set.  This is the favourable case, and it is also the reason the
+uniform (rather than fixed-weight) repetition matters: there is no weight
+constraint for a fixed-weight forgery to exploit.
+
+**The two candidate leaks in the expansion.**  Both were checked, since the bound
+is only as good as the challenge distribution feeding it.
+
+The mod-3 reduction is exact arithmetic, not sampling: `2^32 mod 3 = 1`, so residue
+0 carries one extra preimage out of `2^32`.  A forger who always answers the two
+most likely residues gains a factor `1 + 1.16e-10` per round, `1 + 2.5e-08` across
+all 219 rounds — under `2^-24` bits of soundness.  No rejection sampling is
+warranted on this path.
+
+The chain is the more interesting question, because `nl_fscx_v1` is not a
+bijection and the expansion iterates it 219 times.  Three findings.  Cycles are
+structurally impossible: each step uses a different second argument (the round
+index, which strictly increases), so the chain is a composition of 219 distinct
+maps rather than the iteration of one, and a cycle would require the same index
+twice.  State collapse does not occur either — 8 000 distinct seeds produce 8 000
+distinct states at every depth sampled from 1 to 219, and 8 000 distinct
+219-round challenge vectors.  Nor is there drift: the challenge distribution over
+rounds 110-219 matches rounds 1-109 to within 0.002.  The image contraction that
+makes the map non-bijective — measured at roughly `2/r` of the space for an
+`r`-step revolve in §11.9.12 — does not reach the low 32 bits the reduction
+consumes.
+
+**Challenge uniformity, and what the experiment can actually see.**  Uniformity
+was tested with the per-position chi-square summed over all 219 positions
+(`chi2` with 438 degrees of freedom), reported as six independent replications of
+8 000 seeds rather than one number — a single replication of this statistic lands
+anywhere in roughly plus or minus 2 by chance, and a real per-round bias would
+show as consistent positive z across replications instead.  The six came out
++1.31, +1.40, -1.19, -0.86, -0.31, -0.35, mean -0.001; pooled over all 48 000
+seeds, z = -0.94.  No bias is resolvable.
+
+Turning that into a bound rather than a reassurance: a 99% upper limit on the
+excess chi-square caps the summed per-round skew at 0.204, so a forger who always
+answers the two most likely challenges gains at most **0.44 bits** across all 219
+rounds, leaving a floor of **127.67 bits**.  That floor is set by sample size, not
+by observed structure.
+
+Finally the model was validated end to end at round counts where forgery is
+actually observable — a forger's answerable pattern fixed in advance, commitment
+sets drawn at random, success counted.  At r = 5, 10, 15 and 20 the measured
+forgery probability tracks `(2/3)^r` with every 95% interval covering 1.0.
+
+**Margin, stated plainly.**  219 rounds gives 128.107 bits under the derived
+bound — a margin of 0.107 bits, which is *smaller* than the 0.44-bit resolution
+floor above.  The experiment therefore cannot by itself certify 128.000 bits at
+r = 219; it can only establish that no bias large enough to matter is detectable,
+and closing that gap empirically would take roughly 30x the samples.  A
+maintainer wanting margin against the measurement floor rather than against a
+measured effect can set r = 220 for 128.692 bits at about 0.5% cost in signature
+size and time.  No change is made here, because reacting to a finite experiment's
+resolution limit is not the same as fixing a defect, and none was found.
+
+**Scope.**  The `2/3` per-round cheating probability is the standard Stern
+special-soundness claim of Theorem 17; it is assumed, not re-proved — this section
+audits the repetition and challenge-expansion layer built on top of it.  The
+result is also independent of the parameter problem: 219 rounds over a 30-40-bit
+syndrome-decoding instance is still a demo-only signature, since round count and
+instance hardness are separate axes, and HPKS-Stern-F's `SECURITY.md`
+classification is unaffected.  All four language targets (C, Go, Python, Java)
+derive challenges identically, so the analysis applies to each; cross-language
+agreement is already enforced by `CliTest/test_cross_lang_matrix.sh`.
 
 ---
 

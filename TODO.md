@@ -92,33 +92,3 @@ sets), and Core-SVP is a deliberately crude lower bound.
   ring parameters are adjustable without touching FSCX.
 
 Status: **OPEN**
-
-### #217: Validate HPKS-Stern-F's round count against multi-round Fiat–Shamir forgery attacks
-
-The production figure `rounds = 219` comes from the textbook
-`(2/3)^r ≤ 2^-128`. Recent work on multi-round Fiat–Shamir (the CROSS
-security revision presented at the 6th NIST PQC standardization
-conference, and the fixed-weight-repetition forgery improving on
-Kales–Zaverucha) shows that the naive parallel-repetition bound overstates
-security for several deployed schemes — up to ~24% in the worst case
-reported. Stern here is a 3-pass with uniform (not fixed-weight)
-repetition and one-shot challenge derivation, which is the favourable
-case, but the bound should be derived rather than assumed.
-
-- Derive the forgery cost for this exact construction under the current
-  multi-round FS analysis and confirm (or correct) 219, including the
-  grinding strategy where an attacker re-randomises commitments for a
-  subset of rounds.
-- Audit the challenge expansion itself: `hpks_stern_f_sign` hashes
-  `msg || all commitments` once, then chains `ch_st = nl_fscx_v1(ch_st,
-  BitArray(n, i))` per round and takes `(ch_st & 0xFFFFFFFF) % 3`. Two
-  things to check — that the reduction bias (2^32 mod 3 = 1, so ~2^-32) is
-  genuinely negligible at 219 rounds, and that chaining a **non-bijective**
-  map as challenge PRG cannot be steered into short cycles or low-entropy
-  runs by commitment grinding. The bias question was touched for ring
-  signatures in `stern_ring_challenge_bias.py`; this is the signature path.
-- If the derived bound exceeds 219, update `_STERN_F_PRODUCTION_ROUNDS`,
-  the `sign --rounds` guidance, and the C CLI's `-DSDF_ROUNDS` default
-  across all language targets.
-
-Status: **OPEN**

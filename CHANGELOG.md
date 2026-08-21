@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.15] - 2026-08-21
+
+### Added
+- TODO #217: `SecurityProofsCode/stern_f_multiround_fs.py` — derives HPKS-Stern-F's
+  forgery cost under multi-round Fiat-Shamir instead of assuming the textbook
+  `(2/3)^r` bound, and audits the challenge expansion that feeds it. Write-up in
+  `SecurityProofs-5.md` §11.8.8.
+
+### Changed
+- TODO #217: **`_STERN_F_PRODUCTION_ROUNDS = 219` is confirmed — no code change in
+  any language target.** The recent multi-round-FS discounts (CROSS security
+  revision at the 6th NIST PQC conference; the fixed-weight-repetition forgery
+  improving on Kales-Zaverucha) need the challenge for a round to depend on less
+  than the whole commitment set. HPKS-Stern-F derives every challenge from one hash
+  of `msg || all commitments`, so flipping a single commitment bit changes 0.66716
+  of the 219 challenges against the 0.66667 independent re-randomisation predicts —
+  no subset of rounds can be held fixed while others are reground, and the forger
+  faces the one-shot game `(3/2)^r` describes.
+- TODO #217: the two candidate leaks in the challenge expansion are quantified
+  rather than dismissed. The mod-3 reduction is counted exactly (`2^32 mod 3 = 1`)
+  at `3.7e-08` bits of soundness across all 219 rounds. The non-bijective
+  `nl_fscx_v1` chain shows no cycles — structurally impossible, since each step
+  uses a different round index — no state collapse across 8 000 seeds at any depth,
+  and no drift between the first and second halves of the chain.
+
+### Fixed
+- TODO #220 follow-up: section references that the seven-way split turned
+  cross-file now name the file — `SecurityProofs-5.md`'s §11.9/§11.9.9 citations
+  and `SecurityProofs-6.md`'s §11.8.3/§11.8.4 citations, which resolved within one
+  document before the split and silently dangled after it.
+
 ## [2.7.14] - 2026-08-21
 
 ### Changed

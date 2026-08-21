@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v2.7.14)
+# Herradura Cryptographic Suite (v2.7.15)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -314,7 +314,7 @@ SecurityProofs-3.md                                 — formal analysis §9–§
                                                       v1.4.0 migration)
 SecurityProofs-4.md                                 — formal analysis §11–§11.8.2 (non-linearity and
                                                       post-quantum extensions, NL-FSCX v1/v2, HKEX-RNL)
-SecurityProofs-5.md                                 — formal analysis §11.8.3–§11.8.7 (PQ signature
+SecurityProofs-5.md                                 — formal analysis §11.8.3–§11.8.8 (PQ signature
                                                       options, HPKE-Stern-KEM)
 SecurityProofs-6.md                                 — formal analysis §11.9 (HFSCX-256-DM hash)
 SecurityProofs-7.md                                 — formal analysis §11.10–§11.13, §11.15–§11.19
