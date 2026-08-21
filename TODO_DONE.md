@@ -10723,3 +10723,81 @@ Status: **DONE v2.7.11** — CI-flakiness fix. Verified `test_stern_kem.sh` 9/9,
 the migration, plus the error-signature check against both real CLI messages and
 four non-DFR failures that must not be absorbed. No protocol, parameter, or
 CLI-surface change.
+
+### #215: HFSCX-256-DM — the Davies–Meyer proof does not apply to a non-bijective inner map
+
+`hfscx_256` compresses with `state ← nl_fscx_revolve_v1(state, block, 64) ⊕
+state`. Davies–Meyer's collision/preimage bounds (Black–Rogaway–Shrimpton,
+PGV) are proved in the ideal-**cipher** model — they need `E_block(·)` to be
+a permutation for each block. `nl_fscx_v1` is explicitly documented as not
+bijective in A, so HFSCX-256-DM currently has a construction whose security
+argument is cited but not applicable, and everything downstream (HPKS-NL
+challenges, Stern H-matrix generation, HMAC-HFSCX-256, the KDFs) inherits
+that gap.
+
+Measured so far: iterating `nl_fscx_revolve_v1(·, B, 64)` at n = 12 and
+n = 16 exhaustively gives image fractions of 0.030–0.046, matching the
+~2/k expectation for a random function — so the map behaves like a random
+function rather than showing extra structure, but it is still ~5 bits of
+image collapse per block, and no permutation.
+
+Work items:
+- Re-derive the security bound in the ideal-random-function model that
+  actually fits the construction, and state what it gives (and does not)
+  for collision and preimage resistance.
+- Search for exploitable structure the random-function model would not
+  excuse: fixed points of the compression function, Joux multicollisions,
+  expandable messages / long-message second preimages against the MD chain,
+  and length-extension exposure of the bare (non-HMAC) hash.
+- Evaluate `nl_fscx_revolve_v2` as the inner map. It is bijective in A with
+  a closed-form inverse, which would make the ideal-cipher DM argument
+  apply as cited, at the cost of a wire-format break for every artifact
+  containing a digest — so this item should produce a recommendation and
+  a `MIGRATING.md` draft, not a change.
+
+**Findings (v2.7.12).**  `SecurityProofsCode/hfscx_dm_rf_model.py`; written up as
+SecurityProofs-4.md §11.9.12.
+
+1. *Bound re-derivation.*  With the inner map modelled as an ideal random function
+   `f`, the feed-forward makes `C_DM(s,m) = f(s,m) XOR s` itself an ideal random
+   function — each input pair XORs in a value fixed by that pair, so uniformity and
+   independence carry over.  Every ideal-random-function bound transfers with no
+   loss, so all of §11.9.11's numbers stand; what does not stand is the claim that
+   Davies-Meyer *contributes* to them.  §11.9.8's benefits 1 and 2 survive on their
+   own concrete-structure arguments; benefit 3 (PGV-1 alignment) is retracted.
+
+2. *The image collapse does not propagate.*  Exhaustively at n = 16, `F_1^r` follows
+   the `2/r` law (0.0318 of the space at the deployed r = 64, ~5 bits, matching the
+   figure this item recorded) while `C_DM`'s image sits at `1 - 1/e = 0.632` for
+   every r.  Structural, not incidental: `s -> s XOR c` is a bijection for fixed m.
+
+3. *Bijectivity would be a downgrade.*  DM over an invertible map has free fixed
+   points at `s = E_m^{-1}(0)` — the structure Dean's 1999 expandable-message attack
+   consumes.  Measured: with v2 as inner map, one fixed point per block in `O(r)` by
+   inversion (4/4 blocks).  With v1 it is a preimage-of-zero problem under A2, and
+   the image collapse makes it harder still — 3 of 4 tested blocks have *no* fixed
+   point at r = 64 because 0 is not in the image.  The non-bijectivity that breaks
+   the citation is load-bearing for the property the citation would have certified.
+
+4. *One real documentation defect found.*  §11.9.4's flat 2^n second-preimage claim
+   is wrong for long messages — as in any MD hash, Kelsey-Schneier expandable
+   messages give `k`·2^(n/2+1) + 2^(n-k) against a `2^k`-block target.  Demonstrated
+   end-to-end against the deployed chain at n = 16, k = 8: a distinct message of
+   identical block length (so the finalization block matches and the collision
+   survives padding) at ~3 900 compressions vs. a generic 2^16 — a 16.6x speed-up.
+   Joux multicollisions confirmed on the same chain.  At n = 256 the corrected cost
+   is ~2^216 against a 32 TiB target and never falls below ~2^200 at any realisable
+   size, so the 128-bit target is untouched and no call site is exposed; §11.9.4 and
+   the §11.9.11 summary row have been amended.
+
+5. *Recommendation: keep v1, no migration.*  Rejected on four grounds — it adds the
+   Dean fixed points (3); it trades the studied "v1 is a PRF" idealisation for the
+   stronger, unstudied "v2 is an ideal cipher" (TODO #99, #214); v2's degenerate-key
+   class (§11.19.2) is *unscreenable* in an inner-map role because the attacker-chosen
+   message block occupies the key argument; and it breaks the wire format for every
+   digest-bearing artifact.  Performance is neutral.  No `MIGRATING.md` entry was
+   created — the item asked for a draft, and the draft's conclusion is *do not
+   migrate*; the grounds above are recorded in §11.9.12 as what any future proposal
+   to adopt v2 must answer first.
+
+Status: **DONE v2.7.12** — the PGV/ideal-cipher citation is retracted and the bounds re-derived in the ideal-random-function model, where every figure in the §11.9.11 table survives; the v2 swap is evaluated and rejected.

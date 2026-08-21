@@ -47,9 +47,17 @@ constructions, so there is nothing to regenerate.
 **What changed:** The HFSCX-256 hash's compression function was upgraded to a
 Davies-Meyer construction (renamed HFSCX-256-DM): every compression step now feeds the
 pre-compression state back in, `C_DM(s, m) = F_1^{64}(s, m) ⊕ s` instead of
-`C(s, m) = F_1^{64}(s, m)`. This closes a fixed-point weakness and aligns the
-construction with one of the 12 provably-secure PGV compression functions — see
+`C(s, m) = F_1^{64}(s, m)`. This closes a fixed-point weakness — see
 `SecurityProofs-4.md` §11.9.8.
+
+> **Correction (v2.7.12, TODO #215):** this entry originally also claimed the change
+> "aligns the construction with one of the 12 provably-secure PGV compression
+> functions". That claim is withdrawn: the PGV results hold in the ideal-*cipher*
+> model and require a per-block permutation, which `nl_fscx_v1` is not. The
+> fixed-point benefit above is unaffected, and the bounds are re-derived in the
+> ideal-random-function model in `SecurityProofs-4.md` §11.9.12 — where every
+> previously published figure still holds. Nothing about the v1.9.0 wire-format
+> change or the action required below is altered.
 
 **What's incompatible:** Any HFSCX-256 digest, `--kdf hfscx-256` derived key,
 pre-hash-signed message digest, or HSKE-NL-AEAD authentication tag computed before

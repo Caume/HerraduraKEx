@@ -6,8 +6,15 @@ __pycache__/
 /dist/
 *.egg-info/
 
+# build_c.sh / build_go.sh — plain suite and test binaries, not tracked
+# (the _arm binaries and HerraduraCli/herradura_cli{,_go} are tracked, so they
+#  are deliberately absent here — a rule for them would be inert anyway)
+/Herradura cryptographic suite_c
+/Herradura cryptographic suite_go
+CryptosuiteTests/Herradura_tests_c
+CryptosuiteTests/Herradura_tests_go
+
 # build_c_sanitize.sh (TODO #188) — ASan+UBSan build artifacts, not tracked
-# (mirrors the untracked plain _c/_go suite/test binaries)
 /Herradura cryptographic suite_asan
 CryptosuiteTests/Herradura_tests_asan
 HerraduraCli/herradura_cli_asan
