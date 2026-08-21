@@ -27,6 +27,8 @@ CliTest/                                             (59 scripts; this list is a
   test_encrypt.sh test_encfile.sh  test_signfile.sh
   test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
   test_kat_vectors.sh                               — checks KAT/ is current + cross-verified (TODO #190)
+  lib_dfr.sh                                        — shared QC-MDPC DFR retry policy sourced by
+                                                       every script that decapsulates (TODO #221)
   test_java_bindings.sh                             — builds + runs bindings/java/ (TODO #192)
   test_java_codec.sh                                — Java PEM/DER codec cross-check vs
                                                        Python CLI, both directions (TODO #197)
@@ -234,7 +236,9 @@ jobs on every push/PR, all required/blocking: `native-c`, `native-go`, `native-p
 scripts, split from a single combined `native` job in TODO #205), `native-interop`
 (the `CliTest/*.sh` scripts that exercise two or more CLIs at once — builds both C and Go —
 plus a coverage-guard step that fails if any non-Java, non-cross-lang-matrix `CliTest/*.sh`
-script isn't claimed by exactly one of these four `native-*` jobs), `native-java` (builds/
+script isn't claimed by exactly one of these four `native-*` jobs, and a DFR-guard step that
+fails if a script which decapsulates `hpke-stern-kem` doesn't source `CliTest/lib_dfr.sh`,
+TODO #221), `native-java` (builds/
 runs the `bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python
 interop and KAT cross-checks per-protocol-family, TODO #206), `cross-lang-compat` (builds
 all four CLIs and runs `CliTest/test_cross_lang_matrix.sh` — a genuine 4-way C/Go/Python/

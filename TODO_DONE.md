@@ -10671,3 +10671,55 @@ entry, and belongs to a future major version. The opt-in `--steps` flag this ite
 floated is rejected for the same reason: without a format tag it makes silent
 misdecryption a user-reachable footgun. No wire-format, CLI, or default-parameter
 change was made.
+
+### #221: DFR retry policy was applied per-script, leaving two decapsulating tests unguarded
+
+TODO #195 measured the QC-MDPC BGF decoder's decoding failure rate at 0.225% per
+encapsulation (45/20000, 95% CI [0.159%, 0.291%]) and added a retry canary so a
+DFR event — an expected protocol outcome, not a bug — could not redden a CI run.
+Its residual-probability calculation was right but scoped to the one script it
+touched: the retry was written inline in `test_hybrid_kex_interop.sh`, and later
+copied by hand into `test_cross_lang_matrix.sh` and `test_java_stern_interop.sh`.
+Nothing swept the remaining call sites, and nothing stopped new ones appearing.
+
+Two scripts decapsulate with no retry at all:
+
+- `CliTest/test_stern_kem.sh` — **9 independent encapsulations**, so roughly a
+  **2% chance of a spurious red run**, three orders of magnitude worse than the
+  1-in-29-million residual #195 reasoned about.
+- `CliTest/test_hybrid_kex.sh` — one exposed decapsulation (Alice's completion
+  step), about 0.225% per run. Its two other `hybrid-rnl-stern` calls are Bob-side
+  encapsulations compared only for freshness, and the negative tests expect
+  failure, so neither is exposed.
+
+This surfaced as the `native-interop` failure on PR #210
+(`dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)`,
+raised by `test_stern_kem.sh` immediately after `test_ring` passed), where the
+identical job passed in the parallel workflow run on the same commit.
+
+**Fix.** New `CliTest/lib_dfr.sh` holds the policy once — the retry budget, the
+error signature covering every message the four CLIs emit, a `dfr_is_event`
+predicate and a uniform `dfr_report_retry` log line — with the measurement, the
+safety argument (all 45 observed failures were clean self-detected `None`
+returns, so a retry absorbs the DFR without masking a bug) and the weak-key
+caveat ([[#218]]: retries are correlated rather than independent for a weak key,
+so an exhausted budget is not proof of a bug). `test_stern_kem.sh` gains a
+`kem_roundtrip` helper that retries with a fresh encapsulation and reports the
+CLI's own message on any non-DFR failure; `test_hybrid_kex.sh` wraps its
+encapsulate/complete pair the same way. The three scripts that already had the
+policy now source it instead of redefining it, so the signature has one
+definition rather than five; `test_cross_lang_matrix.sh` keeps its wider budget
+of 5 via a `${MAX_DFR_RETRIES:-3}` default.
+
+**Guard.** A new `native-interop` CI step, modelled on the existing coverage
+guard, fails the build if any `CliTest/*.sh` matching `dec --algo hpke-stern-kem`
+or `--our-kem` does not source `lib_dfr.sh`. Verified both ways: it exits 0 on
+the current tree and reports `UNGUARDED: test_stern_kem.sh` when the source line
+is removed.
+
+Status: **DONE v2.7.11** — CI-flakiness fix. Verified `test_stern_kem.sh` 9/9,
+`test_hybrid_kex.sh` 6/6, `test_hybrid_kex_interop.sh` 19/19,
+`test_java_stern_interop.sh` 6/6, and `test_cross_lang_matrix.sh` 438/438 after
+the migration, plus the error-signature check against both real CLI messages and
+four non-DFR failures that must not be absorbed. No protocol, parameter, or
+CLI-surface change.

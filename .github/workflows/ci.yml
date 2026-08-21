@@ -141,6 +141,7 @@ jobs:
           for f in *.sh; do
             case "$f" in test_java_*) continue ;; esac
             case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
+            case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
               case "$f" in $pattern) claimed=1 ;; esac
@@ -148,6 +149,30 @@ jobs:
             if [ "$claimed" -eq 0 ]; then
               echo "UNCLAIMED: $f is not run by any native-* CI job — update .github/workflows/ci.yml (TODO #205)"
               missing=1
+            fi
+          done
+          exit $missing
+
+      - name: DFR guard — every CliTest script that decapsulates must carry the retry policy
+        run: |
+          # TODO #221. The QC-MDPC BGF decoder behind hpke-stern-kem (and the KEM
+          # half of hybrid-rnl-stern) has a measured ~0.225% decoding failure rate
+          # per encapsulation, so any script that decapsulates will go red at that
+          # rate unless it retries. TODO #195 established the retry policy but it
+          # was applied per-script; test_stern_kem.sh (9 encapsulations, ~2%/run)
+          # and test_hybrid_kex.sh went years without it. This guard stops the next
+          # one from slipping through.
+          cd CliTest
+          missing=0
+          for f in *.sh; do
+            case "$f" in lib_dfr.sh) continue ;; esac
+            # A script is exposed if it decapsulates: `dec --algo hpke-stern-kem`
+            # or a hybrid-rnl-stern completion (the step that takes --our-kem).
+            if grep -qE 'dec --algo hpke-stern-kem|--our-kem' "$f"; then
+              if ! grep -q 'lib_dfr.sh' "$f"; then
+                echo "UNGUARDED: $f decapsulates hpke-stern-kem but does not source lib_dfr.sh (TODO #221)"
+                missing=1
+              fi
             fi
           done
           exit $missing

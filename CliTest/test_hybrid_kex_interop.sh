@@ -62,8 +62,8 @@ cli_for() {
 # to the real completion matrix below, which will then report a genuine
 # failure honestly if retries are exhausted or the error doesn't match the
 # known DFR signature (i.e. we never mask a real bug this way).
-MAX_DFR_RETRIES=3
-DFR_ERR_PATTERN='decapsulation failed \(DFR event or corrupt ciphertext\)'
+# Retry budget and error signature now live in one place (TODO #221).
+. "$(dirname "$0")/lib_dfr.sh"
 declare -A RESP
 for bob in $langs; do
     BOBCLI=$(cli_for "$bob")
@@ -83,8 +83,8 @@ for bob in $langs; do
                 --out "$TMP/_canary_${bob}.pem" 2>"$TMP/_canary_err_${bob}.log"; then
             break
         fi
-        if grep -q "$DFR_ERR_PATTERN" "$TMP/_canary_err_${bob}.log" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
-            echo "INFO bob=$bob: QC-MDPC BGF DFR event on attempt $attempt (TODO #195), retrying with a fresh encapsulation" >&2
+        if dfr_is_event "$(cat "$TMP/_canary_err_${bob}.log")" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+            dfr_report_retry "bob=$bob" "$attempt"
             attempt=$((attempt+1))
             continue
         fi

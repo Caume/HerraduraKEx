@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.11] - 2026-08-21
+
+### Fixed
+- TODO #221: two CliTest scripts decapsulated `hpke-stern-kem` with no DFR retry,
+  so they went red at the QC-MDPC BGF decoder's measured 0.225%-per-encapsulation
+  failure rate. `CliTest/test_stern_kem.sh` performs 9 independent encapsulations
+  (~2% chance of a spurious red run) and `CliTest/test_hybrid_kex.sh` one (~0.2%).
+  TODO #195 established the retry policy and computed a 1-in-29-million residual,
+  but wrote it inline in `test_hybrid_kex_interop.sh`; it was later hand-copied
+  into two more scripts and never swept across the rest. This is what failed the
+  `native-interop` job on PR #210 while the same job passed in the parallel run.
+
+### Added
+- TODO #221: `CliTest/lib_dfr.sh` — the DFR retry policy in one place (budget,
+  error signature covering all four CLIs' messages, `dfr_is_event` predicate,
+  uniform retry log line), with the measurement, the safety argument for retrying,
+  and the weak-key caveat from TODO #218. `test_stern_kem.sh` gains a
+  `kem_roundtrip` helper that retries with a fresh encapsulation and surfaces the
+  CLI's own message on any non-DFR failure; `test_hybrid_kex.sh` wraps its
+  encapsulate/complete pair likewise. The three scripts that already carried the
+  policy now source it rather than redefining it — one definition instead of five
+  — with `test_cross_lang_matrix.sh` keeping its wider budget of 5.
+- TODO #221: a `native-interop` CI guard, modelled on the existing coverage guard,
+  that fails the build if any `CliTest/*.sh` which decapsulates does not source
+  `lib_dfr.sh`. Verified in both directions: clean on the current tree, and
+  reporting `UNGUARDED: test_stern_kem.sh` when the source line is removed.
+
 ## [2.7.10] - 2026-08-20
 
 ### Added

@@ -141,8 +141,8 @@ matrix_asym_enc hpke-stern
 
 # hpke-stern-kem has a nonzero decoding-failure rate (DFR) by design — retry
 # with a fresh keypair on a DFR event rather than treating it as a hard fail.
-DFR_ERR_PATTERN='DFR event or corrupt ciphertext|decapsulation failed'
-MAX_DFR_RETRIES=5
+MAX_DFR_RETRIES=5                 # this matrix runs many encapsulations; keep the wider budget
+. "$(dirname "$0")/lib_dfr.sh"    # shared retry signature (TODO #221)
 matrix_kem() {
     local algo="hpke-stern-kem"
     echo "=== $algo encap/decap matrix (DFR-retry-aware) ==="
@@ -163,7 +163,7 @@ matrix_kem() {
                         check_roundtrip "$algo key=$kg $enc-enc -> $dec-dec" "$TMP/msg.bin" "$TMP/kem_pt.bin"
                         break
                     fi
-                    if echo "$dec_output" | grep -qE "$DFR_ERR_PATTERN" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+                    if dfr_is_event "$dec_output" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
                         continue
                     fi
                     fail "$algo key=$kg $enc-enc -> $dec-dec (rc=$rc): $dec_output"
