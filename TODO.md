@@ -6,47 +6,6 @@
 
 ## Open items
 
-### #211: Prove (and parameterise for) Shannon-perfect one-time HSKE at odd i
-
-Follow-on to [[#210]] and the closest this suite can get to a one-time-pad
-style unconditional proof, reachable **without touching FSCX or
-FSCX_REVOLVE** — only the step-count parameter moves.
-
-Since `E = M^i·P ⊕ T_i·K` is affine, a one-time uniform key K of full
-message width makes `T_i·K` uniform on the image of `T_i`. If `T_i` is
-invertible, `E` is uniform and independent of `P`, which is exactly
-Shannon's perfect-secrecy condition — `I(P; E) = 0`, the same statement
-the OTP satisfies, proved by counting rather than by assumption. The
-conjecture to formalise (verified numerically at n = 64/128/256) is:
-
-> For n = 2^k, `T_i = M · S_i` is invertible over GF(2) **iff i is odd**.
-
-Sketch: `x^n + 1 = (x+1)^n`, so invertibility ⟺ nonzero evaluation at
-x = 1; `m(1) = 3 ≡ 1`, hence `S_i(1) = i mod 2`. The deployed `i = n/4` is
-even for every supported n, which is precisely why [[#210]] finds a corank.
-Correctness is unaffected: decryption needs only `i + r ≡ 0 (mod n)`, and
-`i = 65, r = 191` round-trips (verified, 50/50 at n=256).
-
-Work items:
-- Write the theorem and proof (both directions) into `SecurityProofs-1.md`
-  next to Theorems 2–3, with the perfect-secrecy corollary stated in
-  Shannon's form and its hypotheses spelled out honestly: key uniform, key
-  width = message width, **key used once**. Key reuse remains an immediate
-  break — the affine structure means two ciphertexts under one key give
-  `E1 ⊕ E2 = M^i(P1 ⊕ P2)`, decipherable with no key at all, which the
-  write-up must state as prominently as the positive result.
-- Extend `SecurityProofsCode/` with the numeric verification: invertibility
-  vs parity of i across n ∈ {32…512}, round-trip at (i, r) = (65, 191), and
-  an empirical `I(P; E)` estimate at small n showing 0 for odd i and
-  log2-of-corank bits for even i.
-- Decide the parameter question separately: whether the suite should adopt
-  an odd i as the default (a wire-format break under the CLAUDE.md MAJOR
-  rules, requiring a `MIGRATING.md` entry), expose it as an opt-in
-  `--steps` choice, or document the odd-i variant as a proof-of-concept
-  only. Do not change the default inside this item.
-
-Status: **OPEN**
-
 ### #213: Closed-form O(log i) `fscx_revolve` — bit-exact, no primitive change
 
 Because `fscx_revolve(A, B, i) = M^i·A ⊕ T_i·B` with everything living in
@@ -221,5 +180,35 @@ spectrum.
   nothing about DFR or reaction attacks, and it should — even for a
   demo-only protocol, since a stated DFR is what tells a reader the
   ciphertext-reuse threat model.
+
+Status: **OPEN**
+
+### #220: `SecurityProofs-1.md` is approaching the ~750-expression KaTeX limit
+
+`SecurityProofsCode/validate_katex.js` now warns on `SecurityProofs-1.md`: it
+holds 708 math expressions against GitHub's roughly 750-per-page client-side
+KaTeX limit, past which *every* expression on the page silently renders as
+"Unable to render expression" — a cascade failure with no syntax error to find.
+`SecurityProofs-4.md` sits at 716 with the same warning. The warning threshold
+(700) exists precisely to catch this before it bites; TODO #170 already re-split
+these documents once for the same reason.
+
+Part 1 grew from 581 to 708 across TODO #210 and #211, both of which added
+material to §1.3 (the FSCX_REVOLVE subsections). §1.3.2's additions were trimmed
+back once already, converting prose-adjacent math to plain text to buy headroom,
+which is a stopgap rather than a fix. The remaining open analysis items — #213
+through #218 — will each want a subsection somewhere, and several of them belong
+in Parts 1 and 4.
+
+- Pick split points at section boundaries, as TODO #170 did, so each part lands
+  comfortably under the warning threshold rather than just under the hard limit.
+  Part 1's §1 (Algebraic Foundations) has grown enough to stand alone.
+- Update every cross-reference: `SecurityProofs.md`'s index, the "Continued in
+  Part N" footers, `CLAUDE.md`'s Repository Structure listing with its per-file
+  expression counts, `SecurityProofsCode/KATEX_RULES.md`'s split rationale, and
+  the many `SecurityProofs-N.md §X` citations scattered across `SECURITY.md`,
+  `SPEC.md`, `README.md` and the other parts.
+- Re-run the validator on every part afterwards and record the new counts in the
+  two places that track them.
 
 Status: **OPEN**

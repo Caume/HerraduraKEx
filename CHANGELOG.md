@@ -2,6 +2,51 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.10] - 2026-08-20
+
+### Added
+- TODO #211: proved that one-time HSKE is Shannon-perfect exactly when the step
+  count is odd, and that this is the same fact as TODO #210's leak rather than a
+  separate one. New SecurityProofs-1.md §1.3.2 states it sharply — for uniform
+  independent `P` and `K`,
+
+      I(P; E) = co-rank(T_i) = min(n, 2(2^v2(i) - 1))  bits
+
+  (Theorem 4.2), whence perfect secrecy iff `i` is odd (Corollary 4.3). The proof
+  is a coset argument: `E` is uniform so `H(E) = n`, and for fixed `P` the key map
+  pushes the uniform distribution onto a coset of `im(T_i)`, so
+  `H(E|P) = rank(T_i)`. New `SecurityProofsCode/hske_perfect_secrecy.py` measures
+  the mutual information exhaustively over all 65 536 plaintext-key pairs at
+  `n = 8` and reproduces the co-rank exactly at every step count, including the
+  degenerate `i = n` where the key map vanishes, the ciphertext equals the
+  plaintext, and the leak is the full `n` bits.
+
+  Correctness constrains only `i + r = n`, so `(65, 191)` round-trips 500/500 and
+  costs the identical 256 FSCX steps as the deployed `(64, 192)`: an odd step
+  count is the same work for 126 fewer leaked bits.
+
+### Changed
+- TODO #211 documentation: §1.3.1's forward reference now resolves to §1.3.2, and
+  §5.2's results table records the positive result next to the negative one. The
+  hypotheses are documented as prominently as the conclusion — key uniform, key as
+  wide as the message, key used once — including the two-time-pad break under
+  reuse (`E1 XOR E2 = M^i (P1 XOR P2)`, recovered 200/200 at `n=256`, `i=65`),
+  which HSKE has neither a nonce nor an integrity check to prevent or detect.
+
+  **Parameter decision: documented, not deployed.** An odd step count ties the
+  one-time pad rather than beating it, at roughly 700x the cost and with the same
+  key-as-long-as-the-message burden, so it does not justify a wire-format break on
+  its own. The symmetric-ciphertext PEM records a format tag and `nbits` but no
+  step count, so an odd-`i` build would decrypt existing ciphertexts to silent
+  garbage; adoption would need its own format tag plus a `MIGRATING.md` entry and
+  belongs to a future major version. The opt-in `--steps` flag the item floated is
+  rejected for the same reason. No wire-format, CLI, or default-parameter change.
+- Filed TODO #220: `SecurityProofs-1.md` now holds 708 math expressions against
+  GitHub's ~750-per-page KaTeX limit (`SecurityProofs-4.md` is at 716), so both
+  trip the validator's 700 warning. §1.3.2's additions were trimmed once to buy
+  headroom; the remaining open analysis items will need a re-split at section
+  boundaries as TODO #170 did.
+
 ## [2.7.9] - 2026-08-20
 
 ### Fixed
