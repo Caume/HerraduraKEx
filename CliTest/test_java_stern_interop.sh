@@ -50,8 +50,7 @@ check_verify() {
 # encapsulation (TODO #195) — a legitimate, rare event, not a bug.
 # Retry with a fresh keypair/encapsulation on that specific error, up to
 # MAX_DFR_RETRIES times, mirroring test_hybrid_kex_interop.sh's pattern.
-MAX_DFR_RETRIES=3
-DFR_ERR_PATTERN='DFR event or corrupt ciphertext|decapsulation failed'
+. "$(dirname "$0")/lib_dfr.sh"   # shared retry budget + signature (TODO #221)
 
 kem_roundtrip() {
     local label="$1" gen_cmd="$2" pub_cmd="$3" enc_cmd="$4" dec_cmd="$5" priv="$6" pub="$7" ct="$8" out="$9"
@@ -67,7 +66,7 @@ kem_roundtrip() {
             check_roundtrip "$label" "$TMP/msg.bin" "$out"
             return
         fi
-        if echo "$dec_output" | grep -qE "$DFR_ERR_PATTERN" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+        if dfr_is_event "$dec_output" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
             echo "INFO $label: DFR event on attempt $attempt, retrying with a fresh keypair"
             continue
         fi

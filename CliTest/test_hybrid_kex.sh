@@ -46,14 +46,31 @@ $CLI genpkey --algo hpke-stern-kem --out "$TMP/alice_kem.pem"
 $CLI pkey    --pubout --in "$TMP/alice_kem.pem" --out "$TMP/alice_kem_pub.pem"
 $CLI genpkey --algo hkex-rnl      --out "$TMP/bob_rnl.pem"
 
-# ── Bob's step: encapsulate for both components, write hybrid response ─────
-$CLI kex --algo hybrid-rnl-stern --our "$TMP/bob_rnl.pem" \
-         --their "$TMP/alice_rnl_pub.pem" --their-kem "$TMP/alice_kem_pub.pem" \
-         --out "$TMP/response.pem"
+# ── Bob encapsulates, Alice decapsulates — DFR-retry aware (TODO #221) ─────
+# Alice's completion runs the QC-MDPC BGF decoder, which has a measured ~0.225%
+# failure rate per encapsulation. On the known DFR signature, redo Bob's step for
+# a fresh encapsulation rather than failing the run; anything else, or an
+# exhausted budget, falls through and fails honestly under `set -e`.
+. "$(dirname "$0")/lib_dfr.sh"
+attempt=1
+while :; do
+    $CLI kex --algo hybrid-rnl-stern --our "$TMP/bob_rnl.pem" \
+             --their "$TMP/alice_rnl_pub.pem" --their-kem "$TMP/alice_kem_pub.pem" \
+             --out "$TMP/response.pem"
 
-# ── Alice's step: decapsulate, combine, complete ────────────────────────────
-$CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/alice_kem.pem" \
-         --their "$TMP/response.pem" --out "$TMP/alice_session.pem"
+    if $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/alice_kem.pem" \
+                --their "$TMP/response.pem" --out "$TMP/alice_session.pem" \
+                2>"$TMP/alice_complete_err.log"; then
+        break
+    fi
+    if dfr_is_event "$(cat "$TMP/alice_complete_err.log")" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+        dfr_report_retry "hybrid-rnl-stern alice completes" "$attempt"
+        attempt=$((attempt+1))
+        continue
+    fi
+    cat "$TMP/alice_complete_err.log" >&2
+    exit 1   # not a DFR event, or retries exhausted — a real failure
+done
 
 # ── Cross-party encrypt/decrypt round-trips prove K_alice == K_bob ─────────
 $CLI enc --algo hske --key "$TMP/response.pem" \
