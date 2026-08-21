@@ -10949,3 +10949,182 @@ part back over the threshold, at which point the seam to cut is §11.8.4 out of
 Part 5 or §11.10 out of Part 7.
 
 Status: **DONE v2.7.14** — re-split into seven parts (300/408/409/593/587/131/645 expressions, all under the warning threshold, 0 FAIL), with every live cross-reference repointed by section ownership and verified mechanically.
+
+### #217: Validate HPKS-Stern-F's round count against multi-round Fiat–Shamir forgery attacks
+
+The production figure `rounds = 219` comes from the textbook
+`(2/3)^r ≤ 2^-128`. Recent work on multi-round Fiat–Shamir (the CROSS
+security revision presented at the 6th NIST PQC standardization
+conference, and the fixed-weight-repetition forgery improving on
+Kales–Zaverucha) shows that the naive parallel-repetition bound overstates
+security for several deployed schemes — up to ~24% in the worst case
+reported. Stern here is a 3-pass with uniform (not fixed-weight)
+repetition and one-shot challenge derivation, which is the favourable
+case, but the bound should be derived rather than assumed.
+
+- Derive the forgery cost for this exact construction under the current
+  multi-round FS analysis and confirm (or correct) 219, including the
+  grinding strategy where an attacker re-randomises commitments for a
+  subset of rounds.
+- Audit the challenge expansion itself: `hpks_stern_f_sign` hashes
+  `msg || all commitments` once, then chains `ch_st = nl_fscx_v1(ch_st,
+  BitArray(n, i))` per round and takes `(ch_st & 0xFFFFFFFF) % 3`. Two
+  things to check — that the reduction bias (2^32 mod 3 = 1, so ~2^-32) is
+  genuinely negligible at 219 rounds, and that chaining a **non-bijective**
+  map as challenge PRG cannot be steered into short cycles or low-entropy
+  runs by commitment grinding. The bias question was touched for ring
+  signatures in `stern_ring_challenge_bias.py`; this is the signature path.
+- If the derived bound exceeds 219, update `_STERN_F_PRODUCTION_ROUNDS`,
+  the `sign --rounds` guidance, and the C CLI's `-DSDF_ROUNDS` default
+  across all language targets.
+
+**Outcome.** 219 is confirmed; no change to any language target. The bound was
+derived for this construction rather than assumed, and the challenge expansion
+audited, in `SecurityProofsCode/stern_f_multiround_fs.py` (write-up:
+SecurityProofs-5.md §11.8.8). The script pins a fast reimplementation of the
+challenge chain bit-exact against the deployed one before measuring anything.
+
+**1. The multi-round-FS discount does not apply.** KZ-style forgeries need the
+challenge for a round to depend on less than the whole commitment set — a
+per-round derivation, or a 5-pass scheme's second challenge phase. HPKS-Stern-F
+has neither: one hash of `msg || all commitments`, expanded by chaining
+`nl_fscx_v1` over the round index. Flipping one bit of one commitment changes
+0.66716 of the 219 challenges over 120 independent trials, against the 0.66667
+that independent re-randomisation predicts (z = +0.18), with an independent-seed
+control at z = +0.83. No subset of rounds can be held fixed while others are
+reground, so the forger faces the one-shot game `(3/2)^r` describes. Uniform
+rather than fixed-weight repetition also leaves nothing for a fixed-weight
+forgery to exploit.
+
+**2. Both candidate leaks in the expansion are negligible.** The mod-3 reduction
+was counted exactly, not sampled: `2^32 mod 3 = 1`, giving a forger `1 + 1.16e-10`
+per round and `3.7e-08` bits across all 219 — no rejection sampling warranted.
+The non-bijective chain shows no cycles (structurally impossible: each step uses
+a different round index, so it is a composition of 219 distinct maps, not an
+iteration of one), no state collapse (8 000 distinct seeds give 8 000 distinct
+states at every depth from 1 to 219, and 8 000 distinct challenge vectors), and
+no drift (rounds 110-219 match rounds 1-109 to within 0.002).
+
+**3. Challenge uniformity, bounded rather than asserted.** Per-position
+chi-square summed over all 219 positions, reported as six independent
+replications of 8 000 seeds because a single replication of this statistic lands
+anywhere in +/-2 by chance: +1.31, +1.40, -1.19, -0.86, -0.31, -0.35, mean
+-0.001; pooled z = -0.94 over 48 000 seeds. A 99% limit on the excess caps the
+forger's total gain at 0.44 bits across 219 rounds, leaving a 127.67-bit floor —
+set by sample size, not by observed structure.
+
+**4. End-to-end validation.** At r = 5/10/15/20 the measured forgery probability
+tracks `(2/3)^r` with every 95% interval covering 1.0.
+
+**Margin caveat.** 219 gives 128.107 bits, a 0.107-bit margin — smaller than the
+0.44-bit resolution floor above. The experiment cannot itself certify 128.000
+bits at r = 219, only that no bias large enough to matter is detectable; closing
+that gap empirically needs ~30x the samples. Setting r = 220 would give 128.692
+bits for ~0.5% more signature size and time. Left unchanged deliberately:
+reacting to a finite experiment's resolution limit is not fixing a defect, and
+none was found. Recorded here so the choice is visible rather than implicit.
+
+**Not re-proved.** The `2/3` per-round cheating probability is Theorem 17's
+standard Stern special-soundness claim, assumed here — this item audits the
+repetition and challenge-expansion layer above it. The result is also orthogonal
+to the N >= 17000 parameter problem: round count and instance hardness are
+separate axes, and HPKS-Stern-F stays demo-only in `SECURITY.md`.
+
+Status: **DONE v2.7.15** — 219 confirmed by derivation; KZ splitting shown inapplicable (one-shot challenge derivation), reduction bias counted at 3.7e-08 bits, non-bijective chain clean, and forgery probability validated end to end. No code change.
+
+### #214: Exact differential/linear analysis of NL-FSCX v1/v2 against current ARX tooling
+
+The only non-linearity in either NL-FSCX variant is the carry chain of one
+modular addition per round (`ROL((A+B) mod 2^n, n/4)` in v1, the additive
+`delta(B)` in v2). That places both squarely in the ARX/RX family, where
+exact rather than heuristic tools exist and are standard practice:
+Lipmaa–Moriai gives exact XOR-differential probabilities of modular
+addition in O(log n), and MILP/SMT trail search over the resulting model
+gives provable bounds rather than sampled ones. Today's coverage
+(`nl_fscx_rot_analysis.py`, `nl_fscx_rx_exact_search.py`,
+`nl_fscx_rx_differential_2025.py`, `nl_fscx_prf_analysis.py`) is sampling
+and small-n exhaustive search; this item asks for the bound.
+
+- Build the exact xdp+/xdp-RX model of one v1 and one v2 round and search
+  for optimal trails over the deployed step counts with an SMT/MILP
+  backend, reporting the best trail probability as a function of rounds and
+  the number of rounds needed to drop below 2^-256.
+- Settle the [[#210]] follow-up properly: compute the full Walsh spectrum
+  of the v2 revolve restricted to the 126-dimensional subspace that the
+  classical map leaks, with enough samples to resolve a bias of 2^-16
+  (the current 400-sample spot check resolves nothing below ~2^-4).
+- Include the rotation amount `n/4` in the search space. It is a free
+  parameter that changes trail structure but not the primitive, so an
+  optimal-rotation table across candidate amounts is exactly the kind of
+  parameter tuning that is in scope, feeding a follow-up if some amount
+  dominates.
+- Cross-check the carry-degeneracy characterisation from [[#159]]/[[#168]]
+  against the trail model.
+
+**Deliverable:** `SecurityProofsCode/nl_fscx_exact_trail_search.py` plus a
+`SecurityProofs-7.md` subsection with the bound table and the rotation
+recommendation.
+
+**Outcome.** Delivered as `SecurityProofsCode/nl_fscx_exact_trail_search.py`
+plus SecurityProofs-7.md §11.20. Three of the four sub-items are done; the
+Walsh-spectrum one is not, for a reason recorded below.
+
+**1. Both variants reduce to one xdp+ core.** Writing `M` for the linear FSCX
+map, v1 gives `dY = M(alpha) xor ROL(delta, n/4)` with `delta ~ xdp+(alpha,0->.)`,
+and v2 gives `dY ~ xdp+(M(alpha), 0 -> .)` because `delta(B)` is a per-key
+constant. The variants differ only in where `M` sits relative to the addition.
+Verified at 6 000 random triples, zero mismatches, against round functions
+pinned to the deployed suite.
+
+**2. Proven trail weights** (SMT decision procedure, so each UNSAT is a proven
+lower bound). At 4 rounds: v1 = 6/12/>=10 at n = 8/16/32, v2 = 7/7/7.
+
+**v2 is the differentially weaker variant and does not improve with width** —
+it sits at weight 7 for every width tested while v1 reaches 12 at n = 16. This
+follows from finding 1: v2 sets the next state difference to the addition
+output directly, so a light trail persists, whereas v1's XOR of `M(alpha)`
+forces diffusion. v2 is the variant deployed for HSKE-NL-A2 and HPKE-NL, chosen
+for bijectivity and a closed-form inverse — properties orthogonal to
+differential strength. Not a break, but the relevant design fact.
+
+Widths are powers of two deliberately: `M` is invertible iff `x^2+x+1` does not
+divide `x^n+1`, which fails at n = 24 (measured rank 22), where v2 is not even a
+bijection — the same trap TODO #215 hit at n = 12.
+
+**3. Rotation table.** At n = 16 over 3 rounds, v1 weight by rotation: 2, 4,
+**6 at the deployed n/4**, 6, 6, 5, 2. The deployed choice is at the optimum.
+v2 is identical at every rotation, which finding 1 explains: in v2 the rotation
+applies to `delta(B)`, a constant, so it never enters the differential.
+**Rotation tuning is a v1-only lever.** No change recommended — one small width,
+and changing it breaks the wire format for every stored artifact.
+
+**4. Carry-degeneracy cross-check passes.** Keys with `delta(B)` in
+`{0, 2^(n-1)}` contribute zero trail weight, the differential statement of the
+same degeneracy TODO #168 rejected algebraically. `nl_v2_key_is_valid` already
+refuses them.
+
+**5. The load-bearing negative result: these are key-averaged bounds, and
+NL-FSCX has no key schedule.** xdp+ averages over both operands, and trail
+analysis multiplies per-round probabilities under the Markov assumption of
+independent round keys. NL-FSCX holds the same `B` constant in all 64 deployed
+rounds. Measured over all 256 keys at n = 8, the median key has some
+differential at 32x its xdp+ value (max 128x) and all 256 of 256 keys have one
+at >= 8x. The §11.20.2 weights are the right currency for design comparison and
+are what ARX practice reports, but they are not a per-key guarantee and no extra
+solver time would make them one.
+
+**Not delivered.** No bound at n = 256 — the search does not scale; the slope
+projection (v1 ~2.2, v2 ~1.9 bits/round, putting 64 rounds near 2^-141 and
+2^-119) is an order-of-magnitude indication read off widths 8-32, where each
+width closed at a different round count and per-round weight is not constant in
+the round index. The Walsh-spectrum sub-item was not attempted: as written it
+asks to resolve a 2^-16 bias by sampling, needing ~2^32 evaluations per
+functional. The tractable substitute is an exact Walsh-Hadamard transform at
+small width, which deserves its own item rather than a rushed appendix.
+
+**Follow-ups worth filing:** a MILP formulation with better scaling toward
+n = 256; a fixed-key differential treatment, which for a keyless-schedule
+construction is the open question this surfaces rather than settles; and the
+exact-WHT replacement for the Walsh sub-item.
+
+Status: **DONE v2.7.16** — exact xdp+ model and SMT trail bounds delivered; v2 shown differentially weaker than v1 and width-insensitive, deployed rotation confirmed optimal for v1 and inert for v2; key-averaging gap identified as the limiting assumption. No code change.

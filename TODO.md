@@ -35,41 +35,6 @@ Scope:
 
 Status: **OPEN**
 
-### #214: Exact differential/linear analysis of NL-FSCX v1/v2 against current ARX tooling
-
-The only non-linearity in either NL-FSCX variant is the carry chain of one
-modular addition per round (`ROL((A+B) mod 2^n, n/4)` in v1, the additive
-`delta(B)` in v2). That places both squarely in the ARX/RX family, where
-exact rather than heuristic tools exist and are standard practice:
-Lipmaa–Moriai gives exact XOR-differential probabilities of modular
-addition in O(log n), and MILP/SMT trail search over the resulting model
-gives provable bounds rather than sampled ones. Today's coverage
-(`nl_fscx_rot_analysis.py`, `nl_fscx_rx_exact_search.py`,
-`nl_fscx_rx_differential_2025.py`, `nl_fscx_prf_analysis.py`) is sampling
-and small-n exhaustive search; this item asks for the bound.
-
-- Build the exact xdp+/xdp-RX model of one v1 and one v2 round and search
-  for optimal trails over the deployed step counts with an SMT/MILP
-  backend, reporting the best trail probability as a function of rounds and
-  the number of rounds needed to drop below 2^-256.
-- Settle the [[#210]] follow-up properly: compute the full Walsh spectrum
-  of the v2 revolve restricted to the 126-dimensional subspace that the
-  classical map leaks, with enough samples to resolve a bias of 2^-16
-  (the current 400-sample spot check resolves nothing below ~2^-4).
-- Include the rotation amount `n/4` in the search space. It is a free
-  parameter that changes trail structure but not the primitive, so an
-  optimal-rotation table across candidate amounts is exactly the kind of
-  parameter tuning that is in scope, feeding a follow-up if some amount
-  dominates.
-- Cross-check the carry-degeneracy characterisation from [[#159]]/[[#168]]
-  against the trail model.
-
-**Deliverable:** `SecurityProofsCode/nl_fscx_exact_trail_search.py` plus a
-`SecurityProofs-7.md` subsection with the bound table and the rotation
-recommendation.
-
-Status: **OPEN**
-
 ### #216: Re-estimate HKEX-RNL against the 2026 lattice-attack landscape
 
 `SECURITY.md` puts HKEX-RNL (n=256) at ~105 classical / ~100 quantum
@@ -90,35 +55,5 @@ sets), and Core-SVP is a deliberately crude lower bound.
 - Report whether n=512 still clears 128 bits under the current models. If
   it does not, propose the parameter move (n, q, p, or η) in a follow-up —
   ring parameters are adjustable without touching FSCX.
-
-Status: **OPEN**
-
-### #217: Validate HPKS-Stern-F's round count against multi-round Fiat–Shamir forgery attacks
-
-The production figure `rounds = 219` comes from the textbook
-`(2/3)^r ≤ 2^-128`. Recent work on multi-round Fiat–Shamir (the CROSS
-security revision presented at the 6th NIST PQC standardization
-conference, and the fixed-weight-repetition forgery improving on
-Kales–Zaverucha) shows that the naive parallel-repetition bound overstates
-security for several deployed schemes — up to ~24% in the worst case
-reported. Stern here is a 3-pass with uniform (not fixed-weight)
-repetition and one-shot challenge derivation, which is the favourable
-case, but the bound should be derived rather than assumed.
-
-- Derive the forgery cost for this exact construction under the current
-  multi-round FS analysis and confirm (or correct) 219, including the
-  grinding strategy where an attacker re-randomises commitments for a
-  subset of rounds.
-- Audit the challenge expansion itself: `hpks_stern_f_sign` hashes
-  `msg || all commitments` once, then chains `ch_st = nl_fscx_v1(ch_st,
-  BitArray(n, i))` per round and takes `(ch_st & 0xFFFFFFFF) % 3`. Two
-  things to check — that the reduction bias (2^32 mod 3 = 1, so ~2^-32) is
-  genuinely negligible at 219 rounds, and that chaining a **non-bijective**
-  map as challenge PRG cannot be steered into short cycles or low-entropy
-  runs by commitment grinding. The bias question was touched for ring
-  signatures in `stern_ring_challenge_bias.py`; this is the signature path.
-- If the derived bound exceeds 219, update `_STERN_F_PRODUCTION_ROUNDS`,
-  the `sign --rounds` guidance, and the C CLI's `-DSDF_ROUNDS` default
-  across all language targets.
 
 Status: **OPEN**

@@ -2,6 +2,71 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.16] - 2026-08-21
+
+### Added
+- TODO #214: `SecurityProofsCode/nl_fscx_exact_trail_search.py` — exact differential
+  trail bounds for NL-FSCX v1/v2 via the Lipmaa-Moriai xdp+ model and an SMT decision
+  procedure, replacing the previous sampling-only coverage. Write-up in
+  `SecurityProofs-7.md` §11.20. No code change to any primitive.
+
+### Changed
+- TODO #214: **v2 is the differentially weaker variant, and its trail weight does not
+  improve with width.** At four rounds v2 sits at weight 7 for n = 8, 16 and 32 alike,
+  while v1 reaches 12 at n = 16. Both variants reduce to the same xdp+ core — v1 gives
+  `M(alpha) xor ROL(delta, n/4)`, v2 gives `xdp+(M(alpha), 0 -> .)` — and they differ
+  only in where the linear map sits relative to the addition, which is what lets a light
+  trail persist in v2. v2 is deployed for HSKE-NL-A2 and HPKE-NL, chosen for bijectivity
+  and a closed-form inverse, properties orthogonal to differential strength. Not a break;
+  recorded as the relevant design fact.
+- TODO #214: the deployed rotation `n/4` is confirmed at the optimum for v1 (weight 6 at
+  n = 16 over three rounds, against 2 at rotation 1 and 5 at n/2), and shown to be
+  differentially **inert** for v2 — there the rotation applies to `delta(B)`, a per-key
+  constant, so it never enters the differential. Rotation tuning is a v1-only lever.
+- TODO #214: the carry-degenerate key class of TODO #159/#168 is cross-checked against
+  the trail model and appears there as zero-weight rounds, matching the algebraic
+  argument that `nl_v2_key_is_valid` already enforces.
+
+### Fixed
+- TODO #214: recorded the limiting assumption behind every ARX trail bound for this
+  suite — xdp+ is key-averaged and trail analysis multiplies per-round probabilities
+  under a Markov assumption of independent round keys, but NL-FSCX has no key schedule
+  and reuses one `B` in all 64 deployed rounds. Measured over all 256 keys at n = 8, the
+  median key has some differential at 32x its key-averaged value and every key has one at
+  8x or above. The published weights are a design-comparison quantity, not a per-key
+  guarantee.
+
+## [2.7.15] - 2026-08-21
+
+### Added
+- TODO #217: `SecurityProofsCode/stern_f_multiround_fs.py` — derives HPKS-Stern-F's
+  forgery cost under multi-round Fiat-Shamir instead of assuming the textbook
+  `(2/3)^r` bound, and audits the challenge expansion that feeds it. Write-up in
+  `SecurityProofs-5.md` §11.8.8.
+
+### Changed
+- TODO #217: **`_STERN_F_PRODUCTION_ROUNDS = 219` is confirmed — no code change in
+  any language target.** The recent multi-round-FS discounts (CROSS security
+  revision at the 6th NIST PQC conference; the fixed-weight-repetition forgery
+  improving on Kales-Zaverucha) need the challenge for a round to depend on less
+  than the whole commitment set. HPKS-Stern-F derives every challenge from one hash
+  of `msg || all commitments`, so flipping a single commitment bit changes 0.66716
+  of the 219 challenges against the 0.66667 independent re-randomisation predicts —
+  no subset of rounds can be held fixed while others are reground, and the forger
+  faces the one-shot game `(3/2)^r` describes.
+- TODO #217: the two candidate leaks in the challenge expansion are quantified
+  rather than dismissed. The mod-3 reduction is counted exactly (`2^32 mod 3 = 1`)
+  at `3.7e-08` bits of soundness across all 219 rounds. The non-bijective
+  `nl_fscx_v1` chain shows no cycles — structurally impossible, since each step
+  uses a different round index — no state collapse across 8 000 seeds at any depth,
+  and no drift between the first and second halves of the chain.
+
+### Fixed
+- TODO #220 follow-up: section references that the seven-way split turned
+  cross-file now name the file — `SecurityProofs-5.md`'s §11.9/§11.9.9 citations
+  and `SecurityProofs-6.md`'s §11.8.3/§11.8.4 citations, which resolved within one
+  document before the split and silently dangled after it.
+
 ## [2.7.14] - 2026-08-21
 
 ### Changed

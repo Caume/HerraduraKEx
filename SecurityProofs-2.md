@@ -8,9 +8,9 @@
 > - **Part 2 — §2–§8** (this file): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
 > - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 5 — §11.8.3–§11.8.7** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.20** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -589,6 +589,8 @@ All experimental scripts are in `SecurityProofsCode/`:
 | `nl_fscx_prf_analysis.py` | NL-FSCX v1 PRF tests §11.8.4: 2-query distinguisher, BLR, SAC, higher-order differentials, linear bias, key sensitivity, collisions, cross-key independence |
 | `hfscx_256_analysis.py` | HFSCX-256-DM hash empirical tests §11.9: SAC on input/key, output uniformity (chi²), length-extension forgery, domain separation, fixed-point search |
 | `hfscx_dm_rf_model.py` | HFSCX-256-DM in the ideal-random-function model §11.9.12 (TODO #215): image-collapse propagation from the non-bijective inner map to the Davies-Meyer compression (exhaustive at `n = 16`), DM fixed points under NL-FSCX v1 (search) vs. v2 (one inversion), a working Joux multicollision and an end-to-end Kelsey-Schneier long-message second preimage against the chain, and the corrected bound table at `n = 256` |
+| `nl_fscx_exact_trail_search.py` | Exact differential trail bounds for NL-FSCX v1/v2 §11.20 (TODO #214): the Lipmaa-Moriai xdp+ model validated exhaustively, the reduction of both variants to one xdp+ core, SMT trail search giving proven optima and proven lower bounds at power-of-two widths, the rotation-amount table, the fixed-key vs key-averaged gap that the absent key schedule makes load-bearing, and the carry-degenerate key class cross-check |
+| `stern_f_multiround_fs.py` | HPKS-Stern-F's round count under multi-round Fiat-Shamir §11.8.8 (TODO #217): a bit-exact pin of the challenge expansion against the deployed one, the avalanche measurement showing the derivation is one-shot and so immune to KZ-style splitting, the mod-3 reduction bias counted exactly, challenge uniformity as six independent chi-square replications with a 99% bound on the forger's gain, cycle/collapse/drift checks on the non-bijective chain, and end-to-end forgery probabilities against `(2/3)^r` at reduced round counts |
 | `qcmdpc_dfr_weak_keys.py` | HPKE-Stern-KEM's QC-MDPC BGF decoder §11.8.7 (TODO #218): bit-exact cross-validation of a bit-sliced decoder against the deployed one, DFR at the deployed parameters with a Clopper-Pearson interval, Sendrier-Vasseur DFR(r) fit and extrapolation, distance-spectrum weak-key gradient vs. what keygen emits, and the GJS reaction-attack distinguisher measured to disjoint confidence intervals |
 | `hkex_gf_pohlig_hellman.py` | Pohlig–Hellman against HKEX-GF/HPKS/HPKE §9.2.4 (TODO #212): verified factorisation of $2^n - 1$ and $\text{ord}(g)$ per supported $n$, cost table against the documented FFS figures, end-to-end private-key recovery at $n = 32$ and $n = 64$, HKEX-GF shared-secret recovery and HPKS forgery from the recovered key, and the $n = 256$ wall-clock extrapolation |
 | `hske_perfect_secrecy.py` | Perfect secrecy at odd step counts §1.3.2 (TODO #211): key-map invertibility vs. parity of the step count for `n` from 32 to 512, round-trip correctness and equal step cost at `(i, r) = (65, 191)`, exhaustive mutual information over all 65 536 plaintext-key pairs at `n = 8` against the predicted co-rank, the Latin-square view, the two-time-pad break under key reuse, and a timing comparison against a literal one-time pad |

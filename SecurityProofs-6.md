@@ -8,9 +8,9 @@
 > - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
 > - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 5 — §11.8.3–§11.8.7** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (this file): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.20** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -51,9 +51,9 @@ $$s_i = C_{\text{DM}}(s_{i-1}, m_i) = F_1^{64}(s_{i-1}, m_i) \oplus s_{i-1}, \qq
 
 The security claims for HFSCX-256-DM are conditional on assumptions already used elsewhere in §11:
 
-**A1 (NL-FSCX v1 PRF, §11.8.4).**  For random key $K$, the function $i \mapsto F_1^{64}(K \oplus i, K)$ is computationally indistinguishable from a uniformly random function $\{0,1\}^n \to \{0,1\}^n$ against polynomial-time distinguishers.
+**A1 (NL-FSCX v1 PRF, SecurityProofs-5.md §11.8.4).**  For random key $K$, the function $i \mapsto F_1^{64}(K \oplus i, K)$ is computationally indistinguishable from a uniformly random function $\{0,1\}^n \to \{0,1\}^n$ against polynomial-time distinguishers.
 
-**A2 (NL-FSCX v1 OWF, §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^n) = \Omega(2^{256})$ classical operations and $\Omega(2^{n/2}) = \Omega(2^{128})$ quantum queries (Grover lower bound; the classical bound is supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result, which show no sub-exponential classical solver exists for the resulting degree-$n$ Boolean system).
+**A2 (NL-FSCX v1 OWF, SecurityProofs-5.md §11.8.3, Theorem 16).**  Given $y = F_1^{64}(s, m)$ for known $m$ and unknown $s$, recovering $s$ requires $\Omega(2^n) = \Omega(2^{256})$ classical operations and $\Omega(2^{n/2}) = \Omega(2^{128})$ quantum queries (Grover lower bound; the classical bound is supported by Theorem 13's degree-saturation argument and Corollary 2's Gröbner-immunity result, which show no sub-exponential classical solver exists for the resulting degree-$n$ Boolean system).
 
 **A3 (Symmetric structure).**  $F_1(A, B) = F_1(B, A)$, since
 
@@ -231,7 +231,7 @@ The `2^(n-k)` term dominates at every physically realisable size; the expandable
 **Recommendation: keep NL-FSCX v1; do not migrate.**  The `v2` swap is rejected on four grounds, in descending weight:
 
 1. It adds free Davies-Meyer fixed points (measured above), importing the Dean-1999 structure the current design denies.
-2. It trades a studied idealisation for an unstudied stronger one — "v1 is a PRF" (§11.8.3, §11.8.4, and the A2 one-wayness that every other suite protocol already rests on) becomes "v2 is an ideal cipher", a claim about a map whose differential/linear profile is still open (TODO #99, TODO #214).
+2. It trades a studied idealisation for an unstudied stronger one — "v1 is a PRF" (SecurityProofs-5.md §11.8.3, §11.8.4, and the A2 one-wayness that every other suite protocol already rests on) becomes "v2 is an ideal cipher", a claim about a map whose differential/linear profile is still open (TODO #99, TODO #214).
 3. `v2` has a documented degenerate-key class (§11.19.2, `nl_v2_key_is_valid`) where the round collapses to affine.  In an inner-map role the *message block* occupies the key argument, so an attacker selects it freely, and the key-validity screen that protects HSKE-NL-A2 and HPKE-NL cannot be applied to a hash input at all.
 4. It breaks the wire format for every artifact carrying a digest — signatures, AEAD tags, Stern commitments, KDF outputs, HCRED proofs — for no bound that is not already available.
 
@@ -243,4 +243,4 @@ Performance is not a factor either way (`v2` measures marginally faster than `v1
 
 ---
 
-> **Continued in Part 7 — §11.10–§11.13, §11.15–§11.19** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
+> **Continued in Part 7 — §11.10–§11.13, §11.15–§11.20** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
