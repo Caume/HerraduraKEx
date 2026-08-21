@@ -66,6 +66,9 @@ SecurityProofsCode/                                 — standalone Python proof/
   stern_f_multiround_fs.py — HPKS-Stern-F round count vs. multi-round
                              Fiat-Shamir forgery; challenge-expansion audit
                              (TODO #217)
+  nl_fscx_exact_trail_search.py — exact xdp+ trail bounds for NL-FSCX v1/v2
+                             via SMT; rotation table; key-averaging gap
+                             (TODO #214)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
 SecurityProofs.md                                   — split index (redirects to Parts 1–7; quantum analysis is in SecurityProofs-2.md §6)
@@ -75,7 +78,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.19: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.20: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

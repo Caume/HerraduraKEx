@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.19** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.20** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1125,5 +1125,127 @@ harnesses, checking that $K = 2^{17}$ (which has $\delta = 0$ at $n = 32$, per t
 $2^{\lceil (n+1)/2 \rceil}$ divisibility rule above) is rejected while an ordinary key is
 accepted — verified passing under `qemu-arm`, `qemu-i386`, and `simavr` alongside the
 existing tests `[1]`–`[17]`.
+
+
+## 11.20 Exact Differential Trail Bounds for NL-FSCX v1/v2 (TODO #214)
+
+Both NL-FSCX variants carry exactly one modular addition per round, which puts them
+in the ARX family where exact tools replace sampling.  Coverage before this item
+(`nl_fscx_rot_analysis.py`, `nl_fscx_rx_exact_search.py`,
+`nl_fscx_rx_differential_2025.py`, `nl_fscx_prf_analysis.py`) was sampling and
+small-width exhaustive search; this section reports proven bounds.  It is backed by
+`SecurityProofsCode/nl_fscx_exact_trail_search.py`, which validates its xdp+ model
+exhaustively before using it and pins its round functions against the deployed suite.
+
+### 11.20.1 Both variants reduce to the same core
+
+Writing `M` for the linear FSCX map, so that `fscx(A,B) = M(A xor B)`:
+
+- **v1**: `Y = M(A xor B) xor ROL((A + B) mod 2^n, n/4)`.  A difference `alpha` in `A`
+  with none in `B` contributes `M(alpha)` through the linear part exactly, and the
+  addition contributes an xdp+ difference: `dY = M(alpha) xor ROL(delta, n/4)` where
+  `delta` follows `xdp+(alpha, 0 -> .)`.
+- **v2**: `Y = M(A xor B) + delta(B) mod 2^n`.  Since `delta(B)` depends only on the
+  key it is a constant offset, and adding a constant to two values differing by
+  `M(alpha)` gives `dY ~ xdp+(M(alpha), 0 -> .)`.
+
+So the variants differ only in where `M` sits relative to the addition — v1 mixes
+`M(alpha)` back in by XOR *after* it, v2 feeds `M(alpha)` *into* it.  Both are covered
+by one model, verified at 6 000 random (difference, key, input) triples with zero
+mismatches.
+
+**A consequence worth stating separately:** in v2 the rotation `n/4` is applied to
+`delta(B)`, a per-key constant, so it never enters the differential at all.  Rotation
+tuning is a v1-only lever.  §11.20.3's table confirms this — every rotation amount
+yields identical v2 trail weight.
+
+### 11.20.2 Proven trail weights
+
+Weight is minus the base-2 log of the trail probability.  The search asks "is there a
+trail of weight at most `w`?" for increasing `w` rather than minimising directly, so
+each UNSAT is a proven lower bound and a search that exhausts its budget still leaves
+a usable statement.  Widths are powers of two, matching the deployed `n = 256`: `M` is
+invertible exactly when `x^2 + x + 1` does not divide `x^n + 1`, which holds for every
+power of two and fails at `n = 24` (measured rank 22), where v2 is not even a
+bijection — the same trap TODO #215 hit at `n = 12`.
+
+| rounds | v1 n=8 | v1 n=16 | v1 n=32 | v2 n=8 | v2 n=16 | v2 n=32 |
+|---|---|---|---|---|---|---|
+| 1 | 0 | 0 | 0 | 0 | 0 | 0 |
+| 2 | 2 | 3 | 3 | 2 | 2 | 2 |
+| 3 | 4 | 6 | 6 | 4 | 4 | 4 |
+| 4 | 6 | 12 | >= 10 | 7 | 7 | 7 |
+
+**v2 is the differentially weaker variant, and its weight does not improve with
+width.**  At four rounds v2 sits at weight 7 for every width tested while v1 reaches
+12 at `n = 16`.  Structurally this follows from §11.20.1: v2 sets the next state
+difference to the addition output directly, so a light trail persists, whereas v1's
+XOR of `M(alpha)` forces additional diffusion each round.  This matters because v2 is
+the variant deployed for HSKE-NL-A2 and HPKE-NL, chosen for bijectivity and a
+closed-form inverse — properties orthogonal to differential strength.
+
+The one-round weight of 0 in both variants is the familiar MSB-difference transition,
+which passes an addition with probability 1.
+
+### 11.20.3 The rotation amount
+
+At `n = 16` over three rounds, v1 trail weight by rotation: 2 at rotation 1, 4 at 2,
+**6 at 4 (the deployed n/4)**, 6 at 5, 6 at 6, 5 at 8, 2 at 15.  The deployed choice
+sits at the optimum, tied with 5 and 6.  v2 gives weight 4 at every rotation, as
+§11.20.1 predicts.
+
+No parameter change is recommended.  The table is computed at one small width and
+round count, the ordering is not guaranteed to survive to `n = 256`, and changing the
+rotation would break the wire format for every stored ciphertext and signature.
+
+### 11.20.4 The bounds are key-averaged, and NL-FSCX has no key schedule
+
+This is the finding that most limits everything above.
+
+xdp+ averages over *both* operands of the addition.  Standard ARX trail analysis then
+multiplies per-round probabilities, justified by the Markov-cipher assumption of
+independent, uniformly random round keys.  NL-FSCX has no key schedule at all:
+`nl_fscx_revolve_v1(A, B, steps)` and its v2 counterpart hold the same `B` constant in
+every round, so the hypothesis licensing that multiplication does not hold.
+
+Measured at `n = 8` over all 256 keys and 24 input differences each, comparing true
+fixed-key differential probability against key-averaged xdp+: the median key has some
+differential running **32x** its xdp+ value (max 128x), and **all 256 of 256 keys**
+have some differential at least 8x above it.  A large gap for a single addition is
+ordinary and is precisely why the Markov assumption exists.  What is not ordinary is
+that the same `B` is reused in all 64 deployed rounds, so per-round deviations
+correlate rather than averaging out across a schedule.
+
+The weights in §11.20.2 are therefore a key-averaged design-comparison quantity — the
+standard currency of ARX trail analysis, and the right basis for the rotation table
+and the v1-vs-v2 comparison.  They are **not** a per-key security guarantee, and no
+additional solver time would make them one.
+
+### 11.20.5 Cross-checks and scope
+
+The carry-degenerate key class of §11.19.2 appears in the trail model exactly as
+predicted: for keys with `delta(B)` in `{0, 2^(n-1)}` the addition cannot generate a
+crossing carry, every differential becomes deterministic, and the round contributes
+zero weight.  All sampled affine-class keys at `n = 8` and `n = 16` are
+difference-transparent.  `nl_v2_key_is_valid` already rejects them, so this is a
+cross-check that passes rather than a new finding.
+
+What this section does **not** establish:
+
+- **No bound at `n = 256`.**  The search does not scale there.  Projecting the measured
+  slopes (v1 about 2.2 bits per round, v2 about 1.9) would put 64 deployed rounds near
+  `2^-141` and `2^-119` respectively, but the slopes are read off widths 8-32, each
+  width closed at a different round count, and per-round weight is not constant in the
+  round index — v1 at `n = 16` jumps from 6 at three rounds to 12 at four.  This is an
+  order-of-magnitude indication, not a bound.
+- **No per-key guarantee**, for the reason in §11.20.4.
+- **The Walsh-spectrum sub-item of TODO #214 is not attempted.**  As written it asks to
+  resolve a bias of `2^-16` by sampling, which needs roughly `2^32` evaluations per
+  functional.  The tractable substitute is an exact Walsh-Hadamard transform at small
+  width rather than sampling at 256, and that deserves its own item.
+
+Recommended follow-ups: a MILP formulation with better scaling toward `n = 256`, and a
+fixed-key differential treatment, which for a construction with no key schedule is the
+open question this analysis surfaces rather than settles.
 
 ---

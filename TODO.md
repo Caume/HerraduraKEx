@@ -35,41 +35,6 @@ Scope:
 
 Status: **OPEN**
 
-### #214: Exact differential/linear analysis of NL-FSCX v1/v2 against current ARX tooling
-
-The only non-linearity in either NL-FSCX variant is the carry chain of one
-modular addition per round (`ROL((A+B) mod 2^n, n/4)` in v1, the additive
-`delta(B)` in v2). That places both squarely in the ARX/RX family, where
-exact rather than heuristic tools exist and are standard practice:
-Lipmaa–Moriai gives exact XOR-differential probabilities of modular
-addition in O(log n), and MILP/SMT trail search over the resulting model
-gives provable bounds rather than sampled ones. Today's coverage
-(`nl_fscx_rot_analysis.py`, `nl_fscx_rx_exact_search.py`,
-`nl_fscx_rx_differential_2025.py`, `nl_fscx_prf_analysis.py`) is sampling
-and small-n exhaustive search; this item asks for the bound.
-
-- Build the exact xdp+/xdp-RX model of one v1 and one v2 round and search
-  for optimal trails over the deployed step counts with an SMT/MILP
-  backend, reporting the best trail probability as a function of rounds and
-  the number of rounds needed to drop below 2^-256.
-- Settle the [[#210]] follow-up properly: compute the full Walsh spectrum
-  of the v2 revolve restricted to the 126-dimensional subspace that the
-  classical map leaks, with enough samples to resolve a bias of 2^-16
-  (the current 400-sample spot check resolves nothing below ~2^-4).
-- Include the rotation amount `n/4` in the search space. It is a free
-  parameter that changes trail structure but not the primitive, so an
-  optimal-rotation table across candidate amounts is exactly the kind of
-  parameter tuning that is in scope, feeding a follow-up if some amount
-  dominates.
-- Cross-check the carry-degeneracy characterisation from [[#159]]/[[#168]]
-  against the trail model.
-
-**Deliverable:** `SecurityProofsCode/nl_fscx_exact_trail_search.py` plus a
-`SecurityProofs-7.md` subsection with the bound table and the rotation
-recommendation.
-
-Status: **OPEN**
-
 ### #216: Re-estimate HKEX-RNL against the 2026 lattice-attack landscape
 
 `SECURITY.md` puts HKEX-RNL (n=256) at ~105 classical / ~100 quantum

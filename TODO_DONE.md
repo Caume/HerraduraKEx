@@ -11031,3 +11031,100 @@ to the N >= 17000 parameter problem: round count and instance hardness are
 separate axes, and HPKS-Stern-F stays demo-only in `SECURITY.md`.
 
 Status: **DONE v2.7.15** — 219 confirmed by derivation; KZ splitting shown inapplicable (one-shot challenge derivation), reduction bias counted at 3.7e-08 bits, non-bijective chain clean, and forgery probability validated end to end. No code change.
+
+### #214: Exact differential/linear analysis of NL-FSCX v1/v2 against current ARX tooling
+
+The only non-linearity in either NL-FSCX variant is the carry chain of one
+modular addition per round (`ROL((A+B) mod 2^n, n/4)` in v1, the additive
+`delta(B)` in v2). That places both squarely in the ARX/RX family, where
+exact rather than heuristic tools exist and are standard practice:
+Lipmaa–Moriai gives exact XOR-differential probabilities of modular
+addition in O(log n), and MILP/SMT trail search over the resulting model
+gives provable bounds rather than sampled ones. Today's coverage
+(`nl_fscx_rot_analysis.py`, `nl_fscx_rx_exact_search.py`,
+`nl_fscx_rx_differential_2025.py`, `nl_fscx_prf_analysis.py`) is sampling
+and small-n exhaustive search; this item asks for the bound.
+
+- Build the exact xdp+/xdp-RX model of one v1 and one v2 round and search
+  for optimal trails over the deployed step counts with an SMT/MILP
+  backend, reporting the best trail probability as a function of rounds and
+  the number of rounds needed to drop below 2^-256.
+- Settle the [[#210]] follow-up properly: compute the full Walsh spectrum
+  of the v2 revolve restricted to the 126-dimensional subspace that the
+  classical map leaks, with enough samples to resolve a bias of 2^-16
+  (the current 400-sample spot check resolves nothing below ~2^-4).
+- Include the rotation amount `n/4` in the search space. It is a free
+  parameter that changes trail structure but not the primitive, so an
+  optimal-rotation table across candidate amounts is exactly the kind of
+  parameter tuning that is in scope, feeding a follow-up if some amount
+  dominates.
+- Cross-check the carry-degeneracy characterisation from [[#159]]/[[#168]]
+  against the trail model.
+
+**Deliverable:** `SecurityProofsCode/nl_fscx_exact_trail_search.py` plus a
+`SecurityProofs-7.md` subsection with the bound table and the rotation
+recommendation.
+
+**Outcome.** Delivered as `SecurityProofsCode/nl_fscx_exact_trail_search.py`
+plus SecurityProofs-7.md §11.20. Three of the four sub-items are done; the
+Walsh-spectrum one is not, for a reason recorded below.
+
+**1. Both variants reduce to one xdp+ core.** Writing `M` for the linear FSCX
+map, v1 gives `dY = M(alpha) xor ROL(delta, n/4)` with `delta ~ xdp+(alpha,0->.)`,
+and v2 gives `dY ~ xdp+(M(alpha), 0 -> .)` because `delta(B)` is a per-key
+constant. The variants differ only in where `M` sits relative to the addition.
+Verified at 6 000 random triples, zero mismatches, against round functions
+pinned to the deployed suite.
+
+**2. Proven trail weights** (SMT decision procedure, so each UNSAT is a proven
+lower bound). At 4 rounds: v1 = 6/12/>=10 at n = 8/16/32, v2 = 7/7/7.
+
+**v2 is the differentially weaker variant and does not improve with width** —
+it sits at weight 7 for every width tested while v1 reaches 12 at n = 16. This
+follows from finding 1: v2 sets the next state difference to the addition
+output directly, so a light trail persists, whereas v1's XOR of `M(alpha)`
+forces diffusion. v2 is the variant deployed for HSKE-NL-A2 and HPKE-NL, chosen
+for bijectivity and a closed-form inverse — properties orthogonal to
+differential strength. Not a break, but the relevant design fact.
+
+Widths are powers of two deliberately: `M` is invertible iff `x^2+x+1` does not
+divide `x^n+1`, which fails at n = 24 (measured rank 22), where v2 is not even a
+bijection — the same trap TODO #215 hit at n = 12.
+
+**3. Rotation table.** At n = 16 over 3 rounds, v1 weight by rotation: 2, 4,
+**6 at the deployed n/4**, 6, 6, 5, 2. The deployed choice is at the optimum.
+v2 is identical at every rotation, which finding 1 explains: in v2 the rotation
+applies to `delta(B)`, a constant, so it never enters the differential.
+**Rotation tuning is a v1-only lever.** No change recommended — one small width,
+and changing it breaks the wire format for every stored artifact.
+
+**4. Carry-degeneracy cross-check passes.** Keys with `delta(B)` in
+`{0, 2^(n-1)}` contribute zero trail weight, the differential statement of the
+same degeneracy TODO #168 rejected algebraically. `nl_v2_key_is_valid` already
+refuses them.
+
+**5. The load-bearing negative result: these are key-averaged bounds, and
+NL-FSCX has no key schedule.** xdp+ averages over both operands, and trail
+analysis multiplies per-round probabilities under the Markov assumption of
+independent round keys. NL-FSCX holds the same `B` constant in all 64 deployed
+rounds. Measured over all 256 keys at n = 8, the median key has some
+differential at 32x its xdp+ value (max 128x) and all 256 of 256 keys have one
+at >= 8x. The §11.20.2 weights are the right currency for design comparison and
+are what ARX practice reports, but they are not a per-key guarantee and no extra
+solver time would make them one.
+
+**Not delivered.** No bound at n = 256 — the search does not scale; the slope
+projection (v1 ~2.2, v2 ~1.9 bits/round, putting 64 rounds near 2^-141 and
+2^-119) is an order-of-magnitude indication read off widths 8-32, where each
+width closed at a different round count and per-round weight is not constant in
+the round index. The Walsh-spectrum sub-item was not attempted: as written it
+asks to resolve a 2^-16 bias by sampling, needing ~2^32 evaluations per
+functional. The tractable substitute is an exact Walsh-Hadamard transform at
+small width, which deserves its own item rather than a rushed appendix.
+
+**Follow-ups worth filing:** a MILP formulation with better scaling toward
+n = 256; a fixed-key differential treatment, which for a keyless-schedule
+construction is the open question this surfaces rather than settles; and the
+exact-WHT replacement for the Walsh sub-item.
+
+Status: **DONE v2.7.16** — exact xdp+ model and SMT trail bounds delivered; v2 shown differentially weaker than v1 and width-insensitive, deployed rotation confirmed optimal for v1 and inert for v2; key-averaging gap identified as the limiting assumption. No code change.

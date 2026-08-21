@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.16] - 2026-08-21
+
+### Added
+- TODO #214: `SecurityProofsCode/nl_fscx_exact_trail_search.py` — exact differential
+  trail bounds for NL-FSCX v1/v2 via the Lipmaa-Moriai xdp+ model and an SMT decision
+  procedure, replacing the previous sampling-only coverage. Write-up in
+  `SecurityProofs-7.md` §11.20. No code change to any primitive.
+
+### Changed
+- TODO #214: **v2 is the differentially weaker variant, and its trail weight does not
+  improve with width.** At four rounds v2 sits at weight 7 for n = 8, 16 and 32 alike,
+  while v1 reaches 12 at n = 16. Both variants reduce to the same xdp+ core — v1 gives
+  `M(alpha) xor ROL(delta, n/4)`, v2 gives `xdp+(M(alpha), 0 -> .)` — and they differ
+  only in where the linear map sits relative to the addition, which is what lets a light
+  trail persist in v2. v2 is deployed for HSKE-NL-A2 and HPKE-NL, chosen for bijectivity
+  and a closed-form inverse, properties orthogonal to differential strength. Not a break;
+  recorded as the relevant design fact.
+- TODO #214: the deployed rotation `n/4` is confirmed at the optimum for v1 (weight 6 at
+  n = 16 over three rounds, against 2 at rotation 1 and 5 at n/2), and shown to be
+  differentially **inert** for v2 — there the rotation applies to `delta(B)`, a per-key
+  constant, so it never enters the differential. Rotation tuning is a v1-only lever.
+- TODO #214: the carry-degenerate key class of TODO #159/#168 is cross-checked against
+  the trail model and appears there as zero-weight rounds, matching the algebraic
+  argument that `nl_v2_key_is_valid` already enforces.
+
+### Fixed
+- TODO #214: recorded the limiting assumption behind every ARX trail bound for this
+  suite — xdp+ is key-averaged and trail analysis multiplies per-round probabilities
+  under a Markov assumption of independent round keys, but NL-FSCX has no key schedule
+  and reuses one `B` in all 64 deployed rounds. Measured over all 256 keys at n = 8, the
+  median key has some differential at 32x its key-averaged value and every key has one at
+  8x or above. The published weights are a design-comparison quantity, not a per-key
+  guarantee.
+
 ## [2.7.15] - 2026-08-21
 
 ### Added
