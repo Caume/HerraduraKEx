@@ -74,6 +74,9 @@ SecurityProofsCode/                                 — standalone Python proof/
   stern_f_multiround_fs.py — HPKS-Stern-F round count vs. multi-round
                              Fiat-Shamir forgery; challenge-expansion audit
                              (TODO #217)
+  stern_f_round_count_resolution.py — reruns #217's uniformity statistic at
+                             3M seeds, dropping the resolution floor 0.4418 ->
+                             0.0588 bits and settling r=219 vs 220 (TODO #222)
   nl_fscx_exact_trail_search.py — exact xdp+ trail bounds for NL-FSCX v1/v2
                              via SMT; rotation table; key-averaging gap
                              (TODO #214)
