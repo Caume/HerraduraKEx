@@ -699,15 +699,18 @@ def _decode_session_key(path):
         key_int, nbits = ints
         return key_int, nbits
     elif label == _LABEL_RNL_RESP:
-        # K_B (already contributory-KDF-derived) is the first field
+        # K_B (already contributory-KDF-derived) is the first field.  ints[3] is
+        # the RING dimension, which since TODO #223 is no longer the key width —
+        # the ring is 1024 while the derived key stays 256 bits.  Returning it
+        # raw makes `enc` use a 1024-bit width against a SESSION KEY PEM's 256,
+        # breaking the cross-party round trip.
         K_int = ints[0]
-        n = ints[3]
-        return K_int, n
+        return K_int, _rnl_key_bits(ints[3])
     elif label == _LABEL_HYBRID_RESP:
-        # K (already combined) is the first field
+        # K (already combined) is the first field; ints[3] is the ring dimension,
+        # not the key width — see the RNL RESPONSE case above.
         K_int = ints[0]
-        n = ints[3]
-        return K_int, n
+        return K_int, _rnl_key_bits(ints[3])
     else:
         raise ValueError(f"Expected SESSION KEY or RNL RESPONSE PEM, got {label!r}")
 

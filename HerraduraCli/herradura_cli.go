@@ -1673,7 +1673,11 @@ func loadKey(path string) (*big.Int, int, error) {
 	case lblSession:
 		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[1]), nil
 	case lblRnlResp:
-		return new(big.Int).SetBytes(ints[0]), bytesToInt(ints[3]), nil
+		// ints[3] is the RING dimension, which since TODO #223 is no longer the
+		// key width — the ring is 1024 while the derived key stays 256 bits.
+		// Returning it raw made `enc` use a 1024-bit key width against a SESSION
+		// KEY PEM's 256, so a cross-party HSKE round trip failed.
+		return new(big.Int).SetBytes(ints[0]), rnlKeyBits(bytesToInt(ints[3])), nil
 	}
 	return nil, 0, fmt.Errorf("loadKey: expected SESSION KEY or HKEX-RNL RESPONSE PEM, got %q", label)
 }

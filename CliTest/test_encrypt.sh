@@ -66,6 +66,33 @@ $CLI dec --algo hske --key "$TMP/alice_rnl_sk.pem" \
 check_roundtrip "hkex-rnl kex + hske enc/dec (cross-party)" "$TMP/msg8.bin" "$TMP/hkex_rnl_plain.bin"
 
 # ---------------------------------------------------------------------------
+# Same flow at the DEFAULT ring dimension (n = RNLN = 1024, TODO #223).
+#
+# The n=64 case above cannot catch a key-width bug, because at n=64 the ring
+# dimension and the derived key width are the same number.  Since TODO #223 they
+# differ (ring 1024, key 256), and reading the ring dimension out of a RESPONSE
+# PEM as if it were the key width breaks this exact round trip — it did, in the
+# Go and Python CLIs, and only the Go test caught it because it omits --bits.
+# ---------------------------------------------------------------------------
+
+$CLI genpkey --algo hkex-rnl --out "$TMP/alice_rnl_d.pem"
+$CLI pkey    --in "$TMP/alice_rnl_d.pem" --pubout --out "$TMP/alice_rnl_d_pub.pem"
+$CLI genpkey --algo hkex-rnl --out "$TMP/bob_rnl_d.pem"
+
+$CLI kex --algo hkex-rnl --our "$TMP/bob_rnl_d.pem" --their "$TMP/alice_rnl_d_pub.pem" \
+         --out "$TMP/bob_rnl_d_resp.pem"
+$CLI kex --algo hkex-rnl --our "$TMP/alice_rnl_d.pem" --their "$TMP/bob_rnl_d_resp.pem" \
+         --out "$TMP/alice_rnl_d_sk.pem"
+
+# msg32.bin, not msg8.bin: the derived key is 256 bits here, so HSKE's block is
+# 32 bytes and a shorter message comes back zero-padded.
+$CLI enc --algo hske --key "$TMP/bob_rnl_d_resp.pem" \
+         --in "$TMP/msg32.bin" --out "$TMP/hkex_rnl_d_ct.pem"
+$CLI dec --algo hske --key "$TMP/alice_rnl_d_sk.pem" \
+         --in "$TMP/hkex_rnl_d_ct.pem" --out "$TMP/hkex_rnl_d_plain.bin"
+check_roundtrip "hkex-rnl kex + hske enc/dec (cross-party, default n)" "$TMP/msg32.bin" "$TMP/hkex_rnl_d_plain.bin"
+
+# ---------------------------------------------------------------------------
 # Asymmetric HPKE / HPKE-NL
 # ---------------------------------------------------------------------------
 
