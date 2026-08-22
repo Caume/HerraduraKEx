@@ -2,6 +2,25 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.21] - 2026-08-22
+
+### Fixed
+- **`MIGRATING.md`'s introduction still described three breaking changes and told
+  anyone on v1.9.36 or later that there was nothing to do.** Both statements
+  predated the fourth break, the HKEX-RNL ring-dimension move from n=256 to
+  n=1024 in v2.7.19 (TODO #223), which was appended to the document without the
+  intro being revisited. The stale "nothing to do" line addressed itself to
+  precisely the readers who most need to act: everyone between v1.9.36 and
+  v2.7.19 holding n=256 RNL keys worth ~32 Core-SVP bits.
+- The paragraph now counts all four breaks, is framed around the version being
+  upgraded *to* rather than 2.0.0 specifically, and links straight to section 4,
+  noting that it is the only one of the four that leaves affected key material
+  insecure rather than merely incompatible.
+- No protocol, parameter, wire-format, or code change — documentation only. The
+  remaining "three" references in the file (the HFSCX-256-DM consumer list, and
+  the two inside the "Migrating to 2.0.0" section) were checked and are correctly
+  scoped to breaks 1-3, which are the only ones predating 2.0.0.
+
 ## [2.7.20] - 2026-08-22
 
 ### Changed
