@@ -46,10 +46,16 @@ CliTest/                                             (59 scripts; this list is a
                                                        for HCRED (TODO #202)
   test_java_pake_interop.sh                         — Java <-> Python CLI cross-language interop
                                                        for aPAKE (TODO #203)
-KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190):
+KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190, #226):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
-  generate_kat.py            — deterministic reference generator (Python); --check verifies currency
+  hkex_rnl.json              — HKEX-RNL two-party handshakes at the deployed n=1024
+                               and at n=64: m_blind, both (s,C) pairs, the transmitted
+                               hint, K_raw and the session key (TODO #226).  Pins the
+                               suite layer only — the CLI/PEM layer is TODO #227
+  generate_kat.py            — deterministic reference generator (Python) for both files;
+                               --check verifies currency
   verify_kat.go               — independent cross-check against the Go herradura package
+                               (bindings/java KatVerify does the same for Java)
 SecurityProofsCode/                                 — standalone Python proof/analysis scripts:
   hkex_gf_test.py          — HKEX-GF DH correctness + BSGS DLP illustration
   hkex_nl_verification.py  — NL-FSCX period analysis, Ring-LWR invertibility/noise, v2 bijectivity

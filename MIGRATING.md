@@ -8,9 +8,12 @@ changelog entries.
 
 **Migrating to 2.0.0 itself introduces no new protocol or wire-format changes.** The
 2.0.0 tag marks the CLI/PEM surface as a stable baseline going forward — see
-[Migrating to 2.0.0](#migrating-to-200) below. If you're already running v1.9.36 or
-later, there is nothing to do. If you're running an older version, read the sections
-below for whichever of these three breaks falls between your current version and 2.0.0.
+[Migrating to 2.0.0](#migrating-to-200) below. Read the sections below for whichever of
+these four breaks fall between your current version and the version you're upgrading to.
+Three of them (1–3) predate 2.0.0; the fourth, the HKEX-RNL ring-dimension move in
+v2.7.19, is the only one after it, and it is the only one that leaves affected keys
+insecure rather than merely incompatible — if you are on any version before v2.7.19 and
+use HKEX-RNL, start at [section 4](#4-hkex-rnl-ring-dimension-256--1024-v2719).
 
 ---
 
