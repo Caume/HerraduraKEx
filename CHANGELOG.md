@@ -2,6 +2,45 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.22] - 2026-08-22
+
+### Added
+- **TODO #226: HKEX-RNL known-answer vectors (`KAT/hkex_rnl.json`).** Two full
+  two-party handshakes — `deployed` at the shipping ring dimension n=1024 and
+  `small_ring` at n=64 — covering `m_blind`, both `(s, C)` pairs, the transmitted
+  reconciliation hint, `K_raw` on both sides, and the derived session key. TODO
+  #223 moved the ring across four language implementations with no fixed-vector
+  oracle; every check was cross-language agreement, which catches divergence but
+  not all four drifting together.
+- The deployed samplers draw from `os.urandom`, so the secrets are produced by a
+  deterministic HFSCX-256 counter-mode expansion over a fixed label. A KAT fixes
+  the randomness as an *input* and pins the deterministic parts: ring
+  multiplication, rounding, reconciliation, hint packing, and the session KDF.
+  The expansion mirrors each deployed sampler's bit layout, so a reimplementation
+  can follow `_rnl_cbd_poly` / `_rnl_rand_poly` and get the same polynomials.
+- `KAT/generate_kat.py` now emits and `--check`s both vector files;
+  `KAT/verify_kat.go` and `bindings/java/herradurakex/KatVerify.java` both
+  recompute the RNL handshakes independently of the Python reference that
+  generated them. `CliTest/test_kat_vectors.sh` covers the new file and fails if
+  either is missing, which `--check` alone would not catch.
+- Mutation-tested rather than assumed: corrupting one hex digit of `hint`,
+  `k_raw`, `session_key` or `alice_C` is caught by both the Go and the Java
+  verifier.
+
+### Note
+- **These vectors pin the suite layer, not the CLI layer.** PEM/DER field layout,
+  which field carries the ring dimension, and the key width a response PEM is read
+  at all sit outside them. That is worth stating plainly, because every bug TODO
+  #223 shipped and CI later caught lived in exactly that CLI layer — these vectors
+  would have caught a divergence in `rnl_poly_mul`, `rnl_round`, the hint packing
+  or the KDF, but not `loadKey` reading a ring dimension as a key width. The
+  wire-format-level gap is filed as TODO #227 rather than left implied.
+
+### Added (tracking)
+- TODO #227 (open): wire-format-level KAT vectors for the CLI layer — fixed PEM
+  artifacts that each CLI must *consume* and reproduce the expected session key
+  from, since consumption is the direction TODO #223's bugs broke.
+
 ## [2.7.21] - 2026-08-22
 
 ### Fixed

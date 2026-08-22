@@ -156,25 +156,36 @@ unknown and the next RNL-touching change could cross it.
 
 Status: **OPEN**
 
-### #226: Add HKEX-RNL known-answer vectors to `KAT/`
 
-`KAT/classical_quartet.json` covers HKEX-GF, HSKE, HPKS and HPKE at n=256. It has
-never carried HKEX-RNL vectors, so the ring-dimension move in TODO #223 crossed
-four language implementations with no fixed-vector oracle — every check was
-cross-language agreement, which catches divergence but not a shared drift.
+### #227: Wire-format-level KAT vectors for the CLI layer
 
-That gap is exactly what let TODO #223's bugs through: C, Go, Python and Java all
-agreed with each other at several points where all four were wrong together.
+TODO #226 added HKEX-RNL known-answer vectors, but they pin the *suite* layer:
+ring multiplication, rounding, reconciliation, hint packing, and the KDF. They do
+not pin the CLI layer — PEM/DER field layout, which field carries the ring
+dimension, or the key width a response PEM is read at.
 
-- Add HKEX-RNL vectors at the deployed `n=1024, q=65537, p=4096, eta=1, pp=4`.
-  Deterministic inputs are needed for keygen, so the generator has to seed the
-  CBD sampler and `a_rand` explicitly rather than drawing from `os.urandom`.
-- Cover the full handshake, not just keygen: `m_blind`, both `(s, C)` pairs, the
-  reconciliation hint, `K_raw` on both sides, and the derived session key. The
-  hint and the transcript-bound KDF inputs are where the #223 bugs actually lived.
-- Extend `generate_kat.py` and its `--check` mode, plus `verify_kat.go` and the
-  Java `KatVerify`, so all four languages verify against the same fixed file.
-- Consider a small-ring vector set as well (n=64), since `--bits` is still
-  supported and the small-ring path has its own key-width behaviour.
+That distinction is not academic. Every bug TODO #223 shipped and CI caught lived
+in the CLI layer, not the suite layer:
+
+- `loadKey` (Go) and `_decode_session_key` (Python) read an RNL RESPONSE PEM's
+  ring-dimension field as the derived key width.
+- C's hybrid-rnl-stern response encoder wrote a hardcoded n=256 in that field.
+- Python's and Go's hybrid combiners serialised K1 at the ring dimension rather
+  than the key width, so all three hashed different transcripts.
+
+#226's vectors would have caught none of these. Cross-language CLI tests did
+eventually, but only after two CI rounds, and only where a test happened to use
+default parameters — `test_encrypt.sh` pins `--bits 64`, where ring and key width
+coincide, and so was structurally blind to the whole class.
+
+- Add fixed PEM artifacts to `KAT/`: a private key, a public key, a kex response,
+  and a session key, byte-for-byte, for `hkex-rnl` and `hybrid-rnl-stern`.
+- Verify by having each CLI *consume* the checked-in PEMs and reproduce the
+  expected session key, not merely by regenerating them — consumption is the
+  direction the bugs broke.
+- Cover both the default ring and a small ring, since the small-ring path is
+  exactly where ring dimension and key width coincide and hide this bug class.
+- Consider extending to the classical quartet's PEMs while the harness is being
+  built; the same argument applies, it simply has not bitten yet.
 
 Status: **OPEN**

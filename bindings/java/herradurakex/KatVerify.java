@@ -48,6 +48,108 @@ public final class KatVerify {
         return new BigInteger(obj.get(key), 16);
     }
 
+    // ── HKEX-RNL (TODO #226) ────────────────────────────────────────────────
+    // The ring vectors live in their own file: they are not part of the
+    // classical quartet and their polynomials are far larger.
+
+    private static final Pattern RNL_OBJECT = Pattern.compile(
+            "\"(deployed|small_ring)\"\\s*:\\s*\\{([^}]*)\\}", Pattern.DOTALL);
+
+    private static int intField(Map<String, String> obj, String key) {
+        return Integer.parseInt(obj.get(key));
+    }
+
+    /** Reads a fixed-width big-endian coefficient blob (generate_kat.py's poly_hex). */
+    private static int[] unpackPoly(String hexs, int n, int bytesPerCoeff) {
+        int[] out = new int[n];
+        for (int i = 0; i < n; i++) {
+            int v = 0;
+            for (int k = 0; k < bytesPerCoeff; k++) {
+                v = (v << 8) | Integer.parseInt(
+                        hexs.substring((i * bytesPerCoeff + k) * 2,
+                                       (i * bytesPerCoeff + k) * 2 + 2), 16);
+            }
+            out[i] = v;
+        }
+        return out;
+    }
+
+    private static String polyHex(int[] coeffs, int bytesPerCoeff) {
+        StringBuilder sb = new StringBuilder();
+        for (int c : coeffs) {
+            for (int k = bytesPerCoeff - 1; k >= 0; k--) {
+                sb.append(String.format("%02x", (c >> (8 * k)) & 0xFF));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Packs `used` two-bit hint values, 4 per byte, LSB-first — C's rnl_hint layout. */
+    private static String hintHex(int[] hint, int used) {
+        byte[] raw = new byte[(used + 3) / 4];
+        for (int i = 0; i < used; i++) {
+            raw[i >> 2] |= (byte) ((hint[i] & 3) << ((i & 3) * 2));
+        }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : raw) {
+            sb.append(String.format("%02x", b & 0xFF));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Recomputes one HKEX-RNL handshake from the vector's fixed secrets.  The
+     * secrets are inputs: a KAT fixes the randomness and tests the deterministic
+     * parts — ring arithmetic, rounding, reconciliation, and the KDF.
+     */
+    private static boolean verifyRnl(String name, Map<String, String> v) {
+        int n = intField(v, "n");
+        int q = intField(v, "q"), p = intField(v, "p"), pp = intField(v, "pp");
+        int keyBits = intField(v, "key_bits");
+        int used = intField(v, "hint_coefficients");
+
+        int[] mBlind = unpackPoly(v.get("m_blind"), n, 4);
+        int[] sA = unpackPoly(v.get("alice_s"), n, 4);
+        int[] sB = unpackPoly(v.get("bob_s"), n, 4);
+
+        int[] cA = HerraduraNl.rnlRound(HerraduraNl.rnlPolyMul(mBlind, sA, q, n), q, p);
+        int[] cB = HerraduraNl.rnlRound(HerraduraNl.rnlPolyMul(mBlind, sB, q, n), q, p);
+
+        // Bob reconciles and publishes the hint; Alice consumes it.
+        HerraduraNl.RnlAgreeResult bob = HerraduraNl.rnlAgree(sB, cA, q, p, pp, n, keyBits);
+        BigInteger kAlice = HerraduraNl.rnlAgree(sA, cB, q, p, pp, n, keyBits, bob.hint);
+
+        boolean ok = polyHex(cA, 2).equals(v.get("alice_C"))
+                && polyHex(cB, 2).equals(v.get("bob_C"))
+                && hintHex(bob.hint, used).equals(v.get("hint"))
+                && kAlice.equals(new BigInteger(v.get("k_raw"), 16))
+                && kAlice.equals(bob.key);
+
+        // The session KDF applies only where the derived key is the full width;
+        // the small-ring vector records session_key as null and is skipped.
+        String wantSk = v.get("session_key");
+        if (ok && wantSk != null) {
+            BigInteger seed = Herradura.rol(kAlice, keyBits / 8)
+                    .xor(Hfscx256.RNL_KDF_DC_256);
+            BigInteger sk = Hfscx256.nlFscxRevolveV1(seed, kAlice, keyBits / 4);
+            if (!sk.equals(new BigInteger(wantSk, 16))) {
+                System.out.println("FAIL " + name + ": session_key got "
+                        + sk.toString(16) + " want " + wantSk);
+                return false;
+            }
+        }
+        if (!ok) {
+            System.out.println("FAIL " + name + ": C_A=" + polyHex(cA, 2).equals(v.get("alice_C"))
+                    + " C_B=" + polyHex(cB, 2).equals(v.get("bob_C"))
+                    + " hint=" + hintHex(bob.hint, used).equals(v.get("hint"))
+                    + " k_raw=" + kAlice.equals(new BigInteger(v.get("k_raw"), 16))
+                    + " agree=" + kAlice.equals(bob.key));
+            return false;
+        }
+        System.out.println("PASS " + name + " (n=" + n + ", key_bits=" + keyBits + ")");
+        return true;
+    }
+
     public static void main(String[] args) throws IOException {
         Path path = args.length > 0 ? Paths.get(args[0])
                 : Paths.get("KAT", "classical_quartet.json");
@@ -120,6 +222,27 @@ public final class KatVerify {
                 fails++;
             } else {
                 System.out.println("PASS hpke");
+            }
+        }
+
+        // ── HKEX-RNL (TODO #226) ────────────────────────────────────────
+        Path rnlPath = path.resolveSibling("hkex_rnl.json");
+        if (!Files.exists(rnlPath)) {
+            System.out.println("FAIL hkex_rnl: " + rnlPath + " not found");
+            fails++;
+        } else {
+            String rnlText = new String(Files.readAllBytes(rnlPath));
+            Matcher rm = RNL_OBJECT.matcher(rnlText);
+            int seen = 0;
+            while (rm.find()) {
+                seen++;
+                if (!verifyRnl("hkex_rnl " + rm.group(1), parseObject(rm.group(2)))) {
+                    fails++;
+                }
+            }
+            if (seen != 2) {
+                System.out.println("FAIL hkex_rnl: expected 2 vector sets, parsed " + seen);
+                fails++;
             }
         }
 
