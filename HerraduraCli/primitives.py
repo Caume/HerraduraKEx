@@ -76,6 +76,7 @@ KEYBITS = _s.KEYBITS          # default key width (256)
 GF_POLY = _s.GF_POLY          # irreducible poly dict keyed by bit width
 GF_GEN  = _s.GF_GEN           # DH generator (3)
 ORD     = _s.ORD               # group order = 2^KEYBITS − 1
+RNLN   = _s.RNLN              # Ring-LWR ring dimension (1024; NOT the key width)
 RNLQ   = _s.RNLQ              # Ring-LWR prime modulus (65537)
 RNLP   = _s.RNLP              # Ring-LWR public-key rounding modulus (4096)
 RNLPP  = _s.RNLPP             # Ring-LWR reconciliation modulus (2)

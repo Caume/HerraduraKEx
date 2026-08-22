@@ -136,9 +136,19 @@ static void poly_unpack(rnl_poly_t p, const uint8_t *src, size_t src_len, int bp
 static int der_i32(const uint8_t bytes[KEYBYTES], uint8_t *out, size_t *olen)
 { return der_int_enc(bytes, KEYBYTES, out, olen); }
 
-/* DER INTEGER for n = 256 (minimal: 0x01 0x00). */
+/* DER INTEGER for n = 256 (minimal: 0x01 0x00).  Used for the classical algos,
+ * whose n IS the 256-bit key width. */
 static int der_i_n256(uint8_t *out, size_t *olen)
 { static const uint8_t n[2] = {0x01, 0x00}; return der_int_enc(n, 2, out, olen); }
+
+/* DER INTEGER for the HKEX-RNL ring dimension and for the transmitted hint
+ * length (RNL_N/2 coefficients, matching Python's hint[:n//2]).  Since TODO #223
+ * RNL_N is 1024 rather than 256, so neither is der_i_n256 any more. */
+static int der_i_uint(uint64_t v, uint8_t *out, size_t *olen);
+static int der_i_rnl_n(uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)RNL_N, out, olen); }
+static int der_i_rnl_hintlen(uint8_t *out, size_t *olen)
+{ return der_i_uint((uint64_t)(RNL_N / 2), out, olen); }
 
 /* DER INTEGER for an unsigned value, minimal big-endian width (matches Python der_int).
  * Used for the variable ciphertext length in the HSKE-NL-V2-Duplex format. */
@@ -561,7 +571,7 @@ static void cmd_genpkey(int argc, char **argv)
         if (!is_der || !im_der || !ina_der) die("out of memory");
         der_int_enc(s_buf, sizeof s_buf, is_der, &ls);
         der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-        der_i_n256(in_der, &ln);
+        der_i_rnl_n(in_der, &ln);
         der_int_enc(n_A, KEYBYTES, ina_der, &lna);
         const uint8_t *it[4] = {is_der, im_der, in_der, ina_der};
         size_t il[4] = {ls, lm, ln, lna};
@@ -1017,7 +1027,7 @@ static void cmd_pkey(int argc, char **argv)
             if (!ic_der || !im_der || !ina_der) die("out of memory");
             der_int_enc(C_buf, sizeof C_buf, ic_der, &lc);
             der_int_enc(m_buf, sizeof m_buf, im_der, &lm);
-            der_i_n256(in_der, &ln);
+            der_i_rnl_n(in_der, &ln);
             der_int_enc(n_A, KEYBYTES, ina_der, &lna);
             const uint8_t *it[4] = {ic_der, im_der, in_der, ina_der};
             size_t il[4] = {lc, lm, ln, lna};
@@ -1404,8 +1414,8 @@ static void cmd_kex(int argc, char **argv)
             der_int_enc(kb_start,          kb_len,          ik,      &lk);
             der_int_enc(C_B_buf,    sizeof C_B_buf,  ic_der,  &lc);
             der_int_enc(hint_rev,   sizeof hint_rev,  ih,      &lh);
-            der_i_n256(in1, &ln1);
-            der_i_n256(in2, &ln2);  /* len(hint) == n == 256 */
+            der_i_rnl_n(in1, &ln1);
+            der_i_rnl_hintlen(in2, &ln2);  /* len(hint_used) == RNL_N/2 */
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             const uint8_t *it[6] = {ik, ic_der, ih, in1, in2, inb_der};
             size_t il[6] = {lk, lc, lh, ln1, ln2, lnb};
@@ -1585,7 +1595,7 @@ static void cmd_kex(int argc, char **argv)
             der_int_enc(k_start,   k_len,          ik,      &lk);
             der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der,  &lc);
             der_int_enc(hint_rev,  sizeof hint_rev, ih,      &lh);
-            der_i_n256(in1, &ln1);
+            der_i_rnl_n(in1, &ln1);   /* ring dimension, not the 256-bit key width */
             der_i_uint(RNL_N / 2, in2, &ln2);
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             der_int_enc(syn_buf, QCMDPC_RBYTES, isyn, &lsyn);

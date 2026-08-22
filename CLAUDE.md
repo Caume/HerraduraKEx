@@ -67,6 +67,10 @@ SecurityProofsCode/                                 — standalone Python proof/
                              (primal/dual/hybrid), pinned to published Kyber and
                              Saber figures; supersedes the cited ~105/~220 bit
                              numbers with ~32/~87 (TODO #216)
+  rnl_parameter_selection.py — picks HKEX-RNL's replacement parameters: rejects
+                             n=768 (x^768+1 CRT-splits over Z, so it projects to
+                             ~39 bits), measures the DFR floor, and lands on
+                             n=1024 with p unchanged (TODO #223)
   stern_f_multiround_fs.py — HPKS-Stern-F round count vs. multi-round
                              Fiat-Shamir forgery; challenge-expansion audit
                              (TODO #217)
@@ -79,7 +83,7 @@ SecurityProofs.md                                   — split index (redirects t
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (408 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (637 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (659 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.20: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)

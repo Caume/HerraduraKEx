@@ -363,15 +363,47 @@ being the only standardisation-track LWR scheme and so the only published check 
 that step).  All six reproduce to within $1.5$ bits.  §3 of the script aborts the
 run if any of them does not.
 
-**What reaches 128 bits.** Ring dimension dominates; halving $p$ is worth roughly
-$10$ bits and raising $\eta$ a few more, so neither closes a 96-bit gap.  No
-$(p, \eta)$ combination brings $n=512$ to 128 quantum bits — HKEX-RNL-128 cannot be
-rescued by retuning.  At the deployed $p$, $n=768$ clears both targets (145
-classical / 131 quantum) but has no negacyclic NTT, and $n=1024$ clears them with
-margin (206 / 187) while keeping it, at $4\times$ the key material.  Selecting among
-these is a protocol change, tracked separately as TODO #223; note that $p$ and
-reconciliation reliability are the same parameter, so any move on $p$ has to be
-re-run through `hkex_rnl_failure_rate.py`.
+**What reaches 128 bits — adopted in v2.7.19.** Ring dimension dominates; halving $p$
+is worth roughly $10$ bits and raising $\eta$ a few more, so neither closes a 96-bit
+gap.  No $(p, \eta)$ combination brings $n=512$ to 128 quantum bits — HKEX-RNL-128
+cannot be rescued by retuning.  **The deployed parameters are now**
+
+$$n = 1024, \quad q = 65537, \quad p = 4096, \quad \eta = 1, \quad pp = 4$$
+
+clearing both targets with margin (206 classical / 187 quantum), keeping the negacyclic
+NTT, at $4\times$ the key material and roughly $5\times$ the handshake cost.  The ring
+dimension and the derived session-key width are now separate quantities: the key stays
+at 256 bits regardless of $n$.  The move is wire-format breaking and keys predating it
+must be regenerated — see `MIGRATING.md` §4 and TODO #223.
+
+**Correction — $n=768$ is unsound, not merely NTT-less (TODO #223, v2.7.18).** An
+earlier revision of this paragraph offered $n=768$ as a cheaper option clearing both
+targets at 145 classical / 131 quantum, its only drawback being the loss of the
+negacyclic NTT.  That is wrong.  With $768 = 3 \cdot 256$ and $y = x^{256}$,
+
+$$x^{768} + 1 = y^3 + 1 = (y+1)(y^2-y+1) = (x^{256}+1)(x^{512}-x^{256}+1)$$
+
+a factorisation **over the integers**, not merely mod $q$.  The ring therefore
+CRT-splits, and reduction mod $x^{256}+1$ sends a secret coefficient to
+$s_i - s_{i+256} + s_{i+512}$ — a sum of three, so the image of a short vector is
+still short, with variance scaled by 3.  The rounding error scales identically, so
+the noise ratio is unchanged and only the dimension drops.  Projecting into the
+$x^{256}+1$ component leaves **39 classical / 36 quantum bits**, barely above the
+$n=256$ set $n=768$ was proposed to replace.  This is precisely why Kyber uses a
+module of $k$ rings at $n=256$ rather than one ring at 768.  $x^{1024}+1$ is the
+2048th cyclotomic polynomial, irreducible over $\mathbb{Q}$, so no integral
+projection exists and the argument does not touch it.  Verified in
+`SecurityProofsCode/rnl_parameter_selection.py` §2.
+
+**On $p$.** $p$ and reconciliation reliability are the same parameter, so lowering it
+to buy security bits is only free if the failure rate agrees — and it does not.  At
+$n=1024$, $p=1024$ shows 4 failures in 6000 trials (DFR $\approx 6.7 \times 10^{-4}$,
+about one handshake in 1500), while $p=4096$ and $p=2048$ show none.  Once $n=1024$
+puts security at 187 quantum bits, security is no longer the binding constraint, so
+the remaining freedom belongs to correctness margin: **$p$ stays at 4096**, where the
+worst observed per-coefficient gap is 8% of the reconciliation tolerance.  Measured
+against the deployed `_rnl_keygen`/`_rnl_agree` in
+`SecurityProofsCode/rnl_parameter_selection.py` §3.
 
 **Status.** HKEX-RNL should not be presented as a production-track quantum-resistant
 option at either size until the ring dimension moves.  `SECURITY.md` carries the

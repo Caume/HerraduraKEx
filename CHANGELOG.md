@@ -2,6 +2,109 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.19] - 2026-08-22
+
+### Changed — BREAKING (wire format)
+- **TODO #223: HKEX-RNL's ring dimension moves from 256 to 1024.** `q=65537`, `p=4096`,
+  `eta=1`, `pp=4` are unchanged. This raises HKEX-RNL from ~32 classical / ~29 quantum
+  Core-SVP bits to **~206 / ~187**, clearing the 128-bit target it has claimed all along.
+  Existing HKEX-RNL private keys, public keys, kex responses, ZKP-RNL proofs, and
+  `hybrid-rnl-stern` keys are all invalidated — see `MIGRATING.md` §4. A new build
+  rejects an old key with an explicit ring-size mismatch rather than misreading it,
+  because `n` is carried in every RNL PEM. **Old keys are not merely stale, they are
+  insecure**; treat sessions established with them as compromised.
+- Public keys grow 384 -> 1536 bytes and a handshake costs ~5x (the NTT is O(n log n)).
+  The derived session key is unchanged at 256 bits.
+- **The ring dimension and the derived key width are now separate quantities.** They were
+  the same number before, and the CLIs conflated them: Python, Go, and Java all called
+  `rnl_agree(..., n, n)`. C was already written correctly (`RNL_N` for the ring, `KEYBITS`
+  for the key), so the other three moved to match it. `--bits` still overrides the ring
+  dimension, and rings below 256 keep deriving an n-bit key as before.
+
+### Security
+- **n=768 was evaluated and rejected as unsound.** TODO #216 had proposed it as the cheap
+  option. `x^768+1 = (x^256+1)(x^512-x^256+1)` factors over the **integers**, so the ring
+  CRT-splits; reduction mod x^256+1 sends a secret coefficient to
+  `s_i - s_{i+256} + s_{i+512}`, keeping a short vector short, and the rounding error
+  scales identically. Projecting into the 256-dimensional component leaves ~39 classical
+  / ~36 quantum bits. `x^1024+1` is the 2048th cyclotomic, irreducible over Q, so no
+  integral projection exists there. Recorded in v2.7.18; acted on here.
+- `SECURITY.md`: HKEX-RNL (n=1024) returns to production-track (conjectured
+  PQ-resistant). HKEX-RNL-128 (n=512) is marked **withdrawn**, not merely below target —
+  it is superseded rather than repaired. Two protocol caveats are unchanged and
+  independent of the parameter move: the reconciliation hint is transmitted
+  unauthenticated, and `m_blind`'s uniformity rests on the initiator's RNG (TODO #89).
+- `spec/herradura-protocol-spec.json`: `hkex-rnl` and `rnl-sigma` return to
+  `status: production` with the new bit figures and a migration note.
+
+### Fixed
+- **C's ring helpers are now parameterised by dimension**, matching Python's
+  `_rnl_poly_mul(f, g, q, n)` and Go's `RnlPolyMul(f, g, q, n)`, which always took `n`.
+  `rnl_poly_mul_dim`, `rnl_round_dim`, `rnl_lift_dim`, `rnl_cbd_poly_dim`, and
+  `rnl_keygen_dim` join the existing fixed-`RNL_N` wrappers, and `rnl_ntt_ex` takes the
+  inverse-`n` scaling factor explicitly. This was forced by HCRED, which shares the ring
+  arithmetic at its own dimension: `HCRED_N` was `#define HCRED_N RNL_N` and silently
+  followed the ring to 1024, where its other constants are not tuned. `HCRED_N` is now
+  pinned to 256 with a compile-time assertion tying it to the secondary twiddle table.
+  HCRED's PEM files are unaffected.
+
+### Note
+- Assembly (ARM Thumb-2), NASM i386, and Arduino/AVR stay at `RNL_N = 32` and are now
+  labelled demo-only in-source. A 1024-coefficient int32 ring is 4 KB per polynomial and
+  will not fit AVR SRAM; these targets were never at a security claim and their keys do
+  not interoperate with the 1024-ring targets.
+- The Python reference's HKEX-RNL work is ~5x slower per handshake at the new dimension
+  (measured 1.7 ms -> 8.9 ms per ring multiply without numpy). `native-python` is already
+  the longest CI job at ~23 min; watch it for headroom.
+
+## [2.7.18] - 2026-08-22
+
+### Security
+- **TODO #223: n=768 is unsound and must not be used.** TODO #216's follow-up item
+  offered n=768 as the cheap replacement for HKEX-RNL's broken parameters, clearing
+  both targets at ~145 classical / ~131 quantum bits with the loss of the negacyclic
+  NTT as its only drawback. That is wrong. With 768 = 3*256 and y = x^256,
+  `x^768+1 = (y+1)(y^2-y+1) = (x^256+1)(x^512-x^256+1)` factors **over the integers**,
+  not merely mod q, so the ring CRT-splits. Reduction mod x^256+1 sends a secret
+  coefficient to `s_i - s_{i+256} + s_{i+512}` — a sum of three, so a short vector
+  stays short — and the rounding error scales identically, leaving the noise ratio
+  unchanged while the dimension drops. Projecting into the x^256+1 component gives
+  **~39 classical / ~36 quantum bits**, barely above the n=256 set n=768 was proposed
+  to replace. This is why Kyber uses a module of k rings at n=256 rather than one
+  ring at 768. x^1024+1 is the 2048th cyclotomic, irreducible over Q, so no integral
+  projection exists and the argument does not touch it.
+
+### Changed
+- **TODO #223: replacement parameters decided — `n=1024, q=65537, p=4096, eta=1,
+  pp=4`.** Move n only; leave every other parameter alone. ~206 classical / ~187
+  quantum Core-SVP bits, 0 failures in 6000 trials, 1536-byte public keys (4x the
+  current 384), ~5x handshake cost in the Python reference.
+- **p stays at 4096, against the first pass's recommendation.** Lowering p raises
+  security and shrinks keys, which initially looked free at 0 failures in 250 trials.
+  It is not: at n=1024, p=1024 gives 4 failures in 6000 trials, a DFR of ~6.7e-4 or
+  about one handshake in 1500. Once n=1024 puts security at 187 quantum bits,
+  security stops being the binding constraint and the remaining freedom belongs to
+  correctness margin. p=2048 is also clean at 6000 trials but halves the
+  per-coefficient gap headroom for bits nobody needs. Holding p also keeps the wire
+  format the same shape — 12 bits per coefficient, only the element count changes.
+- `SecurityProofs-4.md` §11.4.3: the "what reaches 128 bits" paragraph is corrected;
+  its n=768 recommendation is replaced by the rejection above, and a new paragraph
+  records the DFR measurements behind holding p.
+
+### Added
+- TODO #223: `SecurityProofsCode/rnl_parameter_selection.py` — the security frontier
+  over (n, p, eta); the n=768 CRT split, verified by exact expansion over Z and
+  costed on both components; the measured DFR floor and per-coefficient gap headroom
+  against the deployed `_rnl_keygen`/`_rnl_agree`; public-key size and handshake
+  timing per candidate; and the recommendation with a per-file port scope.
+
+### Note
+- TODO #223 remains **OPEN**. This release settles which parameters to adopt and why;
+  the port across C/Go/Python/Java, the codec, `KAT/`, and the `MIGRATING.md` entry
+  for the wire-format break are still to come. The assembly and Arduino targets run
+  RNL_N=32 today and cannot hold n=1024 in AVR SRAM; they will stay at 32 and be
+  labelled demo-only rather than ported.
+
 ## [2.7.17] - 2026-08-21
 
 ### Security

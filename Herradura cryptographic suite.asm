@@ -30,6 +30,10 @@
 %define I_VALUE    8
 %define R_VALUE    24
 %define GF_POLY    0x00400007
+; RNL_N stays 32 on this target: DEMO ONLY.  The C/Go/Python/Java builds moved to
+; RNL_N = 1024 in TODO #223 because n = 256 is worth only ~32 Core-SVP bits; 32 is far
+; below any security claim and exists to exercise the arithmetic, not to be deployed.
+; Keys are not interoperable with the 1024-bit-ring targets.
 %define RNL_N      32
 %define RNL_Q      65537
 %define RNL_P      4096

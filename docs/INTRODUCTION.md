@@ -303,9 +303,8 @@ gf_pow(0x03, ?) = 0x8F — the discrete logarithm in GF(2^8).  (Easily done for
 **Limitations:**
 - Vulnerable to **man-in-the-middle** attacks unless public keys are authenticated
   (use HPKS to sign them).
-- Broken by Shor's quantum algorithm at 256-bit parameters. HKEX-RNL is the
-  lattice-based alternative, but its deployed parameters are demo-only too
-  (~32 Core-SVP bits — see `SECURITY.md`); neither is a production key exchange
+- Broken by Shor's quantum algorithm at 256-bit parameters; use HKEX-RNL for new
+  work (lattice-based, ~206 Core-SVP bits at its n=1024 ring since v2.7.19)
   deployments.
 
 → SP2 §3 for the formal security reduction.
@@ -926,12 +925,10 @@ For a standardized RLWE comparison, see NIST FIPS 203 (ML-KEM / Kyber), 2024.
 
 ### 9.4 HKEX-RNL walkthrough
 
-HKEX-RNL is the Herradura lattice-based key exchange, built on Ring-LWR.  Here is
-the full handshake with the actual parameter names.  Read it as an illustration of
-the construction: the parameters below are demo-only, worth about 32 Core-SVP bits
-rather than the 128 a post-quantum key exchange needs (see `SECURITY.md`).
+HKEX-RNL is the Herradura post-quantum key exchange built on Ring-LWR.  Here is the
+full handshake with the actual parameter names.
 
-**Parameters:** n=256 (polynomial degree), q=65537 (modulus), p=4096 (rounding modulus).
+**Parameters:** n=1024 (polynomial degree), q=65537 (modulus), p=4096 (rounding modulus).
 
 ```
 Setup (public, agreed by both parties):
@@ -1158,7 +1155,7 @@ See the TUTORIAL §HCRED section for wire-format details and integration example
 | HPKE | Classical | DLP in GF(2^n)* | Broken by Shor | SP2 §7 | §HPKE |
 | HSKE-NL-A1 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP4 §11.1–§11.2 | §HSKE-NL |
 | HSKE-NL-A2 | NL/PQC | Non-linear symmetric | Grover only (128-bit PQ) | SP4 §11.3 | §HSKE-NL |
-| HKEX-RNL | NL/PQC | Ring-LWR (lattice) | Quantum-hard in structure; deployed parameters are demo-only (~32 Core-SVP bits) | SP4 §11.4–§11.6 | §HKEX-RNL |
+| HKEX-RNL | NL/PQC | Ring-LWR (lattice) | Conjectured quantum-hard; ~206 Core-SVP bits at n=1024 (v2.7.19+) | SP4 §11.4–§11.6 | §HKEX-RNL |
 | HPKS-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP4 §11.7 | §HPKS-NL |
 | HPKE-NL | NL/PQC | NL-FSCX + DLP | Partially quantum-hard | SP4 §11.8 | §HPKE-NL |
 | HPKS-Stern-F | Code-based | Syndrome Decoding (NP-hard) | Conjectured quantum-hard | SP2 §8 | §HPKS-Stern |
@@ -1170,8 +1167,7 @@ See the TUTORIAL §HCRED section for wire-format details and integration example
 
 ```
 Need to exchange a key?
-├── Quantum safety required → HKEX-RNL (structure only — the deployed
-│                            parameters do not provide it; see SECURITY.md)
+├── Quantum safety required → HKEX-RNL
 └── Classical only (legacy/constrained device) → HKEX-GF
 
 Need to derive a uniform symmetric key from a DH or Ring-LWR exchange?

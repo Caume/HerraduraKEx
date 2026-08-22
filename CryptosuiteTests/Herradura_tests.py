@@ -879,8 +879,15 @@ _SIGMA_MAX_ATTEMPTS = 1000
 
 
 def _sigma_params(n):
-    gamma = _SIGMA_GAMMA.get(n, 8192 if n >= 64 else 4096)
-    t     = _SIGMA_T.get(n, max(4, n // 16))
+    # The fallbacks must match C's sigma_params() and Go's ZkpRnlParams()
+    # exactly, or the three produce different challenge weights and their proofs
+    # stop verifying against each other.  The old `max(4, n // 16)` diverged for
+    # n > 256 (t = 64 at n = 1024 where C and Go both use 16), which stayed
+    # invisible until TODO #223 made n = 1024 the default ring dimension.  At
+    # t = 64 the rejection-sampling acceptance rate collapses to ~3e-4 and
+    # rnl_sigma_sign exhausts its 1000 attempts about 72% of the time.
+    gamma = _SIGMA_GAMMA.get(n, 4096 if n <= 32 else 8192)
+    t     = _SIGMA_T.get(n, 4 if n <= 32 else 8 if n <= 64 else 12 if n <= 128 else 16)
     return gamma, t
 
 

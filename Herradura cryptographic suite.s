@@ -34,6 +34,10 @@
     .equ I_VALUE,  8
     .equ R_VALUE,  24
     .equ RNL_KDF_DC, 0x6A09E667     @ SHA-256 H0 — domain constant for KDF seed
+    @ RNL_N stays 32 on this target: DEMO ONLY.  The C/Go/Python/Java builds moved
+    @ to RNL_N = 1024 in TODO #223 because n = 256 is worth only ~32 Core-SVP bits;
+    @ 32 is far below any security claim and is here to exercise the arithmetic, not
+    @ to be deployed.  Keys are not interoperable with the 1024-bit-ring targets.
     .equ RNL_N,    32
     .equ RNL_Q,    65537
     .equ RNL_P,    4096

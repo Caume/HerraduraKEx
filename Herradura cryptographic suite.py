@@ -107,7 +107,7 @@
     PQC protocol variants (C3 hybrid assignment):
       HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
       HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
-      HKEX-RNL    — Ring-LWR key exchange (DEMO-ONLY parameters, see SECURITY.md)
+      HKEX-RNL    — Ring-LWR key exchange (conjectured quantum-resistant; n=1024)
       HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
       HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
 
@@ -165,7 +165,7 @@
         hpake_register, hpake_login_demo  (aPAKE: HKEX-RNL + ZKBoo + OPRF augmented PAKE)
 
     Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
-        RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
+        RNLN, RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
 
     See docs/TUTORIAL.md for complete per-protocol code examples.
 '''
@@ -262,8 +262,15 @@ ORD     = (1 << KEYBITS) - 1  # order of GF(2^n)* (for Schnorr integer arithmeti
 # q=65537 (Fermat prime, fast arithmetic) gives lower noise-to-margin ratio than
 # q=3329 (Kyber), ensuring reliable single-block agreement at the cost of larger
 # keys.  2-bit Peikert reconciliation doubles extracted bits per coefficient.
+RNLN  = 1024   # ring dimension for HKEX-RNL (TODO #223).  Distinct from KEYBITS:
+               # the ring is 1024 but the derived session key stays 256 bits.
+               # n=256 gives only ~32 Core-SVP bits and n=512 only ~87 (TODO #216);
+               # n=768 is unsound because x^768+1 factors over Z (TODO #223).
+               # x^1024+1 is the 2048th cyclotomic, irreducible over Q.
 RNLQ  = 65537  # prime modulus (2^16 + 1)
-RNLP  = 4096   # public-key rounding modulus
+RNLP  = 4096   # public-key rounding modulus.  Held at 4096 deliberately: lowering
+               # it buys security bits but costs DFR (p=1024 -> ~1 failure in 1500),
+               # and at n=1024 security is no longer the binding constraint.
 RNLPP = 4      # reconciliation modulus (2 bits extracted per ring coefficient)
 RNLB  = 1      # centered-binomial eta=1: secret coefficients drawn from CBD(1) in {-1,0,1}
 
@@ -1600,8 +1607,15 @@ def hpks_stern_ring_verify(msg: 'BitArray', sig, ring_keys: list,
 
 def _sigma_params(n):
     """Return (gamma, t) for the Ring-LWR Σ-protocol at bit-width n."""
-    gamma = _SIGMA_GAMMA.get(n, 8192 if n >= 64 else 4096)
-    t     = _SIGMA_T.get(n, max(4, n // 16))
+    # The fallbacks must match C's sigma_params() and Go's ZkpRnlParams()
+    # exactly, or the three produce different challenge weights and their proofs
+    # stop verifying against each other.  The old `max(4, n // 16)` diverged for
+    # n > 256 (t = 64 at n = 1024 where C and Go both use 16), which stayed
+    # invisible until TODO #223 made n = 1024 the default ring dimension.  At
+    # t = 64 the rejection-sampling acceptance rate collapses to ~3e-4 and
+    # rnl_sigma_sign exhausts its 1000 attempts about 72% of the time.
+    gamma = _SIGMA_GAMMA.get(n, 4096 if n <= 32 else 8192)
+    t     = _SIGMA_T.get(n, 4 if n <= 32 else 8 if n <= 64 else 12 if n <= 128 else 16)
     return gamma, t
 
 
@@ -3964,7 +3978,7 @@ HSKE-NL-A2 (revolve-mode HSKE with NL-FSCX v2):
             in the multi-message sense without a nonce in P. Prefer HSKE-NL-A1
             when multiple messages may be encrypted under the same key.
 
-HKEX-RNL (Ring-LWR key exchange — DEMO-ONLY at the deployed parameters):
+HKEX-RNL (Ring-LWR key exchange — conjectured quantum-resistant):
   Setup:    a_rand random; m_blind = m(x) + a_rand  [m(x)=1+x+x^{n-1}]
   Alice:    s_A small private; C_A = round_p(m_blind * s_A)
   Bob:      s_B small private; C_B = round_p(m_blind * s_B)
@@ -3974,12 +3988,11 @@ HKEX-RNL (Ring-LWR key exchange — DEMO-ONLY at the deployed parameters):
   KDF:      seed = ROL(K_raw, n/8); sk = nl_fscx_revolve_v1(seed, K_raw, n/4)
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
-  Parameters: n=256, q=65537, p=4096, pp=4, eta=1 (CBD(1) secret distribution).
-  CAUTION:  These parameters are DEMO-ONLY.  Ring-LWR is lattice-hard in structure,
-            but p=4096 puts the relative noise ~5x below ML-KEM-512's, leaving
-            ~32 classical / ~29 quantum Core-SVP bits at n=256 and ~87/~79 at
-            n=512.  See SECURITY.md, SecurityProofs-4.md 11.4.3, and
-            SecurityProofsCode/hkex_rnl_lattice_2026.py (TODO #216).
+  Parameters: n=RNLN=1024, q=65537, p=4096, pp=4, eta=1 (CBD(1) secret).
+            ~206 classical / ~187 quantum Core-SVP bits (TODO #223).  The ring
+            dimension is separate from the 256-bit derived session key.
+  MIGRATION: keys generated before v2.7.19 used n=256 and are worth only ~32/~29
+            bits (TODO #216) — regenerate them; see MIGRATING.md section 4.
 
 HPKS-NL (Schnorr + NL-FSCX v1 challenge):
   Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
@@ -4122,7 +4135,7 @@ def main():
     else:
         print("- decryption failed!")
 
-    print("\n--- HKEX-RNL [Ring-LWR key exchange — DEMO-ONLY parameters, see SECURITY.md]")
+    print("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]")
     print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537 — may be slow)")
     n_rnl    = KEYBITS
     m_base   = _rnl_m_poly(n_rnl)

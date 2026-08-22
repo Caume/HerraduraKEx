@@ -16,7 +16,7 @@ import java.security.SecureRandom;
  *
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s nl_fscx_v2
  * family, _rnl_* ring-arithmetic helpers, and hkex_rnl_keygen/
- * hkex_rnl_agree, at n=256 bits (RNLQ=65537, RNLP=4096, RNLPP=4, RNLB=1 —
+ * hkex_rnl_agree, at n=RNLN=1024 (RNLQ=65537, RNLP=4096, RNLPP=4, RNLB=1 —
  * matching HerraduraCli/herradura.py's constants).
  */
 public final class HerraduraNl {
@@ -25,6 +25,14 @@ public final class HerraduraNl {
     private static final int N = Herradura.N;               // 256
     private static final BigInteger MASK = Herradura.MASK;
 
+    /**
+     * Ring dimension for HKEX-RNL (TODO #223).  Deliberately NOT tied to the key
+     * width: the ring must be 1024 to reach 128-bit security, while the derived
+     * session key stays 256 bits.  n=256 gives only ~32 Core-SVP bits and n=512
+     * only ~87 (TODO #216); n=768 is unsound because x^768+1 factors over Z, so
+     * the ring CRT-splits and the instance projects down to ~39 bits.
+     */
+    public static final int RNLN = 1024;
     public static final int RNLQ = 65537;  // prime modulus (2^16 + 1)
     public static final int RNLP = 4096;   // public-key rounding modulus
     public static final int RNLPP = 4;     // reconciliation modulus

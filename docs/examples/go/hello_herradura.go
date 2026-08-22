@@ -64,21 +64,26 @@ func main() {
 	}
 
 	// ── HKEX-RNL: Ring-LWR key exchange (PQC-hardened) ───────────────────────
-	fmt.Printf("\n=== HKEX-RNL (Ring-LWR, n=%d, q=%d) ===\n", n, RnlQ)
+	// The RNL ring dimension is RnlN (1024), NOT the 256-bit key width used
+	// above: n=256 is worth only ~32 Core-SVP bits (TODO #216/#223). The derived
+	// key is still 256 bits — the ring is larger than the key it produces.
+	rnlN := RnlN
+	keyN := n
+	fmt.Printf("\n=== HKEX-RNL (Ring-LWR, ring n=%d, key %d bits, q=%d) ===\n", rnlN, keyN, RnlQ)
 
-	mBase  := RnlMPoly(n)
-	aRand  := RnlRandPoly(n, RnlQ)
+	mBase  := RnlMPoly(rnlN)
+	aRand  := RnlRandPoly(rnlN, RnlQ)
 	mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
 
-	sA, CA := RnlKeygen(mBlind, n, RnlQ, RnlP)
-	sB, CB := RnlKeygen(mBlind, n, RnlQ, RnlP)
+	sA, CA := RnlKeygen(mBlind, rnlN, RnlQ, RnlP)
+	sB, CB := RnlKeygen(mBlind, rnlN, RnlQ, RnlP)
 
-	kA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, n, n, nil)
-	kB, _      := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, n, n, hintA)
+	kA, hintA := RnlAgree(sA, CB, RnlQ, RnlP, RnlPP, rnlN, keyN, nil)
+	kB, _      := RnlAgree(sB, CA, RnlQ, RnlP, RnlPP, rnlN, keyN, hintA)
 
-	// KDF: seed = ROL(K, n/8); sk = NL-FSCX-v1(seed, K, n/4)
-	skA := NlFscxRevolveV1(kA.RotateLeft(n/8), kA, n/4)
-	skB := NlFscxRevolveV1(kB.RotateLeft(n/8), kB, n/4)
+	// KDF: seed = ROL(K, n/8); sk = NL-FSCX-v1(seed, K, n/4) — on the KEY width
+	skA := NlFscxRevolveV1(kA.RotateLeft(keyN/8), kA, keyN/4)
+	skB := NlFscxRevolveV1(kB.RotateLeft(keyN/8), kB, keyN/4)
 
 	fmt.Printf("sk (Alice): %x\n", skA)
 	fmt.Printf("sk (Bob)  : %x\n", skB)

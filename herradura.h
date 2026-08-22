@@ -1094,8 +1094,17 @@ static void drbg_reseed(HDrbg *d, const uint8_t *entropy, size_t entropy_len)
  * HKEX-RNL: Ring-LWR key exchange helpers (n=256, negacyclic Z_q[x]/(x^n+1))
  * ───────────────────────────────────────────────────────────────────────────── */
 
-#define RNL_N  256
+/* Ring dimension for HKEX-RNL (TODO #223).  Deliberately NOT tied to KEYBITS:
+   the ring must be 1024 to reach 128-bit security, while the derived session key
+   stays KEYBITS (256).  n=256 gives only ~32 Core-SVP bits and n=512 only ~87
+   (TODO #216); n=768 is unsound because x^768+1 factors over Z, so the ring
+   CRT-splits and the instance projects down to ~39 bits (TODO #223).  x^1024+1
+   is the 2048th cyclotomic, irreducible over Q. */
+#define RNL_N  1024
 #define RNL_Q  65537
+/* Held at 4096 deliberately: lowering p buys security bits but costs decoding
+   failures (p=1024 measures ~1 handshake in 1500), and at n=1024 security is no
+   longer the binding constraint. */
 #define RNL_P  4096
 #define RNL_PP 4
 #define RNL_ETA  1  /* CBD eta: secret coeffs from CBD(1) in {-1,0,1} mod q */
@@ -1111,7 +1120,7 @@ static uint32_t rnl_mod_pow(uint32_t base, uint32_t exp, uint32_t m)
 }
 
 /* Precomputed NTT twiddle tables for n=RNL_N, q=RNL_Q (lazy-initialized on first use). */
-#define RNL_LOG2N 8  /* log2(256) */
+#define RNL_LOG2N 10  /* log2(1024) — must track RNL_N */
 static struct {
     uint32_t psi_pow[RNL_N];          /* ψ^i for pre-twist */
     uint32_t psi_inv_pow[RNL_N];      /* ψ^{-i} for post-twist */
@@ -1119,6 +1128,17 @@ static struct {
     uint32_t stage_w_inv[RNL_LOG2N];  /* per-stage ω, inverse NTT */
     uint32_t inv_n;                   /* n^{-1} mod q for INTT scaling */
 } rnl_tw;
+
+/* Secondary twiddle table for HCRED's ring, which stays at 256 while HKEX-RNL's
+   moved to 1024 (TODO #223).  Only psi/psi_inv/inv_n are dimension-dependent:
+   the per-stage roots are 3^((q-1)/length), a function of `length` alone, so the
+   RNL_N stage tables are correct for every smaller power of two as well. */
+#define RNL_ALT_N 256   /* == HCRED_N, checked by a static assert at its definition */
+static struct {
+    uint32_t psi_pow[RNL_ALT_N];
+    uint32_t psi_inv_pow[RNL_ALT_N];
+    uint32_t inv_n;
+} rnl_tw_alt;
 
 static void rnl_twiddle_do_init(void)
 {
@@ -1139,6 +1159,17 @@ static void rnl_twiddle_do_init(void)
         rnl_tw.stage_w_inv[s] = rnl_mod_pow(w, RNL_Q - 2, RNL_Q);
     }
     rnl_tw.inv_n = rnl_mod_pow((uint32_t)RNL_N, RNL_Q - 2, RNL_Q);
+
+    psi     = rnl_mod_pow(3, (RNL_Q - 1) / (2 * RNL_ALT_N), RNL_Q);
+    psi_inv = rnl_mod_pow(psi, RNL_Q - 2, RNL_Q);
+    pw = pw_inv = 1;
+    for (i = 0; i < RNL_ALT_N; i++) {
+        rnl_tw_alt.psi_pow[i]     = pw;
+        rnl_tw_alt.psi_inv_pow[i] = pw_inv;
+        pw     = (uint32_t)((uint64_t)pw     * psi     % RNL_Q);
+        pw_inv = (uint32_t)((uint64_t)pw_inv * psi_inv % RNL_Q);
+    }
+    rnl_tw_alt.inv_n = rnl_mod_pow((uint32_t)RNL_ALT_N, RNL_Q - 2, RNL_Q);
 }
 
 #ifdef _POSIX_THREADS
@@ -1177,7 +1208,9 @@ static inline uint32_t rnl_mulmodq(uint32_t a, uint32_t b)
 
 /* Cooley-Tukey iterative NTT over Z_q (in-place). n must be a power of 2.
    Uses primitive root 3 (valid since q=65537 is a Fermat prime, ord(3)=q-1=2^16). */
-static void rnl_ntt(int32_t *a, int n, int q, int invert)
+/* inv_n is passed in rather than read from rnl_tw because the table is
+   dimension-specific: HCRED runs this at 256 while HKEX-RNL runs it at RNL_N. */
+static void rnl_ntt_ex(int32_t *a, int n, int q, int invert, uint32_t inv_n)
 {
     int i, j = 0, length, k, s;
     uint32_t w, wn;
@@ -1205,28 +1238,58 @@ static void rnl_ntt(int32_t *a, int n, int q, int invert)
     }
     if (invert) {
         for (i = 0; i < n; i++)
-            a[i] = (int32_t)rnl_mulmodq((uint32_t)a[i], rnl_tw.inv_n);
+            a[i] = (int32_t)rnl_mulmodq((uint32_t)a[i], inv_n);
     }
+}
+
+/* Backwards-compatible wrapper at the HKEX-RNL dimension. */
+static void rnl_ntt(int32_t *a, int n, int q, int invert)
+{
+    rnl_twiddle_init();
+    rnl_ntt_ex(a, n, q, invert, rnl_tw.inv_n);
 }
 
 /* Negacyclic multiply: h = f*g in Z_q[x]/(x^n+1) via NTT. O(n log n).
    ψ = 3^((q-1)/(2n)) is a primitive 2n-th root; ψ^n ≡ -1 encodes the wrap. */
-static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+/* h = f*g in Z_q[x]/(x^n+1) at an explicit dimension.  n must be RNL_N or
+   RNL_ALT_N — the only two the twiddle tables cover.  Python's _rnl_poly_mul and
+   Go's RnlPolyMul have always taken n; this brings C into line (TODO #223). */
+static void rnl_poly_mul_dim(int32_t *h, const int32_t *f, const int32_t *g, int n)
 {
-    int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];
+    int32_t fa[RNL_N], ga[RNL_N], ha[RNL_N];   /* RNL_N is the larger of the two */
+    const uint32_t *psi_pow, *psi_inv_pow;
+    uint32_t inv_n;
     int i;
     rnl_twiddle_init();
-    for (i = 0; i < RNL_N; i++) {
-        fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], rnl_tw.psi_pow[i]);
-        ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], rnl_tw.psi_pow[i]);
+    if (n == RNL_ALT_N) {
+        psi_pow = rnl_tw_alt.psi_pow; psi_inv_pow = rnl_tw_alt.psi_inv_pow;
+        inv_n   = rnl_tw_alt.inv_n;
+    } else if (n == RNL_N) {
+        psi_pow = rnl_tw.psi_pow;     psi_inv_pow = rnl_tw.psi_inv_pow;
+        inv_n   = rnl_tw.inv_n;
+    } else {
+        /* No twiddle table for this dimension.  Falling through to the RNL_N
+           table would silently produce garbage, which for a key-exchange
+           primitive is worse than stopping. */
+        fputs("rnl_poly_mul_dim: unsupported ring dimension\n", stderr);
+        exit(1);
     }
-    rnl_ntt(fa, RNL_N, RNL_Q, 0);
-    rnl_ntt(ga, RNL_N, RNL_Q, 0);
-    for (i = 0; i < RNL_N; i++)
+    for (i = 0; i < n; i++) {
+        fa[i] = (int32_t)rnl_mulmodq((uint32_t)f[i], psi_pow[i]);
+        ga[i] = (int32_t)rnl_mulmodq((uint32_t)g[i], psi_pow[i]);
+    }
+    rnl_ntt_ex(fa, n, RNL_Q, 0, inv_n);
+    rnl_ntt_ex(ga, n, RNL_Q, 0, inv_n);
+    for (i = 0; i < n; i++)
         ha[i] = (int32_t)rnl_mulmodq((uint32_t)fa[i], (uint32_t)ga[i]);
-    rnl_ntt(ha, RNL_N, RNL_Q, 1);
-    for (i = 0; i < RNL_N; i++)
-        h[i] = (int32_t)rnl_mulmodq((uint32_t)ha[i], rnl_tw.psi_inv_pow[i]);
+    rnl_ntt_ex(ha, n, RNL_Q, 1, inv_n);
+    for (i = 0; i < n; i++)
+        h[i] = (int32_t)rnl_mulmodq((uint32_t)ha[i], psi_inv_pow[i]);
+}
+
+static void rnl_poly_mul(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
+{
+    rnl_poly_mul_dim(h, f, g, RNL_N);
 }
 
 static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
@@ -1235,18 +1298,28 @@ static void rnl_poly_add(rnl_poly_t h, const rnl_poly_t f, const rnl_poly_t g)
     for (i = 0; i < RNL_N; i++) h[i] = (f[i] + g[i]) % RNL_Q;
 }
 
-static void rnl_round(int32_t *out, const rnl_poly_t in, int from_q, int to_p)
+static void rnl_round_dim(int32_t *out, const int32_t *in, int from_q, int to_p, int n)
 {
     int i;
-    for (i = 0; i < RNL_N; i++)
+    for (i = 0; i < n; i++)
         out[i] = (int32_t)(((int64_t)in[i] * to_p + from_q / 2) / from_q % to_p);
+}
+
+static void rnl_round(int32_t *out, const rnl_poly_t in, int from_q, int to_p)
+{
+    rnl_round_dim(out, in, from_q, to_p, RNL_N);
+}
+
+static void rnl_lift_dim(int32_t *out, const int32_t *in, int from_p, int to_q, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        out[i] = (int32_t)(((int64_t)in[i] * to_q + from_p / 2) / from_p % to_q);
 }
 
 static void rnl_lift(rnl_poly_t out, const int32_t *in, int from_p, int to_q)
 {
-    int i;
-    for (i = 0; i < RNL_N; i++)
-        out[i] = (int32_t)(((int64_t)in[i] * to_q + from_p / 2) / from_p % to_q);
+    rnl_lift_dim(out, in, from_p, to_q, RNL_N);
 }
 
 /* m(x) = 1 + x + x^{n-1} */
@@ -1271,6 +1344,22 @@ static void rnl_rand_poly(rnl_poly_t p, FILE *urnd)
 
 /* CBD(eta=1): 4 coefficients per byte — bit-pairs (0-1),(2-3),(4-5),(6-7).
    Produces {-1,0,1} with P(-1)=P(1)=1/4, P(0)=1/2; zero mean. */
+static void rnl_cbd_poly_dim(int32_t *p, FILE *urnd, int n)
+{
+    int i;
+    uint8_t buf[(RNL_N + 3) / 4];
+    size_t need = (size_t)((n + 3) / 4);
+    if (fread(buf, 1, need, urnd) != need) {
+        fputs("urandom error\n", stderr); exit(1);
+    }
+    for (i = 0; i < n; i++) {
+        int off = (i & 3) * 2;
+        int a = (buf[i >> 2] >> off) & 1;
+        int b = (buf[i >> 2] >> (off + 1)) & 1;
+        p[i] = (int32_t)((a - b + RNL_Q) % RNL_Q);
+    }
+}
+
 static void rnl_cbd_poly(rnl_poly_t p, FILE *urnd)
 {
     int i;
@@ -1337,13 +1426,21 @@ static void rnl_contributory_kdf(uint8_t out[KEYBYTES],
 }
 
 /* keygen: s=CBD(eta=1) private, C=round_p(m_blind * s) */
+/* Keygen at an explicit ring dimension; n must be RNL_N or RNL_ALT_N.  HCRED
+   uses RNL_ALT_N (256) while HKEX-RNL uses RNL_N (1024) — TODO #223. */
+static void rnl_keygen_dim(int32_t *s_out, int32_t *c_out,
+                           const int32_t *m_blind, FILE *urnd, int n)
+{
+    int32_t ms[RNL_N];
+    rnl_cbd_poly_dim(s_out, urnd, n);
+    rnl_poly_mul_dim(ms, m_blind, s_out, n);
+    rnl_round_dim(c_out, ms, RNL_Q, RNL_P, n);
+}
+
 static void rnl_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                        const rnl_poly_t m_blind, FILE *urnd)
 {
-    rnl_poly_t ms;
-    rnl_cbd_poly(s_out, urnd);
-    rnl_poly_mul(ms, m_blind, s_out);
-    rnl_round(c_out, ms, RNL_Q, RNL_P);
+    rnl_keygen_dim(s_out, c_out, m_blind, urnd, RNL_N);
 }
 
 /* 2-bit Peikert cross-rounding hint for first RNL_N/2 coefficients, packed 2 bits/coeff.
@@ -4141,10 +4238,17 @@ static int hpks_xmss_verify(const uint8_t msg[], size_t mlen,
  *
  * Byte-compatible with the Python/Go suite: 3B/coeff serialisation, identical
  * HFSCX-256 domain strings, counter-mode tape, Fiat-Shamir trit derivation.
- * Fixed n = HCRED_N = RNL_N = 256.
+ * Fixed n = HCRED_N = 256.  This was `#define HCRED_N RNL_N` until TODO #223
+ * moved the HKEX-RNL ring to 1024; HCRED's remaining constants (HCRED_ROW_BITS,
+ * HCRED_EPS_BITS, and the sizes derived from them) are tuned for n = 256, and
+ * HCRED's own parameter security is tracked separately from HKEX-RNL's, so it is
+ * pinned here rather than following the ring.
  * =========================================================================== */
 
-#define HCRED_N          RNL_N
+#define HCRED_N          256   /* pinned; do NOT re-tie to RNL_N (TODO #223) */
+/* The alternate NTT twiddle table (RNL_ALT_N, declared far above because it sits
+   with the other ring helpers) exists precisely to serve HCRED's dimension. */
+typedef char hcred_n_matches_rnl_alt_n[(HCRED_N == RNL_ALT_N) ? 1 : -1];
 #define HCRED_ROWS       (HCRED_N / 2)
 #define HCRED_ROW_BITS   9
 #define HCRED_NB         (HCRED_ROWS * HCRED_ROW_BITS)
@@ -4290,7 +4394,7 @@ static void hcred_user_keygen(int32_t s_out[RNL_N], int32_t c_out[RNL_N],
                                BitArray *e_out, const int32_t m_poly[RNL_N],
                                FILE *urnd)
 {
-    rnl_keygen(s_out, c_out, m_poly, urnd);
+    rnl_keygen_dim(s_out, c_out, m_poly, urnd, HCRED_N);
     hcred_phi(e_out, s_out);
 }
 
@@ -4322,8 +4426,8 @@ static int _hcred_witness(int *W_out, int32_t beta[HCRED_NB], int32_t delta[HCRE
         if (s_poly[i] == 1) W++;
     *W_out = W;
 
-    rnl_poly_mul(ms, m_poly, s_poly);
-    rnl_lift(lift_c, c_poly, RNL_P, RNL_Q);
+    rnl_poly_mul_dim(ms, m_poly, s_poly, HCRED_N);
+    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, HCRED_N);
 
     /* CT-02 (TODO #129 Batch 5): both loops below always run to completion
      * instead of returning as soon as a row/coefficient fails -- a failure
@@ -4419,7 +4523,7 @@ static void _hcred_party_out(HcredOuts *outs, int j,
         outs->s_out[j][r] = (int32_t)(((int64_t)acc - dec + q) % q);
         outs->y_out[j][r] = (int32_t)(shB_j[r*HCRED_ROW_BITS] % q);
     }
-    rnl_poly_mul(ms_j, m_poly, shS_j);
+    rnl_poly_mul_dim(ms_j, m_poly, shS_j, HCRED_N);
     for (i = 0; i < HCRED_N; i++) {
         int32_t dec = 0;
         for (t = 0; t < HCRED_EPS_BITS; t++)
@@ -4760,7 +4864,7 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
     }
 
     stern_build_H(H, seed_H);
-    rnl_lift(lift_c, c_poly, RNL_P, RNL_Q);
+    rnl_lift_dim(lift_c, c_poly, RNL_P, RNL_Q, HCRED_N);
 
     chals = (int *)malloc((size_t)rounds * sizeof(int));
     if (!chals) { free(coms_ser); free(outs_ser); return 0; }
@@ -4912,7 +5016,7 @@ static int hcred_verify(const int32_t m_poly[HCRED_N],
             }
             if (!result) break;
 
-            rnl_poly_mul(ms_j, m_poly, shS3[j]);
+            rnl_poly_mul_dim(ms_j, m_poly, shS3[j], HCRED_N);
             for (i = 0; i < HCRED_N && result; i++) {
                 int32_t dec = 0;
                 for (t = 0; t < HCRED_EPS_BITS; t++)

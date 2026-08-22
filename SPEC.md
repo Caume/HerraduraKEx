@@ -309,13 +309,12 @@ invertibility argument, at the cost of the extra validity check).
 
 **PEM labels:** `HERRADURA HKEX-RNL PRIVATE KEY` / `HERRADURA HKEX-RNL
 PUBLIC KEY`. **CLI:** `genpkey --algo hkex-rnl`, two-round `kex --algo
-hkex-rnl` (Bob responds first, then Alice completes). Lattice-based, so
-unlike HKEX-GF's Shor's-algorithm-breakable discrete log it has no known
-efficient quantum attack *in structure* — but **the deployed parameters are
-demo-only**: n=256 is ~32 classical / ~29 quantum Core-SVP bits and n=512 only
-~87/~79, because the rounding modulus p=4096 makes the relative noise about 5x
-quieter than ML-KEM-512. See `SECURITY.md` and SecurityProofs-4.md §11.4.3
-(TODO #216); the parameter move is TODO #223.
+hkex-rnl` (Bob responds first, then Alice completes). **Conjectured
+quantum-resistant** (lattice-based; no known efficient quantum attack, as
+opposed to HKEX-GF's Shor's-algorithm-breakable discrete log), at ring
+dimension n=1024 since v2.7.19 — ~206 classical / ~187 quantum Core-SVP bits.
+Keys generated before v2.7.19 used n=256 and are worth only ~32/~29; see
+`MIGRATING.md` §4 and SecurityProofs-4.md §11.4.3.
 
 **Parameters** (ring degree `n`, defaults to the CLI's `--bits`, 256):
 modulus `q = 65537` (`2^16 + 1`), public-key rounding modulus `p = 4096`,

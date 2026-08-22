@@ -79,7 +79,7 @@ from primitives import (
     zkp_nl_keygen, zkp_nl_prove, zkp_nl_verify,
     zkp_nl_prove_pp, zkp_nl_verify_pp,
     KEYBITS, GF_POLY, GF_GEN, ORD,
-    RNLQ, RNLP, RNLPP, RNLB,
+    RNLN, RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, SDFT, SDFNR, SDFR,
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
     fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
@@ -359,6 +359,19 @@ def _decode_rnl_pubkey(ints):
     C_poly = unpack_poly(C_packed, n, 2)
     m_poly = unpack_poly(m_packed, n, 4)
     return C_poly, m_poly, n, n_a
+
+
+def _rnl_key_bits(n):
+    """Derived session-key width for an HKEX-RNL ring of dimension n (TODO #223).
+
+    Reconciliation extracts 2 bits from each of key_bits//2 coefficients, so a
+    ring of n coefficients can supply at most 2n key bits.  Since TODO #223 the
+    ring dimension (RNLN = 1024) and the key width (KEYBITS = 256) are separate:
+    a production ring is far larger than the key needs, so the key is capped at
+    KEYBITS.  Small demo/test rings (--bits 32/64) keep their historical
+    behaviour of deriving an n-bit key, which is what their wire format encodes.
+    """
+    return KEYBITS if n >= KEYBITS else n
 
 
 def _rnl_derive_C(m_poly, s_poly, n):
@@ -686,15 +699,18 @@ def _decode_session_key(path):
         key_int, nbits = ints
         return key_int, nbits
     elif label == _LABEL_RNL_RESP:
-        # K_B (already contributory-KDF-derived) is the first field
+        # K_B (already contributory-KDF-derived) is the first field.  ints[3] is
+        # the RING dimension, which since TODO #223 is no longer the key width —
+        # the ring is 1024 while the derived key stays 256 bits.  Returning it
+        # raw makes `enc` use a 1024-bit width against a SESSION KEY PEM's 256,
+        # breaking the cross-party round trip.
         K_int = ints[0]
-        n = ints[3]
-        return K_int, n
+        return K_int, _rnl_key_bits(ints[3])
     elif label == _LABEL_HYBRID_RESP:
-        # K (already combined) is the first field
+        # K (already combined) is the first field; ints[3] is the ring dimension,
+        # not the key width — see the RNL RESPONSE case above.
         K_int = ints[0]
-        n = ints[3]
-        return K_int, n
+        return K_int, _rnl_key_bits(ints[3])
     else:
         raise ValueError(f"Expected SESSION KEY or RNL RESPONSE PEM, got {label!r}")
 
@@ -732,7 +748,11 @@ def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, s
     m_A_packed, m_A_nb = pack_poly(m_A, 4)
     C_B_packed, C_B_nb = pack_poly(C_B, 2)
     rb = (r_qc + 7) // 8
-    data = (K1_int.to_bytes(n // 8, 'big')
+    # K1 is serialised at the KEY width, not the ring dimension.  Those were the
+    # same number until TODO #223 moved the ring to 1024 while the derived key
+    # stayed 256 bits; using n here writes 128 zero-padded bytes where C's
+    # combiner writes KEYBYTES (32), so the two sides derive different keys.
+    data = (K1_int.to_bytes(_rnl_key_bits(n) // 8, 'big')
             + K2_int.to_bytes(KEYBITS // 8, 'big')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
@@ -1205,7 +1225,10 @@ def cmd_genpkey(args):
         pem_out = _encode_classical_privkey(a.uint, C.uint, bits, algo)
 
     elif algo == 'hkex-rnl':
-        n       = bits
+        # Ring dimension is independent of the derived key width (TODO #223):
+        # the ring must be 1024 for 128-bit security, the session key stays
+        # KEYBITS.  --bits still overrides, for interop with older/other sizes.
+        n       = args.bits or RNLN
         m_base  = _rnl_m_poly(n)
         a_rand  = _rnl_rand_poly(n, RNLQ)
         m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)   # randomised m_blind
@@ -1415,13 +1438,13 @@ def cmd_kex(args):
             if not _rnl_validate_m_blind(m_A):
                 sys.exit("kex hkex-rnl: peer m_blind failed entropy check — possible substitution attack")
             C_B       = _rnl_derive_C(m_A, s_B, n)
-            K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
+            K_B, hint = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b       = os.urandom(32)
-            K_B_int   = _rnl_contributory_kdf(K_B.uint, n, n_a, n_b)
+            K_B_int   = _rnl_contributory_kdf(K_B.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
-                K_B_int = _hkex_rnl_sp800227_kdf(K_B_int, n, C_A, m_A, C_B, hint[:n // 2])
+                K_B_int = _hkex_rnl_sp800227_kdf(K_B_int, _rnl_key_bits(n), C_A, m_A, C_B, hint[:n // 2])
             else:
-                K_B_int = _apply_kdf(K_B_int, n)
+                K_B_int = _apply_kdf(K_B_int, _rnl_key_bits(n))
             _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n, n_b))
 
         elif their_label == _LABEL_RNL_RESP:
@@ -1433,14 +1456,14 @@ def cmd_kex(args):
             _, C_B, hint, n_resp, n_b = _decode_rnl_response(their_path)
             if n != n_resp:
                 sys.exit(f"Ring size mismatch: ours n={n}, response n={n_resp}")
-            K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint)
-            K_A_int = _rnl_contributory_kdf(K_A.uint, n, n_a, n_b)
+            K_A     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint)
+            K_A_int = _rnl_contributory_kdf(K_A.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
                 C_A     = _rnl_derive_C(m_A, s_A, n)
-                K_A_int = _hkex_rnl_sp800227_kdf(K_A_int, n, C_A, m_A, C_B, hint[:n // 2])
+                K_A_int = _hkex_rnl_sp800227_kdf(K_A_int, _rnl_key_bits(n), C_A, m_A, C_B, hint[:n // 2])
             else:
-                K_A_int = _apply_kdf(K_A_int, n)
-            _write_file(args.out, _encode_session_key(K_A_int, n))
+                K_A_int = _apply_kdf(K_A_int, _rnl_key_bits(n))
+            _write_file(args.out, _encode_session_key(K_A_int, _rnl_key_bits(n)))
 
         else:
             sys.exit(
@@ -1470,10 +1493,10 @@ def cmd_kex(args):
             h_pub, r_qc = _decode_kem_pubkey(args.their_kem)
 
             C_B         = _rnl_derive_C(m_A, s_B, n)
-            K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, n)
+            K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b         = os.urandom(32)
-            K1_int      = _rnl_contributory_kdf(K1.uint, n, n_a, n_b)
-            K1_int      = _apply_kdf(K1_int, n)
+            K1_int      = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
+            K1_int      = _apply_kdf(K1_int, _rnl_key_bits(n))
 
             syn, K2_int = qcmdpc_encap(h_pub)
 
@@ -1499,9 +1522,9 @@ def cmd_kex(args):
             h_pub  = _qcp_mul(h1, h0_inv, r_qc)
             C_A    = _rnl_derive_C(m_A, s_A, n)
 
-            K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, n, hint_used)
-            K1_int = _rnl_contributory_kdf(K1.uint, n, n_a, n_b)
-            K1_int = _apply_kdf(K1_int, n)
+            K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint_used)
+            K1_int = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
+            K1_int = _apply_kdf(K1_int, _rnl_key_bits(n))
 
             K2_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
             if K2_int is None:
@@ -1510,7 +1533,7 @@ def cmd_kex(args):
 
             K_int = _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B,
                                               hint_used, h_pub, syn, n, r_qc)
-            _write_file(args.out, _encode_session_key(K_int, n))
+            _write_file(args.out, _encode_session_key(K_int, _rnl_key_bits(n)))
 
         else:
             sys.exit(

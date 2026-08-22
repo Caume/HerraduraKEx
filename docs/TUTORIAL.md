@@ -2412,9 +2412,10 @@ models that exclude quantum adversaries.
   HFSCX-256 before using the value as a symmetric key. In the CLI, pass
   `--kdf hfscx-256` to `kex`; in library code call `hfscx_256` / `Hfscx256` /
   `hfscx_256` directly. Both parties must apply the same step.
-- **HKEX-RNL** rests on Ring-LWR hardness, which is conjectured quantum-hard — but
-  the deployed parameters do not reach that bar: ~32 classical / ~29 quantum
-  Core-SVP bits at n=256, and ~87/~79 at n=512 (TODO #216). Demo-only.
+- **HKEX-RNL** rests on Ring-LWR hardness, which is conjectured quantum-hard, at
+  ring dimension n=1024 since v2.7.19: ~206 classical / ~187 quantum Core-SVP bits.
+  Keys generated before v2.7.19 used n=256 and are worth only ~32/~29 — regenerate
+  them (`MIGRATING.md` §4).
   It has not been formally reduced from NIST-standardised parameters.
 - **HKEX-RNL unauthenticated hint:** The Peikert reconciliation hint vector
   (`m_blind`, 64 bytes at n=256) is transmitted from Bob to Alice unauthenticated.

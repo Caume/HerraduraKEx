@@ -36,8 +36,9 @@ exact choices list per subcommand.
 - HKEX-GF: classical DH over GF(2^n)*, generator g=3. pub = g^priv; shared = their_pub^priv.
 - HKEX-RNL: Ring-LWR key exchange. Two-round: responder (Bob) replies to
   initiator's (Alice's) public key first; Alice completes using Bob's response PEM.
-  DEMO-ONLY at the deployed parameters: ~32 classical / ~29 quantum Core-SVP bits at
-  n=256 and ~87/~79 at n=512 (TODO #216). Do not describe it as post-quantum-secure.
+  Ring dimension n=1024 since v2.7.19 (~206 classical / ~187 quantum Core-SVP bits).
+  Keys from before v2.7.19 used n=256 and are worth only ~32 bits — regenerate them.
+  The ring dimension is separate from the 256-bit derived session key.
 - HSKE / HSKE-NLA1 / HSKE-NLA2 / HSKE-duplex: symmetric encryption via
   FSCX_REVOLVE(plaintext, key, i) forward / FSCX_REVOLVE(ciphertext, key, r) inverse
   (r = n - i mod period); NL variants use NL-FSCX v1 (counter-mode keystream) or v2
