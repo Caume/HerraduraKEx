@@ -107,7 +107,7 @@
     PQC protocol variants (C3 hybrid assignment):
       HSKE-NL-A1  — counter-mode HSKE with NL-FSCX v1 keystream
       HSKE-NL-A2  — revolve-mode HSKE with NL-FSCX v2 (invertible)
-      HKEX-RNL    — Ring-LWR key exchange (quantum-resistant; replaces HKEX-GF)
+      HKEX-RNL    — Ring-LWR key exchange (DEMO-ONLY parameters, see SECURITY.md)
       HPKS-NL     — Schnorr with NL-FSCX v1 challenge (linear preimage hardened)
       HPKE-NL     — El Gamal with NL-FSCX v2 encryption/decryption
 
@@ -3964,7 +3964,7 @@ HSKE-NL-A2 (revolve-mode HSKE with NL-FSCX v2):
             in the multi-message sense without a nonce in P. Prefer HSKE-NL-A1
             when multiple messages may be encrypted under the same key.
 
-HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
+HKEX-RNL (Ring-LWR key exchange — DEMO-ONLY at the deployed parameters):
   Setup:    a_rand random; m_blind = m(x) + a_rand  [m(x)=1+x+x^{n-1}]
   Alice:    s_A small private; C_A = round_p(m_blind * s_A)
   Bob:      s_B small private; C_B = round_p(m_blind * s_B)
@@ -3975,6 +3975,11 @@ HKEX-RNL (Ring-LWR key exchange — quantum-resistant):
   Security: Reduces to Ring-LWR on R_q = Z_q[x]/(x^n+1); no known quantum
             polynomial-time attack.  a_rand blinding = standard Ring-LWR hardness.
   Parameters: n=256, q=65537, p=4096, pp=4, eta=1 (CBD(1) secret distribution).
+  CAUTION:  These parameters are DEMO-ONLY.  Ring-LWR is lattice-hard in structure,
+            but p=4096 puts the relative noise ~5x below ML-KEM-512's, leaving
+            ~32 classical / ~29 quantum Core-SVP bits at n=256 and ~87/~79 at
+            n=512.  See SECURITY.md, SecurityProofs-4.md 11.4.3, and
+            SecurityProofsCode/hkex_rnl_lattice_2026.py (TODO #216).
 
 HPKS-NL (Schnorr + NL-FSCX v1 challenge):
   Sign:    k random; R=g^k; e=nl_fscx_revolve_v1(R,P,I); s=(k-a*e) mod ord
@@ -4117,7 +4122,7 @@ def main():
     else:
         print("- decryption failed!")
 
-    print("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]")
+    print("\n--- HKEX-RNL [Ring-LWR key exchange — DEMO-ONLY parameters, see SECURITY.md]")
     print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537 — may be slow)")
     n_rnl    = KEYBITS
     m_base   = _rnl_m_poly(n_rnl)

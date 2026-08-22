@@ -16,8 +16,8 @@ any of these classifications.
 | **HPKS-NL / HPKE-NL** | Demo-only / pedagogical | NL-FSCX challenge/encryption layered on the same GF(2^n)* group, so the ~2^36.5 Pohlig–Hellman key recovery applies unchanged | SecurityProofs-4.md §11.7 |
 | **HSKE** (key-only) | Not suitable for production | The ciphertext alone leaks 126 of 256 linear functionals of the plaintext at the deployed i = n/4 — no known plaintext required; the n/2-bit post-quantum bound covers key search only | SecurityProofs-1.md §1.3.1 (Thm. 4.1), §4.2 W9 |
 | **HSKE** (known-plaintext) / **HSKE-NL-A1/A2** | Not suitable for production | A single known-plaintext pair recovers the keystream | SecurityProofs-4.md §11.7 |
-| **HKEX-RNL** (n=256) | Below target, use HKEX-RNL-128 | ~105 classical / ~100 quantum Core-SVP bits — below the 128-bit target | SecurityProofs-4.md §11.4.3, §11.7 |
-| **HKEX-RNL-128** (n=512) | Production-track (conjectured PQ-resistant) | ≥128-bit classical and quantum Core-SVP bits; cross-checked against ML-KEM-512 | SecurityProofs-4.md §11.4.3 |
+| **HKEX-RNL** (n=256) | Not suitable for production | ~32 classical / ~29 quantum Core-SVP bits, computed directly from the deployed parameters (primal uSVP binding at β=110). The rounding modulus p=4096 sets the relative noise at α≈1/(p·√12) ≈ 7·10⁻⁵ — about 5× quieter than ML-KEM-512 — which is what makes reconciliation reliable and the lattice easy. Supersedes the previously documented ~105/~100 | SecurityProofs-4.md §11.4.3, §11.7; `SecurityProofsCode/hkex_rnl_lattice_2026.py` |
+| **HKEX-RNL-128** (n=512) | Not suitable for production | ~87 classical / ~79 quantum Core-SVP bits — does not reach 128 either, so it is not a fix for the n=256 row. No (p, η) retune brings n=512 to target; the ring dimension has to move (n=768 clears it without an NTT, n=1024 clears it with one). Supersedes the previously documented ~220/~200, which was a linear extrapolation off the n=256 figure now corrected | SecurityProofs-4.md §11.4.3; TODO #223 |
 | **HPKS-Stern-F / HPKE-Stern-F** | Demo-only | ~30–40 bits at deployed N=256; 128-bit classical security needs N ≥ 17000; decapsulation at production parameters needs the QC-MDPC decoder from TODO #126 | SecurityProofs-4.md §11.7, SecurityProofs-5.md §11.8.5 |
 | **HPKE-Stern-KEM** | Demo-only | Measured DFR 0.264% = 2^-8.6 at the deployed toy parameters (r=523, d=15, t=18), where IND-CCA2 needs 2^-128; decapsulation signals failure explicitly with no Fujisaki–Okamoto transform and no implicit rejection, so the GJS reaction attack recovers the private key in ~10^6 chosen-ciphertext queries; keygen applies no weak-key screen (~1 key in 3400 has ~10x the average DFR). Do not reuse a keypair across decapsulations you do not control | SecurityProofs-5.md §11.8.7 |
 
@@ -26,7 +26,9 @@ inherits the KEM row's reaction-attack exposure on its KEM half: `kex --algo
 hybrid-rnl-stern` reports decapsulation failure with its own distinct message, which
 is the same oracle. The Ring-LWR half is unaffected, and an attacker who recovers the
 QC-MDPC private key still faces the HKEX-RNL contribution — but treat the hybrid's
-KEM half as demo-only for the same reasons.
+KEM half as demo-only for the same reasons.  Note also that the RNL contribution is
+worth ~32 Core-SVP bits, not the ~105 previously documented, so the hybrid's second
+half is a much weaker backstop than the earlier text implied.
 
 **Rule of thumb:** if a protocol's status above is anything other than "production-track,"
 treat it as a proof-of-concept for the underlying math, not a component to deploy where

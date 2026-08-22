@@ -63,6 +63,10 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  hkex_rnl_lattice_2026.py — HKEX-RNL/HKEX-RNL-128 Core-SVP re-estimated directly
+                             (primal/dual/hybrid), pinned to published Kyber and
+                             Saber figures; supersedes the cited ~105/~220 bit
+                             numbers with ~32/~87 (TODO #216)
   stern_f_multiround_fs.py — HPKS-Stern-F round count vs. multi-round
                              Fiat-Shamir forgery; challenge-expansion audit
                              (TODO #217)
@@ -75,7 +79,7 @@ SecurityProofs.md                                   — split index (redirects t
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (408 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (593 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (637 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.20: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)

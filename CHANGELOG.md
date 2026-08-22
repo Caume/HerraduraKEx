@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.17] - 2026-08-21
+
+### Security
+- **TODO #216: HKEX-RNL is far weaker than documented, at both parameter sizes.**
+  The ~105 classical / ~100 quantum Core-SVP bits recorded for HKEX-RNL (n=256) and
+  the ~220/~200 recorded for HKEX-RNL-128 (n=512) were never computed from the
+  deployed parameters — the first was cited from the literature against a different
+  parameter set, the second was a linear extrapolation off the first. Computing them
+  directly gives **~32 classical / ~29 quantum bits at n=256** and **~87/~79 at
+  n=512**. Primal uSVP binds in both cases (beta = 110 and 297); the dual attack is
+  more expensive only because one published ring element gives the attacker exactly n
+  equations, and the zero-forcing hybrid gains nothing against a CBD(1) secret. No
+  cost model closes the gap: even the most defender-generous gate-count model here
+  gives 49 and 103 bits.
+- **HKEX-RNL-128 is not a fix for HKEX-RNL.** n=512 was documented as the
+  production-track answer to n=256 being below target. It does not reach 128 bits
+  either, and no (p, eta) retune brings it there — the ring dimension has to move.
+  There is currently no HKEX-RNL parameter set that meets the 128-bit claim.
+- Root cause is parameter selection, not implementation. For rounding from q to p the
+  relative noise is `alpha = sigma/q ~= 1/(p*sqrt(12))`, in which q cancels: raising q
+  with p fixed adds no noise and only makes the lattice easier. The deployed p = 4096
+  puts alpha about 5x below ML-KEM-512's. The suite's own comment at `RNLQ` — that
+  q = 65537 "gives lower noise-to-margin ratio than q = 3329 (Kyber), ensuring
+  reliable single-block agreement" — is correct about correctness and is exactly the
+  problem for security; reconciliation reliability and lattice hardness are the same
+  knob turned in opposite directions.
+- `SECURITY.md`: HKEX-RNL (n=256) moves from "Below target, use HKEX-RNL-128" to
+  "Not suitable for production"; HKEX-RNL-128 (n=512) moves from "Production-track
+  (conjectured PQ-resistant)" to the same. The HYBRID-RNL-STERN note now records that
+  the Ring-LWR half is a ~32-bit backstop, not the ~105-bit one implied before.
+- `spec/herradura-protocol-spec.json`: `hkex-rnl` and `rnl-sigma` move from
+  `status: production` to `status: demo-only`, with security-bit figures attached.
+  ZKP-RNL is sound as a protocol, but at the deployed parameters the witness it
+  proves knowledge of is itself recoverable in ~2^32 work, so a successful proof does
+  not evidence possession.
+
+### Added
+- TODO #216: `SecurityProofsCode/hkex_rnl_lattice_2026.py` — primal uSVP, dual, and
+  zero-forcing hybrid estimates for the deployed Ring-LWR parameters, read from the
+  suite so they cannot drift. `lattice-estimator` needs SageMath, which is not
+  installable on the maintainer's host, so the estimates are implemented in-repo and
+  pinned first to six published Core-SVP figures — Kyber-512/768/1024 for the
+  primal/dual machinery and LightSaber/Saber/FireSaber for the LWR rounding-error
+  translation. All six reproduce to within 1.5 bits, and the script aborts if any
+  does not. Methodology reference: lattice-estimator commit 53da5982.
+- TODO #216: `SecurityProofs-4.md` §11.4.3 correction block, covering the two
+  superseded figures, why p rather than q sets the security level, the validation
+  chain, and the parameter sweep. §11.7's TODO #157 conclusion is annotated: its
+  reasoning about the hybrid family stands and is independently reconfirmed, but the
+  baseline it was stated against has changed.
+- TODO #223 (open): select the replacement ring dimension. n=1024 clears both targets
+  with margin and keeps the negacyclic NTT at 4x the key material; n=768 clears them
+  narrowly without an NTT; a Kyber-style module is the third option. Wire-format
+  breaking, so it needs a `MIGRATING.md` entry.
+- TODO #222 (open): decide whether the 128-bit Fiat-Shamir round count should stay at
+  219 or move to 220. TODO #217 confirmed 219 is the correct parallel-repetition
+  figure but left a 0.107-bit margin, smaller than that analysis's own 0.44-bit
+  experimental resolution floor.
+
 ## [2.7.16] - 2026-08-21
 
 ### Added

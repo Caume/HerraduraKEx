@@ -11128,3 +11128,26 @@ construction is the open question this surfaces rather than settles; and the
 exact-WHT replacement for the Walsh sub-item.
 
 Status: **DONE v2.7.16** — exact xdp+ model and SMT trail bounds delivered; v2 shown differentially weaker than v1 and width-insensitive, deployed rotation confirmed optimal for v1 and inert for v2; key-averaging gap identified as the limiting assumption. No code change.
+
+### #216: Re-estimate HKEX-RNL against the 2026 lattice-attack landscape
+
+`SECURITY.md` puts HKEX-RNL (n=256) at ~105 classical / ~100 quantum
+Core-SVP bits and promotes HKEX-RNL-128 (n=512) as production-track. Those
+numbers predate the current round of dual- and hybrid-attack improvements
+(e.g. enhanced hybrid decoding against Module/Ring-LWE, eprint 2026/366,
+reporting up to ~13 bits over previously-best attacks on ring parameter
+sets), and Core-SVP is a deliberately crude lower bound.
+
+- Re-run the deployed parameters (n=256 and n=512, q=65537, p=4096, pp=4,
+  CBD η=1) through the current `lattice-estimator` across primal, dual, and
+  hybrid families, recording estimator commit and cost model rather than a
+  bare bit count.
+- Check the LWR-specific translation explicitly: rounding noise from
+  q=65537 → p=4096 is deterministic, and η=1 is a very narrow secret, both
+  of which have historically been where sparse/small-secret hybrid attacks
+  bite hardest.
+- Report whether n=512 still clears 128 bits under the current models. If
+  it does not, propose the parameter move (n, q, p, or η) in a follow-up —
+  ring parameters are adjustable without touching FSCX.
+
+Status: **DONE v2.7.17** — computed directly instead of cited: HKEX-RNL n=256 is ~32 classical / ~29 quantum Core-SVP bits (not ~105/~100) and HKEX-RNL-128 n=512 is ~87/~79 (not ~220/~200), so n=512 does NOT clear 128 bits; parameter move split out as #223.
