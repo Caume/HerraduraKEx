@@ -79,16 +79,24 @@ The sweep in `SecurityProofsCode/hkex_rnl_lattice_2026.py` §7 rules out retunin
 no (p, η) combination brings n=512 to 128 quantum bits. Ring dimension is the only
 lever that closes the gap.
 
-- Decide between the two candidates. `n=1024, p=4096` clears both targets with
-  margin (~206 classical / ~187 quantum) and stays a power of two, so
-  `_rnl_poly_mul` keeps its Cooley-Tukey NTT path; cost is 4x the key material.
-  `n=768, p=4096` clears both more narrowly (~145/~131) at 1.5x the key material,
-  but 768 is not a power of two and x^n+1 has no negacyclic NTT there — Kyber
-  solves exactly this with a module (k rings at n=256) rather than one large ring,
-  which is a third option and the largest change of the three.
-- Whatever is chosen, re-run `hkex_rnl_failure_rate.py`: p and reconciliation
-  reliability are the same knob, and the failure rate at the new (n, p, pp) has to
-  be re-measured, not extrapolated.
+**Parameters decided (v2.7.18, `SecurityProofsCode/rnl_parameter_selection.py`):**
+adopt `n=1024, q=65537, p=4096, eta=1, pp=4` — move n only, leave the rest alone.
+~206 classical / ~187 quantum Core-SVP bits; 0 failures in 6000 trials; 1536-byte
+public keys (4x); ~5x handshake cost in the Python reference.
+
+- **n=768 is REJECTED as unsound**, not merely NTT-less as this item first claimed.
+  x^768+1 = (x^256+1)(x^512-x^256+1) factors over the integers, so the ring
+  CRT-splits and a secret projects to `s_i - s_{i+256} + s_{i+512}` — still short.
+  The attacker drops to dimension 256 for ~39 classical / ~36 quantum bits, barely
+  above the n=256 set it was meant to replace. x^1024+1 is the 2048th cyclotomic,
+  irreducible over Q, so no integral projection exists there.
+- **p stays at 4096.** Lowering it buys security but costs DFR: at n=1024, p=1024
+  gives 4 failures in 6000 trials (~1 handshake in 1500). Once n=1024 puts security
+  at 187 quantum bits, security is not the binding constraint and the remaining
+  freedom belongs to correctness margin. p=2048 is also clean but halves the gap
+  headroom for bits nobody needs.
+- The Kyber-style module (k rings at n=256) remains sound and is deferred: it is a
+  larger change than n=1024 for no gain.
 - Port across C/Go/Python/Java and the assembly/Arduino targets as their widths
   allow, and re-run `hkex_rnl_lattice_2026.py` against the new deployed values —
   it reads its parameters from the suite, so it will follow automatically.

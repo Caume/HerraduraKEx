@@ -2,6 +2,54 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.18] - 2026-08-22
+
+### Security
+- **TODO #223: n=768 is unsound and must not be used.** TODO #216's follow-up item
+  offered n=768 as the cheap replacement for HKEX-RNL's broken parameters, clearing
+  both targets at ~145 classical / ~131 quantum bits with the loss of the negacyclic
+  NTT as its only drawback. That is wrong. With 768 = 3*256 and y = x^256,
+  `x^768+1 = (y+1)(y^2-y+1) = (x^256+1)(x^512-x^256+1)` factors **over the integers**,
+  not merely mod q, so the ring CRT-splits. Reduction mod x^256+1 sends a secret
+  coefficient to `s_i - s_{i+256} + s_{i+512}` — a sum of three, so a short vector
+  stays short — and the rounding error scales identically, leaving the noise ratio
+  unchanged while the dimension drops. Projecting into the x^256+1 component gives
+  **~39 classical / ~36 quantum bits**, barely above the n=256 set n=768 was proposed
+  to replace. This is why Kyber uses a module of k rings at n=256 rather than one
+  ring at 768. x^1024+1 is the 2048th cyclotomic, irreducible over Q, so no integral
+  projection exists and the argument does not touch it.
+
+### Changed
+- **TODO #223: replacement parameters decided — `n=1024, q=65537, p=4096, eta=1,
+  pp=4`.** Move n only; leave every other parameter alone. ~206 classical / ~187
+  quantum Core-SVP bits, 0 failures in 6000 trials, 1536-byte public keys (4x the
+  current 384), ~5x handshake cost in the Python reference.
+- **p stays at 4096, against the first pass's recommendation.** Lowering p raises
+  security and shrinks keys, which initially looked free at 0 failures in 250 trials.
+  It is not: at n=1024, p=1024 gives 4 failures in 6000 trials, a DFR of ~6.7e-4 or
+  about one handshake in 1500. Once n=1024 puts security at 187 quantum bits,
+  security stops being the binding constraint and the remaining freedom belongs to
+  correctness margin. p=2048 is also clean at 6000 trials but halves the
+  per-coefficient gap headroom for bits nobody needs. Holding p also keeps the wire
+  format the same shape — 12 bits per coefficient, only the element count changes.
+- `SecurityProofs-4.md` §11.4.3: the "what reaches 128 bits" paragraph is corrected;
+  its n=768 recommendation is replaced by the rejection above, and a new paragraph
+  records the DFR measurements behind holding p.
+
+### Added
+- TODO #223: `SecurityProofsCode/rnl_parameter_selection.py` — the security frontier
+  over (n, p, eta); the n=768 CRT split, verified by exact expansion over Z and
+  costed on both components; the measured DFR floor and per-coefficient gap headroom
+  against the deployed `_rnl_keygen`/`_rnl_agree`; public-key size and handshake
+  timing per candidate; and the recommendation with a per-file port scope.
+
+### Note
+- TODO #223 remains **OPEN**. This release settles which parameters to adopt and why;
+  the port across C/Go/Python/Java, the codec, `KAT/`, and the `MIGRATING.md` entry
+  for the wire-format break are still to come. The assembly and Arduino targets run
+  RNL_N=32 today and cannot hold n=1024 in AVR SRAM; they will stay at 32 and be
+  labelled demo-only rather than ported.
+
 ## [2.7.17] - 2026-08-21
 
 ### Security
