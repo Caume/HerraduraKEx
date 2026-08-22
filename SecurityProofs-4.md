@@ -363,12 +363,18 @@ being the only standardisation-track LWR scheme and so the only published check 
 that step).  All six reproduce to within $1.5$ bits.  §3 of the script aborts the
 run if any of them does not.
 
-**What reaches 128 bits.** Ring dimension dominates; halving $p$ is worth roughly
-$10$ bits and raising $\eta$ a few more, so neither closes a 96-bit gap.  No
-$(p, \eta)$ combination brings $n=512$ to 128 quantum bits — HKEX-RNL-128 cannot be
-rescued by retuning.  The replacement is $n=1024$ at the deployed $p$, which clears
-both targets with margin (206 classical / 187 quantum) and keeps the negacyclic NTT,
-at $4\times$ the key material.
+**What reaches 128 bits — adopted in v2.7.19.** Ring dimension dominates; halving $p$
+is worth roughly $10$ bits and raising $\eta$ a few more, so neither closes a 96-bit
+gap.  No $(p, \eta)$ combination brings $n=512$ to 128 quantum bits — HKEX-RNL-128
+cannot be rescued by retuning.  **The deployed parameters are now**
+
+$$n = 1024, \quad q = 65537, \quad p = 4096, \quad \eta = 1, \quad pp = 4$$
+
+clearing both targets with margin (206 classical / 187 quantum), keeping the negacyclic
+NTT, at $4\times$ the key material and roughly $5\times$ the handshake cost.  The ring
+dimension and the derived session-key width are now separate quantities: the key stays
+at 256 bits regardless of $n$.  The move is wire-format breaking and keys predating it
+must be regenerated — see `MIGRATING.md` §4 and TODO #223.
 
 **Correction — $n=768$ is unsound, not merely NTT-less (TODO #223, v2.7.18).** An
 earlier revision of this paragraph offered $n=768$ as a cheaper option clearing both

@@ -53,22 +53,27 @@ print("✓ decryption correct" if plaintext == recovered else "✗ decryption fa
 
 
 # ── HKEX-RNL: Ring-LWR key exchange (PQC-hardened) ───────────────────────────
-print(f"\n=== HKEX-RNL (Ring-LWR, n={n}, q={h.RNLQ}) ===")
+# The RNL ring dimension is h.RNLN (1024), NOT the 256-bit key width used above:
+# n=256 is worth only ~32 Core-SVP bits (TODO #216/#223).  The derived key is
+# still 256 bits — the ring is larger than the key it produces.
+rnl_n = h.RNLN
+key_n = h.KEYBITS
+print(f"\n=== HKEX-RNL (Ring-LWR, ring n={rnl_n}, key {key_n} bits, q={h.RNLQ}) ===")
 
-m_base  = h._rnl_m_poly(n)
-a_rand  = h._rnl_rand_poly(n, h.RNLQ)
+m_base  = h._rnl_m_poly(rnl_n)
+a_rand  = h._rnl_rand_poly(rnl_n, h.RNLQ)
 m_blind = h._rnl_poly_add(m_base, a_rand, h.RNLQ)
 
 # Use the public aliases added in v1.7.4
-sA, CA = h.hkex_rnl_keygen(m_blind, n, h.RNLQ, h.RNLP, h.RNLB)
-sB, CB = h.hkex_rnl_keygen(m_blind, n, h.RNLQ, h.RNLP, h.RNLB)
+sA, CA = h.hkex_rnl_keygen(m_blind, rnl_n, h.RNLQ, h.RNLP, h.RNLB)
+sB, CB = h.hkex_rnl_keygen(m_blind, rnl_n, h.RNLQ, h.RNLP, h.RNLB)
 
-kA, hint_A = h.hkex_rnl_agree(sA, CB, h.RNLQ, h.RNLP, h.RNLPP, n, n)
-kB         = h.hkex_rnl_agree(sB, CA, h.RNLQ, h.RNLP, h.RNLPP, n, n, hint=hint_A)
+kA, hint_A = h.hkex_rnl_agree(sA, CB, h.RNLQ, h.RNLP, h.RNLPP, rnl_n, key_n)
+kB         = h.hkex_rnl_agree(sB, CA, h.RNLQ, h.RNLP, h.RNLPP, rnl_n, key_n, hint=hint_A)
 
-# KDF: seed = ROL(K, n/8); sk = NL-FSCX-v1(seed, K, n/4)
-skA = h.nl_fscx_revolve_v1(kA.rotated(n // 8), kA, n // 4)
-skB = h.nl_fscx_revolve_v1(kB.rotated(n // 8), kB, n // 4)
+# KDF: seed = ROL(K, n/8); sk = NL-FSCX-v1(seed, K, n/4)  — on the KEY width
+skA = h.nl_fscx_revolve_v1(kA.rotated(key_n // 8), kA, key_n // 4)
+skB = h.nl_fscx_revolve_v1(kB.rotated(key_n // 8), kB, key_n // 4)
 
 print(f"sk (Alice): {skA.hex}")
 print(f"sk (Bob)  : {skB.hex}")

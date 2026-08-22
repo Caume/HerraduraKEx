@@ -139,20 +139,21 @@ SECURITY = {
                        notes="NL-FSCX-hardened classical El Gamal variant; NOT quantum-resistant; PQC claim "
                              "deprecated, no lattice-based replacement planned.",
                        source=["TODO.md #5 (2901)", "TODO.md (351)"]),
-    "hkex-rnl":  dict(status="demo-only", quantum_resistant="conjectured",
-                       classical_security_bits="~32 Core-SVP at deployed n=256/p=4096 (~29 quantum); "
-                                                 "n=512 reaches only ~87/~79 — neither set is production-track",
-                       notes="Ring-LWR key exchange; lattice-hard in structure, but the deployed rounding "
-                             "modulus p=4096 makes the relative noise ~5x quieter than ML-KEM-512, putting "
-                             "both the n=256 and n=512 parameter sets far below the 128-bit target. "
-                             "Parameter move tracked as TODO #223.",
-                       source=["SECURITY.md", "SecurityProofs-4.md 11.4.3", "TODO #216"]),
-    "rnl-sigma": dict(status="demo-only", quantum_resistant="conjectured",
-                       notes="Sigma-protocol proof of knowledge of an HKEX-RNL private key. Sound as a "
-                             "protocol, but at the deployed HKEX-RNL parameters the witness it proves "
-                             "knowledge of is itself recoverable in ~2^32 work (TODO #216), so a "
-                             "successful proof does not evidence possession. Inherits whatever parameter "
-                             "move TODO #223 selects.",
+    "hkex-rnl":  dict(status="production", quantum_resistant="conjectured",
+                       classical_security_bits="~206 Core-SVP at n=1024/p=4096 (~187 quantum); "
+                                                 "the pre-v2.7.19 n=256 ring was worth only ~32/~29",
+                       notes="Ring-LWR key exchange at ring dimension 1024 (TODO #223). Keys generated "
+                             "before v2.7.19 used n=256 and are insecure — regenerate them, see "
+                             "MIGRATING.md section 4. The ring dimension is separate from the derived "
+                             "session key width, which stays 256 bits. Protocol caveats unrelated to the "
+                             "parameters still apply: the reconciliation hint is unauthenticated, and "
+                             "m_blind's uniformity rests on the initiator's RNG (TODO #89).",
+                       source=["SECURITY.md", "SecurityProofs-4.md 11.4.3", "TODO #216", "TODO #223"]),
+    "rnl-sigma": dict(status="production", quantum_resistant="conjectured",
+                       notes="Sigma-protocol proof of knowledge of an HKEX-RNL private key. At the "
+                             "pre-v2.7.19 n=256 ring the witness was recoverable in ~2^32 work, so a "
+                             "proof evidenced nothing; TODO #223 moved the ring to 1024 and restored "
+                             "that property. Proofs about pre-v2.7.19 keys remain meaningless.",
                        source=["CLAUDE.md", "SecurityProofs-7.md"]),
     "hpks-stern": dict(status="demo-only", quantum_resistant="conjectured",
                         classical_security_bits="~56-60 at shipped SDF_ROUNDS=32 (production requires "

@@ -136,6 +136,17 @@ public final class HerraduraCli {
     // PEM label <-> algo mapping (classical quartet only)
     // -----------------------------------------------------------------
 
+    /**
+     * Derived session-key width for an HKEX-RNL ring of dimension n (TODO #223).
+     * Reconciliation takes 2 bits from each of keyBits/2 coefficients, so a ring
+     * of n coefficients supplies at most 2n key bits.  Since TODO #223 the ring
+     * dimension (RNLN = 1024) and the key width (256) are separate; small demo
+     * rings keep their historical n-bit key.
+     */
+    private static int rnlKeyBits(int n) {
+        return n >= 256 ? 256 : n;
+    }
+
     private static String privLabel(String algo) {
         switch (algo) {
             case "hkex-gf":  return Codec.PEM_HKEX_GF_PRIV;
@@ -226,7 +237,8 @@ public final class HerraduraCli {
         }
 
         if (algo.equals("hkex-rnl")) {
-            int n = Herradura.N;
+            // Ring dimension is independent of the derived key width (TODO #223).
+            int n = HerraduraNl.RNLN;
             int[] mBase = HerraduraNl.rnlMPoly(n);
             int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, RNG);
             int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
@@ -437,10 +449,11 @@ public final class HerraduraCli {
             }
             int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
             HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
-                our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, our.n, our.n);
+                our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
+                our.n, rnlKeyBits(our.n));
             byte[] nB = new byte[32];
             RNG.nextBytes(nB);
-            BigInteger kB = HerraduraNl.rnlContributoryKdf(agree.key, our.n, their.nA, nB);
+            BigInteger kB = HerraduraNl.rnlContributoryKdf(agree.key, rnlKeyBits(our.n), their.nA, nB);
             writeString(out, Codec.encodeRnlResponse(kB, cB, agree.hint, our.n, nB));
         } else if (theirBlock.label.equals(Codec.PEM_RNL_RESPONSE)) {
             // ── STEP 2: Alice completes the handshake ────────────────────
@@ -449,9 +462,10 @@ public final class HerraduraCli {
                 throw new CliError("kex hkex-rnl: ring size mismatch (ours=" + our.n + ", response=" + resp.n + ")");
             }
             BigInteger kA = HerraduraNl.rnlAgree(
-                our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, our.n, our.n, resp.hint);
-            BigInteger kAInt = HerraduraNl.rnlContributoryKdf(kA, our.n, our.nA, resp.nB);
-            writeString(out, Codec.encodeSessionKey(kAInt, our.n));
+                our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
+                our.n, rnlKeyBits(our.n), resp.hint);
+            BigInteger kAInt = HerraduraNl.rnlContributoryKdf(kA, rnlKeyBits(our.n), our.nA, resp.nB);
+            writeString(out, Codec.encodeSessionKey(kAInt, rnlKeyBits(our.n)));
         } else {
             throw new CliError("kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM, got "
                 + theirBlock.label);

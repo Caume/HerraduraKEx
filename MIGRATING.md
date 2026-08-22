@@ -21,6 +21,7 @@ below for whichever of these three breaks falls between your current version and
 | [HKEX → HKEX-GF; HPKS/HPKE → Schnorr/El Gamal](#1-hkex--hkex-gf-hpkshpke--schnorrel-gamal-v140) | v1.4.0 | Library API only (predates the CLI/PEM format) | None — no PEM artifacts from this era exist |
 | [HFSCX-256 → HFSCX-256-DM](#2-hfscx-256--hfscx-256-dm-v190) | v1.9.0 | Hash digests, pre-hashed signatures, AEAD tags | Regenerate on v1.9.0+ |
 | [Stern parity-matrix (H) finalization](#3-stern-parity-matrix-h-finalization-v1935) | v1.9.35 | HPKS-Stern-F keys/signatures, HPKE-Stern-F ciphertexts | Regenerate on v1.9.35+ |
+| [HKEX-RNL ring dimension 256 → 1024](#4-hkex-rnl-ring-dimension-256--1024-v2719) | v2.7.19 | HKEX-RNL private/public keys, kex responses, ZKP-RNL proofs | Regenerate on v2.7.19+ — the old keys are not just incompatible, they are insecure |
 
 ---
 
@@ -111,3 +112,62 @@ entry as the three breaks above were.
 
 If you're upgrading from before v1.9.35, read all three sections above in order, since
 your artifacts may be affected by more than one of them.
+
+---
+
+## 4. HKEX-RNL ring dimension 256 → 1024 (v2.7.19)
+
+**What changed:** The HKEX-RNL ring dimension moved from `n = 256` to `n = 1024`.
+`q = 65537`, `p = 4096`, `eta = 1`, and `pp = 4` are all unchanged.
+
+**Why:** TODO #216 computed the deployed parameters directly instead of citing them and
+found HKEX-RNL was worth about **32 classical / 29 quantum Core-SVP bits**, not the
+~105/~100 previously documented — and that HKEX-RNL-128 at `n = 512`, which the docs
+promoted as the production-track answer, reached only ~87/~79. Neither met the 128-bit
+claim. TODO #223 selected `n = 1024`, which reaches ~206 classical / ~187 quantum.
+
+`n = 768` was considered and **rejected as unsound**: `x^768 + 1` factors over the
+integers as `(x^256 + 1)(x^512 - x^256 + 1)`, so the ring CRT-splits and a short secret
+stays short under projection into the 256-dimensional component — worth only ~39/~36
+bits. `x^1024 + 1` is the 2048th cyclotomic polynomial, irreducible over Q, so no such
+projection exists.
+
+**What's incompatible:**
+
+- `HERRADURA HKEX-RNL PRIVATE KEY` and `HERRADURA HKEX-RNL PUBLIC KEY` PEM files —
+  the ring elements are four times as long, and the encoded `n` field changes.
+- `HERRADURA HKEX-RNL RESPONSE` PEM files — both the public element and the
+  reconciliation hint grow with `n`.
+- ZKP-RNL (`rnl-sigma`) proofs, which are statements about an HKEX-RNL key.
+- `hybrid-rnl-stern` key exchange, whose Ring-LWR half is HKEX-RNL.
+
+A new build rejects an old key with a ring-size mismatch rather than misinterpreting it,
+because `n` is carried explicitly in every RNL PEM.
+
+**Action required:** regenerate HKEX-RNL keypairs on v2.7.19 or later:
+
+```
+herradura genpkey --algo hkex-rnl --out alice.pem
+herradura pkey --in alice.pem --pubout --out alice_pub.pem
+```
+
+Unlike the earlier breaks in this document, this one is not merely a format change.
+Keys generated before v2.7.19 are at ~32-bit security and any HKEX-RNL session
+established with them should be treated as compromised, not merely stale. There is no
+migration path that preserves an old key, and there should not be one.
+
+**Costs of the move:** public keys grow from 384 to 1536 bytes, and a handshake costs
+roughly 5x what it did (the NTT is O(n log n), so 4x the dimension is about 5x the
+work). The derived session key is unchanged at 256 bits — the ring dimension and the key
+width are now separate quantities, where before they were the same number.
+
+**Small rings still work.** `--bits N` still overrides the ring dimension for interop
+and testing, and rings below 256 keep deriving an N-bit key as they always did. They
+were never at 128-bit security and still are not; `--bits` is not a supported way to
+opt out of this migration.
+
+**Not affected:** HCRED keeps its own ring at `n = 256`. It shares HKEX-RNL's ring
+arithmetic but its remaining parameters are tuned for that dimension, and its security is
+tracked separately; its PEM files are unchanged. The assembly, NASM, and Arduino targets
+run `RNL_N = 32` and are unchanged — they were demo-only before this migration and remain
+so.

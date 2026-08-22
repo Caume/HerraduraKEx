@@ -912,7 +912,16 @@ func DrbgFromState(state []byte, blocks uint64) *HDrbg {
 
 // RNL protocol parameters (see SecurityProofs-4.md §11.4).
 const (
+	// RnlN is the ring dimension for HKEX-RNL (TODO #223).  Deliberately NOT tied
+	// to the key width: the ring must be 1024 to reach 128-bit security, while the
+	// derived session key stays 256 bits.  n=256 gives only ~32 Core-SVP bits and
+	// n=512 only ~87 (TODO #216); n=768 is unsound because x^768+1 factors over Z,
+	// so the ring CRT-splits and the instance projects down to ~39 bits.
+	RnlN   = 1024
 	RnlQ   = 65537 // Fermat prime (2^16+1)
+	// RnlP is held at 4096 deliberately: lowering it buys security bits but costs
+	// decoding failures (p=1024 measures ~1 handshake in 1500), and at n=1024
+	// security is no longer the binding constraint.
 	RnlP   = 4096  // public-key rounding modulus
 	RnlPP  = 4     // reconciliation modulus (2 bits per coefficient)
 	RnlEta = 1     // CBD eta: secret coefficients in {-1,0,1}

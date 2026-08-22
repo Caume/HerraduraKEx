@@ -31,7 +31,7 @@
       HPKE         — El Gamal + FscxRevolve [classical, not PQC]
       HSKE-NL-A1   — counter-mode HSKE with NL-FSCX v1 keystream [PQC-hardened]
       HSKE-NL-A2   — revolve-mode HSKE with NL-FSCX v2 [PQC-hardened]
-      HKEX-RNL     — Ring-LWR key exchange [DEMO-ONLY parameters, see SECURITY.md]
+      HKEX-RNL     — Ring-LWR key exchange [conjectured quantum-resistant, n=1024]
       HPKS-NL      — Schnorr with NL-FSCX v1 challenge [NL-hardened]
       HPKE-NL      — El Gamal with NL-FSCX v2 [NL-hardened]
       HPKS-Stern-F — Stern ZKP signature [code-based PQC]
@@ -165,7 +165,7 @@ func main() {
 		fmt.Println("- decryption failed!")
 	}
 
-	fmt.Printf("\n--- HKEX-RNL [Ring-LWR key exchange — DEMO-ONLY parameters, see SECURITY.md]\n")
+	fmt.Printf("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]\n")
 	fmt.Printf("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=%d, q=%d)\n", n, RnlQ)
 	nRnl   := n
 	mBase  := RnlMPoly(nRnl)

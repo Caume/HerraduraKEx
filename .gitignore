@@ -14,6 +14,10 @@ __pycache__/
 CryptosuiteTests/Herradura_tests_c
 CryptosuiteTests/Herradura_tests_go
 
+# build_asm_i386.sh — NASM i386 binaries, not tracked (the _arm ones are)
+/Herradura cryptographic suite_i386
+CryptosuiteTests/Herradura_tests_i386
+
 # build_c_sanitize.sh (TODO #188) — ASan+UBSan build artifacts, not tracked
 /Herradura cryptographic suite_asan
 CryptosuiteTests/Herradura_tests_asan

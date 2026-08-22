@@ -474,6 +474,30 @@ func padLeftN(src []byte, n int) []byte {
 // rnlContributoryKDF derives the final HKEX-RNL session key.
 // Returns HFSCX-256(kRaw || nA || nB); nA and nB must each be 32 bytes.
 // Pass make([]byte, 32) for zero nonces when interoperating with old peers.
+// isSet reports whether the named flag was explicitly given on the command line
+// (flag.FlagSet.Visit walks only the flags that were actually set).
+func isSet(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+// rnlKeyBits returns the derived session-key width for an HKEX-RNL ring of
+// dimension n (TODO #223).  Reconciliation extracts 2 bits from each of
+// keyBits/2 coefficients, so a ring of n coefficients supplies at most 2n key
+// bits.  Since TODO #223 the ring dimension (RnlN = 1024) and the key width
+// (256) are separate; small demo/test rings keep their historical n-bit key.
+func rnlKeyBits(n int) int {
+	if n >= 256 {
+		return 256
+	}
+	return n
+}
+
 func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
 	raw := kRaw.Bytes()
 	// Left-pad raw to n/8 bytes
@@ -845,6 +869,11 @@ func cmdGenpkey(args []string) {
 		pem, err = encodeClassicalPriv(&a.Val, C, n, *algo)
 
 	case *algo == "hkex-rnl":
+		// Ring dimension is independent of the key width (TODO #223); --bits
+		// still overrides, for interop with older/other sizes.
+		if !isSet(fs, "bits") {
+			n = RnlN
+		}
 		mBase  := RnlMPoly(n)
 		aRand  := RnlRandPoly(n, RnlQ)
 		mBlind := RnlPolyAdd(mBase, aRand, RnlQ)
@@ -1254,14 +1283,14 @@ func cmdKex(args []string) {
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
 			// Compute K_B and reconciliation hint
-			K_B_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+			K_B_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 
 			// Bob's contributory nonce n_B
 			n_B := NewRandBitArray(256).Bytes()
 
 			// Contributory KDF: final_key = HFSCX-256(K_B_raw || n_A || n_B)
-			K_B := rnlContributoryKDF(K_B_raw, n, n_A, n_B)
-			K_B = applyKDF(K_B, n)
+			K_B := rnlContributoryKDF(K_B_raw, rnlKeyBits(n), n_A, n_B)
+			K_B = applyKDF(K_B, rnlKeyBits(n))
 
 			pem, err := encodeRNLResponse(K_B, C_B, hint, n, n_B)
 			if err != nil {
@@ -1310,12 +1339,12 @@ func cmdKex(args []string) {
 				hintBuf[i], hintBuf[j] = hintBuf[j], hintBuf[i]
 			}
 
-			K_A_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintBuf)
+			K_A_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintBuf)
 
 			// Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B)
-			K_A := rnlContributoryKDF(K_A_raw, n, n_A, n_B)
-			K_A = applyKDF(K_A, n)
-			pem, err := encodeSessionKey(K_A, n)
+			K_A := rnlContributoryKDF(K_A_raw, rnlKeyBits(n), n_A, n_B)
+			K_A = applyKDF(K_A, rnlKeyBits(n))
+			pem, err := encodeSessionKey(K_A, rnlKeyBits(n))
 			if err != nil {
 				die("kex", err)
 			}
@@ -1376,10 +1405,10 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_B, RnlQ, n)
 			C_B := RnlRound(ms, RnlQ, RnlP)
 
-			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, n, nil)
+			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 			n_B := NewRandBitArray(256).Bytes()
-			K1_ba := rnlContributoryKDF(K1_raw, n, n_A, n_B)
-			K1_ba = applyKDF(K1_ba, n)
+			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
+			K1_ba = applyKDF(K1_ba, rnlKeyBits(n))
 
 			syn, K2 := QcMdpcEncap(hPub, nil)
 
@@ -1436,9 +1465,9 @@ func cmdKex(args []string) {
 			ms  := RnlPolyMul(m_A, s_A, RnlQ, n)
 			C_A := RnlRound(ms, RnlQ, RnlP)
 
-			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, n, hintPacked)
-			K1_ba := rnlContributoryKDF(K1_raw, n, n_A, n_B)
-			K1_ba = applyKDF(K1_ba, n)
+			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintPacked)
+			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
+			K1_ba = applyKDF(K1_ba, rnlKeyBits(n))
 
 			K2, ok := QcMdpcDecapBgf(syn, sup0, sup1)
 			if !ok {
@@ -1449,7 +1478,7 @@ func cmdKex(args []string) {
 			hintUsed := rnlHintToBytes(hintPacked, n)
 			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
 
-			pem, err := encodeSessionKey(NewBitArray(256, K), n)
+			pem, err := encodeSessionKey(NewBitArray(256, K), rnlKeyBits(n))
 			if err != nil {
 				die("kex", err)
 			}

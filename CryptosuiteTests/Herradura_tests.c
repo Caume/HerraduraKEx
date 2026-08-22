@@ -5026,9 +5026,12 @@ int main(int argc, char *argv[])
             SternSig cred_sig;
             int pok, pok2;
 
-            rnl_m_poly(m_base);
-            rnl_rand_poly(a_rand, urnd_fp);
-            rnl_poly_add(m_b, m_base, a_rand);
+            /* HCRED's ring stays at HCRED_N (256) while HKEX-RNL's moved to
+               RNL_N (1024) in TODO #223, so build m(x) at HCRED's dimension —
+               rnl_m_poly() would emit 1 + x + x^(RNL_N-1). */
+            rnl_m_poly_n(m_base, HCRED_N);
+            rnl_rand_poly_n(a_rand, HCRED_N);
+            rnl_poly_add_n(m_b, m_base, a_rand, HCRED_N);
             ba_rand(&seed_H, urnd_fp);
 
             hcred_user_keygen(s, c_poly, &e_ba, m_b, urnd_fp);

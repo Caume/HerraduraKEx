@@ -37,6 +37,10 @@
 #define RNL_KDF_DC 0x6A09E667UL
 
 /* HKEX-RNL parameters (N=32 matches KEYBITS=32) */
+/* RNL_N stays 32 on AVR: DEMO ONLY.  The C/Go/Python/Java builds moved to
+   RNL_N = 1024 in TODO #223 because n = 256 is worth only ~32 Core-SVP bits, but a
+   1024-coefficient int32 ring is 4 KB per polynomial and will not fit AVR SRAM.
+   32 is far below any security claim; keys are not interoperable with those targets. */
 #define RNL_N   32
 #define RNL_Q   65537L
 #define RNL_P   4096L
