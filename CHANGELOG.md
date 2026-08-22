@@ -2,6 +2,57 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.20] - 2026-08-22
+
+### Changed
+- **TODO #222: HPKS-Stern-F keeps r = 219; the case for 220 does not survive a
+  longer measurement.** TODO #217 confirmed 219 = ceil(128 / log2(3/2)) but left a
+  gap it could not close: (3/2)^219 gives 128.107 bits, a margin of 0.107, while
+  that analysis could only resolve biases above 0.4418 bits. TODO #222 was framed
+  as a choice between moving to 220 or documenting the margin as an accepted
+  assumption. Both take the 0.44-bit floor as given, and it is not a given — it is
+  a sample-size limit. The bound scales as `sum_d <= sqrt(rounds * excess /
+  (4.5 * n))`, so it falls as 1/sqrt(seeds), and TODO #217 ran 48,000.
+- Rerunning the identical statistic at **3,000,000 seeds** (657 million challenge
+  samples) drops the resolution floor to **0.0588 bits** — comfortably under the
+  0.107-bit margin — and finds no bias: six replications scatter around zero
+  (mean z = -0.066, or -0.14 standard errors from it) and the pooled statistic
+  lands below expectation at 414.6 against 438 degrees of freedom. The 99% limit
+  supports a soundness floor of **128.048 bits**.
+- **r = 219 stands. No parameter change, no code change.** Moving a deployed
+  security parameter to compensate for an experiment's sample size would have been
+  the wrong response, and 220 buys nothing measurable for its ~0.5% cost in
+  signature size and verification time.
+
+### Added
+- TODO #222: `SecurityProofsCode/stern_f_round_count_resolution.py` — the
+  resolution model and how many seeds the margin actually needs, the measurement
+  at scale across 8 workers, and the verdict. It imports the challenge expansion
+  from `stern_f_multiround_fs.py` rather than reimplementing it, so #217's script
+  and this one cannot drift apart.
+- `SecurityProofs-5.md` §11.8.8 gains a "gap closed" subsection with the
+  before/after table; `SECURITY.md`'s HPKS-Stern-F row now carries the round count
+  and the measured bound, so the figure is on the record outside the proofs.
+
+### Note
+- What this does **not** establish is that no bias exists — only that none above
+  0.0588 bits does. A bias engineered below that stays invisible to sampling at
+  any feasible scale; excluding it needs an algebraic argument about
+  `nl_fscx_v1`'s low 32 bits rather than more seeds. That is the same caveat
+  TODO #217 recorded against its own floor, which is simply 7.5x higher.
+- Round count and instance hardness remain separate axes: 219 rounds over a
+  30-40-bit syndrome-decoding instance is still a demo-only signature.
+
+### Added (tracking)
+- TODO #225 (open): CI headroom for `native-python` after TODO #223's ring move —
+  the Python reference's ring multiply went 1.7 -> 8.9 ms on a host without numpy,
+  and that job already runs ~23 min.
+- TODO #226 (open): HKEX-RNL known-answer vectors for `KAT/`. The ring-dimension
+  move crossed four language implementations with no fixed-vector oracle; every
+  check was cross-language agreement, which catches divergence but not the case
+  where all four drift together — which is exactly how TODO #223's bugs survived
+  local verification.
+
 ## [2.7.19] - 2026-08-22
 
 ### Changed — BREAKING (wire format)

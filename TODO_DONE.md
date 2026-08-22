@@ -11192,3 +11192,35 @@ public keys (4x); ~5x handshake cost in the Python reference.
   mark HKEX-RNL and ZKP-RNL as not production-track at any size.
 
 Status: **DONE v2.7.19** — HKEX-RNL ring moved 256 -> 1024 across C/Go/Python/Java with full 4-way interop; n=768 rejected as unsound (integral CRT split); p held at 4096 on DFR grounds; wire-format breaking, MIGRATING.md section 4. Assembly/Arduino stay at RNL_N=32 and are labelled demo-only. HCRED keeps its own n=256 ring, which required parameterising C's ring helpers by dimension (Python/Go already were).
+
+### #222: Decide whether the 128-bit round count should be 219 or 220
+
+TODO #217 confirmed `r = 219` = ⌈128 / log₂(3/2)⌉ is the correct
+parallel-repetition figure and found no exploitable bias in the challenge
+expansion, but it also recorded a margin the analysis cannot close from the
+inside:
+
+- `(3/2)^219` = 128.107 bits — a margin of **0.107 bits** over the 128-bit
+  target.
+- The same script's own experimental resolution floor, from the summed
+  per-position chi-square excess bound over 48,000 seeds, is **0.4418 bits**.
+
+So the measurement can only certify that no bias larger than ~0.44 bits is
+present; it cannot certify 128.000 bits at r = 219. `r = 220` gives 128.692
+bits, clearing the floor, at roughly 0.5% cost in signature size and
+verification time.
+
+- Decide whether to move the production figure to 220, or to keep 219 and
+  document the margin explicitly as an accepted assumption.
+- If moving: `_STERN_F_PRODUCTION_ROUNDS`, `_ZKP_NL_PROD_ROUNDS`, the HCRED
+  production-rounds note, the C CLI's `-DSDF_ROUNDS=` guidance, and the
+  `README.md` / `SECURITY.md` / `SPEC.md` round-count text all carry 219 and
+  must move together across C/Go/Python/Java. Note this does **not** break
+  the wire format — `--rounds` is already a parameter and existing
+  signatures stay verifiable — so it is not a MAJOR bump, but it does change
+  what a default-parameter signature looks like.
+- If keeping 219: state the 0.107-bit margin and the 0.44-bit resolution
+  floor in `SECURITY.md` so the assumption is on the record rather than only
+  in `SecurityProofs-5.md` §11.8.8.
+
+Status: **DONE v2.7.20** — kept r=219. The 0.44-bit floor was a sample-size limit, not a property of the round count: rerunning #217's statistic at 3,000,000 seeds drops it to 0.0588 bits, below the 0.107-bit margin, and finds no bias (pooled chi2 414.6 vs 438 expected). Supports a 128.048-bit soundness floor. No parameter change, no code change.

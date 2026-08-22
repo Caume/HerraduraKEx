@@ -666,13 +666,41 @@ forgery probability tracks `(2/3)^r` with every 95% interval covering 1.0.
 
 **Margin, stated plainly.**  219 rounds gives 128.107 bits under the derived
 bound — a margin of 0.107 bits, which is *smaller* than the 0.44-bit resolution
-floor above.  The experiment therefore cannot by itself certify 128.000 bits at
-r = 219; it can only establish that no bias large enough to matter is detectable,
-and closing that gap empirically would take roughly 30x the samples.  A
-maintainer wanting margin against the measurement floor rather than against a
-measured effect can set r = 220 for 128.692 bits at about 0.5% cost in signature
-size and time.  No change is made here, because reacting to a finite experiment's
-resolution limit is not the same as fixing a defect, and none was found.
+floor above.  The experiment above therefore cannot by itself certify 128.000
+bits at r = 219; it can only establish that no bias large enough to matter is
+detectable, and closing that gap empirically would take roughly 30x the samples.
+No change is made here, because reacting to a finite experiment's resolution
+limit is not the same as fixing a defect, and none was found.
+
+**Gap closed (TODO #222, v2.7.20).**  The 0.44-bit floor above is a sample-size
+limit, not observed structure: the bound scales as
+`sum_d <= sqrt(rounds * excess / (4.5 * n))`, so it falls as one over the square
+root of the seed count.  The paragraph above put the cost of closing it at
+roughly 30x the samples, which is about eleven minutes of compute — so the gap
+was closed rather than accepted.
+`SecurityProofsCode/stern_f_round_count_resolution.py` reruns exactly this
+statistic at **3,000,000 seeds** (657 million challenge samples), importing the
+challenge expansion from `stern_f_multiround_fs.py` so the two cannot drift:
+
+| | TODO #217 | TODO #222 |
+|---|---|---|
+| seeds | 48,000 | 3,000,000 |
+| resolution floor | 0.4418 bits | **0.0588 bits** |
+| soundness floor supported | — | **128.048 bits** |
+
+The six replications scatter around zero (z = −0.96, +0.42, +0.84, −1.48, +1.44,
+−0.65; mean −0.066, or −0.14 standard errors from zero), and the pooled statistic
+lands *below* expectation at 414.6 against 438 degrees of freedom.  The floor is
+now well under the 0.107-bit margin and no bias is found, so **r = 219 stands**
+and r = 220 is not adopted: the case for it rested entirely on the earlier
+experiment being unable to resolve the margin, and moving a deployed parameter to
+compensate for a sample size would have been the wrong response.
+
+What this still does not establish is that no bias exists — only that none above
+0.0588 bits does.  A bias engineered below that remains invisible to sampling at
+any feasible scale, and excluding it needs an algebraic argument about
+`nl_fscx_v1`'s low 32 bits rather than more seeds.  That is the same caveat
+TODO #217 recorded against its own floor; the floor is simply 7.5x lower.
 
 **Scope.**  The `2/3` per-round cheating probability is the standard Stern
 special-soundness claim of Theorem 17; it is assumed, not re-proved — this section

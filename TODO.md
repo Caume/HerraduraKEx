@@ -36,39 +36,6 @@ Scope:
 Status: **OPEN**
 
 
-### #222: Decide whether the 128-bit round count should be 219 or 220
-
-TODO #217 confirmed `r = 219` = ⌈128 / log₂(3/2)⌉ is the correct
-parallel-repetition figure and found no exploitable bias in the challenge
-expansion, but it also recorded a margin the analysis cannot close from the
-inside:
-
-- `(3/2)^219` = 128.107 bits — a margin of **0.107 bits** over the 128-bit
-  target.
-- The same script's own experimental resolution floor, from the summed
-  per-position chi-square excess bound over 48,000 seeds, is **0.4418 bits**.
-
-So the measurement can only certify that no bias larger than ~0.44 bits is
-present; it cannot certify 128.000 bits at r = 219. `r = 220` gives 128.692
-bits, clearing the floor, at roughly 0.5% cost in signature size and
-verification time.
-
-- Decide whether to move the production figure to 220, or to keep 219 and
-  document the margin explicitly as an accepted assumption.
-- If moving: `_STERN_F_PRODUCTION_ROUNDS`, `_ZKP_NL_PROD_ROUNDS`, the HCRED
-  production-rounds note, the C CLI's `-DSDF_ROUNDS=` guidance, and the
-  `README.md` / `SECURITY.md` / `SPEC.md` round-count text all carry 219 and
-  must move together across C/Go/Python/Java. Note this does **not** break
-  the wire format — `--rounds` is already a parameter and existing
-  signatures stay verifiable — so it is not a MAJOR bump, but it does change
-  what a default-parameter signature looks like.
-- If keeping 219: state the 0.107-bit margin and the 0.44-bit resolution
-  floor in `SECURITY.md` so the assumption is on the record rather than only
-  in `SecurityProofs-5.md` §11.8.8.
-
-Status: **OPEN**
-
-
 ### #224: Explore a masked-step / hash-based HKEX PQC variant (MFSCX-KEX)
 
 Every HKEX variant shipped so far derives its hardness from one of two places:
@@ -161,5 +128,53 @@ pick its honest goal early:
 that is not restatable as "FSCX is affine", or a clear negative result saying
 why seed-masked FSCX cannot give key agreement. Anything that only *looks*
 non-linear while `C ⊕ C2` still determines `sk` does not count.
+
+Status: **OPEN**
+
+### #225: CI headroom for `native-python` after the n=1024 ring move
+
+TODO #223 moved HKEX-RNL's ring from 256 to 1024. The NTT is O(n log n), so the
+Python reference's ring multiply went from 1.7 ms to 8.9 ms — 5.2x — measured on
+a host without numpy (`_NUMPY = False`, the pure-Python `_ntt_inplace` path).
+
+`native-python` is already the longest CI job at roughly 23 minutes. It passed on
+PR #217, so this is precaution rather than a live failure, but the margin is now
+unknown and the next RNL-touching change could cross it.
+
+- Measure what the job actually spends on RNL work now, rather than inferring it
+  from the microbenchmark: the suite's `-r`/`-t` caps bound per-test time, so the
+  5.2x does not translate directly into 5.2x job time.
+- Check whether CI runners have numpy available. `_rnl_poly_mul` takes the
+  vectorised path when they do, and the whole question may be moot there —
+  confirm rather than assume, since the 5.2x above was measured without it.
+- If headroom is thin, the options in rough order of preference: lower the RNL
+  tests' iteration caps (they are correctness checks, not benchmarks); split
+  `native-python` the way TODO #205 split the combined `native` job; or raise the
+  job timeout, which hides the trend rather than addressing it.
+- Record the resulting job time in `benchmarks/` so the next ring-parameter
+  change has a baseline to compare against.
+
+Status: **OPEN**
+
+### #226: Add HKEX-RNL known-answer vectors to `KAT/`
+
+`KAT/classical_quartet.json` covers HKEX-GF, HSKE, HPKS and HPKE at n=256. It has
+never carried HKEX-RNL vectors, so the ring-dimension move in TODO #223 crossed
+four language implementations with no fixed-vector oracle — every check was
+cross-language agreement, which catches divergence but not a shared drift.
+
+That gap is exactly what let TODO #223's bugs through: C, Go, Python and Java all
+agreed with each other at several points where all four were wrong together.
+
+- Add HKEX-RNL vectors at the deployed `n=1024, q=65537, p=4096, eta=1, pp=4`.
+  Deterministic inputs are needed for keygen, so the generator has to seed the
+  CBD sampler and `a_rand` explicitly rather than drawing from `os.urandom`.
+- Cover the full handshake, not just keygen: `m_blind`, both `(s, C)` pairs, the
+  reconciliation hint, `K_raw` on both sides, and the derived session key. The
+  hint and the transcript-bound KDF inputs are where the #223 bugs actually lived.
+- Extend `generate_kat.py` and its `--check` mode, plus `verify_kat.go` and the
+  Java `KatVerify`, so all four languages verify against the same fixed file.
+- Consider a small-ring vector set as well (n=64), since `--bits` is still
+  supported and the small-ring path has its own key-width behaviour.
 
 Status: **OPEN**
