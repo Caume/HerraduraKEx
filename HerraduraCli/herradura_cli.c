@@ -1595,7 +1595,7 @@ static void cmd_kex(int argc, char **argv)
             der_int_enc(k_start,   k_len,          ik,      &lk);
             der_int_enc(C_B_buf,   sizeof C_B_buf,  ic_der,  &lc);
             der_int_enc(hint_rev,  sizeof hint_rev, ih,      &lh);
-            der_i_n256(in1, &ln1);
+            der_i_rnl_n(in1, &ln1);   /* ring dimension, not the 256-bit key width */
             der_i_uint(RNL_N / 2, in2, &ln2);
             der_int_enc(n_B, KEYBYTES, inb_der, &lnb);
             der_int_enc(syn_buf, QCMDPC_RBYTES, isyn, &lsyn);

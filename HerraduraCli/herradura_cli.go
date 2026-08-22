@@ -535,7 +535,11 @@ func rnlHintToBytes(hint []byte, n int) []byte {
 //	                  "HERRADURA-HYBRID-RNL-STERN-v1")
 func hybridRnlSternCombine(K1 *big.Int, K2 []byte, C_A, m_A, C_B []int, hintUsed []byte,
 	hPub, syn *big.Int, n, rQC int) *big.Int {
-	K1Bytes := padLeftN(K1.Bytes(), n/8)
+	// K1 is serialised at the KEY width, not the ring dimension. Those were the
+	// same number until TODO #223 moved the ring to 1024 while the derived key
+	// stayed 256 bits; using n here writes 128 zero-padded bytes where C's
+	// combiner writes KEYBYTES (32), so the two sides derive different keys.
+	K1Bytes := padLeftN(K1.Bytes(), rnlKeyBits(n)/8)
 	C_A_packed := packPoly(C_A, 2)
 	m_A_packed := packPoly(m_A, 4)
 	C_B_packed := packPoly(C_B, 2)

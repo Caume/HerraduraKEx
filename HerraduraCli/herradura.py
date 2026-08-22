@@ -748,7 +748,11 @@ def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, s
     m_A_packed, m_A_nb = pack_poly(m_A, 4)
     C_B_packed, C_B_nb = pack_poly(C_B, 2)
     rb = (r_qc + 7) // 8
-    data = (K1_int.to_bytes(n // 8, 'big')
+    # K1 is serialised at the KEY width, not the ring dimension.  Those were the
+    # same number until TODO #223 moved the ring to 1024 while the derived key
+    # stayed 256 bits; using n here writes 128 zero-padded bytes where C's
+    # combiner writes KEYBYTES (32), so the two sides derive different keys.
+    data = (K1_int.to_bytes(_rnl_key_bits(n) // 8, 'big')
             + K2_int.to_bytes(KEYBITS // 8, 'big')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
