@@ -74,7 +74,8 @@
         Fully bijective; used in HSKE-NL-A2 (revolve-mode) and HPKE-NL.
       - HSKE-NL-A1: counter-mode symmetric encryption with NL-FSCX v1 keystream.
       - HSKE-NL-A2: revolve-mode symmetric encryption with NL-FSCX v2 (invertible).
-      - HKEX-RNL: Ring-LWR key exchange (n=256; conjectured quantum-resistant).
+      - HKEX-RNL: Ring-LWR key exchange (n=256). DEMO-ONLY: ~32 classical /
+        ~29 quantum Core-SVP bits at the deployed parameters (TODO #216).
       - HPKS-NL: NL-hardened Schnorr signature using NL-FSCX v1 challenge.
       - HPKE-NL: NL-hardened El Gamal encryption using NL-FSCX v2.
 
@@ -359,8 +360,8 @@ int main(void)
             puts("- decryption failed!");
     }
 
-    /* --- HKEX-RNL [PQC -- Ring-LWR key exchange; conjectured quantum-resistant] */
-    printf("\n--- HKEX-RNL [PQC \xe2\x80\x94 Ring-LWR key exchange; conjectured quantum-resistant]\n");
+    /* --- HKEX-RNL [Ring-LWR key exchange; DEMO-ONLY parameters, see SECURITY.md] */
+    printf("\n--- HKEX-RNL [Ring-LWR key exchange \xe2\x80\x94 DEMO-ONLY parameters, see SECURITY.md]\n");
     puts("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537)");
     {
         rnl_poly_t m_base, a_rand_poly, m_blind;

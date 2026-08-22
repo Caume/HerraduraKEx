@@ -307,6 +307,76 @@ are required for deployment.
 
 The $n=256$ wire format remains the default until a major-version migration.
 
+**Correction — both estimates above are wrong (TODO #216, v2.7.17).** The two
+paragraphs above give ~105–115 classical Core-SVP bits at $n=256$ and ~220 at
+$n=512$.  Both are too high.  `SecurityProofsCode/hkex_rnl_lattice_2026.py`
+computes them directly from the deployed parameters:
+
+| Parameter set | $\beta$ | Classical Core-SVP | Quantum Core-SVP | Claimed above |
+|---|---|---|---|---|
+| **HKEX-RNL** $n=256$ | 110 | **32** | **29** | ~105 / ~100 |
+| **HKEX-RNL-128** $n=512$ | 297 | **87** | **79** | ~220 / ~200 |
+
+The binding attack is plain primal uSVP in both cases.  The dual attack is more
+expensive here only because one published ring element gives the attacker exactly
+$n$ equations, starving it of samples; the zero-forcing hybrid gains nothing,
+because each guessed-zero coefficient of a CBD(1) secret costs a full bit and
+saves about $0.2$ bits of lattice work.  This last point independently reconfirms
+§11.7's TODO #157 conclusion — the 2024–2026 hybrid-decoding improvements do not
+apply to this secret distribution — while removing the baseline that conclusion
+was stated against.  Reporting under the gate-count models rather than Core-SVP
+raises the two figures to 49 and 103 bits; no cost model brings either to 128.
+
+**Why the deployed parameters are weak.** For rounding from $q$ to $p$ the error
+is uniform over $q/p$ values, so its standard deviation is close to
+$(q/p)/\sqrt{12}$ and the relative noise is
+
+$$\alpha = \sigma/q \approx 1/(p\sqrt{12})$$
+
+in which $q$ cancels.  Raising $q$ while holding $p$ fixed adds no noise; it
+spreads the same fixed number of rounding buckets over a larger modulus, which is
+strictly easier for lattice reduction.  The deployed $p = 4096$ puts $\alpha$ at
+$7.0 \times 10^{-5}$, about $5\times$ quieter than ML-KEM-512 and $4\times$ quieter
+than LightSaber.  The comment at `RNLQ` in the suite — that $q=65537$ "gives lower
+noise-to-margin ratio than $q=3329$ (Kyber), ensuring reliable single-block
+agreement" — is accurate about correctness and is precisely the problem for
+security: reconciliation reliability and lattice hardness are the same knob turned
+in opposite directions.
+
+**Where the superseded figures came from.** The $n=256$ estimate was cited rather
+than computed, from sources whose parameter sets differ from this one in both
+dimension and $\alpha$.  The $n=512$ estimate then extrapolated linearly off it;
+the slope is defensible — $\beta$ does grow close to linearly in $n$ at fixed
+$(q, p, \eta)$ — but it is anchored to a wrong intercept.  The ML-KEM-512
+cross-check offered above also runs backwards: it reads a *smaller* relative noise
+ratio as evidence of *greater* hardness, when smaller relative noise is what makes
+an LWE or LWR instance easier.  Read the right way round, that same comparison
+predicts HKEX-RNL is weaker than ML-KEM-512 at equal dimension, which is what the
+direct computation finds.
+
+**Validation.** The estimator these figures come from is implemented in-repo,
+because `lattice-estimator` needs SageMath, which is not installable on the
+maintainer's host.  Before it is used it is pinned to six published Core-SVP
+figures: Kyber-512/768/1024 (validating the primal and dual machinery) and
+LightSaber/Saber/FireSaber (validating the LWR rounding-error translation, Saber
+being the only standardisation-track LWR scheme and so the only published check on
+that step).  All six reproduce to within $1.5$ bits.  §3 of the script aborts the
+run if any of them does not.
+
+**What reaches 128 bits.** Ring dimension dominates; halving $p$ is worth roughly
+$10$ bits and raising $\eta$ a few more, so neither closes a 96-bit gap.  No
+$(p, \eta)$ combination brings $n=512$ to 128 quantum bits — HKEX-RNL-128 cannot be
+rescued by retuning.  At the deployed $p$, $n=768$ clears both targets (145
+classical / 131 quantum) but has no negacyclic NTT, and $n=1024$ clears them with
+margin (206 / 187) while keeping it, at $4\times$ the key material.  Selecting among
+these is a protocol change, tracked separately as TODO #223; note that $p$ and
+reconciliation reliability are the same parameter, so any move on $p$ has to be
+re-run through `hkex_rnl_failure_rate.py`.
+
+**Status.** HKEX-RNL should not be presented as a production-track quantum-resistant
+option at either size until the ring dimension moves.  `SECURITY.md` carries the
+corrected rows.
+
 **Naive algebraic attack analysis.**  Without blinding ($m_\text{blind} = m$), Eve computes
 $m^{-1} \cdot (C \cdot q/p) \bmod q$ attempting to recover $s$.  The attack fails because
 rounding noise $\delta$ (bounded by $q/(2p)$ per coefficient) is amplified by $\|m^{-1}\|_1 \gg q$
@@ -492,7 +562,11 @@ over pure lattice decoding precisely when some block is cheap to enumerate, and 
 $50\%$ density no such block exists — the attack degenerates to the primal lattice
 attack already accounted for in the Core-SVP estimate below.
 
-**Conclusion:** no revision to HKEX-RNL's 105–115-bit Core-SVP estimate is made.  The
+**Conclusion:** the hybrid attack does not apply, so no revision is made *on this
+account*.  (The 105–115-bit baseline this section was written against has since been
+superseded by a direct computation — see the correction in §11.4.3, TODO #216.  That
+computation reaches the same verdict about the hybrid family by a different route, so
+the reasoning below stands; only the number it is stated against changed.)  The
 stakes were real — the paper's measured maximum improvement is 13 bits, which applied to
 HKEX-RNL would mean 92–102 bits — but the attack's precondition fails here by a margin
 that no reasonable reading of "sparse" can close.  Unlike the earlier draft of this
@@ -520,8 +594,8 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 | **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
 | **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^{\ast}$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
 | **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^{\ast}$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
-| **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ: ~105–115 classical Core-SVP bits (MATZOV 2022; §11.4.3) | BKZ-hybrid: ~95–105 quantum Core-SVP bits | ~105 classical / ~100 quantum bits (§11.4.3); below 128-bit target — use HKEX-RNL-128 |
-| **HKEX-RNL-128** $n=512$ (§11.4.3) | Ring-LWR with blinded $m$ | BKZ: ~220 classical Core-SVP bits (linear scaling; §11.4.3, §6 of `hkex_rnl_failure_rate.py`) | BKZ-hybrid: ~200 quantum Core-SVP bits | ≥128-bit classical+quantum; ML-KEM-512 cross-check confirms lower bound; 0 reconciliation failures (§7) |
+| **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ primal uSVP: **32** classical Core-SVP bits at $\beta=110$ (§11.4.3, TODO #216) | **29** quantum Core-SVP bits; hybrid gains nothing (§11.7) | **32 classical / 29 quantum** — far below the 128-bit target and below the 100-bit floor; not production-track at any size (§11.4.3) |
+| **HKEX-RNL-128** $n=512$ (§11.4.3) | Ring-LWR with blinded $m$ | BKZ primal uSVP: **87** classical Core-SVP bits at $\beta=297$ (§11.4.3, TODO #216) | **79** quantum Core-SVP bits | **87 classical / 79 quantum** — does not reach 128 either, and no $(p,\eta)$ retune brings $n=512$ there; needs a larger ring (TODO #223) |
 | **HPKS-WOTS-F** (§11.8.3, proposed) | NL-FSCX v1 OWF (new assumption) | Degree-$n$ Boolean system — $O(2^n)$, Corollary 2 | Grover $O(2^{n/2})$ | $n/2$ bits (under NL-FSCX v1 OWF) |
 | **HPKS-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
 | **HPKE-Stern-F** (§11.8.4, proposed) | $\mathrm{SD}(N,t)$ + NL-FSCX v1 PRF | BJMM/SDE: ~$2^{56}$–$2^{60}$ classical at $N=256$, $t=16$; 128-bit needs $N \geq 17000$ | Quantum ISD: ~$2^{30}$–$2^{40}$ at $N=256$ | ~30–40 bits at $N=256$ — **demo only**; 128-bit needs $N \geq 17000$ |
