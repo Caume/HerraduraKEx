@@ -71,6 +71,10 @@ SecurityProofsCode/                                 — standalone Python proof/
   hkex_cfscx_*.py          — preshared-value, two-step, integer-op, compress/blong constructions
   hkex_classical_break.py  — classical algebraic break proofs
   fscx_revolve_corank.py   — co-rank of the classical FSCX_REVOLVE key map (TODO #210)
+  fscx_revolve_closed_form.py — closed-form O(log i) FSCX_REVOLVE: the telescoping
+                             identity, the Frobenius argument that keeps every
+                             factor sparse, bit-exactness against the loop, and
+                             why the NL variants cannot use it (TODO #213)
   hkex_gf_pohlig_hellman.py — Pohlig-Hellman cost/recovery vs. HKEX-GF/HPKS/HPKE (TODO #212)
   hske_perfect_secrecy.py  — Shannon-perfect one-time HSKE at odd step counts (TODO #211)
   hfscx_dm_rf_model.py     — HFSCX-256-DM re-derived in the ideal-random-function
@@ -153,7 +157,10 @@ bindings/java/                                       — complete pure-Java port
                                                       and aPAKE
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
-benchmarks/                                          — recorded benchmark output/history
+benchmarks/                                          — recorded benchmark output/history;
+                                                      compare_*.py drivers, incl.
+                                                      compare_fscx_revolve_closed_form.py
+                                                      (TODO #213, C/Go/Python)
 Fuzz/                                                — fuzzing harnesses (see TODO #130)
 ```
 
@@ -357,7 +364,7 @@ bash CliTest/test_go_interop.sh
 
 ### SecurityProofsCode scripts
 
-Each script in `SecurityProofsCode/` is self-contained (no imports from the suite).  Run them to reproduce the analysis results cited in `SecurityProofs-*.md`:
+Each script in `SecurityProofsCode/` is standalone — runnable on its own with no third-party dependencies.  Many (about 20, including `fscx_revolve_corank.py` and `fscx_revolve_closed_form.py`) do load the suite via `importlib`, deliberately: a script that verifies a claim about the shipped implementation has to test the shipped implementation.  Run them to reproduce the analysis results cited in `SecurityProofs-*.md`:
 
 ```bash
 python3 SecurityProofsCode/hkex_gf_test.py          # DH correctness + DLP

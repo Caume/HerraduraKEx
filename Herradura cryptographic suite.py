@@ -390,13 +390,111 @@ def fscx(A: BitArray, B: BitArray) -> BitArray:
     return A ^ B ^ A.rotated(1) ^ B.rotated(1) ^ A.rotated(-1) ^ B.rotated(-1)
 
 
+# --- Closed-form FSCX_REVOLVE (TODO #213) -----------------------------------
+#
+# FSCX and FSCX_REVOLVE keep their definitions exactly; what follows is an
+# evaluation strategy, not a redefinition.  Identify an n-bit BitArray with a
+# polynomial in GF(2)[x]/(x^n + 1), bit j <-> coefficient of x^j, so that
+# ROL(v, s) = x^s * v and ROR(v, s) = x^-s * v.  Then
+#
+#     FSCX(A, B) = M * (A + B),      M = 1 + x + x^(n-1)
+#
+# and iterating it with B held constant telescopes to
+#
+#     FSCX_REVOLVE(A, B, i) = M^i * A + T_i * B,   T_i = M * S_i
+#
+# The saving comes from a fact specific to characteristic 2: squaring is the
+# Frobenius endomorphism, so
+#
+#     M^(2^u) = 1 + x^(2^u) + x^-(2^u)
+#
+# stays a THREE-term polynomial no matter how large u is.  Multiplying by it is
+# two rotations and two XORs — the same shape as one FSCX step, just with a
+# stride of 2^u instead of 1.  So no dense polynomial multiplication is needed
+# anywhere: M^i costs one sparse step per set bit of i, and S_i =
+# sum_{j=0..i-1} M^j costs one sparse step per bit of i plus one more per set
+# bit.  At the deployed n=256 that is 10 sparse steps for i = n/4 = 64
+# (encrypt) and 13 for r = 3n/4 = 192 (decrypt), against 64 and 192 FSCX
+# rounds.  Total O(log i) rotate-XOR steps instead of O(i).
+#
+# S_i and T_i are named as in SecurityProofsCode/fscx_revolve_corank.py.
+#
+# This applies only to classical FSCX_REVOLVE.  The NL-FSCX variants are
+# non-linear by construction — no such telescoping exists for them — and stay
+# iterative, which is where the cost gap between the classical and NL protocols
+# comes from.
+
+
+def _m_pow2_mul(v: int, s: int, n: int, mask: int) -> int:
+    """M^(2^u) * v in GF(2)[x]/(x^n + 1) = v ^ ROL(v, s) ^ ROR(v, s).
+
+    s = 2^u mod n is passed in already reduced.  s == 0 means M^(2^u) collapses
+    to 1 + 1 + 1 = 1, the identity, so v is returned unchanged.
+    """
+    if s == 0:
+        return v
+    return (v ^ (v << s) ^ (v >> (n - s)) ^ (v >> s) ^ (v << (n - s))) & mask
+
+
+def _one_plus_m_pow2_mul(v: int, s: int, n: int, mask: int) -> int:
+    """(1 + M^(2^u)) * v = ROL(v, s) ^ ROR(v, s).
+
+    The constant terms cancel, so this is even sparser than _m_pow2_mul: two
+    rotations and one XOR.  s == 0 makes 1 + M^(2^u) = 1 + 1 = 0.
+    """
+    if s == 0:
+        return 0
+    return ((v << s) ^ (v >> (n - s)) ^ (v >> s) ^ (v << (n - s))) & mask
+
+
 def fscx_revolve(A: BitArray, B: BitArray, steps: int, verbose: bool = False) -> BitArray:
-    result = A.copy()
-    for step in range(steps):
-        result = fscx(result, B)
-        if verbose:
+    """Iterate fscx(A, B) `steps` times with B held constant.
+
+    Evaluated in closed form, O(log steps) rotate-XOR steps rather than
+    O(steps) — bit-identical to the loop (TODO #213).  `verbose` still walks the
+    loop, since it prints every intermediate state.
+    """
+    if verbose:
+        result = A.copy()
+        for step in range(steps):
+            result = fscx(result, B)
             print(f"Step {step + 1}: {result.hex}")
-    return result
+        return result
+
+    if steps <= 0:
+        return A.copy()
+
+    n = A._size
+    mask = (1 << n) - 1
+
+    # M^steps * A, and the stride table 2^u mod n built by doubling alongside
+    # it so nothing has to be reduced from a huge shift.
+    a = A.uint
+    strides = []
+    s = 1 % n
+    rem = steps
+    while rem:
+        strides.append(s)
+        if rem & 1:
+            a = _m_pow2_mul(a, s, n, mask)
+        rem >>= 1
+        s = (s * 2) % n
+
+    # S_steps * B, from the recurrence
+    #     S_k(Y) = (1 + Y) * S_{k//2}(Y^2) + [k odd] * (Y^2)^(k//2)
+    # walked from the deepest level up.  With Y = M^(2^u) at level u, both
+    # multipliers are sparse, and k at level u is just steps >> u.  `acc` carries
+    # S_k(Y) * B; `q` carries the correction term (Y^2)^(k//2) * B = M^(2^u k) * B.
+    acc, q = 0, B.uint
+    for u in range(len(strides) - 1, -1, -1):
+        s = strides[u]
+        acc = _one_plus_m_pow2_mul(acc, s, n, mask)
+        if (steps >> u) & 1:
+            acc ^= q
+            q = _m_pow2_mul(q, s, n, mask)
+
+    # T_steps * B = M * (S_steps * B)
+    return BitArray(n, a ^ _m_pow2_mul(acc, strides[0], n, mask))
 
 
 # ---------------------------------------------------------------------------

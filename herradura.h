@@ -171,19 +171,161 @@ static void ba_fscx(BitArray *result, const BitArray *a, const BitArray *b)
         ^ (uint8_t)((b->b[KEYBYTES-1] >> 1) | (b->b[KEYBYTES-2] << 7));
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Closed-form FSCX_REVOLVE (TODO #213)
+ *
+ * FSCX and FSCX_REVOLVE keep their definitions exactly; this is an evaluation
+ * strategy, not a redefinition, and it is bit-identical to the loop it replaces.
+ *
+ * Identify a BitArray with a polynomial in GF(2)[x]/(x^n + 1) (n = KEYBITS,
+ * bit j <-> coefficient of x^j), so ROL(v, s) = x^s * v and ROR(v, s) = x^-s * v.
+ * Then FSCX(A, B) = M * (A + B) with M = 1 + x + x^(n-1), and iterating with B
+ * held constant telescopes to
+ *
+ *     FSCX_REVOLVE(A, B, i) = M^i * A + T_i * B,   T_i = M * S_i
+ *
+ * In characteristic 2 squaring is the Frobenius endomorphism, so
+ *
+ *     M^(2^u) = 1 + x^(2^u) + x^-(2^u)
+ *
+ * is still a THREE-term polynomial however large u gets.  Multiplying by it is
+ * two rotations and two XORs — one FSCX step with stride 2^u instead of 1 — so
+ * no dense polynomial multiplication appears anywhere.  M^i costs one sparse
+ * step per set bit of i; S_i = sum_{j=0..i-1} M^j costs one sparse step per bit
+ * of i plus one more per set bit.  At KEYBITS=256 that is 10 sparse steps for
+ * i = n/4 = 64 (encrypt) and 13 for r = 3n/4 = 192 (decrypt), against 64 and
+ * 192 FSCX rounds.  S_i and T_i are named as in
+ * SecurityProofsCode/fscx_revolve_corank.py.
+ *
+ * Only classical FSCX_REVOLVE telescopes this way.  The NL-FSCX variants are
+ * non-linear by construction and stay iterative.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Step count below which the plain loop beats the closed form (TODO #213).
+   Measured at KEYBITS=256 with gcc -O2: the loop wins to 4 steps, the closed
+   form from 8 on. */
+#define FSCX_CLOSED_FORM_MIN_STEPS 8
+
+/* dst = ROL(src, s), 0 <= s < KEYBITS.  dst must not alias src.
+   Split into two straight runs rather than indexing with a modulo: byte_shift
+   is < KEYBYTES, so the wrap happens exactly once and a division per byte is
+   pure waste. */
+static void ba_rol_bits(BitArray *dst, const BitArray *src, int s)
+{
+    int byte_shift = s >> 3, bit_shift = s & 7, i, split = KEYBYTES - byte_shift;
+
+    if (bit_shift == 0) {
+        for (i = 0; i < split; i++)
+            dst->b[i] = src->b[i + byte_shift];
+        for (; i < KEYBYTES; i++)
+            dst->b[i] = src->b[i - split];
+    } else {
+        int rsh = 8 - bit_shift;
+        for (i = 0; i < split - 1; i++)
+            dst->b[i] = (uint8_t)((src->b[i + byte_shift] << bit_shift)
+                                  | (src->b[i + byte_shift + 1] >> rsh));
+        dst->b[split - 1] = (uint8_t)((src->b[KEYBYTES - 1] << bit_shift)
+                                      | (src->b[0] >> rsh));
+        for (i = split; i < KEYBYTES - 1; i++)
+            dst->b[i] = (uint8_t)((src->b[i - split] << bit_shift)
+                                  | (src->b[i - split + 1] >> rsh));
+        if (split < KEYBYTES)
+            dst->b[KEYBYTES - 1] = (uint8_t)((src->b[byte_shift - 1] << bit_shift)
+                                             | (src->b[byte_shift] >> rsh));
+    }
+}
+
+/* v = M^(2^u) * v = v ^ ROL(v, s) ^ ROR(v, s), with s = 2^u mod KEYBITS passed
+   in already reduced.  s == 0 means M^(2^u) collapses to 1 + 1 + 1 = 1, the
+   identity, so v is left alone. */
+static void ba_m_pow2_mul(BitArray *v, int s)
+{
+    BitArray l, r;
+    int i;
+
+    if (s == 0)
+        return;
+    ba_rol_bits(&l, v, s);
+    ba_rol_bits(&r, v, KEYBITS - s);     /* ROR(v, s) */
+    for (i = 0; i < KEYBYTES; i++)
+        v->b[i] ^= (uint8_t)(l.b[i] ^ r.b[i]);
+}
+
+/* v = (1 + M^(2^u)) * v = ROL(v, s) ^ ROR(v, s).  The constant terms cancel, so
+   this is sparser still: two rotations and one XOR.  s == 0 makes the factor
+   1 + 1 = 0. */
+static void ba_one_plus_m_pow2_mul(BitArray *v, int s)
+{
+    BitArray l, r;
+    int i;
+
+    if (s == 0) {
+        memset(v->b, 0, KEYBYTES);
+        return;
+    }
+    ba_rol_bits(&l, v, s);
+    ba_rol_bits(&r, v, KEYBITS - s);
+    for (i = 0; i < KEYBYTES; i++)
+        v->b[i] = (uint8_t)(l.b[i] ^ r.b[i]);
+}
+
 /* FSCX_REVOLVE: iterate fscx(a, b) steps times keeping b constant.
-   Double-buffered to avoid copying the result back every step. */
+   Evaluated in closed form — O(log steps) rotate-XOR steps, bit-identical to
+   the O(steps) loop (TODO #213). */
 static void ba_fscx_revolve(BitArray *result, const BitArray *a,
                              const BitArray *b, int steps)
 {
-    BitArray buf[2];
-    int idx = 0, i;
-    buf[0] = *a;
-    for (i = 0; i < steps; i++) {
-        ba_fscx(&buf[1 - idx], &buf[idx], b);
-        idx ^= 1;
+    BitArray acc, q, s_acc;
+    int strides[64], nstr = 0, i, u, s, rem;
+
+    /* Below the measured crossover the O(steps) loop is simply cheaper: the
+       closed form pays a fixed setup that ~8 FSCX rounds have not yet earned
+       back.  The threshold is a tuning constant, not a semantic one — both
+       branches produce identical bytes.  No shipped call site lands here (every
+       one uses I_VALUE = n/4 or R_VALUE = 3n/4), but ba_fscx_revolve is part of
+       a header-only library that external code includes directly. */
+    if (steps < FSCX_CLOSED_FORM_MIN_STEPS) {
+        BitArray buf[2];
+        int idx = 0;
+        buf[0] = *a;
+        for (i = 0; i < steps; i++) {
+            ba_fscx(&buf[1 - idx], &buf[idx], b);
+            idx ^= 1;
+        }
+        *result = buf[idx];
+        return;
     }
-    *result = buf[idx];
+
+    /* M^steps * A, building the stride table 2^u mod KEYBITS by doubling as we
+       go so nothing overflows for a large step count. */
+    acc = *a;
+    s = 1 % KEYBITS;
+    for (rem = steps; rem; rem >>= 1) {
+        strides[nstr++] = s;
+        if (rem & 1)
+            ba_m_pow2_mul(&acc, s);
+        s = (s * 2) % KEYBITS;
+    }
+
+    /* S_steps * B, from the recurrence
+           S_k(Y) = (1 + Y) * S_{k/2}(Y^2) + [k odd] * (Y^2)^(k/2)
+       walked from the deepest level up.  With Y = M^(2^u) at level u both
+       multipliers are sparse, and k at level u is just steps >> u.  s_acc
+       carries S_k(Y) * B; q carries the correction (Y^2)^(k/2) * B. */
+    memset(s_acc.b, 0, KEYBYTES);        /* S_0 = 0 */
+    q = *b;                              /* M^0 * B = B */
+    for (u = nstr - 1; u >= 0; u--) {
+        ba_one_plus_m_pow2_mul(&s_acc, strides[u]);
+        if ((steps >> u) & 1) {
+            for (i = 0; i < KEYBYTES; i++)
+                s_acc.b[i] ^= q.b[i];
+            ba_m_pow2_mul(&q, strides[u]);
+        }
+    }
+
+    /* result = M^steps * A + T_steps * B, with T_steps = M * S_steps */
+    ba_m_pow2_mul(&s_acc, strides[0]);
+    ba_xor(result, &acc, &s_acc);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

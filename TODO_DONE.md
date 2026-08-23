@@ -11325,3 +11325,33 @@ was merely unreachable.
   is the surface. Ships as v3.0.0 with a `MIGRATING.md` entry alongside it.
 
 Status: **DONE v3.0.0** — resolved in favour of 256 bits at every ring dimension, which is the contributory KDF's HFSCX-256 output width and what the C CLI had always encoded. Python/Go/Java now split the two quantities explicitly (`_rnl_key_bits`/`rnlKeyBits` = raw reconciliation width, `_rnl_session_bits`/`rnlSessionBits` = derived key width); `test_kat_pem.sh` asserts n=64 alongside n=1024 and all four agree. n >= 256 is byte-identical, so the deployed n=1024 wire format is untouched.
+
+
+### #213: Closed-form O(log i) `fscx_revolve` — bit-exact, no primitive change
+
+Because `fscx_revolve(A, B, i) = M^i·A ⊕ T_i·B` with everything living in
+GF(2)[x]/(x^n + 1), the i sequential rotate-XOR rounds can be replaced by
+square-and-multiply on `m(x)^i` plus a closed form for `S_i` — O(log i)
+polynomial multiplications instead of O(i) rounds, producing byte-identical
+output. At the deployed parameters that is 64 (encrypt) and 192 (decrypt)
+rounds collapsing to ~7–8 multiplications, and `_m_inv`'s bootstrap
+(`fscx_revolve(1, 0, n/2 − 1)`) becomes a single inversion.
+
+FSCX and FSCX_REVOLVE keep their definitions exactly — this is an
+evaluation strategy, not a redefinition, and the KAT vectors in `KAT/` are
+the correctness oracle.
+
+Scope:
+- Benchmark the polynomial route against today's loop in C/Go/Python:
+  schoolbook (n²/w word ops) vs carryless-multiply intrinsics vs the
+  existing rotate loop; the rotate loop may well win at n=256 for small i,
+  and a negative result is a perfectly good outcome to record in
+  `benchmarks/`.
+- If it wins, note that it only applies to classical FSCX_REVOLVE. The NL
+  variants are non-linear by construction and stay iterative — which is
+  itself worth documenting, since it makes the cost gap between the
+  classical and NL protocols explicit.
+- Keep assembly/Arduino targets out of scope unless the win is large;
+  their n=32 parameters give little room.
+
+Status: **DONE v3.0.1** — shipped in C, Go, and Python; bit-exact (exhaustive at n=8, 180k random cases in C, plus the KAT vectors as the oracle). The win is larger than this entry expected because no dense polynomial multiplication is needed at all: in characteristic 2 every M^(2^u) is still a three-term polynomial (Frobenius), so each step is two rotations and an XOR. At the deployed parameters, 10 sparse steps for i=64 and 13 for r=192 against 64 and 192 rounds — measured 44x/102x (Python), 12x/29x (Go), 9x/22x (C). Below a measured crossover each implementation falls back to the loop (C < 8 steps, Go < 2, Python never). NL variants stay iterative, as anticipated; assembly/Arduino left out of scope.
