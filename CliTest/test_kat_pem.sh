@@ -11,21 +11,18 @@
 # the direction the bugs broke.  Every check below feeds a checked-in artifact to
 # a CLI and demands a byte-exact result.
 #
-# Scope: n1024, the deployed ring.  The n64 artifacts are generated and kept
-# because at n=64 the ring dimension and the key width are the same number —
-# exactly the condition that hid this bug class from test_encrypt.sh — but they
-# are NOT asserted here, because the first run of this KAT showed the four CLIs
-# disagree there in three different ways (TODO #228):
+# Scope: n1024, the deployed ring, plus n64.  The small ring matters because
+# there the ring dimension and the raw reconciliation width are the same number
+# — exactly the condition that hid this bug class from test_encrypt.sh, which
+# pins --bits 64.  The first run of this KAT found the four CLIs disagreeing
+# there in three different ways; TODO #228 settled it by fixing the derived
+# session key at 256 bits (the contributory KDF's HFSCX-256 output width) at
+# every ring dimension, which is what C had always encoded.  At n >= 256 that
+# is the same number the old code produced, so n1024 is unaffected.
 #
-#   python  writes the full 255-bit contributory-KDF output, labelled nbits=64
-#   go      truncates it to 64 bits
-#   java    produces a third result again
-#   c       rejects the PEM outright, since it is compiled for one RNL_N
-#
-# All four agree at n=1024, where the derived key is 256 bits and matches the
-# HFSCX-256 output width exactly.  Asserting the small ring here would just pin
-# one arbitrary behaviour before that divergence is resolved; TODO #228 carries
-# the reproducer.
+# The C CLI is skipped for n64: it is compiled for a single RNL_N (1024) and
+# rejects a PEM from any other ring by design (TODO #227), which is a separate
+# property from the width agreement being asserted here.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -61,7 +58,11 @@ for lang in py c go java; do
                   || { skip "Java CLI" "not compiled"; continue; } ;;
     esac
 
-    for tag in n1024; do
+    for tag in n1024 n64; do
+        if [ "$lang" = c ] && [ "$tag" = n64 ]; then
+            skip "c $tag" "C CLI is compiled for a single RNL_N=1024"
+            continue
+        fi
         # 1. Public key derived from a fixed private key — pins the pubkey encoder
         #    and the ring-dimension field it writes.
         if $CLI pkey --in "$K/${tag}_alice_priv.pem" --pubout \

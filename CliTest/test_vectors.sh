@@ -47,7 +47,10 @@ fi
 # Success proves K_A = K_B, validating the Peikert reconciliation property.
 # ---------------------------------------------------------------------------
 
-printf 'KEXTEST!' > "$TMP/msg8.bin"   # 8 bytes matches the n=64 block size
+# 32 bytes, not 8: since TODO #228 the derived session key is the contributory
+# KDF's full HFSCX-256 output at every ring dimension, so even at n=64 the HSKE
+# block is 256 bits wide.
+printf 'KEXTEST!KEXTEST!KEXTEST!KEXTEST!' > "$TMP/msg32.bin"
 
 $CLI genpkey --algo hkex-rnl --bits 64 --out "$TMP/alice_rnl.pem"
 $CLI pkey    --in "$TMP/alice_rnl.pem" --pubout --out "$TMP/alice_rnl_pub.pem"
@@ -62,11 +65,11 @@ $CLI kex --algo hkex-rnl --our "$TMP/alice_rnl.pem" --their "$TMP/bob_rnl_resp.p
 
 # Bob-side encrypt (K_B), Alice-side decrypt (K_A)
 $CLI enc --algo hske --key "$TMP/bob_rnl_resp.pem" \
-         --in "$TMP/msg8.bin" --out "$TMP/rnl_ct_bob.pem"
+         --in "$TMP/msg32.bin" --out "$TMP/rnl_ct_bob.pem"
 $CLI dec --algo hske --key "$TMP/alice_rnl_sk.pem" \
          --in "$TMP/rnl_ct_bob.pem" --out "$TMP/rnl_plain_alice.bin"
 
-if cmp -s "$TMP/msg8.bin" "$TMP/rnl_plain_alice.bin"; then
+if cmp -s "$TMP/msg32.bin" "$TMP/rnl_plain_alice.bin"; then
     check "hkex-rnl key agreement (Bob enc / Alice dec)" "ok"
 else
     check "hkex-rnl key agreement (Bob enc / Alice dec)" "plaintext mismatch — K_A ≠ K_B"
@@ -74,11 +77,11 @@ fi
 
 # Alice-side encrypt (K_A), Bob-side decrypt (K_B)
 $CLI enc --algo hske --key "$TMP/alice_rnl_sk.pem" \
-         --in "$TMP/msg8.bin" --out "$TMP/rnl_ct_alice.pem"
+         --in "$TMP/msg32.bin" --out "$TMP/rnl_ct_alice.pem"
 $CLI dec --algo hske --key "$TMP/bob_rnl_resp.pem" \
          --in "$TMP/rnl_ct_alice.pem" --out "$TMP/rnl_plain_bob.bin"
 
-if cmp -s "$TMP/msg8.bin" "$TMP/rnl_plain_bob.bin"; then
+if cmp -s "$TMP/msg32.bin" "$TMP/rnl_plain_bob.bin"; then
     check "hkex-rnl key agreement (Alice enc / Bob dec)" "ok"
 else
     check "hkex-rnl key agreement (Alice enc / Bob dec)" "plaintext mismatch — K_A ≠ K_B"

@@ -1,7 +1,7 @@
 {
   "$schema": "HerraduraKEx HKEX-RNL KAT vectors (TODO #226)",
   "suite_reference": "Herradura cryptographic suite.py",
-  "note": "Ring dimension and derived key width are separate quantities (TODO #223): the deployed ring is 1024 while the session key stays 256 bits.  The n=64 set exercises the small-ring path, where they coincide and the key is n bits.",
+  "note": "Ring dimension and raw reconciliation width are separate quantities (TODO #223): the deployed ring is 1024 while reconciliation extracts 256 bits.  The n=64 set exercises the small-ring path, where they coincide and k_raw is n bits.  key_bits here is that RAW width, not the width of a derived session key: the CLI's contributory KDF returns an HFSCX-256 digest and so derives 256 bits at either ring (TODO #228).",
   "deployed": {
     "description": "HKEX-RNL Ring-LWR key agreement at ring dimension 1024",
     "n": 1024,

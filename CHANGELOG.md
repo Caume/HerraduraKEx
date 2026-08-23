@@ -2,6 +2,51 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.0] - 2026-08-22
+
+### Fixed
+- **TODO #228: the HKEX-RNL session key had four different widths below n=256.**
+  `_rnl_contributory_kdf` returns an HFSCX-256 digest, so the derived key is 256
+  bits whatever the ring dimension is — but the CLIs labelled it with
+  `_rnl_key_bits(n)`, which is `n` for a small ring. Python then stored a full
+  256-bit digest under an `nbits=64` label, Go truncated the digest to match the
+  label, Java produced a third result, and C — which has only ever encoded
+  `KEYBITS` here — could not read a small ring at all. The four are now agreed:
+  the derived session key is **256 bits at every ring dimension**, which is what
+  C already did.
+- The fix is to stop conflating two quantities that only look like one. Each CLI
+  now has both: `_rnl_key_bits` / `rnlKeyBits` is the **raw reconciliation
+  width** — how many bits an n-coefficient ring can supply into the KDF — and
+  `_rnl_session_bits` / `rnlSessionBits` is the **derived session-key width**,
+  which is 256 unconditionally. They coincide at n >= 256, which is precisely
+  why nothing caught this: Python's small-ring tests only ever compared Python
+  against Python, and every cross-language test uses the default ring.
+- `KAT/pem/`'s n=64 artifacts are regenerated (`n64_alice_session.pem`,
+  `n64_hske_ct.pem`, `message_n64.bin`); the n=1024 artifacts are byte-identical,
+  so the deployed wire format is untouched. `CliTest/test_kat_pem.sh` now asserts
+  n=64 alongside n=1024 — 26 PASS / 0 FAIL across all four CLIs. The C CLI is
+  skipped at n=64, since it is compiled for a single `RNL_N` by design.
+- `CliTest/test_vectors.sh` and `CliTest/test_encrypt.sh` now use a 32-byte
+  message for their `--bits 64` HKEX-RNL round trips. The HSKE block there is
+  256 bits now, not 64, because the ring dimension no longer sets the derived
+  key width.
+
+### Changed
+- **BREAKING (MAJOR): what `kex --algo hkex-rnl --bits N` produces for N < 256**
+  (see `MIGRATING.md` §5). A `HERRADURA SESSION KEY` PEM from a small ring now
+  carries `nbits=256` and the full derived key, and an HSKE block under such a
+  key is 256 bits rather than N. Small rings are demo/interop only and were
+  never at a security claim, and no two CLIs agreed on the old behaviour anyway,
+  so there was no interoperable format to preserve — but this does change what
+  an existing `--algo` value produces, which is precisely the surface the 2.0.0
+  tag froze, so it takes the MAJOR bump. **n >= 256, including the deployed
+  n=1024, is byte-for-byte unchanged**; `KAT/pem/`'s n=1024 artifacts are
+  untouched across this release to demonstrate it.
+- No other protocol, PEM label, CLI flag, or `--algo` value changes in 3.0.0.
+  HKEX-RNL private, public, and RESPONSE PEMs are unchanged at every ring
+  dimension, small rings included — a RESPONSE PEM already stored the full
+  256-bit derived key; only the width the reader ascribed to it was wrong.
+
 ## [2.7.23] - 2026-08-22
 
 ### Added

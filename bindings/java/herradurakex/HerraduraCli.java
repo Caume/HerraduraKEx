@@ -137,14 +137,34 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
 
     /**
-     * Derived session-key width for an HKEX-RNL ring of dimension n (TODO #223).
+     * RAW reconciliation width for an HKEX-RNL ring of dimension n (TODO #223).
      * Reconciliation takes 2 bits from each of keyBits/2 coefficients, so a ring
      * of n coefficients supplies at most 2n key bits.  Since TODO #223 the ring
-     * dimension (RNLN = 1024) and the key width (256) are separate; small demo
-     * rings keep their historical n-bit key.
+     * dimension (RNLN = 1024) and the key width (256) are separate; a small demo
+     * ring can only supply n raw bits.
+     *
+     * <p>This is the width of K_raw — the contributory KDF's input — not the
+     * width of the session key it returns.  See {@link #rnlSessionBits(int)}.
      */
     private static int rnlKeyBits(int n) {
         return n >= 256 ? 256 : n;
+    }
+
+    /**
+     * DERIVED session-key width for HKEX-RNL: always 256, whatever the ring
+     * dimension (TODO #228).  {@code rnlContributoryKdf} returns a whole
+     * HFSCX-256 digest, and the ring only bounds how much raw entropy feeds
+     * into it.  Labelling the session key with {@code rnlKeyBits(n)} put a
+     * 256-bit key under an {@code nbits=64} label below n=256, where each CLI
+     * then reconciled the mismatch differently.  At n &gt;= 256 the two
+     * functions coincide, so the deployed n=1024 wire format is unchanged.
+     *
+     * <p>{@code n} is accepted and ignored so call sites read symmetrically
+     * with {@code rnlKeyBits}.  HKEX-GF is genuinely nbits-wide and must not
+     * use this.
+     */
+    private static int rnlSessionBits(int n) {
+        return 256;
     }
 
     private static String privLabel(String algo) {
@@ -465,7 +485,7 @@ public final class HerraduraCli {
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n), resp.hint);
             BigInteger kAInt = HerraduraNl.rnlContributoryKdf(kA, rnlKeyBits(our.n), our.nA, resp.nB);
-            writeString(out, Codec.encodeSessionKey(kAInt, rnlKeyBits(our.n)));
+            writeString(out, Codec.encodeSessionKey(kAInt, rnlSessionBits(our.n)));
         } else {
             throw new CliError("kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM, got "
                 + theirBlock.label);

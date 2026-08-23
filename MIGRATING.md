@@ -9,11 +9,17 @@ changelog entries.
 **Migrating to 2.0.0 itself introduces no new protocol or wire-format changes.** The
 2.0.0 tag marks the CLI/PEM surface as a stable baseline going forward — see
 [Migrating to 2.0.0](#migrating-to-200) below. Read the sections below for whichever of
-these four breaks fall between your current version and the version you're upgrading to.
-Three of them (1–3) predate 2.0.0; the fourth, the HKEX-RNL ring-dimension move in
-v2.7.19, is the only one after it, and it is the only one that leaves affected keys
-insecure rather than merely incompatible — if you are on any version before v2.7.19 and
-use HKEX-RNL, start at [section 4](#4-hkex-rnl-ring-dimension-256--1024-v2719).
+these five breaks fall between your current version and the version you're upgrading to.
+Three of them (1–3) predate 2.0.0. Of the two after it, the HKEX-RNL ring-dimension
+move in v2.7.19 is the only one that leaves affected keys insecure rather than merely
+incompatible — if you are on any version before v2.7.19 and use HKEX-RNL, start at
+[section 4](#4-hkex-rnl-ring-dimension-256--1024-v2719).
+
+The fifth is the reason the version is **3.0.0**. It is narrow in reach — it touches only
+HKEX-RNL at a non-default `--bits N` below 256, and n = 1024 output is byte-for-byte
+unchanged — but it changes what an existing `--algo` value produces, which is exactly
+the surface the 2.0.0 tag froze. A break of that surface is a MAJOR bump regardless of
+how few artifacts it reaches, so it gets one.
 
 ---
 
@@ -25,6 +31,7 @@ use HKEX-RNL, start at [section 4](#4-hkex-rnl-ring-dimension-256--1024-v2719).
 | [HFSCX-256 → HFSCX-256-DM](#2-hfscx-256--hfscx-256-dm-v190) | v1.9.0 | Hash digests, pre-hashed signatures, AEAD tags | Regenerate on v1.9.0+ |
 | [Stern parity-matrix (H) finalization](#3-stern-parity-matrix-h-finalization-v1935) | v1.9.35 | HPKS-Stern-F keys/signatures, HPKE-Stern-F ciphertexts | Regenerate on v1.9.35+ |
 | [HKEX-RNL ring dimension 256 → 1024](#4-hkex-rnl-ring-dimension-256--1024-v2719) | v2.7.19 | HKEX-RNL private/public keys, kex responses, ZKP-RNL proofs | Regenerate on v2.7.19+ — the old keys are not just incompatible, they are insecure |
+| [HKEX-RNL small-ring session-key width](#5-hkex-rnl-small-ring-session-key-width-v300) | v3.0.0 | `HERRADURA SESSION KEY` PEMs from `kex --algo hkex-rnl --bits N` with N < 256 | Redo the handshake on v3.0.0+; nothing to do at the default ring |
 
 ---
 
@@ -165,12 +172,63 @@ work). The derived session key is unchanged at 256 bits — the ring dimension a
 width are now separate quantities, where before they were the same number.
 
 **Small rings still work.** `--bits N` still overrides the ring dimension for interop
-and testing, and rings below 256 keep deriving an N-bit key as they always did. They
-were never at 128-bit security and still are not; `--bits` is not a supported way to
-opt out of this migration.
+and testing. They were never at 128-bit security and still are not; `--bits` is not a
+supported way to opt out of this migration.
+
+> **Correction (v3.0.0, TODO #228):** this paragraph originally added that rings below
+> 256 "keep deriving an N-bit key as they always did". That was never true of all four
+> CLIs — they disagreed four ways — and as of v3.0.0 it is true of none of them. The
+> derived session key is 256 bits at every ring dimension; see
+> [section 5](#5-hkex-rnl-small-ring-session-key-width-v300).
 
 **Not affected:** HCRED keeps its own ring at `n = 256`. It shares HKEX-RNL's ring
 arithmetic but its remaining parameters are tuned for that dimension, and its security is
 tracked separately; its PEM files are unchanged. The assembly, NASM, and Arduino targets
 run `RNL_N = 32` and are unchanged — they were demo-only before this migration and remain
 so.
+---
+
+## 5. HKEX-RNL small-ring session-key width (v3.0.0)
+
+**What changed:** For HKEX-RNL, the derived session key is now **256 bits at every ring
+dimension**. Before v3.0.0 the CLIs labelled it with the ring-dependent reconciliation
+width, so at `--bits N` for N < 256 the wire format claimed an N-bit key.
+
+**Why:** The two are different quantities and only coincide at n >= 256. Reconciliation
+extracts 2 bits from each of `key_bits/2` coefficients, so an n-coefficient ring bounds
+how much *raw* entropy the handshake can yield — that is genuinely n bits at a small
+ring. But the contributory KDF that turns that raw value into the session key is
+`HFSCX-256(K_raw || n_A || n_B)`, whose output is 256 bits regardless. Labelling the
+output with the input's width made the two numbers disagree, and each CLI reconciled the
+disagreement differently: Python wrote the full 256-bit digest under an `nbits=64`
+label, Go truncated the digest to 64 bits to match the label, Java did a third thing, and
+C — which had only ever encoded 256 here — could not read a small ring at all. Fixing it
+in C's direction is the only choice that changes nothing at the deployed ring.
+
+**What's incompatible:**
+
+- `HERRADURA SESSION KEY` PEM files produced by `kex --algo hkex-rnl --bits N` with
+  N < 256, and any HSKE ciphertext encrypted under such a key. The HSKE block width at a
+  small ring goes from N bits to 256.
+
+Nothing else. `HERRADURA HKEX-RNL PRIVATE KEY`, `PUBLIC KEY`, and `RESPONSE` PEMs are
+unchanged at every ring dimension, small rings included — a RESPONSE PEM already stored
+the full 256-bit derived key; only the width the reader *ascribed* to it was wrong.
+
+**Action required:** none at the default ring. `n = 1024` output is byte-for-byte
+identical before and after, and `KAT/pem/`'s n=1024 artifacts are unchanged across this
+release to demonstrate it. If you kept a small-ring session key or a ciphertext under
+one, redo the handshake on v3.0.0 or later:
+
+```
+herradura kex --algo hkex-rnl --our bob.pem --their alice_pub.pem --out bob_resp.pem
+herradura kex --algo hkex-rnl --our alice.pem --their bob_resp.pem --out alice_sk.pem
+```
+
+**Scope note:** `--bits N` below 256 is a demo and interop facility and was never at a
+security claim, so this is a correctness and interoperability fix, not a vulnerability.
+No two CLIs previously agreed on the old behaviour, so there was no interoperable format
+to preserve here — but it does change what an existing `--algo` value produces, and that
+is a break of the surface 2.0.0 froze whether or not anything depended on it. Hence
+3.0.0 rather than a patch release.
+

@@ -362,16 +362,40 @@ def _decode_rnl_pubkey(ints):
 
 
 def _rnl_key_bits(n):
-    """Derived session-key width for an HKEX-RNL ring of dimension n (TODO #223).
+    """RAW reconciliation width for an HKEX-RNL ring of dimension n (TODO #223).
 
     Reconciliation extracts 2 bits from each of key_bits//2 coefficients, so a
     ring of n coefficients can supply at most 2n key bits.  Since TODO #223 the
     ring dimension (RNLN = 1024) and the key width (KEYBITS = 256) are separate:
-    a production ring is far larger than the key needs, so the key is capped at
-    KEYBITS.  Small demo/test rings (--bits 32/64) keep their historical
-    behaviour of deriving an n-bit key, which is what their wire format encodes.
+    a production ring is far larger than the key needs, so the raw agreement is
+    capped at KEYBITS.  Small demo/test rings (--bits 32/64) can only supply n
+    raw bits, so that is what reconciliation extracts there.
+
+    This is the width of `K_raw` — the input to the contributory KDF, and the
+    width at which `K_raw` is serialised inside it.  It is NOT the width of the
+    session key that comes out; see `_rnl_session_bits` (TODO #228).
     """
     return KEYBITS if n >= KEYBITS else n
+
+
+def _rnl_session_bits(n=None):
+    """DERIVED session-key width for HKEX-RNL — always KEYBITS (TODO #228).
+
+    `_rnl_contributory_kdf` returns an HFSCX-256 digest, so the session key is
+    256 bits wide whatever the ring dimension is; the ring only bounds how much
+    raw entropy reconciliation can extract into the KDF's input.  Labelling the
+    session key with `_rnl_key_bits(n)` made the two numbers disagree below
+    n=256, where the CLIs then diverged four ways: Python stored a full 256-bit
+    digest under an `nbits=64` label, Go truncated the digest to match the
+    label, Java did a third thing, and C — which has only ever encoded KEYBITS
+    here — could not read a small ring at all.  All four now agree that the
+    answer is 256.  At n >= 256 the two functions coincide, so the deployed
+    n=1024 wire format is unchanged.
+
+    `n` is accepted and ignored so call sites read symmetrically with
+    `_rnl_key_bits(n)`.  HKEX-GF is genuinely nbits-wide and must not use this.
+    """
+    return KEYBITS
 
 
 def _rnl_derive_C(m_poly, s_poly, n):
@@ -705,12 +729,12 @@ def _decode_session_key(path):
         # raw makes `enc` use a 1024-bit width against a SESSION KEY PEM's 256,
         # breaking the cross-party round trip.
         K_int = ints[0]
-        return K_int, _rnl_key_bits(ints[3])
+        return K_int, _rnl_session_bits(ints[3])
     elif label == _LABEL_HYBRID_RESP:
         # K (already combined) is the first field; ints[3] is the ring dimension,
         # not the key width — see the RNL RESPONSE case above.
         K_int = ints[0]
-        return K_int, _rnl_key_bits(ints[3])
+        return K_int, _rnl_session_bits(ints[3])
     else:
         raise ValueError(f"Expected SESSION KEY or RNL RESPONSE PEM, got {label!r}")
 
@@ -752,7 +776,7 @@ def _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B, hint_used, h_pub, s
     # same number until TODO #223 moved the ring to 1024 while the derived key
     # stayed 256 bits; using n here writes 128 zero-padded bytes where C's
     # combiner writes KEYBYTES (32), so the two sides derive different keys.
-    data = (K1_int.to_bytes(_rnl_key_bits(n) // 8, 'big')
+    data = (K1_int.to_bytes(_rnl_session_bits(n) // 8, 'big')
             + K2_int.to_bytes(KEYBITS // 8, 'big')
             + C_A_packed.to_bytes(C_A_nb, 'big')
             + m_A_packed.to_bytes(m_A_nb, 'big')
@@ -1442,9 +1466,9 @@ def cmd_kex(args):
             n_b       = os.urandom(32)
             K_B_int   = _rnl_contributory_kdf(K_B.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
-                K_B_int = _hkex_rnl_sp800227_kdf(K_B_int, _rnl_key_bits(n), C_A, m_A, C_B, hint[:n // 2])
+                K_B_int = _hkex_rnl_sp800227_kdf(K_B_int, _rnl_session_bits(n), C_A, m_A, C_B, hint[:n // 2])
             else:
-                K_B_int = _apply_kdf(K_B_int, _rnl_key_bits(n))
+                K_B_int = _apply_kdf(K_B_int, _rnl_session_bits(n))
             _write_file(args.out, _encode_rnl_response(K_B_int, C_B, hint, n, n_b))
 
         elif their_label == _LABEL_RNL_RESP:
@@ -1460,10 +1484,10 @@ def cmd_kex(args):
             K_A_int = _rnl_contributory_kdf(K_A.uint, _rnl_key_bits(n), n_a, n_b)
             if kdf_mode == 'sp800227':
                 C_A     = _rnl_derive_C(m_A, s_A, n)
-                K_A_int = _hkex_rnl_sp800227_kdf(K_A_int, _rnl_key_bits(n), C_A, m_A, C_B, hint[:n // 2])
+                K_A_int = _hkex_rnl_sp800227_kdf(K_A_int, _rnl_session_bits(n), C_A, m_A, C_B, hint[:n // 2])
             else:
-                K_A_int = _apply_kdf(K_A_int, _rnl_key_bits(n))
-            _write_file(args.out, _encode_session_key(K_A_int, _rnl_key_bits(n)))
+                K_A_int = _apply_kdf(K_A_int, _rnl_session_bits(n))
+            _write_file(args.out, _encode_session_key(K_A_int, _rnl_session_bits(n)))
 
         else:
             sys.exit(
@@ -1496,7 +1520,7 @@ def cmd_kex(args):
             K1, hint    = _rnl_agree(s_B, C_A, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n))
             n_b         = os.urandom(32)
             K1_int      = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
-            K1_int      = _apply_kdf(K1_int, _rnl_key_bits(n))
+            K1_int      = _apply_kdf(K1_int, _rnl_session_bits(n))
 
             syn, K2_int = qcmdpc_encap(h_pub)
 
@@ -1524,7 +1548,7 @@ def cmd_kex(args):
 
             K1     = _rnl_agree(s_A, C_B, RNLQ, RNLP, RNLPP, n, _rnl_key_bits(n), hint_used)
             K1_int = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
-            K1_int = _apply_kdf(K1_int, _rnl_key_bits(n))
+            K1_int = _apply_kdf(K1_int, _rnl_session_bits(n))
 
             K2_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
             if K2_int is None:
@@ -1533,7 +1557,7 @@ def cmd_kex(args):
 
             K_int = _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B,
                                               hint_used, h_pub, syn, n, r_qc)
-            _write_file(args.out, _encode_session_key(K_int, _rnl_key_bits(n)))
+            _write_file(args.out, _encode_session_key(K_int, _rnl_session_bits(n)))
 
         else:
             sys.exit(

@@ -20,7 +20,6 @@ check_roundtrip() {
 
 # Reference plaintexts sized to match each block width
 printf 'ABCDEFGHIJKLMNOPQRSTUVWXYZ012345' > "$TMP/msg32.bin"  # 32 bytes (256-bit block)
-printf 'TESTMSG!' > "$TMP/msg8.bin"                            # 8 bytes (64-bit block)
 printf 'Test' > "$TMP/msg4.bin"                                # 4 bytes (32-bit block)
 
 # ---------------------------------------------------------------------------
@@ -59,11 +58,14 @@ $CLI kex --algo hkex-rnl --our "$TMP/alice_rnl.pem" --their "$TMP/bob_rnl_resp.p
 
 # Bob encrypts with K_B (RESPONSE PEM); Alice decrypts with K_A (SESSION KEY PEM).
 # If K_A = K_B the round-trip succeeds, validating the reconciliation property.
+# The block is 32 bytes, not 8, even at n=64: since TODO #228 the derived
+# session key is the contributory KDF's full HFSCX-256 output at every ring
+# dimension, so the ring size no longer sets the HSKE block width.
 $CLI enc --algo hske --key "$TMP/bob_rnl_resp.pem" \
-         --in "$TMP/msg8.bin" --out "$TMP/hkex_rnl_ct.pem"
+         --in "$TMP/msg32.bin" --out "$TMP/hkex_rnl_ct.pem"
 $CLI dec --algo hske --key "$TMP/alice_rnl_sk.pem" \
          --in "$TMP/hkex_rnl_ct.pem" --out "$TMP/hkex_rnl_plain.bin"
-check_roundtrip "hkex-rnl kex + hske enc/dec (cross-party)" "$TMP/msg8.bin" "$TMP/hkex_rnl_plain.bin"
+check_roundtrip "hkex-rnl kex + hske enc/dec (cross-party)" "$TMP/msg32.bin" "$TMP/hkex_rnl_plain.bin"
 
 # ---------------------------------------------------------------------------
 # Same flow at the DEFAULT ring dimension (n = RNLN = 1024, TODO #223).
@@ -84,8 +86,9 @@ $CLI kex --algo hkex-rnl --our "$TMP/bob_rnl_d.pem" --their "$TMP/alice_rnl_d_pu
 $CLI kex --algo hkex-rnl --our "$TMP/alice_rnl_d.pem" --their "$TMP/bob_rnl_d_resp.pem" \
          --out "$TMP/alice_rnl_d_sk.pem"
 
-# msg32.bin, not msg8.bin: the derived key is 256 bits here, so HSKE's block is
-# 32 bytes and a shorter message comes back zero-padded.
+# The derived key is 256 bits here, so HSKE's block is 32 bytes and a shorter
+# message would come back zero-padded.  Since TODO #228 that is true at n=64 as
+# well, which is why the small-ring case above uses the same 32-byte message.
 $CLI enc --algo hske --key "$TMP/bob_rnl_d_resp.pem" \
          --in "$TMP/msg32.bin" --out "$TMP/hkex_rnl_d_ct.pem"
 $CLI dec --algo hske --key "$TMP/alice_rnl_d_sk.pem" \

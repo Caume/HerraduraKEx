@@ -205,7 +205,13 @@ def rnl_kdf(k_raw: 'BitArray') -> str:
 
 
 def gen_hkex_rnl(n: int, tag: str) -> dict:
-    """One full two-party HKEX-RNL handshake at ring dimension n."""
+    """One full two-party HKEX-RNL handshake at ring dimension n.
+
+    `key_bits` is the RAW reconciliation width — how many bits an n-coefficient
+    ring can yield — matching the CLI's `_rnl_key_bits`.  It is not the width of
+    a derived session key; that is always 256 (TODO #228), which is why the
+    suite-level `session_key` below is only defined when the two coincide.
+    """
     key_bits = KEYBITS if n >= KEYBITS else n
     m_base = suite._rnl_m_poly(n)
     a_rand = det_rand_poly(b"HerraduraKEx-TODO226-a_rand-" + tag.encode(), n, RNLQ)
@@ -240,10 +246,13 @@ def generate_rnl() -> dict:
     return {
         "$schema": "HerraduraKEx HKEX-RNL KAT vectors (TODO #226)",
         "suite_reference": "Herradura cryptographic suite.py",
-        "note": ("Ring dimension and derived key width are separate quantities "
-                 "(TODO #223): the deployed ring is 1024 while the session key "
-                 "stays 256 bits.  The n=64 set exercises the small-ring path, "
-                 "where they coincide and the key is n bits."),
+        "note": ("Ring dimension and raw reconciliation width are separate "
+                 "quantities (TODO #223): the deployed ring is 1024 while "
+                 "reconciliation extracts 256 bits.  The n=64 set exercises the "
+                 "small-ring path, where they coincide and k_raw is n bits.  "
+                 "key_bits here is that RAW width, not the width of a derived "
+                 "session key: the CLI's contributory KDF returns an HFSCX-256 "
+                 "digest and so derives 256 bits at either ring (TODO #228)."),
         "deployed": gen_hkex_rnl(RNLN, "n1024"),
         "small_ring": gen_hkex_rnl(64, "n64"),
     }
