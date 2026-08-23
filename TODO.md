@@ -6,36 +6,6 @@
 
 ## Open items
 
-### #213: Closed-form O(log i) `fscx_revolve` — bit-exact, no primitive change
-
-Because `fscx_revolve(A, B, i) = M^i·A ⊕ T_i·B` with everything living in
-GF(2)[x]/(x^n + 1), the i sequential rotate-XOR rounds can be replaced by
-square-and-multiply on `m(x)^i` plus a closed form for `S_i` — O(log i)
-polynomial multiplications instead of O(i) rounds, producing byte-identical
-output. At the deployed parameters that is 64 (encrypt) and 192 (decrypt)
-rounds collapsing to ~7–8 multiplications, and `_m_inv`'s bootstrap
-(`fscx_revolve(1, 0, n/2 − 1)`) becomes a single inversion.
-
-FSCX and FSCX_REVOLVE keep their definitions exactly — this is an
-evaluation strategy, not a redefinition, and the KAT vectors in `KAT/` are
-the correctness oracle.
-
-Scope:
-- Benchmark the polynomial route against today's loop in C/Go/Python:
-  schoolbook (n²/w word ops) vs carryless-multiply intrinsics vs the
-  existing rotate loop; the rotate loop may well win at n=256 for small i,
-  and a negative result is a perfectly good outcome to record in
-  `benchmarks/`.
-- If it wins, note that it only applies to classical FSCX_REVOLVE. The NL
-  variants are non-linear by construction and stay iterative — which is
-  itself worth documenting, since it makes the cost gap between the
-  classical and NL protocols explicit.
-- Keep assembly/Arduino targets out of scope unless the win is large;
-  their n=32 parameters give little room.
-
-Status: **OPEN**
-
-
 ### #224: Explore a masked-step / hash-based HKEX PQC variant (MFSCX-KEX)
 
 Every HKEX variant shipped so far derives its hardness from one of two places:

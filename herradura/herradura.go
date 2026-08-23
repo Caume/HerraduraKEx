@@ -166,13 +166,102 @@ func Fscx(a, b *BitArray) *BitArray {
 		Xor(a.RotateLeft(-1)).Xor(b.RotateLeft(-1))
 }
 
-// FscxRevolve iterates Fscx steps times with B held constant.
-func FscxRevolve(a, b *BitArray, steps int) *BitArray {
-	result := a.Copy()
-	for i := 0; i < steps; i++ {
-		result = Fscx(result, b)
+// ── Closed-form FSCX_REVOLVE (TODO #213) ────────────────────────────────────
+//
+// FSCX and FSCX_REVOLVE keep their definitions exactly; this is an evaluation
+// strategy, not a redefinition, and it is bit-identical to the loop it replaces.
+//
+// Identify an n-bit BitArray with a polynomial in GF(2)[x]/(x^n + 1) (bit j <->
+// coefficient of x^j), so RotateLeft(v, s) = x^s * v. Then
+//
+//	Fscx(A, B) = M * (A + B),   M = 1 + x + x^(n-1)
+//
+// and iterating with B held constant telescopes to
+//
+//	FscxRevolve(A, B, i) = M^i * A + T_i * B,   T_i = M * S_i
+//
+// In characteristic 2 squaring is the Frobenius endomorphism, so M^(2^u) =
+// 1 + x^(2^u) + x^-(2^u) stays a THREE-term polynomial however large u gets.
+// Multiplying by it is two rotations and two XORs — one Fscx step with stride
+// 2^u instead of 1 — so no dense polynomial multiplication appears anywhere.
+// M^i costs one sparse step per set bit of i; S_i = sum_{j=0..i-1} M^j costs
+// one sparse step per bit of i plus one more per set bit. At n=256 that is 10
+// sparse steps for i = n/4 = 64 (encrypt) and 13 for r = 3n/4 = 192 (decrypt),
+// against 64 and 192 Fscx rounds. S_i and T_i are named as in
+// SecurityProofsCode/fscx_revolve_corank.py.
+//
+// Only classical FSCX_REVOLVE telescopes this way. The NL-FSCX variants are
+// non-linear by construction and stay iterative.
+
+// mPow2Mul returns v * M^(2^u) in GF(2)[x]/(x^n + 1), i.e.
+// v ^ ROL(v, s) ^ ROR(v, s) with s = 2^u mod n passed in already reduced. When
+// s == 0 the three terms collapse to 1 + 1 + 1 = 1 and v is returned unchanged.
+func mPow2Mul(v *BitArray, s int) *BitArray {
+	if s == 0 {
+		return v
 	}
-	return result
+	return v.Xor(v.RotateLeft(s)).Xor(v.RotateLeft(-s))
+}
+
+// onePlusMPow2Mul returns v * (1 + M^(2^u)) = ROL(v, s) ^ ROR(v, s). The
+// constant terms cancel, so this is sparser still: two rotations and one XOR.
+// s == 0 makes the factor 1 + 1 = 0.
+func onePlusMPow2Mul(v *BitArray, s int) *BitArray {
+	if s == 0 {
+		return &BitArray{size: v.size}
+	}
+	return v.RotateLeft(s).Xor(v.RotateLeft(-s))
+}
+
+// FscxRevolve iterates Fscx steps times with B held constant. Evaluated in
+// closed form — O(log steps) rotate-XOR steps, bit-identical to the O(steps)
+// loop (TODO #213).
+func FscxRevolve(a, b *BitArray, steps int) *BitArray {
+	// Below the measured crossover the plain loop is cheaper — the closed form
+	// pays a fixed setup a single Fscx round has not earned back. A tuning
+	// constant, not a semantic one: both branches produce identical bits. Go's
+	// crossover sits at 1 rather than C's 8 because a Go Fscx round allocates
+	// several big.Ints while a C round is 32 bytes of register work.
+	if steps <= 1 {
+		r := a.Copy()
+		for i := 0; i < steps; i++ {
+			r = Fscx(r, b)
+		}
+		return r
+	}
+	n := a.size
+
+	// M^steps * A, building the stride table 2^u mod n by doubling as we go so
+	// nothing overflows for a large step count.
+	acc := a.Copy()
+	var strides []int
+	s := 1 % n
+	for rem := steps; rem != 0; rem >>= 1 {
+		strides = append(strides, s)
+		if rem&1 == 1 {
+			acc = mPow2Mul(acc, s)
+		}
+		s = (s * 2) % n
+	}
+
+	// S_steps * B, from the recurrence
+	//
+	//	S_k(Y) = (1 + Y) * S_{k/2}(Y^2) + [k odd] * (Y^2)^(k/2)
+	//
+	// walked from the deepest level up. With Y = M^(2^u) at level u both
+	// multipliers are sparse, and k at level u is just steps >> u. sAcc carries
+	// S_k(Y) * B; q carries the correction term (Y^2)^(k/2) * B.
+	sAcc, q := &BitArray{size: n}, b.Copy() // S_0 = 0 ; M^0 * B = B
+	for u := len(strides) - 1; u >= 0; u-- {
+		sAcc = onePlusMPow2Mul(sAcc, strides[u])
+		if (steps>>uint(u))&1 == 1 {
+			sAcc = sAcc.Xor(q)
+			q = mPow2Mul(q, strides[u])
+		}
+	}
+
+	// T_steps * B = M * (S_steps * B)
+	return acc.Xor(mPow2Mul(sAcc, strides[0]))
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,64 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.1] - 2026-08-22
+
+### Changed
+- **TODO #213: FSCX_REVOLVE now evaluates in O(log i) rotate-XOR steps instead
+  of O(i), bit-for-bit identically.** FSCX and FSCX_REVOLVE keep their
+  definitions exactly — this is an evaluation strategy, not a redefinition, and
+  no key, ciphertext, signature, or PEM changes in any way.
+- The classical FSCX map is affine over GF(2), so in GF(2)[x]/(x^n + 1) with
+  M = 1 + x + x^(n-1), `FSCX(A, B) = M * (A + B)` and iterating with B held
+  constant telescopes to `FSCX_REVOLVE(A, B, i) = M^i * A + T_i * B`, where
+  T_i = M * S_i and S_i = sum_{j<i} M^j (the same decomposition
+  `fscx_revolve_corank.py` already used to measure what T_i fails to cover).
+- What makes it fast is narrower than the identity. TODO #213 anticipated
+  O(log i) *dense polynomial multiplications* and expected the rotate loop might
+  win at n=256 — schoolbook multiplication is n²/w word ops, which at these
+  sizes is no bargain. It is not needed: in characteristic 2 squaring is the
+  Frobenius endomorphism, so `M^(2^u) = 1 + x^(2^u) + x^-(2^u)` stays a
+  three-term polynomial however large u gets, and the factor the S_i recurrence
+  actually uses, `1 + M^(2^u) = x^(2^u) + x^-(2^u)`, is sparser still at two.
+  Every step is therefore two rotations and an XOR — one FSCX step with stride
+  2^u instead of 1 — and dense multiplication never appears.
+- At the deployed n=256 this is 10 sparse steps for i = n/4 = 64 (encrypt) and
+  13 for r = 3n/4 = 192 (decrypt), against 64 and 192 FSCX rounds. Measured on
+  one host: Python 44x / 102x, Go 12x / 29x, C 9x / 22x. A step count at or
+  above n costs *less* than its bit length suggests, since once 2^u is a
+  multiple of n the stride is 0 and that factor is trivial.
+- Below a measured, language-specific crossover the plain loop is still cheaper,
+  and each implementation falls back to it there: C below 8 steps, Go below 2,
+  Python never. A tuning constant, not a semantic one — both branches produce
+  identical bits, and no shipped call site lands in the fallback (every one uses
+  I_VALUE = n/4 or R_VALUE = 3n/4). It exists because `herradura.h` is a
+  header-only library that external code includes directly.
+- Applies to C (`herradura.h`), Go (`herradura/herradura.go`), and Python (the
+  suite, which the Python CLI imports) — the three the TODO scoped. **The
+  NL-FSCX variants are unchanged and stay iterative:** they are non-linear by
+  construction, nothing telescopes, and that is precisely where the cost gap
+  between the classical and NL protocols comes from. The Java port, the ARM
+  Thumb-2/NASM i386/Arduino targets, and the loop-based reference copies inside
+  `CryptosuiteTests/` are also unchanged — the last of these deliberately, since
+  they now serve as an independent oracle for the closed form.
+
+### Added
+- `SecurityProofsCode/fscx_revolve_closed_form.py` — the derivation, checked
+  rather than asserted: the telescoping identity against the loop, the Frobenius
+  argument with the two degenerate strides (s = n/2, where the outer terms
+  cancel, and s = 0, where all three collapse), bit-exactness, operation counts
+  instrumented from the shipped helpers so they cannot drift, and a measurement
+  that NL-FSCX violates the affinity the whole method needs.
+- `benchmarks/compare_fscx_revolve_closed_form.py` — loop vs closed form in all
+  three languages on the same host, building the C and Go harnesses on demand
+  and skipping cleanly when a toolchain is absent.
+
+### Fixed
+- `CLAUDE.md` said every `SecurityProofsCode/` script is "self-contained (no
+  imports from the suite)". About 20 of them already loaded the suite via
+  `importlib`, `fscx_revolve_corank.py` included; the line now says what is
+  actually true and why.
+
 ## [3.0.0] - 2026-08-22
 
 ### Fixed
