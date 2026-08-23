@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.20** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.21** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1247,5 +1247,159 @@ What this section does **not** establish:
 Recommended follow-ups: a MILP formulation with better scaling toward `n = 256`, and a
 fixed-key differential treatment, which for a construction with no key schedule is the
 open question this analysis surfaces rather than settles.
+
+---
+
+## 11.21 Seed-Masked FSCX Revolve (MFSCX) as a Key Exchange — a Negative Result (TODO #224)
+
+Every HKEX variant shipped so far draws its hardness from `GF(2^n)*` discrete log
+(HKEX-GF) or Ring-LWR (HKEX-RNL).  TODO #224 asked whether a third construction could
+lean on symmetric/hash-style hardness instead, using FSCX itself as the mixing
+function: add a per-step, seed-derived injection to the revolve loop and hope the
+resulting map is no longer the affine object that `hkex_classical_break.py` breaks.
+
+The proposed primitive, with `M = I xor ROL xor ROR` as today:
+
+```
+MFSCX_REVOLVE(A, B, i; S):
+    for j = 0 .. i-1:
+        A <- FSCX(A, B) xor u_j,      u_j = S_j and mask_j
+```
+
+in two regimes — *static* (`mask_j` published, identical every session) and *dynamic*
+(`mask_j` derived from the seed or from the running state `A`).
+
+It does not work, in either regime, and the reason is not a parameter choice.  This
+section records why, and what survives.  It is backed by
+`SecurityProofsCode/mfscx_kex_analysis.py`.
+
+### 11.21.1 A static mask only moves the constant term
+
+Measured at `n = 32/64/128/256` over 400 random triples each, with zero mismatches:
+
+$$\text{MFSCX-REVOLVE}(A, B, i; S) = M^i \cdot A \oplus T_i \cdot B \oplus \sigma_i(S)$$
+
+where `T_i = M . S_i` is the *unchanged* classical key map of §1.3.1 and
+
+$$\sigma_i(S) = \bigoplus_{j < i} M^{i-1-j} \cdot u_j$$
+
+is a constant in `(A, B)`.  Nothing in the linear part changed.  A static injection is
+an affine translation, and affine translations are exactly what the FSCX constructions
+already tolerate.
+
+### 11.21.2 The classical break generalises verbatim
+
+Running the honest two-party exchange with both parties using the published schedule,
+the cancellation identity `M . S_n = 0` still removes `B`, `A_2` and `B_2`, and Eve's
+recovery picks up one extra public constant:
+
+$$sk = S_{r+1} \cdot (C \oplus C_2) \oplus \kappa(S), \qquad \kappa(S) = \sigma_r(S') \oplus M^r \cdot \sigma_i(S)$$
+
+Over 10 000 sessions across the four widths: agreement 10 000/10 000, Eve's recovery
+10 000/10 000, at the same `O(n^2)` cost as the unmasked break.  `kappa` is public by
+definition of the static regime, and even if it were not, *both parties add the same
+`kappa`*, so it never enters the `C xor C2` relation that determines the session key.
+The static branch is closed.
+
+Making the P-box seed secret-but-shared does not rescue it either: the residue
+`sk xor S_{r+1}.(C xor C2)` took exactly one value across 2 000 sessions, so one known
+session key recovers `kappa` for all future ones.  A construction that needs a
+pre-shared secret is HSKE, not a key exchange.
+
+### 11.21.3 The mask does not repair the co-rank leak
+
+Because the injection contributes no columns to the key map, the TODO #210 co-rank
+table carries over unchanged — 30, 62 and 126 lost dimensions at `n = 64`, `128` and
+`256`, in both the encrypt and decrypt directions.  This is a second, independent
+reason to reject the static branch.
+
+One positive result does fall out.  The map from a *secret* subkey schedule
+`(u_0, ..., u_{i-1})` to `sigma_i` is surjective: `m(1) = 1`, so `M` is a unit in
+`GF(2)[X]/(X^n+1)` and every `M^{i-1-j}` is invertible (measured: `min_k rank(M^k) = n`
+for all `k < i`, at all three widths).  A secret per-step injection therefore *does*
+close the 126-dimensional plaintext leak §1.3.1 found in HSKE and HPKE.  That is a
+statement about the pre-shared-key setting — TODO #224's option 1 — not about key
+agreement.
+
+### 11.21.4 A dynamic mask destroys agreement
+
+With `mask_j` following the running state, the two parties inject different subkeys
+from step 0 onwards.  Over 2 000 trials per width, `sk_A = sk_B` in 0 cases, and the
+two derived values differ by `n/2` bits on average — the rate two unrelated values
+would show.  The homomorphism that made `C_A xor C_B` a shared quantity at all is gone
+along with the affinity.
+
+### 11.21.5 The middle ground does not exist
+
+`hkex_nonce_impossibility.py` proves that no *nonce* rescues HKEX.  The same algebra
+covers an entire injection schedule, because the injections reach the session key
+through a single accumulator:
+
+$$sk_A = M^r \cdot (C \oplus C_2) \oplus S_r \cdot N \oplus L_A, \qquad L_A = \bigoplus_{j < r} M^{r-1-j} \cdot u_{A,j}$$
+
+and symmetrically for Bob.  Correctness for all independently drawn key pairs forces
+`L_A = L_B`, and a value that is equal across two independent private inputs can depend
+only on what is common to them — the wire values `C` and `C2`.  Hence `L = h(C, C2)`,
+and the session key is once again a function of the transcript alone.
+
+The seed may enter `u_j` through any non-linear map whatsoever; the argument never
+differentiates it.  What matters is only whether `u_j` depends on per-party private
+data.  Both halves of the dichotomy are exhibited at `n = 128`:
+
+| schedule | agreement | `sk` equals the classical public formula |
+|---|---|---|
+| private `u_0`, with cancelling partner `u_1 = M . u_0` | 1000/1000 | 1000/1000 |
+| private `u_0`, no cancelling partner | 0/1000 | — |
+
+So an injection schedule is either invisible to the session key or fatal to agreement.
+"Non-linear in the seed while remaining commutative in the two parties' contributions",
+the middle ground TODO #224 asked about, does not name a third case: commutativity here
+*is* the requirement that the private part cancel, and a part that cancels contributes
+nothing.
+
+For completeness, the seed-derived schedule was also checked for orbit collapse, since
+a mask that lands in a short cycle silently degenerates to a static one.  It does not
+collapse — iterating NL-FSCX v1 gives mean cycle lengths of 146, 640 and 2264 at
+`n = 16`, `20` and `24` against a random-function expectation of 160, 642 and 2567.
+Orbit collapse is not what kills the dynamic branch; §11.21.4 and this subsection are.
+
+### 11.21.6 The hash-only ceiling, tabulated
+
+Impagliazzo-Rudich caps black-box key agreement relative to a random oracle at Merkle's
+quadratic gap, so "hash-based key exchange" is not a free substitution for a trapdoor —
+hash-based *signatures* work (HPKS-WOTS-F, HPKS-XMSS-F) because signing needs no
+trapdoor.  Honest work to reach a `2^128` adversary bound, at 32 bytes of puzzle:
+
+| setting | gap | honest oracle calls | wire bytes |
+|---|---|---|---|
+| classical honest, classical Eve | `N^2` | `2^64` | `2^69` |
+| classical honest, quantum Eve | `N^(13/12)` | `2^118` | `2^123` |
+| quantum honest, quantum Eve | `N^(3/2)` | `2^85` | `2^90` |
+
+The quadratic row is a ceiling, not merely the best known construction; plain Merkle
+falls to `N` against a Grover-equipped Eve, and the two quantum rows are the
+Brassard-Hoyer-Kalach-Kaplan-Laplante-Salvail constructions.  `2^64` 32-byte puzzles is
+roughly `5.9 x 10^8` TB per handshake.  The middle exponent has been nudged upward since
+2011 and may move again; nothing between 1 and 2 changes the conclusion.
+
+### 11.21.7 What survives
+
+| branch | verdict |
+|---|---|
+| static P-box | closed — affine, break generalises (§11.21.2), co-rank unchanged (§11.21.3) |
+| secret shared P-box | not a key exchange — `kappa` recovered from one known session key |
+| dynamic P-box | closed — agreement destroyed (§11.21.4), and §11.21.5 leaves no alternative schedule |
+| hash-only (Merkle) | provable and unshippable (§11.21.6) |
+| MFSCX as PRF/KDF inside a structured KEM | alive, and the only one |
+
+The surviving branch is the one that never needed a trapdoor: MFSCX as a KDF, ratchet,
+or error-sampler over an already-shared secret, or as the symmetric layer inside the
+QC-MDPC or Ring-LWR path, where hardness comes from the code or lattice and MFSCX only
+has to mix.  §11.21.3's surjectivity result is the useful piece there.
+
+TODO #224's success criterion was "either a construction with a written hardness
+assumption that is not restatable as *FSCX is affine*, or a clear negative result
+saying why seed-masked FSCX cannot give key agreement".  This is the second.  No
+`--algo` tag, PEM boundary label, or `spec/` entry follows from it.
 
 ---

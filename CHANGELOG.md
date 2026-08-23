@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.3] - 2026-08-23
+
+### Added
+- **TODO #224: MFSCX-KEX explored and closed — a negative result.** The item asked
+  whether a per-step, seed-masked FSCX revolve could carry a key exchange whose
+  hardness is symmetric/hash-style rather than a restatement of "FSCX is affine".
+  It cannot, in either mask regime, and the reason is structural rather than a
+  parameter choice. `SecurityProofsCode/mfscx_kex_analysis.py` (new, self-contained)
+  and SecurityProofs-7.md §11.21 record why.
+- **Static P-box: the classical break generalizes verbatim.** A published mask is an
+  affine translation — measured at four widths, `MFSCX_REVOLVE(A,B,i;S)` equals
+  `M^i.A xor T_i.B xor sigma_i(S)` with `T_i` the *unchanged* classical key map. Over
+  10 000 honest sessions across `n = 32/64/128/256`, agreement held 10 000/10 000 and
+  Eve recovered the session key 10 000/10 000 from the wire alone, at the same
+  `O(n^2)` cost as `hkex_classical_break.py`: `sk = S_(r+1).(C xor C2) xor kappa(S)`,
+  where `kappa` is public and, more to the point, is added identically by both parties.
+- **A secret-but-shared P-box is not a key exchange.** The residue
+  `sk xor S_(r+1).(C xor C2)` took exactly one value across 2 000 sessions, so a single
+  known session key recovers `kappa` for all future ones. That is HSKE's security
+  model, not HKEX's.
+- **Dynamic P-box: agreement is destroyed.** With the mask following the running state,
+  `sk_A == sk_B` in 0/2000 trials at every width, the two values differing by `n/2`
+  bits — the rate two unrelated values would show.
+- **The middle ground does not exist.** TODO #224's real question was whether some
+  schedule could be non-linear in the seed while remaining commutative in the two
+  parties' contributions. Generalizing `hkex_nonce_impossibility.py` from a single
+  nonce to a whole schedule answers it: the injections reach the session key only
+  through the accumulator `L = xor_j M^(r-1-j).u_j`, correctness forces `L_A = L_B`,
+  and a value equal across two independent private inputs can depend only on `C` and
+  `C2`. Both halves of the dichotomy are exhibited at `n = 128` — a private injection
+  with a cancelling partner keeps agreement 1000/1000 while leaving `sk` at exactly the
+  classical public formula 1000/1000; without the partner, agreement is 0/1000. A
+  schedule is either invisible to `sk` or fatal to agreement.
+- **One positive result, in the pre-shared-key setting.** The map from a *secret*
+  subkey schedule to `sigma_i` is surjective, because `m(1) = 1` makes `M` a unit in
+  `GF(2)[X]/(X^n+1)` and every `M^(i-1-j)` invertible (`min_k rank(M^k) = n` measured at
+  all three widths). So a secret per-step injection *does* close the 126-dimensional
+  plaintext leak TODO #210 found in HSKE/HPKE. That is TODO #224's option 1, not key
+  agreement.
+- **Two branches checked and ruled out as causes rather than assumed.** The static
+  mask leaves the TODO #210 co-rank table unchanged (30/62/126 lost dimensions at
+  `n = 64/128/256`, both directions), and the seed-derived schedule does *not* suffer
+  orbit collapse — mean cycle lengths of 146/640/2264 at `n = 16/20/24` against a
+  random-function expectation of 160/642/2567. The dynamic branch fails for the
+  algebraic reason above, not a degenerate one.
+- **The hash-only ceiling, tabulated rather than assumed.** Impagliazzo-Rudich caps
+  black-box key agreement at Merkle's quadratic gap: `2^64` honest oracle calls and
+  `2^69` wire bytes for a `2^128` classical bound, `2^118` against a quantum Eve
+  (`N^(13/12)`, Brassard et al.; plain Merkle falls to `N` under Grover), `2^85` even
+  with quantum honest parties (`N^(3/2)`). Provable and unshippable — now on the record.
+- Deliverable is the documented dead end, as the item specified. MFSCX survives only as
+  a PRF/KDF or error-sampler inside a structured PQC KEM, so **no `--algo` tag, PEM
+  boundary label, or `spec/` entry follows from this item** and no wire format changed.
+
 ## [3.0.2] - 2026-08-23
 
 ### Changed
