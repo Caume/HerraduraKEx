@@ -2,6 +2,50 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [2.7.23] - 2026-08-22
+
+### Added
+- **TODO #227: wire-format KAT artifacts (`KAT/pem/`).** Fourteen byte-exact PEMs —
+  private and public keys, a kex response, a session key, an HSKE ciphertext, and
+  the plaintext — that each CLI must **consume** and reproduce exactly.
+  `CliTest/test_kat_pem.sh` runs all four CLIs against them: 15 PASS / 0 FAIL at
+  the deployed ring.
+- Consumption is the point. TODO #226's vectors pin the suite layer; every bug
+  TODO #223 shipped lived in the CLI layer, and consumption is the direction they
+  broke. It is also the only direction that can be pinned at all, since `genpkey`
+  draws its secrets and nonces from `os.urandom` — here those are fixed inputs,
+  from the same deterministic expansion TODO #226 uses.
+- The `enc --algo hske --key <RESPONSE PEM>` check is the direct regression test
+  for the width bug fixed in TODO #223: a CLI that reads a RESPONSE PEM's ring
+  dimension as the derived key width encrypts at the wrong width and lands on a
+  different ciphertext.
+
+### Fixed
+- **The C CLI silently misparsed any HKEX-RNL PEM whose ring dimension differs
+  from its compiled `RNL_N`.** It never read the PEM's `n` field at all, and
+  `poly_unpack` right-aligns whatever it is given into an `RNL_N`-sized buffer, so
+  an n=64 private key produced an 8459-byte public key from a 674-byte input **with
+  exit status 0**. It now rejects the PEM with an explicit ring-dimension mismatch
+  message. Silent corruption is the worst available failure mode, and this was it.
+
+### Note
+- **TODO #227's KAT found two real defects on its first run**, which is the whole
+  argument for having it. The C misparse above is fixed here. The second is filed
+  as TODO #228: below n=256 the four CLIs disagree four ways about what an
+  HKEX-RNL session key is — Python writes the full 255-bit contributory-KDF output
+  under an `nbits=64` label, Go truncates to 64, Java produces a third result, and
+  C now rejects. They agree at n=1024, where the derived key is 256 bits and
+  matches the HFSCX-256 output width exactly, which is why nothing caught it:
+  Python's small-ring tests compare Python to Python, and every cross-language test
+  uses the default ring. Pre-existing, not a TODO #223 regression.
+- Only n=1024 is asserted by the test for now. The n=64 artifacts are generated and
+  checked in so TODO #228 has a ready reproducer; restoring the assertion is a
+  one-line change once the divergence is resolved.
+
+### Added (tracking)
+- TODO #228 (open): decide what an HKEX-RNL session key is at a small ring and make
+  all four CLIs agree.
+
 ## [2.7.22] - 2026-08-22
 
 ### Added

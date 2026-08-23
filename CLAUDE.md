@@ -52,8 +52,13 @@ KAT/                                                 — fixed Known-Answer-Test
                                and at n=64: m_blind, both (s,C) pairs, the transmitted
                                hint, K_raw and the session key (TODO #226).  Pins the
                                suite layer only — the CLI/PEM layer is TODO #227
-  generate_kat.py            — deterministic reference generator (Python) for both files;
-                               --check verifies currency
+  pem/                       — byte-exact wire-format artifacts: keys, a kex response,
+                               a session key and an HSKE ciphertext, which each CLI must
+                               CONSUME and reproduce (TODO #227).  Pins the CLI layer that
+                               hkex_rnl.json does not; n=1024 only, see TODO #228 for why
+  generate_kat.py            — deterministic reference generator (Python) for both JSON
+                               files; --check verifies currency
+  generate_pem_kat.py        — generator for pem/; --check verifies currency
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
 SecurityProofsCode/                                 — standalone Python proof/analysis scripts:

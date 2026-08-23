@@ -157,35 +157,40 @@ unknown and the next RNL-touching change could cross it.
 Status: **OPEN**
 
 
-### #227: Wire-format-level KAT vectors for the CLI layer
+### #228: HKEX-RNL session-key width diverges four ways below n=256
 
-TODO #226 added HKEX-RNL known-answer vectors, but they pin the *suite* layer:
-ring multiplication, rounding, reconciliation, hint packing, and the KDF. They do
-not pin the CLI layer — PEM/DER field layout, which field carries the ring
-dimension, or the key width a response PEM is read at.
+TODO #227's wire-format KAT found this on its first run. At the deployed ring
+(n=1024) all four CLIs agree byte-for-byte. Below n=256 they do not:
 
-That distinction is not academic. Every bug TODO #223 shipped and CI caught lived
-in the CLI layer, not the suite layer:
+| CLI | session key at n=64 |
+|---|---|
+| Python | full 255-bit contributory-KDF output, PEM declares `nbits=64` |
+| Go | truncated to 64 bits |
+| Java | a third result again (its `dec` on Python's PEM yields garbage) |
+| C | rejects the PEM — it is compiled for one `RNL_N` (now checked, TODO #227) |
 
-- `loadKey` (Go) and `_decode_session_key` (Python) read an RNL RESPONSE PEM's
-  ring-dimension field as the derived key width.
-- C's hybrid-rnl-stern response encoder wrote a hardcoded n=256 in that field.
-- Python's and Go's hybrid combiners serialised K1 at the ring dimension rather
-  than the key width, so all three hashed different transcripts.
+Root cause: `_rnl_contributory_kdf` always returns an HFSCX-256 output, so the
+derived key is 256 bits regardless of ring dimension — but the CLIs label the
+session key with `_rnl_key_bits(n)`, which is `n` for a small ring. Python then
+stores the full hash under a 64-bit label, Go truncates to match the label, and
+Java does something else again. At n >= 256 the two numbers coincide and the
+disagreement vanishes, which is why nothing caught it: Python's small-ring tests
+only ever compare Python against Python, and every cross-language test uses the
+default ring.
 
-#226's vectors would have caught none of these. Cross-language CLI tests did
-eventually, but only after two CI rounds, and only where a test happened to use
-default parameters — `test_encrypt.sh` pins `--bits 64`, where ring and key width
-coincide, and so was structurally blind to the whole class.
+This is pre-existing, not a TODO #223 regression — it predates the ring move and
+was merely unreachable.
 
-- Add fixed PEM artifacts to `KAT/`: a private key, a public key, a kex response,
-  and a session key, byte-for-byte, for `hkex-rnl` and `hybrid-rnl-stern`.
-- Verify by having each CLI *consume* the checked-in PEMs and reproduce the
-  expected session key, not merely by regenerating them — consumption is the
-  direction the bugs broke.
-- Cover both the default ring and a small ring, since the small-ring path is
-  exactly where ring dimension and key width coincide and hide this bug class.
-- Consider extending to the classical quartet's PEMs while the harness is being
-  built; the same argument applies, it simply has not bitten yet.
+- Decide what an HKEX-RNL session key *is* at a small ring. The defensible answer
+  is that it is always 256 bits, because the contributory KDF's output is, and
+  the ring dimension has no bearing on it — in which case `_encode_session_key`
+  should be given 256 rather than `_rnl_key_bits(n)` for this algorithm, and the
+  small-ring `nbits` field stops lying. Note HKEX-GF is different: there the key
+  really is `nbits` wide, so this cannot be fixed globally in the encoder.
+- Whatever is chosen, apply it to all four and extend `CliTest/test_kat_pem.sh`
+  to assert n=64 as well — the artifacts are already generated and checked in,
+  and the assertions are three lines away (restore `for tag in n1024 n64`).
+- Scope note: small rings are demo/test only and were never at a security claim,
+  so this is a correctness and interoperability defect, not a vulnerability.
 
 Status: **OPEN**

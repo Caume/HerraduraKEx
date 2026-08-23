@@ -202,6 +202,13 @@ static void seq_and_write(const uint8_t **it, const size_t *il, int ni,
  * PEM read helpers
  * ───────────────────────────────────────────────────────────────────────────── */
 
+/* HKEX-RNL PEMs carry their ring dimension explicitly, and this build is compiled
+ * for one value of RNL_N.  poly_unpack right-aligns whatever it is given into an
+ * RNL_N-sized buffer, so a PEM from a different ring would be silently misread as
+ * garbage rather than rejected — it produced a wrong public key with exit status 0
+ * before TODO #227 added this check.  Fail loudly instead. */
+static void rnl_require_n(const void *pk, int idx, const char *what);
+
 /* Read PEM from path or stdin; allocate DER buffer; parse DER SEQUENCE. */
 typedef struct {
     char     label[80];
@@ -211,6 +218,24 @@ typedef struct {
     size_t   vlens[16];
     int      n_items;
 } PemKey;
+
+static void rnl_require_n(const void *pkv, int idx, const char *what)
+{
+    const PemKey *k = (const PemKey *)pkv;
+    uint64_t got = 0;
+    size_t i;
+    if (k->n_items <= idx)
+        dief("%s: malformed HKEX-RNL PEM (no ring-dimension field)", what);
+    for (i = 0; i < k->vlens[idx] && i < 8; i++)
+        got = (got << 8) | k->vals[idx][i];
+    if (got != (uint64_t)RNL_N) {
+        fprintf(stderr, "%s: ring dimension mismatch — PEM declares n=%llu but this "
+                        "build is compiled for RNL_N=%d.  Regenerate the key at the "
+                        "deployed ring size (TODO #223 moved it to 1024).\n",
+                what, (unsigned long long)got, RNL_N);
+        exit(1);
+    }
+}
 
 static void pem_key_load(PemKey *k, const char *path)
 {
@@ -991,6 +1016,7 @@ static void cmd_pkey(int argc, char **argv)
     /* ── HKEX-RNL ─── */
     else if (kind == 0) {
         if (k.n_items < 3) die("pkey: malformed RNL private key");
+        rnl_require_n(&k, 2, "pkey: HKEX-RNL private key");
         rnl_poly_t s_poly, m_poly, C_poly;
         poly_unpack(s_poly, k.vals[0], k.vlens[0], 4);
         poly_unpack(m_poly, k.vals[1], k.vlens[1], 4);
@@ -1339,6 +1365,8 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 2) die("kex rnl: malformed their public key");
+            rnl_require_n(&our,   2, "kex rnl: our private key");
+            rnl_require_n(&their, 2, "kex rnl: their public key");
 
             rnl_poly_t s_B, m_A, C_A, C_B, ms;
             poly_unpack(s_B, our.vals[0],   our.vlens[0],   4);
@@ -1428,6 +1456,8 @@ static void cmd_kex(int argc, char **argv)
             PemKey our; pem_key_load(&our, our_path);
             if (our.n_items < 2)   die("kex rnl: malformed our private key");
             if (their.n_items < 5) die("kex rnl: malformed RNL response");
+            rnl_require_n(&our,   2, "kex rnl: our private key");
+            rnl_require_n(&their, 3, "kex rnl: RNL response");  /* n is field 3 here */
 
             rnl_poly_t s_A, C_B;
             poly_unpack(s_A, our.vals[0],   our.vlens[0],   4);
