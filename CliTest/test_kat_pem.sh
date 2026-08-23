@@ -31,6 +31,14 @@ K="KAT/pem"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# TODO #229: the compiled CLIs are no longer tracked in git, so the not-built
+# skips below are live.  `hkx_require_asserted` at the end keeps an all-skipped
+# run from exiting 0.  Note the two skip kinds are different in kind: the
+# `c n64` skip is a permanent property of the C build (a single compiled RNL_N)
+# and is expected on every run, while a not-built skip means this run covered
+# less than it should have.
+. "$(dirname "$0")/lib_build.sh"
+
 pass=0; fail=0
 check() {  # check <name> <expected-file> <actual-file>
     if cmp -s "$2" "$3"; then
@@ -52,8 +60,8 @@ python3 KAT/generate_pem_kat.py --check || { echo "FAIL: KAT/pem is stale"; exit
 for lang in py c go java; do
     case "$lang" in
         py)   CLI="$PY_CLI" ;;
-        c)    CLI="$C_CLI";    [ -x "$C_CLI" ]  || { skip "C CLI"    "not built"; continue; } ;;
-        go)   CLI="$GO_CLI";   [ -x "$GO_CLI" ] || { skip "Go CLI"   "not built"; continue; } ;;
+        c)    CLI="$C_CLI";    hkx_available c  || { skip "C CLI"  "$(hkx_why c)";  continue; } ;;
+        go)   CLI="$GO_CLI";   hkx_available go || { skip "Go CLI" "$(hkx_why go)"; continue; } ;;
         java) CLI="$JAVA_CLI"; [ -f bindings/java/herradurakex/HerraduraCli.class ] \
                   || { skip "Java CLI" "not compiled"; continue; } ;;
     esac
@@ -110,4 +118,5 @@ done
 
 echo
 echo "Results: $pass PASS / $fail FAIL"
+hkx_require_asserted "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

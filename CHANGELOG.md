@@ -2,6 +2,63 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.2] - 2026-08-23
+
+### Changed
+- **TODO #229: the compiled binaries are no longer tracked in git.** Four
+  artifacts came out of the index — `HerraduraCli/herradura_cli`,
+  `HerraduraCli/herradura_cli_go`, `Herradura cryptographic suite_arm`, and
+  `CryptosuiteTests/Herradura_tests_arm` — and into `.gitignore`, which already
+  excluded every other build output and carried a comment explaining that these
+  four were deliberately exempt. They no longer are.
+- Two reasons, one measurable. The Go CLI's blobs alone accounted for **55 MiB
+  of a 164 MiB `.git`**: a 3.5 MB Go binary recompresses poorly against its
+  predecessor and every rebuild committed a fresh copy, 16 times so far. The
+  other, unmeasurable: a tracked binary is whatever toolchain the last committer
+  happened to run, not a reproducible build, and it put an unreadable binary
+  delta in the diff of every change that touched `herradura.h` or the Go package.
+- **No CI job consumed them.** `arm-i386` runs `./build_arm.sh` from source after
+  installing the cross-compiler; the `native-*` jobs build their own CLIs.
+- **A fresh clone must now build before running the C/Go CLI tests.** Run
+  `./build_c.sh` and `./build_go.sh` first; `docs/TUTORIAL.md` now says so where
+  it introduces the three CLIs.
+
+### Fixed
+- **The unsafe skip semantics that untracking would otherwise have exposed.**
+  Five `CliTest` scripts carried the same copy-pasted guard —
+  `echo "SKIP: $bin not built ..."; exit 0` — which reports **success from a run
+  that asserted nothing**. It never fired before, because a fresh clone always
+  had the binaries; after untracking, running `bash CliTest/test_aead.sh` before
+  `./build_c.sh` would have produced a green result with no coverage behind it.
+  CI was never affected (every job builds first), so this would have been a
+  silent *local* regression.
+- New `CliTest/lib_build.sh` holds the shared policy, alongside `lib_dfr.sh`:
+  a run that asserts nothing never exits 0, and "you forgot to build" is
+  distinguished from "you cannot build" — if `gcc` is installed and the binary
+  is missing, the message says which build script to run. Exit code 2 marks
+  "did not run" as distinct from 1, "assertions failed". `HKX_ALLOW_SKIP=1`
+  overrides, opt-in on purpose.
+- `test_aead.sh`, `test_wots.sh`, `test_duplex.sh`, `test_rand.sh` and
+  `test_ring.sh` now call `hkx_require_built c go`. `test_kat_pem.sh` keeps its
+  per-language skips — including the permanent, expected `c n64` one, which is a
+  property of the C build's single compiled `RNL_N` and not a coverage gap — but
+  gains `hkx_require_asserted`, so an all-skipped run cannot read as a pass.
+- `test_cross_lang_matrix.sh` announces which languages are absent and why, and
+  says when it is running as a 2- or 3-way matrix rather than the full 4-way
+  one. A degraded run still prints a wall of PASS lines, so an unannounced
+  absence looked like full coverage. Fewer than two CLIs is now a failure rather
+  than an `exit 0`.
+- New `native-interop` CI step, "Skip guard", fails if the old copy-pasted block
+  is ever pasted back in — the same shape as the existing coverage and DFR
+  guards.
+
+### Note
+- Rewriting history to reclaim the 55 MiB (`filter-repo`/BFG) was considered and
+  rejected: it changes every commit hash, breaks existing clones and PR
+  references, and invalidates `TODO_DONE.md`'s implicit link to its commits.
+  Untracking stops the growth at no cost; reclaiming the past is a separate
+  decision.
+
 ## [3.0.1] - 2026-08-22
 
 ### Changed

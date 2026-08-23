@@ -11355,3 +11355,74 @@ Scope:
   their n=32 parameters give little room.
 
 Status: **DONE v3.0.1** — shipped in C, Go, and Python; bit-exact (exhaustive at n=8, 180k random cases in C, plus the KAT vectors as the oracle). The win is larger than this entry expected because no dense polynomial multiplication is needed at all: in characteristic 2 every M^(2^u) is still a three-term polynomial (Frobenius), so each step is two rotations and an XOR. At the deployed parameters, 10 sparse steps for i=64 and 13 for r=192 against 64 and 192 rounds — measured 44x/102x (Python), 12x/29x (Go), 9x/22x (C). Below a measured crossover each implementation falls back to the loop (C < 8 steps, Go < 2, Python never). NL variants stay iterative, as anticipated; assembly/Arduino left out of scope.
+
+### #229: Untrack the built binaries and gitignore them
+
+Four compiled artifacts are checked into the repository:
+
+| Path | Revisions | Built by |
+|---|---|---|
+| `HerraduraCli/herradura_cli_go` | 16 | `build_go.sh` |
+| `HerraduraCli/herradura_cli` | 18 | `build_c.sh` |
+| `Herradura cryptographic suite_arm` | 6 | `build_arm.sh` |
+| `CryptosuiteTests/Herradura_tests_arm` | 6 | `build_arm.sh` |
+
+`.gitignore` already excludes every *other* build output — the `_c`/`_go` suite and
+test binaries, the `_i386` pair, the whole `_asan` set — and carries a comment
+explaining that these four are deliberately absent because they are tracked. This
+item removes that exception.
+
+**Why.** Two reasons, one measurable and one not.
+
+- Size: the `herradura_cli_go` blobs alone account for **55 MiB** of a 164 MiB
+  `.git`, because a 3.5 MB Go binary re-compresses poorly against its predecessor
+  and every rebuild commits a fresh copy. The C CLI adds 18 more revisions of a
+  208 KB object.
+- Provenance: a tracked binary is whatever toolchain the last committer happened
+  to run, not a reproducible build. Any TODO that touches `herradura.h` or the Go
+  package now produces a binary delta in its diff that no reviewer can read or
+  verify, and which is stale the moment someone else rebuilds. TODO #213's merge
+  is the immediate example: two binary files changed alongside the source.
+
+**Nothing in CI depends on them.** `arm-i386` runs `./build_arm.sh` from source
+after installing `gcc-arm-linux-gnueabi`; the `native-c`, `native-go`, and
+`native-interop` jobs build their own CLIs. The tracked copies are used by no
+workflow step.
+
+**The one real hazard, and it is not the untracking.** Six `CliTest/*.sh` scripts
+guard on `[ -x "$C_CLI" ]` / `[ -x "$GO_CLI" ]` and `skip` with reason
+`"not built"` when the binary is missing. Today a fresh clone has those binaries,
+so the guard never fires locally. After untracking, a developer who runs
+`bash CliTest/test_kat_pem.sh` before `./build_c.sh` gets `SKIP` lines and a
+`0 FAIL` exit status — a green result that asserted nothing. CI is unaffected
+(it always builds first), so this would be a silent *local* regression in
+coverage. Resolve it as part of this item, not after:
+
+- decide whether a missing binary should stay a `skip` or become a hard failure.
+  Preference: keep `skip` for scripts where the binary is one of several
+  languages being compared, but make the skip loud — print a one-line
+  `run ./build_c.sh first` hint — and have the script exit non-zero if *every*
+  language it tests was skipped, so an all-skip run can never read as a pass.
+- `CliTest/test_kat_pem.sh` deserves particular care: it already has a legitimate
+  `skip` for `c n64` (the C CLI is compiled for a single `RNL_N`). That one must
+  keep passing while a not-built skip must not.
+
+**Plan.**
+
+1. `git rm --cached` the four paths; add them to `.gitignore` and rewrite the
+   comment block that currently explains why they were excluded from it.
+2. Fix the skip-guard semantics above across all six scripts.
+3. Grep `docs/TUTORIAL.md`, `README.md`, `Dockerfile`, `docker-entrypoint.sh`,
+   and `Mcp/` for anything that invokes `./HerraduraCli/herradura_cli{,_go}`
+   without a preceding build step, and add one where it is missing.
+4. Note in `CHANGELOG.md` that a fresh clone must now build before running the
+   C/Go CLI tests.
+
+**Explicitly out of scope: rewriting history.** Deleting the blobs from past
+commits (`filter-repo`/BFG) would reclaim the 55 MiB but changes every commit
+hash, breaks every existing clone and every PR reference, and invalidates the
+`TODO_DONE.md` archive's implicit link to its commits. Untracking going forward
+costs nothing and stops the growth; reclaiming the existing history is a separate
+decision that should be made on its own merits, if ever.
+
+Status: **DONE v3.0.2** — four binaries untracked and gitignored; the skip-guard hazard the untracking exposed fixed in the same change via the new CliTest/lib_build.sh, plus a CI guard against its recurrence.
