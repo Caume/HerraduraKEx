@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.21** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.22** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1401,5 +1401,168 @@ TODO #224's success criterion was "either a construction with a written hardness
 assumption that is not restatable as *FSCX is affine*, or a clear negative result
 saying why seed-masked FSCX cannot give key agreement".  This is the second.  No
 `--algo` tag, PEM boundary label, or `spec/` entry follows from it.
+
+---
+
+## 11.22 Every Step Function That Admits HKEX Agreement Is Broken (TODO #230)
+
+TODO #224 closed the seed-masked revolve; TODO #230 asked whether the same result
+extends to a substitution layer.  It does — but not by extension.  #224's
+impossibility theorem quantifies over *additive* injections, values `u_j` that enter
+the step by XOR and reach the session key only through the accumulator
+`L = xor_j M^(r-1-j).u_j`.  That linear factoring is the whole engine of the proof,
+and an S-box does not factor out of the iteration at all, so #224 is **silent** on the
+S-box rather than dispositive.  Measured: the class #224 covers is exactly the set of
+step functions with `G(A,B) xor G(A',B)` independent of `B`, which every additive
+injection satisfies on 100% of random triples and a nibblewise S-box fails on 100%.
+
+What closes the S-box case is a stronger statement that needs no linearity, no
+affineness, and no assumption about the step function whatsoever.  It is backed by
+`SecurityProofsCode/sbox_kex_extension.py`.
+
+### 11.22.1 The characterization theorem
+
+Let the public phase iterate `F_B` and the derivation phase iterate `G_B` — both
+public — with `i + r = n`.  HKEX-style agreement is the identity
+
+$$G_B^r\bigl(F_{B_2}^i(A_2)\bigr) \oplus A = G_{B_2}^r\bigl(F_B^i(A)\bigr) \oplus A_2$$
+
+required for all `A, B, A_2, B_2`.
+
+**Theorem.** Agreement holds **if and only if** for every pair the composite
+`G_B^r . F_B2^i` is the translation `x -> x xor d(B,B2)`.
+
+*Proof.* Fix `(B, B2)` and write `P(A2)`, `Q(A)` for the two composites.  The identity
+says `P(A2) xor A2 = Q(A) xor A` for all `A, A2`.  The left side depends only on `A2`
+and the right only on `A`, so both equal a constant `d(B,B2)`; exchanging the parties'
+roles gives `d(B,B2) = d(B2,B)` for free. □
+
+Four more lines extract the structure.  Fix any `B0` and set `Psi = (G_B0^r)^{-1}`.
+The theorem at `B = B0` gives `F_B2^i(x) = Psi(x xor e(B2))` with `e(B2) = d(B0,B2)`.
+Substituting that back into the general case gives `G_B^r(y) = Psi^{-1}(y) xor g(B)`
+with `e(B2) xor d(B,B2) = g(B)` independent of `B2`, and symmetry of `d` then forces
+`g(B) = e(B) xor c` for a single constant `c`.  Hence `Psi^{-1}(C) = A xor e(B)` and
+`Psi^{-1}(C2) = A2 xor e(B2)`, so
+
+$$sk = G_B^r(C_2) \oplus A = A \oplus A_2 \oplus e(B) \oplus e(B_2) \oplus c = \Psi^{-1}(C) \oplus \Psi^{-1}(C_2) \oplus c$$
+
+**Corollary (universal attack).** For any construction of this shape,
+
+$$sk = G_{B_0}^r(C) \oplus G_{B_0}^r(C_2) \oplus c, \qquad c = G_{B_0}^r\bigl(F_{B_0}^i(0)\bigr)$$
+
+for an eavesdropper's arbitrary choice of `B0`.  Cost: `2r + i` applications of the
+public step function, no private value and no algebraic structure required.
+
+The content of the theorem is that agreement forces the entire key-dependence of the
+`i`-fold iterate into an input XOR translation — the family `{F_B^i}` lies in a single
+coset of the translation group.  That is the precise sense in which any such
+construction is a disguised XOR homomorphism, and it is why the hardness assumption is
+always vacuous.
+
+Verified at `n = 32/64/128/256`, 300 sessions each: agreement 300/300, the composite is
+a translation 50/50, the universal attack recovers `sk` 300/300, and its output equals
+`hkex_classical_break.py`'s `S_(r+1).(C xor C2)` 300/300 — while never evaluating `M`
+as a linear map.  §1.3.1, `hkex_nonce_impossibility.py` and §11.21 are all special
+cases: `Psi^{-1} = M^r`, the nonce as a public step parameter, and the additive
+injection respectively.
+
+### 11.22.2 A linear S-box: not a new construction, but a better co-rank
+
+With `L` linear the step becomes `(L.M).(A xor B)`, i.e. FSCX with `M` replaced by
+`M' = L.M`.  Writing `Y = M' + I`, the agreement conditions `M'^n = I` and
+`M'.S'_n = 0` are together equivalent to `Y^(n-1) = 0`, and for `i` a power of two the
+binomial sum collapses by Lucas' theorem to `S'_i = Y^(i-1)`, giving
+
+$$\text{co-rank}(T_i) = \dim \ker Y^{2^{v_2(i)} - 1}$$
+
+This recovers §1.3.1's `2(2^{v_2(i)} - 1)` as the special case `v(M+I) = 2`.  **The
+factor 2 in TODO #210's closed form is exactly the valuation of `M+I`** — a property
+of this particular `M`, not of the construction — and a different linear box removes
+it.  Measured at `n = 256`, `i = 64`:
+
+| Jordan type of `Y` | agreement | co-rank `T_i` | co-rank `T_r` |
+|---|---|---|---|
+| single block `(n)` | **no** | 63 | 63 |
+| `(n-1, 1)` | yes | **64** | 64 |
+| `(n-2, 2)` | yes | 65 | 65 |
+| `(n/2, n/2)` | yes | 126 | 126 |
+| classical `M` | yes | 126 | 126 |
+
+The first two rows must be read together.  A regular nilpotent `Y` reaches co-rank 63,
+but there `Y^(n-1) != 0`, so it **fails agreement**: the unconstrained optimum is
+unreachable by any protocol.  The constrained optimum is Jordan type `(n-1, 1)` at
+exactly 64, and since `dim ker Y^(i-1) = sum_j min(lambda_j, i-1)` is minimized by the
+fewest and largest blocks, 64 is a floor rather than the best found by search.
+
+So a linear box takes the plaintext leak from **126 to 64 of 256** — a real
+improvement, and still never 0, because `Y` is nilpotent and `Y^(i-1)` is therefore
+singular for every even `i`.  No linear box repairs the leak; none makes the exchange
+secure either, since §11.22.1 applies verbatim (agreement 100/100, attack 100/100 at
+the `(n-1,1)` box).  This is a finding about HSKE and HPKE, not a licence to change
+them.
+
+### 11.22.3 Non-linear S-boxes: unrelated, not noisy
+
+An affine box is the linear case plus §11.21's `kappa`, which both parties add
+identically — agreement and the attack are unchanged for a zero, random or all-ones
+constant.
+
+For genuinely non-linear boxes, the measurement that matters is not the pass/fail rate
+but the *distance distribution*.  A pass/fail count cannot tell a dead construction
+from a noisy one: HKEX-RNL also fails exact agreement and is rescued by Peikert
+reconciliation (§11.4.2), which needs a small Hamming distance to work with.
+
+| box (applied nibblewise) | agreement, `n = 64` | mean HW | agreement, `n = 128` | mean HW |
+|---|---|---|---|---|
+| identity (linear) | 300/300 | 0.0 | 300/300 | 0.0 |
+| 1 transposition | 0/300 | 32.3 | 0/300 | 64.3 |
+| 2 transpositions | 0/300 | 31.5 | 0/300 | 64.5 |
+| 4 transpositions | 0/300 | 32.1 | 0/300 | 64.1 |
+| PRESENT 4-bit S-box | 0/300 | 32.1 | 0/300 | 63.8 |
+
+A *single transposition* inside one 4-bit box — the smallest departure from linearity
+that exists — already saturates the `n/2` random-function baseline and is
+indistinguishable from a real S-box.  The two derived values are unrelated, not noisy,
+so there is nothing for reconciliation to reconcile.  The one branch that could have
+survived this item is measured shut rather than assumed shut.  A `B`-keyed box, which
+additionally destroys the shared-box symmetry, behaves the same way.
+
+### 11.22.4 The conjecture was wrong, and the theorem does not need it
+
+TODO #230 conjectured that an agreeing step function must be affine over an abelian
+group.  It is **false**.  For the family `G(A,B) = S(A xor B)` with `i = 1`, the
+characterization collapses to the single equation `(S.tau_B)^n = tau_c` with one `c`
+for every `B`, verified exhaustively to be equivalent to full agreement — which makes
+the sweep cheap enough to be genuinely exhaustive:
+
+- all permutations at `n = 2` (24) and `n = 3` (40 320) — `n = 3` admits nothing at
+  all, affine included, so it is a degenerate width rather than evidence;
+- all 322 560 affine permutations at `n = 4`, of which 25 216 agree;
+- all 3 025 920 boxes one transposition away from an agreeing affine box at `n = 4`.
+
+That last family yields **15 360 distinct non-affine permutations that admit full
+agreement**, confirmed over all 65 536 tuples for a 40-box sample.  The smallest is the
+identity with `0` and `1` swapped.  A sample of 200 000 uniform random permutations at
+`n = 4` yields none, so the agreeing set is sparse — but it is not contained in the
+affine boxes.
+
+The universal attack wins on every one of them.  Affineness was simply the wrong
+invariant; the translation-coset condition is the right one, these boxes satisfy it,
+and that is what the theorem is stated in terms of.  The conjecture turning out false
+costs the item nothing, which is the point of not having built the argument on it.
+
+### 11.22.5 Scope
+
+All four sub-cases the item named are closed, and closed by one theorem rather than
+four measurements.  What the theorem does *not* say: it constrains constructions of the
+HKEX template — two parties, one round each, agreement by exact equality.  It says
+nothing about multi-round protocols, about constructions whose agreement is approximate
+by design (HKEX-RNL, where reconciliation is part of the specification, not a rescue),
+or about hardness that lives outside the step function (the lattice and code paths).
+Those remain exactly as analysed elsewhere in this document.
+
+No `--algo` tag, PEM boundary label or `spec/` entry follows from this item.
+§11.22.2's co-rank result is a finding about HSKE/HPKE and would need its own item,
+with wire-format and `MIGRATING.md` analysis, before anything shipped.
 
 ---
