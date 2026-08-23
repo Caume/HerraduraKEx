@@ -29,6 +29,12 @@ CliTest/                                             (59 scripts; this list is a
   test_kat_vectors.sh                               — checks KAT/ is current + cross-verified (TODO #190)
   lib_dfr.sh                                        — shared QC-MDPC DFR retry policy sourced by
                                                        every script that decapsulates (TODO #221)
+  lib_build.sh                                      — shared "is the CLI binary built?" policy
+                                                       (TODO #229).  The compiled CLIs are not
+                                                       tracked in git, so run ./build_c.sh and
+                                                       ./build_go.sh before the C/Go CliTest
+                                                       scripts; a run that asserts nothing now
+                                                       exits 2 instead of 0
   test_java_bindings.sh                             — builds + runs bindings/java/ (TODO #192)
   test_java_codec.sh                                — Java PEM/DER codec cross-check vs
                                                        Python CLI, both directions (TODO #197)

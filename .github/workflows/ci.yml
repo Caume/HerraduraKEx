@@ -155,6 +155,29 @@ jobs:
           done
           exit $missing
 
+      - name: Skip guard — a missing CLI binary must never exit 0
+        run: |
+          # TODO #229. The compiled CLIs are no longer tracked in git, so the
+          # not-built guards in these scripts are live for the first time. Five
+          # scripts carried the same copy-pasted block:
+          #
+          #     echo "SKIP: $bin not built (run build_c.sh / build_go.sh)"; exit 0
+          #
+          # which reports success from a run that asserted nothing. CI never saw
+          # it (every job builds first), so it was a silent local coverage loss.
+          # The replacement lives in CliTest/lib_build.sh and exits 2. This guard
+          # stops the block from being pasted back in.
+          cd CliTest
+          missing=0
+          for f in *.sh; do
+            if grep -qF 'not built (run build_c.sh' "$f"; then
+              echo "UNSAFE SKIP: $f exits 0 on a missing CLI binary — use lib_build.sh's" \
+                   "hkx_require_built / hkx_require_asserted instead (TODO #229)"
+              missing=1
+            fi
+          done
+          exit $missing
+
       - name: DFR guard — every CliTest script that decapsulates must carry the retry policy
         run: |
           # TODO #221. The QC-MDPC BGF decoder behind hpke-stern-kem (and the KEM

@@ -13,11 +13,11 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 PASS=0; FAIL=0
 
-for bin in "$C" "$GO"; do
-    if [ ! -x "$bin" ]; then
-        echo "SKIP: $bin not built (run build_c.sh / build_go.sh)"; exit 0
-    fi
-done
+# TODO #229: the compiled CLIs are no longer tracked in git, so this guard is
+# live.  It exits non-zero rather than 0 — a skipped run asserted nothing and
+# must not read as a pass.  See CliTest/lib_build.sh.
+. "$(dirname "$0")/lib_build.sh"
+hkx_require_built c go
 
 # Three ring members (hpks-stern keypairs) + an outsider
 for m in 0 1 2; do

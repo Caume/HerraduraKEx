@@ -50,9 +50,22 @@ for l in py c go java; do
     [ -n "${CLI[$l]:-}" ] && LANGS+=("$l")
 done
 echo "Languages under test: ${LANGS[*]}"
+# TODO #229: say out loud which languages are absent and why.  This script is a
+# 4-way compatibility matrix; degrading to 2 languages still prints a wall of
+# PASS lines, so an unannounced absence reads as full coverage when it is not.
+. "$ROOT/CliTest/lib_build.sh"
+for l in c go; do
+    [ -n "${CLI[$l]:-}" ] || echo "NOTE: $l CLI absent — $(hkx_why "$l")"
+done
+[ -n "${CLI[java]:-}" ] || echo "NOTE: java CLI absent — javac is not installed"
+if [ "${#LANGS[@]}" -lt 4 ]; then
+    echo "NOTE: this is a ${#LANGS[@]}-way run, not the full 4-way matrix."
+fi
 if [ "${#LANGS[@]}" -lt 2 ]; then
-    echo "SKIP test_cross_lang_matrix: fewer than 2 CLIs available (build C/Go, install a JDK)"
-    exit 0
+    echo "FAIL test_cross_lang_matrix: fewer than 2 CLIs available, so no pair" \
+         "was compared and nothing was asserted (build C/Go, install a JDK)." >&2
+    [ "${HKX_ALLOW_SKIP:-0}" = "1" ] && exit 0
+    exit 2
 fi
 
 pass() { echo "PASS $1"; PASS=$((PASS+1)); }

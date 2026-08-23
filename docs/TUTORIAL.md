@@ -99,10 +99,14 @@ subcommands and PEM wire formats. PEM files produced by one implementation are
 byte-for-byte compatible with all others. The Python CLI requires no build step and
 is the easiest starting point.
 
+The compiled C and Go CLIs are **not checked into the repository** — build them
+before use (TODO #229):
+
 ```bash
 CLI="python3 HerraduraCli/herradura.py"
-# C CLI:  ./HerraduraCli/herradura_cli
-# Go CLI: ./HerraduraCli/herradura_cli_go
+
+./build_c.sh    # then: ./HerraduraCli/herradura_cli
+./build_go.sh   # then: ./HerraduraCli/herradura_cli_go
 ```
 
 See `CliTest/` for full integration test scripts covering all algorithms and

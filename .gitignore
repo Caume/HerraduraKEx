@@ -6,15 +6,27 @@ __pycache__/
 /dist/
 *.egg-info/
 
-# build_c.sh / build_go.sh — plain suite and test binaries, not tracked
-# (the _arm binaries and HerraduraCli/herradura_cli{,_go} are tracked, so they
-#  are deliberately absent here — a rule for them would be inert anyway)
+# Compiled build outputs.  Nothing built from source is tracked (TODO #229):
+# the four artifacts that used to be — the two CLIs and the two _arm binaries —
+# were untracked in v3.0.2, because a committed binary is whatever toolchain the
+# last committer happened to run rather than a reproducible build, and because
+# re-committing a 3.5 MB Go binary on every rebuild had grown .git to 164 MB.
+# No CI job consumed them: arm-i386 runs build_arm.sh from source, and the
+# native-* jobs build their own CLIs.
+#
+# build_c.sh / build_go.sh
 /Herradura cryptographic suite_c
 /Herradura cryptographic suite_go
 CryptosuiteTests/Herradura_tests_c
 CryptosuiteTests/Herradura_tests_go
+HerraduraCli/herradura_cli
+HerraduraCli/herradura_cli_go
 
-# build_asm_i386.sh — NASM i386 binaries, not tracked (the _arm ones are)
+# build_arm.sh — ARM Thumb-2 binaries (run under qemu-arm)
+/Herradura cryptographic suite_arm
+CryptosuiteTests/Herradura_tests_arm
+
+# build_asm_i386.sh — NASM i386 binaries
 /Herradura cryptographic suite_i386
 CryptosuiteTests/Herradura_tests_i386
 
