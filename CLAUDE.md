@@ -95,6 +95,21 @@ SecurityProofsCode/                                 — standalone Python proof/
                              n=768 (x^768+1 CRT-splits over Z, so it projects to
                              ~39 bits), measures the DFR floor, and lands on
                              n=1024 with p unchanged (TODO #223)
+  sbox_kex_extension.py    — does #224 extend to an S-box?  It does not
+                             extend — it is replaced: a characterization
+                             theorem showing every step function admitting
+                             HKEX agreement forces the i-fold iterate into a
+                             coset of the translation group, after which the
+                             session key is two evaluations of the public
+                             step function away from the wire.  Subsumes
+                             #210/#224/nonce-impossibility (TODO #230)
+  mfscx_kex_analysis.py    — seed-masked FSCX revolve (MFSCX) as a key
+                             exchange: static mask stays affine and the
+                             classical break generalizes verbatim, dynamic
+                             mask destroys two-party agreement, and the
+                             generalized injection-schedule impossibility
+                             theorem closes the middle ground.  Negative
+                             result (TODO #224)
   stern_f_multiround_fs.py — HPKS-Stern-F round count vs. multi-round
                              Fiat-Shamir forgery; challenge-expansion audit
                              (TODO #217)
@@ -113,7 +128,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (659 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.20: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (645 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.22: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

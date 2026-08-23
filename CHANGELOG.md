@@ -2,6 +2,119 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.4] - 2026-08-23
+
+### Added
+- **TODO #230: the S-box question, answered by a theorem that subsumes it.** The item
+  asked whether TODO #224's negative result extends to a substitution layer. It does —
+  but not by extension. #224's proof quantifies over *additive* injections that reach
+  the session key through the accumulator `L = xor_j M^(r-1-j).u_j`, and an S-box does
+  not factor out of the iteration at all, so #224 is **silent** on it rather than
+  dispositive. Measured: #224's class is exactly the step functions with
+  `G(A,B) xor G(A',B)` independent of `B`, which additive injections satisfy on 100% of
+  random triples and a nibblewise S-box fails on 100%.
+- **The characterization theorem.** With the public phase iterating `F_B`, the
+  derivation phase `G_B`, and `i + r = n`, HKEX-style agreement holds **iff** the
+  composite `G_B^r . F_B2^i` is the translation `x -> x xor d(B,B2)`. Four further
+  lines force the whole key-dependence of the `i`-fold iterate into an input XOR
+  translation — `{F_B^i}` lies in one coset of the translation group — and yield
+  `sk = Psi^{-1}(C) xor Psi^{-1}(C2) xor c`. Corollary, the universal attack:
+  `sk = G_B0^r(C) xor G_B0^r(C2) xor c` with `c = G_B0^r(F_B0^i(0))`, for any `B0` Eve
+  likes, at `2r + i` applications of the public step function. No private value, no
+  linearity, no assumption about the step function.
+- **It subsumes the existing breaks.** Verified at n=32/64/128/256, 300 sessions each:
+  agreement 300/300, composite-is-a-translation 50/50, attack 300/300, and its output
+  equals `hkex_classical_break.py`'s `S_(r+1).(C xor C2)` 300/300 — without ever
+  evaluating `M` as a linear map. TODO #210, `hkex_nonce_impossibility.py` and TODO
+  #224 are the special cases `Psi^{-1} = M^r`, the nonce as a public step parameter,
+  and the additive injection.
+- **A linear S-box halves TODO #210's leak, and 64 is a floor.** `L` linear makes the
+  step `(L.M).(A xor B)`; with `Y = L.M + I`, agreement is equivalent to `Y^(n-1) = 0`
+  and `co-rank(T_i) = dim ker Y^(2^v2(i) - 1)`. This identifies the factor 2 in #210's
+  closed form as exactly `v(M+I)` — a property of that `M`, not of the construction. At
+  n=256, i=64 the co-rank drops **126 -> 64**. It cannot go lower: the unconstrained
+  optimum of 63 (regular nilpotent `Y`) has `Y^(n-1) != 0` and so *fails agreement*, and
+  `dim ker Y^(i-1) = sum_j min(lambda_j, i-1)` is minimized by the fewest, largest
+  blocks — so 64 is proved, not merely the best found. Never 0, since `Y` is nilpotent.
+- **No reconciliation branch.** The discriminator this item required was the distance
+  *distribution*, not the pass/fail rate — HKEX-RNL also fails exact agreement and is
+  rescued by Peikert reconciliation, which needs a small Hamming distance. A single
+  transposition inside one 4-bit box, the smallest departure from linearity that exists,
+  already saturates the `n/2` baseline (32.3 of 64, 64.3 of 128) and is
+  indistinguishable from the PRESENT S-box. Unrelated, not noisy.
+- **The item's own conjecture was false, and the theorem did not need it.** #230
+  conjectured that an agreeing step function must be affine over an abelian group. For
+  `G(A,B) = S(A xor B)` with `i = 1` the characterization collapses to
+  `(S.tau_B)^n = tau_c`, cheap enough for genuinely exhaustive sweeps: all permutations
+  at n=2 and n=3, all 322 560 affine permutations at n=4 (25 216 agree), and all
+  3 025 920 boxes one transposition off an agreeing affine box — which yield **15 360
+  distinct non-affine permutations admitting full agreement**, confirmed over all 65 536
+  tuples for a 40-box sample. The smallest is the identity with 0 and 1 swapped. The
+  universal attack wins on every one. Affineness was the wrong invariant; the
+  translation-coset condition is the right one.
+- Scope stated explicitly: the theorem constrains the HKEX template — two parties, one
+  round each, agreement by exact equality. It says nothing about multi-round protocols,
+  about constructions approximate by design (HKEX-RNL, where reconciliation is
+  specified rather than a rescue), or about hardness living outside the step function.
+- New `SecurityProofsCode/sbox_kex_extension.py` and SecurityProofs-7.md §11.22. Part 7
+  needed no split (653 of ~750 expressions). **No `--algo` tag, PEM boundary label or
+  `spec/` entry**, and no wire format changed; the co-rank result is a finding about
+  HSKE/HPKE that would need its own item before anything ships.
+
+## [3.0.3] - 2026-08-23
+
+### Added
+- **TODO #224: MFSCX-KEX explored and closed — a negative result.** The item asked
+  whether a per-step, seed-masked FSCX revolve could carry a key exchange whose
+  hardness is symmetric/hash-style rather than a restatement of "FSCX is affine".
+  It cannot, in either mask regime, and the reason is structural rather than a
+  parameter choice. `SecurityProofsCode/mfscx_kex_analysis.py` (new, self-contained)
+  and SecurityProofs-7.md §11.21 record why.
+- **Static P-box: the classical break generalizes verbatim.** A published mask is an
+  affine translation — measured at four widths, `MFSCX_REVOLVE(A,B,i;S)` equals
+  `M^i.A xor T_i.B xor sigma_i(S)` with `T_i` the *unchanged* classical key map. Over
+  10 000 honest sessions across `n = 32/64/128/256`, agreement held 10 000/10 000 and
+  Eve recovered the session key 10 000/10 000 from the wire alone, at the same
+  `O(n^2)` cost as `hkex_classical_break.py`: `sk = S_(r+1).(C xor C2) xor kappa(S)`,
+  where `kappa` is public and, more to the point, is added identically by both parties.
+- **A secret-but-shared P-box is not a key exchange.** The residue
+  `sk xor S_(r+1).(C xor C2)` took exactly one value across 2 000 sessions, so a single
+  known session key recovers `kappa` for all future ones. That is HSKE's security
+  model, not HKEX's.
+- **Dynamic P-box: agreement is destroyed.** With the mask following the running state,
+  `sk_A == sk_B` in 0/2000 trials at every width, the two values differing by `n/2`
+  bits — the rate two unrelated values would show.
+- **The middle ground does not exist.** TODO #224's real question was whether some
+  schedule could be non-linear in the seed while remaining commutative in the two
+  parties' contributions. Generalizing `hkex_nonce_impossibility.py` from a single
+  nonce to a whole schedule answers it: the injections reach the session key only
+  through the accumulator `L = xor_j M^(r-1-j).u_j`, correctness forces `L_A = L_B`,
+  and a value equal across two independent private inputs can depend only on `C` and
+  `C2`. Both halves of the dichotomy are exhibited at `n = 128` — a private injection
+  with a cancelling partner keeps agreement 1000/1000 while leaving `sk` at exactly the
+  classical public formula 1000/1000; without the partner, agreement is 0/1000. A
+  schedule is either invisible to `sk` or fatal to agreement.
+- **One positive result, in the pre-shared-key setting.** The map from a *secret*
+  subkey schedule to `sigma_i` is surjective, because `m(1) = 1` makes `M` a unit in
+  `GF(2)[X]/(X^n+1)` and every `M^(i-1-j)` invertible (`min_k rank(M^k) = n` measured at
+  all three widths). So a secret per-step injection *does* close the 126-dimensional
+  plaintext leak TODO #210 found in HSKE/HPKE. That is TODO #224's option 1, not key
+  agreement.
+- **Two branches checked and ruled out as causes rather than assumed.** The static
+  mask leaves the TODO #210 co-rank table unchanged (30/62/126 lost dimensions at
+  `n = 64/128/256`, both directions), and the seed-derived schedule does *not* suffer
+  orbit collapse — mean cycle lengths of 146/640/2264 at `n = 16/20/24` against a
+  random-function expectation of 160/642/2567. The dynamic branch fails for the
+  algebraic reason above, not a degenerate one.
+- **The hash-only ceiling, tabulated rather than assumed.** Impagliazzo-Rudich caps
+  black-box key agreement at Merkle's quadratic gap: `2^64` honest oracle calls and
+  `2^69` wire bytes for a `2^128` classical bound, `2^118` against a quantum Eve
+  (`N^(13/12)`, Brassard et al.; plain Merkle falls to `N` under Grover), `2^85` even
+  with quantum honest parties (`N^(3/2)`). Provable and unshippable — now on the record.
+- Deliverable is the documented dead end, as the item specified. MFSCX survives only as
+  a PRF/KDF or error-sampler inside a structured PQC KEM, so **no `--algo` tag, PEM
+  boundary label, or `spec/` entry follows from this item** and no wire format changed.
+
 ## [3.0.2] - 2026-08-23
 
 ### Changed

@@ -11426,3 +11426,235 @@ costs nothing and stops the growth; reclaiming the existing history is a separat
 decision that should be made on its own merits, if ever.
 
 Status: **DONE v3.0.2** — four binaries untracked and gitignored; the skip-guard hazard the untracking exposed fixed in the same change via the new CliTest/lib_build.sh, plus a CI guard against its recurrence.
+
+### #224: Explore a masked-step / hash-based HKEX PQC variant (MFSCX-KEX)
+
+Every HKEX variant shipped so far derives its hardness from one of two places:
+GF(2^n)* discrete log (HKEX-GF — classically broken by Shor, and the FSCX layer
+around it is affine) or Ring-LWR (HKEX-RNL — which TODO #216/#223 showed is far
+below its claimed level at the deployed parameters). This item is the exploratory
+track for a third construction that leans on symmetric/hash-style hardness
+instead, using FSCX itself as the mixing function.
+
+**Proposed construction (MFSCX_REVOLVE).** Add a per-step, non-uniform seed
+injection to the revolve loop. With `M = I ⊕ ROL ⊕ ROR` as today:
+
+```
+MFSCX_REVOLVE(A, B, i; S):
+    for j = 0 .. i-1:
+        A <- FSCX(A, B) ⊕ (S_j & mask_j)
+```
+
+where `S_j` is a seed-derived subkey for step `j` and `mask_j` selects *which*
+bits of `S_j` actually get XORed in. Two mask regimes to evaluate:
+
+- **static P-box** — `mask_j` fixed at compile time (a published permutation/
+  selection box, same for all sessions);
+- **dynamic P-box** — `mask_j` derived from the seed itself, or from the current
+  state `A`, so the injection pattern is session- (or state-) dependent.
+
+**The central tension, to be settled before any implementation.** The two-party
+agreement in every FSCX-based construction rests on the XOR homomorphism of the
+affine map, and that same affinity is exactly what `hkex_classical_break.py`
+exploits (`sk = S_{r+1}·(C ⊕ C2)`, computable from the wire values alone).
+
+- A **static** mask keeps the whole map affine over GF(2): it only changes the
+  constant term, `MFSCX(A,B) = M^i·A ⊕ T_i·B ⊕ c(S)`, and `c(S)` cancels in
+  `C ⊕ C2` whenever both parties use the same public S. First task is therefore
+  to check whether the existing break generalizes verbatim — the expectation is
+  that it does, and that finding alone would close the static branch.
+- A **dynamic** (state-dependent) mask does destroy affinity, but it also
+  destroys the homomorphism that makes `C_A ⊕ C_B` a shared value at all. The
+  open question is whether there is any middle ground: a mask schedule that is
+  non-linear in the seed while remaining commutative in the two parties'
+  contributions. `hkex_nonce_impossibility.py` already proves no *nonce* choice
+  rescues HKEX; the argument there is algebraic and may extend to any
+  seed-injection schedule. Extending it (or finding the gap) is the real work.
+
+**Hash-based hardness — state the ceiling up front.** "Hash-based key exchange"
+is not a free substitution for a trapdoor. Hash-based *signatures* (already here
+as HPKS-WOTS-F / HPKS-XMSS-F) work because signing needs no trapdoor; key
+exchange does. Against a random-oracle-only adversary the Impagliazzo–Rudich
+separation caps black-box key agreement at Merkle-puzzle quadratic security —
+2^128 target means ~2^64 honest work, which is not shippable. So the plan must
+pick its honest goal early:
+
+1. **Interactive/authenticated setting** — MFSCX as a KDF or ratchet over an
+   already-shared secret (this is HSKE territory, and works, but is not a KEX);
+2. **Merkle-puzzle-style KEX** — real, provable, and quantifiably too slow;
+   worth a cost table so the number is on the record rather than assumed;
+3. **MFSCX as the symmetric layer inside a structured PQC KEM** — e.g. as the
+   hash/KDF/error-sampler inside the QC-MDPC or Ring-LWR path, where hardness
+   comes from the code/lattice and MFSCX only has to be a good PRF. This is the
+   only branch with a plausible production endpoint.
+
+**Plan.**
+
+1. Add `SecurityProofsCode/mfscx_kex_analysis.py`, self-contained like its
+   neighbours. Sections: (a) formalize MFSCX_REVOLVE for both mask regimes;
+   (b) re-run the `hkex_classical_break.py` recovery against the static-mask
+   variant across widths, expecting success — i.e. a disproof; (c) measure
+   algebraic degree / branch number of the dynamic-mask variant, reusing the
+   method in `fscx_branch_number.py` and `nl_fscx_owf_analysis.py`;
+   (d) test whether two-party agreement survives dynamic masking at all
+   (it likely does not — record the failure rate); (e) the Merkle-puzzle cost
+   table for option 2.
+2. Reuse `fscx_revolve_corank.py`'s machinery to compute the co-rank of the
+   masked key map `T_i` under a static P-box, at the deployed `i = n/4`,
+   `r = 3n/4` — if the mask shrinks the image, that is a second independent
+   reason to reject the static branch.
+3. Check the dynamic-mask permutation for orbit collapse the way
+   `nl_fscx_v2_orbit.py` does: a seed-derived mask that lands in a short cycle
+   silently degrades to a static one.
+4. Only if steps 1–3 leave a branch alive, write it up as a new SecurityProofs
+   subsection (§11.21, in `SecurityProofs-7.md` — mind the ~750-expression
+   KaTeX budget per TODO #220) and open a separate implementation TODO. Do not
+   add an `--algo` tag, PEM label, or `spec/` entry from this item.
+5. If all branches close, the deliverable is still worth having: land the script
+   plus a short negative-result section, the same way `hkex_cy_test.py` and
+   `hkex_cfscx_*.py` record constructions that were tried and rejected. A
+   documented dead end is the point of this item, not a failure of it.
+
+**Success criterion.** Either a construction with a written hardness assumption
+that is not restatable as "FSCX is affine", or a clear negative result saying
+why seed-masked FSCX cannot give key agreement. Anything that only *looks*
+non-linear while `C ⊕ C2` still determines `sk` does not count.
+
+Status: **DONE v3.0.3** — negative result: a static mask leaves the map affine and
+the classical break intact (10 000/10 000 recoveries), a dynamic mask destroys two-party
+agreement (0/2000 at every width), and the generalized injection-schedule impossibility
+theorem shows every schedule in between either breaks agreement or contributes only what
+Eve computes from the wire.  `SecurityProofsCode/mfscx_kex_analysis.py` plus SecurityProofs-7.md
+§11.21; MFSCX survives only as a symmetric layer, so no `--algo` tag, PEM label, or `spec/`
+entry follows.
+
+### #230: Does TODO #224's negative result extend to an S-box layer?
+
+TODO #224 closed the seed-masked revolve (MFSCX) as a key exchange, but the
+argument that closed it has a stated scope, and an S-box is outside it.  The
+impossibility theorem in `mfscx_kex_analysis.py` §5 quantifies over *additive*
+injections: values `u_j` that enter the step by XOR and reach the session key
+only through the accumulator `L = xor_j M^(r-1-j).u_j`.  That linear factoring is
+what let correctness force `L` to be a public function of `(C, C2)`.  A
+substitution layer does not factor out of the iteration at all:
+
+```
+SFSCX_REVOLVE(A, B, i):
+    for j = 0 .. i-1:
+        A <- S(FSCX(A, B))          # or FSCX(S(A), B), or a B-keyed S_B(.)
+```
+
+so #224's theorem says nothing about it, in either direction.  The expectation is
+still failure — but by a different mechanism, and "we expect it for the same
+reason" is exactly the kind of claim this repo has been wrong about before
+(TODO #216 vs. the cited Core-SVP figures).  This item settles it.
+
+**The real question underneath.** Agreement in every HKEX variant rests on one
+identity — that the two parties' step maps commute up to the XOR corrections:
+
+```
+revolve(revolve(A2, B2, i), B,  r) xor A   ==
+revolve(revolve(A,  B,  i), B2, r) xor A2
+```
+
+which holds because `M` is linear and `M.S_n = 0`.  An S-box breaks commutation.
+So the honest formulation is not "does an S-box fail" but:
+
+> Characterize *every* step function `G(A, B)` for which HKEX-style two-party
+> agreement holds.  Conjecture: `G` must be affine over some abelian group, i.e.
+> any such construction is a disguised XOR/DH homomorphism — and therefore
+> already covered by one of the existing breaks.
+
+If that conjecture is provable, it subsumes TODO #210, the nonce impossibility
+theorem, and TODO #224 as corollaries, and it retires a whole class of future
+proposals in one place instead of one script at a time.  The repo currently holds
+five separate one-off failures of this shape — `hkex_cy_test.py` (FSCX-CY, carry
+non-linearity), `nl_fscx_v2_kex.py` (non-abelian `pi_K` family, Ko-Lee),
+`hkex_cfscx_*.py` (four preshared/two-step/int-op/compress constructions),
+`hkex_nonce_impossibility.py`, and now `mfscx_kex_analysis.py` — none of which
+knows about the others.  Deciding whether they are instances of one theorem is
+the substance of this item; the S-box is the concrete case that motivates it.
+
+**Sub-cases, cheapest first.  They do not all have the same answer.**
+
+1. **GF(2)-linear S-box** (a bit permutation, an MDS-style matrix, any linear
+   `L`).  This is *not* a new construction: the step becomes `L.M.(A xor B)`, so
+   every result carries over verbatim with `M` replaced by `L.M`.  Predictions to
+   confirm rather than assume: agreement survives iff `(L.M)` has the same
+   order/annihilation structure that gives `S_n = 0`; the break formula becomes
+   `S_(r+1)` over the new operator; and the TODO #210 co-rank changes — a
+   well-chosen `L` may well make the key map *invertible*, which would be a real
+   (if non-KEX) result worth having, in the same way TODO #211's odd-`i` finding was.
+2. **Affine S-box** (`L.x xor c`).  Reduces to case 1 plus a constant, and the
+   constant is exactly TODO #224's `kappa` — expected to be closed by #224's own
+   argument.  Confirm that the reduction is exact rather than merely plausible.
+3. **Genuinely non-linear S-box, unkeyed** — AES-style bytewise inversion over
+   `GF(2^8)`, or a 4-bit box applied nibblewise.  This is the case the item is
+   named for.  Measure the agreement rate, and — the discriminator that matters —
+   the *distribution* of `sk_A xor sk_B`, not just the pass/fail count.  #224
+   measured `n/2` mean Hamming distance for the dynamic mask, i.e. the two values
+   are unrelated and no reconciliation can help.  If an S-box instead leaves a
+   *small* distance, the construction is not dead: it is noisy, and Peikert-style
+   reconciliation is already deployed in this suite (HKEX-RNL, §11.4.2).  That
+   would be a live branch, and it is the one outcome that would make this item
+   more than a fourth negative result.
+4. **B-keyed S-box** (`S_B(.)`, box selected by the revolve parameter).  Destroys
+   even the shared-box symmetry; expected to be the worst case, included to bound
+   the space rather than because it is promising.
+
+**Plan.**
+
+1. Add `SecurityProofsCode/sbox_kex_extension.py`, self-contained like its
+   neighbours.  Sections: (a) restate #224's theorem with its scope condition made
+   explicit, and show by construction that an S-box violates the condition — the
+   point being that #224 is *silent* here, not that it applies; (b) case 1, with
+   the co-rank of `L.M` measured against `fscx_revolve_corank.py`'s closed form and
+   an explicit search for an `L` making the key map invertible; (c) case 2's
+   reduction; (d) cases 3 and 4, reporting agreement rate *and* the Hamming-distance
+   distribution of `sk_A xor sk_B` against the `n/2` random-function baseline;
+   (e) the reconciliation test from sub-case 3, run only if (d) shows small distances.
+2. Attempt the characterization theorem.  Start at small width where the space is
+   enumerable: for `n = 4` and `n = 6`, search over step functions `G` in a
+   restricted but non-trivial family and record which admit agreement.  A clean
+   empirical statement ("every agreeing `G` found at `n = 4/6` is affine over an
+   abelian group") is a publishable-grade result for this repo even without the
+   general proof, provided the family searched is described honestly and the
+   search is exhaustive over it rather than sampled.
+3. If the theorem lands, write it up as §11.22 in `SecurityProofs-7.md` and add
+   back-references from §11.21 and §1.3.1, so the five scattered failures point at
+   one statement.  Mind the KaTeX budget — Part 7 is at 649 of ~750 after TODO
+   #224, so a theorem-heavy section may need Part 7 split (cf. TODO #220) rather
+   than squeezed in.  Budget the split as part of this item, not as a surprise.
+4. If sub-case 3 leaves a reconciliation-based branch alive, do **not** implement
+   it here.  Open a separate implementation TODO, and note that a noisy-agreement
+   KEX whose hardness is "inverting an S-box layer" still needs a written hardness
+   assumption before it is worth any code — the failure mode TODO #224 warned
+   about, where a construction looks non-linear but the wire still determines the key.
+
+**Explicitly out of scope.** No `--algo` tag, PEM boundary label, or `spec/` entry
+from this item, and no change to any shipped protocol.  A linear S-box that makes
+the key map invertible (sub-case 1) is a finding about HSKE/HPKE, not a licence to
+change them; that would be its own TODO with its own wire-format and MIGRATING.md
+analysis.
+
+**Success criterion.** Either the characterization theorem (with the S-box case
+falling out as a corollary), or — failing the general proof — a measured answer for
+all four sub-cases in which the distance distribution, not just the pass/fail rate,
+is reported, so that a future reader can tell "unrelated" from "noisy but
+reconcilable".  A result that only says "agreement failed 0/2000" repeats TODO #224
+without extending it and does not close this item.
+
+Status: **DONE v3.0.4** — closed, but by replacement rather than extension.  #224's
+theorem is silent on substitution layers, so the item is settled instead by a
+characterization theorem: HKEX-style agreement holds iff `G_B^r . F_B2^i` is a
+translation, which forces the i-fold iterate into a coset of the translation group and
+yields `sk = G_B0^r(C) xor G_B0^r(C2) xor c` from the transcript alone, for any step
+function whatsoever.  It subsumes #210, `hkex_nonce_impossibility.py` and #224.  The
+item's own affineness conjecture is **false** — 15 360 non-affine permutations admit
+full agreement at n=4 — and the theorem covers them anyway.  Sub-case findings: a
+linear box takes the TODO #210 co-rank from 126 to 64 of 256, with 64 proved a floor
+(the co-rank 63 optimum fails agreement), and a single transposition in one 4-bit box
+saturates the n/2 distance baseline, so no reconciliation branch survives.
+`SecurityProofsCode/sbox_kex_extension.py` plus SecurityProofs-7.md §11.22; Part 7
+needed no split (653 of ~750).  No `--algo` tag, PEM label or `spec/` entry.
+
