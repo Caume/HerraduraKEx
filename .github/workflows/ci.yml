@@ -297,6 +297,9 @@ jobs:
           done
           exit $fail
 
+      - name: Part-index consistency (TODO #231)
+        run: python3 SecurityProofsCode/check_part_index.py --require-counts
+
   arduino:
     name: Arduino / AVR (build + simavr tests)
     runs-on: ubuntu-latest

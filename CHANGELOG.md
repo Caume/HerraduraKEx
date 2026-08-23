@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.5] - 2026-08-23
+
+### Added
+- **TODO #231: a CI consistency check for the SecurityProofs part index.** The
+  seven-part split is described by the same seven-row table in ~76 places — the
+  `SecurityProofs.md` index, a seven-row banner atop each of the eight part files, a
+  `Continued in Part N` footer in Parts 1-6, `README.md`'s file map, `CLAUDE.md`'s
+  repository listing, and `SecurityProofsCode/KATEX_RULES.md`'s split history. Nothing
+  generated any of it, and it drifted twice running: TODO #224 added section 11.21 and
+  TODO #230 added section 11.22, and on both occasions six banners, the README map and
+  the KATEX_RULES history were left saying `11.15-11.20`.
+- `SecurityProofsCode/check_part_index.py` treats the `SecurityProofs.md` index as the
+  single source of truth, asserts every other copy of a section range or part title
+  agrees with it, and asserts every advertised math-expression count equals what
+  `validate_katex.js` actually measures. `--require-counts` turns a missing node/katex
+  from a skipped check into a failure.
+- A `Part-index consistency (TODO #231)` step in `ci.yml`'s `katex` job, which already
+  checks out Node and iterates these exact files. A banner mismatch now fails that job
+  the way a broken math span does.
+
+### Fixed
+- The nine stale `11.15-11.20` part ranges (six banners, the `SecurityProofs-6.md`
+  footer, `README.md`'s file map, `KATEX_RULES.md`'s split history) and two stale
+  expression counts: `SecurityProofs.md` advertised **593** expressions for Part 4
+  against an actual **659**, and 408 for Part 2 against 409. Both count errors had
+  survived several releases and read as false reassurance about the ~750-per-page
+  GitHub KaTeX ceiling. Errata against 3.0.3/3.0.4; no protocol, CLI, or wire-format
+  change.
+
 ## [3.0.4] - 2026-08-23
 
 ### Added
