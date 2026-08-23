@@ -486,11 +486,14 @@ func isSet(fs *flag.FlagSet, name string) bool {
 	return found
 }
 
-// rnlKeyBits returns the derived session-key width for an HKEX-RNL ring of
+// rnlKeyBits returns the RAW reconciliation width for an HKEX-RNL ring of
 // dimension n (TODO #223).  Reconciliation extracts 2 bits from each of
 // keyBits/2 coefficients, so a ring of n coefficients supplies at most 2n key
 // bits.  Since TODO #223 the ring dimension (RnlN = 1024) and the key width
-// (256) are separate; small demo/test rings keep their historical n-bit key.
+// (256) are separate; a small demo/test ring can only supply n raw bits.
+//
+// This is the width of K_raw — the contributory KDF's input — not the width of
+// the session key that comes out of it.  See rnlSessionBits (TODO #228).
 func rnlKeyBits(n int) int {
 	if n >= 256 {
 		return 256
@@ -498,10 +501,28 @@ func rnlKeyBits(n int) int {
 	return n
 }
 
-func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
+// rnlSessionBits returns the DERIVED session-key width for HKEX-RNL, which is
+// always 256 regardless of ring dimension (TODO #228): rnlContributoryKDF
+// returns an HFSCX-256 digest, and the ring only bounds how much raw entropy
+// feeds into it.  Labelling the session key with rnlKeyBits(n) made Go truncate
+// that digest to n bits below n=256 while Python kept all 256, so the two CLIs
+// derived different keys from the same handshake.  At n >= 256 the two
+// functions coincide, so the deployed n=1024 wire format is unchanged.
+//
+// n is accepted and ignored so call sites read symmetrically with rnlKeyBits.
+// HKEX-GF is genuinely nbits-wide and must not use this.
+func rnlSessionBits(n int) int {
+	_ = n
+	return 256
+}
+
+// rnlContributoryKDF derives the HKEX-RNL session key: HFSCX-256(K_raw || nA ||
+// nB).  rawBits is the width K_raw is serialised at (rnlKeyBits); the result is
+// always rnlSessionBits wide, since it is a whole HFSCX-256 digest.
+func rnlContributoryKDF(kRaw *BitArray, rawBits int, nA, nB []byte) *BitArray {
 	raw := kRaw.Bytes()
-	// Left-pad raw to n/8 bytes
-	nb := n / 8
+	// Left-pad raw to rawBits/8 bytes
+	nb := rawBits / 8
 	padded := make([]byte, nb)
 	if len(raw) > nb {
 		raw = raw[len(raw)-nb:]
@@ -509,7 +530,7 @@ func rnlContributoryKDF(kRaw *BitArray, n int, nA, nB []byte) *BitArray {
 	copy(padded[nb-len(raw):], raw)
 	payload := append(append(padded, nA...), nB...)
 	digest := Hfscx256(payload, nil)
-	return NewBitArray(n, new(big.Int).SetBytes(digest))
+	return NewBitArray(rnlSessionBits(rawBits), new(big.Int).SetBytes(digest))
 }
 
 // ── TODO #167: hybrid HKEX-RNL + HPKE-Stern-KEM combiner (port of TODO #162) ─
@@ -539,7 +560,7 @@ func hybridRnlSternCombine(K1 *big.Int, K2 []byte, C_A, m_A, C_B []int, hintUsed
 	// same number until TODO #223 moved the ring to 1024 while the derived key
 	// stayed 256 bits; using n here writes 128 zero-padded bytes where C's
 	// combiner writes KEYBYTES (32), so the two sides derive different keys.
-	K1Bytes := padLeftN(K1.Bytes(), rnlKeyBits(n)/8)
+	K1Bytes := padLeftN(K1.Bytes(), rnlSessionBits(n)/8)
 	C_A_packed := packPoly(C_A, 2)
 	m_A_packed := packPoly(m_A, 4)
 	C_B_packed := packPoly(C_B, 2)
@@ -1294,7 +1315,7 @@ func cmdKex(args []string) {
 
 			// Contributory KDF: final_key = HFSCX-256(K_B_raw || n_A || n_B)
 			K_B := rnlContributoryKDF(K_B_raw, rnlKeyBits(n), n_A, n_B)
-			K_B = applyKDF(K_B, rnlKeyBits(n))
+			K_B = applyKDF(K_B, rnlSessionBits(n))
 
 			pem, err := encodeRNLResponse(K_B, C_B, hint, n, n_B)
 			if err != nil {
@@ -1347,8 +1368,8 @@ func cmdKex(args []string) {
 
 			// Contributory KDF: final_key = HFSCX-256(K_A_raw || n_A || n_B)
 			K_A := rnlContributoryKDF(K_A_raw, rnlKeyBits(n), n_A, n_B)
-			K_A = applyKDF(K_A, rnlKeyBits(n))
-			pem, err := encodeSessionKey(K_A, rnlKeyBits(n))
+			K_A = applyKDF(K_A, rnlSessionBits(n))
+			pem, err := encodeSessionKey(K_A, rnlSessionBits(n))
 			if err != nil {
 				die("kex", err)
 			}
@@ -1412,7 +1433,7 @@ func cmdKex(args []string) {
 			K1_raw, hint := RnlAgree(s_B, C_A, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), nil)
 			n_B := NewRandBitArray(256).Bytes()
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
-			K1_ba = applyKDF(K1_ba, rnlKeyBits(n))
+			K1_ba = applyKDF(K1_ba, rnlSessionBits(n))
 
 			syn, K2 := QcMdpcEncap(hPub, nil)
 
@@ -1471,7 +1492,7 @@ func cmdKex(args []string) {
 
 			K1_raw, _ := RnlAgree(s_A, C_B, RnlQ, RnlP, RnlPP, n, rnlKeyBits(n), hintPacked)
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
-			K1_ba = applyKDF(K1_ba, rnlKeyBits(n))
+			K1_ba = applyKDF(K1_ba, rnlSessionBits(n))
 
 			K2, ok := QcMdpcDecapBgf(syn, sup0, sup1)
 			if !ok {
@@ -1482,7 +1503,7 @@ func cmdKex(args []string) {
 			hintUsed := rnlHintToBytes(hintPacked, n)
 			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
 
-			pem, err := encodeSessionKey(NewBitArray(256, K), rnlKeyBits(n))
+			pem, err := encodeSessionKey(NewBitArray(256, K), rnlSessionBits(n))
 			if err != nil {
 				die("kex", err)
 			}
@@ -1680,8 +1701,9 @@ func loadKey(path string) (*big.Int, int, error) {
 		// ints[3] is the RING dimension, which since TODO #223 is no longer the
 		// key width — the ring is 1024 while the derived key stays 256 bits.
 		// Returning it raw made `enc` use a 1024-bit key width against a SESSION
-		// KEY PEM's 256, so a cross-party HSKE round trip failed.
-		return new(big.Int).SetBytes(ints[0]), rnlKeyBits(bytesToInt(ints[3])), nil
+		// KEY PEM's 256, so a cross-party HSKE round trip failed.  The derived
+		// key is 256 bits at every ring dimension (TODO #228).
+		return new(big.Int).SetBytes(ints[0]), rnlSessionBits(bytesToInt(ints[3])), nil
 	}
 	return nil, 0, fmt.Errorf("loadKey: expected SESSION KEY or HKEX-RNL RESPONSE PEM, got %q", label)
 }

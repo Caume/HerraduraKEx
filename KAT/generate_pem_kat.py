@@ -34,6 +34,11 @@ The last one is the direct regression test for the `loadKey` width bug: a CLI th
 reads the RESPONSE PEM's ring dimension as the key width encrypts at the wrong
 width and produces a different ciphertext.
 
+Its first run found a second defect the CLI tests were blind to (TODO #228): below
+n=256 the four CLIs disagreed about how wide an HKEX-RNL session key even is.  That
+is settled — it is 256 bits at every ring dimension, the contributory KDF's output
+width — and both ring sizes below are now asserted by `CliTest/test_kat_pem.sh`.
+
 Usage:
     python3 KAT/generate_pem_kat.py            # (re)write KAT/pem/
     python3 KAT/generate_pem_kat.py --check     # verify the checked-in files
@@ -74,7 +79,14 @@ MESSAGE = b"HerraduraKEx TODO #227 wire-format KAT message!!"
 
 def build(n: int, tag: str) -> dict:
     """One full handshake, rendered as the PEMs the CLIs exchange."""
-    key_bits = cli._rnl_key_bits(n)
+    # Two different widths, and TODO #228 was the four CLIs disagreeing about
+    # which one the session key uses.  `raw_bits` is how many bits reconciliation
+    # can extract from an n-coefficient ring — n below 256, capped at 256 above.
+    # `sess_bits` is the width of what the contributory KDF returns, which is an
+    # HFSCX-256 digest and therefore 256 at every ring dimension.  They coincide
+    # at n >= 256, which is exactly why n=1024 never showed the bug.
+    raw_bits = cli._rnl_key_bits(n)
+    sess_bits = cli._rnl_session_bits(n)
 
     m_base = suite._rnl_m_poly(n)
     a_rand = _gen.det_rand_poly(b"HerraduraKEx-TODO226-a_rand-" + tag.encode(), n, RNLQ)
@@ -86,28 +98,28 @@ def build(n: int, tag: str) -> dict:
     c_b = cli._rnl_derive_C(m_blind, s_b, n)
 
     # Bob's step: reconcile against Alice's C, publish K_B and the hint.
-    k_bob, hint = suite._rnl_agree(s_b, c_a, RNLQ, RNLP, RNLPP, n, key_bits)
-    k_bob_int = cli._rnl_contributory_kdf(k_bob.uint, key_bits, N_A, N_B)
+    k_bob, hint = suite._rnl_agree(s_b, c_a, RNLQ, RNLP, RNLPP, n, raw_bits)
+    k_bob_int = cli._rnl_contributory_kdf(k_bob.uint, raw_bits, N_A, N_B)
     # `--kdf none` is the default and applies no post-hash, so this is the raw
     # contributory output; a CLI defaulting differently would diverge here.
 
     # Alice's step: same reconciliation from the other side, same KDF inputs.
-    k_alice = suite._rnl_agree(s_a, c_b, RNLQ, RNLP, RNLPP, n, key_bits, hint)
-    k_alice_int = cli._rnl_contributory_kdf(k_alice.uint, key_bits, N_A, N_B)
+    k_alice = suite._rnl_agree(s_a, c_b, RNLQ, RNLP, RNLPP, n, raw_bits, hint)
+    k_alice_int = cli._rnl_contributory_kdf(k_alice.uint, raw_bits, N_A, N_B)
     assert k_alice_int == k_bob_int, f"TODO #227: session keys disagree at n={n}"
 
     # HSKE under the key as read from the RESPONSE PEM — the loadKey width probe.
-    key_ba = suite.BitArray(key_bits, k_bob_int)
-    pt_int = int.from_bytes(MESSAGE[: key_bits // 8].ljust(key_bits // 8, b"\0"), "big")
-    ct = suite.fscx_revolve(suite.BitArray(key_bits, pt_int), key_ba, key_bits // 4)
+    key_ba = suite.BitArray(sess_bits, k_bob_int)
+    pt_int = int.from_bytes(MESSAGE[: sess_bits // 8].ljust(sess_bits // 8, b"\0"), "big")
+    ct = suite.fscx_revolve(suite.BitArray(sess_bits, pt_int), key_ba, sess_bits // 4)
 
     return {
         f"{tag}_alice_priv.pem": cli._encode_rnl_privkey(s_a, m_blind, n, N_A),
         f"{tag}_alice_pub.pem": cli._encode_rnl_pubkey(c_a, m_blind, n, N_A),
         f"{tag}_bob_priv.pem": cli._encode_rnl_privkey(s_b, m_blind, n, N_A),
         f"{tag}_bob_response.pem": cli._encode_rnl_response(k_bob_int, c_b, hint, n, N_B),
-        f"{tag}_alice_session.pem": cli._encode_session_key(k_alice_int, key_bits),
-        f"{tag}_hske_ct.pem": cli._encode_sym_ct("hske", ct.uint, key_bits),
+        f"{tag}_alice_session.pem": cli._encode_session_key(k_alice_int, sess_bits),
+        f"{tag}_hske_ct.pem": cli._encode_sym_ct("hske", ct.uint, sess_bits),
     }
 
 
@@ -116,9 +128,10 @@ def build_all() -> dict:
     out.update(build(suite.RNLN, "n1024"))
     out.update(build(64, "n64"))
     # The plaintext the ciphertext decrypts to, as a file the tests can diff.
-    kb = cli._rnl_key_bits(suite.RNLN) // 8
+    # Both plaintexts are session-key-width, i.e. 256 bits at either ring.
+    kb = cli._rnl_session_bits(suite.RNLN) // 8
     out["message_n1024.bin"] = MESSAGE[:kb].ljust(kb, b"\0")
-    kb64 = cli._rnl_key_bits(64) // 8
+    kb64 = cli._rnl_session_bits(64) // 8
     out["message_n64.bin"] = MESSAGE[:kb64].ljust(kb64, b"\0")
     return out
 

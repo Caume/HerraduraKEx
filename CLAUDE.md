@@ -55,7 +55,10 @@ KAT/                                                 — fixed Known-Answer-Test
   pem/                       — byte-exact wire-format artifacts: keys, a kex response,
                                a session key and an HSKE ciphertext, which each CLI must
                                CONSUME and reproduce (TODO #227).  Pins the CLI layer that
-                               hkex_rnl.json does not; n=1024 only, see TODO #228 for why
+                               hkex_rnl.json does not, at n=1024 and n=64 (TODO #228
+                               settled the small-ring session-key width at 256 bits,
+                               so all four CLIs now agree there; the C CLI is skipped
+                               at n=64, being compiled for a single RNL_N)
   generate_kat.py            — deterministic reference generator (Python) for both JSON
                                files; --check verifies currency
   generate_pem_kat.py        — generator for pem/; --check verifies currency
