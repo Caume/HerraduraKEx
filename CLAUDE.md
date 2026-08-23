@@ -121,9 +121,13 @@ SecurityProofsCode/                                 — standalone Python proof/
                              (TODO #214)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
+  check_part_index.py       — asserts every copy of the seven-part index (banners,
+                              footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
+                              SecurityProofs.md, and that the advertised expression
+                              counts match what validate_katex.js measures (TODO #231)
 SecurityProofs.md                                   — split index (redirects to Parts 1–7; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
-SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (408 math expressions)
+SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (659 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
@@ -311,7 +315,8 @@ Java compatibility matrix across the classical quartet, the NL/PQC quartet, the 
 family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates directly
 rather than only each against Python; runs after the four `native-*` jobs, TODO #207),
 `arm-i386` (ARM Thumb-2/NASM i386 under qemu), `katex` (math-rendering validation, TODO
-#179), `arduino` (Arduino/AVR under simavr — ran `continue-on-error: true` until TODO #185
+#179, plus the part-index consistency check of TODO #231), `arduino` (Arduino/AVR under
+simavr — ran `continue-on-error: true` until TODO #185
 promoted it after confirming 100% pass history since its one known failure mode, an SRAM
 overflow, was fixed in TODO #155), `fuzz-smoke` (30s/target libFuzzer/go-fuzz/Hypothesis/
 CLI-argv run, TODO #187), and `sanitizers` (C suite/tests/CLI under ASan+UBSan plus a

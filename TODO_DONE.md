@@ -11658,3 +11658,61 @@ saturates the n/2 distance baseline, so no reconciliation branch survives.
 `SecurityProofsCode/sbox_kex_extension.py` plus SecurityProofs-7.md §11.22; Part 7
 needed no split (653 of ~750).  No `--algo` tag, PEM label or `spec/` entry.
 
+
+---
+
+### #231: The SecurityProofs part index is duplicated ~76 times and has drifted twice — add a CI consistency check
+
+The seven-part split of `SecurityProofs.md` (TODO #170, re-split under TODO #220) is
+described by the *same* seven-row table in about 76 places:
+
+| location | rows | carries |
+|---|---|---|
+| `SecurityProofs.md` index | 7 | ranges, titles, expression counts |
+| banner atop each `SecurityProofs-1..7.md` | 7 x 7 = 49 | ranges, titles |
+| `Continued in Part N` footer in Parts 1–6 | 6 | ranges, titles |
+| `README.md` file map | 7 | ranges |
+| `CLAUDE.md` repository listing | 7 | ranges, expression counts |
+| `SecurityProofsCode/KATEX_RULES.md` split history | 7 | ranges, expression counts |
+
+Nothing generates any of it, and it has now drifted **twice running**: TODO #224 added
+§11.21 and TODO #230 added §11.22, and on both occasions six of the eight banners, the
+README file map and the KATEX_RULES split history were left saying `§11.15–§11.20`.
+Nine locations were stale by the time it was caught.
+
+The expression counts drift independently and are the more dangerous half, because a
+wrong count reads as reassurance about the ~750-per-page GitHub KaTeX ceiling
+(`SecurityProofsCode/KATEX_RULES.md`) when it is nothing of the sort: `SecurityProofs.md`
+advertised **593** expressions for Part 4 against an actual **659**, and 408 for Part 2
+against 409. Both survived several releases and were found by hand, not by CI.
+
+**What this is not.** The conclusions of §11.21/§11.22 are complete and correct — the
+scope argument, the characterization theorem and its universal transcript-only attack,
+the linear-box co-rank identity with the 126 -> 64 table, the Hamming-distance table
+separating "unrelated" from "noisy but reconcilable", and the refutation of #230's own
+affineness conjecture. This item is navigation metadata only and is not licence to
+rewrite them.
+
+**Deliverable.** A checker, not a generator: the banner is prose inside hand-written
+documents, and a check catches the same failure with none of the build machinery.
+`SecurityProofsCode/check_part_index.py` treats the `SecurityProofs.md` index as the
+single source of truth, asserts every other copy of a range or title agrees with it,
+and asserts every advertised count equals what `validate_katex.js` actually measures.
+Wired into the existing `katex` CI job, which already checks out Node and iterates
+these exact files.
+
+**Headroom note.** Part 7 is at 653 of ~750, the tightest of the seven; the next
+research-review section added there should check before landing rather than after. A
+Part 8 split is the eventual answer, not a bigger Part 7 — and when it happens, the
+checker's `NPARTS` and the "split into seven parts" preamble assertion both move with it.
+
+Status: **DONE v3.0.5** — `SecurityProofsCode/check_part_index.py` (source of truth =
+`SecurityProofs.md`; `--require-counts` makes a missing node/katex a failure rather
+than a skip) plus a `Part-index consistency` step in `ci.yml`'s `katex` job.
+Negative-tested against all seven drift classes — banner range, footer range, README
+range, `CLAUDE.md` count, `KATEX_RULES.md` range, an index count stale against the
+measured value, and a deleted banner row — each caught with the offending
+`file:line`; the historical 593-vs-659 Part 4 bug is reproduced and flagged. The
+nine stale `§11.15–§11.20` locations and the two stale counts were fixed first
+(commit `5115f2a`), so the tree passes clean. Documentation/CI only: no protocol,
+`--algo` tag, PEM label or `spec/` change.
