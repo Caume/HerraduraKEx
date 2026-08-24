@@ -11821,3 +11821,118 @@ do; the affine two-time break `E1 ^ E2 = M'^i.(P1 ^ P2)` survives every option (
 for both boxes); the HPKS knock-on is real (challenge entropy 130 -> 192) and is a
 second, separate MAJOR bump; and no rating in `SECURITY.md` would move. No `--algo` tag,
 PEM label, `spec/` entry or `MIGRATING.md` entry follows.
+
+---
+
+### #225: `native-python` — measure what the n=1024 ring actually costs, and where it goes
+
+*Premise rewritten (2026-08-23). The original entry framed this as timeout risk.
+That framing does not survive contact with the workflow file: `.github/workflows/`
+contains **no `timeout-minutes` key at all**, so every job inherits GitHub's
+360-minute default. Five recent `native-python` runs took 18.3, 22.4, 23.5, 24.6
+and 24.7 minutes — a ~15x margin. There is no timeout to cross, and "raise the job
+timeout" was never one of the options because no timeout was ever set. The real
+question is a different one, below.*
+
+TODO #223 moved HKEX-RNL's ring from 256 to 1024. The NTT is O(n log n), so the
+Python reference's ring multiply went from 1.7 ms to 8.9 ms — 5.2x — measured on a
+host without numpy (`_NUMPY = False`, the pure-Python `_ntt_inplace` path).
+
+**Where that 5.2x actually lands.** The suite runs under `-t 2.0`, a per-test
+wall-clock cap. A capped test does not get slower when its inner operation gets
+slower — it performs **fewer iterations in the same two seconds**. So the ring
+move did not buy 5.2x more job time; it bought roughly 5.2x less RNL coverage,
+silently, with no signal in the log. That is the concern worth tracking, and it
+is a correctness-confidence concern, not a scheduling one.
+
+Step timings from run 32617685487 locate the time precisely:
+
+| Step | Time | Share |
+|---|---|---|
+| Python test suite (`-t 2.0`) | 1091 s | 82% |
+| CliTest — Python CLI (15 scripts) | 243 s | 18% |
+| everything else | 9 s | <1% |
+
+So the job is dominated by the capped suite, whose duration is set by the *number*
+of tests and benchmarks, not by how fast any one of them runs. Adding a test costs
+up to 2 s; making RNL 5x slower costs nothing in time.
+
+**Work.**
+
+1. Instrument iteration counts, not wall time. For each RNL-touching test, record
+   how many iterations completed inside the cap at n=256 vs n=1024. That number is
+   the coverage that was lost, and it is the figure this item exists to put on the
+   record. Land it in `benchmarks/` so the next ring-parameter change has a
+   baseline.
+2. Decide per test whether the surviving iteration count is still adequate. These
+   are correctness checks, not benchmarks — a handful of iterations may be entirely
+   sufficient for some and plainly too few for others. Where it is too few, raise
+   that test's cap specifically rather than the job's; there is ample headroom.
+3. Settle the numpy question, which the original entry raised and which is still
+   open. `_rnl_poly_mul` takes a vectorised path when numpy imports. The
+   `native-python` job installs `python3` and nothing else, so whether numpy is
+   present depends on the `ubuntu-latest` image rather than on anything this repo
+   controls — and **the suite prints no indication either way**, so the CI logs
+   cannot answer it retrospectively (grepping them for `numpy` returns nothing).
+   Add a one-line banner reporting `_NUMPY` at startup. That is a two-line change
+   that makes every future run self-documenting, and it should land first, since
+   steps 1 and 2 are measuring a path whose identity is currently unknown.
+
+**A second-order detail worth checking while instrumenting.** The cap is polled
+every 64 iterations (`(i & 63) == 63`, `Herradura_tests.py:1175`), not every
+iteration. Overshoot is therefore bounded by 64 iterations' worth of work, which
+scales with per-iteration cost — the same 5.2x applies to it. At n=1024 this is
+probably still small against a 2 s cap, but it is unmeasured, and it is the one
+mechanism by which a slower ring *could* lengthen the job rather than shorten
+coverage. Confirm it is negligible, or tighten the poll for the RNL tests.
+
+**Explicitly not in scope.** Splitting `native-python` the way TODO #205 split the
+combined `native` job. That was listed as an option under the timeout framing; with
+a 15x margin it addresses nothing, and it would cost a second full checkout and
+dependency install for no benefit.
+
+Status: **DONE v3.0.7** — measured; the premise did not survive the measurement.
+`benchmarks/rnl_ring_cost.py` plus a startup banner and a closing cap-accounting line
+in `CryptosuiteTests/Herradura_tests.py`.
+
+**Step 3 first, as the item asked.** The banner now reports the live path and the ring
+the tests exercise: `Ring: _rnl_poly_mul=pure-Python NTT, RNL_SIZES=[32, 64, 128, 256]`.
+That last field is the finding.
+
+**Step 1 — the coverage loss is zero, and could not have been otherwise.** The Python
+harness is self-contained (it transcribes the primitives rather than importing the
+suite) and its `RNL_SIZES` is still `[32, 64, 128, 256]`. TODO #223 moved the *suite's*
+`RNLN`; the harness never followed, and the C harness is identical
+(`rnl_sizes[] = {32, 64, 128, 256}` against `RNL_N 1024`). Instrumenting all 95 capped
+call sites at `-t 2.0`: **no RNL site is truncated** — every one completes its full 200
+iterations. The ring move cost nothing in the capped path because it never entered it.
+
+The harness could not be pointed at 1024 by editing `RNL_SIZES` either: it uses one
+variable for both ring dimension and key width, so its KDF line
+`_RNL_KDF_DC_256 >> (256 - n_rnl)` raises `ValueError: negative shift count` for any
+`n_rnl > 256`. The suite keeps them separate (ring 1024, `KEYBITS` 256) — precisely the
+distinction #223 introduced, which the harness predates. Deployed-ring coverage comes
+from `KAT/hkex_rnl.json` (which does pin n=1024) and the CliTest scripts, not from the
+capped suite. Ring-cost curve recorded for the next parameter move: the item's 5.2x
+reproduces exactly (5.26x on `_rnl_poly_mul`, 5.15x end to end, n=256 -> 1024).
+
+**Step 2 — no cap needs raising.** Nothing RNL is truncated, and the 16 sites that are
+truncated are GF/NL/FPE/TWK round-trip assertions stopping at 64 of 100 (or 128 of
+1000); those assert exact equality, not a statistical property, so 64 trials is ample.
+
+**The second-order detail was the real finding.** For the RNL tests proper the overshoot
+is negligible as hoped — zero on test [14]. But the poll `(i & 63) == 63` means a site
+requesting fewer than 64 iterations is **never polled at all**, so `-t` cannot reach it
+however slow its work becomes. 18 of 95 sites are in that category and carry ~71% of all
+time spent inside capped sites; the worst, `test_hpke_stern_f_correctness`, requests 30
+and runs ~97 s against a 2.0 s cap. A truncated site always stops at a multiple of 64,
+never in between. Separately, 16 sites pass a literal count to `_trange` instead of
+`_iters(...)`, so `-r` does not reach them either.
+
+Nothing about that behaviour was changed here — tightening the poll would cut real
+coverage from the expensive Stern-F/ZKP sites and is a judgement call that deserves its
+own item. What changed is that the run now says so: a closing
+`--- Time cap: -t 2.00s reached N capped call sites; truncated X, could not poll Y ---`
+line, so a future ring or parameter change can be told from a slower host by reading the
+log. Documented in `CLAUDE.md`'s Testing section. No protocol, `--algo` tag, PEM label
+or `spec/` change.

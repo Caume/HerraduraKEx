@@ -2,6 +2,52 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.7] - 2026-08-24
+
+### Added
+- **TODO #225: measured what the n=1024 ring costs the `native-python` job — nothing.**
+  `benchmarks/rnl_ring_cost.py` records the ring-cost curve (n=32..1024; the item's 5.2x
+  reproduces exactly, 5.26x on `_rnl_poly_mul` and 5.15x end to end) and audits what the
+  `-t` cap actually caps.
+- **The premise did not survive the measurement.** `CryptosuiteTests/Herradura_tests.py`
+  is self-contained — it transcribes the primitives rather than importing the suite — and
+  its `RNL_SIZES` is still `[32, 64, 128, 256]`. TODO #223 moved the *suite's* `RNLN`; the
+  harness never followed, and the C harness is identical. Instrumenting all 95 capped call
+  sites at `-t 2.0`: **no RNL site is truncated**, every one completes its full 200
+  iterations. The ring move cost zero coverage in the capped path because it never entered
+  it. Deployed-ring coverage comes from `KAT/hkex_rnl.json` and the CliTest scripts.
+- **The harness cannot reach n=1024 at all.** It uses one variable for both ring dimension
+  and key width, so its KDF line `_RNL_KDF_DC_256 >> (256 - n_rnl)` raises
+  `ValueError: negative shift count` for `n_rnl > 256`. The suite keeps the two separate
+  (ring 1024, `KEYBITS` 256) — the distinction TODO #223 introduced, which the harness
+  predates.
+- **What `-t` actually bounds.** It caps iteration *count*, not wall time, and only at the
+  poll granularity `(i & 63) == 63`. A site requesting fewer than 64 iterations is never
+  polled, so the cap cannot reach it however slow its work becomes: 18 of 95 sites are in
+  that category and carry ~71% of the time spent inside capped sites, the worst
+  (`test_hpke_stern_f_correctness`) requesting 30 and running ~97 s against a 2.0 s cap. A
+  truncated site always stops at a multiple of 64. Separately, 16 sites pass a literal
+  count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either.
+
+### Changed
+- The Python test suite's startup banner now reports which `_rnl_poly_mul` path is live
+  (`numpy NTT` / `pure-Python NTT`) and the `RNL_SIZES` the tests exercise, so a CI log can
+  distinguish a slower ring from a slower host — previously it printed neither, which is
+  what left the question open.
+- Every capped run now ends with a `--- Time cap: ... ---` line reporting capped sites
+  entered, truncated, and unpollable. Cap *behaviour* is unchanged: tightening the poll
+  would cut real coverage from the expensive Stern-F/ZKP sites and deserves its own item.
+- `CLAUDE.md`'s Testing section documents the cap semantics above.
+
+### Notes
+- While measuring #225, two unrelated defects surfaced and are filed as TODO #233, not
+  fixed here: none of the three test harnesses propagates a failure to an exit status
+  (a Python run printing `[FAIL]` exits 0, so `native-c`/`native-go`/`native-python` go
+  green when security tests fail), and security test [45]'s `stern_synd_reject` check
+  asserts a probabilistic property as if it were deterministic — HPKS-Stern-F at
+  `n=32, rounds=8` accepts a 1-bit-corrupted syndrome 19/400 = 4.75% of the time
+  (theory `(2/3)^8 = 3.90%`), giving the test a 21.6%/38.5% failure rate at N=5/N=10.
+
 ## [3.0.6] - 2026-08-23
 
 ### Added

@@ -1163,16 +1163,35 @@ def _iters(default_n: int) -> int:
     return g_rounds if g_rounds > 0 else default_n
 
 
+# Cap accounting (TODO #225).  The -t cap bounds iteration *count*, not wall
+# time, and only at the granularity of the poll below: a site that requests
+# fewer than _TRANGE_POLL iterations is never polled at all, so the cap cannot
+# reach it however slow its work becomes.  Measured on the shipped suite, 18 of
+# 95 call sites are in that category and carry ~71% of the time spent inside
+# capped sites.  Nothing here changes that behaviour — it only makes the run
+# report it, since the previous silence is what let the question go unanswered.
+_TRANGE_POLL = 64          # poll fires when (i & (_TRANGE_POLL - 1)) == last
+_cap_sites_total = 0       # capped call sites entered
+_cap_sites_cut = 0         # sites the cap actually truncated
+_cap_sites_unpollable = 0  # sites too short for the poll to ever fire
+
+
 def _trange(n: int):
     """Like range(n) but stops early when g_time_limit is reached.
     Yields the iteration index so callers can use it as a loop variable."""
+    global _cap_sites_total, _cap_sites_cut, _cap_sites_unpollable
     if g_time_limit <= 0:
         yield from range(n)
         return
+    _cap_sites_total += 1
+    if n < _TRANGE_POLL:
+        _cap_sites_unpollable += 1
     t0 = time.monotonic()
     for i in range(n):
         yield i
-        if (i & 63) == 63 and time.monotonic() - t0 >= g_time_limit:
+        if (i & (_TRANGE_POLL - 1)) == _TRANGE_POLL - 1 and \
+                time.monotonic() - t0 >= g_time_limit:
+            _cap_sites_cut += 1
             return
 
 
@@ -3015,6 +3034,13 @@ if __name__ == '__main__':
         if g_rounds > 0:     parts.append(f"rounds={g_rounds}")
         if g_time_limit > 0: parts.append(f"time_limit={g_time_limit:.2f}s")
         print(f"    Config: {', '.join(parts)}")
+    # Which _rnl_poly_mul path is live?  numpy is not a declared dependency and
+    # the CI image may or may not carry it, so the run has to say so itself —
+    # otherwise the logs cannot tell a 5x-slower ring from a 5x-slower host
+    # (TODO #225).  RNL_SIZES is printed alongside because it is the ring the
+    # tests actually exercise, which is NOT the suite's deployed RNLN.
+    print(f"    Ring:   _rnl_poly_mul={'numpy NTT' if _NUMPY else 'pure-Python NTT'}"
+          f", RNL_SIZES={RNL_SIZES}")
     print()
 
     print("--- Security Tests: Classical Protocols ---\n")
@@ -3084,3 +3110,11 @@ if __name__ == '__main__':
 
     # Security test [45] appended after [44] to avoid renumbering (TODO #131).
     test_weak_key_rejection()
+
+    # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
+    # parameter change can be told from a slower host by reading the log.
+    if g_time_limit > 0 and _cap_sites_total:
+        print(f"--- Time cap: -t {g_time_limit:.2f}s reached {_cap_sites_total} capped "
+              f"call sites; truncated {_cap_sites_cut}, "
+              f"could not poll {_cap_sites_unpollable} "
+              f"(fewer than {_TRANGE_POLL} iterations requested) ---")

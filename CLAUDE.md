@@ -191,6 +191,9 @@ bindings/java/                                       — complete pure-Java port
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history;
+                                                      rnl_ring_cost.py measures the HKEX-RNL
+                                                      ring-cost curve (n=32..1024) and audits
+                                                      what the `-t` cap actually caps (TODO #225);
                                                       compare_*.py drivers, incl.
                                                       compare_fscx_revolve_closed_form.py
                                                       (TODO #213, C/Go/Python)
@@ -372,6 +375,8 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect \
 ```
 
 The `-r`/`--rounds` flag caps iterations per security test; `-t`/`--time` sets the wall-clock limit for both tests and benchmarks. CLI flags override `HTEST_ROUNDS`/`HTEST_TIME` env vars.
+
+**What `-t` actually bounds (TODO #225).** It caps iteration *count*, not wall time, and only at the granularity of `_trange`'s poll — `(i & 63) == 63`. A call site requesting fewer than 64 iterations is never polled, so the cap cannot reach it however slow its work becomes: 18 of the Python suite's 95 capped sites are in that category and carry ~71% of the time spent inside capped sites (worst: `test_hpke_stern_f_correctness`, 30 iterations requested, ~97 s against a 2.0 s cap). A truncated site always stops at a multiple of 64, never in between. Separately, 16 sites pass a literal count to `_trange` instead of `_iters(...)`, so `-r` does not reach them either. Every run now prints a closing `--- Time cap: ... ---` line reporting sites entered, truncated, and unpollable. The startup banner reports whether `_rnl_poly_mul` took the numpy or pure-Python path, and the `RNL_SIZES` the tests exercise — which is **not** the suite's deployed `RNLN`. Baseline: `benchmarks/rnl_ring_cost.py`.
 
 The suite files run EVE (eavesdropper) bypass tests inline on every execution.
 
