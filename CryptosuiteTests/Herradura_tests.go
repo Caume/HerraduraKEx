@@ -37,14 +37,17 @@ package main
 
 import (
 	. "herradurakex/herradura"
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
+	"math"
 	"math/big"
 	"math/bits"
 	mrand "math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -262,10 +265,30 @@ func testBitFrequency() {
 			if pct > mx { mx = pct }
 		}
 		mean /= float64(size)
+		// Sample-size-aware tolerance (TODO #233).  Each bit count is
+		// Binomial(nRun, 1/2), so the per-bit percentage has sigma =
+		// 50/sqrt(nRun) points.  The historical window was a hard +/-3, which
+		// is 6 sigma at the default N=10000 -- but only 0.19 sigma once -r 2
+		// or a -t truncation cuts nRun to 1000x fewer samples, so the check
+		// failed on sample noise rather than on bias.  Keeping the 6-sigma
+		// intent and letting the window follow nRun reproduces +/-3.00
+		// exactly at N=10000 and stays sound below it; the union bound over
+		// 256+128+64 bits puts the false-alarm rate near 1e-6 per run.
+		tol := 100.0
+		if nRun > 0 { tol = 6.0 * 50.0 / math.Sqrt(float64(nRun)) }
+		// At tol >= 50 the window spans the whole 0-100% range, so the check
+		// cannot discriminate at all (nRun <= 36).  Say SKIP rather than
+		// claim a PASS the samples do not support.
 		status := "PASS"
-		if mn <= 47.0 || mx >= 53.0 { status = "FAIL" }
-		fmt.Printf("    bits=%3d  min=%.2f%%  max=%.2f%%  mean=%.2f%%  [%s]\n",
-			size, mn, mx, mean, status)
+		switch {
+		case tol >= 50.0:
+			status = "SKIP"
+		case mn <= 50.0-tol || mx >= 50.0+tol:
+			status = "FAIL"
+		}
+		fmt.Printf("    bits=%3d  min=%.2f%%  max=%.2f%%  mean=%.2f%%"+
+			"  (tol +/-%.2f, N=%d)  [%s]\n",
+			size, mn, mx, mean, tol, nRun, status)
 	}
 	fmt.Println()
 }
@@ -695,6 +718,16 @@ func testHpkeSternFCorrectness() {
 	fmt.Println("[18] HPKE-Stern-F correctness: encap+decap  (n=32, t=2, brute-force)  [CODE-BASED PQC]")
 	N := testRounds(20)
 	ok := 0
+	// A weight-2 code of length 32 with a 16-bit syndrome is NOT uniquely
+	// decodable: C(32,2)=496 error vectors land in 2^16 syndromes, so the
+	// birthday model predicts ~1.87 colliding pairs per key and 43% of keys
+	// carry at least one.  Measured over 5000 keys: 0.76% of weight-2 vectors
+	// share a syndrome and 0.38% decode to a different e' -- which made this
+	// line report [FAIL] on 7.4% of runs, a failure nothing propagated until
+	// TODO #233 added the exit gate.  Brute force is not wrong when it returns
+	// the other preimage; the parameters are simply ambiguous, so those trials
+	// are counted and reported separately rather than scored.
+	ambiguous, bad := 0, 0
 	t0 := time.Now()
 	for i := 0; i < N; i++ {
 		seed   := randBA(32)
@@ -702,15 +735,27 @@ func testHpkeSternFCorrectness() {
 		ct     := SternSyndrome(seed, ePrime)
 		K      := SternHash(4, seed, ePrime)
 		eDec, found := hpkeSternFBruteForce32(seed, ct)
-		if found {
-			KDec := SternHash(4, seed, eDec)
-			if K.Equal(KDec) { ok++ }
+		switch {
+		case found && K.Equal(SternHash(4, seed, eDec)):
+			ok++
+		case found && !eDec.Equal(ePrime):
+			// A decode that returns a *different* weight-t preimage of the
+			// same syndrome is the code being ambiguous, not the decoder
+			// being wrong.
+			ambiguous++
+		default:
+			// Anything else -- including no preimage at all, which cannot
+			// happen since ePrime is one -- is a real failure.
+			bad++
 		}
 		if timeExceeded(t0) { N = i + 1; break }
 	}
 	status := "PASS"
-	if ok != N { status = "FAIL" }
-	fmt.Printf("    %d / %d decapsulated  [%s]\n\n", ok, N, status)
+	if bad != 0 { status = "FAIL" }
+	plural := "s"
+	if ambiguous == 1 { plural = "" }
+	fmt.Printf("    %d / %d decapsulated  (%d ambiguous syndrome%s, not a failure)  [%s]\n\n",
+		ok, N, ambiguous, plural, status)
 }
 
 func testHpksSternRingCorrectness() {
@@ -1423,6 +1468,73 @@ func testHpkst() {
 }
 
 // ---------------------------------------------------------------------------
+// Failure aggregation (TODO #233)
+//
+// Until v3.0.8 this harness printed "[PASS]"/"[FAIL]" and exited 0 either way,
+// so a failing security test could not fail its CI job: `native-go` was a
+// required, blocking check that went green whenever a test failed -- it had no
+// os.Exit call at all.  The same was true of the C and Python harnesses.
+//
+// The aggregate status is read off the printed output rather than threaded out
+// of each of the ~141 fmt.Print* sites.  That is deliberate: this harness's
+// contract *is* its output, the marker format is uniform, and swapping the
+// file descriptor cannot be forgotten by whoever adds test [46] -- rewriting
+// every call site to a checking helper can be, and would then regress the gate
+// in silence, which is exactly the failure mode being fixed.
+// ---------------------------------------------------------------------------
+
+var (
+	gFailures  int
+	gFailLines []string
+)
+
+const gFailKeep = 32
+
+// captureStdout redirects os.Stdout through a pipe, scanning every line that
+// passes for a failure marker before relaying it to the real stdout.  The
+// returned func restores os.Stdout and blocks until the relay has drained.
+func captureStdout() func() {
+	real := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		// Without a pipe there is no gate; say so rather than exiting 0 on a
+		// silent downgrade.
+		fmt.Fprintf(os.Stderr, "WARNING: stdout capture failed (%v); "+
+			"[FAIL] markers will not be gated\n", err)
+		return func() {}
+	}
+	os.Stdout = w
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		br := bufio.NewReader(r)
+		for {
+			line, err := br.ReadString('\n')
+			if line != "" {
+				if strings.Contains(line, "[FAIL]") ||
+					strings.Contains(line, "FAIL (accepted!)") {
+					gFailures++
+					if len(gFailLines) < gFailKeep {
+						gFailLines = append(gFailLines,
+							strings.TrimSpace(line))
+					}
+				}
+				fmt.Fprint(real, line)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return func() {
+		os.Stdout = real
+		w.Close()
+		<-done
+		r.Close()
+	}
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1462,6 +1574,8 @@ func main() {
 		gTimeLimit = gBenchDur
 	}
 	if gBenchDur == 0 { gBenchDur = time.Second }
+
+	restore := captureStdout()
 
 	fmt.Println("=== Herradura KEx v1.9.35 — Security & Performance Tests (Go) ===")
 	if gRounds > 0 || gTimeLimit > 0 {
@@ -1538,6 +1652,26 @@ func main() {
 	benchZkpNl()
 	testHcred()
 	testWeakKeyRejection()
+
+	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
+	// so that `native-go` can actually fail.  There is no allow-list: the C
+	// harness's banner used to describe [4] "Bit-frequency bias" as an
+	// "expected FAIL", but [4] passes in all three languages (FSCX(A,B) over
+	// random A is bit-balanced; what is not PRF-like about FSCX is its
+	// 3-bits-per-flip diffusion, which is test [2]'s job).  That banner line
+	// has been corrected rather than encoded here as an exemption.
+	restore()
+	if gFailures > 0 {
+		fmt.Printf("\n*** FAILED: %d check(s) reported [FAIL] ***\n", gFailures)
+		for _, line := range gFailLines {
+			fmt.Printf("    %s\n", line)
+		}
+		if gFailures > len(gFailLines) {
+			fmt.Printf("    ... and %d more\n", gFailures-len(gFailLines))
+		}
+		os.Exit(1)
+	}
+	fmt.Println("\n*** OK: no check reported [FAIL] ***")
 }
 
 // Security test [44]: HCRED hybrid credential.  Appended after the benchmarks
@@ -1617,12 +1751,43 @@ func testWeakKeyRejection() {
 	poly := GfPoly[size]
 	sternN := 32
 	N := testRounds(10)
-	okHkex, okHpks, okHpke, okHpkeDec, okStern := 0, 0, 0, 0, 0
+	okHkex, okHpks, okHpke, okHpkeDec := 0, 0, 0, 0
 	okAeadTamper, okAeadKeySwap := 0, 0
 	okV2Weak := 0
-	t0 := time.Now()
 	zero := newBA(size, big.NewInt(0))
 	one := newBA(size, big.NewInt(1))
+
+	// HPKS-Stern-F: an honestly-generated signature must be rejected when
+	// verified against a corrupted (flipped-bit) syndrome.  This one runs on
+	// its own fixed budget rather than N times, because it is the only check
+	// here whose outcome is probabilistic (TODO #233): a bad syndrome is
+	// caught only in the b=0 round, so a forgery slips through with
+	// probability (2/3)^rounds per trial.  At the old rounds=8 that is 3.90%
+	// -- measured 6/200 -- which made the whole of [45] fail 38.5% of the
+	// time at N=10.  sternRounds=32 (matching the C harness's compile-time
+	// SDF_ROUNDS) drops it to (2/3)^32 = 2.4e-6 -- ~8000x less likely to flake,
+	// and cheaper in total too: 2.08s for sternTrials=2 against 2.86s for the
+	// old ten (measured in the Python harness; Go is faster but same shape).
+	const sternRounds, sternTrials = 32, 2
+	okStern := 0
+	for t := 0; t < sternTrials; t++ {
+		seed, e, syndrome := SternFKeygen(sternN)
+		msgS := randBA(sternN)
+		sig := HpksSternFSign(msgS, e, seed, sternRounds)
+		syndromeBad := new(big.Int).Xor(syndrome, big.NewInt(1))
+		if HpksSternFVerify(msgS, sig, seed, syndrome) &&
+			!HpksSternFVerify(msgS, sig, seed, syndromeBad) {
+			okStern++
+		}
+	}
+
+	// Start the -t budget *after* the Stern block, not before.  It is a fixed
+	// two-trial cost, and charging it to the loop's cap let it consume the
+	// whole 2.0s on a slow host -- observed once in the Python harness, as
+	// "SKIP (no iterations completed)", which silently skipped this test's
+	// seven other checks.  The loop now gets exactly the budget it had
+	// before (TODO #233).
+	t0 := time.Now()
 	for i := 0; i < N; i++ {
 		// HKEX-GF: a peer public key of 0 or 1 (identity) must be refused
 		// before agreement -- either collapses the shared secret to a
@@ -1664,17 +1829,6 @@ func testWeakKeyRejection() {
 		_, okDecOne := HpkeDecrypt(ct, one, priv, poly, size)
 		if okDec && dec.Val.Cmp(&pt.Val) == 0 && !okDecZero && !okDecOne {
 			okHpkeDec++
-		}
-
-		// HPKS-Stern-F: an honestly-generated signature must be rejected
-		// when verified against a corrupted (flipped-bit) syndrome.
-		seed, e, syndrome := SternFKeygen(sternN)
-		msgS := randBA(sternN)
-		sig := HpksSternFSign(msgS, e, seed, 8)
-		syndromeBad := new(big.Int).Xor(syndrome, big.NewInt(1))
-		if HpksSternFVerify(msgS, sig, seed, syndrome) &&
-			!HpksSternFVerify(msgS, sig, seed, syndromeBad) {
-			okStern++
 		}
 
 		// HSKE-NL-A1-AEAD: tampered ciphertext must fail the tag check, and
@@ -1720,7 +1874,8 @@ func testWeakKeyRejection() {
 		}
 	}
 	status := "PASS"
-	if okHkex != N || okHpks != N || okHpke != N || okHpkeDec != N || okStern != N ||
+	if okHkex != N || okHpks != N || okHpke != N || okHpkeDec != N ||
+		okStern != sternTrials ||
 		okAeadTamper != N || okAeadKeySwap != N || okV2Weak != N {
 		status = "FAIL"
 	}
@@ -1729,6 +1884,6 @@ func testWeakKeyRejection() {
 		"  stern_synd_reject=%d/%d  aead_tamper_reject=%d/%d"+
 		"  aead_reuse_distinct=%d/%d  v2_weak_key_reject=%d/%d  [%s]\n",
 		N, okHkex, N, okHpks, N, okHpke, N, okHpkeDec, N,
-		okStern, N, okAeadTamper, N, okAeadKeySwap, N, okV2Weak, N, status)
+		okStern, sternTrials, okAeadTamper, N, okAeadKeySwap, N, okV2Weak, N, status)
 	fmt.Println()
 }
