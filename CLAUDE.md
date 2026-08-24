@@ -310,7 +310,29 @@ Use `build_arm.sh` / `build_asm_i386.sh`. To run: `qemu-arm -L /usr/arm-linux-gn
 ## Testing
 
 No unit-test framework in the traditional sense — tests are pass/fail assertions printed
-to the console by the suite/CLI binaries themselves. `.github/workflows/ci.yml` runs eleven
+to the console by the suite/CLI binaries themselves.
+
+**A failing test now fails the build (TODO #233).** Until v3.0.8 the C/Go/Python harnesses
+printed `[PASS]`/`[FAIL]` and exited 0 regardless, so `native-c`, `native-go` and
+`native-python` went green whenever a security test failed. Each harness now aggregates
+the `[FAIL]` markers passing through its own output — `#define printf hprintf` in C, a
+module-level `print` shadow in Python, an `os.Stdout` scanning pipe in Go — and exits
+non-zero, closing with `*** OK: no check reported [FAIL] ***` or
+`*** FAILED: n check(s) reported [FAIL] ***` plus the offending lines. There is no
+allow-list: no test is expected to fail. If you add a test, you do not need to register it
+anywhere — the wrapper sees any line carrying `[FAIL]`, which is exactly why it was built
+that way. **The ARM, NASM i386 and Arduino harnesses are not yet gated** (TODO #234); they
+still exit 0 unconditionally.
+
+Three tests had to be fixed before the gate could be enabled, all the same class — a
+probabilistic property asserted as a deterministic one. If you write a test whose subject
+has a soundness error, a birthday bound, or a sample-size-dependent statistic, make the
+threshold follow it: [4] now scales its tolerance as `6 × 50/sqrt(N)`, [18] distinguishes
+an ambiguous syndrome from a decoder failure (the n=32/t=2 code is not uniquely decodable
+— 43% of keys admit a weight-2 collision), and [45] runs its Stern-F sub-check at
+`rounds=32` so `(2/3)^rounds` is negligible.
+
+`.github/workflows/ci.yml` runs eleven
 jobs on every push/PR, all required/blocking: `native-c`, `native-go`, `native-python`
 (one job per language — build/no-build + suite tests + that language's own `CliTest/*.sh`
 scripts, split from a single combined `native` job in TODO #205), `native-interop`

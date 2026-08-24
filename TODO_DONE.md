@@ -11936,3 +11936,120 @@ own item. What changed is that the run now says so: a closing
 line, so a future ring or parameter change can be told from a slower host by reading the
 log. Documented in `CLAUDE.md`'s Testing section. No protocol, `--algo` tag, PEM label
 or `spec/` change.
+
+---
+
+### #233: The C/Go/Python test harnesses cannot fail their CI jobs, and test [45] fails ~22-38% of the time
+
+Found while measuring TODO #225; unrelated to that item's subject, and more serious.
+
+**1. No harness propagates a failure.** All three suites print `[PASS]`/`[FAIL]` as
+text and return 0 regardless. `CryptosuiteTests/Herradura_tests.py` contains no
+`sys.exit`, no `assert`, and no failure aggregation of any kind; the C harness's
+`exit(1)` calls are all I/O-error paths, not test outcomes; the Go harness has no
+`os.Exit` at all. Verified empirically: a Python run that printed `[FAIL]` exited **0**.
+
+So `native-c`, `native-go` and `native-python` — three required, blocking jobs — go
+green whenever a security test fails. They can only fail on a crash, or via the
+`CliTest/*.sh` scripts, which do assert properly. Every "all 29 checks pass" on a recent
+PR carries that caveat.
+
+**2. And a test really is failing.** Security test [45]'s `stern_synd_reject` check signs
+with HPKS-Stern-F at `n=32, rounds=8`, then requires a 1-bit-corrupted syndrome to be
+rejected — every time, over N trials. Stern-F's soundness error is `(2/3)^rounds` per
+trial, so a corrupted syndrome is *expected* to verify sometimes. Measured over 400
+trials: **19/400 = 4.75% accepted**, against the theoretical `(2/3)^8 = 3.90%`. That puts
+test [45]'s failure probability at **21.6% for N=5 and 38.5% for N=10** (N=10 is the
+default). Observed directly: 2 of 12 runs on a pristine checkout, 1 of 12 with #225's
+changes applied.
+
+The implementation is not wrong — the test asserts a probabilistic property as if it
+were deterministic. Either raise the round count for this check until the soundness
+error is negligible, or assert a bound over many trials rather than perfection over ten.
+
+**Work.**
+
+1. Fix [45] first. Fixing (2) before (1) is mandatory: turning on failure propagation
+   while [45] still flakes would make three required jobs fail a third of the time.
+2. Then give each harness an aggregate exit status. A shared "failures seen" counter and
+   a non-zero exit is the whole change in each language.
+3. Audit for intentional failures before gating. The C harness's own header text
+   describes `[4] Bit-frequency bias` as an "expected FAIL — FSCX is not a PRF", though
+   [4] currently passes in a Python run; any grep-based or counter-based gate needs that
+   settled first, in all three languages.
+4. Re-run the full matrix and see what else has been failing silently. This item should
+   not be closed on the assumption that [45] is the only one — that is exactly the
+   assumption the missing exit status made untestable.
+
+---
+
+**Outcome (v3.0.8).** All four steps done, in the order the item required. The audit in
+step 4 was not a formality: **[45] was not the only failing test, and it was not the only
+test asserting a probabilistic property as a deterministic one.** Three separate checks
+had to be fixed before the gate could be switched on.
+
+**[45] HPKS-Stern-F tampered syndrome — as filed.** A corrupted syndrome is caught only
+in the `b=0` round, so a forgery survives with probability `(2/3)^rounds` per trial;
+measured 6/200 = 3.00% against a theoretical 3.90% at the `rounds=8` the Python and Go
+harnesses used. The sub-check now runs on its own fixed budget (`STERN_TRIALS=2`) at
+`rounds=32`, matching the C harness's compile-time `SDF_ROUNDS` — `(2/3)^32 = 2.4e-6`, an
+~8000x reduction in flake probability that also costs less in total than the old N-fold
+loop (measured 2.08 s vs 2.86 s in Python). The C harness was already at 32 rounds and
+never flaked; it was restructured only so the three languages print the same denominator.
+
+One trap on the way, worth recording because it was invisible from the pass/fail line. The
+hoisted block first sat *inside* the `-t` budget, which put a fixed 2.08 s cost in front of
+a 2.0 s cap: the loop's first check fired immediately, `N` came out 0, and [45] printed
+`SKIP (no iterations completed)` — silently dropping its seven other checks. The old code
+never hit this because the cost was spread across iterations with the check at the *top* of
+the loop, so iteration 1 always completed. Fixed by taking the timestamp after the Stern
+block, which restores the loop's original budget exactly. Caught in verification, not
+shipped.
+
+**[4] Bit-frequency bias — found by the gate itself, first run.** Its window was a hard
+`+/-3` percentage points regardless of sample count. That is 6 sigma at the default
+`N=10000`, but only 0.19 sigma once `-r 2` or a `-t` truncation cuts the sample count, so
+the test failed on sample noise rather than on bias — `min=0.00% max=100.00% [FAIL]` at
+`-r 2`. The window now follows the samples actually taken, `6 * 50/sqrt(N)` points, which
+reproduces `+/-3.00` *exactly* at `N=10000` and stays sound below it. The union bound over
+the 256+128+64 bits puts the false-alarm rate near 1e-6 per run. Below N=37 the window
+spans the whole 0-100% range, so the line now reports `[SKIP]` rather than a `[PASS]` the
+samples do not support. The C harness's banner
+line calling [4] an "expected FAIL — FSCX is not a PRF" was simply wrong and has been
+corrected: [4] passes in all three languages, because FSCX(A,B) over random A is
+bit-balanced. What is *not* PRF-like about FSCX is its 3-bits-per-flip diffusion, which
+is test [2]'s job. No allow-list was needed anywhere.
+
+**[18] HPKE-Stern-F encap/decap — the one the item warned about.** Failed 1 of 5 C runs
+before any change, silently. Root-caused rather than assumed: a weight-2 code of length
+32 with a 16-bit syndrome is **not uniquely decodable**. C(32,2)=496 error vectors land in
+2^16 syndromes, so the birthday model predicts ~1.87 colliding pairs per key. Measured
+over 5000 keys: **43.46% of keys carry at least one collision**, 0.76% of weight-2 vectors
+share a syndrome, and 0.38% brute-force to a *different* `e'` — which puts this line's
+failure rate at **7.37% per 20-trial run**, matching the observed 1/5. Brute force is not
+wrong when it returns the other preimage; the toy parameters are ambiguous. Those trials
+are now identified (via a first-preimage helper, in the same scan order decap uses),
+counted, and reported as `(k ambiguous syndromes, not a failure)` rather than scored.
+
+**Step 2 — the gate.** Each harness now exits non-zero if any check printed `[FAIL]`, and
+prints a closing `*** OK: no check reported [FAIL] ***` or `*** FAILED: n check(s) ... ***`
+with the offending lines. The status is read off the printed output rather than threaded
+out of each report site — deliberately: a harness's contract *is* its output, the marker
+format is uniform across all ~44/~50/~141 sites, and an output wrapper cannot be forgotten
+by whoever adds test [46], whereas a per-site helper can, and would then regress the gate
+in silence — which is the exact failure mode being fixed. C uses `#define printf hprintf`
+(putchar/puts/fputs are left alone; no status marker is ever emitted through them), Python
+shadows `print` at module level, and Go swaps `os.Stdout` for a scanning pipe. **No
+`ci.yml` change was needed:** the three jobs already invoke the harnesses directly with no
+`continue-on-error` and no `|| true`, so the exit status now propagates on its own.
+
+**Not in scope, and worth its own item: the assembly harnesses have the same defect.**
+`CryptosuiteTests/Herradura_tests.s` ends in a hard-coded `mov r0, #0; bl exit` across 19
+`[FAIL]` sites, and the NASM i386 and Arduino harnesses are the same shape — so
+`arm-i386` and `arduino`, two more required jobs, are still green-on-failure. They also
+run test [18] at the same ambiguous n=32/t=2 parameters. Filed as **#234** rather than
+folded in here: it is a different language surface, the item's own title and Work list
+scope it to C/Go/Python, and the change is worth reviewing on its own.
+
+Status: **DONE v3.0.8** — [45], [4] and [18] each fixed at the root (all three asserted a probabilistic property as deterministic), then C/Go/Python given an aggregate exit status; assembly harnesses filed as #234.
+

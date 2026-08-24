@@ -610,6 +610,18 @@ def hpke_stern_f_decap(ciphertext, seed, n):
             return _stern_hash(n, seed, BitArray(n, e_p & ((1 << n) - 1)), ds=4)
     return None
 
+def stern_f_first_preimage(ciphertext, seed, n):
+    """First weight-t preimage of ciphertext, in the order hpke_stern_f_decap
+    scans.  Test [18] needs it to tell "the implementation is wrong" from
+    "this ciphertext has two weight-t preimages and brute force legitimately
+    found the other one" (TODO #233)."""
+    n_rows = n // 2; t = max(2, n // 16)
+    for pos in itertools.combinations(range(n), t):
+        e_p = sum(1 << p for p in pos)
+        if _stern_syndrome(seed.uint, e_p, n, n_rows) == ciphertext:
+            return e_p
+    return None
+
 def hpke_stern_f_encap_with_e(seed, n):
     """Like hpke_stern_f_encap but also returns the plaintext error e_p (for tests)."""
     n_rows = n // 2; t = max(2, n // 16)
@@ -1158,6 +1170,33 @@ g_bench_sec  = 1.0  # benchmark duration (seconds)
 g_time_limit = 0.0  # per-test wall-clock cap; 0 = none
 
 
+# --- Failure aggregation (TODO #233) --------------------------------------
+# Until v3.0.8 this harness printed "[PASS]"/"[FAIL]" and exited 0 either way,
+# so a failing security test could not fail its CI job: `native-python` was a
+# required, blocking check that went green whenever a test failed.  The same
+# was true of the C and Go harnesses.
+#
+# The aggregate status is read off the printed output rather than threaded out
+# of each of the ~50 report sites.  That is deliberate: this harness's contract
+# *is* its output, the marker format is uniform, and a wrapper here cannot be
+# forgotten by whoever adds test [46] -- a per-site helper can, and would then
+# regress the gate in silence, which is exactly the failure mode being fixed.
+_FAIL_MARKERS = ("[FAIL]", "FAIL (accepted!)")
+g_failures = 0
+g_fail_lines = []
+_emit = print
+
+
+def print(*args, **kwargs):      # noqa: A001 -- deliberate builtin shadow
+    """print() that also counts the failure markers passing through it."""
+    global g_failures
+    text = kwargs.get("sep", " ").join(str(a) for a in args)
+    if any(marker in text for marker in _FAIL_MARKERS):
+        g_failures += 1
+        g_fail_lines.append(text.strip())
+    _emit(*args, **kwargs)
+
+
 def _iters(default_n: int) -> int:
     """Effective iteration count: g_rounds if set, otherwise default_n."""
     return g_rounds if g_rounds > 0 else default_n
@@ -1279,8 +1318,23 @@ def test_bit_frequency():
                 if (val >> bit) & 1: counts[bit] += 1
         pcts  = [c / n_run * 100.0 for c in counts] if n_run > 0 else [0.0] * size
         mn = min(pcts); mx = max(pcts); mean = sum(pcts) / size
-        status = "PASS" if mn > 47.0 and mx < 53.0 else "FAIL"
-        print(f"    bits={size:3d}  min={mn:.2f}%  max={mx:.2f}%  mean={mean:.2f}%  [{status}]")
+        # Sample-size-aware tolerance (TODO #233).  Each bit count is
+        # Binomial(n_run, 1/2), so the per-bit percentage has sigma =
+        # 50/sqrt(n_run) points.  The historical window was a hard +/-3, which
+        # is 6 sigma at the default N=10000 -- but only 0.19 sigma once -r 2
+        # or a -t truncation cuts n_run to 1000x fewer samples, so the check
+        # failed on sample noise rather than on bias.  Keeping the 6-sigma
+        # intent and letting the window follow n_run reproduces +/-3.00
+        # exactly at N=10000 and stays sound below it; the union bound over
+        # 256+128+64 bits puts the false-alarm rate near 1e-6 per run.
+        tol = 6.0 * 50.0 / math.sqrt(n_run) if n_run > 0 else 100.0
+        # At tol >= 50 the window spans the whole 0-100% range, so the check
+        # cannot discriminate at all (n_run <= 36).  Say SKIP rather than
+        # claim a PASS the samples do not support.
+        status = ("SKIP" if tol >= 50.0 else
+                  "PASS" if 50.0 - tol < mn and mx < 50.0 + tol else "FAIL")
+        print(f"    bits={size:3d}  min={mn:.2f}%  max={mx:.2f}%  mean={mean:.2f}%"
+              f"  (tol +/-{tol:.2f}, N={n_run})  [{status}]")
     print()
 
 
@@ -1612,17 +1666,39 @@ def test_hpks_stern_f_correctness():
 def test_hpke_stern_f_correctness():
     print("[18] HPKE-Stern-F encap/decap correctness  [CODE-BASED PQC]")
     SDF_TRIALS_KEM = _iters(30)
-    # N=32: brute-force decap (full decoder path; C(32,2)=496 candidates)
-    size = 32; ok = 0; n_run = 0
+    # N=32: brute-force decap (full decoder path; C(32,2)=496 candidates).
+    #
+    # A weight-2 code of length 32 with a 16-bit syndrome is NOT uniquely
+    # decodable: C(32,2)=496 error vectors land in 2^16 syndromes, so the
+    # birthday model predicts ~1.87 colliding pairs per key and 43% of keys
+    # carry at least one.  Measured over 5000 keys: 0.76% of weight-2 vectors
+    # share a syndrome and 0.38% decode to a different e' -- which made this
+    # line report [FAIL] on 7.4% of runs, a failure nothing propagated until
+    # TODO #233 added the exit gate.  Brute force is not wrong when it returns
+    # the other preimage; the parameters are simply ambiguous, so those trials
+    # are counted and reported separately rather than scored.
+    size = 32; ok = 0; n_run = 0; ambiguous = 0; bad = 0
     for _ in _trange(SDF_TRIALS_KEM):
         n_run += 1
         sf_seed, _sf_e, _sf_syn = stern_f_keygen(size)
-        K_enc, ct = hpke_stern_f_encap(sf_seed, size)
+        K_enc, ct, e_p = hpke_stern_f_encap_with_e(sf_seed, size)
         K_dec = hpke_stern_f_decap(ct, sf_seed, size)
         if K_dec is not None and K_dec == K_enc:
             ok += 1
-    status = "PASS" if ok == n_run else "FAIL"
-    print(f"    bits={size:3d}  brute-force decap  {ok:3d}/{n_run} agreed  [{status}]")
+        else:
+            first = stern_f_first_preimage(ct, sf_seed, size)
+            # A decode that returns a *different* weight-t preimage of the
+            # same syndrome is the code being ambiguous, not the decoder
+            # being wrong.  Anything else -- including no preimage at all,
+            # which cannot happen since e_p is one -- is a real failure.
+            if first is not None and first != e_p:
+                ambiguous += 1
+            else:
+                bad += 1
+    status = "PASS" if bad == 0 else "FAIL"
+    print(f"    bits={size:3d}  brute-force decap  {ok:3d}/{n_run} agreed"
+          f"  ({ambiguous} ambiguous syndrome"
+          f"{'' if ambiguous == 1 else 's'}, not a failure)  [{status}]")
     # N=32,64,128,256: known-e' decap (verifies key derivation at all sizes)
     for size in [32, 64, 128, 256]:
         ok = 0; n_run = 0
@@ -2736,9 +2812,38 @@ def test_weak_key_rejection():
     poly = GF_POLY[size]
     stern_n = 32
     N = g_rounds if g_rounds > 0 else 10
-    ok_hkex = ok_hpks = ok_hpke = ok_hpke_dec = ok_stern = 0
+    ok_hkex = ok_hpks = ok_hpke = ok_hpke_dec = 0
     ok_aead_tamper = ok_aead_key_swap = 0
     ok_v2_weak = 0
+
+    # HPKS-Stern-F: an honestly-generated signature must be rejected when
+    # verified against a corrupted (flipped-bit) syndrome.  This one runs on
+    # its own fixed budget rather than N times, because it is the only check
+    # here whose outcome is probabilistic (TODO #233): a bad syndrome is
+    # caught only in the b=0 round, so a forgery slips through with
+    # probability (2/3)^rounds per trial.  At the old rounds=8 that is 3.90%
+    # -- measured 6/200 -- which made the whole of [45] fail 38.5% of the
+    # time at N=10.  STERN_ROUNDS=32 (matching the C harness's compile-time
+    # SDF_ROUNDS) drops it to (2/3)^32 = 2.4e-6 -- ~8000x less likely to
+    # flake, and cheaper in total too: 2.08s for STERN_TRIALS=2 against 2.86s
+    # for the old ten.
+    STERN_ROUNDS, STERN_TRIALS = 32, 2
+    ok_stern = 0
+    for _ in range(STERN_TRIALS):
+        seed, e_int, syndrome = stern_f_keygen(stern_n)
+        msg_s = BitArray.random(stern_n)
+        sig = hpks_stern_f_sign(msg_s, e_int, seed, syndrome, stern_n,
+                                STERN_ROUNDS)
+        if (hpks_stern_f_verify(msg_s, sig, seed, syndrome, stern_n)
+                and not hpks_stern_f_verify(msg_s, sig, seed, syndrome ^ 1,
+                                            stern_n)):
+            ok_stern += 1
+
+    # Start the -t budget *after* the Stern block, not before.  It is a fixed
+    # two-trial cost, and charging it to the loop's cap let it consume the
+    # whole 2.0s on a slow host -- observed once, as `SKIP (no iterations
+    # completed)`, which silently skipped this test's seven other checks.
+    # The loop now gets exactly the budget it had before (TODO #233).
     t0 = time.perf_counter()
     for i in range(N):
         if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit:
@@ -2778,16 +2883,6 @@ def test_weak_key_rejection():
                 and hpke_decrypt_checked(ct, 1, priv, poly, size) is None):
             ok_hpke_dec += 1
 
-        # HPKS-Stern-F: an honestly-generated signature must be rejected
-        # when verified against a corrupted (flipped-bit) syndrome.
-        seed, e_int, syndrome = stern_f_keygen(stern_n)
-        msg_s = BitArray.random(stern_n)
-        sig = hpks_stern_f_sign(msg_s, e_int, seed, syndrome, stern_n, 8)
-        syndrome_bad = syndrome ^ 1
-        if (hpks_stern_f_verify(msg_s, sig, seed, syndrome, stern_n)
-                and not hpks_stern_f_verify(msg_s, sig, seed, syndrome_bad, stern_n)):
-            ok_stern += 1
-
         # HSKE-NL-A1-AEAD: tampered ciphertext must fail the tag check, and
         # re-using the same (key, nonce) pair for a different plaintext must
         # produce a different tag/ciphertext (no silent keystream reuse).
@@ -2817,12 +2912,13 @@ def test_weak_key_rejection():
         print("    SKIP (no iterations completed)\n")
         return
     status = ("PASS" if ok_hkex == N and ok_hpks == N and ok_hpke == N
-              and ok_hpke_dec == N and ok_stern == N
+              and ok_hpke_dec == N and ok_stern == STERN_TRIALS
               and ok_aead_tamper == N and ok_aead_key_swap == N
               and ok_v2_weak == N else "FAIL")
     print(f"    n={N}  hkex_reject={ok_hkex}/{N}  hpks_id_reject={ok_hpks}/{N}"
           f"  hpke_enc_reject={ok_hpke}/{N}  hpke_dec_reject={ok_hpke_dec}/{N}"
-          f"  stern_synd_reject={ok_stern}/{N}  aead_tamper_reject={ok_aead_tamper}/{N}"
+          f"  stern_synd_reject={ok_stern}/{STERN_TRIALS}"
+          f"  aead_tamper_reject={ok_aead_tamper}/{N}"
           f"  aead_reuse_distinct={ok_aead_key_swap}/{N}"
           f"  v2_weak_key_reject={ok_v2_weak}/{N}  [{status}]")
     print()
@@ -3118,3 +3214,17 @@ if __name__ == '__main__':
               f"call sites; truncated {_cap_sites_cut}, "
               f"could not poll {_cap_sites_unpollable} "
               f"(fewer than {_TRANGE_POLL} iterations requested) ---")
+
+    # Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
+    # so that `native-python` can actually fail.  There is no allow-list: the
+    # C harness's banner used to describe [4] "Bit-frequency bias" as an
+    # "expected FAIL", but [4] passes in all three languages (FSCX(A,B) over
+    # random A is bit-balanced; what is not PRF-like about FSCX is its
+    # 3-bits-per-flip diffusion, which is test [2]'s job).  That banner line
+    # has been corrected rather than encoded here as an exemption.
+    if g_failures:
+        _emit(f"\n*** FAILED: {g_failures} check(s) reported [FAIL] ***")
+        for line in g_fail_lines:
+            _emit(f"    {line}")
+        sys.exit(1)
+    _emit("\n*** OK: no check reported [FAIL] ***")

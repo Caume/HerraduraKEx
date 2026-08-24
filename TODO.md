@@ -8,47 +8,34 @@
 
 ---
 
-### #233: The C/Go/Python test harnesses cannot fail their CI jobs, and test [45] fails ~22-38% of the time
+### #234: The ARM / NASM i386 / Arduino test harnesses cannot fail their CI jobs either
 
-Found while measuring TODO #225; unrelated to that item's subject, and more serious.
+TODO #233 gave the C, Go and Python harnesses an aggregate exit status. The assembly and
+Arduino harnesses were left out of that item's scope and still have the defect it fixed:
+`CryptosuiteTests/Herradura_tests.s` ends in a hard-coded `mov r0, #0; bl exit` regardless
+of outcome, across 19 separate `[FAIL]` emission sites, and `Herradura_tests.asm` and
+`Herradura_tests.ino` are the same shape. So `arm-i386` and `arduino` — two more required,
+blocking CI jobs — go green whenever an assembly security test fails.
 
-**1. No harness propagates a failure.** All three suites print `[PASS]`/`[FAIL]` as
-text and return 0 regardless. `CryptosuiteTests/Herradura_tests.py` contains no
-`sys.exit`, no `assert`, and no failure aggregation of any kind; the C harness's
-`exit(1)` calls are all I/O-error paths, not test outcomes; the Go harness has no
-`os.Exit` at all. Verified empirically: a Python run that printed `[FAIL]` exited **0**.
-
-So `native-c`, `native-go` and `native-python` — three required, blocking jobs — go
-green whenever a security test fails. They can only fail on a crash, or via the
-`CliTest/*.sh` scripts, which do assert properly. Every "all 29 checks pass" on a recent
-PR carries that caveat.
-
-**2. And a test really is failing.** Security test [45]'s `stern_synd_reject` check signs
-with HPKS-Stern-F at `n=32, rounds=8`, then requires a 1-bit-corrupted syndrome to be
-rejected — every time, over N trials. Stern-F's soundness error is `(2/3)^rounds` per
-trial, so a corrupted syndrome is *expected* to verify sometimes. Measured over 400
-trials: **19/400 = 4.75% accepted**, against the theoretical `(2/3)^8 = 3.90%`. That puts
-test [45]'s failure probability at **21.6% for N=5 and 38.5% for N=10** (N=10 is the
-default). Observed directly: 2 of 12 runs on a pristine checkout, 1 of 12 with #225's
-changes applied.
-
-The implementation is not wrong — the test asserts a probabilistic property as if it
-were deterministic. Either raise the round count for this check until the soundness
-error is negligible, or assert a bound over many trials rather than perfection over ten.
+They also carry #233's third finding. Tests [1]-[18] include [18] HPKE-Stern-F
+encap/decap at N=32, t=2, where the code is not uniquely decodable: 43.46% of keys admit
+at least one weight-2 syndrome collision and 0.38% of error vectors brute-force to a
+different `e'` (measured over 5000 keys). Whatever trial count the assembly [18] uses, it
+reports a spurious `[FAIL]` at that rate, and always has.
 
 **Work.**
 
-1. Fix [45] first. Fixing (2) before (1) is mandatory: turning on failure propagation
-   while [45] still flakes would make three required jobs fail a third of the time.
-2. Then give each harness an aggregate exit status. A shared "failures seen" counter and
-   a non-zero exit is the whole change in each language.
-3. Audit for intentional failures before gating. The C harness's own header text
-   describes `[4] Bit-frequency bias` as an "expected FAIL — FSCX is not a PRF", though
-   [4] currently passes in a Python run; any grep-based or counter-based gate needs that
-   settled first, in all three languages.
-4. Re-run the full matrix and see what else has been failing silently. This item should
-   not be closed on the assumption that [45] is the only one — that is exactly the
-   assumption the missing exit status made untestable.
+1. Fix [18]'s ambiguity accounting in `.s`, `.asm` and `.ino`, the way #233 did for C/Go/
+   Python: a syndrome with two weight-t preimages is not a decoder failure.
+2. Audit the remaining `[FAIL]` sites in each for the same "probabilistic property
+   asserted as deterministic" class before gating — that audit is what turned up [4] and
+   [18] in #233, and neither was in the original item text.
+3. Then aggregate: a failure counter and a non-zero exit. ARM's exit is already a
+   `bl exit` call, so it is a counter and a load, not a restructure.
+4. Arduino runs under simavr via `run_arduino.sh`; check how (and whether) an exit status
+   propagates there before assuming step 3 is sufficient for that target.
+
+Both toolchains build and run locally on the dev host (`arm-linux-gnueabi-gcc`, `nasm`,
+`qemu-arm`/`qemu-i386`), so this is testable without CI round-trips.
 
 Status: **OPEN**
-

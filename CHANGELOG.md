@@ -2,6 +2,80 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.8] - 2026-08-24
+
+### Fixed
+- **TODO #233: the C, Go and Python test harnesses could not fail their CI jobs — and
+  three security tests had been failing silently.** All three printed `[PASS]`/`[FAIL]`
+  as text and exited 0 regardless: `Herradura_tests.py` had no `sys.exit`, no `assert`
+  and no failure aggregation, `Herradura_tests.go` had no `os.Exit` at all, and the C
+  harness's only `exit(1)` paths were I/O errors. `native-c`, `native-go` and
+  `native-python` — three required, blocking jobs — went green whenever a security test
+  failed. Every "all 29 checks pass" before this release carries that caveat.
+- **Test [45] weak-key rejection — the failure that prompted the item.** Its
+  `stern_synd_reject` check asserted that a 1-bit-corrupted HPKS-Stern-F syndrome is
+  rejected *every* time, but a bad syndrome is caught only in the `b=0` round, so a
+  forgery survives with probability `(2/3)^rounds`. At the `rounds=8` the Python and Go
+  harnesses used that is 3.90% (measured 6/200), making the whole of [45] fail **38.5% of
+  runs** at the default N=10. The sub-check now runs on a fixed `STERN_TRIALS=2` budget at
+  `rounds=32`, matching the C harness's compile-time `SDF_ROUNDS`: `(2/3)^32 = 2.4e-6`,
+  ~8000x less likely to flake, and cheaper in total than the old N-fold loop (measured
+  2.08 s vs 2.86 s in Python). The sub-check runs *before* the `-t` timestamp is taken, so
+  [45]'s main loop keeps exactly the budget it had. That detail was not free: hoisting the
+  block inside the budget first made a fixed 2.08 s cost sit in front of a 2.0 s cap, which
+  zeroed the loop and printed `SKIP (no iterations completed)` — silently skipping [45]'s
+  seven other checks. Caught in the verification run, not shipped.
+- **Test [4] bit-frequency bias — found by the new gate on its first run.** Its
+  acceptance window was a hard `±3` percentage points regardless of how many samples were
+  actually taken: 6 sigma at the default `N=10000`, but only 0.19 sigma once `-r 2` or a
+  `-t` truncation cut the count, so it failed on sample noise rather than on bias
+  (`min=0.00% max=100.00% [FAIL]` at `-r 2`). The window now follows the sample count,
+  `6 × 50/sqrt(N)` points — reproducing `±3.00` **exactly** at `N=10000` and staying sound
+  below it, with a union-bound false-alarm rate near 1e-6 per run. Each line now reports
+  its own `(tol ±x.xx, N=n)`, and reports `[SKIP]` rather than a hollow `[PASS]` when the
+  tolerance exceeds ±50 points (N ≤ 36) and the window therefore spans the whole range.
+- **Test [18] HPKE-Stern-F encap/decap — the silent failure the item predicted.** Failed
+  1 of 5 C runs before any change. A weight-2 code of length 32 with a 16-bit syndrome is
+  **not uniquely decodable**: C(32,2)=496 error vectors land in 2^16 syndromes. Measured
+  over 5000 keys, **43.46% of keys carry at least one syndrome collision**, 0.76% of
+  weight-2 vectors share a syndrome, and 0.38% brute-force to a different `e'` — a
+  **7.37%** failure rate per 20-trial run, matching the observed 1/5 and the birthday
+  prediction of ~1.87 colliding pairs per key. Brute force is not wrong when it returns
+  the other preimage; the toy parameters are ambiguous. Such trials are now identified via
+  a first-preimage helper (same scan order decap uses), counted, and reported as
+  `(k ambiguous syndromes, not a failure)` instead of scored.
+
+### Changed
+- **`CryptosuiteTests/Herradura_tests.{c,go,py}`: aggregate exit status.** Each harness
+  now exits non-zero if any check printed `[FAIL]`, closing with
+  `*** OK: no check reported [FAIL] ***` or `*** FAILED: n check(s) reported [FAIL] ***`
+  followed by the offending lines. The status is read off the printed output rather than
+  threaded out of each of the ~44/~50/~141 report sites: a harness's contract *is* its
+  output, the marker format is uniform, and an output wrapper cannot be forgotten by
+  whoever adds test [46] — a per-site helper can, and would regress the gate in silence,
+  which is the exact failure mode being fixed. C uses `#define printf hprintf`
+  (`putchar`/`puts`/`fputs` are untouched — no status marker is emitted through them),
+  Python shadows `print` at module level, Go swaps `os.Stdout` for a scanning pipe.
+- **No `.github/workflows/ci.yml` change was required.** The three jobs already invoke the
+  harnesses directly with no `continue-on-error` and no `|| true`, so the new exit status
+  propagates on its own; the same is true of `docker-entrypoint.sh` (`set -euo pipefail`).
+- **The C harness banner no longer calls test [4] an "expected FAIL".** It claimed
+  "[4] Bit-frequency bias (expected FAIL — FSCX is not a PRF)", but [4] passes in all
+  three languages: FSCX(A,B) over random A is bit-balanced. What is not PRF-like about
+  FSCX is its 3-bits-per-flip diffusion, which is test [2]'s job. The gate needs no
+  allow-list as a result.
+- **`CryptosuiteTests/Herradura_tests.c` gained a local `hsqrt`** (Newton) for [4]'s
+  tolerance, so the harness still links with a bare `gcc -O2 -o out file.c` as `README.md`
+  and `build_c.sh` document — neither passes `-lm`.
+
+### Notes
+- **The assembly and Arduino harnesses have the same defect and are filed as TODO #234.**
+  `Herradura_tests.s` ends in a hard-coded `mov r0, #0; bl exit` across 19 `[FAIL]` sites,
+  and the NASM i386 and Arduino harnesses are the same shape, so `arm-i386` and `arduino`
+  — two more required jobs — remain green-on-failure. They also run test [18] at the same
+  ambiguous n=32/t=2 parameters. Left out deliberately: different language surface, and
+  TODO #233's own title and Work list scope it to C/Go/Python.
+
 ## [3.0.7] - 2026-08-24
 
 ### Added
