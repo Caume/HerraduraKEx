@@ -11716,3 +11716,108 @@ measured value, and a deleted banner row — each caught with the offending
 nine stale `§11.15–§11.20` locations and the two stale counts were fixed first
 (commit `5115f2a`), so the tree passes clean. Documentation/CI only: no protocol,
 `--algo` tag, PEM label or `spec/` change.
+
+---
+
+### #232: Decide whether to act on §11.22.2's co-rank improvement (126 -> 64) in HSKE/HPKE
+
+TODO #230 produced an unshipped side-result. §11.22.2 of `SecurityProofs-7.md` shows
+that TODO #210's plaintext leak is not intrinsic to the FSCX construction: with a
+linear box `L` the step becomes FSCX with `M` replaced by `M' = L.M`, and writing
+`Y = M' + I`,
+
+    co-rank(T_i) = dim ker Y^(2^v2(i) - 1)
+
+so #210's closed form `2(2^v2(i) - 1)` is the special case `v(M + I) = 2`. **The factor
+2 is a property of this particular `M`, not of the construction.** A box with Jordan
+type `(n-1, 1)` takes the leak from **126 to 64 of 256** at `n = 256, i = 64`, and 64
+is a proved floor, not a search result: `dim ker Y^(i-1) = sum_j min(lambda_j, i-1)` is
+minimized by the fewest and largest blocks, and the unconstrained optimum (regular
+nilpotent, co-rank 63) has `Y^(n-1) != 0` and therefore **fails agreement**.
+
+**This item is the decision, not the change.** Nothing here authorises editing HSKE or
+HPKE; §11.22.2 says as much in its own last line.
+
+**Why the answer is probably "no", and what would have to be true for it to be "yes".**
+Three routes to the same leak are already on the table, and the linear box is the worst
+of them on every axis:
+
+| route | co-rank at n=256 | cost | source |
+|---|---|---|---|
+| odd `i` (e.g. 65) | **0** — `T_i` invertible, Shannon-perfect at one-time use | a parameter | #210/#211, `hske_perfect_secrecy.py` |
+| secret per-step injection | **0** — `sigma_i` is surjective since `m(1) = 1` | a subkey schedule | #224, §11.21.3 |
+| linear box `L` (this item) | **64** — and never 0, since `Y` is nilpotent so `Y^(i-1)` is singular for every even `i` | a new primitive **and** a MAJOR wire-format break | #230, §11.22.2 |
+
+Two further points argue against shipping it:
+
+1. **None of the three fixes the affine two-time break.** `E1 xor E2 = M^i.(P1 xor P2)`
+   under a reused key holds regardless of `L`, `i`, or any additive injection, because
+   all of them preserve affinity. The real fix for multi-use is the NL quartet, which
+   already ships.
+2. **It cannot change a `SECURITY.md` rating.** HSKE (key-only) is already "Not
+   suitable for production" and HPKE "Demo-only", and each is disqualified by something
+   the co-rank does not touch — a single known-plaintext pair recovers the HSKE
+   keystream, and HPKE falls to ~2^36.5 Pohlig-Hellman. A MAJOR break that moves 126 to
+   64 buys a rating change of exactly zero.
+
+So the plausible outcomes are `DEPRECATED` (documented, deliberately not shipped) or an
+opt-in that touches no default. Shipping it as the default would need an argument that
+survives all four objections above, and per CLAUDE.md's MAJOR rules that argument must
+appear in this item's own text before any code moves.
+
+**Work to do.**
+
+1. Decide among: (a) close as `DEPRECATED` with the reasoning recorded in
+   `SecurityProofs-7.md`; (b) expose the `(n-1, 1)` box as an opt-in that leaves every
+   default and every existing artifact readable; (c) make it the default, which is a
+   MAJOR bump plus a `MIGRATING.md` entry, since it changes what existing `--algo hske`
+   and `--algo hpke` ciphertexts decrypt to.
+2. If (b) or (c): exhibit the concrete `L` — §11.22.2 measured a Jordan type, not a
+   shipped matrix. It must be stated as a bit-matrix or a closed form, verified to give
+   `Y^(n-1) = 0` and co-rank 64 at n=256, and be cheap enough for the AVR and Thumb-2
+   targets, which is a real constraint: FSCX is currently three shifts and five XORs.
+3. Either way, check the knock-on to HPKS. #210 notes the Schnorr challenge
+   `e = fscx_revolve(R, msg, i)` lives in a 130-dimensional affine subspace; a box that
+   moves the co-rank to 64 moves that to 192, which is a *signature* parameter and a
+   separate wire-format question from HSKE/HPKE.
+4. Whatever is decided, add the comparison table above to §11.22.2 so a future reader
+   does not rediscover the 126 -> 64 result and mistake it for the best available fix.
+
+Related: [[#210]] (the leak), [[#211]] (odd `i`, co-rank 0), [[#224]] (secret injection,
+co-rank 0), [[#230]] (this result's origin).
+
+Status: **DONE v3.0.6** — decided: **do not ship it.**
+`SecurityProofsCode/corank_linear_box_decision.py` plus SecurityProofs-7.md §11.23.
+Two of this item's four objections held, one was wrong, and the investigation turned up
+two results the item did not anticipate.
+
+*Wrong:* the cost objection. Step 2 assumed the concrete `L` might be too expensive for
+AVR/Thumb-2. In the standard bit basis the `(n-1, 1)` box is a broken non-cyclic shift,
+`Y(x) = (x >> 1) & ~(1 << (n-2))`, `M'(x) = x ^ Y(x)` — 3 word-ops against FSCX's 5. It
+is *cheaper* than what ships.
+
+*The actual objection:* co-rank counts leaked dimensions, not exploitability. That cheap
+box makes 64 ciphertext bits key-independent and every one is a plaintext bit verbatim,
+`E[192] = P[192]` through `E[255] = P[255]` — a quarter of the plaintext in the clear,
+against zero raw bits for the classical `M`. The conjugated box fixes that (co-rank 64,
+minimum leaked weight 75 vs the classical 4, 0 raw bits) but is dense: ~128x the cost and
+8 KB of matrix, which does not fit the AVR target and would cost cross-target parity.
+
+*New result 1 — the circulant floor.* Exhaustively over every circulant at `n = 8` (64
+admit agreement) and `n = 16` (16 384), none beats `2(i-1)`, which is exactly what the
+classical `M` achieves; agreement forces `v(M'+I) >= 2` and then
+`co-rank = min(n, v(i-1))`. So **TODO #210's 126 is both a defect and a floor** — the
+best any rotation-based step can do — and 126 -> 64 is not a parameter tweak but a
+different primitive.
+
+*New result 2 — the leak's concrete form.* The lightest functional in the kernel has
+weight 4: `E[0]^E[2]^E[128]^E[130]` equals the same XOR of plaintext bits under every
+key, verified 300/300 against the shipped `fscx_revolve`. This holds for what ships
+today and is independent of the decision; `SECURITY.md`'s HSKE and HPKE rows now carry
+it, along with the floor.
+
+Confirmed as written: the box never reaches 0 while odd `i` and a secret injection both
+do; the affine two-time break `E1 ^ E2 = M'^i.(P1 ^ P2)` survives every option (200/200
+for both boxes); the HPKS knock-on is real (challenge entropy 130 -> 192) and is a
+second, separate MAJOR bump; and no rating in `SECURITY.md` would move. No `--algo` tag,
+PEM label, `spec/` entry or `MIGRATING.md` entry follows.

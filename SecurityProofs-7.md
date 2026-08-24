@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.22** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.23** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1564,5 +1564,115 @@ Those remain exactly as analysed elsewhere in this document.
 No `--algo` tag, PEM boundary label or `spec/` entry follows from this item.
 §11.22.2's co-rank result is a finding about HSKE/HPKE and would need its own item,
 with wire-format and `MIGRATING.md` analysis, before anything shipped.
+
+---
+
+## 11.23 The Co-Rank Improvement Is Real and Should Not Be Shipped (TODO #232)
+
+§11.22.2 left a loose end: a linear box takes TODO #210's plaintext leak from 126 to
+64 of 256, and 64 is a proved floor.  TODO #232 asks whether the suite should act on
+it.  It should not, and the reasons are worth recording, because two of them are
+positive results in their own right.  Backed by
+`SecurityProofsCode/corank_linear_box_decision.py`.
+
+### 11.23.1 The classical `M` is optimal among rotation-based steps
+
+FSCX is built from rotations, so the natural replacement space is the circulants —
+polynomials in the rotation `X` over `GF(2)[X]/(X^n + 1)`.  With `n` a power of two
+that ring is local with maximal ideal `(Y)`, `Y = X + 1`, so every nilpotent is `Y^v`
+times a unit and `dim ker Y^m = min(n, v.m)`.  Agreement needs `Y^(n-1) = 0`, hence
+`v.(n-1) >= n`, hence `v >= 2`; and then
+
+`co-rank(T_i) = min(n, v.(i-1)) >= 2(i-1)`
+
+The bound is met exactly at `v = 2`, which is `v(M + I)` for the classical `M`.
+Exhaustively over every circulant at `n = 8` (64 admit agreement) and `n = 16` (16 384
+admit agreement), the best co-rank found is 2 and 6 — equal to the classical `M`'s, and
+equal to the predicted `2(i-1)`.
+
+So **TODO #210's 126 is simultaneously a defect and a floor**: it is the best any
+rotation-based step admitting HKEX agreement can do.  §11.22.2's improvement is not a
+matter of choosing better shift amounts; it requires leaving the rotation class, which
+means the "Full Surroundings" construction the suite is named for stops being what is
+implemented.
+
+### 11.23.2 The cheap realisation is worse than what it replaces
+
+§11.22.2 measured a Jordan *type*, not a shipped matrix.  In the standard bit basis
+that type is a broken non-cyclic shift, `Y(x) = (x >> 1) & ~(1 << (n-2))` and
+`M'(x) = x ^ Y(x)` — three word-ops against FSCX's five.  It satisfies `M'^n = I` and
+`Y^(n-1) = 0`, and its co-rank is 64 as advertised.  The expected cost objection does
+not materialise; it is *cheaper* than what ships.
+
+The objection is that co-rank counts leaked dimensions and says nothing about how
+concentrated the leak is.  Splitting the kernel by functional weight at `n = 256`,
+`i = 64`:
+
+| step function | co-rank | raw plaintext bits | min weight found |
+|---|---|---|---|
+| classical `M` (circulant) | 126 | **0** | 4 |
+| Jordan `(n-1, 1)`, bit basis | 64 | **64** | 1 |
+| Jordan `(n-1, 1)`, conjugated | 64 | 0 | 75 |
+
+The `(n-1, 1)` box makes 64 ciphertext bits key-independent, and every one of them is a
+plaintext bit verbatim: `E[192] = P[192]` through `E[255] = P[255]`.  A quarter of the
+plaintext is transmitted in the clear.  The classical `M` leaks 126 dimensions and zero
+raw bits — all of its leaked functionals are spread XORs.  **Co-rank is the wrong
+figure of merit on its own.**
+
+### 11.23.3 The sound realisation costs cross-target parity
+
+Raw-bit exposure is basis-dependent and co-rank is not, so conjugating by a random
+invertible `S` keeps the Jordan type, keeps co-rank 64, and scatters the leak — third
+row above, minimum weight 75 against the classical 4.  That box is genuinely better on
+both security axes.  It is also dense: ~`n/2` ones per column against 3 for `M`, so a
+step costs ~`n` XOR-and-mask operations instead of five rotate/XOR ops, and the matrix
+itself is 8 KB at `n = 256`.  The Arduino/AVR target already overflowed SRAM once
+(TODO #155) and would not fit it, so the suite would lose the property that every
+protocol runs on all six language/architecture targets.
+
+### 11.23.4 It is dominated, and it cannot change a rating
+
+Three routes reach the same leak, and the box is last on every axis:
+
+| route | co-rank | cost | source |
+|---|---|---|---|
+| odd `i` (65 / 191) | **0** — `T_i` invertible | one parameter | §11.9 companion, TODO #211 |
+| secret per-step injection | **0** — `sigma_i` surjective | a subkey schedule | §11.21.3, TODO #224 |
+| linear box, cheap | 64, plus 64 raw bits | 3 word-ops | §11.23.2 |
+| linear box, conjugated | 64 | ~128x, 8 KB, no AVR | §11.23.3 |
+
+It is also the only route that does not reach 0, and the only one costing a wire-format
+break — in fact two, since HPKS's Schnorr challenge `e = fscx_revolve(R, msg, i)` lives
+in a subspace of dimension `rank(T_i)`, which the box moves from 130 to 192.  That is a
+real gain and a separate MAJOR bump from the HSKE/HPKE one.
+
+And no option touches the affine two-time break.  For any linear `M'` whatsoever, two
+messages under one key give `E1 ^ E2 = M'^i.(P1 ^ P2)` — measured 200/200 for both the
+classical `M` and the `(n-1, 1)` box, recovered with no key at all.  The fix for
+multi-use is the NL quartet, which already ships.  Finally, `SECURITY.md` already rates
+HSKE (key-only) "Not suitable for production" and HPKE "Demo-only", each disqualified
+by something the co-rank does not reach: a single known-plaintext pair recovers the
+HSKE keystream, and HPKE falls to the ~2^36.5 Pohlig-Hellman recovery of §9.2.4.  A
+MAJOR break moving 126 to 64 buys no rating change.
+
+### 11.23.5 What the leak actually looks like
+
+One finding here is independent of the decision and applies to what ships today.  "126
+dimensions" understates TODO #210: the lightest functional in the kernel has weight 4,
+
+`E[0] ^ E[2] ^ E[128] ^ E[130]  ==  P[0] ^ P[2] ^ P[128] ^ P[130]`
+
+under every key, on the same bit positions on both sides.  Verified 300/300 against the
+shipped `fscx_revolve` with a fresh random key each time — four ciphertext bits give
+four plaintext bits' parity, with no key and no known plaintext.  `SECURITY.md`'s HSKE
+and HPKE rows cite the dimension count; this is the concrete form of it.
+
+### 11.23.6 Verdict
+
+Deprecate.  Document the result, ship nothing, and keep two things from the
+investigation: §11.23.1's circulant floor, which reframes #210's 126 as the best an
+FSCX-shaped primitive can achieve, and §11.23.5's weight-4 functional, which is the
+usable statement of the leak.
 
 ---

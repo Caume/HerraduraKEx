@@ -103,6 +103,14 @@ SecurityProofsCode/                                 — standalone Python proof/
                              session key is two evaluations of the public
                              step function away from the wire.  Subsumes
                              #210/#224/nonce-impossibility (TODO #230)
+  corank_linear_box_decision.py — should the suite act on §11.22.2's
+                             126 -> 64 co-rank improvement?  No: the classical
+                             M is already optimal among rotation-based steps,
+                             the cheap realisation puts 64 raw plaintext bits
+                             in the clear, the sound one costs ~128x and does
+                             not fit AVR, and odd i reaches co-rank 0 for free.
+                             Also pins the leak's weight-4 functional
+                             (TODO #232)
   mfscx_kex_analysis.py    — seed-masked FSCX revolve (MFSCX) as a key
                              exchange: static mask stays affine and the
                              classical break generalizes verbatim, dynamic
@@ -132,7 +140,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (659 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.22: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.23: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
