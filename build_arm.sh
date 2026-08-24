@@ -41,6 +41,19 @@ fi
 
 echo "=== HerraduraKEx v${VERSION} — ARM Thumb-2 build ==="
 
+# ── TODO #234 gate guard ──────────────────────────────────────────────────────
+# The test harness counts "[FAIL]" markers inside hprintf, so every printf call
+# site has to route through it.  A bare `bl printf` silently leaves its output
+# ungated; the three that legitimately need one are marked GATE-EXEMPT.
+UNGATED=$(grep -n 'bl[[:space:]]\+printf' "${TESTS_SRC}" | grep -v 'GATE-EXEMPT' || true)
+if [ -n "${UNGATED}" ]; then
+    echo "ERROR: ungated printf call site(s) in ${TESTS_SRC}:"
+    echo "${UNGATED}"
+    echo "  Use 'bl hprintf' so the [FAIL] gate sees the output (TODO #234),"
+    echo "  or mark the line GATE-EXEMPT if it must bypass the counter."
+    exit 1
+fi
+
 echo "  Compiling suite..."
 "${ARM_CC}" -O2 \
     -L"${ARM_SYSROOT_LIB}" \

@@ -68,6 +68,14 @@ fmt_p1a:  .asciz "    1 / 1 proof correct  [PASS]\n"
 fmt_p1w:  .asciz "    1 / 1 weak-key checks correct  [PASS]\n"
 fmt_fail: .asciz "    FAILED  [FAIL]\n"
 
+/* TODO #234 gate.  hprintf below counts every "[FAIL]" that passes through
+   it, so a new test only has to print the marker the other 18 already do.
+   Call hprintf, never the libc entry point directly: a bare call bypasses
+   the counter, and build_arm.sh rejects one that is not marked GATE-EXEMPT. */
+str_fail_marker: .asciz "[FAIL]"
+fmt_gate_fail:   .asciz "\n*** FAILED: %d check(s) reported [FAIL] ***\n"
+fmt_gate_ok:     .asciz "\n*** OK: no check reported [FAIL] ***\n"
+
 lcg_state:   .word 0x12345678   /* overwritten from /dev/urandom at main() (SA-01) */
 str_urandom: .asciz "/dev/urandom"
 str_mode_r:  .asciz "r"
@@ -128,6 +136,7 @@ t_dec_key: .space 4
 t_KA:      .space 4
 t_KB:      .space 4
 t_hint_A:  .space 4
+g_failures: .space 4
 
 rnl_m_base:  .space 128
 rnl_a_rand:  .space 128
@@ -221,11 +230,11 @@ main:
 tests_prng_seeded:
 
     ldr     r0, =fmt_hdr
-    bl      printf
+    bl      hprintf
 
     /* ================================================================ [1] HKEX-GF (20 iter) */
     ldr     r0, =fmt_t1
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t1_loop:
@@ -272,16 +281,16 @@ t1_skip:
     cmp     r11, #20
     bne     t1_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t1_done
 t1_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t1_done:
 
     /* ================================================================ [2] HSKE (100 iter) */
     ldr     r0, =fmt_t2
-    bl      printf
+    bl      hprintf
     mov     r10, #100
     mov     r11, #0
 t2_loop:
@@ -316,16 +325,16 @@ t2_skip:
     cmp     r11, #100
     bne     t2_fail
     ldr     r0, =fmt_p100
-    bl      printf
+    bl      hprintf
     b       t2_done
 t2_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t2_done:
 
     /* ================================================================ [3] HPKS Schnorr (20 iter) */
     ldr     r0, =fmt_t3
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t3_loop:
@@ -402,16 +411,16 @@ t3_skip:
     cmp     r11, #20
     bne     t3_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t3_done
 t3_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t3_done:
 
     /* ================================================================ [4] HPKE El Gamal (20 iter) */
     ldr     r0, =fmt_t4
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t4_loop:
@@ -477,16 +486,16 @@ t4_skip:
     cmp     r11, #20
     bne     t4_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t4_done
 t4_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t4_done:
 
     /* ================================================================ [5] NL-FSCX v2 inv (20 iter) */
     ldr     r0, =fmt_t5
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t5_loop:
@@ -521,16 +530,16 @@ t5_skip:
     cmp     r11, #20
     bne     t5_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t5_done
 t5_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t5_done:
 
     /* ================================================================ [6] HSKE-NL-A2 (20 iter) */
     ldr     r0, =fmt_t6
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t6_loop:
@@ -565,16 +574,16 @@ t6_skip:
     cmp     r11, #20
     bne     t6_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t6_done
 t6_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t6_done:
 
     /* ================================================================ [7] HKEX-RNL (10 trials) */
     ldr     r0, =fmt_t7
-    bl      printf
+    bl      hprintf
     ldr     r0, =rnl_m_base
     bl      rnl_m_poly
     mov     r10, #10
@@ -627,16 +636,16 @@ t7_skip:
     cmp     r11, #10
     blt     t7_fail
     ldr     r0, =fmt_prnl
-    bl      printf
+    bl      hprintf
     b       t7_done
 t7_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t7_done:
 
     /* ================================================================ [8] HPKS-NL Schnorr (20 iter) */
     ldr     r0, =fmt_t8
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t8_loop:
@@ -713,16 +722,16 @@ t8_skip:
     cmp     r11, #20
     bne     t8_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t8_done
 t8_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t8_done:
 
     /* ================================================================ [9] HPKE-NL (20 iter) */
     ldr     r0, =fmt_t9
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t9_loop:
@@ -788,16 +797,16 @@ t9_skip:
     cmp     r11, #20
     bne     t9_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t9_done
 t9_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t9_done:
 
     /* ================================================================ [10] HPKS-NL Eve (20 trials) */
     ldr     r0, =fmt_t10
-    bl      printf
+    bl      hprintf
     mov     r10, #20
     mov     r11, #0
 t10_loop:
@@ -861,16 +870,16 @@ t10_skip:
     cmp     r11, #20
     bne     t10_fail
     ldr     r0, =fmt_p20
-    bl      printf
+    bl      hprintf
     b       t10_done
 t10_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t10_done:
 
     /* ================================================================ [11] HPKS-Stern-F (3 iter) */
     ldr     r0, =fmt_t11
-    bl      printf
+    bl      hprintf
     mov     r10, #3
     mov     r11, #0
 t11_loop:
@@ -906,16 +915,16 @@ t11_skip:
     cmp     r11, #3
     bne     t11_fail
     ldr     r0, =fmt_p3v
-    bl      printf
+    bl      hprintf
     b       t11_done
 t11_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t11_done:
 
     /* ================================================================ [12] HPKE-Stern-F KEM (3 iter) */
     ldr     r0, =fmt_t12
-    bl      printf
+    bl      hprintf
     mov     r10, #3
     mov     r11, #0
 t12_loop:
@@ -945,16 +954,16 @@ t12_skip:
     cmp     r11, #3
     bne     t12_fail
     ldr     r0, =fmt_p3k
-    bl      printf
+    bl      hprintf
     b       t12_done
 t12_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t12_done:
 
     /* ================================================================ [13] HPKS-Stern-Ring (3 iter) */
     ldr     r0, =fmt_t13
-    bl      printf
+    bl      hprintf
     mov     r10, #3             @ iter count
     mov     r11, #0             @ pass count
 t13_loop:
@@ -991,16 +1000,16 @@ t13_skip:
     cmp     r11, #3
     bne     t13_fail
     ldr     r0, =fmt_p3r
-    bl      printf
+    bl      hprintf
     b       t13_done
 t13_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t13_done:
 
     /* ================================================================ [14] ZKP-NL (3 iter) */
     ldr     r0, =fmt_t14
-    bl      printf
+    bl      hprintf
     mov     r10, #3
     mov     r11, #0
 t14_loop:
@@ -1032,16 +1041,16 @@ t14_skip:
     cmp     r11, #3
     bne     t14_fail
     ldr     r0, =fmt_p3z
-    bl      printf
+    bl      hprintf
     b       t14_done
 t14_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t14_done:
 
     /* ================================================================ [15] FPE (3 trials) */
     ldr     r0, =fmt_t15
-    bl      printf
+    bl      hprintf
     mov     r10, #3             @ iter count
     mov     r11, #0             @ pass count
 t15_loop:
@@ -1074,16 +1083,16 @@ t15_skip:
     cmp     r11, #3
     bne     t15_fail
     ldr     r0, =fmt_p3f
-    bl      printf
+    bl      hprintf
     b       t15_done
 t15_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t15_done:
 
     /* ================================================================ [16] Tweakable (3 trials) */
     ldr     r0, =fmt_t16
-    bl      printf
+    bl      hprintf
     mov     r10, #3
     mov     r11, #0
 t16_loop:
@@ -1114,16 +1123,16 @@ t16_skip:
     cmp     r11, #3
     bne     t16_fail
     ldr     r0, =fmt_p3f
-    bl      printf
+    bl      hprintf
     b       t16_done
 t16_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t16_done:
 
     /* ================================================================ [17] Accumulator (1 trial) */
     ldr     r0, =fmt_t17
-    bl      printf
+    bl      hprintf
     @ leaf0 = hfscx_32(0xAAAAAAAA)
     ldr     r0, =0xAAAAAAAA
     bl      hfscx_32
@@ -1176,16 +1185,16 @@ t16_done:
     cmp     r0, r10
     bne     t17_fail
     ldr     r0, =fmt_p1a
-    bl      printf
+    bl      hprintf
     b       t17_done
 t17_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t17_done:
 
     /* ================================================================ [18] v2_weak_key_reject (1 trial) */
     ldr     r0, =fmt_t18
-    bl      printf
+    bl      hprintf
     ldr     r0, =0x00020000     @ 2^17: delta(K)=0 at n=32 (TODO #169)
     bl      nl_v2_key_is_valid
     cmp     r0, #0
@@ -1195,13 +1204,26 @@ t17_done:
     cmp     r0, #1
     bne     t18_fail
     ldr     r0, =fmt_p1w
-    bl      printf
+    bl      hprintf
     b       t18_done
 t18_fail:
     ldr     r0, =fmt_fail
-    bl      printf
+    bl      hprintf
 t18_done:
 
+    /* ---- TODO #234: aggregate exit status -------------------------- */
+    ldr     r0, =g_failures
+    ldr     r4, [r0]
+    cmp     r4, #0
+    beq     tests_gate_ok
+    ldr     r0, =fmt_gate_fail
+    mov     r1, r4
+    bl      printf              @ GATE-EXEMPT: this line carries the marker
+    mov     r0, #1
+    bl      exit
+tests_gate_ok:
+    ldr     r0, =fmt_gate_ok
+    bl      printf              @ GATE-EXEMPT: this line carries the marker
     mov     r0, #0
     bl      exit
 
@@ -1862,6 +1884,29 @@ zkp_nl_verify_8:
 .zkp_v_done:
     add     sp, sp, #16
     pop     {r4-r11, pc}
+    .ltorg
+
+/* ------------------------------------------------------------------ */
+/* hprintf: printf that counts the "[FAIL]" markers passing through it. */
+/* r0 = format string (varargs untouched in r1-r3 / on the stack).      */
+/* TODO #234 -- the assembly analogue of #233's `#define printf hprintf`*/
+/* in C: intercepting the one output path means a test added later is   */
+/* gated without anyone remembering to register it.                     */
+/* ------------------------------------------------------------------ */
+    .thumb_func
+hprintf:
+    push    {r0-r3, r4, lr}     @ 6 words keeps sp 8-byte aligned
+    ldr     r1, =str_fail_marker
+    bl      strstr              @ r0 already holds the haystack
+    cmp     r0, #0
+    beq     hprintf_emit
+    ldr     r0, =g_failures
+    ldr     r1, [r0]
+    add     r1, r1, #1
+    str     r1, [r0]
+hprintf_emit:
+    pop     {r0-r3, r4, lr}
+    b       printf              @ GATE-EXEMPT: tail call to the real printf
     .ltorg
 
 /* ------------------------------------------------------------------ */

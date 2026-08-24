@@ -33,18 +33,62 @@ if ! command -v simavr &>/dev/null; then
     exit 1
 fi
 
+# ── TODO #234: the [FAIL] gate ───────────────────────────────────────────────
+# The firmware never exits — it loops forever, so simavr runs under `timeout`
+# and there is no exit status to propagate.  The harness therefore prints its
+# verdict over the UART at the end of every pass, and we read it back here.
+#
+# Absence of the OK line is a failure too: a hang, a watchdog reset, or a
+# TIMEOUT shorter than one pass all end with no verdict at all, and until this
+# check existed every one of them left the `arduino` CI job green.
+gate_check() {
+    local LOG="$1"
+    local CLEAN
+    CLEAN="$(sed 's/\x1b\[[0-9;]*m//g' "${LOG}")"
+
+    if grep -q '\*\*\* FAILED:' <<<"${CLEAN}"; then
+        echo "" >&2
+        echo "ERROR: the AVR test harness reported failing checks (TODO #234):" >&2
+        grep '\*\*\* FAILED:' <<<"${CLEAN}" | sort -u | sed 's/^/    /' >&2
+        return 1
+    fi
+
+    if ! grep -q '\*\*\* OK: no check reported' <<<"${CLEAN}"; then
+        echo "" >&2
+        echo "ERROR: the AVR test harness never printed a verdict (TODO #234)." >&2
+        echo "  Expected '*** OK: no check reported [FAIL] ***' from at least one" >&2
+        echo "  completed pass.  A hang, a reset, or a TIMEOUT (${TIMEOUT}s) shorter" >&2
+        echo "  than a single pass all look like this." >&2
+        return 1
+    fi
+
+    echo "  gate: a full pass completed with no [FAIL] (TODO #234)" >&2
+}
+
 run_elf() {
     local ELF="$1"
     local LABEL="$2"
+    local GATE="${3:-nogate}"
     if [ ! -f "${ELF}" ]; then
         echo "ERROR: ${ELF} not found — run ./build_arduino.sh first."
         exit 1
     fi
     echo "=== Arduino (ATmega2560) — ${LABEL} ===" >&2
+
+    local LOG
+    LOG="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${LOG}'" RETURN
+
     if (( TIMEOUT > 0 )); then
-        timeout "${TIMEOUT}" simavr -m "${MCU}" -f "${FREQ}" "${ELF}" || true
+        timeout "${TIMEOUT}" simavr -m "${MCU}" -f "${FREQ}" "${ELF}" 2>&1 \
+            | tee "${LOG}" >&2 || true
     else
-        simavr -m "${MCU}" -f "${FREQ}" "${ELF}"
+        simavr -m "${MCU}" -f "${FREQ}" "${ELF}" 2>&1 | tee "${LOG}" >&2
+    fi
+
+    if [ "${GATE}" = "gate" ]; then
+        gate_check "${LOG}" || exit 1
     fi
 }
 
@@ -55,11 +99,11 @@ case "${MODE}" in
         run_elf "${SUITE_ELF}" "Suite"
         ;;
     tests)
-        run_elf "${TESTS_ELF}" "Tests"
+        run_elf "${TESTS_ELF}" "Tests" gate
         ;;
     all|*)
         run_elf "${SUITE_ELF}" "Suite"
         echo ""
-        run_elf "${TESTS_ELF}" "Tests"
+        run_elf "${TESTS_ELF}" "Tests" gate
         ;;
 esac

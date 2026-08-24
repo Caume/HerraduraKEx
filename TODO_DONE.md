@@ -12053,3 +12053,115 @@ scope it to C/Go/Python, and the change is worth reviewing on its own.
 
 Status: **DONE v3.0.8** — [45], [4] and [18] each fixed at the root (all three asserted a probabilistic property as deterministic), then C/Go/Python given an aggregate exit status; assembly harnesses filed as #234.
 
+### #234: The ARM / NASM i386 / Arduino test harnesses cannot fail their CI jobs either
+
+TODO #233 gave the C, Go and Python harnesses an aggregate exit status. The assembly and
+Arduino harnesses were left out of that item's scope and still have the defect it fixed:
+`CryptosuiteTests/Herradura_tests.s` ends in a hard-coded `mov r0, #0; bl exit` regardless
+of outcome, across 19 separate `[FAIL]` emission sites, and `Herradura_tests.asm` and
+`Herradura_tests.ino` are the same shape. So `arm-i386` and `arduino` — two more required,
+blocking CI jobs — go green whenever an assembly security test fails.
+
+They also carry #233's third finding. Tests [1]-[18] include [18] HPKE-Stern-F
+encap/decap at N=32, t=2, where the code is not uniquely decodable: 43.46% of keys admit
+at least one weight-2 syndrome collision and 0.38% of error vectors brute-force to a
+different `e'` (measured over 5000 keys). Whatever trial count the assembly [18] uses, it
+reports a spurious `[FAIL]` at that rate, and always has.
+
+**Work.**
+
+1. Fix [18]'s ambiguity accounting in `.s`, `.asm` and `.ino`, the way #233 did for C/Go/
+   Python: a syndrome with two weight-t preimages is not a decoder failure.
+2. Audit the remaining `[FAIL]` sites in each for the same "probabilistic property
+   asserted as deterministic" class before gating — that audit is what turned up [4] and
+   [18] in #233, and neither was in the original item text.
+3. Then aggregate: a failure counter and a non-zero exit. ARM's exit is already a
+   `bl exit` call, so it is a counter and a load, not a restructure.
+4. Arduino runs under simavr via `run_arduino.sh`; check how (and whether) an exit status
+   propagates there before assuming step 3 is sufficient for that target.
+
+Both toolchains build and run locally on the dev host (`arm-linux-gnueabi-gcc`, `nasm`,
+`qemu-arm`/`qemu-i386`), so this is testable without CI round-trips.
+
+
+**Outcome (v3.0.9).**
+
+*Step 1 does not apply.* The item predicted these harnesses carry #233's
+ambiguous-syndrome bug at test [18]. They do not, and the numbering is why: their
+[18] is `v2_weak_key_reject`, which runs on two fixed constants (`0x00020000`,
+`0x5A5A5A5A`) and is fully deterministic. Their Stern KEM is **[12]**, and it
+decapsulates with `hpke_stern_f_decap_known_32` — literally `hash2(seed, e')` on
+both sides, no syndrome decoding, no brute force — so the non-unique-decoding
+failure mode has no counterpart here. The C harness's [18] is the brute-force
+decap; that is the test the item was thinking of.
+
+*Step 2 found one real defect, in the direction opposite to #233's.* Where C's [4]
+asserted a probabilistic property too tightly, the Arduino [7] asserted one far too
+loosely: `test_hkex_rnl` passed at `ok_raw >= trials * 8 / 10` "because Ring-LWR has
+small rounding noise", and its verdict never looked at `ok_sk` at all — a run could
+print `sk agree=0/10` and still pass. Measured, the noise it was budgeting for does
+not exist: 1,000,000 trials of the same n=32 construction, driven through the ARM
+harness with its [7] trial count raised, produced no disagreement whatsoever, giving
+DFR <= 3e-6 at 95% confidence. Peikert reconciliation ships an explicit hint bit, and
+at these parameters it is exact. The test now asserts `ok_raw == trials && ok_sk ==
+trials`, which is what ARM and i386 have always required (`cmp r11, #10; blt`).
+
+*Step 2 found nothing else, for a structural reason worth recording.* These
+harnesses assert **correctness** — honest-party round trips — and never
+**soundness**. There is no counterpart to C's [45], which is why nothing here
+behaves like it. That is a live hazard for whoever adds one: the assembly Stern-F
+runs at `rounds=4`, where a rejection test would carry a `(2/3)^4` = 19.75%
+soundness error per trial, five times worse than the `rounds=8` that made [45] fail
+38.5% of runs. Such a test needs its own round count, the way [45] now uses 32. The
+one genuinely probabilistic assertion already present, [10]'s "random forgery
+rejected", has a false-accept rate of `1/(2^32-1)` = 2.3e-10 per trial — a random
+`s_fake` wins only by equalling the unique correct `s`.
+
+*Step 3, the gate.* Each harness aggregates at its own output layer, so a test added
+later is covered without anyone remembering to register it — the property #233 chose
+this design for:
+
+  * **ARM Thumb-2** — all 55 `bl printf` became `bl hprintf`, which runs the format
+    string past libc's `strstr` for `"[FAIL]"`, bumps a counter and tail-calls the
+    real `printf`. The varargs are untouched: `push {r0-r3, r4, lr}` keeps `sp`
+    8-byte aligned, and the `b printf` after the matching `pop` leaves any
+    stack-passed argument exactly where the callee expects it.
+  * **NASM i386** — no libc at all here, so there is nothing to wrap; instead
+    `print_str`, the single `write`-syscall path, got a six-byte substring scan in
+    front of the `int 0x80`, plus a `print_uint` so the verdict can carry a count.
+    `print_str_raw` is the deliberate bypass, for the verdict lines themselves.
+  * Both build scripts now **refuse to build an ungated call site**: a bare
+    `bl printf` / `call print_str_raw` not marked `GATE-EXEMPT` fails the build. The
+    guard earned its keep immediately by catching the word "printf" in the comment
+    written to explain it.
+
+*Step 4 was the right question to ask, and the answer is no.* An exit status cannot
+propagate from the AVR target: the firmware loops forever, so `run_arduino.sh` runs
+it under `timeout` and discards the status with `|| true`. The gate has to travel
+out over the UART instead. Output scanning does not work there either — the marker
+is split across two `Serial` calls (`"  ["` then `"FAIL]"`), so the literal `[FAIL]`
+never appears in any single write — so all 18 verdicts route through one
+`verdict(bool)` helper, and the harness prints `*** OK: no check reported [FAIL] ***`
+at the end of every pass. `run_arduino.sh` fails on a FAILED line **and on the OK
+line never arriving**, which is new coverage: a hang, a watchdog reset, or a
+`TIMEOUT` shorter than one pass previously all left `arduino` green. Cost on AVR:
++2 bytes `.bss`, no `.data` growth, the new strings being wrapped in `F()`.
+
+*No `ci.yml` change was needed.* `run_arm.sh` and `run_asm_i386.sh` are
+`set -euo pipefail` with the qemu call last, verified by swapping a
+deliberately-failing binary underneath them (both exit 1); `run_arduino.sh` now
+exits 1 itself.
+
+*Verification.* 200 runs of each of the ARM and i386 harnesses before gating (zero
+failures, so nothing was being masked), 200 runs of each after (zero non-zero
+exits). Forced-failure builds: ARM exits 1, i386 exits 1 and counts correctly at one
+digit (8) and two (10), Arduino exits 1 through the run script. Both build guards
+reject an unmarked call site. The AVR no-verdict path fires at `TIMEOUT=1` and not
+at `TIMEOUT=5`; a full pass takes 2-4 s against the CI default of 90.
+
+*Out of scope, deliberately.* The suite binaries
+(`Herradura cryptographic suite.{s,asm,ino}`) are untouched. Their EVE-bypass checks
+print `FAILED` rather than the `[FAIL]` marker, and CI runs only the `tests` mode of
+each run script — the same boundary #233 drew for C/Go/Python.
+
+Status: **DONE v3.0.9** — [12]/[18] cleared as non-issues (the item had the test numbering wrong), Arduino [7] tightened from an 80% threshold that also ignored `ok_sk`, then all three harnesses gated at their output layer; AVR needed a UART verdict rather than an exit status, plus an absent-verdict check.

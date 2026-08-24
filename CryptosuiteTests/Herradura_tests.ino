@@ -56,6 +56,19 @@ typedef unsigned long uint32;
 
 uint32 prng_state = 0x12345678UL;
 
+/* TODO #234: the single point where a test's PASS/FAIL verdict reaches the
+   UART.  Counting here rather than at each of the 18 call sites is what makes
+   the gate survive a test being added later -- the AVR analogue of #233's
+   `#define printf hprintf` in C.  Scanning the output stream would not work
+   here: the marker is split across two Serial calls ("  [" then "FAIL]"), so
+   the literal "[FAIL]" never appears in any single write. */
+static int g_failures = 0;
+
+static void verdict(bool ok) {
+    if (!ok) g_failures++;
+    Serial.println(ok ? "PASS]" : "FAIL]");
+}
+
 uint32 prng_next() {
     prng_state = prng_state * 1664525UL + 1013904223UL;
     return prng_state;
@@ -867,7 +880,7 @@ void test_hkex_gf() {
         if (skA == skB) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -882,7 +895,7 @@ void test_hske() {
         if (dec == p) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 100 passed  [");
-    Serial.println(pass == 100 ? "PASS]" : "FAIL]");
+    verdict(pass == 100);
     Serial.println();
 }
 
@@ -903,7 +916,7 @@ void test_hpks() {
         if (gf_mul_32(gs, Ce) == R) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -923,7 +936,7 @@ void test_hpke() {
         if (D == p) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -940,7 +953,7 @@ void test_nl_fscx_v2_inverse() {
         if (nl_fscx_v2_inv(nl_fscx_v2(a, b), b) == a) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 50 passed  [");
-    Serial.println(pass == 50 ? "PASS]" : "FAIL]");
+    verdict(pass == 50);
     Serial.println();
 }
 
@@ -955,7 +968,7 @@ void test_hske_nl_a2() {
         if (D == p) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -985,9 +998,15 @@ void test_hkex_rnl() {
     Serial.print("/"); Serial.print(trials);
     Serial.print("  sk agree="); Serial.print(ok_sk);
     Serial.print("/"); Serial.print(trials);
-    /* Pass if >= 80% raw agreement (Ring-LWR has small rounding noise) */
+    /* TODO #234: this used to pass at >= 80% raw agreement, on the theory
+       that Ring-LWR rounding noise costs a trial now and then, and it never
+       looked at ok_sk at all -- so a run could print "sk agree=0/10" and
+       still pass.  Peikert reconciliation carries an explicit hint bit, and
+       1,000,000 trials of the same n=32 construction (measured on the ARM
+       harness) produced no disagreement at all: DFR <= 3e-6 at 95%.  The
+       slack was hiding a silent statistic, not absorbing real noise. */
     Serial.print("  [");
-    Serial.println(ok_raw >= trials * 8 / 10 ? "PASS]" : "FAIL]");
+    verdict(ok_raw == trials && ok_sk == trials);
     Serial.println();
 }
 
@@ -1008,7 +1027,7 @@ void test_hpks_nl() {
         if (gf_mul_32(gs, Ce) == R) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -1028,7 +1047,7 @@ void test_hpke_nl() {
         if (D == p) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 20 passed  [");
-    Serial.println(pass == 20 ? "PASS]" : "FAIL]");
+    verdict(pass == 20);
     Serial.println();
 }
 
@@ -1047,7 +1066,7 @@ void test_hpks_nl_eve() {
         if (gf_mul_32(gs, Ce) == R_eve) wins++;
     }
     Serial.print("    "); Serial.print(wins); Serial.print(" / 20 Eve wins (expected 0)  [");
-    Serial.println(wins == 0 ? "PASS]" : "FAIL]");
+    verdict(wins == 0);
     Serial.println();
 }
 
@@ -1068,7 +1087,7 @@ void test_hpks_stern_f() {
         if (hpks_stern_f_verify_32(&sig, msg, seed, synd)) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 5 passed  [");
-    Serial.println(pass == 5 ? "PASS]" : "FAIL]");
+    verdict(pass == 5);
     Serial.println();
 }
 
@@ -1083,7 +1102,7 @@ void test_hpke_stern_f() {
         if (K_enc == K_dec) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 5 passed  [");
-    Serial.println(pass == 5 ? "PASS]" : "FAIL]");
+    verdict(pass == 5);
     Serial.println();
 }
 
@@ -1109,7 +1128,7 @@ void test_hpks_stern_ring() {
         if (stern_ring_verify_32(&rsig, msg, seeds, synds)) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 3 ring-verified  [");
-    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    verdict(pass == 3);
     Serial.println();
 }
 
@@ -1125,7 +1144,7 @@ void test_zkp_nl() {
         if (zkpnl_verify_32(proof, B, y, msg)) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 3 zk-verified  [");
-    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    verdict(pass == 3);
     Serial.println();
 }
 
@@ -1141,7 +1160,7 @@ void test_fpe() {
         if (dec == pt) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 3 round-trips correct  [");
-    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    verdict(pass == 3);
     Serial.println();
 }
 
@@ -1158,7 +1177,7 @@ void test_tweakable() {
         if (dec == block) pass++;
     }
     Serial.print("    "); Serial.print(pass); Serial.print(" / 3 round-trips correct  [");
-    Serial.println(pass == 3 ? "PASS]" : "FAIL]");
+    verdict(pass == 3);
     Serial.println();
 }
 
@@ -1184,7 +1203,7 @@ void test_accumulator() {
     }
     int ok = (cur == root);
     Serial.print("    "); Serial.print(ok ? 1 : 0); Serial.print(" / 1 proof correct  [");
-    Serial.println(ok ? "PASS]" : "FAIL]");
+    verdict(ok);
     Serial.println();
 }
 
@@ -1193,7 +1212,7 @@ void test_v2_weak_key_reject() {
     int ok = !nl_v2_key_is_valid(0x00020000UL)   /* 2^17: delta(K)=0 at n=32 (TODO #169) */
              && nl_v2_key_is_valid(0x5A5A5A5AUL); /* ordinary key: must be accepted */
     Serial.print("    "); Serial.print(ok ? 1 : 0); Serial.print(" / 1 weak-key checks correct  [");
-    Serial.println(ok ? "PASS]" : "FAIL]");
+    verdict(ok);
     Serial.println();
 }
 
@@ -1228,6 +1247,20 @@ void loop() {
     test_tweakable();
     test_accumulator();
     test_v2_weak_key_reject();
+
+    /* TODO #234: the firmware never exits -- simavr runs it under `timeout`
+       and run_arduino.sh discards the status -- so the gate has to travel out
+       over the UART.  run_arduino.sh fails the job on a FAILED line, and also
+       on the OK line never arriving, which is what a hang or a reset before
+       the end of a pass looks like. */
+    if (g_failures) {
+        Serial.print(F("*** FAILED: "));
+        Serial.print(g_failures);
+        Serial.println(F(" check(s) reported [FAIL] ***"));
+    } else {
+        Serial.println(F("*** OK: no check reported [FAIL] ***"));
+    }
+    g_failures = 0;   /* loop() repeats; score each pass on its own */
 
     delay(30000);
 }

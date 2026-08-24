@@ -321,8 +321,28 @@ non-zero, closing with `*** OK: no check reported [FAIL] ***` or
 `*** FAILED: n check(s) reported [FAIL] ***` plus the offending lines. There is no
 allow-list: no test is expected to fail. If you add a test, you do not need to register it
 anywhere — the wrapper sees any line carrying `[FAIL]`, which is exactly why it was built
-that way. **The ARM, NASM i386 and Arduino harnesses are not yet gated** (TODO #234); they
-still exit 0 unconditionally.
+that way.
+
+**The ARM, NASM i386 and Arduino harnesses are gated too (TODO #234)**, at their own
+output layers and for the same reason. ARM routes every `bl printf` through `bl hprintf`
+(a `strstr` on the format string, then a tail call to the real `printf`); NASM i386 scans
+inside `print_str`, the single `write`-syscall path; Arduino routes all 18 verdicts
+through one `verdict(bool)` helper — output scanning cannot work there, because the marker
+is split across two `Serial` calls (`"  ["` then `"FAIL]"`) and the literal `[FAIL]` never
+appears in a single write. `build_arm.sh` and `build_asm_i386.sh` **fail the build** on a
+call site that bypasses the wrapper without a `GATE-EXEMPT` marker, so use `bl hprintf` /
+`call print_str` in new assembly.
+
+The AVR target cannot return an exit status at all — the firmware loops forever, so
+simavr runs under `timeout` and the status is discarded. Its verdict travels over the UART
+instead, and `run_arduino.sh` fails on a `*** FAILED:` line **and on the OK line never
+arriving**; a hang, a reset, or a `TIMEOUT` shorter than one pass (2-4 s; the default is
+90) is a failure, not a pass.
+
+One hazard to know before adding an assembly test: those harnesses assert *correctness*
+only, never *soundness*, and their Stern-F runs at `rounds=4`. A rejection test written
+there would carry a `(2/3)^4` = 19.75% soundness error per trial — five times worse than
+the `rounds=8` that made C's [45] fail 38.5% of runs. Give it its own round count.
 
 Three tests had to be fixed before the gate could be enabled, all the same class — a
 probabilistic property asserted as a deterministic one. If you write a test whose subject
@@ -330,7 +350,11 @@ has a soundness error, a birthday bound, or a sample-size-dependent statistic, m
 threshold follow it: [4] now scales its tolerance as `6 × 50/sqrt(N)`, [18] distinguishes
 an ambiguous syndrome from a decoder failure (the n=32/t=2 code is not uniquely decodable
 — 43% of keys admit a weight-2 collision), and [45] runs its Stern-F sub-check at
-`rounds=32` so `(2/3)^rounds` is negligible.
+`rounds=32` so `(2/3)^rounds` is negligible. TODO #234 found the same class pointing the
+other way in the Arduino harness: [7] passed at 80% agreement and never asserted the
+`ok_sk` statistic it printed, so it now requires `ok_raw == trials && ok_sk == trials` —
+1,000,000 measured trials of that n=32 Ring-LWR construction produced no disagreement at
+all (DFR ≤ 3e-6 at 95%), so the slack was masking a silent check, not absorbing noise.
 
 `.github/workflows/ci.yml` runs eleven
 jobs on every push/PR, all required/blocking: `native-c`, `native-go`, `native-python`
