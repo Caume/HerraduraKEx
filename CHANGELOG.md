@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.6] - 2026-08-23
+
+### Added
+- **TODO #232: §11.22.2's co-rank improvement, decided — do not ship it.** TODO #230
+  found that a linear box takes TODO #210's plaintext leak from 126 to 64 of 256, with
+  64 a proved floor, and left it unshipped. `SecurityProofsCode/corank_linear_box_decision.py`
+  and SecurityProofs-7.md §11.23 rule on it: deprecate.
+- **The circulant floor (new result).** FSCX is rotation-based, so the natural
+  replacement space is the circulants. Agreement forces `v(M'+I) >= 2`, and then
+  `co-rank = min(n, v(i-1)) >= 2(i-1)` — met exactly by the classical `M`. Exhaustively
+  over every circulant at n=8 (64 admit agreement) and n=16 (16 384), none beats it. So
+  **TODO #210's 126 is simultaneously a defect and a floor**: the best any rotation-based
+  step admitting HKEX agreement can achieve. 126 -> 64 is not a parameter tweak; it
+  requires leaving the rotation class.
+- **Why the improvement is a trap.** In the bit basis the `(n-1, 1)` box is a broken
+  non-cyclic shift, 3 word-ops against FSCX's 5 — cheaper than what ships — but it makes
+  64 ciphertext bits key-independent and every one is a plaintext bit verbatim,
+  `E[192] = P[192]` through `E[255] = P[255]`. The classical `M` leaks 126 dimensions and
+  zero raw bits. Co-rank counts dimensions, not exploitability. The conjugated box fixes
+  that (co-rank 64, minimum leaked weight 75 against the classical 4) but is dense:
+  ~128x the cost and 8 KB of matrix, which does not fit the AVR target.
+- **And it is dominated:** odd `i` reaches co-rank 0 for one parameter (TODO #211) and a
+  secret injection reaches 0 for a subkey schedule (TODO #224). The box is the only route
+  that does not reach 0 and the only one costing a wire-format break — two, in fact,
+  since it also moves HPKS's Schnorr challenge entropy from 130 to 192. No option touches
+  the affine two-time break `E1 ^ E2 = M'^i.(P1 ^ P2)` (200/200 for both boxes), and no
+  `SECURITY.md` rating would move.
+
+### Changed
+- `SECURITY.md`'s HSKE (key-only) and HPKE rows now give the leak's concrete form
+  instead of only its dimension count: the lightest functional has weight 4, so
+  `E[0]^E[2]^E[128]^E[130]` equals the same XOR of plaintext bits under every key —
+  verified 300/300 against the shipped `fscx_revolve`, with no key and no known
+  plaintext. The HSKE row also records that 126 is a floor for any rotation-based step,
+  i.e. not fixable within the FSCX design.
+
 ## [3.0.5] - 2026-08-23
 
 ### Added
