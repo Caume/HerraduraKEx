@@ -30,6 +30,11 @@ CryptosuiteTests/Herradura_tests_arm
 /Herradura cryptographic suite_i386
 CryptosuiteTests/Herradura_tests_i386
 
+# build_arduino.sh — ATmega2560 firmware (run under simavr).  Missed by TODO
+# #229 because the AVR target was not being rebuilt at the time; same rule.
+/Herradura cryptographic suite_avr.elf
+CryptosuiteTests/Herradura_tests_avr.elf
+
 # build_c_sanitize.sh (TODO #188) — ASan+UBSan build artifacts, not tracked
 /Herradura cryptographic suite_asan
 CryptosuiteTests/Herradura_tests_asan

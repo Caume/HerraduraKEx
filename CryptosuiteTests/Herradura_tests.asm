@@ -124,6 +124,19 @@ section .data
     pass3k_l    equ $-pass3k
     fail_msg    db "    FAILED  [FAIL]", 10
     fail_msg_l  equ $-fail_msg
+
+    ; TODO #234 gate.  print_str is the single write path, so it counts the
+    ; "[FAIL]" markers going through it: a test added later is gated as soon
+    ; as it prints the marker the other 18 already print.  The two verdict
+    ; messages below carry the marker themselves and so go out via
+    ; print_str_raw, which skips the counter.
+    gate_marker      db "[FAIL]"
+    gate_ok_msg      db 10, "*** OK: no check reported [FAIL] ***", 10
+    gate_ok_msg_l    equ $-gate_ok_msg
+    gate_fail_pre    db 10, "*** FAILED: "
+    gate_fail_pre_l  equ $-gate_fail_pre
+    gate_fail_post   db " check(s) reported [FAIL] ***", 10
+    gate_fail_post_l equ $-gate_fail_post
     ; Stern-F test storage
     t_sdf_seed  dd 0
     t_sdf_syn   dd 0
@@ -135,6 +148,11 @@ section .data
     t_sdf_ct    dd 0
 
 section .bss
+
+    ; TODO #234 gate state
+    g_failures  resd 1
+    numbuf      resb 12
+    numbuf_end  equ $
 
     ; test scratch
     t_a_priv    resd 1
@@ -1269,9 +1287,26 @@ _start:
     call print_str
 .t18_done:
 
-    ; ------------------------------------------------------------------ exit
+    ; ---------------------------------------- TODO #234: aggregate exit status
+    cmp  dword [g_failures], 0
+    jne  .gate_failed
+    mov  eax, gate_ok_msg
+    mov  ecx, gate_ok_msg_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
     mov  eax, SYS_EXIT
     xor  ebx, ebx
+    int  0x80
+.gate_failed:
+    mov  eax, gate_fail_pre
+    mov  ecx, gate_fail_pre_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    mov  eax, [g_failures]
+    call print_uint
+    mov  eax, gate_fail_post
+    mov  ecx, gate_fail_post_l
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    mov  eax, SYS_EXIT
+    mov  ebx, 1
     int  0x80
 
 ; ============================================================
@@ -1914,7 +1949,20 @@ prng_next:
 ; ============================================================
 ; print_str: EAX = pointer, ECX = length
 ; ============================================================
+; print_str: EAX=buf, ECX=len -- writes it and counts any "[FAIL]" in it.
+; TODO #234 -- the assembly analogue of #233's `#define printf hprintf` in C:
+; gating the one output path means a test added later is covered without
+; anyone remembering to register it.  Use print_str_raw only for output that
+; carries the marker itself, i.e. the gate's own verdict lines.
 print_str:
+    push eax
+    push ecx
+    call gate_note
+    pop  ecx
+    pop  eax
+    ; fall through to the writer
+
+print_str_raw:
     push ebx
     push edx
     mov  edx, ecx
@@ -1923,6 +1971,70 @@ print_str:
     mov  ebx, STDOUT
     int  0x80
     pop  edx
+    pop  ebx
+    ret
+
+; gate_note: EAX=buf, ECX=len -- ++g_failures if the buffer contains "[FAIL]".
+; Counts at most once per write, matching one [FAIL] per printf in C.
+gate_note:
+    push ebx
+    push edx
+    push esi
+    push edi
+    cmp  ecx, 6
+    jb   .gn_done
+    mov  esi, eax
+    sub  ecx, 5                 ; number of candidate start offsets
+.gn_outer:
+    xor  edi, edi
+.gn_inner:
+    mov  bl, [esi + edi]
+    cmp  bl, [gate_marker + edi]
+    jne  .gn_next
+    inc  edi
+    cmp  edi, 6
+    jb   .gn_inner
+    inc  dword [g_failures]
+    jmp  .gn_done
+.gn_next:
+    inc  esi
+    dec  ecx
+    jnz  .gn_outer
+.gn_done:
+    pop  edi
+    pop  esi
+    pop  edx
+    pop  ebx
+    ret
+
+; print_uint: EAX=value -- writes it in decimal (no libc here).
+print_uint:
+    push ebx
+    push ecx
+    push edx
+    mov  ecx, numbuf_end
+    mov  ebx, 10
+    test eax, eax
+    jnz  .pu_loop
+    dec  ecx
+    mov  byte [ecx], '0'
+    jmp  .pu_out
+.pu_loop:
+    test eax, eax
+    jz   .pu_out
+    xor  edx, edx
+    div  ebx
+    add  dl, '0'
+    dec  ecx
+    mov  [ecx], dl
+    jmp  .pu_loop
+.pu_out:
+    mov  eax, ecx
+    mov  ecx, numbuf_end
+    sub  ecx, eax
+    call print_str_raw     ; GATE-EXEMPT: verdict text carries the marker
+    pop  edx
+    pop  ecx
     pop  ebx
     ret
 

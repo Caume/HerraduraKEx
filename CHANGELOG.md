@@ -2,6 +2,74 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.9] - 2026-08-24
+
+### Fixed
+- **TODO #234: the ARM, NASM i386 and Arduino test harnesses could not fail their CI jobs
+  either.** TODO #233 gave C, Go and Python an aggregate exit status; the three assembly
+  and AVR harnesses still had the defect it fixed. `Herradura_tests.s` ended in a
+  hard-coded `mov r0, #0; bl exit` across 18 `[FAIL]` sites, `Herradura_tests.asm` in an
+  unconditional `SYS_EXIT 0` across the same 18, and `Herradura_tests.ino` never reported
+  a verdict at all. `arm-i386` and `arduino` — two more required, blocking jobs — went
+  green whenever an assembly security test failed.
+- **Arduino test [7] passed at 80% agreement and never checked the statistic it printed.**
+  `test_hkex_rnl` accepted `ok_raw >= trials * 8 / 10` "because Ring-LWR has small
+  rounding noise", and its verdict ignored `ok_sk` entirely — so a run could print
+  `sk agree=0/10` and still pass. Peikert reconciliation carries an explicit hint bit,
+  and 1,000,000 trials of the same n=32 construction produced no disagreement whatsoever
+  (DFR <= 3e-6 at 95% confidence), so the slack was hiding a silent statistic rather than
+  absorbing real noise. The test now asserts `ok_raw == trials && ok_sk == trials`,
+  matching what the ARM and i386 harnesses have always required.
+
+### Changed
+- **Each of the three harnesses now aggregates `[FAIL]` markers at its own output layer**,
+  the way TODO #233 did for C/Go/Python, so a test added later is gated without anyone
+  remembering to register it:
+  - ARM Thumb-2: every `bl printf` became `bl hprintf`, a wrapper that runs the format
+    string past `strstr` for `"[FAIL]"`, bumps a counter, then tail-calls the real
+    `printf` with the varargs untouched.
+  - NASM i386: `print_str` — the single `write` syscall path, no libc involved — grew a
+    six-byte substring scan in front of the syscall, plus a `print_uint` so the verdict
+    can report a count.
+  - Arduino: all 18 verdicts route through one `verdict(bool)` helper. Output scanning
+    could not work here — the marker is split across two `Serial` calls (`"  ["` then
+    `"FAIL]"`), so the literal `[FAIL]` never appears in any single write.
+- **`build_arm.sh` and `build_asm_i386.sh` now refuse to build an ungated call site.** A
+  bare `bl printf` / `call print_str_raw` bypasses the counter, so one that is not marked
+  `GATE-EXEMPT` fails the build with a pointer to the wrapper. Three lines are exempt in
+  each file: the wrapper's own tail call and the gate's two verdict messages, which carry
+  the `[FAIL]` marker themselves.
+- **`run_arduino.sh` now reads the verdict back off the UART.** The AVR firmware loops
+  forever, so simavr runs under `timeout` and there is no exit status to propagate —
+  step 3 of the item is not sufficient for that target. The harness prints
+  `*** OK: no check reported [FAIL] ***` (or `*** FAILED: n check(s) ... ***`) at the end
+  of every pass, and the script fails the job on a FAILED line **and on the OK line never
+  arriving**. That second condition is new coverage: a hang, a watchdog reset, or a
+  `TIMEOUT` shorter than one pass previously all left `arduino` green.
+
+### Notes
+- **The item's step 1 does not apply.** It predicted these harnesses carry #233's
+  ambiguous-syndrome bug at test [18], but their [18] is `v2_weak_key_reject`, which runs
+  on two fixed constants. Their Stern KEM is **[12]**, and it decapsulates with
+  `hpke_stern_f_decap_known_32` — literally `hash2(seed, e')` on both sides, with no
+  syndrome decoding — so the non-unique-decoding failure mode has no counterpart here.
+- **Step 2's audit found no other mismatched threshold in the assembly harnesses**, and
+  the structural reason is worth recording: they assert *correctness* (honest-party round
+  trips), never *soundness*. There is no counterpart to C's [45], and that matters,
+  because their Stern-F runs at `rounds=4`, where a rejection test would carry a
+  `(2/3)^4` = 19.75% soundness error per trial. Anyone adding one must give it its own
+  round count. The one genuinely probabilistic assertion, [10]'s "random forgery
+  rejected", has a false-accept rate of `1/(2^32-1)` = 2.3e-10 per trial.
+- Baseline before gating: 200 runs each of the ARM and i386 harnesses, zero failures;
+  the ARM RNL DFR probe above extended that to 1,000,000 [7] trials. Both harnesses
+  re-soaked 200 runs each after gating, still zero. AVR SRAM cost: +2 bytes of `.bss`
+  (the counter) and no `.data` growth, the verdict strings being wrapped in `F()`.
+- The suite binaries (`Herradura cryptographic suite.{s,asm,ino}`) are unchanged. Their
+  EVE-bypass checks print `FAILED` rather than the `[FAIL]` marker, and CI runs only the
+  `tests` mode of each run script — the same scope C/Go/Python kept in #233.
+- `.gitignore` now covers the two `_avr.elf` firmware images. TODO #229 untracked every
+  other build output but missed these, the AVR target not being rebuilt at the time.
+
 ## [3.0.8] - 2026-08-24
 
 ### Fixed
