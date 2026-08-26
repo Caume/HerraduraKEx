@@ -120,4 +120,71 @@ reason.
 
 Status: **OPEN**
 
----
+### #239: `ring_sig_load` sizes its allocations from two unbounded PEM fields
+
+Found while closing TODO #236, which bounded exactly this class of value for
+`stern_sig_load` — the ring-signature reader next to it was never given the same
+treatment.  `ring_sig_load` (HerraduraCli/herradura_cli.c:2024) is *not* affected by
+#236's actual defect: it already decodes the round count and allocates from it, rather
+than comparing it against `SDF_ROUNDS`.  The problem is that it trusts what it decodes.
+
+**The mechanism.**  Both `k` and `rounds` come straight off the wire with no range check:
+
+    int k      = (int)parse_be_uint(pk.vals[0], pk.vlens[0]);
+    int rounds = (int)parse_be_uint(pk.vals[1], pk.vlens[1]);
+    size_t entry = 5 * (size_t)KEYBYTES + 1;          /* 161 */
+    size_t blen  = (size_t)k * rounds * entry;
+    uint8_t *blob = (uint8_t *)calloc(blen ? blen : 1, 1);
+
+`ring_load_members` bounds the *caller's* member count at `RING_MAX_K` (64), and the
+signing path rejects `k >= RING_MAX_K` at line 1964, but neither applies here: the
+signature's own `k` is compared against the caller's only *after* `ring_sig_load` has
+returned (line 3388), so the allocation above happens first.
+
+**Confirmed reachable, under `herradura_cli_asan`** with a hand-crafted
+`HERRADURA HPKS-RING SIGNATURE` PEM and two genuine member public keys:
+
+    k=2           rounds=2^30   -> allocator is trying to allocate 0x5080000000 bytes
+    k=2^30        rounds=2^30   -> requested allocation size 0x1000000000000000 exceeds
+                                   maximum supported size of 0x10000000000
+    k=2^31-1      rounds=2                     -> same class
+
+In a normal build `calloc` returns NULL and `die("out of memory")` fires, so **what is
+demonstrated today is a denial of service / abort on a malformed signature, not memory
+corruption.**  A verifier is exactly the component that handles attacker-supplied input,
+so an unbounded allocation driven by two of its fields is still worth closing.
+
+**Two latent defects behind it, neither currently reachable past the failing calloc:**
+
+1. `blen = (size_t)k * rounds * entry` can wrap.  `k` and `rounds` are each up to
+   `2^31-1`, so the product reaches ~7.4e20 against a `2^64` ~ 1.8e19 modulus.  A wrapped
+   `blen` would allocate a small buffer while the `k * rounds` loop below it — whose bound
+   does not depend on `blen` — kept reading, which is an out-of-bounds read rather than an
+   abort.  A bounded search for a `(k, rounds)` pair that lands `blen` small enough to
+   demonstrate this did not find one within the window tried; nothing rules it out, and
+   the fix (bound the inputs) removes the question either way.
+2. `stern_ring_alloc` (herradura.h:2078) computes `int sz = k * rounds` in `int`.  At
+   `k = rounds = 2^30` that is signed overflow — undefined behaviour — before the result
+   is passed to `malloc`.  Unreachable today only because the `calloc` above aborts first.
+
+**Also missing: a declared-vs-actual length check.**  `pk.vlens[3]` is the real blob
+length; when it is shorter than `blen` the reader right-aligns and zero-pads rather than
+rejecting, so a signature whose declared `k`/`rounds` disagree with its payload is
+silently treated as mostly zeros.  TODO #236 added exactly this check to the Stern-F
+reader (`if (pk.vlens[2] > cm_len || ...) return -1`); the ring reader should get its
+counterpart.
+
+**Work.**  Range-check `k` and `rounds` immediately after decoding — `k` against
+`RING_MAX_K` (the same bound the signing path and `ring_load_members` already use) and
+`rounds` against `SDF_MAX_ROUNDS` (added in #236) — before either is used in an arithmetic
+expression.  Reject rather than clamp: a signature declaring more members than
+`RING_MAX_K` is malformed, not merely large.  Then add the `pk.vlens[3]` vs `blen`
+agreement check, and make `stern_ring_alloc` compute its size in `size_t`.  Check the
+other `parse_be_uint` readers in the same file for the same shape while there — this item
+is about the pattern, not only this one call site.
+
+**Not in scope.**  Raising or removing `RING_MAX_K`, and the ring signature's soundness
+or parameters.  `hpks-ring` remains `demo-only` in `spec/`, inheriting `hpks-stern`'s
+round-count caveat; this is an input-validation fix, not a security-level change.
+
+Status: **OPEN**
