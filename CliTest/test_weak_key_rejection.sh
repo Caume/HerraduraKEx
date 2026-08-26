@@ -108,140 +108,29 @@ for v in 0 1; do
 done
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TODO #239 — PEM length/count fields that size an allocation must be bounded
-# before they are used.  Each case below rewrites one INTEGER item of an
-# otherwise-genuine PEM to a value the reader used to trust.
+# TODO #239 / #240 — PEM length/count fields that size an allocation must be
+# bounded before they are used.  The case table is shared with
+# test_malformed_pem_matrix.sh, which runs the same cases against all four CLIs;
+# here it runs against the C CLI alone, which is what puts it in the sanitizers
+# job as well.  That matters: #239's QC-MDPC row weight was a stack-buffer
+# overflow, and a plain build's exit status does not report one.
 # ═════════════════════════════════════════════════════════════════════════════
 
-HCODEC_DIR="$(cd "$(dirname "$0")/../HerraduraCli" && pwd)"
-export HCODEC_DIR
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/CliTest/lib_malformed.sh"
+HKX_MAL_ROOT="$ROOT"
+HKX_MAL_DIR="$TMP"
+# No `ulimit -v` here.  The sanitizers job runs this script against
+# herradura_cli_asan, and ASan reserves a very large shadow-memory region up
+# front: an address-space cap tight enough to be useful stops the binary from
+# starting at all.  A CLI that never starts exits non-zero, which a rejection
+# test would score as a PASS — the same trap the JVM sprang in the matrix
+# script.  The per-section controls in lib_malformed.sh catch it either way.
+HKX_MAL_VLIMIT=""
+export HKX_MAL_VLIMIT
 
-# Rewrite item $3 of a DER SEQUENCE PEM to the integer $4.
-craft_item() {
-    python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
-import os, sys
-sys.path.insert(0, os.environ['HCODEC_DIR'])
-from codec import der_int, der_seq, pem_wrap, pem_unwrap, der_parse_seq
-
-in_path, out_path, idx, value = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
-label, der = pem_unwrap(open(in_path).read())
-items = list(der_parse_seq(der))
-items[idx] = value
-open(out_path, 'w').write(pem_wrap(label, der_seq(*[der_int(x) for x in items])))
-PYEOF
-}
-
-# ── HPKS-RING: signature-declared k / rounds / payload length ──
-"$CLI" genpkey --algo hpks-stern --out "$TMP/rm1.pem" 2>/dev/null
-"$CLI" genpkey --algo hpks-stern --out "$TMP/rm2.pem" 2>/dev/null
-"$CLI" pkey --algo hpks-stern --in "$TMP/rm1.pem" --pubout --out "$TMP/rm1_pub.pem" 2>/dev/null
-"$CLI" pkey --algo hpks-stern --in "$TMP/rm2.pem" --pubout --out "$TMP/rm2_pub.pem" 2>/dev/null
-RING="$TMP/rm1_pub.pem,$TMP/rm2_pub.pem"
-echo "ring message" > "$TMP/rmsg.txt"
-"$CLI" sign --algo hpks-ring --key "$TMP/rm1.pem" --ring "$RING" \
-    --in "$TMP/rmsg.txt" --out "$TMP/rsig.pem" 2>/dev/null
-
-# Control: the untouched signature must still verify.
-if out=$("$CLI" verify --algo hpks-ring --pubkey "$TMP/rm1_pub.pem" --ring "$RING" \
-         --in "$TMP/rmsg.txt" --sig "$TMP/rsig.pem" 2>&1) && [ "$out" = "Signature OK" ]; then
-    pass "verify hpks-ring accepts the genuine signature"
-else
-    fail "verify hpks-ring accepts the genuine signature: got '$out'"
-fi
-
-# item 0 = k, item 1 = rounds, item 3 = the k*rounds entry blob.
-#   k / rounds unbounded drove `blen = k * rounds * entry` and stern_ring_alloc.
-#   A blob longer than (k, rounds) describe used to be silently truncated.
-ring_reject() {   # <name> <item-index> <value>
-    craft_item "$TMP/rsig.pem" "$TMP/rsig_bad.pem" "$2" "$3"
-    if out=$("$CLI" verify --algo hpks-ring --pubkey "$TMP/rm1_pub.pem" --ring "$RING" \
-             --in "$TMP/rmsg.txt" --sig "$TMP/rsig_bad.pem" 2>&1); then
-        fail "verify hpks-ring rejects $1: CLI exited 0"
-    elif [ "$out" = "Verification FAILED" ]; then
-        fail "verify hpks-ring rejects $1: reached the verifier instead of being rejected"
-    else
-        pass "verify hpks-ring rejects $1"
-    fi
-}
-ring_reject "k = 2^30"              0 1073741824
-ring_reject "k = 2^31-1"            0 2147483647
-ring_reject "k = 65 (> RING_MAX_K)" 0 65
-ring_reject "rounds = 2^30"         1 1073741824
-ring_reject "rounds = 0"            1 0
-# Shrinking rounds leaves the payload longer than k*rounds describes.
-ring_reject "payload longer than k*rounds"  1 1
-
-# ── HPKE-Stern-KEM: private-key-declared QC-MDPC row weight d ──
-# d sizes der_right_align()'s writes into QCMDPC_D*2-byte stack buffers, so an
-# out-of-range value was a stack-buffer-overflow WRITE, not merely a big read.
-"$CLI" genpkey --algo hpke-stern-kem --out "$TMP/kem.pem" 2>/dev/null
-if "$CLI" pkey --algo hpke-stern-kem --in "$TMP/kem.pem" --pubout --out "$TMP/kem_pub.pem" 2>/dev/null; then
-    pass "pkey hpke-stern-kem accepts the genuine private key"
-else
-    fail "pkey hpke-stern-kem accepts the genuine private key"
-fi
-for d in 16 2147483647; do
-    craft_item "$TMP/kem.pem" "$TMP/kem_bad.pem" 5 "$d"
-    if "$CLI" pkey --algo hpke-stern-kem --in "$TMP/kem_bad.pem" --pubout \
-        --out "$TMP/kem_pub_bad.pem" 2>/dev/null; then
-        fail "pkey hpke-stern-kem rejects row weight d=$d: CLI exited 0"
-    else
-        pass "pkey hpke-stern-kem rejects row weight d=$d"
-    fi
-done
-
-# ── HPKS-XMSS: key-declared height and signature-declared depth ──
-# h sizes `1 << h` leaves and the num_leaves*KEYBYTES allocation behind them;
-# `1 << h` is undefined for h >= 32.
-"$CLI" genpkey --algo hpks-xmss --xmss-height 2 --out "$TMP/x.pem" 2>/dev/null
-"$CLI" pkey --algo hpks-xmss --in "$TMP/x.pem" --pubout --out "$TMP/x_pub.pem" 2>/dev/null
-echo "xmss message" > "$TMP/xmsg.txt"
-"$CLI" sign --algo hpks-xmss --key "$TMP/x.pem" --in "$TMP/xmsg.txt" --out "$TMP/xsig.pem" 2>/dev/null
-for h in 0 31 2147483647; do
-    craft_item "$TMP/x.pem" "$TMP/x_bad.pem" 1 "$h"
-    if "$CLI" pkey --algo hpks-xmss --in "$TMP/x_bad.pem" --pubout \
-        --out "$TMP/x_pub_bad.pem" 2>/dev/null; then
-        fail "pkey hpks-xmss rejects height h=$h: CLI exited 0"
-    else
-        pass "pkey hpks-xmss rejects height h=$h"
-    fi
-    craft_item "$TMP/xsig.pem" "$TMP/xsig_bad.pem" 3 "$h"
-    if out=$("$CLI" verify --algo hpks-xmss --pubkey "$TMP/x_pub.pem" \
-             --in "$TMP/xmsg.txt" --sig "$TMP/xsig_bad.pem" 2>&1); then
-        fail "verify hpks-xmss rejects signature depth=$h: CLI exited 0"
-    elif [ "$out" = "Verification FAILED" ]; then
-        fail "verify hpks-xmss rejects signature depth=$h: reached the verifier"
-    else
-        pass "verify hpks-xmss rejects signature depth=$h"
-    fi
-done
-
-# ── HSKE-NL-V2-Duplex: ciphertext-declared length ──
-# Item 2 is the declared ct length; it sizes two allocations, and a payload
-# longer than it claims used to be truncated rather than rejected.
-# The duplex takes a 256-bit symmetric key, produced by an HKEX-GF agreement.
-"$CLI" genpkey --algo hkex-gf --out "$TMP/da.pem"
-"$CLI" genpkey --algo hkex-gf --out "$TMP/db.pem"
-"$CLI" pkey --in "$TMP/db.pem" --pubout --out "$TMP/db_pub.pem"
-"$CLI" kex --algo hkex-gf --our "$TMP/da.pem" --their "$TMP/db_pub.pem" --out "$TMP/dk.pem"
-printf 'duplex plaintext spanning several 16-byte rate blocks, well over 32 bytes' > "$TMP/dmsg.txt"
-"$CLI" enc --algo hske-duplex --ad ctx --key "$TMP/dk.pem" \
-    --in "$TMP/dmsg.txt" --out "$TMP/dct.pem" 2>/dev/null
-if "$CLI" dec --algo hske-duplex --ad ctx --key "$TMP/dk.pem" \
-    --in "$TMP/dct.pem" --out "$TMP/dpt.txt" 2>/dev/null; then
-    pass "dec hske-duplex accepts the genuine ciphertext"
-else
-    fail "dec hske-duplex accepts the genuine ciphertext"
-fi
-for n in 1 4294967296; do
-    craft_item "$TMP/dct.pem" "$TMP/dct_bad.pem" 2 "$n"
-    if "$CLI" dec --algo hske-duplex --ad ctx --key "$TMP/dk.pem" \
-        --in "$TMP/dct_bad.pem" --out "$TMP/dpt_bad.txt" 2>/dev/null; then
-        fail "dec hske-duplex rejects declared ct length $n: CLI exited 0"
-    else
-        pass "dec hske-duplex rejects declared ct length $n"
-    fi
-done
+hkx_mal_fixtures "$TMP"
+hkx_mal_suite c "$CLI"
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"

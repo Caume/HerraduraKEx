@@ -143,6 +143,7 @@ jobs:
           for f in *.sh; do
             case "$f" in test_java_*) continue ;; esac
             case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
+            case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -248,6 +249,12 @@ jobs:
 
       - name: Cross-language compatibility matrix
         run: bash CliTest/test_cross_lang_matrix.sh
+
+      # TODO #240: the bounds on the PEM fields that size an allocation are a
+      # wire contract, so they belong in the 4-way job rather than any single
+      # language's. An artifact one CLI refuses must not be one another accepts.
+      - name: Malformed-PEM rejection matrix
+        run: bash CliTest/test_malformed_pem_matrix.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

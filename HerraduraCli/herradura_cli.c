@@ -254,6 +254,30 @@ static void rnl_require_n(const void *pkv, int idx, const char *what)
     }
 }
 
+/* A Stern/ring signature carries its own key width in item[idx].  This build
+ * has exactly one (KEYBITS), and the readers below size every blob from it
+ * rather than from the field — so an unread field is a field the Python, Go and
+ * Java readers now bound and this one does not (TODO #240).  A signature
+ * declaring a different width is not one this build can check: fail loudly
+ * instead of verifying it against the wrong geometry.  Same reasoning as
+ * rnl_require_n above. */
+static void stern_require_n(const void *pkv, int idx, const char *what)
+{
+    const PemKey *k = (const PemKey *)pkv;
+    uint64_t got = 0;
+    size_t i;
+    if (k->n_items <= idx)
+        dief("%s: malformed Stern PEM (no key-width field)", what);
+    for (i = 0; i < k->vlens[idx] && i < 8; i++)
+        got = (got << 8) | k->vals[idx][i];
+    if (got != (uint64_t)KEYBITS) {
+        fprintf(stderr, "%s: key width mismatch — PEM declares n=%llu but this "
+                        "build is compiled for KEYBITS=%d\n",
+                what, (unsigned long long)got, KEYBITS);
+        exit(1);
+    }
+}
+
 static void pem_key_load(PemKey *k, const char *path)
 {
     size_t raw_len;
@@ -1911,6 +1935,7 @@ static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig
     if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
         { pem_key_free(&pk); return -1; }
 
+    stern_require_n(&pk, 0, "verify");
     if (stern_decode_rounds(&pk, &rounds) != 0) { pem_key_free(&pk); return -1; }
 
     size_t cm_len = STERN_COMMITS_BYTES_R(rounds);
@@ -2084,6 +2109,7 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
                         "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
         exit(1);
     }
+    stern_require_n(&pk, 2, "verify");
     int k      = (int)k_raw;
     int rounds = (int)r_raw;
     size_t entry = 5 * (size_t)KEYBYTES + 1;

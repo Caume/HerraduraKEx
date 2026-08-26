@@ -2,6 +2,51 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.1.2] - 2026-08-26
+
+### Fixed
+- **TODO #240: the Python, Go and Java CLIs never got #239's bounds.** #239 range-checked
+  every PEM field that sizes an allocation in `herradura_cli.c` and scoped itself to that
+  one file, so the three sibling CLIs still multiplied wire counts straight into a
+  `to_bytes()` / `make([]byte, ...)` / `toFixedBytes()` length. They cannot corrupt memory
+  — that half of #239 was C-specific — but a four-byte edit to a PEM produced a
+  `MemoryError` traceback (Python), `fatal error: out of memory` with a goroutine dump and
+  a 345 GB request (Go), or a `NegativeArraySizeException` reading `error: -2` (Java, where
+  `d * 2` at `d = 2^31-1` wraps past `int`), against C's one-line diagnostic and exit 1.
+  All three now reject with the same message shape and the same exit status, at the same
+  bounds: `RING_MAX_K`, `SDF_MAX_ROUNDS`, `QCMDPC_D` and the XMSS height cap. The readers
+  fixed are the ring signature (k, rounds, n, payload length), the Stern-F signature
+  (n, rounds), the QC-MDPC private and public keys (r, d), the XMSS key and signature
+  (height, depth), the WOTS key and signature (chain count), and the HSKE-NL-V2-Duplex
+  ciphertext (declared length).
+- **`SDF_MAX_ROUNDS` existed only in C.** TODO #236 added it to `herradura.h`; Python, Go
+  and Java had no round-count bound at all, so #236's fix was as language-local as #239's.
+  Go gains `SdfMaxRounds` in the `herradura` package (mirroring the header), Java
+  `Codec.SDF_MAX_ROUNDS`, Python `_SDF_MAX_ROUNDS`.
+- **The C reader ignored the key width the wire declares**, found by the new matrix when
+  every other CLI rejected `n = 2^31-1` in a Stern or ring signature and C verified it. C
+  sizes every blob from its own `KEYBITS` and simply never read the field, which is the
+  same divergence as the rest of this item pointing the other way. A `stern_require_n`
+  now rejects a declared width this build is not compiled for, following the
+  `rnl_require_n` precedent of TODO #227.
+
+### Added
+- `CliTest/test_malformed_pem_matrix.sh` — the four CLIs against the same deliberately
+  malformed PEMs, run by the `cross-lang-compat` job. The bounds are a wire contract, not
+  an implementation detail: an artifact one CLI refuses must not be one another accepts.
+  Fixtures are generated once with the Python CLI and fed to all four. 108 assertions.
+- `CliTest/lib_malformed.sh` — the shared case table behind both that script and
+  `test_weak_key_rejection.sh`, which keeps running the same cases against the C CLI alone
+  and therefore also under the `sanitizers` job, where #239's stack overflow is visible.
+  Following the `lib_dfr.sh` / `lib_build.sh` precedent; `ci.yml`'s coverage guard already
+  skips `lib_*.sh`.
+- **Each section of that suite asserts the genuine artifact before its rejection cases and
+  skips them if that control fails.** The first draft scored five false passes: under
+  `ulimit -v`, the JVM could not start, and a CLI that never starts exits non-zero — which
+  a rejection test reads as success. The same trap applies to the ASan build (its shadow
+  memory needs the address space), so `test_weak_key_rejection.sh` sets no `ulimit` and
+  the matrix caps the JVM with `-Xmx` instead.
+
 ## [3.1.1] - 2026-08-25
 
 ### Fixed

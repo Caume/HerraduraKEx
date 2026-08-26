@@ -33,6 +33,20 @@ CliTest/                                             — CLI integration + cross
                                                        ./build_go.sh before the C/Go CliTest
                                                        scripts; a run that asserts nothing now
                                                        exits 2 instead of 0
+  lib_malformed.sh                                  — shared malformed-PEM case table (TODO
+                                                       #239, #240): every field that sizes an
+                                                       allocation, rewritten to a hostile value.
+                                                       Sourced by test_weak_key_rejection.sh
+                                                       (C only, so it also runs under the
+                                                       sanitizers job) and by
+                                                       test_malformed_pem_matrix.sh (all four
+                                                       CLIs, claimed by cross-lang-compat).
+                                                       Each section asserts the genuine artifact
+                                                       first and skips its rejection cases if
+                                                       that control fails — a CLI that cannot
+                                                       start also exits non-zero, which a
+                                                       rejection test would otherwise score as
+                                                       a pass
 KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190, #226):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
   hkex_rnl.json              — HKEX-RNL two-party handshakes at the deployed n=1024
@@ -303,10 +317,14 @@ fails if a script which decapsulates `hpke-stern-kem` doesn't source `CliTest/li
 TODO #221), `native-java` (builds/
 runs the `bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python
 interop and KAT cross-checks per-protocol-family, TODO #206), `cross-lang-compat` (builds
-all four CLIs and runs `CliTest/test_cross_lang_matrix.sh` — a genuine 4-way C/Go/Python/
-Java compatibility matrix across the classical quartet, the NL/PQC quartet, the Stern
-family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates directly
-rather than only each against Python; runs after the four `native-*` jobs, TODO #207),
+all four CLIs and runs two 4-way scripts: `CliTest/test_cross_lang_matrix.sh`, a genuine
+C/Go/Python/Java compatibility matrix across the classical quartet, the NL/PQC quartet,
+the Stern family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates
+directly rather than only each against Python (TODO #207); and
+`CliTest/test_malformed_pem_matrix.sh`, the same four CLIs against deliberately malformed
+PEMs, because the bounds on the fields that size an allocation are a wire contract — an
+artifact one CLI refuses must not be one another accepts (TODO #240). Both run after the
+four `native-*` jobs),
 `arm-i386` (ARM Thumb-2/NASM i386 under qemu), `katex` (math-rendering validation, TODO
 #179, plus the part-index consistency check of TODO #231), `arduino` (Arduino/AVR under
 simavr — ran `continue-on-error: true` until TODO #185

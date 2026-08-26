@@ -570,6 +570,53 @@ public final class Codec {
         return new RnlResponse(k, cB, hint, n, nB);
     }
 
+    // ── Bounds on PEM fields that size an allocation (TODO #240) ───────────
+    //
+    // TODO #239 range-checked these fields in the C CLI and stopped there.  The
+    // decoders below still took counts straight off the wire and multiplied
+    // them into a toFixedBytes() length.  Java cannot corrupt memory over it,
+    // but `d * 2` at d = 2^31-1 wraps to -2, so what surfaced was a
+    // NegativeArraySizeException whose message was the wrapped product — and,
+    // more importantly, an artifact the C CLI refuses was one this CLI tried.
+    //
+    // Reject rather than clamp, inside the decoder, before the arithmetic.
+
+    /** herradura_cli.c XMSS_MAX_H; also genpkey's --xmss-height cap. */
+    public static final int XMSS_MAX_H = 20;
+    /** herradura.h SDF_MAX_ROUNDS (TODO #236). */
+    public static final int SDF_MAX_ROUNDS = 4096;
+
+    /** Returns v, or throws if it falls outside [lo, hi].  {@code what} names
+     * the field as the wire calls it; {@code where} is the subcommand, so the
+     * message shape matches the C, Go and Python CLIs'. */
+    private static int bounded(BigInteger value, int lo, int hi, String what, String where) {
+        // intValueExact() already refuses anything too wide for an int; the
+        // range check below is what stops the in-range-but-absurd values.
+        int v;
+        try {
+            v = value.intValueExact();
+        } catch (ArithmeticException e) {
+            throw new IllegalArgumentException(where + ": " + what + " is " + value
+                + " (expected " + lo + ".." + hi + ")");
+        }
+        if (v < lo || v > hi) {
+            throw new IllegalArgumentException(where + ": " + what + " is " + v
+                + " (expected " + lo + ".." + hi + ")");
+        }
+        return v;
+    }
+
+    /** Bounds a wire-supplied bit width: a multiple of 8, no wider than the
+     * suite's own key width. */
+    private static int boundedN(BigInteger value, String where) {
+        int v = bounded(value, 8, Herradura.N, "n", where);
+        if (v % 8 != 0) {
+            throw new IllegalArgumentException(where + ": n is " + v
+                + " (expected a multiple of 8)");
+        }
+        return v;
+    }
+
     private static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.toByteArray();
         byte[] out = new byte[nbytes];
@@ -705,8 +752,8 @@ public final class Codec {
      * {@link #decodeHcredCredential} (identical wire shape, different label). */
     private static SternSigDecoded decodeSternSigDer(byte[] der) {
         List<BigInteger> ints = derParseSeq(der);
-        int nbits = ints.get(0).intValueExact();
-        int rounds = ints.get(1).intValueExact();
+        int nbits = boundedN(ints.get(0), "verify");
+        int rounds = bounded(ints.get(1), 1, SDF_MAX_ROUNDS, "round count", "verify");
         int nbytes = nbits / 8;
         byte[] commits = toFixedBytes(ints.get(2), 3 * rounds * nbytes);
         byte[] challenges = toFixedBytes(ints.get(3), (rounds + 3) / 4);
@@ -808,8 +855,10 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PRIV + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b.der);
-        int r = ints.get(4).intValueExact();
-        int d = ints.get(5).intValueExact();
+        // r and d each size a toFixedBytes() below; d additionally indexes the
+        // support arrays, and `d * 2` overflowed int before this bound existed.
+        int r = bounded(ints.get(4), 1, Stern.QCMDPC_R, "QC-MDPC block length r", "pkey");
+        int d = bounded(ints.get(5), 1, Stern.QCMDPC_D, "QC-MDPC row weight d", "pkey");
         int rb = (r + 7) / 8;
         BigInteger h0 = leReverseToInt(toFixedBytes(ints.get(0), rb));
         BigInteger h1 = leReverseToInt(toFixedBytes(ints.get(1), rb));
@@ -835,7 +884,7 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_HPKE_STERN_KEM_PUB + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b.der);
-        int r = ints.get(1).intValueExact();
+        int r = bounded(ints.get(1), 1, Stern.QCMDPC_R, "QC-MDPC block length r", "pkey");
         int rb = (r + 7) / 8;
         BigInteger hPub = leReverseToInt(toFixedBytes(ints.get(0), rb));
         return new KemPubKey(hPub, r);
@@ -982,7 +1031,9 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_PUB + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b.der);
-        int ell = ints.get(1).intValueExact();
+        // The shipped parameters fix the chain count, so anything else is
+        // malformed rather than merely large.
+        int ell = bounded(ints.get(1), Wots.L, Wots.L, "WOTS chain count", "verify");
         int nbytes = Herradura.N / 8;
         byte[] blob = toFixedBytes(ints.get(0), ell * nbytes);
         return chunkToInts(blob, ell, nbytes);
@@ -1001,7 +1052,9 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_WOTS_SIG + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b.der);
-        int ell = ints.get(1).intValueExact();
+        // The shipped parameters fix the chain count, so anything else is
+        // malformed rather than merely large.
+        int ell = bounded(ints.get(1), Wots.L, Wots.L, "WOTS chain count", "verify");
         int nbytes = Herradura.N / 8;
         byte[] blob = toFixedBytes(ints.get(0), ell * nbytes);
         return chunkToInts(blob, ell, nbytes);
@@ -1042,7 +1095,8 @@ public final class Codec {
         }
         List<BigInteger> ints = derParseSeq(b.der);
         byte[] seed = toFixedBytes(ints.get(0), 32);
-        int h = ints.get(1).intValueExact();
+        // h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
+        int h = bounded(ints.get(1), 1, XMSS_MAX_H, "XMSS height", "pkey");
         int nextIdx = ints.get(2).intValueExact();
         int numLeaves = 1 << h;
         byte[] blob = toFixedBytes(ints.get(3), 32 * numLeaves);
@@ -1070,7 +1124,8 @@ public final class Codec {
             throw new IllegalArgumentException("Expected " + PEM_HPKS_XMSS_PUB + ", got " + b.label);
         }
         List<BigInteger> ints = derParseSeq(b.der);
-        return new XmssPubKey(toFixedBytes(ints.get(0), 32), ints.get(1).intValueExact());
+        return new XmssPubKey(toFixedBytes(ints.get(0), 32),
+                              bounded(ints.get(1), 1, XMSS_MAX_H, "XMSS height", "pkey"));
     }
 
     /** SEQUENCE(leaf_idx, wots_sig_blob, auth_path_blob, h, n). */
@@ -1089,8 +1144,8 @@ public final class Codec {
         }
         List<BigInteger> ints = derParseSeq(b.der);
         int leafIdx = ints.get(0).intValueExact();
-        int h = ints.get(3).intValueExact();
-        int n = ints.get(4).intValueExact();
+        int h = bounded(ints.get(3), 1, XMSS_MAX_H, "XMSS signature depth", "verify");
+        int n = boundedN(ints.get(4), "verify");
         int nbytes = n / 8;
         byte[] sigBlob = toFixedBytes(ints.get(1), Wots.L * nbytes);
         byte[] pathBlob = toFixedBytes(ints.get(2), h * 32);

@@ -12546,3 +12546,73 @@ signature depth (which size `1 << h` leaves, undefined for h >= 32) and the
 HSKE-NL-V2-Duplex declared ciphertext length.  25 assertions in
 `CliTest/test_weak_key_rejection.sh`, which the `sanitizers` CI job now runs too.
 
+### #240: the Python, Go and Java CLIs never got #239's bounds — same fields, uncaught crash instead of a clean rejection
+
+TODO #239 range-checked every PEM field that sizes an allocation in
+`HerraduraCli/herradura_cli.c`.  Its Work section scoped itself to that one file, so the
+three sibling CLIs still read the same fields with no bound at all.  They cannot corrupt
+memory — that part of #239 was C-specific — but they turn a malformed file into an
+**unhandled runtime crash with a stack trace**, where C now prints one line and exits 1.
+A verifier is the component that handles attacker-supplied input; three of the four
+implementations of it currently abort on a 4-byte edit to a PEM.
+
+**Measured, against the same hand-crafted PEMs #239 was closed with** (each run under
+`ulimit -v 2000000` so the host survives):
+
+| field | C (post-#239) | Python | Go | Java |
+|---|---|---|---|---|
+| ring `rounds = 2^30` | `declares 1073741824 rounds (expected 1..4096)`, exit 1 | `MemoryError` traceback out of `herradura.py:1181` | `fatal error: out of memory` — `cannot allocate 345744867328-byte block`, goroutine dump | n/a — the Java CLI has no `hpks-ring` |
+| KEM row weight `d = 2^31-1` | `declares row weight 2147483647 (expected 1..15)`, exit 1 | `MemoryError` traceback out of `herradura.py:996` | `fatal error: out of memory` — `cannot allocate 4294967296-byte block` | `error: -2` |
+
+Java's `error: -2` is its own bug and the most interesting row in the table: `d * 2` at
+`d = 2^31-1` overflows Java's `int` to `-2`, so what surfaces is a
+`NegativeArraySizeException` whose message is the wrapped product.  It does not crash the
+JVM, but the diagnostic is meaningless and the arithmetic is wrong for the same reason
+`stern_ring_alloc`'s `int sz = k * rounds` was.
+
+**The readers to fix.**  These are the counterparts of the five sites #239 touched:
+
+- `HerraduraCli/herradura.py:1173` `_unpack_ring_sig` — `k`, `rounds`, and the
+  `blob_int.to_bytes(k * rounds * entry, 'big')` behind them.
+- `HerraduraCli/herradura.py:987` `_decode_kem_privkey` — `d`, at `s0_int.to_bytes(d * 2)`.
+- `HerraduraCli/herradura.py:460` `_decode_xmss_privkey` and `:508` `_unpack_xmss_sig` —
+  the height and the signature depth.
+- `HerraduraCli/herradura_cli.go:824` `decodeRingSig` and `:1929` `decodeKemPriv`, plus the
+  Go XMSS and duplex readers.
+- `bindings/java/herradurakex/HerraduraCli.java` — the KEM row weight (the `int` overflow
+  above) and the XMSS height/depth; there is no ring reader to fix.
+- The HSKE-NL-V2-Duplex declared ciphertext length in all three.
+
+**What "fix" means here.**  Not "stop the crash" — reject with the same message shape and
+the same exit status C now uses, so the four CLIs agree on what a malformed artifact is.
+The bounds are already decided and already have names: `RING_MAX_K`, `SDF_MAX_ROUNDS`,
+`QCMDPC_D`, `XMSS_MAX_H`.  Divergence is the real defect: today a PEM that C refuses is one
+the other three attempt, which is a wire-format disagreement dressed up as an
+implementation detail.
+
+**Test coverage.**  `CliTest/test_weak_key_rejection.sh` is C-only by construction — it
+hardcodes `$CLI` as `herradura_cli`.  Its TODO #239 section is already written against
+PEM-item indices rather than anything C-specific, so the natural move is to parameterise
+it over the CLIs the way `test_cross_lang_matrix.sh` does, and let the coverage guard in
+`ci.yml` reclassify it.  Decide that first: the alternative — per-language copies — would
+be the fourth copy of the same `craft_item` helper.
+
+**Not in scope.**  Adding `hpks-ring` to the Java CLI (it is a genuine gap, but a feature,
+not a validation fix), and re-auditing the C reader — #239 closed that.
+
+Status: **DONE v3.1.2** — all three CLIs now reject the same fields at the same bounds
+(`RING_MAX_K`, `SDF_MAX_ROUNDS`, `QCMDPC_D`, the XMSS height cap) with the same message
+shape and exit status as C.  Two things the item did not anticipate.  First, #236's
+`SDF_MAX_ROUNDS` was as C-local as #239's bounds were, so Python/Go/Java had no round-count
+bound at all; Go gains `SdfMaxRounds` in the `herradura` package, Java
+`Codec.SDF_MAX_ROUNDS`, Python `_SDF_MAX_ROUNDS`.  Second, the divergence ran both ways:
+the new matrix found that **C** ignored the key width the wire declares in Stern and ring
+signatures — sizing every blob from its own `KEYBITS` — so a signature the other three
+refuse was one C verified.  `stern_require_n` closes that, following #227's
+`rnl_require_n`.  On the test-coverage question the item asked to settle first: the case
+table moved to `CliTest/lib_malformed.sh` (the `lib_dfr.sh`/`lib_build.sh` precedent; the
+coverage guard already skips `lib_*.sh`), shared by `test_weak_key_rejection.sh` (C only,
+so it keeps its place in the `sanitizers` job) and the new 4-way
+`test_malformed_pem_matrix.sh` under `cross-lang-compat`.  108 assertions, 0 fail.
+Adding `hpks-ring` to the Java CLI stays out of scope and remains a gap.
+
