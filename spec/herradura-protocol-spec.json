@@ -9,6 +9,29 @@
   ],
   "protocols": [
     {
+      "id": "apake",
+      "name": "aPAKE (asymmetric password-authenticated key exchange)",
+      "kind": "pake",
+      "cli_binding": {
+        "kind": "subcommand",
+        "subcommands": [
+          "pake-demo",
+          "pake-register"
+        ]
+      },
+      "security": {
+        "status": "pedagogical",
+        "quantum_resistant": false,
+        "classical_security_bits": "~36.5 (n=256), inherited from the OPRF",
+        "notes": "Asymmetric PAKE: the server record stores F(oprf_key, password) so that a stolen database cannot be attacked offline. That property is exactly what the oprf row breaks -- oprf_key is recoverable in ~2^36.5 group operations from one observed transcript, so a compromised database IS offline-guessable at the deployed n, which voids the construction's entire purpose. Independently, the shipped ZKBoo parameters are demo-grade (_HPAKE_ZKP_N = 32, _HPAKE_ROUNDS = 16, soundness error ~0.15%; production needs 219 rounds). Reached through the pake-register/pake-demo subcommands rather than an --algo tag, which is why it had no entry here at all before TODO #238.",
+        "source": [
+          "SECURITY.md",
+          "TODO_DONE.md #237",
+          "SecurityProofs-3.md 9.2.4"
+        ]
+      }
+    },
+    {
       "id": "hcred",
       "name": "HCRED (hybrid credential)",
       "kind": "credential",
@@ -16,21 +39,42 @@
         "private_key": "HERRADURA HCRED PRIVATE KEY",
         "public_key": "HERRADURA HCRED PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hcred",
+        "subcommands": [
+          "cred-issue",
+          "cred-prove",
+          "cred-verify",
+          "genpkey"
+        ]
+      },
       "cli_support": {
         "c": true,
-        "go": false,
+        "go": true,
         "python": true
       },
       "security": {
         "status": "research",
         "quantum_resistant": "conjectured",
-        "notes": "Hybrid credential construction (Stern-based); Python and C CLI only, not in Go."
+        "notes": "Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/cred-verify -- the \"Python and C CLI only, not in Go\" note this row used to carry was stale, and nothing checked it (TODO #238).",
+        "source": [
+          "TODO_DONE.md #128",
+          "SecurityProofs-7.md 11.10.8-11.10.10"
+        ]
       }
     },
     {
       "id": "hfscx-256",
       "name": "HFSCX-256 (Merkle-Damgard hash)",
       "kind": "hash",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hfscx-256",
+        "subcommands": [
+          "dgst"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -39,13 +83,26 @@
       "security": {
         "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "Merkle-Damgard hash built on NL-FSCX v1, with Davies-Meyer feed-forward."
+        "classical_security_bits": "256-bit digest; 128-bit collision resistance in the ideal-random-function model",
+        "notes": "256-bit Merkle-Damgard hash on NL-FSCX v1 with Davies-Meyer feed-forward, re-derived in the ideal-random-function model under TODO #215. The generic Merkle-Damgard weaknesses apply and are not defects of this construction: Joux multicollisions and Kelsey-Schneier expandable-message second preimages both work against it as against any MD hash without a wide pipe. The compression function's own differential profile rests on the NL-FSCX v1 PRF conjecture, so treat the classification as conditional on that.",
+        "source": [
+          "SecurityProofs-6.md 11.9",
+          "TODO_DONE.md #215",
+          "SecurityProofsCode/hfscx_dm_rf_model.py"
+        ]
       }
     },
     {
       "id": "hfscx-256-ds",
       "name": "HFSCX-256-DS (domain-separated variant)",
       "kind": "hash",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hfscx-256-ds",
+        "subcommands": [
+          "dgst"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -54,7 +111,11 @@
       "security": {
         "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "hfscx-256 with an explicit domain-separation parameter."
+        "notes": "hfscx-256 with an explicit domain-separation parameter; same construction, same caveats, distinct digests per tag.",
+        "source": [
+          "SecurityProofs-6.md 11.9",
+          "TODO_DONE.md #215"
+        ]
       }
     },
     {
@@ -64,6 +125,14 @@
       "pem_labels": {
         "private_key": "HERRADURA HKEX-GF PRIVATE KEY",
         "public_key": "HERRADURA HKEX-GF PUBLIC KEY"
+      },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hkex-gf",
+        "subcommands": [
+          "genpkey",
+          "kex"
+        ]
       },
       "cli_support": {
         "c": true,
@@ -88,6 +157,14 @@
       "pem_labels": {
         "private_key": "HERRADURA HKEX-RNL PRIVATE KEY",
         "public_key": "HERRADURA HKEX-RNL PUBLIC KEY"
+      },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hkex-rnl",
+        "subcommands": [
+          "genpkey",
+          "kex"
+        ]
       },
       "cli_support": {
         "c": true,
@@ -115,6 +192,15 @@
         "private_key": "HERRADURA HPKE PRIVATE KEY",
         "public_key": "HERRADURA HPKE PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpke",
+        "subcommands": [
+          "dec",
+          "enc",
+          "genpkey"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -140,18 +226,29 @@
         "private_key": "HERRADURA HPKE-NL PRIVATE KEY",
         "public_key": "HERRADURA HPKE-NL PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpke-nl",
+        "subcommands": [
+          "dec",
+          "enc",
+          "genpkey"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
         "python": true
       },
       "security": {
-        "status": "deprecated",
+        "status": "pedagogical",
         "quantum_resistant": false,
-        "notes": "NL-FSCX-hardened classical El Gamal variant; NOT quantum-resistant; PQC claim deprecated, no lattice-based replacement planned.",
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "NL-FSCX-hardened El Gamal over the same GF(2^n)* group as hpke, with the same ~2^36.5 Pohlig-Hellman recovery of the decryption key. Same `deprecated` -> `pedagogical` correction as hpks-nl (TODO #238).",
         "source": [
-          "TODO.md #5 (2901)",
-          "TODO.md (351)"
+          "SECURITY.md",
+          "TODO_DONE.md #212",
+          "SecurityProofs-4.md 11.7"
         ]
       }
     },
@@ -162,6 +259,15 @@
       "pem_labels": {
         "private_key": "HERRADURA HPKE-STERN PRIVATE KEY",
         "public_key": "HERRADURA HPKE-STERN PUBLIC KEY"
+      },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpke-stern",
+        "subcommands": [
+          "dec",
+          "enc",
+          "genpkey"
+        ]
       },
       "cli_support": {
         "c": true,
@@ -185,6 +291,15 @@
       "pem_labels": {
         "private_key": "HERRADURA HPKE-STERN-KEM PRIVATE KEY",
         "public_key": "HERRADURA HPKE-STERN-KEM PUBLIC KEY"
+      },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpke-stern-kem",
+        "subcommands": [
+          "dec",
+          "enc",
+          "genpkey"
+        ]
       },
       "cli_support": {
         "c": true,
@@ -213,6 +328,15 @@
         "private_key": "HERRADURA HPKS PRIVATE KEY",
         "public_key": "HERRADURA HPKS PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks",
+        "subcommands": [
+          "genpkey",
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -237,18 +361,29 @@
         "private_key": "HERRADURA HPKS-NL PRIVATE KEY",
         "public_key": "HERRADURA HPKS-NL PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-nl",
+        "subcommands": [
+          "genpkey",
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
         "python": true
       },
       "security": {
-        "status": "deprecated",
+        "status": "pedagogical",
         "quantum_resistant": false,
-        "notes": "NL-FSCX-hardened classical Schnorr variant; NOT quantum-resistant despite the 'NL' naming suggesting a PQC upgrade -- PQC claim deprecated, no lattice-based replacement planned.",
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "NL-FSCX-hardened Schnorr over the same GF(2^n)* group as hpks, so the same ~2^36.5 Pohlig-Hellman key recovery applies unchanged -- the NL-FSCX challenge hardens the hash, not the group. NOT quantum-resistant despite the 'NL' naming suggesting a PQC upgrade; that claim is withdrawn and no lattice-based replacement is planned. This row said `deprecated` until TODO #238, which conflated the withdrawn PQC *claim* with the algo being superseded: it is neither superseded nor removed -- it still ships in all four implementations and is covered by the cross-language matrix. `pedagogical` is what SECURITY.md has always said, and matches hpks.",
         "source": [
-          "TODO.md #5 (2901)",
-          "TODO.md (351)"
+          "SECURITY.md",
+          "TODO_DONE.md #212",
+          "SecurityProofs-4.md 11.7"
         ]
       }
     },
@@ -256,6 +391,14 @@
       "id": "hpks-ring",
       "name": "HPKS-Ring (anonymous ring signature)",
       "kind": "signature",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-ring",
+        "subcommands": [
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -278,6 +421,15 @@
         "private_key": "HERRADURA HPKS-STERN PRIVATE KEY",
         "public_key": "HERRADURA HPKS-STERN PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-stern",
+        "subcommands": [
+          "genpkey",
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -299,15 +451,33 @@
       "id": "hpks-t",
       "name": "HPKS-T (threshold Schnorr signature)",
       "kind": "signature",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-t",
+        "subcommands": [
+          "threshold-aggregate",
+          "threshold-combine",
+          "threshold-commit",
+          "threshold-respond",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
         "python": true
       },
       "security": {
-        "status": "production",
-        "quantum_resistant": "conjectured",
-        "notes": "Threshold HPKS-T signing (commit/aggregate/respond/combine phases); verify-only algo tag -- signing goes through the separate threshold-* subcommands, not `sign`."
+        "status": "pedagogical",
+        "quantum_resistant": false,
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "Threshold / aggregate Schnorr over GF(2^n)* (herradura.h 4074), with signing split across the commit/aggregate/respond/combine subcommands and only verification behind the --algo tag. It is the same group as hpks, so it carries the same ~2^36.5 Pohlig-Hellman recovery of a signer's share, which yields arbitrary forgery -- thresholding distributes trust in the signing protocol, it does not raise the hardness of the underlying group. This row said `production` until TODO #238: hpks was reclassified pedagogical under TODO #212 and nothing propagated that to the threshold variant, which is the same class of drift TODO #237 found three of.",
+        "source": [
+          "herradura.h:4074",
+          "TODO_DONE.md #212",
+          "TODO_DONE.md #98",
+          "SecurityProofs-3.md 9.2.4"
+        ]
       }
     },
     {
@@ -317,6 +487,15 @@
       "pem_labels": {
         "private_key": "HERRADURA HPKS-WOTS PRIVATE KEY",
         "public_key": "HERRADURA HPKS-WOTS PUBLIC KEY"
+      },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-wots",
+        "subcommands": [
+          "genpkey",
+          "sign",
+          "verify"
+        ]
       },
       "cli_support": {
         "c": true,
@@ -334,23 +513,34 @@
     },
     {
       "id": "hpks-xmss",
-      "name": "HPKS-XMSS (hash-based, Python-only prototype)",
+      "name": "HPKS-XMSS (stateful hash-based signature)",
       "kind": "signature",
       "pem_labels": {
         "private_key": "HERRADURA HPKS-XMSS PRIVATE KEY",
         "public_key": "HERRADURA HPKS-XMSS PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-xmss",
+        "subcommands": [
+          "genpkey",
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
-        "c": false,
-        "go": false,
+        "c": true,
+        "go": true,
         "python": true
       },
       "security": {
-        "status": "pedagogical",
+        "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "Python-only prototype; not implemented in the C or Go CLI, not cross-language wire-compatible with anything else in the suite.",
+        "notes": "Stateful hash-based signature (XMSS over the WOTS chains of hpks-wots), with the next-unused leaf index kept in a <keyfile>.idx sidecar. Security rests on HFSCX-256's collision resistance and on that state being preserved: reusing a leaf index breaks the one-time property of the WOTS key at that leaf, so a restored-from-backup key must not be signed with again. Reclassified in TODO #238: this row said `pedagogical` because it was a Python-only prototype, which stopped being true at TODO #201/#208 -- all four implementations (C, Go, Python, Java) ship it and interoperate, proven per-release by CliTest/test_cross_lang_matrix.sh. Nothing checked the claim, which is what this item was filed about.",
         "source": [
-          "HerraduraCli/herradura.py (Python-only)"
+          "TODO_DONE.md #208",
+          "TODO_DONE.md #201",
+          "CliTest/test_cross_lang_matrix.sh"
         ]
       }
     },
@@ -362,17 +552,25 @@
         "private_key": "HERRADURA ZKP-NL PRIVATE KEY",
         "public_key": "HERRADURA ZKP-NL PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hpks-zkp-nl",
+        "subcommands": [
+          "genpkey"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
         "python": true
       },
       "security": {
-        "status": "production",
+        "status": "demo-only",
         "quantum_resistant": "conjectured",
-        "notes": "Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols (nl-zkboo, nl-zkbpp).",
+        "notes": "Key-generation entry point for the ZKB[oo/++] proof-of-knowledge protocols. It produces nothing but a keypair, so it has no soundness of its own -- its status is whatever the proofs consuming it are worth, and both nl-zkboo and nl-zkbpp ship at ZKP_NL_DEMO_ROUNDS=4 against the ZKP_NL_PROD_ROUNDS=219 needed for 128-bit soundness. Aligned with them in TODO #238; `production` for a keygen whose only consumers are demo-only was a classification with nothing behind it.",
         "source": [
-          "herradura.h ZKP_NL_* constants"
+          "herradura.h:2716-2721",
+          "TODO #238"
         ]
       }
     },
@@ -380,6 +578,14 @@
       "id": "hske",
       "name": "HSKE (classical symmetric encryption)",
       "kind": "encryption",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hske",
+        "subcommands": [
+          "dec",
+          "enc"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -398,6 +604,14 @@
       "id": "hske-duplex",
       "name": "HSKE-Duplex (single-pass AEAD)",
       "kind": "aead",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hske-duplex",
+        "subcommands": [
+          "dec",
+          "enc"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -418,6 +632,16 @@
       "id": "hske-nla1",
       "name": "HSKE-NL-A1 (NL-FSCX counter-mode AEAD)",
       "kind": "aead",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hske-nla1",
+        "subcommands": [
+          "dec",
+          "decfile",
+          "enc",
+          "encfile"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -437,6 +661,14 @@
       "id": "hske-nla2",
       "name": "HSKE-NL-A2 (NL-FSCX revolve-mode encryption)",
       "kind": "encryption",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hske-nla2",
+        "subcommands": [
+          "dec",
+          "enc"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -454,9 +686,45 @@
       }
     },
     {
+      "id": "hybrid-rnl-stern",
+      "name": "hybrid-rnl-stern",
+      "kind": "kex",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "hybrid-rnl-stern",
+        "subcommands": [
+          "kex"
+        ]
+      },
+      "cli_support": {
+        "c": true,
+        "go": true,
+        "python": true
+      },
+      "security": {
+        "status": "demo-only",
+        "quantum_resistant": "conjectured",
+        "classical_security_bits": "~206 Core-SVP on the Ring-LWR half at n=1024; the QC-MDPC half is capped by its 2^-8.6 DFR, not by a work factor",
+        "notes": "Hybrid key exchange combining HKEX-RNL with HPKE-Stern-KEM. Shipped as a `kex --algo` value by all three CLIs since TODO #167, but it had no entry in this spec at all until TODO #238 added the check that caught it: build_protocols keyed off _PRIV_ALGOS | SECURITY and hybrid-rnl-stern is in neither, being kex-only. It inherits the hpke-stern-kem row's reaction-attack exposure on its KEM half -- `kex --algo hybrid-rnl-stern` reports decapsulation failure with its own distinct message, which is the same GJS oracle -- so the hybrid is demo-only for the KEM half's reasons even though the Ring-LWR half is unaffected. Keys generated before v2.7.19 carry the ~32-bit n=256 ring and must be regenerated.",
+        "source": [
+          "SECURITY.md (HYBRID-RNL-STERN note)",
+          "TODO_DONE.md #167",
+          "SecurityProofs-5.md 11.8.7"
+        ]
+      }
+    },
+    {
       "id": "nl-zkboo",
       "name": "ZKBoo (NL-FSCX preimage proof)",
       "kind": "zkp",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "nl-zkboo",
+        "subcommands": [
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -475,6 +743,14 @@
       "id": "nl-zkbpp",
       "name": "ZKB++ (NL-FSCX preimage proof)",
       "kind": "zkp",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "nl-zkbpp",
+        "subcommands": [
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -497,6 +773,16 @@
         "private_key": "HERRADURA OPRF PRIVATE KEY",
         "public_key": "HERRADURA OPRF PUBLIC KEY"
       },
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "oprf",
+        "subcommands": [
+          "genpkey",
+          "oprf-blind",
+          "oprf-eval",
+          "oprf-unblind"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -518,6 +804,14 @@
       "id": "rnl-sigma",
       "name": "ZKP-RNL Sigma-protocol",
       "kind": "zkp",
+      "cli_binding": {
+        "kind": "algo_flag",
+        "algo_tag": "rnl-sigma",
+        "subcommands": [
+          "sign",
+          "verify"
+        ]
+      },
       "cli_support": {
         "c": true,
         "go": true,
@@ -561,6 +855,86 @@
     "PEM_ZKP_RNL_PROOF": "HERRADURA ZKP-RNL PROOF"
   },
   "cli_subcommands": {
+    "genpkey": {
+      "has_algo_flag": true,
+      "algos": {
+        "hcred": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hkex-gf": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hkex-rnl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpke-stern-kem": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-stern": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-wots": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-xmss": [
+          "c",
+          "go",
+          "python"
+        ],
+        "hpks-zkp-nl": [
+          "c",
+          "go",
+          "python"
+        ],
+        "oprf": [
+          "c",
+          "go",
+          "python"
+        ]
+      }
+    },
+    "pkey": {
+      "has_algo_flag": false,
+      "protocol": null,
+      "unfiled_reason": "Utility, not a protocol: derives a public key from any private-key PEM."
+    },
     "kex": {
       "has_algo_flag": true,
       "algos": {
@@ -574,7 +948,11 @@
           "go",
           "python"
         ],
-        "hybrid-rnl-stern": []
+        "hybrid-rnl-stern": [
+          "c",
+          "go",
+          "python"
+        ]
       }
     },
     "enc": {
@@ -701,6 +1079,8 @@
           "python"
         ],
         "hpks-xmss": [
+          "c",
+          "go",
           "python"
         ],
         "hpks-wots": [
@@ -749,6 +1129,8 @@
           "python"
         ],
         "hpks-xmss": [
+          "c",
+          "go",
           "python"
         ],
         "hpks-wots": [
@@ -767,6 +1149,22 @@
           "python"
         ]
       }
+    },
+    "threshold-commit": {
+      "has_algo_flag": false,
+      "protocol": "hpks-t"
+    },
+    "threshold-aggregate": {
+      "has_algo_flag": false,
+      "protocol": "hpks-t"
+    },
+    "threshold-respond": {
+      "has_algo_flag": false,
+      "protocol": "hpks-t"
+    },
+    "threshold-combine": {
+      "has_algo_flag": false,
+      "protocol": "hpks-t"
     },
     "encfile": {
       "has_algo_flag": true,
@@ -803,98 +1201,55 @@
         ]
       }
     },
-    "genpkey": {
-      "has_algo_flag": true,
-      "algos": {
-        "hkex-gf": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hkex-rnl": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpke": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpke-nl": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpke-stern": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpke-stern-kem": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpks": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpks-nl": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpks-stern": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpks-wots": [
-          "c",
-          "go",
-          "python"
-        ],
-        "hpks-xmss": [
-          "python"
-        ],
-        "hpks-zkp-nl": [
-          "c",
-          "go",
-          "python"
-        ],
-        "oprf": [
-          "c",
-          "go",
-          "python"
-        ]
-      }
+    "rand": {
+      "has_algo_flag": false,
+      "protocol": null,
+      "unfiled_reason": "HDRBG deterministic byte generator (HFSCX-256-based). No security classification exists for it in SECURITY.md or in this file."
+    },
+    "fpe": {
+      "has_algo_flag": false,
+      "protocol": null,
+      "unfiled_reason": "Format-preserving encryption of a 256-bit block (TODO #78.A). Unclassified."
+    },
+    "twk": {
+      "has_algo_flag": false,
+      "protocol": null,
+      "unfiled_reason": "Tweakable wide-block encryption of a 256-bit block (TODO #78.B). Unclassified."
+    },
+    "oprf-blind": {
+      "has_algo_flag": false,
+      "protocol": "oprf"
+    },
+    "oprf-eval": {
+      "has_algo_flag": false,
+      "protocol": "oprf"
+    },
+    "oprf-unblind": {
+      "has_algo_flag": false,
+      "protocol": "oprf"
+    },
+    "pake-register": {
+      "has_algo_flag": false,
+      "protocol": "apake"
+    },
+    "pake-demo": {
+      "has_algo_flag": false,
+      "protocol": "apake"
+    },
+    "cred-issue": {
+      "has_algo_flag": false,
+      "protocol": "hcred"
+    },
+    "cred-prove": {
+      "has_algo_flag": false,
+      "protocol": "hcred"
+    },
+    "cred-verify": {
+      "has_algo_flag": false,
+      "protocol": "hcred"
     }
   },
   "cross_implementation_gaps": [
-    {
-      "feature": "hpks-xmss algo tag",
-      "present_in": [
-        "python"
-      ],
-      "missing_from": [
-        "c",
-        "go"
-      ],
-      "note": "No C/Go equivalent; not wire-compatible with anything else in the suite."
-    },
-    {
-      "feature": "hcred keygen + cred-issue/cred-prove/cred-verify subcommands",
-      "present_in": [
-        "c",
-        "python"
-      ],
-      "missing_from": [
-        "go"
-      ],
-      "note": null
-    },
     {
       "feature": "genpkey --help text completeness",
       "present_in": [
@@ -904,7 +1259,25 @@
         "c",
         "go"
       ],
-      "note": "C's usage() omits oprf/hcred from the genpkey line despite dispatching both; Go's banner omits hpke-stern-kem, nl-zkbpp, oprf, hpks-t despite dispatching all. This spec's algo enumeration is sourced from dispatch/choices logic, not --help text."
+      "note": "C's usage() omits oprf/hcred from the genpkey line despite dispatching both; Go's banner omits hpke-stern-kem, nl-zkbpp, oprf, hpks-t despite dispatching all. This spec's algo enumeration is sourced from dispatch logic, not --help text, which is why the banners' omissions do not reach cli_support."
+    }
+  ],
+  "unfiled_cli_surface": [
+    {
+      "subcommand": "pkey",
+      "reason": "Utility, not a protocol: derives a public key from any private-key PEM."
+    },
+    {
+      "subcommand": "rand",
+      "reason": "HDRBG deterministic byte generator (HFSCX-256-based). No security classification exists for it in SECURITY.md or in this file."
+    },
+    {
+      "subcommand": "fpe",
+      "reason": "Format-preserving encryption of a 256-bit block (TODO #78.A). Unclassified."
+    },
+    {
+      "subcommand": "twk",
+      "reason": "Tweakable wide-block encryption of a 256-bit block (TODO #78.B). Unclassified."
     }
   ],
   "parameters": {

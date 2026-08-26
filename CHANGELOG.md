@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.2.0] - 2026-08-26
+
+### Fixed
+- **TODO #238: nothing checked the generated spec, and five `status=` labels were wrong.**
+  TODO #237 found three (`oprf`, `hske-duplex`, the HSKE-NL rows) and diagnosed the cause:
+  disagreements *between documents* that no tool could see. Two more were sitting there.
+  `hpks-t` was classified `production` — it is threshold/aggregate **Schnorr over the same
+  GF(2^n)\* group as `hpks`**, so it carries the same ~2^36.5 Pohlig–Hellman recovery of a
+  signer's share; `hpks` was reclassified `pedagogical` under TODO #212 and nothing
+  propagated the change to the threshold variant. `hpks-nl`/`hpke-nl` were `deprecated`,
+  conflating a withdrawn PQC *claim* with a superseded algorithm — both still ship in all
+  four implementations and are covered by the cross-language matrix; `pedagogical` is what
+  SECURITY.md has always said. `hpks-zkp-nl` also drops to `demo-only`: it is a keygen
+  whose only two consumers are demo-only, so `production` was a classification with
+  nothing behind it.
+- **`cli_support` was a hand-maintained table and was wrong in two places.** It said
+  `hpks-xmss` was Python-only — all four implementations have shipped it since TODO
+  #201/#208, and `CliTest/test_cross_lang_matrix.sh` proves their interoperation on every
+  release — and that `hcred` was missing from Go, which dispatches
+  `cred-issue`/`-prove`/`-verify`. Both booleans are now derived from each CLI's own
+  dispatch source (every string literal, comments stripped, intersected with the tag
+  universe the Python CLI defines), as is `cross_implementation_gaps`. Verified against an
+  empirical probe of all 26 tags against all three CLIs: no gaps remain, so the two
+  curated entries were the only divergences and both were stale.
+- **`hybrid-rnl-stern` had no protocol entry at all** — a shipped `kex --algo` value in
+  all three CLIs, with a SECURITY.md paragraph of its own, invisible to the spec because
+  `build_protocols` keyed off `_PRIV_ALGOS | SECURITY` and it is in neither. Generation
+  now fails if any tag the CLIs accept is unclassified, which is the check that caught it.
+- **SECURITY.md's table covered 14 of 27 protocols.** Its stated job is letting a reader
+  decide whether to deploy something; twelve protocols could not be evaluated from it at
+  all. Rows added for HYBRID-RNL-STERN (promoted from a prose footnote), HPKS-Ring,
+  HPKS-T, HPKS-WOTS, HPKS-XMSS, HFSCX-256/-DS, the ZKP-RNL Σ-protocol, ZKBoo/ZKB++,
+  HPKS-ZKP-NL, HCRED, and one shared row for `rand`/`fpe`/`twk` reading "Unclassified — no
+  analysis exists", which is the honest status (TODO #241).
+
+### Added
+- **`spec/check_security_md.py`** — cross-references every protocol's `status` in `spec/`
+  against SECURITY.md's prose table, the class of defect neither `--check` nor review had
+  been catching. The prose→enum mapping is curated, because neither document can be
+  derived from the other, but it is self-invalidating: the check fails the moment either
+  side gains, loses, or renames a row, so it cannot drift in silence. It found the
+  `hpks-nl`/`hpke-nl` disagreement on its first run.
+- **A CI step running both spec gates** (`native-python`). `generate_spec.py --check` had
+  existed since TODO #133 and no job ever ran it — the whole reason this item was filed.
+  `--check` now also validates the generated instance against
+  `herradura-protocol-spec.schema.json` when `jsonschema` is importable (a NOTE, not a
+  failure, when it is not): the schema shipped for consumers and nothing had ever checked
+  the spec against it.
+- **`cli_binding` on every protocol, and `unfiled_cli_surface`.** `protocols` is keyed on a
+  stable protocol id rather than an `--algo` tag, so aPAKE — which ships as
+  `pake-register`/`pake-demo` and had no tag to be filed under — is now a normal entry with
+  a `subcommand` binding. Widening the key was chosen over a parallel
+  `subcommand_protocols` section, which would have let a protocol fall between the two
+  halves. `cli_subcommands` covers all 25 subcommands rather than the 9 taking `--algo`;
+  the audit behind that found `rand`, `fpe` and `twk` reach no protocol entry, no
+  SECURITY.md row and no `SecurityProofs-*.md` section, now recorded in
+  `unfiled_cli_surface` and filed as TODO #241. Generation fails on a *new* unaccounted-for
+  subcommand, so the hole cannot grow.
+
 ## [3.1.2] - 2026-08-26
 
 ### Fixed

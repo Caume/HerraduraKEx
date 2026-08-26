@@ -85,6 +85,17 @@ jobs:
       - name: Python test suite
         run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
 
+      # TODO #238. spec/generate_spec.py had a --check mode from the start and no
+      # job ever ran it, so nothing verified that the shipped JSON matched its
+      # generator. check_security_md.py is the second half: --check validates the
+      # spec against its sources, this validates its security classifications
+      # against SECURITY.md's prose table — the disagreement-between-documents
+      # class that TODO #237 found three instances of and neither tool could see.
+      - name: spec/ is current with its generator, its schema, and SECURITY.md
+        run: |
+          python3 spec/generate_spec.py --check
+          python3 spec/check_security_md.py
+
       - name: CliTest — Python CLI
         run: |
           for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \

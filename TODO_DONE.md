@@ -12616,3 +12616,69 @@ so it keeps its place in the `sanitizers` job) and the new 4-way
 `test_malformed_pem_matrix.sh` under `cross-lang-compat`.  108 assertions, 0 fail.
 Adding `hpks-ring` to the Java CLI stays out of scope and remains a gap.
 
+### #238: `spec/generate_spec.py` has no `--check` mode and no CI job, and its protocol list cannot express aPAKE
+
+Split out of TODO #237 Part 3, which found three wrong `status=` labels in `spec/`
+(`oprf`, `hske-duplex`, and the HSKE-NL rows) and identified the same root cause behind
+all of them: nothing checks the generated spec.
+
+**Part A — no `--check` mode, no CI job.**  `KAT/generate_kat.py` and
+`SecurityProofsCode/check_part_index.py` both have `--check` modes wired into CI (TODO
+#190, #231), and the latter caught real drift during #237 — the math-expression count for
+SecurityProofs-4.md moved 659 -> 684 and every copy of the part index had to be updated.
+`spec/generate_spec.py` has neither.  Nothing verifies that
+`spec/herradura-protocol-spec.json` is current with respect to its generator, so a change
+to the generator that is never re-run ships a stale JSON silently.  Add `--check` and a CI
+step, following the shape `check_part_index.py` already uses.
+
+**Part B — cross-reference `status=` against SECURITY.md.**  All three #237 findings were
+disagreements *between documents* that no tool could see: `spec/` said `production` where
+SECURITY.md said "not suitable for production" (HSKE-NL-A1/A2), where the proofs said
+"open research" (`hske-duplex`), and where no analysis existed at all (`oprf`).  A check
+that every `--algo` tag in `spec/` has a row in SECURITY.md's protocol table, and that the
+two classifications are consistent, would have caught all three.  The mapping between
+`spec/`'s six-value status enum (`production`/`demo-only`/`pedagogical`/`deprecated`/
+`broken`/`research`) and SECURITY.md's prose status column has to be defined first; that
+definition is most of the work in this part.
+
+**Part C — the protocol list cannot express aPAKE.**  `spec/`'s protocol array is keyed on
+`--algo` tags.  aPAKE has none: it ships as the standalone subcommands `pake-register` and
+`pake-demo`, so there is no key under which to file it, and the string "PAKE" appears once
+in the whole JSON as `PEM_PAKE_RECORD`.  #237 gave it a SECURITY.md row (it inherits the
+OPRF's ~2^36.5 server-key recovery, which voids the offline-dictionary resistance that is
+its entire purpose) but deliberately did not invent a spec row, because doing so is a
+schema question rather than a labelling one: either widen the protocol array's key beyond
+`--algo` tags, or add a separate `subcommand_protocols` section.  Decide which, then file
+aPAKE and audit whether anything else in the CLI is invisible to `spec/` for the same
+reason.
+
+Status: **DONE v3.2.0** — with one correction to the item's own premise: `--check` already
+existed and did exactly what Part A described; what was missing was only the CI step, which
+is why nothing ever ran it.
+
+**Part A.** CI step added to `native-python` running both gates.  `--check` also validates
+the instance against its own schema now (nothing ever had), and generation fails if any tag
+the CLIs accept has no classification — the check that caught `hybrid-rnl-stern`, a shipped
+`kex --algo` value in all three CLIs with no protocol entry at all.
+
+**Part B.** `spec/check_security_md.py`.  The prose->enum mapping is curated as the item
+predicted, but self-invalidating: checks (1) and (2) fail if either document gains, loses or
+renames a row.  It found `hpks-nl`/`hpke-nl` on its first run.  Two more wrong labels came
+out of building it — `hpks-t` marked `production` while the `hpks` it is a threshold variant
+of is `pedagogical` over the same GF(2^n)* group, and `hpks-zkp-nl` marked `production` for a
+keygen whose only consumers are demo-only — bringing #237's three to five.  SECURITY.md's
+table covered 14 of 27 protocols; the twelve missing rows were written so the check is a real
+gate rather than an allow-list.
+
+**Part C.** Widened the key rather than adding `subcommand_protocols`: `protocols` is keyed
+on a stable protocol id and every entry carries `cli_binding`, so aPAKE is a normal entry
+reached by `pake-register`/`pake-demo`.  A parallel section would have let a protocol fall
+between the two halves, which is the failure mode being fixed.  The audit it asked for found
+`rand`, `fpe` and `twk` invisible for a worse reason than aPAKE's — no analysis exists for
+them anywhere in the repository — recorded in `unfiled_cli_surface` and filed as TODO #241.
+
+**Unplanned but mandatory.** `cli_support` was curated and wrong in two places (`hpks-xmss`
+as Python-only, `hcred` as missing from Go).  It and `cross_implementation_gaps` are now
+derived from each CLI's dispatch source, validated against an empirical probe of all 26 tags
+against all three CLIs.
+

@@ -146,7 +146,20 @@ Mcp/                                                 — MCP server exposing the
 spec/                                                — machine-readable protocol spec (JSON Schema):
                                                       parameters, PEM wire-format labels, CLI --algo
                                                       tags, and security-level classification per
-                                                      protocol; generate_spec.py regenerates it
+                                                      protocol; generate_spec.py regenerates it and
+                                                      `--check` gates it (stale-vs-generator, schema
+                                                      validity, and that every tag the CLIs accept is
+                                                      classified).  check_security_md.py cross-checks
+                                                      every protocol's status against SECURITY.md's
+                                                      prose table — the disagreement-between-documents
+                                                      class TODO #237 found three of and #238 two more.
+                                                      Both run in CI's native-python job (TODO #238).
+                                                      `protocols` is keyed on a protocol id, not an
+                                                      --algo tag: aPAKE has no tag and is filed under
+                                                      its subcommands via `cli_binding`, and
+                                                      `unfiled_cli_surface` names the CLI surface that
+                                                      reaches no protocol at all (`rand`/`fpe`/`twk`,
+                                                      unclassified — TODO #241)
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

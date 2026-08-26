@@ -82,40 +82,46 @@ still stand.
 
 Status: **OPEN**
 
-### #238: `spec/generate_spec.py` has no `--check` mode and no CI job, and its protocol list cannot express aPAKE
+### #241: `rand`, `fpe` and `twk` ship with no security analysis anywhere in the repository
 
-Split out of TODO #237 Part 3, which found three wrong `status=` labels in `spec/`
-(`oprf`, `hske-duplex`, and the HSKE-NL rows) and identified the same root cause behind
-all of them: nothing checks the generated spec.
+Found by TODO #238 Part C's audit of CLI surface invisible to `spec/`.  Three subcommands
+reach no protocol entry, no `SECURITY.md` row, and no `SecurityProofs-*.md` section:
 
-**Part A — no `--check` mode, no CI job.**  `KAT/generate_kat.py` and
-`SecurityProofsCode/check_part_index.py` both have `--check` modes wired into CI (TODO
-#190, #231), and the latter caught real drift during #237 — the math-expression count for
-SecurityProofs-4.md moved 659 -> 684 and every copy of the part index had to be updated.
-`spec/generate_spec.py` has neither.  Nothing verifies that
-`spec/herradura-protocol-spec.json` is current with respect to its generator, so a change
-to the generator that is never re-run ships a stale JSON silently.  Add `--check` and a CI
-step, following the shape `check_part_index.py` already uses.
+| subcommand | construction | analysis |
+|---|---|---|
+| `rand` | HDRBG deterministic byte generator over HFSCX-256 | none |
+| `fpe`  | format-preserving encryption of a 256-bit block (TODO #78.A) | none |
+| `twk`  | tweakable wide-block encryption of a 256-bit block (TODO #78.B) | none |
 
-**Part B — cross-reference `status=` against SECURITY.md.**  All three #237 findings were
-disagreements *between documents* that no tool could see: `spec/` said `production` where
-SECURITY.md said "not suitable for production" (HSKE-NL-A1/A2), where the proofs said
-"open research" (`hske-duplex`), and where no analysis existed at all (`oprf`).  A check
-that every `--algo` tag in `spec/` has a row in SECURITY.md's protocol table, and that the
-two classifications are consistent, would have caught all three.  The mapping between
-`spec/`'s six-value status enum (`production`/`demo-only`/`pedagogical`/`deprecated`/
-`broken`/`research`) and SECURITY.md's prose status column has to be defined first; that
-definition is most of the work in this part.
+They are not obscure: all three ship in the C, Go and Python CLIs, and `rand` writes a
+`HERRADURA HDRBG STATE` PEM that `CliTest/test_rand.sh` round-trips.  What is missing is
+any statement of what they are supposed to guarantee.
 
-**Part C — the protocol list cannot express aPAKE.**  `spec/`'s protocol array is keyed on
-`--algo` tags.  aPAKE has none: it ships as the standalone subcommands `pake-register` and
-`pake-demo`, so there is no key under which to file it, and the string "PAKE" appears once
-in the whole JSON as `PEM_PAKE_RECORD`.  #237 gave it a SECURITY.md row (it inherits the
-OPRF's ~2^36.5 server-key recovery, which voids the offline-dictionary resistance that is
-its entire purpose) but deliberately did not invent a spec row, because doing so is a
-schema question rather than a labelling one: either widen the protocol array's key beyond
-`--algo` tags, or add a separate `subcommand_protocols` section.  Decide which, then file
-aPAKE and audit whether anything else in the CLI is invisible to `spec/` for the same
-reason.
+**Why this is not a documentation task.**  #238 could not classify them the way it
+reclassified `hpks-t` and `hpks-nl`, because those two had an existing analysis to
+propagate — `hpks` is pedagogical because of Pohlig-Hellman, and the threshold and NL
+variants are over the same group, so the verdict follows.  These three have no such
+parent.  `fpe` and `twk` are their own constructions; `rand`'s HDRBG has a `DrbgMaxBlocks
+= 1 << 20` reseed bound in `herradura/herradura.go:933` and nothing anywhere saying what
+that bound is for.  Classifying them means doing the analysis, which is TODO #237-shaped
+work.
+
+**Interim state, deliberately visible rather than silent.**  #238 recorded all three in
+`spec/herradura-protocol-spec.json`'s `unfiled_cli_surface` array and gave them a single
+shared `SECURITY.md` row reading "Unclassified — no analysis exists", with the warning
+that absence of a documented weakness there is absence of analysis rather than evidence of
+strength.  `spec/generate_spec.py` fails if a *new* subcommand appears that is neither
+bound to a protocol nor listed as unfiled, so the hole cannot grow while this is open.
+
+**Work.**  For each of the three: state the security goal, identify the closest standard
+construction (FF1/FF3-1 for `fpe`, a wide-block tweakable cipher such as AEZ or HCTR2 for
+`twk`, SP 800-90A for `rand`), analyse the shipped construction against it, add a
+`SecurityProofs-*.md` section, then file a real `SECURITY.md` row and `spec/` entry and
+delete the `unfiled_cli_surface` record.  Expect at least one of the three to come out
+worse than `demo-only` — `fpe` over a 256-bit block with no documented tweak schedule is
+the one to look at first.
+
+**Not in scope.**  Removing the subcommands.  They are shipped surface; the deficiency is
+that nobody can tell what they promise.
 
 Status: **OPEN**
