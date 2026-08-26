@@ -358,7 +358,11 @@ jobs:
       - name: CLI integration tests against the ASan+UBSan CLI
         run: |
           cp HerraduraCli/herradura_cli_asan HerraduraCli/herradura_cli
-          for f in CliTest/test_c_*.sh; do
+          # test_weak_key_rejection.sh is here as well as in native-c: it is the
+          # malformed-PEM script, and TODO #239's cases (a QC-MDPC row weight
+          # that overran a stack buffer, an unbounded ring k/rounds) are caught
+          # by the sanitizer, not by an exit status in a plain build.
+          for f in CliTest/test_c_*.sh CliTest/test_weak_key_rejection.sh; do
             echo "=== $f ==="
             bash "$f"
           done

@@ -2073,9 +2073,13 @@ typedef struct {
     BitArray *resp_a, *resp_b;
 } SternRingSig;
 
+/* sz is computed in size_t, not int: k and rounds reach this function from a
+ * PEM reader, and `k * rounds` in int is signed overflow — undefined behaviour
+ * — before the product ever reaches malloc (TODO #239).  Callers must still
+ * range-check their inputs; this only removes the UB behind them. */
 static void stern_ring_alloc(SternRingSig *sig, int k, int rounds)
 {
-    int sz = k * rounds;
+    size_t sz = (size_t)k * (size_t)rounds;
     sig->k      = k;
     sig->rounds = rounds;
     sig->c0     = (BitArray *)malloc(sz * sizeof(BitArray));

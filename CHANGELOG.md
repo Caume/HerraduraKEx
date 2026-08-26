@@ -2,6 +2,47 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.1.1] - 2026-08-25
+
+### Fixed
+- **TODO #239: PEM fields that size an allocation are now range-checked before use (C CLI).**
+  `ring_sig_load` took the ring size `k` and the round count straight off the wire and
+  multiplied them into `blen = k * rounds * entry` and `stern_ring_alloc`'s size. The
+  caller's `k` is only compared against the signature's *after* the reader returns, so
+  `ring_load_members`' `RING_MAX_K` bound never reached it: `k = 2` with `rounds = 2^30`
+  had ASan reporting a 0x5080000000-byte request, and in a normal build `calloc` returned
+  NULL and aborted — a denial of service on a malformed signature, in exactly the
+  component that handles attacker-supplied input. Both fields are now rejected (not
+  clamped) outside `[2, RING_MAX_K]` and `[1, SDF_MAX_ROUNDS]`, and a payload longer than
+  `(k, rounds)` describe is rejected rather than silently truncated — the counterpart of
+  the check TODO #236 gave the Stern-F reader. `stern_ring_alloc` computes `k * rounds` in
+  `size_t`; in `int` it was signed overflow, undefined behaviour, before the product
+  reached `malloc`.
+- **A stack-buffer overflow in the HPKE-Stern-KEM private-key reader**, found by the sweep
+  of the file's other `parse_be_uint` readers that #239 asked for, and worse than the
+  defect the item was filed for. Item[5] of the key is the QC-MDPC row weight `d`, and it
+  sizes `der_right_align`'s writes into two `QCMDPC_D*2`-byte **stack** buffers at three
+  call sites — `pkey`, `kex --our-kem` and `dec`. Nothing bounded it: under ASan, `d = 16`
+  (one over the deployed weight) is a 32-byte stack-buffer-overflow WRITE and `d = 2^31-1`
+  a 4 GB one. That is memory corruption from a parsed file, not an abort. A shared
+  `qcmdpc_decode_d` now rejects anything outside `[1, QCMDPC_D]` at all three sites.
+- **Two more readers of the same shape.** The XMSS height in a private key and the depth in
+  a signature size `1 << h` leaves and the `num_leaves * KEYBYTES` allocation behind them,
+  and `1 << h` is undefined for `h >= 32`; both now go through `xmss_decode_h`, bounded by
+  the `XMSS_MAX_H` that `genpkey --xmss-height` already enforced. The HSKE-NL-V2-Duplex
+  ciphertext's declared length sized two allocations unbounded, and a payload longer than
+  it claimed was truncated rather than rejected; it is now bounded by the DER actually
+  read.
+
+### Added
+- `CliTest/test_weak_key_rejection.sh` grew a TODO #239 section: 19 new assertions that
+  rewrite one INTEGER item of an otherwise-genuine PEM and require a clean rejection —
+  covering ring `k`/`rounds`/payload length, the QC-MDPC row weight, the XMSS height and
+  signature depth, and the duplex ciphertext length — each paired with a control asserting
+  the untouched artifact still verifies. The `sanitizers` CI job now runs this script as
+  well as `native-c`: the class it covers is memory safety, which a plain build's exit
+  status does not report.
+
 ## [3.1.0] - 2026-08-25
 
 ### Fixed
