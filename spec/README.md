@@ -17,6 +17,19 @@ python3 spec/generate_spec.py --check    # exit 1 if the checked-in file is stal
 python3 spec/check_security_md.py        # exit 1 if spec/ and SECURITY.md disagree
 ```
 
+`--check` also validates the generated instance against
+`herradura-protocol-spec.schema.json`. That needs the `jsonschema` package — the only
+third-party dependency anywhere in this repository, and a **tooling** one: the suite, the
+CLIs and the `SecurityProofsCode/` scripts still have none. So a bare `python3` gets a
+printed NOTE and the rest of the check still runs. CI does not accept that, because a
+silently-skipped validation is the same class of gap this whole area was filed about:
+`native-python` installs `python3-jsonschema` and passes `--require-schema`, which turns
+the NOTE into a failure.
+
+```bash
+python3 spec/generate_spec.py --check --require-schema   # what CI runs
+```
+
 Both run in CI's `native-python` job (TODO #238). `--check` had existed since TODO #133
 but no job ever ran it, so nothing verified that the shipped JSON matched its generator —
 the gap that let five wrong `status=` labels accumulate (three found by TODO #237, two

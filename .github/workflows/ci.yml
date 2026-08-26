@@ -80,7 +80,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3
+          # python3-jsonschema is for the spec gate below and nothing else -- the
+          # suite and its CLI have no runtime dependencies. The gate passes
+          # --require-schema, so if this install ever stops providing the package
+          # the job fails rather than skipping the validation silently.
+          sudo apt-get install -y --no-install-recommends python3 python3-jsonschema
 
       - name: Python test suite
         run: python3 CryptosuiteTests/Herradura_tests.py -t 2.0
@@ -93,7 +97,7 @@ jobs:
       # class that TODO #237 found three instances of and neither tool could see.
       - name: spec/ is current with its generator, its schema, and SECURITY.md
         run: |
-          python3 spec/generate_spec.py --check
+          python3 spec/generate_spec.py --check --require-schema
           python3 spec/check_security_md.py
 
       - name: CliTest — Python CLI

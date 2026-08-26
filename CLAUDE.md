@@ -149,7 +149,13 @@ spec/                                                — machine-readable protoc
                                                       protocol; generate_spec.py regenerates it and
                                                       `--check` gates it (stale-vs-generator, schema
                                                       validity, and that every tag the CLIs accept is
-                                                      classified).  check_security_md.py cross-checks
+                                                      classified).  Schema validation needs the
+                                                      `jsonschema` package — the repo's only
+                                                      third-party dependency, and tooling-only: a bare
+                                                      python3 gets a NOTE, while CI installs it and
+                                                      passes `--require-schema` so a skipped
+                                                      validation cannot pass.  check_security_md.py
+                                                      cross-checks
                                                       every protocol's status against SECURITY.md's
                                                       prose table — the disagreement-between-documents
                                                       class TODO #237 found three of and #238 two more.

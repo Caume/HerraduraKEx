@@ -2,6 +2,18 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.2.1] - 2026-08-26
+
+### Changed
+- **Schema validation of `spec/` is now a hard requirement in CI.** TODO #238 added it as
+  a best-effort step that printed a NOTE and returned success when the `jsonschema`
+  package was absent, so on a runner without it the validation would have been skipped
+  silently — the same class of gap the item was filed about. `generate_spec.py` gains
+  `--require-schema`, which turns that NOTE into a failure, and `native-python` installs
+  `python3-jsonschema` and passes it. The graceful path stays for local runs: `jsonschema`
+  is the only third-party dependency anywhere in the repository and a tooling-only one,
+  so a bare `python3` must still be able to run the rest of the check.
+
 ## [3.2.0] - 2026-08-26
 
 ### Fixed

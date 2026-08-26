@@ -784,23 +784,36 @@ def generate():
     return spec
 
 
-def validate_schema(spec):
-    """Validate the generated document against its own JSON Schema, when the
-    `jsonschema` package is available.
+def validate_schema(spec, required=False):
+    """Validate the generated document against its own JSON Schema.
 
     The schema is shipped for consumers but nothing ever checked the spec against
     it, so a generator change could add a field the schema forbids
     (`additionalProperties: false` on several objects) and nobody would find out
     until a consumer's validator did.  TODO #238 added `cli_binding`,
     `unfiled_cli_surface`, and the `pake` kind, all of which needed schema edits
-    to stay valid -- exactly the drift this catches.  Absence of the package is a
-    NOTE, not a failure: the rest of the check must still run on a bare python3.
+    to stay valid -- exactly the drift this catches.
+
+    `jsonschema` is the suite's only third-party dependency anywhere, and it is a
+    tooling one, so a bare `python3` must still be able to run the rest of the
+    check: locally, an absent package is a NOTE.  In CI it is not, because a
+    silently-skipped validation is the same failure this whole item is about --
+    `ci.yml` installs the package and passes --require-schema, which turns the
+    NOTE into an error.
     """
     try:
         import jsonschema
     except ImportError:
+        if required:
+            print("SCHEMA: --require-schema was passed but the `jsonschema` package is "
+                  "not importable, so the generated spec was NOT validated against "
+                  "spec/herradura-protocol-spec.schema.json.\n"
+                  "  Install it (apt: python3-jsonschema, pip: jsonschema) or drop "
+                  "--require-schema to downgrade this to a NOTE.")
+            return 1
         print("NOTE: jsonschema not installed — skipped validating against "
-              "spec/herradura-protocol-spec.schema.json")
+              "spec/herradura-protocol-spec.schema.json. Pass --require-schema to "
+              "make this an error (CI does).")
         return 0
     schema = json.load(open(SCHEMA_PATH))
     try:
@@ -817,6 +830,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
                      help="exit 1 if regenerating would change spec/herradura-protocol-spec.json")
+    ap.add_argument("--require-schema", action="store_true",
+                     help="with --check: fail rather than skip if the `jsonschema` package "
+                          "is missing, so a silently-unvalidated spec cannot pass CI")
     args = ap.parse_args()
 
     spec = generate()
@@ -832,7 +848,7 @@ def main():
             print("Run: python3 spec/generate_spec.py")
             return 1
         print("OK: spec/herradura-protocol-spec.json is up to date.")
-        return validate_schema(spec)
+        return validate_schema(spec, required=args.require_schema)
 
     with open(OUT_PATH, "w") as f:
         f.write(new_text)
