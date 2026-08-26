@@ -19,39 +19,20 @@ HerraduraCli/
   herradura_codec.h / codec.py                      — PEM/DER encode-decode helpers
   primitives.py                                     — suite import shim for Python CLI
   go.mod                                            — module herradurakex/cli (replaces ../go.mod)
-CliTest/                                             (59 scripts; this list is a representative
-                                                      sample, not a full index — the real
-                                                      enforcement is ci.yml's native-interop
-                                                      coverage-guard step)
-  test_keygen.sh  test_vectors.sh  test_sign.sh     — Python CLI integration tests
-  test_encrypt.sh test_encfile.sh  test_signfile.sh
-  test_c_*.sh  test_go_*.sh  test_c_interop.sh      — C / Go CLI tests and cross-language interop
-  test_kat_vectors.sh                               — checks KAT/ is current + cross-verified (TODO #190)
-  lib_dfr.sh                                        — shared QC-MDPC DFR retry policy sourced by
-                                                       every script that decapsulates (TODO #221)
+CliTest/                                             — CLI integration + cross-language interop
+                                                      scripts.  Not indexed here: ci.yml's
+                                                      native-interop coverage-guard step is the
+                                                      real index, and fails if a script isn't
+                                                      claimed by exactly one native-* job
+  lib_dfr.sh                                        — shared QC-MDPC DFR retry policy; every
+                                                       script that decapsulates must source it
+                                                       (TODO #221), enforced by ci.yml's DFR guard
   lib_build.sh                                      — shared "is the CLI binary built?" policy
                                                        (TODO #229).  The compiled CLIs are not
                                                        tracked in git, so run ./build_c.sh and
                                                        ./build_go.sh before the C/Go CliTest
                                                        scripts; a run that asserts nothing now
                                                        exits 2 instead of 0
-  test_java_bindings.sh                             — builds + runs bindings/java/ (TODO #192)
-  test_java_codec.sh                                — Java PEM/DER codec cross-check vs
-                                                       Python CLI, both directions (TODO #197)
-  test_java_keygen.sh                               — Java CLI genpkey/pkey smoke test (TODO #198, #200)
-  test_java_interop.sh                              — Java <-> Python CLI cross-language interop
-                                                       for the classical quartet (TODO #198)
-  test_java_nl_interop.sh                           — Java <-> Python CLI cross-language interop
-                                                       for the NL/PQC quartet (TODO #199)
-  test_java_stern_interop.sh                        — Java <-> Python CLI cross-language interop
-                                                       for HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM,
-                                                       DFR-retry-aware for the BGF KEM (TODO #200)
-  test_java_oprf_wots_interop.sh                    — Java <-> Python CLI cross-language interop
-                                                       for OPRF/HPKS-WOTS-F/HPKS-XMSS-F (TODO #201)
-  test_java_hcred_interop.sh                        — Java <-> Python CLI cross-language interop
-                                                       for HCRED (TODO #202)
-  test_java_pake_interop.sh                         — Java <-> Python CLI cross-language interop
-                                                       for aPAKE (TODO #203)
 KAT/                                                 — fixed Known-Answer-Test vectors (TODO #190, #226):
   classical_quartet.json    — HKEX-GF/HSKE/HPKS/HPKE vectors at n=256, NIST-CAVP-.rsp-style
   hkex_rnl.json              — HKEX-RNL two-party handshakes at the deployed n=1024
@@ -164,30 +145,13 @@ pyproject.toml                                       — packaging metadata for 
 bindings/ffi/                                        — opt-in ctypes/cgo FFI bindings around
                                                       herradura.h's classical v1.4.0 quartet, for
                                                       performance-sensitive Python/Go callers
-bindings/java/                                       — complete pure-Java port of the HerraduraKEx suite
-                                                      (TODO #196 umbrella, closed): the classical
-                                                      v1.4.0 quartet (herradurakex.Herradura), the
-                                                      NL/PQC quartet (herradurakex.HerraduraNl, TODO
-                                                      #199), HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM
-                                                      (herradurakex.Stern, TODO #200), OPRF/
-                                                      HPKS-WOTS-F/HPKS-XMSS-F (herradurakex.Oprf/
-                                                      Wots/Xmss, TODO #201), HCRED
-                                                      (herradurakex.Hcred, TODO #202), and aPAKE
-                                                      (herradurakex.ZkpNl/Hpake, TODO #203), for JVM
-                                                      integrations; cross-checked against
-                                                      KAT/classical_quartet.json.
-                                                      herradurakex.HerraduraCli (TODO #198-#203) mirrors
-                                                      HerraduraCli's genpkey/pkey/kex/enc/dec/sign/
-                                                      verify/dgst/encfile/decfile/oprf-blind/oprf-eval/
-                                                      oprf-unblind/cred-issue/cred-prove/cred-verify/
-                                                      pake-register/pake-demo subcommand interface for
-                                                      --algo hkex-gf/hpks/hpke (plus hske), hkex-rnl/
-                                                      hske-nla1/hske-nla2/hpks-nl/hpke-nl,
-                                                      hpks-stern/hpke-stern/hpke-stern-kem,
-                                                      oprf/hpks-wots/hpks-xmss (the latter two use a
-                                                      <keyfile>.idx sidecar file for one-time-use/
-                                                      leaf-index state, matching the Python CLI), hcred,
-                                                      and aPAKE
+bindings/java/                                       — complete pure-Java port of the whole suite
+                                                      (TODO #196-#203, closed), incl. a
+                                                      herradurakex.HerraduraCli mirroring the
+                                                      Python CLI's subcommands and --algo values;
+                                                      cross-checked against KAT/.  hpks-wots /
+                                                      hpks-xmss keep one-time-use/leaf-index state
+                                                      in a <keyfile>.idx sidecar, as Python does
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history;
@@ -199,8 +163,6 @@ benchmarks/                                          — recorded benchmark outp
                                                       (TODO #213, C/Go/Python)
 Fuzz/                                                — fuzzing harnesses (see TODO #130)
 ```
-
-Three `go.mod` files: root-level (`module herradurakex`), `CryptosuiteTests/` (`module herradurakex/tests`), and `HerraduraCli/` (`module herradurakex/cli`, uses `replace herradurakex => ../`). None has external dependencies.
 
 ## Changelog, README, and TODO Policy
 
@@ -229,25 +191,9 @@ are wire-format breaking but not necessarily MAJOR-worthy on their own; use judg
 and err toward documenting in `MIGRATING.md` regardless of which version-component
 changes.
 
-### TODO.md / TODO_DONE.md Status line standard
-
-Every `### ` section in `TODO.md` or `TODO_DONE.md` must end with exactly one `Status:` line using one of these keywords:
-
-| Keyword | Meaning | Format example |
-|---|---|---|
-| `DONE` | Implemented and shipped | `Status: **DONE vX.Y.Z** — one-line summary.` |
-| `OPEN` | Pending — not yet started or in progress | `Status: **OPEN**` |
-| `DEPRECATED` | Will not be fixed; reason documented | `Status: **DEPRECATED** — reason.` |
-| `ACKNOWLEDGED` | Known issue, accepted by design, no action planned | `Status: **ACKNOWLEDGED** — reason.` |
-
-Rules:
-- The `Status:` keyword starts at column 0 with no leading `**`.
-- The keyword (`DONE`, `OPEN`, etc.) is bold: `**KEYWORD**`.
-- For `DONE`, append the version tag and a dash-separated summary: `**DONE vX.Y.Z** — summary.`
-- No item should be left without a `Status:` line.  A missing Status line means "open" only by convention; always add an explicit `Status: **OPEN**` when creating a new item.
-- When parsing programmatically, match `^Status: \*\*` at the start of a line within the section.
-
-**Quick check:** `python3 -c "import re,sys; [print(m.group()) for f in ('TODO.md','TODO_DONE.md') for m in re.finditer(r'(?m)^### .+\n(?:(?!^Status:)[\s\S])*?(?=^###|\Z)', open(f).read()) if 'Status:' not in m.group()]"` — prints any `###` section (in either file) that is missing a Status line. `TODO.md` sections should additionally all say `**OPEN**`, and `TODO_DONE.md` sections should never say `**OPEN**` — a mismatch means an entry wasn't moved when its status changed. Sections predating the `Status:` line standard (TODO #154) — `TODO_DONE.md`'s `### 13`, `### 17`, `### 18`, `### 24`–`### 28`, `### 42`, `### 56`, `### 69`, `### 70`, `### 77`–`### 80` (16 sections in all) — carry no `Status:` line at all. Two of them (`### 13`, `### 26`) mark completion with an inline `✓ DONE`/`DONE (vX...)` marker in the heading; the other fourteen record it only by living in `TODO_DONE.md` and having a `CHANGELOG.md` entry. All 16 are grandfathered rather than backfilled, so the quick-check flagging them is expected and not itself a bug.
+The `Status:` line format for `TODO.md` / `TODO_DONE.md` sections, and the list of
+grandfathered pre-#154 entries, live in the `todo-status` skill
+(`.claude/skills/todo-status/SKILL.md`) — load it when opening or closing a TODO.
 
 ## Build Commands
 
@@ -280,21 +226,11 @@ Use `build_c.sh`. Manual equivalent: `gcc -O2 -o <output> <source.c>` per target
 > `_i386`, `_avr.elf`. Always use `build_go.sh` or pass `-o name_go` explicitly
 > when invoking `go build` directly. Never run bare `go build file.go`.
 
-### Go
-```bash
-go run "Herradura cryptographic suite.go"
-cd CryptosuiteTests && go run Herradura_tests.go
+### Go and Python
 
-# CLI
-cd HerraduraCli && go build -o herradura_cli_go .
-```
-
-### Python
-```bash
-python3 "Herradura cryptographic suite.py"
-python3 CryptosuiteTests/Herradura_tests.py
-```
-No external dependencies.
+Use `build_go.sh`.  The Python targets need no build step, and neither language
+target has external dependencies.  Never run bare `go build file.go` — see the
+build-collision hazard above.
 
 ### Assembly
 
