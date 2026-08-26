@@ -5189,11 +5189,13 @@ int main(int argc, char *argv[])
 
             /* issuer credential binding (HPKS-Stern-F over (m, C, seed_H, y)) */
             stern_f_keygen(&iseed, &ie_ba, isyndr, urnd_fp);
+            stern_sig_alloc(&cred_sig, SDF_ROUNDS);
             hcred_issue(&cred_sig, m_b, c_poly, &seed_H, syndr,
                         &ie_ba, &iseed, urnd_fp);
             if (hcred_cred_verify(m_b, c_poly, &seed_H, syndr,
                                   &cred_sig, &iseed, isyndr))
                 ok_cred++;
+            stern_sig_free(&cred_sig);
 
             hcred_proof_free(&proof);
             if (g_time_limit > 0.0 && time_exceeded(&ts0)) { N = i + 1; break; }
@@ -5245,12 +5247,14 @@ int main(int argc, char *argv[])
             SternSig sig;
             ba_rand(&smsg, urnd_fp);
             stern_f_keygen(&seed, &e_ba, syndr, urnd_fp);
+            stern_sig_alloc(&sig, SDF_ROUNDS);
             hpks_stern_f_sign(&sig, &smsg, &e_ba, &seed, urnd_fp);
             memcpy(syndr_bad, syndr, SDF_SYNBYTES);
             syndr_bad[0] ^= 1;
             if (hpks_stern_f_verify(&sig, &smsg, &seed, syndr) &&
                 !hpks_stern_f_verify(&sig, &smsg, &seed, syndr_bad))
                 ok_stern_synd++;
+            stern_sig_free(&sig);
         }
 
         /* Start the -t budget *after* the Stern block, not before.  It is a

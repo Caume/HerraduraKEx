@@ -183,6 +183,23 @@ static void der_right_align(uint8_t *dst, size_t dst_len,
         memcpy(dst + dst_len - src_len, src, src_len);
 }
 
+/* Decode item[5] of an HPKE-Stern-KEM private key as the QC-MDPC row weight.
+ * It sizes der_right_align()'s writes into QCMDPC_D*2-byte stack buffers, so an
+ * unbounded value off the wire is a stack overflow, not merely a large read
+ * (TODO #239, same shape as ring_sig_load's k/rounds).  Reject rather than
+ * clamp — a key declaring a weight this build cannot hold is malformed. */
+static int qcmdpc_decode_d(const uint8_t *v, size_t vl, const char *who)
+{
+    uint64_t d = parse_be_uint(v, vl);
+    if (vl == 0 || vl > 4 || d < 1 || d > (uint64_t)QCMDPC_D) {
+        fprintf(stderr, "%s: HPKE-Stern-KEM private key declares row weight "
+                        "%llu (expected 1..%d)\n",
+                who, (unsigned long long)d, QCMDPC_D);
+        exit(1);
+    }
+    return (int)d;
+}
+
 /* Wrap items into SEQUENCE DER, then PEM-wrap and write. */
 static void seq_and_write(const uint8_t **it, const size_t *il, int ni,
                           const char *label, const char *out_path)
@@ -233,6 +250,30 @@ static void rnl_require_n(const void *pkv, int idx, const char *what)
                         "build is compiled for RNL_N=%d.  Regenerate the key at the "
                         "deployed ring size (TODO #223 moved it to 1024).\n",
                 what, (unsigned long long)got, RNL_N);
+        exit(1);
+    }
+}
+
+/* A Stern/ring signature carries its own key width in item[idx].  This build
+ * has exactly one (KEYBITS), and the readers below size every blob from it
+ * rather than from the field — so an unread field is a field the Python, Go and
+ * Java readers now bound and this one does not (TODO #240).  A signature
+ * declaring a different width is not one this build can check: fail loudly
+ * instead of verifying it against the wrong geometry.  Same reasoning as
+ * rnl_require_n above. */
+static void stern_require_n(const void *pkv, int idx, const char *what)
+{
+    const PemKey *k = (const PemKey *)pkv;
+    uint64_t got = 0;
+    size_t i;
+    if (k->n_items <= idx)
+        dief("%s: malformed Stern PEM (no key-width field)", what);
+    for (i = 0; i < k->vlens[idx] && i < 8; i++)
+        got = (got << 8) | k->vals[idx][i];
+    if (got != (uint64_t)KEYBITS) {
+        fprintf(stderr, "%s: key width mismatch — PEM declares n=%llu but this "
+                        "build is compiled for KEYBITS=%d\n",
+                what, (unsigned long long)got, KEYBITS);
         exit(1);
     }
 }
@@ -530,6 +571,25 @@ static void xmss_write_idx(const char *key_path, int val)
     if (f) { fprintf(f, "%d\n", val); fclose(f); }
 }
 
+/* Upper bound on the XMSS tree height this build accepts, on the wire and on
+ * the genpkey command line alike.  A height read from a PEM sizes
+ * `num_leaves = 1 << h` and the `num_leaves * KEYBYTES` allocation behind it,
+ * and `1 << h` is undefined for h >= 32, so the readers bound it too (TODO
+ * #239) rather than trusting that only genpkey ever wrote the field. */
+#define XMSS_MAX_H 20
+
+static int xmss_decode_h(const uint8_t *v, size_t vl,
+                         const char *who, const char *what)
+{
+    uint64_t h = parse_be_uint(v, vl);
+    if (vl == 0 || vl > 4 || h < 1 || h > (uint64_t)XMSS_MAX_H) {
+        fprintf(stderr, "%s: HPKS-XMSS %s is %llu (expected 1..%d)\n",
+                who, what, (unsigned long long)h, XMSS_MAX_H);
+        exit(1);
+    }
+    return (int)h;
+}
+
 /* Right-align a variable-length DER integer value into a fixed-size buffer
  * (generic version of wots_blob_unpack's alignment, for arbitrary blob sizes). */
 static void xmss_blob_align(uint8_t *dst, size_t dst_len,
@@ -678,7 +738,8 @@ static void cmd_genpkey(int argc, char **argv)
     if (strcmp(algo, "hpks-xmss") == 0) {
         const char *h_arg = get_arg(argc, argv, "--xmss-height");
         int h_val = h_arg ? atoi(h_arg) : 10;
-        if (h_val < 1 || h_val > 20) die("genpkey: --xmss-height must be in [1,20]");
+        if (h_val < 1 || h_val > XMSS_MAX_H)
+            die("genpkey: --xmss-height must be in [1,20]");
         uint8_t seed[KEYBYTES];
         if (fread(seed, 1, KEYBYTES, urnd) != KEYBYTES) die("urandom read failed");
         fprintf(stderr, "Generating XMSS tree (h=%d, %d leaves) — may take a moment...\n",
@@ -935,7 +996,7 @@ static void cmd_pkey(int argc, char **argv)
                 for (i = 0; i < QCMDPC_RWORDS; i++)
                     for (k2 = 0; k2 < 8 && i*8+k2 < QCMDPC_RBYTES; k2++)
                         priv.h1.w[i] |= (uint64_t)buf66[i*8+k2] << (k2 * 8);
-                int d = (int)parse_be_uint(pk.vals[5], pk.vlens[5]);
+                int d = qcmdpc_decode_d(pk.vals[5], pk.vlens[5], "pkey");
                 uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
                 der_right_align(s0b, (size_t)d*2, pk.vals[2], pk.vlens[2]);
                 der_right_align(s1b, (size_t)d*2, pk.vals[3], pk.vlens[3]);
@@ -1093,7 +1154,7 @@ static void cmd_pkey(int argc, char **argv)
     /* ── HPKS-XMSS-F ─── */
     else if (kind == 4) {
         if (k.n_items < 4) die("pkey: malformed XMSS private key");
-        int h_val = (int)parse_be_uint(k.vals[1], k.vlens[1]);
+        int h_val = xmss_decode_h(k.vals[1], k.vlens[1], "pkey", "height");
         size_t num_leaves = (size_t)1 << h_val;
         size_t blob_len = num_leaves * KEYBYTES;
         uint8_t *flat = (uint8_t *)malloc(blob_len);
@@ -1230,7 +1291,7 @@ static void kem_priv_load(QcMdpcPriv *priv, QcMdpcPub *pub, const char *path)
     der_right_align(h1b, QCMDPC_RBYTES, pk.vals[1], pk.vlens[1]);
     qcpoly_from_be(&priv->h0, h0b);
     qcpoly_from_be(&priv->h1, h1b);
-    int d = (int)parse_be_uint(pk.vals[5], pk.vlens[5]);
+    int d = qcmdpc_decode_d(pk.vals[5], pk.vlens[5], "kex");
     uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
     der_right_align(s0b, (size_t)d*2, pk.vals[2], pk.vlens[2]);
     der_right_align(s1b, (size_t)d*2, pk.vals[3], pk.vlens[3]);
@@ -1773,21 +1834,45 @@ static void make_msg_ba(BitArray *msg, const uint8_t *data, size_t len)
 
 /* ─── Stern signature pack / unpack ─── */
 
-#define STERN_COMMITS_BYTES (3 * SDF_ROUNDS * KEYBYTES)   /* 3072 */
-#define STERN_CHAL_BYTES    ((SDF_ROUNDS + 3) / 4)        /* 8   */
-#define STERN_RESP_BYTES    (2 * SDF_ROUNDS * KEYBYTES)   /* 2048 */
+/* Blob sizes are a function of the signature's own round count, not of the
+ * build's SDF_ROUNDS (TODO #236).  The round count is item[1] of the DER
+ * SEQUENCE and has always been on the wire; deriving the sizes from the macro
+ * instead made two builds with different SDF_ROUNDS unable to read each other. */
+#define STERN_COMMITS_BYTES_R(r) ((size_t)3 * (size_t)(r) * KEYBYTES)
+#define STERN_CHAL_BYTES_R(r)    (((size_t)(r) + 3) / 4)
+#define STERN_RESP_BYTES_R(r)    ((size_t)2 * (size_t)(r) * KEYBYTES)
 
-static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
+/* Decode item[1] of a Stern PEM as a round count, rejecting anything outside
+ * [1, SDF_MAX_ROUNDS].  Returns 0 on success.  A hostile PEM must not be able
+ * to drive the allocations below with an unbounded value. */
+static int stern_decode_rounds(const PemKey *pk, int *out)
 {
-    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
-    uint8_t chal[STERN_CHAL_BYTES];
-    uint8_t *resp    = malloc(STERN_RESP_BYTES);
-    if (!commits || !resp) die("out of memory");
+    size_t i;
+    unsigned long r = 0;
+    if (pk->vlens[1] == 0 || pk->vlens[1] > 4) return -1;
+    for (i = 0; i < pk->vlens[1]; i++) r = (r << 8) | pk->vals[1][i];
+    if (r < 1 || r > (unsigned long)SDF_MAX_ROUNDS) return -1;
+    *out = (int)r;
+    return 0;
+}
+
+/* Pack a SternSig into the five DER items and write them under `label`. */
+static void stern_sig_pack_write_lbl(const SternSig *sig, const char *label,
+                                     const char *out_path)
+{
+    int    rounds  = sig->rounds;
+    size_t cm_len  = STERN_COMMITS_BYTES_R(rounds);
+    size_t ch_len  = STERN_CHAL_BYTES_R(rounds);
+    size_t rs_len  = STERN_RESP_BYTES_R(rounds);
+    uint8_t *commits = malloc(cm_len);
+    uint8_t *chal    = malloc(ch_len);
+    uint8_t *resp    = malloc(rs_len);
+    if (!commits || !chal || !resp) die("out of memory");
 
     /* Commits: c0, c1, c2 per round (each KEYBYTES bytes, big-endian). */
     { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 3 * KEYBYTES;
+      for (i = 0; i < rounds; i++) {
+          size_t off = (size_t)i * 3 * KEYBYTES;
           memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
           memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
           memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
@@ -1795,77 +1880,97 @@ static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
     }
     /* Challenges: 2 bits per round, packed LSB-first within each byte. */
     { int i;
-      memset(chal, 0, STERN_CHAL_BYTES);
-      for (i = 0; i < SDF_ROUNDS; i++)
+      memset(chal, 0, ch_len);
+      for (i = 0; i < rounds; i++)
           chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
     }
     /* Responses: resp_a then resp_b per round (each KEYBYTES). */
     { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 2 * KEYBYTES;
-          memcpy(resp + off,          sig->resp_a[i].b, KEYBYTES);
+      for (i = 0; i < rounds; i++) {
+          size_t off = (size_t)i * 2 * KEYBYTES;
+          memcpy(resp + off,            sig->resp_a[i].b, KEYBYTES);
           memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
       }
     }
 
-    /* DER-encode each blob. */
+    /* DER-encode each blob.  Rounds goes through der_i_uint rather than
+     * der_i_byte: at SDF_MAX_ROUNDS the count does not fit in a uint8_t, and
+     * Python's der_int(rounds) already emits the minimal multi-byte form. */
     uint8_t in_der[8], ir_der[8];
     size_t ln, lr;
-    size_t ic_sz = DER_INT_LEN(STERN_COMMITS_BYTES);
-    size_t ich_sz = DER_INT_LEN(STERN_CHAL_BYTES);
-    size_t irs_sz = DER_INT_LEN(STERN_RESP_BYTES);
+    size_t ic_sz  = DER_INT_LEN(cm_len);
+    size_t ich_sz = DER_INT_LEN(ch_len);
+    size_t irs_sz = DER_INT_LEN(rs_len);
     uint8_t *ic_der  = malloc(ic_sz);
     uint8_t *ich_der = malloc(ich_sz);
     uint8_t *irs_der = malloc(irs_sz);
     if (!ic_der || !ich_der || !irs_der) die("out of memory");
     size_t lc, lch, lrs;
     der_i_n256(in_der, &ln);
-    der_i_byte(SDF_ROUNDS, ir_der, &lr);
-    der_int_enc(commits, STERN_COMMITS_BYTES, ic_der,  &lc);
-    der_int_enc(chal,    STERN_CHAL_BYTES,    ich_der, &lch);
-    der_int_enc(resp,    STERN_RESP_BYTES,    irs_der, &lrs);
+    der_i_uint((uint64_t)rounds, ir_der, &lr);
+    der_int_enc(commits, cm_len, ic_der,  &lc);
+    der_int_enc(chal,    ch_len, ich_der, &lch);
+    der_int_enc(resp,    rs_len, irs_der, &lrs);
 
     const uint8_t *it[5] = {in_der, ir_der, ic_der, ich_der, irs_der};
     size_t         il[5] = {ln,     lr,     lc,     lch,     lrs};
-    seq_and_write(it, il, 5, PEM_SIGNATURE, out_path);
+    seq_and_write(it, il, 5, label, out_path);
 
-    free(commits); free(resp); free(ic_der); free(ich_der); free(irs_der);
+    free(commits); free(chal); free(resp);
+    free(ic_der); free(ich_der); free(irs_der);
 }
 
-static int stern_sig_load(const char *path, SternSig *sig)
+static void stern_sig_pack_and_write(const SternSig *sig, const char *out_path)
+{
+    stern_sig_pack_write_lbl(sig, PEM_SIGNATURE, out_path);
+}
+
+/* Load a SternSig written under `label`.  On success *sig is allocated with
+ * the round count read from the PEM and the caller must stern_sig_free() it. */
+static int stern_sig_load_lbl(const char *path, const char *label, SternSig *sig)
 {
     PemKey pk;
+    int rounds;
     pem_key_load(&pk, path);
-    if (strcmp(pk.label, PEM_SIGNATURE) != 0 || pk.n_items != 5)
+    if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
         { pem_key_free(&pk); return -1; }
 
-    /* Verify rounds. */
-    { int i, r = 0;
-      for (i = 0; i < (int)pk.vlens[1]; i++) r = (r << 8) | pk.vals[1][i];
-      if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
-    }
+    stern_require_n(&pk, 0, "verify");
+    if (stern_decode_rounds(&pk, &rounds) != 0) { pem_key_free(&pk); return -1; }
 
-    /* Right-align each big-endian blob. */
-    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
-    uint8_t chal[STERN_CHAL_BYTES];
-    uint8_t *resp    = malloc(STERN_RESP_BYTES);
-    if (!commits || !resp) die("out of memory");
+    size_t cm_len = STERN_COMMITS_BYTES_R(rounds);
+    size_t ch_len = STERN_CHAL_BYTES_R(rounds);
+    size_t rs_len = STERN_RESP_BYTES_R(rounds);
 
+    /* Each blob must fit the round count the same PEM declares; a longer one
+     * means the two disagree, which is a malformed signature rather than a
+     * value to silently truncate. */
+    if (pk.vlens[2] > cm_len || pk.vlens[3] > ch_len || pk.vlens[4] > rs_len)
+        { pem_key_free(&pk); return -1; }
+
+    uint8_t *commits = malloc(cm_len);
+    uint8_t *chal    = malloc(ch_len);
+    uint8_t *resp    = malloc(rs_len);
+    if (!commits || !chal || !resp) die("out of memory");
+
+    /* Right-align each big-endian blob (DER strips leading zero bytes). */
 #define RA_BUF(dst, dlen, vp, vl) do { \
     size_t _l = (vl) < (dlen) ? (vl) : (dlen); \
     memset(dst, 0, dlen); \
     memcpy((uint8_t *)(dst) + (dlen) - _l, vp, _l); \
 } while (0)
 
-    RA_BUF(commits, STERN_COMMITS_BYTES, pk.vals[2], pk.vlens[2]);
-    RA_BUF(chal,    STERN_CHAL_BYTES,    pk.vals[3], pk.vlens[3]);
-    RA_BUF(resp,    STERN_RESP_BYTES,    pk.vals[4], pk.vlens[4]);
+    RA_BUF(commits, cm_len, pk.vals[2], pk.vlens[2]);
+    RA_BUF(chal,    ch_len, pk.vals[3], pk.vlens[3]);
+    RA_BUF(resp,    rs_len, pk.vals[4], pk.vlens[4]);
 #undef RA_BUF
+
+    stern_sig_alloc(sig, rounds);
 
     /* Unpack commits. */
     { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 3 * KEYBYTES;
+      for (i = 0; i < rounds; i++) {
+          size_t off = (size_t)i * 3 * KEYBYTES;
           memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
           memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
           memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
@@ -1873,21 +1978,26 @@ static int stern_sig_load(const char *path, SternSig *sig)
     }
     /* Unpack challenges. */
     { int i;
-      for (i = 0; i < SDF_ROUNDS; i++)
+      for (i = 0; i < rounds; i++)
           sig->b[i] = (chal[i / 4] >> ((i % 4) * 2)) & 3;
     }
     /* Unpack responses. */
     { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 2 * KEYBYTES;
+      for (i = 0; i < rounds; i++) {
+          size_t off = (size_t)i * 2 * KEYBYTES;
           memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
           memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
       }
     }
 
-    free(commits); free(resp);
+    free(commits); free(chal); free(resp);
     pem_key_free(&pk);
     return 0;
+}
+
+static int stern_sig_load(const char *path, SternSig *sig)
+{
+    return stern_sig_load_lbl(path, PEM_SIGNATURE, sig);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -1979,14 +2089,44 @@ static int ring_sig_load(const char *path, SternRingSig *sig)
     pem_key_load(&pk, path);
     if (strcmp(pk.label, PEM_HPKS_RING_SIG) != 0 || pk.n_items < 4)
         dief("verify: expected HPKS-RING SIGNATURE PEM, got: %s", pk.label);
-    int k      = (int)parse_be_uint(pk.vals[0], pk.vlens[0]);
-    int rounds = (int)parse_be_uint(pk.vals[1], pk.vlens[1]);
+    /* Range-check k and rounds BEFORE either is used in an arithmetic
+     * expression (TODO #239).  Both come straight off the wire; unbounded they
+     * drive `blen` — and `stern_ring_alloc`'s size — to values that at best
+     * abort in calloc and at worst wrap.  The caller's k is only compared
+     * against the signature's after this function has returned, so
+     * ring_load_members' RING_MAX_K bound does not reach here.  Reject rather
+     * than clamp: a signature declaring more members than RING_MAX_K, or more
+     * rounds than SDF_MAX_ROUNDS, is malformed, not merely large. */
+    uint64_t k_raw = parse_be_uint(pk.vals[0], pk.vlens[0]);
+    uint64_t r_raw = parse_be_uint(pk.vals[1], pk.vlens[1]);
+    if (pk.vlens[0] == 0 || pk.vlens[0] > 4 || k_raw < 2 || k_raw > RING_MAX_K) {
+        fprintf(stderr, "verify: HPKS-RING signature declares %llu ring members "
+                        "(expected 2..%d)\n", (unsigned long long)k_raw, RING_MAX_K);
+        exit(1);
+    }
+    if (pk.vlens[1] == 0 || pk.vlens[1] > 4 || r_raw < 1 || r_raw > SDF_MAX_ROUNDS) {
+        fprintf(stderr, "verify: HPKS-RING signature declares %llu rounds "
+                        "(expected 1..%d)\n", (unsigned long long)r_raw, SDF_MAX_ROUNDS);
+        exit(1);
+    }
+    stern_require_n(&pk, 2, "verify");
+    int k      = (int)k_raw;
+    int rounds = (int)r_raw;
     size_t entry = 5 * (size_t)KEYBYTES + 1;
-    size_t blen  = (size_t)k * rounds * entry;
+    size_t blen  = (size_t)k * (size_t)rounds * entry;
+    /* Declared-vs-actual agreement, the counterpart of the check TODO #236 gave
+     * the Stern-F reader: a payload longer than (k, rounds) describe is a
+     * mismatch, not something to truncate.  Shorter is legal — DER integer
+     * encoding strips leading zero bytes — and is right-aligned below. */
+    if (pk.vlens[3] > blen) {
+        fprintf(stderr, "verify: HPKS-RING signature payload is %zu bytes, but "
+                        "k=%d rounds=%d describe %zu\n",
+                pk.vlens[3], k, rounds, blen);
+        exit(1);
+    }
     uint8_t *blob = (uint8_t *)calloc(blen ? blen : 1, 1);
     if (!blob) die("out of memory");
     size_t vl = pk.vlens[3];
-    if (vl > blen) vl = blen;
     memcpy(blob + (blen - vl), pk.vals[3], vl);   /* right-align */
     pem_key_free(&pk);
 
@@ -2421,13 +2561,20 @@ static void cmd_dec(int argc, char **argv)
         const char *ad = get_arg(argc, argv, "--ad");
         ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
         size_t ct_len = (size_t)parse_be_uint(ct.vals[2], ct.vlens[2]);
-        /* Right-align the parsed ct value into a zero-padded ct_len buffer
-         * (integer encoding may have dropped leading zero bytes). */
+        /* The declared length sizes two allocations, so bound it before it is
+         * used (TODO #239).  It cannot exceed the DER we actually read, and the
+         * payload cannot be longer than the length claiming to describe it.
+         * Shorter is legal — integer encoding may have dropped leading zero
+         * bytes — and is right-aligned into the zero-padded buffer below. */
+        if (ct.vlens[2] > 9 || ct_len > ct.der_len || ct.vlens[3] > ct_len) {
+            fprintf(stderr, "dec: V2-Duplex ciphertext declares %zu bytes but "
+                            "carries %zu\n", ct_len, ct.vlens[3]);
+            exit(1);
+        }
         uint8_t *ct_buf = calloc(ct_len ? ct_len : 1, 1);
         uint8_t *pt_buf = malloc(ct_len ? ct_len : 1);
         if (!ct_buf || !pt_buf) die("dec: out of memory");
         size_t vl = ct.vlens[3];
-        if (vl > ct_len) vl = ct_len;   /* defensive */
         memcpy(ct_buf + (ct_len - vl), ct.vals[3], vl);
         uint8_t tag_buf[32];
         BitArray tag_ba;
@@ -2541,7 +2688,7 @@ static void cmd_dec(int argc, char **argv)
                     priv.h1.w[i] |= (uint64_t)h1b[i*8+k] << (k*8);
                 }
         }
-        int d = (int)parse_be_uint(priv_k.vals[5], priv_k.vlens[5]);
+        int d = qcmdpc_decode_d(priv_k.vals[5], priv_k.vlens[5], "dec");
         {   uint8_t s0b[QCMDPC_D*2], s1b[QCMDPC_D*2];
             der_right_align(s0b, (size_t)d*2, priv_k.vals[2], priv_k.vlens[2]);
             der_right_align(s1b, (size_t)d*2, priv_k.vals[3], priv_k.vlens[3]);
@@ -2955,7 +3102,7 @@ static void cmd_sign(int argc, char **argv)
         if (xk.n_items < 4) die("sign: malformed XMSS private key");
         uint8_t seed[KEYBYTES];
         xmss_blob_align(seed, KEYBYTES, xk.vals[0], xk.vlens[0]);
-        int h_val = (int)parse_be_uint(xk.vals[1], xk.vlens[1]);
+        int h_val = xmss_decode_h(xk.vals[1], xk.vlens[1], "sign", "height");
         size_t num_leaves = (size_t)1 << h_val;
         size_t blob_len = num_leaves * KEYBYTES;
         uint8_t *flat = (uint8_t *)malloc(blob_len);
@@ -3118,9 +3265,28 @@ static void cmd_sign(int argc, char **argv)
         ba_from_ra(&seed_ba, priv_k.vals[1], priv_k.vlens[1]);
         pem_key_free(&priv_k);
 
+        /* --rounds selects the Fiat-Shamir round count; SDF_ROUNDS is the
+         * build default.  Matches the Go and Python CLIs (TODO #236). */
+        const char *sr_arg = get_arg(argc, argv, "--rounds");
+        int sr_rounds = SDF_ROUNDS;
+        if (sr_arg) {
+            sr_rounds = atoi(sr_arg);
+            if (sr_rounds < 1 || sr_rounds > SDF_MAX_ROUNDS) {
+                fprintf(stderr, "sign: --rounds must be between 1 and %d\n",
+                        SDF_MAX_ROUNDS);
+                exit(1);
+            }
+        }
+        if (sr_rounds < SDF_PRODUCTION_ROUNDS)
+            fprintf(stderr, "WARNING: signing at %d rounds; %d are needed for "
+                            "128-bit Fiat-Shamir soundness ((2/3)^r).\n",
+                    sr_rounds, SDF_PRODUCTION_ROUNDS);
+
         SternSig sig;
+        stern_sig_alloc(&sig, sr_rounds);
         hpks_stern_f_sign(&sig, &msg, &e_ba, &seed_ba, urnd);
         stern_sig_pack_and_write(&sig, out_path);
+        stern_sig_free(&sig);
 
     } else if (strcmp(algo, "hpks-ring") == 0) {
         fprintf(stderr, "WARNING: Stern-F at N=256 provides only ~30-40 bits of security "
@@ -3272,7 +3438,8 @@ static void cmd_verify(int argc, char **argv)
             dief("verify: expected HPKS-XMSS signature, got: %s", sigk.label);
         if (sigk.n_items < 5) die("verify: malformed XMSS signature");
         uint32_t leaf_idx = (uint32_t)parse_be_uint(sigk.vals[0], sigk.vlens[0]);
-        int depth = (int)parse_be_uint(sigk.vals[3], sigk.vlens[3]);
+        int depth = xmss_decode_h(sigk.vals[3], sigk.vlens[3],
+                                  "verify", "signature depth");
 
         HpksXmssSig sig;
         sig.leaf_idx = leaf_idx;
@@ -3444,6 +3611,7 @@ static void cmd_verify(int argc, char **argv)
             die("verify: cannot load Stern signature");
 
         int ok = hpks_stern_f_verify(&sig, &msg, &seed_ba, syndr);
+        stern_sig_free(&sig);
         if (ok) { puts("Signature OK");        exit(0); }
         else    { puts("Verification FAILED"); exit(1); }
 
@@ -4048,102 +4216,22 @@ static int hcred_load_pubinfo(const char *path,
     return 0;
 }
 
-/* Write a SternSig to PEM under the given label (generic version of
- * stern_sig_pack_and_write that accepts any PEM label). */
+/* HCRED credentials are Stern signatures under a different PEM label, so both
+ * of these are the label-generic codec above with the label bound (TODO #236).
+ * They used to be verbatim copies, which is why the fixed-round-count defect
+ * had to be fixed in two places -- and why cred-issue could only ever talk to a
+ * C consumer built with the issuer's SDF_ROUNDS. */
 static void stern_sig_write_label(const SternSig *sig, const char *label,
                                    const char *out_path)
 {
-    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
-    uint8_t chal[STERN_CHAL_BYTES];
-    uint8_t *resp    = malloc(STERN_RESP_BYTES);
-    if (!commits || !resp) die("out of memory");
-    { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 3 * KEYBYTES;
-          memcpy(commits + off,              sig->c0[i].b, KEYBYTES);
-          memcpy(commits + off + KEYBYTES,   sig->c1[i].b, KEYBYTES);
-          memcpy(commits + off + 2*KEYBYTES, sig->c2[i].b, KEYBYTES);
-      }
-    }
-    { int i;
-      memset(chal, 0, STERN_CHAL_BYTES);
-      for (i = 0; i < SDF_ROUNDS; i++)
-          chal[i / 4] |= (uint8_t)((sig->b[i] & 3) << ((i % 4) * 2));
-    }
-    { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 2 * KEYBYTES;
-          memcpy(resp + off,           sig->resp_a[i].b, KEYBYTES);
-          memcpy(resp + off + KEYBYTES, sig->resp_b[i].b, KEYBYTES);
-      }
-    }
-    uint8_t in_der[8], ir_der[8];
-    size_t ln, lr;
-    size_t ic_sz  = DER_INT_LEN(STERN_COMMITS_BYTES);
-    size_t ich_sz = DER_INT_LEN(STERN_CHAL_BYTES);
-    size_t irs_sz = DER_INT_LEN(STERN_RESP_BYTES);
-    uint8_t *ic_der  = malloc(ic_sz);
-    uint8_t *ich_der = malloc(ich_sz);
-    uint8_t *irs_der = malloc(irs_sz);
-    if (!ic_der || !ich_der || !irs_der) die("out of memory");
-    size_t lc, lch, lrs;
-    der_i_n256(in_der, &ln);
-    der_i_byte(SDF_ROUNDS, ir_der, &lr);
-    der_int_enc(commits, STERN_COMMITS_BYTES, ic_der,  &lc);
-    der_int_enc(chal,    STERN_CHAL_BYTES,    ich_der, &lch);
-    der_int_enc(resp,    STERN_RESP_BYTES,    irs_der, &lrs);
-    const uint8_t *it[5] = {in_der, ir_der, ic_der, ich_der, irs_der};
-    size_t         il[5] = {ln,     lr,     lc,     lch,     lrs};
-    seq_and_write(it, il, 5, label, out_path);
-    free(commits); free(resp); free(ic_der); free(ich_der); free(irs_der);
+    stern_sig_pack_write_lbl(sig, label, out_path);
 }
 
-/* Load a SternSig from a PEM file with an expected label. Returns 0 on success. */
+/* Load a SternSig from a PEM file with an expected label. Returns 0 on success.
+ * On success *sig is allocated; the caller must stern_sig_free() it. */
 static int stern_sig_load_label(const char *path, const char *label, SternSig *sig)
 {
-    PemKey pk;
-    pem_key_load(&pk, path);
-    if (strcmp(pk.label, label) != 0 || pk.n_items != 5)
-        { pem_key_free(&pk); return -1; }
-    { int i, r = 0;
-      for (i = 0; i < (int)pk.vlens[1]; i++) r = (r << 8) | pk.vals[1][i];
-      if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
-    }
-    uint8_t *commits = malloc(STERN_COMMITS_BYTES);
-    uint8_t chal[STERN_CHAL_BYTES];
-    uint8_t *resp    = malloc(STERN_RESP_BYTES);
-    if (!commits || !resp) die("out of memory");
-#define _RA2(dst, dlen, vp, vl) do { \
-    size_t _l = (vl) < (dlen) ? (vl) : (dlen); \
-    memset(dst, 0, dlen); \
-    memcpy((uint8_t *)(dst) + (dlen) - _l, vp, _l); \
-} while(0)
-    _RA2(commits, STERN_COMMITS_BYTES, pk.vals[2], pk.vlens[2]);
-    _RA2(chal,    STERN_CHAL_BYTES,    pk.vals[3], pk.vlens[3]);
-    _RA2(resp,    STERN_RESP_BYTES,    pk.vals[4], pk.vlens[4]);
-#undef _RA2
-    { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 3 * KEYBYTES;
-          memcpy(sig->c0[i].b, commits + off,              KEYBYTES);
-          memcpy(sig->c1[i].b, commits + off + KEYBYTES,   KEYBYTES);
-          memcpy(sig->c2[i].b, commits + off + 2*KEYBYTES, KEYBYTES);
-      }
-    }
-    { int i;
-      for (i = 0; i < SDF_ROUNDS; i++)
-          sig->b[i] = (chal[i / 4] >> ((i % 4) * 2)) & 3;
-    }
-    { int i;
-      for (i = 0; i < SDF_ROUNDS; i++) {
-          int off = i * 2 * KEYBYTES;
-          memcpy(sig->resp_a[i].b, resp + off,            KEYBYTES);
-          memcpy(sig->resp_b[i].b, resp + off + KEYBYTES, KEYBYTES);
-      }
-    }
-    free(commits); free(resp);
-    pem_key_free(&pk);
-    return 0;
+    return stern_sig_load_lbl(path, label, sig);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4183,12 +4271,29 @@ static void cmd_cred_issue(int argc, char **argv)
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
 
+    /* --rounds selects the credential signature's Fiat-Shamir round count,
+     * matching the Go and Python CLIs (TODO #236).  Before that item a C
+     * issuer was locked to its build's SDF_ROUNDS, and CI compensated by
+     * asking the Python and Go issuers for --rounds 32. */
+    const char *ci_rnd = get_arg(argc, argv, "--rounds");
+    int ci_rounds = SDF_ROUNDS;
+    if (ci_rnd) {
+        ci_rounds = atoi(ci_rnd);
+        if (ci_rounds < 1 || ci_rounds > SDF_MAX_ROUNDS) {
+            fprintf(stderr, "cred-issue: --rounds must be between 1 and %d\n",
+                    SDF_MAX_ROUNDS);
+            exit(1);
+        }
+    }
+
     SternSig sig;
+    stern_sig_alloc(&sig, ci_rounds);
     hcred_issue(&sig, m_poly, C_poly, &seed_H_ba, syndr,
                 &issuer_e_ba, &issuer_seed_ba, urnd);
     fclose(urnd);
 
     stern_sig_write_label(&sig, PEM_HCRED_CRED, out_path);
+    stern_sig_free(&sig);
 }
 
 static void cmd_cred_prove(int argc, char **argv)
@@ -4317,6 +4422,7 @@ static void cmd_cred_verify(int argc, char **argv)
 
         int ok_cred = hcred_cred_verify(m_poly, C_poly, &seed_H_ba, syndr,
                                          &cred_sig, &issuer_seed_ba, issuer_syndr);
+        stern_sig_free(&cred_sig);
         if (!ok_cred) {
             puts("Verification FAILED (credential)");
             exit(1);

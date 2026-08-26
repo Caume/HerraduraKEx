@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-hkex_gf_pohlig_hellman.py — TODO #212: what does Pohlig-Hellman actually cost
-against HKEX-GF, HPKS and HPKE?
+hkex_gf_pohlig_hellman.py — TODO #212, #237: what does Pohlig-Hellman actually
+cost against HKEX-GF, HPKS, HPKE and the OPRF?
 
 SecurityProofs-3.md §9.2.4 lists Pohlig-Hellman in its table of attacks on the DLP
 in GF(2^n)*, then quotes the function field sieve as "the practical binding
@@ -22,6 +22,7 @@ this script recovers exact private keys end to end.
   §3  End-to-end private-key recovery at n=32 and n=64
   §4  What the recovered key buys: HKEX-GF shared secret, HPKS forgery
   §5  Extrapolation to the deployed n=256
+  §6  The OPRF server key, and what its recovery costs the aPAKE (TODO #237)
 
 RESULTS
 
@@ -51,6 +52,17 @@ RESULTS
     core.  Pollard rho needs constant memory and parallelises linearly, and a
     carryless-multiply implementation on a desktop core is one to two orders of
     magnitude faster.  This is an attack with a wall-clock cost, not a margin.
+
+§6  The OPRF's oprf_eval is gf_pow(alpha, k) — the same exponentiation — so one
+    observed (alpha, beta) transcript pair recovers the *server key* k at the same
+    2^36.5.  Recovered end to end at n=32 and n=64, then used to reproduce
+    F(k, .) offline on fresh inputs.  The base is the client's blinded alpha rather
+    than the fixed g = 3, and alpha is primitive with density phi(ORD)/ORD ~ 0.4992
+    at every supported n — a coin flip, so k comes back either in full or modulo
+    ord(alpha), and offline evaluation is exact whenever ord(H(x')) divides
+    ord(alpha).  Obliviousness is untouched; k's secrecy is not, and the aPAKE stores
+    F(oprf_key, password) precisely to resist offline dictionary attack on a stolen
+    database — which this defeats.
 
 Self-contained (no imports from the suite), per SecurityProofsCode convention; the
 primitives below are transcribed from `Herradura cryptographic suite.py`.
@@ -411,10 +423,113 @@ def section5():
     print()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# §6  The OPRF: the same exponentiation, and a worse consequence  (TODO #237)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def section6():
+    print(SEP2)
+    print("§6  The OPRF server key falls to the same attack  (TODO #237)")
+    print(SEP2)
+    print()
+    print("  The suite's oprf_eval is one line:")
+    print()
+    print("      return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)")
+    print()
+    print("  — the same exponentiation as HKEX-GF, HPKS and HPKE, so the same")
+    print("  Pohlig-Hellman recovery applies, with the client's blinded alpha as")
+    print("  the base and the server's reply beta as the target.  Both are on the")
+    print("  wire.  The hash-to-field H is irrelevant to the attack: alpha is what")
+    print("  travels, so any H gives the same result.")
+    print()
+    print("  One structural difference from the HKEX-GF case of §3: the base is not")
+    print("  the fixed g = 3 but alpha = H(x)^r with gcd(r, ORD) = 1, so alpha")
+    print("  generates the same subgroup as H(x) — a near-uniform field element.")
+    print("  The density of primitive elements is phi(ORD)/ORD, which is almost")
+    print("  exactly 1/2 at every supported n:")
+    print()
+    for nn in sorted(FACTORS):
+        dens = 1.0
+        for pp in FACTORS[nn]:
+            dens *= 1 - 1.0 / pp
+        print(f"      n={nn:>4}:  phi(2^n-1)/(2^n-1) = {dens:.4f}")
+    print()
+    print("  So this is a coin flip, not a discount: about half the time alpha is")
+    print("  primitive and k is recovered in full, and the rest of the time k comes")
+    print("  back modulo ord(alpha).  Either way one transcript pair suffices — the")
+    print("  server withholding beta is not a protocol option, since handing it over")
+    print("  is the service.")
+    print()
+    for n in (32, 64):
+        poly, ORD, factors = GF_POLY[n], (1 << n) - 1, FACTORS[n]
+        rng = random.Random(237)
+        k = rng.randrange(2, ORD)
+        hx = rng.randrange(2, ORD)
+        while True:
+            r = rng.randrange(2, ORD)
+            if math.gcd(r, ORD) == 1:
+                break
+        alpha = gf_pow(hx, r, poly, n)        # client -> server (oprf_blind)
+        beta = gf_pow(alpha, k, poly, n)      # server -> client (oprf_eval)
+        t0 = time.time()
+        k_rec, order = pohlig_hellman(beta, n, factors, g=alpha)
+        dt = time.time() - t0
+        full = order == ORD
+        ok = k_rec == k % order
+        # The point of recovering k is to evaluate F(k, .) on inputs Eve chooses
+        # and never blinded.  This reproduces F(k, x') exactly when ord(H(x'))
+        # divides ord(alpha) -- always so when alpha is primitive.
+        hits = 0
+        trials = 200
+        for _ in range(trials):
+            x2 = rng.randrange(2, ORD)
+            if gf_pow(x2, k_rec, poly, n) == gf_pow(x2, k, poly, n):
+                hits += 1
+        idx = ORD // order
+        print(f"  n={n}:  largest prime factor {max(factors).bit_length()} bits; "
+              f"ord(alpha) = " + ("2^n-1 (alpha primitive)" if full
+                                  else f"(2^n-1)/{idx} (proper subgroup)"))
+        print(f"        server key k recovered mod ord(alpha) from one (alpha, beta) "
+              f"pair: {'YES' if ok else 'NO'}  [{dt:.2f}s]")
+        print(f"        F(k, .) reproduced offline on fresh inputs: "
+              f"{hits}/{trials}")
+        print()
+    print("  The partial hit rate at n=64 is the subgroup index showing through, and")
+    print("  it is not a defence: ord(alpha) is computable by anyone, since the")
+    print("  factorisation of 2^n-1 is public (§1).  An attacker watching a stream")
+    print("  of transcripts simply attacks one whose alpha is primitive — about half")
+    print("  of them, per the density above — and recovers k in full.  A defender")
+    print("  cannot arrange for every client's H(x) to be non-primitive, and would")
+    print("  gain a factor of the index if they could.")
+    print()
+    bits = rho_cost_bits(FACTORS[256])
+    print(f"  At the deployed n=256 the same computation costs 2^{bits:.1f} group")
+    print("  operations — the §5 figure, unchanged, since the group is the same.")
+    print()
+    print("  Why this matters more than the HKEX-GF row it inherits from:")
+    print()
+    print("    Obliviousness is NOT what breaks.  The server still does not learn")
+    print("    the client's input x; blinding by r is information-theoretic and")
+    print("    survives.  What breaks is the secrecy of k, and k's secrecy is the")
+    print("    OPRF's *other* half — the one that makes F(k, .) a pseudorandom")
+    print("    function to everybody who lacks k.  Once k is recovered from any")
+    print("    single transcript, F(k, .) is a public function, evaluable offline")
+    print("    on chosen inputs at the cost of one gf_pow.")
+    print()
+    print("    The suite's aPAKE (TODO #80) is built on exactly that property.  Its")
+    print("    server record stores F(oprf_key, password) rather than a password")
+    print("    hash, and the stated reason is that an attacker who steals the")
+    print("    database still cannot mount an offline dictionary attack without")
+    print("    oprf_key.  At n=256 oprf_key costs 2^36.5 to recover, so a stolen")
+    print("    aPAKE database IS offline-guessable and the upgrade over a plain")
+    print("    password hash is not realised.")
+    print()
+
+
 def main():
     print()
     print(SEP)
-    print("TODO #212 — Pohlig-Hellman against HKEX-GF / HPKS / HPKE")
+    print("TODO #212, #237 — Pohlig-Hellman against HKEX-GF / HPKS / HPKE / OPRF")
     print(SEP)
     print()
     section1()
@@ -422,10 +537,14 @@ def main():
     section3()
     section4()
     section5()
+    section6()
     print(SEP)
-    print("Summary: the DLP behind HKEX-GF, HPKS and HPKE costs about 2^36.5 group")
-    print("         operations at n=256 via Pohlig-Hellman — roughly 45 bits below")
-    print("         the FFS figure documented in SecurityProofs-3.md §9.2.4.")
+    print("Summary: the DLP behind HKEX-GF, HPKS, HPKE and the OPRF costs about")
+    print("         2^36.5 group operations at n=256 via Pohlig-Hellman — roughly 45")
+    print("         bits below the FFS figure documented in SecurityProofs-3.md §9.2.4.")
+    print("         For the OPRF (§6) the recovered value is the server key, which")
+    print("         makes F(k, .) offline-evaluable and voids the aPAKE's offline-")
+    print("         dictionary-attack resistance.")
     print(SEP)
     print()
 

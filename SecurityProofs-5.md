@@ -320,7 +320,10 @@ encoder in `codec.py` / `herradura_codec.h` / `herradura/codec.go` was capped
 at a 2-byte length field (65535 bytes) — too small for a 219-round signature.
 Both were fixed (`--rounds` flag wired through in Python/Go; C reads
 `-DSDF_ROUNDS=219` at compile time via `#ifndef`; DER codecs extended to the
-standard 3- and 4-byte long-form length fields). Measured at N = 256 on the
+standard 3- and 4-byte long-form length fields).  Since v3.1.0 the C CLI also
+takes `sign --rounds` directly, and its reader takes the round count from the
+signature rather than from its own `SDF_ROUNDS` (TODO #236); the compile-time
+route still works and still sets the signing default. Measured at N = 256 on the
 same machine, single-threaded, no batching:
 
 | Rounds | Sig. size | Python sign | Python verify | C sign | C verify | Go sign | Go verify |

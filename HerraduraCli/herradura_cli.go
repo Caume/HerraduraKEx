@@ -42,6 +42,58 @@ import (
 	. "herradurakex/herradura"
 )
 
+// ── Bounds on PEM fields that size an allocation (TODO #240) ────────────────
+//
+// TODO #239 range-checked these fields in the C CLI and stopped there, so every
+// reader below was still multiplying counts straight off the wire into a
+// make([]byte, ...).  A four-byte edit to a signature became
+// "fatal error: out of memory" with a goroutine dump rather than a diagnostic,
+// and — because these are the same wire fields the C reader now refuses — a
+// disagreement between the two CLIs about what a valid artifact is.
+//
+// Reject rather than clamp, and reject inside the reader: verify's own
+// "signature ring size != provided members" check runs after the allocation it
+// was meant to guard.
+const (
+	ringMaxK  = 64      // herradura_cli.c RING_MAX_K
+	xmssMaxH  = 20      // herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
+	sternMaxN = 256     // the suite key width; nothing here emits a wider Stern instance
+)
+
+// bounded returns v, or exits 1 if it falls outside [lo, hi].  `what` names the
+// field as the wire calls it and `where` is the subcommand, so the message
+// shape matches the C CLI's.
+func bounded(v, lo, hi int, what, where string) int {
+	if v < lo || v > hi {
+		fmt.Fprintf(os.Stderr, "%s: %s is %d (expected %d..%d)\n", where, what, v, lo, hi)
+		os.Exit(1)
+	}
+	return v
+}
+
+// boundedN bounds a wire-supplied bit width: a multiple of 8, no wider than the
+// suite's own key width.
+func boundedN(v int, where string) int {
+	v = bounded(v, 8, sternMaxN, "n", where)
+	if v%8 != 0 {
+		fmt.Fprintf(os.Stderr, "%s: n is %d (expected a multiple of 8)\n", where, v)
+		os.Exit(1)
+	}
+	return v
+}
+
+// wireInt decodes a DER INTEGER's value bytes as a non-negative int, refusing
+// anything too wide to be a count.  bytesToInt goes through Int64 and would
+// silently truncate; a 2^64 round count must be rejected, not wrapped to 0.
+func wireInt(b []byte, what, where string) int {
+	if len(b) == 0 || len(b) > 4 {
+		fmt.Fprintf(os.Stderr, "%s: %s is not a valid count (%d-byte field)\n",
+			where, what, len(b))
+		os.Exit(1)
+	}
+	return bytesToInt(b)
+}
+
 // ── PEM label constants (must match Python and C exactly) ───────────────────
 
 const (
@@ -830,12 +882,25 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 		fmt.Fprintf(os.Stderr, "verify: expected HPKS-RING SIGNATURE PEM, got %q\n", label)
 		os.Exit(1)
 	}
-	k := bytesToInt(ints[0])
-	rounds := bytesToInt(ints[1])
-	n := bytesToInt(ints[2])
+	// Bounded before use: k, rounds and n each multiply into the blob length
+	// below, and verify's own k/n cross-checks only run after this returns.
+	k := bounded(wireInt(ints[0], "ring member count", "verify"), 2, ringMaxK,
+		"ring member count", "verify")
+	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
+		"round count", "verify")
+	n := boundedN(wireInt(ints[2], "n", "verify"), "verify")
 	nb := n / 8
 	entry := 5*nb + 1
-	blob := make([]byte, k*rounds*entry)
+	blen := k * rounds * entry
+	// A payload longer than (k, rounds, n) describe is a mismatch, not
+	// something to truncate; shorter is legal (DER strips leading zero bytes)
+	// and FillBytes zero-pads it.
+	if len(ints[3]) > blen {
+		fmt.Fprintf(os.Stderr, "verify: HPKS-RING signature payload is %d bytes, "+
+			"but k=%d rounds=%d n=%d describe %d\n", len(ints[3]), k, rounds, n, blen)
+		os.Exit(1)
+	}
+	blob := make([]byte, blen)
 	new(big.Int).SetBytes(ints[3]).FillBytes(blob)
 
 	sig := &SternRingSig{K: k, Rounds: rounds, Members: make([]SternSig, k)}
@@ -1137,7 +1202,9 @@ func cmdPkey(args []string) {
 			pem = encodeWotsBlobPEM(pk, lblHpksWotsPub)
 
 		case algo == "hpks-xmss":
-			h := int(bytesToInt(ints[1]))
+			// h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
+			h := bounded(wireInt(ints[1], "XMSS height", "pkey"), 1, xmssMaxH,
+				"XMSS height", "pkey")
 			numLeaves := 1 << uint(h)
 			blob := alignBlob(ints[3], numLeaves*32)
 			leafHashes := make([][]byte, numLeaves)
@@ -1928,7 +1995,10 @@ func encodeKemPriv(sup0, sup1 []int, h0, h1 *big.Int) (string, error) {
 
 func decodeKemPriv(ints [][]byte) (sup0, sup1 []int, h0, h1 *big.Int) {
 	rb := QcMdpcRBytes
-	d := bytesToInt(ints[5])
+	// d sizes supFromDerInt's buffer and indexes the support arrays; in the C
+	// reader it sized a fixed stack buffer (TODO #239).
+	d := bounded(wireInt(ints[5], "QC-MDPC row weight d", "pkey"), 1, QcMdpcD,
+		"QC-MDPC row weight d", "pkey")
 	h0 = polyFromDerInt(new(big.Int).SetBytes(ints[0]), rb)
 	h1 = polyFromDerInt(new(big.Int).SetBytes(ints[1]), rb)
 	sup0 = supFromDerInt(new(big.Int).SetBytes(ints[2]), d)
@@ -2046,8 +2116,9 @@ func packSternSigLabel(sig *SternSig, n int, label string) (string, error) {
 
 // unpackSternSig deserialises a *SternSig from DER-parsed integer fields.
 func unpackSternSig(ints [][]byte) (*SternSig, int, error) {
-	n := bytesToInt(ints[0])
-	rounds := bytesToInt(ints[1])
+	n := boundedN(wireInt(ints[0], "n", "verify"), "verify")
+	rounds := bounded(wireInt(ints[1], "round count", "verify"), 1, SdfMaxRounds,
+		"round count", "verify")
 	nb := n / 8
 
 	padLeft := func(raw []byte, want int) []byte {
@@ -3045,7 +3116,21 @@ func cmdDec(args []string) {
 		n := bytesToInt(ctInts[5])
 		K := NewBitArray(n, keyInt)
 		nonce := NewBitArray(n, new(big.Int).SetBytes(ctInts[1]))
-		ctLen := bytesToInt(ctInts[2])
+		// The declared length sizes the buffer.  It cannot exceed the payload
+		// field's own upper bound, and the payload cannot be longer than the
+		// length claiming to describe it; shorter is legal (DER strips leading
+		// zero bytes) and FillBytes zero-pads it.
+		derBudget := 0
+		for _, it := range ctInts {
+			derBudget += len(it)
+		}
+		ctLen := bounded(wireInt(ctInts[2], "declared ciphertext length", "dec"),
+			0, derBudget, "declared ciphertext length", "dec")
+		if len(ctInts[3]) > ctLen {
+			fmt.Fprintf(os.Stderr, "dec: V2-Duplex ciphertext declares %d bytes "+
+				"but carries %d\n", ctLen, len(ctInts[3]))
+			os.Exit(1)
+		}
 		ct := make([]byte, ctLen)
 		if ctLen > 0 {
 			new(big.Int).SetBytes(ctInts[3]).FillBytes(ct)
@@ -3450,7 +3535,8 @@ func cmdSign(args []string) {
 		}
 		seed := make([]byte, 32)
 		new(big.Int).SetBytes(xmssInts[0]).FillBytes(seed)
-		h := int(bytesToInt(xmssInts[1]))
+		h := bounded(wireInt(xmssInts[1], "XMSS height", "sign"), 1, xmssMaxH,
+			"XMSS height", "sign")
 		numLeaves := 1 << uint(h)
 		blob := alignBlob(xmssInts[3], numLeaves*32)
 		leafHashes := make([][]byte, numLeaves)
@@ -3720,7 +3806,8 @@ func cmdVerify(args []string) {
 			die("verify", serr)
 		}
 		leafIdx := int(bytesToInt(sigInts[0]))
-		depth := int(bytesToInt(sigInts[3]))
+		depth := bounded(wireInt(sigInts[3], "XMSS signature depth", "verify"),
+			1, xmssMaxH, "XMSS signature depth", "verify")
 		sig := &HpksXmssSig{
 			LeafIdx:  leafIdx,
 			WotsSig:  wotsBlobUnpack(sigInts[1]),

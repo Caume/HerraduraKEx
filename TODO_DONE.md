@@ -12165,3 +12165,520 @@ print `FAILED` rather than the `[FAIL]` marker, and CI runs only the `tests` mod
 each run script — the same boundary #233 drew for C/Go/Python.
 
 Status: **DONE v3.0.9** — [12]/[18] cleared as non-issues (the item had the test numbering wrong), Arduino [7] tightened from an 80% threshold that also ignored `ok_sk`, then all three harnesses gated at their output layer; AVR needed a UART verdict rather than an exit status, plus an absent-verdict check.
+
+### #237: `spec/` classifies OPRF and HSKE-NL-A1/A2 as `production` where SECURITY.md and the proofs disagree — adjudicate and reconcile
+
+Found while auditing the six `demo-only` entries for #235/#236.  Both rows say
+`status="production"` in `spec/generate_spec.py`; neither is supported by the security
+documentation, but **they fail in different ways and need different work.**  The fix goes
+in `spec/generate_spec.py` (lines 229-232 and the `"oprf"` entry), not the generated JSON.
+
+**Part 1 — OPRF: not a disagreement, an absence.**
+
+`grep -l OPRF SecurityProofs-*.md` returns nothing.  `grep -c OPRF SECURITY.md` returns 0.
+Same for aPAKE.  Both shipped (TODO #80, #201, #203) with CLI subcommands
+(`oprf-blind`/`oprf-eval`/`oprf-unblind`, `pake-register`/`pake-demo`) and, for OPRF, a
+`production` label carrying no analysis anywhere in the repo.
+
+The label is also internally inconsistent *within `generate_spec.py` itself*.  `oprf` is
+`gf_pow` in the same group as `hkex-gf`/`hpks`/`hpke` — the suite's `oprf_eval` is
+
+    return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)
+
+with `ORD = 2^KEYBITS - 1`.  Those three neighbours are all marked `status="pedagogical"`
+with `classical_security_bits="~36.5 (n=256)"`, from TODO #212's Pohlig-Hellman result.
+`oprf` gets `status="production"` and the note *"inherits GF(2^n)* classical-only
+security"* — which understates a ~36.5-bit break as if it were a 128-bit classical one.
+
+Confirmed by running TODO #212's own `pohlig_hellman()` against the exact relation
+`oprf_eval` implements — one `(alpha, beta)` pair, solving for `k` with `g = alpha`:
+
+    n= 32  largest prime factor 17 bits  recovered=YES  in 0.01s
+    n= 64  largest prime factor 23 bits  recovered=YES  in 1.00s
+
+At the deployed n=256 the largest prime factor of `2^256-1` is 73 bits, giving #212's
+~2^36.5.  Recovering `k` is the whole ballgame for an OPRF: obliviousness protects the
+*client's* input from the server, but `k`'s secrecy is what stops anyone who has seen one
+transcript from evaluating `F(k, ·)` offline on inputs of their choosing — i.e. an offline
+dictionary attack wherever the OPRF is used for password-like inputs, which is what aPAKE
+uses it for.
+
+**Work for Part 1.**  Reclassify `oprf` to match its neighbours (`pedagogical`, or
+`demo-only` — pick one and say why), give it a real `classical_security_bits`, and rewrite
+the note so it states the ~2^36.5 recovery rather than "classical-only".  Add SECURITY.md
+rows for OPRF **and aPAKE**, and extend `SecurityProofsCode/hkex_gf_pohlig_hellman.py` to
+cover the OPRF relation (it currently covers HKEX-GF/HPKS/HPKE only; the demo above is 20
+lines and belongs in that script, not in a TODO entry).  Decide separately whether aPAKE
+needs its own spec row at all — see Part 3.
+
+**Part 2 — HSKE-NL-A1/A2: a real disagreement, and it needs adjudicating before either
+document is edited.**
+
+SECURITY.md:18 puts HSKE-NL-A1/A2 in one row with classical HSKE known-plaintext: *"Not
+suitable for production — a single known-plaintext pair recovers the keystream."*
+`spec/` says `production`.  The proofs support **both** readings, in different places:
+
+  * **For `production`:** §11.3.1 gives a conditional CPA claim — *"Non-linearity prevents
+    GF(2) linear recovery of K from any set of (plaintext, ciphertext) pairs.  Assuming
+    NL-FSCX v1 acts as a pseudorandom function (PRF), CPA security follows from standard
+    stream cipher arguments."*  And TODO #210's correction in §11.7 explicitly exempts
+    these two from the fatal ciphertext-only leak: *"This does not extend to
+    HSKE-NL-A1/A2, whose carry non-linearity breaks the affine identity the argument
+    depends on."*
+  * **For SECURITY.md:** the §11.7 table rows read `HSKE-NL-A1 (known-plaintext) — Linear
+    recovery blocked; 1-pair attack still recovers keystream → **None** (keystream
+    recoverable)`, and the prose says the NL variants *"do not eliminate the 1-pair attack
+    because the underlying structure remains affine."*
+
+**Those last two quotes contradict each other, two paragraphs apart in the same section.**
+One says the carry non-linearity breaks the affine identity; the other says the structure
+remains affine.  That contradiction is the actual bug to fix, and it must be settled
+before the labels are touched — editing either document first would just pick a side.
+
+The question to answer: for a counter-mode stream cipher, one KPT pair recovering *that
+block's* keystream is inherent to the mode and is not a break.  Does the §11.7 row mean
+only that (in which case `production` is right, and SECURITY.md:18 is miscategorising the
+NL variants by merging them into classical HSKE's genuinely fatal 1-pair row), or does it
+mean a pair yields *other* blocks' keystream or `K` itself (in which case `spec/` is
+wrong)?  §11.3.1's nonce/counter construction and the ROL seed rotation are the relevant
+detail.  TODO #214's exact-trail work (`nl_fscx_exact_trail_search.py`) is the closest
+existing measurement of what survives statistically.
+
+**Do not assume the answer from this entry.**  It is written to lay out both sides, not to
+pre-judge; whichever way it goes, one of the two documents gets corrected and §11.7's
+internal contradiction gets resolved in the same change.  If the outcome is that the NL
+variants are sound, `hske-duplex` (also `production`, also unanalysed in SECURITY.md)
+should be checked in the same pass, since it is the same family.
+
+**Part 3 — root cause, and why this drifted (optional, decide during triage).**
+
+`KAT/generate_kat.py` and `SecurityProofsCode/check_part_index.py` both have `--check`
+modes wired into CI (TODO #190, #231).  `spec/generate_spec.py` has neither a `--check`
+mode nor any CI job — nothing checks that the generated JSON is current, and nothing
+checks that a `status=` in it agrees with SECURITY.md's table or with the proofs.  aPAKE
+having no spec row at all (the string "PAKE" appears once in the whole JSON, as
+`PEM_PAKE_RECORD`) is the same gap showing up as missing coverage rather than a wrong
+label.  A `--check` mode plus a cross-reference assertion against SECURITY.md's table
+would have caught all three findings above.  This is scope beyond the two rows named in
+the title — split it into its own item if it makes this one too large.
+
+---
+
+**RESOLUTION (v3.0.10).**
+
+**Part 2 first, since it gated the rest.**  §11.7 contained two sentences, two paragraphs
+apart, asserting opposite things about HSKE-NL-A1/A2.  The TODO #210 correction ("carry
+non-linearity breaks the affine identity the argument depends on") is right; the summary
+paragraph ("the underlying structure remains affine") was wrong and has been withdrawn.
+Settled by measurement at n=256, not by reading:
+
+  * *Affinity.*  Classical `fscx_revolve` satisfies the GF(2)-affinity identity
+    f(x)^f(y)^f(z)^f(x^y^z)=0 in both P and K in 200/200 random trials.  The A1 keystream
+    in `base`, and the A2 ciphertext in P, violate it in 200/200.
+  * *What the classical attack does.*  One KPT pair gives c_K = T_i*K = E ^ M^i*P, and c_K
+    then decrypts *every other* message under that key — recovering an unseen P2 from one
+    pair succeeds end to end.  That step needs affinity in P, which the NL variants lack.
+  * *What one pair buys against the NL variants.*  Against A1: that block's keystream and
+    nothing else — applying it to the neighbouring counter fails, and reaching any other
+    block means inverting NL-FSCX v1 to recover `base`, where both arguments (seed
+    ROL(base, n/8) and parameter base^i) depend on the unknown.  This is counter mode
+    behaving as counter mode, the same as AES-CTR.  Against A2: there is no keystream at
+    all — A2 is a keyed bijection and E^P is not constant across messages.
+
+So `spec/` was right and SECURITY.md:18 was wrong, having merged the NL variants into
+classical HSKE's genuinely fatal row.  The two §11.7 known-plaintext rows now carry the
+n/2 key-search bound instead of "**None** (keystream recoverable)", and a "Correction
+(TODO #237)" note records all three measurements.  This upgrades nothing about the
+underlying assumption, which is still the *conjecture* that NL-FSCX v1 is a PRF.
+
+**The A2 caveats are real and are now stated where a reader will meet them.**  A2 is
+deterministic (not IND-CPA multi-message without a caller-supplied differentiator), and
+its degenerate-key class delta(K) in {0, 2^(n-1)} collapses the permutation to affine.
+Verified that the class is genuinely affine (0/200 violations at B=2^129, versus 200/200
+at a generic key) and that all three CLIs already refuse it via `nl_v2_key_is_valid`.
+
+**`hske-duplex` — the same-family check Part 2 asked for, and a third wrong label.**  It
+was `status="production"` in `spec/` while SecurityProofs-6.md §11.9 calls the single-pass
+sponge "open research" pending the v2 differential/linear characterisation of TODO #99,
+and while `herradura.h`'s own banner reads "RESEARCH CONSTRUCTION — not for production use
+without further cryptanalysis".  Reclassified to `research`, with a SECURITY.md row
+pointing users at `enc --aead` instead.
+
+**Part 1 — OPRF.**  Reclassified `production` -> `pedagogical` with
+`classical_security_bits="~36.5 (n=256)"`, matching its `gf_pow` neighbours.  A new §6 in
+`SecurityProofsCode/hkex_gf_pohlig_hellman.py` recovers the server key from one observed
+(alpha, beta) pair end to end at n=32 and n=64 and then reproduces F(k,.) offline on fresh
+inputs.  One nuance the entry above did not anticipate: the base is the client's blinded
+alpha, which is primitive with density phi(2^n-1)/(2^n-1) = 0.4992 — a coin flip, not the
+"usually primitive" the demo in this entry suggested.  When alpha is not primitive, k
+returns modulo ord(alpha) and offline evaluation is partial (measured 73/200 at n=64, the
+index-3 subgroup showing through).  That is not a mitigation: ord(alpha) is publicly
+computable, so an attacker attacks one of the ~50% of transcripts whose alpha is primitive
+and recovers k in full.  Obliviousness is untouched throughout — what falls is k's
+secrecy, and with it the aPAKE's reason for storing F(oprf_key, password) rather than a
+password hash.
+
+SECURITY.md gained rows for OPRF and aPAKE, both demo-only/pedagogical.  aPAKE got no
+`spec/` row: its protocol array is keyed on `--algo` tags and aPAKE has none (it ships as
+`pake-register`/`pake-demo`), so filing it is a schema question, deferred to #238 Part C.
+
+**Part 3 — split out as TODO #238**, as this entry allowed: `--check` mode and CI for
+`generate_spec.py`, a `status=` cross-reference against SECURITY.md, and the aPAKE
+coverage gap.
+
+**Side effect.**  The §11.7 correction pushed SecurityProofs-4.md from 659 to 684 math
+expressions, so every copy of the seven-part index (SecurityProofs.md, CLAUDE.md,
+KATEX_RULES.md) was updated; `check_part_index.py` and `validate_katex.js` both pass
+(684 OK, 0 FAIL).  684 is under the ~700 warning threshold, but the margin to the ~750
+cascade-failure limit is now 66 expressions — Part 4 is the next candidate for a re-split.
+
+Status: **DONE v3.0.10** — adjudicated §11.7's internal contradiction by measurement (the NL variants do *not* inherit classical HSKE's 1-pair break), corrected SECURITY.md accordingly, and reclassified `oprf` and `hske-duplex` in `spec/`.
+
+### #236: The C CLI's Stern round count is a compile-time wire parameter, and CI works around it by downgrading credentials to 32 rounds
+
+Found while checking whether HPKS-Stern-F's `SDF_ROUNDS=32 -> 219` upgrade path
+(SECURITY.md, spec `hpks-stern` notes) is actually reachable in each CLI.  In Python and
+Go it is.  In C it is not, and the workaround is already in the test suite.
+
+**The mechanism.**  The PEM *already carries the round count* — `stern_sig_load`
+(HerraduraCli/herradura_cli.c:1835) reads it as item[1] and then rejects it:
+
+    if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
+
+`stern_sig_load_label` (line 4102) does the same for HCRED credentials.  The `SternSig`
+struct (herradura.h:1889) is fixed-size — `BitArray c0[SDF_ROUNDS]`, and so on — as are
+`STERN_COMMITS_BYTES` / `STERN_CHAL_BYTES` / `STERN_RESP_BYTES` (herradura_cli.c:1776-1778).
+Go by contrast decodes `rounds := bytesToInt(ints[1])` (herradura_cli.go:2050) and
+allocates from it, and Python does the same.
+
+Measured, C CLI built both ways against Python-produced signatures:
+
+    cli32  verifying python sig r=32:  Signature OK
+    cli32  verifying python sig r=219: verify: cannot load Stern signature
+    cli219 verifying python sig r=32:  verify: cannot load Stern signature
+    cli219 verifying python sig r=219: Signature OK
+
+So the two builds are mutually unreadable, in both directions.
+
+**This is not hypothetical — CI is already accommodating it.**
+`CliTest/test_cred_interop.sh:120-122` and `:146-148` issue HCRED credentials for the C
+CLI to consume with an explicit `--rounds 32`, commented "must match C's SDF_ROUNDS=32
+for interop".  Python's and Go's own default is `_HCRED_SIGN_ROUNDS = 219` /
+`hcredSignRounds = 219`, chosen for 128-bit soundness.  The consequence: **cross-language
+HCRED interop is only ever exercised at 32 rounds — (2/3)^32 rather than the (2/3)^219
+the issuers otherwise use** — and any real deployment with a C consumer forces every
+issuer down to the same demo soundness.
+
+**Work.**  Make the C reader length-dynamic, matching Go: give `SternSig` a `rounds`
+field and heap-allocate its arrays, derive the three `STERN_*_BYTES` sizes from the
+decoded round count rather than the macro, and bound the decoded value (Go's decoder and
+the existing ZKP-NL unpack at herradura_cli.c:327 both range-check; do the same).
+`SDF_ROUNDS` remains the *signing* default.  About 45 references across
+`herradura.h` (25) and `herradura_cli.c` (20).
+
+**Explicitly non-breaking, and this is the point of doing it this way.**  The wire format
+does not change — the round count is already on the wire.  A dynamic reader is purely
+additive: it accepts everything the current build accepts, plus round counts it currently
+rejects.  So this is a PATCH bump with no `MIGRATING.md` entry.  *Changing the signing
+default* from 32 to 219 would be the breaking change (old readers reject new signatures),
+and is deliberately not part of this item — do the reader first so the default can move
+later without a flag day.
+
+**Acceptance.**  Drop the two `--rounds 32` workarounds from `test_cred_interop.sh` and
+let it run at the issuers' own 219-round default; add a C-side round-trip at a round count
+other than `SDF_ROUNDS` to whichever of `test_c_*.sh` covers Stern-F.  Both must pass
+against a stock `./build_c.sh` binary.
+
+**Not in scope.**  The round count and the instance hardness are independent axes.  219
+rounds over the deployed `N=256` instance is worth ~30-40 bits either way
+(SecurityProofs-4.md:632), so this item does not change any `demo-only` status; it only
+makes the soundness axis reachable from C.  See #235's out-of-scope note for the
+parameter side.
+
+---
+
+**RESOLUTION (v3.1.0).**
+
+**The reader.**  `SternSig` now carries its own `rounds` and heap-allocates its six
+arrays, via a `stern_sig_alloc`/`stern_sig_free` pair mirroring the `stern_ring_alloc`
+pair that was already in the file.  `hpks_stern_f_sign` and `hpks_stern_f_verify` both
+follow `sig->rounds`; the three `STERN_*_BYTES` macros became `STERN_*_BYTES_R(r)`
+functions of the decoded count.  `SDF_ROUNDS` no longer appears anywhere in the Stern
+data path -- only as the default a caller hands to `stern_sig_alloc`.
+
+Decoded round counts go through one `stern_decode_rounds` helper that bounds them to
+`[1, SDF_MAX_ROUNDS]` (4096, new) and rejects a length field over 4 bytes, and each of the
+three blobs is checked against the size the same PEM's round count implies rather than
+being silently truncated to fit.
+
+**One thing the entry did not anticipate: `der_i_byte` takes a `uint8_t`.**  The round
+count was encoded through it, so anything above 255 would have silently truncated.  It now
+goes through the existing `der_i_uint`, which emits the same minimal DER form Python's
+`der_int(rounds)` does.  Verified byte-identical at the default: a C and a Python
+signature over the same message both begin `3082141a 02020100 02012002`, where `02 01 20`
+is INTEGER 32 -- so the "wire format does not change" claim holds literally, not just
+structurally.
+
+**The duplicated codec.**  `stern_sig_write_label`/`stern_sig_load_label` (HCRED
+credentials) were verbatim copies of `stern_sig_pack_and_write`/`stern_sig_load`, which is
+why the defect existed in two places.  Both pairs now delegate to one label-generic
+implementation: 98 lines removed, 18 added.
+
+**Beyond the entry's scope, and agreed before starting: `sign --rounds`.**  The acceptance
+criterion asks for a C-side round-trip at a round count other than `SDF_ROUNDS` against a
+stock binary, which a reader-only change cannot deliver -- C had no way to *produce* a
+signature at any other count.  `sign --algo hpks-stern --rounds N` and `cred-issue
+--rounds N` were therefore added to the C CLI, matching Go and Python.  That is a new CLI
+flag, so this is a **MINOR** bump (v3.1.0) rather than the PATCH the entry assumed.
+`SDF_ROUNDS` remains the signing default when `--rounds` is absent, so nothing about what
+a stock C build emits by default has changed -- the deliberately-excluded "change the
+signing default" step is still not taken.
+
+**Measured on a stock `./build_c.sh` (SDF_ROUNDS=32), replacing the entry's table:**
+
+    C sign r=32/64/219/1000  -> C verify:   Signature OK  (all four)
+    C sign default           -> C verify:   Signature OK
+    py sign r=32             -> C verify:   Signature OK
+    py sign r=219            -> C verify:   Signature OK   <- was "cannot load"
+    C sign r=219             -> py verify:  Signature OK
+
+Rejection paths intact: a wrong message still fails at every round count, `--rounds`
+outside `[1, 4096]` is refused before any allocation, and a PEM hand-edited to claim 32767
+rounds is refused by the reader.  The C suite passes under ASan+UBSan with no `[FAIL]`.
+
+**Acceptance.**  `test_cred_interop.sh`'s two `--rounds 32` workarounds are gone; the
+Python and Go issuers now run at their own 219-round defaults, so cross-language HCRED
+interop is finally exercised at `(2/3)^219` rather than `(2/3)^32`.  Cost of that is
+~1.4 s per issuance (0.9 s -> 2.3 s in Python), which is noise next to the ZKBoo proofs
+the same script already runs.  `test_c_sign.sh` gained seven cases: round-trips at 64 and
+219, wrong-message rejection at each, a check that the two differ, `--rounds` bounds
+rejection, and the tampered-round-count PEM.  15 PASS / 0 FAIL.
+
+**A C API break that needed documenting.**  `SternSig sig;` in external code still
+*compiles* -- the members are pointers now, not arrays -- and then writes through
+uninitialized pointers, with no diagnostic.  `herradura.h` is a documented header-only
+library, and `docs/TUTORIAL.md` showed exactly that pattern, so `MIGRATING.md` §6 was
+added alongside the TUTORIAL fix.  No PEM, wire-format or CLI break accompanies it.
+
+**Not done, as scoped.**  The signing default stays at 32, `N=256` is untouched, and
+`hpks-stern`/`hpke-stern` remain `demo-only`: 219 rounds over a ~30-40 bit instance is
+still ~30-40 bits.  This item only made the soundness axis reachable from C.
+
+Status: **DONE v3.1.0** — `SternSig` carries its own round count and the C reader takes it from the PEM; added `sign`/`cred-issue --rounds` for parity with Go and Python, and dropped CI's 32-round HCRED workaround.
+
+### #239: `ring_sig_load` sizes its allocations from two unbounded PEM fields
+
+Found while closing TODO #236, which bounded exactly this class of value for
+`stern_sig_load` — the ring-signature reader next to it was never given the same
+treatment.  `ring_sig_load` (HerraduraCli/herradura_cli.c:2024) is *not* affected by
+#236's actual defect: it already decodes the round count and allocates from it, rather
+than comparing it against `SDF_ROUNDS`.  The problem is that it trusts what it decodes.
+
+**The mechanism.**  Both `k` and `rounds` come straight off the wire with no range check:
+
+    int k      = (int)parse_be_uint(pk.vals[0], pk.vlens[0]);
+    int rounds = (int)parse_be_uint(pk.vals[1], pk.vlens[1]);
+    size_t entry = 5 * (size_t)KEYBYTES + 1;          /* 161 */
+    size_t blen  = (size_t)k * rounds * entry;
+    uint8_t *blob = (uint8_t *)calloc(blen ? blen : 1, 1);
+
+`ring_load_members` bounds the *caller's* member count at `RING_MAX_K` (64), and the
+signing path rejects `k >= RING_MAX_K` at line 1964, but neither applies here: the
+signature's own `k` is compared against the caller's only *after* `ring_sig_load` has
+returned (line 3388), so the allocation above happens first.
+
+**Confirmed reachable, under `herradura_cli_asan`** with a hand-crafted
+`HERRADURA HPKS-RING SIGNATURE` PEM and two genuine member public keys:
+
+    k=2           rounds=2^30   -> allocator is trying to allocate 0x5080000000 bytes
+    k=2^30        rounds=2^30   -> requested allocation size 0x1000000000000000 exceeds
+                                   maximum supported size of 0x10000000000
+    k=2^31-1      rounds=2                     -> same class
+
+In a normal build `calloc` returns NULL and `die("out of memory")` fires, so **what is
+demonstrated today is a denial of service / abort on a malformed signature, not memory
+corruption.**  A verifier is exactly the component that handles attacker-supplied input,
+so an unbounded allocation driven by two of its fields is still worth closing.
+
+**Two latent defects behind it, neither currently reachable past the failing calloc:**
+
+1. `blen = (size_t)k * rounds * entry` can wrap.  `k` and `rounds` are each up to
+   `2^31-1`, so the product reaches ~7.4e20 against a `2^64` ~ 1.8e19 modulus.  A wrapped
+   `blen` would allocate a small buffer while the `k * rounds` loop below it — whose bound
+   does not depend on `blen` — kept reading, which is an out-of-bounds read rather than an
+   abort.  A bounded search for a `(k, rounds)` pair that lands `blen` small enough to
+   demonstrate this did not find one within the window tried; nothing rules it out, and
+   the fix (bound the inputs) removes the question either way.
+2. `stern_ring_alloc` (herradura.h:2078) computes `int sz = k * rounds` in `int`.  At
+   `k = rounds = 2^30` that is signed overflow — undefined behaviour — before the result
+   is passed to `malloc`.  Unreachable today only because the `calloc` above aborts first.
+
+**Also missing: a declared-vs-actual length check.**  `pk.vlens[3]` is the real blob
+length; when it is shorter than `blen` the reader right-aligns and zero-pads rather than
+rejecting, so a signature whose declared `k`/`rounds` disagree with its payload is
+silently treated as mostly zeros.  TODO #236 added exactly this check to the Stern-F
+reader (`if (pk.vlens[2] > cm_len || ...) return -1`); the ring reader should get its
+counterpart.
+
+**Work.**  Range-check `k` and `rounds` immediately after decoding — `k` against
+`RING_MAX_K` (the same bound the signing path and `ring_load_members` already use) and
+`rounds` against `SDF_MAX_ROUNDS` (added in #236) — before either is used in an arithmetic
+expression.  Reject rather than clamp: a signature declaring more members than
+`RING_MAX_K` is malformed, not merely large.  Then add the `pk.vlens[3]` vs `blen`
+agreement check, and make `stern_ring_alloc` compute its size in `size_t`.  Check the
+other `parse_be_uint` readers in the same file for the same shape while there — this item
+is about the pattern, not only this one call site.
+
+**Not in scope.**  Raising or removing `RING_MAX_K`, and the ring signature's soundness
+or parameters.  `hpks-ring` remains `demo-only` in `spec/`, inheriting `hpks-stern`'s
+round-count caveat; this is an input-validation fix, not a security-level change.
+
+Status: **DONE v3.1.1** — `ring_sig_load` now range-checks k against RING_MAX_K and
+rounds against SDF_MAX_ROUNDS before either is used in an arithmetic expression, and
+rejects a payload longer than (k, rounds) describe; `stern_ring_alloc` computes its
+size in `size_t`.  The sweep of the other `parse_be_uint` readers the item asked for
+found a strictly worse instance of the same shape: the HPKE-Stern-KEM private key's
+declared QC-MDPC row weight `d` sizes `der_right_align`'s writes into `QCMDPC_D*2`-byte
+**stack** buffers at three call sites (`pkey`, `kex --our-kem`, `dec`), so `d = 16` was
+already a 32-byte stack-buffer-overflow WRITE under ASan and `d = 2^31-1` a 4 GB one —
+memory corruption, not the abort #239 was filed for.  Also bounded: the XMSS height /
+signature depth (which size `1 << h` leaves, undefined for h >= 32) and the
+HSKE-NL-V2-Duplex declared ciphertext length.  25 assertions in
+`CliTest/test_weak_key_rejection.sh`, which the `sanitizers` CI job now runs too.
+
+### #240: the Python, Go and Java CLIs never got #239's bounds — same fields, uncaught crash instead of a clean rejection
+
+TODO #239 range-checked every PEM field that sizes an allocation in
+`HerraduraCli/herradura_cli.c`.  Its Work section scoped itself to that one file, so the
+three sibling CLIs still read the same fields with no bound at all.  They cannot corrupt
+memory — that part of #239 was C-specific — but they turn a malformed file into an
+**unhandled runtime crash with a stack trace**, where C now prints one line and exits 1.
+A verifier is the component that handles attacker-supplied input; three of the four
+implementations of it currently abort on a 4-byte edit to a PEM.
+
+**Measured, against the same hand-crafted PEMs #239 was closed with** (each run under
+`ulimit -v 2000000` so the host survives):
+
+| field | C (post-#239) | Python | Go | Java |
+|---|---|---|---|---|
+| ring `rounds = 2^30` | `declares 1073741824 rounds (expected 1..4096)`, exit 1 | `MemoryError` traceback out of `herradura.py:1181` | `fatal error: out of memory` — `cannot allocate 345744867328-byte block`, goroutine dump | n/a — the Java CLI has no `hpks-ring` |
+| KEM row weight `d = 2^31-1` | `declares row weight 2147483647 (expected 1..15)`, exit 1 | `MemoryError` traceback out of `herradura.py:996` | `fatal error: out of memory` — `cannot allocate 4294967296-byte block` | `error: -2` |
+
+Java's `error: -2` is its own bug and the most interesting row in the table: `d * 2` at
+`d = 2^31-1` overflows Java's `int` to `-2`, so what surfaces is a
+`NegativeArraySizeException` whose message is the wrapped product.  It does not crash the
+JVM, but the diagnostic is meaningless and the arithmetic is wrong for the same reason
+`stern_ring_alloc`'s `int sz = k * rounds` was.
+
+**The readers to fix.**  These are the counterparts of the five sites #239 touched:
+
+- `HerraduraCli/herradura.py:1173` `_unpack_ring_sig` — `k`, `rounds`, and the
+  `blob_int.to_bytes(k * rounds * entry, 'big')` behind them.
+- `HerraduraCli/herradura.py:987` `_decode_kem_privkey` — `d`, at `s0_int.to_bytes(d * 2)`.
+- `HerraduraCli/herradura.py:460` `_decode_xmss_privkey` and `:508` `_unpack_xmss_sig` —
+  the height and the signature depth.
+- `HerraduraCli/herradura_cli.go:824` `decodeRingSig` and `:1929` `decodeKemPriv`, plus the
+  Go XMSS and duplex readers.
+- `bindings/java/herradurakex/HerraduraCli.java` — the KEM row weight (the `int` overflow
+  above) and the XMSS height/depth; there is no ring reader to fix.
+- The HSKE-NL-V2-Duplex declared ciphertext length in all three.
+
+**What "fix" means here.**  Not "stop the crash" — reject with the same message shape and
+the same exit status C now uses, so the four CLIs agree on what a malformed artifact is.
+The bounds are already decided and already have names: `RING_MAX_K`, `SDF_MAX_ROUNDS`,
+`QCMDPC_D`, `XMSS_MAX_H`.  Divergence is the real defect: today a PEM that C refuses is one
+the other three attempt, which is a wire-format disagreement dressed up as an
+implementation detail.
+
+**Test coverage.**  `CliTest/test_weak_key_rejection.sh` is C-only by construction — it
+hardcodes `$CLI` as `herradura_cli`.  Its TODO #239 section is already written against
+PEM-item indices rather than anything C-specific, so the natural move is to parameterise
+it over the CLIs the way `test_cross_lang_matrix.sh` does, and let the coverage guard in
+`ci.yml` reclassify it.  Decide that first: the alternative — per-language copies — would
+be the fourth copy of the same `craft_item` helper.
+
+**Not in scope.**  Adding `hpks-ring` to the Java CLI (it is a genuine gap, but a feature,
+not a validation fix), and re-auditing the C reader — #239 closed that.
+
+Status: **DONE v3.1.2** — all three CLIs now reject the same fields at the same bounds
+(`RING_MAX_K`, `SDF_MAX_ROUNDS`, `QCMDPC_D`, the XMSS height cap) with the same message
+shape and exit status as C.  Two things the item did not anticipate.  First, #236's
+`SDF_MAX_ROUNDS` was as C-local as #239's bounds were, so Python/Go/Java had no round-count
+bound at all; Go gains `SdfMaxRounds` in the `herradura` package, Java
+`Codec.SDF_MAX_ROUNDS`, Python `_SDF_MAX_ROUNDS`.  Second, the divergence ran both ways:
+the new matrix found that **C** ignored the key width the wire declares in Stern and ring
+signatures — sizing every blob from its own `KEYBITS` — so a signature the other three
+refuse was one C verified.  `stern_require_n` closes that, following #227's
+`rnl_require_n`.  On the test-coverage question the item asked to settle first: the case
+table moved to `CliTest/lib_malformed.sh` (the `lib_dfr.sh`/`lib_build.sh` precedent; the
+coverage guard already skips `lib_*.sh`), shared by `test_weak_key_rejection.sh` (C only,
+so it keeps its place in the `sanitizers` job) and the new 4-way
+`test_malformed_pem_matrix.sh` under `cross-lang-compat`.  108 assertions, 0 fail.
+Adding `hpks-ring` to the Java CLI stays out of scope and remains a gap.
+
+### #238: `spec/generate_spec.py` has no `--check` mode and no CI job, and its protocol list cannot express aPAKE
+
+Split out of TODO #237 Part 3, which found three wrong `status=` labels in `spec/`
+(`oprf`, `hske-duplex`, and the HSKE-NL rows) and identified the same root cause behind
+all of them: nothing checks the generated spec.
+
+**Part A — no `--check` mode, no CI job.**  `KAT/generate_kat.py` and
+`SecurityProofsCode/check_part_index.py` both have `--check` modes wired into CI (TODO
+#190, #231), and the latter caught real drift during #237 — the math-expression count for
+SecurityProofs-4.md moved 659 -> 684 and every copy of the part index had to be updated.
+`spec/generate_spec.py` has neither.  Nothing verifies that
+`spec/herradura-protocol-spec.json` is current with respect to its generator, so a change
+to the generator that is never re-run ships a stale JSON silently.  Add `--check` and a CI
+step, following the shape `check_part_index.py` already uses.
+
+**Part B — cross-reference `status=` against SECURITY.md.**  All three #237 findings were
+disagreements *between documents* that no tool could see: `spec/` said `production` where
+SECURITY.md said "not suitable for production" (HSKE-NL-A1/A2), where the proofs said
+"open research" (`hske-duplex`), and where no analysis existed at all (`oprf`).  A check
+that every `--algo` tag in `spec/` has a row in SECURITY.md's protocol table, and that the
+two classifications are consistent, would have caught all three.  The mapping between
+`spec/`'s six-value status enum (`production`/`demo-only`/`pedagogical`/`deprecated`/
+`broken`/`research`) and SECURITY.md's prose status column has to be defined first; that
+definition is most of the work in this part.
+
+**Part C — the protocol list cannot express aPAKE.**  `spec/`'s protocol array is keyed on
+`--algo` tags.  aPAKE has none: it ships as the standalone subcommands `pake-register` and
+`pake-demo`, so there is no key under which to file it, and the string "PAKE" appears once
+in the whole JSON as `PEM_PAKE_RECORD`.  #237 gave it a SECURITY.md row (it inherits the
+OPRF's ~2^36.5 server-key recovery, which voids the offline-dictionary resistance that is
+its entire purpose) but deliberately did not invent a spec row, because doing so is a
+schema question rather than a labelling one: either widen the protocol array's key beyond
+`--algo` tags, or add a separate `subcommand_protocols` section.  Decide which, then file
+aPAKE and audit whether anything else in the CLI is invisible to `spec/` for the same
+reason.
+
+Status: **DONE v3.2.0** — with one correction to the item's own premise: `--check` already
+existed and did exactly what Part A described; what was missing was only the CI step, which
+is why nothing ever ran it.
+
+**Part A.** CI step added to `native-python` running both gates.  `--check` also validates
+the instance against its own schema now (nothing ever had), and generation fails if any tag
+the CLIs accept has no classification — the check that caught `hybrid-rnl-stern`, a shipped
+`kex --algo` value in all three CLIs with no protocol entry at all.
+
+**Part B.** `spec/check_security_md.py`.  The prose->enum mapping is curated as the item
+predicted, but self-invalidating: checks (1) and (2) fail if either document gains, loses or
+renames a row.  It found `hpks-nl`/`hpke-nl` on its first run.  Two more wrong labels came
+out of building it — `hpks-t` marked `production` while the `hpks` it is a threshold variant
+of is `pedagogical` over the same GF(2^n)* group, and `hpks-zkp-nl` marked `production` for a
+keygen whose only consumers are demo-only — bringing #237's three to five.  SECURITY.md's
+table covered 14 of 27 protocols; the twelve missing rows were written so the check is a real
+gate rather than an allow-list.
+
+**Part C.** Widened the key rather than adding `subcommand_protocols`: `protocols` is keyed
+on a stable protocol id and every entry carries `cli_binding`, so aPAKE is a normal entry
+reached by `pake-register`/`pake-demo`.  A parallel section would have let a protocol fall
+between the two halves, which is the failure mode being fixed.  The audit it asked for found
+`rand`, `fpe` and `twk` invisible for a worse reason than aPAKE's — no analysis exists for
+them anywhere in the repository — recorded in `unfiled_cli_surface` and filed as TODO #241.
+
+**Unplanned but mandatory.** `cli_support` was curated and wrong in two places (`hpks-xmss`
+as Python-only, `hcred` as missing from Go).  It and `cross_implementation_gaps` are now
+derived from each CLI's dispatch source, validated against an empirical probe of all 26 tags
+against all three CLIs.
+

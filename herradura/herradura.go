@@ -1298,6 +1298,12 @@ const (
 	SdfT                = 256 / 16 // 16 error weight
 	SdfRounds           = 32       // ZKP rounds (soundness (2/3)^32; demo only)
 	SdfProductionRounds = 219      // rounds required for 128-bit soundness
+	// SdfMaxRounds bounds a round count decoded from a PEM, mirroring
+	// herradura.h's SDF_MAX_ROUNDS (TODO #236, #240).  A hostile signature must
+	// not be able to name 2^31 rounds and have the reader allocate for it.
+	// Generous next to the 219 needed for 128-bit soundness, and it bounds the
+	// largest allocation at a few MiB.
+	SdfMaxRounds = 4096
 )
 
 // SternHash computes the Fiat-Shamir chain hash over items using NL-FSCX v1,

@@ -107,6 +107,31 @@ for v in 0 1; do
     fi
 done
 
+# ═════════════════════════════════════════════════════════════════════════════
+# TODO #239 / #240 — PEM length/count fields that size an allocation must be
+# bounded before they are used.  The case table is shared with
+# test_malformed_pem_matrix.sh, which runs the same cases against all four CLIs;
+# here it runs against the C CLI alone, which is what puts it in the sanitizers
+# job as well.  That matters: #239's QC-MDPC row weight was a stack-buffer
+# overflow, and a plain build's exit status does not report one.
+# ═════════════════════════════════════════════════════════════════════════════
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/CliTest/lib_malformed.sh"
+HKX_MAL_ROOT="$ROOT"
+HKX_MAL_DIR="$TMP"
+# No `ulimit -v` here.  The sanitizers job runs this script against
+# herradura_cli_asan, and ASan reserves a very large shadow-memory region up
+# front: an address-space cap tight enough to be useful stops the binary from
+# starting at all.  A CLI that never starts exits non-zero, which a rejection
+# test would score as a PASS — the same trap the JVM sprang in the matrix
+# script.  The per-section controls in lib_malformed.sh catch it either way.
+HKX_MAL_VLIMIT=""
+export HKX_MAL_VLIMIT
+
+hkx_mal_fixtures "$TMP"
+hkx_mal_suite c "$CLI"
+
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"
 [ "$FAIL" -eq 0 ]

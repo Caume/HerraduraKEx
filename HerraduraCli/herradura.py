@@ -201,6 +201,54 @@ def _read_pem_ints(path):
 
 
 # ---------------------------------------------------------------------------
+# TODO #240: bound the PEM fields that size an allocation.
+#
+# TODO #239 did this for the C CLI and stopped there, so every reader below was
+# still multiplying counts straight off the wire into a to_bytes() length.  A
+# four-byte edit to a signature turned into a MemoryError traceback rather than
+# a diagnostic, and — because these are the same wire fields the C reader now
+# refuses — into a disagreement between the two CLIs about what a valid
+# artifact is.  The bounds are C's: RING_MAX_K, SDF_MAX_ROUNDS, QCMDPC_D and
+# the XMSS height cap genpkey already enforced.
+#
+# Reject rather than clamp, and reject inside the reader: a check applied after
+# the reader returns (hpks-ring verify's `sig_n != n` and `k != len(ring_keys)`
+# are both of that kind) runs after the allocation it was meant to guard.
+# ---------------------------------------------------------------------------
+
+_RING_MAX_K     = 64      # herradura_cli.c RING_MAX_K
+_SDF_MAX_ROUNDS = 4096    # herradura.h SDF_MAX_ROUNDS (TODO #236)
+_XMSS_MAX_H     = 20      # herradura_cli.c XMSS_MAX_H; genpkey's --xmss-height cap
+_STERN_MAX_N    = KEYBITS # no implementation here emits a wider Stern instance
+
+
+def _bounded(value, lo, hi, what, where):
+    """Return int(value), or exit(1) if it falls outside [lo, hi].
+
+    `what` names the field as the wire calls it; `where` is the subcommand, so
+    the message shape matches the C CLI's.
+    """
+    v = int(value)
+    if v < lo or v > hi:
+        sys.exit(f"{where}: {what} is {v} (expected {lo}..{hi})")
+    return v
+
+
+def _int_nbytes(v) -> int:
+    """Byte width of a parsed DER INTEGER's value, as it will be re-serialised."""
+    v = int(v)
+    return (v.bit_length() + 7) // 8
+
+
+def _bounded_n(value, where, what='n'):
+    """Bound a wire-supplied bit width: a multiple of 8 no wider than the suite's."""
+    v = _bounded(value, 8, _STERN_MAX_N, what, where)
+    if v % 8:
+        sys.exit(f"{where}: {what} is {v} (expected a multiple of 8)")
+    return v
+
+
+# ---------------------------------------------------------------------------
 # TODO #166: optional passphrase-based encryption for exported private keys
 # ---------------------------------------------------------------------------
 
@@ -463,7 +511,8 @@ def _decode_xmss_privkey(path):
     ints = der_parse_seq(der)
     seed_int, h_int, next_idx, blob_int = ints
     master_seed = seed_int.to_bytes(32, 'big')
-    h = int(h_int)
+    # h sizes `1 << h` leaves and the 32-bytes-per-leaf blob behind them.
+    h = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS height', 'pkey')
     num_leaves = 1 << h
     blob = blob_int.to_bytes(32 * num_leaves, 'big')
     leaf_hashes = [blob[i*32:(i+1)*32] for i in range(num_leaves)]
@@ -510,8 +559,8 @@ def _unpack_xmss_sig(path: str):
     label, der = _read_pem(path)
     leaf_idx, sig_int, path_int, h_int, n_int = der_parse_seq(der)
     leaf_idx  = int(leaf_idx)
-    n         = int(n_int)
-    h         = int(h_int)
+    n         = _bounded_n(n_int, 'verify')
+    h         = _bounded(h_int, 1, _XMSS_MAX_H, 'XMSS signature depth', 'verify')
     nbytes    = n // 8
     sig_blob  = sig_int.to_bytes(_WOTS_L * nbytes, 'big')
     path_blob = path_int.to_bytes(h * 32, 'big')
@@ -581,7 +630,9 @@ def _decode_wots_pubkey(path):
     if label != _PUB_ALGOS['hpks-wots']:
         raise ValueError(f"Expected HPKS-WOTS public key, got {label!r}")
     blob_int, ell = der_parse_seq(der)
-    ell = int(ell)
+    # The shipped parameters fix the chain count, so anything else is malformed
+    # rather than merely large.
+    ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
     blob = blob_int.to_bytes(ell * nbytes, 'big')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
@@ -603,7 +654,9 @@ def _unpack_wots_sig(path: str):
     if label != _LABEL_WOTS_SIG:
         raise ValueError(f"Expected HPKS-WOTS signature, got {label!r}")
     blob_int, ell = der_parse_seq(der)
-    ell = int(ell)
+    # The shipped parameters fix the chain count, so anything else is malformed
+    # rather than merely large.
+    ell = _bounded(ell, _WOTS_L, _WOTS_L, 'WOTS chain count', 'verify')
     nbytes = KEYBITS // 8
     blob = blob_int.to_bytes(ell * nbytes, 'big')
     return [BitArray(KEYBITS, int.from_bytes(blob[i*nbytes:(i+1)*nbytes], 'big'))
@@ -911,12 +964,21 @@ def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits):
 
 def _decode_duplex_ct(path):
     """Return (nonce_int, ct_bytes, tag_int, nbits)."""
-    label, ints = _read_pem_ints(path)
+    label, der = _read_pem(path)
+    ints = der_parse_seq(der)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
     if ints[0] != 3:
         raise ValueError(f"Expected V2-Duplex ciphertext (format 3), got {ints[0]}")
     _, nonce_int, ct_len, ct_int, tag_int, nbits = ints
+    # The declared length sizes the buffer.  It cannot exceed the DER actually
+    # read, and the payload cannot be longer than the length claiming to
+    # describe it; shorter is legal (DER strips leading zero bytes) and is
+    # zero-padded by to_bytes.
+    ct_len = _bounded(ct_len, 0, len(der), 'declared ciphertext length', 'dec')
+    if _int_nbytes(ct_int) > ct_len:
+        sys.exit(f"dec: V2-Duplex ciphertext declares {ct_len} bytes but "
+                 f"carries {_int_nbytes(ct_int)}")
     ct_bytes = ct_int.to_bytes(ct_len, 'big') if ct_len else b''
     return nonce_int, ct_bytes, tag_int, nbits
 
@@ -990,6 +1052,10 @@ def _decode_kem_privkey(path):
     if label != _LABEL_KEM_PRIV:
         raise ValueError(f"Expected HPKE-Stern-KEM private key, got {label!r}")
     h0_int, h1_int, s0_int, s1_int, r, d = ints
+    # r and d each size a to_bytes() below.  d additionally indexes the support
+    # arrays, and in the C reader it sized a fixed stack buffer (TODO #239).
+    r  = _bounded(r, 1, _QCMDPC_R, 'QC-MDPC block length r', 'pkey')
+    d  = _bounded(d, 1, _QCMDPC_D, 'QC-MDPC row weight d',   'pkey')
     rb = (r + 7) // 8
     h0 = int.from_bytes(h0_int.to_bytes(rb, 'big'), 'little')
     h1 = int.from_bytes(h1_int.to_bytes(rb, 'big'), 'little')
@@ -1107,6 +1173,8 @@ def _unpack_stern_sig(path):
     if label != _LABEL_SIG:
         raise ValueError(f"Expected SIGNATURE PEM, got {label!r}")
     n, rounds, c_int, ch_int, r_int = ints
+    n      = _bounded_n(n, 'verify')
+    rounds = _bounded(rounds, 1, _SDF_MAX_ROUNDS, 'round count', 'verify')
     nbytes = n // 8
 
     commits_ba = c_int.to_bytes(3 * rounds * nbytes, 'big')
@@ -1175,10 +1243,20 @@ def _unpack_ring_sig(path):
     label, ints = _read_pem_ints(path)
     if label != _LABEL_RING_SIG:
         raise ValueError(f"Expected HPKS-RING SIGNATURE PEM, got {label!r}")
-    k, rounds, n, blob_int = (int(ints[0]), int(ints[1]), int(ints[2]), ints[3])
+    # Bounded before use: k, rounds and n each multiply into the blob length
+    # below, and `verify`'s own k/n cross-checks only run after this returns.
+    k      = _bounded(ints[0], 2, _RING_MAX_K,     'ring member count', 'verify')
+    rounds = _bounded(ints[1], 1, _SDF_MAX_ROUNDS, 'round count',       'verify')
+    n      = _bounded_n(ints[2], 'verify')
+    blob_int = ints[3]
     nbytes = n // 8
     entry  = 5 * nbytes + 1
-    blob   = blob_int.to_bytes(k * rounds * entry, 'big')
+    blen   = k * rounds * entry
+    if _int_nbytes(blob_int) > blen:
+        sys.exit(f"verify: HPKS-RING signature payload is "
+                 f"{_int_nbytes(blob_int)} bytes, but k={k} rounds={rounds} "
+                 f"n={n} describe {blen}")
+    blob   = blob_int.to_bytes(blen, 'big')
 
     all_commits    = [[None] * rounds for _ in range(k)]
     all_challenges = [[0]    * rounds for _ in range(k)]

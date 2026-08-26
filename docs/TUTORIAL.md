@@ -1009,8 +1009,16 @@ stern_f_keygen(&seed, &e, syndr, urnd);  /* keygen: (seed, e) private; syndr pub
 SternSig sig;
 BitArray msg;
 ba_rand(&msg, urnd);
+
+/* The round count is per-signature, not per-build (TODO #236): allocate for
+ * the count you want, and pass SDF_ROUNDS for the build default.  Use
+ * SDF_PRODUCTION_ROUNDS (219) for 128-bit Fiat-Shamir soundness.  A verifier
+ * takes the count from sig->rounds, so it need not have been built with the
+ * same SDF_ROUNDS as the signer. */
+stern_sig_alloc(&sig, SDF_ROUNDS);
 hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);           /* sign   */
 int ok = hpks_stern_f_verify(&sig, &msg, &seed, syndr);   /* verify */
+stern_sig_free(&sig);
 ```
 
 #### Go
@@ -1306,8 +1314,10 @@ uint8_t  issuer_syndr[SDF_SYNBYTES];
 stern_f_keygen(&issuer_seed, &issuer_e, issuer_syndr, urnd);
 
 SternSig cred;
+stern_sig_alloc(&cred, SDF_ROUNDS);   /* or SDF_PRODUCTION_ROUNDS; TODO #236 */
 hcred_issue(&cred, m_poly, c_poly, &seed_H, syndr,
              &issuer_e, &issuer_seed, urnd);
+/* ... stern_sig_free(&cred) once the credential is written or verified. */
 
 /* ── Prove ──────────────────────────────────────────────────────────────── */
 const uint8_t nonce[] = "session-nonce-42";
@@ -2350,8 +2360,12 @@ int  hpks_verify(const BitArray *msg, const BitArray *pub,  const BitArray *R, c
 void hpke_encrypt(const BitArray *pt, const BitArray *pub, BitArray *R, BitArray *ct, FILE *urnd);
 void hpke_decrypt(const BitArray *ct, const BitArray *R,   const BitArray *priv, BitArray *pt);
 
-/* PQC (existing, unchanged) */
+/* PQC.  SternSig is heap-backed and carries its own round count since v3.1.0
+ * (TODO #236): stern_sig_alloc before signing, stern_sig_free when done, and
+ * hpks_stern_f_sign/-verify both follow sig->rounds rather than SDF_ROUNDS. */
 void stern_f_keygen      (BitArray *seed, BitArray *e, uint8_t *syndr, FILE *urnd);
+void stern_sig_alloc     (SternSig *sig, int rounds);
+void stern_sig_free      (SternSig *sig);
 void hpks_stern_f_sign   (SternSig *sig, const BitArray *msg, const BitArray *e,
                            const BitArray *seed, FILE *urnd);
 int  hpks_stern_f_verify (const SternSig *sig, const BitArray *msg,

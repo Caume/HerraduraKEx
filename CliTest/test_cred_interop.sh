@@ -117,9 +117,12 @@ fi
 # C issuer signs C user key
 "$CLI_C" cred-issue --our "$TMP/c_issuer.pem" --in "$TMP/c_user_pub.pem" \
                     --out "$TMP/c2c_cred.pem" 2>/dev/null
-# Python issuer signs C user key — must match C's SDF_ROUNDS=32 for interop
+# Python issuer signs C user key at Python's own 219-round default.  Before
+# TODO #236 this needed an explicit --rounds 32 to match C's compile-time
+# SDF_ROUNDS, which meant cross-language HCRED interop was only ever exercised
+# at (2/3)^32 soundness.  C's reader now takes the round count from the PEM.
 $CLI_PY  cred-issue --our "$TMP/py_issuer.pem" --in "$TMP/c_user_pub.pem" \
-                    --rounds 32 --out "$TMP/py2c_cred.pem" 2>/dev/null
+                    --out "$TMP/py2c_cred.pem" 2>/dev/null
 
 check "C cred → C verify"  \
     "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
@@ -142,9 +145,10 @@ check "Py cred → Py verify" \
     --cred "$TMP/py2c_cred.pem" --issuer "$TMP/py_issuer_pub.pem"
 
 if [ "$HAVE_GO" -eq 1 ]; then
-    # Go issuer signs C user key — must match C's SDF_ROUNDS=32 for interop
+    # Go issuer signs C user key at Go's own 219-round default (TODO #236;
+    # see the note on the Python issuer above).
     "$CLI_GO" cred-issue --our "$TMP/go_issuer.pem" --in "$TMP/c_user_pub.pem" \
-                        --rounds 32 --out "$TMP/go2c_cred.pem" 2>/dev/null
+                        --out "$TMP/go2c_cred.pem" 2>/dev/null
 
     check "Go cred → C verify" \
         "$CLI_C" cred-verify --proof "$TMP/c_proof.pem" \
