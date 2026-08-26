@@ -1886,25 +1886,69 @@ static void stern_fs_challenges(int *chals, int rounds,
     }
 }
 
-/* Signature structure for HPKS-Stern-F (SDF_ROUNDS rounds). */
+/* Signature structure for HPKS-Stern-F.
+ *
+ * The round count is per-signature, not per-build (TODO #236).  It travels on
+ * the wire already -- item[1] of the DER SEQUENCE -- so a reader must take it
+ * from there rather than from SDF_ROUNDS, or two builds of this header with
+ * different SDF_ROUNDS cannot read each other's signatures.  SDF_ROUNDS remains
+ * the *signing* default; nothing about the wire format changes.
+ *
+ * Allocate with stern_sig_alloc() and release with stern_sig_free().  Mirrors
+ * the SternRingSig/stern_ring_alloc pair below. */
 typedef struct {
-    BitArray c0[SDF_ROUNDS], c1[SDF_ROUNDS], c2[SDF_ROUNDS];
-    int      b[SDF_ROUNDS];
-    BitArray resp_a[SDF_ROUNDS]; /* sr (b=0) or pi_seed (b=1,2) */
-    BitArray resp_b[SDF_ROUNDS]; /* sy (b=0) or r (b=1) or y (b=2) */
+    int       rounds;
+    BitArray *c0, *c1, *c2;
+    int      *b;
+    BitArray *resp_a;  /* sr (b=0) or pi_seed (b=1,2) */
+    BitArray *resp_b;  /* sy (b=0) or r (b=1) or y (b=2) */
 } SternSig;
 
-/* Sign: generate Stern commitments and Fiat-Shamir responses. */
+/* Upper bound on a decoded round count.  Rejects absurd values before they
+ * reach malloc: a hostile PEM must not be able to name 2^31 rounds and have the
+ * reader try to allocate for it.  Generous next to the 219 needed for 128-bit
+ * soundness, and it bounds the largest allocation at a few MiB. */
+#define SDF_MAX_ROUNDS      4096
+
+static void stern_sig_alloc(SternSig *sig, int rounds)
+{
+    sig->rounds = rounds;
+    sig->c0     = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    sig->c1     = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    sig->c2     = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    sig->b      = (int *)     malloc((size_t)rounds * sizeof(int));
+    sig->resp_a = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    sig->resp_b = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    if (!sig->c0 || !sig->c1 || !sig->c2 || !sig->b ||
+        !sig->resp_a || !sig->resp_b) {
+        fprintf(stderr, "stern_sig_alloc: out of memory\n"); exit(1);
+    }
+}
+
+static void stern_sig_free(SternSig *sig)
+{
+    free(sig->c0); free(sig->c1); free(sig->c2);
+    free(sig->b);  free(sig->resp_a); free(sig->resp_b);
+    sig->c0 = sig->c1 = sig->c2 = NULL;
+    sig->b = NULL;
+    sig->resp_a = sig->resp_b = NULL;
+    sig->rounds = 0;
+}
+
+/* Sign: generate Stern commitments and Fiat-Shamir responses.
+ * The caller allocates *sig with stern_sig_alloc(), whose round count this
+ * follows -- pass SDF_ROUNDS for the build default. */
 static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
                                const BitArray *e, const BitArray *seed,
                                FILE *urnd)
 {
-    BitArray *r  = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
-    BitArray *y  = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
-    BitArray *pi = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
-    BitArray *sr = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
-    BitArray *sy = (BitArray *)malloc(SDF_ROUNDS * sizeof(BitArray));
-    uint8_t  *Hr = (uint8_t  *)malloc(SDF_ROUNDS * SDF_SYNBYTES);
+    int rounds = sig->rounds;
+    BitArray *r  = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    BitArray *y  = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    BitArray *pi = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    BitArray *sr = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    BitArray *sy = (BitArray *)malloc((size_t)rounds * sizeof(BitArray));
+    uint8_t  *Hr = (uint8_t  *)malloc((size_t)rounds * SDF_SYNBYTES);
     BitArray H_mat[SDF_N_ROWS];
     uint8_t perm[KEYBITS];
     int i;
@@ -1915,7 +1959,7 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
 
     stern_build_H(H_mat, seed);
 
-    for (i = 0; i < SDF_ROUNDS; i++) {
+    for (i = 0; i < rounds; i++) {
         BitArray items[2];
         stern_rand_error(&r[i], urnd);
         ba_xor(&y[i], e, &r[i]);
@@ -1930,10 +1974,10 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
         stern_hash(&sig->c2[i], &sy[i], 1, 3);
     }
 
-    stern_fs_challenges(sig->b, SDF_ROUNDS, msg,
+    stern_fs_challenges(sig->b, rounds, msg,
                         sig->c0, sig->c1, sig->c2);
 
-    for (i = 0; i < SDF_ROUNDS; i++) {
+    for (i = 0; i < rounds; i++) {
         int bv = sig->b[i];
         if      (bv == 0) { sig->resp_a[i] = sr[i]; sig->resp_b[i] = sy[i]; }
         else if (bv == 1) { sig->resp_a[i] = pi[i]; sig->resp_b[i] = r[i];  }
@@ -1947,19 +1991,25 @@ static void hpks_stern_f_sign(SternSig *sig, const BitArray *msg,
 static int hpks_stern_f_verify(const SternSig *sig, const BitArray *msg,
                                 const BitArray *seed, const uint8_t *syndr)
 {
-    int chals[SDF_ROUNDS];
+    int rounds = sig->rounds;
+    int *chals;
     BitArray H_mat[SDF_N_ROWS];
     uint8_t perm[KEYBITS];
     int i;
 
+    if (rounds < 1) return 0;
+    chals = (int *)malloc((size_t)rounds * sizeof(int));
+    if (!chals) { fprintf(stderr, "hpks_stern_f_verify: out of memory\n"); exit(1); }
+
     stern_build_H(H_mat, seed);
 
-    stern_fs_challenges(chals, SDF_ROUNDS, msg,
+    stern_fs_challenges(chals, rounds, msg,
                         sig->c0, sig->c1, sig->c2);
-    for (i = 0; i < SDF_ROUNDS; i++)
-        if (chals[i] != sig->b[i]) return 0;
+    for (i = 0; i < rounds; i++)
+        if (chals[i] != sig->b[i]) { free(chals); return 0; }
+    free(chals);
 
-    for (i = 0; i < SDF_ROUNDS; i++) {
+    for (i = 0; i < rounds; i++) {
         int bv = sig->b[i];
         BitArray tmp;
         if (bv == 0) {

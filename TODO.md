@@ -82,69 +82,6 @@ still stand.
 
 Status: **OPEN**
 
-### #236: The C CLI's Stern round count is a compile-time wire parameter, and CI works around it by downgrading credentials to 32 rounds
-
-Found while checking whether HPKS-Stern-F's `SDF_ROUNDS=32 -> 219` upgrade path
-(SECURITY.md, spec `hpks-stern` notes) is actually reachable in each CLI.  In Python and
-Go it is.  In C it is not, and the workaround is already in the test suite.
-
-**The mechanism.**  The PEM *already carries the round count* — `stern_sig_load`
-(HerraduraCli/herradura_cli.c:1835) reads it as item[1] and then rejects it:
-
-    if (r != SDF_ROUNDS) { pem_key_free(&pk); return -1; }
-
-`stern_sig_load_label` (line 4102) does the same for HCRED credentials.  The `SternSig`
-struct (herradura.h:1889) is fixed-size — `BitArray c0[SDF_ROUNDS]`, and so on — as are
-`STERN_COMMITS_BYTES` / `STERN_CHAL_BYTES` / `STERN_RESP_BYTES` (herradura_cli.c:1776-1778).
-Go by contrast decodes `rounds := bytesToInt(ints[1])` (herradura_cli.go:2050) and
-allocates from it, and Python does the same.
-
-Measured, C CLI built both ways against Python-produced signatures:
-
-    cli32  verifying python sig r=32:  Signature OK
-    cli32  verifying python sig r=219: verify: cannot load Stern signature
-    cli219 verifying python sig r=32:  verify: cannot load Stern signature
-    cli219 verifying python sig r=219: Signature OK
-
-So the two builds are mutually unreadable, in both directions.
-
-**This is not hypothetical — CI is already accommodating it.**
-`CliTest/test_cred_interop.sh:120-122` and `:146-148` issue HCRED credentials for the C
-CLI to consume with an explicit `--rounds 32`, commented "must match C's SDF_ROUNDS=32
-for interop".  Python's and Go's own default is `_HCRED_SIGN_ROUNDS = 219` /
-`hcredSignRounds = 219`, chosen for 128-bit soundness.  The consequence: **cross-language
-HCRED interop is only ever exercised at 32 rounds — (2/3)^32 rather than the (2/3)^219
-the issuers otherwise use** — and any real deployment with a C consumer forces every
-issuer down to the same demo soundness.
-
-**Work.**  Make the C reader length-dynamic, matching Go: give `SternSig` a `rounds`
-field and heap-allocate its arrays, derive the three `STERN_*_BYTES` sizes from the
-decoded round count rather than the macro, and bound the decoded value (Go's decoder and
-the existing ZKP-NL unpack at herradura_cli.c:327 both range-check; do the same).
-`SDF_ROUNDS` remains the *signing* default.  About 45 references across
-`herradura.h` (25) and `herradura_cli.c` (20).
-
-**Explicitly non-breaking, and this is the point of doing it this way.**  The wire format
-does not change — the round count is already on the wire.  A dynamic reader is purely
-additive: it accepts everything the current build accepts, plus round counts it currently
-rejects.  So this is a PATCH bump with no `MIGRATING.md` entry.  *Changing the signing
-default* from 32 to 219 would be the breaking change (old readers reject new signatures),
-and is deliberately not part of this item — do the reader first so the default can move
-later without a flag day.
-
-**Acceptance.**  Drop the two `--rounds 32` workarounds from `test_cred_interop.sh` and
-let it run at the issuers' own 219-round default; add a C-side round-trip at a round count
-other than `SDF_ROUNDS` to whichever of `test_c_*.sh` covers Stern-F.  Both must pass
-against a stock `./build_c.sh` binary.
-
-**Not in scope.**  The round count and the instance hardness are independent axes.  219
-rounds over the deployed `N=256` instance is worth ~30-40 bits either way
-(SecurityProofs-4.md:632), so this item does not change any `demo-only` status; it only
-makes the soundness axis reachable from C.  See #235's out-of-scope note for the
-parameter side.
-
-Status: **OPEN**
-
 ### #238: `spec/generate_spec.py` has no `--check` mode and no CI job, and its protocol list cannot express aPAKE
 
 Split out of TODO #237 Part 3, which found three wrong `status=` labels in `spec/`

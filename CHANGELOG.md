@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.1.0] - 2026-08-25
+
+### Fixed
+- **TODO #236: the C CLI's Stern round count was a compile-time wire parameter.** The
+  Fiat-Shamir round count has always travelled in the signature PEM — item[1] of the DER
+  SEQUENCE — but `stern_sig_load` read it only to compare it against the build's
+  `SDF_ROUNDS` and reject any mismatch, because `SternSig` was dimensioned by that macro.
+  Two C builds with different `SDF_ROUNDS` were mutually unreadable **in both directions**,
+  and the `32 -> 219` upgrade path that SECURITY.md documents for 128-bit Fiat-Shamir
+  soundness was unreachable from C without recompiling every peer in lockstep. Go and
+  Python had always decoded the count and allocated from it.
+- **Cross-language HCRED interop was only ever tested at 32 rounds.**
+  `CliTest/test_cred_interop.sh` passed an explicit `--rounds 32` to the Python and Go
+  issuers, commented "must match C's SDF_ROUNDS=32 for interop", while both languages'
+  own default is 219. CI was accommodating the defect rather than catching it. Both
+  workarounds are gone and the issuers now run at their own defaults, so the path is
+  exercised at `(2/3)^219` instead of `(2/3)^32`.
+- **The round count was encoded through `der_i_byte`, which takes a `uint8_t`** — any
+  value above 255 would have truncated silently. It now goes through the existing
+  `der_i_uint`. The encoding of existing signatures is unchanged down to the byte: a C
+  and a Python signature over the same message both begin `3082141a 02020100 02012002`,
+  where `02 01 20` is INTEGER 32.
+
+### Added
+- **`sign --algo hpks-stern --rounds N` and `cred-issue --rounds N` in the C CLI**,
+  matching the Go and Python CLIs. A stock `./build_c.sh` binary can now both produce and
+  consume signatures at any round count in `[1, SDF_MAX_ROUNDS]`. `SDF_ROUNDS` remains the
+  signing default when `--rounds` is absent, and `-DSDF_ROUNDS=219` still works — the
+  deliberately-separate question of *changing* the signing default is untouched.
+- `stern_sig_alloc` / `stern_sig_free`, and `SDF_MAX_ROUNDS` (4096) bounding any decoded
+  round count so a hostile PEM cannot drive an unbounded allocation.
+- `CliTest/test_c_sign.sh` gained seven cases: C-side round-trips at 64 and 219 against a
+  stock build, wrong-message rejection at each, a check that the two signatures differ,
+  `--rounds` bounds rejection, and a PEM hand-edited to claim 32767 rounds.
+- `MIGRATING.md` §6, for the C source-compatibility break below.
+
+### Changed
+- **`SternSig` is heap-backed and carries its own `rounds`** (`stern_sig_alloc` /
+  `stern_sig_free`, mirroring the `stern_ring_alloc` pair already in `herradura.h`).
+  `hpks_stern_f_sign` and `hpks_stern_f_verify` follow `sig->rounds`; the `STERN_*_BYTES`
+  macros became `STERN_*_BYTES_R(r)`. **This breaks C code that includes `herradura.h` and
+  declares a `SternSig` directly, and it breaks it silently** — the members are pointers
+  now rather than arrays, so `SternSig sig;` still compiles and then writes through
+  uninitialized pointers. See `MIGRATING.md` §6; `docs/TUTORIAL.md` is updated. No PEM,
+  wire-format or CLI break accompanies it, and signatures from earlier versions still
+  verify byte-for-byte.
+- `stern_sig_write_label` / `stern_sig_load_label` (HCRED credentials) were verbatim copies
+  of the `hpks-stern` pair — which is why the defect had to exist in two places — and now
+  delegate to one label-generic implementation. 98 lines removed, 18 added.
+
 ## [3.0.10] - 2026-08-25
 
 ### Fixed

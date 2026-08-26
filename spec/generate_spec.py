@@ -160,8 +160,17 @@ SECURITY = {
                                                   "SDF_PRODUCTION_ROUNDS=219 for 128-bit soundness)",
                         notes="Fiat-Shamir signature from the Stern identification protocol (syndrome decoding). "
                               "Shipped SDF_ROUNDS=32 is a demo parameter; herradura.h emits a #pragma message "
-                              "warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS.",
-                        source=["herradura.h:1383-1392", "herradura/herradura.go:1108-1110"]),
+                              "warning at compile time when SDF_ROUNDS < SDF_PRODUCTION_ROUNDS. The round "
+                              "count is a per-signature wire field (item[1] of the DER SEQUENCE), not a "
+                              "compile-time constant: since v3.1.0 all three CLIs accept `sign --rounds` and "
+                              "any reader accepts any count in [1, SDF_MAX_ROUNDS] regardless of its own "
+                              "SDF_ROUNDS, which is only the signing default (TODO #236). Before that the C "
+                              "reader rejected any count != SDF_ROUNDS, so two C builds were mutually "
+                              "unreadable and cross-language HCRED interop ran only at 32 rounds. Round "
+                              "count and instance hardness are independent axes -- 219 rounds over the "
+                              "deployed N=256 is still ~30-40 bits and still demo-only.",
+                        source=["herradura.h:1383-1392", "herradura/herradura.go:1108-1110",
+                                "TODO.md #236"]),
     "hpke-stern": dict(status="demo-only", quantum_resistant="conjectured",
                         notes="Niederreiter KEM (Stern-based). Demo uses a known error vector e'; production "
                               "requires an actual QC-MDPC syndrome decoder, not yet implemented.",

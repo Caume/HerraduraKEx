@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v3.0.10)
+# Herradura Cryptographic Suite (v3.1.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -358,9 +358,10 @@ visible without having to search `TODO_DONE.md`.
   — and key generation applies no weak-key screen. See `SECURITY.md` and
   `SecurityProofs-5.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
-  in the Python and Go CLIs accept `--rounds` (219 reaches 128-bit Fiat-Shamir soundness;
-  the C CLI takes the same value at compile time via `-DSDF_ROUNDS=219`), but raising
-  rounds alone does not fix the N = 256 SD-hardness shortfall above.
+  accepts `--rounds` in all three CLIs (219 reaches 128-bit Fiat-Shamir soundness), and
+  since v3.1.0 the C CLI does too — the count is a per-signature PEM field, not a
+  compile-time constant, so any build reads any round count (TODO #236). Raising rounds
+  alone does not fix the N = 256 SD-hardness shortfall above.
 - **Two security tests are FAIL-by-design.** Test `[4]` (bit-frequency bias) and C test
   `[18]` (HPKE-Stern-F brute-force decap) are expected to intermittently or consistently
   report FAIL under the suite's own test harness — this is documented, acknowledged

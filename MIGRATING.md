@@ -32,6 +32,7 @@ how few artifacts it reaches, so it gets one.
 | [Stern parity-matrix (H) finalization](#3-stern-parity-matrix-h-finalization-v1935) | v1.9.35 | HPKS-Stern-F keys/signatures, HPKE-Stern-F ciphertexts | Regenerate on v1.9.35+ |
 | [HKEX-RNL ring dimension 256 → 1024](#4-hkex-rnl-ring-dimension-256--1024-v2719) | v2.7.19 | HKEX-RNL private/public keys, kex responses, ZKP-RNL proofs | Regenerate on v2.7.19+ — the old keys are not just incompatible, they are insecure |
 | [HKEX-RNL small-ring session-key width](#5-hkex-rnl-small-ring-session-key-width-v300) | v3.0.0 | `HERRADURA SESSION KEY` PEMs from `kex --algo hkex-rnl --bits N` with N < 256 | Redo the handshake on v3.0.0+; nothing to do at the default ring |
+| [`SternSig` is heap-backed and carries its own round count](#6-sternsig-is-heap-backed-and-carries-its-own-round-count-v310) | v3.1.0 | C code using `herradura.h` directly (`SternSig`, `hpks_stern_f_sign`/`-verify`, `hcred_issue`) | Add `stern_sig_alloc`/`stern_sig_free` around each `SternSig`. **No PEM, wire-format or CLI break** — existing signatures still verify byte-for-byte |
 
 ---
 
@@ -232,3 +233,77 @@ to preserve here — but it does change what an existing `--algo` value produces
 is a break of the surface 2.0.0 froze whether or not anything depended on it. Hence
 3.0.0 rather than a patch release.
 
+---
+
+## 6. `SternSig` is heap-backed and carries its own round count (v3.1.0)
+
+**This is a C source-compatibility break only.** No PEM changes, no wire-format change, no
+CLI flag removed or repurposed. Signatures and HCRED credentials produced by any earlier
+version still verify byte-for-byte, and the DER encoding of an existing 32-round signature
+is unchanged down to the byte (`02 01 20`). If you only use the CLIs, there is nothing to
+do — this release strictly *widens* what they accept.
+
+**What changed:** `SternSig` was a fixed-size struct whose arrays were dimensioned by the
+compile-time `SDF_ROUNDS`:
+
+```c
+typedef struct {
+    BitArray c0[SDF_ROUNDS], c1[SDF_ROUNDS], c2[SDF_ROUNDS];
+    int      b[SDF_ROUNDS];
+    BitArray resp_a[SDF_ROUNDS], resp_b[SDF_ROUNDS];
+} SternSig;
+```
+
+It now carries the round count as data, with heap-allocated arrays:
+
+```c
+typedef struct {
+    int       rounds;
+    BitArray *c0, *c1, *c2;
+    int      *b;
+    BitArray *resp_a, *resp_b;
+} SternSig;
+```
+
+**Why:** the round count has always been on the wire — item[1] of the DER SEQUENCE — but
+the C reader compared it against its own `SDF_ROUNDS` and rejected any mismatch. Two C
+builds with different `SDF_ROUNDS` were therefore mutually unreadable in both directions,
+and the `SDF_ROUNDS=32 -> 219` upgrade path documented for 128-bit Fiat-Shamir soundness
+was unreachable from C without recompiling every peer in lockstep. It also meant
+cross-language HCRED interop was only ever exercised at 32 rounds, because CI asked the
+Python and Go issuers for `--rounds 32` to match C. See TODO #236.
+
+**What's incompatible:** C code that includes `herradura.h` and declares a `SternSig`
+directly. The dangerous part is that such code **still compiles**: the struct is smaller
+now, and the members are pointers rather than arrays, so a bare
+
+```c
+SternSig sig;
+hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);   /* undefined behaviour */
+```
+
+passes the compiler and then writes through uninitialized pointers at run time. There is
+no diagnostic. Audit for `SternSig` declarations rather than relying on the build to find
+them.
+
+**Action required:**
+
+```c
+SternSig sig;
+stern_sig_alloc(&sig, SDF_ROUNDS);            /* or SDF_PRODUCTION_ROUNDS (219) */
+hpks_stern_f_sign(&sig, &msg, &e, &seed, urnd);
+int ok = hpks_stern_f_verify(&sig, &msg, &seed, syndr);
+stern_sig_free(&sig);
+```
+
+`stern_sig_load` / `stern_sig_load_label` allocate the signature themselves, from the
+round count in the PEM — call `stern_sig_free` when done, and do not `stern_sig_alloc`
+beforehand. `hpks_stern_f_sign` and `hpks_stern_f_verify` both follow `sig->rounds`;
+`SDF_ROUNDS` is now only the default a caller passes to `stern_sig_alloc`, never a
+constraint on what can be read. Decoded round counts are bounded to
+`[1, SDF_MAX_ROUNDS]` (4096) so a hostile PEM cannot drive an unbounded allocation.
+
+**Also new:** `sign --algo hpks-stern --rounds N` and `cred-issue --rounds N` in the C
+CLI, matching the Go and Python CLIs. This is what makes the version bump a MINOR rather
+than a PATCH; the C CLI previously took the round count only at compile time via
+`-DSDF_ROUNDS=219`, which remains supported and still sets the *signing* default.

@@ -437,8 +437,11 @@ NL-FSCX primitives + Ring-LWR
 ```
 Stern identification protocol (ZKP for syndrome decoding)
 ├── HPKS-Stern-F — Fiat-Shamir signature (C/Go/Python: N=n=256, t=16, rounds=32 demo
-│                  default, 219 for 128-bit Fiat-Shamir soundness — Python/Go CLI:
-│                  `sign --rounds 219`; C CLI: rebuild with `-DSDF_ROUNDS=219`;
+│                  default, 219 for 128-bit Fiat-Shamir soundness — all three CLIs
+│                  take `sign --rounds 219` and `cred-issue --rounds 219` since
+│                  v3.1.0 (TODO #236); the round count travels in the PEM, so a
+│                  reader accepts any count in [1, SDF_MAX_ROUNDS] regardless of
+│                  its own SDF_ROUNDS, which remains only the signing default.
 │                  assembly/Arduino: N=32, t=2, rounds=4)
 │                  commit: c0=hash(π,H·r^T), c1=hash(σ(r)), c2=hash(σ(y))
 │                  challenge b∈{0,1,2} via NL-FSCX hash of msg+commitments
