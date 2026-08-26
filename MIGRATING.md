@@ -21,6 +21,11 @@ unchanged — but it changes what an existing `--algo` value produces, which is 
 the surface the 2.0.0 tag froze. A break of that surface is a MAJOR bump regardless of
 how few artifacts it reaches, so it gets one.
 
+The seventh, in v3.3.0, is the only one on this list that leaves every stored artifact
+readable and still breaks interoperation: `hpke-stern-kem` keys and ciphertexts are
+unchanged byte-for-byte, but the *shared secret* derived from them is not. Nothing needs
+regenerating; both ends simply have to be on the same side of the upgrade.
+
 ---
 
 ## Summary table
@@ -33,6 +38,7 @@ how few artifacts it reaches, so it gets one.
 | [HKEX-RNL ring dimension 256 → 1024](#4-hkex-rnl-ring-dimension-256--1024-v2719) | v2.7.19 | HKEX-RNL private/public keys, kex responses, ZKP-RNL proofs | Regenerate on v2.7.19+ — the old keys are not just incompatible, they are insecure |
 | [HKEX-RNL small-ring session-key width](#5-hkex-rnl-small-ring-session-key-width-v300) | v3.0.0 | `HERRADURA SESSION KEY` PEMs from `kex --algo hkex-rnl --bits N` with N < 256 | Redo the handshake on v3.0.0+; nothing to do at the default ring |
 | [`SternSig` is heap-backed and carries its own round count](#6-sternsig-is-heap-backed-and-carries-its-own-round-count-v310) | v3.1.0 | C code using `herradura.h` directly (`SternSig`, `hpks_stern_f_sign`/`-verify`, `hcred_issue`) | Add `stern_sig_alloc`/`stern_sig_free` around each `SternSig`. **No PEM, wire-format or CLI break** — existing signatures still verify byte-for-byte |
+| [HPKE-Stern-KEM session-key derivation](#7-hpke-stern-kem-session-key-derivation-v330) | v3.3.0 | Shared secrets from `--algo hpke-stern-kem` and `--algo hybrid-rnl-stern`; anything encrypted under one | Both peers must be on v3.3.0+. **No key or ciphertext format change** — existing keys and ciphertexts are still read; only the derived secret differs |
 
 ---
 
@@ -307,3 +313,58 @@ constraint on what can be read. Decoded round counts are bounded to
 CLI, matching the Go and Python CLIs. This is what makes the version bump a MINOR rather
 than a PATCH; the C CLI previously took the round count only at compile time via
 `-DSDF_ROUNDS=219`, which remains supported and still sets the *signing* default.
+
+---
+
+## 7. HPKE-Stern-KEM session-key derivation (v3.3.0)
+
+**What changed:** `hpke-stern-kem` decapsulation gained a Fujisaki-Okamoto transform with
+implicit rejection (TODO #235 Part 2), and the session key it derives changed with it:
+
+| | before v3.3.0 | v3.3.0 onward |
+|---|---|---|
+| success | `HFSCX-256(e0 \|\| e1)` | `HFSCX-256-DS(0x10, e0 \|\| e1 \|\| C)` |
+| failure | *error: no key* | `HFSCX-256-DS(0x11, z \|\| C)`, `z = HFSCX-256-DS(0x12, h0 \|\| h1)` |
+
+**Why:** decapsulation used to report failure — a distinct return value in the library and
+a distinct exit status plus stderr message at all four CLIs. That signal was the oracle the
+GJS reaction attack consumes to recover the private key (`SecurityProofs-5.md` §11.8.7,
+TODO #218 §5–§6). Removing it means decapsulation must return *something* on failure, and
+the standard construction returns a pseudorandom key bound to the ciphertext. The success
+path was domain-separated and bound to the ciphertext in the same change: HFSCX-256 is
+Merkle-Damgard, so length extension applies, and an FO transform hashes attacker-influenced
+data.
+
+**What's incompatible:** the derived shared secret, and only that. Specifically:
+
+- A v3.3.0 peer and a pre-v3.3.0 peer running `enc`/`dec --algo hpke-stern-kem` against
+  each other will each derive a *different* 32-byte key, and — because the failure path is
+  now silent — **neither will report an error.** The decryption simply produces garbage.
+  The same applies to `kex --algo hybrid-rnl-stern`, whose KEM half feeds the combiner.
+- Anything encrypted under a session key derived before v3.3.0 cannot be decrypted by
+  re-running decapsulation on v3.3.0+. If you have stored such a ciphertext and still need
+  it, decrypt it with a pre-v3.3.0 build first.
+
+**What is *not* incompatible:** `HERRADURA QC-MDPC` private keys, public keys and
+ciphertext PEMs are all unchanged byte-for-byte and are still read by both sides. The
+implicit-rejection secret `z` is *derived* from `h0 || h1` rather than stored, precisely so
+that no PEM field had to be added and existing private keys keep working. The CLI surface
+— subcommands, flags, `--algo` values — is unchanged.
+
+**Action required:** upgrade both ends together. There is nothing to regenerate: keep your
+existing keys, and redo any handshake that spans the upgrade.
+
+**Why this is a MINOR and not a MAJOR.** No PEM boundary label changed, no CLI flag was
+renamed or removed, and no existing key, ciphertext or signature file became unreadable —
+the surface the 2.0.0 tag froze is intact. What changed is a derived secret, in a protocol
+classified **demo-only** in `SECURITY.md` for reasons this change does not alter. It is
+recorded here anyway, because a silent wrong-key outcome is exactly the kind of break a
+reader should not have to discover from a garbled plaintext.
+
+**One further behavioural change to be aware of**, not a wire-format matter but the reason
+a passing test can now be meaningless: a decoding failure (measured DFR ~0.225% per
+encapsulation at the deployed toy parameters) no longer surfaces as an error. It surfaces
+as a shared secret the two parties disagree on. Any script or application that treated
+`dec --algo hpke-stern-kem` exiting 0 as proof of success is no longer testing the KEM —
+it must compare output bytes. `CliTest/lib_dfr.sh` documents the retry policy this
+implies.

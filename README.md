@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v3.2.1)
+# Herradura Cryptographic Suite (v3.3.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -353,10 +353,13 @@ visible without having to search `TODO_DONE.md`.
   `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
   particular limitation, but is demo-only for its own reasons (TODO #218): at its toy
   parameters (r = 523, d = 15, t = 18) the measured decoding-failure rate is 0.264%
-  = 2^-8.6 where IND-CCA2 needs 2^-128, decapsulation reports failure explicitly with no
-  FO transform or implicit rejection — which is the oracle the GJS reaction attack needs
-  — and key generation applies no weak-key screen. See `SECURITY.md` and
-  `SecurityProofs-5.md` §11.8.7. The
+  = 2^-8.6 where IND-CCA2 needs 2^-128, and the underlying QC syndrome-decoding instance
+  is itself far below any usable level. Since v3.3.0 (TODO #235) decapsulation applies an
+  FO transform with implicit rejection and key generation screens the weak-key classes, so
+  the GJS reaction attack no longer has an oracle — but those two parameter facts are
+  untouched and remain the binding constraints. One consequence to know: a decoding
+  failure is now silent, surfacing as a shared secret the peer disagrees with rather than
+  an error. See `SECURITY.md` and `SecurityProofs-5.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
   accepts `--rounds` in all three CLIs (219 reaches 128-bit Fiat-Shamir soundness), and
   since v3.1.0 the C CLI does too — the count is a per-signature PEM field, not a

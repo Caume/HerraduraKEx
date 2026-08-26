@@ -62,16 +62,24 @@ kem_roundtrip() {
         eval "$enc_cmd" >/dev/null 2>&1
         local dec_output rc
         dec_output=$(eval "$dec_cmd" 2>&1) && rc=0 || rc=$?
-        if [ "$rc" -eq 0 ]; then
+        if [ "$rc" -ne 0 ]; then
+            # Since TODO #235 a DFR event never exits nonzero — implicit
+            # rejection always produces a key — so this is a real failure.
+            echo "FAIL $label: dec exited nonzero (rc=$rc): $dec_output"
+            FAIL=$((FAIL+1))
+            return
+        fi
+        if cmp -s "$TMP/msg.bin" "$out"; then
             check_roundtrip "$label" "$TMP/msg.bin" "$out"
             return
         fi
-        if dfr_is_event "$dec_output" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
-            echo "INFO $label: DFR event on attempt $attempt, retrying with a fresh keypair"
+        # A mismatch is either a DFR event (gone on a fresh draw) or a genuine
+        # Java-vs-other disagreement (deterministic, survives every attempt).
+        if dfr_retryable "$attempt"; then
+            dfr_report_retry "$label" "$attempt"
             continue
         fi
-        echo "FAIL $label: dec failed (rc=$rc): $dec_output"
-        FAIL=$((FAIL+1))
+        check_roundtrip "$label" "$TMP/msg.bin" "$out"   # report the mismatch
         return
     done
 }
@@ -118,6 +126,62 @@ kem_roundtrip "hpke-stern-kem: Python enc -> Java dec" \
     "$CLI_PY enc --algo hpke-stern-kem --pubkey $TMP/kem_p_pub.pem --in $TMP/msg.bin --out $TMP/kem_p2j.pem" \
     "$CLI_JAVA dec --algo hpke-stern-kem --key $TMP/kem_p.pem --in $TMP/kem_p2j.pem --out $TMP/kem_p2j_out.bin" \
     "$TMP/kem_p.pem" "$TMP/kem_p_pub.pem" "$TMP/kem_p2j.pem" "$TMP/kem_p2j_out.bin"
+
+# ── TODO #235: the Java port must agree on both halves ────────────────────────
+# Part 1 — the weak-key screen. Every key the Java CLI emits must have
+# distance-spectrum multiplicity <= 5 in both private polynomials, read back out
+# of the PEM by Python's decoder so the two ports are checked against one
+# contract rather than each against itself.
+java_mult=$(cd "$ROOT/HerraduraCli" && python3 -c '
+import importlib.util
+spec = importlib.util.spec_from_file_location("hcli", "herradura.py")
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+sup0, sup1, _, _ = m._decode_kem_privkey("'"$TMP/kem_j.pem"'")
+def mm(sup, r=523):
+    c = {}
+    sl = sorted(sup)
+    for i in range(len(sl)):
+        for j in range(i + 1, len(sl)):
+            d = (sl[j] - sl[i]) % r
+            d = min(d, r - d)
+            c[d] = c.get(d, 0) + 1
+    return max(c.values())
+print(max(mm(sup0), mm(sup1)))
+')
+if [ "$java_mult" -le 5 ]; then
+    echo "PASS weak-key screen: Java keygen (max spectrum multiplicity $java_mult <= 5)"
+    PASS=$((PASS+1))
+else
+    echo "FAIL weak-key screen: Java keygen (max spectrum multiplicity $java_mult > 5)"
+    FAIL=$((FAIL+1))
+fi
+
+# Part 2 — implicit rejection. A well-formed ciphertext encapsulated to somebody
+# else's public key must decapsulate without complaint, to the same pseudorandom
+# key under Java as under Python. Corrupting the PEM instead would only exercise
+# the DER reader, whose rejection is a separate and legitimate one.
+$CLI_PY enc --algo hpke-stern-kem --pubkey "$TMP/kem_j_pub.pem" \
+            --in "$TMP/msg.bin" --out "$TMP/ir_ct_bad.pem" 2>/dev/null
+ir_rc=0
+$CLI_JAVA dec --algo hpke-stern-kem --key "$TMP/kem_p.pem" \
+              --in "$TMP/ir_ct_bad.pem" --out "$TMP/ir_j.bin" 2>/dev/null || ir_rc=$?
+if [ "$ir_rc" -eq 0 ]; then
+    echo "PASS Java: undecodable ciphertext is not reported (implicit rejection)"
+    PASS=$((PASS+1))
+else
+    echo "FAIL Java: undecodable ciphertext is not reported (rc=$ir_rc — the GJS oracle is back)"
+    FAIL=$((FAIL+1))
+fi
+$CLI_PY dec --algo hpke-stern-kem --key "$TMP/kem_p.pem" \
+            --in "$TMP/ir_ct_bad.pem" --out "$TMP/ir_p.bin" 2>/dev/null
+if cmp -s "$TMP/ir_j.bin" "$TMP/ir_p.bin"; then
+    echo "PASS implicit-rejection key agrees: Java vs Python"
+    PASS=$((PASS+1))
+else
+    echo "FAIL implicit-rejection key agrees: Java vs Python"
+    FAIL=$((FAIL+1))
+fi
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"

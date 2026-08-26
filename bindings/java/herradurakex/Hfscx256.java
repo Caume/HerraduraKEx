@@ -105,6 +105,17 @@ public final class Hfscx256 {
         return hash(data, null);
     }
 
+    /** HFSCX-256-DS: domain-separated variant — prepends a 1-byte tag before
+     * hashing.  ds=0x01 generic digest, 0x02 sign pre-hash, 0x03 AEAD-MAC,
+     * 0x10/0x11/0x12 the QC-MDPC KEM's FO hashes (TODO #235).  Mirrors
+     * herradura.h's hfscx_256_ds. */
+    public static byte[] hashDs(int ds, byte[] data) {
+        byte[] buf = new byte[1 + data.length];
+        buf[0] = (byte) ds;
+        System.arraycopy(data, 0, buf, 1, data.length);
+        return hash(buf, null);
+    }
+
     private static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.and(MASK).toByteArray();
         byte[] out = new byte[nbytes];

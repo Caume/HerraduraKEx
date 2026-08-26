@@ -221,10 +221,11 @@ public final class SelfTest {
             for (int i = 0; i < trials; i++) {
                 Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(kp.hPub, rng);
                 BigInteger recovered = Stern.qcmdpcDecapBgf(enc.syn, kp.sup0, kp.sup1);
-                // A null/mismatched result is a legitimate DFR event (~0.225%
-                // measured, TODO #195), not necessarily a bug — only flag it
-                // if it happens on every one of a small batch.
-                if (recovered != null && recovered.equals(enc.k)) { anyMismatch = false; break; }
+                // Under implicit rejection (TODO #235) decapsulation always
+                // returns a key, so a DFR event is a mismatch rather than a
+                // null — still a legitimate outcome (~0.225% measured, TODO
+                // #195), so only flag it if every one of a small batch misses.
+                if (recovered.equals(enc.k)) { anyMismatch = false; break; }
                 anyMismatch = true;
             }
             if (!pubMatches || anyMismatch) {

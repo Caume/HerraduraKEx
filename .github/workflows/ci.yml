@@ -215,6 +215,14 @@ jobs:
                 missing=1
               fi
             fi
+            # TODO #235 deleted dfr_is_event: implicit rejection means a DFR
+            # event no longer produces an error message, so a script grepping
+            # for one would treat every DFR event as a hard red — the exact
+            # failure this guard exists to prevent. Catch a resurrected copy.
+            if grep -q 'dfr_is_event' "$f"; then
+              echo "STALE: $f uses dfr_is_event, removed by TODO #235 — retry on an output mismatch via dfr_retryable instead"
+              missing=1
+            fi
           done
           exit $missing
 

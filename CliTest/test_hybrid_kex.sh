@@ -48,9 +48,12 @@ $CLI genpkey --algo hkex-rnl      --out "$TMP/bob_rnl.pem"
 
 # ── Bob encapsulates, Alice decapsulates — DFR-retry aware (TODO #221) ─────
 # Alice's completion runs the QC-MDPC BGF decoder, which has a measured ~0.225%
-# failure rate per encapsulation. On the known DFR signature, redo Bob's step for
-# a fresh encapsulation rather than failing the run; anything else, or an
-# exhausted budget, falls through and fails honestly under `set -e`.
+# failure rate per encapsulation. Since TODO #235 that failure is silent —
+# implicit rejection means Alice's completion always exits 0 and simply derives a
+# session key Bob disagrees with — so the retry is keyed on the key-agreement
+# round-trip below rather than on an error message, and Bob's step is redone for
+# a fresh encapsulation. A mismatch surviving the budget falls through and is
+# reported honestly.
 . "$(dirname "$0")/lib_dfr.sh"
 attempt=1
 while :; do
@@ -58,25 +61,26 @@ while :; do
              --their "$TMP/alice_rnl_pub.pem" --their-kem "$TMP/alice_kem_pub.pem" \
              --out "$TMP/response.pem"
 
-    if $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/alice_kem.pem" \
-                --their "$TMP/response.pem" --out "$TMP/alice_session.pem" \
-                2>"$TMP/alice_complete_err.log"; then
-        break
-    fi
-    if dfr_is_event "$(cat "$TMP/alice_complete_err.log")" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+    $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/alice_kem.pem" \
+             --their "$TMP/response.pem" --out "$TMP/alice_session.pem"
+
+    # Bob encrypts under his session key, Alice decrypts under hers: this is the
+    # only observable that still distinguishes agreement from a DFR event.
+    $CLI enc --algo hske --key "$TMP/response.pem" \
+             --in "$TMP/msg.bin" --out "$TMP/ct_bob.pem"
+    $CLI dec --algo hske --key "$TMP/alice_session.pem" \
+             --in "$TMP/ct_bob.pem" --out "$TMP/pt_alice.bin"
+    cmp -s "$TMP/msg.bin" "$TMP/pt_alice.bin" && break
+
+    if dfr_retryable "$attempt"; then
         dfr_report_retry "hybrid-rnl-stern alice completes" "$attempt"
         attempt=$((attempt+1))
         continue
     fi
-    cat "$TMP/alice_complete_err.log" >&2
-    exit 1   # not a DFR event, or retries exhausted — a real failure
+    break   # budget exhausted — the check below reports the mismatch
 done
 
 # ── Cross-party encrypt/decrypt round-trips prove K_alice == K_bob ─────────
-$CLI enc --algo hske --key "$TMP/response.pem" \
-         --in "$TMP/msg.bin" --out "$TMP/ct_bob.pem"
-$CLI dec --algo hske --key "$TMP/alice_session.pem" \
-         --in "$TMP/ct_bob.pem" --out "$TMP/pt_alice.bin"
 if cmp -s "$TMP/msg.bin" "$TMP/pt_alice.bin"; then
     check "hybrid-rnl-stern key agreement (Bob enc / Alice dec)" "ok"
 else
@@ -102,11 +106,26 @@ check_fail "missing --our-kem on Alice's step" \
     $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" \
              --their "$TMP/response.pem" --out "$TMP/unused2.pem"
 
-# ── Wrong HPKE-Stern-KEM private key → decapsulation failure, not a wrong key ─
+# ── Wrong HPKE-Stern-KEM private key → a silently different session key ──────
+# Before TODO #235 this asserted a clean rejection. That rejection WAS the GJS
+# reaction oracle (TODO #218 §5, §6): it told the caller whether decapsulation
+# had succeeded. Under implicit rejection the completion must instead succeed
+# and derive a key that simply does not agree with Bob's — indistinguishable
+# from a DFR event, which is the point. The assertion is therefore inverted:
+# exit 0, and a session key that differs from the legitimate one.
 $CLI genpkey --algo hpke-stern-kem --out "$TMP/eve_kem.pem"
-check_fail "wrong --our-kem (Eve's KEM key) rejected" \
-    $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/eve_kem.pem" \
-             --their "$TMP/response.pem" --out "$TMP/unused3.pem"
+if $CLI kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" --our-kem "$TMP/eve_kem.pem" \
+            --their "$TMP/response.pem" --out "$TMP/eve_session.pem" 2>/dev/null; then
+    check "wrong --our-kem (Eve's KEM key) is not reported" "ok"
+else
+    check "wrong --our-kem (Eve's KEM key) is not reported" \
+          "decapsulation reported a failure — the GJS oracle is back"
+fi
+if cmp -s "$TMP/alice_session.pem" "$TMP/eve_session.pem"; then
+    check "wrong --our-kem yields a different session key" "keys agree — the KEM half is not binding"
+else
+    check "wrong --our-kem yields a different session key" "ok"
+fi
 
 # ── Freshness: two independent runs must not produce the same session key ──
 $CLI genpkey --algo hkex-rnl      --out "$TMP/bob_rnl2.pem"
