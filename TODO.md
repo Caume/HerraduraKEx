@@ -145,101 +145,41 @@ parameter side.
 
 Status: **OPEN**
 
-### #237: `spec/` classifies OPRF and HSKE-NL-A1/A2 as `production` where SECURITY.md and the proofs disagree — adjudicate and reconcile
+### #238: `spec/generate_spec.py` has no `--check` mode and no CI job, and its protocol list cannot express aPAKE
 
-Found while auditing the six `demo-only` entries for #235/#236.  Both rows say
-`status="production"` in `spec/generate_spec.py`; neither is supported by the security
-documentation, but **they fail in different ways and need different work.**  The fix goes
-in `spec/generate_spec.py` (lines 229-232 and the `"oprf"` entry), not the generated JSON.
+Split out of TODO #237 Part 3, which found three wrong `status=` labels in `spec/`
+(`oprf`, `hske-duplex`, and the HSKE-NL rows) and identified the same root cause behind
+all of them: nothing checks the generated spec.
 
-**Part 1 — OPRF: not a disagreement, an absence.**
+**Part A — no `--check` mode, no CI job.**  `KAT/generate_kat.py` and
+`SecurityProofsCode/check_part_index.py` both have `--check` modes wired into CI (TODO
+#190, #231), and the latter caught real drift during #237 — the math-expression count for
+SecurityProofs-4.md moved 659 -> 684 and every copy of the part index had to be updated.
+`spec/generate_spec.py` has neither.  Nothing verifies that
+`spec/herradura-protocol-spec.json` is current with respect to its generator, so a change
+to the generator that is never re-run ships a stale JSON silently.  Add `--check` and a CI
+step, following the shape `check_part_index.py` already uses.
 
-`grep -l OPRF SecurityProofs-*.md` returns nothing.  `grep -c OPRF SECURITY.md` returns 0.
-Same for aPAKE.  Both shipped (TODO #80, #201, #203) with CLI subcommands
-(`oprf-blind`/`oprf-eval`/`oprf-unblind`, `pake-register`/`pake-demo`) and, for OPRF, a
-`production` label carrying no analysis anywhere in the repo.
+**Part B — cross-reference `status=` against SECURITY.md.**  All three #237 findings were
+disagreements *between documents* that no tool could see: `spec/` said `production` where
+SECURITY.md said "not suitable for production" (HSKE-NL-A1/A2), where the proofs said
+"open research" (`hske-duplex`), and where no analysis existed at all (`oprf`).  A check
+that every `--algo` tag in `spec/` has a row in SECURITY.md's protocol table, and that the
+two classifications are consistent, would have caught all three.  The mapping between
+`spec/`'s six-value status enum (`production`/`demo-only`/`pedagogical`/`deprecated`/
+`broken`/`research`) and SECURITY.md's prose status column has to be defined first; that
+definition is most of the work in this part.
 
-The label is also internally inconsistent *within `generate_spec.py` itself*.  `oprf` is
-`gf_pow` in the same group as `hkex-gf`/`hpks`/`hpke` — the suite's `oprf_eval` is
-
-    return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)
-
-with `ORD = 2^KEYBITS - 1`.  Those three neighbours are all marked `status="pedagogical"`
-with `classical_security_bits="~36.5 (n=256)"`, from TODO #212's Pohlig-Hellman result.
-`oprf` gets `status="production"` and the note *"inherits GF(2^n)* classical-only
-security"* — which understates a ~36.5-bit break as if it were a 128-bit classical one.
-
-Confirmed by running TODO #212's own `pohlig_hellman()` against the exact relation
-`oprf_eval` implements — one `(alpha, beta)` pair, solving for `k` with `g = alpha`:
-
-    n= 32  largest prime factor 17 bits  recovered=YES  in 0.01s
-    n= 64  largest prime factor 23 bits  recovered=YES  in 1.00s
-
-At the deployed n=256 the largest prime factor of `2^256-1` is 73 bits, giving #212's
-~2^36.5.  Recovering `k` is the whole ballgame for an OPRF: obliviousness protects the
-*client's* input from the server, but `k`'s secrecy is what stops anyone who has seen one
-transcript from evaluating `F(k, ·)` offline on inputs of their choosing — i.e. an offline
-dictionary attack wherever the OPRF is used for password-like inputs, which is what aPAKE
-uses it for.
-
-**Work for Part 1.**  Reclassify `oprf` to match its neighbours (`pedagogical`, or
-`demo-only` — pick one and say why), give it a real `classical_security_bits`, and rewrite
-the note so it states the ~2^36.5 recovery rather than "classical-only".  Add SECURITY.md
-rows for OPRF **and aPAKE**, and extend `SecurityProofsCode/hkex_gf_pohlig_hellman.py` to
-cover the OPRF relation (it currently covers HKEX-GF/HPKS/HPKE only; the demo above is 20
-lines and belongs in that script, not in a TODO entry).  Decide separately whether aPAKE
-needs its own spec row at all — see Part 3.
-
-**Part 2 — HSKE-NL-A1/A2: a real disagreement, and it needs adjudicating before either
-document is edited.**
-
-SECURITY.md:18 puts HSKE-NL-A1/A2 in one row with classical HSKE known-plaintext: *"Not
-suitable for production — a single known-plaintext pair recovers the keystream."*
-`spec/` says `production`.  The proofs support **both** readings, in different places:
-
-  * **For `production`:** §11.3.1 gives a conditional CPA claim — *"Non-linearity prevents
-    GF(2) linear recovery of K from any set of (plaintext, ciphertext) pairs.  Assuming
-    NL-FSCX v1 acts as a pseudorandom function (PRF), CPA security follows from standard
-    stream cipher arguments."*  And TODO #210's correction in §11.7 explicitly exempts
-    these two from the fatal ciphertext-only leak: *"This does not extend to
-    HSKE-NL-A1/A2, whose carry non-linearity breaks the affine identity the argument
-    depends on."*
-  * **For SECURITY.md:** the §11.7 table rows read `HSKE-NL-A1 (known-plaintext) — Linear
-    recovery blocked; 1-pair attack still recovers keystream → **None** (keystream
-    recoverable)`, and the prose says the NL variants *"do not eliminate the 1-pair attack
-    because the underlying structure remains affine."*
-
-**Those last two quotes contradict each other, two paragraphs apart in the same section.**
-One says the carry non-linearity breaks the affine identity; the other says the structure
-remains affine.  That contradiction is the actual bug to fix, and it must be settled
-before the labels are touched — editing either document first would just pick a side.
-
-The question to answer: for a counter-mode stream cipher, one KPT pair recovering *that
-block's* keystream is inherent to the mode and is not a break.  Does the §11.7 row mean
-only that (in which case `production` is right, and SECURITY.md:18 is miscategorising the
-NL variants by merging them into classical HSKE's genuinely fatal 1-pair row), or does it
-mean a pair yields *other* blocks' keystream or `K` itself (in which case `spec/` is
-wrong)?  §11.3.1's nonce/counter construction and the ROL seed rotation are the relevant
-detail.  TODO #214's exact-trail work (`nl_fscx_exact_trail_search.py`) is the closest
-existing measurement of what survives statistically.
-
-**Do not assume the answer from this entry.**  It is written to lay out both sides, not to
-pre-judge; whichever way it goes, one of the two documents gets corrected and §11.7's
-internal contradiction gets resolved in the same change.  If the outcome is that the NL
-variants are sound, `hske-duplex` (also `production`, also unanalysed in SECURITY.md)
-should be checked in the same pass, since it is the same family.
-
-**Part 3 — root cause, and why this drifted (optional, decide during triage).**
-
-`KAT/generate_kat.py` and `SecurityProofsCode/check_part_index.py` both have `--check`
-modes wired into CI (TODO #190, #231).  `spec/generate_spec.py` has neither a `--check`
-mode nor any CI job — nothing checks that the generated JSON is current, and nothing
-checks that a `status=` in it agrees with SECURITY.md's table or with the proofs.  aPAKE
-having no spec row at all (the string "PAKE" appears once in the whole JSON, as
-`PEM_PAKE_RECORD`) is the same gap showing up as missing coverage rather than a wrong
-label.  A `--check` mode plus a cross-reference assertion against SECURITY.md's table
-would have caught all three findings above.  This is scope beyond the two rows named in
-the title — split it into its own item if it makes this one too large.
+**Part C — the protocol list cannot express aPAKE.**  `spec/`'s protocol array is keyed on
+`--algo` tags.  aPAKE has none: it ships as the standalone subcommands `pake-register` and
+`pake-demo`, so there is no key under which to file it, and the string "PAKE" appears once
+in the whole JSON as `PEM_PAKE_RECORD`.  #237 gave it a SECURITY.md row (it inherits the
+OPRF's ~2^36.5 server-key recovery, which voids the offline-dictionary resistance that is
+its entire purpose) but deliberately did not invent a spec row, because doing so is a
+schema question rather than a labelling one: either widen the protocol array's key beyond
+`--algo` tags, or add a separate `subcommand_protocols` section.  Decide which, then file
+aPAKE and audit whether anything else in the CLI is invisible to `spec/` for the same
+reason.
 
 Status: **OPEN**
 

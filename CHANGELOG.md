@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.0.10] - 2026-08-25
+
+### Fixed
+- **TODO #237: SecurityProofs-4.md §11.7 contradicted itself about HSKE-NL-A1/A2, and the
+  wrong side of the contradiction had been copied into SECURITY.md.** Two paragraphs
+  apart, the section stated that the NL variants' "carry non-linearity breaks the affine
+  identity the argument depends on" (the TODO #210 correction) and that they "do not
+  eliminate the 1-pair attack because the underlying structure remains affine". The
+  second is false. Measured at n=256: classical `fscx_revolve` satisfies the GF(2)
+  affinity identity in both the plaintext and the key in 200/200 random trials, while the
+  A1 keystream in `base` and the A2 ciphertext in the plaintext violate it in 200/200.
+  The classical 1-pair attack works by solving for `T_i*K` and reusing it — recovering an
+  unseen second plaintext from one known pair succeeds end to end — and that step needs
+  affinity the NL variants do not have. Against A1 a known-plaintext pair yields that
+  block's keystream and nothing else, which is counter mode behaving as counter mode;
+  against A2 there is no keystream to recover at all, since A2 is a keyed bijection and
+  `E ^ P` is not constant across messages. The two §11.7 known-plaintext rows now carry
+  the same n/2 key-search bound as the key-only rows instead of "**None** (keystream
+  recoverable)", and a "Correction (TODO #237)" note records the measurements. The
+  underlying assumption is unchanged and still a conjecture: that NL-FSCX v1 is a PRF.
+- **`spec/` classified the OPRF as `production` with no analysis anywhere in the repo.**
+  `oprf_eval` is `gf_pow(alpha, k)` — the same exponentiation as HKEX-GF, HPKS and HPKE,
+  all three of which are `pedagogical` at ~2^36.5 — so Pohlig-Hellman recovers the
+  *server key* from a single observed `(alpha, beta)` transcript pair. Reclassified to
+  `pedagogical` with `classical_security_bits="~36.5 (n=256)"`.
+- **`spec/` classified `hske-duplex` as `production` against both the proofs and the
+  implementation's own banner.** SecurityProofs-6.md §11.9 calls the single-pass sponge
+  "open research" pending the NL-FSCX v2 differential/linear characterisation of TODO
+  #99, and `herradura.h` marks it "RESEARCH CONSTRUCTION — not for production use without
+  further cryptanalysis". Reclassified to `research`.
+
+### Added
+- **`SecurityProofsCode/hkex_gf_pohlig_hellman.py` §6 — the OPRF server key.** Recovers
+  `k` from one transcript pair end to end at n=32 and n=64, then reproduces `F(k, .)`
+  offline on fresh inputs. Records a nuance absent from the TODO entry: the base is the
+  client's blinded `alpha`, primitive with density phi(2^n-1)/(2^n-1) = 0.4992, so `k`
+  returns in full about half the time and modulo `ord(alpha)` otherwise (measured 73/200
+  offline hits at n=64, the index-3 subgroup showing through). That is not a mitigation —
+  `ord(alpha)` is publicly computable, so an attacker picks a transcript whose `alpha` is
+  primitive. Obliviousness is untouched; `k`'s secrecy is not.
+- **SECURITY.md rows for OPRF and aPAKE**, neither of which had one. The aPAKE row is the
+  consequential one: its server record stores `F(oprf_key, password)` specifically to
+  resist offline dictionary attack on a stolen database, and a ~2^36.5 `oprf_key`
+  recovery voids exactly that.
+- **SECURITY.md rows for HSKE-NL-A1, HSKE-NL-A2 and HSKE-Duplex**, split out of the row
+  that had merged the NL variants into classical HSKE's known-plaintext verdict. The A2
+  row states its two load-bearing constraints: deterministic encryption (not IND-CPA
+  multi-message without a caller-supplied differentiator) and the degenerate-key class
+  `delta(K) in {0, 2^(n-1)}`, which all three CLIs already refuse via `nl_v2_key_is_valid`.
+- **TODO #238**, splitting out #237's Part 3: `generate_spec.py` has no `--check` mode and
+  no CI job, nothing cross-references its `status=` values against SECURITY.md, and its
+  `--algo`-keyed protocol array has no slot for aPAKE (`pake-register`/`pake-demo`).
+
+### Changed
+- SecurityProofs-4.md grew from 659 to 684 math expressions, so every copy of the
+  seven-part index (SecurityProofs.md, CLAUDE.md, `KATEX_RULES.md`) was updated;
+  `check_part_index.py` and `validate_katex.js` both pass. The margin to the ~750
+  cascade-failure limit is now 66 expressions.
+
 ## [3.0.9] - 2026-08-24
 
 ### Fixed

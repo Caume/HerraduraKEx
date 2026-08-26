@@ -12165,3 +12165,171 @@ print `FAILED` rather than the `[FAIL]` marker, and CI runs only the `tests` mod
 each run script — the same boundary #233 drew for C/Go/Python.
 
 Status: **DONE v3.0.9** — [12]/[18] cleared as non-issues (the item had the test numbering wrong), Arduino [7] tightened from an 80% threshold that also ignored `ok_sk`, then all three harnesses gated at their output layer; AVR needed a UART verdict rather than an exit status, plus an absent-verdict check.
+
+### #237: `spec/` classifies OPRF and HSKE-NL-A1/A2 as `production` where SECURITY.md and the proofs disagree — adjudicate and reconcile
+
+Found while auditing the six `demo-only` entries for #235/#236.  Both rows say
+`status="production"` in `spec/generate_spec.py`; neither is supported by the security
+documentation, but **they fail in different ways and need different work.**  The fix goes
+in `spec/generate_spec.py` (lines 229-232 and the `"oprf"` entry), not the generated JSON.
+
+**Part 1 — OPRF: not a disagreement, an absence.**
+
+`grep -l OPRF SecurityProofs-*.md` returns nothing.  `grep -c OPRF SECURITY.md` returns 0.
+Same for aPAKE.  Both shipped (TODO #80, #201, #203) with CLI subcommands
+(`oprf-blind`/`oprf-eval`/`oprf-unblind`, `pake-register`/`pake-demo`) and, for OPRF, a
+`production` label carrying no analysis anywhere in the repo.
+
+The label is also internally inconsistent *within `generate_spec.py` itself*.  `oprf` is
+`gf_pow` in the same group as `hkex-gf`/`hpks`/`hpke` — the suite's `oprf_eval` is
+
+    return gf_pow(alpha & ORD, k & ORD, GF_POLY[KEYBITS], KEYBITS)
+
+with `ORD = 2^KEYBITS - 1`.  Those three neighbours are all marked `status="pedagogical"`
+with `classical_security_bits="~36.5 (n=256)"`, from TODO #212's Pohlig-Hellman result.
+`oprf` gets `status="production"` and the note *"inherits GF(2^n)* classical-only
+security"* — which understates a ~36.5-bit break as if it were a 128-bit classical one.
+
+Confirmed by running TODO #212's own `pohlig_hellman()` against the exact relation
+`oprf_eval` implements — one `(alpha, beta)` pair, solving for `k` with `g = alpha`:
+
+    n= 32  largest prime factor 17 bits  recovered=YES  in 0.01s
+    n= 64  largest prime factor 23 bits  recovered=YES  in 1.00s
+
+At the deployed n=256 the largest prime factor of `2^256-1` is 73 bits, giving #212's
+~2^36.5.  Recovering `k` is the whole ballgame for an OPRF: obliviousness protects the
+*client's* input from the server, but `k`'s secrecy is what stops anyone who has seen one
+transcript from evaluating `F(k, ·)` offline on inputs of their choosing — i.e. an offline
+dictionary attack wherever the OPRF is used for password-like inputs, which is what aPAKE
+uses it for.
+
+**Work for Part 1.**  Reclassify `oprf` to match its neighbours (`pedagogical`, or
+`demo-only` — pick one and say why), give it a real `classical_security_bits`, and rewrite
+the note so it states the ~2^36.5 recovery rather than "classical-only".  Add SECURITY.md
+rows for OPRF **and aPAKE**, and extend `SecurityProofsCode/hkex_gf_pohlig_hellman.py` to
+cover the OPRF relation (it currently covers HKEX-GF/HPKS/HPKE only; the demo above is 20
+lines and belongs in that script, not in a TODO entry).  Decide separately whether aPAKE
+needs its own spec row at all — see Part 3.
+
+**Part 2 — HSKE-NL-A1/A2: a real disagreement, and it needs adjudicating before either
+document is edited.**
+
+SECURITY.md:18 puts HSKE-NL-A1/A2 in one row with classical HSKE known-plaintext: *"Not
+suitable for production — a single known-plaintext pair recovers the keystream."*
+`spec/` says `production`.  The proofs support **both** readings, in different places:
+
+  * **For `production`:** §11.3.1 gives a conditional CPA claim — *"Non-linearity prevents
+    GF(2) linear recovery of K from any set of (plaintext, ciphertext) pairs.  Assuming
+    NL-FSCX v1 acts as a pseudorandom function (PRF), CPA security follows from standard
+    stream cipher arguments."*  And TODO #210's correction in §11.7 explicitly exempts
+    these two from the fatal ciphertext-only leak: *"This does not extend to
+    HSKE-NL-A1/A2, whose carry non-linearity breaks the affine identity the argument
+    depends on."*
+  * **For SECURITY.md:** the §11.7 table rows read `HSKE-NL-A1 (known-plaintext) — Linear
+    recovery blocked; 1-pair attack still recovers keystream → **None** (keystream
+    recoverable)`, and the prose says the NL variants *"do not eliminate the 1-pair attack
+    because the underlying structure remains affine."*
+
+**Those last two quotes contradict each other, two paragraphs apart in the same section.**
+One says the carry non-linearity breaks the affine identity; the other says the structure
+remains affine.  That contradiction is the actual bug to fix, and it must be settled
+before the labels are touched — editing either document first would just pick a side.
+
+The question to answer: for a counter-mode stream cipher, one KPT pair recovering *that
+block's* keystream is inherent to the mode and is not a break.  Does the §11.7 row mean
+only that (in which case `production` is right, and SECURITY.md:18 is miscategorising the
+NL variants by merging them into classical HSKE's genuinely fatal 1-pair row), or does it
+mean a pair yields *other* blocks' keystream or `K` itself (in which case `spec/` is
+wrong)?  §11.3.1's nonce/counter construction and the ROL seed rotation are the relevant
+detail.  TODO #214's exact-trail work (`nl_fscx_exact_trail_search.py`) is the closest
+existing measurement of what survives statistically.
+
+**Do not assume the answer from this entry.**  It is written to lay out both sides, not to
+pre-judge; whichever way it goes, one of the two documents gets corrected and §11.7's
+internal contradiction gets resolved in the same change.  If the outcome is that the NL
+variants are sound, `hske-duplex` (also `production`, also unanalysed in SECURITY.md)
+should be checked in the same pass, since it is the same family.
+
+**Part 3 — root cause, and why this drifted (optional, decide during triage).**
+
+`KAT/generate_kat.py` and `SecurityProofsCode/check_part_index.py` both have `--check`
+modes wired into CI (TODO #190, #231).  `spec/generate_spec.py` has neither a `--check`
+mode nor any CI job — nothing checks that the generated JSON is current, and nothing
+checks that a `status=` in it agrees with SECURITY.md's table or with the proofs.  aPAKE
+having no spec row at all (the string "PAKE" appears once in the whole JSON, as
+`PEM_PAKE_RECORD`) is the same gap showing up as missing coverage rather than a wrong
+label.  A `--check` mode plus a cross-reference assertion against SECURITY.md's table
+would have caught all three findings above.  This is scope beyond the two rows named in
+the title — split it into its own item if it makes this one too large.
+
+---
+
+**RESOLUTION (v3.0.10).**
+
+**Part 2 first, since it gated the rest.**  §11.7 contained two sentences, two paragraphs
+apart, asserting opposite things about HSKE-NL-A1/A2.  The TODO #210 correction ("carry
+non-linearity breaks the affine identity the argument depends on") is right; the summary
+paragraph ("the underlying structure remains affine") was wrong and has been withdrawn.
+Settled by measurement at n=256, not by reading:
+
+  * *Affinity.*  Classical `fscx_revolve` satisfies the GF(2)-affinity identity
+    f(x)^f(y)^f(z)^f(x^y^z)=0 in both P and K in 200/200 random trials.  The A1 keystream
+    in `base`, and the A2 ciphertext in P, violate it in 200/200.
+  * *What the classical attack does.*  One KPT pair gives c_K = T_i*K = E ^ M^i*P, and c_K
+    then decrypts *every other* message under that key — recovering an unseen P2 from one
+    pair succeeds end to end.  That step needs affinity in P, which the NL variants lack.
+  * *What one pair buys against the NL variants.*  Against A1: that block's keystream and
+    nothing else — applying it to the neighbouring counter fails, and reaching any other
+    block means inverting NL-FSCX v1 to recover `base`, where both arguments (seed
+    ROL(base, n/8) and parameter base^i) depend on the unknown.  This is counter mode
+    behaving as counter mode, the same as AES-CTR.  Against A2: there is no keystream at
+    all — A2 is a keyed bijection and E^P is not constant across messages.
+
+So `spec/` was right and SECURITY.md:18 was wrong, having merged the NL variants into
+classical HSKE's genuinely fatal row.  The two §11.7 known-plaintext rows now carry the
+n/2 key-search bound instead of "**None** (keystream recoverable)", and a "Correction
+(TODO #237)" note records all three measurements.  This upgrades nothing about the
+underlying assumption, which is still the *conjecture* that NL-FSCX v1 is a PRF.
+
+**The A2 caveats are real and are now stated where a reader will meet them.**  A2 is
+deterministic (not IND-CPA multi-message without a caller-supplied differentiator), and
+its degenerate-key class delta(K) in {0, 2^(n-1)} collapses the permutation to affine.
+Verified that the class is genuinely affine (0/200 violations at B=2^129, versus 200/200
+at a generic key) and that all three CLIs already refuse it via `nl_v2_key_is_valid`.
+
+**`hske-duplex` — the same-family check Part 2 asked for, and a third wrong label.**  It
+was `status="production"` in `spec/` while SecurityProofs-6.md §11.9 calls the single-pass
+sponge "open research" pending the v2 differential/linear characterisation of TODO #99,
+and while `herradura.h`'s own banner reads "RESEARCH CONSTRUCTION — not for production use
+without further cryptanalysis".  Reclassified to `research`, with a SECURITY.md row
+pointing users at `enc --aead` instead.
+
+**Part 1 — OPRF.**  Reclassified `production` -> `pedagogical` with
+`classical_security_bits="~36.5 (n=256)"`, matching its `gf_pow` neighbours.  A new §6 in
+`SecurityProofsCode/hkex_gf_pohlig_hellman.py` recovers the server key from one observed
+(alpha, beta) pair end to end at n=32 and n=64 and then reproduces F(k,.) offline on fresh
+inputs.  One nuance the entry above did not anticipate: the base is the client's blinded
+alpha, which is primitive with density phi(2^n-1)/(2^n-1) = 0.4992 — a coin flip, not the
+"usually primitive" the demo in this entry suggested.  When alpha is not primitive, k
+returns modulo ord(alpha) and offline evaluation is partial (measured 73/200 at n=64, the
+index-3 subgroup showing through).  That is not a mitigation: ord(alpha) is publicly
+computable, so an attacker attacks one of the ~50% of transcripts whose alpha is primitive
+and recovers k in full.  Obliviousness is untouched throughout — what falls is k's
+secrecy, and with it the aPAKE's reason for storing F(oprf_key, password) rather than a
+password hash.
+
+SECURITY.md gained rows for OPRF and aPAKE, both demo-only/pedagogical.  aPAKE got no
+`spec/` row: its protocol array is keyed on `--algo` tags and aPAKE has none (it ships as
+`pake-register`/`pake-demo`), so filing it is a schema question, deferred to #238 Part C.
+
+**Part 3 — split out as TODO #238**, as this entry allowed: `--check` mode and CI for
+`generate_spec.py`, a `status=` cross-reference against SECURITY.md, and the aPAKE
+coverage gap.
+
+**Side effect.**  The §11.7 correction pushed SecurityProofs-4.md from 659 to 684 math
+expressions, so every copy of the seven-part index (SecurityProofs.md, CLAUDE.md,
+KATEX_RULES.md) was updated; `check_part_index.py` and `validate_katex.js` both pass
+(684 OK, 0 FAIL).  684 is under the ~700 warning threshold, but the margin to the ~750
+cascade-failure limit is now 66 expressions — Part 4 is the next candidate for a re-split.
+
+Status: **DONE v3.0.10** — adjudicated §11.7's internal contradiction by measurement (the NL variants do *not* inherit classical HSKE's 1-pair break), corrected SECURITY.md accordingly, and reclassified `oprf` and `hske-duplex` in `spec/`.

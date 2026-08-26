@@ -403,9 +403,14 @@
         "python": true
       },
       "security": {
-        "status": "production",
+        "status": "research",
         "quantum_resistant": "conjectured",
-        "notes": "Arbitrary-length single-pass AEAD construction."
+        "notes": "Arbitrary-length single-pass AEAD: a MonkeyDuplex-style sponge using nl_fscx_revolve_v2 as the permutation (TODO #95 Option 2). Reclassified from production under TODO #237 to match both the proofs and the implementation's own banner: SecurityProofs-6.md 11.9 calls the single-pass sponge \"open research\" requiring the differential/linear characterisation of the v2 permutation tracked in TODO #99, and herradura.h marks it \"RESEARCH CONSTRUCTION -- not for production use without further cryptanalysis\". Bijectivity of v2 is proven; its standalone sponge profile is not. Use hske-nla1 --aead, whose encrypt-then-MAC tag rests on the studied \"v1 is a PRF\" assumption instead.",
+        "source": [
+          "TODO.md #237",
+          "herradura.h HSKE-NL-V2-Duplex banner",
+          "SecurityProofs-6.md 11.9"
+        ]
       }
     },
     {
@@ -420,7 +425,11 @@
       "security": {
         "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "NL-FSCX v1 counter-mode; supports --aead authenticated encryption."
+        "notes": "NL-FSCX v1 counter-mode; supports --aead authenticated encryption. Unlike classical hske, a known-plaintext pair does NOT break this construction: it yields that one block's keystream and nothing else, which is inherent to counter mode rather than a weakness. The classical 1-pair attack works by solving E = M^i.P XOR T_i.K for T_i.K and reusing it on other ciphertexts; the v1 carry non-linearity makes the keystream non-affine in base, so that step has no analogue here (TODO #210, #237). Security rests on the conjecture that NL-FSCX v1 is a PRF (SecurityProofs-4.md 11.3.1) -- an assumption, not a proof.",
+        "source": [
+          "TODO.md #237",
+          "TODO_DONE.md #210"
+        ]
       }
     },
     {
@@ -435,7 +444,12 @@
       "security": {
         "status": "production",
         "quantum_resistant": "conjectured",
-        "notes": "NL-FSCX v2 revolve-mode symmetric encryption."
+        "notes": "NL-FSCX v2 revolve-mode symmetric encryption -- a keyed bijection, not a stream cipher, so there is no keystream for a known-plaintext pair to recover and E XOR P is not constant across messages. Two usage constraints are load-bearing. (1) Deterministic: the same (P, K) always gives the same E, so it is not IND-CPA in the multi-message sense unless the caller embeds a nonce or sequence number in the plaintext; prefer hske-nla1 when several messages share a key (SecurityProofs-4.md 11.3.2). (2) Keys with delta(K) in {0, 2^(n-1)} collapse the permutation to GF(2)-affine and are recoverable from a handful of known plaintexts; the class is about 2^-129 of the key space and all three CLIs refuse it via nl_v2_key_is_valid (SecurityProofs-7.md 11.19.2).",
+        "source": [
+          "TODO.md #237",
+          "TODO_DONE.md #159",
+          "TODO_DONE.md #168"
+        ]
       }
     },
     {
@@ -488,9 +502,15 @@
         "python": true
       },
       "security": {
-        "status": "production",
+        "status": "pedagogical",
         "quantum_resistant": false,
-        "notes": "2HashDH OPRF over GF(2^n)*; inherits GF(2^n)* classical-only security."
+        "classical_security_bits": "~36.5 (n=256)",
+        "notes": "2HashDH OPRF over GF(2^n)*. oprf_eval is gf_pow(alpha, k), the same exponentiation as hkex-gf/hpks/hpke, so the same Pohlig-Hellman recovery applies to the server key k: one observed (alpha, beta) transcript pair costs about 2^36.5 group operations at n=256 (TODO #212, #237). The base here is the client's blinded alpha rather than the fixed g=3, and alpha is primitive with density phi(2^n-1)/(2^n-1) = 0.4992; when it is not, k comes back modulo ord(alpha) instead. That is not a mitigation -- ord(alpha) is publicly computable, so an attacker watching a stream of transcripts attacks one of the ~50% whose alpha is primitive and recovers k in full. Obliviousness (the server not learning the client's input) is unaffected; what breaks is k's secrecy, and with it the only property that stops anyone who has seen one transcript from evaluating F(k, .) offline on inputs of their choosing. That is exactly the offline-dictionary-attack resistance the aPAKE built on this OPRF claims, so treat the aPAKE server record as offline-guessable at the deployed n.",
+        "source": [
+          "TODO.md #237",
+          "TODO_DONE.md #212",
+          "SecurityProofsCode/hkex_gf_pohlig_hellman.py 6"
+        ]
       }
     },
     {

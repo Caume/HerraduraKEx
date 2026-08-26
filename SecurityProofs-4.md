@@ -621,9 +621,9 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 | **HPKS** | DLP in $\mathbb{GF}(2^n)^{\ast}$ + non-ROM challenge | Pohlig–Hellman key recovery ~$2^{36.5}$ at $n=256$, then arbitrary forgery (§9.2.4, TODO #212); the signing scalar reduces modulo the same $2^n - 1$ | Shor's DLP | **None** |
 | **HPKE** | CDH in $\mathbb{GF}(2^n)^{\ast}$ | CDH $\leq$ DLP: Pohlig–Hellman ~$2^{36.5}$ at $n=256$ (§9.2.4, TODO #212); independently, the FSCX layer leaks 126 plaintext functionals per §1.3.1 / W9 | Shor's CDH | **None** |
 | **HSKE-NL-A1** (§11.3.1, key-only) | NL-FSCX v1 PRF | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
-| **HSKE-NL-A1** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
+| **HSKE-NL-A1** (known-plaintext) | NL-FSCX v1 PRF | 1 KPT pair reveals that block's keystream and nothing else — inherent to counter mode, not a break; no other counter value and no $K$ (TODO #237) | BV inapplicable (non-affine); Grover $2^{n/2}$ on the key | $n/2$ bits |
 | **HSKE-NL-A2** (§11.3.2, key-only) | NL-FSCX v2 bijection | Brute force $2^n$ (linear recovery blocked) | Grover $2^{n/2}$ | $n/2$ bits |
-| **HSKE-NL-A2** (known-plaintext) | — | Linear recovery blocked; 1-pair attack still recovers keystream | BV inapplicable (non-affine) | **None** (keystream recoverable) |
+| **HSKE-NL-A2** (known-plaintext) | NL-FSCX v2 bijection | No keystream exists to recover — A2 is a keyed bijection, and $E \oplus P$ is not constant across messages. A pair leaves a key-recovery problem, open except in the degenerate-key class of §11.19.2, which the CLIs refuse (TODO #237) | BV inapplicable (non-affine); Grover $2^{n/2}$ on the key | $n/2$ bits |
 | **HPKS-NL** (§11.2.1) | DLP in $\mathbb{GF}(2^n)^{\ast}$ + NL challenge | Quasi-polynomial DLP; challenge non-predictable | Shor's DLP | **None** |
 | **HPKE-NL** (§11.2.2) | CDH in $\mathbb{GF}(2^n)^{\ast}$ + NL-FSCX v2 | CDH $\leq$ DLP, quasi-polynomial | Shor's CDH | **None** |
 | **HKEX-RNL** $n=256$ (§11.4) | Ring-LWR with blinded $m$ | BKZ primal uSVP: **32** classical Core-SVP bits at $\beta=110$ (§11.4.3, TODO #216) | **29** quantum Core-SVP bits; hybrid gains nothing (§11.7) | **32 classical / 29 quantum** — far below the 128-bit target and below the 100-bit floor; not production-track at any size (§11.4.3) |
@@ -635,8 +635,7 @@ sparse-secret concern (in favor of CBD) stands **unaffected**.
 **HSKE key-only** provides $n/2$ bits of post-quantum security *for the key*, and only
 when no plaintext is ever observed.  In any realistic deployment, plaintexts are available
 and this bound does not apply.  The NL-FSCX counter-mode and revolve-mode HSKE variants
-(§11.3) preserve the same KPT vulnerability; they harden against linear key-recovery but do
-not eliminate the 1-pair attack because the underlying structure remains affine.
+(§11.3) do **not** inherit the classical KPT break; see the TODO #237 correction below.
 
 **Correction (TODO #210).**  The key-only column above was previously read as a
 *confidentiality* claim, and it is not one.  Theorem 4.1 (SecurityProofs-1.md §1.3.1) shows
@@ -647,6 +646,45 @@ classical HSKE and HPKE have no IND-CPA claim at any key size.  Only the *key se
 is $n/2$ post-quantum bits.  This does not extend to HSKE-NL-A1/A2, whose carry
 non-linearity breaks the affine identity the argument depends on (see TODO #214 for the
 measurement of what, if anything, survives statistically).
+
+**Correction (TODO #237) — the known-plaintext rows for HSKE-NL-A1/A2 were wrong, and
+contradicted the paragraph above.**  Until this revision the summary paragraph asserted
+that the NL variants "do not eliminate the 1-pair attack because the underlying structure
+remains affine," two paragraphs after the TODO #210 correction asserted the opposite.  The
+TODO #210 statement is the correct one; the other has been withdrawn, and the two
+known-plaintext rows it justified have been rewritten.  Three measurements settle it, all
+at the deployed $n = 256$:
+
+1. **The classical structure is affine; the NL structure is not.**  A map $f$ is
+   GF(2)-affine exactly when $f(x) \oplus f(y) \oplus f(z) \oplus f(x \oplus y \oplus z) = 0$
+   identically.  Classical $\text{fscx-revolve}(P, K, i)$ satisfies this in $P$ and in $K$ in
+   200 of 200 random trials.  The A1 keystream as a function of $\text{base}$, and the A2
+   ciphertext as a function of $P$, violate it in 200 of 200 — as Theorem 13 predicts, the
+   carry non-linearity saturates the algebraic degree after two rounds.
+
+2. **What the classical 1-pair attack actually does, and why it has no analogue.**  From
+   $E = M^i P \oplus T_i K$ one pair yields $c_K = T_i K = E \oplus M^i P$ with no key
+   search, and $c_K$ then decrypts *every other* ciphertext under that key: recovering an
+   unseen $P_2$ from a single known pair succeeds end to end.  That step needs affinity in
+   $P$, which measurement 1 rules out for both NL variants.
+
+3. **What one pair buys against A1 and A2.**  Against A1 it yields exactly the keystream of
+   the block it came from; applied to the neighbouring counter value it fails, and the two
+   keystreams are distinct.  Recovering any other block requires inverting
+   $\text{nl-fscx-revolve-v1}$ to get $\text{base}$ — and in this construction both
+   arguments, seed $\text{ROL}(\text{base}, n/8)$ and parameter $\text{base} \oplus i$,
+   depend on the unknown, so v1's one-wayness is the binding assumption rather than a
+   detour around it.  That a pair reveals its own block's keystream is a property of
+   counter mode shared with AES-CTR, not a weakness.  Against A2 there is no keystream at
+   all: A2 is a keyed bijection, and $E \oplus P$ is not constant across messages.
+
+**Consequences.**  The post-quantum column for both known-plaintext rows moves from
+"**None** (keystream recoverable)" to the same $n/2$ key-search bound as the key-only rows.
+This is a claim about the KPT attack only — it does not upgrade the underlying assumption,
+which remains the *conjecture* that NL-FSCX v1 is a PRF (§11.3.1), and it does not touch
+A2's two documented usage constraints: determinism (§11.3.2) and the degenerate-key class
+of §11.19.2.  `SecurityProofs-6.md` §11.9's separate finding that the single-pass
+`hske-duplex` sponge is open research is unaffected and still binding.
 
 **Note on concrete security estimates (2026 landscape review, TODO #71; revised under TODO #212).**
 The classical attack column for HKEX-GF previously reflected the FFS $L[1/3]$ result (§9.2.4) at
