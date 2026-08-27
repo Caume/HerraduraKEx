@@ -5453,6 +5453,24 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 #define QCMDPC_RWORDS  ((QCMDPC_R + 63) / 64)     /* 9  */
 #define QCMDPC_NB_ITER 20
 
+/* ── FO transform with implicit rejection + weak-key screen (TODO #235) ──
+ * Remediation of the two blockers TODO #218 §7 listed that are constructions
+ * rather than parameter choices.  Neither changes the deployed parameters, and
+ * neither makes this KEM production-ready — see SecurityProofs-5.md §11.8.7.
+ *
+ * Domain-separation tags live in hfscx_256_ds's namespace, where 0x01 (generic
+ * digest), 0x02 (sign pre-hash) and 0x03 (AEAD-MAC) are already allocated. */
+#define QCMDPC_DS_K      0x10   /* session key, success path        */
+#define QCMDPC_DS_Z      0x11   /* session key, implicit-rejection path */
+#define QCMDPC_DS_ZSEED  0x12   /* z, derived from the private polynomials */
+
+/* Weak-key screen: reject a private polynomial whose cyclic distance spectrum
+ * contains a distance of multiplicity above this bound.  TODO #218 §4 puts the
+ * DFR cliff between multiplicity 6 and 7; honest keygen reaches 6 at roughly
+ * 1 key in 4800, which is rare but not negligible, so the accepted set is
+ * multiplicity <= 5.  Costs ~0.02% extra draws. */
+#define QCMDPC_MAX_MULT  5
+
 /* r-bit polynomial: QCMDPC_RWORDS uint64_t, little-endian (bit i = word[i>>6] bit i&63) */
 typedef struct { uint64_t w[QCMDPC_RWORDS]; } QcPoly;
 
@@ -5489,6 +5507,16 @@ static int qcp_is_zero(const QcPoly *p) {
     int i;
     for (i = 0; i < QCMDPC_RWORDS; i++) if (p->w[i]) return 0;
     return 1;
+}
+
+/* Canonical little-endian serialization — the byte order every language target
+ * and every FO hash below agrees on. */
+static void qcp_to_bytes(uint8_t out[QCMDPC_RBYTES], const QcPoly *p) {
+    int i, k;
+    memset(out, 0, QCMDPC_RBYTES);
+    for (i = 0; i < QCMDPC_RWORDS; i++)
+        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++)
+            out[i * 8 + k] = (uint8_t)(p->w[i] >> (k * 8));
 }
 
 /* dst ^= ROL(src, j) mod (x^r - 1): bit i of src goes to bit (i+j)%r of dst */
@@ -5646,11 +5674,38 @@ static void qcprf_sparse_support(QcMdpcPrf *prf, int r, int d, uint16_t *out) {
 
 /* ── QC-MDPC keygen ── */
 
+/* Largest multiplicity in the multiset of cyclic distances within a support.
+ * Distances fold to [1, r/2], and d(d-1)/2 = 105 pairs fit a uint8_t count. */
+static int qcmdpc_max_multiplicity(const uint16_t *sup, int d, int r) {
+    uint8_t cnt[QCMDPC_R / 2 + 1];
+    int i, j, best = 0;
+    memset(cnt, 0, sizeof(cnt));
+    for (i = 0; i < d; i++) {
+        for (j = i + 1; j < d; j++) {
+            int dd = (sup[j] > sup[i]) ? sup[j] - sup[i] : sup[i] - sup[j];
+            if (dd > r - dd) dd = r - dd;
+            if (++cnt[dd] > best) best = cnt[dd];
+        }
+    }
+    return best;
+}
+
+/* Is this private key acceptable to the weak-key screen?  Exposed so an
+ * imported key can be screened too — qcmdpc_keygen is not the only way a
+ * private key enters the system. */
+static int qcmdpc_key_is_strong(const QcMdpcPriv *priv) {
+    return qcmdpc_max_multiplicity(priv->sup0, QCMDPC_D, QCMDPC_R) <= QCMDPC_MAX_MULT
+        && qcmdpc_max_multiplicity(priv->sup1, QCMDPC_D, QCMDPC_R) <= QCMDPC_MAX_MULT;
+}
+
 static void qcmdpc_keygen(QcMdpcPriv *priv, QcMdpcPub *pub, QcMdpcPrf *prf) {
     int k;
     for (;;) {
         qcprf_sparse_support(prf, QCMDPC_R, QCMDPC_D, priv->sup0);
         qcprf_sparse_support(prf, QCMDPC_R, QCMDPC_D, priv->sup1);
+        /* Weak-key screen (TODO #235 Part 1) — before the inversion, which is
+           the expensive half of a draw. */
+        if (!qcmdpc_key_is_strong(priv)) continue;
         qcp_zero(&priv->h0); qcp_zero(&priv->h1);
         for (k = 0; k < QCMDPC_D; k++) {
             qcp_set(&priv->h0, priv->sup0[k]);
@@ -5663,15 +5718,45 @@ static void qcmdpc_keygen(QcMdpcPriv *priv, QcMdpcPub *pub, QcMdpcPrf *prf) {
     }
 }
 
+/* ── FO hashes (TODO #235 Part 2) ── */
+/* Every hash on this path is domain-separated: HFSCX-256 is Merkle-Damgard, so
+   length extension applies, and FO re-encryption hashes attacker-influenced
+   data.  The ciphertext is bound into the session key on both paths, so a key
+   is only ever valid for the syndrome it was derived from. */
+
+/* K = HFSCX-256-DS(0x10, e0 || e1 || syn) — the success path. */
+static void qcmdpc_kem_key(BitArray *K_out, const QcPoly *e0, const QcPoly *e1,
+                            const QcPoly *syn) {
+    uint8_t buf[3 * QCMDPC_RBYTES];
+    qcp_to_bytes(buf,                      e0);
+    qcp_to_bytes(buf +     QCMDPC_RBYTES,  e1);
+    qcp_to_bytes(buf + 2 * QCMDPC_RBYTES,  syn);
+    hfscx_256_ds(QCMDPC_DS_K, buf, sizeof buf, NULL, K_out->b);
+}
+
+/* z = HFSCX-256-DS(0x12, h0 || h1) — the implicit-rejection secret.
+   FO needs z to be secret and unpredictable, not independent of the key, so it
+   is derived rather than stored: the private-key PEM is unchanged, and an
+   imported key gets the same z as the one that generated it.  Derived from the
+   polynomials rather than the support arrays because the polynomials are
+   canonical — support order depends on sampling order and does not survive a
+   PEM round-trip. */
+static void qcmdpc_z_seed(const QcMdpcPriv *priv, uint8_t z[32]) {
+    uint8_t buf[2 * QCMDPC_RBYTES];
+    qcp_to_bytes(buf,                  &priv->h0);
+    qcp_to_bytes(buf + QCMDPC_RBYTES,  &priv->h1);
+    hfscx_256_ds(QCMDPC_DS_ZSEED, buf, sizeof buf, NULL, z);
+}
+
 /* ── QC-MDPC encapsulate ── */
-/* syn_out = e0 + e1·h_pub;  K_out = hfscx_256(e0||e1);  no e' in ciphertext. */
+/* syn_out = e0 + e1·h_pub;  K_out = qcmdpc_kem_key(e0, e1, syn);
+   no e' in ciphertext. */
 
 static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
                           const QcMdpcPub *pub, QcMdpcPrf *prf) {
     uint16_t sup_e[QCMDPC_T];
     QcPoly e0, e1, e1h;
-    uint8_t ebuf[2 * QCMDPC_RBYTES];
-    int k, i;
+    int k;
     qcprf_sparse_support(prf, 2 * QCMDPC_R, QCMDPC_T, sup_e);
     qcp_zero(&e0); qcp_zero(&e1);
     for (k = 0; k < QCMDPC_T; k++) {
@@ -5681,15 +5766,7 @@ static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
     qcp_mul(&e1h, &e1, &pub->h_pub);
     qcp_copy(syn_out, &e0);
     qcp_xor(syn_out, &e1h);
-    /* K = hfscx_256(e0 || e1) */
-    memset(ebuf, 0, sizeof(ebuf));
-    for (i = 0; i < QCMDPC_RWORDS; i++) {
-        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++) {
-            ebuf[i * 8 + k]              = (uint8_t)(e0.w[i] >> (k * 8));
-            ebuf[QCMDPC_RBYTES + i*8 + k] = (uint8_t)(e1.w[i] >> (k * 8));
-        }
-    }
-    hfscx_256(ebuf, 2 * QCMDPC_RBYTES, NULL, K_out->b);
+    qcmdpc_kem_key(K_out, &e0, &e1, syn_out);
 }
 
 /* ── BGF decoder ── */
@@ -5793,24 +5870,40 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
     return 1;
 }
 
-/* ── QC-MDPC decapsulate ── */
-/* Decodes syndrome using BGF; returns 1 on success, 0 on failure. */
+/* ── QC-MDPC decapsulate — FO with implicit rejection (TODO #235 Part 2) ── */
+/* Always produces a key.  On a decoding failure, on a wrong-weight error, or on
+   any other malformed ciphertext, the key is a pseudorandom function of the
+   private key and the ciphertext instead of an error: the caller cannot tell
+   the two apart, which is what removes the GJS reaction oracle TODO #218 §5
+   measured.  A DFR event now surfaces as a shared secret the peer disagrees
+   with, not as a failure signal — see CliTest/lib_dfr.sh.
 
-static int qcmdpc_decap_bgf(BitArray *K_out, const QcPoly *syn,
+   Rigidity check.  The textbook check is "re-encrypt e' and compare to C".
+   Here that reduces to a weight check, and the reduction is exact rather than
+   an approximation: qcmdpc_bgf_decode returns 1 only when the running syndrome
+   reaches zero, i.e. only when e0·h0 + e1·h1 == C·h0, and h0 is invertible mod
+   x^r - 1 by construction, so that equality holds iff e0 + e1·h_pub == C — the
+   re-encryption identity itself.  What decoder success does NOT establish is
+   that e' has the weight an honest encapsulation samples, so that is the half
+   checked explicitly here.  Decap therefore needs no access to h_pub.
+
+   Not constant time: the decoder is not, and neither is this branch.  Timing
+   side channels are out of scope at these parameters (SecurityProofs-5.md
+   §11.8.7); implicit rejection closes the *protocol-level* oracle only. */
+
+static void qcmdpc_decap_bgf(BitArray *K_out, const QcPoly *syn,
                               const QcMdpcPriv *priv) {
     QcPoly e0, e1;
-    uint8_t ebuf[2 * QCMDPC_RBYTES];
-    int i, k;
-    if (!qcmdpc_bgf_decode(&e0, &e1, syn, priv)) return 0;
-    memset(ebuf, 0, sizeof(ebuf));
-    for (i = 0; i < QCMDPC_RWORDS; i++) {
-        for (k = 0; k < 8 && i * 8 + k < QCMDPC_RBYTES; k++) {
-            ebuf[i * 8 + k]              = (uint8_t)(e0.w[i] >> (k * 8));
-            ebuf[QCMDPC_RBYTES + i*8 + k] = (uint8_t)(e1.w[i] >> (k * 8));
-        }
+    uint8_t zbuf[32 + QCMDPC_RBYTES];
+    if (qcmdpc_bgf_decode(&e0, &e1, syn, priv) &&
+        qcp_popcount(&e0) + qcp_popcount(&e1) == QCMDPC_T) {
+        qcmdpc_kem_key(K_out, &e0, &e1, syn);
+        return;
     }
-    hfscx_256(ebuf, 2 * QCMDPC_RBYTES, NULL, K_out->b);
-    return 1;
+    /* K = HFSCX-256-DS(0x11, z || syn) */
+    qcmdpc_z_seed(priv, zbuf);
+    qcp_to_bytes(zbuf + 32, syn);
+    hfscx_256_ds(QCMDPC_DS_Z, zbuf, sizeof zbuf, NULL, K_out->b);
 }
 
 #endif /* HERRADURA_H */

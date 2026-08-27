@@ -1425,11 +1425,70 @@ def _qcp_inv(h: int, r: int) -> int:
     return u0
 
 
+# ── FO transform with implicit rejection + weak-key screen (TODO #235) ──
+# Domain-separation tags in hfscx_256_ds's namespace (0x01/0x02/0x03 taken).
+_QCMDPC_DS_K     = 0x10   # session key, success path
+_QCMDPC_DS_Z     = 0x11   # session key, implicit-rejection path
+_QCMDPC_DS_ZSEED = 0x12   # z, derived from the private polynomials
+
+# Weak-key screen bound: TODO #218 §4 puts the DFR cliff between distance-
+# spectrum multiplicity 6 and 7, and honest keygen reaches 6 at ~1 key in 4800.
+_QCMDPC_MAX_MULT = 5
+
+
+def _qcmdpc_max_multiplicity(sup, r: int) -> int:
+    """Largest multiplicity in the multiset of cyclic distances within sup."""
+    cnt: dict[int, int] = {}
+    sl = sorted(sup)
+    for i in range(len(sl)):
+        for j in range(i + 1, len(sl)):
+            dd = (sl[j] - sl[i]) % r
+            dd = min(dd, r - dd)
+            cnt[dd] = cnt.get(dd, 0) + 1
+    return max(cnt.values()) if cnt else 0
+
+
+def qcmdpc_key_is_strong(sup0, sup1) -> bool:
+    """Weak-key screen (TODO #235 Part 1).  Exposed so an imported key can be
+    screened too — qcmdpc_keygen is not the only way a private key arrives."""
+    r = _QCMDPC_R
+    return (_qcmdpc_max_multiplicity(sup0, r) <= _QCMDPC_MAX_MULT and
+            _qcmdpc_max_multiplicity(sup1, r) <= _QCMDPC_MAX_MULT)
+
+
+def _qcmdpc_kem_key(e0: int, e1: int, syn: int) -> int:
+    """K = HFSCX-256-DS(0x10, e0 || e1 || syn), the success path.
+
+    Domain-separated because HFSCX-256 is Merkle-Damgard and FO re-encryption
+    hashes attacker-influenced data; the syndrome is bound in so a key is only
+    ever valid for the ciphertext it came from."""
+    rb = (_QCMDPC_R + 7) // 8
+    buf = (e0.to_bytes(rb, 'little') + e1.to_bytes(rb, 'little') +
+           syn.to_bytes(rb, 'little'))
+    return int.from_bytes(hfscx_256_ds(_QCMDPC_DS_K, buf), 'big')
+
+
+def _qcmdpc_z_seed(sup0, sup1) -> bytes:
+    """z = HFSCX-256-DS(0x12, h0 || h1), the implicit-rejection secret.
+
+    Derived rather than stored, so the private-key PEM is unchanged and an
+    imported key gets the same z as the key that generated it.  Taken from the
+    polynomials, which are canonical — support order is a sampling artefact and
+    does not survive a PEM round-trip."""
+    rb = (_QCMDPC_R + 7) // 8
+    h0 = sum(1 << j for j in sup0)
+    h1 = sum(1 << j for j in sup1)
+    return hfscx_256_ds(_QCMDPC_DS_ZSEED,
+                        h0.to_bytes(rb, 'little') + h1.to_bytes(rb, 'little'))
+
+
 def qcmdpc_keygen(seed_int: int | None = None):
     """Generate QC-MDPC private/public key pair.
 
     Returns (sup0, sup1, h0, h1, h_pub) where sup0/sup1 are sets of positions
     in [0, r), h0/h1 are polynomial ints, and h_pub = h1·h0^{-1} mod (x^r−1).
+
+    Keys failing the weak-key screen are rejected and redrawn (TODO #235).
     """
     import os
     if seed_int is None:
@@ -1439,6 +1498,9 @@ def qcmdpc_keygen(seed_int: int | None = None):
     while True:
         sup0 = prf.sparse_support(r, d)
         sup1 = prf.sparse_support(r, d)
+        # Weak-key screen — before the inversion, the expensive half of a draw.
+        if not qcmdpc_key_is_strong(sup0, sup1):
+            continue
         h0 = sum(1 << j for j in sup0)
         h1 = sum(1 << j for j in sup1)
         try:
@@ -1463,11 +1525,7 @@ def qcmdpc_encap(h_pub: int, seed_int: int | None = None):
     e0 = sum(1 << j for j in sup_e if j < r)
     e1 = sum(1 << (j - r) for j in sup_e if j >= r)
     syn = e0 ^ _qcp_mul(e1, h_pub, r)
-    rb = (r + 7) // 8
-    ebuf = e0.to_bytes(rb, 'little') + e1.to_bytes(rb, 'little')
-    K_bytes = hfscx_256(ebuf)
-    K_int = int.from_bytes(K_bytes, 'big')
-    return syn, K_int
+    return syn, _qcmdpc_kem_key(e0, e1, syn)
 
 
 def qcmdpc_bgf_decode(syn_pub: int, h0: int, sup0: set, sup1: set) -> tuple | None:
@@ -1508,16 +1566,31 @@ def qcmdpc_bgf_decode(syn_pub: int, h0: int, sup0: set, sup1: set) -> tuple | No
     return (e0, e1) if s == 0 else None
 
 
-def qcmdpc_decap_bgf(syn: int, sup0: set, sup1: set, h0: int) -> int | None:
-    """Decapsulate using BGF decoder.  Returns K (int) or None on DFR."""
+def qcmdpc_decap_bgf(syn: int, sup0: set, sup1: set, h0: int) -> int:
+    """Decapsulate — FO with implicit rejection (TODO #235 Part 2).
+
+    Always returns a key.  On a decoding failure, a wrong-weight error, or any
+    other malformed ciphertext, the key is a pseudorandom function of the
+    private key and the ciphertext rather than None: the caller cannot tell the
+    two apart, which is what removes the GJS reaction oracle of TODO #218 §5.
+    A DFR event now surfaces as a shared secret the peer disagrees with.
+
+    Rigidity check.  "Re-encrypt and compare" reduces exactly to a weight check
+    here: qcmdpc_bgf_decode succeeds only when the running syndrome reaches
+    zero, i.e. e0·h0 + e1·h1 == syn·h0, and h0 is invertible by construction, so
+    that holds iff e0 + e1·h_pub == syn — the re-encryption identity.  Only the
+    weight of e' is left to check, so decapsulation needs no h_pub.
+
+    Callers that genuinely need the failure signal — the analysis scripts and
+    the DFR measurements — must call qcmdpc_bgf_decode directly."""
     result = qcmdpc_bgf_decode(syn, h0, sup0, sup1)
-    if result is None:
-        return None
-    e0, e1 = result
+    if result is not None:
+        e0, e1 = result
+        if bin(e0).count('1') + bin(e1).count('1') == _QCMDPC_T:
+            return _qcmdpc_kem_key(e0, e1, syn)
     rb = (_QCMDPC_R + 7) // 8
-    ebuf = e0.to_bytes(rb, 'little') + e1.to_bytes(rb, 'little')
-    K_bytes = hfscx_256(ebuf)
-    return int.from_bytes(K_bytes, 'big')
+    buf = _qcmdpc_z_seed(sup0, sup1) + syn.to_bytes(rb, 'little')
+    return int.from_bytes(hfscx_256_ds(_QCMDPC_DS_Z, buf), 'big')
 
 
 def hpke_stern_f_encap_with_e(seed: 'BitArray', n: int = None):

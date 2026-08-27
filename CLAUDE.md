@@ -26,7 +26,15 @@ CliTest/                                             — CLI integration + cross
                                                       claimed by exactly one native-* job
   lib_dfr.sh                                        — shared QC-MDPC DFR retry policy; every
                                                        script that decapsulates must source it
-                                                       (TODO #221), enforced by ci.yml's DFR guard
+                                                       (TODO #221), enforced by ci.yml's DFR guard.
+                                                       Since TODO #235 a DFR event is an output
+                                                       MISMATCH, not an error — implicit rejection
+                                                       means `dec --algo hpke-stern-kem` always
+                                                       exits 0 — so the retry is keyed on comparing
+                                                       bytes, `dfr_is_event` is gone (the guard
+                                                       fails on a resurrected copy), and a script
+                                                       that only checks dec's exit status is no
+                                                       longer testing the KEM
   lib_build.sh                                      — shared "is the CLI binary built?" policy
                                                        (TODO #229).  The compiled CLIs are not
                                                        tracked in git, so run ./build_c.sh and

@@ -444,12 +444,73 @@ public final class Stern {
         }
     }
 
+    // FO transform with implicit rejection + weak-key screen (TODO #235).
+    // Domain-separation tags in Hfscx256.hashDs's namespace (0x01/0x02/0x03
+    // are already allocated).
+    static final int QCMDPC_DS_K      = 0x10; // session key, success path
+    static final int QCMDPC_DS_Z      = 0x11; // session key, implicit-rejection path
+    static final int QCMDPC_DS_ZSEED  = 0x12; // z, derived from the private polynomials
+
+    /** Weak-key screen bound: TODO #218 §4 puts the DFR cliff between
+     * distance-spectrum multiplicity 6 and 7, and honest keygen reaches 6 at
+     * roughly 1 key in 4800. */
+    static final int QCMDPC_MAX_MULT = 5;
+
+    /** Largest multiplicity in the multiset of cyclic distances within sup. */
+    static int qcmdpcMaxMultiplicity(int[] sup, int r) {
+        int[] cnt = new int[r / 2 + 1];
+        int best = 0;
+        for (int i = 0; i < sup.length; i++) {
+            for (int j = i + 1; j < sup.length; j++) {
+                int dd = Math.abs(sup[j] - sup[i]);
+                if (dd > r - dd) dd = r - dd;
+                if (++cnt[dd] > best) best = cnt[dd];
+            }
+        }
+        return best;
+    }
+
+    /** Weak-key screen (TODO #235 Part 1).  Public so an imported key can be
+     * screened too — qcmdpcKeygen is not the only way a private key arrives. */
+    public static boolean qcmdpcKeyIsStrong(int[] sup0, int[] sup1) {
+        return qcmdpcMaxMultiplicity(sup0, QCMDPC_R) <= QCMDPC_MAX_MULT
+            && qcmdpcMaxMultiplicity(sup1, QCMDPC_R) <= QCMDPC_MAX_MULT;
+    }
+
+    /** K = HFSCX-256-DS(0x10, e0 || e1 || syn), the success path.  Domain-
+     * separated because HFSCX-256 is Merkle-Damgard and FO re-encryption
+     * hashes attacker-influenced data; the syndrome is bound in so a key is
+     * only ever valid for the ciphertext it came from. */
+    private static BigInteger qcmdpcKemKey(BigInteger e0, BigInteger e1, BigInteger syn) {
+        int rb = (QCMDPC_R + 7) / 8;
+        byte[] buf = new byte[3 * rb];
+        System.arraycopy(toFixedBytesLE(e0,  rb), 0, buf, 0,      rb);
+        System.arraycopy(toFixedBytesLE(e1,  rb), 0, buf, rb,     rb);
+        System.arraycopy(toFixedBytesLE(syn, rb), 0, buf, 2 * rb, rb);
+        return new BigInteger(1, Hfscx256.hashDs(QCMDPC_DS_K, buf));
+    }
+
+    /** z = HFSCX-256-DS(0x12, h0 || h1), the implicit-rejection secret.
+     * Derived rather than stored, so the private-key PEM is unchanged and an
+     * imported key gets the same z as the key that generated it.  Taken from
+     * the polynomials, which are canonical — support order is a sampling
+     * artefact and does not survive a PEM round-trip. */
+    private static byte[] qcmdpcZSeed(int[] sup0, int[] sup1) {
+        int rb = (QCMDPC_R + 7) / 8;
+        byte[] buf = new byte[2 * rb];
+        System.arraycopy(toFixedBytesLE(supToPoly(sup0), rb), 0, buf, 0,  rb);
+        System.arraycopy(toFixedBytesLE(supToPoly(sup1), rb), 0, buf, rb, rb);
+        return Hfscx256.hashDs(QCMDPC_DS_ZSEED, buf);
+    }
+
     static QcMdpcKeypair qcmdpcKeygen(BigInteger seedInt) {
         QcMdpcPrf prf = new QcMdpcPrf(seedInt);
         int r = QCMDPC_R, d = QCMDPC_D;
         while (true) {
             int[] sup0 = prf.sparseSupport(r, d);
             int[] sup1 = prf.sparseSupport(r, d);
+            // Weak-key screen — before the inversion, the expensive half of a draw.
+            if (!qcmdpcKeyIsStrong(sup0, sup1)) continue;
             BigInteger h0 = supToPoly(sup0);
             BigInteger h1 = supToPoly(sup1);
             BigInteger h0Inv;
@@ -489,12 +550,7 @@ public final class Stern {
             else e1 = e1.setBit(j - r);
         }
         BigInteger syn = e0.xor(qcpMul(e1, hPub, r));
-        int rb = (r + 7) / 8;
-        byte[] ebuf = new byte[2 * rb];
-        System.arraycopy(toFixedBytesLE(e0, rb), 0, ebuf, 0, rb);
-        System.arraycopy(toFixedBytesLE(e1, rb), 0, ebuf, rb, rb);
-        BigInteger k = new BigInteger(1, Hfscx256.hash(ebuf));
-        return new QcMdpcEncapResult(syn, k);
+        return new QcMdpcEncapResult(syn, qcmdpcKemKey(e0, e1, syn));
     }
 
     public static QcMdpcEncapResult qcmdpcEncap(BigInteger hPub, SecureRandom rng) {
@@ -556,16 +612,35 @@ public final class Stern {
         return upc;
     }
 
-    /** Decapsulate: BGF-decode, then derive K from the recovered error
-     * vector. Returns null on a DFR event or corrupt ciphertext. */
+    /** Decapsulate — FO with implicit rejection (TODO #235 Part 2).
+     *
+     * <p>Always returns a key, never null.  On a decoding failure, a
+     * wrong-weight error, or any other malformed ciphertext, the key is a
+     * pseudorandom function of the private key and the ciphertext rather than
+     * an error: the caller cannot tell the two apart, which is what removes
+     * the GJS reaction oracle of TODO #218 §5.  A DFR event now surfaces as a
+     * shared secret the peer disagrees with.
+     *
+     * <p>Rigidity check.  "Re-encrypt and compare" reduces exactly to a weight
+     * check here: qcmdpcBgfDecode succeeds only when the running syndrome
+     * reaches zero, i.e. e0·h0 + e1·h1 == syn·h0, and h0 is invertible by
+     * construction, so that holds iff e0 + e1·hPub == syn — the re-encryption
+     * identity.  Only the weight of e' is left to check, so decapsulation
+     * needs no hPub.
+     *
+     * <p>Callers that genuinely need the failure signal — the analysis scripts
+     * and the DFR measurements — must call qcmdpcBgfDecode directly. */
     public static BigInteger qcmdpcDecapBgf(BigInteger syn, int[] sup0, int[] sup1) {
         BigInteger[] result = qcmdpcBgfDecode(syn, sup0, sup1);
-        if (result == null) return null;
+        if (result != null
+                && result[0].bitCount() + result[1].bitCount() == QCMDPC_T) {
+            return qcmdpcKemKey(result[0], result[1], syn);
+        }
         int rb = (QCMDPC_R + 7) / 8;
-        byte[] ebuf = new byte[2 * rb];
-        System.arraycopy(toFixedBytesLE(result[0], rb), 0, ebuf, 0, rb);
-        System.arraycopy(toFixedBytesLE(result[1], rb), 0, ebuf, rb, rb);
-        return new BigInteger(1, Hfscx256.hash(ebuf));
+        byte[] buf = new byte[32 + rb];
+        System.arraycopy(qcmdpcZSeed(sup0, sup1), 0, buf, 0, 32);
+        System.arraycopy(toFixedBytesLE(syn, rb), 0, buf, 32, rb);
+        return new BigInteger(1, Hfscx256.hashDs(QCMDPC_DS_Z, buf));
     }
 
     // -----------------------------------------------------------------

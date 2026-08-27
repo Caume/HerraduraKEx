@@ -668,10 +668,10 @@ public final class HerraduraCli {
             }
             Codec.KemPrivKey pk = Codec.decodeKemPrivKey(pem);
             Codec.KemCt ct = Codec.decodeKemCt(readString(req(opt, "in", "dec")));
+            // Implicit rejection (TODO #235): no failure path — a DFR event
+            // or a corrupt ciphertext decrypts to garbage rather than
+            // reporting.
             BigInteger k = Stern.qcmdpcDecapBgf(ct.syn, pk.sup0, pk.sup1);
-            if (k == null) {
-                throw new CliError("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)");
-            }
             BigInteger d = Herradura.fscxRevolve(ct.e, k, Herradura.R_STEPS);
             writeBytes(out, toFixedBytes(d, Herradura.N / 8));
         } else {

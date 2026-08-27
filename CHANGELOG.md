@@ -2,6 +2,76 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.3.0] - 2026-08-26
+
+### Added
+- **HPKE-Stern-KEM: weak-key screening at keygen (TODO #235 Part 1).** `qcmdpc_keygen`
+  previously retried only when `h0` was non-invertible. TODO #218 §4 measured the DFR
+  varying materially with distance-spectrum multiplicity, with the cliff between
+  multiplicity 6 and 7 and roughly 1 key in 4800 drawn at 6 — carrying about 10x the
+  average DFR, with nothing rejecting it. Keygen now computes the multiset of cyclic
+  distances within each candidate support and redraws any polynomial above
+  `QCMDPC_MAX_MULT = 5`, so that whole tail, and every total-failure class above it, is
+  unreachable from keygen. The screen runs before the polynomial inversion — the
+  expensive half of a candidate — and costs about 0.02% of extra draws. Identical in C
+  (`qcmdpc_key_is_strong`), Go (`QcMdpcKeyIsStrong`), Python (`qcmdpc_key_is_strong`) and
+  Java (`qcmdpcKeyIsStrong`); because it rejects inside the PRF stream rather than
+  reseeding, deterministic keygen from a fixed seed still agrees byte-for-byte across all
+  four. An *imported* private key is still unscreened, which is recorded in
+  SecurityProofs-5.md §11.8.7 rather than fixed here.
+- `Hfscx256.hashDs` in the Java port, mirroring `hfscx_256_ds` in C/Python and
+  `Hfscx256DS` in Go.
+
+### Changed
+- **HPKE-Stern-KEM: FO transform with implicit rejection (TODO #235 Part 2).**
+  *Wire-format breaking for derived session keys — see [MIGRATING.md](MIGRATING.md) §7.*
+  Decapsulation no longer has a failure path. It decodes, checks rigidity, and returns
+  `HFSCX-256-DS(0x10, e0 || e1 || C)` on success or `HFSCX-256-DS(0x11, z || C)` on any
+  failure, where `z = HFSCX-256-DS(0x12, h0 || h1)`. Previously it returned `None` / `0` /
+  `false` and every CLI exited non-zero with a distinct message — which was precisely the
+  oracle the GJS reaction attack consumes (TODO #218 §5, §6).
+
+  Three details worth recording. The rigidity check reduces *exactly* to a weight check:
+  `qcmdpc_bgf_decode` succeeds only when its running syndrome reaches zero, i.e.
+  `e0·h0 + e1·h1 == C·h0`, and `h0` is invertible by construction, so that holds iff
+  `e0 + e1·h_pub == C` — the re-encryption identity — leaving `wt(e0) + wt(e1) == t` as
+  the only unchecked half. Decapsulation therefore needs no `h_pub` and the ciphertext
+  encoding is untouched. Every FO hash is domain-separated, since HFSCX-256 is
+  Merkle-Damgard and FO re-encryption hashes attacker-influenced data. And `z` is derived
+  from the private polynomials rather than stored, so no PEM field was added and existing
+  private keys keep working; it comes from `h0 || h1` rather than the support arrays
+  because the polynomials are canonical — support order does not survive a PEM round-trip.
+
+  What did not change: the decoder's DFR, and therefore TODO #218 §5's statistic. That is
+  a property of the decoder; §6 was what made it observable. This is also protocol-level
+  indistinguishability only — neither the decoder nor the branch selecting the rejection
+  key is constant time.
+- **`CliTest/lib_dfr.sh` rewritten, and all five consumer scripts with it.** A DFR event
+  is now an output *mismatch*, not an error: the CLI exits 0, writes a file, and the bytes
+  are wrong. `dfr_is_event` was deleted rather than left to match nothing — a stale caller
+  would turn every DFR event into a hard red, the exact failure TODO #221 exists to
+  prevent — and replaced by `dfr_retryable`. The retry policy keeps its shape and its
+  residual-error math (`p^N`: 1.1e-8 at N=3), keyed on the comparison instead of the
+  message: a DFR event is a property of one (key, error-vector) pair and vanishes on a
+  fresh draw, whereas a genuine bug is deterministic and survives every attempt. `ci.yml`'s
+  DFR guard now also fails on a resurrected `dfr_is_event`.
+- `test_hybrid_kex.sh`'s "wrong `--our-kem` is rejected" assertion is inverted: that
+  rejection *was* the GJS oracle, so the completion must now succeed and derive a session
+  key that simply does not agree. `test_stern_kem.sh` and `test_java_stern_interop.sh`
+  gained direct checks for both parts, including that all four CLIs derive the *same*
+  implicit-rejection key from the same undecodable ciphertext.
+- `SecurityProofsCode/qcmdpc_dfr_weak_keys.py` (the acceptance oracle for this item) now
+  measures the remediated behaviour: §4 reports what keygen emits after the screen
+  alongside the raw draw distribution, §6 demonstrates rather than asserts that success
+  and failure return the same kind of answer, and §7 marks blockers 3 and 4 closed while
+  1 and 2 stand. `qcmdpc_bgf_failure_rate.py` reads the decoder directly, since
+  decapsulation no longer signals.
+- SecurityProofs-5.md §11.8.7, `SECURITY.md` and `spec/herradura-protocol-spec.json`
+  updated. **HPKE-Stern-KEM remains `demo-only`, and TODO #235 was explicitly scoped not
+  to change that** — the DFR of 2^-8.6 and the toy parameters behind it are untouched and
+  remain the binding constraints. What changed is that the KEM is no longer weaker than
+  its own parameters require.
+
 ## [3.2.1] - 2026-08-26
 
 ### Changed

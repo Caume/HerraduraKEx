@@ -868,9 +868,12 @@ key-generation algorithm or PEM key format was introduced. Bob is ephemeral per 
    needed), and combines identically.
 
 A KEM decapsulation failure (corrupt ciphertext or, in principle, a genuine QC-MDPC
-decoding-failure-rate event, §11.8.4) is rejected with a clean, distinct error rather than
-silently producing a divergent key — verified empirically (`CliTest/test_hybrid_kex.sh`)
-against both a wrong KEM private key and missing-flag misuse.
+decoding-failure-rate event, §11.8.4) used to be rejected with a clean, distinct error.
+As of TODO #235 it is deliberately *not*: that error was the GJS reaction oracle
+(§11.8.7), so decapsulation now applies implicit rejection and silently produces a
+divergent key instead. `CliTest/test_hybrid_kex.sh` verifies the inverted property — a
+wrong KEM private key completes without complaint and yields a session key that does not
+agree — alongside the missing-flag misuse cases, whose clean rejection is unaffected.
 
 **Security argument.** The combined scheme is secure if *either* HKEX-RNL or
 HPKE-Stern-KEM is secure, by the combiner construction above (SP 800-227 §4.6.2-style

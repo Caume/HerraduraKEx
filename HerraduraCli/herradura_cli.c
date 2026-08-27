@@ -1760,9 +1760,11 @@ static void cmd_kex(int argc, char **argv)
                 explicit_bzero(kdf_out, sizeof(kdf_out));
             }
 
+            /* Implicit rejection (TODO #235): decapsulation always yields a
+               key.  A DFR event or a corrupt ciphertext now shows up as a
+               session key Bob disagrees with, never as an error here. */
             BitArray K2;
-            if (!qcmdpc_decap_bgf(&K2, &syn, &priv_kem))
-                die("kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation failed (DFR event or corrupt ciphertext)");
+            qcmdpc_decap_bgf(&K2, &syn, &priv_kem);
             explicit_bzero(&priv_kem, sizeof(priv_kem));
 
             uint8_t hint_used[RNL_N / 2];
@@ -2708,8 +2710,9 @@ static void cmd_dec(int argc, char **argv)
         BitArray E_ba, K_dec, D;
         ba_from_ra(&E_ba, ct.vals[1], ct.vlens[1]);
         pem_key_free(&ct); pem_key_free(&priv_k);
-        if (!qcmdpc_decap_bgf(&K_dec, &syn, &priv))
-            die("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)");
+        /* Implicit rejection (TODO #235): no failure path — a DFR event or a
+           corrupt ciphertext decrypts to garbage rather than reporting. */
+        qcmdpc_decap_bgf(&K_dec, &syn, &priv);
         ba_fscx_revolve(&D, &E_ba, &K_dec, R_VALUE);
         write_binary_file(out_path, D.b, KEYBYTES);
 

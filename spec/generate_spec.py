@@ -225,11 +225,14 @@ SECURITY = {
                               "in this spec at all until TODO #238 added the check that caught it: "
                               "build_protocols keyed off _PRIV_ALGOS | SECURITY and hybrid-rnl-stern is "
                               "in neither, being kex-only. It inherits the hpke-stern-kem row's "
-                              "reaction-attack exposure on its KEM half -- `kex --algo hybrid-rnl-stern` "
-                              "reports decapsulation failure with its own distinct message, which is the "
-                              "same GJS oracle -- so the hybrid is demo-only for the KEM half's reasons "
-                              "even though the Ring-LWR half is unaffected. Keys generated before "
-                              "v2.7.19 carry the ~32-bit n=256 ring and must be regenerated.",
+                              "properties on its KEM half -- `kex --algo hybrid-rnl-stern` used to "
+                              "report decapsulation failure with its own distinct message, the same "
+                              "GJS oracle, and since TODO #235 it does not report at all: the "
+                              "completion always succeeds and a KEM-half failure shows up as a session "
+                              "key the peer disagrees with. The hybrid stays demo-only for the KEM "
+                              "half's remaining reasons even though the Ring-LWR half is unaffected. "
+                              "Keys generated before v2.7.19 carry the ~32-bit n=256 ring and must be "
+                              "regenerated.",
                         source=["SECURITY.md (HYBRID-RNL-STERN note)", "TODO_DONE.md #167",
                                 "SecurityProofs-5.md 11.8.7"]),
     "hpke-stern": dict(status="demo-only", quantum_resistant="conjectured",
@@ -245,16 +248,29 @@ SECURITY = {
                               "n=120000 trials, TODO #218; consistent with the 0.225% of "
                               "TODO #195) -- well above production security margins (BIKE "
                               "targets DFR <= 2^-128 at r=12323), so CliTest scripts that "
-                              "decapsulate retry a fresh encapsulation on a detected DFR "
-                              "event rather than treating it as a bug (CliTest/lib_dfr.sh, "
-                              "TODO #221). Reclassified demo-only in TODO #218: IND-CCA2 "
-                              "needs DFR <= 2^-128 and this is 2^-8.6; decapsulation "
-                              "signals failure explicitly with no Fujisaki-Okamoto "
-                              "transform and no implicit rejection, so the GJS reaction "
-                              "attack recovers the private key in ~10^6 chosen-ciphertext "
-                              "queries; and keygen applies no weak-key screen, so about 1 "
-                              "key in 3400 carries roughly 10x the average DFR. Do not "
-                              "reuse a keypair across decapsulations you do not control.",
+                              "decapsulate retry a fresh encapsulation rather than treating "
+                              "a DFR event as a bug (CliTest/lib_dfr.sh, TODO #221). "
+                              "Reclassified demo-only in TODO #218, which listed four "
+                              "blockers; TODO #235 closed the two that were missing "
+                              "constructions rather than parameter choices. Keygen now "
+                              "screens weak keys (distance-spectrum multiplicity capped at "
+                              "5, so the ~1-in-3400 class carrying roughly 10x the average "
+                              "DFR is unreachable), and decapsulation applies a "
+                              "Fujisaki-Okamoto transform with implicit rejection: it "
+                              "checks rigidity -- which at an invertible h0 reduces exactly "
+                              "to wt(e)=t -- and returns HFSCX-256-DS(0x11, z || C) on any "
+                              "failure instead of reporting one, so the GJS reaction attack "
+                              "no longer has an oracle. Still demo-only, and TODO #235 was "
+                              "scoped not to change that: IND-CCA2 needs DFR <= 2^-128 and "
+                              "this is 2^-8.6, and the underlying QC syndrome-decoding "
+                              "instance at these parameters is far below any usable level. "
+                              "Two consequences for callers: a decoding failure is now "
+                              "silent (it surfaces as a shared secret the peer disagrees "
+                              "with, never an error), and the success-path session key "
+                              "changed from HFSCX-256(e0||e1) to "
+                              "HFSCX-256-DS(0x10, e0||e1||C), so pre-#235 builds do not "
+                              "interoperate -- see MIGRATING.md. An imported private key is "
+                              "still unscreened.",
                         source=["herradura.h QCMDPC_* / qcmdpc_decap_bgf",
                                 "herradura/herradura.go QcMdpcDecapBgf",
                                 "CliTest/test_stern_kem.sh",

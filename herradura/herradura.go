@@ -4199,7 +4199,78 @@ func QcMdpcInv(h *big.Int) (*big.Int, bool) {
 	return u0, true
 }
 
+// FO transform with implicit rejection + weak-key screen (TODO #235).
+// Domain-separation tags in Hfscx256DS's namespace (0x01/0x02/0x03 taken).
+const (
+	qcMdpcDsK     = 0x10 // session key, success path
+	qcMdpcDsZ     = 0x11 // session key, implicit-rejection path
+	qcMdpcDsZSeed = 0x12 // z, derived from the private polynomials
+
+	// Weak-key screen bound: TODO #218 §4 puts the DFR cliff between
+	// distance-spectrum multiplicity 6 and 7, and honest keygen reaches 6 at
+	// roughly 1 key in 4800.
+	qcMdpcMaxMult = 5
+)
+
+// qcMdpcMaxMultiplicity is the largest multiplicity in the multiset of cyclic
+// distances within sup.
+func qcMdpcMaxMultiplicity(sup []int, r int) int {
+	cnt := make([]int, r/2+1)
+	best := 0
+	for i := 0; i < len(sup); i++ {
+		for j := i + 1; j < len(sup); j++ {
+			dd := sup[j] - sup[i]
+			if dd < 0 {
+				dd = -dd
+			}
+			if dd > r-dd {
+				dd = r - dd
+			}
+			cnt[dd]++
+			if cnt[dd] > best {
+				best = cnt[dd]
+			}
+		}
+	}
+	return best
+}
+
+// QcMdpcKeyIsStrong applies the weak-key screen (TODO #235 Part 1).  Exported
+// so an imported key can be screened too — QcMdpcKeygen is not the only way a
+// private key arrives.
+func QcMdpcKeyIsStrong(sup0, sup1 []int) bool {
+	return qcMdpcMaxMultiplicity(sup0, QcMdpcR) <= qcMdpcMaxMult &&
+		qcMdpcMaxMultiplicity(sup1, QcMdpcR) <= qcMdpcMaxMult
+}
+
+// qcMdpcKemKey is K = HFSCX-256-DS(0x10, e0 || e1 || syn), the success path.
+// Domain-separated because HFSCX-256 is Merkle-Damgard and FO re-encryption
+// hashes attacker-influenced data; the syndrome is bound in so a key is only
+// ever valid for the ciphertext it came from.
+func qcMdpcKemKey(e0, e1, syn *big.Int) []byte {
+	rb := QcMdpcRBytes
+	buf := make([]byte, 3*rb)
+	putLE(buf[:rb], e0)
+	putLE(buf[rb:2*rb], e1)
+	putLE(buf[2*rb:], syn)
+	return Hfscx256DS(qcMdpcDsK, buf, nil)
+}
+
+// qcMdpcZSeed is z = HFSCX-256-DS(0x12, h0 || h1), the implicit-rejection
+// secret.  Derived rather than stored, so the private-key PEM is unchanged and
+// an imported key gets the same z as the key that generated it.  Taken from the
+// polynomials, which are canonical — support order is a sampling artefact and
+// does not survive a PEM round-trip.
+func qcMdpcZSeed(sup0, sup1 []int) []byte {
+	rb := QcMdpcRBytes
+	buf := make([]byte, 2*rb)
+	putLE(buf[:rb], supportToPoly(sup0))
+	putLE(buf[rb:], supportToPoly(sup1))
+	return Hfscx256DS(qcMdpcDsZSeed, buf, nil)
+}
+
 // QcMdpcKeygen generates a QC-MDPC key pair.  seed==nil uses OS randomness.
+// Keys failing the weak-key screen are rejected and redrawn (TODO #235).
 func QcMdpcKeygen(seed []byte) (sup0, sup1 []int, h0, h1, hPub *big.Int) {
 	r, d := QcMdpcR, QcMdpcD
 	var seedInt *big.Int
@@ -4216,6 +4287,10 @@ func QcMdpcKeygen(seed []byte) (sup0, sup1 []int, h0, h1, hPub *big.Int) {
 	for {
 		sup0 = prf.sparseSupport(r, d, nil)
 		sup1 = prf.sparseSupport(r, d, nil)
+		// Weak-key screen — before the inversion, the expensive half of a draw.
+		if !QcMdpcKeyIsStrong(sup0, sup1) {
+			continue
+		}
 		h0 = supportToPoly(sup0)
 		h1 = supportToPoly(sup1)
 		inv, ok := QcMdpcInv(h0)
@@ -4260,16 +4335,8 @@ func QcMdpcEncap(hPub *big.Int, seed []byte) (syn *big.Int, K []byte) {
 		}
 	}
 	syn = new(big.Int).Xor(e0, QcMdpcMul(e1, hPub))
-	K = qcMdpcKfromE(e0, e1)
+	K = qcMdpcKemKey(e0, e1, syn)
 	return syn, K
-}
-
-func qcMdpcKfromE(e0, e1 *big.Int) []byte {
-	rb := QcMdpcRBytes
-	ebuf := make([]byte, 2*rb)
-	putLE(ebuf[:rb], e0)
-	putLE(ebuf[rb:], e1)
-	return Hfscx256(ebuf, nil)
 }
 
 // putLE writes v as little-endian into buf (len(buf) bytes).
@@ -4373,11 +4440,40 @@ func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, boo
 	return e0, e1, true
 }
 
-// QcMdpcDecapBgf decapsulates using the BGF decoder.  Returns (K, ok).
-func QcMdpcDecapBgf(syn *big.Int, sup0, sup1 []int) ([]byte, bool) {
-	e0, e1, ok := QcMdpcBgfDecode(syn, sup0, sup1)
-	if !ok {
-		return nil, false
+// QcMdpcDecapBgf decapsulates — FO with implicit rejection (TODO #235 Part 2).
+//
+// It always returns a key.  On a decoding failure, a wrong-weight error, or any
+// other malformed ciphertext, the key is a pseudorandom function of the private
+// key and the ciphertext rather than an error: the caller cannot tell the two
+// apart, which is what removes the GJS reaction oracle of TODO #218 §5.  A DFR
+// event now surfaces as a shared secret the peer disagrees with.
+//
+// Rigidity check.  "Re-encrypt and compare" reduces exactly to a weight check
+// here: QcMdpcBgfDecode succeeds only when the running syndrome reaches zero,
+// i.e. e0·h0 + e1·h1 == syn·h0, and h0 is invertible by construction, so that
+// holds iff e0 + e1·hPub == syn — the re-encryption identity.  Only the weight
+// of e' is left to check, so decapsulation needs no hPub.
+//
+// Callers that genuinely need the failure signal — the analysis scripts and the
+// DFR measurements — must call QcMdpcBgfDecode directly.
+func QcMdpcDecapBgf(syn *big.Int, sup0, sup1 []int) []byte {
+	if e0, e1, ok := QcMdpcBgfDecode(syn, sup0, sup1); ok {
+		if bitCount(e0)+bitCount(e1) == QcMdpcT {
+			return qcMdpcKemKey(e0, e1, syn)
+		}
 	}
-	return qcMdpcKfromE(e0, e1), true
+	rb := QcMdpcRBytes
+	buf := make([]byte, 32+rb)
+	copy(buf, qcMdpcZSeed(sup0, sup1))
+	putLE(buf[32:], syn)
+	return Hfscx256DS(qcMdpcDsZ, buf, nil)
+}
+
+// bitCount is the Hamming weight of a non-negative big.Int.
+func bitCount(v *big.Int) int {
+	n := 0
+	for _, w := range v.Bits() {
+		n += bits.OnesCount(uint(w))
+	}
+	return n
 }

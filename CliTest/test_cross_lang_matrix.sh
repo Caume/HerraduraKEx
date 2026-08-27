@@ -172,14 +172,25 @@ matrix_kem() {
                     local dec_output rc
                     dec_output=$(${CLI[$dec]} dec --algo "$algo" --key "$TMP/kem_${kg}.pem" --in "$TMP/kem_ct.pem" \
                         --out "$TMP/kem_pt.bin" 2>&1) && rc=0 || rc=$?
-                    if [ "$rc" -eq 0 ]; then
+                    if [ "$rc" -ne 0 ]; then
+                        # Since TODO #235 a DFR event never exits nonzero, so this
+                        # is always a real failure.
+                        fail "$algo key=$kg $enc-enc -> $dec-dec (rc=$rc): $dec_output"
+                        break
+                    fi
+                    if cmp -s "$TMP/msg.bin" "$TMP/kem_pt.bin"; then
                         check_roundtrip "$algo key=$kg $enc-enc -> $dec-dec" "$TMP/msg.bin" "$TMP/kem_pt.bin"
                         break
                     fi
-                    if dfr_is_event "$dec_output" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+                    # A mismatch is either a DFR event (a property of this one
+                    # key/error pair, gone on a fresh draw) or a genuine
+                    # cross-language disagreement (deterministic, survives every
+                    # attempt).  Bounded retries separate the two.
+                    if dfr_retryable "$attempt"; then
+                        dfr_report_retry "$algo key=$kg $enc-enc -> $dec-dec" "$attempt"
                         continue
                     fi
-                    fail "$algo key=$kg $enc-enc -> $dec-dec (rc=$rc): $dec_output"
+                    check_roundtrip "$algo key=$kg $enc-enc -> $dec-dec" "$TMP/msg.bin" "$TMP/kem_pt.bin"
                     break
                 done
             done

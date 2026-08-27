@@ -7,7 +7,9 @@ Decoding Failure Rate (DFR) at the suite's current toy parameters
 This closes the "DFR never measured" gap noted in TODO #183/#186 and
 referenced by TODO #195: `CliTest/test_hybrid_kex_interop.sh` generates
 fresh random keys every run, so a nonzero DFR shows up as intermittent CI
-failures (`HPKE-Stern-KEM decapsulation failed`) that are NOT bugs — this
+failures that are NOT bugs (before TODO #235 they surfaced as an explicit
+`HPKE-Stern-KEM decapsulation failed`; implicit rejection now makes them a
+silent wrong-key outcome instead, so this script reads the decoder) — this
 script quantifies exactly how often that is expected to happen, so the
 test suite's retry/skip policy has a measured basis instead of a guess.
 
@@ -73,12 +75,17 @@ def main():
         # (a colliding-but-wrong e would also give the wrong K, but we want
         # to distinguish "decoder returned None" from "decoder returned the
         # wrong e" for diagnostic purposes).
-        K_dec = m.qcmdpc_decap_bgf(syn, sup0, sup1, h0)
-
-        if K_dec is None:
+        #
+        # Since TODO #235 that distinction has to be taken from the DECODER, not
+        # from qcmdpc_decap_bgf: the FO transform means decapsulation always
+        # returns a key and never signals failure. This measures the same DFR it
+        # always did — what changed is only who can observe it. An attacker
+        # cannot; this script can, because it holds the private key.
+        dec = m.qcmdpc_bgf_decode(syn, h0, sup0, sup1)
+        if dec is None:
             failures += 1
             none_decode += 1
-        elif K_dec != K_enc:
+        elif m.qcmdpc_decap_bgf(syn, sup0, sup1, h0) != K_enc:
             failures += 1
             wrong_decode += 1
 

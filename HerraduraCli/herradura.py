@@ -1628,10 +1628,10 @@ def cmd_kex(args):
             K1_int = _rnl_contributory_kdf(K1.uint, _rnl_key_bits(n), n_a, n_b)
             K1_int = _apply_kdf(K1_int, _rnl_session_bits(n))
 
+            # Implicit rejection (TODO #235): decapsulation always yields a
+            # key.  A DFR event or a corrupt ciphertext now shows up as a
+            # session key Bob disagrees with, never as an error here.
             K2_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
-            if K2_int is None:
-                sys.exit("kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation "
-                         "failed (DFR event or corrupt ciphertext)")
 
             K_int = _hybrid_rnl_stern_combine(K1_int, K2_int, C_A, m_A, C_B,
                                               hint_used, h_pub, syn, n, r_qc)
@@ -1881,9 +1881,9 @@ def cmd_dec(args):
         key_path = args.key
         sup0, sup1, h0, h1 = _decode_kem_privkey(key_path)
         syn, E_int, r = _decode_kem_ct(getattr(args, 'in'))
+        # Implicit rejection (TODO #235): no failure path — a DFR event or a
+        # corrupt ciphertext decrypts to garbage rather than reporting.
         K_int = qcmdpc_decap_bgf(syn, sup0, sup1, h0)
-        if K_int is None:
-            sys.exit("dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)")
         K = BitArray(KEYBITS, K_int)
         E = BitArray(KEYBITS, E_int)
         D = fscx_revolve(E, K, R_VALUE)

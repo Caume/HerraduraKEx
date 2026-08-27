@@ -481,15 +481,38 @@ def section4(n_spectra, n_per_key, quick):
     print("per-position estimates degrade together.\n")
 
     rng = random.Random(4218)
+    screen = getattr(_SUITE, '_QCMDPC_MAX_MULT', None)
 
-    # (a) what keygen actually emits — spectrum only, no decoding, so this is cheap
-    print("  (a) Multiplicity of one private polynomial as keygen emits it")
+    # (a) what a raw draw looks like — spectrum only, no decoding, so this is cheap
+    print("  (a) Multiplicity of one private polynomial, as DRAWN")
     hist = Counter()
     for _ in range(n_spectra):
         hist[max(distance_spectrum(rng.sample(range(R_DEP), D_DEP), R_DEP).values())] += 1
     print(f"      {n_spectra} samples at d = {D_DEP}, r = {R_DEP}")
     for k in sorted(hist):
         print(f"        max multiplicity {k:>2}: {hist[k]:>8}  {hist[k]/n_spectra:>9.4%}")
+
+    # (a′) what keygen now EMITS — the screen TODO #235 Part 1 added
+    print("\n  (a′) ... and as keygen EMITS it, after the weak-key screen")
+    if screen is None:
+        print("      NO SCREEN FOUND in the suite (_QCMDPC_MAX_MULT is absent).")
+        print("      This section's verdict below assumes TODO #235 Part 1 is")
+        print("      deployed; without it, read (a) as the emitted distribution.")
+    else:
+        print(f"      Deployed bound: _QCMDPC_MAX_MULT = {screen}"
+              f"  (accept iff both polynomials are <= {screen})")
+        emitted = Counter({k: v for k, v in hist.items() if k <= screen})
+        n_emit = sum(emitted.values())
+        for k in sorted(emitted):
+            print(f"        max multiplicity {k:>2}: {emitted[k]:>8}  "
+                  f"{emitted[k]/n_emit:>9.4%}")
+        rej_poly = 1 - n_emit / n_spectra
+        rej_key = 1 - (n_emit / n_spectra) ** 2
+        print(f"      Rejected polynomials: {rej_poly:.4%};  rejected key draws: "
+              f"{rej_key:.4%}"
+              + (f"  (~1 in {1/rej_key:,.0f})" if rej_key > 0 else ""))
+        print("      The screen sits before the inversion, the expensive half of")
+        print("      a draw, so this is close to free.")
 
     # (b) the DFR gradient, driven by construction
     print("\n  (b) DFR as multiplicity is dialled up (h0 partly an arithmetic")
@@ -529,19 +552,37 @@ def section4(n_spectra, n_per_key, quick):
     print("      and above the key is effectively non-functional — every")
     print("      decapsulation fails.")
     print()
-    print("      Honest keygen does reach multiplicity 6.  It is rare but it is")
-    print("      not negligible, and nothing rejects it: qcmdpc_keygen retries")
-    print("      only when h0 is non-invertible — in C, Go, and Python alike.")
-    print("      There is no spectrum test, no multiplicity bound, and no")
-    print("      weak-key screen of any kind.  A user who draws such a key gets a")
-    print("      materially worse DFR than the published average and no signal")
-    print("      that anything is unusual.")
-    print()
-    print("      The total-failure classes (multiplicity >= 7, e.g. any h0 whose")
-    print("      support is an arithmetic progression) are far out of reach of")
-    print("      uniform sampling — they matter only if a key can be supplied")
-    print("      rather than generated.  Nothing in the PEM decode path checks")
-    print("      the spectrum of an imported private key either.")
+    if screen is None:
+        print("      Honest keygen does reach multiplicity 6.  It is rare but it is")
+        print("      not negligible, and nothing rejects it: qcmdpc_keygen retries")
+        print("      only when h0 is non-invertible — in C, Go, and Python alike.")
+        print("      There is no spectrum test, no multiplicity bound, and no")
+        print("      weak-key screen of any kind.  A user who draws such a key gets")
+        print("      a materially worse DFR than the published average and no")
+        print("      signal that anything is unusual.")
+    else:
+        print("      Original finding: honest keygen reached multiplicity 6 — rare")
+        print("      but not negligible — and nothing rejected it; qcmdpc_keygen")
+        print("      retried only on a non-invertible h0, in C, Go and Python")
+        print("      alike.  TODO #235 Part 1 closed this.  The screen rejects and")
+        print(f"      redraws any polynomial above multiplicity {screen}, so the whole")
+        print("      tail measured in (a) — the multiplicity-6 keys AND every")
+        print("      total-failure class above them — is now unreachable from")
+        print("      keygen, in C, Go, Python and Java identically.")
+        print()
+        print("      Cost, from (a′): a fraction of a percent of extra draws, paid")
+        print("      before the inversion.  Benefit, from (b): the DFR gradient no")
+        print("      longer has a reachable upper half.")
+        print()
+        print("      Still true, and NOT fixed by the screen: nothing in the PEM")
+        print("      decode path checks the spectrum of an IMPORTED private key.")
+        print("      The library exposes the predicate (qcmdpc_key_is_strong /")
+        print("      QcMdpcKeyIsStrong / qcmdpcKeyIsStrong) but the CLI readers do")
+        print("      not call it.  A supplied key can still be an arithmetic")
+        print("      progression, and it will still fail every decapsulation.")
+        print("      That is a self-inflicted denial of service rather than a")
+        print("      confidentiality break, which is why it was not filed with the")
+        print("      two blockers, but it is the remaining half of this section.")
     return hist, gradient
 
 
@@ -650,30 +691,74 @@ def section6():
     print("attacker cannot tell failure from success.  BIKE does this; it is the")
     print("reason its DFR argument is about IND-CCA2 rather than about UX.\n")
 
-    print("  Deployed behaviour, checked in the source:")
-    print("    suite      qcmdpc_decap_bgf(...) -> None on decoding failure")
-    print("    Python CLI dec --algo hpke-stern-kem:")
-    print('               sys.exit("dec: HPKE-Stern-KEM BGF decoding failed ...")')
-    print("    hybrid     kex --algo hybrid-rnl-stern: same, distinct message")
-    print("    C / Go     qcmdpc_decap_bgf returns 0 / false on failure")
+    print("  Original finding (before TODO #235): the failure was signalled")
+    print("  explicitly at every layer — qcmdpc_decap_bgf returned None / 0 /")
+    print("  false, and each CLI exited nonzero with a distinct stderr message.")
+    print("  There was no FO transform: decapsulation never checked that the")
+    print("  ciphertext had been honestly generated, so an attacker's chosen")
+    print("  syndrome was processed exactly like a real one, and the oracle §5")
+    print("  needs was not merely present in theory, it was the documented")
+    print("  interface.\n")
+
+    print("  Deployed behaviour now — measured here, not asserted:\n")
+
+    sup0, sup1, h0, h1, h_pub = _SUITE.qcmdpc_keygen()
+    # An honest ciphertext for a DIFFERENT key: well-formed, but this key cannot
+    # decode it.  That is the adversary's chosen-ciphertext input, and the one
+    # that used to produce the oracle's "failure" answer.
+    s2, s3, h0b, _h1b, h_pub_b = _SUITE.qcmdpc_keygen()
+    syn_foreign, _K_foreign = _SUITE.qcmdpc_encap(h_pub_b)
+    syn_honest,  K_honest   = _SUITE.qcmdpc_encap(h_pub)
+
+    decoded_foreign = _SUITE.qcmdpc_bgf_decode(syn_foreign, h0, sup0, sup1)
+    K_good      = _SUITE.qcmdpc_decap_bgf(syn_honest,  sup0, sup1, h0)
+    K_bad       = _SUITE.qcmdpc_decap_bgf(syn_foreign, sup0, sup1, h0)
+    K_bad2      = _SUITE.qcmdpc_decap_bgf(syn_foreign, sup0, sup1, h0)
+    K_bad_other = _SUITE.qcmdpc_decap_bgf(syn_foreign, s2, s3, h0b)
+
+    print("    decoder on the foreign ciphertext         : "
+          f"{'FAILS (as expected)' if decoded_foreign is None else 'decoded'}")
+    print("    decap on the honest ciphertext            : returns a key, "
+          f"correct = {K_good == K_honest}")
+    print("    decap on the foreign ciphertext           : "
+          f"{'returns a key (no None, no exception)' if K_bad is not None else 'SIGNALS FAILURE'}")
+    print(f"    ... differing from the honest key         : {K_bad != K_good}")
+    print(f"    ... deterministic in (key, ciphertext)    : {K_bad == K_bad2}")
+    print(f"    ... and different under a different key   : {K_bad != K_bad_other}")
     print()
-    print("  So the failure is signalled explicitly at every layer: a distinct")
-    print("  return value in the library, and a distinct exit status plus a")
-    print("  distinct message on stderr at the CLI.  There is no implicit")
-    print("  rejection and no FO transform — decapsulation never re-encrypts to")
-    print("  check that the ciphertext was honestly generated, so an attacker's")
-    print("  chosen syndrome is processed exactly like a real one.")
-    print()
-    print("  Consequence: the oracle §5 needs is not merely present in theory,")
-    print("  it is the documented interface.  The KEM is IND-CPA at best; the")
-    print("  gap to IND-CCA2 is not only the DFR number, it is the missing")
-    print("  transform.")
+
+    oracle_gone = (K_bad is not None and K_bad != K_good and K_bad == K_bad2
+                   and K_bad != K_bad_other)
+    if oracle_gone:
+        print("  The two answers the oracle needed to tell apart — success and")
+        print("  failure — are now the same answer: a 32-byte key.  On the failure")
+        print("  path it is HFSCX-256-DS(0x11, z || C), with z = HFSCX-256-DS(0x12,")
+        print("  h0 || h1) a secret the attacker does not hold.  Nothing in the")
+        print("  return value, the exit status, or the stderr of any of the four")
+        print("  CLIs separates the cases.")
+        print()
+        print("  Note what did NOT change: the decoder's DFR, and therefore §5's")
+        print("  statistic, are exactly as measured above.  §5 is a property of")
+        print("  the decoder; §6 was what made it observable.  Removing the signal")
+        print("  removes the attack without touching the failure rate — which is")
+        print("  also why blocker 1 in §7 still stands entirely on its own.")
+        print()
+        print("  Residual, deliberately not claimed away: this is protocol-level")
+        print("  indistinguishability only.  Neither the decoder nor the branch")
+        print("  selecting the rejection key is constant time, so an attacker with")
+        print("  a local timing channel can still separate the two.  At these")
+        print("  parameters that is not the binding constraint.")
+    else:
+        print("  *** The oracle is still reachable — TODO #235 Part 2 is not")
+        print("  *** deployed, or has regressed.  Treat §7's blocker 4 as OPEN.")
+    return oracle_gone
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # §7 — verdict
 # ═══════════════════════════════════════════════════════════════════════════
-def section7(dfr):
+def section7(dfr, oracle_gone=False):
+    screen = getattr(_SUITE, '_QCMDPC_MAX_MULT', None)
     print("\n" + SEP)
     print("§7  Verdict")
     print(SEP)
@@ -682,14 +767,41 @@ def section7(dfr):
     print(f"     supporting lambda = {lam:.1f} bits where IND-CCA2 wants 128.")
     print( "  2. The DFR(r) fit puts the required r at a large multiple of the")
     print(f"     deployed {R_DEP}, and the fit understates it (concavity, §3).")
-    print( "  3. Weak keys are not screened: keygen retries only on a")
-    print( "     non-invertible h0.  DFR varies materially across keys (§4).")
-    print( "  4. The GJS precondition holds — failures are explicitly signalled,")
-    print( "     with no FO transform or implicit rejection (§5, §6).")
+    if screen is None:
+        print( "  3. Weak keys are not screened: keygen retries only on a")
+        print( "     non-invertible h0.  DFR varies materially across keys (§4).")
+    else:
+        print(f"  3. CLOSED by TODO #235 Part 1.  Keygen now rejects and redraws")
+        print(f"     any private polynomial above distance-spectrum multiplicity")
+        print(f"     {screen}, in C, Go, Python and Java identically, so the weak-key")
+        print( "     tail §4(a) measured is no longer reachable from keygen.  An")
+        print( "     IMPORTED key is still unscreened (§4(c)) — a self-inflicted")
+        print( "     denial of service, not a confidentiality break.")
+    if not oracle_gone:
+        print( "  4. The GJS precondition holds — failures are explicitly signalled,")
+        print( "     with no FO transform or implicit rejection (§5, §6).")
+    else:
+        print( "  4. CLOSED by TODO #235 Part 2.  Decapsulation applies an FO")
+        print( "     transform with implicit rejection: it checks rigidity (the")
+        print( "     re-encryption identity, which reduces exactly to wt(e) = t")
+        print( "     given an invertible h0) and returns HFSCX-256-DS(0x11, z || C)")
+        print( "     on any failure.  §6 measures success and failure returning the")
+        print( "     same kind of answer.  §5's statistic is unchanged — it is a")
+        print( "     property of the decoder — but it is no longer observable.")
     print()
-    print( "  These compound rather than trade off.  Even a DFR of 2^-128 would")
-    print( "  not make this KEM IND-CCA2 while decapsulation reports failure, and")
-    print( "  implicit rejection would not fix a 2^-8.8 DFR either.")
+    if screen is None or not oracle_gone:
+        print( "  These compound rather than trade off.  Even a DFR of 2^-128 would")
+        print( "  not make this KEM IND-CCA2 while decapsulation reports failure, and")
+        print( "  implicit rejection would not fix a 2^-8.8 DFR either.")
+    else:
+        print( "  Blockers 3 and 4 were the two that were missing CONSTRUCTIONS at")
+        print( "  the deployed parameters, and they are the two TODO #235 added.")
+        print( "  Blockers 1 and 2 are parameter choices and they still stand, so")
+        print( "  the compounding argument still bites in the other direction:")
+        print( "  implicit rejection does not fix a 2^-8.8 DFR.  This KEM remains")
+        print( "  demo-only, and closing #235 did not change that — what it changed")
+        print( "  is that the KEM is no longer weaker than its own parameters")
+        print( "  require.  Blocker 1 alone keeps IND-CCA2 out of reach.")
     print()
     print( "  Not the binding constraint, but worth stating plainly: at r = 523,")
     print( "  d = 15, t = 18 the underlying QC syndrome-decoding instance is far")
@@ -698,13 +810,24 @@ def section7(dfr):
     print( "  the KEM secure; the parameters have to move first, and BIKE-128's")
     print( "  r = 12323, d = 71, t = 134 is the reference point.")
     print()
-    print( "  Recommended SECURITY.md row (added in this item):")
-    print( "    HPKE-Stern-KEM | Demo-only | measured DFR 2^-8.8 at the deployed")
-    print( "    toy parameters, so IND-CCA2 (which needs 2^-128) does not hold;")
-    print( "    decapsulation signals failure explicitly with no FO transform or")
-    print( "    implicit rejection, exposing the GJS reaction attack, and keygen")
-    print( "    does not screen weak keys. Do not reuse a keypair across")
-    print( "    decapsulations you do not control.")
+    if screen is None or not oracle_gone:
+        print( "  Recommended SECURITY.md row (added in this item):")
+        print( "    HPKE-Stern-KEM | Demo-only | measured DFR 2^-8.8 at the deployed")
+        print( "    toy parameters, so IND-CCA2 (which needs 2^-128) does not hold;")
+        print( "    decapsulation signals failure explicitly with no FO transform or")
+        print( "    implicit rejection, exposing the GJS reaction attack, and keygen")
+        print( "    does not screen weak keys. Do not reuse a keypair across")
+        print( "    decapsulations you do not control.")
+    else:
+        print( "  Recommended SECURITY.md row (as revised by TODO #235):")
+        print( "    HPKE-Stern-KEM | Demo-only | measured DFR 2^-8.8 at the deployed")
+        print( "    toy parameters, so IND-CCA2 (which needs 2^-128) does not hold,")
+        print( "    and the underlying QC syndrome-decoding instance is far below")
+        print( "    any usable level at r=523/d=15/t=18. Decapsulation now applies")
+        print( "    an FO transform with implicit rejection and keygen screens the")
+        print( "    weak-key classes (TODO #235), so the GJS reaction attack no")
+        print( "    longer has an oracle — but the DFR and the parameters are")
+        print( "    unchanged and remain the binding constraints.")
 
 
 def main():
@@ -726,8 +849,8 @@ def main():
     section3(1.0, q)
     section4(20000 if q else 200000, 1500 if q else 4000, q)
     section5(400 if q else 3000, 3 if q else 8)
-    section6()
-    section7(dfr)
+    oracle_gone = section6()
+    section7(dfr, oracle_gone)
 
     print("\n" + SEP)
     print(f"done in {time.time() - t0:.0f}s")

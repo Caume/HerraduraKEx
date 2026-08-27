@@ -60,9 +60,9 @@ cli_for() {
 # a rare bad draw fail the whole CI run we retry with a *fresh* encapsulation
 # (new random error vector) a bounded number of times before falling through
 # to the real completion matrix below, which will then report a genuine
-# failure honestly if retries are exhausted or the error doesn't match the
-# known DFR signature (i.e. we never mask a real bug this way).
-# Retry budget and error signature now live in one place (TODO #221).
+# failure honestly if retries are exhausted (i.e. we never mask a real bug this
+# way — a genuine disagreement is deterministic and survives every attempt).
+# Retry budget and policy now live in one place (TODO #221, rewritten by #235).
 . "$(dirname "$0")/lib_dfr.sh"
 declare -A RESP
 for bob in $langs; do
@@ -76,19 +76,29 @@ for bob in $langs; do
         # Canary: have Alice (Python) complete against this response now, off
         # to the side, purely to detect a DFR event before committing to it
         # for the full py/c/go completion matrix below (decoding is
-        # deterministic given the ciphertext, so if Python's decoder fails
+        # deterministic given the ciphertext, so if Python's decoder misses
         # here, C's and Go's would too — no need to canary all three).
-        if $CLI_PY kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" \
+        #
+        # Since TODO #235 the completion always succeeds — implicit rejection
+        # means a DFR event yields a session key Alice and Bob disagree on
+        # rather than an error — so the canary has to compare keys, not exit
+        # statuses. An hske round-trip under Bob's key and Alice's is the
+        # observable that still separates the two.
+        $CLI_PY kex --algo hybrid-rnl-stern --our "$TMP/alice_rnl.pem" \
                 --our-kem "$TMP/alice_kem.pem" --their "$TMP/resp_$bob.pem" \
-                --out "$TMP/_canary_${bob}.pem" 2>"$TMP/_canary_err_${bob}.log"; then
-            break
-        fi
-        if dfr_is_event "$(cat "$TMP/_canary_err_${bob}.log")" && [ "$attempt" -lt "$MAX_DFR_RETRIES" ]; then
+                --out "$TMP/_canary_${bob}.pem" 2>"$TMP/_canary_err_${bob}.log" || break
+        $CLI_PY enc --algo hske --key "$TMP/resp_$bob.pem" \
+                --in "$TMP/msg.bin" --out "$TMP/_canary_ct_${bob}.pem" 2>/dev/null || break
+        $CLI_PY dec --algo hske --key "$TMP/_canary_${bob}.pem" \
+                --in "$TMP/_canary_ct_${bob}.pem" --out "$TMP/_canary_pt_${bob}.bin" 2>/dev/null || break
+        cmp -s "$TMP/msg.bin" "$TMP/_canary_pt_${bob}.bin" && break
+
+        if dfr_retryable "$attempt"; then
             dfr_report_retry "bob=$bob" "$attempt"
             attempt=$((attempt+1))
             continue
         fi
-        break  # not the known DFR signature, or retries exhausted — let the matrix below report it for real
+        break  # retries exhausted — let the matrix below report it for real
     done
     RESP[$bob]="$TMP/resp_$bob.pem"
 done

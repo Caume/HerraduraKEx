@@ -1561,11 +1561,10 @@ func cmdKex(args []string) {
 			K1_ba := rnlContributoryKDF(K1_raw, rnlKeyBits(n), n_A, n_B)
 			K1_ba = applyKDF(K1_ba, rnlSessionBits(n))
 
-			K2, ok := QcMdpcDecapBgf(syn, sup0, sup1)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "kex hybrid-rnl-stern: HPKE-Stern-KEM decapsulation failed (DFR event or corrupt ciphertext)")
-				os.Exit(1)
-			}
+			// Implicit rejection (TODO #235): decapsulation always yields a
+			// key.  A DFR event or a corrupt ciphertext now shows up as a
+			// session key Bob disagrees with, never as an error here.
+			K2 := QcMdpcDecapBgf(syn, sup0, sup1)
 
 			hintUsed := rnlHintToBytes(hintPacked, n)
 			K := hybridRnlSternCombine(&K1_ba.Val, K2, C_A, m_A, C_B, hintUsed, hPub, syn, n, rQC)
@@ -3300,11 +3299,9 @@ func cmdDec(args []string) {
 		}
 		sup0, sup1, _, _ := decodeKemPriv(ourInts)
 		syn, EInt := decodeKemCT(ctInts)
-		K, ok := QcMdpcDecapBgf(syn, sup0, sup1)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "dec: HPKE-Stern-KEM BGF decoding failed (DFR event or corrupt ciphertext)")
-			os.Exit(1)
-		}
+		// Implicit rejection (TODO #235): no failure path — a DFR event or a
+		// corrupt ciphertext decrypts to garbage rather than reporting.
+		K := QcMdpcDecapBgf(syn, sup0, sup1)
 		Kba := NewBitArray(256, new(big.Int).SetBytes(K))
 		E := NewBitArray(256, EInt)
 		D := FscxRevolve(E, Kba, 192)
