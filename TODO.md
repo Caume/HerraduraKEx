@@ -10,46 +10,70 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #241: `rand`, `fpe` and `twk` ship with no security analysis anywhere in the repository
+### #242: `fpe` and `twk` share a subkey derivation and compute the same function
 
-Found by TODO #238 Part C's audit of CLI surface invisible to `spec/`.  Three subcommands
-reach no protocol entry, no `SECURITY.md` row, and no `SecurityProofs-*.md` section:
+Found by TODO #241's analysis of the unclassified CLI surface, and deliberately left
+unfixed there: #241 is an analysis item, and this fix changes what two shipped
+subcommands produce.
 
-| subcommand | construction | analysis |
-|---|---|---|
-| `rand` | HDRBG deterministic byte generator over HFSCX-256 | none |
-| `fpe`  | format-preserving encryption of a 256-bit block (TODO #78.A) | none |
-| `twk`  | tweakable wide-block encryption of a 256-bit block (TODO #78.B) | none |
+Both derive their 256-bit subkey with the same unseparated hash call:
 
-They are not obscure: all three ship in the C, Go and Python CLIs, and `rand` writes a
-`HERRADURA HDRBG STATE` PEM that `CliTest/test_rand.sh` round-trips.  What is missing is
-any statement of what they are supposed to guarantee.
+| | derivation |
+|---|---|
+| `fpe` | `B = HFSCX-256(key ‖ ctx)` |
+| `twk` | `B = HFSCX-256(key ‖ sector_be64 ‖ bidx_be32)` |
 
-**Why this is not a documentation task.**  #238 could not classify them the way it
-reclassified `hpks-t` and `hpks-nl`, because those two had an existing analysis to
-propagate — `hpks` is pedagogical because of Pohlig-Hellman, and the threshold and NL
-variants are over the same group, so the verdict follows.  These three have no such
-parent.  `fpe` and `twk` are their own constructions; `rand`'s HDRBG has a `DrbgMaxBlocks
-= 1 << 20` reseed bound in `herradura/herradura.go:933` and nothing anywhere saying what
-that bound is for.  Classifying them means doing the analysis, which is TODO #237-shaped
-work.
+Neither carries a domain-separation tag, so a 12-byte `ctx` equal to
+`sector_be64 ‖ bidx_be32` makes the two subcommands the identical function.  Verified
+byte-identical across the C, Go and Python CLIs, in both directions — `twk --decrypt`
+recovers a plaintext that `fpe --encrypt` produced:
 
-**Interim state, deliberately visible rather than silent.**  #238 recorded all three in
-`spec/herradura-protocol-spec.json`'s `unfiled_cli_surface` array and gave them a single
-shared `SECURITY.md` row reading "Unclassified — no analysis exists", with the warning
-that absence of a documented weakness there is absence of analysis rather than evidence of
-strength.  `spec/generate_spec.py` fails if a *new* subcommand appears that is neither
-bound to a protocol nor listed as unfiled, so the hole cannot grow while this is open.
+```
+$CLI fpe --context '0123456789:;'                      --encrypt --in pt --out a
+$CLI twk --sector 3472611983179986487 --bidx 943274555 --encrypt --in pt --out b
+cmp a b        # identical
+```
 
-**Work.**  For each of the three: state the security goal, identify the closest standard
-construction (FF1/FF3-1 for `fpe`, a wide-block tweakable cipher such as AEZ or HCTR2 for
-`twk`, SP 800-90A for `rand`), analyse the shipped construction against it, add a
-`SecurityProofs-*.md` section, then file a real `SECURITY.md` row and `spec/` entry and
-delete the `unfiled_cli_surface` record.  Expect at least one of the three to come out
-worse than `demo-only` — `fpe` over a 256-bit block with no documented tweak schedule is
-the one to look at first.
+Two separately-advertised primitives reachable under one key are therefore not
+independent, which is the only reason to ship both.  See SecurityProofs-7.md §11.24.1
+and `SecurityProofsCode/rand_fpe_twk_analysis.py` §2.
 
-**Not in scope.**  Removing the subcommands.  They are shipped surface; the deficiency is
-that nobody can tell what they promise.
+**Work.**  Give each primitive its own domain-separation tag via `hfscx_256_ds` (TODO
+#93), whose namespace already has `0x01`–`0x03` and `0x10`–`0x12` allocated, and
+length-prefix the key so the `key ‖ tweak` boundary stops being ambiguous — `drbg_seed`
+in the same file and TODO #235's KEM work both already do this.  Land it identically in
+C, Go and Python (Java ships neither subcommand).  Consider also calling
+`nl_v2_key_is_valid` on the derived subkey for defence in depth; the exposure is
+negligible because `B` is a hash output, but the check exists and is used elsewhere.
+
+**This is a MAJOR-class change and must be treated as one.**  It changes what an
+existing `--algo`-equivalent CLI surface produces: every `fpe` and `twk` ciphertext
+written by any prior build becomes undecryptable by the fixed build, and the failure is
+silent — both subcommands are unauthenticated permutations, so a wrong subkey yields
+plaintext-shaped garbage rather than an error.  Per CLAUDE.md that needs a `MIGRATING.md`
+entry alongside the version bump, and this item is the required explicit call-out.
+
+**Test coverage, which must land with the fix.**  `fpe` and `twk` have no `CliTest`
+script at all — no CLI-level test and no cross-language interop test, in a repo whose CI
+runs a four-language matrix over every other protocol family.  That C, Go and Python
+currently agree byte-for-byte was established by hand for #241 and is guarded by nothing.
+The suite-level `test_fpe_correctness` / `test_twk_correctness` do not close this: they
+re-implement the construction locally (`_fpe_derive_b`, `fpe_encrypt_test`,
+`twk_encrypt_test`) and round-trip against the copy, so the shipped `fpe_encrypt` and
+`twk_encrypt` are never called by any test, and the round-trip property they assert is a
+tautology for any bijection — it would pass even with the subkey derivation deleted.  Add
+a `CliTest` script exercising the shipped subcommands across all three CLIs, and make the
+suite tests call the real functions.  A regression test that the two primitives no longer
+collide is the specific thing this item must not ship without.
+
+**Not in scope.**  The `fpe` naming defect (it is not format-preserving encryption in
+the SP 800-38G sense — no radix, no domain, 32 bytes in and out).  That is a separate
+question — rename, re-scope, or implement a real FF1/FF3-1 domain — and it should not be
+bundled with a wire-format fix.  SECURITY.md's `fpe` row records it meanwhile.
+
+**Worth deciding first.**  Whether `fpe` should keep existing at all once it is
+domain-separated from `twk`: with the naming defect on one side and `twk` covering the
+tweaked-permutation use case on the other, a deprecation may be cheaper than a fix.
+#241 put removal out of its own scope but did not rule it out here.
 
 Status: **OPEN**

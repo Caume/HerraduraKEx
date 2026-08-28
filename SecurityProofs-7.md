@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.23** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.24** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1679,3 +1679,68 @@ FSCX-shaped primitive can achieve, and §11.23.5's weight-4 functional, which is
 usable statement of the leak.
 
 ---
+
+### 11.24 `rand`, `fpe` and `twk` — the unclassified CLI surface (TODO #241)
+
+Three subcommands ship in the C, Go and Python CLIs and reach no protocol entry in `spec/`, no `SECURITY.md` row, and no section here: `rand` (HDRBG byte generator, TODO #96), `fpe` (TODO #78.A) and `twk` (TODO #78.B).  TODO #238 Part C recorded them in `spec/`'s `unfiled_cli_surface` so the gap was at least enumerable; this section is the analysis that lets them be filed.  Backed by `SecurityProofsCode/rand_fpe_twk_analysis.py`, which fails rather than prints if any finding below stops reproducing.  (Written with code spans rather than math spans throughout, as §11.8.7 is, for the reason given there.)
+
+Two of TODO #241's own premises did not survive contact with the code.  Both are recorded rather than worked around, because each one changes what the item costs.
+
+**§11.24.1 `fpe` and `twk` are the same function.**  #241 states the three "have no such parent" — no existing analysis whose verdict could be propagated.  For `rand` that holds.  For the other two it does not: each is the other's parent, and both are HSKE-NL-A2's.
+
+Both derive a 256-bit subkey and hand it to the same permutation at the same step count:
+
+| | subkey derivation | permutation |
+|---|---|---|
+| `fpe` | `B = HFSCX-256(key ‖ ctx)` | `nl_fscx_revolve_v2(P, B, I_VALUE)` |
+| `twk` | `B = HFSCX-256(key ‖ sector_be64 ‖ bidx_be32)` | `nl_fscx_revolve_v2(P, B, I_VALUE)` |
+
+Neither derivation carries a domain-separation tag.  So whenever `twk`'s `sector_be64 ‖ bidx_be32` equals `fpe`'s `ctx` — twelve bytes, the natural size, every byte of which can be printable ASCII — the subkeys are equal and the two subcommands compute the identical function.  Reproduced at the CLI in all three implementations that ship these subcommands, against one `HERRADURA SESSION KEY` PEM:
+
+```
+$CLI fpe --context '0123456789:;'                          --encrypt --in pt --out a
+$CLI twk --sector 3472611983179986487 --bidx 943274555     --encrypt --in pt --out b
+cmp a b                                        # identical, in C, Go and Python
+$CLI twk --sector 3472611983179986487 --bidx 943274555 --decrypt --in a  # recovers pt
+```
+
+All three agree byte-for-byte on the colliding value, which makes this a property of the construction rather than a bug in one port.  Two separately-advertised primitives, reachable under one key, are therefore not independent: either subcommand decrypts the other's output.  A caller who believes they are using distinct primitives for distinct purposes — the only reason to ship both — does not get that.  The suite already has the machinery to prevent it: `hfscx_256_ds` (TODO #93) and `hmac_hfscx_256` both exist, and neither is used here.
+
+**§11.24.2 `fpe` is not format-preserving encryption.**  As the term is used in SP 800-38G (FF1, FF3-1), FPE is a cipher on an arbitrary domain: given a radix and a length it maps a radix-`radix` string of length `n` to another of the same radix and length, so that a 16-digit card number encrypts to a 16-digit card number and ciphertext survives format validation.
+
+The shipped `fpe` has no radix parameter, no length parameter and no domain.  It maps 32 bytes to 32 bytes — the block width of the underlying permutation, which every block cipher preserves and none calls FPE.  The CLI makes the mismatch concrete rather than terminological: input shorter than 32 bytes is zero-padded and output is always 32 raw bytes, so a 16-digit input returns 32 bytes of binary.  Nothing in the help text (`Format-preserving encrypt/decrypt a 256-bit block`) corrects the expectation the name sets.
+
+This is a naming defect rather than a break of the permutation, but a classification that omitted it would be classifying something other than what users reach for.
+
+**§11.24.3 The tweak derivation.**  Three problems sit in the one line `HFSCX-256(key ‖ tweak)`.  The first is §11.24.1.  The second is that the concatenation boundary is unencoded, so `fpe(P, key=AB, ctx=C)` and `fpe(P, key=A, ctx=BC)` collide — and the CLI takes key width from the session-key PEM, so key length is not fixed by the interface either.  The correct pattern is already in use two hundred lines away: `drbg_seed` length-prefixes its entropy, and TODO #235's KEM work length-prefixes for exactly this reason.
+
+The third points the other way and is worth stating in the same breath.  Neither subcommand calls `nl_v2_key_is_valid` on the derived subkey, which `SECURITY.md`'s HSKE-NL-A2 row says "all three CLIs reject it via" — true for A2, not true here.  But because `B` is a hash output rather than user-supplied, the degenerate class (about `2^-129` of the space) is unreachable by chance and cannot be steered without the key.  Deriving `B` is what makes it unreachable, so on this specific axis `fpe`/`twk` are in a *better* position than the A2 they inherit from.  It is a missing defence-in-depth check, not a live break.
+
+**§11.24.4 The round count is where the inheritance stops.**  `fpe` and `twk` are HSKE-NL-A2 with a derived rather than a supplied subkey — same permutation, same primitive, same width.  The step count is not the same:
+
+| | steps |
+|---|---|
+| HSKE-NL-A2 | `R_VALUE = 3n/4 = 192` |
+| `fpe` / `twk` | `I_VALUE = n/4 = 64` |
+
+A factor of three, and the reason the classification cannot be inherited: `SECURITY.md` rates HSKE-NL-A2 "Production-track (conjectured)", and whatever confidence that carries is a statement about 192 rounds.  TODO #214 (`nl_fscx_exact_trail_search.py`) is the relevant measurement — an exact Lipmaa-Moriai `xdp+` model of one v2 round, searched for optimal differential trails with an SMT backend.  Its §4, for v2 at the deployed rotation: mean slope `1.87` bits of trail weight per round, `137` rounds to reach `2^-256`, and 64 rounds reaching `2^-119`.
+
+So A2's 192 rounds clear the 137-round bar and `fpe`/`twk`'s 64 do not.  Two caveats, both #214's own and both load-bearing: that projection is explicitly the weakest step in #214, with the slope read off widths 16–32 rather than 256; and a trail probability is not a security level — `2^-119` describes the best trail the model finds, not a demonstrated attack.  What survives both is comparative, and comparative is enough here: on the only quantitative handle the repository has for this permutation, these two sit on the wrong side of a line the identical primitive clears at A2's round count.  Nothing in the code or history records a reason for the smaller count; `I_VALUE` appears to have been taken as a default rather than chosen.
+
+One inconsistency to fix when #214 is next revisited: it frames "the deployed step count is n/4 = 64 rounds at n = 256", which is right for HFSCX-256's v1 compression and for `fpe`/`twk`, and wrong for HSKE-NL-A2 at 192.
+
+**§11.24.5 `rand` is already analysed; it was never filed.**  #241 says the `DRBG_MAX_BLOCKS = 2^20` bound has "nothing anywhere saying what that bound is for."  It has a derivation, it is reproducible, and the suite source cites it three lines above the constant: `nl_fscx_v1_ratchet_collision.py` §5.  Re-run on the deployed construction, that section gives `|Im(F^64)|` extrapolating to `2^218.79`, an expected walk-collision distance of `2^109.7` output blocks, and a collision probability within `2^20` blocks of `2^-179.8` against a `2^-128` requirement.  The bound is the point at which the state walk stays roughly fifty bits below target.  For `rand`, #241's work is filing, not deriving.
+
+One new observation falls out of the same numbers.  The walk is non-bijective, so its image contracts: the reachable state space after one revolve is about `2^218.8`, making the generator's effective state entropy roughly 219 bits rather than the 256 its state width suggests.  Far above any practical threshold, not a weakness — but a reader entitled to assume "256-bit state, 256-bit security" would be assuming slightly wrong, and no document said so.
+
+Measured against SP 800-90A, the gaps are the ones the suite's own comment already names as non-goals: no health tests (§11 of the standard), so a stuck state is never detected; no prediction-resistance request path; no entropy-source assessment, so `rand --seed` consumes whatever file it is handed with no minimum length check; and no reseed counter against wall-clock or request count, only the output-block bound.  Stated positively, it is a deterministic expander for seed material that is already full-entropy, with forward secrecy from the fast-key-erasure ratchet resting on the same OWF conjecture as the #78.C ratchet.  Used that way it is sound; used as a general-purpose RNG by a system expecting SP 800-90A semantics it is not, because four of that standard's mechanisms are absent rather than weak.  Backtracking resistance in the Python port is best-effort — erasure of an immutable int cannot be guaranteed — which the suite states and the C port does not share.
+
+**§11.24.6 Verdicts.**  #241 predicted at least one of the three would land worse than demo-only and named `fpe` first.  Correct, for a different reason than the one it gave — not an undocumented tweak schedule, but a name promising a primitive the code does not implement.
+
+`fpe` is **broken as named**: not format-preserving in the SP 800-38G sense (§11.24.2), the same function as `twk` at twelve-byte contexts (§11.24.1), and as a deterministic tweakable permutation it is A2 at one third the rounds (§11.24.4).  `twk` is **demo-only**: the construction is the right shape for its stated purpose and per-tweak determinism is the expected XTS-style property rather than a defect, but the collision, the round count and the unencoded key boundary together are more than a caveat.  `rand` is **demo-only** and the closest of the three to sound: a documented fast-key-erasure DRBG with a derived, reproducible output bound and behavioural properties that check out, which is simply not an SP 800-90A DRBG and says so itself.
+
+None of the three is removed — #241 puts that out of scope and they are shipped surface.  The domain-separation collision is a live defect rather than merely an unanalysed one, and fixing it changes what both subcommands produce, breaking the CLI surface 2.0.0 froze; that is TODO #242 rather than a silent edit inside an analysis item.
+
+**§11.24.7 A coverage gap found while checking the above.**  `rand` has `CliTest/test_rand.sh` (20 assertions, including a `HERRADURA HDRBG STATE` PEM round-trip).  `fpe` and `twk` have no `CliTest` script at all — no CLI-level test, and no cross-language interop test, in a repository whose CI otherwise runs a four-language compatibility matrix over every other protocol family.  That the C, Go and Python CLIs do agree byte-for-byte on both subcommands, including on the colliding value of §11.24.1, was established by hand for this analysis and is guarded by nothing.
+
+Worse, the suite-level tests that do exist (`test_fpe_correctness`, `test_twk_correctness`, present in the C, Go, Python and Arduino harnesses) do not exercise the shipped functions.  They re-implement the construction locally — `_fpe_derive_b`, `fpe_encrypt_test`, `twk_encrypt_test` — and assert a round-trip against that copy.  The shipped `fpe_encrypt` and `twk_encrypt` are therefore never called by any test in the repository, and a drift between the copy and the original would not be detected.  The round-trip property they check is also the one property that cannot fail here: encrypt-then-decrypt with the same derived subkey is a tautology for any bijection, so the tests would pass unchanged even if the subkey derivation were removed entirely.  Filed with the fix in TODO #242, since the natural time to add real coverage is when the derivation changes.

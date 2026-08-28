@@ -2,6 +2,61 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [3.3.1] - 2026-08-27
+
+### Added
+- **`rand`, `fpe` and `twk` are analysed and classified (TODO #241).** The three shipped
+  CLI subcommands that reached no protocol entry in `spec/`, no `SECURITY.md` row and no
+  `SecurityProofs-*.md` section now have all three, plus
+  `SecurityProofsCode/rand_fpe_twk_analysis.py` as the backing script — which exits
+  non-zero rather than printing a stale finding if any defect below stops reproducing.
+  `unfiled_cli_surface` is left holding only `pkey`, a genuine key-format utility.
+- SecurityProofs-7.md §11.24; Part 7's advertised range becomes §11.10–§11.13,
+  §11.15–§11.24 in every copy of the index.
+
+### Changed
+- **`fpe` is classified `broken` — it is not format-preserving encryption.** SP 800-38G's
+  FF1/FF3-1 preserve a radix and a length; `fpe` has neither, and no domain of any kind.
+  It maps 32 bytes to 32 bytes, zero-pads shorter input and returns raw binary, so a
+  16-digit card number comes back as 32 bytes of binary. The name promises a primitive the
+  code does not implement.
+- **`fpe` and `twk` are the same function**, whenever the context is 12 bytes. Both derive
+  their subkey as the unseparated `HFSCX-256(key ‖ tweak)`, so a `ctx` equal to
+  `sector_be64 ‖ bidx_be32` yields the identical subkey — `twk --decrypt` undoes
+  `fpe --encrypt`, verified byte-identical across the C, Go and Python CLIs. Two
+  separately-advertised primitives reachable under one key are therefore not independent.
+  Filed as **TODO #242** rather than fixed here: the fix changes what both subcommands
+  produce, which is a MAJOR-class break of the CLI surface 2.0.0 froze, and #241 is an
+  analysis item.
+- `twk` and `rand` are classified `demo-only`, each for stated reasons rather than by
+  default. `twk`'s shape is right for disk encryption and its per-tweak determinism is the
+  expected XTS-style property, but the `fpe` collision, the round count and an unencoded
+  `key ‖ tweak` boundary together are more than a caveat. `rand` is a documented
+  fast-key-erasure expander that is explicitly not an SP 800-90A DRBG — four of that
+  standard's mechanisms are absent by design.
+
+### Notes
+- Two of TODO #241's own premises did not survive contact with the code, and both are
+  recorded in §11.24 rather than worked around. The item said the three "have no such
+  parent"; `fpe` and `twk` have two — each other, and HSKE-NL-A2, whose
+  `nl_fscx_revolve_v2` they run at `I_VALUE` = 64 steps rather than A2's 192. On TODO
+  #214's trail projection that is 2^-119 against the 137 rounds it estimates for 2^-256,
+  so the production-track rating A2 carries cannot be inherited. The item also said
+  `DRBG_MAX_BLOCKS` had "nothing anywhere saying what that bound is for"; it is derived in
+  `nl_fscx_v1_ratchet_collision.py` §5, which puts the collision probability at 2^-179.8
+  against a 2^-128 requirement. For `rand` the work was filing, not deriving.
+- New along the way: HDRBG's effective state entropy is ~2^218.8, not the 2^256 its state
+  width suggests, because the non-bijective walk's image contracts. Far above any
+  practical threshold, but no document said so.
+- `spec/check_security_md.py` gains a `Broken as named` status prose mapping and three row
+  mappings, replacing the single placeholder row.
+- A coverage gap found while checking the above, filed with the fix in TODO #242: `fpe` and
+  `twk` have no `CliTest` script at all — no CLI-level and no cross-language test — and the
+  suite-level `test_fpe_correctness`/`test_twk_correctness` re-implement the construction
+  locally rather than calling the shipped `fpe_encrypt`/`twk_encrypt`, which are therefore
+  never exercised by any test. The round-trip property they do assert is a tautology for
+  any bijection and would pass with the subkey derivation deleted.
+
 ## [3.3.0] - 2026-08-26
 
 ### Added

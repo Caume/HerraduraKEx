@@ -12753,3 +12753,47 @@ SECURITY.md row to state which two of the four blockers now fail to apply, and w
 still stand.
 
 Status: **DONE v3.3.0** — both parts landed in C, Go, Python and Java: keygen rejects and redraws any private polynomial whose distance spectrum exceeds multiplicity 5 (#218 §4's cliff), and decapsulation applies an FO transform with implicit rejection, returning HFSCX-256-DS(0x11, z || C) on any failure instead of reporting one. The rigidity check reduces exactly to wt(e)=t given an invertible h0, so the ciphertext encoding is untouched and decap needs no h_pub; z is derived as HFSCX-256-DS(0x12, h0 || h1) rather than stored, so the private-key PEM is unchanged and old keys keep working. The success-path session key changed to HFSCX-256-DS(0x10, e0 || e1 || C) — wire-format breaking for derived secrets only, MIGRATING.md §7. `CliTest/lib_dfr.sh` was rewritten: a DFR event is now an output mismatch rather than an error message, `dfr_is_event` is deleted (and ci.yml's DFR guard fails on a resurrected copy), and all five consumer scripts retry on the comparison. #218's script is the oracle and confirms both: §4's weak-key tail is gone from what keygen emits and §6 measures success and failure returning the same kind of answer. Blockers 1 and 2 stand and the KEM stays demo-only, as the item scoped.
+
+### #241: `rand`, `fpe` and `twk` ship with no security analysis anywhere in the repository
+
+Found by TODO #238 Part C's audit of CLI surface invisible to `spec/`.  Three subcommands
+reach no protocol entry, no `SECURITY.md` row, and no `SecurityProofs-*.md` section:
+
+| subcommand | construction | analysis |
+|---|---|---|
+| `rand` | HDRBG deterministic byte generator over HFSCX-256 | none |
+| `fpe`  | format-preserving encryption of a 256-bit block (TODO #78.A) | none |
+| `twk`  | tweakable wide-block encryption of a 256-bit block (TODO #78.B) | none |
+
+They are not obscure: all three ship in the C, Go and Python CLIs, and `rand` writes a
+`HERRADURA HDRBG STATE` PEM that `CliTest/test_rand.sh` round-trips.  What is missing is
+any statement of what they are supposed to guarantee.
+
+**Why this is not a documentation task.**  #238 could not classify them the way it
+reclassified `hpks-t` and `hpks-nl`, because those two had an existing analysis to
+propagate — `hpks` is pedagogical because of Pohlig-Hellman, and the threshold and NL
+variants are over the same group, so the verdict follows.  These three have no such
+parent.  `fpe` and `twk` are their own constructions; `rand`'s HDRBG has a `DrbgMaxBlocks
+= 1 << 20` reseed bound in `herradura/herradura.go:933` and nothing anywhere saying what
+that bound is for.  Classifying them means doing the analysis, which is TODO #237-shaped
+work.
+
+**Interim state, deliberately visible rather than silent.**  #238 recorded all three in
+`spec/herradura-protocol-spec.json`'s `unfiled_cli_surface` array and gave them a single
+shared `SECURITY.md` row reading "Unclassified — no analysis exists", with the warning
+that absence of a documented weakness there is absence of analysis rather than evidence of
+strength.  `spec/generate_spec.py` fails if a *new* subcommand appears that is neither
+bound to a protocol nor listed as unfiled, so the hole cannot grow while this is open.
+
+**Work.**  For each of the three: state the security goal, identify the closest standard
+construction (FF1/FF3-1 for `fpe`, a wide-block tweakable cipher such as AEZ or HCTR2 for
+`twk`, SP 800-90A for `rand`), analyse the shipped construction against it, add a
+`SecurityProofs-*.md` section, then file a real `SECURITY.md` row and `spec/` entry and
+delete the `unfiled_cli_surface` record.  Expect at least one of the three to come out
+worse than `demo-only` — `fpe` over a 256-bit block with no documented tweak schedule is
+the one to look at first.
+
+**Not in scope.**  Removing the subcommands.  They are shipped surface; the deficiency is
+that nobody can tell what they promise.
+
+Status: **DONE v3.3.1** — all three analysed and filed: SecurityProofs-7.md §11.24, a SECURITY.md row each, a spec/ protocol entry each (bound by `cli_binding`, since none has an --algo tag), and `SecurityProofsCode/rand_fpe_twk_analysis.py` as the backing script, which exits non-zero if any finding stops reproducing. `unfiled_cli_surface` now holds only `pkey`, a genuine utility. Two of this item's own premises turned out wrong and are recorded rather than worked around. First, `fpe` and `twk` DO have a parent — each other, and HSKE-NL-A2 — and they are literally the same function whenever the context is 12 bytes, because both derive their subkey from the same unseparated HFSCX-256(key || tweak); verified byte-identical across the C, Go and Python CLIs, in both directions. Second, `rand`'s DRBG_MAX_BLOCKS bound is not unexplained: nl_fscx_v1_ratchet_collision.py §5 derives it (collision probability 2^-179.8 against a 2^-128 requirement), so for `rand` the work was filing, not deriving. Verdicts: `fpe` **broken as named** — it is not FPE in the SP 800-38G sense at all, having no radix and no domain — `twk` and `rand` demo-only. The item's prediction that at least one would land worse than demo-only was right, for a different reason than it gave. New findings along the way: fpe/twk run nl_fscx_revolve_v2 at 64 steps where HSKE-NL-A2 uses 192, which TODO #214's trail projection puts at 2^-119 vs the 137 rounds it estimates for 2^-256; and HDRBG's effective state entropy is ~2^218.8, not 2^256. The domain-separation collision is a live defect and is filed as TODO #242 rather than fixed here, since fixing it changes what both subcommands produce.
