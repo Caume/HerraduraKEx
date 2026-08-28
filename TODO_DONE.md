@@ -12874,3 +12874,47 @@ tweaked-permutation use case on the other, a deprecation may be cheaper than a f
 #241 put removal out of its own scope but did not rule it out here.
 
 Status: **DONE v4.0.0** — the first MAJOR since 2.0.0. Both primitives now derive their subkey as HFSCX-256-DS(tag, len(key)_be8 || key || tweak), tag 0x20 for fpe and 0x21 for twk, closing the collision and the unencoded key boundary together; the derived subkey is additionally rejection-sampled away from NL-FSCX v2's degenerate affine class, a backstop that is effectively never taken. Landed identically in C, Go and Python (Java ships neither). The 64-vs-192 round count #241 §11.24.4 found was folded into the same break rather than spent as a second one: both now run at R_VALUE=192, matching HSKE-NL-A2. Wire-format breaking and silently so — both subcommands are unauthenticated permutations, so a pre-4.0.0 ciphertext decrypts to plausible garbage rather than an error; MIGRATING.md §8 leads with that. Coverage, which this item was required not to ship without: new CliTest/test_fpe_twk.sh (38 assertions across all three CLIs — round-trips, byte-for-byte cross-implementation agreement, cross-decrypt both directions on each pair, tweak separation, and the collision regression itself), plus test [46] in the C, Go and Python harnesses. One correction to #241 along the way: the C and Go harnesses DO call the shipped fpe_encrypt/FpeEncrypt — only Python re-implemented, and §11.24.7 now says so and cross-checks the Python copy against the suite. Two things deliberately not done: the fpe naming defect stays open, as this item scoped, and twk was NOT reclassified even though all three of its stated blockers are now closed — that gets a deliberate review as TODO #243 rather than being granted on the strength of "the defects I found are fixed".
+
+### #243: does `twk` still belong at demo-only now that its three blockers are closed?
+
+TODO #241 classified `twk` demo-only and named exactly three reasons: it shared an
+unseparated subkey derivation with `fpe` and collided with it, it ran
+`nl_fscx_revolve_v2` at 64 steps where HSKE-NL-A2 uses 192, and its `key ‖ tweak`
+boundary was unencoded.  TODO #242 (v4.0.0) closed all three.
+
+The row was not moved at the same time, deliberately.  Reclassifying a protocol because
+the specific defects someone found have been fixed is the reasoning TODO #237 and #238
+were filed to undo — it mistakes "no known problems" for "analysed".  This item is the
+deliberate review that a promotion would need.
+
+**The question.**  `twk` is now HSKE-NL-A2's `nl_fscx_revolve_v2` at A2's own round
+count, under a subkey derived from the key and a per-(sector, block) tweak rather than
+supplied by the caller.  A2 is rated "Production-track (conjectured), with two
+constraints".  Does `twk` inherit that, and if so with which constraints?
+
+**What has to be established, not assumed.**
+
+* **A security definition.**  A2's row is about a keyed bijection used once per message.
+  `twk`'s claim is a *tweakable* one — the standard target is STPRP (strong tweakable
+  pseudorandom permutation), and nothing in the repository argues `twk` meets it.  A
+  per-tweak-derived subkey is a construction, not a proof: the reduction has to say what
+  happens when an adversary queries many tweaks under one key.
+* **Whether A2's two constraints transfer.**  Determinism is inherent here and expected
+  (XTS-style, per tweak) rather than a caveat, which is arguably *better* than A2's
+  position.  The weak-key class is unreachable because the subkey is a hash output, which
+  is also better.  Both differences point the same way, and both should be stated as
+  findings rather than assumed.
+* **What the round count actually buys.**  #214's trail projection is explicitly its own
+  weakest step (slope read off widths 16–32, not 256).  "Now matches A2" is a
+  comparative statement; a promotion needs more than parity with something whose own
+  rating is conjectural.
+
+**Do not treat this as a formality.**  The honest outcome may well be that `twk` stays
+demo-only because NL-FSCX v2 has no positive security result at all, only key-averaged
+trail bounds — in which case A2's own "production-track (conjectured)" rating is the
+thing that deserves re-examination, and this item should say so rather than quietly
+promoting `twk` to match it.
+
+**Not in scope.**  `fpe`, whose naming defect is its own open question, and `rand`.
+
+Status: **DONE v4.0.1** — reviewed, and `twk` STAYS demo-only. The review is SecurityProofs-7.md §11.25, backed by `SecurityProofsCode/twk_stprp_review.py` (its reduced-width model pinned 200/200 against the shipped nl_fscx_v2 first). Three results. (1) A reduction that settles what the question is: modelling HFSCX-256-DS as a random oracle, `twk` is an STPRP exactly if F_B^r is an SPRP under a uniform key — so the whole question is about the permutation and none of it is about tweaking, which is all #242 touched. (2) A structural property neither #241 nor #242 recorded: v2-revolve is ONE unvaried round iterated 192 times, with no round constant and no key schedule, in all three languages. Measured consequences — at n=8, 10.7% of keys give ord(F_B) | 192 and encrypt to the IDENTITY MAP (a small-width artefact, gone by n=12, and the identity case is ruled out 12/12 at the 32 bits the Arduino/assembly ports use); and one slid pair leaves a mean 1.7 candidate keys of 2^16, two leave 1.08, so the barrier to a slide attack is only the ~2^128 birthday cost of finding a pair — a cost that does not depend on the round count at all, meaning #242's 64->192 move bought nothing against this class. (3) `twk` is genuinely stronger than HSKE-NL-A2 on three axes because its subkey is a hash output, which contains the blast radius of the unproven assumption without replacing the missing proof. Verdict: unproven is demo-only. The inconsistency this exposes is that HSKE-NL-A2 carries the same unproven claim with worse failure consequences and is rated production-track — it is the only production-track rating in the suite resting on NL-FSCX v2 — so A2's rating, not `twk`'s, is what needs re-examining. Filed as TODO #244 rather than changed unilaterally here.

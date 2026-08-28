@@ -479,13 +479,26 @@ SECURITY = {
                              "result rather than a defect list: no reduction to a standard "
                              "tweakable-cipher security definition (no STPRP argument), and "
                              "NL-FSCX v2's security is conjectural with only key-averaged trail "
-                             "bounds behind it. Whether that suffices to move it off demo-only is "
-                             "TODO #243. Wire-format breaking in v4.0.0 -- every earlier twk "
+                             "bounds behind it. TODO #243 reviewed it for promotion and KEPT it "
+                             "demo-only: in the random-oracle model twk is an STPRP exactly if "
+                             "nl_fscx_revolve_v2 is an SPRP under a uniform key, and no such result "
+                             "exists -- the permutation is one unvaried round iterated 192 times "
+                             "with no round constant and no key schedule, so one slid pair "
+                             "determines the key and the ~2^128 cost of finding one does not "
+                             "depend on the round count. twk is nonetheless stronger than "
+                             "HSKE-NL-A2 on three axes because its subkey is a hash output: key "
+                             "recovery is confined to one block, the degenerate affine class is "
+                             "unreachable, and per-tweak determinism is expected rather than a "
+                             "constraint. That contains the blast radius of an unproven assumption "
+                             "without replacing the missing proof. A2 carries the same assumption "
+                             "at production-track with worse failure consequences; re-rating A2 is "
+                             "TODO #244. Wire-format breaking in v4.0.0 -- every earlier twk "
                              "ciphertext is undecryptable, silently; see MIGRATING.md section 8.",
                        source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt",
                                "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt",
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",
-                               "SECURITY.md", "SecurityProofs-7.md 11.24"]),
+                               "SecurityProofsCode/twk_stprp_review.py",
+                               "SECURITY.md", "SecurityProofs-7.md 11.24, 11.25"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
                              "MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/"

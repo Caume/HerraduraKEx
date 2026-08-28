@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.24** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.25** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1754,3 +1754,45 @@ The suite-level tests are a more mixed picture, and an earlier draft of this sec
 **Out of scope throughout, and worth naming so it is not mistaken for coverage.**  The Arduino/AVR harness has its own `fpe`/`twk` at 32 bits, deriving the subkey with `nl_fscx_revolve_v1` rather than HFSCX-256 and with a different mixing shape for each.  It is a reduced-width demonstration of the primitives, not a compatible implementation — nothing interoperates with it and no PEM it could read exists — so neither #241's analysis nor #242's fix applies to it, and #242 deliberately left it alone rather than push an HFSCX-256-based derivation onto a target with a known SRAM ceiling (TODO #155).  Its two derivations are not obviously collision-free in the way the 256-bit ones now are; that is a question for whoever next revisits the AVR target, not a live exposure.
 
 **Closed in v4.0.0 (TODO #242).**  `CliTest/test_fpe_twk.sh` covers both subcommands across the C, Go and Python CLIs (38 assertions): round-trips, cross-implementation byte-for-byte agreement, cross-implementation decrypt in both directions on each pair, tweak separation within each primitive, and the §11.24.1 regression itself.  Test `[46]` in the C, Go and Python harnesses asserts the non-collision and the length-encoded boundary at the library level, and the Python one additionally cross-checks its local copy against the shipped suite, so drift is now detected.
+
+### 11.25 Should `twk` move off demo-only? (TODO #243)
+
+TODO #241 rated `twk` demo-only and named exactly three reasons; TODO #242 closed all three.  The row was deliberately not moved at the same time, because reclassifying a protocol because the specific defects someone found have been fixed mistakes "no known problems" for "analysed" — the reasoning §11.24's predecessors, TODO #237 and #238, were filed to undo.  This section is the review a promotion would need.  Backed by `SecurityProofsCode/twk_stprp_review.py`, whose reduced-width model is pinned 200/200 against the shipped `nl_fscx_v2` before any measurement is taken.  (Code spans throughout, as §11.8.7 and §11.24.)
+
+**§11.25.1 The definition, and a reduction that settles what the question actually is.**  A tweakable block cipher's standard target is STPRP — strong tweakable pseudorandom permutation, with both encryption and decryption oracles.  "Strong" is the right variant because `twk --decrypt` is a shipped subcommand.  Nothing in the repository has ever argued `twk` meets it.
+
+Model `HFSCX-256-DS` as a random oracle.  Distinct tweaks then yield independent uniform subkeys `B` that an adversary cannot steer without the key, since the derivation is length-prefixed and domain-separated (§11.24.3).  Under that model `twk` is exactly one independent instance of `nl_fscx_revolve_v2` under a uniform key, per tweak, so
+
+`twk is an STPRP  ⟺  F_B^r under uniform B is an SPRP`
+
+The reduction is the easy half.  It has two immediate consequences pointing opposite ways: `twk` cannot be rated *above* whatever `v2`-revolve deserves, since its own machinery adds isolation rather than strength; and it should not be rated *below* it either, since all three of #241's defects were in the derivation and all are gone.  The honest question is therefore not "has `twk` earned a promotion" but "what is `v2`-revolve worth" — which is the question HSKE-NL-A2's rating already purports to answer.
+
+**§11.25.2 A structural property neither #241 nor #242 recorded.**  Read off the shipped code in all three languages, the loop index never enters the round function, there is no round constant, and there is no key schedule — the same `B` is the XOR mask in every one of the 192 rounds.  The cipher is `F_B^r` for a single fixed bijection `F_B(x) = M(x ⊕ B) + δ(B) mod 2^n`.
+
+Iterating one unvaried round is a property block ciphers deliberately avoid, and round constants exist precisely to avoid it.  TODO #214 noticed the key reuse and flagged its trail bounds as key-averaged for that reason; what follows is what the structure costs beyond the bounds.
+
+*Does `F_B^r` degenerate?*  If `ord(F_B)` divides `r` the cipher is the identity map.  Exhaustive cycle decomposition:
+
+| `n` | trials | min order | median order | `ord | 192` |
+|---|---|---|---|---|
+| 8 | 300 | 4 | 45,045 | **32/300** |
+| 12 | 120 | 55,440 | 63,303,240 | 0/120 |
+| 16 | 10 | 1.3e11 | 2.1e19 | 0/10 |
+
+At `n = 8`, **10.7% of keys encrypt to the identity map**.  That is a small-width artefact — gone by `n = 12`, with `n = 16` orders consistent with a random permutation — so it does not reach `n = 256` and is not a finding against the deployed parameters.  It is a finding about reduced-width use, and the suite has reduced-width targets: the Arduino and assembly ports run these primitives at 32 bits.  `ord(F_B)` cannot be computed at `n = 32`, but degeneracy is cheap to *disprove* — one cycle whose length does not divide `r` suffices — and the identity case is ruled out for 12/12 random 32-bit keys.  The 32-bit ports are clear.
+
+*Self-similarity.*  Because every round is the same map, `E_B = F_B^r` commutes with `F_B`, and a slid pair `(P, F_B(P))` propagates through the whole cipher to `C' = F_B(C)`.  Brute-forcing `B` at `n = 16` against such a pair: **one slid pair leaves a mean of 1.7 candidate keys out of 2^16, and two leave 1.08.**  A slid pair therefore very nearly determines the key, and the information-theoretic barrier to a slide attack is only the birthday cost of *finding* one — about `2^(n/2)` known plaintexts under a single tweak, `2^128` at `n = 256`.
+
+Two qualifications, because this is where it would be easy to overclaim.  `2^128` data under one tweak is not a practical attack, and at `n = 256` it sits *at* rather than below the 128-bit target.  And "a slid pair determines `B`" is measured by brute force; that is not an efficient algorithm for extracting `B`, which would mean solving `M(P ⊕ B) + δ(B) = P'` for `B`, with `δ` quadratic in `B` over a mixed XOR/add structure.  Whether the slide attack costs `2^128` or is blocked at that step is open, and this analysis does not claim to settle it.
+
+*What this means for the round count.*  A slide attack's cost does not depend on `r` at all.  So TODO #214's "137 rounds to reach 2^-256" is a statement about differential trails and only those; and TODO #242's move from 64 to 192 rounds, which was right and closed a real gap against that class at no cost, bought exactly nothing against self-similarity.  Nothing in #214, #241 or #242 says so.
+
+**§11.25.3 Where `twk` is genuinely stronger than HSKE-NL-A2.**  Both are `F_B^192` over the same primitive, so §11.25.2 applies to both equally.  They differ in where `B` comes from, and the difference favours `twk` on three axes.  In A2, `B` *is* the caller's key, so recovering it is total key compromise across every message.  In `twk`, `B = HFSCX-256-DS(0x21, … ‖ key ‖ sector ‖ bidx)`, so recovering it compromises one (sector, block index) and does not yield the key — inverting the derivation is a preimage problem.  The degenerate affine key class is unreachable for the same reason (§11.24.3), where A2 needs `nl_v2_key_is_valid` as a live check.  And `twk`'s determinism is per-tweak and expected, where A2's is a documented constraint on multi-message use.
+
+None of that is evidence that `F_B^192` is an SPRP.  It is evidence that the consequences of it not being one are contained.  Confining the blast radius of an unproven assumption is worth documenting; it is not production-track.
+
+**§11.25.4 Verdict, and the inconsistency it exposes.**  **`twk` stays demo-only** — not because #241's blockers are open, but because the positive result a promotion needs does not exist.  By §11.25.1 the whole question is whether `F_B^r` is an SPRP, and the evidence is: key-averaged trail bounds that #214 itself labels an order-of-magnitude indication rather than a bound; no reduction to any standard definition anywhere; and now a self-similar structure against which the one parameter anybody has tuned does nothing.  The right verdict on that evidence is "unproven", and the right label for unproven is demo-only.
+
+HSKE-NL-A2 is rated **"Production-track (conjectured), with two constraints"** and rests on the same unproven claim about the same permutation at the same round count, with strictly worse consequences if the claim fails.  Those two ratings cannot both be right, and #243 anticipated exactly this outcome: the honest conclusion is that A2's rating is the one needing re-examination, not that `twk` needs promoting.
+
+That re-rating is not done here — it deserves its own item, and A2's row carries two specific constraints a re-rating must re-derive rather than inherit.  Filed as TODO #244.  It is more contained than it sounds: four SECURITY.md entries rest on NL-FSCX v2 — HSKE-NL-A2, HSKE-Duplex, `fpe` and `twk` — and three are already research, broken or demo-only.  **HSKE-NL-A2 is the only production-track rating in the suite that depends on this permutation.**  HPKS-NL / HPKE-NL name NL-FSCX but their demo-only rating comes from Pohlig-Hellman on the GF(2^n)* group, independent of v2's strength, so #244 cannot make them worse.

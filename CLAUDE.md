@@ -90,6 +90,16 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  twk_stprp_review.py      — should `twk` move off demo-only? (TODO #243).
+                             No: in the ROM it is an STPRP iff nl_fscx_revolve_v2
+                             is an SPRP, and no such result exists.  Records the
+                             structural finding neither #241 nor #242 caught --
+                             v2-revolve is ONE unvaried round iterated 192 times,
+                             no round constant, no key schedule -- so one slid
+                             pair determines the key and the round count does
+                             nothing against that class.  Also finds HSKE-NL-A2
+                             carries the same assumption at production-track with
+                             worse failure consequences (TODO #244)
   rand_fpe_twk_analysis.py — the three formerly-unclassified CLI subcommands
                              (TODO #241).  `fpe` and `twk` turn out to be the
                              same function -- one unseparated
@@ -151,7 +161,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.24: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.25: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

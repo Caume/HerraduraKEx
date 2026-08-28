@@ -2,6 +2,53 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [4.0.1] - 2026-08-28
+
+### Added
+- **TODO #243: `twk` reviewed for promotion, and kept demo-only.** TODO #242 closed all
+  three blockers #241 had named, so the row was due a deliberate review rather than an
+  automatic promotion. `SecurityProofsCode/twk_stprp_review.py` and SecurityProofs-7.md
+  §11.25 are that review. Its reduced-width model is pinned 200/200 against the shipped
+  `nl_fscx_v2` before any measurement is taken.
+
+### Changed
+- `SECURITY.md`'s `twk` row now reads "Demo-only — reviewed, not merely unreviewed", and
+  states the reduction that settles the question: in the random-oracle model `twk` is an
+  STPRP exactly if `nl_fscx_revolve_v2` is an SPRP under a uniform key. No such result
+  exists, so the verdict is unproven, and unproven is demo-only.
+- `SECURITY.md`'s **HSKE-NL-A2** row gains a third constraint, "Under review", pointing at
+  TODO #244 — see Notes.
+- `spec/`'s `twk` entry carries the review's conclusion and the `#244` cross-reference.
+
+### Notes
+- **A structural property of NL-FSCX v2 that neither #241 nor #242 recorded.** `v2`-revolve
+  is *one unvaried round iterated 192 times*, with no round constant and no key schedule,
+  in C, Go and Python alike — the loop index never enters the round function. Two measured
+  consequences. At `n = 8`, **10.7% of keys give `ord(F_B) | 192` and encrypt to the
+  identity map**; that is a small-width artefact, gone by `n = 12`, and the identity case
+  is ruled out 12/12 at the 32 bits the Arduino and assembly ports use — but it is a
+  standing caution for any future reduced-width use. And **one slid pair leaves a mean of
+  1.7 candidate keys out of 2^16, two leave 1.08**, so the barrier to a slide attack is
+  only the ~2^128 birthday cost of finding a pair. That cost does not depend on the round
+  count, which means **TODO #242's 64 → 192 move bought nothing against this class** — it
+  remains right for the differential-trail class it was aimed at.
+- Deliberately not overclaimed: 2^128 data under one tweak is not a practical attack and
+  sits *at* rather than below the 128-bit target, and "a slid pair determines `B`" is
+  measured by brute force, not an efficient extraction algorithm. Whether the slide attack
+  costs 2^128 or is blocked at that step is open and §11.25 says so.
+- **`twk` is genuinely stronger than HSKE-NL-A2 on three axes**, because its subkey is a
+  hash output rather than the caller's key: key recovery is confined to one (sector, block
+  index) instead of total, the degenerate affine class is unreachable, and per-tweak
+  determinism is expected rather than a constraint. That contains the blast radius of an
+  unproven assumption without replacing the missing proof.
+- **The inconsistency this exposes, filed as TODO #244.** HSKE-NL-A2 rests on the same
+  unproven claim about the same permutation at the same round count, with strictly worse
+  consequences if it fails, and is rated production-track. Both ratings cannot be right,
+  and #243 concluded it is A2's that needs re-examining — not that `twk` needs promoting.
+  A2 is the only production-track rating in the suite depending on NL-FSCX v2; the other
+  three v2 entries are already research, broken or demo-only. #244 also records the fix
+  worth attempting first: adding round constants would break the self-similarity outright.
+
 ## [4.0.0] - 2026-08-28
 
 **MAJOR — `fpe` and `twk` ciphertexts written by earlier builds cannot be decrypted by
@@ -78,7 +125,7 @@ are read unchanged, `rand` is untouched, and no CLI flag or `--algo` value chang
   non-zero rather than printing a stale finding if any defect below stops reproducing.
   `unfiled_cli_surface` is left holding only `pkey`, a genuine key-format utility.
 - SecurityProofs-7.md §11.24; Part 7's advertised range becomes §11.10–§11.13,
-  §11.15–§11.24 in every copy of the index.
+  §11.15–§11.25 in every copy of the index.
 
 ### Changed
 - **`fpe` is classified `broken` — it is not format-preserving encryption.** SP 800-38G's
