@@ -451,11 +451,16 @@ SECURITY = {
                              "context is 12 bytes: both derive their subkey as the unseparated "
                              "HFSCX-256(key || tweak), so `twk --decrypt` undoes `fpe --encrypt`, "
                              "verified byte-identical across the C, Go and Python CLIs. As a "
-                             "construction it is HSKE-NL-A2's nl_fscx_revolve_v2 at I_VALUE=64 "
-                             "steps rather than A2's 192. Do not use where the output format must "
-                             "survive, and do not use under a key shared with twk. The collision "
-                             "fix is TODO #242, deliberately not folded into the analysis item "
-                             "because it changes what the subcommand produces.",
+                             "construction it is HSKE-NL-A2's nl_fscx_revolve_v2. Do not use "
+                             "where the output format must survive. TODO #242 (v4.0.0) fixed "
+                             "everything about it except the name: it is now domain-separated from "
+                             "twk with tag 0x20, its key/tweak boundary is length-encoded, its "
+                             "derived subkey is rejection-sampled away from the degenerate affine "
+                             "class, and it runs at R_VALUE=192 rather than I_VALUE=64. Renaming "
+                             "it, re-scoping it, or implementing a real FF1/FF3-1 domain is a "
+                             "separate decision and remains open. Wire-format breaking in v4.0.0 -- "
+                             "every earlier fpe ciphertext is undecryptable, silently, since the "
+                             "output is an unauthenticated permutation; see MIGRATING.md section 8.",
                        source=["Herradura cryptographic suite.py fpe_encrypt/fpe_decrypt",
                                "herradura.h fpe_encrypt", "herradura/herradura.go FpeEncrypt",
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",
@@ -465,14 +470,18 @@ SECURITY = {
                              "through the `twk` subcommand rather than an --algo tag. The shape is "
                              "right for disk encryption and determinism per tweak is the expected "
                              "XTS-style property, not a defect. Three things keep it below "
-                             "production: it shares an unseparated HFSCX-256(key || tweak) subkey "
-                             "derivation with fpe and collides with it (see the fpe entry); it "
-                             "runs nl_fscx_revolve_v2 at I_VALUE=64 where HSKE-NL-A2 uses 192, and "
-                             "TODO #214's trail projection puts 64 rounds at 2^-119 against the "
-                             "137 rounds it estimates for 2^-256; and the key||tweak boundary is "
-                             "unencoded, so distinct (key, tweak) pairs collide. None is a break; "
-                             "together they are more than a caveat. Classified in TODO #241; the "
-                             "collision fix is TODO #242.",
+                             "production. TODO #242 (v4.0.0) closed all three of the blockers "
+                             "TODO #241 recorded: it is now domain-separated from fpe with tag "
+                             "0x21 rather than sharing an unseparated HFSCX-256(key || tweak) "
+                             "derivation, the key||tweak boundary is length-encoded, and it runs "
+                             "nl_fscx_revolve_v2 at R_VALUE=192 rather than I_VALUE=64, matching "
+                             "HSKE-NL-A2. What keeps it demo-only is now the absence of a positive "
+                             "result rather than a defect list: no reduction to a standard "
+                             "tweakable-cipher security definition (no STPRP argument), and "
+                             "NL-FSCX v2's security is conjectural with only key-averaged trail "
+                             "bounds behind it. Whether that suffices to move it off demo-only is "
+                             "TODO #243. Wire-format breaking in v4.0.0 -- every earlier twk "
+                             "ciphertext is undecryptable, silently; see MIGRATING.md section 8.",
                        source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt",
                                "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt",
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",

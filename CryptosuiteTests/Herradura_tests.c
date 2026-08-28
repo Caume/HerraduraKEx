@@ -5380,6 +5380,45 @@ int main(int argc, char *argv[])
         }
     }
 
+    /* Security test [46]: fpe/twk domain separation (TODO #242).  The two
+     * primitives shared an unseparated HFSCX-256(key || tweak) subkey
+     * derivation until v4.0.0, so a 12-byte fpe context equal to twk's
+     * sector_be64 || bidx_be32 made them the identical function.  Regression
+     * guard: they must now differ on exactly that input, and the key/tweak
+     * boundary must be length-encoded. */
+    {
+        int N = g_rounds > 0 ? g_rounds : 200, i, coll = 0, amb = 0;
+        struct timespec t0;
+        uint8_t key_bytes[KEYBYTES], ctx[12];
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        printf("[46] fpe/twk domain separation + no cross-primitive collision"
+               "  [SECURITY]\n");
+        for (i = 0; i < N; i++) {
+            BitArray P, Cf, Ct, Ca, Cb;
+            uint64_t sector; uint32_t bidx; int k;
+            ba_rand(&P, urnd_fp);
+            (void)fread(key_bytes, 1, KEYBYTES, urnd_fp);
+            (void)fread(&sector, 1, sizeof(sector), urnd_fp);
+            (void)fread(&bidx,   1, sizeof(bidx),   urnd_fp);
+            /* ctx = sector_be64 || bidx_be32 — the shape that used to collide */
+            for (k = 7; k >= 0; k--) ctx[k] = (uint8_t)(sector >> (8 * (7 - k)));
+            ctx[8]  = (uint8_t)((bidx >> 24) & 0xff);
+            ctx[9]  = (uint8_t)((bidx >> 16) & 0xff);
+            ctx[10] = (uint8_t)((bidx >>  8) & 0xff);
+            ctx[11] = (uint8_t)( bidx        & 0xff);
+            fpe_encrypt(&P, key_bytes, KEYBYTES, ctx, sizeof(ctx), &Cf);
+            twk_encrypt(&P, key_bytes, KEYBYTES, sector, bidx, &Ct);
+            if (ba_equal(&Cf, &Ct)) coll++;
+            /* (key=AB, ctx=C) must differ from (key=A, ctx=BC) */
+            fpe_encrypt(&P, key_bytes,     2, key_bytes + 2, 1, &Ca);
+            fpe_encrypt(&P, key_bytes,     1, key_bytes + 1, 2, &Cb);
+            if (ba_equal(&Ca, &Cb)) amb++;
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    n=%d  fpe/twk collisions=%d  key-boundary collisions=%d  [%s]\n\n",
+               N, coll, amb, (coll == 0 && amb == 0) ? "PASS" : "FAIL");
+    }
+
     fclose(urnd_fp);
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

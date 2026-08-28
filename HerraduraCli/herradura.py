@@ -2982,7 +2982,7 @@ def build_parser():
 
     # fpe (78.A)
     fp = sub.add_parser('fpe',
-                        help='Format-preserving encrypt/decrypt a 256-bit block (78.A)')
+                        help='Encrypt/decrypt a 256-bit block with a key+context tweak (78.A). NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain — 32 bytes in, 32 raw bytes out. See SECURITY.md.')
     fp.add_argument('--key',     required=True,
                     help='Session key PEM')
     fp.add_argument('--context', default='',

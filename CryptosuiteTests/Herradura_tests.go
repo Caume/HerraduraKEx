@@ -39,6 +39,7 @@ import (
 	. "herradurakex/herradura"
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"math"
@@ -1652,6 +1653,7 @@ func main() {
 	benchZkpNl()
 	testHcred()
 	testWeakKeyRejection()
+	testFpeTwkDomainSeparation()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -1744,6 +1746,43 @@ func testHcred() {
 // Exercises the guarded protocol-level API (GfPubIsValid/HkexGfAgree/
 // HpksVerify/HpkeEncrypt/HpkeDecrypt) added to herradura/herradura.go by
 // TODO #144, rather than local test-only duplicates.
+// [46] fpe/twk domain separation (TODO #242). The two primitives shared an
+// unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0, so a
+// 12-byte fpe context equal to twk's sector_be64 || bidx_be32 made them the
+// identical function. Regression guard: they must differ on exactly that input,
+// and the key/tweak boundary must be length-encoded.
+func testFpeTwkDomainSeparation() {
+	fmt.Println("[46] fpe/twk domain separation + no cross-primitive collision  [SECURITY]")
+	N := testRounds(200)
+	coll, amb := 0, 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		P := NewRandBitArray(256)
+		key := NewRandBitArray(256).Bytes()
+		sector := binary.BigEndian.Uint64(NewRandBitArray(64).Bytes())
+		bidx := binary.BigEndian.Uint32(NewRandBitArray(32).Bytes())
+		ctx := make([]byte, 12)
+		binary.BigEndian.PutUint64(ctx, sector)
+		binary.BigEndian.PutUint32(ctx[8:], bidx)
+		if FpeEncrypt(P, key, ctx).Equal(TwkEncrypt(P, key, sector, bidx)) {
+			coll++
+		}
+		if FpeEncrypt(P, key[:2], key[2:3]).Equal(FpeEncrypt(P, key[:1], key[1:3])) {
+			amb++
+		}
+		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if coll != 0 || amb != 0 {
+		status = "FAIL"
+	}
+	fmt.Printf("    n=%d  fpe/twk collisions=%d  key-boundary collisions=%d  [%s]\n\n",
+		N, coll, amb, status)
+}
+
 func testWeakKeyRejection() {
 	fmt.Println("[45] Weak-key & malformed-input rejection (identity pubkey, " +
 		"zero/degenerate elements, tampered syndrome/AEAD)  [SECURITY]")

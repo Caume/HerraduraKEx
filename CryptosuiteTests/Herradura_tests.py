@@ -374,24 +374,42 @@ def hfscx_256(data: bytes, *, iv: BitArray | None = None) -> bytes:
 _KEYBITS = 256
 _I_VALUE = _KEYBITS // 4  # 64
 
-def _fpe_derive_b(key: bytes, ctx: bytes) -> BitArray:
-    return BitArray(_KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
+# fpe/twk subkey derivation, mirroring the suite as of TODO #242: a
+# per-primitive domain-separation tag and an 8-byte big-endian key length, at
+# HSKE-NL-A2's R_VALUE step count.  The C and Go harnesses call the shipped
+# functions directly; this harness is standalone by design, so [51] below
+# cross-checks this copy against the shipped suite to catch drift.
+_R_VALUE = 3 * _KEYBITS // 4  # 192
+_FPE_DS  = 0x20
+_TWK_DS  = 0x21
+
+def _hfscx_256_ds(ds: int, data: bytes) -> bytes:
+    return hfscx_256(bytes([ds]) + data)
+
+def _fpe_twk_derive_b(ds: int, key: bytes, tweak: bytes) -> BitArray:
+    h = _hfscx_256_ds(ds, len(key).to_bytes(8, 'big') + key + tweak)
+    B = BitArray(_KEYBITS, int.from_bytes(h, 'big'))
+    while not nl_v2_key_is_valid(B.uint, _KEYBITS):
+        h = _hfscx_256_ds(ds, h)
+        B = BitArray(_KEYBITS, int.from_bytes(h, 'big'))
+    return B
+
+def _twk_tweak(sector: int, bidx: int) -> bytes:
+    return sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
 
 def fpe_encrypt_test(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
-    return nl_fscx_revolve_v2(pt, _fpe_derive_b(key, ctx), _I_VALUE)
+    return nl_fscx_revolve_v2(pt, _fpe_twk_derive_b(_FPE_DS, key, ctx), _R_VALUE)
 
 def fpe_decrypt_test(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
-    return nl_fscx_revolve_v2_inv(ct, _fpe_derive_b(key, ctx), _I_VALUE)
+    return nl_fscx_revolve_v2_inv(ct, _fpe_twk_derive_b(_FPE_DS, key, ctx), _R_VALUE)
 
 def twk_encrypt_test(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
-    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
-    B = BitArray(_KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
-    return nl_fscx_revolve_v2(block, B, _I_VALUE)
+    B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v2(block, B, _R_VALUE)
 
 def twk_decrypt_test(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
-    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
-    B = BitArray(_KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
-    return nl_fscx_revolve_v2_inv(ct, B, _I_VALUE)
+    B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v2_inv(ct, B, _R_VALUE)
 
 def haccum_leaf_test(data: bytes) -> bytes:
     return hfscx_256(b'\x00' + data)
@@ -2803,6 +2821,58 @@ def hpke_decrypt_checked(ct: 'BitArray', R_int: int, priv: int, poly: int, size:
     return fscx_revolve(ct, BitArray(size, dec_key), _R_VALUE)
 
 
+# Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
+# shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
+# so a 12-byte fpe context equal to twk's sector||bidx made them the identical
+# function.  This is the regression guard.  It also cross-checks this harness's
+# copy of the derivation against the shipped suite: the C and Go harnesses call
+# herradura.h / the herradura package directly, but this one is standalone by
+# design, so nothing else would catch the copy drifting from the original.
+# ---------------------------------------------------------------------------
+
+def test_fpe_twk_domain_separation():
+    print("[46] fpe/twk domain separation + no cross-primitive collision  [SECURITY]")
+    N = _iters(200)
+    collisions = 0; amb = 0; n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        P      = BitArray.random(_KEYBITS)
+        key    = BitArray.random(_KEYBITS).bytes
+        sector = random.getrandbits(64)
+        bidx   = random.getrandbits(32)
+        # The exact shape that used to collide: ctx == sector_be64 || bidx_be32.
+        ctx    = _twk_tweak(sector, bidx)
+        if fpe_encrypt_test(P, key, ctx).uint == twk_encrypt_test(P, key, sector, bidx).uint:
+            collisions += 1
+        # key||tweak boundary must be encoded: (AB, C) and (A, BC) must differ.
+        if fpe_encrypt_test(P, key[:2], key[2:3]).uint == \
+           fpe_encrypt_test(P, key[:1], key[1:3]).uint:
+            amb += 1
+    # Drift check against the shipped suite, if it can be loaded.
+    drift = "skipped"
+    try:
+        import importlib.util as _il, os as _os
+        _sp = _il.spec_from_file_location(
+            'herradura_suite',
+            _os.path.join(_os.path.dirname(__file__), '..',
+                          'Herradura cryptographic suite.py'))
+        _m = _il.module_from_spec(_sp); _sp.loader.exec_module(_m)
+        _k = b'\x5a' * 32
+        ok_f = (fpe_encrypt_test(BitArray(_KEYBITS, 1), _k, b'z').uint
+                == _m.fpe_encrypt(_m.BitArray(_KEYBITS, 1), _k, b'z').uint)
+        ok_t = (twk_encrypt_test(BitArray(_KEYBITS, 1), _k, 3, 4).uint
+                == _m.twk_encrypt(_m.BitArray(_KEYBITS, 1), _k, 3, 4).uint)
+        drift = "matches" if (ok_f and ok_t) else "DRIFTED"
+    except Exception as e:                      # pragma: no cover
+        drift = f"skipped ({type(e).__name__})"
+    good = (collisions == 0 and amb == 0 and drift != "DRIFTED")
+    status = "PASS" if good else "FAIL"
+    print(f"    n={n_run}  fpe/twk collisions={collisions}  key-boundary collisions={amb}"
+          f"  vs shipped suite: {drift}  [{status}]")
+    print()
+
+
+# ---------------------------------------------------------------------------
 # Security test [45]: weak-key & malformed-input rejection — appended after
 # [44] to avoid renumbering (same number in C/Go/Python; TODO #131).
 def test_weak_key_rejection():
@@ -3206,6 +3276,7 @@ if __name__ == '__main__':
 
     # Security test [45] appended after [44] to avoid renumbering (TODO #131).
     test_weak_key_rejection()
+    test_fpe_twk_domain_separation()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

@@ -2,6 +2,72 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [4.0.0] - 2026-08-28
+
+**MAJOR — `fpe` and `twk` ciphertexts written by earlier builds cannot be decrypted by
+this one, and the failure is silent.** Both subcommands are unauthenticated permutations,
+so a 4.0.0 build handed a 3.x ciphertext exits 0 and writes 32 plausible-looking bytes.
+If you have stored any, decrypt them with a pre-4.0.0 build **before** upgrading. See
+[MIGRATING.md](MIGRATING.md) §8. Nothing else is affected: keys and every other PEM type
+are read unchanged, `rand` is untouched, and no CLI flag or `--algo` value changed.
+
+### Changed
+- **`fpe` and `twk` no longer share a subkey derivation (TODO #242).** Both now derive it
+  as `HFSCX-256-DS(tag, len(key)_be8 ‖ key ‖ tweak)` — tag `0x20` for `fpe`, `0x21` for
+  `twk`. This closes two defects TODO #241 measured in one change: the two subcommands
+  were *the same function* whenever an `fpe --context` was the 12 bytes
+  `sector_be64 ‖ bidx_be32` (so `twk --decrypt` undid `fpe --encrypt`, byte-identically in
+  the C, Go and Python CLIs), and the `key ‖ tweak` boundary was unencoded, so
+  `(key=AB, ctx=C)` and `(key=A, ctx=BC)` collided.
+- **Both now run at `R_VALUE` = 192 steps rather than `I_VALUE` = 64.** #241 §11.24.4
+  found them running HSKE-NL-A2's `nl_fscx_revolve_v2` at one third of A2's rounds, which
+  TODO #214's trail projection puts at 2^-119 against the 137 rounds it estimates for
+  2^-256. Folded into this break rather than spent as a second one — the alternative was
+  telling users their ciphertexts were undecryptable twice.
+- The derived subkey is now rejection-sampled away from NL-FSCX v2's degenerate affine
+  class. A backstop rather than a fix: the class is ~2^-129 of the space and the subkey is
+  a hash output an attacker cannot steer, so deriving it was already what made the class
+  unreachable. `SECURITY.md`'s HSKE-NL-A2 row claimed "all three CLIs reject it via
+  `nl_v2_key_is_valid`", which was true for A2 and is now true here too.
+- Go's `fpeDeriveB` used `append(key, ctx...)`, which can write into the caller's backing
+  array when `key` has spare capacity. The shared derivation allocates its own buffer.
+- `SECURITY.md`, `spec/` and SecurityProofs-7.md §11.24 updated throughout. **`fpe` stays
+  `broken as named` and `twk` stays `demo-only`** — see Notes.
+- `fpe`'s help text in all three CLIs now says plainly that it is not format-preserving in
+  the FF1/FF3-1 sense. §11.24.2 observed that nothing in the help corrected the expectation
+  the name sets; this is documentation, not the rename that stays out of scope.
+
+### Added
+- **`CliTest/test_fpe_twk.sh`** (38 assertions across the C, Go and Python CLIs):
+  round-trips, byte-for-byte cross-implementation agreement, cross-implementation decrypt
+  in both directions on every pair, tweak separation within each primitive, and the
+  collision regression itself. These two subcommands had no `CliTest` script at all, which
+  is how the defect survived; the script is registered with `native-interop`.
+- **Test `[46]`** in the C, Go and Python harnesses — the same non-collision and
+  length-encoded-boundary properties at the library level. The Python one additionally
+  cross-checks its local copy of the derivation against the shipped suite.
+
+### Notes
+- **Neither classification moved, deliberately.** `fpe` is still **broken as named**: #242
+  fixed everything about it except the name, so it is now sound-shaped but still not
+  format-preserving encryption in the SP 800-38G sense. Renaming it, re-scoping it, or
+  implementing a real FF1/FF3-1 domain is a different decision from a wire-format fix and
+  stays open. `twk` is still **demo-only** even though all three of its stated blockers are
+  now closed — promoting a protocol because the defects someone found got fixed is the
+  reasoning TODO #237 and #238 were filed to undo. What remains is the absence of a
+  positive result: no STPRP argument, and NL-FSCX v2's security conjectural with only
+  key-averaged trail bounds. Filed as **TODO #243** for a deliberate review.
+- **A correction to TODO #241.** Its §11.24.7 said the shipped `fpe_encrypt`/`twk_encrypt`
+  "are never called by any test in the repository". That was overbroad: the C harness calls
+  `fpe_encrypt` from `herradura.h` and the Go harness calls `FpeEncrypt` from the
+  `herradura` package. Only the Python harness re-implemented the construction, and it now
+  cross-checks itself against the suite. What was true of all of them is that a round-trip
+  under the same derived subkey is a tautology for any bijection, so none could have caught
+  the collision.
+- `SecurityProofsCode/rand_fpe_twk_analysis.py` changed role rather than shape: it asserted
+  that the defects reproduce, and now asserts that they do not. It caught its own fix on the
+  first run after the change, which is what it was built to do.
+
 ## [3.3.1] - 2026-08-27
 
 ### Added

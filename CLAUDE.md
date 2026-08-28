@@ -377,9 +377,14 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 
 ```bash
 # C/Go/Python — security tests [1]–[29] + benchmarks [30]–[41]
-# ([44] HCRED, [45] weak-key/malformed-input rejection appended after the
-#  benchmarks to avoid renumbering; all three languages also run test [19]
-#  "HFSCX-256-DM known-answer vectors" out of strict numeric sequence)
+# ([44] HCRED, [45] weak-key/malformed-input rejection, [46] fpe/twk domain
+#  separation appended after the benchmarks to avoid renumbering; all three
+#  languages also run test [19] "HFSCX-256-DM known-answer vectors" out of
+#  strict numeric sequence.  [46] is TODO #242's regression guard: fpe and twk
+#  shared one unseparated subkey derivation until v4.0.0 and were literally the
+#  same function at a 12-byte context.  Python's copy of the derivation is
+#  cross-checked against the shipped suite there, since that harness alone
+#  re-implements it — C and Go call herradura.h / the herradura package)
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

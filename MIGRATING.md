@@ -26,6 +26,13 @@ readable and still breaks interoperation: `hpke-stern-kem` keys and ciphertexts 
 unchanged byte-for-byte, but the *shared secret* derived from them is not. Nothing needs
 regenerating; both ends simply have to be on the same side of the upgrade.
 
+The eighth is the reason the version is **4.0.0**, and it is the one on this list most
+likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
+build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
+permutations the failure is **silent** — you get plaintext-shaped garbage, not an error.
+If you have stored any, decrypt them with a pre-4.0.0 build first. See
+[section 8](#8-fpe-and-twk-subkey-derivation-v400).
+
 ---
 
 ## Summary table
@@ -39,6 +46,7 @@ regenerating; both ends simply have to be on the same side of the upgrade.
 | [HKEX-RNL small-ring session-key width](#5-hkex-rnl-small-ring-session-key-width-v300) | v3.0.0 | `HERRADURA SESSION KEY` PEMs from `kex --algo hkex-rnl --bits N` with N < 256 | Redo the handshake on v3.0.0+; nothing to do at the default ring |
 | [`SternSig` is heap-backed and carries its own round count](#6-sternsig-is-heap-backed-and-carries-its-own-round-count-v310) | v3.1.0 | C code using `herradura.h` directly (`SternSig`, `hpks_stern_f_sign`/`-verify`, `hcred_issue`) | Add `stern_sig_alloc`/`stern_sig_free` around each `SternSig`. **No PEM, wire-format or CLI break** — existing signatures still verify byte-for-byte |
 | [HPKE-Stern-KEM session-key derivation](#7-hpke-stern-kem-session-key-derivation-v330) | v3.3.0 | Shared secrets from `--algo hpke-stern-kem` and `--algo hybrid-rnl-stern`; anything encrypted under one | Both peers must be on v3.3.0+. **No key or ciphertext format change** — existing keys and ciphertexts are still read; only the derived secret differs |
+| [`fpe` and `twk` subkey derivation](#8-fpe-and-twk-subkey-derivation-v400) | v4.0.0 | Every `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-4.0.0 build before upgrading.** Old ciphertexts cannot be recovered by 4.0.0+, and the failure is silent |
 
 ---
 
@@ -368,3 +376,75 @@ as a shared secret the two parties disagree on. Any script or application that t
 `dec --algo hpke-stern-kem` exiting 0 as proof of success is no longer testing the KEM —
 it must compare output bytes. `CliTest/lib_dfr.sh` documents the retry policy this
 implies.
+
+---
+
+## 8. `fpe` and `twk` subkey derivation (v4.0.0)
+
+**What changed:** both subcommands derive their 256-bit subkey differently, and both run
+more rounds.
+
+| | before v4.0.0 | v4.0.0 onward |
+|---|---|---|
+| `fpe` subkey | `HFSCX-256(key ‖ ctx)` | `HFSCX-256-DS(0x20, len(key)_be8 ‖ key ‖ ctx)` |
+| `twk` subkey | `HFSCX-256(key ‖ sector_be64 ‖ bidx_be32)` | `HFSCX-256-DS(0x21, len(key)_be8 ‖ key ‖ sector_be64 ‖ bidx_be32)` |
+| step count | `I_VALUE` = 64 | `R_VALUE` = 192 |
+
+Both derivations additionally reject the subkey and rehash if it lands in NL-FSCX v2's
+degenerate affine class — a backstop that is effectively never taken, since the class is
+about `2^-129` of the space and the subkey is a hash output.
+
+**Why:** three defects, all found by TODO #241 and measured in `SecurityProofs-7.md`
+§11.24.
+
+1. *The two subcommands were the same function.* Neither derivation carried a
+   domain-separation tag, so a 12-byte `fpe --context` equal to `twk`'s
+   `sector_be64 ‖ bidx_be32` produced the identical subkey. `twk --decrypt` recovered
+   what `fpe --encrypt` produced, byte-identically in the C, Go and Python CLIs. Two
+   separately-advertised primitives reachable under one key were not independent.
+2. *The key/tweak boundary was unencoded.* `key ‖ tweak` does not record where the key
+   ends, so `(key=AB, ctx=C)` and `(key=A, ctx=BC)` collided — and the CLI takes key
+   width from the session-key PEM, so key length was never fixed by the interface.
+3. *The round count was a third of its parent's.* Both run HSKE-NL-A2's
+   `nl_fscx_revolve_v2`, which A2 uses at 192 steps; these used 64. TODO #214's trail
+   projection puts 64 rounds at `2^-119` against the 137 rounds it estimates for
+   `2^-256`. Folded into this break rather than spent as a second one.
+
+**What's incompatible:** every `fpe` and `twk` ciphertext ever written. There is no
+format or length change — the files are the same 32 bytes they always were — but the
+permutation that produced them is different, so a 4.0.0 build decrypts them to garbage.
+
+**This failure is silent.** Both subcommands are unauthenticated permutations with no
+tag, no checksum and no structure in the output. A 4.0.0 build handed a 3.x ciphertext
+exits 0 and writes 32 plausible-looking bytes. Nothing will tell you the decryption was
+wrong except comparing against the original plaintext. This is the single most important
+line in this section.
+
+**Action required — do this before upgrading:**
+
+1. Find any stored `fpe` or `twk` output. If you have none, there is nothing to do; keys
+   are unaffected, and `HERRADURA SESSION KEY` PEMs are read unchanged.
+2. Decrypt it with a **pre-4.0.0** build, under the same key and tweak you encrypted it
+   with.
+3. Upgrade, then re-encrypt with 4.0.0+ if you still need it stored.
+
+There is no conversion tool and no dual-read mode: the old derivation was removed rather
+than kept behind a flag, because a flag that silently selects between two subkey
+derivations is the same hazard in a different shape.
+
+**What is *not* affected:** every other subcommand and protocol. `rand` is untouched.
+Keys, public keys and all other PEM types are unchanged. The CLI surface — subcommands,
+flags, `--algo` values — is unchanged; `fpe --context`, `twk --sector` and `twk --bidx`
+all still mean exactly what they meant.
+
+**Why this is MAJOR rather than MINOR.** It changes what an existing CLI surface
+produces and makes existing files unreadable by a newer build, which is precisely what
+CLAUDE.md reserves MAJOR for. That the affected protocols are classified `broken` and
+`demo-only` in `SECURITY.md` does not downgrade it: the version number describes the
+compatibility break, not the maturity of what broke.
+
+**Still open after this change.** `fpe` is still not format-preserving encryption in the
+SP 800-38G sense — no radix, no domain, 32 bytes in and 32 raw bytes out. TODO #242
+scoped that out deliberately: renaming it, re-scoping it, or implementing a real
+FF1/FF3-1 domain is a different decision from a wire-format fix, and bundling them would
+have forced both at once. `SECURITY.md`'s `fpe` row records it meanwhile.

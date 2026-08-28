@@ -2861,19 +2861,52 @@ func HaccumVerify(root, leafHash []byte, proof [][]byte, idx int) bool {
 // For IND-CPA include a per-record nonce in ctx.
 // ---------------------------------------------------------------------------
 
+// Domain-separation tags for the two subkey derivations (TODO #242). Until
+// v4.0.0 both derived B as the bare HFSCX-256(key || tweak), which had two
+// defects TODO #241 measured (SecurityProofs-7.md §11.24): no separation between
+// the two primitives, so a 12-byte fpe context equal to twk's sector||bidx gave
+// the identical subkey and each decrypted the other's output; and an unencoded
+// key/tweak boundary, so (key=AB, ctx=C) and (key=A, ctx=BC) collided.
+// Wire-format breaking; see MIGRATING.md §8.
+const (
+	fpeDS = 0x20
+	twkDS = 0x21
+)
+
+// fpeTwkDeriveB is B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak), rejected
+// to a non-degenerate NL-FSCX v2 subkey. The rejection loop is defence in depth
+// and effectively never taken: the degenerate class is ~2^-129 of the space and
+// B is a hash output an attacker cannot steer without the key. Rehashing keeps
+// the derivation deterministic and total.
+func fpeTwkDeriveB(ds byte, key, tweak []byte) *BitArray {
+	buf := make([]byte, 8+len(key)+len(tweak))
+	binary.BigEndian.PutUint64(buf, uint64(len(key)))
+	copy(buf[8:], key)
+	copy(buf[8+len(key):], tweak)
+	h := Hfscx256DS(ds, buf, nil)
+	B := NewBitArray(256, new(big.Int).SetBytes(h))
+	for !NlV2KeyIsValid(B) {
+		h = Hfscx256DS(ds, h, nil)
+		B = NewBitArray(256, new(big.Int).SetBytes(h))
+	}
+	return B
+}
+
 func fpeDeriveB(key, ctx []byte) *BitArray {
-	tweak := Hfscx256(append(key, ctx...), nil)
-	return NewBitArray(256, new(big.Int).SetBytes(tweak))
+	// Note: never `append(key, ctx...)` here — append may write into the
+	// caller's backing array when key has spare capacity, silently corrupting
+	// the caller's key. fpeTwkDeriveB allocates its own buffer.
+	return fpeTwkDeriveB(fpeDS, key, ctx)
 }
 
 // FpeEncrypt encrypts a 256-bit BitArray with key and context.
 func FpeEncrypt(pt *BitArray, key, ctx []byte) *BitArray {
-	return NlFscxRevolveV2(pt, fpeDeriveB(key, ctx), 64) // 64 = I_VALUE
+	return NlFscxRevolveV2(pt, fpeDeriveB(key, ctx), 192) // 192 = R_VALUE
 }
 
 // FpeDecrypt decrypts a 256-bit BitArray with key and context.
 func FpeDecrypt(ct *BitArray, key, ctx []byte) *BitArray {
-	return NlFscxRevolveV2Inv(ct, fpeDeriveB(key, ctx), 64)
+	return NlFscxRevolveV2Inv(ct, fpeDeriveB(key, ctx), 192)
 }
 
 // ---------------------------------------------------------------------------
@@ -2885,22 +2918,20 @@ func FpeDecrypt(ct *BitArray, key, ctx []byte) *BitArray {
 // ---------------------------------------------------------------------------
 
 func twkDeriveB(key []byte, sector uint64, bidx uint32) *BitArray {
-	buf := make([]byte, len(key)+12)
-	copy(buf, key)
-	binary.BigEndian.PutUint64(buf[len(key):], sector)
-	binary.BigEndian.PutUint32(buf[len(key)+8:], bidx)
-	tweak := Hfscx256(buf, nil)
-	return NewBitArray(256, new(big.Int).SetBytes(tweak))
+	tw := make([]byte, 12)
+	binary.BigEndian.PutUint64(tw, sector)
+	binary.BigEndian.PutUint32(tw[8:], bidx)
+	return fpeTwkDeriveB(twkDS, key, tw)
 }
 
 // TwkEncrypt encrypts a 256-bit block with sector and block-index tweaks.
 func TwkEncrypt(block *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
-	return NlFscxRevolveV2(block, twkDeriveB(key, sector, bidx), 64)
+	return NlFscxRevolveV2(block, twkDeriveB(key, sector, bidx), 192)
 }
 
 // TwkDecrypt decrypts a 256-bit block with sector and block-index tweaks.
 func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
-	return NlFscxRevolveV2Inv(ct, twkDeriveB(key, sector, bidx), 64)
+	return NlFscxRevolveV2Inv(ct, twkDeriveB(key, sector, bidx), 192)
 }
 
 // ---------------------------------------------------------------------------

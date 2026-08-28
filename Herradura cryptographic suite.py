@@ -3571,40 +3571,96 @@ def hpks_xmss_verify(msg: bytes, sig: dict, root: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# 78.A / 78.B — subkey derivation shared by FPE and the tweakable wide-block
+# cipher (TODO #242).
+#
+# Both primitives are nl_fscx_revolve_v2 under a subkey derived from the key and
+# a tweak.  Until v4.0.0 both derived it as the bare HFSCX-256(key || tweak),
+# which had two defects that TODO #241 (SecurityProofs-7.md §11.24) measured:
+#
+#   * No domain separation between the two.  A 12-byte fpe `ctx` equal to twk's
+#     sector_be64 || bidx_be32 produced the identical subkey, so the two
+#     subcommands computed the same function and each decrypted the other's
+#     output.  Reproduced byte-identically across the C, Go and Python CLIs.
+#   * An unencoded concatenation boundary.  `key || tweak` does not record where
+#     the key ends, so (key=AB, ctx=C) and (key=A, ctx=BC) collided, and the CLI
+#     takes key width from the session-key PEM rather than fixing it.
+#
+# Both are fixed here: a per-primitive domain-separation tag in hfscx_256_ds's
+# namespace (0x01-0x03 and 0x10-0x12 were already allocated), and an 8-byte
+# big-endian key length before the key — the pattern drbg_seed and TODO #235's
+# KEM code already use.
+#
+# The step count moved with them, from I_VALUE (64) to R_VALUE (192).  #241
+# §11.24.4 found these running HSKE-NL-A2's permutation at one third of A2's
+# rounds, which TODO #214's trail projection puts at 2^-119 against the 137
+# rounds it estimates for 2^-256.  Folded into the same wire-format break rather
+# than spent as a second one.
+#
+# Both are wire-format breaking; see MIGRATING.md §8.
+
+_FPE_DS = 0x20   # domain-separation tag: FPE subkey
+_TWK_DS = 0x21   # domain-separation tag: tweakable wide-block subkey
+
+
+def _fpe_twk_derive_b(ds: int, key: bytes, tweak: bytes) -> BitArray:
+    """B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak), rejected to a
+    non-degenerate NL-FSCX v2 subkey.
+
+    The rejection loop is defence in depth and effectively never taken: v2
+    degenerates to a GF(2)-affine permutation for keys with delta(B) in
+    {0, 2^(n-1)}, about 2^-129 of the space, and B is a hash output that an
+    attacker cannot steer without the key.  Deriving B is what makes the class
+    unreachable in the first place — HSKE-NL-A2, which takes B from the caller,
+    needs nl_v2_key_is_valid as a real check rather than a backstop.  Rehashing
+    keeps the derivation deterministic and total."""
+    h = hfscx_256_ds(ds, len(key).to_bytes(8, 'big') + key + tweak)
+    B = BitArray(KEYBITS, int.from_bytes(h, 'big'))
+    while not nl_v2_key_is_valid(B):
+        h = hfscx_256_ds(ds, h)
+        B = BitArray(KEYBITS, int.from_bytes(h, 'big'))
+    return B
+
+
+# ---------------------------------------------------------------------------
 # 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
-# B = HFSCX-256(key || ctx); C = nl_fscx_revolve_v2(P, B, I_VALUE).
+# B = HFSCX-256-DS(0x20, len(key) || key || ctx); C = nl_fscx_revolve_v2(P, B, R_VALUE).
 # Deterministic: same (key, ctx, plaintext) → same ciphertext.
 # For IND-CPA include a per-record nonce in ctx.
+#
+# NOTE: despite the name this is NOT format-preserving encryption in the
+# SP 800-38G (FF1/FF3-1) sense — there is no radix and no domain, only a
+# 256-bit block.  See SECURITY.md's FPE row and SecurityProofs-7.md §11.24.2.
 # ---------------------------------------------------------------------------
 
 def fpe_encrypt(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
     """Format-preserving encrypt pt using nl_fscx_revolve_v2 with key+ctx tweak."""
-    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
-    return nl_fscx_revolve_v2(pt, B, I_VALUE)
+    return nl_fscx_revolve_v2(pt, _fpe_twk_derive_b(_FPE_DS, key, ctx), R_VALUE)
 
 def fpe_decrypt(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
     """Format-preserving decrypt ct — inverse of fpe_encrypt."""
-    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(key + ctx), 'big'))
-    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE)
+    return nl_fscx_revolve_v2_inv(ct, _fpe_twk_derive_b(_FPE_DS, key, ctx), R_VALUE)
 
 
 # ---------------------------------------------------------------------------
 # 78.B — Tweakable Wide-Block Cipher (TODO #78.B)
-# B = HFSCX-256(key || sector_be64 || bidx_be32); each block gets a unique tweak.
+# B = HFSCX-256-DS(0x21, len(key) || key || sector_be64 || bidx_be32);
+# each block gets a unique tweak.
 # Resolves HSKE-NL-A2 determinism limitation (TODO #12).
 # ---------------------------------------------------------------------------
 
+def _twk_tweak(sector: int, bidx: int) -> bytes:
+    return sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
+
 def twk_encrypt(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
     """Tweakable block-cipher encrypt with per-(sector, block-index) tweak."""
-    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
-    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
-    return nl_fscx_revolve_v2(block, B, I_VALUE)
+    B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v2(block, B, R_VALUE)
 
 def twk_decrypt(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
     """Tweakable block-cipher decrypt — inverse of twk_encrypt."""
-    tweak = key + sector.to_bytes(8, 'big') + bidx.to_bytes(4, 'big')
-    B = BitArray(KEYBITS, int.from_bytes(hfscx_256(tweak), 'big'))
-    return nl_fscx_revolve_v2_inv(ct, B, I_VALUE)
+    B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v2_inv(ct, B, R_VALUE)
 
 
 # ---------------------------------------------------------------------------
