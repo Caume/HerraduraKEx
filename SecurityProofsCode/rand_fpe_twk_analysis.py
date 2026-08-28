@@ -19,6 +19,11 @@ Sections
 Two of TODO #241's own premises did not survive contact with the code, and both
 are recorded here rather than quietly worked around -- see §2 and §6.
 
+TODO #242 (v4.0.0) fixed the two live defects §2 and §4 found.  This script kept
+its shape but changed role: where it used to assert that the defects reproduce,
+it now asserts that they do NOT, so a regression re-opens it.  What the defects
+were is kept, because the SECURITY.md rows and MIGRATING.md §8 refer to them.
+
 Everything here runs against the shipped suite (`Herradura cryptographic
 suite.py`) via importlib, deliberately: a claim about the deployed construction
 has to be tested on the deployed construction.  No third-party dependencies;
@@ -86,18 +91,22 @@ count.  §2 shows what follows from that.""")
 # §2 — fpe and twk are one function
 # ═══════════════════════════════════════════════════════════════════════════
 def section2():
-    rule("§2  `fpe` and `twk` are the same function")
+    rule("§2  `fpe` and `twk` were the same function (fixed in v4.0.0)")
     print("""TODO #241 states that these three "have no such parent" -- no existing
 analysis whose verdict could be propagated the way TODO #238 propagated the
 hpks row to hpks-t and hpks-nl.  That premise is half right.  `rand` has no
 parent.  `fpe` and `twk` have two: each other, and HSKE-NL-A2 (§5).
 
-Neither derivation carries a domain-separation tag, so whenever twk's
-`sector_be64 || bidx_be32` happens to equal fpe's `ctx`, the two subkeys are
-equal and the two subcommands compute the identical function.  Twelve bytes of
-context is not an exotic choice -- it is the natural size -- and every byte of
-it can be printable ASCII, so the collision is reachable from the command line
-without constructing anything unusual.""")
+As shipped through v3.3.1 neither derivation carried a domain-separation tag,
+so whenever twk's `sector_be64 || bidx_be32` equalled fpe's `ctx` the two
+subkeys were equal and the two subcommands computed the identical function.
+Twelve bytes of context is not an exotic choice -- it is the natural size --
+and every byte of it can be printable ASCII, so the collision was reachable
+from the command line without constructing anything unusual.
+
+TODO #242 separated them: each primitive now derives its subkey as
+HFSCX-256-DS(tag, len(key)_be8 || key || tweak), with tag 0x20 for fpe and 0x21
+for twk.  The check below is now a REGRESSION test -- the two must differ.""")
 
     key = b'\x11' * 32
     P = _SUITE.BitArray(_SUITE.KEYBITS, 0xdeadbeefcafe)
@@ -113,35 +122,26 @@ without constructing anything unusual.""")
     print(f"  --sector {sector} --bidx {bidx}")
     print(f"  fpe_encrypt(P, key, ctx)          : {a:064x}")
     print(f"  twk_encrypt(P, key, sector, bidx) : {b:064x}")
-    print(f"  identical                         : {same}")
+    print(f"  identical (must be False)         : {same}")
 
     # The inverse direction matters too: it is not merely an equal ciphertext,
     # the two subcommands are inverses of one another across the boundary.
     back = _SUITE.twk_decrypt(_SUITE.BitArray(_SUITE.KEYBITS, a),
                               key, sector, bidx).uint
-    print(f"  twk_decrypt undoes fpe_encrypt    : {back == P.uint}")
+    print(f"  twk_decrypt undoes fpe_encrypt    : {back == P.uint}   (must be False)")
 
     print("""
-  Reproduced at the CLI, in all three implementations that ship these
-  subcommands (C, Go, Python), against one HERRADURA SESSION KEY PEM:
-
-      $CLI fpe --context '0123456789:;'      --encrypt --in pt --out a
-      $CLI twk --sector 3472611983179986487 \\
-               --bidx   943274555            --encrypt --in pt --out b
-      cmp a b        # identical, in each of the three
-      $CLI twk --sector ... --bidx ... --decrypt --in a   # recovers pt
-
-  All three agree byte-for-byte on the colliding value, which makes this a
+  Why it mattered.  Two separately-advertised primitives, reachable under one
+  key, were not independent: a `twk` disk-sector ciphertext and an `fpe` record
+  ciphertext could be the same ciphertext, and either subcommand decrypted the
+  other's output.  A caller who believes they are using distinct primitives for
+  distinct purposes -- the only reason to ship both -- did not get that.  It
+  reproduced byte-identically in the C, Go and Python CLIs, which made it a
   property of the construction rather than a bug in one port.
 
-  Why it matters.  Two separately-advertised primitives, reachable under one
-  key, are not independent: a `twk` disk-sector ciphertext and an `fpe` record
-  ciphertext can be the same ciphertext, and either subcommand decrypts the
-  other's output.  A caller who believes they are using distinct primitives for
-  distinct purposes -- which is the only reason to ship both -- does not get
-  that.  Standard practice is one domain-separation tag per primitive, and the
-  suite already has the machinery: `hfscx_256_ds` (TODO #93) and
-  `hmac_hfscx_256` both exist and neither is used here.""")
+  The machinery to prevent it was already in the suite and simply unused:
+  `hfscx_256_ds` (TODO #93) and `hmac_hfscx_256`.  CliTest/test_fpe_twk.sh now
+  holds the CLI-level regression across all three implementations.""")
     return same, back == P.uint
 
 
@@ -218,23 +218,26 @@ key as a bare prefix.  Three separate problems sit in that line.\n""")
     print("      before the entropy -- so the correct pattern is already in use")
     print("      two hundred lines away.\n")
 
-    src = inspect.getsource(_SUITE.fpe_encrypt) + inspect.getsource(_SUITE.twk_encrypt)
+    src = inspect.getsource(_SUITE._fpe_twk_derive_b)
     checks_key = 'nl_v2_key_is_valid' in src
-    print("  (c) The derived subkey is never validity-checked.")
-    print(f"        fpe/twk call nl_v2_key_is_valid : {checks_key}")
+    print("  (c) The derived subkey was never validity-checked.")
+    print(f"        derivation calls nl_v2_key_is_valid : {checks_key}   (must be True)")
     print("""      NL-FSCX v2 degenerates to a GF(2)-affine permutation, recoverable
       by linear algebra from a handful of known plaintexts, for keys with
       delta(B) in {0, 2^(n-1)}.  SECURITY.md's HSKE-NL-A2 row states that "all
-      three CLIs reject it via nl_v2_key_is_valid" -- true for A2, not true
-      here.  The practical exposure is small, because B is a hash output rather
-      than user-supplied and the class is about 2^-129 of the space, so it is
-      unreachable by chance and an attacker cannot steer it without the key.
-      It is recorded as a missing defence-in-depth check that the suite already
-      implements elsewhere, not as a live break.
+      three CLIs reject it via nl_v2_key_is_valid" -- true for A2, and now true
+      here too: the derivation rehashes until the subkey is non-degenerate.
+
+      The exposure was always small, because B is a hash output rather than
+      user-supplied and the class is about 2^-129 of the space, so it was
+      unreachable by chance and an attacker could not steer it without the key.
+      It was a missing defence-in-depth check rather than a live break, and the
+      rejection loop is a backstop rather than a fix.
 
       Note the direction of this one: deriving B by hashing is what makes the
-      weak-key class unreachable, so on this specific axis fpe/twk are in a
-      BETTER position than the HSKE-NL-A2 they inherit from.""")
+      weak-key class unreachable, so on this axis fpe/twk are in a BETTER
+      position than the HSKE-NL-A2 they inherit from, which takes B from the
+      caller and needs the check as a real one.""")
     return amb, checks_key
 
 
@@ -242,49 +245,43 @@ key as a bare prefix.  Three separate problems sit in that line.\n""")
 # §5 — round count
 # ═══════════════════════════════════════════════════════════════════════════
 def section5(i_value, r_value):
-    rule("§5  The same permutation as HSKE-NL-A2, at one third the rounds")
+    rule("§5  The same permutation as HSKE-NL-A2 -- and now at the same rounds")
+    steps = _SUITE.R_VALUE
     print(f"""`fpe` and `twk` are HSKE-NL-A2's construction with a derived rather than a
 supplied subkey.  A2 is `nl_fscx_revolve_v2(P, K, r)`; these are
-`nl_fscx_revolve_v2(P, B, i)`.  Same permutation, same primitive, same width.
+`nl_fscx_revolve_v2(P, B, r)`.  Same permutation, same primitive, same width.
 
-The step count is not the same:
+Through v3.3.1 the step count was NOT the same:
 
       HSKE-NL-A2      R_VALUE = 3n/4 = {r_value} steps
       fpe / twk       I_VALUE =   n/4 = {i_value} steps
 
-That is a factor of {r_value // i_value}, and it is the reason the classification cannot simply
-be inherited.  SECURITY.md rates HSKE-NL-A2 "Production-track (conjectured)".
-Whatever confidence that rating carries is a statement about {r_value} rounds.
+A factor of {r_value // i_value}, and the reason the classification could not simply be
+inherited.  SECURITY.md rates HSKE-NL-A2 "Production-track (conjectured)", and
+whatever confidence that carries is a statement about {r_value} rounds.
 
 TODO #214 (SecurityProofsCode/nl_fscx_exact_trail_search.py) is the relevant
-measurement.  It builds an exact Lipmaa-Moriai xdp+ model of one v2 round and
-searches for optimal differential trails with an SMT backend.  Its §4 reports,
-for v2 at the deployed rotation:
+measurement: an exact Lipmaa-Moriai xdp+ model of one v2 round, searched for
+optimal differential trails with an SMT backend.  Its §4, for v2 at the
+deployed rotation:
 
       mean slope                  1.87 bits of trail weight per round
       rounds to reach 2^-256      137
       64 rounds reaches           2^-119
 
-So A2's {r_value} rounds clear the 137-round bar comfortably, and fpe/twk's {i_value} do not
-reach it.  Two caveats, both important, both #214's own:
+So A2's {r_value} rounds cleared the 137-round bar and fpe/twk's {i_value} did not.  Two
+caveats, both #214's own: that projection is explicitly the weakest step in
+#214 -- the slope is read off widths 16-32, not 256 -- and a trail probability
+is not a security level.  The argument was therefore comparative rather than
+absolute, and comparative was enough: the identical primitive sat on opposite
+sides of a line depending only on a step count nothing recorded a reason for.
 
-  * That projection is explicitly labelled the weakest step in #214 -- the
-    slope is read off widths 16-32, not 256, and the search closes only for
-    small round counts.  It is an order-of-magnitude indication, not a bound.
-  * A trail probability is not a security level.  2^-119 is a statement about
-    the best differential trail the model finds, not a demonstrated attack.
+TODO #242 moved fpe/twk to R_VALUE, folding the change into the same
+wire-format break as the domain separation rather than spending a second one.""")
+    print(f"\n  Deployed step count for fpe/twk now : {steps}"
+          f"   (matches HSKE-NL-A2: {steps == r_value})")
+    return steps == r_value
 
-What survives both caveats is comparative, and that is enough for a
-classification: on the only quantitative handle the repository has for this
-permutation, fpe/twk sit on the wrong side of a line that HSKE-NL-A2 clears,
-using the identical primitive.  Nothing in the code or the commit history
-records a reason for the smaller count; I_VALUE appears to have been taken as
-the default step count rather than chosen.
-
-Note also that #214's own framing says "the deployed step count is n/4 = 64
-rounds at n = 256".  That is right for HFSCX-256's v1 compression and for
-fpe/twk, and wrong for HSKE-NL-A2 at 192 -- a documentation inconsistency
-worth fixing when #214 is next revisited.""")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -388,77 +385,93 @@ document currently says so.\n""")
 def section7():
     rule("§7  Verdicts and the SECURITY.md rows")
     print("""TODO #241 predicted "at least one of the three to come out worse than
-demo-only", and named `fpe` as the one to look at first.  That prediction is
-correct, for a different reason than the one it gave: not an undocumented
-tweak schedule, but a name that promises a primitive the code does not
-implement, plus a shared subkey derivation that makes it indistinguishable
-from `twk`.
+demo-only", and named `fpe` as the one to look at first.  That prediction was
+correct, for a different reason than it gave: not an undocumented tweak
+schedule, but a name promising a primitive the code does not implement, plus a
+shared subkey derivation that made it indistinguishable from `twk`.
 
-  fpe   BROKEN AS NAMED.  It is not format-preserving encryption in the
-        SP 800-38G sense -- no radix, no domain, 32 bytes in and 32 raw bytes
-        out, short input zero-padded (§3).  It is additionally the same
-        function as `twk` whenever the context is twelve bytes (§2).  As a
-        deterministic 256-bit tweakable permutation it is HSKE-NL-A2 at one
-        third the rounds (§5).  Do not use it to encrypt anything whose format
-        must survive, and do not use it under a key shared with `twk`.
+TODO #242 (v4.0.0) fixed the two defects that were fixable without touching the
+name: the primitives are domain-separated, the key boundary is length-encoded,
+the derived subkey is rejection-sampled to a non-degenerate one, and both run
+at HSKE-NL-A2's round count.  The verdicts below reflect the post-#242 state.
 
-  twk   DEMO-ONLY.  The construction is coherent for its stated purpose --
-        a per-(sector, block) tweaked wide-block permutation, which is the
-        right shape for disk encryption, and determinism per tweak is the
-        expected XTS-style property rather than a defect.  Three things keep
-        it below production: the domain-separation collision with `fpe` (§2),
-        the round count (§5), and the unencoded key boundary (§4b).  None of
-        the three is a break; together they are more than a caveat.
+  fpe   BROKEN AS NAMED -- unchanged by #242, deliberately.  It is still not
+        format-preserving encryption in the SP 800-38G sense: no radix, no
+        domain, 32 bytes in and 32 raw bytes out, short input zero-padded
+        (§3).  #242 scoped the naming defect out, because renaming, re-scoping
+        or implementing a real FF1/FF3-1 domain is a different decision from a
+        wire-format fix.  What #242 did remove is the collision with `twk`, so
+        the row no longer has to warn about a shared key.  Do not use this to
+        encrypt anything whose format must survive.
 
-  rand  DEMO-ONLY, and the closest of the three to sound.  The construction is
-        a documented fast-key-erasure DRBG with a derived and reproducible
-        output bound (§6), and its behavioural properties check out.  It is
-        not an SP 800-90A DRBG and its own source says so; the four missing
-        mechanisms are absent by design, not broken.  Effective state entropy
-        is ~2^218.8 rather than 2^256.  Sound as a deterministic expander for
-        full-entropy seeds under the 2^20 block bound; not a drop-in RNG.
+  twk   DEMO-ONLY, and for narrower reasons than before.  All three of the
+        blockers #241 listed are now closed -- the fpe collision (§2), the
+        round count (§5), and the unencoded key boundary (§4b).  What keeps it
+        demo-only is no longer a defect list but the absence of a positive
+        result: the construction has never been reduced to a standard
+        tweakable-cipher security definition (no STPRP argument), and
+        NL-FSCX v2's security is conjectural with only key-averaged trail
+        bounds behind it.  Whether that is now enough to move it off demo-only
+        is a reclassification question, and reclassification on the strength of
+        "the defects I found are fixed" would be exactly the reasoning TODO
+        #237 and #238 were filed to undo.  It gets its own review: TODO #243.
 
-None of the three is being removed -- TODO #241 puts that explicitly out of
-scope, and they are shipped surface.  The deficiency the item was filed about
-is that nobody could tell what they promised, and these rows are the answer.
+  rand  DEMO-ONLY, untouched by #242 and the closest of the three to sound.  A
+        documented fast-key-erasure DRBG with a derived and reproducible output
+        bound (§6), whose behavioural properties check out.  Not an SP 800-90A
+        DRBG and its own source says so; the four missing mechanisms are absent
+        by design.  Effective state entropy ~2^218.8 rather than 2^256.  Sound
+        as a deterministic expander for full-entropy seeds under the 2^20 block
+        bound; not a drop-in RNG.
 
-The domain-separation collision (§2) is a live defect rather than merely an
-unanalysed one, and fixing it changes what both subcommands produce -- a break
-of the CLI surface 2.0.0 froze, and therefore its own item rather than a
-silent edit inside an analysis one.  It is filed as TODO #242.""")
+None of the three was removed.  #241 put that out of scope and #242 kept both
+subcommands deliberately: deciding whether `fpe` should exist at all cannot be
+separated from deciding whether it should be renamed or made real FPE, and that
+question is still open.""")
+
 
 
 def main():
     print(SEP)
-    print("rand / fpe / twk — the unclassified CLI surface (TODO #241)")
+    print("rand / fpe / twk — the formerly-unclassified CLI surface (TODO #241/#242)")
     print(SEP)
 
     i_value, r_value = section1()
     collides, inverts = section2()
     section3()
     amb, checks_key = section4()
-    section5(i_value, r_value)
+    rounds_ok = section5(i_value, r_value)
     drbg = section6()
     section7()
 
     print("\n" + SEP)
-    print("Machine-readable summary of the checked claims")
+    print("Regression summary — TODO #242 fixed these; they must stay fixed")
     print(SEP)
-    print(f"  fpe/twk subkey collision reachable      : {collides}")
-    print(f"  twk_decrypt inverts fpe_encrypt         : {inverts}")
-    print(f"  key||ctx boundary ambiguous             : {amb}")
-    print(f"  derived subkey validity-checked         : {checks_key}")
-    print(f"  drbg determinism / pers / reseed / cap  : {drbg}")
+    print(f"  fpe/twk subkeys collide           : {collides}   (want False)")
+    print(f"  twk_decrypt inverts fpe_encrypt   : {inverts}   (want False)")
+    print(f"  key||tweak boundary ambiguous     : {amb}   (want False)")
+    print(f"  derived subkey validity-checked   : {checks_key}   (want True)")
+    print(f"  step count matches HSKE-NL-A2     : {rounds_ok}   (want True)")
+    print(f"  drbg determinism/pers/reseed/cap  : {drbg}   (want all True)")
     print(SEP)
 
-    # The analysis is only meaningful if the defects it describes are present.
-    # If a future change fixes one, this script should fail loudly rather than
-    # keep printing a stale finding.
-    ok = collides and inverts and amb and not checks_key and all(drbg)
-    if not ok:
-        print("\n*** One or more findings no longer reproduce. The construction has")
-        print("*** changed; re-derive §2-§4 and update SecurityProofs-7.md §11.24.")
+    failures = []
+    if collides:      failures.append("fpe and twk still derive the same subkey (TODO #242 regressed)")
+    if inverts:       failures.append("twk_decrypt still inverts fpe_encrypt (TODO #242 regressed)")
+    if amb:           failures.append("key||tweak boundary is ambiguous again (TODO #242 regressed)")
+    if not checks_key: failures.append("derived subkey is no longer validity-checked")
+    if not rounds_ok: failures.append("fpe/twk step count no longer matches HSKE-NL-A2")
+    if not all(drbg): failures.append("an HDRBG behavioural property changed")
+
+    if failures:
+        print("\n*** REGRESSION:")
+        for f in failures:
+            print(f"***   - {f}")
+        print("*** Re-derive the affected section and update SecurityProofs-7.md §11.24.")
         return 1
+
+    print("\nAll findings hold: the defects TODO #242 fixed are still fixed, and the")
+    print("`fpe` naming defect it deliberately left open is still open (§3, §7).")
     return 0
 
 

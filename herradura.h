@@ -3511,24 +3511,60 @@ static int haccum_verify(const uint8_t root[KEYBYTES],
 /* ─────────────────────────────────────────────────────────────────────────────
  * 78.A — Format-Preserving Encryption (FPE) (TODO #78.A)
  *
- * Bijective encryption on {0,1}^256: nl_fscx_revolve_v2 with tweak B derived
- * from HFSCX-256(key || context).  Same (key, context, plaintext) always
- * yields the same ciphertext — suitable for deterministic / searchable
- * encryption.  Include a nonce in context for IND-CPA (e.g. record_id||nonce).
+ * Bijective encryption on {0,1}^256: nl_fscx_revolve_v2 at R_VALUE steps with
+ * subkey B = HFSCX-256-DS(FPE_DS, len(key) || key || context).  Same
+ * (key, context, plaintext) always yields the same ciphertext — suitable for
+ * deterministic / searchable encryption.  Include a nonce in context for
+ * IND-CPA (e.g. record_id||nonce).
+ *
+ * NOT format-preserving in the SP 800-38G (FF1/FF3-1) sense despite the name:
+ * there is no radix and no domain, only a 256-bit block.  See SECURITY.md's
+ * FPE row and SecurityProofs-7.md §11.24.2.
  * ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Subkey derivation shared by FPE and TWK (TODO #242) ──
+ * Until v4.0.0 both derived B as the bare HFSCX-256(key || tweak), which had two
+ * defects TODO #241 measured (SecurityProofs-7.md §11.24): no domain separation
+ * between the two primitives, so a 12-byte fpe context equal to twk's
+ * sector||bidx produced the identical subkey and each subcommand decrypted the
+ * other's output; and an unencoded key/tweak boundary, so (key=AB, ctx=C) and
+ * (key=A, ctx=BC) collided.  Both are fixed by a per-primitive tag in
+ * hfscx_256_ds's namespace plus an 8-byte big-endian key length.
+ * Wire-format breaking; see MIGRATING.md §8. */
+#define FPE_DS 0x20   /* domain-separation tag: FPE subkey                    */
+#define TWK_DS 0x21   /* domain-separation tag: tweakable wide-block subkey   */
+
+/* B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak), rejected to a
+ * non-degenerate NL-FSCX v2 subkey.  The rejection loop is defence in depth and
+ * effectively never taken: the degenerate class is ~2^-129 of the space and B is
+ * a hash output an attacker cannot steer without the key.  Rehashing keeps the
+ * derivation deterministic and total. */
+static inline void fpe_twk_derive_b(uint8_t ds,
+                                     const uint8_t *key, size_t klen,
+                                     const uint8_t *tweak, size_t tlen,
+                                     BitArray *B)
+{
+    uint8_t *tbuf = (uint8_t *)malloc(8 + klen + tlen);
+    uint8_t h[KEYBYTES];
+    int i;
+    if (!tbuf) { fprintf(stderr, "fpe/twk: out of memory\n"); exit(1); }
+    for (i = 7; i >= 0; i--) tbuf[i] = (uint8_t)((uint64_t)klen >> (8 * (7 - i)));
+    if (klen) memcpy(tbuf + 8,        key,   klen);
+    if (tlen) memcpy(tbuf + 8 + klen, tweak, tlen);
+    hfscx_256_ds(ds, tbuf, 8 + klen + tlen, NULL, h);
+    free(tbuf);
+    memcpy(B->b, h, KEYBYTES);
+    while (!nl_v2_key_is_valid(B)) {
+        hfscx_256_ds(ds, h, KEYBYTES, NULL, h);
+        memcpy(B->b, h, KEYBYTES);
+    }
+}
 
 static inline void fpe_derive_b(const uint8_t *key, size_t klen,
                                  const uint8_t *ctx, size_t clen,
                                  BitArray *B)
 {
-    uint8_t *tbuf = (uint8_t *)malloc(klen + clen);
-    uint8_t tweak[KEYBYTES];
-    if (!tbuf) { fprintf(stderr, "fpe: out of memory\n"); exit(1); }
-    if (klen) memcpy(tbuf,       key, klen);
-    if (clen) memcpy(tbuf + klen, ctx, clen);
-    hfscx_256(tbuf, klen + clen, NULL, tweak);
-    free(tbuf);
-    memcpy(B->b, tweak, KEYBYTES);
+    fpe_twk_derive_b(FPE_DS, key, klen, ctx, clen, B);
 }
 
 static inline void fpe_encrypt(const BitArray *pt,
@@ -3538,7 +3574,7 @@ static inline void fpe_encrypt(const BitArray *pt,
 {
     BitArray B;
     fpe_derive_b(key, klen, ctx, clen, &B);
-    nl_fscx_revolve_v2_ba(ct, pt, &B, I_VALUE);
+    nl_fscx_revolve_v2_ba(ct, pt, &B, R_VALUE);
 }
 
 static inline void fpe_decrypt(const BitArray *ct,
@@ -3548,37 +3584,30 @@ static inline void fpe_decrypt(const BitArray *ct,
 {
     BitArray B;
     fpe_derive_b(key, klen, ctx, clen, &B);
-    nl_fscx_revolve_v2_inv_ba(pt, ct, &B, I_VALUE);
+    nl_fscx_revolve_v2_inv_ba(pt, ct, &B, R_VALUE);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * 78.B — Tweakable Wide-Block Cipher (disk / file encryption) (TODO #78.B)
  *
- * Each block gets a unique tweak B = HFSCX-256(key || sector_be64 || bidx_be32),
+ * Each block gets a unique subkey
+ * B = HFSCX-256-DS(TWK_DS, len(key) || key || sector_be64 || bidx_be32),
  * solving the determinism limitation of HSKE-NL-A2 (TODO #12).
- * Encrypt sector s, block i: C = nl_fscx_revolve_v2(P, B(s,i), I_VALUE).
+ * Encrypt sector s, block i: C = nl_fscx_revolve_v2(P, B(s,i), R_VALUE).
  * ─────────────────────────────────────────────────────────────────────────── */
 
 static inline void twk_derive_b(const uint8_t *key, size_t klen,
                                   uint64_t sector, uint32_t bidx,
                                   BitArray *B)
 {
-    uint8_t *tbuf = (uint8_t *)malloc(klen + 12);
-    uint8_t tweak[KEYBYTES];
+    uint8_t tw[12];
     int i;
-    if (!tbuf) { fprintf(stderr, "twk: out of memory\n"); exit(1); }
-    if (klen) memcpy(tbuf, key, klen);
-    for (i = 7; i >= 0; i--) {
-        tbuf[klen + (size_t)i] = (uint8_t)(sector & 0xff);
-        sector >>= 8;
-    }
-    tbuf[klen + 8]  = (uint8_t)((bidx >> 24) & 0xff);
-    tbuf[klen + 9]  = (uint8_t)((bidx >> 16) & 0xff);
-    tbuf[klen + 10] = (uint8_t)((bidx >>  8) & 0xff);
-    tbuf[klen + 11] = (uint8_t)( bidx        & 0xff);
-    hfscx_256(tbuf, klen + 12, NULL, tweak);
-    free(tbuf);
-    memcpy(B->b, tweak, KEYBYTES);
+    for (i = 7; i >= 0; i--) { tw[i] = (uint8_t)(sector & 0xff); sector >>= 8; }
+    tw[8]  = (uint8_t)((bidx >> 24) & 0xff);
+    tw[9]  = (uint8_t)((bidx >> 16) & 0xff);
+    tw[10] = (uint8_t)((bidx >>  8) & 0xff);
+    tw[11] = (uint8_t)( bidx        & 0xff);
+    fpe_twk_derive_b(TWK_DS, key, klen, tw, sizeof tw, B);
 }
 
 static inline void twk_encrypt(const BitArray *block,
@@ -3588,7 +3617,7 @@ static inline void twk_encrypt(const BitArray *block,
 {
     BitArray B;
     twk_derive_b(key, klen, sector, bidx, &B);
-    nl_fscx_revolve_v2_ba(ct, block, &B, I_VALUE);
+    nl_fscx_revolve_v2_ba(ct, block, &B, R_VALUE);
 }
 
 static inline void twk_decrypt(const BitArray *ct,
@@ -3598,7 +3627,7 @@ static inline void twk_decrypt(const BitArray *ct,
 {
     BitArray B;
     twk_derive_b(key, klen, sector, bidx, &B);
-    nl_fscx_revolve_v2_inv_ba(block, ct, &B, I_VALUE);
+    nl_fscx_revolve_v2_inv_ba(block, ct, &B, R_VALUE);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

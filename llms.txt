@@ -26,7 +26,8 @@ Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
                   hpks-zkp-nl (genpkey) / nl-zkboo, nl-zkbpp (sign/verify), rnl-sigma,
                   hpks-t (threshold, via threshold-* subcommands)
 Other primitives: oprf (OPRF/aPAKE), hcred (anonymous credentials), hfscx-256,
-                  hfscx-256-ds (digest), fpe, twk (format-preserving / tweakable enc),
+                  hfscx-256-ds (digest), fpe, twk (256-bit tweakable block enc; fpe is
+                  NOT FF1/FF3-1 format-preserving despite the name — see SECURITY.md),
                   rand (HDRBG)
 
 Not every identifier is valid for every subcommand — see the CLI section below for the

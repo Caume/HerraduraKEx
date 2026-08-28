@@ -4406,6 +4406,8 @@ Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time) hpks-ring (anonymous)
   sign/verify --algo hpks-ring --ring p0_pub.pem,p1_pub.pem,... : code-based ring signature
   fpe      --encrypt|--decrypt --key SK --context STR --in FILE [--out FILE]
+           NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --
+           32 bytes in, 32 raw bytes out. See SECURITY.md.
   twk      --encrypt|--decrypt --key SK [--sector N] [--bidx N] --in FILE [--out FILE]
 `)
 }

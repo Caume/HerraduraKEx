@@ -12797,3 +12797,80 @@ the one to look at first.
 that nobody can tell what they promise.
 
 Status: **DONE v3.3.1** — all three analysed and filed: SecurityProofs-7.md §11.24, a SECURITY.md row each, a spec/ protocol entry each (bound by `cli_binding`, since none has an --algo tag), and `SecurityProofsCode/rand_fpe_twk_analysis.py` as the backing script, which exits non-zero if any finding stops reproducing. `unfiled_cli_surface` now holds only `pkey`, a genuine utility. Two of this item's own premises turned out wrong and are recorded rather than worked around. First, `fpe` and `twk` DO have a parent — each other, and HSKE-NL-A2 — and they are literally the same function whenever the context is 12 bytes, because both derive their subkey from the same unseparated HFSCX-256(key || tweak); verified byte-identical across the C, Go and Python CLIs, in both directions. Second, `rand`'s DRBG_MAX_BLOCKS bound is not unexplained: nl_fscx_v1_ratchet_collision.py §5 derives it (collision probability 2^-179.8 against a 2^-128 requirement), so for `rand` the work was filing, not deriving. Verdicts: `fpe` **broken as named** — it is not FPE in the SP 800-38G sense at all, having no radix and no domain — `twk` and `rand` demo-only. The item's prediction that at least one would land worse than demo-only was right, for a different reason than it gave. New findings along the way: fpe/twk run nl_fscx_revolve_v2 at 64 steps where HSKE-NL-A2 uses 192, which TODO #214's trail projection puts at 2^-119 vs the 137 rounds it estimates for 2^-256; and HDRBG's effective state entropy is ~2^218.8, not 2^256. The domain-separation collision is a live defect and is filed as TODO #242 rather than fixed here, since fixing it changes what both subcommands produce.
+
+### #242: `fpe` and `twk` share a subkey derivation and compute the same function
+
+Found by TODO #241's analysis of the unclassified CLI surface, and deliberately left
+unfixed there: #241 is an analysis item, and this fix changes what two shipped
+subcommands produce.
+
+Both derive their 256-bit subkey with the same unseparated hash call:
+
+| | derivation |
+|---|---|
+| `fpe` | `B = HFSCX-256(key ‖ ctx)` |
+| `twk` | `B = HFSCX-256(key ‖ sector_be64 ‖ bidx_be32)` |
+
+Neither carries a domain-separation tag, so a 12-byte `ctx` equal to
+`sector_be64 ‖ bidx_be32` makes the two subcommands the identical function.  Verified
+byte-identical across the C, Go and Python CLIs, in both directions — `twk --decrypt`
+recovers a plaintext that `fpe --encrypt` produced:
+
+```
+$CLI fpe --context '0123456789:;'                      --encrypt --in pt --out a
+$CLI twk --sector 3472611983179986487 --bidx 943274555 --encrypt --in pt --out b
+cmp a b        # identical
+```
+
+Two separately-advertised primitives reachable under one key are therefore not
+independent, which is the only reason to ship both.  See SecurityProofs-7.md §11.24.1
+and `SecurityProofsCode/rand_fpe_twk_analysis.py` §2.
+
+**Work.**  Give each primitive its own domain-separation tag via `hfscx_256_ds` (TODO
+#93), whose namespace already has `0x01`–`0x03` and `0x10`–`0x12` allocated, and
+length-prefix the key so the `key ‖ tweak` boundary stops being ambiguous — `drbg_seed`
+in the same file and TODO #235's KEM work both already do this.  Land it identically in
+C, Go and Python (Java ships neither subcommand).  Consider also calling
+`nl_v2_key_is_valid` on the derived subkey for defence in depth; the exposure is
+negligible because `B` is a hash output, but the check exists and is used elsewhere.
+
+**Scope expanded during implementation, deliberately: the round count comes too.**  TODO
+#241 §11.24.4 found `fpe`/`twk` running HSKE-NL-A2's `nl_fscx_revolve_v2` at `I_VALUE` =
+64 steps where A2 uses `R_VALUE` = 192, which TODO #214's trail projection puts at
+`2^-119` against the 137 rounds it estimates for `2^-256`.  Fixing that is a wire-format
+break of exactly the same two subcommands, so doing it in a later item would mean telling
+users their ciphertexts are undecryptable a second time.  Both changes ship together in
+one MAJOR.  This paragraph is the explicit call-out CLAUDE.md requires for the expanded
+break.
+
+**This is a MAJOR-class change and must be treated as one.**  It changes what an
+existing `--algo`-equivalent CLI surface produces: every `fpe` and `twk` ciphertext
+written by any prior build becomes undecryptable by the fixed build, and the failure is
+silent — both subcommands are unauthenticated permutations, so a wrong subkey yields
+plaintext-shaped garbage rather than an error.  Per CLAUDE.md that needs a `MIGRATING.md`
+entry alongside the version bump, and this item is the required explicit call-out.
+
+**Test coverage, which must land with the fix.**  `fpe` and `twk` have no `CliTest`
+script at all — no CLI-level test and no cross-language interop test, in a repo whose CI
+runs a four-language matrix over every other protocol family.  That C, Go and Python
+currently agree byte-for-byte was established by hand for #241 and is guarded by nothing.
+The suite-level `test_fpe_correctness` / `test_twk_correctness` do not close this: they
+re-implement the construction locally (`_fpe_derive_b`, `fpe_encrypt_test`,
+`twk_encrypt_test`) and round-trip against the copy, so the shipped `fpe_encrypt` and
+`twk_encrypt` are never called by any test, and the round-trip property they assert is a
+tautology for any bijection — it would pass even with the subkey derivation deleted.  Add
+a `CliTest` script exercising the shipped subcommands across all three CLIs, and make the
+suite tests call the real functions.  A regression test that the two primitives no longer
+collide is the specific thing this item must not ship without.
+
+**Not in scope.**  The `fpe` naming defect (it is not format-preserving encryption in
+the SP 800-38G sense — no radix, no domain, 32 bytes in and out).  That is a separate
+question — rename, re-scope, or implement a real FF1/FF3-1 domain — and it should not be
+bundled with a wire-format fix.  SECURITY.md's `fpe` row records it meanwhile.
+
+**Worth deciding first.**  Whether `fpe` should keep existing at all once it is
+domain-separated from `twk`: with the naming defect on one side and `twk` covering the
+tweaked-permutation use case on the other, a deprecation may be cheaper than a fix.
+#241 put removal out of its own scope but did not rule it out here.
+
+Status: **DONE v4.0.0** — the first MAJOR since 2.0.0. Both primitives now derive their subkey as HFSCX-256-DS(tag, len(key)_be8 || key || tweak), tag 0x20 for fpe and 0x21 for twk, closing the collision and the unencoded key boundary together; the derived subkey is additionally rejection-sampled away from NL-FSCX v2's degenerate affine class, a backstop that is effectively never taken. Landed identically in C, Go and Python (Java ships neither). The 64-vs-192 round count #241 §11.24.4 found was folded into the same break rather than spent as a second one: both now run at R_VALUE=192, matching HSKE-NL-A2. Wire-format breaking and silently so — both subcommands are unauthenticated permutations, so a pre-4.0.0 ciphertext decrypts to plausible garbage rather than an error; MIGRATING.md §8 leads with that. Coverage, which this item was required not to ship without: new CliTest/test_fpe_twk.sh (38 assertions across all three CLIs — round-trips, byte-for-byte cross-implementation agreement, cross-decrypt both directions on each pair, tweak separation, and the collision regression itself), plus test [46] in the C, Go and Python harnesses. One correction to #241 along the way: the C and Go harnesses DO call the shipped fpe_encrypt/FpeEncrypt — only Python re-implemented, and §11.24.7 now says so and cross-checks the Python copy against the suite. Two things deliberately not done: the fpe naming defect stays open, as this item scoped, and twk was NOT reclassified even though all three of its stated blockers are now closed — that gets a deliberate review as TODO #243 rather than being granted on the strength of "the defects I found are fixed".
