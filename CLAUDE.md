@@ -90,6 +90,14 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  rand_fpe_twk_analysis.py — the three formerly-unclassified CLI subcommands
+                             (TODO #241).  `fpe` and `twk` turn out to be the
+                             same function -- one unseparated
+                             HFSCX-256(key||tweak) subkey derivation, so a
+                             12-byte ctx makes them identical -- and `fpe` is
+                             not FPE in the SP 800-38G sense at all.  Exits
+                             non-zero if a finding stops reproducing, so it
+                             cannot print a stale verdict.  The fix is TODO #242
   hkex_rnl_lattice_2026.py — HKEX-RNL/HKEX-RNL-128 Core-SVP re-estimated directly
                              (primal/dual/hybrid), pinned to published Kyber and
                              Saber figures; supersedes the cited ~105/~220 bit
@@ -143,7 +151,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.23: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.24: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -169,11 +177,11 @@ spec/                                                — machine-readable protoc
                                                       class TODO #237 found three of and #238 two more.
                                                       Both run in CI's native-python job (TODO #238).
                                                       `protocols` is keyed on a protocol id, not an
-                                                      --algo tag: aPAKE has no tag and is filed under
-                                                      its subcommands via `cli_binding`, and
-                                                      `unfiled_cli_surface` names the CLI surface that
-                                                      reaches no protocol at all (`rand`/`fpe`/`twk`,
-                                                      unclassified — TODO #241)
+                                                      --algo tag: aPAKE, and since TODO #241 also
+                                                      hdrbg/fpe/twk, have no tag and are filed under
+                                                      their subcommands via `cli_binding`.
+                                                      `unfiled_cli_surface` now names only `pkey`, a
+                                                      key-format utility with no protocol of its own
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

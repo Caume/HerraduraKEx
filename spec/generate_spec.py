@@ -421,6 +421,62 @@ SECURITY = {
                              "rather than an --algo tag, which is why it had no entry here at all before "
                              "TODO #238.",
                        source=["SECURITY.md", "TODO_DONE.md #237", "SecurityProofs-3.md 9.2.4"]),
+    # ── TODO #241: the three formerly-unfiled subcommands ──────────────────
+    "hdrbg":     dict(status="demo-only", quantum_resistant="conjectured",
+                       notes="Fast-key-erasure deterministic bit generator over HFSCX-256 and "
+                             "NL-FSCX v1 (TODO #96), reached through the `rand` subcommand rather "
+                             "than an --algo tag. NOT an SP 800-90A DRBG and does not claim to be: "
+                             "no health tests, no prediction-resistance request path, no "
+                             "entropy-source assessment, and no reseed counter beyond the "
+                             "output-block bound -- absent by design, not broken. DRBG_MAX_BLOCKS "
+                             "= 2^20 is derived rather than arbitrary: it holds the state-walk "
+                             "collision probability at 2^-179.8 against a 2^-128 requirement "
+                             "(nl_fscx_v1_ratchet_collision.py section 5). Effective state entropy "
+                             "is ~2^218.8 rather than 2^256, because the non-bijective walk's image "
+                             "contracts. Sound as a deterministic expander for seed material that "
+                             "is already full-entropy, under the block bound; not a drop-in RNG. "
+                             "Backtracking resistance is best-effort in Python (immutable ints "
+                             "cannot be erased); the C port erases. Classified in TODO #241.",
+                       source=["Herradura cryptographic suite.py drbg_seed/generate/reseed",
+                               "SecurityProofsCode/nl_fscx_v1_ratchet_collision.py",
+                               "SecurityProofsCode/rand_fpe_twk_analysis.py",
+                               "SECURITY.md", "SecurityProofs-7.md 11.24"]),
+    "fpe":       dict(status="broken", quantum_resistant="conjectured",
+                       notes="Reached through the `fpe` subcommand rather than an --algo tag. "
+                             "BROKEN AS NAMED: this is not format-preserving encryption in the "
+                             "SP 800-38G (FF1/FF3-1) sense. It has no radix, no length and no "
+                             "domain -- it maps 32 bytes to 32 bytes, zero-pads shorter input and "
+                             "returns raw binary, so a 16-digit card number comes back as 32 bytes "
+                             "of binary. It is additionally the SAME FUNCTION as twk whenever the "
+                             "context is 12 bytes: both derive their subkey as the unseparated "
+                             "HFSCX-256(key || tweak), so `twk --decrypt` undoes `fpe --encrypt`, "
+                             "verified byte-identical across the C, Go and Python CLIs. As a "
+                             "construction it is HSKE-NL-A2's nl_fscx_revolve_v2 at I_VALUE=64 "
+                             "steps rather than A2's 192. Do not use where the output format must "
+                             "survive, and do not use under a key shared with twk. The collision "
+                             "fix is TODO #242, deliberately not folded into the analysis item "
+                             "because it changes what the subcommand produces.",
+                       source=["Herradura cryptographic suite.py fpe_encrypt/fpe_decrypt",
+                               "herradura.h fpe_encrypt", "herradura/herradura.go FpeEncrypt",
+                               "SecurityProofsCode/rand_fpe_twk_analysis.py",
+                               "SECURITY.md", "SecurityProofs-7.md 11.24"]),
+    "twk":       dict(status="demo-only", quantum_resistant="conjectured",
+                       notes="Per-(sector, block-index) tweaked 256-bit permutation, reached "
+                             "through the `twk` subcommand rather than an --algo tag. The shape is "
+                             "right for disk encryption and determinism per tweak is the expected "
+                             "XTS-style property, not a defect. Three things keep it below "
+                             "production: it shares an unseparated HFSCX-256(key || tweak) subkey "
+                             "derivation with fpe and collides with it (see the fpe entry); it "
+                             "runs nl_fscx_revolve_v2 at I_VALUE=64 where HSKE-NL-A2 uses 192, and "
+                             "TODO #214's trail projection puts 64 rounds at 2^-119 against the "
+                             "137 rounds it estimates for 2^-256; and the key||tweak boundary is "
+                             "unencoded, so distinct (key, tweak) pairs collide. None is a break; "
+                             "together they are more than a caveat. Classified in TODO #241; the "
+                             "collision fix is TODO #242.",
+                       source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt",
+                               "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt",
+                               "SecurityProofsCode/rand_fpe_twk_analysis.py",
+                               "SECURITY.md", "SecurityProofs-7.md 11.24"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
                              "MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/"
@@ -466,6 +522,11 @@ SUBCOMMAND_PROTOCOLS = {
     "cred-verify":         "hcred",
     "pake-register":       "apake",
     "pake-demo":           "apake",
+    # TODO #241: classified at last. Like aPAKE these have no --algo tag and
+    # ship as their own subcommands, so they are filed by id with a cli_binding.
+    "rand":                "hdrbg",
+    "fpe":                 "fpe",
+    "twk":                 "twk",
 }
 
 # The rest of the audit #238 Part C asked for: CLI surface that reaches no
@@ -477,10 +538,9 @@ SUBCOMMAND_PROTOCOLS = {
 # in generate() fails on a *new* unfiled subcommand.
 UNFILED_CLI_SURFACE = {
     "pkey": "Utility, not a protocol: derives a public key from any private-key PEM.",
-    "rand": "HDRBG deterministic byte generator (HFSCX-256-based). No security "
-            "classification exists for it in SECURITY.md or in this file.",
-    "fpe":  "Format-preserving encryption of a 256-bit block (TODO #78.A). Unclassified.",
-    "twk":  "Tweakable wide-block encryption of a 256-bit block (TODO #78.B). Unclassified.",
+    # rand/fpe/twk were here from TODO #238 until TODO #241 analysed and filed
+    # them. `pkey` is the only genuine remainder: it is a key-format utility with
+    # no protocol of its own, not an unanalysed construction.
 }
 
 PROTOCOL_KIND = {
@@ -494,6 +554,7 @@ PROTOCOL_KIND = {
     "hske": "encryption", "hske-nla1": "aead", "hske-nla2": "encryption", "hske-duplex": "aead",
     "hfscx-256": "hash", "hfscx-256-ds": "hash",
     "oprf": "oprf", "hcred": "credential", "apake": "pake",
+    "hdrbg": "drbg", "fpe": "encryption", "twk": "encryption",
 }
 
 PROTOCOL_NAME = {

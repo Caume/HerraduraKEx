@@ -70,7 +70,11 @@ ROW_PROTOCOLS = {
     "ZKBoo / ZKB++":                        ["nl-zkboo", "nl-zkbpp"],
     "HPKS-ZKP-NL":                          ["hpks-zkp-nl"],
     "HCRED":                                ["hcred"],
-    "HDRBG / FPE / tweakable-wide-block":   [],   # unclassified; see unfiled_cli_surface
+    # TODO #241 split the former "HDRBG / FPE / tweakable-wide-block" placeholder
+    # row into three real rows, one verdict each -- they turned out not to share one.
+    "FPE":                                  ["fpe"],
+    "Tweakable wide-block":                 ["twk"],
+    "HDRBG":                                ["hdrbg"],
 }
 
 # SECURITY.md status prose -> the spec/ status values compatible with it.  Matched
@@ -78,6 +82,7 @@ ROW_PROTOCOLS = {
 # "..., with two constraints") does not need a new entry, but a genuinely new
 # verdict does.
 STATUS_PROSE = [
+    ("Broken as named",              {"broken"}),
     ("Production-track",             {"production"}),
     ("Demo-only / pedagogical",      {"demo-only", "pedagogical"}),
     ("Demo-only",                    {"demo-only"}),
