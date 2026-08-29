@@ -120,7 +120,10 @@ all been about.
   in one round at n = 10, from carry propagation — "FSCX is affine" is true of FSCX, not of
   v2.  The deficiency is differential behaviour.
 
-**Interim recommendation: candidate B**, on measurement and on smallest-diff grounds.  But
+**Interim recommendation: candidate B**, and TODO #247(c) has since confirmed it holds on
+the *linear* axis too (B 3.48 bits over three rounds at n = 10, A 2.00, deployed v2 0.16),
+so the recommendation is not an artefact of having looked only at differentials.  On
+measurement and on smallest-diff grounds.  But
 candidate A's advantage is different in kind and should not be dismissed — a Simon-style
 Feistel inherits a large third-party literature, and the point of this item is to make a
 *provable* bound reachable, which a better-measured construction with no literature may not.
@@ -188,6 +191,50 @@ is that item.
 family be described accurately rather than conservatively.  It is possible the outcome is
 "the bounds are fine and the family was under-rated" — that would be a real result, and
 #248 is where it would be acted on.
+
+**Progress — (b) and (c) done, (a) done as far as exact methods reach.**
+`SecurityProofsCode/nl_fscx_v2_bounds.py`.  Everything exact: full DDT/LAT, then a DP over
+difference or mask states, so each figure is a proven optimum rather than a sample.
+
+*(a) The slope is width-stable, which SUPPORTS #214.*  Optimal trail weight for the
+deployed round at every exactly-reachable width with `M` invertible, 6 keys each:
+
+| n | r=3 | r=5 | slope | saturated? |
+|---|---|---|---|---|
+| 8 | 2.03 | 4.83 | 1.40 | yes (>0.6n) |
+| 10 | 1.88 | 5.12 | 1.62 | yes |
+| 11 | 1.86 | 4.73 | 1.44 | no |
+| 13 | 1.47 | 4.87 | 1.70 | no |
+
+Range 1.40–1.70, no monotone drift, bracketing #214's independently measured 1.87 closely
+enough that its methodology is not in question.  **A near-miss worth recording:** an earlier
+2-key run gave 1.30 at n = 13 and appeared to show the slope collapsing with width — which
+would have meant #214's projection and the 137-round figure were optimistic.  It does not
+reproduce at 6 keys.  Two keys is not a sample for a statistic with this spread.
+
+*(b) The per-key spread is large.*  Optimal 5-round trail weight across keys at n = 11 runs
+from 0.70 to 7.71 on a mean of 4.73 — a spread wider than the mean.  A key at the weak end
+has almost no 5-round trail resistance while the averaged figure advertises ~4.7, and
+nothing screens for it: there is no trail-behaviour analogue of TODO #235's QC-MDPC
+weak-key screen, and `nl_v2_key_is_valid` covers only the degenerate affine class.  Not a
+new attack — the reason "key-averaged" must stay attached to every figure, and the reason a
+rating cannot rest on an averaged bound.
+
+*(c) Exact linear cryptanalysis, an axis nobody had measured.*  Optimal linear-trail weight
+`-log2|c|` at n = 10: deployed v2 reaches **0.16 bits over three rounds** — correlation ≈ 0.90,
+very nearly deterministic — against 2.00 for candidate A and 3.48 for candidate B.  Run
+specifically to test whether #246's recommendation was an artefact of looking only at
+differentials.  **It was not:** B leads on both axes.
+
+**Still open: the MILP half, and it raises a dependency decision.**  No MILP solver is
+installed and the suite deliberately carries almost none (`jsonschema`, tooling-only; z3 is
+already an optional soft dependency of #214 that degrades to a skip).  z3's optimiser could
+express the model, but #214 already found it stops closing at small widths.  A dedicated
+backend (HiGHS via scipy, or PuLP/CBC) is the standard tool and would plausibly reach useful
+widths.  **Recommendation: add it as an optional, analysis-only dependency with the same
+degrade-to-skip pattern**, never touching the shipped primitives.  Until then every bound in
+the repository is a small-width exact result plus an extrapolation, and #243/#244/#246
+should keep saying so in those words.
 
 Status: **OPEN**
 
