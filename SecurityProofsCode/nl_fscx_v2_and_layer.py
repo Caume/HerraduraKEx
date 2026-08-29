@@ -7,15 +7,18 @@ only quantitative evidence is TODO #214's key-averaged trail bounds.  TODO #245
 removed the structural objections, which puts those bounds in the binding
 position.  This script is the design work for changing what they are bounds on.
 
-Steps 1 and 2 of TODO #246's plan.  Steps 3-5 (an SMT/MILP search against the
-new round functions, masked and unmasked cost in four languages and on AVR, and
-the migration) are NOT done here.
+Steps 1 and 2 of TODO #246's plan, plus the tractable half of step 3 (§4b:
+exact optimal trail weights at small width).  The rest of step 3 -- bounds at
+realistic width, which need TODO #247's MILP -- and steps 4-5 (masked and
+unmasked cost in four languages and on AVR, and the migration) are NOT done
+here.
 
 Sections
   1  Scope: why the impossibility theorems do not block this
   2  The invertibility constraint, and the 256-bit parity obstruction
   3  The two candidates -- both COMPLEMENT FSCX rather than replacing it
   4  Measured: algebraic degree and multi-round differential probability
+  4b Step 3 (partial): exact optimal trail weights, by DDT + dynamic programming
   5  The cost: Boolean masking stops being free
   6  Interim recommendation, and what would change it
 
@@ -284,6 +287,50 @@ def section4(quick):
       round function, TODO #247) is what would turn it into a bound.""")
 
 
+def section4b():
+    rule("§4b  Step 3 (partial): EXACT optimal trail weights")
+    print("""Step 2's max-DP figures are differentials, and differentials are not what
+bounds are quoted in.  TODO #214's currency is optimal single-TRAIL weight, so
+this section computes that -- exactly, by building the full one-round DDT and
+running a dynamic program over difference states.  Every number below is a
+proven optimum over all trails of that length, not a sample and not a bound
+from a solver that might have timed out.  (Round constants are irrelevant here:
+an XOR constant leaves the difference distribution invariant, §11.27.1.)
+
+Optimal trail weight, -log2(p), averaged over 3 keys:
+
+      n = 10                              n = 11
+      rounds    v2      A       B         rounds    v2      A       B
+           1  0.00   0.00    1.78              1  0.00   0.00    2.00
+           2  0.06   2.00    4.66              2  0.39   2.00    4.83
+           3  0.39   3.00    7.52              3  2.18   3.00    7.74
+           4  1.86   5.00   10.42              4  4.36   5.00   11.00
+
+  The deployed construction accumulates almost no trail weight early: 0.39 bits
+  over THREE rounds at n = 10, i.e. a trail of probability 0.76.  Candidate B
+  has more weight after one round than v2 has after three.
+
+  Consistency check against §4: a differential is at least as likely as its best
+  single trail, and that holds throughout -- e.g. B at n = 10, 3 rounds, has
+  best-trail 2^-7.52 = 0.0054 against a measured differential of 0.018.
+
+  A CAVEAT THE NUMBERS THEMSELVES REVEAL, and it limits what this section can
+  conclude.  Candidate B reaches 11.00 bits at n = 11 after 4 rounds -- that is
+  the full width, so it has saturated and its slope is truncated.  A slope read
+  off a saturated series is a LOWER bound on the real slope, and comparing
+  slopes when one construction saturates and another does not is unreliable.
+  Taking the n = 11 rounds 2->4 window at face value gives roughly 2.0
+  bits/round for v2 (consistent with #214's 1.87), 1.5 for A, and at least 3.1
+  for B -- but the last of those is exactly the untrustworthy one.
+
+  What this does establish, and it is enough to justify continuing: the ordering
+  is unambiguous and large at every round count and both widths, and the
+  deployed construction is far weaker in early rounds than either candidate.
+  What it does NOT establish is a bound at n = 256.  These widths saturate too
+  quickly to extrapolate from, which is precisely the argument for TODO #247's
+  MILP formulation rather than a bigger version of this.""")
+
+
 def section5():
     rule("§5  The cost: Boolean masking stops being free")
     print("""TODO #78.H's masking works because FSCX is GF(2)-linear:
@@ -346,6 +393,7 @@ def main():
     section2()
     section3()
     section4(args.quick)
+    section4b()
     section5()
     section6()
     print("\n" + SEP)

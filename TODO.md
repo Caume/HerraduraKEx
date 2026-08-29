@@ -125,11 +125,36 @@ candidate A's advantage is different in kind and should not be dismissed — a S
 Feistel inherits a large third-party literature, and the point of this item is to make a
 *provable* bound reachable, which a better-measured construction with no literature may not.
 
-**Remaining, and step 3 gates the decision.**  (3) TODO #247's MILP/SMT bounds against both
-candidates — the numbers above are comparative, not bounds.  (4) Masked and unmasked cost in
-four languages and on AVR.  (5) Migration.  **Open technical risk in candidate B:** χ is
-normally applied to equal, short rows, and 127 + 129 is neither — whether Keccak's own
-symmetry arguments survive unequal long rows is unexamined.
+**Step 3, tractable half done.**  Optimal single-trail weight is the currency #214 reports,
+so it was computed *exactly* — full one-round DDT, then a dynamic program over difference
+states, giving proven optima rather than solver output that might have timed out.  Averaged
+over 3 keys, `-log2(p)`:
+
+| rounds | v2 (n=10) | A | B | | v2 (n=11) | A | B |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.00 | 0.00 | 1.78 | | 0.00 | 0.00 | 2.00 |
+| 2 | 0.06 | 2.00 | 4.66 | | 0.39 | 2.00 | 4.83 |
+| 3 | **0.39** | 3.00 | 7.52 | | 2.18 | 3.00 | 7.74 |
+| 4 | 1.86 | 5.00 | 10.42 | | 4.36 | 5.00 | 11.00 |
+
+The deployed round accumulates **0.39 bits of trail weight over three rounds** at n = 10 — a
+trail of probability 0.76.  Candidate B has more weight after one round than v2 has after
+three.  Cross-checks against the §4 differentials are consistent throughout (a differential
+is at least as likely as its best trail).
+
+**A caveat the numbers themselves reveal.**  B hits 11.00 bits at n = 11 after 4 rounds —
+the full width — so it has *saturated* and its slope is truncated.  A slope read off a
+saturated series is a lower bound, and comparing slopes when one construction saturates and
+another does not is unreliable.  The rounds 2→4 window gives ~2.0 bits/round for v2
+(consistent with #214's 1.87), 1.5 for A, and *at least* 3.1 for B — the last being exactly
+the untrustworthy one.  These widths saturate too fast to extrapolate from, which is the
+argument for #247's MILP rather than a bigger version of this.
+
+**Remaining.**  (3, rest) bounds at realistic width — **#247 gates the decision**; nothing
+here is a bound at n = 256.  (4) Masked and unmasked cost in four languages and on AVR.
+(5) Migration.  **Open technical risk in candidate B:** χ is normally applied to equal,
+short rows, and 127 + 129 is neither — whether Keccak's own symmetry arguments survive
+unequal long rows is unexamined, and it is the main reason not to treat B as settled.
 
 Status: **OPEN**
 
