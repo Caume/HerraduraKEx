@@ -243,8 +243,9 @@ both wrong:
   3-round optimum — impossible — so anything consuming its time limit is now reported
   unproven.
 
-**Proven optima, and they are identical at n = 16 and n = 32:** 2.0 / 4.0 / 7.0 for
-r = 2/3/4, plus 10.0 at r = 5 (n = 16).  The optimal trail is **local** — narrower than the
+**Proven optima are identical at every width that closes** — n = 16 gives 2.0/4.0/7.0/10.0
+for r = 2/3/4/5; n = 32 gives 2.0/4.0/7.0 (r = 5 hit the limit at 13.0); n = 64 gives 2.0/4.0
+(r = 4 hit the limit at 16.0).  Three widths agree at r = 2 and r = 3, two at r = 4.  The optimal trail is **local** — narrower than the
 state, never wrapping — and `M` is rotation-invariant, so *the same trail exists at n = 256*.
 
 That yields a one-sided statement at the deployed width **with no extrapolation**: a 5-round

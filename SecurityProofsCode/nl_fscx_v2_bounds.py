@@ -375,10 +375,16 @@ them wrong.
             if not pr:
                 break
     print("""
-      THE RESULT THAT MATTERS is that the proven optima are IDENTICAL at n = 16
-      and n = 32 -- 2.0, 4.0, 7.0 for r = 2, 3, 4, with 10.0 additionally proven
-      at r = 5 for n = 16.  The optimal trail is LOCAL: it lives in a window
-      narrower than the state and never wraps.  Since M is rotation-invariant,
+      THE RESULT THAT MATTERS is that the proven optima are IDENTICAL at every
+      width that closes:
+
+          n      r=2    r=3    r=4    r=5
+          16     2.0    4.0    7.0   10.0
+          32     2.0    4.0    7.0      -     (r=5 hit the time limit at 13.0)
+          64     2.0    4.0      -      -     (r=4 hit the time limit at 16.0)
+
+      Three widths agree at r = 2 and r = 3, two at r = 4.  The optimal trail is
+      LOCAL: it lives in a window narrower than the state and never wraps.  Since M is rotation-invariant,
       that same trail exists at every larger width.
 
       For n = 256 that gives a genuine one-sided statement with NO extrapolation:
