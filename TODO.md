@@ -97,9 +97,16 @@ all been about.
   `hkex-rnl` via `_rnl_agree`; the single FSCX in a kex path is a **v1 KDF applied after
   agreement**.  So this touches no key exchange, and no v1 consumer either — HFSCX-256 and
   HSKE-NL-A1 are out of scope.  Affected: exactly the five listed above.
-* *The parity obstruction dissolves.*  χ is applied per row and the rows need not be equal;
-  a sum of odd parts is even iff the number of parts is even.  **Rows of 127 + 129** give a
-  bijective χ over the whole 256-bit state — no passthrough bit, no resize.  Verified.
+* *The parity obstruction dissolves — but not the way first proposed.*  χ is applied per
+  row and rows need only be odd, not equal; a sum of odd parts is even iff the count is even.
+  The naive fix, **127 + 129**, is the WRONG one: χ's inverse has degree `(L+1)/2` (measured
+  exhaustively, L = 3..13), so a 127-bit row means **degree-64 decryption via a serial
+  127-step recurrence**, and every affected construction ships a decrypt path.  Keccak never
+  pays this — it uses L = 5 and, being a sponge, never inverts χ.  The right design is **many
+  short odd rows: 256 = 47×5 + 3×7**, fifty parts, inverse degree ≤ 4, bit-parallel, inside
+  Keccak's analysed regime.  Row length barely affects differentials — at n = 16, (5,11) and
+  (7,9) are within noise — and every candidate-B figure below was *already* measured with
+  short rows (`odd_partition` gives (5,5) at n=10, (7,7) at n=14).
 * *Both candidates are bijections* at reduced width, and both keep `M`.
 * *Measured, and the ordering holds at two widths* (n = 10 exhaustive, n = 14 sampled; both
   widths chosen with `M` invertible).  Max differential probability:
@@ -153,11 +160,30 @@ another does not is unreliable.  The rounds 2→4 window gives ~2.0 bits/round f
 the untrustworthy one.  These widths saturate too fast to extrapolate from, which is the
 argument for #247's MILP rather than a bigger version of this.
 
-**Remaining.**  (3, rest) bounds at realistic width — **#247 gates the decision**; nothing
-here is a bound at n = 256.  (4) Masked and unmasked cost in four languages and on AVR.
-(5) Migration.  **Open technical risk in candidate B:** χ is normally applied to equal,
-short rows, and 127 + 129 is neither — whether Keccak's own symmetry arguments survive
-unequal long rows is unexamined, and it is the main reason not to treat B as settled.
+**Step 4 done, and it corrects an error in this item's own text.**  This item claimed an AND
+layer would take masking "from free to expensive".  That is **wrong for the v2 family**.
+TODO #78.H masks the *classical*, GF(2)-linear `fscx_revolve`; there is no masked v2 anywhere,
+and v2 already contains a modular addition that is nonlinear over GF(2) and already needs a
+masked adder.  Order-of-magnitude first-order cost per round at n = 256: the masked addition
+already present ~1792 ops, + χ ~1024 (+57%), + Simon's F ~512 (+29%).  A half to a third on
+top of a cost already paid — not free→expensive.  **The correction runs in favour of the
+change.**  Unchanged: none of it is implemented, and the AVR SRAM ceiling applies to the
+masked adder v2 already needs, independently of any AND layer.
+
+**Candidate B's main technical risk is RESOLVED** — see the short-row finding above.  It was
+χ's inverse, and short rows close it.
+
+**Recommendation, now firm: candidate B with short odd rows.**  Leads on differentials and
+on linear (#247(c)), smallest diff against what ships, no structural change, invertible
+cheaply, inside Keccak's analysed regime.
+
+**Remaining, and it is the reason this item cannot be closed.**  (5) Migration — a
+five-construction MAJOR.  Step 3's realistic-width bound was the stated gate on shipping,
+and **#247 established that CBC cannot reach it**: proven optima stop at n = 64, and the
+dominant uncertainty turns out to be the key-averaged/per-key gap rather than width.
+Shipping a new round function on small-width comparative evidence would be precisely the
+under-evidenced move #237, #238, #243, #244 and #245 were filed to prevent.  The design is
+decided; the evidence to justify a wire-format break is not yet in hand.
 
 Status: **OPEN**
 
@@ -243,15 +269,18 @@ both wrong:
   3-round optimum — impossible — so anything consuming its time limit is now reported
   unproven.
 
-**Proven optima are identical at every width that closes** — n = 16 gives 2.0/4.0/7.0/10.0
-for r = 2/3/4/5; n = 32 gives 2.0/4.0/7.0 (r = 5 hit the limit at 13.0); n = 64 gives 2.0/4.0
-(r = 4 hit the limit at 16.0).  Three widths agree at r = 2 and r = 3, two at r = 4.  The optimal trail is **local** — narrower than the
-state, never wrapping — and `M` is rotation-invariant, so *the same trail exists at n = 256*.
+**Proven optima are identical at every width that closes** — 2.0 / 4.0 / 7.0 at r = 2/3/4
+for n = 16, 32 **and 64** (the last needing 864 s), plus 10.0 at r = 5 for n = 16.  Three
+widths differing by a factor of four agree at every round count that closes.
 
-That yields a one-sided statement at the deployed width **with no extrapolation**: a 5-round
-trail of probability 2^-10 exists, and a 4-round one of 2^-7.  It does not yield the
-converse (no better trail at 256), which is what a two-sided bound needs and which CBC does
-not close beyond n = 32.
+**A correction to an earlier version of this entry.**  It justified carrying the figure to
+n = 256 by asserting the optimal trail is *local*, so rotation-invariance would embed it at
+any width.  The solver's own output refutes that: the optimal trail at n = 64 spans all 64
+bit positions.  A narrow optimum may exist, but nothing here exhibits one, and the embedding
+argument would also have to handle carry propagation past a window boundary.  So the claim
+is **empirical, not structural** — identical optima at three widths strongly suggest, but do
+not prove, the same value at n = 256.  Neither direction is established at the deployed
+width.
 
 The proven series is exactly linear at **3.0 bits/round**, which taken at face value gives
 ~86 rounds for 2^-256 — more optimistic than #214's 137, making 192 comfortable.  Three

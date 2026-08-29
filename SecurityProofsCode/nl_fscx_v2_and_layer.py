@@ -218,8 +218,24 @@ one XOR per bit -- but it is invertible only on ODD-length rows:\n""")
         print(f"      n={n:>3} rows={str(rows):<8} all-odd={str(all(L % 2 for L in rows)):<5}"
               f" -> {'bijective' if ok else 'NOT invertible'}")
     print("""
-      For the deployed block: rows of 127 + 129.  Two odd parts, covers all 256
-      bits, no passthrough bit and no state resize.  The obstruction dissolves.""")
+      For the deployed block, the naive fix is two odd parts -- 127 + 129 -- and
+      it is the WRONG one.  chi's inverse has algebraic degree (L+1)/2, measured
+      exhaustively for L = 3..13, so a 127-bit row means degree-64 decryption
+      via a serial 127-step recurrence down the row.  Keccak never pays that: it
+      uses L = 5 (inverse degree 3) and, being a sponge, never inverts chi at
+      all.  Every construction here ships a decrypt path, so the inverse is not
+      optional.
+
+      The right fix is MANY SHORT odd rows.  256 = 47x5 + 3x7, fifty parts, all
+      odd -- bijective, inverse degree at most 4, cheap and bit-parallel, and
+      squarely inside the regime Keccak's own analysis covers.  Row length
+      barely affects the differentials in any case: at n = 16, partitions
+      (5,11) and (7,9) give max DP within noise of each other.
+
+      Worth noting explicitly: every candidate-B figure in this file was already
+      measured with short rows -- odd_partition gives (5,5) at n=10 and (7,7) at
+      n=14 -- so the measurements support the short-row design and never
+      described the 127+129 one.""")
 
 
 def section3():
@@ -332,7 +348,34 @@ Optimal trail weight, -log2(p), averaged over 3 keys:
 
 
 def section5():
-    rule("§5  The cost: Boolean masking stops being free")
+    rule("§5  The cost: masking — a correction")
+    print("""An earlier version of this section claimed an AND layer would take masking
+from free to expensive.  That is wrong for the v2 family and the error mattered,
+because it was one of the two costs weighed against the whole change.
+
+TODO #78.H masks the CLASSICAL, GF(2)-linear fscx_revolve -- fscx_revolve_masked
+and hske_encrypt_masked both call it.  There is no masked v2 anywhere in the
+suite, and v2 is not linear: its round is M(a^i^B) + delta(B), and that modular
+addition is nonlinear over GF(2) and already needs a masked adder (Goubin, or
+Coron-Grosschadl-Vadnala), which is the expensive part.
+
+Rough first-order Boolean-masking cost per round at n = 256, order of magnitude:
+
+    masked modular addition (ALREADY PRESENT)   ~1792 ops
+    + chi layer, one AND per bit                ~1024 ops    +57%
+    + Simon F, one AND per half-state bit        ~512 ops    +29%
+
+So the increase is a half to a third on top of a cost the family already pays --
+not a transition from free to expensive.  The masking objection is much weaker
+than stated and the correction runs in FAVOUR of the change.
+
+What stays true: none of it is implemented.  Masking the v2 family is new work
+whichever round function it ends up with, and the AVR SRAM ceiling (TODO #155)
+applies to the masked adder it would already need, independently of any AND
+layer.
+
+For the record, the original -- and still correct -- statement about the
+CLASSICAL family:""")
     print("""TODO #78.H's masking works because FSCX is GF(2)-linear:
 
     fscx_revolve(A XOR r, B) XOR fscx_revolve(r, 0) = fscx_revolve(A, B)
@@ -354,14 +397,18 @@ SECURITY.md's masking claims would need revisiting either way.""")
 def section6():
     rule("§6  Interim recommendation, and what would change it")
     print("""On the evidence so far, CANDIDATE B -- the deployed round followed by chi over
-127+129 odd rows -- is ahead on every axis measured:
+MANY SHORT odd rows (256 = 47x5 + 3x7) -- is ahead on every axis measured:
 
   * strongest differentials at every round count, at both test widths;
   * smallest diff against what ships (the existing round is untouched; chi is
     appended);
   * no structural change, so the round count does not need re-deriving;
   * the parity obstruction that appeared to rule chi out dissolves once the
-    rows are allowed to differ in length.
+    rows are allowed to differ in length;
+  * leads on the LINEAR axis too (TODO #247(c)), so the recommendation is not
+    an artefact of having measured only differentials;
+  * its one serious technical risk -- chi's inverse -- is resolved by short
+    rows, which also keep it inside the regime Keccak analysed.
 
 Candidate A's advantage is different in kind and should not be dismissed: a
 Simon-style Feistel inherits a large body of third-party cryptanalysis, and the
