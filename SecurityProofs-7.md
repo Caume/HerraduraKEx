@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.26** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.27** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1773,13 +1773,16 @@ Iterating one unvaried round is a property block ciphers deliberately avoid, and
 
 *Does `F_B^r` degenerate?*  If `ord(F_B)` divides `r` the cipher is the identity map.  Exhaustive cycle decomposition:
 
-| `n` | trials | min order | median order | `ord | 192` |
-|---|---|---|---|---|
-| 8 | 300 | 4 | 45,045 | **32/300** |
-| 12 | 120 | 55,440 | 63,303,240 | 0/120 |
-| 16 | 10 | 1.3e11 | 2.1e19 | 0/10 |
+> **Corrected in v5.0.0 (TODO #245 §0).**  The `n = 12` row below was void: `M = I ⊕ ROL ⊕ ROR` is *singular* at `n = 12`, so `F_B` is not a bijection there and the cycle decomposition this table used produces nonsense.  TODO #214 avoided this by choosing widths where `M` is invertible and said so; this section did not check.  The `n = 12` row is withdrawn, and the `n = 16` row's 10-key sample was too small — remeasured at 300 keys, the identity case **does** occur at `n = 16`.  The table and the paragraph below are the corrected versions.  `M` is invertible at the deployed `n = 256`, so the construction is a genuine bijection where it ships.
 
-At `n = 8`, **10.7% of keys encrypt to the identity map**.  That is a small-width artefact — gone by `n = 12`, with `n = 16` orders consistent with a random permutation — so it does not reach `n = 256` and is not a finding against the deployed parameters.  It is a finding about reduced-width use, and the suite has reduced-width targets: the Arduino and assembly ports run these primitives at 32 bits.  `ord(F_B)` cannot be computed at `n = 32`, but degeneracy is cheap to *disprove* — one cycle whose length does not divide `r` suffices — and the identity case is ruled out for 12/12 random 32-bit keys.  The 32-bit ports are clear.
+| `n` | keys | `F^192 = identity` | note |
+|---|---|---|---|
+| 8 | 300 | **38/300** (12.7%) | small width |
+| 16 | 300 | **1/300** | rare but real — the earlier 10-key sample missed it |
+| 32 | 200 | 0/200 | Arduino / assembly width (probed) |
+| 256 | 200 | 0/200 | **deployed** (probed) |
+
+At `n = 8`, one key in eight encrypts to the identity map.  It persists at `n = 16`, where the collapsing key found (`B = 22464`) has *every* cycle of length exactly 16 — a structured class, not a fluke, and `16 | 192`.  It does **not** reach the deployed parameters, for a structural reason rather than luck: that class needs `ord(F_B) = n` and `256 ∤ 192`.  The Arduino and assembly ports at `n = 32` are clear too.  So this was never a live exposure — but it was reachable at two of the widths anyone might test at, and this section originally asserted it was not.
 
 *Self-similarity.*  Because every round is the same map, `E_B = F_B^r` commutes with `F_B`, and a slid pair `(P, F_B(P))` propagates through the whole cipher to `C' = F_B(C)`.  Brute-forcing `B` at `n = 16` against such a pair: **one slid pair leaves a mean of 1.7 candidate keys out of 2^16, and two leave 1.08.**  A slid pair therefore very nearly determines the key, and the information-theoretic barrier to a slide attack is only the birthday cost of *finding* one — about `2^(n/2)` known plaintexts under a single tweak, `2^128` at `n = 256`.
 
@@ -1811,22 +1814,27 @@ For a uniform random permutation the expected number of fixed points is 1.  But 
 
 with `τ` the divisor-counting function.  `τ(192) = 14`.  Measured by exhaustive cycle decomposition:
 
-| `n` | trials | measured E[fixed points] | predicted `τ(192)` | ideal cipher |
+> **Corrected in v5.0.0 (TODO #245 §0).**  Two things were wrong here.  The `n = 12` row was void — `M` is singular at that width, so `F_B` is not a bijection (see §11.25's correction).  And "13.84 confirming τ = 14 almost exactly" was a small-sample artefact: the statistic is heavy-tailed, and over 300 keys the mean is an order of magnitude higher with a standard error exceeding it, because a few keys contribute enormously.  τ(r) is the mean for a *uniform random* permutation, and `F_B` is not one.  The robust statistics below replace it, and they support the same conclusion more honestly.
+
+| variant | median | mean | max | fraction > 1 |
 |---|---|---|---|---|
-| 12 | 150 | 3724.69 | 14 | 1.00 |
-| 16 | 25 | **13.84** | 14 | 1.00 |
+| deployed, no round constant | 4.0 | 9.04 | 77 | 76.0% |
+| **with round constants** (v5.0.0) | **1.0** | **0.84** | **3** | **16.0%** |
+| ideal cipher | 1.0 | 1.00 | — | 37.0% |
 
-At `n = 16` the theory is confirmed almost exactly.  (`n = 12` is far larger because at 4096 points a large fraction of cycle lengths divide 192 — the same small-width effect §11.25.2 found for `ord(F_B)`.)
+Measured at `n = 16`, `r = 192`, 25 keys.  The honest form of the claim is not "τ(r) predicts 14" but **the median key deviates and most keys deviate** — 76% exceed one fixed point where an ideal cipher gives 37% — and with a round constant they stop deviating.
 
-**What this does and does not establish.**  It does *not* break PRP security against a bounded adversary: at `n = 256` the excess is ~14 points out of `2^256`, so finding even one costs ~`2^252` queries and no efficient distinguisher follows.  What it establishes is that the construction is provably distinguishable from an ideal cipher by a statistic requiring no assumption to compute — the ideal-cipher idealisation is false for `E_B` as a matter of arithmetic, not of cryptanalytic opinion.  That matters for a *rating* rather than for a threat model: a reader who sees "production-track" will not infer "provably not an ideal cipher, by a factor of 14, for a reason inherent to the design".  Real block ciphers do not have this property, and the reason is round constants.
+**What this does and does not establish.**  It does *not* break PRP security against a bounded adversary: at `n = 256` the excess is a handful of points out of `2^256`, so finding even one costs on the order of `2^252` queries and no efficient distinguisher follows.  What it establishes is that the construction is provably distinguishable from an ideal cipher by a statistic requiring no assumption to compute — the ideal-cipher idealisation is false for `E_B` as a matter of arithmetic, not of cryptanalytic opinion.  That matters for a *rating* rather than for a threat model: a reader who sees "production-track" will not infer "provably not an ideal cipher, by a factor of 14, for a reason inherent to the design".  Real block ciphers do not have this property, and the reason is round constants.
 
 **§11.26.3 The round count is the worst available choice for it.**  The excess is `τ(r)` — it depends on the *divisor count* of the round count, not its size.  The deployed `r = 192 = 2^6·3` is among the most composite numbers in range, `τ = 14`.  A prime round count gives `τ = 2`.  Measured at `n = 16`:
 
-| `r` | `τ(r)` | measured | excess over ideal |
+| `r` | `τ(r)` | median fixed points | fraction > 1 |
 |---|---|---|---|
-| 64 | 7 | 9.52 | 9.5× |
-| **192** (deployed) | 14 | 13.84 | 13.8× |
-| 191 / 193 (prime) | 2 | 1.04 | **1.0×** |
+| 64 | 7 | 1.0 | 46% |
+| **192** (deployed) | 14 | **6.5** | **76%** |
+| 191 / 193 (prime) | 2 | 1.0 | 8–9% |
+
+(Medians and fractions over 300 keys at `n = 16`, replacing the small-sample means an earlier version of this table reported.  An ideal cipher gives median 1 and 37%.)
 
 Two things follow.  First, this was never chosen: `R_VALUE = 3n/4` is a shape inherited from the classical FSCX parameters, where it had nothing to do with cycle structure — nobody picked a highly composite round count on purpose and nobody checked.  TODO #242 moved `fpe`/`twk` from 64 to 192 on trail-bound grounds and thereby made *this* statistic worse (`τ(64) = 7 → τ(192) = 14`) while making the trail picture better.  That is not an argument against #242 — the trail gap was real and this is not an attack — but it illustrates tuning one parameter against one metric with no model of the others.  Second, a prime round count is a one-line change per language that makes the symptom essentially vanish; round constants would remove the underlying self-similarity outright.  Both are wire-format breaks across A2, `twk`, `fpe` and HSKE-Duplex together, so both belong in a deliberate MAJOR rather than a rating review.  Filed as TODO #245.
 
@@ -1841,3 +1849,35 @@ The reasoning is consistency and it is short.  §11.25 refused `twk` a promotion
 **What would earn it back.**  A PRP or SPRP reduction for `nl_fscx_revolve_v2`, which does not exist at any round count; or, more realistically first, removing the structural objections so the trail bounds become binding again — TODO #245.
 
 **Reach.**  A2 is the only production-track rating in the suite depending on NL-FSCX v2 as a cipher; the other three v2 entries are already research, broken or demo-only.  `README.md` describes A2's construction but makes no production-readiness claim about it, so nothing there needs revising — the maturity claim lived only in `SECURITY.md` and `spec/`.
+
+### 11.27 Round constants for NL-FSCX v2 (TODO #245)
+
+§11.25 and §11.26 found that `v2`-revolve — the permutation behind HSKE-NL-A2, HPKE-NL, HSKE-Duplex, `fpe` and `twk` — was the iterate of one unvaried round — `E_B = F_B^r`, no round constant, no key schedule — and left two candidate fixes unapplied because both are wire-format breaks and a rating review is the wrong place for one.  This section is the fix.  Backed by `SecurityProofsCode/nl_fscx_v2_round_constants.py`, which also carries the corrections those two sections needed (§0 there; the corrected tables are inline above).
+
+**§11.27.1 The gating question, answered analytically.**  TODO #245 named this the blocker: round constants change the round function, and TODO #214's trail bounds are bounds *on* the round function.
+
+They carry over exactly, and the argument is short enough to check by hand.  With an XOR round constant the round is `F_i(x) = M(x ⊕ B ⊕ C_i) + δ(B)`.  For a pair with input XOR difference `α`, the two inputs to `M` are `x ⊕ B ⊕ C_i` and `x ⊕ α ⊕ B ⊕ C_i` — the constant cancels, so the difference entering `M` is still `α`.  `M` is linear, so the difference leaving it is still `M(α)`.  And `M` is a bijection, so as `x` ranges uniformly the value entering the modular addition ranges uniformly either way, leaving the carry behaviour — and hence the entire output-difference distribution — unchanged.
+
+Not approximately: **identically**.  Confirmed exhaustively, comparing full one-round output-difference distributions with and without a constant, 25/25 random `(B, α, C)` at `n = 10`.  So `xdp+` is exactly invariant and #214's bounds need no re-run.
+
+Note what this also means: a round constant is *not* a strengthening against differential cryptanalysis.  It buys nothing there and costs nothing there.  What it buys is §11.27.2.
+
+**§11.27.2 What it buys.**  Measured at `n = 16`, `r = 192`, 25 keys — the fixed-point statistic that exposes `E_B = F_B^r`:
+
+| variant | median | mean | max | fraction > 1 |
+|---|---|---|---|---|
+| without (pre-5.0.0) | 4.0 | 9.04 | 77 | 76.0% |
+| **with round constants** | **1.0** | **0.84** | **3** | **16.0%** |
+| ideal cipher | 1.0 | 1.00 | — | 37.0% |
+
+Every statistic moves to where an ideal cipher sits.  And the identity-collapse class of §11.25 stops being askable at all: `E_B` is no longer a power of any single map, so no order of `F_B` can collapse it, at any width.  That matters more than the deployed numbers suggest — the collapse was reachable at `n = 8` (38/300 keys) and `n = 16` (1/300), even though `256 ∤ 192` kept it away from the deployed parameters.
+
+**§11.27.3 What shipped.**  The 1-based round index is XORed into the state before each step, in C, Go, Python and Java identically.  One XOR per round.  `nl_fscx_v2` — the single-step function — is unchanged; only the revolve loops and their inverses carry the constant, which is where the self-similarity lived.
+
+TODO #245's other candidate, a **prime round count**, is not shipped and is no longer needed.  It addressed only the fixed-point symptom, and only by making `τ(r)` small; once the cipher is not a power of one map, the round count's divisor structure is irrelevant.  `R_VALUE` stays at 192.
+
+The Arduino and assembly ports were left unchanged, as in TODO #242: their `v2` is a separate 32-bit construction with no wire compatibility to anything, and they were measured clear of the collapse class (0/200 probed at `n = 32`).
+
+**§11.27.4 What this does not do.**  It does not re-rate anything.  HSKE-NL-A2 and `twk` remain demo-only, and TODO #245 was written to forbid granting itself a promotion for work it also performed — the failure mode #237, #238, #243 and #244 have all been about.
+
+The structural objections are answered, which means the trail bounds become the binding constraint again.  Those bounds are still #214's key-averaged, explicitly order-of-magnitude ones, and there is still no PRP or SPRP reduction for `nl_fscx_revolve_v2` at any round count.  **Removing an objection is not supplying a proof.**  Whether the ratings should now move is a separate question, for a separate item, on evidence gathered after this one has landed.

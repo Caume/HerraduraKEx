@@ -675,8 +675,18 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = A.copy()
-    for _ in range(steps):
-        result = BitArray(n, (fscx(result, B).uint + delta.uint) & mask)
+    for i in range(1, steps + 1):
+        # Round constant (TODO #245): XOR the 1-based round index into the state
+        # before the linear map.  Without it every round is the identical map
+        # F_B and the cipher is F_B^steps, which is what SecurityProofs-7.md
+        # §11.25/§11.26 found against -- a slide structure the round count
+        # cannot improve, and for some (n, steps) a key class where F_B^steps is
+        # the identity.  An XOR constant leaves xdp+ EXACTLY invariant (the
+        # constant cancels in the XOR difference entering M, and M is a
+        # bijection so the value distribution is unchanged), so TODO #214's
+        # trail bounds carry over verbatim.
+        result = BitArray(n, (fscx(BitArray(n, result.uint ^ i), B).uint
+                              + delta.uint) & mask)
     return result
 
 
@@ -712,9 +722,9 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
-    for _ in range(steps):
+    for i in range(steps, 0, -1):
         z      = BitArray(n, (result.uint - delta.uint) & mask)
-        result = B ^ _m_inv(z)
+        result = BitArray(n, (B ^ _m_inv(z)).uint ^ i)   # undo the round constant
     return result
 
 

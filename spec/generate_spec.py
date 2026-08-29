@@ -371,7 +371,9 @@ SECURITY = {
                              "on identical evidence about the identical permutation, and A2 is the worse "
                              "of the two because its key is caller-supplied. Candidate fixes (round "
                              "constants; a prime round count, since the fixed-point excess is tau(r)) are "
-                             "TODO #245.",
+                             "TODO #245, which shipped round constants in v5.0.0 -- the "
+                             "structural objection is answered but the missing PRP/SPRP "
+                             "reduction is not, so the rating is unchanged.",
                        source=["TODO.md #237", "TODO_DONE.md #159", "TODO_DONE.md #168",
                                "TODO_DONE.md #244",
                                "SecurityProofsCode/hske_nl_a2_rating_review.py",

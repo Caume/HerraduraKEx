@@ -723,13 +723,27 @@ static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArra
     ba_xor(result, b, &mz);
 }
 
+/* XOR the 1-based round index into the low bytes of the state (TODO #245).
+ * Without a round constant every round is the identical map F_B and the cipher
+ * is F_B^steps -- the self-similarity SecurityProofs-7.md §11.25/§11.26 found
+ * against.  An XOR constant leaves xdp+ exactly invariant, so TODO #214's trail
+ * bounds carry over verbatim.  Wire-format breaking; see MIGRATING.md §9. */
+static inline void nl_fscx_v2_rc_ba(BitArray *st, int i)
+{
+    st->b[KEYBYTES - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
+    st->b[KEYBYTES - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
+    st->b[KEYBYTES - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
+    st->b[KEYBYTES - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
+}
+
 static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
                                    const BitArray *b, int steps)
 {
     BitArray buf[2];
     int idx = 0, i;
     buf[0] = *a;
-    for (i = 0; i < steps; i++) {
+    for (i = 1; i <= steps; i++) {
+        nl_fscx_v2_rc_ba(&buf[idx], i);
         nl_fscx_v2_ba(&buf[1 - idx], &buf[idx], b);
         idx ^= 1;
     }
@@ -743,11 +757,12 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
     int idx = 0, i;
     nl_fscx_delta_v2_ba(&delta, b);   /* precompute once — b is constant */
     buf[0] = *y;
-    for (i = 0; i < steps; i++) {
+    for (i = steps; i >= 1; i--) {
         BitArray z, mz;
         ba_sub256(&z, &buf[idx], &delta);
         m_inv_ba(&mz, &z);
         ba_xor(&buf[1 - idx], b, &mz);
+        nl_fscx_v2_rc_ba(&buf[1 - idx], i);   /* undo the round constant */
         idx ^= 1;
     }
     *result = buf[idx];

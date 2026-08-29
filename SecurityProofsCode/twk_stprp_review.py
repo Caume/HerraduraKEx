@@ -173,7 +173,11 @@ costs beyond the bounds.
     print("      identity map.  Exhaustive cycle decomposition at small widths:\n")
     print(f"      {'n':>3}  {'trials':>6}  {'min ord':>12}  {'median ord':>18}  {'ord | 192':>10}")
     print("      " + SEP2[:62])
-    widths = [(8, 300), (12, 120), (16, 25 if full else 10)]
+    # n=12 is deliberately absent: M = I + ROL + ROR is SINGULAR at n=12, so
+    # F_B is not a bijection there and a cycle decomposition is meaningless.
+    # An earlier version of this script measured it anyway and published the
+    # result; TODO #245 §0 corrected that.  M is invertible at 8, 16 and 256.
+    widths = [(8, 300), (16, 25 if full else 10)]
     degenerate = {}
     for n, trials in widths:
         rng = random.Random(243 + n)
@@ -205,9 +209,9 @@ costs beyond the bounds.
 
     print(f"""
       At n = 8, {degenerate.get(8, 0):.1%} of keys give ord(F_B) | {_SUITE.R_VALUE} -- for those keys
-      encryption is the IDENTITY MAP.  That is a small-width artefact: it is
-      already gone at n = 12 and the orders at n = 16 are astronomically large,
-      consistent with a random permutation, so it does not reach n = 256 and is
+      encryption is the IDENTITY MAP.  It thins out with width but does NOT
+      vanish: remeasured at 300 keys, n = 16 still shows it at about 1/300
+      (TODO #245 §3; an earlier 10-key sample here missed it).  It does not
       not a finding against the deployed parameters.  It is a finding about
       reduced-width use of this construction, and the suite HAS reduced-width
       targets: the Arduino and assembly ports run these primitives at 32 bits.""")

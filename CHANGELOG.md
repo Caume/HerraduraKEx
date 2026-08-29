@@ -2,6 +2,77 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.0] - 2026-08-29
+
+**MAJOR — five constructions break together: `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk`.**
+Every ciphertext any of them produced before this release is undecryptable by it, and for
+`fpe`/`twk` the failure is **silent** (unauthenticated permutations: exit 0, plausible
+garbage). Decrypt anything stored with a pre-5.0.0 build **before** upgrading. See
+[MIGRATING.md](MIGRATING.md) §9. Keys, PEM labels, CLI flags and `--algo` values are all
+unchanged, and NL-FSCX **v1** — HSKE-NL-A1, HFSCX-256 and everything built on them — is
+untouched.
+
+### Changed
+- **NL-FSCX v2 gains round constants (TODO #245).** `nl_fscx_revolve_v2` and its inverse
+  now XOR the 1-based round index into the state before each step, in C, Go, Python and
+  Java identically. One XOR per round. The single-step `nl_fscx_v2` is unchanged and
+  `R_VALUE` stays at 192.
+
+  Without it the cipher was `F_B^r` — one unvaried map iterated — which SecurityProofs-7.md
+  §11.25 and §11.26 found two consequences of: a slide structure in which one slid pair very
+  nearly determines the key and the ~2^128 cost of finding one **does not depend on the
+  round count**, and a measurable deviation from ideal-cipher behaviour on fixed points.
+  At some widths `F_B^r` was the **identity map** (38/300 keys at n=8, 1/300 at n=16),
+  though `256 ∤ 192` kept that away from the deployed parameters.
+
+- **The gating question resolved analytically, and favourably.** #245 could not ship until
+  it was known whether round constants degrade TODO #214's differential trail bounds. They
+  do not: an XOR round constant leaves `xdp+` **exactly** invariant — the constant cancels
+  in the XOR difference entering `M`, and `M` is a bijection so the value distribution into
+  the modular addition is unchanged. Confirmed exhaustively, 25/25. #214's bounds carry over
+  verbatim with no re-run.
+
+- Measured benefit at n=16: median fixed points **4.0 → 1.0**, mean **9.04 → 0.84**, max
+  **77 → 3**, fraction above 1 **76% → 16%** (an ideal cipher gives 1, 1, and 37%). The
+  identity-collapse class becomes unaskable at every width, since `E_B` is no longer a power
+  of any single map.
+
+- TODO #245's other candidate, a **prime round count**, is not shipped and is no longer
+  needed: it treated only the fixed-point symptom by making `τ(r)` small, and once the cipher
+  is not `F^r` the round count's divisor structure is irrelevant.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_round_constants.py` and SecurityProofs-7.md §11.27.
+
+### Fixed — corrections to v4.0.1 and v4.0.2
+Found while doing this item's work, corrected in place rather than dropped. **Neither
+changes the verdict of #243 or #244.**
+- **Every n = 12 measurement in §11.25 and §11.26 was void.** `M = I ⊕ ROL ⊕ ROR` is
+  *singular* at n = 12, so `F_B` is not a bijection there and the cycle-decomposition method
+  both sections used produces nonsense. TODO #214 avoided this by choosing widths where `M`
+  is invertible and said so; #243 and #244 did not check. `M` is invertible at the deployed
+  n = 256.
+- **§11.26's "measured 13.84 at n = 16, confirming τ(192) = 14 almost exactly" was a
+  small-sample artefact.** The statistic is heavy-tailed; over 300 keys the mean is an order
+  of magnitude higher with a standard error exceeding it. τ(r) is the mean for a *uniform
+  random* permutation and `F_B` is not one. Replaced throughout with robust statistics
+  (median, fraction above 1), which support the same conclusion more honestly.
+- **§11.25 asserted the identity collapse was gone by n = 12.** Remeasured at 300 keys, it
+  occurs at **n = 16** (1/300) — the collapsing key has every cycle of length exactly 16, a
+  structured class rather than a fluke. The deployed parameters remain clear for a structural
+  reason: that class needs `ord(F_B) = n`, and `256 ∤ 192`.
+
+### Notes
+- **No rating moved, deliberately.** `hske-nla2` and `twk` remain demo-only. #245 was written
+  to forbid granting itself a promotion for work it also performed — the failure mode #237,
+  #238, #243 and #244 have all been about. Removing a structural objection puts the trail
+  bounds back in the binding position; those are still key-averaged and explicitly
+  order-of-magnitude, and there is still no PRP/SPRP reduction for `nl_fscx_revolve_v2` at any
+  round count.
+- The Arduino and assembly ports were left unchanged, as in TODO #242: their v2 is a separate
+  32-bit construction with no wire compatibility to anything, and it was measured clear of the
+  collapse class (0/200 probed at n = 32).
+
 ## [4.0.2] - 2026-08-28
 
 ### Changed
@@ -179,7 +250,7 @@ are read unchanged, `rand` is untouched, and no CLI flag or `--algo` value chang
   non-zero rather than printing a stale finding if any defect below stops reproducing.
   `unfiled_cli_surface` is left holding only `pkey`, a genuine key-format utility.
 - SecurityProofs-7.md §11.24; Part 7's advertised range becomes §11.10–§11.13,
-  §11.15–§11.26 in every copy of the index.
+  §11.15–§11.27 in every copy of the index.
 
 ### Changed
 - **`fpe` is classified `broken` — it is not format-preserving encryption.** SP 800-38G's

@@ -510,10 +510,21 @@ func NlFscxV2Inv(y, b *BitArray) *BitArray {
 }
 
 // NlFscxRevolveV2 iterates NlFscxV2 steps times (B held constant).
+// nlFscxV2RC XORs the 1-based round index into the state (TODO #245). Without a
+// round constant every round is the identical map F_B and the cipher is
+// F_B^steps -- the self-similarity SecurityProofs-7.md §11.25/§11.26 found
+// against. An XOR constant leaves xdp+ exactly invariant, so TODO #214's trail
+// bounds carry over verbatim. Wire-format breaking; see MIGRATING.md §9.
+func nlFscxV2RC(st *BitArray, i int) *BitArray {
+	out := &BitArray{size: st.size}
+	out.Val.Xor(&st.Val, big.NewInt(int64(i)))
+	return out
+}
+
 func NlFscxRevolveV2(a, b *BitArray, steps int) *BitArray {
 	result := a.Copy()
-	for i := 0; i < steps; i++ {
-		result = NlFscxV2(result, b)
+	for i := 1; i <= steps; i++ {
+		result = NlFscxV2(nlFscxV2RC(result, i), b)
 	}
 	return result
 }
@@ -524,12 +535,12 @@ func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
 	mask := bitArrayMask(n)
 	delta := nlFscxDeltaV2(b)
 	result := y.Copy()
-	for i := 0; i < steps; i++ {
+	for i := steps; i >= 1; i-- {
 		diff := new(big.Int).Sub(&result.Val, &delta.Val)
 		diff.And(diff, mask)
 		zBA := &BitArray{size: n}
 		zBA.Val.Set(diff)
-		result = b.Xor(MInv(zBA))
+		result = nlFscxV2RC(b.Xor(MInv(zBA)), i) // undo the round constant
 	}
 	return result
 }

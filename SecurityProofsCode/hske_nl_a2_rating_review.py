@@ -187,7 +187,10 @@ theorem about the construction, not a property anyone has to conjecture.
 """)
     print(f"      {'n':>3}  {'trials':>6}  {'measured E[fixed pts]':>22}  {'predicted tau(r)':>17}  {'ideal':>6}")
     print("      " + SEP2[:66])
-    widths = [(12, 150), (16, 40 if full else 25)]
+    # n=12 removed by TODO #245 §0: M is SINGULAR there, so F_B is not a
+    # bijection and the cycle decomposition below is meaningless.  An earlier
+    # version measured it and published 3724.69, which is withdrawn.
+    widths = [(16, 40 if full else 25)]
     measured = {}
     for n, trials in widths:
         m = mean_fixed_points(n, r, trials, 1000 + n)
@@ -196,12 +199,20 @@ theorem about the construction, not a property anyone has to conjecture.
         sys.stdout.flush()
 
     print(f"""
-      n = 16 lands at {measured.get(16, float('nan')):.2f} against the predicted {tau(r)} and an ideal 1.00 --
-      the theory is confirmed, and the model slightly overpredicts, which is
-      expected since F_B is not literally a uniform random permutation.  n = 12
-      is far larger still ({measured.get(12, float('nan')):.0f}): at 4096 points the cycle lengths are
-      small enough that a large fraction of them divide {r}, which is the same
-      small-width effect #243 §11.25 found for ord(F_B).
+      CAUTION, added by TODO #245 §0.  tau(r) is the mean for a UNIFORM RANDOM
+      permutation, and F_B is not one.  This statistic is heavy-tailed: over
+      300 keys the mean is an order of magnitude above tau(r) with a standard
+      error exceeding it, because a few keys contribute enormously.  An earlier
+      version of this script reported a 25-key mean of 13.84 as confirming
+      tau(192) = 14 "almost exactly"; that was luck, and it is withdrawn.  The
+      robust statistics are the ones to quote:
+
+          at r = 192, n = 16, 300 keys:  median 6.5, and 76% of keys exceed 1
+          an ideal cipher would give:    median 1.0, and 37% exceeding 1
+
+      The conclusion is unchanged and better supported: the MEDIAN key deviates
+      and MOST keys deviate.  What is withdrawn is the claim that tau(r)
+      predicts the size of the deviation numerically.
 
   What this does and does not establish.  It does NOT break PRP security
   against a bounded adversary: at n = 256 the excess is about {tau(r)} points out of

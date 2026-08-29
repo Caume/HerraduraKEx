@@ -12978,3 +12978,60 @@ being smuggled into a rating review — but a rating review that ignores an avai
 structural fix is the wrong shape.
 
 Status: **DONE v4.0.2** — **HSKE-NL-A2 downgraded from "Production-track (conjectured), with two constraints" to demo-only.** The first downgrade of a production-track row in this suite. Review is SecurityProofs-7.md §11.26, backed by `SecurityProofsCode/hske_nl_a2_rating_review.py` (reduced-width model pinned 200/200 against the shipped nl_fscx_v2 first). The decisive reasoning is consistency: TODO #243 refused to promote `twk` because nl_fscx_revolve_v2 has no SPRP result, the only quantitative evidence is #214's key-averaged trail bounds, and the construction is self-similar in a way the round count cannot fix — all of which applies to A2 unchanged, since it is the same permutation at the same round count, and A2 is the worse of the two because its key is caller-supplied (needs the weak-key check twk cannot reach; key recovery is total rather than one block). NEW result the review adds, which #243 did not have: a THEOREM rather than a conjecture. Since E_B = F_B^r, a point is fixed exactly when it lies on an F-cycle whose length divides r, so E[fixed points] = tau(r) = tau(192) = 14 against an ideal cipher's 1 — measured 13.84 at n=16. Not an attack (finding one costs ~2^252 at n=256) but provably not an ideal cipher, as arithmetic rather than opinion, and never previously computed. Corollary worth acting on: the excess is tau(r), so 192 = 2^6*3 is among the worst choices available and a PRIME round count drops it to ~1.04 for one line per language — and #242's 64->192 move made this statistic worse (tau 7 -> 14) while improving the trail picture. A2's two documented constraints were re-derived rather than inherited (both survive) and a third, self-similarity, was added. Explicitly NOT claimed: that A2 is broken (bijectivity is proven, the weak-key class is excluded, no attack is known), and nothing changes for NL-FSCX v1, HFSCX-256 or HSKE-NL-A1, which use the primitive in modes the argument does not reach. No wire-format change — a rating is not a format, MIGRATING.md untouched, all keys and ciphertexts still work. README needed no revision: it describes A2 but never claimed production-readiness for it. Candidate fixes filed as TODO #245.
+
+### #245: remove NL-FSCX v2's self-similarity — round constants, or at least a prime round count
+
+Raised by TODO #244, which downgraded HSKE-NL-A2 to demo-only.  Two candidate fixes came
+out of #243 and #244 and neither was applied there, because both are wire-format breaks
+and a rating review is the wrong place for one.  This item decides between them and
+applies whichever survives.
+
+**The problem.**  `nl_fscx_revolve_v2` is one unvaried round iterated `r` times, with no
+round constant and no key schedule: `E_B = F_B^r`.  Two measured consequences
+(SecurityProofs-7.md §11.25.2, §11.26.2):
+
+* one slid pair leaves ~1.7 candidate keys out of `2^16` and two leave 1.08, so the only
+  barrier to a slide attack is the ~`2^128` birthday cost of finding a pair — **a cost
+  that does not depend on `r` at all**;
+* `E[#fixed points] = tau(r) = tau(192) = 14` against an ideal cipher's 1, measured 13.84
+  at `n = 16`.  Provably not an ideal cipher, as arithmetic rather than opinion.
+
+Neither is an attack at `n = 256`.  Both are properties a production-track rating should
+not have had to carry, and both are fixable.
+
+**Option A — round constants.**  XOR a round-indexed constant into each step.  Breaks the
+self-similarity outright: `E_B` stops being a power of one map, the slide structure goes,
+and `tau(r)` stops being meaningful.  This is the standard fix and the reason round
+constants exist.  Cost: a real change to the round function in C, Go, Python and the
+Arduino/assembly ports, and **the existing trail bounds (#214) would have to be re-run** —
+they are bounds on the current round, and adding a constant changes it.
+
+**Option B — a prime round count.**  Change `R_VALUE` from 192 to 191 or 193.  One line
+per language.  Drops the fixed-point excess from 13.8x to 1.04x (measured, §11.26.3).
+Does **nothing** for the slide structure, which is the more serious of the two.  Cheap,
+and strictly an improvement, but it treats the symptom.
+
+**Recommendation to evaluate, not to assume.**  A alone is the principled fix; B alone is
+insufficient; A+B together costs nothing extra over A, since both are the same wire break.
+The open question is what A does to the trail bounds — if adding a round constant degrades
+them, that has to be known before shipping, not after.  Re-running #214's SMT search on
+the modified round is the gating work for this item.
+
+**Reach — this is a four-construction break.**  `nl_fscx_revolve_v2` is used by HSKE-NL-A2,
+`twk`, `fpe` and HSKE-Duplex.  Any change to the round function or the round count breaks
+every stored artifact of all four, and for `twk` and `fpe` the failure is **silent**, since
+both are unauthenticated permutations (MIGRATING.md §8 has the pattern).  One deliberate
+MAJOR, one `MIGRATING.md` section, all four constructions at once.
+
+> *Correction, made while implementing:* the reach is **five**, not four — `hpke-nl` also
+> encrypts through `nl_fscx_revolve_v2` and was missed when this item was filed.
+> `MIGRATING.md` §9 lists all five.
+
+**What this item may allow afterwards.**  If A lands and the trail bounds survive, the
+structural objections in §11.25 and §11.26 stop applying and the ratings for A2 and `twk`
+can be revisited on trail-bound evidence alone.  That would be a *separate* item — this one
+ships the fix, it does not re-rate anything.  A rating review that grants itself a
+promotion for work it also performed is the failure mode #237, #238, #243 and #244 have all
+been about.
+
+Status: **DONE v5.0.0** — Option A shipped, Option B dropped as redundant. `nl_fscx_revolve_v2` and its inverse now XOR the 1-based round index into the state before each step, in C, Go, Python and Java identically; the single-step `nl_fscx_v2` is unchanged and R_VALUE stays 192. **The gating question resolved analytically and favourably**: an XOR round constant leaves xdp+ EXACTLY invariant — the constant cancels in the XOR difference entering M, and M is a bijection so the value distribution into the modular add is unchanged — confirmed exhaustively 25/25, so #214's trail bounds carry over verbatim with no re-run. Measured benefit at n=16: median fixed points 4.0 -> 1.0, mean 9.04 -> 0.84, max 77 -> 3, frac>1 76% -> 16% (ideal: 1, 1, 37%), and the identity-collapse class becomes unaskable at every width since E_B is no longer a power of any single map. Option B (prime round count) is not shipped: it treated only the fixed-point symptom via tau(r), and once the cipher is not F^r the divisor structure is irrelevant. Five constructions break together — hske-nla2, hpke-nl, hske-duplex, fpe, twk — MIGRATING.md §9, silent for the two unauthenticated ones. Arduino/assembly left unchanged as in #242 (separate 32-bit construction, no wire compatibility, measured clear of the collapse class 0/200). **Ratings deliberately unchanged**, as this item required of itself: removing an objection is not supplying a proof, and there is still no PRP/SPRP reduction for v2 at any round count. **This item also corrected two numbers #243 and #244 published**, found while doing the work: every n=12 measurement in §11.25/§11.26 was void because M is singular at n=12 (so F_B is not a bijection and the cycle decomposition produced nonsense — #214 avoided this and said so; #243/#244 did not check), and §11.26's "13.84 confirming tau(192)=14 almost exactly" was a 25-key sample of a heavy-tailed statistic whose 300-key mean is an order of magnitude higher with a standard error exceeding it. Both are corrected in place with the robust statistics, and neither changes either item's verdict. Remeasuring also found the identity collapse DOES occur at n=16 (1/300), which §11.25 had asserted was gone — the deployed n=256 remains clear, structurally, since 256 does not divide 192.
