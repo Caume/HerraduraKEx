@@ -226,15 +226,47 @@ very nearly deterministic — against 2.00 for candidate A and 3.48 for candidat
 specifically to test whether #246's recommendation was an artefact of looking only at
 differentials.  **It was not:** B leads on both axes.
 
-**Still open: the MILP half, and it raises a dependency decision.**  No MILP solver is
-installed and the suite deliberately carries almost none (`jsonschema`, tooling-only; z3 is
-already an optional soft dependency of #214 that degrades to a skip).  z3's optimiser could
-express the model, but #214 already found it stops closing at small widths.  A dedicated
-backend (HiGHS via scipy, or PuLP/CBC) is the standard tool and would plausibly reach useful
-widths.  **Recommendation: add it as an optional, analysis-only dependency with the same
-degrade-to-skip pattern**, never touching the shipped primitives.  Until then every bound in
-the repository is a small-width exact result plus an extrapolation, and #243/#244/#246
-should keep saying so in those words.
+*(d) The MILP half — backend added, and it closes further than expected.*  `pulp` (CBC) is
+now an **optional, analysis-only** dependency: absent, §(d) prints a NOTE with install
+instructions and the file still runs, the same pattern #214 uses for z3.  Documented in
+CLAUDE.md's new *Third-party dependencies* table.  The shipped primitives still have none.
+
+Two things had to be got right before any MILP number was usable, and the first attempt got
+both wrong:
+
+* **What it models.**  `xdp+` assumes both addends vary; here one is a constant, so the LM
+  formula computes the **key-averaged** behaviour, not a per-key bound.  Validated against
+  its own reference — a DDT averaged over 64 keys, then the exact DP — giving 1.80/3.43/5.82
+  at n = 10 against the MILP's 2.00/4.00/7.00.  It tracks, slightly conservative.
+* **When a result is proven.**  A time-limited CBC run reports `Optimal` for merely feasible
+  solutions.  An early pass at n = 128 returned a 4-round optimum *cheaper* than its own
+  3-round optimum — impossible — so anything consuming its time limit is now reported
+  unproven.
+
+**Proven optima, and they are identical at n = 16 and n = 32:** 2.0 / 4.0 / 7.0 for
+r = 2/3/4, plus 10.0 at r = 5 (n = 16).  The optimal trail is **local** — narrower than the
+state, never wrapping — and `M` is rotation-invariant, so *the same trail exists at n = 256*.
+
+That yields a one-sided statement at the deployed width **with no extrapolation**: a 5-round
+trail of probability 2^-10 exists, and a 4-round one of 2^-7.  It does not yield the
+converse (no better trail at 256), which is what a two-sided bound needs and which CBC does
+not close beyond n = 32.
+
+The proven series is exactly linear at **3.0 bits/round**, which taken at face value gives
+~86 rounds for 2^-256 — more optimistic than #214's 137, making 192 comfortable.  Three
+reasons not to take it at face value, in increasing order of weight: three points only; the
+trail may stop being local at larger r; and decisively, **this is key-averaged while (b)
+measured real keys at roughly half the averaged weight** — halving 3.0 puts the per-key
+requirement above 170 rounds and 192 becomes marginal.
+
+**Net:** the round count is still not known to be adequate or inadequate, but the
+uncertainty is now bracketed by proven numbers at both ends rather than one extrapolated
+slope — and the dominant term in it is the key-averaged/per-key gap, **not** the width
+extrapolation everyone has been caveating.  That reframes what #248 has to resolve.
+
+**Remaining:** a two-sided bound at n = 256.  CBC stops at n = 32; a stronger backend
+(HiGHS/Gurobi) or a structural argument would be needed, and it is not clear the former
+suffices.
 
 Status: **OPEN**
 

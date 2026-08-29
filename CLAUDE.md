@@ -194,11 +194,12 @@ spec/                                                — machine-readable protoc
                                                       `--check` gates it (stale-vs-generator, schema
                                                       validity, and that every tag the CLIs accept is
                                                       classified).  Schema validation needs the
-                                                      `jsonschema` package — the repo's only
-                                                      third-party dependency, and tooling-only: a bare
+                                                      `jsonschema` package — tooling-only: a bare
                                                       python3 gets a NOTE, while CI installs it and
                                                       passes `--require-schema` so a skipped
-                                                      validation cannot pass.  check_security_md.py
+                                                      validation cannot pass.  (It is no longer the
+                                                      repo's only third-party package: see the
+                                                      optional-dependency note below.)  check_security_md.py
                                                       cross-checks
                                                       every protocol's status against SECURITY.md's
                                                       prose table — the disagreement-between-documents
@@ -271,6 +272,22 @@ changes.
 The `Status:` line format for `TODO.md` / `TODO_DONE.md` sections, and the list of
 grandfathered pre-#154 entries, live in the `todo-status` skill
 (`.claude/skills/todo-status/SKILL.md`) — load it when opening or closing a TODO.
+
+## Third-party dependencies
+
+The shipped primitives and CLIs have **none**, in any language, and that is a property
+worth preserving — `./build_c.sh`, `./build_go.sh` and every `HerraduraCli/` entry point
+run against a bare toolchain.  Three optional packages exist, all analysis- or
+tooling-only, and every consumer of them degrades to a printed NOTE rather than failing:
+
+| package | used by | absent ⇒ | install |
+|---|---|---|---|
+| `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
+| `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214) | section skipped | `pip install z3-solver` |
+| `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
+
+Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
+inside a `try`/`except ImportError` and prints what to install.
 
 ## Build Commands
 

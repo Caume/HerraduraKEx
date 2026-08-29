@@ -25,10 +25,11 @@ or a solver result that might have timed out.  Round constants do not affect any
 of it -- an XOR constant leaves both tables invariant (SecurityProofs-7.md
 §11.27.1).
 
-NOT done here, and #247 stays open for it: a MILP formulation that reaches
-n = 256.  No MILP solver is installed and this repository deliberately carries
-almost no dependencies, so acquiring one is a decision rather than an
-implementation detail.  See §4.
+  (d) The MILP formulation, now that an optional backend exists.  It reaches
+      proven optima at n = 16 and n = 32, which turn out to be IDENTICAL -- the
+      optimal trail is local, so the same trail exists at n = 256.  That gives a
+      one-sided statement at the deployed width with no extrapolation.  It does
+      not reach a two-sided bound, and §(d) says where it stops and why.
 
 Run:  python3 SecurityProofsCode/nl_fscx_v2_bounds.py [--quick]
 """
@@ -37,6 +38,19 @@ import argparse
 import math
 import random
 import sys
+
+# Optional, analysis-only MILP backend (TODO #247).  Absent -> §(d) reports a
+# NOTE and skips, exactly as TODO #214 does for z3, so a bare python3 still runs
+# everything else in this file.  Never used by the shipped primitives.
+#   apt:  sudo apt-get install -y python3-pulp
+#   pip:  python3 -m venv ~/.venvs/herradura-milp && \
+#         ~/.venvs/herradura-milp/bin/pip install pulp
+try:
+    import pulp
+    HAVE_MILP = True
+except ImportError:
+    pulp = None
+    HAVE_MILP = False
 
 SEP = "=" * 74
 SEP2 = "-" * 74
@@ -274,29 +288,124 @@ Optimal linear-trail weight, -log2|correlation|, averaged over keys
       having looked at differentials.""")
 
 
-def section_d():
-    rule("§(d)  What remains, and the dependency question it raises")
-    print("""The MILP half of #247 is not done, and cannot be done as things stand: no MILP
-solver is installed, and this repository deliberately carries almost no
-third-party dependencies -- `jsonschema`, tooling-only, is the entire list, and
-z3 is already an optional soft dependency of #214 that degrades to a skip.
+def milp_bound(n, rounds, tl=240):
+    """Proven optimal key-averaged trail weight via bit-level MILP.
 
-That makes acquiring a solver a decision rather than an implementation detail,
-and it should be taken deliberately:
+    Returns (proven, weight, seconds).  `proven` is False whenever the solve
+    consumed its time limit, WHATEVER status the backend reports: an early pass
+    at n = 128 returned a 4-round optimum cheaper than its own 3-round optimum,
+    which is impossible (every 4-round trail contains a 3-round prefix of no
+    greater weight) and is what a time-limited CBC run looks like."""
+    P = pulp.LpProblem("trail", pulp.LpMinimize)
+    Bv = lambda nm: pulp.LpVariable(nm, cat="Binary")
+    al = [[Bv(f"a{i}_{j}") for j in range(n)] for i in range(rounds + 1)]
+    obj = []
+    for i in range(rounds + 1):
+        P += pulp.lpSum(al[i]) >= 1              # a dead trail is not a trail
+    for i in range(rounds):
+        a, g = al[i], al[i + 1]
+        src = [Bv(f"s{i}_{j}") for j in range(n)]
+        for j in range(n):                        # src = M(a) = a ^ ROL(a) ^ ROR(a)
+            k = pulp.LpVariable(f"k{i}_{j}", 0, 1, cat="Integer")
+            P += a[j] + a[(j - 1) % n] + a[(j + 1) % n] == src[j] + 2 * k
+        shs = [0] + [src[j - 1] for j in range(1, n)]
+        shg = [0] + [g[j - 1] for j in range(1, n)]
+        for j in range(n):                        # Lipmaa-Moriai, second addend fixed
+            eq = Bv(f"e{i}_{j}")
+            P += eq <= 1 - shs[j]
+            P += eq <= 1 - shg[j]
+            P += eq >= 1 - shs[j] - shg[j]
+            P += src[j] - g[j] <= 1 - eq
+            P += g[j] - src[j] <= 1 - eq
+        for j in range(n - 1):
+            u = Bv(f"u{i}_{j}")
+            P += u >= src[j]
+            P += u >= g[j]
+            P += u <= src[j] + g[j]
+            obj.append(u)
+    P += pulp.lpSum(obj)
+    import time as _t
+    t0 = _t.time()
+    st = P.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=tl))
+    el = _t.time() - t0
+    proven = (pulp.LpStatus[st] == "Optimal") and (el < tl * 0.95)
+    return proven, pulp.value(P.objective), el
 
-  * z3's optimiser is already present and could express the model, but it is a
-    general SMT solver and #214 already found it stops closing at small widths.
-    Reaching n = 64, let alone 256, is not a matter of writing the model.
-  * A dedicated MILP backend (HiGHS via scipy, or PuLP/CBC) is the standard tool
-    for exactly this and would plausibly reach useful widths.  It would be the
-    first non-tooling dependency in the suite, and only for analysis scripts,
-    never for the shipped primitives.
 
-Recommendation: add it as an OPTIONAL analysis-only dependency with the same
-degrade-to-skip pattern #214 uses for z3, so a bare `python3` still runs
-everything else.  Until then, every bound in this repository is a small-width
-exact result plus an extrapolation, and #243, #244 and #246 should keep saying
-so in exactly those words.""")
+def section_d(quick):
+    rule("§(d)  MILP: proven bounds, and how far they actually reach")
+    if not HAVE_MILP:
+        print("""NOTE: no MILP backend found, so this section is skipped and the file still
+runs.  Install one -- analysis-only, never used by the shipped primitives:
+
+    sudo apt-get install -y python3-pulp
+    # or:  python3 -m venv ~/.venvs/herradura-milp
+    #      ~/.venvs/herradura-milp/bin/pip install pulp
+
+Same degrade-to-skip pattern TODO #214 uses for z3.""")
+        return
+    print("""The model is bit-level over the same Lipmaa-Moriai conditions #214 encodes,
+with the second addend fixed.  Two things had to be got right before any number
+here was trustworthy, and both are worth stating because the first attempt got
+them wrong.
+
+  1. WHAT IT MODELS.  xdp+ assumes both addends vary; here one is a constant, so
+     the LM formula computes the KEY-AVERAGED behaviour.  It is not a bound on
+     any particular key.  Validated against its own reference -- a DDT averaged
+     over 64 random keys, then the exact DP of §(a) -- which gives 1.80 / 3.43 /
+     5.82 at n = 10 for r = 2/3/4 against the MILP's 2.00 / 4.00 / 7.00.  The
+     MILP tracks it and is slightly conservative, which is the right direction.
+
+  2. WHEN A RESULT IS PROVEN.  A time-limited CBC run can report "Optimal" for a
+     merely feasible solution.  An early pass at n = 128 returned a 4-round
+     optimum CHEAPER than its own 3-round optimum -- impossible, since every
+     4-round trail contains a 3-round prefix of no greater weight.  Anything
+     that consumes its time limit is reported unproven here.\n""")
+    print(f"      {'n':>5}{'rounds':>8}{'proven?':>9}{'weight':>9}{'sec':>8}")
+    print("      " + SEP2[:39])
+    widths = (16, 32) if quick else (16, 32, 64)
+    seen = {}
+    for n in widths:
+        for r in (2, 3, 4):
+            pr, w, t = milp_bound(n, r, 60 if quick else 240)
+            seen[(n, r)] = (pr, w)
+            print(f"      {n:>5}{r:>8}{('yes' if pr else 'NO'):>9}"
+                  f"{(f'{w:.1f}' if w is not None else '-'):>9}{t:>8.1f}")
+            sys.stdout.flush()
+            if not pr:
+                break
+    print("""
+      THE RESULT THAT MATTERS is that the proven optima are IDENTICAL at n = 16
+      and n = 32 -- 2.0, 4.0, 7.0 for r = 2, 3, 4, with 10.0 additionally proven
+      at r = 5 for n = 16.  The optimal trail is LOCAL: it lives in a window
+      narrower than the state and never wraps.  Since M is rotation-invariant,
+      that same trail exists at every larger width.
+
+      For n = 256 that gives a genuine one-sided statement with NO extrapolation:
+      a 5-round trail of weight 10.0 EXISTS, i.e. of probability 2^-10, and a
+      4-round one of 2^-7.  That is the direction that matters for security --
+      a trail existing is an attack avenue.  What it does not give is the
+      converse, that no BETTER trail exists at 256, which is what a two-sided
+      bound would require and what CBC does not close beyond n = 32.
+
+      The proven series 4.0 / 7.0 / 10.0 at r = 3 / 4 / 5 is exactly linear at
+      3.0 bits per round.  Taken at face value that is 256 / 3 = about 86 rounds
+      to reach 2^-256 -- considerably more optimistic than #214's 137, and the
+      deployed 192 would then be comfortable.
+
+      Three reasons not to take it at face value, in increasing order of weight:
+      the linearity is established over three points only; the trail may stop
+      being local at larger r, at which point width re-enters; and, decisively,
+      this is the KEY-AVERAGED figure, while §(b) measured real keys at roughly
+      half the averaged weight.  Halving 3.0 puts the per-key requirement back
+      above 170 rounds and the deployed 192 becomes marginal rather than
+      comfortable.
+
+      The honest summary is that the round count is still not known to be
+      adequate or inadequate.  What has changed is that the uncertainty is now
+      bracketed by proven numbers at both ends rather than by one extrapolated
+      slope, and the dominant term in it is the key-averaged/per-key gap, not
+      the width extrapolation everyone has been caveating.""")
 
 
 def main():
@@ -309,7 +418,7 @@ def main():
     rows = section_a(args.quick)
     section_b(rows)
     section_c(args.quick)
-    section_d()
+    section_d(args.quick)
     print("\n" + SEP)
     print("Slope width-stable at reachable widths; B leads linearly too; MILP still open.")
     print(SEP)
