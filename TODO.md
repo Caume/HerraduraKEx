@@ -91,6 +91,46 @@ and `twk` together — the same five as TODO #245, one deliberate MAJOR and one
 by the item that performs the work — the failure mode #237, #238, #243, #244 and #245 have
 all been about.
 
+**Progress — steps 1 and 2 are done.**  `SecurityProofsCode/nl_fscx_v2_and_layer.py`.
+
+* *Step 1, premise re-verified and narrower than feared.*  `hkex-gf` agrees via `gf_pow`,
+  `hkex-rnl` via `_rnl_agree`; the single FSCX in a kex path is a **v1 KDF applied after
+  agreement**.  So this touches no key exchange, and no v1 consumer either — HFSCX-256 and
+  HSKE-NL-A1 are out of scope.  Affected: exactly the five listed above.
+* *The parity obstruction dissolves.*  χ is applied per row and the rows need not be equal;
+  a sum of odd parts is even iff the number of parts is even.  **Rows of 127 + 129** give a
+  bijective χ over the whole 256-bit state — no passthrough bit, no resize.  Verified.
+* *Both candidates are bijections* at reduced width, and both keep `M`.
+* *Measured, and the ordering holds at two widths* (n = 10 exhaustive, n = 14 sampled; both
+  widths chosen with `M` invertible).  Max differential probability:
+
+  | rounds | current v2 | A: Feistel + AND | B: v2 then χ |
+  |---|---|---|---|
+  | 1 | 1.000 | 1.000 | 0.281 |
+  | 2 | 1.000 | 0.250 | 0.086 |
+  | 3 | **1.000** | 0.125 | 0.018 |
+  | 4 | 0.375 | 0.031 | 0.014 |
+
+  At n = 14 the margin is wider: B is at the random-permutation floor by round 3 (0.00085)
+  where the deployed round is still at 0.102.
+
+* *A finding about the CURRENT construction, not just the candidates:* deployed v2 has a
+  **probability-one differential through three rounds**, and is still at 0.375 after four.
+* *Raw algebraic degree is not the deficiency.*  The deployed round already reaches degree 5
+  in one round at n = 10, from carry propagation — "FSCX is affine" is true of FSCX, not of
+  v2.  The deficiency is differential behaviour.
+
+**Interim recommendation: candidate B**, on measurement and on smallest-diff grounds.  But
+candidate A's advantage is different in kind and should not be dismissed — a Simon-style
+Feistel inherits a large third-party literature, and the point of this item is to make a
+*provable* bound reachable, which a better-measured construction with no literature may not.
+
+**Remaining, and step 3 gates the decision.**  (3) TODO #247's MILP/SMT bounds against both
+candidates — the numbers above are comparative, not bounds.  (4) Masked and unmasked cost in
+four languages and on AVR.  (5) Migration.  **Open technical risk in candidate B:** χ is
+normally applied to equal, short rows, and 127 + 129 is neither — whether Keccak's own
+symmetry arguments survive unequal long rows is unexamined.
+
 Status: **OPEN**
 
 ### #247: provable trail bounds — MILP scaling, fixed-key differentials, exact Walsh
