@@ -90,6 +90,15 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  hske_nl_a2_rating_review.py — is HSKE-NL-A2 production-track? (TODO #244).
+                             No, and this is the suite's first downgrade of a
+                             production-track row.  Adds the result #243 lacked:
+                             a THEOREM, not a conjecture -- since E_B = F_B^r,
+                             E[fixed points] = tau(r) = tau(192) = 14 against an
+                             ideal cipher's 1 (measured 13.84 at n=16).  Not an
+                             attack; provably not an ideal cipher.  Corollary:
+                             192 = 2^6*3 is among the worst round counts
+                             available, a prime gives ~1.04 (TODO #245)
   twk_stprp_review.py      — should `twk` move off demo-only? (TODO #243).
                              No: in the ROM it is an STPRP iff nl_fscx_revolve_v2
                              is an SPRP, and no such result exists.  Records the
@@ -161,7 +170,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.25: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.26: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

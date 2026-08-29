@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [4.0.2] - 2026-08-28
+
+### Changed
+- **HSKE-NL-A2 is downgraded from "Production-track (conjectured), with two constraints"
+  to demo-only (TODO #244).** The first downgrade of a production-track row in this suite.
+  It is **not** a claim that A2 is broken — bijectivity is proven, the affine weak-key class
+  is identified and excluded, and no attack on it is known. It is a claim about what has
+  been established. **No wire-format change**: a rating is not a format, `MIGRATING.md` is
+  untouched, and every existing key and ciphertext works exactly as before.
+
+  The reasoning is consistency. TODO #243 refused to promote `twk` because
+  `nl_fscx_revolve_v2` has no PRP/SPRP result at any round count, the only quantitative
+  evidence is TODO #214's trail bounds (which #214 itself calls an order-of-magnitude
+  indication rather than a bound, and which are key-averaged because the construction
+  reuses one key every round), and the construction is self-similar in a way the round
+  count cannot fix. All of that applies to A2 unchanged — it is the same permutation at the
+  same round count — and A2 is the *worse* of the two: its key is caller-supplied, so it
+  needs the `nl_v2_key_is_valid` check `twk` cannot reach, and key recovery is total rather
+  than confined to one block.
+- A2's row gains a third constraint (self-similarity) and its two existing ones were
+  re-derived rather than carried over; both survive. `spec/`'s `hske-nla2` status follows.
+
+### Added
+- `SecurityProofsCode/hske_nl_a2_rating_review.py` and SecurityProofs-7.md §11.26.
+
+### Notes
+- **The new result is a theorem, not a conjecture.** Since `E_B = F_B^r`, a point is fixed
+  exactly when it lies on an `F`-cycle whose length divides `r`, so
+  `E[#fixed points] = τ(r)`. `τ(192) = 14`, against an ideal cipher's 1 — **measured 13.84
+  at n = 16**, confirming the prediction almost exactly. This does *not* break PRP security
+  against a bounded adversary (finding one fixed point costs ~2^252 at n = 256, so no
+  efficient distinguisher follows), and the review says so plainly. What it establishes is
+  that the construction is provably distinguishable from an ideal cipher by a statistic
+  that needs no assumption to compute — arithmetic rather than cryptanalytic opinion. It
+  had never been computed.
+- **A corollary worth acting on.** The excess is `τ(r)`, so it depends on the *divisor
+  count* of the round count, not its size. The deployed `192 = 2^6·3` is among the worst
+  choices available; a prime round count measures at 1.04× versus 13.8×, for one line per
+  language. Note that TODO #242's 64 → 192 move made this statistic *worse*
+  (`τ: 7 → 14`) while improving the trail picture — not an argument against #242, whose
+  trail gap was real, but a clean illustration of tuning one parameter against one metric
+  with no model of the others.
+- **Filed as TODO #245**, not applied here: round constants (the principled fix, which
+  breaks the self-similarity outright but requires re-running #214's trail search on the
+  modified round) and/or a prime round count (cheap, but treats only the symptom). Both are
+  wire-format breaks across A2, `twk`, `fpe` and HSKE-Duplex together, so they belong in one
+  deliberate MAJOR rather than in a rating review.
+- Unchanged and explicitly out of scope: NL-FSCX v1, HFSCX-256 and HSKE-NL-A1, which use the
+  primitive in modes this argument does not reach — A1 is a keystream generator whose second
+  argument varies per block, HFSCX-256 is a Davies-Meyer compression with feed-forward.
+  Neither was examined and both keep their ratings. `README.md` needed no revision: it
+  describes A2's construction but never claimed production-readiness for it, so the maturity
+  claim lived only in `SECURITY.md` and `spec/`.
+
 ## [4.0.1] - 2026-08-28
 
 ### Added
@@ -125,7 +179,7 @@ are read unchanged, `rand` is untouched, and no CLI flag or `--algo` value chang
   non-zero rather than printing a stale finding if any defect below stops reproducing.
   `unfiled_cli_surface` is left holding only `pkey`, a genuine key-format utility.
 - SecurityProofs-7.md §11.24; Part 7's advertised range becomes §11.10–§11.13,
-  §11.15–§11.25 in every copy of the index.
+  §11.15–§11.26 in every copy of the index.
 
 ### Changed
 - **`fpe` is classified `broken` — it is not format-preserving encryption.** SP 800-38G's

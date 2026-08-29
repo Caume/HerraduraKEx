@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.25** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.26** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1793,6 +1793,51 @@ None of that is evidence that `F_B^192` is an SPRP.  It is evidence that the con
 
 **§11.25.4 Verdict, and the inconsistency it exposes.**  **`twk` stays demo-only** — not because #241's blockers are open, but because the positive result a promotion needs does not exist.  By §11.25.1 the whole question is whether `F_B^r` is an SPRP, and the evidence is: key-averaged trail bounds that #214 itself labels an order-of-magnitude indication rather than a bound; no reduction to any standard definition anywhere; and now a self-similar structure against which the one parameter anybody has tuned does nothing.  The right verdict on that evidence is "unproven", and the right label for unproven is demo-only.
 
-HSKE-NL-A2 is rated **"Production-track (conjectured), with two constraints"** and rests on the same unproven claim about the same permutation at the same round count, with strictly worse consequences if the claim fails.  Those two ratings cannot both be right, and #243 anticipated exactly this outcome: the honest conclusion is that A2's rating is the one needing re-examination, not that `twk` needs promoting.
+HSKE-NL-A2 was rated **"Production-track (conjectured), with two constraints"** and rests on the same unproven claim about the same permutation at the same round count, with strictly worse consequences if the claim fails.  Those two ratings could not both be right, and #243 anticipated exactly this outcome: the honest conclusion is that A2's rating is the one needing re-examination, not that `twk` needs promoting.  §11.26 carried that out and **downgraded A2 to demo-only**.
 
 That re-rating is not done here — it deserves its own item, and A2's row carries two specific constraints a re-rating must re-derive rather than inherit.  Filed as TODO #244.  It is more contained than it sounds: four SECURITY.md entries rest on NL-FSCX v2 — HSKE-NL-A2, HSKE-Duplex, `fpe` and `twk` — and three are already research, broken or demo-only.  **HSKE-NL-A2 is the only production-track rating in the suite that depends on this permutation.**  HPKS-NL / HPKE-NL name NL-FSCX but their demo-only rating comes from Pohlig-Hellman on the GF(2^n)* group, independent of v2's strength, so #244 cannot make them worse.
+
+### 11.26 Is HSKE-NL-A2 production-track? (TODO #244)
+
+§11.25 refused to promote `twk` because `nl_fscx_revolve_v2` has no SPRP result and a self-similar structure the round count cannot improve.  HSKE-NL-A2 is the same permutation at the same round count, with strictly worse consequences if the assumption fails — there `B` *is* the caller's key — and is rated "Production-track (conjectured), with two constraints".  Both ratings cannot be right.  This section is the re-examination §11.25 called for, backed by `SecurityProofsCode/hske_nl_a2_rating_review.py`, pinned 200/200 against the shipped `nl_fscx_v2` before measurement.
+
+**§11.26.1 The evidence for, stated fairly.**  The rest of this section is negative, so the positives come first and they are real.  Bijectivity is *proven*, not conjectured — `nl_fscx_v2` is invertible in `A` for every `B` with a closed-form inverse, which is more than several `SECURITY.md` rows can say.  A weak-key class is identified and excluded: keys with `δ(K) ∈ {0, 2^(n-1)}` collapse to a GF(2)-affine permutation, the class is ~`2^-129` of the space, and all three CLIs reject it via `nl_v2_key_is_valid` (TODO #159/#168).  Differential trail bounds exist and are real cryptanalytic work (TODO #214's exact `xdp+` model under an SMT backend).  And **no practical attack on A2 at n = 256 is known** — not from #243, not from this section, not anywhere in the repository.  A demo-only rating is not a claim that A2 is broken; it is a claim about what has been established.
+
+**§11.26.2 A theorem, not a conjecture.**  §11.25.2 established that `v2`-revolve is one unvaried round iterated 192 times: `E_B = F_B^r`.  That has a consequence needing no conjecture at all.
+
+For a uniform random permutation the expected number of fixed points is 1.  But `E_B` is not a random permutation — it is the `r`-th *power* of one, and `F^r(x) = x` exactly when `x` lies on an `F`-cycle whose length divides `r`.  For uniform random `F` the expected number of points on cycles of length exactly `d` is 1 for every `d ≤ N`, so
+
+`E[ #fixed points of F^r ] = Σ_{d | r} 1 = τ(r)`
+
+with `τ` the divisor-counting function.  `τ(192) = 14`.  Measured by exhaustive cycle decomposition:
+
+| `n` | trials | measured E[fixed points] | predicted `τ(192)` | ideal cipher |
+|---|---|---|---|---|
+| 12 | 150 | 3724.69 | 14 | 1.00 |
+| 16 | 25 | **13.84** | 14 | 1.00 |
+
+At `n = 16` the theory is confirmed almost exactly.  (`n = 12` is far larger because at 4096 points a large fraction of cycle lengths divide 192 — the same small-width effect §11.25.2 found for `ord(F_B)`.)
+
+**What this does and does not establish.**  It does *not* break PRP security against a bounded adversary: at `n = 256` the excess is ~14 points out of `2^256`, so finding even one costs ~`2^252` queries and no efficient distinguisher follows.  What it establishes is that the construction is provably distinguishable from an ideal cipher by a statistic requiring no assumption to compute — the ideal-cipher idealisation is false for `E_B` as a matter of arithmetic, not of cryptanalytic opinion.  That matters for a *rating* rather than for a threat model: a reader who sees "production-track" will not infer "provably not an ideal cipher, by a factor of 14, for a reason inherent to the design".  Real block ciphers do not have this property, and the reason is round constants.
+
+**§11.26.3 The round count is the worst available choice for it.**  The excess is `τ(r)` — it depends on the *divisor count* of the round count, not its size.  The deployed `r = 192 = 2^6·3` is among the most composite numbers in range, `τ = 14`.  A prime round count gives `τ = 2`.  Measured at `n = 16`:
+
+| `r` | `τ(r)` | measured | excess over ideal |
+|---|---|---|---|
+| 64 | 7 | 9.52 | 9.5× |
+| **192** (deployed) | 14 | 13.84 | 13.8× |
+| 191 / 193 (prime) | 2 | 1.04 | **1.0×** |
+
+Two things follow.  First, this was never chosen: `R_VALUE = 3n/4` is a shape inherited from the classical FSCX parameters, where it had nothing to do with cycle structure — nobody picked a highly composite round count on purpose and nobody checked.  TODO #242 moved `fpe`/`twk` from 64 to 192 on trail-bound grounds and thereby made *this* statistic worse (`τ(64) = 7 → τ(192) = 14`) while making the trail picture better.  That is not an argument against #242 — the trail gap was real and this is not an attack — but it illustrates tuning one parameter against one metric with no model of the others.  Second, a prime round count is a one-line change per language that makes the symptom essentially vanish; round constants would remove the underlying self-similarity outright.  Both are wire-format breaks across A2, `twk`, `fpe` and HSKE-Duplex together, so both belong in a deliberate MAJOR rather than a rating review.  Filed as TODO #245.
+
+**§11.26.4 The two documented constraints, re-derived.**  TODO #237 and #238 exist because propagated rows go stale, so these are re-derived rather than carried over.  Both survive.  *Determinism* — identical `(P, K)` always gives identical `E`, so A2 is not IND-CPA across messages without a nonce embedded in the plaintext — is still exactly right, and still the constraint most likely to be missed, since A2 has no nonce input at all.  *The affine weak-key class* is still correctly described and still checked.  Worth noting the direction §11.25.3 observed: A2 *needs* `nl_v2_key_is_valid` because its key is caller-supplied, where `twk` and `fpe` cannot reach the class at all because their subkey is a hash output.  A2 is the weaker position on that axis, not the stronger.  A third constraint is added: **self-similarity**, covering both §11.25.2's slide structure and §11.26.2's fixed-point excess.
+
+**§11.26.5 Verdict.**  **HSKE-NL-A2 moves to demo-only.**
+
+The reasoning is consistency and it is short.  §11.25 refused `twk` a promotion because no SPRP result exists, the only quantitative evidence is key-averaged trail bounds TODO #214 itself calls an order-of-magnitude indication, and the construction is self-similar in a way the round count cannot fix.  All of that applies to A2 unchanged, and A2 is worse on two further axes: its key is caller-supplied, so it needs a weak-key check `twk` does not, and key recovery is total rather than confined to one block.  Keeping A2 at production-track while `twk` sits at demo-only would mean the same evidence supports two verdicts depending on which item looked at it.  §11.26.2 adds what §11.25 did not have — a property that is a theorem rather than a conjecture, and one that had never been computed.
+
+**What the downgrade is not.**  Not a claim that A2 is broken: no attack is known, bijectivity is proven, the weak-key class is excluded.  Not a wire-format change: a rating is not a format, `MIGRATING.md` is untouched, and every existing key and ciphertext works exactly as before.  And not a statement about NL-FSCX v1, HFSCX-256 or HSKE-NL-A1, which use the primitive in modes §11.26.2's argument does not reach — A1 is a keystream generator whose second argument varies per block, and HFSCX-256 is a Davies-Meyer compression with feed-forward.  Both keep their ratings; neither was examined here.
+
+**What would earn it back.**  A PRP or SPRP reduction for `nl_fscx_revolve_v2`, which does not exist at any round count; or, more realistically first, removing the structural objections so the trail bounds become binding again — TODO #245.
+
+**Reach.**  A2 is the only production-track rating in the suite depending on NL-FSCX v2 as a cipher; the other three v2 entries are already research, broken or demo-only.  `README.md` describes A2's construction but makes no production-readiness claim about it, so nothing there needs revising — the maturity claim lived only in `SECURITY.md` and `spec/`.
