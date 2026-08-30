@@ -13516,3 +13516,50 @@ and reversible.
 
 Status: **DEPRECATED** — superseded by TODO #255.  The v2 migration will not be performed; the
 design ships as a new primitive alongside v2 instead.  Decision recorded above.
+
+### #249: finish the constant-time audit scope TODO #129 opened
+
+`SecurityProofs-7.md` §11.16 records that TODO #129's original item-2 scope was never
+completed, and names what is outstanding.  It has sat unfiled across several batches.
+
+* **`stern_apply_perm`'s memory-access pattern**, flagged in Batch 2 and still unaddressed.
+* **A residual timing signal** that survived the absolute-gap collapse and interop re-test.
+  Chasing it needs cache/power instrumentation — hardware performance counters, or a
+  controlled non-degenerate "fixed" class — which a wall-clock `dudect` harness cannot
+  provide.  Decide whether to acquire that capability or to document the limit and stop;
+  either is a defensible close, silence is not.
+* **HKEX-RNL, ZKP-RNL and HCRED are entirely unaudited** for constant-time behaviour.  They
+  fall inside #129's stated scope and no batch has touched them.
+
+**Worth stating plainly:** this is the one open item that concerns a side channel rather
+than a structural property, and side channels are the class this suite has audited least.
+`SECURITY.md` should say so if the answer is "not audited".
+
+**Outcome (v5.0.8): all three bullets were already closed, and the item's own closing
+sentence was the only live part.**  See SecurityProofs-7.md §11.11 Batch 9.  Verified by
+re-running `SecurityProofsCode/dudect_timing_audit.c` rather than by reading the write-up.
+
+* `stern_apply_perm`'s memory-access pattern — closed by **Batch 6** (CT-03, v1.9.99).  The
+  shipped function scans all `N` positions under a constant-time equality mask.
+* The residual signal — **Batch 7** (v1.9.105) already took the "controlled non-degenerate
+  fixed class" option this item names, and executed it: `|t|` goes from ~17 under the
+  all-zero class to under 1.5 under `0xA5`, with nothing else changed.  Reproduced today at
+  17.53 / 12.73 against 0.65 / 1.00.  The decision this item asked for was already made.
+* HKEX-RNL / ZKP-RNL / HCRED — audited in **Batch 4**, one finding fixed in **Batch 5**, and
+  HKEX-RNL reconciliation covered empirically in **Batch 8** (TODO #182).
+
+This item also cited the audit as §11.16, which is the Stern-KEM combiner; it was filed from
+a stale reading of §11.11 that stopped at Batch 3.
+
+**What was genuinely missing** is exactly what this item's closing paragraph said: `SECURITY.md`
+had **zero** mentions of side channels, so the posture had to be inferred from silence.  It now
+carries a *Side-Channel Posture* section stating per target what is and is not audited, and
+`docs/TUTORIAL.md`'s note is corrected — it had omitted Java and implied the assembly targets
+were audited when only C ever has been.  Two doc-drift items fixed alongside: §11.11 never
+recorded Batch 8, and `spec/check_security_md.py` scanned the whole file for protocol rows
+rather than the Protocol Status section.
+
+No code change was required and none was made.
+
+Status: **DONE v5.0.8** — bullets were stale (verified empirically); the real gap was that the
+audit result was never stated where a user would look for it.  SECURITY.md now says it.

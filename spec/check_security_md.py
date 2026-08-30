@@ -94,9 +94,20 @@ STATUS_PROSE = [
 
 
 def parse_security_md(text):
-    """Return {row_heading: status_prose} for the protocol table's rows."""
+    """Return {row_heading: status_prose} for the protocol table's rows.
+
+    Scoped to the "## Protocol Status" section only.  SECURITY.md carries other
+    tables -- the side-channel posture table added under TODO #249 is one -- whose
+    first cell is also a bolded name, and scanning the whole file made them look
+    like protocol rows with unrecognised statuses (TODO #249)."""
     rows = {}
+    in_section = False
     for line in text.splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == "## Protocol Status"
+            continue
+        if not in_section:
+            continue
         if not line.startswith("|") or line.startswith("|---"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]

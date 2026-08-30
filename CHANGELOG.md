@@ -2,6 +2,44 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.8] - 2026-08-30
+
+TODO #249 — the constant-time audit scope.  All three of its bullets were already closed;
+the one thing genuinely missing was that the result had never been stated where a user would
+look for it.  Documentation only, plus one gate fix.  No code change to any primitive.
+
+### Added
+- **`SECURITY.md` now has a *Side-Channel Posture* section.**  It previously contained **zero**
+  mentions of side channels or constant-time behaviour, so the posture had to be inferred from
+  silence.  It now states per target what is audited: **C** audited for timing (dudect plus
+  inspection, two real leaks found and fixed); **assembly** branchless by construction but never
+  leakage-tested; **Go** not audited; **Java** not achievable as written (`BigInteger` gives no
+  constant-time guarantee); **Python** explicitly not constant-time.  **Cache and power channels
+  are out of scope for every target, C included.**
+- SecurityProofs-7.md §11.11 gains **Batch 8** — the HKEX-RNL reconciliation audit that shipped
+  under TODO #182 (v2.0.4) and was recorded only in `TODO_DONE.md`, never in the canonical
+  section, which stopped at Batch 7 — and **Batch 9**, this verification pass.
+
+### Fixed
+- `docs/TUTORIAL.md`'s constant-time note omitted Java entirely and implied the assembly targets
+  were audited when only C ever has been.  Rewritten to match the new SECURITY.md section.
+- `spec/check_security_md.py` scanned the **whole file** for protocol rows despite its own
+  docstring saying "the protocol table's rows", so any other bolded-first-cell table looked like
+  a protocol row with an unrecognised status.  Now scoped to the `## Protocol Status` section;
+  still reports the same 30 protocols across 27 rows.
+
+### Verified, not assumed
+- The audit harness was re-run rather than trusted: `stern_gen_perm` `|t| = 17.53` and
+  `stern_apply_perm` `|t| = 12.73` under the all-zero fixed class against `0.65` / `1.00` under
+  the `0xA5` class — Batch 7's result exactly, on current hardware, every other target clean.
+  A real leak would reproduce at any fixed secret rather than vanish when the fixed value is
+  merely made non-degenerate.
+
+### Note
+- TODO #249 cited the audit as §11.16 (the Stern-KEM combiner) and described the state of the
+  world as of Batch 3.  It was filed from a stale reading; Batches 4–8 had closed every item it
+  listed.
+
 ## [5.0.7] - 2026-08-30
 
 The TODO #251 decision, recorded.  Documentation only — no code, no wire format, no CLI
