@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v5.0.9)
+# Herradura Cryptographic Suite (v5.1.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -319,7 +319,9 @@ SecurityProofs-5.md                                 — formal analysis §11.8.3
 SecurityProofs-6.md                                 — formal analysis §11.9 (HFSCX-256-DM hash)
 SecurityProofs-7.md                                 — formal analysis §11.10–§11.13, §11.15–§11.33
                                                       (ZKP extensions, research-review sections)
-SecurityProofs.md                                   — split index (redirects to the seven files above)
+SecurityProofs-8.md                                 — formal analysis §11.34 (NL-FSCX v3 exact
+                                                      row analysis, weak keys)
+SecurityProofs.md                                   — split index (redirects to the eight files above)
 MIGRATING.md                                        — consolidated breaking-change history and
                                                       upgrade notes
 docs/

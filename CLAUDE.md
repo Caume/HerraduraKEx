@@ -109,6 +109,24 @@ SecurityProofsCode/                                 — standalone Python proof/
                              unaffected, but odd_partition(8) = (3,5) is not,
                              so §11.32's n=8 column is void.  Exits non-zero
                              if a finding stops reproducing
+  nl_fscx_v3_weak_keys.py  — does NL-FSCX v3 need a key check?  NO, and it is a
+                             proof rather than a sample (TODO #255).  The v3
+                             round's key-dependence collapses to delta(B), and
+                             chi's ROW-LOCALITY makes the per-row profile exact
+                             at ANY width -- so an exhaustive statement about
+                             every 256-bit key is a sweep over L=5 and L=7.
+                             Both v2 weak classes dissolve; the differential
+                             profile is key-INDEPENDENT, and the linear one is
+                             graded but attains its worst grade for all but
+                             ~1 key in 750,000, so there is nothing to screen.
+                             Also CORRECTS #255's own round-count derivation:
+                             the LOWEST-ACTIVE-ROW LEMMA (a pair always shares
+                             the carry into its lowest active row) puts the
+                             round-level differential floor at exactly
+                             4 - log2(5) = 1.6781, not the layer-wise 2.000, so
+                             the criterion needs r >= 153 and R3_VALUE = 160
+                             clears it at 1.05x, not the 1.25x §11.33.6 recorded.
+                             Exits non-zero if a finding stops reproducing
   and_layer_recheck.py     — TODO #246's candidate comparison, re-run after
                              #252 invalidated its methodology.  #246's ordering
                              SURVIVES and is better founded: B's advantage lives
@@ -265,11 +283,11 @@ SecurityProofsCode/                                 — standalone Python proof/
                              (TODO #214)
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
-  check_part_index.py       — asserts every copy of the seven-part index (banners,
+  check_part_index.py       — asserts every copy of the eight-part index (banners,
                               footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
                               SecurityProofs.md, and that the advertised expression
                               counts match what validate_katex.js measures (TODO #231)
-SecurityProofs.md                                   — split index (redirects to Parts 1–7; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs.md                                   — split index (redirects to Parts 1–8; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
@@ -277,6 +295,7 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
+SecurityProofs-8.md                                 — §11.34: NL-FSCX v3 — exact row analysis, weak keys (141 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -528,13 +547,20 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 ```bash
 # C/Go/Python — security tests [1]–[29] + benchmarks [30]–[41]
 # ([44] HCRED, [45] weak-key/malformed-input rejection, [46] fpe/twk domain
-#  separation appended after the benchmarks to avoid renumbering; all three
+#  separation, [47] the NL-FSCX v3 primitive appended after the benchmarks to
+#  avoid renumbering; all four
 #  languages also run test [19] "HFSCX-256-DM known-answer vectors" out of
 #  strict numeric sequence.  [46] is TODO #242's regression guard: fpe and twk
 #  shared one unseparated subkey derivation until v4.0.0 and were literally the
 #  same function at a 12-byte context.  Python's copy of the derivation is
 #  cross-checked against the shipped suite there, since that harness alone
-#  re-implements it — C and Go call herradura.h / the herradura package)
+#  re-implements it — C and Go call herradura.h / the herradura package.
+#  [47] is TODO #255's guard for the v3 primitive: chi against a per-row
+#  reference, chi^-1 . chi == id, the revolve round-trip at R3_VALUE = 160, and
+#  that every row of the 47x5 + 3x7 partition is odd and >= 5 -- a 3-row is a
+#  complete break (SecurityProofs-8.md 11.34.2), so that last one is a security
+#  assertion.  Python's copy is cross-checked against the shipped suite there,
+#  as [46] does, since that harness alone re-implements the primitive)
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

@@ -11,6 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
 
 ---
 
@@ -2224,6 +2225,8 @@ The derivation rests on something v2 does not have, and yields the family's firs
 
 For v3 the round count *is* free.  The criterion therefore does not collapse, and at `n = 256` reads `r >= 256/s_diff` and `r >= 128/s_lin`.  **Note the direction.**  #252 and #254 are stuck trying to show v2's slopes are large *enough*; here any provable *lower bound* on the slope immediately yields a sufficient round count.  That is a strictly easier problem.
 
+> **Superseded in part by §11.34 (SecurityProofs-8.md, TODO #255).**  The floor below is a *layer-wise* bound charged to χ alone, and it carries — correctly — the caveat that within-round clustering can beat it.  §11.34.3 closes that caveat exactly: the **round-level** differential floor is `4 - log2(5) = 1.6781` bits, not `2`, the gap being clustering across the addition's carry, and it is reached by a lemma this section did not have (the two members of a pair always share the carry into their *lowest active row*).  The consequence for §11.33.6 is that the criterion needs `r >= 153`, not `r >= 128`: **`R3_VALUE = 160` still clears it, but at 1.05× rather than the 1.25× recorded below.**  The linear axis and the round count itself are unchanged.
+
 **§11.33.2 The floor theorem.**  *Let the v3 round be* `chi_rows ∘ (+delta) ∘ M ∘ (xor B, xor C_i)` *on `n` bits, with `M` invertible and the rows an arbitrary partition of `n` into **odd** parts.  Then in the layer-wise trail model every `r`-round differential trail has weight at least `2r`, and every `r`-round linear trail at least `r`.*  Unconditional — no assumption on the key, the constants, the row lengths, or `n`.
 
 *Proof.*  (a) The difference entering χ is never zero: XOR by a constant preserves a difference, `M` is invertible, and `x -> x + delta` is injective, so a nonzero difference cannot be absorbed by the addition.  Dually for masks, since a linear trail has every mask nonzero by definition and `M^T` is invertible.  (b) Hence at least one row is active every round.  (c) One active row costs at least 2 bits differentially and 1 bit linearly, and this is *uniform in the row length* — measured exhaustively, χ over a row of length 3, 5, 7, 9 or 11 gives exactly `2.0000` and `1.0000` in every case.  Inactive rows contribute a factor 1 and cost nothing.  Summing over `r` rounds gives `2r` and `r`. ∎
@@ -2292,3 +2295,9 @@ Measured now, both rounds in the same `4×64`-bit limb representation with `delt
 χ is implemented there as a real one would be — not bit by bit, but as two shift-and-mask row rotations, since the 47 five-bit rows and the 3 seven-bit rows are each contiguous and uniform — and is validated bit-exactly against a per-row reference before timing, so the ratio is that of a correct fast implementation rather than a placeholder.  The per-round ratio is `2.12`–`2.17×` across runs.
 
 **So the fewer rounds do not offset the per-round cost, and #255's hope of a cost-neutral v3 does not survive measurement.**  The trade on offer is unambiguous and should be recorded as such: **v3 buys the family's first proven per-round trail bound, on both axes, for roughly 1.8× the work.**  Whether that is worth shipping is a decision rather than a measurement — but it is now a decision with numbers under it.  Two caveats: this is one x86-class host at one optimisation level, so the ratio will differ on AVR (which #255 puts out of scope) and under masking, where #246 §5's +57% is the relevant figure and applies on top.
+
+---
+
+---
+
+> **Continued in Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis

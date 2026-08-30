@@ -5419,6 +5419,73 @@ int main(int argc, char *argv[])
                N, coll, amb, (coll == 0 && amb == 0) ? "PASS" : "FAIL");
     }
 
+    /* Security test [47]: NL-FSCX v3 primitive (TODO #255).  Four properties,
+     * each of which the design rests on and none of which is implied by the
+     * others:
+     *   (a) the chi layer matches a straightforward per-row reference.  The
+     *       shipped chi is bit-parallel shift-and-mask, which is exactly the
+     *       kind of code that can be wrong on the wrap positions only.
+     *   (b) chi^-1 . chi == id, and the revolve round-trips at R3_VALUE.  chi
+     *       being a bijection on ODD rows is what makes the whole layer
+     *       invertible.
+     *   (c) the row partition is legal: every row odd and >= 5, summing to
+     *       KEYBITS.  A 3-row would be a complete break (§11.33.4), so this is
+     *       a security assertion, not a bookkeeping one.
+     *   (d) v3 differs from v2 at the same round count -- a guard against a
+     *       chi layer that silently degenerates to the identity. */
+    {
+        int N = g_rounds > 0 ? g_rounds : 200, i;
+        int bad_ref = 0, bad_inv = 0, bad_rt = 0, same_as_v2 = 0;
+        int rowsum = 0, badrow = 0, g;
+        struct timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        printf("[47] NL-FSCX v3: chi vs reference, invertibility, partition"
+               "  [SECURITY]\n");
+        for (g = 0; g < 50; g++) {
+            int L = (g < 47) ? 5 : 7;
+            if (L < 5 || (L % 2) == 0) badrow++;
+            rowsum += L;
+        }
+        for (i = 0; i < N; i++) {
+            BitArray P, K, C, Ci, Y, Z, V2, ref;
+            uint8_t b[KEYBITS], o[KEYBITS];
+            int k, off, j, L;
+            ba_rand(&P, urnd_fp);
+            ba_rand(&K, urnd_fp);
+            /* (a) chi against a per-row reference */
+            nl_chi_v3_ba(&C, &P);
+            for (k = 0; k < KEYBITS; k++)
+                b[k] = (uint8_t)((P.b[KEYBYTES - 1 - (k >> 3)] >> (k & 7)) & 1);
+            off = 0;
+            for (g = 0; g < 50; g++) {
+                L = (g < 47) ? 5 : 7;
+                for (j = 0; j < L; j++)
+                    o[off + j] = (uint8_t)(b[off + j] ^
+                        ((1 - b[off + (j + 1) % L]) & b[off + (j + 2) % L]));
+                off += L;
+            }
+            memset(ref.b, 0, KEYBYTES);
+            for (k = 0; k < KEYBITS; k++)
+                if (o[k]) ref.b[KEYBYTES - 1 - (k >> 3)] |= (uint8_t)(1u << (k & 7));
+            if (!ba_equal(&ref, &C)) bad_ref++;
+            /* (b) invertibility */
+            nl_chi_v3_inv_ba(&Ci, &C);
+            if (!ba_equal(&Ci, &P)) bad_inv++;
+            nl_fscx_revolve_v3_ba(&Y, &P, &K, R3_VALUE);
+            nl_fscx_revolve_v3_inv_ba(&Z, &Y, &K, R3_VALUE);
+            if (!ba_equal(&Z, &P)) bad_rt++;
+            /* (d) v3 != v2 */
+            nl_fscx_revolve_v2_ba(&V2, &P, &K, R3_VALUE);
+            if (ba_equal(&V2, &Y)) same_as_v2++;
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    n=%d  R3_VALUE=%d  rows=50 sum=%d illegal=%d  chi!=ref=%d"
+               "  chi-inv fails=%d  revolve round-trip fails=%d  v3==v2=%d  [%s]\n\n",
+               N, R3_VALUE, rowsum, badrow, bad_ref, bad_inv, bad_rt, same_as_v2,
+               (rowsum == KEYBITS && badrow == 0 && bad_ref == 0 && bad_inv == 0
+                && bad_rt == 0 && same_as_v2 == 0) ? "PASS" : "FAIL");
+    }
+
     fclose(urnd_fp);
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

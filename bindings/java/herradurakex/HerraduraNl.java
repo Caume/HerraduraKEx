@@ -102,6 +102,171 @@ public final class HerraduraNl {
         return !d.equals(BigInteger.ZERO) && !d.equals(BigInteger.ONE.shiftLeft(N - 1));
     }
 
+    // -----------------------------------------------------------------
+    // NL-FSCX v3 (TODO #255) — the v2 round followed by a Keccak-chi layer
+    //
+    // v3 is an ADDITION, not a replacement: v2 is untouched and every stored v2
+    // artifact keeps working.  The round is
+    //
+    //     x -> chi( M(x ^ i ^ B) + delta(B) mod 2^n )
+    //
+    // i.e. exactly nlFscxV2 followed by chi over a partition of the state into
+    // short odd rows.  chi is bijective on a row of odd length, so the layer is
+    // a bijection on the whole state and the round stays invertible.
+    //
+    // THE PARTITION at n=256 is 256 = 47*5 + 3*7, the 5-rows first, so the LSB
+    // is in a 5-row.  v3Rows derives it, and the same rule at any other width.
+    //
+    // MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT, not a preference.  Oddness
+    // alone is NOT sufficient and 3 is odd: a 3-bit row admits a correlation-1
+    // one-round linear approximation -- exhaustive over all 8 row-deltas and
+    // both carry-ins -- which is a complete break at any round count.  At L=5
+    // the worst is 0.875 and at L=7 it is 0.71875, for every key at every
+    // width.  v3Rows emits only 5s and 7s, so the constraint holds by
+    // construction.  See SecurityProofs-7.md §11.33.4 and §11.34.2.
+    //
+    // ROUND COUNT: R3_VALUE = 5n/8 = 160, DERIVED, not inherited from v2's
+    // 3n/4.  chi gives the round an unconditional per-round differential trail
+    // floor of 4 - log2(5) = 1.6781 bits -- the lowest active row of a pair
+    // always shares its carry-in, so it always pays the same-carry cost -- and
+    // §11.30.1's criterion s_diff * r >= n then needs r >= 153.  v2 has no such
+    // floor at all.  See SecurityProofs-7.md §11.33, §11.34 and
+    // SecurityProofsCode/nl_fscx_v3_round_count.py, nl_fscx_v3_weak_keys.py.
+    //
+    // NO KEY CHECK.  There is deliberately no nlV3KeyIsValid.  v2's two weak
+    // classes are both artefacts of its round being linear-then-add-constant
+    // and both dissolve under chi.  See §11.34.4 and §11.34.7.
+    //
+    // Ratings: DEMO-ONLY, exactly like v2.
+    // -----------------------------------------------------------------
+
+    /** NL-FSCX v3's round count at the suite's 256-bit width: 5n/8 = 160. */
+    public static final int R3_VALUE = 5 * N / 8;
+
+    /**
+     * chi row partition for width {@code n}: 5-bit rows then 7-bit rows, the
+     * unique such partition with the fewest 7-rows.  Both lengths are odd and
+     * &gt;= 5, so the minimum-row-5 constraint holds by construction.  At
+     * n = 256 this is 47 fives then 3 sevens.
+     *
+     * @throws IllegalArgumentException if {@code n} admits no such partition
+     *         (n &lt; 5, or n in {6, 8, 9, 11, 13}); the deployed widths all do.
+     */
+    public static int[] v3Rows(int n) {
+        for (int k = 0; k * 7 <= n; k++) {
+            int rest = n - 7 * k;
+            if (rest % 5 == 0) {
+                int[] rows = new int[rest / 5 + k];
+                for (int i = 0; i < rest / 5; i++) rows[i] = 5;
+                for (int i = 0; i < k; i++) rows[rest / 5 + i] = 7;
+                return rows;
+            }
+        }
+        throw new IllegalArgumentException(
+            "NL-FSCX v3: width " + n
+            + " admits no all-odd row partition with every row >= 5");
+    }
+
+    /** Keccak chi on one row of length L held in the low bits of v:
+     * out_i = b_i XOR ((NOT b_(i+1)) AND b_(i+2)), indices cyclic in the row. */
+    private static int chiRow(int v, int L) {
+        int out = 0;
+        for (int i = 0; i < L; i++) {
+            int bi = (v >>> i) & 1;
+            int b1 = (v >>> ((i + 1) % L)) & 1;
+            int b2 = (v >>> ((i + 2) % L)) & 1;
+            out |= (bi ^ ((1 - b1) & b2)) << i;
+        }
+        return out;
+    }
+
+    /** Inverse of chi on a row of length L, by table.  Building it also asserts
+     * chi is a bijection there -- the property the whole layer rests on. */
+    private static int[] chiRowInvTable(int L) {
+        int n = 1 << L;
+        int[] inv = new int[n];
+        boolean[] seen = new boolean[n];
+        for (int x = 0; x < n; x++) {
+            int y = chiRow(x, L);
+            if (seen[y]) {
+                throw new IllegalStateException(
+                    "NL-FSCX v3: chi is not a bijection on a " + L + "-bit row");
+            }
+            seen[y] = true;
+            inv[y] = x;
+        }
+        return inv;
+    }
+
+    private static final int[] CHI_INV5 = chiRowInvTable(5);
+    private static final int[] CHI_INV7 = chiRowInvTable(7);
+
+    private static int[] chiInvFor(int L) {
+        if (L == 5) return CHI_INV5;
+        if (L == 7) return CHI_INV7;
+        return chiRowInvTable(L);
+    }
+
+    /** Apply the chi layer to a 256-bit value, row by row. */
+    public static BigInteger nlChiV3(BigInteger x) {
+        BigInteger v = x.and(MASK);
+        BigInteger out = BigInteger.ZERO;
+        int off = 0;
+        for (int L : v3Rows(N)) {
+            int row = v.shiftRight(off).and(BigInteger.valueOf((1L << L) - 1)).intValue();
+            out = out.or(BigInteger.valueOf(chiRow(row, L)).shiftLeft(off));
+            off += L;
+        }
+        return out;
+    }
+
+    /** Invert the chi layer. */
+    public static BigInteger nlChiV3Inv(BigInteger y) {
+        BigInteger v = y.and(MASK);
+        BigInteger out = BigInteger.ZERO;
+        int off = 0;
+        for (int L : v3Rows(N)) {
+            int row = v.shiftRight(off).and(BigInteger.valueOf((1L << L) - 1)).intValue();
+            out = out.or(BigInteger.valueOf(chiInvFor(L)[row]).shiftLeft(off));
+            off += L;
+        }
+        return out;
+    }
+
+    /** NL-FSCX v3: chi(nlFscxV2(a, b)).  Bijective in a for all b. */
+    public static BigInteger nlFscxV3(BigInteger a, BigInteger b) {
+        return nlChiV3(nlFscxV2(a, b));
+    }
+
+    /** Exact inverse of one nlFscxV3 step. */
+    public static BigInteger nlFscxV3Inv(BigInteger y, BigInteger b) {
+        return nlFscxV2Inv(nlChiV3Inv(y), b);
+    }
+
+    /** Iterate nlFscxV3 {@code steps} times (b held constant).  The round
+     * constant is v2's, unchanged: an XOR constant leaves xdp+ exactly
+     * invariant (TODO #245), and chi does not interact with that argument. */
+    public static BigInteger nlFscxRevolveV3(BigInteger a, BigInteger b, int steps) {
+        BigInteger d = delta(b);
+        BigInteger result = a.and(MASK);
+        for (int i = 1; i <= steps; i++) {
+            result = nlChiV3(Herradura.fscx(result.xor(BigInteger.valueOf(i)), b)
+                             .add(d).and(MASK));
+        }
+        return result;
+    }
+
+    /** Invert nlFscxRevolveV3. */
+    public static BigInteger nlFscxRevolveV3Inv(BigInteger y, BigInteger b, int steps) {
+        BigInteger d = delta(b);
+        BigInteger result = y.and(MASK);
+        for (int i = steps; i >= 1; i--) {
+            BigInteger z = nlChiV3Inv(result).subtract(d).and(MASK);
+            result = b.xor(mInv(z)).xor(BigInteger.valueOf(i));  // undo the round constant
+        }
+        return result;
+    }
+
     // M^{-1} = M^{n/2-1}, bootstrapped once from fscx_revolve(1, 0, n/2-1) and
     // applied as an XOR of ROL(X, k) for each set bit k of that bootstrap value.
     private static int[] mInvRotations;

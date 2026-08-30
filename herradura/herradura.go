@@ -557,6 +557,178 @@ func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
 }
 
 // ---------------------------------------------------------------------------
+// NL-FSCX v3 (TODO #255) — the v2 round followed by a Keccak-chi layer
+// ---------------------------------------------------------------------------
+//
+// v3 is an ADDITION, not a replacement: v2 is untouched and every stored v2
+// artifact keeps working. The round is
+//
+//	x -> chi( M(x ^ i ^ B) + delta(B) mod 2^n )
+//
+// i.e. exactly NlFscxV2 followed by chi over a partition of the state into
+// short odd rows. chi is bijective on a row of odd length, so the layer is a
+// bijection on the whole state and the round stays invertible.
+//
+// THE PARTITION at n=256 is 256 = 47*5 + 3*7, the 5-rows first, so the LSB is
+// in a 5-row. V3Rows derives it, and the same rule at any other width.
+//
+// MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT, not a preference. Oddness alone is
+// NOT sufficient and 3 is odd: a 3-bit row admits a correlation-1 one-round
+// linear approximation — exhaustive over all 8 row-deltas and both carry-ins —
+// which is a complete break at any round count. At L=5 the worst is 0.875 and
+// at L=7 it is 0.71875, for every key at every width. V3Rows emits only 5s and
+// 7s, so the constraint holds by construction. See SecurityProofs-7.md
+// §11.33.4 and §11.34.2.
+//
+// ROUND COUNT: R3Value = 5n/8 = 160, DERIVED, not inherited from v2's 3n/4.
+// chi gives the round an unconditional per-round differential trail floor of
+// 4 - log2(5) = 1.6781 bits — the lowest active row of a pair always shares its
+// carry-in, so it always pays the same-carry cost — and §11.30.1's criterion
+// s_diff * r >= n then needs r >= 153. v2 has no such floor at all. See
+// SecurityProofs-7.md §11.33, §11.34 and SecurityProofsCode/
+// nl_fscx_v3_round_count.py, nl_fscx_v3_weak_keys.py.
+//
+// NO KEY CHECK. There is deliberately no NlV3KeyIsValid. v2's two weak classes
+// are both artefacts of its round being linear-then-add-constant and both
+// dissolve under chi: no key makes the v3 round affine, and v3 has no
+// zero-weight round for any key. See §11.34.4 and §11.34.7.
+//
+// Ratings: DEMO-ONLY, exactly like v2.
+
+// R3Value is NL-FSCX v3's round count at the suite's 256-bit width.
+const R3Value = 5 * 256 / 8 // 160
+
+// V3Rows returns the chi row partition for width n: 5-bit rows followed by
+// 7-bit rows, the unique such partition with the fewest 7-rows. Both lengths
+// are odd and >= 5, so the minimum-row-5 constraint holds by construction.
+// At n = 256 this is 47 fives then 3 sevens.
+//
+// Panics if n admits no such partition (n < 5, or n in {6, 8, 9, 11, 13}); the
+// deployed widths all do.
+func V3Rows(n int) []int {
+	for k := 0; k*7 <= n; k++ {
+		rest := n - 7*k
+		if rest%5 == 0 {
+			rows := make([]int, 0, rest/5+k)
+			for i := 0; i < rest/5; i++ {
+				rows = append(rows, 5)
+			}
+			for i := 0; i < k; i++ {
+				rows = append(rows, 7)
+			}
+			return rows
+		}
+	}
+	panic(fmt.Sprintf("NL-FSCX v3: width %d admits no all-odd row partition with every row >= 5", n))
+}
+
+// chiRow applies Keccak chi to one row of length L held in the low bits of v:
+// out_i = b_i XOR ((NOT b_{i+1}) AND b_{i+2}), indices cyclic within the row.
+func chiRow(v uint, L int) uint {
+	var out uint
+	for i := 0; i < L; i++ {
+		bi := (v >> uint(i)) & 1
+		b1 := (v >> uint((i+1)%L)) & 1
+		b2 := (v >> uint((i+2)%L)) & 1
+		out |= (bi ^ ((1 - b1) & b2)) << uint(i)
+	}
+	return out
+}
+
+// chiRowInvTable inverts chi on a row of length L by table. L is 5 or 7, so the
+// table is 32 or 128 entries; building it also asserts that chi is a bijection
+// there, which is the property the whole layer rests on.
+func chiRowInvTable(L int) []uint {
+	n := uint(1) << uint(L)
+	inv := make([]uint, n)
+	seen := make([]bool, n)
+	for x := uint(0); x < n; x++ {
+		y := chiRow(x, L)
+		if seen[y] {
+			panic(fmt.Sprintf("NL-FSCX v3: chi is not a bijection on a %d-bit row", L))
+		}
+		seen[y] = true
+		inv[y] = x
+	}
+	return inv
+}
+
+var chiInv5 = chiRowInvTable(5)
+var chiInv7 = chiRowInvTable(7)
+
+// NlChiV3 applies the chi layer to a BitArray, row by row.
+func NlChiV3(x *BitArray) *BitArray {
+	rows := V3Rows(x.size)
+	out := new(big.Int)
+	off := 0
+	for _, L := range rows {
+		var v uint
+		for j := 0; j < L; j++ {
+			v |= uint(x.Val.Bit(off+j)) << uint(j)
+		}
+		u := chiRow(v, L)
+		for j := 0; j < L; j++ {
+			out.SetBit(out, off+j, (u>>uint(j))&1)
+		}
+		off += L
+	}
+	return NewBitArray(x.size, out)
+}
+
+// NlChiV3Inv inverts the chi layer.
+func NlChiV3Inv(y *BitArray) *BitArray {
+	rows := V3Rows(y.size)
+	out := new(big.Int)
+	off := 0
+	for _, L := range rows {
+		var v uint
+		for j := 0; j < L; j++ {
+			v |= uint(y.Val.Bit(off+j)) << uint(j)
+		}
+		var u uint
+		switch L {
+		case 5:
+			u = chiInv5[v]
+		case 7:
+			u = chiInv7[v]
+		default:
+			u = chiRowInvTable(L)[v]
+		}
+		for j := 0; j < L; j++ {
+			out.SetBit(out, off+j, (u>>uint(j))&1)
+		}
+		off += L
+	}
+	return NewBitArray(y.size, out)
+}
+
+// NlFscxV3 computes chi(NlFscxV2(A, B)). Bijective in A.
+func NlFscxV3(a, b *BitArray) *BitArray { return NlChiV3(NlFscxV2(a, b)) }
+
+// NlFscxV3Inv inverts one NlFscxV3 step.
+func NlFscxV3Inv(y, b *BitArray) *BitArray { return NlFscxV2Inv(NlChiV3Inv(y), b) }
+
+// NlFscxRevolveV3 iterates NlFscxV3 steps times (B held constant). The round
+// constant is v2's, unchanged: an XOR constant leaves xdp+ exactly invariant
+// (TODO #245), and chi does not interact with that argument.
+func NlFscxRevolveV3(a, b *BitArray, steps int) *BitArray {
+	result := a.Copy()
+	for i := 1; i <= steps; i++ {
+		result = NlFscxV3(nlFscxV2RC(result, i), b)
+	}
+	return result
+}
+
+// NlFscxRevolveV3Inv inverts NlFscxRevolveV3.
+func NlFscxRevolveV3Inv(y, b *BitArray, steps int) *BitArray {
+	result := y.Copy()
+	for i := steps; i >= 1; i-- {
+		result = nlFscxV2RC(NlFscxV3Inv(result, b), i) // undo the round constant
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
 // HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1 with Davies-Meyer compression (v1.9.0)
 // ---------------------------------------------------------------------------
 

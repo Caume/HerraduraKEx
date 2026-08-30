@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.1.0] - 2026-08-30
+
+### TODO #255 (partial) — the NL-FSCX v3 primitive, in four languages
+
+MINOR: new public API in every port, no existing surface changed.  v3 is an addition
+alongside v2, so every stored v2 artifact keeps working.
+
+### Added
+
+- **`nl_fscx_v3` / `nl_fscx_revolve_v3` and their inverses** in C (`herradura.h`), Go
+  (`herradura`), Python (the suite file) and Java (`HerraduraNl`) — the v2 round
+  followed by a Keccak-χ layer over the `256 = 47×5 + 3×7` row partition, at the
+  derived `R3_VALUE = 5n/8 = 160` rounds.  Verified byte-for-byte identical across all
+  four languages.  The partition is derived by a rule that emits only 5- and 7-bit rows,
+  so §11.33.4's minimum-row-5 constraint holds by construction rather than by comment.
+- **Test [47]** in the C, Go and Python harnesses: χ against a straightforward per-row
+  reference (the shipped χ is bit-parallel shift-and-mask, exactly the shape that can be
+  wrong on the wrap positions only), `χ^-1 ∘ χ = id`, the revolve round-trip at 160
+  rounds, that every row is odd and at least 5 — a security assertion, since a 3-row is a
+  complete break — and that v3 differs from v2 at the same round count.  Python's copy is
+  additionally cross-checked against the shipped suite, as [46] does, because that
+  harness alone re-implements the primitive.
+- **`SecurityProofsCode/nl_fscx_v3_weak_keys.py`** and **SecurityProofs-8.md §11.34**.
+- **SecurityProofs-8.md**, split off because Part 7 had reached 698 of GitHub's ~750
+  per-page KaTeX expressions.  The part index is updated in all eleven places and
+  `check_part_index.py` now knows about eight parts.
+
+### Findings
+
+- **v3 needs no key check, and this is a proof rather than a sample.**  v3 admits a
+  reduction v2 never did: the round's key-dependence collapses to `delta(B)`, and χ's
+  row-locality makes the per-row profile exact at *any* width, so an exhaustive statement
+  about every 256-bit key is a sweep over `L = 5` and `L = 7`.  Both inherited v2 weak
+  classes dissolve — no key makes the v3 round affine, and the `tz(delta(B)) >= 4` class
+  lands exactly on the universal floor rather than below it.  No new χ-specific class is
+  screenable: the differential profile is key-*independent*, and the linear profile is
+  graded but attains its worst grade for all but ~1 key in 750,000.  There is therefore
+  deliberately no `nl_v3_key_is_valid` in any port.
+- **Correction to v5.0.9's own round-count derivation.**  §11.33.2's floor is layer-wise,
+  charged to χ alone.  The *round-level* differential floor is `4 - log2(5) = 1.6781`
+  bits, not `2.000`, the gap being clustering across the addition's carry; it is reached
+  by the lowest-active-row lemma (the two members of a pair always share the carry into
+  their lowest active row).  So the criterion needs `r >= 153`, not `r >= 128`:
+  `R3_VALUE = 160` still clears it, but at 1.05× rather than the 1.25× recorded — there
+  is no room left to reduce the round count.
+- §11.33.4's sampled worst-case `0.193` and median `0.678` were never weak-key artefacts.
+  They are the exact universal single-row figures, now derived rather than measured.
+- **The linear axis is capped by the carry, not by the row length.**  Sweeping past the
+  deployed row lengths (`nl_fscx_v3_weak_keys.py --long`), the single-row weight
+  saturates — `0.1926` at `L = 5`, `0.4764` at `L = 7`, `0.5243` at `L = 9` — and never
+  approaches χ's own isolated floor of `1`.  The 5→7 gain is real and is why the
+  partition spends its remainder on 7-rows; past 7 there is essentially nothing left to
+  buy, for rows that no longer divide 256 conveniently.  So "use longer rows" is not
+  available as a future fix for the linear bound.
+
+### Changed
+
+- SecurityProofs-7.md §11.33.2 carries a correction box pointing at §11.34.
+
 ## [5.0.9] - 2026-08-30
 
 ### TODO #255 (partial) — NL-FSCX v3's round count, derived

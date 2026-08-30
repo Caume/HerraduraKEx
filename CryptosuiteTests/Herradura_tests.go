@@ -1654,6 +1654,7 @@ func main() {
 	testHcred()
 	testWeakKeyRejection()
 	testFpeTwkDomainSeparation()
+	testNlFscxV3()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -1781,6 +1782,75 @@ func testFpeTwkDomainSeparation() {
 	}
 	fmt.Printf("    n=%d  fpe/twk collisions=%d  key-boundary collisions=%d  [%s]\n\n",
 		N, coll, amb, status)
+}
+
+// [47] NL-FSCX v3 primitive (TODO #255). Four properties, each of which the
+// design rests on and none of which is implied by the others:
+//
+//	(a) the chi layer matches a straightforward per-row reference;
+//	(b) chi^-1 . chi == id, and the revolve round-trips at R3Value -- chi
+//	    being a bijection on ODD rows is what makes the layer invertible;
+//	(c) the row partition is legal: every row odd and >= 5, summing to the
+//	    key width.  A 3-row would be a complete break (§11.33.4), so this is
+//	    a security assertion, not a bookkeeping one;
+//	(d) v3 differs from v2 at the same round count -- a guard against a chi
+//	    layer that silently degenerates to the identity.
+func testNlFscxV3() {
+	fmt.Println("[47] NL-FSCX v3: chi vs reference, invertibility, partition  [SECURITY]")
+	N := testRounds(200)
+	rows := V3Rows(256)
+	rowsum, badrow := 0, 0
+	for _, L := range rows {
+		if L < 5 || L%2 == 0 {
+			badrow++
+		}
+		rowsum += L
+	}
+	badRef, badInv, badRT, sameAsV2 := 0, 0, 0, 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		P := NewRandBitArray(256)
+		K := NewRandBitArray(256)
+		// (a) chi against a per-row reference
+		C := NlChiV3(P)
+		ref := new(big.Int)
+		off := 0
+		for _, L := range rows {
+			for j := 0; j < L; j++ {
+				bi := P.Val.Bit(off + j)
+				b1 := P.Val.Bit(off + (j+1)%L)
+				b2 := P.Val.Bit(off + (j+2)%L)
+				ref.SetBit(ref, off+j, bi^((1-b1)&b2))
+			}
+			off += L
+		}
+		if ref.Cmp(&C.Val) != 0 {
+			badRef++
+		}
+		// (b) invertibility
+		if NlChiV3Inv(C).Val.Cmp(&P.Val) != 0 {
+			badInv++
+		}
+		Y := NlFscxRevolveV3(P, K, R3Value)
+		if NlFscxRevolveV3Inv(Y, K, R3Value).Val.Cmp(&P.Val) != 0 {
+			badRT++
+		}
+		// (d) v3 != v2
+		if NlFscxRevolveV2(P, K, R3Value).Val.Cmp(&Y.Val) == 0 {
+			sameAsV2++
+		}
+		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if rowsum != 256 || badrow != 0 || badRef != 0 || badInv != 0 || badRT != 0 || sameAsV2 != 0 {
+		status = "FAIL"
+	}
+	fmt.Printf("    n=%d  R3Value=%d  rows=%d sum=%d illegal=%d  chi!=ref=%d"+
+		"  chi-inv fails=%d  revolve round-trip fails=%d  v3==v2=%d  [%s]\n\n",
+		N, R3Value, len(rows), rowsum, badrow, badRef, badInv, badRT, sameAsV2, status)
 }
 
 func testWeakKeyRejection() {
