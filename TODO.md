@@ -49,73 +49,6 @@ decoder needs its own.
 
 Status: **OPEN**
 
-### #251: ship the AND-based nonlinear layer for NL-FSCX v2 (migration)
-
-TODO #246 decided the design and could not ship it.  This is the migration, held back
-deliberately rather than for lack of work done.
-
-**What ships, if it ships.**  Candidate B: the deployed v2 round followed by a χ layer over
-short odd rows, `256 = 47×5 + 3×7` — fifty parts, all odd, so χ is a bijection over the whole
-state; inverse degree ≤ 4, bit-parallel; inside the regime Keccak's own analysis covers.  The
-existing round is untouched and χ is appended, which is the smallest diff that achieves the
-goal.  Identically in C, Go, Python and Java.
-
-**Why it is blocked, and this is the point of the item.**  #246 step 3 named a realistic-width
-bound as the condition for shipping, and TODO #247 established that condition cannot currently
-be met: CBC proves optima only to n = 64, and #247 further found the dominant uncertainty is
-the **key-averaged/per-key gap**, not width.  All the evidence favouring candidate B is
-small-width and comparative.  Shipping a new round function on that basis would be exactly the
-under-evidenced move TODO #237, #238, #243, #244 and #245 exist to prevent — with the
-aggravating factor that it is a five-construction MAJOR.
-
-**Unblocked by** either #252 (a two-sided bound at n = 256) or #253 (a fixed-key treatment
-showing the per-key gap does not sink the margin), or by a decision to accept small-width
-comparative evidence as sufficient — which is a legitimate call, but must be made explicitly
-and recorded, not arrived at by default.
-
-**Evidence status as of v5.0.6 — the comparison was re-run and B's case is stronger, but the
-case for urgency is weaker.**  See SecurityProofs-7.md §11.32 and
-`SecurityProofsCode/and_layer_recheck.py`.  #252 had invalidated the methodology #246 used
-(slopes read inside the transient), so the comparison was redone.
-
-* **#246's ordering survives and is better founded.**  B carries 2-3x the deployed round's
-  trail weight at every round on both axes, at n = 8, 10 and 11.
-* **The reason it is better founded is specific.**  B's advantage lives in the TRANSIENT, and
-  §11.31.2 established the transient is the width-independent part (confirmed by MILP: n = 16
-  and n = 32 give identical proven optima at r = 4 and 5).  So the part of a small-width
-  comparison that carries to n = 256 is exactly the part where B wins.  #246 compared saturated
-  slopes; this does not.
-* **The mechanism.**  Any linear-then-add-constant round has a probability-1 one-round
-  differential (the MSB freebie, §11.28.3) — that IS the transient.  chi removes it: B's
-  round-1 weight is 2.00 / 1.81 / 2.00 across the three widths where v2 and A are both 0.00.
-* **Candidate A is disqualified** and should not be revisited: correlation-1 linear trail
-  through eight rounds at n = 8, and exactly 1.00 bit/round at n = 10 and 11.
-* **Still not a bound.**  B saturates by round 3 at reachable widths, so it has no measurement
-  window and its asymptotic slope is as unmeasured as the deployed round's.  #252 and #254 are
-  unchanged by this.
-* **Urgency is DOWN.**  #254 found the deployed round meets the linear criterion at every width
-  measured (settled 0.93-0.95 against 2/3) and #253 found the per-key gap does not sink the
-  differential margin.  The thing B was meant to fix looks less broken than when #246 proposed
-  it.
-
-**So the blocker is no longer methodological, it is a decision.**  A five-construction MAJOR on
-comparative evidence that is now well founded but still not a bound, against a deployed
-construction not known to be failing.  That call is the maintainer's and this item still
-requires it be recorded explicitly rather than arrived at by default.
-
-**Reach.**  `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe`, `twk` — the same five as TODO #245.
-One MAJOR, one `MIGRATING.md` section, and the silent-failure warning `fpe`/`twk` need, since
-both are unauthenticated permutations.  Arduino and assembly stay unchanged, as in #242 and
-#245: separate 32-bit construction, no wire compatibility.
-
-**Must land with it.**  Round-count re-derivation (χ changes the per-round weight, so 192 is
-no longer justified by inheritance); masked-cost measurement on AVR; a KAT refresh; and the
-regression tests that already exist for `fpe`/`twk` extended to the new layer.
-
-**Explicitly not in scope.**  Re-rating anything.  That remains #248.
-
-Status: **OPEN**
-
 ### #252: a two-sided trail bound at n = 256
 
 TODO #247 got proven optimal key-averaged trail weights to n = 64 and stopped.  This is the
@@ -257,5 +190,89 @@ and does **not** transfer unexamined to HSKE-NL-A1 (counter-mode PRF) or HFSCX-2
 item that reaches three production-track rows.  (2) The transfer-matrix bound on `s_lin`.
 (3) The same treatment for `s_diff`, which is #252 — and by the correction above, #252 is now
 the more urgent of the two.
+
+Status: **OPEN**
+
+### #255: NL-FSCX v3 — ship candidate B as a new primitive alongside v2
+
+TODO #251 declined to migrate v2 to candidate B, on the grounds that a five-construction
+MAJOR is not warranted against a deployed round that passes every test that exists.  This is
+the alternative it named: **add** the design rather than **replace** with it.
+
+**Why this shape is better than #251's.**  Nothing breaks.  `v2` is untouched, so every stored
+key, ciphertext and signature keeps working and `MIGRATING.md` is not involved.  The change is
+additive CLI/API surface, so it is a **MINOR**, not a MAJOR.  It is reversible: a v3 that turns
+out badly can be deprecated without stranding anyone.  And it decouples the design question
+(is B better? — answered, §11.32) from the deployment question (must everyone move? — no).
+
+**What v3 is.**  The deployed v2 round followed by a χ layer over short odd rows,
+`256 = 47×5 + 3×7` — fifty parts, all odd, so χ is a bijection over the whole state; inverse
+degree ≤ 4, bit-parallel; inside the regime Keccak's own analysis covers.  This is candidate B
+exactly as #246 specified and §11.32 re-validated; **no redesign is in scope here.**
+
+**Round count must be DERIVED, not inherited — and it may go down.**  χ changes the per-round
+weight, so `R_VALUE = 3n/4` carries no justification for v3.  Use §11.30.1's scale-invariant
+criteria: safety needs `s_lin · r >= n/2` and `s_diff · r >= n`.  §11.32 measures v3's
+round-1/early weights at roughly 2-3× v2's, so the honest expectation is that v3 needs
+materially fewer than 192 rounds — possibly enough to offset the +57% per-round cost outright,
+making v3 no slower than v2 and stronger.  **Determine this before choosing constants**; do not
+assume either direction, and state the margin chosen.
+
+**Weak-key classes need re-deriving, and two may simply vanish.**  Both known v2 classes are
+artefacts of the round being linear-then-add-constant, which v3 is not:
+
+* the affine class `delta(B) ∈ {0, 2^(n-1)}` (§11.19.2) — v2 degenerates to affine there, but
+  χ is non-linear, so v3 plausibly does not.  If so, v3 needs no `nl_v3_key_is_valid` at all.
+* the zero-weight-trail class `tz(delta(B)) >= 4` (§11.28.3) — this is the MSB freebie, and
+  §11.32.3 measured v3's round-1 weight at 1.81-2.00 where v2's is 0.00, so it is already
+  known to be gone.
+
+Verify both rather than assuming; a *new* weak class specific to χ is also possible and must
+be looked for.
+
+**Scope — what gets a v3 consumer.**  The same five v2 consumers, each as a new variant with
+the v2 one left in place:
+
+| existing | new | surface |
+|---|---|---|
+| `hske-nla2` | `hske-nla3` | `--algo` |
+| `hpke-nl` | `hpke-nl3` | `--algo` |
+| `hske-duplex` | `hske-duplex3` | `--algo` |
+| `fpe` | `fpe --v3` | flag on the subcommand |
+| `twk` | `twk --v3` | flag on the subcommand |
+
+`fpe`/`twk` take a flag rather than new subcommands because they are already filed under
+`cli_binding` in `spec/` rather than under an `--algo` tag.  Decide the flag-vs-subcommand
+question explicitly and record it; either is defensible.
+
+**Out of scope, explicitly.**  NL-FSCX v1 and everything on it (HFSCX-256, HSKE-NL-A1, WOTS,
+XMSS, every Fiat-Shamir transform) — v3 does not touch v1.  The classical quartet.  Key
+exchange (#230's impossibility is about HKEX agreement and does not arise).  Arduino and
+assembly, following #242 and #245: separate 32-bit construction, no wire compatibility, and
+adding a second primitive there is a cost with no consumer.
+
+**Ratings — v3 does NOT arrive production-track.**  This is the trap #237, #238, #243, #244 and
+#248 were each filed to close.  v3 has a wider margin than v2 but the same *missing* items:
+no PRP/SPRP reduction, and no trail bound at realistic width on either axis (#252, #254 are
+unchanged by v3 existing).  **Ship v3 demo-only**, with a row saying precisely that its margin
+is wider and that the same two measurements are outstanding.  A promotion is #248-shaped work
+on separate evidence.
+
+**Must land with it.**
+* C (`herradura.h`), Go, Python and Java in lockstep — `nl_fscx_v3`, `nl_fscx_revolve_v3`, its
+  inverse, and the key check if §above finds one is needed.
+* `spec/` entries and `SECURITY.md` rows for all five new variants; `spec/check_security_md.py`
+  and `generate_spec.py --check --require-schema` must pass.
+* KAT vectors for v3 in `KAT/`, generator updated, `--check` current; `verify_kat.go` and the
+  Java `KatVerify` extended.
+* `CliTest/` coverage: every new script claimed by exactly one `native-*` job, or the
+  coverage-guard step fails.  `test_cross_lang_matrix.sh` extended to the v3 family.
+* Tests in all four harnesses; the `[FAIL]`-scanning gate picks them up with no registration.
+* `docs/TUTORIAL.md`, `llms.txt`'s CLI section, and this file's CLI/test sections (TODO #145).
+* A benchmark against v2 at the derived round count, since the cost question is live.
+
+**Version.**  MINOR — new `--algo` values and new public API, no existing surface changed.
+
+**Do not start** until the round count is derived; every other step depends on it.
 
 Status: **OPEN**

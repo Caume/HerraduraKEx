@@ -13422,3 +13422,97 @@ Status: **DONE v5.0.3 (analysis)** — both rows stay demo-only and both rationa
 replaced: the "no PRP/SPRP reduction" standard is not the one the rest of SECURITY.md uses,
 self-similarity was already gone, and the single missing item is now a linear bound at
 realistic width (#254).  Invariant-subspace resistance proven at n = 256.
+
+### #251: ship the AND-based nonlinear layer for NL-FSCX v2 (migration)
+
+TODO #246 decided the design and could not ship it.  This is the migration, held back
+deliberately rather than for lack of work done.
+
+**What ships, if it ships.**  Candidate B: the deployed v2 round followed by a χ layer over
+short odd rows, `256 = 47×5 + 3×7` — fifty parts, all odd, so χ is a bijection over the whole
+state; inverse degree ≤ 4, bit-parallel; inside the regime Keccak's own analysis covers.  The
+existing round is untouched and χ is appended, which is the smallest diff that achieves the
+goal.  Identically in C, Go, Python and Java.
+
+**Why it is blocked, and this is the point of the item.**  #246 step 3 named a realistic-width
+bound as the condition for shipping, and TODO #247 established that condition cannot currently
+be met: CBC proves optima only to n = 64, and #247 further found the dominant uncertainty is
+the **key-averaged/per-key gap**, not width.  All the evidence favouring candidate B is
+small-width and comparative.  Shipping a new round function on that basis would be exactly the
+under-evidenced move TODO #237, #238, #243, #244 and #245 exist to prevent — with the
+aggravating factor that it is a five-construction MAJOR.
+
+**Unblocked by** either #252 (a two-sided bound at n = 256) or #253 (a fixed-key treatment
+showing the per-key gap does not sink the margin), or by a decision to accept small-width
+comparative evidence as sufficient — which is a legitimate call, but must be made explicitly
+and recorded, not arrived at by default.
+
+**Evidence status as of v5.0.6 — the comparison was re-run and B's case is stronger, but the
+case for urgency is weaker.**  See SecurityProofs-7.md §11.32 and
+`SecurityProofsCode/and_layer_recheck.py`.  #252 had invalidated the methodology #246 used
+(slopes read inside the transient), so the comparison was redone.
+
+* **#246's ordering survives and is better founded.**  B carries 2-3x the deployed round's
+  trail weight at every round on both axes, at n = 8, 10 and 11.
+* **The reason it is better founded is specific.**  B's advantage lives in the TRANSIENT, and
+  §11.31.2 established the transient is the width-independent part (confirmed by MILP: n = 16
+  and n = 32 give identical proven optima at r = 4 and 5).  So the part of a small-width
+  comparison that carries to n = 256 is exactly the part where B wins.  #246 compared saturated
+  slopes; this does not.
+* **The mechanism.**  Any linear-then-add-constant round has a probability-1 one-round
+  differential (the MSB freebie, §11.28.3) — that IS the transient.  chi removes it: B's
+  round-1 weight is 2.00 / 1.81 / 2.00 across the three widths where v2 and A are both 0.00.
+* **Candidate A is disqualified** and should not be revisited: correlation-1 linear trail
+  through eight rounds at n = 8, and exactly 1.00 bit/round at n = 10 and 11.
+* **Still not a bound.**  B saturates by round 3 at reachable widths, so it has no measurement
+  window and its asymptotic slope is as unmeasured as the deployed round's.  #252 and #254 are
+  unchanged by this.
+* **Urgency is DOWN.**  #254 found the deployed round meets the linear criterion at every width
+  measured (settled 0.93-0.95 against 2/3) and #253 found the per-key gap does not sink the
+  differential margin.  The thing B was meant to fix looks less broken than when #246 proposed
+  it.
+
+**So the blocker is no longer methodological, it is a decision.**  A five-construction MAJOR on
+comparative evidence that is now well founded but still not a bound, against a deployed
+construction not known to be failing.  That call is the maintainer's and this item still
+requires it be recorded explicitly rather than arrived at by default.
+
+**Reach.**  `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe`, `twk` — the same five as TODO #245.
+One MAJOR, one `MIGRATING.md` section, and the silent-failure warning `fpe`/`twk` need, since
+both are unauthenticated permutations.  Arduino and assembly stay unchanged, as in #242 and
+#245: separate 32-bit construction, no wire compatibility.
+
+**Must land with it.**  Round-count re-derivation (χ changes the per-round weight, so 192 is
+no longer justified by inheritance); masked-cost measurement on AVR; a KAT refresh; and the
+regression tests that already exist for `fpe`/`twk` extended to the new layer.
+
+**Explicitly not in scope.**  Re-rating anything.  That remains #248.
+
+**DECISION, recorded as this item requires (2026-08-30).**  This item asked that the call be
+made explicitly rather than arrived at by default.  It is made: **do not ship the v2
+migration.**  The reasoning, in the order it weighed:
+
+* **The deployed round is not failing any test that exists.**  TODO #253 found the per-key gap
+  does not sink the differential margin; #254 found the linear criterion met at every width
+  measured (settled 0.93-0.95 against 2/3).  No attack on any v2 consumer at n = 256 is known.
+  A breaking change to five constructions, against a construction that passes everything
+  measurable, is not justified by "the replacement is better".
+* **The cost is real and lands on users, not on us.**  A MAJOR makes every stored ciphertext,
+  key and signature under `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk` unreadable by
+  the new build.  That is a migration every downstream user performs, for a margin improvement
+  they cannot currently observe a need for.
+* **The evidence is sound but singly sourced.**  Every figure supporting candidate B was
+  produced by this project's own scripts, with no external review, and four of them required
+  correction within three days — including one (§11.32.1) that would have wrongly killed B.
+  That argues for the reversible option, and not shipping is the reversible one.
+* **What did NOT weigh:** the +57% round cost.  It is real but small, and TODO #255 notes the
+  round count may fall enough to offset it entirely.
+
+**This is not a rejection of candidate B.**  §11.32 confirmed B's advantage is real and that it
+lives in the width-independent part, which is the strongest evidence any design change in this
+suite has had.  The objection is to *replacing* v2, not to *having* B.  **Superseded by TODO
+#255**, which adds B as NL-FSCX v3 alongside v2 — same benefit, no wire break, no migration,
+and reversible.
+
+Status: **DEPRECATED** — superseded by TODO #255.  The v2 migration will not be performed; the
+design ships as a new primitive alongside v2 instead.  Decision recorded above.

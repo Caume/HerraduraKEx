@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.7] - 2026-08-30
+
+The TODO #251 decision, recorded.  Documentation only — no code, no wire format, no CLI
+surface, no `--algo` value changes.
+
+### Decided
+- **TODO #251 is DEPRECATED: the NL-FSCX v2 migration will not be performed.**  #251 required
+  that this call be made explicitly rather than arrived at by default, so the reasoning is
+  recorded in the item: the deployed round fails no test that exists (#253, #254), a MAJOR
+  would make every stored artifact under five constructions unreadable for a margin
+  improvement users cannot currently observe a need for, and every figure supporting the
+  change is singly sourced with four corrections needed in three days — which argues for the
+  reversible option.
+- **This is not a rejection of candidate B.**  §11.32 confirmed its advantage is real and
+  sits in the width-independent part, the strongest evidence any design change in this suite
+  has had.  The objection is to *replacing* v2, not to *having* B.
+
+### Added
+- **TODO #255: NL-FSCX v3** — ship candidate B as a new primitive *alongside* v2 rather than
+  in place of it.  Nothing breaks, `MIGRATING.md` is not involved, the change is additive
+  surface (a MINOR, not a MAJOR), and it is reversible.  Five new variants — `hske-nla3`,
+  `hpke-nl3`, `hske-duplex3`, `fpe --v3`, `twk --v3` — with the v2 originals left in place.
+  Two things the item flags as must-derive-not-inherit: the **round count**, since χ changes
+  the per-round weight and v3 may need materially fewer than 192 rounds (possibly enough to
+  offset its +57% per-round cost outright), and the **weak-key classes**, two of which are
+  artefacts of the round being linear-then-add-constant and may simply not exist for v3.
+  v3 ships **demo-only**: a wider margin does not supply the missing bound, and #252/#254 are
+  unchanged by v3 existing.
+
 ## [5.0.6] - 2026-08-29
 
 TODO #246's candidate comparison, re-run against the corrected methodology.  TODO #252 had
