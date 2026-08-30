@@ -25,9 +25,14 @@ Analysis and documentation only.
   proven — and the two-round strengthening it would need is contradicted by four consecutive
   near-free rounds measured at `n = 11`.  Revised route order: 1, then 3.
 - **Route 1 is re-motivated with a different target**: not a larger width but a larger *round
-  count* at `n = 32`–`64`, where the window is wide and CBC already reaches.  A run here proved
-  `n = 16` at `r = 4/5/6` (7.0 / 10.0 / 14.0 in 8 s / 35 s / 365 s), still saturated at
-  `0.875n`.
+  count* at `n = 32`–`64`, where the window is wide and CBC already reaches.  Measured: `n = 16`
+  proves `r = 4/5/6` in 8 s / 35 s / 365 s and fails `r = 7` at 600 s; `n = 32` proves `r = 4/5`
+  in 68 s / 635 s and fails `r = 6` at 900 s.  `n = 32` at `r = 5` sits at `0.31n`, so the width
+  is right and the round count is the entire gap — the target is `r ≈ 10`–`14`, several orders
+  of magnitude away.  A stronger backend, not a longer time limit.
+- **The transient's width-independence is confirmed directly**: `n = 16` and `n = 32` give
+  identical proven optima at `r = 4` and `r = 5` (7.0 and 10.0) — the same agreement #247 saw
+  across `n = 16/32/64` and read as evidence about the asymptote.
 - **A weak-key lead, filed and explicitly not concluded**: the per-key increment tracks the
   *signed-digit (NAF)* weight of `delta(B)` rather than its Hamming weight — `d` and `-d`
   produce identical series because they are the same constant up to sign.  Whether the

@@ -132,9 +132,15 @@ SecurityProofs-7.md §11.31 and `SecurityProofsCode/diff_bound_window.py`.
   not the quantity the criterion needs.  Their agreement across widths was never the evidence
   it was read as.  Every per-round differential figure in this repo is affected.
 * **Route 1 is re-motivated with a different target**: not a larger width but a larger ROUND
-  COUNT at n = 32-64, where the window is wide and CBC already reaches.  A run here got n = 16
-  to r = 6 (7.0 / 10.0 / 14.0 at r = 4/5/6, proven, 8 s / 35 s / 365 s) — still saturated at
-  `0.875n`, so the target is real but not close.  **This is now the first thing to try.**
+  COUNT at n = 32-64, where the window is wide and CBC already reaches.  Measured distance to
+  that target: at n = 16, r = 4/5/6 prove in 8 s / 35 s / 365 s and r = 7 does not close in
+  600 s; at n = 32, r = 4 and 5 prove in 68 s and 635 s and r = 6 does not close in 900 s.
+  n = 32 r = 5 sits at `0.31n`, so the width is right and the ROUND COUNT is the whole gap —
+  the target is r ≈ 10-14, several orders of magnitude away.  A stronger backend, not a longer
+  time limit.  **This is now the first thing to try.**
+* **The transient's width-independence is now directly confirmed**: n = 16 and n = 32 give
+  identical proven optima at r = 4 and r = 5 (7.0 and 10.0) — the same agreement #247 saw and
+  read as evidence about the asymptote.
 * **Route 2 is demoted.**  As sketched it yields `s_diff >= 1` against a 4/3 criterion, so it
   cannot close the gap even fully proven, and the two-round strengthening it would need is
   contradicted by four consecutive near-free rounds measured at n = 11.

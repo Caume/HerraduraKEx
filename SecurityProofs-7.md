@@ -2086,7 +2086,14 @@ The window is about `0.6n/s - transient` rounds wide.  With `s ≈ 1.5` and a fo
 
 Exhaustive DDT construction costs `2^2n` per key and stops around `n = 11`–`13`.  **Every width it reaches has a window of zero or one round**, so the asymptotic increment is not measurable by exhaustive search at any reachable width — not slowly, but at all.  This also retroactively explains #247's stable-looking optima 2.0 / 4.0 / 7.0 across `n = 8/16/32/64`: that is the *transient*, which is width-independent for a structural reason, and it is not the quantity the criterion needs.  Every per-round differential figure this repository has published is affected.
 
-**§11.31.3 What this does to the three routes.**  **Route 1 is re-motivated with a target it did not have.**  The problem was never the width — #247 already reached `n = 32` and `64` with CBC — it was the *round count*: #247 solved to `r = 4`, inside the transient.  What is needed is `n = 32`–`64` at `r = 10`–`14`, where the window is wide.  A CBC run here reached `n = 16` at `r = 4/5/6` (weights 7.0 / 10.0 / 14.0, proven, 8 s / 35 s / 365 s), the last of which is already at `0.875n` and therefore still saturated — so the target is real but not close.
+**§11.31.3 What this does to the three routes.**  **Route 1 is re-motivated with a target it did not have.**  The problem was never the width — #247 already reached `n = 32` and `64` with CBC — it was the *round count*: #247 solved to `r = 4`, inside the transient.  What is needed is `n = 32`–`64` at `r = 10`–`14`, where the window is wide.  A CBC run here gives the concrete distance to that target:
+
+| | r=4 | r=5 | r=6 | r=7 |
+|---|---|---|---|---|
+| `n = 16` | 7.0 (8 s) | 10.0 (35 s) | 14.0 (365 s) | unproven at 600 s |
+| `n = 32` | 7.0 (68 s) | 10.0 (635 s) | unproven at 900 s | — |
+
+Two things to read off it.  **The transient is confirmed width-independent directly**: `n = 16` and `n = 32` agree exactly at `r = 4` and `r = 5` (7.0 and 10.0), which is precisely the agreement #247 saw across `n = 16/32/64` and read as evidence about the asymptote.  And **`n = 32` is the right width but CBC is far from the right round count** — at `n = 32`, `r = 5` sits at `0.31n`, comfortably inside the window, but the solve already costs 635 s and `r = 6` does not close in 900 s.  The target is `r ≈ 10`–`14`.  The gap is several orders of magnitude, not a matter of patience, which is why a stronger backend rather than a longer time limit is route 1's actual content.
 
 **Route 2 is demoted.**  #252 proposed proving "each active round costs at least one bit unless the difference is MSB-only".  Even fully proven that yields `s_diff >= 1` against a `4/3` criterion, so it cannot close the gap in the best case; and the two-round strengthening it would need is contradicted by §11.31.2's four consecutive near-free rounds.  The germ does not survive contact with the measurement.  **Route 3** is unchanged here, and was promoted to first choice for the *linear* axis by §11.30.4, where mask propagation is deterministic; it has no such advantage on the differential side.
 
