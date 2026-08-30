@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.31** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.32** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -2113,3 +2113,54 @@ The recommended order becomes **1, then 3**, with route 2 — previously "the on
 The linear transient is about two rounds where the differential one runs to four or more, so §11.30's reads sat mostly past it: the corrections are small and every width above `n = 7` still clears `2/3`.  One claim is weakened — "the slope rises with width" does hold, but settled it is **flattening** (a gain of 0.03 between the two widest against 0.16 between the two narrowest), so part of the apparent rise was the transient shrinking relative to the read window.  §11.30's conclusion is unaffected, since a flat 0.95 clears `2/3` as comfortably as a rising one; what is withdrawn is any expectation that wider widths keep improving without limit.
 
 No rating moves.  §11.29.6's verdict stands.
+
+---
+
+### 11.32 TODO #246's candidate comparison, re-run correctly
+
+§11.31.2 established that trail slopes read at `r = 2`–`5` sit inside the transient, which invalidated the methodology TODO #246 used to choose candidate B — and left TODO #251 holding evidence whose basis had been removed underneath it.  This is the re-run.  **#246's ordering survives, and comes out better founded than it was.**  Reproduce with `SecurityProofsCode/and_layer_recheck.py`.
+
+**§11.32.1 A reporting bug, recorded because it pointed the wrong way.**  The first attempt applied §11.31's window filter verbatim — increments from round 4 onward, below the ceiling — and printed "BELOW criterion" whenever the filter came back empty.  For candidates A and B it came back empty at every width, and both were duly reported as failing.  They were not: they were saturating *before* round 4 **because they are stronger**.  A construction gaining three bits a round crosses `0.6n` while one gaining half a bit is still warming up.  An empty window is a statement about the measurement, and conflating it with a failing cipher penalises exactly the candidates the comparison exists to favour.
+
+**§11.32.2 The corrected comparison.**  Cumulative differential trail weight, averaged over keys, with each construction's ceiling crossing:
+
+| construction | r=1 | r=2 | r=3 | r=4 | r=5 | ceiling (0.6n) |
+|---|---|---|---|---|---|---|
+| deployed v2 (n=10) | 0.00 | 0.45 | 1.27 | 2.44 | 4.13 | not reached by r=6 |
+| A: Feistel M+AND (n=10) | 0.00 | 2.00 | 3.00 | 5.00 | 6.00 | r=5 |
+| **B: v2 then χ (n=10)** | **1.85** | **4.47** | **7.57** | **10.74** | **13.62** | r=3 |
+
+B carries 2–3× the deployed round's weight at every round, on both axes and at every width measured.
+
+**§11.32.3 The structural finding: candidate B has no free first round.**  Any round of the form linear-then-add-constant hands the attacker a probability-1 one-round differential — the MSB difference passes any constant addition because the final carry is discarded (§11.28.3).  That is the *source* of the transient §11.31 showed poisons every slope measurement here.  χ removes it: a single-bit difference entering χ propagates to three output bits, two data-dependent, so the free differential stops being free.
+
+Round-1 weight — "how expensive is the cheapest single round" — differential / linear:
+
+| construction | n=8 | n=10 | n=11 |
+|---|---|---|---|
+| deployed v2 | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 |
+| A: Feistel M+AND | 0.00 / 0.00 | 0.00 / 0.00 | 0.00 / 0.00 |
+| **B: v2 then χ** | **2.00 / 0.74** | **1.81 / 0.66** | **2.00 / 0.98** |
+
+**This is why the re-run leaves B on better footing than #246 gave it.**  #246 compared saturated slopes, and §11.31 invalidated that.  This is a comparison of *transients* — and §11.31.2 established the transient is the width-independent part, confirmed independently by MILP (n=16 and n=32 give identical proven optima at r=4 and r=5).  So the part of a small-width comparison that actually carries to `n = 256` is precisely the part where B wins outright, and B's own round-1 figure is stable across widths as a transient quantity should be.
+
+What it is still **not**: an asymptotic bound.  B saturates by round 3 at these widths, so B has no measurement window at all and its asymptotic slope is as unmeasured as the deployed round's.  The claim is that B is better, not that B is sufficient.
+
+**§11.32.4 Candidate A is disqualified on the linear axis.**  #246 preferred B on differential evidence and #247 §(c) checked B was not *worse* linearly; neither looked hard at A.  Exact optimal linear-trail weight, cumulative, at `n = 8`:
+
+| construction | r=1 | r=2 | r=3 | r=4 | r=5 | r=6 | r=7 | r=8 |
+|---|---|---|---|---|---|---|---|---|
+| A: Feistel M+AND | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| B: v2 then χ | 0.74 | 1.82 | 3.00 | 4.00 | 5.00 | 6.00 | 7.00 | 8.00 |
+
+**Candidate A has a correlation-1 linear trail through eight rounds at `n = 8`** — a total linear break at that width.  At `n = 10` and `11` it settles to exactly 1.00 bit per round, an integer clean enough to indicate a structural correlation-`1/2` approximation per round rather than a measured average.
+
+Two caveats before this reads as harsher than intended: A is a Feistel whose halves are `n/2 = 4` bits at `n = 8`, which is degenerate, so the total break is plausibly a small-width artefact; and 1.00 bit/round still clears §11.30.1's `2/3` criterion.  It is nonetheless enough to settle the comparison — A is the only candidate exhibiting a probability-1 trail of any length on either axis at any width measured, and B beats it on both axes everywhere.
+
+**§11.32.5 What this does for TODO #251.**  #251's own text allows unblocking "by a decision to accept small-width comparative evidence as sufficient — which is a legitimate call, but must be made explicitly and recorded, not arrived at by default."  Three things bear on that call:
+
+- **The evidence is stronger than #246 had**, in the way that matters: it rests on the transient rather than on saturated slopes, and the transient is the width-independent part.
+- **It is still not a bound.**  B has no measurement window at reachable widths; #252 and #254 are not closed by this and their targets are unchanged.
+- **The case for urgency is weaker than when #251 was filed.**  §11.30 found the deployed round meets the linear criterion at every width measured (settled 0.93–0.95 against 2/3), and §11.28 found the per-key gap does not sink the differential margin.  The thing candidate B was meant to fix looks less broken than it did when #246 proposed it.
+
+So the decision remains a judgement call — a five-construction MAJOR, on comparative evidence that is now well founded but still not a bound, against a deployed construction not known to be failing.  What this section removes is the reason to *defer* it: the evidence base is no longer methodologically broken.

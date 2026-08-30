@@ -2,6 +2,53 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.6] - 2026-08-29
+
+TODO #246's candidate comparison, re-run against the corrected methodology.  TODO #252 had
+invalidated the basis on which candidate B was chosen, leaving TODO #251 holding evidence
+whose methodology had been removed underneath it.  Analysis and documentation only.
+
+### Findings
+- **#246's ordering survives, and is better founded than it was.**  Candidate B (the deployed
+  round followed by χ over short odd rows) carries 2–3× the deployed round's trail weight at
+  every round, on both axes, at `n = 8`, `10` and `11`.
+- **The reason it is better founded is specific and new.**  B's advantage lives in the
+  *transient*, and §11.31.2 established the transient is the width-independent part —
+  confirmed independently by MILP, where `n = 16` and `n = 32` give identical proven optima at
+  `r = 4` and `5`.  So the part of a small-width comparison that carries to `n = 256` is
+  exactly the part where B wins.  #246 compared saturated slopes; this does not.
+- **The mechanism.**  Any linear-then-add-constant round hands over a probability-1 one-round
+  differential — the MSB freebie of §11.28.3 — and that *is* the transient.  χ removes it: B's
+  round-1 weight is 2.00 / 1.81 / 2.00 across the three widths, where the deployed round and
+  candidate A are both 0.00 on **both** axes.
+- **Candidate A is disqualified** and should not be revisited: a correlation-1 linear trail
+  through eight rounds at `n = 8`, and exactly 1.00 bit/round at `n = 10` and `11` — an integer
+  clean enough to indicate a structural per-round approximation.  Caveated as possibly a
+  small-width artefact (A's Feistel halves are 4 bits at `n = 8`).
+- **Still not a bound.**  B saturates by round 3 at reachable widths, so it has no measurement
+  window and its asymptotic slope is as unmeasured as the deployed round's.  #252 and #254 are
+  unchanged.
+
+### Fixed
+- **A reporting bug in this work's own first attempt, recorded because it pointed the wrong
+  way.**  Applying §11.31's window filter verbatim returned an empty window for candidates A
+  and B and the table printed "BELOW criterion".  They were not failing — they were saturating
+  *before* round 4 because they are stronger.  An empty window is a statement about the
+  measurement, and conflating it with a failing cipher penalises exactly the candidates the
+  comparison exists to favour.
+
+### Changed
+- TODO #251's blocker is no longer methodological.  Its evidence base is repaired, but the
+  case for urgency is *weaker* than when it was filed: §11.30 found the deployed round meets
+  the linear criterion at every width measured, and §11.28 found the per-key gap does not sink
+  the differential margin.  What remains is a judgement call — a five-construction MAJOR on
+  well-founded comparative evidence that is still not a bound — which #251 requires be recorded
+  explicitly rather than arrived at by default.  **Not made here.**
+
+### Added
+- `SecurityProofsCode/and_layer_recheck.py`, SecurityProofs-7.md §11.32.  Part 7's range becomes
+  §11.10–§11.13, §11.15–§11.32; the expression count stays 698.
+
 ## [5.0.5] - 2026-08-29
 
 TODO #252, first pass.  The bound is **not** delivered and #252 stays open; what this pass

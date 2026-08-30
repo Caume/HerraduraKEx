@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (this file): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.31** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.32** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 

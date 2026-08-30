@@ -73,6 +73,36 @@ showing the per-key gap does not sink the margin), or by a decision to accept sm
 comparative evidence as sufficient — which is a legitimate call, but must be made explicitly
 and recorded, not arrived at by default.
 
+**Evidence status as of v5.0.6 — the comparison was re-run and B's case is stronger, but the
+case for urgency is weaker.**  See SecurityProofs-7.md §11.32 and
+`SecurityProofsCode/and_layer_recheck.py`.  #252 had invalidated the methodology #246 used
+(slopes read inside the transient), so the comparison was redone.
+
+* **#246's ordering survives and is better founded.**  B carries 2-3x the deployed round's
+  trail weight at every round on both axes, at n = 8, 10 and 11.
+* **The reason it is better founded is specific.**  B's advantage lives in the TRANSIENT, and
+  §11.31.2 established the transient is the width-independent part (confirmed by MILP: n = 16
+  and n = 32 give identical proven optima at r = 4 and 5).  So the part of a small-width
+  comparison that carries to n = 256 is exactly the part where B wins.  #246 compared saturated
+  slopes; this does not.
+* **The mechanism.**  Any linear-then-add-constant round has a probability-1 one-round
+  differential (the MSB freebie, §11.28.3) — that IS the transient.  chi removes it: B's
+  round-1 weight is 2.00 / 1.81 / 2.00 across the three widths where v2 and A are both 0.00.
+* **Candidate A is disqualified** and should not be revisited: correlation-1 linear trail
+  through eight rounds at n = 8, and exactly 1.00 bit/round at n = 10 and 11.
+* **Still not a bound.**  B saturates by round 3 at reachable widths, so it has no measurement
+  window and its asymptotic slope is as unmeasured as the deployed round's.  #252 and #254 are
+  unchanged by this.
+* **Urgency is DOWN.**  #254 found the deployed round meets the linear criterion at every width
+  measured (settled 0.93-0.95 against 2/3) and #253 found the per-key gap does not sink the
+  differential margin.  The thing B was meant to fix looks less broken than when #246 proposed
+  it.
+
+**So the blocker is no longer methodological, it is a decision.**  A five-construction MAJOR on
+comparative evidence that is now well founded but still not a bound, against a deployed
+construction not known to be failing.  That call is the maintainer's and this item still
+requires it be recorded explicitly rather than arrived at by default.
+
 **Reach.**  `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe`, `twk` — the same five as TODO #245.
 One MAJOR, one `MIGRATING.md` section, and the silent-failure warning `fpe`/`twk` need, since
 both are unauthenticated permutations.  Arduino and assembly stay unchanged, as in #242 and
