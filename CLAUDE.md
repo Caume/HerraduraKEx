@@ -90,6 +90,22 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  nl_fscx_v2_fixed_key.py  — the fixed-key trail gap (TODO #253).  #247's
+                             factor of two between a real key and the
+                             key-averaged bound does NOT dissolve with width
+                             (0.50-0.61 at n=7,8,10,11) and is generic, not
+                             tail-driven.  Finds a weak-key class the deployed
+                             nl_v2_key_is_valid misses -- every B with
+                             tz(delta(B)) >= 4 admits a zero-weight trail, at
+                             every width including 256, proven by GF(2)
+                             nullspace rather than extrapolated -- and shows it
+                             costs at most ~3 of 192 rounds on 6% of keys, so
+                             it is documented rather than screened.  Corrects
+                             §11.20.5, which called the affine class a passing
+                             cross-check when it is a proper subset.  Exits
+                             non-zero if a finding stops reproducing.  Ungates
+                             #248.  n=9/n=12 are excluded throughout: M is
+                             singular there
   nl_fscx_v2_round_constants.py — round constants for NL-FSCX v2 (TODO #245).
                              Ships the fix and carries the corrections to #243
                              and #244: every n=12 measurement in §11.25/§11.26
@@ -179,7 +195,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.27: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.28: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

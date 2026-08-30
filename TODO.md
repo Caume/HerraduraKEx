@@ -39,6 +39,22 @@ bound at n = 256).  #252 would be welcome and would tighten the picture, but a t
 *key-averaged* bound would not answer the question this rating actually turns on.  If #251
 ships the AND layer, the analysis must be redone against the round function that ships.
 
+**Ungated by TODO #253 (v5.0.2) — this item is now runnable.**  #253 answered the question
+above and the answer is that the trail margin is *not* the binding constraint.  The
+per-key gap is real and generic (0.50–0.61 of the key-averaged weight at four widths, and
+it survives restriction to typical keys, so no screen addresses it), but halving #247's
+increment still leaves the deployed 192 rounds ahead of 256 bits on any plausible reading
+of the projection.  #253 also found a weak-key class the deployed `nl_v2_key_is_valid`
+misses — every `B` with `tz(delta(B)) >= 4` — and showed it costs at most ~3 of 192 rounds
+on 6% of keys at n = 256, so it does not bear on the rating either.
+
+**What #248 must therefore decide on.**  Not trail weight.  The binding constraint is
+§11.25's structural finding — `nl_fscx_revolve_v2` is one unvaried round iterated with no
+key schedule, and there is still no PRP/SPRP reduction for it at any round count.  #253
+neither rescues the rating nor further damages it.  A promotion needs a *reduction*, not a
+better bound; #248 should say so explicitly rather than re-weighing the bounds a fourth
+time.
+
 **Re-derive, do not inherit.**  Whatever the outcome, A2's three constraints and `twk`'s
 must be re-derived against the then-current construction.  #237 and #238 exist because
 propagated rows go stale.
@@ -155,42 +171,5 @@ cheaper than its own 3-round optimum.  Scaling to 256 is not a matter of patienc
    individual differences, which is how some ARX bounds are made to scale.
 
 Route 2 is the one that would actually settle it; routes 1 and 3 might only push the wall.
-
-Status: **OPEN**
-
-### #253: fixed-key trail analysis — the gap #247 found is the dominant uncertainty
-
-TODO #247(b) measured what TODO #214 had flagged qualitatively, and it is larger than the
-thing everyone has been caveating.
-
-**The finding.**  Optimal 5-round trail weight at n = 11 ranges from **0.70 to 7.71 across
-six keys, on a mean of 4.73** — a spread wider than the mean.  And the key-averaged model
-systematically overstates: real keys sit at roughly **half** the averaged trail weight
-(per-key DP 0.41 / 1.88 / 3.40 at r = 2/3/4, n = 10, against a key-averaged 1.80 / 3.43 /
-5.82).  Halving #247's proven 3.0 bits/round puts the per-key round requirement above 170 and
-makes the deployed 192 **marginal rather than comfortable**.
-
-**Why it bites here specifically.**  NL-FSCX has no key schedule: the same `B` is the XOR mask
-in every round, so per-round deviations correlate instead of averaging out.  A key-averaged
-bound is the right currency for comparing designs — it is what ARX practice reports and what
-#214 correctly produced — but it is not a per-key security claim, and for this construction
-the two differ by more than a caveat's worth.
-
-**What to establish.**
-* Whether the ~2× gap persists at larger widths, or is a small-width artefact.  This is the
-  first question and it may dissolve the item.
-* The shape of the weak tail: is there an identifiable class, as with the QC-MDPC weak keys
-  TODO #235 screened, or is it a smooth distribution with no screenable structure?
-* If there is a class: whether a keygen screen is possible.  Note `nl_v2_key_is_valid` covers
-  only the degenerate affine class and says nothing about trail behaviour.
-* If there is not: whether the honest figure for `SECURITY.md` is the weak-tail value rather
-  than the mean.
-
-**Why it is filed separately from #248.**  #248 is the rating decision; this is the evidence
-it needs.  #248's own text currently assumes the open question is width extrapolation, which
-#247 showed it is not — that text is amended to point here.
-
-**Blocks** #248, and informs #251: if the per-key gap is real at scale, it is an argument for
-the AND layer rather than against it, since candidate B's margin is far wider.
 
 Status: **OPEN**

@@ -87,7 +87,16 @@ public final class HerraduraNl {
     }
 
     /** Rejects NL-FSCX v2 keys for which delta(B) collapses the permutation to
-     * affine (delta in {0, 2^(n-1)}) — TODO #159/#168. */
+     * affine (delta in {0, 2^(n-1)}) — TODO #159/#168.
+     *
+     * <p>SCOPE (TODO #253): the affine class only, NOT the full set of
+     * differentially weak keys.  Keys admitting a zero-weight differential
+     * trail are a strictly larger family — every B with tz(delta(B)) &gt;= 4,
+     * at every width including n=256 — and this check accepts all of it
+     * except the two endpoints.  Deliberate: at n=256 such a key forfeits
+     * about tz/2 of 192 rounds with probability ~2^-tz, so a random key loses
+     * at most 3 rounds with probability 1/16.  See SecurityProofs-7.md
+     * §11.28.3-§11.28.4. */
     public static boolean nlV2KeyIsValid(BigInteger b) {
         BigInteger d = delta(b);
         return !d.equals(BigInteger.ZERO) && !d.equals(BigInteger.ONE.shiftLeft(N - 1));

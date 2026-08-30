@@ -13325,3 +13325,42 @@ extrapolation everyone has been caveating.  That reframes what #248 has to resol
 suffices.
 
 Status: **DONE v5.0.1 (analysis)** — (a), (b), (c) and the MILP backend complete; the two-sided bound at n=256 is split out as TODO #252, unreachable with CBC. (a) The trail slope is width-stable at 1.40-1.70 bits/round across every exactly-reachable width, bracketing #214's independently measured 1.87 — a SUPPORTIVE result. A 2-key run had suggested the slope collapsing at n=13; it did not reproduce at 6 keys and is recorded as a near-miss. (b) The per-key spread is wider than the mean: optimal 5-round trail weight at n=11 runs 0.70 to 7.71 on a mean of 4.73, and nothing screens for the weak end. (c) Exact linear cryptanalysis, an axis neither #214 nor #246 had touched: the deployed round reaches 0.16 bits over three rounds (correlation ~0.90, near-deterministic) against 2.00 for candidate A and 3.48 for B — so #246's recommendation is not an artefact of measuring only differentials. (d) `pulp`/CBC added as an OPTIONAL analysis-only dependency with verified degrade-to-skip, documented in CLAUDE.md's new Third-party dependencies table; proven optima 2.0/4.0/7.0 at r=2/3/4 are IDENTICAL at n=16, 32 and 64. A locality claim made along the way was WITHDRAWN: the optimal trail at n=64 spans all 64 positions, so width-independence here is empirical, not structural. **The headline for whatever comes next:** the dominant uncertainty is the key-averaged/per-key gap, not the width extrapolation that #214, #243, #244 and #246 all caveated. Real keys sit at roughly half the averaged trail weight, which would put the per-key round requirement above 170 and make the deployed 192 marginal.
+
+### #253: fixed-key trail analysis — the gap #247 found is the dominant uncertainty
+
+TODO #247(b) measured what TODO #214 had flagged qualitatively, and it is larger than the
+thing everyone has been caveating.
+
+**The finding.**  Optimal 5-round trail weight at n = 11 ranges from **0.70 to 7.71 across
+six keys, on a mean of 4.73** — a spread wider than the mean.  And the key-averaged model
+systematically overstates: real keys sit at roughly **half** the averaged trail weight
+(per-key DP 0.41 / 1.88 / 3.40 at r = 2/3/4, n = 10, against a key-averaged 1.80 / 3.43 /
+5.82).  Halving #247's proven 3.0 bits/round puts the per-key round requirement above 170 and
+makes the deployed 192 **marginal rather than comfortable**.
+
+**Why it bites here specifically.**  NL-FSCX has no key schedule: the same `B` is the XOR mask
+in every round, so per-round deviations correlate instead of averaging out.  A key-averaged
+bound is the right currency for comparing designs — it is what ARX practice reports and what
+#214 correctly produced — but it is not a per-key security claim, and for this construction
+the two differ by more than a caveat's worth.
+
+**What to establish.**
+* Whether the ~2× gap persists at larger widths, or is a small-width artefact.  This is the
+  first question and it may dissolve the item.
+* The shape of the weak tail: is there an identifiable class, as with the QC-MDPC weak keys
+  TODO #235 screened, or is it a smooth distribution with no screenable structure?
+* If there is a class: whether a keygen screen is possible.  Note `nl_v2_key_is_valid` covers
+  only the degenerate affine class and says nothing about trail behaviour.
+* If there is not: whether the honest figure for `SECURITY.md` is the weak-tail value rather
+  than the mean.
+
+**Why it is filed separately from #248.**  #248 is the rating decision; this is the evidence
+it needs.  #248's own text currently assumes the open question is width extrapolation, which
+#247 showed it is not — that text is amended to point here.
+
+**Blocks** #248, and informs #251: if the per-key gap is real at scale, it is an argument for
+the AND layer rather than against it, since candidate B's margin is far wider.
+
+Status: **DONE v5.0.2 (analysis)** — the gap persists and is generic (0.50–0.61 at four
+widths, surviving restriction to typical keys); a previously unrecorded weak-key class
+found and proven harmless at n = 256; §11.20.5's conflation corrected; #248 ungated.

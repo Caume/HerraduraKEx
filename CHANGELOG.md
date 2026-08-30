@@ -2,6 +2,66 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.2] - 2026-08-29
+
+TODO #253 — the fixed-key trail gap TODO #247 found, resolved.  Analysis and
+documentation only: no primitive, wire format, CLI surface or `--algo` value changes.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_fixed_key.py` — answers all four of TODO #253's
+  questions.  Exits non-zero if a headline finding stops reproducing, so it cannot
+  print a stale verdict.
+- SecurityProofs-7.md §11.28; Part 7's advertised range becomes §11.10–§11.13,
+  §11.15–§11.28 (698 math expressions) in every copy of the index.  Part 7 is now
+  close to `validate_katex.js`'s ~700-expression warning threshold; the next section
+  added there will likely need a split.
+
+### Findings
+- **The per-key/key-averaged gap does not dissolve, and it is generic.**  #253's first
+  question was whether #247's factor of two was a small-width artefact.  It is not:
+  the ratio is 0.50–0.61 at n = 7, 8, 10 and 11 with no shrinking trend, and it
+  survives restriction to keys with `tz(delta) <= 1` — about three quarters of the key
+  space.  No screen addresses it, because there is nothing to screen out.  Every trail
+  figure this repository publishes for the v2 family overstates an actual key's
+  resistance by about a factor of two in weight.
+- **A weak-key class the deployed check misses.**  The probability-1 differences of
+  `+delta` are exactly `span{e_0..e_(k-1), e_(n-1)}` for `k = tz(delta)`, so a
+  zero-weight r-round trail exists iff a nonzero difference stays in that subspace
+  under r applications of `M` — a nullspace, computed exactly rather than sampled.  The
+  smallest `tz(delta)` admitting a zero-weight 3-round trail is **4 at every width
+  tested, n = 256 included**.  `nl_v2_key_is_valid` rejects only the two endpoints of
+  this family.
+- **It is quantitatively harmless at n = 256, and is not being screened for.**  Free
+  rounds grow like `tz/2` while `Pr[tz >= k]` falls like `2^-k`, so buying g free rounds
+  costs about `2^-2g` of the key space; a random key loses at most 3 of 192 rounds with
+  probability 1/16.  A screen is one line but would change the key distribution across
+  four language ports for a 2-round effect on 0.4% of keys.  Documented instead.
+- **The reduction that made the above exact.**  On differences the round's XOR terms
+  cancel and `M` is linear, so per-key differential behaviour depends on the key only
+  through `delta(B)`.  Two keys with the same `delta` have identical trail weights at
+  every round count.
+
+### Fixed
+- **SecurityProofs-7.md §11.20.5 concluded too much.**  It read "`nl_v2_key_is_valid`
+  already rejects them, so this is a cross-check that passes rather than a new finding."
+  The affine keys are a *proper subset* of the zero-weight-trail keys; everything with
+  `4 <= tz(delta) < n-1` is accepted.  §11.19.2 itself is correct — it characterises the
+  affine class exactly and claims nothing more — but the two properties were conflated
+  one section later.  Corrected in place, with the scope now stated in
+  `nl_v2_key_is_valid`'s docstring in all four language ports (C, Go, Python, Java).
+
+### Changed
+- TODO #248 is **ungated**: #253 was its blocker.  Its text now records that the trail
+  margin is not the binding constraint and never was, so #248 must decide on §11.25's
+  structural finding — one unvaried round, no key schedule, no PRP/SPRP reduction —
+  rather than re-weighing bounds a fourth time.
+
+### Note on method
+- `n = 9` and `n = 12` are excluded from every measurement: `M` is singular there, so
+  the round is not a bijection.  An earlier pass of this work ran at `n = 9` before the
+  `m_is_singular` assertion caught it, and those numbers were discarded — the same trap
+  TODO #245 recorded after it voided §11.25's and §11.26's `n = 12` measurements.
+
 ## [5.0.1] - 2026-08-29
 
 Documentation and analysis only. No code, no wire-format change.

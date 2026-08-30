@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.27** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.28** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1230,8 +1230,15 @@ The carry-degenerate key class of §11.19.2 appears in the trail model exactly a
 predicted: for keys with `delta(B)` in `{0, 2^(n-1)}` the addition cannot generate a
 crossing carry, every differential becomes deterministic, and the round contributes
 zero weight.  All sampled affine-class keys at `n = 8` and `n = 16` are
-difference-transparent.  `nl_v2_key_is_valid` already rejects them, so this is a
-cross-check that passes rather than a new finding.
+difference-transparent.  `nl_v2_key_is_valid` already rejects them.
+
+> **Corrected in v5.0.2 (TODO #253).**  This paragraph originally concluded "so this is
+> a cross-check that passes rather than a new finding."  That conclusion does not
+> follow.  The affine keys are a *proper subset* of the keys admitting a zero-weight
+> trail: the full class is `tz(delta(B)) >= 4`, at every width including `n = 256`, and
+> everything strictly between the two endpoints `nl_v2_key_is_valid` rejects is
+> accepted by it.  See §11.28.3.  The class is quantitatively harmless at the deployed
+> width (§11.28.4), but it was not a passing cross-check.
 
 What this section does **not** establish:
 
@@ -1881,3 +1888,56 @@ The Arduino and assembly ports were left unchanged, as in TODO #242: their `v2` 
 **§11.27.4 What this does not do.**  It does not re-rate anything.  HSKE-NL-A2 and `twk` remain demo-only, and TODO #245 was written to forbid granting itself a promotion for work it also performed — the failure mode #237, #238, #243 and #244 have all been about.
 
 The structural objections are answered, which means the trail bounds become the binding constraint again.  Those bounds are still #214's key-averaged, explicitly order-of-magnitude ones, and there is still no PRP or SPRP reduction for `nl_fscx_revolve_v2` at any round count.  **Removing an objection is not supplying a proof.**  Whether the ratings should now move is a separate question, for a separate item, on evidence gathered after this one has landed.
+
+---
+
+### 11.28 The fixed-key trail gap, and a weak-key class the deployed check misses (TODO #253)
+
+TODO #247 measured, at two widths, that the optimal trail weight of a **fixed** key sits at roughly half the key-averaged figure every bound in this repository quotes.  TODO #253 was filed because that is a larger uncertainty than the width extrapolation §11.20.5 caveats, and because TODO #248's rating decision cannot be made without resolving it.  Reproduce with `SecurityProofsCode/nl_fscx_v2_fixed_key.py`.
+
+**§11.28.1 The reduction.**  The deployed round is $\pi_B(A) = M(A \oplus i \oplus B) + \delta(B) \bmod 2^n$.  On differences both XOR terms cancel and $M$ is linear, so every key-dependent part of the differential behaviour enters through the additive constant alone:
+
+$$\mathrm{DDT}(\pi_B) = \mathrm{DDT}(+\delta(B)) \text{ reindexed by } \alpha \mapsto M(\alpha)$$
+
+Two keys with the same $\delta$ therefore have *identical* trail weights at every round count.  "Which keys are weak" is a question about the image of $\delta$, not about a $2^n$-element key space — which is what makes §11.28.3 exactly computable at the deployed width instead of extrapolated to it.
+
+**§11.28.2 The gap persists, and it is generic.**  Exact optimal 5-round trail weight per key against the key-averaged optimum over the same key set, at every width where $M$ is invertible and the DDT is enumerable ($n = 9$ and $n = 12$ are excluded — $M$ is singular there, the trap TODO #245 recorded):
+
+| $n$ | keys | min | median | mean | max | key-averaged | mean/avg |
+|---|---|---|---|---|---|---|---|
+| 7 | 40 | 1.00 | 5.07 | 3.81 | 6.09 | 7.68 | **0.50** |
+| 8 | 40 | 1.00 | 4.79 | 4.39 | 7.14 | 7.44 | **0.59** |
+| 10 | 40 | 1.00 | 5.25 | 5.04 | 8.22 | 9.47 | **0.53** |
+| 11 | 30 | 0.70 | 6.09 | 5.43 | 8.72 | 9.57 | **0.57** |
+
+The ratio does not shrink with width, so #253's first question — "is this a small-width artefact that dissolves the item?" — is answered **no**.  Restricting to keys with $\mathrm{tz}(\delta) \le 1$, about three quarters of the key space and by §11.28.3 the part with no structural weakness at all, gives 0.51–0.61: the gap is **generic, not tail-driven**.  No screen addresses it, because there is nothing to screen out.
+
+*Recorded as a non-finding:* those ratios drift mildly upward with $n$, which if real would mean the gap narrows at the deployed width.  Four points with this much per-key spread do not establish a trend, and §11.26 already records one near-miss of exactly this shape.  Nothing below leans on it.
+
+**§11.28.3 A weak-key class, exactly characterised.**  Addition of a constant $d$ with $k$ trailing zeros leaves the low $k$ bits untouched and cannot carry out of position $k-1$; the top bit is free for any constant because the final carry is discarded mod $2^n$.  So the probability-1 differences of $+d$ are exactly the subspace
+
+$$V_k = \mathrm{span}\lbrace e_0, \ldots, e_{k-1}, e_{n-1} \rbrace$$
+
+and a zero-weight $r$-round trail exists iff some nonzero $\gamma$ has $M^j \gamma \in V_k$ for all $j < r$.  That is a nullspace, computed exactly by GF(2) linear algebra and cross-checked against brute-force enumeration at $n = 8$ (counts 0/0/0/1/3/31/255 at $k = 1..7$, agreeing exactly) before being trusted at $n = 256$.
+
+The smallest $\mathrm{tz}(\delta)$ admitting a zero-weight 3-round trail is **4 at every width tested** — $n = 7, 8, 10, 11, 16, 32, 64, 128, 256$.  This class is invisible to `nl_v2_key_is_valid`, which rejects only $\delta \in \lbrace 0, 2^{n-1} \rbrace$: in this language the two *endpoints* of the family.
+
+**§11.28.4 What it costs at $n = 256$, and why not to screen.**
+
+| $\mathrm{tz}(\delta)$ | 0 | 2 | 4 | 6 | 8 | 12 | 16 | 24 | 40 |
+|---|---|---|---|---|---|---|---|---|---|
+| free (zero-weight) rounds | 1 | 2 | 3 | 4 | 5 | 7 | 9 | 13 | 21 |
+| of 192 remaining | 191 | 190 | 189 | 188 | 187 | 185 | 183 | 179 | 171 |
+| $\Pr[\mathrm{tz} \geq k]$ | 1.0 | 0.25 | 0.062 | 0.016 | 0.0038 | 0.0002 | \<1e-4 | \<1e-4 | \<1e-4 |
+
+Free rounds grow like $k/2$ while the probability falls like $2^{-k}$, so buying $g$ free rounds costs about $2^{-2g}$ of the key space; losing all 192 requires $\mathrm{tz} = 254$, one key in $2^{254}$.  A random key loses at most 3 of 192 rounds with probability $1/16$ and at most 5 with probability $1/256$.
+
+**The recommendation is to document the class, not screen for it.**  A screen is one line (`tz(δ(B)) < 8`), but it changes the key distribution and would need matching changes in four language ports, a KAT refresh and a `MIGRATING.md` entry, to remove a 2-round effect on 0.4% of keys.
+
+**§11.28.5 A correction to §11.20.5.**  That section reads: "the carry-degenerate key class of §11.19.2 appears in the trail model exactly as predicted … `nl_v2_key_is_valid` already rejects them, so this is a cross-check that passes rather than a new finding."  The first half is true and **the conclusion does not follow**.  The affine keys are a proper subset of the zero-weight-trail keys, and the complement — everything with $4 \leq \mathrm{tz}(\delta) < n-1$ — is accepted by the deployed check.  §11.19.2 itself is correct as written: it characterises the *affine* class exactly and claims nothing more.  The two properties were conflated one section later, and `nl_v2_key_is_valid`'s docstring inherited the conflation by calling its class "the" degenerate one.  Both are corrected in v5.0.2.
+
+**§11.28.6 What this means for the deployed 192 rounds.**  #247's proven key-averaged increment of 3.0 bits/round becomes about 1.5 bits/round per key, which over 192 rounds would be roughly 290 bits.  That multiplication **inherits TODO #252's open extrapolation in full**: the 3.0 is proven only to $n = 64$ and only to $r = 4$, and per-round increments in ARX-like constructions typically fall as rounds accumulate, so 290 is an optimistic reading of an unproven projection and not a bound.  What is solid is the *ratio*: whatever the key-averaged figure turns out to be, the per-key one is about half of it.
+
+The honest reporting figure is therefore neither of the two TODO #253 proposed.  It is the **per-key median** with the spread stated alongside — not the mean, and not the weak-tail value, which would report a $2^{-254}$ event as the typical case.
+
+**§11.28.7 What this does not do.**  It does not re-rate anything; that remains TODO #248.  It does say that #248's binding constraint is not the trail margin at any plausible reading of the projection, and never was — it remains §11.25's structural finding, that `nl_fscx_revolve_v2` is one unvaried round iterated with no key schedule.  TODO #244's downgrade of HSKE-NL-A2 rested on the STPRP argument, not on trail weight, and nothing here disturbs it.
