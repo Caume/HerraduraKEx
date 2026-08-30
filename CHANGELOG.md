@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.9] - 2026-08-30
+
+### TODO #255 (partial) — NL-FSCX v3's round count, derived
+
+Closes the gate #255 placed on every other step of that item: `R3_VALUE = 5n/8 = 160`
+rounds at `n = 256`.  Analysis in `SecurityProofsCode/nl_fscx_v3_round_count.py` and
+SecurityProofs-7.md §11.33; cost measured by the new `benchmarks/v3_round_cost.c`.
+The implementation itself remains open.
+
+### Added
+
+- `SecurityProofsCode/nl_fscx_v3_round_count.py` — derives v3's round count.  Exits
+  non-zero if a finding stops reproducing.
+- `benchmarks/v3_round_cost.c` — v2 vs v3 per-round cost, both in the same 4x64-bit limb
+  representation with `delta(B)` precomputed, so only chi is measured.  Its fast chi (two
+  shift-and-mask row rotations over the 47x5 + 3x7 partition) is validated bit-exactly
+  against a per-row reference before timing.
+- SecurityProofs-7.md §11.33 (§11.33.1–§11.33.7); part index now §11.10–§11.13,
+  §11.15–§11.33.  The expression count stays 698.
+
+### Findings
+
+- **A floor theorem — the NL-FSCX family's first per-round trail bound on either axis.**
+  chi gives the v3 round an unconditional floor of 2 bits differential and 1 bit linear per
+  round, at every odd row length, with no assumption on the key, the constants or `n`: the
+  difference entering chi is never zero, so at least one row is always active.  v2 provably
+  has no such floor — its round is linear-then-add-constant, which hands every key a
+  probability-1 one-round differential.  §11.30.1's criteria are therefore met by v3 at
+  `r >= n/2 = 128` outright, without appeal to #252 or #254.
+- **Minimum row length 5 is a hard constraint, and oddness alone is not sufficient.**  A
+  3-bit row holding the LSB gives a correlation-1 one-round linear approximation — a complete
+  break at any round count — to exactly the keys whose `delta(B)` is odd, 112 of 256 at
+  `n = 8`, verified exhaustively; a 3-row placed elsewhere still costs 12/256.  The deployed
+  47x5 + 3x7 partition satisfies the constraint and is unaffected.
+- **Correction to §11.32 and to TODO #246 before it.**  `odd_partition(8)` returns `(3,5)`,
+  so the `n = 8` column of §11.32's candidate-B measurements described that broken variant
+  rather than the proposed design, with roughly half its keys drawn from the weak class.
+  Those figures are now marked void; the `n = 10` `(5,5)` and `n = 11` `(11,)` columns are
+  sound and #246's ordering is undisturbed.  `odd_partition` carries a warning.
+- **Correction to #255's own cost figure.**  Its "+57% per round" is a misreading of #246 §5,
+  where that is the cost of *masking* chi; no masked v2 exists in the suite.  Measured
+  unmasked, the v3 round is 2.12–2.17x the v2 round, so v3 @160 rounds is ~1.77x v2 @192 per
+  block.  #255's hope of a cost-neutral v3 does not survive measurement; the trade is the
+  first proven trail bound in the family for roughly 1.8x the work.
+
+### Changed
+
+- TODO #255 records the derived round count, the minimum-row-5 constraint and the corrected
+  cost figure, and is unblocked; it stays `OPEN` for the implementation.
+
 ## [5.0.8] - 2026-08-30
 
 TODO #249 — the constant-time audit scope.  All three of its bullets were already closed;

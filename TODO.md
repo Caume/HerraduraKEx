@@ -190,13 +190,36 @@ out badly can be deprecated without stranding anyone.  And it decouples the desi
 degree ≤ 4, bit-parallel; inside the regime Keccak's own analysis covers.  This is candidate B
 exactly as #246 specified and §11.32 re-validated; **no redesign is in scope here.**
 
-**Round count must be DERIVED, not inherited — and it may go down.**  χ changes the per-round
-weight, so `R_VALUE = 3n/4` carries no justification for v3.  Use §11.30.1's scale-invariant
-criteria: safety needs `s_lin · r >= n/2` and `s_diff · r >= n`.  §11.32 measures v3's
-round-1/early weights at roughly 2-3× v2's, so the honest expectation is that v3 needs
-materially fewer than 192 rounds — possibly enough to offset the +57% per-round cost outright,
-making v3 no slower than v2 and stronger.  **Determine this before choosing constants**; do not
-assume either direction, and state the margin chosen.
+**MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT (§11.33.4), and the implementation must assert
+it.**  Oddness alone is *not* sufficient and 3 is odd.  A 3-bit row holding the LSB gives a
+correlation-1 one-round linear approximation to exactly the keys with `delta(B)` odd — 112 of
+256 at `n = 8`, verified exhaustively — which is a complete break at any round count; a 3-row
+elsewhere still costs 12/256.  `47×5 + 3×7` satisfies the constraint and also puts a 5-row at
+the LSB, so the specified partition is unaffected.  Consequence for the analysis scripts: the
+`odd_partition(n)` helper returns `(3,5)` at `n = 8`, so **§11.32's `n = 8` column for
+candidate B measured a broken variant** and is void; `n = 10` `(5,5)` and `n = 11` `(11,)` are
+sound and #246's ordering is undisturbed.
+
+**Round count: DERIVED — `R3_VALUE = 5n/8 = 160`.**  Done in v5.0.9; see §11.33 and
+`SecurityProofsCode/nl_fscx_v3_round_count.py`.  **This gate is lifted** and the rest of the
+item may proceed.  The derivation did not go the way this entry assumed, in three ways:
+
+* **It rests on a proof, not a measurement.**  χ gives v3 an unconditional per-round trail
+  floor — 2 bits differential, 1 bit linear — at every odd row length, because the difference
+  entering χ is never zero and one active row always costs that much (§11.33.2).  This is the
+  family's *first* per-round trail bound of any kind.  v2 provably has none: its round is
+  linear-then-add-constant, which hands every key a probability-1 one-round differential.  So
+  §11.30.1's criteria are met at `r >= n/2 = 128` outright, with no appeal to #252 or #254.
+* **The margin chosen is 1.25×**, giving `5n/8 = 160`.  It covers within-round *linear*
+  clustering, which is real (worst single round `0.193` against the floor of `1.00`) but is not
+  chainable — the multi-round window contradicts it directly, so the alternative of pricing it
+  in as a slope (`r >= 664`) is far too pessimistic.  #254 is the item that would tighten this
+  or force it wider.  `5n/8` needs `n` divisible by 8, slightly stronger than v2's `3n/4`.
+* **The cost hope does not survive measurement.**  The "+57%" below is a misreading of #246 §5,
+  where it is the cost of *masking* χ; there is no masked v2 in the suite, so it was never the
+  cost of the shipped path.  Measured unmasked (`benchmarks/v3_round_cost.c`), the v3 round is
+  **2.12–2.17×** the v2 round, so v3 @160 is **~1.77×** v2 @192 per block.  The trade is:
+  the family's first proven trail bound, on both axes, for roughly 1.8× the work.
 
 **Weak-key classes need re-deriving, and two may simply vanish.**  Both known v2 classes are
 artefacts of the round being linear-then-add-constant, which v3 is not:
@@ -204,11 +227,15 @@ artefacts of the round being linear-then-add-constant, which v3 is not:
 * the affine class `delta(B) ∈ {0, 2^(n-1)}` (§11.19.2) — v2 degenerates to affine there, but
   χ is non-linear, so v3 plausibly does not.  If so, v3 needs no `nl_v3_key_is_valid` at all.
 * the zero-weight-trail class `tz(delta(B)) >= 4` (§11.28.3) — this is the MSB freebie, and
-  §11.32.3 measured v3's round-1 weight at 1.81-2.00 where v2's is 0.00, so it is already
-  known to be gone.
+  §11.33.2's floor theorem settles it: v3 has no zero-weight round at all, for any key.  (Do
+  not cite §11.32.3's 1.81-2.00 round-1 figures for this — its `n = 8` column is void, see
+  above.)
 
 Verify both rather than assuming; a *new* weak class specific to χ is also possible and must
-be looked for.
+be looked for.  **One has already been found and closed by construction** — the `delta(B)`-odd
+class of §11.33.4 — but it exists only for partitions violating the minimum-row-5 constraint,
+so the fix is the constraint, not a key check.  At `(5,5)` no correlation-1 key appeared in
+150 samples.  That is evidence, not proof, and the search at full width is still owed.
 
 **Scope — what gets a v3 consumer.**  The same five v2 consumers, each as a new variant with
 the v2 one left in place:
@@ -249,10 +276,14 @@ on separate evidence.
   coverage-guard step fails.  `test_cross_lang_matrix.sh` extended to the v3 family.
 * Tests in all four harnesses; the `[FAIL]`-scanning gate picks them up with no registration.
 * `docs/TUTORIAL.md`, `llms.txt`'s CLI section, and this file's CLI/test sections (TODO #145).
-* A benchmark against v2 at the derived round count, since the cost question is live.
+* A benchmark against v2 at the derived round count.  A microbenchmark of the round itself
+  already exists (`benchmarks/v3_round_cost.c`, v5.0.9) and settles the per-round ratio at
+  2.12–2.17×; what is still owed is an end-to-end figure for the five consumers.
 
 **Version.**  MINOR — new `--algo` values and new public API, no existing surface changed.
 
-**Do not start** until the round count is derived; every other step depends on it.
+**Round count derived (v5.0.9) — the item is unblocked.**  Next step is the four-language
+`nl_fscx_v3` / `nl_fscx_revolve_v3` implementation at `R3_VALUE = 5n/8`, with the
+minimum-row-5 assertion, followed by the five consumers.
 
 Status: **OPEN**

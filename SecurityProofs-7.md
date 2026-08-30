@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.32** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -2165,6 +2165,8 @@ No rating moves.  §11.29.6's verdict stands.
 
 §11.31.2 established that trail slopes read at `r = 2`–`5` sit inside the transient, which invalidated the methodology TODO #246 used to choose candidate B — and left TODO #251 holding evidence whose basis had been removed underneath it.  This is the re-run.  **#246's ordering survives, and comes out better founded than it was.**  Reproduce with `SecurityProofsCode/and_layer_recheck.py`.
 
+> **Correction (§11.33.4).**  The `n = 8` figures for candidate B below were measured on a **degenerate partition**.  `odd_partition(8)` returns `(3,5)`, and a 3-bit row holding the LSB gives roughly half of all keys a correlation-1 one-round linear approximation — so that column describes a broken variant rather than the proposed design, which requires a minimum row length of 5.  The `n = 10` `(5,5)` and `n = 11` `(11,)` columns are sound and carry the conclusions below; **the `n = 8` figures for B should be read as void.**
+
 **§11.32.1 A reporting bug, recorded because it pointed the wrong way.**  The first attempt applied §11.31's window filter verbatim — increments from round 4 onward, below the ceiling — and printed "BELOW criterion" whenever the filter came back empty.  For candidates A and B it came back empty at every width, and both were duly reported as failing.  They were not: they were saturating *before* round 4 **because they are stronger**.  A construction gaining three bits a round crosses `0.6n` while one gaining half a bit is still warming up.  An empty window is a statement about the measurement, and conflating it with a failing cipher penalises exactly the candidates the comparison exists to favour.
 
 **§11.32.2 The corrected comparison.**  Cumulative differential trail weight, averaged over keys, with each construction's ceiling crossing:
@@ -2209,3 +2211,84 @@ Two caveats before this reads as harsher than intended: A is a Feistel whose hal
 - **The case for urgency is weaker than when #251 was filed.**  §11.30 found the deployed round meets the linear criterion at every width measured (settled 0.93–0.95 against 2/3), and §11.28 found the per-key gap does not sink the differential margin.  The thing candidate B was meant to fix looks less broken than it did when #246 proposed it.
 
 So the decision remains a judgement call — a five-construction MAJOR, on comparative evidence that is now well founded but still not a bound, against a deployed construction not known to be failing.  What this section removes is the reason to *defer* it: the evidence base is no longer methodologically broken.
+
+---
+
+### 11.33 TODO #255: deriving NL-FSCX v3's round count
+
+TODO #251 declined to migrate the v2 family to candidate B; TODO #255 instead ships it as a new primitive, **NL-FSCX v3**, alongside v2.  #255 gates every step of that work behind one question — how many rounds? — because `R_VALUE = 3n/4` is v2's number and carries no justification for a different round function.  This section derives it.  Reproduce with `SecurityProofsCode/nl_fscx_v3_round_count.py`; the cost figures come from `benchmarks/v3_round_cost.c`.
+
+The derivation rests on something v2 does not have, and yields the family's first per-round trail bound on either axis.
+
+**§11.33.1 The criterion, with the round count free.**  §11.30.1 fixed the trail criterion for an `n`-bit block cipher run for `r` rounds: writing `s` for the per-round trail weight, a differential distinguisher dies once `s_diff · r >= n` and a linear one once `s_lin · r >= n/2`.  For v2 the round count is *not* free — `3n/4` is tied to the block size — so the width cancels and the criterion collapses to two pure numbers, `s_diff >= 4/3` and `s_lin >= 2/3`, neither of which has been established (§11.30, §11.31; #252 and #254 both open).
+
+For v3 the round count *is* free.  The criterion therefore does not collapse, and at `n = 256` reads `r >= 256/s_diff` and `r >= 128/s_lin`.  **Note the direction.**  #252 and #254 are stuck trying to show v2's slopes are large *enough*; here any provable *lower bound* on the slope immediately yields a sufficient round count.  That is a strictly easier problem.
+
+**§11.33.2 The floor theorem.**  *Let the v3 round be* `chi_rows ∘ (+delta) ∘ M ∘ (xor B, xor C_i)` *on `n` bits, with `M` invertible and the rows an arbitrary partition of `n` into **odd** parts.  Then in the layer-wise trail model every `r`-round differential trail has weight at least `2r`, and every `r`-round linear trail at least `r`.*  Unconditional — no assumption on the key, the constants, the row lengths, or `n`.
+
+*Proof.*  (a) The difference entering χ is never zero: XOR by a constant preserves a difference, `M` is invertible, and `x -> x + delta` is injective, so a nonzero difference cannot be absorbed by the addition.  Dually for masks, since a linear trail has every mask nonzero by definition and `M^T` is invertible.  (b) Hence at least one row is active every round.  (c) One active row costs at least 2 bits differentially and 1 bit linearly, and this is *uniform in the row length* — measured exhaustively, χ over a row of length 3, 5, 7, 9 or 11 gives exactly `2.0000` and `1.0000` in every case.  Inactive rows contribute a factor 1 and cost nothing.  Summing over `r` rounds gives `2r` and `r`. ∎
+
+**§11.33.3 Why v2 has no floor, as a theorem in the opposite direction.**  The result needs a non-linear layer in which *every* nonzero difference costs something.  v2's round is linear-then-add-constant, and such a round has a probability-1 one-round differential for every key: the MSB difference passes the addition untouched because the carry it generates falls off the top and is discarded (§11.28.3).  v2's per-round differential floor is therefore exactly 0, and no round count repairs it.  Measured at the three widths where `M` is invertible and an exhaustive DDT is reachable, the deployed round's worst-case one-round weight is `0.00` on both axes at `n = 8`, `10` and `11` — exactly as the argument predicts.
+
+**§11.33.4 The 3-row disqualification.**  §11.33.2 bounds a *trail* — a fixed intermediate difference before χ each round.  What actually composes across rounds is the round's own DDT entry, which **sums over** those intermediates, so within-round clustering can beat the trail bound.  It is not a small effect: at `n = 8` with rows `(3,5)` and key 218, the differential `0xb7 -> 0x003` holds with probability `1/2` — weight `1.00` against a floor of `2.00` — clustering over two intermediates each individually capped at χ's `1/4`.
+
+Checking the floor against the composite round turns up a design constraint that had not been recorded.  It is a **weak-key** property, not a universal one, which is why a small key sample misses it: exhaustively over all 256 keys at `n = 8`, counting keys for which the round has a *correlation-1* linear approximation — weight `0.00`, a complete break at any round count:
+
+| rows (low row first) | correlation-1 keys | of those, `delta(B)` odd |
+|---|---|---|
+| (3, 5) | **112 / 256** | 112 / 112 |
+| (5, 3) | 12 / 256 | 0 / 12 |
+
+With the 3-row **at the bottom** the weak set is *exactly* the keys whose `delta(B)` is odd — all 112 of them, and no others — and the approximation always lies on the same bit, the top bit of the 3-row.  The mechanism is visible in that: bit 0 of a sum has no carry-in, so the low bit entering χ is affine in the input, and a row of three has too little room to destroy the resulting correlation.  With the 3-row **at the top** the `delta`-odd class vanishes entirely, leaving a residue of 12/256.  So there are two effects and they separate cleanly: **a 3-row anywhere is bad, and a 3-row holding the LSB is catastrophic.**
+
+At `n = 10`, where a partition with no 3-row exists, the same comparison over a 12-key sample:
+
+| `n` | rows | 3-row? | diff min | diff `<= 1` | lin min | correlation-1 |
+|---|---|---|---|---|---|---|
+| 10 | (3, 7) | **yes** | 1.000 | 7/12 | 0.000 | 7/12 |
+| 10 | (5, 5) | no | 1.678 | 0/12 | 0.193 | 0/12 |
+
+The 3-row partition puts about half its keys at half the differential floor and gives about half of them a correlation-1 linear approximation; the all-rows-5 partition does neither for any key sampled, and a separate 150-key run at `(5,5)` finds no correlation-1 key and a stable minimum of `0.193` with median `0.678`.
+
+*Isolated*, χ over a 3-row measures the same `2/1` as any other odd length (§11.33.2).  It fails only in composition — which is exactly why an S-box-level check misses it.
+
+Two consequences follow.
+
+- **A constraint on v3.**  The partition must have **minimum row length 5**, and the implementation must assert it.  The specified `256 = 47×5 + 3×7` satisfies it, and also puts a 5-row at the LSB — but the stated reason for that partition had been only that every row be *odd* (bijectivity) and *short* (degree).  Oddness is not sufficient, and 3 is odd.  This is now the binding constraint.
+- **A correction to §11.32.**  The small-width scripts build their partition with `odd_partition(n)`, which returns `(3,5)` at `n = 8` — a 3-row holding the LSB, the catastrophic placement.  **The `n = 8` column of §11.32.3, and the `n = 8` table of §11.32.4's candidate-B row, therefore measured the degenerate variant rather than the proposed design**, as did #246's originals, with roughly half their keys drawn from a broken class.  The `n = 10` partition `(5,5)` and `n = 11` partition `(11,)` are sound and carry those sections' conclusions, so #246's ordering is undisturbed; but the `n = 8` figures for B should be read as void.
+
+**§11.33.5 The multi-round window.**  §11.33.4's one-round worst case is a valid lower bound on a trail's per-round weight but a loose one — it assumes the cheapest round can be taken every round, which the trail structure forbids.  The exact multi-round optimum, by dynamic programming over round DDTs and LATs, settles how loose.  Subject to §11.31's ceiling, only the first two rounds are meaningful at reachable widths — #252's problem restated, and not solved here.  Within that window the differential increments sit **at** the floor of 2 (`1.96`, `2.45` at `n = 10`; `2.00`, `2.00` at `n = 11`) and the linear increments straddle **1** (`0.80`, `1.05`; `0.78`, `1.58`), well above §11.33.4's worst-case single round.  The cheapest single round is several times cheaper than any round the trail can actually chain, so the worst-case figure is loose by about that factor and §11.33.2's floor is the better estimate on both axes.
+
+**§11.33.6 The derived count.**  Putting §11.33.1's criterion together with §11.33.2's floor at `n = 256`:
+
+| axis | requirement | floor | minimum `r` |
+|---|---|---|---|
+| differential | `r >= n / s_diff` | `s_diff >= 2` | 128 |
+| linear | `r >= (n/2) / s_lin` | `s_lin >= 1` | 128 |
+
+Both axes land on the same number: **`r_min = n/2 = 128`, against a proven floor rather than a measured slope.**  This is the first round count in the family with that property; v2's `3n/4 = 192` rests on slopes that #252 and #254 have not been able to establish at all.
+
+`r_min` is where the criterion is met exactly, so shipping there would leave no margin.  Two facts argue for margin and one against.  *For:* the floor bounds a trail, and §11.33.4 showed clustering can beat a trail bound comprehensively; with minimum row 5 the differential gap measures at essentially zero, but the **linear gap is real** — the worst single round measured is `0.193` against a floor of `1.00`, a tail well below the median but a stable one, and its behaviour at `n = 256` is not established.  That is #254's open question, which v3 does not close.  *Against:* §11.33.5 shows the cheap linear round is not chainable — treating `0.193` as the slope would demand `r >= 664`, which the multi-round window contradicts directly.
+
+A 1.25× margin covers the measured gap without pricing in a slope the evidence contradicts:
+
+| | rounds | basis |
+|---|---|---|
+| v2 (deployed) | 192 | `3n/4`, inherited, no floor known |
+| v3 floor minimum | 128 | `n/2`, proven trail floor |
+| **v3 shipped** | **160** | **`5n/8`, 1.25× margin** |
+
+Stated plainly, as #255 requires: the margin chosen is **1.25× over a proven floor**, the residual risk it covers is linear clustering at full width, and #254 is the item that would let it be tightened or would force it wider.  `5n/8` is integral for every `n` divisible by 8, covering 256 and the 32-bit assembly width; v2's `3n/4` needed only a multiple of 4, so this is a slightly stronger constraint on any future width.  **#255's expectation is met on rounds: v3 needs materially fewer than v2 — 160 against 192 — because it earns more per round.**
+
+**§11.33.7 Cost, and a correction to #255's own figure.**  #255 states the change costs "+57% per round" and reasons that fewer rounds may offset it outright.  That figure is a misreading of #246 §5, where +57% is the cost of **masking** the χ layer relative to masking the modular addition the family already needs.  There is no masked v2 anywhere in the suite, so it is not the cost of the shipped path, and the unmasked cost had never been measured.
+
+Measured now, both rounds in the same `4×64`-bit limb representation with `delta(B)` precomputed for each:
+
+| | per round | per 256-bit block | vs v2 |
+|---|---|---|---|
+| v2 @ 192 rounds | 37.3 ns | 7.16 µs | 1.00× |
+| v3 @ 160 rounds | 79.2 ns | 12.67 µs | **1.77×** |
+
+χ is implemented there as a real one would be — not bit by bit, but as two shift-and-mask row rotations, since the 47 five-bit rows and the 3 seven-bit rows are each contiguous and uniform — and is validated bit-exactly against a per-row reference before timing, so the ratio is that of a correct fast implementation rather than a placeholder.  The per-round ratio is `2.12`–`2.17×` across runs.
+
+**So the fewer rounds do not offset the per-round cost, and #255's hope of a cost-neutral v3 does not survive measurement.**  The trade on offer is unambiguous and should be recorded as such: **v3 buys the family's first proven per-round trail bound, on both axes, for roughly 1.8× the work.**  Whether that is worth shipping is a decision rather than a measurement — but it is now a decision with numbers under it.  Two caveats: this is one x86-class host at one optimisation level, so the ratio will differ on AVR (which #255 puts out of scope) and under masking, where #246 §5's +57% is the relevant figure and applies on top.

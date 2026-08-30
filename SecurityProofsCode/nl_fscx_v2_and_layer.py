@@ -89,7 +89,16 @@ def mk_v2(n, B):
 
 
 def odd_partition(n):
-    """Two odd rows summing to n.  Exists iff n is even (or n itself is odd)."""
+    """Two odd rows summing to n.  Exists iff n is even (or n itself is odd).
+
+    WARNING (TODO #255, §11.33.4): this returns (3,5) at n = 8, and a 3-BIT ROW
+    IS DEGENERATE -- with one holding the LSB, every key whose delta(B) is odd
+    (112 of 256 at n = 8) gets a correlation-1 one-round linear approximation.
+    Oddness is not sufficient; v3 requires a MINIMUM ROW LENGTH OF 5, which the
+    deployed 47x5 + 3x7 satisfies.  Measurements taken at n = 8 through this
+    helper therefore describe a broken variant rather than candidate B, and the
+    n = 8 column of §11.32 is void for that reason.  n = 10 -> (5,5) and
+    n = 11 -> (11,) are sound.  Prefer a width whose partition has no 3-row."""
     if n % 2:
         return (n,)
     a = n // 2
