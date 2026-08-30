@@ -13364,3 +13364,61 @@ the AND layer rather than against it, since candidate B's margin is far wider.
 Status: **DONE v5.0.2 (analysis)** — the gap persists and is generic (0.50–0.61 at four
 widths, surviving restriction to typical keys); a previously unrecorded weak-key class
 found and proven harmless at n = 256; §11.20.5's conflation corrected; #248 ungated.
+
+### #248: re-review the v2 family ratings once #245's successors land
+
+TODO #245 shipped round constants and deliberately did not re-rate anything, on the grounds
+that removing a structural objection is not supplying a proof.  It named this successor in
+its own text and in SecurityProofs-7.md §11.27.4.
+
+**The question.**  HSKE-NL-A2 (downgraded to demo-only by #244) and `twk` (kept demo-only by
+#243) both rest on `nl_fscx_revolve_v2` being a PRP/SPRP.  #245 removed the self-similarity
+objections — the slide structure and the fixed-point deviation are gone — so the trail bounds
+are now the binding constraint.  Do they bind tightly enough to move either rating?
+
+**Gated on evidence, not on time.**  This item must not run until the evidence exists.
+Opening it earlier would repeat exactly the error #244 was filed to correct: treating "the
+objections I know about are answered" as equivalent to "analysed".
+
+**Amended after TODO #247: the gate is not the one this item was filed with.**  As written
+above, this item assumed the blocker was width extrapolation — bounds at n = 256 rather than
+projections from small widths.  #247 measured that and found the opposite: the trail slope is
+width-stable at 1.40–1.70 across every reachable width, bracketing #214's 1.87, so the width
+extrapolation is in better shape than anyone assumed.  What #247 *did* surface is a larger
+problem — real keys sit at roughly **half** the key-averaged trail weight, with a per-key
+spread wider than the mean.  Halving #247's proven 3.0 bits/round puts the per-key
+requirement above 170 rounds and makes the deployed 192 marginal.
+
+So the binding gate is **TODO #253** (fixed-key trail analysis), not #252 (the two-sided
+bound at n = 256).  #252 would be welcome and would tighten the picture, but a two-sided
+*key-averaged* bound would not answer the question this rating actually turns on.  If #251
+ships the AND layer, the analysis must be redone against the round function that ships.
+
+**Ungated by TODO #253 (v5.0.2) — this item is now runnable.**  #253 answered the question
+above and the answer is that the trail margin is *not* the binding constraint.  The
+per-key gap is real and generic (0.50–0.61 of the key-averaged weight at four widths, and
+it survives restriction to typical keys, so no screen addresses it), but halving #247's
+increment still leaves the deployed 192 rounds ahead of 256 bits on any plausible reading
+of the projection.  #253 also found a weak-key class the deployed `nl_v2_key_is_valid`
+misses — every `B` with `tz(delta(B)) >= 4` — and showed it costs at most ~3 of 192 rounds
+on 6% of keys at n = 256, so it does not bear on the rating either.
+
+**What #248 must therefore decide on.**  Not trail weight.  The binding constraint is
+§11.25's structural finding — `nl_fscx_revolve_v2` is one unvaried round iterated with no
+key schedule, and there is still no PRP/SPRP reduction for it at any round count.  #253
+neither rescues the rating nor further damages it.  A promotion needs a *reduction*, not a
+better bound; #248 should say so explicitly rather than re-weighing the bounds a fourth
+time.
+
+**Re-derive, do not inherit.**  Whatever the outcome, A2's three constraints and `twk`'s
+must be re-derived against the then-current construction.  #237 and #238 exist because
+propagated rows go stale.
+
+**Both directions are live outcomes.**  A promotion is possible.  So is confirming
+demo-only, in which case the useful deliverable is a row that says precisely what is missing
+rather than one that reads as an unexplained caution.
+
+Status: **DONE v5.0.3 (analysis)** — both rows stay demo-only and both rationales are
+replaced: the "no PRP/SPRP reduction" standard is not the one the rest of SECURITY.md uses,
+self-similarity was already gone, and the single missing item is now a linear bound at
+realistic width (#254).  Invariant-subspace resistance proven at n = 256.

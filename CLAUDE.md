@@ -90,6 +90,22 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  v2_family_rating_review.py — re-review of the NL-FSCX v2 family ratings
+                             (TODO #248).  Both rows stay demo-only and BOTH
+                             RATIONALES ARE REPLACED: "no PRP/SPRP reduction"
+                             is not the standard the rest of SECURITY.md uses
+                             (six production-track rows rest on named
+                             conjectures, as does AES), and the self-similarity
+                             reason was already false -- #245 removed it and
+                             both rows still asserted it while also saying it
+                             was fixed.  Proves invariant-subspace resistance
+                             at n=256 (BCLR criterion, the family's first
+                             unconditional result).  Finds LINEAR, not
+                             differential, is the binding axis -- and that it
+                             does not distinguish A2 from the v1-backed
+                             production-track rows, so it is filed as #254
+                             rather than used to demote three more.  Exits
+                             non-zero if a finding stops reproducing
   nl_fscx_v2_fixed_key.py  — the fixed-key trail gap (TODO #253).  #247's
                              factor of two between a real key and the
                              key-averaged bound does NOT dissolve with width
@@ -195,7 +211,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.28: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.29: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

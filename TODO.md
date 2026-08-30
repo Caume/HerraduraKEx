@@ -10,61 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #248: re-review the v2 family ratings once #245's successors land
-
-TODO #245 shipped round constants and deliberately did not re-rate anything, on the grounds
-that removing a structural objection is not supplying a proof.  It named this successor in
-its own text and in SecurityProofs-7.md §11.27.4.
-
-**The question.**  HSKE-NL-A2 (downgraded to demo-only by #244) and `twk` (kept demo-only by
-#243) both rest on `nl_fscx_revolve_v2` being a PRP/SPRP.  #245 removed the self-similarity
-objections — the slide structure and the fixed-point deviation are gone — so the trail bounds
-are now the binding constraint.  Do they bind tightly enough to move either rating?
-
-**Gated on evidence, not on time.**  This item must not run until the evidence exists.
-Opening it earlier would repeat exactly the error #244 was filed to correct: treating "the
-objections I know about are answered" as equivalent to "analysed".
-
-**Amended after TODO #247: the gate is not the one this item was filed with.**  As written
-above, this item assumed the blocker was width extrapolation — bounds at n = 256 rather than
-projections from small widths.  #247 measured that and found the opposite: the trail slope is
-width-stable at 1.40–1.70 across every reachable width, bracketing #214's 1.87, so the width
-extrapolation is in better shape than anyone assumed.  What #247 *did* surface is a larger
-problem — real keys sit at roughly **half** the key-averaged trail weight, with a per-key
-spread wider than the mean.  Halving #247's proven 3.0 bits/round puts the per-key
-requirement above 170 rounds and makes the deployed 192 marginal.
-
-So the binding gate is **TODO #253** (fixed-key trail analysis), not #252 (the two-sided
-bound at n = 256).  #252 would be welcome and would tighten the picture, but a two-sided
-*key-averaged* bound would not answer the question this rating actually turns on.  If #251
-ships the AND layer, the analysis must be redone against the round function that ships.
-
-**Ungated by TODO #253 (v5.0.2) — this item is now runnable.**  #253 answered the question
-above and the answer is that the trail margin is *not* the binding constraint.  The
-per-key gap is real and generic (0.50–0.61 of the key-averaged weight at four widths, and
-it survives restriction to typical keys, so no screen addresses it), but halving #247's
-increment still leaves the deployed 192 rounds ahead of 256 bits on any plausible reading
-of the projection.  #253 also found a weak-key class the deployed `nl_v2_key_is_valid`
-misses — every `B` with `tz(delta(B)) >= 4` — and showed it costs at most ~3 of 192 rounds
-on 6% of keys at n = 256, so it does not bear on the rating either.
-
-**What #248 must therefore decide on.**  Not trail weight.  The binding constraint is
-§11.25's structural finding — `nl_fscx_revolve_v2` is one unvaried round iterated with no
-key schedule, and there is still no PRP/SPRP reduction for it at any round count.  #253
-neither rescues the rating nor further damages it.  A promotion needs a *reduction*, not a
-better bound; #248 should say so explicitly rather than re-weighing the bounds a fourth
-time.
-
-**Re-derive, do not inherit.**  Whatever the outcome, A2's three constraints and `twk`'s
-must be re-derived against the then-current construction.  #237 and #238 exist because
-propagated rows go stale.
-
-**Both directions are live outcomes.**  A promotion is possible.  So is confirming
-demo-only, in which case the useful deliverable is a row that says precisely what is missing
-rather than one that reads as an unexplained caution.
-
-Status: **OPEN**
-
 ### #249: finish the constant-time audit scope TODO #129 opened
 
 `SecurityProofs-7.md` §11.16 records that TODO #129's original item-2 scope was never
@@ -171,5 +116,47 @@ cheaper than its own 3-round optimum.  Scaling to 256 is not a matter of patienc
    individual differences, which is how some ARX bounds are made to scale.
 
 Route 2 is the one that would actually settle it; routes 1 and 3 might only push the wall.
+
+Status: **OPEN**
+
+### #254: a linear-trail bound at realistic width — the binding axis for the NL-FSCX family
+
+TODO #248 found that linear cryptanalysis, not differential, is the binding axis for both
+NL-FSCX v1 and v2, and that nobody had measured it until TODO #247 §(c) — which was never
+written up.  This is the item that closes it.  See SecurityProofs-7.md §11.29.4.
+
+**What exists.**  Exact optimal linear-trail weights by fast Walsh-Hadamard transform plus a
+dynamic program over mask states, at `n = 7, 8, 10`, on typical keys.  Slopes: v2 0.49–0.87
+bits/round, v1 0.47–0.69.  Both rise with width.  The correlation-1 mask subspace has the
+same `tz(delta)` structure #253 found on the differential side, and is equally harmless at
+`n = 256` (about `tz/2` free rounds at probability `2^-tz`).
+
+**What does not.**  Anything at a realistic width, on either primitive.  Projected over the
+deployed round counts the measured range spans roughly 100–190 bits of correlation weight for
+A2's 192 rounds; the bottom of that range is under the 128 a 256-bit block needs.  That is an
+unmeasured quantity, not an attack — and the *rise* with width is the reassuring direction.
+
+**Why it matters more than #252.**  #252 asks for a two-sided **differential** bound, on an
+axis #247 already showed to be width-stable and #253 showed to be comfortable per-key.  This
+axis is weaker in absolute terms AND its slope is not width-stable, so the extrapolation
+everyone has been relying on is on worse ground here than there.  If only one of the two gets
+done, it should be this one.
+
+**Reach — four rows, three of them production-track.**  HSKE-NL-A2 and `twk` (demo-only,
+gated on exactly this by #248), plus **HSKE-NL-A1, HFSCX-256** and everything inheriting the
+hash: HPKS-WOTS, HPKS-XMSS, and every Fiat-Shamir transform in the suite.  #248 deliberately
+did not re-rate the v1 rows on a slope read at `n <= 10`; this item is what would justify
+moving any of them, in either direction.
+
+**Both directions are live.**  If the slope at realistic width lands where the trend points,
+A2 and `twk` meet the standard the six production-track rows in §11.29.2 meet and should be
+promoted together.  If it does not, the v1 rows are the ones needing re-examination, and that
+is the more consequential outcome — it reaches the hash.
+
+**Method notes, so this does not repeat #247's wall.**  Widths where `M` is singular (`n = 9`,
+12, 15, 18, ...) are not usable.  The exhaustive LAT is `2^2n` per key and will not reach far;
+the routes worth trying are the linear analogue of #247's MILP formulation (correlation weight
+is additive over rounds in the same way, so the same encoding shape applies), and the
+transfer-matrix idea in #252's route 3, which suits masks at least as well as differences.
 
 Status: **OPEN**

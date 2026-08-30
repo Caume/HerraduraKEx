@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.28** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.29** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -1941,3 +1941,62 @@ Free rounds grow like $k/2$ while the probability falls like $2^{-k}$, so buying
 The honest reporting figure is therefore neither of the two TODO #253 proposed.  It is the **per-key median** with the spread stated alongside — not the mean, and not the weak-tail value, which would report a $2^{-254}$ event as the typical case.
 
 **§11.28.7 What this does not do.**  It does not re-rate anything; that remains TODO #248.  It does say that #248's binding constraint is not the trail margin at any plausible reading of the projection, and never was — it remains §11.25's structural finding, that `nl_fscx_revolve_v2` is one unvaried round iterated with no key schedule.  TODO #244's downgrade of HSKE-NL-A2 rested on the STPRP argument, not on trail weight, and nothing here disturbs it.
+
+---
+
+### 11.29 Re-review of the NL-FSCX v2 family ratings (TODO #248)
+
+TODO #245 shipped round constants and re-rated nothing; TODO #253 supplied the evidence #248 was gated on.  This is the review.  Both rows under review — HSKE-NL-A2, downgraded by §11.26, and `twk`, kept demo-only by §11.25 — reduce by §11.25.1 to the same question, so they move together or not at all.  Reproduce with `SecurityProofsCode/v2_family_rating_review.py`, pinned 200/200 against the shipped `nl_fscx_v2` before any measurement.
+
+**§11.29.1 An inherited sentence, falsified.**  #248's own text warns against inheriting rather than re-deriving, and the first thing this review had to correct was its own premise.  The amendment #248 carried described the cipher as "one unvaried round iterated with no key schedule" — §11.25.2's *pre-#245* wording.  Since v5.0.0 the round is `F_i(x) = M(x ^ B ^ C_i) + delta(B)` with `C_i = i`, and the cipher is not a power of any single map.  Measured against the shipped implementation, the slide property `E(F(P)) = F(E(P))` holds in **0/200** trials at `n = 16`, where before #245 it held identically; the identity-collapse class cannot be posed at all, and §11.27.2 measured the fixed-point statistic at ideal-cipher values.
+
+That sentence is nevertheless still asserted as a **live constraint in both rows** — as constraint (3) of the HSKE-NL-A2 row and as a stated reason in the `twk` row — with each row then saying #245 removed it.  Both rows contradict themselves as shipped in v5.0.0.  Corrected in v5.0.3.
+
+What remains true is narrower: there is no key schedule.  The same `B` masks every round and only a counter varies.  That is the LED / PRINCE-core shape — a published, analysed design pattern rather than a defect — but it is the shape whose security depends on the round constants, which is §11.29.3.
+
+**§11.29.2 The standard, and why both rationales are wrong regardless of the verdict.**  Both rows rest their rating on one sentence: no PRP/SPRP reduction exists for `nl_fscx_revolve_v2`.  That is true.  It is also not the standard the rest of `SECURITY.md` is rated against:
+
+| row | classification | rests on |
+|---|---|---|
+| HSKE-NL-A1 | Production-track (conjectured) | the *conjecture* that NL-FSCX v1 is a PRF |
+| HFSCX-256 / -DS | Production-track (conjectured) | the same v1 PRF conjecture, "conditional on it" |
+| HKEX-RNL | Production-track (conjectured PQ-resistant) | Ring-LWR hardness at `n = 1024` |
+| HPKS-WOTS | Production-track (conjectured) | the HFSCX-256 row, hence the v1 conjecture |
+| HPKS-XMSS | Production-track (conjectured), stateful | the WOTS row, hence the v1 conjecture |
+| ZKP-RNL | Production-track (conjectured) | the HKEX-RNL Ring-LWR assumption |
+
+None is backed by a reduction to a standard definition; every one is "named conjecture + quantitative cryptanalytic evidence + no known attack", and five say so in their own text.  That is a normal standard — no deployed block cipher or hash has a PRP reduction, AES included.  Applied literally, "no reduction, therefore demo-only" demotes all six.  **So it cannot be why A2 and `twk` are demo-only, and both rationales must be replaced whatever the verdict.**  The real question is whether `nl_fscx_revolve_v2`'s cryptanalytic coverage is comparable to those six rows'.
+
+**§11.29.3 A positive result: no invariant subspace, proven at `n = 256`.**  §11.29.1 leaves the construction in the LED/PRINCE-core shape, whose known failure mode is the invariant-subspace and nonlinear-invariant class.  #245 chose its constants to kill the slide structure and did not consider this.
+
+Beierle–Canteaut–Leander–Rotella (CRYPTO 2017) give the criterion: any subspace `V` mapped to cosets of itself by every round must be invariant under the linear layer *and* contain every constant difference `C_i ^ C_j`.  If the smallest `M`-invariant subspace containing those differences is the whole space, no such `V` exists — for any nonlinear part and at every round count.  Adapted here for the constant being XORed before the linear layer rather than after a substitution layer, which is the same computation up to that conjugation:
+
+| `n` | 16 | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|---|
+| dim span{`C_i ^ C_j`} | 8 | 8 | 8 | 8 | 8 |
+| dim of its `M`-invariant closure | 16 | 32 | 64 | 128 | **256** |
+
+The counter never exceeds 192, so the raw differences span only 8 dimensions of a 256-bit state — but `M` spreads those 8 into all 256.  **The criterion passes at the deployed width.**  This is the v2 family's first proven resistance result: exact rather than extrapolated, unconditional on any conjecture, and stated at `n = 256` rather than carried there by a projection.  It also retroactively justifies #245's constants against a class #245 did not consider — which was luck rather than design, and belongs in the record either way.
+
+**§11.29.4 The linear axis — the binding one, and it is shared.**  TODO #214 deferred linear cryptanalysis; #247 §(c) did it exactly at small width and it was never written up.  Because §11.29.2's argument is about *consistency*, the same measurement must be taken for v1, which backs three production-track rows.  Exact optimal linear-trail weight (`-log2|corr|`) by fast Walsh–Hadamard transform and a dynamic program over mask states, on typical keys (`tz(delta) <= 1`, excluding §11.28.3's weak class):
+
+| primitive | n=7 | n=8 | n=10 | slope, r=4 to 6 |
+|---|---|---|---|---|
+| NL-FSCX v2 (A2, `twk`) | 0.49 | 0.75 | 0.87 | 0.49–0.87 |
+| NL-FSCX v1 (A1, HFSCX-256) | 0.47 | 0.49 | 0.69 | 0.47–0.69 |
+
+Three consequences, of which only the third bears on the rating.
+
+1. The linear slope is far below the differential one (#247's 1.40–1.70 key-averaged, about half that per key by §11.28.2).  **Linear is the binding axis for this family**, and until #247 nobody had looked at it.
+2. It **rises with width**, where #247 found the differential slope width-stable — so the small-width projection is unresolved in a way §11.28's and #252's differential work does not cover.  Projected over 192 rounds the measured range spans roughly 100 to 190 bits of correlation weight, and the bottom of that range is under the 128 a 256-bit block needs.  That is not an attack; it is an unmeasured quantity.  The rise is the reassuring direction, but three widths under `n = 11` do not fix a trend, and §11.28.2 recorded a near-miss of exactly this shape.
+3. **The axis does not distinguish A2 from the production-track rows.**  v1 is no better than v2 at any width measured — v2 is slightly ahead — and A2/`twk` run 192 rounds where HSKE-NL-A1 and HFSCX-256 run 64.  On this axis A2 is the *better*-covered of the two.  The gap is shared by four rows, three of them production-track, and is filed as TODO #254 rather than acted on: a slope read at `n <= 10` is not a basis for demoting three more rows, and #244's error run in reverse is still #244's error.
+
+**§11.29.5 The three constraints, re-derived.**  *Determinism* survives unchanged and is still the constraint most likely to be missed, since A2 has no nonce input.  *The affine weak-key class* survives, and §11.28.3 widened what the check does **not** cover — the keys admitting a zero-weight trail are every `B` with `tz(delta(B)) >= 4`, strictly larger than the affine class — so the constraint should read "affine class", not "the degenerate class".  *Self-similarity* is **removed** and must come off both rows (§11.29.1).  A replacement rather than a deletion is warranted, because the one-key/no-schedule structure is still there even though its symptoms are not; §11.29.3 is the evidence that the structure is safe against the class that exploits it.
+
+**§11.29.6 Verdict.**  **HSKE-NL-A2 and `twk` both stay demo-only, and both rationales are replaced.**  The rating does not move, and the reason it does not move is not the reason either row currently gives.
+
+*Why not promote.*  The standard (§11.29.2) is cryptanalytic coverage at the deployed width with a named conjecture where a proof is absent.  Differential coverage is now good — exact optima to `n = 64`, per-key figures, an exactly-characterised weak-key class.  Invariant-subspace resistance is *proven* at `n = 256`.  But the binding axis is linear, it has one small-width measurement three items old, and its width trend is unresolved.  Promoting on that would be the "no known problems" reasoning §11.24's predecessors, §11.25 and §11.26 were each filed to undo — three versions after #244 is not the moment to repeat it.
+
+*What the rows should say.*  #248 asked for a row that says precisely what is missing rather than one that reads as an unexplained caution.  What is missing is now one specific, closeable thing: **a linear-trail bound at realistic width**.  Not a reduction, not a structural fix, not a parameter change.  If TODO #254 lands where the trend points, A2 and `twk` meet the same standard the six rows in §11.29.2 meet and should move together — a measurement, not a research programme, and unusually for this suite a promotion criterion that is a number rather than a judgement.
+
+*What does not change.*  No attack on A2 or `twk` at `n = 256` is known, from this review or anywhere in the repository; bijectivity is proven.  Demo-only is a statement about what has been established, not a claim that either is broken.

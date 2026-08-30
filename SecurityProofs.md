@@ -15,7 +15,7 @@
 - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM (587 math expressions)
 - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM (131 math expressions)
-- **Part 7 — §11.10–§11.13, §11.15–§11.28** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections (698 math expressions)
+- **Part 7 — §11.10–§11.13, §11.15–§11.29** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections (698 math expressions)
 
 ---
 

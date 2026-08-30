@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.3] - 2026-08-29
+
+TODO #248 — the NL-FSCX v2 family rating re-review that TODO #245 named and TODO #253
+ungated.  Analysis and documentation only: no primitive, wire format, CLI surface or
+`--algo` value changes.
+
+### Verdict
+- **HSKE-NL-A2 and `twk` both stay demo-only, and both rationales are replaced.**  The
+  rating does not move; the reason it does not move is not the reason either row gave.
+  What is missing is now one specific, closeable thing — **a linear-trail bound at
+  realistic width** (filed as #254) — rather than an unexplained caution.
+
+### Added
+- `SecurityProofsCode/v2_family_rating_review.py`, SecurityProofs-7.md §11.29.  Part 7's
+  advertised range becomes §11.10–§11.13, §11.15–§11.29; the count stays at 698 because
+  the new section deliberately uses code spans over math where either would do — a first
+  pass took the page to 727, into `validate_katex.js`'s ~700 warning band.
+- **Invariant-subspace resistance, proven at n = 256.**  The Beierle–Canteaut–Leander–
+  Rotella criterion, adapted for the constant being XORed before the linear layer: the
+  round-constant differences span 8 dimensions, and their smallest `M`-invariant closure
+  is the full 256.  So no invariant-subspace or nonlinear-invariant attack of that class
+  exists, for any nonlinear part and at any round count.  This is the v2 family's first
+  unconditional resistance result — exact rather than extrapolated, and stated at the
+  deployed width rather than carried there.  It also retroactively justifies #245's round
+  constants against a class #245 did not consider.
+
+### Fixed
+- **Both rows contradicted themselves.**  Each asserted self-similarity as a live
+  constraint in TODO #243's pre-#245 wording — "one unvaried round iterated 192 times with
+  no round constant" — and then said #245 removed it.  Re-verified gone against the
+  shipped code (the slide property holds in 0/200 trials) and withdrawn from both rows.
+  The same stale sentence had propagated into #248's own text and is corrected there too.
+- **The stated rationale was a standard the rest of the table does not use.**  Both rows
+  rested on the absent PRP/SPRP reduction.  Six production-track rows — HSKE-NL-A1,
+  HFSCX-256, HKEX-RNL, HPKS-WOTS, HPKS-XMSS, ZKP-RNL — rest on named conjectures with no
+  reduction either, as does AES.  Applied literally the standard demotes all six, so it
+  cannot be why A2 and `twk` are demo-only.  Withdrawn from both rows.
+- A2's weak-key constraint now says it rejects the **affine** class specifically, since
+  TODO #253 showed the keys admitting a zero-weight trail are strictly more.
+
+### Findings
+- **Linear, not differential, is the binding axis for this family**, and it had never been
+  written up.  Exact optimal linear-trail weight is far below the differential figure, and
+  unlike the differential slope it **rises with width** — so the small-width projection is
+  unresolved in a way #252's differential work does not cover.
+- **The axis does not distinguish A2 from the production-track rows.**  Measured for v1 as
+  well, because the argument above is about consistency: v1 is no better than v2 at any
+  width (0.47–0.69 against 0.49–0.87), and A2/`twk` run 192 rounds where HSKE-NL-A1 and
+  HFSCX-256 run 64.  On this axis A2 is the better-covered side.
+- The gap therefore reaches four rows, three production-track.  **Filed as #254, not acted
+  on** — a slope read at n ≤ 10 is not a basis for demoting three more rows, and #244's
+  error run in reverse is still #244's error.  The HSKE-NL-A1 and HFSCX-256 rows are
+  annotated with the open axis and keep their classifications.
+
 ## [5.0.2] - 2026-08-29
 
 TODO #253 — the fixed-key trail gap TODO #247 found, resolved.  Analysis and
