@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.1] - 2026-08-29
+
+Documentation and analysis only. No code, no wire-format change.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_and_layer.py` (TODO #246) and
+  `SecurityProofsCode/nl_fscx_v2_bounds.py` (TODO #247).
+- **`pulp` (CBC) as an optional, analysis-only dependency**, with verified degrade-to-skip —
+  absent, the MILP section prints a NOTE and the file still runs, the pattern #214 uses for
+  z3. CLAUDE.md gains a *Third-party dependencies* table listing all three optional packages
+  and the rule that shipped primitives never acquire one.
+- TODO #251 (ship the AND layer), #252 (two-sided bound at n=256) and #253 (fixed-key trail
+  analysis) — the blockers split out of #246 and #247 so both could close honestly.
+
+### Changed
+- **TODO #246 and #247 closed as *analysis complete*.** #246 decided the design —
+  candidate B, the deployed round followed by χ over short odd rows (`256 = 47×5 + 3×7`) —
+  and could not ship it: its own gate was a realistic-width bound, and #247 established that
+  gate cannot currently be met. #247 completed the width-scaling study, the fixed-key spread,
+  the exact linear analysis and the MILP backend.
+- TODO #248's premise **amended**. It assumed the blocker was width extrapolation; #247 found
+  the slope is width-stable and the real gap is key-averaged versus per-key. Its gate is now
+  #253, not #252.
+
+### Notes — findings
+- The impossibility theorems (#210/#224/#230) do **not** block a non-linear v2: #230 is about
+  HKEX *agreement*, and no shipped protocol uses FSCX_REVOLVE for agreement any more.
+- **Exact optimal trail weights**, by DDT/LAT plus dynamic programming: the deployed round
+  accumulates 0.39 bits over three rounds at n=10 — a trail of probability 0.76 — where
+  candidate B has more weight after one round than v2 has after three.
+- **Exact linear cryptanalysis**, an axis neither #214 nor #246 had touched: v2 reaches 0.16
+  bits over three rounds (correlation ≈ 0.90). Candidate B leads on this axis too, so the
+  recommendation is not an artefact of measuring only differentials.
+- **MILP proven optima** 2.0 / 4.0 / 7.0 at r = 2/3/4 are identical at n = 16, 32 and 64.
+- **The dominant uncertainty is not width.** Real keys sit at roughly half the key-averaged
+  trail weight, with a per-key spread wider than the mean (0.70 to 7.71 on a mean of 4.73 at
+  n=11). Halving the proven 3.0 bits/round puts the per-key requirement above 170 rounds and
+  makes the deployed 192 marginal. This reframes #248.
+
+### Notes — corrections to claims made during this work
+- **A locality argument was withdrawn.** #247 justified carrying trail figures to n=256 by
+  asserting the optimal trail is local; the solver's own output refutes it — the optimum at
+  n=64 spans all 64 bit positions. Width-independence here is empirical, not structural.
+- **The masking objection in #246 was wrong, and in the direction that disfavoured the
+  change.** #78.H masks the *classical* linear `fscx_revolve`; there is no masked v2, and v2
+  already needs a masked adder for its modular addition. Adding χ is roughly +57% on a cost
+  already paid, not free→expensive.
+- **The 127+129 χ row split was wrong.** χ's inverse has degree `(L+1)/2`, so it would have
+  meant degree-64 decryption by a serial 127-step recurrence — and every affected construction
+  ships a decrypt path. Short rows keep the inverse at degree 4 and stay inside Keccak's
+  analysed regime.
+- A 2-key run suggested the trail slope collapsing at n=13, which would have made #214's
+  projection optimistic. It did not reproduce at 6 keys; recorded as a near-miss.
+- On the OR half of the original brief: `b∨c = b⊕c⊕(b∧c)`, so OR is an AND plus linear terms
+  and adds no algebraic degree. Recorded as considered and redundant.
+
 ## [5.0.0] - 2026-08-29
 
 **MAJOR — five constructions break together: `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk`.**
