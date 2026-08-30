@@ -10,26 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #249: finish the constant-time audit scope TODO #129 opened
-
-`SecurityProofs-7.md` §11.16 records that TODO #129's original item-2 scope was never
-completed, and names what is outstanding.  It has sat unfiled across several batches.
-
-* **`stern_apply_perm`'s memory-access pattern**, flagged in Batch 2 and still unaddressed.
-* **A residual timing signal** that survived the absolute-gap collapse and interop re-test.
-  Chasing it needs cache/power instrumentation — hardware performance counters, or a
-  controlled non-degenerate "fixed" class — which a wall-clock `dudect` harness cannot
-  provide.  Decide whether to acquire that capability or to document the limit and stop;
-  either is a defensible close, silence is not.
-* **HKEX-RNL, ZKP-RNL and HCRED are entirely unaudited** for constant-time behaviour.  They
-  fall inside #129's stated scope and no batch has touched them.
-
-**Worth stating plainly:** this is the one open item that concerns a side channel rather
-than a structural property, and side channels are the class this suite has audited least.
-`SECURITY.md` should say so if the answer is "not audited".
-
-Status: **OPEN**
-
 ### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
 
 `SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not

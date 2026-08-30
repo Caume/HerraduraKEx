@@ -43,6 +43,32 @@ any of these classifications.
 treat it as a proof-of-concept for the underlying math, not a component to deploy where
 real confidentiality or authenticity guarantees are required.
 
+## Side-Channel Posture
+
+Timing and other physical side channels are audited **only in the C implementation**, and
+only for timing.  This section states the posture per target so it is not inferred from
+silence; the full audit is SecurityProofs-7.md §11.11 (TODO #129, #182, #249) and the
+physical-side-channel risk register is §11.13 (TODO #160).
+
+| Target | Timing side channels | Basis |
+|---|---|---|
+| **C** (`herradura.h`, C CLI) | **Audited.** Two real leaks found and fixed; all core primitives, the eight `hkex_`/`hske_`/`hpks_`/`hpke_` entry points, WOTS/XMSS, Stern-F, HKEX-RNL reconciliation, ZKP-RNL and HCRED covered | Statistical fixed-vs-random (dudect) leakage testing plus inspection — `SecurityProofsCode/dudect_timing_audit.c`, re-verified each pass |
+| **Assembly** (ARM Thumb-2, NASM i386) | **Not empirically audited.** The GF multiply and the `stern_apply_perm` equivalent are branchless *by construction*, with the masking documented at the call sites, but no leakage testing has ever been run against these targets | Inspection only |
+| **Go** (`herradura/`, Go CLI) | **Not audited.** Data-dependent branching is avoided in critical paths, and the Stern permutation carries the same Lemire fix as C (TODO #129 Batch 3), but no leakage testing has been run | Inspection only; no dudect equivalent exists |
+| **Java** (`bindings/java/`) | **Not audited, and not achievable as written.** `java.math.BigInteger` offers no constant-time guarantee regardless of how the arithmetic is expressed | `bindings/java/README.md` |
+| **Python** (suite, Python CLI) | **Explicitly not constant-time**, by design. Do not use where timing side channels matter | Reference implementation |
+
+**Two documented limits on even the C result.**  First, a small residual timing signal on
+`stern_gen_perm`/`stern_apply_perm` is *positively attributed* to the audit harness's own
+degenerate all-zero test point rather than to a code path: swapping the fixed class to a
+non-degenerate `0xA5` pattern takes `|t|` from ~17 to under 1.5 with nothing else changed,
+and a real leak would reproduce at any fixed secret.  Second, **cache and power side
+channels are out of scope entirely** — a wall-clock harness cannot characterise them, and no
+cache-timing or power instrumentation has been applied to any target.
+
+**Power and EM analysis** is treated separately as a risk register (SecurityProofs-7.md
+§11.13) rather than as an audit: no physical measurement has been performed on any target.
+
 ## Supported Versions
 
 The project follows `MAJOR.MINOR.PATCH` versioning (see `CLAUDE.md`). Security fixes are

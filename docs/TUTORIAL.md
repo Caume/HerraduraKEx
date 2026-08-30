@@ -2539,9 +2539,26 @@ $CLI pkey --pubout --in alice.pem --out alice_pub.pem
 
 ### Constant-time status
 
-- **C and assembly targets** implement branchless GF multiply, branchless
-  `stern_apply_perm`, and constant-time equality checks.
-- **Python** is a reference implementation and is **not** constant-time.
-  Do not use the Python target in production where timing side-channels matter.
-- **Go** avoids data-dependent branching in critical paths but has not undergone
-  formal constant-time verification.
+Only the **C** target has ever been leakage-tested.  Everything else below is
+inspection or design intent.  `SECURITY.md`'s *Side-Channel Posture* section is
+the authoritative statement; SecurityProofs-7.md §11.11 is the full audit.
+
+- **C** (`herradura.h`, C CLI) — **audited** by statistical fixed-vs-random
+  (dudect) leakage testing plus inspection, across the core arithmetic, the eight
+  protocol entry points, WOTS/XMSS, Stern-F, HKEX-RNL reconciliation, ZKP-RNL and
+  HCRED.  Two real leaks were found and fixed.
+- **Assembly** (ARM Thumb-2, NASM i386) — branchless GF multiply and
+  `stern_apply_perm` **by construction**, with the masking documented at the call
+  sites, but **never leakage-tested**.  Do not read the C result as covering these.
+- **Go** (`herradura/`, Go CLI) — avoids data-dependent branching in critical
+  paths and carries the same Stern permutation fix as C, but **not audited**; no
+  dudect equivalent exists.
+- **Java** (`bindings/java/`) — **not audited, and not achievable as written**:
+  `java.math.BigInteger` gives no constant-time guarantee however the arithmetic
+  is expressed.
+- **Python** — a reference implementation and **explicitly not** constant-time.
+  Do not use it where timing side channels matter.
+
+**Cache and power side channels are out of scope for every target**, C included:
+the audit is wall-clock timing only, and no cache or power instrumentation has
+been applied anywhere.

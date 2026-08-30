@@ -648,6 +648,51 @@ for anyone re-running or extending this audit — future batches should prefer a
 non-degenerate fixed class (e.g. this batch's `0xA5` pattern) over an all-zero one when
 adding new dudect targets, to avoid re-discovering the same artifact.
 
+**Batch 8 — HKEX-RNL reconciliation (TODO #182, v2.0.4).**  Recorded here late: this batch
+shipped and is described in `TODO_DONE.md` #182, but was never written into this section,
+which stopped at Batch 7 (found by TODO #249).  Recent PQC literature targets the
+message-decoding/reconciliation step of LWE/LWR schemes with single-trace power analysis and
+template attacks, and Peikert cross-rounding reconciliation was exactly the operation Batches
+1–7 had not covered empirically — Batch 4 audited it by *inspection* only.
+
+`dudect_timing_audit.c` gains a parallel `run_test_poly` harness, since the RNL secret operand
+is `rnl_poly_t` (`int32_t[RNL_N]`) rather than a `BitArray`.  It audits `rnl_hint`,
+`rnl_reconcile_bits`, and the reconciler path of `rnl_agree` end-to-end.  Each is tested
+against a zero secret and, for the two hint/reconcile functions, additionally against a fixed
+pattern with **every coefficient pinned exactly at the `q/4` rounding threshold** — the value
+most likely to expose a division or comparison the compiler did not actually make branch-free,
+mirroring Batch 7's `0xA5` rationale.  All five tests clean.
+
+**Batch 9 — verification pass and scope statement (TODO #249, v5.0.8).**  TODO #249 was filed
+asserting three items still open from #129's item-2 scope.  **All three were already closed**,
+and re-running the harness confirms it rather than taking the write-up's word for it:
+
+| #249's claim | Actual state |
+|---|---|
+| `stern_apply_perm`'s memory-access pattern unaddressed | Closed by **Batch 6** (CT-03, v1.9.99); the shipped function scans all `N` positions under a constant-time equality mask |
+| Residual signal needs instrumentation, or a non-degenerate fixed class — "decide" | **Batch 7** already took the second option and executed it; the decision #249 asks for was made |
+| HKEX-RNL, ZKP-RNL and HCRED "entirely unaudited" | **Batch 4** audited all three; **Batch 5** fixed the one finding (CT-02); **Batch 8** covers HKEX-RNL reconciliation empirically |
+
+#249 also cited this material as §11.16, which is the HKEX-RNL/Stern-KEM combiner.  The item
+was filed from a stale reading, and the harness output today reproduces every published
+figure: `stern_gen_perm` `|t| = 17.53` and `stern_apply_perm` `|t| = 12.73` under the
+all-zero fixed class, against `0.65` and `1.00` under the `0xA5` class — the Batch 7 result
+exactly, on current hardware, with every other target clean.
+
+*What was genuinely missing*, and is #249's own closing point rather than any of its bullets:
+**`SECURITY.md` said nothing whatsoever about side channels** — zero mentions, so a reader had
+to infer the posture from silence.  It now carries a *Side-Channel Posture* section stating,
+per target, what is audited and what is not: C audited for timing; assembly branchless by
+construction but never leakage-tested; Go not audited; Java not achievable as written
+(`BigInteger` offers no constant-time guarantee); Python explicitly not constant-time.  Cache
+and power channels are out of scope for every target, and `docs/TUTORIAL.md`'s constant-time
+note is corrected to match — it had omitted Java entirely and implied the assembly targets
+were audited when only C ever has been.
+
+*Disposition.*  No code change is required and none is made.  The audit's technical scope was
+complete at Batch 8; what #249 correctly identified is that the *result* had never been stated
+where a user would look for it.
+
 **Reproduce:**
 ```bash
 gcc -O2 -o /tmp/dudect_timing_audit SecurityProofsCode/dudect_timing_audit.c -lm
