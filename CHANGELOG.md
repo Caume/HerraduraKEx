@@ -2,6 +2,57 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.5] - 2026-08-29
+
+TODO #252, first pass.  The bound is **not** delivered and #252 stays open; what this pass
+establishes is why every previous attempt was unstable, and it was not solver time.
+Analysis and documentation only.
+
+### Findings
+- **The measurement window is empty at every reachable width.**  A differential increment
+  series has a cheap *transient* — every key has a probability-1 one-round differential, so
+  the first rounds are near-free — and a *ceiling* at about `0.6n`.  The asymptotic increment
+  lives between them, and that gap is `0.6n/s - transient` rounds wide: zero or one round for
+  every `n <= 13`, which is where exhaustive DDT construction stops.  The quantity is not
+  measurable exhaustively **at all**, not merely slowly.
+- **#247's headline optima were measuring the transient.**  2.0 / 4.0 / 7.0 at `r = 2/3/4`,
+  identical at `n = 16`, `32` and `64`, was read as strong evidence of width-independence.  It
+  is the transient, which is width-independent for a structural reason and is not the quantity
+  the `s_diff >= 4/3` criterion needs.  Every per-round differential figure in this repository
+  is affected, #248's and #254's included.
+- **Route 2 is demoted.**  #252 named it "the one that would actually settle it".  As sketched
+  it yields `s_diff >= 1` against a `4/3` criterion — it cannot close the gap even fully
+  proven — and the two-round strengthening it would need is contradicted by four consecutive
+  near-free rounds measured at `n = 11`.  Revised route order: 1, then 3.
+- **Route 1 is re-motivated with a different target**: not a larger width but a larger *round
+  count* at `n = 32`–`64`, where the window is wide and CBC already reaches.  A run here proved
+  `n = 16` at `r = 4/5/6` (7.0 / 10.0 / 14.0 in 8 s / 35 s / 365 s), still saturated at
+  `0.875n`.
+- **A weak-key lead, filed and explicitly not concluded**: the per-key increment tracks the
+  *signed-digit (NAF)* weight of `delta(B)` rather than its Hamming weight — `d` and `-d`
+  produce identical series because they are the same constant up to sign.  Whether the
+  threshold is a constant NAF weight (density ~`2^-240` at `n = 256`, irrelevant) or scales
+  with `n` is undetermined, and those are very far apart.  Most classes measured rest on fewer
+  than five keys.
+
+### Fixed
+- **TODO #254's linear figures re-checked against the transient and corrected.**  Settled
+  increments are 0.59 / 0.75 / 0.93 / 0.95 at `n = 7/8/10/11` against the 0.42 / 0.77 / 0.88 /
+  1.03 reported in v5.0.4.  The linear transient is about two rounds where the differential one
+  runs to four or more, so the corrections are small and **the conclusion is unchanged** —
+  every width above `n = 7` still clears the `2/3` criterion.
+- **#254's "the slope rises with width" is weakened.**  It rises, but settled it is flattening:
+  +0.03 between the two widest against +0.16 between the two narrowest.  Part of the apparent
+  rise was the transient shrinking relative to the read window.  Wider widths should not be
+  expected to keep improving.
+
+### Added
+- `SecurityProofsCode/diff_bound_window.py`, SecurityProofs-7.md §11.31.  Part 7's range
+  becomes §11.10–§11.13, §11.15–§11.31; the expression count stays 698.
+
+### Unchanged
+- No rating moves.  TODO #248's verdict stands: HSKE-NL-A2 and `twk` remain demo-only.
+
 ## [5.0.4] - 2026-08-29
 
 TODO #254, first pass.  The bound it was filed for is **not** delivered and #254 stays open;

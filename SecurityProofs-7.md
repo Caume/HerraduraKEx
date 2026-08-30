@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.30** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.31** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -2059,3 +2059,50 @@ Same verdict as §11.28.4: about `tz/2` free rounds at probability `2^-tz`, so a
 **§11.30.6 A correction to §11.29.4.**  That section called linear "the binding axis" because its slope is far below the differential one.  **The comparison was not normalised.**  The two thresholds differ by exactly the same factor of two (0.667 against 1.333), so the raw slopes were never comparable; normalised, and with both corrected for saturation, the axes are close, and at the widths where both are measured *differential* is the tighter of the two.  The claim that linear is uniquely binding is withdrawn.  What survives is that linear was the **less measured** axis, which is why #254 exists — and that it now looks the more comfortable of the two.
 
 This does not move any rating.  §11.29.6's verdict stands: HSKE-NL-A2 and `twk` remain demo-only, gated on a bound this pass did not produce.
+
+---
+
+### 11.31 Why the differential bound has not closed (TODO #252, first pass)
+
+TODO #252 asks for a two-sided differential trail bound at `n = 256` and lists three routes.  **The bound is not delivered and #252 stays open.**  What this pass establishes is why the previous attempts were unstable, and it is not solver time.  Reproduce with `SecurityProofsCode/diff_bound_window.py`.
+
+**§11.31.1 The target, restated.**  By §11.30.1 the criterion is width-independent — `s_diff >= 4/3` — so #252 does not need a number at `n = 256`.  It needs the asymptotic per-round increment, a single scalar, obtainable at whatever width it reads most cleanly.  That is strictly easier than the problem #252 was filed with.
+
+**§11.31.2 The measurement window, and why reachable widths have none.**  Two effects bracket the usable part of an increment series.  The **transient**: every key has a probability-1 one-round differential (§11.28.3), so the first several rounds of an optimal trail cost almost nothing and the increment climbs from zero rather than starting at its asymptote.  The **ceiling**: weight cannot usefully exceed about `n`, and past `0.6n` the series flattens against the codebook.  Per-round increments at `n = 11`:
+
+| `delta` | NAF | r=1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|---|
+| 514 | 2 | 0.00 | 0.01 | 0.03 | 0.05 | 0.68 | 1.00 | 0.02 | 1.00 |
+| 530 | 3 | 0.00 | 0.05 | 0.32 | 0.48 | 2.00 | 1.96 | 1.19 | — |
+| 1354 | 5 | 0.00 | 0.63 | 2.37 | 2.00 | — | — | — | — |
+
+For `delta = 514` the first four rounds cost 0.00 / 0.01 / 0.03 / 0.05 — a trail of probability 0.94 across four rounds — and the increment only reaches its ~0.73 level at round 5.  **A slope read at `r = 2` to `4`, which is what #247 and §11.30.3 both did, reports 0.03 for this key.**
+
+The window is about `0.6n/s - transient` rounds wide.  With `s ≈ 1.5` and a four-round transient:
+
+| `n` | 8 | 11 | 13 | 16 | 32 | 64 | 256 |
+|---|---|---|---|---|---|---|---|
+| usable rounds | none | 0.4 | 1.2 | 2.4 | 8.8 | 21.6 | 98.4 |
+
+Exhaustive DDT construction costs `2^2n` per key and stops around `n = 11`–`13`.  **Every width it reaches has a window of zero or one round**, so the asymptotic increment is not measurable by exhaustive search at any reachable width — not slowly, but at all.  This also retroactively explains #247's stable-looking optima 2.0 / 4.0 / 7.0 across `n = 8/16/32/64`: that is the *transient*, which is width-independent for a structural reason, and it is not the quantity the criterion needs.  Every per-round differential figure this repository has published is affected.
+
+**§11.31.3 What this does to the three routes.**  **Route 1 is re-motivated with a target it did not have.**  The problem was never the width — #247 already reached `n = 32` and `64` with CBC — it was the *round count*: #247 solved to `r = 4`, inside the transient.  What is needed is `n = 32`–`64` at `r = 10`–`14`, where the window is wide.  A CBC run here reached `n = 16` at `r = 4/5/6` (weights 7.0 / 10.0 / 14.0, proven, 8 s / 35 s / 365 s), the last of which is already at `0.875n` and therefore still saturated — so the target is real but not close.
+
+**Route 2 is demoted.**  #252 proposed proving "each active round costs at least one bit unless the difference is MSB-only".  Even fully proven that yields `s_diff >= 1` against a `4/3` criterion, so it cannot close the gap in the best case; and the two-round strengthening it would need is contradicted by §11.31.2's four consecutive near-free rounds.  The germ does not survive contact with the measurement.  **Route 3** is unchanged here, and was promoted to first choice for the *linear* axis by §11.30.4, where mask propagation is deterministic; it has no such advantage on the differential side.
+
+The recommended order becomes **1, then 3**, with route 2 — previously "the one that would actually settle it" — set aside.
+
+**§11.31.4 A lead, explicitly not a conclusion.**  §11.31.2's cheapest key, `delta = 514 = 2^9 + 2^1`, is sparse; so is the other key with an identical series, `delta = 1534 = 2^11 - 514`.  The two are the same constant up to sign, and `x + d` and `x - d` are the same object to differential cryptanalysis — so the predictor is not the Hamming weight of `delta` but its **signed-digit (NAF) weight**.  The direction is consistent across the measured keys (sparser `delta`, lower increment) and the mechanism is plausible: few signed digits means few carry chains, so the round stays close to linear.  It is also the third weak-key structure of the same shape, after §11.28.3's `tz` class and §11.30.5's correlation-1 masks.
+
+**It is not concluded.**  Most NAF classes measured rest on fewer than five keys, and §11.31.2 has just shown the averaged quantity is barely measurable at these widths.  This repository has already recorded three small-sample near-misses (§11.26's `tau(192)`, #247 §(a)'s two-key slope, §11.28.2's drift); a fourth is not needed.  What makes it worth filing: **if the weakness threshold is a constant NAF weight the class has density about `2^-240` at `n = 256` and is irrelevant; if it scales with `n` it is not.**  Nothing measured distinguishes those, and they are very far apart.
+
+**§11.31.5 The linear axis re-checked — it survives.**  §11.30's figures were read the same contaminated way, so they were re-measured by this standard.  Settled increments (rounds 4 and up, below the ceiling), against what §11.30.3 reported:
+
+| `n` | 7 | 8 | 10 | 11 |
+|---|---|---|---|---|
+| settled | 0.59 | 0.75 | 0.93 | **0.95** |
+| §11.30.3 said | 0.42 | 0.77 | 0.88 | 1.03 |
+
+The linear transient is about two rounds where the differential one runs to four or more, so §11.30's reads sat mostly past it: the corrections are small and every width above `n = 7` still clears `2/3`.  One claim is weakened — "the slope rises with width" does hold, but settled it is **flattening** (a gain of 0.03 between the two widest against 0.16 between the two narrowest), so part of the apparent rise was the transient shrinking relative to the read window.  §11.30's conclusion is unaffected, since a flat 0.95 clears `2/3` as comfortably as a rising one; what is withdrawn is any expectation that wider widths keep improving without limit.
+
+No rating moves.  §11.29.6's verdict stands.

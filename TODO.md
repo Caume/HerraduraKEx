@@ -117,6 +117,34 @@ cheaper than its own 3-round optimum.  Scaling to 256 is not a matter of patienc
 
 Route 2 is the one that would actually settle it; routes 1 and 3 might only push the wall.
 
+**First pass done in v5.0.5 — the bound is still open, and the stall is now explained.**  See
+SecurityProofs-7.md §11.31 and `SecurityProofsCode/diff_bound_window.py`.
+
+* **The target is a scalar**, `s_diff >= 4/3`, carried from #254's scale-invariance result.
+  Not a bound at n = 256.
+* **The stall was never solver time.**  An increment series has a cheap TRANSIENT (every key
+  has a probability-1 one-round differential, so the first rounds are near-free) and a CEILING
+  at ~`0.6n`.  The asymptote lives between them, and the window is `0.6n/s - transient` rounds
+  wide: **zero or one round at every width an exhaustive DDT can reach** (n <= 13).  So the
+  quantity is not measurable exhaustively at all, not merely slowly.
+* **This invalidates the "what exists" paragraph above.**  The proven optima 2.0 / 4.0 / 7.0,
+  identical at n = 16/32/64, are the TRANSIENT — width-independent for a structural reason and
+  not the quantity the criterion needs.  Their agreement across widths was never the evidence
+  it was read as.  Every per-round differential figure in this repo is affected.
+* **Route 1 is re-motivated with a different target**: not a larger width but a larger ROUND
+  COUNT at n = 32-64, where the window is wide and CBC already reaches.  A run here got n = 16
+  to r = 6 (7.0 / 10.0 / 14.0 at r = 4/5/6, proven, 8 s / 35 s / 365 s) — still saturated at
+  `0.875n`, so the target is real but not close.  **This is now the first thing to try.**
+* **Route 2 is demoted.**  As sketched it yields `s_diff >= 1` against a 4/3 criterion, so it
+  cannot close the gap even fully proven, and the two-round strengthening it would need is
+  contradicted by four consecutive near-free rounds measured at n = 11.
+* **A weak-key lead, filed not concluded**: the per-key increment tracks the signed-digit (NAF)
+  weight of `delta(B)`, not its Hamming weight (`d` and `-d` behave identically).  Whether the
+  threshold is a constant NAF weight (density ~`2^-240` at n = 256, irrelevant) or scales with
+  `n` (not irrelevant) is undetermined and is the part worth resolving.
+
+**Revised route order: 1, then 3.**  Route 2 is set aside.
+
 Status: **OPEN**
 
 ### #254: a linear-trail bound at realistic width — the binding axis for the NL-FSCX family
@@ -178,6 +206,11 @@ SecurityProofs-7.md §11.30 and `SecurityProofsCode/fscx_scaling_and_linear.py`.
 * **Saturation invalidated the earlier numbers**, #248's included.  Corrected, the slope is
   0.42 / 0.77 / 0.88 / 1.03 at n = 7 / 8 / 10 / 11, crossing 2/3 between 7 and 8 and clearing it
   by 55% at the widest.  Encouraging; four widths with the slope still rising is not a bound.
+  **Re-corrected in v5.0.5 (#252 §11.31.5)** for the TRANSIENT as well as the ceiling — the
+  figures above were read at r = 3-5, partly inside it.  Settled: 0.59 / 0.75 / 0.93 / 0.95.
+  The conclusion is unchanged (every width above n = 7 clears 2/3), but **"the slope rises with
+  width" is weakened**: settled it is flattening, +0.03 between the two widest against +0.16
+  between the two narrowest.  Do not expect wider widths to keep improving.
 * **#248's "linear is the binding axis" is withdrawn** — the thresholds differ by the same
   factor of two the slopes do, so the raw comparison was never normalised.  Normalised,
   differential is the tighter axis, which raises #252's priority relative to this item.

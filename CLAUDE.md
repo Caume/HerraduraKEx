@@ -90,6 +90,23 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  diff_bound_window.py     — why the differential bound has not closed
+                             (TODO #252, first pass; still open).  The stall is
+                             NOT solver time: an increment series has a cheap
+                             transient (every key has a probability-1 one-round
+                             differential) and a ceiling at ~0.6n, and the
+                             asymptote lives between them -- a window that is
+                             zero or one round wide at every width an exhaustive
+                             DDT reaches.  So #247's 2.0/4.0/7.0, identical at
+                             n=16/32/64, was measuring the TRANSIENT, not the
+                             quantity the s_diff >= 4/3 criterion needs.  Demotes
+                             #252's route 2 (yields >= 1 against a 4/3 bar) and
+                             re-aims route 1 at higher ROUND COUNTS at n=32-64
+                             rather than at wider n.  Re-checks and corrects
+                             #254's linear numbers (settled 0.59/0.75/0.93/0.95;
+                             conclusion holds, the "rises with width" trend is
+                             weakened).  NAF-weight weak-key lead filed, not
+                             concluded -- samples are too thin
   fscx_scaling_and_linear.py — the linear axis and what key size buys
                              (TODO #254, first pass; the bound is still open).
                              SCALE-INVARIANCE THEOREM: because r = 3n/4 is tied
@@ -225,7 +242,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.30: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.31: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
