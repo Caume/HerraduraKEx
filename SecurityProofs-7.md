@@ -10,7 +10,7 @@
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
-> - **Part 7 — §11.10–§11.13, §11.15–§11.29** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
+> - **Part 7 — §11.10–§11.13, §11.15–§11.30** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
 
 ---
 
@@ -2000,3 +2000,62 @@ Three consequences, of which only the third bears on the rating.
 *What the rows should say.*  #248 asked for a row that says precisely what is missing rather than one that reads as an unexplained caution.  What is missing is now one specific, closeable thing: **a linear-trail bound at realistic width**.  Not a reduction, not a structural fix, not a parameter change.  If TODO #254 lands where the trend points, A2 and `twk` meet the same standard the six rows in §11.29.2 meet and should move together — a measurement, not a research programme, and unusually for this suite a promotion criterion that is a number rather than a judgement.
 
 *What does not change.*  No attack on A2 or `twk` at `n = 256` is known, from this review or anywhere in the repository; bijectivity is proven.  Demo-only is a statement about what has been established, not a claim that either is broken.
+
+---
+
+### 11.30 Scale invariance, and the linear axis (TODO #254, first pass)
+
+TODO #248 filed #254 for a linear-trail bound at realistic width.  **That bound is not delivered and #254 stays open.**  What this pass delivers is four things that change what the bound has to establish, one of which answers the headline question without it.  Reproduce with `SecurityProofsCode/fscx_scaling_and_linear.py`.
+
+**§11.30.1 A scale-invariance theorem.**  FSCX has no free round count: `R_VALUE = 3n/4` and `I_VALUE = n/4` are tied to the block size and scale automatically with `KEYBITS`.  Let `s` be the per-round trail weight, so an `r`-round trail weighs about `s·r`.
+
+*Linear.*  An attack on an `n`-bit block needs about `corr^-2` known plaintexts against a codebook of `2^n`, so it is meaningless once the weight `W` satisfies `2W >= n`.  With `r = 3n/4`:
+
+`s_lin · (3n/4) >= n/2  <=>  s_lin >= 2/3`
+
+*Differential.*  A distinguisher needs probability above the `2^-n` a random permutation gives, so safety needs `W >= n`:
+
+`s_diff · (3n/4) >= n  <=>  s_diff >= 4/3`
+
+**The width cancels in both.**  Resistance to trail attacks is a property of the round function alone, expressed as a pure number, identical at every block size — doubling `n` doubles the rounds and the threshold in exactly equal measure.  This also re-poses the open question: not "what is the security level at `n = 256`" but "is `s_lin` above 0.667", a single scalar establishable at *any* width where saturation is not binding.  That is a far better-posed target than the one #252 and #254 were filed with.
+
+**§11.30.2 What longer keys buy on this axis: nothing.**  Since FSCX raises its round count with its key size, a natural proposal is to close the gap with a 512- or 1024-bit key.  By §11.30.1 that does not work, and not by a little — the criterion `s >= 2/3` is identical at every width, so a construction below it is equally broken at `n = 1024` and one above it is already safe at `n = 256`.
+
+| `n` | rounds `3n/4` | threshold `n/2` | criterion | cost per block |
+|---|---|---|---|---|
+| 256 | 192 | 128 | `s >= 0.667` | 1× |
+| 512 | 384 | 256 | `s >= 0.667` | 4× |
+| 1024 | 768 | 512 | `s >= 0.667` | 16× |
+
+**Scope of the theorem.**  §11.30.1 is derived for a *block cipher* — codebook `2^n`, `r = 3n/4` — so it applies to HSKE-NL-A2, `twk` and `fpe` directly.  It does **not** transfer unexamined to HSKE-NL-A1 (a counter-mode PRF) or HFSCX-256 (a Davies–Meyer compression function): each has its own attack model, and both run `n/4` rounds rather than `3n/4`, which would give a sharper bar on a naive transfer.  Deriving the right criterion for those two modes is part of #254 and is not attempted here.
+
+The cost matters as much as the invariance.  A round is `O(n)` bit operations and there are `3n/4` of them, so a block costs `O(n^2)` and carries only `n` bits — the cost *per bit* still doubles with `n`.
+
+Stated fairly, longer keys do buy three things, none of which is this: brute-force key search rises to `2^n`, which was never the binding constraint at 256; generic birthday/slide data bounds rise as `2^(n/2)`, which helps against the `~2^128` figure §11.25.2 quoted before #245 removed the slide structure, so that objection is already gone; and the measured slope does rise with `n`, but that is the slope doing the work, not the width, and a slope that reaches 2/3 does so at `n = 256` too.  **The only way to buy margin on either trail axis is a round function with a higher per-round slope** — which is TODO #251, and this is the strongest argument that item has had.
+
+**§11.30.3 Saturation invalidates most published slopes here, including #248's.**  A trail's weight cannot grow past the distinguishing budget — about `n/2` for linear, `n` for differential — and a slope read past that ceiling measures the ceiling.  TODO #248 §11.29.4 quoted linear slopes of 0.49–0.87 read at `r = 4` to `6`; #247's differential optima 2.0/4.0/7.0 at `n = 8` put `r = 4` at `0.875n`.  Both were saturated.  Corrected, reading `r = 3` to `5` (under 60% of the ceiling at every width):
+
+| `n` | 7 | 8 | 10 | 11 |
+|---|---|---|---|---|
+| slope, `r=3→5` | 0.42 | 0.77 | 0.88 | **1.03** |
+| vs the 2/3 criterion | below | meets | meets | meets |
+
+The slope rises with width, crosses 2/3 between `n = 7` and `n = 8`, and clears it by 32% and 55% at the two widest.  **That is the most encouraging measurement this construction has produced** — and it is still not a bound: four widths, none above 11, with the slope still moving, which is exactly the shape §11.28.2 and #247 §(a) each recorded a near-miss on.
+
+**§11.30.4 The MILP route is closed, and the reason is the missing key schedule.**  #254 named a linear MILP as its first route, by analogy with #247's differential model.  Every bit-level MILP model for ARX linear cryptanalysis rests on Wallén's characterisation: the correlation of modular addition with two *variable* inputs is exactly `±2^-k`, so the weight is an integer, additive over bit positions, and encodable as a sum of binaries.
+
+Here the addend is a **constant** — `delta(B)`, the same every round, because there is no key schedule.  Its correlations are sums over carry paths that re-merge and are **not** powers of two; measured at `n = 10`, the weights include 1.830, 2.476, 2.508, 3.093, 3.415, …  With no additive per-bit weight the standard encoding cannot be written down at all.  A model built on the two-state carry automaton instead is easy to write and computes the wrong thing — it scores single carry paths where the true correlation sums them, so it *overstates* the weight.  That model was built and discarded here before it could be quoted; a bound that overstates resistance is worse than no bound.
+
+The honest next route is the transfer-matrix formulation (#252's route 3), which suits masks better than differences: mask propagation through `M` is deterministic, so a trail is fixed by its starting mask and the search is over `2^n` starting masks rather than over trails.
+
+**§11.30.5 The correlation-1 subspace at `n = 256`.**  Addition of `d` with `k = tz(d)` trailing zeros leaves bits `0..k-1` untouched and sets bit `k` to `x_k ⊕ 1`, so every mask supported on bits `0..k` passes with correlation `±1`.  `M` is symmetric, so masks propagate backwards through the same map and a correlation-1 `r`-round trail exists iff a nonzero mask stays in that subspace for `r` applications — the exact linear analogue of §11.28.3, computed at the deployed width:
+
+| `tz(delta)` | 0 | 1 | 2 | 4 | 8 | 16 | 32 | 64 |
+|---|---|---|---|---|---|---|---|---|
+| correlation-1 rounds | 1 | 1 | 2 | 3 | 5 | 9 | 17 | 33 |
+
+Same verdict as §11.28.4: about `tz/2` free rounds at probability `2^-tz`, so a typical key gets exactly **one** free round and losing all 192 needs a key of density `2^-254`.  This is also the mechanism behind §11.30.3 — the first round is free for every key, so a linear trail's weight is entirely a question of how fast `M` drags the mask out of this subspace and keeps it out, which is `M`'s orbit structure and therefore linear algebra rather than search.
+
+**§11.30.6 A correction to §11.29.4.**  That section called linear "the binding axis" because its slope is far below the differential one.  **The comparison was not normalised.**  The two thresholds differ by exactly the same factor of two (0.667 against 1.333), so the raw slopes were never comparable; normalised, and with both corrected for saturation, the axes are close, and at the widths where both are measured *differential* is the tighter of the two.  The claim that linear is uniquely binding is withdrawn.  What survives is that linear was the **less measured** axis, which is why #254 exists — and that it now looks the more comfortable of the two.
+
+This does not move any rating.  §11.29.6's verdict stands: HSKE-NL-A2 and `twk` remain demo-only, gated on a bound this pass did not produce.

@@ -2,6 +2,58 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.4] - 2026-08-29
+
+TODO #254, first pass.  The bound it was filed for is **not** delivered and #254 stays open;
+what changed is what the bound has to establish.  Analysis and documentation only.
+
+### Findings
+- **A scale-invariance theorem.**  FSCX ties its round count to its block size
+  (`r = 3n/4`), so the trail-resistance criterion is *independent of n*: `s_lin >= 2/3` and
+  `s_diff >= 4/3`, the same numbers at every width.  The open question is therefore a single
+  scalar rather than a width-dependent curve, establishable at any width where saturation is
+  not binding — a far better-posed target than #252 and #254 were filed with.
+- **Longer keys do not help on this axis.**  n = 512 faces the identical criterion at 4x the
+  cost per block (and 2x per bit, since a block carries only n bits).  What longer keys do buy
+  — 2^n key search, 2^(n/2) generic data bounds — was either never binding or already
+  addressed by #245.  The only way to buy trail margin is a round function with a higher
+  per-round slope, which is the strongest argument TODO #251 has had.
+- **The MILP route is closed, structurally.**  Addition of a *constant* — which is what a
+  cipher with no key schedule does every round — has correlations that are not powers of two,
+  so Wallén's characterisation and every ARX bit-level encoding built on it are inapplicable.
+  Measured weights at n = 10 include 1.830, 2.476, 2.508.  A carry-automaton model was built,
+  found to score single paths where the true correlation sums them (thus *overstating*
+  resistance), and discarded before it could be quoted.  The transfer-matrix route is promoted
+  to first choice for both #252 and #254.
+- **The correlation-1 mask subspace at n = 256**, exact — the linear analogue of #253's
+  zero-weight class, with the same `tz/2`-free-rounds-at-`2^-tz` shape and the same verdict: a
+  typical key gets exactly one free round.
+
+### Fixed
+- **Saturation invalidated most published slope figures here, including the ones added three
+  commits ago.**  Trail weight cannot exceed the distinguishing budget (~n/2 linear, ~n
+  differential), and a slope read past it measures the ceiling.  #248's linear slopes were read
+  at r = 4–6 and #247's differential optima put r = 4 at 0.875n; both were saturated.  Corrected
+  (read at r = 3–5), the linear slope is 0.42 / 0.77 / 0.88 / 1.03 at n = 7 / 8 / 10 / 11 —
+  crossing the 2/3 criterion between n = 7 and n = 8 and clearing it by 55% at the widest.
+  Encouraging, and still not a bound.
+- **#248's claim that linear is "the binding axis" is withdrawn.**  The comparison was not
+  normalised: the two thresholds differ by exactly the factor of two the raw slopes do.
+  Normalised and saturation-corrected, differential is the tighter axis, which raises #252's
+  priority relative to #254.  The HSKE-NL-A2 and `twk` rows are corrected accordingly.
+- The scale-invariance theorem is **scoped**: it is derived for a block cipher and does not
+  transfer unexamined to HSKE-NL-A1 (counter-mode PRF) or HFSCX-256 (Davies–Meyer), both of
+  which run `n/4` rounds.  Deriving their criteria is the part of #254 that reaches three
+  production-track rows, and is not done.
+
+### Added
+- `SecurityProofsCode/fscx_scaling_and_linear.py`, SecurityProofs-7.md §11.30.  Part 7's range
+  becomes §11.10–§11.13, §11.15–§11.30; the expression count stays 698.
+
+### Unchanged
+- No rating moves.  HSKE-NL-A2 and `twk` remain demo-only, gated on a bound this pass did not
+  produce.
+
 ## [5.0.3] - 2026-08-29
 
 TODO #248 — the NL-FSCX v2 family rating re-review that TODO #245 named and TODO #253

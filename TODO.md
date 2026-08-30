@@ -159,4 +159,34 @@ the routes worth trying are the linear analogue of #247's MILP formulation (corr
 is additive over rounds in the same way, so the same encoding shape applies), and the
 transfer-matrix idea in #252's route 3, which suits masks at least as well as differences.
 
+**First pass done in v5.0.4 — the bound is still open, but the target changed.**  See
+SecurityProofs-7.md §11.30 and `SecurityProofsCode/fscx_scaling_and_linear.py`.
+
+* **The question is a scalar, not a curve.**  Because `r = 3n/4` is tied to the block size, the
+  criterion is *width-independent*: `s_lin >= 2/3`, `s_diff >= 4/3`.  So this item no longer
+  needs "a bound at n = 256" — it needs the asymptotic per-round slope, establishable at any
+  width where saturation is not binding.  That reopens widths this item had written off.
+* **No key size moves it.**  n = 512 faces the identical criterion at 4x the cost per block.
+  Recorded because it was a natural proposal and it does not work.
+* **The MILP route named above is CLOSED**, and not for want of solver effort: addition of a
+  *constant* has correlations that are not powers of two, so Wallén's characterisation and every
+  ARX bit-level encoding built on it are inapplicable.  A carry-automaton model computes single
+  paths where the true correlation sums them, overstating the weight — built and discarded
+  before it could be quoted.  **The transfer-matrix route is now first choice**, and it suits
+  masks better than differences: mask propagation through `M` is deterministic, so a trail is
+  fixed by its starting mask and the search is over `2^n` starting masks rather than trails.
+* **Saturation invalidated the earlier numbers**, #248's included.  Corrected, the slope is
+  0.42 / 0.77 / 0.88 / 1.03 at n = 7 / 8 / 10 / 11, crossing 2/3 between 7 and 8 and clearing it
+  by 55% at the widest.  Encouraging; four widths with the slope still rising is not a bound.
+* **#248's "linear is the binding axis" is withdrawn** — the thresholds differ by the same
+  factor of two the slopes do, so the raw comparison was never normalised.  Normalised,
+  differential is the tighter axis, which raises #252's priority relative to this item.
+
+**What remains, in priority order.**  (1) The two modes: §11.30.1 is derived for a block cipher
+and does **not** transfer unexamined to HSKE-NL-A1 (counter-mode PRF) or HFSCX-256
+(Davies–Meyer), each of which runs `n/4` rounds; deriving their criteria is the part of this
+item that reaches three production-track rows.  (2) The transfer-matrix bound on `s_lin`.
+(3) The same treatment for `s_diff`, which is #252 — and by the correction above, #252 is now
+the more urgent of the two.
+
 Status: **OPEN**
