@@ -90,6 +90,112 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  and_layer_recheck.py     — TODO #246's candidate comparison, re-run after
+                             #252 invalidated its methodology.  #246's ordering
+                             SURVIVES and is better founded: B's advantage lives
+                             in the TRANSIENT, which #252 showed is the
+                             width-independent part, so it is the half of a
+                             small-width comparison that carries to n=256.
+                             Mechanism: any linear-then-add-constant round has a
+                             probability-1 one-round differential (the MSB
+                             freebie) and chi removes it -- B's round-1 weight is
+                             2.00/1.81/2.00 where v2 and A are 0.00 on both axes.
+                             Disqualifies candidate A (correlation-1 linear trail
+                             through 8 rounds at n=8).  Records a reporting bug
+                             of its own that had scored "no measurement window"
+                             as "below criterion", penalising the stronger
+                             candidates.  Leaves #251 a decision, not a blocker
+  diff_bound_window.py     — why the differential bound has not closed
+                             (TODO #252, first pass; still open).  The stall is
+                             NOT solver time: an increment series has a cheap
+                             transient (every key has a probability-1 one-round
+                             differential) and a ceiling at ~0.6n, and the
+                             asymptote lives between them -- a window that is
+                             zero or one round wide at every width an exhaustive
+                             DDT reaches.  So #247's 2.0/4.0/7.0, identical at
+                             n=16/32/64, was measuring the TRANSIENT, not the
+                             quantity the s_diff >= 4/3 criterion needs.  Demotes
+                             #252's route 2 (yields >= 1 against a 4/3 bar) and
+                             re-aims route 1 at higher ROUND COUNTS at n=32-64
+                             rather than at wider n.  Re-checks and corrects
+                             #254's linear numbers (settled 0.59/0.75/0.93/0.95;
+                             conclusion holds, the "rises with width" trend is
+                             weakened).  NAF-weight weak-key lead filed, not
+                             concluded -- samples are too thin
+  fscx_scaling_and_linear.py — the linear axis and what key size buys
+                             (TODO #254, first pass; the bound is still open).
+                             SCALE-INVARIANCE THEOREM: because r = 3n/4 is tied
+                             to the block size, the trail criterion does not
+                             depend on n -- s_lin >= 2/3, s_diff >= 4/3 at every
+                             width -- so the open question is a scalar, and NO
+                             KEY SIZE MOVES IT (n=512 is the same criterion at
+                             4x cost).  Derived for a block cipher; does NOT
+                             transfer unexamined to A1/HFSCX-256, which run n/4
+                             rounds.  Closes the MILP route structurally: a
+                             constant addend has non-power-of-two correlations,
+                             so Wallen and every ARX encoding on it are
+                             inapplicable.  Finds saturation had invalidated
+                             most slope figures in the repo, #248's included
+  v2_family_rating_review.py — re-review of the NL-FSCX v2 family ratings
+                             (TODO #248).  Both rows stay demo-only and BOTH
+                             RATIONALES ARE REPLACED: "no PRP/SPRP reduction"
+                             is not the standard the rest of SECURITY.md uses
+                             (six production-track rows rest on named
+                             conjectures, as does AES), and the self-similarity
+                             reason was already false -- #245 removed it and
+                             both rows still asserted it while also saying it
+                             was fixed.  Proves invariant-subspace resistance
+                             at n=256 (BCLR criterion, the family's first
+                             unconditional result).  Finds LINEAR, not
+                             differential, is the binding axis -- and that it
+                             does not distinguish A2 from the v1-backed
+                             production-track rows, so it is filed as #254
+                             rather than used to demote three more.  Exits
+                             non-zero if a finding stops reproducing
+  nl_fscx_v2_fixed_key.py  — the fixed-key trail gap (TODO #253).  #247's
+                             factor of two between a real key and the
+                             key-averaged bound does NOT dissolve with width
+                             (0.50-0.61 at n=7,8,10,11) and is generic, not
+                             tail-driven.  Finds a weak-key class the deployed
+                             nl_v2_key_is_valid misses -- every B with
+                             tz(delta(B)) >= 4 admits a zero-weight trail, at
+                             every width including 256, proven by GF(2)
+                             nullspace rather than extrapolated -- and shows it
+                             costs at most ~3 of 192 rounds on 6% of keys, so
+                             it is documented rather than screened.  Corrects
+                             §11.20.5, which called the affine class a passing
+                             cross-check when it is a proper subset.  Exits
+                             non-zero if a finding stops reproducing.  Ungates
+                             #248.  n=9/n=12 are excluded throughout: M is
+                             singular there
+  nl_fscx_v2_round_constants.py — round constants for NL-FSCX v2 (TODO #245).
+                             Ships the fix and carries the corrections to #243
+                             and #244: every n=12 measurement in §11.25/§11.26
+                             was void (M is SINGULAR at n=12, so F_B is not a
+                             bijection -- always check before picking a test
+                             width), and the tau(192)=14 "confirmation" was a
+                             25-key sample of a heavy-tailed statistic.  Proves
+                             an XOR round constant leaves xdp+ exactly invariant,
+                             so #214's trail bounds carry over verbatim
+  hske_nl_a2_rating_review.py — is HSKE-NL-A2 production-track? (TODO #244).
+                             No, and this is the suite's first downgrade of a
+                             production-track row.  Adds the result #243 lacked:
+                             a THEOREM, not a conjecture -- since E_B = F_B^r,
+                             E[fixed points] = tau(r) = tau(192) = 14 against an
+                             ideal cipher's 1 (measured 13.84 at n=16).  Not an
+                             attack; provably not an ideal cipher.  Corollary:
+                             192 = 2^6*3 is among the worst round counts
+                             available, a prime gives ~1.04 (TODO #245)
+  twk_stprp_review.py      — should `twk` move off demo-only? (TODO #243).
+                             No: in the ROM it is an STPRP iff nl_fscx_revolve_v2
+                             is an SPRP, and no such result exists.  Records the
+                             structural finding neither #241 nor #242 caught --
+                             v2-revolve is ONE unvaried round iterated 192 times,
+                             no round constant, no key schedule -- so one slid
+                             pair determines the key and the round count does
+                             nothing against that class.  Also finds HSKE-NL-A2
+                             carries the same assumption at production-track with
+                             worse failure consequences (TODO #244)
   rand_fpe_twk_analysis.py — the three formerly-unclassified CLI subcommands
                              (TODO #241).  `fpe` and `twk` turn out to be the
                              same function -- one unseparated
@@ -151,7 +257,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.24: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (653 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.32: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -166,11 +272,12 @@ spec/                                                — machine-readable protoc
                                                       `--check` gates it (stale-vs-generator, schema
                                                       validity, and that every tag the CLIs accept is
                                                       classified).  Schema validation needs the
-                                                      `jsonschema` package — the repo's only
-                                                      third-party dependency, and tooling-only: a bare
+                                                      `jsonschema` package — tooling-only: a bare
                                                       python3 gets a NOTE, while CI installs it and
                                                       passes `--require-schema` so a skipped
-                                                      validation cannot pass.  check_security_md.py
+                                                      validation cannot pass.  (It is no longer the
+                                                      repo's only third-party package: see the
+                                                      optional-dependency note below.)  check_security_md.py
                                                       cross-checks
                                                       every protocol's status against SECURITY.md's
                                                       prose table — the disagreement-between-documents
@@ -243,6 +350,22 @@ changes.
 The `Status:` line format for `TODO.md` / `TODO_DONE.md` sections, and the list of
 grandfathered pre-#154 entries, live in the `todo-status` skill
 (`.claude/skills/todo-status/SKILL.md`) — load it when opening or closing a TODO.
+
+## Third-party dependencies
+
+The shipped primitives and CLIs have **none**, in any language, and that is a property
+worth preserving — `./build_c.sh`, `./build_go.sh` and every `HerraduraCli/` entry point
+run against a bare toolchain.  Three optional packages exist, all analysis- or
+tooling-only, and every consumer of them degrades to a printed NOTE rather than failing:
+
+| package | used by | absent ⇒ | install |
+|---|---|---|---|
+| `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
+| `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214) | section skipped | `pip install z3-solver` |
+| `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
+
+Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
+inside a `try`/`except ImportError` and prints what to install.
 
 ## Build Commands
 

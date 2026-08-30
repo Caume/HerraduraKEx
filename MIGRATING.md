@@ -26,6 +26,12 @@ readable and still breaks interoperation: `hpke-stern-kem` keys and ciphertexts 
 unchanged byte-for-byte, but the *shared secret* derived from them is not. Nothing needs
 regenerating; both ends simply have to be on the same side of the upgrade.
 
+The ninth, in v5.0.0, is the widest on this list: it changes the NL-FSCX v2 round
+function itself, so **five** constructions break together — `hske-nla2`, `hpke-nl`,
+`hske-duplex`, `fpe` and `twk`. For the two unauthenticated ones the failure is silent,
+as in section 8.
+See [section 9](#9-nl-fscx-v2-round-constants-v500).
+
 The eighth is the reason the version is **4.0.0**, and it is the one on this list most
 likely to lose data if it is ignored. `fpe` and `twk` ciphertexts written by any earlier
 build cannot be decrypted by 4.0.0+, and because both subcommands are unauthenticated
@@ -47,6 +53,7 @@ If you have stored any, decrypt them with a pre-4.0.0 build first. See
 | [`SternSig` is heap-backed and carries its own round count](#6-sternsig-is-heap-backed-and-carries-its-own-round-count-v310) | v3.1.0 | C code using `herradura.h` directly (`SternSig`, `hpks_stern_f_sign`/`-verify`, `hcred_issue`) | Add `stern_sig_alloc`/`stern_sig_free` around each `SternSig`. **No PEM, wire-format or CLI break** — existing signatures still verify byte-for-byte |
 | [HPKE-Stern-KEM session-key derivation](#7-hpke-stern-kem-session-key-derivation-v330) | v3.3.0 | Shared secrets from `--algo hpke-stern-kem` and `--algo hybrid-rnl-stern`; anything encrypted under one | Both peers must be on v3.3.0+. **No key or ciphertext format change** — existing keys and ciphertexts are still read; only the derived secret differs |
 | [`fpe` and `twk` subkey derivation](#8-fpe-and-twk-subkey-derivation-v400) | v4.0.0 | Every `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-4.0.0 build before upgrading.** Old ciphertexts cannot be recovered by 4.0.0+, and the failure is silent |
+| [NL-FSCX v2 round constants](#9-nl-fscx-v2-round-constants-v500) | v5.0.0 | Every `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-5.0.0 build before upgrading.** Five constructions at once; for `fpe`/`twk` the failure is silent |
 
 ---
 
@@ -448,3 +455,76 @@ SP 800-38G sense — no radix, no domain, 32 bytes in and 32 raw bytes out. TODO
 scoped that out deliberately: renaming it, re-scoping it, or implementing a real
 FF1/FF3-1 domain is a different decision from a wire-format fix, and bundling them would
 have forced both at once. `SECURITY.md`'s `fpe` row records it meanwhile.
+
+---
+
+## 9. NL-FSCX v2 round constants (v5.0.0)
+
+**What changed:** `nl_fscx_revolve_v2` and its inverse now XOR the 1-based round index
+into the state before each step. One XOR per round.
+
+```
+before v5.0.0   for i in 1..r:   x = M(x ⊕ B) + δ(B)          every round identical
+v5.0.0 onward   for i in 1..r:   x = M(x ⊕ i ⊕ B) + δ(B)      rounds differ
+```
+
+The single-step `nl_fscx_v2` is unchanged; only the revolve loops carry the constant.
+`R_VALUE` stays at 192.
+
+**Why:** without a round constant the cipher was `F_B^r` — one unvaried map iterated —
+which `SecurityProofs-7.md` §11.25 and §11.26 found two consequences of. A slid pair very
+nearly determines the key, and the ~`2^128` cost of finding one does not depend on the
+round count, so adding rounds could never help. And `E_B` deviated measurably from an
+ideal cipher on fixed points: at `n = 16` the median key had 4 where an ideal cipher has
+1, and 76% of keys exceeded 1 against an ideal 37%. At some widths — 38/300 keys at
+`n = 8`, 1/300 at `n = 16` — `F_B^r` was the **identity map**, though `256 ∤ 192` kept
+that away from the deployed parameters.
+
+Round constants remove all of it, and cost nothing measurable: `xdp+` is *exactly*
+invariant under an XOR constant (§11.27.1), so TODO #214's differential trail bounds carry
+over verbatim.
+
+**What's incompatible — five constructions, not one:**
+
+| affected | what breaks |
+|---|---|
+| `enc`/`dec --algo hske-nla2` | every ciphertext |
+| `enc`/`dec --algo hpke-nl` | every ciphertext (El Gamal layer unchanged; the v2 envelope is not) |
+| `enc`/`dec --algo hske-duplex` | every ciphertext |
+| `fpe --encrypt`/`--decrypt` | every ciphertext |
+| `twk --encrypt`/`--decrypt` | every ciphertext |
+
+No key format changes. No PEM label changes. No CLI flag or `--algo` value changes.
+`HERRADURA SESSION KEY` PEMs and every other key type are read exactly as before.
+
+**The `fpe` and `twk` failures are silent**, for the same reason as section 8: both are
+unauthenticated permutations with no tag and no structure in the output, so a v5.0.0 build
+handed a 4.x ciphertext exits 0 and writes 32 plausible-looking bytes. `hske-nla2` and
+`hske-duplex` go through the AEAD/PEM layer and will fail visibly.
+
+**Action required — before upgrading:**
+
+1. Identify any stored `hske-nla2`, `hske-duplex`, `fpe` or `twk` output.
+2. Decrypt it with a **pre-5.0.0** build, under the same key and tweak.
+3. Upgrade, then re-encrypt if you still need it stored.
+
+There is no conversion tool and no dual-read mode: the constant-free path was removed
+rather than kept behind a flag, because a flag selecting between two round functions is
+the same hazard in a different shape.
+
+**Not affected:** NL-FSCX **v1** and everything built on it — HSKE-NL-A1, HFSCX-256 and
+every hash, signature and KEM that uses them — plus HKEX-GF, HKEX-RNL, the Stern family,
+`rand`, and all classical constructions. The change is confined to the v2 revolve. The
+Arduino and assembly ports were also left unchanged: their v2 is a separate 32-bit
+construction with no wire compatibility to anything.
+
+**Why this is MAJOR.** It makes existing ciphertexts unreadable by a newer build, which is
+what CLAUDE.md reserves MAJOR for. That the four affected protocols are all rated
+`demo-only`, `research` or `broken` in `SECURITY.md` does not downgrade it: the version
+number describes the compatibility break, not the maturity of what broke.
+
+**What it does *not* change: any rating.** `hske-nla2` and `twk` remain demo-only. The fix
+removes the structural objections §11.25 and §11.26 raised, which puts the differential
+trail bounds back in the binding position — and those are still key-averaged and
+explicitly order-of-magnitude, with no PRP/SPRP reduction behind them. Removing an
+objection is not supplying a proof.

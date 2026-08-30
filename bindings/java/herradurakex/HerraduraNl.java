@@ -61,11 +61,17 @@ public final class HerraduraNl {
         return b.xor(mInv(z));
     }
 
+    /** Round constant (TODO #245): the 1-based round index is XORed into the
+     * state before each step, so the cipher stops being F_B^steps. Without it
+     * every round is the identical map, which is the self-similarity
+     * SecurityProofs-7.md §11.25/§11.26 found against. An XOR constant leaves
+     * xdp+ exactly invariant, so TODO #214's trail bounds carry over verbatim.
+     * Wire-format breaking; see MIGRATING.md §9. */
     public static BigInteger nlFscxRevolveV2(BigInteger a, BigInteger b, int steps) {
         BigInteger d = delta(b);
         BigInteger result = a.and(MASK);
-        for (int i = 0; i < steps; i++) {
-            result = Herradura.fscx(result, b).add(d).and(MASK);
+        for (int i = 1; i <= steps; i++) {
+            result = Herradura.fscx(result.xor(BigInteger.valueOf(i)), b).add(d).and(MASK);
         }
         return result;
     }
@@ -73,15 +79,24 @@ public final class HerraduraNl {
     public static BigInteger nlFscxRevolveV2Inv(BigInteger y, BigInteger b, int steps) {
         BigInteger d = delta(b);
         BigInteger result = y.and(MASK);
-        for (int i = 0; i < steps; i++) {
+        for (int i = steps; i >= 1; i--) {
             BigInteger z = result.subtract(d).and(MASK);
-            result = b.xor(mInv(z));
+            result = b.xor(mInv(z)).xor(BigInteger.valueOf(i));   // undo the round constant
         }
         return result;
     }
 
     /** Rejects NL-FSCX v2 keys for which delta(B) collapses the permutation to
-     * affine (delta in {0, 2^(n-1)}) — TODO #159/#168. */
+     * affine (delta in {0, 2^(n-1)}) — TODO #159/#168.
+     *
+     * <p>SCOPE (TODO #253): the affine class only, NOT the full set of
+     * differentially weak keys.  Keys admitting a zero-weight differential
+     * trail are a strictly larger family — every B with tz(delta(B)) &gt;= 4,
+     * at every width including n=256 — and this check accepts all of it
+     * except the two endpoints.  Deliberate: at n=256 such a key forfeits
+     * about tz/2 of 192 rounds with probability ~2^-tz, so a random key loses
+     * at most 3 rounds with probability 1/16.  See SecurityProofs-7.md
+     * §11.28.3-§11.28.4. */
     public static boolean nlV2KeyIsValid(BigInteger b) {
         BigInteger d = delta(b);
         return !d.equals(BigInteger.ZERO) && !d.equals(BigInteger.ONE.shiftLeft(N - 1));

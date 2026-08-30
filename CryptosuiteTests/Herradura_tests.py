@@ -313,10 +313,15 @@ def nl_fscx_v2_inv(Y: BitArray, B: BitArray) -> BitArray:
     return B ^ _m_inv(Z)
 
 
+# Round constant (TODO #245), mirroring the suite: the 1-based round index is
+# XORed into the state before each step, so the cipher stops being F_B^steps.
+# This harness is standalone by design; test [46] cross-checks its copy against
+# the shipped suite, which is what catches drift here.
 def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    n = A._size
     result = A.copy()
-    for _ in range(steps):
-        result = nl_fscx_v2(result, B)
+    for i in range(1, steps + 1):
+        result = nl_fscx_v2(BitArray(n, result.uint ^ i), B)
     return result
 
 
@@ -325,9 +330,9 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
-    for _ in range(steps):
+    for i in range(steps, 0, -1):
         z      = BitArray(n, (result.uint - delta.uint) & mask)
-        result = B ^ _m_inv(z)
+        result = BitArray(n, (B ^ _m_inv(z)).uint ^ i)
     return result
 
 

@@ -2,6 +2,532 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.0.7] - 2026-08-30
+
+The TODO #251 decision, recorded.  Documentation only — no code, no wire format, no CLI
+surface, no `--algo` value changes.
+
+### Decided
+- **TODO #251 is DEPRECATED: the NL-FSCX v2 migration will not be performed.**  #251 required
+  that this call be made explicitly rather than arrived at by default, so the reasoning is
+  recorded in the item: the deployed round fails no test that exists (#253, #254), a MAJOR
+  would make every stored artifact under five constructions unreadable for a margin
+  improvement users cannot currently observe a need for, and every figure supporting the
+  change is singly sourced with four corrections needed in three days — which argues for the
+  reversible option.
+- **This is not a rejection of candidate B.**  §11.32 confirmed its advantage is real and
+  sits in the width-independent part, the strongest evidence any design change in this suite
+  has had.  The objection is to *replacing* v2, not to *having* B.
+
+### Added
+- **TODO #255: NL-FSCX v3** — ship candidate B as a new primitive *alongside* v2 rather than
+  in place of it.  Nothing breaks, `MIGRATING.md` is not involved, the change is additive
+  surface (a MINOR, not a MAJOR), and it is reversible.  Five new variants — `hske-nla3`,
+  `hpke-nl3`, `hske-duplex3`, `fpe --v3`, `twk --v3` — with the v2 originals left in place.
+  Two things the item flags as must-derive-not-inherit: the **round count**, since χ changes
+  the per-round weight and v3 may need materially fewer than 192 rounds (possibly enough to
+  offset its +57% per-round cost outright), and the **weak-key classes**, two of which are
+  artefacts of the round being linear-then-add-constant and may simply not exist for v3.
+  v3 ships **demo-only**: a wider margin does not supply the missing bound, and #252/#254 are
+  unchanged by v3 existing.
+
+## [5.0.6] - 2026-08-29
+
+TODO #246's candidate comparison, re-run against the corrected methodology.  TODO #252 had
+invalidated the basis on which candidate B was chosen, leaving TODO #251 holding evidence
+whose methodology had been removed underneath it.  Analysis and documentation only.
+
+### Findings
+- **#246's ordering survives, and is better founded than it was.**  Candidate B (the deployed
+  round followed by χ over short odd rows) carries 2–3× the deployed round's trail weight at
+  every round, on both axes, at `n = 8`, `10` and `11`.
+- **The reason it is better founded is specific and new.**  B's advantage lives in the
+  *transient*, and §11.31.2 established the transient is the width-independent part —
+  confirmed independently by MILP, where `n = 16` and `n = 32` give identical proven optima at
+  `r = 4` and `5`.  So the part of a small-width comparison that carries to `n = 256` is
+  exactly the part where B wins.  #246 compared saturated slopes; this does not.
+- **The mechanism.**  Any linear-then-add-constant round hands over a probability-1 one-round
+  differential — the MSB freebie of §11.28.3 — and that *is* the transient.  χ removes it: B's
+  round-1 weight is 2.00 / 1.81 / 2.00 across the three widths, where the deployed round and
+  candidate A are both 0.00 on **both** axes.
+- **Candidate A is disqualified** and should not be revisited: a correlation-1 linear trail
+  through eight rounds at `n = 8`, and exactly 1.00 bit/round at `n = 10` and `11` — an integer
+  clean enough to indicate a structural per-round approximation.  Caveated as possibly a
+  small-width artefact (A's Feistel halves are 4 bits at `n = 8`).
+- **Still not a bound.**  B saturates by round 3 at reachable widths, so it has no measurement
+  window and its asymptotic slope is as unmeasured as the deployed round's.  #252 and #254 are
+  unchanged.
+
+### Fixed
+- **A reporting bug in this work's own first attempt, recorded because it pointed the wrong
+  way.**  Applying §11.31's window filter verbatim returned an empty window for candidates A
+  and B and the table printed "BELOW criterion".  They were not failing — they were saturating
+  *before* round 4 because they are stronger.  An empty window is a statement about the
+  measurement, and conflating it with a failing cipher penalises exactly the candidates the
+  comparison exists to favour.
+
+### Changed
+- TODO #251's blocker is no longer methodological.  Its evidence base is repaired, but the
+  case for urgency is *weaker* than when it was filed: §11.30 found the deployed round meets
+  the linear criterion at every width measured, and §11.28 found the per-key gap does not sink
+  the differential margin.  What remains is a judgement call — a five-construction MAJOR on
+  well-founded comparative evidence that is still not a bound — which #251 requires be recorded
+  explicitly rather than arrived at by default.  **Not made here.**
+
+### Added
+- `SecurityProofsCode/and_layer_recheck.py`, SecurityProofs-7.md §11.32.  Part 7's range becomes
+  §11.10–§11.13, §11.15–§11.32; the expression count stays 698.
+
+## [5.0.5] - 2026-08-29
+
+TODO #252, first pass.  The bound is **not** delivered and #252 stays open; what this pass
+establishes is why every previous attempt was unstable, and it was not solver time.
+Analysis and documentation only.
+
+### Findings
+- **The measurement window is empty at every reachable width.**  A differential increment
+  series has a cheap *transient* — every key has a probability-1 one-round differential, so
+  the first rounds are near-free — and a *ceiling* at about `0.6n`.  The asymptotic increment
+  lives between them, and that gap is `0.6n/s - transient` rounds wide: zero or one round for
+  every `n <= 13`, which is where exhaustive DDT construction stops.  The quantity is not
+  measurable exhaustively **at all**, not merely slowly.
+- **#247's headline optima were measuring the transient.**  2.0 / 4.0 / 7.0 at `r = 2/3/4`,
+  identical at `n = 16`, `32` and `64`, was read as strong evidence of width-independence.  It
+  is the transient, which is width-independent for a structural reason and is not the quantity
+  the `s_diff >= 4/3` criterion needs.  Every per-round differential figure in this repository
+  is affected, #248's and #254's included.
+- **Route 2 is demoted.**  #252 named it "the one that would actually settle it".  As sketched
+  it yields `s_diff >= 1` against a `4/3` criterion — it cannot close the gap even fully
+  proven — and the two-round strengthening it would need is contradicted by four consecutive
+  near-free rounds measured at `n = 11`.  Revised route order: 1, then 3.
+- **Route 1 is re-motivated with a different target**: not a larger width but a larger *round
+  count* at `n = 32`–`64`, where the window is wide and CBC already reaches.  Measured: `n = 16`
+  proves `r = 4/5/6` in 8 s / 35 s / 365 s and fails `r = 7` at 600 s; `n = 32` proves `r = 4/5`
+  in 68 s / 635 s and fails `r = 6` at 900 s.  `n = 32` at `r = 5` sits at `0.31n`, so the width
+  is right and the round count is the entire gap — the target is `r ≈ 10`–`14`, several orders
+  of magnitude away.  A stronger backend, not a longer time limit.
+- **The transient's width-independence is confirmed directly**: `n = 16` and `n = 32` give
+  identical proven optima at `r = 4` and `r = 5` (7.0 and 10.0) — the same agreement #247 saw
+  across `n = 16/32/64` and read as evidence about the asymptote.
+- **A weak-key lead, filed and explicitly not concluded**: the per-key increment tracks the
+  *signed-digit (NAF)* weight of `delta(B)` rather than its Hamming weight — `d` and `-d`
+  produce identical series because they are the same constant up to sign.  Whether the
+  threshold is a constant NAF weight (density ~`2^-240` at `n = 256`, irrelevant) or scales
+  with `n` is undetermined, and those are very far apart.  Most classes measured rest on fewer
+  than five keys.
+
+### Fixed
+- **TODO #254's linear figures re-checked against the transient and corrected.**  Settled
+  increments are 0.59 / 0.75 / 0.93 / 0.95 at `n = 7/8/10/11` against the 0.42 / 0.77 / 0.88 /
+  1.03 reported in v5.0.4.  The linear transient is about two rounds where the differential one
+  runs to four or more, so the corrections are small and **the conclusion is unchanged** —
+  every width above `n = 7` still clears the `2/3` criterion.
+- **#254's "the slope rises with width" is weakened.**  It rises, but settled it is flattening:
+  +0.03 between the two widest against +0.16 between the two narrowest.  Part of the apparent
+  rise was the transient shrinking relative to the read window.  Wider widths should not be
+  expected to keep improving.
+
+### Added
+- `SecurityProofsCode/diff_bound_window.py`, SecurityProofs-7.md §11.31.  Part 7's range
+  becomes §11.10–§11.13, §11.15–§11.31; the expression count stays 698.
+
+### Unchanged
+- No rating moves.  TODO #248's verdict stands: HSKE-NL-A2 and `twk` remain demo-only.
+
+## [5.0.4] - 2026-08-29
+
+TODO #254, first pass.  The bound it was filed for is **not** delivered and #254 stays open;
+what changed is what the bound has to establish.  Analysis and documentation only.
+
+### Findings
+- **A scale-invariance theorem.**  FSCX ties its round count to its block size
+  (`r = 3n/4`), so the trail-resistance criterion is *independent of n*: `s_lin >= 2/3` and
+  `s_diff >= 4/3`, the same numbers at every width.  The open question is therefore a single
+  scalar rather than a width-dependent curve, establishable at any width where saturation is
+  not binding — a far better-posed target than #252 and #254 were filed with.
+- **Longer keys do not help on this axis.**  n = 512 faces the identical criterion at 4x the
+  cost per block (and 2x per bit, since a block carries only n bits).  What longer keys do buy
+  — 2^n key search, 2^(n/2) generic data bounds — was either never binding or already
+  addressed by #245.  The only way to buy trail margin is a round function with a higher
+  per-round slope, which is the strongest argument TODO #251 has had.
+- **The MILP route is closed, structurally.**  Addition of a *constant* — which is what a
+  cipher with no key schedule does every round — has correlations that are not powers of two,
+  so Wallén's characterisation and every ARX bit-level encoding built on it are inapplicable.
+  Measured weights at n = 10 include 1.830, 2.476, 2.508.  A carry-automaton model was built,
+  found to score single paths where the true correlation sums them (thus *overstating*
+  resistance), and discarded before it could be quoted.  The transfer-matrix route is promoted
+  to first choice for both #252 and #254.
+- **The correlation-1 mask subspace at n = 256**, exact — the linear analogue of #253's
+  zero-weight class, with the same `tz/2`-free-rounds-at-`2^-tz` shape and the same verdict: a
+  typical key gets exactly one free round.
+
+### Fixed
+- **Saturation invalidated most published slope figures here, including the ones added three
+  commits ago.**  Trail weight cannot exceed the distinguishing budget (~n/2 linear, ~n
+  differential), and a slope read past it measures the ceiling.  #248's linear slopes were read
+  at r = 4–6 and #247's differential optima put r = 4 at 0.875n; both were saturated.  Corrected
+  (read at r = 3–5), the linear slope is 0.42 / 0.77 / 0.88 / 1.03 at n = 7 / 8 / 10 / 11 —
+  crossing the 2/3 criterion between n = 7 and n = 8 and clearing it by 55% at the widest.
+  Encouraging, and still not a bound.
+- **#248's claim that linear is "the binding axis" is withdrawn.**  The comparison was not
+  normalised: the two thresholds differ by exactly the factor of two the raw slopes do.
+  Normalised and saturation-corrected, differential is the tighter axis, which raises #252's
+  priority relative to #254.  The HSKE-NL-A2 and `twk` rows are corrected accordingly.
+- The scale-invariance theorem is **scoped**: it is derived for a block cipher and does not
+  transfer unexamined to HSKE-NL-A1 (counter-mode PRF) or HFSCX-256 (Davies–Meyer), both of
+  which run `n/4` rounds.  Deriving their criteria is the part of #254 that reaches three
+  production-track rows, and is not done.
+
+### Added
+- `SecurityProofsCode/fscx_scaling_and_linear.py`, SecurityProofs-7.md §11.30.  Part 7's range
+  becomes §11.10–§11.13, §11.15–§11.30; the expression count stays 698.
+
+### Unchanged
+- No rating moves.  HSKE-NL-A2 and `twk` remain demo-only, gated on a bound this pass did not
+  produce.
+
+## [5.0.3] - 2026-08-29
+
+TODO #248 — the NL-FSCX v2 family rating re-review that TODO #245 named and TODO #253
+ungated.  Analysis and documentation only: no primitive, wire format, CLI surface or
+`--algo` value changes.
+
+### Verdict
+- **HSKE-NL-A2 and `twk` both stay demo-only, and both rationales are replaced.**  The
+  rating does not move; the reason it does not move is not the reason either row gave.
+  What is missing is now one specific, closeable thing — **a linear-trail bound at
+  realistic width** (filed as #254) — rather than an unexplained caution.
+
+### Added
+- `SecurityProofsCode/v2_family_rating_review.py`, SecurityProofs-7.md §11.29.  Part 7's
+  advertised range becomes §11.10–§11.13, §11.15–§11.29; the count stays at 698 because
+  the new section deliberately uses code spans over math where either would do — a first
+  pass took the page to 727, into `validate_katex.js`'s ~700 warning band.
+- **Invariant-subspace resistance, proven at n = 256.**  The Beierle–Canteaut–Leander–
+  Rotella criterion, adapted for the constant being XORed before the linear layer: the
+  round-constant differences span 8 dimensions, and their smallest `M`-invariant closure
+  is the full 256.  So no invariant-subspace or nonlinear-invariant attack of that class
+  exists, for any nonlinear part and at any round count.  This is the v2 family's first
+  unconditional resistance result — exact rather than extrapolated, and stated at the
+  deployed width rather than carried there.  It also retroactively justifies #245's round
+  constants against a class #245 did not consider.
+
+### Fixed
+- **Both rows contradicted themselves.**  Each asserted self-similarity as a live
+  constraint in TODO #243's pre-#245 wording — "one unvaried round iterated 192 times with
+  no round constant" — and then said #245 removed it.  Re-verified gone against the
+  shipped code (the slide property holds in 0/200 trials) and withdrawn from both rows.
+  The same stale sentence had propagated into #248's own text and is corrected there too.
+- **The stated rationale was a standard the rest of the table does not use.**  Both rows
+  rested on the absent PRP/SPRP reduction.  Six production-track rows — HSKE-NL-A1,
+  HFSCX-256, HKEX-RNL, HPKS-WOTS, HPKS-XMSS, ZKP-RNL — rest on named conjectures with no
+  reduction either, as does AES.  Applied literally the standard demotes all six, so it
+  cannot be why A2 and `twk` are demo-only.  Withdrawn from both rows.
+- A2's weak-key constraint now says it rejects the **affine** class specifically, since
+  TODO #253 showed the keys admitting a zero-weight trail are strictly more.
+
+### Findings
+- **Linear, not differential, is the binding axis for this family**, and it had never been
+  written up.  Exact optimal linear-trail weight is far below the differential figure, and
+  unlike the differential slope it **rises with width** — so the small-width projection is
+  unresolved in a way #252's differential work does not cover.
+- **The axis does not distinguish A2 from the production-track rows.**  Measured for v1 as
+  well, because the argument above is about consistency: v1 is no better than v2 at any
+  width (0.47–0.69 against 0.49–0.87), and A2/`twk` run 192 rounds where HSKE-NL-A1 and
+  HFSCX-256 run 64.  On this axis A2 is the better-covered side.
+- The gap therefore reaches four rows, three production-track.  **Filed as #254, not acted
+  on** — a slope read at n ≤ 10 is not a basis for demoting three more rows, and #244's
+  error run in reverse is still #244's error.  The HSKE-NL-A1 and HFSCX-256 rows are
+  annotated with the open axis and keep their classifications.
+
+## [5.0.2] - 2026-08-29
+
+TODO #253 — the fixed-key trail gap TODO #247 found, resolved.  Analysis and
+documentation only: no primitive, wire format, CLI surface or `--algo` value changes.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_fixed_key.py` — answers all four of TODO #253's
+  questions.  Exits non-zero if a headline finding stops reproducing, so it cannot
+  print a stale verdict.
+- SecurityProofs-7.md §11.28; Part 7's advertised range becomes §11.10–§11.13,
+  §11.15–§11.28 (698 math expressions) in every copy of the index.  Part 7 is now
+  close to `validate_katex.js`'s ~700-expression warning threshold; the next section
+  added there will likely need a split.
+
+### Findings
+- **The per-key/key-averaged gap does not dissolve, and it is generic.**  #253's first
+  question was whether #247's factor of two was a small-width artefact.  It is not:
+  the ratio is 0.50–0.61 at n = 7, 8, 10 and 11 with no shrinking trend, and it
+  survives restriction to keys with `tz(delta) <= 1` — about three quarters of the key
+  space.  No screen addresses it, because there is nothing to screen out.  Every trail
+  figure this repository publishes for the v2 family overstates an actual key's
+  resistance by about a factor of two in weight.
+- **A weak-key class the deployed check misses.**  The probability-1 differences of
+  `+delta` are exactly `span{e_0..e_(k-1), e_(n-1)}` for `k = tz(delta)`, so a
+  zero-weight r-round trail exists iff a nonzero difference stays in that subspace
+  under r applications of `M` — a nullspace, computed exactly rather than sampled.  The
+  smallest `tz(delta)` admitting a zero-weight 3-round trail is **4 at every width
+  tested, n = 256 included**.  `nl_v2_key_is_valid` rejects only the two endpoints of
+  this family.
+- **It is quantitatively harmless at n = 256, and is not being screened for.**  Free
+  rounds grow like `tz/2` while `Pr[tz >= k]` falls like `2^-k`, so buying g free rounds
+  costs about `2^-2g` of the key space; a random key loses at most 3 of 192 rounds with
+  probability 1/16.  A screen is one line but would change the key distribution across
+  four language ports for a 2-round effect on 0.4% of keys.  Documented instead.
+- **The reduction that made the above exact.**  On differences the round's XOR terms
+  cancel and `M` is linear, so per-key differential behaviour depends on the key only
+  through `delta(B)`.  Two keys with the same `delta` have identical trail weights at
+  every round count.
+
+### Fixed
+- **SecurityProofs-7.md §11.20.5 concluded too much.**  It read "`nl_v2_key_is_valid`
+  already rejects them, so this is a cross-check that passes rather than a new finding."
+  The affine keys are a *proper subset* of the zero-weight-trail keys; everything with
+  `4 <= tz(delta) < n-1` is accepted.  §11.19.2 itself is correct — it characterises the
+  affine class exactly and claims nothing more — but the two properties were conflated
+  one section later.  Corrected in place, with the scope now stated in
+  `nl_v2_key_is_valid`'s docstring in all four language ports (C, Go, Python, Java).
+
+### Changed
+- TODO #248 is **ungated**: #253 was its blocker.  Its text now records that the trail
+  margin is not the binding constraint and never was, so #248 must decide on §11.25's
+  structural finding — one unvaried round, no key schedule, no PRP/SPRP reduction —
+  rather than re-weighing bounds a fourth time.
+
+### Note on method
+- `n = 9` and `n = 12` are excluded from every measurement: `M` is singular there, so
+  the round is not a bijection.  An earlier pass of this work ran at `n = 9` before the
+  `m_is_singular` assertion caught it, and those numbers were discarded — the same trap
+  TODO #245 recorded after it voided §11.25's and §11.26's `n = 12` measurements.
+
+## [5.0.1] - 2026-08-29
+
+Documentation and analysis only. No code, no wire-format change.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_and_layer.py` (TODO #246) and
+  `SecurityProofsCode/nl_fscx_v2_bounds.py` (TODO #247).
+- **`pulp` (CBC) as an optional, analysis-only dependency**, with verified degrade-to-skip —
+  absent, the MILP section prints a NOTE and the file still runs, the pattern #214 uses for
+  z3. CLAUDE.md gains a *Third-party dependencies* table listing all three optional packages
+  and the rule that shipped primitives never acquire one.
+- TODO #251 (ship the AND layer), #252 (two-sided bound at n=256) and #253 (fixed-key trail
+  analysis) — the blockers split out of #246 and #247 so both could close honestly.
+
+### Changed
+- **TODO #246 and #247 closed as *analysis complete*.** #246 decided the design —
+  candidate B, the deployed round followed by χ over short odd rows (`256 = 47×5 + 3×7`) —
+  and could not ship it: its own gate was a realistic-width bound, and #247 established that
+  gate cannot currently be met. #247 completed the width-scaling study, the fixed-key spread,
+  the exact linear analysis and the MILP backend.
+- TODO #248's premise **amended**. It assumed the blocker was width extrapolation; #247 found
+  the slope is width-stable and the real gap is key-averaged versus per-key. Its gate is now
+  #253, not #252.
+
+### Notes — findings
+- The impossibility theorems (#210/#224/#230) do **not** block a non-linear v2: #230 is about
+  HKEX *agreement*, and no shipped protocol uses FSCX_REVOLVE for agreement any more.
+- **Exact optimal trail weights**, by DDT/LAT plus dynamic programming: the deployed round
+  accumulates 0.39 bits over three rounds at n=10 — a trail of probability 0.76 — where
+  candidate B has more weight after one round than v2 has after three.
+- **Exact linear cryptanalysis**, an axis neither #214 nor #246 had touched: v2 reaches 0.16
+  bits over three rounds (correlation ≈ 0.90). Candidate B leads on this axis too, so the
+  recommendation is not an artefact of measuring only differentials.
+- **MILP proven optima** 2.0 / 4.0 / 7.0 at r = 2/3/4 are identical at n = 16, 32 and 64.
+- **The dominant uncertainty is not width.** Real keys sit at roughly half the key-averaged
+  trail weight, with a per-key spread wider than the mean (0.70 to 7.71 on a mean of 4.73 at
+  n=11). Halving the proven 3.0 bits/round puts the per-key requirement above 170 rounds and
+  makes the deployed 192 marginal. This reframes #248.
+
+### Notes — corrections to claims made during this work
+- **A locality argument was withdrawn.** #247 justified carrying trail figures to n=256 by
+  asserting the optimal trail is local; the solver's own output refutes it — the optimum at
+  n=64 spans all 64 bit positions. Width-independence here is empirical, not structural.
+- **The masking objection in #246 was wrong, and in the direction that disfavoured the
+  change.** #78.H masks the *classical* linear `fscx_revolve`; there is no masked v2, and v2
+  already needs a masked adder for its modular addition. Adding χ is roughly +57% on a cost
+  already paid, not free→expensive.
+- **The 127+129 χ row split was wrong.** χ's inverse has degree `(L+1)/2`, so it would have
+  meant degree-64 decryption by a serial 127-step recurrence — and every affected construction
+  ships a decrypt path. Short rows keep the inverse at degree 4 and stay inside Keccak's
+  analysed regime.
+- A 2-key run suggested the trail slope collapsing at n=13, which would have made #214's
+  projection optimistic. It did not reproduce at 6 keys; recorded as a near-miss.
+- On the OR half of the original brief: `b∨c = b⊕c⊕(b∧c)`, so OR is an AND plus linear terms
+  and adds no algebraic degree. Recorded as considered and redundant.
+
+## [5.0.0] - 2026-08-29
+
+**MAJOR — five constructions break together: `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk`.**
+Every ciphertext any of them produced before this release is undecryptable by it, and for
+`fpe`/`twk` the failure is **silent** (unauthenticated permutations: exit 0, plausible
+garbage). Decrypt anything stored with a pre-5.0.0 build **before** upgrading. See
+[MIGRATING.md](MIGRATING.md) §9. Keys, PEM labels, CLI flags and `--algo` values are all
+unchanged, and NL-FSCX **v1** — HSKE-NL-A1, HFSCX-256 and everything built on them — is
+untouched.
+
+### Changed
+- **NL-FSCX v2 gains round constants (TODO #245).** `nl_fscx_revolve_v2` and its inverse
+  now XOR the 1-based round index into the state before each step, in C, Go, Python and
+  Java identically. One XOR per round. The single-step `nl_fscx_v2` is unchanged and
+  `R_VALUE` stays at 192.
+
+  Without it the cipher was `F_B^r` — one unvaried map iterated — which SecurityProofs-7.md
+  §11.25 and §11.26 found two consequences of: a slide structure in which one slid pair very
+  nearly determines the key and the ~2^128 cost of finding one **does not depend on the
+  round count**, and a measurable deviation from ideal-cipher behaviour on fixed points.
+  At some widths `F_B^r` was the **identity map** (38/300 keys at n=8, 1/300 at n=16),
+  though `256 ∤ 192` kept that away from the deployed parameters.
+
+- **The gating question resolved analytically, and favourably.** #245 could not ship until
+  it was known whether round constants degrade TODO #214's differential trail bounds. They
+  do not: an XOR round constant leaves `xdp+` **exactly** invariant — the constant cancels
+  in the XOR difference entering `M`, and `M` is a bijection so the value distribution into
+  the modular addition is unchanged. Confirmed exhaustively, 25/25. #214's bounds carry over
+  verbatim with no re-run.
+
+- Measured benefit at n=16: median fixed points **4.0 → 1.0**, mean **9.04 → 0.84**, max
+  **77 → 3**, fraction above 1 **76% → 16%** (an ideal cipher gives 1, 1, and 37%). The
+  identity-collapse class becomes unaskable at every width, since `E_B` is no longer a power
+  of any single map.
+
+- TODO #245's other candidate, a **prime round count**, is not shipped and is no longer
+  needed: it treated only the fixed-point symptom by making `τ(r)` small, and once the cipher
+  is not `F^r` the round count's divisor structure is irrelevant.
+
+### Added
+- `SecurityProofsCode/nl_fscx_v2_round_constants.py` and SecurityProofs-7.md §11.27.
+
+### Fixed — corrections to v4.0.1 and v4.0.2
+Found while doing this item's work, corrected in place rather than dropped. **Neither
+changes the verdict of #243 or #244.**
+- **Every n = 12 measurement in §11.25 and §11.26 was void.** `M = I ⊕ ROL ⊕ ROR` is
+  *singular* at n = 12, so `F_B` is not a bijection there and the cycle-decomposition method
+  both sections used produces nonsense. TODO #214 avoided this by choosing widths where `M`
+  is invertible and said so; #243 and #244 did not check. `M` is invertible at the deployed
+  n = 256.
+- **§11.26's "measured 13.84 at n = 16, confirming τ(192) = 14 almost exactly" was a
+  small-sample artefact.** The statistic is heavy-tailed; over 300 keys the mean is an order
+  of magnitude higher with a standard error exceeding it. τ(r) is the mean for a *uniform
+  random* permutation and `F_B` is not one. Replaced throughout with robust statistics
+  (median, fraction above 1), which support the same conclusion more honestly.
+- **§11.25 asserted the identity collapse was gone by n = 12.** Remeasured at 300 keys, it
+  occurs at **n = 16** (1/300) — the collapsing key has every cycle of length exactly 16, a
+  structured class rather than a fluke. The deployed parameters remain clear for a structural
+  reason: that class needs `ord(F_B) = n`, and `256 ∤ 192`.
+
+### Notes
+- **No rating moved, deliberately.** `hske-nla2` and `twk` remain demo-only. #245 was written
+  to forbid granting itself a promotion for work it also performed — the failure mode #237,
+  #238, #243 and #244 have all been about. Removing a structural objection puts the trail
+  bounds back in the binding position; those are still key-averaged and explicitly
+  order-of-magnitude, and there is still no PRP/SPRP reduction for `nl_fscx_revolve_v2` at any
+  round count.
+- The Arduino and assembly ports were left unchanged, as in TODO #242: their v2 is a separate
+  32-bit construction with no wire compatibility to anything, and it was measured clear of the
+  collapse class (0/200 probed at n = 32).
+
+## [4.0.2] - 2026-08-28
+
+### Changed
+- **HSKE-NL-A2 is downgraded from "Production-track (conjectured), with two constraints"
+  to demo-only (TODO #244).** The first downgrade of a production-track row in this suite.
+  It is **not** a claim that A2 is broken — bijectivity is proven, the affine weak-key class
+  is identified and excluded, and no attack on it is known. It is a claim about what has
+  been established. **No wire-format change**: a rating is not a format, `MIGRATING.md` is
+  untouched, and every existing key and ciphertext works exactly as before.
+
+  The reasoning is consistency. TODO #243 refused to promote `twk` because
+  `nl_fscx_revolve_v2` has no PRP/SPRP result at any round count, the only quantitative
+  evidence is TODO #214's trail bounds (which #214 itself calls an order-of-magnitude
+  indication rather than a bound, and which are key-averaged because the construction
+  reuses one key every round), and the construction is self-similar in a way the round
+  count cannot fix. All of that applies to A2 unchanged — it is the same permutation at the
+  same round count — and A2 is the *worse* of the two: its key is caller-supplied, so it
+  needs the `nl_v2_key_is_valid` check `twk` cannot reach, and key recovery is total rather
+  than confined to one block.
+- A2's row gains a third constraint (self-similarity) and its two existing ones were
+  re-derived rather than carried over; both survive. `spec/`'s `hske-nla2` status follows.
+
+### Added
+- `SecurityProofsCode/hske_nl_a2_rating_review.py` and SecurityProofs-7.md §11.26.
+
+### Notes
+- **The new result is a theorem, not a conjecture.** Since `E_B = F_B^r`, a point is fixed
+  exactly when it lies on an `F`-cycle whose length divides `r`, so
+  `E[#fixed points] = τ(r)`. `τ(192) = 14`, against an ideal cipher's 1 — **measured 13.84
+  at n = 16**, confirming the prediction almost exactly. This does *not* break PRP security
+  against a bounded adversary (finding one fixed point costs ~2^252 at n = 256, so no
+  efficient distinguisher follows), and the review says so plainly. What it establishes is
+  that the construction is provably distinguishable from an ideal cipher by a statistic
+  that needs no assumption to compute — arithmetic rather than cryptanalytic opinion. It
+  had never been computed.
+- **A corollary worth acting on.** The excess is `τ(r)`, so it depends on the *divisor
+  count* of the round count, not its size. The deployed `192 = 2^6·3` is among the worst
+  choices available; a prime round count measures at 1.04× versus 13.8×, for one line per
+  language. Note that TODO #242's 64 → 192 move made this statistic *worse*
+  (`τ: 7 → 14`) while improving the trail picture — not an argument against #242, whose
+  trail gap was real, but a clean illustration of tuning one parameter against one metric
+  with no model of the others.
+- **Filed as TODO #245**, not applied here: round constants (the principled fix, which
+  breaks the self-similarity outright but requires re-running #214's trail search on the
+  modified round) and/or a prime round count (cheap, but treats only the symptom). Both are
+  wire-format breaks across A2, `twk`, `fpe` and HSKE-Duplex together, so they belong in one
+  deliberate MAJOR rather than in a rating review.
+- Unchanged and explicitly out of scope: NL-FSCX v1, HFSCX-256 and HSKE-NL-A1, which use the
+  primitive in modes this argument does not reach — A1 is a keystream generator whose second
+  argument varies per block, HFSCX-256 is a Davies-Meyer compression with feed-forward.
+  Neither was examined and both keep their ratings. `README.md` needed no revision: it
+  describes A2's construction but never claimed production-readiness for it, so the maturity
+  claim lived only in `SECURITY.md` and `spec/`.
+
+## [4.0.1] - 2026-08-28
+
+### Added
+- **TODO #243: `twk` reviewed for promotion, and kept demo-only.** TODO #242 closed all
+  three blockers #241 had named, so the row was due a deliberate review rather than an
+  automatic promotion. `SecurityProofsCode/twk_stprp_review.py` and SecurityProofs-7.md
+  §11.25 are that review. Its reduced-width model is pinned 200/200 against the shipped
+  `nl_fscx_v2` before any measurement is taken.
+
+### Changed
+- `SECURITY.md`'s `twk` row now reads "Demo-only — reviewed, not merely unreviewed", and
+  states the reduction that settles the question: in the random-oracle model `twk` is an
+  STPRP exactly if `nl_fscx_revolve_v2` is an SPRP under a uniform key. No such result
+  exists, so the verdict is unproven, and unproven is demo-only.
+- `SECURITY.md`'s **HSKE-NL-A2** row gains a third constraint, "Under review", pointing at
+  TODO #244 — see Notes.
+- `spec/`'s `twk` entry carries the review's conclusion and the `#244` cross-reference.
+
+### Notes
+- **A structural property of NL-FSCX v2 that neither #241 nor #242 recorded.** `v2`-revolve
+  is *one unvaried round iterated 192 times*, with no round constant and no key schedule,
+  in C, Go and Python alike — the loop index never enters the round function. Two measured
+  consequences. At `n = 8`, **10.7% of keys give `ord(F_B) | 192` and encrypt to the
+  identity map**; that is a small-width artefact, gone by `n = 12`, and the identity case
+  is ruled out 12/12 at the 32 bits the Arduino and assembly ports use — but it is a
+  standing caution for any future reduced-width use. And **one slid pair leaves a mean of
+  1.7 candidate keys out of 2^16, two leave 1.08**, so the barrier to a slide attack is
+  only the ~2^128 birthday cost of finding a pair. That cost does not depend on the round
+  count, which means **TODO #242's 64 → 192 move bought nothing against this class** — it
+  remains right for the differential-trail class it was aimed at.
+- Deliberately not overclaimed: 2^128 data under one tweak is not a practical attack and
+  sits *at* rather than below the 128-bit target, and "a slid pair determines `B`" is
+  measured by brute force, not an efficient extraction algorithm. Whether the slide attack
+  costs 2^128 or is blocked at that step is open and §11.25 says so.
+- **`twk` is genuinely stronger than HSKE-NL-A2 on three axes**, because its subkey is a
+  hash output rather than the caller's key: key recovery is confined to one (sector, block
+  index) instead of total, the degenerate affine class is unreachable, and per-tweak
+  determinism is expected rather than a constraint. That contains the blast radius of an
+  unproven assumption without replacing the missing proof.
+- **The inconsistency this exposes, filed as TODO #244.** HSKE-NL-A2 rests on the same
+  unproven claim about the same permutation at the same round count, with strictly worse
+  consequences if it fails, and is rated production-track. Both ratings cannot be right,
+  and #243 concluded it is A2's that needs re-examining — not that `twk` needs promoting.
+  A2 is the only production-track rating in the suite depending on NL-FSCX v2; the other
+  three v2 entries are already research, broken or demo-only. #244 also records the fix
+  worth attempting first: adding round constants would break the self-similarity outright.
+
 ## [4.0.0] - 2026-08-28
 
 **MAJOR — `fpe` and `twk` ciphertexts written by earlier builds cannot be decrypted by
@@ -78,7 +604,7 @@ are read unchanged, `rand` is untouched, and no CLI flag or `--algo` value chang
   non-zero rather than printing a stale finding if any defect below stops reproducing.
   `unfiled_cli_surface` is left holding only `pkey`, a genuine key-format utility.
 - SecurityProofs-7.md §11.24; Part 7's advertised range becomes §11.10–§11.13,
-  §11.15–§11.24 in every copy of the index.
+  §11.15–§11.27 in every copy of the index.
 
 ### Changed
 - **`fpe` is classified `broken` — it is not format-preserving encryption.** SP 800-38G's

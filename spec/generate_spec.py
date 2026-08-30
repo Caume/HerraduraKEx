@@ -347,7 +347,7 @@ SECURITY = {
                              "conjecture that NL-FSCX v1 is a PRF (SecurityProofs-4.md 11.3.1) -- an "
                              "assumption, not a proof.",
                        source=["TODO.md #237", "TODO_DONE.md #210"]),
-    "hske-nla2": dict(status="production", quantum_resistant="conjectured",
+    "hske-nla2": dict(status="demo-only", quantum_resistant="conjectured",
                        notes="NL-FSCX v2 revolve-mode symmetric encryption -- a keyed bijection, not a "
                              "stream cipher, so there is no keystream for a known-plaintext pair to "
                              "recover and E XOR P is not constant across messages. Two usage constraints "
@@ -358,8 +358,26 @@ SECURITY = {
                              "delta(K) in {0, 2^(n-1)} collapse the permutation to GF(2)-affine and are "
                              "recoverable from a handful of known plaintexts; the class is about 2^-129 "
                              "of the key space and all three CLIs refuse it via nl_v2_key_is_valid "
-                             "(SecurityProofs-7.md 11.19.2).",
-                       source=["TODO.md #237", "TODO_DONE.md #159", "TODO_DONE.md #168"]),
+                             "(SecurityProofs-7.md 11.19.2). (3) NEW in TODO #244, and the reason this "
+                             "entry was DOWNGRADED FROM production in v4.0.2: the construction is "
+                             "self-similar -- one unvaried round iterated 192 times, no round constant, "
+                             "no key schedule -- so one slid pair very nearly determines the key and the "
+                             "~2^128 birthday cost of finding one does not depend on the round count, and "
+                             "it is provably not an ideal cipher, showing ~14 fixed points (tau(192); "
+                             "measured 13.84 at n=16) where an ideal cipher shows 1. Neither is an attack "
+                             "at n=256 and A2 is not broken -- bijectivity is proven and no attack is "
+                             "known -- but the rating rested on nl_fscx_revolve_v2 being a PRP/SPRP, for "
+                             "which no result exists at any round count. TODO #243 refused to promote twk "
+                             "on identical evidence about the identical permutation, and A2 is the worse "
+                             "of the two because its key is caller-supplied. Candidate fixes (round "
+                             "constants; a prime round count, since the fixed-point excess is tau(r)) are "
+                             "TODO #245, which shipped round constants in v5.0.0 -- the "
+                             "structural objection is answered but the missing PRP/SPRP "
+                             "reduction is not, so the rating is unchanged.",
+                       source=["TODO.md #237", "TODO_DONE.md #159", "TODO_DONE.md #168",
+                               "TODO_DONE.md #244",
+                               "SecurityProofsCode/hske_nl_a2_rating_review.py",
+                               "SecurityProofs-7.md 11.25, 11.26"]),
     "hske-duplex": dict(status="research", quantum_resistant="conjectured",
                        notes="Arbitrary-length single-pass AEAD: a MonkeyDuplex-style sponge using "
                              "nl_fscx_revolve_v2 as the permutation (TODO #95 Option 2). Reclassified from "
@@ -479,13 +497,26 @@ SECURITY = {
                              "result rather than a defect list: no reduction to a standard "
                              "tweakable-cipher security definition (no STPRP argument), and "
                              "NL-FSCX v2's security is conjectural with only key-averaged trail "
-                             "bounds behind it. Whether that suffices to move it off demo-only is "
-                             "TODO #243. Wire-format breaking in v4.0.0 -- every earlier twk "
+                             "bounds behind it. TODO #243 reviewed it for promotion and KEPT it "
+                             "demo-only: in the random-oracle model twk is an STPRP exactly if "
+                             "nl_fscx_revolve_v2 is an SPRP under a uniform key, and no such result "
+                             "exists -- the permutation is one unvaried round iterated 192 times "
+                             "with no round constant and no key schedule, so one slid pair "
+                             "determines the key and the ~2^128 cost of finding one does not "
+                             "depend on the round count. twk is nonetheless stronger than "
+                             "HSKE-NL-A2 on three axes because its subkey is a hash output: key "
+                             "recovery is confined to one block, the degenerate affine class is "
+                             "unreachable, and per-tweak determinism is expected rather than a "
+                             "constraint. That contains the blast radius of an unproven assumption "
+                             "without replacing the missing proof. A2 carries the same assumption "
+                             "at production-track with worse failure consequences; re-rating A2 is "
+                             "TODO #244. Wire-format breaking in v4.0.0 -- every earlier twk "
                              "ciphertext is undecryptable, silently; see MIGRATING.md section 8.",
                        source=["Herradura cryptographic suite.py twk_encrypt/twk_decrypt",
                                "herradura.h twk_encrypt", "herradura/herradura.go TwkEncrypt",
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",
-                               "SECURITY.md", "SecurityProofs-7.md 11.24"]),
+                               "SecurityProofsCode/twk_stprp_review.py",
+                               "SECURITY.md", "SecurityProofs-7.md 11.24, 11.25"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
                              "MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/"

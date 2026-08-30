@@ -675,13 +675,26 @@ def nl_fscx_revolve_v2(A: BitArray, B: BitArray, steps: int) -> BitArray:
     mask  = A._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = A.copy()
-    for _ in range(steps):
-        result = BitArray(n, (fscx(result, B).uint + delta.uint) & mask)
+    for i in range(1, steps + 1):
+        # Round constant (TODO #245): XOR the 1-based round index into the state
+        # before the linear map.  Without it every round is the identical map
+        # F_B and the cipher is F_B^steps, which is what SecurityProofs-7.md
+        # §11.25/§11.26 found against -- a slide structure the round count
+        # cannot improve, and for some (n, steps) a key class where F_B^steps is
+        # the identity.  An XOR constant leaves xdp+ EXACTLY invariant (the
+        # constant cancels in the XOR difference entering M, and M is a
+        # bijection so the value distribution is unchanged), so TODO #214's
+        # trail bounds carry over verbatim.
+        result = BitArray(n, (fscx(BitArray(n, result.uint ^ i), B).uint
+                              + delta.uint) & mask)
     return result
 
 
 def nl_v2_key_is_valid(B: BitArray) -> bool:
     """Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
+
+    This is the affine class only — NOT the full set of differentially weak keys;
+    see SCOPE below.
 
     delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
     c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
@@ -697,8 +710,18 @@ def nl_v2_key_is_valid(B: BitArray) -> bool:
     2^-129 of the key space, so a uniformly random key is not at risk, but the check
     is cheap and the class is otherwise silently accepted.
 
-    See SecurityProofs-7.md §11.19.2 and
-    SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py (TODO #159, #168).
+    SCOPE (TODO #253).  This is an exact characterisation of the AFFINE class and
+    nothing wider.  The keys admitting a zero-weight differential trail are a
+    strictly larger family — every B with tz(delta(B)) >= 4, at every width
+    including n=256 — and this check accepts all of it except the two endpoints.
+    That is deliberate: at n=256 such a key forfeits about tz/2 of 192 rounds
+    with probability ~2^-tz, so a random key loses at most 3 rounds with
+    probability 1/16, and screening it would change the key distribution for no
+    meaningful gain.  See SecurityProofs-7.md §11.28.3-§11.28.4.
+
+    See SecurityProofs-7.md §11.19.2 and §11.28,
+    SecurityProofsCode/nl_fscx_carry_degeneracy_2026.py and
+    SecurityProofsCode/nl_fscx_v2_fixed_key.py (TODO #159, #168, #253).
     """
     n     = B._size
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & B._mask).rotated(n // 4).uint
@@ -712,9 +735,9 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     mask  = Y._mask
     delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
     result = Y.copy()
-    for _ in range(steps):
+    for i in range(steps, 0, -1):
         z      = BitArray(n, (result.uint - delta.uint) & mask)
-        result = B ^ _m_inv(z)
+        result = BitArray(n, (B ^ _m_inv(z)).uint ^ i)   # undo the round constant
     return result
 
 

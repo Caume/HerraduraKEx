@@ -681,6 +681,9 @@ static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
 
 /* Rejects NL-FSCX v2 keys for which the permutation degenerates to affine.
  *
+ * This is the affine class only — NOT the full set of differentially weak keys;
+ * see SCOPE below.
+ *
  * delta(B) enters nl_fscx_v2 as an additive *constant*, and addition of a constant
  * c is GF(2)-affine for every input exactly when c == 0 or c == 2^(n-1) (the top
  * carry is discarded mod 2^n, making the addition pure XOR).  Since M is invertible
@@ -692,7 +695,17 @@ static void nl_fscx_delta_v2_ba(BitArray *delta, const BitArray *b)
  * For such a key HSKE-NL-A2 / HPKE-NL collapse to an affine map recoverable from a
  * handful of known plaintexts by linear algebra.  Class density is ~2^-129 at
  * n=256, so a random key is not at risk, but the check is one comparison.
- * See SecurityProofs-7.md §11.19.2 (TODO #159, #168). */
+ *
+ * SCOPE (TODO #253).  This is an exact characterisation of the AFFINE class and
+ * nothing wider.  The keys admitting a zero-weight differential trail are a
+ * strictly larger family — every B with tz(delta(B)) >= 4, at every width
+ * including n=256 — and this check accepts all of it except the two endpoints.
+ * That is deliberate: at n=256 such a key forfeits about tz/2 of 192 rounds
+ * with probability ~2^-tz, so a random key loses at most 3 rounds with
+ * probability 1/16, and screening it would change the key distribution for no
+ * meaningful gain.
+ *
+ * See SecurityProofs-7.md §11.19.2 and §11.28 (TODO #159, #168, #253). */
 static int nl_v2_key_is_valid(const BitArray *b)
 {
     BitArray d, msb;
@@ -723,13 +736,27 @@ static void nl_fscx_v2_inv_ba(BitArray *result, const BitArray *y, const BitArra
     ba_xor(result, b, &mz);
 }
 
+/* XOR the 1-based round index into the low bytes of the state (TODO #245).
+ * Without a round constant every round is the identical map F_B and the cipher
+ * is F_B^steps -- the self-similarity SecurityProofs-7.md §11.25/§11.26 found
+ * against.  An XOR constant leaves xdp+ exactly invariant, so TODO #214's trail
+ * bounds carry over verbatim.  Wire-format breaking; see MIGRATING.md §9. */
+static inline void nl_fscx_v2_rc_ba(BitArray *st, int i)
+{
+    st->b[KEYBYTES - 1] ^= (uint8_t)( (unsigned)i        & 0xff);
+    st->b[KEYBYTES - 2] ^= (uint8_t)(((unsigned)i >> 8)  & 0xff);
+    st->b[KEYBYTES - 3] ^= (uint8_t)(((unsigned)i >> 16) & 0xff);
+    st->b[KEYBYTES - 4] ^= (uint8_t)(((unsigned)i >> 24) & 0xff);
+}
+
 static void nl_fscx_revolve_v2_ba(BitArray *result, const BitArray *a,
                                    const BitArray *b, int steps)
 {
     BitArray buf[2];
     int idx = 0, i;
     buf[0] = *a;
-    for (i = 0; i < steps; i++) {
+    for (i = 1; i <= steps; i++) {
+        nl_fscx_v2_rc_ba(&buf[idx], i);
         nl_fscx_v2_ba(&buf[1 - idx], &buf[idx], b);
         idx ^= 1;
     }
@@ -743,11 +770,12 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
     int idx = 0, i;
     nl_fscx_delta_v2_ba(&delta, b);   /* precompute once — b is constant */
     buf[0] = *y;
-    for (i = 0; i < steps; i++) {
+    for (i = steps; i >= 1; i--) {
         BitArray z, mz;
         ba_sub256(&z, &buf[idx], &delta);
         m_inv_ba(&mz, &z);
         ba_xor(&buf[1 - idx], b, &mz);
+        nl_fscx_v2_rc_ba(&buf[1 - idx], i);   /* undo the round constant */
         idx ^= 1;
     }
     *result = buf[idx];
