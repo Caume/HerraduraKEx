@@ -90,6 +90,25 @@ SecurityProofsCode/                                 — standalone Python proof/
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
                              GJS reaction attack (TODO #218)
+  nl_fscx_v3_round_count.py — NL-FSCX v3's round count, DERIVED (TODO #255):
+                             R3_VALUE = 5n/8 = 160 at n=256.  Rests on the
+                             family's FIRST per-round trail bound — chi gives
+                             the v3 round an unconditional floor of 2 bits
+                             differential / 1 bit linear at every odd row
+                             length, where v2 provably has none (its
+                             linear-then-add-constant round hands every key a
+                             probability-1 one-round differential).  So
+                             §11.30.1's criteria are met at r >= n/2 = 128
+                             outright, without #252 or #254; 160 adds a stated
+                             1.25x margin for linear clustering.  Also finds
+                             MINIMUM ROW LENGTH 5 is a hard constraint —
+                             oddness alone is NOT sufficient: a 3-bit row on
+                             the LSB gives a correlation-1 one-round linear
+                             approximation to exactly the delta(B)-odd keys
+                             (112/256 at n=8, exhaustive).  47x5+3x7 is
+                             unaffected, but odd_partition(8) = (3,5) is not,
+                             so §11.32's n=8 column is void.  Exits non-zero
+                             if a finding stops reproducing
   and_layer_recheck.py     — TODO #246's candidate comparison, re-run after
                              #252 invalidated its methodology.  #246's ordering
                              SURVIVES and is better founded: B's advantage lives
@@ -257,7 +276,7 @@ SecurityProofs-3.md                                 — §9–§10: Non-Linear P
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
-SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.32: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
+SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -311,6 +330,14 @@ bindings/java/                                       — complete pure-Java port
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history;
+                                                      v3_round_cost.c measures the NL-FSCX v2
+                                                      vs v3 per-round cost in one shared 4x64
+                                                      limb representation, so only chi is
+                                                      timed (TODO #255): 2.12-2.17x per round,
+                                                      ~1.77x per block at v3's 160 rounds vs
+                                                      v2's 192.  Its fast chi is validated
+                                                      bit-exactly against a per-row reference
+                                                      before timing;
                                                       rnl_ring_cost.py measures the HKEX-RNL
                                                       ring-cost curve (n=32..1024) and audits
                                                       what the `-t` cap actually caps (TODO #225);
