@@ -4,7 +4,7 @@ All notable changes to the Herradura Cryptographic Suite are documented here.
 
 ## [5.2.0] - 2026-08-30
 
-### TODO #255 (partial) — the five NL-FSCX v3 consumers, across every CLI
+### TODO #255 — the five NL-FSCX v3 consumers, across every CLI (closes #255)
 
 MINOR: new `--algo` values, a new flag, new PEM labels and new public API; nothing
 existing changed.  v3 remains an addition alongside v2, so every stored v2 key,
@@ -101,6 +101,11 @@ ciphertext and signature keeps working, and no `MIGRATING.md` entry is needed.
   and its `flag` field.
 - `docs/TUTORIAL.md`, `llms.txt` and `CLAUDE.md` document the five consumers, the
   flag-vs-subcommand decision, and the corrected cost figures.
+- **TODO #255 is closed** by this release, having landed across three: v5.0.9 derived
+  the round count, v5.1.0 shipped the primitive and settled the key-check question, and
+  v5.2.0 ships the consumers.  Nothing in its scope is outstanding.  The v3 ratings stay
+  demo-only, which is not an open part of #255 — it waits on the trail bounds at
+  realistic width that #252 and #254 track, and v3 existing does not move them.
 
 ## [5.1.0] - 2026-08-30
 
