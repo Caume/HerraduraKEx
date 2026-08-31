@@ -142,6 +142,42 @@ n = 14 (cost is the DDT's `2^2n`, not the cycle computation); and carry the same
 reformulation to the LINEAR axis, which is #254 and where mask propagation through M is
 deterministic, so it should transfer more cleanly still.
 
+
+**Third pass (shared with #254) done in v5.2.3 — the residue is now MONOTONICITY, not the
+limit.**  See SecurityProofs-8.md §11.37 and `SecurityProofsCode/width_residue.py`.  This
+item and #254 have identical remaining scope and **should be merged**; they are kept separate
+only because the repo's numbering policy has no merge operation, and the shared analysis
+lives in one place rather than two.
+
+* **The obligation is smaller than this item states.**  Both criteria are already met at the
+  widest *exact* width — `s_diff = 1.903` against `4/3` at `n = 11`, `s_lin = 1.154` against
+  `2/3` at `n = 13` — and every measured value is a minimum mean cycle, not a slope.  So what
+  is owed is not a limit: it is that the sequence never turns around.
+* **§11.35.7's caution is retired: there is NO EMBEDDING between widths.**  `M` and `delta`
+  both depend on `n`, and only a third of optimal-cycle nodes keep their image at `n+1`, so a
+  cycle of length 10+ survives with probability ~0.33^10.  The graph at `n+1` is not an
+  extension of the graph at `n`; it is an unrelated graph.  No monotonicity proof can come
+  from comparing two graphs — it has to be a statement about the ensemble.
+* **An ANNEALED FIRST-MOMENT MODEL is validated on both axes**, predicting `mu` from the
+  edge-weight distribution and the out-degree alone to within a few percent by `n = 11`
+  (per-key median ratios 0.85 -> 0.89 -> 0.97 -> 0.97 differential, 0.85 -> 0.88 -> 1.00 ->
+  1.00 linear).  It is an estimator, not a bound — the overshoot's sign is observed, not
+  established — but it reduces the width question to ONE quantity: the largest correlation
+  and the largest `xdp+` of addition with a *constant*, as a function of `n`.  That statement
+  has no FSCX in it, and Wallen does not apply to it (§11.30.4).
+* **Three routes closed by measurement.**  Sparse-subgraph search at `n = 256` (optimal
+  cycles are dense — 0.6n to 0.86n Hamming weight, no downward trend); guessing the LP-dual
+  potential (Howard's bias correlates with no natural node statistic, largest 0.37);
+  and sampling the weight distribution at `n = 256` (the threshold is a `2^-n` quantile — the
+  sampler returns 157 at `n = 256` and 0.48 at `n = 13`, where the exact answer is 1.154, so
+  **the 157 must not be quoted**).
+* **A decomposition that halves the surface.**  `mu` falls by a width-stable 0.10-0.13 per
+  trailing zero of `delta`, and the distribution of `tz(delta)` does not depend on width — so
+  only the `tz = 0` sequence needs extrapolating.
+
+**No rating moves, and none could**: every row this touches is demo-only on other axes
+(#243, #244, #248), and #254's production-track rows left its scope in §11.36.8.
+
 Status: **OPEN**
 
 ### #254: a linear-trail bound at realistic width — the binding axis for the NL-FSCX family
@@ -263,6 +299,42 @@ and should be filed once rather than twice.  (2) The **linear hull**, which no t
 reaches.  (3) The **B-axis**, newly named, belonging to whoever re-examines A1 and HFSCX-256:
 nothing here measures it beyond four rounds, and those modes run `n/4` rounds, so they have
 less margin to spend, not more.
+
+
+**Third pass (shared with #252) done in v5.2.3 — the residue is now MONOTONICITY, not the
+limit.**  See SecurityProofs-8.md §11.37 and `SecurityProofsCode/width_residue.py`.  This
+item and #252 have identical remaining scope and **should be merged**; they are kept separate
+only because the repo's numbering policy has no merge operation, and the shared analysis
+lives in one place rather than two.
+
+* **The obligation is smaller than this item states.**  Both criteria are already met at the
+  widest *exact* width — `s_diff = 1.903` against `4/3` at `n = 11`, `s_lin = 1.154` against
+  `2/3` at `n = 13` — and every measured value is a minimum mean cycle, not a slope.  So what
+  is owed is not a limit: it is that the sequence never turns around.
+* **§11.35.7's caution is retired: there is NO EMBEDDING between widths.**  `M` and `delta`
+  both depend on `n`, and only a third of optimal-cycle nodes keep their image at `n+1`, so a
+  cycle of length 10+ survives with probability ~0.33^10.  The graph at `n+1` is not an
+  extension of the graph at `n`; it is an unrelated graph.  No monotonicity proof can come
+  from comparing two graphs — it has to be a statement about the ensemble.
+* **An ANNEALED FIRST-MOMENT MODEL is validated on both axes**, predicting `mu` from the
+  edge-weight distribution and the out-degree alone to within a few percent by `n = 11`
+  (per-key median ratios 0.85 -> 0.89 -> 0.97 -> 0.97 differential, 0.85 -> 0.88 -> 1.00 ->
+  1.00 linear).  It is an estimator, not a bound — the overshoot's sign is observed, not
+  established — but it reduces the width question to ONE quantity: the largest correlation
+  and the largest `xdp+` of addition with a *constant*, as a function of `n`.  That statement
+  has no FSCX in it, and Wallen does not apply to it (§11.30.4).
+* **Three routes closed by measurement.**  Sparse-subgraph search at `n = 256` (optimal
+  cycles are dense — 0.6n to 0.86n Hamming weight, no downward trend); guessing the LP-dual
+  potential (Howard's bias correlates with no natural node statistic, largest 0.37);
+  and sampling the weight distribution at `n = 256` (the threshold is a `2^-n` quantile — the
+  sampler returns 157 at `n = 256` and 0.48 at `n = 13`, where the exact answer is 1.154, so
+  **the 157 must not be quoted**).
+* **A decomposition that halves the surface.**  `mu` falls by a width-stable 0.10-0.13 per
+  trailing zero of `delta`, and the distribution of `tz(delta)` does not depend on width — so
+  only the `tz = 0` sequence needs extrapolating.
+
+**No rating moves, and none could**: every row this touches is demo-only on other axes
+(#243, #244, #248), and #254's production-track rows left its scope in §11.36.8.
 
 Status: **OPEN**
 

@@ -2,6 +2,60 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.3] - 2026-08-31
+
+### TODO #252 + #254 (third pass, shared) — the width residue
+
+PATCH: analysis and documentation, plus one new standalone script.  No shipped
+primitive, CLI surface, wire format or rating changes.  Both items stay OPEN.
+
+### Added
+
+- **`SecurityProofsCode/width_residue.py`** — the one question #252 and #254
+  still share, worked.  It does not close it; it changes what is being asked.
+- **`SecurityProofs-8.md` §11.37**, and Part 8 grows from 435 to 600 math
+  expressions.
+
+### Findings
+
+- **The residue is MONOTONICITY, not the limit.**  Both criteria are already met
+  at the widest *exact* width — `s_diff = 1.903` against `4/3` at n = 11,
+  `s_lin = 1.154` against `2/3` at n = 13 — so any non-decreasing continuation
+  clears n = 256.  Both items had been carrying the harder version of the
+  question for four passes.
+- **There is no embedding between widths**, which retires §11.35.7's caution
+  that "the obvious tool points the wrong way".  `M` and `delta` both depend on
+  n; only a third of optimal-cycle nodes keep their image at n+1, so a cycle of
+  length ten survives with probability about `0.33^10`.  The graph at n+1 is not
+  an extension of the graph at n, it is an unrelated graph — so no monotonicity
+  proof can come from comparing two of them.
+- **An annealed first-moment model is validated on both axes**, predicting `mu`
+  from the edge-weight distribution and the out-degree alone to within a few
+  percent by n = 11, independently on the differential and linear sides.  It is
+  an estimator, not a bound — the sign of the finite-size correction is observed
+  rather than established — but it reduces the whole width question to one
+  quantity: **the largest correlation and the largest `xdp+` of addition with a
+  CONSTANT, as a function of n**.  That statement contains no FSCX, and Wallen's
+  characterisation does not apply to it (§11.30.4).
+- **`mu` falls by a width-stable 0.10-0.13 per trailing zero of `delta`**, and
+  the distribution of `tz(delta)` does not depend on width — so only the
+  `tz = 0` sequence needs extrapolating.
+
+### Changed
+
+- **Three routes are closed by measurement.**  (1) Sparse-subgraph search at
+  n = 256: the optimal cycle is dense, 0.6n to 0.86n Hamming weight at every
+  width with no downward trend.  (2) Guessing the LP-dual potential — the only
+  route that could give a theorem: Howard's bias correlates with no natural node
+  statistic (largest 0.37, most under 0.11).  (3) Sampling the weight
+  distribution at n = 256: the annealed threshold is a `2^-n` quantile, which
+  uniform sampling cannot reach.  **The sampled figure of ~157 at n = 256 must
+  not be quoted** — the same procedure returns 0.48 at n = 13 where the exact
+  answer is 1.154, and that control is recorded alongside it.
+- **#252 and #254 are recommended for merger.**  Their remaining scope is now
+  identical.  They are kept separate only because the numbering policy has no
+  merge operation; the shared analysis lives in one place.
+
 ## [5.2.2] - 2026-08-31
 
 ### TODO #254 (second pass) — the linear slope, measured exactly; and the two modes

@@ -204,6 +204,34 @@ SecurityProofsCode/                                 — standalone Python proof/
                              r=10-14 is 4-7 orders of magnitude away) and
                              supersedes route 3.  Exits non-zero if a finding
                              stops reproducing
+  width_residue.py         — the ONE question #252 and #254 still share, worked
+                             (both items still OPEN).  Does not close it;
+                             changes it three times.  (1) THE RESIDUE IS
+                             MONOTONICITY, NOT THE LIMIT: both criteria are
+                             already met at the widest EXACT width (1.903 vs
+                             4/3 at n=11; 1.154 vs 2/3 at n=13), so any
+                             non-decreasing continuation clears n=256.  (2)
+                             THERE IS NO EMBEDDING between widths -- M and
+                             delta both depend on n, and only a third of
+                             optimal-cycle nodes keep their image at n+1 -- so
+                             §11.35.7's caution does not apply, and no proof
+                             can come from comparing two graphs.  (3) An
+                             ANNEALED FIRST-MOMENT MODEL predicts mu from the
+                             edge-weight distribution and out-degree alone,
+                             within a few percent by n=11 on BOTH axes, which
+                             reduces the whole width question to the max
+                             correlation / max xdp+ of addition with a
+                             CONSTANT -- a statement with no FSCX in it.
+                             Closes three routes by measurement: sparse
+                             subgraphs (optimal cycles are dense, 0.6-0.86n),
+                             a guessed LP-dual potential (Howard's bias
+                             correlates with nothing, max 0.37), and sampling
+                             the weight distribution at n=256 (the threshold
+                             is a 2^-n quantile; the sampler returns 157 at
+                             n=256 and 0.48 at n=13 where the exact answer is
+                             1.154 -- DO NOT QUOTE THE 157).  Recommends
+                             merging #252 and #254.  Exits non-zero if a
+                             finding stops reproducing
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -367,7 +395,7 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
+SecurityProofs-8.md                                 — §11.34–§11.37: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured · the width residue #252 and #254 share (600 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

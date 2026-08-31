@@ -11,7 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34–§11.36** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes, Measured
+> - **Part 8 — §11.34–§11.37** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes · The Width Residue
 
 ---
 
@@ -376,3 +376,117 @@ Item (2) is closed by §11.36.1 and item (1) by §11.36.8.  Three things remain,
 **The linear hull.**  Every number in §11.36.5 is a trail weight.  While the criterion is being cleared by a comfortable factor this is a technicality; the two narrowest widths do not clear it, and if a wider measurement ever lands near the bar the gap between the best trail and the hull stops being one.
 
 **The B-axis.**  Newly named by §11.36.8 and belonging to whoever re-examines A1 and HFSCX-256.  Nothing in this repository measures it beyond four rounds, and those two modes run $n/4$ rounds rather than $3n/4$ — less margin to spend, not more.
+
+---
+
+## 11.37 The width extrapolation — the one question TODO #252 and TODO #254 share
+
+`SecurityProofsCode/width_residue.py` reproduces everything in this section.  §11.35 computed the asymptotic *differential* slope exactly as a minimum mean cycle; §11.36 did the same for the *linear* slope, on both NL-FSCX v1 and v2.  Each ends owing the width extrapolation and nothing else, and it is the same extrapolation about the same kind of object.  This section is that shared residue, worked.
+
+It does not close it.  It changes what is being asked, three times over.
+
+### 11.37.1 The residue is monotonicity, not the limit
+
+Both criteria are already met at the widest width either item reached, and every measured value is exact — a minimum mean cycle, not a slope read off a finite series.
+
+| axis | widest exact value | criterion | margin |
+|---|---|---|---|
+| differential | $s_{\text{diff}} = 1.903$ at $n = 11$ | $4/3 = 1.3333$ | $1.43\times$ |
+| linear | $s_{\text{lin}} = 1.154$ at $n = 13$ | $2/3 = 0.6667$ | $1.73\times$ |
+
+Both sequences rise monotonely over every width measured, on both primitives, and the fraction of keys below the criterion falls to zero for v2's linear slope by $n = 13$.  So the extrapolation does not have to produce a limit.  It has to rule out a turning point:
+
+$$\text{if } \mu(n) \text{ is non-decreasing for } n \geq 13, \text{ both criteria hold at } n = 256.$$
+
+That is a strictly weaker obligation than the one #252 and #254 were filed with, and it is worth stating because both items have been carrying the harder version of the question for four passes.
+
+### 11.37.2 There is no embedding between widths, which resolves §11.35.7's caution
+
+§11.35.7 warned that the obvious tool points the wrong way: exhibit a cycle at width $n$ that survives at width $n+1$ and one proves $\mu$ **non-increasing**, the opposite of what is measured.  The warning turns out to be unnecessary, and the reason is worth having.
+
+Both of the round's width-dependent objects change with $n$.  $M = I \oplus \mathrm{ROL} \oplus \mathrm{ROR}$ is built from rotations by one position, so $M_n$ and $M_{n+1}$ disagree on almost every argument; and $\delta(B) = \mathrm{ROL}(B \lfloor (B+1)/2 \rfloor \bmod 2^n, n/4)$ changes in its modulus *and* in its rotation amount.  Measured, of the nodes lying on an optimal cycle at width $n$, the fraction whose image under $M$ is unchanged at width $n+1$ is $33$% at both $n = 7$ and $n = 10$.  A cycle of length $L$ therefore survives with probability about $0.33^{L}$, and §11.37.3 measures $L \geq 10$ everywhere — so in practice none survives, and the same key's $\delta$ is a different constant besides.
+
+**The graph at width $n+1$ is not an extension of the graph at width $n$; it is an unrelated graph on a different vertex set.**  The obvious tool does not point the wrong way.  It does not apply.  The consequence is clarifying rather than comfortable: a monotonicity proof cannot come from comparing two graphs, so it has to come from a statement about the *ensemble*, which is §11.37.4.
+
+### 11.37.3 Two routes closed by measurement
+
+**The sparse-subgraph route.**  The natural first idea for reaching $n = 256$ is to search only low-Hamming-weight differences or masks.  That subgraph is small enough to enumerate at any width, and because a subgraph has fewer cycles its minimum mean is an *upper* bound on the true one — so a cheap cycle found there would be a real result at the deployed width.  It fails on the input: the optimal cycle is dense.
+
+| axis | $n$ | median cycle length | median max Hamming weight | as a fraction of $n$ |
+|---|---|---|---|---|
+| differential | 7 / 8 / 10 / 11 | 12 / 10 / 22 / 13 | 6 / 6 / 7 / 8 | $0.86 / 0.75 / 0.70 / 0.73$ |
+| linear | 7 / 8 / 10 / 11 | 10 / 10 / 11 / 10 | 4 / 5 / 6 / 7 | $0.57 / 0.62 / 0.60 / 0.64$ |
+
+No downward trend at any width.  At $n = 256$ that is a difference or mask of weight between 150 and 220, while the subgraph of weight at most $w$ has $\binom{256}{\leq w}$ nodes — enumerable only for single-digit $w$.  The optimal cycle is not in any subgraph anyone can build, and it is not close.
+
+**The LP-dual route**, which is the only one that could give a *theorem* rather than an estimate.  Minimum mean cycle is a linear program, and its dual says that if a potential $h$ on the nodes satisfies
+
+$$w(a \to b) + h(b) - h(a) \geq \lambda \quad \text{for every edge},$$
+
+then $\mu \geq \lambda$ unconditionally, at any width.  Howard's algorithm already produces the optimal $h$ as its bias, so the question is whether that $h$ has a closed form one could write down at $n = 256$ and verify combinatorially.  Measured against every natural statistic of a node — Hamming weight, trailing zeros, NAF weight, the value itself — the largest correlation anywhere is $0.371$ (Hamming weight, linear axis, $n = 8$), accounting for about a seventh of the variance; every differential-axis entry is under $0.11$.  A potential must still exist, but it cannot be guessed from these, and a potential computed node by node is a $2^{256}$-sized object.
+
+### 11.37.4 The route that is open: an annealed first-moment model
+
+§11.37.2 says a monotonicity proof cannot come from relating two graphs, so it has to come from treating the graph as a member of an ensemble.  That can be tested directly.
+
+In a digraph on $N$ nodes where each node has $D$ out-edges to arbitrary targets, with weights drawn from a distribution $F$, the expected number of cycles of length $L$ whose mean weight is at most $\lambda$ is about
+
+$$\frac{D^{L}}{L} \Pr[W_1 + \dots + W_L \leq \lambda L] \ \approx\ \frac{1}{L}\exp\bigl(L(\ln D - I(\lambda))\bigr)$$
+
+with $I$ the large-deviation rate function of $F$.  The exponent changes sign at the $\lambda$ solving $I(\lambda) = \ln D$, so that $\lambda$ is the model's prediction for the minimum mean cycle — depending on nothing but the weight distribution and the out-degree, both of which are available at any width.
+
+| axis | $n$ | exact $\mu$ | annealed | ratio | out-degree |
+|---|---|---|---|---|---|
+| differential | 7 | $1.4958$ | $1.2644$ | $0.846$ | 9 |
+| differential | 8 | $1.7483$ | $1.5644$ | $0.892$ | 13 |
+| differential | 10 | $1.7385$ | $1.6352$ | $0.972$ | 19 |
+| differential | 11 | $1.8943$ | $1.8975$ | $0.967$ | 30 |
+| linear | 7 | $0.6851$ | $0.5876$ | $0.851$ | 43 |
+| linear | 8 | $0.8180$ | $0.7159$ | $0.880$ | 86 |
+| linear | 10 | $0.8058$ | $0.7562$ | $0.997$ | 256 |
+| linear | 11 | $0.8951$ | $0.8846$ | $1.004$ | 341 |
+
+Per-key median ratios $0.846 \to 0.892 \to 0.972 \to 0.967$ and $0.851 \to 0.880 \to 0.997 \to 1.004$: the model under-predicts at the narrow widths — the direction that matters, since under-predicting $\mu$ over-states the attacker's advantage — and the gap closes to a few percent by the widest width, on both axes independently.  That is the expected behaviour of a first-moment threshold on a graph becoming locally tree-like: asymptotically tight, pulled low at small sizes by correlations a tree does not have.
+
+Two cautions before this is leaned on.  The convergence is to within a few percent, not to zero, and on a small sample of keys the ratio overshoots one by about a tenth — so **this is an estimator, not a bound**, and a claim resting on it would need the sign of the finite-size correction established rather than observed.  What it does establish is that $\mu$ is not an algebraic accident of this cipher: it is close to what the weight distribution alone predicts.
+
+### 11.37.5 What the model needs, and the third closed route
+
+The annealed threshold solves $I(\lambda) = \ln D$.  With $D$ of order $2^n/3$ on the linear axis, $\ln D$ is about $n \ln 2$, and the $\lambda$ achieving a rate that large is the quantile of $F$ at roughly $3 \cdot 2^{-n}$.  The threshold is set by the *cheapest* edges a node has, not by typical ones — and indeed $\mu$ sits between the tenth percentile and the median of the per-node minimum out-edge weight at every width measured:
+
+| axis | $n$ | $\mu$ | p10 min out-edge | median min out-edge |
+|---|---|---|---|---|
+| differential | 7 / 8 / 10 / 11 | $1.496 / 1.748 / 1.739 / 1.894$ | $1.000 / 1.356 / 1.415 / 1.708$ | $2.000 / 2.415 / 2.415 / 2.915$ |
+| linear | 10 / 11 | $0.806 / 0.895$ | $0.516 / 0.677$ | $1.206 / 1.317$ |
+
+The median minimum out-edge weight rises with $n$ at about the rate $\mu$ does.  So the width dependence of the whole construction is inherited from one quantity: **the largest correlation of $x \mapsto x + d$ for a fixed output mask, and its differential twin, the largest $\mathrm{xdp}^{+}$ for a fixed input difference.**  That is the residue stated with no FSCX in it — a question about modular addition with a constant.
+
+It is also why the third route fails.  *Estimate $F$ at $n = 256$ by sampling mask pairs, then evaluate the model* reaches the bulk of $F$ and not a tail of measure $2^{-n}$.  Run at $n = 256$ that procedure returns about $157$; run at $n = 13$, where the answer is known, it returns $0.48$ against an exact $1.154$.  The control is what identifies the $157$ as an artefact of the sampler, and it is recorded here so that nobody quotes it.
+
+### 11.37.6 A decomposition that shortens the sequence to extrapolate
+
+The slope depends on the key almost entirely through $\mathrm{tz}(\delta)$ — the same statistic #253's differential weak class is defined by and §11.30.5's correlation-1 mask subspace is indexed by.  Within a width, $\mu$ falls by a roughly constant amount per trailing zero:
+
+| $n$ | $\mathrm{tz} = 0$ | $1$ | $2$ | $3$ | $4$ | per-$\mathrm{tz}$ slope |
+|---|---|---|---|---|---|---|
+| 8 | $0.797$ | $0.664$ | $0.564$ | $0.417$ | $0.321$ | $0.119$ |
+| 10 | $0.882$ | $0.832$ | $0.611$ | $0.491$ | — | $0.130$ |
+| 11 | $0.939$ | $0.862$ | $0.715$ | $0.611$ | $0.539$ | $0.100$ |
+
+The per-trailing-zero cost is $0.100$ to $0.130$ — flat to within the sample.  If that offset is width-independent, and it looks it, the whole per-key distribution at $n = 256$ follows from **one** sequence, the $\mathrm{tz} = 0$ class, plus a constant — because the distribution of $\mathrm{tz}(\delta)$ does not itself depend on the width.  That halves the extrapolation's surface without assuming anything about its limit.
+
+### 11.37.7 Where this leaves the two items
+
+**Their remaining scope is identical**: the width behaviour of a minimum mean cycle over an add-constant transition graph, on two axes sharing their machinery, their obstacle and their reduction.  Carrying two items whose open text would be the same paragraph is how the disagreement-between-documents class of defect (#237, #238) begins, and merging them is recommended.
+
+**The obligation is smaller than either item states.**  By §11.37.1 what is owed is monotonicity, not a limit.
+
+Routes, ranked, with three now closed:
+
+1. **Open, and the only one with a path to $n = 256$.**  Bound the largest correlation and the largest $\mathrm{xdp}^{+}$ of addition with a *constant* as a function of $n$ (§11.37.5).  Self-contained, and it feeds a model already validated to within a few percent at $n = 11$.  Note that Wallén's characterisation does **not** apply — §11.30.4 closed that for the constant-addend case — so this needs its own argument.
+2. **Open, weaker.**  Extend the exact sequence.  The linear axis reaches $n = 13$ for the cost of an $(n+1)4^{n}$ table and $n = 14$ is a factor of four away; the differential axis is stuck at $n = 11$ on its $2^{2n}$ DDT.  More points would not prove monotonicity but would make a turning point harder to hide.
+3. **Closed.**  Sparse-subgraph search at $n = 256$: the optimal cycle is dense (§11.37.3).
+4. **Closed.**  Guessing the LP-dual potential: it correlates with nothing (§11.37.3).
+5. **Closed.**  Sampling the weight distribution at $n = 256$: the threshold is a $2^{-n}$ quantile, and the sampler misses it by more than a factor of two at $n = 13$, where the answer is known (§11.37.5).
+
+**No rating moves, and none could.**  Every row this touches is already demo-only for reasons on other axes (#243, #244, #248), and the production-track rows #254 hoped to reach were removed from its scope by §11.36.8, which showed a trail bound cannot describe those modes at all.
