@@ -16,7 +16,7 @@
 - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM (587 math expressions)
 - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM (131 math expressions)
 - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections (698 math expressions)
-- **Part 8 — §11.34–§11.35** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope (261 math expressions)
+- **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes, Measured (435 math expressions)
 
 ---
 

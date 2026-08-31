@@ -11,7 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34–§11.35** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope
+> - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes, Measured
 
 ---
 
@@ -2053,6 +2053,8 @@ Three consequences, of which only the third bears on the rating.
 
 TODO #248 filed #254 for a linear-trail bound at realistic width.  **That bound is not delivered and #254 stays open.**  What this pass delivers is four things that change what the bound has to establish, one of which answers the headline question without it.  Reproduce with `SecurityProofsCode/fscx_scaling_and_linear.py`.
 
+> **Superseded in part by §11.36 in Part 8 (TODO #254, second pass).**  §11.30.1's scale-invariance theorem and §11.30.4's closure of the MILP route stand, and so does the conclusion that every width above `n = 7` clears the `2/3` criterion.  Two things do not.  **§11.30.6's flattening is withdrawn**: computed exactly rather than read off a finite-round series, the slope does not decelerate — it accelerates, and the reported `+0.03` between the two widest widths was an artefact of the kind §11.35.5 documents.  And **§11.30's scope note is corrected**: it guesses that transferring the block-cipher criterion to HSKE-NL-A1 or HFSCX-256 would give "a sharper bar" at `n/4` rounds, but in both modes the attacked input is the round *constant*, so there is no trail to bound and the transfer gives nothing rather than something sharper.  §11.36 also supersedes the transfer-matrix route this section nominated.  Read the two together; where they disagree, §11.36 is later and is the one with the exact computation.
+
 **§11.30.1 A scale-invariance theorem.**  FSCX has no free round count: `R_VALUE = 3n/4` and `I_VALUE = n/4` are tied to the block size and scale automatically with `KEYBITS`.  Let `s` be the per-round trail weight, so an `r`-round trail weighs about `s·r`.
 
 *Linear.*  An attack on an `n`-bit block needs about `corr^-2` known plaintexts against a codebook of `2^n`, so it is meaningless once the weight `W` satisfies `2W >= n`.  With `r = 3n/4`:
@@ -2302,4 +2304,4 @@ Measured now, both rounds in the same `4×64`-bit limb representation with `delt
 
 ---
 
-> **Continued in Part 8 — §11.34–§11.35** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope
+> **Continued in Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes, Measured

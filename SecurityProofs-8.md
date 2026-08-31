@@ -11,7 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34–§11.35** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope
+> - **Part 8 — §11.34–§11.36** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes, Measured
 
 ---
 
@@ -249,3 +249,130 @@ One thing: **the width extrapolation, and nothing else.**  $\mu$ is exact at the
 A caution for whoever attacks it, because the obvious tool points the wrong way.  Embedding is how one usually relates widths: exhibit a cycle at width $n$ that survives at width $n+1$, and conclude $\mu(n+1) \leq \mu(n)$.  That argument, if it worked, would prove $\mu$ **non-increasing** — the opposite of what §11.35.3 measures.  Widening also adds nodes and therefore adds candidate cycles, so the naive counting argument points down as well.  $\mu$ rises anyway, which means the rise is driven by width *destroying* cheap cycles rather than by anything an embedding captures, and a structural proof has to explain that first.
 
 The other two openings are cheaper: extend the sequence to $n = 13$ and $n = 14$, where the cost is the DDT's $2^{2n}$ and not the cycle computation, which stays cheap; and carry the same reformulation to the **linear** axis, where §11.30 has the identical problem and where mask propagation through $M$ is deterministic, so the cycle argument should transfer more cleanly still.
+
+---
+
+## 11.36 The linear slope, measured exactly — and why the two modes are out of reach (TODO #254)
+
+`SecurityProofsCode/lin_cycle_mean.py` reproduces everything in this section.  It is TODO #254's second pass, and it closes both of the items the first pass left, in the first pass's own priority order.  Neither answer is the one the item expected.
+
+§11.35.7 ended by predicting that #252's cycle reformulation "should transfer more cleanly still" to the linear axis.  It does, and it reaches two widths further.
+
+### 11.36.1 The linear slope is a minimum mean cycle
+
+The NL-FSCX v2 round is $F_i(x) = M(x \oplus B \oplus C_i) + \delta(B)$.  Two of its three layers move a mask deterministically: XOR with a constant changes only a sign, and $M$ is linear and symmetric, so a mask $w$ after it is the mask $M(w)$ before it.  Only the addition is probabilistic.  A linear trail is therefore a walk on a graph,
+
+$$\text{nodes} = \{1, \dots, 2^n-1\}, \qquad \beta \longrightarrow M(w) \ \text{ with weight } -\log_2 |C_{+\delta}(\beta \leftarrow w)|$$
+
+and the best $r$-round trail weight obeys the standard min-plus asymptotic $W(r) = c + s_{\text{lin}} r + o(1)$.  That identifies the slope exactly:
+
+$$s_{\text{lin}} = \text{the minimum mean cycle of the mask graph}.$$
+
+The constant $c$ is the cost of walking into the cheapest cycle, and it cancels in a cycle mean because a cycle has no beginning.  So **saturation** — the contamination §11.30.3 found in almost every slope figure in this repository — is a property of reading a slope off a finite series, and a cycle mean is not read off a series.  It is computed, by Howard's policy iteration, in seconds.
+
+This retires #254's item (2).  The **transfer-matrix route** was nominated to make the computation scale after §11.30.4 closed the MILP route; it is superseded exactly as #252's route 3 was, and for the same reason — the computation does not need to scale, because the answer is a cycle mean and cycles are small.
+
+### 11.36.2 Why the LAT is affordable, and an exact identity for its support
+
+The obstacle to this measurement was always the linear approximation table of $x \mapsto x + d \bmod 2^n$: $4^n$ entries, and §11.30's first pass computed them one pair at a time through a carry automaton, which is why it stopped at $n = 10$.  Each row is a **rotation**, not a new function:
+
+$$(-1)^{v \cdot (x+d)} = s_v[(x+d) \bmod 2^n], \qquad s_v[y] = (-1)^{v \cdot y}$$
+
+so the row for output mask $v$ is one list rotation of $s_v$ followed by a Walsh–Hadamard transform — $(n+1)2^n$ per row and $(n+1)4^n$ for the table.  That reaches $n = 13$ in pure Python.
+
+The table's support turns out to have an exact closed form, not previously recorded here.  Writing $k = \mathrm{tz}(d)$ for the number of trailing zeros of the addend, the number of nonzero entries depends on $d$ **only** through $k$:
+
+$$\lvert \lbrace (v,w) : C(v \leftarrow w) \neq 0 \rbrace \rvert = \begin{cases} 2^k \cdot \dfrac{4^{n-k} - 4}{3}, & k \leq n-2 \\ 2^n, & k \geq n-1 \end{cases}$$
+
+verified exhaustively over every addend at $n = 5, 6, 7$.  At $k = 0$ that is $(4^n-4)/3$, one third of the table; each trailing zero halves it.  It is what makes the graph's edge count predictable in advance, and it is the check that would catch a broken LAT before any slope is read off it.
+
+### 11.36.3 v1 rides the same table
+
+The v1 round is $F_B(A) = M(A) \oplus M(B) \oplus \mathrm{ROL}(A + B \bmod 2^n, n/4)$, and its nonlinear term takes $A$ rather than a constant.  It looks like a different object and #254 budgeted a separate treatment for it.  It is not different.  Splitting a mask $\beta$ on the output, and using $M = M^{T}$,
+
+$$\beta \cdot F_B(A) = M(\beta) \cdot A \ \oplus \ \gamma \cdot (A + B) \ \oplus \ \text{const}, \qquad \gamma = \mathrm{ROR}(\beta, n/4).$$
+
+$B$ is held constant for the whole revolve, so $\gamma \cdot (A+B)$ is again addition of a **constant**, and its correlation with a mask $w$ on $A$ is the same $C(\gamma \leftarrow w)$ the v2 graph uses — with $B$ itself in the role $\delta(B)$ plays for v2.  The round input mask is $M(\beta) \oplus w$.
+
+One asymmetry survives and shapes the sweep.  v2's round depends on the key only through $\delta(B)$, so a sweep over keys collapses to a sweep over deltas — 554 of them for 1024 keys at $n = 10$.  v1's round depends on $B$ directly, with no collapse, so every key is its own graph.
+
+### 11.36.4 Validation
+
+Four checks, and the script fails if any stops reproducing.
+
+- The LAT against `fscx_scaling_and_linear.py`'s carry automaton — an independent implementation, per-pair rather than per-row: $0$ mismatches over every constant and every mask pair at $n = 6$.
+- The support identity of §11.36.2: $0$ deviations at $n = 5, 6, 7$.
+- The v1 pull-back of §11.36.3 against a brute-force LAT of the round as the suite evaluates it: $0$ mismatches, four keys, every mask pair, $n = 6$.
+- Edge pruning.  The widest row keeps only the $K$ cheapest out-edges per node, because the full graph at $n = 13$ has 22M edges; at $n = 11$, where the full graph fits, $K = 64, 32, 16$ all reproduce the full-graph answer to $10^{-9}$.
+- Howard's policy iteration against **Karp's theorem** and against the exact $r$-round trail weight from a min-plus dynamic program: agreement to $10^{-9}$ between the first two, and to better than $0.02$ against a 20-round window of the third.
+
+The dynamic-programming column is deliberately a window *average* rather than a difference.  The min-plus series is eventually periodic here as it is on the differential side, so a window that is not a whole number of periods carries an $O(1/\text{window})$ error — §11.35.2's trap, present on this axis too.
+
+### 11.36.5 The measured slope
+
+Per key, exact.  `below` is the key-weighted fraction under §11.30.1's criterion $s_{\text{lin}} \geq 2/3$.
+
+**NL-FSCX v2**, indexed by $\delta(B)$, excluding the two constants `nl_v2_key_is_valid` already rejects:
+
+| $n$ | deltas | p10 | median | mean | min | max | below $2/3$ |
+|---|---|---|---|---|---|---|---|
+| 7 | 69 (all) | $0.3240$ | $0.5931$ | $0.5156$ | $0.1429$ | $0.8113$ | 77.7% |
+| 8 | 138 (all) | $0.2557$ | $0.6304$ | $0.5755$ | $0.2000$ | $0.9715$ | 57.8% |
+| 10 | 554 (all) | $0.3260$ | $0.7341$ | $0.7055$ | $0.1667$ | $1.1136$ | 45.3% |
+| 11 | 90 | $0.3180$ | $0.8313$ | $0.7642$ | $0.3180$ | $1.1245$ | 33.2% |
+| 13 | 12 | $0.7539$ | $1.1541$ | $1.0631$ | $0.7539$ | $1.2211$ | 0.0% |
+
+The $n = 13$ row needs `--wide` and takes minutes per key; every one of its twelve keys clears the criterion, and its *minimum* is above the median at $n = 11$.  Weighting by delta rather than by key gives medians $0.5931 / 0.6515 / 0.7983 / 0.8699 / 1.0350$ over the same widths — the same trend, so neither the sampling nor the weighting is driving it.
+
+**NL-FSCX v1**, indexed by the key itself:
+
+| $n$ | keys | p10 | median | mean | min | max | below $2/3$ |
+|---|---|---|---|---|---|---|---|
+| 7 | 128 (all) | $0.2721$ | $0.6048$ | $0.5280$ | $0.0000$ | $0.8080$ | 78.1% |
+| 8 | 256 (all) | $0.2996$ | $0.6157$ | $0.5847$ | $0.1667$ | $0.8515$ | 66.7% |
+| 10 | 200 | $0.4150$ | $0.7535$ | $0.6972$ | $0.0000$ | $1.0150$ | 37.5% |
+| 11 | 60 | $0.4716$ | $0.8516$ | $0.7797$ | $0.2767$ | $1.0869$ | 33.3% |
+
+A supplementary eight-key run at $n = 13$ gives median $1.0709$, minimum $0.4975$ and 25.0% below the criterion, continuing the same climb; it is reported here rather than in the table because the shipped script does not sweep v1 that wide by default.
+
+**The shape matches the differential axis.**  §11.35.4 found the differential median monotone rising, clearing $4/3$ from $n = 8$ on, with the failing fraction thinning.  The linear median does the same against $2/3$: below at the two narrowest widths, above from $n = 10$ on, still rising at the widest width reached, with the failing fraction falling monotonely across the range — from 77.7% to zero for v2 by $n = 13$, and from 78.1% to 33.3% for v1 by $n = 11$.  Both primitives do it independently.  This is the reassuring direction, and it is the first time the quantity has been computed rather than read off a slope.
+
+**It does not promote anything.**  HSKE-NL-A2, `twk` and `fpe` are demo-only for reasons this measurement does not touch — the SPRP assumption (#243), the $\tau(192) = 14$ fixed-point theorem (#244), the single unvaried round.  Clearing a trail criterion at four small widths substitutes for none of them.  And the criterion is sufficient, not necessary: what an attacker gets is the linear **hull**, the sum over all trails sharing endpoints, which a per-trail weight bounds in one direction only.
+
+### 11.36.6 A correction to §11.30.6: the flattening is an artefact
+
+§11.30.6 settled the linear slope at $0.59 / 0.75 / 0.93 / 0.95$ for $n = 7/8/10/11$ after removing saturation and the transient, and concluded that "the slope rises with width" was **weakened** — flattening, $+0.03$ between the two widest against $+0.16$ between the two narrowest.
+
+Computed exactly, the flattening is not there — the sequence accelerates instead.  The v2 medians climb $+0.04 / +0.10 / +0.10 / +0.32$ per step across $n = 7, 8, 10, 11, 13$, against the first pass's $+0.16 / +0.18 / +0.02$; the v1 medians climb without a flat step over the same range.  §11.35.5's diagnosis applies verbatim: a finite-round read is a window average over a series that has not reached its slope, and its errors have no consistent sign.  Nothing in §11.30.6's *conclusion* changes — every width above $n = 7$ still clears $2/3$ — but the deceleration it reported should not be carried forward.
+
+### 11.36.7 The v1 degenerate class, characterised exactly
+
+A few v1 keys admit a correlation-1 trail of unbounded length — mean weight $0$ — or no cycle at all.  Exhaustively, at both widths where an exhaustive scan is instant, the class is the same four keys and nothing else:
+
+$$B \in \{0,\ 2^{n-2},\ 2^{n-1},\ 3 \cdot 2^{n-2}\} \quad\Longleftrightarrow\quad \mathrm{tz}(B) \geq n-2.$$
+
+At $n = 7$ the four give a zero-weight cycle; at $n = 8$ their graphs are acyclic, which is strictly better for the defender.  Four keys at every width, one of them the all-zero key the suite already treats as degenerate, is density $2^{-254}$ at $n = 256$.  Contrast #253's differential class for v2 — every $B$ with $\mathrm{tz}(\delta(B)) \geq 4$, about 6% of keys.  This one is not a weak-key class in any operational sense and needs no screening; it is recorded because §11.30.5's correlation-1 subspace predicted something in this shape.
+
+### 11.36.8 The two modes — TODO #254's item (1), answered negatively
+
+§11.30's scope note says the block-cipher criterion "does not transfer unexamined" to HSKE-NL-A1 or HFSCX-256, and guesses that a naive transfer would give "a sharper bar", both running $n/4$ rounds instead of $3n/4$.  *Sharper* is the wrong word.  The transfer does not fail by a factor of three.  It fails.
+
+$$\text{A1:} \quad ks_i = F_1^{n/4}(\text{seed},\ \text{base} \oplus i), \qquad \text{DM:} \quad h' = F_1^{n/4}(h,\ m) \oplus h$$
+
+In A1 the seed and base are secret and the attacker varies the block counter $i$, so the varying input is the **second** argument; the first never varies at all across a keystream.  In Davies–Meyer the message block is again the second argument, and it is the input the attacker controls.  A trail — differential or linear — propagates a difference or a mask in the *first* argument through $r$ rounds.  That is what §11.30.1's $s$ measures and what §11.36.5 computes.  In both of these modes the attacked input is the round **constant**, which enters all $r$ rounds simultaneously: there is no round-by-round propagation in $B$, hence no trail, hence no cycle, hence no cycle mean.
+
+**Consequence.**  The three production-track rows #254 hoped to reach — HSKE-NL-A1, HFSCX-256, and everything inheriting the hash (HPKS-WOTS, HPKS-XMSS, every Fiat–Shamir transform in the suite) — are **not reachable by a trail bound in either direction**.  §11.36.5's numbers speak to HSKE-NL-A2, `twk` and `fpe` only.  #254 can no longer be the item that re-rates them, and the naive transfer §11.30 anticipated gives nothing rather than a sharper bar.
+
+What can be measured on the actual axis is the exhaustive maximum differential probability of the A1 keystream map $B \mapsto F_1^{r}(A_0, B)$, over the counter differences A1 can actually reach.  Against a random-function floor of $-7.68$ at $n = 11$ and $-9.42$ at $n = 13$, $\log_2$ of that maximum runs $-0.10 / -1.90 / -4.42 / -5.80 / -7.68$ and $-0.34 / -2.95 / -5.88 / -7.80 / -9.19$ at $r = 1 \dots 5$: healthy pre-saturation increments running to $3.5$ bits per round, and the floor reached by $r = 5$.  Read it as a floor, not a slope.  Those increments are read at $r \leq 4$, and §11.35.5 is the standing warning about exactly that — on an axis where the asymptote *could* be computed, a read inside the transient missed it by between $-7$ and $+17$ percent with no consistent sign.  Here it cannot be computed, so there is nothing to correct the read against, and A1's deployed $r = 64$ at $n = 256$ is far outside anything measurable.
+
+The Davies–Meyer message input is better news and is exhaustively checkable.  A necessary condition for collision resistance is that $m \mapsto F_1^{n/4}(h, m) \oplus h$ not collapse; measured, its image fraction is $0.6465 / 0.6442 / 0.6231 / 0.6246 / 0.6314$ at $n = 10/11/12/13/14$ against the $1 - 1/e = 0.6321$ a random function gives, with maximum preimage counts of $5$ to $8$.  No anomaly, which corroborates §11.9's ideal-random-function treatment (TODO #215) on the one point a trail argument could have contradicted.  Note that the singular widths are usable here and only here: $n = 12$ makes $M$ non-invertible, which voids §11.36.5 — $F_B$ must be a bijection for a mask graph to mean anything — but Davies–Meyer does not need $F_B$ invertible.
+
+### 11.36.9 What TODO #254 still owes
+
+Item (2) is closed by §11.36.1 and item (1) by §11.36.8.  Three things remain, and the first is not #254's alone.
+
+**The width extrapolation.**  Five exact points that rise do not bound $n = 256$.  This is now the *only* thing #252 and #254 have left, jointly and identically — both items reduce to the same question about the same kind of object, and §11.35.7's caution transfers with it: an embedding argument would prove the slope non-increasing, the opposite of what is measured, so the rise must come from width destroying cheap cycles rather than from anything an embedding captures.  It should be filed once, not twice.
+
+**The linear hull.**  Every number in §11.36.5 is a trail weight.  While the criterion is being cleared by a comfortable factor this is a technicality; the two narrowest widths do not clear it, and if a wider measurement ever lands near the bar the gap between the best trail and the hull stops being one.
+
+**The B-axis.**  Newly named by §11.36.8 and belonging to whoever re-examines A1 and HFSCX-256.  Nothing in this repository measures it beyond four rounds, and those two modes run $n/4$ rounds rather than $3n/4$ — less margin to spend, not more.

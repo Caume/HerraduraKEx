@@ -219,4 +219,80 @@ item that reaches three production-track rows.  (2) The transfer-matrix bound on
 (3) The same treatment for `s_diff`, which is #252 — and by the correction above, #252 is now
 the more urgent of the two.
 
+**Second pass done in v5.2.2 — both items above are closed; one residue remains, and it is
+shared with #252.**  See SecurityProofs-8.md §11.36 and `SecurityProofsCode/lin_cycle_mean.py`.
+
+* **Item (2), the bound: `s_lin` is a MINIMUM MEAN CYCLE**, the same reformulation #252 used
+  on the differential side, and §11.35.7 was right that it transfers more cleanly.  Two of the
+  round's three layers move a mask deterministically, so a trail is a walk on the mask graph
+  and its asymptotic weight per round is the least mean over that graph's cycles — exactly
+  computable by Howard's policy iteration.  Saturation, which §11.30.3 showed had invalidated
+  most slope figures in this repository, is a property of reading a slope off a finite series;
+  a cycle mean is not read off one.  **The transfer-matrix route is superseded**, as #252's
+  route 3 was, and for the same reason: it existed to make the computation scale.
+* **It reaches `n = 13`, two widths further than the differential axis got.**  Each LAT row is
+  a rotation of a fixed sign vector followed by one Walsh–Hadamard transform, so the table
+  costs `(n+1)·4^n` instead of a carry automaton per mask pair.  Filed alongside: an exact
+  identity for the LAT's support, which depends on the addend only through `tz`.
+* **v1 needs no separate machinery**, which this item had budgeted for.  Pulling a mask through
+  `M(A) ^ M(B) ^ ROL(A+B, n/4)` leaves `gamma·(A+B)` with B constant — addition of a CONSTANT
+  again, with `B` itself in `delta(B)`'s role.  Only the sweep differs: v2 collapses to
+  `delta(B)`, v1 does not.
+* **Both primitives clear `2/3` from `n = 10` on, monotone rising, failing fraction thinning.**
+  Same shape as #252 found on the differential axis, measured independently.  **Corrects
+  §11.30.6**: the "flattening" it reported (+0.03 between the two widest widths) was a
+  finite-round artefact and is not there when the slope is computed exactly.
+* **Nothing is promoted.**  HSKE-NL-A2, `twk` and `fpe` are demo-only for reasons this does not
+  touch (#243's SPRP assumption, #244's `tau(192)` theorem, the single unvaried round), and the
+  criterion is sufficient rather than necessary — the linear *hull* is what an attacker gets.
+* **Item (1), the two modes: ANSWERED, and negatively.**  §11.30's scope note guessed the naive
+  transfer would give "a sharper bar" at `n/4` rounds.  It gives nothing.  In both HSKE-NL-A1
+  (`ks_i = F1^{n/4}(seed, base ^ i)`) and HFSCX-256's Davies–Meyer compression, the input the
+  attacker varies is the **second** argument — the round CONSTANT, which enters all `r` rounds
+  at once.  A trail propagates through the first argument, which neither mode varies.  No
+  trail, no cycle, no cycle mean, and no criterion.  **The three production-track rows this
+  item was filed to reach are not reachable by a trail bound in either direction**, so #254 can
+  no longer be the item that re-rates them.  Direct exhaustive measurement of both modes' real
+  axis is reported instead: A1's counter-difference maximum saturates against the
+  random-function floor by `r = 5`, and DM's message input matches a random function's image
+  fraction to within 0.01.
+
+**What remains.**  (1) The **width extrapolation** — now the only thing #252 and #254 have
+left, jointly and identically; both reduce to the same question about the same kind of object
+and should be filed once rather than twice.  (2) The **linear hull**, which no trail method
+reaches.  (3) The **B-axis**, newly named, belonging to whoever re-examines A1 and HFSCX-256:
+nothing here measures it beyond four rounds, and those modes run `n/4` rounds, so they have
+less margin to spend, not more.
+
+Status: **OPEN**
+
+### #256: the remaining `\%`-in-math spans render with the sign silently dropped
+
+`SecurityProofs-7.md` had two of these; v5.2.1 fixed them.  Nineteen more survive, in
+`SecurityProofs-4.md` (10) and `SecurityProofs-5.md` (9), across 16 lines.
+
+**The bug.**  GitHub's pipeline is CommonMark first, KaTeX second.  CommonMark §6.7 resolves
+a backslash escape before any `$...$` span is handed on, so `\%` arrives at KaTeX as a bare
+`%` — and there `%` starts a comment that runs to end of input.  `$\approx 50\%$` therefore
+renders as `50`, with the percent sign gone and no error anywhere.  It is not a KaTeX FAIL;
+`validate_katex.js` reports it as the strict-mode warning `commentAtEnd`, which is why
+nineteen instances survived every previous KaTeX pass.  Reproduce with
+`node SecurityProofsCode/validate_katex.js SecurityProofs-4.md 2>&1 | grep -c commentAtEnd`.
+
+**The fix**, already applied twice in Part 7: close the math span before the sign —
+`$\approx 50$%` — which is the form `SecurityProofs-2.md` §379 has always used.  Do not reach
+for `\mathbin{\%}` or a `\char` escape; the backslash never survives to KaTeX, so nothing
+spelled with one can work.
+
+**Affected content is all quantitative**, which is why it is worth doing rather than
+cosmetic: Part 4's sparse-secret density table (§11.7, six rows of percentages, the argument
+that any sparsity definition below ~12% density is broken) and Part 5's rotational-rate,
+image-coverage and key-recovery figures (§9.3, §11.8).  A reader currently sees bare numbers
+where the units carry the claim.
+
+**Scope note.**  Mechanical, one line per instance, and each is confirmed by the validator
+going to zero on the file.  The expression counts do not change — the span is still one
+expression — so `check_part_index.py` should stay green without touching the banners.  Verify
+that rather than assuming it.
+
 Status: **OPEN**

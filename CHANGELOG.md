@@ -2,6 +2,79 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.2] - 2026-08-31
+
+### TODO #254 (second pass) — the linear slope, measured exactly; and the two modes
+
+PATCH: analysis and documentation, plus one new standalone script and one new
+TODO.  No shipped primitive, CLI surface, wire format or rating changes.
+
+### Added
+
+- **`SecurityProofsCode/lin_cycle_mean.py`** — computes `s_lin`, the asymptotic
+  per-round linear trail weight, **exactly**, per key, for NL-FSCX v1 and v2.
+  Same minimum-mean-cycle reformulation TODO #252 used on the differential
+  axis; §11.35.7 predicted it would transfer more cleanly here and it does.
+  It reaches `n = 13`, two widths further than the differential side, because
+  each LAT row is a rotation of a fixed sign vector followed by one
+  Walsh-Hadamard transform rather than a per-mask-pair carry automaton.
+  Validated four ways: against `fscx_scaling_and_linear.py`'s independent
+  automaton, against an exact identity for the LAT's support, against a
+  brute-force LAT of the real v1 round, and Howard vs Karp vs a min-plus
+  dynamic program.  Exits non-zero if a finding stops reproducing.
+- **`SecurityProofs-8.md` §11.36**, and Part 8 grows from 261 to 435 math
+  expressions.
+- **TODO #256** — nineteen `\%`-in-math spans in Parts 4 and 5 that render
+  with the percent sign silently dropped, the same defect v5.2.1 fixed two of
+  in Part 7.
+
+### Findings
+
+- **`s_lin` clears the `2/3` criterion from `n = 10` on, for BOTH v1 and v2**,
+  monotone rising, with the failing fraction thinning across the range.  The
+  same shape TODO #252 found on the differential axis, measured independently
+  on a different primitive pair.  First time the quantity has been computed
+  rather than read off a finite-round slope.
+- **v1 needs no separate treatment**, which #254 had budgeted for.  Pulling a
+  mask through `M(A) ^ M(B) ^ ROL(A+B, n/4)` leaves addition of a *constant*
+  again, with `B` itself in `delta(B)`'s role.
+- **An exact identity for the add-constant LAT's support**, not previously
+  recorded: the number of nonzero entries depends on the addend only through
+  its trailing-zero count.  It is what makes the graph's edge count predictable
+  and what would catch a broken LAT before a slope is read off it.
+- **The v1 degenerate class is exactly four keys at every width** — those
+  supported on the top two bits — one of which the suite already treats as
+  degenerate.  Density `2^-254` at `n = 256`; no screening warranted.  Contrast
+  #253's differential class for v2, which covers about 6% of keys.
+- **Nothing is promoted.**  The v2 rows stay demo-only for reasons this does
+  not touch, and the criterion is sufficient rather than necessary — the linear
+  hull is what an attacker gets, and a trail weight bounds it one way only.
+
+### Changed
+
+- **TODO #254's item (1) is answered, negatively and structurally.**  §11.30's
+  scope note guessed that transferring the block-cipher criterion to
+  HSKE-NL-A1 and HFSCX-256 would give "a sharper bar" at `n/4` rounds.  It
+  gives nothing: in both modes the input the attacker varies is the round
+  CONSTANT, which enters all `r` rounds at once, so there is no trail to bound.
+  **The three production-track rows #254 was filed to reach are not reachable
+  by a trail bound in either direction.**  Measured instead: A1's
+  counter-difference maximum saturates against the random-function floor by
+  `r = 5`, and Davies-Meyer's message input matches a random function's image
+  fraction to within 0.01 — corroborating §11.9's ideal-random-function
+  treatment (TODO #215) on the one point a trail argument could have
+  contradicted.
+- **§11.30.6's reported flattening is corrected.**  The first pass settled the
+  slope at 0.59/0.75/0.93/0.95 and concluded that "the slope rises with width"
+  was weakened.  Computed exactly, the deceleration is not there; it was a
+  finite-round artefact of the kind #252 §11.35.5 documents.
+- **The transfer-matrix route is superseded**, as #252's route 3 was, and for
+  the same reason: it existed to make the computation scale.
+- **`SecurityProofs-7.md` §11.30 carries the supersession notice inline**, so the
+  two passes cannot be read as disagreeing.
+- **#252 and #254 now share their entire remaining scope** — the width
+  extrapolation — and should be filed once rather than twice.
+
 ## [5.2.1] - 2026-08-30
 
 ### TODO #252 (second pass) — the asymptotic differential slope, measured exactly

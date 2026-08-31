@@ -204,6 +204,33 @@ SecurityProofsCode/                                 — standalone Python proof/
                              r=10-14 is 4-7 orders of magnitude away) and
                              supersedes route 3.  Exits non-zero if a finding
                              stops reproducing
+  lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
+                             modes (TODO #254, second pass; only the width
+                             extrapolation is still open).  s_lin is the
+                             MINIMUM MEAN CYCLE of the mask graph, the same
+                             reformulation #252 used on differences, and it
+                             reaches n = 13 -- two widths further -- because
+                             each LAT row is a ROTATION plus one
+                             Walsh-Hadamard, not a per-pair carry automaton.
+                             Records an exact identity for the LAT's support
+                             (it depends on the addend only through tz).
+                             v1 needs no separate machinery: pulling a mask
+                             through M(A) xor M(B) xor ROL(A+B, n/4) leaves
+                             addition of a CONSTANT again, with B itself in
+                             delta(B)'s role.  Per-key medians rise monotonely
+                             and clear the 2/3 criterion from n = 10 on, for
+                             BOTH v1 and v2 -- so #11.30.6's reported
+                             "flattening" was a finite-round artefact, and
+                             nothing is promoted, since the v2 rows are
+                             demo-only for reasons (#243, #244) this does not
+                             touch.  ANSWERS #254's item (1) NEGATIVELY: a
+                             trail bound cannot reach HSKE-NL-A1 or
+                             HFSCX-256 at all, because in both the attacked
+                             input is the round CONSTANT B, which enters every
+                             round at once -- so there is no trail, and the
+                             three production-track rows are not #254's to
+                             move.  Exits non-zero if a finding stops
+                             reproducing
   fscx_scaling_and_linear.py — the linear axis and what key size buys
                              (TODO #254, first pass; the bound is still open).
                              SCALE-INVARIANCE THEOREM: because r = 3n/4 is tied
@@ -340,7 +367,7 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34–§11.35: NL-FSCX v3 exact row analysis · the asymptotic differential slope, measured (261 math expressions)
+SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
