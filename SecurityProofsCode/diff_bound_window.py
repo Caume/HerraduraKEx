@@ -27,6 +27,14 @@ reason every previous attempt was unstable.
       the SIGNED-DIGIT (NAF) weight of delta(B), not its Hamming weight.
       Recorded with its sample sizes because they are too small to conclude on.
 
+SUPERSEDED IN PART by diff_cycle_mean.py (TODO #252, second pass).  Everything
+measured here still reproduces, and §3's demotion of routes 2 and 3 stands.  What
+is WITHDRAWN is §2's conclusion that the asymptotic increment is not measurable
+at any reachable width: that is true of reading a slope off a finite increment
+series, which is what this file does, and false of the asymptote, which is the
+minimum mean cycle of the difference graph -- an object in which the transient
+cancels and the ceiling does not apply.  See SecurityProofs-8.md §11.35.
+
 Exits non-zero if a finding stops reproducing.
 
 Run:  python3 SecurityProofsCode/diff_bound_window.py [--quick]

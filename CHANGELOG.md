@@ -2,6 +2,80 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.1] - 2026-08-30
+
+### TODO #252 (second pass) — the asymptotic differential slope, measured exactly
+
+PATCH: analysis and documentation, plus one new standalone script.  No shipped
+primitive, CLI surface, wire format or rating changes.
+
+### Added
+
+- **`SecurityProofsCode/diff_cycle_mean.py`** — computes `s_diff`, the asymptotic
+  per-round differential trail increment, **exactly**, per key, at every width an
+  exhaustive DDT reaches.  Howard's policy iteration for the minimum mean cycle,
+  cross-checked against Karp's theorem and against value iteration run far past
+  the ceiling: seven cases, three methods sharing no machinery, agreement to
+  1e-9.  Exits non-zero if a finding stops reproducing.
+- **`SecurityProofs-8.md` §11.35**, and Part 8 grows from 165 to 261 math
+  expressions.
+
+### Changed
+
+- **TODO #252's first pass is partly withdrawn.**  §11.31.2 concluded the
+  asymptotic increment "is NOT MEASURABLE BY EXHAUSTIVE SEARCH AT ANY REACHABLE
+  WIDTH — not slowly, but at all".  That is a correct statement about reading a
+  slope off a finite increment series — which is what every previous pass did —
+  and an incorrect one about the asymptote.  `s_diff` is the **minimum mean
+  cycle** of the difference graph: the transient is exactly the additive
+  constant in `W(r) = c + mu*r + o(1)` and cancels in a cycle mean, and the
+  0.6n ceiling is a statement about a codebook, which a cycle is not compared
+  to.  Both brackets dissolve rather than being defeated.  §11.31 now carries
+  the supersession notice inline, so the two sections cannot be read as
+  disagreeing.
+- **#247 §(d)'s "3.0 bits per round" is corrected.**  Solved for the cycle mean
+  in the same key-averaged model, the r = 3..5 read misses the exact asymptote
+  by −7% to +17% — with **no consistent sign**, so it is not a biased slope but
+  a window average over a series that has not reached its slope.  The
+  256/3 ≈ 86-round projection built on it has no support.  §11.28.6's separate
+  claim that the per-key figure is about half the key-averaged one survives and
+  is now measured directly rather than inferred: 1.717 / 2.751 = 0.62 at n = 10.
+- **Route 1 is closed and route 3 is superseded.**  HiGHS was added as an
+  optional analysis-only MILP backend; it beats CBC by 1.4x at r = 4 and by more
+  than 3.7x at r = 5, and proves n = 32 at r = 5 (weight 10.0) and r = 6
+  (weight 14.0), which CBC could not — two new rows for #247's width-agreement
+  table.  But growth is 3.6–4.0x per added round, putting the r = 10–14 target
+  four to seven orders of magnitude out of reach.  It is closed because the
+  target was unnecessary: r = 10–14 existed only to open a measurement window,
+  and §11.35.1 removes the need for one.  Route 3 was proposed to make the
+  computation scale, and Howard's algorithm already does.
+
+### Findings
+
+- **Per-key `mu` = 1.279 / 1.349 / 1.717 / 1.903 at n = 7 / 8 / 10 / 11** —
+  monotone rising, clearing the `4/3` criterion from n = 8 on, with the fraction
+  of accepted keys below it falling 63.4% → 27.3%.  Every key measured already
+  passes the deployed `nl_v2_key_is_valid`, which rejects only `delta = 0` and
+  `delta = 2^(n-1)`.  This is the reassuring direction and the first time the
+  quantity has been measured rather than projected.  **No rating moves**: the
+  NL-FSCX v2 rows stay demo-only, and four exact points are a trend, not a limit.
+- **A tail remains, and is documented rather than screened**, following TODO
+  #253's disposition for the same shape of finding: p10 sits below the criterion
+  at every width and thins more slowly than the median rises.
+- **The obvious route to the remaining question points the wrong way.**  A
+  surviving-cycle embedding argument would prove `mu` *non-increasing*, and
+  widening also adds candidate cycles, so the naive counting argument points
+  down as well.  `mu` rises anyway — so the rise is driven by width *destroying*
+  cheap cycles, and any structural proof has to explain that first.  Recorded
+  because it is the first thing the next attempt will reach for.
+- **A value-iteration trap, recorded because it costs a percent silently.**
+  Reading the asymptote off a series tail by averaging over a fixed window is
+  only approximate: the series is eventually periodic, and a window that is not
+  a whole number of periods leaves an O(1/window) error.  Detecting the period
+  makes it exact — but a short period must be confirmed over a long tail, since
+  at n = 7, `delta = 44` satisfies the test at P = 3 by coincidence and reports
+  a `mu` one percent low.
+
 ## [5.2.0] - 2026-08-30
 
 ### TODO #255 — the five NL-FSCX v3 consumers, across every CLI (closes #255)

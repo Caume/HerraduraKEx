@@ -94,6 +94,54 @@ SecurityProofs-7.md §11.31 and `SecurityProofsCode/diff_bound_window.py`.
 
 **Revised route order: 1, then 3.**  Route 2 is set aside.
 
+**Second pass done in v5.2.1 — the MEASUREMENT PROBLEM IS SOLVED; only the width
+extrapolation is left.**  See SecurityProofs-8.md §11.35 and
+`SecurityProofsCode/diff_cycle_mean.py`.
+
+* **The first pass's central conclusion is WITHDRAWN.**  §11.31.2 said the asymptotic
+  increment "is NOT MEASURABLE BY EXHAUSTIVE SEARCH AT ANY REACHABLE WIDTH -- not slowly,
+  but at all".  That is true of reading a slope off a finite increment series, which is what
+  every pass had done, and false of the asymptote.  `s_diff` is the **MINIMUM MEAN CYCLE** of
+  the difference graph -- nodes are differences, `a -> b` weighted `-log2 xdp(M(a) -> b)`,
+  and `W(r) = c + mu*r + o(1)`.  The transient IS the constant `c` and cancels in a cycle
+  mean; the ceiling is a statement about a codebook and a cycle is not compared to one.
+  Both brackets dissolve rather than being defeated.
+* **Exactly computable, and computed.**  Howard's policy iteration, cross-checked against
+  Karp's theorem and against value iteration run far past the ceiling -- seven cases, three
+  methods sharing no machinery, agreement to 1e-9.
+* **The numbers, per key, at every usable width** (n = 9, 12 excluded: M singular).  Median
+  `mu` = 1.279 / 1.349 / 1.717 / 1.903 at n = 7 / 8 / 10 / 11: **monotone rising**, clearing
+  the 4/3 criterion from n = 8 on, with the fraction of keys below it **monotone falling**,
+  63.4% -> 27.3%.  Every key measured already passes the deployed `nl_v2_key_is_valid`.
+* **A tail remains and is documented, not screened**, following #253's disposition: p10 is
+  below the criterion at every width, and thinning more slowly than the median rises.
+* **#247 §(d)'s "3.0 bits per round" is corrected.**  The r = 3..5 read misses the exact
+  key-averaged asymptote by -7% to +17% with **no consistent sign**, so 3.0 is not a
+  per-round increment and the 256/3 = 86-round projection has no support.  §11.28.6's
+  separate claim that the per-key figure is about half the key-averaged one SURVIVES and is
+  now measured directly: 1.717 / 2.751 = 0.62 at n = 10.
+* **Route 1 is quantified and CLOSED.**  HiGHS beats CBC by 1.4x at r = 4 and by more than
+  3.7x at r = 5, and proves n = 32 at r = 5 (weight 10.0) and r = 6 (weight 14.0), which CBC
+  could not -- two new rows for #247's width-agreement table.  But growth is 3.6-4.0x per
+  added round with no flattening, so r = 10-14 is four to seven orders of magnitude away.
+  It is closed because the target was unnecessary, not because it failed: r = 10-14 existed
+  only to open a window, and there is no longer a window to open.  **Route 3 is superseded**
+  -- it was proposed to make the computation scale, and Howard's already does.
+* **A caution for the remaining work:** embedding is the obvious tool for relating widths and
+  it points the WRONG WAY.  A surviving-cycle argument would prove `mu` non-increasing, and
+  widening also adds candidate cycles, so the naive count points down too.  `mu` rises
+  anyway, so the rise comes from width DESTROYING cheap cycles and a structural proof must
+  explain that first.
+
+**What is left, and it is the whole of what is left: the width extrapolation.**  `mu` is
+exact at the width measured and cannot be read at n = 256 -- the graph has `2^n` nodes, so
+the exhaustive-DDT wall that stopped every previous pass stops this one too.  But the
+residual question is now the limit of a monotone sequence of EXACT values rather than a
+slope read through two sources of contamination.  Cheapest next steps: extend to n = 13 and
+n = 14 (cost is the DDT's `2^2n`, not the cycle computation); and carry the same
+reformulation to the LINEAR axis, which is #254 and where mask propagation through M is
+deterministic, so it should transfer more cleanly still.
+
 Status: **OPEN**
 
 ### #254: a linear-trail bound at realistic width — the binding axis for the NL-FSCX family

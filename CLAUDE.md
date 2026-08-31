@@ -177,7 +177,33 @@ SecurityProofsCode/                                 — standalone Python proof/
                              #254's linear numbers (settled 0.59/0.75/0.93/0.95;
                              conclusion holds, the "rises with width" trend is
                              weakened).  NAF-weight weak-key lead filed, not
-                             concluded -- samples are too thin
+                             concluded -- samples are too thin.  ITS CENTRAL
+                             CONCLUSION IS WITHDRAWN by diff_cycle_mean.py: the
+                             window argument is right about reading a slope off
+                             a finite series and wrong about the asymptote
+  diff_cycle_mean.py       — the asymptotic differential slope, MEASURED
+                             (TODO #252, second pass; only the width
+                             extrapolation is still open).  s_diff is the
+                             MINIMUM MEAN CYCLE of the difference graph, so the
+                             transient (the constant cost of walking into the
+                             cycle) and the 0.6n ceiling (a codebook statement;
+                             a cycle is not a codebook) both cancel -- and it is
+                             exactly computable per key by Howard's policy
+                             iteration, cross-checked against Karp and against
+                             value iteration run far past the ceiling.  Per-key
+                             median mu = 1.279/1.349/1.717/1.903 at n=7/8/10/11,
+                             MONOTONE RISING, clearing the 4/3 criterion from
+                             n=8 on, with the failing fraction falling
+                             63%->27%.  Every key measured already passes the
+                             deployed nl_v2_key_is_valid.  Corrects #247's "3.0
+                             bits per round" -- the r=3..5 read misses the exact
+                             asymptote by -7% to +17% with NO consistent sign,
+                             so the 86-round projection has no support.  Closes
+                             route 1 (HiGHS beats CBC 1.4-3.7x and proves
+                             n=32 r=5,6, but growth is 3.6-4.0x per round, so
+                             r=10-14 is 4-7 orders of magnitude away) and
+                             supersedes route 3.  Exits non-zero if a finding
+                             stops reproducing
   fscx_scaling_and_linear.py — the linear axis and what key size buys
                              (TODO #254, first pass; the bound is still open).
                              SCALE-INVARIANCE THEOREM: because r = 3n/4 is tied
@@ -314,7 +340,7 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34: NL-FSCX v3 — exact row analysis, weak keys (165 math expressions)
+SecurityProofs-8.md                                 — §11.34–§11.35: NL-FSCX v3 exact row analysis · the asymptotic differential slope, measured (261 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -441,6 +467,7 @@ tooling-only, and every consumer of them degrades to a printed NOTE rather than 
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
 | `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214) | section skipped | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
+| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6) | CBC is used instead, and reaches one round fewer | `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
 inside a `try`/`except ImportError` and prints what to install.

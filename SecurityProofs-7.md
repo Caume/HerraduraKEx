@@ -11,7 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
+> - **Part 8 — §11.34–§11.35** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope
 
 ---
 
@@ -2112,6 +2112,8 @@ This does not move any rating.  §11.29.6's verdict stands: HSKE-NL-A2 and `twk`
 
 TODO #252 asks for a two-sided differential trail bound at `n = 256` and lists three routes.  **The bound is not delivered and #252 stays open.**  What this pass establishes is why the previous attempts were unstable, and it is not solver time.  Reproduce with `SecurityProofsCode/diff_bound_window.py`.
 
+> **Superseded in part by §11.35 (TODO #252, second pass).**  §11.31.2's diagnosis of the transient and the ceiling stands, and so does everything this section concludes about routes 2 and 3.  Its central *conclusion* — that the asymptotic increment "is not measurable by exhaustive search at any reachable width, not slowly, but at all" — is **withdrawn**.  That is a true statement about reading a slope off a finite increment series, which is what this pass and every earlier one did, and a false one about the asymptote itself: the asymptote is the minimum mean cycle of the difference graph, in which the transient cancels and the ceiling does not apply, and it is exactly computable at every width reached here.  §11.35 measures it.  Read the two together; where they disagree, §11.35 is later and is the one with the measurement.
+
 **§11.31.1 The target, restated.**  By §11.30.1 the criterion is width-independent — `s_diff >= 4/3` — so #252 does not need a number at `n = 256`.  It needs the asymptotic per-round increment, a single scalar, obtainable at whatever width it reads most cleanly.  That is strictly easier than the problem #252 was filed with.
 
 **§11.31.2 The measurement window, and why reachable widths have none.**  Two effects bracket the usable part of an increment series.  The **transient**: every key has a probability-1 one-round differential (§11.28.3), so the first several rounds of an optimal trail cost almost nothing and the increment climbs from zero rather than starting at its asymptote.  The **ceiling**: weight cannot usefully exceed about `n`, and past `0.6n` the series flattens against the codebook.  Per-round increments at `n = 11`:
@@ -2300,4 +2302,4 @@ Measured now, both rounds in the same `4×64`-bit limb representation with `delt
 
 ---
 
-> **Continued in Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
+> **Continued in Part 8 — §11.34–§11.35** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope

@@ -11,7 +11,7 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34** (this file): NL-FSCX v3 — Exact Row Analysis
+> - **Part 8 — §11.34–§11.35** (this file): NL-FSCX v3 — Exact Row Analysis · Asymptotic Differential Slope
 
 ---
 
@@ -158,3 +158,94 @@ So $r \ge 77$ binds, and $I_3 = 80$ clears it on both axes with a small margin. 
 > **This does not lift `hske-duplex3`'s rating.** What holds the v2 duplex at *research* is that the permutation's standalone **sponge** profile — the differential/linear characterisation TODO #99 tracks — has never been produced. A per-round trail floor is a statement about the round, not that characterisation, and the gap between the two is exactly the thing a sponge's security argument needs and this family does not have. `hske-duplex3` ships at *research* for the same reason, with a floor its predecessor lacks and the same missing analysis.
 
 **Cost.** $80$ v3 rounds against $64$ v2 rounds is $1.25\times$ the rounds on top of the per-round ratio. Measured end to end against the shipped `herradura.h` (`benchmarks/v3_consumer_cost.c`), that is $1.45\times$ per 4 KiB message, and $1.38\times$ at 64 bytes where the fixed cost of init, associated-data absorption and finalisation — about five permutation calls regardless of length — dominates.
+
+---
+
+## 11.35 The asymptotic differential slope, measured exactly (TODO #252)
+
+§11.31 posed TODO #252's target correctly — the criterion is width-independent, so what is wanted is the asymptotic per-round increment `s_diff` against a bar of `4/3` — and then concluded that this quantity "is **not measurable by exhaustive search at any reachable width** — not slowly, but at all", because the cheap transient and the $0.6n$ ceiling overlap at every width an exhaustive DDT reaches.
+
+**That conclusion is withdrawn here.**  It is a correct statement about the *method* every previous pass used, and a false one about the asymptote.  Reproduce with `python3 SecurityProofsCode/diff_cycle_mean.py`; it exits non-zero if any finding below stops reproducing.
+
+### 11.35.1 The asymptote is a minimum mean cycle
+
+The XOR with the key and the round constant, and the linear map $M$, are deterministic on differences; only the addition of $\delta(B)$ is probabilistic.  A trail is therefore a **walk on a finite directed graph**: nodes are the $2^n$ differences, and the edge $a \to b$ carries weight
+
+$$w(a \to b) = -\log_2 \text{xdp}(M(a) \to b).$$
+
+For any finite weighted digraph the minimum weight over walks of $r$ edges obeys $W(r) = c + \mu r + o(1)$, where $\mu$ is the **minimum mean cycle** — the least average edge weight over all directed cycles.  Hence
+
+$$s_{\text{diff}} = \mu, \qquad\text{exactly, for that width and that key.}$$
+
+Both of §11.31.2's brackets dissolve against this object rather than being defeated by it.  The **transient** is precisely the constant $c$, the cost of walking into the best cycle; it is what contaminates a slope read at small $r$, and it cancels in a mean taken over a cycle, which has no beginning.  The **ceiling** is a statement about interpreting a finite trail against a codebook of size $2^n$; a cycle is not compared to a codebook, so nothing caps it.  And $\mu$ is computable in near-linear time by Howard's policy iteration, so the widths that were out of reach for a solver are not out of reach for this.
+
+### 11.35.2 Validation — three independent methods
+
+Howard's algorithm is iterative, so it is checked against two methods sharing none of its machinery: **Karp's theorem**, which reads the answer off a table of exact $k$-edge distances and never forms a policy, and **value iteration** run far past the ceiling.  Seven cases at $n = 7$ and $n = 8$ agree to $10^{-9}$.
+
+The third column carries the methodological point.  Value iteration *is* §11.31's own series.  Run to $r = 400$ its cumulative weight is far beyond $0.6n$, deep inside the region §11.31.2 called ceiling-limited — and it converges on the same $\mu$ the two exact methods return.  The series was never flattening.  What flattens is a slope read at $r = 3$–$5$, which is inside the transient: the diagnosis was right and the conclusion drawn from it was not.
+
+One implementation note worth recording, because it is a trap.  Reading $\mu$ off the tail of a value-iteration series by averaging over a fixed window is only approximate — the series is eventually **periodic**, and a window that is not a whole number of periods leaves an $O(1/\text{window})$ error that shows up in the fourth decimal.  Detecting the period makes the read exact.  A short period must be confirmed over a long tail rather than over one repetition: at $n = 7$, $\delta = 44$ satisfies the periodicity test at $P = 3$ by coincidence and reports a $\mu$ one percent low if that is believed.
+
+### 11.35.3 The per-key slope at every usable width
+
+$\mu$ for every distinct additive constant $\delta(B)$ a key can produce, weighted by how many keys produce it.  Widths 7 and 8 are exhaustive over all keys; 10 and 11 are sampled over distinct constants.  $n = 9$ and $n = 12$ are absent throughout — $M$ is singular there, so $F_B$ is not a bijection and a trail through it is not a trail (§11.25, TODO #245).
+
+| $n$ | deltas | keys | min | median | mean | max | p10 | % keys below `4/3` |
+|---|---|---|---|---|---|---|---|---|
+| 7 | 69 | 112 | 0.500 | 1.279 | 1.188 | 1.778 | 0.718 | 63.4% |
+| 8 | 138 | 232 | 0.250 | 1.349 | 1.275 | 2.014 | 0.425 | 50.0% |
+| 10 | 120 | 197 | 0.340 | 1.717 | 1.615 | 2.320 | 1.087 | 35.5% |
+| 11 | 60 | 110 | 0.650 | 1.903 | 1.813 | 2.523 | 1.165 | 27.3% |
+
+Every constant in the table **already passes the deployed check**: `nl_v2_key_is_valid` rejects $\delta = 0$ and $\delta = 2^{n-1}$ and nothing else, and both are excluded.  These are the slopes of keys the shipped code accepts.
+
+### 11.35.4 Against the `4/3` criterion
+
+The median is **monotone rising** across every width tested, it clears the criterion from $n = 8$ on, and the fraction of accepted keys below the criterion is **monotone falling**, more than halving between the narrowest and widest width measured.  Both trends point the same way and neither is subtle.  This is the reassuring direction, and it is the first time the quantity has been measured rather than projected.
+
+Three things keep it from being a bound.
+
+1. **The narrow widths do not really bear on the criterion.**  At $n = 7$ the deployed round count would be $r = 3n/4 = 5$, and an asymptotic slope is not what governs a five-round cipher — the transient is.  $n = 7$ and $n = 8$ are present to establish a trend and to be cross-checkable by Karp, not because a 63% failure rate at $n = 7$ says anything about $n = 256$.
+2. **A tail remains, and the deployed check does not screen it.**  The p10 column is the relevant one: a tenth of accepted keys sit below the criterion at every width, and that tail is thinning more slowly than the median is rising.  This is the same shape §11.28 found on the fixed-key side, and it receives the same disposition — documented, not screened, since screening it would reject a substantial fraction of keys for a property that is not an attack.
+3. **Four points are a trend, not a limit.**  The usable sequence is $n = 7, 8, 10, 11$ and the next rung is $n = 13$.
+
+**Effect on ratings: none, deliberately.**  The NL-FSCX v2 rows are demo-only already (§11.26, §11.29), and nothing here promotes or demotes them.  What has changed is that the quantity gating any future move is now measurable.
+
+### 11.35.5 A correction to #247's "3.0 bits per round"
+
+#247 §(d) reported key-averaged optima $4.0 / 7.0 / 10.0$ at $r = 3/4/5$, read them as "exactly linear at 3.0 bits per round", and projected $256/3 \approx 86$ rounds.  Solved for the minimum mean cycle in the same key-averaged model:
+
+| $n$ | exact $\mu$ | slope read at $r = 3$–$5$ | ratio |
+|---|---|---|---|
+| 7 | 2.1555 | 1.9960 | 0.93 |
+| 8 | 2.0107 | 2.0466 | 1.02 |
+| 10 | 2.7512 | 3.2109 | 1.17 |
+
+The read misses the exact asymptote by between $-7$ and $+17$ percent, and **the sign is not consistent**.  It is not a slope that happens to be biased; it is a window average over a series that has not reached its slope, and which way it lands depends on where the transient sits.  So the correction is not "3.0 should be 2.6" — it is that 3.0 is not a per-round increment at all, and neither its value nor its direction of error is recoverable without solving for the cycle mean at that width.  The 86-round projection has no support.  A second symptom from the MILP itself: extending #247's own series to $r = 6$ (§11.35.6) gives $2.0 / 4.0 / 7.0 / 10.0 / 14.0$, whose increments are $2 / 3 / 3 / 4$ — rising, not the constant $3.0$ the series was described as.
+
+**§11.28.6's ratio survives and is now measured directly.**  That section put the per-key figure at "about half" the key-averaged one, inferred from §11.28's spread.  Comparing exact asymptotes at $n = 10$ gives $1.717 / 2.751 = 0.62$, consistent with §11.28's measured $0.50$–$0.61$ and no longer resting on two transient-contaminated series.
+
+### 11.35.6 Route 1 quantified, and closed
+
+§11.31.3 made route 1 — a stronger MILP backend — first choice, with the target $r = 10$–$14$ at $n = 32$–$64$.  HiGHS was put against CBC on the identical model, on one machine, so the comparison is not against a recorded timing.
+
+| $n = 32$ | CBC | HiGHS |
+|---|---|---|
+| $r = 4$ | 68 s, proven | 47 s, proven |
+| $r = 5$ | 635 s, **unproven** | 171 s, proven, weight 10.0 |
+| $r = 6$ | not attempted | 676 s, proven, weight 14.0 |
+
+HiGHS is genuinely better and bought two results CBC could not: $r = 5$ and $r = 6$ at $n = 32$ are now proven, so the width-agreement table of #247 §(d) extends by two rows.  That is a real if small addition to the one-sided statement #247 owns.
+
+It does not reach the target, and the growth rate says it cannot.  HiGHS costs $1.6 / 10.1 / 47.0 / 171.1 / 676.3$ seconds at $r = 2/3/4/5/6$ — a factor of $3.6$–$4.0$ per added round with no sign of flattening, and $r = 6$ was predicted at about 620 s before it was run.  Extrapolated, $r = 10$ is roughly a day and a half and $r = 14$ roughly eight months, four to seven orders of magnitude past where a better LP backend lands.
+
+**The target was unnecessary.**  $r = 10$–$14$ was needed only to open a window to read a slope in.  §11.35.1 removes the need for a window, and §11.35.3 delivers the same quantity exactly, in seconds, at widths both solvers reach trivially.  Route 1 is closed not because it failed but because the question it was aimed at no longer has to be asked that way.  **Route 3** (a transfer matrix over difference classes) was proposed to make the computation scale; Howard's policy iteration on the difference graph already does, so route 3 is superseded rather than pending.  **Route 2** remains demoted for the reason §11.31.3 gave.
+
+### 11.35.7 What TODO #252 still owes
+
+One thing: **the width extrapolation, and nothing else.**  $\mu$ is exact at the width measured, and reading it at $n = 256$ is not possible by this method — the graph has $2^n$ nodes, so the exhaustive-DDT bound that stopped every previous pass stops this one too.  What has changed is that the residual question is the limit of a monotone sequence of *exact* values, rather than a slope read through two sources of contamination at widths where no clean read exists.
+
+A caution for whoever attacks it, because the obvious tool points the wrong way.  Embedding is how one usually relates widths: exhibit a cycle at width $n$ that survives at width $n+1$, and conclude $\mu(n+1) \leq \mu(n)$.  That argument, if it worked, would prove $\mu$ **non-increasing** — the opposite of what §11.35.3 measures.  Widening also adds nodes and therefore adds candidate cycles, so the naive counting argument points down as well.  $\mu$ rises anyway, which means the rise is driven by width *destroying* cheap cycles rather than by anything an embedding captures, and a structural proof has to explain that first.
+
+The other two openings are cheaper: extend the sequence to $n = 13$ and $n = 14$, where the cost is the DDT's $2^{2n}$ and not the cycle computation, which stays cheap; and carry the same reformulation to the **linear** axis, where §11.30 has the identical problem and where mask propagation through $M$ is deterministic, so the cycle argument should transfer more cleanly still.
