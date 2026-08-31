@@ -76,6 +76,18 @@ primitive, CLI surface, wire format or rating changes.
   at n = 7, `delta = 44` satisfies the test at P = 3 by coincidence and reports
   a `mu` one percent low.
 
+### Fixed
+
+- **Two silently-dropped percent signs in `SecurityProofs-7.md` (§11.16's
+  modulo-3 ring-signature finding).**  A `\%` inside an inline math span is
+  resolved by CommonMark to a bare `%` *before* KaTeX sees it, where it is a
+  comment marker — so `$... 33.59\%$` renders on GitHub as `33.59` with the
+  percent silently gone, and `validate_katex.js` reports it as a strict-mode
+  `commentAtEnd` warning rather than a FAIL.  Closing the math span before the
+  sign (`$33.59$%`, the form already used in `SecurityProofs-2.md`) fixes it.
+  Part 7 now validates with zero warnings; the same pattern survives in Parts 4
+  and 5 and is untouched here.
+
 ## [5.2.0] - 2026-08-30
 
 ### TODO #255 — the five NL-FSCX v3 consumers, across every CLI (closes #255)

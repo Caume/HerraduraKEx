@@ -715,13 +715,13 @@ manual review missed.
 #164).** The C and Python non-signer challenge simulators each draw one random byte and
 reduce mod 3 to choose $b \in \{0,1,2\}$ for every ring member other than the real
 signer. Since $256 \not\equiv 0 \pmod 3$, this draw is biased: $\Pr[b=0] = 86/256 \approx
-33.59\%$ versus $\Pr[b=1]=\Pr[b=2]=85/256\approx 33.20\%$. Crucially, the real signer's
+33.59$% versus $\Pr[b=1]=\Pr[b=2]=85/256\approx 33.20$%. Crucially, the real signer's
 own displayed challenge is *not* drawn this way at all — the OR-composition forces it as
 $b_j = (\text{joint} - \sum_{i \neq j} b_i) \bmod 3$, where `joint` is the Fiat-Shamir
 hash-derived challenge (effectively uniform, independent of the simulator's random
 draws). A uniform value minus anything, reduced mod 3, is itself exactly uniform — so
 the signer's own slot has **zero** skew round to round, while every non-signer's slot
-carries the $\approx 0.39\%$ bias. This is not merely a "modulo bias" in the sense TODO
+carries the $\approx 0.39$% bias. This is not merely a "modulo bias" in the sense TODO
 #2 already fixed elsewhere (which only mattered for the uniformity of a secret value);
 here the asymmetry it creates between the signer's slot and every other slot is exactly
 the kind of statistical distinguisher a ring signature's anonymity property is supposed
