@@ -234,7 +234,7 @@
         },
         "cli_binding": {
           "type": "object",
-          "description": "How the CLI reaches this protocol: an --algo tag ('algo_flag', with the subcommands whose choices list carries it), its own subcommands ('subcommand', for protocols with no tag), or neither ('none').",
+          "description": "How the CLI reaches this protocol: an --algo tag ('algo_flag', with the subcommands whose choices list carries it), its own subcommands ('subcommand', for protocols with no tag), a flag on an existing subcommand ('subcommand_flag', e.g. `fpe --v3`, which names the flag in 'flag'), or neither ('none').",
           "required": [
             "kind",
             "subcommands"
@@ -245,11 +245,16 @@
               "enum": [
                 "algo_flag",
                 "subcommand",
+                "subcommand_flag",
                 "none"
               ]
             },
             "algo_tag": {
               "type": "string"
+            },
+            "flag": {
+              "type": "string",
+              "description": "Only for kind 'subcommand_flag': the flag that selects this variant on the named subcommand."
             },
             "subcommands": {
               "type": "array",

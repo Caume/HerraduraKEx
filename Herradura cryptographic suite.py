@@ -150,9 +150,13 @@
         gf_mul, gf_pow
         nl_fscx_v1, nl_fscx_revolve_v1
         nl_fscx_v2, nl_fscx_v2_inv, nl_fscx_revolve_v2, nl_fscx_revolve_v2_inv
+        nl_fscx_v3, nl_fscx_v3_inv, nl_fscx_revolve_v3, nl_fscx_revolve_v3_inv
         hfscx_256
         hske_nl_aead_encrypt, hske_nl_aead_decrypt  (HSKE-NL-AEAD, TODO #95)
         hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt  (HSKE-NL-V2-Duplex, TODO #95 Option 2)
+        hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt  (HSKE-NL-V3-Duplex, TODO #255)
+        fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt  (TODO #78.A/#78.B)
+        fpe_v3_encrypt, fpe_v3_decrypt, twk_v3_encrypt, twk_v3_decrypt  (TODO #255)
         drbg_seed, drbg_generate, drbg_reseed  (HDRBG forward-secure DRBG, TODO #96)
         stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify
         hpke_stern_f_encap, hpke_stern_f_decap
@@ -164,7 +168,8 @@
         oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct  (OPRF: 2HashDH over GF(2^n)*)
         hpake_register, hpake_login_demo  (aPAKE: HKEX-RNL + ZKBoo + OPRF augmented PAKE)
 
-    Key module constants: KEYBITS, I_VALUE, R_VALUE, GF_POLY, GF_GEN, ORD,
+    Key module constants: KEYBITS, I_VALUE, R_VALUE, R3_VALUE, I3_VALUE,
+        GF_POLY, GF_GEN, ORD,
         RNLN, RNLQ, RNLP, RNLPP, RNLB, SDFNR, SDFT, SDFR.
 
     See docs/TUTORIAL.md for complete per-protocol code examples.
@@ -781,6 +786,16 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 # Ratings: DEMO-ONLY, exactly like v2.
 
 R3_VALUE = 5 * KEYBITS // 8   # 160 for 256-bit
+
+# Sponge round count for HSKE-NL-V3-Duplex.  DERIVED, and it is the first
+# duplex round count in this suite that is: the sponge's capacity is 128 bits,
+# so 128 bits is the target, and chi's proven per-round floors put the
+# requirement at r >= 128 / 1.6781 = 77 differential and r >= 64 linear.
+# I3_VALUE = 5n/16 = 80 clears both, and is exactly half of R3_VALUE for a
+# half-width target.  Note this is NOT hske-duplex's I_VALUE = n/4 = 64, which
+# was inherited rather than derived and which 1.6781 bits/round would leave at
+# 107 bits — see SecurityProofs-8.md §11.34.8.
+I3_VALUE = 5 * KEYBITS // 16  # 80 for 256-bit
 
 
 def v3_rows(n: int = KEYBITS) -> tuple[int, ...]:
@@ -3787,6 +3802,8 @@ def hpks_xmss_verify(msg: bytes, sig: dict, root: bytes) -> bool:
 
 _FPE_DS = 0x20   # domain-separation tag: FPE subkey
 _TWK_DS = 0x21   # domain-separation tag: tweakable wide-block subkey
+_FPE_V3_DS = 0x22   # ... same, over NL-FSCX v3 (TODO #255)
+_TWK_V3_DS = 0x23
 
 
 def _fpe_twk_derive_b(ds: int, key: bytes, tweak: bytes) -> BitArray:
@@ -3847,6 +3864,54 @@ def twk_decrypt(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
     """Tweakable block-cipher decrypt — inverse of twk_encrypt."""
     B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
     return nl_fscx_revolve_v2_inv(ct, B, R_VALUE)
+
+
+# ---------------------------------------------------------------------------
+# 78.A/78.B over NL-FSCX v3  (TODO #255)
+#
+# Same constructions, same wire shape, v3 in place of v2:
+#   fpe_v3: B = HFSCX-256-DS(0x22, len(key)_be8 || key || ctx)
+#   twk_v3: B = HFSCX-256-DS(0x23, len(key)_be8 || key || sector_be64 || bidx_be32)
+#   C = nl_fscx_revolve_v3(P, B, R3_VALUE)
+#
+# NO REJECTION LOOP, deliberately.  _fpe_twk_derive_b rehashes past v2's
+# affine-degenerate subkeys; v3 has no such class at all (SecurityProofs-8.md
+# §11.34.4), so a loop here would reject ~2^-129 of subkeys for a degeneracy
+# the primitive does not have, while implying the rest had been screened for
+# one that it does.  The derivation is therefore a single hash.
+#
+# The tags are distinct from 0x20/0x21, so the same (key, ctx) never produces
+# the same subkey for the v2 and v3 variants — the separation TODO #242 had to
+# retrofit is built in here from the start.
+# ---------------------------------------------------------------------------
+
+def _fpe_twk_v3_derive_b(ds: int, key: bytes, tweak: bytes) -> BitArray:
+    """B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak).  No rejection."""
+    h = hfscx_256_ds(ds, len(key).to_bytes(8, 'big') + key + tweak)
+    return BitArray(KEYBITS, int.from_bytes(h, 'big'))
+
+
+def fpe_v3_encrypt(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    """fpe_encrypt over NL-FSCX v3.  Not FPE in the SP 800-38G sense; see
+    fpe_encrypt's note."""
+    return nl_fscx_revolve_v3(pt, _fpe_twk_v3_derive_b(_FPE_V3_DS, key, ctx),
+                              R3_VALUE)
+
+def fpe_v3_decrypt(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    """Inverse of fpe_v3_encrypt."""
+    return nl_fscx_revolve_v3_inv(ct, _fpe_twk_v3_derive_b(_FPE_V3_DS, key, ctx),
+                                  R3_VALUE)
+
+
+def twk_v3_encrypt(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    """twk_encrypt over NL-FSCX v3."""
+    B = _fpe_twk_v3_derive_b(_TWK_V3_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v3(block, B, R3_VALUE)
+
+def twk_v3_decrypt(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    """Inverse of twk_v3_encrypt."""
+    B = _fpe_twk_v3_derive_b(_TWK_V3_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v3_inv(ct, B, R3_VALUE)
 
 
 # ---------------------------------------------------------------------------
@@ -4071,28 +4136,43 @@ _V2DPLEX_DS_TWEAK = b'NL-V2-DUPLEX-TWEAK'
 _V2DPLEX_DS_TAG   = b'NL-V2-DUPLEX-TAG'
 _V2DPLEX_RATE     = 16   # bytes = 128 bits
 
+# HSKE-NL-V3-Duplex (TODO #255): the same construction over the v3 permutation.
+# Separate domain-separation strings, so a v2 and a v3 session under the same
+# (key, nonce) share no state, tweak or tag input.
+_V3DPLEX_DS_INIT  = b'NL-V3-DUPLEX-INIT'
+_V3DPLEX_DS_TWEAK = b'NL-V3-DUPLEX-TWEAK'
+_V3DPLEX_DS_TAG   = b'NL-V3-DUPLEX-TAG'
 
-def _v2_dplex_perm_bytes(state_b: bytearray, tweak_ba: 'BitArray') -> bytearray:
-    """Apply one permutation round: nl_fscx_revolve_v2(state, tweak, I_VALUE)."""
+
+def _v2_dplex_perm_bytes(state_b: bytearray, tweak_ba: 'BitArray',
+                          v3: bool = False) -> bytearray:
+    """One permutation call: nl_fscx_revolve_v2(state, tweak, I_VALUE), or the
+    v3 permutation at I3_VALUE when *v3*."""
     sa = BitArray(KEYBITS, int.from_bytes(state_b, 'big'))
-    r  = nl_fscx_revolve_v2(sa, tweak_ba, I_VALUE)
+    if v3:
+        r = nl_fscx_revolve_v3(sa, tweak_ba, I3_VALUE)
+    else:
+        r = nl_fscx_revolve_v2(sa, tweak_ba, I_VALUE)
     return bytearray(r.uint.to_bytes(KEYBITS // 8, 'big'))
 
 
-def _v2_dplex_init(key: 'BitArray', nonce: 'BitArray') -> tuple:
+def _v2_dplex_init(key: 'BitArray', nonce: 'BitArray',
+                    v3: bool = False) -> tuple:
     """Returns (state: bytearray, tweak: BitArray)."""
     kb = key.uint.to_bytes(KEYBITS // 8, 'big')
     nb = nonce.uint.to_bytes(KEYBITS // 8, 'big')
-    state_b = bytearray(hfscx_256(_V2DPLEX_DS_INIT + kb + nb))
-    tweak_b = hfscx_256(_V2DPLEX_DS_TWEAK + kb + nb)
+    ds_init  = _V3DPLEX_DS_INIT  if v3 else _V2DPLEX_DS_INIT
+    ds_tweak = _V3DPLEX_DS_TWEAK if v3 else _V2DPLEX_DS_TWEAK
+    state_b = bytearray(hfscx_256(ds_init + kb + nb))
+    tweak_b = hfscx_256(ds_tweak + kb + nb)
     tweak_ba = BitArray(KEYBITS, int.from_bytes(tweak_b, 'big'))
-    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
-    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
     return state_b, tweak_ba
 
 
 def _v2_dplex_absorb_ad(state_b: bytearray, tweak_ba: 'BitArray',
-                         ad: bytes) -> bytearray:
+                         ad: bytes, v3: bool = False) -> bytearray:
     """Absorb associated data (length-prefixed, padded) + domain separator."""
     R = _V2DPLEX_RATE
     ad_prefixed = len(ad).to_bytes(8, 'big') + ad
@@ -4106,18 +4186,18 @@ def _v2_dplex_absorb_ad(state_b: bytearray, tweak_ba: 'BitArray',
         block = ad_prefixed[i:i + R]
         for j in range(R):
             state_b[j] ^= block[j]
-        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
     state_b[R] ^= 0x01          # domain separator: end of AD
-    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
     return state_b
 
 
 def _v2_dplex_enc(state_b: bytearray, tweak_ba: 'BitArray',
-                   pt: bytes) -> tuple:
+                   pt: bytes, v3: bool = False) -> tuple:
     """Duplex-encrypt pt.  Returns (ct: bytes, state_b: bytearray)."""
     R, ct = _V2DPLEX_RATE, bytearray()
     if not pt:
-        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
         return bytes(ct), state_b
     for off in range(0, len(pt), R):
         block = pt[off:off + R]
@@ -4127,16 +4207,16 @@ def _v2_dplex_enc(state_b: bytearray, tweak_ba: 'BitArray',
             state_b[j] ^= block[j]
         if L < R:
             state_b[L] ^= 0x80
-        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
     return bytes(ct), state_b
 
 
 def _v2_dplex_dec(state_b: bytearray, tweak_ba: 'BitArray',
-                   ct: bytes) -> tuple:
+                   ct: bytes, v3: bool = False) -> tuple:
     """Duplex-decrypt ct.  Returns (pt: bytes, state_b: bytearray)."""
     R, pt = _V2DPLEX_RATE, bytearray()
     if not ct:
-        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
         return bytes(pt), state_b
     for off in range(0, len(ct), R):
         block = ct[off:off + R]
@@ -4147,15 +4227,39 @@ def _v2_dplex_dec(state_b: bytearray, tweak_ba: 'BitArray',
             state_b[j] ^= pt_block[j]
         if L < R:
             state_b[L] ^= 0x80
-        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
+        state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
     return bytes(pt), state_b
 
 
-def _v2_dplex_finalize(state_b: bytearray, tweak_ba: 'BitArray') -> bytes:
+def _v2_dplex_finalize(state_b: bytearray, tweak_ba: 'BitArray',
+                        v3: bool = False) -> bytes:
     """Apply PT domain separator, final permutation, squeeze 32-byte tag."""
     state_b[_V2DPLEX_RATE] ^= 0x02
-    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba)
-    return hfscx_256(bytes(state_b) + _V2DPLEX_DS_TAG)
+    state_b = _v2_dplex_perm_bytes(state_b, tweak_ba, v3)
+    ds_tag = _V3DPLEX_DS_TAG if v3 else _V2DPLEX_DS_TAG
+    return hfscx_256(bytes(state_b) + ds_tag)
+
+
+def _dplex_encrypt(key: 'BitArray', pt: bytes, ad: bytes,
+                    nonce: 'BitArray | None', v3: bool) -> tuple:
+    if nonce is None:
+        nonce = BitArray.random(KEYBITS)
+    state_b, tweak_ba = _v2_dplex_init(key, nonce, v3)
+    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad, v3)
+    ct, state_b = _v2_dplex_enc(state_b, tweak_ba, pt, v3)
+    tag = _v2_dplex_finalize(state_b, tweak_ba, v3)
+    return nonce, ct, tag
+
+
+def _dplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
+                    tag: bytes, ad: bytes, v3: bool) -> 'bytes | None':
+    state_b, tweak_ba = _v2_dplex_init(key, nonce, v3)
+    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad, v3)
+    pt, state_b = _v2_dplex_dec(state_b, tweak_ba, ct, v3)
+    expected = _v2_dplex_finalize(state_b, tweak_ba, v3)
+    if not hmac.compare_digest(bytes(tag), expected):
+        return None
+    return pt
 
 
 def hske_nl_v2_duplex_encrypt(key: 'BitArray', pt: bytes, ad: bytes = b'',
@@ -4163,13 +4267,7 @@ def hske_nl_v2_duplex_encrypt(key: 'BitArray', pt: bytes, ad: bytes = b'',
     """HSKE-NL-V2-Duplex AEAD encrypt (RESEARCH CONSTRUCTION).
 
     Returns (nonce, ct, tag).  Never reuse (key, nonce)."""
-    if nonce is None:
-        nonce = BitArray.random(KEYBITS)
-    state_b, tweak_ba = _v2_dplex_init(key, nonce)
-    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad)
-    ct, state_b = _v2_dplex_enc(state_b, tweak_ba, pt)
-    tag = _v2_dplex_finalize(state_b, tweak_ba)
-    return nonce, ct, tag
+    return _dplex_encrypt(key, pt, ad, nonce, False)
 
 
 def hske_nl_v2_duplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
@@ -4177,13 +4275,25 @@ def hske_nl_v2_duplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
     """HSKE-NL-V2-Duplex AEAD decrypt (RESEARCH CONSTRUCTION).
 
     Returns plaintext or None if tag authentication fails."""
-    state_b, tweak_ba = _v2_dplex_init(key, nonce)
-    state_b = _v2_dplex_absorb_ad(state_b, tweak_ba, ad)
-    pt, state_b = _v2_dplex_dec(state_b, tweak_ba, ct)
-    expected = _v2_dplex_finalize(state_b, tweak_ba)
-    if not hmac.compare_digest(bytes(tag), expected):
-        return None
-    return pt
+    return _dplex_decrypt(key, nonce, ct, tag, ad, False)
+
+
+def hske_nl_v3_duplex_encrypt(key: 'BitArray', pt: bytes, ad: bytes = b'',
+                               nonce: 'BitArray | None' = None) -> tuple:
+    """HSKE-NL-V3-Duplex AEAD encrypt (RESEARCH CONSTRUCTION, TODO #255).
+
+    Identical to the v2 duplex but over nl_fscx_revolve_v3 at I3_VALUE = 80,
+    with its own domain-separation strings.  Returns (nonce, ct, tag).
+    Never reuse (key, nonce)."""
+    return _dplex_encrypt(key, pt, ad, nonce, True)
+
+
+def hske_nl_v3_duplex_decrypt(key: 'BitArray', nonce: 'BitArray', ct: bytes,
+                               tag: bytes, ad: bytes = b'') -> 'bytes | None':
+    """HSKE-NL-V3-Duplex AEAD decrypt (RESEARCH CONSTRUCTION, TODO #255).
+
+    Returns plaintext or None if tag authentication fails."""
+    return _dplex_decrypt(key, nonce, ct, tag, ad, True)
 
 
 # ---------------------------------------------------------------------------

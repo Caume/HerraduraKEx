@@ -41,6 +41,18 @@ CliTest/                                             — CLI integration + cross
                                                        ./build_go.sh before the C/Go CliTest
                                                        scripts; a run that asserts nothing now
                                                        exits 2 instead of 0
+  test_v3_family.sh                                 — the five NL-FSCX v3 consumers at the
+                                                       CLI (TODO #255): hske-nla3 and
+                                                       hpke-nl3 across all four CLIs,
+                                                       hske-duplex3 / fpe --v3 / twk --v3
+                                                       across C/Go/Python (Java ships no
+                                                       duplex, fpe or twk).  Claimed by
+                                                       native-interop; degrades to a NOTE
+                                                       if bindings/java is not compiled.
+                                                       Asserts the FLAG actually changes
+                                                       the output — a --v3 that parsed and
+                                                       was then ignored would pass every
+                                                       round-trip
   lib_malformed.sh                                  — shared malformed-PEM case table (TODO
                                                        #239, #240): every field that sizes an
                                                        allocation, rewritten to a hostile value.
@@ -68,8 +80,15 @@ KAT/                                                 — fixed Known-Answer-Test
                                settled the small-ring session-key width at 256 bits,
                                so all four CLIs now agree there; the C CLI is skipped
                                at n=64, being compiled for a single RNL_N)
-  generate_kat.py            — deterministic reference generator (Python) for both JSON
-                               files; --check verifies currency
+  nl_fscx_v3.json            — the NL-FSCX v3 primitive (chi, one round, the
+                               R3_VALUE revolve and its inverse) and all five
+                               consumers (TODO #255).  The only KAT coverage of
+                               the NL side of the suite.  twk's sector/bidx are
+                               hex STRINGS, not JSON numbers: a 64-bit sector
+                               does not survive the float64 a JSON parser
+                               defaults to, and the loss is silent
+  generate_kat.py            — deterministic reference generator (Python) for all three
+                               JSON files; --check verifies currency
   generate_pem_kat.py        — generator for pem/; --check verifies currency
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
@@ -295,7 +314,7 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34: NL-FSCX v3 — exact row analysis, weak keys (141 math expressions)
+SecurityProofs-8.md                                 — §11.34: NL-FSCX v3 — exact row analysis, weak keys (165 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -356,7 +375,20 @@ benchmarks/                                          — recorded benchmark outp
                                                       ~1.77x per block at v3's 160 rounds vs
                                                       v2's 192.  Its fast chi is validated
                                                       bit-exactly against a per-row reference
-                                                      before timing;
+                                                      before timing.  That projection does
+                                                      NOT hold for the shipped C path:
+                                                      v3_consumer_cost.c links herradura.h
+                                                      itself and measures 1.16x per round —
+                                                      the byte-per-limb BitArray makes the v2
+                                                      round expensive enough that chi is a
+                                                      smaller relative addition — so
+                                                      hske-nla3 / fpe --v3 / twk --v3 come
+                                                      out at ~0.97x, hske-duplex3 at ~1.45x
+                                                      (80 sponge rounds vs 64) and hpke-nl3
+                                                      at ~2.92x (160 vs hpke-nl's deployed
+                                                      I_VALUE=64).  Both figures are right;
+                                                      the packed one is what an optimised
+                                                      port would see;
                                                       rnl_ring_cost.py measures the HKEX-RNL
                                                       ring-cost curve (n=32..1024) and audits
                                                       what the `-t` cap actually caps (TODO #225);
@@ -555,6 +587,13 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  same function at a 12-byte context.  Python's copy of the derivation is
 #  cross-checked against the shipped suite there, since that harness alone
 #  re-implements it — C and Go call herradura.h / the herradura package.
+#  [48] is TODO #255's guard for the five v3 CONSUMERS, which [47] does not
+#  cover: round-trips, each v3 variant differing from its v2 counterpart on the
+#  same inputs (a reused DS string or tag would still round-trip), fpe --v3 vs
+#  twk --v3 at a 12-byte context -- #241's bug in new code -- and, in C/Go, that
+#  the v3 duplex rejects a flipped AD.  Python's copy of fpe/twk v3 is
+#  cross-checked against the suite as [46]'s is; Python has no duplex in either
+#  version, so hske-duplex3 is covered only by C and Go.
 #  [47] is TODO #255's guard for the v3 primitive: chi against a per-row
 #  reference, chi^-1 . chi == id, the revolve round-trip at R3_VALUE = 160, and
 #  that every row of the 47x5 + 3x7 partition is odd and >= 5 -- a 3-row is a

@@ -630,4 +630,43 @@ public final class HerraduraNl {
         if (!nlV2KeyIsValid(decKey)) return null;
         return nlFscxRevolveV2Inv(ct, decKey, N / 4);
     }
+
+    // -----------------------------------------------------------------
+    // NL-FSCX v3 consumers (TODO #255).  Same shapes as the v2 pair
+    // above, at R3_VALUE = 5n/8 = 160 rounds, and with NO key check
+    // anywhere: v3's two inherited weak classes both dissolve under chi,
+    // and there is no chi-specific class to screen
+    // (SecurityProofs-8.md 11.34.4).
+    // -----------------------------------------------------------------
+
+    public static BigInteger hskeNlA3Encrypt(BigInteger pt, BigInteger key) {
+        return nlFscxRevolveV3(pt, key, R3_VALUE);
+    }
+
+    public static BigInteger hskeNlA3Decrypt(BigInteger ct, BigInteger key) {
+        return nlFscxRevolveV3Inv(ct, key, R3_VALUE);
+    }
+
+    /** No resampling loop, unlike hpkeNlEncrypt: v3 has no affine-degenerate
+     * key class to sample past, so the first draw is always usable.  Returns
+     * null only if the recipient public key itself is degenerate. */
+    public static Herradura.Ciphertext hpkeNl3Encrypt(BigInteger pt, BigInteger pub,
+                                                      SecureRandom rng) {
+        if (!Herradura.gfPubIsValid(pub)) return null;
+        BigInteger r = new BigInteger(N, rng).and(MASK);
+        return hpkeNl3Encrypt(pt, pub, r);
+    }
+
+    public static Herradura.Ciphertext hpkeNl3Encrypt(BigInteger pt, BigInteger pub,
+                                                      BigInteger r) {
+        if (!Herradura.gfPubIsValid(pub)) return null;
+        BigInteger bigR = Herradura.gfPow(Herradura.GF_GEN, r);
+        BigInteger encKey = Herradura.gfPow(pub, r);
+        return new Herradura.Ciphertext(bigR, nlFscxRevolveV3(pt, encKey, R3_VALUE));
+    }
+
+    public static BigInteger hpkeNl3Decrypt(BigInteger ct, BigInteger r, BigInteger priv) {
+        if (!Herradura.gfPubIsValid(r)) return null;
+        return nlFscxRevolveV3Inv(ct, Herradura.gfPow(r, priv), R3_VALUE);
+    }
 }

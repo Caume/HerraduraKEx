@@ -20,8 +20,8 @@
 ## Protocol identifiers (used as --algo values across all 3 CLIs; also the naming
 ## convention for functions in every language binding)
 Key exchange:     hkex-gf, hkex-rnl
-Symmetric enc:    hske, hske-nla1, hske-nla2, hske-duplex
-Asymmetric enc:   hpke, hpke-nl, hpke-stern, hpke-stern-kem
+Symmetric enc:    hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3
+Asymmetric enc:   hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem
 Signatures:       hpks, hpks-nl, hpks-stern, hpks-ring, hpks-wots, hpks-xmss,
                   hpks-zkp-nl (genpkey) / nl-zkboo, nl-zkbpp (sign/verify), rnl-sigma,
                   hpks-t (threshold, via threshold-* subcommands)
@@ -29,6 +29,14 @@ Other primitives: oprf (OPRF/aPAKE), hcred (anonymous credentials), hfscx-256,
                   hfscx-256-ds (digest), fpe, twk (256-bit tweakable block enc; fpe is
                   NOT FF1/FF3-1 format-preserving despite the name — see SECURITY.md),
                   rand (HDRBG)
+NL-FSCX v3 (TODO #255): the -nla3 / -duplex3 / -nl3 tags above, plus `fpe --v3` and
+                  `twk --v3`, run the chi-hardened round at R3_VALUE=160 instead of
+                  v2's 192.  All five are ADDED alongside their v2 counterparts, not
+                  replacements: no stored artifact changes, and the two versions do
+                  not interoperate.  fpe/twk take a flag rather than new subcommands
+                  because both are already reached by subcommand rather than by tag.
+                  There is deliberately NO key check on any v3 path.  Demo-only, like
+                  v2 — see SECURITY.md.
 
 Not every identifier is valid for every subcommand — see the CLI section below for the
 exact choices list per subcommand.
@@ -81,6 +89,9 @@ drbg_, haccum_, ratchet_, fpe_, twk_, qcmdpc_. Key public entry points:
   int  hpke_decrypt(const BitArray *ct, const BitArray *R, const BitArray *priv, BitArray *pt);
   void hske_nl_aead_encrypt(...); int hske_nl_aead_decrypt(...);
   void hske_nl_v2_duplex_encrypt(...); int hske_nl_v2_duplex_decrypt(...);
+  void hske_nl_v3_duplex_encrypt(...); int hske_nl_v3_duplex_decrypt(...);   /* #255 */
+  void nl_fscx_revolve_v3_ba(...);     void nl_fscx_revolve_v3_inv_ba(...);
+  void fpe_v3_encrypt/decrypt(...);    void twk_v3_encrypt/decrypt(...);
   void hpks_stern_f_sign(SternSig *sig, ...); int hpks_stern_f_verify(const SternSig *sig, ...);
   void hpke_stern_f_encap(...); void hpke_stern_f_decap_known(...);
   void hpks_wots_keygen/sign/verify(...); void hpks_xmss_keygen/sign/verify(...);
@@ -116,7 +127,8 @@ and HerraduraCli/primitives.py for the exact pattern). Function names are snake_
 match the C API 1:1 (fscx, fscx_revolve, gf_mul, gf_pow, nl_fscx_v1/v2/v2_inv,
 hfscx_256, hfscx_256_ds, hmac_hfscx_256, stern_f_keygen, hpks_stern_f_sign/verify,
 hpke_stern_f_encap/decap, hcred_*, hpkst_*, oprf_*, hpake_*, fpe_encrypt/decrypt,
-twk_encrypt/decrypt, haccum_*, ratchet_init/advance, qcmdpc_*). BitArray is the core
+twk_encrypt/decrypt, fpe_v3_*/twk_v3_*, nl_fscx_*_v3, haccum_*, ratchet_init/advance,
+qcmdpc_*). BitArray is the core
 class (BitArray.random(n)). Notable constants: KEYBITS, GF_POLY, GF_GEN, I_VALUE,
 R_VALUE.
 
@@ -126,14 +138,18 @@ PEM files from any one are byte-for-byte readable by the others, EXCEPT hpks-xms
 which is Python-only (see note below — no C or Go CLI support, TODO #143).
 
   genpkey --algo <ID> [--bits N] [--xmss-height N] --out FILE
-    <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpks-stern,
+    <ID> in: hkex-gf, hkex-rnl, hpks, hpks-nl, hpke, hpke-nl, hpke-nl3, hpks-stern,
              hpke-stern, hpke-stern-kem, hpks-zkp-nl, oprf, hpks-xmss (Python-only), hpks-wots, hcred
   pkey --in FILE [--pubout] [--text] [--out FILE]
   kex --algo {hkex-gf,hkex-rnl} --our FILE --their FILE --out FILE [--kdf {none,hfscx-256}]
     hkex-rnl is two-round: responder replies first, initiator completes with the response PEM.
-  enc/dec --algo {hske,hske-nla1,hske-nla2,hske-duplex,hpke,hpke-nl,hpke-stern,hpke-stern-kem}
+  enc/dec --algo {hske,hske-nla1,hske-nla2,hske-nla3,hske-duplex,hske-duplex3,
+                  hpke,hpke-nl,hpke-nl3,hpke-stern,hpke-stern-kem}
            --key|--pubkey FILE --in FILE --out FILE [--aead] [--ad STR]
-    --aead/--ad apply to hske-nla1 (and hske-duplex is inherently AEAD).
+    --aead/--ad apply to hske-nla1 (and both duplex variants are inherently AEAD).
+    hske-duplex3 ciphertexts carry format tag 4, hske-duplex's tag 3, so each
+    refuses the other's artifact at the parser.  Java ships hske-nla3 and
+    hpke-nl3 but no duplex in either version.
   sign --algo {hpks,hpks-nl,hpks-stern,rnl-sigma,nl-zkboo,nl-zkbpp,hpks-xmss,hpks-wots,hpks-ring}
        --key FILE [--ring FILE1,FILE2,...] --in FILE --out FILE
        [--digest {none,hfscx-256}] [--rounds N]
@@ -154,7 +170,11 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
   dgst --algo {hfscx-256,hfscx-256-ds} --in FILE [--out FILE]
   rand [--seed FILE|--state FILE] [--personalization STR] [--reseed FILE]
        --bytes N [--hex] [--out FILE]
-  fpe/twk --key FILE (--encrypt|--decrypt) --in FILE --out FILE [--context STR | --sector N --bidx N]
+  fpe/twk --key FILE (--encrypt|--decrypt) [--v3] --in FILE --out FILE [--context STR | --sector N --bidx N]
+    --v3 selects the NL-FSCX v3 round and its own subkey domain (tags 0x22/0x23
+    against v2's 0x20/0x21), so a --v3 artifact does not decrypt without --v3 —
+    and, being an unauthenticated permutation, it fails by returning wrong bytes
+    rather than an error.  C, Go and Python; Java ships neither subcommand.
   oprf-blind --in FILE --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE

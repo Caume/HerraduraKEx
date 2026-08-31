@@ -824,6 +824,57 @@ BigInteger rc3 = HerraduraNl.nlFscxRevolveV3Inv(ct3, key3, HerraduraNl.R3_VALUE)
 // rc3.equals(pt3)
 ```
 
+#### The five v3 consumers at the CLI
+
+The primitive above ships with five constructions on top of it, each added
+alongside its v2 counterpart rather than replacing it. Three are `--algo`
+values; `fpe` and `twk` take a `--v3` flag instead, because both are already
+reached by subcommand rather than by tag and a second pair of subcommands would
+have doubled that surface.
+
+| v2 | v3 | how | implementations |
+|---|---|---|---|
+| `hske-nla2` | `hske-nla3` | `--algo` | C, Go, Python, Java |
+| `hpke-nl` | `hpke-nl3` | `--algo`, own PEM labels | C, Go, Python, Java |
+| `hske-duplex` | `hske-duplex3` | `--algo` | C, Go, Python |
+| `fpe` | `fpe --v3` | flag | C, Go, Python |
+| `twk` | `twk --v3` | flag | C, Go, Python |
+
+```bash
+# Symmetric block encryption.  No key check: any 256-bit key is accepted,
+# including ones hske-nla2 refuses as affine-weak.
+herradura enc --algo hske-nla3 --key sk.pem --in msg.bin --out ct.pem
+herradura dec --algo hske-nla3 --key sk.pem --in ct.pem  --out out.bin
+
+# Public-key encryption.  Its own key type, so generate a fresh keypair —
+# an hpke-nl key is not an hpke-nl3 key.
+herradura genpkey --algo hpke-nl3 --out bob.pem
+herradura pkey --in bob.pem --pubout --out bob_pub.pem
+herradura enc --algo hpke-nl3 --pubkey bob_pub.pem --in msg.bin --out ct.pem
+herradura dec --algo hpke-nl3 --key bob.pem --in ct.pem --out out.bin
+
+# Single-pass AEAD, arbitrary length.  Its ciphertexts carry format tag 4, so
+# `dec --algo hske-duplex` refuses them outright rather than failing the tag.
+herradura enc --algo hske-duplex3 --key sk.pem --in msg.bin --ad hdr --out ct.pem
+herradura dec --algo hske-duplex3 --key sk.pem --in ct.pem  --ad hdr --out out.bin
+
+# The two flag-selected variants.  --v3 changes the subkey domain as well as the
+# round, so a v3 ciphertext will not decrypt without --v3 — and, being an
+# unauthenticated permutation, it fails by returning wrong bytes, not an error.
+herradura fpe --v3 --encrypt --key sk.pem --context ctx --in msg.bin --out ct.bin
+herradura fpe --v3 --decrypt --key sk.pem --context ctx --in ct.bin  --out out.bin
+herradura twk --v3 --encrypt --key sk.pem --sector 7 --bidx 3 --in msg.bin --out ct.bin
+herradura twk --v3 --decrypt --key sk.pem --sector 7 --bidx 3 --in ct.bin  --out out.bin
+```
+
+**Cost.** In the shipped C implementation the v3 round is about 1.16× the v2
+round, so at 160 rounds against v2's 192 `hske-nla3`, `fpe --v3` and `twk --v3`
+come out at roughly 0.97× — no slower. The two exceptions are `hske-duplex3`,
+~1.45× because its sponge runs 80 permutation rounds against v2's 64, and
+`hpke-nl3`, ~2.92× because `hpke-nl`'s deployed wire format runs only
+`I_VALUE = 64` rounds and v3 uses the derived 160. Measure with
+`benchmarks/v3_consumer_cost.c`.
+
 ### HSKE-NL-AEAD authenticated encryption
 
 Authenticated encryption with associated data (AD) built on HSKE-NL-A1. A fresh

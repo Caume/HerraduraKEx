@@ -517,6 +517,85 @@ SECURITY = {
                                "SecurityProofsCode/rand_fpe_twk_analysis.py",
                                "SecurityProofsCode/twk_stprp_review.py",
                                "SECURITY.md", "SecurityProofs-7.md 11.24, 11.25"]),
+    "hske-nla3": dict(status="demo-only", quantum_resistant="conjectured",
+                       notes="NL-FSCX v3 revolve-mode symmetric encryption -- hske-nla2's shape over "
+                             "the v3 round. The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests on a PROOF -- chi gives the round an unconditional per-round trail floor of 4 - log2(5) = 1.6781 bits differential and 1 bit linear, where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 has the same two MISSING items as v2 -- no PRP/SPRP reduction, and no trail bound at realistic width on either axis (TODO #252, #254 are unchanged by v3 existing). A wider margin is not a promotion. "
+                             "hske-nla2's two usage constraints carry over unchanged except the "
+                             "weak-key one: it is still DETERMINISTIC (same (P, K) gives the same E, "
+                             "so embed a nonce or prefer hske-nla1 when several messages share a "
+                             "key), and self-similarity is answered by v2's round constant, which v3 "
+                             "inherits verbatim -- an XOR round constant leaves xdp+ exactly "
+                             "invariant (TODO #245). The affine-weak-key refusal is GONE because the "
+                             "class is gone.",
+                       source=["TODO.md #255", "SecurityProofs-8.md 11.34",
+                               "SecurityProofsCode/nl_fscx_v3_round_count.py",
+                               "SecurityProofsCode/nl_fscx_v3_weak_keys.py"]),
+    "hske-duplex3": dict(status="research", quantum_resistant="conjectured",
+                       notes="hske-duplex's MonkeyDuplex sponge over the v3 permutation, with its own "
+                             "domain-separation strings and its own format tag (4, against v2's 3), so "
+                             "a v2 artifact is rejected by the parser rather than surfacing as an "
+                             "opaque tag mismatch. The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests on a PROOF -- chi gives the round an unconditional per-round trail floor of 4 - log2(5) = 1.6781 bits differential and 1 bit linear, where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 has the same two MISSING items as v2 -- no PRP/SPRP reduction, and no trail bound at realistic width on either axis (TODO #252, #254 are unchanged by v3 existing). A wider margin is not a promotion. "
+                             "The sponge round count is I3_VALUE = 5n/16 = 80, and it is the FIRST "
+                             "duplex round count in this suite that is derived rather than inherited: "
+                             "the capacity is 128 bits, so 128 bits is the target, and the per-round "
+                             "floors put the requirement at r >= 77 differential and r >= 64 linear. "
+                             "hske-duplex's I_VALUE = 64 would have left the differential axis at 107 "
+                             "bits. That does not lift the rating: what keeps the v2 duplex at "
+                             "`research` is that the standalone sponge profile of the permutation has "
+                             "never been characterised (TODO #99), and a per-round trail floor is not "
+                             "that characterisation. Prefer hske-nla1 --aead for anything real.",
+                       source=["TODO.md #255", "TODO.md #99", "SecurityProofs-8.md 11.34.8",
+                               "SecurityProofs-6.md 11.9"]),
+    "hpke-nl3":  dict(status="pedagogical", quantum_resistant=False,
+                       classical_security_bits="~36.5 (n=256)",
+                       notes="hpke-nl's shape over the v3 round, with its own PEM labels. "
+                             "PEDAGOGICAL FOR THE SAME REASON hpke-nl IS, AND THE v3 ROUND DOES NOT "
+                             "HELP: the break is Pohlig-Hellman against the GF(2^n)* group, which "
+                             "recovers the decryption key in ~2^36.5 work without touching the "
+                             "symmetric layer at all. Hardening that layer changes nothing. Shipped "
+                             "for parity with the rest of the v3 family and to keep the "
+                             "cross-language matrix symmetric, not because it is usable. "
+                             "The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests on a PROOF -- chi gives the round an unconditional per-round trail floor of 4 - log2(5) = 1.6781 bits differential and 1 bit linear, where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 has the same two MISSING items as v2 -- no PRP/SPRP reduction, and no trail bound at realistic width on either axis (TODO #252, #254 are unchanged by v3 existing). A wider margin is not a promotion. "
+                             "Unlike hpke-nl, encryption does NOT resample the ephemeral scalar: "
+                             "there is no affine-degenerate key class to sample past.",
+                       source=["TODO.md #255", "TODO_DONE.md #212", "SecurityProofs-4.md 11.7",
+                               "SecurityProofs-8.md 11.34"]),
+    "fpe-v3":    dict(status="broken", quantum_resistant="conjectured",
+                       notes="Reached as `fpe --v3`, a flag on the fpe subcommand rather than a new "
+                             "subcommand or an --algo tag (TODO #255 recorded the choice explicitly: "
+                             "fpe and twk are already filed by cli_binding rather than by tag, the "
+                             "flag keeps every other option identical between the two variants, and "
+                             "a new subcommand would have doubled a surface that TODO #241 found "
+                             "confusing enough already). "
+                             "STILL BROKEN AS NAMED, and the v3 round does not touch that: it is "
+                             "still not format-preserving encryption in the SP 800-38G sense -- no "
+                             "radix, no length, no domain, 32 bytes in and 32 raw bytes out. The v3 "
+                             "variant does inherit TODO #242's fixes (domain separation, "
+                             "length-encoded key/tweak boundary) with its own tag 0x22, so it is "
+                             "separated from twk --v3 (0x23) and from both v2 variants; the same "
+                             "(key, ctx) never yields the same subkey across the four. Its subkey "
+                             "derivation is a single hash with NO rejection loop, unlike v2's: a "
+                             "loop would reject ~2^-129 of subkeys for a degeneracy v3 does not "
+                             "have, while implying the rest had been screened for one that it does. "
+                             "The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests on a PROOF -- chi gives the round an unconditional per-round trail floor of 4 - log2(5) = 1.6781 bits differential and 1 bit linear, where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 has the same two MISSING items as v2 -- no PRP/SPRP reduction, and no trail bound at realistic width on either axis (TODO #252, #254 are unchanged by v3 existing). A wider margin is not a promotion.",
+                       source=["TODO.md #255", "SecurityProofs-8.md 11.34",
+                               "SecurityProofs-7.md 11.24.2"]),
+    "twk-v3":    dict(status="demo-only", quantum_resistant="conjectured",
+                       notes="Reached as `twk --v3`; see fpe-v3 for why a flag rather than a "
+                             "subcommand. twk's shape over the v3 round, domain-separated with tag "
+                             "0x23. The NL-FSCX v3 round is the deployed v2 round followed by a Keccak-chi layer over 47 five-bit and 3 seven-bit rows, at R3_VALUE = 5n/8 = 160 rounds (TODO #255). It is ADDED alongside v2, not a replacement: no stored artifact changes and the v2 tag keeps working. Its margin is wider than v2's and for the first time in this family it rests on a PROOF -- chi gives the round an unconditional per-round trail floor of 4 - log2(5) = 1.6781 bits differential and 1 bit linear, where v2 provably has none (its linear-then-add-constant round hands every key a probability-1 one-round differential). There is deliberately NO key check: both v2 weak classes dissolve under chi and there is no chi-specific class to screen, proven exhaustively rather than sampled (SecurityProofs-8.md 11.34.4). IT ARRIVES DEMO-ONLY ANYWAY, and that is the point of the rating: v3 has the same two MISSING items as v2 -- no PRP/SPRP reduction, and no trail bound at realistic width on either axis (TODO #252, #254 are unchanged by v3 existing). A wider margin is not a promotion. "
+                             "WHAT KEEPS IT DEMO-ONLY IS EXACTLY WHAT KEEPS twk DEMO-ONLY: TODO "
+                             "#243 refused to promote twk because in the ROM it is an STPRP iff the "
+                             "permutation is an SPRP under a uniform key, and no such result exists. "
+                             "v3 does not supply one. It removes the structural objection TODO #243 "
+                             "recorded alongside it -- the round is no longer linear-then-add-constant "
+                             "-- and it inherits twk's three genuine advantages over hske-nla3, all "
+                             "from the subkey being a hash output: key recovery is confined to one "
+                             "block, no caller-supplied key reaches the permutation, and per-tweak "
+                             "determinism is the expected XTS-style property rather than a "
+                             "constraint. A promotion is #248-shaped work on separate evidence.",
+                       source=["TODO.md #255", "TODO_DONE.md #243", "SecurityProofs-8.md 11.34",
+                               "SecurityProofs-7.md 11.24"]),
     "hcred":     dict(status="research", quantum_resistant="conjectured",
                        notes="Hybrid Ring-LWR + Stern-F credential over a unified ZKBoo-(2,3) "
                              "MPC-in-the-head circuit. All three CLIs dispatch cred-issue/cred-prove/"
@@ -569,6 +648,18 @@ SUBCOMMAND_PROTOCOLS = {
     "twk":                 "twk",
 }
 
+# TODO #255: two protocols reached by a FLAG on an existing subcommand rather
+# than by an --algo tag or a subcommand of their own.  `fpe --v3` and `twk --v3`
+# are separate constructions with separate subkey domains and separate ratings,
+# so they need their own entries; they are not separate subcommands, so
+# SUBCOMMAND_PROTOCOLS cannot hold them without claiming a subcommand that does
+# not exist.  Both halves are validated in generate(): the subcommand must be a
+# real subparser, and the flag must be a real option on it.
+FLAG_VARIANT_PROTOCOLS = {
+    "fpe-v3": ("fpe", "--v3"),
+    "twk-v3": ("twk", "--v3"),
+}
+
 # The rest of the audit #238 Part C asked for: CLI surface that reaches no
 # protocol entry at all.  `pkey` is a utility.  The other three are real
 # constructions that have never been classified -- they have no SECURITY entry
@@ -592,6 +683,8 @@ PROTOCOL_KIND = {
     "hpke-stern": "kem", "hpke-stern-kem": "kem",
     "hpks-zkp-nl": "zkp",
     "hske": "encryption", "hske-nla1": "aead", "hske-nla2": "encryption", "hske-duplex": "aead",
+    "hske-nla3": "encryption", "hske-duplex3": "aead", "hpke-nl3": "encryption",
+    "fpe-v3": "encryption", "twk-v3": "encryption",
     "hfscx-256": "hash", "hfscx-256-ds": "hash",
     "oprf": "oprf", "hcred": "credential", "apake": "pake",
     "hdrbg": "drbg", "fpe": "encryption", "twk": "encryption",
@@ -619,6 +712,11 @@ PROTOCOL_NAME = {
     "hske-nla1": "HSKE-NL-A1 (NL-FSCX counter-mode AEAD)",
     "hske-nla2": "HSKE-NL-A2 (NL-FSCX revolve-mode encryption)",
     "hske-duplex": "HSKE-Duplex (single-pass AEAD)",
+    "hske-nla3": "HSKE-NL-A3 (NL-FSCX v3 revolve-mode encryption)",
+    "hske-duplex3": "HSKE-Duplex-V3 (single-pass AEAD over NL-FSCX v3)",
+    "hpke-nl3": "HPKE-NL3 (NL-FSCX v3-hardened El Gamal, classical only)",
+    "fpe-v3": "FPE-V3 (`fpe --v3`, NL-FSCX v3 block permutation)",
+    "twk-v3": "TWK-V3 (`twk --v3`, NL-FSCX v3 tweakable block cipher)",
     "hfscx-256": "HFSCX-256 (Merkle-Damgard hash)",
     "hfscx-256-ds": "HFSCX-256-DS (domain-separated variant)",
     "oprf": "OPRF (2HashDH oblivious PRF over GF(2^n)*)",
@@ -662,9 +760,14 @@ def build_cli_binding(pid, algo_subcommand_tags):
 
     `algo_flag` -- an --algo tag, plus every subcommand whose choices list carries
     it.  `subcommand` -- no tag at all; the protocol IS its subcommands (aPAKE).
+    `subcommand_flag` -- a variant selected by a flag on an existing subcommand
+    (`fpe --v3`, `twk --v3`; TODO #255).
     Recording this is what let aPAKE be filed under the same `protocols` array as
     everything else instead of a second parallel section (TODO #238 Part C).
     """
+    if pid in FLAG_VARIANT_PROTOCOLS:
+        sub, flag = FLAG_VARIANT_PROTOCOLS[pid]
+        return {"kind": "subcommand_flag", "subcommands": [sub], "flag": flag}
     subs = sorted(sc for sc, tags in algo_subcommand_tags.items() if pid in tags)
     own = sorted(sc for sc, target in SUBCOMMAND_PROTOCOLS.items() if target == pid)
     if subs:
@@ -809,7 +912,8 @@ def generate():
 
     # Protocol ids reached only through a subcommand carry no --algo tag, so they
     # are legitimately absent from known_tags.
-    subcommand_only_ids = set(SUBCOMMAND_PROTOCOLS.values()) - known_tags
+    subcommand_only_ids = (set(SUBCOMMAND_PROTOCOLS.values())
+                            | set(FLAG_VARIANT_PROTOCOLS)) - known_tags
     stale = set(SECURITY) - known_tags - subcommand_only_ids
     if stale:
         raise RuntimeError(
@@ -830,6 +934,18 @@ def generate():
             f"classify: {sorted(unclassified)}. Add a SECURITY entry (and a SECURITY.md row) "
             f"rather than letting the tag ship unclassified."
         )
+
+    # TODO #255: a flag-variant protocol must name a real subparser AND a real
+    # flag on it, or the binding is a claim about a CLI surface that is not there.
+    for pid, (sub, flag) in sorted(FLAG_VARIANT_PROTOCOLS.items()):
+        if sub not in subcommands:
+            raise RuntimeError(
+                f"FLAG_VARIANT_PROTOCOLS[{pid!r}] names subcommand {sub!r}, which "
+                f"herradura.py does not define.")
+        if f"{sub[:2]}.add_argument('{flag}'" not in py_src:
+            raise RuntimeError(
+                f"FLAG_VARIANT_PROTOCOLS[{pid!r}] claims `{sub} {flag}`, but "
+                f"herradura.py's {sub!r} subparser does not add {flag!r}.")
 
     # cli_support, derived per tag from each CLI's own dispatch source.
     c_tags = extract_cli_tags(read(CLI_C), known_tags)

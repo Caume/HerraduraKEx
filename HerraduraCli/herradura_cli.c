@@ -615,10 +615,10 @@ static void cmd_genpkey(int argc, char **argv)
 
     /* Classical GF key: (priv, pub=g^priv, n) */
     static const char *const classical[] = {
-        "hkex-gf","hpks","hpks-nl","hpke","hpke-nl", NULL };
+        "hkex-gf","hpks","hpks-nl","hpke","hpke-nl","hpke-nl3", NULL };
     static const char *const classical_labels[] = {
         PEM_HKEX_GF_PRIV, PEM_HPKS_PRIV, PEM_HPKS_NL_PRIV,
-        PEM_HPKE_PRIV, PEM_HPKE_NL_PRIV };
+        PEM_HPKE_PRIV, PEM_HPKE_NL_PRIV, PEM_HPKE_NL3_PRIV };
     for (int ci = 0; classical[ci]; ci++) {
         if (strcmp(algo, classical[ci]) != 0) continue;
         BitArray a, C;
@@ -1037,6 +1037,7 @@ static void cmd_pkey(int argc, char **argv)
         { PEM_HPKS_NL_PRIV,    PEM_HPKS_NL_PUB,     "hpks-nl",    1 },
         { PEM_HPKE_PRIV,       PEM_HPKE_PUB,        "hpke",       1 },
         { PEM_HPKE_NL_PRIV,    PEM_HPKE_NL_PUB,     "hpke-nl",    1 },
+        { PEM_HPKE_NL3_PRIV,   PEM_HPKE_NL3_PUB,    "hpke-nl3",   1 },
         { PEM_HKEX_RNL_PRIV,   PEM_HKEX_RNL_PUB,   "hkex-rnl",   0 },
         { PEM_HPKS_STERN_PRIV, PEM_HPKS_STERN_PUB, "hpks-stern", 2 },
         { PEM_HPKE_STERN_PRIV, PEM_HPKE_STERN_PUB, "hpke-stern", 2 },
@@ -2294,9 +2295,11 @@ static void cmd_enc(int argc, char **argv)
     size_t in_len;
     uint8_t *in_buf = read_binary_file(in_path, &in_len);
 
-    /* ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118 ── */
-    if (strcmp(algo, "hske-duplex") == 0) {
-        if (!key_path) die("enc: --key required for hske-duplex");
+    /* ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) — TODO #118,
+     * #255 ── */
+    if (strcmp(algo, "hske-duplex") == 0 || strcmp(algo, "hske-duplex3") == 0) {
+        const int dplex_v3 = (strcmp(algo, "hske-duplex3") == 0);
+        if (!key_path) dief("enc: --key required for %s", algo);
         BitArray K, N_nonce;
         load_sym_key(&K, key_path);
         const char *ad = get_arg(argc, argv, "--ad");
@@ -2308,18 +2311,24 @@ static void cmd_enc(int argc, char **argv)
         uint8_t *ct_buf = malloc(in_len ? in_len : 1);
         if (!ct_buf) die("enc: out of memory");
         uint8_t tag[32];
-        hske_nl_v2_duplex_encrypt(&K, &N_nonce,
-                                  (const uint8_t *)(ad ? ad : ""),
-                                  ad ? strlen(ad) : 0,
-                                  in_buf, in_len, ct_buf, tag);
+        if (dplex_v3)
+            hske_nl_v3_duplex_encrypt(&K, &N_nonce,
+                                      (const uint8_t *)(ad ? ad : ""),
+                                      ad ? strlen(ad) : 0,
+                                      in_buf, in_len, ct_buf, tag);
+        else
+            hske_nl_v2_duplex_encrypt(&K, &N_nonce,
+                                      (const uint8_t *)(ad ? ad : ""),
+                                      ad ? strlen(ad) : 0,
+                                      in_buf, in_len, ct_buf, tag);
 
-        /* format tag 3: SEQ(3, nonce, ct_len, ct, tag, nbits) */
+        /* format tag 3 (v2) / 4 (v3): SEQ(t, nonce, ct_len, ct, tag, nbits) */
         uint8_t it0[8], itn[DER_INT_LEN(KEYBYTES)], itl[DER_INT_LEN(8)];
         uint8_t itt[DER_INT_LEN(KEYBYTES)], itnb[8];
         uint8_t *itE = malloc(DER_INT_LEN(in_len ? in_len : 1));
         if (!itE) die("enc: out of memory");
         size_t l0, ln, ll, lE, lt, lnb;
-        der_i_byte(3, it0, &l0);
+        der_i_byte(dplex_v3 ? 4 : 3, it0, &l0);
         der_i32(N_nonce.b, itn, &ln);
         der_i_uint((uint64_t)in_len, itl, &ll);
         if (in_len) der_int_enc(ct_buf, in_len, itE, &lE);
@@ -2340,7 +2349,7 @@ static void cmd_enc(int argc, char **argv)
 
     /* ── Symmetric algos ── */
     if (strcmp(algo, "hske") == 0 || strcmp(algo, "hske-nla1") == 0 ||
-        strcmp(algo, "hske-nla2") == 0) {
+        strcmp(algo, "hske-nla2") == 0 || strcmp(algo, "hske-nla3") == 0) {
         if (!key_path) dief("enc: --key required for %s", algo);
         BitArray K;
         load_sym_key(&K, key_path);
@@ -2400,10 +2409,19 @@ static void cmd_enc(int argc, char **argv)
             size_t il[4] = {l0, ln, lE, lnb};
             seq_and_write(it, il, 4, PEM_CIPHERTEXT, out_path);
 
-        } else { /* hske-nla2 */
+        } else if (strcmp(algo, "hske-nla2") == 0) {
             BitArray E;
             if (!nl_v2_key_is_valid(&K)) die("enc hske-nla2: " WEAK_V2_KEY_MSG);
             nl_fscx_revolve_v2_ba(&E, &P, &K, R_VALUE);
+            uint8_t it0[8], itE[DER_INT_LEN(KEYBYTES)], itn[8];
+            size_t l0, lE, ln;
+            der_i_byte(0, it0, &l0); der_i32(E.b, itE, &lE); der_i_n256(itn, &ln);
+            const uint8_t *it[3] = {it0, itE, itn}; size_t il[3] = {l0, lE, ln};
+            seq_and_write(it, il, 3, PEM_CIPHERTEXT, out_path);
+
+        } else { /* hske-nla3 — no key check: v3 has no weak class (TODO #255) */
+            BitArray E;
+            nl_fscx_revolve_v3_ba(&E, &P, &K, R3_VALUE);
             uint8_t it0[8], itE[DER_INT_LEN(KEYBYTES)], itn[8];
             size_t l0, lE, ln;
             der_i_byte(0, it0, &l0); der_i32(E.b, itE, &lE); der_i_n256(itn, &ln);
@@ -2418,7 +2436,8 @@ static void cmd_enc(int argc, char **argv)
     PemKey pub_k;
     pem_key_load(&pub_k, pubkey_path);
 
-    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0) {
+    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0 ||
+        strcmp(algo, "hpke-nl3") == 0) {
         /* vals[0]=pub (32 bytes), vals[1]=n */
         if (pub_k.n_items < 1) die("enc: malformed public key");
         BitArray pub, r, R, enc_key, E;
@@ -2438,7 +2457,10 @@ static void cmd_enc(int argc, char **argv)
                 ba_rand(&r, urnd);
                 gf_pow_ba(&R, &GF_GEN, &r);
                 gf_pow_ba(&enc_key, &pub, &r);
-                if (strcmp(algo, "hpke") == 0 || nl_v2_key_is_valid(&enc_key)) break;
+                /* hpke-nl3 has no affine-degenerate key class to sample past
+                 * (SecurityProofs-8.md 11.34.4), so it takes the first draw. */
+                if (strcmp(algo, "hpke-nl") != 0 || nl_v2_key_is_valid(&enc_key))
+                    break;
             }
             if (attempt == 64)
                 die("enc hpke-nl: could not sample a non-degenerate ephemeral key");
@@ -2446,6 +2468,8 @@ static void cmd_enc(int argc, char **argv)
         fclose(urnd);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&E, &P, &enc_key, I_VALUE);
+        else if (strcmp(algo, "hpke-nl3") == 0)
+            nl_fscx_revolve_v3_ba(&E, &P, &enc_key, R3_VALUE);
         else
             nl_fscx_revolve_v2_ba(&E, &P, &enc_key, I_VALUE);
         uint8_t iR[DER_INT_LEN(KEYBYTES)], iE[DER_INT_LEN(KEYBYTES)], in[8];
@@ -2553,13 +2577,17 @@ static void cmd_dec(int argc, char **argv)
     if (strcmp(ct.label, PEM_CIPHERTEXT) != 0)
         dief("dec: expected CIPHERTEXT PEM, got: %s", ct.label);
 
-    /* ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118 ── */
-    if (strcmp(algo, "hske-duplex") == 0) {
-        if (!key_path) die("dec: --key required for hske-duplex");
+    /* ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) — TODO #118,
+     * #255 ── */
+    if (strcmp(algo, "hske-duplex") == 0 || strcmp(algo, "hske-duplex3") == 0) {
+        const int dplex_v3 = (strcmp(algo, "hske-duplex3") == 0);
+        const uint8_t want_fmt = dplex_v3 ? 4 : 3;
+        if (!key_path) dief("dec: --key required for %s", algo);
         BitArray K, N_nonce;
         load_sym_key(&K, key_path);
-        if (ct.n_items < 6 || ct.vlens[0] < 1 || ct.vals[0][0] != 3)
-            die("dec: not a V2-Duplex (format 3) ciphertext");
+        if (ct.n_items < 6 || ct.vlens[0] < 1 || ct.vals[0][0] != want_fmt)
+            die(dplex_v3 ? "dec: not a V3-Duplex (format 4) ciphertext"
+                         : "dec: not a V2-Duplex (format 3) ciphertext");
         const char *ad = get_arg(argc, argv, "--ad");
         ba_from_ra(&N_nonce, ct.vals[1], ct.vlens[1]);
         size_t ct_len = (size_t)parse_be_uint(ct.vals[2], ct.vlens[2]);
@@ -2569,8 +2597,9 @@ static void cmd_dec(int argc, char **argv)
          * Shorter is legal — integer encoding may have dropped leading zero
          * bytes — and is right-aligned into the zero-padded buffer below. */
         if (ct.vlens[2] > 9 || ct_len > ct.der_len || ct.vlens[3] > ct_len) {
-            fprintf(stderr, "dec: V2-Duplex ciphertext declares %zu bytes but "
-                            "carries %zu\n", ct_len, ct.vlens[3]);
+            fprintf(stderr, "dec: V%d-Duplex ciphertext declares %zu bytes but "
+                            "carries %zu\n", dplex_v3 ? 3 : 2, ct_len,
+                    ct.vlens[3]);
             exit(1);
         }
         uint8_t *ct_buf = calloc(ct_len ? ct_len : 1, 1);
@@ -2582,10 +2611,15 @@ static void cmd_dec(int argc, char **argv)
         BitArray tag_ba;
         ba_from_ra(&tag_ba, ct.vals[4], ct.vlens[4]);
         memcpy(tag_buf, tag_ba.b, 32);
-        int ok = hske_nl_v2_duplex_decrypt(&K, &N_nonce,
-                                           (const uint8_t *)(ad ? ad : ""),
-                                           ad ? strlen(ad) : 0,
-                                           ct_buf, ct_len, tag_buf, pt_buf);
+        int ok = dplex_v3
+            ? hske_nl_v3_duplex_decrypt(&K, &N_nonce,
+                                        (const uint8_t *)(ad ? ad : ""),
+                                        ad ? strlen(ad) : 0,
+                                        ct_buf, ct_len, tag_buf, pt_buf)
+            : hske_nl_v2_duplex_decrypt(&K, &N_nonce,
+                                        (const uint8_t *)(ad ? ad : ""),
+                                        ad ? strlen(ad) : 0,
+                                        ct_buf, ct_len, tag_buf, pt_buf);
         pem_key_free(&ct);
         if (!ok) {
             free(ct_buf); free(pt_buf);
@@ -2599,7 +2633,7 @@ static void cmd_dec(int argc, char **argv)
 
     /* ── Symmetric algos ── */
     if (strcmp(algo, "hske") == 0 || strcmp(algo, "hske-nla1") == 0 ||
-        strcmp(algo, "hske-nla2") == 0) {
+        strcmp(algo, "hske-nla2") == 0 || strcmp(algo, "hske-nla3") == 0) {
         if (!key_path) dief("dec: --key required for %s", algo);
         BitArray K;
         load_sym_key(&K, key_path);
@@ -2642,6 +2676,9 @@ static void cmd_dec(int argc, char **argv)
             pem_key_free(&ct);
             if (strcmp(algo, "hske") == 0)
                 ba_fscx_revolve(&D, &E, &K, R_VALUE);
+            else if (strcmp(algo, "hske-nla3") == 0)
+                /* no key check: v3 has no weak class (TODO #255) */
+                nl_fscx_revolve_v3_inv_ba(&D, &E, &K, R3_VALUE);
             else {
                 if (!nl_v2_key_is_valid(&K)) die("dec hske-nla2: " WEAK_V2_KEY_MSG);
                 nl_fscx_revolve_v2_inv_ba(&D, &E, &K, R_VALUE);
@@ -2656,7 +2693,8 @@ static void cmd_dec(int argc, char **argv)
     PemKey priv_k;
     pem_key_load(&priv_k, key_path);
 
-    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0) {
+    if (strcmp(algo, "hpke") == 0 || strcmp(algo, "hpke-nl") == 0 ||
+        strcmp(algo, "hpke-nl3") == 0) {
         /* CT: vals[0]=R, vals[1]=E, vals[2]=nbits (no format tag) */
         if (ct.n_items < 2) die("dec: malformed HPKE ciphertext");
         if (priv_k.n_items < 1) die("dec: malformed private key");
@@ -2668,6 +2706,8 @@ static void cmd_dec(int argc, char **argv)
         gf_pow_ba(&dec_key, &R, &priv);
         if (strcmp(algo, "hpke") == 0)
             ba_fscx_revolve(&D, &E, &dec_key, R_VALUE);
+        else if (strcmp(algo, "hpke-nl3") == 0)
+            nl_fscx_revolve_v3_inv_ba(&D, &E, &dec_key, R3_VALUE);
         else {
             if (!nl_v2_key_is_valid(&dec_key)) die("dec hpke-nl: " WEAK_V2_KEY_MSG);
             nl_fscx_revolve_v2_inv_ba(&D, &E, &dec_key, I_VALUE);
@@ -3863,11 +3903,16 @@ static void cmd_fpe(int argc, char **argv)
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);
 
+    /* --v3 selects the NL-FSCX v3 round (TODO #255).  Separate subkey domain,
+     * so v3 output is not v2 output; decrypt with --v3 too. */
+    const int v3 = has_flag(argc, argv, "--v3");
     BitArray R;
     if (do_enc)
-        fpe_encrypt(&P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
+        (v3 ? fpe_v3_encrypt : fpe_encrypt)(
+            &P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
     else
-        fpe_decrypt(&P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
+        (v3 ? fpe_v3_decrypt : fpe_decrypt)(
+            &P, K.b, KEYBYTES, (const uint8_t *)ctx_str, strlen(ctx_str), &R);
 
     write_binary_file(out_path, R.b, KEYBYTES);
 }
@@ -3902,11 +3947,12 @@ static void cmd_twk(int argc, char **argv)
     make_msg_ba(&P, in_buf, in_len);
     free(in_buf);
 
+    const int v3 = has_flag(argc, argv, "--v3");
     BitArray R;
     if (do_enc)
-        twk_encrypt(&P, K.b, KEYBYTES, sector, bidx, &R);
+        (v3 ? twk_v3_encrypt : twk_encrypt)(&P, K.b, KEYBYTES, sector, bidx, &R);
     else
-        twk_decrypt(&P, K.b, KEYBYTES, sector, bidx, &R);
+        (v3 ? twk_v3_decrypt : twk_decrypt)(&P, K.b, KEYBYTES, sector, bidx, &R);
 
     write_binary_file(out_path, R.b, KEYBYTES);
 }
@@ -4450,7 +4496,8 @@ static void usage(void)
 "Commands:\n"
 "  genpkey --algo ALGO [--out FILE]\n"
 "    Generate a private key.  Algorithms: hkex-gf hkex-rnl hpks hpks-nl\n"
-"    hpke hpke-nl hpks-stern hpke-stern hpke-stern-kem hpks-zkp-nl hpks-wots hpks-xmss\n"
+"    hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hpke-stern-kem hpks-zkp-nl\n"
+"    hpks-wots hpks-xmss\n"
 "    hpks-xmss: --xmss-height H (default 10) selects the 2^H-leaf tree height.\n"
 "\n"
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
@@ -4464,11 +4511,15 @@ static void usage(void)
 "    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE] [--aead [--ad STR]]\n"
-"    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2 hske-duplex\n"
-"    Asymmetric (--pubkey): hpke hpke-nl hpke-stern hpke-stern-kem\n"
+"    Encrypt.  Symmetric (--key): hske hske-nla1 hske-nla2 hske-nla3\n"
+"                                 hske-duplex hske-duplex3\n"
+"    Asymmetric (--pubkey): hpke hpke-nl hpke-nl3 hpke-stern hpke-stern-kem\n"
 "    --aead (hske-nla1 only): HSKE-NL-AEAD authenticated encryption; --ad binds\n"
 "    optional associated data into the tag (must match at dec).\n"
 "    hske-duplex: arbitrary-length single-pass AEAD (256-bit key; --ad supported).\n"
+"    The -nla3 / -duplex3 / -nl3 variants run the NL-FSCX v3 round (TODO #255)\n"
+"    at R3_VALUE=160 instead of v2; they are separate algorithms, not a mode of\n"
+"    the v2 ones, and their artifacts do not interoperate with them.\n"
 "\n"
 "  dec --algo ALGO --key KEY --in CT_FILE [--out FILE] [--ad STR]\n"
 "    Decrypt.  Symmetric: key=SESSION KEY PEM.  Asymmetric: key=PRIVATE KEY PEM.\n"
@@ -4528,10 +4579,13 @@ static void usage(void)
 "    NOT format-preserving in the FF1/FF3-1 sense: no radix, no domain --\n"
 "    32 bytes in, 32 raw bytes out.  See SECURITY.md.\n"
 "    Key: HERRADURA SESSION KEY PEM.  CTX: arbitrary context string.\n"
+"    --v3: use the NL-FSCX v3 round (TODO #255).  Separate subkey domain, so v3\n"
+"    output is not v2 output; decrypt with --v3 too.\n"
 "\n"
 "  twk (--encrypt|--decrypt) --key SK [--sector N] [--bidx N] --in FILE [--out FILE]\n"
 "    Tweakable wide-block cipher (78.B).  Unique tweak per (sector, block-index).\n"
 "    Key: HERRADURA SESSION KEY PEM.\n"
+"    --v3: use the NL-FSCX v3 round (TODO #255), as for fpe.\n"
 "\n"
 "  oprf-blind --in FILE [--out FILE]\n"
 "    OPRF client step 1: hash input and blind with random scalar r.\n"

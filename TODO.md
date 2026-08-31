@@ -306,11 +306,68 @@ on separate evidence.
   reference, `χ^-1 ∘ χ = id`, the revolve round-trip, the partition's legality, and (Python
   only, which re-implements) agreement with the shipped suite.
 
-**Remaining.**  The five consumers (`hske-nla3`, `hpke-nl3`, `hske-duplex3`, `fpe --v3`,
-`twk --v3`) in all four CLIs — including the flag-vs-subcommand decision for `fpe`/`twk`, which
-is still owed explicitly — then `spec/` entries, SECURITY.md rows (demo-only), KAT vectors and
-generators, `CliTest/` coverage with each new script claimed by exactly one `native-*` job,
-`test_cross_lang_matrix.sh` extended to the v3 family, `docs/TUTORIAL.md`, `llms.txt`, and the
-end-to-end benchmark against v2.  Nothing in the remaining work is blocked.
+* v5.2.0 — the FIVE CONSUMERS are done, in every CLI that has a v2 counterpart to
+  match: `hske-nla3` and `hpke-nl3` in all four (C, Go, Python, Java), and
+  `hske-duplex3`, `fpe --v3`, `twk --v3` in C, Go and Python — Java ships no duplex,
+  `fpe` or `twk` in either version, so there was nothing there to pair with.  With them:
+  `spec/` entries and SECURITY.md rows for all five (all demo-only or worse),
+  `KAT/nl_fscx_v3.json` plus its Go and Java verifiers, `CliTest/test_v3_family.sh`,
+  v3 rows in `test_cross_lang_matrix.sh` (518 checks, four languages), test [48] in
+  three harnesses, `benchmarks/v3_consumer_cost.c`, and the TUTORIAL/llms.txt/CLAUDE.md
+  entries.
+
+**Decisions recorded in v5.2.0**, each of which this entry left open:
+
+* **`fpe`/`twk` take a `--v3` FLAG, not new subcommands.**  Both are already filed in
+  `spec/` by `cli_binding` rather than by `--algo` tag; the flag keeps every other
+  option identical between variants, so a caller switches version without rewriting the
+  invocation; and a second pair of subcommands would have doubled a surface #241 already
+  found confusing.  `spec/` grows a `cli_binding.kind` of `subcommand_flag` to say this
+  machine-readably, validated against both the subparser list and the flag itself, so
+  the claim cannot go stale silently.
+* **`I3_VALUE = 5n/16 = 80` for the v3 duplex sponge** — the first duplex round count in
+  this suite that is derived rather than inherited.  The capacity is 128 bits, so 128
+  bits is the target, and chi's proven per-round floors put the requirement at
+  `r >= 128/1.6781 = 77` differential and `r >= 64` linear.  `hske-duplex`'s inherited
+  `I_VALUE = 64` would have left the differential axis at 107 bits.  It does NOT lift
+  the duplex's rating: what keeps the v2 duplex at `research` is that the permutation's
+  standalone SPONGE profile has never been characterised (#99), and a per-round trail
+  floor is not that characterisation.
+* **A distinct ciphertext format tag (4) for `hske-duplex3`**, so a v2 artifact fed to
+  the v3 decryptor is refused by the parser rather than surfacing as an opaque tag
+  mismatch 80 permutation calls later.
+* **Domain-separation tags 0x22/0x23** for `fpe`/`twk --v3`, and separate
+  `NL-V3-DUPLEX-*` strings, so the same `(key, tweak)` never yields the same subkey
+  across the four fpe/twk variants — the separation #242 had to retrofit is built in
+  from the start here.
+
+**Cost — this entry's "~1.77x per block" is WRONG for the shipped C path; it is ~0.97x**
+(`benchmarks/v3_consumer_cost.c`).  `v3_round_cost.c`'s 2.12-2.17x is a packed 4x64
+representation where the v2 round is a few limb operations and chi roughly doubles it.
+`herradura.h`'s BitArray is 32 separate bytes, so the v2 round's rotations and its
+256-bit carry chain are already byte-serial and chi adds proportionally much less:
+**1.16x per round** against the shipped header.  Both figures are correct measurements of
+different things, and the packed one is what an optimised port would see.  Every consumer
+figure follows from 1.16x times its round-count ratio, checked rather than fitted:
+`hske-nla3` 0.97x (160 rounds against 192), `fpe --v3` 0.97x, `twk --v3` 0.98x,
+`hske-duplex3` 1.45x at 4 KiB (80 sponge rounds against 64), and **`hpke-nl3` 2.92x** —
+the one materially more expensive case, because `hpke-nl`'s deployed wire format runs
+only `I_VALUE = 64` rounds while `hpke-nl3` uses the derived 160.
+
+**Also found:** a silent 64-bit truncation in the KAT format, caught by the Go
+cross-check rather than by any Python-side test.  `twk`'s `sector` was first written as a
+JSON number, and `0x0123456789ABCDEF` does not survive the float64 every JSON parser
+defaults to — the Python generator and the Go verifier disagreed by 1 in the low limb.
+Both `sector` and `bidx` are hex strings now.  Nothing else in the pipeline would have
+caught it; it is exactly the class of thing a second-implementation verifier exists for.
+
+**Remaining.**  Nothing in this entry's original scope is outstanding.  What is left is
+deliberately out of it and tracked elsewhere: the ratings stay demo-only until #252 and
+#254 land a trail bound at realistic width, which v3 existing does not change.  The
+Arduino and assembly targets remain out of scope for the reasons stated above, and
+NL-FSCX v1 and everything on it is untouched.  **This entry can close when a reviewer
+agrees the five consumers are the whole of "ship candidate B as a new primitive
+alongside v2"; it is left OPEN only so that judgement is made deliberately rather than
+by my own count.**
 
 Status: **OPEN**

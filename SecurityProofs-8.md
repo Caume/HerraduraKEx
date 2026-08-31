@@ -136,3 +136,25 @@ The linear axis is unchanged in both findings and logic.  The round-level figure
 Carrying v2's check across anyway would be worse than useless: it would reject a $\approx 2^{-129}$ fraction of keys for a degeneracy v3 does not have, while implying to a reader that the remaining keys had been screened for one that it does.
 
 **The minimum-row-5 constraint is a security assertion and is enforced in code.** All four ports derive the partition from a rule that emits only 5s and 7s, and the test harnesses assert that every row is odd and at least 5 (test [47] in C, Go and Python).
+
+### 11.34.8 The duplex sponge round count, derived (TODO #255)
+
+`hske-duplex3` is `hske-duplex`'s MonkeyDuplex construction with the v3 permutation in place of the v2 one. Its round count is **not** $R_3$: a sponge permutation is not a block cipher and is not held to the codebook-sized target §11.30.1 sets. It is
+
+$$I_3 = \frac{5n}{16} = 80 \quad (n = 256),$$
+
+and it is the first duplex round count in this suite that is derived rather than inherited.
+
+**The target.** The state is 256 bits split rate $128$ / capacity $c = 128$. A sponge's security against the generic attacks is governed by the capacity, so the quantity to clear is $c = 128$ bits, not $n = 256$.
+
+**The requirement.** §11.34.3 gives the v3 round an unconditional differential floor of $4 - \log_2 5 = 1.6781$ bits and §11.34.2 a linear floor of $1$ bit, both per round and both independent of the key. Applying §11.30.1's two criteria at the capacity rather than the block size:
+
+$$r \ \ge\ \frac{c}{1.6781} = 76.3 \quad\text{(differential)}, \qquad r \ \ge\ \frac{c}{2} = 64 \quad\text{(linear)}.$$
+
+So $r \ge 77$ binds, and $I_3 = 80$ clears it on both axes with a small margin. That $I_3 = R_3 / 2$ exactly — half the round count for a half-width target — is a consequence of both being $5n/2^k$, not an independent choice.
+
+**Why not reuse $I = n/4 = 64$.** `hske-duplex` runs the v2 permutation at $I = 64$, a count inherited from the classical FSCX step parameter rather than derived from anything. At the v3 floor, $64$ rounds would give $64 \times 1.6781 = 107.4$ bits against a $128$-bit capacity — short, and short in the one direction that matters. v2 has no per-round floor at all, so the same arithmetic cannot even be attempted for `hske-duplex`; its $64$ is not defensible or indefensible, it is unquantified.
+
+> **This does not lift `hske-duplex3`'s rating.** What holds the v2 duplex at *research* is that the permutation's standalone **sponge** profile — the differential/linear characterisation TODO #99 tracks — has never been produced. A per-round trail floor is a statement about the round, not that characterisation, and the gap between the two is exactly the thing a sponge's security argument needs and this family does not have. `hske-duplex3` ships at *research* for the same reason, with a floor its predecessor lacks and the same missing analysis.
+
+**Cost.** $80$ v3 rounds against $64$ v2 rounds is $1.25\times$ the rounds on top of the per-round ratio. Measured end to end against the shipped `herradura.h` (`benchmarks/v3_consumer_cost.c`), that is $1.45\times$ per 4 KiB message, and $1.38\times$ at 64 bytes where the fixed cost of init, associated-data absorption and finalisation — about five permutation calls regardless of length — dominates.

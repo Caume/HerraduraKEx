@@ -24,6 +24,9 @@ nl_fscx_revolve_v1     = _s.nl_fscx_revolve_v1
 nl_fscx_revolve_v2     = _s.nl_fscx_revolve_v2
 nl_fscx_revolve_v2_inv = _s.nl_fscx_revolve_v2_inv
 nl_v2_key_is_valid     = _s.nl_v2_key_is_valid
+nl_fscx_revolve_v3     = _s.nl_fscx_revolve_v3      # TODO #255
+nl_fscx_revolve_v3_inv = _s.nl_fscx_revolve_v3_inv
+v3_rows                = _s.v3_rows
 gf_mul                 = _s.gf_mul
 gf_pow                 = _s.gf_pow
 hfscx_256              = _s.hfscx_256
@@ -32,6 +35,8 @@ hmac_hfscx_256         = _s.hmac_hfscx_256
 hske_nl_aead_encrypt   = _s.hske_nl_aead_encrypt
 hske_nl_aead_decrypt   = _s.hske_nl_aead_decrypt
 hske_nl_v2_duplex_encrypt = _s.hske_nl_v2_duplex_encrypt
+hske_nl_v3_duplex_encrypt = _s.hske_nl_v3_duplex_encrypt
+hske_nl_v3_duplex_decrypt = _s.hske_nl_v3_duplex_decrypt
 hske_nl_v2_duplex_decrypt = _s.hske_nl_v2_duplex_decrypt
 HDrbg                  = _s.HDrbg
 drbg_seed              = _s.drbg_seed
@@ -83,6 +88,8 @@ RNLPP  = _s.RNLPP             # Ring-LWR reconciliation modulus (2)
 RNLB   = _s.RNLB              # Ring-LWR CBD eta (1)
 I_VALUE = _s.I_VALUE          # FSCX encrypt steps (KEYBITS/4 = 64)
 R_VALUE = _s.R_VALUE          # FSCX decrypt steps (3*KEYBITS/4 = 192)
+R3_VALUE = _s.R3_VALUE        # NL-FSCX v3 rounds (5*KEYBITS/8 = 160)
+I3_VALUE = _s.I3_VALUE        # NL-FSCX v3 duplex sponge rounds (5*KEYBITS/16 = 80)
 SDFT   = _s.SDFT              # Stern-F error weight t
 SDFNR  = _s.SDFNR             # Stern-F parity-check rows
 SDFR   = _s.SDFR              # Stern-F Fiat-Shamir rounds
@@ -91,6 +98,10 @@ _ZKP_NL_PROD_ROUNDS = _s._ZKP_NL_PROD_ROUNDS  # ZKBoo production rounds (219)
 
 # ── 78.A FPE / 78.B Tweakable / 78.J Accumulator ───────────────────────────
 fpe_encrypt   = _s.fpe_encrypt
+fpe_v3_encrypt = _s.fpe_v3_encrypt
+fpe_v3_decrypt = _s.fpe_v3_decrypt
+twk_v3_encrypt = _s.twk_v3_encrypt
+twk_v3_decrypt = _s.twk_v3_decrypt
 fpe_decrypt   = _s.fpe_decrypt
 twk_encrypt   = _s.twk_encrypt
 twk_decrypt   = _s.twk_decrypt
