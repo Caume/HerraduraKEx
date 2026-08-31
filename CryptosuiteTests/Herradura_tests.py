@@ -336,6 +336,77 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
     return result
 
 
+# NL-FSCX v3 (TODO #255): the v2 round followed by a Keccak-chi layer over a
+# partition of the state into short odd rows.  Standalone copy, like the rest of
+# this harness; test [47] cross-checks it against the shipped suite, which is
+# what catches drift here.
+#
+# MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT (§11.33.4): oddness alone is not
+# sufficient and 3 is odd -- a 3-bit row admits a correlation-1 one-round linear
+# approximation.  _v3_rows emits only 5s and 7s.
+_R3_VALUE = 5 * 256 // 8   # 160
+
+
+def _v3_rows(n: int) -> tuple:
+    for k in range(n // 7 + 1):
+        rest = n - 7 * k
+        if rest % 5 == 0:
+            return (5,) * (rest // 5) + (7,) * k
+    raise ValueError(f"NL-FSCX v3: no legal row partition at width {n}")
+
+
+def _chi_row(v: int, L: int) -> int:
+    out = 0
+    for i in range(L):
+        bi = (v >> i) & 1
+        b1 = (v >> ((i + 1) % L)) & 1
+        b2 = (v >> ((i + 2) % L)) & 1
+        out |= (bi ^ ((1 - b1) & b2)) << i
+    return out
+
+
+def _chi_inv_table(L: int) -> tuple:
+    inv = [0] * (1 << L)
+    for x in range(1 << L):
+        inv[_chi_row(x, L)] = x
+    return tuple(inv)
+
+
+_CHI_INV_T = {5: _chi_inv_table(5), 7: _chi_inv_table(7)}
+
+
+def nl_chi_v3(X: BitArray) -> BitArray:
+    n, x, out, off = X._size, X.uint, 0, 0
+    for L in _v3_rows(n):
+        out |= _chi_row((x >> off) & ((1 << L) - 1), L) << off
+        off += L
+    return BitArray(n, out)
+
+
+def nl_chi_v3_inv(Y: BitArray) -> BitArray:
+    n, y, out, off = Y._size, Y.uint, 0, 0
+    for L in _v3_rows(n):
+        out |= _CHI_INV_T[L][(y >> off) & ((1 << L) - 1)] << off
+        off += L
+    return BitArray(n, out)
+
+
+def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    n = A._size
+    result = A.copy()
+    for i in range(1, steps + 1):
+        result = nl_chi_v3(nl_fscx_v2(BitArray(n, result.uint ^ i), B))
+    return result
+
+
+def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
+    n = Y._size
+    result = Y.copy()
+    for i in range(steps, 0, -1):
+        result = BitArray(n, nl_fscx_v2_inv(nl_chi_v3_inv(result), B).uint ^ i)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # HFSCX-256 (self-contained, mirrors suite)
 # ---------------------------------------------------------------------------
@@ -2826,6 +2897,90 @@ def hpke_decrypt_checked(ct: 'BitArray', R_int: int, priv: int, poly: int, size:
     return fscx_revolve(ct, BitArray(size, dec_key), _R_VALUE)
 
 
+# ---------------------------------------------------------------------------
+# Security test [47]: NL-FSCX v3 primitive (TODO #255).  Five properties, each
+# of which the design rests on and none of which is implied by the others:
+#   (a) the chi layer matches a straightforward per-row reference;
+#   (b) chi^-1 . chi == id, and the revolve round-trips at R3_VALUE -- chi being
+#       a bijection on ODD rows is what makes the layer invertible;
+#   (c) the row partition is legal: every row odd and >= 5, summing to the key
+#       width.  A 3-row would be a complete break (§11.33.4), so this is a
+#       security assertion, not a bookkeeping one;
+#   (d) v3 differs from v2 at the same round count -- a guard against a chi
+#       layer that silently degenerates to the identity;
+#   (e) this harness's standalone copy agrees BYTE-FOR-BYTE with the shipped
+#       suite.  The C and Go harnesses call herradura.h / the herradura package
+#       directly and so cannot drift; this one re-implements, exactly as it does
+#       for fpe/twk in [46], so the cross-check has to be explicit.
+# ---------------------------------------------------------------------------
+
+def test_nl_fscx_v3():
+    print("[47] NL-FSCX v3: chi vs reference, invertibility, partition  [SECURITY]")
+    N = _iters(200)
+    rows = _v3_rows(_KEYBITS)
+    badrow = sum(1 for L in rows if L < 5 or L % 2 == 0)
+    rowsum = sum(rows)
+    bad_ref = bad_inv = bad_rt = same_as_v2 = n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        P = BitArray.random(_KEYBITS)
+        K = BitArray.random(_KEYBITS)
+        # (a) per-row reference
+        C = nl_chi_v3(P)
+        x, ref, off = P.uint, 0, 0
+        for L in rows:
+            for j in range(L):
+                bi = (x >> (off + j)) & 1
+                b1 = (x >> (off + (j + 1) % L)) & 1
+                b2 = (x >> (off + (j + 2) % L)) & 1
+                ref |= (bi ^ ((1 - b1) & b2)) << (off + j)
+            off += L
+        if ref != C.uint:
+            bad_ref += 1
+        # (b) invertibility
+        if nl_chi_v3_inv(C).uint != P.uint:
+            bad_inv += 1
+        Y = nl_fscx_revolve_v3(P, K, _R3_VALUE)
+        if nl_fscx_revolve_v3_inv(Y, K, _R3_VALUE).uint != P.uint:
+            bad_rt += 1
+        # (d) v3 != v2
+        if nl_fscx_revolve_v2(P, K, _R3_VALUE).uint == Y.uint:
+            same_as_v2 += 1
+
+    # (e) cross-check the harness copy against the shipped suite
+    drift = "n/a (suite not importable)"
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_v3", _p)
+        _m = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+        mism = 0
+        for _ in range(5):
+            pv = random.getrandbits(_KEYBITS)
+            kv = random.getrandbits(_KEYBITS)
+            mine = nl_fscx_revolve_v3(BitArray(_KEYBITS, pv),
+                                      BitArray(_KEYBITS, kv), _R3_VALUE).uint
+            theirs = _m.nl_fscx_revolve_v3(_m.BitArray(_KEYBITS, pv),
+                                           _m.BitArray(_KEYBITS, kv),
+                                           _m.R3_VALUE).uint
+            if mine != theirs:
+                mism += 1
+        if _m.R3_VALUE != _R3_VALUE:
+            mism += 1
+        drift = str(mism)
+    except Exception as exc:                       # pragma: no cover
+        drift = f"n/a ({type(exc).__name__})"
+
+    ok = (rowsum == _KEYBITS and badrow == 0 and bad_ref == 0 and bad_inv == 0
+          and bad_rt == 0 and same_as_v2 == 0 and drift == "0")
+    print(f"    n={n_run}  R3_VALUE={_R3_VALUE}  rows={len(rows)} sum={rowsum} "
+          f"illegal={badrow}  chi!=ref={bad_ref}  chi-inv fails={bad_inv}  "
+          f"revolve round-trip fails={bad_rt}  v3==v2={same_as_v2}  "
+          f"suite mismatches={drift}  [{'PASS' if ok else 'FAIL'}]\n")
+
+
 # Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
 # shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
 # so a 12-byte fpe context equal to twk's sector||bidx made them the identical
@@ -3282,6 +3437,7 @@ if __name__ == '__main__':
     # Security test [45] appended after [44] to avoid renumbering (TODO #131).
     test_weak_key_rejection()
     test_fpe_twk_domain_separation()
+    test_nl_fscx_v3()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

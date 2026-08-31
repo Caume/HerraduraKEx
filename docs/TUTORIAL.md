@@ -766,6 +766,64 @@ recovered  = h.nl_fscx_revolve_v2_inv(ciphertext, key, h.R_VALUE)
 assert plaintext == recovered
 ```
 
+### NL-FSCX v3 (the χ-hardened round)
+
+**Demo-only, like v2.** v3 is the v2 round followed by a Keccak-χ layer over the
+`256 = 47×5 + 3×7` row partition, at the derived `R3_VALUE = 5n/8 = 160` rounds
+(v2 uses `R_VALUE = 3n/4 = 192`). It is an *addition*: v2 is untouched, so every
+stored v2 key, ciphertext and signature keeps working, and the two are not
+interchangeable — a v3 ciphertext does not decrypt under v2 or vice versa.
+
+Unlike v2, **v3 takes no key check**: there is no `nl_v3_key_is_valid`, because
+both of v2's weak-key classes provably dissolve under χ. Any 256-bit key is fine.
+See SecurityProofs-8.md §11.34.
+
+#### C
+
+```c
+BitArray key3, plaintext3, ciphertext3, recovered3;
+
+ba_rand(&key3,       urnd);
+ba_rand(&plaintext3, urnd);
+
+nl_fscx_revolve_v3_ba    (&ciphertext3, &plaintext3, &key3, R3_VALUE);  /* encrypt */
+nl_fscx_revolve_v3_inv_ba(&recovered3,  &ciphertext3, &key3, R3_VALUE); /* decrypt */
+/* ba_equal(&plaintext3, &recovered3) == 1 */
+```
+
+#### Go
+
+```go
+key3       := NewRandBitArray(256)
+plaintext3 := NewRandBitArray(256)
+
+ct3  := NlFscxRevolveV3(plaintext3, key3, R3Value)    /* encrypt (R3Value = 5n/8 = 160) */
+dec3 := NlFscxRevolveV3Inv(ct3, key3, R3Value)        /* decrypt */
+/* dec3.Equal(plaintext3) */
+```
+
+#### Python
+
+```python
+key        = h.BitArray.random(256)
+plaintext  = h.BitArray.random(256)
+
+ciphertext = h.nl_fscx_revolve_v3(plaintext, key, h.R3_VALUE)
+recovered  = h.nl_fscx_revolve_v3_inv(ciphertext, key, h.R3_VALUE)
+assert plaintext == recovered
+```
+
+#### Java
+
+```java
+BigInteger key3 = new BigInteger(256, new SecureRandom());
+BigInteger pt3  = new BigInteger(256, new SecureRandom());
+
+BigInteger ct3 = HerraduraNl.nlFscxRevolveV3(pt3, key3, HerraduraNl.R3_VALUE);
+BigInteger rc3 = HerraduraNl.nlFscxRevolveV3Inv(ct3, key3, HerraduraNl.R3_VALUE);
+// rc3.equals(pt3)
+```
+
 ### HSKE-NL-AEAD authenticated encryption
 
 Authenticated encryption with associated data (AD) built on HSKE-NL-A1. A fresh

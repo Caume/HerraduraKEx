@@ -782,6 +782,250 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * NL-FSCX v3 (TODO #255) — the v2 round followed by a Keccak-chi layer
+ *
+ * v3 is an ADDITION, not a replacement: v2 is untouched and every stored v2
+ * artifact keeps working.  The round is
+ *
+ *     x  ->  chi( M(x ^ i ^ B) + delta(B)  mod 2^n )
+ *
+ * i.e. exactly nl_fscx_v2 followed by chi over a partition of the state into
+ * short odd rows.  chi is bijective on a row of odd length, so the layer is a
+ * bijection on the whole state and the round stays invertible; chi's inverse
+ * has degree <= 4 and is applied row-wise.
+ *
+ * THE PARTITION: 256 = 47*5 + 3*7, the 5-rows first, so the LSB is in a 5-row.
+ * Fifty rows, all odd, shortest 5.
+ *
+ * MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT, not a preference, and _V3_ROWS is
+ * asserted against it below.  Oddness alone is NOT sufficient and 3 is odd: a
+ * 3-bit row admits a correlation-1 one-round linear approximation -- exhaustive
+ * over all 8 row-deltas and both carry-ins -- which is a complete break at any
+ * round count.  At L=5 the worst is 0.875 and at L=7 it is 0.71875, for every
+ * key at every width.  See SecurityProofs-7.md §11.33.4 and §11.34.2.
+ *
+ * ROUND COUNT: R3_VALUE = 5n/8 = 160, DERIVED, not inherited from v2's 3n/4.
+ * chi gives the round an unconditional per-round differential trail floor of
+ * 4 - log2(5) = 1.6781 bits -- the lowest active row of a pair always shares
+ * its carry-in, so it always pays the same-carry cost -- and §11.30.1's
+ * criterion s_diff * r >= n then needs r >= 153.  v2 has no such floor at all.
+ * See SecurityProofs-7.md §11.33, §11.34 and
+ * SecurityProofsCode/nl_fscx_v3_round_count.py, nl_fscx_v3_weak_keys.py.
+ *
+ * NO KEY CHECK.  There is deliberately no nl_v3_key_is_valid.  v2's two weak
+ * classes are both artefacts of its round being linear-then-add-constant and
+ * both dissolve under chi: no key makes the v3 round affine, and v3 has no
+ * zero-weight round for any key.  See §11.34.4 and §11.34.7.
+ *
+ * Ratings: DEMO-ONLY, exactly like v2.  A wider margin is not a reduction; the
+ * same two measurements (TODO #252, #254) are outstanding.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define R3_VALUE (5 * KEYBITS / 8)   /* 160 for 256-bit; needs KEYBITS % 8 == 0 */
+
+#if (KEYBITS % 8) != 0
+#  error "NL-FSCX v3's R3_VALUE = 5n/8 requires KEYBITS divisible by 8"
+#endif
+
+/* Row masks for the 47*5 + 3*7 partition, as big-endian BitArray literals.
+ *   _V3_TOPA / _V3_TOPB — the top bit of each 5-row / 7-row (where b_{i+1} wraps)
+ *   _V3_T2A  / _V3_T2B  — the top TWO bits of each 5-row / 7-row (b_{i+2} wraps)
+ *   _V3_NOTTOP / _V3_NOTTOP2 — their complements, the non-wrapping positions
+ * Generated for KEYBITS=256; the #error above and the row table below keep any
+ * other width from silently using them. */
+#if KEYBITS != 256
+#  error "NL-FSCX v3's chi row masks are only defined for KEYBITS=256"
+#endif
+
+static const uint8_t _V3_TOPA[KEYBYTES] = {
+    0x00,0x00,0x04,0x21,0x08,0x42,0x10,0x84,
+    0x21,0x08,0x42,0x10,0x84,0x21,0x08,0x42,
+    0x10,0x84,0x21,0x08,0x42,0x10,0x84,0x21,
+    0x08,0x42,0x10,0x84,0x21,0x08,0x42,0x10,
+};
+static const uint8_t _V3_TOPB[KEYBYTES] = {
+    0x81,0x02,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+};
+static const uint8_t _V3_NOTTOP[KEYBYTES] = {
+    0x7E,0xFD,0xFB,0xDE,0xF7,0xBD,0xEF,0x7B,
+    0xDE,0xF7,0xBD,0xEF,0x7B,0xDE,0xF7,0xBD,
+    0xEF,0x7B,0xDE,0xF7,0xBD,0xEF,0x7B,0xDE,
+    0xF7,0xBD,0xEF,0x7B,0xDE,0xF7,0xBD,0xEF,
+};
+static const uint8_t _V3_T2A[KEYBYTES] = {
+    0x00,0x00,0x06,0x31,0x8C,0x63,0x18,0xC6,
+    0x31,0x8C,0x63,0x18,0xC6,0x31,0x8C,0x63,
+    0x18,0xC6,0x31,0x8C,0x63,0x18,0xC6,0x31,
+    0x8C,0x63,0x18,0xC6,0x31,0x8C,0x63,0x18,
+};
+static const uint8_t _V3_T2B[KEYBYTES] = {
+    0xC1,0x83,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+};
+static const uint8_t _V3_NOTTOP2[KEYBYTES] = {
+    0x3E,0x7C,0xF9,0xCE,0x73,0x9C,0xE7,0x39,
+    0xCE,0x73,0x9C,0xE7,0x39,0xCE,0x73,0x9C,
+    0xE7,0x39,0xCE,0x73,0x9C,0xE7,0x39,0xCE,
+    0x73,0x9C,0xE7,0x39,0xCE,0x73,0x9C,0xE7,
+};
+
+/* dst = a << k (numeric, mod 2^KEYBITS), 0 <= k < 8.  b[0] is the MSB, so a
+ * numeric left shift moves bits toward the FRONT of the array. */
+static void ba_shl_k(BitArray *dst, const BitArray *a, int k)
+{
+    int i;
+    if (k == 0) { *dst = *a; return; }
+    for (i = 0; i < KEYBYTES - 1; i++)
+        dst->b[i] = (uint8_t)((a->b[i] << k) | (a->b[i + 1] >> (8 - k)));
+    dst->b[KEYBYTES - 1] = (uint8_t)(a->b[KEYBYTES - 1] << k);
+}
+
+/* dst = a >> k (numeric), 0 <= k < 8. */
+static void ba_shr_k(BitArray *dst, const BitArray *a, int k)
+{
+    int i;
+    if (k == 0) { *dst = *a; return; }
+    for (i = KEYBYTES - 1; i > 0; i--)
+        dst->b[i] = (uint8_t)((a->b[i] >> k) | (a->b[i - 1] << (8 - k)));
+    dst->b[0] = (uint8_t)(a->b[0] >> k);
+}
+
+/* out = chi(x), Keccak chi over the 47*5 + 3*7 row partition.
+ *
+ *     out_i = b_i XOR ((NOT b_{i+1}) AND b_{i+2}),  indices cyclic WITHIN a row.
+ *
+ * Bit-parallel: b_{i+1} is (x >> 1) except at a row's top bit, where it wraps to
+ * the row's bit 0 and is supplied by (x << 4) for a 5-row / (x << 6) for a
+ * 7-row; b_{i+2} is (x >> 2) except at a row's top TWO bits, supplied by
+ * (x << 3) / (x << 5).  Validated bit-exactly against a per-row reference in
+ * test [47] and in benchmarks/v3_round_cost.c. */
+static void nl_chi_v3_ba(BitArray *out, const BitArray *x)
+{
+    BitArray s1, s2, s3, s4, s5, s6, r1, r2, t;
+    int i;
+    ba_shr_k(&s1, x, 1);
+    ba_shl_k(&s2, x, 4);
+    ba_shl_k(&s3, x, 6);
+    ba_shr_k(&s4, x, 2);
+    ba_shl_k(&s5, x, 3);
+    ba_shl_k(&s6, x, 5);
+    for (i = 0; i < KEYBYTES; i++) {
+        r1.b[i] = (uint8_t)((s1.b[i] & _V3_NOTTOP[i]) |
+                            (s2.b[i] & _V3_TOPA[i])   |
+                            (s3.b[i] & _V3_TOPB[i]));
+        r2.b[i] = (uint8_t)((s4.b[i] & _V3_NOTTOP2[i]) |
+                            (s5.b[i] & _V3_T2A[i])     |
+                            (s6.b[i] & _V3_T2B[i]));
+        t.b[i]  = (uint8_t)((uint8_t)(~r1.b[i]) & r2.b[i]);
+    }
+    ba_xor(out, x, &t);
+}
+
+/* chi restricted to one row is a permutation of {0,1}^L, so its inverse is a
+ * table: 32 entries at L=5, 128 at L=7.  Both are generated by inverting the
+ * forward row permutation and are checked against it in test [47].  This is
+ * exact by construction; chi^-1 has algebraic degree <= 4 but there is no need
+ * to realise it as a circuit at these row lengths. */
+static const uint8_t _V3_CHI5_INV[32] = {
+     0,11,22, 9,13, 4,18,15,
+    26, 1, 8, 3, 5,12,30, 7,
+    21,20, 2,23,16,17, 6,19,
+    10,27,24,25,29,28,14,31,
+};
+static const uint8_t _V3_CHI7_INV[128] = {
+     0,43,86,41,45, 4,82,47,
+    90,33, 8,35,37,12,94,39,
+    53,20,66,55,16,49,70,51,
+    74,59,24,57,61,28,78,63,
+    106, 1,40, 3, 5,44,110, 7,
+    32,11,98, 9,13,36,102,15,
+    21,52,118,23,48,17,114,19,
+    122,27,56,25,29,60,126,31,
+    85,84, 2,87,80,81, 6,83,
+    10,91,88,89,93,92,14,95,
+    64,65,22,67,69,68,18,71,
+    26,75,72,73,77,76,30,79,
+    42,107,104,105,109,108,46,111,
+    96,97,34,99,101,100,38,103,
+    117,116,54,119,112,113,50,115,
+    58,123,120,121,125,124,62,127,
+};
+
+/* out = chi^-1(y), row-wise, via the two tables above.  Bit i (LSB = 0) of a
+ * big-endian BitArray lives in byte KEYBYTES-1-(i/8) at bit position i%8. */
+static void nl_chi_v3_inv_ba(BitArray *out, const BitArray *y)
+{
+    int g, off = 0, j;
+    memset(out->b, 0, KEYBYTES);
+    for (g = 0; g < 50; g++) {
+        int L = (g < 47) ? 5 : 7;
+        unsigned v = 0, u;
+        for (j = 0; j < L; j++) {
+            int i = off + j;
+            v |= (unsigned)((y->b[KEYBYTES - 1 - (i >> 3)] >> (i & 7)) & 1) << j;
+        }
+        u = (L == 5) ? _V3_CHI5_INV[v] : _V3_CHI7_INV[v];
+        for (j = 0; j < L; j++) {
+            int i = off + j;
+            if ((u >> j) & 1u)
+                out->b[KEYBYTES - 1 - (i >> 3)] |= (uint8_t)(1u << (i & 7));
+        }
+        off += L;
+    }
+}
+
+/* NL-FSCX v3 round: chi(nl_fscx_v2(A, B)). */
+static void nl_fscx_v3_ba(BitArray *result, const BitArray *a, const BitArray *b)
+{
+    BitArray t;
+    nl_fscx_v2_ba(&t, a, b);
+    nl_chi_v3_ba(result, &t);
+}
+
+/* NL-FSCX v3 round inverse. */
+static void nl_fscx_v3_inv_ba(BitArray *result, const BitArray *y, const BitArray *b)
+{
+    BitArray t;
+    nl_chi_v3_inv_ba(&t, y);
+    nl_fscx_v2_inv_ba(result, &t, b);
+}
+
+/* The round constant is v2's, unchanged: an XOR constant leaves xdp+ exactly
+ * invariant (TODO #245), and chi does not interact with that argument. */
+static void nl_fscx_revolve_v3_ba(BitArray *result, const BitArray *a,
+                                   const BitArray *b, int steps)
+{
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *a;
+    for (i = 1; i <= steps; i++) {
+        nl_fscx_v2_rc_ba(&buf[idx], i);
+        nl_fscx_v3_ba(&buf[1 - idx], &buf[idx], b);
+        idx ^= 1;
+    }
+    *result = buf[idx];
+}
+
+static void nl_fscx_revolve_v3_inv_ba(BitArray *result, const BitArray *y,
+                                       const BitArray *b, int steps)
+{
+    BitArray buf[2];
+    int idx = 0, i;
+    buf[0] = *y;
+    for (i = steps; i >= 1; i--) {
+        nl_fscx_v3_inv_ba(&buf[1 - idx], &buf[idx], b);
+        nl_fscx_v2_rc_ba(&buf[1 - idx], i);   /* undo the round constant */
+        idx ^= 1;
+    }
+    *result = buf[idx];
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * HFSCX-256-DM: Merkle-Damgård hash on NL-FSCX v1, Davies-Meyer compression (v1.9.0)
  * ───────────────────────────────────────────────────────────────────────────── */
 

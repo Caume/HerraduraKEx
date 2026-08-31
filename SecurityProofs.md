@@ -7,7 +7,7 @@
 > titles below are unfamiliar; `docs/INTRODUCTION.md` links back into these same
 > Part files at the point where each concept is introduced.
 
-**This document has been split into seven parts to avoid GitHub's per-page math rendering limit (~750 expressions):**
+**This document has been split into eight parts to avoid GitHub's per-page math rendering limit (~750 expressions):**
 
 - **Part 1 — §1** (SecurityProofs-1.md): Algebraic Foundations (300 math expressions)
 - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
@@ -16,6 +16,7 @@
 - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM (587 math expressions)
 - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM (131 math expressions)
 - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections (698 math expressions)
+- **Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis (141 math expressions)
 
 ---
 

@@ -742,6 +742,169 @@ def nl_fscx_revolve_v2_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
 
 
 # ---------------------------------------------------------------------------
+# NL-FSCX v3 (TODO #255) — the v2 round followed by a Keccak-chi layer
+# ---------------------------------------------------------------------------
+#
+# v3 is an ADDITION, not a replacement: v2 is untouched and every stored v2
+# artifact keeps working.  The round is
+#
+#     x -> chi( M(x ^ i ^ B) + delta(B)  mod 2^n )
+#
+# i.e. exactly nl_fscx_v2 followed by chi over a partition of the state into
+# short odd rows.  chi is bijective on a row of odd length, so the layer is a
+# bijection on the whole state and the round stays invertible.
+#
+# THE PARTITION at n=256 is 256 = 47*5 + 3*7, the 5-rows first, so the LSB is in
+# a 5-row.  v3_rows() derives it, and the same rule at any other width.
+#
+# MINIMUM ROW LENGTH 5 IS A HARD CONSTRAINT, not a preference.  Oddness alone is
+# NOT sufficient and 3 is odd: a 3-bit row admits a correlation-1 one-round
+# linear approximation — exhaustive over all 8 row-deltas and both carry-ins —
+# which is a complete break at any round count.  At L=5 the worst is 0.875 and
+# at L=7 it is 0.71875, for every key at every width.  v3_rows() emits only 5s
+# and 7s, so the constraint holds by construction.  See SecurityProofs-7.md
+# §11.33.4 and §11.34.2.
+#
+# ROUND COUNT: R3_VALUE = 5n/8 = 160, DERIVED, not inherited from v2's 3n/4.
+# chi gives the round an unconditional per-round differential trail floor of
+# 4 - log2(5) = 1.6781 bits — the lowest active row of a pair always shares its
+# carry-in, so it always pays the same-carry cost — and §11.30.1's criterion
+# s_diff * r >= n then needs r >= 153.  v2 has no such floor at all.  See
+# SecurityProofs-7.md §11.33, §11.34 and SecurityProofsCode/
+# nl_fscx_v3_round_count.py, nl_fscx_v3_weak_keys.py.
+#
+# NO KEY CHECK.  There is deliberately no nl_v3_key_is_valid.  v2's two weak
+# classes are both artefacts of its round being linear-then-add-constant and
+# both dissolve under chi: no key makes the v3 round affine, and v3 has no
+# zero-weight round for any key.  See §11.34.4 and §11.34.7.
+#
+# Ratings: DEMO-ONLY, exactly like v2.
+
+R3_VALUE = 5 * KEYBITS // 8   # 160 for 256-bit
+
+
+def v3_rows(n: int = KEYBITS) -> tuple[int, ...]:
+    """chi row partition for width *n*: 5-bit rows then 7-bit rows.
+
+    The unique such partition with the fewest 7-rows.  Both lengths are odd and
+    >= 5, so the minimum-row-5 constraint holds by construction.  At n = 256
+    this is 47 fives then 3 sevens.
+
+    Raises ValueError if *n* admits no such partition (n < 5, or n in
+    {6, 8, 9, 11, 13}); the deployed widths all do.
+    """
+    for k in range(n // 7 + 1):
+        rest = n - 7 * k
+        if rest % 5 == 0:
+            return (5,) * (rest // 5) + (7,) * k
+    raise ValueError(
+        f"NL-FSCX v3: width {n} admits no all-odd row partition with every row >= 5")
+
+
+def _chi_row(v: int, L: int) -> int:
+    """Keccak chi on one row of length L held in the low bits of v:
+    out_i = b_i XOR ((NOT b_{i+1}) AND b_{i+2}), indices cyclic within the row."""
+    out = 0
+    for i in range(L):
+        bi = (v >> i) & 1
+        b1 = (v >> ((i + 1) % L)) & 1
+        b2 = (v >> ((i + 2) % L)) & 1
+        out |= (bi ^ ((1 - b1) & b2)) << i
+    return out
+
+
+def _chi_row_inv_table(L: int) -> tuple[int, ...]:
+    """Invert chi on a row of length L by table (32 entries at L=5, 128 at L=7).
+    Building it also asserts chi is a bijection there — the property the whole
+    layer rests on."""
+    inv = [0] * (1 << L)
+    seen = [False] * (1 << L)
+    for x in range(1 << L):
+        y = _chi_row(x, L)
+        if seen[y]:
+            raise AssertionError(f"NL-FSCX v3: chi is not a bijection on a {L}-bit row")
+        seen[y] = True
+        inv[y] = x
+    return tuple(inv)
+
+
+_CHI_INV = {5: _chi_row_inv_table(5), 7: _chi_row_inv_table(7)}
+
+
+def nl_chi_v3(X: BitArray) -> BitArray:
+    """Apply the chi layer to a BitArray, row by row."""
+    n = X._size
+    x = X.uint
+    out = 0
+    off = 0
+    for L in v3_rows(n):
+        out |= _chi_row((x >> off) & ((1 << L) - 1), L) << off
+        off += L
+    return BitArray(n, out)
+
+
+def nl_chi_v3_inv(Y: BitArray) -> BitArray:
+    """Invert the chi layer."""
+    n = Y._size
+    y = Y.uint
+    out = 0
+    off = 0
+    for L in v3_rows(n):
+        tbl = _CHI_INV.get(L) or _chi_row_inv_table(L)
+        out |= tbl[(y >> off) & ((1 << L) - 1)] << off
+        off += L
+    return BitArray(n, out)
+
+
+def nl_fscx_v3(A: BitArray, B: BitArray) -> BitArray:
+    """NL-FSCX v3: chi(nl_fscx_v2(A, B)).  Bijective in A for all B."""
+    return nl_chi_v3(nl_fscx_v2(A, B))
+
+
+def nl_fscx_v3_inv(Y: BitArray, B: BitArray) -> BitArray:
+    """Exact inverse of one nl_fscx_v3 step."""
+    return nl_fscx_v2_inv(nl_chi_v3_inv(Y), B)
+
+
+def nl_fscx_revolve_v3(A: BitArray, B: BitArray, steps: int) -> BitArray:
+    """Iterate nl_fscx_v3 *steps* times (B held constant).
+
+    The round constant is v2's, unchanged: an XOR constant leaves xdp+ exactly
+    invariant (TODO #245), and chi does not interact with that argument."""
+    n     = A._size
+    mask  = A._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    rows  = v3_rows(n)
+    result = A.copy()
+    for i in range(1, steps + 1):
+        t = (fscx(BitArray(n, result.uint ^ i), B).uint + delta.uint) & mask
+        out, off = 0, 0
+        for L in rows:
+            out |= _chi_row((t >> off) & ((1 << L) - 1), L) << off
+            off += L
+        result = BitArray(n, out)
+    return result
+
+
+def nl_fscx_revolve_v3_inv(Y: BitArray, B: BitArray, steps: int) -> BitArray:
+    """Invert nl_fscx_revolve_v3: apply nl_fscx_v3_inv *steps* times."""
+    n     = Y._size
+    mask  = Y._mask
+    delta = BitArray(n, (B.uint * ((B.uint + 1) >> 1)) & mask).rotated(n // 4)
+    rows  = v3_rows(n)
+    result = Y.copy()
+    for i in range(steps, 0, -1):
+        y, out, off = result.uint, 0, 0
+        for L in rows:
+            tbl = _CHI_INV.get(L) or _chi_row_inv_table(L)
+            out |= tbl[(y >> off) & ((1 << L) - 1)] << off
+            off += L
+        z      = BitArray(n, (out - delta.uint) & mask)
+        result = BitArray(n, (B ^ _m_inv(z)).uint ^ i)   # undo the round constant
+    return result
+
+
+# ---------------------------------------------------------------------------
 # HFSCX-256-DM: Merkle-Damgård hash over NL-FSCX v1, Davies-Meyer compression (v1.9.0)
 # ---------------------------------------------------------------------------
 

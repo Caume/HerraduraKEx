@@ -221,21 +221,35 @@ item may proceed.  The derivation did not go the way this entry assumed, in thre
   **2.12–2.17×** the v2 round, so v3 @160 is **~1.77×** v2 @192 per block.  The trade is:
   the family's first proven trail bound, on both axes, for roughly 1.8× the work.
 
-**Weak-key classes need re-deriving, and two may simply vanish.**  Both known v2 classes are
-artefacts of the round being linear-then-add-constant, which v3 is not:
+**Weak-key classes: SETTLED — v3 needs NO key check** (v5.1.0; §11.34,
+`SecurityProofsCode/nl_fscx_v3_weak_keys.py`).  Both v2 classes dissolve, and the answer is a
+proof rather than a sample, because v3 admits a reduction v2 never did: the round's
+key-dependence collapses to `delta(B)`, and χ's ROW-LOCALITY makes the per-row profile exact at
+ANY width — so an exhaustive statement about every 256-bit key is a sweep over `L = 5` and
+`L = 7`.
 
-* the affine class `delta(B) ∈ {0, 2^(n-1)}` (§11.19.2) — v2 degenerates to affine there, but
-  χ is non-linear, so v3 plausibly does not.  If so, v3 needs no `nl_v3_key_is_valid` at all.
-* the zero-weight-trail class `tz(delta(B)) >= 4` (§11.28.3) — this is the MSB freebie, and
-  §11.33.2's floor theorem settles it: v3 has no zero-weight round at all, for any key.  (Do
-  not cite §11.32.3's 1.81-2.00 round-1 figures for this — its `n = 8` column is void, see
-  above.)
+* the affine class `delta(B) ∈ {0, 2^(n-1)}` — dissolved, provably: χ is a fixed
+  key-independent non-linear bijection and `χ ∘ (affine)` is never affine, at any width.
+* the zero-weight-trail class `tz(delta(B)) >= 4` — dissolved; its worst one-round DDT entry is
+  `5/16`, which is exactly the universal floor every key already sits on, so it is not a class.
+* a new χ-specific class — none to screen.  The differential profile is key-INDEPENDENT, and
+  the linear one is graded but attains its worst grade for all but ~1 key in 750,000.
+* the `delta(B)`-odd class — real, but a property of 3-rows; closed by the minimum-row-5
+  constraint, not by a key check.
 
-Verify both rather than assuming; a *new* weak class specific to χ is also possible and must
-be looked for.  **One has already been found and closed by construction** — the `delta(B)`-odd
-class of §11.33.4 — but it exists only for partitions violating the minimum-row-5 constraint,
-so the fix is the constraint, not a key check.  At `(5,5)` no correlation-1 key appeared in
-150 samples.  That is evidence, not proof, and the search at full width is still owed.
+So there is deliberately no `nl_v3_key_is_valid` in any port and no rejection-sampling loop in
+any v3 keygen path.  Carrying v2's loop across would reject ~2^-129 of keys for a degeneracy v3
+does not have, while implying the rest had been screened for one that it does.
+
+**Correction to the round count's own derivation** (same script, §11.34.3/§11.34.6).  §11.33.2's
+floor is layer-wise, charged to χ alone; the ROUND-level differential floor is
+`4 - log2(5) = 1.6781`, not `2.000`, the gap being clustering across the addition's carry.  It
+is reached by the LOWEST-ACTIVE-ROW LEMMA — the two members of a pair always share the carry
+into their lowest active row, so that row always pays the same-carry cost.  Consequence:
+the criterion needs `r >= 153`, not `r >= 128`.  **`R3_VALUE = 160` still clears it, but at
+1.05x, not the 1.25x §11.33.6 recorded — there is no room left to reduce the round count.**
+Also settles that §11.33.4's sampled `0.193` and median `0.678` were never weak-key artefacts:
+they are the exact universal single-row figures.
 
 **Scope — what gets a v3 consumer.**  The same five v2 consumers, each as a new variant with
 the v2 one left in place:
@@ -282,8 +296,21 @@ on separate evidence.
 
 **Version.**  MINOR — new `--algo` values and new public API, no existing surface changed.
 
-**Round count derived (v5.0.9) — the item is unblocked.**  Next step is the four-language
-`nl_fscx_v3` / `nl_fscx_revolve_v3` implementation at `R3_VALUE = 5n/8`, with the
-minimum-row-5 assertion, followed by the five consumers.
+**Progress.**
+* v5.0.9 — round count derived (`R3_VALUE = 5n/8 = 160`); the gate is lifted.
+* v5.1.0 — the PRIMITIVE LAYER is done and the key-check question is settled.  `nl_fscx_v3`,
+  `nl_fscx_revolve_v3` and their inverses ship in all four languages (C `herradura.h`, Go
+  `herradura`, Python suite, Java `HerraduraNl`), byte-for-byte identical across the four, with
+  the row partition derived by a rule that emits only 5s and 7s so the minimum-row-5 constraint
+  holds by construction.  Test [47] in the C/Go/Python harnesses asserts χ against a per-row
+  reference, `χ^-1 ∘ χ = id`, the revolve round-trip, the partition's legality, and (Python
+  only, which re-implements) agreement with the shipped suite.
+
+**Remaining.**  The five consumers (`hske-nla3`, `hpke-nl3`, `hske-duplex3`, `fpe --v3`,
+`twk --v3`) in all four CLIs — including the flag-vs-subcommand decision for `fpe`/`twk`, which
+is still owed explicitly — then `spec/` entries, SECURITY.md rows (demo-only), KAT vectors and
+generators, `CliTest/` coverage with each new script claimed by exactly one `native-*` job,
+`test_cross_lang_matrix.sh` extended to the v3 family, `docs/TUTORIAL.md`, `llms.txt`, and the
+end-to-end benchmark against v2.  Nothing in the remaining work is blocked.
 
 Status: **OPEN**
