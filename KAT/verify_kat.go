@@ -44,6 +44,15 @@ type rnlFile struct {
 	SmallRing map[string]interface{} `json:"small_ring"`
 }
 
+// TODO #255: NL-FSCX v3 and its five consumers, likewise in their own file.
+type v3File struct {
+	Primitive map[string]interface{} `json:"nl_fscx_v3"`
+	HskeNla3  map[string]interface{} `json:"hske_nla3"`
+	HpkeNl3   map[string]interface{} `json:"hpke_nl3"`
+	Duplex3   map[string]interface{} `json:"hske_duplex3"`
+	FpeTwkV3  map[string]interface{} `json:"fpe_twk_v3"`
+}
+
 func str(m map[string]interface{}, k string) string { return m[k].(string) }
 
 func num(m map[string]interface{}, k string) int { return int(m[k].(float64)) }
@@ -112,6 +121,94 @@ func verifyRnl(name string, v map[string]interface{}) bool {
 	}
 	fmt.Printf("PASS %s (n=%d, key_bits=%d)\n", name, n, keyBits)
 	return true
+}
+
+// verifyV3 recomputes every NL-FSCX v3 vector with the Go package.  The four
+// ports are byte-identical by design, so a divergence here is a port bug, not a
+// tolerance question -- there is nothing probabilistic in any of these.
+func verifyV3(v v3File) int {
+	n := 256
+	fails := 0
+	check := func(name, got, want string) {
+		if got != want {
+			fmt.Printf("FAIL %s: got %s want %s\n", name, got, want)
+			fails++
+		} else {
+			fmt.Println("PASS " + name)
+		}
+	}
+	hx := func(b *BitArray) string { return fmt.Sprintf("%0*x", n/4, &b.Val) }
+
+	// The primitive: chi, one round, the full revolve, and its inverse.
+	{
+		p := v.Primitive
+		key := hexToBA(n, str(p, "key"))
+		pt := hexToBA(n, str(p, "plaintext"))
+		r3 := num(p, "r3_steps")
+		if r3 != R3Value {
+			fmt.Printf("FAIL nl_fscx_v3: vector says r3_steps=%d, package says %d\n", r3, R3Value)
+			fails++
+		}
+		if i3 := num(p, "i3_steps"); i3 != I3Value {
+			fmt.Printf("FAIL nl_fscx_v3: vector says i3_steps=%d, package says %d\n", i3, I3Value)
+			fails++
+		}
+		check("nl_fscx_v3 chi", hx(NlChiV3(pt)), str(p, "chi_of_plaintext"))
+		check("nl_fscx_v3 round", hx(NlFscxV3(pt, key)), str(p, "one_round"))
+		ct := NlFscxRevolveV3(pt, key, r3)
+		check("nl_fscx_v3 revolve", hx(ct), str(p, "revolve"))
+		check("nl_fscx_v3 revolve_inv", hx(NlFscxRevolveV3Inv(ct, key, r3)), str(p, "plaintext"))
+	}
+
+	// HSKE-NL-A3.
+	{
+		a := v.HskeNla3
+		ct := NlFscxRevolveV3(hexToBA(n, str(a, "plaintext")),
+			hexToBA(n, str(a, "key")), num(a, "r3_steps"))
+		check("hske_nla3", hx(ct), str(a, "ciphertext"))
+	}
+
+	// HPKE-NL3: rederive the shared encryption key from both sides, then encrypt.
+	{
+		e := v.HpkeNl3
+		poly := GfPoly[n]
+		priv := hexToBig(str(e, "priv"))
+		r := hexToBig(str(e, "ephemeral_r"))
+		pub := GfPow(big.NewInt(GfGen), priv, poly, n)
+		bigR := GfPow(big.NewInt(GfGen), r, poly, n)
+		encKey := NewBitArray(n, GfPow(pub, r, poly, n))
+		decKey := NewBitArray(n, GfPow(bigR, priv, poly, n))
+		check("hpke_nl3 pub", fmt.Sprintf("%0*x", n/4, pub), str(e, "pub"))
+		check("hpke_nl3 R", fmt.Sprintf("%0*x", n/4, bigR), str(e, "R"))
+		check("hpke_nl3 enc_key", hx(encKey), str(e, "enc_key"))
+		check("hpke_nl3 dec_key agrees", hx(decKey), str(e, "enc_key"))
+		ct := NlFscxRevolveV3(hexToBA(n, str(e, "plaintext")), encKey, num(e, "r3_steps"))
+		check("hpke_nl3", hx(ct), str(e, "ciphertext"))
+	}
+
+	// HSKE-NL-V3-Duplex.
+	{
+		d := v.Duplex3
+		pt, _ := hex.DecodeString(str(d, "plaintext"))
+		ad, _ := hex.DecodeString(str(d, "ad"))
+		ct, tag := HskeNlV3DuplexEncrypt(hexToBA(n, str(d, "key")),
+			hexToBA(n, str(d, "nonce")), ad, pt)
+		check("hske_duplex3 ct", hex.EncodeToString(ct), str(d, "ciphertext"))
+		check("hske_duplex3 tag", hex.EncodeToString(tag), str(d, "tag"))
+	}
+
+	// fpe --v3 / twk --v3.
+	{
+		f := v.FpeTwkV3
+		key := hexToBA(n, str(f, "key")).Bytes()
+		pt := hexToBA(n, str(f, "plaintext"))
+		ctx, _ := hex.DecodeString(str(f, "fpe_context"))
+		check("fpe_v3", hx(FpeV3Encrypt(pt, key, ctx)), str(f, "fpe_ciphertext"))
+		sector := hexToBig(str(f, "twk_sector")).Uint64()
+		bidx := uint32(hexToBig(str(f, "twk_bidx")).Uint64())
+		check("twk_v3", hx(TwkV3Encrypt(pt, key, sector, bidx)), str(f, "twk_ciphertext"))
+	}
+	return fails
 }
 
 func polyHex(coeffs []int, bytesPerCoeff int) string {
@@ -236,6 +333,20 @@ func main() {
 			if !verifyRnl("hkex_rnl small_ring", rv.SmallRing) {
 				fails++
 			}
+		}
+	}
+
+	// ── NL-FSCX v3 (TODO #255) ──────────────────────────────────────────
+	if vdata, err := os.ReadFile("KAT/nl_fscx_v3.json"); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot read KAT/nl_fscx_v3.json:", err)
+		fails++
+	} else {
+		var vv v3File
+		if err := json.Unmarshal(vdata, &vv); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot parse KAT/nl_fscx_v3.json:", err)
+			fails++
+		} else {
+			fails += verifyV3(vv)
 		}
 	}
 

@@ -598,6 +598,16 @@ func NlFscxRevolveV2Inv(y, b *BitArray, steps int) *BitArray {
 // R3Value is NL-FSCX v3's round count at the suite's 256-bit width.
 const R3Value = 5 * 256 / 8 // 160
 
+// I3Value is the sponge round count for HSKE-NL-V3-Duplex (TODO #255).
+// DERIVED, and the first duplex round count in this suite that is: the capacity
+// is 128 bits, so 128 bits is the target, and chi's proven per-round floors put
+// the requirement at r >= 128/1.6781 = 77 differential and r >= 64 linear.
+// 5n/16 clears both and is exactly half of R3Value for a half-width target.
+// Deliberately NOT hske-duplex's IValue = n/4 = 64, which was inherited rather
+// than derived and which 1.6781 bits/round would leave at 107 bits.
+// See SecurityProofs-8.md 11.34.8.
+const I3Value = 5 * 256 / 16 // 80
+
 // V3Rows returns the chi row partition for width n: 5-bit rows followed by
 // 7-bit rows, the unique such partition with the fewest 7-rows. Both lengths
 // are odd and >= 5, so the minimum-row-5 constraint holds by construction.
@@ -945,19 +955,32 @@ var (
 	v2dplexDSInit  = []byte("NL-V2-DUPLEX-INIT")
 	v2dplexDSTweak = []byte("NL-V2-DUPLEX-TWEAK")
 	v2dplexDSTag   = []byte("NL-V2-DUPLEX-TAG")
+
+	// HSKE-NL-V3-Duplex (TODO #255): the same construction over the v3
+	// permutation at I3Value, with its own domain-separation strings, so a v2
+	// and a v3 session under the same (key, nonce) share no state, tweak or
+	// tag input.
+	v3dplexDSInit  = []byte("NL-V3-DUPLEX-INIT")
+	v3dplexDSTweak = []byte("NL-V3-DUPLEX-TWEAK")
+	v3dplexDSTag   = []byte("NL-V3-DUPLEX-TAG")
 )
 
-func v2dplexPerm(state []byte, tw *BitArray) []byte {
+func v2dplexPerm(state []byte, tw *BitArray, v3 bool) []byte {
 	n := tw.Size()
 	sa := NewBitArray(n, new(big.Int).SetBytes(state))
-	r := NlFscxRevolveV2(sa, tw, n/4)
+	var r *BitArray
+	if v3 {
+		r = NlFscxRevolveV3(sa, tw, 5*n/16)
+	} else {
+		r = NlFscxRevolveV2(sa, tw, n/4)
+	}
 	b := r.Val.Bytes()
 	out := make([]byte, n/8)
 	copy(out[n/8-len(b):], b)
 	return out
 }
 
-func v2dplexInit(key, nonce *BitArray) ([]byte, *BitArray) {
+func v2dplexInit(key, nonce *BitArray, v3 bool) ([]byte, *BitArray) {
 	n := key.Size()
 	keyb := make([]byte, n/8)
 	kb := key.Val.Bytes()
@@ -966,19 +989,23 @@ func v2dplexInit(key, nonce *BitArray) ([]byte, *BitArray) {
 	nbb := nonce.Val.Bytes()
 	copy(nb[n/8-len(nbb):], nbb)
 
-	stateSrc := append(append(append([]byte{}, v2dplexDSInit...), keyb...), nb...)
+	dsInit, dsTweak := v2dplexDSInit, v2dplexDSTweak
+	if v3 {
+		dsInit, dsTweak = v3dplexDSInit, v3dplexDSTweak
+	}
+	stateSrc := append(append(append([]byte{}, dsInit...), keyb...), nb...)
 	state := Hfscx256(stateSrc, nil)
 
-	tweakSrc := append(append(append([]byte{}, v2dplexDSTweak...), keyb...), nb...)
+	tweakSrc := append(append(append([]byte{}, dsTweak...), keyb...), nb...)
 	tweakB := Hfscx256(tweakSrc, nil)
 	tw := NewBitArray(n, new(big.Int).SetBytes(tweakB))
 
-	state = v2dplexPerm(state, tw)
-	state = v2dplexPerm(state, tw)
+	state = v2dplexPerm(state, tw, v3)
+	state = v2dplexPerm(state, tw, v3)
 	return state, tw
 }
 
-func v2dplexAbsorbAD(state []byte, tw *BitArray, ad []byte) []byte {
+func v2dplexAbsorbAD(state []byte, tw *BitArray, ad []byte, v3 bool) []byte {
 	R := v2dplexRate
 	lenEnc := make([]byte, 8)
 	l := uint64(len(ad))
@@ -1000,18 +1027,18 @@ func v2dplexAbsorbAD(state []byte, tw *BitArray, ad []byte) []byte {
 		for j := 0; j < R; j++ {
 			state[j] ^= block[j]
 		}
-		state = v2dplexPerm(state, tw)
+		state = v2dplexPerm(state, tw, v3)
 	}
 	state[R] ^= 0x01 // domain separator: end of AD
-	state = v2dplexPerm(state, tw)
+	state = v2dplexPerm(state, tw, v3)
 	return state
 }
 
-func v2dplexEnc(state []byte, tw *BitArray, pt []byte) ([]byte, []byte) {
+func v2dplexEnc(state []byte, tw *BitArray, pt []byte, v3 bool) ([]byte, []byte) {
 	R := v2dplexRate
 	ct := make([]byte, 0, len(pt))
 	if len(pt) == 0 {
-		state = v2dplexPerm(state, tw)
+		state = v2dplexPerm(state, tw, v3)
 		return ct, state
 	}
 	for off := 0; off < len(pt); off += R {
@@ -1030,16 +1057,16 @@ func v2dplexEnc(state []byte, tw *BitArray, pt []byte) ([]byte, []byte) {
 		if L < R {
 			state[L] ^= 0x80
 		}
-		state = v2dplexPerm(state, tw)
+		state = v2dplexPerm(state, tw, v3)
 	}
 	return ct, state
 }
 
-func v2dplexDec(state []byte, tw *BitArray, ct []byte) ([]byte, []byte) {
+func v2dplexDec(state []byte, tw *BitArray, ct []byte, v3 bool) ([]byte, []byte) {
 	R := v2dplexRate
 	pt := make([]byte, 0, len(ct))
 	if len(ct) == 0 {
-		state = v2dplexPerm(state, tw)
+		state = v2dplexPerm(state, tw, v3)
 		return pt, state
 	}
 	for off := 0; off < len(ct); off += R {
@@ -1060,15 +1087,19 @@ func v2dplexDec(state []byte, tw *BitArray, ct []byte) ([]byte, []byte) {
 		if L < R {
 			state[L] ^= 0x80
 		}
-		state = v2dplexPerm(state, tw)
+		state = v2dplexPerm(state, tw, v3)
 	}
 	return pt, state
 }
 
-func v2dplexFinalizeTag(state []byte, tw *BitArray) []byte {
+func v2dplexFinalizeTag(state []byte, tw *BitArray, v3 bool) []byte {
 	state[v2dplexRate] ^= 0x02
-	state = v2dplexPerm(state, tw)
-	return Hfscx256(append(append([]byte{}, state...), v2dplexDSTag...), nil)
+	state = v2dplexPerm(state, tw, v3)
+	dsTag := v2dplexDSTag
+	if v3 {
+		dsTag = v3dplexDSTag
+	}
+	return Hfscx256(append(append([]byte{}, state...), dsTag...), nil)
 }
 
 // HskeNlV2DuplexEncrypt AEAD-encrypts pt under (key, nonce) with associated
@@ -1076,10 +1107,21 @@ func v2dplexFinalizeTag(state []byte, tw *BitArray) []byte {
 // supplies a fresh random 256-bit nonce (e.g. NewRandBitArray(256)).
 // RESEARCH CONSTRUCTION — not for production use.
 func HskeNlV2DuplexEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
-	state, tw := v2dplexInit(key, nonce)
-	state = v2dplexAbsorbAD(state, tw, ad)
-	ct, state := v2dplexEnc(state, tw, pt)
-	tag := v2dplexFinalizeTag(state, tw)
+	return dplexEncrypt(key, nonce, ad, pt, false)
+}
+
+// HskeNlV3DuplexEncrypt is HskeNlV2DuplexEncrypt over the NL-FSCX v3
+// permutation at I3Value, with the v3 domain-separation strings (TODO #255).
+// RESEARCH CONSTRUCTION — not for production use.
+func HskeNlV3DuplexEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte) {
+	return dplexEncrypt(key, nonce, ad, pt, true)
+}
+
+func dplexEncrypt(key, nonce *BitArray, ad, pt []byte, v3 bool) ([]byte, []byte) {
+	state, tw := v2dplexInit(key, nonce, v3)
+	state = v2dplexAbsorbAD(state, tw, ad, v3)
+	ct, state := v2dplexEnc(state, tw, pt, v3)
+	tag := v2dplexFinalizeTag(state, tw, v3)
 	return ct, tag
 }
 
@@ -1087,10 +1129,21 @@ func HskeNlV2DuplexEncrypt(key, nonce *BitArray, ad, pt []byte) ([]byte, []byte)
 // or (nil, false) if the tag does not authenticate.  Tag comparison is
 // constant-time.  RESEARCH CONSTRUCTION — not for production use.
 func HskeNlV2DuplexDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) {
-	state, tw := v2dplexInit(key, nonce)
-	state = v2dplexAbsorbAD(state, tw, ad)
-	pt, state := v2dplexDec(state, tw, ct)
-	expected := v2dplexFinalizeTag(state, tw)
+	return dplexDecrypt(key, nonce, ad, ct, tag, false)
+}
+
+// HskeNlV3DuplexDecrypt verifies then decrypts an HSKE-NL-V3-Duplex message
+// (TODO #255).  Returns (pt, true) on success or (nil, false) if the tag does
+// not authenticate.  Tag comparison is constant-time.
+func HskeNlV3DuplexDecrypt(key, nonce *BitArray, ad, ct, tag []byte) ([]byte, bool) {
+	return dplexDecrypt(key, nonce, ad, ct, tag, true)
+}
+
+func dplexDecrypt(key, nonce *BitArray, ad, ct, tag []byte, v3 bool) ([]byte, bool) {
+	state, tw := v2dplexInit(key, nonce, v3)
+	state = v2dplexAbsorbAD(state, tw, ad, v3)
+	pt, state := v2dplexDec(state, tw, ct, v3)
+	expected := v2dplexFinalizeTag(state, tw, v3)
 	if subtle.ConstantTimeCompare(tag, expected) != 1 {
 		return nil, false
 	}
@@ -3065,6 +3118,10 @@ func HaccumVerify(root, leafHash []byte, proof [][]byte, idx int) bool {
 const (
 	fpeDS = 0x20
 	twkDS = 0x21
+	// ... the same, over NL-FSCX v3 (TODO #255).  Distinct tags, so the same
+	// (key, tweak) never yields the same subkey for the v2 and v3 variants.
+	fpeV3DS = 0x22
+	twkV3DS = 0x23
 )
 
 // fpeTwkDeriveB is B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak), rejected
@@ -3126,6 +3183,53 @@ func TwkEncrypt(block *BitArray, key []byte, sector uint64, bidx uint32) *BitArr
 // TwkDecrypt decrypts a 256-bit block with sector and block-index tweaks.
 func TwkDecrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
 	return NlFscxRevolveV2Inv(ct, twkDeriveB(key, sector, bidx), 192)
+}
+
+// ---------------------------------------------------------------------------
+// 78.A / 78.B over NL-FSCX v3  (TODO #255)
+//
+// Same constructions, same shape, v3 in place of v2 at R3Value steps.
+//
+// NO REJECTION LOOP, deliberately.  fpeTwkDeriveB rehashes past v2's
+// affine-degenerate subkeys; v3 has no such class at all (SecurityProofs-8.md
+// 11.34.4), so a loop here would reject ~2^-129 of subkeys for a degeneracy the
+// primitive does not have, while implying the rest had been screened for one
+// that it does.  The derivation is a single hash.
+// ---------------------------------------------------------------------------
+
+func fpeTwkV3DeriveB(ds byte, key, tweak []byte) *BitArray {
+	buf := make([]byte, 8+len(key)+len(tweak))
+	binary.BigEndian.PutUint64(buf, uint64(len(key)))
+	copy(buf[8:], key)
+	copy(buf[8+len(key):], tweak)
+	return NewBitArray(256, new(big.Int).SetBytes(Hfscx256DS(ds, buf, nil)))
+}
+
+// FpeV3Encrypt is FpeEncrypt over NL-FSCX v3.
+func FpeV3Encrypt(pt *BitArray, key, ctx []byte) *BitArray {
+	return NlFscxRevolveV3(pt, fpeTwkV3DeriveB(fpeV3DS, key, ctx), R3Value)
+}
+
+// FpeV3Decrypt is the inverse of FpeV3Encrypt.
+func FpeV3Decrypt(ct *BitArray, key, ctx []byte) *BitArray {
+	return NlFscxRevolveV3Inv(ct, fpeTwkV3DeriveB(fpeV3DS, key, ctx), R3Value)
+}
+
+func twkV3DeriveB(key []byte, sector uint64, bidx uint32) *BitArray {
+	tw := make([]byte, 12)
+	binary.BigEndian.PutUint64(tw, sector)
+	binary.BigEndian.PutUint32(tw[8:], bidx)
+	return fpeTwkV3DeriveB(twkV3DS, key, tw)
+}
+
+// TwkV3Encrypt is TwkEncrypt over NL-FSCX v3.
+func TwkV3Encrypt(block *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
+	return NlFscxRevolveV3(block, twkV3DeriveB(key, sector, bidx), R3Value)
+}
+
+// TwkV3Decrypt is the inverse of TwkV3Encrypt.
+func TwkV3Decrypt(ct *BitArray, key []byte, sector uint64, bidx uint32) *BitArray {
+	return NlFscxRevolveV3Inv(ct, twkV3DeriveB(key, sector, bidx), R3Value)
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ import java.util.Map;
  * herradura_cli.c / herradura_cli.go's subcommand interface. Covers the
  * classical quartet (algo values hkex-gf, hpks, hpke, plus hske for
  * symmetric enc/dec — {@link Herradura}) and the NL/PQC quartet (hkex-rnl,
- * hske-nla1, hske-nla2, hpks-nl, hpke-nl — {@link HerraduraNl}). dgst and
+ * hske-nla1, hske-nla2, hske-nla3, hpks-nl, hpke-nl, hpke-nl3 — {@link HerraduraNl}). dgst and
  * encfile/decfile additionally use the NL-FSCX-based HFSCX-256 hash and
  * HSKE-NL-A1 file container ({@link Hfscx256}) for wire-format parity with
  * the other CLIs.
@@ -174,10 +174,11 @@ public final class HerraduraCli {
             case "hpks-nl":  return Codec.PEM_HPKS_NL_PRIV;
             case "hpke":     return Codec.PEM_HPKE_PRIV;
             case "hpke-nl":  return Codec.PEM_HPKE_NL_PRIV;
+            case "hpke-nl3": return Codec.PEM_HPKE_NL3_PRIV;
             case "hkex-rnl": return Codec.PEM_HKEX_RNL_PRIV;
             default: throw new CliError("genpkey: unsupported --algo " + algo
                 + " (this Java CLI covers the classical quartet plus hkex-rnl, "
-                + "hske-nla1/nla2, hpks-nl, hpke-nl)");
+                + "hske-nla1/nla2/nla3, hpks-nl, hpke-nl, hpke-nl3)");
         }
     }
 
@@ -188,6 +189,7 @@ public final class HerraduraCli {
             case "hpks-nl":  return Codec.PEM_HPKS_NL_PUB;
             case "hpke":     return Codec.PEM_HPKE_PUB;
             case "hpke-nl":  return Codec.PEM_HPKE_NL_PUB;
+            case "hpke-nl3": return Codec.PEM_HPKE_NL3_PUB;
             case "hkex-rnl": return Codec.PEM_HKEX_RNL_PUB;
             default: throw new CliError("unsupported --algo " + algo);
         }
@@ -199,6 +201,7 @@ public final class HerraduraCli {
         if (label.equals(Codec.PEM_HPKS_NL_PRIV))  return "hpks-nl";
         if (label.equals(Codec.PEM_HPKE_PRIV))     return "hpke";
         if (label.equals(Codec.PEM_HPKE_NL_PRIV))  return "hpke-nl";
+        if (label.equals(Codec.PEM_HPKE_NL3_PRIV)) return "hpke-nl3";
         throw new CliError("unrecognized private-key label: " + label);
     }
 
@@ -565,6 +568,15 @@ public final class HerraduraCli {
             BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
             BigInteger e = HerraduraNl.hskeNlA2Encrypt(p, key[0]);
             writeString(out, encodeSymCt(e, nbits));
+        } else if (algo.equals("hske-nla3")) {
+            // No key check: v3 has no weak class (TODO #255).
+            BigInteger[] key = loadKey(req(opt, "key", "enc"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) {
+                throw new CliError("enc hske-nla3: requires a 256-bit key");
+            }
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbits / 8));
+            writeString(out, encodeSymCt(HerraduraNl.hskeNlA3Encrypt(p, key[0]), nbits));
         } else if (algo.equals("hpke")) {
             String pubPath = req(opt, "pubkey", "enc");
             String pubPem = readString(pubPath);
@@ -584,6 +596,14 @@ public final class HerraduraCli {
             BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
             Herradura.Ciphertext ct = HerraduraNl.hpkeNlEncrypt(p, pub.pub, RNG);
             if (ct == null) throw new CliError("enc: could not sample a non-degenerate ephemeral key");
+            writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
+        } else if (algo.equals("hpke-nl3")) {
+            String pubPem = readString(req(opt, "pubkey", "enc"));
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            Codec.PubKey pub = Codec.decodePubKey(pubPem, pubBlock.label);
+            BigInteger p = new BigInteger(1, padTrunc(inBytes, pub.nbits / 8));
+            Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(p, pub.pub, RNG);
+            if (ct == null) throw new CliError("enc: recipient public key is degenerate");
             writeString(out, Codec.encodeAsymCt(ct.r, ct.ct, pub.nbits));
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -607,7 +627,7 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemCt(enc.syn, e));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -637,6 +657,16 @@ public final class HerraduraCli {
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             BigInteger d = HerraduraNl.hskeNlA2Decrypt(ct[0], key[0]);
             writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hske-nla3")) {
+            // No key check: v3 has no weak class (TODO #255).
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) {
+                throw new CliError("dec hske-nla3: requires a 256-bit key");
+            }
+            BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
+            writeBytes(out, toFixedBytes(
+                HerraduraNl.hskeNlA3Decrypt(ct[0], key[0]), nbits / 8));
         } else if (algo.equals("hpke")) {
             BigInteger[] key = loadKey(req(opt, "key", "dec"));
             int nbits = key[1].intValueExact();
@@ -650,6 +680,13 @@ public final class HerraduraCli {
             Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
             BigInteger d = HerraduraNl.hpkeNlDecrypt(ct.e, ct.r, key[0]);
             if (d == null) throw new CliError("dec: ephemeral public value is degenerate or key is affine-weak");
+            writeBytes(out, toFixedBytes(d, nbits / 8));
+        } else if (algo.equals("hpke-nl3")) {
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            Codec.AsymCt ct = Codec.decodeAsymCt(readString(req(opt, "in", "dec")));
+            BigInteger d = HerraduraNl.hpkeNl3Decrypt(ct.e, ct.r, key[0]);
+            if (d == null) throw new CliError("dec: ephemeral public value is degenerate");
             writeBytes(out, toFixedBytes(d, nbits / 8));
         } else if (algo.equals("hpke-stern")) {
             sternDemoWarning();
@@ -676,7 +713,7 @@ public final class HerraduraCli {
             writeBytes(out, toFixedBytes(d, Herradura.N / 8));
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hpke, hpke-nl, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 

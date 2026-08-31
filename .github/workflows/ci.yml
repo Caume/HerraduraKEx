@@ -136,7 +136,8 @@ jobs:
                    CliTest/test_fuzz_interop.sh CliTest/test_kat_vectors.sh CliTest/test_duplex.sh \
                    CliTest/test_rand.sh CliTest/test_ring.sh CliTest/test_stern_kem.sh CliTest/test_wots.sh \
                    CliTest/test_zkbpp.sh CliTest/test_zkp_default_rounds.sh \
-                   CliTest/test_kat_pem.sh CliTest/test_fpe_twk.sh; do
+                   CliTest/test_kat_pem.sh CliTest/test_fpe_twk.sh \
+                   CliTest/test_v3_family.sh; do
             echo "=== $f ==="
             bash "$f"
           done
@@ -152,7 +153,7 @@ jobs:
                     test_stern_interop.sh test_zkp_interop.sh test_hybrid_kex_interop.sh test_threshold_interop.sh \
                     test_fuzz_interop.sh test_kat_vectors.sh test_duplex.sh test_rand.sh test_ring.sh \
                     test_stern_kem.sh test_wots.sh test_zkbpp.sh test_zkp_default_rounds.sh \
-                    test_kat_pem.sh test_fpe_twk.sh"
+                    test_kat_pem.sh test_fpe_twk.sh test_v3_family.sh"
           cd CliTest
           missing=0
           for f in *.sh; do

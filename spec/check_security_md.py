@@ -75,6 +75,14 @@ ROW_PROTOCOLS = {
     "FPE":                                  ["fpe"],
     "Tweakable wide-block":                 ["twk"],
     "HDRBG":                                ["hdrbg"],
+    # TODO #255: the NL-FSCX v3 family.  Each is a separate construction with a
+    # separate subkey domain and its own rating, so each gets its own row rather
+    # than a parenthetical on its v2 counterpart.
+    "HSKE-NL-A3":                           ["hske-nla3"],
+    "HSKE-Duplex-V3":                       ["hske-duplex3"],
+    "HPKE-NL3":                             ["hpke-nl3"],
+    "FPE-V3":                               ["fpe-v3"],
+    "Tweakable wide-block V3":              ["twk-v3"],
 }
 
 # SECURITY.md status prose -> the spec/ status values compatible with it.  Matched

@@ -1655,6 +1655,7 @@ func main() {
 	testWeakKeyRejection()
 	testFpeTwkDomainSeparation()
 	testNlFscxV3()
+	testNlFscxV3Consumers()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -1851,6 +1852,96 @@ func testNlFscxV3() {
 	fmt.Printf("    n=%d  R3Value=%d  rows=%d sum=%d illegal=%d  chi!=ref=%d"+
 		"  chi-inv fails=%d  revolve round-trip fails=%d  v3==v2=%d  [%s]\n\n",
 		N, R3Value, len(rows), rowsum, badrow, badRef, badInv, badRT, sameAsV2, status)
+}
+
+// [48] The NL-FSCX v3 consumers (TODO #255).  [47] pins the primitive; this
+// pins the five constructions on top of it, and every check is a property the
+// primitive alone does not give you:
+//
+//	(a) each consumer round-trips.  A wrong round count still round-trips;
+//	    a wrong INVERSE round count does not;
+//	(b) each v3 consumer differs from its v2 counterpart on the same inputs
+//	    -- the domain-separation assertion.  A copy-paste that reused v2's
+//	    DS strings or tags would still round-trip;
+//	(c) fpe --v3 and twk --v3 disagree at a 12-BYTE CONTEXT, the exact shape
+//	    of the TODO #241 bug (§11.24.4) where the v2 pair were literally the
+//	    same function whenever ctx == sector||bidx.  [46] guards the v2 pair;
+//	(d) the duplex rejects a flipped AD.
+func testNlFscxV3Consumers() {
+	fmt.Println("[48] NL-FSCX v3 consumers: round-trip, v2 separation, AEAD  [SECURITY]")
+	N := testRounds(100)
+	const sector uint64 = 0x0123456789ABCDEF
+	const bidx uint32 = 0x00C0FFEE
+	tw12 := make([]byte, 12)
+	binary.BigEndian.PutUint64(tw12, sector)
+	binary.BigEndian.PutUint32(tw12[8:], bidx)
+
+	badRT, sameAsV2, fpeEqTwk, forged := 0, 0, 0, 0
+	t0 := time.Now()
+	for i := 0; i < N; i++ {
+		P := NewRandBitArray(256)
+		K := NewRandBitArray(256)
+		nonce := NewRandBitArray(256)
+		pt := make([]byte, 40)
+		for j := range pt {
+			pt[j] = P.Bytes()[j%32] ^ byte(j)
+		}
+
+		// hske-nla3
+		E3 := NlFscxRevolveV3(P, K, R3Value)
+		if NlFscxRevolveV3Inv(E3, K, R3Value).Val.Cmp(&P.Val) != 0 {
+			badRT++
+		}
+		if NlFscxRevolveV2(P, K, 3*256/4).Val.Cmp(&E3.Val) == 0 {
+			sameAsV2++
+		}
+
+		// hske-duplex3
+		ct, tag := HskeNlV3DuplexEncrypt(K, nonce, []byte("ad"), pt)
+		if got, ok := HskeNlV3DuplexDecrypt(K, nonce, []byte("ad"), ct, tag); !ok ||
+			!bytes.Equal(got, pt) {
+			badRT++
+		}
+		if _, ok := HskeNlV3DuplexDecrypt(K, nonce, []byte("AD"), ct, tag); ok {
+			forged++
+		}
+		ct2, _ := HskeNlV2DuplexEncrypt(K, nonce, []byte("ad"), pt)
+		if bytes.Equal(ct2, ct) {
+			sameAsV2++
+		}
+
+		// fpe --v3 / twk --v3, and the 12-byte-context collision (c)
+		keyB := K.Bytes()
+		F3 := FpeV3Encrypt(P, keyB, tw12)
+		if FpeV3Decrypt(F3, keyB, tw12).Val.Cmp(&P.Val) != 0 {
+			badRT++
+		}
+		if FpeEncrypt(P, keyB, tw12).Val.Cmp(&F3.Val) == 0 {
+			sameAsV2++
+		}
+		T3 := TwkV3Encrypt(P, keyB, sector, bidx)
+		if TwkV3Decrypt(T3, keyB, sector, bidx).Val.Cmp(&P.Val) != 0 {
+			badRT++
+		}
+		if TwkEncrypt(P, keyB, sector, bidx).Val.Cmp(&T3.Val) == 0 {
+			sameAsV2++
+		}
+		if F3.Val.Cmp(&T3.Val) == 0 {
+			fpeEqTwk++
+		}
+
+		if gTimeLimit > 0 && i&63 == 63 && time.Since(t0) >= gTimeLimit {
+			N = i + 1
+			break
+		}
+	}
+	status := "PASS"
+	if badRT != 0 || sameAsV2 != 0 || fpeEqTwk != 0 || forged != 0 {
+		status = "FAIL"
+	}
+	fmt.Printf("    n=%d  round-trip fails=%d  v3==v2=%d  fpe-v3==twk-v3 at "+
+		"12-byte ctx=%d  AEAD forgeries=%d  [%s]\n\n",
+		N, badRT, sameAsV2, fpeEqTwk, forged, status)
 }
 
 func testWeakKeyRejection() {

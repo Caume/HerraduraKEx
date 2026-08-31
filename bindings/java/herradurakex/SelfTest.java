@@ -141,6 +141,39 @@ public final class SelfTest {
             }
         }
 
+        // HSKE-NL-A3 and HPKE-NL3 (NL-FSCX v3, TODO #255).  Deliberately NO
+        // nlV2KeyIsValid filter on the key: v3 has no weak-key class, so the
+        // filter above would be testing a screen that does not exist.  The
+        // v3 != v2 check is what would catch a chi layer that degenerated to
+        // the identity -- a round-trip alone would not.
+        {
+            BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BigInteger ct = HerraduraNl.hskeNlA3Encrypt(pt, key);
+            boolean rt = HerraduraNl.hskeNlA3Decrypt(ct, key).equals(pt);
+            boolean differsFromV2 =
+                    !ct.equals(HerraduraNl.nlFscxRevolveV2(pt, key, HerraduraNl.R3_VALUE));
+            if (!rt || !differsFromV2) {
+                System.out.println("FAIL hske_nl_a3 round-trip (rt=" + rt
+                        + " differs_from_v2=" + differsFromV2 + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hske_nl_a3 round-trip");
+            }
+
+            BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BigInteger pub = Herradura.hkexGfPubkey(priv);
+            Herradura.Ciphertext enc3 = HerraduraNl.hpkeNl3Encrypt(pt, pub, rng);
+            BigInteger rec3 = enc3 == null ? null
+                    : HerraduraNl.hpkeNl3Decrypt(enc3.ct, enc3.r, priv);
+            if (enc3 == null || !pt.equals(rec3)) {
+                System.out.println("FAIL hpke_nl3 round-trip");
+                fails++;
+            } else {
+                System.out.println("PASS hpke_nl3 round-trip");
+            }
+        }
+
         // HPKS-NL: sign/verify, plus a tampered-message rejection check.
         {
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);

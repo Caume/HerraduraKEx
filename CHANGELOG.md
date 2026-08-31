@@ -2,6 +2,106 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.0] - 2026-08-30
+
+### TODO #255 (partial) — the five NL-FSCX v3 consumers, across every CLI
+
+MINOR: new `--algo` values, a new flag, new PEM labels and new public API; nothing
+existing changed.  v3 remains an addition alongside v2, so every stored v2 key,
+ciphertext and signature keeps working, and no `MIGRATING.md` entry is needed.
+
+### Added
+
+- **The five v3 consumers**, each alongside its v2 counterpart:
+
+  | v2 | v3 | reached by | implementations |
+  |---|---|---|---|
+  | `hske-nla2` | `hske-nla3` | `--algo` | C, Go, Python, Java |
+  | `hpke-nl` | `hpke-nl3` | `--algo`, own PEM labels | C, Go, Python, Java |
+  | `hske-duplex` | `hske-duplex3` | `--algo`, ciphertext format tag 4 | C, Go, Python |
+  | `fpe` | `fpe --v3` | flag | C, Go, Python |
+  | `twk` | `twk --v3` | flag | C, Go, Python |
+
+  Java gets the two its CLI has counterparts for; it ships no duplex, `fpe` or `twk`
+  in either version.  Every artifact is byte-identical across the implementations that
+  ship it, proven by `CliTest/test_v3_family.sh` and the 4-language matrix.
+- **`hske_nl_v3_duplex_encrypt`/`_decrypt`**, **`fpe_v3_encrypt`/`_decrypt`** and
+  **`twk_v3_encrypt`/`_decrypt`** in C, Go and Python; **`hskeNlA3Encrypt`/`Decrypt`**
+  and **`hpkeNl3Encrypt`/`Decrypt`** in Java.
+- **`KAT/nl_fscx_v3.json`** — the first KAT coverage of the NL side of the suite:
+  the primitive (χ, one round, the revolve and its inverse) plus all five consumers.
+  `KAT/verify_kat.go` checks all of it against the Go package; `KatVerify` checks the
+  three sets Java ports.
+- **`CliTest/test_v3_family.sh`** (claimed by `native-interop`) and v3 rows in
+  `CliTest/test_cross_lang_matrix.sh`, which now runs 518 checks across four languages.
+- **Test [48]** in the C, Go and Python harnesses, for the consumers that [47] does not
+  reach: round-trips, each v3 variant differing from its v2 counterpart on the same
+  inputs (a reused domain-separation string or tag would still round-trip), `fpe --v3`
+  vs `twk --v3` at a 12-byte context — #241's bug in new code — and, in C and Go, that
+  the v3 duplex rejects a flipped AD.  Java's `SelfTest` gains the two round-trips its
+  port has.
+- **`benchmarks/v3_consumer_cost.c`** — the end-to-end figures, against the shipped
+  `herradura.h` rather than a model.
+- **`spec/` entries and `SECURITY.md` rows for all five**, all demo-only or worse.
+
+### Decided
+
+- **`fpe`/`twk` take a `--v3` flag, not new subcommands.**  Both are already filed in
+  `spec/` by CLI binding rather than by `--algo` tag; the flag keeps every other option
+  identical between the two variants; and a second pair of subcommands would have
+  doubled a surface TODO #241 already found confusing.  `spec/` grows a
+  `cli_binding.kind` of `subcommand_flag` to say so machine-readably, validated against
+  both the subparser list and the flag itself.
+- **`I3_VALUE = 5n/16 = 80` for the v3 duplex sponge**, and it is the first duplex round
+  count in this suite that is *derived*: the capacity is 128 bits, so 128 bits is the
+  target, and χ's proven per-round floors put the requirement at `r ≥ 77` differential
+  and `r ≥ 64` linear.  `hske-duplex`'s inherited `I_VALUE = 64` would have left the
+  differential axis at 107 bits.
+- **No key check on any v3 path, and no rejection sampling.**  `fpe`/`twk --v3` derive
+  their subkey with a single hash where v2 rehashes past its affine-degenerate class;
+  `hpke-nl3` takes the first ephemeral scalar where `hpke-nl` resamples; `hske-nla3`
+  accepts keys `hske-nla2` refuses.  A loop would reject ~2^-129 of keys for a
+  degeneracy v3 does not have, while implying the rest had been screened for one that
+  it does.
+- **A distinct ciphertext format tag (4) for `hske-duplex3`**, so feeding a v2 artifact
+  to the v3 decryptor is refused by the parser rather than surfacing as an opaque tag
+  mismatch 80 permutation calls later.
+- **Domain-separation tags 0x22/0x23** for `fpe --v3`/`twk --v3`, and separate
+  `NL-V3-DUPLEX-*` strings for the duplex, so the same `(key, tweak)` never produces the
+  same subkey across the four fpe/twk variants and a v2 and v3 duplex session under one
+  `(key, nonce)` share no state, tweak or tag input.
+
+### Findings
+
+- **`#255`'s projected "~1.77× per block" does not hold for the shipped C path — it is
+  ~0.97×.**  `benchmarks/v3_round_cost.c`'s 2.12–2.17× is a packed 4×64 representation,
+  where the v2 round is a few limb operations and χ roughly doubles it.  `herradura.h`'s
+  `BitArray` is 32 separate bytes, so the v2 round's rotations and its 256-bit carry
+  chain are already byte-serial and χ adds proportionally much less: **1.16× per round**,
+  measured against the shipped header.  Both figures are correct measurements of
+  different things, and the packed one is what an optimised port would see.
+  Every consumer figure follows from 1.16× times its round-count ratio, checked rather
+  than fitted: `hske-nla3` 0.97× (160 rounds against 192), `fpe --v3` 0.97×, `twk --v3`
+  0.98×, `hske-duplex3` 1.45× at 4 KiB (80 sponge rounds against 64), and **`hpke-nl3`
+  2.92×** — the one materially more expensive case, because `hpke-nl`'s deployed wire
+  format runs only `I_VALUE = 64` rounds while `hpke-nl3` uses the derived 160.
+- **A silent 64-bit truncation in the KAT format, caught by the Go cross-check.**
+  `twk`'s `sector` was first written as a JSON number; `0x0123456789ABCDEF` does not
+  survive the float64 every JSON parser defaults to, and the loss is silent — the Python
+  generator and the Go verifier disagreed by 1 in the low limb.  Both `sector` and
+  `bidx` are hex strings now.  This is exactly the class of thing a second-implementation
+  verifier exists to find, and nothing else in the pipeline would have.
+- **The v3 duplex's cost is dominated by fixed overhead at short messages**: 1.38× at
+  64 bytes against 1.45× at 4 KiB, because init, AD absorption and finalisation are
+  ~5 permutation calls regardless of length.
+
+### Changed
+
+- `spec/herradura-protocol-spec.schema.json` gains the `subcommand_flag` binding kind
+  and its `flag` field.
+- `docs/TUTORIAL.md`, `llms.txt` and `CLAUDE.md` document the five consumers, the
+  flag-vs-subcommand decision, and the corrected cost figures.
+
 ## [5.1.0] - 2026-08-30
 
 ### TODO #255 (partial) — the NL-FSCX v3 primitive, in four languages

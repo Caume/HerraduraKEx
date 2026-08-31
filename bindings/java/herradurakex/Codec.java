@@ -40,6 +40,8 @@ public final class Codec {
     public static final String PEM_HPKE_PUB = "HERRADURA HPKE PUBLIC KEY";
     public static final String PEM_HPKE_NL_PRIV = "HERRADURA HPKE-NL PRIVATE KEY";
     public static final String PEM_HPKE_NL_PUB = "HERRADURA HPKE-NL PUBLIC KEY";
+    public static final String PEM_HPKE_NL3_PRIV = "HERRADURA HPKE-NL3 PRIVATE KEY"; // TODO #255
+    public static final String PEM_HPKE_NL3_PUB = "HERRADURA HPKE-NL3 PUBLIC KEY";
     public static final String PEM_HPKS_STERN_PRIV = "HERRADURA HPKS-STERN PRIVATE KEY";
     public static final String PEM_HPKS_STERN_PUB = "HERRADURA HPKS-STERN PUBLIC KEY";
     public static final String PEM_HPKE_STERN_PRIV = "HERRADURA HPKE-STERN PRIVATE KEY";

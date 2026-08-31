@@ -55,6 +55,14 @@ public final class KatVerify {
     private static final Pattern RNL_OBJECT = Pattern.compile(
             "\"(deployed|small_ring)\"\\s*:\\s*\\{([^}]*)\\}", Pattern.DOTALL);
 
+    // ── NL-FSCX v3 (TODO #255) ──────────────────────────────────────────────
+    // This Java CLI has no duplex, fpe or twk, so KAT/nl_fscx_v3.json's
+    // hske_duplex3 and fpe_twk_v3 sets have nothing here to check them against;
+    // KAT/verify_kat.go covers those.  What Java does port is the primitive
+    // itself plus hske-nla3 and hpke-nl3, and those are checked below.
+    private static final Pattern V3_OBJECT = Pattern.compile(
+            "\"(nl_fscx_v3|hske_nla3|hpke_nl3)\"\\s*:\\s*\\{([^}]*)\\}", Pattern.DOTALL);
+
     private static int intField(Map<String, String> obj, String key) {
         return Integer.parseInt(obj.get(key));
     }
@@ -150,6 +158,64 @@ public final class KatVerify {
         return true;
     }
 
+    /** Recomputes the Java-portable NL-FSCX v3 vectors.  Nothing here is
+     * probabilistic: the four ports are byte-identical by design, so any
+     * mismatch is a port bug rather than a tolerance question. */
+    private static int verifyV3(Map<String, Map<String, String>> v3) {
+        int fails = 0;
+
+        Map<String, String> p = v3.get("nl_fscx_v3");
+        int r3 = intField(p, "r3_steps");
+        if (r3 != HerraduraNl.R3_VALUE) {
+            System.out.println("FAIL nl_fscx_v3: vector says r3_steps=" + r3
+                    + ", package says " + HerraduraNl.R3_VALUE);
+            fails++;
+        }
+        BigInteger key = hex(p, "key"), pt = hex(p, "plaintext");
+        BigInteger revolve = HerraduraNl.nlFscxRevolveV3(pt, key, r3);
+        if (!HerraduraNl.nlChiV3(pt).equals(hex(p, "chi_of_plaintext"))
+                || !HerraduraNl.nlFscxV3(pt, key).equals(hex(p, "one_round"))
+                || !revolve.equals(hex(p, "revolve"))
+                || !HerraduraNl.nlFscxRevolveV3Inv(revolve, key, r3).equals(pt)) {
+            System.out.println("FAIL nl_fscx_v3: chi="
+                    + HerraduraNl.nlChiV3(pt).equals(hex(p, "chi_of_plaintext"))
+                    + " round=" + HerraduraNl.nlFscxV3(pt, key).equals(hex(p, "one_round"))
+                    + " revolve=" + revolve.equals(hex(p, "revolve"))
+                    + " revolve_inv="
+                    + HerraduraNl.nlFscxRevolveV3Inv(revolve, key, r3).equals(pt));
+            fails++;
+        } else {
+            System.out.println("PASS nl_fscx_v3");
+        }
+
+        Map<String, String> a = v3.get("hske_nla3");
+        BigInteger got = HerraduraNl.hskeNlA3Encrypt(hex(a, "plaintext"), hex(a, "key"));
+        if (!got.equals(hex(a, "ciphertext"))) {
+            System.out.println("FAIL hske_nla3: got " + got.toString(16)
+                    + " want " + a.get("ciphertext"));
+            fails++;
+        } else {
+            System.out.println("PASS hske_nla3");
+        }
+
+        Map<String, String> e = v3.get("hpke_nl3");
+        Herradura.Ciphertext ct = HerraduraNl.hpkeNl3Encrypt(
+                hex(e, "plaintext"), hex(e, "pub"), hex(e, "ephemeral_r"));
+        BigInteger dec = ct == null ? null
+                : HerraduraNl.hpkeNl3Decrypt(ct.ct, ct.r, hex(e, "priv"));
+        if (ct == null || !ct.r.equals(hex(e, "R")) || !ct.ct.equals(hex(e, "ciphertext"))
+                || dec == null || !dec.equals(hex(e, "plaintext"))) {
+            System.out.println("FAIL hpke_nl3: R="
+                    + (ct != null && ct.r.equals(hex(e, "R")))
+                    + " ct=" + (ct != null && ct.ct.equals(hex(e, "ciphertext")))
+                    + " decrypt_roundtrip=" + (dec != null && dec.equals(hex(e, "plaintext"))));
+            fails++;
+        } else {
+            System.out.println("PASS hpke_nl3");
+        }
+        return fails;
+    }
+
     public static void main(String[] args) throws IOException {
         Path path = args.length > 0 ? Paths.get(args[0])
                 : Paths.get("KAT", "classical_quartet.json");
@@ -243,6 +309,26 @@ public final class KatVerify {
             if (seen != 2) {
                 System.out.println("FAIL hkex_rnl: expected 2 vector sets, parsed " + seen);
                 fails++;
+            }
+        }
+
+        // ── NL-FSCX v3 (TODO #255) ──────────────────────────────────────
+        Path v3Path = path.resolveSibling("nl_fscx_v3.json");
+        if (!Files.exists(v3Path)) {
+            System.out.println("FAIL nl_fscx_v3: " + v3Path + " not found");
+            fails++;
+        } else {
+            Map<String, Map<String, String>> v3 = new HashMap<>();
+            Matcher vm = V3_OBJECT.matcher(new String(Files.readAllBytes(v3Path)));
+            while (vm.find()) {
+                v3.put(vm.group(1), parseObject(vm.group(2)));
+            }
+            if (v3.size() != 3) {
+                System.out.println("FAIL nl_fscx_v3: expected 3 Java-portable vector "
+                        + "sets, parsed " + v3.size());
+                fails++;
+            } else {
+                fails += verifyV3(v3);
             }
         }
 

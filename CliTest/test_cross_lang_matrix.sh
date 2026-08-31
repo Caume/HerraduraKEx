@@ -129,6 +129,11 @@ matrix_symmetric() {
 matrix_symmetric hske "$SK"
 matrix_symmetric hske-nla1 "$SK"
 matrix_symmetric hske-nla2 "$SK"
+# NL-FSCX v3 (TODO #255).  All four CLIs ship hske-nla3; hske-duplex3 is Python,
+# C and Go only (Java has no duplex in either version), so it is covered by
+# CliTest/test_v3_family.sh rather than here -- this matrix runs one algo list
+# across every LANG and has no per-algo language subset.
+matrix_symmetric hske-nla3 "$SK"
 
 # ── Generic NxN asymmetric enc/dec matrix (fresh keypair per producer) ─────
 matrix_asym_enc() {
@@ -150,6 +155,7 @@ matrix_asym_enc() {
 }
 matrix_asym_enc hpke
 matrix_asym_enc hpke-nl
+matrix_asym_enc hpke-nl3          # TODO #255
 matrix_asym_enc hpke-stern
 
 # hpke-stern-kem has a nonzero decoding-failure rate (DFR) by design — retry

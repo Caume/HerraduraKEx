@@ -44,6 +44,19 @@ KEYBITS = suite.KEYBITS
 _RNL_KDF_DC_256 = suite._RNL_KDF_DC_256
 _RNL_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hkex_rnl.json")
 
+# NL-FSCX v3 and its five consumers (TODO #255).  Pins the primitive AND every
+# construction built on it, because the family's ports are byte-identical by
+# design and nothing else in KAT/ covers the NL side of the suite.
+_V3_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nl_fscx_v3.json")
+nl_chi_v3 = suite.nl_chi_v3
+nl_fscx_v3 = suite.nl_fscx_v3
+nl_fscx_revolve_v3 = suite.nl_fscx_revolve_v3
+nl_fscx_revolve_v3_inv = suite.nl_fscx_revolve_v3_inv
+hske_nl_v3_duplex_encrypt = suite.hske_nl_v3_duplex_encrypt
+fpe_v3_encrypt = suite.fpe_v3_encrypt
+twk_v3_encrypt = suite.twk_v3_encrypt
+R3_VALUE, I3_VALUE = suite.R3_VALUE, suite.I3_VALUE
+
 N = 256
 POLY = GF_POLY[N]
 I_STEPS = N // 4        # 64
@@ -258,6 +271,126 @@ def generate_rnl() -> dict:
     }
 
 
+# ── NL-FSCX v3 (TODO #255) ──────────────────────────────────────────────────
+
+# Fixed non-secret constants, chosen only to exercise the math.
+_V3_KEY = 0xCAFEBABEDEADBEEF0123456789ABCDEF_CAFEBABEDEADBEEF0123456789ABCDEF
+_V3_PT  = 0x004E4C2D46534358207633204B41542D_544F444F2032353520766563746F72
+_V3_NONCE = 0x0102030405060708090A0B0C0D0E0F10_1112131415161718191A1B1C1D1E1F20
+_V3_HPKE_PRIV = 0x33445566778899AABBCCDDEEFF001122_33445566778899AABBCCDDEEFF001122
+_V3_HPKE_R    = 0x0BADC0FFEE0DDF00D0BADC0FFEE0DDF0_0BADC0FFEE0DDF00D0BADC0FFEE0DDF0
+
+
+def gen_nl_fscx_v3() -> dict:
+    """The v3 primitive itself: the chi layer, one round, and the full revolve."""
+    key = BitArray(N, _V3_KEY & ((1 << N) - 1))
+    pt  = BitArray(N, _V3_PT  & ((1 << N) - 1))
+    ct  = nl_fscx_revolve_v3(pt, key, R3_VALUE)
+    assert nl_fscx_revolve_v3_inv(ct, key, R3_VALUE).uint == pt.uint
+    return {
+        "description": "NL-FSCX v3 primitive: chi layer, one round, and the "
+                       "R3_VALUE-round revolve with its inverse",
+        "n": N,
+        "rows": list(suite.v3_rows(N)),
+        "r3_steps": R3_VALUE,
+        "i3_steps": I3_VALUE,
+        "key": h(key.uint),
+        "plaintext": h(pt.uint),
+        "chi_of_plaintext": h(nl_chi_v3(pt).uint),
+        "one_round": h(nl_fscx_v3(pt, key).uint),
+        "revolve": h(ct.uint),
+    }
+
+
+def gen_hske_nla3() -> dict:
+    key = BitArray(N, _V3_KEY & ((1 << N) - 1))
+    pt  = BitArray(N, _V3_PT  & ((1 << N) - 1))
+    return {
+        "description": "HSKE-NL-A3: E = nl_fscx_revolve_v3(P, K, R3_VALUE).  No "
+                       "key check — v3 has no weak class (SecurityProofs-8.md 11.34.4)",
+        "n": N, "r3_steps": R3_VALUE,
+        "key": h(key.uint), "plaintext": h(pt.uint),
+        "ciphertext": h(nl_fscx_revolve_v3(pt, key, R3_VALUE).uint),
+    }
+
+
+def gen_hpke_nl3() -> dict:
+    priv = _V3_HPKE_PRIV & ((1 << N) - 1)
+    r    = _V3_HPKE_R    & ((1 << N) - 1)
+    pub  = gf_pow(GF_GEN, priv, POLY, N)
+    R    = gf_pow(GF_GEN, r, POLY, N)
+    enc_key = BitArray(N, gf_pow(pub, r, POLY, N))
+    dec_key = BitArray(N, gf_pow(R, priv, POLY, N))
+    assert enc_key.uint == dec_key.uint
+    pt = BitArray(N, _V3_PT & ((1 << N) - 1))
+    ct = nl_fscx_revolve_v3(pt, enc_key, R3_VALUE)
+    assert nl_fscx_revolve_v3_inv(ct, dec_key, R3_VALUE).uint == pt.uint
+    return {
+        "description": "HPKE-NL3: El Gamal over GF(2^256)* with the v3 round.  The "
+                       "ephemeral scalar is fixed here; the CLI draws it at random "
+                       "and, unlike hpke-nl, never resamples",
+        "n": N, "r3_steps": R3_VALUE,
+        "priv": h(priv), "pub": h(pub), "ephemeral_r": h(r), "R": h(R),
+        "enc_key": h(enc_key.uint),
+        "plaintext": h(pt.uint), "ciphertext": h(ct.uint),
+    }
+
+
+def gen_hske_duplex3() -> dict:
+    key   = BitArray(N, _V3_KEY & ((1 << N) - 1))
+    nonce = BitArray(N, _V3_NONCE & ((1 << N) - 1))
+    pt = b"HerraduraKEx TODO #255 duplex-v3 KAT vector"
+    ad = b"nl-v3-duplex-associated-data"
+    _, ct, tag = hske_nl_v3_duplex_encrypt(key, pt, ad, nonce=nonce)
+    return {
+        "description": "HSKE-NL-V3-Duplex AEAD at I3_VALUE = 5n/16 sponge rounds, "
+                       "rate 16 bytes.  Ciphertext format tag 4 on the wire",
+        "n": N, "i3_steps": I3_VALUE, "rate_bytes": 16,
+        "key": h(key.uint), "nonce": h(nonce.uint),
+        "ad": ad.hex(), "plaintext": pt.hex(),
+        "ciphertext": ct.hex(), "tag": tag.hex(),
+    }
+
+
+def gen_fpe_twk_v3() -> dict:
+    key = (_V3_KEY & ((1 << N) - 1)).to_bytes(N // 8, "big")
+    pt  = BitArray(N, _V3_PT & ((1 << N) - 1))
+    ctx = b"herradura-v3-kat-context"
+    sector, bidx = 0x0123456789ABCDEF, 0x00C0FFEE
+    return {
+        "description": "fpe --v3 and twk --v3: subkey = HFSCX-256-DS(0x22 / 0x23, "
+                       "len(key)_be8 || key || tweak), single hash, NO rejection loop",
+        "n": N, "r3_steps": R3_VALUE,
+        "key": h(int.from_bytes(key, "big")),
+        "plaintext": h(pt.uint),
+        "fpe_context": ctx.hex(),
+        "fpe_ciphertext": h(fpe_v3_encrypt(pt, key, ctx).uint),
+        # Hex strings, not JSON numbers: a 64-bit sector does not survive a
+        # round trip through the float64 every JSON parser defaults to, and the
+        # loss is silent (0x0123456789ABCDEF reads back off by 1).
+        "twk_sector": f"{sector:016x}", "twk_bidx": f"{bidx:08x}",
+        "twk_ciphertext": h(twk_v3_encrypt(pt, key, sector, bidx).uint),
+    }
+
+
+def generate_v3() -> dict:
+    return {
+        "$schema": "HerraduraKEx NL-FSCX v3 KAT vectors (TODO #255)",
+        "suite_reference": "Herradura cryptographic suite.py",
+        "note": ("R3_VALUE = 5n/8 = 160 is DERIVED, not inherited from v2's 3n/4, "
+                 "and I3_VALUE = 5n/16 = 80 is the duplex sponge count, likewise "
+                 "derived (SecurityProofs-8.md 11.34.8).  The chi row partition is "
+                 "47 fives then 3 sevens: every row odd and >= 5, which is a hard "
+                 "constraint and not a preference -- a 3-bit row is a complete "
+                 "break at any round count (11.34.2)."),
+        "nl_fscx_v3": gen_nl_fscx_v3(),
+        "hske_nla3": gen_hske_nla3(),
+        "hpke_nl3": gen_hpke_nl3(),
+        "hske_duplex3": gen_hske_duplex3(),
+        "fpe_twk_v3": gen_fpe_twk_v3(),
+    }
+
+
 def generate() -> dict:
     return {
         "$schema": "HerraduraKEx classical-quartet KAT vectors (TODO #190)",
@@ -270,7 +403,8 @@ def generate() -> dict:
 
 
 def main() -> int:
-    outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl())]
+    outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl()),
+               (_V3_OUT_PATH, generate_v3())]
     if "--check" in sys.argv:
         rc = 0
         for path, vectors in outputs:

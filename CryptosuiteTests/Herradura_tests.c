@@ -5486,6 +5486,92 @@ int main(int argc, char *argv[])
                 && bad_rt == 0 && same_as_v2 == 0) ? "PASS" : "FAIL");
     }
 
+
+    /* Security test [48]: the NL-FSCX v3 consumers (TODO #255).  [47] pins the
+     * primitive; this pins the five constructions on top of it, and every check
+     * here is about a property the primitive alone does not give you:
+     *   (a) each consumer round-trips.  hske-nla3 and hpke-nl3 are keyed
+     *       bijections, hske-duplex3 is an AEAD, fpe/twk --v3 are tweaked
+     *       permutations; a wrong round count round-trips fine, but a wrong
+     *       INVERSE round count does not.
+     *   (b) each v3 consumer differs from its v2 counterpart on the same
+     *       inputs.  This is the domain-separation assertion: the v3 duplex
+     *       has its own DS strings and fpe/twk v3 their own tags (0x22/0x23),
+     *       and a copy-paste that reused v2's would still round-trip.
+     *   (c) fpe --v3 and twk --v3 disagree at a 12-BYTE CONTEXT.  That is the
+     *       exact shape of the TODO #241 bug (§11.24.4): the two were literally
+     *       the same function whenever ctx == sector||bidx.  [46] guards the
+     *       v2 pair; this guards the v3 pair, which is new code.
+     *   (d) the duplex rejects a flipped AD.  A tag that authenticates
+     *       anything is worse than no tag. */
+    {
+        int N = g_rounds > 0 ? g_rounds : 100, i;
+        int bad_rt = 0, same_as_v2 = 0, fpe_eq_twk = 0, forged = 0;
+        struct timespec t0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        printf("[48] NL-FSCX v3 consumers: round-trip, v2 separation, AEAD"
+               "  [SECURITY]\n");
+        for (i = 0; i < N; i++) {
+            BitArray P, K, Nc, E3, D3, E2, F3, F2, T3, T2;
+            uint8_t pt[40], ct[40], out[40], tag[32];
+            uint8_t tw12[12];
+            uint64_t sector = 0x0123456789ABCDEFULL;
+            uint32_t bidx = 0x00C0FFEEu;
+            int j;
+            ba_rand(&P, urnd_fp);
+            ba_rand(&K, urnd_fp);
+            ba_rand(&Nc, urnd_fp);
+            for (j = 0; j < 40; j++) pt[j] = (uint8_t)(P.b[j % KEYBYTES] ^ (uint8_t)j);
+
+            /* hske-nla3 */
+            nl_fscx_revolve_v3_ba(&E3, &P, &K, R3_VALUE);
+            nl_fscx_revolve_v3_inv_ba(&D3, &E3, &K, R3_VALUE);
+            if (!ba_equal(&D3, &P)) bad_rt++;
+            nl_fscx_revolve_v2_ba(&E2, &P, &K, R_VALUE);
+            if (ba_equal(&E2, &E3)) same_as_v2++;
+
+            /* hske-duplex3 */
+            hske_nl_v3_duplex_encrypt(&K, &Nc, (const uint8_t *)"ad", 2,
+                                       pt, sizeof pt, ct, tag);
+            if (!hske_nl_v3_duplex_decrypt(&K, &Nc, (const uint8_t *)"ad", 2,
+                                            ct, sizeof ct, tag, out)
+                || memcmp(out, pt, sizeof pt) != 0) bad_rt++;
+            if (hske_nl_v3_duplex_decrypt(&K, &Nc, (const uint8_t *)"AD", 2,
+                                           ct, sizeof ct, tag, out)) forged++;
+            {   /* the v2 duplex under the same (key, nonce, ad) must differ */
+                uint8_t ct2[40], tag2[32];
+                hske_nl_v2_duplex_encrypt(&K, &Nc, (const uint8_t *)"ad", 2,
+                                           pt, sizeof pt, ct2, tag2);
+                if (memcmp(ct2, ct, sizeof ct) == 0) same_as_v2++;
+            }
+
+            /* fpe --v3 / twk --v3, and the 12-byte-context collision (c) */
+            for (j = 7; j >= 0; j--) tw12[j] = (uint8_t)((sector >> (8 * (7 - j))) & 0xff);
+            tw12[8]  = (uint8_t)((bidx >> 24) & 0xff);
+            tw12[9]  = (uint8_t)((bidx >> 16) & 0xff);
+            tw12[10] = (uint8_t)((bidx >>  8) & 0xff);
+            tw12[11] = (uint8_t)( bidx        & 0xff);
+            fpe_v3_encrypt(&P, K.b, KEYBYTES, tw12, sizeof tw12, &F3);
+            fpe_v3_decrypt(&F3, K.b, KEYBYTES, tw12, sizeof tw12, &D3);
+            if (!ba_equal(&D3, &P)) bad_rt++;
+            fpe_encrypt(&P, K.b, KEYBYTES, tw12, sizeof tw12, &F2);
+            if (ba_equal(&F2, &F3)) same_as_v2++;
+            twk_v3_encrypt(&P, K.b, KEYBYTES, sector, bidx, &T3);
+            twk_v3_decrypt(&T3, K.b, KEYBYTES, sector, bidx, &D3);
+            if (!ba_equal(&D3, &P)) bad_rt++;
+            twk_encrypt(&P, K.b, KEYBYTES, sector, bidx, &T2);
+            if (ba_equal(&T2, &T3)) same_as_v2++;
+            if (ba_equal(&F3, &T3)) fpe_eq_twk++;
+
+            if ((i & 63) == 63 && time_exceeded(&t0)) { N = i + 1; break; }
+        }
+        printf("    n=%d  round-trip fails=%d  v3==v2=%d  fpe-v3==twk-v3 at "
+               "12-byte ctx=%d  AEAD forgeries=%d  [%s]\n\n",
+               N, bad_rt, same_as_v2, fpe_eq_twk, forged,
+               (bad_rt == 0 && same_as_v2 == 0 && fpe_eq_twk == 0 && forged == 0)
+               ? "PASS" : "FAIL");
+    }
+
     fclose(urnd_fp);
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

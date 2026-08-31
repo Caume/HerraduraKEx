@@ -823,8 +823,18 @@ static void nl_fscx_revolve_v2_inv_ba(BitArray *result, const BitArray *y,
 
 #define R3_VALUE (5 * KEYBITS / 8)   /* 160 for 256-bit; needs KEYBITS % 8 == 0 */
 
-#if (KEYBITS % 8) != 0
-#  error "NL-FSCX v3's R3_VALUE = 5n/8 requires KEYBITS divisible by 8"
+/* Sponge round count for HSKE-NL-V3-Duplex (TODO #255).  DERIVED, and the
+ * first duplex round count in this suite that is: the capacity is 128 bits, so
+ * 128 bits is the target, and chi's proven per-round floors put the requirement
+ * at r >= 128/1.6781 = 77 differential and r >= 64 linear.  I3_VALUE = 5n/16
+ * clears both and is exactly half of R3_VALUE for a half-width target.  It is
+ * deliberately NOT hske-duplex's I_VALUE = n/4 = 64, which was inherited rather
+ * than derived and which 1.6781 bits/round would leave at 107 bits.
+ * See SecurityProofs-8.md §11.34.8. */
+#define I3_VALUE (5 * KEYBITS / 16)  /* 80 for 256-bit */
+
+#if (KEYBITS % 16) != 0
+#  error "NL-FSCX v3's R3_VALUE = 5n/8 and I3_VALUE = 5n/16 require KEYBITS divisible by 16"
 #endif
 
 /* Row masks for the 47*5 + 3*7 partition, as big-endian BitArray literals.
@@ -1280,26 +1290,37 @@ static int hske_nl_aead_decrypt(const BitArray *key, const BitArray *nonce,
 #define _V2DPLEX_DS_TWEAK_L 18
 #define _V2DPLEX_DS_TAG_L   16
 
-typedef struct { uint8_t s[KEYBYTES]; BitArray tw; } _V2DState;
+/* HSKE-NL-V3-Duplex (TODO #255): the same construction over the v3 permutation
+ * at I3_VALUE.  Separate domain-separation strings — deliberately the same
+ * lengths — so a v2 and a v3 session under the same (key, nonce) share no
+ * state, tweak or tag input. */
+#define _V3DPLEX_DS_INIT    "NL-V3-DUPLEX-INIT"
+#define _V3DPLEX_DS_TWEAK   "NL-V3-DUPLEX-TWEAK"
+#define _V3DPLEX_DS_TAG     "NL-V3-DUPLEX-TAG"
+
+typedef struct { uint8_t s[KEYBYTES]; BitArray tw; int v3; } _V2DState;
 
 static void _v2dplex_perm(_V2DState *d)
 {
     BitArray sa, out;
     memcpy(sa.b, d->s, KEYBYTES);
-    nl_fscx_revolve_v2_ba(&out, &sa, &d->tw, I_VALUE);
+    if (d->v3) nl_fscx_revolve_v3_ba(&out, &sa, &d->tw, I3_VALUE);
+    else       nl_fscx_revolve_v2_ba(&out, &sa, &d->tw, I_VALUE);
     memcpy(d->s, out.b, KEYBYTES);
 }
 
-static void _v2dplex_init(_V2DState *d, const BitArray *key, const BitArray *nonce)
+static void _v2dplex_init(_V2DState *d, const BitArray *key,
+                          const BitArray *nonce, int v3)
 {
     uint8_t buf[_V2DPLEX_DS_TWEAK_L + KEYBYTES + KEYBYTES];
     /* state = HFSCX-256(DS_INIT || key || nonce) */
-    memcpy(buf, _V2DPLEX_DS_INIT, _V2DPLEX_DS_INIT_L);
+    d->v3 = v3;
+    memcpy(buf, v3 ? _V3DPLEX_DS_INIT : _V2DPLEX_DS_INIT, _V2DPLEX_DS_INIT_L);
     memcpy(buf + _V2DPLEX_DS_INIT_L, key->b, KEYBYTES);
     memcpy(buf + _V2DPLEX_DS_INIT_L + KEYBYTES, nonce->b, KEYBYTES);
     hfscx_256(buf, (size_t)(_V2DPLEX_DS_INIT_L + 2 * KEYBYTES), NULL, d->s);
     /* tweak = HFSCX-256(DS_TWEAK || key || nonce) */
-    memcpy(buf, _V2DPLEX_DS_TWEAK, _V2DPLEX_DS_TWEAK_L);
+    memcpy(buf, v3 ? _V3DPLEX_DS_TWEAK : _V2DPLEX_DS_TWEAK, _V2DPLEX_DS_TWEAK_L);
     memcpy(buf + _V2DPLEX_DS_TWEAK_L, key->b, KEYBYTES);
     memcpy(buf + _V2DPLEX_DS_TWEAK_L + KEYBYTES, nonce->b, KEYBYTES);
     hfscx_256(buf, (size_t)(_V2DPLEX_DS_TWEAK_L + 2 * KEYBYTES), NULL, d->tw.b);
@@ -1341,21 +1362,20 @@ static void _v2dplex_squeeze_tag(_V2DState *d, uint8_t tag[32])
     d->s[_V2DPLEX_RATE] ^= 0x02;   /* domain separator: end of PT */
     _v2dplex_perm(d);
     memcpy(buf, d->s, KEYBYTES);
-    memcpy(buf + KEYBYTES, _V2DPLEX_DS_TAG, _V2DPLEX_DS_TAG_L);
+    memcpy(buf + KEYBYTES, d->v3 ? _V3DPLEX_DS_TAG : _V2DPLEX_DS_TAG,
+           _V2DPLEX_DS_TAG_L);
     hfscx_256(buf, KEYBYTES + _V2DPLEX_DS_TAG_L, NULL, tag);
 }
 
-/* AEAD-encrypt pt_len bytes into ct_out (same length) and tag_out (32 bytes).
- * Caller supplies a fresh random 256-bit nonce (e.g. via ba_rand). */
-static void hske_nl_v2_duplex_encrypt(
+static void _dplex_encrypt(
     const BitArray *key, const BitArray *nonce,
     const uint8_t *ad, size_t ad_len,
     const uint8_t *pt, size_t pt_len,
-    uint8_t *ct_out, uint8_t tag_out[32])
+    uint8_t *ct_out, uint8_t tag_out[32], int v3)
 {
     _V2DState d;
     size_t off, blk, j;
-    _v2dplex_init(&d, key, nonce);
+    _v2dplex_init(&d, key, nonce, v3);
     _v2dplex_absorb_ad(&d, ad, ad_len);
     if (!pt_len) {
         _v2dplex_perm(&d);
@@ -1371,19 +1391,18 @@ static void hske_nl_v2_duplex_encrypt(
     _v2dplex_squeeze_tag(&d, tag_out);
 }
 
-/* Verify-then-decrypt.  Returns 1 on success, 0 on auth failure (pt_out untouched). */
-static int hske_nl_v2_duplex_decrypt(
+static int _dplex_decrypt(
     const BitArray *key, const BitArray *nonce,
     const uint8_t *ad, size_t ad_len,
     const uint8_t *ct, size_t ct_len,
-    const uint8_t tag[32], uint8_t *pt_out)
+    const uint8_t tag[32], uint8_t *pt_out, int v3)
 {
     _V2DState d;
     uint8_t expected[32];
     uint8_t *tmp;
     size_t off, blk, j;
 
-    _v2dplex_init(&d, key, nonce);
+    _v2dplex_init(&d, key, nonce, v3);
     _v2dplex_absorb_ad(&d, ad, ad_len);
     tmp = ct_len ? (uint8_t *)malloc(ct_len) : NULL;
     if (ct_len && !tmp) { fprintf(stderr, "v2_duplex: out of memory\n"); exit(1); }
@@ -1403,6 +1422,47 @@ static int hske_nl_v2_duplex_decrypt(
     if (!ct_eq32(tag, expected)) { free(tmp); return 0; }
     if (tmp) { memcpy(pt_out, tmp, ct_len); free(tmp); }
     return 1;
+}
+
+/* AEAD-encrypt pt_len bytes into ct_out (same length) and tag_out (32 bytes).
+ * Caller supplies a fresh random 256-bit nonce (e.g. via ba_rand). */
+static void hske_nl_v2_duplex_encrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *pt, size_t pt_len,
+    uint8_t *ct_out, uint8_t tag_out[32])
+{
+    _dplex_encrypt(key, nonce, ad, ad_len, pt, pt_len, ct_out, tag_out, 0);
+}
+
+/* Verify-then-decrypt.  Returns 1 on success, 0 on auth failure (pt_out untouched). */
+static int hske_nl_v2_duplex_decrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *ct, size_t ct_len,
+    const uint8_t tag[32], uint8_t *pt_out)
+{
+    return _dplex_decrypt(key, nonce, ad, ad_len, ct, ct_len, tag, pt_out, 0);
+}
+
+/* HSKE-NL-V3-Duplex (TODO #255): identical, over nl_fscx_revolve_v3 at
+ * I3_VALUE and with the v3 domain-separation strings. */
+static void hske_nl_v3_duplex_encrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *pt, size_t pt_len,
+    uint8_t *ct_out, uint8_t tag_out[32])
+{
+    _dplex_encrypt(key, nonce, ad, ad_len, pt, pt_len, ct_out, tag_out, 1);
+}
+
+static int hske_nl_v3_duplex_decrypt(
+    const BitArray *key, const BitArray *nonce,
+    const uint8_t *ad, size_t ad_len,
+    const uint8_t *ct, size_t ct_len,
+    const uint8_t tag[32], uint8_t *pt_out)
+{
+    return _dplex_decrypt(key, nonce, ad, ad_len, ct, ct_len, tag, pt_out, 1);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -3805,6 +3865,8 @@ static int haccum_verify(const uint8_t root[KEYBYTES],
  * Wire-format breaking; see MIGRATING.md §8. */
 #define FPE_DS 0x20   /* domain-separation tag: FPE subkey                    */
 #define TWK_DS 0x21   /* domain-separation tag: tweakable wide-block subkey   */
+#define FPE_V3_DS 0x22 /* ... the same, over NL-FSCX v3 (TODO #255)           */
+#define TWK_V3_DS 0x23
 
 /* B = HFSCX-256-DS(ds, len(key)_be8 || key || tweak), rejected to a
  * non-degenerate NL-FSCX v2 subkey.  The rejection loop is defence in depth and
@@ -3900,6 +3962,90 @@ static inline void twk_decrypt(const BitArray *ct,
     BitArray B;
     twk_derive_b(key, klen, sector, bidx, &B);
     nl_fscx_revolve_v2_inv_ba(block, ct, &B, R_VALUE);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 78.A / 78.B over NL-FSCX v3  (TODO #255)
+ *
+ * Same constructions, same shape, v3 in place of v2 at R3_VALUE steps.
+ *
+ * NO REJECTION LOOP, deliberately.  fpe_twk_derive_b rehashes past v2's
+ * affine-degenerate subkeys; v3 has no such class at all (SecurityProofs-8.md
+ * §11.34.4), so a loop here would reject ~2^-129 of subkeys for a degeneracy
+ * the primitive does not have, while implying the rest had been screened for
+ * one that it does.  The derivation is a single hash.
+ *
+ * The tags 0x22/0x23 are distinct from 0x20/0x21, so the same (key, tweak)
+ * never yields the same subkey for the v2 and v3 variants.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+static inline void fpe_twk_v3_derive_b(uint8_t ds,
+                                        const uint8_t *key, size_t klen,
+                                        const uint8_t *tweak, size_t tlen,
+                                        BitArray *B)
+{
+    uint8_t *tbuf = (uint8_t *)malloc(8 + klen + tlen);
+    int i;
+    if (!tbuf) { fprintf(stderr, "fpe/twk v3: out of memory\n"); exit(1); }
+    for (i = 7; i >= 0; i--) tbuf[i] = (uint8_t)((uint64_t)klen >> (8 * (7 - i)));
+    if (klen) memcpy(tbuf + 8,        key,   klen);
+    if (tlen) memcpy(tbuf + 8 + klen, tweak, tlen);
+    hfscx_256_ds(ds, tbuf, 8 + klen + tlen, NULL, B->b);
+    free(tbuf);
+}
+
+static inline void fpe_v3_encrypt(const BitArray *pt,
+                                   const uint8_t *key, size_t klen,
+                                   const uint8_t *ctx, size_t clen,
+                                   BitArray *ct)
+{
+    BitArray B;
+    fpe_twk_v3_derive_b(FPE_V3_DS, key, klen, ctx, clen, &B);
+    nl_fscx_revolve_v3_ba(ct, pt, &B, R3_VALUE);
+}
+
+static inline void fpe_v3_decrypt(const BitArray *ct,
+                                   const uint8_t *key, size_t klen,
+                                   const uint8_t *ctx, size_t clen,
+                                   BitArray *pt)
+{
+    BitArray B;
+    fpe_twk_v3_derive_b(FPE_V3_DS, key, klen, ctx, clen, &B);
+    nl_fscx_revolve_v3_inv_ba(pt, ct, &B, R3_VALUE);
+}
+
+static inline void twk_v3_derive_b(const uint8_t *key, size_t klen,
+                                    uint64_t sector, uint32_t bidx,
+                                    BitArray *B)
+{
+    uint8_t tw[12];
+    int i;
+    for (i = 7; i >= 0; i--) { tw[i] = (uint8_t)(sector & 0xff); sector >>= 8; }
+    tw[8]  = (uint8_t)((bidx >> 24) & 0xff);
+    tw[9]  = (uint8_t)((bidx >> 16) & 0xff);
+    tw[10] = (uint8_t)((bidx >>  8) & 0xff);
+    tw[11] = (uint8_t)( bidx        & 0xff);
+    fpe_twk_v3_derive_b(TWK_V3_DS, key, klen, tw, sizeof tw, B);
+}
+
+static inline void twk_v3_encrypt(const BitArray *block,
+                                   const uint8_t *key, size_t klen,
+                                   uint64_t sector, uint32_t bidx,
+                                   BitArray *ct)
+{
+    BitArray B;
+    twk_v3_derive_b(key, klen, sector, bidx, &B);
+    nl_fscx_revolve_v3_ba(ct, block, &B, R3_VALUE);
+}
+
+static inline void twk_v3_decrypt(const BitArray *ct,
+                                   const uint8_t *key, size_t klen,
+                                   uint64_t sector, uint32_t bidx,
+                                   BitArray *block)
+{
+    BitArray B;
+    twk_v3_derive_b(key, klen, sector, bidx, &B);
+    nl_fscx_revolve_v3_inv_ba(block, ct, &B, R3_VALUE);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────

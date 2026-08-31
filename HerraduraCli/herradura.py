@@ -63,9 +63,11 @@ from codec import (der_int, der_seq, der_parse_seq, pem_wrap, pem_unwrap,
 from primitives import (
     BitArray, fscx_revolve, nl_fscx_revolve_v1, nl_fscx_revolve_v2,
     nl_fscx_revolve_v2_inv, nl_v2_key_is_valid, gf_mul, gf_pow,
+    nl_fscx_revolve_v3, nl_fscx_revolve_v3_inv, v3_rows,
     hfscx_256, hfscx_256_ds, hmac_hfscx_256, _HFSCX256_IV_BYTES, _RNL_KDF_DC_256,
     hske_nl_aead_encrypt, hske_nl_aead_decrypt,
     hske_nl_v2_duplex_encrypt, hske_nl_v2_duplex_decrypt,
+    hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul,
@@ -80,9 +82,10 @@ from primitives import (
     zkp_nl_prove_pp, zkp_nl_verify_pp,
     KEYBITS, GF_POLY, GF_GEN, ORD,
     RNLN, RNLQ, RNLP, RNLPP, RNLB,
-    I_VALUE, R_VALUE, SDFT, SDFNR, SDFR,
+    I_VALUE, R_VALUE, R3_VALUE, I3_VALUE, SDFT, SDFNR, SDFR,
     _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
     fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
+    fpe_v3_encrypt, fpe_v3_decrypt, twk_v3_encrypt, twk_v3_decrypt,
     haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
     oprf_keygen, oprf_blind, oprf_eval, oprf_unblind, oprf_direct,
     hpake_register, hpake_login_demo,
@@ -107,6 +110,7 @@ _PRIV_ALGOS = {
     'hpks-nl':     'HERRADURA HPKS-NL PRIVATE KEY',
     'hpke':        'HERRADURA HPKE PRIVATE KEY',
     'hpke-nl':     'HERRADURA HPKE-NL PRIVATE KEY',
+    'hpke-nl3':    'HERRADURA HPKE-NL3 PRIVATE KEY',
     'hpks-stern':  'HERRADURA HPKS-STERN PRIVATE KEY',
     'hpke-stern':     'HERRADURA HPKE-STERN PRIVATE KEY',
     'hpke-stern-kem': 'HERRADURA HPKE-STERN-KEM PRIVATE KEY',
@@ -330,7 +334,24 @@ _WEAK_V2_KEY_MSG = (
     "permutation GF(2)-affine and the ciphertext recoverable by linear algebra "
     "(SecurityProofs-7.md \u00a711.19.2, TODO #168)")
 
-_CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl'}
+_CLASSICAL_GF_ALGOS = {'hkex-gf', 'hpks', 'hpks-nl', 'hpke', 'hpke-nl',
+                       'hpke-nl3'}
+
+# NL-FSCX v3 has NO weak-key class and therefore no key check: v2's two classes
+# are artefacts of its linear-then-add-constant round and both dissolve under
+# chi (SecurityProofs-8.md §11.34.4).  What v3 does constrain is the WIDTH — chi
+# needs an all-odd row partition with every row >= 5, which not every n admits.
+def _v3_width_ok(nbits, ctx):
+    """sys.exit with a readable message if *nbits* admits no chi row partition."""
+    try:
+        v3_rows(nbits)
+    except ValueError as e:
+        sys.exit(f"{ctx}: {e}")
+
+
+def _r3(nbits):
+    """NL-FSCX v3's round count at width *nbits* (5n/8; 160 at n=256)."""
+    return 5 * nbits // 8
 _STERN_ALGOS        = {'hpks-stern', 'hpke-stern'}
 
 _STERN_DEMO_WARNING = (
@@ -948,12 +969,16 @@ def _decode_sym_ct(path):
 # Unlike the single-block sym formats above, the duplex AEAD handles
 # arbitrary-length plaintext, so the ciphertext is stored length-prefixed:
 #   format tag 3, nonce (KEYBYTES), ct_len, ct (ct_len bytes), tag (32), nbits.
+# Format tag 4 is the same shape over HSKE-NL-V3-Duplex (TODO #255).  A distinct
+# tag rather than a shared one, so feeding a v2 artifact to `dec --algo
+# hske-duplex3` is rejected by the parser rather than surfacing as an opaque
+# tag mismatch 160 rounds later.
 # ---------------------------------------------------------------------------
 
-def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits):
+def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits, v3=False):
     nbytes = nbits // 8
     ct_len = len(ct_bytes)
-    der = der_seq(der_int(3),                       # format tag 3: V2-Duplex AEAD
+    der = der_seq(der_int(4 if v3 else 3),          # 3: V2-Duplex, 4: V3-Duplex
                   der_int(nonce_int, nbytes),
                   der_int(ct_len),
                   der_int(int.from_bytes(ct_bytes, 'big'), max(1, ct_len)),
@@ -962,14 +987,16 @@ def _encode_duplex_ct(nonce_int, ct_bytes, tag_int, nbits):
     return pem_wrap(_LABEL_CT, der)
 
 
-def _decode_duplex_ct(path):
+def _decode_duplex_ct(path, v3=False):
     """Return (nonce_int, ct_bytes, tag_int, nbits)."""
     label, der = _read_pem(path)
     ints = der_parse_seq(der)
     if label != _LABEL_CT:
         raise ValueError(f"Expected CIPHERTEXT PEM, got {label!r}")
-    if ints[0] != 3:
-        raise ValueError(f"Expected V2-Duplex ciphertext (format 3), got {ints[0]}")
+    want = 4 if v3 else 3
+    if ints[0] != want:
+        raise ValueError(f"Expected {'V3' if v3 else 'V2'}-Duplex ciphertext "
+                         f"(format {want}), got {ints[0]}")
     _, nonce_int, ct_len, ct_int, tag_int, nbits = ints
     # The declared length sizes the buffer.  It cannot exceed the DER actually
     # read, and the payload cannot be longer than the length claiming to
@@ -1657,22 +1684,26 @@ def cmd_enc(args):
     out_path = args.out
 
     # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
-    if algo == 'hske-duplex':
+    if algo in ('hske-duplex', 'hske-duplex3'):
         key_path = args.key
         if not key_path:
             sys.exit(f"--key required for {algo}")
         key_int, nbits = _load_key(key_path)
         if nbits != 256:
-            sys.exit("enc: hske-duplex requires a 256-bit key")
+            sys.exit(f"enc: {algo} requires a 256-bit key")
         K = BitArray(nbits, key_int)
         ad = (args.ad or '').encode()
-        nonce, ct, tag = hske_nl_v2_duplex_encrypt(K, in_bytes, ad)
+        if algo == 'hske-duplex3':
+            nonce, ct, tag = hske_nl_v3_duplex_encrypt(K, in_bytes, ad)
+        else:
+            nonce, ct, tag = hske_nl_v2_duplex_encrypt(K, in_bytes, ad)
         _write_file(out_path, _encode_duplex_ct(
-            nonce.uint, ct, int.from_bytes(tag, 'big'), nbits))
+            nonce.uint, ct, int.from_bytes(tag, 'big'), nbits,
+            v3=(algo == 'hske-duplex3')))
         return
 
     # ── Symmetric algos ─────────────────────────────────────────────────────
-    if algo in ('hske', 'hske-nla1', 'hske-nla2'):
+    if algo in ('hske', 'hske-nla1', 'hske-nla2', 'hske-nla3'):
         key_path = args.key
         if not key_path:
             sys.exit(f"--key required for {algo}")
@@ -1706,11 +1737,16 @@ def cmd_enc(args):
             E       = BitArray(nbits, P.uint ^ ks.uint)
             _write_file(out_path, _encode_sym_ct('hske-nla1', E.uint, nbits, nonce_int=N_nonce.uint))
 
-        else:  # hske-nla2
+        elif algo == 'hske-nla2':
             if not nl_v2_key_is_valid(K):
                 sys.exit("enc hske-nla2: %s" % _WEAK_V2_KEY_MSG)
             E = nl_fscx_revolve_v2(P, K, 3 * nbits // 4)
             _write_file(out_path, _encode_sym_ct('hske-nla2', E.uint, nbits))
+
+        else:  # hske-nla3 — no key check: v3 has no weak class (TODO #255)
+            _v3_width_ok(nbits, 'enc hske-nla3')
+            E = nl_fscx_revolve_v3(P, K, _r3(nbits))
+            _write_file(out_path, _encode_sym_ct('hske-nla3', E.uint, nbits))
         return
 
     # ── Asymmetric algos ────────────────────────────────────────────────────
@@ -1748,6 +1784,20 @@ def cmd_enc(args):
         E       = nl_fscx_revolve_v2(P, enc_key, nbits // 4)
         _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
 
+    elif algo == 'hpke-nl3':
+        pub_int, nbits = their_ints
+        _v3_width_ok(nbits, 'enc hpke-nl3')
+        poly    = GF_POLY.get(nbits, GF_POLY[256])
+        nbytes  = nbits // 8
+        P       = BitArray(nbits, int.from_bytes(in_bytes[:nbytes].ljust(nbytes, b'\x00'), 'big'))
+        # No resampling loop, unlike hpke-nl: v3 has no affine-degenerate key
+        # class to sample past (SecurityProofs-8.md §11.34.4).
+        r       = BitArray.random(nbits)
+        R       = BitArray(nbits, gf_pow(GF_GEN, r.uint, poly, nbits))
+        enc_key = BitArray(nbits, gf_pow(pub_int, r.uint, poly, nbits))
+        E       = nl_fscx_revolve_v3(P, enc_key, _r3(nbits))
+        _write_file(out_path, _encode_asym_ct(R.uint, E.uint, nbits))
+
     elif algo == 'hpke-stern':
         print(_STERN_DEMO_WARNING, file=sys.stderr)
         syn_int, seed_int, n = their_ints
@@ -1779,19 +1829,22 @@ def cmd_dec(args):
     algo     = args.algo
     out_path = args.out
 
-    # ── HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) ──────────────
-    if algo == 'hske-duplex':
+    # ── HSKE-NL-V2/V3-Duplex AEAD (arbitrary-length, single-pass) ──────────
+    if algo in ('hske-duplex', 'hske-duplex3'):
         key_path = args.key
         if not key_path:
             sys.exit(f"--key required for {algo}")
         key_int, nbits = _load_key(key_path)
         if nbits != 256:
-            sys.exit("dec: hske-duplex requires a 256-bit key")
+            sys.exit(f"dec: {algo} requires a 256-bit key")
         K = BitArray(nbits, key_int)
-        nonce_int, ct_bytes, tag_int, _nb = _decode_duplex_ct(getattr(args, 'in'))
+        v3 = (algo == 'hske-duplex3')
+        nonce_int, ct_bytes, tag_int, _nb = _decode_duplex_ct(
+            getattr(args, 'in'), v3=v3)
         ad = (getattr(args, 'ad', None) or '').encode()
-        pt = hske_nl_v2_duplex_decrypt(K, BitArray(nbits, nonce_int), ct_bytes,
-                                       tag_int.to_bytes(32, 'big'), ad)
+        dec_fn = hske_nl_v3_duplex_decrypt if v3 else hske_nl_v2_duplex_decrypt
+        pt = dec_fn(K, BitArray(nbits, nonce_int), ct_bytes,
+                    tag_int.to_bytes(32, 'big'), ad)
         if pt is None:
             sys.exit("dec: authentication tag mismatch — "
                      "ciphertext corrupt, wrong key, or wrong --ad")
@@ -1799,7 +1852,7 @@ def cmd_dec(args):
         return
 
     # ── Symmetric algos ─────────────────────────────────────────────────────
-    if algo in ('hske', 'hske-nla1', 'hske-nla2'):
+    if algo in ('hske', 'hske-nla1', 'hske-nla2', 'hske-nla3'):
         key_path = args.key
         if not key_path:
             sys.exit(f"--key required for {algo}")
@@ -1831,10 +1884,13 @@ def cmd_dec(args):
             seed    = BitArray(nbits, base.rotated(nbits // 8).uint ^ (_RNL_KDF_DC_256 >> (256 - nbits)))
             ks      = nl_fscx_revolve_v1(seed, BitArray(nbits, base.uint ^ 0), nbits // 4)
             D       = BitArray(nbits, E.uint ^ ks.uint)
-        else:  # hske-nla2
+        elif algo == 'hske-nla2':
             if not nl_v2_key_is_valid(K):
                 sys.exit("dec hske-nla2: %s" % _WEAK_V2_KEY_MSG)
             D = nl_fscx_revolve_v2_inv(E, K, 3 * nbits // 4)
+        else:  # hske-nla3 — no key check: v3 has no weak class (TODO #255)
+            _v3_width_ok(nbits, 'dec hske-nla3')
+            D = nl_fscx_revolve_v3_inv(E, K, _r3(nbits))
 
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
         return
@@ -1863,6 +1919,16 @@ def cmd_dec(args):
         if not nl_v2_key_is_valid(dec_key):
             sys.exit("dec hpke-nl: %s" % _WEAK_V2_KEY_MSG)
         D       = nl_fscx_revolve_v2_inv(E, dec_key, nbits // 4)
+        _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
+
+    elif algo == 'hpke-nl3':
+        priv_int, _, nbits = our_ints
+        _v3_width_ok(nbits, 'dec hpke-nl3')
+        poly    = GF_POLY.get(nbits, GF_POLY[256])
+        R_int, E_int, _nb = _decode_asym_ct(getattr(args, 'in'))
+        E       = BitArray(nbits, E_int)
+        dec_key = BitArray(nbits, gf_pow(R_int, priv_int, poly, nbits))
+        D       = nl_fscx_revolve_v3_inv(E, dec_key, _r3(nbits))
         _write_file(out_path, D.uint.to_bytes(nbits // 8, 'big'))
 
     elif algo == 'hpke-stern':
@@ -2510,10 +2576,13 @@ def cmd_fpe(args):
     if len(in_bytes) < 32:
         in_bytes = in_bytes.ljust(32, b'\x00')
     P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    v3 = getattr(args, 'v3', False)
     if args.encrypt:
-        R = fpe_encrypt(P, key_bytes, ctx_bytes)
+        R = fpe_v3_encrypt(P, key_bytes, ctx_bytes) if v3 else \
+            fpe_encrypt(P, key_bytes, ctx_bytes)
     else:
-        R = fpe_decrypt(P, key_bytes, ctx_bytes)
+        R = fpe_v3_decrypt(P, key_bytes, ctx_bytes) if v3 else \
+            fpe_decrypt(P, key_bytes, ctx_bytes)
     out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
@@ -2533,10 +2602,13 @@ def cmd_twk(args):
     if len(in_bytes) < 32:
         in_bytes = in_bytes.ljust(32, b'\x00')
     P = BitArray(KEYBITS, int.from_bytes(in_bytes[:32], 'big'))
+    v3 = getattr(args, 'v3', False)
     if args.encrypt:
-        R = twk_encrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_encrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
+            twk_encrypt(P, key_bytes, args.sector, args.bidx)
     else:
-        R = twk_decrypt(P, key_bytes, args.sector, args.bidx)
+        R = twk_v3_decrypt(P, key_bytes, args.sector, args.bidx) if v3 else \
+            twk_decrypt(P, key_bytes, args.sector, args.bidx)
     out_bytes = R.uint.to_bytes(KEYBITS // 8, 'big')
     if args.out == '-':
         sys.stdout.buffer.write(out_bytes)
@@ -2839,8 +2911,10 @@ def build_parser():
     # enc
     en = sub.add_parser('enc', help='Encrypt')
     en.add_argument('--algo', required=True,
-                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
-                             'hpke', 'hpke-nl', 'hpke-stern', 'hpke-stern-kem'])
+                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
+                             'hske-duplex', 'hske-duplex3',
+                             'hpke', 'hpke-nl', 'hpke-nl3',
+                             'hpke-stern', 'hpke-stern-kem'])
     en.add_argument('--key',    default=None)
     en.add_argument('--pubkey', default=None)
     en.add_argument('--in',  required=True, dest='in')
@@ -2853,8 +2927,10 @@ def build_parser():
     # dec
     de = sub.add_parser('dec', help='Decrypt')
     de.add_argument('--algo', required=True,
-                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-duplex',
-                             'hpke', 'hpke-nl', 'hpke-stern', 'hpke-stern-kem'])
+                    choices=['hske', 'hske-nla1', 'hske-nla2', 'hske-nla3',
+                             'hske-duplex', 'hske-duplex3',
+                             'hpke', 'hpke-nl', 'hpke-nl3',
+                             'hpke-stern', 'hpke-stern-kem'])
     de.add_argument('--key',    default=None)
     de.add_argument('--in',  required=True, dest='in')
     de.add_argument('--out', required=True)
@@ -2991,6 +3067,10 @@ def build_parser():
                     help='Input file (32 bytes)')
     fp.add_argument('--out',    default='-',
                     help='Output file (raw 32 bytes); - for stdout')
+    fp.add_argument('--v3', action='store_true',
+                    help='Use the NL-FSCX v3 round (TODO #255) instead of v2. '
+                         'Separate subkey domain, so v3 output is not v2 output; '
+                         'decrypt with --v3 too.')
     fp_mode = fp.add_mutually_exclusive_group(required=True)
     fp_mode.add_argument('--encrypt', action='store_true')
     fp_mode.add_argument('--decrypt', action='store_true')
@@ -3008,6 +3088,10 @@ def build_parser():
                     help='Input file (32 bytes)')
     tw.add_argument('--out',   default='-',
                     help='Output file (raw 32 bytes); - for stdout')
+    tw.add_argument('--v3', action='store_true',
+                    help='Use the NL-FSCX v3 round (TODO #255) instead of v2. '
+                         'Separate subkey domain, so v3 output is not v2 output; '
+                         'decrypt with --v3 too.')
     tw_mode = tw.add_mutually_exclusive_group(required=True)
     tw_mode.add_argument('--encrypt', action='store_true')
     tw_mode.add_argument('--decrypt', action='store_true')

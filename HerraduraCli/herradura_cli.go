@@ -103,6 +103,7 @@ const (
 	lblHpksNLPriv    = "HERRADURA HPKS-NL PRIVATE KEY"
 	lblHpkePriv      = "HERRADURA HPKE PRIVATE KEY"
 	lblHpkeNLPriv    = "HERRADURA HPKE-NL PRIVATE KEY"
+	lblHpkeNL3Priv   = "HERRADURA HPKE-NL3 PRIVATE KEY" // TODO #255
 	lblHpksSternPriv = "HERRADURA HPKS-STERN PRIVATE KEY"
 	lblHpkeSternPriv = "HERRADURA HPKE-STERN PRIVATE KEY"
 
@@ -112,6 +113,7 @@ const (
 	lblHpksNLPub    = "HERRADURA HPKS-NL PUBLIC KEY"
 	lblHpkePub      = "HERRADURA HPKE PUBLIC KEY"
 	lblHpkeNLPub    = "HERRADURA HPKE-NL PUBLIC KEY"
+	lblHpkeNL3Pub   = "HERRADURA HPKE-NL3 PUBLIC KEY"
 	lblHpksSternPub = "HERRADURA HPKS-STERN PUBLIC KEY"
 	lblHpkeSternPub = "HERRADURA HPKE-STERN PUBLIC KEY"
 
@@ -164,6 +166,7 @@ var privToAlgo = map[string]string{
 	lblHpksNLPriv:    "hpks-nl",
 	lblHpkePriv:      "hpke",
 	lblHpkeNLPriv:    "hpke-nl",
+	lblHpkeNL3Priv:   "hpke-nl3",
 	lblHpksSternPriv: "hpks-stern",
 	lblHpkeSternPriv: "hpke-stern",
 	lblKemPriv:       "hpke-stern-kem",
@@ -178,6 +181,7 @@ var algoToPrivLbl = map[string]string{
 	"hpks-nl":    lblHpksNLPriv,
 	"hpke":       lblHpkePriv,
 	"hpke-nl":    lblHpkeNLPriv,
+	"hpke-nl3":   lblHpkeNL3Priv,
 	"hpks-stern": lblHpksSternPriv,
 	"hpke-stern": lblHpkeSternPriv,
 	"hpks-wots":  lblHpksWotsPriv,
@@ -191,6 +195,7 @@ var algoToPubLbl = map[string]string{
 	"hpks-nl":    lblHpksNLPub,
 	"hpke":       lblHpkePub,
 	"hpke-nl":    lblHpkeNLPub,
+	"hpke-nl3":   lblHpkeNL3Pub,
 	"hpks-stern": lblHpksSternPub,
 	"hpke-stern": lblHpkeSternPub,
 	"hpks-wots":  lblHpksWotsPub,
@@ -199,7 +204,7 @@ var algoToPubLbl = map[string]string{
 
 var classicalAlgos = map[string]bool{
 	"hkex-gf": true, "hpks": true, "hpks-nl": true,
-	"hpke": true, "hpke-nl": true,
+	"hpke": true, "hpke-nl": true, "hpke-nl3": true,
 }
 
 var sternAlgos = map[string]bool{
@@ -930,7 +935,7 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
-	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
+	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpke-nl3|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
 	bits := fs.Int("bits", 256, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
@@ -1822,14 +1827,19 @@ func encodeSymCTTag(algo string, E *big.Int, n int, nonce, authTag *big.Int) (st
 
 // encodeDuplexCT: HSKE-NL-V2-Duplex AEAD, format tag 3 (TODO #118):
 // SEQ(3, nonce, ct_len, ct, tag, nbits) with variable-length ciphertext.
-func encodeDuplexCT(nonce *big.Int, ct []byte, tag *big.Int, n int) (string, error) {
+// v3 selects format tag 4 (HSKE-NL-V3-Duplex, TODO #255) over tag 3.
+func encodeDuplexCT(nonce *big.Int, ct []byte, tag *big.Int, n int, v3 bool) (string, error) {
 	nb := n / 8
 	ctLen := len(ct)
 	ctWidth := ctLen
 	if ctWidth == 0 {
 		ctWidth = 1
 	}
-	t3, _ := derIntSmall(3)
+	fmtTag := 3
+	if v3 {
+		fmtTag = 4
+	}
+	t3, _ := derIntSmall(fmtTag)
 	nd, _ := derIntBig(nonce, nb)
 	ld, _ := derIntSmall(ctLen)
 	ed, _ := derIntBig(new(big.Int).SetBytes(ct), ctWidth)
@@ -2896,10 +2906,11 @@ func cmdEnc(args []string) {
 	gen := new(big.Int).SetInt64(GfGen)
 
 	switch *algo {
-	case "hske-duplex":
-		// HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118
+	case "hske-duplex", "hske-duplex3":
+		// HSKE-NL-V2/V3-Duplex AEAD (single-pass) — TODO #118, #255
+		dplexV3 := *algo == "hske-duplex3"
 		if *key == "" {
-			fmt.Fprintln(os.Stderr, "enc: --key required for hske-duplex")
+			fmt.Fprintf(os.Stderr, "enc: --key required for %s\n", *algo)
 			os.Exit(1)
 		}
 		keyInt, n, err := loadKey(*key)
@@ -2907,13 +2918,18 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 		if n != 256 {
-			fmt.Fprintln(os.Stderr, "enc: hske-duplex requires a 256-bit key")
+			fmt.Fprintf(os.Stderr, "enc: %s requires a 256-bit key\n", *algo)
 			os.Exit(1)
 		}
 		K := NewBitArray(n, keyInt)
 		nonce := NewRandBitArray(n)
-		ct, authTag := HskeNlV2DuplexEncrypt(K, nonce, []byte(*ad), inBytes)
-		pem, err := encodeDuplexCT(&nonce.Val, ct, new(big.Int).SetBytes(authTag), n)
+		var ct, authTag []byte
+		if dplexV3 {
+			ct, authTag = HskeNlV3DuplexEncrypt(K, nonce, []byte(*ad), inBytes)
+		} else {
+			ct, authTag = HskeNlV2DuplexEncrypt(K, nonce, []byte(*ad), inBytes)
+		}
+		pem, err := encodeDuplexCT(&nonce.Val, ct, new(big.Int).SetBytes(authTag), n, dplexV3)
 		if err != nil {
 			die("enc", err)
 		}
@@ -2921,7 +2937,7 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 
-	case "hske", "hske-nla1", "hske-nla2":
+	case "hske", "hske-nla1", "hske-nla2", "hske-nla3":
 		if *key == "" {
 			fmt.Fprintf(os.Stderr, "enc: --key required for %s\n", *algo)
 			os.Exit(1)
@@ -2967,6 +2983,10 @@ func cmdEnc(args []string) {
 			}
 			E := NlFscxRevolveV2(P, K, 3*n/4)
 			pem, err = encodeSymCT("hske-nla2", &E.Val, n, nil)
+		case "hske-nla3":
+			// no key check: v3 has no weak class (TODO #255)
+			E := NlFscxRevolveV3(P, K, 5*n/8)
+			pem, err = encodeSymCT("hske-nla3", &E.Val, n, nil)
 		}
 		if err != nil {
 			die("enc", err)
@@ -2975,7 +2995,7 @@ func cmdEnc(args []string) {
 			die("enc", err)
 		}
 
-	case "hpke", "hpke-nl":
+	case "hpke", "hpke-nl", "hpke-nl3":
 		if *pubkey == "" {
 			fmt.Fprintf(os.Stderr, "enc: --pubkey required for %s\n", *algo)
 			os.Exit(1)
@@ -3001,6 +3021,8 @@ func cmdEnc(args []string) {
 			r = NewRandBitArray(n)
 			R = GfPow(gen, &r.Val, poly, n)
 			encKey = NewBitArray(n, GfPow(pubInt, &r.Val, poly, n))
+			// hpke-nl3 has no affine-degenerate key class to sample past
+			// (SecurityProofs-8.md 11.34.4), so it takes the first draw.
 			if *algo != "hpke-nl" || NlV2KeyIsValid(encKey) {
 				break
 			}
@@ -3011,10 +3033,14 @@ func cmdEnc(args []string) {
 		}
 
 		var pem string
-		if *algo == "hpke" {
+		switch *algo {
+		case "hpke":
 			E := FscxRevolve(P, encKey, n/4)
 			pem, err = encodeAsymCT(R, &E.Val, n)
-		} else {
+		case "hpke-nl3":
+			E := NlFscxRevolveV3(P, encKey, 5*n/8)
+			pem, err = encodeAsymCT(R, &E.Val, n)
+		default:
 			E := NlFscxRevolveV2(P, encKey, n/4)
 			pem, err = encodeAsymCT(R, &E.Val, n)
 		}
@@ -3094,10 +3120,11 @@ func cmdDec(args []string) {
 	}
 
 	switch *algo {
-	case "hske-duplex":
-		// HSKE-NL-V2-Duplex AEAD (arbitrary-length, single-pass) — TODO #118
+	case "hske-duplex", "hske-duplex3":
+		// HSKE-NL-V2/V3-Duplex AEAD (single-pass) — TODO #118, #255
+		dplexV3 := *algo == "hske-duplex3"
 		if *key == "" {
-			fmt.Fprintln(os.Stderr, "dec: --key required for hske-duplex")
+			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
 			os.Exit(1)
 		}
 		keyInt, _, err := loadKey(*key)
@@ -3108,8 +3135,13 @@ func cmdDec(args []string) {
 		if err != nil {
 			die("dec", err)
 		}
-		if len(ctInts) < 6 || bytesToInt(ctInts[0]) != 3 {
-			fmt.Fprintln(os.Stderr, "dec: not a V2-Duplex (format 3) ciphertext")
+		wantFmt := 3
+		if dplexV3 {
+			wantFmt = 4
+		}
+		if len(ctInts) < 6 || bytesToInt(ctInts[0]) != wantFmt {
+			fmt.Fprintf(os.Stderr, "dec: not a V%d-Duplex (format %d) ciphertext\n",
+				wantFmt-1, wantFmt)
 			os.Exit(1)
 		}
 		n := bytesToInt(ctInts[5])
@@ -3126,8 +3158,8 @@ func cmdDec(args []string) {
 		ctLen := bounded(wireInt(ctInts[2], "declared ciphertext length", "dec"),
 			0, derBudget, "declared ciphertext length", "dec")
 		if len(ctInts[3]) > ctLen {
-			fmt.Fprintf(os.Stderr, "dec: V2-Duplex ciphertext declares %d bytes "+
-				"but carries %d\n", ctLen, len(ctInts[3]))
+			fmt.Fprintf(os.Stderr, "dec: V%d-Duplex ciphertext declares %d bytes "+
+				"but carries %d\n", wantFmt-1, ctLen, len(ctInts[3]))
 			os.Exit(1)
 		}
 		ct := make([]byte, ctLen)
@@ -3136,7 +3168,13 @@ func cmdDec(args []string) {
 		}
 		authTag := make([]byte, 32)
 		new(big.Int).SetBytes(ctInts[4]).FillBytes(authTag)
-		pt, ok := HskeNlV2DuplexDecrypt(K, nonce, []byte(*ad), ct, authTag)
+		var pt []byte
+		var ok bool
+		if dplexV3 {
+			pt, ok = HskeNlV3DuplexDecrypt(K, nonce, []byte(*ad), ct, authTag)
+		} else {
+			pt, ok = HskeNlV2DuplexDecrypt(K, nonce, []byte(*ad), ct, authTag)
+		}
 		if !ok {
 			fmt.Fprintln(os.Stderr, "dec: authentication tag mismatch — "+
 				"ciphertext corrupt, wrong key, or wrong --ad")
@@ -3147,7 +3185,7 @@ func cmdDec(args []string) {
 		}
 		return
 
-	case "hske", "hske-nla1", "hske-nla2":
+	case "hske", "hske-nla1", "hske-nla2", "hske-nla3":
 		if *key == "" {
 			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
 			os.Exit(1)
@@ -3217,12 +3255,15 @@ func cmdDec(args []string) {
 				die("dec hske-nla2", errWeakV2Key)
 			}
 			D = NlFscxRevolveV2Inv(E, K, 3*n/4)
+		case "hske-nla3":
+			// no key check: v3 has no weak class (TODO #255)
+			D = NlFscxRevolveV3Inv(E, K, 5*n/8)
 		}
 		if err := writeBytes(*out, D.Bytes()); err != nil {
 			die("dec", err)
 		}
 
-	case "hpke", "hpke-nl":
+	case "hpke", "hpke-nl", "hpke-nl3":
 		if *key == "" {
 			fmt.Fprintf(os.Stderr, "dec: --key required for %s\n", *algo)
 			os.Exit(1)
@@ -3247,9 +3288,12 @@ func cmdDec(args []string) {
 		E      := NewBitArray(n, EInt)
 
 		var D *BitArray
-		if *algo == "hpke" {
+		switch *algo {
+		case "hpke":
 			D = FscxRevolve(E, decKey, 3*n/4)
-		} else {
+		case "hpke-nl3":
+			D = NlFscxRevolveV3Inv(E, decKey, 5*n/8)
+		default:
 			if !NlV2KeyIsValid(decKey) {
 				die("dec hpke-nl", errWeakV2Key)
 			}
@@ -4058,6 +4102,8 @@ func cmdFpe(args []string) {
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
+	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
+		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
 	fs.Parse(args)
 
 	if !*doEnc && !*doDec {
@@ -4081,9 +4127,14 @@ func cmdFpe(args []string) {
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray
-	if *doEnc {
+	switch {
+	case *doEnc && *v3:
+		R = FpeV3Encrypt(P, K.Bytes(), []byte(*ctx))
+	case *doEnc:
 		R = FpeEncrypt(P, K.Bytes(), []byte(*ctx))
-	} else {
+	case *v3:
+		R = FpeV3Decrypt(P, K.Bytes(), []byte(*ctx))
+	default:
 		R = FpeDecrypt(P, K.Bytes(), []byte(*ctx))
 	}
 	if err := writeBytes(*out, R.Bytes()); err != nil {
@@ -4102,6 +4153,8 @@ func cmdTwk(args []string) {
 	out     := fs.String("out",     "-", "Output file")
 	doEnc   := fs.Bool("encrypt",   false, "Encrypt")
 	doDec   := fs.Bool("decrypt",   false, "Decrypt")
+	v3      := fs.Bool("v3", false, "Use the NL-FSCX v3 round (TODO #255) "+
+		"instead of v2.  Separate subkey domain; decrypt with --v3 too.")
 	fs.Parse(args)
 
 	if !*doEnc && !*doDec {
@@ -4125,9 +4178,14 @@ func cmdTwk(args []string) {
 	P := NewBitArray(256, new(big.Int).SetBytes(data))
 
 	var R *BitArray
-	if *doEnc {
+	switch {
+	case *doEnc && *v3:
+		R = TwkV3Encrypt(P, K.Bytes(), *sector, uint32(*bidx))
+	case *doEnc:
 		R = TwkEncrypt(P, K.Bytes(), *sector, uint32(*bidx))
-	} else {
+	case *v3:
+		R = TwkV3Decrypt(P, K.Bytes(), *sector, uint32(*bidx))
+	default:
 		R = TwkDecrypt(P, K.Bytes(), *sector, uint32(*bidx))
 	}
 	if err := writeBytes(*out, R.Bytes()); err != nil {
@@ -4398,10 +4456,10 @@ Commands:
   dgst     [--algo hfscx-256] --in FILE [--out FILE]
   rand     (--seed FILE | --state FILE) [--personalization STR] [--reseed FILE] [--bytes N] [--hex] [--out FILE]
 
-Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpks-stern hpke-stern hpks-zkp-nl
+Algorithms (genpkey/pkey): hkex-gf hkex-rnl hpks hpks-nl hpke hpke-nl hpke-nl3 hpks-stern hpke-stern hpks-zkp-nl
 Algorithms (kex):           hkex-gf hkex-rnl hybrid-rnl-stern
   kex --algo hybrid-rnl-stern --their-kem FILE (Bob step) | --our-kem FILE (Alice step)
-Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-duplex hpke hpke-nl hpke-stern
+Algorithms (enc/dec):       hske hske-nla1 hske-nla2 hske-nla3 hske-duplex hske-duplex3 hpke hpke-nl hpke-nl3 hpke-stern
 Algorithms (encfile/decfile): hske-nla1
 Algorithms (sign/verify):   hpks hpks-nl hpks-stern rnl-sigma nl-zkboo hpks-wots (one-time) hpks-ring (anonymous)
   sign/verify --algo hpks-ring --ring p0_pub.pem,p1_pub.pem,... : code-based ring signature

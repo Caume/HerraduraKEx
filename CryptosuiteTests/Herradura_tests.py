@@ -487,6 +487,32 @@ def twk_decrypt_test(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArr
     B = _fpe_twk_derive_b(_TWK_DS, key, _twk_tweak(sector, bidx))
     return nl_fscx_revolve_v2_inv(ct, B, _R_VALUE)
 
+# ... the same two, over NL-FSCX v3 (TODO #255).  Distinct tags 0x22/0x23, at
+# R3_VALUE, and with NO rejection loop: v3 has no affine-degenerate subkey class
+# to reject (SecurityProofs-8.md §11.34.4), so the derivation is a single hash.
+# _R3_VALUE is already defined above with the v3 primitive.
+_FPE_V3_DS  = 0x22
+_TWK_V3_DS  = 0x23
+
+def _fpe_twk_v3_derive_b(ds: int, key: bytes, tweak: bytes) -> BitArray:
+    h = _hfscx_256_ds(ds, len(key).to_bytes(8, 'big') + key + tweak)
+    return BitArray(_KEYBITS, int.from_bytes(h, 'big'))
+
+def fpe_v3_encrypt_test(pt: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    return nl_fscx_revolve_v3(pt, _fpe_twk_v3_derive_b(_FPE_V3_DS, key, ctx), _R3_VALUE)
+
+def fpe_v3_decrypt_test(ct: BitArray, key: bytes, ctx: bytes = b'') -> BitArray:
+    return nl_fscx_revolve_v3_inv(ct, _fpe_twk_v3_derive_b(_FPE_V3_DS, key, ctx), _R3_VALUE)
+
+def twk_v3_encrypt_test(block: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    B = _fpe_twk_v3_derive_b(_TWK_V3_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v3(block, B, _R3_VALUE)
+
+def twk_v3_decrypt_test(ct: BitArray, key: bytes, sector: int, bidx: int) -> BitArray:
+    B = _fpe_twk_v3_derive_b(_TWK_V3_DS, key, _twk_tweak(sector, bidx))
+    return nl_fscx_revolve_v3_inv(ct, B, _R3_VALUE)
+
+
 def haccum_leaf_test(data: bytes) -> bytes:
     return hfscx_256(b'\x00' + data)
 
@@ -2981,6 +3007,98 @@ def test_nl_fscx_v3():
           f"suite mismatches={drift}  [{'PASS' if ok else 'FAIL'}]\n")
 
 
+# ---------------------------------------------------------------------------
+# Security test [48]: the NL-FSCX v3 consumers (TODO #255).  [47] pins the
+# primitive; this pins the constructions on top of it, and every check is a
+# property the primitive alone does not give:
+#   (a) each consumer round-trips.  A wrong round count still round-trips; a
+#       wrong INVERSE round count does not;
+#   (b) each v3 consumer differs from its v2 counterpart on the same inputs --
+#       the domain-separation assertion.  A copy-paste that reused v2's tags
+#       would still round-trip;
+#   (c) fpe --v3 and twk --v3 disagree at a 12-BYTE CONTEXT, the exact shape of
+#       the TODO #241 bug (§11.24.4) where the v2 pair were literally the same
+#       function whenever ctx == sector||bidx.  [46] guards the v2 pair;
+#   (d) this harness's standalone v3 fpe/twk copies agree byte-for-byte with the
+#       shipped suite, as [46] and [47] do for their own copies.
+# hske-duplex3 is not checked here because this harness has no duplex at all,
+# in either version; the C and Go harnesses cover it in their own [48].
+# ---------------------------------------------------------------------------
+
+def test_nl_fscx_v3_consumers():
+    print("[48] NL-FSCX v3 consumers: round-trip, v2 separation, fpe/twk  [SECURITY]")
+    N = _iters(50)
+    poly = GF_POLY[_KEYBITS]
+    sector, bidx = 0x0123456789ABCDEF, 0x00C0FFEE
+    tw12 = _twk_tweak(sector, bidx)
+    bad_rt = same_as_v2 = fpe_eq_twk = n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        P = BitArray.random(_KEYBITS)
+        K = BitArray.random(_KEYBITS)
+        key_b = K.uint.to_bytes(_KEYBITS // 8, 'big')
+
+        # hske-nla3
+        E3 = nl_fscx_revolve_v3(P, K, _R3_VALUE)
+        if nl_fscx_revolve_v3_inv(E3, K, _R3_VALUE).uint != P.uint:
+            bad_rt += 1
+        if nl_fscx_revolve_v2(P, K, _R_VALUE).uint == E3.uint:
+            same_as_v2 += 1
+
+        # hpke-nl3: El Gamal, both sides deriving the same key
+        priv = random.getrandbits(_KEYBITS) or 1
+        r    = random.getrandbits(_KEYBITS) or 1
+        pub  = gf_pow(GF_GEN, priv, poly, _KEYBITS)
+        R    = gf_pow(GF_GEN, r, poly, _KEYBITS)
+        enc_key = BitArray(_KEYBITS, gf_pow(pub, r, poly, _KEYBITS))
+        dec_key = BitArray(_KEYBITS, gf_pow(R, priv, poly, _KEYBITS))
+        C3 = nl_fscx_revolve_v3(P, enc_key, _R3_VALUE)
+        if nl_fscx_revolve_v3_inv(C3, dec_key, _R3_VALUE).uint != P.uint:
+            bad_rt += 1
+
+        # fpe --v3 / twk --v3, and the 12-byte-context collision (c)
+        F3 = fpe_v3_encrypt_test(P, key_b, tw12)
+        if fpe_v3_decrypt_test(F3, key_b, tw12).uint != P.uint:
+            bad_rt += 1
+        if fpe_encrypt_test(P, key_b, tw12).uint == F3.uint:
+            same_as_v2 += 1
+        T3 = twk_v3_encrypt_test(P, key_b, sector, bidx)
+        if twk_v3_decrypt_test(T3, key_b, sector, bidx).uint != P.uint:
+            bad_rt += 1
+        if twk_encrypt_test(P, key_b, sector, bidx).uint == T3.uint:
+            same_as_v2 += 1
+        if F3.uint == T3.uint:
+            fpe_eq_twk += 1
+
+    # (d) cross-check the harness copies against the shipped suite
+    drift = "n/a (suite not importable)"
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_v3c", _p)
+        _m = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+        mism = 0
+        for _ in range(3):
+            pv = random.getrandbits(_KEYBITS)
+            kb = random.getrandbits(_KEYBITS).to_bytes(_KEYBITS // 8, 'big')
+            if (fpe_v3_encrypt_test(BitArray(_KEYBITS, pv), kb, b'ctx').uint
+                    != _m.fpe_v3_encrypt(_m.BitArray(_KEYBITS, pv), kb, b'ctx').uint):
+                mism += 1
+            if (twk_v3_encrypt_test(BitArray(_KEYBITS, pv), kb, sector, bidx).uint
+                    != _m.twk_v3_encrypt(_m.BitArray(_KEYBITS, pv), kb, sector, bidx).uint):
+                mism += 1
+        drift = str(mism)
+    except Exception as exc:                       # pragma: no cover
+        drift = f"n/a ({type(exc).__name__})"
+
+    ok = (bad_rt == 0 and same_as_v2 == 0 and fpe_eq_twk == 0 and drift == "0")
+    print(f"    n={n_run}  round-trip fails={bad_rt}  v3==v2={same_as_v2}  "
+          f"fpe-v3==twk-v3 at 12-byte ctx={fpe_eq_twk}  suite mismatches={drift}  "
+          f"[{'PASS' if ok else 'FAIL'}]\n")
+
+
 # Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
 # shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
 # so a 12-byte fpe context equal to twk's sector||bidx made them the identical
@@ -3438,6 +3556,7 @@ if __name__ == '__main__':
     test_weak_key_rejection()
     test_fpe_twk_domain_separation()
     test_nl_fscx_v3()
+    test_nl_fscx_v3_consumers()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.
