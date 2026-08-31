@@ -232,6 +232,38 @@ SecurityProofsCode/                                 — standalone Python proof/
                              1.154 -- DO NOT QUOTE THE 157).  Recommends
                              merging #252 and #254.  Exits non-zero if a
                              finding stops reproducing
+  annealed_moment_ladder.py — the width extrapolation, EVALUATED (TODO #257,
+                             which MERGES #252 and #254).  #255-era passes
+                             closed the sampling route because the annealed
+                             threshold sits in a 2^-n quantile; that is true
+                             and is not the obstacle.  The model needs the
+                             edge-weight distribution only through its
+                             MOMENTS, and A_t = sum of (path count)^t is a
+                             count of t-TUPLES of paths, hence one linear DP
+                             over a tensor power -- O(n*t*2^t), no dependence
+                             on the number of edges, exact at n=256.  Rests
+                             on a carry-pair automaton for xdp+ with a
+                             CONSTANT (the output difference is not free:
+                             beta_i = alpha_i xor c_i xor c'_i, so a
+                             differential is a constraint sequence), and on a
+                             concavity lemma making the INTEGER lattice
+                             exact rather than a lower bound.  FINDING: mu is
+                             not asymptotically constant, it is LINEAR IN n
+                             (~0.19n differential, ~0.088n linear), so the
+                             fixed 4/3 and 2/3 criteria are cleared at n=256
+                             by 36x and 34x and n=256 is the EASIEST width,
+                             not the hardest.  Replaces #252's warned-against
+                             157 with 48.4.  Retro-explains why every pass
+                             since #247 saw mu rise and none could say why,
+                             and corrects §11.30.2's reading that no key size
+                             would help (the criterion is width-independent;
+                             the achieved slope is not).  The linear axis
+                             reaches only EVEN t -- a correlation's sign is
+                             not affine in the masks, checked -- so it
+                             brackets to 1-7% instead of closing.  Still an
+                             ESTIMATOR: annealed, validated against exact mu
+                             only at n<=13.  Exits non-zero if a finding
+                             stops reproducing
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -387,7 +419,7 @@ SecurityProofsCode/                                 — standalone Python proof/
                               footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
                               SecurityProofs.md, and that the advertised expression
                               counts match what validate_katex.js measures (TODO #231)
-SecurityProofs.md                                   — split index (redirects to Parts 1–8; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs.md                                   — split index (redirects to Parts 1–9; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
@@ -395,7 +427,8 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34–§11.37: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured · the width residue #252 and #254 share (600 math expressions)
+SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.38: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 (401 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

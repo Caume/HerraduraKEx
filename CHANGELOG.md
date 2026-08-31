@@ -2,6 +2,87 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.4] - 2026-08-31
+
+### TODO #252 + #254 merged into TODO #257 — the width extrapolation, evaluated
+
+PATCH: analysis and documentation, one new standalone script, and a split of
+SecurityProofs-8.md into Parts 8 and 9 to stay under GitHub's KaTeX limit.  No
+shipped primitive, CLI surface, wire format or rating changes.
+
+### Changed
+
+- **TODO #252 and TODO #254 are CLOSED BY MERGER, not by completion**, and their
+  shared remaining scope is now **TODO #257**.  Three passes each had reduced them
+  to the same obligation over the same kind of object, and their third-pass blocks
+  were byte-identical — the disagreement-between-documents class of defect (#237,
+  #238) waiting to happen.  Nothing is dropped: #257 opens with the union of what
+  both left, and the analysis they produced stays where it is.
+- **`SecurityProofs-8.md` is split**, at §11.37, into Part 8 (§11.34–§11.36, 435
+  math expressions) and the new **`SecurityProofs-9.md`** (§11.37–§11.38, 401).
+  Appending §11.38 had taken Part 8 to 839, past the ~750 threshold at which
+  GitHub silently stops rendering math.  Every copy of the part index — the index
+  itself, nine banners, seven footers, `README.md`, `CLAUDE.md`,
+  `KATEX_RULES.md` — is updated, and `check_part_index.py` moves to `NPARTS = 9`.
+
+### Added
+
+- **`SecurityProofsCode/annealed_moment_ladder.py`** and **`SecurityProofs-9.md`
+  §11.38** — TODO #257's first pass.  §11.37 opened the annealed first-moment
+  model and closed the only way anyone had of evaluating it at realistic width:
+  the threshold sits in a `2^-n` quantile, so a sampler cannot find it (that
+  section records one returning 157 at n = 256 against 0.48 at n = 13, where the
+  exact answer is 1.154).  That obstacle is real and is not the binding one.  The
+  model consumes the edge-weight distribution only through its MOMENTS, and
+  `A_t = sum of (path count)^t` counts t-TUPLES of paths — one linear DP over a
+  tensor power, `O(n * t * 2^t)`, with no dependence on the number of edges.
+  Exact at n = 256.
+
+### Findings
+
+- **A carry-pair automaton for `xdp+` of addition with a CONSTANT.**  The output
+  difference is not a free variable: `beta_i = alpha_i xor c_i xor c'_i`, so a
+  differential is a prescribed sequence of carry-pair parities and its probability
+  is a path count.  Validated bit-exactly against the exhaustive DDT at n = 6 and
+  n = 7 — every addend, every pair.
+- **Integer moments are enough, as a lemma rather than an approximation.**  The
+  annealed threshold is a supremum over a continuous parameter whose numerator is
+  concave, so it lies above its chord and below either flanking secant on any
+  interval, and both bounds are extremal at the endpoints.  The integer lattice
+  brackets — and the bracket is observed to close to 1e-12.
+- **THE SLOPE IS LINEAR IN n.**  Four passes (#247, #252's two, #254's two) asked
+  what the per-round slope converges to.  It does not converge: what settles is
+  `lambda*/n`, at about 0.19 differential and 0.088 linear, and the per-key spread
+  of that ratio narrows with width (0.0345 -> 0.0093 from n = 32 to n = 256).  The
+  criteria are fixed numbers, so the margin GROWS with width and **n = 256 is the
+  easiest width, not the hardest**: 48.4 against 4/3 and 22.4 against 2/3, margins
+  of 36x and 34x, at every key and every `tz` class sampled.  The 157 that #252
+  warned must not be quoted is replaced by 48.4.
+- **It retro-explains #252 and #254's own measurements.**  Both reported mu rising
+  monotonely over n = 7..13 without being able to say why a bounded-looking
+  quantity kept climbing.  It is not bounded — their exact medians 1.279 / 1.349 /
+  1.717 / 1.903 are 0.183 / 0.169 / 0.172 / 0.173 of n, the same constant the
+  model approaches from below.
+- **A correction to §11.30.2.**  Its scale-invariance theorem stands: the
+  CRITERION does not depend on n.  Its reading that "no key size moves it" — taken
+  as *widening buys nothing on this axis* — does not; widening faces the same
+  criterion with proportionally more margin.  Nothing here recommends widening.
+- **A correction to §11.37.6.**  Its per-trailing-zero offset is not
+  width-independent (about 0.40 per zero at n = 256 against 0.100-0.130 at
+  n <= 11), and the per-class ordering is not resolved by a sample of this size.
+  Its CONCLUSION survives a fortiori: the whole `tz` span is under 6% of the
+  largest class where one zero cost 5-7% at n <= 11.
+- **The linear axis reaches only EVEN moments**, because a correlation's sign is
+  not an affine function of the masks — fitted over GF(2) and rejected at every
+  addend, with exactly half the nonzero entries negative.  The even lattice still
+  brackets, to 1-7%, and its lower end is the conservative one.
+- **What is NOT settled, and neither part is small.**  The model is an ESTIMATOR —
+  annealed, a first moment, which bounds nothing on its own — validated against
+  exact mu only at n <= 13, where it runs 3-15% below the truth.  And the linear
+  hull is unreached, as it was in #254.  The cheapest upgrade is named precisely:
+  the gap is a SECOND-MOMENT question about the same two inputs, both exactly
+  computable by the machinery already here.
+
 ## [5.2.3] - 2026-08-31
 
 ### TODO #252 + #254 (third pass, shared) — the width residue
