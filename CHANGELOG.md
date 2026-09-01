@@ -2,6 +2,47 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.2] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, first pass
+
+PATCH: extends existing `CliTest/*.sh` interop scripts to Java where the surface they test
+already exists there (TODO #260 step 6, first pass — not the whole step).
+
+- **`test_v3_family.sh`**: `sym_langs` (driving hske-duplex3, fpe --v3, twk --v3, and the
+  hske-nla2/hske-nla3 zero-key check) now includes `java` when `bindings/java` is compiled,
+  matching the `nla3_langs` pattern the same file already used for hske-nla3/hpke-nl3. The
+  header comment's per-family language table and its "Java ships no duplex at all" /
+  "Java ships neither fpe nor twk" notes — both stale since v5.3.6/v5.3.8 — are corrected.
+  124/124 checks pass with Java included.
+- **`test_duplex.sh`**: the plain (v2) `hske-duplex` 3-way (py/c/go) interop test gains a
+  4th, optional Java column (`HAVE_JAVA`-gated, same idiom as the scripts above) — round-trip,
+  wrong-`--ad` rejection, and the empty-plaintext case, in every producer/consumer
+  combination. 38/38 checks pass with Java included, up from the prior 3-way count.
+- **`test_threshold_interop.sh`**: gains a 4th "Java sign, verify with all" scenario and a
+  Java verify leg on every existing scenario (Python/C/Go sign), plus extends the mixed
+  cross-CLI scenario to combine with Java instead of C when available (Python commit → C
+  aggregate → Go respond → Java combine) — a genuine cross-CLI protocol run, not just
+  cross-CLI verification of a single-CLI-produced signature. Both of Java's `threshold-*`
+  flag conventions get their own helper: `nargs_threshold_sign` (Python's and Java's
+  `--commits`/`--partials` space-separated multi-value shape) alongside the existing
+  `threshold_sign` (C's and Go's repeated `--commit`/`--partial` shape). Java remains
+  optional (`command -v javac`), degrading to a NOTE and 3-way coverage rather than failing.
+- **`test_cross_lang_matrix.sh`**: corrected its own stale header comment, which still
+  listed `hpks-ring`, `hpks-t` and `hske-duplex` among the `--algo` surface "Java's CLI
+  does not yet expose" — all three were ported in v5.3.6-v5.3.9 — and pointed each to
+  where its 4-way coverage now actually lives (`test_threshold_interop.sh`,
+  `test_duplex.sh`, `test_v3_family.sh` respectively; `hpks-ring`'s is still open, see
+  below). No functional change to this script itself; the 16-way matrix it runs is
+  unaffected and still passes (518/518 with all four languages).
+- **`.github/workflows/ci.yml`**: `native-interop` now installs `default-jdk-headless`, so
+  `test_threshold_interop.sh`, `test_duplex.sh` and `test_v3_family.sh` — all three claimed
+  by that job — get genuine 4-way coverage in CI rather than degrading to a NOTE every run.
+
+**Not done in this pass** — `hpks-ring` (HPKS-Stern-Ring) still has no 4-way interop
+coverage anywhere; that, plus a further audit for any other stale "Java doesn't have X"
+comment this session's CLI work left behind, remains open for a follow-up pass of step 6.
+
 ## [5.4.1] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the `native-java` demo CI step

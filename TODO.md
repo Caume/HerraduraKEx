@@ -191,9 +191,17 @@ exposes, the same `+`/`[FAIL]` verdict style, and the same TODO #258/#259 `[FAIL
 gate, verified clean across several runs.  Step 4 is DONE.  v5.4.1 added step 5:
 `native-java`'s CI job now builds Java explicitly and runs `Demo.java` as its own step
 ("Java suite demo runs to completion"), the same position and the same `[FAIL]`-gated
-convention C/Go/Python's demo steps use.  Step 5 is DONE; only step 6 (interop
-coverage — `test_cross_lang_matrix.sh` and `test_threshold_interop.sh` still skip Java's
-cell) remains open.
+convention C/Go/Python's demo steps use.  Step 5 is DONE.  v5.4.2 made step 6's
+first pass: `test_v3_family.sh`'s `sym_langs` now includes Java (matching the `nla3_langs`
+pattern it already used); `test_duplex.sh` gained an optional 4th Java column for plain
+(v2) `hske-duplex`; `test_threshold_interop.sh` gained a Java sign scenario and a Java
+verify leg on every scenario, plus a Java-combine mixed-CLI run; `test_cross_lang_matrix.sh`'s
+header comment (still listing `hpks-ring`/`hpks-t`/`hske-duplex` as unexposed by Java,
+stale since v5.3.6-v5.3.9) was corrected; and `native-interop` now installs a JDK so all
+three interop scripts it runs get real 4-way coverage in CI rather than a NOTE.  Step 6 is
+NOT fully closed — `hpks-ring` still has no 4-way interop script anywhere, and this was one
+pass, not an exhaustive audit for every stale "Java doesn't have X" comment this session's
+CLI work may have left behind.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
@@ -220,11 +228,13 @@ cell) remains open.
   C's output-scanning `hprintf`, Go's `os.Stdout` pipe, Python's `print` shadow, and now
   `Demo.java`'s own scanning `out()` — worth noting, not necessarily worth unifying for its
   own sake.
-* **Cross-interoperability checks.**  `cross-lang-compat`'s `test_cross_lang_matrix.sh` and
-  `test_malformed_pem_matrix.sh`, and `CliTest/test_v3_family.sh`, all degrade to a NOTE or
-  skip Java's cell for exactly the families above — `test_v3_family.sh`'s own header says so
-  explicitly.  Every function/CLI gap above is therefore also an interop-coverage gap: there
-  is no `test_java_*_interop.sh` for a protocol Java cannot run.
+* **Cross-interoperability checks.**  Partially done as of v5.4.2 — see Progress above.
+  `test_v3_family.sh`, `test_duplex.sh` and `test_threshold_interop.sh` now cover Java
+  (optionally, degrading to a NOTE without a JDK) alongside C/Go/Python.  Still open:
+  `hpks-ring` has no 4-way interop script at all (neither before nor after this pass);
+  `test_malformed_pem_matrix.sh` was not audited this pass for Java-specific gaps; and a
+  broader sweep for any other stale "Java doesn't have X" comment left over from this
+  session's CLI-subcommand work (v5.3.6-v5.3.9) has not been done.
 
 **Explicitly out of scope, and why.**  HCRED-KKW (`hcred_prove_kkw`/`hcred_verify_kkw`) is
 NOT a Java gap — it exists only in the Python suite file today, absent from C, Go, *and*

@@ -140,10 +140,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # default-jdk-headless is for test_threshold_interop.sh and
+      # test_v3_family.sh below (TODO #260): both are Java-optional and
+      # degrade to a NOTE without it, but a JDK is cheap here and gets
+      # this job's genuine 4-way (not just 3-way) coverage.
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3
+          sudo apt-get install -y --no-install-recommends gcc libc6-dev golang-go python3 default-jdk-headless
 
       - name: Build C
         run: ./build_c.sh

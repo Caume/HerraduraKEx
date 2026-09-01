@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # CliTest/test_duplex.sh — HSKE-NL-V2-Duplex AEAD enc/dec cross-language interop (TODO #118)
-# Covers all 9 producer/consumer pairs across the Python, C, and Go CLIs, plus
-# tamper rejection (wrong --ad, wrong key, mutated ciphertext), a multi-block
-# arbitrary-length message, and an empty-plaintext round-trip.
+# Covers all producer/consumer pairs across the Python, C, Go and (TODO #260,
+# optional) Java CLIs, plus tamper rejection (wrong --ad, wrong key, mutated
+# ciphertext), a multi-block arbitrary-length message, and an empty-plaintext
+# round-trip. Java degrades to a NOTE — skipping only Java's rows — if no JDK
+# is installed; C and Go remain hard requirements.
 set -euo pipefail
 
 DIR=$(dirname "$0")
+ROOT="$(cd "$DIR/.." && pwd)"
 PY="python3 $DIR/../HerraduraCli/herradura.py"
 C="$DIR/../HerraduraCli/herradura_cli"
 GO="$DIR/../HerraduraCli/herradura_cli_go"
@@ -19,6 +22,16 @@ PASS=0; FAIL=0
 . "$(dirname "$0")/lib_build.sh"
 hkx_require_built c go
 
+declare -A CLI=( [py]="$PY" [c]="$C" [go]="$GO" )
+langs="py c go"
+if command -v javac >/dev/null 2>&1; then
+    bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
+    CLI[java]="java -cp $ROOT/bindings/java herradurakex.HerraduraCli"
+    langs="py c go java"
+else
+    echo "NOTE: javac not found — skipping Java's duplex rows"
+fi
+
 # Shared 256-bit symmetric key via HKEX-GF
 $PY genpkey --algo hkex-gf --out "$TMP/alice.pem"
 $PY pkey    --in "$TMP/alice.pem" --pubout --out "$TMP/alice_pub.pem"
@@ -31,12 +44,10 @@ $PY kex     --algo hkex-gf --our "$TMP/alice.pem" --their "$TMP/bob_pub.pem" \
 printf 'HSKE-NL-V2-Duplex single-pass AEAD: arbitrary-length message spanning multiple 16-byte rate blocks (well over 32 bytes).' > "$TMP/msg.bin"
 AD="duplex-test-context"
 
-declare -A CLI=( [py]="$PY" [c]="$C" [go]="$GO" )
-
-for enc in py c go; do
+for enc in $langs; do
     ${CLI[$enc]} enc --algo hske-duplex --ad "$AD" \
         --key "$TMP/sk.pem" --in "$TMP/msg.bin" --out "$TMP/ct_$enc.pem"
-    for dec in py c go; do
+    for dec in $langs; do
         if ${CLI[$dec]} dec --algo hske-duplex --ad "$AD" \
               --key "$TMP/sk.pem" --in "$TMP/ct_$enc.pem" --out "$TMP/pt_${enc}_${dec}.bin" \
            && cmp -s "$TMP/msg.bin" "$TMP/pt_${enc}_${dec}.bin"; then
@@ -56,7 +67,7 @@ done
 
 # Empty-plaintext round-trip (each producer -> Python consumer)
 : > "$TMP/empty.bin"
-for enc in py c go; do
+for enc in $langs; do
     ${CLI[$enc]} enc --algo hske-duplex --ad "$AD" \
         --key "$TMP/sk.pem" --in "$TMP/empty.bin" --out "$TMP/ect_$enc.pem"
     if $PY dec --algo hske-duplex --ad "$AD" \
