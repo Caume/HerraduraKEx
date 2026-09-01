@@ -27,6 +27,7 @@ import (
 	"math"
 	"math/big"
 	"math/bits"
+	"sort"
 	"sync"
 )
 
@@ -4054,13 +4055,9 @@ func hcredChallenges(stmt, comsSer, outsSer []byte, rounds int) []int {
 	return out
 }
 
-// TODO #261: the KKW preprocessing-model transcript variant
-// (hcred_prove_kkw/hcred_verify_kkw in "Herradura cryptographic suite.py",
-// ~11x smaller proofs at production parameters) has no equivalent here
-// yet -- port planned, not implemented.  It is not wired to any CLI in
-// any language (cred-prove always takes this ZKBoo-(2,3) path), so
-// parity means a suite-level HcredProveKkw/HcredVerifyKkw pair plus demo
-// output, not a new --algo/--transcript flag.
+// TODO #261: the KKW preprocessing-model transcript variant is ported
+// below as HcredProveKkw/HcredVerifyKkw (search "HCRED-KKW"), alongside
+// this ZKBoo-(2,3) path -- both prove the same statement/circuit.
 
 // HcredProve produces a credential-presentation proof for the compound
 // statement (Ring-LWR key C + code syndrome y for the SAME s).
@@ -4365,6 +4362,874 @@ func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 		}
 	}
 	return true
+}
+
+// ── HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3 /
+// ported from Python under TODO #261) ───────────────────────────────────────
+//
+// Same circuit and statement as HcredProve/HcredVerify, encoded with the
+// KKW (Katz-Kolesnikov-Wang 2018) N-party preprocessing paradigm instead of
+// ZKBoo-(2,3):
+//   * Preprocessing: every wire w carries a mask lambda_w additively shared
+//     by N parties; for each mult gate z = x*y the parties also share
+//     lambda_x*lambda_y.  All of party i's shares derive from a seed
+//     (binary seed tree per emulation) except party N-1's product-share
+//     corrections ("aux").
+//   * Cut-and-choose: M emulations are committed; a Fiat-Shamir challenge
+//     opens M-tau of them completely (root seed only -- the verifier
+//     recomputes aux and all commitments), which is what forces aux to be
+//     honest.
+//   * Online (tau emulations): masked inputs zhat_w = w + lambda_w are
+//     published; per mult gate each party broadcasts
+//       t_i = -zhat_x*[lambda_y]_i - zhat_y*[lambda_x]_i + [lambda_xy]_i +
+//             [lambda_z]_i   (+ zhat_x*zhat_y for party 0),
+//     and zhat_z = sum(t_i).  A second challenge hides ONE party per
+//     emulation; the proof ships the N-1 other seeds (log2 N tree nodes),
+//     the hidden party's broadcasts, and aux when the aux party is opened.
+//   * Batched output check: all K output wires are folded into one random
+//     linear combination (FS-derived rho in Z_q^K after the broadcasts are
+//     bound), so each party broadcasts a single combined mask share u_i --
+//     the per-exec escape probability gains only 1/q ~ 2^-16, negligible
+//     against the 1/N party-hiding term.
+//   * Soundness: a prover cheating in k preprocessing emulations survives
+//     with probability C(M-k,M-tau)/C(M,M-tau) * (1/N)^(tau-k); production
+//     parameters N=64, M=343, tau=27 give 2^-128 (Picnic2 parameter set).
+//     Demo defaults N=4, M=8, tau=4 (illustration only).
+//
+// Not wired to any CLI in any language -- Python's own KKW path has none
+// either, so parity here is this suite-level function pair plus demo
+// output, not a new --algo/--transcript flag (SecurityProofs-7.md
+// Sec.11.10.8-11.10.10; SECURITY.md's HCRED row).
+
+const (
+	HcredKkwDemoN   = 4 // demo parties;      production: 64
+	HcredKkwDemoM   = 8 // demo emulations;   production: 343
+	HcredKkwDemoTau = 4 // demo online execs; production: 27
+)
+
+// kkwGate is one multiplication gate: (xKind,xIdx,yKind,yIdx,zIdx).
+// xKind/yKind is 'i' for an input wire ([0,n)=s, [n,n+nb)=beta,
+// [n+nb,n+nb+nd)=delta) or 'z' for a Z wire ([0,n)=a, [n,2n)=b,
+// [2n,2n+nb)=g, [2n+nb,2n+nb+nd)=h).
+type kkwGate struct {
+	xKind byte
+	xIdx  int
+	yKind byte
+	yIdx  int
+	zIdx  int
+}
+
+func hcredKkwGates(n, nb, nd int) []kkwGate {
+	gates := make([]kkwGate, 0, 2*n+nb+nd)
+	for i := 0; i < n; i++ {
+		gates = append(gates, kkwGate{'i', i, 'i', i, i}) // a = s^2
+	}
+	for i := 0; i < n; i++ {
+		gates = append(gates, kkwGate{'z', i, 'i', i, n + i}) // b = a*s
+	}
+	for i := 0; i < nb; i++ {
+		gates = append(gates, kkwGate{'i', n + i, 'i', n + i, 2*n + i}) // g = beta^2
+	}
+	for i := 0; i < nd; i++ {
+		gates = append(gates, kkwGate{'i', n + nb + i, 'i', n + nb + i, 2*n + nb + i}) // h = delta^2
+	}
+	return gates
+}
+
+type kkwNodeKey struct{ L, I int }
+
+// hcredKkwTree expands a binary seed tree; returns (leaves, all nodes).
+func hcredKkwTree(root []byte, N int) ([][]byte, map[kkwNodeKey][]byte) {
+	levels := bits.Len(uint(N)) - 1
+	nodes := map[kkwNodeKey][]byte{{0, 0}: root}
+	for l := 0; l < levels; l++ {
+		for i := 0; i < (1 << l); i++ {
+			par := nodes[kkwNodeKey{l, i}]
+			m0 := append(append([]byte{}, []byte("HCRED-tree0")...), par...)
+			m1 := append(append([]byte{}, []byte("HCRED-tree1")...), par...)
+			nodes[kkwNodeKey{l + 1, 2 * i}] = Hfscx256(m0, nil)
+			nodes[kkwNodeKey{l + 1, 2*i + 1}] = Hfscx256(m1, nil)
+		}
+	}
+	leaves := make([][]byte, N)
+	for i := 0; i < N; i++ {
+		leaves[i] = nodes[kkwNodeKey{levels, i}]
+	}
+	return leaves, nodes
+}
+
+// KkwPathEntry is one sibling-subtree entry in a KKW seed-tree opening.
+type KkwPathEntry struct {
+	L, I int
+	Node []byte
+}
+
+// hcredKkwTreeOpen returns the sibling path revealing every leaf except
+// `hide` (log2 N nodes).
+func hcredKkwTreeOpen(nodes map[kkwNodeKey][]byte, N, hide int) []KkwPathEntry {
+	levels := bits.Len(uint(N)) - 1
+	out := make([]KkwPathEntry, 0, levels)
+	idx := hide
+	for l := levels; l >= 1; l-- {
+		sib := idx ^ 1
+		out = append(out, KkwPathEntry{l, sib, nodes[kkwNodeKey{l, sib}]})
+		idx >>= 1
+	}
+	return out
+}
+
+// hcredKkwTreeRecover rebuilds every leaf covered by a sibling path (all
+// except the hidden one).
+func hcredKkwTreeRecover(path []KkwPathEntry, N int) map[int][]byte {
+	levels := bits.Len(uint(N)) - 1
+	leaves := map[int][]byte{}
+	for _, pe := range path {
+		cur := map[int][]byte{pe.I: pe.Node}
+		for l := pe.L; l < levels; l++ {
+			nxt := map[int][]byte{}
+			for ii, nd := range cur {
+				m0 := append(append([]byte{}, []byte("HCRED-tree0")...), nd...)
+				m1 := append(append([]byte{}, []byte("HCRED-tree1")...), nd...)
+				nxt[2*ii] = Hfscx256(m0, nil)
+				nxt[2*ii+1] = Hfscx256(m1, nil)
+			}
+			cur = nxt
+		}
+		for k, v := range cur {
+			leaves[k] = v
+		}
+	}
+	return leaves
+}
+
+func kkwLeavesCoverAllExcept(leaves map[int][]byte, N, hide int) bool {
+	if len(leaves) != N-1 {
+		return false
+	}
+	for i := 0; i < N; i++ {
+		_, ok := leaves[i]
+		if i == hide {
+			if ok {
+				return false
+			}
+		} else if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// hcredKkwParty derives one party's preprocessing shares from its seed.
+// Draw order: lambda_in (I), lambda_z (G), lambda_xy (G).
+func hcredKkwParty(seed []byte, I, G int) ([]int, []int, []int) {
+	tp := &hcredTape{seed: seed}
+	return tp.draws(I), tp.draws(G), tp.draws(G)
+}
+
+// hcredKkwPre runs one preprocessing emulation from its root seed.
+// lamXY[N-1] is already corrected by aux so that sum_i [lambda_xy]_i ==
+// lambda_x*lambda_y per gate.
+func hcredKkwPre(root []byte, N, I, G int, gates []kkwGate) (
+	map[kkwNodeKey][]byte, [][]int, [][]int, [][]int, []int) {
+	q := RnlQ
+	leaves, nodes := hcredKkwTree(root, N)
+	lamIn := make([][]int, N)
+	lamZ := make([][]int, N)
+	lamXY := make([][]int, N)
+	for i := 0; i < N; i++ {
+		lamIn[i], lamZ[i], lamXY[i] = hcredKkwParty(leaves[i], I, G)
+	}
+	tin := make([]int, I)
+	for w := 0; w < I; w++ {
+		s := 0
+		for i := 0; i < N; i++ {
+			s += lamIn[i][w]
+		}
+		tin[w] = ((s % q) + q) % q
+	}
+	tz := make([]int, G)
+	for w := 0; w < G; w++ {
+		s := 0
+		for i := 0; i < N; i++ {
+			s += lamZ[i][w]
+		}
+		tz[w] = ((s % q) + q) % q
+	}
+	aux := make([]int, len(gates))
+	for gidx, g := range gates {
+		var lx, ly int
+		if g.xKind == 'i' {
+			lx = tin[g.xIdx]
+		} else {
+			lx = tz[g.xIdx]
+		}
+		if g.yKind == 'i' {
+			ly = tin[g.yIdx]
+		} else {
+			ly = tz[g.yIdx]
+		}
+		s := 0
+		for i := 0; i < N; i++ {
+			s += lamXY[i][gidx]
+		}
+		cor := (((lx*ly-s)%q)+q)%q
+		aux[gidx] = cor
+		lamXY[N-1][gidx] = ((lamXY[N-1][gidx]+cor)%q + q) % q
+	}
+	return nodes, lamIn, lamZ, lamXY, aux
+}
+
+// hcredKkwStateCom commits to party j's preprocessing state in emulation e.
+func hcredKkwStateCom(e, j int, seed []byte, aux []int) []byte {
+	buf := make([]byte, 0, 16+len(seed))
+	buf = append(buf, []byte("HCRED-kkwst")...)
+	buf = append(buf, byte(e>>8), byte(e))
+	buf = append(buf, byte(j))
+	buf = append(buf, seed...)
+	if aux != nil {
+		buf = append(buf, hcredSer(aux)...)
+	}
+	return Hfscx256(buf, nil)
+}
+
+// hcredKkwOutmap applies the (linear) output map of the unified circuit to
+// a wire valuation -- used both for masked values zhat and per-party mask
+// shares, since the map is linear and so commutes with additive sharing.
+func hcredKkwOutmap(vecIn, vecZ, mPoly []int, HRows []*BitArray,
+	n, rows, rowBits int) []int {
+	q := RnlQ
+	inv2 := (q + 1) / 2
+	eb := HcredEpsBits
+	nb := rows * rowBits
+	sArr := vecIn[:n]
+	bArr := vecIn[n : n+nb]
+	dArr := vecIn[n+nb:]
+	aArr := vecZ[:n]
+	bZ := vecZ[n : 2*n]
+	gArr := vecZ[2*n : 2*n+nb]
+	hArr := vecZ[2*n+nb:]
+
+	out := make([]int, 0, n+nb+len(dArr)+1+2*rows+n)
+	for i := 0; i < n; i++ {
+		out = append(out, (((bZ[i]-sArr[i])%q)+q)%q)
+	}
+	for i := 0; i < nb; i++ {
+		out = append(out, (((gArr[i]-bArr[i])%q)+q)%q)
+	}
+	for i := range dArr {
+		out = append(out, (((hArr[i]-dArr[i])%q)+q)%q)
+	}
+	wsum := 0
+	for i := 0; i < n; i++ {
+		wsum += (aArr[i] + sArr[i]) * inv2
+	}
+	out = append(out, ((wsum%q)+q)%q)
+	for r := 0; r < rows; r++ {
+		acc := 0
+		for i := 0; i < n; i++ {
+			if HRows[r].Val.Bit(i) == 1 {
+				acc += (aArr[i] + sArr[i]) * inv2
+			}
+		}
+		dec := 0
+		for t := 0; t < rowBits; t++ {
+			dec += (1 << uint(t)) * bArr[r*rowBits+t]
+		}
+		out = append(out, (((acc-dec)%q)+q)%q)
+	}
+	for r := 0; r < rows; r++ {
+		out = append(out, ((bArr[r*rowBits]%q)+q)%q)
+	}
+	sNorm := make([]int, n)
+	for i := 0; i < n; i++ {
+		sNorm[i] = ((sArr[i] % q) + q) % q
+	}
+	ms := RnlPolyMul(mPoly, sNorm, q, n)
+	for i := 0; i < n; i++ {
+		dec := 0
+		for t := 0; t < eb; t++ {
+			dec += (1 << uint(t)) * dArr[i*eb+t]
+		}
+		out = append(out, (((ms[i]-dec)%q)+q)%q)
+	}
+	return out
+}
+
+// hcredKkwTargets returns the public output values v_o, in
+// hcredKkwOutmap's order.
+func hcredKkwTargets(W int, ySynd *big.Int, cPoly []int, n, rows, rowBits int) []int {
+	q := RnlQ
+	off := HcredEpsOff
+	nb := rows * rowBits
+	nd := n * HcredEpsBits
+	lift := RnlLift(cPoly, RnlP, q)
+	v := make([]int, 0, n+nb+nd+1+2*rows+n)
+	for i := 0; i < n+nb+nd; i++ {
+		v = append(v, 0)
+	}
+	v = append(v, ((W%q)+q)%q)
+	for r := 0; r < rows; r++ {
+		v = append(v, 0)
+	}
+	for r := 0; r < rows; r++ {
+		v = append(v, int(ySynd.Bit(r)))
+	}
+	for i := 0; i < n; i++ {
+		v = append(v, (((lift[i]-off)%q)+q)%q)
+	}
+	return v
+}
+
+// hcredKkwFsInts derives `count` FS integers in [0,modulus) via rejection
+// sampling from an HFSCX stream.  Uses 1-byte windows for modulus <= 256,
+// 2-byte windows above.
+func hcredKkwFsInts(tag, material []byte, count, modulus int, distinct bool) []int {
+	width := 1
+	if modulus > 256 {
+		width = 2
+	}
+	space := 1 << uint(8*width)
+	lim := (space / modulus) * modulus
+	out := make([]int, 0, count)
+	var seen map[int]bool
+	if distinct {
+		seen = make(map[int]bool, count)
+	}
+	ctr := uint32(0)
+	for len(out) < count {
+		msg := make([]byte, 0, 9+len(tag)+len(material)+4)
+		msg = append(msg, []byte("HCRED-kkw")...)
+		msg = append(msg, tag...)
+		msg = append(msg, material...)
+		msg = append(msg, byte(ctr>>24), byte(ctr>>16), byte(ctr>>8), byte(ctr))
+		blk := Hfscx256(msg, nil)
+		ctr++
+		for w := 0; w+width <= 32; w += width {
+			v := 0
+			for b := 0; b < width; b++ {
+				v = v<<8 | int(blk[w+b])
+			}
+			if v < lim && len(out) < count {
+				v %= modulus
+				if distinct {
+					if seen[v] {
+						continue
+					}
+					seen[v] = true
+				}
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+func intSlicesEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// KkwOnlineProof is the revealed data for one opened (online) emulation.
+type KkwOnlineProof struct {
+	Path []KkwPathEntry
+	ComH []byte
+	Pbar int
+	Aux  []int // nil iff Pbar == N-1 (aux belongs to N-1's own hidden state then)
+	Zin  []int
+	T    []int
+	U    int
+}
+
+// HcredKkwProof is a KKW-encoded credential-presentation proof (TODO #261).
+type HcredKkwProof struct {
+	W      int
+	NPar   int
+	M      int
+	Tau    int
+	Pre    map[int][]byte // e -> root seed, unopened emulations only
+	Online map[int]*KkwOnlineProof
+}
+
+type kkwPreState struct {
+	nodes              map[kkwNodeKey][]byte
+	lamIn, lamZ, lamXY [][]int
+	aux                []int
+	coms               [][]byte
+}
+
+type kkwOnlineState struct {
+	zin         []int
+	tvec        [][]int
+	zz          []int
+	nodes       map[kkwNodeKey][]byte
+	lamIn, lamZ [][]int
+	aux         []int
+	coms        [][]byte
+	us          []int
+}
+
+// HcredProveKkw produces a KKW-encoded credential-presentation proof
+// (same statement/circuit as HcredProve).  Production soundness needs
+// (nPar,m,tau) = (64,343,27) for 2^-128.
+func HcredProveKkw(sPoly, mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	n, nPar, m, tau int, msg []byte) (*HcredKkwProof, error) {
+	if nPar <= 0 || nPar&(nPar-1) != 0 {
+		return nil, fmt.Errorf("HcredProveKkw: N_par must be a power of two")
+	}
+	rows, rowBits, _ := HcredParams(n)
+	q := RnlQ
+	nb := rows * rowBits
+	nd := n * HcredEpsBits
+	I := n + nb + nd
+	G := 2*n + nb + nd
+	gates := hcredKkwGates(n, nb, nd)
+
+	H := SternBuildH(seedH)
+	W, beta, delta, err := hcredWitness(sPoly, mPoly, cPoly, H, y, n, rows, rowBits)
+	if err != nil {
+		return nil, err
+	}
+	wIn := make([]int, 0, I)
+	for _, x := range sPoly {
+		wIn = append(wIn, ((x%q)+q)%q)
+	}
+	wIn = append(wIn, beta...)
+	wIn = append(wIn, delta...)
+	stmt := hcredStmtHash(mPoly, cPoly, seedH, y, n, msg)
+
+	// Preprocessing: M emulations, commit.
+	roots := make([][]byte, m)
+	pre := make([]kkwPreState, m)
+	hEs := make([][]byte, m)
+	lvl := bits.Len(uint(nPar)) - 1
+	for e := 0; e < m; e++ {
+		root := make([]byte, 32)
+		if _, err := rand.Read(root); err != nil {
+			return nil, err
+		}
+		nodes, lamIn, lamZ, lamXY, aux := hcredKkwPre(root, nPar, I, G, gates)
+		coms := make([][]byte, nPar)
+		for j := 0; j < nPar; j++ {
+			var a []int
+			if j == nPar-1 {
+				a = aux
+			}
+			coms[j] = hcredKkwStateCom(e, j, nodes[kkwNodeKey{lvl, j}], a)
+		}
+		buf := append([]byte("HCRED-kkwem"), byte(e>>8), byte(e))
+		for _, c := range coms {
+			buf = append(buf, c...)
+		}
+		hEs[e] = Hfscx256(buf, nil)
+		roots[e] = root
+		pre[e] = kkwPreState{nodes, lamIn, lamZ, lamXY, aux, coms}
+	}
+	preBuf := append([]byte("HCRED-kkwpre"), stmt...)
+	for _, h := range hEs {
+		preBuf = append(preBuf, h...)
+	}
+	hPre := Hfscx256(preBuf, nil)
+
+	// Challenge 1: cut-and-choose subset.
+	subset := hcredKkwFsInts([]byte("c1"), hPre, tau, m, true)
+	sort.Ints(subset)
+
+	// Online phase for the tau selected emulations.
+	online := map[int]*kkwOnlineState{}
+	for _, e := range subset {
+		ps := pre[e]
+		tin := make([]int, I)
+		for w := 0; w < I; w++ {
+			s := 0
+			for i := 0; i < nPar; i++ {
+				s += ps.lamIn[i][w]
+			}
+			tin[w] = ((s % q) + q) % q
+		}
+		zin := make([]int, I)
+		for w := 0; w < I; w++ {
+			zin[w] = ((wIn[w]+tin[w])%q + q) % q
+		}
+		tvec := make([][]int, nPar)
+		for j := range tvec {
+			tvec[j] = make([]int, len(gates))
+		}
+		zz := make([]int, G)
+		for gidx, g := range gates {
+			var zx, zy int
+			if g.xKind == 'i' {
+				zx = zin[g.xIdx]
+			} else {
+				zx = zz[g.xIdx]
+			}
+			if g.yKind == 'i' {
+				zy = zin[g.yIdx]
+			} else {
+				zy = zz[g.yIdx]
+			}
+			acc := 0
+			for j := 0; j < nPar; j++ {
+				var lx, ly int
+				if g.xKind == 'i' {
+					lx = ps.lamIn[j][g.xIdx]
+				} else {
+					lx = ps.lamZ[j][g.xIdx]
+				}
+				if g.yKind == 'i' {
+					ly = ps.lamIn[j][g.yIdx]
+				} else {
+					ly = ps.lamZ[j][g.yIdx]
+				}
+				t := -zx*ly - zy*lx + ps.lamXY[j][gidx] + ps.lamZ[j][g.zIdx]
+				if j == 0 {
+					t += zx * zy
+				}
+				t = ((t % q) + q) % q
+				tvec[j][gidx] = t
+				acc += t
+			}
+			zz[g.zIdx] = ((acc % q) + q) % q
+		}
+		online[e] = &kkwOnlineState{zin: zin, tvec: tvec, zz: zz, nodes: ps.nodes,
+			lamIn: ps.lamIn, lamZ: ps.lamZ, aux: ps.aux, coms: ps.coms}
+	}
+
+	// Batched output check.
+	var mskParts []byte
+	for _, e := range subset {
+		mskParts = append(mskParts, hcredSer(online[e].zin)...)
+		for j := 0; j < nPar; j++ {
+			mskParts = append(mskParts, hcredSer(online[e].tvec[j])...)
+		}
+	}
+	hMsk := Hfscx256(append([]byte("HCRED-kkwmsk"), mskParts...), nil)
+	K := I + 1 + 2*rows + n
+	rhoSeed := Hfscx256(append(append(append([]byte("HCRED-kkwrho"), stmt...), hPre...), hMsk...), nil)
+	rho := (&hcredTape{seed: rhoSeed}).draws(K)
+	var comOns []byte
+	for _, e := range subset {
+		od := online[e]
+		us := make([]int, nPar)
+		for j := 0; j < nPar; j++ {
+			lo := hcredKkwOutmap(od.lamIn[j], od.lamZ[j], mPoly, H, n, rows, rowBits)
+			s := 0
+			for k := 0; k < K; k++ {
+				s += rho[k] * lo[k]
+			}
+			us[j] = ((s % q) + q) % q
+		}
+		od.us = us
+		for j := 0; j < nPar; j++ {
+			buf := append([]byte("HCRED-kkwon"), byte(e>>8), byte(e), byte(j))
+			buf = append(buf, hcredSer(od.tvec[j])...)
+			buf = append(buf, hcredSer([]int{us[j]})...)
+			comOns = append(comOns, Hfscx256(buf, nil)...)
+		}
+	}
+	hOn := Hfscx256(append([]byte("HCRED-kkwhon"), comOns...), nil)
+
+	// Challenge 2: hidden party per online emulation.
+	c2mat := append(append(append([]byte{}, hPre...), hMsk...), hOn...)
+	pbars := hcredKkwFsInts([]byte("c2"), c2mat, tau, nPar, false)
+
+	// Assemble proof.
+	subsetSet := make(map[int]bool, len(subset))
+	for _, e := range subset {
+		subsetSet[e] = true
+	}
+	proofPre := map[int][]byte{}
+	for e := 0; e < m; e++ {
+		if !subsetSet[e] {
+			proofPre[e] = roots[e]
+		}
+	}
+	proofOn := map[int]*KkwOnlineProof{}
+	for k, e := range subset {
+		pb := pbars[k]
+		od := online[e]
+		path := hcredKkwTreeOpen(od.nodes, nPar, pb)
+		var aux []int
+		if pb != nPar-1 {
+			aux = od.aux
+		}
+		proofOn[e] = &KkwOnlineProof{
+			Path: path,
+			ComH: od.coms[pb],
+			Pbar: pb,
+			Aux:  aux,
+			Zin:  od.zin,
+			T:    od.tvec[pb],
+			U:    od.us[pb],
+		}
+	}
+	return &HcredKkwProof{W: W, NPar: nPar, M: m, Tau: tau, Pre: proofPre, Online: proofOn}, nil
+}
+
+// HcredVerifyKkw verifies a KKW-encoded credential-presentation proof.
+func HcredVerifyKkw(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
+	proof *HcredKkwProof, n int, msg []byte) bool {
+	rows, rowBits, wMax := HcredParams(n)
+	q := RnlQ
+	nb := rows * rowBits
+	nd := n * HcredEpsBits
+	I := n + nb + nd
+	G := 2*n + nb + nd
+	nPar, m, tau := proof.NPar, proof.M, proof.Tau
+	if nPar <= 0 || nPar&(nPar-1) != 0 || tau < 1 || tau > m {
+		return false
+	}
+	W := proof.W
+	if W < 1 || W > wMax {
+		return false
+	}
+	if len(proof.Pre) != m-tau || len(proof.Online) != tau {
+		return false
+	}
+	gates := hcredKkwGates(n, nb, nd)
+	H := SternBuildH(seedH)
+	stmt := hcredStmtHash(mPoly, cPoly, seedH, y, n, msg)
+	lvl := bits.Len(uint(nPar)) - 1
+
+	hEs := make([][]byte, m)
+	onLeaves := map[int]map[int][]byte{}
+	for e, root := range proof.Pre {
+		if e < 0 || e >= m {
+			return false
+		}
+		nodes, _, _, _, aux := hcredKkwPre(root, nPar, I, G, gates)
+		coms := make([][]byte, nPar)
+		for j := 0; j < nPar; j++ {
+			var a []int
+			if j == nPar-1 {
+				a = aux
+			}
+			coms[j] = hcredKkwStateCom(e, j, nodes[kkwNodeKey{lvl, j}], a)
+		}
+		buf := append([]byte("HCRED-kkwem"), byte(e>>8), byte(e))
+		for _, c := range coms {
+			buf = append(buf, c...)
+		}
+		hEs[e] = Hfscx256(buf, nil)
+	}
+	for e, od := range proof.Online {
+		if e < 0 || e >= m {
+			return false
+		}
+		pb := od.Pbar
+		if pb < 0 || pb >= nPar {
+			return false
+		}
+		if pb != nPar-1 && od.Aux == nil {
+			return false
+		}
+		leaves := hcredKkwTreeRecover(od.Path, nPar)
+		if !kkwLeavesCoverAllExcept(leaves, nPar, pb) {
+			return false
+		}
+		onLeaves[e] = leaves
+		coms := make([][]byte, nPar)
+		for j := 0; j < nPar; j++ {
+			if j == pb {
+				coms[j] = od.ComH
+			} else {
+				var a []int
+				if j == nPar-1 {
+					a = od.Aux
+				}
+				coms[j] = hcredKkwStateCom(e, j, leaves[j], a)
+			}
+		}
+		buf := append([]byte("HCRED-kkwem"), byte(e>>8), byte(e))
+		for _, c := range coms {
+			buf = append(buf, c...)
+		}
+		hEs[e] = Hfscx256(buf, nil)
+	}
+	for _, h := range hEs {
+		if h == nil {
+			return false
+		}
+	}
+	preBuf := append([]byte("HCRED-kkwpre"), stmt...)
+	for _, h := range hEs {
+		preBuf = append(preBuf, h...)
+	}
+	hPre := Hfscx256(preBuf, nil)
+
+	// Challenge-1 consistency.
+	subset := hcredKkwFsInts([]byte("c1"), hPre, tau, m, true)
+	sort.Ints(subset)
+	onlineKeys := make([]int, 0, len(proof.Online))
+	for e := range proof.Online {
+		onlineKeys = append(onlineKeys, e)
+	}
+	sort.Ints(onlineKeys)
+	if !intSlicesEqual(subset, onlineKeys) {
+		return false
+	}
+
+	// Re-emulate opened parties online.
+	emu := map[int]*kkwEmu{}
+	for _, e := range subset {
+		od := proof.Online[e]
+		zin := od.Zin
+		if len(zin) != I || len(od.T) != len(gates) {
+			return false
+		}
+		shares := map[int]kkwShare{}
+		for j, seed := range onLeaves[e] {
+			li, lz, lxy := hcredKkwParty(seed, I, G)
+			if j == nPar-1 {
+				if len(od.Aux) != G {
+					return false
+				}
+				for g := 0; g < G; g++ {
+					lxy[g] = ((lxy[g]+od.Aux[g])%q + q) % q
+				}
+			}
+			shares[j] = kkwShare{li, lz, lxy}
+		}
+		tvec := map[int][]int{}
+		for j := range shares {
+			tvec[j] = make([]int, len(gates))
+		}
+		zz := make([]int, G)
+		for gidx, g := range gates {
+			var zx, zy int
+			if g.xKind == 'i' {
+				zx = zin[g.xIdx]
+			} else {
+				zx = zz[g.xIdx]
+			}
+			if g.yKind == 'i' {
+				zy = zin[g.yIdx]
+			} else {
+				zy = zz[g.yIdx]
+			}
+			acc := od.T[gidx]
+			for j, sh := range shares {
+				var lx, ly int
+				if g.xKind == 'i' {
+					lx = sh.li[g.xIdx]
+				} else {
+					lx = sh.lz[g.xIdx]
+				}
+				if g.yKind == 'i' {
+					ly = sh.li[g.yIdx]
+				} else {
+					ly = sh.lz[g.yIdx]
+				}
+				t := -zx*ly - zy*lx + sh.lxy[gidx] + sh.lz[g.zIdx]
+				if j == 0 {
+					t += zx * zy
+				}
+				t = ((t % q) + q) % q
+				tvec[j][gidx] = t
+				acc += t
+			}
+			zz[g.zIdx] = ((acc % q) + q) % q
+		}
+		emu[e] = &kkwEmu{shares: shares, tvec: tvec, zz: zz}
+	}
+
+	// Batched output check + challenge-2 consistency.
+	var mskParts []byte
+	for _, e := range subset {
+		od := proof.Online[e]
+		mskParts = append(mskParts, hcredSer(od.Zin)...)
+		for j := 0; j < nPar; j++ {
+			var tv []int
+			if j == od.Pbar {
+				tv = od.T
+			} else {
+				tv = emu[e].tvec[j]
+			}
+			mskParts = append(mskParts, hcredSer(tv)...)
+		}
+	}
+	hMsk := Hfscx256(append([]byte("HCRED-kkwmsk"), mskParts...), nil)
+	K := I + 1 + 2*rows + n
+	rhoSeed := Hfscx256(append(append(append([]byte("HCRED-kkwrho"), stmt...), hPre...), hMsk...), nil)
+	rho := (&hcredTape{seed: rhoSeed}).draws(K)
+	targets := hcredKkwTargets(W, y, cPoly, n, rows, rowBits)
+
+	var comOns []byte
+	for _, e := range subset {
+		od := proof.Online[e]
+		pb := od.Pbar
+		usum := ((od.U % q) + q) % q
+		js := make([]int, 0, len(emu[e].shares))
+		for j := range emu[e].shares {
+			js = append(js, j)
+		}
+		sort.Ints(js)
+		for _, j := range js {
+			sh := emu[e].shares[j]
+			lo := hcredKkwOutmap(sh.li, sh.lz, mPoly, H, n, rows, rowBits)
+			s := 0
+			for k := 0; k < K; k++ {
+				s += rho[k] * lo[k]
+			}
+			usum = ((usum+s)%q + q) % q
+		}
+		zo := hcredKkwOutmap(od.Zin, emu[e].zz, mPoly, H, n, rows, rowBits)
+		lhs := 0
+		for k := 0; k < K; k++ {
+			diff := (((zo[k]-targets[k])%q)+q)%q
+			lhs += rho[k] * diff
+		}
+		lhs = ((lhs % q) + q) % q
+		if lhs != usum {
+			return false
+		}
+		for j := 0; j < nPar; j++ {
+			var tv []int
+			var uj int
+			if j == pb {
+				tv = od.T
+				uj = od.U
+			} else {
+				tv = emu[e].tvec[j]
+				sh := emu[e].shares[j]
+				lo := hcredKkwOutmap(sh.li, sh.lz, mPoly, H, n, rows, rowBits)
+				s := 0
+				for k := 0; k < K; k++ {
+					s += rho[k] * lo[k]
+				}
+				uj = ((s % q) + q) % q
+			}
+			buf := append([]byte("HCRED-kkwon"), byte(e>>8), byte(e), byte(j))
+			buf = append(buf, hcredSer(tv)...)
+			buf = append(buf, hcredSer([]int{uj})...)
+			comOns = append(comOns, Hfscx256(buf, nil)...)
+		}
+	}
+	hOn := Hfscx256(append([]byte("HCRED-kkwhon"), comOns...), nil)
+	c2mat := append(append(append([]byte{}, hPre...), hMsk...), hOn...)
+	pbars := hcredKkwFsInts([]byte("c2"), c2mat, tau, nPar, false)
+	for k, e := range subset {
+		if proof.Online[e].Pbar != pbars[k] {
+			return false
+		}
+	}
+	return true
+}
+
+type kkwShare struct {
+	li, lz, lxy []int
+}
+
+type kkwEmu struct {
+	shares map[int]kkwShare
+	tvec   map[int][]int
+	zz     []int
 }
 
 // HcredBindMsg derives the issuer-signature message binding (m, C, seed_H, y).

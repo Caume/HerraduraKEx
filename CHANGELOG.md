@@ -2,6 +2,43 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.5.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to Go
+
+MINOR: the first language port of asymmetry #1 (new public API surface — a language-target
+port of an existing protocol variant, per CLAUDE.md's versioning rule).
+
+- **`herradura/herradura.go`** gains `HcredProveKkw`/`HcredVerifyKkw`, a 1:1 port of Python's
+  `hcred_prove_kkw`/`hcred_verify_kkw` (KKW/Katz–Kolesnikov–Wang preprocessing-model MPCitH
+  transcript, TODO #128 Batch 3) — same statement/circuit as the existing ZKBoo-(2,3)
+  `HcredProve`/`HcredVerify`, ~11x smaller proofs at production parameters. Every Python
+  helper has a direct counterpart: gate wiring, the binary seed tree and its opening/
+  recovery, per-party preprocessing shares, state commitments, the linear output map,
+  public targets, and the Fiat-Shamir integer sampler.
+- **Real bug caught in review, before it shipped:** the "reveal `aux` when party N-1 is
+  opened" condition was transcribed inverted on the first pass (`pb == N_par-1` instead of
+  Python's `pb != N_par-1`), which made every genuine proof fail verification. A
+  fail-point-tagged debug pass (temporary `fmt.Println` at every `return false` site,
+  removed after) isolated it to that one line in one commit; not present in the pushed
+  code.
+- **Verification:** no fixed-vector KAT for KKW exists in any language yet (Python
+  included), so this is checked structurally, the same standard the rest of HCRED already
+  uses — ~20 repeated prove→verify round trips, all clean, plus six independent rejection
+  checks (wrong message, flipped `W`, flipped a party's batched-check broadcast `U`,
+  flipped a gate broadcast `T`, flipped one byte of a preprocessing root seed, and a
+  relabeled hidden-party index `Pbar`), each one caught by `HcredVerifyKkw`.
+- Wired into `Herradura cryptographic suite.go`'s existing HCRED demo section, right after
+  the ZKBoo path and reusing the same enrolment keys; the full demo runs clean end to end
+  (`*** OK: no check reported [FAIL] ***`).
+- `SECURITY.md`'s HCRED row, and the pointer comments in `herradura.h` and
+  `bindings/java/herradurakex/Hcred.java`, updated to say Go has the port and C/Java don't
+  yet, rather than "port planned" for all three.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: the C and Java ports (now with the Go port as a function-for-function
+  reference to translate from) and asymmetry #2 (numbered `SelfTest.java` convention) remain.
+
 ## [5.4.5] - 2026-09-01
 
 ### TODO #261 (partial) — reconsider asymmetry #1: port HCRED-KKW instead of acknowledging it

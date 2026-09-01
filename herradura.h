@@ -5273,9 +5273,10 @@ typedef struct {
 /* TODO #261: the KKW preprocessing-model transcript variant
    (hcred_prove_kkw/hcred_verify_kkw in "Herradura cryptographic suite.py",
    ~11x smaller proofs at production parameters) has no equivalent here
-   yet -- port planned, not implemented.  It is not wired to any CLI in
-   any language (cred-prove always takes this ZKBoo-(2,3) path), so
-   parity means a suite-level hcred_prove_kkw/hcred_verify_kkw pair plus
+   yet -- port planned, not implemented.  Go has it (herradura/herradura.go's
+   HcredProveKkw/HcredVerifyKkw); Java's is still open too.  Not wired to
+   any CLI in any language (cred-prove always takes this ZKBoo-(2,3) path),
+   so parity means a suite-level hcred_prove_kkw/hcred_verify_kkw pair plus
    demo output, not a new --algo/--transcript flag. */
 
 /* Prove credential presentation (ZKBoo-(2,3) MPCitH, rounds repetitions).

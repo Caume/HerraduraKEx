@@ -170,20 +170,38 @@ both pointer comments once the ports land.
 Task breakdown for the port (mirroring Python's `hcred_prove_kkw`/`hcred_verify_kkw`, ~113
 lines, `Herradura cryptographic suite.py` line 3061 on — KKW encoding, cut-and-choose over
 `M` emulations opening `M-τ`, `N`-party preprocessing, the batched output check):
+- **Go (DONE, v5.5.0):** `HcredProveKkw`/`HcredVerifyKkw` added to `herradura/herradura.go`,
+  a 1:1 port of every Python helper (`hcred_kkw_gates`/`_tree`/`_tree_open`/`_tree_recover`/
+  `_party`/`_pre`/`_state_com`/`_outmap`/`_targets`/`_fs_ints`) plus the two entry points, all
+  unexported except the entry points and the two exported proof-carrying types
+  (`HcredKkwProof`, `KkwOnlineProof`, `KkwPathEntry`). Wired into
+  `Herradura cryptographic suite.go`'s existing HCRED demo section, right after the ZKBoo
+  path, reusing the same enrolment keys. **Caught one real transcription bug in review**:
+  the "reveal `aux` when party N-1 is opened" condition was inverted on the first pass
+  (`pb == N_par-1` instead of Python's `pb != N_par-1`) — every genuine proof failed
+  verification until a fail-point-tagged debug pass isolated it to that one line. Verified
+  structurally (no fixed-vector KAT exists for KKW in any language yet, matching Python):
+  ~20 repeated prove→verify round trips all passed, plus targeted rejection checks — wrong
+  message, flipped `W`, flipped a party's `U` broadcast, flipped a `T` gate broadcast,
+  flipped a preprocessing root seed byte, and a relabeled `Pbar` (claimed hidden party) —
+  each one independently caught by `HcredVerifyKkw`. Demo run and the full Go suite/CliTest
+  gates are clean (see CHANGELOG v5.5.0).
 - **C** (`herradura.h`): `hcred_prove_kkw`/`hcred_verify_kkw` alongside the existing
-  `hcred_prove`/`hcred_verify`, same `HcredProof`-style calling convention where it fits a
-  distinct KKW transcript shape; demo output in
+  `hcred_prove`/`hcred_verify`; demo output in
   `Herradura cryptographic suite.c`'s HCRED section, matching Python's `[FAIL]`-gated print.
-- **Go** (`herradura/herradura.go`): `HcredProveKkw`/`HcredVerifyKkw`, same treatment;
-  `Herradura cryptographic suite.go` demo section.
-- **Java** (`bindings/java/herradurakex/Hcred.java`): drop the "out of scope for this port"
-  doc-comment paragraph once implemented; wire into `Demo.java`'s HCRED section.
-- Still **not** a CLI subcommand in any language — Python's KKW path has none either, so
-  parity here means the three suite files and the demos, not `cred-prove --transcript kkw`.
-- KAT/test coverage is a judgment call for whoever picks this up: Python's own demo has no
-  fixed-vector KAT for KKW today, so a byte-exact cross-language check needs one added
-  first (or the port is verified structurally — round-trips + rejection — like the rest of
-  HCRED, without new KAT entries).
+  Still open — the Go port above is the reference to port from next, since its structure
+  now mirrors Python's function-for-function.
+- **Java** (`bindings/java/herradurakex/Hcred.java`): drop the "port planned, not
+  implemented" doc-comment paragraph once implemented; wire into `Demo.java`'s HCRED
+  section. Still open.
+- Still **not** a CLI subcommand in any language — Python's (and now Go's) KKW path has
+  none either, so parity here means the suite files and the demos, not
+  `cred-prove --transcript kkw`.
+- KAT/test coverage remains a judgment call for whoever finishes C and Java: no
+  fixed-vector KAT for KKW exists in any language today (Python's included), so a
+  byte-exact cross-language check needs one added first — the structural verification
+  the Go port used (round-trips + the six rejection axes above) is the fallback and is
+  what every language has today.
 
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:
