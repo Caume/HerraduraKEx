@@ -14095,3 +14095,76 @@ the full inherited state, and the analysis it continues lives in `SecurityProofs
 Status: **DONE v5.2.4** — closed by merger: the linear axis is measured exactly as a
 minimum mean cycle, item (1)'s two modes are answered negatively, and the residual width
 extrapolation, identical to #252's, is now #257.
+
+### #258: segmentation fault in the C demo's HCRED section — `SternSig` used unallocated
+
+Reported against the C library demo (`Herradura cryptographic suite.c`), and it reproduced
+deterministically: the binary died inside the HCRED block, after the section header printed
+and before the first verdict line.
+
+```
+gcc -O2 -o suite_c "Herradura cryptographic suite.c" && ./suite_c    # SIGSEGV, exit 139
+```
+
+**Root cause.**  Under `-O0 -g` the backtrace was unambiguous:
+
+```
+#0  stern_hash (out=0x0, ...)            herradura.h:2015   (*out = h)
+#1  hpks_stern_f_sign                    herradura.h:2304   (stern_hash(&sig->c0[i], ...))
+#2  hcred_issue                          herradura.h:5725
+#3  main                                 Herradura cryptographic suite.c:654
+```
+
+`sig->c0` was `NULL`.  `SternSig` became a heap-backed struct with a caller-supplied round
+count when the Stern round count was made variable (TODO #236) — `herradura.h:2271` states
+the contract, *"the caller allocates `*sig` with `stern_sig_alloc()`"* — and
+`hpks_stern_f_sign` reads `rounds` straight out of `sig->rounds`.  The demo declared
+`SternSig hc_cred;` at line 642 and never allocated it, so both the round count and the six
+commitment/response arrays were uninitialised stack.
+
+**The demo was the only consumer that got this wrong**, which is why CI stayed green: all
+three CLI call sites and both `CryptosuiteTests/Herradura_tests.c` sites already call
+`stern_sig_alloc` first, and no CI job ran the suite demo binary — the `native-c` job runs
+the *tests* harness, a different binary.  The [FAIL] gate of TODO #233 didn't reach here
+either; the demo prints `+`/`-` verdicts, not `[FAIL]` markers, and its exit status wasn't
+aggregated by anything.
+
+**Two more sites of the same defect, found while localising, and neither was merely a
+crash risk.**  All three `SternSig` declarations in the demo were unallocated:
+
+* **line 472, `static SternSig sf_sig`** — `static`, so `rounds` was 0 and the pointers were
+  `NULL` rather than garbage.  The signing loop ran zero times and nothing faulted; the
+  section printed **`- HPKS-Stern-F verification FAILED`** on every single run — a
+  permanent false failure in the flagship code-based signature section, silently wrong
+  since TODO #236 (v3.1.0) made the round count variable.
+* **line 790, `static SternSig eve_sig`** — the Eve-forgery bypass test writes
+  `ba_rand(&eve_sig.c0[i], ...)` through the same unallocated struct.  It had never
+  executed, because the HCRED segfault upstream killed the process first — a second latent
+  segfault, not a passing test.
+
+**Fix.**  Added `stern_sig_alloc(&sig, SDF_ROUNDS)` before use and `stern_sig_free(&sig)`
+after, at all three sites — the same allocate/free pattern the file's own 78.I ring-signature
+demo already used for `SternRingSig`.  Verified: the binary now exits 0 and runs to
+completion across repeated runs; `+ HPKS-Stern-F signature verified` and `+ issuer
+credential ... verified` now print correctly in place of the two false failures; clean
+under `valgrind --leak-check=full` (28,257 allocations, 28,257 frees, 0 leaks, 0 errors).
+
+**Checked whether the other language demos share the shape — they do not.**  Go's
+`HpksSternFSign` and Python's `hpks_stern_f_sign` are constructor functions that return a
+fully-built signature value; there is no caller-allocated out-parameter struct to forget to
+allocate.  Java ships no equivalent standalone demo binary at all (`SelfTest.java` is a test
+harness, not a printout demo) — nothing to check there.  The unsafe pattern existed only in
+the C API.
+
+**CI gap closed, in the smallest sound form.**  `native-c`/`native-go`/`native-python` each
+gained a step that runs their suite demo binary and gates on exit status — the check that
+would have caught this bug directly.  A finer-grained gate on the demo's own verdict lines
+is deliberately NOT done here: the `+`/`-` convention marks both genuine failures and
+correct negative results (`- Eve cannot forge: ...` is a PASS), so a naive text gate on `-`
+would false-positive on every expected adversary-failure line.  That is filed as its own
+item, **TODO #259**, rather than shipped as a shallow rider that either breaks CI on correct
+output or checks nothing.
+
+Status: **DONE v5.2.5** — fixed at all three sites in the C demo, verified clean under
+valgrind, and CI now runs the C/Go/Python suite demos and fails on a crash. The remaining
+verdict-line gate is TODO #259.

@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.5] - 2026-08-31
+
+### TODO #258 — segmentation fault in the C demo's HCRED section, fixed
+
+PATCH: bug fix in the C library demo (`Herradura cryptographic suite.c`) and a
+CI process guard.  No shipped primitive, CLI surface, wire format or rating
+changes.
+
+### Fixed
+
+- **`SternSig` used unallocated at three sites in the C demo.**  `SternSig`
+  became a heap-backed struct with a caller-supplied round count under TODO
+  #236, and `herradura.h` states the contract explicitly: the caller allocates
+  with `stern_sig_alloc()` before signing.  The demo's HCRED block declared
+  `SternSig hc_cred;` and never allocated it, so both the round count and all
+  six commitment/response arrays were uninitialised stack — `hcred_issue()` ->
+  `hpks_stern_f_sign()` -> `stern_hash()` wrote through a NULL `sig->c0` and
+  the binary segfaulted partway through the demo.
+- **Two more sites of the same defect, found while localising, and neither
+  was merely a crash risk.**  `static SternSig sf_sig` in the HPKS-Stern-F
+  section is `static`, so `rounds` was 0 and the signing loop ran zero times —
+  no fault, but the section printed `- HPKS-Stern-F verification FAILED` on
+  every run, a permanent false failure in the flagship code-based-signature
+  demo.  `static SternSig eve_sig` in the Eve-forgery bypass test wrote
+  through the same kind of unallocated struct; it had simply never executed,
+  because the HCRED segfault upstream killed the process first.  All three
+  now call `stern_sig_alloc(&sig, SDF_ROUNDS)` before use and
+  `stern_sig_free(&sig)` after.  Verified clean under valgrind memcheck (0
+  leaks, 0 errors, all 28,257 allocations freed) and confirmed the demo now
+  runs to completion and reports the correct verdict at all three sites.
+- **The Go and Python suite demos do not share the defect.**  Checked while
+  fixing this: `HpksSternFSign`/`hpks_stern_f_sign` in both languages are
+  constructor functions that return a fully-built signature value, not a
+  caller-allocated out-parameter struct — the pattern that made this bug
+  possible exists only in the C API.  Java ships no equivalent demo binary at
+  all (`SelfTest.java` is a test harness, not this suite's printout demo), so
+  there was nothing to check there.
+
+### Added
+
+- **CI now runs the C, Go, and Python suite demo binaries and gates on their
+  exit status** (`native-c`, `native-go`, `native-python`).  This is the gap
+  that let the segfault above ship unnoticed through eleven green CI jobs:
+  `build_c.sh` already compiled the demo, but only the separate
+  `Herradura_tests_c` harness was ever executed.  This is a **process** guard,
+  not a **content** guard — it catches a crash or non-zero exit, not a wrong
+  verdict line.  The demo's `+`/`-` convention marks both genuine failures and
+  correct negative results (`- Eve cannot forge: ...` is a PASS), so a naive
+  grep for `-` would false-positive on every expected adversary-failure line;
+  scoring individual verdict lines needs the demo to adopt an unambiguous
+  marker first, which is why that part is filed separately as TODO #259
+  rather than done here as a rider.
+
 ## [5.2.4] - 2026-08-31
 
 ### TODO #252 + #254 merged into TODO #257 — the width extrapolation, evaluated
