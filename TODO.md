@@ -294,19 +294,88 @@ two things mechanically rather than by a one-time source read:
    two entries**: `hcred-zkboo` (all four languages, pre-existing) and `hcred-kkw` (all four,
    now that this item's own work closed it) — verified to catch a renamed/removed marker.
 
+**v5.8.0 — `PRIMITIVES` extended past its seed, one real gap found and closed.**  Audited
+the four suite files/bindings for suite-internal (non-CLI) primitives beyond `hcred-*`:
+
+* **Masked HSKE (78.H) was a genuine Java gap.**  `fscx_revolve_masked` /
+  `hske_encrypt_masked` / `hske_decrypt_masked` (Boolean masking via `M`'s GF(2)-linearity)
+  existed in C/Go/Python but had no Java port — `Demo.java`'s own doc comment already named
+  this as a pre-existing gap.  Ported to `Herradura.java`, wired into `Demo.java`, and
+  cross-checked against the unmasked `fscxRevolve` result, not just round-tripped.
+* **The Merkle accumulator (78.J) existed in Java but wasn't independently usable** — it was
+  package-private inside `Xmss.java` (its only caller) where C/Go/Python expose it as
+  general-purpose top-level functions.  Widened to `public`; `Demo.java`'s doc comment,
+  which claimed it wasn't ported at all, corrected.
+* The forward-secret ratchet (78.C) was already at four-language parity and gets its first
+  `PRIMITIVES` entry as a regression guard, same treatment as ZKBoo.
+* `spec/check_language_parity.py`'s `SUITE_FILES["java"]` generalized from a single
+  hardcoded path (`Hcred.java`, a leftover of the manifest's KKW-only origin) to every
+  `bindings/java/herradurakex/*.java` concatenated — Java, unlike C/Go/Python, splits its
+  suite one class per protocol family, so a single-file assumption would have made every
+  future non-Hcred entry a false positive.
+* `PRIMITIVES` is now 7 entries (`hcred-zkboo`, `hcred-kkw`, `haccum`, `ratchet`,
+  `fscx-revolve-masked`, `hske-encrypt-masked`, `hske-decrypt-masked`), up from 2.
+
 **What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
-below asks for *every* protocol/primitive, and `PRIMITIVES` currently has exactly the two
-entries this item's own investigation produced — a seed, not the retroactive full census of
-the ~35-protocol table `spec/herradura-protocol-spec.json` already tracks by CLI surface.
-Populating `PRIMITIVES` with every suite-internal (non-CLI) primitive the suite has is real,
-separate work of its own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing
-script-by-script rather than arriving complete — pick it up incrementally, the same way.
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 7 entries — grown
+past the seed, but still not the retroactive full census of the ~35-protocol table
+`spec/herradura-protocol-spec.json` already tracks by CLI surface.  Populating `PRIMITIVES`
+with every suite-internal (non-CLI) primitive the suite has is real, separate work of its
+own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing script-by-script
+rather than arriving complete — pick it up incrementally, the same way.  Candidates not yet
+in the manifest include the HPKS-T threshold aggregation helpers and the aPAKE/OPRF internal
+derivation functions — all CLI-reachable at their protocol's top level already, so lower
+priority than the non-CLI class this item exists to catch.
 
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current two entries — extending `PRIMITIVES`
+the primitive-manifest half is met only for its current 7 entries — extending `PRIMITIVES`
 is what keeps this item open.
+
+Status: **OPEN**
+
+### #262: `HpksXmssSign`'s `int`→`uint32` leaf-index conversion has no bound check (CodeQL go/incorrect-integer-conversion, alert #1)
+
+GitHub code scanning flags `herradura/herradura.go`'s `HpksXmssSign` — `uint32(leafIdx)` —
+as CWE-190/CWE-681 ("Incorrect conversion between integer types"), high severity, open since
+2026-08-19 and still present on `master` (commit `f4420cb`) and `devtest`. The alert's
+traced source is `HerraduraCli/herradura_cli.go`'s `xmssReadIdx`, which parses the
+`<keyfile>.idx` sidecar via `strconv.Atoi` (architecture-dependent `int`, so 64-bit on every
+platform this repo targets) with only a lower-bound check (`v < 0` → 0), no upper bound.
+
+**Verified: not exploitable through the shipped CLI path, but a real library-API gap.**
+`herradura_cli.go`'s `sign --algo hpks-xmss` handler *does* bound `leafIdx` before calling
+`HpksXmssSign` — `if leafIdx >= numLeaves { ...exit... }`, where `numLeaves = 1 << h` and
+`h` is itself capped at `xmssMaxH = 20`, so `leafIdx` can never exceed ~2^20 by the time it
+reaches the conversion. CodeQL's own documentation for this rule states it "is only able to
+identify bounds checks that compare against a constant value" — `numLeaves` is a variable,
+not a constant, so the tool cannot see this guard and flags the call anyway. Confirmed by
+reading both sides of the CLI's `sign` case (`HerraduraCli/herradura_cli.go` lines
+3579–3591) and `HpksXmssSign`'s definition (`herradura/herradura.go` ~line 3379).
+
+**What is real: `HpksXmssSign` is an exported library function with no bound check of its
+own**, unlike `HpksWotsKeygen`/`HpksWotsSign` (already typed `leafIdx uint32` — correct by
+construction) and unlike `HpksXmssKeygen` which trusts its `h int` from the same CLI-side
+`bounded()` helper. Any other caller of the `herradura` package — a future MCP tool, a
+different CLI, direct library use — that passes an out-of-range `int` (negative, or
+`>= 2^32`, or simply `>= len(kp.LeafHashes)`) gets silent wraparound/truncation into a
+*different, already-used* leaf index rather than an error. For a one-time-use signature
+scheme, silently signing with a reused WOTS leaf is a private-key-recovery bug (two WOTS
+signatures under the same leaf let an attacker forge a third) — the CLI happening to guard
+correctly today doesn't make the library API itself safe to call.
+
+**Fix.** Add the bound check inside `HpksXmssSign` (and `HpksXmssKeygen`'s leaf-index
+consumers) itself, against `len(kp.LeafHashes)` — the same check `herradura_cli.go` already
+performs, just moved (or duplicated) into the library so it can't be skipped by a caller
+that doesn't know to replicate it. Return an error/nil rather than a signature on an
+out-of-range index, matching the CLI's existing "key exhausted" behavior. Apply the same
+audit to any other exported function taking a leaf/round/index `int` that later narrows to
+a smaller unsigned type without its own check (a quick grep for `uint32(` conversions in
+`herradura/herradura.go` bounds the search). Re-run `codeql.yml`'s Go analysis (or
+`gh api repos/Caume/HerraduraKEx/code-scanning/alerts/1`) after the fix to confirm the alert
+closes; GitHub auto-closes code-scanning alerts once the flagged line's data flow is
+provably bounded, no manual dismissal needed if the fix actually lands.
 
 Status: **OPEN**

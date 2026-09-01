@@ -191,4 +191,46 @@ public final class Herradura {
         BigInteger decKey = gfPow(r, priv);
         return fscxRevolve(ct, decKey, R_STEPS);
     }
+
+    // -----------------------------------------------------------------
+    // 78.H — Masking-Friendly FSCX (Boolean masking via GF(2) linearity)
+    // TODO #261: ported from herradura.h / herradura.go / the Python suite
+    // so this suite-internal primitive has four-language parity.
+    //
+    // FSCX(A^r, B, steps) ^ FSCX(r, 0, steps) == FSCX(A, B, steps)
+    // because M = I^ROL^ROR is GF(2)-linear, so M^steps(A^r) == M^steps(A)^M^steps(r).
+    //
+    // The caller supplies a uniform random mask r; no secret bits of A are
+    // exposed in any intermediate value computed by this method.
+    // -----------------------------------------------------------------
+
+    /** Computes fscxRevolve(a, b, steps) without exposing a: mask must be a
+     * uniform random value. Returns fscxRevolve(a^mask, b, steps) ^
+     * fscxRevolve(mask, 0, steps), which equals fscxRevolve(a, b, steps) by
+     * GF(2)-linearity of M^steps. */
+    public static BigInteger fscxRevolveMasked(BigInteger a, BigInteger b, BigInteger mask, int steps) {
+        BigInteger am = a.xor(mask).and(MASK);
+        BigInteger fm = fscxRevolve(am, b, steps);
+        BigInteger fz = fscxRevolve(mask, BigInteger.ZERO, steps);
+        return fm.xor(fz).and(MASK);
+    }
+
+    public static final class Masked {
+        public final BigInteger result;
+        public final BigInteger mask;
+        public Masked(BigInteger result, BigInteger mask) { this.result = result; this.mask = mask; }
+    }
+
+    /** HSKE encrypt with internal mask generation. Caller should discard/erase
+     * {@code mask} after use (BigInteger cannot itself be zeroized). */
+    public static Masked hskeEncryptMasked(BigInteger pt, BigInteger key, SecureRandom rng) {
+        BigInteger mask = new BigInteger(N, rng).and(MASK);
+        return new Masked(fscxRevolveMasked(pt, key, mask, I_STEPS), mask);
+    }
+
+    /** HSKE decrypt with internal mask generation. */
+    public static Masked hskeDecryptMasked(BigInteger ct, BigInteger key, SecureRandom rng) {
+        BigInteger mask = new BigInteger(N, rng).and(MASK);
+        return new Masked(fscxRevolveMasked(ct, key, mask, R_STEPS), mask);
+    }
 }

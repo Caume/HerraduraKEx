@@ -143,11 +143,21 @@ def check_shared_numbering(errors, numbers):
 
 
 # ── Part 3: suite-internal (non-CLI) primitive manifest ─────────────────
+# C/Go/Python each keep their whole suite in one file, so a single path
+# suffices; Java (bindings/java/herradurakex/) is split one class per
+# protocol family instead, so its entry is every *.java file in that
+# directory concatenated — a marker regex can then target whichever class
+# actually holds it (Hcred.java, Herradura.java, Xmss.java, Ratchet.java,
+# ...) without SUITE_FILES itself needing to know which one.
 SUITE_FILES = {
     "c": os.path.join(REPO, "herradura.h"),
     "go": os.path.join(REPO, "herradura", "herradura.go"),
     "python": os.path.join(REPO, "Herradura cryptographic suite.py"),
-    "java": os.path.join(REPO, "bindings", "java", "herradurakex", "Hcred.java"),
+    "java": sorted(
+        os.path.join(REPO, "bindings", "java", "herradurakex", f)
+        for f in os.listdir(os.path.join(REPO, "bindings", "java", "herradurakex"))
+        if f.endswith(".java")
+    ),
 }
 
 # id -> {lang: marker_regex} — a language absent from the dict, or whose
@@ -171,14 +181,64 @@ PRIMITIVES = {
         "python": r"^def hcred_prove_kkw\(",
         "java": r"public static HcredKkwProof proveKkw\(",
     },
+    # The next three entries are TODO #261's first pass at extending the
+    # manifest beyond its hcred-kkw seed (SecurityProofs-*.md's 78.x
+    # numbering). All were already at four-language parity except
+    # fscx-revolve-masked, ported to Java in this pass.
+    "haccum": {
+        # Merkle accumulator (78.J): checks haccum_verify, the security-
+        # critical member of the leaf/node/root/prove/verify family — the
+        # other four move in lockstep with it in every language's history.
+        # In Java it lives inside Xmss.java (its only caller) rather than
+        # a standalone module, but is public (TODO #261) like the other
+        # three languages' top-level functions.
+        "c": r"static int haccum_verify\(",
+        "go": r"func HaccumVerify\(",
+        "python": r"^def haccum_verify\(",
+        "java": r"public static boolean haccumVerify\(",
+    },
+    "ratchet": {
+        # Forward-secret ratchet (78.C): checks ratchet_advance, the
+        # step that must erase superseded state (SecurityProofs-5 §11.8.3).
+        "c": r"static inline void ratchet_advance\(",
+        "go": r"func RatchetAdvance\(",
+        "python": r"^def ratchet_advance\(",
+        "java": r"static Object\[\] advance\(",
+    },
+    "fscx-revolve-masked": {
+        # 78.H, Boolean masking via GF(2)-linearity of M. Absent from Java
+        # until TODO #261 (v5.8.0) — Herradura.java now carries
+        # fscxRevolveMasked/hskeEncryptMasked/hskeDecryptMasked, ported
+        # from herradura.h/herradura.go/the Python suite.
+        "c": r"static inline void fscx_revolve_masked\(",
+        "go": r"func FscxRevolveMasked\(",
+        "python": r"^def fscx_revolve_masked\(",
+        "java": r"public static BigInteger fscxRevolveMasked\(",
+    },
+    "hske-encrypt-masked": {
+        "c": r"static inline void hske_encrypt_masked\(",
+        "go": r"func HskeEncryptMasked\(",
+        "python": r"^def hske_encrypt_masked\(",
+        "java": r"public static Masked hskeEncryptMasked\(",
+    },
+    "hske-decrypt-masked": {
+        "c": r"static inline void hske_decrypt_masked\(",
+        "go": r"func HskeDecryptMasked\(",
+        "python": r"^def hske_decrypt_masked\(",
+        "java": r"public static Masked hskeDecryptMasked\(",
+    },
 }
 
 
 def check_primitives(errors):
     file_text = {}
-    for lang, path in SUITE_FILES.items():
-        with open(path, encoding="utf-8") as f:
-            file_text[lang] = f.read()
+    for lang, paths in SUITE_FILES.items():
+        paths = [paths] if isinstance(paths, str) else paths
+        chunks = []
+        for path in paths:
+            with open(path, encoding="utf-8") as f:
+                chunks.append(f.read())
+        file_text[lang] = "\n".join(chunks)
 
     checked = 0
     for pid, spec in PRIMITIVES.items():
@@ -196,9 +256,11 @@ def check_primitives(errors):
             if not re.search(pattern, file_text[lang], re.M):
                 if reason:
                     continue
-                rel = os.path.relpath(SUITE_FILES[lang], REPO)
+                paths = SUITE_FILES[lang]
+                paths = [paths] if isinstance(paths, str) else paths
+                rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
                 errors.append(
-                    f"'{pid}': marker {pattern!r} not found in {lang}'s suite file ({rel}) — "
+                    f"'{pid}': marker {pattern!r} not found in {lang}'s suite file(s) ({rel}) — "
                     f"either the function was renamed/removed (update PRIMITIVES to match) or "
                     f"this is a real cross-language gap (port it, or add an 'acknowledged' "
                     f"reason to the PRIMITIVES entry, the same way SECURITY.md records one)"
