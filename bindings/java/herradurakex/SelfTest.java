@@ -11,8 +11,9 @@ import java.security.SecureRandom;
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
  * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
- * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), and HDRBG
- * ({@link Hdrbg}, TODO #96/#260). Exits non-zero on any failure.
+ * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), HDRBG
+ * ({@link Hdrbg}, TODO #96/#260), and HPKS-T ({@link HpksT}, TODO
+ * #98/#260). Exits non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -481,6 +482,30 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hdrbg round-trip");
+            }
+        }
+
+        // HPKS-T (#98): n-of-n threshold/aggregate Schnorr — 3 signers must
+        // jointly produce a signature that verifies against the aggregate
+        // public key, and a tampered response scalar must be rejected.
+        {
+            int n = 3;
+            java.util.List<BigInteger> secrets = new java.util.ArrayList<>();
+            java.util.List<BigInteger> pubkeys = new java.util.ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                BigInteger sk = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+                secrets.add(sk);
+                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, sk));
+            }
+            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            HpksT.Signature sig = HpksT.sign(secrets, pubkeys, msg, rng);
+            boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msg);
+            boolean rejectsTamper = !HpksT.verify(sig.cAgg, sig.r, sig.s.xor(BigInteger.ONE), msg);
+            if (!ok || !rejectsTamper) {
+                System.out.println("FAIL hpks_t round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_t round-trip");
             }
         }
 

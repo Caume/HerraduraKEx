@@ -2,6 +2,35 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.2] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T (#98) library primitive ported
+
+MINOR: a new language-target port of an existing primitive (TODO #98's threshold/aggregate
+Schnorr), Java's third piece of TODO #260. This slice is the library primitive and
+`SelfTest` coverage only (step 1 of TODO #260's staged scope) — HPKS-T, unlike Ratchet and
+HDRBG, DOES have a CLI subcommand in C/Go/Python (`--algo hpks-t`, TODO #106, a multi-round
+threshold-signing protocol split across pubkey-aggregation/partial-sign/aggregate/verify
+phases); that CLI surface is step 3's job and is not part of this commit, so `spec/` and
+`SECURITY.md` gates stay green — nothing new is CLI-exposed yet.
+
+### Added
+
+- **`bindings/java/herradurakex/HpksT.java`** — port of `hpkst_aggregate_pubkeys`/
+  `hpkst_sign`/`hpkst_verify` from "Herradura cryptographic suite.{c,go,py}"'s #98 section:
+  n-of-n MuSig2-style key aggregation (`mu_j = HFSCX-256(L || C_j) mod ord`, `L` = sorted
+  pubkeys) with an NL-FSCX v1 challenge, over the same GF(2^256)* group
+  {@link Herradura}'s classical quartet already uses — `gfMul`/`gfPow`/`GF_GEN` are reused
+  directly rather than re-implemented.
+- Cross-checked against Python: `hpkst_aggregate_pubkeys` on three fixed deterministic
+  pubkeys produces byte-identical `C_agg` and all three `mu_j` coefficients in both
+  languages. Sign/verify themselves draw fresh random nonces per call (as all three
+  existing languages' HPKS-T does), so the correctness property checked end-to-end is
+  round-trip validity plus tamper rejection, run repeatedly, rather than byte-exact output.
+- **`SelfTest.java`** gains an HPKS-T round-trip check: 3 signers jointly produce a
+  signature that verifies against the aggregate public key, and a tampered response scalar
+  is rejected.
+
 ## [5.3.1] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HDRBG (#96) ported
