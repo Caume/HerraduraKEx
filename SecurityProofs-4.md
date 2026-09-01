@@ -545,8 +545,8 @@ paper's own precise sparsity definition could not be read directly. All five cit
 target papers are established CKKS/BFV/BGV **sparse-secret bootstrapping** proposals,
 whose defining parameter is a Hamming weight $h$ deliberately kept far below the ring
 degree $N$ — published sparse-secret-encapsulation parameter sets use figures like
-$h \in \{64, 128, 192\}$ against $N = 2^{15} = 32768$ (density $h/N \approx
-0.2\%$–$0.6\%$), chosen specifically to shrink the noise growth during bootstrapping.
+$h \in \{64, 128, 192\}$ against $N = 2^{15} = 32768$ (density
+$h/N \approx 0.2$%–$0.6$%), chosen specifically to shrink the noise growth during bootstrapping.
 This is the same "sparse" regime TODO #1 (now `DONE` in `TODO_DONE.md`, not `DEPRECATED`
 as an earlier draft of this item's background section stated) originally flagged for
 HKEX-RNL's pre-v1.5.x uniform $\{0,1\}$ sampler.
@@ -555,8 +555,8 @@ HKEX-RNL's deployed $\mathrm{CBD}(\eta=1)$ sampler (§11.4.2 above,
 $q=65537$, $n=256$) draws each coefficient as $a_0 - b_0$ for independent uniform bits
 $a_0, b_0$, giving $\Pr[s_i = 0] = 1/2$ and $\Pr[s_i = \pm1] = 1/4$ each — i.e. **roughly
 half the coefficients are nonzero**, an expected Hamming weight of $\approx 128$ out of
-$n=256$ ($\approx 50\%$ density). This is over **two orders of magnitude denser** than
-the $h/N \lesssim 0.6\%$ regime the cited FHE sparse-secret parameter sets (and, by
+$n=256$ ($\approx 50$% density). This is over **two orders of magnitude denser** than
+the $h/N \lesssim 0.6$% regime the cited FHE sparse-secret parameter sets (and, by
 inference, this paper's attack) target. Classical and prior hybrid attacks on sparse
 secrets (e.g. the Son-Cheon-style hybrid MITM lineage this paper builds on) gain their
 speedup specifically from a *reduced guessing space over the nonzero-coefficient
@@ -575,14 +575,14 @@ $\Pr(\mathrm{HW} \leq h)$ across the sparse regime:
 
 | Threshold | Density | $\Pr(\mathrm{HW} \leq h)$ |
 |---|---|---|
-| $h \leq 1$ (the cited FHE regime, scaled to $n=256$) | $0.39\%$ | $2^{-248}$ |
-| $h \leq 8$ | $3.1\%$ | $2^{-207}$ |
-| $h \leq 16$ | $6.3\%$ | $2^{-173}$ |
-| $h \leq 29$ | $11.3\%$ | $2^{-129}$ |
-| $h \leq 64$ | $25\%$ | $2^{-52}$ |
+| $h \leq 1$ (the cited FHE regime, scaled to $n=256$) | $0.39$% | $2^{-248}$ |
+| $h \leq 8$ | $3.1$% | $2^{-207}$ |
+| $h \leq 16$ | $6.3$% | $2^{-173}$ |
+| $h \leq 29$ | $11.3$% | $2^{-129}$ |
+| $h \leq 64$ | $25$% | $2^{-52}$ |
 
 The loosest threshold whose escape probability still beats $2^{-128}$ is $h \leq 29$,
-i.e. a density of $11.3\%$.  **Any** sparsity definition set below roughly $12\%$ density
+i.e. a density of $11.3$%.  **Any** sparsity definition set below roughly $12$% density
 is therefore escaped by a deployed HKEX-RNL secret except with probability below the
 $128$-bit security target itself — so the conclusion holds for any threshold the paper
 could reasonably be using, without needing to read it.  Empirically, over $1000$ secrets
@@ -593,7 +593,7 @@ speedup actually monetizes.  CBD($\eta=1$) carries $1.5$ bits of Shannon entropy
 coefficient, or $384$ bits at $n=256$; a sparse ternary secret with $h=1$ nonzero
 occupies only $9$ bits, and even $h=16$ only $99$ bits.  The MITM/decoding split gains
 over pure lattice decoding precisely when some block is cheap to enumerate, and at
-$50\%$ density no such block exists — the attack degenerates to the primal lattice
+$50$% density no such block exists — the attack degenerates to the primal lattice
 attack already accounted for in the Core-SVP estimate below.
 
 **Conclusion:** the hybrid attack does not apply, so no revision is made *on this

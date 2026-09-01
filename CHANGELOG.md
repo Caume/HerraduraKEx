@@ -2,6 +2,48 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.7] - 2026-09-01
+
+### TODO #256 — the remaining `\%`-in-math spans, fixed across Parts 4 and 5
+
+PATCH: documentation-only fix in `SecurityProofs-4.md` and `SecurityProofs-5.md`, plus the
+three index copies of Part 4's expression count. No shipped primitive, CLI surface, wire
+format, or rating changes.
+
+### Fixed
+
+- **21 instances of `\%` inside a math span — the sign was silently dropped on GitHub's
+  render, with no error anywhere.** GitHub's pipeline is CommonMark first, KaTeX second;
+  CommonMark resolves `\%` to a bare `%` before KaTeX ever sees it, and `%` starts a
+  LaTeX comment that runs to end of input. `$\approx 50\%$` rendered as `50`. Fixed by
+  closing the math span before the sign (`$\approx 50$%`), the form `SecurityProofs-2.md`
+  §379 has always used — confirmed all 21 occurrences (12 in Part 4, 9 in Part 5) were the
+  identical `\%$` pattern, so one global substitution per file was sound.
+- **One site needed more than the substitution.** Part 4's sparse-secret-density paragraph
+  (§11.7) had a math span straddling a source line break; `validate_katex.js`'s inline
+  extractor is deliberately single-line-only, so moving the `\%` merely shifted which
+  fragment absorbed the bare `%` rather than removing the warning. Fixed by rewrapping the
+  sentence so each span sits on one source line — pure formatting, identical rendered text.
+- **Part 4's advertised expression count corrected 684 → 685** in `SecurityProofs.md`,
+  `CLAUDE.md`, and `SecurityProofsCode/KATEX_RULES.md`: the straddling span above was
+  invisible to the validator before the rewrap (neither counted nor flagged) and became a
+  normal counted span once confined to one line. `check_part_index.py --require-counts`
+  failed once before this fix, confirming the drift was real, and passes clean after.
+
+### Findings
+
+- **A previously-undocumented KaTeX hazard, distinct from the `\%` bug itself: an inline
+  `$...$` span must not straddle a source line break.** `validate_katex.js`'s own extractor
+  will not pair a `$` opened on one line with a `$` closed on the next, even mid-paragraph,
+  and this does not match how GitHub's actual paragraph-joined renderer reads the same
+  source — worth remembering independent of the percent-sign case that surfaced it here.
+
+Status verified: `validate_katex.js` reports `0 commentAtEnd`, `0 FAIL`, `0 PIPE-FAIL` across
+all nine parts (not only 4 and 5); every edited line was read back to confirm the rendered
+prose is correct, per `KATEX_RULES.md`'s caution that per-span validation does not model
+cross-line pairing hazards; `spec/generate_spec.py --check --require-schema` and
+`spec/check_security_md.py` reconfirmed green.
+
 ## [5.2.6] - 2026-09-01
 
 ### TODO #259 — the suite demos gain an unambiguous [FAIL] marker, and CI gates on it

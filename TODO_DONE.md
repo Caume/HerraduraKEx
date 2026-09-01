@@ -14235,3 +14235,56 @@ Status: **DONE v5.2.6** — implemented option (a): all three suite demos now ex
 on a wrong verdict, not only on a crash, via an unambiguous `[FAIL]` marker mirroring the
 test harnesses' TODO #233 gate; the pre-existing `+`/`-` narrative inversions found while
 auditing every branch are also fixed.
+
+### #256: the remaining `\%`-in-math spans render with the sign silently dropped
+
+`SecurityProofs-7.md` had two of these; v5.2.1 fixed them.  Nineteen more survived, in
+`SecurityProofs-4.md` (10) and `SecurityProofs-5.md` (9), across 16 lines — later confirmed
+as 12 and 9 raw `\%` occurrences respectively (21 total) once mismeasured cross-span pairing
+was accounted for; see below.
+
+**The bug.**  GitHub's pipeline is CommonMark first, KaTeX second.  CommonMark §6.7 resolves
+a backslash escape before any `$...$` span is handed on, so `\%` arrived at KaTeX as a bare
+`%` — and there `%` starts a comment that runs to end of input.  `$\approx 50\%$` therefore
+rendered as `50`, with the percent sign gone and no error anywhere.  It is not a KaTeX FAIL;
+`validate_katex.js` reported it as the strict-mode warning `commentAtEnd`, which is why
+nineteen instances survived every previous KaTeX pass.
+
+**The fix**, already applied twice in Part 7: close the math span before the sign —
+`$\approx 50$%` — the form `SecurityProofs-2.md` §379 has always used.  Confirmed every one
+of the 21 raw `\%` occurrences (12 in Part 4, 9 in Part 5) was the identical `\%$` pattern —
+the escape immediately before the closing delimiter — so one global `sed 's/\\%\$/$%/g'` per
+file was sound and sufficient; there was no case needing individual handling.
+
+**One instance needed more than the mechanical substitution.**  After the global fix, Part 5
+validated clean (0 `commentAtEnd`) but Part 4 still reported one.  Isolating it to §11.7's
+sparse-secret-density paragraph found the actual cause: `validate_katex.js`'s inline-`$...$`
+extractor is deliberately single-line-only (its own comment says so) and will not pair a `$`
+opened on one source line with a `$` closed on the next, even mid-paragraph.  The sentence
+`(density $h/N \approx` / `0.2\%$–$0.6\%$)` straddled exactly such a line break, so the
+validator's real span pairing did not match the reading a human (or GitHub's actual
+paragraph-joined renderer) would give it — moving the `\%` outside the span shifted, rather
+than removed, which fragment absorbed the bare `%`.  Fixed by rewrapping the sentence so each
+math span sits fully on one source line (pure formatting; identical rendered text) rather
+than by further chasing the escape.  This is a second, previously-unknown site class distinct
+from the `\%`-escape bug itself, worth remembering if it recurs: **an inline math span must
+not straddle a line break in the source**, independent of anything to do with `%`.
+
+**The rewrap changed Part 4's expression count** (684 -> 685): the straddling span was
+invisible to the validator before (neither counted as OK nor FAIL), and became a normal,
+counted span once confined to one line.  `SecurityProofs.md`, `CLAUDE.md`, and
+`SecurityProofsCode/KATEX_RULES.md`'s copies of the count were updated;
+`check_part_index.py --require-counts` failed once before the fix (confirming the drift was
+real, not assumed) and passed clean after.
+
+**Verified.**  `validate_katex.js` reports `0 commentAtEnd` and `0 FAIL, 0 PIPE-FAIL` on all
+nine parts (not just 4 and 5) after the change.  Every edited line was read back to confirm
+the rendered prose reads correctly (`$25$%` → "25%", etc.), per `KATEX_RULES.md` Rule 12's
+caution that per-span validation does not model cross-span or cross-line pairing hazards.
+`spec/generate_spec.py --check --require-schema` and `spec/check_security_md.py` reconfirmed
+green (docs-only change, unaffected as expected).
+
+Status: **DONE v5.2.7** — all 21 instances fixed across `SecurityProofs-4.md` (12) and
+`SecurityProofs-5.md` (9); one line rewrapped to keep its math span on a single source line,
+which the validator's own extractor requires; Part 4's advertised expression count corrected
+684 -> 685 in all three index copies.

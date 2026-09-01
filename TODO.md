@@ -29,37 +29,6 @@ decoder needs its own.
 
 Status: **OPEN**
 
-### #256: the remaining `\%`-in-math spans render with the sign silently dropped
-
-`SecurityProofs-7.md` had two of these; v5.2.1 fixed them.  Nineteen more survive, in
-`SecurityProofs-4.md` (10) and `SecurityProofs-5.md` (9), across 16 lines.
-
-**The bug.**  GitHub's pipeline is CommonMark first, KaTeX second.  CommonMark §6.7 resolves
-a backslash escape before any `$...$` span is handed on, so `\%` arrives at KaTeX as a bare
-`%` — and there `%` starts a comment that runs to end of input.  `$\approx 50\%$` therefore
-renders as `50`, with the percent sign gone and no error anywhere.  It is not a KaTeX FAIL;
-`validate_katex.js` reports it as the strict-mode warning `commentAtEnd`, which is why
-nineteen instances survived every previous KaTeX pass.  Reproduce with
-`node SecurityProofsCode/validate_katex.js SecurityProofs-4.md 2>&1 | grep -c commentAtEnd`.
-
-**The fix**, already applied twice in Part 7: close the math span before the sign —
-`$\approx 50$%` — which is the form `SecurityProofs-2.md` §379 has always used.  Do not reach
-for `\mathbin{\%}` or a `\char` escape; the backslash never survives to KaTeX, so nothing
-spelled with one can work.
-
-**Affected content is all quantitative**, which is why it is worth doing rather than
-cosmetic: Part 4's sparse-secret density table (§11.7, six rows of percentages, the argument
-that any sparsity definition below ~12% density is broken) and Part 5's rotational-rate,
-image-coverage and key-recovery figures (§9.3, §11.8).  A reader currently sees bare numbers
-where the units carry the claim.
-
-**Scope note.**  Mechanical, one line per instance, and each is confirmed by the validator
-going to zero on the file.  The expression counts do not change — the span is still one
-expression — so `check_part_index.py` should stay green without touching the banners.  Verify
-that rather than assuming it.
-
-Status: **OPEN**
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
