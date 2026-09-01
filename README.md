@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v5.2.7)
+# Herradura Cryptographic Suite (v5.3.0)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 

@@ -10,7 +10,8 @@ import java.security.SecureRandom;
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
- * HCRED ({@link Hcred}), and aPAKE ({@link ZkpNl}, {@link Hpake}). Exits
+ * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), and the
+ * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260). Exits
  * non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
@@ -411,6 +412,36 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpake round-trip");
+            }
+        }
+
+        // Ratchet (78.C): forward secrecy & message-key uniqueness across
+        // steps, and state divergence between two independently-seeded chains.
+        {
+            BigInteger state = Ratchet.init("self-test-ratchet-seed".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            java.util.Set<String> msgKeys = new java.util.HashSet<>();
+            for (int i = 0; i < 5; i++) {
+                Object[] r = Ratchet.advance(state);
+                state = (BigInteger) r[0];
+                byte[] mk = (byte[]) r[1];
+                msgKeys.add(new BigInteger(1, mk).toString(16));
+            }
+            boolean allDistinct = msgKeys.size() == 5;
+
+            BigInteger s1 = Ratchet.init("seed-alice".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BigInteger s2 = Ratchet.init("seed-bob".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            for (int i = 0; i < 3; i++) {
+                s1 = (BigInteger) Ratchet.advance(s1)[0];
+                s2 = (BigInteger) Ratchet.advance(s2)[0];
+            }
+            boolean chainsDiverge = !s1.equals(s2);
+
+            if (!allDistinct || !chainsDiverge) {
+                System.out.println("FAIL ratchet round-trip (all_distinct=" + allDistinct
+                    + " chains_diverge=" + chainsDiverge + ")");
+                fails++;
+            } else {
+                System.out.println("PASS ratchet round-trip");
             }
         }
 

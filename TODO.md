@@ -138,16 +138,22 @@ duplex, fpe or twk"). This item is where that stops being scattered across other
 notes and becomes its own tracked gap, closed a piece at a time the way #255's four passes
 closed the v3 primitive.
 
+**Progress.**  v5.3.0 ported the 78.C ratchet (`Ratchet.java`) — the first of the seven
+missing primitives listed below — plus its `SelfTest.java` round-trip coverage.  No CLI
+subcommand, wire format, or KAT vector exists for it in any language, so that slice touched
+none of steps 3/5/6 below.  The remaining six primitives, the demo, the CLI subcommands, the
+CI step, and interop coverage are all still open.
+
 **What is actually missing, confirmed against the current tree, not assumed:**
 
-* **Library functions/protocols.**  Java has no Ratchet (78.C), no HDRBG (forward-secure
+* **Library functions/protocols.**  Java has no HDRBG (forward-secure
   DRBG demo #96), no HPKS-T (n-of-n threshold aggregate Schnorr), no HPKS-Stern-Ring (78.I
   ring signature), no FPE (78.A), no tweakable cipher/`twk` (78.B), and no
   HSKE-NL-V2-Duplex (research AEAD) — and by extension none of their NL-FSCX v3 variants
   (`fpe --v3`, `twk --v3`, `hske-duplex3`) that TODO #255 landed in C/Go/Python only.
-  Grep confirms: `Ratchet`, `HpksT`, `Drbg`, `SternRing` match nothing under
-  `bindings/java/herradurakex/*.java`; `Fpe`/`Twk`/`Duplex` match only a comment in
-  `KatVerify.java` recording that they are absent.
+  (Ratchet (78.C) is done — see Progress above.)  Grep confirms: `HpksT`, `Drbg`,
+  `SternRing` match nothing under `bindings/java/herradurakex/*.java`; `Fpe`/`Twk`/`Duplex`
+  match only a comment in `KatVerify.java` recording that they are absent.
 * **Library demo.**  C, Go and Python each have a `Herradura cryptographic suite.{c,go,py}`
   that exercises every protocol end to end with human-readable +/- verdicts (and, since
   TODO #258/#259, an unambiguous `[FAIL]` gate).  Java has no equivalent — `SelfTest.java`

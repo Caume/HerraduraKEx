@@ -2,6 +2,53 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.0] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the 78.C ratchet ported
+
+MINOR: a new language-target port of an existing protocol (78.C's forward-secret
+unidirectional ratchet), Java's first piece of TODO #260. No CLI subcommand, wire format, or
+KAT vector exists for this primitive in any language — it is library-only, so `spec/` and
+`SECURITY.md` are unaffected and both gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Ratchet.java`** — byte-exact port of `ratchet_init`/
+  `ratchet_advance` from `Herradura cryptographic suite.{c,go,py}`'s 78.C section:
+  `state_{i+1} = nl_fscx_revolve_v1(state_i, RATCHET_DOMAIN, 1)`,
+  `msg_key_i = hfscx_256(state_i.bytes || 0x01)`. Cross-checked byte-for-byte against
+  Python's `ratchet_init(b"test-seed-0")` + 3 `ratchet_advance` steps (state and message-key
+  bytes identical at every step) — there is no KAT vector for this primitive in `KAT/`, so
+  this ad hoc cross-check is the only currently-existing verification against another
+  language's output.
+- **`Hfscx256.toFixedBytes`** widened from `private` to package-visible so `Ratchet` can
+  render a masked state to fixed-width bytes without a second copy of the same left-pad
+  logic — the only change to an existing file besides the `SelfTest` addition below.
+- **`SelfTest.java`** gains a ratchet round-trip check: 5 steps from one seed must produce 5
+  distinct message keys (forward secrecy / key uniqueness, matching C/Go/Python test [27]'s
+  intent), and two independently-seeded chains must diverge after 3 steps each.
+
+### Findings
+
+- The Go suite's `RatchetInit`/`RatchetAdvance`/`ratchetDomain` live in
+  `herradura/herradura.go` (the shared package "Herradura cryptographic suite.go" dot-imports
+  from), not in the suite file itself — worth knowing before grepping the suite file directly
+  for a Go primitive and concluding it's missing.
+- The `RATCHET_DOMAIN` constant is `b'NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V'[:32]` — the
+  byte after `V1` is a literal NUL, not an ASCII space. A first draft of the Java constant
+  used a Java string literal with a space in that position, which compiles and runs but
+  silently produces a different domain constant and therefore different ratchet output;
+  caught only by the byte-exact cross-check against Python, not by compilation or a
+  superficial run. Written in `Ratchet.java` as a hex literal instead, to remove the
+  possibility of a repeat.
+
+### Remaining for TODO #260
+
+HDRBG (#96), HPKS-T, HPKS-Stern-Ring, FPE, `twk`, HSKE-NL-V2-Duplex (and v3 variants of the
+latter three) are still unported; the Java suite still has no narrated demo equivalent to
+C/Go/Python's, no `native-java` demo CI step, and no interop-matrix coverage for any of the
+above. See TODO.md #260 for the full remaining scope.
+
 ## [5.2.7] - 2026-09-01
 
 ### TODO #256 — the remaining `\%`-in-math spans, fixed across Parts 4 and 5

@@ -116,7 +116,10 @@ public final class Hfscx256 {
         return hash(buf, null);
     }
 
-    private static byte[] toFixedBytes(BigInteger v, int nbytes) {
+    /** Package-visible so {@link Ratchet} and other NL-family callers can
+     * render a masked BigInteger state to fixed-width bytes without each
+     * re-implementing the same left-zero-pad logic. */
+    static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.and(MASK).toByteArray();
         byte[] out = new byte[nbytes];
         int rawStart = Math.max(0, raw.length - nbytes);
