@@ -2,6 +2,42 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.9] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `hpks-ring` CLI subcommand
+
+MINOR: two new `--algo hpks-ring` branches on the existing `sign`/`verify` subcommands (a
+new CLI surface for an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java`
+gains HPKS-Stern-Ring (TODO #78.I/#121), the CLI-surface consequence of `SternRing.java`
+(ported to the library in v5.3.5) — **the last of TODO #260's CLI gaps.** Matches
+`herradura.py`'s shape exactly: `sign --algo hpks-ring --key <hpks-stern priv> --ring
+<comma-separated member pubkey PEMs> --rounds N --in --out` and `verify --algo hpks-ring
+--ring <...> --in --sig` — note `--ring` is comma-separated, unlike `threshold-*`'s
+space-separated `--commits`/`--partials` (v5.3.7), because that's the convention
+`herradura.py`'s own `_load_ring_pubkeys` uses. Adds `HPKS-RING SIGNATURE` to `Codec.java`
+(`encodeRingSig`/`decodeRingSig`), DER-encoded byte-for-byte with `herradura.py`'s
+`_pack_ring_sig`/`_unpack_ring_sig` (member-major, round-major blob: `c0||c1||c2||b(1
+byte)||resp0||resp1` per entry), plus the same `k`/`rounds`/`n` wire-format bounds
+(`RING_MAX_K=64`, `SDF_MAX_ROUNDS=4096`) the C CLI enforces.
+
+Verified against `herradura.py`'s CLI in both directions on a 4-member ring: Java signs,
+Python verifies, and vice versa; tampered-message rejection; signing with a key not in the
+ring; a too-small ring; and a ring-size mismatch at verify. `spec/generate_spec.py --check
+--require-schema`, `spec/check_security_md.py`, and `bash CliTest/test_java_bindings.sh`
+stay green.
+
+**Found and fixed a flaky pre-existing test while running the gate**: `SelfTest.java`'s
+HPKS-Stern-Ring forgery-rejection check (added in v5.3.5) ran at `demoRounds=8`, whose
+`(2/3)^8 ≈ 3.9%` soundness error let a forged signature pass verification often enough to
+fail CI outright — reproduced 1-in-~25 runs. Exactly the class CLAUDE.md's Testing section
+already documents for [45] (a probabilistic property asserted as if deterministic); fixed
+the same way, by raising the round count to 32 (`≈ 2×10⁻⁶` error), matching this suite's
+other Stern-F self-test round counts.
+
+TODO #260's step 3 (CLI subcommands) is now **fully complete** — every primitive that had a
+CLI subcommand in C/Go/Python now has one in Java too. Steps 2 (numbered-test parity), 4
+(Java demo), 5 (its CI step), and 6 (interop coverage) remain open.
+
 ## [5.3.8] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `duplex` CLI subcommand

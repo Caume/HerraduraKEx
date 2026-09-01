@@ -592,7 +592,13 @@ public final class SelfTest {
         // a secret matching no ring member's syndrome is rejected too.
         {
             int k = 4;
-            int demoRounds = 8; // small demo round count for self-test speed
+            // 8 rounds gives only (2/3)^8 ~= 3.9% soundness error -- enough
+            // to make rejects_forgery flake in CI (TODO #260 caught this
+            // the same way CLAUDE.md's Testing section describes for [45]:
+            // a probabilistic property was asserted as if deterministic).
+            // 32 rounds matches this suite's other Stern-F self-test round
+            // counts and drops the error to ~2e-6, negligible for CI.
+            int demoRounds = 32;
             java.util.List<Stern.SternKeypair> keys = new java.util.ArrayList<>();
             java.util.List<SternRing.RingKey> ringPub = new java.util.ArrayList<>();
             for (int i = 0; i < k; i++) {

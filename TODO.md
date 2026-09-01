@@ -165,32 +165,40 @@ run whose intermediate and final PEMs matched byte-for-byte).  v5.3.8 added
 `hske-duplex`/`hske-duplex3` to the existing `enc`/`dec` subcommands (matching Python's
 own CLI shape — duplex is not a separate subcommand there either) with a `--ad` flag,
 also byte-exact and cross-language round-tripped both directions, plus empty-plaintext,
-wrong-`--ad`, and cross-version format-tag rejection checks.  Step 2 (numbered-test parity
-matching C/Go/Python's [44]-[48]) remains open — `SelfTest.java`'s existing per-primitive
-coverage (round-trip, tamper rejection, and protocol-specific checks like forward secrecy
-or forgery rejection) is comparable in kind but was never explicitly checked against the
-C/Go/Python test numbering for gaps.  Step 3 (remaining: `hpks-ring` only), 4 (Java
-demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh` and
-`test_threshold_interop.sh` still skip Java's cell) are all still open.
+wrong-`--ad`, and cross-version format-tag rejection checks.  v5.3.9 added
+`sign`/`verify --algo hpks-ring` (comma-separated `--ring`, matching Python's
+`_load_ring_pubkeys` convention — deliberately not `threshold-*`'s space-separated
+`--commits`/`--partials`), completing step 3: **every C/Go/Python CLI subcommand this port
+was missing now exists in Java.**  Cross-language verified both directions on a 4-member
+ring, plus outsider-signer, too-small-ring, and ring-size-mismatch rejection checks.  Also
+found and fixed a flaky pre-existing test while running the gate: `SelfTest.java`'s
+HPKS-Stern-Ring forgery check (v5.3.5) ran at `demoRounds=8` — `(2/3)^8 ~= 3.9%` soundness
+error, so it failed roughly 1 run in 25 — raised to 32 rounds (`~2e-6` error), the same
+probabilistic-test-asserted-as-deterministic class CLAUDE.md's Testing section documents
+for [45].  Step 2 (numbered-test parity matching C/Go/Python's [44]-[48]) remains open —
+`SelfTest.java`'s existing per-primitive coverage (round-trip, tamper rejection, and
+protocol-specific checks like forward secrecy or forgery rejection) is comparable in kind
+but was never explicitly checked against the C/Go/Python test numbering for gaps.  Step 3
+is DONE; 4 (Java demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh`
+and `test_threshold_interop.sh` still skip Java's cell) are all still open.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
 * **Library functions/protocols.**  All seven primitives that were missing are now
   ported — Ratchet (78.C), HDRBG (#96), HPKS-T, FPE/twk (both v2 and v3),
   HSKE-NL-V2/V3-Duplex, and HPKS-Stern-Ring (78.I) — see Progress above. This bullet is
-  DONE; the remaining gaps are the demo, CLI subcommands, the CI step, and interop
-  coverage below.
+  DONE; the remaining gaps are the demo, the CI step, and interop coverage below.
 * **Library demo.**  C, Go and Python each have a `Herradura cryptographic suite.{c,go,py}`
   that exercises every protocol end to end with human-readable +/- verdicts (and, since
   TODO #258/#259, an unambiguous `[FAIL]` gate).  Java has no equivalent — `SelfTest.java`
   is a compact round-trip test harness, not the narrated demo the other three languages
   ship, so a reader comparing "what does using this protocol from Java look like" has
   nothing to run.
-* **CLI capabilities.**  `HerraduraCli.java` gained `fpe`/`twk` (both v2 and v3) in
-  v5.3.6, `hpks-t`'s four `threshold-*` subcommands plus `verify --algo hpks-t` in v5.3.7,
-  and `hske-duplex`/`hske-duplex3` on `enc`/`dec` in v5.3.8 — see Progress above.  Still
-  missing: `hpks-ring`.  Its library primitive is ported (`SternRing.java`), but no CLI
-  subcommand exists yet (including whatever ring-signature flag shape C/Go/Python use).
+* **CLI capabilities.**  DONE as of v5.3.9.  `HerraduraCli.java` gained `fpe`/`twk`
+  (both v2 and v3) in v5.3.6, `hpks-t`'s four `threshold-*` subcommands plus
+  `verify --algo hpks-t` in v5.3.7, `hske-duplex`/`hske-duplex3` on `enc`/`dec` in v5.3.8,
+  and `sign`/`verify --algo hpks-ring` in v5.3.9 — see Progress above.  No C/Go/Python CLI
+  subcommand this port was missing remains missing.
   (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)

@@ -47,15 +47,20 @@ import java.util.Map;
  * {@code threshold-combine} (phase 4, coordinator) — plus {@code verify
  * --algo hpks-t} for the resulting HPKST SIGNATURE PEM. Only 256-bit
  * hpks/hpks-nl keys are supported (Python's variable-{@code nbits} HPKS-T
- * is not ported; see {@link HpksT}); and the research HSKE-NL-V2/V3-Duplex
+ * is not ported; see {@link HpksT}); the research HSKE-NL-V2/V3-Duplex
  * AEAD (TODO #95 Option 2/#255/#260 — {@link Duplex}), via {@code enc}/
  * {@code dec --algo hske-duplex}/{@code hske-duplex3} plus {@code --ad}
  * for associated data, matching the arbitrary-length ciphertext framing
- * (format tag 3/4) {@code herradura.py}'s {@code _encode_duplex_ct} uses.
+ * (format tag 3/4) {@code herradura.py}'s {@code _encode_duplex_ct} uses;
+ * and HPKS-Stern-Ring (TODO #78.I/#121/#260 — {@link SternRing}), an
+ * OR-composed ring signature over {@code k} hpks-stern public keys, via
+ * {@code sign}/{@code verify --algo hpks-ring} plus a comma-separated
+ * {@code --ring} of member public-key PEM paths (matching Python's
+ * {@code _load_ring_pubkeys}, not the space-separated convention
+ * {@code threshold-*}'s {@code --commits}/{@code --partials} use).
  *
  * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
- * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
- * OR-composition signature, and the
+ * signature schemes, rnl-sigma, hybrid-rnl-stern, and the
  * {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
  * these gaps).
  *
@@ -842,8 +847,63 @@ public final class HerraduraCli {
     // sign / verify (hpks only)
     // -----------------------------------------------------------------
 
+    /** Parses a comma-separated list of hpks-stern public-key PEM paths for
+     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys.
+     * Returns the ring's member keys, all sharing Herradura.N (this port,
+     * like the rest of the CLI, is fixed at N rather than Python's
+     * variable nbits). */
+    private static List<SternRing.RingKey> loadRingPubkeys(String ringArg) throws IOException {
+        String[] paths = ringArg.split(",");
+        List<SternRing.RingKey> keys = new java.util.ArrayList<>();
+        for (String p : paths) {
+            if (p.isEmpty()) continue;
+            String pem = readString(p);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HPKS_STERN_PUB)) {
+                throw new CliError("hpks-ring: ring member " + p + " is " + block.label + ", expected " + Codec.PEM_HPKS_STERN_PUB);
+            }
+            Codec.SternPubKey pub = Codec.decodeSternPubKey(pem, block.label);
+            if (pub.nbits != Herradura.N) {
+                throw new CliError("hpks-ring: all ring members must share n=" + Herradura.N);
+            }
+            keys.add(new SternRing.RingKey(pub.seed, pub.syndrome));
+        }
+        if (keys.size() < 2) {
+            throw new CliError("hpks-ring: --ring needs at least 2 member public keys");
+        }
+        return keys;
+    }
+
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
+        if (algo.equals("hpks-ring")) {
+            sternDemoWarning();
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+
+            String pem = readString(keyPath);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HPKS_STERN_PRIV)) {
+                throw new CliError("hpks-ring sign: signer key must be hpks-stern, got " + block.label);
+            }
+            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"));
+            int j = -1;
+            for (int i = 0; i < ring.size(); i++) {
+                if (ring.get(i).seed.equals(pk.seed)) { j = i; break; }
+            }
+            if (j < 0) {
+                throw new CliError("hpks-ring sign: signer's public key is not in --ring "
+                    + "(run pkey --pubout on the signer key and include it)");
+            }
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
+            SternRing.RingSignature sig = SternRing.sign(msgInt, pk.e, j, ring, rounds, RNG);
+            writeString(out, Codec.encodeRingSig(sig, pk.nbits));
+            System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
+            return;
+        }
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
@@ -891,7 +951,7 @@ public final class HerraduraCli {
             return;
         }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
+            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -959,8 +1019,24 @@ public final class HerraduraCli {
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }
+        if (algo.equals("hpks-ring")) {
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"));
+            Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
+            if (sig.nbits != Herradura.N) {
+                throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + Herradura.N);
+            }
+            if (sig.sig.ringSize() != ring.size()) {
+                throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
+                    + " != " + ring.size() + " provided members");
+            }
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Herradura.N / 8));
+            boolean ok = SternRing.verify(msgInt, sig.sig, ring);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots, hpks-t)");
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots, hpks-t)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));
