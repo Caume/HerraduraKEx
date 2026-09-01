@@ -2,6 +2,28 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.4] - 2026-09-01
+
+### TODO #261 (partial) — full 4-way capability parity: resolve confirmed asymmetry #1 (HCRED-KKW)
+
+PATCH: the first of #261's two confirmed asymmetries, closed by downgrading rather than
+porting.
+
+- **Decision:** `hcred_prove_kkw`/`hcred_verify_kkw` (Python-only) stay Python-only.
+  They are not wired to any CLI in any language — `cred-prove` always takes the
+  ZKBoo-(2,3) path — so there is no `--algo`/`--transcript` surface for C, Go or Java to
+  diverge on, and the code is exercised only from Python's own `__main__` demo. Porting a
+  second full MPCitH transcript variant to three more languages for a research-tier,
+  do-not-deploy protocol with no CLI exposure would cost far more than it buys.
+- `SECURITY.md`'s HCRED row now states this explicitly as ACKNOWLEDGED non-parity, mirroring
+  the doc comment `bindings/java/herradurakex/Hcred.java` already carried.
+- Matching comments added at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s
+  `HcredProve`, so a reader chasing KKW in C or Go finds the same recorded answer.
+- `spec/check_security_md.py` re-run clean (35 protocols / 32 rows agree).
+- TODO #261 stays OPEN: asymmetry #2 (Java's `SelfTest.java` has no numbered-test
+  convention matching C/Go/Python's `[1]`-`[48]`) and the proposed mechanical
+  `check_language_parity.py` guard are both still unaddressed.
+
 ## [5.4.3] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, second pass

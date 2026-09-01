@@ -158,6 +158,18 @@ explicitly ACKNOWLEDGED non-parity (a research/demo convenience, not a security-
 divergence) and record why in `SECURITY.md`/`spec/`.  Don't leave it as an unstated fact
 four different files each know a different piece of.
 
+**Resolved (v5.4.4): downgraded to ACKNOWLEDGED, not ported.**  `hcred_prove_kkw`/
+`hcred_verify_kkw` are not wired to any CLI in any language — `cred-prove` always takes the
+ZKBoo-(2,3) path, so there is no `--algo`/`--transcript` flag for the other three to be
+missing; it is exercised only from Python's own `__main__` walkthrough.  Porting a second
+full MPCitH transcript variant to C, Go and Java for a research-tier, do-not-deploy protocol
+with no CLI surface would cost far more than it buys.  `SECURITY.md`'s HCRED row now states
+this explicitly (mirroring `Hcred.java`'s existing doc comment), and matching comments were
+added at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s `HcredProve` so a
+reader who goes looking for KKW there finds the same answer Java's port already gave.
+Confirmed asymmetry #1 is closed; asymmetry #2 (numbered test convention) and the
+mechanical `check_language_parity.py` guard remain open.
+
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:
 
