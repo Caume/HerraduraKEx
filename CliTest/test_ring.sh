@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # CliTest/test_ring.sh — HPKS-Stern-Ring anonymous ring signatures, cross-language (TODO #121)
-# Covers: sign-by-member / verify-by-ring success, 9-way cross-CLI interop,
-# anonymity (any member can sign), non-member sign refusal, tamper rejection,
-# and wrong-ring rejection.
+# Covers: sign-by-member / verify-by-ring success, cross-CLI interop (up to
+# 16-way with Java), anonymity (any member can sign), non-member sign
+# refusal, tamper rejection, and wrong-ring rejection. Java is optional
+# (TODO #260) and degrades to a NOTE — skipping only Java's rows — if no JDK
+# is installed; C and Go remain hard requirements.
 set -euo pipefail
 
 DIR=$(dirname "$0")
+ROOT="$(cd "$DIR/.." && pwd)"
 PY="python3 $DIR/../HerraduraCli/herradura.py"
 C="$DIR/../HerraduraCli/herradura_cli"
 GO="$DIR/../HerraduraCli/herradura_cli_go"
@@ -19,6 +22,16 @@ PASS=0; FAIL=0
 . "$(dirname "$0")/lib_build.sh"
 hkx_require_built c go
 
+declare -A CLI=( [py]="$PY" [c]="$C" [go]="$GO" )
+langs="py c go"
+if command -v javac >/dev/null 2>&1; then
+    bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
+    CLI[java]="java -cp $ROOT/bindings/java herradurakex.HerraduraCli"
+    langs="py c go java"
+else
+    echo "NOTE: javac not found — skipping Java's ring-signature rows"
+fi
+
 # Three ring members (hpks-stern keypairs) + an outsider
 for m in 0 1 2; do
     $PY genpkey --algo hpks-stern --out "$TMP/m$m.pem" 2>/dev/null
@@ -28,13 +41,11 @@ $PY genpkey --algo hpks-stern --out "$TMP/outsider.pem" 2>/dev/null
 RING="$TMP/m0_pub.pem,$TMP/m1_pub.pem,$TMP/m2_pub.pem"
 printf 'anonymous ring signature test message' > "$TMP/msg.bin"
 
-declare -A CLI=( [py]="$PY" [c]="$C" [go]="$GO" )
-
-# 9-way interop: signer language signs as member 1, every verifier checks
-for s in py c go; do
+# NxN interop: signer language signs as member 1, every verifier checks
+for s in $langs; do
     ${CLI[$s]} sign --algo hpks-ring --key "$TMP/m1.pem" --ring "$RING" \
         --in "$TMP/msg.bin" --out "$TMP/sig_$s.pem" 2>/dev/null
-    for v in py c go; do
+    for v in $langs; do
         if ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
               --in "$TMP/msg.bin" --sig "$TMP/sig_$s.pem" >/dev/null 2>&1; then
             echo "PASS ring $s-sign -> $v-verify"; PASS=$((PASS+1))
@@ -57,7 +68,7 @@ for m in 0 1 2; do
 done
 
 # Non-member cannot sign (signer key not in ring)
-for s in py c go; do
+for s in $langs; do
     if ${CLI[$s]} sign --algo hpks-ring --key "$TMP/outsider.pem" --ring "$RING" \
           --in "$TMP/msg.bin" --out "$TMP/bad_$s.pem" 2>/dev/null; then
         echo "FAIL ring $s non-member signed"; FAIL=$((FAIL+1))
@@ -68,7 +79,7 @@ done
 
 # Tampered message must fail verification (every language)
 printf 'tampered message' > "$TMP/tampered.bin"
-for v in py c go; do
+for v in $langs; do
     if ${CLI[$v]} verify --algo hpks-ring --ring "$RING" \
           --in "$TMP/tampered.bin" --sig "$TMP/sig_py.pem" >/dev/null 2>&1; then
         echo "FAIL ring $v accepted tampered message"; FAIL=$((FAIL+1))
@@ -80,7 +91,7 @@ done
 # Wrong ring (member 0 swapped for outsider) must fail
 $PY pkey --in "$TMP/outsider.pem" --pubout --out "$TMP/outsider_pub.pem" 2>/dev/null
 WRONG_RING="$TMP/outsider_pub.pem,$TMP/m1_pub.pem,$TMP/m2_pub.pem"
-for v in py c go; do
+for v in $langs; do
     if ${CLI[$v]} verify --algo hpks-ring --ring "$WRONG_RING" \
           --in "$TMP/msg.bin" --sig "$TMP/sig_py.pem" >/dev/null 2>&1; then
         echo "FAIL ring $v accepted wrong ring"; FAIL=$((FAIL+1))

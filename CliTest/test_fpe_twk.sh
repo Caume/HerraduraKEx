@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# CliTest/test_fpe_twk.sh — TODO #242: `fpe` and `twk` at the CLI, across the
-# three implementations that ship them (C, Go, Python; Java ships neither).
+# CliTest/test_fpe_twk.sh — TODO #242: `fpe` and `twk` at the CLI, across
+# every implementation that ships them (C, Go, Python, and — since TODO
+# #260's v5.3.6 — Java, optionally: this script degrades to a NOTE and
+# 3-way coverage if no JDK is installed).
 #
 # These two subcommands had no CliTest script at all until this one, which is
 # how the defect TODO #241 found survived: through v3.3.1 both derived their
@@ -38,11 +40,21 @@ bad()  { echo "FAIL $1"; FAIL=$((FAIL+1)); }
 same() { if cmp -s "$2" "$3"; then ok "$1"; else bad "$1"; fi; }
 diff_() { if cmp -s "$2" "$3"; then bad "$1"; else ok "$1"; fi; }
 
+HAVE_JAVA=0
+if command -v javac >/dev/null 2>&1; then
+    bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
+    CLI_JAVA="java -cp $ROOT/bindings/java herradurakex.HerraduraCli"
+    HAVE_JAVA=1
+else
+    echo "NOTE: javac not found — skipping Java's fpe/twk rows"
+fi
+
 cli_for() {
     case "$1" in
-        py) echo "$CLI_PY" ;;
-        c)  echo "$CLI_C"  ;;
-        go) echo "$CLI_GO" ;;
+        py)   echo "$CLI_PY" ;;
+        c)    echo "$CLI_C"  ;;
+        go)   echo "$CLI_GO" ;;
+        java) echo "$CLI_JAVA" ;;
     esac
 }
 
@@ -65,7 +77,7 @@ COLLIDE_CTX='0123456789:;'
 COLLIDE_SECTOR=3472611983179986487    # int.from_bytes(b'01234567', 'big')
 COLLIDE_BIDX=943274555                # int.from_bytes(b'89:;',     'big')
 
-langs="py c go"
+[ "$HAVE_JAVA" -eq 1 ] && langs="py c go java" || langs="py c go"
 
 # ── 1. Round-trips, per implementation ───────────────────────────────────────
 for l in $langs; do
@@ -100,7 +112,8 @@ for l in $langs; do
 done
 
 # ── 3. Cross-implementation agreement (the wire contract) ────────────────────
-for l in c go; do
+for l in $langs; do
+    [ "$l" = py ] && continue
     same "fpe: python vs $l agree byte-for-byte" "$TMP/fpe_py.bin" "$TMP/fpe_$l.bin"
     same "twk: python vs $l agree byte-for-byte" "$TMP/twk_py.bin" "$TMP/twk_$l.bin"
 done

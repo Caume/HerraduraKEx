@@ -2,6 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.3] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, second pass
+
+PATCH: closes the two remaining gaps v5.4.2's pass explicitly left open.
+
+- **`test_ring.sh`**: HPKS-Stern-Ring's 3-way (py/c/go) interop test gains a 4th, optional
+  Java column (`command -v javac`-gated, same idiom as every other script this session
+  touched) — the sign/verify NxN matrix (now 16-way with Java), anonymity across all three
+  ring members, non-member sign refusal, tampered-message rejection, and wrong-ring
+  rejection. 31/31 checks pass with Java included. This was the one algo TODO #260's step 6
+  first pass (v5.4.2) flagged as still having zero 4-way interop coverage.
+- **`test_fpe_twk.sh`**: the (v2) `fpe`/`twk` 3-way interop test gains the same 4th Java
+  column — round-trip, domain-separation (the TODO #241/#242 regression this script exists
+  for), byte-for-byte cross-implementation agreement, cross-implementation decrypt in both
+  directions, and per-tweak-field separation. 59/59 checks pass with Java included. Its own
+  header comment ("Java ships neither" — stale since v5.3.6) is corrected.
+- Swept `CliTest/`, `spec/`, and `SECURITY.md` for any other "Java ships/has/lacks X"
+  phrasing; found none remaining.
+
+Both scripts are claimed by `native-interop` (unchanged filenames, so the coverage guard is
+unaffected), which already gained a JDK install in v5.4.2 — so both get real 4-way coverage
+in CI, not just locally.
+
+TODO #260's step 6 is now DONE: every family that has a dedicated interop script covers
+Java, and the sweep for stale comments came back clean. `bash CliTest/test_java_bindings.sh`,
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and the
+`CliTest/*.sh` coverage-guard's declared-scripts check all stay green.
+
+**TODO #260 itself is now DONE** — all six steps (primitive porting, `SelfTest` coverage,
+CLI subcommands, the suite demo, its CI step, and interop coverage) are complete.
+
 ## [5.4.2] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, first pass
