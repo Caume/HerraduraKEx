@@ -13,9 +13,10 @@ import java.security.SecureRandom;
  * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
  * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), HDRBG
  * ({@link Hdrbg}, TODO #96/#260), HPKS-T ({@link HpksT}, TODO
- * #98/#260), FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260), and
- * HSKE-NL-V2/V3-Duplex ({@link Duplex}, TODO #95/#255/#260). Exits
- * non-zero on any failure.
+ * #98/#260), FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260),
+ * HSKE-NL-V2/V3-Duplex ({@link Duplex}, TODO #95/#255/#260), and
+ * HPKS-Stern-Ring ({@link SternRing}, TODO #78.I/#260). Exits non-zero
+ * on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -582,6 +583,37 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS duplex round-trip");
+            }
+        }
+
+        // HPKS-Stern-Ring (78.I): OR-composed Stern ring signature -- any one
+        // of a 4-member ring signs, verify succeeds without revealing which
+        // member, a tampered message is rejected, and a signature "signed" with
+        // a secret matching no ring member's syndrome is rejected too.
+        {
+            int k = 4;
+            int demoRounds = 8; // small demo round count for self-test speed
+            java.util.List<Stern.SternKeypair> keys = new java.util.ArrayList<>();
+            java.util.List<SternRing.RingKey> ringPub = new java.util.ArrayList<>();
+            for (int i = 0; i < k; i++) {
+                Stern.SternKeypair kp = Stern.sternFKeygen(rng);
+                keys.add(kp);
+                ringPub.add(new SternRing.RingKey(kp.seed, kp.syndrome));
+            }
+            int j = 2;
+            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            SternRing.RingSignature sig = SternRing.sign(msg, keys.get(j).e, j, ringPub, demoRounds, rng);
+            boolean ok = SternRing.verify(msg, sig, ringPub);
+            boolean rejectsTamper = !SternRing.verify(msg.xor(BigInteger.ONE), sig, ringPub);
+            BigInteger badE = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            SternRing.RingSignature forged = SternRing.sign(msg, badE, 0, ringPub, demoRounds, rng);
+            boolean rejectsForgery = !SternRing.verify(msg, forged, ringPub);
+            if (!ok || !rejectsTamper || !rejectsForgery) {
+                System.out.println("FAIL hpks_stern_ring round-trip (verify=" + ok
+                    + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_stern_ring round-trip");
             }
         }
 

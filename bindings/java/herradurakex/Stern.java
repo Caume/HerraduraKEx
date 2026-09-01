@@ -27,8 +27,9 @@ import java.util.List;
  * Python suite, not BIKE production scale, and must not be "improved"
  * without breaking cross-language ciphertext compatibility.
  *
- * The OR-composition ring-signature variant (HPKS-Stern-Ring) is out of
- * scope for this port.
+ * The OR-composition ring-signature variant (HPKS-Stern-Ring, TODO #78.I)
+ * lives in {@link SternRing} (TODO #260), which reuses several of this
+ * class's package-visible helpers rather than duplicating them.
  */
 public final class Stern {
     private Stern() { }

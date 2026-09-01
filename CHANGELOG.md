@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.5] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-Stern-Ring (#78.I) ported, step 1 COMPLETE
+
+MINOR: a new language-target port of an existing protocol (TODO #78.I's OR-composed Stern
+ring signature), Java's sixth piece of TODO #260 — and the last of the seven primitives it
+lists. Library primitive and `SelfTest` coverage only (step 1 of TODO #260's staged scope);
+no `hpks-ring` CLI subcommand exists in Java, so `spec/` and `SECURITY.md` gates stay green.
+**Step 1 of TODO #260 is now complete: every primitive C/Go/Python have that Java lacked is
+ported.**
+
+### Added
+
+- **`bindings/java/herradurakex/SternRing.java`** — port of `hpks_stern_ring_sign`/
+  `hpks_stern_ring_verify` from "Herradura cryptographic suite.{c,go,py}"'s #78.I section: a
+  code-based ring/group signature that OR-composes `k` HPKS-Stern-F identification
+  instances to prove knowledge of one secret key in a ring of `k` public keys without
+  revealing which one. Reuses `Stern`'s existing package-visible helpers
+  (`csprngWeightT`/`sternHash`/`sternBuildH`/`sternSyndromeH`/`sternGenPerm`/
+  `sternApplyPerm`) rather than duplicating the underlying Stern identification machinery —
+  the ring construction adds only the OR-composition (HVZK-simulate every non-signer round,
+  then splice the real signer's per-round challenge in via challenge splitting on the
+  Fiat-Shamir output) on top. `Stern.java`'s class doc, which had explicitly scoped the
+  ring variant out ("is out of scope for this port"), is updated to point at it.
+- Cross-checked structurally against Python rather than byte-for-byte: HPKS-Stern-Ring is,
+  like HPKS-T, an inherently randomized protocol (fresh per-round nonces/challenges each
+  call in all three existing languages), so the check is round-trip validity, rejection of
+  a tampered message, and rejection of a forged signature (a secret matching no ring
+  member's syndrome) — verified in both languages, and in Java additionally swept across
+  every ring position (signer index 0..k-1) to catch an off-by-one in the member-indexed
+  arrays.
+- **`SelfTest.java`** gains an HPKS-Stern-Ring round-trip check: a 4-member ring, member 2
+  signs, verify succeeds without the verifier learning which member signed, a tampered
+  message is rejected, and a forged signature is rejected.
+
 ## [5.3.4] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HSKE-NL-V2/V3-Duplex ported
