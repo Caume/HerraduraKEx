@@ -5273,7 +5273,8 @@ typedef struct {
 /* TODO #261: the KKW preprocessing-model transcript variant is ported
    below as hcred_prove_kkw/hcred_verify_kkw (search "HCRED-KKW", right
    after hcred_proof_free), alongside this ZKBoo-(2,3) path -- both prove
-   the same statement/circuit.  Java's port is still open. */
+   the same statement/circuit.  Go, Java and Python all have it too now --
+   asymmetry #1 (TODO #261) is closed in all four languages. */
 
 /* Prove credential presentation (ZKBoo-(2,3) MPCitH, rounds repetitions).
    Returns 0 on success, negative on error. */

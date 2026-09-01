@@ -2,6 +2,38 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.7.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to Java; asymmetry #1 closed in all four languages
+
+MINOR: the third and final language port of asymmetry #1 (new public API surface, per
+CLAUDE.md's versioning rule).
+
+- **`bindings/java/herradurakex/Hcred.java`** gains `proveKkw`/`verifyKkw`, translated from
+  the Go port. Java's `BigInteger.testBit(i)` is layout-independent, so the byte-array
+  bit-endianness class of bug the C port hit (v5.6.0) had no way to occur here, and none
+  was found.
+- `HcredKkwProof`/`KkwOnlineProof` follow this file's existing `Proof`/`ProofRound` style —
+  `public final` fields, an immutable proof once built.
+- Wired into `Demo.java`'s HCRED section, right after the ZKBoo path.
+- Verified structurally (no fixed-vector KAT for KKW exists in any language): 21 clean
+  prove→verify round trips across repeated runs, plus five rejection checks on the
+  array-typed fields (tampered message, `t`, `comH`, `zin`, a preprocessing root byte) —
+  the primitive `W`/`pbar`/`u` fields are `final`, so tampering those would need
+  constructing a distinct proof object rather than mutating one, and weren't exercised
+  this pass — plus a re-verify-after-restore on every run confirming no check has a side
+  effect.
+- `bindings/java/build.sh`, the full `Demo.java` run, and `CliTest/test_java_bindings.sh`
+  all clean.
+- `SECURITY.md`'s HCRED row and the C/Go pointer comments updated: **all four languages
+  now have the KKW port** — TODO #261's asymmetry #1 (named in the request that opened the
+  item) is closed.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: only asymmetry #2 (give `SelfTest.java` the numbered `[1]`-`[N]`
+  test convention C/Go/Python share) and the proposed `check_language_parity.py` mechanical
+  guard remain.
+
 ## [5.6.0] - 2026-09-01
 
 ### TODO #261 (partial) — port HCRED-KKW to C

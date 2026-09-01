@@ -216,16 +216,31 @@ lines, `Herradura cryptographic suite.py` line 3061 on — KKW encoding, cut-and
   flipped `W`, flipped `u`, flipped `t`, flipped a preprocessing root byte, relabeled
   `pbar`) — all independently caught. `build_c.sh`'s full suite build and the demo run both
   clean (`*** OK: no check reported [FAIL] ***`).
-- **Java** (`bindings/java/herradurakex/Hcred.java`): drop the "port planned, not
-  implemented" doc-comment paragraph once implemented; wire into `Demo.java`'s HCRED
-  section. Still open — C and Go are now both available as ports to translate from.
-- Still **not** a CLI subcommand in any language — Python's (and now Go's and C's) KKW path
-  has none either, so parity here means the suite files and the demos, not
+- **Java (DONE, v5.7.0):** `Hcred.proveKkw`/`Hcred.verifyKkw` added to
+  `bindings/java/herradurakex/Hcred.java`, translated from the Go port. Java's `BigInteger`
+  bit convention (`.testBit(i)`) is layout-independent — no analogue of C's byte-array
+  endianness bug was possible here, and none was found. One structural difference from
+  Go/C worth noting for future readers: `HcredKkwProof`/`KkwOnlineProof`'s fields are
+  `public final`, matching this file's existing `Proof`/`ProofRound` style — a proof is
+  Java-idiomatically immutable once built (a real tamper attempt has to forge a byte/int
+  differently from a test poking a field, which is closer to what verification is actually
+  defending against). Wired into `Demo.java`'s HCRED section, right after the ZKBoo path.
+  Verified structurally: 21 prove→verify round trips across repeated runs plus five
+  in-place-mutable-field rejection checks (tampered message, `t`, `comH`, `zin`, a
+  preprocessing root byte — the primitive-typed `W`/`pbar`/`u` fields being `final` int
+  make an in-place tamper of those three specifically require constructing a distinct
+  proof object rather than mutating one, so they weren't exercised this pass), all
+  correctly caught, plus a same-object re-verify-after-restore on every run confirming no
+  check has a side effect. `bindings/java/build.sh`, the full `Demo.java` run, and
+  `CliTest/test_java_bindings.sh` all clean.
+- Still **not** a CLI subcommand in any language — Python's (and now Go's, C's and Java's)
+  KKW path has none either, so parity here means the suite files and the demos, not
   `cred-prove --transcript kkw`.
-- KAT/test coverage remains a judgment call for whoever finishes Java: no fixed-vector KAT
-  for KKW exists in any language today (Python's included), so a byte-exact cross-language
-  check needs one added first — the structural verification Go and C both used (round-trips
-  + the six rejection axes above) is the fallback and is what every language has today.
+- KAT/test coverage is the one piece left un-decided: no fixed-vector KAT for KKW exists in
+  any language, so a byte-exact cross-language check needs one added first — every language
+  ships today verified only structurally (round-trips + rejection checks), which is the
+  standard the rest of HCRED already uses too.
+- **Asymmetry #1 is now closed in all four languages.**
 
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:
