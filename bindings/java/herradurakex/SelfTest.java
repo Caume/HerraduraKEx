@@ -10,9 +10,9 @@ import java.security.SecureRandom;
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
- * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), and the
- * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260). Exits
- * non-zero on any failure.
+ * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
+ * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), and HDRBG
+ * ({@link Hdrbg}, TODO #96/#260). Exits non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -442,6 +442,45 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS ratchet round-trip");
+            }
+        }
+
+        // HDRBG (#96): determinism from a fixed seed, distinct output after
+        // reseed (forward-secure separation), and the block-limit guard.
+        {
+            byte[] entropy = "self-test-hdrbg-entropy-01234567".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Hdrbg d1 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Hdrbg d2 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] out1 = d1.generate(96);
+            byte[] out2 = d2.generate(96);
+            boolean deterministic = java.util.Arrays.equals(out1, out2);
+
+            Hdrbg d3 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] pre = d3.generate(32);
+            d3.reseed("fresh-entropy".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] post = d3.generate(32);
+            boolean reseedSeparates = !java.util.Arrays.equals(pre, post) && d3.blocksGenerated() == 1;
+
+            boolean limitEnforced;
+            try {
+                Hdrbg d4 = Hdrbg.seed(entropy);
+                java.lang.reflect.Field blocksField = Hdrbg.class.getDeclaredField("blocks");
+                blocksField.setAccessible(true);
+                blocksField.setLong(d4, Hdrbg.DRBG_MAX_BLOCKS);
+                d4.generate(32);
+                limitEnforced = false;
+            } catch (IllegalStateException expected) {
+                limitEnforced = true;
+            } catch (ReflectiveOperationException e) {
+                limitEnforced = false;
+            }
+
+            if (!deterministic || !reseedSeparates || !limitEnforced) {
+                System.out.println("FAIL hdrbg round-trip (deterministic=" + deterministic
+                    + " reseed_separates=" + reseedSeparates + " limit_enforced=" + limitEnforced + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hdrbg round-trip");
             }
         }
 

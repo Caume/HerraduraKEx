@@ -2,6 +2,36 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.1] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HDRBG (#96) ported
+
+MINOR: a new language-target port of an existing primitive (TODO #96's forward-secure
+DRBG), Java's second piece of TODO #260. No CLI subcommand, wire format, or KAT vector
+exists for it in any language — library-only, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Hdrbg.java`** — byte-exact port of `drbg_seed`/
+  `drbg_generate`/`drbg_reseed` from "Herradura cryptographic suite.{c,go,py}"'s #96
+  section: the fast-key-erasure pattern (Bernstein 2017) over `nl_fscx_revolve_v1`.
+  `seed`/`generate`/`reseed` mirror Go's `DrbgSeed`/`DrbgGenerate`/`DrbgReseed` API shape
+  (an instance carrying `state`/`blocks`) rather than Python's free functions over a bare
+  struct, since Java has no equivalent to passing a mutable object by reference into a
+  free function the way Python's `HDrbg` does. `DRBG_MAX_BLOCKS` (1<<20) enforced the same
+  way: `generate` throws `IllegalStateException` once it would be exceeded, matching
+  Python's `RuntimeError` and Go's `(nil, false)` return.
+- Cross-checked byte-for-byte against Python: `drbg_seed` + `drbg_generate(50)` +
+  `drbg_reseed` + `drbg_generate(40)` from the same entropy/personalization produce
+  identical output at every step in both languages (there is no KAT vector for this
+  primitive in `KAT/`, so — as with Ratchet in v5.3.0 — this ad hoc cross-check is
+  currently the only verification against another language's output).
+- **`SelfTest.java`** gains an HDRBG round-trip check: two generators seeded identically
+  produce identical output (determinism); reseeding changes subsequent output and resets
+  the block counter (forward-secure separation); and the block-limit guard actually fires
+  once `DRBG_MAX_BLOCKS` is reached (checked via reflection to set the private counter
+  directly, rather than actually generating a million blocks).
+
 ## [5.3.0] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the 78.C ratchet ported
