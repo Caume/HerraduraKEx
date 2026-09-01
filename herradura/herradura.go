@@ -4057,7 +4057,9 @@ func hcredChallenges(stmt, comsSer, outsSer []byte, rounds int) []int {
 
 // TODO #261: the KKW preprocessing-model transcript variant is ported
 // below as HcredProveKkw/HcredVerifyKkw (search "HCRED-KKW"), alongside
-// this ZKBoo-(2,3) path -- both prove the same statement/circuit.
+// this ZKBoo-(2,3) path -- both prove the same statement/circuit.  C has
+// it too (herradura.h's hcred_prove_kkw/hcred_verify_kkw); Java's port is
+// still open.
 
 // HcredProve produces a credential-presentation proof for the compound
 // statement (Ring-LWR key C + code syndrome y for the SAME s).

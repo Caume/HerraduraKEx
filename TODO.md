@@ -186,22 +186,46 @@ lines, `Herradura cryptographic suite.py` line 3061 on — KKW encoding, cut-and
   flipped a preprocessing root seed byte, and a relabeled `Pbar` (claimed hidden party) —
   each one independently caught by `HcredVerifyKkw`. Demo run and the full Go suite/CliTest
   gates are clean (see CHANGELOG v5.5.0).
-- **C** (`herradura.h`): `hcred_prove_kkw`/`hcred_verify_kkw` alongside the existing
-  `hcred_prove`/`hcred_verify`; demo output in
-  `Herradura cryptographic suite.c`'s HCRED section, matching Python's `[FAIL]`-gated print.
-  Still open — the Go port above is the reference to port from next, since its structure
-  now mirrors Python's function-for-function.
+- **C (DONE, v5.6.0):** `hcred_prove_kkw`/`hcred_verify_kkw` added to `herradura.h`,
+  translated from the Go port line-by-line (gates/tree/tree-open/tree-recover/party/pre/
+  state-com/outmap/targets/fs-ints, `HcredKkwProof`/`HcredKkwOnline`/`HcredKkwPathEntry`,
+  manually heap-managed since C has no GC — every allocation is freed on every exit path,
+  checked clean under ASan+UBSan). Wired into `Herradura cryptographic suite.c`'s existing
+  HCRED demo section, right after the ZKBoo path. **Caught two real bugs before either
+  shipped, both found by writing a standalone test harness first rather than trusting the
+  translation:**
+  1. A genuine **buffer overflow** in `hcred_kkw_state_com`: its size calculation omitted
+     the 2-byte emulation-index field it then wrote, caught by `-Wstringop-overflow` on a
+     first compile (not by a crash — the under-allocation was 2 bytes on a much larger
+     buffer, exactly the class of bug a sanitizer or a careful compiler catches and a
+     casual test run does not).
+  2. A **bit-endianness mismatch**: `hcred_kkw_outmap`'s per-row check tested `H[r]`'s bit
+     `i` little-endian-style (`b[i/8]`), where this file's `BitArray` convention (used by
+     `hcred_phi` and every existing HCRED/Stern function) is big-endian (`b[KEYBYTES-1-i/8]`).
+     This is NOT a copy-paste error from Go/Python — Go's own `.Val.Bit(i)` on a `big.Int`
+     and Python's integer `>>`/`&` both give the *correct* bit regardless of byte layout,
+     so this bug is specific to C's byte-array `BitArray` representation and had no Go/Python
+     analogue to catch it by comparison. Found by an isolated linearity test
+     (`outmap(a+b,c+d) == outmap(a,c)+outmap(b,d)`, which passed, ruling out the outmap
+     formula itself) followed by a direct real-witness test (`outmap(w_in,z_real) ==
+     targets`, which failed with small residuals concentrated exactly in the row-check
+     block) — the same divide-and-conquer approach the Go debugging session used, applied
+     one layer deeper since this bug was C-specific.
+  Verified the same way as Go: no fixed-vector KAT exists for KKW in any language, so
+  round-trips (clean across repeated runs) plus the same six rejection axes (wrong message,
+  flipped `W`, flipped `u`, flipped `t`, flipped a preprocessing root byte, relabeled
+  `pbar`) — all independently caught. `build_c.sh`'s full suite build and the demo run both
+  clean (`*** OK: no check reported [FAIL] ***`).
 - **Java** (`bindings/java/herradurakex/Hcred.java`): drop the "port planned, not
   implemented" doc-comment paragraph once implemented; wire into `Demo.java`'s HCRED
-  section. Still open.
-- Still **not** a CLI subcommand in any language — Python's (and now Go's) KKW path has
-  none either, so parity here means the suite files and the demos, not
+  section. Still open — C and Go are now both available as ports to translate from.
+- Still **not** a CLI subcommand in any language — Python's (and now Go's and C's) KKW path
+  has none either, so parity here means the suite files and the demos, not
   `cred-prove --transcript kkw`.
-- KAT/test coverage remains a judgment call for whoever finishes C and Java: no
-  fixed-vector KAT for KKW exists in any language today (Python's included), so a
-  byte-exact cross-language check needs one added first — the structural verification
-  the Go port used (round-trips + the six rejection axes above) is the fallback and is
-  what every language has today.
+- KAT/test coverage remains a judgment call for whoever finishes Java: no fixed-vector KAT
+  for KKW exists in any language today (Python's included), so a byte-exact cross-language
+  check needs one added first — the structural verification Go and C both used (round-trips
+  + the six rejection axes above) is the fallback and is what every language has today.
 
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:

@@ -38,8 +38,9 @@ import java.util.List;
  * TODO #261: the KKW preprocessing-model transcript variant
  * ({@code hcred_prove_kkw}/{@code hcred_verify_kkw}, ~11x smaller proofs
  * at production parameters) has no equivalent here yet — port planned,
- * not implemented.  Go has it ({@code herradura/herradura.go}'s
- * {@code HcredProveKkw}/{@code HcredVerifyKkw}); C's is still open too.
+ * not implemented.  Go ({@code herradura/herradura.go}'s
+ * {@code HcredProveKkw}/{@code HcredVerifyKkw}) and C ({@code herradura.h}'s
+ * {@code hcred_prove_kkw}/{@code hcred_verify_kkw}) both have it now.
  * Not wired to any CLI in any language, so parity
  * means a {@code hcredProveKkw}/{@code hcredVerifyKkw} pair plus demo
  * output, not a new {@code --algo}/{@code --transcript} flag.

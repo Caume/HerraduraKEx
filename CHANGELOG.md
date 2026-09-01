@@ -2,6 +2,44 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.6.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to C
+
+MINOR: the second language port of asymmetry #1 (new public API surface, per CLAUDE.md's
+versioning rule).
+
+- **`herradura.h`** gains `hcred_prove_kkw`/`hcred_verify_kkw`, translated from the Go port
+  (itself a port of Python) function-by-function: gate wiring, seed tree + opening/recovery,
+  per-party preprocessing, state commitments, the linear output map, public targets, the
+  Fiat-Shamir sampler, and the two entry points, all manually heap-managed with every
+  allocation freed on every exit path (checked clean under ASan+UBSan).
+- **Two real bugs caught before either shipped**, both found via a standalone test harness
+  rather than by trusting the translation:
+  1. A **buffer overflow** in `hcred_kkw_state_com` — its size calculation omitted the
+     2-byte emulation-index field it then wrote. Caught by `-Wstringop-overflow` on first
+     compile, not by a crash.
+  2. A **BitArray bit-endianness mismatch** in the row-check term of `hcred_kkw_outmap` —
+     it tested bit `i` little-endian-style (`b[i/8]`) where this file's `BitArray`
+     convention (used throughout HCRED and Stern) is big-endian (`b[KEYBYTES-1-i/8]`). This
+     had no Go/Python analogue — both languages' native bit-test operators are
+     layout-independent — so it's a genuine C-specific defect, not a transcription slip.
+     Isolated by first proving `outmap` linear on random inputs (passed, ruling out the
+     formula), then checking `outmap(true witness) == targets` directly (failed, with small
+     residuals concentrated exactly in the row-check block), narrowing straight to the bug.
+- Verified the same way Go was: no fixed-vector KAT exists for KKW in any language, so
+  round-trips (clean, repeated) plus six independent rejection checks (wrong message,
+  flipped `W`, flipped `u`, flipped `t`, flipped a root-seed byte, relabeled `pbar`), each
+  one caught.
+- Wired into `Herradura cryptographic suite.c`'s HCRED demo section; `build_c.sh`'s full
+  build and the demo run both clean (`*** OK: no check reported [FAIL] ***`).
+- `SECURITY.md`'s HCRED row and the Go/Java pointer comments updated: C has the port now,
+  only Java doesn't.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: only the Java port (now with two reference implementations to
+  translate from) and asymmetry #2 (numbered `SelfTest.java` convention) remain.
+
 ## [5.5.0] - 2026-09-01
 
 ### TODO #261 (partial) — port HCRED-KKW to Go
