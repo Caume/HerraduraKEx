@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.10] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `SelfTest.java` parity audit, first pass
+
+PATCH: strengthens two existing `SelfTest.java` checks to match the granularity of their
+C/Go/Python counterparts (TODO #260 step 2), found by auditing each of the six new
+primitives' Java coverage against the numbered tests ([27] Ratchet, [29] HDRBG, [31]
+HPKS-T, [46] fpe/twk, [20] HPKS-Stern-Ring) and the research HSKE-NL-V2/V3-Duplex AEAD
+(uncovered by any numbered test in the reference harnesses themselves).
+
+- **HDRBG** (`#96`): added the exact cross-language KAT hex vectors test [29] hardcodes
+  (`seed(0..31, "HDRBG-KAT")` → 80 bytes, then `reseed(0xa5*16)` → 32 bytes — verified
+  byte-exact against Java's `Hdrbg` before adding as a literal), a monobit sanity check
+  over 8 KiB of output (expects 48-52% ones), and a personalization-divergence check
+  (same entropy, different `pers` must diverge) that was previously untested — only
+  same-personalization determinism was checked before.
+- **fpe/twk** (`#78.A`/`#78.B`, TODO #242): added test [46]'s key‖tweak boundary-encoding
+  guard — `(key[:2], ctx=key[2:3])` and `(key[:1], ctx=key[1:3])` must NOT collide, since
+  both concatenate to the same raw bytes if the derivation ever dropped its length prefix.
+
+Audited and found already at or above C/Go/Python's own depth, no changes needed:
+**Ratchet** (`[27]` checks key-uniqueness + two-chain divergence over up to 20 steps; Java's
+5-step version already covers the same properties), **HPKS-T** (`[31]` checks sign+tamper
+only; Java already cross-checks `aggregatePublicKeys` byte-exact against Python on top of
+that), **HPKS-Stern-Ring** (`[20]` checks only positive verification with no forgery test at
+all; Java already adds tamper AND forgery rejection, swept across every ring position), and
+**Duplex** (no numbered test exists for it in any reference harness — it's demo-only
+research code; Java's round-trip + AD-tamper + ciphertext-tamper coverage for both v2 and v3
+already exceeds what the harnesses themselves do).
+
+`bash CliTest/test_java_bindings.sh`, `spec/generate_spec.py --check --require-schema`, and
+`spec/check_security_md.py` all stay green. Step 2 (numbered-test parity) is not fully
+closed — this is a first audit pass, not an exhaustive one — but the two gaps this pass
+found are closed.
+
 ## [5.3.9] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `hpks-ring` CLI subcommand

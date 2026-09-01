@@ -23,6 +23,12 @@ import java.security.SecureRandom;
 public final class SelfTest {
     private SelfTest() { }
 
+    private static String toHex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) sb.append(String.format("%02x", x));
+        return sb.toString();
+    }
+
     public static void main(String[] args) {
         SecureRandom rng = new SecureRandom();
         int fails = 0;
@@ -449,15 +455,33 @@ public final class SelfTest {
             }
         }
 
-        // HDRBG (#96): determinism from a fixed seed, distinct output after
-        // reseed (forward-secure separation), and the block-limit guard.
+        // HDRBG (#96): cross-language KAT, determinism from a fixed seed,
+        // personalization/reseed separation, the block-limit guard, and a
+        // monobit sanity check -- matching C/Go/Python test [29]'s
+        // granularity exactly (TODO #260 step 2).
         {
+            byte[] katEntropy = new byte[32];
+            for (int i = 0; i < 32; i++) katEntropy[i] = (byte) i;
+            Hdrbg dk = Hdrbg.seed(katEntropy, "HDRBG-KAT".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            String kat1 = toHex(dk.generate(80));
+            byte[] resEntropy = new byte[16];
+            java.util.Arrays.fill(resEntropy, (byte) 0xa5);
+            dk.reseed(resEntropy);
+            String kat2 = toHex(dk.generate(32));
+            boolean katOk = kat1.equals("cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23"
+                    + "90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e"
+                    + "089ea95dc62208133b3475fadb10ef6d")
+                && kat2.equals("bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf");
+
             byte[] entropy = "self-test-hdrbg-entropy-01234567".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
             Hdrbg d1 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             Hdrbg d2 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Hdrbg d2b = Hdrbg.seed(entropy, "different-pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             byte[] out1 = d1.generate(96);
             byte[] out2 = d2.generate(96);
+            byte[] out2b = d2b.generate(96);
             boolean deterministic = java.util.Arrays.equals(out1, out2);
+            boolean persSeparates = !java.util.Arrays.equals(out1, out2b);
 
             Hdrbg d3 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
             byte[] pre = d3.generate(32);
@@ -479,9 +503,17 @@ public final class SelfTest {
                 limitEnforced = false;
             }
 
-            if (!deterministic || !reseedSeparates || !limitEnforced) {
-                System.out.println("FAIL hdrbg round-trip (deterministic=" + deterministic
-                    + " reseed_separates=" + reseedSeparates + " limit_enforced=" + limitEnforced + ")");
+            Hdrbg d5 = Hdrbg.seed("ent-monobit".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] stream = d5.generate(8192);
+            int ones = 0;
+            for (byte b : stream) ones += Integer.bitCount(b & 0xFF);
+            double frac = ones / (8192.0 * 8);
+            boolean monoOk = frac >= 0.48 && frac <= 0.52;
+
+            if (!katOk || !deterministic || !persSeparates || !reseedSeparates || !limitEnforced || !monoOk) {
+                System.out.println("FAIL hdrbg round-trip (kat=" + katOk + " deterministic=" + deterministic
+                    + " pers_separates=" + persSeparates + " reseed_separates=" + reseedSeparates
+                    + " limit_enforced=" + limitEnforced + " monobit=" + monoOk + ")");
                 fails++;
             } else {
                 System.out.println("PASS hdrbg round-trip");
@@ -540,10 +572,22 @@ public final class SelfTest {
             boolean domainSeparated = !fpeCtWithTwkTweakAsCtx.equals(twkCt);
             boolean v2v3Separated = !fpeCt.equals(fpeCtV3) && !twkCt.equals(twkCtV3);
 
-            if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated) {
+            // C/Go/Python test [46]'s key||tweak boundary-encoding guard: the
+            // derivation must length-prefix the key, or (key[:2], ctx=key[2:3])
+            // and (key[:1], ctx=key[1:3]) collide -- same raw concatenated
+            // bytes, different (key, ctx) split.
+            byte[] keyAB = java.util.Arrays.copyOfRange(key, 0, 2);
+            byte[] ctxC = java.util.Arrays.copyOfRange(key, 2, 3);
+            byte[] keyA = java.util.Arrays.copyOfRange(key, 0, 1);
+            byte[] ctxBC = java.util.Arrays.copyOfRange(key, 1, 3);
+            BigInteger split1 = FpeTwk.fpeEncrypt(pt, keyAB, ctxC);
+            BigInteger split2 = FpeTwk.fpeEncrypt(pt, keyA, ctxBC);
+            boolean keyBoundarySeparated = !split1.equals(split2);
+
+            if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated || !keyBoundarySeparated) {
                 System.out.println("FAIL fpe_twk round-trip (fpe=" + fpeRt + " twk=" + twkRt
                     + " fpe_v3=" + fpeV3Rt + " twk_v3=" + twkV3Rt + " domain_separated=" + domainSeparated
-                    + " v2v3_separated=" + v2v3Separated + ")");
+                    + " v2v3_separated=" + v2v3Separated + " key_boundary_separated=" + keyBoundarySeparated + ")");
                 fails++;
             } else {
                 System.out.println("PASS fpe_twk round-trip");

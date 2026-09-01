@@ -175,10 +175,16 @@ found and fixed a flaky pre-existing test while running the gate: `SelfTest.java
 HPKS-Stern-Ring forgery check (v5.3.5) ran at `demoRounds=8` — `(2/3)^8 ~= 3.9%` soundness
 error, so it failed roughly 1 run in 25 — raised to 32 rounds (`~2e-6` error), the same
 probabilistic-test-asserted-as-deterministic class CLAUDE.md's Testing section documents
-for [45].  Step 2 (numbered-test parity matching C/Go/Python's [44]-[48]) remains open —
-`SelfTest.java`'s existing per-primitive coverage (round-trip, tamper rejection, and
-protocol-specific checks like forward secrecy or forgery rejection) is comparable in kind
-but was never explicitly checked against the C/Go/Python test numbering for gaps.  Step 3
+for [45].  v5.3.10 made step 2's first audit pass: checked each of the six new
+primitives' `SelfTest.java` coverage against its C/Go/Python numbered-test counterpart
+([27] Ratchet, [29] HDRBG, [31] HPKS-T, [46] fpe/twk, [20] HPKS-Stern-Ring; Duplex has no
+numbered-test counterpart in any reference harness) and closed the two real gaps it found:
+HDRBG gained the exact cross-language KAT hex vectors test [29] hardcodes, a monobit check,
+and a personalization-divergence check; fpe/twk gained test [46]'s key‖tweak
+boundary-encoding collision guard.  Ratchet, HPKS-T, HPKS-Stern-Ring and Duplex were
+already at or above their C/Go/Python counterparts' depth.  Step 2 is not fully closed —
+this was one audit pass, not an exhaustive one — but remains open only for further passes,
+not for the gaps this one found.  Step 3
 is DONE; 4 (Java demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh`
 and `test_threshold_interop.sh` still skip Java's cell) are all still open.
 
