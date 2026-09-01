@@ -5270,6 +5270,12 @@ typedef struct {
     int32_t  h_arr[3][HCRED_ND];
 } _HcredExec;
 
+/* TODO #261: the KKW preprocessing-model transcript variant is ported
+   below as hcred_prove_kkw/hcred_verify_kkw (search "HCRED-KKW", right
+   after hcred_proof_free), alongside this ZKBoo-(2,3) path -- both prove
+   the same statement/circuit.  Go, Java and Python all have it too now --
+   asymmetry #1 (TODO #261) is closed in all four languages. */
+
 /* Prove credential presentation (ZKBoo-(2,3) MPCitH, rounds repetitions).
    Returns 0 on success, negative on error. */
 static int hcred_prove(HcredProof *proof,
@@ -5695,6 +5701,970 @@ static void hcred_proof_free(HcredProof *proof)
     proof->rd = NULL;
     proof->rounds = 0;
     proof->W = 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * HCRED-KKW: preprocessing-model MPCitH transcript (TODO #128 Batch 3 /
+ * ported from Python/Go under TODO #261)
+ *
+ * Same circuit and statement as hcred_prove/hcred_verify, encoded with the
+ * KKW (Katz-Kolesnikov-Wang 2018) N-party preprocessing paradigm instead of
+ * ZKBoo-(2,3).  See "Herradura cryptographic suite.py"'s hcred_prove_kkw /
+ * herradura/herradura.go's HcredProveKkw for the protocol write-up; this is
+ * a direct port of the Go implementation (itself a port of Python), fixed
+ * at n = HCRED_N = 256 like the rest of this file's HCRED code.
+ *
+ * Not wired to any CLI in any language -- Python's own KKW path has none
+ * either, so parity here is this suite-level function pair, not a new
+ * --algo/--transcript flag (SecurityProofs-7.md Sec.11.10.8-11.10.10;
+ * SECURITY.md's HCRED row).
+ * ───────────────────────────────────────────────────────────────────────── */
+
+#define HCRED_KKW_I  (HCRED_N + HCRED_NB + HCRED_ND)        /* input wires */
+#define HCRED_KKW_G  (2 * HCRED_N + HCRED_NB + HCRED_ND)    /* Z wires == #gates */
+#define HCRED_KKW_K  (HCRED_KKW_I + 1 + 2 * HCRED_ROWS + HCRED_N) /* output wires */
+
+#define HCRED_KKW_DEMO_N   4   /* demo parties;      production: 64 */
+#define HCRED_KKW_DEMO_M   8   /* demo emulations;   production: 343 */
+#define HCRED_KKW_DEMO_TAU 4   /* demo online execs; production: 27 */
+
+#define HCRED_KKW_MAX_LEVELS 12  /* supports N_par up to 4096; production needs 6 */
+
+/* One multiplication gate: (x_kind,x_idx,y_kind,y_idx,z_idx).  x_kind/y_kind
+ * is 'i' for an input wire ([0,n)=s, [n,n+nb)=beta, [n+nb,n+nb+nd)=delta) or
+ * 'z' for a Z wire ([0,n)=a, [n,2n)=b, [2n,2n+nb)=g, [2n+nb,2n+nb+nd)=h). */
+typedef struct {
+    char    x_kind;
+    int32_t x_idx;
+    char    y_kind;
+    int32_t y_idx;
+    int32_t z_idx;
+} HcredKkwGate;
+
+static void hcred_kkw_gates(HcredKkwGate gates[HCRED_KKW_G])
+{
+    int i, k = 0;
+    for (i = 0; i < HCRED_N; i++) {
+        gates[k].x_kind = 'i'; gates[k].x_idx = i;
+        gates[k].y_kind = 'i'; gates[k].y_idx = i;
+        gates[k].z_idx  = i; k++;                              /* a = s^2 */
+    }
+    for (i = 0; i < HCRED_N; i++) {
+        gates[k].x_kind = 'z'; gates[k].x_idx = i;
+        gates[k].y_kind = 'i'; gates[k].y_idx = i;
+        gates[k].z_idx  = HCRED_N + i; k++;                    /* b = a*s */
+    }
+    for (i = 0; i < HCRED_NB; i++) {
+        gates[k].x_kind = 'i'; gates[k].x_idx = HCRED_N + i;
+        gates[k].y_kind = 'i'; gates[k].y_idx = HCRED_N + i;
+        gates[k].z_idx  = 2 * HCRED_N + i; k++;                /* g = beta^2 */
+    }
+    for (i = 0; i < HCRED_ND; i++) {
+        gates[k].x_kind = 'i'; gates[k].x_idx = HCRED_N + HCRED_NB + i;
+        gates[k].y_kind = 'i'; gates[k].y_idx = HCRED_N + HCRED_NB + i;
+        gates[k].z_idx  = 2 * HCRED_N + HCRED_NB + i; k++;     /* h = delta^2 */
+    }
+}
+
+static int hcred_kkw_levels(int N) { int l = 0, t = N; while (t > 1) { l++; t >>= 1; } return l; }
+static int hcred_kkw_node_idx(int l, int i) { return (1 << l) - 1 + i; }
+
+/* Expand a binary seed tree into a flat (2N-1)*KEYBYTES node buffer.  Leaf i
+ * lives at nodes + node_idx(levels,i)*KEYBYTES. */
+static void hcred_kkw_tree(uint8_t *nodes, const uint8_t root[KEYBYTES], int N)
+{
+    int levels = hcred_kkw_levels(N), l, i;
+    memcpy(nodes + (size_t)hcred_kkw_node_idx(0, 0) * KEYBYTES, root, KEYBYTES);
+    for (l = 0; l < levels; l++) {
+        for (i = 0; i < (1 << l); i++) {
+            uint8_t par[KEYBYTES];
+            uint8_t buf[11 + KEYBYTES];
+            memcpy(par, nodes + (size_t)hcred_kkw_node_idx(l, i) * KEYBYTES, KEYBYTES);
+            memcpy(buf, "HCRED-tree0", 11); memcpy(buf + 11, par, KEYBYTES);
+            hfscx_256(buf, sizeof buf, NULL,
+                      nodes + (size_t)hcred_kkw_node_idx(l + 1, 2 * i) * KEYBYTES);
+            memcpy(buf, "HCRED-tree1", 11); memcpy(buf + 11, par, KEYBYTES);
+            hfscx_256(buf, sizeof buf, NULL,
+                      nodes + (size_t)hcred_kkw_node_idx(l + 1, 2 * i + 1) * KEYBYTES);
+        }
+    }
+}
+
+typedef struct {
+    int     l, i;
+    uint8_t node[KEYBYTES];
+} HcredKkwPathEntry;
+
+/* Sibling path revealing every leaf except `hide` (levels entries).  `out`
+ * must have room for HCRED_KKW_MAX_LEVELS entries; returns the count used. */
+static int hcred_kkw_tree_open(HcredKkwPathEntry *out, const uint8_t *nodes, int N, int hide)
+{
+    int levels = hcred_kkw_levels(N);
+    int idx = hide, l, cnt = 0;
+    for (l = levels; l >= 1; l--) {
+        int sib = idx ^ 1;
+        out[cnt].l = l; out[cnt].i = sib;
+        memcpy(out[cnt].node, nodes + (size_t)hcred_kkw_node_idx(l, sib) * KEYBYTES, KEYBYTES);
+        cnt++;
+        idx >>= 1;
+    }
+    return cnt;
+}
+
+static void hcred_kkw_expand(uint8_t *leaves_out, uint8_t *known, int l, int idx,
+                              const uint8_t node[KEYBYTES], int levels)
+{
+    uint8_t buf[11 + KEYBYTES], child[KEYBYTES];
+    if (l == levels) {
+        memcpy(leaves_out + (size_t)idx * KEYBYTES, node, KEYBYTES);
+        known[idx] = 1;
+        return;
+    }
+    memcpy(buf, "HCRED-tree0", 11); memcpy(buf + 11, node, KEYBYTES);
+    hfscx_256(buf, sizeof buf, NULL, child);
+    hcred_kkw_expand(leaves_out, known, l + 1, 2 * idx, child, levels);
+    memcpy(buf, "HCRED-tree1", 11); memcpy(buf + 11, node, KEYBYTES);
+    hfscx_256(buf, sizeof buf, NULL, child);
+    hcred_kkw_expand(leaves_out, known, l + 1, 2 * idx + 1, child, levels);
+}
+
+/* Rebuild every leaf covered by a sibling path (all except the hidden one).
+ * leaves_out/known must have room for N entries; known must be caller-zeroed. */
+static void hcred_kkw_tree_recover(uint8_t *leaves_out, uint8_t *known,
+                                    const HcredKkwPathEntry *path, int path_len, int N)
+{
+    int levels = hcred_kkw_levels(N), p;
+    for (p = 0; p < path_len; p++)
+        hcred_kkw_expand(leaves_out, known, path[p].l, path[p].i, path[p].node, levels);
+}
+
+/* Derive one party's preprocessing shares from its seed.
+ * Draw order: lambda_in (I), lambda_z (G), lambda_xy (G). */
+static void hcred_kkw_party(int32_t *lam_in, int32_t *lam_z, int32_t *lam_xy,
+                             const uint8_t seed[KEYBYTES])
+{
+    HcredTape tp;
+    hcred_tape_init(&tp, seed);
+    hcred_tape_draws(&tp, lam_in, HCRED_KKW_I);
+    hcred_tape_draws(&tp, lam_z, HCRED_KKW_G);
+    hcred_tape_draws(&tp, lam_xy, HCRED_KKW_G);
+}
+
+/* One preprocessing emulation from its root seed.  lam_xy for party N-1 is
+ * corrected in place by aux so that sum_i [lambda_xy]_i == lambda_x*lambda_y
+ * per gate.  nodes/lam_in/lam_z/lam_xy/aux are all caller-allocated:
+ * nodes[(2N-1)*KEYBYTES], lam_in[N*I], lam_z[N*G], lam_xy[N*G], aux[G]. */
+static void hcred_kkw_pre(uint8_t *nodes, int32_t *lam_in, int32_t *lam_z,
+                           int32_t *lam_xy, int32_t *aux,
+                           const uint8_t root[KEYBYTES], int N, const HcredKkwGate *gates)
+{
+    int j, w, g;
+    const int64_t q = RNL_Q;
+    int32_t *tin = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_I);
+    int32_t *tz  = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+
+    hcred_kkw_tree(nodes, root, N);
+    {
+        int levels = hcred_kkw_levels(N);
+        for (j = 0; j < N; j++) {
+            hcred_kkw_party(lam_in + (size_t)j * HCRED_KKW_I,
+                            lam_z  + (size_t)j * HCRED_KKW_G,
+                            lam_xy + (size_t)j * HCRED_KKW_G,
+                            nodes + (size_t)hcred_kkw_node_idx(levels, j) * KEYBYTES);
+        }
+    }
+    for (w = 0; w < HCRED_KKW_I; w++) {
+        int64_t s = 0;
+        for (j = 0; j < N; j++) s += lam_in[(size_t)j * HCRED_KKW_I + w];
+        tin[w] = (int32_t)(((s % q) + q) % q);
+    }
+    for (w = 0; w < HCRED_KKW_G; w++) {
+        int64_t s = 0;
+        for (j = 0; j < N; j++) s += lam_z[(size_t)j * HCRED_KKW_G + w];
+        tz[w] = (int32_t)(((s % q) + q) % q);
+    }
+    for (g = 0; g < HCRED_KKW_G; g++) {
+        const HcredKkwGate *gt = &gates[g];
+        int64_t lx = (gt->x_kind == 'i') ? tin[gt->x_idx] : tz[gt->x_idx];
+        int64_t ly = (gt->y_kind == 'i') ? tin[gt->y_idx] : tz[gt->y_idx];
+        int64_t s = 0, cor;
+        for (j = 0; j < N; j++) s += lam_xy[(size_t)j * HCRED_KKW_G + g];
+        cor = (((lx * ly - s) % q) + q) % q;
+        aux[g] = (int32_t)cor;
+        {
+            int32_t *last = &lam_xy[(size_t)(N - 1) * HCRED_KKW_G + g];
+            *last = (int32_t)(((((int64_t)*last + cor) % q) + q) % q);
+        }
+    }
+    free(tin); free(tz);
+}
+
+/* Commit to party j's preprocessing state in emulation e. */
+static void hcred_kkw_state_com(uint8_t out[KEYBYTES], int e, int j,
+                                 const uint8_t seed[KEYBYTES], const int32_t *aux)
+{
+    size_t sz = 11 + 2 + 1 + KEYBYTES + (aux ? (size_t)3 * HCRED_KKW_G : 0);
+    uint8_t *buf = (uint8_t *)malloc(sz);
+    size_t off = 0;
+    memcpy(buf, "HCRED-kkwst", 11); off += 11;
+    buf[off++] = (uint8_t)(e >> 8); buf[off++] = (uint8_t)e;
+    buf[off++] = (uint8_t)j;
+    memcpy(buf + off, seed, KEYBYTES); off += KEYBYTES;
+    if (aux) { hcred_ser(buf + off, aux, HCRED_KKW_G); off += (size_t)3 * HCRED_KKW_G; }
+    hfscx_256(buf, off, NULL, out);
+    free(buf);
+}
+
+/* Apply the (linear) output map of the unified circuit to a wire valuation
+ * -- used both for masked values zhat and per-party mask shares, since the
+ * map is linear and so commutes with additive sharing.  out[HCRED_KKW_K]. */
+static void hcred_kkw_outmap(int32_t *out, const int32_t *vec_in, const int32_t *vec_z,
+                              const int32_t *m_poly, const BitArray H[SDF_N_ROWS])
+{
+    const int64_t q = RNL_Q, inv2 = (RNL_Q + 1) / 2;
+    const int32_t *s_ = vec_in;
+    const int32_t *B_ = vec_in + HCRED_N;
+    const int32_t *D_ = vec_in + HCRED_N + HCRED_NB;
+    const int32_t *a_ = vec_z;
+    const int32_t *b_ = vec_z + HCRED_N;
+    const int32_t *g_ = vec_z + 2 * HCRED_N;
+    const int32_t *h_ = vec_z + 2 * HCRED_N + HCRED_NB;
+    int32_t s_norm[HCRED_N], ms[HCRED_N];
+    int i, r, t, k = 0;
+
+    for (i = 0; i < HCRED_N; i++)
+        out[k++] = (int32_t)((((int64_t)b_[i] - s_[i]) % q + q) % q);
+    for (i = 0; i < HCRED_NB; i++)
+        out[k++] = (int32_t)((((int64_t)g_[i] - B_[i]) % q + q) % q);
+    for (i = 0; i < HCRED_ND; i++)
+        out[k++] = (int32_t)((((int64_t)h_[i] - D_[i]) % q + q) % q);
+    {
+        int64_t wsum = 0;
+        for (i = 0; i < HCRED_N; i++) wsum += ((int64_t)a_[i] + s_[i]) * inv2;
+        out[k++] = (int32_t)(((wsum % q) + q) % q);
+    }
+    for (r = 0; r < HCRED_ROWS; r++) {
+        int64_t acc = 0, dec = 0;
+        for (i = 0; i < HCRED_N; i++)
+            if ((H[r].b[KEYBYTES - 1 - i / 8] >> (i % 8)) & 1)
+                acc += ((int64_t)a_[i] + s_[i]) * inv2;
+        for (t = 0; t < HCRED_ROW_BITS; t++)
+            dec += ((int64_t)1 << t) * B_[r * HCRED_ROW_BITS + t];
+        out[k++] = (int32_t)((((acc - dec) % q) + q) % q);
+    }
+    for (r = 0; r < HCRED_ROWS; r++)
+        out[k++] = (int32_t)((((int64_t)B_[r * HCRED_ROW_BITS] % q) + q) % q);
+    for (i = 0; i < HCRED_N; i++)
+        s_norm[i] = (int32_t)((((int64_t)s_[i] % q) + q) % q);
+    rnl_poly_mul_dim(ms, m_poly, s_norm, HCRED_N);
+    for (i = 0; i < HCRED_N; i++) {
+        int64_t dec = 0;
+        for (t = 0; t < HCRED_EPS_BITS; t++)
+            dec += ((int64_t)1 << t) * D_[i * HCRED_EPS_BITS + t];
+        out[k++] = (int32_t)((((int64_t)ms[i] - dec) % q + q) % q);
+    }
+}
+
+/* Public output values v_o, in hcred_kkw_outmap's order.  v[HCRED_KKW_K]. */
+static void hcred_kkw_targets(int32_t *v, int W, const uint8_t syndr[SDF_SYNBYTES],
+                               const int32_t *c_poly)
+{
+    const int64_t q = RNL_Q;
+    int32_t lift[HCRED_N];
+    int i, r, k = 0;
+    rnl_lift_dim(lift, c_poly, RNL_P, RNL_Q, HCRED_N);
+    for (i = 0; i < HCRED_KKW_I; i++) v[k++] = 0;
+    v[k++] = (int32_t)((((int64_t)W % q) + q) % q);
+    for (r = 0; r < HCRED_ROWS; r++) v[k++] = 0;
+    for (r = 0; r < HCRED_ROWS; r++) v[k++] = (syndr[r / 8] >> (r % 8)) & 1;
+    for (i = 0; i < HCRED_N; i++)
+        v[k++] = (int32_t)((((int64_t)lift[i] - HCRED_EPS_OFF) % q + q) % q);
+}
+
+static int hcred_kkw_int_cmp(const void *a, const void *b)
+{
+    int32_t x = *(const int32_t *)a, y = *(const int32_t *)b;
+    return (x > y) - (x < y);
+}
+
+/* `count` FS integers in [0,modulus) via rejection sampling from an HFSCX
+ * stream.  1-byte windows for modulus <= 256, 2-byte windows above. */
+static void hcred_kkw_fs_ints(int32_t *out, const char *tag, size_t tag_len,
+                               const uint8_t *material, size_t material_len,
+                               int count, int modulus, int distinct)
+{
+    int width = (modulus > 256) ? 2 : 1;
+    int space = 1 << (8 * width);
+    int lim = (space / modulus) * modulus;
+    int have = 0;
+    uint32_t ctr = 0;
+    uint8_t *msg = (uint8_t *)malloc(9 + tag_len + material_len + 4);
+
+    while (have < count) {
+        uint8_t blk[KEYBYTES];
+        int w;
+        size_t off = 0;
+        memcpy(msg, "HCRED-kkw", 9); off += 9;
+        memcpy(msg + off, tag, tag_len); off += tag_len;
+        memcpy(msg + off, material, material_len); off += material_len;
+        msg[off++] = (uint8_t)(ctr >> 24); msg[off++] = (uint8_t)(ctr >> 16);
+        msg[off++] = (uint8_t)(ctr >> 8);  msg[off++] = (uint8_t)ctr;
+        hfscx_256(msg, off, NULL, blk);
+        ctr++;
+        for (w = 0; w + width <= KEYBYTES; w += width) {
+            int v = 0, b;
+            for (b = 0; b < width; b++) v = (v << 8) | blk[w + b];
+            if (v < lim && have < count) {
+                v %= modulus;
+                if (distinct) {
+                    int dup = 0, z;
+                    for (z = 0; z < have; z++) if (out[z] == v) { dup = 1; break; }
+                    if (dup) continue;
+                }
+                out[have++] = v;
+            }
+        }
+    }
+    free(msg);
+}
+
+/* One opened (online) emulation's revealed data. */
+typedef struct {
+    HcredKkwPathEntry path[HCRED_KKW_MAX_LEVELS];
+    int      path_len;
+    uint8_t  com_h[KEYBYTES];
+    int      pbar;
+    int32_t *aux;   /* [HCRED_KKW_G], NULL iff pbar == N_par-1 */
+    int32_t *zin;   /* [HCRED_KKW_I] */
+    int32_t *t;     /* [HCRED_KKW_G] */
+    int32_t  u;
+} HcredKkwOnline;
+
+typedef struct {
+    int      W;
+    int      n_par, m, tau;
+    int     *pre_e;               /* [m-tau] unopened emulation indices */
+    uint8_t *pre_root;            /* [m-tau][KEYBYTES] flat */
+    int     *online_e;            /* [tau] opened emulation indices */
+    HcredKkwOnline *online;       /* [tau], parallel to online_e */
+} HcredKkwProof;
+
+static void hcred_kkw_proof_free(HcredKkwProof *proof)
+{
+    int k;
+    if (proof->online) {
+        for (k = 0; k < proof->tau; k++) {
+            free(proof->online[k].aux);
+            free(proof->online[k].zin);
+            free(proof->online[k].t);
+        }
+    }
+    free(proof->pre_e);
+    free(proof->pre_root);
+    free(proof->online_e);
+    free(proof->online);
+    memset(proof, 0, sizeof *proof);
+}
+
+/* Per-selected-emulation online-phase scratch, kept until the proof is
+ * assembled. */
+typedef struct {
+    int32_t *zin;   /* [I] */
+    int32_t *tvec;  /* [N*G] flat */
+    int32_t *zz;    /* [G] */
+    int32_t *us;    /* [N] */
+} HcredKkwOnlineWork;
+
+/* Produce a KKW-encoded credential-presentation proof (same statement/
+ * circuit as hcred_prove).  Production soundness needs (n_par,m,tau) =
+ * (64,343,27) for 2^-128.  Returns 0 on success, matching hcred_prove's
+ * -1 (syndrome mismatch) / -2 (LWR range) on witness failure, -3 if n_par
+ * is not a power of two or its tree exceeds HCRED_KKW_MAX_LEVELS. */
+static int hcred_prove_kkw(HcredKkwProof *proof,
+                            const int32_t s_poly[HCRED_N], const int32_t m_poly[HCRED_N],
+                            const int32_t c_poly[HCRED_N], const BitArray *seed_H,
+                            const uint8_t syndr[SDF_SYNBYTES],
+                            int n_par, int m, int tau,
+                            const uint8_t *msg, size_t msg_len, FILE *urnd)
+{
+    int W, e, j, k, gidx, levels, wr;
+    int32_t *beta = NULL, *delta = NULL, *w_in = NULL;
+    uint8_t stmt[KEYBYTES], h_pre[KEYBYTES], h_msk[KEYBYTES], h_on[KEYBYTES];
+    BitArray H[SDF_N_ROWS];
+    HcredKkwGate *gates = NULL;
+    uint8_t **roots = NULL;
+    uint8_t **nodes_all = NULL;
+    int32_t **lam_in_all = NULL, **lam_z_all = NULL, **lam_xy_all = NULL, **aux_all = NULL;
+    uint8_t **coms_all = NULL;
+    uint8_t *h_es = NULL;
+    int32_t *subset = NULL, *pbars = NULL;
+    int32_t *rho = NULL;
+    HcredKkwOnlineWork *work = NULL;
+    int ret = -1;
+
+    memset(proof, 0, sizeof *proof);
+    if (n_par <= 0 || (n_par & (n_par - 1)) != 0) return -3;
+    levels = hcred_kkw_levels(n_par);
+    if (levels >= HCRED_KKW_MAX_LEVELS) return -3;
+    if (tau < 1 || tau > m) return -3;
+
+    beta  = (int32_t *)malloc(sizeof(int32_t) * HCRED_NB);
+    delta = (int32_t *)malloc(sizeof(int32_t) * HCRED_ND);
+    stern_build_H(H, seed_H);
+    wr = _hcred_witness(&W, beta, delta, s_poly, m_poly, c_poly, H, syndr);
+    if (wr != 0) { free(beta); free(delta); return wr; }
+
+    w_in = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_I);
+    for (j = 0; j < HCRED_N; j++)
+        w_in[j] = (int32_t)((((int64_t)s_poly[j] % RNL_Q) + RNL_Q) % RNL_Q);
+    memcpy(w_in + HCRED_N, beta, sizeof(int32_t) * HCRED_NB);
+    memcpy(w_in + HCRED_N + HCRED_NB, delta, sizeof(int32_t) * HCRED_ND);
+    free(beta); beta = NULL; free(delta); delta = NULL;
+
+    hcred_stmt_hash(stmt, m_poly, c_poly, seed_H, syndr, msg, msg_len);
+
+    gates = (HcredKkwGate *)malloc(sizeof(HcredKkwGate) * HCRED_KKW_G);
+    hcred_kkw_gates(gates);
+
+    /* Preprocessing: M emulations, commit. */
+    roots      = (uint8_t **)calloc((size_t)m, sizeof(uint8_t *));
+    nodes_all  = (uint8_t **)calloc((size_t)m, sizeof(uint8_t *));
+    lam_in_all = (int32_t **)calloc((size_t)m, sizeof(int32_t *));
+    lam_z_all  = (int32_t **)calloc((size_t)m, sizeof(int32_t *));
+    lam_xy_all = (int32_t **)calloc((size_t)m, sizeof(int32_t *));
+    aux_all    = (int32_t **)calloc((size_t)m, sizeof(int32_t *));
+    coms_all   = (uint8_t **)calloc((size_t)m, sizeof(uint8_t *));
+    h_es       = (uint8_t *)malloc((size_t)m * KEYBYTES);
+
+    for (e = 0; e < m; e++) {
+        uint8_t *buf;
+        size_t off;
+        roots[e] = (uint8_t *)malloc(KEYBYTES);
+        if (fread(roots[e], 1, KEYBYTES, urnd) != (size_t)KEYBYTES) {
+            fputs("hcred_prove_kkw: urandom error\n", stderr); exit(1);
+        }
+        nodes_all[e]  = (uint8_t *)malloc((size_t)(2 * n_par - 1) * KEYBYTES);
+        lam_in_all[e] = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_I);
+        lam_z_all[e]  = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_G);
+        lam_xy_all[e] = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_G);
+        aux_all[e]    = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+        coms_all[e]   = (uint8_t *)malloc((size_t)n_par * KEYBYTES);
+
+        hcred_kkw_pre(nodes_all[e], lam_in_all[e], lam_z_all[e], lam_xy_all[e], aux_all[e],
+                      roots[e], n_par, gates);
+
+        for (j = 0; j < n_par; j++) {
+            const int32_t *a = (j == n_par - 1) ? aux_all[e] : NULL;
+            hcred_kkw_state_com(coms_all[e] + (size_t)j * KEYBYTES, e, j,
+                                nodes_all[e] + (size_t)hcred_kkw_node_idx(levels, j) * KEYBYTES, a);
+        }
+        buf = (uint8_t *)malloc(11 + 2 + (size_t)n_par * KEYBYTES);
+        off = 0;
+        memcpy(buf, "HCRED-kkwem", 11); off += 11;
+        buf[off++] = (uint8_t)(e >> 8); buf[off++] = (uint8_t)e;
+        memcpy(buf + off, coms_all[e], (size_t)n_par * KEYBYTES); off += (size_t)n_par * KEYBYTES;
+        hfscx_256(buf, off, NULL, h_es + (size_t)e * KEYBYTES);
+        free(buf);
+    }
+    {
+        uint8_t *buf = (uint8_t *)malloc(12 + KEYBYTES + (size_t)m * KEYBYTES);
+        size_t off = 0;
+        memcpy(buf, "HCRED-kkwpre", 12); off += 12;
+        memcpy(buf + off, stmt, KEYBYTES); off += KEYBYTES;
+        memcpy(buf + off, h_es, (size_t)m * KEYBYTES); off += (size_t)m * KEYBYTES;
+        hfscx_256(buf, off, NULL, h_pre);
+        free(buf);
+    }
+
+    /* Challenge 1: cut-and-choose subset. */
+    subset = (int32_t *)malloc(sizeof(int32_t) * (size_t)tau);
+    hcred_kkw_fs_ints(subset, "c1", 2, h_pre, KEYBYTES, tau, m, 1);
+    qsort(subset, (size_t)tau, sizeof(int32_t), hcred_kkw_int_cmp);
+
+    /* Online phase for the tau selected emulations. */
+    work = (HcredKkwOnlineWork *)calloc((size_t)tau, sizeof(HcredKkwOnlineWork));
+    for (k = 0; k < tau; k++) {
+        int ee = subset[k];
+        int32_t *tin = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_I);
+        int w;
+        work[k].zin  = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_I);
+        work[k].tvec = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_G);
+        work[k].zz   = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+
+        for (w = 0; w < HCRED_KKW_I; w++) {
+            int64_t s = 0;
+            for (j = 0; j < n_par; j++) s += lam_in_all[ee][(size_t)j * HCRED_KKW_I + w];
+            tin[w] = (int32_t)(((s % RNL_Q) + RNL_Q) % RNL_Q);
+        }
+        for (w = 0; w < HCRED_KKW_I; w++)
+            work[k].zin[w] = (int32_t)((((int64_t)w_in[w] + tin[w]) % RNL_Q + RNL_Q) % RNL_Q);
+        free(tin);
+
+        for (gidx = 0; gidx < HCRED_KKW_G; gidx++) {
+            const HcredKkwGate *gt = &gates[gidx];
+            int64_t zx = (gt->x_kind == 'i') ? work[k].zin[gt->x_idx] : work[k].zz[gt->x_idx];
+            int64_t zy = (gt->y_kind == 'i') ? work[k].zin[gt->y_idx] : work[k].zz[gt->y_idx];
+            int64_t acc = 0;
+            for (j = 0; j < n_par; j++) {
+                int64_t lx = (gt->x_kind == 'i')
+                    ? lam_in_all[ee][(size_t)j * HCRED_KKW_I + gt->x_idx]
+                    : lam_z_all[ee][(size_t)j * HCRED_KKW_G + gt->x_idx];
+                int64_t ly = (gt->y_kind == 'i')
+                    ? lam_in_all[ee][(size_t)j * HCRED_KKW_I + gt->y_idx]
+                    : lam_z_all[ee][(size_t)j * HCRED_KKW_G + gt->y_idx];
+                int64_t t = -zx * ly - zy * lx + lam_xy_all[ee][(size_t)j * HCRED_KKW_G + gidx]
+                          + lam_z_all[ee][(size_t)j * HCRED_KKW_G + gt->z_idx];
+                if (j == 0) t += zx * zy;
+                t = ((t % RNL_Q) + RNL_Q) % RNL_Q;
+                work[k].tvec[(size_t)j * HCRED_KKW_G + gidx] = (int32_t)t;
+                acc += t;
+            }
+            work[k].zz[gt->z_idx] = (int32_t)(((acc % RNL_Q) + RNL_Q) % RNL_Q);
+        }
+    }
+
+    /* Batched output check. */
+    {
+        size_t per = (size_t)3 * HCRED_KKW_I + (size_t)n_par * 3 * HCRED_KKW_G;
+        size_t total = per * (size_t)tau;
+        uint8_t *msk_buf = (uint8_t *)malloc(total);
+        uint8_t *buf2;
+        size_t off = 0;
+        for (k = 0; k < tau; k++) {
+            hcred_ser(msk_buf + off, work[k].zin, HCRED_KKW_I); off += (size_t)3 * HCRED_KKW_I;
+            for (j = 0; j < n_par; j++) {
+                hcred_ser(msk_buf + off, work[k].tvec + (size_t)j * HCRED_KKW_G, HCRED_KKW_G);
+                off += (size_t)3 * HCRED_KKW_G;
+            }
+        }
+        buf2 = (uint8_t *)malloc(12 + total);
+        memcpy(buf2, "HCRED-kkwmsk", 12);
+        memcpy(buf2 + 12, msk_buf, total);
+        hfscx_256(buf2, 12 + total, NULL, h_msk);
+        free(buf2); free(msk_buf);
+    }
+    rho = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_K);
+    {
+        uint8_t rho_seed_buf[12 + 3 * KEYBYTES];
+        uint8_t rho_seed[KEYBYTES];
+        HcredTape rho_tp;
+        memcpy(rho_seed_buf, "HCRED-kkwrho", 12);
+        memcpy(rho_seed_buf + 12, stmt, KEYBYTES);
+        memcpy(rho_seed_buf + 12 + KEYBYTES, h_pre, KEYBYTES);
+        memcpy(rho_seed_buf + 12 + 2 * KEYBYTES, h_msk, KEYBYTES);
+        hfscx_256(rho_seed_buf, sizeof rho_seed_buf, NULL, rho_seed);
+        hcred_tape_init(&rho_tp, rho_seed);
+        hcred_tape_draws(&rho_tp, rho, HCRED_KKW_K);
+    }
+    {
+        uint8_t *com_ons = (uint8_t *)malloc((size_t)tau * (size_t)n_par * KEYBYTES);
+        uint8_t *buf2;
+        size_t off = 0;
+        for (k = 0; k < tau; k++) {
+            int ee = subset[k];
+            work[k].us = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par);
+            for (j = 0; j < n_par; j++) {
+                int32_t lo[HCRED_KKW_K];
+                int64_t s = 0;
+                int kk;
+                uint8_t *buf;
+                size_t o = 0;
+                hcred_kkw_outmap(lo, lam_in_all[ee] + (size_t)j * HCRED_KKW_I,
+                                 lam_z_all[ee] + (size_t)j * HCRED_KKW_G, m_poly, H);
+                for (kk = 0; kk < HCRED_KKW_K; kk++) s += (int64_t)rho[kk] * lo[kk];
+                work[k].us[j] = (int32_t)(((s % RNL_Q) + RNL_Q) % RNL_Q);
+
+                buf = (uint8_t *)malloc(11 + 2 + 1 + (size_t)3 * HCRED_KKW_G + 3);
+                memcpy(buf, "HCRED-kkwon", 11); o += 11;
+                buf[o++] = (uint8_t)(ee >> 8); buf[o++] = (uint8_t)ee;
+                buf[o++] = (uint8_t)j;
+                hcred_ser(buf + o, work[k].tvec + (size_t)j * HCRED_KKW_G, HCRED_KKW_G);
+                o += (size_t)3 * HCRED_KKW_G;
+                hcred_ser(buf + o, &work[k].us[j], 1); o += 3;
+                hfscx_256(buf, o, NULL, com_ons + off); off += KEYBYTES;
+                free(buf);
+            }
+        }
+        buf2 = (uint8_t *)malloc(12 + (size_t)tau * (size_t)n_par * KEYBYTES);
+        memcpy(buf2, "HCRED-kkwhon", 12);
+        memcpy(buf2 + 12, com_ons, (size_t)tau * (size_t)n_par * KEYBYTES);
+        hfscx_256(buf2, 12 + (size_t)tau * (size_t)n_par * KEYBYTES, NULL, h_on);
+        free(buf2); free(com_ons);
+    }
+
+    /* Challenge 2: hidden party per online emulation. */
+    pbars = (int32_t *)malloc(sizeof(int32_t) * (size_t)tau);
+    {
+        uint8_t c2mat[3 * KEYBYTES];
+        memcpy(c2mat, h_pre, KEYBYTES);
+        memcpy(c2mat + KEYBYTES, h_msk, KEYBYTES);
+        memcpy(c2mat + 2 * KEYBYTES, h_on, KEYBYTES);
+        hcred_kkw_fs_ints(pbars, "c2", 2, c2mat, sizeof c2mat, tau, n_par, 0);
+    }
+
+    /* Assemble proof. */
+    proof->W = W; proof->n_par = n_par; proof->m = m; proof->tau = tau;
+    {
+        uint8_t *is_open = (uint8_t *)calloc((size_t)m, 1);
+        int n_pre = m - tau, idx = 0;
+        for (k = 0; k < tau; k++) is_open[subset[k]] = 1;
+        proof->pre_e    = (int *)malloc(sizeof(int) * (size_t)n_pre);
+        proof->pre_root = (uint8_t *)malloc((size_t)n_pre * KEYBYTES);
+        for (e = 0; e < m; e++) {
+            if (!is_open[e]) {
+                proof->pre_e[idx] = e;
+                memcpy(proof->pre_root + (size_t)idx * KEYBYTES, roots[e], KEYBYTES);
+                idx++;
+            }
+        }
+        free(is_open);
+    }
+    proof->online_e = (int *)malloc(sizeof(int) * (size_t)tau);
+    proof->online   = (HcredKkwOnline *)calloc((size_t)tau, sizeof(HcredKkwOnline));
+    for (k = 0; k < tau; k++) {
+        int ee = subset[k], pb = (int)pbars[k];
+        HcredKkwOnline *o = &proof->online[k];
+        proof->online_e[k] = ee;
+        o->path_len = hcred_kkw_tree_open(o->path, nodes_all[ee], n_par, pb);
+        memcpy(o->com_h, coms_all[ee] + (size_t)pb * KEYBYTES, KEYBYTES);
+        o->pbar = pb;
+        if (pb != n_par - 1) {
+            o->aux = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+            memcpy(o->aux, aux_all[ee], sizeof(int32_t) * HCRED_KKW_G);
+        } else {
+            o->aux = NULL;
+        }
+        o->zin = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_I);
+        memcpy(o->zin, work[k].zin, sizeof(int32_t) * HCRED_KKW_I);
+        o->t = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+        memcpy(o->t, work[k].tvec + (size_t)pb * HCRED_KKW_G, sizeof(int32_t) * HCRED_KKW_G);
+        o->u = work[k].us[pb];
+    }
+    ret = 0;
+
+    for (e = 0; e < m; e++) {
+        free(roots[e]); free(nodes_all[e]);
+        free(lam_in_all[e]); free(lam_z_all[e]); free(lam_xy_all[e]);
+        free(aux_all[e]); free(coms_all[e]);
+    }
+    free(roots); free(nodes_all);
+    free(lam_in_all); free(lam_z_all); free(lam_xy_all); free(aux_all); free(coms_all);
+    free(h_es); free(w_in); free(gates); free(subset); free(pbars); free(rho);
+    if (work) {
+        for (k = 0; k < tau; k++) { free(work[k].zin); free(work[k].tvec); free(work[k].zz); free(work[k].us); }
+        free(work);
+    }
+    return ret;
+}
+
+/* Verify a KKW-encoded credential-presentation proof.  Returns 1 if valid,
+ * 0 otherwise. */
+static int hcred_verify_kkw(const int32_t m_poly[HCRED_N], const int32_t c_poly[HCRED_N],
+                             const BitArray *seed_H, const uint8_t syndr[SDF_SYNBYTES],
+                             const HcredKkwProof *proof,
+                             const uint8_t *msg, size_t msg_len)
+{
+    int n_par = proof->n_par, m = proof->m, tau = proof->tau;
+    int result = 1;
+    int levels, k, j, e, gidx;
+    uint8_t stmt[KEYBYTES], h_pre[KEYBYTES], h_msk[KEYBYTES], h_on[KEYBYTES];
+    BitArray H[SDF_N_ROWS];
+    HcredKkwGate *gates = NULL;
+    uint8_t *h_es = NULL;
+    uint8_t *h_es_set = NULL;
+    uint8_t **on_leaves = NULL;   /* [tau] -> [n_par*KEYBYTES] flat */
+    uint8_t **on_known  = NULL;   /* [tau] -> [n_par] */
+    int32_t *subset = NULL, *online_sorted = NULL;
+    int32_t **em_lam_in = NULL, **em_lam_z = NULL, **em_lam_xy = NULL; /* [tau] per opened party set, dense over j=0..n_par-1 (unused rows for pbar) */
+    int32_t **em_tvec = NULL;     /* [tau] -> [n_par*G] flat */
+    int32_t **em_zz = NULL;       /* [tau] -> [G] */
+    int32_t *rho = NULL;
+    int32_t *pbars = NULL;
+
+    if (n_par <= 0 || (n_par & (n_par - 1)) != 0 || tau < 1 || tau > m) { return 0; }
+    levels = hcred_kkw_levels(n_par);
+    if (levels >= HCRED_KKW_MAX_LEVELS) { return 0; }
+    if (proof->W < 1 || proof->W > HCRED_W_MAX) { return 0; }
+    if (m - tau < 0) { return 0; }
+    /* proof->pre_e/pre_root implicitly hold m-tau entries; proof->online* hold tau */
+
+    gates = (HcredKkwGate *)malloc(sizeof(HcredKkwGate) * HCRED_KKW_G);
+    hcred_kkw_gates(gates);
+    stern_build_H(H, seed_H);
+    hcred_stmt_hash(stmt, m_poly, c_poly, seed_H, syndr, msg, msg_len);
+
+    h_es     = (uint8_t *)malloc((size_t)m * KEYBYTES);
+    h_es_set = (uint8_t *)calloc((size_t)m, 1);
+
+    /* Recompute every unopened emulation's hash from its root. */
+    for (k = 0; k < m - tau; k++) {
+        int ee = proof->pre_e[k];
+        uint8_t *nodes, *coms, *buf;
+        int32_t *lam_in, *lam_z, *lam_xy, *aux;
+        size_t off;
+        if (ee < 0 || ee >= m || h_es_set[ee]) { result = 0; goto done; }
+        nodes  = (uint8_t *)malloc((size_t)(2 * n_par - 1) * KEYBYTES);
+        lam_in = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_I);
+        lam_z  = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_G);
+        lam_xy = (int32_t *)malloc(sizeof(int32_t) * (size_t)n_par * HCRED_KKW_G);
+        aux    = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_G);
+        hcred_kkw_pre(nodes, lam_in, lam_z, lam_xy, aux,
+                      proof->pre_root + (size_t)k * KEYBYTES, n_par, gates);
+        coms = (uint8_t *)malloc((size_t)n_par * KEYBYTES);
+        for (j = 0; j < n_par; j++) {
+            const int32_t *a = (j == n_par - 1) ? aux : NULL;
+            hcred_kkw_state_com(coms + (size_t)j * KEYBYTES, ee, j,
+                                nodes + (size_t)hcred_kkw_node_idx(levels, j) * KEYBYTES, a);
+        }
+        buf = (uint8_t *)malloc(11 + 2 + (size_t)n_par * KEYBYTES);
+        off = 0;
+        memcpy(buf, "HCRED-kkwem", 11); off += 11;
+        buf[off++] = (uint8_t)(ee >> 8); buf[off++] = (uint8_t)ee;
+        memcpy(buf + off, coms, (size_t)n_par * KEYBYTES); off += (size_t)n_par * KEYBYTES;
+        hfscx_256(buf, off, NULL, h_es + (size_t)ee * KEYBYTES);
+        h_es_set[ee] = 1;
+        free(buf); free(coms); free(nodes); free(lam_in); free(lam_z); free(lam_xy); free(aux);
+    }
+
+    on_leaves = (uint8_t **)calloc((size_t)tau, sizeof(uint8_t *));
+    on_known  = (uint8_t **)calloc((size_t)tau, sizeof(uint8_t *));
+    for (k = 0; k < tau; k++) {
+        int ee = proof->online_e[k];
+        const HcredKkwOnline *od = &proof->online[k];
+        uint8_t *coms, *buf;
+        size_t off;
+        int pb = od->pbar, cnt, jj;
+
+        if (ee < 0 || ee >= m || h_es_set[ee]) { result = 0; goto done; }
+        if (pb < 0 || pb >= n_par) { result = 0; goto done; }
+        if (pb != n_par - 1 && od->aux == NULL) { result = 0; goto done; }
+
+        on_leaves[k] = (uint8_t *)calloc((size_t)n_par, KEYBYTES);
+        on_known[k]  = (uint8_t *)calloc((size_t)n_par, 1);
+        hcred_kkw_tree_recover(on_leaves[k], on_known[k], od->path, od->path_len, n_par);
+        cnt = 0;
+        for (jj = 0; jj < n_par; jj++) {
+            if (jj == pb) { if (on_known[k][jj]) { result = 0; goto done; } }
+            else { if (!on_known[k][jj]) { result = 0; goto done; } cnt++; }
+        }
+        if (cnt != n_par - 1) { result = 0; goto done; }
+
+        coms = (uint8_t *)malloc((size_t)n_par * KEYBYTES);
+        for (j = 0; j < n_par; j++) {
+            if (j == pb) {
+                memcpy(coms + (size_t)j * KEYBYTES, od->com_h, KEYBYTES);
+            } else {
+                const int32_t *a = (j == n_par - 1) ? od->aux : NULL;
+                hcred_kkw_state_com(coms + (size_t)j * KEYBYTES, ee, j,
+                                    on_leaves[k] + (size_t)j * KEYBYTES, a);
+            }
+        }
+        buf = (uint8_t *)malloc(11 + 2 + (size_t)n_par * KEYBYTES);
+        off = 0;
+        memcpy(buf, "HCRED-kkwem", 11); off += 11;
+        buf[off++] = (uint8_t)(ee >> 8); buf[off++] = (uint8_t)ee;
+        memcpy(buf + off, coms, (size_t)n_par * KEYBYTES); off += (size_t)n_par * KEYBYTES;
+        hfscx_256(buf, off, NULL, h_es + (size_t)ee * KEYBYTES);
+        h_es_set[ee] = 1;
+        free(buf); free(coms);
+    }
+    for (e = 0; e < m; e++) if (!h_es_set[e]) { result = 0; goto done; }
+
+    {
+        uint8_t *buf = (uint8_t *)malloc(12 + KEYBYTES + (size_t)m * KEYBYTES);
+        size_t off = 0;
+        memcpy(buf, "HCRED-kkwpre", 12); off += 12;
+        memcpy(buf + off, stmt, KEYBYTES); off += KEYBYTES;
+        memcpy(buf + off, h_es, (size_t)m * KEYBYTES); off += (size_t)m * KEYBYTES;
+        hfscx_256(buf, off, NULL, h_pre);
+        free(buf);
+    }
+
+    /* Challenge-1 consistency. */
+    subset = (int32_t *)malloc(sizeof(int32_t) * (size_t)tau);
+    hcred_kkw_fs_ints(subset, "c1", 2, h_pre, KEYBYTES, tau, m, 1);
+    qsort(subset, (size_t)tau, sizeof(int32_t), hcred_kkw_int_cmp);
+    online_sorted = (int32_t *)malloc(sizeof(int32_t) * (size_t)tau);
+    for (k = 0; k < tau; k++) online_sorted[k] = proof->online_e[k];
+    qsort(online_sorted, (size_t)tau, sizeof(int32_t), hcred_kkw_int_cmp);
+    for (k = 0; k < tau; k++)
+        if (subset[k] != online_sorted[k]) { result = 0; goto done; }
+
+    /* Re-emulate opened parties online. */
+    em_lam_in  = (int32_t **)calloc((size_t)tau, sizeof(int32_t *));
+    em_lam_z   = (int32_t **)calloc((size_t)tau, sizeof(int32_t *));
+    em_lam_xy  = (int32_t **)calloc((size_t)tau, sizeof(int32_t *));
+    em_tvec    = (int32_t **)calloc((size_t)tau, sizeof(int32_t *));
+    em_zz      = (int32_t **)calloc((size_t)tau, sizeof(int32_t *));
+    for (k = 0; k < tau; k++) {
+        const HcredKkwOnline *od = &proof->online[k];
+        int pb = od->pbar;
+        if (od->zin == NULL) { result = 0; goto done; }
+
+        em_lam_in[k] = (int32_t *)calloc((size_t)n_par * HCRED_KKW_I, sizeof(int32_t));
+        em_lam_z[k]  = (int32_t *)calloc((size_t)n_par * HCRED_KKW_G, sizeof(int32_t));
+        em_lam_xy[k] = (int32_t *)calloc((size_t)n_par * HCRED_KKW_G, sizeof(int32_t));
+        em_tvec[k]   = (int32_t *)calloc((size_t)n_par * HCRED_KKW_G, sizeof(int32_t));
+        em_zz[k]     = (int32_t *)calloc(HCRED_KKW_G, sizeof(int32_t));
+
+        for (j = 0; j < n_par; j++) {
+            if (j == pb) continue;
+            hcred_kkw_party(em_lam_in[k] + (size_t)j * HCRED_KKW_I,
+                            em_lam_z[k]  + (size_t)j * HCRED_KKW_G,
+                            em_lam_xy[k] + (size_t)j * HCRED_KKW_G,
+                            on_leaves[k] + (size_t)j * KEYBYTES);
+            if (j == n_par - 1) {
+                if (od->aux == NULL) { result = 0; goto done; }
+                for (gidx = 0; gidx < HCRED_KKW_G; gidx++) {
+                    int64_t v = (int64_t)em_lam_xy[k][(size_t)j * HCRED_KKW_G + gidx] + od->aux[gidx];
+                    em_lam_xy[k][(size_t)j * HCRED_KKW_G + gidx] =
+                        (int32_t)(((v % RNL_Q) + RNL_Q) % RNL_Q);
+                }
+            }
+        }
+        for (gidx = 0; gidx < HCRED_KKW_G; gidx++) {
+            const HcredKkwGate *gt = &gates[gidx];
+            int64_t zx = (gt->x_kind == 'i') ? od->zin[gt->x_idx] : em_zz[k][gt->x_idx];
+            int64_t zy = (gt->y_kind == 'i') ? od->zin[gt->y_idx] : em_zz[k][gt->y_idx];
+            int64_t acc = od->t[gidx];
+            for (j = 0; j < n_par; j++) {
+                int64_t lx, ly, t;
+                if (j == pb) continue;
+                lx = (gt->x_kind == 'i') ? em_lam_in[k][(size_t)j * HCRED_KKW_I + gt->x_idx]
+                                         : em_lam_z[k][(size_t)j * HCRED_KKW_G + gt->x_idx];
+                ly = (gt->y_kind == 'i') ? em_lam_in[k][(size_t)j * HCRED_KKW_I + gt->y_idx]
+                                         : em_lam_z[k][(size_t)j * HCRED_KKW_G + gt->y_idx];
+                t = -zx * ly - zy * lx + em_lam_xy[k][(size_t)j * HCRED_KKW_G + gidx]
+                  + em_lam_z[k][(size_t)j * HCRED_KKW_G + gt->z_idx];
+                if (j == 0) t += zx * zy;
+                t = ((t % RNL_Q) + RNL_Q) % RNL_Q;
+                em_tvec[k][(size_t)j * HCRED_KKW_G + gidx] = (int32_t)t;
+                acc += t;
+            }
+            em_zz[k][gt->z_idx] = (int32_t)(((acc % RNL_Q) + RNL_Q) % RNL_Q);
+        }
+    }
+
+    /* Batched output check + challenge-2 consistency. */
+    {
+        size_t per = (size_t)3 * HCRED_KKW_I + (size_t)n_par * 3 * HCRED_KKW_G;
+        size_t total = per * (size_t)tau;
+        uint8_t *msk_buf = (uint8_t *)malloc(total);
+        uint8_t *buf2;
+        size_t off = 0;
+        for (k = 0; k < tau; k++) {
+            const HcredKkwOnline *od = &proof->online[k];
+            hcred_ser(msk_buf + off, od->zin, HCRED_KKW_I); off += (size_t)3 * HCRED_KKW_I;
+            for (j = 0; j < n_par; j++) {
+                const int32_t *tv = (j == od->pbar) ? od->t : (em_tvec[k] + (size_t)j * HCRED_KKW_G);
+                hcred_ser(msk_buf + off, tv, HCRED_KKW_G); off += (size_t)3 * HCRED_KKW_G;
+            }
+        }
+        buf2 = (uint8_t *)malloc(12 + total);
+        memcpy(buf2, "HCRED-kkwmsk", 12);
+        memcpy(buf2 + 12, msk_buf, total);
+        hfscx_256(buf2, 12 + total, NULL, h_msk);
+        free(buf2); free(msk_buf);
+    }
+    rho = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_K);
+    {
+        uint8_t rho_seed_buf[12 + 3 * KEYBYTES];
+        uint8_t rho_seed[KEYBYTES];
+        HcredTape rho_tp;
+        memcpy(rho_seed_buf, "HCRED-kkwrho", 12);
+        memcpy(rho_seed_buf + 12, stmt, KEYBYTES);
+        memcpy(rho_seed_buf + 12 + KEYBYTES, h_pre, KEYBYTES);
+        memcpy(rho_seed_buf + 12 + 2 * KEYBYTES, h_msk, KEYBYTES);
+        hfscx_256(rho_seed_buf, sizeof rho_seed_buf, NULL, rho_seed);
+        hcred_tape_init(&rho_tp, rho_seed);
+        hcred_tape_draws(&rho_tp, rho, HCRED_KKW_K);
+    }
+    {
+        int32_t *targets = (int32_t *)malloc(sizeof(int32_t) * HCRED_KKW_K);
+        uint8_t *com_ons = (uint8_t *)malloc((size_t)tau * (size_t)n_par * KEYBYTES);
+        size_t off = 0;
+        hcred_kkw_targets(targets, proof->W, syndr, c_poly);
+        for (k = 0; k < tau; k++) {
+            const HcredKkwOnline *od = &proof->online[k];
+            int pb = od->pbar;
+            int64_t usum = (((int64_t)od->u % RNL_Q) + RNL_Q) % RNL_Q;
+            int32_t zo[HCRED_KKW_K], lo[HCRED_KKW_K];
+            int64_t lhs = 0;
+            int kk;
+
+            for (j = 0; j < n_par; j++) {
+                if (j == pb) continue;
+                hcred_kkw_outmap(lo, em_lam_in[k] + (size_t)j * HCRED_KKW_I,
+                                 em_lam_z[k] + (size_t)j * HCRED_KKW_G, m_poly, H);
+                { int64_t s = 0; for (kk = 0; kk < HCRED_KKW_K; kk++) s += (int64_t)rho[kk]*lo[kk];
+                  usum = ((usum + s) % RNL_Q + RNL_Q) % RNL_Q; }
+            }
+            hcred_kkw_outmap(zo, od->zin, em_zz[k], m_poly, H);
+            for (kk = 0; kk < HCRED_KKW_K; kk++) {
+                int64_t diff = (((int64_t)zo[kk] - targets[kk]) % RNL_Q + RNL_Q) % RNL_Q;
+                lhs += (int64_t)rho[kk] * diff;
+            }
+            lhs = ((lhs % RNL_Q) + RNL_Q) % RNL_Q;
+            if (lhs != usum) { result = 0; free(targets); free(com_ons); goto done; }
+
+            for (j = 0; j < n_par; j++) {
+                const int32_t *tv;
+                int32_t uj;
+                uint8_t *buf; size_t o = 0;
+                if (j == pb) {
+                    tv = od->t; uj = od->u;
+                } else {
+                    int64_t s = 0;
+                    tv = em_tvec[k] + (size_t)j * HCRED_KKW_G;
+                    hcred_kkw_outmap(lo, em_lam_in[k] + (size_t)j * HCRED_KKW_I,
+                                     em_lam_z[k] + (size_t)j * HCRED_KKW_G, m_poly, H);
+                    for (kk = 0; kk < HCRED_KKW_K; kk++) s += (int64_t)rho[kk]*lo[kk];
+                    uj = (int32_t)(((s % RNL_Q) + RNL_Q) % RNL_Q);
+                }
+                buf = (uint8_t *)malloc(11 + 2 + 1 + (size_t)3 * HCRED_KKW_G + 3);
+                memcpy(buf, "HCRED-kkwon", 11); o += 11;
+                { int ee = proof->online_e[k];
+                  buf[o++] = (uint8_t)(ee >> 8); buf[o++] = (uint8_t)ee; }
+                buf[o++] = (uint8_t)j;
+                hcred_ser(buf + o, tv, HCRED_KKW_G); o += (size_t)3 * HCRED_KKW_G;
+                hcred_ser(buf + o, &uj, 1); o += 3;
+                hfscx_256(buf, o, NULL, com_ons + off); off += KEYBYTES;
+                free(buf);
+            }
+        }
+        free(targets);
+        {
+            uint8_t *buf2b = (uint8_t *)malloc(12 + (size_t)tau * (size_t)n_par * KEYBYTES);
+            memcpy(buf2b, "HCRED-kkwhon", 12);
+            memcpy(buf2b + 12, com_ons, (size_t)tau * (size_t)n_par * KEYBYTES);
+            hfscx_256(buf2b, 12 + (size_t)tau * (size_t)n_par * KEYBYTES, NULL, h_on);
+            free(buf2b);
+        }
+        free(com_ons);
+    }
+
+    pbars = (int32_t *)malloc(sizeof(int32_t) * (size_t)tau);
+    {
+        uint8_t c2mat[3 * KEYBYTES];
+        memcpy(c2mat, h_pre, KEYBYTES);
+        memcpy(c2mat + KEYBYTES, h_msk, KEYBYTES);
+        memcpy(c2mat + 2 * KEYBYTES, h_on, KEYBYTES);
+        hcred_kkw_fs_ints(pbars, "c2", 2, c2mat, sizeof c2mat, tau, n_par, 0);
+    }
+    for (k = 0; k < tau; k++)
+        if (proof->online[k].pbar != (int)pbars[k]) { result = 0; goto done; }
+
+done:
+    free(gates); free(h_es); free(h_es_set);
+    if (on_leaves) { for (k = 0; k < tau; k++) free(on_leaves[k]); free(on_leaves); }
+    if (on_known)  { for (k = 0; k < tau; k++) free(on_known[k]);  free(on_known); }
+    free(subset); free(online_sorted); free(rho); free(pbars);
+    if (em_lam_in) { for (k = 0; k < tau; k++) free(em_lam_in[k]); free(em_lam_in); }
+    if (em_lam_z)  { for (k = 0; k < tau; k++) free(em_lam_z[k]);  free(em_lam_z); }
+    if (em_lam_xy) { for (k = 0; k < tau; k++) free(em_lam_xy[k]); free(em_lam_xy); }
+    if (em_tvec)   { for (k = 0; k < tau; k++) free(em_tvec[k]);   free(em_tvec); }
+    if (em_zz)     { for (k = 0; k < tau; k++) free(em_zz[k]);     free(em_zz); }
+    return result;
 }
 
 /* Issuer-signature message: truncated stmt_hash with "HCRED-issue" as context. */

@@ -745,6 +745,35 @@ int main(void)
         }
         puts("  (demo uses R=4; production requires R=219; rounding check"
              " relaxed to ||m*s - lift(C)||inf <= 15 — see §11.10.10)");
+
+        /* HCRED-KKW: the same statement/circuit, preprocessing-model
+         * transcript (TODO #128 Batch 3 / ported under TODO #261). */
+        {
+            static const uint8_t kkw_nonce[]  = "HCRED-KKW demo nonce";
+            static const uint8_t kkw_nonce2[] = "other nonce";
+            HcredKkwProof kkw_proof;
+            int kkw_rc = hcred_prove_kkw(&kkw_proof, hc_s, hc_m, hc_c, &hc_seed_H, hc_syndr,
+                                          HCRED_KKW_DEMO_N, HCRED_KKW_DEMO_M, HCRED_KKW_DEMO_TAU,
+                                          kkw_nonce, sizeof(kkw_nonce)-1, urnd);
+            if (kkw_rc != 0) {
+                printf("[FAIL] HCRED-KKW prove error rc=%d\n", kkw_rc);
+            } else {
+                if (hcred_verify_kkw(hc_m, hc_c, &hc_seed_H, hc_syndr, &kkw_proof,
+                                     kkw_nonce, sizeof(kkw_nonce)-1))
+                    puts("+ HCRED-KKW presentation proof verified (preprocessing MPCitH; "
+                         "N=4, M=8, tau=4 demo)");
+                else
+                    printf("[FAIL] HCRED-KKW verify failed\n");
+                if (!hcred_verify_kkw(hc_m, hc_c, &hc_seed_H, hc_syndr, &kkw_proof,
+                                      kkw_nonce2, sizeof(kkw_nonce2)-1))
+                    puts("+ HCRED-KKW replay under different nonce rejected");
+                else
+                    printf("[FAIL] HCRED-KKW replay NOT rejected\n");
+                hcred_kkw_proof_free(&kkw_proof);
+                puts("  (production KKW: N=64, M=343, tau=27 for 2^-128 — "
+                     "~11x smaller than the ZKBoo path above at production rounds)");
+            }
+        }
     }
 
     puts("\n*** HPKS-WOTS-F / HPKS-XMSS-F \xe2\x80\x94 hash-based many-time signatures");

@@ -158,6 +158,90 @@ explicitly ACKNOWLEDGED non-parity (a research/demo convenience, not a security-
 divergence) and record why in `SECURITY.md`/`spec/`.  Don't leave it as an unstated fact
 four different files each know a different piece of.
 
+**v5.4.4 tried the ACKNOWLEDGED route; reconsidered (v5.4.5) — port it instead.**
+`SECURITY.md` briefly recorded `hcred_prove_kkw`/`hcred_verify_kkw` as ACKNOWLEDGED
+non-parity (no CLI surface for the other three to be missing, research-tier protocol), with
+matching pointer comments at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s
+`HcredProve`.  That resolution is withdrawn: asymmetry #1's scope is now **port KKW to C, Go
+and Java so all four match Python**, the other option this item's opening paragraph always
+named.  The ACKNOWLEDGED wording added in v5.4.4 needs pulling back out of `SECURITY.md` and
+both pointer comments once the ports land.
+
+Task breakdown for the port (mirroring Python's `hcred_prove_kkw`/`hcred_verify_kkw`, ~113
+lines, `Herradura cryptographic suite.py` line 3061 on — KKW encoding, cut-and-choose over
+`M` emulations opening `M-τ`, `N`-party preprocessing, the batched output check):
+- **Go (DONE, v5.5.0):** `HcredProveKkw`/`HcredVerifyKkw` added to `herradura/herradura.go`,
+  a 1:1 port of every Python helper (`hcred_kkw_gates`/`_tree`/`_tree_open`/`_tree_recover`/
+  `_party`/`_pre`/`_state_com`/`_outmap`/`_targets`/`_fs_ints`) plus the two entry points, all
+  unexported except the entry points and the two exported proof-carrying types
+  (`HcredKkwProof`, `KkwOnlineProof`, `KkwPathEntry`). Wired into
+  `Herradura cryptographic suite.go`'s existing HCRED demo section, right after the ZKBoo
+  path, reusing the same enrolment keys. **Caught one real transcription bug in review**:
+  the "reveal `aux` when party N-1 is opened" condition was inverted on the first pass
+  (`pb == N_par-1` instead of Python's `pb != N_par-1`) — every genuine proof failed
+  verification until a fail-point-tagged debug pass isolated it to that one line. Verified
+  structurally (no fixed-vector KAT exists for KKW in any language yet, matching Python):
+  ~20 repeated prove→verify round trips all passed, plus targeted rejection checks — wrong
+  message, flipped `W`, flipped a party's `U` broadcast, flipped a `T` gate broadcast,
+  flipped a preprocessing root seed byte, and a relabeled `Pbar` (claimed hidden party) —
+  each one independently caught by `HcredVerifyKkw`. Demo run and the full Go suite/CliTest
+  gates are clean (see CHANGELOG v5.5.0).
+- **C (DONE, v5.6.0):** `hcred_prove_kkw`/`hcred_verify_kkw` added to `herradura.h`,
+  translated from the Go port line-by-line (gates/tree/tree-open/tree-recover/party/pre/
+  state-com/outmap/targets/fs-ints, `HcredKkwProof`/`HcredKkwOnline`/`HcredKkwPathEntry`,
+  manually heap-managed since C has no GC — every allocation is freed on every exit path,
+  checked clean under ASan+UBSan). Wired into `Herradura cryptographic suite.c`'s existing
+  HCRED demo section, right after the ZKBoo path. **Caught two real bugs before either
+  shipped, both found by writing a standalone test harness first rather than trusting the
+  translation:**
+  1. A genuine **buffer overflow** in `hcred_kkw_state_com`: its size calculation omitted
+     the 2-byte emulation-index field it then wrote, caught by `-Wstringop-overflow` on a
+     first compile (not by a crash — the under-allocation was 2 bytes on a much larger
+     buffer, exactly the class of bug a sanitizer or a careful compiler catches and a
+     casual test run does not).
+  2. A **bit-endianness mismatch**: `hcred_kkw_outmap`'s per-row check tested `H[r]`'s bit
+     `i` little-endian-style (`b[i/8]`), where this file's `BitArray` convention (used by
+     `hcred_phi` and every existing HCRED/Stern function) is big-endian (`b[KEYBYTES-1-i/8]`).
+     This is NOT a copy-paste error from Go/Python — Go's own `.Val.Bit(i)` on a `big.Int`
+     and Python's integer `>>`/`&` both give the *correct* bit regardless of byte layout,
+     so this bug is specific to C's byte-array `BitArray` representation and had no Go/Python
+     analogue to catch it by comparison. Found by an isolated linearity test
+     (`outmap(a+b,c+d) == outmap(a,c)+outmap(b,d)`, which passed, ruling out the outmap
+     formula itself) followed by a direct real-witness test (`outmap(w_in,z_real) ==
+     targets`, which failed with small residuals concentrated exactly in the row-check
+     block) — the same divide-and-conquer approach the Go debugging session used, applied
+     one layer deeper since this bug was C-specific.
+  Verified the same way as Go: no fixed-vector KAT exists for KKW in any language, so
+  round-trips (clean across repeated runs) plus the same six rejection axes (wrong message,
+  flipped `W`, flipped `u`, flipped `t`, flipped a preprocessing root byte, relabeled
+  `pbar`) — all independently caught. `build_c.sh`'s full suite build and the demo run both
+  clean (`*** OK: no check reported [FAIL] ***`).
+- **Java (DONE, v5.7.0):** `Hcred.proveKkw`/`Hcred.verifyKkw` added to
+  `bindings/java/herradurakex/Hcred.java`, translated from the Go port. Java's `BigInteger`
+  bit convention (`.testBit(i)`) is layout-independent — no analogue of C's byte-array
+  endianness bug was possible here, and none was found. One structural difference from
+  Go/C worth noting for future readers: `HcredKkwProof`/`KkwOnlineProof`'s fields are
+  `public final`, matching this file's existing `Proof`/`ProofRound` style — a proof is
+  Java-idiomatically immutable once built (a real tamper attempt has to forge a byte/int
+  differently from a test poking a field, which is closer to what verification is actually
+  defending against). Wired into `Demo.java`'s HCRED section, right after the ZKBoo path.
+  Verified structurally: 21 prove→verify round trips across repeated runs plus five
+  in-place-mutable-field rejection checks (tampered message, `t`, `comH`, `zin`, a
+  preprocessing root byte — the primitive-typed `W`/`pbar`/`u` fields being `final` int
+  make an in-place tamper of those three specifically require constructing a distinct
+  proof object rather than mutating one, so they weren't exercised this pass), all
+  correctly caught, plus a same-object re-verify-after-restore on every run confirming no
+  check has a side effect. `bindings/java/build.sh`, the full `Demo.java` run, and
+  `CliTest/test_java_bindings.sh` all clean.
+- Still **not** a CLI subcommand in any language — Python's (and now Go's, C's and Java's)
+  KKW path has none either, so parity here means the suite files and the demos, not
+  `cred-prove --transcript kkw`.
+- KAT/test coverage is the one piece left un-decided: no fixed-vector KAT for KKW exists in
+  any language, so a byte-exact cross-language check needs one added first — every language
+  ships today verified only structurally (round-trips + rejection checks), which is the
+  standard the rest of HCRED already uses too.
+- **Asymmetry #1 is now closed in all four languages.**
+
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:
 
@@ -165,15 +249,24 @@ explicit that tests are in scope, not only the primitives:
 CryptosuiteTests/Herradura_tests.c   32 `test_*` functions
 CryptosuiteTests/Herradura_tests.go  37 `test*` functions
 CryptosuiteTests/Herradura_tests.py  36 `test_*` functions
-bindings/java/herradurakex/SelfTest.java  ~20 PASS/fail checks, unnumbered
+bindings/java/herradurakex/SelfTest.java  26 PASS/fail checks, numbered [1]-[26] (v5.7.1)
 ```
 
 C/Go/Python additionally share a **numbered** test convention ([1]-[48], stable IDs cited
 throughout `CHANGELOG.md`/`TODO_DONE.md` — e.g. "test [45] runs its Stern-F sub-check at
-`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` has no
-equivalent numbering, so a Java gap can't even be cited by the same vocabulary the other
-three use to talk about test coverage.  Bringing Java's test count up (TODO #260, item 2)
-should also adopt the numbered convention, not just close the count gap.
+`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` had no
+equivalent numbering.
+
+**Resolved (v5.7.1):** every check in `SelfTest.java` now prints `PASS [N] name` /
+`FAIL [N] name`, giving each one the same kind of stable, citable ID the other three
+languages have ("SelfTest.java's check [18]" is now as citable as "test [45]"). The
+numbering is **Java's own**, not aligned index-for-index with C/Go/Python's: Java bundles
+correctness and Eve-resistance into one round-trip-plus-tamper check per protocol, where
+C/Go/Python often split those into separate numbered tests repeated per bit-width, so
+forcing the same number onto both would misleadingly imply they test the same thing. The
+class doc comment lists all 26 by name and states the numbers are permanent (new checks
+append at `[27]` onward), matching `TODO.md`/`TODO_DONE.md`'s own numbering discipline
+(TODO #154). `test_java_bindings.sh` re-run clean.
 
 **Relationship to #260 and sequencing.**  Work #260 first — most of what #261 would flag
 today is exactly #260's Java list, and fixing it there is the direct fix.  What #261 adds on
@@ -182,19 +275,38 @@ individually grew, like KKW), and (b) turning "parity" from a one-time audit int
 checked mechanically going forward, so a fifth divergence doesn't accumulate silently the
 way KKW apparently did.
 
-**Proposed mechanism, to design when this item is worked, not decided here.**  The repo
-already has two coverage guards in this family — `ci.yml`'s native-interop step failing if a
-`CliTest/*.sh` script isn't claimed by exactly one job, and `check_part_index.py` failing if
-`SecurityProofs-*.md`'s banners disagree.  A `check_language_parity.py` in the same spirit —
-enumerating each language's public functions/CLI subcommands/numbered tests and diffing the
-four sets — would turn every future asymmetry (Java or otherwise) into a caught CI failure
-instead of a fact three other files quietly don't know.  Scope, false-positive rate (a
-language-appropriate helper that isn't a protocol function shouldn't count), and where it
-runs are all open design questions for whoever picks this up.
+**Mechanism (v5.7.2): `spec/check_language_parity.py`, built and running in CI.**  In the
+same spirit as `ci.yml`'s native-interop coverage guard and `check_part_index.py`, it checks
+two things mechanically rather than by a one-time source read:
+
+1. **Numbered-test contiguity + alignment**, fully automatic (no manifest): each of
+   C/Go/Python/Java's `[N]` markers must be contiguous from 1 with no duplicates, and
+   C/Go/Python's shared numbering (they use ONE convention; Java deliberately uses its own,
+   per SelfTest.java's class doc comment) must have identical *sets*, not just identical
+   maxima — catches the exact "renumbered one language, forgot the others" class of bug
+   before it reaches `CHANGELOG.md` as a wrong citation. Verified against two deliberate
+   breaks (a renumbered Go test, a set-misalignment) — both caught with an actionable
+   message, both restore clean.
+2. **A curated `PRIMITIVES` manifest** of suite-internal primitives with no CLI `--algo` tag
+   (the exact class of thing #261's own gap was — `spec/generate_spec.py --check` cannot see
+   these by construction). Each entry names a marker regex per language; a language missing
+   a required marker fails unless the entry carries an `acknowledged` reason. **Seeded with
+   two entries**: `hcred-zkboo` (all four languages, pre-existing) and `hcred-kkw` (all four,
+   now that this item's own work closed it) — verified to catch a renamed/removed marker.
+
+**What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has exactly the two
+entries this item's own investigation produced — a seed, not the retroactive full census of
+the ~35-protocol table `spec/herradura-protocol-spec.json` already tracks by CLI surface.
+Populating `PRIMITIVES` with every suite-internal (non-CLI) primitive the suite has is real,
+separate work of its own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing
+script-by-script rather than arriving complete — pick it up incrementally, the same way.
 
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
-one-time read of the source tree, so it stays true.
+one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
+the primitive-manifest half is met only for its current two entries — extending `PRIMITIVES`
+is what keeps this item open.
 
 Status: **OPEN**

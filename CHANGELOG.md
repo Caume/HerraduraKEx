@@ -2,6 +2,210 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.7.2] - 2026-09-01
+
+### TODO #261 (partial) — the mechanical parity guard: spec/check_language_parity.py
+
+PATCH: new internal tooling script + CI step, no new protocol/CLI/API surface.
+
+- **New `spec/check_language_parity.py`**, run in CI's `native-python` job. Two checks:
+  1. Numbered-test `[N]` contiguity in each of C/Go/Python/Java, plus set-alignment (not
+     just matching maxima) of C/Go/Python's shared `[1]`-`[48]` numbering — Java's numbering
+     is deliberately excluded from that alignment check, per its own class doc comment.
+  2. A curated `PRIMITIVES` manifest of suite-internal (non-CLI) primitives — the exact
+     class of thing this whole TODO was filed over, since `spec/generate_spec.py --check`
+     can't see a primitive with no `--algo` tag. Seeded with two entries: `hcred-zkboo` and
+     `hcred-kkw` (the concrete case v5.5.0-v5.7.0 closed).
+- Verified against three deliberate breaks — a renumbered test, a cross-language
+  set-misalignment, a renamed primitive marker — each caught with an actionable message,
+  each restoring clean afterward.
+- `.github/workflows/ci.yml` gains a step in `native-python` running the new script.
+  `CLAUDE.md`'s `spec/` description updated to describe it alongside
+  `check_security_md.py`.
+- **Scope, stated explicitly:** the `PRIMITIVES` manifest currently covers only the two
+  entries this item's own investigation produced, not a full census of the suite's
+  primitives — extending it is real, separate, incremental work (matching how
+  `CliTest/lib_build.sh`'s coverage guard grew script-by-script). TODO #261 stays OPEN for
+  that reason, even though both confirmed asymmetries (#1 HCRED-KKW, #2 the SelfTest.java
+  numbering gap) are closed.
+
+## [5.7.1] - 2026-09-01
+
+### TODO #261 (partial) — give SelfTest.java the numbered test convention (asymmetry #2)
+
+PATCH: internal test-output convention change, no new API surface.
+
+- Every one of `bindings/java/herradurakex/SelfTest.java`'s 26 checks now prints
+  `PASS [N] name` / `FAIL [N] name` instead of an unnumbered `PASS name` / `FAIL name`,
+  giving each one the same kind of stable, citable ID C/Go/Python's `[1]`-`[48]` tests
+  already have (e.g. CHANGELOG.md's "test [45] runs its Stern-F sub-check at rounds=32").
+- The numbering is **Java's own**, deliberately not aligned index-for-index with
+  C/Go/Python's: this file bundles correctness and Eve-resistance into one
+  round-trip-plus-tamper check per protocol, where the other three languages often split
+  those into separate numbered tests repeated per bit-width. Forcing the same number onto
+  both would misleadingly imply they test the same thing, so cite these as "SelfTest.java's
+  check [N]".
+- The class doc comment lists all 26 checks by name in order and states the numbers are
+  permanent — new checks append at `[27]` onward, matching `TODO.md`/`TODO_DONE.md`'s own
+  numbering discipline (TODO #154).
+- `bindings/java/build.sh`, a direct `SelfTest` run (26/26 clean), and
+  `CliTest/test_java_bindings.sh` all re-run clean.
+- TODO #261 stays OPEN: only the proposed `check_language_parity.py` mechanical guard
+  remains — both confirmed asymmetries (#1 HCRED-KKW, #2 this numbering gap) are now
+  closed.
+
+## [5.7.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to Java; asymmetry #1 closed in all four languages
+
+MINOR: the third and final language port of asymmetry #1 (new public API surface, per
+CLAUDE.md's versioning rule).
+
+- **`bindings/java/herradurakex/Hcred.java`** gains `proveKkw`/`verifyKkw`, translated from
+  the Go port. Java's `BigInteger.testBit(i)` is layout-independent, so the byte-array
+  bit-endianness class of bug the C port hit (v5.6.0) had no way to occur here, and none
+  was found.
+- `HcredKkwProof`/`KkwOnlineProof` follow this file's existing `Proof`/`ProofRound` style —
+  `public final` fields, an immutable proof once built.
+- Wired into `Demo.java`'s HCRED section, right after the ZKBoo path.
+- Verified structurally (no fixed-vector KAT for KKW exists in any language): 21 clean
+  prove→verify round trips across repeated runs, plus five rejection checks on the
+  array-typed fields (tampered message, `t`, `comH`, `zin`, a preprocessing root byte) —
+  the primitive `W`/`pbar`/`u` fields are `final`, so tampering those would need
+  constructing a distinct proof object rather than mutating one, and weren't exercised
+  this pass — plus a re-verify-after-restore on every run confirming no check has a side
+  effect.
+- `bindings/java/build.sh`, the full `Demo.java` run, and `CliTest/test_java_bindings.sh`
+  all clean.
+- `SECURITY.md`'s HCRED row and the C/Go pointer comments updated: **all four languages
+  now have the KKW port** — TODO #261's asymmetry #1 (named in the request that opened the
+  item) is closed.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: only asymmetry #2 (give `SelfTest.java` the numbered `[1]`-`[N]`
+  test convention C/Go/Python share) and the proposed `check_language_parity.py` mechanical
+  guard remain.
+
+## [5.6.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to C
+
+MINOR: the second language port of asymmetry #1 (new public API surface, per CLAUDE.md's
+versioning rule).
+
+- **`herradura.h`** gains `hcred_prove_kkw`/`hcred_verify_kkw`, translated from the Go port
+  (itself a port of Python) function-by-function: gate wiring, seed tree + opening/recovery,
+  per-party preprocessing, state commitments, the linear output map, public targets, the
+  Fiat-Shamir sampler, and the two entry points, all manually heap-managed with every
+  allocation freed on every exit path (checked clean under ASan+UBSan).
+- **Two real bugs caught before either shipped**, both found via a standalone test harness
+  rather than by trusting the translation:
+  1. A **buffer overflow** in `hcred_kkw_state_com` — its size calculation omitted the
+     2-byte emulation-index field it then wrote. Caught by `-Wstringop-overflow` on first
+     compile, not by a crash.
+  2. A **BitArray bit-endianness mismatch** in the row-check term of `hcred_kkw_outmap` —
+     it tested bit `i` little-endian-style (`b[i/8]`) where this file's `BitArray`
+     convention (used throughout HCRED and Stern) is big-endian (`b[KEYBYTES-1-i/8]`). This
+     had no Go/Python analogue — both languages' native bit-test operators are
+     layout-independent — so it's a genuine C-specific defect, not a transcription slip.
+     Isolated by first proving `outmap` linear on random inputs (passed, ruling out the
+     formula), then checking `outmap(true witness) == targets` directly (failed, with small
+     residuals concentrated exactly in the row-check block), narrowing straight to the bug.
+- Verified the same way Go was: no fixed-vector KAT exists for KKW in any language, so
+  round-trips (clean, repeated) plus six independent rejection checks (wrong message,
+  flipped `W`, flipped `u`, flipped `t`, flipped a root-seed byte, relabeled `pbar`), each
+  one caught.
+- Wired into `Herradura cryptographic suite.c`'s HCRED demo section; `build_c.sh`'s full
+  build and the demo run both clean (`*** OK: no check reported [FAIL] ***`).
+- `SECURITY.md`'s HCRED row and the Go/Java pointer comments updated: C has the port now,
+  only Java doesn't.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: only the Java port (now with two reference implementations to
+  translate from) and asymmetry #2 (numbered `SelfTest.java` convention) remain.
+
+## [5.5.0] - 2026-09-01
+
+### TODO #261 (partial) — port HCRED-KKW to Go
+
+MINOR: the first language port of asymmetry #1 (new public API surface — a language-target
+port of an existing protocol variant, per CLAUDE.md's versioning rule).
+
+- **`herradura/herradura.go`** gains `HcredProveKkw`/`HcredVerifyKkw`, a 1:1 port of Python's
+  `hcred_prove_kkw`/`hcred_verify_kkw` (KKW/Katz–Kolesnikov–Wang preprocessing-model MPCitH
+  transcript, TODO #128 Batch 3) — same statement/circuit as the existing ZKBoo-(2,3)
+  `HcredProve`/`HcredVerify`, ~11x smaller proofs at production parameters. Every Python
+  helper has a direct counterpart: gate wiring, the binary seed tree and its opening/
+  recovery, per-party preprocessing shares, state commitments, the linear output map,
+  public targets, and the Fiat-Shamir integer sampler.
+- **Real bug caught in review, before it shipped:** the "reveal `aux` when party N-1 is
+  opened" condition was transcribed inverted on the first pass (`pb == N_par-1` instead of
+  Python's `pb != N_par-1`), which made every genuine proof fail verification. A
+  fail-point-tagged debug pass (temporary `fmt.Println` at every `return false` site,
+  removed after) isolated it to that one line in one commit; not present in the pushed
+  code.
+- **Verification:** no fixed-vector KAT for KKW exists in any language yet (Python
+  included), so this is checked structurally, the same standard the rest of HCRED already
+  uses — ~20 repeated prove→verify round trips, all clean, plus six independent rejection
+  checks (wrong message, flipped `W`, flipped a party's batched-check broadcast `U`,
+  flipped a gate broadcast `T`, flipped one byte of a preprocessing root seed, and a
+  relabeled hidden-party index `Pbar`), each one caught by `HcredVerifyKkw`.
+- Wired into `Herradura cryptographic suite.go`'s existing HCRED demo section, right after
+  the ZKBoo path and reusing the same enrolment keys; the full demo runs clean end to end
+  (`*** OK: no check reported [FAIL] ***`).
+- `SECURITY.md`'s HCRED row, and the pointer comments in `herradura.h` and
+  `bindings/java/herradurakex/Hcred.java`, updated to say Go has the port and C/Java don't
+  yet, rather than "port planned" for all three.
+- `spec/check_security_md.py` and `spec/generate_spec.py --check --require-schema` both
+  re-run clean.
+- TODO #261 stays OPEN: the C and Java ports (now with the Go port as a function-for-function
+  reference to translate from) and asymmetry #2 (numbered `SelfTest.java` convention) remain.
+
+## [5.4.5] - 2026-09-01
+
+### TODO #261 (partial) — reconsider asymmetry #1: port HCRED-KKW instead of acknowledging it
+
+PATCH: reverses v5.4.4's resolution before any implementation depended on it.
+
+- v5.4.4 recorded `hcred_prove_kkw`/`hcred_verify_kkw` as ACKNOWLEDGED non-parity. That is
+  withdrawn: the scope for asymmetry #1 is now **porting KKW to C, Go and Java**, the other
+  option this item's text always named.
+- `SECURITY.md`'s HCRED row updated from "ACKNOWLEDGED non-parity" to "cross-language gap
+  tracked" with the port now in scope.
+- The pointer comments added in v5.4.4 at `herradura.h`'s `hcred_prove`,
+  `herradura/herradura.go`'s `HcredProve`, and `bindings/java/herradurakex/Hcred.java`'s
+  class doc comment are reworded from "deliberately out of scope" to "port planned, not
+  implemented."
+- `TODO.md`'s #261 entry gained a task breakdown for the port: `hcred_prove_kkw`/
+  `hcred_verify_kkw` equivalents in C/Go/Java plus their demo sections, still no new CLI
+  flag (Python's own KKW path has none), and a note that a fixed-vector KAT for KKW doesn't
+  exist yet if byte-exact cross-language verification is wanted.
+- `spec/check_security_md.py` re-run clean.
+- No implementation in this pass — #261 stays OPEN, now correctly scoped for whoever picks
+  up the actual C/Go/Java KKW port next.
+
+## [5.4.4] - 2026-09-01
+
+### TODO #261 (partial) — full 4-way capability parity: resolve confirmed asymmetry #1 (HCRED-KKW)
+
+PATCH: the first of #261's two confirmed asymmetries, closed by downgrading rather than
+porting.
+
+- **Decision:** `hcred_prove_kkw`/`hcred_verify_kkw` (Python-only) stay Python-only.
+  They are not wired to any CLI in any language — `cred-prove` always takes the
+  ZKBoo-(2,3) path — so there is no `--algo`/`--transcript` surface for C, Go or Java to
+  diverge on, and the code is exercised only from Python's own `__main__` demo. Porting a
+  second full MPCitH transcript variant to three more languages for a research-tier,
+  do-not-deploy protocol with no CLI exposure would cost far more than it buys.
+- `SECURITY.md`'s HCRED row now states this explicitly as ACKNOWLEDGED non-parity, mirroring
+  the doc comment `bindings/java/herradurakex/Hcred.java` already carried.
+- Matching comments added at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s
+  `HcredProve`, so a reader chasing KKW in C or Go finds the same recorded answer.
+- `spec/check_security_md.py` re-run clean (35 protocols / 32 rows agree).
+- TODO #261 stays OPEN: asymmetry #2 (Java's `SelfTest.java` has no numbered-test
+  convention matching C/Go/Python's `[1]`-`[48]`) and the proposed mechanical
+  `check_language_parity.py` guard are both still unaddressed.
+
 ## [5.4.3] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, second pass

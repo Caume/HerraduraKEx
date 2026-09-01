@@ -123,6 +123,14 @@ jobs:
           python3 spec/generate_spec.py --check --require-schema
           python3 spec/check_security_md.py
 
+      # TODO #261's mechanism half: numbered-test contiguity/alignment across
+      # C/Go/Python/Java, plus a curated suite-internal (non-CLI) primitive
+      # manifest, seeded with the HCRED-KKW gap the item was filed over. Only
+      # reads source text (no build needed), so it runs here regardless of
+      # which other jobs pass.
+      - name: cross-language parity (numbered tests + suite-internal primitives)
+        run: python3 spec/check_language_parity.py
+
       - name: CliTest — Python CLI
         run: |
           for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \

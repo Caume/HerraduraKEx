@@ -358,6 +358,22 @@ public final class Demo {
             out(replayRejected ? "+ HCRED replay under different nonce rejected"
                                  : "[FAIL] HCRED replay NOT rejected");
             System.out.println("  (demo uses R=4; production requires R=219)");
+
+            // HCRED-KKW: the same statement/circuit, preprocessing-model
+            // transcript (TODO #128 Batch 3 / ported under TODO #261).
+            byte[] kkwNonce = "HCRED-KKW demo nonce".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Hcred.HcredKkwProof kkwProof = Hcred.proveKkw(kp.s, mBlind, kp.c, seedH, y,
+                    Hcred.KKW_DEMO_N, Hcred.KKW_DEMO_M, Hcred.KKW_DEMO_TAU, kkwNonce, rng);
+            boolean kkwOk = Hcred.verifyKkw(mBlind, kp.c, seedH, y, kkwProof, kkwNonce);
+            out(kkwOk ? "+ HCRED-KKW presentation proof verified (preprocessing MPCitH; "
+                    + "N=4, M=8, tau=4 demo)"
+                : "[FAIL] HCRED-KKW verify failed");
+            byte[] kkwOtherNonce = "other nonce".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            boolean kkwReplayRejected = !Hcred.verifyKkw(mBlind, kp.c, seedH, y, kkwProof, kkwOtherNonce);
+            out(kkwReplayRejected ? "+ HCRED-KKW replay under different nonce rejected"
+                                    : "[FAIL] HCRED-KKW replay NOT rejected");
+            System.out.println("  (production KKW: N=64, M=343, tau=27 for 2^-128 — "
+                    + "~11x smaller than the ZKBoo path above at production rounds)");
         }
 
         // ── Hash-based signatures ────────────────────────────────────────

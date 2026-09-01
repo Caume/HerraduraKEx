@@ -455,6 +455,30 @@ func main() {
 		}
 		fmt.Println("  (demo uses R=4; production requires R=219; rounding check" +
 			" relaxed to ||m*s - lift(C)||inf <= 15 — see §11.10.10)")
+
+		// HCRED-KKW: the same statement/circuit, preprocessing-model
+		// transcript (TODO #128 Batch 3 / ported under TODO #261).
+		kkwProof, kkwErr := HcredProveKkw(hcS, hcM, hcC, hcSeedH, hcY, hcN,
+			HcredKkwDemoN, HcredKkwDemoM, HcredKkwDemoTau, []byte("HCRED-KKW demo nonce"))
+		if kkwErr != nil {
+			fmt.Println("[FAIL] HCRED-KKW prove error:", kkwErr)
+		} else {
+			if HcredVerifyKkw(hcM, hcC, hcSeedH, hcY, kkwProof, hcN,
+				[]byte("HCRED-KKW demo nonce")) {
+				fmt.Println("+ HCRED-KKW presentation proof verified (preprocessing MPCitH; " +
+					"N=4, M=8, tau=4 demo)")
+			} else {
+				fmt.Println("[FAIL] HCRED-KKW verify failed")
+			}
+			if !HcredVerifyKkw(hcM, hcC, hcSeedH, hcY, kkwProof, hcN,
+				[]byte("other nonce")) {
+				fmt.Println("+ HCRED-KKW replay under different nonce rejected")
+			} else {
+				fmt.Println("[FAIL] HCRED-KKW replay NOT rejected")
+			}
+			fmt.Println("  (production KKW: N=64, M=343, tau=27 for 2^-128 — " +
+				"~11x smaller than the ZKBoo path above at production rounds)")
+		}
 	}
 
 	// ── HPKS-WOTS-F / HPKS-XMSS-F ───────────────────────────────────────────────
