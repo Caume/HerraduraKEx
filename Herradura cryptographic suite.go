@@ -42,13 +42,78 @@ package main
 
 import (
 	. "herradurakex/herradura"
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"os"
+	"strings"
 )
 
+// --- Failure aggregation (TODO #259) ----------------------------------------
+// CI has run this demo since TODO #258 (v5.2.5) and gated on its exit status,
+// which catches a crash but not a wrong verdict: the demo's "+"/"-" prefix
+// convention marks both genuine failures and, in the Eve bypass sections, a
+// correct negative result ("Eve could not forge" is a PASS) -- and several
+// 78.x feature demos below print the pair inverted ("-" for pass, "+" for
+// fail).  A text gate on that prefix would either miss failures or
+// false-positive on expected ones.
+//
+// The fix mirrors CryptosuiteTests/Herradura_tests.go (TODO #233): stdout is
+// captured through a pipe and scanned for an explicit "[FAIL]" marker, which
+// every genuine-failure branch below now carries, so this demo exits
+// non-zero on a wrong verdict, not only on a crash.  One branch is
+// deliberately NOT tagged even though its prefix already reads as a
+// failure: the HKEX-RNL "session key disagrees" note, a nonzero-DFR Ring-LWR
+// reconciliation event this demo does not retry, not a bug -- see the site
+// itself.
+var (
+	gFailures  int
+	gFailLines []string
+)
+
+const gFailKeep = 32
+
+func captureStdout() func() {
+	real := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: stdout capture failed (%v); "+
+			"[FAIL] markers will not be gated\n", err)
+		return func() {}
+	}
+	os.Stdout = w
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		br := bufio.NewReader(r)
+		for {
+			line, err := br.ReadString('\n')
+			if line != "" {
+				if strings.Contains(line, "[FAIL]") {
+					gFailures++
+					if len(gFailLines) < gFailKeep {
+						gFailLines = append(gFailLines, strings.TrimSpace(line))
+					}
+				}
+				fmt.Fprint(real, line)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return func() {
+		os.Stdout = real
+		w.Close()
+		<-done
+		r.Close()
+	}
+}
+
 func main() {
+	restore := captureStdout()
 	const n = 256
 	iValue := n / 4
 	rValue := 3 * n / 4
@@ -69,7 +134,7 @@ func main() {
 	sk, okSk := HkexGfAgree(a, C2, poly, n)
 	skBob, okSkBob := HkexGfAgree(b, C, poly, n)
 	if !okSk || !okSkBob {
-		fmt.Println("- HKEX-GF agreement refused a degenerate peer public key!")
+		fmt.Println("[FAIL] HKEX-GF agreement refused a degenerate peer public key!")
 	}
 
 	fmt.Printf("a         : %x\n", a)
@@ -88,7 +153,7 @@ func main() {
 	if sk.Equal(skBob) {
 		fmt.Println("+ session keys agree!")
 	} else {
-		fmt.Println("- session keys differ!")
+		fmt.Println("[FAIL] session keys differ!")
 	}
 
 	fmt.Println("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]")
@@ -101,7 +166,7 @@ func main() {
 	if dHske.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Println("- decryption failed!")
+		fmt.Println("[FAIL] decryption failed!")
 	}
 
 	fmt.Println("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]")
@@ -118,7 +183,7 @@ func main() {
 	if verified {
 		fmt.Println("  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
 	} else {
-		fmt.Println("  [Bob,verify] : - Schnorr verification failed!")
+		fmt.Println("  [Bob,verify] : [FAIL] Schnorr verification failed!")
 	}
 
 	fmt.Println("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
@@ -131,7 +196,7 @@ func main() {
 	if okEnc && okDec && dHpke.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Println("- decryption failed!")
+		fmt.Println("[FAIL] decryption failed!")
 	}
 
 	// ── PQC-HARDENED protocols ───────────────────────────────────────────────
@@ -150,7 +215,7 @@ func main() {
 	if dA1.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Println("- decryption failed!")
+		fmt.Println("[FAIL] decryption failed!")
 	}
 
 	fmt.Println("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]")
@@ -162,7 +227,7 @@ func main() {
 	if dA2.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Println("- decryption failed!")
+		fmt.Println("[FAIL] decryption failed!")
 	}
 
 	fmt.Printf("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]\n")
@@ -210,7 +275,7 @@ func main() {
 	if lhsNl.Cmp(&RNl.Val) == 0 {
 		fmt.Println("  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
 	} else {
-		fmt.Println("  [Bob,verify] : - HPKS-NL verification failed!")
+		fmt.Println("  [Bob,verify] : [FAIL] HPKS-NL verification failed!")
 	}
 
 	fmt.Println("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
@@ -227,7 +292,7 @@ func main() {
 	if dHpkeNl.Equal(plaintext) {
 		fmt.Println("+ plaintext correctly decrypted")
 	} else {
-		fmt.Println("- decryption failed!")
+		fmt.Println("[FAIL] decryption failed!")
 	}
 
 	fmt.Println("\n--- HPKS-Stern-F [CODE-BASED PQC — EUF-CMA ≤ q_H/T_SD + ε_PRF]")
@@ -239,7 +304,7 @@ func main() {
 	if HpksSternFVerify(plaintext, sfSig, sfSeed, sfSyn) {
 		fmt.Println("+ HPKS-Stern-F signature verified")
 	} else {
-		fmt.Println("- HPKS-Stern-F verification FAILED")
+		fmt.Println("[FAIL] HPKS-Stern-F verification failed")
 	}
 
 	fmt.Printf("\n--- HPKE-Stern-F [CODE-BASED PQC — Niederreiter KEM, N=%d]\n", n)
@@ -252,7 +317,7 @@ func main() {
 	if sfKEnc.Equal(sfKDec) {
 		fmt.Println("+ HPKE-Stern-F session keys agree")
 	} else {
-		fmt.Println("- HPKE-Stern-F key agreement FAILED")
+		fmt.Println("[FAIL] HPKE-Stern-F key agreement failed")
 	}
 
 	// ── HPKS-Stern-Ring (78.I) ───────────────────────────────────────────────
@@ -269,7 +334,7 @@ func main() {
 		if HpksSternRingVerify(plaintext, rsig, rKeys) {
 			fmt.Printf("+ HPKS-Stern-Ring signature verified (k=%d, signer=1)\n", ringK)
 		} else {
-			fmt.Printf("- HPKS-Stern-Ring verification FAILED (k=%d)\n", ringK)
+			fmt.Printf("[FAIL] HPKS-Stern-Ring verification failed (k=%d)\n", ringK)
 		}
 	}
 
@@ -298,7 +363,7 @@ func main() {
 		if !same {
 			fmt.Println("+ keyed ≠ bare (key influences output)")
 		} else {
-			fmt.Println("- keyed == bare (unexpected!)")
+			fmt.Println("[FAIL] keyed == bare (unexpected!)")
 		}
 	}
 
@@ -315,13 +380,13 @@ func main() {
 		zkpMsg := []byte("ZKP-RNL test message")
 		zkpW, zkpC, zkpZ, zkpErr := RnlSigmaSign(zkpS, zkpMBlind, zkpCp, zkpN, zkpMsg)
 		if zkpErr != nil {
-			fmt.Println("- ZKP-RNL sign error:", zkpErr)
+			fmt.Println("[FAIL] ZKP-RNL sign error:", zkpErr)
 		} else {
 			ok := RnlSigmaVerify(zkpMBlind, zkpCp, zkpN, zkpMsg, zkpW, zkpC, zkpZ)
 			if ok {
 				fmt.Println("+ ZKP-RNL proof verified")
 			} else {
-				fmt.Println("- ZKP-RNL verify FAILED")
+				fmt.Println("[FAIL] ZKP-RNL verify failed")
 			}
 		}
 	}
@@ -332,18 +397,18 @@ func main() {
 	{
 		zkpA, zkpB, zkpY, zkpErr := ZkpNlKeygen(ZkpNlDefaultN)
 		if zkpErr != nil {
-			fmt.Println("- ZKP-NL keygen error:", zkpErr)
+			fmt.Println("[FAIL] ZKP-NL keygen error:", zkpErr)
 		} else {
 			zkpMsg := []byte("ZKP-NL test message")
 			zkpProof, zkpErr2 := ZkpNlProve(zkpA, zkpB, zkpY, ZkpNlDefaultN, ZkpNlDemoRounds, zkpMsg)
 			if zkpErr2 != nil {
-				fmt.Println("- ZKP-NL prove error:", zkpErr2)
+				fmt.Println("[FAIL] ZKP-NL prove error:", zkpErr2)
 			} else {
 				ok := ZkpNlVerify(zkpB, zkpY, ZkpNlDefaultN, ZkpNlDemoRounds, zkpMsg, zkpProof)
 				if ok {
 					fmt.Println("+ ZKP-NL proof verified")
 				} else {
-					fmt.Println("- ZKP-NL verify FAILED")
+					fmt.Println("[FAIL] ZKP-NL verify failed")
 				}
 			}
 		}
@@ -366,12 +431,12 @@ func main() {
 		if HcredCredVerify(hcM, hcC, hcSeedH, hcY, hcN, hcCred, hcIsd, hcIsyn) {
 			fmt.Println("+ issuer credential (Stern-F over (m,C,seed_H,y)) verified")
 		} else {
-			fmt.Println("- issuer credential verify FAILED")
+			fmt.Println("[FAIL] issuer credential verify failed")
 		}
 		hcProof, hcErr := HcredProve(hcS, hcM, hcC, hcSeedH, hcY, hcN, 4,
 			[]byte("HCRED demo nonce"))
 		if hcErr != nil {
-			fmt.Println("- HCRED prove error:", hcErr)
+			fmt.Println("[FAIL] HCRED prove error:", hcErr)
 		} else {
 			fmt.Printf("enrolment: W=%d (weight of hidden e=φ(s))\n", hcProof.W)
 			if HcredVerify(hcM, hcC, hcSeedH, hcY, hcProof, hcN, 4,
@@ -379,13 +444,13 @@ func main() {
 				fmt.Println("+ HCRED presentation proof verified (unified circuit: " +
 					"Ring-LWR rounding + syndrome for the SAME s; e never revealed)")
 			} else {
-				fmt.Println("- HCRED presentation verify FAILED")
+				fmt.Println("[FAIL] HCRED presentation verify failed")
 			}
 			if !HcredVerify(hcM, hcC, hcSeedH, hcY, hcProof, hcN, 4,
 				[]byte("other nonce")) {
 				fmt.Println("+ HCRED replay under different nonce rejected")
 			} else {
-				fmt.Println("- HCRED replay NOT rejected")
+				fmt.Println("[FAIL] HCRED replay NOT rejected")
 			}
 		}
 		fmt.Println("  (demo uses R=4; production requires R=219; rounding check" +
@@ -397,7 +462,7 @@ func main() {
 	{
 		xmssSeed := make([]byte, 32)
 		if _, err := rand.Read(xmssSeed); err != nil {
-			fmt.Println("+ HPKS-XMSS-F: rand.Read failed:", err)
+			fmt.Println("[FAIL] HPKS-XMSS-F: rand.Read failed:", err)
 		} else {
 			xmssH  := 3 // 8 leaves; production uses h=10
 			xmssKp := HpksXmssKeygen(xmssSeed, xmssH)
@@ -409,9 +474,9 @@ func main() {
 			bad   := HpksXmssVerify([]byte("tampered"), sig0, xmssKp.Root)
 			reuse := HpksXmssVerify([]byte("different message"), sig0, xmssKp.Root)
 			if ok0 && ok1 && !bad && !reuse {
-				fmt.Printf("- HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n", xmssH)
+				fmt.Printf("+ HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n", xmssH)
 			} else {
-				fmt.Printf("+ HPKS-XMSS-F FAILED: ok0=%v ok1=%v bad=%v reuse=%v\n", ok0, ok1, bad, reuse)
+				fmt.Printf("[FAIL] HPKS-XMSS-F: ok0=%v ok1=%v bad=%v reuse=%v\n", ok0, ok1, bad, reuse)
 			}
 		}
 	}
@@ -435,9 +500,9 @@ func main() {
 		tOk  := HpkstVerify(tCAgg, tR, tS, tMsg)
 		tBad := HpkstVerify(tCAgg, tR, new(big.Int).Xor(tS, big.NewInt(1)), tMsg)
 		if tOk && !tBad {
-			fmt.Printf("- HPKS-T %d-of-%d sign/verify correct, tamper rejected\n", tN, tN)
+			fmt.Printf("+ HPKS-T %d-of-%d sign/verify correct, tamper rejected\n", tN, tN)
 		} else {
-			fmt.Printf("+ HPKS-T FAILED: ok=%v bad=%v\n", tOk, tBad)
+			fmt.Printf("[FAIL] HPKS-T: ok=%v bad=%v\n", tOk, tBad)
 		}
 	}
 
@@ -452,9 +517,9 @@ func main() {
 		out3, _ := d2.DrbgGenerate(64)
 		out4, _ := d1.DrbgGenerate(64)
 		if bytes.Equal(out1, out2) && !bytes.Equal(out3, out4) && len(out1) == 64 {
-			fmt.Println("- HDRBG determinism + reseed separation correct")
+			fmt.Println("+ HDRBG determinism + reseed separation correct")
 		} else {
-			fmt.Println("+ HDRBG failed!")
+			fmt.Println("[FAIL] HDRBG failed!")
 		}
 	}
 
@@ -472,9 +537,9 @@ func main() {
 		_, badOk   := HskeNlAeadDecrypt(aeadKey, aeadNonce, aeadAd, badCt, aeadTag)
 		_, badAdOk := HskeNlAeadDecrypt(aeadKey, aeadNonce, []byte("header-v2"), aeadCt, aeadTag)
 		if aeadOk && bytes.Equal(aeadDec, aeadPt) && !badOk && !badAdOk {
-			fmt.Println("- HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
+			fmt.Println("+ HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
 		} else {
-			fmt.Println("+ HSKE-NL-AEAD failed!")
+			fmt.Println("[FAIL] HSKE-NL-AEAD failed!")
 		}
 	}
 
@@ -492,9 +557,9 @@ func main() {
 		_, badCtOk  := HskeNlV2DuplexDecrypt(dpKey, dpNonce, dpAd, badCt2, dpTag)
 		_, badAdOk2 := HskeNlV2DuplexDecrypt(dpKey, dpNonce, []byte("duplex-header-v2"), dpCt, dpTag)
 		if dpOk && bytes.Equal(dpDec, dpPt) && !badCtOk && !badAdOk2 {
-			fmt.Println("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
+			fmt.Println("+ HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
 		} else {
-			fmt.Println("+ HSKE-NL-V2-Duplex FAILED!")
+			fmt.Println("[FAIL] HSKE-NL-V2-Duplex round-trip / tamper / AD rejection")
 		}
 	}
 
@@ -507,7 +572,7 @@ func main() {
 	sEve   := &NewRandBitArray(n).Val
 	lhsEve := GfMul(GfPow(g, sEve, poly, n), GfPow(&C.Val, &eEve.Val, poly, n), poly, n)
 	if lhsEve.Cmp(&REve.Val) == 0 {
-		fmt.Println("+ Eve forged HPKS-NL signature (Eve wins)!")
+		fmt.Println("[FAIL] Eve forged HPKS-NL signature (Eve wins)!")
 	} else {
 		fmt.Println("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)")
 	}
@@ -516,7 +581,7 @@ func main() {
 	eveKey := NewBitArray(n, new(big.Int).Xor(&C.Val, &RNl2.Val))
 	dEve   := NlFscxRevolveV2Inv(eHpkeNl, eveKey, iValue)
 	if dEve.Equal(plaintext) {
-		fmt.Println("+ Eve decrypted plaintext (Eve wins)!")
+		fmt.Println("[FAIL] Eve decrypted plaintext (Eve wins)!")
 	} else {
 		fmt.Println("- Eve could not decrypt without Alice's private key (CDH + NL protection)")
 	}
@@ -524,7 +589,7 @@ func main() {
 	fmt.Println("*** HKEX-RNL — Eve cannot derive shared key from public ring polynomials")
 	eveRnlGuess := NewRandBitArray(n)
 	if eveRnlGuess.Equal(skRnlA) {
-		fmt.Println("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
+		fmt.Println("[FAIL] Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
 	} else {
 		fmt.Println("- Eve random guess does not match shared key (Ring-LWR protection)")
 	}
@@ -540,7 +605,7 @@ func main() {
 		eveSig.Rounds[i].RespB = NewRandBitArray(n)
 	}
 	if HpksSternFVerify(decoy, eveSig, sfSeed, sfSyn) {
-		fmt.Println("+ Eve forged HPKS-Stern-F (Eve wins)!")
+		fmt.Println("[FAIL] Eve forged HPKS-Stern-F (Eve wins)!")
 	} else {
 		fmt.Println("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)")
 	}
@@ -567,7 +632,7 @@ func main() {
 			}
 		}
 		if HpksSternRingVerify(decoy, eveRSig, eveRKeys) {
-			fmt.Println("+ Eve forged HPKS-Stern-Ring (Eve wins)!")
+			fmt.Println("[FAIL] Eve forged HPKS-Stern-Ring (Eve wins)!")
 		} else {
 			fmt.Println("- Eve cannot forge ring sig: challenge-sum mismatch  (SD + PRF protection)")
 		}
@@ -576,7 +641,7 @@ func main() {
 	fmt.Println("*** HPKE-Stern-F — Eve cannot derive session key from syndrome ciphertext")
 	eveKGuess := NewRandBitArray(n)
 	if eveKGuess.Equal(sfKEnc) {
-		fmt.Println("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
+		fmt.Println("[FAIL] Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
 	} else {
 		fmt.Println("- Eve random guess does not match session key  (SD protection)")
 	}
@@ -589,9 +654,9 @@ func main() {
 		fpeCt    := FpeEncrypt(fpePlain, fpeKey, fpeCtx)
 		fpeRec   := FpeDecrypt(fpeCt,   fpeKey, fpeCtx)
 		if fpeRec.Equal(fpePlain) {
-			fmt.Println("- FPE round-trip correct")
+			fmt.Println("+ FPE round-trip correct")
 		} else {
-			fmt.Println("+ FPE round-trip failed!")
+			fmt.Println("[FAIL] FPE round-trip failed!")
 		}
 	}
 
@@ -602,9 +667,9 @@ func main() {
 		twkCt    := TwkEncrypt(twkPlain, twkKey, 7, 3)
 		twkRec   := TwkDecrypt(twkCt,   twkKey, 7, 3)
 		if twkRec.Equal(twkPlain) {
-			fmt.Println("- Tweakable cipher round-trip correct")
+			fmt.Println("+ Tweakable cipher round-trip correct")
 		} else {
-			fmt.Println("+ Tweakable cipher round-trip failed!")
+			fmt.Println("[FAIL] Tweakable cipher round-trip failed!")
 		}
 	}
 
@@ -623,9 +688,9 @@ func main() {
 		// tamper check: wrong leaf must fail
 		okWrong := HaccumVerify(root, leafHashes[0], proof, 2)
 		if ok && !okWrong {
-			fmt.Println("- Accumulator proof/verify correct")
+			fmt.Println("+ Accumulator proof/verify correct")
 		} else {
-			fmt.Println("+ Accumulator proof/verify failed!")
+			fmt.Println("[FAIL] Accumulator proof/verify failed!")
 		}
 		_ = leavesData
 	}
@@ -638,9 +703,9 @@ func main() {
 		ct, _ := HskeEncryptMasked(plain, key)
 		rec, _ := HskeDecryptMasked(ct, key)
 		if rec.Equal(plain) {
-			fmt.Println("- Masked HSKE encrypt/decrypt correct")
+			fmt.Println("+ Masked HSKE encrypt/decrypt correct")
 		} else {
-			fmt.Println("+ Masked HSKE encrypt/decrypt failed!")
+			fmt.Println("[FAIL] Masked HSKE encrypt/decrypt failed!")
 		}
 	}
 
@@ -661,9 +726,9 @@ func main() {
 			}
 		}
 		if unique {
-			fmt.Println("- Ratchet: 5 distinct message keys")
+			fmt.Println("+ Ratchet: 5 distinct message keys")
 		} else {
-			fmt.Println("+ Ratchet: duplicate message keys!")
+			fmt.Println("[FAIL] Ratchet: duplicate message keys!")
 		}
 	}
 
@@ -673,19 +738,19 @@ func main() {
 		oprfMsg := []byte("oprf-demo-input")
 		k, err := OprfKeygen(256)
 		if err != nil {
-			fmt.Println("+ OprfKeygen error:", err)
+			fmt.Println("[FAIL] OprfKeygen error:", err)
 		} else {
 			r, alpha, err2 := OprfBlind(oprfMsg, 256)
 			if err2 != nil {
-				fmt.Println("+ OprfBlind error:", err2)
+				fmt.Println("[FAIL] OprfBlind error:", err2)
 			} else {
 				beta    := OprfEval(alpha, k, 256)
 				F       := OprfUnblind(beta, r, 256)
 				Fdirect := OprfDirect(oprfMsg, k, 256)
 				if F.Cmp(Fdirect) == 0 {
-					fmt.Println("- OPRF blind/eval/unblind round-trip correct")
+					fmt.Println("+ OPRF blind/eval/unblind round-trip correct")
 				} else {
-					fmt.Println("+ OPRF round-trip failed!")
+					fmt.Println("[FAIL] OPRF round-trip failed!")
 				}
 			}
 		}
@@ -697,27 +762,42 @@ func main() {
 		pakePw := []byte("s3cr3t-pw")
 		pakeK, err := OprfKeygen(256)
 		if err != nil {
-			fmt.Println("+ OprfKeygen error:", err)
+			fmt.Println("[FAIL] OprfKeygen error:", err)
 		} else {
 			rec, err2 := HpakeRegister(pakePw, pakeK)
 			if err2 != nil {
-				fmt.Println("+ HpakeRegister error:", err2)
+				fmt.Println("[FAIL] HpakeRegister error:", err2)
 			} else {
 				sk, err3 := HpakeLoginDemo(rec, pakePw, pakeK)
 				if err3 != nil {
-					fmt.Println("+ HpakeLoginDemo error:", err3)
+					fmt.Println("[FAIL] HpakeLoginDemo error:", err3)
 				} else if sk != nil {
-					fmt.Println("- aPAKE login with correct password: session key established")
+					fmt.Println("+ aPAKE login with correct password: session key established")
 				} else {
-					fmt.Println("+ aPAKE login with correct password: FAILED!")
+					fmt.Println("[FAIL] aPAKE login with correct password failed!")
 				}
 				skBad, _ := HpakeLoginDemo(rec, []byte("wrong-pw"), pakeK)
 				if skBad == nil {
-					fmt.Println("- aPAKE login with wrong password: correctly rejected")
+					fmt.Println("+ aPAKE login with wrong password: correctly rejected")
 				} else {
-					fmt.Println("+ aPAKE login with wrong password: ACCEPTED (security failure)!")
+					fmt.Println("[FAIL] aPAKE login with wrong password ACCEPTED (security failure)!")
 				}
 			}
 		}
 	}
+
+	// Failure gate (TODO #259).  Exit non-zero if any check reported [FAIL],
+	// mirroring CryptosuiteTests/Herradura_tests.go's TODO #233 gate.
+	restore()
+	if gFailures > 0 {
+		fmt.Printf("\n*** FAILED: %d check(s) reported [FAIL] ***\n", gFailures)
+		for _, line := range gFailLines {
+			fmt.Printf("    %s\n", line)
+		}
+		if gFailures > len(gFailLines) {
+			fmt.Printf("    ... and %d more\n", gFailures-len(gFailLines))
+		}
+		os.Exit(1)
+	}
+	fmt.Println("\n*** OK: no check reported [FAIL] ***")
 }

@@ -14168,3 +14168,70 @@ output or checks nothing.
 Status: **DONE v5.2.5** — fixed at all three sites in the C demo, verified clean under
 valgrind, and CI now runs the C/Go/Python suite demos and fails on a crash. The remaining
 verdict-line gate is TODO #259.
+
+### #259: give the suite demos an unambiguous verdict marker, then gate CI on it
+
+TODO #258 (v5.2.5) added a CI step per language that runs the C/Go/Python suite demo and
+gates on its exit status.  That closed the class of bug #258 was — a crash or an abort —
+but it was a **process** guard, not a **content** guard: it could not catch a demo that ran
+to completion and printed the wrong verdict.
+
+**Why it was not a small addition on top.**  The demos' `+`/`-` prefix convention marked two
+different things with the same character: a genuine failure (`- HPKS-Stern-F verification
+FAILED`) and a correct negative result phrased as a negation (`- Eve cannot forge:
+Fiat-Shamir mismatch (SD + PRF protection)` is a PASS — Eve was supposed to fail).  A naive
+`grep -c '^-'` gate would have false-positived on every expected adversary-failure line in
+the Eve/bypass sections — the "asserts nothing now exits 2" trap CLAUDE.md's Testing section
+already warns about for a different case (TODO #233).
+
+**What auditing every branch actually found.**  The ambiguity went well beyond the two-way
+`+`/`-` split the item was filed against.  Every 78.x/80 feature demo (FPE, the tweakable
+cipher, the accumulator, masked HSKE, the ratchet, HDRBG, HSKE-NL-AEAD,
+HSKE-NL-V2-Duplex, OPRF, aPAKE) printed the pair **inverted** — `-` for pass, `+` for fail —
+in all three languages, and C's and Go's HPKS-T block printed `+` on both branches, so a
+reader could not tell pass from fail from the prefix at all.  All three demos are now
+internally consistent: `+` always means pass.
+
+**Fix implemented — option (a), the unambiguous marker, not the ACKNOWLEDGED close.**
+Mirrors `CryptosuiteTests/Herradura_tests.{c,go,py}`'s TODO #233 gate exactly, one mechanism
+per language: C shadows `printf` with a scanning `hprintf` (leaving `puts()` narrative
+alone, as the test harness does); Go pipes `os.Stdout` through a scanning goroutine; Python
+shadows the `print` builtin.  Every genuine-failure branch across all three demos was
+rewritten to carry an explicit `[FAIL]` marker — 34 sites in C, 45 in Go, 40 in Python — and
+each demo now closes with the same `*** FAILED: N check(s) reported [FAIL] ***` / `*** OK: no
+check reported [FAIL] ***` banner the test harnesses use, exiting non-zero on any failure.
+
+**What is, and is not, tagged in the Eve/bypass sections.**  Only the branch where Eve
+**succeeds** (forges a signature, decrypts, or guesses a key) is tagged — the one outcome
+among the pair that would actually be catastrophic.  "Eve correctly fails" is left as
+narrative, unmarked, matching how those sections already read.
+
+**One branch deliberately excluded in all three demos**: the HKEX-RNL "session key
+disagrees" / "raw key disagrees" note.  It is a nonzero-DFR Ring-LWR reconciliation event
+none of the three demos retry (unlike the CLI's `hpke-stern-kem` path, which TODO #221's
+`lib_dfr.sh` retry policy covers) — tagging it would make CI flaky on a rare, legitimate
+outcome rather than catch a bug, the probabilistic-property-asserted-as-deterministic class
+TODO #234 already found and fixed once in the Arduino harness.
+
+**Verification.**  Each language's gate was checked both ways: a clean run exits 0 and
+prints the OK banner (confirmed across repeated runs per language), and a deliberate break
+(FPE's round-trip check, inverted one condition) reports `[FAIL] FPE round-trip failed!`,
+names exactly that check, and exits 1 — then the break was reverted and a clean run
+reconfirmed.  The C build was also re-checked under valgrind (0 leaks, 0 errors) since two
+sites there changed from a `puts()` ternary to an `if`/`else`.
+
+**Also found, not fixed here**: the three demos have quietly diverged in scope — Python
+alone covers an OPRF-aPAKE password-key determinism check and an HPKS-XMSS-F
+leaf-index-swap rejection check.  Both are marker-covered where they exist; no attempt is
+made to backport them to C/Go, since that is a coverage decision for whoever owns those
+files, not a side effect of a CI-gating item.
+
+**CI.**  `.github/workflows/ci.yml`'s three suite-demo steps (added in #258/v5.2.5) needed
+no workflow changes — the demos' own exit code already carried the process guard from
+v5.2.5 and now carries the content check too.  Comments at all three call sites are updated
+to say so.
+
+Status: **DONE v5.2.6** — implemented option (a): all three suite demos now exit non-zero
+on a wrong verdict, not only on a crash, via an unambiguous `[FAIL]` marker mirroring the
+test harnesses' TODO #233 gate; the pre-existing `+`/`-` narrative inversions found while
+auditing every branch are also fixed.

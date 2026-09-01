@@ -2,6 +2,79 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.6] - 2026-09-01
+
+### TODO #259 — the suite demos gain an unambiguous [FAIL] marker, and CI gates on it
+
+PATCH: bug fixes and a CI gate strengthening across the three suite demos
+(`Herradura cryptographic suite.{c,go,py}`). No shipped primitive, CLI
+surface, wire format, or rating changes.
+
+### Fixed
+
+- **The three suite demos' "+"/"-" narrative convention was inconsistent
+  with itself, in a way that went well beyond the ambiguity #259 was filed
+  to fix.** In each language, most protocol sections use "+" for a pass and
+  "-" for a fail, exactly as assumed — but every 78.x/80 feature demo (FPE,
+  the tweakable cipher, the accumulator, masked HSKE, the ratchet, HDRBG,
+  HSKE-NL-AEAD, HSKE-NL-V2-Duplex, OPRF, aPAKE) printed the pair **inverted**
+  ("-" for pass, "+" for fail), and HPKS-T in the C and Go demos printed
+  "+" on **both** branches, so a reader could not tell pass from fail by the
+  prefix at all. All three demos are now internally consistent: "+" always
+  means pass. This was found, not introduced, while auditing every
+  verdict branch for TODO #259's marker work below — none of it changes what
+  a check tests, only what it prints.
+
+### Added
+
+- **Every genuine-failure branch across all three suite demos now prints an
+  explicit `[FAIL]` marker, and each demo exits non-zero if any check
+  reports one** — mirroring `CryptosuiteTests/Herradura_tests.{c,go,py}`'s
+  TODO #233 gate exactly: C shadows `printf` with a scanning `hprintf` (so
+  `puts()` narrative is left alone, as in the test harness); Go pipes
+  `os.Stdout` through a scanning goroutine; Python shadows the `print`
+  builtin. All three aggregate failures and print the same closing
+  `*** FAILED: N check(s) reported [FAIL] ***` / `*** OK: no check reported
+  [FAIL] ***` banner the test harnesses use. Verified by deliberately
+  breaking one check per language (FPE's round-trip) and confirming the
+  demo reports `[FAIL] FPE round-trip failed!`, names exactly that check,
+  and exits 1 — then restoring and confirming a clean exit 0 across
+  repeated runs.
+- **34 (C) / 45 (Go) / 40 (Python) failure sites now carry the marker.**
+  Coverage includes every protocol correctness check, every genuine error
+  path (a failed `rand.Read`, an OPRF/HPAKE keygen error, a ZKP-RNL/ZKP-NL
+  sign or prove error), and — in the four Eve/adversary bypass sections per
+  language — specifically the branch where Eve **succeeds** (forges a
+  signature, decrypts, or guesses a key), which is the one outcome among
+  the pair that would actually be catastrophic. The mirror branch, "Eve
+  correctly fails," is left unmarked, matching how those sections already
+  read.
+- **`.github/workflows/ci.yml`'s three suite-demo steps, added in TODO
+  #258/v5.2.5 as a process guard (crash or non-zero exit only), now also
+  catch a wrong verdict** — no workflow changes were needed; the demos'
+  own exit code already carried the process guard, and now carries the
+  content check too. Comments at all three call sites are updated to say
+  so.
+
+### Findings
+
+- **One branch is deliberately NOT tagged in any of the three demos**, even
+  though its narrative prefix already reads as a failure: the HKEX-RNL
+  "session key disagrees" / "raw key disagrees" note. This is a nonzero-DFR
+  Ring-LWR reconciliation event none of the three demos retry (unlike the
+  CLI's `hpke-stern-kem` path, which TODO #221's `lib_dfr.sh` retry policy
+  covers) — tagging it would make CI flaky on a rare, legitimate outcome
+  rather than catch a bug, exactly the class of mistake CLAUDE.md's Testing
+  section already warns about for a probabilistic property asserted as
+  deterministic (TODO #234).
+- **The demos have quietly diverged in scope**, discovered while cataloguing
+  every branch rather than introduced by this change: Python's demo alone
+  covers an OPRF-aPAKE password-key determinism check and an
+  HPKS-XMSS-F leaf-index-swap rejection check; both are now marker-covered
+  there. No attempt is made here to backport them to C/Go — that is a
+  coverage decision for whoever owns those files, not a side effect of a
+  CI-gating TODO.
+
 ## [5.2.5] - 2026-08-31
 
 ### TODO #258 — segmentation fault in the C demo's HCRED section, fixed

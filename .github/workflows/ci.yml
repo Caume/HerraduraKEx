@@ -35,16 +35,16 @@ jobs:
       - name: Build C
         run: ./build_c.sh
 
-      # TODO #258. build_c.sh compiles the suite demo binary but nothing ran it --
-      # only the separate Herradura_tests_c harness was gated. The demo is a
-      # different binary with its own bugs: a segfault in the HCRED section went
-      # unnoticed through every green run because of that gap. This step is a
-      # process guard, not a content guard: it catches a crash or non-zero exit,
-      # not a wrong verdict line -- the demo's "+"/"-" convention marks BOTH
-      # genuine failures and correct negative results (e.g. "- Eve cannot forge"
-      # is a pass), so grepping for "-" would false-positive on expected
-      # adversary-failure lines. Scoring individual verdict lines needs the demo
-      # to adopt an unambiguous marker first; filed separately as TODO #259.
+      # TODO #258/#259. build_c.sh compiles the suite demo binary but nothing ran
+      # it -- only the separate Herradura_tests_c harness was gated. The demo is
+      # a different binary with its own bugs: a segfault in the HCRED section
+      # went unnoticed through every green run because of that gap (#258). This
+      # step now gates on both a crash AND a wrong verdict: the demo's own
+      # "+"/"-" narrative prefix is ambiguous (it marks both genuine failures
+      # and, in the Eve bypass sections, a correct negative result), so every
+      # genuine-failure branch was rewritten to also carry an explicit
+      # "[FAIL]" marker, scanned exactly as Herradura_tests_c scans its own
+      # (TODO #233), and the demo now exits non-zero if any fires (#259).
       - name: C suite demo runs to completion
         run: ./"Herradura cryptographic suite_c"
 
@@ -73,8 +73,8 @@ jobs:
       - name: Build Go
         run: ./build_go.sh
 
-      # TODO #258/#259. See the matching C step: a process guard against a
-      # crashing or non-zero-exiting demo, not a verdict-line check.
+      # TODO #258/#259. See the matching C step: gates on a crash AND a wrong
+      # verdict, via the demo's own "[FAIL]"-marker exit code.
       - name: Go suite demo runs to completion
         run: ./"Herradura cryptographic suite_go"
 
@@ -104,8 +104,8 @@ jobs:
           # the job fails rather than skipping the validation silently.
           sudo apt-get install -y --no-install-recommends python3 python3-jsonschema
 
-      # TODO #258/#259. See the matching C step: a process guard against a
-      # crashing or non-zero-exiting demo, not a verdict-line check.
+      # TODO #258/#259. See the matching C step: gates on a crash AND a wrong
+      # verdict, via the demo's own "[FAIL]"-marker exit code.
       - name: Python suite demo runs to completion
         run: python3 "Herradura cryptographic suite.py"
 

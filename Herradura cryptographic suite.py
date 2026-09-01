@@ -181,7 +181,39 @@ import math
 import os
 import random
 import secrets
+import sys
 import warnings
+
+# --- Failure aggregation (TODO #259) ----------------------------------------
+# CI has run this demo since TODO #258 (v5.2.5) and gated on its exit status,
+# which catches a crash but not a wrong verdict: the demo's "+"/"-" prefix
+# convention marks both genuine failures and, in the Eve bypass sections, a
+# correct negative result ("Eve could not forge" is a PASS) -- and several
+# 78.x/80 feature demos below print the pair inverted ("-" for pass, "+" for
+# fail).  A text gate on that prefix would either miss failures or
+# false-positive on expected ones.
+#
+# The fix mirrors CryptosuiteTests/Herradura_tests.py (TODO #233): print() is
+# shadowed to scan every line for an explicit "[FAIL]" marker, which every
+# genuine-failure branch below now carries, so this demo exits non-zero on a
+# wrong verdict, not only on a crash.  One branch is deliberately NOT tagged
+# even though its prefix already reads as a failure: the HKEX-RNL "session
+# key disagrees" note, a nonzero-DFR Ring-LWR reconciliation event this demo
+# does not retry, not a bug -- see the site itself.
+g_failures = 0
+g_fail_lines = []
+_emit = print
+
+
+def print(*args, **kwargs):      # noqa: A001 -- deliberate builtin shadow
+    """print() that also counts the failure markers passing through it."""
+    global g_failures
+    text = kwargs.get("sep", " ").join(str(a) for a in args)
+    if "[FAIL]" in text:
+        g_failures += 1
+        g_fail_lines.append(text.strip())
+    _emit(*args, **kwargs)
+
 
 try:
     import numpy as _np
@@ -4564,7 +4596,7 @@ def main():
     sk_val = hkex_gf_agree(a.uint, C2.uint, poly, KEYBITS)
     sk_bob_val = hkex_gf_agree(b.uint, C.uint, poly, KEYBITS)
     if sk_val is None or sk_bob_val is None:
-        print("- HKEX-GF agreement refused a degenerate peer public key!")
+        print("[FAIL] HKEX-GF agreement refused a degenerate peer public key!")
     sk = BitArray(KEYBITS, sk_val)
 
     print(f"a         : {a.hex}")
@@ -4584,7 +4616,7 @@ def main():
     if sk == sk_bob:
         print("+ session keys agree!")
     else:
-        print("- session keys differ!")
+        print("[FAIL] session keys differ!")
 
     print("\n--- HSKE [CLASSICAL — not PQC; linear key recovery from 1 KPT pair]")
     print("    (fscx_revolve symmetric encryption)")
@@ -4596,7 +4628,7 @@ def main():
     if D_hske == plaintext:
         print("+ plaintext correctly decrypted")
     else:
-        print("- decryption failed!")
+        print("[FAIL] decryption failed!")
 
     print("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]")
     print("    (Schnorr-like with fscx_revolve challenge)")
@@ -4612,7 +4644,7 @@ def main():
     if verified:
         print(f"  [Bob,verify] : + Schnorr verified: g^s · C^e == R")
     else:
-        print(f"  [Bob,verify] : - Schnorr verification failed!")
+        print(f"  [Bob,verify] : [FAIL] Schnorr verification failed!")
 
     print("\n--- HPKE [CLASSICAL — not PQC; DLP + linear HSKE sub-protocol]")
     print("    (El Gamal + fscx_revolve)")
@@ -4625,7 +4657,7 @@ def main():
     if D_hpke is not None and D_hpke == plaintext:
         print("+ plaintext correctly decrypted")
     else:
-        print("- decryption failed!")
+        print("[FAIL] decryption failed!")
 
     # ── PQC-HARDENED protocols ───────────────────────────────────────────────
     print("\n--- HSKE-NL-A1 [PQC-HARDENED — counter-mode with NL-FSCX v1]")
@@ -4645,7 +4677,7 @@ def main():
     if D_a1 == plaintext:
         print("+ plaintext correctly decrypted")
     else:
-        print("- decryption failed!")
+        print("[FAIL] decryption failed!")
 
     print("\n--- HSKE-NL-A2 [PQC-HARDENED — revolve-mode with NL-FSCX v2]")
     E_a2 = nl_fscx_revolve_v2(plaintext, preshared, R_VALUE)
@@ -4656,7 +4688,7 @@ def main():
     if D_a2 == plaintext:
         print("+ plaintext correctly decrypted")
     else:
-        print("- decryption failed!")
+        print("[FAIL] decryption failed!")
 
     print("\n--- HKEX-RNL [PQC — Ring-LWR key exchange; conjectured quantum-resistant]")
     print("    (Ring-LWR, m(x)=1+x+x^{n-1}, n=256, q=65537 — may be slow)")
@@ -4701,7 +4733,7 @@ def main():
     if lhs_nl == R_nl.uint:
         print(f"  [Bob,verify] : + HPKS-NL verified: g^s · C^e == R")
     else:
-        print(f"  [Bob,verify] : - HPKS-NL verification failed!")
+        print(f"  [Bob,verify] : [FAIL] HPKS-NL verification failed!")
 
     print("\n--- HPKS-T [THRESHOLD — n-of-n MuSig2-style aggregate Schnorr over GF(2^n)*]")
     _t_n = 3  # 3-of-3 demo
@@ -4713,7 +4745,7 @@ def main():
     if _t_ok and not _t_bad:
         print(f"+ HPKS-T {_t_n}-of-{_t_n} sign/verify correct, tamper rejected")
     else:
-        print(f"- HPKS-T FAILED: ok={_t_ok} bad={_t_bad}")
+        print(f"[FAIL] HPKS-T: ok={_t_ok} bad={_t_bad}")
 
     print("\n--- HPKE-NL [NL-hardened El Gamal — NL-FSCX v2 encryption]")
     print("    (GF DLP still present; NL hardens linear HSKE sub-protocol)")
@@ -4729,7 +4761,7 @@ def main():
     if D_nl == plaintext:
         print("+ plaintext correctly decrypted")
     else:
-        print("- decryption failed!")
+        print("[FAIL] decryption failed!")
 
     print("\n--- HPKS-Stern-F [PQC — Stern SD signature; EUF-CMA ≤ SD(N,t) + NL-FSCX PRF]")
     print(f"    (n={KEYBITS}, N={KEYBITS}, t={SDFT}, rounds={SDFR}; soundness=(2/3)^{SDFR})")
@@ -4743,7 +4775,7 @@ def main():
     if sf_ok:
         print("+ HPKS-Stern-F signature verified")
     else:
-        print("- HPKS-Stern-F verification FAILED")
+        print("[FAIL] HPKS-Stern-F verification failed")
 
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; brute-force demo at n=32]")
     print("    (N=32, t=2; C(32,2)=496 candidates; production requires QC-MDPC decoder)")
@@ -4755,7 +4787,7 @@ def main():
     if sf32_K_dec is not None and sf32_K_dec == sf32_K_enc:
         print("+ HPKE-Stern-F session keys agree (n=32, brute-force)")
     else:
-        print("- HPKE-Stern-F key agreement FAILED (n=32)")
+        print("[FAIL] HPKE-Stern-F key agreement failed (n=32)")
 
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; known-e' demo at n=256]")
     print(f"    (N={KEYBITS}, t={KEYBITS//16}; known e' passed to decap — production decoder not included)")
@@ -4767,7 +4799,7 @@ def main():
     if sf256_K_dec is not None and sf256_K_dec == sf256_K_enc:
         print("+ HPKE-Stern-F session keys agree (n=256, known-e')")
     else:
-        print("- HPKE-Stern-F key agreement FAILED (n=256)")
+        print("[FAIL] HPKE-Stern-F key agreement failed (n=256)")
 
     print("\n--- HPKS-Stern-Ring [PQC — OR-composed Stern SD ring sig; ring-anonymous, EUF-CMA ≤ SD]")
     _ring_k = 3
@@ -4789,7 +4821,7 @@ def main():
     if _ring_ok:
         print("+ HPKS-Stern-Ring signature verified")
     else:
-        print("- HPKS-Stern-Ring verification FAILED")
+        print("[FAIL] HPKS-Stern-Ring verification failed")
 
     # ── HPKS-XMSS-F (TODO #97, h=3 demo: 8 leaves) ──────────────────────────
     print("\n--- HPKS-XMSS-F [PQC — hash-based many-time sig; WOTS-F chains + Merkle tree]")
@@ -4810,7 +4842,7 @@ def main():
         print(f"+ HPKS-XMSS-F sign/verify correct (h={_xmss_h}, 2 distinct leaves, "
               f"tamper rejected, OTS reuse rejected)")
     else:
-        print(f"- HPKS-XMSS-F FAILED: ok={_xmss_ok} bad={_xmss_bad} "
+        print(f"[FAIL] HPKS-XMSS-F: ok={_xmss_ok} bad={_xmss_bad} "
               f"ok2={_xmss_ok2} reuse={_xmss_reuse}")
 
     # ── HFSCX-256-DM ─────────────────────────────────────────────────────────
@@ -4823,7 +4855,7 @@ def main():
     print(f"digest (keyed) : {_keyed.hex()}")
     print(f"+ hash length correct ({len(_bare)} bytes)")
     print("+ keyed ≠ bare (key influences output)" if _bare != _keyed
-          else "- keyed == bare (unexpected!)")
+          else "[FAIL] keyed == bare (unexpected!)")
 
     # ── ZKP-RNL: Ring-LWR Σ-protocol ────────────────────────────────────────
     print(f"\n--- ZKP-RNL [PROOF — Ring-LWR Σ-protocol, Fiat-Shamir; n={KEYBITS}]")
@@ -4842,7 +4874,7 @@ def main():
         _zkprnl_w, _zkprnl_c, _zkprnl_z)
     print(f"proof (w[0]={_zkprnl_w[0]}, c-nonzero={sum(1 for x in _zkprnl_c if x)}, "
           f"z[0]={_zkprnl_z[0]})")
-    print(f"+ ZKP-RNL proof verified" if _zkprnl_ok else "- ZKP-RNL verify FAILED")
+    print(f"+ ZKP-RNL proof verified" if _zkprnl_ok else "[FAIL] ZKP-RNL verify failed")
 
     # ── ZKP-NL: NL-FSCX ZKBoo ───────────────────────────────────────────────
     print(f"\n--- ZKP-NL [PROOF — NL-FSCX ZKBoo, MPC-in-the-head; n={_ZKP_NL_DEFAULT_N}, R={_ZKP_NL_DEMO_ROUNDS}]")
@@ -4859,7 +4891,7 @@ def main():
           f"y=0x{_zkpnl_y:0{_ZKP_NL_DEFAULT_N//4}x}")
     print(f"proof rounds: {len(_zkpnl_proof)}, "
           f"view size: {len(_zkpnl_proof[0]['view_p1'])} bytes each")
-    print(f"+ ZKP-NL proof verified" if _zkpnl_ok else "- ZKP-NL verify FAILED")
+    print(f"+ ZKP-NL proof verified" if _zkpnl_ok else "[FAIL] ZKP-NL verify failed")
     print(f"  (demo uses R={_ZKP_NL_DEMO_ROUNDS}; production requires R={_ZKP_NL_PROD_ROUNDS} for 128-bit soundness)")
 
     # ── HCRED: Hybrid Ring-LWR + Stern-F credential ─────────────────────────
@@ -4887,12 +4919,12 @@ def main():
     print(f"enrolment: W={_hc_proof['W']} (weight of hidden e=φ(s)), "
           f"y=0x{_hc_y:0{_hc_n // 8}x}")
     print(f"+ issuer credential (Stern-F over (m,C,seed_H,y)) verified"
-          if _hc_cok else "- issuer credential verify FAILED")
+          if _hc_cok else "[FAIL] issuer credential verify failed")
     print(f"+ HCRED presentation proof verified (unified circuit: Ring-LWR "
           f"rounding + syndrome for the SAME s; e never revealed)"
-          if _hc_ok else "- HCRED presentation verify FAILED")
+          if _hc_ok else "[FAIL] HCRED presentation verify failed")
     print(f"+ HCRED replay under different nonce rejected"
-          if not _hc_replay else "- HCRED replay NOT rejected")
+          if not _hc_replay else "[FAIL] HCRED replay NOT rejected")
     print(f"  (demo uses R={_HCRED_DEMO_ROUNDS}; production requires "
           f"R={_ZKP_NL_PROD_ROUNDS}; rounding check is relaxed to "
           f"||m*s - lift(C)||inf <= 15 — see §11.10.10)")
@@ -4903,7 +4935,7 @@ def main():
                                _hc_n, b"HCRED demo nonce")
     print(f"+ HCRED-KKW presentation proof verified (preprocessing MPCitH; "
           f"demo N=4, M=4, tau=2)"
-          if _hc_kok else "- HCRED-KKW verify FAILED")
+          if _hc_kok else "[FAIL] HCRED-KKW verify failed")
     print(f"  (production KKW: N=64, M=343, tau=27 for 2^-128 — "
           f"~11x smaller than the ZKBoo transcript at R=219)")
 
@@ -4918,7 +4950,7 @@ def main():
     lhs_eve = gf_mul(gf_pow(GF_GEN, s_eve,     poly, KEYBITS),
                      gf_pow(C.uint,  e_eve.uint, poly, KEYBITS), poly, KEYBITS)
     if lhs_eve == R_eve.uint:
-        print("+ Eve forged HPKS-NL signature (Eve wins)!")
+        print("[FAIL] Eve forged HPKS-NL signature (Eve wins)!")
     else:
         print("- Eve could not forge: g^s_eve · C^e_eve ≠ R_eve  (DLP protection)")
 
@@ -4926,7 +4958,7 @@ def main():
     eve_key = C ^ R_nl2
     D_eve   = nl_fscx_revolve_v2_inv(E_nl, eve_key, I_VALUE)
     if D_eve == plaintext:
-        print("+ Eve decrypted plaintext (Eve wins)!")
+        print("[FAIL] Eve decrypted plaintext (Eve wins)!")
     else:
         print("- Eve could not decrypt without Alice's private key (CDH + NL protection)")
 
@@ -4937,7 +4969,7 @@ def main():
     # For the bypass test we just show that a random BitArray guess does not match.
     eve_rnl_guess = BitArray.random(KEYBITS)
     if eve_rnl_guess == sk_rnl_A:
-        print("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
+        print("[FAIL] Eve guessed HKEX-RNL shared key (astronomically unlikely)!")
     else:
         print("- Eve random guess does not match shared key (Ring-LWR protection)")
 
@@ -4955,7 +4987,7 @@ def main():
     fake_responses  = [(fake_pi_seed, fake_y)] * fake_rounds
     eve_sf_sig = (fake_commits, fake_challenges, fake_responses)
     if hpks_stern_f_verify(decoy, eve_sf_sig, sf_seed, sf_syn):
-        print("+ Eve forged HPKS-Stern-F (Eve wins)!")
+        print("[FAIL] Eve forged HPKS-Stern-F (Eve wins)!")
     else:
         print("- Eve could not forge: Fiat-Shamir challenges mismatch  (SD + PRF protection)")
 
@@ -4963,7 +4995,7 @@ def main():
     # Eve sees (sf32_seed, sf32_ct) but not sf32_e. She guesses K randomly.
     eve_K_guess = BitArray.random(32)
     if sf32_K_dec is not None and eve_K_guess == sf32_K_dec:
-        print("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
+        print("[FAIL] Eve guessed HPKE-Stern-F session key (astronomically unlikely)!")
     else:
         print("- Eve random guess does not match session key (SD protection)")
 
@@ -4974,9 +5006,9 @@ def main():
     fpe_ct  = fpe_encrypt(fpe_plain, fpe_key, fpe_ctx)
     fpe_rec = fpe_decrypt(fpe_ct,   fpe_key, fpe_ctx)
     if fpe_rec == fpe_plain:
-        print("- FPE round-trip correct")
+        print("+ FPE round-trip correct")
     else:
-        print("+ FPE round-trip failed!")
+        print("[FAIL] FPE round-trip failed!")
 
     print("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt")
     twk_key   = b"herradura-twk-key-256bit-example"
@@ -4984,9 +5016,9 @@ def main():
     twk_ct  = twk_encrypt(twk_plain, twk_key, sector=7, bidx=3)
     twk_rec = twk_decrypt(twk_ct,   twk_key, sector=7, bidx=3)
     if twk_rec == twk_plain:
-        print("- Tweakable cipher round-trip correct")
+        print("+ Tweakable cipher round-trip correct")
     else:
-        print("+ Tweakable cipher round-trip failed!")
+        print("[FAIL] Tweakable cipher round-trip failed!")
 
     print("*** Accumulator (78.J) — Merkle root + proof/verify for 4 leaves")
     leaf_hashes = [haccum_leaf(f"leaf{i}".encode()) for i in range(4)]
@@ -4995,9 +5027,9 @@ def main():
     ok         = haccum_verify(acc_root, leaf_hashes[2], acc_proof, 2)
     ok_wrong   = haccum_verify(acc_root, leaf_hashes[0], acc_proof, 2)
     if ok and not ok_wrong:
-        print("- Accumulator proof/verify correct")
+        print("+ Accumulator proof/verify correct")
     else:
-        print("+ Accumulator proof/verify failed!")
+        print("[FAIL] Accumulator proof/verify failed!")
 
     # 78.H — Masked HSKE demo
     hske_plain = BitArray.random(KEYBITS)
@@ -5005,9 +5037,9 @@ def main():
     hske_ct, _  = hske_encrypt_masked(hske_plain, hske_key)
     hske_rec, _ = hske_decrypt_masked(hske_ct,   hske_key)
     if hske_rec.uint == hske_plain.uint:
-        print("- Masked HSKE encrypt/decrypt correct")
+        print("+ Masked HSKE encrypt/decrypt correct")
     else:
-        print("+ Masked HSKE encrypt/decrypt failed!")
+        print("[FAIL] Masked HSKE encrypt/decrypt failed!")
 
     # 96 — HDRBG demo: determinism + reseed separation + forward ratchet
     d1 = drbg_seed(b'demo-entropy-96', b'pers')
@@ -5017,9 +5049,9 @@ def main():
     drbg_reseed(d2, b'fresh-entropy')
     out3 = drbg_generate(d2, 64)
     if out1 == out2 and out3 != drbg_generate(d1, 64) and len(out1) == 64:
-        print("- HDRBG determinism + reseed separation correct")
+        print("+ HDRBG determinism + reseed separation correct")
     else:
-        print("+ HDRBG failed!")
+        print("[FAIL] HDRBG failed!")
 
     # 95 — HSKE-NL-AEAD demo: round-trip + tamper rejection
     aead_key = BitArray.random(KEYBITS)
@@ -5032,9 +5064,9 @@ def main():
                                     aead_tag, aead_ad)
     aead_bad_ad = hske_nl_aead_decrypt(aead_key, aead_nonce, aead_ct, aead_tag, b"header-v2")
     if aead_dec == aead_pt and aead_bad is None and aead_bad_ad is None:
-        print("- HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
+        print("+ HSKE-NL-AEAD round-trip + tamper/AD rejection correct")
     else:
-        print("+ HSKE-NL-AEAD failed!")
+        print("[FAIL] HSKE-NL-AEAD failed!")
 
     # 95 Option 2 — HSKE-NL-V2-Duplex demo (RESEARCH CONSTRUCTION)
     dplex_key   = BitArray.random(KEYBITS)
@@ -5050,9 +5082,9 @@ def main():
     dplex_bad_ad = hske_nl_v2_duplex_decrypt(
         dplex_key, dplex_nonce, dplex_ct, dplex_tag, b"duplex-header-v2")
     if dplex_dec == dplex_pt and dplex_bad is None and dplex_bad_ad is None:
-        print("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
+        print("+ HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]")
     else:
-        print("+ HSKE-NL-V2-Duplex FAILED!")
+        print("[FAIL] HSKE-NL-V2-Duplex round-trip / tamper / AD rejection")
 
     # 78.C — Ratchet demo (5 steps)
     ratchet_seed = b"demo-seed-78c"
@@ -5062,9 +5094,9 @@ def main():
         state, mk = ratchet_advance(state)
         keys.append(mk)
     if len(set(keys)) == 5:
-        print("- Ratchet: 5 distinct message keys")
+        print("+ Ratchet: 5 distinct message keys")
     else:
-        print("+ Ratchet: duplicate message keys!")
+        print("[FAIL] Ratchet: duplicate message keys!")
 
     print("*** Ring signature (78.I) — Eve cannot forge without solving SD for any ring member")
     # Eve constructs a fake ring sig with random responses; must fail challenge consistency.
@@ -5077,7 +5109,7 @@ def main():
                   for _ in range(_ring_k)]
     _eve_ring_sig = (_eve_all_c, _eve_all_b, _eve_all_r)
     if hpks_stern_ring_verify(decoy, _eve_ring_sig, _eve_ring_pub):
-        print("+ Eve forged ring signature (Eve wins!)")
+        print("[FAIL] Eve forged ring signature (Eve wins!)")
     else:
         print("- Eve cannot forge: challenge-sum mismatch  (SD + PRF protection)")
 
@@ -5090,7 +5122,7 @@ def main():
     }
     _xmss_eve_ok = hpks_xmss_verify(b"HPKS-XMSS-F test message", _xmss_eve_sig, _xmss_root)
     if _xmss_eve_ok:
-        print("+ Eve forged HPKS-XMSS-F (Eve wins!)")
+        print("[FAIL] Eve forged HPKS-XMSS-F (Eve wins!)")
     else:
         print("- Eve cannot forge HPKS-XMSS-F: OWF inversion required")
 
@@ -5099,7 +5131,7 @@ def main():
     _xmss_reuse_sig['leaf_idx'] = 1   # wrong index, stale auth path
     _xmss_reuse_ok = hpks_xmss_verify(b"HPKS-XMSS-F test message", _xmss_reuse_sig, _xmss_root)
     if _xmss_reuse_ok:
-        print("+ Index-swap accepted (unexpected — audit Merkle proof)")
+        print("[FAIL] Index-swap accepted (unexpected — audit Merkle proof)")
     else:
         print("- Index-swap correctly rejected: Merkle proof anchors leaf identity")
 
@@ -5112,18 +5144,18 @@ def main():
     _oprf_F     = oprf_unblind(_oprf_beta, _oprf_r)
     _oprf_check = oprf_direct(_oprf_pw, _oprf_k)
     if _oprf_F == _oprf_check:
-        print("- OPRF blind/eval/unblind round-trip correct")
+        print("+ OPRF blind/eval/unblind round-trip correct")
     else:
-        print("+ OPRF round-trip failed!")
+        print("[FAIL] OPRF round-trip failed!")
     # aPAKE: OPRF output replaces direct password hash
     _oprf_salt   = os.urandom(32)
     _oprf_pw_key = hfscx_256(_oprf_F.to_bytes(KEYBITS // 8, 'big') + _oprf_salt)
     _oprf_F2     = oprf_direct(_oprf_pw, _oprf_k)
     _oprf_pw_key2 = hfscx_256(_oprf_F2.to_bytes(KEYBITS // 8, 'big') + _oprf_salt)
     if _oprf_pw_key == _oprf_pw_key2:
-        print("- OPRF aPAKE: pw_key derived from OPRF output is deterministic")
+        print("+ OPRF aPAKE: pw_key derived from OPRF output is deterministic")
     else:
-        print("+ OPRF aPAKE pw_key mismatch!")
+        print("[FAIL] OPRF aPAKE pw_key mismatch!")
 
     # 80 — aPAKE demo (register + login with correct password + wrong password)
     print("*** aPAKE (80) — HKEX-RNL + ZKBoo + OPRF augmented PAKE")
@@ -5131,14 +5163,23 @@ def main():
     _pake_record  = hpake_register("alice", b"s3cr3t-pw", _pake_key)
     _pake_sk      = hpake_login_demo(_pake_record, b"s3cr3t-pw", _pake_key)
     if _pake_sk is not None:
-        print("- aPAKE login with correct password: session key established")
+        print("+ aPAKE login with correct password: session key established")
     else:
-        print("+ aPAKE login with correct password: FAILED!")
+        print("[FAIL] aPAKE login with correct password failed!")
     _pake_sk_bad  = hpake_login_demo(_pake_record, b"wrong-pw", _pake_key)
     if _pake_sk_bad is None:
-        print("- aPAKE login with wrong password: correctly rejected")
+        print("+ aPAKE login with wrong password: correctly rejected")
     else:
-        print("+ aPAKE login with wrong password: ACCEPTED (security failure)!")
+        print("[FAIL] aPAKE login with wrong password ACCEPTED (security failure)!")
+
+    # Failure gate (TODO #259).  Exit non-zero if any check reported [FAIL],
+    # mirroring CryptosuiteTests/Herradura_tests.py's TODO #233 gate.
+    if g_failures:
+        _emit(f"\n*** FAILED: {g_failures} check(s) reported [FAIL] ***")
+        for line in g_fail_lines:
+            _emit(f"    {line}")
+        sys.exit(1)
+    _emit("\n*** OK: no check reported [FAIL] ***")
 
 
 hkex_rnl_keygen = _rnl_keygen   # (m_blind, n, q, p, b) -> (s, C)

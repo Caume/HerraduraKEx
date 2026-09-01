@@ -156,26 +156,3 @@ figures already published, not as a gate on anything.
 
 Status: **OPEN**
 
-### #259: give the suite demos an unambiguous verdict marker, then gate CI on it
-
-TODO #258 (v5.2.5) added a CI step per language that runs the C/Go/Python suite demo and
-gates on its exit status.  That closes the class of bug #258 was — a crash or an abort —
-but it is a **process** guard, not a **content** guard: it cannot catch a demo that runs to
-completion and prints the wrong verdict.
-
-**Why that's not a small addition on top.**  The demos' `+`/`-` prefix convention marks two
-different things with the same character: a genuine failure (`- HPKS-Stern-F verification
-FAILED`) and a correct negative result phrased as a negation (`- Eve cannot forge:
-Fiat-Shamir mismatch (SD + PRF protection)` is a PASS — Eve was supposed to fail).  A naive
-`grep -c '^-'` gate would false-positive on every expected adversary-failure line in the
-Eve/bypass sections, which is exactly the "asserts nothing now exits 2" trap CLAUDE.md's
-Testing section already warns about for a different case (TODO #233).
-
-**Scope.**  Either (a) give the demos a second, unambiguous marker for genuine failures only
-— mirroring the `[FAIL]` convention `Herradura_tests.c`/`.go`/`.py` already use, added once
-per language across three files — and gate CI on that marker's absence; or (b) decide the
-exit-status guard added in v5.2.5 is sufficient and close this as ACKNOWLEDGED. Either way,
-the ARM/NASM/Arduino ports have no equivalent suite-demo binary (their harness *is*
-`Herradura_tests_*`), so this item is C/Go/Python only.
-
-Status: **OPEN**
