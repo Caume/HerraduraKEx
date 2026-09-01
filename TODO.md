@@ -161,11 +161,15 @@ rather than assumed here).  Every pass through v5.3.5 ported only the library pr
 `verify --algo hpks-t` for HPKS-T's four-phase protocol, with five new PEM types in
 `Codec.java`.  Both passes verified byte-exact against `herradura.py`'s CLI output and
 cross-language round-tripped in every direction (including a mixed Java/Python protocol
-run whose intermediate and final PEMs matched byte-for-byte).  Step 2 (numbered-test parity
+run whose intermediate and final PEMs matched byte-for-byte).  v5.3.8 added
+`hske-duplex`/`hske-duplex3` to the existing `enc`/`dec` subcommands (matching Python's
+own CLI shape — duplex is not a separate subcommand there either) with a `--ad` flag,
+also byte-exact and cross-language round-tripped both directions, plus empty-plaintext,
+wrong-`--ad`, and cross-version format-tag rejection checks.  Step 2 (numbered-test parity
 matching C/Go/Python's [44]-[48]) remains open — `SelfTest.java`'s existing per-primitive
 coverage (round-trip, tamper rejection, and protocol-specific checks like forward secrecy
 or forgery rejection) is comparable in kind but was never explicitly checked against the
-C/Go/Python test numbering for gaps.  Step 3 (remaining: `duplex`, `hpks-ring`), 4 (Java
+C/Go/Python test numbering for gaps.  Step 3 (remaining: `hpks-ring` only), 4 (Java
 demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh` and
 `test_threshold_interop.sh` still skip Java's cell) are all still open.
 
@@ -183,10 +187,10 @@ demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh` 
   ship, so a reader comparing "what does using this protocol from Java look like" has
   nothing to run.
 * **CLI capabilities.**  `HerraduraCli.java` gained `fpe`/`twk` (both v2 and v3) in
-  v5.3.6 and `hpks-t`'s four `threshold-*` subcommands plus `verify --algo hpks-t` in
-  v5.3.7 — see Progress above.  Still missing: `hpks-ring` and the research `duplex` AEAD
-  subcommand.  Both library primitives (duplex both v2 and v3) are ported, but neither has
-  a CLI subcommand (including whatever ring-signature flag shape C/Go/Python use).
+  v5.3.6, `hpks-t`'s four `threshold-*` subcommands plus `verify --algo hpks-t` in v5.3.7,
+  and `hske-duplex`/`hske-duplex3` on `enc`/`dec` in v5.3.8 — see Progress above.  Still
+  missing: `hpks-ring`.  Its library primitive is ported (`SternRing.java`), but no CLI
+  subcommand exists yet (including whatever ring-signature flag shape C/Go/Python use).
   (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)

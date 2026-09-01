@@ -2,6 +2,30 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.8] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `duplex` CLI subcommand
+
+MINOR: two new `--algo` values on the existing `enc`/`dec` subcommands (a new CLI surface for
+an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java`'s `enc`/`dec`
+gain `hske-duplex`/`hske-duplex3` (the research HSKE-NL-V2/V3-Duplex AEAD, TODO #95 Option
+2/#255), the CLI-surface consequence of `Duplex.java` (ported to the library in v5.3.4).
+Unlike `duplex` being its own subcommand shape in some ports, herradura.py routes it through
+`enc`/`dec --algo hske-duplex[3]` with a `--ad` flag for associated data — Java now matches
+that exactly, including the arbitrary-length ciphertext framing (`_encode_duplex_ct`'s
+format tag 3/4, length-prefixed ciphertext ahead of a fixed 32-byte tag) rather than the
+fixed-block symmetric formats `hske`/`hske-nla*` use.
+
+Verified byte-exact-ciphertext-independent round-trips against `herradura.py`'s CLI in both
+directions (Java encrypts → Python decrypts, and vice versa) for both v2 and v3, plus an
+empty-plaintext edge case, wrong-`--ad` tag-mismatch rejection, and feeding a v2 ciphertext
+to `dec --algo hske-duplex3` (rejected on the format-tag check rather than surfacing as an
+opaque authentication failure, matching Python's `_decode_duplex_ct`).
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and
+`bash CliTest/test_java_bindings.sh` stay green unchanged.
+
+TODO #260's step 3 (CLI subcommands) is now down to a single remaining gap: `hpks-ring`.
+
 ## [5.3.7] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T CLI subcommands

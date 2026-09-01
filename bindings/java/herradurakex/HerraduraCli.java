@@ -39,7 +39,7 @@ import java.util.Map;
  * Also covers {@code fpe}/{@code twk} (78.A/78.B, plus their {@code --v3}
  * variants, TODO #255/#260 — {@link FpeTwk}): a 32-byte-block tweak cipher
  * and a tweakable wide-block cipher, both keyed by a session key PEM (the
- * same shape {@code enc}/{@code dec} use for {@code hske}); and HPKS-T
+ * same shape {@code enc}/{@code dec} use for {@code hske}); HPKS-T
  * (TODO #98/#106/#260 — {@link HpksT}), an n-of-n MuSig2-style
  * threshold/aggregate Schnorr signature over four phases —
  * {@code threshold-commit} (phase 1, per signer), {@code threshold-aggregate}
@@ -47,11 +47,15 @@ import java.util.Map;
  * {@code threshold-combine} (phase 4, coordinator) — plus {@code verify
  * --algo hpks-t} for the resulting HPKST SIGNATURE PEM. Only 256-bit
  * hpks/hpks-nl keys are supported (Python's variable-{@code nbits} HPKS-T
- * is not ported; see {@link HpksT}).
+ * is not ported; see {@link HpksT}); and the research HSKE-NL-V2/V3-Duplex
+ * AEAD (TODO #95 Option 2/#255/#260 — {@link Duplex}), via {@code enc}/
+ * {@code dec --algo hske-duplex}/{@code hske-duplex3} plus {@code --ad}
+ * for associated data, matching the arbitrary-length ciphertext framing
+ * (format tag 3/4) {@code herradura.py}'s {@code _encode_duplex_ct} uses.
  *
  * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
  * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
- * OR-composition signature, the research {@code duplex} AEAD, and the
+ * OR-composition signature, and the
  * {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
  * these gaps).
  *
@@ -569,12 +573,70 @@ public final class HerraduraCli {
         }
     }
 
+    /** HSKE-NL-V2/V3-Duplex AEAD ciphertext DER, format tag 3 (v2) or 4 (v3)
+     * — matches herradura.py's _encode_duplex_ct: SEQUENCE(tag, nonce[32B],
+     * ct_len (minimal), ct (ct_len bytes, or a single 0x00 if empty), tag[32B],
+     * nbits (minimal)). Unlike the fixed-block sym formats, ct is
+     * arbitrary-length, so its own length is DER-encoded ahead of it. */
+    private static String encodeDuplexCt(BigInteger nonce, byte[] ct, byte[] tagBytes, int nbits, boolean v3) {
+        int ctLen = ct.length;
+        byte[] der = Codec.derSeq(
+            Codec.derInt(BigInteger.valueOf(v3 ? 4 : 3), -1),
+            Codec.derInt(nonce, nbits / 8),
+            Codec.derInt(BigInteger.valueOf(ctLen), -1),
+            Codec.derInt(new BigInteger(1, ct), Math.max(1, ctLen)),
+            Codec.derInt(new BigInteger(1, tagBytes), 32),
+            Codec.derInt(BigInteger.valueOf(nbits), -1));
+        return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
+    }
+
+    /** Returns {nonce, ct, tag, nbits}. */
+    private static final class DuplexCt {
+        final BigInteger nonce;
+        final byte[] ct;
+        final byte[] tag;
+        final int nbits;
+        DuplexCt(BigInteger nonce, byte[] ct, byte[] tag, int nbits) {
+            this.nonce = nonce; this.ct = ct; this.tag = tag; this.nbits = nbits;
+        }
+    }
+
+    private static DuplexCt decodeDuplexCt(String pem, boolean v3) {
+        Codec.PemBlock b = Codec.pemUnwrap(pem);
+        if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
+            throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
+        }
+        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        int want = v3 ? 4 : 3;
+        int got = ints.get(0).intValueExact();
+        if (got != want) {
+            throw new CliError("expected " + (v3 ? "V3" : "V2") + "-Duplex ciphertext (format "
+                + want + "), got " + got);
+        }
+        BigInteger nonce = ints.get(1);
+        int ctLen = ints.get(2).intValueExact();
+        byte[] ct = ctLen == 0 ? new byte[0] : toFixedBytes(ints.get(3), ctLen);
+        byte[] tag = toFixedBytes(ints.get(4), 32);
+        int nbits = ints.get(5).intValueExact();
+        return new DuplexCt(nonce, ct, tag, nbits);
+    }
+
     private static void cmdEnc(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "enc");
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
 
-        if (algo.equals("hske")) {
+        if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
+            boolean v3 = algo.equals("hske-duplex3");
+            BigInteger[] key = loadKey(req(opt, "key", "enc"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) throw new CliError("enc " + algo + ": requires a " + Herradura.N + "-bit key");
+            byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Duplex.EncResult r = v3
+                ? Duplex.v3Encrypt(key[0], inBytes, ad, RNG)
+                : Duplex.v2Encrypt(key[0], inBytes, ad, RNG);
+            writeString(out, encodeDuplexCt(r.nonce, r.ct, r.tag, nbits, v3));
+        } else if (algo.equals("hske")) {
             BigInteger[] key = loadKey(req(opt, "key", "enc"));
             int nbits = key[1].intValueExact();
             int nbytes = nbits / 8;
@@ -658,7 +720,7 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemCt(enc.syn, e));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -666,7 +728,21 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "dec");
         String out = req(opt, "out", "dec");
 
-        if (algo.equals("hske")) {
+        if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
+            boolean v3 = algo.equals("hske-duplex3");
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) throw new CliError("dec " + algo + ": requires a " + Herradura.N + "-bit key");
+            DuplexCt ct = decodeDuplexCt(readString(req(opt, "in", "dec")), v3);
+            byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] pt = v3
+                ? Duplex.v3Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad)
+                : Duplex.v2Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad);
+            if (pt == null) {
+                throw new CliError("dec: authentication tag mismatch — ciphertext corrupt, wrong key, or wrong --ad");
+            }
+            writeBytes(out, pt);
+        } else if (algo.equals("hske")) {
             BigInteger[] key = loadKey(req(opt, "key", "dec"));
             int nbits = key[1].intValueExact();
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
@@ -744,7 +820,7 @@ public final class HerraduraCli {
             writeBytes(out, toFixedBytes(d, Herradura.N / 8));
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 
