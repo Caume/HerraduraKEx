@@ -453,7 +453,16 @@ spec/                                                — machine-readable protoc
                                                       every protocol's status against SECURITY.md's
                                                       prose table — the disagreement-between-documents
                                                       class TODO #237 found three of and #238 two more.
-                                                      Both run in CI's native-python job (TODO #238).
+                                                      check_language_parity.py (TODO #261) is a
+                                                      different axis: numbered-test [N] contiguity in
+                                                      each of C/Go/Python/Java, set-alignment of
+                                                      C/Go/Python's shared [1]-[48] numbering, and a
+                                                      curated manifest of suite-internal (non-CLI)
+                                                      primitives -- seeded with the HCRED-KKW gap the
+                                                      item was filed over -- so a primitive with no
+                                                      `--algo` tag can still be caught missing in a
+                                                      language.  All three run in CI's native-python
+                                                      job (TODO #238, #261).
                                                       `protocols` is keyed on a protocol id, not an
                                                       --algo tag: aPAKE, and since TODO #241 also
                                                       hdrbg/fpe/twk, have no tag and are filed under

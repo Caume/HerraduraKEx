@@ -2,6 +2,33 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.7.2] - 2026-09-01
+
+### TODO #261 (partial) — the mechanical parity guard: spec/check_language_parity.py
+
+PATCH: new internal tooling script + CI step, no new protocol/CLI/API surface.
+
+- **New `spec/check_language_parity.py`**, run in CI's `native-python` job. Two checks:
+  1. Numbered-test `[N]` contiguity in each of C/Go/Python/Java, plus set-alignment (not
+     just matching maxima) of C/Go/Python's shared `[1]`-`[48]` numbering — Java's numbering
+     is deliberately excluded from that alignment check, per its own class doc comment.
+  2. A curated `PRIMITIVES` manifest of suite-internal (non-CLI) primitives — the exact
+     class of thing this whole TODO was filed over, since `spec/generate_spec.py --check`
+     can't see a primitive with no `--algo` tag. Seeded with two entries: `hcred-zkboo` and
+     `hcred-kkw` (the concrete case v5.5.0-v5.7.0 closed).
+- Verified against three deliberate breaks — a renumbered test, a cross-language
+  set-misalignment, a renamed primitive marker — each caught with an actionable message,
+  each restoring clean afterward.
+- `.github/workflows/ci.yml` gains a step in `native-python` running the new script.
+  `CLAUDE.md`'s `spec/` description updated to describe it alongside
+  `check_security_md.py`.
+- **Scope, stated explicitly:** the `PRIMITIVES` manifest currently covers only the two
+  entries this item's own investigation produced, not a full census of the suite's
+  primitives — extending it is real, separate, incremental work (matching how
+  `CliTest/lib_build.sh`'s coverage guard grew script-by-script). TODO #261 stays OPEN for
+  that reason, even though both confirmed asymmetries (#1 HCRED-KKW, #2 the SelfTest.java
+  numbering gap) are closed.
+
 ## [5.7.1] - 2026-09-01
 
 ### TODO #261 (partial) — give SelfTest.java the numbered test convention (asymmetry #2)

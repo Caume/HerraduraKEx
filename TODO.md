@@ -275,19 +275,38 @@ individually grew, like KKW), and (b) turning "parity" from a one-time audit int
 checked mechanically going forward, so a fifth divergence doesn't accumulate silently the
 way KKW apparently did.
 
-**Proposed mechanism, to design when this item is worked, not decided here.**  The repo
-already has two coverage guards in this family — `ci.yml`'s native-interop step failing if a
-`CliTest/*.sh` script isn't claimed by exactly one job, and `check_part_index.py` failing if
-`SecurityProofs-*.md`'s banners disagree.  A `check_language_parity.py` in the same spirit —
-enumerating each language's public functions/CLI subcommands/numbered tests and diffing the
-four sets — would turn every future asymmetry (Java or otherwise) into a caught CI failure
-instead of a fact three other files quietly don't know.  Scope, false-positive rate (a
-language-appropriate helper that isn't a protocol function shouldn't count), and where it
-runs are all open design questions for whoever picks this up.
+**Mechanism (v5.7.2): `spec/check_language_parity.py`, built and running in CI.**  In the
+same spirit as `ci.yml`'s native-interop coverage guard and `check_part_index.py`, it checks
+two things mechanically rather than by a one-time source read:
+
+1. **Numbered-test contiguity + alignment**, fully automatic (no manifest): each of
+   C/Go/Python/Java's `[N]` markers must be contiguous from 1 with no duplicates, and
+   C/Go/Python's shared numbering (they use ONE convention; Java deliberately uses its own,
+   per SelfTest.java's class doc comment) must have identical *sets*, not just identical
+   maxima — catches the exact "renumbered one language, forgot the others" class of bug
+   before it reaches `CHANGELOG.md` as a wrong citation. Verified against two deliberate
+   breaks (a renumbered Go test, a set-misalignment) — both caught with an actionable
+   message, both restore clean.
+2. **A curated `PRIMITIVES` manifest** of suite-internal primitives with no CLI `--algo` tag
+   (the exact class of thing #261's own gap was — `spec/generate_spec.py --check` cannot see
+   these by construction). Each entry names a marker regex per language; a language missing
+   a required marker fails unless the entry carries an `acknowledged` reason. **Seeded with
+   two entries**: `hcred-zkboo` (all four languages, pre-existing) and `hcred-kkw` (all four,
+   now that this item's own work closed it) — verified to catch a renamed/removed marker.
+
+**What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has exactly the two
+entries this item's own investigation produced — a seed, not the retroactive full census of
+the ~35-protocol table `spec/herradura-protocol-spec.json` already tracks by CLI surface.
+Populating `PRIMITIVES` with every suite-internal (non-CLI) primitive the suite has is real,
+separate work of its own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing
+script-by-script rather than arriving complete — pick it up incrementally, the same way.
 
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
-one-time read of the source tree, so it stays true.
+one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
+the primitive-manifest half is met only for its current two entries — extending `PRIMITIVES`
+is what keeps this item open.
 
 Status: **OPEN**
