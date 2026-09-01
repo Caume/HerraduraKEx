@@ -167,9 +167,10 @@ and interop coverage are all still open.
   nothing to run.
 * **CLI capabilities.**  `HerraduraCli.java` has no `hpks-t`, `hpks-ring`, `fpe`, `twk`,
   or the research `duplex` AEAD subcommand — the direct CLI-surface consequence of the
-  missing library functions above (`hpks-t`'s library primitive is now ported, but its
-  multi-round threshold-signing CLI protocol, TODO #106 in C/Go/Python, is not).
-  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
+  missing library functions above.  `hpks-t`'s library primitive is now ported, but its
+  multi-round threshold-signing CLI protocol (TODO #106 in C/Go/Python) is not; `fpe`'s and
+  `twk`'s library primitives (both v2 and v3) are now ported, but their CLI subcommands
+  (including `--v3`) are not.  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)
 * **CI checks.**  `native-java` never runs a demo-equivalent step, because none exists; it

@@ -12,8 +12,9 @@ import java.security.SecureRandom;
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
  * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
  * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), HDRBG
- * ({@link Hdrbg}, TODO #96/#260), and HPKS-T ({@link HpksT}, TODO
- * #98/#260). Exits non-zero on any failure.
+ * ({@link Hdrbg}, TODO #96/#260), HPKS-T ({@link HpksT}, TODO
+ * #98/#260), and FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260). Exits
+ * non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
@@ -506,6 +507,44 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpks_t round-trip");
+            }
+        }
+
+        // FPE (78.A) / twk (78.B), v2 and v3: round-trip, and TODO #241/#242's
+        // regression guard -- a 12-byte fpe ctx equal to twk's
+        // sector_be64||bidx_be32 must NOT produce the same subkey/ciphertext
+        // (the bug that made the two subcommands the same function pre-v4.0.0).
+        {
+            byte[] key = "self-test-fpe-twk-key-material!!".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] ctx = "self-test12b".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+
+            BigInteger fpeCt = FpeTwk.fpeEncrypt(pt, key, ctx);
+            boolean fpeRt = FpeTwk.fpeDecrypt(fpeCt, key, ctx).equals(pt);
+
+            long sector = 0x0102030405060708L;
+            int bidx = 0x090A0B0C;
+            BigInteger twkCt = FpeTwk.twkEncrypt(pt, key, sector, bidx);
+            boolean twkRt = FpeTwk.twkDecrypt(twkCt, key, sector, bidx).equals(pt);
+
+            BigInteger fpeCtV3 = FpeTwk.fpeV3Encrypt(pt, key, ctx);
+            boolean fpeV3Rt = FpeTwk.fpeV3Decrypt(fpeCtV3, key, ctx).equals(pt);
+            BigInteger twkCtV3 = FpeTwk.twkV3Encrypt(pt, key, sector, bidx);
+            boolean twkV3Rt = FpeTwk.twkV3Decrypt(twkCtV3, key, sector, bidx).equals(pt);
+
+            java.nio.ByteBuffer tweakBuf = java.nio.ByteBuffer.allocate(12);
+            tweakBuf.putLong(sector).putInt(bidx);
+            BigInteger fpeCtWithTwkTweakAsCtx = FpeTwk.fpeEncrypt(pt, key, tweakBuf.array());
+            boolean domainSeparated = !fpeCtWithTwkTweakAsCtx.equals(twkCt);
+            boolean v2v3Separated = !fpeCt.equals(fpeCtV3) && !twkCt.equals(twkCtV3);
+
+            if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated) {
+                System.out.println("FAIL fpe_twk round-trip (fpe=" + fpeRt + " twk=" + twkRt
+                    + " fpe_v3=" + fpeV3Rt + " twk_v3=" + twkV3Rt + " domain_separated=" + domainSeparated
+                    + " v2v3_separated=" + v2v3Separated + ")");
+                fails++;
+            } else {
+                System.out.println("PASS fpe_twk round-trip");
             }
         }
 

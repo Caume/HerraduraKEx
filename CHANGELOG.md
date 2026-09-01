@@ -2,6 +2,36 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.3] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: FPE/twk (#78.A/#78.B) and their v3 variants ported
+
+MINOR: a new language-target port of two existing primitives (plus their NL-FSCX v3
+variants), Java's fourth piece of TODO #260. Library primitive and `SelfTest` coverage
+only (step 1 of TODO #260's staged scope) — `fpe`/`twk` CLI subcommands exist in
+C/Go/Python and are not part of this commit, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/FpeTwk.java`** — port of `fpe_encrypt`/`fpe_decrypt`/
+  `twk_encrypt`/`twk_decrypt` and their `_v3` counterparts from "Herradura cryptographic
+  suite.{c,go,py}"'s #78.A/#78.B sections (as fixed by TODO #241/#242) and TODO #255's v3
+  layer. Both v2 primitives are `nl_fscx_revolve_v2` under a subkey derived as
+  `HFSCX-256-DS(ds, len(key)_be8 || key || tweak)`, rejected to a non-degenerate v2 subkey;
+  v3 uses the same derivation with distinct DS tags and no rejection loop (v3 has no
+  affine-degenerate class to screen for). One shared derivation helper per version, since
+  FPE and twk differ only in what they pass as the tweak (`ctx` vs.
+  `sector_be64 || bidx_be32`) — mirroring the Python source's own `_fpe_twk_derive_b`.
+- Cross-checked byte-for-byte against Python: `fpe_encrypt`, `twk_encrypt`,
+  `fpe_v3_encrypt`, and `twk_v3_encrypt` on the same fixed key/ctx/sector/bidx/plaintext
+  produce identical ciphertexts in both languages (there is no KAT vector for either
+  primitive in `KAT/`).
+- **`SelfTest.java`** gains a combined FPE/twk round-trip check covering all four variants,
+  plus TODO #241/#242's own regression guard: a 12-byte FPE `ctx` set equal to twk's
+  `sector_be64 || bidx_be32` must NOT produce the same ciphertext as `twk_encrypt` — the
+  exact bug that made the two subcommands the same function pre-v4.0.0 — and the v2/v3
+  ciphertexts must differ from each other at the same inputs.
+
 ## [5.3.2] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T (#98) library primitive ported
