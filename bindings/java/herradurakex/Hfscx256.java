@@ -258,7 +258,10 @@ public final class Hfscx256 {
         return v;
     }
 
-    private static boolean constantTimeEquals(byte[] a, byte[] b) {
+    /** Package-visible so {@link Duplex} (and any other NL-family AEAD) can
+     * share one constant-time tag comparison instead of each re-implementing
+     * it. */
+    static boolean constantTimeEquals(byte[] a, byte[] b) {
         if (a.length != b.length) return false;
         int diff = 0;
         for (int i = 0; i < a.length; i++) diff |= a[i] ^ b[i];

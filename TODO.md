@@ -139,26 +139,25 @@ notes and becomes its own tracked gap, closed a piece at a time the way #255's f
 closed the v3 primitive.
 
 **Progress.**  v5.3.0 ported the 78.C ratchet (`Ratchet.java`); v5.3.1 added HDRBG
-(`Hdrbg.java`, TODO #96); v5.3.2 added HPKS-T (`HpksT.java`, TODO #98) — the first three of
-the seven missing primitives listed below — each with its own `SelfTest.java` round-trip
-coverage, and each cross-checked against Python's output for the same fixed inputs (there
-is no KAT vector for any of the three in `KAT/`).  HPKS-T unlike Ratchet/HDRBG DOES have a
-CLI subcommand in C/Go/Python (`--algo hpks-t`, TODO #106, a multi-round threshold-signing
-protocol) — this pass ported only the library primitive + `SelfTest` coverage (step 1 of
-the scope below); the CLI subcommand itself is still step 3's job, not done here.  The
-remaining four primitives, the demo, all CLI subcommands (including hpks-t's), the CI step,
-and interop coverage are all still open.
+(`Hdrbg.java`, TODO #96); v5.3.2 added HPKS-T (`HpksT.java`, TODO #98); v5.3.3 added FPE/twk
+and their v3 variants (`FpeTwk.java`, TODO #78.A/#78.B/#255); v5.3.4 added
+HSKE-NL-V2/V3-Duplex (`Duplex.java`, TODO #95 Option 2/#255) — six of the seven missing
+primitives listed below — each with its own `SelfTest.java` round-trip coverage, and each
+cross-checked against Python's output for the same fixed inputs (there is no KAT vector for
+any of the six in `KAT/`).  HPKS-T, FPE and twk unlike Ratchet/HDRBG/Duplex DO have CLI
+subcommands in C/Go/Python (`--algo hpks-t` TODO #106; `fpe`/`twk` subcommands) — every
+pass so far has ported only the library primitive + `SelfTest` coverage (step 1 of the
+scope below); every CLI subcommand is still step 3's job, not done in any of them.  Only
+HPKS-Stern-Ring remains unported.  The demo, all CLI subcommands, the CI step, and interop
+coverage are all still open.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
 * **Library functions/protocols.**  Java has no HPKS-Stern-Ring (78.I ring
-  signature), no FPE (78.A), no tweakable cipher/`twk` (78.B), and no HSKE-NL-V2-Duplex
-  (research AEAD) — and by extension none of their NL-FSCX v3 variants (`fpe --v3`,
-  `twk --v3`, `hske-duplex3`) that TODO #255 landed in C/Go/Python only.  (Ratchet (78.C),
-  HDRBG (#96) and HPKS-T's library primitive are done — see Progress above.)  Grep
-  confirms: `SternRing` matches nothing under `bindings/java/herradurakex/*.java`;
-  `Fpe`/`Twk`/`Duplex` match only a comment in `KatVerify.java` recording that they are
-  absent.
+  signature) — the last of the seven missing primitives (Ratchet (78.C), HDRBG (#96),
+  HPKS-T's library primitive, FPE/twk (both v2 and v3), and HSKE-NL-V2/V3-Duplex are all
+  done — see Progress above).  Grep confirms: `SternRing` matches nothing under
+  `bindings/java/herradurakex/*.java`.
 * **Library demo.**  C, Go and Python each have a `Herradura cryptographic suite.{c,go,py}`
   that exercises every protocol end to end with human-readable +/- verdicts (and, since
   TODO #258/#259, an unambiguous `[FAIL]` gate).  Java has no equivalent — `SelfTest.java`
@@ -168,9 +167,10 @@ and interop coverage are all still open.
 * **CLI capabilities.**  `HerraduraCli.java` has no `hpks-t`, `hpks-ring`, `fpe`, `twk`,
   or the research `duplex` AEAD subcommand — the direct CLI-surface consequence of the
   missing library functions above.  `hpks-t`'s library primitive is now ported, but its
-  multi-round threshold-signing CLI protocol (TODO #106 in C/Go/Python) is not; `fpe`'s and
-  `twk`'s library primitives (both v2 and v3) are now ported, but their CLI subcommands
-  (including `--v3`) are not.  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
+  multi-round threshold-signing CLI protocol (TODO #106 in C/Go/Python) is not; `fpe`'s,
+  `twk`'s, and the research `duplex` AEAD's library primitives (fpe/twk both v2 and v3;
+  duplex both v2 and v3) are now ported, but none of their CLI subcommands (including
+  `--v3`) are.  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)
 * **CI checks.**  `native-java` never runs a demo-equivalent step, because none exists; it

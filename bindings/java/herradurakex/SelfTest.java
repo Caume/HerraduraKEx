@@ -13,7 +13,8 @@ import java.security.SecureRandom;
  * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
  * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), HDRBG
  * ({@link Hdrbg}, TODO #96/#260), HPKS-T ({@link HpksT}, TODO
- * #98/#260), and FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260). Exits
+ * #98/#260), FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260), and
+ * HSKE-NL-V2/V3-Duplex ({@link Duplex}, TODO #95/#255/#260). Exits
  * non-zero on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
@@ -545,6 +546,42 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS fpe_twk round-trip");
+            }
+        }
+
+        // HSKE-NL-V2-Duplex / V3-Duplex (#95 Option 2 / TODO #255, RESEARCH
+        // CONSTRUCTION): round-trip, tampered-ciphertext rejection, and
+        // tampered-AD rejection, for both permutation versions.
+        {
+            BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            byte[] pt = "self-test duplex plaintext, several blocks long".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] ad = "self-test-duplex-ad".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+            Duplex.EncResult r2 = Duplex.v2Encrypt(key, pt, ad, rng);
+            byte[] dec2 = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag, ad);
+            byte[] ct2Tampered = r2.ct.clone();
+            ct2Tampered[0] ^= 1;
+            boolean v2RejectsCt = Duplex.v2Decrypt(key, r2.nonce, ct2Tampered, r2.tag, ad) == null;
+            boolean v2RejectsAd = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag,
+                "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
+            boolean v2Ok = java.util.Arrays.equals(dec2, pt);
+
+            Duplex.EncResult r3 = Duplex.v3Encrypt(key, pt, ad, rng);
+            byte[] dec3 = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag, ad);
+            byte[] ct3Tampered = r3.ct.clone();
+            ct3Tampered[0] ^= 1;
+            boolean v3RejectsCt = Duplex.v3Decrypt(key, r3.nonce, ct3Tampered, r3.tag, ad) == null;
+            boolean v3RejectsAd = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag,
+                "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
+            boolean v3Ok = java.util.Arrays.equals(dec3, pt);
+
+            if (!v2Ok || !v2RejectsCt || !v2RejectsAd || !v3Ok || !v3RejectsCt || !v3RejectsAd) {
+                System.out.println("FAIL duplex round-trip (v2_ok=" + v2Ok + " v2_rejects_ct=" + v2RejectsCt
+                    + " v2_rejects_ad=" + v2RejectsAd + " v3_ok=" + v3Ok + " v3_rejects_ct=" + v3RejectsCt
+                    + " v3_rejects_ad=" + v3RejectsAd + ")");
+                fails++;
+            } else {
+                System.out.println("PASS duplex round-trip");
             }
         }
 

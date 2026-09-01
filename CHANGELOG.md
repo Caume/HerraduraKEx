@@ -2,6 +2,47 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.4] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HSKE-NL-V2/V3-Duplex ported
+
+MINOR: a new language-target port of an existing research construction (plus its NL-FSCX v3
+variant), Java's fifth piece of TODO #260, and the sixth of the seven primitives TODO #260
+lists — only HPKS-Stern-Ring remains unported. Library primitive and `SelfTest` coverage
+only (step 1 of TODO #260's staged scope); no `duplex` CLI subcommand exists in any
+language, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Duplex.java`** — port of `hske_nl_v2_duplex_encrypt`/
+  `hske_nl_v2_duplex_decrypt` and their `_v3` counterparts from "Herradura cryptographic
+  suite.{c,go,py}"'s #95 Option 2 section (TODO #255 for v3): a MonkeyDuplex-style
+  single-pass AEAD built directly on the NL-FSCX v2/v3 permutations (256-bit state,
+  128-bit rate, `nl_fscx_revolve_v{2,3}` as the sponge permutation, tweaked per (key,
+  nonce)). RESEARCH CONSTRUCTION, carried over verbatim from the other languages'
+  documentation of that status.
+- Cross-checked byte-for-byte against Python across four plaintext-length classes (empty,
+  sub-rate, exact-one-rate-block, multi-block) for both v2 and v3 — ciphertext and tag
+  identical in both languages at every combination (there is no KAT vector for either
+  primitive in `KAT/`).
+- **`SelfTest.java`** gains a duplex round-trip check for both versions: correct
+  decryption, rejection of a tampered ciphertext byte, and rejection of tampered
+  associated data — mirroring the depth of C/Go's existing duplex demo/tests.
+
+### Fixed
+
+- **Two stale TODO.md paragraphs from v5.3.3, silently never written.** That commit's
+  `TODO.md` update script raised an exception on its third (unrelated) edit before writing
+  the file, discarding the first two edits in memory along with it — so v5.3.3's Progress
+  note and "Library functions" bullet still described FPE/twk as unported after the commit
+  that ported them, and the CLI-capabilities bullet (fixed separately, by a script that ran
+  after the failure) was the only one of the three that actually landed. Caught while
+  updating the same paragraphs for this release; both corrected here alongside this
+  release's own progress note. A `git diff`/re-read after a multi-edit script, not just a
+  clean exit code, is the fix going forward — the script printed nothing wrong because the
+  exception was real and visible, but its blast radius (silently discarding prior edits in
+  the same buffer) was not.
+
 ## [5.3.3] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: FPE/twk (#78.A/#78.B) and their v3 variants ported
