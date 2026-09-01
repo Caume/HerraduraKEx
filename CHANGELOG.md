@@ -2,6 +2,31 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.7.1] - 2026-09-01
+
+### TODO #261 (partial) — give SelfTest.java the numbered test convention (asymmetry #2)
+
+PATCH: internal test-output convention change, no new API surface.
+
+- Every one of `bindings/java/herradurakex/SelfTest.java`'s 26 checks now prints
+  `PASS [N] name` / `FAIL [N] name` instead of an unnumbered `PASS name` / `FAIL name`,
+  giving each one the same kind of stable, citable ID C/Go/Python's `[1]`-`[48]` tests
+  already have (e.g. CHANGELOG.md's "test [45] runs its Stern-F sub-check at rounds=32").
+- The numbering is **Java's own**, deliberately not aligned index-for-index with
+  C/Go/Python's: this file bundles correctness and Eve-resistance into one
+  round-trip-plus-tamper check per protocol, where the other three languages often split
+  those into separate numbered tests repeated per bit-width. Forcing the same number onto
+  both would misleadingly imply they test the same thing, so cite these as "SelfTest.java's
+  check [N]".
+- The class doc comment lists all 26 checks by name in order and states the numbers are
+  permanent — new checks append at `[27]` onward, matching `TODO.md`/`TODO_DONE.md`'s own
+  numbering discipline (TODO #154).
+- `bindings/java/build.sh`, a direct `SelfTest` run (26/26 clean), and
+  `CliTest/test_java_bindings.sh` all re-run clean.
+- TODO #261 stays OPEN: only the proposed `check_language_parity.py` mechanical guard
+  remains — both confirmed asymmetries (#1 HCRED-KKW, #2 this numbering gap) are now
+  closed.
+
 ## [5.7.0] - 2026-09-01
 
 ### TODO #261 (partial) — port HCRED-KKW to Java; asymmetry #1 closed in all four languages

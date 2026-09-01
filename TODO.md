@@ -249,15 +249,24 @@ explicit that tests are in scope, not only the primitives:
 CryptosuiteTests/Herradura_tests.c   32 `test_*` functions
 CryptosuiteTests/Herradura_tests.go  37 `test*` functions
 CryptosuiteTests/Herradura_tests.py  36 `test_*` functions
-bindings/java/herradurakex/SelfTest.java  ~20 PASS/fail checks, unnumbered
+bindings/java/herradurakex/SelfTest.java  26 PASS/fail checks, numbered [1]-[26] (v5.7.1)
 ```
 
 C/Go/Python additionally share a **numbered** test convention ([1]-[48], stable IDs cited
 throughout `CHANGELOG.md`/`TODO_DONE.md` — e.g. "test [45] runs its Stern-F sub-check at
-`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` has no
-equivalent numbering, so a Java gap can't even be cited by the same vocabulary the other
-three use to talk about test coverage.  Bringing Java's test count up (TODO #260, item 2)
-should also adopt the numbered convention, not just close the count gap.
+`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` had no
+equivalent numbering.
+
+**Resolved (v5.7.1):** every check in `SelfTest.java` now prints `PASS [N] name` /
+`FAIL [N] name`, giving each one the same kind of stable, citable ID the other three
+languages have ("SelfTest.java's check [18]" is now as citable as "test [45]"). The
+numbering is **Java's own**, not aligned index-for-index with C/Go/Python's: Java bundles
+correctness and Eve-resistance into one round-trip-plus-tamper check per protocol, where
+C/Go/Python often split those into separate numbered tests repeated per bit-width, so
+forcing the same number onto both would misleadingly imply they test the same thing. The
+class doc comment lists all 26 by name and states the numbers are permanent (new checks
+append at `[27]` onward), matching `TODO.md`/`TODO_DONE.md`'s own numbering discipline
+(TODO #154). `test_java_bindings.sh` re-run clean.
 
 **Relationship to #260 and sequencing.**  Work #260 first — most of what #261 would flag
 today is exactly #260's Java list, and fixing it there is the direct fix.  What #261 adds on

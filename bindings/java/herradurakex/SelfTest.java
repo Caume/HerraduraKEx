@@ -18,6 +18,24 @@ import java.security.SecureRandom;
  * HPKS-Stern-Ring ({@link SternRing}, TODO #78.I/#260). Exits non-zero
  * on any failure.
  *
+ * TODO #261 (asymmetry #2): each check below now carries a stable numeric
+ * ID, {@code PASS [N] name} / {@code FAIL [N] name}, the same citable-ID
+ * convention C/Go/Python's {@code [1]}-{@code [48]} test suites use
+ * (e.g. CHANGELOG.md's "test [45] runs its Stern-F sub-check at
+ * rounds=32"). The numbering is this file's own — one check per
+ * protocol here where C/Go/Python often split correctness and
+ * Eve-resistance into separate numbered tests per bit-width — so a
+ * Java {@code [N]} does NOT name the same test as a same-numbered C/Go/
+ * Python one; cite it as "SelfTest.java's check [N]" to avoid ambiguity.
+ * In file order: [1] hkex_gf [2] hske [3] hpks [4] hpke [5] hkex_rnl
+ * [6] hske_nl_a1 [7] hske_nl_a2 [8] hske_nl_a3 [9] hpke_nl3 [10] hpks_nl
+ * [11] hpke_nl [12] hpks_stern_f [13] hpke_stern_f [14] hpke_stern_kem
+ * [15] oprf [16] hpks_wots_f [17] hpks_xmss_f [18] hcred [19] zkp_nl
+ * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
+ * [26] hpks_stern_ring. New checks append at [27] onward; a check's
+ * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
+ * own numbering discipline (TODO #154).
+ *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
 public final class SelfTest {
@@ -42,10 +60,10 @@ public final class SelfTest {
             BigInteger skAlice = Herradura.hkexGfAgree(alicePriv, bobPub);
             BigInteger skBob = Herradura.hkexGfAgree(bobPriv, alicePub);
             if (!skAlice.equals(skBob)) {
-                System.out.println("FAIL hkex_gf round-trip: shared secrets differ");
+                System.out.println("FAIL [1] hkex_gf round-trip: shared secrets differ");
                 fails++;
             } else {
-                System.out.println("PASS hkex_gf round-trip");
+                System.out.println("PASS [1] hkex_gf round-trip");
             }
         }
 
@@ -56,10 +74,10 @@ public final class SelfTest {
             BigInteger ct = Herradura.hskeEncrypt(pt, key);
             BigInteger recovered = Herradura.hskeDecrypt(ct, key);
             if (!recovered.equals(pt)) {
-                System.out.println("FAIL hske round-trip");
+                System.out.println("FAIL [2] hske round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hske round-trip");
+                System.out.println("PASS [2] hske round-trip");
             }
         }
 
@@ -72,10 +90,10 @@ public final class SelfTest {
             boolean ok = Herradura.hpksVerify(msg, pub, sig.r, sig.s);
             boolean rejectsTamper = !Herradura.hpksVerify(msg.xor(BigInteger.ONE), pub, sig.r, sig.s);
             if (!ok || !rejectsTamper) {
-                System.out.println("FAIL hpks round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                System.out.println("FAIL [3] hpks round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks round-trip");
+                System.out.println("PASS [3] hpks round-trip");
             }
         }
 
@@ -87,10 +105,10 @@ public final class SelfTest {
             Herradura.Ciphertext enc = Herradura.hpkeEncrypt(pt, pub, rng);
             BigInteger recovered = Herradura.hpkeDecrypt(enc.ct, enc.r, priv);
             if (!recovered.equals(pt)) {
-                System.out.println("FAIL hpke round-trip");
+                System.out.println("FAIL [4] hpke round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hpke round-trip");
+                System.out.println("PASS [4] hpke round-trip");
             }
         }
 
@@ -113,10 +131,10 @@ public final class SelfTest {
             BigInteger kAlice = HerraduraNl.rnlContributoryKdf(aliceKey, n, nA, nB);
             BigInteger kBob = HerraduraNl.rnlContributoryKdf(bobAgree.key, n, nA, nB);
             if (!bobAgree.key.equals(aliceKey) || !kAlice.equals(kBob)) {
-                System.out.println("FAIL hkex_rnl round-trip: reconciled keys differ");
+                System.out.println("FAIL [5] hkex_rnl round-trip: reconciled keys differ");
                 fails++;
             } else {
-                System.out.println("PASS hkex_rnl round-trip");
+                System.out.println("PASS [5] hkex_rnl round-trip");
             }
         }
 
@@ -128,10 +146,10 @@ public final class SelfTest {
             BigInteger ct = HerraduraNl.hskeNlA1Encrypt(pt, key, nonce);
             BigInteger recovered = HerraduraNl.hskeNlA1Decrypt(ct, key, nonce);
             if (!recovered.equals(pt)) {
-                System.out.println("FAIL hske_nl_a1 round-trip");
+                System.out.println("FAIL [6] hske_nl_a1 round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hske_nl_a1 round-trip");
+                System.out.println("PASS [6] hske_nl_a1 round-trip");
             }
         }
 
@@ -145,10 +163,10 @@ public final class SelfTest {
             BigInteger ct = HerraduraNl.hskeNlA2Encrypt(pt, key);
             BigInteger recovered = HerraduraNl.hskeNlA2Decrypt(ct, key);
             if (!recovered.equals(pt)) {
-                System.out.println("FAIL hske_nl_a2 round-trip");
+                System.out.println("FAIL [7] hske_nl_a2 round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hske_nl_a2 round-trip");
+                System.out.println("PASS [7] hske_nl_a2 round-trip");
             }
         }
 
@@ -165,11 +183,11 @@ public final class SelfTest {
             boolean differsFromV2 =
                     !ct.equals(HerraduraNl.nlFscxRevolveV2(pt, key, HerraduraNl.R3_VALUE));
             if (!rt || !differsFromV2) {
-                System.out.println("FAIL hske_nl_a3 round-trip (rt=" + rt
+                System.out.println("FAIL [8] hske_nl_a3 round-trip (rt=" + rt
                         + " differs_from_v2=" + differsFromV2 + ")");
                 fails++;
             } else {
-                System.out.println("PASS hske_nl_a3 round-trip");
+                System.out.println("PASS [8] hske_nl_a3 round-trip");
             }
 
             BigInteger priv = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
@@ -178,10 +196,10 @@ public final class SelfTest {
             BigInteger rec3 = enc3 == null ? null
                     : HerraduraNl.hpkeNl3Decrypt(enc3.ct, enc3.r, priv);
             if (enc3 == null || !pt.equals(rec3)) {
-                System.out.println("FAIL hpke_nl3 round-trip");
+                System.out.println("FAIL [9] hpke_nl3 round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hpke_nl3 round-trip");
+                System.out.println("PASS [9] hpke_nl3 round-trip");
             }
         }
 
@@ -194,10 +212,10 @@ public final class SelfTest {
             boolean ok = HerraduraNl.hpksNlVerify(msg, pub, sig.r, sig.s);
             boolean rejectsTamper = !HerraduraNl.hpksNlVerify(msg.xor(BigInteger.ONE), pub, sig.r, sig.s);
             if (!ok || !rejectsTamper) {
-                System.out.println("FAIL hpks_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                System.out.println("FAIL [10] hpks_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_nl round-trip");
+                System.out.println("PASS [10] hpks_nl round-trip");
             }
         }
 
@@ -209,10 +227,10 @@ public final class SelfTest {
             Herradura.Ciphertext enc = HerraduraNl.hpkeNlEncrypt(pt, pub, rng);
             BigInteger recovered = HerraduraNl.hpkeNlDecrypt(enc.ct, enc.r, priv);
             if (enc == null || !pt.equals(recovered)) {
-                System.out.println("FAIL hpke_nl round-trip");
+                System.out.println("FAIL [11] hpke_nl round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hpke_nl round-trip");
+                System.out.println("PASS [11] hpke_nl round-trip");
             }
         }
 
@@ -232,11 +250,11 @@ public final class SelfTest {
             boolean rejectsTamper = !Stern.hpksSternFVerify(msg.xor(BigInteger.ONE), sig, kp.seed, kp.syndrome);
             boolean rejectsCorruptSyn = !Stern.hpksSternFVerify(msg, sig, kp.seed, kp.syndrome.xor(BigInteger.ONE));
             if (!ok || !rejectsTamper || !rejectsCorruptSyn) {
-                System.out.println("FAIL hpks_stern_f round-trip (verify=" + ok
+                System.out.println("FAIL [12] hpks_stern_f round-trip (verify=" + ok
                     + " rejects_tamper=" + rejectsTamper + " rejects_corrupt_syn=" + rejectsCorruptSyn + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_stern_f round-trip");
+                System.out.println("PASS [12] hpks_stern_f round-trip");
             }
         }
 
@@ -247,10 +265,10 @@ public final class SelfTest {
             Stern.SternEncapResult enc = Stern.hpkeSternFEncapWithE(seed, rng);
             BigInteger recovered = Stern.hpkeSternFDecap(enc.eP, seed);
             if (!enc.k.equals(recovered)) {
-                System.out.println("FAIL hpke_stern_f round-trip");
+                System.out.println("FAIL [13] hpke_stern_f round-trip");
                 fails++;
             } else {
-                System.out.println("PASS hpke_stern_f round-trip");
+                System.out.println("PASS [13] hpke_stern_f round-trip");
             }
         }
 
@@ -273,11 +291,11 @@ public final class SelfTest {
                 anyMismatch = true;
             }
             if (!pubMatches || anyMismatch) {
-                System.out.println("FAIL hpke_stern_kem round-trip (pub_matches=" + pubMatches
+                System.out.println("FAIL [14] hpke_stern_kem round-trip (pub_matches=" + pubMatches
                     + " all_" + trials + "_trials_failed=" + anyMismatch + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpke_stern_kem round-trip");
+                System.out.println("PASS [14] hpke_stern_kem round-trip");
             }
         }
 
@@ -290,10 +308,10 @@ public final class SelfTest {
             BigInteger f1 = Oprf.unblind(beta, blinded.r);
             BigInteger f2 = Oprf.direct(x, k);
             if (!f1.equals(f2)) {
-                System.out.println("FAIL oprf round-trip: blind/eval/unblind != direct");
+                System.out.println("FAIL [15] oprf round-trip: blind/eval/unblind != direct");
                 fails++;
             } else {
-                System.out.println("PASS oprf round-trip");
+                System.out.println("PASS [15] oprf round-trip");
             }
         }
 
@@ -307,10 +325,10 @@ public final class SelfTest {
             boolean ok = Wots.verify(msg, sig.sig, kp.pk);
             boolean rejectsTamper = !Wots.verify("tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), sig.sig, kp.pk);
             if (!ok || !rejectsTamper) {
-                System.out.println("FAIL hpks_wots_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                System.out.println("FAIL [16] hpks_wots_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_wots_f round-trip");
+                System.out.println("PASS [16] hpks_wots_f round-trip");
             }
         }
 
@@ -326,10 +344,10 @@ public final class SelfTest {
             boolean ok = Xmss.verify(msg, sig0, kp.root) && Xmss.verify(msg, sig1, kp.root);
             boolean rejectsTamper = !Xmss.verify("tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), sig0, kp.root);
             if (!ok || !rejectsTamper) {
-                System.out.println("FAIL hpks_xmss_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                System.out.println("FAIL [17] hpks_xmss_f round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_xmss_f round-trip");
+                System.out.println("PASS [17] hpks_xmss_f round-trip");
             }
         }
 
@@ -375,12 +393,12 @@ public final class SelfTest {
                 ok = rejectsTamper = rejectsCorruptSyn = rejectsWrongKey = rejectsSplitWitness = credOk = false;
             }
             if (!ok || !rejectsTamper || !rejectsCorruptSyn || !rejectsWrongKey || !rejectsSplitWitness || !credOk) {
-                System.out.println("FAIL hcred round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
+                System.out.println("FAIL [18] hcred round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
                     + " rejects_corrupt_syn=" + rejectsCorruptSyn + " rejects_wrong_key=" + rejectsWrongKey
                     + " rejects_split_witness=" + rejectsSplitWitness + " cred_verify=" + credOk + ")");
                 fails++;
             } else {
-                System.out.println("PASS hcred round-trip");
+                System.out.println("PASS [18] hcred round-trip");
             }
         }
 
@@ -399,11 +417,11 @@ public final class SelfTest {
                 "tampered".getBytes(java.nio.charset.StandardCharsets.US_ASCII), proof);
             boolean rejectsWrongY = !ZkpNl.verify(b, y.xor(BigInteger.ONE), n, rounds, msg, proof);
             if (!ok || !rejectsTamper || !rejectsWrongY) {
-                System.out.println("FAIL zkp_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
+                System.out.println("FAIL [19] zkp_nl round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper
                     + " rejects_wrong_y=" + rejectsWrongY + ")");
                 fails++;
             } else {
-                System.out.println("PASS zkp_nl round-trip");
+                System.out.println("PASS [19] zkp_nl round-trip");
             }
         }
 
@@ -417,11 +435,11 @@ public final class SelfTest {
             byte[] wrongSk = Hpake.loginDemo(record,
                 "wrong password".getBytes(java.nio.charset.StandardCharsets.US_ASCII), oprfKey, rng);
             if (sk == null || wrongSk != null) {
-                System.out.println("FAIL hpake round-trip (correct_login=" + (sk != null)
+                System.out.println("FAIL [20] hpake round-trip (correct_login=" + (sk != null)
                     + " wrong_login_rejected=" + (wrongSk == null) + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpake round-trip");
+                System.out.println("PASS [20] hpake round-trip");
             }
         }
 
@@ -447,11 +465,11 @@ public final class SelfTest {
             boolean chainsDiverge = !s1.equals(s2);
 
             if (!allDistinct || !chainsDiverge) {
-                System.out.println("FAIL ratchet round-trip (all_distinct=" + allDistinct
+                System.out.println("FAIL [21] ratchet round-trip (all_distinct=" + allDistinct
                     + " chains_diverge=" + chainsDiverge + ")");
                 fails++;
             } else {
-                System.out.println("PASS ratchet round-trip");
+                System.out.println("PASS [21] ratchet round-trip");
             }
         }
 
@@ -511,12 +529,12 @@ public final class SelfTest {
             boolean monoOk = frac >= 0.48 && frac <= 0.52;
 
             if (!katOk || !deterministic || !persSeparates || !reseedSeparates || !limitEnforced || !monoOk) {
-                System.out.println("FAIL hdrbg round-trip (kat=" + katOk + " deterministic=" + deterministic
+                System.out.println("FAIL [22] hdrbg round-trip (kat=" + katOk + " deterministic=" + deterministic
                     + " pers_separates=" + persSeparates + " reseed_separates=" + reseedSeparates
                     + " limit_enforced=" + limitEnforced + " monobit=" + monoOk + ")");
                 fails++;
             } else {
-                System.out.println("PASS hdrbg round-trip");
+                System.out.println("PASS [22] hdrbg round-trip");
             }
         }
 
@@ -537,10 +555,10 @@ public final class SelfTest {
             boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msg);
             boolean rejectsTamper = !HpksT.verify(sig.cAgg, sig.r, sig.s.xor(BigInteger.ONE), msg);
             if (!ok || !rejectsTamper) {
-                System.out.println("FAIL hpks_t round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                System.out.println("FAIL [23] hpks_t round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_t round-trip");
+                System.out.println("PASS [23] hpks_t round-trip");
             }
         }
 
@@ -585,12 +603,12 @@ public final class SelfTest {
             boolean keyBoundarySeparated = !split1.equals(split2);
 
             if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated || !keyBoundarySeparated) {
-                System.out.println("FAIL fpe_twk round-trip (fpe=" + fpeRt + " twk=" + twkRt
+                System.out.println("FAIL [24] fpe_twk round-trip (fpe=" + fpeRt + " twk=" + twkRt
                     + " fpe_v3=" + fpeV3Rt + " twk_v3=" + twkV3Rt + " domain_separated=" + domainSeparated
                     + " v2v3_separated=" + v2v3Separated + " key_boundary_separated=" + keyBoundarySeparated + ")");
                 fails++;
             } else {
-                System.out.println("PASS fpe_twk round-trip");
+                System.out.println("PASS [24] fpe_twk round-trip");
             }
         }
 
@@ -621,12 +639,12 @@ public final class SelfTest {
             boolean v3Ok = java.util.Arrays.equals(dec3, pt);
 
             if (!v2Ok || !v2RejectsCt || !v2RejectsAd || !v3Ok || !v3RejectsCt || !v3RejectsAd) {
-                System.out.println("FAIL duplex round-trip (v2_ok=" + v2Ok + " v2_rejects_ct=" + v2RejectsCt
+                System.out.println("FAIL [25] duplex round-trip (v2_ok=" + v2Ok + " v2_rejects_ct=" + v2RejectsCt
                     + " v2_rejects_ad=" + v2RejectsAd + " v3_ok=" + v3Ok + " v3_rejects_ct=" + v3RejectsCt
                     + " v3_rejects_ad=" + v3RejectsAd + ")");
                 fails++;
             } else {
-                System.out.println("PASS duplex round-trip");
+                System.out.println("PASS [25] duplex round-trip");
             }
         }
 
@@ -659,11 +677,11 @@ public final class SelfTest {
             SternRing.RingSignature forged = SternRing.sign(msg, badE, 0, ringPub, demoRounds, rng);
             boolean rejectsForgery = !SternRing.verify(msg, forged, ringPub);
             if (!ok || !rejectsTamper || !rejectsForgery) {
-                System.out.println("FAIL hpks_stern_ring round-trip (verify=" + ok
+                System.out.println("FAIL [26] hpks_stern_ring round-trip (verify=" + ok
                     + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery + ")");
                 fails++;
             } else {
-                System.out.println("PASS hpks_stern_ring round-trip");
+                System.out.println("PASS [26] hpks_stern_ring round-trip");
             }
         }
 
