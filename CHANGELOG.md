@@ -2,6 +2,37 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.1] - 2026-09-01
+
+### TODO #262 (DONE) — `HpksXmssSign` bound-checks its own leaf index (CodeQL go/incorrect-integer-conversion, alert #1)
+
+PATCH: bug fix / hardening. Go API signature change (`HpksXmssSign` now returns an error),
+but no CLI/PEM/wire-format change — `bindings/ffi` doesn't touch XMSS.
+
+- **Root cause.** `herradura/herradura.go`'s `HpksXmssSign` narrowed its `leafIdx int`
+  parameter to `uint32` with no bound check of its own. `HerraduraCli/herradura_cli.go`'s
+  `sign --algo hpks-xmss` handler already guarded this correctly (`leafIdx >= numLeaves`,
+  `numLeaves` capped via `xmssMaxH = 20`) before calling in — but CodeQL's own docs say it
+  "is only able to identify bounds checks that compare against a constant value", and
+  `numLeaves` is a variable, so the alert fired anyway and stayed open since 2026-08-19.
+  Investigation confirmed the shipped CLI path was safe but the library function itself
+  was not: any other caller of the exported `herradura` package skipping that guard would
+  get silent leaf-index wraparound into an already-used leaf — WOTS key reuse, i.e.
+  private-key recovery for a one-time-use signature scheme.
+- **Fix:** `HpksXmssSign(msg, kp, leafIdx) (*HpksXmssSig, error)` — validates
+  `leafIdx` against `len(kp.LeafHashes)` itself and returns an error rather than silently
+  narrowing an out-of-range index. All three callers updated (`Herradura cryptographic
+  suite.go`'s demo, `CryptosuiteTests/Herradura_tests.go`'s test [30],
+  `HerraduraCli/herradura_cli.go`'s `sign` handler). No other `uint32(...)` conversion in
+  `herradura/herradura.go` takes an unbounded caller-supplied `int` (checked); C's
+  `hpks_xmss_sign` was already typed `uint32_t leaf_idx` by construction, so no analogous
+  Go-only bug there.
+- Test [30] gained a `range_reject` sub-check (negative index and index `== len(LeafHashes)`,
+  both must error).
+- Verified: `build_go.sh`/`build_c.sh` clean; suite demo's XMSS section passes; test [30]
+  reports `range_reject=N/N [PASS]`; `CliTest/test_wots.sh`'s full C/Go/Python XMSS/WOTS
+  interop matrix (45 checks) passes unchanged.
+
 ## [5.8.0] - 2026-09-01
 
 ### TODO #261 (partial) — extend the `PRIMITIVES` manifest: masked HSKE ported to Java, Merkle accumulator made public, ratchet/haccum guarded

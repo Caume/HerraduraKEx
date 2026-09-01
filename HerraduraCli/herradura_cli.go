@@ -3592,7 +3592,10 @@ func cmdSign(args []string) {
 				numLeaves)
 			os.Exit(1)
 		}
-		sig := HpksXmssSign(inBytes, kp, leafIdx)
+		sig, serr := HpksXmssSign(inBytes, kp, leafIdx)
+		if serr != nil {
+			die("sign", serr)
+		}
 
 		sigBlob := wotsBlobPack(sig.WotsSig)
 		pathBlob := make([]byte, 0, len(sig.AuthPath)*32)

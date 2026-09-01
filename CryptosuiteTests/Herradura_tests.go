@@ -1407,7 +1407,7 @@ func testHdrbg() {
 func testWotsXmss() {
 	const xmssH = 3 // 8 leaves; production uses h=10
 	N := testRounds(3)
-	okSign, okTamper, okReuse := 0, 0, 0
+	okSign, okTamper, okReuse, okRangeReject := 0, 0, 0, 0
 	fmt.Printf("[30] HPKS-WOTS-F / HPKS-XMSS-F sign+verify (h=%d)  [PQC]\n", xmssH)
 	t0 := time.Now()
 	for i := 0; i < N; i++ {
@@ -1415,23 +1415,33 @@ func testWotsXmss() {
 		for j := range seed { seed[j] = byte(mrand.Intn(256)) }
 		kp   := HpksXmssKeygen(seed, xmssH)
 		msg  := []byte("HPKS-XMSS-F security test")
-		sig0 := HpksXmssSign(msg, kp, 0)
-		sig1 := HpksXmssSign(msg, kp, 1)
-		if HpksXmssVerify(msg, sig0, kp.Root) && HpksXmssVerify(msg, sig1, kp.Root) {
+		sig0, err0 := HpksXmssSign(msg, kp, 0)
+		sig1, err1 := HpksXmssSign(msg, kp, 1)
+		if err0 == nil && err1 == nil &&
+			HpksXmssVerify(msg, sig0, kp.Root) && HpksXmssVerify(msg, sig1, kp.Root) {
 			okSign++
 		}
-		if !HpksXmssVerify([]byte("tampered"), sig0, kp.Root) {
+		if err0 == nil && !HpksXmssVerify([]byte("tampered"), sig0, kp.Root) {
 			okTamper++
 		}
-		if !HpksXmssVerify([]byte("different message"), sig0, kp.Root) {
+		if err0 == nil && !HpksXmssVerify([]byte("different message"), sig0, kp.Root) {
 			okReuse++
+		}
+		// TODO #262: an out-of-range leaf index (negative, or >= the tree
+		// size) must be rejected by HpksXmssSign itself rather than
+		// silently narrowed by uint32(leafIdx) into an in-range, already-
+		// used leaf -- that would be WOTS key reuse.
+		_, errNeg := HpksXmssSign(msg, kp, -1)
+		_, errHigh := HpksXmssSign(msg, kp, len(kp.LeafHashes))
+		if errNeg != nil && errHigh != nil {
+			okRangeReject++
 		}
 		if timeExceeded(t0) { N = i + 1; break }
 	}
 	status := "PASS"
-	if okSign != N || okTamper != N || okReuse != N { status = "FAIL" }
-	fmt.Printf("    sign_ok=%d/%d  tamper_reject=%d/%d  reuse_reject=%d/%d  [%s]\n\n",
-		okSign, N, okTamper, N, okReuse, N, status)
+	if okSign != N || okTamper != N || okReuse != N || okRangeReject != N { status = "FAIL" }
+	fmt.Printf("    sign_ok=%d/%d  tamper_reject=%d/%d  reuse_reject=%d/%d  range_reject=%d/%d  [%s]\n\n",
+		okSign, N, okTamper, N, okReuse, N, okRangeReject, N, status)
 }
 
 func testHpkst() {
