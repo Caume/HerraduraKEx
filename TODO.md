@@ -188,9 +188,12 @@ not for the gaps this one found.  Step 3
 is DONE.  v5.4.0 added step 4: `Demo.java`, a narrated protocol-by-protocol walkthrough
 mirroring the other three languages' `main()` — every protocol `HerraduraCli.java`
 exposes, the same `+`/`[FAIL]` verdict style, and the same TODO #258/#259 `[FAIL]`-marker
-gate, verified clean across several runs.  Step 4 is DONE; 5 (its CI step) and 6 (interop
+gate, verified clean across several runs.  Step 4 is DONE.  v5.4.1 added step 5:
+`native-java`'s CI job now builds Java explicitly and runs `Demo.java` as its own step
+("Java suite demo runs to completion"), the same position and the same `[FAIL]`-gated
+convention C/Go/Python's demo steps use.  Step 5 is DONE; only step 6 (interop
 coverage — `test_cross_lang_matrix.sh` and `test_threshold_interop.sh` still skip Java's
-cell) are still open.
+cell) remains open.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
@@ -198,10 +201,10 @@ cell) are still open.
   ported — Ratchet (78.C), HDRBG (#96), HPKS-T, FPE/twk (both v2 and v3),
   HSKE-NL-V2/V3-Duplex, and HPKS-Stern-Ring (78.I) — see Progress above. This bullet is
   DONE; the remaining gaps are the demo, the CI step, and interop coverage below.
-* **Library demo.**  DONE as of v5.4.0.  `bindings/java/herradurakex/Demo.java` now
+* **Library demo.**  DONE as of v5.4.0.  `bindings/java/herradurakex/Demo.java`
   exercises every protocol `HerraduraCli.java` exposes end to end with human-readable
-  +/- verdicts and the same `[FAIL]`-marker gate TODO #258/#259 gave C/Go/Python.  Not yet
-  wired into any CI job — see the CI checks bullet below (step 5).
+  +/- verdicts and the same `[FAIL]`-marker gate TODO #258/#259 gave C/Go/Python.  Wired
+  into CI as of v5.4.1 — see the CI checks bullet below (step 5, now DONE).
 * **CLI capabilities.**  DONE as of v5.3.9.  `HerraduraCli.java` gained `fpe`/`twk`
   (both v2 and v3) in v5.3.6, `hpks-t`'s four `threshold-*` subcommands plus
   `verify --algo hpks-t` in v5.3.7, `hske-duplex`/`hske-duplex3` on `enc`/`dec` in v5.3.8,
@@ -210,12 +213,13 @@ cell) are still open.
   (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)
-* **CI checks.**  `native-java` never runs a demo-equivalent step, because none exists; it
-  cannot inherit #258/#259's `[FAIL]`-gated demo run without #260 shipping the demo first.
-  `SelfTest.java`'s own pass/fail gate (a direct `fails` counter, `System.exit(1)`) is
-  functionally sound but is a third gating idiom next to C's output-scanning `hprintf`, Go's
-  `os.Stdout` pipe, and Python's `print` shadow — worth noting, not necessarily worth
-  unifying for its own sake.
+* **CI checks.**  DONE as of v5.4.1.  `native-java` now runs `Demo.java` as its own
+  `[FAIL]`-gated step ("Java suite demo runs to completion"), the same position and
+  convention C/Go/Python's demo steps use.  `SelfTest.java`'s own pass/fail gate (a direct
+  `fails` counter, `System.exit(1)`) remains a separate, functionally-sound idiom next to
+  C's output-scanning `hprintf`, Go's `os.Stdout` pipe, Python's `print` shadow, and now
+  `Demo.java`'s own scanning `out()` — worth noting, not necessarily worth unifying for its
+  own sake.
 * **Cross-interoperability checks.**  `cross-lang-compat`'s `test_cross_lang_matrix.sh` and
   `test_malformed_pem_matrix.sh`, and `CliTest/test_v3_family.sh`, all degrade to a NOTE or
   skip Java's cell for exactly the families above — `test_v3_family.sh`'s own header says so

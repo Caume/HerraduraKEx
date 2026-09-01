@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.1] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the `native-java` demo CI step
+
+PATCH: a new CI step, no new protocol/CLI/API surface. `.github/workflows/ci.yml`'s
+`native-java` job gains an explicit "Build Java" step and a "Java suite demo runs to
+completion" step (`java -cp bindings/java herradurakex.Demo`) between the build and the
+existing `CliTest/test_java_*.sh` loop — the same position C/Go/Python's demo-run steps
+occupy in their own jobs (TODO #258/#259). `Demo.java`'s own `[FAIL]`-marker gate (v5.4.0)
+means this step now fails on a wrong verdict the same way the other three languages' demo
+steps do, not only on a crash. Verified locally with the exact CI invocation
+(`bash bindings/java/build.sh` then `java -cp bindings/java herradurakex.Demo`, both run
+from the repo root) — clean exit 0. `native-java`'s job name updated to
+"Java (build + demo + CliTest interop)" to match, and `CLAUDE.md`'s CI-jobs paragraph
+updated to describe the new step.
+
+TODO #260's step 5 is now DONE. Only step 6 (interop-matrix coverage — extending
+`test_cross_lang_matrix.sh`/`test_threshold_interop.sh` to stop skipping Java's cell)
+remains open.
+
 ## [5.4.0] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the Java suite demo

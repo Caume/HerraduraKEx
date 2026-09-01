@@ -666,8 +666,10 @@ plus a coverage-guard step that fails if any non-Java, non-cross-lang-matrix `Cl
 script isn't claimed by exactly one of these four `native-*` jobs, and a DFR-guard step that
 fails if a script which decapsulates `hpke-stern-kem` doesn't source `CliTest/lib_dfr.sh`,
 TODO #221), `native-java` (builds/
-runs the `bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python
-interop and KAT cross-checks per-protocol-family, TODO #206), `cross-lang-compat` (builds
+runs the `bindings/java/` port, its `Demo.java` suite walkthrough — gated on the same
+`[FAIL]`-marker convention as C/Go/Python's demo binaries, TODO #258/#259/#260 — and all
+`CliTest/test_java_*.sh` scripts — Java-vs-Python interop and KAT cross-checks
+per-protocol-family, TODO #206), `cross-lang-compat` (builds
 all four CLIs and runs two 4-way scripts: `CliTest/test_cross_lang_matrix.sh`, a genuine
 C/Go/Python/Java compatibility matrix across the classical quartet, the NL/PQC quartet,
 the Stern family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates

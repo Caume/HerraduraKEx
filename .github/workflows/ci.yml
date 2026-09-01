@@ -251,7 +251,7 @@ jobs:
           exit $missing
 
   native-java:
-    name: Java (build + CliTest interop)
+    name: Java (build + demo + CliTest interop)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +260,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends default-jdk-headless python3
+
+      - name: Build Java
+        run: bash bindings/java/build.sh
+
+      # TODO #260 step 5. See the matching C/Go/Python steps: gates on a
+      # crash AND a wrong verdict, via the demo's own "[FAIL]"-marker exit
+      # code (Demo.java's out() helper, mirroring C's hprintf / Go's
+      # stdout-capturing pipe / Python's print shadow, TODO #258/#259).
+      - name: Java suite demo runs to completion
+        run: java -cp bindings/java herradurakex.Demo
 
       - name: CliTest — Java bindings + interop
         run: |
