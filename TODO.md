@@ -294,19 +294,44 @@ two things mechanically rather than by a one-time source read:
    two entries**: `hcred-zkboo` (all four languages, pre-existing) and `hcred-kkw` (all four,
    now that this item's own work closed it) — verified to catch a renamed/removed marker.
 
+**v5.8.0 — `PRIMITIVES` extended past its seed, one real gap found and closed.**  Audited
+the four suite files/bindings for suite-internal (non-CLI) primitives beyond `hcred-*`:
+
+* **Masked HSKE (78.H) was a genuine Java gap.**  `fscx_revolve_masked` /
+  `hske_encrypt_masked` / `hske_decrypt_masked` (Boolean masking via `M`'s GF(2)-linearity)
+  existed in C/Go/Python but had no Java port — `Demo.java`'s own doc comment already named
+  this as a pre-existing gap.  Ported to `Herradura.java`, wired into `Demo.java`, and
+  cross-checked against the unmasked `fscxRevolve` result, not just round-tripped.
+* **The Merkle accumulator (78.J) existed in Java but wasn't independently usable** — it was
+  package-private inside `Xmss.java` (its only caller) where C/Go/Python expose it as
+  general-purpose top-level functions.  Widened to `public`; `Demo.java`'s doc comment,
+  which claimed it wasn't ported at all, corrected.
+* The forward-secret ratchet (78.C) was already at four-language parity and gets its first
+  `PRIMITIVES` entry as a regression guard, same treatment as ZKBoo.
+* `spec/check_language_parity.py`'s `SUITE_FILES["java"]` generalized from a single
+  hardcoded path (`Hcred.java`, a leftover of the manifest's KKW-only origin) to every
+  `bindings/java/herradurakex/*.java` concatenated — Java, unlike C/Go/Python, splits its
+  suite one class per protocol family, so a single-file assumption would have made every
+  future non-Hcred entry a false positive.
+* `PRIMITIVES` is now 7 entries (`hcred-zkboo`, `hcred-kkw`, `haccum`, `ratchet`,
+  `fscx-revolve-masked`, `hske-encrypt-masked`, `hske-decrypt-masked`), up from 2.
+
 **What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
-below asks for *every* protocol/primitive, and `PRIMITIVES` currently has exactly the two
-entries this item's own investigation produced — a seed, not the retroactive full census of
-the ~35-protocol table `spec/herradura-protocol-spec.json` already tracks by CLI surface.
-Populating `PRIMITIVES` with every suite-internal (non-CLI) primitive the suite has is real,
-separate work of its own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing
-script-by-script rather than arriving complete — pick it up incrementally, the same way.
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 7 entries — grown
+past the seed, but still not the retroactive full census of the ~35-protocol table
+`spec/herradura-protocol-spec.json` already tracks by CLI surface.  Populating `PRIMITIVES`
+with every suite-internal (non-CLI) primitive the suite has is real, separate work of its
+own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing script-by-script
+rather than arriving complete — pick it up incrementally, the same way.  Candidates not yet
+in the manifest include the HPKS-T threshold aggregation helpers and the aPAKE/OPRF internal
+derivation functions — all CLI-reachable at their protocol's top level already, so lower
+priority than the non-CLI class this item exists to catch.
 
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current two entries — extending `PRIMITIVES`
+the primitive-manifest half is met only for its current 7 entries — extending `PRIMITIVES`
 is what keeps this item open.
 
 Status: **OPEN**

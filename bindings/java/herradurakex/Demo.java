@@ -25,18 +25,24 @@ import java.util.List;
  * ({@link Wots}, {@link Xmss}), HPKS-T ({@link HpksT}), HDRBG
  * ({@link Hdrbg}), fpe/twk both v2 and v3 ({@link FpeTwk}), the
  * HSKE-NL-V2/V3-Duplex research AEAD ({@link Duplex}), the 78.C
- * forward-secret ratchet ({@link Ratchet}), OPRF ({@link Oprf}) and aPAKE
- * ({@link Hpake}) — every protocol {@code HerraduraCli.java} exposes,
- * narrated the way the suite files narrate them rather than as CLI
- * invocations. A short EVE-bypass section closes the walkthrough, matching
- * the other three languages' "Eve cannot break this without the secret"
- * checks.
+ * forward-secret ratchet ({@link Ratchet}), the 78.H masked HSKE
+ * ({@link Herradura#hskeEncryptMasked}/{@link Herradura#hskeDecryptMasked},
+ * TODO #261), OPRF ({@link Oprf}) and aPAKE ({@link Hpake}) — every
+ * protocol {@code HerraduraCli.java} exposes, narrated the way the suite
+ * files narrate them rather than as CLI invocations. A short EVE-bypass
+ * section closes the walkthrough, matching the other three languages'
+ * "Eve cannot break this without the secret" checks.
+ *
+ * <p>The Merkle accumulator (78.J) is not a standalone demo section here:
+ * it is exercised implicitly by every {@link Xmss} keygen/sign/verify call,
+ * the same way C/Go/Python's suite files use it only as XMSS's tree
+ * (its {@code haccum*} methods are {@code public} in {@link Xmss}, TODO
+ * #261, so it is callable independently too).
  *
  * <p>Not covered, matching {@code HerraduraCli.java}'s own out-of-scope
- * list: rnl-sigma, hybrid-rnl-stern, HSKE-NL-AEAD (the {@code --aead}
- * counter-mode construction), the Merkle accumulator (78.J), and masked
- * HSKE (78.H) — none of these are ported to Java at all, a pre-existing
- * gap outside TODO #260's seven-primitive scope.
+ * list: rnl-sigma, hybrid-rnl-stern, and HSKE-NL-AEAD (the {@code --aead}
+ * counter-mode construction) — none of these are ported to Java at all, a
+ * pre-existing gap outside TODO #260's seven-primitive scope.
  *
  * <p>Usage: {@code java -cp bindings/java herradurakex.Demo}
  */
@@ -114,6 +120,17 @@ public final class Demo {
         BigInteger dHske = Herradura.fscxRevolve(eHske, preshared, Herradura.R_STEPS);
         System.out.println("D (Bob)   : " + hex(dHske, n / 8));
         out(dHske.equals(plaintext) ? "+ plaintext correctly decrypted" : "[FAIL] decryption failed!");
+
+        out("\n--- Masked HSKE (78.H) [GF(2)-linearity masking, TODO #261]");
+        System.out.println("    (fscx_revolve_masked: no secret bits of the input exposed in any");
+        System.out.println("     intermediate value, via M^steps(A^r) == M^steps(A)^M^steps(r))");
+        {
+            Herradura.Masked mCt = Herradura.hskeEncryptMasked(plaintext, preshared, rng);
+            Herradura.Masked mPt = Herradura.hskeDecryptMasked(mCt.result, preshared, rng);
+            out(mPt.result.equals(plaintext) && mCt.result.equals(eHske)
+                    ? "+ masked encrypt/decrypt correct and matches unmasked fscx_revolve"
+                    : "[FAIL] masked HSKE encrypt/decrypt failed!");
+        }
 
         out("\n--- HPKS [CLASSICAL — not PQC; DLP + linear challenge]");
         System.out.println("    (Schnorr-like with fscx_revolve challenge)");

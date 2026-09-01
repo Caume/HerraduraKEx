@@ -2,6 +2,49 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.0] - 2026-09-01
+
+### TODO #261 (partial) — extend the `PRIMITIVES` manifest: masked HSKE ported to Java, Merkle accumulator made public, ratchet/haccum guarded
+
+MINOR: new public API surface in `bindings/java/herradurakex/Herradura.java`
+(`fscxRevolveMasked`/`hskeEncryptMasked`/`hskeDecryptMasked`) and widened visibility on
+`Xmss.java`'s `haccum*` methods (package-private → `public`).
+
+- **Audited the four suite files/bindings for suite-internal (non-CLI) primitives** beyond
+  v5.7.2's two-entry seed. Found two real findings and confirmed two families already at
+  parity:
+  - **Masked HSKE (78.H) was Java's only genuine gap.** `fscx_revolve_masked` /
+    `hske_encrypt_masked` / `hske_decrypt_masked` (Boolean masking via `M`'s GF(2)-linearity
+    — `M^steps(A⊕r) = M^steps(A)⊕M^steps(r)`) existed in `herradura.h`, `herradura.go` and
+    the Python suite but had no Java port at all; `Demo.java`'s own doc comment already
+    named this as "a pre-existing gap outside TODO #260's scope." Ported to
+    `Herradura.java` (BigInteger, matching that file's existing style), wired into
+    `Demo.java` right after the unmasked HSKE section, and cross-checked there against the
+    unmasked `fscxRevolve` result on the same inputs, not just round-tripped against itself.
+  - **The Merkle accumulator (78.J) existed in Java but wasn't independently usable.**
+    `Xmss.java` already had a byte-for-byte port of `haccum_leaf`/`_node`/`_root`/`_prove`/
+    `_verify` — but package-private, unlike C/Go/Python where these are general-purpose
+    top-level functions. Widened to `public` (no behavior change); `Demo.java`'s doc comment
+    corrected — it previously claimed the accumulator wasn't ported to Java at all, which
+    was already false by the time it was written.
+  - `hcred-zkboo`/`hcred-kkw` (v5.7.2) and the forward-secret ratchet (78.C) were already at
+    four-language parity; the ratchet gets its first `PRIMITIVES` entry here as a permanent
+    regression guard, matching the treatment ZKBoo got.
+- **`spec/check_language_parity.py`'s `SUITE_FILES["java"]` generalized** from a single
+  hardcoded path (`Hcred.java` — a leftover of the manifest's KKW-only origin) to every
+  `bindings/java/herradurakex/*.java` file concatenated, since Java (unlike C/Go/Python)
+  splits its suite one class per protocol family. `check_primitives` now accepts either a
+  single path or a list per language.
+- **`PRIMITIVES` grows five entries**: `haccum`, `ratchet`, `fscx-revolve-masked`,
+  `hske-encrypt-masked`, `hske-decrypt-masked` (7 total, up from 2).
+- Verified: `bindings/java/build.sh` compiles clean; `Demo.java` and `SelfTest.java` both
+  exit `*** OK: no check reported [FAIL] ***`; `CliTest/test_java_bindings.sh` passes;
+  `spec/check_language_parity.py` passes and was re-checked against a deliberate rename
+  (`Ratchet.advance` → `advanceRenamed`), caught with an actionable message and clean after
+  restoring.
+- TODO #261 stays OPEN: `PRIMITIVES` is still a seed relative to the full suite, not a
+  completed census — extending it further is the item's remaining work.
+
 ## [5.7.2] - 2026-09-01
 
 ### TODO #261 (partial) — the mechanical parity guard: spec/check_language_parity.py

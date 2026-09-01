@@ -12,7 +12,10 @@ import java.util.List;
  *
  * Byte-for-byte port of "Herradura cryptographic suite.py"'s
  * haccum_leaf / haccum_node / haccum_root / haccum_prove / haccum_verify /
- * hpks_xmss_keygen / hpks_xmss_sign / hpks_xmss_verify.
+ * hpks_xmss_keygen / hpks_xmss_sign / hpks_xmss_verify. The haccum* methods
+ * are {@code public} (TODO #261) so the accumulator is independently usable
+ * here too, matching C/Go/Python where it is a general-purpose top-level
+ * primitive rather than an XMSS-only implementation detail.
  *
  * <b>Statefulness</b>: this class is stateless — {@code leafIdx} is an
  * explicit parameter to every sign call, and callers MUST never sign with
@@ -31,14 +34,14 @@ public final class Xmss {
     // Merkle accumulator (RFC 6962-style domain separation)
     // -----------------------------------------------------------------
 
-    static byte[] haccumLeaf(byte[] data) {
+    public static byte[] haccumLeaf(byte[] data) {
         byte[] tagged = new byte[data.length + 1];
         tagged[0] = 0x00;
         System.arraycopy(data, 0, tagged, 1, data.length);
         return Hfscx256.hash(tagged);
     }
 
-    static byte[] haccumNode(byte[] left, byte[] right) {
+    public static byte[] haccumNode(byte[] left, byte[] right) {
         byte[] tagged = new byte[1 + left.length + right.length];
         tagged[0] = 0x01;
         System.arraycopy(left, 0, tagged, 1, left.length);
@@ -47,7 +50,7 @@ public final class Xmss {
     }
 
     /** Merkle root of leafHashes (each 32 bytes); pads to the next power of two. */
-    static byte[] haccumRoot(List<byte[]> leafHashes) {
+    public static byte[] haccumRoot(List<byte[]> leafHashes) {
         int n = leafHashes.size();
         if (n == 0) return new byte[32];
         int sz = 1;
@@ -64,7 +67,7 @@ public final class Xmss {
     }
 
     /** Sibling-hash proof path for the leaf at idx. */
-    static List<byte[]> haccumProve(List<byte[]> leafHashes, int idx) {
+    public static List<byte[]> haccumProve(List<byte[]> leafHashes, int idx) {
         int n = leafHashes.size();
         int sz = 1;
         while (sz < n) sz <<= 1;
@@ -83,7 +86,7 @@ public final class Xmss {
         return proof;
     }
 
-    static boolean haccumVerify(byte[] root, byte[] leafHash, List<byte[]> proof, int idx) {
+    public static boolean haccumVerify(byte[] root, byte[] leafHash, List<byte[]> proof, int idx) {
         byte[] cur = leafHash;
         for (byte[] sib : proof) {
             cur = ((idx & 1) == 0) ? haccumNode(cur, sib) : haccumNode(sib, cur);
