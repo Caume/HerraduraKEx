@@ -2,6 +2,29 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.5] - 2026-09-01
+
+### TODO #261 (partial) — reconsider asymmetry #1: port HCRED-KKW instead of acknowledging it
+
+PATCH: reverses v5.4.4's resolution before any implementation depended on it.
+
+- v5.4.4 recorded `hcred_prove_kkw`/`hcred_verify_kkw` as ACKNOWLEDGED non-parity. That is
+  withdrawn: the scope for asymmetry #1 is now **porting KKW to C, Go and Java**, the other
+  option this item's text always named.
+- `SECURITY.md`'s HCRED row updated from "ACKNOWLEDGED non-parity" to "cross-language gap
+  tracked" with the port now in scope.
+- The pointer comments added in v5.4.4 at `herradura.h`'s `hcred_prove`,
+  `herradura/herradura.go`'s `HcredProve`, and `bindings/java/herradurakex/Hcred.java`'s
+  class doc comment are reworded from "deliberately out of scope" to "port planned, not
+  implemented."
+- `TODO.md`'s #261 entry gained a task breakdown for the port: `hcred_prove_kkw`/
+  `hcred_verify_kkw` equivalents in C/Go/Java plus their demo sections, still no new CLI
+  flag (Python's own KKW path has none), and a note that a fixed-vector KAT for KKW doesn't
+  exist yet if byte-exact cross-language verification is wanted.
+- `spec/check_security_md.py` re-run clean.
+- No implementation in this pass — #261 stays OPEN, now correctly scoped for whoever picks
+  up the actual C/Go/Java KKW port next.
+
 ## [5.4.4] - 2026-09-01
 
 ### TODO #261 (partial) — full 4-way capability parity: resolve confirmed asymmetry #1 (HCRED-KKW)

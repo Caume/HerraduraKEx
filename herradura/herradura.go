@@ -4056,11 +4056,11 @@ func hcredChallenges(stmt, comsSer, outsSer []byte, rounds int) []int {
 
 // TODO #261: the KKW preprocessing-model transcript variant
 // (hcred_prove_kkw/hcred_verify_kkw in "Herradura cryptographic suite.py",
-// ~11x smaller proofs at production parameters) is Python-only and
-// deliberately out of scope here -- it is not wired to any CLI in any
-// language (cred-prove always takes this ZKBoo-(2,3) path), so there is
-// no --algo/--transcript surface for it to diverge on.  Recorded as
-// ACKNOWLEDGED non-parity in SECURITY.md rather than ported.
+// ~11x smaller proofs at production parameters) has no equivalent here
+// yet -- port planned, not implemented.  It is not wired to any CLI in
+// any language (cred-prove always takes this ZKBoo-(2,3) path), so
+// parity means a suite-level HcredProveKkw/HcredVerifyKkw pair plus demo
+// output, not a new --algo/--transcript flag.
 
 // HcredProve produces a credential-presentation proof for the compound
 // statement (Ring-LWR key C + code syndrome y for the SAME s).

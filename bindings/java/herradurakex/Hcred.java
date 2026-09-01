@@ -35,10 +35,12 @@ import java.util.List;
  * directly instead of introducing a second, arbitrary-width NL-FSCX v1
  * implementation just for HCRED.
  *
- * The KKW preprocessing-model transcript variant
+ * TODO #261: the KKW preprocessing-model transcript variant
  * ({@code hcred_prove_kkw}/{@code hcred_verify_kkw}, ~11x smaller proofs
- * at production parameters) is out of scope for this port — the
- * ZKBoo-(2,3) path here is sufficient for interop.
+ * at production parameters) has no equivalent here yet — port planned,
+ * not implemented.  Not wired to any CLI in any language, so parity
+ * means a {@code hcredProveKkw}/{@code hcredVerifyKkw} pair plus demo
+ * output, not a new {@code --algo}/{@code --transcript} flag.
  */
 public final class Hcred {
     private Hcred() { }

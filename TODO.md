@@ -158,17 +158,32 @@ explicitly ACKNOWLEDGED non-parity (a research/demo convenience, not a security-
 divergence) and record why in `SECURITY.md`/`spec/`.  Don't leave it as an unstated fact
 four different files each know a different piece of.
 
-**Resolved (v5.4.4): downgraded to ACKNOWLEDGED, not ported.**  `hcred_prove_kkw`/
-`hcred_verify_kkw` are not wired to any CLI in any language — `cred-prove` always takes the
-ZKBoo-(2,3) path, so there is no `--algo`/`--transcript` flag for the other three to be
-missing; it is exercised only from Python's own `__main__` walkthrough.  Porting a second
-full MPCitH transcript variant to C, Go and Java for a research-tier, do-not-deploy protocol
-with no CLI surface would cost far more than it buys.  `SECURITY.md`'s HCRED row now states
-this explicitly (mirroring `Hcred.java`'s existing doc comment), and matching comments were
-added at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s `HcredProve` so a
-reader who goes looking for KKW there finds the same answer Java's port already gave.
-Confirmed asymmetry #1 is closed; asymmetry #2 (numbered test convention) and the
-mechanical `check_language_parity.py` guard remain open.
+**v5.4.4 tried the ACKNOWLEDGED route; reconsidered (v5.4.5) — port it instead.**
+`SECURITY.md` briefly recorded `hcred_prove_kkw`/`hcred_verify_kkw` as ACKNOWLEDGED
+non-parity (no CLI surface for the other three to be missing, research-tier protocol), with
+matching pointer comments at `herradura.h`'s `hcred_prove` and `herradura/herradura.go`'s
+`HcredProve`.  That resolution is withdrawn: asymmetry #1's scope is now **port KKW to C, Go
+and Java so all four match Python**, the other option this item's opening paragraph always
+named.  The ACKNOWLEDGED wording added in v5.4.4 needs pulling back out of `SECURITY.md` and
+both pointer comments once the ports land.
+
+Task breakdown for the port (mirroring Python's `hcred_prove_kkw`/`hcred_verify_kkw`, ~113
+lines, `Herradura cryptographic suite.py` line 3061 on — KKW encoding, cut-and-choose over
+`M` emulations opening `M-τ`, `N`-party preprocessing, the batched output check):
+- **C** (`herradura.h`): `hcred_prove_kkw`/`hcred_verify_kkw` alongside the existing
+  `hcred_prove`/`hcred_verify`, same `HcredProof`-style calling convention where it fits a
+  distinct KKW transcript shape; demo output in
+  `Herradura cryptographic suite.c`'s HCRED section, matching Python's `[FAIL]`-gated print.
+- **Go** (`herradura/herradura.go`): `HcredProveKkw`/`HcredVerifyKkw`, same treatment;
+  `Herradura cryptographic suite.go` demo section.
+- **Java** (`bindings/java/herradurakex/Hcred.java`): drop the "out of scope for this port"
+  doc-comment paragraph once implemented; wire into `Demo.java`'s HCRED section.
+- Still **not** a CLI subcommand in any language — Python's KKW path has none either, so
+  parity here means the three suite files and the demos, not `cred-prove --transcript kkw`.
+- KAT/test coverage is a judgment call for whoever picks this up: Python's own demo has no
+  fixed-vector KAT for KKW today, so a byte-exact cross-language check needs one added
+  first (or the port is verified structurally — round-trips + rejection — like the rest of
+  HCRED, without new KAT entries).
 
 **Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
 explicit that tests are in scope, not only the primitives:
