@@ -11,7 +11,8 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (this file): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
+> - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
+> - **Part 9 — §11.37–§11.38** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256
 
 ---
 

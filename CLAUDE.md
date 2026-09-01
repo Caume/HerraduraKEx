@@ -177,7 +177,120 @@ SecurityProofsCode/                                 — standalone Python proof/
                              #254's linear numbers (settled 0.59/0.75/0.93/0.95;
                              conclusion holds, the "rises with width" trend is
                              weakened).  NAF-weight weak-key lead filed, not
-                             concluded -- samples are too thin
+                             concluded -- samples are too thin.  ITS CENTRAL
+                             CONCLUSION IS WITHDRAWN by diff_cycle_mean.py: the
+                             window argument is right about reading a slope off
+                             a finite series and wrong about the asymptote
+  diff_cycle_mean.py       — the asymptotic differential slope, MEASURED
+                             (TODO #252, second pass; only the width
+                             extrapolation is still open).  s_diff is the
+                             MINIMUM MEAN CYCLE of the difference graph, so the
+                             transient (the constant cost of walking into the
+                             cycle) and the 0.6n ceiling (a codebook statement;
+                             a cycle is not a codebook) both cancel -- and it is
+                             exactly computable per key by Howard's policy
+                             iteration, cross-checked against Karp and against
+                             value iteration run far past the ceiling.  Per-key
+                             median mu = 1.279/1.349/1.717/1.903 at n=7/8/10/11,
+                             MONOTONE RISING, clearing the 4/3 criterion from
+                             n=8 on, with the failing fraction falling
+                             63%->27%.  Every key measured already passes the
+                             deployed nl_v2_key_is_valid.  Corrects #247's "3.0
+                             bits per round" -- the r=3..5 read misses the exact
+                             asymptote by -7% to +17% with NO consistent sign,
+                             so the 86-round projection has no support.  Closes
+                             route 1 (HiGHS beats CBC 1.4-3.7x and proves
+                             n=32 r=5,6, but growth is 3.6-4.0x per round, so
+                             r=10-14 is 4-7 orders of magnitude away) and
+                             supersedes route 3.  Exits non-zero if a finding
+                             stops reproducing
+  width_residue.py         — the ONE question #252 and #254 still share, worked
+                             (both items still OPEN).  Does not close it;
+                             changes it three times.  (1) THE RESIDUE IS
+                             MONOTONICITY, NOT THE LIMIT: both criteria are
+                             already met at the widest EXACT width (1.903 vs
+                             4/3 at n=11; 1.154 vs 2/3 at n=13), so any
+                             non-decreasing continuation clears n=256.  (2)
+                             THERE IS NO EMBEDDING between widths -- M and
+                             delta both depend on n, and only a third of
+                             optimal-cycle nodes keep their image at n+1 -- so
+                             §11.35.7's caution does not apply, and no proof
+                             can come from comparing two graphs.  (3) An
+                             ANNEALED FIRST-MOMENT MODEL predicts mu from the
+                             edge-weight distribution and out-degree alone,
+                             within a few percent by n=11 on BOTH axes, which
+                             reduces the whole width question to the max
+                             correlation / max xdp+ of addition with a
+                             CONSTANT -- a statement with no FSCX in it.
+                             Closes three routes by measurement: sparse
+                             subgraphs (optimal cycles are dense, 0.6-0.86n),
+                             a guessed LP-dual potential (Howard's bias
+                             correlates with nothing, max 0.37), and sampling
+                             the weight distribution at n=256 (the threshold
+                             is a 2^-n quantile; the sampler returns 157 at
+                             n=256 and 0.48 at n=13 where the exact answer is
+                             1.154 -- DO NOT QUOTE THE 157).  Recommends
+                             merging #252 and #254.  Exits non-zero if a
+                             finding stops reproducing
+  annealed_moment_ladder.py — the width extrapolation, EVALUATED (TODO #257,
+                             which MERGES #252 and #254).  #255-era passes
+                             closed the sampling route because the annealed
+                             threshold sits in a 2^-n quantile; that is true
+                             and is not the obstacle.  The model needs the
+                             edge-weight distribution only through its
+                             MOMENTS, and A_t = sum of (path count)^t is a
+                             count of t-TUPLES of paths, hence one linear DP
+                             over a tensor power -- O(n*t*2^t), no dependence
+                             on the number of edges, exact at n=256.  Rests
+                             on a carry-pair automaton for xdp+ with a
+                             CONSTANT (the output difference is not free:
+                             beta_i = alpha_i xor c_i xor c'_i, so a
+                             differential is a constraint sequence), and on a
+                             concavity lemma making the INTEGER lattice
+                             exact rather than a lower bound.  FINDING: mu is
+                             not asymptotically constant, it is LINEAR IN n
+                             (~0.19n differential, ~0.088n linear), so the
+                             fixed 4/3 and 2/3 criteria are cleared at n=256
+                             by 36x and 34x and n=256 is the EASIEST width,
+                             not the hardest.  Replaces #252's warned-against
+                             157 with 48.4.  Retro-explains why every pass
+                             since #247 saw mu rise and none could say why,
+                             and corrects §11.30.2's reading that no key size
+                             would help (the criterion is width-independent;
+                             the achieved slope is not).  The linear axis
+                             reaches only EVEN t -- a correlation's sign is
+                             not affine in the masks, checked -- so it
+                             brackets to 1-7% instead of closing.  Still an
+                             ESTIMATOR: annealed, validated against exact mu
+                             only at n<=13.  Exits non-zero if a finding
+                             stops reproducing
+  lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
+                             modes (TODO #254, second pass; only the width
+                             extrapolation is still open).  s_lin is the
+                             MINIMUM MEAN CYCLE of the mask graph, the same
+                             reformulation #252 used on differences, and it
+                             reaches n = 13 -- two widths further -- because
+                             each LAT row is a ROTATION plus one
+                             Walsh-Hadamard, not a per-pair carry automaton.
+                             Records an exact identity for the LAT's support
+                             (it depends on the addend only through tz).
+                             v1 needs no separate machinery: pulling a mask
+                             through M(A) xor M(B) xor ROL(A+B, n/4) leaves
+                             addition of a CONSTANT again, with B itself in
+                             delta(B)'s role.  Per-key medians rise monotonely
+                             and clear the 2/3 criterion from n = 10 on, for
+                             BOTH v1 and v2 -- so #11.30.6's reported
+                             "flattening" was a finite-round artefact, and
+                             nothing is promoted, since the v2 rows are
+                             demo-only for reasons (#243, #244) this does not
+                             touch.  ANSWERS #254's item (1) NEGATIVELY: a
+                             trail bound cannot reach HSKE-NL-A1 or
+                             HFSCX-256 at all, because in both the attacked
+                             input is the round CONSTANT B, which enters every
+                             round at once -- so there is no trail, and the
+                             three production-track rows are not #254's to
+                             move.  Exits non-zero if a finding stops
+                             reproducing
   fscx_scaling_and_linear.py — the linear axis and what key size buys
                              (TODO #254, first pass; the bound is still open).
                              SCALE-INVARIANCE THEOREM: because r = 3n/4 is tied
@@ -306,7 +419,7 @@ SecurityProofsCode/                                 — standalone Python proof/
                               footers, README, CLAUDE.md, KATEX_RULES.md) agrees with
                               SecurityProofs.md, and that the advertised expression
                               counts match what validate_katex.js measures (TODO #231)
-SecurityProofs.md                                   — split index (redirects to Parts 1–8; quantum analysis is in SecurityProofs-2.md §6)
+SecurityProofs.md                                   — split index (redirects to Parts 1–9; quantum analysis is in SecurityProofs-2.md §6)
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
@@ -314,7 +427,8 @@ SecurityProofs-4.md                                 — §11–§11.8.2: Non-lin
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
-SecurityProofs-8.md                                 — §11.34: NL-FSCX v3 — exact row analysis, weak keys (165 math expressions)
+SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.38: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 (401 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts
@@ -441,6 +555,7 @@ tooling-only, and every consumer of them degrades to a printed NOTE rather than 
 | `jsonschema` | `spec/generate_spec.py` schema validation | NOTE, but CI passes `--require-schema` so a skipped validation cannot pass | `pip install jsonschema` |
 | `z3-solver` | `SecurityProofsCode/nl_fscx_exact_trail_search.py` (TODO #214) | section skipped | `pip install z3-solver` |
 | `pulp` (CBC) | `SecurityProofsCode/nl_fscx_v2_bounds.py` §(d) MILP bounds (TODO #247) | section skipped | `sudo apt-get install -y python3-pulp`, or a venv: `python3 -m venv ~/.venvs/herradura-milp && ~/.venvs/herradura-milp/bin/pip install pulp` |
+| `highspy` | the same §(d) model under a stronger backend (TODO #252 §11.35.6) | CBC is used instead, and reaches one round fewer | `~/.venvs/herradura-milp/bin/pip install highspy` (PuLP finds it as the `HiGHS` solver) |
 
 Never add one to a shipped primitive.  If an analysis script needs a solver, it imports it
 inside a `try`/`except ImportError` and prints what to install.

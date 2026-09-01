@@ -471,6 +471,7 @@ int main(void)
     {
         static SternSig sf_sig;
         BitArray sf_e;
+        stern_sig_alloc(&sf_sig, SDF_ROUNDS);
         stern_f_keygen(&sf_seed_saved, &sf_e, sf_syn_saved, urnd);
         ba_print_hex("seed     : ", &sf_seed_saved);
         ba_print_hex("msg      : ", &plaintext);
@@ -479,6 +480,7 @@ int main(void)
             puts("+ HPKS-Stern-F signature verified");
         else
             puts("- HPKS-Stern-F verification FAILED");
+        stern_sig_free(&sf_sig);
     }
 
     /* --- HPKE-Stern-F N=32 [CODE-BASED PQC -- Niederreiter KEM, brute-force] */
@@ -642,6 +644,8 @@ int main(void)
         SternSig hc_cred;
         HcredProof hc_proof;
 
+        stern_sig_alloc(&hc_cred, SDF_ROUNDS);
+
         rnl_m_poly(hc_m);
         rnl_rand_poly(hc_rand, urnd);
         rnl_poly_add(hc_m, hc_m, hc_rand);
@@ -658,6 +662,7 @@ int main(void)
             puts("+ issuer credential (Stern-F over (m,C,seed_H,y)) verified");
         else
             puts("- issuer credential verify FAILED");
+        stern_sig_free(&hc_cred);
 
         static const uint8_t hcred_nonce[]  = "HCRED demo nonce";
         static const uint8_t hcred_nonce2[] = "other nonce";
@@ -789,6 +794,7 @@ int main(void)
     {
         static SternSig eve_sig;
         int i;
+        stern_sig_alloc(&eve_sig, SDF_ROUNDS);
         for (i = 0; i < SDF_ROUNDS; i++) {
             ba_rand(&eve_sig.c0[i], urnd);
             ba_rand(&eve_sig.c1[i], urnd);
@@ -801,6 +807,7 @@ int main(void)
             puts("+ Eve forged HPKS-Stern-F (Eve wins)!");
         else
             puts("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)");
+        stern_sig_free(&eve_sig);
     }
 
     puts("*** HPKE-Stern-F \xe2\x80\x94 Eve cannot derive session key from syndrome ciphertext");

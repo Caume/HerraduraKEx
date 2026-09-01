@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Consistency check for the SecurityProofs part index (TODO #231).
 
-The eight-part split of SecurityProofs.md is described by the same table in
+The nine-part split of SecurityProofs.md is described by the same table in
 roughly 76 places: the index in SecurityProofs.md itself, an NPARTS-row banner at
-the top of each of the eight SecurityProofs*.md files, a "Continued in Part N"
+the top of each of the nine SecurityProofs*.md files, a "Continued in Part N"
 footer at the bottom of six of them, the file map in README.md, the repository
 listing in CLAUDE.md, and the split history in SecurityProofsCode/KATEX_RULES.md.
 
@@ -32,40 +32,40 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX = "SecurityProofs.md"
-NPARTS = 8
+NPARTS = 9
 
 # "- **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity ... (659 math expressions)"
 INDEX_RE = re.compile(
-    r"^- \*\*Part (?P<n>[1-8]) — (?P<range>.+?)\*\* \(SecurityProofs-(?P=n)\.md\): "
+    r"^- \*\*Part (?P<n>[1-9]) — (?P<range>.+?)\*\* \(SecurityProofs-(?P=n)\.md\): "
     r"(?P<title>.+?) \((?P<count>\d+) math expressions\)\s*$"
 )
 
 # Banner row inside a part file; the file's own row says "(this file)".
 BANNER_RE = re.compile(
-    r"^> - \*\*Part (?P<n>[1-8]) — (?P<range>.+?)\*\* "
-    r"\((?P<file>this file|SecurityProofs-[1-8]\.md)\): (?P<title>.+?)\s*$"
+    r"^> - \*\*Part (?P<n>[1-9]) — (?P<range>.+?)\*\* "
+    r"\((?P<file>this file|SecurityProofs-[1-9]\.md)\): (?P<title>.+?)\s*$"
 )
 
 FOOTER_RE = re.compile(
-    r"^> \*\*Continued in Part (?P<n>[1-8]) — (?P<range>.+?)\*\* "
+    r"^> \*\*Continued in Part (?P<n>[1-9]) — (?P<range>.+?)\*\* "
     r"\(SecurityProofs-(?P=n)\.md\): (?P<title>.+?)\s*$"
 )
 
 # CLAUDE.md: "SecurityProofs-4.md   — §11–§11.8.2: ... (659 math expressions)"
 CLAUDE_RE = re.compile(
-    r"^SecurityProofs-(?P<n>[1-8])\.md\s+— (?P<range>.+?): .*?"
+    r"^SecurityProofs-(?P<n>[1-9])\.md\s+— (?P<range>.+?): .*?"
     r"\((?P<count>\d+) math expressions\)\s*$"
 )
 
 # KATEX_RULES.md split history: "SecurityProofs-4.md (§11–§11.8.2, 659 spans)"
 KATEX_RULES_RE = re.compile(
-    r"SecurityProofs-(?P<n>[1-8])\.md \((?P<range>[^()]+?), (?P<count>\d+) spans\)"
+    r"SecurityProofs-(?P<n>[1-9])\.md \((?P<range>[^()]+?), (?P<count>\d+) spans\)"
 )
 
 # README.md file map, after whitespace normalisation:
 # "SecurityProofs-4.md — formal analysis §11–§11.8.2 (non-linearity ..."
 README_RE = re.compile(
-    r"SecurityProofs-(?P<n>[1-8])\.md — formal analysis (?P<range>.+?) \("
+    r"SecurityProofs-(?P<n>[1-9])\.md — formal analysis (?P<range>.+?) \("
 )
 
 

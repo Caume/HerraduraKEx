@@ -11,7 +11,8 @@
 > - **Part 5 — §11.8.3–§11.8.8** (SecurityProofs-5.md): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (this file): Zero-Knowledge Proof Extensions · Research-Review Sections
-> - **Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
+> - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
+> - **Part 9 — §11.37–§11.38** (SecurityProofs-9.md): The Width Residue · The Annealed Threshold at n = 256
 
 ---
 
@@ -715,13 +716,13 @@ manual review missed.
 #164).** The C and Python non-signer challenge simulators each draw one random byte and
 reduce mod 3 to choose $b \in \{0,1,2\}$ for every ring member other than the real
 signer. Since $256 \not\equiv 0 \pmod 3$, this draw is biased: $\Pr[b=0] = 86/256 \approx
-33.59\%$ versus $\Pr[b=1]=\Pr[b=2]=85/256\approx 33.20\%$. Crucially, the real signer's
+33.59$% versus $\Pr[b=1]=\Pr[b=2]=85/256\approx 33.20$%. Crucially, the real signer's
 own displayed challenge is *not* drawn this way at all — the OR-composition forces it as
 $b_j = (\text{joint} - \sum_{i \neq j} b_i) \bmod 3$, where `joint` is the Fiat-Shamir
 hash-derived challenge (effectively uniform, independent of the simulator's random
 draws). A uniform value minus anything, reduced mod 3, is itself exactly uniform — so
 the signer's own slot has **zero** skew round to round, while every non-signer's slot
-carries the $\approx 0.39\%$ bias. This is not merely a "modulo bias" in the sense TODO
+carries the $\approx 0.39$% bias. This is not merely a "modulo bias" in the sense TODO
 #2 already fixed elsewhere (which only mattered for the uniformity of a secret value);
 here the asymmetry it creates between the signer's slot and every other slot is exactly
 the kind of statistical distinguisher a ring signature's anonymity property is supposed
@@ -2053,6 +2054,8 @@ Three consequences, of which only the third bears on the rating.
 
 TODO #248 filed #254 for a linear-trail bound at realistic width.  **That bound is not delivered and #254 stays open.**  What this pass delivers is four things that change what the bound has to establish, one of which answers the headline question without it.  Reproduce with `SecurityProofsCode/fscx_scaling_and_linear.py`.
 
+> **Superseded in part by §11.36 in Part 8 (TODO #254, second pass).**  §11.30.1's scale-invariance theorem and §11.30.4's closure of the MILP route stand, and so does the conclusion that every width above `n = 7` clears the `2/3` criterion.  Two things do not.  **§11.30.6's flattening is withdrawn**: computed exactly rather than read off a finite-round series, the slope does not decelerate — it accelerates, and the reported `+0.03` between the two widest widths was an artefact of the kind §11.35.5 documents.  And **§11.30's scope note is corrected**: it guesses that transferring the block-cipher criterion to HSKE-NL-A1 or HFSCX-256 would give "a sharper bar" at `n/4` rounds, but in both modes the attacked input is the round *constant*, so there is no trail to bound and the transfer gives nothing rather than something sharper.  §11.36 also supersedes the transfer-matrix route this section nominated.  Read the two together; where they disagree, §11.36 is later and is the one with the exact computation.
+
 **§11.30.1 A scale-invariance theorem.**  FSCX has no free round count: `R_VALUE = 3n/4` and `I_VALUE = n/4` are tied to the block size and scale automatically with `KEYBITS`.  Let `s` be the per-round trail weight, so an `r`-round trail weighs about `s·r`.
 
 *Linear.*  An attack on an `n`-bit block needs about `corr^-2` known plaintexts against a codebook of `2^n`, so it is meaningless once the weight `W` satisfies `2W >= n`.  With `r = 3n/4`:
@@ -2111,6 +2114,8 @@ This does not move any rating.  §11.29.6's verdict stands: HSKE-NL-A2 and `twk`
 ### 11.31 Why the differential bound has not closed (TODO #252, first pass)
 
 TODO #252 asks for a two-sided differential trail bound at `n = 256` and lists three routes.  **The bound is not delivered and #252 stays open.**  What this pass establishes is why the previous attempts were unstable, and it is not solver time.  Reproduce with `SecurityProofsCode/diff_bound_window.py`.
+
+> **Superseded in part by §11.35 (TODO #252, second pass).**  §11.31.2's diagnosis of the transient and the ceiling stands, and so does everything this section concludes about routes 2 and 3.  Its central *conclusion* — that the asymptotic increment "is not measurable by exhaustive search at any reachable width, not slowly, but at all" — is **withdrawn**.  That is a true statement about reading a slope off a finite increment series, which is what this pass and every earlier one did, and a false one about the asymptote itself: the asymptote is the minimum mean cycle of the difference graph, in which the transient cancels and the ceiling does not apply, and it is exactly computable at every width reached here.  §11.35 measures it.  Read the two together; where they disagree, §11.35 is later and is the one with the measurement.
 
 **§11.31.1 The target, restated.**  By §11.30.1 the criterion is width-independent — `s_diff >= 4/3` — so #252 does not need a number at `n = 256`.  It needs the asymptotic per-round increment, a single scalar, obtainable at whatever width it reads most cleanly.  That is strictly easier than the problem #252 was filed with.
 
@@ -2300,4 +2305,4 @@ Measured now, both rounds in the same `4×64`-bit limb representation with `delt
 
 ---
 
-> **Continued in Part 8 — §11.34** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis
+> **Continued in Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes

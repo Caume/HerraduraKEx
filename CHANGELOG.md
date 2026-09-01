@@ -2,9 +2,356 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.2.5] - 2026-08-31
+
+### TODO #258 — segmentation fault in the C demo's HCRED section, fixed
+
+PATCH: bug fix in the C library demo (`Herradura cryptographic suite.c`) and a
+CI process guard.  No shipped primitive, CLI surface, wire format or rating
+changes.
+
+### Fixed
+
+- **`SternSig` used unallocated at three sites in the C demo.**  `SternSig`
+  became a heap-backed struct with a caller-supplied round count under TODO
+  #236, and `herradura.h` states the contract explicitly: the caller allocates
+  with `stern_sig_alloc()` before signing.  The demo's HCRED block declared
+  `SternSig hc_cred;` and never allocated it, so both the round count and all
+  six commitment/response arrays were uninitialised stack — `hcred_issue()` ->
+  `hpks_stern_f_sign()` -> `stern_hash()` wrote through a NULL `sig->c0` and
+  the binary segfaulted partway through the demo.
+- **Two more sites of the same defect, found while localising, and neither
+  was merely a crash risk.**  `static SternSig sf_sig` in the HPKS-Stern-F
+  section is `static`, so `rounds` was 0 and the signing loop ran zero times —
+  no fault, but the section printed `- HPKS-Stern-F verification FAILED` on
+  every run, a permanent false failure in the flagship code-based-signature
+  demo.  `static SternSig eve_sig` in the Eve-forgery bypass test wrote
+  through the same kind of unallocated struct; it had simply never executed,
+  because the HCRED segfault upstream killed the process first.  All three
+  now call `stern_sig_alloc(&sig, SDF_ROUNDS)` before use and
+  `stern_sig_free(&sig)` after.  Verified clean under valgrind memcheck (0
+  leaks, 0 errors, all 28,257 allocations freed) and confirmed the demo now
+  runs to completion and reports the correct verdict at all three sites.
+- **The Go and Python suite demos do not share the defect.**  Checked while
+  fixing this: `HpksSternFSign`/`hpks_stern_f_sign` in both languages are
+  constructor functions that return a fully-built signature value, not a
+  caller-allocated out-parameter struct — the pattern that made this bug
+  possible exists only in the C API.  Java ships no equivalent demo binary at
+  all (`SelfTest.java` is a test harness, not this suite's printout demo), so
+  there was nothing to check there.
+
+### Added
+
+- **CI now runs the C, Go, and Python suite demo binaries and gates on their
+  exit status** (`native-c`, `native-go`, `native-python`).  This is the gap
+  that let the segfault above ship unnoticed through eleven green CI jobs:
+  `build_c.sh` already compiled the demo, but only the separate
+  `Herradura_tests_c` harness was ever executed.  This is a **process** guard,
+  not a **content** guard — it catches a crash or non-zero exit, not a wrong
+  verdict line.  The demo's `+`/`-` convention marks both genuine failures and
+  correct negative results (`- Eve cannot forge: ...` is a PASS), so a naive
+  grep for `-` would false-positive on every expected adversary-failure line;
+  scoring individual verdict lines needs the demo to adopt an unambiguous
+  marker first, which is why that part is filed separately as TODO #259
+  rather than done here as a rider.
+
+## [5.2.4] - 2026-08-31
+
+### TODO #252 + #254 merged into TODO #257 — the width extrapolation, evaluated
+
+PATCH: analysis and documentation, one new standalone script, and a split of
+SecurityProofs-8.md into Parts 8 and 9 to stay under GitHub's KaTeX limit.  No
+shipped primitive, CLI surface, wire format or rating changes.
+
+### Changed
+
+- **TODO #252 and TODO #254 are CLOSED BY MERGER, not by completion**, and their
+  shared remaining scope is now **TODO #257**.  Three passes each had reduced them
+  to the same obligation over the same kind of object, and their third-pass blocks
+  were byte-identical — the disagreement-between-documents class of defect (#237,
+  #238) waiting to happen.  Nothing is dropped: #257 opens with the union of what
+  both left, and the analysis they produced stays where it is.
+- **`SecurityProofs-8.md` is split**, at §11.37, into Part 8 (§11.34–§11.36, 435
+  math expressions) and the new **`SecurityProofs-9.md`** (§11.37–§11.38, 401).
+  Appending §11.38 had taken Part 8 to 839, past the ~750 threshold at which
+  GitHub silently stops rendering math.  Every copy of the part index — the index
+  itself, nine banners, seven footers, `README.md`, `CLAUDE.md`,
+  `KATEX_RULES.md` — is updated, and `check_part_index.py` moves to `NPARTS = 9`.
+
+### Added
+
+- **`SecurityProofsCode/annealed_moment_ladder.py`** and **`SecurityProofs-9.md`
+  §11.38** — TODO #257's first pass.  §11.37 opened the annealed first-moment
+  model and closed the only way anyone had of evaluating it at realistic width:
+  the threshold sits in a `2^-n` quantile, so a sampler cannot find it (that
+  section records one returning 157 at n = 256 against 0.48 at n = 13, where the
+  exact answer is 1.154).  That obstacle is real and is not the binding one.  The
+  model consumes the edge-weight distribution only through its MOMENTS, and
+  `A_t = sum of (path count)^t` counts t-TUPLES of paths — one linear DP over a
+  tensor power, `O(n * t * 2^t)`, with no dependence on the number of edges.
+  Exact at n = 256.
+
+### Findings
+
+- **A carry-pair automaton for `xdp+` of addition with a CONSTANT.**  The output
+  difference is not a free variable: `beta_i = alpha_i xor c_i xor c'_i`, so a
+  differential is a prescribed sequence of carry-pair parities and its probability
+  is a path count.  Validated bit-exactly against the exhaustive DDT at n = 6 and
+  n = 7 — every addend, every pair.
+- **Integer moments are enough, as a lemma rather than an approximation.**  The
+  annealed threshold is a supremum over a continuous parameter whose numerator is
+  concave, so it lies above its chord and below either flanking secant on any
+  interval, and both bounds are extremal at the endpoints.  The integer lattice
+  brackets — and the bracket is observed to close to 1e-12.
+- **THE SLOPE IS LINEAR IN n.**  Four passes (#247, #252's two, #254's two) asked
+  what the per-round slope converges to.  It does not converge: what settles is
+  `lambda*/n`, at about 0.19 differential and 0.088 linear, and the per-key spread
+  of that ratio narrows with width (0.0345 -> 0.0093 from n = 32 to n = 256).  The
+  criteria are fixed numbers, so the margin GROWS with width and **n = 256 is the
+  easiest width, not the hardest**: 48.4 against 4/3 and 22.4 against 2/3, margins
+  of 36x and 34x, at every key and every `tz` class sampled.  The 157 that #252
+  warned must not be quoted is replaced by 48.4.
+- **It retro-explains #252 and #254's own measurements.**  Both reported mu rising
+  monotonely over n = 7..13 without being able to say why a bounded-looking
+  quantity kept climbing.  It is not bounded — their exact medians 1.279 / 1.349 /
+  1.717 / 1.903 are 0.183 / 0.169 / 0.172 / 0.173 of n, the same constant the
+  model approaches from below.
+- **A correction to §11.30.2.**  Its scale-invariance theorem stands: the
+  CRITERION does not depend on n.  Its reading that "no key size moves it" — taken
+  as *widening buys nothing on this axis* — does not; widening faces the same
+  criterion with proportionally more margin.  Nothing here recommends widening.
+- **A correction to §11.37.6.**  Its per-trailing-zero offset is not
+  width-independent (about 0.40 per zero at n = 256 against 0.100-0.130 at
+  n <= 11), and the per-class ordering is not resolved by a sample of this size.
+  Its CONCLUSION survives a fortiori: the whole `tz` span is under 6% of the
+  largest class where one zero cost 5-7% at n <= 11.
+- **The linear axis reaches only EVEN moments**, because a correlation's sign is
+  not an affine function of the masks — fitted over GF(2) and rejected at every
+  addend, with exactly half the nonzero entries negative.  The even lattice still
+  brackets, to 1-7%, and its lower end is the conservative one.
+- **What is NOT settled, and neither part is small.**  The model is an ESTIMATOR —
+  annealed, a first moment, which bounds nothing on its own — validated against
+  exact mu only at n <= 13, where it runs 3-15% below the truth.  And the linear
+  hull is unreached, as it was in #254.  The cheapest upgrade is named precisely:
+  the gap is a SECOND-MOMENT question about the same two inputs, both exactly
+  computable by the machinery already here.
+
+## [5.2.3] - 2026-08-31
+
+### TODO #252 + #254 (third pass, shared) — the width residue
+
+PATCH: analysis and documentation, plus one new standalone script.  No shipped
+primitive, CLI surface, wire format or rating changes.  Both items stay OPEN.
+
+### Added
+
+- **`SecurityProofsCode/width_residue.py`** — the one question #252 and #254
+  still share, worked.  It does not close it; it changes what is being asked.
+- **`SecurityProofs-8.md` §11.37**, and Part 8 grows from 435 to 600 math
+  expressions.
+
+### Findings
+
+- **The residue is MONOTONICITY, not the limit.**  Both criteria are already met
+  at the widest *exact* width — `s_diff = 1.903` against `4/3` at n = 11,
+  `s_lin = 1.154` against `2/3` at n = 13 — so any non-decreasing continuation
+  clears n = 256.  Both items had been carrying the harder version of the
+  question for four passes.
+- **There is no embedding between widths**, which retires §11.35.7's caution
+  that "the obvious tool points the wrong way".  `M` and `delta` both depend on
+  n; only a third of optimal-cycle nodes keep their image at n+1, so a cycle of
+  length ten survives with probability about `0.33^10`.  The graph at n+1 is not
+  an extension of the graph at n, it is an unrelated graph — so no monotonicity
+  proof can come from comparing two of them.
+- **An annealed first-moment model is validated on both axes**, predicting `mu`
+  from the edge-weight distribution and the out-degree alone to within a few
+  percent by n = 11, independently on the differential and linear sides.  It is
+  an estimator, not a bound — the sign of the finite-size correction is observed
+  rather than established — but it reduces the whole width question to one
+  quantity: **the largest correlation and the largest `xdp+` of addition with a
+  CONSTANT, as a function of n**.  That statement contains no FSCX, and Wallen's
+  characterisation does not apply to it (§11.30.4).
+- **`mu` falls by a width-stable 0.10-0.13 per trailing zero of `delta`**, and
+  the distribution of `tz(delta)` does not depend on width — so only the
+  `tz = 0` sequence needs extrapolating.
+
+### Changed
+
+- **Three routes are closed by measurement.**  (1) Sparse-subgraph search at
+  n = 256: the optimal cycle is dense, 0.6n to 0.86n Hamming weight at every
+  width with no downward trend.  (2) Guessing the LP-dual potential — the only
+  route that could give a theorem: Howard's bias correlates with no natural node
+  statistic (largest 0.37, most under 0.11).  (3) Sampling the weight
+  distribution at n = 256: the annealed threshold is a `2^-n` quantile, which
+  uniform sampling cannot reach.  **The sampled figure of ~157 at n = 256 must
+  not be quoted** — the same procedure returns 0.48 at n = 13 where the exact
+  answer is 1.154, and that control is recorded alongside it.
+- **#252 and #254 are recommended for merger.**  Their remaining scope is now
+  identical.  They are kept separate only because the numbering policy has no
+  merge operation; the shared analysis lives in one place.
+
+## [5.2.2] - 2026-08-31
+
+### TODO #254 (second pass) — the linear slope, measured exactly; and the two modes
+
+PATCH: analysis and documentation, plus one new standalone script and one new
+TODO.  No shipped primitive, CLI surface, wire format or rating changes.
+
+### Added
+
+- **`SecurityProofsCode/lin_cycle_mean.py`** — computes `s_lin`, the asymptotic
+  per-round linear trail weight, **exactly**, per key, for NL-FSCX v1 and v2.
+  Same minimum-mean-cycle reformulation TODO #252 used on the differential
+  axis; §11.35.7 predicted it would transfer more cleanly here and it does.
+  It reaches `n = 13`, two widths further than the differential side, because
+  each LAT row is a rotation of a fixed sign vector followed by one
+  Walsh-Hadamard transform rather than a per-mask-pair carry automaton.
+  Validated four ways: against `fscx_scaling_and_linear.py`'s independent
+  automaton, against an exact identity for the LAT's support, against a
+  brute-force LAT of the real v1 round, and Howard vs Karp vs a min-plus
+  dynamic program.  Exits non-zero if a finding stops reproducing.
+- **`SecurityProofs-8.md` §11.36**, and Part 8 grows from 261 to 435 math
+  expressions.
+- **TODO #256** — nineteen `\%`-in-math spans in Parts 4 and 5 that render
+  with the percent sign silently dropped, the same defect v5.2.1 fixed two of
+  in Part 7.
+
+### Findings
+
+- **`s_lin` clears the `2/3` criterion from `n = 10` on, for BOTH v1 and v2**,
+  monotone rising, with the failing fraction thinning across the range.  The
+  same shape TODO #252 found on the differential axis, measured independently
+  on a different primitive pair.  First time the quantity has been computed
+  rather than read off a finite-round slope.
+- **v1 needs no separate treatment**, which #254 had budgeted for.  Pulling a
+  mask through `M(A) ^ M(B) ^ ROL(A+B, n/4)` leaves addition of a *constant*
+  again, with `B` itself in `delta(B)`'s role.
+- **An exact identity for the add-constant LAT's support**, not previously
+  recorded: the number of nonzero entries depends on the addend only through
+  its trailing-zero count.  It is what makes the graph's edge count predictable
+  and what would catch a broken LAT before a slope is read off it.
+- **The v1 degenerate class is exactly four keys at every width** — those
+  supported on the top two bits — one of which the suite already treats as
+  degenerate.  Density `2^-254` at `n = 256`; no screening warranted.  Contrast
+  #253's differential class for v2, which covers about 6% of keys.
+- **Nothing is promoted.**  The v2 rows stay demo-only for reasons this does
+  not touch, and the criterion is sufficient rather than necessary — the linear
+  hull is what an attacker gets, and a trail weight bounds it one way only.
+
+### Changed
+
+- **TODO #254's item (1) is answered, negatively and structurally.**  §11.30's
+  scope note guessed that transferring the block-cipher criterion to
+  HSKE-NL-A1 and HFSCX-256 would give "a sharper bar" at `n/4` rounds.  It
+  gives nothing: in both modes the input the attacker varies is the round
+  CONSTANT, which enters all `r` rounds at once, so there is no trail to bound.
+  **The three production-track rows #254 was filed to reach are not reachable
+  by a trail bound in either direction.**  Measured instead: A1's
+  counter-difference maximum saturates against the random-function floor by
+  `r = 5`, and Davies-Meyer's message input matches a random function's image
+  fraction to within 0.01 — corroborating §11.9's ideal-random-function
+  treatment (TODO #215) on the one point a trail argument could have
+  contradicted.
+- **§11.30.6's reported flattening is corrected.**  The first pass settled the
+  slope at 0.59/0.75/0.93/0.95 and concluded that "the slope rises with width"
+  was weakened.  Computed exactly, the deceleration is not there; it was a
+  finite-round artefact of the kind #252 §11.35.5 documents.
+- **The transfer-matrix route is superseded**, as #252's route 3 was, and for
+  the same reason: it existed to make the computation scale.
+- **`SecurityProofs-7.md` §11.30 carries the supersession notice inline**, so the
+  two passes cannot be read as disagreeing.
+- **#252 and #254 now share their entire remaining scope** — the width
+  extrapolation — and should be filed once rather than twice.
+
+## [5.2.1] - 2026-08-30
+
+### TODO #252 (second pass) — the asymptotic differential slope, measured exactly
+
+PATCH: analysis and documentation, plus one new standalone script.  No shipped
+primitive, CLI surface, wire format or rating changes.
+
+### Added
+
+- **`SecurityProofsCode/diff_cycle_mean.py`** — computes `s_diff`, the asymptotic
+  per-round differential trail increment, **exactly**, per key, at every width an
+  exhaustive DDT reaches.  Howard's policy iteration for the minimum mean cycle,
+  cross-checked against Karp's theorem and against value iteration run far past
+  the ceiling: seven cases, three methods sharing no machinery, agreement to
+  1e-9.  Exits non-zero if a finding stops reproducing.
+- **`SecurityProofs-8.md` §11.35**, and Part 8 grows from 165 to 261 math
+  expressions.
+
+### Changed
+
+- **TODO #252's first pass is partly withdrawn.**  §11.31.2 concluded the
+  asymptotic increment "is NOT MEASURABLE BY EXHAUSTIVE SEARCH AT ANY REACHABLE
+  WIDTH — not slowly, but at all".  That is a correct statement about reading a
+  slope off a finite increment series — which is what every previous pass did —
+  and an incorrect one about the asymptote.  `s_diff` is the **minimum mean
+  cycle** of the difference graph: the transient is exactly the additive
+  constant in `W(r) = c + mu*r + o(1)` and cancels in a cycle mean, and the
+  0.6n ceiling is a statement about a codebook, which a cycle is not compared
+  to.  Both brackets dissolve rather than being defeated.  §11.31 now carries
+  the supersession notice inline, so the two sections cannot be read as
+  disagreeing.
+- **#247 §(d)'s "3.0 bits per round" is corrected.**  Solved for the cycle mean
+  in the same key-averaged model, the r = 3..5 read misses the exact asymptote
+  by −7% to +17% — with **no consistent sign**, so it is not a biased slope but
+  a window average over a series that has not reached its slope.  The
+  256/3 ≈ 86-round projection built on it has no support.  §11.28.6's separate
+  claim that the per-key figure is about half the key-averaged one survives and
+  is now measured directly rather than inferred: 1.717 / 2.751 = 0.62 at n = 10.
+- **Route 1 is closed and route 3 is superseded.**  HiGHS was added as an
+  optional analysis-only MILP backend; it beats CBC by 1.4x at r = 4 and by more
+  than 3.7x at r = 5, and proves n = 32 at r = 5 (weight 10.0) and r = 6
+  (weight 14.0), which CBC could not — two new rows for #247's width-agreement
+  table.  But growth is 3.6–4.0x per added round, putting the r = 10–14 target
+  four to seven orders of magnitude out of reach.  It is closed because the
+  target was unnecessary: r = 10–14 existed only to open a measurement window,
+  and §11.35.1 removes the need for one.  Route 3 was proposed to make the
+  computation scale, and Howard's algorithm already does.
+
+### Findings
+
+- **Per-key `mu` = 1.279 / 1.349 / 1.717 / 1.903 at n = 7 / 8 / 10 / 11** —
+  monotone rising, clearing the `4/3` criterion from n = 8 on, with the fraction
+  of accepted keys below it falling 63.4% → 27.3%.  Every key measured already
+  passes the deployed `nl_v2_key_is_valid`, which rejects only `delta = 0` and
+  `delta = 2^(n-1)`.  This is the reassuring direction and the first time the
+  quantity has been measured rather than projected.  **No rating moves**: the
+  NL-FSCX v2 rows stay demo-only, and four exact points are a trend, not a limit.
+- **A tail remains, and is documented rather than screened**, following TODO
+  #253's disposition for the same shape of finding: p10 sits below the criterion
+  at every width and thins more slowly than the median rises.
+- **The obvious route to the remaining question points the wrong way.**  A
+  surviving-cycle embedding argument would prove `mu` *non-increasing*, and
+  widening also adds candidate cycles, so the naive counting argument points
+  down as well.  `mu` rises anyway — so the rise is driven by width *destroying*
+  cheap cycles, and any structural proof has to explain that first.  Recorded
+  because it is the first thing the next attempt will reach for.
+- **A value-iteration trap, recorded because it costs a percent silently.**
+  Reading the asymptote off a series tail by averaging over a fixed window is
+  only approximate: the series is eventually periodic, and a window that is not
+  a whole number of periods leaves an O(1/window) error.  Detecting the period
+  makes it exact — but a short period must be confirmed over a long tail, since
+  at n = 7, `delta = 44` satisfies the test at P = 3 by coincidence and reports
+  a `mu` one percent low.
+
+### Fixed
+
+- **Two silently-dropped percent signs in `SecurityProofs-7.md` (§11.16's
+  modulo-3 ring-signature finding).**  A `\%` inside an inline math span is
+  resolved by CommonMark to a bare `%` *before* KaTeX sees it, where it is a
+  comment marker — so `$... 33.59\%$` renders on GitHub as `33.59` with the
+  percent silently gone, and `validate_katex.js` reports it as a strict-mode
+  `commentAtEnd` warning rather than a FAIL.  Closing the math span before the
+  sign (`$33.59$%`, the form already used in `SecurityProofs-2.md`) fixes it.
+  Part 7 now validates with zero warnings; the same pattern survives in Parts 4
+  and 5 and is untouched here.
+
 ## [5.2.0] - 2026-08-30
 
-### TODO #255 (partial) — the five NL-FSCX v3 consumers, across every CLI
+### TODO #255 — the five NL-FSCX v3 consumers, across every CLI (closes #255)
 
 MINOR: new `--algo` values, a new flag, new PEM labels and new public API; nothing
 existing changed.  v3 remains an addition alongside v2, so every stored v2 key,
@@ -101,6 +448,11 @@ ciphertext and signature keeps working, and no `MIGRATING.md` entry is needed.
   and its `flag` field.
 - `docs/TUTORIAL.md`, `llms.txt` and `CLAUDE.md` document the five consumers, the
   flag-vs-subcommand decision, and the corrected cost figures.
+- **TODO #255 is closed** by this release, having landed across three: v5.0.9 derived
+  the round count, v5.1.0 shipped the primitive and settled the key-check question, and
+  v5.2.0 ships the consumers.  Nothing in its scope is outstanding.  The v3 ratings stay
+  demo-only, which is not an open part of #255 — it waits on the trail bounds at
+  realistic width that #252 and #254 track, and v3 existing does not move them.
 
 ## [5.1.0] - 2026-08-30
 
