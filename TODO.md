@@ -185,8 +185,12 @@ boundary-encoding collision guard.  Ratchet, HPKS-T, HPKS-Stern-Ring and Duplex 
 already at or above their C/Go/Python counterparts' depth.  Step 2 is not fully closed —
 this was one audit pass, not an exhaustive one — but remains open only for further passes,
 not for the gaps this one found.  Step 3
-is DONE; 4 (Java demo), 5 (its CI step), and 6 (interop coverage — `test_cross_lang_matrix.sh`
-and `test_threshold_interop.sh` still skip Java's cell) are all still open.
+is DONE.  v5.4.0 added step 4: `Demo.java`, a narrated protocol-by-protocol walkthrough
+mirroring the other three languages' `main()` — every protocol `HerraduraCli.java`
+exposes, the same `+`/`[FAIL]` verdict style, and the same TODO #258/#259 `[FAIL]`-marker
+gate, verified clean across several runs.  Step 4 is DONE; 5 (its CI step) and 6 (interop
+coverage — `test_cross_lang_matrix.sh` and `test_threshold_interop.sh` still skip Java's
+cell) are still open.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
@@ -194,12 +198,10 @@ and `test_threshold_interop.sh` still skip Java's cell) are all still open.
   ported — Ratchet (78.C), HDRBG (#96), HPKS-T, FPE/twk (both v2 and v3),
   HSKE-NL-V2/V3-Duplex, and HPKS-Stern-Ring (78.I) — see Progress above. This bullet is
   DONE; the remaining gaps are the demo, the CI step, and interop coverage below.
-* **Library demo.**  C, Go and Python each have a `Herradura cryptographic suite.{c,go,py}`
-  that exercises every protocol end to end with human-readable +/- verdicts (and, since
-  TODO #258/#259, an unambiguous `[FAIL]` gate).  Java has no equivalent — `SelfTest.java`
-  is a compact round-trip test harness, not the narrated demo the other three languages
-  ship, so a reader comparing "what does using this protocol from Java look like" has
-  nothing to run.
+* **Library demo.**  DONE as of v5.4.0.  `bindings/java/herradurakex/Demo.java` now
+  exercises every protocol `HerraduraCli.java` exposes end to end with human-readable
+  +/- verdicts and the same `[FAIL]`-marker gate TODO #258/#259 gave C/Go/Python.  Not yet
+  wired into any CI job — see the CI checks bullet below (step 5).
 * **CLI capabilities.**  DONE as of v5.3.9.  `HerraduraCli.java` gained `fpe`/`twk`
   (both v2 and v3) in v5.3.6, `hpks-t`'s four `threshold-*` subcommands plus
   `verify --algo hpks-t` in v5.3.7, `hske-duplex`/`hske-duplex3` on `enc`/`dec` in v5.3.8,

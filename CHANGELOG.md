@@ -2,6 +2,43 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.0] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the Java suite demo
+
+MINOR: a new runnable entry point (`bindings/java/herradurakex/Demo.java`, TODO #260 step
+4) — a narrated, protocol-by-protocol walkthrough mirroring `Herradura cryptographic
+suite.{c,go,py}`'s `main()`, which `SelfTest.java` (a compact pass/fail smoke test) never
+replaced. Covers every protocol `HerraduraCli.java` exposes: the classical quartet with
+full hex-printed values (HKEX-GF, HSKE, HPKS, HPKE); the NL/PQC quartet including the v3
+(TODO #255) variants (HSKE-NL-A1/A2/A3, HKEX-RNL, HPKS-NL, HPKE-NL/NL3); the Stern family
+(HPKS-Stern-F, HPKE-Stern-F demo KEM, HPKE-Stern-KEM real QC-MDPC/BGF, HPKS-Stern-Ring);
+HFSCX-256-DM, ZKP-NL, HCRED, HPKS-WOTS-F/XMSS-F; and every one of TODO #260's seven newly
+ported primitives (HPKS-T, HDRBG, fpe/twk both v2 and v3, HSKE-NL-V2/V3-Duplex, the 78.C
+ratchet); OPRF and aPAKE; and a short EVE-bypass section (HPKS-NL forgery, HPKE-NL
+decryption, HKEX-RNL key-guessing, HPKS-Stern-F forgery) matching the other three
+languages' "Eve cannot break this without the secret" checks.
+
+Every genuine-failure branch prints a line carrying the literal marker `[FAIL]`; a `+`
+prefixes success. `out()` scans every line it prints for that marker and counts it —
+the same idiom C's `hprintf`, Go's stdout-capturing pipe, and Python's `print` shadow use
+(TODO #258/#259) — so the demo exits non-zero on a wrong verdict, not only on a crash, and
+prints `*** FAILED: n check(s) reported [FAIL] ***` (with the offending lines) or
+`*** OK: no check reported [FAIL] ***` at the end, matching the other three languages
+verbatim. Verified clean (`exit 0`, zero `[FAIL]` lines through the gate) across several
+runs — the fresh-random-values-per-run design meant checking this wasn't a one-off pass.
+
+Deliberately not covered, matching `HerraduraCli.java`'s own out-of-scope list: rnl-sigma,
+hybrid-rnl-stern, HSKE-NL-AEAD (the `--aead` counter-mode construction), the Merkle
+accumulator (78.J), and masked HSKE (78.H) — none of these are ported to Java at all, a
+pre-existing gap outside TODO #260's seven-primitive scope, not something this pass
+backfills.
+
+`bash CliTest/test_java_bindings.sh`, `spec/generate_spec.py --check --require-schema`, and
+`spec/check_security_md.py` all stay green — `Demo.java` is picked up by `build.sh`'s
+`javac -d . herradurakex/*.java` glob but is not yet wired into any test script (that's
+TODO #260 step 5, a `native-java` CI step running it — not done in this pass).
+
 ## [5.3.10] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `SelfTest.java` parity audit, first pass
