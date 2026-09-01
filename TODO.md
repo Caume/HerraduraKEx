@@ -156,3 +156,154 @@ figures already published, not as a gate on anything.
 
 Status: **OPEN**
 
+
+### #260: bring Java to full parity with C/Go/Python — functions, demo, tests, CLI, CI, cross-interop
+
+Java (`bindings/java/`) has been a genuine, mostly-complete port since TODO #196-#203, and
+gets carried along with most new work (#245, #255, #258/#259's audit all touched it). But it
+has never been held to full parity, and several past items documented the gap and explicitly
+declined to close it rather than losing track of it: TODO #240 ("**Not in scope.** Adding
+`hpks-ring` to the Java CLI ... stays out of scope and remains a gap"), TODO #241/#242/v4.0.0
+("Landed identically in C, Go and Python (Java ships neither)"), TODO #255 ("Java ships no
+duplex, fpe or twk"). This item is where that stops being scattered across other items' scope
+notes and becomes its own tracked gap, closed a piece at a time the way #255's four passes
+closed the v3 primitive.
+
+**What is actually missing, confirmed against the current tree, not assumed:**
+
+* **Library functions/protocols.**  Java has no Ratchet (78.C), no HDRBG (forward-secure
+  DRBG demo #96), no HPKS-T (n-of-n threshold aggregate Schnorr), no HPKS-Stern-Ring (78.I
+  ring signature), no FPE (78.A), no tweakable cipher/`twk` (78.B), and no
+  HSKE-NL-V2-Duplex (research AEAD) — and by extension none of their NL-FSCX v3 variants
+  (`fpe --v3`, `twk --v3`, `hske-duplex3`) that TODO #255 landed in C/Go/Python only.
+  Grep confirms: `Ratchet`, `HpksT`, `Drbg`, `SternRing` match nothing under
+  `bindings/java/herradurakex/*.java`; `Fpe`/`Twk`/`Duplex` match only a comment in
+  `KatVerify.java` recording that they are absent.
+* **Library demo.**  C, Go and Python each have a `Herradura cryptographic suite.{c,go,py}`
+  that exercises every protocol end to end with human-readable +/- verdicts (and, since
+  TODO #258/#259, an unambiguous `[FAIL]` gate).  Java has no equivalent — `SelfTest.java`
+  is a compact round-trip test harness, not the narrated demo the other three languages
+  ship, so a reader comparing "what does using this protocol from Java look like" has
+  nothing to run.
+* **CLI capabilities.**  `HerraduraCli.java` has no `hpks-ring`, `fpe`, `twk`, or the
+  research `duplex` AEAD subcommand — the direct CLI-surface consequence of the missing
+  library functions above.  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
+  against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
+  rather than assumed here.)
+* **CI checks.**  `native-java` never runs a demo-equivalent step, because none exists; it
+  cannot inherit #258/#259's `[FAIL]`-gated demo run without #260 shipping the demo first.
+  `SelfTest.java`'s own pass/fail gate (a direct `fails` counter, `System.exit(1)`) is
+  functionally sound but is a third gating idiom next to C's output-scanning `hprintf`, Go's
+  `os.Stdout` pipe, and Python's `print` shadow — worth noting, not necessarily worth
+  unifying for its own sake.
+* **Cross-interoperability checks.**  `cross-lang-compat`'s `test_cross_lang_matrix.sh` and
+  `test_malformed_pem_matrix.sh`, and `CliTest/test_v3_family.sh`, all degrade to a NOTE or
+  skip Java's cell for exactly the families above — `test_v3_family.sh`'s own header says so
+  explicitly.  Every function/CLI gap above is therefore also an interop-coverage gap: there
+  is no `test_java_*_interop.sh` for a protocol Java cannot run.
+
+**Explicitly out of scope, and why.**  HCRED-KKW (`hcred_prove_kkw`/`hcred_verify_kkw`) is
+NOT a Java gap — it exists only in the Python suite file today, absent from C, Go, *and*
+Java alike, so it is a separate Python-only-feature item, not a C/Go/Python-vs-Java
+asymmetry.  Don't fold it in here.  Likewise the assembly/Arduino targets are not this
+item's concern — they are deliberately narrower ports (N=32, t=2, demo-only) and were never
+held to suite-language parity.
+
+**Scope for the work, expected to land in stages like #255 did, each its own PATCH or MINOR
+bump per CLAUDE.md's versioning rule (a new CLI subcommand is MINOR):**
+1. Port each missing primitive to `bindings/java/herradurakex/` (Ratchet, HDRBG, HPKS-T,
+   HPKS-Stern-Ring, FPE, twk, HSKE-NL-V2-Duplex, and the v3 variants of the latter three),
+   cross-checked against the existing KAT vectors the way `KatVerify.java` already does for
+   everything else.
+2. Add `SelfTest.java` round-trip coverage for each, matching the granularity the C/Go/Python
+   test [44]-[48] additions used.
+3. Add the CLI subcommands to `HerraduraCli.java` and regenerate `spec/` (`generate_spec.py`)
+   so `cli_binding` picks them up — `check_security_md.py` and the schema gate must stay green.
+4. Write the Java suite demo (`bindings/java/herradurakex/Demo.java` or similar — name it
+   when the work starts, don't presume it here) mirroring the other three's protocol-by-
+   protocol narration, with the same `[FAIL]`-marker gate #259 gave C/Go/Python.
+5. Add a `native-java` CI step that runs it, gated the same way.
+6. Add or extend the `CliTest/test_java_*_interop.sh` / `test_cross_lang_matrix.sh` /
+   `test_v3_family.sh` coverage so every newly-ported feature gets a real 4-way (or
+   3-way, where a feature predates v3) interop check instead of a NOTE.
+
+**Acceptance criterion.**  Done means every `grep`/scope note above finds nothing: no
+protocol, CLI subcommand, demo section, test, or interop script that exists for C, Go and
+Python but not Java, and no cross-lang-compat script that skips Java's cell with a NOTE for
+a feature reason (a language-inherent reason, if any turns up during the work, gets
+documented as ACKNOWLEDGED instead of silently left as OPEN forever).
+
+Status: **OPEN**
+
+### #261: full 4-way capability parity — C, Go, Python and Java run the exact same algorithms and tests
+
+**Distinct from TODO #260, and the direction matters.**  #260 is "Java catches up to
+C/Go/Python" — every gap it lists is something the other three have and Java lacks.  This
+item is the symmetric closure: no language may have an algorithm, protocol variant, or
+security test that any of the other three is missing, **in either direction**.  Once #260
+lands, this item is what keeps all four in lockstep going forward, and it already has at
+least one confirmed gap #260 does not cover, because #260 explicitly excluded it.
+
+**Confirmed asymmetry #1 — HCRED-KKW, named in the request that opened this item.**  The
+KKW preprocessing-model transcript variant (`hcred_prove_kkw`/`hcred_verify_kkw`, ~11x
+smaller proofs than the ZKBoo-(2,3) path at production parameters) exists **only in
+Python**:
+
+```
+Herradura cryptographic suite.c   -- absent
+Herradura cryptographic suite.go  -- absent
+Herradura cryptographic suite.py  -- hcred_prove_kkw / hcred_verify_kkw, ~113 lines
+bindings/java/herradurakex/Hcred.java -- absent, and says so explicitly:
+    "The KKW preprocessing-model transcript variant ... is out of scope for
+     this port -- the ZKBoo-(2,3) path here is sufficient for interop."
+```
+
+Java's own doc comment is a documented, deliberate exclusion — which is exactly the
+ACKNOWLEDGED outcome this item should produce for anything that turns out to be a genuine
+per-language reason, rather than four different implicit answers to the same question.  C
+and Go have never addressed it at all.  Resolve it one of two ways when this item is worked:
+port KKW to C, Go and Java so all four match Python; or downgrade Python's KKW path to
+explicitly ACKNOWLEDGED non-parity (a research/demo convenience, not a security-relevant
+divergence) and record why in `SECURITY.md`/`spec/`.  Don't leave it as an unstated fact
+four different files each know a different piece of.
+
+**Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
+explicit that tests are in scope, not only the primitives:
+
+```
+CryptosuiteTests/Herradura_tests.c   32 `test_*` functions
+CryptosuiteTests/Herradura_tests.go  37 `test*` functions
+CryptosuiteTests/Herradura_tests.py  36 `test_*` functions
+bindings/java/herradurakex/SelfTest.java  ~20 PASS/fail checks, unnumbered
+```
+
+C/Go/Python additionally share a **numbered** test convention ([1]-[48], stable IDs cited
+throughout `CHANGELOG.md`/`TODO_DONE.md` — e.g. "test [45] runs its Stern-F sub-check at
+`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` has no
+equivalent numbering, so a Java gap can't even be cited by the same vocabulary the other
+three use to talk about test coverage.  Bringing Java's test count up (TODO #260, item 2)
+should also adopt the numbered convention, not just close the count gap.
+
+**Relationship to #260 and sequencing.**  Work #260 first — most of what #261 would flag
+today is exactly #260's Java list, and fixing it there is the direct fix.  What #261 adds on
+top: (a) the reverse-direction check (does every OTHER language have what Python/Go/C
+individually grew, like KKW), and (b) turning "parity" from a one-time audit into something
+checked mechanically going forward, so a fifth divergence doesn't accumulate silently the
+way KKW apparently did.
+
+**Proposed mechanism, to design when this item is worked, not decided here.**  The repo
+already has two coverage guards in this family — `ci.yml`'s native-interop step failing if a
+`CliTest/*.sh` script isn't claimed by exactly one job, and `check_part_index.py` failing if
+`SecurityProofs-*.md`'s banners disagree.  A `check_language_parity.py` in the same spirit —
+enumerating each language's public functions/CLI subcommands/numbered tests and diffing the
+four sets — would turn every future asymmetry (Java or otherwise) into a caught CI failure
+instead of a fact three other files quietly don't know.  Scope, false-positive rate (a
+language-appropriate helper that isn't a protocol function shouldn't count), and where it
+runs are all open design questions for whoever picks this up.
+
+**Acceptance criterion.**  For every protocol/primitive and every named security test, the
+four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
+recorded reason (never a silent absence) — checked by the mechanism above rather than by a
+one-time read of the source tree, so it stays true.
+
+Status: **OPEN**
