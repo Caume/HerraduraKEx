@@ -154,11 +154,16 @@ syndrome, run repeatedly and at every ring position.  HPKS-T, FPE and twk unlike
 Ratchet/HDRBG/Duplex DO have CLI subcommands in C/Go/Python (`--algo hpks-t` TODO #106;
 `fpe`/`twk` subcommands); HPKS-Stern-Ring also has one (`sign --ring`/`verify --ring` or
 equivalent — audit the exact flag shape against the C/Go/Python CLIs when step 3 is worked,
-rather than assumed here).  Every pass so far has ported only the library primitive +
-`SelfTest` coverage (step 1 of the scope below); step 1 is now COMPLETE.  Steps 2-6 —
-numbered-test parity, CLI subcommands, the Java demo, its CI step, and interop coverage —
-are all still open.
-coverage are all still open.
+rather than assumed here).  Every pass through v5.3.5 ported only the library primitive +
+`SelfTest` coverage (step 1 of the scope below); step 1 is COMPLETE.  v5.3.6 started step 3
+(CLI subcommands) with `fpe`/`twk` (both v2 and v3) in `HerraduraCli.java`, verified
+byte-exact against `herradura.py`'s CLI output and cross-language round-tripped.  Step 2
+(numbered-test parity matching C/Go/Python's [44]-[48]) remains open — `SelfTest.java`'s
+existing per-primitive coverage (round-trip, tamper rejection, and protocol-specific checks
+like forward secrecy or forgery rejection) is comparable in kind but was never explicitly
+checked against the C/Go/Python test numbering for gaps.  Steps 3 (remaining: `hpks-t`,
+`duplex`, `hpks-ring`), 4 (Java demo), 5 (its CI step), and 6 (interop coverage) are all
+still open.
 
 **What is actually missing, confirmed against the current tree, not assumed:**
 
@@ -173,14 +178,13 @@ coverage are all still open.
   is a compact round-trip test harness, not the narrated demo the other three languages
   ship, so a reader comparing "what does using this protocol from Java look like" has
   nothing to run.
-* **CLI capabilities.**  `HerraduraCli.java` has no `hpks-t`, `hpks-ring`, `fpe`, `twk`,
-  or the research `duplex` AEAD subcommand — the direct CLI-surface consequence of the
-  (now fully ported, see above) library functions.  `hpks-t`'s library primitive is
-  ported, but its multi-round threshold-signing CLI protocol (TODO #106 in C/Go/Python) is
-  not; `fpe`'s, `twk`'s, the research `duplex` AEAD's, and `hpks-ring`'s library primitives
-  (fpe/twk both v2 and v3; duplex both v2 and v3) are all ported, but none of their CLI
-  subcommands (including `--v3` and whatever ring-signature flag shape C/Go/Python use) are.
-  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
+* **CLI capabilities.**  `HerraduraCli.java` gained `fpe`/`twk` (both v2 and v3) in
+  v5.3.6 — see Progress above.  Still missing: `hpks-t`, `hpks-ring`, and the research
+  `duplex` AEAD subcommand.  `hpks-t`'s library primitive is ported, but its multi-round
+  threshold-signing CLI protocol (TODO #106 in C/Go/Python) is not; the research `duplex`
+  AEAD's and `hpks-ring`'s library primitives (duplex both v2 and v3) are ported, but
+  neither has a CLI subcommand (including whatever ring-signature flag shape C/Go/Python
+  use).  (`pkey` and `hdrbg`/OPRF/aPAKE-adjacent subcommands: audit
   against `spec/herradura-protocol-spec.json`'s `cli_binding` map when this item is worked,
   rather than assumed here.)
 * **CI checks.**  `native-java` never runs a demo-equivalent step, because none exists; it

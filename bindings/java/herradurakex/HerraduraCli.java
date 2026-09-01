@@ -36,13 +36,19 @@ import java.util.Map;
  * aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL,
  * {@code pake-register}/{@code pake-demo} — {@link Hpake}, TODO #203).
  *
+ * Also covers {@code fpe}/{@code twk} (78.A/78.B, plus their {@code --v3}
+ * variants, TODO #255/#260 — {@link FpeTwk}): a 32-byte-block tweak cipher
+ * and a tweakable wide-block cipher, both keyed by a session key PEM (the
+ * same shape {@code enc}/{@code dec} use for {@code hske}).
+ *
  * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
  * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
- * OR-composition signature, and the {@code --kdf}/{@code --aead} CLI
- * options.
+ * OR-composition signature, the research {@code duplex} AEAD, HPKS-T, and
+ * the {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
+ * these gaps).
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
- * decfile. PEM/DER wire format is byte-for-byte compatible with the
+ * decfile, fpe, twk. PEM/DER wire format is byte-for-byte compatible with the
  * Python/C/Go CLIs (via {@link Codec}). HKEX-RNL's {@code kex} is
  * two-round: Bob responds first ({@code --our} his priv key, {@code --their}
  * Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
@@ -76,6 +82,7 @@ public final class HerraduraCli {
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
+                + "|fpe|twk"
                 + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
                 + "|pake-register|pake-demo> [options]");
         }
@@ -92,6 +99,8 @@ public final class HerraduraCli {
             case "dgst":    cmdDgst(opt);    break;
             case "encfile": cmdEncfile(opt); break;
             case "decfile": cmdDecfile(opt); break;
+            case "fpe":     cmdFpe(opt);     break;
+            case "twk":     cmdTwk(opt);     break;
             case "oprf-blind":   cmdOprfBlind(opt);   break;
             case "oprf-eval":    cmdOprfEval(opt);    break;
             case "oprf-unblind": cmdOprfUnblind(opt); break;
@@ -934,6 +943,58 @@ public final class HerraduraCli {
             throw new CliError("decfile: " + e.getMessage());
         }
         writeBytes(req(opt, "out", "decfile"), pt);
+    }
+
+    // -----------------------------------------------------------------
+    // fpe / twk (78.A / 78.B, TODO #260) — mirrors herradura.py's cmd_fpe /
+    // cmd_twk and the C/Go CLIs' cmd_fpe / cmdFpe. NOT format-preserving in
+    // the FF1/FF3-1 sense: 32 raw bytes in, 32 raw bytes out. --key takes a
+    // HERRADURA SESSION KEY PEM (the same shape enc/dec use for hske); --v3
+    // selects the NL-FSCX v3 round (TODO #255) instead of v2 — separate
+    // subkey domain, so decrypt must pass --v3 too if encrypt did.
+    // -----------------------------------------------------------------
+
+    private static void cmdFpe(Map<String, String> opt) throws IOException {
+        boolean doEnc = opt.containsKey("encrypt");
+        boolean doDec = opt.containsKey("decrypt");
+        if (doEnc == doDec) throw new CliError("fpe: exactly one of --encrypt or --decrypt required");
+        BigInteger[] key = loadKey(req(opt, "key", "fpe"));
+        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        byte[] inBytes = readBytes(req(opt, "in", "fpe"));
+        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        boolean v3 = opt.containsKey("v3");
+        BigInteger r = doEnc
+            ? (v3 ? FpeTwk.fpeV3Encrypt(p, keyBytes, ctx) : FpeTwk.fpeEncrypt(p, keyBytes, ctx))
+            : (v3 ? FpeTwk.fpeV3Decrypt(p, keyBytes, ctx) : FpeTwk.fpeDecrypt(p, keyBytes, ctx));
+        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+    }
+
+    private static void cmdTwk(Map<String, String> opt) throws IOException {
+        boolean doEnc = opt.containsKey("encrypt");
+        boolean doDec = opt.containsKey("decrypt");
+        if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
+        BigInteger[] key = loadKey(req(opt, "key", "twk"));
+        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
+        int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
+        byte[] inBytes = readBytes(req(opt, "in", "twk"));
+        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        boolean v3 = opt.containsKey("v3");
+        BigInteger r = doEnc
+            ? (v3 ? FpeTwk.twkV3Encrypt(p, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(p, keyBytes, sector, bidx))
+            : (v3 ? FpeTwk.twkV3Decrypt(p, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(p, keyBytes, sector, bidx));
+        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+    }
+
+    /** Right-pads (zero-fills) to a 32-byte block and truncates to it,
+     * matching herradura.py's {@code in_bytes.ljust(32, b'\x00')[:32]}. */
+    private static byte[] padBlock(byte[] in) {
+        int blockLen = Herradura.N / 8;
+        if (in.length == blockLen) return in;
+        byte[] out = new byte[blockLen];
+        System.arraycopy(in, 0, out, 0, Math.min(in.length, blockLen));
+        return out;
     }
 
     // -----------------------------------------------------------------

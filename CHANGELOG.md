@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.6] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `fpe`/`twk` CLI subcommands
+
+MINOR: two new CLI subcommands (a new CLI surface for an existing protocol, per CLAUDE.md's
+versioning rule). `HerraduraCli.java` gains `fpe` and `twk` (78.A/78.B, plus `--v3`, TODO
+#255), mirroring `herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s subcommands exactly:
+`--key` (a session key PEM, the same shape `enc`/`dec` use for `hske`), `--context` (fpe) or
+`--sector`/`--bidx` (twk), `--in`/`--out` (raw 32-byte blocks, right-zero-padded/truncated to
+32 bytes like Python's `ljust`), `--encrypt`/`--decrypt` (now-exclusive, matching the other
+three CLIs' mutually-exclusive-group semantics), and `--v3`. First piece of TODO #260's step
+3 (CLI subcommands); `hpks-t`, `duplex`, and `hpks-ring` remain unexposed at the CLI.
+
+Verified byte-exact against `herradura.py`'s `fpe`/`twk` output (all four of v2/v3 x
+fpe/twk) on the same session key, context/sector/bidx, and plaintext block, plus a
+cross-language round-trip (Java encrypts, Python decrypts, and vice versa) and the
+`--encrypt`/`--decrypt`-required error path. `spec/generate_spec.py --check
+--require-schema` and `spec/check_security_md.py` stay green unchanged — `cli_binding`
+already listed `fpe`/`twk` from the other three CLIs and carries no per-language dimension.
+
 ## [5.3.5] - 2026-08-31
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-Stern-Ring (#78.I) ported, step 1 COMPLETE
