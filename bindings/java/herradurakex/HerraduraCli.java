@@ -39,16 +39,26 @@ import java.util.Map;
  * Also covers {@code fpe}/{@code twk} (78.A/78.B, plus their {@code --v3}
  * variants, TODO #255/#260 — {@link FpeTwk}): a 32-byte-block tweak cipher
  * and a tweakable wide-block cipher, both keyed by a session key PEM (the
- * same shape {@code enc}/{@code dec} use for {@code hske}).
+ * same shape {@code enc}/{@code dec} use for {@code hske}); and HPKS-T
+ * (TODO #98/#106/#260 — {@link HpksT}), an n-of-n MuSig2-style
+ * threshold/aggregate Schnorr signature over four phases —
+ * {@code threshold-commit} (phase 1, per signer), {@code threshold-aggregate}
+ * (phase 2, coordinator), {@code threshold-respond} (phase 3, per signer),
+ * {@code threshold-combine} (phase 4, coordinator) — plus {@code verify
+ * --algo hpks-t} for the resulting HPKST SIGNATURE PEM. Only 256-bit
+ * hpks/hpks-nl keys are supported (Python's variable-{@code nbits} HPKS-T
+ * is not ported; see {@link HpksT}).
  *
  * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
  * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
- * OR-composition signature, the research {@code duplex} AEAD, HPKS-T, and
- * the {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
+ * OR-composition signature, the research {@code duplex} AEAD, and the
+ * {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
  * these gaps).
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
- * decfile, fpe, twk. PEM/DER wire format is byte-for-byte compatible with the
+ * decfile, fpe, twk, threshold-commit, threshold-aggregate,
+ * threshold-respond, threshold-combine. PEM/DER wire format is byte-for-byte
+ * compatible with the
  * Python/C/Go CLIs (via {@link Codec}). HKEX-RNL's {@code kex} is
  * two-round: Bob responds first ({@code --our} his priv key, {@code --their}
  * Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
@@ -83,6 +93,7 @@ public final class HerraduraCli {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
                 + "|fpe|twk"
+                + "|threshold-commit|threshold-aggregate|threshold-respond|threshold-combine"
                 + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
                 + "|pake-register|pake-demo> [options]");
         }
@@ -101,6 +112,10 @@ public final class HerraduraCli {
             case "decfile": cmdDecfile(opt); break;
             case "fpe":     cmdFpe(opt);     break;
             case "twk":     cmdTwk(opt);     break;
+            case "threshold-commit":    cmdThresholdCommit(opt);    break;
+            case "threshold-aggregate": cmdThresholdAggregate(opt); break;
+            case "threshold-respond":   cmdThresholdRespond(opt);   break;
+            case "threshold-combine":   cmdThresholdCombine(opt);   break;
             case "oprf-blind":   cmdOprfBlind(opt);   break;
             case "oprf-eval":    cmdOprfEval(opt);    break;
             case "oprf-unblind": cmdOprfUnblind(opt); break;
@@ -124,13 +139,20 @@ public final class HerraduraCli {
             String a = args[i];
             if (!a.startsWith("--")) throw new CliError("unexpected argument: " + a);
             String key = a.substring(2);
-            if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
-                opt.put(key, args[i + 1]);
-                i += 2;
-            } else {
-                opt.put(key, "true"); // boolean flag
-                i += 1;
+            // Greedily consume every following non-"--" token as this
+            // flag's value(s), space-joined — matches argparse's nargs='+'
+            // for multi-value flags (e.g. --commits a.pem b.pem c.pem)
+            // while staying a no-op for the single-value case, since every
+            // other flag's value is always immediately followed by the
+            // next "--flag" or end of argv.
+            int j = i + 1;
+            java.util.List<String> vals = new java.util.ArrayList<>();
+            while (j < args.length && !args[j].startsWith("--")) {
+                vals.add(args[j]);
+                j++;
             }
+            opt.put(key, vals.isEmpty() ? "true" : String.join(" ", vals));
+            i = j;
         }
         return opt;
     }
@@ -853,8 +875,16 @@ public final class HerraduraCli {
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }
+        if (algo.equals("hpks-t")) {
+            Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
+            boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots, hpks-t)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));
@@ -943,6 +973,105 @@ public final class HerraduraCli {
             throw new CliError("decfile: " + e.getMessage());
         }
         writeBytes(req(opt, "out", "decfile"), pt);
+    }
+
+    // -----------------------------------------------------------------
+    // threshold-commit / threshold-aggregate / threshold-respond /
+    // threshold-combine — HPKS-T (TODO #98/#106/#260), mirrors
+    // herradura.py's cmd_threshold_commit / _aggregate / _respond /
+    // _combine exactly, in the same four-phase shape: each signer runs
+    // commit (phase 1) and respond (phase 3); a coordinator runs
+    // aggregate (phase 2) and combine (phase 4). Only 256-bit hpks/hpks-nl
+    // keys are supported — {@link HpksT}'s port, like the rest of this
+    // CLI, is fixed at Herradura.N rather than Python's variable nbits.
+    // -----------------------------------------------------------------
+
+    /** Loads an hpks or hpks-nl private key PEM (the two algos HPKS-T
+     * threshold-signs over); returns {priv, pub, nbits}. */
+    private static Codec.PrivKey loadHpksPrivKeyForThreshold(String path) throws IOException {
+        String pem = readString(path);
+        Codec.PemBlock block = Codec.pemUnwrap(pem);
+        if (!block.label.equals(Codec.PEM_HPKS_PRIV) && !block.label.equals(Codec.PEM_HPKS_NL_PRIV)) {
+            throw new CliError("threshold: expected an hpks or hpks-nl private key PEM, got " + block.label);
+        }
+        return Codec.decodePrivKey(pem, block.label);
+    }
+
+    private static void cmdThresholdCommit(Map<String, String> opt) throws IOException {
+        Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-commit"));
+        if (pk.nbits != Herradura.N) {
+            throw new CliError("threshold-commit: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+        }
+        BigInteger kJ = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
+        BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, kJ);
+        writeString(req(opt, "commit-out", "threshold-commit"), Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
+        writeString(req(opt, "nonce-out", "threshold-commit"), Codec.encodeHpkstNonce(kJ, pk.nbits));
+    }
+
+    private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {
+        String commitsArg = req(opt, "commits", "threshold-aggregate");
+        List<Codec.HpkstCommit> commits = new java.util.ArrayList<>();
+        Integer nbits = null;
+        for (String cp : commitsArg.trim().split("\\s+")) {
+            Codec.HpkstCommit c = Codec.decodeHpkstCommit(readString(cp));
+            if (nbits == null) nbits = c.nbits;
+            else if (!nbits.equals(c.nbits)) throw new CliError("threshold-aggregate: commitment n mismatch");
+            commits.add(c);
+        }
+        if (nbits == null || nbits != Herradura.N) {
+            throw new CliError("threshold-aggregate: HPKS-T requires " + Herradura.N + "-bit commitments");
+        }
+        byte[] inBytes = readBytes(req(opt, "in", "threshold-aggregate"));
+        BigInteger msg = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
+
+        BigInteger rVal = BigInteger.ONE;
+        List<BigInteger> pubkeys = new java.util.ArrayList<>();
+        for (Codec.HpkstCommit c : commits) {
+            rVal = Herradura.gfMul(rVal, c.rJ);
+            pubkeys.add(c.cJ);
+        }
+        BigInteger e = Hfscx256.nlFscxRevolveV1(rVal, msg, Herradura.I_STEPS);
+        HpksT.Aggregate agg = HpksT.aggregatePublicKeys(pubkeys);
+        writeString(req(opt, "out", "threshold-aggregate"), Codec.encodeHpkstAggregate(rVal, agg.cAgg, e, nbits));
+    }
+
+    private static void cmdThresholdRespond(Map<String, String> opt) throws IOException {
+        Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-respond"));
+        if (pk.nbits != Herradura.N) {
+            throw new CliError("threshold-respond: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+        }
+        String commitsArg = req(opt, "commits", "threshold-respond");
+        List<BigInteger> pubkeys = new java.util.ArrayList<>();
+        for (String cp : commitsArg.trim().split("\\s+")) {
+            pubkeys.add(Codec.decodeHpkstCommit(readString(cp)).cJ);
+        }
+        Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-respond")));
+        if (agg.nbits != pk.nbits) throw new CliError("threshold-respond: aggregate n mismatch with key");
+        Codec.HpkstNonce nonce = Codec.decodeHpkstNonce(readString(req(opt, "nonce", "threshold-respond")));
+        if (nonce.nbits != pk.nbits) throw new CliError("threshold-respond: nonce n mismatch with key");
+
+        HpksT.Aggregate recomputed = HpksT.aggregatePublicKeys(pubkeys);
+        int idx = -1;
+        for (int i = 0; i < pubkeys.size(); i++) {
+            if (pubkeys.get(i).equals(pk.pub)) { idx = i; break; }
+        }
+        if (idx < 0) throw new CliError("threshold-respond: our public key not found in commit list");
+        BigInteger muJ = recomputed.coeffs[idx];
+
+        BigInteger sJ = nonce.kJ.subtract(pk.priv.multiply(muJ).multiply(agg.e)).mod(Herradura.GROUP_ORDER);
+        writeString(req(opt, "out", "threshold-respond"), Codec.encodeHpkstPartial(sJ, pk.nbits));
+    }
+
+    private static void cmdThresholdCombine(Map<String, String> opt) throws IOException {
+        Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-combine")));
+        String partialsArg = req(opt, "partials", "threshold-combine");
+        BigInteger sAcc = BigInteger.ZERO;
+        for (String pp : partialsArg.trim().split("\\s+")) {
+            Codec.HpkstPartial part = Codec.decodeHpkstPartial(readString(pp));
+            if (part.nbits != agg.nbits) throw new CliError("threshold-combine: partial n mismatch");
+            sAcc = sAcc.add(part.sJ).mod(Herradura.GROUP_ORDER);
+        }
+        writeString(req(opt, "out", "threshold-combine"), Codec.encodeHpkstSig(agg.cAgg, agg.r, sAcc, agg.nbits));
     }
 
     // -----------------------------------------------------------------

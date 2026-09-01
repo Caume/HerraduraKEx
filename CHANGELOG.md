@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.3.7] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T CLI subcommands
+
+MINOR: four new CLI subcommands plus a new `verify --algo hpks-t` branch (a new CLI surface
+for an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java` gains
+`threshold-commit` / `threshold-aggregate` / `threshold-respond` / `threshold-combine` —
+HPKS-T's four-phase n-of-n MuSig2-style threshold Schnorr protocol (TODO #98/#106),
+mirroring `herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s subcommand shape and flags
+exactly: `--key`/`--commit-out`/`--nonce-out` (phase 1, per signer), `--commits`/`--in`/`--out`
+(phase 2, coordinator), `--key`/`--commits`/`--aggregate`/`--nonce`/`--out` (phase 3, per
+signer), `--aggregate`/`--partials`/`--out` (phase 4, coordinator). Adds five new PEM types
+to `Codec.java` (`HPKST COMMITMENT`/`NONCE`/`AGGREGATE`/`PARTIAL`/`SIGNATURE`), encoded
+byte-for-byte with `herradura.py`'s `encode_hpkst_*` functions. Only 256-bit `hpks`/`hpks-nl`
+keys are supported — `HpksT.java`'s v5.3.2 port, like the rest of this CLI, is fixed at
+`Herradura.N` rather than Python's variable `nbits`.
+
+`parseOpts` now greedily consumes every following non-`--` token as a flag's value(s),
+space-joined, adding `argparse`'s `nargs='+'` semantics for `--commits`/`--partials` (each
+takes multiple PEM paths) — a no-op for every existing single-value flag, since those are
+always immediately followed by the next `--flag` or end of argv.
+
+Verified against `herradura.py`'s CLI in every direction: a full 3-of-3 protocol run
+entirely in Java, one entirely in Python, and a mixed run (Java `commit`/`aggregate`,
+Python `respond`/`combine`) whose aggregate and final signature PEMs are byte-identical to
+the all-Java run; cross-verification of a Java-produced signature by Python's `verify` and
+vice versa; tamper rejection; and a full run over `hpks-nl` keys (HPKS-T's challenge is
+always NL-FSCX v1 regardless of the underlying key's own scheme, matching Python).
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and
+`bash CliTest/test_java_bindings.sh` stay green unchanged.
+
+`CliTest/test_cross_lang_matrix.sh`/`test_threshold_interop.sh` still skip Java's cell with
+a NOTE (`javac` presence aside, they don't yet exercise `threshold-*`) — that's TODO #260's
+step 6 (interop coverage), not done in this pass.
+
 ## [5.3.6] - 2026-09-01
 
 ### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `fpe`/`twk` CLI subcommands

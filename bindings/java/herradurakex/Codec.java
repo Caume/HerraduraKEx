@@ -69,6 +69,11 @@ public final class Codec {
     public static final String PEM_DIGEST = "HERRADURA DIGEST";
 
     public static final String PEM_ZKP_RNL_PROOF = "HERRADURA ZKP-RNL PROOF";
+    public static final String PEM_HPKST_COMMIT = "HERRADURA HPKST COMMITMENT";
+    public static final String PEM_HPKST_NONCE = "HERRADURA HPKST NONCE";
+    public static final String PEM_HPKST_AGGREGATE = "HERRADURA HPKST AGGREGATE";
+    public static final String PEM_HPKST_PARTIAL = "HERRADURA HPKST PARTIAL";
+    public static final String PEM_HPKST_SIG = "HERRADURA HPKST SIGNATURE";
     public static final String PEM_ZKP_NL_PRIV = "HERRADURA ZKP-NL PRIVATE KEY";
     public static final String PEM_ZKP_NL_PUB = "HERRADURA ZKP-NL PUBLIC KEY";
     public static final String PEM_ZKP_NL_PROOF = "HERRADURA ZKP-NL PROOF";
@@ -1466,5 +1471,133 @@ public final class Codec {
         List<BigInteger> ints = derParseSeq(block.der);
         byte[] salt = toFixedBytes(ints.get(0), 32);
         return new Hpake.Record("", salt, ints.get(1), ints.get(2));
+    }
+
+    // -----------------------------------------------------------------
+    // HPKS-T (threshold, TODO #106/#260): encode-decode for the five
+    // phase PEMs, byte-for-byte with HerraduraCli/herradura.py's
+    // encode_hpkst_commit / _nonce / _aggregate / _partial / _sig. All are
+    // DER SEQUENCE of INTEGERs, with n itself DER-encoded as a fixed
+    // 4-byte field (not the minimal-width default) so every field but n
+    // is nbits/8 bytes wide.
+    //   HPKST COMMITMENT  — SEQUENCE(R_j, C_j, n)
+    //   HPKST NONCE       — SEQUENCE(k_j, n)
+    //   HPKST AGGREGATE   — SEQUENCE(R, C_agg, e, n)
+    //   HPKST PARTIAL     — SEQUENCE(s_j, n)
+    //   HPKST SIGNATURE   — SEQUENCE(C_agg, R, s, n)
+    // -----------------------------------------------------------------
+
+    public static String encodeHpkstCommit(BigInteger rJ, BigInteger cJ, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(rJ, nb), derInt(cJ, nb), derInt(BigInteger.valueOf(n), 4));
+        return pemWrap(PEM_HPKST_COMMIT, der);
+    }
+
+    public static final class HpkstCommit {
+        public final BigInteger rJ;
+        public final BigInteger cJ;
+        public final int nbits;
+        HpkstCommit(BigInteger rJ, BigInteger cJ, int nbits) { this.rJ = rJ; this.cJ = cJ; this.nbits = nbits; }
+    }
+
+    public static HpkstCommit decodeHpkstCommit(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKST_COMMIT)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKST_COMMIT + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new HpkstCommit(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    public static String encodeHpkstNonce(BigInteger kJ, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(kJ, nb), derInt(BigInteger.valueOf(n), 4));
+        return pemWrap(PEM_HPKST_NONCE, der);
+    }
+
+    public static final class HpkstNonce {
+        public final BigInteger kJ;
+        public final int nbits;
+        HpkstNonce(BigInteger kJ, int nbits) { this.kJ = kJ; this.nbits = nbits; }
+    }
+
+    public static HpkstNonce decodeHpkstNonce(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKST_NONCE)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKST_NONCE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new HpkstNonce(ints.get(0), ints.get(1).intValueExact());
+    }
+
+    public static String encodeHpkstAggregate(BigInteger r, BigInteger cAgg, BigInteger e, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(r, nb), derInt(cAgg, nb), derInt(e, nb), derInt(BigInteger.valueOf(n), 4));
+        return pemWrap(PEM_HPKST_AGGREGATE, der);
+    }
+
+    public static final class HpkstAggregate {
+        public final BigInteger r;
+        public final BigInteger cAgg;
+        public final BigInteger e;
+        public final int nbits;
+        HpkstAggregate(BigInteger r, BigInteger cAgg, BigInteger e, int nbits) {
+            this.r = r; this.cAgg = cAgg; this.e = e; this.nbits = nbits;
+        }
+    }
+
+    public static HpkstAggregate decodeHpkstAggregate(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKST_AGGREGATE)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKST_AGGREGATE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new HpkstAggregate(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
+    }
+
+    public static String encodeHpkstPartial(BigInteger sJ, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(sJ, nb), derInt(BigInteger.valueOf(n), 4));
+        return pemWrap(PEM_HPKST_PARTIAL, der);
+    }
+
+    public static final class HpkstPartial {
+        public final BigInteger sJ;
+        public final int nbits;
+        HpkstPartial(BigInteger sJ, int nbits) { this.sJ = sJ; this.nbits = nbits; }
+    }
+
+    public static HpkstPartial decodeHpkstPartial(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKST_PARTIAL)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKST_PARTIAL + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new HpkstPartial(ints.get(0), ints.get(1).intValueExact());
+    }
+
+    public static String encodeHpkstSig(BigInteger cAgg, BigInteger r, BigInteger s, int n) {
+        int nb = n / 8;
+        byte[] der = derSeq(derInt(cAgg, nb), derInt(r, nb), derInt(s, nb), derInt(BigInteger.valueOf(n), 4));
+        return pemWrap(PEM_HPKST_SIG, der);
+    }
+
+    public static final class HpkstSig {
+        public final BigInteger cAgg;
+        public final BigInteger r;
+        public final BigInteger s;
+        public final int nbits;
+        HpkstSig(BigInteger cAgg, BigInteger r, BigInteger s, int nbits) {
+            this.cAgg = cAgg; this.r = r; this.s = s; this.nbits = nbits;
+        }
+    }
+
+    public static HpkstSig decodeHpkstSig(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HPKST_SIG)) {
+            throw new IllegalArgumentException("Expected " + PEM_HPKST_SIG + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        return new HpkstSig(ints.get(0), ints.get(1), ints.get(2), ints.get(3).intValueExact());
     }
 }
