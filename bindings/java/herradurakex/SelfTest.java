@@ -10,13 +10,24 @@ import java.security.SecureRandom;
  * quartet ({@link Herradura}), the NL/PQC quartet ({@link HerraduraNl}),
  * HPKS-Stern-F/HPKE-Stern-F/HPKE-Stern-KEM ({@link Stern}), the OPRF
  * ({@link Oprf}), HPKS-WOTS-F/HPKS-XMSS-F ({@link Wots}, {@link Xmss}),
- * HCRED ({@link Hcred}), and aPAKE ({@link ZkpNl}, {@link Hpake}). Exits
- * non-zero on any failure.
+ * HCRED ({@link Hcred}), aPAKE ({@link ZkpNl}, {@link Hpake}), the
+ * 78.C forward-secret ratchet ({@link Ratchet}, TODO #260), HDRBG
+ * ({@link Hdrbg}, TODO #96/#260), HPKS-T ({@link HpksT}, TODO
+ * #98/#260), FPE/twk ({@link FpeTwk}, TODO #78.A/#78.B/#260),
+ * HSKE-NL-V2/V3-Duplex ({@link Duplex}, TODO #95/#255/#260), and
+ * HPKS-Stern-Ring ({@link SternRing}, TODO #78.I/#260). Exits non-zero
+ * on any failure.
  *
  * Usage: java -cp bindings/java herradurakex.SelfTest
  */
 public final class SelfTest {
     private SelfTest() { }
+
+    private static String toHex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte x : b) sb.append(String.format("%02x", x));
+        return sb.toString();
+    }
 
     public static void main(String[] args) {
         SecureRandom rng = new SecureRandom();
@@ -411,6 +422,248 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS hpake round-trip");
+            }
+        }
+
+        // Ratchet (78.C): forward secrecy & message-key uniqueness across
+        // steps, and state divergence between two independently-seeded chains.
+        {
+            BigInteger state = Ratchet.init("self-test-ratchet-seed".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            java.util.Set<String> msgKeys = new java.util.HashSet<>();
+            for (int i = 0; i < 5; i++) {
+                Object[] r = Ratchet.advance(state);
+                state = (BigInteger) r[0];
+                byte[] mk = (byte[]) r[1];
+                msgKeys.add(new BigInteger(1, mk).toString(16));
+            }
+            boolean allDistinct = msgKeys.size() == 5;
+
+            BigInteger s1 = Ratchet.init("seed-alice".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            BigInteger s2 = Ratchet.init("seed-bob".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            for (int i = 0; i < 3; i++) {
+                s1 = (BigInteger) Ratchet.advance(s1)[0];
+                s2 = (BigInteger) Ratchet.advance(s2)[0];
+            }
+            boolean chainsDiverge = !s1.equals(s2);
+
+            if (!allDistinct || !chainsDiverge) {
+                System.out.println("FAIL ratchet round-trip (all_distinct=" + allDistinct
+                    + " chains_diverge=" + chainsDiverge + ")");
+                fails++;
+            } else {
+                System.out.println("PASS ratchet round-trip");
+            }
+        }
+
+        // HDRBG (#96): cross-language KAT, determinism from a fixed seed,
+        // personalization/reseed separation, the block-limit guard, and a
+        // monobit sanity check -- matching C/Go/Python test [29]'s
+        // granularity exactly (TODO #260 step 2).
+        {
+            byte[] katEntropy = new byte[32];
+            for (int i = 0; i < 32; i++) katEntropy[i] = (byte) i;
+            Hdrbg dk = Hdrbg.seed(katEntropy, "HDRBG-KAT".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            String kat1 = toHex(dk.generate(80));
+            byte[] resEntropy = new byte[16];
+            java.util.Arrays.fill(resEntropy, (byte) 0xa5);
+            dk.reseed(resEntropy);
+            String kat2 = toHex(dk.generate(32));
+            boolean katOk = kat1.equals("cd3e576bee89501a3760fb96fc05b6a3029c26f405e8667c71f311fc39ab1b23"
+                    + "90620f2641a2a2dabf28cf35ae991d6b9fc254509a7720de24cbd9c603cd718e"
+                    + "089ea95dc62208133b3475fadb10ef6d")
+                && kat2.equals("bd5324b039a98172fae214390fe9bcc928f3bd65231213efd9162664b5e756bf");
+
+            byte[] entropy = "self-test-hdrbg-entropy-01234567".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Hdrbg d1 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Hdrbg d2 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            Hdrbg d2b = Hdrbg.seed(entropy, "different-pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] out1 = d1.generate(96);
+            byte[] out2 = d2.generate(96);
+            byte[] out2b = d2b.generate(96);
+            boolean deterministic = java.util.Arrays.equals(out1, out2);
+            boolean persSeparates = !java.util.Arrays.equals(out1, out2b);
+
+            Hdrbg d3 = Hdrbg.seed(entropy, "pers".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] pre = d3.generate(32);
+            d3.reseed("fresh-entropy".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] post = d3.generate(32);
+            boolean reseedSeparates = !java.util.Arrays.equals(pre, post) && d3.blocksGenerated() == 1;
+
+            boolean limitEnforced;
+            try {
+                Hdrbg d4 = Hdrbg.seed(entropy);
+                java.lang.reflect.Field blocksField = Hdrbg.class.getDeclaredField("blocks");
+                blocksField.setAccessible(true);
+                blocksField.setLong(d4, Hdrbg.DRBG_MAX_BLOCKS);
+                d4.generate(32);
+                limitEnforced = false;
+            } catch (IllegalStateException expected) {
+                limitEnforced = true;
+            } catch (ReflectiveOperationException e) {
+                limitEnforced = false;
+            }
+
+            Hdrbg d5 = Hdrbg.seed("ent-monobit".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            byte[] stream = d5.generate(8192);
+            int ones = 0;
+            for (byte b : stream) ones += Integer.bitCount(b & 0xFF);
+            double frac = ones / (8192.0 * 8);
+            boolean monoOk = frac >= 0.48 && frac <= 0.52;
+
+            if (!katOk || !deterministic || !persSeparates || !reseedSeparates || !limitEnforced || !monoOk) {
+                System.out.println("FAIL hdrbg round-trip (kat=" + katOk + " deterministic=" + deterministic
+                    + " pers_separates=" + persSeparates + " reseed_separates=" + reseedSeparates
+                    + " limit_enforced=" + limitEnforced + " monobit=" + monoOk + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hdrbg round-trip");
+            }
+        }
+
+        // HPKS-T (#98): n-of-n threshold/aggregate Schnorr — 3 signers must
+        // jointly produce a signature that verifies against the aggregate
+        // public key, and a tampered response scalar must be rejected.
+        {
+            int n = 3;
+            java.util.List<BigInteger> secrets = new java.util.ArrayList<>();
+            java.util.List<BigInteger> pubkeys = new java.util.ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                BigInteger sk = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+                secrets.add(sk);
+                pubkeys.add(Herradura.gfPow(Herradura.GF_GEN, sk));
+            }
+            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            HpksT.Signature sig = HpksT.sign(secrets, pubkeys, msg, rng);
+            boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msg);
+            boolean rejectsTamper = !HpksT.verify(sig.cAgg, sig.r, sig.s.xor(BigInteger.ONE), msg);
+            if (!ok || !rejectsTamper) {
+                System.out.println("FAIL hpks_t round-trip (verify=" + ok + " rejects_tamper=" + rejectsTamper + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_t round-trip");
+            }
+        }
+
+        // FPE (78.A) / twk (78.B), v2 and v3: round-trip, and TODO #241/#242's
+        // regression guard -- a 12-byte fpe ctx equal to twk's
+        // sector_be64||bidx_be32 must NOT produce the same subkey/ciphertext
+        // (the bug that made the two subcommands the same function pre-v4.0.0).
+        {
+            byte[] key = "self-test-fpe-twk-key-material!!".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] ctx = "self-test12b".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            BigInteger pt = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+
+            BigInteger fpeCt = FpeTwk.fpeEncrypt(pt, key, ctx);
+            boolean fpeRt = FpeTwk.fpeDecrypt(fpeCt, key, ctx).equals(pt);
+
+            long sector = 0x0102030405060708L;
+            int bidx = 0x090A0B0C;
+            BigInteger twkCt = FpeTwk.twkEncrypt(pt, key, sector, bidx);
+            boolean twkRt = FpeTwk.twkDecrypt(twkCt, key, sector, bidx).equals(pt);
+
+            BigInteger fpeCtV3 = FpeTwk.fpeV3Encrypt(pt, key, ctx);
+            boolean fpeV3Rt = FpeTwk.fpeV3Decrypt(fpeCtV3, key, ctx).equals(pt);
+            BigInteger twkCtV3 = FpeTwk.twkV3Encrypt(pt, key, sector, bidx);
+            boolean twkV3Rt = FpeTwk.twkV3Decrypt(twkCtV3, key, sector, bidx).equals(pt);
+
+            java.nio.ByteBuffer tweakBuf = java.nio.ByteBuffer.allocate(12);
+            tweakBuf.putLong(sector).putInt(bidx);
+            BigInteger fpeCtWithTwkTweakAsCtx = FpeTwk.fpeEncrypt(pt, key, tweakBuf.array());
+            boolean domainSeparated = !fpeCtWithTwkTweakAsCtx.equals(twkCt);
+            boolean v2v3Separated = !fpeCt.equals(fpeCtV3) && !twkCt.equals(twkCtV3);
+
+            // C/Go/Python test [46]'s key||tweak boundary-encoding guard: the
+            // derivation must length-prefix the key, or (key[:2], ctx=key[2:3])
+            // and (key[:1], ctx=key[1:3]) collide -- same raw concatenated
+            // bytes, different (key, ctx) split.
+            byte[] keyAB = java.util.Arrays.copyOfRange(key, 0, 2);
+            byte[] ctxC = java.util.Arrays.copyOfRange(key, 2, 3);
+            byte[] keyA = java.util.Arrays.copyOfRange(key, 0, 1);
+            byte[] ctxBC = java.util.Arrays.copyOfRange(key, 1, 3);
+            BigInteger split1 = FpeTwk.fpeEncrypt(pt, keyAB, ctxC);
+            BigInteger split2 = FpeTwk.fpeEncrypt(pt, keyA, ctxBC);
+            boolean keyBoundarySeparated = !split1.equals(split2);
+
+            if (!fpeRt || !twkRt || !fpeV3Rt || !twkV3Rt || !domainSeparated || !v2v3Separated || !keyBoundarySeparated) {
+                System.out.println("FAIL fpe_twk round-trip (fpe=" + fpeRt + " twk=" + twkRt
+                    + " fpe_v3=" + fpeV3Rt + " twk_v3=" + twkV3Rt + " domain_separated=" + domainSeparated
+                    + " v2v3_separated=" + v2v3Separated + " key_boundary_separated=" + keyBoundarySeparated + ")");
+                fails++;
+            } else {
+                System.out.println("PASS fpe_twk round-trip");
+            }
+        }
+
+        // HSKE-NL-V2-Duplex / V3-Duplex (#95 Option 2 / TODO #255, RESEARCH
+        // CONSTRUCTION): round-trip, tampered-ciphertext rejection, and
+        // tampered-AD rejection, for both permutation versions.
+        {
+            BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            byte[] pt = "self-test duplex plaintext, several blocks long".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] ad = "self-test-duplex-ad".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+            Duplex.EncResult r2 = Duplex.v2Encrypt(key, pt, ad, rng);
+            byte[] dec2 = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag, ad);
+            byte[] ct2Tampered = r2.ct.clone();
+            ct2Tampered[0] ^= 1;
+            boolean v2RejectsCt = Duplex.v2Decrypt(key, r2.nonce, ct2Tampered, r2.tag, ad) == null;
+            boolean v2RejectsAd = Duplex.v2Decrypt(key, r2.nonce, r2.ct, r2.tag,
+                "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
+            boolean v2Ok = java.util.Arrays.equals(dec2, pt);
+
+            Duplex.EncResult r3 = Duplex.v3Encrypt(key, pt, ad, rng);
+            byte[] dec3 = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag, ad);
+            byte[] ct3Tampered = r3.ct.clone();
+            ct3Tampered[0] ^= 1;
+            boolean v3RejectsCt = Duplex.v3Decrypt(key, r3.nonce, ct3Tampered, r3.tag, ad) == null;
+            boolean v3RejectsAd = Duplex.v3Decrypt(key, r3.nonce, r3.ct, r3.tag,
+                "self-test-duplex-ad-2".getBytes(java.nio.charset.StandardCharsets.US_ASCII)) == null;
+            boolean v3Ok = java.util.Arrays.equals(dec3, pt);
+
+            if (!v2Ok || !v2RejectsCt || !v2RejectsAd || !v3Ok || !v3RejectsCt || !v3RejectsAd) {
+                System.out.println("FAIL duplex round-trip (v2_ok=" + v2Ok + " v2_rejects_ct=" + v2RejectsCt
+                    + " v2_rejects_ad=" + v2RejectsAd + " v3_ok=" + v3Ok + " v3_rejects_ct=" + v3RejectsCt
+                    + " v3_rejects_ad=" + v3RejectsAd + ")");
+                fails++;
+            } else {
+                System.out.println("PASS duplex round-trip");
+            }
+        }
+
+        // HPKS-Stern-Ring (78.I): OR-composed Stern ring signature -- any one
+        // of a 4-member ring signs, verify succeeds without revealing which
+        // member, a tampered message is rejected, and a signature "signed" with
+        // a secret matching no ring member's syndrome is rejected too.
+        {
+            int k = 4;
+            // 8 rounds gives only (2/3)^8 ~= 3.9% soundness error -- enough
+            // to make rejects_forgery flake in CI (TODO #260 caught this
+            // the same way CLAUDE.md's Testing section describes for [45]:
+            // a probabilistic property was asserted as if deterministic).
+            // 32 rounds matches this suite's other Stern-F self-test round
+            // counts and drops the error to ~2e-6, negligible for CI.
+            int demoRounds = 32;
+            java.util.List<Stern.SternKeypair> keys = new java.util.ArrayList<>();
+            java.util.List<SternRing.RingKey> ringPub = new java.util.ArrayList<>();
+            for (int i = 0; i < k; i++) {
+                Stern.SternKeypair kp = Stern.sternFKeygen(rng);
+                keys.add(kp);
+                ringPub.add(new SternRing.RingKey(kp.seed, kp.syndrome));
+            }
+            int j = 2;
+            BigInteger msg = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            SternRing.RingSignature sig = SternRing.sign(msg, keys.get(j).e, j, ringPub, demoRounds, rng);
+            boolean ok = SternRing.verify(msg, sig, ringPub);
+            boolean rejectsTamper = !SternRing.verify(msg.xor(BigInteger.ONE), sig, ringPub);
+            BigInteger badE = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            SternRing.RingSignature forged = SternRing.sign(msg, badE, 0, ringPub, demoRounds, rng);
+            boolean rejectsForgery = !SternRing.verify(msg, forged, ringPub);
+            if (!ok || !rejectsTamper || !rejectsForgery) {
+                System.out.println("FAIL hpks_stern_ring round-trip (verify=" + ok
+                    + " rejects_tamper=" + rejectsTamper + " rejects_forgery=" + rejectsForgery + ")");
+                fails++;
+            } else {
+                System.out.println("PASS hpks_stern_ring round-trip");
             }
         }
 

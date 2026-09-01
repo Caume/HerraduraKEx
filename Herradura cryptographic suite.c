@@ -102,6 +102,59 @@
 /* Build: gcc -O2 -o "Herradura cryptographic suite" "Herradura cryptographic suite.c" */
 
 #include "herradura.h"
+#include <stdarg.h>
+
+/* --- Failure aggregation (TODO #259) -------------------------------------
+ * CI has run this demo since TODO #258 (v5.2.5) and gated on its exit
+ * status, which catches a crash but not a wrong verdict: the demo's
+ * "+"/"-" prefix convention marks both genuine failures and, in the Eve
+ * bypass sections, a correct negative result ("Eve could not forge" is a
+ * PASS) -- and several 78.x feature demos below print the pair inverted
+ * ("-" for pass, "+" for fail) or, in HPKS-T's case, print "+" on both
+ * branches.  A text gate on that prefix would either miss failures or
+ * false-positive on expected ones.
+ *
+ * The fix mirrors CryptosuiteTests/Herradura_tests.c (TODO #233): every
+ * genuine-failure branch is rewritten to go through printf() carrying an
+ * explicit "[FAIL]" marker, scanned here exactly as that harness scans it,
+ * so this demo now exits non-zero on a wrong verdict, not only on a crash.
+ * puts()/fputs() are left alone, as there -- no status marker is ever
+ * emitted through them.  Two branches are deliberately NOT tagged even
+ * though their prefix already reads as a failure: the HKEX-RNL "raw key
+ * disagrees" retry note (a nonzero-DFR Ring-LWR reconciliation event this
+ * demo does not retry, not a bug) and nothing else in this file carries
+ * that kind of probabilistic exemption -- see the site itself. */
+#define HFAIL_KEEP 32
+static int  g_failures = 0;
+static char g_fail_lines[HFAIL_KEEP][256];
+
+static int hprintf(const char *fmt, ...)
+{
+    char buf[4096];
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+
+    if (strstr(buf, "[FAIL]")) {
+        if (g_failures < HFAIL_KEEP) {
+            const char *p = buf;
+            size_t len;
+            while (*p == ' ' || *p == '\n') p++;
+            len = strlen(p);
+            while (len > 0 && (p[len - 1] == '\n' || p[len - 1] == ' ')) len--;
+            if (len >= sizeof g_fail_lines[0]) len = sizeof g_fail_lines[0] - 1;
+            memcpy(g_fail_lines[g_failures], p, len);
+            g_fail_lines[g_failures][len] = '\0';
+        }
+        g_failures++;
+    }
+    fputs(buf, stdout);
+    return n;
+}
+#define printf hprintf
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * HPKE-Stern-F N=32 brute-force demo helpers  (N=32, t=2, C(32,2)=496)
@@ -249,7 +302,7 @@ int main(void)
         if (ba_equal(&skA, &skB))
             puts("+ session keys agree!");
         else
-            puts("- session keys differ!");
+            printf("[FAIL] session keys differ!\n");
         explicit_bzero(&skA, sizeof(skA));
         explicit_bzero(&skB, sizeof(skB));
     }
@@ -267,7 +320,7 @@ int main(void)
         if (ba_equal(&D_hske, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- decryption failed!");
+            printf("[FAIL] decryption failed!\n");
     }
 
     /* --- HPKS [CLASSICAL -- not PQC; DLP + linear challenge] */
@@ -316,7 +369,7 @@ int main(void)
         if (ba_equal(&D_hpke, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- decryption failed!");
+            printf("[FAIL] decryption failed!\n");
         explicit_bzero(&r_hpke,  sizeof(r_hpke));
         explicit_bzero(&enc_key, sizeof(enc_key));
         explicit_bzero(&dec_key, sizeof(dec_key));
@@ -340,7 +393,7 @@ int main(void)
         if (ba_equal(&D_nl1, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- decryption failed!");
+            printf("[FAIL] decryption failed!\n");
         explicit_bzero(&seed_a1, sizeof(seed_a1));
         explicit_bzero(&base_a1, sizeof(base_a1));
     }
@@ -357,7 +410,7 @@ int main(void)
         if (ba_equal(&D_nl2, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- decryption failed!");
+            printf("[FAIL] decryption failed!\n");
     }
 
     /* --- HKEX-RNL [PQC -- Ring-LWR key exchange; conjectured quantum-resistant] */
@@ -455,7 +508,7 @@ int main(void)
         if (ba_equal(&D_nl, &plaintext))
             puts("+ plaintext correctly decrypted");
         else
-            puts("- decryption failed!");
+            printf("[FAIL] decryption failed!\n");
         /* save for Eve test */
         E_nl_saved   = E_nl;
         R_nl2_saved  = R_nl2;
@@ -479,7 +532,7 @@ int main(void)
         if (hpks_stern_f_verify(&sf_sig, &plaintext, &sf_seed_saved, sf_syn_saved))
             puts("+ HPKS-Stern-F signature verified");
         else
-            puts("- HPKS-Stern-F verification FAILED");
+            printf("[FAIL] HPKS-Stern-F verification failed\n");
         stern_sig_free(&sf_sig);
     }
 
@@ -505,7 +558,7 @@ int main(void)
         if (sf32_K_enc == sf32_K_dec)
             puts("+ HPKE-Stern-F session keys agree (N=32, brute-force)");
         else
-            puts("- HPKE-Stern-F key agreement FAILED (N=32)");
+            printf("[FAIL] HPKE-Stern-F key agreement failed (N=32)\n");
     }
 
     /* --- HPKE-Stern-F N=256 [CODE-BASED PQC -- Niederreiter KEM, known-e'] */
@@ -522,7 +575,7 @@ int main(void)
         if (ba_equal(&sf_K_enc_saved, &K_dec))
             puts("+ HPKE-Stern-F session keys agree (N=256, known-e')");
         else
-            puts("- HPKE-Stern-F key agreement FAILED (N=256)");
+            printf("[FAIL] HPKE-Stern-F key agreement failed (N=256)\n");
     }
 
     /* --- HSKE-NL-V2-Duplex [AEAD -- MonkeyDuplex-style, nl_fscx_revolve_v2 sponge] */
@@ -561,9 +614,9 @@ int main(void)
                                                 dplex_ct, pt_len,
                                                 dplex_tag, dplex_rec);
         if (ok && memcmp(dplex_rec, dplex_pt, pt_len) == 0 && !bad_ct && !bad_ad)
-            puts("- HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]");
+            puts("+ HSKE-NL-V2-Duplex round-trip + tamper/AD rejection correct [RESEARCH]");
         else
-            puts("+ HSKE-NL-V2-Duplex FAILED!");
+            printf("[FAIL] HSKE-NL-V2-Duplex round-trip / tamper / AD rejection\n");
         explicit_bzero(&dplex_key, sizeof(dplex_key));
     }
 
@@ -586,8 +639,8 @@ int main(void)
         printf("+ hash length correct (%d bytes)\n", (int)sizeof(bare_out));
         same = 1;
         for (i = 0; i < 32; i++) if (bare_out[i] != keyed_out[i]) { same = 0; break; }
-        puts(same ? "- keyed == bare (unexpected!)" :
-                    "+ keyed \xe2\x89\xa0 bare (key influences output)");
+        if (same) printf("[FAIL] keyed == bare (unexpected!)\n");
+        else puts("+ keyed \xe2\x89\xa0 bare (key influences output)");
         explicit_bzero(mac_iv, sizeof(mac_iv));
     }
 
@@ -610,9 +663,10 @@ int main(void)
             int ok = rnl_sigma_verify(zkr_m, zkr_Cp, RNL_N,
                                        zkr_msg, sizeof(zkr_msg)-1,
                                        zkr_w, zkr_c, zkr_z);
-            puts(ok ? "+ ZKP-RNL proof verified" : "- ZKP-RNL verification FAILED");
+            if (ok) puts("+ ZKP-RNL proof verified");
+            else printf("[FAIL] ZKP-RNL verification failed\n");
         } else {
-            puts("- ZKP-RNL rejection limit reached (unexpected)");
+            printf("[FAIL] ZKP-RNL rejection limit reached (unexpected)\n");
         }
     }
 
@@ -628,7 +682,8 @@ int main(void)
         int ok = zkp_nl_verify(zkn_B, zkn_y, ZKP_NL_DEFAULT_N, ZKP_NL_DEMO_ROUNDS,
                                zkn_msg, sizeof(zkn_msg)-1, zkn_proof);
         zkp_nl_proof_free(zkn_proof, ZKP_NL_DEMO_ROUNDS);
-        puts(ok ? "+ ZKP-NL proof verified" : "- ZKP-NL verification FAILED");
+        if (ok) puts("+ ZKP-NL proof verified");
+        else printf("[FAIL] ZKP-NL verification failed\n");
     }
 
     /* --- HCRED [CREDENTIAL — Ring-LWR + code syndrome via φ, MPCitH] */
@@ -661,7 +716,7 @@ int main(void)
                               &hc_cred, &hc_isd, hc_isyndr))
             puts("+ issuer credential (Stern-F over (m,C,seed_H,y)) verified");
         else
-            puts("- issuer credential verify FAILED");
+            printf("[FAIL] issuer credential verify failed\n");
         stern_sig_free(&hc_cred);
 
         static const uint8_t hcred_nonce[]  = "HCRED demo nonce";
@@ -670,7 +725,7 @@ int main(void)
         if (hcred_prove(&hc_proof, hc_s, hc_m, hc_c, &hc_seed_H, hc_syndr,
                         HCRED_DEMO_ROUNDS,
                         hcred_nonce, sizeof(hcred_nonce)-1, urnd) != 0) {
-            puts("- HCRED prove error");
+            printf("[FAIL] HCRED prove error\n");
         } else {
             printf("enrolment: W=%d (weight of hidden e=φ(s))\n", hc_proof.W);
             if (hcred_verify(hc_m, hc_c, &hc_seed_H, hc_syndr, &hc_proof,
@@ -679,13 +734,13 @@ int main(void)
                 puts("+ HCRED presentation proof verified (unified circuit: "
                      "Ring-LWR rounding + syndrome for the SAME s; e never revealed)");
             else
-                puts("- HCRED presentation verify FAILED");
+                printf("[FAIL] HCRED presentation verify failed\n");
             if (!hcred_verify(hc_m, hc_c, &hc_seed_H, hc_syndr, &hc_proof,
                               HCRED_DEMO_ROUNDS,
                               hcred_nonce2, sizeof(hcred_nonce2)-1))
                 puts("+ HCRED replay under different nonce rejected");
             else
-                puts("- HCRED replay NOT rejected");
+                printf("[FAIL] HCRED replay NOT rejected\n");
             hcred_proof_free(&hc_proof);
         }
         puts("  (demo uses R=4; production requires R=219; rounding check"
@@ -717,10 +772,10 @@ int main(void)
         int reuse = hpks_xmss_verify(diff_msg, sizeof(diff_msg)-1, &sig0, xmss_root);
 
         if (ok0 && ok1 && !bad && !reuse)
-            printf("- HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n",
+            printf("+ HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n",
                    xmss_h);
         else
-            printf("+ HPKS-XMSS-F FAILED: ok0=%d ok1=%d bad=%d reuse=%d\n",
+            printf("[FAIL] HPKS-XMSS-F: ok0=%d ok1=%d bad=%d reuse=%d\n",
                    ok0, ok1, bad, reuse);
 
         hpks_xmss_sig_free(&sig0);
@@ -746,7 +801,7 @@ int main(void)
         if (t_ok && !t_bad)
             printf("+ HPKS-T %d-of-%d sign/verify correct, tamper rejected\n", T_N, T_N);
         else
-            printf("+ HPKS-T FAILED: ok=%d bad=%d\n", t_ok, t_bad);
+            printf("[FAIL] HPKS-T: ok=%d bad=%d\n", t_ok, t_bad);
     }
 
     /* *** EVE bypass TESTS *** */
@@ -763,7 +818,7 @@ int main(void)
         gf_pow_ba(&Ce_eve,  &C,      &e_eve);
         gf_mul_ba(&lhs_eve, &gs_eve, &Ce_eve);
         if (ba_equal(&lhs_eve, &R_eve))
-            puts("+ Eve forged HPKS-NL signature (Eve wins)!");
+            printf("[FAIL] Eve forged HPKS-NL signature (Eve wins)!\n");
         else
             puts("- Eve could not forge: g^s_eve \xc2\xb7 C^e_eve \xe2\x89\xa0 R_eve  (DLP protection)");
     }
@@ -775,7 +830,7 @@ int main(void)
         ba_xor(&eve_key, &C, &R_nl2_saved);
         nl_fscx_revolve_v2_inv_ba(&D_eve, &E_nl_saved, &eve_key, I_VALUE);
         if (ba_equal(&D_eve, &plaintext))
-            puts("+ Eve decrypted plaintext (Eve wins)!");
+            printf("[FAIL] Eve decrypted plaintext (Eve wins)!\n");
         else
             puts("- Eve could not decrypt without Alice's private key (CDH + NL protection)");
     }
@@ -785,7 +840,7 @@ int main(void)
         BitArray eve_rnl_guess;
         ba_rand(&eve_rnl_guess, urnd);
         if (ba_equal(&eve_rnl_guess, &sk_rnl_A_saved))
-            puts("+ Eve guessed HKEX-RNL shared key (astronomically unlikely)!");
+            printf("[FAIL] Eve guessed HKEX-RNL shared key (astronomically unlikely)!\n");
         else
             puts("- Eve random guess does not match shared key (Ring-LWR protection)");
     }
@@ -804,7 +859,7 @@ int main(void)
             ba_rand(&eve_sig.resp_b[i], urnd);
         }
         if (hpks_stern_f_verify(&eve_sig, &decoy, &sf_seed_saved, sf_syn_saved))
-            puts("+ Eve forged HPKS-Stern-F (Eve wins)!");
+            printf("[FAIL] Eve forged HPKS-Stern-F (Eve wins)!\n");
         else
             puts("- Eve cannot forge: Fiat-Shamir mismatch  (SD + PRF protection)");
         stern_sig_free(&eve_sig);
@@ -815,7 +870,7 @@ int main(void)
         BitArray eve_K_guess;
         ba_rand(&eve_K_guess, urnd);
         if (ba_equal(&eve_K_guess, &sf_K_enc_saved))
-            puts("+ Eve guessed HPKE-Stern-F session key (astronomically unlikely)!");
+            printf("[FAIL] Eve guessed HPKE-Stern-F session key (astronomically unlikely)!\n");
         else
             puts("- Eve random guess does not match session key  (SD protection)");
     }
@@ -831,9 +886,9 @@ int main(void)
         fpe_decrypt(&fpe_ct,   fpe_key, sizeof(fpe_key)-1,
                                 fpe_ctx,  sizeof(fpe_ctx)-1,  &fpe_rec);
         if (ba_equal(&fpe_plain, &fpe_rec))
-            puts("- FPE round-trip correct");
+            puts("+ FPE round-trip correct");
         else
-            puts("+ FPE round-trip failed!");
+            printf("[FAIL] FPE round-trip failed!\n");
     }
 
     puts("*** Tweakable cipher (78.B) — sector-block encrypt/decrypt");
@@ -844,9 +899,9 @@ int main(void)
         twk_encrypt(&twk_plain, twk_key, sizeof(twk_key)-1, 7, 3, &twk_ct);
         twk_decrypt(&twk_ct,   twk_key, sizeof(twk_key)-1, 7, 3, &twk_rec);
         if (ba_equal(&twk_plain, &twk_rec))
-            puts("- Tweakable cipher round-trip correct");
+            puts("+ Tweakable cipher round-trip correct");
         else
-            puts("+ Tweakable cipher round-trip failed!");
+            printf("[FAIL] Tweakable cipher round-trip failed!\n");
     }
 
     puts("*** Accumulator (78.J) — Merkle root + proof/verify for 4 leaves");
@@ -870,9 +925,9 @@ int main(void)
         int ok_wrong = haccum_verify(root, leaves[0], proof, depth, 2);
         free(proof);
         if (ok && !ok_wrong)
-            puts("- Accumulator proof/verify correct");
+            puts("+ Accumulator proof/verify correct");
         else
-            puts("+ Accumulator proof/verify failed!");
+            printf("[FAIL] Accumulator proof/verify failed!\n");
         (void)root_check;
     }
 
@@ -883,9 +938,9 @@ int main(void)
         hske_encrypt_masked(&hske_plain, &hske_key, &hske_ct, &mask, urnd);
         hske_decrypt_masked(&hske_ct,   &hske_key, &hske_rec, &mask, urnd);
         if (ba_equal(&hske_rec, &hske_plain))
-            puts("- Masked HSKE encrypt/decrypt correct");
+            puts("+ Masked HSKE encrypt/decrypt correct");
         else
-            puts("+ Masked HSKE encrypt/decrypt failed!");
+            printf("[FAIL] Masked HSKE encrypt/decrypt failed!\n");
         explicit_bzero(&mask, sizeof(mask));
     }
 
@@ -904,8 +959,8 @@ int main(void)
         }
         for (i = 1; i < 5 && unique; i++)
             if (memcmp(seen[0], seen[i], KEYBYTES) == 0) unique = 0;
-        puts(unique ? "- Ratchet: 5 distinct message keys"
-                    : "+ Ratchet: duplicate message keys!");
+        if (unique) puts("+ Ratchet: 5 distinct message keys");
+        else printf("[FAIL] Ratchet: duplicate message keys!\n");
         ratchet_erase(&state);
     }
 
@@ -927,9 +982,9 @@ int main(void)
         stern_ring_sign(&rsig, &plaintext, &ring_e[ring_j], ring_j,
                          ring_seeds, ring_syndrs, urnd);
         if (stern_ring_verify(&rsig, &plaintext, ring_seeds, ring_syndrs))
-            puts("- Ring sig (78.I): signature verified (k=3, signer=1)");
+            puts("+ Ring sig (78.I): signature verified (k=3, signer=1)");
         else
-            puts("+ Ring sig (78.I): verification FAILED");
+            printf("[FAIL] Ring sig (78.I): verification failed\n");
         stern_ring_free(&rsig);
         for (i = 0; i < RING_K; i++) explicit_bzero(&ring_e[i], sizeof(ring_e[i]));
 #undef RING_K
@@ -946,9 +1001,9 @@ int main(void)
         oprf_unblind(&oprf_F, &oprf_beta, &oprf_r);
         oprf_direct(&oprf_check, (const uint8_t*)oprf_msg, strlen(oprf_msg), &oprf_k);
         if (memcmp(oprf_F.b, oprf_check.b, KEYBYTES) == 0)
-            puts("- OPRF blind/eval/unblind round-trip correct");
+            puts("+ OPRF blind/eval/unblind round-trip correct");
         else
-            puts("+ OPRF round-trip failed!");
+            printf("[FAIL] OPRF round-trip failed!\n");
         explicit_bzero(&oprf_k, sizeof(oprf_k));
         explicit_bzero(&oprf_r, sizeof(oprf_r));
     }
@@ -967,16 +1022,16 @@ int main(void)
         if (hpake_login_demo(pake_sk, &pake_rec,
                              (const uint8_t *)pake_pw, strlen(pake_pw),
                              &pake_oprf_k, urnd))
-            puts("- aPAKE login with correct password: session key established");
+            puts("+ aPAKE login with correct password: session key established");
         else
-            puts("+ aPAKE login with correct password: FAILED!");
+            printf("[FAIL] aPAKE login with correct password failed!\n");
         uint8_t pake_sk2[KEYBYTES];
         if (!hpake_login_demo(pake_sk2, &pake_rec,
                               (const uint8_t *)pake_pw_bad, strlen(pake_pw_bad),
                               &pake_oprf_k, urnd))
-            puts("- aPAKE login with wrong password: correctly rejected");
+            puts("+ aPAKE login with wrong password: correctly rejected");
         else
-            puts("+ aPAKE login with wrong password: ACCEPTED (security failure)!");
+            printf("[FAIL] aPAKE login with wrong password ACCEPTED (security failure)!\n");
         explicit_bzero(&pake_oprf_k, sizeof(pake_oprf_k));
         explicit_bzero(pake_sk, sizeof(pake_sk));
     }
@@ -986,5 +1041,19 @@ int main(void)
     explicit_bzero(&a,         sizeof(a));
     explicit_bzero(&b,         sizeof(b));
     explicit_bzero(&preshared, sizeof(preshared));
+
+    /* Failure gate (TODO #259).  Return non-zero if any check reported
+     * [FAIL], mirroring CryptosuiteTests/Herradura_tests.c's TODO #233 gate. */
+    if (g_failures) {
+        int k, shown = g_failures < HFAIL_KEEP ? g_failures : HFAIL_KEEP;
+        fprintf(stdout, "\n*** FAILED: %d check(s) reported [FAIL] ***\n",
+                g_failures);
+        for (k = 0; k < shown; k++)
+            fprintf(stdout, "    %s\n", g_fail_lines[k]);
+        if (g_failures > shown)
+            fprintf(stdout, "    ... and %d more\n", g_failures - shown);
+        return 1;
+    }
+    fputs("\n*** OK: no check reported [FAIL] ***\n", stdout);
     return 0;
 }

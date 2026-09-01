@@ -13,12 +13,18 @@
 # (HKEX-GF/HSKE/HPKS/HPKE), the NL/PQC quartet (HKEX-RNL, HSKE-NL-A1/A2,
 # HPKS-NL, HPKE-NL), the Stern family (HPKS-Stern-F, HPKE-Stern-F,
 # HPKE-Stern-KEM), HCRED, and HPKS-XMSS-F (TODO #208; h=3 for speed).
-# C and Go additionally cover more of the
-# --algo surface (hpks-ring, hpks-t, hske-duplex, rnl-sigma,
+# C and Go additionally cover more of the --algo surface (rnl-sigma,
 # hybrid-rnl-stern, nl-zkboo/zkbpp, hpks-zkp-nl) that Java's CLI does not
-# yet expose (see CLAUDE.md's bindings/java/ entry); that surface is
+# expose at all (see CLAUDE.md's bindings/java/ entry); that surface is
 # intentionally out of scope here — it is not a 4-way concern and is
-# already covered by native-interop's C<->Go/Python scripts.
+# already covered by native-interop's C<->Go/Python scripts.  hpks-ring,
+# hpks-t and hske-duplex/hske-duplex3 WERE in that list until TODO #260
+# ported them to Java too (v5.3.6-v5.3.9); none of the three fit this
+# file's producer/consumer shape, so each has its own dedicated 4-way
+# script instead: hpks-t's multi-phase protocol is
+# CliTest/test_threshold_interop.sh, hske-duplex (v2) is
+# CliTest/test_duplex.sh, and hske-duplex3 is CliTest/test_v3_family.sh.
+# hpks-ring's 4-way coverage is still open (TODO #260 step 6).
 #
 # OPRF and aPAKE are inherently role-asymmetric (blind/eval/unblind,
 # register/login) multi-party protocols rather than simple
@@ -129,10 +135,11 @@ matrix_symmetric() {
 matrix_symmetric hske "$SK"
 matrix_symmetric hske-nla1 "$SK"
 matrix_symmetric hske-nla2 "$SK"
-# NL-FSCX v3 (TODO #255).  All four CLIs ship hske-nla3; hske-duplex3 is Python,
-# C and Go only (Java has no duplex in either version), so it is covered by
-# CliTest/test_v3_family.sh rather than here -- this matrix runs one algo list
-# across every LANG and has no per-algo language subset.
+# NL-FSCX v3 (TODO #255).  All four CLIs ship hske-nla3.  hske-duplex3 (all
+# four CLIs since TODO #260's v5.3.8) is covered by CliTest/test_v3_family.sh
+# rather than here -- this matrix runs one algo list across every LANG and
+# has no per-algo language subset, so a script with its own arbitrary-length
+# ciphertext framing and --ad flag doesn't fit matrix_symmetric's shape.
 matrix_symmetric hske-nla3 "$SK"
 
 # ── Generic NxN asymmetric enc/dec matrix (fresh keypair per producer) ─────

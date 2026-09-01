@@ -36,13 +36,38 @@ import java.util.Map;
  * aPAKE (augmented PAKE over HKEX-RNL + OPRF + ZKBoo-NL,
  * {@code pake-register}/{@code pake-demo} — {@link Hpake}, TODO #203).
  *
+ * Also covers {@code fpe}/{@code twk} (78.A/78.B, plus their {@code --v3}
+ * variants, TODO #255/#260 — {@link FpeTwk}): a 32-byte-block tweak cipher
+ * and a tweakable wide-block cipher, both keyed by a session key PEM (the
+ * same shape {@code enc}/{@code dec} use for {@code hske}); HPKS-T
+ * (TODO #98/#106/#260 — {@link HpksT}), an n-of-n MuSig2-style
+ * threshold/aggregate Schnorr signature over four phases —
+ * {@code threshold-commit} (phase 1, per signer), {@code threshold-aggregate}
+ * (phase 2, coordinator), {@code threshold-respond} (phase 3, per signer),
+ * {@code threshold-combine} (phase 4, coordinator) — plus {@code verify
+ * --algo hpks-t} for the resulting HPKST SIGNATURE PEM. Only 256-bit
+ * hpks/hpks-nl keys are supported (Python's variable-{@code nbits} HPKS-T
+ * is not ported; see {@link HpksT}); the research HSKE-NL-V2/V3-Duplex
+ * AEAD (TODO #95 Option 2/#255/#260 — {@link Duplex}), via {@code enc}/
+ * {@code dec --algo hske-duplex}/{@code hske-duplex3} plus {@code --ad}
+ * for associated data, matching the arbitrary-length ciphertext framing
+ * (format tag 3/4) {@code herradura.py}'s {@code _encode_duplex_ct} uses;
+ * and HPKS-Stern-Ring (TODO #78.I/#121/#260 — {@link SternRing}), an
+ * OR-composed ring signature over {@code k} hpks-stern public keys, via
+ * {@code sign}/{@code verify --algo hpks-ring} plus a comma-separated
+ * {@code --ring} of member public-key PEM paths (matching Python's
+ * {@code _load_ring_pubkeys}, not the space-separated convention
+ * {@code threshold-*}'s {@code --commits}/{@code --partials} use).
+ *
  * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
- * signature schemes, rnl-sigma, hybrid-rnl-stern, the Stern-Ring
- * OR-composition signature, and the {@code --kdf}/{@code --aead} CLI
- * options.
+ * signature schemes, rnl-sigma, hybrid-rnl-stern, and the
+ * {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
+ * these gaps).
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
- * decfile. PEM/DER wire format is byte-for-byte compatible with the
+ * decfile, fpe, twk, threshold-commit, threshold-aggregate,
+ * threshold-respond, threshold-combine. PEM/DER wire format is byte-for-byte
+ * compatible with the
  * Python/C/Go CLIs (via {@link Codec}). HKEX-RNL's {@code kex} is
  * two-round: Bob responds first ({@code --our} his priv key, {@code --their}
  * Alice's pub key) with an RNL RESPONSE PEM; Alice then completes
@@ -76,6 +101,8 @@ public final class HerraduraCli {
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
+                + "|fpe|twk"
+                + "|threshold-commit|threshold-aggregate|threshold-respond|threshold-combine"
                 + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
                 + "|pake-register|pake-demo> [options]");
         }
@@ -92,6 +119,12 @@ public final class HerraduraCli {
             case "dgst":    cmdDgst(opt);    break;
             case "encfile": cmdEncfile(opt); break;
             case "decfile": cmdDecfile(opt); break;
+            case "fpe":     cmdFpe(opt);     break;
+            case "twk":     cmdTwk(opt);     break;
+            case "threshold-commit":    cmdThresholdCommit(opt);    break;
+            case "threshold-aggregate": cmdThresholdAggregate(opt); break;
+            case "threshold-respond":   cmdThresholdRespond(opt);   break;
+            case "threshold-combine":   cmdThresholdCombine(opt);   break;
             case "oprf-blind":   cmdOprfBlind(opt);   break;
             case "oprf-eval":    cmdOprfEval(opt);    break;
             case "oprf-unblind": cmdOprfUnblind(opt); break;
@@ -115,13 +148,20 @@ public final class HerraduraCli {
             String a = args[i];
             if (!a.startsWith("--")) throw new CliError("unexpected argument: " + a);
             String key = a.substring(2);
-            if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
-                opt.put(key, args[i + 1]);
-                i += 2;
-            } else {
-                opt.put(key, "true"); // boolean flag
-                i += 1;
+            // Greedily consume every following non-"--" token as this
+            // flag's value(s), space-joined — matches argparse's nargs='+'
+            // for multi-value flags (e.g. --commits a.pem b.pem c.pem)
+            // while staying a no-op for the single-value case, since every
+            // other flag's value is always immediately followed by the
+            // next "--flag" or end of argv.
+            int j = i + 1;
+            java.util.List<String> vals = new java.util.ArrayList<>();
+            while (j < args.length && !args[j].startsWith("--")) {
+                vals.add(args[j]);
+                j++;
             }
+            opt.put(key, vals.isEmpty() ? "true" : String.join(" ", vals));
+            i = j;
         }
         return opt;
     }
@@ -538,12 +578,70 @@ public final class HerraduraCli {
         }
     }
 
+    /** HSKE-NL-V2/V3-Duplex AEAD ciphertext DER, format tag 3 (v2) or 4 (v3)
+     * — matches herradura.py's _encode_duplex_ct: SEQUENCE(tag, nonce[32B],
+     * ct_len (minimal), ct (ct_len bytes, or a single 0x00 if empty), tag[32B],
+     * nbits (minimal)). Unlike the fixed-block sym formats, ct is
+     * arbitrary-length, so its own length is DER-encoded ahead of it. */
+    private static String encodeDuplexCt(BigInteger nonce, byte[] ct, byte[] tagBytes, int nbits, boolean v3) {
+        int ctLen = ct.length;
+        byte[] der = Codec.derSeq(
+            Codec.derInt(BigInteger.valueOf(v3 ? 4 : 3), -1),
+            Codec.derInt(nonce, nbits / 8),
+            Codec.derInt(BigInteger.valueOf(ctLen), -1),
+            Codec.derInt(new BigInteger(1, ct), Math.max(1, ctLen)),
+            Codec.derInt(new BigInteger(1, tagBytes), 32),
+            Codec.derInt(BigInteger.valueOf(nbits), -1));
+        return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
+    }
+
+    /** Returns {nonce, ct, tag, nbits}. */
+    private static final class DuplexCt {
+        final BigInteger nonce;
+        final byte[] ct;
+        final byte[] tag;
+        final int nbits;
+        DuplexCt(BigInteger nonce, byte[] ct, byte[] tag, int nbits) {
+            this.nonce = nonce; this.ct = ct; this.tag = tag; this.nbits = nbits;
+        }
+    }
+
+    private static DuplexCt decodeDuplexCt(String pem, boolean v3) {
+        Codec.PemBlock b = Codec.pemUnwrap(pem);
+        if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
+            throw new CliError("expected " + Codec.PEM_CIPHERTEXT + ", got " + b.label);
+        }
+        List<BigInteger> ints = Codec.derParseSeq(b.der);
+        int want = v3 ? 4 : 3;
+        int got = ints.get(0).intValueExact();
+        if (got != want) {
+            throw new CliError("expected " + (v3 ? "V3" : "V2") + "-Duplex ciphertext (format "
+                + want + "), got " + got);
+        }
+        BigInteger nonce = ints.get(1);
+        int ctLen = ints.get(2).intValueExact();
+        byte[] ct = ctLen == 0 ? new byte[0] : toFixedBytes(ints.get(3), ctLen);
+        byte[] tag = toFixedBytes(ints.get(4), 32);
+        int nbits = ints.get(5).intValueExact();
+        return new DuplexCt(nonce, ct, tag, nbits);
+    }
+
     private static void cmdEnc(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "enc");
         byte[] inBytes = readBytes(req(opt, "in", "enc"));
         String out = req(opt, "out", "enc");
 
-        if (algo.equals("hske")) {
+        if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
+            boolean v3 = algo.equals("hske-duplex3");
+            BigInteger[] key = loadKey(req(opt, "key", "enc"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) throw new CliError("enc " + algo + ": requires a " + Herradura.N + "-bit key");
+            byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            Duplex.EncResult r = v3
+                ? Duplex.v3Encrypt(key[0], inBytes, ad, RNG)
+                : Duplex.v2Encrypt(key[0], inBytes, ad, RNG);
+            writeString(out, encodeDuplexCt(r.nonce, r.ct, r.tag, nbits, v3));
+        } else if (algo.equals("hske")) {
             BigInteger[] key = loadKey(req(opt, "key", "enc"));
             int nbits = key[1].intValueExact();
             int nbytes = nbits / 8;
@@ -627,7 +725,7 @@ public final class HerraduraCli {
             writeString(out, Codec.encodeKemCt(enc.syn, e));
         } else {
             throw new CliError("enc: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -635,7 +733,21 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "dec");
         String out = req(opt, "out", "dec");
 
-        if (algo.equals("hske")) {
+        if (algo.equals("hske-duplex") || algo.equals("hske-duplex3")) {
+            boolean v3 = algo.equals("hske-duplex3");
+            BigInteger[] key = loadKey(req(opt, "key", "dec"));
+            int nbits = key[1].intValueExact();
+            if (nbits != Herradura.N) throw new CliError("dec " + algo + ": requires a " + Herradura.N + "-bit key");
+            DuplexCt ct = decodeDuplexCt(readString(req(opt, "in", "dec")), v3);
+            byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] pt = v3
+                ? Duplex.v3Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad)
+                : Duplex.v2Decrypt(key[0], ct.nonce, ct.ct, ct.tag, ad);
+            if (pt == null) {
+                throw new CliError("dec: authentication tag mismatch — ciphertext corrupt, wrong key, or wrong --ad");
+            }
+            writeBytes(out, pt);
+        } else if (algo.equals("hske")) {
             BigInteger[] key = loadKey(req(opt, "key", "dec"));
             int nbits = key[1].intValueExact();
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
@@ -713,7 +825,7 @@ public final class HerraduraCli {
             writeBytes(out, toFixedBytes(d, Herradura.N / 8));
         } else {
             throw new CliError("dec: unsupported --algo " + algo
-                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
+                + " (this Java CLI covers hske, hske-nla1, hske-nla2, hske-nla3, hske-duplex, hske-duplex3, hpke, hpke-nl, hpke-nl3, hpke-stern, hpke-stern-kem)");
         }
     }
 
@@ -735,8 +847,63 @@ public final class HerraduraCli {
     // sign / verify (hpks only)
     // -----------------------------------------------------------------
 
+    /** Parses a comma-separated list of hpks-stern public-key PEM paths for
+     * hpks-ring sign/verify, matching herradura.py's _load_ring_pubkeys.
+     * Returns the ring's member keys, all sharing Herradura.N (this port,
+     * like the rest of the CLI, is fixed at N rather than Python's
+     * variable nbits). */
+    private static List<SternRing.RingKey> loadRingPubkeys(String ringArg) throws IOException {
+        String[] paths = ringArg.split(",");
+        List<SternRing.RingKey> keys = new java.util.ArrayList<>();
+        for (String p : paths) {
+            if (p.isEmpty()) continue;
+            String pem = readString(p);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HPKS_STERN_PUB)) {
+                throw new CliError("hpks-ring: ring member " + p + " is " + block.label + ", expected " + Codec.PEM_HPKS_STERN_PUB);
+            }
+            Codec.SternPubKey pub = Codec.decodeSternPubKey(pem, block.label);
+            if (pub.nbits != Herradura.N) {
+                throw new CliError("hpks-ring: all ring members must share n=" + Herradura.N);
+            }
+            keys.add(new SternRing.RingKey(pub.seed, pub.syndrome));
+        }
+        if (keys.size() < 2) {
+            throw new CliError("hpks-ring: --ring needs at least 2 member public keys");
+        }
+        return keys;
+    }
+
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
+        if (algo.equals("hpks-ring")) {
+            sternDemoWarning();
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
+
+            String pem = readString(keyPath);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HPKS_STERN_PRIV)) {
+                throw new CliError("hpks-ring sign: signer key must be hpks-stern, got " + block.label);
+            }
+            Codec.SternPrivKey pk = Codec.decodeSternPrivKey(pem, block.label);
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "sign"));
+            int j = -1;
+            for (int i = 0; i < ring.size(); i++) {
+                if (ring.get(i).seed.equals(pk.seed)) { j = i; break; }
+            }
+            if (j < 0) {
+                throw new CliError("hpks-ring sign: signer's public key is not in --ring "
+                    + "(run pkey --pubout on the signer key and include it)");
+            }
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, pk.nbits / 8));
+            SternRing.RingSignature sig = SternRing.sign(msgInt, pk.e, j, ring, rounds, RNG);
+            writeString(out, Codec.encodeRingSig(sig, pk.nbits));
+            System.err.println("Ring signature created (k=" + ring.size() + "); signer index is hidden.");
+            return;
+        }
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
@@ -784,7 +951,7 @@ public final class HerraduraCli {
             return;
         }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
+            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -844,8 +1011,32 @@ public final class HerraduraCli {
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
             return;
         }
+        if (algo.equals("hpks-t")) {
+            Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
+            boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
+        if (algo.equals("hpks-ring")) {
+            List<SternRing.RingKey> ring = loadRingPubkeys(req(opt, "ring", "verify"));
+            Codec.RingSigDecoded sig = Codec.decodeRingSig(readString(req(opt, "sig", "verify")));
+            if (sig.nbits != Herradura.N) {
+                throw new CliError("hpks-ring verify: signature n=" + sig.nbits + " != ring n=" + Herradura.N);
+            }
+            if (sig.sig.ringSize() != ring.size()) {
+                throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
+                    + " != " + ring.size() + " provided members");
+            }
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            BigInteger msgInt = new BigInteger(1, padTrunc(msg, Herradura.N / 8));
+            boolean ok = SternRing.verify(msgInt, sig.sig, ring);
+            if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
+            return;
+        }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-xmss, hpks-wots)");
+            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots, hpks-t)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));
@@ -934,6 +1125,157 @@ public final class HerraduraCli {
             throw new CliError("decfile: " + e.getMessage());
         }
         writeBytes(req(opt, "out", "decfile"), pt);
+    }
+
+    // -----------------------------------------------------------------
+    // threshold-commit / threshold-aggregate / threshold-respond /
+    // threshold-combine — HPKS-T (TODO #98/#106/#260), mirrors
+    // herradura.py's cmd_threshold_commit / _aggregate / _respond /
+    // _combine exactly, in the same four-phase shape: each signer runs
+    // commit (phase 1) and respond (phase 3); a coordinator runs
+    // aggregate (phase 2) and combine (phase 4). Only 256-bit hpks/hpks-nl
+    // keys are supported — {@link HpksT}'s port, like the rest of this
+    // CLI, is fixed at Herradura.N rather than Python's variable nbits.
+    // -----------------------------------------------------------------
+
+    /** Loads an hpks or hpks-nl private key PEM (the two algos HPKS-T
+     * threshold-signs over); returns {priv, pub, nbits}. */
+    private static Codec.PrivKey loadHpksPrivKeyForThreshold(String path) throws IOException {
+        String pem = readString(path);
+        Codec.PemBlock block = Codec.pemUnwrap(pem);
+        if (!block.label.equals(Codec.PEM_HPKS_PRIV) && !block.label.equals(Codec.PEM_HPKS_NL_PRIV)) {
+            throw new CliError("threshold: expected an hpks or hpks-nl private key PEM, got " + block.label);
+        }
+        return Codec.decodePrivKey(pem, block.label);
+    }
+
+    private static void cmdThresholdCommit(Map<String, String> opt) throws IOException {
+        Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-commit"));
+        if (pk.nbits != Herradura.N) {
+            throw new CliError("threshold-commit: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+        }
+        BigInteger kJ = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
+        BigInteger rJ = Herradura.gfPow(Herradura.GF_GEN, kJ);
+        writeString(req(opt, "commit-out", "threshold-commit"), Codec.encodeHpkstCommit(rJ, pk.pub, pk.nbits));
+        writeString(req(opt, "nonce-out", "threshold-commit"), Codec.encodeHpkstNonce(kJ, pk.nbits));
+    }
+
+    private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {
+        String commitsArg = req(opt, "commits", "threshold-aggregate");
+        List<Codec.HpkstCommit> commits = new java.util.ArrayList<>();
+        Integer nbits = null;
+        for (String cp : commitsArg.trim().split("\\s+")) {
+            Codec.HpkstCommit c = Codec.decodeHpkstCommit(readString(cp));
+            if (nbits == null) nbits = c.nbits;
+            else if (!nbits.equals(c.nbits)) throw new CliError("threshold-aggregate: commitment n mismatch");
+            commits.add(c);
+        }
+        if (nbits == null || nbits != Herradura.N) {
+            throw new CliError("threshold-aggregate: HPKS-T requires " + Herradura.N + "-bit commitments");
+        }
+        byte[] inBytes = readBytes(req(opt, "in", "threshold-aggregate"));
+        BigInteger msg = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
+
+        BigInteger rVal = BigInteger.ONE;
+        List<BigInteger> pubkeys = new java.util.ArrayList<>();
+        for (Codec.HpkstCommit c : commits) {
+            rVal = Herradura.gfMul(rVal, c.rJ);
+            pubkeys.add(c.cJ);
+        }
+        BigInteger e = Hfscx256.nlFscxRevolveV1(rVal, msg, Herradura.I_STEPS);
+        HpksT.Aggregate agg = HpksT.aggregatePublicKeys(pubkeys);
+        writeString(req(opt, "out", "threshold-aggregate"), Codec.encodeHpkstAggregate(rVal, agg.cAgg, e, nbits));
+    }
+
+    private static void cmdThresholdRespond(Map<String, String> opt) throws IOException {
+        Codec.PrivKey pk = loadHpksPrivKeyForThreshold(req(opt, "key", "threshold-respond"));
+        if (pk.nbits != Herradura.N) {
+            throw new CliError("threshold-respond: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
+        }
+        String commitsArg = req(opt, "commits", "threshold-respond");
+        List<BigInteger> pubkeys = new java.util.ArrayList<>();
+        for (String cp : commitsArg.trim().split("\\s+")) {
+            pubkeys.add(Codec.decodeHpkstCommit(readString(cp)).cJ);
+        }
+        Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-respond")));
+        if (agg.nbits != pk.nbits) throw new CliError("threshold-respond: aggregate n mismatch with key");
+        Codec.HpkstNonce nonce = Codec.decodeHpkstNonce(readString(req(opt, "nonce", "threshold-respond")));
+        if (nonce.nbits != pk.nbits) throw new CliError("threshold-respond: nonce n mismatch with key");
+
+        HpksT.Aggregate recomputed = HpksT.aggregatePublicKeys(pubkeys);
+        int idx = -1;
+        for (int i = 0; i < pubkeys.size(); i++) {
+            if (pubkeys.get(i).equals(pk.pub)) { idx = i; break; }
+        }
+        if (idx < 0) throw new CliError("threshold-respond: our public key not found in commit list");
+        BigInteger muJ = recomputed.coeffs[idx];
+
+        BigInteger sJ = nonce.kJ.subtract(pk.priv.multiply(muJ).multiply(agg.e)).mod(Herradura.GROUP_ORDER);
+        writeString(req(opt, "out", "threshold-respond"), Codec.encodeHpkstPartial(sJ, pk.nbits));
+    }
+
+    private static void cmdThresholdCombine(Map<String, String> opt) throws IOException {
+        Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-combine")));
+        String partialsArg = req(opt, "partials", "threshold-combine");
+        BigInteger sAcc = BigInteger.ZERO;
+        for (String pp : partialsArg.trim().split("\\s+")) {
+            Codec.HpkstPartial part = Codec.decodeHpkstPartial(readString(pp));
+            if (part.nbits != agg.nbits) throw new CliError("threshold-combine: partial n mismatch");
+            sAcc = sAcc.add(part.sJ).mod(Herradura.GROUP_ORDER);
+        }
+        writeString(req(opt, "out", "threshold-combine"), Codec.encodeHpkstSig(agg.cAgg, agg.r, sAcc, agg.nbits));
+    }
+
+    // -----------------------------------------------------------------
+    // fpe / twk (78.A / 78.B, TODO #260) — mirrors herradura.py's cmd_fpe /
+    // cmd_twk and the C/Go CLIs' cmd_fpe / cmdFpe. NOT format-preserving in
+    // the FF1/FF3-1 sense: 32 raw bytes in, 32 raw bytes out. --key takes a
+    // HERRADURA SESSION KEY PEM (the same shape enc/dec use for hske); --v3
+    // selects the NL-FSCX v3 round (TODO #255) instead of v2 — separate
+    // subkey domain, so decrypt must pass --v3 too if encrypt did.
+    // -----------------------------------------------------------------
+
+    private static void cmdFpe(Map<String, String> opt) throws IOException {
+        boolean doEnc = opt.containsKey("encrypt");
+        boolean doDec = opt.containsKey("decrypt");
+        if (doEnc == doDec) throw new CliError("fpe: exactly one of --encrypt or --decrypt required");
+        BigInteger[] key = loadKey(req(opt, "key", "fpe"));
+        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        byte[] ctx = opt.getOrDefault("context", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        byte[] inBytes = readBytes(req(opt, "in", "fpe"));
+        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        boolean v3 = opt.containsKey("v3");
+        BigInteger r = doEnc
+            ? (v3 ? FpeTwk.fpeV3Encrypt(p, keyBytes, ctx) : FpeTwk.fpeEncrypt(p, keyBytes, ctx))
+            : (v3 ? FpeTwk.fpeV3Decrypt(p, keyBytes, ctx) : FpeTwk.fpeDecrypt(p, keyBytes, ctx));
+        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+    }
+
+    private static void cmdTwk(Map<String, String> opt) throws IOException {
+        boolean doEnc = opt.containsKey("encrypt");
+        boolean doDec = opt.containsKey("decrypt");
+        if (doEnc == doDec) throw new CliError("twk: exactly one of --encrypt or --decrypt required");
+        BigInteger[] key = loadKey(req(opt, "key", "twk"));
+        byte[] keyBytes = toFixedBytes(key[0], key[1].intValueExact() / 8);
+        long sector = opt.containsKey("sector") ? Long.parseLong(opt.get("sector")) : 0L;
+        int bidx = opt.containsKey("bidx") ? Integer.parseInt(opt.get("bidx")) : 0;
+        byte[] inBytes = readBytes(req(opt, "in", "twk"));
+        BigInteger p = new BigInteger(1, padBlock(inBytes));
+        boolean v3 = opt.containsKey("v3");
+        BigInteger r = doEnc
+            ? (v3 ? FpeTwk.twkV3Encrypt(p, keyBytes, sector, bidx) : FpeTwk.twkEncrypt(p, keyBytes, sector, bidx))
+            : (v3 ? FpeTwk.twkV3Decrypt(p, keyBytes, sector, bidx) : FpeTwk.twkDecrypt(p, keyBytes, sector, bidx));
+        writeBytes(opt.getOrDefault("out", "-"), toFixedBytes(r, Herradura.N / 8));
+    }
+
+    /** Right-pads (zero-fills) to a 32-byte block and truncates to it,
+     * matching herradura.py's {@code in_bytes.ljust(32, b'\x00')[:32]}. */
+    private static byte[] padBlock(byte[] in) {
+        int blockLen = Herradura.N / 8;
+        if (in.length == blockLen) return in;
+        byte[] out = new byte[blockLen];
+        System.arraycopy(in, 0, out, 0, Math.min(in.length, blockLen));
+        return out;
     }
 
     // -----------------------------------------------------------------

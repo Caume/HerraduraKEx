@@ -4,9 +4,14 @@
 #
 #   hske-nla3      C, Go, Python, Java   (--algo)
 #   hpke-nl3       C, Go, Python, Java   (--algo, own PEM labels)
-#   hske-duplex3   C, Go, Python         (--algo; Java ships no duplex at all)
-#   fpe --v3       C, Go, Python         (flag; Java ships neither fpe nor twk)
-#   twk --v3       C, Go, Python         (flag)
+#   hske-duplex3   C, Go, Python, Java   (--algo; TODO #260 added Java's duplex in v5.3.8)
+#   fpe --v3       C, Go, Python, Java   (flag; TODO #260 added Java's fpe/twk in v5.3.6)
+#   twk --v3       C, Go, Python, Java   (flag)
+#
+# Java columns above degrade to a NOTE rather than failing outright if
+# bindings/java is not compiled (HAVE_JAVA below) -- see native-interop's
+# coverage-guard step, which still requires this script be claimed by
+# exactly one native-* job regardless.
 #
 # WHY A FLAG AND NOT A SUBCOMMAND, for fpe/twk: recorded in TODO #255 and
 # SECURITY.md's FPE-V3 row.  Both are already filed in spec/ by CLI binding
@@ -76,7 +81,7 @@ $CLI_PY kex --algo hkex-gf --our "$TMP/a.pem" --their "$TMP/bpub.pem" \
             --out "$TMP/sk.pem"                                >/dev/null
 head -c 32 /dev/urandom > "$TMP/pt.bin"
 
-sym_langs="py c go"
+[ "$HAVE_JAVA" -eq 1 ] && sym_langs="py c go java" || sym_langs="py c go"
 [ "$HAVE_JAVA" -eq 1 ] && nla3_langs="py c go java" || nla3_langs="py c go"
 
 # ── 1. hske-nla3 ─────────────────────────────────────────────────────────────
@@ -199,7 +204,8 @@ for l in $sym_langs; do
           "$TMP/twk3_$l.bin" "$TMP/fpe2_$l.bin"
 done
 
-for l in c go; do
+for l in $sym_langs; do
+    [ "$l" = py ] && continue
     same "fpe --v3: python vs $l byte-identical" "$TMP/fpe3_py.bin" "$TMP/fpe3_$l.bin"
     same "twk --v3: python vs $l byte-identical" "$TMP/twk3_py.bin" "$TMP/twk3_$l.bin"
 done

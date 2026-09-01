@@ -2,6 +2,613 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.4.3] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, second pass
+
+PATCH: closes the two remaining gaps v5.4.2's pass explicitly left open.
+
+- **`test_ring.sh`**: HPKS-Stern-Ring's 3-way (py/c/go) interop test gains a 4th, optional
+  Java column (`command -v javac`-gated, same idiom as every other script this session
+  touched) — the sign/verify NxN matrix (now 16-way with Java), anonymity across all three
+  ring members, non-member sign refusal, tampered-message rejection, and wrong-ring
+  rejection. 31/31 checks pass with Java included. This was the one algo TODO #260's step 6
+  first pass (v5.4.2) flagged as still having zero 4-way interop coverage.
+- **`test_fpe_twk.sh`**: the (v2) `fpe`/`twk` 3-way interop test gains the same 4th Java
+  column — round-trip, domain-separation (the TODO #241/#242 regression this script exists
+  for), byte-for-byte cross-implementation agreement, cross-implementation decrypt in both
+  directions, and per-tweak-field separation. 59/59 checks pass with Java included. Its own
+  header comment ("Java ships neither" — stale since v5.3.6) is corrected.
+- Swept `CliTest/`, `spec/`, and `SECURITY.md` for any other "Java ships/has/lacks X"
+  phrasing; found none remaining.
+
+Both scripts are claimed by `native-interop` (unchanged filenames, so the coverage guard is
+unaffected), which already gained a JDK install in v5.4.2 — so both get real 4-way coverage
+in CI, not just locally.
+
+TODO #260's step 6 is now DONE: every family that has a dedicated interop script covers
+Java, and the sweep for stale comments came back clean. `bash CliTest/test_java_bindings.sh`,
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and the
+`CliTest/*.sh` coverage-guard's declared-scripts check all stay green.
+
+**TODO #260 itself is now DONE** — all six steps (primitive porting, `SelfTest` coverage,
+CLI subcommands, the suite demo, its CI step, and interop coverage) are complete.
+
+## [5.4.2] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: interop coverage, first pass
+
+PATCH: extends existing `CliTest/*.sh` interop scripts to Java where the surface they test
+already exists there (TODO #260 step 6, first pass — not the whole step).
+
+- **`test_v3_family.sh`**: `sym_langs` (driving hske-duplex3, fpe --v3, twk --v3, and the
+  hske-nla2/hske-nla3 zero-key check) now includes `java` when `bindings/java` is compiled,
+  matching the `nla3_langs` pattern the same file already used for hske-nla3/hpke-nl3. The
+  header comment's per-family language table and its "Java ships no duplex at all" /
+  "Java ships neither fpe nor twk" notes — both stale since v5.3.6/v5.3.8 — are corrected.
+  124/124 checks pass with Java included.
+- **`test_duplex.sh`**: the plain (v2) `hske-duplex` 3-way (py/c/go) interop test gains a
+  4th, optional Java column (`HAVE_JAVA`-gated, same idiom as the scripts above) — round-trip,
+  wrong-`--ad` rejection, and the empty-plaintext case, in every producer/consumer
+  combination. 38/38 checks pass with Java included, up from the prior 3-way count.
+- **`test_threshold_interop.sh`**: gains a 4th "Java sign, verify with all" scenario and a
+  Java verify leg on every existing scenario (Python/C/Go sign), plus extends the mixed
+  cross-CLI scenario to combine with Java instead of C when available (Python commit → C
+  aggregate → Go respond → Java combine) — a genuine cross-CLI protocol run, not just
+  cross-CLI verification of a single-CLI-produced signature. Both of Java's `threshold-*`
+  flag conventions get their own helper: `nargs_threshold_sign` (Python's and Java's
+  `--commits`/`--partials` space-separated multi-value shape) alongside the existing
+  `threshold_sign` (C's and Go's repeated `--commit`/`--partial` shape). Java remains
+  optional (`command -v javac`), degrading to a NOTE and 3-way coverage rather than failing.
+- **`test_cross_lang_matrix.sh`**: corrected its own stale header comment, which still
+  listed `hpks-ring`, `hpks-t` and `hske-duplex` among the `--algo` surface "Java's CLI
+  does not yet expose" — all three were ported in v5.3.6-v5.3.9 — and pointed each to
+  where its 4-way coverage now actually lives (`test_threshold_interop.sh`,
+  `test_duplex.sh`, `test_v3_family.sh` respectively; `hpks-ring`'s is still open, see
+  below). No functional change to this script itself; the 16-way matrix it runs is
+  unaffected and still passes (518/518 with all four languages).
+- **`.github/workflows/ci.yml`**: `native-interop` now installs `default-jdk-headless`, so
+  `test_threshold_interop.sh`, `test_duplex.sh` and `test_v3_family.sh` — all three claimed
+  by that job — get genuine 4-way coverage in CI rather than degrading to a NOTE every run.
+
+**Not done in this pass** — `hpks-ring` (HPKS-Stern-Ring) still has no 4-way interop
+coverage anywhere; that, plus a further audit for any other stale "Java doesn't have X"
+comment this session's CLI work left behind, remains open for a follow-up pass of step 6.
+
+## [5.4.1] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the `native-java` demo CI step
+
+PATCH: a new CI step, no new protocol/CLI/API surface. `.github/workflows/ci.yml`'s
+`native-java` job gains an explicit "Build Java" step and a "Java suite demo runs to
+completion" step (`java -cp bindings/java herradurakex.Demo`) between the build and the
+existing `CliTest/test_java_*.sh` loop — the same position C/Go/Python's demo-run steps
+occupy in their own jobs (TODO #258/#259). `Demo.java`'s own `[FAIL]`-marker gate (v5.4.0)
+means this step now fails on a wrong verdict the same way the other three languages' demo
+steps do, not only on a crash. Verified locally with the exact CI invocation
+(`bash bindings/java/build.sh` then `java -cp bindings/java herradurakex.Demo`, both run
+from the repo root) — clean exit 0. `native-java`'s job name updated to
+"Java (build + demo + CliTest interop)" to match, and `CLAUDE.md`'s CI-jobs paragraph
+updated to describe the new step.
+
+TODO #260's step 5 is now DONE. Only step 6 (interop-matrix coverage — extending
+`test_cross_lang_matrix.sh`/`test_threshold_interop.sh` to stop skipping Java's cell)
+remains open.
+
+## [5.4.0] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the Java suite demo
+
+MINOR: a new runnable entry point (`bindings/java/herradurakex/Demo.java`, TODO #260 step
+4) — a narrated, protocol-by-protocol walkthrough mirroring `Herradura cryptographic
+suite.{c,go,py}`'s `main()`, which `SelfTest.java` (a compact pass/fail smoke test) never
+replaced. Covers every protocol `HerraduraCli.java` exposes: the classical quartet with
+full hex-printed values (HKEX-GF, HSKE, HPKS, HPKE); the NL/PQC quartet including the v3
+(TODO #255) variants (HSKE-NL-A1/A2/A3, HKEX-RNL, HPKS-NL, HPKE-NL/NL3); the Stern family
+(HPKS-Stern-F, HPKE-Stern-F demo KEM, HPKE-Stern-KEM real QC-MDPC/BGF, HPKS-Stern-Ring);
+HFSCX-256-DM, ZKP-NL, HCRED, HPKS-WOTS-F/XMSS-F; and every one of TODO #260's seven newly
+ported primitives (HPKS-T, HDRBG, fpe/twk both v2 and v3, HSKE-NL-V2/V3-Duplex, the 78.C
+ratchet); OPRF and aPAKE; and a short EVE-bypass section (HPKS-NL forgery, HPKE-NL
+decryption, HKEX-RNL key-guessing, HPKS-Stern-F forgery) matching the other three
+languages' "Eve cannot break this without the secret" checks.
+
+Every genuine-failure branch prints a line carrying the literal marker `[FAIL]`; a `+`
+prefixes success. `out()` scans every line it prints for that marker and counts it —
+the same idiom C's `hprintf`, Go's stdout-capturing pipe, and Python's `print` shadow use
+(TODO #258/#259) — so the demo exits non-zero on a wrong verdict, not only on a crash, and
+prints `*** FAILED: n check(s) reported [FAIL] ***` (with the offending lines) or
+`*** OK: no check reported [FAIL] ***` at the end, matching the other three languages
+verbatim. Verified clean (`exit 0`, zero `[FAIL]` lines through the gate) across several
+runs — the fresh-random-values-per-run design meant checking this wasn't a one-off pass.
+
+Deliberately not covered, matching `HerraduraCli.java`'s own out-of-scope list: rnl-sigma,
+hybrid-rnl-stern, HSKE-NL-AEAD (the `--aead` counter-mode construction), the Merkle
+accumulator (78.J), and masked HSKE (78.H) — none of these are ported to Java at all, a
+pre-existing gap outside TODO #260's seven-primitive scope, not something this pass
+backfills.
+
+`bash CliTest/test_java_bindings.sh`, `spec/generate_spec.py --check --require-schema`, and
+`spec/check_security_md.py` all stay green — `Demo.java` is picked up by `build.sh`'s
+`javac -d . herradurakex/*.java` glob but is not yet wired into any test script (that's
+TODO #260 step 5, a `native-java` CI step running it — not done in this pass).
+
+## [5.3.10] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `SelfTest.java` parity audit, first pass
+
+PATCH: strengthens two existing `SelfTest.java` checks to match the granularity of their
+C/Go/Python counterparts (TODO #260 step 2), found by auditing each of the six new
+primitives' Java coverage against the numbered tests ([27] Ratchet, [29] HDRBG, [31]
+HPKS-T, [46] fpe/twk, [20] HPKS-Stern-Ring) and the research HSKE-NL-V2/V3-Duplex AEAD
+(uncovered by any numbered test in the reference harnesses themselves).
+
+- **HDRBG** (`#96`): added the exact cross-language KAT hex vectors test [29] hardcodes
+  (`seed(0..31, "HDRBG-KAT")` → 80 bytes, then `reseed(0xa5*16)` → 32 bytes — verified
+  byte-exact against Java's `Hdrbg` before adding as a literal), a monobit sanity check
+  over 8 KiB of output (expects 48-52% ones), and a personalization-divergence check
+  (same entropy, different `pers` must diverge) that was previously untested — only
+  same-personalization determinism was checked before.
+- **fpe/twk** (`#78.A`/`#78.B`, TODO #242): added test [46]'s key‖tweak boundary-encoding
+  guard — `(key[:2], ctx=key[2:3])` and `(key[:1], ctx=key[1:3])` must NOT collide, since
+  both concatenate to the same raw bytes if the derivation ever dropped its length prefix.
+
+Audited and found already at or above C/Go/Python's own depth, no changes needed:
+**Ratchet** (`[27]` checks key-uniqueness + two-chain divergence over up to 20 steps; Java's
+5-step version already covers the same properties), **HPKS-T** (`[31]` checks sign+tamper
+only; Java already cross-checks `aggregatePublicKeys` byte-exact against Python on top of
+that), **HPKS-Stern-Ring** (`[20]` checks only positive verification with no forgery test at
+all; Java already adds tamper AND forgery rejection, swept across every ring position), and
+**Duplex** (no numbered test exists for it in any reference harness — it's demo-only
+research code; Java's round-trip + AD-tamper + ciphertext-tamper coverage for both v2 and v3
+already exceeds what the harnesses themselves do).
+
+`bash CliTest/test_java_bindings.sh`, `spec/generate_spec.py --check --require-schema`, and
+`spec/check_security_md.py` all stay green. Step 2 (numbered-test parity) is not fully
+closed — this is a first audit pass, not an exhaustive one — but the two gaps this pass
+found are closed.
+
+## [5.3.9] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `hpks-ring` CLI subcommand
+
+MINOR: two new `--algo hpks-ring` branches on the existing `sign`/`verify` subcommands (a
+new CLI surface for an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java`
+gains HPKS-Stern-Ring (TODO #78.I/#121), the CLI-surface consequence of `SternRing.java`
+(ported to the library in v5.3.5) — **the last of TODO #260's CLI gaps.** Matches
+`herradura.py`'s shape exactly: `sign --algo hpks-ring --key <hpks-stern priv> --ring
+<comma-separated member pubkey PEMs> --rounds N --in --out` and `verify --algo hpks-ring
+--ring <...> --in --sig` — note `--ring` is comma-separated, unlike `threshold-*`'s
+space-separated `--commits`/`--partials` (v5.3.7), because that's the convention
+`herradura.py`'s own `_load_ring_pubkeys` uses. Adds `HPKS-RING SIGNATURE` to `Codec.java`
+(`encodeRingSig`/`decodeRingSig`), DER-encoded byte-for-byte with `herradura.py`'s
+`_pack_ring_sig`/`_unpack_ring_sig` (member-major, round-major blob: `c0||c1||c2||b(1
+byte)||resp0||resp1` per entry), plus the same `k`/`rounds`/`n` wire-format bounds
+(`RING_MAX_K=64`, `SDF_MAX_ROUNDS=4096`) the C CLI enforces.
+
+Verified against `herradura.py`'s CLI in both directions on a 4-member ring: Java signs,
+Python verifies, and vice versa; tampered-message rejection; signing with a key not in the
+ring; a too-small ring; and a ring-size mismatch at verify. `spec/generate_spec.py --check
+--require-schema`, `spec/check_security_md.py`, and `bash CliTest/test_java_bindings.sh`
+stay green.
+
+**Found and fixed a flaky pre-existing test while running the gate**: `SelfTest.java`'s
+HPKS-Stern-Ring forgery-rejection check (added in v5.3.5) ran at `demoRounds=8`, whose
+`(2/3)^8 ≈ 3.9%` soundness error let a forged signature pass verification often enough to
+fail CI outright — reproduced 1-in-~25 runs. Exactly the class CLAUDE.md's Testing section
+already documents for [45] (a probabilistic property asserted as if deterministic); fixed
+the same way, by raising the round count to 32 (`≈ 2×10⁻⁶` error), matching this suite's
+other Stern-F self-test round counts.
+
+TODO #260's step 3 (CLI subcommands) is now **fully complete** — every primitive that had a
+CLI subcommand in C/Go/Python now has one in Java too. Steps 2 (numbered-test parity), 4
+(Java demo), 5 (its CI step), and 6 (interop coverage) remain open.
+
+## [5.3.8] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `duplex` CLI subcommand
+
+MINOR: two new `--algo` values on the existing `enc`/`dec` subcommands (a new CLI surface for
+an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java`'s `enc`/`dec`
+gain `hske-duplex`/`hske-duplex3` (the research HSKE-NL-V2/V3-Duplex AEAD, TODO #95 Option
+2/#255), the CLI-surface consequence of `Duplex.java` (ported to the library in v5.3.4).
+Unlike `duplex` being its own subcommand shape in some ports, herradura.py routes it through
+`enc`/`dec --algo hske-duplex[3]` with a `--ad` flag for associated data — Java now matches
+that exactly, including the arbitrary-length ciphertext framing (`_encode_duplex_ct`'s
+format tag 3/4, length-prefixed ciphertext ahead of a fixed 32-byte tag) rather than the
+fixed-block symmetric formats `hske`/`hske-nla*` use.
+
+Verified byte-exact-ciphertext-independent round-trips against `herradura.py`'s CLI in both
+directions (Java encrypts → Python decrypts, and vice versa) for both v2 and v3, plus an
+empty-plaintext edge case, wrong-`--ad` tag-mismatch rejection, and feeding a v2 ciphertext
+to `dec --algo hske-duplex3` (rejected on the format-tag check rather than surfacing as an
+opaque authentication failure, matching Python's `_decode_duplex_ct`).
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and
+`bash CliTest/test_java_bindings.sh` stay green unchanged.
+
+TODO #260's step 3 (CLI subcommands) is now down to a single remaining gap: `hpks-ring`.
+
+## [5.3.7] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T CLI subcommands
+
+MINOR: four new CLI subcommands plus a new `verify --algo hpks-t` branch (a new CLI surface
+for an existing protocol, per CLAUDE.md's versioning rule). `HerraduraCli.java` gains
+`threshold-commit` / `threshold-aggregate` / `threshold-respond` / `threshold-combine` —
+HPKS-T's four-phase n-of-n MuSig2-style threshold Schnorr protocol (TODO #98/#106),
+mirroring `herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s subcommand shape and flags
+exactly: `--key`/`--commit-out`/`--nonce-out` (phase 1, per signer), `--commits`/`--in`/`--out`
+(phase 2, coordinator), `--key`/`--commits`/`--aggregate`/`--nonce`/`--out` (phase 3, per
+signer), `--aggregate`/`--partials`/`--out` (phase 4, coordinator). Adds five new PEM types
+to `Codec.java` (`HPKST COMMITMENT`/`NONCE`/`AGGREGATE`/`PARTIAL`/`SIGNATURE`), encoded
+byte-for-byte with `herradura.py`'s `encode_hpkst_*` functions. Only 256-bit `hpks`/`hpks-nl`
+keys are supported — `HpksT.java`'s v5.3.2 port, like the rest of this CLI, is fixed at
+`Herradura.N` rather than Python's variable `nbits`.
+
+`parseOpts` now greedily consumes every following non-`--` token as a flag's value(s),
+space-joined, adding `argparse`'s `nargs='+'` semantics for `--commits`/`--partials` (each
+takes multiple PEM paths) — a no-op for every existing single-value flag, since those are
+always immediately followed by the next `--flag` or end of argv.
+
+Verified against `herradura.py`'s CLI in every direction: a full 3-of-3 protocol run
+entirely in Java, one entirely in Python, and a mixed run (Java `commit`/`aggregate`,
+Python `respond`/`combine`) whose aggregate and final signature PEMs are byte-identical to
+the all-Java run; cross-verification of a Java-produced signature by Python's `verify` and
+vice versa; tamper rejection; and a full run over `hpks-nl` keys (HPKS-T's challenge is
+always NL-FSCX v1 regardless of the underlying key's own scheme, matching Python).
+`spec/generate_spec.py --check --require-schema`, `spec/check_security_md.py`, and
+`bash CliTest/test_java_bindings.sh` stay green unchanged.
+
+`CliTest/test_cross_lang_matrix.sh`/`test_threshold_interop.sh` still skip Java's cell with
+a NOTE (`javac` presence aside, they don't yet exercise `threshold-*`) — that's TODO #260's
+step 6 (interop coverage), not done in this pass.
+
+## [5.3.6] - 2026-09-01
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: `fpe`/`twk` CLI subcommands
+
+MINOR: two new CLI subcommands (a new CLI surface for an existing protocol, per CLAUDE.md's
+versioning rule). `HerraduraCli.java` gains `fpe` and `twk` (78.A/78.B, plus `--v3`, TODO
+#255), mirroring `herradura.py`/`herradura_cli.c`/`herradura_cli.go`'s subcommands exactly:
+`--key` (a session key PEM, the same shape `enc`/`dec` use for `hske`), `--context` (fpe) or
+`--sector`/`--bidx` (twk), `--in`/`--out` (raw 32-byte blocks, right-zero-padded/truncated to
+32 bytes like Python's `ljust`), `--encrypt`/`--decrypt` (now-exclusive, matching the other
+three CLIs' mutually-exclusive-group semantics), and `--v3`. First piece of TODO #260's step
+3 (CLI subcommands); `hpks-t`, `duplex`, and `hpks-ring` remain unexposed at the CLI.
+
+Verified byte-exact against `herradura.py`'s `fpe`/`twk` output (all four of v2/v3 x
+fpe/twk) on the same session key, context/sector/bidx, and plaintext block, plus a
+cross-language round-trip (Java encrypts, Python decrypts, and vice versa) and the
+`--encrypt`/`--decrypt`-required error path. `spec/generate_spec.py --check
+--require-schema` and `spec/check_security_md.py` stay green unchanged — `cli_binding`
+already listed `fpe`/`twk` from the other three CLIs and carries no per-language dimension.
+
+## [5.3.5] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-Stern-Ring (#78.I) ported, step 1 COMPLETE
+
+MINOR: a new language-target port of an existing protocol (TODO #78.I's OR-composed Stern
+ring signature), Java's sixth piece of TODO #260 — and the last of the seven primitives it
+lists. Library primitive and `SelfTest` coverage only (step 1 of TODO #260's staged scope);
+no `hpks-ring` CLI subcommand exists in Java, so `spec/` and `SECURITY.md` gates stay green.
+**Step 1 of TODO #260 is now complete: every primitive C/Go/Python have that Java lacked is
+ported.**
+
+### Added
+
+- **`bindings/java/herradurakex/SternRing.java`** — port of `hpks_stern_ring_sign`/
+  `hpks_stern_ring_verify` from "Herradura cryptographic suite.{c,go,py}"'s #78.I section: a
+  code-based ring/group signature that OR-composes `k` HPKS-Stern-F identification
+  instances to prove knowledge of one secret key in a ring of `k` public keys without
+  revealing which one. Reuses `Stern`'s existing package-visible helpers
+  (`csprngWeightT`/`sternHash`/`sternBuildH`/`sternSyndromeH`/`sternGenPerm`/
+  `sternApplyPerm`) rather than duplicating the underlying Stern identification machinery —
+  the ring construction adds only the OR-composition (HVZK-simulate every non-signer round,
+  then splice the real signer's per-round challenge in via challenge splitting on the
+  Fiat-Shamir output) on top. `Stern.java`'s class doc, which had explicitly scoped the
+  ring variant out ("is out of scope for this port"), is updated to point at it.
+- Cross-checked structurally against Python rather than byte-for-byte: HPKS-Stern-Ring is,
+  like HPKS-T, an inherently randomized protocol (fresh per-round nonces/challenges each
+  call in all three existing languages), so the check is round-trip validity, rejection of
+  a tampered message, and rejection of a forged signature (a secret matching no ring
+  member's syndrome) — verified in both languages, and in Java additionally swept across
+  every ring position (signer index 0..k-1) to catch an off-by-one in the member-indexed
+  arrays.
+- **`SelfTest.java`** gains an HPKS-Stern-Ring round-trip check: a 4-member ring, member 2
+  signs, verify succeeds without the verifier learning which member signed, a tampered
+  message is rejected, and a forged signature is rejected.
+
+## [5.3.4] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HSKE-NL-V2/V3-Duplex ported
+
+MINOR: a new language-target port of an existing research construction (plus its NL-FSCX v3
+variant), Java's fifth piece of TODO #260, and the sixth of the seven primitives TODO #260
+lists — only HPKS-Stern-Ring remains unported. Library primitive and `SelfTest` coverage
+only (step 1 of TODO #260's staged scope); no `duplex` CLI subcommand exists in any
+language, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Duplex.java`** — port of `hske_nl_v2_duplex_encrypt`/
+  `hske_nl_v2_duplex_decrypt` and their `_v3` counterparts from "Herradura cryptographic
+  suite.{c,go,py}"'s #95 Option 2 section (TODO #255 for v3): a MonkeyDuplex-style
+  single-pass AEAD built directly on the NL-FSCX v2/v3 permutations (256-bit state,
+  128-bit rate, `nl_fscx_revolve_v{2,3}` as the sponge permutation, tweaked per (key,
+  nonce)). RESEARCH CONSTRUCTION, carried over verbatim from the other languages'
+  documentation of that status.
+- Cross-checked byte-for-byte against Python across four plaintext-length classes (empty,
+  sub-rate, exact-one-rate-block, multi-block) for both v2 and v3 — ciphertext and tag
+  identical in both languages at every combination (there is no KAT vector for either
+  primitive in `KAT/`).
+- **`SelfTest.java`** gains a duplex round-trip check for both versions: correct
+  decryption, rejection of a tampered ciphertext byte, and rejection of tampered
+  associated data — mirroring the depth of C/Go's existing duplex demo/tests.
+
+### Fixed
+
+- **Two stale TODO.md paragraphs from v5.3.3, silently never written.** That commit's
+  `TODO.md` update script raised an exception on its third (unrelated) edit before writing
+  the file, discarding the first two edits in memory along with it — so v5.3.3's Progress
+  note and "Library functions" bullet still described FPE/twk as unported after the commit
+  that ported them, and the CLI-capabilities bullet (fixed separately, by a script that ran
+  after the failure) was the only one of the three that actually landed. Caught while
+  updating the same paragraphs for this release; both corrected here alongside this
+  release's own progress note. A `git diff`/re-read after a multi-edit script, not just a
+  clean exit code, is the fix going forward — the script printed nothing wrong because the
+  exception was real and visible, but its blast radius (silently discarding prior edits in
+  the same buffer) was not.
+
+## [5.3.3] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: FPE/twk (#78.A/#78.B) and their v3 variants ported
+
+MINOR: a new language-target port of two existing primitives (plus their NL-FSCX v3
+variants), Java's fourth piece of TODO #260. Library primitive and `SelfTest` coverage
+only (step 1 of TODO #260's staged scope) — `fpe`/`twk` CLI subcommands exist in
+C/Go/Python and are not part of this commit, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/FpeTwk.java`** — port of `fpe_encrypt`/`fpe_decrypt`/
+  `twk_encrypt`/`twk_decrypt` and their `_v3` counterparts from "Herradura cryptographic
+  suite.{c,go,py}"'s #78.A/#78.B sections (as fixed by TODO #241/#242) and TODO #255's v3
+  layer. Both v2 primitives are `nl_fscx_revolve_v2` under a subkey derived as
+  `HFSCX-256-DS(ds, len(key)_be8 || key || tweak)`, rejected to a non-degenerate v2 subkey;
+  v3 uses the same derivation with distinct DS tags and no rejection loop (v3 has no
+  affine-degenerate class to screen for). One shared derivation helper per version, since
+  FPE and twk differ only in what they pass as the tweak (`ctx` vs.
+  `sector_be64 || bidx_be32`) — mirroring the Python source's own `_fpe_twk_derive_b`.
+- Cross-checked byte-for-byte against Python: `fpe_encrypt`, `twk_encrypt`,
+  `fpe_v3_encrypt`, and `twk_v3_encrypt` on the same fixed key/ctx/sector/bidx/plaintext
+  produce identical ciphertexts in both languages (there is no KAT vector for either
+  primitive in `KAT/`).
+- **`SelfTest.java`** gains a combined FPE/twk round-trip check covering all four variants,
+  plus TODO #241/#242's own regression guard: a 12-byte FPE `ctx` set equal to twk's
+  `sector_be64 || bidx_be32` must NOT produce the same ciphertext as `twk_encrypt` — the
+  exact bug that made the two subcommands the same function pre-v4.0.0 — and the v2/v3
+  ciphertexts must differ from each other at the same inputs.
+
+## [5.3.2] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HPKS-T (#98) library primitive ported
+
+MINOR: a new language-target port of an existing primitive (TODO #98's threshold/aggregate
+Schnorr), Java's third piece of TODO #260. This slice is the library primitive and
+`SelfTest` coverage only (step 1 of TODO #260's staged scope) — HPKS-T, unlike Ratchet and
+HDRBG, DOES have a CLI subcommand in C/Go/Python (`--algo hpks-t`, TODO #106, a multi-round
+threshold-signing protocol split across pubkey-aggregation/partial-sign/aggregate/verify
+phases); that CLI surface is step 3's job and is not part of this commit, so `spec/` and
+`SECURITY.md` gates stay green — nothing new is CLI-exposed yet.
+
+### Added
+
+- **`bindings/java/herradurakex/HpksT.java`** — port of `hpkst_aggregate_pubkeys`/
+  `hpkst_sign`/`hpkst_verify` from "Herradura cryptographic suite.{c,go,py}"'s #98 section:
+  n-of-n MuSig2-style key aggregation (`mu_j = HFSCX-256(L || C_j) mod ord`, `L` = sorted
+  pubkeys) with an NL-FSCX v1 challenge, over the same GF(2^256)* group
+  {@link Herradura}'s classical quartet already uses — `gfMul`/`gfPow`/`GF_GEN` are reused
+  directly rather than re-implemented.
+- Cross-checked against Python: `hpkst_aggregate_pubkeys` on three fixed deterministic
+  pubkeys produces byte-identical `C_agg` and all three `mu_j` coefficients in both
+  languages. Sign/verify themselves draw fresh random nonces per call (as all three
+  existing languages' HPKS-T does), so the correctness property checked end-to-end is
+  round-trip validity plus tamper rejection, run repeatedly, rather than byte-exact output.
+- **`SelfTest.java`** gains an HPKS-T round-trip check: 3 signers jointly produce a
+  signature that verifies against the aggregate public key, and a tampered response scalar
+  is rejected.
+
+## [5.3.1] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: HDRBG (#96) ported
+
+MINOR: a new language-target port of an existing primitive (TODO #96's forward-secure
+DRBG), Java's second piece of TODO #260. No CLI subcommand, wire format, or KAT vector
+exists for it in any language — library-only, so `spec/` and `SECURITY.md` gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Hdrbg.java`** — byte-exact port of `drbg_seed`/
+  `drbg_generate`/`drbg_reseed` from "Herradura cryptographic suite.{c,go,py}"'s #96
+  section: the fast-key-erasure pattern (Bernstein 2017) over `nl_fscx_revolve_v1`.
+  `seed`/`generate`/`reseed` mirror Go's `DrbgSeed`/`DrbgGenerate`/`DrbgReseed` API shape
+  (an instance carrying `state`/`blocks`) rather than Python's free functions over a bare
+  struct, since Java has no equivalent to passing a mutable object by reference into a
+  free function the way Python's `HDrbg` does. `DRBG_MAX_BLOCKS` (1<<20) enforced the same
+  way: `generate` throws `IllegalStateException` once it would be exceeded, matching
+  Python's `RuntimeError` and Go's `(nil, false)` return.
+- Cross-checked byte-for-byte against Python: `drbg_seed` + `drbg_generate(50)` +
+  `drbg_reseed` + `drbg_generate(40)` from the same entropy/personalization produce
+  identical output at every step in both languages (there is no KAT vector for this
+  primitive in `KAT/`, so — as with Ratchet in v5.3.0 — this ad hoc cross-check is
+  currently the only verification against another language's output).
+- **`SelfTest.java`** gains an HDRBG round-trip check: two generators seeded identically
+  produce identical output (determinism); reseeding changes subsequent output and resets
+  the block counter (forward-secure separation); and the block-limit guard actually fires
+  once `DRBG_MAX_BLOCKS` is reached (checked via reflection to set the private counter
+  directly, rather than actually generating a million blocks).
+
+## [5.3.0] - 2026-08-31
+
+### TODO #260 (partial) — bring Java to full parity with C/Go/Python: the 78.C ratchet ported
+
+MINOR: a new language-target port of an existing protocol (78.C's forward-secret
+unidirectional ratchet), Java's first piece of TODO #260. No CLI subcommand, wire format, or
+KAT vector exists for this primitive in any language — it is library-only, so `spec/` and
+`SECURITY.md` are unaffected and both gates stay green.
+
+### Added
+
+- **`bindings/java/herradurakex/Ratchet.java`** — byte-exact port of `ratchet_init`/
+  `ratchet_advance` from `Herradura cryptographic suite.{c,go,py}`'s 78.C section:
+  `state_{i+1} = nl_fscx_revolve_v1(state_i, RATCHET_DOMAIN, 1)`,
+  `msg_key_i = hfscx_256(state_i.bytes || 0x01)`. Cross-checked byte-for-byte against
+  Python's `ratchet_init(b"test-seed-0")` + 3 `ratchet_advance` steps (state and message-key
+  bytes identical at every step) — there is no KAT vector for this primitive in `KAT/`, so
+  this ad hoc cross-check is the only currently-existing verification against another
+  language's output.
+- **`Hfscx256.toFixedBytes`** widened from `private` to package-visible so `Ratchet` can
+  render a masked state to fixed-width bytes without a second copy of the same left-pad
+  logic — the only change to an existing file besides the `SelfTest` addition below.
+- **`SelfTest.java`** gains a ratchet round-trip check: 5 steps from one seed must produce 5
+  distinct message keys (forward secrecy / key uniqueness, matching C/Go/Python test [27]'s
+  intent), and two independently-seeded chains must diverge after 3 steps each.
+
+### Findings
+
+- The Go suite's `RatchetInit`/`RatchetAdvance`/`ratchetDomain` live in
+  `herradura/herradura.go` (the shared package "Herradura cryptographic suite.go" dot-imports
+  from), not in the suite file itself — worth knowing before grepping the suite file directly
+  for a Go primitive and concluding it's missing.
+- The `RATCHET_DOMAIN` constant is `b'NL-FSCX-RATCHET-V1\x00NL-FSCX-RATCHET-V'[:32]` — the
+  byte after `V1` is a literal NUL, not an ASCII space. A first draft of the Java constant
+  used a Java string literal with a space in that position, which compiles and runs but
+  silently produces a different domain constant and therefore different ratchet output;
+  caught only by the byte-exact cross-check against Python, not by compilation or a
+  superficial run. Written in `Ratchet.java` as a hex literal instead, to remove the
+  possibility of a repeat.
+
+### Remaining for TODO #260
+
+HDRBG (#96), HPKS-T, HPKS-Stern-Ring, FPE, `twk`, HSKE-NL-V2-Duplex (and v3 variants of the
+latter three) are still unported; the Java suite still has no narrated demo equivalent to
+C/Go/Python's, no `native-java` demo CI step, and no interop-matrix coverage for any of the
+above. See TODO.md #260 for the full remaining scope.
+
+## [5.2.7] - 2026-09-01
+
+### TODO #256 — the remaining `\%`-in-math spans, fixed across Parts 4 and 5
+
+PATCH: documentation-only fix in `SecurityProofs-4.md` and `SecurityProofs-5.md`, plus the
+three index copies of Part 4's expression count. No shipped primitive, CLI surface, wire
+format, or rating changes.
+
+### Fixed
+
+- **21 instances of `\%` inside a math span — the sign was silently dropped on GitHub's
+  render, with no error anywhere.** GitHub's pipeline is CommonMark first, KaTeX second;
+  CommonMark resolves `\%` to a bare `%` before KaTeX ever sees it, and `%` starts a
+  LaTeX comment that runs to end of input. `$\approx 50\%$` rendered as `50`. Fixed by
+  closing the math span before the sign (`$\approx 50$%`), the form `SecurityProofs-2.md`
+  §379 has always used — confirmed all 21 occurrences (12 in Part 4, 9 in Part 5) were the
+  identical `\%$` pattern, so one global substitution per file was sound.
+- **One site needed more than the substitution.** Part 4's sparse-secret-density paragraph
+  (§11.7) had a math span straddling a source line break; `validate_katex.js`'s inline
+  extractor is deliberately single-line-only, so moving the `\%` merely shifted which
+  fragment absorbed the bare `%` rather than removing the warning. Fixed by rewrapping the
+  sentence so each span sits on one source line — pure formatting, identical rendered text.
+- **Part 4's advertised expression count corrected 684 → 685** in `SecurityProofs.md`,
+  `CLAUDE.md`, and `SecurityProofsCode/KATEX_RULES.md`: the straddling span above was
+  invisible to the validator before the rewrap (neither counted nor flagged) and became a
+  normal counted span once confined to one line. `check_part_index.py --require-counts`
+  failed once before this fix, confirming the drift was real, and passes clean after.
+
+### Findings
+
+- **A previously-undocumented KaTeX hazard, distinct from the `\%` bug itself: an inline
+  `$...$` span must not straddle a source line break.** `validate_katex.js`'s own extractor
+  will not pair a `$` opened on one line with a `$` closed on the next, even mid-paragraph,
+  and this does not match how GitHub's actual paragraph-joined renderer reads the same
+  source — worth remembering independent of the percent-sign case that surfaced it here.
+
+Status verified: `validate_katex.js` reports `0 commentAtEnd`, `0 FAIL`, `0 PIPE-FAIL` across
+all nine parts (not only 4 and 5); every edited line was read back to confirm the rendered
+prose is correct, per `KATEX_RULES.md`'s caution that per-span validation does not model
+cross-line pairing hazards; `spec/generate_spec.py --check --require-schema` and
+`spec/check_security_md.py` reconfirmed green.
+
+## [5.2.6] - 2026-09-01
+
+### TODO #259 — the suite demos gain an unambiguous [FAIL] marker, and CI gates on it
+
+PATCH: bug fixes and a CI gate strengthening across the three suite demos
+(`Herradura cryptographic suite.{c,go,py}`). No shipped primitive, CLI
+surface, wire format, or rating changes.
+
+### Fixed
+
+- **The three suite demos' "+"/"-" narrative convention was inconsistent
+  with itself, in a way that went well beyond the ambiguity #259 was filed
+  to fix.** In each language, most protocol sections use "+" for a pass and
+  "-" for a fail, exactly as assumed — but every 78.x/80 feature demo (FPE,
+  the tweakable cipher, the accumulator, masked HSKE, the ratchet, HDRBG,
+  HSKE-NL-AEAD, HSKE-NL-V2-Duplex, OPRF, aPAKE) printed the pair **inverted**
+  ("-" for pass, "+" for fail), and HPKS-T in the C and Go demos printed
+  "+" on **both** branches, so a reader could not tell pass from fail by the
+  prefix at all. All three demos are now internally consistent: "+" always
+  means pass. This was found, not introduced, while auditing every
+  verdict branch for TODO #259's marker work below — none of it changes what
+  a check tests, only what it prints.
+
+### Added
+
+- **Every genuine-failure branch across all three suite demos now prints an
+  explicit `[FAIL]` marker, and each demo exits non-zero if any check
+  reports one** — mirroring `CryptosuiteTests/Herradura_tests.{c,go,py}`'s
+  TODO #233 gate exactly: C shadows `printf` with a scanning `hprintf` (so
+  `puts()` narrative is left alone, as in the test harness); Go pipes
+  `os.Stdout` through a scanning goroutine; Python shadows the `print`
+  builtin. All three aggregate failures and print the same closing
+  `*** FAILED: N check(s) reported [FAIL] ***` / `*** OK: no check reported
+  [FAIL] ***` banner the test harnesses use. Verified by deliberately
+  breaking one check per language (FPE's round-trip) and confirming the
+  demo reports `[FAIL] FPE round-trip failed!`, names exactly that check,
+  and exits 1 — then restoring and confirming a clean exit 0 across
+  repeated runs.
+- **34 (C) / 45 (Go) / 40 (Python) failure sites now carry the marker.**
+  Coverage includes every protocol correctness check, every genuine error
+  path (a failed `rand.Read`, an OPRF/HPAKE keygen error, a ZKP-RNL/ZKP-NL
+  sign or prove error), and — in the four Eve/adversary bypass sections per
+  language — specifically the branch where Eve **succeeds** (forges a
+  signature, decrypts, or guesses a key), which is the one outcome among
+  the pair that would actually be catastrophic. The mirror branch, "Eve
+  correctly fails," is left unmarked, matching how those sections already
+  read.
+- **`.github/workflows/ci.yml`'s three suite-demo steps, added in TODO
+  #258/v5.2.5 as a process guard (crash or non-zero exit only), now also
+  catch a wrong verdict** — no workflow changes were needed; the demos'
+  own exit code already carried the process guard, and now carries the
+  content check too. Comments at all three call sites are updated to say
+  so.
+
+### Findings
+
+- **One branch is deliberately NOT tagged in any of the three demos**, even
+  though its narrative prefix already reads as a failure: the HKEX-RNL
+  "session key disagrees" / "raw key disagrees" note. This is a nonzero-DFR
+  Ring-LWR reconciliation event none of the three demos retry (unlike the
+  CLI's `hpke-stern-kem` path, which TODO #221's `lib_dfr.sh` retry policy
+  covers) — tagging it would make CI flaky on a rare, legitimate outcome
+  rather than catch a bug, exactly the class of mistake CLAUDE.md's Testing
+  section already warns about for a probabilistic property asserted as
+  deterministic (TODO #234).
+- **The demos have quietly diverged in scope**, discovered while cataloguing
+  every branch rather than introduced by this change: Python's demo alone
+  covers an OPRF-aPAKE password-key determinism check and an
+  HPKS-XMSS-F leaf-index-swap rejection check; both are now marker-covered
+  there. No attempt is made here to backport them to C/Go — that is a
+  coverage decision for whoever owns those files, not a side effect of a
+  CI-gating TODO.
+
 ## [5.2.5] - 2026-08-31
 
 ### TODO #258 — segmentation fault in the C demo's HCRED section, fixed

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # CliTest/test_threshold_interop.sh — cross-language HPKS-T interop tests
-# Tests that Python, C, and Go CLIs produce interoperable threshold signatures.
-# Requires: HerraduraCli/herradura_cli (C) and HerraduraCli/herradura_cli_go (Go).
+# Tests that Python, C, Go, and Java CLIs produce interoperable threshold
+# signatures. Requires: HerraduraCli/herradura_cli (C) and
+# HerraduraCli/herradura_cli_go (Go); Java is optional (TODO #260) and
+# degrades to a NOTE — skipping only Java's rows — if no JDK is installed.
 set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$0")"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY="python3 $SCRIPT_DIR/../HerraduraCli/herradura.py"
 C="$SCRIPT_DIR/../HerraduraCli/herradura_cli"
 GO="$SCRIPT_DIR/../HerraduraCli/herradura_cli_go"
@@ -18,6 +21,15 @@ if [ ! -x "$GO" ]; then
   exit 0
 fi
 
+HAVE_JAVA=1
+if command -v javac >/dev/null 2>&1; then
+  bash "$ROOT/bindings/java/build.sh" >/dev/null 2>&1
+  JAVA="java -cp $ROOT/bindings/java herradurakex.HerraduraCli"
+else
+  HAVE_JAVA=0
+  echo "NOTE: javac not found — skipping Java's threshold-* rows"
+fi
+
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 MSG="$TMPDIR/msg.txt"
@@ -25,13 +37,9 @@ echo "cross-language threshold signing" > "$MSG"
 
 pass() { echo "[PASS] $1"; }
 fail() { echo "[FAIL] $1: $2"; exit 1; }
-check_verify() {
-  local result
-  result=$("$@" 2>&1 || true)
-  echo "$result" | grep -q "Signature OK" || fail "verify" "$result"
-}
 
-# ── Helper: run 4-phase threshold sign with given CLIs ─────────────────────
+# ── Helper: run 4-phase threshold sign with given CLIs, C/Go's repeated-flag
+# shape (--commit / --partial once per value) ───────────────────────────────
 # Usage: threshold_sign <commit_cli> <agg_cli> <respond_cli> <combine_cli> <msg> <key_a> <key_b>
 #        writes final sig to $TMPDIR/result_sig.pem
 threshold_sign() {
@@ -52,21 +60,39 @@ threshold_sign() {
     --partial "$TMPDIR/pa.pem" --partial "$TMPDIR/pb.pem" --out "$TMPDIR/result_sig.pem"
 }
 
-# ── Python variant of threshold_sign (uses --commits / --partials nargs+) ──
-py_threshold_sign() {
-  local msg="$1" ka="$2" kb="$3"
-  $PY threshold-commit --key "$ka" --commit-out "$TMPDIR/ca.pem" --nonce-out "$TMPDIR/na.pem"
-  $PY threshold-commit --key "$kb" --commit-out "$TMPDIR/cb.pem" --nonce-out "$TMPDIR/nb.pem"
-  $PY threshold-aggregate --commits "$TMPDIR/ca.pem" "$TMPDIR/cb.pem" \
+# ── nargs-style variant (--commits / --partials, space-separated multiple
+# values in one flag) — Python's and Java's shape, unlike C/Go's repeated
+# flag above. Java's --ring uses a THIRD, comma-separated convention
+# elsewhere in the CLI surface; threshold-* is not that one. ────────────────
+nargs_threshold_sign() {
+  local cli="$1" msg="$2" ka="$3" kb="$4"
+  $cli threshold-commit --key "$ka" --commit-out "$TMPDIR/ca.pem" --nonce-out "$TMPDIR/na.pem"
+  $cli threshold-commit --key "$kb" --commit-out "$TMPDIR/cb.pem" --nonce-out "$TMPDIR/nb.pem"
+  $cli threshold-aggregate --commits "$TMPDIR/ca.pem" "$TMPDIR/cb.pem" \
     --in "$msg" --out "$TMPDIR/agg.pem"
-  $PY threshold-respond --key "$ka" \
+  $cli threshold-respond --key "$ka" \
     --commits "$TMPDIR/ca.pem" "$TMPDIR/cb.pem" \
     --aggregate "$TMPDIR/agg.pem" --nonce "$TMPDIR/na.pem" --out "$TMPDIR/pa.pem"
-  $PY threshold-respond --key "$kb" \
+  $cli threshold-respond --key "$kb" \
     --commits "$TMPDIR/ca.pem" "$TMPDIR/cb.pem" \
     --aggregate "$TMPDIR/agg.pem" --nonce "$TMPDIR/nb.pem" --out "$TMPDIR/pb.pem"
-  $PY threshold-combine --aggregate "$TMPDIR/agg.pem" \
+  $cli threshold-combine --aggregate "$TMPDIR/agg.pem" \
     --partials "$TMPDIR/pa.pem" "$TMPDIR/pb.pem" --out "$TMPDIR/result_sig.pem"
+}
+
+verify_all() {
+  local label="$1"
+  $PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+    || fail "$label" "Python verify failed"
+  $C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+    || fail "$label" "C verify failed"
+  $GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+    || fail "$label" "Go verify failed"
+  if [ "$HAVE_JAVA" -eq 1 ]; then
+    $JAVA verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" \
+      || fail "$label" "Java verify failed"
+  fi
+  pass "$label → Python/C/Go$([ "$HAVE_JAVA" -eq 1 ] && echo "/Java") verify"
 }
 
 echo "=== HPKS-T cross-language interop tests ==="
@@ -76,27 +102,26 @@ $PY genpkey --algo hpks-nl --out "$TMPDIR/alice.pem"
 $PY genpkey --algo hpks-nl --out "$TMPDIR/bob.pem"
 
 # 1. Pure Python
-py_threshold_sign "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"
-$PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "pure Python" "verify failed"
-$C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "pure Python sig, C verify" "verify failed"
-$GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "pure Python sig, Go verify" "verify failed"
-pass "Python sign → Python/C/Go verify"
+nargs_threshold_sign "$PY" "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"
+verify_all "Python sign"
 
 # 2. C sign, verify with all
 threshold_sign "$C" "$C" "$C" "$C" "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"
-$PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "C sig, Python verify" "verify failed"
-$C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "C sign, C verify" "verify failed"
-$GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "C sig, Go verify" "verify failed"
-pass "C sign → Python/C/Go verify"
+verify_all "C sign"
 
 # 3. Go sign, verify with all
 threshold_sign "$GO" "$GO" "$GO" "$GO" "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"
-$PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "Go sig, Python verify" "verify failed"
-$C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "Go sig, C verify" "verify failed"
-$GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "Go sign, Go verify" "verify failed"
-pass "Go sign → Python/C/Go verify"
+verify_all "Go sign"
 
-# 4. Mixed: Python commits, C aggregates, Go responds, C combines
+# 4. Java sign, verify with all (nargs-style, like Python — TODO #260)
+if [ "$HAVE_JAVA" -eq 1 ]; then
+  nargs_threshold_sign "$JAVA" "$MSG" "$TMPDIR/alice.pem" "$TMPDIR/bob.pem"
+  verify_all "Java sign"
+fi
+
+# 5. Mixed: Python commits, C aggregates, Go responds, Java combines (or C
+# if Java is unavailable) — a genuine cross-CLI protocol run, not just
+# cross-CLI verification of a single-CLI-produced signature.
 $PY threshold-commit --key "$TMPDIR/alice.pem" --commit-out "$TMPDIR/ca.pem" --nonce-out "$TMPDIR/na.pem"
 $PY threshold-commit --key "$TMPDIR/bob.pem"   --commit-out "$TMPDIR/cb.pem" --nonce-out "$TMPDIR/nb.pem"
 $C  threshold-aggregate --commit "$TMPDIR/ca.pem" --commit "$TMPDIR/cb.pem" --in "$MSG" --out "$TMPDIR/agg.pem"
@@ -106,11 +131,14 @@ $GO threshold-respond --key "$TMPDIR/alice.pem" \
 $GO threshold-respond --key "$TMPDIR/bob.pem" \
     --commit "$TMPDIR/ca.pem" --commit "$TMPDIR/cb.pem" \
     --aggregate "$TMPDIR/agg.pem" --nonce "$TMPDIR/nb.pem" --out "$TMPDIR/pb.pem"
-$C  threshold-combine --aggregate "$TMPDIR/agg.pem" \
-    --partial "$TMPDIR/pa.pem" --partial "$TMPDIR/pb.pem" --out "$TMPDIR/result_sig.pem"
-$PY verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "mixed interop" "Python verify failed"
-$C  verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "mixed interop" "C verify failed"
-$GO verify --algo hpks-t --in "$MSG" --sig "$TMPDIR/result_sig.pem" | grep -q "Signature OK" || fail "mixed interop" "Go verify failed"
-pass "Mixed (Python commit, C aggregate, Go respond, C combine) → all CLIs verify"
+if [ "$HAVE_JAVA" -eq 1 ]; then
+  $JAVA threshold-combine --aggregate "$TMPDIR/agg.pem" \
+      --partials "$TMPDIR/pa.pem" "$TMPDIR/pb.pem" --out "$TMPDIR/result_sig.pem"
+  verify_all "Mixed (Python commit, C aggregate, Go respond, Java combine)"
+else
+  $C  threshold-combine --aggregate "$TMPDIR/agg.pem" \
+      --partial "$TMPDIR/pa.pem" --partial "$TMPDIR/pb.pem" --out "$TMPDIR/result_sig.pem"
+  verify_all "Mixed (Python commit, C aggregate, Go respond, C combine)"
+fi
 
 echo "=== All HPKS-T interop tests PASSED ==="

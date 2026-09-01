@@ -29,37 +29,6 @@ decoder needs its own.
 
 Status: **OPEN**
 
-### #256: the remaining `\%`-in-math spans render with the sign silently dropped
-
-`SecurityProofs-7.md` had two of these; v5.2.1 fixed them.  Nineteen more survive, in
-`SecurityProofs-4.md` (10) and `SecurityProofs-5.md` (9), across 16 lines.
-
-**The bug.**  GitHub's pipeline is CommonMark first, KaTeX second.  CommonMark §6.7 resolves
-a backslash escape before any `$...$` span is handed on, so `\%` arrives at KaTeX as a bare
-`%` — and there `%` starts a comment that runs to end of input.  `$\approx 50\%$` therefore
-renders as `50`, with the percent sign gone and no error anywhere.  It is not a KaTeX FAIL;
-`validate_katex.js` reports it as the strict-mode warning `commentAtEnd`, which is why
-nineteen instances survived every previous KaTeX pass.  Reproduce with
-`node SecurityProofsCode/validate_katex.js SecurityProofs-4.md 2>&1 | grep -c commentAtEnd`.
-
-**The fix**, already applied twice in Part 7: close the math span before the sign —
-`$\approx 50$%` — which is the form `SecurityProofs-2.md` §379 has always used.  Do not reach
-for `\mathbin{\%}` or a `\char` escape; the backslash never survives to KaTeX, so nothing
-spelled with one can work.
-
-**Affected content is all quantitative**, which is why it is worth doing rather than
-cosmetic: Part 4's sparse-secret density table (§11.7, six rows of percentages, the argument
-that any sparsity definition below ~12% density is broken) and Part 5's rotational-rate,
-image-coverage and key-recovery figures (§9.3, §11.8).  A reader currently sees bare numbers
-where the units carry the claim.
-
-**Scope note.**  Mechanical, one line per instance, and each is confirmed by the validator
-going to zero on the file.  The expression counts do not change — the span is still one
-expression — so `check_part_index.py` should stay green without touching the banners.  Verify
-that rather than assuming it.
-
-Status: **OPEN**
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
@@ -156,26 +125,76 @@ figures already published, not as a gate on anything.
 
 Status: **OPEN**
 
-### #259: give the suite demos an unambiguous verdict marker, then gate CI on it
 
-TODO #258 (v5.2.5) added a CI step per language that runs the C/Go/Python suite demo and
-gates on its exit status.  That closes the class of bug #258 was — a crash or an abort —
-but it is a **process** guard, not a **content** guard: it cannot catch a demo that runs to
-completion and prints the wrong verdict.
+### #261: full 4-way capability parity — C, Go, Python and Java run the exact same algorithms and tests
 
-**Why that's not a small addition on top.**  The demos' `+`/`-` prefix convention marks two
-different things with the same character: a genuine failure (`- HPKS-Stern-F verification
-FAILED`) and a correct negative result phrased as a negation (`- Eve cannot forge:
-Fiat-Shamir mismatch (SD + PRF protection)` is a PASS — Eve was supposed to fail).  A naive
-`grep -c '^-'` gate would false-positive on every expected adversary-failure line in the
-Eve/bypass sections, which is exactly the "asserts nothing now exits 2" trap CLAUDE.md's
-Testing section already warns about for a different case (TODO #233).
+**Distinct from TODO #260, and the direction matters.**  #260 is "Java catches up to
+C/Go/Python" — every gap it lists is something the other three have and Java lacks.  This
+item is the symmetric closure: no language may have an algorithm, protocol variant, or
+security test that any of the other three is missing, **in either direction**.  Once #260
+lands, this item is what keeps all four in lockstep going forward, and it already has at
+least one confirmed gap #260 does not cover, because #260 explicitly excluded it.
 
-**Scope.**  Either (a) give the demos a second, unambiguous marker for genuine failures only
-— mirroring the `[FAIL]` convention `Herradura_tests.c`/`.go`/`.py` already use, added once
-per language across three files — and gate CI on that marker's absence; or (b) decide the
-exit-status guard added in v5.2.5 is sufficient and close this as ACKNOWLEDGED. Either way,
-the ARM/NASM/Arduino ports have no equivalent suite-demo binary (their harness *is*
-`Herradura_tests_*`), so this item is C/Go/Python only.
+**Confirmed asymmetry #1 — HCRED-KKW, named in the request that opened this item.**  The
+KKW preprocessing-model transcript variant (`hcred_prove_kkw`/`hcred_verify_kkw`, ~11x
+smaller proofs than the ZKBoo-(2,3) path at production parameters) exists **only in
+Python**:
+
+```
+Herradura cryptographic suite.c   -- absent
+Herradura cryptographic suite.go  -- absent
+Herradura cryptographic suite.py  -- hcred_prove_kkw / hcred_verify_kkw, ~113 lines
+bindings/java/herradurakex/Hcred.java -- absent, and says so explicitly:
+    "The KKW preprocessing-model transcript variant ... is out of scope for
+     this port -- the ZKBoo-(2,3) path here is sufficient for interop."
+```
+
+Java's own doc comment is a documented, deliberate exclusion — which is exactly the
+ACKNOWLEDGED outcome this item should produce for anything that turns out to be a genuine
+per-language reason, rather than four different implicit answers to the same question.  C
+and Go have never addressed it at all.  Resolve it one of two ways when this item is worked:
+port KKW to C, Go and Java so all four match Python; or downgrade Python's KKW path to
+explicitly ACKNOWLEDGED non-parity (a research/demo convenience, not a security-relevant
+divergence) and record why in `SECURITY.md`/`spec/`.  Don't leave it as an unstated fact
+four different files each know a different piece of.
+
+**Confirmed asymmetry #2 — test coverage, not just algorithm coverage.**  The request is
+explicit that tests are in scope, not only the primitives:
+
+```
+CryptosuiteTests/Herradura_tests.c   32 `test_*` functions
+CryptosuiteTests/Herradura_tests.go  37 `test*` functions
+CryptosuiteTests/Herradura_tests.py  36 `test_*` functions
+bindings/java/herradurakex/SelfTest.java  ~20 PASS/fail checks, unnumbered
+```
+
+C/Go/Python additionally share a **numbered** test convention ([1]-[48], stable IDs cited
+throughout `CHANGELOG.md`/`TODO_DONE.md` — e.g. "test [45] runs its Stern-F sub-check at
+`rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` has no
+equivalent numbering, so a Java gap can't even be cited by the same vocabulary the other
+three use to talk about test coverage.  Bringing Java's test count up (TODO #260, item 2)
+should also adopt the numbered convention, not just close the count gap.
+
+**Relationship to #260 and sequencing.**  Work #260 first — most of what #261 would flag
+today is exactly #260's Java list, and fixing it there is the direct fix.  What #261 adds on
+top: (a) the reverse-direction check (does every OTHER language have what Python/Go/C
+individually grew, like KKW), and (b) turning "parity" from a one-time audit into something
+checked mechanically going forward, so a fifth divergence doesn't accumulate silently the
+way KKW apparently did.
+
+**Proposed mechanism, to design when this item is worked, not decided here.**  The repo
+already has two coverage guards in this family — `ci.yml`'s native-interop step failing if a
+`CliTest/*.sh` script isn't claimed by exactly one job, and `check_part_index.py` failing if
+`SecurityProofs-*.md`'s banners disagree.  A `check_language_parity.py` in the same spirit —
+enumerating each language's public functions/CLI subcommands/numbered tests and diffing the
+four sets — would turn every future asymmetry (Java or otherwise) into a caught CI failure
+instead of a fact three other files quietly don't know.  Scope, false-positive rate (a
+language-appropriate helper that isn't a protocol function shouldn't count), and where it
+runs are all open design questions for whoever picks this up.
+
+**Acceptance criterion.**  For every protocol/primitive and every named security test, the
+four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
+recorded reason (never a silent absence) — checked by the mechanism above rather than by a
+one-time read of the source tree, so it stays true.
 
 Status: **OPEN**

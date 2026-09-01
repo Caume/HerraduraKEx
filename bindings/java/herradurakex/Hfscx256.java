@@ -116,7 +116,10 @@ public final class Hfscx256 {
         return hash(buf, null);
     }
 
-    private static byte[] toFixedBytes(BigInteger v, int nbytes) {
+    /** Package-visible so {@link Ratchet} and other NL-family callers can
+     * render a masked BigInteger state to fixed-width bytes without each
+     * re-implementing the same left-zero-pad logic. */
+    static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.and(MASK).toByteArray();
         byte[] out = new byte[nbytes];
         int rawStart = Math.max(0, raw.length - nbytes);
@@ -255,7 +258,10 @@ public final class Hfscx256 {
         return v;
     }
 
-    private static boolean constantTimeEquals(byte[] a, byte[] b) {
+    /** Package-visible so {@link Duplex} (and any other NL-family AEAD) can
+     * share one constant-time tag comparison instead of each re-implementing
+     * it. */
+    static boolean constantTimeEquals(byte[] a, byte[] b) {
         if (a.length != b.length) return false;
         int diff = 0;
         for (int i = 0; i < a.length; i++) diff |= a[i] ^ b[i];

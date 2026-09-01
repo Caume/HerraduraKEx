@@ -423,7 +423,7 @@ SecurityProofs.md                                   — split index (redirects t
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (684 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (685 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
@@ -666,8 +666,10 @@ plus a coverage-guard step that fails if any non-Java, non-cross-lang-matrix `Cl
 script isn't claimed by exactly one of these four `native-*` jobs, and a DFR-guard step that
 fails if a script which decapsulates `hpke-stern-kem` doesn't source `CliTest/lib_dfr.sh`,
 TODO #221), `native-java` (builds/
-runs the `bindings/java/` port and all `CliTest/test_java_*.sh` scripts — Java-vs-Python
-interop and KAT cross-checks per-protocol-family, TODO #206), `cross-lang-compat` (builds
+runs the `bindings/java/` port, its `Demo.java` suite walkthrough — gated on the same
+`[FAIL]`-marker convention as C/Go/Python's demo binaries, TODO #258/#259/#260 — and all
+`CliTest/test_java_*.sh` scripts — Java-vs-Python interop and KAT cross-checks
+per-protocol-family, TODO #206), `cross-lang-compat` (builds
 all four CLIs and runs two 4-way scripts: `CliTest/test_cross_lang_matrix.sh`, a genuine
 C/Go/Python/Java compatibility matrix across the classical quartet, the NL/PQC quartet,
 the Stern family, HCRED, OPRF, and aPAKE, proving every pair of languages interoperates

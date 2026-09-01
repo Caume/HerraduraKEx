@@ -48,11 +48,11 @@ $$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
 *Linear bias.* At $n = 8$ the max Walsh bias falls to $0.24$–$0.40$ at $r = 8$; at $n = 32$, $r = 8$ the sampled max bias ($0.070$) is within the Bernstein random-function bound ($0.087$), consistent with no exploitable linear structure.
 
-*Rotational cryptanalysis.* For all rotation amounts $k \in \{1,2,4,7,8,16\}$ at $n = 32$, $r = 8$, the fraction of random pairs $(A, B)$ satisfying $F_{1}^r(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_{1}^r(A,B), k)$ is approximately $1$–$6\%$, far above the $2^{-32}$ expectation for a random function.  This structural correlation is inherited from the FSCX linear base (exactly rotation-equivariant by construction); the integer-carry non-linear term only partially breaks it.  See the **Rotational structure** follow-up below (TODO #75) for a full characterisation of which protocol uses are affected.
+*Rotational cryptanalysis.* For all rotation amounts $k \in \{1,2,4,7,8,16\}$ at $n = 32$, $r = 8$, the fraction of random pairs $(A, B)$ satisfying $F_{1}^r(\mathrm{ROL}(A,k), \mathrm{ROL}(B,k)) = \mathrm{ROL}(F_{1}^r(A,B), k)$ is approximately $1$–$6$%, far above the $2^{-32}$ expectation for a random function.  This structural correlation is inherited from the FSCX linear base (exactly rotation-equivariant by construction); the integer-carry non-linear term only partially breaks it.  See the **Rotational structure** follow-up below (TODO #75) for a full characterisation of which protocol uses are affected.
 
 *B=0 degeneracy.* $F_{1}^r(A, 0) = L_{r}(A)$ is confirmed GF(2)-linear and **singular** (rank 2/8 for $L_{2}$ at $n = 8$), meaning $F_{1}^r(\cdot, 0)$ collapses most inputs.  All protocol instantiations have $\Pr[B = 0] = 2^{-n}$, negligible.
 
-*MITM preimage.* Exhaustive enumeration at $n = 20$, $r = 5$ shows $28.1\%$ image coverage (average preimage count $3.52$).  Non-injectivity means backward enumeration requires $O(2^n)$ forward work, confirming MITM provides no asymptotic speedup.
+*MITM preimage.* Exhaustive enumeration at $n = 20$, $r = 5$ shows $28.1$% image coverage (average preimage count $3.52$).  Non-injectivity means backward enumeration requires $O(2^n)$ forward work, confirming MITM provides no asymptotic speedup.
 
 *Open concerns from this analysis.* (1) Sparse-bit $B$ values exhibit elevated MDP at $n = 8$; large-$n$ behavior is characterised in the sparse-$B$ follow-up below (TODO #125) — the elevation persists at $n = 32$ and the safe-use bound is $\text{wt}(B) \geq n/2$.  (2) No formal hardness reduction to any studied problem.  Independent expert cryptanalysis is required before deployment.  (The rotational concern is characterised in the follow-up analysis below.)
 
@@ -64,7 +64,7 @@ $$\Pr[\mathrm{forge}] \leq \ell \cdot \Pr[\text{invert}(h)].$$
 
 $$p_{\text{rot}}(r,k) \approx C(k) \cdot r^{-\alpha(k)}$$
 
-where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \approx 1.88$, $C(8) \approx 0.65$.  At the protocol round count $r = n/4 = 64$ for $n = 256$: $p_{\text{rot}}(64,1) \approx 0.78\%$, requiring approximately $90$ query pairs for a $50\%$-advantage random-oracle distinguisher ($q \approx \ln 2 / p$).
+where empirically $\alpha(1) \approx 0.96$, $C(1) \approx 0.42$ and $\alpha(8) \approx 1.88$, $C(8) \approx 0.65$.  At the protocol round count $r = n/4 = 64$ for $n = 256$: $p_{\text{rot}}(64,1) \approx 0.78$%, requiring approximately $90$ query pairs for a $50$%-advantage random-oracle distinguisher ($q \approx \ln 2 / p$).
 
 *Protocol impact.* All PRF uses of $F_{1}$ have a fixed key $B$: the Stern-F row generator $F_{K}(i) = F_{1}^{n/4}(\mathrm{ROL}(K \oplus i, n/8), K)$, the HSKE-NL-A1 keystream, and the HFSCX-256-DM compression function.  These are one-sided; $p \approx 0$ — **rotation-safe**.  The HPKS-WOTS-F hash chain $h(x) = F_{1}^{n/4}(\mathrm{ROL}(x, n/8), x)$ is two-sided (rotating $x$ rotates both $A$ and $B$), so a $\approx 90$-pair random-oracle distinguisher exists.  However, Theorem 16 reduces HPKS-WOTS-F to the OWF assumption on $h$, not to a random-oracle assumption — the distinguisher does **not** break Theorem 16.
 
@@ -253,7 +253,7 @@ Tests §1, §2, §4, §8 detect GF(2)-linearity and low algebraic degree; linear
 
 - **§9.1 (n=8):** max_bias = 1.0 — degenerate at r = 2 steps; a perfect linear correlation exists for some (a,b) pair.
 - **§9.2 ($n=12$):** max\_bias $\approx 0.43$, ratio $\approx 4.7\times$ the random-function bound $\sqrt{4 \cdot 12 \cdot \ln 2 / 2^{12}} \approx 0.090$.  The affine baseline $H\_\mathrm{linear}$ gives max\_bias $= 1.0$ (correctly detected).
-- **§9.3 (Range compression):** $F_K(\cdot)$ maps only $\approx 40$–$55\%$ of inputs to distinct outputs at $n = 8$/$12$/$16$, versus $\approx 63\%$ expected for a truly random function.  The compressed range inflates Walsh coefficients beyond the random bound.
+- **§9.3 (Range compression):** $F_K(\cdot)$ maps only $\approx 40$–$55$% of inputs to distinct outputs at $n = 8$/$12$/$16$, versus $\approx 63$% expected for a truly random function.  The compressed range inflates Walsh coefficients beyond the random bound.
 - **§9.4 (Extrapolation):** $\mathbb{E}[\mathrm{max\_bias}(n)] \approx \sqrt{4n \ln 2 / 2^n}$; at $n=32$ this is $\approx 1.44 \times 10^{-4}$.
 
 The elevated bias at n=12 is attributed to range compression, not to linear algebraic structure.  At the deployed n=32, §5 sampling is consistent with the random bound, but exhaustive verification requires scanning 2^64 pairs — infeasible in pure Python.
@@ -506,13 +506,13 @@ This option is documented as a future research direction.
 
 *Algebraic degree (Theorem 14 verification).*  Exhaustive ANF over all keys at $n \in \{8, 12\}$: the key-to-output map has degree $\geq n - 2$ from $r = 1$ onward (mean degree $7.25$ of max $8$ at $n = 8$; $11.25$ of $12$ at $n = 12$).  Theorem 14's MQ claim is conservative — the actual system is dense and near-maximal-degree immediately, not merely quadratic.
 
-*Key-recovery information.*  At $r = 3n/4$ (HSKE-A2 round count), a single known-plaintext pair leaves on average fewer than $2.1$ consistent keys ($40\%$ uniquely determined); two pairs determine $K$ uniquely in $\geq 99.5\%$ of trials.  The MQ system is heavily over-determined, as Theorem 14's $n$-equations-in-$n$-unknowns view predicts.
+*Key-recovery information.*  At $r = 3n/4$ (HSKE-A2 round count), a single known-plaintext pair leaves on average fewer than $2.1$ consistent keys ($40$% uniquely determined); two pairs determine $K$ uniquely in $\geq 99.5$% of trials.  The MQ system is heavily over-determined, as Theorem 14's $n$-equations-in-$n$-unknowns view predicts.
 
 *Carry guess-and-determine.*  The only structural shortcut found: at $r = 1$, guessing the combined offset-plus-carry word collapses the step to a GF(2)-linear system in $K$.  Measured at $n = 12$, the guess space is the $\delta$-image ($\approx 2^{n-1}$), yielding only a $\approx 2\times$ speedup over brute force — and the linearization fails entirely at $r \geq 2$ because carries compose non-linearly across steps.  All deployed uses have $r \geq n/4 \geq 64$.
 
 *Walsh spectrum of the key map.*  Exhaustive max linear bias of $K \mapsto F_2^r(P, K)$ at $n \in \{8, 12\}$: above the Bernstein random-function bound at $r \leq 2$, within range from $r = 4$ onward ($0.0952$ vs bound $0.0901$ at $n = 12$, $r = 4$; $0.0693$ at $r = 9$).  No exploitable linear structure at protocol round counts.
 
-*Rotational rate.*  At $n = 32$, $r = 8$, 100 000 trials: both one-sided and two-sided rotational-equivariance rates are $0$ (no hits) for all $k \in \{1,2,4,8,16\}$ — versus v1's $1$–$6\%$ two-sided rate.  The integer multiplication inside $\delta(K)$ is not rotation-equivariant and destroys the FSCX base's rotational structure entirely; **v2 is strictly stronger than v1 rotationally**.
+*Rotational rate.*  At $n = 32$, $r = 8$, 100 000 trials: both one-sided and two-sided rotational-equivariance rates are $0$ (no hits) for all $k \in \{1,2,4,8,16\}$ — versus v1's $1$–$6$% two-sided rate.  The integer multiplication inside $\delta(K)$ is not rotation-equivariant and destroys the FSCX base's rotational structure entirely; **v2 is strictly stronger than v1 rotationally**.
 
 *Status.*  Cipher-stream-problem hardness for v2 remains a conjecture, but v2 now has the same empirical coverage as v1's OWF assumption, with no attack found beyond the $\approx 2\times$ single-round guess-and-determine.  Independent expert cryptanalysis is still required before treating it as a standard assumption.
 
