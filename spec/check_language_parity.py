@@ -241,6 +241,38 @@ PRIMITIVES = {
         "python": r"^def hpkst_aggregate_pubkeys\(",
         "java": r"public static Aggregate aggregatePublicKeys\(",
     },
+    "oprf-hash-to-field": {
+        # OPRF (TODO #80/#201) hash-to-field: HFSCX-256(data) mapped to a
+        # non-zero element of GF(2^n)*, with the 0 -> 1 remap on collision.
+        # Called from both oprf_blind and oprf_direct but is not itself a
+        # CLI subcommand (oprf-blind/-eval/-unblind are), so — like
+        # hpkst-aggregate-pubkeys above — it's the internal-derivation class
+        # TODO #261 exists to catch, not the already-CLI-reachable class.
+        "c": r"static void oprf_hash_to_field\(",
+        "go": r"func oprfHashToField\(",
+        "python": r"^def _oprf_hash_to_field\(",
+        "java": r"static BigInteger hashToField\(",
+    },
+    "hpake-derive-zkp-witness": {
+        # aPAKE (TODO #80/#201/#203) ZKBoo witness derivation: lower bits of
+        # HFSCX-256(oprf_out || "ZKP-A"), domain-separating the ZKBoo witness
+        # from the raw OPRF output. Internal to hpake_register/login_demo,
+        # which are reachable only via the CLI's pake-register/pake-demo
+        # subcommands, not this helper directly.
+        "c": r"static uint32_t _hpake_zkp_witness\(",
+        "go": r"func hpakeDeriveZkpWitness\(",
+        "python": r"^def _hpake_derive_zkp_witness\(",
+        "java": r"static BigInteger deriveZkpWitness\(",
+    },
+    "hpake-rnl-kdf": {
+        # aPAKE (TODO #80/#201/#203) session KDF applied to the HKEX-RNL
+        # raw shared secret before it's used to authenticate/derive the
+        # session key. Same internal-helper class as the two entries above.
+        "c": r"static void _hpake_rnl_kdf\(",
+        "go": r"func hpakeRnlKdf\(",
+        "python": r"^def _hpake_rnl_kdf\(",
+        "java": r"static byte\[\] rnlKdf\(",
+    },
 }
 
 

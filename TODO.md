@@ -317,15 +317,15 @@ the four suite files/bindings for suite-internal (non-CLI) primitives beyond `hc
   `fscx-revolve-masked`, `hske-encrypt-masked`, `hske-decrypt-masked`), up from 2.
 
 **What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
-below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 8 entries — grown
-past the seed, but still not the retroactive full census of the ~35-protocol table
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 11 entries —
+grown past the seed, but still not the retroactive full census of the ~35-protocol table
 `spec/herradura-protocol-spec.json` already tracks by CLI surface.  Populating `PRIMITIVES`
 with every suite-internal (non-CLI) primitive the suite has is real, separate work of its
 own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing script-by-script
-rather than arriving complete — pick it up incrementally, the same way.  Candidates not yet
-in the manifest include the aPAKE/OPRF internal derivation functions — CLI-reachable at
-their protocol's top level already, so lower priority than the non-CLI class this item
-exists to catch.
+rather than arriving complete — pick it up incrementally, the same way.  The named
+candidate list is now exhausted (HPKS-T in v5.8.2, aPAKE/OPRF in v5.8.3 below); further
+growth needs a fresh sweep of the suite files for non-CLI internal derivations rather than
+working off a standing list.
 
 **v5.8.2 — HPKS-T threshold key-aggregation audited, added to the manifest.**  Checked
 `_hpkst_aggregate`/`_hpkst_mu_coeff` (C), `HpkstAggregatePublickeys`/`hpkstMuCoeff` (Go),
@@ -337,11 +337,24 @@ just a `hpkst-aggregate-pubkeys` manifest entry so a future one-language diverge
 caught mechanically.  Verified the entry fails when the guard's target is renamed in any
 one language.
 
+**v5.8.3 — aPAKE/OPRF internal derivation functions audited, added to the manifest.**
+Checked three helpers: `oprf_hash_to_field`/`oprfHashToField`/`_oprf_hash_to_field`/
+`Oprf.hashToField` (HFSCX-256(data) → non-zero GF(2^n)* element, called from
+`oprf_blind`/`oprf_direct`, not itself a CLI subcommand); `_hpake_zkp_witness`/
+`hpakeDeriveZkpWitness`/`_hpake_derive_zkp_witness`/`Hpake.deriveZkpWitness` (ZKBoo
+witness derivation from the OPRF output); and `_hpake_rnl_kdf`/`hpakeRnlKdf`/
+`_hpake_rnl_kdf`/`Hpake.rnlKdf` (the session KDF over HKEX-RNL's raw shared secret inside
+`hpake_login_demo`).  All four languages already had all three correctly, at parity — no
+port needed, just three manifest entries (`oprf-hash-to-field`,
+`hpake-derive-zkp-witness`, `hpake-rnl-kdf`).  The top-level entry points
+(`oprf-blind`/`-eval`/`-unblind`, `pake-register`/`pake-demo`) stay out of scope, already
+CLI-reachable in all four CLIs.  Verified each entry fails when its Go marker is renamed.
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current 8 entries — extending `PRIMITIVES`
-is what keeps this item open.
+the primitive-manifest half is met only for its current 11 entries — extending
+`PRIMITIVES` is what keeps this item open.
 
 Status: **OPEN**
