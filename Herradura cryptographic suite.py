@@ -1562,6 +1562,23 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     return None
 
 
+def stern_f_first_preimage(ciphertext: int, seed: 'BitArray', n: int = None):
+    """First weight-t preimage of ciphertext, in the order hpke_stern_f_decap
+    scans.  Lets a caller tell "the decoder is wrong" from "this ciphertext
+    has more than one weight-t preimage and brute force legitimately found a
+    different one" — see hpke_stern_f_decap's docstring on small-code
+    ambiguity (e.g. n=32, t=2 is not uniquely decodable)."""
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+    for pos in itertools.combinations(range(n), t):
+        e_p = sum(1 << p for p in pos)
+        if _stern_syndrome_H(H_rows, e_p) == ciphertext:
+            return e_p
+    return None
+
+
 # ---------------------------------------------------------------------------
 # QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
 #
@@ -4799,14 +4816,23 @@ def main():
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; brute-force demo at n=32]")
     print("    (N=32, t=2; C(32,2)=496 candidates; production requires QC-MDPC decoder)")
     sf32_seed, _sf32_e, _sf32_syn = stern_f_keygen(32)
-    sf32_K_enc, sf32_ct = hpke_stern_f_encap(sf32_seed, 32)
+    sf32_K_enc, sf32_ct, sf32_e_p = hpke_stern_f_encap_with_e(sf32_seed, 32)
     sf32_K_dec = hpke_stern_f_decap(sf32_ct, 0, sf32_seed, 32)  # e_int=0 → brute-force
     print(f"K (encap): {sf32_K_enc.hex}")
     print(f"K (decap): {sf32_K_dec.hex if sf32_K_dec else 'decode failed'}")
     if sf32_K_dec is not None and sf32_K_dec == sf32_K_enc:
         print("+ HPKE-Stern-F session keys agree (n=32, brute-force)")
     else:
-        print("[FAIL] HPKE-Stern-F key agreement failed (n=32)")
+        # A weight-2 code of length 32 with a 16-bit syndrome is not uniquely
+        # decodable (see test [18]'s docstring): brute force can legitimately
+        # land on a different weight-t preimage of the same syndrome. That is
+        # the parameters being ambiguous, not the decoder being wrong.
+        sf32_first = stern_f_first_preimage(sf32_ct, sf32_seed, 32)
+        if sf32_first is not None and sf32_first != sf32_e_p:
+            print("+ HPKE-Stern-F syndrome ambiguous at n=32 (not a failure — "
+                  "brute force found a different weight-2 preimage)")
+        else:
+            print("[FAIL] HPKE-Stern-F key agreement failed (n=32)")
 
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; known-e' demo at n=256]")
     print(f"    (N={KEYBITS}, t={KEYBITS//16}; known e' passed to decap — production decoder not included)")

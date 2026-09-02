@@ -14557,3 +14557,35 @@ Go's live in their own CLI files (`HerraduraCli/herradura.py`,
 `hpake_login_demo` couldn't reach it and needed its own copy/reuse here.
 
 Status: **DONE v5.8.4**
+
+---
+
+### #264: Python demo's n=32 HPKE-Stern-F brute-force check flakes CI on the code's known non-unique decoding
+
+**Found while investigating a `native-python` CI failure**, not a dedicated audit.
+`Herradura cryptographic suite.py`'s `main()` demo runs a brute-force Niederreiter
+decap at `n=32, t=2` and printed `[FAIL] HPKE-Stern-F key agreement failed (n=32)`
+whenever the derived session key didn't match — but that code is not uniquely
+decodable: `C(32,2)=496` weight-2 error vectors land in a 16-bit syndrome space, so
+brute force can legitimately return a *different* weight-2 preimage of the same
+syndrome than the one encap used. `CryptosuiteTests/Herradura_tests.py` test [18]
+already documents and handles exactly this (TODO #233's note: "made this line report
+`[FAIL]` on 7.4% of runs"), but the demo's `main()` had a separate, naive copy of the
+check that never got the same treatment — so it flaked CI's `native-python` job
+nondeterministically once TODO #233 made any `[FAIL]` marker fail the build.
+
+**Fix.** Added `stern_f_first_preimage()` to `Herradura cryptographic suite.py`
+(mirroring the test suite's private helper of the same purpose) and changed the demo
+to call `hpke_stern_f_encap_with_e` instead of `hpke_stern_f_encap`, so it has the true
+error vector to compare against. On a key mismatch, the demo now checks whether brute
+force found a genuinely different weight-2 preimage of the same ciphertext — if so it
+prints `+ HPKE-Stern-F syndrome ambiguous at n=32 (not a failure — ...)` instead of
+`[FAIL]`; anything else is still reported as a real failure.
+
+**Verification.** 40 consecutive full runs of `python3 "Herradura cryptographic
+suite.py"` all closed with `*** OK: no check reported [FAIL] ***`. `python3 -m
+py_compile` passes. No other code path (test suite, CLI) called the changed
+`hpke_stern_f_encap`/`hpke_stern_f_decap` demo lines, so the fix is scoped to `main()`
+plus the one new, previously-absent helper function.
+
+Status: **DONE v5.8.5**

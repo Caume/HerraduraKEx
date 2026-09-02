@@ -2,6 +2,22 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.5] - 2026-09-02
+
+### TODO #264 (DONE) — fix flaky `[FAIL]` in the Python demo's n=32 HPKE-Stern-F brute-force check
+
+PATCH (CI reliability fix; no protocol behavior change). `Herradura cryptographic
+suite.py`'s `main()` demo ran a brute-force Niederreiter decap at `n=32, t=2` — a code
+that is not uniquely decodable, since `C(32,2)=496` weight-2 error vectors land in a
+16-bit syndrome space — and printed `[FAIL]` whenever brute force legitimately
+returned a *different* valid preimage than the one encap used. Test [18] already
+handles this correctly; the demo had its own naive copy of the check that didn't, so
+it flaked CI's `native-python` job nondeterministically (~0.4% per run) once TODO #233
+made any `[FAIL]` marker fail the build. Added `stern_f_first_preimage()` and switched
+the demo to `hpke_stern_f_encap_with_e` so it can distinguish a genuine decode failure
+from an ambiguous-syndrome non-failure. Verified with 40 consecutive full demo runs,
+all clean.
+
 ## [5.8.4] - 2026-09-02
 
 ### TODO #263 (DONE) — aPAKE's ephemeral HKEX-RNL exchange gains TODO #89's contributory-nonce binding in Go/Python/Java
