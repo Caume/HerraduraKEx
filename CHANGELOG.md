@@ -2,6 +2,34 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.3] - 2026-09-01
+
+### TODO #261 (partial) — extend PRIMITIVES: OPRF hash-to-field and aPAKE internal derivation
+
+PATCH: tooling/regression-guard only, no code behavior change. Audited the two remaining
+named candidates from TODO #261's own text — the OPRF/aPAKE internal derivation
+functions — across all four languages:
+
+- `oprf_hash_to_field` (C) / `oprfHashToField` (Go) / `_oprf_hash_to_field` (Python) /
+  `Oprf.hashToField` (Java): HFSCX-256(data) mapped to a non-zero GF(2^n)* element, the
+  0→1 remap on collision. Called from `oprf_blind`/`oprf_direct` internally; not itself a
+  CLI subcommand (`oprf-blind`/`-eval`/`-unblind` are).
+- `_hpake_zkp_witness` (C) / `hpakeDeriveZkpWitness` (Go) / `_hpake_derive_zkp_witness`
+  (Python) / `Hpake.deriveZkpWitness` (Java): ZKBoo witness derivation from the OPRF
+  output, domain-separated with a `"ZKP-A"` label.
+- `_hpake_rnl_kdf` (C) / `hpakeRnlKdf` (Go) / `_hpake_rnl_kdf` (Python) /
+  `Hpake.rnlKdf` (Java): the session KDF applied to HKEX-RNL's raw shared secret inside
+  `hpake_login_demo`.
+
+All four languages already implemented all three correctly and at parity — no port
+needed. Added `oprf-hash-to-field`, `hpake-derive-zkp-witness` and `hpake-rnl-kdf`
+entries to `spec/check_language_parity.py`'s `PRIMITIVES` manifest (now 11 entries) so a
+future one-language divergence is caught mechanically. The top-level entry points
+(`oprf-blind`/`-eval`/`-unblind` and `pake-register`/`pake-demo`) were already
+CLI-reachable in all four CLIs and out of scope for this manifest, same reasoning as the
+HPKS-T pass. Verified each new entry fails when its Go marker is renamed, then confirmed
+`git diff` is empty after reverting.
+
 ## [5.8.2] - 2026-09-01
 
 ### TODO #261 (partial) — extend PRIMITIVES: HPKS-T threshold key-aggregation
