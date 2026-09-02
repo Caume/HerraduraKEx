@@ -227,6 +227,20 @@ PRIMITIVES = {
         "python": r"^def hske_decrypt_masked\(",
         "java": r"public static Masked hskeDecryptMasked\(",
     },
+    "hpkst-aggregate-pubkeys": {
+        # HPKS-T (TODO #98/#106/#260) MuSig2-style key aggregation
+        # (mu_j = HFSCX-256(L||C_j) mod ord; C_agg = prod C_j^mu_j) — the
+        # rogue-key-binding step, not the sign/verify entry points, which
+        # CLI's threshold-* subcommands already exercise in all four
+        # languages (TODO #261's "lower priority than the non-CLI class"
+        # note). All four already had this at parity; this entry is the
+        # mechanical guard so a future change to one language's coefficient
+        # derivation can't silently diverge from the other three.
+        "c": r"static void _hpkst_aggregate\(",
+        "go": r"func HpkstAggregatePublickeys\(",
+        "python": r"^def hpkst_aggregate_pubkeys\(",
+        "java": r"public static Aggregate aggregatePublicKeys\(",
+    },
 }
 
 
