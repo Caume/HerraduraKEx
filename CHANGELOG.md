@@ -2,6 +2,26 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.2] - 2026-09-01
+
+### TODO #261 (partial) — extend PRIMITIVES: HPKS-T threshold key-aggregation
+
+PATCH: tooling/regression-guard only, no code behavior change. Audited the HPKS-T
+(TODO #98/#106/#260) threshold/aggregate Schnorr key-aggregation step — MuSig2-style
+rogue-key-binding coefficient (`mu_j = HFSCX-256(L||C_j) mod ord`) and `C_agg = prod
+C_j^{mu_j}` — across all four languages: `_hpkst_aggregate`/`_hpkst_mu_coeff` (C,
+`herradura.h`), `HpkstAggregatePublickeys`/`hpkstMuCoeff` (Go, `herradura/herradura.go`),
+`hpkst_aggregate_pubkeys`/`_hpkst_mu_coeff` (Python), `HpksT.aggregatePublicKeys`/`muCoeff`
+(Java, `bindings/java/herradurakex/HpksT.java`). All four already implemented this
+correctly and at parity — no port was needed. Added a `hpkst-aggregate-pubkeys` entry to
+`spec/check_language_parity.py`'s `PRIMITIVES` manifest so a future divergence in one
+language's coefficient derivation is caught mechanically rather than requiring a source
+read to notice, per TODO #261's stated candidate list (the sign/verify entry points are
+already CLI-reachable via all four CLIs' `threshold-*` subcommands and `verify --algo
+hpks-t`, so they were out of scope for this manifest; the aggregation step itself is not).
+Verified the new entry both passes as-is and fails when the guard's target function is
+renamed in any one language (checked against Go).
+
 ## [5.8.1] - 2026-09-01
 
 ### TODO #262 (DONE) — `HpksXmssSign` bound-checks its own leaf index (CodeQL go/incorrect-integer-conversion, alert #1)

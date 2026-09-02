@@ -317,21 +317,31 @@ the four suite files/bindings for suite-internal (non-CLI) primitives beyond `hc
   `fscx-revolve-masked`, `hske-encrypt-masked`, `hske-decrypt-masked`), up from 2.
 
 **What's deliberately NOT done, and why the item stays open.**  The acceptance criterion
-below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 7 entries — grown
+below asks for *every* protocol/primitive, and `PRIMITIVES` currently has 8 entries — grown
 past the seed, but still not the retroactive full census of the ~35-protocol table
 `spec/herradura-protocol-spec.json` already tracks by CLI surface.  Populating `PRIMITIVES`
 with every suite-internal (non-CLI) primitive the suite has is real, separate work of its
 own, sized similarly to `CliTest/lib_build.sh`'s coverage guard growing script-by-script
 rather than arriving complete — pick it up incrementally, the same way.  Candidates not yet
-in the manifest include the HPKS-T threshold aggregation helpers and the aPAKE/OPRF internal
-derivation functions — all CLI-reachable at their protocol's top level already, so lower
-priority than the non-CLI class this item exists to catch.
+in the manifest include the aPAKE/OPRF internal derivation functions — CLI-reachable at
+their protocol's top level already, so lower priority than the non-CLI class this item
+exists to catch.
+
+**v5.8.2 — HPKS-T threshold key-aggregation audited, added to the manifest.**  Checked
+`_hpkst_aggregate`/`_hpkst_mu_coeff` (C), `HpkstAggregatePublickeys`/`hpkstMuCoeff` (Go),
+`hpkst_aggregate_pubkeys`/`_hpkst_mu_coeff` (Python) and `HpksT.aggregatePublicKeys`/
+`muCoeff` (Java) — the MuSig2-style rogue-key-binding coefficient and key-aggregation step,
+not the sign/verify entry points (already CLI-reachable via all four CLIs' `threshold-*`
+subcommands).  All four languages already had this correctly, at parity — no port needed,
+just a `hpkst-aggregate-pubkeys` manifest entry so a future one-language divergence is
+caught mechanically.  Verified the entry fails when the guard's target is renamed in any
+one language.
 
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current 7 entries — extending `PRIMITIVES`
+the primitive-manifest half is met only for its current 8 entries — extending `PRIMITIVES`
 is what keeps this item open.
 
 Status: **OPEN**
