@@ -273,6 +273,20 @@ PRIMITIVES = {
         "python": r"^def _hpake_rnl_kdf\(",
         "java": r"static byte\[\] rnlKdf\(",
     },
+    "hpake-contributory-kdf": {
+        # TODO #263: aPAKE's ephemeral HKEX-RNL exchange inside
+        # hpake_login_demo binds K_raw to per-session nonces from both
+        # parties before it's used for the ZKBoo auth binding or the
+        # session key -- the same TODO #89 RNG-hardening construction plain
+        # `kex --algo hkex-rnl` applies (HFSCX-256(K_raw||n_A||n_B)).  C had
+        # this from the start (reusing rnl_contributory_kdf); Go, Python and
+        # Java derived the session key straight off raw K_raw until #263
+        # ported it in each.
+        "c": r"rnl_contributory_kdf\(K_kdf_c,",
+        "go": r"func hpakeContributoryKdf\(",
+        "python": r"^def _hpake_contributory_kdf\(",
+        "java": r"rnlContributoryKdf\(agreeC\.key,",
+    },
 }
 
 

@@ -350,11 +350,21 @@ port needed, just three manifest entries (`oprf-hash-to-field`,
 (`oprf-blind`/`-eval`/`-unblind`, `pake-register`/`pake-demo`) stay out of scope, already
 CLI-reachable in all four CLIs.  Verified each entry fails when its Go marker is renamed.
 
+**v5.8.4 — the same v5.8.3 sweep found a genuine behavioral gap, not just a manifest
+omission: filed and fixed as TODO #263.** `hpake_login_demo`'s inline ephemeral HKEX-RNL
+exchange needed TODO #89's contributory-nonce session-key binding — the fix for a weak or
+backdoored RNG on one side alone — and only C's copy had it; Go, Python and Java derived
+the session key straight off the raw shared secret. Ported to all three (see TODO #263 in
+`TODO_DONE.md` for the full account); added a `hpake-contributory-kdf` manifest entry (now
+12 total). Unlike the HPKS-T and OPRF/aPAKE passes above, this one was not "already at
+parity" — a reminder that the manifest's value is in surfacing exactly this class of
+silent divergence, not just in cataloguing agreement.
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current 11 entries — extending
+the primitive-manifest half is met only for its current 12 entries — extending
 `PRIMITIVES` is what keeps this item open.
 
 Status: **OPEN**

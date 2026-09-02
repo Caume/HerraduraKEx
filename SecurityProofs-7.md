@@ -983,10 +983,30 @@ this isn't a no-op); and `--kdf sp800227` is rejected on `hkex-gf`. No regressio
 precedent (TODO #25). `herradura.h`'s `ba_rnl_kdf_seed`/`_RNL_KDF_DC` (used by HSKE-NL-A1/
 AEAD and HPAKE, not plain HKEX-RNL's own session-key derivation) is a separate, lower-level
 helper and was not in scope for this item — the actual target was `_rnl_contributory_kdf`
-in `herradura.h`/`Herradura cryptographic suite.py`/`herradura/herradura.go`, all of which
-still use the unmodified (nonce-only) contributory KDF as their default; `--kdf sp800227`
-exists in Python only, tracked as a Go/C follow-up if this construction is adopted more
-broadly.
+(C's copy lives in `herradura.h`; Python's and Go's live in their own CLI files,
+`HerraduraCli/herradura.py` and `HerraduraCli/herradura_cli.go`, not the shared suite
+files — the plain-`kex` CLI path, not a suite-internal primitive), all of which still use
+the unmodified (nonce-only) contributory KDF as their default; `--kdf sp800227` exists in
+Python only, tracked as a Go/C follow-up if this construction is adopted more broadly.
+
+**TODO #263 (v5.8.4): the same nonce-binding construction, missing from aPAKE in three
+of four languages.** `hpake_login_demo`'s (and its Go/Java equivalents') inline ephemeral
+HKEX-RNL exchange draws its own blinding polynomial the same way plain `kex --algo
+hkex-rnl` does, and so faces the identical TODO #89 threat — a weak or backdoored RNG on
+one side silently weakening the session. C's copy of `hpake_login_demo` already applied
+the fix, reusing `rnl_contributory_kdf` to bind the ZKBoo auth message and the session key
+to fresh `n_A`/`n_B` nonces before deriving either. Go's `HpakeLoginDemo`, Python's
+`hpake_login_demo`, and Java's `Hpake.loginDemo` did not — all three authenticated and
+derived the session key straight off the raw HKEX-RNL shared secret, silently reverting to
+the pre-#89 exposure for this one code path. Found during a TODO #261 (four-language
+parity) sweep, not a dedicated audit of this code. Ported: Go gained
+`hpakeContributoryKdf` (mirroring C's construction); Python gained
+`_hpake_contributory_kdf`; Java reused its existing `HerraduraNl.rnlContributoryKdf`
+(already correct and used by its own plain-`kex` path). Does not change aPAKE's
+SECURITY.md rating — Demo-only for two larger, independent reasons (§9.2.4's ~2^36.5 OPRF
+key recovery; demo-grade ZKBoo rounds) — but closes a real four-language behavioral
+divergence in a security-motivated construction. Guarded going forward by
+`spec/check_language_parity.py`'s `hpake-contributory-kdf` entry.
 
 ---
 

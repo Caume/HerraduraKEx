@@ -4412,6 +4412,17 @@ def _hpake_rnl_kdf(K_raw: 'BitArray') -> bytes:
     return sk.bytes
 
 
+def _hpake_contributory_kdf(k_raw_bytes: bytes, n_a: bytes, n_b: bytes) -> bytes:
+    """Binds K_raw to per-session nonces contributed by both parties — the
+    same TODO #89 hardening plain HKEX-RNL applies via
+    HerraduraCli/herradura.py's _rnl_contributory_kdf: even if one side's RNG
+    is weak or backdoored (weakening its blinding polynomial and thus
+    K_raw), the other side's nonce still contributes independent entropy to
+    the derived key.  n_a and n_b must each be 32 bytes.
+    final = HFSCX-256(K_raw || n_A || n_B)."""
+    return hfscx_256(k_raw_bytes + n_a + n_b)
+
+
 def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
     """
     aPAKE registration.  Returns a server record containing (username, salt, B, y).
@@ -4455,7 +4466,9 @@ def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | N
     if y_check != y:
         return None
 
-    # Client: ephemeral HKEX-RNL keypair
+    # Client: ephemeral HKEX-RNL keypair, with contributory nonces (n_A from
+    # client, n_B from server) — TODO #89's RNG-hardening fix, applied here
+    # the same way plain kex --algo hkex-rnl applies it.
     m_base  = _rnl_m_poly(KEYBITS)
     a_rand  = _rnl_rand_poly(KEYBITS, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -4470,17 +4483,23 @@ def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | N
     # Server: HKEX-RNL reconciliation (uses hint)
     K_raw_s = _rnl_agree(s_s, C_c, RNLQ, RNLP, RNLPP, KEYBITS, KEYBITS, hint)
 
-    # Client: ZKBoo proof of knowledge of zkp_A bound to session key
-    auth_msg = K_raw_c.bytes + _HPAKE_AUTH_LABEL
+    pake_n_a = os.urandom(32)
+    pake_n_b = os.urandom(32)
+    K_kdf_c = _hpake_contributory_kdf(K_raw_c.bytes, pake_n_a, pake_n_b)
+    K_kdf_s = _hpake_contributory_kdf(K_raw_s.bytes, pake_n_a, pake_n_b)
+
+    # Client: ZKBoo proof of knowledge of zkp_A bound to session channel
+    auth_msg = K_kdf_c + _HPAKE_AUTH_LABEL
     proof    = zkp_nl_prove(zkp_A, B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg)
 
     # Server: ZKBoo verification
-    auth_msg_s = K_raw_s.bytes + _HPAKE_AUTH_LABEL
+    auth_msg_s = K_kdf_s + _HPAKE_AUTH_LABEL
     if not zkp_nl_verify(B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg_s, proof):
         return None
 
-    # Session key: hfscx_256(KDF(K_raw) ‖ label)
-    return hfscx_256(_hpake_rnl_kdf(K_raw_c) + _HPAKE_SESSION_LBL)
+    # Session key: hfscx_256(KDF(K_kdf_c) ‖ label)
+    K_kdf_c_ba = BitArray(KEYBITS, int.from_bytes(K_kdf_c, 'big'))
+    return hfscx_256(_hpake_rnl_kdf(K_kdf_c_ba) + _HPAKE_SESSION_LBL)
 
 
 # ---------------------------------------------------------------------------

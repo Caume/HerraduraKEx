@@ -3561,6 +3561,18 @@ func hpakeRnlKdf(kRaw *BitArray) []byte {
 	return NlFscxRevolveV1(seed, kRaw, kRaw.size/4).Bytes()
 }
 
+// hpakeContributoryKdf binds K_raw to per-session nonces contributed by both
+// parties, the same TODO #89 hardening plain `kex --algo hkex-rnl` applies
+// via rnlContributoryKDF (HerraduraCli/herradura_cli.go): even if one side's
+// RNG is weak or backdoored (weakening its blinding polynomial and thus
+// K_raw), the other side's nonce still contributes independent entropy to
+// the derived key. nA and nB must each be 32 bytes.
+// final = HFSCX-256(K_raw || n_A || n_B).
+func hpakeContributoryKdf(kRaw *BitArray, nA, nB []byte) []byte {
+	payload := append(append(append([]byte(nil), kRaw.Bytes()...), nA...), nB...)
+	return Hfscx256(payload, nil)
+}
+
 // HpakeRegister creates a server-side aPAKE record for the given password and OPRF key.
 func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
 	rec := &HpakeRecord{}
@@ -3599,7 +3611,9 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 		return nil, nil // wrong password
 	}
 
-	// Ephemeral HKEX-RNL
+	// Ephemeral HKEX-RNL with contributory nonces (n_A from client, n_B from
+	// server) — TODO #89's RNG-hardening fix, applied here the same way
+	// plain `kex --algo hkex-rnl` applies it.
 	n := 256
 	mBase := RnlMPoly(n)
 	aRand := RnlRandPoly(n, RnlQ)
@@ -3609,10 +3623,21 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 	kRawC, hint := RnlAgree(sC, CS, RnlQ, RnlP, RnlPP, n, n, nil)
 	kRawS, _ := RnlAgree(sS, CC, RnlQ, RnlP, RnlPP, n, n, hint)
 
+	pakeNA := make([]byte, 32)
+	pakeNB := make([]byte, 32)
+	if _, err := rand.Read(pakeNA); err != nil {
+		return nil, err
+	}
+	if _, err := rand.Read(pakeNB); err != nil {
+		return nil, err
+	}
+	kKdfC := hpakeContributoryKdf(kRawC, pakeNA, pakeNB)
+	kKdfS := hpakeContributoryKdf(kRawS, pakeNA, pakeNB)
+
 	// ZKBoo: client proves knowledge of zkp_A bound to session channel
 	authLbl := []byte("PAKE-AUTH-v1")
-	authMsgC := append(kRawC.Bytes(), authLbl...)
-	authMsgS := append(kRawS.Bytes(), authLbl...)
+	authMsgC := append(append([]byte(nil), kKdfC...), authLbl...)
+	authMsgS := append(append([]byte(nil), kKdfS...), authLbl...)
 	proof, err := ZkpNlProve(zkpA, rec.B, rec.Y, HpakeZkpN, HpakeRounds, authMsgC)
 	if err != nil {
 		return nil, err
@@ -3621,8 +3646,9 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 		return nil, nil
 	}
 
-	// Session key: hfscx_256(kdf(K_raw_c) || "PAKE-SESSION-v1")
-	skInput := append(hpakeRnlKdf(kRawC), []byte("PAKE-SESSION-v1")...)
+	// Session key: hfscx_256(kdf(K_kdf_c) || "PAKE-SESSION-v1")
+	kKdfCBA := NewBitArray(256, new(big.Int).SetBytes(kKdfC))
+	skInput := append(hpakeRnlKdf(kKdfCBA), []byte("PAKE-SESSION-v1")...)
 	return Hfscx256(skInput, nil), nil
 }
 
