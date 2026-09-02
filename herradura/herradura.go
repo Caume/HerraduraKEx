@@ -3376,12 +3376,22 @@ type HpksXmssSig struct {
 }
 
 // HpksXmssSign signs msg at leafIdx using the pre-built keypair.
-func HpksXmssSign(msg []byte, kp *HpksXmssKeypair, leafIdx int) *HpksXmssSig {
+//
+// leafIdx is bound-checked against len(kp.LeafHashes) here (TODO #262,
+// CodeQL go/incorrect-integer-conversion alert #1): callers must not rely
+// on an external guard, since the uint32(leafIdx) narrowing below would
+// otherwise silently wrap an out-of-range int into an in-range,
+// already-used leaf index — WOTS leaf reuse leaks the one-time private
+// key, so this has to fail rather than sign.
+func HpksXmssSign(msg []byte, kp *HpksXmssKeypair, leafIdx int) (*HpksXmssSig, error) {
+	if leafIdx < 0 || leafIdx >= len(kp.LeafHashes) {
+		return nil, fmt.Errorf("HpksXmssSign: leaf index %d out of range [0, %d)", leafIdx, len(kp.LeafHashes))
+	}
 	return &HpksXmssSig{
 		LeafIdx:  leafIdx,
 		WotsSig:  HpksWotsSign(msg, kp.MasterSeed, uint32(leafIdx)),
 		AuthPath: HaccumProve(kp.LeafHashes, leafIdx),
-	}
+	}, nil
 }
 
 // HpksXmssVerify verifies an XMSS-F signature against root.

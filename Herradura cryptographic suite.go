@@ -491,16 +491,20 @@ func main() {
 			xmssH  := 3 // 8 leaves; production uses h=10
 			xmssKp := HpksXmssKeygen(xmssSeed, xmssH)
 			xmssMsg := []byte("HPKS-XMSS-F test message")
-			sig0 := HpksXmssSign(xmssMsg, xmssKp, 0)
-			sig1 := HpksXmssSign(xmssMsg, xmssKp, 1)
-			ok0   := HpksXmssVerify(xmssMsg, sig0, xmssKp.Root)
-			ok1   := HpksXmssVerify(xmssMsg, sig1, xmssKp.Root)
-			bad   := HpksXmssVerify([]byte("tampered"), sig0, xmssKp.Root)
-			reuse := HpksXmssVerify([]byte("different message"), sig0, xmssKp.Root)
-			if ok0 && ok1 && !bad && !reuse {
-				fmt.Printf("+ HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n", xmssH)
+			sig0, err0 := HpksXmssSign(xmssMsg, xmssKp, 0)
+			sig1, err1 := HpksXmssSign(xmssMsg, xmssKp, 1)
+			if err0 != nil || err1 != nil {
+				fmt.Printf("[FAIL] HPKS-XMSS-F: sign error: %v / %v\n", err0, err1)
 			} else {
-				fmt.Printf("[FAIL] HPKS-XMSS-F: ok0=%v ok1=%v bad=%v reuse=%v\n", ok0, ok1, bad, reuse)
+				ok0   := HpksXmssVerify(xmssMsg, sig0, xmssKp.Root)
+				ok1   := HpksXmssVerify(xmssMsg, sig1, xmssKp.Root)
+				bad   := HpksXmssVerify([]byte("tampered"), sig0, xmssKp.Root)
+				reuse := HpksXmssVerify([]byte("different message"), sig0, xmssKp.Root)
+				if ok0 && ok1 && !bad && !reuse {
+					fmt.Printf("+ HPKS-XMSS-F sign/verify correct (h=%d, 2 leaves, tamper/reuse rejected)\n", xmssH)
+				} else {
+					fmt.Printf("[FAIL] HPKS-XMSS-F: ok0=%v ok1=%v bad=%v reuse=%v\n", ok0, ok1, bad, reuse)
+				}
 			}
 		}
 	}
