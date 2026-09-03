@@ -1520,7 +1520,7 @@
     "stern_f": {
       "n_rows": 128,
       "t": 16,
-      "rounds_demo": "32             /* ZKP rounds (demo; prod >= 219);",
+      "rounds_demo": 32,
       "rounds_production": 219,
       "syndrome_bytes": 16
     },

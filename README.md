@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v5.8.5)
+# Herradura Cryptographic Suite (v5.8.6)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -92,7 +92,7 @@ The suite builds protocols on top of HKEX-GF, FSCX_REVOLVE, and the v1.5.0 NL-FS
 
 **Code-based PQC (v1.5.18)** — the signature and KEM here rest on a different post-quantum hardness assumption, syndrome decoding (SD), via the Stern zero-knowledge identification protocol made non-interactive (Fiat-Shamir):
 
-10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature. Security reduces to EUF-CMA ≤ SD($n$, $t$) + NL-FSCX v1 PRF — i.e. forging a signature ("EUF-CMA", existential unforgeability under chosen-message attack) would require either breaking syndrome decoding or the NL-FSCX v1 pseudorandom function ("PRF", an output indistinguishable from random without the key). Protocol: commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (production default; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
+10. **HPKS-Stern-F** — Fiat-Shamir Stern ZKP signature. Security reduces to EUF-CMA ≤ SD($n$, $t$) + NL-FSCX v1 PRF — i.e. forging a signature ("EUF-CMA", existential unforgeability under chosen-message attack) would require either breaking syndrome decoding or the NL-FSCX v1 pseudorandom function ("PRF", an output indistinguishable from random without the key). Protocol: commit $(c_0, c_1, c_2)$; challenge $b \in \{0,1,2\}$ via NL-FSCX hash; response reveals permuted $r$, $y = e \oplus r$, or permutation $\pi$. Parameters (C/Go/Python): $N = n = 256$, $t = 16$, rounds $= 32$ (demo default; production needs 219, see the caveats section below — `herradura.h` emits a build warning at any count below `SDF_PRODUCTION_ROUNDS`; benchmarks use 4–8 rounds for throughput measurement). Assembly/Arduino: $N = 32$, $t = 2$, rounds $= 4$.
 11. **HPKE-Stern-F** — Niederreiter KEM: $\mathit{ct} = H \cdot e'^T$; $K = \text{hash}(\mathit{seed}, e')$. The CLI's `hpke-stern` algo tag is a demo that decaps from a known $e'$; the separate `hpke-stern-kem` algo tag uses a real Black-Gray-Flip (BGF) QC-MDPC syndrome decoder (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf` in all three suites) and does not need the plaintext error vector at decap.
 
 Implementations are provided in C, Go, Python, ARM Thumb-2 assembly, NASM i386 assembly, and Arduino (all six targets at v1.5.19).
@@ -373,11 +373,14 @@ visible without having to search `TODO_DONE.md`.
   since v3.1.0 the C CLI does too — the count is a per-signature PEM field, not a
   compile-time constant, so any build reads any round count (TODO #236). Raising rounds
   alone does not fix the N = 256 SD-hardness shortfall above.
-- **Two security tests are FAIL-by-design.** Test `[4]` (bit-frequency bias) and C test
-  `[18]` (HPKE-Stern-F brute-force decap) are expected to intermittently or consistently
-  report FAIL under the suite's own test harness — this is documented, acknowledged
-  behavior (`TODO_DONE.md` #85, #86), not a regression. Don't treat either as a build
-  gate.
+- **No test is FAIL-by-design; every `[FAIL]` fails the build (TODO #233, v3.0.8).** This
+  bullet used to say the opposite — that test `[4]` (bit-frequency bias) and C test `[18]`
+  (HPKE-Stern-F brute-force decap) were expected to report FAIL and should not be treated
+  as a build gate. Both were fixed in v3.0.8 and the harnesses were given an aggregate
+  exit status at the same time: all six targets now aggregate their own `[FAIL]` markers
+  and exit non-zero, with **no allow-list**. `[4]` scales its tolerance with the sample
+  size (`6 × 50/sqrt(N)`) and `[18]` distinguishes an ambiguous syndrome from a decoder
+  failure, so both assert what they measure. A `[FAIL]` in any language is a regression.
 - **Arduino/AVR CI is a required, blocking job (TODO #185, v2.0.6).** It ran
   `continue-on-error: true` from its introduction (TODO #153, v1.9.120) until the
   ATmega2560 SRAM overflow behind its only failures was fixed (TODO #155, v1.9.122);

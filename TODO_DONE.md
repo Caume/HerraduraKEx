@@ -14589,3 +14589,71 @@ py_compile` passes. No other code path (test suite, CLI) called the changed
 plus the one new, previously-absent helper function.
 
 Status: **DONE v5.8.5**
+
+### #265: cross-document consistency audit — SecurityProofs, INTRODUCTION, README, CHANGELOG vs. what is actually implemented
+
+The repo already has narrow, mechanical cross-checks for specific slices of this problem
+(`spec/check_security_md.py` diffs each protocol's status between `spec/` and
+`SECURITY.md`; `spec/check_language_parity.py` diffs numbered tests and primitives across
+C/Go/Python/Java; `SecurityProofsCode/check_part_index.py` diffs the eight-part index
+across banners/footers/README/CLAUDE.md/`SecurityProofs.md`). None of them cross-check the
+prose documents against each other or against the shipped code as a whole: `README.md`,
+`docs/INTRODUCTION.md`, `SecurityProofs-*.md`'s protocol/parameter descriptions, and
+`CHANGELOG.md` can drift independently — a parameter changed in one file (e.g. a round
+count, a key size, an `--algo` tag, a protocol's maturity/production-track status) with no
+mechanical guarantee the other three still agree, or that any of them still match
+`herradura.h`/the suite sources/`spec/herradura-protocol-spec.json`.
+
+Scope: build (or extend an existing) audit that checks, at minimum —
+- every protocol/primitive named in `README.md` and `docs/INTRODUCTION.md` exists in
+  `spec/herradura-protocol-spec.json` and vice versa (no doc describing something removed,
+  no shipped protocol undocumented at the intro level);
+- numeric parameters repeated across documents (round counts, key/ring sizes, i = n/4,
+  r = 3n/4, R3_VALUE, etc.) agree with each other and with the constants in the suite
+  sources/`spec/`;
+- `CHANGELOG.md`'s versioned entries match the version-bump policy in `CLAUDE.md` (MINOR
+  vs. PATCH, MAJOR + `MIGRATING.md` pairing) and that the README title-line version matches
+  the latest `CHANGELOG.md` entry;
+- `SecurityProofs-*.md`'s per-protocol maturity claims (production-track vs. demo-only)
+  agree with `SECURITY.md`'s table (already covered by `check_security_md.py` — confirm
+  scope, don't duplicate) and with any maturity language in `README.md`/`INTRODUCTION.md`.
+
+Decide first whether this belongs in `spec/` alongside the existing checkers (same
+`--check`-gated, CI-enforced pattern) or as a new `SecurityProofsCode/` script in the
+`check_part_index.py` style — the two existing families differ in what they compare
+against (machine-readable spec vs. prose-to-prose), and this item spans both.
+
+Status: **DONE v5.8.6**
+
+**Outcome (v5.8.6).**  Placed in `spec/` as `check_docs_consistency.py`, next to the two
+existing checkers and in CI's `native-python` job.  The item asked to decide that first:
+`spec/` wins because three of the four axes resolve prose against machine-readable ground
+truth (`spec/herradura-protocol-spec.json` and `herradura.h`), which is the `spec/` family's
+job, and only the version/CHANGELOG axis is prose-to-prose -- and that one needs none of
+`SecurityProofsCode/`'s KaTeX or proof machinery.  All four bullets of the scope are
+implemented as checks A-D.
+
+Following `check_security_md.py`'s precedent the curated tables are self-invalidating:
+check C fails the moment `spec/` gains or loses a protocol `DOC_COVERAGE` does not name,
+and every regex in checks B and D must match at least once, so deleting the sentence an
+entry was anchored to is an "anchor lost" failure rather than a silent pass.  Six negative
+cases were run against a scratch copy -- one per check plus a deleted anchor and a
+resurrected superseded claim -- and all six exit non-zero.
+
+**Six defects found on the first run, all fixed** (see `CHANGELOG.md` [5.8.6] for the
+detail): README called the demo Stern round count `32` the "production default" while
+contradicting itself 280 lines later; INTRODUCTION put Stern's soundness error at
+`(1/3)^32` where the same file says `(2/3)^R` 40 lines on, and quoted a `10^-15` matching
+neither; INTRODUCTION still said the Niederreiter KEM has "no decoder implemented" three
+major versions after `--algo hpke-stern-kem` shipped one; `pyproject.toml` declared
+`version = "2.1.3"` at suite v5.8.5; README told readers tests [4] and [18] are
+"FAIL-by-design" and not to treat them as a build gate, which TODO #233 (v3.0.8) had made
+false in both halves; and check B itself caught `generate_spec.py` leaking a four-line C
+comment into `parameters.stern_f.rounds_demo` as a string -- its comment stripper is
+single-line.
+
+**Not in scope, deliberately.**  `SecurityProofs-*.md`'s per-protocol maturity claims are
+left to `check_security_md.py`, as the item's fourth bullet asked ("confirm scope, don't
+duplicate"); its coverage is complete over all 35 protocols and 32 SECURITY.md rows.  The
+narrative documents' *own* maturity language is thin enough (README has two such
+sentences, INTRODUCTION one) that check D pins it by assertion rather than by parsing.

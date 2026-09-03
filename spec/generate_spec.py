@@ -135,6 +135,12 @@ def extract_const_int(src, name):
     if val is None:
         return None
     val = re.sub(r"/\*.*?\*/", "", val)  # strip /* ... */ comments
+    # ...and an UNTERMINATED `/*`, which opens a comment continuing onto the next
+    # source line.  The rule above is single-line and non-greedy, so it does not
+    # match one, and the comment text used to leak into the value: SDF_ROUNDS's
+    # four-line explanatory comment made spec/ report rounds_demo as the string
+    # "32             /* ZKP rounds (demo; prod >= 219);" (TODO #265).
+    val = re.sub(r"/\*.*$", "", val)
     val = re.sub(r"//.*$", "", val)      # strip // comments
     val = val.strip().strip(",")
     if val.startswith("(") and val.endswith(")"):

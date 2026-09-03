@@ -461,8 +461,28 @@ spec/                                                — machine-readable protoc
                                                       primitives -- seeded with the HCRED-KKW gap the
                                                       item was filed over -- so a primitive with no
                                                       `--algo` tag can still be caught missing in a
-                                                      language.  All three run in CI's native-python
-                                                      job (TODO #238, #261).
+                                                      language.  check_docs_consistency.py (TODO #265)
+                                                      is the third axis, and the only one that reads
+                                                      the NARRATIVE documents: README.md,
+                                                      docs/INTRODUCTION.md and CHANGELOG.md restate
+                                                      spec/'s and herradura.h's protocols, parameters
+                                                      and verdicts in hand-written prose, and nothing
+                                                      compared them before.  Four checks -- versions
+                                                      (README title / CHANGELOG head / pyproject.toml
+                                                      agree; MAJOR bumps have a MIGRATING.md entry),
+                                                      parameters (herradura.h #defines, resolved
+                                                      transitively, vs. spec/ and vs. the sentences
+                                                      quoting them), protocol coverage (both
+                                                      directions), and a claims table of corrected
+                                                      statements that must stay plus superseded ones
+                                                      that must not return.  Its curated tables are
+                                                      self-invalidating the way check_security_md.py's
+                                                      mapping is: a spec/ protocol with no
+                                                      DOC_COVERAGE entry fails, and every regex must
+                                                      match at least once, so deleting the sentence an
+                                                      entry anchors to is an "anchor lost" FAILURE,
+                                                      not a silent pass.  All four run in CI's
+                                                      native-python job (TODO #238, #261, #265).
                                                       `protocols` is keyed on a protocol id, not an
                                                       --algo tag: aPAKE, and since TODO #241 also
                                                       hdrbg/fpe/twk, have no tag and are filed under

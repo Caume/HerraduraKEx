@@ -1043,9 +1043,13 @@ invertible matrices) so that H appears random to the attacker while the owner ca
 still decode.
 
 HPKE-Stern-F in the suite uses this construction: the ciphertext is the syndrome
-`ct = H · e'^T`, and the shared secret is `K = Hash(seed, e')`.  The demo uses a
-known e' (no decoder implemented); a production deployment would need a QC-MDPC or
-similar decoder.
+`ct = H · e'^T`, and the shared secret is `K = Hash(seed, e')`.  Two algo tags exist:
+`--algo hpke-stern` is the demo, which decapsulates from a known e', while
+`--algo hpke-stern-kem` ships a real Black-Gray-Flip (BGF) QC-MDPC decoder
+(`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf`) and needs no plaintext error
+vector at decapsulation.  The KEM tag is still demo-only, for a different reason:
+at its parameters (r = 523, d = 15, t = 18) the decoding-failure rate is ~2^-8.6
+where IND-CCA2 needs 2^-128.  See `SECURITY.md` and SecurityProofs-5.md §11.8.7.
 
 → SP2 §8.2 for the formal Niederreiter description.
 → TUT for HPKE-Stern-F API usage.
@@ -1084,8 +1088,12 @@ Round (repeated for soundness):
      b=2: reveal σ(y) = σ(π(e ⊕ r))    → verifier checks c₂ and weight(y)
 ```
 
-Each round, the verifier catches a cheating prover with probability ≥ 2/3.  After
-32 rounds, the probability a cheater passes all checks is (1/3)^32 ≈ 10^{-15}.
+Each round, a cheating prover survives with probability 2/3 — it can anticipate two
+of the three challenges, never all three.  After 32 rounds (the suite's demo default)
+the probability a cheater passes every check is (2/3)^32 ≈ 5.6 × 10^{-6}, which is far
+from negligible: reaching 128-bit soundness takes 219 rounds, which is what
+`sign --rounds 219` is for.  Note the surviving probability is 2/3 per round, not 1/3
+— see the (2/3)^R bound in the ZKBoo section below.
 
 **Fiat-Shamir Stern (HPKS-Stern-F):** Replace the verifier's random challenge b with
 a hash of the message and all commitments.  This makes the signature non-interactive:

@@ -2,6 +2,64 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.6] - 2026-09-02
+
+### TODO #265 (DONE) — cross-document consistency audit: `spec/check_docs_consistency.py`
+
+PATCH (new tooling script plus documentation fixes; no protocol, CLI, or wire-format
+change). Three mechanical cross-checks already existed — `spec/check_security_md.py`,
+`spec/check_language_parity.py`, `SecurityProofsCode/check_part_index.py` — and none
+of them looked at the narrative documents. `README.md`, `docs/INTRODUCTION.md` and
+`CHANGELOG.md` restate the same protocols, parameters and maturity verdicts as
+`spec/herradura-protocol-spec.json` and `herradura.h`, in prose, and nothing had ever
+compared them.
+
+**The new script** lives in `spec/` alongside the two existing checkers and runs in
+CI's `native-python` job, exiting non-zero on any inconsistency. It checks four axes:
+**(A) versions** — README's title line, CHANGELOG's newest entry and `pyproject.toml`
+name the same release, CHANGELOG's version list is strictly descending with no
+duplicates, and every MAJOR bump has a `MIGRATING.md` section, as CLAUDE.md's policy
+requires; **(B) parameters** — 58 integer constants are read out of `herradura.h` with
+their arithmetic resolved transitively (`KEYBITS / 2` → 128) and compared against both
+`spec/`'s `parameters` block and a curated table of the sentences where the prose
+repeats them; **(C) protocol coverage** — every one of spec/'s 35 protocols is
+accounted for in the two intro-level documents, in both directions; **(D) claims** — a
+table of corrected statements that must stay and superseded ones that must not return.
+
+Following `check_security_md.py`'s precedent, the curated tables are self-invalidating:
+check C fails the moment spec/ gains or loses a protocol `DOC_COVERAGE` does not name,
+and every regex in B and D must match at least once, so a doc edit that deletes the
+sentence an entry was anchored to is an "anchor lost" failure rather than a silent pass.
+
+**Six defects found on the first run, all fixed:**
+
+- `README.md` §HPKS-Stern-F called `rounds = 32` the **"production default"**. It is
+  the *demo* default — `herradura.h` emits a `#pragma message` warning at any count
+  below `SDF_PRODUCTION_ROUNDS = 219` — and README's own caveats section, 280 lines
+  further down, correctly called the same 32 "a low-soundness demonstration
+  configuration". The file contradicted itself.
+- `docs/INTRODUCTION.md` put Stern's soundness error at `(1/3)^32 ≈ 10^-15`. A cheating
+  prover survives with probability **2/3** per round, as the same document states 40
+  lines later, so the bound is `(2/3)^32 ≈ 5.6 × 10^-6` — and the stated `10^-15`
+  matched neither expression. Under `(1/3)^R`, 128-bit soundness would need 81 rounds
+  rather than the 219 the suite is built around.
+- `docs/INTRODUCTION.md` said HPKE-Stern-F ships with "no decoder implemented" and that
+  production "would need a QC-MDPC or similar decoder". The BGF QC-MDPC decoder has
+  shipped as `--algo hpke-stern-kem` since v1.9.x; the paragraph now names both tags and
+  gives the KEM's actual (different) reason for being demo-only.
+- `pyproject.toml` still declared `version = "2.1.3"` at suite v5.8.5 — three major
+  versions stale, and the number `pip install` reports. Now tracked by check A.
+- `README.md`'s caveats section said tests `[4]` and `[18]` are **"FAIL-by-design"** and
+  "Don't treat either as a build gate". TODO #233 (v3.0.8) fixed both tests and made any
+  `[FAIL]` marker fail the build with no allow-list. The README was telling readers to
+  ignore a blocking CI gate; the bullet now says the opposite and explains what changed.
+- Found by check B rather than by reading: `spec/` reported
+  `parameters.stern_f.rounds_demo` as the *string*
+  `"32             /* ZKP rounds (demo; prod >= 219);"`. `generate_spec.py`'s comment
+  stripper is single-line and `SDF_ROUNDS`'s comment runs to four, so the comment text
+  leaked into the value. Fixed in `generate_spec.py`; check B keeps it fixed by
+  comparing that field to an int.
+
 ## [5.8.5] - 2026-09-02
 
 ### TODO #264 (DONE) — fix flaky `[FAIL]` in the Python demo's n=32 HPKE-Stern-F brute-force check
