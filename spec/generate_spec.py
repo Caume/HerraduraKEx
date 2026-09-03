@@ -40,6 +40,11 @@ HERRADURA_H = os.path.join(REPO, "herradura.h")
 HERRADURA_GO = os.path.join(REPO, "herradura", "herradura.go")
 CLI_C = os.path.join(REPO, "HerraduraCli", "herradura_cli.c")
 CLI_GO = os.path.join(REPO, "HerraduraCli", "herradura_cli.go")
+# TODO #261: the fourth CLI.  bindings/java/ carries a complete port of the suite
+# AND a herradurakex.HerraduraCli mirroring the Python CLI's subcommands and
+# --algo values, but cli_support was a three-column table until v5.8.7, so
+# Java's coverage -- and its five gaps -- were invisible to spec/ by construction.
+CLI_JAVA = os.path.join(REPO, "bindings", "java", "herradurakex", "HerraduraCli.java")
 OUT_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.json")
 SCHEMA_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.schema.json")
 
@@ -101,12 +106,14 @@ def _strip_c_comments(src):
 
 
 def extract_cli_tags(src, universe):
-    """Algo tags a C or Go CLI actually dispatches on.
+    """Algo tags a C, Go or Java CLI actually dispatches on.
 
-    Both CLIs reach a tag through a quoted string literal -- `strcmp(algo, "hpks")`
-    in C, a `case "hpks"` or an `algo -> PEM label` map entry in Go -- so the rule
-    is: every string literal in the source, intersected with the tag universe the
-    Python CLI defines.  Comments are stripped first.
+    All three reach a tag through a quoted string literal -- `strcmp(algo, "hpks")`
+    in C, a `case "hpks"` or an `algo -> PEM label` map entry in Go,
+    `algo.equals("hpks")` or a `case "hpks"` in Java -- so the rule is: every
+    string literal in the source, intersected with the tag universe the Python CLI
+    defines.  Comments are stripped first (Java's `//` form is C's, so the same
+    stripper serves).
 
     This replaces a hand-maintained CLI_SUPPORT table (TODO #238).  That table had
     gone stale in two places without anything noticing: it said `hpks-xmss` was
@@ -730,6 +737,40 @@ PROTOCOL_NAME = {
     "apake": "aPAKE (asymmetric password-authenticated key exchange)",
 }
 
+# TODO #261's acceptance criterion: a four-language cell is either filled or
+# ACKNOWLEDGED with a recorded reason, "never a silent absence".  Deriving Java's
+# cli_support column (above) fills 24 of the 29 cells and turns the other five
+# into DATA; this table is what keeps them from being data with no explanation.
+# Keyed (tag, language) -> the reason that cell is empty.  A gap with no entry
+# here still appears in cross_implementation_gaps, just with note=None -- which
+# is the honest rendering of "nobody has written down why yet", and is what the
+# five Java cells looked like before this table existed.
+GAP_REASONS = {
+    ("nl-zkbpp", "java"):
+        "ZkpNl.java's class doc comment declares it out of scope explicitly: the "
+        "Java ZKP-NL port 'exists only to give Hpake its mutual-authentication "
+        "proof', so it carries the ZKBoo circuit (prove/verify) but not the ZKB++ "
+        "transcript encoding. A documented per-file exclusion, the same shape "
+        "Hcred.java's KKW note had before TODO #261 closed that one by porting.",
+    ("hpks-zkp-nl", "java"):
+        "Same ZkpNl.java doc comment: the standalone HPKS-ZKP-NL signature scheme "
+        "built on the ZKBoo circuit is named out of scope alongside ZKB++.",
+    ("nl-zkboo", "java"):
+        "Suite-level support EXISTS (ZkpNl.prove/verify, ported under TODO #203) "
+        "and is exercised through Hpake; only the CLI --algo tag is missing, so "
+        "this is a CLI-surface gap rather than a missing algorithm -- the "
+        "narrowest of the five, and the one to close first.",
+    ("rnl-sigma", "java"):
+        "No Java port at any layer: neither a CLI tag nor an RnlSigmaSign/Verify "
+        "in bindings/java/. Unlike the two ZkpNl entries above, nothing in the "
+        "Java tree records the omission -- TODO #261 found it, and this note is "
+        "the record. Not yet triaged into port-vs-acknowledge.",
+    ("hybrid-rnl-stern", "java"):
+        "No Java port at any layer, and undocumented in the Java tree, same as "
+        "rnl-sigma. Its C/Go/Python row is demo-only for the KEM half's DFR "
+        "(see SECURITY.md), so porting it is low-value next to the other four.",
+}
+
 # Gaps in the algo-tag surface are derived (see build_cross_impl_gaps); what stays
 # curated is the one gap that is not a tag at all.
 CROSS_IMPL_GAPS_CURATED = [
@@ -742,7 +783,7 @@ CROSS_IMPL_GAPS_CURATED = [
 
 
 def build_cross_impl_gaps(cli_support):
-    """Any tag not dispatched by all three CLIs, derived rather than curated.
+    """Any tag not dispatched by all four CLIs, derived rather than curated.
 
     The curated list this replaces claimed two gaps that had both closed:
     `hpks-xmss` as Python-only (all three have shipped it since TODO #208) and
@@ -755,9 +796,12 @@ def build_cross_impl_gaps(cli_support):
         missing = sorted(i for i, ok in impls.items() if not ok)
         if not missing:
             continue
+        notes = [GAP_REASONS[(tag, lang)] for lang in missing
+                 if (tag, lang) in GAP_REASONS]
         gaps.append(dict(feature=f"{tag} algo tag",
                           present_in=sorted(i for i, ok in impls.items() if ok),
-                          missing_from=missing, note=None))
+                          missing_from=missing,
+                          note=" ".join(notes) if notes else None))
     return gaps + CROSS_IMPL_GAPS_CURATED
 
 
@@ -956,7 +1000,9 @@ def generate():
     # cli_support, derived per tag from each CLI's own dispatch source.
     c_tags = extract_cli_tags(read(CLI_C), known_tags)
     go_tags = extract_cli_tags(read(CLI_GO), known_tags)
-    cli_support = {tag: {"c": tag in c_tags, "go": tag in go_tags, "python": True}
+    java_tags = extract_cli_tags(read(CLI_JAVA), known_tags)
+    cli_support = {tag: {"c": tag in c_tags, "go": tag in go_tags,
+                          "python": True, "java": tag in java_tags}
                     for tag in sorted(known_tags)}
 
     # tag lists per --algo subcommand, needed both for cli_binding and below.

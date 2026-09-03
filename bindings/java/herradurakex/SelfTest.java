@@ -32,7 +32,8 @@ import java.security.SecureRandom;
  * [11] hpke_nl [12] hpks_stern_f [13] hpke_stern_f [14] hpke_stern_kem
  * [15] oprf [16] hpks_wots_f [17] hpks_xmss_f [18] hcred [19] zkp_nl
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
- * [26] hpks_stern_ring. New checks append at [27] onward; a check's
+ * [26] hpks_stern_ring [27] rnl_m_blind_guard. New checks append at [28]
+ * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
  *
@@ -682,6 +683,58 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS [26] hpks_stern_ring round-trip");
+            }
+        }
+
+        // [27] HKEX-RNL peer-m_blind substitution guard (TODO #261).
+        // m_blind is chosen by the INITIATOR and its uniformity rests entirely
+        // on that party's RNG (TODO #89), so the responder cannot verify the
+        // draw -- only reject the degenerate shapes that break the construction
+        // outright: a sparse m_blind makes C = round_p(m_blind*s) leak s almost
+        // directly, and a clustered one collapses the rounding noise the
+        // hardness argument depends on.  Shipped here, in C and in Go, and
+        // untested in all four languages until TODO #261.
+        // (a) is the accept-control: without it, a guard that rejected
+        // everything would score a perfect pass on (b)-(e).
+        {
+            final int n = 256, q = HerraduraNl.RNLQ;
+            int badAccept = 0, badReject = 0;
+
+            // (a) accept-control: a genuine uniform draw must pass.
+            int[] uniform = new int[n];
+            for (int i = 0; i < n; i++) uniform[i] = rng.nextInt(q);
+            if (!HerraduraNl.rnlValidateMBlind(uniform, q)) badReject++;
+
+            // (b) the all-zero polynomial.
+            if (HerraduraNl.rnlValidateMBlind(new int[n], q)) badAccept++;
+
+            // (c) sparse: n/8 non-zero at full range -- isolates the count bound.
+            int[] sparse = new int[n];
+            for (int i = 0; i < n / 8; i++) sparse[i] = q - 1;
+            if (HerraduraNl.rnlValidateMBlind(sparse, q)) badAccept++;
+
+            // (d) clustered: all non-zero inside [1, q/8) -- isolates the range bound.
+            int[] clustered = new int[n];
+            for (int i = 0; i < n; i++) clustered[i] = 1 + rng.nextInt(q / 8 - 1);
+            if (HerraduraNl.rnlValidateMBlind(clustered, q)) badAccept++;
+
+            // (e) the count boundary, both sides.  Range is full in both, so
+            //     only the non-zero count decides.
+            int[] nzCounts = { n / 4, n / 4 - 1 };
+            boolean[] want = { true, false };
+            for (int k = 0; k < 2; k++) {
+                int[] poly = new int[n];
+                for (int i = 0; i < nzCounts[k]; i++) poly[i] = q - 1;
+                boolean got = HerraduraNl.rnlValidateMBlind(poly, q);
+                if (got != want[k]) { if (got) badAccept++; else badReject++; }
+            }
+
+            if (badAccept != 0 || badReject != 0) {
+                System.out.println("FAIL [27] rnl_m_blind_guard (bad_accepts=" + badAccept
+                    + " bad_rejects=" + badReject + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [27] rnl_m_blind_guard");
             }
         }
 

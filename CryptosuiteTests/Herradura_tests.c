@@ -5572,6 +5572,66 @@ int main(int argc, char *argv[])
                ? "PASS" : "FAIL");
     }
 
+
+    /* Security test [49]: the HKEX-RNL peer-m_blind substitution guard
+     * (TODO #261).  m_blind is chosen by the INITIATOR, and its uniformity
+     * rests entirely on that party's RNG (TODO #89), so the responder cannot
+     * verify the draw -- it can only reject the degenerate shapes that break
+     * the construction outright: a sparse m_blind makes C = round_p(m_blind*s)
+     * leak s almost directly, and a clustered one collapses the rounding noise
+     * the hardness argument depends on.  The guard shipped in C, Go and Java
+     * and was UNTESTED IN ALL FOUR LANGUAGES until TODO #261 (Python's suite
+     * did not have it at all -- only a private copy inside the CLI).
+     *   (a) accept-control: a genuine uniform draw must pass, or (b)-(e) are
+     *       vacuous -- a guard that rejects everything would otherwise score a
+     *       perfect pass.  Same discipline as CliTest/lib_malformed.sh.
+     *   (b) the all-zero polynomial.
+     *   (c) sparse: n/8 non-zero at full range -- isolates the count bound.
+     *   (d) clustered: all non-zero inside [1, q/8) -- isolates the range bound.
+     *   (e) the count boundary itself, both sides of it. */
+    {
+        int N = g_rounds > 0 ? g_rounds : 50, i, j;
+        int bad_accept = 0, bad_reject = 0;
+        static rnl_poly_t poly;
+        printf("[49] HKEX-RNL peer-m_blind substitution guard  [SECURITY]\n");
+        for (i = 0; i < N; i++) {
+            /* (a) accept-control */
+            for (j = 0; j < RNL_N; j++) poly[j] = (int32_t)rnl_rand_coeff();
+            if (!rnl_validate_m_blind(poly, RNL_N)) bad_reject++;
+
+            /* (b) all-zero */
+            memset(poly, 0, sizeof poly);
+            if (rnl_validate_m_blind(poly, RNL_N)) bad_accept++;
+
+            /* (c) sparse, full range */
+            memset(poly, 0, sizeof poly);
+            for (j = 0; j < RNL_N / 8; j++) poly[j] = RNL_Q - 1;
+            if (rnl_validate_m_blind(poly, RNL_N)) bad_accept++;
+
+            /* (d) clustered, all non-zero */
+            for (j = 0; j < RNL_N; j++)
+                poly[j] = (int32_t)(1 + rnl_rand_coeff() % (RNL_Q / 8 - 1));
+            if (rnl_validate_m_blind(poly, RNL_N)) bad_accept++;
+
+            /* (e) the count boundary, both sides */
+            {
+                const int nz[2] = { RNL_N / 4, RNL_N / 4 - 1 };
+                const int want[2] = { 1, 0 };
+                int k;
+                for (k = 0; k < 2; k++) {
+                    int got;
+                    memset(poly, 0, sizeof poly);
+                    for (j = 0; j < nz[k]; j++) poly[j] = RNL_Q - 1;
+                    got = rnl_validate_m_blind(poly, RNL_N);
+                    if (got != want[k]) { if (got) bad_accept++; else bad_reject++; }
+                }
+            }
+        }
+        printf("    n=%d  bad accepts=%d  bad rejects=%d  [%s]\n\n",
+               N, bad_accept, bad_reject,
+               (bad_accept == 0 && bad_reject == 0) ? "PASS" : "FAIL");
+    }
+
     fclose(urnd_fp);
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

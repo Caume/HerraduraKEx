@@ -55,6 +55,10 @@ _rnl_rand_poly      = _s._rnl_rand_poly
 _rnl_poly_add       = _s._rnl_poly_add
 _rnl_lift           = _s._rnl_lift
 _rnl_poly_mul       = _s._rnl_poly_mul
+# TODO #261: the peer-m_blind substitution guard.  C/Go/Java carried it in the
+# suite; Python had only a private copy in the CLI, so it is re-exported here
+# rather than reimplemented there.
+rnl_validate_m_blind = _s.rnl_validate_m_blind
 
 # ── Stern-F (code-based PQC) ─────────────────────────────────────────────────
 stern_f_keygen            = _s.stern_f_keygen

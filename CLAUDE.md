@@ -45,8 +45,13 @@ CliTest/                                             — CLI integration + cross
                                                        CLI (TODO #255): hske-nla3 and
                                                        hpke-nl3 across all four CLIs,
                                                        hske-duplex3 / fpe --v3 / twk --v3
-                                                       across C/Go/Python (Java ships no
-                                                       duplex, fpe or twk).  Claimed by
+                                                       across all four as well — TODO #260
+                                                       added Java's fpe/twk in v5.3.6 and
+                                                       its duplex in v5.3.8, and this line
+                                                       said "Java ships no duplex, fpe or
+                                                       twk" until TODO #261 caught it
+                                                       contradicting the script's own
+                                                       header.  Claimed by
                                                        native-interop; degrades to a NOTE
                                                        if bindings/java is not compiled.
                                                        Asserts the FLAG actually changes
@@ -423,7 +428,7 @@ SecurityProofs.md                                   — split index (redirects t
 SecurityProofs-1.md                                 — §1: Algebraic Foundations (300 math expressions)
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
-SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (685 math expressions)
+SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (686 math expressions)
 SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ signature options · HPKE-Stern-KEM (587 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
@@ -456,7 +461,7 @@ spec/                                                — machine-readable protoc
                                                       check_language_parity.py (TODO #261) is a
                                                       different axis: numbered-test [N] contiguity in
                                                       each of C/Go/Python/Java, set-alignment of
-                                                      C/Go/Python's shared [1]-[48] numbering, and a
+                                                      C/Go/Python's shared [1]-[49] numbering, and a
                                                       curated manifest of suite-internal (non-CLI)
                                                       primitives -- seeded with the HCRED-KKW gap the
                                                       item was filed over -- so a primitive with no
@@ -745,7 +750,15 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  that every row of the 47x5 + 3x7 partition is odd and >= 5 -- a 3-row is a
 #  complete break (SecurityProofs-8.md 11.34.2), so that last one is a security
 #  assertion.  Python's copy is cross-checked against the shipped suite there,
-#  as [46] does, since that harness alone re-implements the primitive)
+#  as [46] does, since that harness alone re-implements the primitive.
+#  [49] is TODO #261's guard for the HKEX-RNL peer-m_blind substitution check
+#  (reject a sparse or clustered m_blind before using it).  All four languages
+#  ship it and NONE tested it until #261 -- and Python's suite did not have the
+#  function at all, only a private copy inside HerraduraCli/herradura.py, so
+#  #261 moved it into the suite and the CLI now imports it.  Case (a) is an
+#  accept-control: a guard that rejected everything would otherwise pass the
+#  four rejection cases perfectly.  Python's copy is cross-checked against the
+#  suite as [46]'s and [47]'s are.  Java's counterpart is SelfTest.java's [27])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

@@ -1666,6 +1666,7 @@ func main() {
 	testFpeTwkDomainSeparation()
 	testNlFscxV3()
 	testNlFscxV3Consumers()
+	testRnlMBlindGuard()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -1952,6 +1953,74 @@ func testNlFscxV3Consumers() {
 	fmt.Printf("    n=%d  round-trip fails=%d  v3==v2=%d  fpe-v3==twk-v3 at "+
 		"12-byte ctx=%d  AEAD forgeries=%d  [%s]\n\n",
 		N, badRT, sameAsV2, fpeEqTwk, forged, status)
+}
+
+// [49] The HKEX-RNL peer-m_blind substitution guard (TODO #261).  m_blind is
+// chosen by the INITIATOR and its uniformity rests entirely on that party's RNG
+// (TODO #89), so the responder cannot verify the draw -- it can only reject the
+// degenerate shapes that break the construction outright: a sparse m_blind makes
+// C = round_p(m_blind*s) leak s almost directly, and a clustered one collapses
+// the rounding noise the hardness argument depends on.  Untested in all four
+// languages until TODO #261.  (a) is the accept-control: a guard that rejects
+// everything would otherwise score a perfect pass on (b)-(e).
+func testRnlMBlindGuard() {
+	fmt.Println("[49] HKEX-RNL peer-m_blind substitution guard  [SECURITY]")
+	const n = 256
+	N := testRounds(50)
+	badAccept, badReject, nRun := 0, 0, 0
+	for i := 0; i < N; i++ {
+		nRun++
+		// (a) accept-control: a genuine uniform draw must pass.
+		if !RnlValidateMBlind(RnlRandPoly(n, RnlQ), RnlQ) {
+			badReject++
+		}
+		// (b) the all-zero polynomial.
+		if RnlValidateMBlind(make([]int, n), RnlQ) {
+			badAccept++
+		}
+		// (c) sparse: n/8 non-zero, full range -- isolates the count bound.
+		sparse := make([]int, n)
+		for j := 0; j < n/8; j++ {
+			sparse[j] = RnlQ - 1
+		}
+		if RnlValidateMBlind(sparse, RnlQ) {
+			badAccept++
+		}
+		// (d) clustered: all non-zero but inside [1, q/8) -- isolates the
+		//     range bound.
+		clustered := make([]int, n)
+		for j := range clustered {
+			clustered[j] = 1 + mrand.Intn(RnlQ/8-1)
+		}
+		if RnlValidateMBlind(clustered, RnlQ) {
+			badAccept++
+		}
+		// (e) the count boundary, both sides.  Range is full in both, so only
+		//     the non-zero count decides.
+		for _, tc := range []struct {
+			nz   int
+			want bool
+		}{{n / 4, true}, {n/4 - 1, false}} {
+			poly := make([]int, n)
+			for j := 0; j < tc.nz; j++ {
+				poly[j] = RnlQ - 1
+			}
+			if got := RnlValidateMBlind(poly, RnlQ); got != tc.want {
+				if got {
+					badAccept++
+				} else {
+					badReject++
+				}
+			}
+		}
+	}
+	ok := badAccept == 0 && badReject == 0
+	verdict := "PASS"
+	if !ok {
+		verdict = "FAIL"
+	}
+	fmt.Printf("    n=%d  bad accepts=%d  bad rejects=%d  [%s]\n\n",
+		nRun, badAccept, badReject, verdict)
 }
 
 func testWeakKeyRejection() {

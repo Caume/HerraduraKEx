@@ -2,6 +2,72 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.7] - 2026-09-02
+
+### TODO #261 (still OPEN) — a fresh parity sweep: `cli_support` goes four-wide, one placement gap closed, one guard tested in all four languages
+
+PATCH (tooling, one function moved between files in Python, one new security test per
+language; no protocol, wire-format or CLI-surface change). TODO #261's previous pass
+(v5.8.4) exhausted its standing candidate list, so this one enumerated every top-level
+function in all four suites and diffed them. That census is mostly noise by construction —
+C's `ba_*`/`qcp_*` bignum plumbing has no analogue in three languages with native big
+integers, and Java's methods are class-scoped, so name matching alone reports `Hcred.prove`
+as missing `hcred_prove` — which is why `check_language_parity.py`'s docstring already
+declined to automate it. Read by hand it produced three findings, two of them about the
+mechanism rather than the manifest.
+
+**`spec/`'s `cli_support` was a three-column table in a four-language repo.**
+`bindings/java/herradurakex/HerraduraCli.java` has mirrored the Python CLI's subcommands
+and `--algo` values since TODO #201/#260, but `generate_spec.py` derived the column only
+from `herradura_cli.c` and `herradura_cli.go` — so Java's coverage, and its gaps, were
+invisible to `spec/` **by construction**: the same shape as the KKW gap this item was filed
+over, one layer up. The existing `extract_cli_tags` needed no change (Java reaches a tag
+through `algo.equals("hpks")`/`case "hpks"` exactly as C and Go do); the schema's three
+`["c","go","python"]` enums gained `java`, and `cli_subcommands.*.algos` picked the column
+up for free. **Java dispatches 24 of the 29 algo tags.**
+
+**The five gaps that surfaces are now data with reasons, not silent absences** — which is
+what #261's acceptance criterion asks for. `build_cross_impl_gaps` emits them
+automatically; a new curated `GAP_REASONS` table supplies each note, and a gap with no
+entry still appears with `note: null`, the honest rendering of "nobody has written down
+why yet". Triaged: `nl-zkbpp` and `hpks-zkp-nl` are a **documented exclusion** —
+`ZkpNl.java`'s class doc comment says the port "exists only to give `Hpake` its
+mutual-authentication proof", the same shape `Hcred.java`'s KKW note had before this item
+closed that one; `nl-zkboo` is **CLI-surface only** (`ZkpNl.prove`/`verify` ship and are
+exercised through `Hpake`), the narrowest of the five; `rnl-sigma` and `hybrid-rnl-stern`
+have **no Java port at any layer, and nothing in the Java tree recorded that** until now.
+
+**`rnl_validate_m_blind` was a placement gap** — a shape the manifest had not caught
+before. The peer-`m_blind` substitution guard (reject a sparse or clustered polynomial
+before use; `m_blind`'s uniformity rests entirely on the initiator's RNG, TODO #89) lived
+in the **suite** in C, Go and Java, where any caller reaches it, and in Python only as a
+private copy inside `HerraduraCli/herradura.py` — so the pedagogical suite path, which
+`docs/examples/hello_herradura.py` demonstrates, could not reach it, and the thresholds
+lived in two places in that one language. All four agreed behaviourally, so nothing was
+broken; it was one edit away from being broken in Python alone. Moved into the Python
+suite, re-exported through `primitives.py`, CLI copy deleted. Manifest entry
+`rnl-validate-m-blind` added (13 total), its regexes anchored at the **suite** files —
+pointing Python's at the CLI would have made the entry pass while the asymmetry stood.
+
+**The guard was untested in all four languages**, a four-way absence the numbered-test half
+of the mechanism cannot see (it checks that the four numberings agree, not that they cover
+anything). Added as **[49]** in C/Go/Python's shared numbering and **[27]** in Java's own:
+an accept-control on a genuine uniform draw, then the all-zero polynomial, a sparse one
+(n/8 non-zero at full range, isolating the count bound), a clustered one (all non-zero
+inside `[1, q/8)`, isolating the range bound), and the count boundary on both sides. Case
+(a) is not decoration — without it a guard that rejected *everything* scores a perfect pass
+on the four rejection cases, which is `CliTest/lib_malformed.sh`'s discipline applied here.
+Python's harness re-implements the guard locally and cross-checks it against the shipped
+suite, as [46]/[47]/[48] do. Verified against three deliberate breaks — a guard that
+accepts everything, one that rejects everything, and a harness copy whose threshold drifts
+from the suite's — all three fail, each on a different counter.
+
+**Also corrected, found while checking the above.** `CLAUDE.md`'s `CliTest/` index said
+`test_v3_family.sh` runs `hske-duplex3`/`fpe --v3`/`twk --v3` "across C/Go/Python (Java
+ships no duplex, fpe or twk)". Stale since v5.3.6/v5.3.8 — TODO #260 added all three to
+Java and the script's own header has said so since. `spec/README.md`'s description of the
+derived `cli_support` column updated for the Java column at the same time.
+
 ## [5.8.6] - 2026-09-02
 
 ### TODO #265 (DONE) — cross-document consistency audit: `spec/check_docs_consistency.py`

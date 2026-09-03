@@ -70,7 +70,7 @@ from primitives import (
     hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
-    _rnl_lift, _rnl_poly_mul,
+    _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
@@ -484,17 +484,10 @@ def _rnl_contributory_kdf(k_raw_int: int, n_bits: int, n_a: bytes, n_b: bytes) -
     return int.from_bytes(hfscx_256(payload), 'big')
 
 
-def _rnl_validate_m_blind(poly, q=RNLQ):
-    """Return True if poly looks like a uniform-random element of Z_q^n.
-    Rejects sparse polys (nz < n/4) and clustered polys (range < q/4)."""
-    n = len(poly)
-    nz = sum(1 for c in poly if c != 0)
-    if nz < n // 4:
-        return False
-    span = max(poly) - min(poly)
-    if span < q // 4:
-        return False
-    return True
+# _rnl_validate_m_blind is imported from the suite above (TODO #261).  It used to
+# be a private copy here -- C, Go and Java all kept the equivalent in their SUITE,
+# so Python was the one language where a non-CLI caller could not reach the peer
+# m_blind substitution guard, and where the thresholds lived in two places.
 
 
 def _encode_stern_privkey(e_int, seed, n, algo):

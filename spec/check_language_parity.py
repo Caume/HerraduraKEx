@@ -273,6 +273,26 @@ PRIMITIVES = {
         "python": r"^def _hpake_rnl_kdf\(",
         "java": r"static byte\[\] rnlKdf\(",
     },
+    "rnl-validate-m-blind": {
+        # TODO #261 (v5.8.7): the peer-m_blind substitution guard -- reject a
+        # sparse (nz < n/4) or clustered (range < q/4) polynomial before using
+        # it, since m_blind's uniformity rests entirely on the initiator's RNG
+        # (TODO #89) and the responder cannot verify the draw itself.
+        #
+        # NOT a missing-algorithm gap but a PLACEMENT one, which is a shape this
+        # manifest had not caught before: C, Go and Java all had it in the SUITE,
+        # where any caller reaches it; Python had it only as a private copy inside
+        # HerraduraCli/herradura.py, so the pedagogical suite path (what
+        # docs/examples/hello_herradura.py shows) could not reach it, and the
+        # thresholds lived in two places in that one language.  The regexes below
+        # are therefore deliberately anchored at the SUITE files -- pointing
+        # Python's at the CLI would have made the entry pass while the asymmetry
+        # stood.
+        "c": r"static int rnl_validate_m_blind\(",
+        "go": r"func RnlValidateMBlind\(",
+        "python": r"^def rnl_validate_m_blind\(",
+        "java": r"public static boolean rnlValidateMBlind\(",
+    },
     "hpake-contributory-kdf": {
         # TODO #263: aPAKE's ephemeral HKEX-RNL exchange inside
         # hpake_login_demo binds K_raw to per-session nonces from both
