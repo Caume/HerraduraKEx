@@ -131,6 +131,16 @@ jobs:
       - name: cross-language parity (numbered tests + suite-internal primitives)
         run: python3 spec/check_language_parity.py
 
+      # TODO #265. The third axis: the two checks above compare spec/ against
+      # SECURITY.md and against the four language ports, but nothing looked at
+      # the NARRATIVE documents. README.md, docs/INTRODUCTION.md and CHANGELOG.md
+      # restate the same protocols, parameters and maturity verdicts as spec/ and
+      # herradura.h, in hand-written prose, and could drift freely. Six defects on
+      # the first run, including a README that called the demo Stern round count a
+      # production default and told readers to ignore a blocking CI gate.
+      - name: cross-document consistency (README / INTRODUCTION / CHANGELOG vs. sources)
+        run: python3 spec/check_docs_consistency.py
+
       - name: CliTest — Python CLI
         run: |
           for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \
