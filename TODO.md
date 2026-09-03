@@ -10,6 +10,41 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
+### #265: cross-document consistency audit — SecurityProofs, INTRODUCTION, README, CHANGELOG vs. what is actually implemented
+
+The repo already has narrow, mechanical cross-checks for specific slices of this problem
+(`spec/check_security_md.py` diffs each protocol's status between `spec/` and
+`SECURITY.md`; `spec/check_language_parity.py` diffs numbered tests and primitives across
+C/Go/Python/Java; `SecurityProofsCode/check_part_index.py` diffs the eight-part index
+across banners/footers/README/CLAUDE.md/`SecurityProofs.md`). None of them cross-check the
+prose documents against each other or against the shipped code as a whole: `README.md`,
+`docs/INTRODUCTION.md`, `SecurityProofs-*.md`'s protocol/parameter descriptions, and
+`CHANGELOG.md` can drift independently — a parameter changed in one file (e.g. a round
+count, a key size, an `--algo` tag, a protocol's maturity/production-track status) with no
+mechanical guarantee the other three still agree, or that any of them still match
+`herradura.h`/the suite sources/`spec/herradura-protocol-spec.json`.
+
+Scope: build (or extend an existing) audit that checks, at minimum —
+- every protocol/primitive named in `README.md` and `docs/INTRODUCTION.md` exists in
+  `spec/herradura-protocol-spec.json` and vice versa (no doc describing something removed,
+  no shipped protocol undocumented at the intro level);
+- numeric parameters repeated across documents (round counts, key/ring sizes, i = n/4,
+  r = 3n/4, R3_VALUE, etc.) agree with each other and with the constants in the suite
+  sources/`spec/`;
+- `CHANGELOG.md`'s versioned entries match the version-bump policy in `CLAUDE.md` (MINOR
+  vs. PATCH, MAJOR + `MIGRATING.md` pairing) and that the README title-line version matches
+  the latest `CHANGELOG.md` entry;
+- `SecurityProofs-*.md`'s per-protocol maturity claims (production-track vs. demo-only)
+  agree with `SECURITY.md`'s table (already covered by `check_security_md.py` — confirm
+  scope, don't duplicate) and with any maturity language in `README.md`/`INTRODUCTION.md`.
+
+Decide first whether this belongs in `spec/` alongside the existing checkers (same
+`--check`-gated, CI-enforced pattern) or as a new `SecurityProofsCode/` script in the
+`check_part_index.py` style — the two existing families differ in what they compare
+against (machine-readable spec vs. prose-to-prose), and this item spans both.
+
+Status: **OPEN**
+
 ### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
 
 `SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not
