@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [5.8.5] - 2026-09-02
+
+### TODO #264 (DONE) — fix flaky `[FAIL]` in the Python demo's n=32 HPKE-Stern-F brute-force check
+
+PATCH (CI reliability fix; no protocol behavior change). `Herradura cryptographic
+suite.py`'s `main()` demo ran a brute-force Niederreiter decap at `n=32, t=2` — a code
+that is not uniquely decodable, since `C(32,2)=496` weight-2 error vectors land in a
+16-bit syndrome space — and printed `[FAIL]` whenever brute force legitimately
+returned a *different* valid preimage than the one encap used. Test [18] already
+handles this correctly; the demo had its own naive copy of the check that didn't, so
+it flaked CI's `native-python` job nondeterministically (~0.4% per run) once TODO #233
+made any `[FAIL]` marker fail the build. Added `stern_f_first_preimage()` and switched
+the demo to `hpke_stern_f_encap_with_e` so it can distinguish a genuine decode failure
+from an ambiguous-syndrome non-failure. Verified with 40 consecutive full demo runs,
+all clean.
+
+## [5.8.4] - 2026-09-02
+
+### TODO #263 (DONE) — aPAKE's ephemeral HKEX-RNL exchange gains TODO #89's contributory-nonce binding in Go/Python/Java
+
+PATCH (security hardening; does not change any protocol's SECURITY.md classification).
+Found during a TODO #261 (four-language parity) sweep, not a dedicated audit:
+`hpake_login_demo`'s (and its Go/Java equivalents') inline ephemeral HKEX-RNL exchange
+faces the same RNG-quality-asymmetry threat TODO #89 fixed for plain `kex --algo
+hkex-rnl` — a weak or backdoored RNG on one side alone silently weakening the session —
+but only C's copy applied #89's fix, binding the ZKBoo auth message and the session key
+to fresh per-session nonces from both parties via the contributory KDF
+(`HFSCX-256(K_raw ‖ n_A ‖ n_B)`). Go's `HpakeLoginDemo`, Python's `hpake_login_demo`, and
+Java's `Hpake.loginDemo` derived the session key straight off the raw shared secret,
+silently reverting to the pre-#89 exposure for this one code path.
+
+Ported C's construction to the other three: Go gained `hpakeContributoryKdf`
+(`herradura/herradura.go`); Python gained `_hpake_contributory_kdf` (`Herradura
+cryptographic suite.py`); Java reused its existing, already-correct
+`HerraduraNl.rnlContributoryKdf`. Does not change aPAKE's Demo-only/pedagogical rating in
+`SECURITY.md` — two larger, independent reasons already hold that rating (~2^36.5 OPRF key
+recovery; demo-grade ZKBoo soundness) — but closes a real four-language behavioral
+divergence in a security-motivated construction. Added a `hpake-contributory-kdf` entry to
+`spec/check_language_parity.py`'s `PRIMITIVES` manifest (now 12 entries) as a regression
+guard, verified against a renamed Go marker.
+
+Verified via manual smoke tests (Go, Python), Java's `SelfTest [20] hpake round-trip`, and
+all four CLIs' aPAKE integration suites (`test_pake.sh`, `test_c_pake.sh`,
+`test_go_pake.sh`, `test_java_pake_interop.sh`) unchanged and passing.
+
+`SECURITY.md`'s aPAKE row and `SecurityProofs-7.md` §11.17 updated; the latter also
+corrects a pre-existing inaccuracy about where `_rnl_contributory_kdf` lives per language
+(only C's copy is in the shared suite file — Python's and Go's are CLI-file-local, which
+is exactly why `hpake_login_demo` needed its own copy/reuse here).
+
 ## [5.8.3] - 2026-09-01
 
 ### TODO #261 (partial) — extend PRIMITIVES: OPRF hash-to-field and aPAKE internal derivation

@@ -118,17 +118,27 @@ public final class Hpake {
         HerraduraNl.RnlKeypair kpC = HerraduraNl.rnlKeygen(mBlind, Herradura.N, HerraduraNl.RNLQ, HerraduraNl.RNLP, rng);
         HerraduraNl.RnlKeypair kpS = HerraduraNl.rnlKeygen(mBlind, Herradura.N, HerraduraNl.RNLQ, HerraduraNl.RNLP, rng);
 
+        // Ephemeral HKEX-RNL with contributory nonces (n_A from client, n_B
+        // from server) — TODO #89's RNG-hardening fix, applied here the same
+        // way plain kex --algo hkex-rnl applies it (HerraduraNl.rnlContributoryKdf).
         HerraduraNl.RnlAgreeResult agreeC = HerraduraNl.rnlAgree(
             kpC.s, kpS.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, Herradura.N, Herradura.N);
         BigInteger kRawS = HerraduraNl.rnlAgree(
             kpS.s, kpC.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP, Herradura.N, Herradura.N, agreeC.hint);
 
-        byte[] authMsgC = concat(toFixedBytes(agreeC.key, Herradura.N / 8), AUTH_LABEL);
+        byte[] pakeNA = new byte[32];
+        byte[] pakeNB = new byte[32];
+        rng.nextBytes(pakeNA);
+        rng.nextBytes(pakeNB);
+        BigInteger kKdfC = HerraduraNl.rnlContributoryKdf(agreeC.key, Herradura.N, pakeNA, pakeNB);
+        BigInteger kKdfS = HerraduraNl.rnlContributoryKdf(kRawS, Herradura.N, pakeNA, pakeNB);
+
+        byte[] authMsgC = concat(toFixedBytes(kKdfC, Herradura.N / 8), AUTH_LABEL);
         List<ZkpNl.ProofRound> proof = ZkpNl.prove(zkpA, record.b, record.y, ZKP_N, ROUNDS, authMsgC, rng);
 
-        byte[] authMsgS = concat(toFixedBytes(kRawS, Herradura.N / 8), AUTH_LABEL);
+        byte[] authMsgS = concat(toFixedBytes(kKdfS, Herradura.N / 8), AUTH_LABEL);
         if (!ZkpNl.verify(record.b, record.y, ZKP_N, ROUNDS, authMsgS, proof)) return null;
 
-        return Hfscx256.hash(concat(rnlKdf(agreeC.key), SESSION_LABEL));
+        return Hfscx256.hash(concat(rnlKdf(kKdfC), SESSION_LABEL));
     }
 }

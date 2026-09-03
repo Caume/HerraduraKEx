@@ -14500,3 +14500,92 @@ exercising both a negative and an over-the-tree-size index. Verified: `build_go.
 (45 checks, including leaf-exhaustion and tamper/wrong-key rejection) passes unchanged.
 
 Status: **DONE v5.8.1**
+
+---
+
+### #263: aPAKE's ephemeral HKEX-RNL exchange skips TODO #89's contributory-nonce KDF in three of four languages
+
+**Found during a TODO #261 (four-language parity) sweep of the aPAKE/OPRF internal
+derivation functions** — not a dedicated audit. `hpake_login_demo` (and its Go/Java
+equivalents) draws its own ephemeral HKEX-RNL keypair inline, the same shape TODO #89
+(DONE v1.9.49) was filed against: one side's `a_rand` determines the blinding
+polynomial's uniformity, so a weak or backdoored RNG on that side alone silently
+weakens the whole session. TODO #89's shipped fix binds the *final session key* (not
+`a_rand` itself, which turned out to be structurally infeasible to make contributory in
+two rounds) to per-session nonces from both parties: `sk = HFSCX-256(K_raw ‖ n_A ‖
+n_B)`, applied to every plain `kex --algo hkex-rnl` session.
+
+**C's `hpake_login_demo` already re-applies this fix** — generates `pake_n_A`/`pake_n_B`
+each call, runs `rnl_contributory_kdf(K_raw, n_A, n_B)`, and uses the result (not raw
+`K_raw`) for both the ZKBoo auth-binding message and the final session key. **Go's
+`HpakeLoginDemo`, Python's `hpake_login_demo`, and Java's `Hpake.loginDemo` did not** —
+all three authenticated and derived the session key straight off raw `K_raw`, silently
+reverting to the pre-#89 exposure for this one code path while their plain-`kex` CLI
+paths (which apply the equivalent construction independently) remained correct.
+
+**Not a change to aPAKE's security classification.** `SECURITY.md` already rates aPAKE
+Demo-only/pedagogical for two larger, independent reasons: the OPRF server key is
+recoverable in ~2^36.5 group operations (defeating aPAKE's whole stated purpose — a
+stolen database becomes offline-guessable), and the shipped ZKBoo parameters give only
+0.15% soundness. This RNG-hardening gap is real but smaller than either.
+
+**Fix.** Ported C's construction to the other three: Go gained `hpakeContributoryKdf`
+(new, `herradura/herradura.go`, mirroring C's `rnl_contributory_kdf`); Python gained
+`_hpake_contributory_kdf` (new, `Herradura cryptographic suite.py`); Java reused its
+existing `HerraduraNl.rnlContributoryKdf` (already correct — it's what Java's own
+plain-`kex` path calls), wiring it into `Hpake.loginDemo`. All three now generate fresh
+32-byte `n_A`/`n_B` nonces per login-demo call, derive `K_kdf = HFSCX-256(K_raw ‖ n_A ‖
+n_B)` for both parties, and use `K_kdf` (not raw `K_raw`) for the ZKBoo auth message and
+the session-key KDF input — matching C exactly.
+
+**Verification.** Manual smoke tests (Go, Python) confirm correct-password → 32-byte
+session key, wrong-password → nil/None, no panics. Java's `SelfTest` `[20] hpake
+round-trip` passes. All four CLIs' aPAKE integration tests pass unchanged:
+`CliTest/test_pake.sh` (Python, 7/7), `test_c_pake.sh` (7/7), `test_go_pake.sh` (7/7),
+`test_java_pake_interop.sh` (5/5, Java<->Python record/session-key cross-checks). C/Go/Python
+suite security-test builds and `spec/check_language_parity.py` both stay green. Added a
+`hpake-contributory-kdf` entry to `PRIMITIVES` (now 12 entries) so this can't silently
+regress in one language again; verified it fails when the Go marker is renamed.
+
+**Docs.** `SECURITY.md`'s aPAKE row and `SecurityProofs-7.md` §11.17 (immediately
+adjacent to `_rnl_contributory_kdf`'s own description) both updated. In the course of
+writing the latter, corrected a pre-existing inaccuracy in the same section: it claimed
+`_rnl_contributory_kdf` lives in `herradura.h`/`Herradura cryptographic suite.py`/
+`herradura/herradura.go`; in fact only C's copy is in the shared suite file — Python's and
+Go's live in their own CLI files (`HerraduraCli/herradura.py`,
+`HerraduraCli/herradura_cli.go`), which is exactly why the suite-internal
+`hpake_login_demo` couldn't reach it and needed its own copy/reuse here.
+
+Status: **DONE v5.8.4**
+
+---
+
+### #264: Python demo's n=32 HPKE-Stern-F brute-force check flakes CI on the code's known non-unique decoding
+
+**Found while investigating a `native-python` CI failure**, not a dedicated audit.
+`Herradura cryptographic suite.py`'s `main()` demo runs a brute-force Niederreiter
+decap at `n=32, t=2` and printed `[FAIL] HPKE-Stern-F key agreement failed (n=32)`
+whenever the derived session key didn't match — but that code is not uniquely
+decodable: `C(32,2)=496` weight-2 error vectors land in a 16-bit syndrome space, so
+brute force can legitimately return a *different* weight-2 preimage of the same
+syndrome than the one encap used. `CryptosuiteTests/Herradura_tests.py` test [18]
+already documents and handles exactly this (TODO #233's note: "made this line report
+`[FAIL]` on 7.4% of runs"), but the demo's `main()` had a separate, naive copy of the
+check that never got the same treatment — so it flaked CI's `native-python` job
+nondeterministically once TODO #233 made any `[FAIL]` marker fail the build.
+
+**Fix.** Added `stern_f_first_preimage()` to `Herradura cryptographic suite.py`
+(mirroring the test suite's private helper of the same purpose) and changed the demo
+to call `hpke_stern_f_encap_with_e` instead of `hpke_stern_f_encap`, so it has the true
+error vector to compare against. On a key mismatch, the demo now checks whether brute
+force found a genuinely different weight-2 preimage of the same ciphertext — if so it
+prints `+ HPKE-Stern-F syndrome ambiguous at n=32 (not a failure — ...)` instead of
+`[FAIL]`; anything else is still reported as a real failure.
+
+**Verification.** 40 consecutive full runs of `python3 "Herradura cryptographic
+suite.py"` all closed with `*** OK: no check reported [FAIL] ***`. `python3 -m
+py_compile` passes. No other code path (test suite, CLI) called the changed
+`hpke_stern_f_encap`/`hpke_stern_f_decap` demo lines, so the fix is scoped to `main()`
+plus the one new, previously-absent helper function.
+
+Status: **DONE v5.8.5**

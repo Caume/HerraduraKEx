@@ -1562,6 +1562,23 @@ def hpke_stern_f_decap(ciphertext: int, e_int: int, seed: 'BitArray',
     return None
 
 
+def stern_f_first_preimage(ciphertext: int, seed: 'BitArray', n: int = None):
+    """First weight-t preimage of ciphertext, in the order hpke_stern_f_decap
+    scans.  Lets a caller tell "the decoder is wrong" from "this ciphertext
+    has more than one weight-t preimage and brute force legitimately found a
+    different one" — see hpke_stern_f_decap's docstring on small-code
+    ambiguity (e.g. n=32, t=2 is not uniquely decodable)."""
+    if n is None: n = KEYBITS
+    n_rows = n // 2
+    t      = max(2, n // 16)
+    H_rows = _stern_build_H(seed.uint, n, n_rows)
+    for pos in itertools.combinations(range(n), t):
+        e_p = sum(1 << p for p in pos)
+        if _stern_syndrome_H(H_rows, e_p) == ciphertext:
+            return e_p
+    return None
+
+
 # ---------------------------------------------------------------------------
 # QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
 #
@@ -4412,6 +4429,17 @@ def _hpake_rnl_kdf(K_raw: 'BitArray') -> bytes:
     return sk.bytes
 
 
+def _hpake_contributory_kdf(k_raw_bytes: bytes, n_a: bytes, n_b: bytes) -> bytes:
+    """Binds K_raw to per-session nonces contributed by both parties — the
+    same TODO #89 hardening plain HKEX-RNL applies via
+    HerraduraCli/herradura.py's _rnl_contributory_kdf: even if one side's RNG
+    is weak or backdoored (weakening its blinding polynomial and thus
+    K_raw), the other side's nonce still contributes independent entropy to
+    the derived key.  n_a and n_b must each be 32 bytes.
+    final = HFSCX-256(K_raw || n_A || n_B)."""
+    return hfscx_256(k_raw_bytes + n_a + n_b)
+
+
 def hpake_register(username: str, password: bytes, oprf_key: int) -> dict:
     """
     aPAKE registration.  Returns a server record containing (username, salt, B, y).
@@ -4455,7 +4483,9 @@ def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | N
     if y_check != y:
         return None
 
-    # Client: ephemeral HKEX-RNL keypair
+    # Client: ephemeral HKEX-RNL keypair, with contributory nonces (n_A from
+    # client, n_B from server) — TODO #89's RNG-hardening fix, applied here
+    # the same way plain kex --algo hkex-rnl applies it.
     m_base  = _rnl_m_poly(KEYBITS)
     a_rand  = _rnl_rand_poly(KEYBITS, RNLQ)
     m_blind = _rnl_poly_add(m_base, a_rand, RNLQ)
@@ -4470,17 +4500,23 @@ def hpake_login_demo(record: dict, password: bytes, oprf_key: int) -> 'bytes | N
     # Server: HKEX-RNL reconciliation (uses hint)
     K_raw_s = _rnl_agree(s_s, C_c, RNLQ, RNLP, RNLPP, KEYBITS, KEYBITS, hint)
 
-    # Client: ZKBoo proof of knowledge of zkp_A bound to session key
-    auth_msg = K_raw_c.bytes + _HPAKE_AUTH_LABEL
+    pake_n_a = os.urandom(32)
+    pake_n_b = os.urandom(32)
+    K_kdf_c = _hpake_contributory_kdf(K_raw_c.bytes, pake_n_a, pake_n_b)
+    K_kdf_s = _hpake_contributory_kdf(K_raw_s.bytes, pake_n_a, pake_n_b)
+
+    # Client: ZKBoo proof of knowledge of zkp_A bound to session channel
+    auth_msg = K_kdf_c + _HPAKE_AUTH_LABEL
     proof    = zkp_nl_prove(zkp_A, B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg)
 
     # Server: ZKBoo verification
-    auth_msg_s = K_raw_s.bytes + _HPAKE_AUTH_LABEL
+    auth_msg_s = K_kdf_s + _HPAKE_AUTH_LABEL
     if not zkp_nl_verify(B, y, _HPAKE_ZKP_N, _HPAKE_ROUNDS, auth_msg_s, proof):
         return None
 
-    # Session key: hfscx_256(KDF(K_raw) ‖ label)
-    return hfscx_256(_hpake_rnl_kdf(K_raw_c) + _HPAKE_SESSION_LBL)
+    # Session key: hfscx_256(KDF(K_kdf_c) ‖ label)
+    K_kdf_c_ba = BitArray(KEYBITS, int.from_bytes(K_kdf_c, 'big'))
+    return hfscx_256(_hpake_rnl_kdf(K_kdf_c_ba) + _HPAKE_SESSION_LBL)
 
 
 # ---------------------------------------------------------------------------
@@ -4780,14 +4816,23 @@ def main():
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; brute-force demo at n=32]")
     print("    (N=32, t=2; C(32,2)=496 candidates; production requires QC-MDPC decoder)")
     sf32_seed, _sf32_e, _sf32_syn = stern_f_keygen(32)
-    sf32_K_enc, sf32_ct = hpke_stern_f_encap(sf32_seed, 32)
+    sf32_K_enc, sf32_ct, sf32_e_p = hpke_stern_f_encap_with_e(sf32_seed, 32)
     sf32_K_dec = hpke_stern_f_decap(sf32_ct, 0, sf32_seed, 32)  # e_int=0 → brute-force
     print(f"K (encap): {sf32_K_enc.hex}")
     print(f"K (decap): {sf32_K_dec.hex if sf32_K_dec else 'decode failed'}")
     if sf32_K_dec is not None and sf32_K_dec == sf32_K_enc:
         print("+ HPKE-Stern-F session keys agree (n=32, brute-force)")
     else:
-        print("[FAIL] HPKE-Stern-F key agreement failed (n=32)")
+        # A weight-2 code of length 32 with a 16-bit syndrome is not uniquely
+        # decodable (see test [18]'s docstring): brute force can legitimately
+        # land on a different weight-t preimage of the same syndrome. That is
+        # the parameters being ambiguous, not the decoder being wrong.
+        sf32_first = stern_f_first_preimage(sf32_ct, sf32_seed, 32)
+        if sf32_first is not None and sf32_first != sf32_e_p:
+            print("+ HPKE-Stern-F syndrome ambiguous at n=32 (not a failure — "
+                  "brute force found a different weight-2 preimage)")
+        else:
+            print("[FAIL] HPKE-Stern-F key agreement failed (n=32)")
 
     print("\n--- HPKE-Stern-F [PQC — Niederreiter KEM; known-e' demo at n=256]")
     print(f"    (N={KEYBITS}, t={KEYBITS//16}; known e' passed to decap — production decoder not included)")
