@@ -233,6 +233,10 @@ func polyHex(coeffs []int, bytesPerCoeff int) string {
 // this very package; a mis-sized commitment buffer and a flipped bit convention
 // in C), and each of them is exactly what this catches.
 type kkwFile struct {
+	Sets map[string]kkwSet `json:"sets"`
+}
+
+type kkwSet struct {
 	Params struct {
 		N        int `json:"n"`
 		NPar     int `json:"N_par"`
@@ -289,7 +293,7 @@ func unpackVec(s string) []int {
 
 // buildKkwProof rebuilds the Go proof struct from the pinned JSON.  Kept
 // separate from verifyKkw so each tamper case can start from a fresh copy.
-func buildKkwProof(v kkwFile) *HcredKkwProof {
+func buildKkwProof(v kkwSet) *HcredKkwProof {
 	p := &HcredKkwProof{
 		W: v.Proof.W, NPar: v.Proof.Params[0], M: v.Proof.Params[1],
 		Tau: v.Proof.Params[2],
@@ -370,7 +374,7 @@ func applyKkwTamper(p *HcredKkwProof, msg []byte, which string) (*HcredKkwProof,
 	return &cp, msg
 }
 
-func verifyKkw(v kkwFile) int {
+func verifyKkwSet(name string, v kkwSet) int {
 	n := v.Params.N
 	m := unpackVec(v.Statement.MPoly)
 	c := unpackVec(v.Statement.CPoly)
@@ -380,24 +384,24 @@ func verifyKkw(v kkwFile) int {
 
 	fails := 0
 	if !HcredVerifyKkw(m, c, seedH, y, buildKkwProof(v), n, msg) {
-		fmt.Println("FAIL hcred_kkw: Go REJECTS the pinned Python transcript " +
-			"— the two implementations disagree on the wire format")
+		fmt.Printf("FAIL %s: Go REJECTS the pinned Python transcript "+
+			"— the two implementations disagree on the wire format\n", name)
 		fails++
 	} else {
-		fmt.Println("PASS hcred_kkw (Go accepts the pinned Python transcript)")
+		fmt.Printf("PASS %s (Go accepts the pinned Python transcript, n=%d)\n", name, n)
 	}
 	// The accept above is not self-validating: a verifier that returned true
 	// unconditionally would pass it.  Each tamper case must be rejected.
 	for _, tc := range v.Tamper {
 		tp, tmsg := applyKkwTamper(buildKkwProof(v), msg, tc.Apply)
 		if HcredVerifyKkw(m, c, seedH, y, tp, n, tmsg) {
-			fmt.Printf("FAIL hcred_kkw tamper %q ACCEPTED\n", tc.Name)
+			fmt.Printf("FAIL %s tamper %q ACCEPTED\n", name, tc.Name)
 			fails++
 		}
 	}
 	if fails == 0 {
-		fmt.Printf("PASS hcred_kkw tamper (%d/%d rejected)\n",
-			len(v.Tamper), len(v.Tamper))
+		fmt.Printf("PASS %s tamper (%d/%d rejected)\n",
+			name, len(v.Tamper), len(v.Tamper))
 	}
 	return fails
 }
@@ -540,7 +544,23 @@ func main() {
 			fmt.Fprintln(os.Stderr, "cannot parse KAT/hcred_kkw.json:", err)
 			fails++
 		} else {
-			fails += verifyKkw(vv)
+			// Both sets, and the full tamper matrix on each: Go is
+			// compiled, so the n=256 pass that costs Python ~70 s
+			// per verification costs well under a second here.
+			// That is why check_kkw defers it to the consumers.
+			if len(vv.Sets) == 0 {
+				fmt.Fprintln(os.Stderr, "KAT/hcred_kkw.json has no vector sets")
+				fails++
+			}
+			for _, sn := range []string{"n256", "n32"} {
+				sv, ok := vv.Sets[sn]
+				if !ok {
+					fmt.Printf("FAIL hcred_kkw: set %q missing\n", sn)
+					fails++
+					continue
+				}
+				fails += verifyKkwSet("hcred_kkw["+sn+"]", sv)
+			}
 		}
 	}
 

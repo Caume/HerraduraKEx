@@ -39,3 +39,7 @@ CryptosuiteTests/Herradura_tests_avr.elf
 /Herradura cryptographic suite_asan
 CryptosuiteTests/Herradura_tests_asan
 HerraduraCli/herradura_cli_asan
+
+# KAT/verify_kat_c.c is compiled on demand by CliTest/test_kat_vectors.sh
+# (TODO #266); the header it consumes IS tracked, the binary is not.
+/KAT/verify_kat_c
