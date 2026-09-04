@@ -2,6 +2,52 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.3] - 2026-09-04
+
+### TODO #261 (ongoing) — `hcred_stmt_hash` joins the parity manifest, and the manifest learns to bind
+
+Picked up from TODO #266, which flagged the gap on its way out. `hcred_stmt_hash` is the
+statement digest both HCRED prove paths bind to — `HFSCX-256(m_poly, C_poly, seed_H,
+syndrome, n, msg)`, 5–7 call sites per language including the credential-issuance digest —
+and `spec/check_language_parity.py`'s `PRIMITIVES` manifest named the two prove entry points
+while leaving the one thing they agree on unguarded. No `--algo` tag reaches it, so
+`generate_spec.py --check` cannot see it by construction; a language that changed its field
+order, length prefixes or domain separator would round-trip perfectly against *itself* and
+fail only against the other three. `KAT/hcred_kkw.json`'s acceptance rests entirely on the
+four hashing the statement identically, and the one divergence found while building that
+vector — C stores the syndrome in the reverse byte order of Python/Go's big-endian integer,
+un-reversed inside this very function — surfaced as C rejecting Python's transcript with
+nothing pointing at the cause. All four are at parity; the entry is the regression guard.
+
+Two further findings, neither of them what was being looked for:
+
+- **`hcred_verify` / `hcred_verify_kkw` were unguarded as well** — the `hcred-zkboo` and
+  `hcred-kkw` entries each named only their prove side. Verify is the half that matters
+  more: a prover that disappears is a build error in its own language, while a verifier that
+  drifts accepts or rejects *the other three languages'* proofs. Two entries added, one per
+  direction, following `hske-encrypt-masked`/`hske-decrypt-masked`.
+- **A marker could pass while the function it guarded was deleted** — a hole in the
+  mechanism, not in the suite. `SUITE_FILES["java"]` concatenates every
+  `bindings/java/herradurakex/*.java`, and the check was `re.search` — presence anywhere in
+  the concatenation. A marker written as a bare method name therefore guards nothing:
+  `public static boolean verify(` matches **six** classes (`HpksT`, `SternRing`, `Wots`,
+  `Xmss`, `ZkpNl` and `Hcred`), and with `Hcred.verify` deleted outright 5 matches remain
+  and the old semantics still return `True`. `check_primitives` now requires **exactly one**
+  match, reporting the count and the files when it finds more; the Java marker is anchored on
+  the signature. All 17 pre-existing entries were audited against the new rule first and
+  every one was already unique — this closes a latent trap for future entries, not a live
+  false pass.
+
+`PRIMITIVES` is now 20 entries / 80 language-markers, up from 17 / 68. Verified against four
+deliberate breaks: the loose marker (ambiguity error, files listed), the loose marker with
+the function deleted (the blind spot, shown passing under the old semantics and failing under
+the new), and a rename of each of the 12 new language-markers in turn — each caught on its
+own entry and no other. `CLAUDE.md`'s stale `[1]-[49]` corrected to `[1]-[50]` (TODO #266
+added `[50]`) and its parity-checker note now states the exactly-once rule.
+
+TODO #261 stays **OPEN**: extending `PRIMITIVES` to the suite-internal primitives it still
+does not name remains the only outstanding work.
+
 ## [6.0.2] - 2026-09-04
 
 ### TODO #266 (DONE) — HCRED-KKW gets a KAT and numbered tests in all four languages

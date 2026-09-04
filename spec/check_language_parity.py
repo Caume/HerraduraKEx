@@ -181,6 +181,61 @@ PRIMITIVES = {
         "python": r"^def hcred_prove_kkw\(",
         "java": r"public static HcredKkwProof proveKkw\(",
     },
+    "hcred-stmt-hash": {
+        # TODO #261 (v6.0.3), found while working #266. The statement digest
+        # HCRED binds a proof to: HFSCX-256 over (m_poly, C_poly, seed_H,
+        # syndrome, n, msg). BOTH hcred-zkboo and hcred-kkw call it, in all
+        # four languages -- 5 to 7 call sites each, including the credential
+        # issuance digest -- so the two entries above cover the two prove
+        # paths while leaving the one thing they agree on unguarded.
+        #
+        # It is the internal-derivation class this manifest exists for: no
+        # --algo tag reaches it, and a language that changed its field order,
+        # its length prefixes or its domain separator would still round-trip
+        # perfectly against ITSELF and fail only against the other three. That
+        # is not hypothetical here -- KAT/hcred_kkw.json (TODO #266) is a
+        # cross-language vector whose acceptance depends entirely on the four
+        # implementations hashing the statement identically, and the one
+        # divergence found while building it (C stores the syndrome in the
+        # reverse byte order of Python/Go's big-endian integer, un-reversed
+        # inside this very function) surfaced as C rejecting Python's
+        # transcript with nothing pointing at the cause.
+        #
+        # Java's is package-private where the other three are file-local or
+        # unexported; the regex matches the declaration as written rather
+        # than requiring a visibility the port has no reason to widen.
+        "c": r"static void hcred_stmt_hash\(",
+        "go": r"func hcredStmtHash\(",
+        "python": r"^def _hcred_stmt_hash\(",
+        "java": r"static byte\[\] stmtHash\(",
+    },
+    # The two verify counterparts, added in the same v6.0.3 pass and for the
+    # same reason the stmt-hash entry above exists: `hcred-zkboo` and
+    # `hcred-kkw` each named only their PROVE entry point, so half of each
+    # pair was guarded. Verify is the half that matters more -- a prover that
+    # disappears is a build error in its own language, while a verifier that
+    # drifts accepts or rejects the OTHER three languages' proofs, which is
+    # what KAT/hcred_kkw.json (TODO #266) is a vector for. One entry per
+    # direction, following hske-encrypt-masked / hske-decrypt-masked.
+    "hcred-zkboo-verify": {
+        "c": r"static int hcred_verify\(",
+        "go": r"func HcredVerify\(",
+        "python": r"^def hcred_verify\(",
+        # Anchored on the signature, not just the name: bare
+        # `public static boolean verify(` matches SIX classes (HpksT,
+        # SternRing, Wots, Xmss, ZkpNl as well as Hcred), and SUITE_FILES
+        # concatenates every *.java, so the loose form would have kept
+        # passing with Hcred.verify deleted outright. See the uniqueness
+        # check in check_primitives() below, which now fails on this class.
+        "java": r"public static boolean verify\(int\[\] mPoly, int\[\] cPoly, "
+                r"BigInteger seedH, BigInteger ySynd, Proof proof",
+    },
+    "hcred-kkw-verify": {
+        "c": r"static int hcred_verify_kkw\(",
+        "go": r"func HcredVerifyKkw\(",
+        "python": r"^def hcred_verify_kkw\(",
+        "java": r"public static boolean verifyKkw\(",
+    },
     # The next three entries are TODO #261's first pass at extending the
     # manifest beyond its hcred-kkw seed (SecurityProofs-*.md's 78.x
     # numbering). All were already at four-language parity except
@@ -374,17 +429,33 @@ def check_primitives(errors):
                     )
                 continue
             checked += 1
-            if not re.search(pattern, file_text[lang], re.M):
+            hits = len(re.findall(pattern, file_text[lang], re.M))
+            paths = SUITE_FILES[lang]
+            paths = [paths] if isinstance(paths, str) else paths
+            rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
+            if hits == 0:
                 if reason:
                     continue
-                paths = SUITE_FILES[lang]
-                paths = [paths] if isinstance(paths, str) else paths
-                rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
                 errors.append(
                     f"'{pid}': marker {pattern!r} not found in {lang}'s suite file(s) ({rel}) — "
                     f"either the function was renamed/removed (update PRIMITIVES to match) or "
                     f"this is a real cross-language gap (port it, or add an 'acknowledged' "
                     f"reason to the PRIMITIVES entry, the same way SECURITY.md records one)"
+                )
+            elif hits > 1:
+                # A marker must IDENTIFY one function, not merely occur. This
+                # is not pedantry: Java's suite is many files concatenated
+                # here (see SUITE_FILES), so a marker written as a bare method
+                # name — `public static boolean verify(` matches six classes —
+                # keeps passing after the function it was meant to guard is
+                # deleted, which is precisely the silent gap this manifest
+                # exists to prevent. Added in v6.0.3 after hcred-zkboo-verify
+                # was written that way; every other entry was already unique.
+                errors.append(
+                    f"'{pid}': marker {pattern!r} matches {hits} places in {lang}'s suite "
+                    f"file(s) ({rel}) — a marker must identify exactly one function, or it "
+                    f"still passes once that function is gone. Anchor it on the signature "
+                    f"(argument types) rather than the bare name"
                 )
     return checked
 

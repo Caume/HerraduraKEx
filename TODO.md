@@ -473,6 +473,45 @@ total).  The hybrid combiner is deliberately NOT one of them — it lives in the
 in three of the four languages, not in the suite files that manifest reads, so an entry
 would be checking the wrong files; the 4×4 session-key comparison guards it instead.
 
+**v6.0.3 — `hcred_stmt_hash` added; two more gaps found on the way in, one of them in the
+mechanism itself.**  Picked up from TODO #266, which flagged that `hcred_stmt_hash` — the
+statement digest both HCRED prove paths bind to, `HFSCX-256(m_poly, C_poly, seed_H,
+syndrome, n, msg)`, 5–7 call sites per language including the credential-issuance digest —
+had no manifest entry.  It is squarely the internal-derivation class: no `--algo` tag
+reaches it, and a language that changed its field order, length prefixes or domain
+separator would round-trip perfectly against *itself* and fail only against the other
+three.  Not hypothetical — `KAT/hcred_kkw.json`'s acceptance rests entirely on the four
+hashing the statement identically, and the one divergence found while building that vector
+(C stores the syndrome in the reverse byte order of Python/Go's big-endian integer,
+un-reversed inside this very function) surfaced as C rejecting Python's transcript with
+nothing pointing at the cause.  All four were at parity; the entry is the regression guard.
+
+Two further findings, neither of them the thing that was being looked for:
+
+* **`hcred_verify` / `hcred_verify_kkw` were unguarded too — half of each pair.**  The
+  `hcred-zkboo` and `hcred-kkw` entries each named only their PROVE entry point.  Verify is
+  the half that matters more: a prover that disappears is a build error in its own language,
+  while a verifier that drifts accepts or rejects *the other three languages'* proofs.  Two
+  entries added, one per direction, following `hske-encrypt-masked`/`hske-decrypt-masked`.
+  `PRIMITIVES` is now 20 entries / 80 markers, up from 17 / 68.
+* **A marker could pass while the function it guarded was deleted — a hole in the mechanism,
+  not in the suite.**  `SUITE_FILES["java"]` concatenates every `herradurakex/*.java` (v5.8.0
+  generalized it from a single hardcoded path for good reason), and the check was
+  `re.search` — presence anywhere in the concatenation.  So a marker written as a bare method
+  name silently guards nothing: `public static boolean verify(` matches **six** classes
+  (`HpksT`, `SternRing`, `Wots`, `Xmss`, `ZkpNl` as well as `Hcred`), and with
+  `Hcred.verify` deleted outright 5 matches remain and the old semantics return True.  That
+  is how `hcred-zkboo-verify` was first written in this pass, which is the only reason it was
+  noticed.  `check_primitives` now requires **exactly one** match and reports the count and
+  the files; the Java marker is anchored on the signature instead.  Audited all 17
+  pre-existing entries against the new rule first: **every one was already unique**, so this
+  closes a latent trap for future entries rather than a live false pass.  Verified against
+  four deliberate breaks — the loose marker (ambiguity error, 6 files listed), the loose
+  marker *with the function deleted* (the blind spot, shown passing under the old semantics
+  and failing under the new), and a rename of each of the 12 new language-markers in turn,
+  each caught on its own entry and no other.  Also corrected `CLAUDE.md`'s stale
+  "`[1]-[49]`" (TODO #266 added `[50]`).
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
@@ -480,7 +519,7 @@ one-time read of the source tree, so it stays true.  The numbered-test half is f
 **The CLI-surface half is now fully met too**: as of v6.0.0 all four languages dispatch all
 29 `--algo` tags, so every cell is FILLED rather than acknowledged, and `spec/`'s
 `cli_support` column is derived from each CLI's own dispatch source rather than curated.
-The primitive-manifest half is met only for its current 17 entries — extending `PRIMITIVES`
+The primitive-manifest half is met only for its current 20 entries — extending `PRIMITIVES`
 to the suite-internal (non-CLI) primitives it does not yet name is what keeps this item
 open, and is the only remaining work.
 

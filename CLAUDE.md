@@ -528,12 +528,19 @@ spec/                                                — machine-readable protoc
                                                       check_language_parity.py (TODO #261) is a
                                                       different axis: numbered-test [N] contiguity in
                                                       each of C/Go/Python/Java, set-alignment of
-                                                      C/Go/Python's shared [1]-[49] numbering, and a
+                                                      C/Go/Python's shared [1]-[50] numbering, and a
                                                       curated manifest of suite-internal (non-CLI)
                                                       primitives -- seeded with the HCRED-KKW gap the
                                                       item was filed over -- so a primitive with no
                                                       `--algo` tag can still be caught missing in a
-                                                      language.  check_docs_consistency.py (TODO #265)
+                                                      language.  A marker regex must match EXACTLY
+                                                      ONCE, not merely occur (TODO #261, v6.0.3):
+                                                      Java's entry is every herradurakex/*.java
+                                                      concatenated, so a bare method name like
+                                                      `public static boolean verify(` matches six
+                                                      classes and keeps passing after the one it
+                                                      guards is deleted.  Anchor new Java markers on
+                                                      the signature.  check_docs_consistency.py (TODO #265)
                                                       is the third axis, and the only one that reads
                                                       the NARRATIVE documents: README.md,
                                                       docs/INTRODUCTION.md and CHANGELOG.md restate
