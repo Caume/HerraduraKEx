@@ -14657,3 +14657,177 @@ left to `check_security_md.py`, as the item's fourth bullet asked ("confirm scop
 duplicate"); its coverage is complete over all 35 protocols and 32 SECURITY.md rows.  The
 narrative documents' *own* maturity language is thin enough (README has two such
 sentences, INTRODUCTION one) that check D pins it by assertion rather than by parsing.
+
+### #266: HCRED-KKW has no KAT and no numbered test in any of the four languages
+
+**The one piece TODO #261 shipped un-decided, and it is now the largest structurally-only-
+verified surface in the suite.**  #261's own KKW port block closes with it:
+
+> KAT/test coverage is the one piece left un-decided: no fixed-vector KAT for KKW exists in
+> any language, so a byte-exact cross-language check needs one added first — every language
+> ships today verified only structurally (round-trips + rejection checks), which is the
+> standard the rest of HCRED already uses too.
+
+Confirmed still true at v6.0.0.  `grep -ril kkw KAT/ CliTest/ CryptosuiteTests/` returns
+exactly one hit, and it is base64 noise inside `KAT/pem/n1024_alice_pub.pem`.  KKW is
+reached **only** from the four demo files:
+
+```
+Herradura cryptographic suite.c    hcred_prove_kkw / hcred_verify_kkw   (herradura.h)
+Herradura cryptographic suite.go   HcredProveKkw  / HcredVerifyKkw      (herradura/herradura.go)
+Herradura cryptographic suite.py   hcred_prove_kkw / hcred_verify_kkw   (~113 lines, line 3305 on)
+bindings/java/.../Hcred.java       Hcred.proveKkw / Hcred.verifyKkw     (Demo.java)
+```
+
+**Why this is not merely a missing-test chore.**  Three of the four ports had a real
+transcription bug, each found by a hand-built throwaway harness and none of them
+regression-guarded today (all three accounts are in #261's port block):
+
+* **Go** — the "reveal `aux` when party `N-1` is opened" condition was *inverted*
+  (`pb == N_par-1` for Python's `pb != N_par-1`); every genuine proof failed verification.
+* **C** — a genuine **buffer overflow** in `hcred_kkw_state_com` (a 2-byte under-allocation
+  on a much larger buffer, caught by `-Wstringop-overflow`, not by a crash), *and* a
+  **bit-endianness mismatch** in `hcred_kkw_outmap` with no Go/Python analogue, because
+  `big.Int.Bit(i)` and Python's `>>`/`&` are layout-independent where C's `BitArray` is
+  big-endian.
+* **Java** — none found; `BigInteger.testBit` is layout-independent too.
+
+Every one of those was a *cross-language* divergence found by hand.  Nothing in CI would
+find the next one.
+
+**And v6.0.0 just demonstrated the exact failure mode this leaves open.**  `nl-zkboo` and
+`rnl-sigma` round-tripped cleanly in all four languages for multiple releases and had
+**never** interoperated between {C, Go} and Python.  Self-consistency is not interop.  KKW
+today has precisely that property: four implementations, each verified against itself.
+
+**The design point that has to be settled first: KKW proving is NOT deterministic.**
+`hcred_prove_kkw` draws `root = os.urandom(32)` per emulation (one call, Python line ~3332;
+the other three ports mirror it), so there is no fixed vector for a *prover* to reproduce
+without a test-only deterministic root source added identically to all four languages.  Two
+routes, and they are not equally good:
+
+1. **A verify-side KAT (recommended, and it should land first).**  Pin ONE reference
+   transcript — statement (`m`, `C`, `seed_H`, `y`), `W`, `params`, `pre`, `online`,
+   `msg_bytes` — generated once by Python at the demo parameters, and require all four
+   languages to CONSUME it and accept.  This needs no change to any prover, and it is the
+   check that would have caught all three known bugs: an inverted `aux` condition, a
+   mis-sized commitment buffer and a flipped bit convention are all *reader* disagreements
+   about a byte layout.  It is also exactly the discipline `KAT/pem/` already uses ("which
+   each CLI must CONSUME and reproduce").
+2. **A produce-side KAT** — inject the `M` preprocessing roots from the vector instead of
+   `urandom`, in all four languages, and require byte-identical transcripts.  Strictly
+   stronger, but it puts a test-only seam in four production provers.  Worth doing only
+   after (1), and only if (1) turns out not to pin the encoding tightly enough.
+
+Note the JSON hazard `KAT/nl_fscx_v3.json` already documents: KKW's `pre` carries 32-byte
+seeds and its `online` carries party indices and gate broadcasts — **hex strings, never JSON
+numbers**.  A 64-bit value does not survive the float64 a JSON parser defaults to, and the
+loss is silent.
+
+**Scope.**
+- `KAT/hcred_kkw.json` + generation in `KAT/generate_kat.py` (with `--check` currency
+  gating, as the other three files have), at the demo parameters
+  `(N_par, M, tau) = (4, 8, 4)` — production is `(64, 343, 27)`, which should be recorded in
+  the vector's metadata even though the vector itself is demo-sized.
+- Cross-checks in the two independent verifiers that already exist for the other KAT files:
+  `KAT/verify_kat.go` and `bindings/java` `KatVerify`.
+- A **numbered security test** in each language, which is the four-way absence half of
+  #261's asymmetry #2 (the numbered-test mechanism checks that the four numberings *agree*,
+  not that they *cover* anything — it cannot see this): **[50]** in C/Go/Python's shared
+  numbering, **[31]** in Java's own.  Content: verify the pinned transcript, then the six
+  rejection axes each port was independently debugged against — wrong message, flipped `W`,
+  flipped a party's `U` broadcast, flipped a `T` gate broadcast, flipped a preprocessing
+  root seed byte, and a relabeled `Pbar`.  Per `CliTest/lib_malformed.sh`'s discipline and
+  test [49]'s, the accept-control is not decoration: without it a verifier that rejects
+  *everything* scores a perfect pass on all six rejection cases.
+- Python's harness re-implements what it checks and cross-checks against the shipped suite,
+  as [46]/[47]/[48]/[49] do; C/Go call `herradura.h` / the `herradura` package directly.
+
+**Out of scope.**  KKW gets no CLI subcommand — Python has none either, and #261 settled
+that parity here means the suite files and the demos, not `cred-prove --transcript kkw`.
+So there is no `CliTest/` script to add and nothing for the native-interop coverage guard
+to claim; the KAT and the numbered tests are the whole surface.
+
+**Relationship to #261.**  Adjacent, not a sub-item.  #261's remaining work is extending
+`PRIMITIVES` to more suite-internal primitives — a manifest asks *does the marker exist in
+all four languages*, and `hcred-kkw` has been a passing entry since v5.7.2.  This item asks
+*do the four implementations agree on the bytes*, which no manifest entry can answer.  The
+`hcred-kkw` entry passing while three of the four ports carried a real bug is the precise
+illustration.
+
+---
+
+## Resolution (v6.0.2)
+
+**All four languages now consume one pinned transcript, and all four have a
+numbered prove-side test.**  The two halves are deliberate: a verify-side vector
+cannot reach the PROVE path by construction, and a structural test cannot prove
+two implementations agree on a byte layout.  Neither alone was enough.
+
+**The design question the entry asked to settle first, settled as filed.**
+`hcred_prove_kkw` draws one `os.urandom(32)` root per emulation, so a proof is
+not a function of its statement and the other three KAT files' regenerate-and-
+diff model cannot work.  `KAT/hcred_kkw.json` is therefore a VERIFY-SIDE vector:
+captured once, checked in, consumed by everyone -- the route this entry
+recommended, and the one that catches the bugs KKW actually had, since an
+inverted aux-reveal condition, an under-allocated commitment buffer and a
+flipped bit convention are all READER disagreements about a byte layout.  The
+produce-side variant stays unbuilt and unneeded; it would put a test-only seam
+in four production provers to buy strictly less.
+
+**A four-language finding forced a two-set vector.**  HCRED's width is a runtime
+argument in Python and Go (both demo at `n = 32`) but a COMPILE-TIME constant
+fixed at 256 in C (`HCRED_N`) and Java (`Hcred.N`).  The four implementations
+have never proved the same statement size, and two of them cannot run the size
+the other two demo at.  So `n256` is the only width every language can consume;
+`n32` is kept because one `n = 256` verification is ~70 s in Python, and the
+full accept-plus-six-rejections matrix therefore runs there on `n32` and in the
+compiled consumers on `n256` -- split by COST, not by coverage.
+
+**C got a KAT verifier for the first time, via a generated header.**  C had none
+of any kind -- Python checks its own vectors, `verify_kat.go` does Go,
+`KatVerify` does Java -- in the language where two of the three port bugs were.
+`KAT/verify_kat_c.c` consumes the vector through `KAT/hcred_kkw_vector.h`, the
+transcript transposed into C arrays, so the dependency-free C tree needs no JSON
+parser.  The header is a pure deterministic transform of the JSON, so unlike the
+JSON it IS regenerate-and-diff checked: editing one without re-emitting the
+other fails rather than drifting.
+
+**And building it reproduced the bug class this item exists for.**  The first C
+run reported `C REJECTS the pinned Python transcript`.  That was the consumer's
+bug, not a wire split, and it was CHECKED rather than assumed -- comparing
+`hcred_stmt_hash` across the two languages localised it to the syndrome, which C
+stores in the reverse byte order of the big-endian integer Python and Go use
+(`hcred_stmt_hash` reverses it back on the way in).  Same class as the
+`hcred_kkw_outmap` endianness bug, and C-specific for the same reason:
+`big.Int.Bit` and Python's `>>`/`&` are layout-independent where C byte arrays
+are not.  The conversion now lives in the header emitter, once.
+
+**Java needed a real JSON parser.**  `KatVerify`'s hand-rolled regex reader
+handles flat `"key": "value"` objects only, and this file is nested (the online
+proofs carry an array of path arrays), so the consumer brings a ~90-line
+recursive-descent reader rather than a dependency.  Java's proof types are
+immutable, so each tamper case REBUILDS the proof rather than poking a finished
+one -- which is closer to what verification actually defends against.
+
+**Numbered tests: [50] in C/Go/Python's shared numbering, [31] in Java's own.**
+Accept-control plus the same six rejection axes the vector's tamper table
+applies, so a divergence between test and vector is visible rather than two
+independent opinions about what to check.  Unlike [46]-[49], the Python copy
+calls the SUITE instead of re-implementing: KKW is ~113 lines of interlocking
+cut-and-choose machinery and a second copy would be a new place for exactly the
+divergence being guarded.  Verified against a deliberate break -- an
+always-accept `hcred_verify_kkw` is caught on all six axes.
+
+**What the vector happens to cover, worth recording because it was luck.**
+`pbar = [3, 3, 2, 0]` at `N_par = 4` gives `has_aux = [false, false, true,
+true]`, so both branches of `aux is revealed iff pbar != N_par-1` appear -- the
+exact condition the Go port shipped inverted.  A capture that hit one branch
+only would miss that bug entirely.  A future re-capture should check this still
+holds rather than assume it.
+
+**Result.**  C, Go, Python and Java all accept the same transcript and reject
+all six tampered variants.  They were previously assumed to agree on the KKW
+wire format; now they are known to.
+
+Status: **DONE v6.0.2** — pinned verify-side vector consumed by all four languages (C via a generated header, its first KAT verifier of any kind), plus numbered prove-side tests [50]/[31].

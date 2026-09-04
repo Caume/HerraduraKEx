@@ -402,7 +402,452 @@ def generate() -> dict:
     }
 
 
+# ── HCRED-KKW (TODO #266) ───────────────────────────────────────────────────
+#
+# This file is PINNED, not regenerated, and that is a deliberate difference from
+# the other three.  hcred_prove_kkw draws one os.urandom(32) root per emulation,
+# so a proof is not a function of its statement and "regenerate and diff" cannot
+# work here.  TODO #266 settles the shape: this is a VERIFY-SIDE vector.  One
+# reference transcript is captured once, checked in, and every language must
+# CONSUME it and accept -- the same discipline KAT/pem/ uses, and the one that
+# would have caught all three bugs the C/Go ports actually had (an inverted
+# aux-reveal condition, an under-allocated commitment buffer and a flipped bit
+# convention are all READER disagreements about a byte layout).
+#
+#   python3 KAT/generate_kat.py --capture-kkw   # re-capture a fresh transcript
+#   python3 KAT/generate_kat.py --check         # verify the checked-in one
+#
+# --check does not diff bytes here; it runs hcred_verify_kkw over the pinned
+# transcript and asserts True, then applies each tamper case and asserts False.
+# That is strictly stronger than a diff: a byte-identical file whose verifier
+# has drifted still fails.
+_KKW_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hcred_kkw.json")
+
+hcred_prove_kkw = suite.hcred_prove_kkw
+hcred_verify_kkw = suite.hcred_verify_kkw
+_hcred_ser = suite._hcred_ser
+RNLQ_ = suite.RNLQ
+
+# Demo parameters.  Production KKW is (N, M, tau) = (64, 343, 27) for 2^-128;
+# a vector at those parameters would be ~0.9 MB and minutes to verify, so the
+# vector is demo-sized and records the production triple as metadata.
+_KKW_N_PAR, _KKW_M, _KKW_TAU = 4, 8, 4
+_KKW_MSG = b"HCRED-KKW KAT vector (TODO #266)"
+
+# TWO SETS, and the reason is a four-language finding rather than a convenience
+# (TODO #266).  HCRED's bit width is a RUNTIME argument in Python and Go, whose
+# demos both use n = 32, but a COMPILE-TIME constant fixed at 256 in C
+# (herradura.h's HCRED_N) and in Java (Hcred.N = Herradura.N).  So the four
+# implementations have never proved the same statement size, and two of them
+# cannot run the size the other two demo at.  A vector every language can
+# consume must therefore be at n = 256; the n = 32 set is kept because it is
+# cheap enough to tamper-check exhaustively in the Python reference.
+#
+# Cost is why the two sets are checked differently.  One n = 256 verification is
+# ~70 s in Python, so a full accept-plus-six-rejections pass would add ~8 min to
+# CI's slowest job.  The split: Python checks n32 exhaustively and n256 for
+# ACCEPT only, while the compiled consumers (Go, C, Java) run the full tamper
+# matrix on n256 in well under a second.  Nothing is unchecked -- the expensive
+# matrix simply runs where it is cheap.
+_KKW_SETS = (("n256", 256), ("n32", 32))
+
+
+def _vec_hex(vec) -> str:
+    """Z_q vector as hex of the protocol's own 3-bytes-per-coefficient wire
+    encoding (_hcred_ser).  Not JSON numbers: KAT/nl_fscx_v3.json records why
+    -- a wide value does not survive the float64 a JSON parser defaults to, and
+    the loss is silent."""
+    return _hcred_ser(vec).hex()
+
+
+def _vec_unhex(s: str) -> list:
+    b = bytes.fromhex(s)
+    return [int.from_bytes(b[i:i + 3], "big") for i in range(0, len(b), 3)]
+
+
+def _kkw_proof_to_json(p: dict) -> dict:
+    return {
+        "W": p["W"],
+        "params": list(p["params"]),
+        "pre": {str(e): root.hex() for e, root in sorted(p["pre"].items())},
+        "online": {str(e): {
+            "pbar": od["pbar"],
+            "path": [[lvl, idx, node.hex()] for (lvl, idx), node in od["path"]],
+            "com_h": od["com_h"].hex(),
+            # aux is a Z_q VECTOR, not a byte string: it is the correction the
+            # last party carries, revealed only when that party is not the
+            # hidden one.  Getting this wrong is what the Go port's inverted
+            # reveal condition did.
+            "aux": None if od["aux"] is None else _vec_hex(od["aux"]),
+            "zin": _vec_hex(od["zin"]),
+            "t": _vec_hex(od["t"]),
+            "u": od["u"],
+        } for e, od in sorted(p["online"].items())},
+    }
+
+
+def _kkw_proof_from_json(j: dict) -> dict:
+    return {
+        "W": j["W"],
+        "params": tuple(j["params"]),
+        "pre": {int(e): bytes.fromhex(r) for e, r in j["pre"].items()},
+        "online": {int(e): {
+            "pbar": od["pbar"],
+            "path": [((lvl, idx), bytes.fromhex(node))
+                     for lvl, idx, node in od["path"]],
+            "com_h": bytes.fromhex(od["com_h"]),
+            "aux": None if od["aux"] is None else _vec_unhex(od["aux"]),
+            "zin": _vec_unhex(od["zin"]),
+            "t": _vec_unhex(od["t"]),
+            "u": od["u"],
+        } for e, od in j["online"].items()},
+    }
+
+
+def _capture_kkw_set(n: int) -> dict:
+    """Capture one fresh reference transcript at width n."""
+    m = suite._rnl_poly_add(suite._rnl_m_poly(n),
+                            suite._rnl_rand_poly(n, RNLQ_), RNLQ_)
+    seed_H = suite.BitArray.random(n)
+    s, C, e_int = suite.hcred_user_keygen(m, n)
+    y = suite.hcred_syndrome(seed_H, e_int, n)
+    proof = hcred_prove_kkw(s, m, C, seed_H, y, n, N_par=_KKW_N_PAR,
+                            M=_KKW_M, tau=_KKW_TAU, msg_bytes=_KKW_MSG)
+    assert hcred_verify_kkw(m, C, seed_H, y, proof, n, _KKW_MSG), \
+        f"captured n={n} transcript does not verify"
+    rows, row_bits, w_max = suite._hcred_params(n)
+    return {
+        "params": {
+            "n": n, "rows": rows, "row_bits": row_bits, "w_max": w_max,
+            "N_par": _KKW_N_PAR, "M": _KKW_M, "tau": _KKW_TAU,
+            "production": {"N_par": 64, "M": 343, "tau": 27},
+        },
+        "statement": {
+            "m_poly": _vec_hex(m),
+            "C_poly": _vec_hex(C),
+            "s_poly": _vec_hex(s),
+            "seed_H": f"{seed_H.uint:0{n // 4}x}",
+            "y": f"{y:0{(rows + 3) // 4}x}",
+            "msg": _KKW_MSG.hex(),
+        },
+        "proof": _kkw_proof_to_json(proof),
+        "expect_verify": True,
+        # The six axes each port was independently debugged against.  Declared
+        # as mutations rather than as six more full transcripts: a consumer
+        # applies one to a copy of `proof` and asserts verification FAILS.
+        "tamper": [
+            {"name": "wrong_msg", "apply": "msg", "note": "verify under a different msg"},
+            {"name": "flip_W", "apply": "W"},
+            {"name": "flip_u", "apply": "online[0].u"},
+            {"name": "flip_t", "apply": "online[0].t[0]"},
+            {"name": "flip_pre_root", "apply": "pre[0][0]"},
+            {"name": "relabel_pbar", "apply": "online[0].pbar"},
+        ],
+    }
+
+
+def capture_kkw() -> dict:
+    """Capture both reference transcripts.  Uses os.urandom, so this is the one
+    generator here whose output legitimately differs run to run."""
+    return {
+        "$schema": "HerraduraKEx HCRED-KKW KAT vectors (TODO #266)",
+        "suite_reference": "Herradura cryptographic suite.py",
+        "note": ("VERIFY-SIDE vectors: hcred_prove_kkw is not deterministic "
+                 "(one os.urandom root per emulation), so these transcripts are "
+                 "PINNED rather than regenerated, and every language must "
+                 "CONSUME them and accept.  Coefficient vectors are hex of the "
+                 "protocol's own 3-bytes-per-coefficient encoding, never JSON "
+                 "numbers.  Demo-sized: production KKW is (N, M, tau) = "
+                 "(64, 343, 27) for 2^-128 soundness."),
+        "width_note": ("n256 is the FOUR-LANGUAGE set.  HCRED's width is a "
+                       "runtime argument in Python and Go (both demo at n=32) "
+                       "but a compile-time constant fixed at 256 in C "
+                       "(HCRED_N) and Java (Hcred.N), so only n=256 is a width "
+                       "every implementation can run.  n32 is kept because it "
+                       "is cheap enough for the Python reference to "
+                       "tamper-check exhaustively: one n=256 verification is "
+                       "~70 s in Python, so the full accept-plus-six-rejections "
+                       "matrix runs there on n32 and in the compiled consumers "
+                       "on n256."),
+        "sets": {name: _capture_kkw_set(n) for name, n in _KKW_SETS},
+    }
+
+
+def _kkw_apply_tamper(vec: dict, proof: dict, msg: bytes, which: str):
+    """Apply one tamper case, returning (proof, msg).  Mirrored by every
+    language's consumer, so keep the mutations arithmetically trivial."""
+    import copy
+    p = copy.deepcopy(proof)
+    e0 = sorted(p["online"])[0]
+    r0 = sorted(p["pre"])[0]
+    if which == "msg":
+        return p, msg + b"!"
+    if which == "W":
+        p["W"] += 1
+    elif which == "online[0].u":
+        p["online"][e0]["u"] = (p["online"][e0]["u"] + 1) % RNLQ_
+    elif which == "online[0].t[0]":
+        p["online"][e0]["t"][0] = (p["online"][e0]["t"][0] + 1) % RNLQ_
+    elif which == "pre[0][0]":
+        b = bytearray(p["pre"][r0]); b[0] ^= 1
+        p["pre"][r0] = bytes(b)
+    elif which == "online[0].pbar":
+        p["online"][e0]["pbar"] = (p["online"][e0]["pbar"] + 1) % p["params"][0]
+    else:
+        raise ValueError(f"unknown tamper case {which}")
+    return p, msg
+
+
+def _check_kkw_set(name: str, vec: dict, tamper: bool) -> int:
+    """Verify one pinned transcript instead of diffing a regeneration."""
+    n = vec["params"]["n"]
+    st = vec["statement"]
+    m = _vec_unhex(st["m_poly"])
+    C = _vec_unhex(st["C_poly"])
+    seed_H = suite.BitArray(n, int(st["seed_H"], 16))
+    y = int(st["y"], 16)
+    msg = bytes.fromhex(st["msg"])
+    proof = _kkw_proof_from_json(vec["proof"])
+
+    if not hcred_verify_kkw(m, C, seed_H, y, proof, n, msg):
+        sys.stderr.write(f"{name}: pinned transcript FAILS verification — the "
+                         "vector is stale or the verifier has drifted\n")
+        return 1
+    if not tamper:
+        print(f"{name} verifies (accept only; the tamper matrix for this set "
+              "runs in the compiled consumers — see width_note).")
+        return 0
+    rc = 0
+    for case in vec["tamper"]:
+        tp, tmsg = _kkw_apply_tamper(vec, proof, msg, case["apply"])
+        if hcred_verify_kkw(m, C, seed_H, y, tp, n, tmsg):
+            sys.stderr.write(f"{name}: tamper case '{case['name']}' was "
+                             "ACCEPTED — verification is not binding here\n")
+            rc = 1
+    if rc == 0:
+        print(f"{name} verifies (1 accept + {len(vec['tamper'])} rejections).")
+    return rc
+
+
+# ── The C consumer's generated header (TODO #266) ───────────────────────────
+#
+# C is the one language with no KAT verifier of any kind, and it is where two of
+# the three KKW port bugs were (an under-allocated commitment buffer and a
+# flipped bit convention).  Rather than put a JSON parser in a dependency-free
+# C tree, the pinned vector is transposed into C arrays here.
+#
+# The header is a DERIVED artifact -- a pure, deterministic transform of the
+# pinned JSON -- so unlike the JSON itself it can be regenerate-and-diff checked,
+# and `--check` does exactly that.  Editing the JSON without re-emitting the
+# header is therefore a failure, not a silent drift.
+#
+# Only the n256 set is emitted: herradura.h fixes HCRED_N at 256, so the n32 set
+# is not a width this build can represent at all.
+_KKW_HDR_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hcred_kkw_vector.h")
+
+
+def _c_i32_array(name: str, vals, per_line: int = 12) -> str:
+    out = [f"static const int32_t {name}[{len(vals)}] = {{"]
+    for i in range(0, len(vals), per_line):
+        out.append("    " + " ".join(f"{v}," for v in vals[i:i + per_line]))
+    out.append("};")
+    return "\n".join(out)
+
+
+def _c_bytes(name: str, data: bytes, per_line: int = 16) -> str:
+    out = [f"static const uint8_t {name}[{len(data)}] = {{"]
+    for i in range(0, len(data), per_line):
+        out.append("    " + " ".join(f"0x{b:02x}," for b in data[i:i + per_line]))
+    out.append("};")
+    return "\n".join(out)
+
+
+def emit_kkw_header(vec: dict) -> str:
+    s = vec["sets"]["n256"]
+    p = s["proof"]
+    st = s["statement"]
+    n = s["params"]["n"]
+    n_par, m_cnt, tau = p["params"]
+    pre_e = sorted(int(e) for e in p["pre"])
+    on_e = sorted(int(e) for e in p["online"])
+    ons = [p["online"][str(e)] for e in on_e]
+    ilen = len(_vec_unhex(ons[0]["zin"]))
+    glen = len(_vec_unhex(ons[0]["t"]))
+    maxpath = max(len(o["path"]) for o in ons)
+
+    L = ["/* KAT/hcred_kkw_vector.h — GENERATED, do not edit.",
+         " *",
+         " * The n=256 HCRED-KKW reference transcript from KAT/hcred_kkw.json,",
+         " * transposed into C arrays (TODO #266).  Regenerate with:",
+         " *",
+         " *     python3 KAT/generate_kat.py --emit-kkw-header",
+         " *",
+         " * `python3 KAT/generate_kat.py --check` diffs this against the JSON,",
+         " * so editing one without the other fails rather than drifting.",
+         " */",
+         "#ifndef HCRED_KKW_VECTOR_H",
+         "#define HCRED_KKW_VECTOR_H",
+         "",
+         f"#define KKW_KAT_N       {n}",
+         f"#define KKW_KAT_N_PAR   {n_par}",
+         f"#define KKW_KAT_M       {m_cnt}",
+         f"#define KKW_KAT_TAU     {tau}",
+         f"#define KKW_KAT_I       {ilen}",
+         f"#define KKW_KAT_G       {glen}",
+         f"#define KKW_KAT_MAXPATH {maxpath}",
+         f"#define KKW_KAT_W       {p['W']}",
+         ""]
+
+    L.append(_c_i32_array("kkw_kat_m_poly", _vec_unhex(st["m_poly"])))
+    L.append(_c_i32_array("kkw_kat_c_poly", _vec_unhex(st["C_poly"])))
+    L.append(_c_bytes("kkw_kat_seed_H", bytes.fromhex(st["seed_H"])))
+    # The syndrome is emitted in herradura.h's INTERNAL byte order, which is the
+    # reverse of the big-endian integer Python and Go use: hcred_stmt_hash
+    # reverses it back on the way into the hash (its own comment says so).  The
+    # conversion belongs here, once, rather than in every C consumer -- feeding
+    # it in Python's order makes the statement hash differ and every proof
+    # rejected, with nothing pointing at the byte order.  This is the same class
+    # of bug that TODO #261's C KKW port hit in hcred_kkw_outmap.
+    L.append("/* NOTE: herradura.h's internal syndrome order (reverse of the "
+             "big-endian\n * integer Python/Go use); pass straight to "
+             "hcred_verify_kkw. */")
+    L.append(_c_bytes("kkw_kat_syndrome", bytes.fromhex(st["y"])[::-1]))
+    L.append(_c_bytes("kkw_kat_msg", bytes.fromhex(st["msg"])))
+    L.append(f"#define KKW_KAT_MSG_LEN {len(bytes.fromhex(st['msg']))}")
+    L.append("")
+
+    L.append(_c_i32_array("kkw_kat_pre_e", pre_e))
+    L.append(f"static const uint8_t kkw_kat_pre_root[{len(pre_e)}][32] = {{")
+    for e in pre_e:
+        raw = bytes.fromhex(p["pre"][str(e)])
+        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+    L.append("};")
+    L.append("")
+
+    L.append(_c_i32_array("kkw_kat_online_e", on_e))
+    L.append(_c_i32_array("kkw_kat_pbar", [o["pbar"] for o in ons]))
+    L.append(_c_i32_array("kkw_kat_u", [o["u"] for o in ons]))
+    L.append(_c_i32_array("kkw_kat_path_len", [len(o["path"]) for o in ons]))
+    L.append(_c_i32_array("kkw_kat_has_aux",
+                          [0 if o["aux"] is None else 1 for o in ons]))
+    L.append("")
+
+    # Path entries: (level, index, node) per online emulation.
+    L.append(f"static const int32_t kkw_kat_path_l[{tau}][KKW_KAT_MAXPATH] = {{")
+    for o in ons:
+        vals = [pe[0] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
+        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
+    L.append("};")
+    L.append(f"static const int32_t kkw_kat_path_i[{tau}][KKW_KAT_MAXPATH] = {{")
+    for o in ons:
+        vals = [pe[1] for pe in o["path"]] + [0] * (maxpath - len(o["path"]))
+        L.append("    { " + " ".join(f"{v}," for v in vals) + " },")
+    L.append("};")
+    L.append(f"static const uint8_t kkw_kat_path_node[{tau}][KKW_KAT_MAXPATH][32] = {{")
+    for o in ons:
+        L.append("    {")
+        for k in range(maxpath):
+            raw = bytes.fromhex(o["path"][k][2]) if k < len(o["path"]) else b"\0" * 32
+            L.append("        { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+        L.append("    },")
+    L.append("};")
+    L.append("")
+
+    L.append(f"static const uint8_t kkw_kat_com_h[{tau}][32] = {{")
+    for o in ons:
+        raw = bytes.fromhex(o["com_h"])
+        L.append("    { " + " ".join(f"0x{b:02x}," for b in raw) + " },")
+    L.append("};")
+    L.append("")
+
+    for label, key, width in (("zin", "zin", ilen), ("t", "t", glen),
+                              ("aux", "aux", glen)):
+        L.append(f"static const int32_t kkw_kat_{label}[{tau}][{width}] = {{")
+        for o in ons:
+            vals = ([0] * width if o[key] is None else _vec_unhex(o[key]))
+            L.append("    {")
+            for i in range(0, width, 12):
+                L.append("        " + " ".join(f"{v}," for v in vals[i:i + 12]))
+            L.append("    },")
+        L.append("};")
+        L.append("")
+
+    # The tamper table, so C runs the same six cases as every other consumer
+    # rather than a set someone chose independently.
+    L.append(f"#define KKW_KAT_TAMPER_COUNT {len(s['tamper'])}")
+    L.append("static const char *const kkw_kat_tamper_name[] = {")
+    for tc in s["tamper"]:
+        L.append(f"    \"{tc['name']}\",")
+    L.append("};")
+    L.append("static const char *const kkw_kat_tamper_apply[] = {")
+    for tc in s["tamper"]:
+        L.append(f"    \"{tc['apply']}\",")
+    L.append("};")
+    L.append("")
+    L.append("#endif /* HCRED_KKW_VECTOR_H */")
+    return "\n".join(L) + "\n"
+
+
+def check_kkw_header(vec: dict) -> int:
+    name = os.path.basename(_KKW_HDR_PATH)
+    want = emit_kkw_header(vec)
+    if not os.path.exists(_KKW_HDR_PATH):
+        sys.stderr.write(f"{name} is missing — run "
+                         "python3 KAT/generate_kat.py --emit-kkw-header\n")
+        return 1
+    with open(_KKW_HDR_PATH) as f:
+        got = f.read()
+    if got != want:
+        sys.stderr.write(f"{name} is stale — it no longer matches "
+                         "hcred_kkw.json; rerun "
+                         "python3 KAT/generate_kat.py --emit-kkw-header\n")
+        return 1
+    print(f"{name} matches hcred_kkw.json[n256].")
+    return 0
+
+
+def check_kkw(path: str) -> int:
+    name = os.path.basename(path)
+    if not os.path.exists(path):
+        sys.stderr.write(f"{name} is missing — run "
+                         "python3 KAT/generate_kat.py --capture-kkw\n")
+        return 1
+    with open(path) as f:
+        vec = json.load(f)
+    rc = check_kkw_header(vec)
+    for set_name, sv in vec["sets"].items():
+        # n=256 is accept-only HERE and fully tamper-checked in Go/C/Java; see
+        # _KKW_SETS' comment for why the split is by cost, not by coverage.
+        rc |= _check_kkw_set(f"{name}[{set_name}]", sv,
+                             tamper=(sv["params"]["n"] != 256))
+    return rc
+
+
 def main() -> int:
+    if "--capture-kkw" in sys.argv:
+        vec = capture_kkw()
+        with open(_KKW_OUT_PATH, "w") as f:
+            f.write(json.dumps(vec, indent=2, sort_keys=False) + "\n")
+        print(f"captured {os.path.basename(_KKW_OUT_PATH)} "
+              f"(N={_KKW_N_PAR}, M={_KKW_M}, tau={_KKW_TAU})")
+        # The C header is derived from the vector, so a re-capture must
+        # re-emit it or --check would immediately go red.
+        with open(_KKW_HDR_PATH, "w") as f:
+            f.write(emit_kkw_header(vec))
+        print(f"emitted {os.path.basename(_KKW_HDR_PATH)}")
+        return check_kkw(_KKW_OUT_PATH)
+
+    if "--emit-kkw-header" in sys.argv:
+        with open(_KKW_OUT_PATH) as f:
+            vec = json.load(f)
+        with open(_KKW_HDR_PATH, "w") as f:
+            f.write(emit_kkw_header(vec))
+        print(f"emitted {os.path.basename(_KKW_HDR_PATH)} from "
+              f"{os.path.basename(_KKW_OUT_PATH)}[n256]")
+        return 0
+
     outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl()),
                (_V3_OUT_PATH, generate_v3())]
     if "--check" in sys.argv:
@@ -417,12 +862,18 @@ def main() -> int:
                 rc = 1
             else:
                 print(f"{os.path.basename(path)} is up to date.")
+        # The KKW vector is pinned, so it is CHECKED here, never diffed.
+        rc |= check_kkw(_KKW_OUT_PATH)
         return rc
     for path, vectors in outputs:
         with open(path, "w") as f:
             f.write(json.dumps(vectors, indent=2, sort_keys=False) + "\n")
         print(f"Wrote {path}")
-    return 0
+    # A plain run must not silently leave the pinned vector unexamined: it is
+    # the one output this mode cannot rewrite, so say so and check it instead.
+    print(f"NOTE: {os.path.basename(_KKW_OUT_PATH)} is pinned, not regenerated "
+          "(hcred_prove_kkw is randomised) — use --capture-kkw to replace it.")
+    return check_kkw(_KKW_OUT_PATH)
 
 
 if __name__ == "__main__":

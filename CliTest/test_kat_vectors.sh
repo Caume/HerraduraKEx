@@ -16,9 +16,27 @@ python3 KAT/generate_kat.py --check
 echo "=== KAT/verify_kat.go (Go cross-check) ==="
 go run KAT/verify_kat.go
 
+# TODO #266: C's consumer.  C had no KAT verifier of any kind before this, and
+# is where two of the three KKW port bugs were -- both of them reader
+# disagreements about a byte layout, which is what consuming another
+# implementation's transcript catches and a self-round-trip cannot.  Compiled on
+# demand rather than tracked, per TODO #229.
+echo "=== KAT/verify_kat_c.c (C cross-check, TODO #266) ==="
+# stderr is captured rather than discarded: herradura.h emits an SDF_ROUNDS
+# #pragma message on every include, but discarding all of stderr to hide it
+# would also hide a genuine compile error, leaving only a confusing "no such
+# file" from the run below.  Show it only when the compile actually fails.
+if ! cc -O2 -o KAT/verify_kat_c KAT/verify_kat_c.c 2>/tmp/hkx_kkw_cc.log; then
+    echo "FAIL: could not compile KAT/verify_kat_c.c"
+    cat /tmp/hkx_kkw_cc.log
+    exit 1
+fi
+./KAT/verify_kat_c
+
 # Both files must exist; a missing one would otherwise pass silently, since
 # --check only compares what it regenerates.
-for f in KAT/classical_quartet.json KAT/hkex_rnl.json; do
+for f in KAT/classical_quartet.json KAT/hkex_rnl.json KAT/nl_fscx_v3.json \
+         KAT/hcred_kkw.json; do
     [ -s "$f" ] || { echo "FAIL: $f missing or empty"; exit 1; }
 done
 

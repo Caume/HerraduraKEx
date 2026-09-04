@@ -3196,6 +3196,104 @@ def test_rnl_m_blind_guard():
           f"suite mismatches={drift}  [{'PASS' if ok else 'FAIL'}]\n")
 
 
+# Security test [50]: HCRED-KKW prove/verify and its rejection axes (TODO #266).
+#
+# WHY THIS EXISTS.  KKW shipped in all four languages under TODO #261 verified
+# only STRUCTURALLY -- round-trips plus rejection checks written by hand during
+# each port and then thrown away.  Three of the four ports carried a real
+# transcription bug found that way (Go's inverted aux-reveal condition; C's
+# under-allocated commitment buffer and flipped bit convention), and none of
+# those checks survived as a regression guard.  KAT/hcred_kkw.json now pins the
+# VERIFY side across all four languages; this is the PROVE side, which a
+# consume-only vector cannot reach by construction.
+#
+# WHY IT IMPORTS THE SUITE INSTEAD OF RE-IMPLEMENTING.  Tests [46]-[49] each
+# keep a local copy cross-checked against the shipped suite, because they are
+# small.  KKW is ~113 lines of interlocking cut-and-choose machinery, and a
+# second copy here would be a new place for exactly the divergence this test
+# guards against.  So it calls the suite directly, as the C and Go harnesses do.
+# ---------------------------------------------------------------------------
+
+def test_hcred_kkw():
+    print("[50] HCRED-KKW prove/verify + rejection axes  [PQC-EXT]")
+    import copy as _copy
+    n = 32
+    N_par, M, tau = 4, 4, 2       # demo params; production is (64, 343, 27)
+    N = g_rounds if g_rounds > 0 else 1
+    suite = None
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_kkw", _p)
+        suite = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(suite)
+    except Exception as e:                      # noqa: BLE001 - reported, not raised
+        print(f"    suite not importable: {type(e).__name__}  [FAIL]\n")
+        return
+
+    ok_verify = 0
+    rejected = {k: 0 for k in ("wrong_msg", "flip_W", "flip_u", "flip_t",
+                               "flip_pre_root", "relabel_pbar")}
+    n_run = 0
+    t0 = time.perf_counter()
+    msg = b"HCRED-KKW test [50]"
+    for i in range(N):
+        if g_time_limit > 0 and time.perf_counter() - t0 >= g_time_limit and i:
+            break
+        n_run += 1
+        m = suite._rnl_poly_add(suite._rnl_m_poly(n),
+                                suite._rnl_rand_poly(n, suite.RNLQ), suite.RNLQ)
+        seed_H = suite.BitArray.random(n)
+        s, C, e_int = suite.hcred_user_keygen(m, n)
+        y = suite.hcred_syndrome(seed_H, e_int, n)
+        p = suite.hcred_prove_kkw(s, m, C, seed_H, y, n, N_par=N_par, M=M,
+                                  tau=tau, msg_bytes=msg)
+
+        # (a) accept-control.  Without it every rejection below is vacuous: a
+        #     verifier that refused everything would score a perfect 6/6.
+        if suite.hcred_verify_kkw(m, C, seed_H, y, p, n, msg):
+            ok_verify += 1
+
+        # (b)-(g) the six axes each port was independently debugged against,
+        #     the same set KAT/hcred_kkw.json's tamper table applies.
+        e0 = sorted(p["online"])[0]
+        r0 = sorted(p["pre"])[0]
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, p, n, msg + b"!"):
+            rejected["wrong_msg"] += 1
+
+        q = _copy.deepcopy(p); q["W"] += 1
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, q, n, msg):
+            rejected["flip_W"] += 1
+
+        q = _copy.deepcopy(p)
+        q["online"][e0]["u"] = (q["online"][e0]["u"] + 1) % suite.RNLQ
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, q, n, msg):
+            rejected["flip_u"] += 1
+
+        q = _copy.deepcopy(p)
+        q["online"][e0]["t"][0] = (q["online"][e0]["t"][0] + 1) % suite.RNLQ
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, q, n, msg):
+            rejected["flip_t"] += 1
+
+        q = _copy.deepcopy(p)
+        _b = bytearray(q["pre"][r0]); _b[0] ^= 1; q["pre"][r0] = bytes(_b)
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, q, n, msg):
+            rejected["flip_pre_root"] += 1
+
+        q = _copy.deepcopy(p)
+        q["online"][e0]["pbar"] = (q["online"][e0]["pbar"] + 1) % N_par
+        if not suite.hcred_verify_kkw(m, C, seed_H, y, q, n, msg):
+            rejected["relabel_pbar"] += 1
+
+    ok = (n_run > 0 and ok_verify == n_run
+          and all(v == n_run for v in rejected.values()))
+    miss = ",".join(k for k, v in rejected.items() if v != n_run) or "none"
+    print(f"    n={n_run}  verified={ok_verify}/{n_run}  "
+          f"rejections missed={miss}  (N={N_par}, M={M}, tau={tau})  "
+          f"[{'PASS' if ok else 'FAIL'}]\n")
+
+
 # Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
 # shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
 # so a 12-byte fpe context equal to twk's sector||bidx made them the identical
@@ -3655,6 +3753,7 @@ if __name__ == '__main__':
     test_nl_fscx_v3()
     test_nl_fscx_v3_consumers()
     test_rnl_m_blind_guard()
+    test_hcred_kkw()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.
