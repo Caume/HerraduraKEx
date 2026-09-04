@@ -33,7 +33,7 @@ import java.security.SecureRandom;
  * [15] oprf [16] hpks_wots_f [17] hpks_xmss_f [18] hcred [19] zkp_nl
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
  * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
- * [29] zkp_nl_zkbpp [30] rnl_sigma. New checks append at [31]
+ * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw. New checks append at [32]
  * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
@@ -824,10 +824,104 @@ public final class SelfTest {
             }
         }
 
+        // [31] HCRED-KKW prove/verify + rejection axes (TODO #266).
+        //
+        // KKW shipped in all four languages under TODO #261 verified only
+        // STRUCTURALLY -- round-trips plus rejection checks written by hand
+        // during each port and then thrown away.  Three of the four ports
+        // carried a real transcription bug found that way (Go's inverted
+        // aux-reveal condition; C's under-allocated commitment buffer and
+        // flipped bit convention), and none of those checks survived as a
+        // regression guard.  KAT/hcred_kkw.json now pins the VERIFY side
+        // across all four languages (KatVerify consumes it here); this is the
+        // PROVE side, which a consume-only vector cannot reach.
+        //
+        // (a) is the accept-control: without it a verifier that refused
+        // everything would score a perfect 6/6 on the rejection axes.
+        //
+        // Note the shape difference from C/Go/Python: this port's proof fields
+        // are final, so a tamper cannot be poked into a finished object -- each
+        // axis rebuilds the proof with one value changed, which is closer to
+        // what verification actually defends against anyway.
+        {
+            final int nPar = 4, mEmul = 4, tau = 2;
+            int[] mBase = HerraduraNl.rnlMPoly(Herradura.N);
+            int[] aRand = HerraduraNl.rnlRandPoly(Herradura.N, HerraduraNl.RNLQ, rng);
+            int[] mBlind = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
+            Hcred.UserKeypair kp = Hcred.userKeygen(mBlind, rng);
+            BigInteger seedH = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+            BigInteger y = Hcred.syndrome(seedH, kp.e);
+            byte[] msg = "HCRED-KKW test [31]".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            byte[] msg2 = "HCRED-KKW test [31]!".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            try {
+                Hcred.HcredKkwProof p = Hcred.proveKkw(kp.s, mBlind, kp.c, seedH, y,
+                        nPar, mEmul, tau, msg, rng);
+                boolean okVerify = Hcred.verifyKkw(mBlind, kp.c, seedH, y, p, msg);
+                boolean rejMsg = !Hcred.verifyKkw(mBlind, kp.c, seedH, y, p, msg2);
+
+                int e0 = java.util.Collections.min(p.online.keySet());
+                int r0 = java.util.Collections.min(p.pre.keySet());
+                Hcred.KkwOnlineProof o0 = p.online.get(e0);
+
+                boolean rejW = !Hcred.verifyKkw(mBlind, kp.c, seedH, y,
+                        rebuildKkw(p, p.W + 1, e0, o0.pbar, o0.u, o0.t, r0, false), msg);
+                boolean rejU = !Hcred.verifyKkw(mBlind, kp.c, seedH, y,
+                        rebuildKkw(p, p.W, e0, o0.pbar, (o0.u + 1) % HerraduraNl.RNLQ,
+                                o0.t, r0, false), msg);
+                int[] tBad = o0.t.clone();
+                tBad[0] = (tBad[0] + 1) % HerraduraNl.RNLQ;
+                boolean rejT = !Hcred.verifyKkw(mBlind, kp.c, seedH, y,
+                        rebuildKkw(p, p.W, e0, o0.pbar, o0.u, tBad, r0, false), msg);
+                boolean rejRoot = !Hcred.verifyKkw(mBlind, kp.c, seedH, y,
+                        rebuildKkw(p, p.W, e0, o0.pbar, o0.u, o0.t, r0, true), msg);
+                boolean rejPbar = !Hcred.verifyKkw(mBlind, kp.c, seedH, y,
+                        rebuildKkw(p, p.W, e0, (o0.pbar + 1) % nPar, o0.u, o0.t, r0, false), msg);
+
+                if (!okVerify || !rejMsg || !rejW || !rejU || !rejT || !rejRoot || !rejPbar) {
+                    System.out.println("FAIL [31] hcred_kkw prove/verify (verify=" + okVerify
+                            + " rejects_msg=" + rejMsg + " rejects_W=" + rejW
+                            + " rejects_u=" + rejU + " rejects_t=" + rejT
+                            + " rejects_pre_root=" + rejRoot + " rejects_pbar=" + rejPbar + ")");
+                    fails++;
+                } else {
+                    System.out.println("PASS [31] hcred_kkw prove/verify");
+                }
+            } catch (RuntimeException e) {
+                System.out.println("FAIL [31] hcred_kkw prove/verify (" + e + ")");
+                fails++;
+            }
+        }
+
         if (fails > 0) {
             System.out.println(fails + " test(s) FAILED");
             System.exit(1);
         }
         System.out.println("All round-trip self-tests passed.");
+    }
+
+    /**
+     * Rebuild a KKW proof with one field changed, for [31]'s rejection axes.
+     * The proof types are immutable by design, so a tamper is a reconstruction
+     * rather than a poke; `flipRoot` xors the low bit of pre root `r0`.
+     */
+    private static Hcred.HcredKkwProof rebuildKkw(Hcred.HcredKkwProof p, int W, int e0,
+            int pbar, int u, int[] t, int r0, boolean flipRoot) {
+        java.util.Map<Integer, byte[]> pre = new java.util.TreeMap<>();
+        for (java.util.Map.Entry<Integer, byte[]> e : p.pre.entrySet()) {
+            byte[] root = e.getValue().clone();
+            if (flipRoot && e.getKey() == r0) root[0] ^= 1;
+            pre.put(e.getKey(), root);
+        }
+        java.util.Map<Integer, Hcred.KkwOnlineProof> online = new java.util.TreeMap<>();
+        for (java.util.Map.Entry<Integer, Hcred.KkwOnlineProof> e : p.online.entrySet()) {
+            Hcred.KkwOnlineProof o = e.getValue();
+            if (e.getKey() == e0) {
+                online.put(e.getKey(), new Hcred.KkwOnlineProof(
+                        o.path, o.comH, pbar, o.aux, o.zin, t, u));
+            } else {
+                online.put(e.getKey(), o);
+            }
+        }
+        return new Hcred.HcredKkwProof(W, p.nPar, p.m, p.tau, pre, online);
     }
 }

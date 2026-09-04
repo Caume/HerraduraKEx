@@ -113,11 +113,57 @@ KAT/                                                 — fixed Known-Answer-Test
                                hex STRINGS, not JSON numbers: a 64-bit sector
                                does not survive the float64 a JSON parser
                                defaults to, and the loss is silent
-  generate_kat.py            — deterministic reference generator (Python) for all three
-                               JSON files; --check verifies currency
+  hcred_kkw.json             — HCRED-KKW, and the ONLY PINNED vector here
+                               (TODO #266).  hcred_prove_kkw draws one
+                               os.urandom root per emulation, so a proof is not
+                               a function of its statement and regenerate-and-
+                               diff cannot work: it is a VERIFY-SIDE vector that
+                               every language must CONSUME and accept, like
+                               pem/.  That is also the shape that catches the
+                               bugs KKW actually had -- an inverted aux-reveal
+                               condition (Go), an under-allocated commitment
+                               buffer and a flipped bit convention (C) are all
+                               READER disagreements about a byte layout.  TWO
+                               SETS, and the reason is a finding: HCRED's width
+                               is a runtime argument in Python and Go (both demo
+                               at n=32) but a COMPILE-TIME constant of 256 in C
+                               (HCRED_N) and Java (Hcred.N), so the four have
+                               never proved the same statement size and only
+                               n256 is consumable by all four.  n32 is kept
+                               because one n=256 verification is ~70 s in
+                               Python: the full accept-plus-six-rejections
+                               matrix runs there on n32 and in the compiled
+                               consumers on n256 -- split by COST, not coverage.
+                               Z_q vectors are hex of the protocol's own
+                               3-bytes-per-coefficient encoding, never JSON
+                               numbers, for nl_fscx_v3.json's float64 reason
+  hcred_kkw_vector.h         — GENERATED: hcred_kkw.json[n256] transposed into C
+                               arrays (TODO #266), so the dependency-free C tree
+                               needs no JSON parser.  A pure deterministic
+                               transform of the JSON, so unlike the JSON it IS
+                               regenerate-and-diff checked -- editing one
+                               without re-emitting the other fails rather than
+                               drifting.  The syndrome is emitted in
+                               herradura.h's INTERNAL byte order (the reverse of
+                               the big-endian integer Python/Go use); feeding
+                               Python's order makes every proof reject with
+                               nothing pointing at byte order
+  generate_kat.py            — deterministic reference generator (Python) for the three
+                               regenerable JSON files; --check verifies currency.
+                               --capture-kkw re-captures the pinned KKW vector (the one
+                               output here that legitimately differs run to run) and
+                               re-emits its C header; --emit-kkw-header rebuilds the
+                               header alone.  --check does not diff the KKW vector: it
+                               VERIFIES it and asserts each tamper case rejects, which
+                               is stronger — a byte-identical file whose verifier has
+                               drifted still fails
   generate_pem_kat.py        — generator for pem/; --check verifies currency
   verify_kat.go               — independent cross-check against the Go herradura package
                                (bindings/java KatVerify does the same for Java)
+  verify_kat_c.c              — the C consumer for hcred_kkw.json[n256] (TODO #266),
+                               compiled on demand by CliTest/test_kat_vectors.sh.
+                               C had no KAT verifier of any kind before this, in the
+                               language where two of the three KKW port bugs were
 SecurityProofsCode/                                 — standalone Python proof/analysis scripts:
   hkex_gf_test.py          — HKEX-GF DH correctness + BSGS DLP illustration
   hkex_nl_verification.py  — NL-FSCX period analysis, Ring-LWR invertibility/noise, v2 bijectivity
@@ -786,7 +832,20 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  #261 moved it into the suite and the CLI now imports it.  Case (a) is an
 #  accept-control: a guard that rejected everything would otherwise pass the
 #  four rejection cases perfectly.  Python's copy is cross-checked against the
-#  suite as [46]'s and [47]'s are.  Java's counterpart is SelfTest.java's [27])
+#  suite as [46]'s and [47]'s are.  Java's counterpart is SelfTest.java's [27]
+#  [50] is TODO #266's guard for HCRED-KKW's PROVE side, which KAT/hcred_kkw.json
+#  cannot reach by construction (that vector is verify-only).  KKW shipped in all
+#  four languages under #261 verified only structurally -- round-trips and
+#  rejection checks written by hand during each port, then thrown away -- and
+#  three of the four ports carried a real transcription bug found exactly that
+#  way.  Accept-control plus the same six rejection axes the vector's tamper
+#  table applies, so a divergence between test and vector is visible rather than
+#  two independent opinions about what to check.  Unlike [46]-[49] it calls the
+#  suite rather than keeping a local copy: KKW is ~113 lines of interlocking
+#  cut-and-choose machinery and a second copy would be a new place for the very
+#  divergence it guards.  Java's counterpart is SelfTest.java's [31], where the
+#  tamper is a REBUILD rather than a poke because that port's proof fields are
+#  final)
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

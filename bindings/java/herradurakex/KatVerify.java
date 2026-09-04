@@ -332,10 +332,260 @@ public final class KatVerify {
             }
         }
 
+        // ── HCRED-KKW (TODO #266) ───────────────────────────────────────
+        Path kkwPath = path.resolveSibling("hcred_kkw.json");
+        if (!Files.exists(kkwPath)) {
+            System.out.println("FAIL hcred_kkw: " + kkwPath + " not found");
+            fails++;
+        } else {
+            fails += verifyKkw(new String(Files.readAllBytes(kkwPath)));
+        }
+
         if (fails > 0) {
             System.out.println(fails + " vector set(s) FAILED");
             System.exit(1);
         }
         System.out.println("All KAT vectors verified against the Java herradurakex package.");
+    }
+
+    // ── HCRED-KKW (TODO #266) ───────────────────────────────────────────────
+    //
+    // This is the one vector set here that is CONSUMED rather than recomputed.
+    // hcredProveKkw is randomised (one root seed per emulation), so there is no
+    // deterministic transcript for Java to reproduce; what it can do -- and what
+    // the item is about -- is READ Python's transcript and accept it, then
+    // reject each tampered variant.  Every KKW bug that has actually shipped was
+    // a reader disagreement about a byte layout, which is exactly this.
+    //
+    // Only the n256 set is consumable: Hcred.N is a compile-time constant of
+    // 256, as herradura.h's HCRED_N is, while Python and Go take the width as a
+    // runtime argument and demo at 32.  That asymmetry is a TODO #266 finding
+    // in its own right -- the four implementations have never proved the same
+    // statement size.
+    //
+    // The flat regex parser above cannot read this file: it is nested (the
+    // online proofs carry an array of path arrays), so this section brings a
+    // minimal recursive-descent JSON reader rather than a dependency.
+
+    /** Minimal recursive-descent JSON reader: enough for this file's shapes. */
+    private static final class Json {
+        private final String s;
+        private int p;
+        private Json(String s) { this.s = s; }
+
+        static Object parse(String text) {
+            Json j = new Json(text);
+            j.ws();
+            Object v = j.value();
+            j.ws();
+            if (j.p != text.length()) throw new IllegalStateException("trailing JSON at " + j.p);
+            return v;
+        }
+
+        private void ws() { while (p < s.length() && Character.isWhitespace(s.charAt(p))) p++; }
+
+        private Object value() {
+            char c = s.charAt(p);
+            switch (c) {
+                case '{': return object();
+                case '[': return array();
+                case '"': return string();
+                case 't': p += 4; return Boolean.TRUE;
+                case 'f': p += 5; return Boolean.FALSE;
+                case 'n': p += 4; return null;
+                default:  return number();
+            }
+        }
+
+        private Map<String, Object> object() {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            p++; ws();
+            if (s.charAt(p) == '}') { p++; return m; }
+            while (true) {
+                ws();
+                String k = string();
+                ws();
+                p++;              // ':'
+                ws();
+                m.put(k, value());
+                ws();
+                char c = s.charAt(p++);
+                if (c == '}') return m;
+                if (c != ',') throw new IllegalStateException("expected , or } at " + p);
+            }
+        }
+
+        private java.util.List<Object> array() {
+            java.util.List<Object> l = new java.util.ArrayList<>();
+            p++; ws();
+            if (s.charAt(p) == ']') { p++; return l; }
+            while (true) {
+                ws();
+                l.add(value());
+                ws();
+                char c = s.charAt(p++);
+                if (c == ']') return l;
+                if (c != ',') throw new IllegalStateException("expected , or ] at " + p);
+            }
+        }
+
+        private String string() {
+            StringBuilder b = new StringBuilder();
+            p++;                                  // opening quote
+            while (true) {
+                char c = s.charAt(p++);
+                if (c == '"') return b.toString();
+                if (c != '\\') { b.append(c); continue; }
+                char e = s.charAt(p++);
+                switch (e) {
+                    case 'n': b.append('\n'); break;
+                    case 't': b.append('\t'); break;
+                    case 'r': b.append('\r'); break;
+                    case 'b': b.append('\b'); break;
+                    case 'f': b.append('\f'); break;
+                    case 'u':
+                        b.append((char) Integer.parseInt(s.substring(p, p + 4), 16));
+                        p += 4;
+                        break;
+                    default:  b.append(e);        // \" \\ \/
+                }
+            }
+        }
+
+        private Object number() {
+            int st = p;
+            while (p < s.length() && "-+.eE0123456789".indexOf(s.charAt(p)) >= 0) p++;
+            String tok = s.substring(st, p);
+            if (tok.indexOf('.') < 0 && tok.indexOf('e') < 0 && tok.indexOf('E') < 0)
+                return Long.valueOf(tok);
+            return Double.valueOf(tok);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> obj(Object o) { return (Map<String, Object>) o; }
+
+    @SuppressWarnings("unchecked")
+    private static java.util.List<Object> arr(Object o) { return (java.util.List<Object>) o; }
+
+    private static int jint(Object o) { return (int) (long) (Long) o; }
+
+    private static byte[] unhexBytes(String s) {
+        byte[] out = new byte[s.length() / 2];
+        for (int i = 0; i < out.length; i++)
+            out[i] = (byte) Integer.parseInt(s.substring(2 * i, 2 * i + 2), 16);
+        return out;
+    }
+
+    /** Decode the 3-bytes-per-coefficient encoding used for every Z_q vector. */
+    private static int[] unpackVec(String hexs) {
+        byte[] b = unhexBytes(hexs);
+        int[] out = new int[b.length / 3];
+        for (int i = 0; i < out.length; i++)
+            out[i] = ((b[3 * i] & 0xff) << 16) | ((b[3 * i + 1] & 0xff) << 8) | (b[3 * i + 2] & 0xff);
+        return out;
+    }
+
+    /**
+     * Rebuild the proof, optionally with one tamper case applied.  A tamper has
+     * to be applied HERE rather than to a finished object because this port's
+     * proof fields are final -- which is the Java-idiomatic shape and also why
+     * TODO #261's Java rejection checks could not poke W, pbar or u in place.
+     *
+     * Mirrors _kkw_apply_tamper in KAT/generate_kat.py, applyKkwTamper in
+     * KAT/verify_kat.go and apply_tamper in KAT/verify_kat_c.c.  All four must
+     * agree case for case: a mutation one applies and another does not silently
+     * downgrades a rejection test into a second accept test.
+     */
+    private static Hcred.HcredKkwProof buildKkwProof(Map<String, Object> set, String tamper) {
+        Map<String, Object> pr = obj(set.get("proof"));
+        java.util.List<Object> params = arr(pr.get("params"));
+        int nPar = jint(params.get(0)), m = jint(params.get(1)), tau = jint(params.get(2));
+        int W = jint(pr.get("W"));
+        if ("W".equals(tamper)) W += 1;
+
+        Map<Integer, byte[]> pre = new java.util.TreeMap<>();
+        for (Map.Entry<String, Object> e : obj(pr.get("pre")).entrySet())
+            pre.put(Integer.valueOf(e.getKey()), unhexBytes((String) e.getValue()));
+        if ("pre[0][0]".equals(tamper)) {
+            Integer r0 = ((java.util.TreeMap<Integer, byte[]>) pre).firstKey();
+            pre.get(r0)[0] ^= 1;
+        }
+
+        Map<Integer, Hcred.KkwOnlineProof> online = new java.util.TreeMap<>();
+        java.util.TreeMap<String, Object> ons = new java.util.TreeMap<>(
+                java.util.Comparator.comparingInt(Integer::parseInt));
+        ons.putAll(obj(pr.get("online")));
+        boolean first = true;
+        for (Map.Entry<String, Object> e : ons.entrySet()) {
+            Map<String, Object> od = obj(e.getValue());
+            java.util.List<Hcred.KkwPathEntry> path = new java.util.ArrayList<>();
+            for (Object pe : arr(od.get("path"))) {
+                java.util.List<Object> t3 = arr(pe);
+                path.add(new Hcred.KkwPathEntry(jint(t3.get(0)), jint(t3.get(1)),
+                        unhexBytes((String) t3.get(2))));
+            }
+            int pbar = jint(od.get("pbar"));
+            int u = jint(od.get("u"));
+            int[] t = unpackVec((String) od.get("t"));
+            Object auxo = od.get("aux");
+            int[] aux = auxo == null ? null : unpackVec((String) auxo);
+            if (first) {
+                if ("online[0].pbar".equals(tamper)) pbar = (pbar + 1) % nPar;
+                if ("online[0].u".equals(tamper))    u = (u + 1) % HerraduraNl.RNLQ;
+                if ("online[0].t[0]".equals(tamper)) t[0] = (t[0] + 1) % HerraduraNl.RNLQ;
+                first = false;
+            }
+            online.put(Integer.valueOf(e.getKey()), new Hcred.KkwOnlineProof(
+                    path, unhexBytes((String) od.get("com_h")),
+                    pbar, aux, unpackVec((String) od.get("zin")), t, u));
+        }
+        return new Hcred.HcredKkwProof(W, nPar, m, tau, pre, online);
+    }
+
+    private static int verifyKkw(String text) {
+        Map<String, Object> root = obj(Json.parse(text));
+        Map<String, Object> sets = obj(root.get("sets"));
+        Map<String, Object> set = obj(sets.get("n256"));
+        if (set == null) {
+            System.out.println("FAIL hcred_kkw: set \"n256\" missing — Java is "
+                    + "compiled for n=256 only and cannot consume the n32 set");
+            return 1;
+        }
+        Map<String, Object> st = obj(set.get("statement"));
+        int[] mPoly = unpackVec((String) st.get("m_poly"));
+        int[] cPoly = unpackVec((String) st.get("C_poly"));
+        BigInteger seedH = new BigInteger((String) st.get("seed_H"), 16);
+        BigInteger y = new BigInteger((String) st.get("y"), 16);
+        byte[] msg = unhexBytes((String) st.get("msg"));
+
+        int fails = 0;
+        if (Hcred.verifyKkw(mPoly, cPoly, seedH, y, buildKkwProof(set, null), msg)) {
+            System.out.println("PASS hcred_kkw[n256] (Java accepts the pinned Python transcript)");
+        } else {
+            System.out.println("FAIL hcred_kkw[n256]: Java REJECTS the pinned Python "
+                    + "transcript — the implementations disagree on the wire format");
+            fails++;
+        }
+        // The accept is not self-validating: a verifier returning true
+        // unconditionally would pass it.  Each tamper case must be rejected.
+        java.util.List<Object> tamper = arr(set.get("tamper"));
+        for (Object tco : tamper) {
+            Map<String, Object> tc = obj(tco);
+            String apply = (String) tc.get("apply");
+            byte[] tmsg = msg;
+            if ("msg".equals(apply)) {
+                tmsg = java.util.Arrays.copyOf(msg, msg.length + 1);
+                tmsg[msg.length] = '!';
+            }
+            if (Hcred.verifyKkw(mPoly, cPoly, seedH, y, buildKkwProof(set, apply), tmsg)) {
+                System.out.println("FAIL hcred_kkw[n256] tamper \"" + tc.get("name") + "\" ACCEPTED");
+                fails++;
+            }
+        }
+        if (fails == 0)
+            System.out.println("PASS hcred_kkw[n256] tamper (" + tamper.size() + "/"
+                    + tamper.size() + " rejected)");
+        return fails;
     }
 }

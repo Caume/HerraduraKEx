@@ -5632,6 +5632,127 @@ int main(int argc, char *argv[])
                (bad_accept == 0 && bad_reject == 0) ? "PASS" : "FAIL");
     }
 
+    /* Security test [50]: HCRED-KKW prove/verify + rejection axes (TODO #266).
+     *
+     * KKW shipped in all four languages under TODO #261 verified only
+     * STRUCTURALLY -- round-trips plus rejection checks written by hand during
+     * each port and then thrown away.  Three of the four ports carried a real
+     * transcription bug found that way, and TWO OF THEM WERE HERE: a genuine
+     * buffer overflow in hcred_kkw_state_com (a 2-byte under-allocation caught
+     * by -Wstringop-overflow, not by a crash) and a bit-endianness mismatch in
+     * hcred_kkw_outmap with no Go/Python analogue, because big.Int.Bit and
+     * Python's >>/& are layout-independent where this file's BitArray is
+     * big-endian.  Nothing kept either check.
+     *
+     * KAT/hcred_kkw.json now pins the VERIFY side across all four languages
+     * (KAT/verify_kat_c.c consumes it here); this is the PROVE side, which a
+     * consume-only vector cannot reach by construction.
+     *
+     *   (a) accept-control: without it a verifier that refused everything
+     *       would score a perfect 6/6 on (b)-(g).
+     *   (b)-(g) the six axes, the same set the vector's tamper table applies. */
+    {
+        int i, N = g_rounds > 0 ? g_rounds : 1;
+        int n_run = 0, ok_verify = 0;
+        static const char *const axis[6] = {
+            "wrong_msg", "flip_W", "flip_u", "flip_t",
+            "flip_pre_root", "relabel_pbar"
+        };
+        int rejected[6] = {0, 0, 0, 0, 0, 0};
+        static const uint8_t kkw_msg[] = "HCRED-KKW test [50]";
+        const size_t kkw_msg_len = sizeof(kkw_msg) - 1;
+        static uint8_t kkw_msg2[sizeof(kkw_msg)];
+        printf("[50] HCRED-KKW prove/verify + rejection axes  [PQC-EXT]\n");
+        memcpy(kkw_msg2, kkw_msg, sizeof(kkw_msg) - 1);
+        kkw_msg2[sizeof(kkw_msg) - 1] = '!';
+        for (i = 0; i < N; i++) {
+            /* Full RNL_N buffers, exactly as the suite demo declares them:
+             * rnl_m_poly/rnl_rand_poly write RNL_N coefficients while
+             * hcred_user_keygen consumes only the first HCRED_N, so anything
+             * narrower here overflows. */
+            static rnl_poly_t kk_m, kk_rand;
+            static int32_t kk_s[RNL_N], kk_c[RNL_N];
+            uint8_t kk_syndr[SDF_SYNBYTES];
+            BitArray kk_seed_H, kk_e;
+            HcredKkwProof kp;
+            int j, e0, r0, saved;
+            n_run++;
+            rnl_m_poly(kk_m);
+            rnl_rand_poly(kk_rand, urnd_fp);
+            rnl_poly_add(kk_m, kk_m, kk_rand);
+            ba_rand(&kk_seed_H, urnd_fp);
+            hcred_user_keygen(kk_s, kk_c, &kk_e, kk_m, urnd_fp);
+            hcred_syndrome(kk_syndr, &kk_seed_H, &kk_e);
+            if (hcred_prove_kkw(&kp, kk_s, kk_m, kk_c, &kk_seed_H, kk_syndr,
+                                4, 4, 2, kkw_msg, kkw_msg_len, urnd_fp) != 0) {
+                printf("    prove error  [FAIL]\n\n");
+                break;
+            }
+            /* (a) accept-control */
+            if (hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                 kkw_msg, kkw_msg_len))
+                ok_verify++;
+            /* Lowest online / pre index, matching every other consumer's
+             * choice of which emulation to tamper. */
+            e0 = 0; r0 = 0;
+            for (j = 1; j < kp.tau; j++)
+                if (kp.online_e[j] < kp.online_e[e0]) e0 = j;
+            for (j = 1; j < kp.m - kp.tau; j++)
+                if (kp.pre_e[j] < kp.pre_e[r0]) r0 = j;
+
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg2, kkw_msg_len + 1)) rejected[0]++;
+
+            /* Each axis restores what it changed, so a mutation never leaks
+             * into the next one. */
+            saved = kp.W; kp.W += 1;
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg, kkw_msg_len)) rejected[1]++;
+            kp.W = saved;
+
+            saved = kp.online[e0].u;
+            kp.online[e0].u = (int32_t)(((int64_t)saved + 1) % RNL_Q);
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg, kkw_msg_len)) rejected[2]++;
+            kp.online[e0].u = saved;
+
+            saved = kp.online[e0].t[0];
+            kp.online[e0].t[0] = (int32_t)(((int64_t)saved + 1) % RNL_Q);
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg, kkw_msg_len)) rejected[3]++;
+            kp.online[e0].t[0] = saved;
+
+            kp.pre_root[(size_t)r0 * KEYBYTES] ^= 1;
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg, kkw_msg_len)) rejected[4]++;
+            kp.pre_root[(size_t)r0 * KEYBYTES] ^= 1;
+
+            saved = kp.online[e0].pbar;
+            kp.online[e0].pbar = (saved + 1) % kp.n_par;
+            if (!hcred_verify_kkw(kk_m, kk_c, &kk_seed_H, kk_syndr, &kp,
+                                  kkw_msg, kkw_msg_len)) rejected[5]++;
+            kp.online[e0].pbar = saved;
+
+            hcred_kkw_proof_free(&kp);
+        }
+        {
+            int all_ok = (n_run > 0 && ok_verify == n_run), k;
+            char miss[128];
+            miss[0] = '\0';
+            for (k = 0; k < 6; k++) {
+                if (rejected[k] != n_run) {
+                    all_ok = 0;
+                    if (miss[0]) strncat(miss, ",", sizeof(miss) - strlen(miss) - 1);
+                    strncat(miss, axis[k], sizeof(miss) - strlen(miss) - 1);
+                }
+            }
+            if (!miss[0]) strncpy(miss, "none", sizeof(miss) - 1);
+            printf("    n=%d  verified=%d/%d  rejections missed=%s  "
+                   "(N=4, M=4, tau=2)  [%s]\n\n",
+                   n_run, ok_verify, n_run, miss, all_ok ? "PASS" : "FAIL");
+        }
+    }
+
     fclose(urnd_fp);
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

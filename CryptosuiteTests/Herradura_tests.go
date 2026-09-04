@@ -1667,6 +1667,7 @@ func main() {
 	testNlFscxV3()
 	testNlFscxV3Consumers()
 	testRnlMBlindGuard()
+	testHcredKkw()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -2021,6 +2022,123 @@ func testRnlMBlindGuard() {
 	}
 	fmt.Printf("    n=%d  bad accepts=%d  bad rejects=%d  [%s]\n\n",
 		nRun, badAccept, badReject, verdict)
+}
+
+// [50] HCRED-KKW prove/verify and its rejection axes (TODO #266).
+//
+// KKW shipped in all four languages under TODO #261 verified only
+// STRUCTURALLY -- round-trips plus rejection checks written by hand during each
+// port and then thrown away.  Three of the four ports carried a real
+// transcription bug found that way, THIS ONE INCLUDED: the "reveal aux when
+// party N-1 is opened" condition was inverted here on the first pass, and every
+// genuine proof failed verification until a fail-point-tagged debug run
+// isolated it.  Nothing kept that check.  KAT/hcred_kkw.json now pins the
+// VERIFY side across all four languages; this is the PROVE side, which a
+// consume-only vector cannot reach by construction.
+//
+// (a) is the accept-control: without it a verifier that refused everything
+// would score a perfect 6/6 on the rejection axes below.
+func testHcredKkw() {
+	fmt.Println("[50] HCRED-KKW prove/verify + rejection axes  [PQC-EXT]")
+	const n = 32
+	const nPar, m, tau = 4, 4, 2 // demo params; production is (64, 343, 27)
+	N := testRounds(1)
+	msg := []byte("HCRED-KKW test [50]")
+	nRun, okVerify := 0, 0
+	names := []string{"wrong_msg", "flip_W", "flip_u", "flip_t",
+		"flip_pre_root", "relabel_pbar"}
+	rejected := map[string]int{}
+
+	for i := 0; i < N; i++ {
+		nRun++
+		mB := RnlPolyAdd(RnlMPoly(n), RnlRandPoly(n, RnlQ), RnlQ)
+		seedH := NewRandBitArray(n)
+		s, c, eInt := HcredUserKeygen(mB, n)
+		y := HcredSyndrome(seedH, eInt, n)
+		p, err := HcredProveKkw(s, mB, c, seedH, y, n, nPar, m, tau, msg)
+		if err != nil {
+			fmt.Printf("    prove error: %v  [FAIL]\n\n", err)
+			return
+		}
+		// (a) accept-control.
+		if HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			okVerify++
+		}
+		// (b)-(g) the six axes, the same set KAT/hcred_kkw.json's tamper table
+		// applies -- so a divergence between this and the vector is itself
+		// visible rather than two independent opinions about what to check.
+		e0, r0 := -1, -1
+		for k := range p.Online {
+			if e0 < 0 || k < e0 {
+				e0 = k
+			}
+		}
+		for k := range p.Pre {
+			if r0 < 0 || k < r0 {
+				r0 = k
+			}
+		}
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, append(append([]byte{}, msg...), '!')) {
+			rejected["wrong_msg"]++
+		}
+		// Each case rebuilds from the same proof and restores after, so a
+		// mutation never leaks into the next axis.
+		origW := p.W
+		p.W++
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			rejected["flip_W"]++
+		}
+		p.W = origW
+
+		origU := p.Online[e0].U
+		p.Online[e0].U = (origU + 1) % RnlQ
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			rejected["flip_u"]++
+		}
+		p.Online[e0].U = origU
+
+		origT := p.Online[e0].T[0]
+		p.Online[e0].T[0] = (origT + 1) % RnlQ
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			rejected["flip_t"]++
+		}
+		p.Online[e0].T[0] = origT
+
+		p.Pre[r0][0] ^= 1
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			rejected["flip_pre_root"]++
+		}
+		p.Pre[r0][0] ^= 1
+
+		origPbar := p.Online[e0].Pbar
+		p.Online[e0].Pbar = (origPbar + 1) % nPar
+		if !HcredVerifyKkw(mB, c, seedH, y, p, n, msg) {
+			rejected["relabel_pbar"]++
+		}
+		p.Online[e0].Pbar = origPbar
+	}
+
+	ok := nRun > 0 && okVerify == nRun
+	miss := ""
+	for _, k := range names {
+		if rejected[k] != nRun {
+			ok = false
+			if miss != "" {
+				miss += ","
+			}
+			miss += k
+		}
+	}
+	if miss == "" {
+		miss = "none"
+	}
+	verdict := "PASS"
+	if !ok {
+		verdict = "FAIL"
+	}
+	fmt.Printf("    n=%d  verified=%d/%d  rejections missed=%s  "+
+		"(N=%d, M=%d, tau=%d)  [%s]\n\n",
+		nRun, okVerify, nRun, miss, nPar, m, tau, verdict)
 }
 
 func testWeakKeyRejection() {
