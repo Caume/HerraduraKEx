@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "herradurakex"
-version = "6.0.0"
+version = "6.0.1"
 description = "Herradura Cryptographic Suite — HKEX-GF, HSKE, HPKS, HPKE and PQC extensions built on the FSCX primitive"
 readme = "README.md"
 license = "GPL-3.0-or-later OR MIT"

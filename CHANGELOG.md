@@ -2,6 +2,49 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.1] - 2026-09-03
+
+### TODO #261 — two CI failures the v6.0.0 push exposed, both real
+
+Neither was a flake, and neither was reachable by running the new script directly, which is
+how both got past local verification. The lesson is the same one v6.0.0 itself recorded: a
+check that never runs proves nothing, and CI's guards are part of the test surface.
+
+**1. `CliTest/test_zkp_hybrid_family.sh` did not source `CliTest/lib_dfr.sh`.** It completes
+`hybrid-rnl-stern` (`--our-kem`), so it was exactly what TODO #221's DFR guard exists to
+catch. The QC-MDPC KEM half fails to decode ~0.225% per encapsulation and — since TODO
+#235's implicit rejection — does so *silently*: round 2 exits 0 and derives a wrong key. At
+16 completions per run that is a ~3.5% chance of a red run, and, worse, a DFR event was
+indistinguishable from the wire splits the script was written to find.
+
+Fixed by handling DFR rather than by sourcing the file to quiet the guard. The retry unit is
+the round-1 encapsulation, keyed on a **same-language control completion**, which by
+construction cannot be a cross-language split. The two failure modes are told apart by their
+shape: a DFR event belongs to one `(key, error-vector)` pair and misses every completer at
+once, while a wire split is deterministic and belongs to a language *pair*. Once the control
+agrees, the encapsulation is known good and every cell below it is a clean interop verdict.
+The control is an unscored probe, so the matrix stays 4×4 at 88 checks. Verified against a
+deliberate break (control forced to mismatch): 8 `INFO` retry lines — 4 languages × 2
+retries at budget 3 — then an honest failure rather than a silent pass.
+
+**2. `CliTest/test_java_keygen.sh` asserted that Java *rejects* `hpks-zkp-nl`** — "out of
+this Java CLI's scope". That is precisely the shape TODO #261 exists to remove: a capability
+gap encoded as expected behaviour, so *closing* the gap turns the test red. Inverted rather
+than deleted — `genpkey` and `pkey --pubout` now assert the key is produced — and the
+property the block actually carried, "genpkey rejects unsupported algos honestly, with no
+silent wrong output", is kept using an algo no CLI will ever support. A real tag cannot
+serve that purpose any more: as of v6.0.0 all four CLIs dispatch all 29.
+
+**Also, found while fixing (2).** `HerraduraCli.privLabel`'s error string claimed the whole
+CLI's coverage and was wrong in *both* directions — it named `hske-nla1`/`nla2`/`nla3`,
+which are symmetric and have no keypair to label, and omitted every algo `genpkey` builds
+through its own key structure rather than a plain label (`hpks-stern`, `hpke-stern`,
+`hpke-stern-kem`, `hpks-wots`, `hpks-xmss`, `hcred`, `oprf`). Rewritten to describe the
+switch's own domain, which is what it is the default arm of.
+
+`test_java_keygen.sh` 25 PASS / 0 FAIL (was 22 / 1); `test_zkp_hybrid_family.sh` 88 PASS /
+0 FAIL; the DFR guard reproduced locally and clean.
+
 ## [6.0.0] - 2026-09-03
 
 ### TODO #261 — the five missing Java algo tags are PORTED, and two real wire splits fall out of doing it
