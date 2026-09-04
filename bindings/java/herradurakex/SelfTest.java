@@ -33,8 +33,8 @@ import java.security.SecureRandom;
  * [15] oprf [16] hpks_wots_f [17] hpks_xmss_f [18] hcred [19] zkp_nl
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
  * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
- * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw. New checks append at [32]
- * onward; a check's
+ * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw
+ * [32] qcmdpc_weak_key_screen. New checks append at [33] onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
  *
@@ -889,6 +889,84 @@ public final class SelfTest {
             } catch (RuntimeException e) {
                 System.out.println("FAIL [31] hcred_kkw prove/verify (" + e + ")");
                 fails++;
+            }
+        }
+
+        // [32] The QC-MDPC weak-key screen (TODO #261).  Stern.qcmdpcKeyIsStrong
+        // rejects and redraws any private polynomial whose cyclic distance
+        // spectrum has a multiplicity above QCMDPC_MAX_MULT = 5 -- the screen
+        // TODO #235 Part 1 added to make the entire measured DFR tail
+        // unreachable from keygen.  Until TODO #261 it was UNTESTED IN ALL FOUR
+        // LANGUAGES: it is called only from qcmdpcKeygen, so nothing here, in
+        // CryptosuiteTests/ or in CliTest/ ever exercised it, and a screen that
+        // accepted everything would have passed the entire repo -- the same
+        // four-way absence #261 found for rnlValidateMBlind before it became
+        // [27] here and [49] in C/Go/Python.
+        //
+        // SCOPE: the screen covers KEYGEN only.  No PEM decode path checks an
+        // imported key's spectrum, in any language, and that is a recorded
+        // position rather than an oversight -- a supplied arithmetic-progression
+        // key fails its own decapsulations, a self-inflicted denial of service
+        // and not a confidentiality break
+        // (SecurityProofsCode/qcmdpc_dfr_weak_keys.py section 4).
+        //
+        // The supports are PINNED, not sampled, so each case asserts a known
+        // answer rather than a probable one, and each is exactly QCMDPC_D = 15
+        // elements because C's counterpart takes a fixed-width QcMdpcPriv.
+        // The same five vectors are used by C/Go/Python's [51].
+        {
+            // 0..14 -- distance 1 occurs 14 times: the arithmetic progression
+            // the screen exists to reject.
+            int[] ap1 = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 };
+            // the same multiplicity at a non-unit step, so a screen keyed on
+            // consecutive integers rather than on the spectrum fails here.
+            int[] ap35 = { 0, 35, 70, 105, 140, 175, 210, 245, 280, 315,
+                           350, 385, 420, 455, 490 };
+            // max multiplicity exactly 5 -- ACCEPTED, the boundary from below.
+            int[] b5 = { 0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515 };
+            // b5 with 135 replaced by 6: the run becomes {0..6}, multiplicity 6.
+            // A minimal pair with b5 -- one element carries it over the line.
+            int[] b6 = { 0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515 };
+            // The cyclic-fold discriminator: its run straddles zero
+            // (519..522, 0..2), so the true multiplicity is 6 and it must be
+            // rejected -- but computed WITHOUT min(d, r-d) the largest count is
+            // 5 and it would be accepted.  An implementation that dropped the
+            // fold passes every other case here and fails only this one.
+            int[] wrap = { 0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497,
+                           519, 520, 521, 522 };
+
+            int badAccept = 0, badReject = 0, wrapMissed = 0, keygenOk = 0;
+
+            // (a) accept-control, and the boundary from below.  Without it a
+            //     screen that rejects EVERYTHING scores a perfect pass below.
+            if (!Stern.qcmdpcKeyIsStrong(b5, b5)) badReject++;
+            // (b) the arithmetic progression.
+            if (Stern.qcmdpcKeyIsStrong(ap1, b5)) badAccept++;
+            // (c) the same multiplicity at a non-unit step.
+            if (Stern.qcmdpcKeyIsStrong(ap35, b5)) badAccept++;
+            // (d) the boundary from above.
+            if (Stern.qcmdpcKeyIsStrong(b6, b5)) badAccept++;
+            // (e) BOTH supports must be screened: a predicate testing sup0
+            //     twice passes (a)-(d) and fails exactly here.
+            if (Stern.qcmdpcKeyIsStrong(b5, b6)) badAccept++;
+            // (f) the cyclic-distance discriminator, counted on its own so a
+            //     failure names the cause rather than a total.
+            if (Stern.qcmdpcKeyIsStrong(wrap, b5)) wrapMissed++;
+
+            // What keygen PRODUCES must be what the screen ACCEPTS -- no pinned
+            // vector can assert that.
+            for (int i = 0; i < 4; i++) {
+                Stern.QcMdpcKeypair kp = Stern.qcmdpcKeygen(new java.security.SecureRandom());
+                if (Stern.qcmdpcKeyIsStrong(kp.sup0, kp.sup1)) keygenOk++;
+            }
+
+            if (badAccept != 0 || badReject != 0 || wrapMissed != 0 || keygenOk != 4) {
+                System.out.println("FAIL [32] qcmdpc_weak_key_screen (bad_accepts=" + badAccept
+                        + " bad_rejects=" + badReject + " cyclic_fold_misses=" + wrapMissed
+                        + " keygen_accepted=" + keygenOk + "/4)");
+                fails++;
+            } else {
+                System.out.println("PASS [32] qcmdpc_weak_key_screen");
             }
         }
 

@@ -565,6 +565,47 @@ oversight, since a supplied arithmetic-progression key fails its own decapsulati
 self-inflicted denial of service rather than a confidentiality break
 (`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` §4).
 
+**v6.0.5 — the `qcmdpc_key_is_strong` gap v6.0.4 found is CLOSED, in all four languages.**
+Test `[51]` in C/Go/Python's shared numbering and `[32]` in Java's own — the second four-way
+test absence this item has found and fixed, after `rnl_validate_m_blind`'s in v5.8.7.
+
+The vectors are **pinned, not sampled**, so every case asserts a known answer rather than a
+probable one, and each is exactly `QCMDPC_D = 15` elements because C's
+`qcmdpc_key_is_strong` takes a `QcMdpcPriv` whose support arrays are fixed at that width and
+could not be handed a shorter list.  Six cases: an accept-control that sits exactly **on**
+the threshold (so it is both the control and the boundary from below — without it a screen
+rejecting *everything* scores a perfect pass), the arithmetic progression the screen exists
+to reject, the same multiplicity at a **non-unit step** (so a screen keyed on consecutive
+integers rather than on the spectrum fails), the boundary from **above** as a minimal pair
+with the control — one element moved carries it across — an asymmetric pair that fails only
+if a predicate screens `sup0` twice, and the case that earns its keep:
+
+* **The cyclic-fold discriminator.**  A support whose run of consecutive positions straddles
+  zero (`519..522, 0..2`) has true multiplicity 6 and must be rejected, but computed without
+  `min(d, r-d)` its largest count is 5 and it is accepted.  An implementation that lost the
+  fold passes every other case here — and keygen keeps accepting its own output — so it is
+  counted on its own line rather than folded into a total.
+
+All four also assert that what keygen **produces** is what the screen **accepts**, which no
+pinned vector can.  Python keeps a local copy cross-checked against the shipped suite, as
+`[46]`-`[49]` do; C, Go and Java call theirs directly.
+
+**Verified against deliberate breaks in the SHIPPED code, not just the harness.**  Python's
+four (no cyclic fold, `sup0` screened twice, accept-everything, reject-everything) hit the
+local copy; C's, Go's and Java's three each (no cyclic fold, `sup0` twice, threshold 5 → 6)
+patch `herradura.h`, `herradura/herradura.go` and `Stern.java` themselves.  Every break
+failed, each on the counter it should: the fold break fires the cyclic-fold counter **alone**
+in all four, and leaves `keygen accepted` at full marks, which is exactly how quiet that
+regression would be in production.  One first attempt was invalid and is recorded as such —
+deleting C's fold line without widening `cnt[QCMDPC_R/2 + 1]` overflows the array, so that
+run proved nothing until the array was widened too.
+
+**SCOPE, before anyone extends this test.**  The screen covers **keygen only**.  No PEM
+decode path checks an imported key's spectrum, in any of the four languages, and that is a
+recorded position rather than an oversight: a supplied arithmetic-progression key fails its
+own decapsulations, which is a self-inflicted denial of service and not a confidentiality
+break (`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` §4).
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a

@@ -1668,6 +1668,7 @@ func main() {
 	testNlFscxV3Consumers()
 	testRnlMBlindGuard()
 	testHcredKkw()
+	testQcmdpcWeakKeyScreen()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -2139,6 +2140,95 @@ func testHcredKkw() {
 	fmt.Printf("    n=%d  verified=%d/%d  rejections missed=%s  "+
 		"(N=%d, M=%d, tau=%d)  [%s]\n\n",
 		nRun, okVerify, nRun, miss, nPar, m, tau, verdict)
+}
+
+// [51] The QC-MDPC weak-key screen (TODO #261).  QcMdpcKeyIsStrong rejects and
+// redraws any private polynomial whose cyclic distance spectrum has a
+// multiplicity above 5 -- the screen TODO #235 Part 1 added to make the entire
+// measured DFR tail unreachable from keygen.  Until TODO #261 it was UNTESTED IN
+// ALL FOUR LANGUAGES: it is called only from QcMdpcKeygen, so nothing in
+// CryptosuiteTests/, SelfTest.java or CliTest/ ever exercised it, and a screen
+// that accepted everything would have passed the entire repo -- the same
+// four-way absence #261 found for RnlValidateMBlind before it became test [49].
+//
+// SCOPE: the screen covers KEYGEN only.  No PEM decode path checks an imported
+// key's spectrum, in any language, and that is a recorded position rather than
+// an oversight -- a supplied arithmetic-progression key fails its own
+// decapsulations, a self-inflicted denial of service and not a confidentiality
+// break (SecurityProofsCode/qcmdpc_dfr_weak_keys.py section 4).
+//
+// The supports are PINNED, not sampled, so each case asserts a known answer
+// rather than a probable one, and every one is exactly QcMdpcD = 15 elements
+// because C's qcmdpc_key_is_strong takes a QcMdpcPriv whose support arrays are
+// fixed at that width.  qcSupWrap is the interesting one: its run of
+// consecutive positions straddles zero (519..522, 0..2), so its true
+// multiplicity is 6 and it must be rejected -- but computed WITHOUT the
+// min(d, r-d) cyclic fold the largest count is 5 and it would be accepted.  An
+// implementation that dropped the fold passes every other case and fails only
+// that one.
+var (
+	qcSupAP1  = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+	qcSupAP35 = []int{0, 35, 70, 105, 140, 175, 210, 245, 280, 315, 350, 385, 420, 455, 490}
+	// max multiplicity exactly 5 -- accepted, the boundary from below
+	qcSupB5 = []int{0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515}
+	// qcSupB5 with 135 replaced by 6: the run becomes {0..6}, multiplicity 6
+	qcSupB6 = []int{0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515}
+	// cyclic multiplicity 6, non-cyclic 5 -- the fold discriminator
+	qcSupWrap = []int{0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522}
+)
+
+func testQcmdpcWeakKeyScreen() {
+	fmt.Println("[51] QC-MDPC weak-key screen (distance spectrum)  [SECURITY]")
+	N := testRounds(50)
+	badAccept, badReject, nRun, wrapMissed := 0, 0, 0, 0
+	for i := 0; i < N; i++ {
+		nRun++
+		// (a) accept-control.  Without it a screen that rejects EVERYTHING
+		//     scores a perfect pass on (b)-(f).  qcSupB5 sits exactly on the
+		//     threshold, so this is also the boundary from below.
+		if !QcMdpcKeyIsStrong(qcSupB5, qcSupB5) {
+			badReject++
+		}
+		// (b) the arithmetic progression the screen exists to reject.
+		if QcMdpcKeyIsStrong(qcSupAP1, qcSupB5) {
+			badAccept++
+		}
+		// (c) the same multiplicity at a non-unit step.
+		if QcMdpcKeyIsStrong(qcSupAP35, qcSupB5) {
+			badAccept++
+		}
+		// (d) the boundary from above -- one element moved from (a).
+		if QcMdpcKeyIsStrong(qcSupB6, qcSupB5) {
+			badAccept++
+		}
+		// (e) BOTH supports must be screened.  A predicate testing sup0 twice,
+		//     or sup1 twice, passes (a)-(d) and fails exactly here.
+		if QcMdpcKeyIsStrong(qcSupB5, qcSupB6) {
+			badAccept++
+		}
+		// (f) the cyclic-distance discriminator, counted separately so a
+		//     failure names its cause instead of incrementing a total.
+		if QcMdpcKeyIsStrong(qcSupWrap, qcSupB5) {
+			wrapMissed++
+		}
+	}
+	// What keygen PRODUCES must be what the screen ACCEPTS -- no pinned vector
+	// can assert that.
+	keygenOK := 0
+	for i := 0; i < 8; i++ {
+		sup0, sup1, _, _, _ := QcMdpcKeygen(nil)
+		if QcMdpcKeyIsStrong(sup0, sup1) {
+			keygenOK++
+		}
+	}
+	ok := badAccept == 0 && badReject == 0 && wrapMissed == 0 && keygenOK == 8
+	verdict := "PASS"
+	if !ok {
+		verdict = "FAIL"
+	}
+	fmt.Printf("    n=%d  bad accepts=%d  bad rejects=%d  cyclic-fold misses=%d  "+
+		"keygen accepted=%d/8  [%s]\n\n",
+		nRun, badAccept, badReject, wrapMissed, keygenOK, verdict)
 }
 
 func testWeakKeyRejection() {

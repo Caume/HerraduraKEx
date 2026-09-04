@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.5] - 2026-09-04
+
+### TODO #261 (ongoing) — the QC-MDPC weak-key screen gets a test, in all four languages
+
+Closes the gap v6.0.4 found on its way past: `qcmdpc_key_is_strong` — the TODO #235 Part 1
+screen that makes the entire measured DFR tail unreachable from keygen — was called only
+from `qcmdpc_keygen` and exercised by nothing, anywhere. A screen that accepted everything
+would have passed the whole repo. This is the second four-way test absence this item has
+found and closed, after `rnl_validate_m_blind`'s in v5.8.7.
+
+Test `[51]` in C/Go/Python's shared numbering, `[32]` in Java's own.
+
+The supports are **pinned, not sampled**, so each case asserts a known answer rather than a
+probable one, and each is exactly `QCMDPC_D = 15` elements because C's counterpart takes a
+`QcMdpcPriv` whose arrays are fixed at that width. Six cases:
+
+- an **accept-control that sits exactly on the threshold**, so it serves as both the control
+  and the boundary from below — without it a screen that rejects *everything* scores a
+  perfect pass on the rest;
+- the arithmetic progression the screen exists to reject;
+- the same multiplicity at a **non-unit step**, so a screen keyed on consecutive integers
+  rather than on the distance spectrum fails here;
+- the boundary from **above**, a minimal pair with the control — one element moved carries it
+  across the line;
+- an asymmetric pair, which fails only if the predicate screens `sup0` twice;
+- **the cyclic-fold discriminator.** A support whose run straddles zero (`519..522, 0..2`)
+  has true multiplicity 6 and must be rejected, but computed without `min(d, r-d)` its
+  largest count is 5 and it is accepted. An implementation that lost the fold passes every
+  other case — and keygen keeps accepting its own output — so this one is counted on its own
+  line rather than folded into a total.
+
+All four also assert that what keygen **produces** is what the screen **accepts**, which no
+pinned vector can. Python keeps a local copy cross-checked against the shipped suite as
+`[46]`-`[49]` do; C, Go and Java call theirs directly.
+
+Verified against deliberate breaks in the **shipped code**, not just the harness: Python's
+four against the local copy, and three each (no cyclic fold, `sup0` screened twice, threshold
+5 → 6) patched into `herradura.h`, `herradura/herradura.go` and `Stern.java` themselves.
+Every break failed on the counter it should, and the fold break fires the cyclic-fold counter
+*alone* in all four while leaving `keygen accepted` at full marks — which is exactly how
+quiet that regression would be in production. One first attempt was invalid and is recorded
+as such: deleting C's fold line without widening `cnt[QCMDPC_R/2 + 1]` overflows the array,
+so that run proved nothing until the array was widened too.
+
+**Scope, before anyone extends this test:** the screen covers **keygen only**. No PEM decode
+path checks an imported key's spectrum, in any language, and that is a recorded position
+rather than an oversight — a supplied arithmetic-progression key fails its own
+decapsulations, a self-inflicted denial of service and not a confidentiality break
+(`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` §4).
+
 ## [6.0.4] - 2026-09-04
 
 ### TODO #261 (ongoing) — the input validators and the `haccum` family join the manifest
