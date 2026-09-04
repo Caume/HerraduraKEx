@@ -3294,6 +3294,136 @@ def test_hcred_kkw():
           f"[{'PASS' if ok else 'FAIL'}]\n")
 
 
+# Security test [51]: the QC-MDPC weak-key screen (TODO #261).
+# qcmdpc_key_is_strong rejects and redraws any private polynomial whose cyclic
+# distance spectrum has a multiplicity above QCMDPC_MAX_MULT = 5 -- the screen
+# TODO #235 Part 1 added to make the entire measured DFR tail unreachable from
+# keygen.  Until TODO #261 it was UNTESTED IN ALL FOUR LANGUAGES: it is called
+# only from qcmdpc_keygen, so nothing in CryptosuiteTests/, SelfTest.java or
+# CliTest/ ever exercised it, and a screen that accepted everything would have
+# passed the entire repo -- the same four-way absence #261 found for
+# rnl_validate_m_blind before it became test [49].
+#
+# SCOPE, so this test is not mistaken for a wider claim: the screen covers
+# KEYGEN only.  No PEM decode path checks an imported key's spectrum, in any
+# language, and that is a recorded position rather than an oversight -- a
+# supplied arithmetic-progression key fails its own decapsulations, a
+# self-inflicted denial of service and not a confidentiality break
+# (SecurityProofsCode/qcmdpc_dfr_weak_keys.py section 4).
+#
+# The supports below are PINNED, not sampled, so each case asserts a known
+# answer rather than a probable one.  Every one is exactly QCMDPC_D = 15
+# elements, because C's qcmdpc_key_is_strong takes a QcMdpcPriv whose support
+# arrays are fixed at that width and could not be handed a shorter list.
+#   AP1  : 0..14 -- distance 1 occurs 14 times.  The arithmetic progression the
+#          screen exists to reject.
+#   AP35 : step 35 -- the same multiplicity at a non-unit step, so a screen
+#          keyed on consecutive integers rather than on the spectrum fails here.
+#   B5   : max multiplicity exactly 5 -- ACCEPTED, and the boundary from below.
+#          Its {0..5} run contributes 5 at distance 1; the other nine points are
+#          placed so nothing else reaches 5.
+#   B6   : B5 with 135 replaced by 6 -- the run becomes {0..6}, distance 1 goes
+#          to 6, and it must be REJECTED.  A minimal pair with B5: one element
+#          moved carries it across the threshold.
+#   WRAP : the discriminator for the CYCLIC distance.  Its run straddles zero
+#          (519..522, 0..2), so the true multiplicity is 6 and it must be
+#          rejected -- but computed WITHOUT min(d, r-d) the largest count is 5
+#          and it would be accepted.  An implementation that forgot the cyclic
+#          fold passes every other case here and fails only this one.
+# As [46]-[49] do, this harness's own copy is cross-checked against the shipped
+# suite, since this file is standalone by design.
+# ---------------------------------------------------------------------------
+
+_QC_R_T        = 523        # _QCMDPC_R
+_QC_MAX_MULT_T = 5          # _QCMDPC_MAX_MULT
+
+_QC_SUP_AP1  = list(range(15))
+_QC_SUP_AP35 = [(35 * i) % _QC_R_T for i in range(15)]
+_QC_SUP_B5   = [0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515]
+_QC_SUP_B6   = [0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515]
+_QC_SUP_WRAP = [0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522]
+
+
+def _qc_max_mult_test(sup, r=_QC_R_T):
+    """Reference copy of the suite's distance-spectrum multiplicity."""
+    cnt = {}
+    sl = sorted(sup)
+    for i in range(len(sl)):
+        for j in range(i + 1, len(sl)):
+            d = (sl[j] - sl[i]) % r
+            d = min(d, r - d)
+            cnt[d] = cnt.get(d, 0) + 1
+    return max(cnt.values()) if cnt else 0
+
+
+def _qc_key_is_strong_test(sup0, sup1):
+    """Reference copy of the suite's qcmdpc_key_is_strong."""
+    return (_qc_max_mult_test(sup0) <= _QC_MAX_MULT_T and
+            _qc_max_mult_test(sup1) <= _QC_MAX_MULT_T)
+
+
+def test_qcmdpc_weak_key_screen():
+    print("[51] QC-MDPC weak-key screen (distance spectrum)  [SECURITY]")
+    s = _qc_key_is_strong_test
+    N = _iters(50)
+    bad_accept = bad_reject = n_run = 0
+    wrap_missed = 0
+
+    for _ in _trange(N):
+        n_run += 1
+        # (a) accept-control.  Without it a screen that rejects EVERYTHING
+        #     scores a perfect pass on (b)-(f).  B5 sits exactly on the
+        #     threshold, so this is also the boundary from below.
+        if not s(_QC_SUP_B5, _QC_SUP_B5):
+            bad_reject += 1
+        # (b) the arithmetic progression the screen exists to reject
+        if s(_QC_SUP_AP1, _QC_SUP_B5):
+            bad_accept += 1
+        # (c) the same multiplicity at a non-unit step
+        if s(_QC_SUP_AP35, _QC_SUP_B5):
+            bad_accept += 1
+        # (d) the boundary from above -- one element moved from (a)
+        if s(_QC_SUP_B6, _QC_SUP_B5):
+            bad_accept += 1
+        # (e) BOTH supports must be screened.  A predicate that tested sup0
+        #     twice, or sup1 twice, passes (a)-(d) and fails exactly here.
+        if s(_QC_SUP_B5, _QC_SUP_B6):
+            bad_accept += 1
+        # (f) the cyclic-distance discriminator: true multiplicity 6, but 5 if
+        #     min(d, r-d) is omitted.  Counted separately so a failure names
+        #     the cause instead of just incrementing a total.
+        if s(_QC_SUP_WRAP, _QC_SUP_B5):
+            wrap_missed += 1
+
+    # Cross-check this harness's copy against the shipped suite, on the pinned
+    # vectors and on a genuine keygen draw -- the latter also asserts that what
+    # keygen PRODUCES is what the screen ACCEPTS, which no pinned vector can.
+    drift = "n/a (suite not importable)"
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_qcs", _p)
+        _m = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+        mism = 0
+        for a in (_QC_SUP_AP1, _QC_SUP_AP35, _QC_SUP_B5, _QC_SUP_B6, _QC_SUP_WRAP):
+            for b in (_QC_SUP_B5, _QC_SUP_B6):
+                if _m.qcmdpc_key_is_strong(a, b) != s(a, b):
+                    mism += 1
+        sup0, sup1 = _m.qcmdpc_keygen()[:2]
+        if not (_m.qcmdpc_key_is_strong(sup0, sup1) and s(sup0, sup1)):
+            mism += 1
+        drift = str(mism)
+    except Exception as e:                      # noqa: BLE001 - reported, not raised
+        drift = f"n/a ({type(e).__name__})"
+
+    ok = (bad_accept == 0 and bad_reject == 0 and wrap_missed == 0 and drift == "0")
+    print(f"    n={n_run}  bad accepts={bad_accept}  bad rejects={bad_reject}  "
+          f"cyclic-fold misses={wrap_missed}  suite mismatches={drift}  "
+          f"[{'PASS' if ok else 'FAIL'}]\n")
+
+
 # Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
 # shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
 # so a 12-byte fpe context equal to twk's sector||bidx made them the identical
@@ -3754,6 +3884,7 @@ if __name__ == '__main__':
     test_nl_fscx_v3_consumers()
     test_rnl_m_blind_guard()
     test_hcred_kkw()
+    test_qcmdpc_weak_key_screen()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

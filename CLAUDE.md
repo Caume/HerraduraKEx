@@ -528,12 +528,19 @@ spec/                                                — machine-readable protoc
                                                       check_language_parity.py (TODO #261) is a
                                                       different axis: numbered-test [N] contiguity in
                                                       each of C/Go/Python/Java, set-alignment of
-                                                      C/Go/Python's shared [1]-[49] numbering, and a
+                                                      C/Go/Python's shared [1]-[51] numbering, and a
                                                       curated manifest of suite-internal (non-CLI)
                                                       primitives -- seeded with the HCRED-KKW gap the
                                                       item was filed over -- so a primitive with no
                                                       `--algo` tag can still be caught missing in a
-                                                      language.  check_docs_consistency.py (TODO #265)
+                                                      language.  A marker regex must match EXACTLY
+                                                      ONCE, not merely occur (TODO #261, v6.0.3):
+                                                      Java's entry is every herradurakex/*.java
+                                                      concatenated, so a bare method name like
+                                                      `public static boolean verify(` matches six
+                                                      classes and keeps passing after the one it
+                                                      guards is deleted.  Anchor new Java markers on
+                                                      the signature.  check_docs_consistency.py (TODO #265)
                                                       is the third axis, and the only one that reads
                                                       the NARRATIVE documents: README.md,
                                                       docs/INTRODUCTION.md and CHANGELOG.md restate
@@ -845,7 +852,27 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  cut-and-choose machinery and a second copy would be a new place for the very
 #  divergence it guards.  Java's counterpart is SelfTest.java's [31], where the
 #  tamper is a REBUILD rather than a poke because that port's proof fields are
-#  final)
+#  final.
+#  [51] is TODO #261's guard for the QC-MDPC weak-key screen
+#  (qcmdpc_key_is_strong), the TODO #235 Part 1 check that makes the measured
+#  DFR tail unreachable from keygen.  Another FOUR-WAY absence, the same shape
+#  as [49]'s: it is called only from qcmdpc_keygen, so nothing anywhere
+#  exercised it and a screen that accepted everything passed the whole repo.
+#  Its supports are PINNED rather than sampled, all at QCMDPC_D = 15 because
+#  C's qcmdpc_key_is_strong takes a fixed-width QcMdpcPriv, and the accept
+#  case sits exactly ON the threshold so it is both control and lower
+#  boundary.  The case that earns its keep is the CYCLIC-FOLD discriminator:
+#  a support whose run straddles zero has true multiplicity 6 but only 5 if
+#  min(d, r-d) is dropped, so an implementation that lost the fold passes
+#  every other case and fails just that one.  SCOPE, before anyone extends
+#  it: the screen covers KEYGEN only -- no PEM decode path checks an imported
+#  key's spectrum in any language, and that is a recorded position, not an
+#  oversight (an arithmetic-progression key fails its own decapsulations: a
+#  self-inflicted DoS, not a confidentiality break).  Python keeps a local
+#  copy cross-checked against the suite as [46]-[49] do; C/Go/Java call
+#  theirs directly.  All four also assert that what keygen PRODUCES the
+#  screen ACCEPTS, which no pinned vector can.  Java's counterpart is
+#  SelfTest.java's [32])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

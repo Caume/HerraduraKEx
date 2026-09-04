@@ -181,21 +181,189 @@ PRIMITIVES = {
         "python": r"^def hcred_prove_kkw\(",
         "java": r"public static HcredKkwProof proveKkw\(",
     },
+    "hcred-stmt-hash": {
+        # TODO #261 (v6.0.3), found while working #266. The statement digest
+        # HCRED binds a proof to: HFSCX-256 over (m_poly, C_poly, seed_H,
+        # syndrome, n, msg). BOTH hcred-zkboo and hcred-kkw call it, in all
+        # four languages -- 5 to 7 call sites each, including the credential
+        # issuance digest -- so the two entries above cover the two prove
+        # paths while leaving the one thing they agree on unguarded.
+        #
+        # It is the internal-derivation class this manifest exists for: no
+        # --algo tag reaches it, and a language that changed its field order,
+        # its length prefixes or its domain separator would still round-trip
+        # perfectly against ITSELF and fail only against the other three. That
+        # is not hypothetical here -- KAT/hcred_kkw.json (TODO #266) is a
+        # cross-language vector whose acceptance depends entirely on the four
+        # implementations hashing the statement identically, and the one
+        # divergence found while building it (C stores the syndrome in the
+        # reverse byte order of Python/Go's big-endian integer, un-reversed
+        # inside this very function) surfaced as C rejecting Python's
+        # transcript with nothing pointing at the cause.
+        #
+        # Java's is package-private where the other three are file-local or
+        # unexported; the regex matches the declaration as written rather
+        # than requiring a visibility the port has no reason to widen.
+        "c": r"static void hcred_stmt_hash\(",
+        "go": r"func hcredStmtHash\(",
+        "python": r"^def _hcred_stmt_hash\(",
+        "java": r"static byte\[\] stmtHash\(",
+    },
+    # The two verify counterparts, added in the same v6.0.3 pass and for the
+    # same reason the stmt-hash entry above exists: `hcred-zkboo` and
+    # `hcred-kkw` each named only their PROVE entry point, so half of each
+    # pair was guarded. Verify is the half that matters more -- a prover that
+    # disappears is a build error in its own language, while a verifier that
+    # drifts accepts or rejects the OTHER three languages' proofs, which is
+    # what KAT/hcred_kkw.json (TODO #266) is a vector for. One entry per
+    # direction, following hske-encrypt-masked / hske-decrypt-masked.
+    "hcred-zkboo-verify": {
+        "c": r"static int hcred_verify\(",
+        "go": r"func HcredVerify\(",
+        "python": r"^def hcred_verify\(",
+        # Anchored on the signature, not just the name: bare
+        # `public static boolean verify(` matches SIX classes (HpksT,
+        # SternRing, Wots, Xmss, ZkpNl as well as Hcred), and SUITE_FILES
+        # concatenates every *.java, so the loose form would have kept
+        # passing with Hcred.verify deleted outright. See the uniqueness
+        # check in check_primitives() below, which now fails on this class.
+        "java": r"public static boolean verify\(int\[\] mPoly, int\[\] cPoly, "
+                r"BigInteger seedH, BigInteger ySynd, Proof proof",
+    },
+    "hcred-kkw-verify": {
+        "c": r"static int hcred_verify_kkw\(",
+        "go": r"func HcredVerifyKkw\(",
+        "python": r"^def hcred_verify_kkw\(",
+        "java": r"public static boolean verifyKkw\(",
+    },
     # The next three entries are TODO #261's first pass at extending the
     # manifest beyond its hcred-kkw seed (SecurityProofs-*.md's 78.x
     # numbering). All were already at four-language parity except
     # fscx-revolve-masked, ported to Java in this pass.
     "haccum": {
         # Merkle accumulator (78.J): checks haccum_verify, the security-
-        # critical member of the leaf/node/root/prove/verify family — the
-        # other four move in lockstep with it in every language's history.
+        # critical member of the leaf/node/root/prove/verify family.
         # In Java it lives inside Xmss.java (its only caller) rather than
         # a standalone module, but is public (TODO #261) like the other
         # three languages' top-level functions.
+        #
+        # This entry used to justify naming only verify by saying "the other
+        # four move in lockstep with it in every language's history". v6.0.4
+        # tested that rather than inheriting it, because the identical
+        # assumption about hcred_prove/hcred_verify turned out to be wrong
+        # one entry above. Here it HOLDS -- all four members are at
+        # four-language parity, byte-identical in construction (leaf =
+        # 0x00||data, node = 0x01||left||right, right-padded with zero
+        # hashes to the next power of two, empty tree = 32 zero bytes; C
+        # reaches that last case without an explicit n == 0 guard and lands
+        # on the same answer) -- but they get their own entries below
+        # anyway, since "verified once in 2026" is not a guard.
         "c": r"static int haccum_verify\(",
         "go": r"func HaccumVerify\(",
         "python": r"^def haccum_verify\(",
         "java": r"public static boolean haccumVerify\(",
+    },
+    # ── TODO #261 (v6.0.4): the haccum family's other four members ───────
+    # Unlike the validators below, these ARE behaviourally covered already:
+    # CliTest/test_cross_lang_matrix.sh runs a 4x4 hpks-xmss sign/verify
+    # matrix, and an XMSS signature is a haccum root plus an authentication
+    # path, so all 16 ordered pairs agreeing means leaf, node, root and
+    # prove agree across the four languages. These entries are therefore
+    # regression guards in the ordinary sense, not gap-finders -- their
+    # value is that the matrix would report a haccum divergence as "hpks-xmss
+    # go-sign -> java-verify FAILED", pointing at the signature scheme
+    # rather than at the accumulator underneath it.
+    "haccum-leaf": {
+        "c": r"static inline void haccum_leaf\(",
+        "go": r"func HaccumLeaf\(",
+        "python": r"^def haccum_leaf\(",
+        "java": r"public static byte\[\] haccumLeaf\(",
+    },
+    "haccum-node": {
+        "c": r"static inline void haccum_node\(",
+        "go": r"func HaccumNode\(",
+        "python": r"^def haccum_node\(",
+        "java": r"public static byte\[\] haccumNode\(",
+    },
+    "haccum-root": {
+        "c": r"static void haccum_root\(",
+        "go": r"func HaccumRoot\(",
+        "python": r"^def haccum_root\(",
+        "java": r"public static byte\[\] haccumRoot\(",
+    },
+    "haccum-prove": {
+        "c": r"static uint8_t \*haccum_prove\(",
+        "go": r"func HaccumProve\(",
+        "python": r"^def haccum_prove\(",
+        "java": r"public static List<byte\[\]> haccumProve\(",
+    },
+    # ── TODO #261 (v6.0.4): the three input validators ───────────────────
+    # These are the manifest's sharpest case, and the reason to prefer them
+    # over the rest of the unguarded sweep. A validator only ever REJECTS
+    # inputs that a correct test never produces, so its absence is invisible
+    # to every behavioural test in the repo: delete gf_pub_is_valid from one
+    # language and `CliTest/test_cross_lang_matrix.sh`, the KAT vectors and
+    # all 181 numbered tests still pass, because every artifact they exchange
+    # is well-formed by construction. `spec/generate_spec.py --check` cannot
+    # see them either -- no `--algo` tag reaches a validator. A manifest entry
+    # is the only mechanical guard available for this class.
+    #
+    # All three were confirmed at four-language parity in this pass on
+    # BEHAVIOUR, not just presence: same predicate, same thresholds
+    # (QCMDPC_MAX_MULT = 5 in all four; delta(B) in {0, 2^(n-1)} in all four).
+    "gf-pub-is-valid": {
+        # Rejects the additive zero and the multiplicative identity as a peer
+        # GF(2^n)* public element -- pub = 1 makes pub^e == 1 for every e, so
+        # an attacker-chosen (s, R = g^s) verifies against any message under
+        # HPKS, and HKEX-GF/HPKE collapse likewise.
+        #
+        # One representational difference, deliberately not flattened: Java
+        # masks to N bits first (BigInteger is unbounded where the other three
+        # hold an n-bit BitArray), which makes it strictly stricter -- an
+        # over-wide value congruent to 1 is rejected there and would be
+        # accepted by the others if one could ever be constructed. The regexes
+        # check the function, not the arithmetic; nothing here depends on the
+        # difference.
+        "c": r"static int gf_pub_is_valid\(",
+        "go": r"func GfPubIsValid\(",
+        "python": r"^def gf_pub_is_valid\(",
+        "java": r"public static boolean gfPubIsValid\(",
+    },
+    "nl-v2-key-is-valid": {
+        # Rejects NL-FSCX v2 keys whose permutation degenerates to affine,
+        # i.e. delta(B) in {0, 2^(n-1)} -- an exact characterisation of the
+        # AFFINE class only, not of every differentially weak key (TODO #253
+        # found a wider class this deliberately does not screen). C fixes the
+        # width at 256 where Go carries b.size; that is the same
+        # compile-time-vs-runtime split TODO #266 recorded for HCRED_N, and
+        # is harmless here because C's whole suite is 256-bit.
+        "c": r"static int nl_v2_key_is_valid\(",
+        "go": r"func NlV2KeyIsValid\(",
+        "python": r"^def nl_v2_key_is_valid\(",
+        "java": r"public static boolean nlV2KeyIsValid\(",
+    },
+    "qcmdpc-key-is-strong": {
+        # QC-MDPC weak-key screen (TODO #235 Part 1): rejects and redraws any
+        # private polynomial whose distance spectrum exceeds multiplicity 5,
+        # making the entire measured DFR tail unreachable from keygen.
+        #
+        # SCOPE, so nobody "completes" this by accident: it screens KEYGEN
+        # only. Nothing in the PEM decode path checks an IMPORTED key's
+        # spectrum, in any of the four languages, and that is a recorded
+        # position rather than an oversight -- a supplied arithmetic-
+        # progression key fails its own decapsulations, which is a
+        # self-inflicted denial of service and not a confidentiality break
+        # (SecurityProofsCode/qcmdpc_dfr_weak_keys.py §4).
+        #
+        # It is also the one entry in this group with NO test behind it in
+        # ANY language -- a four-way absence of exactly the shape v5.8.7
+        # found for rnl_validate_m_blind before it became test [49]/[27].
+        # This entry guards that the function exists; nothing yet guards that
+        # it still screens correctly.
+        "c": r"static int qcmdpc_key_is_strong\(",
+        "go": r"func QcMdpcKeyIsStrong\(",
+        "python": r"^def qcmdpc_key_is_strong\(",
+        "java": r"public static boolean qcmdpcKeyIsStrong\(",
     },
     "ratchet": {
         # Forward-secret ratchet (78.C): checks ratchet_advance, the
@@ -374,17 +542,33 @@ def check_primitives(errors):
                     )
                 continue
             checked += 1
-            if not re.search(pattern, file_text[lang], re.M):
+            hits = len(re.findall(pattern, file_text[lang], re.M))
+            paths = SUITE_FILES[lang]
+            paths = [paths] if isinstance(paths, str) else paths
+            rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
+            if hits == 0:
                 if reason:
                     continue
-                paths = SUITE_FILES[lang]
-                paths = [paths] if isinstance(paths, str) else paths
-                rel = ", ".join(os.path.relpath(p, REPO) for p in paths)
                 errors.append(
                     f"'{pid}': marker {pattern!r} not found in {lang}'s suite file(s) ({rel}) — "
                     f"either the function was renamed/removed (update PRIMITIVES to match) or "
                     f"this is a real cross-language gap (port it, or add an 'acknowledged' "
                     f"reason to the PRIMITIVES entry, the same way SECURITY.md records one)"
+                )
+            elif hits > 1:
+                # A marker must IDENTIFY one function, not merely occur. This
+                # is not pedantry: Java's suite is many files concatenated
+                # here (see SUITE_FILES), so a marker written as a bare method
+                # name — `public static boolean verify(` matches six classes —
+                # keeps passing after the function it was meant to guard is
+                # deleted, which is precisely the silent gap this manifest
+                # exists to prevent. Added in v6.0.3 after hcred-zkboo-verify
+                # was written that way; every other entry was already unique.
+                errors.append(
+                    f"'{pid}': marker {pattern!r} matches {hits} places in {lang}'s suite "
+                    f"file(s) ({rel}) — a marker must identify exactly one function, or it "
+                    f"still passes once that function is gone. Anchor it on the signature "
+                    f"(argument types) rather than the bare name"
                 )
     return checked
 

@@ -5755,6 +5755,110 @@ int main(int argc, char *argv[])
 
     fclose(urnd_fp);
 
+    /* Security test [51]: the QC-MDPC weak-key screen (TODO #261).
+     *
+     * qcmdpc_key_is_strong rejects and redraws any private polynomial whose
+     * cyclic distance spectrum has a multiplicity above QCMDPC_MAX_MULT = 5 --
+     * the screen TODO #235 Part 1 added to make the entire measured DFR tail
+     * unreachable from keygen.  Until TODO #261 it was UNTESTED IN ALL FOUR
+     * LANGUAGES: it is called only from qcmdpc_keygen, so nothing in
+     * CryptosuiteTests/, SelfTest.java or CliTest/ ever exercised it, and a
+     * screen that accepted everything would have passed the entire repo -- the
+     * same four-way absence #261 found for rnl_validate_m_blind before it
+     * became test [49].
+     *
+     * SCOPE: the screen covers KEYGEN only.  No PEM decode path checks an
+     * imported key's spectrum, in any language, and that is a recorded position
+     * rather than an oversight -- a supplied arithmetic-progression key fails
+     * its own decapsulations, a self-inflicted denial of service and not a
+     * confidentiality break (SecurityProofsCode/qcmdpc_dfr_weak_keys.py §4).
+     *
+     * The supports are PINNED, not sampled, so each case asserts a known answer
+     * rather than a probable one.  Each is exactly QCMDPC_D = 15 elements,
+     * which is also what QcMdpcPriv's arrays hold.
+     *   (a) accept-control: qc_b5 has max multiplicity exactly 5, so it is both
+     *       the control (a screen rejecting EVERYTHING fails here) and the
+     *       boundary from below.
+     *   (b) qc_ap1: 0..14, distance 1 occurs 14 times -- the arithmetic
+     *       progression the screen exists to reject.
+     *   (c) qc_ap35: the same multiplicity at a non-unit step, so a screen
+     *       keyed on consecutive integers rather than on the spectrum fails.
+     *   (d) qc_b6: qc_b5 with 135 replaced by 6, making the run {0..6} and the
+     *       multiplicity 6 -- the boundary from above, one element away from (a).
+     *   (e) both supports must be screened: a predicate testing sup0 twice
+     *       passes (a)-(d) and fails only here.
+     *   (f) qc_wrap: its run straddles zero (519..522, 0..2), so the true
+     *       multiplicity is 6 and it must be rejected -- but computed WITHOUT
+     *       the min(d, r-d) cyclic fold the largest count is 5 and it would be
+     *       accepted.  Counted separately so a failure names the cause. */
+    {
+        static const uint16_t qc_ap1[QCMDPC_D] =
+            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 };
+        static const uint16_t qc_ap35[QCMDPC_D] =
+            { 0, 35, 70, 105, 140, 175, 210, 245, 280, 315, 350, 385, 420, 455, 490 };
+        static const uint16_t qc_b5[QCMDPC_D] =
+            { 0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515 };
+        static const uint16_t qc_b6[QCMDPC_D] =
+            { 0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515 };
+        static const uint16_t qc_wrap[QCMDPC_D] =
+            { 0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522 };
+        int N = g_rounds > 0 ? g_rounds : 50, i;
+        int bad_accept = 0, bad_reject = 0, wrap_missed = 0, keygen_ok = 0;
+        static QcMdpcPriv qp;
+
+        printf("[51] QC-MDPC weak-key screen (distance spectrum)  [SECURITY]\n");
+        for (i = 0; i < N; i++) {
+            /* (a) accept-control, and the boundary from below */
+            memcpy(qp.sup0, qc_b5, sizeof qc_b5);
+            memcpy(qp.sup1, qc_b5, sizeof qc_b5);
+            if (!qcmdpc_key_is_strong(&qp)) bad_reject++;
+
+            /* (b) the arithmetic progression */
+            memcpy(qp.sup0, qc_ap1, sizeof qc_ap1);
+            if (qcmdpc_key_is_strong(&qp)) bad_accept++;
+
+            /* (c) the same multiplicity at a non-unit step */
+            memcpy(qp.sup0, qc_ap35, sizeof qc_ap35);
+            if (qcmdpc_key_is_strong(&qp)) bad_accept++;
+
+            /* (d) the boundary from above */
+            memcpy(qp.sup0, qc_b6, sizeof qc_b6);
+            if (qcmdpc_key_is_strong(&qp)) bad_accept++;
+
+            /* (e) both supports screened, not just sup0 */
+            memcpy(qp.sup0, qc_b5, sizeof qc_b5);
+            memcpy(qp.sup1, qc_b6, sizeof qc_b6);
+            if (qcmdpc_key_is_strong(&qp)) bad_accept++;
+
+            /* (f) the cyclic-fold discriminator */
+            memcpy(qp.sup0, qc_wrap, sizeof qc_wrap);
+            memcpy(qp.sup1, qc_b5,   sizeof qc_b5);
+            if (qcmdpc_key_is_strong(&qp)) wrap_missed++;
+        }
+
+        /* What keygen PRODUCES must be what the screen ACCEPTS -- no pinned
+         * vector can assert that. */
+        {
+            QcMdpcPrf  kprf;
+            QcMdpcPub  kpub;
+            uint8_t    kseed[KEYBYTES];
+            int k;
+            for (k = 0; k < 8; k++) {
+                int b;
+                for (b = 0; b < KEYBYTES; b++) kseed[b] = (uint8_t)(rand() & 0xFF);
+                qcprf_init(&kprf, kseed);
+                qcmdpc_keygen(&qp, &kpub, &kprf);
+                if (qcmdpc_key_is_strong(&qp)) keygen_ok++;
+            }
+        }
+
+        printf("    n=%d  bad accepts=%d  bad rejects=%d  cyclic-fold misses=%d  "
+               "keygen accepted=%d/8  [%s]\n\n",
+               N, bad_accept, bad_reject, wrap_missed, keygen_ok,
+               (bad_accept == 0 && bad_reject == 0 && wrap_missed == 0 &&
+                keygen_ok == 8) ? "PASS" : "FAIL");
+    }
+
     /* Failure gate (TODO #233).  Return non-zero if any check reported
      * [FAIL], so that `native-c` can actually fail.  There is no allow-list:
      * the banner above used to describe [4] "Bit-frequency bias" as an

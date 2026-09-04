@@ -2,6 +2,153 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.5] - 2026-09-04
+
+### TODO #261 (ongoing) — the QC-MDPC weak-key screen gets a test, in all four languages
+
+Closes the gap v6.0.4 found on its way past: `qcmdpc_key_is_strong` — the TODO #235 Part 1
+screen that makes the entire measured DFR tail unreachable from keygen — was called only
+from `qcmdpc_keygen` and exercised by nothing, anywhere. A screen that accepted everything
+would have passed the whole repo. This is the second four-way test absence this item has
+found and closed, after `rnl_validate_m_blind`'s in v5.8.7.
+
+Test `[51]` in C/Go/Python's shared numbering, `[32]` in Java's own.
+
+The supports are **pinned, not sampled**, so each case asserts a known answer rather than a
+probable one, and each is exactly `QCMDPC_D = 15` elements because C's counterpart takes a
+`QcMdpcPriv` whose arrays are fixed at that width. Six cases:
+
+- an **accept-control that sits exactly on the threshold**, so it serves as both the control
+  and the boundary from below — without it a screen that rejects *everything* scores a
+  perfect pass on the rest;
+- the arithmetic progression the screen exists to reject;
+- the same multiplicity at a **non-unit step**, so a screen keyed on consecutive integers
+  rather than on the distance spectrum fails here;
+- the boundary from **above**, a minimal pair with the control — one element moved carries it
+  across the line;
+- an asymmetric pair, which fails only if the predicate screens `sup0` twice;
+- **the cyclic-fold discriminator.** A support whose run straddles zero (`519..522, 0..2`)
+  has true multiplicity 6 and must be rejected, but computed without `min(d, r-d)` its
+  largest count is 5 and it is accepted. An implementation that lost the fold passes every
+  other case — and keygen keeps accepting its own output — so this one is counted on its own
+  line rather than folded into a total.
+
+All four also assert that what keygen **produces** is what the screen **accepts**, which no
+pinned vector can. Python keeps a local copy cross-checked against the shipped suite as
+`[46]`-`[49]` do; C, Go and Java call theirs directly.
+
+Verified against deliberate breaks in the **shipped code**, not just the harness: Python's
+four against the local copy, and three each (no cyclic fold, `sup0` screened twice, threshold
+5 → 6) patched into `herradura.h`, `herradura/herradura.go` and `Stern.java` themselves.
+Every break failed on the counter it should, and the fold break fires the cyclic-fold counter
+*alone* in all four while leaving `keygen accepted` at full marks — which is exactly how
+quiet that regression would be in production. One first attempt was invalid and is recorded
+as such: deleting C's fold line without widening `cnt[QCMDPC_R/2 + 1]` overflows the array,
+so that run proved nothing until the array was widened too.
+
+**Scope, before anyone extends this test:** the screen covers **keygen only**. No PEM decode
+path checks an imported key's spectrum, in any language, and that is a recorded position
+rather than an oversight — a supplied arithmetic-progression key fails its own
+decapsulations, a self-inflicted denial of service and not a confidentiality break
+(`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` §4).
+
+## [6.0.4] - 2026-09-04
+
+### TODO #261 (ongoing) — the input validators and the `haccum` family join the manifest
+
+Seven more `PRIMITIVES` entries, chosen over the other 27 unguarded candidates because these
+two groups test the manifest's own premises. They turn out to be opposite cases.
+
+**The `haccum` lockstep assumption holds — tested, not inherited.** The `haccum` entry
+guarded only `haccum_verify`, justified by "the other four move in lockstep with it in every
+language's history". That is the same reasoning that had left `hcred_verify` unguarded, and
+v6.0.3 showed it wrong there, so it was re-checked rather than trusted. Here it survives:
+`haccum_leaf` / `_node` / `_root` / `_prove` are at four-language parity and byte-identical
+in construction — leaf `0x00||data`, node `0x01||left||right`, right-padded with zero hashes
+to the next power of two, empty tree = 32 zero bytes (C reaches that last case with no
+explicit `n == 0` guard and lands on the same answer). Entries added anyway; "verified once
+in 2026" is not a guard.
+
+These are also the first entries added that were **already behaviourally covered**:
+`CliTest/test_cross_lang_matrix.sh` runs a 4×4 `hpks-xmss` sign/verify matrix, and an XMSS
+signature *is* a `haccum` root plus an authentication path, so 16 passing ordered pairs
+already prove leaf/node/root/prove agree. Their value is diagnostic — the matrix reports a
+`haccum` divergence as "`hpks-xmss` go-sign → java-verify FAILED", pointing at the signature
+scheme rather than the accumulator underneath it.
+
+**The three validators are the opposite, and are the manifest's sharpest case.** A validator
+only ever *rejects* inputs that a correct test never produces, so its absence is invisible to
+every behavioural test in the repo: delete `gf_pub_is_valid` from one language and the
+cross-language matrix, the KAT vectors and all 181 numbered tests still pass, because every
+artifact they exchange is well-formed by construction. `spec/generate_spec.py --check` cannot
+see them either — no `--algo` tag reaches a validator. A manifest entry is the only
+mechanical guard this class can have. All three were checked on behaviour, not just presence,
+and agree in all four languages (`QCMDPC_MAX_MULT = 5` with the same multiplicity predicate;
+`delta(B) ∈ {0, 2^(n-1)}` with the same rejection).
+
+Two differences recorded rather than flattened, neither a defect: Java's `gfPubIsValid` masks
+to `N` bits first (`BigInteger` is unbounded where the other three hold an n-bit `BitArray`),
+making it strictly *stricter* on an over-wide input; and C fixes `nl_v2_key_is_valid`'s width
+at 256 where Go carries `b.size` — the same compile-time-vs-runtime split TODO #266 recorded
+for `HCRED_N`, harmless because C's whole suite is 256-bit.
+
+`PRIMITIVES` is now 27 entries / 108 language-markers, up from 20 / 80. All 28 new markers
+verified by renaming each function in turn — every one caught on its own entry and no other.
+
+**Found on the way, not fixed here:** `qcmdpc_key_is_strong` — the QC-MDPC weak-key screen
+that makes the measured DFR tail unreachable from keygen (TODO #235 Part 1) — has **no test
+in any of the four languages**. It is called only from `qcmdpc_keygen`, and nothing in
+`CryptosuiteTests/`, `SelfTest.java` or `CliTest/` exercises it. A four-way absence of
+exactly the shape v5.8.7 found for `rnl_validate_m_blind` before it became test `[49]`/`[27]`,
+and the same argument applies: a screen that accepted everything would pass every existing
+test. Recorded in TODO #261 with its intended shape and the scope caveat it needs.
+
+## [6.0.3] - 2026-09-04
+
+### TODO #261 (ongoing) — `hcred_stmt_hash` joins the parity manifest, and the manifest learns to bind
+
+Picked up from TODO #266, which flagged the gap on its way out. `hcred_stmt_hash` is the
+statement digest both HCRED prove paths bind to — `HFSCX-256(m_poly, C_poly, seed_H,
+syndrome, n, msg)`, 5–7 call sites per language including the credential-issuance digest —
+and `spec/check_language_parity.py`'s `PRIMITIVES` manifest named the two prove entry points
+while leaving the one thing they agree on unguarded. No `--algo` tag reaches it, so
+`generate_spec.py --check` cannot see it by construction; a language that changed its field
+order, length prefixes or domain separator would round-trip perfectly against *itself* and
+fail only against the other three. `KAT/hcred_kkw.json`'s acceptance rests entirely on the
+four hashing the statement identically, and the one divergence found while building that
+vector — C stores the syndrome in the reverse byte order of Python/Go's big-endian integer,
+un-reversed inside this very function — surfaced as C rejecting Python's transcript with
+nothing pointing at the cause. All four are at parity; the entry is the regression guard.
+
+Two further findings, neither of them what was being looked for:
+
+- **`hcred_verify` / `hcred_verify_kkw` were unguarded as well** — the `hcred-zkboo` and
+  `hcred-kkw` entries each named only their prove side. Verify is the half that matters
+  more: a prover that disappears is a build error in its own language, while a verifier that
+  drifts accepts or rejects *the other three languages'* proofs. Two entries added, one per
+  direction, following `hske-encrypt-masked`/`hske-decrypt-masked`.
+- **A marker could pass while the function it guarded was deleted** — a hole in the
+  mechanism, not in the suite. `SUITE_FILES["java"]` concatenates every
+  `bindings/java/herradurakex/*.java`, and the check was `re.search` — presence anywhere in
+  the concatenation. A marker written as a bare method name therefore guards nothing:
+  `public static boolean verify(` matches **six** classes (`HpksT`, `SternRing`, `Wots`,
+  `Xmss`, `ZkpNl` and `Hcred`), and with `Hcred.verify` deleted outright 5 matches remain
+  and the old semantics still return `True`. `check_primitives` now requires **exactly one**
+  match, reporting the count and the files when it finds more; the Java marker is anchored on
+  the signature. All 17 pre-existing entries were audited against the new rule first and
+  every one was already unique — this closes a latent trap for future entries, not a live
+  false pass.
+
+`PRIMITIVES` is now 20 entries / 80 language-markers, up from 17 / 68. Verified against four
+deliberate breaks: the loose marker (ambiguity error, files listed), the loose marker with
+the function deleted (the blind spot, shown passing under the old semantics and failing under
+the new), and a rename of each of the 12 new language-markers in turn — each caught on its
+own entry and no other. `CLAUDE.md`'s stale `[1]-[49]` corrected to `[1]-[50]` (TODO #266
+added `[50]`) and its parity-checker note now states the exactly-once rule.
+
+TODO #261 stays **OPEN**: extending `PRIMITIVES` to the suite-internal primitives it still
+does not name remains the only outstanding work.
+
 ## [6.0.2] - 2026-09-04
 
 ### TODO #266 (DONE) — HCRED-KKW gets a KAT and numbered tests in all four languages
