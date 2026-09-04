@@ -2,6 +2,57 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.4] - 2026-09-04
+
+### TODO #261 (ongoing) — the input validators and the `haccum` family join the manifest
+
+Seven more `PRIMITIVES` entries, chosen over the other 27 unguarded candidates because these
+two groups test the manifest's own premises. They turn out to be opposite cases.
+
+**The `haccum` lockstep assumption holds — tested, not inherited.** The `haccum` entry
+guarded only `haccum_verify`, justified by "the other four move in lockstep with it in every
+language's history". That is the same reasoning that had left `hcred_verify` unguarded, and
+v6.0.3 showed it wrong there, so it was re-checked rather than trusted. Here it survives:
+`haccum_leaf` / `_node` / `_root` / `_prove` are at four-language parity and byte-identical
+in construction — leaf `0x00||data`, node `0x01||left||right`, right-padded with zero hashes
+to the next power of two, empty tree = 32 zero bytes (C reaches that last case with no
+explicit `n == 0` guard and lands on the same answer). Entries added anyway; "verified once
+in 2026" is not a guard.
+
+These are also the first entries added that were **already behaviourally covered**:
+`CliTest/test_cross_lang_matrix.sh` runs a 4×4 `hpks-xmss` sign/verify matrix, and an XMSS
+signature *is* a `haccum` root plus an authentication path, so 16 passing ordered pairs
+already prove leaf/node/root/prove agree. Their value is diagnostic — the matrix reports a
+`haccum` divergence as "`hpks-xmss` go-sign → java-verify FAILED", pointing at the signature
+scheme rather than the accumulator underneath it.
+
+**The three validators are the opposite, and are the manifest's sharpest case.** A validator
+only ever *rejects* inputs that a correct test never produces, so its absence is invisible to
+every behavioural test in the repo: delete `gf_pub_is_valid` from one language and the
+cross-language matrix, the KAT vectors and all 181 numbered tests still pass, because every
+artifact they exchange is well-formed by construction. `spec/generate_spec.py --check` cannot
+see them either — no `--algo` tag reaches a validator. A manifest entry is the only
+mechanical guard this class can have. All three were checked on behaviour, not just presence,
+and agree in all four languages (`QCMDPC_MAX_MULT = 5` with the same multiplicity predicate;
+`delta(B) ∈ {0, 2^(n-1)}` with the same rejection).
+
+Two differences recorded rather than flattened, neither a defect: Java's `gfPubIsValid` masks
+to `N` bits first (`BigInteger` is unbounded where the other three hold an n-bit `BitArray`),
+making it strictly *stricter* on an over-wide input; and C fixes `nl_v2_key_is_valid`'s width
+at 256 where Go carries `b.size` — the same compile-time-vs-runtime split TODO #266 recorded
+for `HCRED_N`, harmless because C's whole suite is 256-bit.
+
+`PRIMITIVES` is now 27 entries / 108 language-markers, up from 20 / 80. All 28 new markers
+verified by renaming each function in turn — every one caught on its own entry and no other.
+
+**Found on the way, not fixed here:** `qcmdpc_key_is_strong` — the QC-MDPC weak-key screen
+that makes the measured DFR tail unreachable from keygen (TODO #235 Part 1) — has **no test
+in any of the four languages**. It is called only from `qcmdpc_keygen`, and nothing in
+`CryptosuiteTests/`, `SelfTest.java` or `CliTest/` exercises it. A four-way absence of
+exactly the shape v5.8.7 found for `rnl_validate_m_blind` before it became test `[49]`/`[27]`,
+and the same argument applies: a screen that accepted everything would pass every existing
+test. Recorded in TODO #261 with its intended shape and the scope caveat it needs.
+
 ## [6.0.3] - 2026-09-04
 
 ### TODO #261 (ongoing) — `hcred_stmt_hash` joins the parity manifest, and the manifest learns to bind

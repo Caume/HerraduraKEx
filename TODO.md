@@ -512,6 +512,59 @@ Two further findings, neither of them the thing that was being looked for:
   each caught on its own entry and no other.  Also corrected `CLAUDE.md`'s stale
   "`[1]-[49]`" (TODO #266 added `[50]`).
 
+**v6.0.4 — the validators and the `haccum` family: 7 entries, and the two clusters turn out
+to be opposite cases.**  The next increment of the sweep, chosen over the other 27 unguarded
+candidates because these two groups test the manifest's own premises.
+
+* **The `haccum` lockstep assumption HOLDS — tested, not inherited.**  The `haccum` entry
+  guarded only `haccum_verify`, justified by "the other four move in lockstep with it in
+  every language's history".  That is the same reasoning that had left `hcred_verify`
+  unguarded, and v6.0.3 showed it wrong there, so it was re-checked rather than trusted.
+  Here it survives: `haccum_leaf`/`_node`/`_root`/`_prove` are at four-language parity and
+  byte-identical in construction (leaf `0x00||data`, node `0x01||left||right`, right-padded
+  with zero hashes to the next power of two, empty tree = 32 zero bytes — C reaches that
+  last case with no explicit `n == 0` guard and lands on the same answer).  Entries added
+  anyway: "verified once in 2026" is not a guard.
+* **They are also the first entries added that were ALREADY behaviourally covered.**
+  `CliTest/test_cross_lang_matrix.sh` runs a 4×4 `hpks-xmss` sign/verify matrix, and an XMSS
+  signature *is* a `haccum` root plus an authentication path, so 16 passing ordered pairs
+  already prove leaf/node/root/prove agree across the four.  Their value is diagnostic
+  rather than detective: the matrix reports a `haccum` divergence as "`hpks-xmss` go-sign →
+  java-verify FAILED", pointing at the signature scheme instead of the accumulator under it.
+* **The three validators are the opposite, and are the manifest's sharpest case.**  A
+  validator only ever REJECTS inputs a correct test never produces, so its absence is
+  invisible to every behavioural test in the repo — delete `gf_pub_is_valid` from one
+  language and the cross-language matrix, the KAT vectors and all 181 numbered tests still
+  pass, because every artifact they exchange is well-formed by construction.
+  `generate_spec.py --check` cannot see them either, no `--algo` tag reaching a validator.
+  A manifest entry is the only mechanical guard this class can have.  All three were checked
+  on BEHAVIOUR, not just presence, and agree in all four: `QCMDPC_MAX_MULT = 5` and the same
+  multiplicity predicate; `delta(B) ∈ {0, 2^(n-1)}` and the same rejection.
+
+Two differences recorded rather than flattened, neither a defect: Java's `gfPubIsValid`
+masks to `N` bits first (`BigInteger` is unbounded where the other three hold an n-bit
+`BitArray`), making it strictly *stricter* on an over-wide input; and C fixes
+`nl_v2_key_is_valid`'s width at 256 where Go carries `b.size`, the same
+compile-time-vs-runtime split TODO #266 recorded for `HCRED_N`, harmless because C's whole
+suite is 256-bit.
+
+`PRIMITIVES` is now 27 entries / 108 markers, up from 20 / 80.  All 28 new markers verified
+by renaming each function in turn — every one caught on its own entry and no other.
+
+**Found on the way, NOT fixed here — `qcmdpc_key_is_strong` has no test in any language.**
+The QC-MDPC weak-key screen (TODO #235 Part 1, the thing that makes the measured DFR tail
+unreachable from keygen) is called only from `qcmdpc_keygen`, in all four suites, and
+nothing in `CryptosuiteTests/`, `SelfTest.java` or `CliTest/` exercises it.  A four-way test
+absence — precisely the shape v5.8.7 found for `rnl_validate_m_blind` before it became test
+`[49]`/`[27]`, and the same argument applies: a screen that accepted everything would pass
+every existing test.  It needs the same treatment (accept-control plus multiplicity cases
+either side of the threshold, `[51]` in C/Go/Python's shared numbering and `[32]` in Java's).
+Note the deliberate SCOPE before writing it: the screen covers KEYGEN only, and the PEM
+decode path checks no imported key's spectrum in any language — a recorded position, not an
+oversight, since a supplied arithmetic-progression key fails its own decapsulations, a
+self-inflicted denial of service rather than a confidentiality break
+(`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` §4).
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
@@ -519,7 +572,7 @@ one-time read of the source tree, so it stays true.  The numbered-test half is f
 **The CLI-surface half is now fully met too**: as of v6.0.0 all four languages dispatch all
 29 `--algo` tags, so every cell is FILLED rather than acknowledged, and `spec/`'s
 `cli_support` column is derived from each CLI's own dispatch source rather than curated.
-The primitive-manifest half is met only for its current 20 entries — extending `PRIMITIVES`
+The primitive-manifest half is met only for its current 27 entries — extending `PRIMITIVES`
 to the suite-internal (non-CLI) primitives it does not yet name is what keeps this item
 open, and is the only remaining work.
 
