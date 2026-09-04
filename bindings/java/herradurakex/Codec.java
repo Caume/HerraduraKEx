@@ -78,6 +78,9 @@ public final class Codec {
     public static final String PEM_ZKP_NL_PRIV = "HERRADURA ZKP-NL PRIVATE KEY";
     public static final String PEM_ZKP_NL_PUB = "HERRADURA ZKP-NL PUBLIC KEY";
     public static final String PEM_ZKP_NL_PROOF = "HERRADURA ZKP-NL PROOF";
+    // TODO #261 (v6.0.0): the labels the Java CLI's newly-ported tags need.
+    public static final String PEM_ZKP_NL_PP_SIG = "HERRADURA ZKP-NL-PP SIGNATURE";
+    public static final String PEM_HYBRID_RESPONSE = "HERRADURA HYBRID-RNL-STERN RESPONSE";
 
     // -----------------------------------------------------------------
     // Base64 (76-char lines, matching Python base64.encodebytes)
@@ -637,6 +640,332 @@ public final class Codec {
     }
 
     /** Encodes an HFSCX-256 digest: SEQUENCE(digest as 32-byte INTEGER). */
+
+    // =================================================================
+    // TODO #261 (v6.0.0) — wire formats for the five algo tags the Java
+    // CLI was missing.  All of these are RAW-BINARY bodies (no DER)
+    // except the hybrid response, which is DER like the other kex
+    // responses; each layout below is transcribed from
+    // HerraduraCli/codec.py so the four CLIs stay byte-compatible.
+    // =================================================================
+
+    // ── ZKP-NL keypair ──────────────────────────────────────────────
+    //   PRIVATE: 4B n | nb A | nb B | nb y     (nb = ceil(n/8))
+    //   PUBLIC : 4B n | nb B | nb y
+
+    private static byte[] be4(int v) {
+        return new byte[] { (byte) (v >>> 24), (byte) (v >>> 16), (byte) (v >>> 8), (byte) v };
+    }
+
+    private static int rd4(byte[] b, int off) {
+        return ((b[off] & 0xff) << 24) | ((b[off + 1] & 0xff) << 16)
+             | ((b[off + 2] & 0xff) << 8) | (b[off + 3] & 0xff);
+    }
+
+    private static byte[] fixed(BigInteger v, int nbytes) {
+        byte[] raw = v.toByteArray();
+        byte[] out = new byte[nbytes];
+        int start = Math.max(0, raw.length - nbytes);
+        int len = Math.min(raw.length - start, nbytes);
+        System.arraycopy(raw, raw.length - len, out, nbytes - len, len);
+        return out;
+    }
+
+    private static byte[] sub(byte[] b, int off, int len) {
+        if (off + len > b.length) throw new IllegalArgumentException("PEM body truncated");
+        byte[] out = new byte[len];
+        System.arraycopy(b, off, out, 0, len);
+        return out;
+    }
+
+    private static byte[] join(java.util.List<byte[]> parts) {
+        int total = 0;
+        for (byte[] p : parts) total += p.length;
+        byte[] out = new byte[total];
+        int off = 0;
+        for (byte[] p : parts) { System.arraycopy(p, 0, out, off, p.length); off += p.length; }
+        return out;
+    }
+
+    public static String encodeZkpNlPrivKey(BigInteger a, BigInteger b, BigInteger y, int n) {
+        int nb = (n + 7) / 8;
+        java.util.List<byte[]> parts = new ArrayList<>();
+        parts.add(be4(n)); parts.add(fixed(a, nb)); parts.add(fixed(b, nb)); parts.add(fixed(y, nb));
+        return pemWrap(PEM_ZKP_NL_PRIV, join(parts));
+    }
+
+    /** ZKP-NL private key: {A, B, y} plus n. */
+    public static final class ZkpNlPrivKey {
+        public final BigInteger a, b, y;
+        public final int n;
+        ZkpNlPrivKey(BigInteger a, BigInteger b, BigInteger y, int n) {
+            this.a = a; this.b = b; this.y = y; this.n = n;
+        }
+    }
+
+    public static ZkpNlPrivKey decodeZkpNlPrivKey(String pem) {
+        PemBlock blk = pemUnwrap(pem);
+        if (!blk.label.equals(PEM_ZKP_NL_PRIV)) {
+            throw new IllegalArgumentException("Unexpected PEM label: " + blk.label);
+        }
+        byte[] body = blk.der;
+        int n = rd4(body, 0);
+        if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
+        int nb = (n + 7) / 8;
+        return new ZkpNlPrivKey(new BigInteger(1, sub(body, 4, nb)),
+                                new BigInteger(1, sub(body, 4 + nb, nb)),
+                                new BigInteger(1, sub(body, 4 + 2 * nb, nb)), n);
+    }
+
+    public static String encodeZkpNlPubKey(BigInteger b, BigInteger y, int n) {
+        int nb = (n + 7) / 8;
+        java.util.List<byte[]> parts = new ArrayList<>();
+        parts.add(be4(n)); parts.add(fixed(b, nb)); parts.add(fixed(y, nb));
+        return pemWrap(PEM_ZKP_NL_PUB, join(parts));
+    }
+
+    /** ZKP-NL public key: {B, y} plus n. */
+    public static final class ZkpNlPubKey {
+        public final BigInteger b, y;
+        public final int n;
+        ZkpNlPubKey(BigInteger b, BigInteger y, int n) { this.b = b; this.y = y; this.n = n; }
+    }
+
+    public static ZkpNlPubKey decodeZkpNlPubKey(String pem) {
+        PemBlock blk = pemUnwrap(pem);
+        if (!blk.label.equals(PEM_ZKP_NL_PUB)) {
+            throw new IllegalArgumentException("Unexpected PEM label: " + blk.label);
+        }
+        byte[] body = blk.der;
+        int n = rd4(body, 0);
+        if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-NL: bad n " + n);
+        int nb = (n + 7) / 8;
+        return new ZkpNlPubKey(new BigInteger(1, sub(body, 4, nb)),
+                               new BigInteger(1, sub(body, 4 + nb, nb)), n);
+    }
+
+    // ── ZKBoo proof (nl-zkboo) ──────────────────────────────────────
+    //   4B n | 4B rounds | per round:
+    //     32B com0 | 32B com1 | 32B com2 | 1B e
+    //     | 2B len_p1 | view_p1 | 2B len_p2 | view_p2
+
+    public static String encodeZkpNlProof(java.util.List<ZkpNl.ProofRound> rounds, int n) {
+        java.util.List<byte[]> parts = new ArrayList<>();
+        parts.add(be4(n)); parts.add(be4(rounds.size()));
+        for (ZkpNl.ProofRound r : rounds) {
+            parts.add(r.com0); parts.add(r.com1); parts.add(r.com2);
+            parts.add(new byte[] { (byte) r.e });
+            parts.add(new byte[] { (byte) (r.viewP1.length >>> 8), (byte) r.viewP1.length });
+            parts.add(r.viewP1);
+            parts.add(new byte[] { (byte) (r.viewP2.length >>> 8), (byte) r.viewP2.length });
+            parts.add(r.viewP2);
+        }
+        return pemWrap(PEM_ZKP_NL_PROOF, join(parts));
+    }
+
+    /** Decoded ZKBoo proof: the rounds plus the n they were made at. */
+    public static final class ZkpNlProof {
+        public final java.util.List<ZkpNl.ProofRound> rounds;
+        public final int n;
+        ZkpNlProof(java.util.List<ZkpNl.ProofRound> rounds, int n) { this.rounds = rounds; this.n = n; }
+    }
+
+    public static ZkpNlProof decodeZkpNlProof(String pem) {
+        PemBlock blk = pemUnwrap(pem);
+        if (!blk.label.equals(PEM_ZKP_NL_PROOF)) {
+            throw new IllegalArgumentException("Unexpected PEM label: " + blk.label);
+        }
+        byte[] body = blk.der;
+        int off = 0;
+        int n = rd4(body, off); off += 4;
+        int r = rd4(body, off); off += 4;
+        if (n <= 0 || r < 0 || r > 1 << 16) throw new IllegalArgumentException("ZKP-NL proof: bad header");
+        java.util.List<ZkpNl.ProofRound> rounds = new ArrayList<>(r);
+        for (int j = 0; j < r; j++) {
+            ZkpNl.ProofRound pr = new ZkpNl.ProofRound();
+            pr.com0 = sub(body, off, 32); off += 32;
+            pr.com1 = sub(body, off, 32); off += 32;
+            pr.com2 = sub(body, off, 32); off += 32;
+            pr.e = body[off] & 0xff; off += 1;
+            int l1 = ((body[off] & 0xff) << 8) | (body[off + 1] & 0xff); off += 2;
+            pr.viewP1 = sub(body, off, l1); off += l1;
+            int l2 = ((body[off] & 0xff) << 8) | (body[off + 1] & 0xff); off += 2;
+            pr.viewP2 = sub(body, off, l2); off += l2;
+            rounds.add(pr);
+        }
+        return new ZkpNlProof(rounds, n);
+    }
+
+    // ── ZKB++ proof (nl-zkbpp) ──────────────────────────────────────
+    //   4B n | 4B rounds | per round:
+    //     32B com_e | 1B e | nb out_e | 16B seed_p1 | 16B seed_p2
+    //     | 1B gates_len | gates_p2 | 1B has_share2 | [nb share2]
+
+    public static String encodeZkpNlPpProof(java.util.List<ZkpNl.PpRound> rounds, int n) {
+        java.util.List<byte[]> parts = new ArrayList<>();
+        parts.add(be4(n)); parts.add(be4(rounds.size()));
+        for (ZkpNl.PpRound r : rounds) {
+            parts.add(r.comE);
+            parts.add(new byte[] { (byte) r.e });
+            parts.add(r.outE);
+            parts.add(r.seedP1);
+            parts.add(r.seedP2);
+            parts.add(new byte[] { (byte) r.gatesP2.length });
+            parts.add(r.gatesP2);
+            boolean has = r.share2.length > 0;
+            parts.add(new byte[] { (byte) (has ? 1 : 0) });
+            if (has) parts.add(r.share2);
+        }
+        return pemWrap(PEM_ZKP_NL_PP_SIG, join(parts));
+    }
+
+    /** Decoded ZKB++ proof: the rounds plus the n they were made at. */
+    public static final class ZkpNlPpProof {
+        public final java.util.List<ZkpNl.PpRound> rounds;
+        public final int n;
+        ZkpNlPpProof(java.util.List<ZkpNl.PpRound> rounds, int n) { this.rounds = rounds; this.n = n; }
+    }
+
+    public static ZkpNlPpProof decodeZkpNlPpProof(String pem) {
+        PemBlock blk = pemUnwrap(pem);
+        if (!blk.label.equals(PEM_ZKP_NL_PP_SIG)) {
+            throw new IllegalArgumentException("Unexpected PEM label: " + blk.label);
+        }
+        byte[] body = blk.der;
+        int off = 0;
+        int n = rd4(body, off); off += 4;
+        int r = rd4(body, off); off += 4;
+        if (n <= 0 || r < 0 || r > 1 << 16) throw new IllegalArgumentException("ZKB++ proof: bad header");
+        int nb = (n + 7) / 8;
+        java.util.List<ZkpNl.PpRound> rounds = new ArrayList<>(r);
+        for (int j = 0; j < r; j++) {
+            ZkpNl.PpRound pr = new ZkpNl.PpRound();
+            pr.comE = sub(body, off, 32); off += 32;
+            pr.e = body[off] & 0xff; off += 1;
+            pr.outE = sub(body, off, nb); off += nb;
+            pr.seedP1 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
+            pr.seedP2 = sub(body, off, ZkpNl.ZKPP_SEED_BYTES); off += ZkpNl.ZKPP_SEED_BYTES;
+            int gl = body[off] & 0xff; off += 1;
+            pr.gatesP2 = sub(body, off, gl); off += gl;
+            int has = body[off] & 0xff; off += 1;
+            if (has != 0) { pr.share2 = sub(body, off, nb); off += nb; }
+            else pr.share2 = new byte[0];
+            rounds.add(pr);
+        }
+        return new ZkpNlPpProof(rounds, n);
+    }
+
+    // ── ZKP-RNL Sigma proof (rnl-sigma) ─────────────────────────────
+    //   4B n | n x s32be w | n x u32be c | n x s32be z
+
+    private static void putS32(java.util.List<byte[]> parts, int[] vals) {
+        byte[] out = new byte[vals.length * 4];
+        for (int i = 0; i < vals.length; i++) {
+            int v = vals[i];
+            out[4 * i] = (byte) (v >>> 24); out[4 * i + 1] = (byte) (v >>> 16);
+            out[4 * i + 2] = (byte) (v >>> 8); out[4 * i + 3] = (byte) v;
+        }
+        parts.add(out);
+    }
+
+    public static String encodeZkpRnlProof(int[] w, int[] c, int[] z, int n) {
+        java.util.List<byte[]> parts = new ArrayList<>();
+        parts.add(be4(n));
+        putS32(parts, w); putS32(parts, c); putS32(parts, z);
+        return pemWrap(PEM_ZKP_RNL_PROOF, join(parts));
+    }
+
+    /** Decoded Sigma proof triple plus its n. */
+    public static final class ZkpRnlProof {
+        public final int[] w, c, z;
+        public final int n;
+        ZkpRnlProof(int[] w, int[] c, int[] z, int n) { this.w = w; this.c = c; this.z = z; this.n = n; }
+    }
+
+    public static ZkpRnlProof decodeZkpRnlProof(String pem) {
+        PemBlock blk = pemUnwrap(pem);
+        if (!blk.label.equals(PEM_ZKP_RNL_PROOF)) {
+            throw new IllegalArgumentException("Unexpected PEM label: " + blk.label);
+        }
+        byte[] body = blk.der;
+        int n = rd4(body, 0);
+        if (n <= 0 || n > 1 << 20) throw new IllegalArgumentException("ZKP-RNL: bad n " + n);
+        if (body.length < 4 + 12 * n) throw new IllegalArgumentException("ZKP-RNL: body truncated");
+        int[] w = new int[n], c = new int[n], z = new int[n];
+        int off = 4;
+        for (int i = 0; i < n; i++) { w[i] = rd4(body, off); off += 4; }   // signed
+        for (int i = 0; i < n; i++) { c[i] = rd4(body, off); off += 4; }   // unsigned (< 2^31)
+        for (int i = 0; i < n; i++) { z[i] = rd4(body, off); off += 4; }   // signed
+        return new ZkpRnlProof(w, c, z, n);
+    }
+
+
+    // ── hybrid-rnl-stern response (TODO #261) ───────────────────────
+    //   DER SEQUENCE(K, C_B_packed, hint_packed, n, hint_len, n_B, syn, r_qc)
+    //   Eight fields, all mandatory — unlike the plain HKEX-RNL response,
+    //   whose n_B is optional for pre-TODO-#89 compatibility.
+
+    public static String encodeHybridResponse(BigInteger k, int[] cB, int[] hintUsed,
+                                               int n, byte[] nB, BigInteger syn, int rQc) {
+        byte[] cPacked = packPoly(cB, 2);
+        BigInteger hintInt = BigInteger.ZERO;
+        for (int i = 0; i < hintUsed.length; i++) {
+            hintInt = hintInt.or(BigInteger.valueOf(hintUsed[i] & 3).shiftLeft(2 * i));
+        }
+        int rb = (rQc + 7) / 8;
+        byte[] der = derSeq(
+            derInt(k, Math.max(1, (k.bitLength() + 7) / 8)),
+            derInt(cPacked),
+            derInt(hintInt, Math.max(1, (2 * hintUsed.length + 7) / 8)),
+            derInt(BigInteger.valueOf(n), -1),
+            derInt(BigInteger.valueOf(hintUsed.length), -1),
+            derInt(new BigInteger(1, nB), nB.length),
+            derInt(syn, rb),
+            derInt(BigInteger.valueOf(rQc), -1));
+        return pemWrap(PEM_HYBRID_RESPONSE, der);
+    }
+
+    /** Decoded hybrid-rnl-stern response. */
+    public static final class HybridResponse {
+        public final BigInteger k, syn;
+        public final int[] cB, hint;
+        public final int n, rQc;
+        public final byte[] nB;
+        HybridResponse(BigInteger k, int[] cB, int[] hint, int n, byte[] nB,
+                       BigInteger syn, int rQc) {
+            this.k = k; this.cB = cB; this.hint = hint; this.n = n;
+            this.nB = nB; this.syn = syn; this.rQc = rQc;
+        }
+    }
+
+    public static HybridResponse decodeHybridResponse(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HYBRID_RESPONSE)) {
+            throw new IllegalArgumentException("Expected " + PEM_HYBRID_RESPONSE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        if (ints.size() < 8) {
+            throw new IllegalArgumentException("HYBRID-RNL-STERN RESPONSE: expected 8 fields, got " + ints.size());
+        }
+        int n = ints.get(3).intValueExact();
+        int hintLen = ints.get(4).intValueExact();
+        int rQc = ints.get(7).intValueExact();
+        // Bound every field that sizes an allocation before it is used (TODO #240).
+        if (n <= 0 || n > 1 << 16) throw new IllegalArgumentException("HYBRID response: bad n " + n);
+        if (hintLen < 0 || hintLen > n) {
+            throw new IllegalArgumentException("HYBRID response: bad hint_len " + hintLen);
+        }
+        if (rQc <= 0 || rQc > 1 << 20) throw new IllegalArgumentException("HYBRID response: bad r " + rQc);
+        int[] cB = unpackPoly(ints.get(1), n, 2);
+        BigInteger hintInt = ints.get(2);
+        int[] hint = new int[hintLen];
+        for (int i = 0; i < hintLen; i++) {
+            hint[i] = hintInt.shiftRight(2 * i).and(BigInteger.valueOf(3)).intValueExact();
+        }
+        byte[] nB = toFixedBytes(ints.get(5), RNL_NA_BYTES);
+        return new HybridResponse(ints.get(0), cB, hint, n, nB, ints.get(6), rQc);
+    }
+
     public static String encodeDigest(BigInteger digest) {
         byte[] der = derSeq(derInt(digest, 32));
         return pemWrap(PEM_DIGEST, der);

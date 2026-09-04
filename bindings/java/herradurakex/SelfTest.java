@@ -32,7 +32,9 @@ import java.security.SecureRandom;
  * [11] hpke_nl [12] hpks_stern_f [13] hpke_stern_f [14] hpke_stern_kem
  * [15] oprf [16] hpks_wots_f [17] hpks_xmss_f [18] hcred [19] zkp_nl
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
- * [26] hpks_stern_ring. New checks append at [27] onward; a check's
+ * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
+ * [29] zkp_nl_zkbpp [30] rnl_sigma. New checks append at [31]
+ * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
  *
@@ -682,6 +684,143 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS [26] hpks_stern_ring round-trip");
+            }
+        }
+
+        // [27] HKEX-RNL peer-m_blind substitution guard (TODO #261).
+        // m_blind is chosen by the INITIATOR and its uniformity rests entirely
+        // on that party's RNG (TODO #89), so the responder cannot verify the
+        // draw -- only reject the degenerate shapes that break the construction
+        // outright: a sparse m_blind makes C = round_p(m_blind*s) leak s almost
+        // directly, and a clustered one collapses the rounding noise the
+        // hardness argument depends on.  Shipped here, in C and in Go, and
+        // untested in all four languages until TODO #261.
+        // (a) is the accept-control: without it, a guard that rejected
+        // everything would score a perfect pass on (b)-(e).
+        {
+            final int n = 256, q = HerraduraNl.RNLQ;
+            int badAccept = 0, badReject = 0;
+
+            // (a) accept-control: a genuine uniform draw must pass.
+            int[] uniform = new int[n];
+            for (int i = 0; i < n; i++) uniform[i] = rng.nextInt(q);
+            if (!HerraduraNl.rnlValidateMBlind(uniform, q)) badReject++;
+
+            // (b) the all-zero polynomial.
+            if (HerraduraNl.rnlValidateMBlind(new int[n], q)) badAccept++;
+
+            // (c) sparse: n/8 non-zero at full range -- isolates the count bound.
+            int[] sparse = new int[n];
+            for (int i = 0; i < n / 8; i++) sparse[i] = q - 1;
+            if (HerraduraNl.rnlValidateMBlind(sparse, q)) badAccept++;
+
+            // (d) clustered: all non-zero inside [1, q/8) -- isolates the range bound.
+            int[] clustered = new int[n];
+            for (int i = 0; i < n; i++) clustered[i] = 1 + rng.nextInt(q / 8 - 1);
+            if (HerraduraNl.rnlValidateMBlind(clustered, q)) badAccept++;
+
+            // (e) the count boundary, both sides.  Range is full in both, so
+            //     only the non-zero count decides.
+            int[] nzCounts = { n / 4, n / 4 - 1 };
+            boolean[] want = { true, false };
+            for (int k = 0; k < 2; k++) {
+                int[] poly = new int[n];
+                for (int i = 0; i < nzCounts[k]; i++) poly[i] = q - 1;
+                boolean got = HerraduraNl.rnlValidateMBlind(poly, q);
+                if (got != want[k]) { if (got) badAccept++; else badReject++; }
+            }
+
+            if (badAccept != 0 || badReject != 0) {
+                System.out.println("FAIL [27] rnl_m_blind_guard (bad_accepts=" + badAccept
+                    + " bad_rejects=" + badReject + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [27] rnl_m_blind_guard");
+            }
+        }
+
+        // [28]/[29] ZKP-NL: the ZKBoo and ZKB++ proof systems (TODO #261).
+        // Both were CLI-unreachable from Java until v6.0.0 -- ZKB++ was not
+        // ported at all, and ZkpNl.java's class doc comment declared it out of
+        // scope.  Each check is prove -> verify plus TWO rejection axes, because
+        // a verifier that returns true unconditionally passes a round-trip.
+        {
+            int n = 8, rounds = 16;
+            BigInteger[] kp = ZkpNl.keygen(n, rng);
+            byte[] msg = new byte[32];
+            rng.nextBytes(msg);
+            byte[] other = msg.clone();
+            other[0] ^= 0x01;
+
+            java.util.List<ZkpNl.ProofRound> booPr =
+                ZkpNl.prove(kp[0], kp[1], kp[2], n, rounds, msg, rng);
+            boolean booOk = ZkpNl.verify(kp[1], kp[2], n, rounds, msg, booPr);
+            boolean booMsg = !ZkpNl.verify(kp[1], kp[2], n, rounds, other, booPr);
+            // A different statement (y+1) must not verify against this proof.
+            boolean booStmt = !ZkpNl.verify(kp[1], kp[2].add(BigInteger.ONE), n,
+                                            rounds, msg, booPr);
+            if (!booOk || !booMsg || !booStmt) {
+                System.out.println("FAIL [28] zkp_nl_zkboo prove/verify (verify=" + booOk
+                    + " rejects_msg=" + booMsg + " rejects_stmt=" + booStmt + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [28] zkp_nl_zkboo prove/verify");
+            }
+
+            java.util.List<ZkpNl.PpRound> ppPr =
+                ZkpNl.provePp(kp[0], kp[1], kp[2], n, rounds, msg, rng);
+            boolean ppOk = ZkpNl.verifyPp(kp[1], kp[2], n, rounds, msg, ppPr);
+            boolean ppMsg = !ZkpNl.verifyPp(kp[1], kp[2], n, rounds, other, ppPr);
+            boolean ppStmt = !ZkpNl.verifyPp(kp[1], kp[2].add(BigInteger.ONE), n,
+                                             rounds, msg, ppPr);
+            // ZKB++ is the smaller transcript, and must actually be smaller:
+            // two 16-byte seeds instead of two full views is the whole point.
+            boolean ppSmaller = ppPr.get(0).seedP1.length == ZkpNl.ZKPP_SEED_BYTES;
+            if (!ppOk || !ppMsg || !ppStmt || !ppSmaller) {
+                System.out.println("FAIL [29] zkp_nl_zkbpp prove/verify (verify=" + ppOk
+                    + " rejects_msg=" + ppMsg + " rejects_stmt=" + ppStmt
+                    + " seed_len_ok=" + ppSmaller + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [29] zkp_nl_zkbpp prove/verify");
+            }
+        }
+
+        // [30] ZKP-RNL Sigma-protocol (rnl-sigma), TODO #261.  No Java port at
+        // any layer before v6.0.0.  Rejection sampling can legitimately fail,
+        // so a null proof is reported rather than counted as a verify failure.
+        {
+            int n = 256;
+            int[] mBase = HerraduraNl.rnlMPoly(n);
+            int[] aRand = HerraduraNl.rnlRandPoly(n, HerraduraNl.RNLQ, rng);
+            int[] m = HerraduraNl.rnlPolyAdd(mBase, aRand, HerraduraNl.RNLQ);
+            HerraduraNl.RnlKeypair kp = HerraduraNl.rnlKeygen(
+                m, n, HerraduraNl.RNLQ, HerraduraNl.RNLP, rng);
+            byte[] msg = new byte[32];
+            rng.nextBytes(msg);
+            byte[] other = msg.clone();
+            other[0] ^= 0x01;
+
+            HerraduraNl.SigmaProof pr =
+                HerraduraNl.rnlSigmaSign(kp.s, m, kp.c, n, msg, rng);
+            if (pr == null) {
+                System.out.println("FAIL [30] rnl_sigma sign/verify (rejection limit reached)");
+                fails++;
+            } else {
+                boolean ok = HerraduraNl.rnlSigmaVerify(m, kp.c, n, msg, pr.w, pr.c, pr.z);
+                boolean rejMsg = !HerraduraNl.rnlSigmaVerify(m, kp.c, n, other, pr.w, pr.c, pr.z);
+                // A flipped response coefficient must break the rounding-slack
+                // check, not merely the Fiat-Shamir replay.
+                int[] zBad = pr.z.clone();
+                zBad[0] += 1;
+                boolean rejZ = !HerraduraNl.rnlSigmaVerify(m, kp.c, n, msg, pr.w, pr.c, zBad);
+                if (!ok || !rejMsg || !rejZ) {
+                    System.out.println("FAIL [30] rnl_sigma sign/verify (verify=" + ok
+                        + " rejects_msg=" + rejMsg + " rejects_z=" + rejZ + ")");
+                    fails++;
+                } else {
+                    System.out.println("PASS [30] rnl_sigma sign/verify");
+                }
             }
         }
 

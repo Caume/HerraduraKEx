@@ -95,12 +95,25 @@ check "genpkey hcred" "$TMP/hcred.pem" "HCRED PRIVATE KEY"
 $CLI pkey --in "$TMP/hcred.pem" --pubout --out "$TMP/hcred_pub.pem"
 check "pkey pubout hcred" "$TMP/hcred_pub.pem" "HCRED PUBLIC KEY"
 
+# ── genpkey hpks-zkp-nl (TODO #261, v6.0.0) ──────────────────────────────
+# This was a NEGATIVE assertion until v6.0.0 — "should be rejected (out of this
+# Java CLI's scope)" — which is exactly the shape TODO #261 exists to remove: a
+# capability gap encoded as expected behaviour, so closing the gap turns the
+# test red.  The tag is ported; the assertion is inverted rather than deleted.
+$CLI genpkey --algo hpks-zkp-nl --out "$TMP/zkpnl.pem"
+check "genpkey hpks-zkp-nl" "$TMP/zkpnl.pem" "ZKP-NL PRIVATE KEY"
+$CLI pkey --in "$TMP/zkpnl.pem" --pubout --out "$TMP/zkpnl_pub.pem"
+check "pkey pubout hpks-zkp-nl" "$TMP/zkpnl_pub.pem" "ZKP-NL PUBLIC KEY"
+
 # ── genpkey rejects unsupported algos honestly (no silent wrong output) ────
-if $CLI genpkey --algo hpks-zkp-nl --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
-    echo "FAIL genpkey hpks-zkp-nl should be rejected (out of this Java CLI's scope)"
+# The property the block above used to carry.  It needs an algo no CLI will
+# ever support, not one that merely wasn't ported yet: as of v6.0.0 all four
+# CLIs dispatch all 29 tags, so any real tag would make this a false negative.
+if $CLI genpkey --algo not-a-real-algo --out "$TMP/should_fail.pem" 2>"$TMP/err.log"; then
+    echo "FAIL genpkey not-a-real-algo should be rejected"
     FAIL=$((FAIL+1))
 else
-    echo "PASS genpkey hpks-zkp-nl correctly rejected: $(cat "$TMP/err.log")"
+    echo "PASS genpkey unsupported algo correctly rejected: $(cat "$TMP/err.log")"
     PASS=$((PASS+1))
 fi
 

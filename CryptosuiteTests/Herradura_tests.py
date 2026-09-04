@@ -3099,6 +3099,103 @@ def test_nl_fscx_v3_consumers():
           f"[{'PASS' if ok else 'FAIL'}]\n")
 
 
+# Security test [49]: the HKEX-RNL peer-m_blind substitution guard (TODO #261).
+# m_blind is chosen by the INITIATOR and its uniformity rests entirely on that
+# party's RNG (TODO #89), so the responder cannot verify the draw -- it can only
+# reject the degenerate shapes that would break the construction outright:
+#   * a sparse m_blind (few non-zero coefficients) makes C = round_p(m_blind*s)
+#     leak s almost directly;
+#   * a clustered m_blind (all coefficients in a narrow band) collapses the
+#     rounding noise the hardness argument depends on.
+# Until TODO #261 this guard was UNTESTED IN ALL FOUR LANGUAGES, and Python's
+# suite did not have it at all -- only a private copy inside the CLI.  Every
+# rejection case is preceded by the accept-control (a), because a guard that
+# rejects everything, or a suite that fails to import, would otherwise score a
+# perfect pass on (b)-(e).  Same discipline as CliTest/lib_malformed.sh.
+# As [46]/[47]/[48] do, this harness's own copy is cross-checked against the
+# shipped suite, since this file is standalone by design.
+# ---------------------------------------------------------------------------
+
+def _rnl_validate_m_blind_test(poly, q=RNLQ):
+    """Reference copy of the suite's guard; cross-checked against it below."""
+    n = len(poly)
+    if n == 0:
+        return False
+    if sum(1 for c in poly if c != 0) < n // 4:
+        return False
+    return (max(poly) - min(poly)) >= q // 4
+
+
+def test_rnl_m_blind_guard():
+    print("[49] HKEX-RNL peer-m_blind substitution guard  [SECURITY]")
+    v = _rnl_validate_m_blind_test
+    n = 256
+    N = _iters(50)
+    bad_accept = bad_reject = n_run = 0
+    for _ in _trange(N):
+        n_run += 1
+        # (a) accept-control: a genuine uniform draw must pass, or every
+        #     rejection case below is vacuous.
+        if not v(_rnl_rand_poly(n, RNLQ)):
+            bad_reject += 1
+        # (b) the all-zero polynomial
+        if v([0] * n):
+            bad_accept += 1
+        # (c) sparse: n/8 non-zero coefficients, full range -- fails the count
+        #     bound while passing the range one, so it isolates check (1).
+        sparse = [0] * n
+        for i in range(n // 8):
+            sparse[i] = RNLQ - 1
+        if v(sparse):
+            bad_accept += 1
+        # (d) clustered: every coefficient non-zero but confined to [0, q/8) --
+        #     passes the count bound, fails the range one, isolating check (2).
+        if v([random.randrange(RNLQ // 8) or 1 for _ in range(n)]):
+            bad_accept += 1
+        # (e) the count boundary itself, both sides of it.  Range is full in
+        #     both, so only the non-zero count decides.
+        for nz, want in ((n // 4, True), (n // 4 - 1, False)):
+            poly = [0] * n
+            for i in range(nz):
+                poly[i] = RNLQ - 1
+            got = v(poly)
+            if got != want:
+                if got:
+                    bad_accept += 1
+                else:
+                    bad_reject += 1
+
+    # Cross-check this harness's copy against the shipped suite.
+    drift = "n/a (suite not importable)"
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_mbg", _p)
+        _m = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(_m)
+        mism = 0
+        for _ in range(200):
+            shape = random.randrange(4)
+            if shape == 0:
+                poly = _rnl_rand_poly(n, RNLQ)
+            elif shape == 1:
+                poly = [0] * n
+            elif shape == 2:
+                poly = [random.randrange(RNLQ // 8) for _ in range(n)]
+            else:
+                poly = [RNLQ - 1 if i < random.randrange(n) else 0 for i in range(n)]
+            if _m.rnl_validate_m_blind(poly, RNLQ) != v(poly, RNLQ):
+                mism += 1
+        drift = str(mism)
+    except Exception as e:                      # noqa: BLE001 - reported, not raised
+        drift = f"n/a ({type(e).__name__})"
+
+    ok = (bad_accept == 0 and bad_reject == 0 and drift == "0")
+    print(f"    n={n_run}  bad accepts={bad_accept}  bad rejects={bad_reject}  "
+          f"suite mismatches={drift}  [{'PASS' if ok else 'FAIL'}]\n")
+
+
 # Security test [46]: fpe/twk domain separation (TODO #242).  The two primitives
 # shared an unseparated HFSCX-256(key || tweak) subkey derivation until v4.0.0,
 # so a 12-byte fpe context equal to twk's sector||bidx made them the identical
@@ -3557,6 +3654,7 @@ if __name__ == '__main__':
     test_fpe_twk_domain_separation()
     test_nl_fscx_v3()
     test_nl_fscx_v3_consumers()
+    test_rnl_m_blind_guard()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

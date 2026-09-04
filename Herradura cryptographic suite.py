@@ -1136,6 +1136,42 @@ def _rnl_rand_poly(n, q):
             out.append(v % q)
     return out
 
+def rnl_validate_m_blind(poly, q=None):
+    """Return True if poly plausibly came from a uniform-random draw over Z_q^n.
+
+    Two checks, either failing -> reject:
+      (1) non-zero coefficient count >= n/4  — catches sparse/zero-polynomial
+          substitution, where a degenerate m_blind makes C = round_p(m_blind*s)
+          leak s directly;
+      (2) coefficient range (max-min) >= q/4 — catches clustered/small-value
+          substitution, which collapses the rounding noise the security argument
+          depends on.
+    A uniform poly over Z_65537 has ~n non-zero coefficients and range ~q, so
+    both bounds are loose by design: this is a substitution guard, not a
+    randomness test.
+
+    Call it on a PEER-supplied m_blind before using it.  m_blind's uniformity
+    rests entirely on the initiator's RNG (TODO #89), so the responder has no
+    way to verify the draw and this is the cheapest check that rules out the
+    degenerate cases.
+
+    TODO #261: C (`rnl_validate_m_blind`, herradura.h), Go (`RnlValidateMBlind`)
+    and Java (`HerraduraNl.rnlValidateMBlind`) all carried this in the SUITE,
+    where any caller reaches it; Python had it only as a private copy inside
+    `HerraduraCli/herradura.py`, so a Python caller using the suite directly
+    -- the pedagogical reference path, and what docs/examples/hello_herradura.py
+    demonstrates -- had no access to it.  The CLI now calls this one, so the
+    thresholds live in a single place per language rather than two in Python.
+    """
+    if q is None:
+        q = RNLQ
+    n = len(poly)
+    if n == 0:
+        return False
+    if sum(1 for c in poly if c != 0) < n // 4:
+        return False
+    return (max(poly) - min(poly)) >= q // 4
+
 def _rnl_cbd_poly(n, eta, q):
     """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q).
     For eta=1: 4 coefficients per byte, bit-pairs (0-1),(2-3),(4-5),(6-7).

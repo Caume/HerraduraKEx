@@ -69,7 +69,8 @@
               "enum": [
                 "c",
                 "go",
-                "python"
+                "python",
+                "java"
               ]
             }
           },
@@ -79,7 +80,8 @@
               "enum": [
                 "c",
                 "go",
-                "python"
+                "python",
+                "java"
               ]
             }
           },
@@ -278,7 +280,8 @@
               "enum": [
                 "c",
                 "go",
-                "python"
+                "python",
+                "java"
               ]
             }
           },

@@ -59,10 +59,17 @@ import java.util.Map;
  * {@code _load_ring_pubkeys}, not the space-separated convention
  * {@code threshold-*}'s {@code --commits}/{@code --partials} use).
  *
- * Out of scope (beyond this point): the standalone HPKS-ZKP-NL/ZKP-RNL
- * signature schemes, rnl-sigma, hybrid-rnl-stern, and the
- * {@code --kdf}/{@code --aead} CLI options (TODO #260 tracks closing
- * these gaps).
+ * TODO #261 (v6.0.0) closed the last of the algo-tag gaps this comment used
+ * to list: {@code hpks-zkp-nl} (genpkey/pkey), {@code nl-zkboo} and
+ * {@code nl-zkbpp} (sign/verify — ZKBoo and ZKB++ over the NL-FSCX circuit,
+ * {@link ZkpNl}), {@code rnl-sigma} (sign/verify — the Ring-LWR
+ * Sigma-protocol, {@link HerraduraNl}) and {@code hybrid-rnl-stern}
+ * ({@code kex}, two-round, taking {@code --their-kem}/{@code --our-kem}
+ * alongside the HKEX-RNL pair).  This CLI now dispatches all 29 algo tags
+ * the Python CLI defines.
+ *
+ * Still out of scope: the {@code --kdf} and {@code --aead} CLI options
+ * (TODO #260 tracks those).
  *
  * Subcommands: genpkey, pkey, kex, enc, dec, sign, verify, dgst, encfile,
  * decfile, fpe, twk, threshold-commit, threshold-aggregate,
@@ -207,6 +214,16 @@ public final class HerraduraCli {
         return 256;
     }
 
+    // ── ZKP-NL / Sigma parameters, mirroring herradura.h (TODO #261) ─────
+    /** herradura.h ZKP_NL_DEFAULT_N. */
+    private static final int ZKP_NL_DEFAULT_N = 8;
+    /** herradura.h ZKP_NL_MAX_N. */
+    private static final int ZKP_NL_MAX_N = 64;
+    /** herradura.h ZKP_NL_PROD_ROUNDS -- the CLI default in all four
+     *  implementations, giving full 128-bit soundness rather than the
+     *  demo round count the suite files use. */
+    private static final int ZKP_CLI_ROUNDS = 219;
+
     private static String privLabel(String algo) {
         switch (algo) {
             case "hkex-gf":  return Codec.PEM_HKEX_GF_PRIV;
@@ -216,9 +233,17 @@ public final class HerraduraCli {
             case "hpke-nl":  return Codec.PEM_HPKE_NL_PRIV;
             case "hpke-nl3": return Codec.PEM_HPKE_NL3_PRIV;
             case "hkex-rnl": return Codec.PEM_HKEX_RNL_PRIV;
+            case "hpks-zkp-nl": return Codec.PEM_ZKP_NL_PRIV;
+            // The list is this SWITCH's domain, not the CLI's coverage.  It used
+            // to claim the latter and was wrong in both directions (TODO #261):
+            // it named hske-nla1/nla2/nla3, which are symmetric and have no
+            // keypair to label, and omitted every algo genpkey builds through
+            // its own key structure rather than a plain label -- hpks-stern,
+            // hpke-stern, hpke-stern-kem, hpks-wots, hpks-xmss, hcred, oprf.
             default: throw new CliError("genpkey: unsupported --algo " + algo
-                + " (this Java CLI covers the classical quartet plus hkex-rnl, "
-                + "hske-nla1/nla2/nla3, hpks-nl, hpke-nl, hpke-nl3)");
+                + " (single-label keypairs here: hkex-gf, hpks, hpks-nl, hpke, "
+                + "hpke-nl, hpke-nl3, hkex-rnl, hpks-zkp-nl; the stern/wots/"
+                + "xmss/hcred/oprf algos are built elsewhere in genpkey)");
         }
     }
 
@@ -231,6 +256,7 @@ public final class HerraduraCli {
             case "hpke-nl":  return Codec.PEM_HPKE_NL_PUB;
             case "hpke-nl3": return Codec.PEM_HPKE_NL3_PUB;
             case "hkex-rnl": return Codec.PEM_HKEX_RNL_PUB;
+            case "hpks-zkp-nl": return Codec.PEM_ZKP_NL_PUB;
             default: throw new CliError("unsupported --algo " + algo);
         }
     }
@@ -296,6 +322,29 @@ public final class HerraduraCli {
             Xmss.Keypair kp = Xmss.keygen(masterSeed, h);
             writeString(out, Codec.encodeXmssPrivKey(masterSeed, h, 0, kp.leafHashes));
             writeIdxState(out, 0);
+            return;
+        }
+
+        if (algo.equals("hpks-zkp-nl")) {
+            // TODO #261: ZKP-NL keypair (A private; B, y public).  n defaults to
+            // the same 8 the other three CLIs use -- at R = 219 rounds a ZKBoo
+            // proof is already ~35 KB there, so a wider n is a deliberate choice
+            // rather than a default.
+            // n comes from --bits, exactly as in the Python CLI: an omitted
+            // --bits (or --bits 256, its KEYBITS default) means ZKP_NL_DEFAULT_N,
+            // because at R = 219 a ZKBoo proof is already ~35 KB at n = 8.
+            int n = ZKP_NL_DEFAULT_N;
+            String nOpt = opt.get("bits");
+            if (nOpt != null) {
+                int req = Integer.parseInt(nOpt);
+                if (req != Herradura.N) n = req;
+            }
+            if (n <= 0 || n % 2 != 0 || n > ZKP_NL_MAX_N) {
+                throw new CliError("genpkey hpks-zkp-nl: --bits must be a positive even "
+                    + "integer <= " + ZKP_NL_MAX_N + ", got " + n);
+            }
+            BigInteger[] kp = ZkpNl.keygen(n, RNG);
+            writeString(out, Codec.encodeZkpNlPrivKey(kp[0], kp[1], kp[2], n));
             return;
         }
 
@@ -414,6 +463,21 @@ public final class HerraduraCli {
             return;
         }
 
+        if (block.label.equals(Codec.PEM_ZKP_NL_PRIV)) {
+            Codec.ZkpNlPrivKey pk = Codec.decodeZkpNlPrivKey(pemIn);
+            if (opt.containsKey("pubout")) {
+                writeString(out, Codec.encodeZkpNlPubKey(pk.b, pk.y, pk.n));
+            } else if (opt.containsKey("text")) {
+                System.out.println("algorithm : hpks-zkp-nl");
+                System.out.println("n         : " + pk.n);
+                System.out.println("B         : " + pk.b);
+                System.out.println("y         : " + pk.y);
+            } else {
+                throw new CliError("pkey: specify --pubout or --text");
+            }
+            return;
+        }
+
         if (block.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
             Codec.RnlPrivKey pk = Codec.decodeRnlPrivKey(pemIn);
             int[] c = HerraduraNl.hkexRnlDeriveC(pk.mBlind, pk.s, pk.n);
@@ -457,8 +521,13 @@ public final class HerraduraCli {
             cmdKexRnl(opt);
             return;
         }
+        if (algo.equals("hybrid-rnl-stern")) {
+            cmdKexHybrid(opt);
+            return;
+        }
         if (!algo.equals("hkex-gf")) {
-            throw new CliError("kex: unsupported --algo " + algo + " (this Java CLI covers hkex-gf, hkex-rnl)");
+            throw new CliError("kex: unsupported --algo " + algo
+                + " (this Java CLI covers hkex-gf, hkex-rnl, hybrid-rnl-stern)");
         }
         String ourPath = req(opt, "our", "kex");
         String theirPath = req(opt, "their", "kex");
@@ -532,6 +601,112 @@ public final class HerraduraCli {
         } else {
             throw new CliError("kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM, got "
                 + theirBlock.label);
+        }
+    }
+
+
+    /**
+     * {@code kex --algo hybrid-rnl-stern} (TODO #162/#165; ported TODO #261).
+     *
+     * <p>Two independent post-quantum assumptions run side by side — HKEX-RNL
+     * (lattice) and HPKE-Stern-KEM/QC-MDPC (code-based) — combined through the
+     * SP 800-227 §4.6-shaped combiner in
+     * {@link HerraduraNl#hybridRnlSternCombine}, which binds both secrets to the
+     * whole public transcript rather than naively hashing K1||K2.
+     *
+     * <p>Each party therefore needs TWO keys: its HKEX-RNL keypair (--our /
+     * --their) and its QC-MDPC KEM keypair (--our-kem / --their-kem).
+     *
+     * <p>Demo-only, as in the other three CLIs: the KEM half's decoding-failure
+     * rate at r = 523 is ~2^-8.6 where IND-CCA2 needs 2^-128 (SECURITY.md).
+     * Since TODO #235 a decoding failure is SILENT — implicit rejection means
+     * decapsulation always returns a key, so a DFR event surfaces as a session
+     * key the peer disagrees with, never as an error here.
+     */
+    private static void cmdKexHybrid(Map<String, String> opt) throws IOException {
+        String ourPath = req(opt, "our", "kex");
+        String theirPath = req(opt, "their", "kex");
+        String out = req(opt, "out", "kex");
+
+        String ourPem = readString(ourPath);
+        Codec.PemBlock ourBlock = Codec.pemUnwrap(ourPem);
+        if (!ourBlock.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
+            throw new CliError("kex hybrid-rnl-stern: --our must be an HKEX-RNL PRIVATE KEY, got "
+                + ourBlock.label);
+        }
+        Codec.RnlPrivKey our = Codec.decodeRnlPrivKey(ourPem);
+
+        String theirPem = readString(theirPath);
+        Codec.PemBlock theirBlock = Codec.pemUnwrap(theirPem);
+
+        if (theirBlock.label.equals(Codec.PEM_HKEX_RNL_PUB)) {
+            // ── STEP 1: Bob responds — encapsulator for both components ──
+            String theirKem = opt.get("their-kem");
+            if (theirKem == null) {
+                throw new CliError("kex hybrid-rnl-stern: --their-kem required "
+                    + "(Alice's HPKE-Stern-KEM public key)");
+            }
+            Codec.RnlPubKey their = Codec.decodeRnlPubKey(theirPem);
+            if (our.n != their.n) {
+                throw new CliError("kex hybrid-rnl-stern: ring size mismatch (ours=" + our.n
+                    + ", theirs=" + their.n + ")");
+            }
+            if (!HerraduraNl.rnlValidateMBlind(their.mBlind, HerraduraNl.RNLQ)) {
+                throw new CliError("kex hybrid-rnl-stern: peer m_blind failed entropy check "
+                    + "— possible substitution attack");
+            }
+            Codec.KemPubKey kemPub = Codec.decodeKemPubKey(readString(theirKem));
+
+            int[] cB = HerraduraNl.hkexRnlDeriveC(their.mBlind, our.s, our.n);
+            HerraduraNl.RnlAgreeResult agree = HerraduraNl.rnlAgree(
+                our.s, their.c, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
+                our.n, rnlKeyBits(our.n));
+            byte[] nB = new byte[32];
+            RNG.nextBytes(nB);
+            BigInteger k1 = HerraduraNl.rnlContributoryKdf(agree.key, rnlKeyBits(our.n),
+                                                            their.nA, nB);
+
+            Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(kemPub.hPub, RNG);
+
+            int[] hintUsed = java.util.Arrays.copyOf(agree.hint,
+                Math.min(agree.hint.length, our.n / 2));
+            BigInteger k = HerraduraNl.hybridRnlSternCombine(
+                k1, enc.k, their.c, their.mBlind, cB, hintUsed,
+                kemPub.hPub, enc.syn, rnlSessionBits(our.n), Stern.QCMDPC_R);
+            writeString(out, Codec.encodeHybridResponse(k, cB, hintUsed, our.n, nB,
+                                                         enc.syn, Stern.QCMDPC_R));
+        } else if (theirBlock.label.equals(Codec.PEM_HYBRID_RESPONSE)) {
+            // ── STEP 2: Alice completes — decapsulator for the KEM half ──
+            String ourKem = opt.get("our-kem");
+            if (ourKem == null) {
+                throw new CliError("kex hybrid-rnl-stern: --our-kem required "
+                    + "(Alice's own HPKE-Stern-KEM private key)");
+            }
+            Codec.HybridResponse resp = Codec.decodeHybridResponse(theirPem);
+            if (our.n != resp.n) {
+                throw new CliError("kex hybrid-rnl-stern: ring size mismatch (ours=" + our.n
+                    + ", response=" + resp.n + ")");
+            }
+            Codec.KemPrivKey kemPriv = Codec.decodeKemPrivKey(readString(ourKem));
+            BigInteger hPub = Stern.qcmdpcPubFromPriv(kemPriv.h0, kemPriv.h1);
+            int[] cA = HerraduraNl.hkexRnlDeriveC(our.mBlind, our.s, our.n);
+
+            BigInteger k1raw = HerraduraNl.rnlAgree(
+                our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
+                our.n, rnlKeyBits(our.n), resp.hint);
+            BigInteger k1 = HerraduraNl.rnlContributoryKdf(k1raw, rnlKeyBits(our.n),
+                                                            our.nA, resp.nB);
+
+            // Implicit rejection (TODO #235): decapsulation always yields a key.
+            BigInteger k2 = Stern.qcmdpcDecapBgf(resp.syn, kemPriv.sup0, kemPriv.sup1);
+
+            BigInteger k = HerraduraNl.hybridRnlSternCombine(
+                k1, k2, cA, our.mBlind, resp.cB, resp.hint, hPub, resp.syn,
+                rnlSessionBits(our.n), resp.rQc);
+            writeString(out, Codec.encodeSessionKey(k, rnlSessionBits(our.n)));
+        } else {
+            throw new CliError("kex hybrid-rnl-stern: --their must be an HKEX-RNL PUBLIC KEY "
+                + "or HYBRID-RNL-STERN RESPONSE PEM, got " + theirBlock.label);
         }
     }
 
@@ -876,6 +1051,61 @@ public final class HerraduraCli {
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
+        // ── TODO #261: the three ZKP-backed signature tags ──────────────
+        if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+            int rounds = opt.containsKey("rounds")
+                ? Integer.parseInt(opt.get("rounds")) : ZKP_CLI_ROUNDS;
+            if (rounds <= 0) throw new CliError(algo + " sign: --rounds must be positive");
+
+            String pem = readString(keyPath);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_ZKP_NL_PRIV)) {
+                throw new CliError(algo + " sign: expected hpks-zkp-nl key, got " + block.label);
+            }
+            Codec.ZkpNlPrivKey pk = Codec.decodeZkpNlPrivKey(pem);
+            // BOTH tags bind a FIXED 32-byte message block: C passes
+            // `msg_bytes, KEYBYTES` and Go `msgPad(inBytes, 32)` for each.  A
+            // Java that hashed the raw length would produce proofs neither
+            // accepts -- which is exactly the split TODO #261 found between
+            // Python's unpadded nl-zkboo and C/Go's padded one.
+            byte[] m32 = padTrunc(msg, 32);
+            if (algo.equals("nl-zkboo")) {
+                List<ZkpNl.ProofRound> pr =
+                    ZkpNl.prove(pk.a, pk.b, pk.y, pk.n, rounds, m32, RNG);
+                writeString(out, Codec.encodeZkpNlProof(pr, pk.n));
+            } else {
+                List<ZkpNl.PpRound> pr =
+                    ZkpNl.provePp(pk.a, pk.b, pk.y, pk.n, rounds, m32, RNG);
+                writeString(out, Codec.encodeZkpNlPpProof(pr, pk.n));
+            }
+            return;
+        }
+        if (algo.equals("rnl-sigma")) {
+            String keyPath = req(opt, "key", "sign");
+            byte[] msg = readBytes(req(opt, "in", "sign"));
+            String out = req(opt, "out", "sign");
+
+            String pem = readString(keyPath);
+            Codec.PemBlock block = Codec.pemUnwrap(pem);
+            if (!block.label.equals(Codec.PEM_HKEX_RNL_PRIV)) {
+                throw new CliError("rnl-sigma sign: expected hkex-rnl key, got " + block.label);
+            }
+            Codec.RnlPrivKey pk = Codec.decodeRnlPrivKey(pem);
+            int[] c = HerraduraNl.hkexRnlDeriveC(pk.mBlind, pk.s, pk.n);
+            // 32-byte message block, as C (`msg.b, KEYBYTES`) and Go
+            // (`msgPad(inBytes, 32)`) both use -- see the nl-zkboo note above.
+            HerraduraNl.SigmaProof pr =
+                HerraduraNl.rnlSigmaSign(pk.s, pk.mBlind, c, pk.n, padTrunc(msg, 32), RNG);
+            if (pr == null) {
+                throw new CliError("rnl-sigma sign: rejection sampling limit reached "
+                    + "(1000 attempts) -- retry, or check the ring parameters");
+            }
+            writeString(out, Codec.encodeZkpRnlProof(pr.w, pr.c, pr.z, pk.n));
+            return;
+        }
         if (algo.equals("hpks-ring")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
@@ -951,7 +1181,9 @@ public final class HerraduraCli {
             return;
         }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("sign: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots)");
+            throw new CliError("sign: unsupported --algo " + algo
+                + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, "
+                + "hpks-wots, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String keyPath = req(opt, "key", "sign");
         byte[] msg = readBytes(req(opt, "in", "sign"));
@@ -972,8 +1204,69 @@ public final class HerraduraCli {
         }
     }
 
+    /** Prints the verify verdict and sets the exit status, matching the other
+     *  three CLIs exactly: "Signature OK" + status 0, or "Verification FAILED"
+     *  + status 1.  A caller that only checks output text and not the status
+     *  is not testing verification (TODO #261). */
+    private static void reportVerify(boolean ok) {
+        if (ok) {
+            System.out.println("Signature OK");
+        } else {
+            System.out.println("Verification FAILED");
+            System.exit(1);
+        }
+    }
+
     private static void cmdVerify(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "verify");
+        // ── TODO #261: the three ZKP-backed signature tags ──────────────
+        if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
+            String pubPath = req(opt, "pubkey", "verify");
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            String sigPath = req(opt, "sig", "verify");
+
+            String pubPem = readString(pubPath);
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            if (!pubBlock.label.equals(Codec.PEM_ZKP_NL_PUB)) {
+                throw new CliError(algo + " verify: expected hpks-zkp-nl pubkey, got " + pubBlock.label);
+            }
+            Codec.ZkpNlPubKey pub = Codec.decodeZkpNlPubKey(pubPem);
+            boolean ok;
+            if (algo.equals("nl-zkboo")) {
+                Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(readString(sigPath));
+                // The round count travels in the PEM, as it does for Stern-F
+                // (TODO #236): a verifier accepts whatever the signer used.
+                ok = ZkpNl.verify(pub.b, pub.y, pub.n, pr.rounds.size(),
+                                  padTrunc(msg, 32), pr.rounds);
+            } else {
+                Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(readString(sigPath));
+                ok = ZkpNl.verifyPp(pub.b, pub.y, pub.n, pr.rounds.size(),
+                                    padTrunc(msg, 32), pr.rounds);
+            }
+            reportVerify(ok);
+            return;
+        }
+        if (algo.equals("rnl-sigma")) {
+            String pubPath = req(opt, "pubkey", "verify");
+            byte[] msg = readBytes(req(opt, "in", "verify"));
+            String sigPath = req(opt, "sig", "verify");
+
+            String pubPem = readString(pubPath);
+            Codec.PemBlock pubBlock = Codec.pemUnwrap(pubPem);
+            if (!pubBlock.label.equals(Codec.PEM_HKEX_RNL_PUB)) {
+                throw new CliError("rnl-sigma verify: expected hkex-rnl pubkey, got " + pubBlock.label);
+            }
+            Codec.RnlPubKey pub = Codec.decodeRnlPubKey(pubPem);
+            Codec.ZkpRnlProof pr = Codec.decodeZkpRnlProof(readString(sigPath));
+            if (pr.n != pub.n) {
+                throw new CliError("rnl-sigma verify: ring size mismatch (pubkey n=" + pub.n
+                    + ", proof n=" + pr.n + ")");
+            }
+            boolean ok = HerraduraNl.rnlSigmaVerify(pub.mBlind, pub.c, pub.n,
+                                                     padTrunc(msg, 32), pr.w, pr.c, pr.z);
+            reportVerify(ok);
+            return;
+        }
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String pubPath = req(opt, "pubkey", "verify");
@@ -1036,7 +1329,9 @@ public final class HerraduraCli {
             return;
         }
         if (!algo.equals("hpks") && !algo.equals("hpks-nl")) {
-            throw new CliError("verify: unsupported --algo " + algo + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, hpks-wots, hpks-t)");
+            throw new CliError("verify: unsupported --algo " + algo
+                + " (this Java CLI covers hpks, hpks-nl, hpks-stern, hpks-ring, hpks-xmss, "
+                + "hpks-wots, hpks-t, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String pubPath = req(opt, "pubkey", "verify");
         byte[] msg = readBytes(req(opt, "in", "verify"));

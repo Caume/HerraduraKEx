@@ -249,10 +249,10 @@ explicit that tests are in scope, not only the primitives:
 CryptosuiteTests/Herradura_tests.c   32 `test_*` functions
 CryptosuiteTests/Herradura_tests.go  37 `test*` functions
 CryptosuiteTests/Herradura_tests.py  36 `test_*` functions
-bindings/java/herradurakex/SelfTest.java  26 PASS/fail checks, numbered [1]-[26] (v5.7.1)
+bindings/java/herradurakex/SelfTest.java  27 PASS/fail checks, numbered [1]-[27] (v5.8.7)
 ```
 
-C/Go/Python additionally share a **numbered** test convention ([1]-[48], stable IDs cited
+C/Go/Python additionally share a **numbered** test convention ([1]-[49], stable IDs cited
 throughout `CHANGELOG.md`/`TODO_DONE.md` — e.g. "test [45] runs its Stern-F sub-check at
 `rounds=32`", "test [46] is TODO #242's regression guard").  `SelfTest.java` had no
 equivalent numbering.
@@ -360,11 +360,227 @@ the session key straight off the raw shared secret. Ported to all three (see TOD
 parity" — a reminder that the manifest's value is in surfacing exactly this class of
 silent divergence, not just in cataloguing agreement.
 
+**v5.8.7 — a fresh sweep, run the way the item asked: three findings, two of them
+about the MECHANISM rather than the manifest.**  The v5.8.3/#263 pass exhausted the
+standing candidate list, so this one enumerated every top-level function in all four
+suites and diffed them.  That census is mostly noise by construction (C's `ba_*`/`qcp_*`
+bignum plumbing has no analogue in three GC'd languages with native big integers; Java's
+methods are class-scoped, so name matching alone reports `Hcred.prove` as missing
+`hcred_prove`), which is why `check_language_parity.py`'s docstring already declined to
+do it automatically.  Read by hand, it yielded:
+
+* **`spec/`'s `cli_support` was a THREE-column table in a four-language repo** — and
+  that is the acceptance criterion's own object.  `bindings/java/herradurakex/HerraduraCli.java`
+  has mirrored the Python CLI's subcommands and `--algo` values since TODO #201/#260, but
+  `generate_spec.py` derived the column only from `herradura_cli.c` and `herradura_cli.go`,
+  so Java's coverage and its gaps were invisible to `spec/` *by construction* — the same
+  shape as the original KKW gap, one layer up.  Fixed by deriving Java's column with the
+  existing `extract_cli_tags` (its literal-intersection rule needed no change: Java reaches
+  a tag through `algo.equals("hpks")`/`case "hpks"` exactly as C and Go do).  Java
+  dispatches **24 of the 29** tags; the schema's three `["c","go","python"]` enums gained
+  `java`, and `cli_subcommands.*.algos` picked the column up for free.
+* **The five Java gaps that turns up are now DATA WITH REASONS, not silent absences** —
+  which is what the criterion asks for.  `build_cross_impl_gaps` emits them automatically;
+  a new curated `GAP_REASONS` table supplies the note for each, and a gap with no entry
+  still appears with `note: null`, which is the honest rendering of "nobody has written
+  down why yet".  Triaged: `nl-zkbpp` and `hpks-zkp-nl` are a **documented exclusion** —
+  `ZkpNl.java`'s class doc comment says the port "exists only to give `Hpake` its
+  mutual-authentication proof" — the same shape `Hcred.java`'s KKW note had before this
+  item closed it; `nl-zkboo` is **CLI-surface only** (`ZkpNl.prove`/`verify` ship and are
+  exercised through `Hpake`), the narrowest of the five and the one to close first;
+  `rnl-sigma` and `hybrid-rnl-stern` have **no Java port at any layer and nothing in the
+  Java tree recording that** — this pass is their first record.
+* **`rnl_validate_m_blind` was a PLACEMENT gap**, a shape the manifest had not caught
+  before.  The peer-`m_blind` substitution guard (reject a sparse or clustered polynomial
+  before use; `m_blind`'s uniformity rests entirely on the initiator's RNG, TODO #89) lived
+  in the SUITE in C, Go and Java, where any caller reaches it — and in Python only as a
+  private copy inside `HerraduraCli/herradura.py`, so the pedagogical suite path
+  (`docs/examples/hello_herradura.py`'s) could not reach it and the thresholds lived in two
+  places in that one language.  All four implementations agreed behaviourally, so nothing
+  was broken; it was one edit away from being broken in Python only.  Moved into the Python
+  suite, CLI now imports it through `primitives.py`, `rnl-validate-m-blind` manifest entry
+  added (13 total) with its regexes deliberately anchored at the SUITE files — pointing
+  Python's at the CLI would have made the entry pass while the asymmetry stood.
+
+**v5.8.7 — asymmetry #2 revisited: the guard was untested in ALL FOUR languages.**  Nothing
+in `CliTest/`, `CryptosuiteTests/` or `SelfTest.java` exercised `rnl_validate_m_blind` in any
+language — a four-way absence, which the numbered-test half of the mechanism cannot see (it
+checks that the four numberings agree, not that they cover anything).  Added as **[49]** in
+C/Go/Python's shared numbering and **[27]** in Java's own: accept-control on a genuine
+uniform draw, then the all-zero polynomial, a sparse one (n/8 non-zero at full range,
+isolating the count bound), a clustered one (all non-zero inside [1, q/8), isolating the
+range bound), and the count boundary on both sides.  Case (a) is not decoration — without
+it a guard that rejected *everything* scores a perfect pass on the four rejection cases,
+which is `CliTest/lib_malformed.sh`'s discipline applied here.  Python's harness
+re-implements the guard locally and cross-checks it against the shipped suite, as [46],
+[47] and [48] do.  Verified against three deliberate breaks (a guard that accepts
+everything, one that rejects everything, and a harness copy whose threshold drifts from the
+suite's): all three fail, each on a different counter.
+
+**Also corrected, found while checking the above.**  `CLAUDE.md`'s `CliTest/` index said
+`test_v3_family.sh` runs `hske-duplex3`/`fpe --v3`/`twk --v3` "across C/Go/Python (Java
+ships no duplex, fpe or twk)".  Stale since v5.3.6/v5.3.8 — TODO #260 added all three to
+Java, and the script's own header has said so since.  `spec/README.md`'s description of the
+derived `cli_support` column updated for the Java column at the same time.
+
+**v6.0.0 — the five Java gaps are PORTED, not documented.**  v5.8.7's resolution
+(record a reason for each of the five missing `--algo` tags and leave them) was
+rejected on review: documentation alone is not an acceptable answer to this item,
+whose whole subject is that a capability exists in one language and not another.
+All five are now ported — `nl-zkboo`, `nl-zkbpp`, `hpks-zkp-nl`, `rnl-sigma` and
+`hybrid-rnl-stern` — and **the Java CLI dispatches all 29 algo tags**.  `spec/`'s
+derived `cli_support` column has no empty Java cell left; `GAP_REASONS` is now an
+empty table, kept only so the next gap gets a reason instead of silence.
+
+What that took, in `bindings/java/herradurakex/`: `ZkpNl.keygen`; `ZkpNl.provePp`/
+`verifyPp` (the ZKB++ transcript encoding, ~230 lines, which `ZkpNl.java`'s own class
+doc comment had declared out of scope); `HerraduraNl.rnlSigmaSign`/`rnlSigmaVerify`
+plus the Σ-protocol parameter tables (transcribed rather than re-derived — a drifting
+fallback formula is exactly what TODO #223 hit); `HerraduraNl.hybridRnlSternCombine`;
+eight `Codec` encode/decode pairs and two new PEM labels; and the `genpkey`/`pkey`/
+`sign`/`verify`/`kex` wiring.
+
+**Porting found two REAL WIRE SPLITS that had shipped, and this is the item's most
+important result.**  The Java code was written against the Python reference and
+verified against it byte-for-byte — then failed against C and Go.  `nl-zkboo` and
+`rnl-sigma` had **never** interoperated between {C, Go} and Python: C passes
+`msg.b, KEYBYTES` and Go `msgPad(inBytes, 32)`, while Python hashed the raw message,
+so each side rejected the other's signatures for any input not exactly 32 bytes long.
+Python's own `nl-zkbpp` branch already carried the fix, commented *"Pad/truncate to 32
+bytes to match C/Go behavior"* — the other two were missed when it was applied.
+Python was moved to match C and Go; `MIGRATING.md` §10 records it, and it is why this
+release is MAJOR.
+
+**Why nothing caught it, which is the lesson worth keeping.**  Every existing
+cross-language test either drove one CLI or checked each implementation *against
+Python*.  A star topology around Python reports Python-vs-Python for the very pair
+that was broken and goes green.  The new `CliTest/test_zkp_hybrid_family.sh` is a full
+**4×4 matrix** instead — every (signer, verifier) pair for the three signature tags, and
+every (responder, completer) pair for the hybrid, compared on **session-key bytes**
+rather than exit status, because TODO #235's implicit rejection makes a hybrid mismatch
+silent.  88 checks; verified against the bug it exists for by reverting the Python fix,
+which produces exactly 6 failures, precisely the C/Go↔Python pairs.
+
+**A third gap, in CI itself.**  `native-interop` installs `default-jdk-headless` under a
+comment claiming "genuine 4-way (not just 3-way) coverage", but never compiled the
+bindings — so every Java-optional script in that job hit its `HerraduraCli.class` check,
+printed `NOTE: bindings/java not compiled`, and skipped the Java column.  That claim had
+been false since it was written.  Fixed by adding the `bindings/java/build.sh` step.
+
+Also: `SelfTest.java` gains `[28]` zkp_nl_zkboo, `[29]` zkp_nl_zkbpp, `[30]` rnl_sigma,
+each with two rejection axes beside the round-trip; `PRIMITIVES` gains four entries (17
+total).  The hybrid combiner is deliberately NOT one of them — it lives in the CLI layer
+in three of the four languages, not in the suite files that manifest reads, so an entry
+would be checking the wrong files; the 4×4 session-key comparison guards it instead.
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
-one-time read of the source tree, so it stays true.  The numbered-test half is fully met;
-the primitive-manifest half is met only for its current 12 entries — extending
-`PRIMITIVES` is what keeps this item open.
+one-time read of the source tree, so it stays true.  The numbered-test half is fully met.
+**The CLI-surface half is now fully met too**: as of v6.0.0 all four languages dispatch all
+29 `--algo` tags, so every cell is FILLED rather than acknowledged, and `spec/`'s
+`cli_support` column is derived from each CLI's own dispatch source rather than curated.
+The primitive-manifest half is met only for its current 17 entries — extending `PRIMITIVES`
+to the suite-internal (non-CLI) primitives it does not yet name is what keeps this item
+open, and is the only remaining work.
+
+Status: **OPEN**
+
+### #266: HCRED-KKW has no KAT and no numbered test in any of the four languages
+
+**The one piece TODO #261 shipped un-decided, and it is now the largest structurally-only-
+verified surface in the suite.**  #261's own KKW port block closes with it:
+
+> KAT/test coverage is the one piece left un-decided: no fixed-vector KAT for KKW exists in
+> any language, so a byte-exact cross-language check needs one added first — every language
+> ships today verified only structurally (round-trips + rejection checks), which is the
+> standard the rest of HCRED already uses too.
+
+Confirmed still true at v6.0.0.  `grep -ril kkw KAT/ CliTest/ CryptosuiteTests/` returns
+exactly one hit, and it is base64 noise inside `KAT/pem/n1024_alice_pub.pem`.  KKW is
+reached **only** from the four demo files:
+
+```
+Herradura cryptographic suite.c    hcred_prove_kkw / hcred_verify_kkw   (herradura.h)
+Herradura cryptographic suite.go   HcredProveKkw  / HcredVerifyKkw      (herradura/herradura.go)
+Herradura cryptographic suite.py   hcred_prove_kkw / hcred_verify_kkw   (~113 lines, line 3305 on)
+bindings/java/.../Hcred.java       Hcred.proveKkw / Hcred.verifyKkw     (Demo.java)
+```
+
+**Why this is not merely a missing-test chore.**  Three of the four ports had a real
+transcription bug, each found by a hand-built throwaway harness and none of them
+regression-guarded today (all three accounts are in #261's port block):
+
+* **Go** — the "reveal `aux` when party `N-1` is opened" condition was *inverted*
+  (`pb == N_par-1` for Python's `pb != N_par-1`); every genuine proof failed verification.
+* **C** — a genuine **buffer overflow** in `hcred_kkw_state_com` (a 2-byte under-allocation
+  on a much larger buffer, caught by `-Wstringop-overflow`, not by a crash), *and* a
+  **bit-endianness mismatch** in `hcred_kkw_outmap` with no Go/Python analogue, because
+  `big.Int.Bit(i)` and Python's `>>`/`&` are layout-independent where C's `BitArray` is
+  big-endian.
+* **Java** — none found; `BigInteger.testBit` is layout-independent too.
+
+Every one of those was a *cross-language* divergence found by hand.  Nothing in CI would
+find the next one.
+
+**And v6.0.0 just demonstrated the exact failure mode this leaves open.**  `nl-zkboo` and
+`rnl-sigma` round-tripped cleanly in all four languages for multiple releases and had
+**never** interoperated between {C, Go} and Python.  Self-consistency is not interop.  KKW
+today has precisely that property: four implementations, each verified against itself.
+
+**The design point that has to be settled first: KKW proving is NOT deterministic.**
+`hcred_prove_kkw` draws `root = os.urandom(32)` per emulation (one call, Python line ~3332;
+the other three ports mirror it), so there is no fixed vector for a *prover* to reproduce
+without a test-only deterministic root source added identically to all four languages.  Two
+routes, and they are not equally good:
+
+1. **A verify-side KAT (recommended, and it should land first).**  Pin ONE reference
+   transcript — statement (`m`, `C`, `seed_H`, `y`), `W`, `params`, `pre`, `online`,
+   `msg_bytes` — generated once by Python at the demo parameters, and require all four
+   languages to CONSUME it and accept.  This needs no change to any prover, and it is the
+   check that would have caught all three known bugs: an inverted `aux` condition, a
+   mis-sized commitment buffer and a flipped bit convention are all *reader* disagreements
+   about a byte layout.  It is also exactly the discipline `KAT/pem/` already uses ("which
+   each CLI must CONSUME and reproduce").
+2. **A produce-side KAT** — inject the `M` preprocessing roots from the vector instead of
+   `urandom`, in all four languages, and require byte-identical transcripts.  Strictly
+   stronger, but it puts a test-only seam in four production provers.  Worth doing only
+   after (1), and only if (1) turns out not to pin the encoding tightly enough.
+
+Note the JSON hazard `KAT/nl_fscx_v3.json` already documents: KKW's `pre` carries 32-byte
+seeds and its `online` carries party indices and gate broadcasts — **hex strings, never JSON
+numbers**.  A 64-bit value does not survive the float64 a JSON parser defaults to, and the
+loss is silent.
+
+**Scope.**
+- `KAT/hcred_kkw.json` + generation in `KAT/generate_kat.py` (with `--check` currency
+  gating, as the other three files have), at the demo parameters
+  `(N_par, M, tau) = (4, 8, 4)` — production is `(64, 343, 27)`, which should be recorded in
+  the vector's metadata even though the vector itself is demo-sized.
+- Cross-checks in the two independent verifiers that already exist for the other KAT files:
+  `KAT/verify_kat.go` and `bindings/java` `KatVerify`.
+- A **numbered security test** in each language, which is the four-way absence half of
+  #261's asymmetry #2 (the numbered-test mechanism checks that the four numberings *agree*,
+  not that they *cover* anything — it cannot see this): **[50]** in C/Go/Python's shared
+  numbering, **[31]** in Java's own.  Content: verify the pinned transcript, then the six
+  rejection axes each port was independently debugged against — wrong message, flipped `W`,
+  flipped a party's `U` broadcast, flipped a `T` gate broadcast, flipped a preprocessing
+  root seed byte, and a relabeled `Pbar`.  Per `CliTest/lib_malformed.sh`'s discipline and
+  test [49]'s, the accept-control is not decoration: without it a verifier that rejects
+  *everything* scores a perfect pass on all six rejection cases.
+- Python's harness re-implements what it checks and cross-checks against the shipped suite,
+  as [46]/[47]/[48]/[49] do; C/Go call `herradura.h` / the `herradura` package directly.
+
+**Out of scope.**  KKW gets no CLI subcommand — Python has none either, and #261 settled
+that parity here means the suite files and the demos, not `cred-prove --transcript kkw`.
+So there is no `CliTest/` script to add and nothing for the native-interop coverage guard
+to claim; the KAT and the numbered tests are the whole surface.
+
+**Relationship to #261.**  Adjacent, not a sub-item.  #261's remaining work is extending
+`PRIMITIVES` to more suite-internal primitives — a manifest asks *does the marker exist in
+all four languages*, and `hcred-kkw` has been a passing entry since v5.7.2.  This item asks
+*do the four implementations agree on the bytes*, which no manifest entry can answer.  The
+`hcred-kkw` entry passing while three of the four ports carried a real bug is the precise
+illustration.
 
 Status: **OPEN**

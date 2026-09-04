@@ -41,7 +41,7 @@ The generator (`generate_spec.py`) pulls the following **directly from source** 
 regex, so these fields cannot silently drift from what the CLIs actually implement:
 
 - Algo tag -> PEM private/public key label: `HerraduraCli/herradura.py`'s `_PRIV_ALGOS`
-  dict (the most complete of the three CLIs — it's the only one that defines
+  dict (the most complete of the four CLIs — it's the only one that defines
   `hpks-xmss` and `hcred`).
 - Every `PEM_*` wire-format label: `HerraduraCli/herradura_codec.h`.
 - Per-subcommand `--algo` choices (enc/dec/sign/verify/kex/encfile/decfile/dgst):
@@ -50,9 +50,16 @@ regex, so these fields cannot silently drift from what the CLIs actually impleme
   `herradura.h` `#define`s, resolved numerically where the expression is a simple
   ratio of already-known constants (e.g. `SDF_N_ROWS = KEYBITS / 2` -> `128`).
 
-- Which of the C/Go/Python CLIs dispatch which algo tag: every string literal in
-  `HerraduraCli/herradura_cli.c` and `herradura_cli.go`, intersected with the tag
-  universe above (comments stripped). Dispatch code, not `--help` text — both banners
+- Which of the C/Go/Python/Java CLIs dispatch which algo tag: every string literal in
+  `HerraduraCli/herradura_cli.c`, `herradura_cli.go` and
+  `bindings/java/herradurakex/HerraduraCli.java`, intersected with the tag
+  universe above (comments stripped). The Java column arrived in TODO #261: the
+  table had been three-wide in a four-language repo since `bindings/java/` landed,
+  so Java's coverage — 24 of the 29 tags — and its five gaps were invisible here
+  by construction. Those five now appear in `cross_implementation_gaps` with a
+  recorded reason each, which is what #261's acceptance criterion asks for
+  ("all four cells filled, or ACKNOWLEDGED with a recorded reason, never a
+  silent absence"). Dispatch code, not `--help` text — both banners
   under-document working tags. This was a curated `CLI_SUPPORT` table until TODO #238
   found it wrong in two places: it called `hpks-xmss` Python-only when all four
   implementations have shipped it since TODO #201/#208, and said `hcred` was missing from

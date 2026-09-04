@@ -70,7 +70,7 @@ from primitives import (
     hske_nl_v3_duplex_encrypt, hske_nl_v3_duplex_decrypt,
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
-    _rnl_lift, _rnl_poly_mul,
+    _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
@@ -484,17 +484,10 @@ def _rnl_contributory_kdf(k_raw_int: int, n_bits: int, n_a: bytes, n_b: bytes) -
     return int.from_bytes(hfscx_256(payload), 'big')
 
 
-def _rnl_validate_m_blind(poly, q=RNLQ):
-    """Return True if poly looks like a uniform-random element of Z_q^n.
-    Rejects sparse polys (nz < n/4) and clustered polys (range < q/4)."""
-    n = len(poly)
-    nz = sum(1 for c in poly if c != 0)
-    if nz < n // 4:
-        return False
-    span = max(poly) - min(poly)
-    if span < q // 4:
-        return False
-    return True
+# _rnl_validate_m_blind is imported from the suite above (TODO #261).  It used to
+# be a private copy here -- C, Go and Java all kept the equivalent in their SUITE,
+# so Python was the one language where a non-CLI caller could not reach the peer
+# m_blind substitution guard, and where the thresholds lived in two places.
 
 
 def _encode_stern_privkey(e_int, seed, n, algo):
@@ -2025,7 +2018,12 @@ def cmd_sign(args):
             sys.exit(f"rnl-sigma sign: expected hkex-rnl key, got {our_algo!r}")
         s_poly, m_poly, n, _ = _decode_rnl_privkey(our_ints)
         C_poly = _rnl_derive_C(m_poly, s_poly, n)
-        w, c, z = rnl_sigma_sign(s_poly, m_poly, C_poly, n, in_bytes)
+        # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261) — C passes
+        # `msg.b, KEYBYTES` and Go `msgPad(inBytes, 32)`.  Same omission as the
+        # nl-zkboo branch below, and with the same consequence: Python's
+        # rnl-sigma proofs were rejected by C and Go, and theirs by Python.
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        w, c, z = rnl_sigma_sign(s_poly, m_poly, C_poly, n, msg)
         pem_out = encode_zkp_rnl_proof(w, c, z, n)
         _write_file(args.out, pem_out)
 
@@ -2035,7 +2033,14 @@ def cmd_sign(args):
             sys.exit(f"nl-zkboo sign: expected hpks-zkp-nl key, got {our_algo!r}")
         A, B, y, n = our_ints
         rounds = getattr(args, 'rounds', None) or _ZKP_CLI_ROUNDS
-        proof_rounds = zkp_nl_prove(A, B, y, n, rounds, in_bytes)
+        # Pad/truncate to 32 bytes to match C/Go behavior.  TODO #261 found this
+        # line missing here while it was present in the nl-zkbpp branch below:
+        # C passes `msg_bytes, KEYBYTES` and Go `msgPad(inBytes, 32)`, so an
+        # unpadded Python message produced signatures neither of them accepted,
+        # and rejected theirs.  Nothing tested nl-zkboo across languages, so the
+        # split shipped.  See MIGRATING.md.
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        proof_rounds = zkp_nl_prove(A, B, y, n, rounds, msg)
         pem_out = encode_zkp_nl_proof(proof_rounds, n)
         _write_file(args.out, pem_out)
 
@@ -2284,7 +2289,9 @@ def cmd_verify(args):
         C_poly, m_poly, n, _ = _decode_rnl_pubkey(their_ints)
         sig_pem = _read_file(sig_path).decode('ascii')
         w, c, z, _n = decode_zkp_rnl_proof(sig_pem)
-        ok = rnl_sigma_verify(m_poly, C_poly, n, in_bytes, w, c, z)
+        # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261).
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        ok = rnl_sigma_verify(m_poly, C_poly, n, msg, w, c, z)
         if ok:
             print("Signature OK")
             sys.exit(0)
@@ -2300,7 +2307,10 @@ def cmd_verify(args):
         sig_pem = _read_file(sig_path).decode('ascii')
         proof_rounds, _n = decode_zkp_nl_proof(sig_pem)
         rounds = len(proof_rounds)
-        ok = zkp_nl_verify(B, y, n, rounds, in_bytes, proof_rounds)
+        # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261; see the
+        # sign branch above for why this was missing).
+        msg = (in_bytes + b'\x00' * 32)[:32]
+        ok = zkp_nl_verify(B, y, n, rounds, msg, proof_rounds)
         if ok:
             print("Signature OK")
             sys.exit(0)

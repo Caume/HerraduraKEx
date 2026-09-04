@@ -250,8 +250,19 @@ random polynomial over $\mathbb{Z}_{65537}$ has $\approx n$ non-zero coefficient
 (2) coefficient range $\max - \min \geq q/4$ (a clustered or constant polynomial has a
 small range).  These checks catch zero-polynomial and sparse-polynomial attacks while
 accepting any legitimate uniformly random blinding.  The check is implemented in
-`rnl_validate_m_blind` (C/`herradura.h`), `_rnl_validate_m_blind` (Python CLI), and
-`RnlValidateMBlind` (Go package); all three CLIs reject on failure with an explicit error.
+`rnl_validate_m_blind` (C/`herradura.h`), `RnlValidateMBlind` (Go package),
+`HerraduraNl.rnlValidateMBlind` (Java) and `rnl_validate_m_blind` (Python suite);
+all four CLIs reject on failure with an explicit error.
+
+TODO #261 (v5.8.7) corrected two things about that sentence.  Python's copy used to
+live in the **CLI** (`HerraduraCli/herradura.py`), not the suite, so it was the one
+language where a caller using the suite directly could not reach the guard and where
+the two thresholds existed in two places; it now lives in the suite and the CLI
+imports it.  And the check was **untested in all four languages** — the numbered
+security test `[49]` (Java: `SelfTest.java`'s `[27]`) now exercises it: an
+accept-control on a genuine uniform draw, then the all-zero polynomial, a sparse one
+(isolating check (1)), a clustered one (isolating check (2)), and the $n/4$ boundary
+on both sides.
 
 **Remaining gap.** The blinding is still non-contributory: the uniformity of $m_\text{blind}$
 rests entirely on Alice's RNG.  A backdoored or weak RNG on Alice's side silently weakens

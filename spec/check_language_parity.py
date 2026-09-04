@@ -273,6 +273,67 @@ PRIMITIVES = {
         "python": r"^def _hpake_rnl_kdf\(",
         "java": r"static byte\[\] rnlKdf\(",
     },
+    # ── TODO #261 (v6.0.0): the tags Java was missing, now ported ────────
+    # These ARE CLI-reachable, so generate_spec.py's cli_support column is the
+    # primary guard and CliTest/test_zkp_hybrid_family.sh is the behavioural
+    # one.  They are listed here too because cli_support checks each CLI's
+    # DISPATCH source, not the suite behind it: a CLI that still parsed the tag
+    # while its primitive was deleted or renamed would keep that column green.
+    #
+    # `hybrid-rnl-stern`'s combiner is deliberately NOT here.  It lives in the
+    # CLI layer in three of the four languages (herradura_cli.c, herradura.py),
+    # not in the suite files this manifest reads, so an entry for it would be
+    # checking the wrong files.  The 4x4 session-key comparison in
+    # test_zkp_hybrid_family.sh is what guards it.
+    "zkp-nl-keygen": {
+        "c": r"static void zkp_nl_keygen\(",
+        "go": r"func ZkpNlKeygen\(",
+        "python": r"^def zkp_nl_keygen\(",
+        "java": r"public static BigInteger\[\] keygen\(",
+    },
+    "zkp-nl-prove": {
+        # ZKBoo (nl-zkboo).
+        "c": r"static ZkpNlRound \*zkp_nl_prove\(",
+        "go": r"func ZkpNlProve\(",
+        "python": r"^def zkp_nl_prove\(",
+        "java": r"public static List<ProofRound> prove\(",
+    },
+    "zkp-nl-prove-pp": {
+        # ZKB++ (nl-zkbpp).  Absent from Java until v6.0.0 -- ZkpNl.java's class
+        # doc comment declared it, and hpks-zkp-nl, explicitly out of scope.
+        "c": r"static ZkpNlPpRound \*zkp_nl_pp_prove\(",
+        "go": r"func ZkpNlProvepp\(",
+        "python": r"^def zkp_nl_prove_pp\(",
+        "java": r"public static List<PpRound> provePp\(",
+    },
+    "rnl-sigma-sign": {
+        # ZKP-RNL Sigma-protocol (rnl-sigma).  No Java port at any layer before
+        # v6.0.0, and nothing in the Java tree recorded the omission.
+        "c": r"static int rnl_sigma_sign\(",
+        "go": r"func RnlSigmaSign\(",
+        "python": r"^def rnl_sigma_sign\(",
+        "java": r"public static SigmaProof rnlSigmaSign\(",
+    },
+    "rnl-validate-m-blind": {
+        # TODO #261 (v5.8.7): the peer-m_blind substitution guard -- reject a
+        # sparse (nz < n/4) or clustered (range < q/4) polynomial before using
+        # it, since m_blind's uniformity rests entirely on the initiator's RNG
+        # (TODO #89) and the responder cannot verify the draw itself.
+        #
+        # NOT a missing-algorithm gap but a PLACEMENT one, which is a shape this
+        # manifest had not caught before: C, Go and Java all had it in the SUITE,
+        # where any caller reaches it; Python had it only as a private copy inside
+        # HerraduraCli/herradura.py, so the pedagogical suite path (what
+        # docs/examples/hello_herradura.py shows) could not reach it, and the
+        # thresholds lived in two places in that one language.  The regexes below
+        # are therefore deliberately anchored at the SUITE files -- pointing
+        # Python's at the CLI would have made the entry pass while the asymmetry
+        # stood.
+        "c": r"static int rnl_validate_m_blind\(",
+        "go": r"func RnlValidateMBlind\(",
+        "python": r"^def rnl_validate_m_blind\(",
+        "java": r"public static boolean rnlValidateMBlind\(",
+    },
     "hpake-contributory-kdf": {
         # TODO #263: aPAKE's ephemeral HKEX-RNL exchange inside
         # hpake_login_demo binds K_raw to per-session nonces from both

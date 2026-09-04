@@ -40,6 +40,11 @@ HERRADURA_H = os.path.join(REPO, "herradura.h")
 HERRADURA_GO = os.path.join(REPO, "herradura", "herradura.go")
 CLI_C = os.path.join(REPO, "HerraduraCli", "herradura_cli.c")
 CLI_GO = os.path.join(REPO, "HerraduraCli", "herradura_cli.go")
+# TODO #261: the fourth CLI.  bindings/java/ carries a complete port of the suite
+# AND a herradurakex.HerraduraCli mirroring the Python CLI's subcommands and
+# --algo values, but cli_support was a three-column table until v5.8.7, so
+# Java's coverage -- and its five gaps -- were invisible to spec/ by construction.
+CLI_JAVA = os.path.join(REPO, "bindings", "java", "herradurakex", "HerraduraCli.java")
 OUT_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.json")
 SCHEMA_PATH = os.path.join(REPO, "spec", "herradura-protocol-spec.schema.json")
 
@@ -101,12 +106,14 @@ def _strip_c_comments(src):
 
 
 def extract_cli_tags(src, universe):
-    """Algo tags a C or Go CLI actually dispatches on.
+    """Algo tags a C, Go or Java CLI actually dispatches on.
 
-    Both CLIs reach a tag through a quoted string literal -- `strcmp(algo, "hpks")`
-    in C, a `case "hpks"` or an `algo -> PEM label` map entry in Go -- so the rule
-    is: every string literal in the source, intersected with the tag universe the
-    Python CLI defines.  Comments are stripped first.
+    All three reach a tag through a quoted string literal -- `strcmp(algo, "hpks")`
+    in C, a `case "hpks"` or an `algo -> PEM label` map entry in Go,
+    `algo.equals("hpks")` or a `case "hpks"` in Java -- so the rule is: every
+    string literal in the source, intersected with the tag universe the Python CLI
+    defines.  Comments are stripped first (Java's `//` form is C's, so the same
+    stripper serves).
 
     This replaces a hand-maintained CLI_SUPPORT table (TODO #238).  That table had
     gone stale in two places without anything noticing: it said `hpks-xmss` was
@@ -730,6 +737,17 @@ PROTOCOL_NAME = {
     "apake": "aPAKE (asymmetric password-authenticated key exchange)",
 }
 
+# TODO #261: GAP_REASONS was a table of five Java cells with a recorded reason
+# each -- the "ACKNOWLEDGED rather than silent" half of #261's acceptance
+# criterion.  It is now EMPTY, and deliberately kept rather than deleted: all
+# five (nl-zkboo, nl-zkbpp, hpks-zkp-nl, rnl-sigma, hybrid-rnl-stern) were
+# PORTED to Java in v6.0.0 instead of documented, so Java dispatches all 29 algo
+# tags and there is nothing left to excuse.  Keeping the mechanism means the next
+# gap gets a reason instead of silence; a gap with no entry here still appears in
+# cross_implementation_gaps with note=None, which is the honest rendering of
+# "nobody has written down why yet".
+GAP_REASONS = {}
+
 # Gaps in the algo-tag surface are derived (see build_cross_impl_gaps); what stays
 # curated is the one gap that is not a tag at all.
 CROSS_IMPL_GAPS_CURATED = [
@@ -742,7 +760,7 @@ CROSS_IMPL_GAPS_CURATED = [
 
 
 def build_cross_impl_gaps(cli_support):
-    """Any tag not dispatched by all three CLIs, derived rather than curated.
+    """Any tag not dispatched by all four CLIs, derived rather than curated.
 
     The curated list this replaces claimed two gaps that had both closed:
     `hpks-xmss` as Python-only (all three have shipped it since TODO #208) and
@@ -755,9 +773,12 @@ def build_cross_impl_gaps(cli_support):
         missing = sorted(i for i, ok in impls.items() if not ok)
         if not missing:
             continue
+        notes = [GAP_REASONS[(tag, lang)] for lang in missing
+                 if (tag, lang) in GAP_REASONS]
         gaps.append(dict(feature=f"{tag} algo tag",
                           present_in=sorted(i for i, ok in impls.items() if ok),
-                          missing_from=missing, note=None))
+                          missing_from=missing,
+                          note=" ".join(notes) if notes else None))
     return gaps + CROSS_IMPL_GAPS_CURATED
 
 
@@ -956,7 +977,9 @@ def generate():
     # cli_support, derived per tag from each CLI's own dispatch source.
     c_tags = extract_cli_tags(read(CLI_C), known_tags)
     go_tags = extract_cli_tags(read(CLI_GO), known_tags)
-    cli_support = {tag: {"c": tag in c_tags, "go": tag in go_tags, "python": True}
+    java_tags = extract_cli_tags(read(CLI_JAVA), known_tags)
+    cli_support = {tag: {"c": tag in c_tags, "go": tag in go_tags,
+                          "python": True, "java": tag in java_tags}
                     for tag in sorted(known_tags)}
 
     # tag lists per --algo subcommand, needed both for cli_binding and below.
