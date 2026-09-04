@@ -234,9 +234,16 @@ public final class HerraduraCli {
             case "hpke-nl3": return Codec.PEM_HPKE_NL3_PRIV;
             case "hkex-rnl": return Codec.PEM_HKEX_RNL_PRIV;
             case "hpks-zkp-nl": return Codec.PEM_ZKP_NL_PRIV;
+            // The list is this SWITCH's domain, not the CLI's coverage.  It used
+            // to claim the latter and was wrong in both directions (TODO #261):
+            // it named hske-nla1/nla2/nla3, which are symmetric and have no
+            // keypair to label, and omitted every algo genpkey builds through
+            // its own key structure rather than a plain label -- hpks-stern,
+            // hpke-stern, hpke-stern-kem, hpks-wots, hpks-xmss, hcred, oprf.
             default: throw new CliError("genpkey: unsupported --algo " + algo
-                + " (this Java CLI covers the classical quartet plus hkex-rnl, "
-                + "hske-nla1/nla2/nla3, hpks-nl, hpke-nl, hpke-nl3, hpks-zkp-nl)");
+                + " (single-label keypairs here: hkex-gf, hpks, hpks-nl, hpke, "
+                + "hpke-nl, hpke-nl3, hkex-rnl, hpks-zkp-nl; the stern/wots/"
+                + "xmss/hcred/oprf algos are built elsewhere in genpkey)");
         }
     }
 

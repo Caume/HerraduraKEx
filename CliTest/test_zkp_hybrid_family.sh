@@ -38,6 +38,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 . "$(dirname "$0")/lib_build.sh"
+. "$(dirname "$0")/lib_dfr.sh"
 
 CLI_PY="python3 $ROOT/HerraduraCli/herradura.py"
 CLI_C="$ROOT/HerraduraCli/herradura_cli"
@@ -166,13 +167,45 @@ sig_matrix rnl-sigma "$TMP/rnl_a.pem" "$TMP/rnl_a_pub.pem"
 echo "── hybrid-rnl-stern: $(echo $LANGS | wc -w)x$(echo $LANGS | wc -w) responder/completer matrix ──"
 for b in $LANGS; do
     BCLI=$(cli_for "$b")
-    if ! $BCLI kex --algo hybrid-rnl-stern --our "$TMP/rnl_b.pem" \
-                   --their "$TMP/rnl_a_pub.pem" --their-kem "$TMP/kem_a_pub.pem" \
-                   --out "$TMP/hyb_$b.pem" >/dev/null 2>&1; then
+    # ── DFR policy (TODO #221/#195/#235) ──────────────────────────────────
+    # Round 1 encapsulates against the QC-MDPC KEM, which fails to decode
+    # ~0.225% of the time.  Since #235 that failure is IMPLICIT: round 2
+    # exits 0 and derives a wrong key, so it shows up only as a session-key
+    # mismatch — indistinguishable, on one attempt, from the wire splits this
+    # script exists to catch.  They are told apart by their SHAPE: a DFR event
+    # belongs to one (key, error-vector) pair and misses every completer at
+    # once, while a wire split is deterministic and belongs to a language PAIR.
+    # So the retry is keyed on a same-language control completion, which by
+    # construction cannot be a cross-language split.  Once the control agrees
+    # the encapsulation is known good, and every cell below is a clean interop
+    # verdict.  The control is an unscored probe; the matrix stays 4x4.
+    resp_ok=0
+    attempt=1
+    while :; do
+        if ! $BCLI kex --algo hybrid-rnl-stern --our "$TMP/rnl_b.pem" \
+                       --their "$TMP/rnl_a_pub.pem" --their-kem "$TMP/kem_a_pub.pem" \
+                       --out "$TMP/hyb_$b.pem" >/dev/null 2>&1; then
+            break
+        fi
+        KB=$(key_of "$TMP/hyb_$b.pem")
+        if ! $BCLI kex --algo hybrid-rnl-stern --our "$TMP/rnl_a.pem" \
+                       --their "$TMP/hyb_$b.pem" --our-kem "$TMP/kem_a.pem" \
+                       --out "$TMP/hybctl_$b.pem" >/dev/null 2>&1; then
+            break
+        fi
+        if [ "$(key_of "$TMP/hybctl_$b.pem")" = "$KB" ]; then
+            resp_ok=1; break
+        fi
+        if dfr_retryable "$attempt"; then
+            dfr_report_retry "[$b] hybrid-rnl-stern round 1" "$attempt"
+            attempt=$((attempt+1)); continue
+        fi
+        break   # budget exhausted — fall through and fail honestly
+    done
+    if [ "$resp_ok" -ne 1 ]; then
         bad "[$b] hybrid-rnl-stern responds (round 1)"; continue
     fi
     ok "[$b] hybrid-rnl-stern responds (round 1)"
-    KB=$(key_of "$TMP/hyb_$b.pem")
     for a in $LANGS; do
         ACLI=$(cli_for "$a")
         if ! $ACLI kex --algo hybrid-rnl-stern --our "$TMP/rnl_a.pem" \
