@@ -22,7 +22,15 @@ go run KAT/verify_kat.go
 # implementation's transcript catches and a self-round-trip cannot.  Compiled on
 # demand rather than tracked, per TODO #229.
 echo "=== KAT/verify_kat_c.c (C cross-check, TODO #266) ==="
-cc -O2 -o KAT/verify_kat_c KAT/verify_kat_c.c 2>/dev/null
+# stderr is captured rather than discarded: herradura.h emits an SDF_ROUNDS
+# #pragma message on every include, but discarding all of stderr to hide it
+# would also hide a genuine compile error, leaving only a confusing "no such
+# file" from the run below.  Show it only when the compile actually fails.
+if ! cc -O2 -o KAT/verify_kat_c KAT/verify_kat_c.c 2>/tmp/hkx_kkw_cc.log; then
+    echo "FAIL: could not compile KAT/verify_kat_c.c"
+    cat /tmp/hkx_kkw_cc.log
+    exit 1
+fi
 ./KAT/verify_kat_c
 
 # Both files must exist; a missing one would otherwise pass silently, since
