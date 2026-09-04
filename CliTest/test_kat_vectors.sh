@@ -18,7 +18,8 @@ go run KAT/verify_kat.go
 
 # Both files must exist; a missing one would otherwise pass silently, since
 # --check only compares what it regenerates.
-for f in KAT/classical_quartet.json KAT/hkex_rnl.json; do
+for f in KAT/classical_quartet.json KAT/hkex_rnl.json KAT/nl_fscx_v3.json \
+         KAT/hcred_kkw.json; do
     [ -s "$f" ] || { echo "FAIL: $f missing or empty"; exit 1; }
 done
 

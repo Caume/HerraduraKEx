@@ -222,6 +222,186 @@ func polyHex(coeffs []int, bytesPerCoeff int) string {
 	return hex.EncodeToString(raw)
 }
 
+// ── HCRED-KKW (TODO #266) ───────────────────────────────────────────────────
+//
+// This is the one vector set here that is CONSUMED rather than recomputed.
+// hcred_prove_kkw is randomised (one root seed per emulation), so there is no
+// deterministic transcript for Go to reproduce; what Go can do — and what the
+// item is actually about — is READ Python's transcript and accept it, then
+// reject each tampered variant.  Every KKW bug that has actually shipped was a
+// reader disagreement about a byte layout (an inverted aux-reveal condition in
+// this very package; a mis-sized commitment buffer and a flipped bit convention
+// in C), and each of them is exactly what this catches.
+type kkwFile struct {
+	Params struct {
+		N        int `json:"n"`
+		NPar     int `json:"N_par"`
+		M        int `json:"M"`
+		Tau      int `json:"tau"`
+		Rows     int `json:"rows"`
+		RowBits  int `json:"row_bits"`
+	} `json:"params"`
+	Statement struct {
+		MPoly string `json:"m_poly"`
+		CPoly string `json:"C_poly"`
+		SeedH string `json:"seed_H"`
+		Y     string `json:"y"`
+		Msg   string `json:"msg"`
+	} `json:"statement"`
+	Proof struct {
+		W      int            `json:"W"`
+		Params []int          `json:"params"`
+		Pre    map[string]string `json:"pre"`
+		Online map[string]struct {
+			Pbar  int             `json:"pbar"`
+			Path  [][]interface{} `json:"path"`
+			ComH  string          `json:"com_h"`
+			Aux   *string         `json:"aux"`
+			Zin   string          `json:"zin"`
+			T     string          `json:"t"`
+			U     int             `json:"u"`
+		} `json:"online"`
+	} `json:"proof"`
+	Tamper []struct {
+		Name  string `json:"name"`
+		Apply string `json:"apply"`
+	} `json:"tamper"`
+}
+
+func mustHex(s string) []byte {
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		panic("bad hex: " + s)
+	}
+	return b
+}
+
+// unpackVec decodes the 3-bytes-per-coefficient encoding the vector uses for
+// every Z_q vector (the protocol's own _hcred_ser layout).
+func unpackVec(s string) []int {
+	b := mustHex(s)
+	out := make([]int, len(b)/3)
+	for i := range out {
+		out[i] = int(b[3*i])<<16 | int(b[3*i+1])<<8 | int(b[3*i+2])
+	}
+	return out
+}
+
+// buildKkwProof rebuilds the Go proof struct from the pinned JSON.  Kept
+// separate from verifyKkw so each tamper case can start from a fresh copy.
+func buildKkwProof(v kkwFile) *HcredKkwProof {
+	p := &HcredKkwProof{
+		W: v.Proof.W, NPar: v.Proof.Params[0], M: v.Proof.Params[1],
+		Tau: v.Proof.Params[2],
+		Pre: map[int][]byte{}, Online: map[int]*KkwOnlineProof{},
+	}
+	for e, root := range v.Proof.Pre {
+		var ei int
+		fmt.Sscanf(e, "%d", &ei)
+		p.Pre[ei] = mustHex(root)
+	}
+	for e, od := range v.Proof.Online {
+		var ei int
+		fmt.Sscanf(e, "%d", &ei)
+		path := make([]KkwPathEntry, len(od.Path))
+		for i, pe := range od.Path {
+			path[i] = KkwPathEntry{
+				L: int(pe[0].(float64)), I: int(pe[1].(float64)),
+				Node: mustHex(pe[2].(string)),
+			}
+		}
+		var aux []int
+		if od.Aux != nil {
+			aux = unpackVec(*od.Aux)
+		}
+		p.Online[ei] = &KkwOnlineProof{
+			Path: path, ComH: mustHex(od.ComH), Pbar: od.Pbar, Aux: aux,
+			Zin: unpackVec(od.Zin), T: unpackVec(od.T), U: od.U,
+		}
+	}
+	return p
+}
+
+// applyKkwTamper mirrors _kkw_apply_tamper in KAT/generate_kat.py.  The two
+// must agree case for case: a mutation Python applies and Go does not would
+// silently downgrade a rejection test into a second accept test.
+func applyKkwTamper(p *HcredKkwProof, msg []byte, which string) (*HcredKkwProof, []byte) {
+	// Deep-copy only what a case mutates; Pre and Online are shared maps.
+	cp := *p
+	cp.Pre = map[int][]byte{}
+	for k, v := range p.Pre {
+		b := make([]byte, len(v))
+		copy(b, v)
+		cp.Pre[k] = b
+	}
+	cp.Online = map[int]*KkwOnlineProof{}
+	for k, v := range p.Online {
+		o := *v
+		o.T = append([]int(nil), v.T...)
+		cp.Online[k] = &o
+	}
+	e0, r0 := -1, -1
+	for k := range cp.Online {
+		if e0 < 0 || k < e0 {
+			e0 = k
+		}
+	}
+	for k := range cp.Pre {
+		if r0 < 0 || k < r0 {
+			r0 = k
+		}
+	}
+	switch which {
+	case "msg":
+		return &cp, append(append([]byte(nil), msg...), '!')
+	case "W":
+		cp.W++
+	case "online[0].u":
+		cp.Online[e0].U = (cp.Online[e0].U + 1) % RnlQ
+	case "online[0].t[0]":
+		cp.Online[e0].T[0] = (cp.Online[e0].T[0] + 1) % RnlQ
+	case "pre[0][0]":
+		cp.Pre[r0][0] ^= 1
+	case "online[0].pbar":
+		cp.Online[e0].Pbar = (cp.Online[e0].Pbar + 1) % cp.NPar
+	default:
+		panic("unknown tamper case " + which)
+	}
+	return &cp, msg
+}
+
+func verifyKkw(v kkwFile) int {
+	n := v.Params.N
+	m := unpackVec(v.Statement.MPoly)
+	c := unpackVec(v.Statement.CPoly)
+	seedH := hexToBA(n, v.Statement.SeedH)
+	y := hexToBig(v.Statement.Y)
+	msg := mustHex(v.Statement.Msg)
+
+	fails := 0
+	if !HcredVerifyKkw(m, c, seedH, y, buildKkwProof(v), n, msg) {
+		fmt.Println("FAIL hcred_kkw: Go REJECTS the pinned Python transcript " +
+			"— the two implementations disagree on the wire format")
+		fails++
+	} else {
+		fmt.Println("PASS hcred_kkw (Go accepts the pinned Python transcript)")
+	}
+	// The accept above is not self-validating: a verifier that returned true
+	// unconditionally would pass it.  Each tamper case must be rejected.
+	for _, tc := range v.Tamper {
+		tp, tmsg := applyKkwTamper(buildKkwProof(v), msg, tc.Apply)
+		if HcredVerifyKkw(m, c, seedH, y, tp, n, tmsg) {
+			fmt.Printf("FAIL hcred_kkw tamper %q ACCEPTED\n", tc.Name)
+			fails++
+		}
+	}
+	if fails == 0 {
+		fmt.Printf("PASS hcred_kkw tamper (%d/%d rejected)\n",
+			len(v.Tamper), len(v.Tamper))
+	}
+	return fails
+}
+
 func main() {
 	data, err := os.ReadFile("KAT/classical_quartet.json")
 	if err != nil {
@@ -347,6 +527,20 @@ func main() {
 			fails++
 		} else {
 			fails += verifyV3(vv)
+		}
+	}
+
+	// ── HCRED-KKW (TODO #266) ───────────────────────────────────────────
+	if vdata, err := os.ReadFile("KAT/hcred_kkw.json"); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot read KAT/hcred_kkw.json:", err)
+		fails++
+	} else {
+		var vv kkwFile
+		if err := json.Unmarshal(vdata, &vv); err != nil {
+			fmt.Fprintln(os.Stderr, "cannot parse KAT/hcred_kkw.json:", err)
+			fails++
+		} else {
+			fails += verifyKkw(vv)
 		}
 	}
 

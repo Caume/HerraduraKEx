@@ -402,7 +402,213 @@ def generate() -> dict:
     }
 
 
+# ── HCRED-KKW (TODO #266) ───────────────────────────────────────────────────
+#
+# This file is PINNED, not regenerated, and that is a deliberate difference from
+# the other three.  hcred_prove_kkw draws one os.urandom(32) root per emulation,
+# so a proof is not a function of its statement and "regenerate and diff" cannot
+# work here.  TODO #266 settles the shape: this is a VERIFY-SIDE vector.  One
+# reference transcript is captured once, checked in, and every language must
+# CONSUME it and accept -- the same discipline KAT/pem/ uses, and the one that
+# would have caught all three bugs the C/Go ports actually had (an inverted
+# aux-reveal condition, an under-allocated commitment buffer and a flipped bit
+# convention are all READER disagreements about a byte layout).
+#
+#   python3 KAT/generate_kat.py --capture-kkw   # re-capture a fresh transcript
+#   python3 KAT/generate_kat.py --check         # verify the checked-in one
+#
+# --check does not diff bytes here; it runs hcred_verify_kkw over the pinned
+# transcript and asserts True, then applies each tamper case and asserts False.
+# That is strictly stronger than a diff: a byte-identical file whose verifier
+# has drifted still fails.
+_KKW_OUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "hcred_kkw.json")
+
+hcred_prove_kkw = suite.hcred_prove_kkw
+hcred_verify_kkw = suite.hcred_verify_kkw
+_hcred_ser = suite._hcred_ser
+RNLQ_ = suite.RNLQ
+
+# Demo parameters.  Production KKW is (N, M, tau) = (64, 343, 27) for 2^-128;
+# a vector at those parameters would be ~0.9 MB and minutes to verify, so the
+# vector is demo-sized and records the production triple as metadata.
+_KKW_N_PAR, _KKW_M, _KKW_TAU = 4, 8, 4
+_KKW_MSG = b"HCRED-KKW KAT vector (TODO #266)"
+
+
+def _vec_hex(vec) -> str:
+    """Z_q vector as hex of the protocol's own 3-bytes-per-coefficient wire
+    encoding (_hcred_ser).  Not JSON numbers: KAT/nl_fscx_v3.json records why
+    -- a wide value does not survive the float64 a JSON parser defaults to, and
+    the loss is silent."""
+    return _hcred_ser(vec).hex()
+
+
+def _vec_unhex(s: str) -> list:
+    b = bytes.fromhex(s)
+    return [int.from_bytes(b[i:i + 3], "big") for i in range(0, len(b), 3)]
+
+
+def _kkw_proof_to_json(p: dict) -> dict:
+    return {
+        "W": p["W"],
+        "params": list(p["params"]),
+        "pre": {str(e): root.hex() for e, root in sorted(p["pre"].items())},
+        "online": {str(e): {
+            "pbar": od["pbar"],
+            "path": [[lvl, idx, node.hex()] for (lvl, idx), node in od["path"]],
+            "com_h": od["com_h"].hex(),
+            # aux is a Z_q VECTOR, not a byte string: it is the correction the
+            # last party carries, revealed only when that party is not the
+            # hidden one.  Getting this wrong is what the Go port's inverted
+            # reveal condition did.
+            "aux": None if od["aux"] is None else _vec_hex(od["aux"]),
+            "zin": _vec_hex(od["zin"]),
+            "t": _vec_hex(od["t"]),
+            "u": od["u"],
+        } for e, od in sorted(p["online"].items())},
+    }
+
+
+def _kkw_proof_from_json(j: dict) -> dict:
+    return {
+        "W": j["W"],
+        "params": tuple(j["params"]),
+        "pre": {int(e): bytes.fromhex(r) for e, r in j["pre"].items()},
+        "online": {int(e): {
+            "pbar": od["pbar"],
+            "path": [((lvl, idx), bytes.fromhex(node))
+                     for lvl, idx, node in od["path"]],
+            "com_h": bytes.fromhex(od["com_h"]),
+            "aux": None if od["aux"] is None else _vec_unhex(od["aux"]),
+            "zin": _vec_unhex(od["zin"]),
+            "t": _vec_unhex(od["t"]),
+            "u": od["u"],
+        } for e, od in j["online"].items()},
+    }
+
+
+def capture_kkw() -> dict:
+    """Capture one fresh reference transcript.  Uses os.urandom, so this is the
+    one generator here whose output legitimately differs run to run."""
+    n = suite._HCRED_DEFAULT_N
+    m = suite._rnl_poly_add(suite._rnl_m_poly(n),
+                            suite._rnl_rand_poly(n, RNLQ_), RNLQ_)
+    seed_H = suite.BitArray.random(n)
+    s, C, e_int = suite.hcred_user_keygen(m, n)
+    y = suite.hcred_syndrome(seed_H, e_int, n)
+    proof = hcred_prove_kkw(s, m, C, seed_H, y, n, N_par=_KKW_N_PAR,
+                            M=_KKW_M, tau=_KKW_TAU, msg_bytes=_KKW_MSG)
+    assert hcred_verify_kkw(m, C, seed_H, y, proof, n, _KKW_MSG), \
+        "captured transcript does not verify"
+    rows, row_bits, w_max = suite._hcred_params(n)
+    return {
+        "$schema": "HerraduraKEx HCRED-KKW KAT vector (TODO #266)",
+        "suite_reference": "Herradura cryptographic suite.py",
+        "note": ("VERIFY-SIDE vector: hcred_prove_kkw is not deterministic (one "
+                 "os.urandom root per emulation), so this transcript is PINNED "
+                 "rather than regenerated, and every language must CONSUME it "
+                 "and accept.  Coefficient vectors are hex of the protocol's own "
+                 "3-bytes-per-coefficient encoding, never JSON numbers.  "
+                 "Demo-sized: production KKW is (N, M, tau) = (64, 343, 27) for "
+                 "2^-128 soundness."),
+        "params": {
+            "n": n, "rows": rows, "row_bits": row_bits, "w_max": w_max,
+            "N_par": _KKW_N_PAR, "M": _KKW_M, "tau": _KKW_TAU,
+            "production": {"N_par": 64, "M": 343, "tau": 27},
+        },
+        "statement": {
+            "m_poly": _vec_hex(m),
+            "C_poly": _vec_hex(C),
+            "s_poly": _vec_hex(s),
+            "seed_H": f"{seed_H.uint:0{n // 4}x}",
+            "y": f"{y:0{(rows + 3) // 4}x}",
+            "msg": _KKW_MSG.hex(),
+        },
+        "proof": _kkw_proof_to_json(proof),
+        "expect_verify": True,
+        # The six axes each port was independently debugged against.  Declared
+        # as mutations rather than as six more full transcripts: a consumer
+        # applies one to a copy of `proof` and asserts verification FAILS.
+        "tamper": [
+            {"name": "wrong_msg", "apply": "msg", "note": "verify under a different msg"},
+            {"name": "flip_W", "apply": "W"},
+            {"name": "flip_u", "apply": "online[0].u"},
+            {"name": "flip_t", "apply": "online[0].t[0]"},
+            {"name": "flip_pre_root", "apply": "pre[0][0]"},
+            {"name": "relabel_pbar", "apply": "online[0].pbar"},
+        ],
+    }
+
+
+def _kkw_apply_tamper(vec: dict, proof: dict, msg: bytes, which: str):
+    """Apply one tamper case, returning (proof, msg).  Mirrored by every
+    language's consumer, so keep the mutations arithmetically trivial."""
+    import copy
+    p = copy.deepcopy(proof)
+    e0 = sorted(p["online"])[0]
+    r0 = sorted(p["pre"])[0]
+    if which == "msg":
+        return p, msg + b"!"
+    if which == "W":
+        p["W"] += 1
+    elif which == "online[0].u":
+        p["online"][e0]["u"] = (p["online"][e0]["u"] + 1) % RNLQ_
+    elif which == "online[0].t[0]":
+        p["online"][e0]["t"][0] = (p["online"][e0]["t"][0] + 1) % RNLQ_
+    elif which == "pre[0][0]":
+        b = bytearray(p["pre"][r0]); b[0] ^= 1
+        p["pre"][r0] = bytes(b)
+    elif which == "online[0].pbar":
+        p["online"][e0]["pbar"] = (p["online"][e0]["pbar"] + 1) % p["params"][0]
+    else:
+        raise ValueError(f"unknown tamper case {which}")
+    return p, msg
+
+
+def check_kkw(path: str) -> int:
+    """Verify the pinned transcript instead of diffing a regeneration."""
+    name = os.path.basename(path)
+    if not os.path.exists(path):
+        sys.stderr.write(f"{name} is missing — run "
+                         "python3 KAT/generate_kat.py --capture-kkw\n")
+        return 1
+    with open(path) as f:
+        vec = json.load(f)
+    n = vec["params"]["n"]
+    st = vec["statement"]
+    m = _vec_unhex(st["m_poly"])
+    C = _vec_unhex(st["C_poly"])
+    seed_H = suite.BitArray(n, int(st["seed_H"], 16))
+    y = int(st["y"], 16)
+    msg = bytes.fromhex(st["msg"])
+    proof = _kkw_proof_from_json(vec["proof"])
+
+    if not hcred_verify_kkw(m, C, seed_H, y, proof, n, msg):
+        sys.stderr.write(f"{name}: pinned transcript FAILS verification — the "
+                         "vector is stale or the verifier has drifted\n")
+        return 1
+    rc = 0
+    for case in vec["tamper"]:
+        tp, tmsg = _kkw_apply_tamper(vec, proof, msg, case["apply"])
+        if hcred_verify_kkw(m, C, seed_H, y, tp, n, tmsg):
+            sys.stderr.write(f"{name}: tamper case '{case['name']}' was "
+                             "ACCEPTED — verification is not binding here\n")
+            rc = 1
+    if rc == 0:
+        print(f"{name} verifies (1 accept + {len(vec['tamper'])} rejections).")
+    return rc
+
+
 def main() -> int:
+    if "--capture-kkw" in sys.argv:
+        vec = capture_kkw()
+        with open(_KKW_OUT_PATH, "w") as f:
+            f.write(json.dumps(vec, indent=2, sort_keys=False) + "\n")
+        print(f"captured {os.path.basename(_KKW_OUT_PATH)} "
+              f"(N={_KKW_N_PAR}, M={_KKW_M}, tau={_KKW_TAU})")
+        return check_kkw(_KKW_OUT_PATH)
+
     outputs = [(_OUT_PATH, generate()), (_RNL_OUT_PATH, generate_rnl()),
                (_V3_OUT_PATH, generate_v3())]
     if "--check" in sys.argv:
@@ -417,12 +623,18 @@ def main() -> int:
                 rc = 1
             else:
                 print(f"{os.path.basename(path)} is up to date.")
+        # The KKW vector is pinned, so it is CHECKED here, never diffed.
+        rc |= check_kkw(_KKW_OUT_PATH)
         return rc
     for path, vectors in outputs:
         with open(path, "w") as f:
             f.write(json.dumps(vectors, indent=2, sort_keys=False) + "\n")
         print(f"Wrote {path}")
-    return 0
+    # A plain run must not silently leave the pinned vector unexamined: it is
+    # the one output this mode cannot rewrite, so say so and check it instead.
+    print(f"NOTE: {os.path.basename(_KKW_OUT_PATH)} is pinned, not regenerated "
+          "(hcred_prove_kkw is randomised) — use --capture-kkw to replace it.")
+    return check_kkw(_KKW_OUT_PATH)
 
 
 if __name__ == "__main__":
