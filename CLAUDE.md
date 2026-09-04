@@ -58,6 +58,27 @@ CliTest/                                             — CLI integration + cross
                                                        the output — a --v3 that parsed and
                                                        was then ignored would pass every
                                                        round-trip
+  test_zkp_hybrid_family.sh                         — the five algo tags Java lacked
+                                                       until TODO #261 (v6.0.0), as a
+                                                       full 4x4 matrix: every
+                                                       (signer, verifier) pair for
+                                                       nl-zkboo / nl-zkbpp / rnl-sigma
+                                                       and every (responder, completer)
+                                                       pair for hybrid-rnl-stern, the
+                                                       latter compared on SESSION-KEY
+                                                       BYTES since #235's implicit
+                                                       rejection makes a mismatch
+                                                       silent.  Claimed by
+                                                       native-interop.  The matrix
+                                                       shape is the point: every other
+                                                       cross-language test checked each
+                                                       implementation against PYTHON,
+                                                       which reports Python-vs-Python
+                                                       for the very pair that was
+                                                       broken — nl-zkboo and rnl-sigma
+                                                       had never interoperated between
+                                                       {C, Go} and Python, and that is
+                                                       why it shipped
   lib_malformed.sh                                  — shared malformed-PEM case table (TODO
                                                        #239, #240): every field that sizes an
                                                        allocation, rewritten to a hostile value.
@@ -509,7 +530,14 @@ bindings/ffi/                                        — opt-in ctypes/cgo FFI b
 bindings/java/                                       — complete pure-Java port of the whole suite
                                                       (TODO #196-#203, closed), incl. a
                                                       herradurakex.HerraduraCli mirroring the
-                                                      Python CLI's subcommands and --algo values;
+                                                      Python CLI's subcommands and --algo values —
+                                                      all 29 tags since TODO #261 (v6.0.0) ported
+                                                      the last five: hpks-zkp-nl, nl-zkboo,
+                                                      nl-zkbpp, rnl-sigma and hybrid-rnl-stern.
+                                                      spec/'s cli_support column is derived from
+                                                      this CLI's dispatch source as it is for the
+                                                      other three, so a regression shows up as an
+                                                      empty cell rather than as silence;
                                                       cross-checked against KAT/.  hpks-wots /
                                                       hpks-xmss keep one-time-use/leaf-index state
                                                       in a <keyfile>.idx sidecar, as Python does

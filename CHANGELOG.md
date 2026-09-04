@@ -2,6 +2,80 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.0.0] - 2026-09-03
+
+### TODO #261 — the five missing Java algo tags are PORTED, and two real wire splits fall out of doing it
+
+MAJOR. Bumped for one reason, called out in full in `MIGRATING.md` §10: the Python CLI's
+`sign --algo nl-zkboo` and `--algo rnl-sigma` now pad-or-truncate the message to 32 bytes,
+changing what those two tags produce for any input that is not exactly 32 bytes long. That
+is a change to what an existing `--algo` value produces, which this project's version
+policy reserves MAJOR for — even though, as below, the old behaviour was a bug that no
+other implementation could interoperate with. Everything else here is additive.
+
+**What this item asked for, and what changed about the answer.** v5.8.7 recorded the five
+`--algo` tags the Java CLI lacked — `nl-zkboo`, `nl-zkbpp`, `hpks-zkp-nl`, `rnl-sigma`,
+`hybrid-rnl-stern` — as documented gaps with a reason each, on the grounds that #261's
+acceptance criterion permits "ACKNOWLEDGED with a recorded reason". Documentation was not
+an acceptable resolution. **All five are now ported**, and the Java CLI dispatches all 29
+algo tags: `spec/`'s derived `cli_support` column has no empty Java cell left, and
+`GAP_REASONS` is now an empty table kept only so the next gap gets a reason rather than
+silence.
+
+**Ported (`bindings/java/herradurakex/`).**
+- `ZkpNl.keygen` — ZKP-NL keypair generation, backing `genpkey --algo hpks-zkp-nl`.
+- `ZkpNl.provePp` / `ZkpNl.verifyPp` — the ZKB++ transcript encoding (Chase et al. 2017),
+  ~230 lines. `ZkpNl.java`'s class doc comment had declared this and HPKS-ZKP-NL out of
+  scope, on the grounds the port "exists only to give `Hpake` its mutual-authentication
+  proof"; that comment is now the record of what was fixed rather than a standing
+  exclusion.
+- `HerraduraNl.rnlSigmaSign` / `rnlSigmaVerify` plus `sigmaParams`/`sigmaChallenge` — the
+  Ring-LWR Σ-protocol. The parameter tables are transcribed rather than re-derived,
+  because a fallback formula that drifts is exactly what TODO #223 hit.
+- `HerraduraNl.hybridRnlSternCombine` — the SP 800-227 §4.6-shaped combiner, including
+  the detail that K1 is serialised at the **session-key** width and not the ring
+  dimension (they stopped coinciding at TODO #223's n = 1024, and using n writes 128
+  zero-padded bytes where the other three write 32).
+- `Codec`: eight encode/decode pairs — ZKP-NL private/public keys, the ZKBoo proof, the
+  ZKB++ proof, the Σ-protocol proof, and the hybrid response — plus two new PEM labels.
+- `HerraduraCli`: `genpkey`/`pkey` for `hpks-zkp-nl`, `sign`/`verify` for all three
+  signature tags, and a two-round `kex --algo hybrid-rnl-stern` with `--their-kem` /
+  `--our-kem`.
+
+**Two wire splits found by porting, both pre-existing, both fixed.** The new Java code was
+written against the Python reference, verified against it — and then failed against C and
+Go. `nl-zkboo` and `rnl-sigma` had **never** interoperated between {C, Go} and Python: C
+passes `msg.b, KEYBYTES` and Go `msgPad(inBytes, 32)`, while Python hashed the raw
+message, so each side rejected the other's signatures for every message whose length was
+not exactly 32 bytes. Python's own `nl-zkbpp` branch already carried the correction, with
+the comment *"Pad/truncate to 32 bytes to match C/Go behavior"* — `nl-zkboo` and
+`rnl-sigma` were simply missed when it was applied. Nothing detected it because no test
+ever signed with one implementation and verified with another for these tags. Python was
+moved to match C and Go (two of three shipped implementations already padded, and
+truncating to the key width is this suite's established CLI convention for signature
+inputs). See `MIGRATING.md` §10.
+
+**A third gap, in CI itself.** `native-interop` installs `default-jdk-headless` and a
+comment claiming "genuine 4-way (not just 3-way) coverage" — but never compiled the
+bindings, so every Java-optional script in that job hit its `HerraduraCli.class` check,
+printed `NOTE: bindings/java not compiled` and skipped the Java column. The claimed 4-way
+coverage has been 3-way since it was written. Added the `bindings/java/build.sh` step.
+
+**New guard: `CliTest/test_zkp_hybrid_family.sh`** (claimed by `native-interop`). A full
+**4×4 matrix** — every (signer, verifier) pair for the three signature tags, and every
+(responder, completer) pair for the hybrid, comparing **session-key bytes** rather than
+exit status, since TODO #235's implicit rejection makes a hybrid mismatch silent. 88
+checks. Verified against the bug it exists for: reverting the Python `nl-zkboo` fix
+produces exactly 6 failures, precisely the C/Go↔Python pairs. A star topology around
+Python — the shape every existing cross-language test used — reports Python-vs-Python and
+goes green, which is why both splits shipped.
+
+**Also added.** `SelfTest.java` gains `[28]` zkp_nl_zkboo, `[29]` zkp_nl_zkbpp and `[30]`
+rnl_sigma, each with two rejection axes beside the round-trip. `spec/check_language_parity.py`
+gains four `PRIMITIVES` entries (17 total); the hybrid combiner is deliberately excluded,
+living in the CLI layer in three of four languages rather than in the suite files that
+manifest reads.
+
 ## [5.8.7] - 2026-09-02
 
 ### TODO #261 (still OPEN) — a fresh parity sweep: `cli_support` goes four-wide, one placement gap closed, one guard tested in all four languages

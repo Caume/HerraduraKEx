@@ -273,6 +273,47 @@ PRIMITIVES = {
         "python": r"^def _hpake_rnl_kdf\(",
         "java": r"static byte\[\] rnlKdf\(",
     },
+    # ── TODO #261 (v6.0.0): the tags Java was missing, now ported ────────
+    # These ARE CLI-reachable, so generate_spec.py's cli_support column is the
+    # primary guard and CliTest/test_zkp_hybrid_family.sh is the behavioural
+    # one.  They are listed here too because cli_support checks each CLI's
+    # DISPATCH source, not the suite behind it: a CLI that still parsed the tag
+    # while its primitive was deleted or renamed would keep that column green.
+    #
+    # `hybrid-rnl-stern`'s combiner is deliberately NOT here.  It lives in the
+    # CLI layer in three of the four languages (herradura_cli.c, herradura.py),
+    # not in the suite files this manifest reads, so an entry for it would be
+    # checking the wrong files.  The 4x4 session-key comparison in
+    # test_zkp_hybrid_family.sh is what guards it.
+    "zkp-nl-keygen": {
+        "c": r"static void zkp_nl_keygen\(",
+        "go": r"func ZkpNlKeygen\(",
+        "python": r"^def zkp_nl_keygen\(",
+        "java": r"public static BigInteger\[\] keygen\(",
+    },
+    "zkp-nl-prove": {
+        # ZKBoo (nl-zkboo).
+        "c": r"static ZkpNlRound \*zkp_nl_prove\(",
+        "go": r"func ZkpNlProve\(",
+        "python": r"^def zkp_nl_prove\(",
+        "java": r"public static List<ProofRound> prove\(",
+    },
+    "zkp-nl-prove-pp": {
+        # ZKB++ (nl-zkbpp).  Absent from Java until v6.0.0 -- ZkpNl.java's class
+        # doc comment declared it, and hpks-zkp-nl, explicitly out of scope.
+        "c": r"static ZkpNlPpRound \*zkp_nl_pp_prove\(",
+        "go": r"func ZkpNlProvepp\(",
+        "python": r"^def zkp_nl_prove_pp\(",
+        "java": r"public static List<PpRound> provePp\(",
+    },
+    "rnl-sigma-sign": {
+        # ZKP-RNL Sigma-protocol (rnl-sigma).  No Java port at any layer before
+        # v6.0.0, and nothing in the Java tree recorded the omission.
+        "c": r"static int rnl_sigma_sign\(",
+        "go": r"func RnlSigmaSign\(",
+        "python": r"^def rnl_sigma_sign\(",
+        "java": r"public static SigmaProof rnlSigmaSign\(",
+    },
     "rnl-validate-m-blind": {
         # TODO #261 (v5.8.7): the peer-m_blind substitution guard -- reject a
         # sparse (nz < n/4) or clustered (range < q/4) polynomial before using

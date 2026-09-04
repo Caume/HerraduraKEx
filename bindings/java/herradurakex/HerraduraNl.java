@@ -1,5 +1,6 @@
 package herradurakex;
 
+import java.nio.charset.StandardCharsets;
 import java.math.BigInteger;
 import java.security.SecureRandom;
 
@@ -668,5 +669,225 @@ public final class HerraduraNl {
     public static BigInteger hpkeNl3Decrypt(BigInteger ct, BigInteger r, BigInteger priv) {
         if (!Herradura.gfPubIsValid(r)) return null;
         return nlFscxRevolveV3Inv(ct, Herradura.gfPow(r, priv), R3_VALUE);
+    }
+
+    // -----------------------------------------------------------------
+    // ZKP-RNL: Ring-LWR Sigma-protocol (rnl-sigma), TODO #261 (v6.0.0)
+    //
+    // Proves knowledge of s with C = round_p(m*s), Fiat-Shamir'd into a
+    // signature.  Ported from the Python/Go/C implementations; the
+    // parameter tables below MUST match sigma_params() in C and
+    // ZkpRnlParams() in Go exactly, or the four languages derive different
+    // challenge weights and stop verifying each other's proofs (the exact
+    // divergence TODO #223 hit when Python's fallback formula drifted).
+    // -----------------------------------------------------------------
+
+    private static final int SIGMA_MAX_ATTEMPTS = 1000;
+
+    /** Returns {gamma, t} for the Sigma-protocol at bit-width n. */
+    public static int[] sigmaParams(int n) {
+        int gamma;
+        switch (n) {
+            case 32:  gamma = 4096; break;
+            case 64: case 128: case 256: gamma = 8192; break;
+            default:  gamma = (n <= 32) ? 4096 : 8192;
+        }
+        int t;
+        switch (n) {
+            case 32:  t = 4;  break;
+            case 64:  t = 8;  break;
+            case 128: t = 12; break;
+            case 256: t = 16; break;
+            default:  t = (n <= 32) ? 4 : (n <= 64) ? 8 : (n <= 128) ? 12 : 16;
+        }
+        return new int[] { gamma, t };
+    }
+
+    /** Serializes a polynomial for hashing: 4 bytes/coefficient, big-endian,
+     *  reduced mod 2^32 so negative (centered) values match Python's
+     *  `c % (1 << 32)`. */
+    static byte[] sigmaPolyBytes(int[] poly) {
+        byte[] out = new byte[poly.length * 4];
+        for (int i = 0; i < poly.length; i++) {
+            long v = ((long) poly[i]) & 0xFFFFFFFFL;
+            out[4 * i]     = (byte) (v >>> 24);
+            out[4 * i + 1] = (byte) (v >>> 16);
+            out[4 * i + 2] = (byte) (v >>> 8);
+            out[4 * i + 3] = (byte) v;
+        }
+        return out;
+    }
+
+    private static byte[] be4i(int v) {
+        return new byte[] { (byte) (v >>> 24), (byte) (v >>> 16), (byte) (v >>> 8), (byte) v };
+    }
+
+    private static byte[] cat(byte[]... parts) {
+        int total = 0;
+        for (byte[] p : parts) total += p.length;
+        byte[] out = new byte[total];
+        int off = 0;
+        for (byte[] p : parts) { System.arraycopy(p, 0, out, off, p.length); off += p.length; }
+        return out;
+    }
+
+    /** Fiat-Shamir challenge: sparse ternary polynomial with exactly t nonzero
+     *  entries, each 1 or q-1. */
+    static int[] sigmaChallenge(int[] mPoly, int[] cPoly, int[] wPoly, int n, int q,
+                                 int t, byte[] msgBytes) {
+        byte[] seed = Hfscx256.hash(cat(be4i(n), sigmaPolyBytes(mPoly), sigmaPolyBytes(cPoly),
+                                        sigmaPolyBytes(wPoly), msgBytes));
+        int[] positions = new int[t];
+        int found = 0, idx = 0;
+        while (found < t) {
+            byte[] hh = Hfscx256.hash(cat(seed, "pos".getBytes(StandardCharsets.US_ASCII), be4i(idx)));
+            long v = ((long) (hh[0] & 0xff) << 24) | ((hh[1] & 0xff) << 16)
+                   | ((hh[2] & 0xff) << 8) | (hh[3] & 0xff);
+            int pos = (int) (v % n);
+            boolean dup = false;
+            for (int k = 0; k < found; k++) if (positions[k] == pos) { dup = true; break; }
+            if (!dup) positions[found++] = pos;
+            idx++;
+        }
+        int[] c = new int[n];
+        for (int k = 0; k < t; k++) {
+            byte[] hh = Hfscx256.hash(cat(seed, "sgn".getBytes(StandardCharsets.US_ASCII), be4i(k)));
+            c[positions[k]] = ((hh[0] & 1) == 0) ? 1 : q - 1;
+        }
+        return c;
+    }
+
+    /** Result triple of {@link #rnlSigmaSign}. */
+    public static final class SigmaProof {
+        public final int[] w, c, z;
+        public SigmaProof(int[] w, int[] c, int[] z) { this.w = w; this.c = c; this.z = z; }
+    }
+
+    /** ZKP-RNL prover.  Returns null if rejection sampling is exhausted
+     *  (SIGMA_MAX_ATTEMPTS; extremely rare at the shipped parameters). */
+    public static SigmaProof rnlSigmaSign(int[] sPoly, int[] mPoly, int[] cPoly, int n,
+                                           byte[] msgBytes, SecureRandom rng) {
+        final int q = RNLQ;
+        int[] gt = sigmaParams(n);
+        final int gamma = gt[0], t = gt[1];
+        final int bound = gamma - t;
+        final int half = q / 2;
+
+        byte[] rb = new byte[4];
+        for (int attempt = 0; attempt < SIGMA_MAX_ATTEMPTS; attempt++) {
+            int[] yv = new int[n], yq = new int[n];
+            for (int i = 0; i < n; i++) {
+                rng.nextBytes(rb);
+                long v = ((long) (rb[0] & 0xff) << 24) | ((rb[1] & 0xff) << 16)
+                       | ((rb[2] & 0xff) << 8) | (rb[3] & 0xff);
+                yv[i] = (int) (v % (2L * gamma + 1)) - gamma;
+                yq[i] = Math.floorMod(yv[i], q);
+            }
+            int[] my = rnlPolyMul(mPoly, yq, q, n);
+            int[] w = new int[n];
+            for (int i = 0; i < n; i++) w[i] = (my[i] > half) ? my[i] - q : my[i];
+
+            int[] c = sigmaChallenge(mPoly, cPoly, w, n, q, t, msgBytes);
+            int[] cs = rnlPolyMul(c, sPoly, q, n);
+            int[] z = new int[n];
+            int maxAbs = 0;
+            for (int i = 0; i < n; i++) {
+                int csc = (cs[i] > half) ? cs[i] - q : cs[i];
+                z[i] = yv[i] + csc;
+                maxAbs = Math.max(maxAbs, Math.abs(z[i]));
+            }
+            if (maxAbs <= bound) return new SigmaProof(w, c, z);
+        }
+        return null;
+    }
+
+    /** ZKP-RNL verifier. */
+    public static boolean rnlSigmaVerify(int[] mPoly, int[] cPoly, int n, byte[] msgBytes,
+                                          int[] wPoly, int[] cChal, int[] zPoly) {
+        final int q = RNLQ, p = RNLP;
+        int[] gt = sigmaParams(n);
+        final int gamma = gt[0], t = gt[1];
+        final int bound = gamma - t;
+        final int slack = t * (q / (2 * p) + 1);
+        final int half = q / 2;
+
+        if (wPoly.length != n || cChal.length != n || zPoly.length != n) return false;
+
+        // (1) infinity-norm bound on the response
+        for (int zi : zPoly) if (Math.abs(zi) > bound) return false;
+
+        // (2) Fiat-Shamir consistency
+        int[] expect = sigmaChallenge(mPoly, cPoly, wPoly, n, q, t, msgBytes);
+        for (int i = 0; i < n; i++) if (expect[i] != cChal[i]) return false;
+
+        // (3) rounding slack: ||m*z - c*lift(C) - w||_inf <= slack
+        int[] zq = new int[n];
+        for (int i = 0; i < n; i++) zq[i] = Math.floorMod(zPoly[i], q);
+        int[] mz = rnlPolyMul(mPoly, zq, q, n);
+        int[] lift = rnlLift(cPoly, p, q);
+        int[] ct = rnlPolyMul(cChal, lift, q, n);
+        for (int i = 0; i < n; i++) {
+            int wq = Math.floorMod(wPoly[i], q);
+            int d = Math.floorMod(mz[i] - ct[i] - wq, q);
+            int dc = (d > half) ? d - q : d;
+            if (Math.abs(dc) > slack) return false;
+        }
+        return true;
+    }
+
+    // -----------------------------------------------------------------
+    // hybrid-rnl-stern key combiner (TODO #162/#165; ported TODO #261)
+    // -----------------------------------------------------------------
+
+    /** Domain-separation tag for the hybrid combiner (SecurityProofs-6.md
+     *  §11.9.7's tag namespace; matches _HYBRID_COMBINE_DS in the Python CLI
+     *  and HYBRID_COMBINE_DS in C/Go). */
+    public static final int HYBRID_COMBINE_DS = 0x05;
+
+    /** SP 800-227 §4.6-style IND-CCA-preserving combiner:
+     *  K = HFSCX-256-DS(0x05, K1 || K2 || C_A || m_A || C_B || hint || h_pub || syn || v1).
+     *
+     *  Binds BOTH component secrets to the full public transcript rather than
+     *  naively hashing K1||K2, which per §4.6.2 (citing Giacon et al.) does not
+     *  generically preserve IND-CCA when only one component KEM is IND-CCA.
+     *
+     *  K1 is serialised at the SESSION-KEY width, not the ring dimension: those
+     *  coincided until TODO #223 moved the ring to n = 1024 while the derived key
+     *  stayed 256 bits, and using n here would write 128 zero-padded bytes where
+     *  the other three languages write 32 — the two sides would then derive
+     *  different keys and the handshake would fail silently.
+     *
+     *  @param sessionBits width in bits at which K1 is serialised (256 today)
+     *  @param hintUsed    the truncated reconciliation hint, one byte per entry
+     *  @param rQc         QC-MDPC ring size in bits (523), sizing h_pub and syn
+     */
+    public static BigInteger hybridRnlSternCombine(BigInteger k1, BigInteger k2,
+                                                    int[] cA, int[] mA, int[] cB,
+                                                    int[] hintUsed, BigInteger hPub,
+                                                    BigInteger syn, int sessionBits, int rQc) {
+        byte[] cAPacked = Codec.packPoly(cA, 2);
+        byte[] mAPacked = Codec.packPoly(mA, 4);
+        byte[] cBPacked = Codec.packPoly(cB, 2);
+        int rb = (rQc + 7) / 8;
+        byte[] hintBytes = new byte[hintUsed.length];
+        for (int i = 0; i < hintUsed.length; i++) hintBytes[i] = (byte) hintUsed[i];
+        byte[] data = cat(
+            fixedBytes(k1, sessionBits / 8),
+            fixedBytes(k2, N / 8),
+            cAPacked, mAPacked, cBPacked, hintBytes,
+            fixedBytes(hPub, rb),
+            fixedBytes(syn, rb),
+            "HERRADURA-HYBRID-RNL-STERN-v1".getBytes(StandardCharsets.US_ASCII));
+        return new BigInteger(1, Hfscx256.hashDs(HYBRID_COMBINE_DS, data));
+    }
+
+    /** Big-endian fixed-width serialisation, left-zero-padded / high-truncated. */
+    static byte[] fixedBytes(BigInteger v, int nbytes) {
+        byte[] raw = v.toByteArray();
+        byte[] out = new byte[nbytes];
+        int start = Math.max(0, raw.length - nbytes);
+        int len = Math.min(raw.length - start, nbytes);
+        System.arraycopy(raw, raw.length - len, out, nbytes - len, len);
+        return out;
     }
 }

@@ -737,39 +737,16 @@ PROTOCOL_NAME = {
     "apake": "aPAKE (asymmetric password-authenticated key exchange)",
 }
 
-# TODO #261's acceptance criterion: a four-language cell is either filled or
-# ACKNOWLEDGED with a recorded reason, "never a silent absence".  Deriving Java's
-# cli_support column (above) fills 24 of the 29 cells and turns the other five
-# into DATA; this table is what keeps them from being data with no explanation.
-# Keyed (tag, language) -> the reason that cell is empty.  A gap with no entry
-# here still appears in cross_implementation_gaps, just with note=None -- which
-# is the honest rendering of "nobody has written down why yet", and is what the
-# five Java cells looked like before this table existed.
-GAP_REASONS = {
-    ("nl-zkbpp", "java"):
-        "ZkpNl.java's class doc comment declares it out of scope explicitly: the "
-        "Java ZKP-NL port 'exists only to give Hpake its mutual-authentication "
-        "proof', so it carries the ZKBoo circuit (prove/verify) but not the ZKB++ "
-        "transcript encoding. A documented per-file exclusion, the same shape "
-        "Hcred.java's KKW note had before TODO #261 closed that one by porting.",
-    ("hpks-zkp-nl", "java"):
-        "Same ZkpNl.java doc comment: the standalone HPKS-ZKP-NL signature scheme "
-        "built on the ZKBoo circuit is named out of scope alongside ZKB++.",
-    ("nl-zkboo", "java"):
-        "Suite-level support EXISTS (ZkpNl.prove/verify, ported under TODO #203) "
-        "and is exercised through Hpake; only the CLI --algo tag is missing, so "
-        "this is a CLI-surface gap rather than a missing algorithm -- the "
-        "narrowest of the five, and the one to close first.",
-    ("rnl-sigma", "java"):
-        "No Java port at any layer: neither a CLI tag nor an RnlSigmaSign/Verify "
-        "in bindings/java/. Unlike the two ZkpNl entries above, nothing in the "
-        "Java tree records the omission -- TODO #261 found it, and this note is "
-        "the record. Not yet triaged into port-vs-acknowledge.",
-    ("hybrid-rnl-stern", "java"):
-        "No Java port at any layer, and undocumented in the Java tree, same as "
-        "rnl-sigma. Its C/Go/Python row is demo-only for the KEM half's DFR "
-        "(see SECURITY.md), so porting it is low-value next to the other four.",
-}
+# TODO #261: GAP_REASONS was a table of five Java cells with a recorded reason
+# each -- the "ACKNOWLEDGED rather than silent" half of #261's acceptance
+# criterion.  It is now EMPTY, and deliberately kept rather than deleted: all
+# five (nl-zkboo, nl-zkbpp, hpks-zkp-nl, rnl-sigma, hybrid-rnl-stern) were
+# PORTED to Java in v6.0.0 instead of documented, so Java dispatches all 29 algo
+# tags and there is nothing left to excuse.  Keeping the mechanism means the next
+# gap gets a reason instead of silence; a gap with no entry here still appears in
+# cross_implementation_gaps with note=None, which is the honest rendering of
+# "nobody has written down why yet".
+GAP_REASONS = {}
 
 # Gaps in the algo-tag surface are derived (see build_cross_impl_gaps); what stays
 # curated is the one gap that is not a tag at all.

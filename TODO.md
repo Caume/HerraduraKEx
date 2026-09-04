@@ -423,14 +423,65 @@ ships no duplex, fpe or twk)".  Stale since v5.3.6/v5.3.8 — TODO #260 added al
 Java, and the script's own header has said so since.  `spec/README.md`'s description of the
 derived `cli_support` column updated for the Java column at the same time.
 
+**v6.0.0 — the five Java gaps are PORTED, not documented.**  v5.8.7's resolution
+(record a reason for each of the five missing `--algo` tags and leave them) was
+rejected on review: documentation alone is not an acceptable answer to this item,
+whose whole subject is that a capability exists in one language and not another.
+All five are now ported — `nl-zkboo`, `nl-zkbpp`, `hpks-zkp-nl`, `rnl-sigma` and
+`hybrid-rnl-stern` — and **the Java CLI dispatches all 29 algo tags**.  `spec/`'s
+derived `cli_support` column has no empty Java cell left; `GAP_REASONS` is now an
+empty table, kept only so the next gap gets a reason instead of silence.
+
+What that took, in `bindings/java/herradurakex/`: `ZkpNl.keygen`; `ZkpNl.provePp`/
+`verifyPp` (the ZKB++ transcript encoding, ~230 lines, which `ZkpNl.java`'s own class
+doc comment had declared out of scope); `HerraduraNl.rnlSigmaSign`/`rnlSigmaVerify`
+plus the Σ-protocol parameter tables (transcribed rather than re-derived — a drifting
+fallback formula is exactly what TODO #223 hit); `HerraduraNl.hybridRnlSternCombine`;
+eight `Codec` encode/decode pairs and two new PEM labels; and the `genpkey`/`pkey`/
+`sign`/`verify`/`kex` wiring.
+
+**Porting found two REAL WIRE SPLITS that had shipped, and this is the item's most
+important result.**  The Java code was written against the Python reference and
+verified against it byte-for-byte — then failed against C and Go.  `nl-zkboo` and
+`rnl-sigma` had **never** interoperated between {C, Go} and Python: C passes
+`msg.b, KEYBYTES` and Go `msgPad(inBytes, 32)`, while Python hashed the raw message,
+so each side rejected the other's signatures for any input not exactly 32 bytes long.
+Python's own `nl-zkbpp` branch already carried the fix, commented *"Pad/truncate to 32
+bytes to match C/Go behavior"* — the other two were missed when it was applied.
+Python was moved to match C and Go; `MIGRATING.md` §10 records it, and it is why this
+release is MAJOR.
+
+**Why nothing caught it, which is the lesson worth keeping.**  Every existing
+cross-language test either drove one CLI or checked each implementation *against
+Python*.  A star topology around Python reports Python-vs-Python for the very pair
+that was broken and goes green.  The new `CliTest/test_zkp_hybrid_family.sh` is a full
+**4×4 matrix** instead — every (signer, verifier) pair for the three signature tags, and
+every (responder, completer) pair for the hybrid, compared on **session-key bytes**
+rather than exit status, because TODO #235's implicit rejection makes a hybrid mismatch
+silent.  88 checks; verified against the bug it exists for by reverting the Python fix,
+which produces exactly 6 failures, precisely the C/Go↔Python pairs.
+
+**A third gap, in CI itself.**  `native-interop` installs `default-jdk-headless` under a
+comment claiming "genuine 4-way (not just 3-way) coverage", but never compiled the
+bindings — so every Java-optional script in that job hit its `HerraduraCli.class` check,
+printed `NOTE: bindings/java not compiled`, and skipped the Java column.  That claim had
+been false since it was written.  Fixed by adding the `bindings/java/build.sh` step.
+
+Also: `SelfTest.java` gains `[28]` zkp_nl_zkboo, `[29]` zkp_nl_zkbpp, `[30]` rnl_sigma,
+each with two rejection axes beside the round-trip; `PRIMITIVES` gains four entries (17
+total).  The hybrid combiner is deliberately NOT one of them — it lives in the CLI layer
+in three of the four languages, not in the suite files that manifest reads, so an entry
+would be checking the wrong files; the 4×4 session-key comparison guards it instead.
+
 **Acceptance criterion.**  For every protocol/primitive and every named security test, the
 four-language table has either all four cells filled, or a cell marked ACKNOWLEDGED with a
 recorded reason (never a silent absence) — checked by the mechanism above rather than by a
 one-time read of the source tree, so it stays true.  The numbered-test half is fully met.
-The CLI-surface half became four-wide in v5.8.7 and now names a reason for each of the five
-Java gaps, so no cell there is silent — but four of those five are still *recorded* rather
-than *closed*, and closing `nl-zkboo` (a CLI tag over a suite port that already exists) is
-the obvious next increment.  The primitive-manifest half is met only for its current 13
-entries — extending `PRIMITIVES` is what keeps this item open.
+**The CLI-surface half is now fully met too**: as of v6.0.0 all four languages dispatch all
+29 `--algo` tags, so every cell is FILLED rather than acknowledged, and `spec/`'s
+`cli_support` column is derived from each CLI's own dispatch source rather than curated.
+The primitive-manifest half is met only for its current 17 entries — extending `PRIMITIVES`
+to the suite-internal (non-CLI) primitives it does not yet name is what keeps this item
+open, and is the only remaining work.
 
 Status: **OPEN**

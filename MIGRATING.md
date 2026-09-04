@@ -54,6 +54,7 @@ If you have stored any, decrypt them with a pre-4.0.0 build first. See
 | [HPKE-Stern-KEM session-key derivation](#7-hpke-stern-kem-session-key-derivation-v330) | v3.3.0 | Shared secrets from `--algo hpke-stern-kem` and `--algo hybrid-rnl-stern`; anything encrypted under one | Both peers must be on v3.3.0+. **No key or ciphertext format change** — existing keys and ciphertexts are still read; only the derived secret differs |
 | [`fpe` and `twk` subkey derivation](#8-fpe-and-twk-subkey-derivation-v400) | v4.0.0 | Every `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-4.0.0 build before upgrading.** Old ciphertexts cannot be recovered by 4.0.0+, and the failure is silent |
 | [NL-FSCX v2 round constants](#9-nl-fscx-v2-round-constants-v500) | v5.0.0 | Every `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-5.0.0 build before upgrading.** Five constructions at once; for `fpe`/`twk` the failure is silent |
+| [`nl-zkboo` and `rnl-sigma` message padding, Python CLI only](#10-nl-zkboo-and-rnl-sigma-message-padding-python-cli-only-v600) | v6.0.0 | `sign --algo nl-zkboo` / `--algo rnl-sigma` signatures produced by the **Python** CLI over a message whose length is not exactly 32 bytes | Re-sign on v6.0.0+. Those signatures never verified under the C or Go CLIs anyway — that was the bug |
 
 ---
 
@@ -528,3 +529,39 @@ removes the structural objections §11.25 and §11.26 raised, which puts the dif
 trail bounds back in the binding position — and those are still key-averaged and
 explicitly order-of-magnitude, with no PRP/SPRP reduction behind them. Removing an
 objection is not supplying a proof.
+
+---
+
+## 10. `nl-zkboo` and `rnl-sigma` message padding, Python CLI only (v6.0.0)
+
+**What changed.** The Python CLI now pads-or-truncates the message to 32 bytes before
+signing and verifying with `--algo nl-zkboo` and `--algo rnl-sigma`, which is what the C
+and Go CLIs have always done (`msg.b, KEYBYTES` in C; `msgPad(inBytes, 32)` in Go).
+
+**Why this is a fix and not a design change.** The three implementations never agreed.
+A signature produced by the Python CLI was rejected by the C and Go CLIs, and theirs by
+Python — for both tags, for every message whose length was not exactly 32 bytes. Python's
+own `nl-zkbpp` branch already carried the correction, with the comment *"Pad/truncate to
+32 bytes to match C/Go behavior"*; `nl-zkboo` and `rnl-sigma` were simply missed when it
+was applied. Nothing detected it because no test signed with one implementation and
+verified with another for these tags — every existing cross-language test either used a
+single CLI or checked each implementation against Python alone.
+
+TODO #261 found it while porting the two tags to the Java CLI: the new Java code matched
+Python, and then failed against C and Go.
+
+**Who is affected.** Only the Python CLI, and only for messages that are not exactly 32
+bytes long. Signatures over a 32-byte input (the common case, since these tags are
+normally fed a digest) are unchanged and still verify.
+
+**What to do.** Re-sign affected artifacts with v6.0.0 or later. There is nothing to
+recover: an affected signature was, by construction, one that only the Python CLI would
+ever have accepted.
+
+**Direction of the fix.** Python was moved to match C and Go rather than the reverse, for
+two reasons. Two of the three shipped implementations already padded, so this is the
+smaller change to deployed behaviour; and truncating to the key width is this suite's
+established CLI convention for signature inputs — `hpks-stern`, `hpks-ring` and the rest
+do the same. `CliTest/test_zkp_hybrid_family.sh` now runs a full four-way
+(signer × verifier) matrix for both tags, so the split cannot reopen silently.
+
