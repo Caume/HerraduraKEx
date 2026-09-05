@@ -67,6 +67,17 @@ regex, so these fields cannot silently drift from what the CLIs actually impleme
   is derived from the same data.
 - Every CLI subcommand, and for those without `--algo`, the protocol they implement
   (`SUBCOMMAND_PROTOCOLS`, validated against the argparse subparser list).
+- Which of the four CLIs implement which `--flag`, per subcommand
+  (`cli_flag_matrix`), from each CLI's *own argument parser*: argparse
+  `add_argument` calls in Python, `get_arg`/`has_flag`/`get_arg_multi` literals in
+  C, the `flag.FlagSet` constructors and `stringFlags` in Go, and
+  `opt.get`/`getOrDefault`/`containsKey`/`req` in Java. Each extractor maps
+  subcommand -> handler first and then follows delegation, or C's
+  `threshold-verify` flags (reached only through `cmd_verify`) and Go's
+  `cmdKexRnl`/`cmdKexHybrid` flags would read as absent from the languages that
+  have them. Each raises rather than returning empty when it maps no
+  subcommands: a stale regex must fail as "the extractor broke", not as "port 26
+  subcommands".
 
 The following is **curated** in `generate_spec.py` (`SECURITY`, `PROTOCOL_KIND`,
 `PROTOCOL_NAME`, `SUBCOMMAND_PROTOCOLS`, `UNFILED_CLI_SURFACE`) because it requires
@@ -93,6 +104,49 @@ A new algo tag can no longer ship unclassified: generation fails if any tag the 
 accept has no `SECURITY` entry — the check that caught `hybrid-rnl-stern`, a shipped
 `kex --algo` value in all three CLIs that had no protocol entry at all because
 `build_protocols` keyed off `_PRIV_ALGOS | SECURITY` and it is in neither.
+
+## The CLI FLAG surface (TODO #267)
+
+`cross_implementation_gaps` answers *does this CLI dispatch this `--algo` tag*, and
+TODO #261 declared that half met at v6.0.0 — all 29 tags in all four CLIs. That is
+true and narrower than "the CLI surface": a subcommand's **flags** are capability
+too, and they were never compared. `genpkey --passphrase` has been Python-only since
+TODO #166 (v1.9.134), recorded in that item's own text and invisible to every check
+once the item was archived; eight further asymmetries had never been recorded
+anywhere at all, and one — the `--commits` / `--commit` spelling split — is not a
+missing capability but the same capability under two names, so a documented
+threshold-signing command line does not port between CLIs.
+
+`cli_flag_matrix` is the derived matrix; `cli_surface_gaps` is every non-unanimous
+cell of it joined to a curated reason, and it is **exhaustive by construction** —
+generation fails if a derived gap has no recorded reason, if a recorded reason has
+no derived gap, or if a reason's language set no longer matches what the parsers
+say. So adding a flag to one CLI and not the others fails `--check` with the flag
+named, and the only ways to make it pass are to port it or to write down why not.
+That last direction is the half the deleted `CLI_SUPPORT` table never had: an
+acknowledgement whose gap has closed must be removed, or the next reader inherits a
+reason for something that is no longer true.
+
+`status` separates the two legitimate answers the repo already uses in practice.
+`acknowledged` is a deliberate per-language scope decision — `genpkey --bits` is
+absent from C because the C CLI is compiled for a single `KEYBITS` and `RNL_N`, so
+there is no runtime width for the flag to set. `defect` is a real asymmetry that is
+merely recorded and counted. **#267 closes on this mechanism, not on the ports**, so
+`defect` rows are an expected steady state here rather than a failing one; the
+current count is 16 defect and 5 acknowledged.
+
+Two limits worth stating. The matrix is at **flag granularity**: where a flag takes an
+enumerated value the value sets can still differ — Python's `kex --kdf` accepts
+`hfscx-256` and `sp800227` (TODO #165) where C and Go accept `hfscx-256` only — and
+that second axis is carried in the gap's `reason`, not derived. And a flag gap is
+reported only against CLIs that define the subcommand at all, so `rand`'s seven flags
+are not re-reported as missing from Java, which lacks `rand` itself; that shows up
+once, as a `kind: "subcommand"` row.
+
+Subcommand-level parity lives in the same place. `cli_subcommands` is keyed on the
+Python CLI's subparser list, which made a subcommand only another CLI defines
+structurally invisible — Go's top-level `threshold-verify` was. Each entry now carries
+`implementations`, and the union appears in `cli_flag_matrix`.
 
 ## Protocols without an `--algo` tag
 

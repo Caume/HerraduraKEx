@@ -2,6 +2,78 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.1.1] - 2026-09-04
+
+### TODO #267 (DONE) — the CLI's FLAG surface joins the derived-parity checks
+
+TODO #261 declared the CLI half of language parity met at v6.0.0 on a specific basis:
+all 29 `--algo` tags dispatch in all four CLIs, and `spec/`'s `cli_support` column is
+derived from each CLI's own dispatch source rather than curated. That claim is true and
+stays true. It is also narrower than "the CLI surface" — a subcommand's **flags** are
+capability too, and nothing had ever compared them.
+
+`spec/generate_spec.py` now derives `cli_flag_matrix`, a per-subcommand `--flag` matrix
+across C, Go, Python and Java, from each CLI's **own argument parser**: argparse
+`add_argument` calls, `get_arg`/`has_flag`/`get_arg_multi` literals, `flag.FlagSet`
+constructors and `stringFlags`, and `opt.get`/`getOrDefault`/`containsKey`/`req`
+respectively. Each extractor maps subcommand → handler and then follows delegation, or
+C's `threshold-verify` flags (reached only through `cmd_verify`) and Go's
+`cmdKexRnl`/`cmdKexHybrid` flags would read as absent from the languages that have them.
+Each raises rather than returning empty when it maps no subcommands, so a stale regex
+fails as "the extractor broke" and not as "port 26 subcommands".
+
+`cli_surface_gaps` joins every non-unanimous cell to a recorded reason and is exhaustive
+by construction: generation fails if a derived gap has no reason, if a reason has no
+derived gap, or if a reason's language set no longer matches what the parsers say. So
+adding a flag to one CLI and not the others fails `--check` with the flag named, and the
+only ways to make it pass are to port it or write down why not. That middle direction is
+the half the curated `CLI_SUPPORT` table deleted in TODO #238 never had — an
+acknowledgement whose gap has closed must be removed, or the next reader inherits a
+reason for something that is no longer true. All five failure modes were verified by
+deliberately breaking the generator. CI needed no change: the existing
+`generate_spec.py --check --require-schema` step in `native-python` gates it.
+
+**Twenty-one gaps, and #267's own text named three of them.** Nine were not recorded
+anywhere. `genpkey --bits` is absent from C (acknowledged — the C CLI is compiled for a
+single `KEYBITS` and `RNL_N`, so there is no runtime width for the flag to set).
+`sign`/`verify`/`threshold-aggregate --digest` are absent from Java, which has a
+correctness consequence rather than a convenience one: a Java verifier cannot check a
+`--digest hfscx-256` signature the other three produce. `pake-register`/`pake-demo
+--username` are absent from C and Go (acknowledged — the username is stored for lookup,
+is not bound into salt/B/y, and never reaches the `HERRADURA PAKE RECORD` PEM, so the
+records stay byte-comparable). `cred-verify --rounds` exists only in C and Go
+(acknowledged — an extra override; the round count travels in the PEM since TODO #236,
+so all four default identically). Java has no `rand` subcommand, and Go exposes an extra
+top-level `threshold-verify` (acknowledged — same operation, same PEM, one more entry
+point).
+
+**The sharpest finding is not a missing capability at all.** `threshold-aggregate` and
+`threshold-respond` take `--commits a b c` in Python and Java and `--commit a --commit b`
+in C and Go, and `threshold-combine` splits the same way on `--partials`/`--partial`.
+All four implement threshold signing and produce identical PEMs; they spell the flag
+differently, so a documented command line does not port between CLIs. Every parity check
+before this one compared `--algo` tags and PEM bytes, and the PEMs here are identical,
+which is exactly why nothing caught it.
+
+Subcommand-level parity moved into the same place: `cli_subcommands` was keyed on the
+Python CLI's subparser list, so a subcommand only another CLI defines was structurally
+invisible. Each entry now carries `implementations`, and `cli_flag_matrix` is keyed on
+the union.
+
+Two limits are stated rather than papered over. The matrix is at **flag granularity**,
+so `kex --kdf`'s value-set divergence (Python accepts `hfscx-256` and `sp800227` per
+TODO #165; C and Go accept `hfscx-256` only) is carried in the gap's `reason` rather
+than derived. And a flag gap is reported only against CLIs that define the subcommand,
+so `rand`'s seven flags appear as one subcommand row rather than eight flag rows.
+
+`status` separates the two answers the repo already uses in practice: `acknowledged` for
+a deliberate per-language scope decision (5 rows), `defect` for a real asymmetry that is
+recorded and counted (16 rows). **#267 closes on the mechanism, not on the ports**, as
+its own text specifies, so `defect` rows are an expected steady state. The ports it makes
+visible are filed as TODO #268 (the passphrase envelope, which also closes #261's
+`hmac-hfscx-256` acknowledgement), #269 (Java's five CLI capabilities, `--digest` first)
+and #270 (the spelling split, a MAJOR-version decision with three unequal options).
+
 ## [6.1.0] - 2026-09-04
 
 ### TODO #261 (DONE) — the manifest covers the whole internal surface, and a census keeps it that way

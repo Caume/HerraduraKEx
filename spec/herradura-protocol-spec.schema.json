@@ -118,6 +118,104 @@
           }
         }
       }
+    },
+    "cli_flag_matrix": {
+      "type": "object",
+      "description": "Per-subcommand --flag support, derived from each CLI's OWN argument parser the way `cli_subcommands[*].algos` is derived from each CLI's own dispatch (TODO #267). Keyed by subcommand, then by flag, to a boolean per implementation. Keys are the UNION over all four CLIs, so a subcommand only one CLI defines (Go's `threshold-verify`) appears here even though `cli_subcommands` does not carry it. Flag GRANULARITY only: where a flag takes an enumerated value the value sets may still differ (`kex --kdf`), and that is recorded in `cli_surface_gaps[*].reason`, not derived.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "c",
+            "go",
+            "python",
+            "java"
+          ],
+          "properties": {
+            "c": {
+              "type": "boolean"
+            },
+            "go": {
+              "type": "boolean"
+            },
+            "python": {
+              "type": "boolean"
+            },
+            "java": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "cli_surface_gaps": {
+      "type": "array",
+      "description": "Every non-unanimous cell of `cli_flag_matrix` and of the subcommand surface, joined to a curated reason (TODO #267). Derived, and exhaustive by construction: generate_spec.py refuses to emit a spec in which a gap has no recorded reason, or a recorded reason has no gap. `status` separates a deliberate per-language scope decision (`acknowledged`) from a real asymmetry that is merely recorded and counted (`defect`) -- TODO #267 closes on this mechanism, not on the ports, so `defect` rows are an expected steady state.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "subcommand",
+          "flag",
+          "present_in",
+          "missing_from",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "subcommand",
+              "flag"
+            ]
+          },
+          "subcommand": {
+            "type": "string"
+          },
+          "flag": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "null when `kind` is \"subcommand\"."
+          },
+          "present_in": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "c",
+                "go",
+                "python",
+                "java"
+              ]
+            }
+          },
+          "missing_from": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "c",
+                "go",
+                "python",
+                "java"
+              ]
+            },
+            "description": "For a flag gap, restricted to CLIs that define the subcommand at all -- `rand`'s flags are not also reported as missing from Java, which lacks `rand` itself."
+          },
+          "status": {
+            "enum": [
+              "acknowledged",
+              "defect"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -300,6 +398,18 @@
         "unfiled_reason": {
           "type": "string",
           "description": "Present only when `protocol` is null."
+        },
+        "implementations": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "c",
+              "go",
+              "python",
+              "java"
+            ]
+          },
+          "description": "Which CLI implementations define this subcommand at all. TODO #267: `cli_subcommands` is keyed on the Python CLI's subparser list, so this is the only place a subcommand another CLI lacks (Java has no `rand`) becomes visible here."
         }
       },
       "description": "Every CLI subcommand, keyed by name. Those with `has_algo_flag: true` carry an `algos` map; the rest name the protocol they implement, or record why they implement none."

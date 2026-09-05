@@ -124,48 +124,84 @@ no rating in either direction, and is filed as an outstanding proof obligation b
 figures already published, not as a gate on anything.
 
 Status: **OPEN**
+### #268: port the passphrase-encrypted private-key envelope to C, Go and Java
 
+**Made visible by TODO #267's flag matrix**, where it is `spec/`'s largest single
+`defect` cluster: `genpkey --passphrase`, `genpkey --kdf-iterations`,
+`pkey --passphrase` and `pkey --decrypt` are all Python-only, so a key exported this
+way is unreadable by three of the four CLIs.  TODO #166 (v1.9.134) scoped it to Python
+deliberately, matching its own Low priority; that was a reasonable call then and the
+note lived only in #166's text, which is the drift #267 exists to catch.
 
-### #267: the CLI FLAG surface is not at four-way parity, and nothing checks it
+**Not a thin port.**  It needs PBKDF2-HFSCX-256, which needs `hmac_hfscx_256` in Java
+first — TODO #261's primitive manifest already carries that as `acknowledged` for
+exactly this reason, so closing this closes both the missing primitive and the missing
+flag.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
+in every subcommand that loads a key: an encrypted key reaching a build that does not
+understand the envelope must be refused, never mis-parsed.
 
-**Found by TODO #261's closing census (v6.1.0), and deliberately not absorbed into it.**
-#261's CLI-surface half was declared met at v6.0.0 on a specific basis: all 29 `--algo`
-tags dispatch in all four CLIs, and `spec/`'s `cli_support` column is derived from each
-CLI's own dispatch source rather than curated.  That claim is true and stays true.  It
-is also narrower than "the CLI surface": a subcommand's FLAGS are capability too, and
-they are not at parity.
+**Acceptance.**  All four CLIs write and read the envelope, cross-checked in
+`CliTest/` as a 4x4 matrix (writer x reader) rather than each against Python — the
+shape `test_zkp_hybrid_family.sh` adopted after #261 found a pair that had never
+interoperated because every test compared to Python.  A KAT/pem/ artifact pins the
+envelope's bytes.  On success the four `defect` rows and #261's `hmac-hfscx-256`
+acknowledgement are deleted, and `generate_spec.py --check` FAILS until they are —
+that is the anchor-lost direction working as designed.
 
-**Confirmed asymmetries.**
+Status: **OPEN**
 
-* `genpkey --passphrase` / `pkey --decrypt` — passphrase-encrypted private-key PEM
-  export (TODO #166, v1.9.134) — exists **only in the Python CLI**.  The C, Go and Java
-  CLIs have no `--passphrase` anywhere, so a key exported this way is unreadable by
-  three of the four.  #166 recorded this ("Scoped to the Python CLI only, matching this
-  item's own Low priority"), which was a reasonable call for #166 and is exactly the
-  kind of recorded-then-forgotten scope note #261 exists to keep visible.
-* `--kdf` differs across all four: Python has `hfscx-256` and `sp800227` (TODO #165),
-  C and Go have `hfscx-256` only, Java has none.
-* `--aead` is absent from the Java CLI, and `HerraduraCli.java`'s class doc says so —
-  in a Javadoc sentence, which is a comment, not a record any check reads.
+### #269: the Java CLI's five missing flag/subcommand capabilities
 
-**The primitive-level shadow of this, already filed.**  #261's manifest carries
-`hmac-hfscx-256` as `acknowledged` because Java lacks it; its only consumer is the
-Python CLI's PBKDF2 for #166's envelopes.  So the missing primitive and the missing flag
-are one gap seen from two layers, and closing the flag closes both.
+**Made visible by TODO #267's flag matrix.**  Separate from #268 because these are
+much cheaper — the primitives are already in `bindings/java/`; what is missing is the
+CLI wiring.
 
-**What this item has to decide, before any porting.**  Whether these flags are
-capability parity or deliberate per-language scope.  Both answers are legitimate and the
-repo already uses both -- but neither is currently WRITTEN anywhere a check can read,
-which is the actual defect.  The minimum acceptable outcome is therefore a mechanism,
-not three ports: `spec/` should carry the per-CLI flag matrix the way it carries
-`cli_support` for `--algo`, derived from each CLI's own argument parser, with an
-explicit ACKNOWLEDGED cell (and reason) wherever a language deliberately does not
-implement one.  Porting `--passphrase` to the other three is then a separate decision
-the matrix makes visible rather than a precondition for closing this.
+* `enc --aead` — HSKE-NL-AEAD.  `HerraduraCli.java`'s class doc already states the
+  gap, in a Javadoc sentence, which is a comment and not a record any check reads.
+  `CliTest/test_aead.sh`'s 9-way interop covers the other three only.
+* `sign --digest` / `verify --digest` / `threshold-aggregate --digest` — pre-hash
+  selection.  **This one has a correctness consequence, not just a convenience one:**
+  Java signs the raw message only, so a Java verifier cannot check a signature the
+  other three produced with `--digest hfscx-256`, and vice versa.  Do this first.
+* `kex --kdf` — absent from Java entirely.  Note the second axis #267's matrix
+  deliberately does not derive: the VALUE sets differ where the flag does exist
+  (Python `hfscx-256` and `sp800227` per TODO #165, C and Go `hfscx-256` only), so
+  "port `--kdf`" needs a decision about which values, not only about the flag.
+* the `rand` subcommand — Java ships the HDRBG primitive but exposes no `rand`.
 
-**Cost note for whoever picks it up.**  `--passphrase` is not a thin port: it needs
-PBKDF2-HFSCX-256 (so `hmac_hfscx_256` in Java first), the `HERRADURA ENCRYPTED PRIVATE
-KEY` envelope, and the fail-closed read path in every subcommand that loads a key.
-`--kdf sp800227` is much smaller.  They should be judged separately.
+**Acceptance.**  Each ported flag deletes its `CLI_FLAG_PARITY` entry in
+`spec/generate_spec.py`, and `--check` fails until it does.  `--digest` needs a
+cross-language signature test at `--digest hfscx-256`, since the current gap is
+invisible to any test that signs and verifies in one language.
+
+Status: **OPEN**
+
+### #270: the `--commits` / `--commit` spelling split in the threshold subcommands
+
+**Made visible by TODO #267's flag matrix, and the only gap there that is not a
+capability difference at all.**  `threshold-aggregate` and `threshold-respond` take
+`--commits a b c` in Python and Java and `--commit a --commit b` in C and Go;
+`threshold-combine` splits the same way on `--partials` / `--partial`.  All four
+implement threshold signing, produce identical PEMs, and interoperate — a documented
+command line simply does not port between them.  Every parity check before #267
+compared `--algo` tags and PEM bytes, which is precisely why this survived.
+
+**This one is a MAJOR-version decision, and that is the reason it is filed separately
+rather than folded into #269.**  Per CLAUDE.md, renaming or removing a CLI flag breaks
+the stable 2.0.0 CLI surface and needs a `MIGRATING.md` entry.  The options are not
+equal:
+
+1. **Accept both spellings everywhere** — additive, MINOR, no migration entry, and it
+   leaves four `defect` rows that must be re-stated as `acknowledged`.
+2. **Converge on one spelling** — MAJOR, `MIGRATING.md`, and it breaks scripts.
+   `--commit`/`--partial` (repeat the flag) is the more conventional CLI idiom and
+   needs no `nargs`; `--commits`/`--partials` matches the two CLIs whose users are
+   most likely to be scripting.
+3. **Leave it, upgrading the four rows to `acknowledged`** with the reason that the
+   capability is present in all four and only the spelling differs.
+
+Option 1 is the recommendation: it makes every documented command line portable at no
+compatibility cost.  Whichever is chosen, the outcome must be written into
+`CLI_FLAG_PARITY`, which is what makes this closable.
 
 Status: **OPEN**

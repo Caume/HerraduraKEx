@@ -15396,3 +15396,83 @@ all four languages (196 entries, 686 markers), and Part 4's census makes that
 completeness mechanical rather than a one-time read; found and fixed the HKEX-RNL
 session KDF living in two languages' CLIs instead of their suites, plus a hole in the
 manifest's own Java file list.
+
+### #267: the CLI FLAG surface is not at four-way parity, and nothing checks it
+
+**Found by TODO #261's closing census (v6.1.0), and deliberately not absorbed into it.**
+#261's CLI-surface half was declared met at v6.0.0 on a specific basis: all 29 `--algo`
+tags dispatch in all four CLIs, and `spec/`'s `cli_support` column is derived from each
+CLI's own dispatch source rather than curated.  That claim is true and stays true.  It
+is also narrower than "the CLI surface": a subcommand's FLAGS are capability too, and
+they are not at parity.
+
+**Confirmed asymmetries.**
+
+* `genpkey --passphrase` / `pkey --decrypt` — passphrase-encrypted private-key PEM
+  export (TODO #166, v1.9.134) — exists **only in the Python CLI**.  The C, Go and Java
+  CLIs have no `--passphrase` anywhere, so a key exported this way is unreadable by
+  three of the four.  #166 recorded this ("Scoped to the Python CLI only, matching this
+  item's own Low priority"), which was a reasonable call for #166 and is exactly the
+  kind of recorded-then-forgotten scope note #261 exists to keep visible.
+* `--kdf` differs across all four: Python has `hfscx-256` and `sp800227` (TODO #165),
+  C and Go have `hfscx-256` only, Java has none.
+* `--aead` is absent from the Java CLI, and `HerraduraCli.java`'s class doc says so —
+  in a Javadoc sentence, which is a comment, not a record any check reads.
+
+**The primitive-level shadow of this, already filed.**  #261's manifest carries
+`hmac-hfscx-256` as `acknowledged` because Java lacks it; its only consumer is the
+Python CLI's PBKDF2 for #166's envelopes.  So the missing primitive and the missing flag
+are one gap seen from two layers, and closing the flag closes both.
+
+**What this item has to decide, before any porting.**  Whether these flags are
+capability parity or deliberate per-language scope.  Both answers are legitimate and the
+repo already uses both -- but neither is currently WRITTEN anywhere a check can read,
+which is the actual defect.  The minimum acceptable outcome is therefore a mechanism,
+not three ports: `spec/` should carry the per-CLI flag matrix the way it carries
+`cli_support` for `--algo`, derived from each CLI's own argument parser, with an
+explicit ACKNOWLEDGED cell (and reason) wherever a language deliberately does not
+implement one.  Porting `--passphrase` to the other three is then a separate decision
+the matrix makes visible rather than a precondition for closing this.
+
+**Cost note for whoever picks it up.**  `--passphrase` is not a thin port: it needs
+PBKDF2-HFSCX-256 (so `hmac_hfscx_256` in Java first), the `HERRADURA ENCRYPTED PRIVATE
+KEY` envelope, and the fail-closed read path in every subcommand that loads a key.
+`--kdf sp800227` is much smaller.  They should be judged separately.
+
+**CLOSED in v6.1.1 on the mechanism, as its own text specifies.**  `spec/`'s
+`cli_flag_matrix` now carries the per-CLI flag surface derived from each CLI's own
+argument parser, and `cli_surface_gaps` joins every non-unanimous cell to a recorded
+reason, exhaustive in both directions.  The decision this item said it had to make is
+made per gap: 5 `acknowledged`, 16 `defect`.
+
+**It found nine asymmetries beyond the three recorded above**, which is the item
+justifying itself -- the three in its own text were the ones somebody happened to
+remember.  New: `genpkey --bits` absent from C (acknowledged -- the C CLI is compiled
+for a single `KEYBITS`/`RNL_N`, so there is no runtime width to set);
+`sign`/`verify`/`threshold-aggregate --digest` absent from Java, which means a Java
+verifier cannot check a `--digest hfscx-256` signature the other three produce;
+`pake-register`/`pake-demo --username` absent from C and Go (acknowledged -- the
+username is stored for lookup only, is not bound into salt/B/y, and does not appear in
+the `HERRADURA PAKE RECORD` PEM, so the records stay byte-comparable);
+`cred-verify --rounds` present only in C and Go (acknowledged -- an EXTRA override, and
+the round count travels in the PEM since #236, so all four default identically); the
+`rand` subcommand absent from Java; and Go's `threshold-verify` as an extra top-level
+subcommand (acknowledged -- same operation, same PEM, one more entry point).
+
+**The sharpest one is not a missing capability at all.**  `threshold-aggregate`,
+`threshold-respond` and `threshold-combine` take `--commits a b c` / `--partials a b`
+in Python and Java and `--commit a --commit b` / `--partial a` in C and Go.  All four
+can do it; they spell it differently, so a documented threshold-signing command line
+does not port.  Every parity check before this compared `--algo` tags and PEM bytes,
+and the PEMs here are identical, which is exactly why nothing caught it.
+
+**Two limits, stated rather than papered over.**  The matrix is at FLAG granularity,
+so `--kdf`'s value-set divergence (Python `hfscx-256`+`sp800227`, C/Go `hfscx-256`) is
+carried in the gap's reason rather than derived.  And a flag gap is reported only
+against CLIs that define the subcommand, so `rand`'s seven flags are one subcommand
+row, not eight flag rows.
+
+The ports it makes visible are filed as #268, #269 and #270, per this item's own
+"a separate decision the matrix makes visible rather than a precondition for closing".
+
+Status: **DONE v6.1.1** — the per-CLI flag matrix is derived in `spec/` and gated in CI; 21 gaps, each with a recorded reason, in both directions.
