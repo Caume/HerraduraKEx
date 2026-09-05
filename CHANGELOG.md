@@ -2,6 +2,109 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.1.0] - 2026-09-04
+
+### TODO #261 (DONE) — the manifest covers the whole internal surface, and a census keeps it that way
+
+The item's remaining half was "extend `PRIMITIVES` to the suite-internal (non-CLI)
+primitives it does not yet name". Doing that by hand would have been the eleventh
+one-time read of the source tree — the exact method #261's own acceptance criterion
+says not to rely on, and the reason the item survived eleven releases that each added
+to it. So the manifest was not extended by reading: a fourth check was built that
+ENUMERATES the internal surface, and the manifest is what it takes to make that check
+pass.
+
+**`spec/check_language_parity.py` Part 4 — the internal-surface census.** For each of
+the four languages it lists the suite's own top-level functions, subtracts the ones
+that language's CLI calls (the executable form of "suite-internal (non-CLI)", a
+definition the manifest had always applied by hand), subtracts the ones a `PRIMITIVES`
+entry names, and fails on the remainder. Adding a suite-internal primitive in any
+language is now a CI failure until it is filed with four cells or given a
+`CENSUS_EXEMPT` rule with a stated reason. Each language is measured against its OWN
+CLI and its OWN markers, so no cross-language name normaliser has to guess that
+`nl_chi_v3_ba`, `NlChiV3`, `nl_chi_v3` and `nlChiV3` are one function — the
+cross-language claim stays in `PRIMITIVES`' four cells, where it is written down
+rather than inferred. Exempt rules are self-invalidating in the same way the manifest
+is: a rule that stops matching anything is an error, so a family cannot leave its
+excuse behind to cover the next thing that matches.
+
+**The manifest went from 27 entries to 196** (108 language-markers to 686). Not a
+curated selection: the census produced the list, and every entry is either four cells
+or an `acknowledged` reason. 34 carry a reason, and they are worth reading as a group
+— they are the places where the four ports factor the same computation differently
+(C splits the KKW seed tree into expand/levels/node-idx where Go and Python inline it;
+Java factors out `gateRound`, `issuerMsg`, `computeUpc`; Go and Python express
+classical HSKE as `fscx_revolve` at the call site while C and Java name the wrapper),
+plus two absences that are neither naming nor decomposition:
+
+- **`ratchet_erase` exists only in C, and cannot exist in the other three.** Go,
+  Python and Java are garbage-collected, so superseded ratchet state cannot be
+  reliably zeroized. This is a real limit on the forward-secrecy claim in
+  `SecurityProofs-5.md` §11.8.3, now recorded where the parity check will keep it
+  visible instead of living in nobody's notes.
+- **`hmac_hfscx_256` is absent from the Java port**, and its only consumer — the
+  Python CLI's PBKDF2 for passphrase-encrypted PEMs (TODO #166) — is itself
+  Python-CLI-only. See TODO #267.
+
+### Fixed — the HKEX-RNL session KDF was in two languages' CLIs instead of their suites
+
+The census's first finding, and the reason it was worth building rather than
+hand-extending. `rnl_contributory_kdf` — `HFSCX-256(K_raw || n_A || n_B)`, TODO #89's
+RNG hardening, the function that turns the raw Ring-LWR agreement into the session key
+— lived in the SUITE in C (`herradura.h`) and Java (`HerraduraNl.rnlContributoryKdf`),
+and only in the CLI in Go (`herradura_cli.go`) and Python (`HerraduraCli/herradura.py`).
+
+This is the same placement asymmetry v5.8.7 found for `rnl_validate_m_blind`, one
+release later and one step more consequential: that one screens an input, this one
+derives the key. In two of the four languages a caller using the suite directly — the
+pedagogical path `docs/examples/hello_herradura.py` demonstrates — could complete an
+HKEX-RNL exchange and then derive a session key some other way, with nothing anywhere
+to point at the divergence.
+
+Added `rnl_contributory_kdf` to the Python suite and `RnlContributoryKdf` to the
+`herradura` Go package, both byte-identical to the copies they replace; both CLIs now
+call the suite. The Go CLI keeps a one-line wrapper so its call sites still read in
+`rnlKeyBits`/`rnlSessionBits` terms, with a width assertion that makes the delegation
+checkable.
+
+No numbered test was added, and the reason is worth stating because v5.8.7 added one
+([49]) for the analogous move: `rnl_validate_m_blind` was a guard **nothing anywhere
+exercised**, so moving it into the suite left it still untested. This KDF is the
+opposite — every `hkex-rnl` CLI test in the repo runs through it, in all four
+languages, and a divergence is a failed key agreement rather than a silent pass. What
+was missing here was reachability, not coverage.
+
+No wire-format change — `CliTest/test_hybrid_kex_interop.sh` (19/19),
+`test_rnl_sp800227_kdf.sh` (4/4), `test_go_interop.sh` (10/10) and `test_vectors.sh`
+(3/3) all pass unchanged, which is what "byte-identical" has to mean here.
+
+### Fixed — the Java manifest was reading the CLI and the test drivers
+
+`SUITE_FILES["java"]` was every `.java` file in `bindings/java/herradurakex/`, which
+includes `HerraduraCli.java`, `Codec.java` and the three test drivers. The manifest
+therefore had the hole it was built to catch, from the other side: `rnl-validate-m-blind`
+had to be "deliberately anchored at the SUITE files" to catch Python keeping a
+validator in its CLI, while the same manifest would have scored a Java primitive found
+only in `HerraduraCli.java` as present. `JAVA_NON_SUITE` now separates the layers in
+both directions, `Codec.java` included on the same where-do-the-others-keep-it rule
+(C and Python keep their codecs in `HerraduraCli/`).
+
+Java markers may now be written `File.java::<regex>` to scope the search to one class.
+That is what makes short method names usable without growing every regex a full
+argument list, and it pins WHICH class holds a primitive, so moving a method between
+classes is a reported finding. The census's coverage set is scoped the same way, which
+immediately surfaced two functions the unscoped version had been silently vouching for:
+`Herradura.rol` and `Herradura.ror` were being covered by the entry for `ZkpNl.rol`, a
+different function at a different width.
+
+### Added — TODO #267, filed not fixed
+
+The CLI **flag** surface is not at four-way parity and nothing checks it: `--passphrase`
+/ `pkey --decrypt` (TODO #166) exists only in the Python CLI, and `--kdf` / `--aead`
+support differs across all four. Java's `HerraduraCli.java` records its own gaps in a
+Javadoc sentence, which is a comment rather than a checked record. #261's CLI-surface
+half counted `--algo` tags only, so this was never in its scope; it is now #267's.
+
 ## [6.0.5] - 2026-09-04
 
 ### TODO #261 (ongoing) — the QC-MDPC weak-key screen gets a test, in all four languages

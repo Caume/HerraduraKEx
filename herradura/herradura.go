@@ -1435,6 +1435,35 @@ func RnlValidateMBlind(poly []int, q int) bool {
 	return nz >= n/4 && mx-mn >= q/4
 }
 
+// RnlContributoryKdf derives the HKEX-RNL session key: HFSCX-256(K_raw || nA ||
+// nB).  rawBits is the width K_raw is serialised at; nA and nB are the
+// per-session nonces contributed by Alice and Bob, each exactly 32 bytes (pass
+// make([]byte, 32) for an old-format peer that sends none).  The result is
+// always 256 bits wide — a whole HFSCX-256 digest — regardless of rawBits.
+//
+// Binding K_raw to nonces from BOTH parties is TODO #89's RNG hardening: the
+// raw Ring-LWR agreement is a function of the two key draws alone, so a party
+// with a weak RNG would otherwise contribute a predictable session key on its
+// own.
+//
+// TODO #261 (v6.1.0): C (rnl_contributory_kdf, herradura.h) and Java
+// (HerraduraNl.rnlContributoryKdf) kept this in the SUITE; Go and Python kept
+// private copies in their CLIs, so a caller using this package directly could
+// complete an HKEX-RNL exchange and then derive the session key some other way.
+// HerraduraCli/herradura_cli.go now calls this.
+func RnlContributoryKdf(kRaw *BitArray, rawBits int, nA, nB []byte) *BitArray {
+	nb := rawBits / 8
+	raw := kRaw.Bytes()
+	if len(raw) > nb {
+		raw = raw[len(raw)-nb:]
+	}
+	padded := make([]byte, nb)
+	copy(padded[nb-len(raw):], raw)
+	payload := append(append(padded, nA...), nB...)
+	digest := Hfscx256(payload, nil)
+	return NewBitArray(256, new(big.Int).SetBytes(digest))
+}
+
 // RnlRandPoly samples n uniform coefficients from Z_q using rejection sampling.
 func RnlRandPoly(n, q int) []int {
 	p := make([]int, n)

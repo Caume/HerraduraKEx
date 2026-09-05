@@ -528,19 +528,40 @@ spec/                                                — machine-readable protoc
                                                       check_language_parity.py (TODO #261) is a
                                                       different axis: numbered-test [N] contiguity in
                                                       each of C/Go/Python/Java, set-alignment of
-                                                      C/Go/Python's shared [1]-[51] numbering, and a
-                                                      curated manifest of suite-internal (non-CLI)
-                                                      primitives -- seeded with the HCRED-KKW gap the
-                                                      item was filed over -- so a primitive with no
-                                                      `--algo` tag can still be caught missing in a
-                                                      language.  A marker regex must match EXACTLY
+                                                      C/Go/Python's shared [1]-[51] numbering, a
+                                                      manifest of suite-internal (non-CLI)
+                                                      primitives -- 196 entries, four cells each --
+                                                      so a primitive with no `--algo` tag can still
+                                                      be caught missing in a language, and since
+                                                      v6.1.0 an INTERNAL-SURFACE CENSUS that closed
+                                                      TODO #261.  The census is what keeps the
+                                                      manifest complete: per language it lists the
+                                                      suite's own top-level functions, subtracts the
+                                                      ones that language's CLI calls, subtracts the
+                                                      ones the manifest names, and FAILS on the rest.
+                                                      So adding a suite-internal primitive in any
+                                                      language is a CI failure until it is filed with
+                                                      four cells or given a CENSUS_EXEMPT rule with a
+                                                      reason -- and an exempt rule matching nothing is
+                                                      itself an error, so a family cannot leave its
+                                                      excuse behind for the next thing that matches.
+                                                      A marker regex must match EXACTLY
                                                       ONCE, not merely occur (TODO #261, v6.0.3):
-                                                      Java's entry is every herradurakex/*.java
+                                                      Java's entry is every SUITE herradurakex/*.java
                                                       concatenated, so a bare method name like
                                                       `public static boolean verify(` matches six
                                                       classes and keeps passing after the one it
                                                       guards is deleted.  Anchor new Java markers on
-                                                      the signature.  check_docs_consistency.py (TODO #265)
+                                                      the signature, or scope them with the
+                                                      `File.java::<regex>` form (v6.1.0), which also
+                                                      pins WHICH class holds the primitive.  Note
+                                                      JAVA_NON_SUITE: HerraduraCli.java, Codec.java
+                                                      and the test drivers are NOT read, because a
+                                                      primitive living only in a CLI is the very
+                                                      asymmetry this manifest catches (it found one
+                                                      in Python at v5.8.7 and another in Go and
+                                                      Python at v6.1.0).
+                                                      check_docs_consistency.py (TODO #265)
                                                       is the third axis, and the only one that reads
                                                       the NARRATIVE documents: README.md,
                                                       docs/INTRODUCTION.md and CHANGELOG.md restate

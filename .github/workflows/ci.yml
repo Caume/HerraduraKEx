@@ -123,12 +123,18 @@ jobs:
           python3 spec/generate_spec.py --check --require-schema
           python3 spec/check_security_md.py
 
-      # TODO #261's mechanism half: numbered-test contiguity/alignment across
-      # C/Go/Python/Java, plus a curated suite-internal (non-CLI) primitive
-      # manifest, seeded with the HCRED-KKW gap the item was filed over. Only
-      # reads source text (no build needed), so it runs here regardless of
+      # TODO #261's mechanism half, and since v6.1.0 the whole of it:
+      # numbered-test contiguity/alignment across C/Go/Python/Java, a
+      # suite-internal (non-CLI) primitive manifest of 196 entries with four
+      # cells each, and the INTERNAL-SURFACE CENSUS that keeps the manifest
+      # complete — it enumerates each language's suite functions, subtracts the
+      # ones that language's CLI calls and the ones the manifest names, and
+      # fails on the rest. That is what makes "no silent absence" a check
+      # rather than a habit: a new suite-internal primitive in ANY of the four
+      # languages fails this step until it is filed or exempted with a reason.
+      # Only reads source text (no build needed), so it runs here regardless of
       # which other jobs pass.
-      - name: cross-language parity (numbered tests + suite-internal primitives)
+      - name: cross-language parity (numbered tests + suite-internal primitives + census)
         run: python3 spec/check_language_parity.py
 
       # TODO #265. The third axis: the two checks above compare spec/ against
