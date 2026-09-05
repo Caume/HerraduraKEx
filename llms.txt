@@ -163,18 +163,27 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
   threshold-verify --sig FILE --in FILE [--digest {none,hfscx-256}]
-    (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify;
-     threshold-verify is a directly-invokable subcommand in C and Go; Python only
-     exposes the equivalent check via `verify --algo hpks-t`.)
+    (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify.
+     threshold-verify is a directly-invokable top-level subcommand in GO ONLY.
+     C dispatches `verify` and delegates internally to cmd_threshold_verify;
+     Python and Java expose the check only via `verify --algo hpks-t`.  Same
+     operation and same PEM in all four -- one extra entry point in Go.
+     Corrected by TODO #267's CLI-surface matrix, which had said "C and Go".)
   encfile/decfile --algo hske-nla1 --key FILE --in FILE --out FILE   (streaming, .hkx)
   dgst --algo {hfscx-256,hfscx-256-ds} --in FILE [--out FILE]
   rand [--seed FILE|--state FILE] [--personalization STR] [--reseed FILE]
        --bytes N [--hex] [--out FILE]
+    All four CLIs since TODO #269 (v6.3.0); Java shipped the HDRBG primitive from
+    the start and the subcommand only now.  --state is both the resume source and
+    the checkpoint destination, and the HERRADURA HDRBG STATE PEM is byte-identical
+    across all four writers.
   fpe/twk --key FILE (--encrypt|--decrypt) [--v3] --in FILE --out FILE [--context STR | --sector N --bidx N]
     --v3 selects the NL-FSCX v3 round and its own subkey domain (tags 0x22/0x23
     against v2's 0x20/0x21), so a --v3 artifact does not decrypt without --v3 —
     and, being an unauthenticated permutation, it fails by returning wrong bytes
-    rather than an error.  C, Go and Python; Java ships neither subcommand.
+    rather than an error.  ALL FOUR CLIs, Java included: TODO #260 added Java's
+    fpe and twk in v5.3.6, and this line went on saying it shipped neither until
+    TODO #269 re-checked it (v6.3.0).
   oprf-blind --in FILE --out FILE
   oprf-eval --key FILE --in FILE --out FILE
   oprf-unblind --state FILE --eval FILE --out FILE

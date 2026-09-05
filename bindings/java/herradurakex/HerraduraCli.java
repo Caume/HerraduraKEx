@@ -108,7 +108,7 @@ public final class HerraduraCli {
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
-                + "|fpe|twk"
+                + "|rand|fpe|twk"
                 + "|threshold-commit|threshold-aggregate|threshold-respond|threshold-combine"
                 + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
                 + "|pake-register|pake-demo> [options]");
@@ -124,6 +124,7 @@ public final class HerraduraCli {
             case "sign":    cmdSign(opt);    break;
             case "verify":  cmdVerify(opt);  break;
             case "dgst":    cmdDgst(opt);    break;
+            case "rand":    cmdRand(opt);    break;
             case "encfile": cmdEncfile(opt); break;
             case "decfile": cmdDecfile(opt); break;
             case "fpe":     cmdFpe(opt);     break;
@@ -1388,6 +1389,74 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
     // encfile / decfile (hske-nla1 .hkx container)
     // -----------------------------------------------------------------
+
+    /** `rand` — HDRBG deterministic byte generation (TODO #119; ported to Java
+     *  by TODO #269).
+     *
+     *  Java shipped the Hdrbg primitive and no `rand` subcommand, so this was a
+     *  CLI-surface gap rather than a missing construction — the shape TODO #267's
+     *  flag matrix exists to surface, and the reason its subcommand rows are
+     *  checked separately from #261's primitive manifest, which passed here
+     *  because the primitive was present all along.
+     *
+     *  Semantics follow the other three exactly, including the two ways to do
+     *  nothing: `--seed` or `--state` is required, and `--bytes` or `--reseed`
+     *  is required, each with the same message. `--state` is both the resume
+     *  source AND the checkpoint destination — it is rewritten with the advanced
+     *  state after generating, which is what makes DRBG_MAX_BLOCKS accounting
+     *  survive across invocations. */
+    private static void cmdRand(Map<String, String> opt) throws IOException {
+        String seedPath = opt.get("seed");
+        String statePath = opt.get("state");
+        String reseedPath = opt.get("reseed");
+        String out = opt.getOrDefault("out", "-");
+        boolean hex = opt.containsKey("hex");
+
+        Hdrbg drbg;
+        if (seedPath != null) {
+            byte[] pers = opt.getOrDefault("personalization", "")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            drbg = Hdrbg.seed(readBytes(seedPath), pers);
+        } else if (statePath != null) {
+            Codec.HdrbgState st = Codec.decodeHdrbgState(readString(statePath));
+            drbg = Hdrbg.resume(st.state, st.blocks);
+        } else {
+            throw new CliError("rand: one of --seed or --state is required");
+        }
+
+        if (reseedPath != null) {
+            drbg.reseed(readBytes(reseedPath));
+        }
+
+        if (opt.containsKey("bytes")) {
+            int n;
+            try {
+                n = Integer.parseInt(opt.get("bytes"));
+            } catch (NumberFormatException e) {
+                throw new CliError("rand: --bytes must be an integer");
+            }
+            if (n < 0) throw new CliError("rand: --bytes must be non-negative");
+            byte[] data;
+            try {
+                data = drbg.generate(n);
+            } catch (IllegalStateException e) {
+                throw new CliError("rand: output limit reached — reseed required");
+            }
+            // Hex goes out with a trailing newline in all four CLIs, to a file
+            // as well as to stdout -- Python writes (out.hex() + '\n') either
+            // way, and C writes n*2+1 bytes.  Dropping it for the file case
+            // would make a hex artifact one CLI writes differ from another's.
+            writeBytes(out, hex ? (hexBytes(data) + "\n")
+                                     .getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+                               : data);
+        } else if (reseedPath == null) {
+            throw new CliError("rand: nothing to do (specify --bytes and/or --reseed)");
+        }
+
+        if (statePath != null) {
+            writeString(statePath, Codec.encodeHdrbgState(drbg.stateValue(), drbg.blocksGenerated()));
+        }
+    }
 
     private static void cmdEncfile(Map<String, String> opt) throws IOException {
         String algo = opt.getOrDefault("algo", "hske-nla1");

@@ -1012,14 +1012,11 @@ CLI_FLAG_PARITY = {
 # The same table one level up: a SUBCOMMAND present in some CLIs and not others.
 # `cli_subcommands` above is keyed on the Python CLI's subparser list, so a
 # subcommand only another CLI defines was structurally invisible to this spec.
+#
+# `rand` was the other entry here until TODO #269 ported it to Java (v6.3.0),
+# which is the intended life-cycle of a `defect` row: it is deleted by closing the
+# gap, and generation FAILS until it is.
 CLI_SUBCOMMAND_PARITY = {
-    "rand": (
-        ("c", "go", "python"), "defect",
-        "The HDRBG generator subcommand. Java ships the DRBG primitive but exposes no "
-        "`rand` subcommand, and its own usage banner lists the 24 it does have -- "
-        "again a string, not a record. TODO #261's manifest checks the PRIMITIVE "
-        "surface and passes here because the primitive is present; this is the "
-        "CLI-surface shadow of that, which is why #267 is a separate axis."),
     "threshold-verify": (
         ("go",), "acknowledged",
         "An EXTRA subcommand rather than a missing one. All four verify a threshold "

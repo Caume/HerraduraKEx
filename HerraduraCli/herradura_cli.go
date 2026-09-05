@@ -1706,6 +1706,14 @@ func cmdRand(args []string) {
 		d.DrbgReseed(rbuf)
 	}
 
+	// TODO #269: -1 was doing double duty as "not given" and as a value, so
+	// `--bytes -1` fell through to "nothing to do" while Python, C and Java all
+	// report "--bytes must be non-negative".  isSet distinguishes the two, which
+	// is what the other three get for free from argparse / an explicit NULL check.
+	if isSet(fs, "bytes") && *nbytes < 0 {
+		fmt.Fprintln(os.Stderr, "rand: --bytes must be non-negative")
+		os.Exit(1)
+	}
 	if *nbytes >= 0 {
 		outBytes, ok := d.DrbgGenerate(*nbytes)
 		if !ok {

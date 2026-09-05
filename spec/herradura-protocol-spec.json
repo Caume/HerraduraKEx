@@ -1630,6 +1630,7 @@
       "implementations": [
         "c",
         "go",
+        "java",
         "python"
       ],
       "has_algo_flag": false,
@@ -2256,43 +2257,43 @@
       "--bytes": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--hex": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--out": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--personalization": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--reseed": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--seed": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--state": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       }
     },
@@ -2566,21 +2567,6 @@
     }
   },
   "cli_surface_gaps": [
-    {
-      "kind": "subcommand",
-      "subcommand": "rand",
-      "flag": null,
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "The HDRBG generator subcommand. Java ships the DRBG primitive but exposes no `rand` subcommand, and its own usage banner lists the 24 it does have -- again a string, not a record. TODO #261's manifest checks the PRIMITIVE surface and passes here because the primitive is present; this is the CLI-surface shadow of that, which is why #267 is a separate axis."
-    },
     {
       "kind": "subcommand",
       "subcommand": "threshold-verify",

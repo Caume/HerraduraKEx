@@ -188,8 +188,28 @@ puts it in #268's cost class, not this one.  **It should be re-filed as its own 
 alongside #268 rather than closed here; leaving it in #269 is what made this item look
 cheap.
 
-**`rand` — confirmed pure CLI wiring.**  `bindings/java/herradurakex/Hdrbg.java`
-exists and is complete; only the subcommand and its seven flags are missing.
+**`rand` — DONE in v6.3.0.**  It was pure CLI wiring as predicted, plus two small
+additions the port needed: `Hdrbg.resume(state, blocks)` (the read side of the
+existing `stateValue()`/`blocksGenerated()` pair -- `blocks` is CARRIED, not reset,
+or a resume would silently hand back a generator with no DRBG_MAX_BLOCKS accounting)
+and `Codec.encodeHdrbgState`/`decodeHdrbgState`.  Verified bit-exact against the
+other three: identical streams with and without `--personalization`, all 16
+writer x reader checkpoint-resume pairs, and byte-identical HDRBG STATE PEMs from
+all four writers.
+
+`CliTest/test_rand.sh` went from three languages to four rather than gaining a
+parallel script -- `native-interop` already builds all four, so no CI change was
+needed.  Two assertions were added that it did not have: that every writer's STATE
+PEM is byte-identical (it only checked that each RESUMES, which a writer using a
+different DER width for `blocks` would also pass), and that the three error paths
+report the same message in every language.
+
+**That last one found a real Go bug, fixed here.**  Go used `-1` as its "not given"
+sentinel for `--bytes`, so `rand --bytes -1` was indistinguishable from omitting the
+flag and reported `nothing to do` where the other three report
+`--bytes must be non-negative`.  Fixed with the file's own `isSet` helper.  It is a
+wrong-but-plausible diagnostic, which is precisely the class nobody notices by hand,
+and it had never been asserted in any language.
 
 **`kex --kdf` — pure wiring for `hfscx-256`, but DO NOT PORT IT WITHOUT READING THIS.**
 The port itself is a post-hash of the session-key bytes and Java has `Hfscx256.hash`.

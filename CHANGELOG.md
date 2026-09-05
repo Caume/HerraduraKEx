@@ -2,6 +2,54 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.3.0] - 2026-09-04
+
+### TODO #269 (second pass) — `rand` ported to the Java CLI, and a Go diagnostic bug found doing it
+
+The Java CLI shipped `Hdrbg.java` complete and no `rand` subcommand at all, so this
+was a CLI-surface gap rather than a missing construction — the shape TODO #267's flag
+matrix exists to surface, and the reason its subcommand rows are checked separately
+from TODO #261's primitive manifest, which passed here all along because the
+*primitive* was present.
+
+`cmdRand` follows the other three exactly, including both ways to do nothing
+(`--seed` or `--state` required; `--bytes` or `--reseed` required) and the trailing
+newline on hex output to a file as well as to stdout. Two small additions were needed:
+`Hdrbg.resume(state, blocks)`, the read side of the existing
+`stateValue()`/`blocksGenerated()` pair — `blocks` is *carried*, not reset, or a
+resume would silently return a generator with no `DRBG_MAX_BLOCKS` accounting — and
+`Codec.encodeHdrbgState`/`decodeHdrbgState` for the `HERRADURA HDRBG STATE` PEM, whose
+fixed 32-byte `state` and minimal-width `blocks` INTEGER widths are wire format, not a
+formatting choice.
+
+Verified bit-exact against the other three: identical streams with and without
+`--personalization`, all 16 writer x reader checkpoint-resume pairs, and
+byte-identical STATE PEMs from all four writers.
+
+**`CliTest/test_rand.sh` went from three languages to four** rather than gaining a
+parallel script — `native-interop` already builds all four, so CI needed no change. It
+also gained two assertions it never had. First, that every writer's STATE PEM is
+*byte-identical*: it previously checked only that each checkpoint RESUMES elsewhere,
+which a writer encoding `blocks` at a different DER width would also pass while
+emitting a different file. Second, that the three error paths report the same message
+in every language.
+
+**That second assertion found a real Go bug.** Go used `-1` as its "not given"
+sentinel for `--bytes`, so `rand --bytes -1` was indistinguishable from omitting the
+flag entirely and reported `nothing to do` where Python, C and Java all report
+`--bytes must be non-negative`. Fixed using the file's own existing `isSet` helper.
+A wrong-but-plausible diagnostic is exactly the class nobody notices by hand, and it
+had never been asserted in any language. Confirmed the new test fails against the
+unfixed build.
+
+`rand`'s row is gone from `CLI_SUBCOMMAND_PARITY`, and the generator refused to emit a
+spec until it was — the second time in three releases that the anchor-lost direction
+has done its job. `cli_surface_gaps` is now 17 rows: 12 defect, 5 acknowledged.
+
+**#269 stays open** with `enc --aead` (re-scoped in v6.2.0 as a primitive port, not
+wiring) and `kex --kdf` (blocked on recording the value-level axis first, or porting it
+deletes the only record of the `sp800227` divergence) remaining.
+
 ## [6.2.0] - 2026-09-04
 
 ### TODO #269 (first pass) — the Java CLI gets `--digest`, and it was a correctness gap
