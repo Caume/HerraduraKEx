@@ -152,27 +152,66 @@ Status: **OPEN**
 
 ### #269: the Java CLI's five missing flag/subcommand capabilities
 
-**Made visible by TODO #267's flag matrix.**  Separate from #268 because these are
-much cheaper — the primitives are already in `bindings/java/`; what is missing is the
-CLI wiring.
+**Made visible by TODO #267's flag matrix.**  Originally filed as "much cheaper than
+#268 — the primitives are already in `bindings/java/`; what is missing is the CLI
+wiring."  **That premise was half wrong, and finding out which half is the main result
+of the first pass.**
 
-* `enc --aead` — HSKE-NL-AEAD.  `HerraduraCli.java`'s class doc already states the
-  gap, in a Javadoc sentence, which is a comment and not a record any check reads.
-  `CliTest/test_aead.sh`'s 9-way interop covers the other three only.
-* `sign --digest` / `verify --digest` / `threshold-aggregate --digest` — pre-hash
-  selection.  **This one has a correctness consequence, not just a convenience one:**
-  Java signs the raw message only, so a Java verifier cannot check a signature the
-  other three produced with `--digest hfscx-256`, and vice versa.  Do this first.
-* `kex --kdf` — absent from Java entirely.  Note the second axis #267's matrix
-  deliberately does not derive: the VALUE sets differ where the flag does exist
-  (Python `hfscx-256` and `sp800227` per TODO #165, C and Go `hfscx-256` only), so
-  "port `--kdf`" needs a decision about which values, not only about the flag.
-* the `rand` subcommand — Java ships the HDRBG primitive but exposes no `rand`.
+**`--digest` — DONE in v6.2.0.**  The correctness one, and it is fixed.  Java's
+`cmdSign`/`cmdVerify`/`cmdThresholdAggregate` now apply the `hfscx-256` pre-hash at
+READ time through one `readMessage(opt, cmd)` helper, which is where Python and Go
+apply it and where C applies it in each of its three early-returning branches.
+`CliTest/test_digest_matrix.sh` is the guard, claimed by `cross-lang-compat`: a 4x4
+signer x verifier matrix on `hpks` and `hpks-nl` plus a rotated `threshold-aggregate`,
+over a 768-byte message (24x the 32-byte key width, so raw and pre-hashed actually
+differ).  It caught 39 failures against the pre-fix build and 0 after.
 
-**Acceptance.**  Each ported flag deletes its `CLI_FLAG_PARITY` entry in
-`spec/generate_spec.py`, and `--check` fails until it does.  `--digest` needs a
-cross-language signature test at `--digest hfscx-256`, since the current gap is
-invisible to any test that signs and verifies in one language.
+Two things worth keeping from how it had to be written.  (1) **The negative control is
+what earns the file**, not the matrix: a CLI that parsed `--digest` and ignored it
+would pass every positive cell, which is precisely how Java passed every existing
+signature test, so each pair is also asserted to FAIL across the flag.  (2) It could
+only ever have been caught cross-language — every signature test in the repo signs and
+verifies within one language or compares PEM bytes, and a raw-message signature and a
+digest signature are byte-identical in shape.
+
+It also forced a fix to #267's own extractor: the call-graph followed only `cmd*`
+handlers, so factoring three duplicated `--in` reads into `readMessage` made `sign --in`
+read as ABSENT FROM JAVA.  It now follows any callee handed the subcommand's argument
+container.  Verified to change no other cell of the matrix.
+
+**`enc --aead` — RE-SCOPED, and it does not belong in this item.**  It is not CLI
+wiring: `bindings/java/` has no AEAD primitive at all.  TODO #261's manifest already
+records this, carrying `hske-nl-aead-xor-ks`, `hske-nl-aead-tag` and
+`hske-nl-aead-streams` as `acknowledged` for Java.  So `--aead` is a primitive port
+plus a codec change (format tag 2 carries a nonce and an auth tag) plus the CLI, which
+puts it in #268's cost class, not this one.  **It should be re-filed as its own item**
+alongside #268 rather than closed here; leaving it in #269 is what made this item look
+cheap.
+
+**`rand` — confirmed pure CLI wiring.**  `bindings/java/herradurakex/Hdrbg.java`
+exists and is complete; only the subcommand and its seven flags are missing.
+
+**`kex --kdf` — pure wiring for `hfscx-256`, but DO NOT PORT IT WITHOUT READING THIS.**
+The port itself is a post-hash of the session-key bytes and Java has `Hfscx256.hash`.
+The trap is what porting it DESTROYS: `--kdf`'s value sets differ (Python takes
+`none`/`hfscx-256`/`sp800227` per TODO #165; C and Go take `none`/`hfscx-256`), and
+#267's matrix is at FLAG granularity, so the only record of that value-level
+divergence anywhere is the `reason` on the `kex --kdf` gap.  Giving Java the flag puts
+`--kdf` at flag parity, which DELETES that gap row and with it the only written record
+of the `sp800227` asymmetry.  That is #267's "anchor lost" failure reproduced one level
+down, at the granularity its own matrix deliberately does not reach.
+
+So the order is forced: **record the value-level axis first, port `--kdf` second.**
+The cheapest honest form is a curated value-set table in `generate_spec.py`
+alongside `CLI_FLAG_PARITY`, validated the same way in both directions.  Deriving
+enumerated values mechanically is possible for Python (argparse `choices=`) but not
+reliably for C/Go/Java, where the accepted set is a chain of string comparisons -- so a
+derived-Python / curated-other-three split, with the Python side self-invalidating, is
+probably the right shape.
+
+**Remaining acceptance.**  `rand` and `--kdf` each delete their `CLI_FLAG_PARITY` /
+`CLI_SUBCOMMAND_PARITY` entry, and `--check` fails until they do.  `--aead` moves to
+its own item.
 
 Status: **OPEN**
 

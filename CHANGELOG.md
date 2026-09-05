@@ -2,6 +2,61 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.2.0] - 2026-09-04
+
+### TODO #269 (first pass) — the Java CLI gets `--digest`, and it was a correctness gap
+
+TODO #267's flag matrix, one release old, produced its first fix. Java's CLI had no
+`--digest` at all while the other three have taken `--digest hfscx-256` since well
+before it. That was not a convenience gap: every signature path in the suite
+pads-or-**truncates** the message to the key width (32 bytes at n=256), which is
+exactly why `--digest` exists — so for any message longer than that, the other three
+CLIs had a correct way to sign it and Java had none, and a Java verifier rejected
+signatures the other three considered valid, silently, with a well-formed PEM on both
+sides.
+
+`cmdSign`, `cmdVerify` and `cmdThresholdAggregate` now read the message through one
+`readMessage(opt, cmd)` helper that applies the pre-hash at read time — where Python
+and Go apply it, and where C applies it in each of its three early-returning branches,
+so the pre-hash reaches every `--algo` rather than only the branches that remembered
+it. An unrecognised `--digest` is rejected, matching Python's argparse `choices`; C and
+Go ignore what they do not recognise, so a misspelled `--digest hfscx256` there signs
+the raw message with no diagnostic. That is a fail-open on a security-relevant flag and
+was not worth copying — the new test asserts strictness only where it holds and names
+the two CLIs where it does not.
+
+**`CliTest/test_digest_matrix.sh`** (claimed by `cross-lang-compat`) is the guard: a 4x4
+signer x verifier matrix on `hpks` and `hpks-nl`, plus `threshold-aggregate` with the
+aggregator rotated, over a 768-byte message. It reports 162 PASS / 0 FAIL now and
+**39 failures against the pre-fix build**.
+
+Two properties of it are the point. **The negative control earns the file, not the
+matrix**: a CLI that parsed `--digest` and then ignored it would pass every positive
+cell — which is precisely how Java passed every existing signature test — so each pair
+is also asserted to *fail* across the flag, in both directions. And the gap was only
+ever visible cross-language: every signature test in this repo either signs and verifies
+within one language or compares PEM bytes, and a raw-message signature and a digest
+signature are byte-identical in shape.
+
+**It also corrected #267's own extractor.** The flag matrix's call-graph followed only
+`cmd*` handlers, so factoring three duplicated `--in` reads into `readMessage` made
+`sign --in` read as absent from Java. It now follows any callee handed the subcommand's
+argument container — a function given the parsed options is part of that subcommand's
+flag surface however it is named. Confirmed to change no other cell. The three
+`--digest` rows are gone from `CLI_FLAG_PARITY`, and the generator refused to emit a
+spec until they were, which is the anchor-lost direction working as designed.
+
+**#269 stays open, with two of its four parts re-scoped by doing the work.** `enc
+--aead` is *not* CLI wiring — `bindings/java/` has no AEAD primitive at all, and TODO
+#261's manifest already carries `hske-nl-aead-xor-ks`, `-tag` and `-streams` as
+`acknowledged` for Java — so it belongs in #268's cost class and should be re-filed as
+its own item. And `kex --kdf` carries a trap: porting it puts the flag at parity, which
+deletes the gap row that is the *only* written record of the value-set divergence
+(`sp800227` is Python-only), since the matrix is deliberately at flag granularity. The
+value-level axis has to be recorded before that flag is ported, or #267's anchor-lost
+failure reproduces one level down. `rand` is confirmed pure wiring (`Hdrbg.java` is
+complete).
+
 ## [6.1.1] - 2026-09-04
 
 ### TODO #267 (DONE) — the CLI's FLAG surface joins the derived-parity checks

@@ -167,7 +167,15 @@ def _resolve_flags(bodies, fn, flag_patterns, call_re, seen=None):
     The delegation step is not decoration: C reaches `threshold-verify`'s flags
     only through `cmd_verify`, and Go's `cmdKex` splits into `cmdKexRnl` /
     `cmdKexHybrid`.  Without it those flags read as absent from the language
-    that has them."""
+    that has them.
+
+    `call_re` matches any callee handed the subcommand's own argument container
+    -- `(argc, argv)`, `(args)`, `(opt, ...)` -- not only the `cmd*` handlers.
+    Restricting it to `cmd*` was wrong and TODO #269 proved it: factoring three
+    duplicated `--in` reads in the Java CLI into one `readMessage(opt, cmd)`
+    helper made `sign --in` read as ABSENT FROM JAVA, because the helper is not
+    a command handler.  A function given the parsed options is part of that
+    subcommand's flag surface however it is named."""
     seen = set() if seen is None else seen
     if fn in seen or fn not in bodies:
         return set()
@@ -176,7 +184,10 @@ def _resolve_flags(bodies, fn, flag_patterns, call_re, seen=None):
     flags = set()
     for pattern in flag_patterns:
         flags.update("--" + name for name in re.findall(pattern, body))
-    for callee in set(re.findall(call_re, body)):
+    # finditer, not findall: `call_re` may carry alternatives, and findall on a
+    # multi-group pattern yields tuples with empty slots rather than names.
+    callees = {g for m in re.finditer(call_re, body) for g in m.groups() if g}
+    for callee in callees:
         if callee != fn:
             flags |= _resolve_flags(bodies, callee, flag_patterns, call_re, seen)
     return flags
@@ -218,7 +229,7 @@ def extract_flags_c(c_src):
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
     pat = [r'(?:get_arg|has_flag|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"']
-    return {sub: _resolve_flags(bodies, fn, pat, r'\b(cmd_[a-z_0-9]+)\s*\(\s*argc')
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
             for sub, fn in dispatch.items()}
 
 
@@ -235,7 +246,7 @@ def extract_flags_go(go_src):
     bodies = _decl_bodies(src, r'^func\s+(\w+)\s*\(')
     pat = [r'\bfs\.\w+\(\s*"([a-z0-9\-]+)"',
            r'stringFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"']
-    return {sub: _resolve_flags(bodies, fn, pat, r'\b(cmd[A-Za-z0-9]+)\(')
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*args\b|\b(cmd[A-Za-z0-9]+)\(')
             for sub, fn in dispatch.items()}
 
 
@@ -251,7 +262,7 @@ def extract_flags_java(java_src):
         src, r'^    (?:private|public|protected)\s+static\s+[\w<>,\[\] ]+?\s(\w+)\s*\(')
     pat = [r'\bopt\.(?:get|getOrDefault|containsKey)\(\s*"([a-z0-9\-]+)"',
            r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"']
-    return {sub: _resolve_flags(bodies, fn, pat, r'\b(cmd[A-Za-z0-9]+)\(\s*opt')
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*opt\b')
             for sub, fn in dispatch.items()}
 
 
@@ -947,19 +958,6 @@ CLI_FLAG_PARITY = {
         "hfscx-256 only -- and this matrix is at flag granularity, so that second "
         "axis is recorded here rather than derived. Cheaper to port than "
         "--passphrase and should be judged separately from it (TODO #267)."),
-    ("sign", "--digest"): (
-        ("c", "go", "python"), "defect",
-        "Pre-hash selection (none | hfscx-256) before signing. Java signs the raw "
-        "message only, so a Java verifier cannot check a signature the other three "
-        "produced with --digest hfscx-256, and vice versa."),
-    ("verify", "--digest"): (
-        ("c", "go", "python"), "defect",
-        "The verify side of sign --digest; moves with it."),
-    ("threshold-aggregate", "--digest"): (
-        ("c", "go", "python"), "defect",
-        "The threshold-signing side of sign --digest; moves with it."),
-
-    # ── Deliberate per-language scope ─────────────────────────────────────
     ("genpkey", "--bits"): (
         ("go", "java", "python"), "acknowledged",
         "A runtime key-width selector. The C CLI is compiled for a single KEYBITS "

@@ -224,6 +224,7 @@ jobs:
             case "$f" in test_java_*) continue ;; esac
             case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
+            case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -353,6 +354,15 @@ jobs:
       # language's. An artifact one CLI refuses must not be one another accepts.
       - name: Malformed-PEM rejection matrix
         run: bash CliTest/test_malformed_pem_matrix.sh
+
+      # TODO #269: --digest is a 4-way concern for the same reason. The gap it
+      # guards (Java had no --digest at all) was invisible to every existing
+      # signature test, because those either sign and verify within ONE language
+      # or compare PEM bytes -- and a raw-message signature and a digest
+      # signature are byte-identical in shape. Only a cross-language pair with
+      # the flag set on both sides can see it.
+      - name: --digest pre-hash matrix
+        run: bash CliTest/test_digest_matrix.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

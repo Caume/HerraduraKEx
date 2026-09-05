@@ -2306,7 +2306,7 @@
       "--digest": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--in": {
@@ -2356,7 +2356,7 @@
       "--digest": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--in": {
@@ -2536,7 +2536,7 @@
       "--digest": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--in": {
@@ -2748,21 +2748,6 @@
     },
     {
       "kind": "flag",
-      "subcommand": "sign",
-      "flag": "--digest",
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "Pre-hash selection (none | hfscx-256) before signing. Java signs the raw message only, so a Java verifier cannot check a signature the other three produced with --digest hfscx-256, and vice versa."
-    },
-    {
-      "kind": "flag",
       "subcommand": "threshold-aggregate",
       "flag": "--commit",
       "present_in": [
@@ -2790,21 +2775,6 @@
       ],
       "status": "defect",
       "reason": "Python and Java take one repeatable-by-nargs `--commits a b c`; C and Go take a repeated `--commit a --commit b`. The CAPABILITY is present in all four -- what differs is the spelling, so a documented threshold-signing command line does not port between CLIs. Nothing caught it because every parity check so far compared --algo tags and PEM bytes, and the PEMs here are identical."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-aggregate",
-      "flag": "--digest",
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "The threshold-signing side of sign --digest; moves with it."
     },
     {
       "kind": "flag",
@@ -2865,21 +2835,6 @@
       ],
       "status": "defect",
       "reason": "The threshold-respond half of the --commits/--commit spelling split."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "verify",
-      "flag": "--digest",
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "The verify side of sign --digest; moves with it."
     }
   ],
   "unfiled_cli_surface": [

@@ -1054,7 +1054,7 @@ public final class HerraduraCli {
         // ── TODO #261: the three ZKP-backed signature tags ──────────────
         if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds")
                 ? Integer.parseInt(opt.get("rounds")) : ZKP_CLI_ROUNDS;
@@ -1085,7 +1085,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("rnl-sigma")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
 
             String pem = readString(keyPath);
@@ -1109,7 +1109,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-ring")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
 
@@ -1137,7 +1137,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
 
@@ -1151,7 +1151,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-xmss")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(readString(keyPath));
             int leafIdx = readIdxState(keyPath);
@@ -1167,7 +1167,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-wots")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             if (readIdxState(keyPath) != 0) {
                 throw new CliError("sign: this HPKS-WOTS key was already used — WOTS keys are "
@@ -1186,7 +1186,7 @@ public final class HerraduraCli {
                 + "hpks-wots, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String keyPath = req(opt, "key", "sign");
-        byte[] msg = readBytes(req(opt, "in", "sign"));
+        byte[] msg = readMessage(opt, "sign");
         String out = req(opt, "out", "sign");
 
         String pem = readString(keyPath);
@@ -1222,7 +1222,7 @@ public final class HerraduraCli {
         // ── TODO #261: the three ZKP-backed signature tags ──────────────
         if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1248,7 +1248,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("rnl-sigma")) {
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1270,7 +1270,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1290,7 +1290,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-xmss")) {
             Codec.XmssPubKey pub = Codec.decodeXmssPubKey(readString(req(opt, "pubkey", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             Xmss.Signature sig = Codec.decodeXmssSig(readString(req(opt, "sig", "verify")));
             boolean ok = Xmss.verify(msg, sig, pub.root);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1298,7 +1298,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-wots")) {
             BigInteger[] pub = Codec.decodeWotsPubKey(readString(req(opt, "pubkey", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger[] sig = Codec.decodeWotsSig(readString(req(opt, "sig", "verify")));
             boolean ok = Wots.verify(msg, sig, pub);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1306,7 +1306,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-t")) {
             Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
             boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1322,7 +1322,7 @@ public final class HerraduraCli {
                 throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
                     + " != " + ring.size() + " provided members");
             }
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, Herradura.N / 8));
             boolean ok = SternRing.verify(msgInt, sig.sig, ring);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1334,7 +1334,7 @@ public final class HerraduraCli {
                 + "hpks-wots, hpks-t, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String pubPath = req(opt, "pubkey", "verify");
-        byte[] msg = readBytes(req(opt, "in", "verify"));
+        byte[] msg = readMessage(opt, "verify");
         String sigPath = req(opt, "sig", "verify");
 
         String pubPem = readString(pubPath);
@@ -1468,7 +1468,7 @@ public final class HerraduraCli {
         if (nbits == null || nbits != Herradura.N) {
             throw new CliError("threshold-aggregate: HPKS-T requires " + Herradura.N + "-bit commitments");
         }
-        byte[] inBytes = readBytes(req(opt, "in", "threshold-aggregate"));
+        byte[] inBytes = readMessage(opt, "threshold-aggregate");
         BigInteger msg = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
 
         BigInteger rVal = BigInteger.ONE;
@@ -1728,6 +1728,39 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
     // I/O helpers ('-' means stdin/stdout, matching the other CLIs)
     // -----------------------------------------------------------------
+
+    /** Read a signing/verifying subcommand's message file, applying the optional
+     *  `--digest` pre-hash (TODO #269).
+     *
+     *  The Java CLI signed the RAW message only until v6.1.2, while the other
+     *  three have taken `--digest hfscx-256` since well before it.  That was not
+     *  a convenience gap: `--digest` exists precisely because every signature
+     *  path here pads-or-TRUNCATES the message to the key width, so for any
+     *  input longer than that the other three CLIs had a correct way to sign it
+     *  and Java had none -- and a Java verifier rejected signatures the other
+     *  three considered valid, silently, with a well-formed PEM on both sides.
+     *  TODO #267's flag matrix is what surfaced it; no test could, because every
+     *  signature test signed and verified within one language.
+     *
+     *  Applied at READ time, before any algo-specific handling, which is where
+     *  Python and Go apply it and where C applies it in each of its three
+     *  early-returning branches -- so the pre-hash reaches every --algo in all
+     *  four CLIs, not just the ones whose branch remembered it.
+     *
+     *  Unknown values are REJECTED, matching Python's argparse `choices`.  C and
+     *  Go instead ignore what they do not recognise, so a misspelled
+     *  `--digest hfscx256` there silently signs the raw message; that is a
+     *  fail-open on a security-relevant flag, and it is not worth copying. */
+    private static byte[] readMessage(Map<String, String> opt, String cmd) throws IOException {
+        byte[] msg = readBytes(req(opt, "in", cmd));
+        String digest = opt.getOrDefault("digest", "none");
+        if (digest.equals("hfscx-256")) return Hfscx256.hash(msg);
+        if (!digest.equals("none")) {
+            throw new CliError(cmd + ": unsupported --digest " + digest
+                + " (choices: none, hfscx-256)");
+        }
+        return msg;
+    }
 
     private static byte[] readBytes(String path) throws IOException {
         if (path.equals("-")) {
