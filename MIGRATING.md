@@ -565,3 +565,44 @@ established CLI convention for signature inputs — `hpks-stern`, `hpks-ring` an
 do the same. `CliTest/test_zkp_hybrid_family.sh` now runs a full four-way
 (signer × verifier) matrix for both tags, so the split cannot reopen silently.
 
+
+## 11. `--digest` and `--kdf` value sets are now enforced in C and Go (v6.5.0)
+
+**Who is affected:** callers of the C or Go CLI who pass a value these flags do not
+recognise. Nothing stored on disk changes: no key, signature, ciphertext or session key
+written by an earlier build becomes unreadable, and the bytes a valid invocation produces
+are unchanged.
+
+**What changed.** Both CLIs matched these flags with a single equality test and fell
+through silently on anything else:
+
+```c
+if (digest && strcmp(digest, "hfscx-256") == 0) { /* pre-hash */ }
+/* no else -- any other value, including a typo, took the raw-message path */
+```
+
+So `sign --digest hfscx256` (one missing hyphen) signed the RAW message and exited 0,
+while the caller believed the input had been pre-hashed. Python rejects such a value via
+argparse `choices=` and Java by name, so this was also a four-way disagreement about the
+same command line. Both now fail closed:
+
+```
+sign: unsupported --digest hfscx256 (choices: none, hfscx-256)
+```
+
+`kex --kdf` moved in the other direction as well: `none` — Python's own default value —
+was previously REJECTED by C and Go, and is now accepted as a no-op alias for omitting
+the flag.
+
+**What to do.** Fix any misspelled `--digest` or `--kdf` value in scripts; the new error
+message names the accepted set. A script that was silently getting the raw-message path
+from a typo was not doing what it appeared to, so re-check whether the signatures it
+produced were meant to be over the digest. `--digest none` and `--kdf none` are now
+accepted everywhere and mean exactly what omitting the flag means.
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, flag name or `--algo`
+behaviour changed, and no stored artifact is affected. The change is a previously
+accepted-but-meaningless input becoming an error, which follows the precedent set at
+v6.4.0 (TODO #270), where C's silent 64-signer truncation was made to fail loudly under a
+MINOR bump. `sp800227` remains Python-only and is rejected by name in the other three;
+that divergence is recorded on the value-set axis in `spec/`'s `cli_flag_value_gaps`.

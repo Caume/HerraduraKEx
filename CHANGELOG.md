@@ -2,6 +2,66 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.0] - 2026-09-05
+
+### TODO #269 (DONE) — `kex --kdf` reaches Java, and the value-set axis it forced first
+
+The last of the three capabilities TODO #269 tracked. `--digest` shipped in v6.2.0 and
+`rand` in v6.3.0; `kex --kdf` lands here, alongside the machinery that had to exist
+before it could.
+
+**The ordering was forced, and it paid for itself.** Porting `--kdf` to Java puts the
+flag at 4/4 parity, which DELETES its `CLI_FLAG_PARITY` row — and that reason string was
+the only written record anywhere that Python accepts `sp800227` and the others do not.
+That is TODO #267's own "anchor lost" failure reproduced one granularity below the level
+its matrix reaches. So the value-level axis was recorded first, as `CLI_FLAG_VALUES` in
+`spec/generate_spec.py`, emitted as `cli_flag_value_gaps` and schema-validated. Python's
+value sets are DERIVED from argparse `choices=` and must be written as `None`; C, Go and
+Java accept values through chains of string comparisons and are curated. Exhaustive in
+both directions like every other table there: an entry whose value sets have converged is
+an orphan and generation fails until it is deleted.
+
+**Recording it first was not bookkeeping — it found two live divergences before any
+porting happened**, both invisible to the flag matrix, which reports `--kdf` and
+`--digest` as present in every CLI that should have them:
+
+- **`--kdf none` was a hard error in C and Go.** It is Python's own default value, printed
+  in its help text, so a command line copied from the Python CLI failed against two of the
+  four. Both now accept it as a no-op alias, asserted byte-identical to omitting the flag.
+- **`--digest` failed OPEN in C and Go.** Any unrecognised value was silently accepted and
+  treated as `none` — the weaker branch. `sign --digest hfscx256`, one missing hyphen,
+  produced a raw-message signature and reported success; confirmed by round-trip, since a
+  raw and a pre-hashed signature are byte-identical in shape. Both now fail closed, so all
+  four reject the same value set. Same class as the fail-open `--digest` bug v6.2.0 fixed,
+  one level down.
+
+**A third defect surfaced while writing the test.** Java's `enc --key` accepted only a
+SESSION KEY PEM, so a two-round kex left the RESPONDER unable to encrypt at all:
+`hkex-rnl` and `hybrid-rnl-stern` RESPONSE PEMs fell through to `decodePrivKey`, which
+read the ring polynomial as an `nbits` field and died with `BigInteger out of int range`
+— an error naming a DER width rather than the missing capability. Python's
+`_decode_session_key` takes both labels and `test_rnl_sp800227_kdf.sh` exercises exactly
+that flow, so Bob's half of every two-round exchange was Python/C/Go-only. Fixed, including
+the width trap: a response's `n` is the RING dimension (1024 since TODO #223), not the key
+width.
+
+**`CliTest/test_kdf_matrix.sh`** (new, claimed by `cross-lang-compat`) is the guard: 45
+assertions covering byte-identical hkex-gf session keys in three modes, a 4x4
+responder × completer agreement matrix on hkex-rnl, the negative controls (a post-hashed
+key must differ from an un-hashed one; mismatched `--kdf` between the parties must not
+agree), and the value set itself. Its second reason for existing is the one nobody had
+noticed: **`--kdf hfscx-256` had never been tested across languages in any pair.** The one
+script that mentioned the flag, `test_rnl_sp800227_kdf.sh`, is Python-vs-Python by
+construction because `sp800227` exists nowhere else — so C and Go had shipped `--kdf` since
+before 2.0.0 with nothing asserting their post-hash agreed with Python's, or each other's.
+It does.
+
+`CliTest/test_digest_matrix.sh` grows the matching value-set block: what was a
+two-language assertion plus a NOTE naming C and Go is now asserted for all four.
+
+`enc --aead` is re-filed as TODO #273 — it is not CLI wiring (`bindings/java/` has no AEAD
+primitive at all), and leaving it in #269 is what made that item look cheap.
+
 ## [6.4.0] - 2026-09-05
 
 ### TODO #270 (DONE) — one capability, two spellings, now accepted by all four CLIs

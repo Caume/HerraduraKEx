@@ -568,6 +568,7 @@ public final class HerraduraCli {
             throw new CliError("kex: unsupported --algo " + algo
                 + " (this Java CLI covers hkex-gf, hkex-rnl, hybrid-rnl-stern)");
         }
+        boolean kdfOn = kdfRequested(opt);
         String ourPath = req(opt, "our", "kex");
         String theirPath = req(opt, "their", "kex");
         String out = req(opt, "out", "kex");
@@ -587,6 +588,7 @@ public final class HerraduraCli {
         if (sk == null) {
             throw new CliError("kex: peer public key is degenerate (identity or zero)");
         }
+        sk = applyKdf(sk, our.nbits, kdfOn);
         String pem = Codec.encodeSessionKey(sk, our.nbits);
         writeString(out, pem);
     }
@@ -595,6 +597,7 @@ public final class HerraduraCli {
      * first with an RNL RESPONSE PEM; Alice (our=Alice priv, their=Bob's
      * RNL RESPONSE) completes the handshake into a plain SESSION KEY PEM. */
     private static void cmdKexRnl(Map<String, String> opt) throws IOException {
+        boolean kdfOn = kdfRequested(opt);
         String ourPath = req(opt, "our", "kex");
         String theirPath = req(opt, "their", "kex");
         String out = req(opt, "out", "kex");
@@ -625,6 +628,7 @@ public final class HerraduraCli {
             byte[] nB = new byte[32];
             RNG.nextBytes(nB);
             BigInteger kB = HerraduraNl.rnlContributoryKdf(agree.key, rnlKeyBits(our.n), their.nA, nB);
+            kB = applyKdf(kB, rnlSessionBits(our.n), kdfOn);
             writeString(out, Codec.encodeRnlResponse(kB, cB, agree.hint, our.n, nB));
         } else if (theirBlock.label.equals(Codec.PEM_RNL_RESPONSE)) {
             // ── STEP 2: Alice completes the handshake ────────────────────
@@ -636,6 +640,7 @@ public final class HerraduraCli {
                 our.s, resp.cB, HerraduraNl.RNLQ, HerraduraNl.RNLP, HerraduraNl.RNLPP,
                 our.n, rnlKeyBits(our.n), resp.hint);
             BigInteger kAInt = HerraduraNl.rnlContributoryKdf(kA, rnlKeyBits(our.n), our.nA, resp.nB);
+            kAInt = applyKdf(kAInt, rnlSessionBits(our.n), kdfOn);
             writeString(out, Codec.encodeSessionKey(kAInt, rnlSessionBits(our.n)));
         } else {
             throw new CliError("kex hkex-rnl: --their must be an HKEX-RNL PUBLIC KEY or RESPONSE PEM, got "
@@ -663,6 +668,7 @@ public final class HerraduraCli {
      * key the peer disagrees with, never as an error here.
      */
     private static void cmdKexHybrid(Map<String, String> opt) throws IOException {
+        boolean kdfOn = kdfRequested(opt);
         String ourPath = req(opt, "our", "kex");
         String theirPath = req(opt, "their", "kex");
         String out = req(opt, "out", "kex");
@@ -704,6 +710,7 @@ public final class HerraduraCli {
             RNG.nextBytes(nB);
             BigInteger k1 = HerraduraNl.rnlContributoryKdf(agree.key, rnlKeyBits(our.n),
                                                             their.nA, nB);
+            k1 = applyKdf(k1, rnlSessionBits(our.n), kdfOn);
 
             Stern.QcMdpcEncapResult enc = Stern.qcmdpcEncap(kemPub.hPub, RNG);
 
@@ -735,6 +742,7 @@ public final class HerraduraCli {
                 our.n, rnlKeyBits(our.n), resp.hint);
             BigInteger k1 = HerraduraNl.rnlContributoryKdf(k1raw, rnlKeyBits(our.n),
                                                             our.nA, resp.nB);
+            k1 = applyKdf(k1, rnlSessionBits(our.n), kdfOn);
 
             // Implicit rejection (TODO #235): decapsulation always yields a key.
             BigInteger k2 = Stern.qcmdpcDecapBgf(resp.syn, kemPriv.sup0, kemPriv.sup1);
@@ -1052,6 +1060,32 @@ public final class HerraduraCli {
         if (block.label.equals(Codec.PEM_SESSION_KEY)) {
             Codec.PubKey sk = Codec.decodeSessionKey(pem);
             return new BigInteger[] { sk.pub, BigInteger.valueOf(sk.nbits) };
+        }
+        // A two-round kex leaves the RESPONDER holding a RESPONSE PEM, not a
+        // SESSION KEY PEM: Bob's derived key K is the response's first field,
+        // and `enc --key bob_response.pem` is how Bob encrypts to Alice in the
+        // other three CLIs (herradura.py's _decode_session_key takes both
+        // labels, and CliTest/test_rnl_sp800227_kdf.sh exercises exactly that
+        // flow).  This port accepted only the SESSION KEY label, so Bob's half
+        // of every hkex-rnl and hybrid-rnl-stern exchange was unreachable here:
+        // the response fell through to decodePrivKey, which read the ring
+        // polynomial as an nbits field and died with "BigInteger out of int
+        // range" -- an error that names a DER width, not the missing capability.
+        // Found by TODO #269's --kdf matrix, which needs Bob to encrypt.
+        //
+        // NOTE the width, which is the trap Python documents: the response's
+        // `n` is the RING dimension (1024 since TODO #223), NOT the key width.
+        // The derived key is rnlSessionBits(n) = 256 wide, and returning the
+        // ring dimension instead makes `enc` run at 1024 bits against a peer's
+        // 256-bit SESSION KEY PEM -- a round trip that fails with two keys that
+        // are in fact equal.
+        if (block.label.equals(Codec.PEM_RNL_RESPONSE)) {
+            Codec.RnlResponse r = Codec.decodeRnlResponse(pem);
+            return new BigInteger[] { r.k, BigInteger.valueOf(rnlSessionBits(r.n)) };
+        }
+        if (block.label.equals(Codec.PEM_HYBRID_RESPONSE)) {
+            Codec.HybridResponse r = Codec.decodeHybridResponse(pem);
+            return new BigInteger[] { r.k, BigInteger.valueOf(rnlSessionBits(r.n)) };
         }
         Codec.PrivKey pk = Codec.decodePrivKey(pem, block.label);
         return new BigInteger[] { pk.priv, BigInteger.valueOf(pk.nbits) };
@@ -1855,9 +1889,13 @@ public final class HerraduraCli {
      *  four CLIs, not just the ones whose branch remembered it.
      *
      *  Unknown values are REJECTED, matching Python's argparse `choices`.  C and
-     *  Go instead ignore what they do not recognise, so a misspelled
-     *  `--digest hfscx256` there silently signs the raw message; that is a
-     *  fail-open on a security-relevant flag, and it is not worth copying. */
+     *  Go used to ignore what they did not recognise, so a misspelled
+     *  `--digest hfscx256` there silently signed the RAW message while reporting
+     *  success -- fail-open on a security-relevant flag.  TODO #269 made both
+     *  fail closed (`digest_value` in herradura_cli.c, `digestValue` in
+     *  herradura_cli.go), so all four now reject the same value set; this
+     *  paragraph is kept because the divergence is the reason the value-set axis
+     *  in spec/generate_spec.py exists, not because it is still live. */
     private static byte[] readMessage(Map<String, String> opt, String cmd) throws IOException {
         byte[] msg = readBytes(req(opt, "in", cmd));
         String digest = opt.getOrDefault("digest", "none");
@@ -1923,6 +1961,41 @@ public final class HerraduraCli {
         byte[] out = new byte[nbytes];
         System.arraycopy(data, 0, out, 0, Math.min(nbytes, data.length));
         return out;
+    }
+
+    /** {@code kex --kdf} (TODO #269).
+     *
+     *  <p>Returns true when the raw shared secret must be post-hashed with
+     *  HFSCX-256 before it is encoded, false for {@code none} (the default, and
+     *  the value the other three CLIs also treat as "leave the secret alone").
+     *
+     *  <p>Accepted value set is {none, hfscx-256}, matching C and Go. Python
+     *  additionally accepts {@code sp800227} (TODO #165), which binds the whole
+     *  public transcript into the key and exists in that CLI alone; it is
+     *  rejected here BY NAME rather than falling into the generic error, because
+     *  a peer that used it does not merely have a different flag, it has a
+     *  different session key. That divergence is recorded on the value-set axis
+     *  in spec/generate_spec.py's CLI_FLAG_VALUES, which is the only place it is
+     *  written down -- porting the flag deleted its CLI_FLAG_PARITY row. */
+    private static boolean kdfRequested(Map<String, String> opt) {
+        String kdf = opt.getOrDefault("kdf", "none");
+        if (kdf.equals("hfscx-256")) return true;
+        if (kdf.equals("none")) return false;
+        if (kdf.equals("sp800227")) {
+            throw new CliError("kex: --kdf sp800227 is implemented only by the Python "
+                + "CLI (TODO #165); this CLI accepts none, hfscx-256");
+        }
+        throw new CliError("kex: unsupported --kdf value: " + kdf
+            + " (choices: none, hfscx-256)");
+    }
+
+    /** The post-hash itself: HFSCX-256 over the secret at its OWN width, which
+     *  is why {@code nbits} is passed rather than assumed. Python encodes
+     *  {@code k.to_bytes(nbits // 8, 'big')} before hashing, and a narrower or
+     *  wider buffer here would hash a different string and agree with nobody. */
+    private static BigInteger applyKdf(BigInteger k, int nbits, boolean on) {
+        if (!on) return k;
+        return new BigInteger(1, Hfscx256.hash(toFixedBytes(k, nbits / 8)));
     }
 
     private static byte[] toFixedBytes(BigInteger v, int nbytes) {

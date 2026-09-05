@@ -15550,3 +15550,131 @@ cost of a derived matrix and is now recorded in CLAUDE.md: a new way to READ a f
 must be taught to the extractor, or its flags read as absent.
 
 Status: **DONE v6.4.0** — all four CLIs take both spellings with both syntaxes; six `defect` rows deleted, and a divergent diagnostic fixed alongside.
+
+### #269: the Java CLI's five missing flag/subcommand capabilities
+
+**Made visible by TODO #267's flag matrix.**  Originally filed as "much cheaper than
+#268 — the primitives are already in `bindings/java/`; what is missing is the CLI
+wiring."  **That premise was half wrong, and finding out which half is the main result
+of the first pass.**
+
+**`--digest` — DONE in v6.2.0.**  The correctness one, and it is fixed.  Java's
+`cmdSign`/`cmdVerify`/`cmdThresholdAggregate` now apply the `hfscx-256` pre-hash at
+READ time through one `readMessage(opt, cmd)` helper, which is where Python and Go
+apply it and where C applies it in each of its three early-returning branches.
+`CliTest/test_digest_matrix.sh` is the guard, claimed by `cross-lang-compat`: a 4x4
+signer x verifier matrix on `hpks` and `hpks-nl` plus a rotated `threshold-aggregate`,
+over a 768-byte message (24x the 32-byte key width, so raw and pre-hashed actually
+differ).  It caught 39 failures against the pre-fix build and 0 after.
+
+Two things worth keeping from how it had to be written.  (1) **The negative control is
+what earns the file**, not the matrix: a CLI that parsed `--digest` and ignored it
+would pass every positive cell, which is precisely how Java passed every existing
+signature test, so each pair is also asserted to FAIL across the flag.  (2) It could
+only ever have been caught cross-language — every signature test in the repo signs and
+verifies within one language or compares PEM bytes, and a raw-message signature and a
+digest signature are byte-identical in shape.
+
+It also forced a fix to #267's own extractor: the call-graph followed only `cmd*`
+handlers, so factoring three duplicated `--in` reads into `readMessage` made `sign --in`
+read as ABSENT FROM JAVA.  It now follows any callee handed the subcommand's argument
+container.  Verified to change no other cell of the matrix.
+
+**`enc --aead` — RE-SCOPED, and it does not belong in this item.**  It is not CLI
+wiring: `bindings/java/` has no AEAD primitive at all.  TODO #261's manifest already
+records this, carrying `hske-nl-aead-xor-ks`, `hske-nl-aead-tag` and
+`hske-nl-aead-streams` as `acknowledged` for Java.  So `--aead` is a primitive port
+plus a codec change (format tag 2 carries a nonce and an auth tag) plus the CLI, which
+puts it in #268's cost class, not this one.  **It should be re-filed as its own item**
+alongside #268 rather than closed here; leaving it in #269 is what made this item look
+cheap.
+
+**`rand` — DONE in v6.3.0.**  It was pure CLI wiring as predicted, plus two small
+additions the port needed: `Hdrbg.resume(state, blocks)` (the read side of the
+existing `stateValue()`/`blocksGenerated()` pair -- `blocks` is CARRIED, not reset,
+or a resume would silently hand back a generator with no DRBG_MAX_BLOCKS accounting)
+and `Codec.encodeHdrbgState`/`decodeHdrbgState`.  Verified bit-exact against the
+other three: identical streams with and without `--personalization`, all 16
+writer x reader checkpoint-resume pairs, and byte-identical HDRBG STATE PEMs from
+all four writers.
+
+`CliTest/test_rand.sh` went from three languages to four rather than gaining a
+parallel script -- `native-interop` already builds all four, so no CI change was
+needed.  Two assertions were added that it did not have: that every writer's STATE
+PEM is byte-identical (it only checked that each RESUMES, which a writer using a
+different DER width for `blocks` would also pass), and that the three error paths
+report the same message in every language.
+
+**That last one found a real Go bug, fixed here.**  Go used `-1` as its "not given"
+sentinel for `--bytes`, so `rand --bytes -1` was indistinguishable from omitting the
+flag and reported `nothing to do` where the other three report
+`--bytes must be non-negative`.  Fixed with the file's own `isSet` helper.  It is a
+wrong-but-plausible diagnostic, which is precisely the class nobody notices by hand,
+and it had never been asserted in any language.
+
+**`kex --kdf` — DONE in v6.5.0, and the forced ordering held.**  The port itself was
+what the first pass predicted: a post-hash of the session-key bytes, applied at the
+same four points Python applies it (hkex-gf, both hkex-rnl steps, both
+hybrid-rnl-stern steps), using Java's existing `Hfscx256.hash`.
+
+**The value-level axis was recorded FIRST, as this item required**, and it is now
+`CLI_FLAG_VALUES` in `spec/generate_spec.py`, emitted as `cli_flag_value_gaps` and
+schema-validated.  Shape is the derived/curated split the first pass proposed:
+Python's sets come from argparse `choices=` and must be written as `None`, so a
+changed choices list fails the table instead of silently disagreeing with it; C, Go
+and Java accept values through chains of string comparisons and are curated.  It is
+exhaustive in both directions like every other table in that file -- an entry whose
+value sets have CONVERGED is an orphan and generation fails until it is deleted, so
+reaching value parity forces the row out rather than leaving a stale claim.  All
+three failure directions are negative-tested.
+
+**Recording it first was not bookkeeping: the axis found two live divergences before
+any porting happened**, both invisible to #267's flag matrix, which says `--kdf` and
+`--digest` are at flag parity.
+
+1. **`--kdf none` -- Python's own DEFAULT value, printed in its help text -- was a
+   hard error in C and Go.**  A command line copied from the Python CLI's help
+   failed against two of the four.  Both now accept it as a no-op alias, asserted
+   byte-identical to omitting the flag.
+2. **`--digest <anything unrecognised>` was silently accepted by C and Go and
+   treated as `none`** -- the WEAKER branch.  `sign --digest hfscx256`, one missing
+   hyphen, produced a raw-message signature while reporting success; verified by
+   round-trip, not inferred, since a raw and a pre-hashed signature are
+   byte-identical in shape.  Mechanism was `if (digest && strcmp(digest,
+   "hfscx-256") == 0)` with no `else`, mirrored in Go.  Both now fail closed
+   (`digest_value`, `digestValue`), so all four reject the same value set.  This is
+   the same fail-open class the `--digest` pass fixed at v6.2.0, one granularity
+   down, and it is the concrete argument for the value axis existing at all.
+
+**A third defect surfaced while writing the test, unrelated to any flag.**  Java's
+`enc --key` accepted only a SESSION KEY PEM, so a two-round kex left the RESPONDER
+unable to encrypt: `hkex-rnl` and `hybrid-rnl-stern` RESPONSE PEMs fell through to
+`decodePrivKey`, which read the ring polynomial as an `nbits` field and died with
+`BigInteger out of int range` -- an error naming a DER width rather than the missing
+capability.  Python's `_decode_session_key` takes both labels and
+`test_rnl_sp800227_kdf.sh` exercises exactly that flow, so Bob's half of every
+two-round exchange was Python/C/Go-only.  Fixed in `loadKey`, including the width
+trap Python documents: the response's `n` is the RING dimension (1024 since TODO
+#223), not the key width, so the derived key is `rnlSessionBits(n) = 256` and
+returning `n` would run `enc` at 1024 bits against a peer's 256-bit session key.
+
+**`CliTest/test_kdf_matrix.sh`** is the guard, claimed by `cross-lang-compat`: 45
+assertions over byte-identical hkex-gf session keys in three modes, a 4x4
+responder x completer agreement matrix on hkex-rnl, the negative controls (a
+post-hashed key must DIFFER from an un-hashed one, and mismatched `--kdf` between
+the two parties must NOT agree), and the value set itself.  **The second reason it
+exists is the one nobody had noticed: `--kdf hfscx-256` had never been tested across
+languages in any pair.**  The only script that mentioned the flag was
+`test_rnl_sp800227_kdf.sh`, which is Python-vs-Python by construction because
+`sp800227` exists in no other CLI -- so C and Go had shipped `--kdf` since before
+2.0.0 with nothing anywhere asserting their post-hash agreed with Python's, or with
+each other's.  It does.
+
+`sp800227` stays Python-only and is now recorded on the value axis rather than in a
+`CLI_FLAG_PARITY` reason.  The other three reject it BY VALUE, which is the safe
+direction: a peer asking for it gets an error, never a silently different session
+key.
+
+**`enc --aead` — RE-FILED as TODO #273**, per the re-scoping above.
+
+Status: **DONE v6.5.0** — `--digest` (v6.2.0), `rand` (v6.3.0) and `kex --kdf` (v6.5.0) ported to the Java CLI; the value-set axis recorded first as the item required, which found `--kdf none` rejected by C/Go and `--digest` failing open in both; `--aead` re-filed as #273.

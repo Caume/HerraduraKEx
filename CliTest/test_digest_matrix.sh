@@ -170,24 +170,42 @@ for agg in "${LANGS[@]}"; do
 done
 
 # ── An unrecognised --digest must not silently sign the raw message ────────
-# Python rejects via argparse `choices`; Java rejects explicitly (TODO #269).
-# C and Go compare against "hfscx-256" and ignore anything else, so a misspelled
-# flag there signs the raw message with no diagnostic -- a fail-OPEN on a
-# security-relevant option.  Asserted only where it holds, and named where it
-# does not, rather than lowering the bar to the laxest implementation.
-echo "=== unknown --digest value is rejected (py, java) ==="
-for l in py java; do
-    [ -n "${CLI[$l]:-}" ] || continue
+# Python rejects via argparse `choices` and Java by name, and both always did.
+# C and Go compared against "hfscx-256" and IGNORED anything else, so a
+# misspelled flag there signed the raw message and reported success -- fail-OPEN
+# on a security-relevant option, with the weaker branch as the fallback. This
+# block was a two-language assertion plus a NOTE naming C and Go until TODO #269
+# fixed both (`digest_value` in herradura_cli.c, `digestValue` in
+# herradura_cli.go); it is now asserted for all four.
+#
+# The bug was invisible to TODO #267's flag matrix by construction: that matrix
+# records that a CLI DEFINES --digest, never which values it accepts. It is the
+# reason spec/generate_spec.py grew CLI_FLAG_VALUES, and this loop is the
+# executable half of that table.
+#
+# `none` is also checked, in both directions: it must be accepted (it is the
+# documented default in all four) and it must mean the same thing as omitting
+# the flag, or "reject everything unknown" would have been satisfied by a CLI
+# that rejected the legal value too.
+echo "=== --digest value set: unknown rejected, none accepted, all four ==="
+for l in "${LANGS[@]}"; do
     if ${CLI[$l]} sign --algo hpks --key "$TMP/k.pem" --in "$TMP/msg.bin" \
        --out "$TMP/bogus.pem" --digest hfscx256 >/dev/null 2>&1; then
-        fail "$l: sign --digest hfscx256 (misspelled) was accepted"
+        fail "$l: sign --digest hfscx256 (misspelled) was accepted — fail-open, the raw message was signed"
     else
         pass "$l: sign --digest hfscx256 (misspelled) rejected"
     fi
-done
-for l in c go; do
-    [ -n "${CLI[$l]:-}" ] && echo "NOTE: $l ignores an unrecognised --digest rather" \
-        "than rejecting it; not asserted here (see TODO #269)."
+    if ${CLI[$l]} sign --algo hpks --key "$TMP/k.pem" --in "$TMP/msg.bin" \
+       --out "$TMP/dnone_$l.pem" --digest none >/dev/null 2>&1; then
+        pass "$l: sign --digest none accepted"
+    else
+        fail "$l: sign --digest none rejected — it is the documented default value"
+    fi
+    # `--digest none` must verify against a signature made with the flag
+    # omitted: the two spellings are one behaviour.
+    verify_ok "$l: --digest none == flag omitted" \
+        ${CLI[$l]} verify --algo hpks --pubkey "$TMP/p.pem" \
+        --in "$TMP/msg.bin" --sig "$TMP/dnone_$l.pem"
 done
 
 echo

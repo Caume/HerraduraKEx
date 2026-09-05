@@ -225,6 +225,7 @@ jobs:
             case "$f" in test_cross_lang_matrix.sh) continue ;; esac  # claimed by cross-lang-compat (TODO #207)
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
+            case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -363,6 +364,17 @@ jobs:
       # the flag set on both sides can see it.
       - name: --digest pre-hash matrix
         run: bash CliTest/test_digest_matrix.sh
+
+      # TODO #269: `kex --kdf`, for two reasons. Java had no --kdf until v6.5.0,
+      # and -- the one that is easy to miss -- `--kdf hfscx-256` had never been
+      # tested across languages in ANY pair: the only script that mentioned the
+      # flag was test_rnl_sp800227_kdf.sh, which is Python-vs-Python by
+      # construction because sp800227 exists in no other CLI. C and Go had
+      # shipped the flag since before 2.0.0 with nothing asserting their
+      # post-hash agreed with Python's. This also covers the VALUE-set axis that
+      # spec/'s cli_flag_value_gaps records, which the flag matrix cannot reach.
+      - name: kex --kdf matrix
+        run: bash CliTest/test_kdf_matrix.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)
