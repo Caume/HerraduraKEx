@@ -1172,6 +1172,34 @@ def rnl_validate_m_blind(poly, q=None):
         return False
     return (max(poly) - min(poly)) >= q // 4
 
+def rnl_contributory_kdf(k_raw_int, n_bits, n_a, n_b):
+    """Derive the HKEX-RNL session key: HFSCX-256(K_raw || n_A || n_B).
+
+    `k_raw_int` is the raw agreed value, serialised big-endian and left-padded
+    to `n_bits // 8` bytes; `n_a` and `n_b` are the per-session nonces
+    contributed by Alice and Bob, each exactly 32 bytes (pass `bytes(32)` for
+    an old-format peer that sends none).  Returns an int; the result is always
+    a whole 256-bit HFSCX-256 digest regardless of `n_bits`.
+
+    Binding K_raw to nonces from BOTH parties is TODO #89's RNG hardening: the
+    raw Ring-LWR agreement is a function of the two key draws alone, so a party
+    with a weak RNG would otherwise contribute a predictable session key on its
+    own.
+
+    TODO #261 (v6.1.0): this is the second instance of the placement asymmetry
+    v5.8.7 found for `rnl_validate_m_blind` above, and the more consequential
+    one -- it derives the session key rather than screening an input.  C
+    (`rnl_contributory_kdf`, herradura.h) and Java
+    (`HerraduraNl.rnlContributoryKdf`) kept it in the SUITE; Go and Python kept
+    private copies inside `HerraduraCli/herradura_cli.go` and
+    `HerraduraCli/herradura.py`, so in two of the four languages a caller using
+    the suite directly -- docs/examples/hello_herradura.py's path -- could
+    complete an HKEX-RNL exchange and then derive the session key some other
+    way, with nothing to point at the divergence.  Both CLIs now call this.
+    """
+    k_bytes = int(k_raw_int).to_bytes(n_bits // 8, 'big')
+    return int.from_bytes(hfscx_256(k_bytes + n_a + n_b), 'big')
+
 def _rnl_cbd_poly(n, eta, q):
     """Centered binomial distribution CBD(eta): each coefficient = a - b (mod q).
     For eta=1: 4 coefficients per byte, bit-pairs (0-1),(2-3),(4-5),(6-7).

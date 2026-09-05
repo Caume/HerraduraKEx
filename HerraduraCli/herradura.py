@@ -71,6 +71,7 @@ from primitives import (
     HDrbg, drbg_seed, drbg_generate, drbg_reseed,
     _rnl_keygen, _rnl_agree, _rnl_m_poly, _rnl_rand_poly, _rnl_poly_add,
     _rnl_lift, _rnl_poly_mul, rnl_validate_m_blind as _rnl_validate_m_blind,
+    rnl_contributory_kdf as _rnl_contributory_kdf,
     stern_f_keygen, hpks_stern_f_sign, hpks_stern_f_verify,
     hpks_stern_ring_sign, hpks_stern_ring_verify,
     hpke_stern_f_encap_with_e, hpke_stern_f_decap,
@@ -473,21 +474,16 @@ def _rnl_derive_C(m_poly, s_poly, n):
     return _suite_mod._rnl_round(ms, RNLQ, RNLP)
 
 
-def _rnl_contributory_kdf(k_raw_int: int, n_bits: int, n_a: bytes, n_b: bytes) -> int:
-    """Derive final HKEX-RNL session key via contributory KDF.
-
-    Returns int: HFSCX-256(K_raw_bytes || n_A || n_B)
-    n_a and n_b must each be 32 bytes; use bytes(32) for old-format peers.
-    """
-    k_bytes = k_raw_int.to_bytes(n_bits // 8, 'big')
-    payload = k_bytes + n_a + n_b
-    return int.from_bytes(hfscx_256(payload), 'big')
-
-
 # _rnl_validate_m_blind is imported from the suite above (TODO #261).  It used to
 # be a private copy here -- C, Go and Java all kept the equivalent in their SUITE,
 # so Python was the one language where a non-CLI caller could not reach the peer
 # m_blind substitution guard, and where the thresholds lived in two places.
+#
+# _rnl_contributory_kdf is imported the same way and for the same reason (TODO
+# #261, v6.1.0).  It was a private copy here until the manifest census found the
+# asymmetry a second time: C and Java derived the HKEX-RNL session key in their
+# suites, Go and Python only in their CLIs.  Deriving a session key is the more
+# consequential of the two to keep in one place.
 
 
 def _encode_stern_privkey(e_int, seed, n, algo):

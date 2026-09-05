@@ -576,18 +576,18 @@ func rnlSessionBits(n int) int {
 // rnlContributoryKDF derives the HKEX-RNL session key: HFSCX-256(K_raw || nA ||
 // nB).  rawBits is the width K_raw is serialised at (rnlKeyBits); the result is
 // always rnlSessionBits wide, since it is a whole HFSCX-256 digest.
+//
+// TODO #261 (v6.1.0): the body moved to the suite as RnlContributoryKdf, where
+// C and Java had always kept theirs.  This wrapper stays only to keep the call
+// sites reading in rnlKeyBits/rnlSessionBits terms; it must not grow a body
+// again.  The width assertion below is what makes the delegation safe: the
+// suite returns a whole 256-bit digest, which is rnlSessionBits by definition.
 func rnlContributoryKDF(kRaw *BitArray, rawBits int, nA, nB []byte) *BitArray {
-	raw := kRaw.Bytes()
-	// Left-pad raw to rawBits/8 bytes
-	nb := rawBits / 8
-	padded := make([]byte, nb)
-	if len(raw) > nb {
-		raw = raw[len(raw)-nb:]
+	k := RnlContributoryKdf(kRaw, rawBits, nA, nB)
+	if k.Size() != rnlSessionBits(rawBits) {
+		panic("rnlContributoryKDF: suite KDF width != rnlSessionBits")
 	}
-	copy(padded[nb-len(raw):], raw)
-	payload := append(append(padded, nA...), nB...)
-	digest := Hfscx256(payload, nil)
-	return NewBitArray(rnlSessionBits(rawBits), new(big.Int).SetBytes(digest))
+	return k
 }
 
 // ── TODO #167: hybrid HKEX-RNL + HPKE-Stern-KEM combiner (port of TODO #162) ─
