@@ -628,14 +628,44 @@ spec/                                                — machine-readable protoc
                                                       ten of the original sixteen, each deletion
                                                       FORCED because the generator refuses to emit a
                                                       spec while an acknowledgement describes a gap
-                                                      that no longer exists.  #268 is the port that
-                                                      remains.  NOTE for anyone adding a new way to
+                                                      that no longer exists.  #268 and #273 are the
+                                                      ports that remain.  NOTE for anyone adding a new way to
                                                       READ a flag: the matrix is derived from
                                                       per-language accessor patterns, so a new
                                                       accessor must be taught to the extractor or
                                                       its flags read as ABSENT -- #269's
                                                       readMessage and #270's get_arg_multi2 /
-                                                      multiValueFlags / multiPaths each needed that
+                                                      multiValueFlags / multiPaths each needed that.
+                                                      cli_flag_value_gaps (TODO #269) is the FIFTH
+                                                      axis and sits one level below cli_flag_matrix
+                                                      again: that matrix answers "does this CLI
+                                                      DEFINE this flag", never "which VALUES does it
+                                                      accept".  Two divergences lived under that
+                                                      floor and neither was visible anywhere -- C and
+                                                      Go REJECTED `kex --kdf none`, which is Python's
+                                                      own default value, and both SILENTLY accepted
+                                                      any unrecognised `--digest` as `none`, the
+                                                      weaker branch, so one missing hyphen signed the
+                                                      raw message and reported success.  Shape is a
+                                                      derived/curated split, because it has to be:
+                                                      Python's value sets come from argparse
+                                                      `choices=` and MUST be written as None in
+                                                      CLI_FLAG_VALUES, while C/Go/Java accept values
+                                                      through chains of string comparisons that no
+                                                      regex reads reliably.  Exhaustive in both
+                                                      directions like every other table here, with
+                                                      the orphan rule doing the same work one level
+                                                      down: an entry whose value sets have CONVERGED
+                                                      fails generation until it is deleted, so
+                                                      reaching value parity forces the row out rather
+                                                      than leaving a stale claim.  The axis is
+                                                      SPARSE by design -- a flag belongs in it only
+                                                      while the four disagree, which is why
+                                                      `--digest` is absent (all four now take exactly
+                                                      {none, hfscx-256}) and `kex --kdf` is present
+                                                      (Python alone takes sp800227).  Its executable
+                                                      half is CliTest/test_kdf_matrix.sh and
+                                                      test_digest_matrix.sh's value-set block
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

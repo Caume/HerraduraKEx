@@ -1292,7 +1292,7 @@ func cmdKex(args []string) {
 	our  := fs.String("our", "", "Our private key file")
 	their := fs.String("their", "", "Their public key or response file")
 	out  := fs.String("out", "-", "Output path")
-	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (hfscx-256)")
+	kdf  := fs.String("kdf", "", "KDF applied to raw shared secret (none|hfscx-256; both sides must match)")
 	theirKem := fs.String("their-kem", "", "hybrid-rnl-stern: Alice's HPKE-Stern-KEM public key (Bob step)")
 	ourKem   := fs.String("our-kem", "", "hybrid-rnl-stern: Alice's own HPKE-Stern-KEM private key (Alice step)")
 	fs.Parse(args)
@@ -1301,8 +1301,16 @@ func cmdKex(args []string) {
 		fmt.Fprintln(os.Stderr, "kex: --algo, --our, --their required")
 		os.Exit(1)
 	}
-	if *kdf != "" && *kdf != "hfscx-256" {
-		fmt.Fprintf(os.Stderr, "kex: unsupported --kdf value %q\n", *kdf)
+	// TODO #269: `none` is Python's DEFAULT value for this flag and was a hard
+	// error here, so a command line copied from the Python CLI's own help text
+	// failed against this one. Accept it, and normalise it to the empty string so
+	// applyKDF below keeps reading "" as "no post-hash". Anything else is still
+	// refused: the value set is {none, hfscx-256}, and `sp800227` (TODO #165) is
+	// Python-only and rejected here by name.
+	if *kdf == "none" {
+		*kdf = ""
+	} else if *kdf != "" && *kdf != "hfscx-256" {
+		fmt.Fprintf(os.Stderr, "kex: unsupported --kdf value %q (choices: none, hfscx-256)\n", *kdf)
 		os.Exit(1)
 	}
 
@@ -3381,6 +3389,7 @@ func cmdSign(args []string) {
 		"default: 219 for nl-zkboo/nl-zkbpp, 32 demo for hpks-stern/hpks-ring; "+
 		"production soundness needs >= 219 for all)")
 	fs.Parse(args)
+	digestValue("sign", digest)
 
 	if *algo == "" || *key == "" {
 		fmt.Fprintln(os.Stderr, "sign: --algo and --key required")
@@ -3648,6 +3657,7 @@ func cmdVerify(args []string) {
 	sig    := fs.String("sig", "", "Signature PEM file")
 	ring   := fs.String("ring", "", "hpks-ring: comma-separated member public-key PEM paths")
 	fs.Parse(args)
+	digestValue("verify", digest)
 
 	if *algo == "" || *sig == "" {
 		fmt.Fprintln(os.Stderr, "verify: --algo and --sig required")
@@ -4451,13 +4461,34 @@ func die(prefix string, err error) {
 	os.Exit(1)
 }
 
+// digestValue validates --digest's value set in one place (TODO #269).
+//
+// Every call site tests `*digest == "hfscx-256"` and falls through to the
+// raw-message path otherwise, so an unrecognised value used to be accepted
+// SILENTLY and signed the message unhashed -- `--digest hfscx256`, one missing
+// hyphen, produced a raw signature while reporting success. That is fail-OPEN on
+// the weaker branch, and TODO #267's flag matrix cannot see it: the matrix knows
+// only that the flag exists. Python rejects via argparse choices= and Java by
+// name; this makes Go agree. `none` is normalised to "" so the call sites are
+// unchanged.
+func digestValue(cmd string, digest *string) {
+	if *digest == "none" {
+		*digest = ""
+		return
+	}
+	if *digest != "" && *digest != "hfscx-256" {
+		fmt.Fprintf(os.Stderr, "%s: unsupported --digest %q (choices: none, hfscx-256)\n", cmd, *digest)
+		os.Exit(1)
+	}
+}
+
 func usage() {
 	fmt.Fprint(os.Stderr, `Usage: herradura_cli_go <command> [options]
 
 Commands:
   genpkey  --algo ALGO [--bits N] [--out FILE]
   pkey     --in FILE (--pubout | --text) [--out FILE]
-  kex      --algo ALGO --our FILE --their FILE [--kdf hfscx-256] [--out FILE]
+  kex      --algo ALGO --our FILE --their FILE [--kdf none|hfscx-256] [--out FILE]
   enc      --algo ALGO (--key FILE | --pubkey FILE) --in FILE [--out FILE]
   dec      --algo ALGO --key FILE --in FILE [--out FILE]
   sign     --algo ALGO --key FILE --in FILE [--digest hfscx-256] [--out FILE]
@@ -4652,6 +4683,7 @@ func cmdThresholdAggregate(args []string) {
 	out    := fs.String("out", "-", "Output aggregate PEM")
 	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
 	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
+	digestValue("threshold-aggregate", digest)
 	if len(commitPaths) == 0 {
 		fmt.Fprintln(os.Stderr, "threshold-aggregate: --commits (or --commit) is required")
 		os.Exit(1)
@@ -4846,6 +4878,7 @@ func cmdThresholdVerify(args []string) {
 	sig    := fs.String("sig", "", "HPKST SIGNATURE PEM file")
 	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
 	fs.Parse(args)
+	digestValue("threshold-verify", digest)
 	if *sig == "" {
 		fmt.Fprintln(os.Stderr, "threshold-verify: --sig required")
 		os.Exit(1)

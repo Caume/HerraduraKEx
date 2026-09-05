@@ -961,20 +961,17 @@ CLI_FLAG_PARITY = {
         ("python",), "defect",
         "Selects the passphrase-decrypting read path; moves with pkey --passphrase."),
 
-    # ── Java's four missing flags ─────────────────────────────────────────
+    # ── Java's remaining missing flag ─────────────────────────────────────
+    # `--digest` and `rand` closed in v6.2.0/v6.3.0 and `kex --kdf` in v6.5.0,
+    # all under TODO #269. `--aead` is the one left, and it is not CLI wiring:
+    # bindings/java/ has no AEAD primitive at all, which is why TODO #269 re-filed
+    # it as its own item rather than closing it in place.
     ("enc", "--aead"): (
         ("c", "go", "python"), "defect",
         "HSKE-NL-AEAD encryption. HerraduraCli.java's class doc already states this "
         "gap -- in a Javadoc sentence, which is a comment and not a record any check "
         "reads, which is precisely TODO #267's complaint. CliTest/test_aead.sh's "
         "9-way interop covers the other three only."),
-    ("kex", "--kdf"): (
-        ("c", "go", "python"), "defect",
-        "Session-key derivation selection. The VALUE sets also differ where the flag "
-        "does exist -- Python accepts hfscx-256 and sp800227 (TODO #165), C and Go "
-        "hfscx-256 only -- and this matrix is at flag granularity, so that second "
-        "axis is recorded here rather than derived. Cheaper to port than "
-        "--passphrase and should be judged separately from it (TODO #267)."),
     ("genpkey", "--bits"): (
         ("go", "java", "python"), "acknowledged",
         "A runtime key-width selector. The C CLI is compiled for a single KEYBITS "
@@ -1020,6 +1017,142 @@ CLI_SUBCOMMAND_PARITY = {
 }
 
 VALID_PARITY_STATUS = ("acknowledged", "defect")
+
+
+# herradura.py's argparse subparser variable names, needed by extract_choices.
+# Hoisted to module scope by TODO #269 so the --algo tag lists and the value-set
+# table below read the same map rather than two copies that can drift apart.
+PY_SUBPARSER_VARS = {
+    "kex": "kx", "enc": "en", "dec": "de", "sign": "sg", "verify": "vf",
+    "encfile": "ef", "decfile": "df", "dgst": "dg",
+}
+
+
+# ── TODO #269: the value-level axis, one granularity below CLI_FLAG_PARITY ────
+#
+# #267's matrix answers "does this CLI define this flag".  It deliberately does
+# not reach the flag's accepted VALUE set, and #269 found that gap the hard way:
+# porting `kex --kdf` to Java would put the flag at 4/4, DELETE its
+# CLI_FLAG_PARITY row, and take with it the only written record anywhere that
+# Python accepts `sp800227` and C/Go do not.  That is #267's own "anchor lost"
+# failure reproduced one level down, so the axis is recorded here FIRST and the
+# port comes after.
+#
+# Shape, and why it is a derived/curated split.  Python's sets are DERIVED from
+# argparse `choices=` and must be written as None below -- so a choices list that
+# changes fails this table instead of silently disagreeing with it.  C, Go and
+# Java accept values through chains of string comparisons (`strcmp(v,
+# "hfscx-256") == 0`, `*v == "hfscx-256"`, `v.equals(...)`), which is not
+# reliably derivable, so those three are curated and carry the cost of being
+# checked by hand against a probe.
+#
+# A flag belongs here ONLY while its value sets disagree.  Agreement makes the
+# entry an orphan and generation fails until it is deleted -- the same
+# life-cycle as a CLI_FLAG_PARITY row, and the reason `sign --digest` is absent:
+# TODO #269 made C and Go fail closed on an unknown value, so all four now take
+# exactly {none, hfscx-256} and there is nothing left to record.
+CLI_FLAG_VALUES = {
+    ("kex", "--kdf"): (
+        {"python": None,                              # derived from choices=
+         "c":      ("none", "hfscx-256"),
+         "go":     ("none", "hfscx-256"),
+         "java":   ("none", "hfscx-256")},
+        "defect",
+        "`sp800227` (TODO #165) binds the full public transcript -- both parties' "
+        "public polynomials and the reconciliation hint -- into the session key per "
+        "SP 800-227 Sec 4.5-4.6, and exists only in the Python CLI. It is scoped to "
+        "--algo hkex-rnl, and Python rejects it on any other algo. The other three "
+        "reject the VALUE, so there is no interoperability hazard in the "
+        "fail-closed direction: a peer asking for sp800227 against a C/Go/Java "
+        "responder gets an error, never a silently different session key. Filed as "
+        "a defect rather than blessed scope because both sides must pass the same "
+        "--kdf and only one CLI can pass this one."),
+}
+
+
+def build_cli_flag_value_gaps(flag_matrix, py_src):
+    """The value-set axis of the CLI surface: derived where it can be, curated
+    where it cannot, and exhaustive in both directions like every other table here.
+
+    Four ways this raises, mirroring build_cli_surface_gaps:
+      * a curated entry naming a flag no CLI defines (the flag was renamed);
+      * a curated entry whose languages disagree with the derived flag matrix;
+      * a Python cell that is not None, or whose argparse choices= cannot be read
+        (the extractor went stale, which must fail rather than read as "no values");
+      * an entry whose value sets now AGREE -- parity reached, delete the row.
+    """
+    langs = ("c", "go", "java", "python")
+    gaps = []
+
+    for (sub, flag), (per_lang, status, reason) in sorted(CLI_FLAG_VALUES.items()):
+        if sub not in flag_matrix or flag not in flag_matrix[sub]:
+            raise RuntimeError(
+                f"CLI_FLAG_VALUES names `{sub} {flag}`, which no CLI's argument "
+                f"parser defines. The flag was renamed or removed -- update the "
+                f"entry, or delete it (TODO #269).")
+        if status not in VALID_PARITY_STATUS:
+            raise RuntimeError(
+                f"CLI_FLAG_VALUES[({sub!r}, {flag!r})] has unknown status {status!r}.")
+
+        # The flag matrix decides WHO must have a value set: a language that does
+        # not define the flag must not carry one, and one that does must.
+        present = sorted(l for l in langs if flag_matrix[sub][flag][l])
+        if sorted(per_lang) != present:
+            raise RuntimeError(
+                f"CLI_FLAG_VALUES[({sub!r}, {flag!r})] lists value sets for "
+                f"{sorted(per_lang)}, but the CLIs' own argument parsers say the "
+                f"flag is defined by {present}. A language that gained or lost the "
+                f"flag must gain or lose its value set with it.")
+
+        resolved = {}
+        for lang, values in per_lang.items():
+            if lang == "python":
+                if values is not None:
+                    raise RuntimeError(
+                        f"CLI_FLAG_VALUES[({sub!r}, {flag!r})]['python'] must be None: "
+                        f"Python's set is derived from argparse choices=, so writing it "
+                        f"out by hand is the drift this table exists to catch.")
+                var = PY_SUBPARSER_VARS.get(sub)
+                if var is None:
+                    raise RuntimeError(
+                        f"CLI_FLAG_VALUES[({sub!r}, {flag!r})] needs herradura.py's "
+                        f"argparse variable for subcommand {sub!r}; add it to "
+                        f"PY_SUBPARSER_VARS.")
+                derived = extract_choices(py_src, var, flag)
+                if not derived:
+                    raise RuntimeError(
+                        f"CLI_FLAG_VALUES[({sub!r}, {flag!r})]: no argparse choices= "
+                        f"found for `{var}.add_argument({flag!r}, ...)` in "
+                        f"herradura.py. Either the flag stopped being enumerated or "
+                        f"extract_choices went stale -- both must fail here rather "
+                        f"than read as an empty value set.")
+                resolved[lang] = sorted(derived)
+            else:
+                if not values:
+                    raise RuntimeError(
+                        f"CLI_FLAG_VALUES[({sub!r}, {flag!r})][{lang!r}] is empty; a "
+                        f"language that defines the flag accepts at least one value.")
+                resolved[lang] = sorted(values)
+
+        # Parity reached => orphan. Same direction as build_cli_surface_gaps'
+        # orphan check, and the reason porting a value must delete its row.
+        distinct = {tuple(v) for v in resolved.values()}
+        if len(distinct) == 1:
+            raise RuntimeError(
+                f"CLI_FLAG_VALUES[({sub!r}, {flag!r})] records a divergence, but all "
+                f"of {sorted(resolved)} now accept exactly "
+                f"{list(next(iter(distinct)))}. The gap is closed -- delete the entry "
+                f"(TODO #269).")
+
+        shared = set.intersection(*(set(v) for v in resolved.values()))
+        gaps.append({
+            "kind": "flag_values", "subcommand": sub, "flag": flag,
+            "accepted_values": {l: resolved[l] for l in sorted(resolved)},
+            "accepted_by_all": sorted(shared),
+            "divergent_values": sorted(set().union(*(set(v) for v in resolved.values())) - shared),
+            "status": status, "reason": reason,
+        })
+    return gaps
 
 
 def build_cli_surface_gaps(flag_matrix, subcommand_impls):
@@ -1352,14 +1485,14 @@ def generate():
         flag_matrix[sub] = {f: {l: f in flags_by_lang[l].get(sub, set()) for l in langs}
                             for f in every_flag}
     cli_surface_gaps = build_cli_surface_gaps(flag_matrix, subcommand_impls)
+    cli_flag_value_gaps = build_cli_flag_value_gaps(flag_matrix, py_src)
 
     # tag lists per --algo subcommand, needed both for cli_binding and below.
     # genpkey's choices is `list(_PRIV_ALGOS) + ['hcred']`, so hcred is a real
     # --algo tag there even though it is not in _PRIV_ALGOS; without it hcred's
     # cli_binding came out as subcommand-only.
     algo_subcommand_tags = {"genpkey": sorted(set(priv_algos) | genpkey_extra)}
-    for subcmd, var in [("kex", "kx"), ("enc", "en"), ("dec", "de"), ("sign", "sg"),
-                         ("verify", "vf"), ("encfile", "ef"), ("decfile", "df"), ("dgst", "dg")]:
+    for subcmd, var in sorted(PY_SUBPARSER_VARS.items()):
         choices = extract_choices(py_src, var)
         if choices is not None:
             algo_subcommand_tags[subcmd] = choices
@@ -1414,6 +1547,7 @@ def generate():
         "cross_implementation_gaps": build_cross_impl_gaps(cli_support),
         "cli_flag_matrix": flag_matrix,
         "cli_surface_gaps": cli_surface_gaps,
+        "cli_flag_value_gaps": cli_flag_value_gaps,
         "unfiled_cli_surface": [
             {"subcommand": sc, "reason": UNFILED_CLI_SURFACE[sc]}
             for sc in subcommands if sc in UNFILED_CLI_SURFACE

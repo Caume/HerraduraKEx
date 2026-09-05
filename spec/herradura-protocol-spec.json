@@ -2081,7 +2081,7 @@
       "--kdf": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--our": {
@@ -2659,21 +2659,6 @@
     },
     {
       "kind": "flag",
-      "subcommand": "kex",
-      "flag": "--kdf",
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "Session-key derivation selection. The VALUE sets also differ where the flag does exist -- Python accepts hfscx-256 and sp800227 (TODO #165), C and Go hfscx-256 only -- and this matrix is at flag granularity, so that second axis is recorded here rather than derived. Cheaper to port than --passphrase and should be judged separately from it (TODO #267)."
-    },
-    {
-      "kind": "flag",
       "subcommand": "pake-demo",
       "flag": "--username",
       "present_in": [
@@ -2731,6 +2716,41 @@
       ],
       "status": "defect",
       "reason": "The read side of --passphrase's envelope; moves with genpkey --passphrase."
+    }
+  ],
+  "cli_flag_value_gaps": [
+    {
+      "kind": "flag_values",
+      "subcommand": "kex",
+      "flag": "--kdf",
+      "accepted_values": {
+        "c": [
+          "hfscx-256",
+          "none"
+        ],
+        "go": [
+          "hfscx-256",
+          "none"
+        ],
+        "java": [
+          "hfscx-256",
+          "none"
+        ],
+        "python": [
+          "hfscx-256",
+          "none",
+          "sp800227"
+        ]
+      },
+      "accepted_by_all": [
+        "hfscx-256",
+        "none"
+      ],
+      "divergent_values": [
+        "sp800227"
+      ],
+      "status": "defect",
+      "reason": "`sp800227` (TODO #165) binds the full public transcript -- both parties' public polynomials and the reconciliation hint -- into the session key per SP 800-227 Sec 4.5-4.6, and exists only in the Python CLI. It is scoped to --algo hkex-rnl, and Python rejects it on any other algo. The other three reject the VALUE, so there is no interoperability hazard in the fail-closed direction: a peer asking for sp800227 against a C/Go/Java responder gets an error, never a silently different session key. Filed as a defect rather than blessed scope because both sides must pass the same --kdf and only one CLI can pass this one."
     }
   ],
   "unfiled_cli_surface": [

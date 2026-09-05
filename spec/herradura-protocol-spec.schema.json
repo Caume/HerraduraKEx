@@ -216,6 +216,70 @@
           }
         }
       }
+    },
+    "cli_flag_value_gaps": {
+      "type": "array",
+      "description": "The VALUE-set axis of the CLI surface, one granularity below `cli_surface_gaps` (TODO #269). That table answers whether a CLI defines a flag; this one answers which values it accepts, for the flags where the four disagree. Python's sets are DERIVED from argparse `choices=`; C, Go and Java accept values through chains of string comparisons and are curated in generate_spec.py's CLI_FLAG_VALUES, checked against the derived flag matrix in both directions. Exhaustive the same way every other table here is: an entry whose value sets have converged is an orphan and generation FAILS until it is deleted, so reaching value parity forces the row out rather than leaving a stale claim behind. `accepted_by_all` is the portable subset -- the values a caller may use against any of the four.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "subcommand",
+          "flag",
+          "accepted_values",
+          "accepted_by_all",
+          "divergent_values",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "flag_values"
+            ]
+          },
+          "subcommand": {
+            "type": "string"
+          },
+          "flag": {
+            "type": "string"
+          },
+          "accepted_values": {
+            "type": "object",
+            "description": "Per-language accepted value set, keyed by implementation.",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "accepted_by_all": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Intersection: the values portable across every CLI that defines the flag."
+          },
+          "divergent_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Values at least one CLI accepts and at least one does not."
+          },
+          "status": {
+            "enum": [
+              "acknowledged",
+              "defect"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "$defs": {

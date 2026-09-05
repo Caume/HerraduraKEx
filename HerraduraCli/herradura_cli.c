@@ -83,6 +83,25 @@ static int has_flag(int argc, char **argv, const char *flag)
     return 0;
 }
 
+/* --digest's value set, validated in one place (TODO #269).
+ *
+ * Every call site below tests `strcmp(digest, "hfscx-256") == 0` and falls
+ * through to the raw-message path otherwise, so an unrecognised value used to be
+ * accepted SILENTLY and signed the message unhashed -- `--digest hfscx256`, one
+ * missing hyphen, produced a raw signature while reporting success.  That is
+ * fail-OPEN on the weaker branch, and it is invisible to TODO #267's flag matrix,
+ * which sees only that the flag exists.  Python rejects via argparse choices= and
+ * Java by name; this makes C agree.  Returns the value normalised to NULL for
+ * "no pre-hash", so the `if (digest && ...)` sites are unchanged. */
+static const char *digest_value(const char *cmd, const char *digest)
+{
+    if (!digest || strcmp(digest, "none") == 0) return NULL;
+    if (strcmp(digest, "hfscx-256") == 0) return digest;
+    fprintf(stderr, "%s: unsupported --digest %s (choices: none, hfscx-256)\n",
+            cmd, digest);
+    exit(1);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * BitArray / polynomial packing helpers
  * ───────────────────────────────────────────────────────────────────────────── */
@@ -1376,8 +1395,16 @@ static void cmd_kex(int argc, char **argv)
     const char *our_kem    = get_arg(argc, argv, "--our-kem");
     if (!algo || !our_path || !their_path || !out_path)
         die("kex: --algo, --our, --their, --out required");
-    if (kdf && strcmp(kdf, "hfscx-256") != 0)
-        dief("kex: unsupported --kdf value: %s", kdf);
+    /* TODO #269: `none` is Python's DEFAULT value for this flag, and was a hard
+       error here -- so a command line copied from the Python CLI's own help text
+       failed against this one.  Accept it, and normalise it to "flag absent" so
+       the `if (kdf)` sites below keep reading as "apply the post-hash".  Any
+       other value is still refused: the value set is {none, hfscx-256}, and
+       `sp800227` (TODO #165) is Python-only and rejected here by name. */
+    if (kdf && strcmp(kdf, "none") == 0)
+        kdf = NULL;
+    else if (kdf && strcmp(kdf, "hfscx-256") != 0)
+        dief("kex: unsupported --kdf value: %s (choices: none, hfscx-256)", kdf);
 
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
@@ -2899,6 +2926,7 @@ static void cmd_threshold_aggregate(int argc, char **argv)
     const char *in_path     = get_arg(argc, argv, "--in");
     const char *out_path    = get_arg(argc, argv, "--out");
     const char *digest      = get_arg(argc, argv, "--digest");
+    digest = digest_value("threshold-aggregate", digest);
     if (!in_path)  die("threshold-aggregate: --in required");
     if (!out_path) die("threshold-aggregate: --out required");
 
@@ -3090,6 +3118,7 @@ static void cmd_threshold_verify(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *sig_path = get_arg(argc, argv, "--sig");
     const char *digest   = get_arg(argc, argv, "--digest");
+    digest = digest_value("threshold-verify", digest);
     if (!in_path)  die("threshold-verify: --in required");
     if (!sig_path) die("threshold-verify: --sig required");
 
@@ -3131,6 +3160,7 @@ static void cmd_sign(int argc, char **argv)
     const char *in_path  = get_arg(argc, argv, "--in");
     const char *out_path = get_arg(argc, argv, "--out");
     const char *digest   = get_arg(argc, argv, "--digest");
+    digest = digest_value("sign", digest);
     if (!algo)     die("sign: --algo required");
     if (!key_path) die("sign: --key required");
     if (!in_path)  die("sign: --in required");
@@ -3466,6 +3496,7 @@ static void cmd_verify(int argc, char **argv)
     const char *in_path     = get_arg(argc, argv, "--in");
     const char *sig_path    = get_arg(argc, argv, "--sig");
     const char *digest      = get_arg(argc, argv, "--digest");
+    digest = digest_value("verify", digest);
     if (!algo)    die("verify: --algo required");
     if (!in_path) die("verify: --in required");
     if (!sig_path) die("verify: --sig required");
@@ -4549,11 +4580,12 @@ static void usage(void)
 "  pkey --in FILE (--pubout | --text) [--out FILE]\n"
 "    Extract public key (--pubout) or print fields in hex (--text).\n"
 "\n"
-"  kex --algo ALGO --our PRIV --their PUB --out FILE [--kdf hfscx-256]\n"
+"  kex --algo ALGO --our PRIV --their PUB --out FILE [--kdf none|hfscx-256]\n"
 "    Key exchange.  Algorithms: hkex-gf hkex-rnl\n"
 "    HKEX-RNL is 2-round: Bob runs step 1 (--their=alice_pub.pem),\n"
 "    Alice runs step 2 (--their=bob_resp.pem).\n"
 "    --kdf hfscx-256: post-hash the raw shared secret with HFSCX-256.\n"
+"    --kdf none (default): use the raw shared secret. Both sides must match.\n"
 "    Both sides must use the same --kdf flag to derive the same final key.\n"
 "\n"
 "  enc --algo ALGO (--key SK | --pubkey PUB) --in FILE [--out FILE] [--aead [--ad STR]]\n"
