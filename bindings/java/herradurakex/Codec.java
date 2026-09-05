@@ -81,6 +81,8 @@ public final class Codec {
     // TODO #261 (v6.0.0): the labels the Java CLI's newly-ported tags need.
     public static final String PEM_ZKP_NL_PP_SIG = "HERRADURA ZKP-NL-PP SIGNATURE";
     public static final String PEM_HYBRID_RESPONSE = "HERRADURA HYBRID-RNL-STERN RESPONSE";
+    /** TODO #269: the HDRBG checkpoint `rand --state` reads and writes. */
+    public static final String PEM_HDRBG_STATE = "HERRADURA HDRBG STATE";
 
     // -----------------------------------------------------------------
     // Base64 (76-char lines, matching Python base64.encodebytes)
@@ -315,6 +317,38 @@ public final class Codec {
         }
         List<BigInteger> ints = derParseSeq(b.der);
         return new PrivKey(ints.get(0), ints.get(1), ints.get(2).intValueExact());
+    }
+
+    /** Encodes an HDRBG checkpoint: SEQUENCE(state[32], blocks) (TODO #269).
+     *
+     *  `state` is a FIXED 32-byte INTEGER and `blocks` a minimal-width one,
+     *  matching Python's `der_int(drbg.state.uint, KEYBITS // 8), der_int(
+     *  drbg.blocks)` and C's write_hdrbg_state exactly -- the widths are the
+     *  wire format here, not a formatting choice, and a state encoded at
+     *  minimal width would be unreadable by the other three CLIs whenever its
+     *  top byte happened to be zero. */
+    public static String encodeHdrbgState(BigInteger state, long blocks) {
+        byte[] der = derSeq(derInt(state, NBYTES),
+                            derInt(BigInteger.valueOf(blocks), -1));
+        return pemWrap(PEM_HDRBG_STATE, der);
+    }
+
+    public static final class HdrbgState {
+        public final BigInteger state;
+        public final long blocks;
+        HdrbgState(BigInteger state, long blocks) { this.state = state; this.blocks = blocks; }
+    }
+
+    public static HdrbgState decodeHdrbgState(String pem) {
+        PemBlock b = pemUnwrap(pem);
+        if (!b.label.equals(PEM_HDRBG_STATE)) {
+            throw new IllegalArgumentException("Expected " + PEM_HDRBG_STATE + ", got " + b.label);
+        }
+        List<BigInteger> ints = derParseSeq(b.der);
+        if (ints.size() < 2) {
+            throw new IllegalArgumentException("HDRBG STATE: expected SEQUENCE(state, blocks)");
+        }
+        return new HdrbgState(ints.get(0), ints.get(1).longValueExact());
     }
 
     /** Encodes a classical public key: SEQUENCE(pub, nbits). */

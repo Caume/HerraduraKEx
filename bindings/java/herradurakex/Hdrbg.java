@@ -101,6 +101,26 @@ public final class Hdrbg {
         blocks = 0;
     }
 
+    /** Resumes a checkpointed instance from a persisted (state, blocks) pair —
+     * the read side of {@link #stateValue()}/{@link #blocksGenerated()}, needed
+     * by the CLI's {@code rand --state} (TODO #269).
+     *
+     * {@code blocks} is carried, not reset: it is what makes DRBG_MAX_BLOCKS an
+     * accounting over the whole life of a seed rather than per invocation, so a
+     * resume that dropped it would silently hand back an unlimited generator. */
+    public static Hdrbg resume(BigInteger state, long blocks) {
+        if (state == null || state.signum() < 0) {
+            throw new IllegalArgumentException("Hdrbg.resume: state must be non-negative");
+        }
+        if (blocks < 0 || blocks > DRBG_MAX_BLOCKS) {
+            throw new IllegalArgumentException(
+                "Hdrbg.resume: blocks out of range [0, " + DRBG_MAX_BLOCKS + "]: " + blocks);
+        }
+        Hdrbg d = new Hdrbg(state.and(MASK));
+        d.blocks = blocks;
+        return d;
+    }
+
     /** The raw internal state, for checkpointing/inspection/testing — not
      * needed for ordinary use. */
     public BigInteger stateValue() {

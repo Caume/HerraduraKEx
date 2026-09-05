@@ -588,7 +588,54 @@ spec/                                                — machine-readable protoc
                                                       hdrbg/fpe/twk, have no tag and are filed under
                                                       their subcommands via `cli_binding`.
                                                       `unfiled_cli_surface` now names only `pkey`, a
-                                                      key-format utility with no protocol of its own
+                                                      key-format utility with no protocol of its own.
+                                                      cli_flag_matrix / cli_surface_gaps (TODO #267)
+                                                      are the FOURTH axis, one level below
+                                                      cli_support: that column answers "does this CLI
+                                                      dispatch this --algo tag", and #261 met it at
+                                                      v6.0.0, but a subcommand's FLAGS are capability
+                                                      too and nothing compared them.  Derived from
+                                                      each CLI's OWN argument parser -- argparse
+                                                      add_argument, C's get_arg/has_flag, Go's
+                                                      flag.FlagSet + stringFlags, Java's
+                                                      opt.get/req -- mapping subcommand to handler
+                                                      and then FOLLOWING DELEGATION, or C's
+                                                      threshold-verify flags (reached only via
+                                                      cmd_verify) read as absent from a CLI that has
+                                                      them.  Every extractor RAISES when it maps no
+                                                      subcommands, so a stale regex fails as "the
+                                                      extractor broke" rather than as "port 26
+                                                      subcommands".  cli_surface_gaps is exhaustive
+                                                      in both directions like check_docs_
+                                                      consistency's anchors: a gap with no reason
+                                                      fails, and so does a reason with no gap -- so
+                                                      PORTING a flag fails --check until its
+                                                      CLI_FLAG_PARITY entry is deleted.  Two limits
+                                                      to know before extending it: it is at FLAG
+                                                      granularity, so a flag's VALUE set can still
+                                                      differ (kex --kdf takes sp800227 in Python
+                                                      only) and that lives in the gap's reason, not
+                                                      in the matrix; and a flag gap is scoped to CLIs
+                                                      that define the subcommand, so Java's missing
+                                                      `rand` is ONE subcommand row, not eight flag
+                                                      rows.  `status` is acknowledged (deliberate
+                                                      per-language scope) vs defect (a real
+                                                      asymmetry, recorded and counted) -- #267 closed
+                                                      on the MECHANISM, so defect rows are the
+                                                      expected steady state, not a failing one.
+                                                      Read the counts from cli_surface_gaps, not
+                                                      from prose: #269 and #270 have already deleted
+                                                      ten of the original sixteen, each deletion
+                                                      FORCED because the generator refuses to emit a
+                                                      spec while an acknowledgement describes a gap
+                                                      that no longer exists.  #268 is the port that
+                                                      remains.  NOTE for anyone adding a new way to
+                                                      READ a flag: the matrix is derived from
+                                                      per-language accessor patterns, so a new
+                                                      accessor must be taught to the extractor or
+                                                      its flags read as ABSENT -- #269's
+                                                      readMessage and #270's get_arg_multi2 /
+                                                      multiValueFlags / multiPaths each needed that
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

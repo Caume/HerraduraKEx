@@ -108,7 +108,7 @@ public final class HerraduraCli {
     private static void run(String[] args) throws IOException {
         if (args.length == 0) {
             throw new CliError("usage: herradurakex <genpkey|pkey|kex|enc|dec|sign|verify|dgst|encfile|decfile"
-                + "|fpe|twk"
+                + "|rand|fpe|twk"
                 + "|threshold-commit|threshold-aggregate|threshold-respond|threshold-combine"
                 + "|oprf-blind|oprf-eval|oprf-unblind|cred-issue|cred-prove|cred-verify"
                 + "|pake-register|pake-demo> [options]");
@@ -124,6 +124,7 @@ public final class HerraduraCli {
             case "sign":    cmdSign(opt);    break;
             case "verify":  cmdVerify(opt);  break;
             case "dgst":    cmdDgst(opt);    break;
+            case "rand":    cmdRand(opt);    break;
             case "encfile": cmdEncfile(opt); break;
             case "decfile": cmdDecfile(opt); break;
             case "fpe":     cmdFpe(opt);     break;
@@ -148,6 +149,12 @@ public final class HerraduraCli {
     // Option parsing: --flag value  or  --flag (boolean)
     // -----------------------------------------------------------------
 
+    /** Flags whose repeated occurrences accumulate instead of overwriting
+     *  (TODO #270).  Both the plural and singular spelling of each threshold path
+     *  list, since all four CLIs now accept both. */
+    private static final java.util.Set<String> REPEATABLE = new java.util.HashSet<>(
+        java.util.Arrays.asList("commits", "commit", "partials", "partial"));
+
     private static Map<String, String> parseOpts(String[] args, int from) {
         Map<String, String> opt = new HashMap<>();
         int i = from;
@@ -167,10 +174,42 @@ public final class HerraduraCli {
                 vals.add(args[j]);
                 j++;
             }
-            opt.put(key, vals.isEmpty() ? "true" : String.join(" ", vals));
+            String val = vals.isEmpty() ? "true" : String.join(" ", vals);
+            // TODO #270: a REPEATED multi-value flag accumulates rather than
+            // overwriting, so `--commit a --commit b` reaches the command as the
+            // same space-joined list `--commits a b` does.  Scoped to the declared
+            // repeatable names: making every flag accumulate would turn a typo like
+            // `--out x --out y` into the filename "x y" instead of last-wins.
+            String prev = opt.get(key);
+            if (prev != null && REPEATABLE.contains(key)) {
+                val = prev + " " + val;
+            }
+            opt.put(key, val);
             i = j;
         }
         return opt;
+    }
+
+    /** Unions the plural and singular spellings of a repeated path flag (TODO #270).
+     *
+     *  Mixing the two NAMES is refused rather than concatenated: the list order is
+     *  consensus-critical -- threshold-respond must see the order
+     *  threshold-aggregate did -- so there is no defensible interleaving, and
+     *  silently choosing one would produce a wrong signature rather than an error. */
+    private static String[] multiPaths(Map<String, String> opt, String cmd,
+                                       String plural, String singular) {
+        String p = opt.get(plural);
+        String s = opt.get(singular);
+        if (p != null && s != null) {
+            throw new CliError(cmd + ": use --" + plural + " or --" + singular
+                + ", not both (they name the same list, and mixing them leaves its "
+                + "order undefined)");
+        }
+        String v = p != null ? p : s;
+        if (v == null) {
+            throw new CliError(cmd + ": --" + plural + " (or --" + singular + ") is required");
+        }
+        return v.trim().split("\\s+");
     }
 
     private static String req(Map<String, String> opt, String key, String cmd) {
@@ -1054,7 +1093,7 @@ public final class HerraduraCli {
         // ── TODO #261: the three ZKP-backed signature tags ──────────────
         if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds")
                 ? Integer.parseInt(opt.get("rounds")) : ZKP_CLI_ROUNDS;
@@ -1085,7 +1124,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("rnl-sigma")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
 
             String pem = readString(keyPath);
@@ -1109,7 +1148,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-ring")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
 
@@ -1137,7 +1176,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             int rounds = opt.containsKey("rounds") ? Integer.parseInt(opt.get("rounds")) : Stern.SDFR;
 
@@ -1151,7 +1190,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-xmss")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             Codec.XmssPrivKey pk = Codec.decodeXmssPrivKey(readString(keyPath));
             int leafIdx = readIdxState(keyPath);
@@ -1167,7 +1206,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-wots")) {
             String keyPath = req(opt, "key", "sign");
-            byte[] msg = readBytes(req(opt, "in", "sign"));
+            byte[] msg = readMessage(opt, "sign");
             String out = req(opt, "out", "sign");
             if (readIdxState(keyPath) != 0) {
                 throw new CliError("sign: this HPKS-WOTS key was already used — WOTS keys are "
@@ -1186,7 +1225,7 @@ public final class HerraduraCli {
                 + "hpks-wots, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String keyPath = req(opt, "key", "sign");
-        byte[] msg = readBytes(req(opt, "in", "sign"));
+        byte[] msg = readMessage(opt, "sign");
         String out = req(opt, "out", "sign");
 
         String pem = readString(keyPath);
@@ -1222,7 +1261,7 @@ public final class HerraduraCli {
         // ── TODO #261: the three ZKP-backed signature tags ──────────────
         if (algo.equals("nl-zkboo") || algo.equals("nl-zkbpp")) {
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1248,7 +1287,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("rnl-sigma")) {
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1270,7 +1309,7 @@ public final class HerraduraCli {
         if (algo.equals("hpks-stern")) {
             sternDemoWarning();
             String pubPath = req(opt, "pubkey", "verify");
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             String sigPath = req(opt, "sig", "verify");
 
             String pubPem = readString(pubPath);
@@ -1290,7 +1329,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-xmss")) {
             Codec.XmssPubKey pub = Codec.decodeXmssPubKey(readString(req(opt, "pubkey", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             Xmss.Signature sig = Codec.decodeXmssSig(readString(req(opt, "sig", "verify")));
             boolean ok = Xmss.verify(msg, sig, pub.root);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1298,7 +1337,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-wots")) {
             BigInteger[] pub = Codec.decodeWotsPubKey(readString(req(opt, "pubkey", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger[] sig = Codec.decodeWotsSig(readString(req(opt, "sig", "verify")));
             boolean ok = Wots.verify(msg, sig, pub);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1306,7 +1345,7 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-t")) {
             Codec.HpkstSig sig = Codec.decodeHpkstSig(readString(req(opt, "sig", "verify")));
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, sig.nbits / 8));
             boolean ok = HpksT.verify(sig.cAgg, sig.r, sig.s, msgInt);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1322,7 +1361,7 @@ public final class HerraduraCli {
                 throw new CliError("hpks-ring verify: signature ring size " + sig.sig.ringSize()
                     + " != " + ring.size() + " provided members");
             }
-            byte[] msg = readBytes(req(opt, "in", "verify"));
+            byte[] msg = readMessage(opt, "verify");
             BigInteger msgInt = new BigInteger(1, padTrunc(msg, Herradura.N / 8));
             boolean ok = SternRing.verify(msgInt, sig.sig, ring);
             if (ok) { System.out.println("Signature OK"); } else { System.out.println("Verification FAILED"); System.exit(1); }
@@ -1334,7 +1373,7 @@ public final class HerraduraCli {
                 + "hpks-wots, hpks-t, nl-zkboo, nl-zkbpp, rnl-sigma)");
         }
         String pubPath = req(opt, "pubkey", "verify");
-        byte[] msg = readBytes(req(opt, "in", "verify"));
+        byte[] msg = readMessage(opt, "verify");
         String sigPath = req(opt, "sig", "verify");
 
         String pubPem = readString(pubPath);
@@ -1388,6 +1427,74 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
     // encfile / decfile (hske-nla1 .hkx container)
     // -----------------------------------------------------------------
+
+    /** `rand` — HDRBG deterministic byte generation (TODO #119; ported to Java
+     *  by TODO #269).
+     *
+     *  Java shipped the Hdrbg primitive and no `rand` subcommand, so this was a
+     *  CLI-surface gap rather than a missing construction — the shape TODO #267's
+     *  flag matrix exists to surface, and the reason its subcommand rows are
+     *  checked separately from #261's primitive manifest, which passed here
+     *  because the primitive was present all along.
+     *
+     *  Semantics follow the other three exactly, including the two ways to do
+     *  nothing: `--seed` or `--state` is required, and `--bytes` or `--reseed`
+     *  is required, each with the same message. `--state` is both the resume
+     *  source AND the checkpoint destination — it is rewritten with the advanced
+     *  state after generating, which is what makes DRBG_MAX_BLOCKS accounting
+     *  survive across invocations. */
+    private static void cmdRand(Map<String, String> opt) throws IOException {
+        String seedPath = opt.get("seed");
+        String statePath = opt.get("state");
+        String reseedPath = opt.get("reseed");
+        String out = opt.getOrDefault("out", "-");
+        boolean hex = opt.containsKey("hex");
+
+        Hdrbg drbg;
+        if (seedPath != null) {
+            byte[] pers = opt.getOrDefault("personalization", "")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            drbg = Hdrbg.seed(readBytes(seedPath), pers);
+        } else if (statePath != null) {
+            Codec.HdrbgState st = Codec.decodeHdrbgState(readString(statePath));
+            drbg = Hdrbg.resume(st.state, st.blocks);
+        } else {
+            throw new CliError("rand: one of --seed or --state is required");
+        }
+
+        if (reseedPath != null) {
+            drbg.reseed(readBytes(reseedPath));
+        }
+
+        if (opt.containsKey("bytes")) {
+            int n;
+            try {
+                n = Integer.parseInt(opt.get("bytes"));
+            } catch (NumberFormatException e) {
+                throw new CliError("rand: --bytes must be an integer");
+            }
+            if (n < 0) throw new CliError("rand: --bytes must be non-negative");
+            byte[] data;
+            try {
+                data = drbg.generate(n);
+            } catch (IllegalStateException e) {
+                throw new CliError("rand: output limit reached — reseed required");
+            }
+            // Hex goes out with a trailing newline in all four CLIs, to a file
+            // as well as to stdout -- Python writes (out.hex() + '\n') either
+            // way, and C writes n*2+1 bytes.  Dropping it for the file case
+            // would make a hex artifact one CLI writes differ from another's.
+            writeBytes(out, hex ? (hexBytes(data) + "\n")
+                                     .getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+                               : data);
+        } else if (reseedPath == null) {
+            throw new CliError("rand: nothing to do (specify --bytes and/or --reseed)");
+        }
+
+        if (statePath != null) {
+            writeString(statePath, Codec.encodeHdrbgState(drbg.stateValue(), drbg.blocksGenerated()));
+        }
+    }
 
     private static void cmdEncfile(Map<String, String> opt) throws IOException {
         String algo = opt.getOrDefault("algo", "hske-nla1");
@@ -1456,10 +1563,10 @@ public final class HerraduraCli {
     }
 
     private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {
-        String commitsArg = req(opt, "commits", "threshold-aggregate");
+        String[] commitPaths = multiPaths(opt, "threshold-aggregate", "commits", "commit");
         List<Codec.HpkstCommit> commits = new java.util.ArrayList<>();
         Integer nbits = null;
-        for (String cp : commitsArg.trim().split("\\s+")) {
+        for (String cp : commitPaths) {
             Codec.HpkstCommit c = Codec.decodeHpkstCommit(readString(cp));
             if (nbits == null) nbits = c.nbits;
             else if (!nbits.equals(c.nbits)) throw new CliError("threshold-aggregate: commitment n mismatch");
@@ -1468,7 +1575,7 @@ public final class HerraduraCli {
         if (nbits == null || nbits != Herradura.N) {
             throw new CliError("threshold-aggregate: HPKS-T requires " + Herradura.N + "-bit commitments");
         }
-        byte[] inBytes = readBytes(req(opt, "in", "threshold-aggregate"));
+        byte[] inBytes = readMessage(opt, "threshold-aggregate");
         BigInteger msg = new BigInteger(1, padTrunc(inBytes, Herradura.N / 8));
 
         BigInteger rVal = BigInteger.ONE;
@@ -1487,9 +1594,9 @@ public final class HerraduraCli {
         if (pk.nbits != Herradura.N) {
             throw new CliError("threshold-respond: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
         }
-        String commitsArg = req(opt, "commits", "threshold-respond");
+        String[] commitPaths = multiPaths(opt, "threshold-respond", "commits", "commit");
         List<BigInteger> pubkeys = new java.util.ArrayList<>();
-        for (String cp : commitsArg.trim().split("\\s+")) {
+        for (String cp : commitPaths) {
             pubkeys.add(Codec.decodeHpkstCommit(readString(cp)).cJ);
         }
         Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-respond")));
@@ -1511,9 +1618,9 @@ public final class HerraduraCli {
 
     private static void cmdThresholdCombine(Map<String, String> opt) throws IOException {
         Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-combine")));
-        String partialsArg = req(opt, "partials", "threshold-combine");
+        String[] partialPaths = multiPaths(opt, "threshold-combine", "partials", "partial");
         BigInteger sAcc = BigInteger.ZERO;
-        for (String pp : partialsArg.trim().split("\\s+")) {
+        for (String pp : partialPaths) {
             Codec.HpkstPartial part = Codec.decodeHpkstPartial(readString(pp));
             if (part.nbits != agg.nbits) throw new CliError("threshold-combine: partial n mismatch");
             sAcc = sAcc.add(part.sJ).mod(Herradura.GROUP_ORDER);
@@ -1728,6 +1835,39 @@ public final class HerraduraCli {
     // -----------------------------------------------------------------
     // I/O helpers ('-' means stdin/stdout, matching the other CLIs)
     // -----------------------------------------------------------------
+
+    /** Read a signing/verifying subcommand's message file, applying the optional
+     *  `--digest` pre-hash (TODO #269).
+     *
+     *  The Java CLI signed the RAW message only until v6.1.2, while the other
+     *  three have taken `--digest hfscx-256` since well before it.  That was not
+     *  a convenience gap: `--digest` exists precisely because every signature
+     *  path here pads-or-TRUNCATES the message to the key width, so for any
+     *  input longer than that the other three CLIs had a correct way to sign it
+     *  and Java had none -- and a Java verifier rejected signatures the other
+     *  three considered valid, silently, with a well-formed PEM on both sides.
+     *  TODO #267's flag matrix is what surfaced it; no test could, because every
+     *  signature test signed and verified within one language.
+     *
+     *  Applied at READ time, before any algo-specific handling, which is where
+     *  Python and Go apply it and where C applies it in each of its three
+     *  early-returning branches -- so the pre-hash reaches every --algo in all
+     *  four CLIs, not just the ones whose branch remembered it.
+     *
+     *  Unknown values are REJECTED, matching Python's argparse `choices`.  C and
+     *  Go instead ignore what they do not recognise, so a misspelled
+     *  `--digest hfscx256` there silently signs the raw message; that is a
+     *  fail-open on a security-relevant flag, and it is not worth copying. */
+    private static byte[] readMessage(Map<String, String> opt, String cmd) throws IOException {
+        byte[] msg = readBytes(req(opt, "in", cmd));
+        String digest = opt.getOrDefault("digest", "none");
+        if (digest.equals("hfscx-256")) return Hfscx256.hash(msg);
+        if (!digest.equals("none")) {
+            throw new CliError(cmd + ": unsupported --digest " + digest
+                + " (choices: none, hfscx-256)");
+        }
+        return msg;
+    }
 
     private static byte[] readBytes(String path) throws IOException {
         if (path.equals("-")) {

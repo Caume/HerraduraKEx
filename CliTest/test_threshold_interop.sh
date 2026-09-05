@@ -141,4 +141,90 @@ else
   verify_all "Mixed (Python commit, C aggregate, Go respond, C combine)"
 fi
 
+# ── TODO #270: flag-SPELLING portability ───────────────────────────────────
+# The list flags had two spellings for the same capability: `--commits a b` in
+# Python and Java, `--commit a --commit b` in C and Go, and `--partials` /
+# `--partial` likewise.  All four implemented threshold signing and emitted
+# identical PEMs, so every parity check before TODO #267's flag matrix passed --
+# a documented command line simply did not port between CLIs.  This file is the
+# evidence: the helpers above still carry one branch per shape because that is
+# what it cost every caller.
+#
+# Since v6.4.0 all four accept BOTH names with BOTH syntaxes.  The assertions
+# below drive each CLI with the spelling it historically did NOT accept, which is
+# the only way to catch a regression that removes one of the two.
+echo "--- TODO #270: both flag spellings, all CLIs ---"
+CLIS=("$PY" "$C" "$GO")
+CLINAMES=(python c go)
+if [ "$HAVE_JAVA" -eq 1 ]; then CLIS+=("$JAVA"); CLINAMES+=(java); fi
+
+$PY threshold-commit --key "$TMPDIR/alice.pem" --commit-out "$TMPDIR/sa.pem" --nonce-out "$TMPDIR/sna.pem"
+$PY threshold-commit --key "$TMPDIR/bob.pem"   --commit-out "$TMPDIR/sb.pem" --nonce-out "$TMPDIR/snb.pem"
+
+for i in "${!CLIS[@]}"; do
+  cli="${CLIS[$i]}"; name="${CLINAMES[$i]}"
+  # Every syntax must yield the SAME aggregate from that CLI: plural-multi,
+  # singular-repeated, plural-repeated, and singular-multi.
+  $cli threshold-aggregate --commits "$TMPDIR/sa.pem" "$TMPDIR/sb.pem" \
+      --in "$MSG" --out "$TMPDIR/sp1.pem" 2>/dev/null \
+      || fail "spelling ($name)" "--commits a b rejected"
+  $cli threshold-aggregate --commit "$TMPDIR/sa.pem" --commit "$TMPDIR/sb.pem" \
+      --in "$MSG" --out "$TMPDIR/sp2.pem" 2>/dev/null \
+      || fail "spelling ($name)" "--commit a --commit b rejected"
+  $cli threshold-aggregate --commits "$TMPDIR/sa.pem" --commits "$TMPDIR/sb.pem" \
+      --in "$MSG" --out "$TMPDIR/sp3.pem" 2>/dev/null \
+      || fail "spelling ($name)" "--commits a --commits b rejected"
+  $cli threshold-aggregate --commit "$TMPDIR/sa.pem" "$TMPDIR/sb.pem" \
+      --in "$MSG" --out "$TMPDIR/sp4.pem" 2>/dev/null \
+      || fail "spelling ($name)" "--commit a b rejected"
+  cmp -s "$TMPDIR/sp1.pem" "$TMPDIR/sp2.pem" \
+      || fail "spelling ($name)" "plural and singular gave DIFFERENT aggregates"
+  cmp -s "$TMPDIR/sp1.pem" "$TMPDIR/sp3.pem" \
+      || fail "spelling ($name)" "repeated-plural gave a different aggregate"
+  cmp -s "$TMPDIR/sp1.pem" "$TMPDIR/sp4.pem" \
+      || fail "spelling ($name)" "multi-value singular gave a different aggregate"
+  pass "spelling: all four --commits/--commit syntaxes agree ($name)"
+
+  # Mixing the two NAMES is refused, not silently concatenated: the list order is
+  # consensus-critical, so picking one would be a wrong signature, not an error.
+  if $cli threshold-aggregate --commits "$TMPDIR/sa.pem" --commit "$TMPDIR/sb.pem" \
+       --in "$MSG" --out "$TMPDIR/sx.pem" >/dev/null 2>&1; then
+    fail "spelling ($name)" "mixing --commits and --commit was ACCEPTED"
+  fi
+  pass "spelling: mixing --commits with --commit is refused ($name)"
+
+  # One diagnostic, four CLIs.  These messages diverged until v6.4.0 ("at least
+  # one --commit required" in C and Go), which is the same wrong-but-plausible
+  # class TODO #269 found in Go's `rand --bytes -1`.
+  # `|| true`: the CLI exits 1 here by design, and `set -o pipefail` would make
+  # the substitution itself fail under `set -e` before the message is examined.
+  msg=$($cli threshold-aggregate --in "$MSG" --out "$TMPDIR/sx.pem" 2>&1 | tail -1 || true)
+  case "$msg" in
+    *"--commits (or --commit) is required"*) pass "spelling: missing-flag message ($name)" ;;
+    *) fail "spelling ($name)" "missing-flag message differs: $msg" ;;
+  esac
+done
+
+# ── TODO #272: C's 64-value cap must REFUSE, never truncate ────────────────
+# C collects list-flag values into a fixed 64-entry array and used to stop
+# filling it silently, returning success: a ceremony with more than 64 signers
+# produced an aggregate over the FIRST 64 while Python, Go and Java used every
+# one, so the same command line gave a DIFFERENT signature depending on which CLI
+# aggregated it, with no diagnostic anywhere.  Found while verifying TODO #270.
+# The limit itself is TODO #272; that it fails loudly is asserted here.
+echo "--- TODO #272: C refuses more list values than it can hold ---"
+many=""
+i=0; while [ $i -lt 70 ]; do many="$many $TMPDIR/sa.pem"; i=$((i+1)); done
+if $C threshold-aggregate --commits $many --in "$MSG" --out "$TMPDIR/over.pem" >/dev/null 2>&1; then
+  fail "over-limit" "C accepted 70 --commits values; it holds 64 and must refuse, not truncate"
+fi
+pass "over-limit: C refuses 70 --commits values instead of silently using 64"
+
+# The boundary itself must still work, or the guard above is just an off-by-one.
+few=""
+i=0; while [ $i -lt 64 ]; do few="$few $TMPDIR/sa.pem"; i=$((i+1)); done
+$C threshold-aggregate --commits $few --in "$MSG" --out "$TMPDIR/at64.pem" >/dev/null 2>&1 \
+  || fail "over-limit" "C rejected exactly 64 --commits values, which is within its capacity"
+pass "over-limit: C still accepts exactly 64"
+
 echo "=== All HPKS-T interop tests PASSED ==="

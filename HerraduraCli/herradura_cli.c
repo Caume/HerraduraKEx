@@ -2782,14 +2782,60 @@ static void cmd_dec(int argc, char **argv)
  * threshold signing phases — HPKS-T (TODO #106)
  * ───────────────────────────────────────────────────────────────────────────── */
 
-/* Collect all occurrences of --flag in argv into paths[0..count-1].
+/* Collect every occurrence of --flag in argv into paths[0..count-1], taking ALL
+ * following non-"--" tokens as values rather than only the first.
  * Returns the count. paths must be large enough (caller provides max). */
 static int get_arg_multi(int argc, char **argv, const char *flag,
                          const char **paths, int max)
 {
     int n = 0;
-    for (int i = 1; i < argc - 1 && n < max; i++)
-        if (strcmp(argv[i], flag) == 0) paths[n++] = argv[i + 1];
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], flag) != 0) continue;
+        for (int j = i + 1; j < argc && strncmp(argv[j], "--", 2) != 0; j++) {
+            /* Refuse rather than truncate.  This capped at `max` silently and
+               returned 0, so a ceremony with more than 64 signers produced an
+               aggregate over the FIRST 64 and exited successfully -- while
+               Python, Go and Java all used every one, so the same command line
+               gave a different signature depending on which CLI aggregated it.
+               A silent wrong signature is the worst available outcome here; the
+               limit itself is left where it is (see TODO #272). */
+            if (n >= max) {
+                fprintf(stderr, "%s: at most %d values supported (got more)\n", flag, max);
+                exit(1);
+            }
+            paths[n++] = argv[j];
+        }
+    }
+    return n;
+}
+
+/* TODO #270: union the plural and singular spellings of a repeated path flag.
+ * C and Go accepted only "--commit a --commit b" while Python and Java accepted
+ * only "--commits a b", so one capability had two spellings and a documented
+ * threshold command line did not port between CLIs.  All four now take both names
+ * with both syntaxes.
+ *
+ * Mixing the two NAMES is refused rather than concatenated: the list order is
+ * consensus-critical -- threshold-respond must see the order threshold-aggregate
+ * did -- so there is no defensible interleaving, and silently choosing one would
+ * produce a wrong signature rather than an error. */
+static int get_arg_multi2(int argc, char **argv, const char *cmd,
+                          const char *plural, const char *singular,
+                          const char **paths, int max)
+{
+    const char *pbuf[64], *sbuf[64];
+    int np = get_arg_multi(argc, argv, plural, pbuf, 64);
+    int ns = get_arg_multi(argc, argv, singular, sbuf, 64);
+    if (np > 0 && ns > 0) {
+        fprintf(stderr, "%s: use %s or %s, not both (they name the same list, and "
+                        "mixing them leaves its order undefined)\n",
+                cmd, plural, singular);
+        exit(1);
+    }
+    const char **src = np > 0 ? pbuf : sbuf;
+    int n = np > 0 ? np : ns;
+    if (n > max) n = max;
+    for (int i = 0; i < n; i++) paths[i] = src[i];
     return n;
 }
 
@@ -2857,8 +2903,8 @@ static void cmd_threshold_aggregate(int argc, char **argv)
     if (!out_path) die("threshold-aggregate: --out required");
 
     const char *commit_paths[64];
-    int n_signers = get_arg_multi(argc, argv, "--commit", commit_paths, 64);
-    if (n_signers < 1) die("threshold-aggregate: at least one --commit required");
+    int n_signers = get_arg_multi2(argc, argv, "threshold-aggregate", "--commits", "--commit", commit_paths, 64);
+    if (n_signers < 1) die("threshold-aggregate: --commits (or --commit) is required");
 
     /* Load message */
     size_t in_len;
@@ -2931,8 +2977,8 @@ static void cmd_threshold_respond(int argc, char **argv)
     if (!out_path)   die("threshold-respond: --out required");
 
     const char *commit_paths[64];
-    int n_signers = get_arg_multi(argc, argv, "--commit", commit_paths, 64);
-    if (n_signers < 1) die("threshold-respond: at least one --commit required");
+    int n_signers = get_arg_multi2(argc, argv, "threshold-respond", "--commits", "--commit", commit_paths, 64);
+    if (n_signers < 1) die("threshold-respond: --commits (or --commit) is required");
 
     BitArray priv, our_pub;
     load_hpks_priv_for_threshold(key_path, &priv, &our_pub);
@@ -3003,8 +3049,8 @@ static void cmd_threshold_combine(int argc, char **argv)
     if (!out_path) die("threshold-combine: --out required");
 
     const char *partial_paths[64];
-    int n_parts = get_arg_multi(argc, argv, "--partial", partial_paths, 64);
-    if (n_parts < 1) die("threshold-combine: at least one --partial required");
+    int n_parts = get_arg_multi2(argc, argv, "threshold-combine", "--partials", "--partial", partial_paths, 64);
+    if (n_parts < 1) die("threshold-combine: --partials (or --partial) is required");
 
     /* Load aggregate PEM for R and C_agg */
     PemKey ak; pem_key_load(&ak, agg_path);

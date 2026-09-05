@@ -126,6 +126,163 @@ def extract_cli_tags(src, universe):
     return literals & set(universe)
 
 
+# ── CLI FLAG surface, per subcommand, per language (TODO #267) ────────────
+#
+# `cli_support` above answers "does this CLI dispatch this --algo tag", and
+# TODO #261 declared that half of the CLI surface met.  It is narrower than
+# "the CLI surface": a subcommand's FLAGS are capability too.  Nothing compared
+# them, so `genpkey --passphrase` has been Python-only since TODO #166 (v1.9.134)
+# -- recorded in that item's own text and then invisible to every check -- and
+# eight further asymmetries had never been recorded anywhere at all.
+#
+# Same rule as extract_cli_tags: derive from each CLI's OWN argument parser, so
+# a regression shows up as a changed cell rather than as silence.  The four
+# parsers are four different shapes, so there are four extractors, but they
+# share the same two-step: map subcommand -> handler, then collect the flag
+# literals that handler (and anything it delegates to) reads.
+#
+# Each extractor raises when it maps no subcommands.  A regex that silently
+# stopped matching would otherwise report the whole surface missing from one
+# language, which is a loud failure -- but it would be the WRONG failure, and
+# the message needs to say "the extractor broke", not "port 26 subcommands".
+
+
+def _decl_bodies(src, decl_re, name_group=1):
+    """Slice `src` at every top-level declaration matching `decl_re`, returning
+    {name: body}.  Bodies run to the NEXT declaration, not to the next match of
+    some narrower pattern -- slicing on `cmd*` alone gives the last command
+    handler a body that swallows the rest of the file, and every flag in it."""
+    decls = [(m.start(), m.group(name_group))
+             for m in re.finditer(decl_re, src, re.MULTILINE)]
+    bodies = {}
+    for i, (pos, name) in enumerate(decls):
+        end = decls[i + 1][0] if i + 1 < len(decls) else len(src)
+        bodies[name] = src[pos:end]
+    return bodies
+
+
+def _resolve_flags(bodies, fn, flag_patterns, call_re, seen=None):
+    """Flags read by `fn`, plus those read by any handler it delegates to.
+
+    The delegation step is not decoration: C reaches `threshold-verify`'s flags
+    only through `cmd_verify`, and Go's `cmdKex` splits into `cmdKexRnl` /
+    `cmdKexHybrid`.  Without it those flags read as absent from the language
+    that has them.
+
+    `call_re` matches any callee handed the subcommand's own argument container
+    -- `(argc, argv)`, `(args)`, `(opt, ...)` -- not only the `cmd*` handlers.
+    Restricting it to `cmd*` was wrong and TODO #269 proved it: factoring three
+    duplicated `--in` reads in the Java CLI into one `readMessage(opt, cmd)`
+    helper made `sign --in` read as ABSENT FROM JAVA, because the helper is not
+    a command handler.  A function given the parsed options is part of that
+    subcommand's flag surface however it is named."""
+    seen = set() if seen is None else seen
+    if fn in seen or fn not in bodies:
+        return set()
+    seen.add(fn)
+    body = bodies[fn]
+    flags = set()
+    for pattern in flag_patterns:
+        # finditer + every non-empty group: an accessor may name TWO flags in one
+        # call, as C's get_arg_multi2 / Go's multiValueFlags / Java's multiPaths do
+        # for the plural and singular spelling of a list flag (TODO #270).
+        for m in re.finditer(pattern, body):
+            flags.update("--" + g for g in m.groups() if g)
+    # finditer, not findall: `call_re` may carry alternatives, and findall on a
+    # multi-group pattern yields tuples with empty slots rather than names.
+    callees = {g for m in re.finditer(call_re, body) for g in m.groups() if g}
+    for callee in callees:
+        if callee != fn:
+            flags |= _resolve_flags(bodies, callee, flag_patterns, call_re, seen)
+    return flags
+
+
+def extract_flags_python(py_src):
+    """argparse: `xx = sub.add_parser('name')` then `xx.add_argument('--flag')`.
+
+    Mutually-exclusive groups (`fp_mode = fp.add_mutually_exclusive_group()`)
+    are followed, or `fpe`/`twk` would lose --encrypt/--decrypt."""
+    flags, var_sub = {}, {}
+    for line in py_src.splitlines():
+        m = re.match(r"\s*(\w+)\s*=\s*sub\.add_parser\('([a-z0-9\-]+)'", line)
+        if m:
+            var_sub[m.group(1)] = m.group(2)
+            flags.setdefault(m.group(2), set())
+            continue
+        m = re.match(r"\s*(\w+)\s*=\s*(\w+)\.add_mutually_exclusive_group", line)
+        if m and m.group(2) in var_sub:
+            var_sub[m.group(1)] = var_sub[m.group(2)]
+            continue
+        m = re.match(r"\s*(\w+)\.add_argument\('(--[a-z0-9\-]+)'", line)
+        if m and m.group(1) in var_sub:
+            flags[var_sub[m.group(1)]].add(m.group(2))
+    if not flags:
+        raise RuntimeError("extract_flags_python matched no sub.add_parser() calls "
+                           "in herradura.py -- the extractor is stale, not the CLI.")
+    return flags
+
+
+def extract_flags_c(c_src):
+    """C: `if (strcmp(cmd, "kex") == 0) { cmd_kex(argc, argv); ... }`, then
+    get_arg/has_flag/get_arg_multi(argc, argv, "--flag") inside the handler."""
+    src = _strip_c_comments(c_src)
+    dispatch = dict(re.findall(
+        r'strcmp\(cmd,\s*"([a-z0-9\-]+)"\)\s*==\s*0\)\s*\{\s*(cmd_[a-z_0-9]+)\(', src))
+    if not dispatch:
+        raise RuntimeError("extract_flags_c mapped no subcommands in herradura_cli.c "
+                           "-- the extractor is stale, not the CLI.")
+    bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
+    pat = [r'(?:get_arg|has_flag|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+           # get_arg_multi2(argc, argv, "<cmd>", "--plural", "--singular", ...) — TODO #270
+           r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
+            for sub, fn in dispatch.items()}
+
+
+def extract_flags_go(go_src):
+    """Go: `case "kex":` -> `cmdKex(rest)`, then a flag.FlagSet inside.
+    `fs.<Anything>("name", ...)` covers String/Bool/Int/Uint/Uint64 without
+    enumerating them -- fs.Parse/fs.Visit take no string literal first, so they
+    cannot match.  Repeatable flags go through stringFlags(args, "--commit")."""
+    src = _strip_c_comments(go_src)
+    dispatch = dict(re.findall(r'case\s+"([a-z0-9\-]+)":\s*\n\s*(cmd[A-Za-z0-9]+)\(', src))
+    if not dispatch:
+        raise RuntimeError("extract_flags_go mapped no subcommands in herradura_cli.go "
+                           "-- the extractor is stale, not the CLI.")
+    bodies = _decl_bodies(src, r'^func\s+(\w+)\s*\(')
+    pat = [r'\bfs\.\w+\(\s*"([a-z0-9\-]+)"',
+           r'stringFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"',
+           # multiValueFlags(args, "<cmd>", "--plural", "--singular") — TODO #270
+           r'multiValueFlags\(\s*\w+\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"',
+           # filterMultiFlags strips the same names before flag.Parse; naming them
+           # there too keeps the two lists from silently drifting apart.
+           r'filterMultiFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*args\b|\b(cmd[A-Za-z0-9]+)\(')
+            for sub, fn in dispatch.items()}
+
+
+def extract_flags_java(java_src):
+    """Java: `case "kex": cmdKex(opt);` where opt is the parsed Map, read via
+    opt.get/getOrDefault/containsKey("name") or req(opt, "name", "kex")."""
+    src = _strip_c_comments(java_src)
+    dispatch = dict(re.findall(r'case\s+"([a-z0-9\-]+)":\s*(cmd[A-Za-z0-9]+)\(', src))
+    if not dispatch:
+        raise RuntimeError("extract_flags_java mapped no subcommands in "
+                           "HerraduraCli.java -- the extractor is stale, not the CLI.")
+    bodies = _decl_bodies(
+        src, r'^    (?:private|public|protected)\s+static\s+[\w<>,\[\] ]+?\s(\w+)\s*\(')
+    pat = [r'\bopt\.(?:get|getOrDefault|containsKey)\(\s*"([a-z0-9\-]+)"',
+           r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+           # multiPaths(opt, "<cmd>", "plural", "singular") — TODO #270.  No "--"
+           # here: Java's option map is keyed without the dashes.
+           r'multiPaths\(\s*opt\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"([a-z0-9\-]+)"\s*,\s*"([a-z0-9\-]+)"']
+    return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*opt\b')
+            for sub, fn in dispatch.items()}
+
+
 def extract_const_int(src, name):
     """Grep a `#define NAME <expr>  /* comment */` (C) or `Name = <expr>  // comment`
     (Go) constant, stripping trailing line comments before capturing the expression.
@@ -759,6 +916,198 @@ CROSS_IMPL_GAPS_CURATED = [
 ]
 
 
+# TODO #267: the ACKNOWLEDGED half of the flag matrix.
+#
+# The matrix itself is derived; this table is the part that cannot be -- WHY a
+# language does not implement a flag.  #267's finding was not that gaps exist
+# but that neither answer ("capability parity" or "deliberate scope") was
+# written anywhere a check could read, so a scope note recorded once in a TODO
+# (#166's "Scoped to the Python CLI only") became invisible the moment that item
+# was archived.
+#
+# Keyed by (subcommand, flag) -> (languages that HAVE it, reason).  Both
+# directions are validated in build_cli_surface_gaps, which is what keeps this
+# from becoming the stale curated table TODO #238 deleted: a derived gap with no
+# entry here is an error, an entry here matching no derived gap is an error, and
+# an entry whose language set no longer matches what the parsers say is an error
+# naming both sets.  So porting a flag fails the check until the entry is
+# dropped, and deleting one fails it until the entry is too.
+#
+# STATUS VOCABULARY.  "acknowledged" is a deliberate per-language scope decision.
+# "defect" is a gap this table does NOT bless -- it is recorded so it is visible
+# and counted, and it names the follow-up.  #267 closes on the mechanism, not on
+# the ports, so a defect row is an expected state here, not a failing one.
+CLI_FLAG_PARITY = {
+    # ── TODO #166's envelope, Python-only since v1.9.134 ──────────────────
+    ("genpkey", "--passphrase"): (
+        ("python",), "defect",
+        "Passphrase-encrypted private-key PEM export (TODO #166) exists only in the "
+        "Python CLI, so a key exported this way is unreadable by three of the four. "
+        "#166 scoped it to Python deliberately, matching its own Low priority, and "
+        "that note was the only record until TODO #267. Porting is not thin: it "
+        "needs PBKDF2-HFSCX-256 (hence hmac_hfscx_256 in Java, which TODO #261's "
+        "manifest already carries as acknowledged), the HERRADURA ENCRYPTED PRIVATE "
+        "KEY envelope, and a fail-closed read path in every subcommand that loads a "
+        "key. Filed as a defect, not blessed scope, because it makes an artifact "
+        "one CLI writes unreadable to the others."),
+    ("genpkey", "--kdf-iterations"): (
+        ("python",), "defect",
+        "The PBKDF2 iteration count for --passphrase's envelope; it has no meaning "
+        "without that flag and moves with it."),
+    ("pkey", "--passphrase"): (
+        ("python",), "defect",
+        "The read side of --passphrase's envelope; moves with genpkey --passphrase."),
+    ("pkey", "--decrypt"): (
+        ("python",), "defect",
+        "Selects the passphrase-decrypting read path; moves with pkey --passphrase."),
+
+    # ── Java's four missing flags ─────────────────────────────────────────
+    ("enc", "--aead"): (
+        ("c", "go", "python"), "defect",
+        "HSKE-NL-AEAD encryption. HerraduraCli.java's class doc already states this "
+        "gap -- in a Javadoc sentence, which is a comment and not a record any check "
+        "reads, which is precisely TODO #267's complaint. CliTest/test_aead.sh's "
+        "9-way interop covers the other three only."),
+    ("kex", "--kdf"): (
+        ("c", "go", "python"), "defect",
+        "Session-key derivation selection. The VALUE sets also differ where the flag "
+        "does exist -- Python accepts hfscx-256 and sp800227 (TODO #165), C and Go "
+        "hfscx-256 only -- and this matrix is at flag granularity, so that second "
+        "axis is recorded here rather than derived. Cheaper to port than "
+        "--passphrase and should be judged separately from it (TODO #267)."),
+    ("genpkey", "--bits"): (
+        ("go", "java", "python"), "acknowledged",
+        "A runtime key-width selector. The C CLI is compiled for a single KEYBITS "
+        "and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C "
+        "CLI -- so there is no runtime width for the flag to set. Porting it would "
+        "mean making the C suite width-parametric, which is a far larger change than "
+        "an argument parser."),
+    ("pake-register", "--username"): (
+        ("java", "python"), "acknowledged",
+        "aPAKE client identifier. It is stored in the record dict for lookup and is "
+        "NOT cryptographically bound: hpake_register derives salt, B and y from the "
+        "password and the OPRF key alone, and the HERRADURA PAKE RECORD PEM carries "
+        "(salt, B, y) with no username field. So C and Go omitting the flag costs no "
+        "interoperability -- their records are byte-comparable with Python's."),
+    ("pake-demo", "--username"): (
+        ("java", "python"), "acknowledged",
+        "The login side of pake-register --username; unbound for the same reason."),
+    ("cred-verify", "--rounds"): (
+        ("c", "go"), "acknowledged",
+        "An EXTRA flag rather than a missing one: C and Go let the caller override "
+        "the round count a proof declares, defaulting to the proof's own. Python and "
+        "Java always use the proof's. The round count travels in the PEM (TODO #236), "
+        "so the default is identical in all four and the flag only widens what C and "
+        "Go will attempt; it cannot make them accept a proof the others reject."),
+
+}
+
+# The same table one level up: a SUBCOMMAND present in some CLIs and not others.
+# `cli_subcommands` above is keyed on the Python CLI's subparser list, so a
+# subcommand only another CLI defines was structurally invisible to this spec.
+#
+# `rand` was the other entry here until TODO #269 ported it to Java (v6.3.0),
+# which is the intended life-cycle of a `defect` row: it is deleted by closing the
+# gap, and generation FAILS until it is.
+CLI_SUBCOMMAND_PARITY = {
+    "threshold-verify": (
+        ("go",), "acknowledged",
+        "An EXTRA subcommand rather than a missing one. All four verify a threshold "
+        "signature; they differ in how it is reached. Python and Java route it through "
+        "`verify --algo hpks-t`, C dispatches `verify` and delegates internally to "
+        "cmd_threshold_verify, and Go additionally exposes it as its own top-level "
+        "subcommand. Same operation, same PEM, one extra entry point."),
+}
+
+VALID_PARITY_STATUS = ("acknowledged", "defect")
+
+
+def build_cli_surface_gaps(flag_matrix, subcommand_impls):
+    """Every non-unanimous cell of the CLI flag/subcommand surface, derived, each
+    joined to its curated reason -- and the four ways that join can fail.
+
+    A gap with no curated entry raises: that is the check.  Adding a flag to one
+    CLI and not the others fails `--check` with the flag named, and the only ways
+    to make it pass are to port it or to write down why not.
+    """
+    langs = ("c", "go", "java", "python")
+    gaps, used_flag, used_sub = [], set(), set()
+
+    for sub in sorted(subcommand_impls):
+        present = tuple(sorted(l for l in langs if l in subcommand_impls[sub]))
+        if len(present) == len(langs):
+            continue
+        entry = CLI_SUBCOMMAND_PARITY.get(sub)
+        if entry is None:
+            raise RuntimeError(
+                f"CLI subcommand {sub!r} is defined by {list(present)} but not by "
+                f"{[l for l in langs if l not in present]}, and generate_spec.py's "
+                f"CLI_SUBCOMMAND_PARITY does not account for it. Port it, or record "
+                f"why it is scoped to those CLIs (TODO #267).")
+        expected, status, reason = entry
+        used_sub.add(sub)
+        if tuple(sorted(expected)) != present:
+            raise RuntimeError(
+                f"CLI_SUBCOMMAND_PARITY[{sub!r}] says {sorted(expected)} implement it, "
+                f"but the CLIs' own dispatch says {list(present)}. Update the entry "
+                f"(or drop it if the gap is closed) -- an acknowledgement that no "
+                f"longer describes the code is the drift TODO #267 exists to catch.")
+        if status not in VALID_PARITY_STATUS:
+            raise RuntimeError(f"CLI_SUBCOMMAND_PARITY[{sub!r}] has unknown status {status!r}.")
+        gaps.append({"kind": "subcommand", "subcommand": sub, "flag": None,
+                     "present_in": list(present),
+                     "missing_from": [l for l in langs if l not in present],
+                     "status": status, "reason": reason})
+
+    for sub in sorted(flag_matrix):
+        for flag in sorted(flag_matrix[sub]):
+            cells = flag_matrix[sub][flag]
+            present = tuple(sorted(l for l in langs if cells[l]))
+            # A flag can only be missing from a CLI that has the subcommand at all;
+            # `rand`'s seven flags are absent from Java because `rand` is, and
+            # reporting them again would be the same gap counted eight times.
+            scope = tuple(sorted(l for l in langs if l in subcommand_impls[sub]))
+            if present == scope:
+                continue
+            entry = CLI_FLAG_PARITY.get((sub, flag))
+            if entry is None:
+                raise RuntimeError(
+                    f"CLI flag `{sub} {flag}` is implemented by {list(present)} but not "
+                    f"by {[l for l in scope if l not in present]}, and "
+                    f"generate_spec.py's CLI_FLAG_PARITY does not account for it. Port "
+                    f"it, or record why it is scoped to those CLIs (TODO #267).")
+            expected, status, reason = entry
+            used_flag.add((sub, flag))
+            if tuple(sorted(expected)) != present:
+                raise RuntimeError(
+                    f"CLI_FLAG_PARITY[({sub!r}, {flag!r})] says {sorted(expected)} "
+                    f"implement it, but the CLIs' own argument parsers say "
+                    f"{list(present)}. Update the entry (or drop it if the gap is "
+                    f"closed).")
+            if status not in VALID_PARITY_STATUS:
+                raise RuntimeError(
+                    f"CLI_FLAG_PARITY[({sub!r}, {flag!r})] has unknown status {status!r}.")
+            gaps.append({"kind": "flag", "subcommand": sub, "flag": flag,
+                         "present_in": list(present),
+                         "missing_from": [l for l in scope if l not in present],
+                         "status": status, "reason": reason})
+
+    # The anchor-lost direction, the half TODO #238's deleted CLI_SUPPORT table
+    # never had: an acknowledgement whose gap is gone must be removed, or the
+    # next reader inherits a reason for something that is no longer true.
+    orphan_flags = sorted(set(CLI_FLAG_PARITY) - used_flag)
+    if orphan_flags:
+        raise RuntimeError(
+            f"CLI_FLAG_PARITY entries matching no derived gap: {orphan_flags}. The flag "
+            f"is now at parity (or was renamed/removed) -- delete the entry.")
+    orphan_subs = sorted(set(CLI_SUBCOMMAND_PARITY) - used_sub)
+    if orphan_subs:
+        raise RuntimeError(
+            f"CLI_SUBCOMMAND_PARITY entries matching no derived gap: {orphan_subs}. "
+            f"Delete the entry.")
+    return gaps
+
+
 def build_cross_impl_gaps(cli_support):
     """Any tag not dispatched by all four CLIs, derived rather than curated.
 
@@ -982,6 +1331,28 @@ def generate():
                           "python": True, "java": tag in java_tags}
                     for tag in sorted(known_tags)}
 
+    # TODO #267: the same treatment one level down -- the per-subcommand FLAG
+    # matrix, derived from each CLI's own argument parser exactly as cli_support
+    # is derived from each CLI's own dispatch.
+    flags_by_lang = {
+        "python": extract_flags_python(py_src),
+        "c":      extract_flags_c(read(CLI_C)),
+        "go":     extract_flags_go(read(CLI_GO)),
+        "java":   extract_flags_java(read(CLI_JAVA)),
+    }
+    langs = ("c", "go", "java", "python")
+    # The union, not Python's list: `threshold-verify` is a Go-only subcommand
+    # and was invisible to a spec keyed on the Python CLI's subparsers.
+    all_subcommands = sorted(set().union(*(set(d) for d in flags_by_lang.values())))
+    subcommand_impls = {sub: sorted(l for l in langs if sub in flags_by_lang[l])
+                        for sub in all_subcommands}
+    flag_matrix = {}
+    for sub in all_subcommands:
+        every_flag = sorted(set().union(*(flags_by_lang[l].get(sub, set()) for l in langs)))
+        flag_matrix[sub] = {f: {l: f in flags_by_lang[l].get(sub, set()) for l in langs}
+                            for f in every_flag}
+    cli_surface_gaps = build_cli_surface_gaps(flag_matrix, subcommand_impls)
+
     # tag lists per --algo subcommand, needed both for cli_binding and below.
     # genpkey's choices is `list(_PRIV_ALGOS) + ['hcred']`, so hcred is a real
     # --algo tag there even though it is not in _PRIV_ALGOS; without it hcred's
@@ -1008,17 +1379,20 @@ def generate():
     for subcmd in subcommands:
         if subcmd in algo_subcommand_tags:
             cli_subcommands[subcmd] = {
+                "implementations": subcommand_impls[subcmd],
                 "has_algo_flag": True,
                 "algos": {tag: sorted([impl for impl, ok in cli_support.get(tag, {}).items() if ok])
                           for tag in algo_subcommand_tags[subcmd]},
             }
         elif subcmd in SUBCOMMAND_PROTOCOLS:
             cli_subcommands[subcmd] = {
+                "implementations": subcommand_impls[subcmd],
                 "has_algo_flag": False,
                 "protocol": SUBCOMMAND_PROTOCOLS[subcmd],
             }
         else:
             cli_subcommands[subcmd] = {
+                "implementations": subcommand_impls[subcmd],
                 "has_algo_flag": False,
                 "protocol": None,
                 "unfiled_reason": UNFILED_CLI_SURFACE[subcmd],
@@ -1032,11 +1406,14 @@ def generate():
             "HerraduraCli/herradura_codec.h (PEM_* constants)",
             "herradura.h (protocol parameter #define constants)",
             "herradura/herradura.go (Stern-F parameter const block)",
+            "each CLI's own argument parser (per-subcommand --flag matrix, TODO #267)",
         ],
         "protocols": protocols,
         "wire_format_labels": dict(sorted(wire_labels.items())),
         "cli_subcommands": cli_subcommands,
         "cross_implementation_gaps": build_cross_impl_gaps(cli_support),
+        "cli_flag_matrix": flag_matrix,
+        "cli_surface_gaps": cli_surface_gaps,
         "unfiled_cli_surface": [
             {"subcommand": sc, "reason": UNFILED_CLI_SURFACE[sc]}
             for sc in subcommands if sc in UNFILED_CLI_SURFACE

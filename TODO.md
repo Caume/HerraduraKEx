@@ -124,48 +124,191 @@ no rating in either direction, and is filed as an outstanding proof obligation b
 figures already published, not as a gate on anything.
 
 Status: **OPEN**
+### #268: port the passphrase-encrypted private-key envelope to C, Go and Java
 
+**Made visible by TODO #267's flag matrix**, where it is `spec/`'s largest single
+`defect` cluster: `genpkey --passphrase`, `genpkey --kdf-iterations`,
+`pkey --passphrase` and `pkey --decrypt` are all Python-only, so a key exported this
+way is unreadable by three of the four CLIs.  TODO #166 (v1.9.134) scoped it to Python
+deliberately, matching its own Low priority; that was a reasonable call then and the
+note lived only in #166's text, which is the drift #267 exists to catch.
 
-### #267: the CLI FLAG surface is not at four-way parity, and nothing checks it
+**Not a thin port.**  It needs PBKDF2-HFSCX-256, which needs `hmac_hfscx_256` in Java
+first — TODO #261's primitive manifest already carries that as `acknowledged` for
+exactly this reason, so closing this closes both the missing primitive and the missing
+flag.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
+in every subcommand that loads a key: an encrypted key reaching a build that does not
+understand the envelope must be refused, never mis-parsed.
 
-**Found by TODO #261's closing census (v6.1.0), and deliberately not absorbed into it.**
-#261's CLI-surface half was declared met at v6.0.0 on a specific basis: all 29 `--algo`
-tags dispatch in all four CLIs, and `spec/`'s `cli_support` column is derived from each
-CLI's own dispatch source rather than curated.  That claim is true and stays true.  It
-is also narrower than "the CLI surface": a subcommand's FLAGS are capability too, and
-they are not at parity.
+**Acceptance.**  All four CLIs write and read the envelope, cross-checked in
+`CliTest/` as a 4x4 matrix (writer x reader) rather than each against Python — the
+shape `test_zkp_hybrid_family.sh` adopted after #261 found a pair that had never
+interoperated because every test compared to Python.  A KAT/pem/ artifact pins the
+envelope's bytes.  On success the four `defect` rows and #261's `hmac-hfscx-256`
+acknowledgement are deleted, and `generate_spec.py --check` FAILS until they are —
+that is the anchor-lost direction working as designed.
 
-**Confirmed asymmetries.**
+Status: **OPEN**
 
-* `genpkey --passphrase` / `pkey --decrypt` — passphrase-encrypted private-key PEM
-  export (TODO #166, v1.9.134) — exists **only in the Python CLI**.  The C, Go and Java
-  CLIs have no `--passphrase` anywhere, so a key exported this way is unreadable by
-  three of the four.  #166 recorded this ("Scoped to the Python CLI only, matching this
-  item's own Low priority"), which was a reasonable call for #166 and is exactly the
-  kind of recorded-then-forgotten scope note #261 exists to keep visible.
-* `--kdf` differs across all four: Python has `hfscx-256` and `sp800227` (TODO #165),
-  C and Go have `hfscx-256` only, Java has none.
-* `--aead` is absent from the Java CLI, and `HerraduraCli.java`'s class doc says so —
-  in a Javadoc sentence, which is a comment, not a record any check reads.
+### #269: the Java CLI's five missing flag/subcommand capabilities
 
-**The primitive-level shadow of this, already filed.**  #261's manifest carries
-`hmac-hfscx-256` as `acknowledged` because Java lacks it; its only consumer is the
-Python CLI's PBKDF2 for #166's envelopes.  So the missing primitive and the missing flag
-are one gap seen from two layers, and closing the flag closes both.
+**Made visible by TODO #267's flag matrix.**  Originally filed as "much cheaper than
+#268 — the primitives are already in `bindings/java/`; what is missing is the CLI
+wiring."  **That premise was half wrong, and finding out which half is the main result
+of the first pass.**
 
-**What this item has to decide, before any porting.**  Whether these flags are
-capability parity or deliberate per-language scope.  Both answers are legitimate and the
-repo already uses both -- but neither is currently WRITTEN anywhere a check can read,
-which is the actual defect.  The minimum acceptable outcome is therefore a mechanism,
-not three ports: `spec/` should carry the per-CLI flag matrix the way it carries
-`cli_support` for `--algo`, derived from each CLI's own argument parser, with an
-explicit ACKNOWLEDGED cell (and reason) wherever a language deliberately does not
-implement one.  Porting `--passphrase` to the other three is then a separate decision
-the matrix makes visible rather than a precondition for closing this.
+**`--digest` — DONE in v6.2.0.**  The correctness one, and it is fixed.  Java's
+`cmdSign`/`cmdVerify`/`cmdThresholdAggregate` now apply the `hfscx-256` pre-hash at
+READ time through one `readMessage(opt, cmd)` helper, which is where Python and Go
+apply it and where C applies it in each of its three early-returning branches.
+`CliTest/test_digest_matrix.sh` is the guard, claimed by `cross-lang-compat`: a 4x4
+signer x verifier matrix on `hpks` and `hpks-nl` plus a rotated `threshold-aggregate`,
+over a 768-byte message (24x the 32-byte key width, so raw and pre-hashed actually
+differ).  It caught 39 failures against the pre-fix build and 0 after.
 
-**Cost note for whoever picks it up.**  `--passphrase` is not a thin port: it needs
-PBKDF2-HFSCX-256 (so `hmac_hfscx_256` in Java first), the `HERRADURA ENCRYPTED PRIVATE
-KEY` envelope, and the fail-closed read path in every subcommand that loads a key.
-`--kdf sp800227` is much smaller.  They should be judged separately.
+Two things worth keeping from how it had to be written.  (1) **The negative control is
+what earns the file**, not the matrix: a CLI that parsed `--digest` and ignored it
+would pass every positive cell, which is precisely how Java passed every existing
+signature test, so each pair is also asserted to FAIL across the flag.  (2) It could
+only ever have been caught cross-language — every signature test in the repo signs and
+verifies within one language or compares PEM bytes, and a raw-message signature and a
+digest signature are byte-identical in shape.
+
+It also forced a fix to #267's own extractor: the call-graph followed only `cmd*`
+handlers, so factoring three duplicated `--in` reads into `readMessage` made `sign --in`
+read as ABSENT FROM JAVA.  It now follows any callee handed the subcommand's argument
+container.  Verified to change no other cell of the matrix.
+
+**`enc --aead` — RE-SCOPED, and it does not belong in this item.**  It is not CLI
+wiring: `bindings/java/` has no AEAD primitive at all.  TODO #261's manifest already
+records this, carrying `hske-nl-aead-xor-ks`, `hske-nl-aead-tag` and
+`hske-nl-aead-streams` as `acknowledged` for Java.  So `--aead` is a primitive port
+plus a codec change (format tag 2 carries a nonce and an auth tag) plus the CLI, which
+puts it in #268's cost class, not this one.  **It should be re-filed as its own item**
+alongside #268 rather than closed here; leaving it in #269 is what made this item look
+cheap.
+
+**`rand` — DONE in v6.3.0.**  It was pure CLI wiring as predicted, plus two small
+additions the port needed: `Hdrbg.resume(state, blocks)` (the read side of the
+existing `stateValue()`/`blocksGenerated()` pair -- `blocks` is CARRIED, not reset,
+or a resume would silently hand back a generator with no DRBG_MAX_BLOCKS accounting)
+and `Codec.encodeHdrbgState`/`decodeHdrbgState`.  Verified bit-exact against the
+other three: identical streams with and without `--personalization`, all 16
+writer x reader checkpoint-resume pairs, and byte-identical HDRBG STATE PEMs from
+all four writers.
+
+`CliTest/test_rand.sh` went from three languages to four rather than gaining a
+parallel script -- `native-interop` already builds all four, so no CI change was
+needed.  Two assertions were added that it did not have: that every writer's STATE
+PEM is byte-identical (it only checked that each RESUMES, which a writer using a
+different DER width for `blocks` would also pass), and that the three error paths
+report the same message in every language.
+
+**That last one found a real Go bug, fixed here.**  Go used `-1` as its "not given"
+sentinel for `--bytes`, so `rand --bytes -1` was indistinguishable from omitting the
+flag and reported `nothing to do` where the other three report
+`--bytes must be non-negative`.  Fixed with the file's own `isSet` helper.  It is a
+wrong-but-plausible diagnostic, which is precisely the class nobody notices by hand,
+and it had never been asserted in any language.
+
+**`kex --kdf` — pure wiring for `hfscx-256`, but DO NOT PORT IT WITHOUT READING THIS.**
+The port itself is a post-hash of the session-key bytes and Java has `Hfscx256.hash`.
+The trap is what porting it DESTROYS: `--kdf`'s value sets differ (Python takes
+`none`/`hfscx-256`/`sp800227` per TODO #165; C and Go take `none`/`hfscx-256`), and
+#267's matrix is at FLAG granularity, so the only record of that value-level
+divergence anywhere is the `reason` on the `kex --kdf` gap.  Giving Java the flag puts
+`--kdf` at flag parity, which DELETES that gap row and with it the only written record
+of the `sp800227` asymmetry.  That is #267's "anchor lost" failure reproduced one level
+down, at the granularity its own matrix deliberately does not reach.
+
+So the order is forced: **record the value-level axis first, port `--kdf` second.**
+The cheapest honest form is a curated value-set table in `generate_spec.py`
+alongside `CLI_FLAG_PARITY`, validated the same way in both directions.  Deriving
+enumerated values mechanically is possible for Python (argparse `choices=`) but not
+reliably for C/Go/Java, where the accepted set is a chain of string comparisons -- so a
+derived-Python / curated-other-three split, with the Python side self-invalidating, is
+probably the right shape.
+
+**Remaining acceptance.**  `rand` and `--kdf` each delete their `CLI_FLAG_PARITY` /
+`CLI_SUBCOMMAND_PARITY` entry, and `--check` fails until they do.  `--aead` moves to
+its own item.
+
+Status: **OPEN**
+### #271: the HPKST AGGREGATE PEM's trailing `n` is DER-encoded at two different widths
+
+**Found while verifying TODO #270** by comparing aggregate PEMs byte-for-byte across
+CLIs -- something no test had done, because every threshold test checks that the
+artifacts INTEROPERATE and none checks that they are IDENTICAL.
+
+For the same commitments and message, Python and Java emit the final `n` field as a
+4-byte DER INTEGER (`02 04 00 00 01 00`) while C and Go emit the minimal 2-byte form
+(`02 02 01 00`). Both decode to 256, every CLI accepts either, and the whole 4x4
+threshold matrix passes -- so this is a wire-format inconsistency with no functional
+symptom today.
+
+**It predates #270** (confirmed by rebuilding the pre-change C and Python CLIs and
+re-comparing), and #270 did not touch it.
+
+**Why it is worth an item.** `spec/` treats PEM bytes as a contract -- `KAT/pem/`
+exists precisely to pin them, and TODO #240's malformed-PEM matrix rests on the four
+CLIs agreeing about field widths. A field whose width depends on which CLI wrote it
+is a latent difference in any byte-comparison, and the fix direction is not obvious:
+
+1. **Converge on minimal width** (C/Go's form) -- matches DER's own canonical
+   encoding rules and shortens the artifact, but changes the bytes Python and Java
+   have been emitting since the subcommand shipped.
+2. **Converge on fixed width** (Python/Java's form) -- changes C and Go instead.
+3. **Leave it, and document that this field's width is not pinned** -- honest, but it
+   means `KAT/pem/` can never gain an aggregate vector.
+
+Either convergence changes bytes on the wire for two of the four CLIs. Since every
+reader accepts both, no stored artifact becomes unreadable, so this is very likely a
+`MIGRATING.md` note rather than a MAJOR bump -- but that call belongs to whoever
+takes it.
+
+**First step for whoever does:** audit the OTHER multi-CLI PEMs the same way. This was
+found by accident on one field of one label; nothing has ever compared the rest
+byte-for-byte across all four writers, and `test_rand.sh` gained exactly that check
+for `HDRBG STATE` in v6.3.0 (where all four already agreed).
+
+Status: **OPEN**
+
+### #272: the C CLI's 64-value list-flag limit is arbitrary, undocumented, and unmatched
+
+**Found while verifying TODO #270**, by driving `threshold-aggregate` with 70
+commitments in each CLI and comparing each one's result against its own 64-signer
+result.
+
+C collects `--commits`/`--commit` and `--partials`/`--partial` values into a fixed
+64-entry array. Until v6.4.0 it stopped filling that array **silently and returned
+success**, so a ceremony with more than 64 signers produced an aggregate over the
+first 64 in C while Python, Go and Java used every one — the same command line
+yielding a different signature depending on which CLI aggregated it, with no
+diagnostic anywhere. Pre-existing (verified against a rebuilt pre-#270 binary) and
+invisible to every test, because nothing had ever run a ceremony larger than a handful
+of signers.
+
+**v6.4.0 made it fail loudly** (`--commits: at most 64 values supported`), asserted in
+`CliTest/test_threshold_interop.sh` along with the boundary case. **That is the
+containment, not the fix**, and this item is the fix.
+
+**The open question is what the limit should be.** The three facts that shape it:
+
+* Python, Go and Java impose no limit at all, so 64 is not a protocol constant — it is
+  one implementation's buffer size, and nothing in `spec/` or `SPEC.md` mentions it.
+* HPKS-T is an n-of-n scheme, so the signer count is a deployment choice, not a
+  parameter. There is no principled ceiling to point at.
+* C's arrays are stack-allocated in three call sites plus `get_arg_multi2`'s two
+  scratch buffers, so raising the number naively raises stack usage in all of them.
+
+Options: heap-allocate and drop the limit (matching the other three, at the cost of C's
+current allocation-free argument parsing); raise it to a documented constant and put
+that constant in `spec/`; or declare 64 a deliberate protocol-wide maximum and enforce
+it in all four, which is the only option that makes the CLIs agree rather than merely
+making C honest.
+
+**Worth checking at the same time:** whether any other C list-flag or fixed-size
+argument buffer truncates the same way. `get_arg_multi` was the one this surfaced
+through; nothing has audited the rest.
 
 Status: **OPEN**

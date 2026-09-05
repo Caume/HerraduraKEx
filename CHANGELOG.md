@@ -2,6 +2,252 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.4.0] - 2026-09-05
+
+### TODO #270 (DONE) — one capability, two spellings, now accepted by all four CLIs
+
+The threshold list flags had two names for the same thing: `--commits a b` in Python and
+Java, `--commit a --commit b` in C and Go, and `--partials`/`--partial` likewise. All
+four implemented threshold signing and emitted interoperable PEMs, so every parity check
+before TODO #267's flag matrix passed — a documented command line simply did not port
+between CLIs. `CliTest/test_threshold_interop.sh` is the evidence: its helpers still
+carry one branch per shape, which is what the split cost every caller.
+
+All four now accept **both names with both syntaxes** — `--commits a b`,
+`--commit a --commit b`, `--commits a --commits b` and `--commit a b` are equivalent.
+Additive, so MINOR and no `MIGRATING.md` entry. Python takes `action='append',
+nargs='+'` on both names and flattens; C grew `get_arg_multi2` and `get_arg_multi` now
+consumes every following non-`--` token; Go grew `multiValueFlags` and
+`filterMultiFlags` became variadic (it must strip *both* names or `flag.Parse` chokes on
+the one it was not told about); Java's `parseOpts` now *accumulates* repeated
+occurrences rather than overwriting — scoped to a declared `REPEATABLE` set, since
+making every flag accumulate would turn a typo like `--out x --out y` into the filename
+`x y` instead of last-wins.
+
+**Mixing the two names is refused**, in all four and with the same message. The list
+order is consensus-critical — `threshold-respond` must see the order
+`threshold-aggregate` did — so there is no defensible interleaving, and silently
+choosing one would produce a wrong signature rather than an error.
+
+**A second divergence was found and fixed on the way**: the missing-flag diagnostic
+differed, C and Go saying `at least one --commit required` where Python said
+`--commits (or --commit) is required`. Same wrong-but-plausible class as the Go
+`rand --bytes -1` bug TODO #269 found, and likewise never asserted anywhere. One message
+now, asserted per CLI.
+
+Twelve new assertions in `test_threshold_interop.sh`: every CLI x every syntax must
+produce the *same* aggregate, mixing must be refused, and the diagnostic must match.
+Each CLI is deliberately driven with the spelling it historically did **not** accept,
+since that is the only way to catch a regression that removes one of the two.
+
+**The option list in #270's own text was wrong on one point.** It said accepting both
+spellings would leave four `defect` rows to be re-stated as `acknowledged`. It leaves
+none: there were six rows, not four, and full parity *deletes* them. The generator
+proved it — after the ports it refused to emit a spec until all six acknowledgements
+were removed, naming each. `cli_surface_gaps` is now 11 rows: 6 defect, 5 acknowledged,
+down from 21 at v6.1.1.
+
+This also required teaching #267's extractor three new accessors (`get_arg_multi2`,
+`multiValueFlags`, `multiPaths`), and `_resolve_flags` now reads every non-empty capture
+group because one accessor names two flags. That is the standing maintenance cost of a
+derived matrix, and it is now written into CLAUDE.md: a new way to *read* a flag must be
+taught to the extractor, or its flags read as absent.
+
+**New: TODO #272 — a silent wrong-signature path, found and contained here.** Driving
+`threshold-aggregate` with 70 commitments and comparing each CLI against its own
+64-signer result shows C collects list-flag values into a fixed 64-entry array and used
+to stop filling it *silently, returning success*: a ceremony with more than 64 signers
+produced an aggregate over the first 64 in C while Python, Go and Java used every one,
+so the same command line gave a different signature depending on which CLI aggregated
+it. Pre-existing (verified against a rebuilt pre-#270 binary) and invisible to every
+test, since nothing had run a ceremony larger than a handful of signers. C now **refuses
+rather than truncates**, asserted along with the boundary case; the limit itself — 64 is
+one implementation's buffer size, not a protocol constant, and the other three impose
+none — is TODO #272.
+
+**New: TODO #271**, filed from a second discrepancy this work surfaced. Comparing aggregate
+PEMs byte-for-byte across CLIs — which no test had done, since every threshold test
+checks that artifacts interoperate and none checks that they are identical — shows
+Python and Java encode the trailing `n` field as a 4-byte DER INTEGER where C and Go use
+the minimal 2-byte form. Both decode to 256 and every CLI accepts either, so there is no
+functional symptom; it predates #270 (verified against rebuilt pre-change binaries) and
+is left alone here.
+
+## [6.3.0] - 2026-09-04
+
+### TODO #269 (second pass) — `rand` ported to the Java CLI, and a Go diagnostic bug found doing it
+
+The Java CLI shipped `Hdrbg.java` complete and no `rand` subcommand at all, so this
+was a CLI-surface gap rather than a missing construction — the shape TODO #267's flag
+matrix exists to surface, and the reason its subcommand rows are checked separately
+from TODO #261's primitive manifest, which passed here all along because the
+*primitive* was present.
+
+`cmdRand` follows the other three exactly, including both ways to do nothing
+(`--seed` or `--state` required; `--bytes` or `--reseed` required) and the trailing
+newline on hex output to a file as well as to stdout. Two small additions were needed:
+`Hdrbg.resume(state, blocks)`, the read side of the existing
+`stateValue()`/`blocksGenerated()` pair — `blocks` is *carried*, not reset, or a
+resume would silently return a generator with no `DRBG_MAX_BLOCKS` accounting — and
+`Codec.encodeHdrbgState`/`decodeHdrbgState` for the `HERRADURA HDRBG STATE` PEM, whose
+fixed 32-byte `state` and minimal-width `blocks` INTEGER widths are wire format, not a
+formatting choice.
+
+Verified bit-exact against the other three: identical streams with and without
+`--personalization`, all 16 writer x reader checkpoint-resume pairs, and
+byte-identical STATE PEMs from all four writers.
+
+**`CliTest/test_rand.sh` went from three languages to four** rather than gaining a
+parallel script — `native-interop` already builds all four, so CI needed no change. It
+also gained two assertions it never had. First, that every writer's STATE PEM is
+*byte-identical*: it previously checked only that each checkpoint RESUMES elsewhere,
+which a writer encoding `blocks` at a different DER width would also pass while
+emitting a different file. Second, that the three error paths report the same message
+in every language.
+
+**That second assertion found a real Go bug.** Go used `-1` as its "not given"
+sentinel for `--bytes`, so `rand --bytes -1` was indistinguishable from omitting the
+flag entirely and reported `nothing to do` where Python, C and Java all report
+`--bytes must be non-negative`. Fixed using the file's own existing `isSet` helper.
+A wrong-but-plausible diagnostic is exactly the class nobody notices by hand, and it
+had never been asserted in any language. Confirmed the new test fails against the
+unfixed build.
+
+`rand`'s row is gone from `CLI_SUBCOMMAND_PARITY`, and the generator refused to emit a
+spec until it was — the second time in three releases that the anchor-lost direction
+has done its job. `cli_surface_gaps` is now 17 rows: 12 defect, 5 acknowledged.
+
+**#269 stays open** with `enc --aead` (re-scoped in v6.2.0 as a primitive port, not
+wiring) and `kex --kdf` (blocked on recording the value-level axis first, or porting it
+deletes the only record of the `sp800227` divergence) remaining.
+
+## [6.2.0] - 2026-09-04
+
+### TODO #269 (first pass) — the Java CLI gets `--digest`, and it was a correctness gap
+
+TODO #267's flag matrix, one release old, produced its first fix. Java's CLI had no
+`--digest` at all while the other three have taken `--digest hfscx-256` since well
+before it. That was not a convenience gap: every signature path in the suite
+pads-or-**truncates** the message to the key width (32 bytes at n=256), which is
+exactly why `--digest` exists — so for any message longer than that, the other three
+CLIs had a correct way to sign it and Java had none, and a Java verifier rejected
+signatures the other three considered valid, silently, with a well-formed PEM on both
+sides.
+
+`cmdSign`, `cmdVerify` and `cmdThresholdAggregate` now read the message through one
+`readMessage(opt, cmd)` helper that applies the pre-hash at read time — where Python
+and Go apply it, and where C applies it in each of its three early-returning branches,
+so the pre-hash reaches every `--algo` rather than only the branches that remembered
+it. An unrecognised `--digest` is rejected, matching Python's argparse `choices`; C and
+Go ignore what they do not recognise, so a misspelled `--digest hfscx256` there signs
+the raw message with no diagnostic. That is a fail-open on a security-relevant flag and
+was not worth copying — the new test asserts strictness only where it holds and names
+the two CLIs where it does not.
+
+**`CliTest/test_digest_matrix.sh`** (claimed by `cross-lang-compat`) is the guard: a 4x4
+signer x verifier matrix on `hpks` and `hpks-nl`, plus `threshold-aggregate` with the
+aggregator rotated, over a 768-byte message. It reports 162 PASS / 0 FAIL now and
+**39 failures against the pre-fix build**.
+
+Two properties of it are the point. **The negative control earns the file, not the
+matrix**: a CLI that parsed `--digest` and then ignored it would pass every positive
+cell — which is precisely how Java passed every existing signature test — so each pair
+is also asserted to *fail* across the flag, in both directions. And the gap was only
+ever visible cross-language: every signature test in this repo either signs and verifies
+within one language or compares PEM bytes, and a raw-message signature and a digest
+signature are byte-identical in shape.
+
+**It also corrected #267's own extractor.** The flag matrix's call-graph followed only
+`cmd*` handlers, so factoring three duplicated `--in` reads into `readMessage` made
+`sign --in` read as absent from Java. It now follows any callee handed the subcommand's
+argument container — a function given the parsed options is part of that subcommand's
+flag surface however it is named. Confirmed to change no other cell. The three
+`--digest` rows are gone from `CLI_FLAG_PARITY`, and the generator refused to emit a
+spec until they were, which is the anchor-lost direction working as designed.
+
+**#269 stays open, with two of its four parts re-scoped by doing the work.** `enc
+--aead` is *not* CLI wiring — `bindings/java/` has no AEAD primitive at all, and TODO
+#261's manifest already carries `hske-nl-aead-xor-ks`, `-tag` and `-streams` as
+`acknowledged` for Java — so it belongs in #268's cost class and should be re-filed as
+its own item. And `kex --kdf` carries a trap: porting it puts the flag at parity, which
+deletes the gap row that is the *only* written record of the value-set divergence
+(`sp800227` is Python-only), since the matrix is deliberately at flag granularity. The
+value-level axis has to be recorded before that flag is ported, or #267's anchor-lost
+failure reproduces one level down. `rand` is confirmed pure wiring (`Hdrbg.java` is
+complete).
+
+## [6.1.1] - 2026-09-04
+
+### TODO #267 (DONE) — the CLI's FLAG surface joins the derived-parity checks
+
+TODO #261 declared the CLI half of language parity met at v6.0.0 on a specific basis:
+all 29 `--algo` tags dispatch in all four CLIs, and `spec/`'s `cli_support` column is
+derived from each CLI's own dispatch source rather than curated. That claim is true and
+stays true. It is also narrower than "the CLI surface" — a subcommand's **flags** are
+capability too, and nothing had ever compared them.
+
+`spec/generate_spec.py` now derives `cli_flag_matrix`, a per-subcommand `--flag` matrix
+across C, Go, Python and Java, from each CLI's **own argument parser**: argparse
+`add_argument` calls, `get_arg`/`has_flag`/`get_arg_multi` literals, `flag.FlagSet`
+constructors and `stringFlags`, and `opt.get`/`getOrDefault`/`containsKey`/`req`
+respectively. Each extractor maps subcommand → handler and then follows delegation, or
+C's `threshold-verify` flags (reached only through `cmd_verify`) and Go's
+`cmdKexRnl`/`cmdKexHybrid` flags would read as absent from the languages that have them.
+Each raises rather than returning empty when it maps no subcommands, so a stale regex
+fails as "the extractor broke" and not as "port 26 subcommands".
+
+`cli_surface_gaps` joins every non-unanimous cell to a recorded reason and is exhaustive
+by construction: generation fails if a derived gap has no reason, if a reason has no
+derived gap, or if a reason's language set no longer matches what the parsers say. So
+adding a flag to one CLI and not the others fails `--check` with the flag named, and the
+only ways to make it pass are to port it or write down why not. That middle direction is
+the half the curated `CLI_SUPPORT` table deleted in TODO #238 never had — an
+acknowledgement whose gap has closed must be removed, or the next reader inherits a
+reason for something that is no longer true. All five failure modes were verified by
+deliberately breaking the generator. CI needed no change: the existing
+`generate_spec.py --check --require-schema` step in `native-python` gates it.
+
+**Twenty-one gaps, and #267's own text named three of them.** Nine were not recorded
+anywhere. `genpkey --bits` is absent from C (acknowledged — the C CLI is compiled for a
+single `KEYBITS` and `RNL_N`, so there is no runtime width for the flag to set).
+`sign`/`verify`/`threshold-aggregate --digest` are absent from Java, which has a
+correctness consequence rather than a convenience one: a Java verifier cannot check a
+`--digest hfscx-256` signature the other three produce. `pake-register`/`pake-demo
+--username` are absent from C and Go (acknowledged — the username is stored for lookup,
+is not bound into salt/B/y, and never reaches the `HERRADURA PAKE RECORD` PEM, so the
+records stay byte-comparable). `cred-verify --rounds` exists only in C and Go
+(acknowledged — an extra override; the round count travels in the PEM since TODO #236,
+so all four default identically). Java has no `rand` subcommand, and Go exposes an extra
+top-level `threshold-verify` (acknowledged — same operation, same PEM, one more entry
+point).
+
+**The sharpest finding is not a missing capability at all.** `threshold-aggregate` and
+`threshold-respond` take `--commits a b c` in Python and Java and `--commit a --commit b`
+in C and Go, and `threshold-combine` splits the same way on `--partials`/`--partial`.
+All four implement threshold signing and produce identical PEMs; they spell the flag
+differently, so a documented command line does not port between CLIs. Every parity check
+before this one compared `--algo` tags and PEM bytes, and the PEMs here are identical,
+which is exactly why nothing caught it.
+
+Subcommand-level parity moved into the same place: `cli_subcommands` was keyed on the
+Python CLI's subparser list, so a subcommand only another CLI defines was structurally
+invisible. Each entry now carries `implementations`, and `cli_flag_matrix` is keyed on
+the union.
+
+Two limits are stated rather than papered over. The matrix is at **flag granularity**,
+so `kex --kdf`'s value-set divergence (Python accepts `hfscx-256` and `sp800227` per
+TODO #165; C and Go accept `hfscx-256` only) is carried in the gap's `reason` rather
+than derived. And a flag gap is reported only against CLIs that define the subcommand,
+so `rand`'s seven flags appear as one subcommand row rather than eight flag rows.
+
+`status` separates the two answers the repo already uses in practice: `acknowledged` for
+a deliberate per-language scope decision (5 rows), `defect` for a real asymmetry that is
+recorded and counted (16 rows). **#267 closes on the mechanism, not on the ports**, as
+its own text specifies, so `defect` rows are an expected steady state. The ports it makes
+visible are filed as TODO #268 (the passphrase envelope, which also closes #261's
+`hmac-hfscx-256` acknowledgement), #269 (Java's five CLI capabilities, `--digest` first)
+and #270 (the spelling split, a MAJOR-version decision with three unequal options).
+
 ## [6.1.0] - 2026-09-04
 
 ### TODO #261 (DONE) — the manifest covers the whole internal surface, and a census keeps it that way

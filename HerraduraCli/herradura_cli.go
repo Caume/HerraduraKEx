@@ -1706,6 +1706,14 @@ func cmdRand(args []string) {
 		d.DrbgReseed(rbuf)
 	}
 
+	// TODO #269: -1 was doing double duty as "not given" and as a value, so
+	// `--bytes -1` fell through to "nothing to do" while Python, C and Java all
+	// report "--bytes must be non-negative".  isSet distinguishes the two, which
+	// is what the other three get for free from argparse / an explicit NULL check.
+	if isSet(fs, "bytes") && *nbytes < 0 {
+		fmt.Fprintln(os.Stderr, "rand: --bytes must be non-negative")
+		os.Exit(1)
+	}
 	if *nbytes >= 0 {
 		outBytes, ok := d.DrbgGenerate(*nbytes)
 		if !ok {
@@ -4572,15 +4580,43 @@ func encodeHpkstSig(Cagg, R, s *big.Int, n int) (string, error) {
 	return PemWrap(lblHpkstSig, seq), nil
 }
 
-// stringFlags collects all occurrences of a flag name from args (e.g. "--commit").
+// stringFlags collects all occurrences of a flag name from args (e.g. "--commit"),
+// taking EVERY following non-"--" token as a value, not just the first.
+//
+// TODO #270: Go and C accepted only "--commit a --commit b" while Python and Java
+// accepted only "--commits a b", so one capability had two spellings and a documented
+// threshold command line did not port between CLIs.  All four now take both names with
+// both syntaxes; multiValueFlags is the entry point that unions the two names.
 func stringFlags(args []string, name string) []string {
 	var out []string
-	for i := 0; i < len(args)-1; i++ {
-		if args[i] == name {
-			out = append(out, args[i+1])
+	for i := 0; i < len(args); i++ {
+		if args[i] != name {
+			continue
+		}
+		for j := i + 1; j < len(args) && !strings.HasPrefix(args[j], "--"); j++ {
+			out = append(out, args[j])
 		}
 	}
 	return out
+}
+
+// multiValueFlags unions the plural and singular spellings of a repeated path flag.
+// Mixing the two NAMES is refused rather than concatenated: the list order is
+// consensus-critical -- threshold-respond must see the order threshold-aggregate did --
+// so there is no defensible interleaving, and silently choosing one would produce a
+// wrong signature rather than an error.
+func multiValueFlags(args []string, cmd, plural, singular string) []string {
+	p := stringFlags(args, plural)
+	sg := stringFlags(args, singular)
+	if len(p) > 0 && len(sg) > 0 {
+		fmt.Fprintf(os.Stderr, "%s: use %s or %s, not both (they name the same list, "+
+			"and mixing them leaves its order undefined)\n", cmd, plural, singular)
+		os.Exit(1)
+	}
+	if len(p) > 0 {
+		return p
+	}
+	return sg
 }
 
 func cmdThresholdCommit(args []string) {
@@ -4609,15 +4645,15 @@ func cmdThresholdCommit(args []string) {
 }
 
 func cmdThresholdAggregate(args []string) {
-	commitPaths := stringFlags(args, "--commit")
+	commitPaths := multiValueFlags(args, "threshold-aggregate", "--commits", "--commit")
 
 	fs     := flag.NewFlagSet("threshold-aggregate", flag.ExitOnError)
 	in     := fs.String("in", "-", "Message input file")
 	out    := fs.String("out", "-", "Output aggregate PEM")
 	digest := fs.String("digest", "", "Pre-hash (hfscx-256)")
-	fs.Parse(filterMultiFlags(args, "--commit"))
+	fs.Parse(filterMultiFlags(args, "--commits", "--commit"))
 	if len(commitPaths) == 0 {
-		fmt.Fprintln(os.Stderr, "threshold-aggregate: at least one --commit required")
+		fmt.Fprintln(os.Stderr, "threshold-aggregate: --commits (or --commit) is required")
 		os.Exit(1)
 	}
 
@@ -4654,23 +4690,36 @@ func cmdThresholdAggregate(args []string) {
 	if err := writeString(*out, pemOut); err != nil { die("threshold-aggregate", err) }
 }
 
-// filterMultiFlags removes occurrences of "--flag value" pairs from args
-// so the remaining args can be parsed by flag.FlagSet without unknown-flag errors.
-func filterMultiFlags(args []string, flag string) []string {
+// filterMultiFlags removes every "--flag v1 v2 ..." run from args so the remainder can
+// be parsed by flag.FlagSet without unknown-flag errors.  Variadic since TODO #270:
+// BOTH spellings must be stripped, or flag.Parse chokes on the one it was not told
+// about -- and it must skip all of a run's values, not just the first, now that
+// stringFlags consumes them.
+func filterMultiFlags(args []string, names ...string) []string {
+	isName := func(a string) bool {
+		for _, n := range names {
+			if a == n {
+				return true
+			}
+		}
+		return false
+	}
 	var out []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == flag && i+1 < len(args) {
-			i++ // skip value
-		} else {
-			out = append(out, args[i])
+		if isName(args[i]) {
+			for i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				i++
+			}
+			continue
 		}
+		out = append(out, args[i])
 	}
 	return out
 }
 
 func cmdThresholdRespond(args []string) {
-	commitPaths := stringFlags(args, "--commit")
-	rest        := filterMultiFlags(args, "--commit")
+	commitPaths := multiValueFlags(args, "threshold-respond", "--commits", "--commit")
+	rest        := filterMultiFlags(args, "--commits", "--commit")
 
 	fs        := flag.NewFlagSet("threshold-respond", flag.ExitOnError)
 	key       := fs.String("key", "", "hpks or hpks-nl private key PEM")
@@ -4683,7 +4732,7 @@ func cmdThresholdRespond(args []string) {
 		os.Exit(1)
 	}
 	if len(commitPaths) == 0 {
-		fmt.Fprintln(os.Stderr, "threshold-respond: at least one --commit required")
+		fmt.Fprintln(os.Stderr, "threshold-respond: --commits (or --commit) is required")
 		os.Exit(1)
 	}
 
@@ -4746,8 +4795,8 @@ func cmdThresholdRespond(args []string) {
 }
 
 func cmdThresholdCombine(args []string) {
-	partialPaths := stringFlags(args, "--partial")
-	rest         := filterMultiFlags(args, "--partial")
+	partialPaths := multiValueFlags(args, "threshold-combine", "--partials", "--partial")
+	rest         := filterMultiFlags(args, "--partials", "--partial")
 
 	fs        := flag.NewFlagSet("threshold-combine", flag.ExitOnError)
 	aggregate := fs.String("aggregate", "", "Aggregate PEM")
@@ -4758,7 +4807,7 @@ func cmdThresholdCombine(args []string) {
 		os.Exit(1)
 	}
 	if len(partialPaths) == 0 {
-		fmt.Fprintln(os.Stderr, "threshold-combine: at least one --partial required")
+		fmt.Fprintln(os.Stderr, "threshold-combine: --partials (or --partial) is required")
 		os.Exit(1)
 	}
 

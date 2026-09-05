@@ -5,7 +5,8 @@
     "HerraduraCli/herradura.py (_PRIV_ALGOS dict, argparse choices=)",
     "HerraduraCli/herradura_codec.h (PEM_* constants)",
     "herradura.h (protocol parameter #define constants)",
-    "herradura/herradura.go (Stern-F parameter const block)"
+    "herradura/herradura.go (Stern-F parameter const block)",
+    "each CLI's own argument parser (per-subcommand --flag matrix, TODO #267)"
   ],
   "protocols": [
     {
@@ -1098,6 +1099,12 @@
   },
   "cli_subcommands": {
     "genpkey": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hcred": [
@@ -1193,11 +1200,23 @@
       }
     },
     "pkey": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": null,
       "unfiled_reason": "Utility, not a protocol: derives a public key from any private-key PEM."
     },
     "kex": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hkex-gf": [
@@ -1221,6 +1240,12 @@
       }
     },
     "enc": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hske": [
@@ -1292,6 +1317,12 @@
       }
     },
     "dec": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hske": [
@@ -1363,6 +1394,12 @@
       }
     },
     "sign": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hpks": [
@@ -1422,6 +1459,12 @@
       }
     },
     "verify": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hpks": [
@@ -1487,22 +1530,52 @@
       }
     },
     "threshold-commit": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hpks-t"
     },
     "threshold-aggregate": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hpks-t"
     },
     "threshold-respond": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hpks-t"
     },
     "threshold-combine": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hpks-t"
     },
     "encfile": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hske-nla1": [
@@ -1514,6 +1587,12 @@
       }
     },
     "decfile": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hske-nla1": [
@@ -1525,6 +1604,12 @@
       }
     },
     "dgst": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": true,
       "algos": {
         "hfscx-256": [
@@ -1542,46 +1627,112 @@
       }
     },
     "rand": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hdrbg"
     },
     "fpe": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "fpe"
     },
     "twk": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "twk"
     },
     "oprf-blind": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "oprf"
     },
     "oprf-eval": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "oprf"
     },
     "oprf-unblind": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "oprf"
     },
     "pake-register": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "apake"
     },
     "pake-demo": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "apake"
     },
     "cred-issue": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hcred"
     },
     "cred-prove": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hcred"
     },
     "cred-verify": {
+      "implementations": [
+        "c",
+        "go",
+        "java",
+        "python"
+      ],
       "has_algo_flag": false,
       "protocol": "hcred"
     }
@@ -1597,6 +1748,989 @@
         "go"
       ],
       "note": "C's usage() omits oprf/hcred from the genpkey line despite dispatching both; Go's banner omits hpke-stern-kem, nl-zkbpp, oprf, hpks-t despite dispatching all. This spec's algo enumeration is sourced from dispatch logic, not --help text, which is why the banners' omissions do not reach cli_support."
+    }
+  ],
+  "cli_flag_matrix": {
+    "cred-issue": {
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--our": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--rounds": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "cred-prove": {
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--msg": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--rounds": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "cred-verify": {
+      "--cred": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--issuer": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--msg": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--proof": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--pubkey": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--rounds": {
+        "c": true,
+        "go": true,
+        "java": false,
+        "python": false
+      }
+    },
+    "dec": {
+      "--ad": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "decfile": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "dgst": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "enc": {
+      "--ad": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--aead": {
+        "c": true,
+        "go": true,
+        "java": false,
+        "python": true
+      },
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--pubkey": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "encfile": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "fpe": {
+      "--context": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--decrypt": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--encrypt": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--v3": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "genpkey": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--bits": {
+        "c": false,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--kdf-iterations": {
+        "c": false,
+        "go": false,
+        "java": false,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--passphrase": {
+        "c": false,
+        "go": false,
+        "java": false,
+        "python": true
+      },
+      "--xmss-height": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "kex": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--kdf": {
+        "c": true,
+        "go": true,
+        "java": false,
+        "python": true
+      },
+      "--our": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--our-kem": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--their": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--their-kem": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "oprf-blind": {
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "oprf-eval": {
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "oprf-unblind": {
+      "--eval": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--state": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "pake-demo": {
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--password": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--username": {
+        "c": false,
+        "go": false,
+        "java": true,
+        "python": true
+      }
+    },
+    "pake-register": {
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--password": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--username": {
+        "c": false,
+        "go": false,
+        "java": true,
+        "python": true
+      }
+    },
+    "pkey": {
+      "--decrypt": {
+        "c": false,
+        "go": false,
+        "java": false,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--passphrase": {
+        "c": false,
+        "go": false,
+        "java": false,
+        "python": true
+      },
+      "--pubout": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--text": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "rand": {
+      "--bytes": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--hex": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--personalization": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--reseed": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--seed": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--state": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "sign": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--digest": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--ring": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--rounds": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "threshold-aggregate": {
+      "--commit": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--commits": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--digest": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "threshold-combine": {
+      "--aggregate": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--partial": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--partials": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "threshold-commit": {
+      "--commit-out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--nonce-out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "threshold-respond": {
+      "--aggregate": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--commit": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--commits": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--nonce": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "threshold-verify": {
+      "--digest": {
+        "c": false,
+        "go": true,
+        "java": false,
+        "python": false
+      },
+      "--in": {
+        "c": false,
+        "go": true,
+        "java": false,
+        "python": false
+      },
+      "--sig": {
+        "c": false,
+        "go": true,
+        "java": false,
+        "python": false
+      }
+    },
+    "twk": {
+      "--bidx": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--decrypt": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--encrypt": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--key": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--out": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--sector": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--v3": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    },
+    "verify": {
+      "--algo": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--digest": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--in": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--pubkey": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--ring": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      },
+      "--sig": {
+        "c": true,
+        "go": true,
+        "java": true,
+        "python": true
+      }
+    }
+  },
+  "cli_surface_gaps": [
+    {
+      "kind": "subcommand",
+      "subcommand": "threshold-verify",
+      "flag": null,
+      "present_in": [
+        "go"
+      ],
+      "missing_from": [
+        "c",
+        "java",
+        "python"
+      ],
+      "status": "acknowledged",
+      "reason": "An EXTRA subcommand rather than a missing one. All four verify a threshold signature; they differ in how it is reached. Python and Java route it through `verify --algo hpks-t`, C dispatches `verify` and delegates internally to cmd_threshold_verify, and Go additionally exposes it as its own top-level subcommand. Same operation, same PEM, one extra entry point."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "cred-verify",
+      "flag": "--rounds",
+      "present_in": [
+        "c",
+        "go"
+      ],
+      "missing_from": [
+        "java",
+        "python"
+      ],
+      "status": "acknowledged",
+      "reason": "An EXTRA flag rather than a missing one: C and Go let the caller override the round count a proof declares, defaulting to the proof's own. Python and Java always use the proof's. The round count travels in the PEM (TODO #236), so the default is identical in all four and the flag only widens what C and Go will attempt; it cannot make them accept a proof the others reject."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "enc",
+      "flag": "--aead",
+      "present_in": [
+        "c",
+        "go",
+        "python"
+      ],
+      "missing_from": [
+        "java"
+      ],
+      "status": "defect",
+      "reason": "HSKE-NL-AEAD encryption. HerraduraCli.java's class doc already states this gap -- in a Javadoc sentence, which is a comment and not a record any check reads, which is precisely TODO #267's complaint. CliTest/test_aead.sh's 9-way interop covers the other three only."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "genpkey",
+      "flag": "--bits",
+      "present_in": [
+        "go",
+        "java",
+        "python"
+      ],
+      "missing_from": [
+        "c"
+      ],
+      "status": "acknowledged",
+      "reason": "A runtime key-width selector. The C CLI is compiled for a single KEYBITS and a single RNL_N -- the same reason KAT/'s n=64 PEM vectors skip the C CLI -- so there is no runtime width for the flag to set. Porting it would mean making the C suite width-parametric, which is a far larger change than an argument parser."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "genpkey",
+      "flag": "--kdf-iterations",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go",
+        "java"
+      ],
+      "status": "defect",
+      "reason": "The PBKDF2 iteration count for --passphrase's envelope; it has no meaning without that flag and moves with it."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "genpkey",
+      "flag": "--passphrase",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go",
+        "java"
+      ],
+      "status": "defect",
+      "reason": "Passphrase-encrypted private-key PEM export (TODO #166) exists only in the Python CLI, so a key exported this way is unreadable by three of the four. #166 scoped it to Python deliberately, matching its own Low priority, and that note was the only record until TODO #267. Porting is not thin: it needs PBKDF2-HFSCX-256 (hence hmac_hfscx_256 in Java, which TODO #261's manifest already carries as acknowledged), the HERRADURA ENCRYPTED PRIVATE KEY envelope, and a fail-closed read path in every subcommand that loads a key. Filed as a defect, not blessed scope, because it makes an artifact one CLI writes unreadable to the others."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "kex",
+      "flag": "--kdf",
+      "present_in": [
+        "c",
+        "go",
+        "python"
+      ],
+      "missing_from": [
+        "java"
+      ],
+      "status": "defect",
+      "reason": "Session-key derivation selection. The VALUE sets also differ where the flag does exist -- Python accepts hfscx-256 and sp800227 (TODO #165), C and Go hfscx-256 only -- and this matrix is at flag granularity, so that second axis is recorded here rather than derived. Cheaper to port than --passphrase and should be judged separately from it (TODO #267)."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "pake-demo",
+      "flag": "--username",
+      "present_in": [
+        "java",
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go"
+      ],
+      "status": "acknowledged",
+      "reason": "The login side of pake-register --username; unbound for the same reason."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "pake-register",
+      "flag": "--username",
+      "present_in": [
+        "java",
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go"
+      ],
+      "status": "acknowledged",
+      "reason": "aPAKE client identifier. It is stored in the record dict for lookup and is NOT cryptographically bound: hpake_register derives salt, B and y from the password and the OPRF key alone, and the HERRADURA PAKE RECORD PEM carries (salt, B, y) with no username field. So C and Go omitting the flag costs no interoperability -- their records are byte-comparable with Python's."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "pkey",
+      "flag": "--decrypt",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go",
+        "java"
+      ],
+      "status": "defect",
+      "reason": "Selects the passphrase-decrypting read path; moves with pkey --passphrase."
+    },
+    {
+      "kind": "flag",
+      "subcommand": "pkey",
+      "flag": "--passphrase",
+      "present_in": [
+        "python"
+      ],
+      "missing_from": [
+        "c",
+        "go",
+        "java"
+      ],
+      "status": "defect",
+      "reason": "The read side of --passphrase's envelope; moves with genpkey --passphrase."
     }
   ],
   "unfiled_cli_surface": [
