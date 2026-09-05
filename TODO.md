@@ -255,3 +255,102 @@ language.  On success the `("enc", "--aead")` row in `spec/generate_spec.py`'s
 `generate_spec.py --check` FAILS until they are.
 
 Status: **OPEN**
+
+### #274: C and Java accept unknown CLI flags silently, and `enc --aead` fails OPEN in Java
+
+**Found by TODO #271's byte-for-byte PEM audit**, which ran `enc --aead` through all
+four CLIs expecting a Java skip and got a successful exit and a valid-looking
+artifact instead.
+
+Java's CLI has no `--aead` (that is TODO #273). It does not say so. `enc --algo
+hske-nla1 --aead --ad ctx ...` **exits 0** and writes a `HERRADURA CIPHERTEXT` PEM
+carrying format tag 1 — plain, unauthenticated HSKE-NL-A1, four DER fields — where
+C, Go and Python write format tag 2 with five fields, the fifth being the
+authentication tag. `--ad` is dropped just as quietly. The operator asked for
+authenticated encryption, received confidentiality only, and nothing on stdout or
+stderr distinguishes the two outcomes.
+
+**The cause is broader than `--aead`.** Unknown flags are ignored by two of the four
+argument parsers and rejected by the other two:
+
+| probe | C | Go | Java | Python |
+|---|---|---|---|---|
+| `dgst --nosuchflag --in msg` | exit 0 | exit 2 | exit 0 | exit 2 |
+| `genpkey --algo hpks --totallybogus` | — | — | exit 0 | — |
+| `sign --algo hpks ... --zzz` | — | — | exit 0 | — |
+
+So this is not one missing feature, it is the parsers' contract. C is exposed the
+same way for a misspelled flag, with one accidental guard worth knowing about:
+`enc --aeadx` alone exits 0 and writes format tag 1, unauthenticated — but
+`enc --aeadx --ad ctx` is REFUSED, because C separately checks that `--ad` requires
+`--aead`. So the two-flag typo is caught and the one-flag typo is not, by a check
+that was written for a different purpose and covers this one by coincidence.
+
+**This is TODO #269's class, one level up.** #269 found C and Go silently accepting
+an unrecognised `--digest` VALUE as `none` — the weaker branch — so one missing
+hyphen signed the raw message and reported success. The same failure shape at FLAG
+granularity is strictly worse here, because the property it silently drops is
+authentication rather than pre-hashing, and because #269's own instrument cannot see
+it: `spec/`'s `cli_flag_matrix` records that Java does not DEFINE `--aead`, which is
+true and is exactly why the flag falls through.
+
+**It is independent of #273.** Porting AEAD to Java fixes this one command and leaves
+the parser behaviour intact for the next security-relevant flag a user misspells or a
+future port has not reached yet. Neither item subsumes the other, and this one should
+not wait behind a three-part primitive port.
+
+**Acceptance.** An unrecognised flag is a hard error in all four CLIs: non-zero exit
+and a one-line diagnostic naming the flag, never a silent fall-through to a weaker
+default. A `CliTest/` script asserts it per CLI per subcommand, including the
+security-relevant case that motivated the item (a flag that would have selected
+authenticated encryption must never degrade to unauthenticated with exit 0). Check at
+the same time whether any flag already in `cli_flag_matrix` as a Java or C gap has the
+same fail-open shape — `--aead` was found by accident and nothing has swept the rest.
+
+Status: **OPEN**
+
+### #275: eight PEM labels bypass the DER codec, so TODO #240's malformed-PEM matrix cannot reach them
+
+**Also found by TODO #271's audit**, which could not fingerprint them: the analyzer
+expects a DER SEQUENCE and these are not one.
+
+Eight labels use a hand-rolled fixed-offset binary framing instead — a 4-byte
+big-endian `n` header followed by packed fields whose sizes are DERIVED from `n`
+rather than carried as lengths (see `codec.py`'s `encode_zkp_rnl_proof` and the
+block comment above `encode_zkp_nl_privkey`, which documents the layout):
+
+* `HERRADURA HCRED PRIVATE KEY`, `HCRED PUBLIC KEY`, `HCRED PROOF`
+* `HERRADURA ZKP-NL PRIVATE KEY`, `ZKP-NL PUBLIC KEY`, `ZKP-NL PROOF`
+* `HERRADURA ZKP-NL-PP SIGNATURE`
+* `HERRADURA ZKP-RNL PROOF`
+
+Everything else is DER, `HCRED CREDENTIAL`, `HDRBG STATE` and `HYBRID-RNL-STERN
+RESPONSE` included — so the split is not "the newer protocols", it is the ZKP family
+plus HCRED's key and proof artifacts specifically.
+
+**Why it is worth an item.** `CliTest/lib_malformed.sh` is built on
+`der_parse_seq` / `der_seq`: `hkx_mal_craft` decodes a SEQUENCE of INTEGERs, rewrites
+item `$idx`, and re-encodes. It CANNOT craft a case for a label that is not a DER
+SEQUENCE. So TODO #240's four-CLI malformed-PEM matrix — the test that exists because
+"the bounds on the fields that size an allocation are a wire contract" — has
+structurally zero coverage of these eight, and the coverage guard does not notice,
+because a case that was never written is not a case that fails.
+
+These labels do have a field that sizes an allocation. It is the 4-byte `n` header,
+plus `rounds` and the per-round `len_p1` / `len_p2` in the ZKP-NL proof. That is the
+same hostile-input class #239 and #240 were opened for, in a framing their table
+cannot express.
+
+**Scope note, so this is not read as bigger than it is.** The audit found no
+DISAGREEMENT here: all four CLIs produce byte-identical output for these labels
+wherever the artifact is a deterministic function of its inputs. This item is about
+missing rejection coverage, not about a divergence.
+
+**First step for whoever takes it:** decide whether the fix is a second craft helper
+for the packed framing (cheap, keeps the two wire formats) or converging these eight
+onto DER (a wire-format break needing `MIGRATING.md`, and it would make one codec
+serve every label). Do not start by writing cases — `hkx_mal_craft`'s shape is the
+constraint, and the table is exhaustive-in-both-directions by design, so the helper
+has to exist before a case can be filed against it.
+
+Status: **OPEN**
