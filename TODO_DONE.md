@@ -15678,3 +15678,42 @@ key.
 **`enc --aead` — RE-FILED as TODO #273**, per the re-scoping above.
 
 Status: **DONE v6.5.0** — `--digest` (v6.2.0), `rand` (v6.3.0) and `kex --kdf` (v6.5.0) ported to the Java CLI; the value-set axis recorded first as the item required, which found `--kdf none` rejected by C/Go and `--digest` failing open in both; `--aead` re-filed as #273.
+
+### #271: the HPKST AGGREGATE PEM's trailing `n` is DER-encoded at two different widths
+
+**Found while verifying TODO #270** by comparing aggregate PEMs byte-for-byte across
+CLIs -- something no test had done, because every threshold test checks that the
+artifacts INTEROPERATE and none checks that they are IDENTICAL.
+
+For the same commitments and message, Python and Java emit the final `n` field as a
+4-byte DER INTEGER (`02 04 00 00 01 00`) while C and Go emit the minimal 2-byte form
+(`02 02 01 00`). Both decode to 256, every CLI accepts either, and the whole 4x4
+threshold matrix passes -- so this is a wire-format inconsistency with no functional
+symptom today.
+
+**It predates #270** (confirmed by rebuilding the pre-change C and Python CLIs and
+re-comparing), and #270 did not touch it.
+
+**Why it is worth an item.** `spec/` treats PEM bytes as a contract -- `KAT/pem/`
+exists precisely to pin them, and TODO #240's malformed-PEM matrix rests on the four
+CLIs agreeing about field widths. A field whose width depends on which CLI wrote it
+is a latent difference in any byte-comparison, and the fix direction is not obvious:
+
+1. **Converge on minimal width** (C/Go's form) -- matches DER's own canonical
+   encoding rules and shortens the artifact, but changes the bytes Python and Java
+   have been emitting since the subcommand shipped.
+2. **Converge on fixed width** (Python/Java's form) -- changes C and Go instead.
+3. **Leave it, and document that this field's width is not pinned** -- honest, but it
+   means `KAT/pem/` can never gain an aggregate vector.
+
+Either convergence changes bytes on the wire for two of the four CLIs. Since every
+reader accepts both, no stored artifact becomes unreadable, so this is very likely a
+`MIGRATING.md` note rather than a MAJOR bump -- but that call belongs to whoever
+takes it.
+
+**First step for whoever does:** audit the OTHER multi-CLI PEMs the same way. This was
+found by accident on one field of one label; nothing has ever compared the rest
+byte-for-byte across all four writers, and `test_rand.sh` gained exactly that check
+for `HDRBG STATE` in v6.3.0 (where all four already agreed).
+
+Status: **DONE v6.5.1** — converged all five HPKST labels on the minimal `n` encoding in Python and Java; the byte-for-byte audit that preceded it widened the item from one label to five, settled the fix direction, and filed TODO #274 and #275.

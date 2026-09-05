@@ -606,3 +606,47 @@ accepted-but-meaningless input becoming an error, which follows the precedent se
 v6.4.0 (TODO #270), where C's silent 64-signer truncation was made to fail loudly under a
 MINOR bump. `sp800227` remains Python-only and is rejected by name in the other three;
 that divergence is recorded on the value-set axis in `spec/`'s `cli_flag_value_gaps`.
+
+## 12. HPKST PEMs encode the trailing `n` minimally in Python and Java (v6.5.1)
+
+**Who is affected:** nobody, for any stored artifact — but anyone who compares HPKST
+PEMs byte-for-byte, or who has pinned their bytes in a test fixture, a checksum or a
+golden file. Every CLI still reads both encodings, so nothing on disk becomes
+unreadable and no ceremony breaks across the upgrade.
+
+**What changed.** All five HPKS-T wire artifacts end with an `n` field carrying the key
+size. Python and Java encoded it as a fixed 4-byte DER INTEGER; C and Go used DER's
+minimal form:
+
+```
+Python / Java (before)   02 04 00 00 01 00      # 4-byte, non-minimal
+C / Go, and all four now  02 02 01 00           # minimal
+```
+
+Both decode to 256, and every reader accepted either, so the whole 4×4 threshold interop
+matrix passed for four releases while the bytes on the wire quietly depended on which CLI
+wrote them. The affected labels are `HERRADURA HPKST COMMITMENT`, `HPKST NONCE`,
+`HPKST AGGREGATE`, `HPKST PARTIAL` and `HPKST SIGNATURE` — the whole family, not just
+the aggregate the divergence was first spotted in.
+
+**Why minimal was the right side to converge on.** Those five encoders were the *only*
+place in the Python CLI passing an explicit width for `n`; every other trailing `n` /
+`nbits` in `herradura.py` — 40-odd call sites — already used the minimal form, as did
+Java's other encoders. The 4-byte spelling was a local slip introduced with HPKS-T, not
+a convention, so converging on minimal made HPKST consistent with the two CLIs' *own*
+encoders as well as with C and Go.
+
+**What to do.** Nothing, unless you have pinned HPKST PEM bytes somewhere outside this
+repo — a fixture, a hash, a signed manifest. Those pins need regenerating; the artifacts
+they pin are two bytes shorter — each label carries exactly one `n`, and the DER
+SEQUENCE header absorbs the change without widening. Ceremonies that span
+the upgrade are fine: a pre-6.5.1 aggregate is still accepted by every 6.5.1 CLI, which
+is asserted directly in `CliTest/test_threshold_interop.sh`.
+
+**Why this is not a MAJOR bump.** No PEM label, flag name or `--algo` behaviour changed,
+and — the test the 2.0.0 surface actually sets — no existing key, signature or ciphertext
+becomes unreadable by a newer build: all four CLIs parse the 4-byte form exactly as they
+did before, because none of them ever required a particular width. This is the narrower
+class the v3.3.0 entry (section 7) describes from the other direction: there the bytes
+were unchanged and the derived secret moved; here the bytes moved and everything derived
+from them is unchanged.

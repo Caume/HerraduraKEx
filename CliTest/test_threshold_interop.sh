@@ -227,4 +227,122 @@ $C threshold-aggregate --commits $few --in "$MSG" --out "$TMPDIR/at64.pem" >/dev
   || fail "over-limit" "C rejected exactly 64 --commits values, which is within its capacity"
 pass "over-limit: C still accepts exactly 64"
 
+# ── TODO #271: the five HPKST PEMs must be BYTE-IDENTICAL across the CLIs ───
+# Every threshold test above checks that the artifacts INTEROPERATE.  None
+# checked that they are the SAME BYTES, and since the subcommand shipped they were not:
+# Python and Java encoded the trailing `n` as a 4-byte DER INTEGER
+# (02 04 00 00 01 00) where C and Go used the minimal 2-byte form
+# (02 02 01 00).  Both decode to 256 and every reader accepted either, so the
+# whole 4x4 matrix passed while the wire format quietly depended on which CLI
+# wrote it.
+#
+# Two assertions, because the five labels split into two kinds:
+#   * aggregate / partial / signature are a deterministic function of their
+#     inputs, so from SHARED fixtures all four CLIs must produce identical
+#     bytes -- the strongest form of the check.
+#   * commitment / nonce carry a fresh random k_j, so identical bytes are
+#     impossible; the `n` FIELD WIDTH is asserted directly instead.
+echo "--- TODO #271: HPKST wire-format byte-identity across CLIs ---"
+
+# Width of the LAST DER INTEGER in a PEM (the `n` field in all five labels).
+hpkst_n_width() {
+  python3 - "$1" <<'PYEOF'
+import base64, sys
+lines = [l.strip() for l in open(sys.argv[1]) if l.strip() and not l.startswith('-----')]
+d = base64.b64decode(''.join(lines))
+def rlen(b, o):
+    x = b[o]
+    if x < 0x80: return x, o + 1
+    n = x & 0x7f
+    return int.from_bytes(b[o+1:o+1+n], 'big'), o + 1 + n
+assert d[0] == 0x30, 'not a DER SEQUENCE'
+_, o = rlen(d, 1)
+last = 0
+while o < len(d):
+    o += 1                      # tag
+    vlen, o = rlen(d, o)
+    last = vlen
+    o += vlen
+print(last)
+PYEOF
+}
+
+# Shared fixtures: ONE set of commitments, nonces and message for every CLI.
+$PY threshold-commit --key "$TMPDIR/alice.pem" \
+  --commit-out "$TMPDIR/i271_ca.pem" --nonce-out "$TMPDIR/i271_na.pem"
+$PY threshold-commit --key "$TMPDIR/bob.pem" \
+  --commit-out "$TMPDIR/i271_cb.pem" --nonce-out "$TMPDIR/i271_nb.pem"
+
+for i in "${!CLIS[@]}"; do
+  cli="${CLIS[$i]}"; name="${CLINAMES[$i]}"
+  $cli threshold-aggregate --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
+    --in "$MSG" --out "$TMPDIR/i271_agg_$name.pem"
+  $cli threshold-respond --key "$TMPDIR/alice.pem" \
+    --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
+    --aggregate "$TMPDIR/i271_agg_$name.pem" --nonce "$TMPDIR/i271_na.pem" \
+    --out "$TMPDIR/i271_pa_$name.pem"
+  # A second partial, so `combine` has a real n-of-n set to fold.
+  $cli threshold-respond --key "$TMPDIR/bob.pem" \
+    --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
+    --aggregate "$TMPDIR/i271_agg_$name.pem" --nonce "$TMPDIR/i271_nb.pem" \
+    --out "$TMPDIR/i271_pb_$name.pem"
+  $cli threshold-combine --aggregate "$TMPDIR/i271_agg_$name.pem" \
+    --partial "$TMPDIR/i271_pa_$name.pem" --partial "$TMPDIR/i271_pb_$name.pem" \
+    --out "$TMPDIR/i271_sig_$name.pem"
+  # Randomized pair: assert the field width rather than the bytes.
+  $cli threshold-commit --key "$TMPDIR/alice.pem" \
+    --commit-out "$TMPDIR/i271_co_$name.pem" --nonce-out "$TMPDIR/i271_no_$name.pem"
+done
+
+# CONTROL: the reference artifacts must exist and be non-empty before any
+# comparison, or a CLI that failed to write anything would make every
+# subsequent "identical" check vacuously true.
+for kind in agg pa sig co no; do
+  ref="$TMPDIR/i271_${kind}_${CLINAMES[0]}.pem"
+  [ -s "$ref" ] || fail "byte-identity" "reference $kind artifact from ${CLINAMES[0]} is missing or empty"
+done
+
+for kind in agg pa sig; do
+  ref="$TMPDIR/i271_${kind}_${CLINAMES[0]}.pem"
+  for name in "${CLINAMES[@]}"; do
+    cmp -s "$ref" "$TMPDIR/i271_${kind}_$name.pem" \
+      || fail "byte-identity" "$kind PEM from $name differs byte-for-byte from ${CLINAMES[0]}'s"
+  done
+  pass "byte-identity: $kind PEM is identical across ${CLINAMES[*]}"
+done
+
+for kind in co no; do
+  for name in "${CLINAMES[@]}"; do
+    w=$(hpkst_n_width "$TMPDIR/i271_${kind}_$name.pem")
+    [ "$w" = "2" ] \
+      || fail "n-width" "$kind PEM from $name encodes n in $w bytes; the minimal form is 2"
+  done
+  pass "n-width: $kind PEM encodes n minimally (2 bytes) in ${CLINAMES[*]}"
+done
+
+# A pre-fix artifact (4-byte n) must still READ everywhere: the convergence
+# changes what we WRITE and must not narrow what we ACCEPT.
+python3 - "$TMPDIR/i271_agg_${CLINAMES[0]}.pem" "$TMPDIR/i271_agg_wide.pem" <<'PYEOF'
+import base64, sys
+src, dst = sys.argv[1], sys.argv[2]
+lines = [l.strip() for l in open(src) if l.strip() and not l.startswith('-----')]
+d = bytearray(base64.b64decode(''.join(lines)))
+# Widen the trailing `02 02 01 00` back to the old `02 04 00 00 01 00`.
+assert bytes(d[-4:]) == b'\x02\x02\x01\x00', 'unexpected trailing n encoding'
+d[-4:] = b'\x02\x04\x00\x00\x01\x00'
+d[1] += 2                      # SEQUENCE body grew by two bytes
+body = base64.encodebytes(bytes(d)).decode().strip()
+open(dst, 'w').write('-----BEGIN HERRADURA HPKST AGGREGATE-----\n%s\n'
+                     '-----END HERRADURA HPKST AGGREGATE-----\n' % body)
+PYEOF
+for i in "${!CLIS[@]}"; do
+  cli="${CLIS[$i]}"; name="${CLINAMES[$i]}"
+  $cli threshold-respond --key "$TMPDIR/alice.pem" \
+    --commit "$TMPDIR/i271_ca.pem" --commit "$TMPDIR/i271_cb.pem" \
+    --aggregate "$TMPDIR/i271_agg_wide.pem" --nonce "$TMPDIR/i271_na.pem" \
+    --out "$TMPDIR/i271_wide_$name.pem" >/dev/null 2>&1 \
+    || fail "back-compat" "$name refused a pre-#271 aggregate with a 4-byte n"
+done
+pass "back-compat: a pre-#271 4-byte-n aggregate still reads in ${CLINAMES[*]}"
+
 echo "=== All HPKS-T interop tests PASSED ==="

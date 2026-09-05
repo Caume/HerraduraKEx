@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.1] - 2026-09-05
+
+### TODO #271 (DONE) — the HPKST PEM's trailing `n`, and the audit that found it was five labels
+
+`threshold-aggregate` PEMs were not byte-identical across the four CLIs: Python and Java
+wrote the trailing `n` as a 4-byte DER INTEGER (`02 04 00 00 01 00`), C and Go as the
+minimal 2-byte form (`02 02 01 00`). Both decode to 256 and every reader accepted either,
+so the entire 4x4 threshold matrix passed, since the subcommand shipped, while the wire
+format depended on who wrote it.
+
+**Step one was the audit #271 asked for, and it changed the item.** Nothing had ever
+compared multi-CLI PEMs byte-for-byte, so the fix was gated on sweeping the rest first:
+40 artifact kinds, every PEM-producing subcommand, all four CLIs. Two things came back.
+
+- **The divergence is the whole HPKS-T family, not one label.** `HPKST COMMITMENT`,
+  `NONCE`, `AGGREGATE`, `PARTIAL` and `SIGNATURE` all carried it — proven from source,
+  not inferred: five `der_int(n, 4)` calls in `codec.py`, five matching
+  `derInt(..., 4)` in `Codec.java`, against `der_i_n256` in C and `derIntSmall` in Go.
+- **Everything else agrees.** Every deterministic artifact — 14 `pkey --pubout` exports,
+  `kex` (GF, GF+KDF, RNL completion), both `dgst` variants, symmetric `enc`,
+  `oprf-eval`, `rand`'s HDRBG state — is byte-for-byte identical across all four.
+
+**The audit also settled #271's open fix-direction question.** Those five encoders were
+the only sites in the Python CLI passing an explicit width for `n`; the other 40-odd
+trailing `n` / `nbits` sites already used the minimal form, as did Java's other encoders.
+So the 4-byte spelling was a local slip introduced with HPKS-T rather than a convention,
+and converging on minimal — #271's option 1 — makes HPKST consistent with Python's and
+Java's *own* encoders, not merely with C and Go. Ten call sites changed; no reader did,
+because none ever required a particular width.
+
+**A methodological note, because the naive version of this audit does not work.** The
+codec prepends a positive-sign byte when the high bit is set, so a random 256-bit field
+is legitimately 32 or 33 bytes depending on its value: every signature and key "differs"
+between CLIs for reasons that are not divergences. The audit therefore separates
+constant-valued metadata fields (conclusive on one sample) from random payload fields
+(compared on encoding policy across samples), and every surviving candidate was confirmed
+against the four codecs' source rather than trusted from observation.
+
+**Regression guard**, in `CliTest/test_threshold_interop.sh`, in two halves because the
+five labels split in two: `aggregate`/`partial`/`signature` are deterministic given
+shared fixtures and are asserted byte-identical across all four CLIs; `commitment`/`nonce`
+carry a fresh random `k_j`, so their `n` field width is asserted directly instead. Both
+halves were verified to FAIL on a reintroduced regression, including the nonce case that
+byte-identity structurally cannot reach. A third check reads a synthesised pre-6.5.1
+4-byte-`n` aggregate in every CLI, so the convergence cannot narrow what is accepted.
+
+Wire-format change with no stored artifact affected — see `MIGRATING.md` section 12.
+
+**Two findings filed, not fixed** (both from the audit, neither a wire-format issue):
+TODO #274, Java's CLI silently ignoring unknown flags so `enc --aead` exits 0 and writes
+an *unauthenticated* ciphertext; and TODO #275, eight PEM labels using a non-DER framing
+that `lib_malformed.sh`'s DER-based case builder structurally cannot reach.
+
+**Not done here:** a `KAT/pem/` aggregate vector. The convergence makes one possible for
+the first time, and the CliTest guard pins these bytes across all four CLIs meanwhile.
+
 ## [6.5.0] - 2026-09-05
 
 ### TODO #269 (DONE) — `kex --kdf` reaches Java, and the value-set axis it forced first
