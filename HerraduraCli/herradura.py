@@ -2104,9 +2104,38 @@ def cmd_threshold_commit(args):
     _write_file(args.nonce_out,  encode_hpkst_nonce(k_j.uint, nbits).encode())
 
 
+def _multi_flag(subcmd, plural_name, plural_val, singular_name, singular_val):
+    """Merge a threshold subcommand's plural/singular path flags (TODO #270).
+
+    `--commits a b` and `--commit a --commit b` name the same list.  Python and
+    Java shipped only the plural, C and Go only the singular, so the CAPABILITY
+    was in all four CLIs under two spellings and a documented command line did
+    not port between them -- TODO #267's flag matrix is what surfaced it, since
+    every earlier parity check compared --algo tags and PEM bytes, and the PEMs
+    here are identical.
+
+    All four now accept BOTH names with BOTH syntaxes (repeated, multi-valued, or
+    mixed).  Mixing the two NAMES is rejected rather than concatenated: the list
+    order is consensus-critical -- threshold-respond must see the same order
+    threshold-aggregate did, or the Lagrange-style coefficients differ -- so
+    there is no defensible interleaving of two flags, and silently picking one
+    would be a wrong signature rather than an error.
+    """
+    plural = [x for group in (plural_val or []) for x in group]
+    singular = [x for group in (singular_val or []) for x in group]
+    if plural and singular:
+        sys.exit(f"{subcmd}: use {plural_name} or {singular_name}, not both "
+                 f"(they name the same list, and mixing them leaves its order undefined)")
+    paths = plural or singular
+    if not paths:
+        sys.exit(f"{subcmd}: {plural_name} (or {singular_name}) is required")
+    return paths
+
+
 def cmd_threshold_aggregate(args):
     """Phase 2 (coordinator): read all commitment PEMs + message, write aggregate PEM."""
-    commit_paths = args.commits
+    commit_paths = _multi_flag('threshold-aggregate', '--commits', args.commits,
+                               '--commit', args.commit)
     R_parts = []
     pubkeys  = []
     nbits    = None
@@ -2142,7 +2171,8 @@ def cmd_threshold_respond(args):
     priv_int, pub_int, nbits = _load_hpks_privkey_for_threshold(args.key)
 
     # Load all commit PEMs to recompute mu_j
-    commit_paths = args.commits
+    commit_paths = _multi_flag('threshold-respond', '--commits', args.commits,
+                               '--commit', args.commit)
     pubkeys      = []
     for cp in commit_paths:
         text = _read_file(cp).decode('ascii')
@@ -2185,7 +2215,8 @@ def cmd_threshold_combine(args):
 
     ord_n  = (1 << nbits) - 1
     s_acc  = 0
-    for pp in args.partials:
+    for pp in _multi_flag('threshold-combine', '--partials', args.partials,
+                          '--partial', args.partial):
         text = _read_file(pp).decode('ascii')
         s_j, n = decode_hpkst_partial(text)
         if n != nbits:
@@ -2986,8 +3017,11 @@ def build_parser():
     # threshold-aggregate
     ta = sub.add_parser('threshold-aggregate',
                         help='HPKS-T phase 2 (coordinator): build aggregate PEM from commitments')
-    ta.add_argument('--commits', required=True, nargs='+',
+    ta.add_argument('--commits', action='append', nargs='+', default=[],
                     help='One or more commitment PEM files (one per signer)')
+    ta.add_argument('--commit', action='append', nargs='+', default=[],
+                    help='Synonym for --commits, repeatable (TODO #270): both names '
+                         'and both syntaxes work in all four CLIs')
     ta.add_argument('--in',  required=True, dest='in', help='Message file to sign')
     ta.add_argument('--out', required=True, help='Output aggregate PEM (broadcast to all signers)')
     ta.add_argument('--digest', default='none', choices=['none', 'hfscx-256'],
@@ -2997,8 +3031,10 @@ def build_parser():
     tr = sub.add_parser('threshold-respond',
                         help='HPKS-T phase 3: produce partial signature PEM')
     tr.add_argument('--key',       required=True, help='hpks or hpks-nl private key PEM')
-    tr.add_argument('--commits',   required=True, nargs='+',
+    tr.add_argument('--commits', action='append', nargs='+', default=[],
                     help='All commitment PEMs (same list used in threshold-aggregate)')
+    tr.add_argument('--commit', action='append', nargs='+', default=[],
+                    help='Synonym for --commits, repeatable (TODO #270)')
     tr.add_argument('--aggregate', required=True, help='Aggregate PEM from coordinator')
     tr.add_argument('--nonce',     required=True, help='Nonce PEM from threshold-commit')
     tr.add_argument('--out',       required=True, help='Output partial signature PEM')
@@ -3007,8 +3043,10 @@ def build_parser():
     tb = sub.add_parser('threshold-combine',
                         help='HPKS-T phase 4 (coordinator): combine partial sigs into final sig')
     tb.add_argument('--aggregate', required=True, help='Aggregate PEM from threshold-aggregate')
-    tb.add_argument('--partials',  required=True, nargs='+',
+    tb.add_argument('--partials', action='append', nargs='+', default=[],
                     help='One or more partial signature PEM files (one per signer)')
+    tb.add_argument('--partial', action='append', nargs='+', default=[],
+                    help='Synonym for --partials, repeatable (TODO #270)')
     tb.add_argument('--out', required=True, help='Output HPKST SIGNATURE PEM')
 
     # encfile

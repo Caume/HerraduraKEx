@@ -162,6 +162,14 @@ which is Python-only (see note below — no C or Go CLI support, TODO #143).
   threshold-aggregate --commits FILE... --in FILE --out FILE [--digest ...]
   threshold-respond --key FILE --commits FILE... --aggregate FILE --nonce FILE --out FILE
   threshold-combine --aggregate FILE --partials FILE... --out FILE
+    Since TODO #270 (v6.4.0) all four CLIs accept BOTH spellings of these list
+    flags with BOTH syntaxes: --commits a b, --commit a --commit b, --commits a
+    --commits b and --commit a b are equivalent (likewise --partials/--partial).
+    Python and Java took only the plural and C and Go only the singular until
+    then, so the capability was in all four under two names and a documented
+    command line did not port.  MIXING the two names in one invocation is
+    refused: the list order is consensus-critical (threshold-respond must see the
+    order threshold-aggregate did), so there is no defensible interleaving.
   threshold-verify --sig FILE --in FILE [--digest {none,hfscx-256}]
     (HPKS-T 4-phase flow: commit -> aggregate -> respond -> combine, then verify.
      threshold-verify is a directly-invokable top-level subcommand in GO ONLY.

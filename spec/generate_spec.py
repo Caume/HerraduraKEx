@@ -183,7 +183,11 @@ def _resolve_flags(bodies, fn, flag_patterns, call_re, seen=None):
     body = bodies[fn]
     flags = set()
     for pattern in flag_patterns:
-        flags.update("--" + name for name in re.findall(pattern, body))
+        # finditer + every non-empty group: an accessor may name TWO flags in one
+        # call, as C's get_arg_multi2 / Go's multiValueFlags / Java's multiPaths do
+        # for the plural and singular spelling of a list flag (TODO #270).
+        for m in re.finditer(pattern, body):
+            flags.update("--" + g for g in m.groups() if g)
     # finditer, not findall: `call_re` may carry alternatives, and findall on a
     # multi-group pattern yields tuples with empty slots rather than names.
     callees = {g for m in re.finditer(call_re, body) for g in m.groups() if g}
@@ -228,7 +232,10 @@ def extract_flags_c(c_src):
         raise RuntimeError("extract_flags_c mapped no subcommands in herradura_cli.c "
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^static\s+[A-Za-z_][\w \t\*]*\b(\w+)\s*\(')
-    pat = [r'(?:get_arg|has_flag|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"']
+    pat = [r'(?:get_arg|has_flag|get_arg_multi)\s*\(\s*argc\s*,\s*argv\s*,\s*"--([a-z0-9\-]+)"',
+           # get_arg_multi2(argc, argv, "<cmd>", "--plural", "--singular", ...) — TODO #270
+           r'get_arg_multi2\s*\(\s*argc\s*,\s*argv\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\s*\(\s*argc\b')
             for sub, fn in dispatch.items()}
 
@@ -245,7 +252,13 @@ def extract_flags_go(go_src):
                            "-- the extractor is stale, not the CLI.")
     bodies = _decl_bodies(src, r'^func\s+(\w+)\s*\(')
     pat = [r'\bfs\.\w+\(\s*"([a-z0-9\-]+)"',
-           r'stringFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"']
+           r'stringFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"',
+           # multiValueFlags(args, "<cmd>", "--plural", "--singular") — TODO #270
+           r'multiValueFlags\(\s*\w+\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"',
+           # filterMultiFlags strips the same names before flag.Parse; naming them
+           # there too keeps the two lists from silently drifting apart.
+           r'filterMultiFlags\(\s*\w+\s*,\s*"--([a-z0-9\-]+)"\s*,\s*"--([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*args\b|\b(cmd[A-Za-z0-9]+)\(')
             for sub, fn in dispatch.items()}
 
@@ -261,7 +274,11 @@ def extract_flags_java(java_src):
     bodies = _decl_bodies(
         src, r'^    (?:private|public|protected)\s+static\s+[\w<>,\[\] ]+?\s(\w+)\s*\(')
     pat = [r'\bopt\.(?:get|getOrDefault|containsKey)\(\s*"([a-z0-9\-]+)"',
-           r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"']
+           r'\breq\(\s*opt\s*,\s*"([a-z0-9\-]+)"',
+           # multiPaths(opt, "<cmd>", "plural", "singular") — TODO #270.  No "--"
+           # here: Java's option map is keyed without the dashes.
+           r'multiPaths\(\s*opt\s*,\s*"[a-z0-9\-]+"\s*,'
+           r'\s*"([a-z0-9\-]+)"\s*,\s*"([a-z0-9\-]+)"']
     return {sub: _resolve_flags(bodies, fn, pat, r'\b(\w+)\(\s*opt\b')
             for sub, fn in dispatch.items()}
 
@@ -983,30 +1000,6 @@ CLI_FLAG_PARITY = {
         "so the default is identical in all four and the flag only widens what C and "
         "Go will attempt; it cannot make them accept a proof the others reject."),
 
-    # ── A NAME divergence, not a capability one ───────────────────────────
-    ("threshold-aggregate", "--commits"): (
-        ("java", "python"), "defect",
-        "Python and Java take one repeatable-by-nargs `--commits a b c`; C and Go take "
-        "a repeated `--commit a --commit b`. The CAPABILITY is present in all four -- "
-        "what differs is the spelling, so a documented threshold-signing command line "
-        "does not port between CLIs. Nothing caught it because every parity check so "
-        "far compared --algo tags and PEM bytes, and the PEMs here are identical."),
-    ("threshold-aggregate", "--commit"): (
-        ("c", "go"), "defect",
-        "The C/Go spelling of threshold-aggregate --commits; see that entry."),
-    ("threshold-respond", "--commits"): (
-        ("java", "python"), "defect",
-        "The threshold-respond half of the --commits/--commit spelling split."),
-    ("threshold-respond", "--commit"): (
-        ("c", "go"), "defect",
-        "The C/Go spelling of threshold-respond --commits; see that entry."),
-    ("threshold-combine", "--partials"): (
-        ("java", "python"), "defect",
-        "The same spelling split on partial signatures: `--partials a b` in Python and "
-        "Java, `--partial a --partial b` in C and Go."),
-    ("threshold-combine", "--partial"): (
-        ("c", "go"), "defect",
-        "The C/Go spelling of threshold-combine --partials; see that entry."),
 }
 
 # The same table one level up: a SUBCOMMAND present in some CLIs and not others.

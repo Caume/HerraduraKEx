@@ -2,6 +2,77 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.4.0] - 2026-09-05
+
+### TODO #270 (DONE) — one capability, two spellings, now accepted by all four CLIs
+
+The threshold list flags had two names for the same thing: `--commits a b` in Python and
+Java, `--commit a --commit b` in C and Go, and `--partials`/`--partial` likewise. All
+four implemented threshold signing and emitted interoperable PEMs, so every parity check
+before TODO #267's flag matrix passed — a documented command line simply did not port
+between CLIs. `CliTest/test_threshold_interop.sh` is the evidence: its helpers still
+carry one branch per shape, which is what the split cost every caller.
+
+All four now accept **both names with both syntaxes** — `--commits a b`,
+`--commit a --commit b`, `--commits a --commits b` and `--commit a b` are equivalent.
+Additive, so MINOR and no `MIGRATING.md` entry. Python takes `action='append',
+nargs='+'` on both names and flattens; C grew `get_arg_multi2` and `get_arg_multi` now
+consumes every following non-`--` token; Go grew `multiValueFlags` and
+`filterMultiFlags` became variadic (it must strip *both* names or `flag.Parse` chokes on
+the one it was not told about); Java's `parseOpts` now *accumulates* repeated
+occurrences rather than overwriting — scoped to a declared `REPEATABLE` set, since
+making every flag accumulate would turn a typo like `--out x --out y` into the filename
+`x y` instead of last-wins.
+
+**Mixing the two names is refused**, in all four and with the same message. The list
+order is consensus-critical — `threshold-respond` must see the order
+`threshold-aggregate` did — so there is no defensible interleaving, and silently
+choosing one would produce a wrong signature rather than an error.
+
+**A second divergence was found and fixed on the way**: the missing-flag diagnostic
+differed, C and Go saying `at least one --commit required` where Python said
+`--commits (or --commit) is required`. Same wrong-but-plausible class as the Go
+`rand --bytes -1` bug TODO #269 found, and likewise never asserted anywhere. One message
+now, asserted per CLI.
+
+Twelve new assertions in `test_threshold_interop.sh`: every CLI x every syntax must
+produce the *same* aggregate, mixing must be refused, and the diagnostic must match.
+Each CLI is deliberately driven with the spelling it historically did **not** accept,
+since that is the only way to catch a regression that removes one of the two.
+
+**The option list in #270's own text was wrong on one point.** It said accepting both
+spellings would leave four `defect` rows to be re-stated as `acknowledged`. It leaves
+none: there were six rows, not four, and full parity *deletes* them. The generator
+proved it — after the ports it refused to emit a spec until all six acknowledgements
+were removed, naming each. `cli_surface_gaps` is now 11 rows: 6 defect, 5 acknowledged,
+down from 21 at v6.1.1.
+
+This also required teaching #267's extractor three new accessors (`get_arg_multi2`,
+`multiValueFlags`, `multiPaths`), and `_resolve_flags` now reads every non-empty capture
+group because one accessor names two flags. That is the standing maintenance cost of a
+derived matrix, and it is now written into CLAUDE.md: a new way to *read* a flag must be
+taught to the extractor, or its flags read as absent.
+
+**New: TODO #272 — a silent wrong-signature path, found and contained here.** Driving
+`threshold-aggregate` with 70 commitments and comparing each CLI against its own
+64-signer result shows C collects list-flag values into a fixed 64-entry array and used
+to stop filling it *silently, returning success*: a ceremony with more than 64 signers
+produced an aggregate over the first 64 in C while Python, Go and Java used every one,
+so the same command line gave a different signature depending on which CLI aggregated
+it. Pre-existing (verified against a rebuilt pre-#270 binary) and invisible to every
+test, since nothing had run a ceremony larger than a handful of signers. C now **refuses
+rather than truncates**, asserted along with the boundary case; the limit itself — 64 is
+one implementation's buffer size, not a protocol constant, and the other three impose
+none — is TODO #272.
+
+**New: TODO #271**, filed from a second discrepancy this work surfaced. Comparing aggregate
+PEMs byte-for-byte across CLIs — which no test had done, since every threshold test
+checks that artifacts interoperate and none checks that they are identical — shows
+Python and Java encode the trailing `n` field as a 4-byte DER INTEGER where C and Go use
+the minimal 2-byte form. Both decode to 256 and every CLI accepts either, so there is no
+functional symptom; it predates #270 (verified against rebuilt pre-change binaries) and
+is left alone here.
+
 ## [6.3.0] - 2026-09-04
 
 ### TODO #269 (second pass) — `rand` ported to the Java CLI, and a Go diagnostic bug found doing it

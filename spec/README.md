@@ -132,8 +132,14 @@ reason for something that is no longer true.
 absent from C because the C CLI is compiled for a single `KEYBITS` and `RNL_N`, so
 there is no runtime width for the flag to set. `defect` is a real asymmetry that is
 merely recorded and counted. **#267 closes on this mechanism, not on the ports**, so
-`defect` rows are an expected steady state here rather than a failing one; the
-current count is 16 defect and 5 acknowledged.
+`defect` rows are an expected steady state here rather than a failing one.
+
+The counts move as gaps close, so read them from `cli_surface_gaps` rather than from
+here; they started at 16 defect / 5 acknowledged and TODO #269 and #270 have since
+removed ten defect rows between them (`sign`/`verify`/`threshold-aggregate --digest`,
+the `rand` subcommand, and all six `--commits`/`--commit` and `--partials`/`--partial`
+rows). Each of those deletions was *forced*: the generator refused to emit a spec
+while an acknowledgement described a gap that no longer existed.
 
 Two limits worth stating. The matrix is at **flag granularity**: where a flag takes an
 enumerated value the value sets can still differ — Python's `kex --kdf` accepts

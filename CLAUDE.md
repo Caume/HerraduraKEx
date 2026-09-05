@@ -621,9 +621,21 @@ spec/                                                — machine-readable protoc
                                                       rows.  `status` is acknowledged (deliberate
                                                       per-language scope) vs defect (a real
                                                       asymmetry, recorded and counted) -- #267 closed
-                                                      on the MECHANISM, so 16 defect rows are the
-                                                      expected steady state, not a failing one, and
-                                                      the ports are TODO #268/#269/#270
+                                                      on the MECHANISM, so defect rows are the
+                                                      expected steady state, not a failing one.
+                                                      Read the counts from cli_surface_gaps, not
+                                                      from prose: #269 and #270 have already deleted
+                                                      ten of the original sixteen, each deletion
+                                                      FORCED because the generator refuses to emit a
+                                                      spec while an acknowledgement describes a gap
+                                                      that no longer exists.  #268 is the port that
+                                                      remains.  NOTE for anyone adding a new way to
+                                                      READ a flag: the matrix is derived from
+                                                      per-language accessor patterns, so a new
+                                                      accessor must be taught to the extractor or
+                                                      its flags read as ABSENT -- #269's
+                                                      readMessage and #270's get_arg_multi2 /
+                                                      multiValueFlags / multiPaths each needed that
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

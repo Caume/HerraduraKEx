@@ -15476,3 +15476,77 @@ The ports it makes visible are filed as #268, #269 and #270, per this item's own
 "a separate decision the matrix makes visible rather than a precondition for closing".
 
 Status: **DONE v6.1.1** — the per-CLI flag matrix is derived in `spec/` and gated in CI; 21 gaps, each with a recorded reason, in both directions.
+
+### #270: the `--commits` / `--commit` spelling split in the threshold subcommands
+
+**Made visible by TODO #267's flag matrix, and the only gap there that is not a
+capability difference at all.**  `threshold-aggregate` and `threshold-respond` take
+`--commits a b c` in Python and Java and `--commit a --commit b` in C and Go;
+`threshold-combine` splits the same way on `--partials` / `--partial`.  All four
+implement threshold signing, produce identical PEMs, and interoperate — a documented
+command line simply does not port between them.  Every parity check before #267
+compared `--algo` tags and PEM bytes, which is precisely why this survived.
+
+**This one is a MAJOR-version decision, and that is the reason it is filed separately
+rather than folded into #269.**  Per CLAUDE.md, renaming or removing a CLI flag breaks
+the stable 2.0.0 CLI surface and needs a `MIGRATING.md` entry.  The options are not
+equal:
+
+1. **Accept both spellings everywhere** — additive, MINOR, no migration entry, and it
+   leaves four `defect` rows that must be re-stated as `acknowledged`.
+2. **Converge on one spelling** — MAJOR, `MIGRATING.md`, and it breaks scripts.
+   `--commit`/`--partial` (repeat the flag) is the more conventional CLI idiom and
+   needs no `nargs`; `--commits`/`--partials` matches the two CLIs whose users are
+   most likely to be scripting.
+3. **Leave it, upgrading the four rows to `acknowledged`** with the reason that the
+   capability is present in all four and only the spelling differs.
+
+Option 1 is the recommendation: it makes every documented command line portable at no
+compatibility cost.  Whichever is chosen, the outcome must be written into
+`CLI_FLAG_PARITY`, which is what makes this closable.
+
+**RESOLVED BY OPTION 1 in v6.4.0, and one detail of the option list above was
+wrong.** Option 1 said accepting both spellings "leaves four `defect` rows that must
+be re-stated as `acknowledged`". It leaves none: there were SIX rows, not four
+(a plural and a singular row per subcommand), and full parity DELETES them rather
+than re-stating them. The generator proved it -- after the ports it refused to emit a
+spec until all six acknowledgements were removed, naming each one.
+
+**What shipped.** All four CLIs now accept BOTH names with BOTH syntaxes:
+`--commits a b`, `--commit a --commit b`, `--commits a --commits b` and
+`--commit a b` are equivalent, and likewise `--partials`/`--partial`. Additive, so
+MINOR and no `MIGRATING.md` entry, exactly as the option predicted. Per language:
+Python takes `action='append', nargs='+'` on both names and flattens; C grew
+`get_arg_multi2` and made `get_arg_multi` consume every following non-`--` token;
+Go grew `multiValueFlags` and made `filterMultiFlags` variadic (it must strip BOTH
+names or `flag.Parse` chokes on the one it was not told about); Java made
+`parseOpts` ACCUMULATE repeated occurrences instead of overwriting -- scoped to a
+declared `REPEATABLE` set, because making every flag accumulate would turn a typo
+like `--out x --out y` into the filename `x y` rather than last-wins.
+
+**Mixing the two NAMES is refused rather than concatenated**, in all four and with
+the same message. The list order is consensus-critical -- `threshold-respond` must
+see the order `threshold-aggregate` did -- so there is no defensible interleaving of
+two flags, and silently picking one would produce a WRONG SIGNATURE rather than an
+error.
+
+**A second divergence, found and fixed on the way.** The missing-flag diagnostic
+differed: C and Go said `at least one --commit required` where Python said
+`--commits (or --commit) is required`. Same wrong-but-plausible class as the Go
+`rand --bytes -1` bug TODO #269 found, and it had never been asserted anywhere. All
+four now emit one message, asserted per CLI.
+
+**Guarded by `CliTest/test_threshold_interop.sh`**, which was already the file paying
+the cost of this split -- its helpers still carry one branch per shape, which is the
+evidence for why the item existed. Twelve new assertions: every CLI x every syntax
+must produce the SAME aggregate, mixing must be refused, and the diagnostic must
+match. Each CLI is deliberately driven with the spelling it historically did NOT
+accept, since that is the only way to catch a regression that removes one of the two.
+
+**It also required teaching #267's extractor three new accessors** (`get_arg_multi2`,
+`multiValueFlags`, `multiPaths`), and `_resolve_flags` now reads every non-empty
+capture group because one accessor names two flags. That is the standing maintenance
+cost of a derived matrix and is now recorded in CLAUDE.md: a new way to READ a flag
+must be taught to the extractor, or its flags read as absent.
+
+Status: **DONE v6.4.0** — all four CLIs take both spellings with both syntaxes; six `defect` rows deleted, and a divergent diagnostic fixed alongside.

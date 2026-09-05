@@ -2345,12 +2345,12 @@
       "--commit": {
         "c": true,
         "go": true,
-        "java": false,
-        "python": false
+        "java": true,
+        "python": true
       },
       "--commits": {
-        "c": false,
-        "go": false,
+        "c": true,
+        "go": true,
         "java": true,
         "python": true
       },
@@ -2389,12 +2389,12 @@
       "--partial": {
         "c": true,
         "go": true,
-        "java": false,
-        "python": false
+        "java": true,
+        "python": true
       },
       "--partials": {
-        "c": false,
-        "go": false,
+        "c": true,
+        "go": true,
         "java": true,
         "python": true
       }
@@ -2429,12 +2429,12 @@
       "--commit": {
         "c": true,
         "go": true,
-        "java": false,
-        "python": false
+        "java": true,
+        "python": true
       },
       "--commits": {
-        "c": false,
-        "go": false,
+        "c": true,
+        "go": true,
         "java": true,
         "python": true
       },
@@ -2731,96 +2731,6 @@
       ],
       "status": "defect",
       "reason": "The read side of --passphrase's envelope; moves with genpkey --passphrase."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-aggregate",
-      "flag": "--commit",
-      "present_in": [
-        "c",
-        "go"
-      ],
-      "missing_from": [
-        "java",
-        "python"
-      ],
-      "status": "defect",
-      "reason": "The C/Go spelling of threshold-aggregate --commits; see that entry."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-aggregate",
-      "flag": "--commits",
-      "present_in": [
-        "java",
-        "python"
-      ],
-      "missing_from": [
-        "c",
-        "go"
-      ],
-      "status": "defect",
-      "reason": "Python and Java take one repeatable-by-nargs `--commits a b c`; C and Go take a repeated `--commit a --commit b`. The CAPABILITY is present in all four -- what differs is the spelling, so a documented threshold-signing command line does not port between CLIs. Nothing caught it because every parity check so far compared --algo tags and PEM bytes, and the PEMs here are identical."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-combine",
-      "flag": "--partial",
-      "present_in": [
-        "c",
-        "go"
-      ],
-      "missing_from": [
-        "java",
-        "python"
-      ],
-      "status": "defect",
-      "reason": "The C/Go spelling of threshold-combine --partials; see that entry."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-combine",
-      "flag": "--partials",
-      "present_in": [
-        "java",
-        "python"
-      ],
-      "missing_from": [
-        "c",
-        "go"
-      ],
-      "status": "defect",
-      "reason": "The same spelling split on partial signatures: `--partials a b` in Python and Java, `--partial a --partial b` in C and Go."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-respond",
-      "flag": "--commit",
-      "present_in": [
-        "c",
-        "go"
-      ],
-      "missing_from": [
-        "java",
-        "python"
-      ],
-      "status": "defect",
-      "reason": "The C/Go spelling of threshold-respond --commits; see that entry."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "threshold-respond",
-      "flag": "--commits",
-      "present_in": [
-        "java",
-        "python"
-      ],
-      "missing_from": [
-        "c",
-        "go"
-      ],
-      "status": "defect",
-      "reason": "The threshold-respond half of the --commits/--commit spelling split."
     }
   ],
   "unfiled_cli_surface": [

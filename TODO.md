@@ -234,33 +234,81 @@ probably the right shape.
 its own item.
 
 Status: **OPEN**
+### #271: the HPKST AGGREGATE PEM's trailing `n` is DER-encoded at two different widths
 
-### #270: the `--commits` / `--commit` spelling split in the threshold subcommands
+**Found while verifying TODO #270** by comparing aggregate PEMs byte-for-byte across
+CLIs -- something no test had done, because every threshold test checks that the
+artifacts INTEROPERATE and none checks that they are IDENTICAL.
 
-**Made visible by TODO #267's flag matrix, and the only gap there that is not a
-capability difference at all.**  `threshold-aggregate` and `threshold-respond` take
-`--commits a b c` in Python and Java and `--commit a --commit b` in C and Go;
-`threshold-combine` splits the same way on `--partials` / `--partial`.  All four
-implement threshold signing, produce identical PEMs, and interoperate — a documented
-command line simply does not port between them.  Every parity check before #267
-compared `--algo` tags and PEM bytes, which is precisely why this survived.
+For the same commitments and message, Python and Java emit the final `n` field as a
+4-byte DER INTEGER (`02 04 00 00 01 00`) while C and Go emit the minimal 2-byte form
+(`02 02 01 00`). Both decode to 256, every CLI accepts either, and the whole 4x4
+threshold matrix passes -- so this is a wire-format inconsistency with no functional
+symptom today.
 
-**This one is a MAJOR-version decision, and that is the reason it is filed separately
-rather than folded into #269.**  Per CLAUDE.md, renaming or removing a CLI flag breaks
-the stable 2.0.0 CLI surface and needs a `MIGRATING.md` entry.  The options are not
-equal:
+**It predates #270** (confirmed by rebuilding the pre-change C and Python CLIs and
+re-comparing), and #270 did not touch it.
 
-1. **Accept both spellings everywhere** — additive, MINOR, no migration entry, and it
-   leaves four `defect` rows that must be re-stated as `acknowledged`.
-2. **Converge on one spelling** — MAJOR, `MIGRATING.md`, and it breaks scripts.
-   `--commit`/`--partial` (repeat the flag) is the more conventional CLI idiom and
-   needs no `nargs`; `--commits`/`--partials` matches the two CLIs whose users are
-   most likely to be scripting.
-3. **Leave it, upgrading the four rows to `acknowledged`** with the reason that the
-   capability is present in all four and only the spelling differs.
+**Why it is worth an item.** `spec/` treats PEM bytes as a contract -- `KAT/pem/`
+exists precisely to pin them, and TODO #240's malformed-PEM matrix rests on the four
+CLIs agreeing about field widths. A field whose width depends on which CLI wrote it
+is a latent difference in any byte-comparison, and the fix direction is not obvious:
 
-Option 1 is the recommendation: it makes every documented command line portable at no
-compatibility cost.  Whichever is chosen, the outcome must be written into
-`CLI_FLAG_PARITY`, which is what makes this closable.
+1. **Converge on minimal width** (C/Go's form) -- matches DER's own canonical
+   encoding rules and shortens the artifact, but changes the bytes Python and Java
+   have been emitting since the subcommand shipped.
+2. **Converge on fixed width** (Python/Java's form) -- changes C and Go instead.
+3. **Leave it, and document that this field's width is not pinned** -- honest, but it
+   means `KAT/pem/` can never gain an aggregate vector.
+
+Either convergence changes bytes on the wire for two of the four CLIs. Since every
+reader accepts both, no stored artifact becomes unreadable, so this is very likely a
+`MIGRATING.md` note rather than a MAJOR bump -- but that call belongs to whoever
+takes it.
+
+**First step for whoever does:** audit the OTHER multi-CLI PEMs the same way. This was
+found by accident on one field of one label; nothing has ever compared the rest
+byte-for-byte across all four writers, and `test_rand.sh` gained exactly that check
+for `HDRBG STATE` in v6.3.0 (where all four already agreed).
+
+Status: **OPEN**
+
+### #272: the C CLI's 64-value list-flag limit is arbitrary, undocumented, and unmatched
+
+**Found while verifying TODO #270**, by driving `threshold-aggregate` with 70
+commitments in each CLI and comparing each one's result against its own 64-signer
+result.
+
+C collects `--commits`/`--commit` and `--partials`/`--partial` values into a fixed
+64-entry array. Until v6.4.0 it stopped filling that array **silently and returned
+success**, so a ceremony with more than 64 signers produced an aggregate over the
+first 64 in C while Python, Go and Java used every one — the same command line
+yielding a different signature depending on which CLI aggregated it, with no
+diagnostic anywhere. Pre-existing (verified against a rebuilt pre-#270 binary) and
+invisible to every test, because nothing had ever run a ceremony larger than a handful
+of signers.
+
+**v6.4.0 made it fail loudly** (`--commits: at most 64 values supported`), asserted in
+`CliTest/test_threshold_interop.sh` along with the boundary case. **That is the
+containment, not the fix**, and this item is the fix.
+
+**The open question is what the limit should be.** The three facts that shape it:
+
+* Python, Go and Java impose no limit at all, so 64 is not a protocol constant — it is
+  one implementation's buffer size, and nothing in `spec/` or `SPEC.md` mentions it.
+* HPKS-T is an n-of-n scheme, so the signer count is a deployment choice, not a
+  parameter. There is no principled ceiling to point at.
+* C's arrays are stack-allocated in three call sites plus `get_arg_multi2`'s two
+  scratch buffers, so raising the number naively raises stack usage in all of them.
+
+Options: heap-allocate and drop the limit (matching the other three, at the cost of C's
+current allocation-free argument parsing); raise it to a documented constant and put
+that constant in `spec/`; or declare 64 a deliberate protocol-wide maximum and enforce
+it in all four, which is the only option that makes the CLIs agree rather than merely
+making C honest.
+
+**Worth checking at the same time:** whether any other C list-flag or fixed-size
+argument buffer truncates the same way. `get_arg_multi` was the one this surfaced
+through; nothing has audited the rest.
 
 Status: **OPEN**

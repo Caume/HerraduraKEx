@@ -149,6 +149,12 @@ public final class HerraduraCli {
     // Option parsing: --flag value  or  --flag (boolean)
     // -----------------------------------------------------------------
 
+    /** Flags whose repeated occurrences accumulate instead of overwriting
+     *  (TODO #270).  Both the plural and singular spelling of each threshold path
+     *  list, since all four CLIs now accept both. */
+    private static final java.util.Set<String> REPEATABLE = new java.util.HashSet<>(
+        java.util.Arrays.asList("commits", "commit", "partials", "partial"));
+
     private static Map<String, String> parseOpts(String[] args, int from) {
         Map<String, String> opt = new HashMap<>();
         int i = from;
@@ -168,10 +174,42 @@ public final class HerraduraCli {
                 vals.add(args[j]);
                 j++;
             }
-            opt.put(key, vals.isEmpty() ? "true" : String.join(" ", vals));
+            String val = vals.isEmpty() ? "true" : String.join(" ", vals);
+            // TODO #270: a REPEATED multi-value flag accumulates rather than
+            // overwriting, so `--commit a --commit b` reaches the command as the
+            // same space-joined list `--commits a b` does.  Scoped to the declared
+            // repeatable names: making every flag accumulate would turn a typo like
+            // `--out x --out y` into the filename "x y" instead of last-wins.
+            String prev = opt.get(key);
+            if (prev != null && REPEATABLE.contains(key)) {
+                val = prev + " " + val;
+            }
+            opt.put(key, val);
             i = j;
         }
         return opt;
+    }
+
+    /** Unions the plural and singular spellings of a repeated path flag (TODO #270).
+     *
+     *  Mixing the two NAMES is refused rather than concatenated: the list order is
+     *  consensus-critical -- threshold-respond must see the order
+     *  threshold-aggregate did -- so there is no defensible interleaving, and
+     *  silently choosing one would produce a wrong signature rather than an error. */
+    private static String[] multiPaths(Map<String, String> opt, String cmd,
+                                       String plural, String singular) {
+        String p = opt.get(plural);
+        String s = opt.get(singular);
+        if (p != null && s != null) {
+            throw new CliError(cmd + ": use --" + plural + " or --" + singular
+                + ", not both (they name the same list, and mixing them leaves its "
+                + "order undefined)");
+        }
+        String v = p != null ? p : s;
+        if (v == null) {
+            throw new CliError(cmd + ": --" + plural + " (or --" + singular + ") is required");
+        }
+        return v.trim().split("\\s+");
     }
 
     private static String req(Map<String, String> opt, String key, String cmd) {
@@ -1525,10 +1563,10 @@ public final class HerraduraCli {
     }
 
     private static void cmdThresholdAggregate(Map<String, String> opt) throws IOException {
-        String commitsArg = req(opt, "commits", "threshold-aggregate");
+        String[] commitPaths = multiPaths(opt, "threshold-aggregate", "commits", "commit");
         List<Codec.HpkstCommit> commits = new java.util.ArrayList<>();
         Integer nbits = null;
-        for (String cp : commitsArg.trim().split("\\s+")) {
+        for (String cp : commitPaths) {
             Codec.HpkstCommit c = Codec.decodeHpkstCommit(readString(cp));
             if (nbits == null) nbits = c.nbits;
             else if (!nbits.equals(c.nbits)) throw new CliError("threshold-aggregate: commitment n mismatch");
@@ -1556,9 +1594,9 @@ public final class HerraduraCli {
         if (pk.nbits != Herradura.N) {
             throw new CliError("threshold-respond: HPKS-T requires a " + Herradura.N + "-bit key; got " + pk.nbits + "-bit");
         }
-        String commitsArg = req(opt, "commits", "threshold-respond");
+        String[] commitPaths = multiPaths(opt, "threshold-respond", "commits", "commit");
         List<BigInteger> pubkeys = new java.util.ArrayList<>();
-        for (String cp : commitsArg.trim().split("\\s+")) {
+        for (String cp : commitPaths) {
             pubkeys.add(Codec.decodeHpkstCommit(readString(cp)).cJ);
         }
         Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-respond")));
@@ -1580,9 +1618,9 @@ public final class HerraduraCli {
 
     private static void cmdThresholdCombine(Map<String, String> opt) throws IOException {
         Codec.HpkstAggregate agg = Codec.decodeHpkstAggregate(readString(req(opt, "aggregate", "threshold-combine")));
-        String partialsArg = req(opt, "partials", "threshold-combine");
+        String[] partialPaths = multiPaths(opt, "threshold-combine", "partials", "partial");
         BigInteger sAcc = BigInteger.ZERO;
-        for (String pp : partialsArg.trim().split("\\s+")) {
+        for (String pp : partialPaths) {
             Codec.HpkstPartial part = Codec.decodeHpkstPartial(readString(pp));
             if (part.nbits != agg.nbits) throw new CliError("threshold-combine: partial n mismatch");
             sAcc = sAcc.add(part.sJ).mod(Herradura.GROUP_ORDER);
