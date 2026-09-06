@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.4] - 2026-09-06
+
+### TODO #273 (DONE) — HSKE-NL-AEAD ported to Java; `enc --aead` is four-way
+
+Split out of TODO #269 on the finding that `--aead` was not CLI wiring: `bindings/java/`
+had **no AEAD primitive at all**. Until TODO #274 (v6.5.2) Java accepted `--aead` and wrote
+format tag 1 — plain, unauthenticated HSKE-NL-A1 — with exit 0, so a caller asking for
+authenticated encryption got a ciphertext the other three CLIs would read back as authentic.
+#274 made it refuse the flag by name; this closes it.
+
+**Three parts, in the order the item set out.**
+
+1. **The primitive** (`HerraduraNl.hskeNlAeadStreams` / `hskeNlAeadXorKs` / `hskeNlAeadTag`
+   plus `hskeNlAeadEncrypt` / `hskeNlAeadDecrypt`). `Hfscx256.encFile` already had the
+   counter-keystream-plus-keyed-MAC shape, but it cannot be reused: `.hkx` block-pads its
+   ciphertext and its MAC input carries neither the domain-separation string nor associated
+   data. Verified byte-identical to Python on the same (key, nonce, ad, pt) before any CLI
+   was touched.
+2. **The codec.** Format tag 2 carries a nonce *and* a 32-byte auth tag, which the Java
+   codec had no shape for. The tag is a fixed 32 bytes regardless of `nbits` — it is an
+   HFSCX-256 output, not a key-width-sized field.
+3. **The flags.** `enc --aead`, and `--ad` gated behind it: format tag 1 has nowhere to put
+   associated data, so accepting `--ad` without `--aead` would silently drop it.
+
+**One asymmetry avoided, and `generate_spec.py` is what caught it.** The first version also
+accepted `--aead` on `dec`, to reject it when the artifact carried no tag. The generator
+refused to emit a spec — C, Go and Python have no such flag, because the format tag is what
+the artifact *is* and decryption never needs telling. Java now matches: an authenticated
+ciphertext takes the AEAD path whether or not anything was passed, so verification is never
+optional.
+
+**Tests.** `CliTest/test_aead.sh` goes from 9 pairs to **16** — the full
+encryptor × decryptor matrix, the shape `test_zkp_hybrid_family.sh` adopted after TODO #261
+found a pair that had never interoperated because every test compared against Python. The
+direction that matters most is `java-enc → {py,c,go}-dec`: the one that would have produced
+an unauthenticated artifact the other three accepted. It also grows two artifact-tampering
+axes (flipped auth tag, flipped ciphertext) asserted in all four languages, alongside the
+existing wrong-`--ad` and wrong-key cases: 41 assertions, up from 19. Java's `SelfTest`
+gains `[33] hske_nl_aead`, whose point is the three rejection axes rather than the
+round-trip.
+
+**Bookkeeping now forced, not remembered.** The `("enc", "--aead")` row in
+`CLI_FLAG_PARITY` and TODO #261's three `acknowledged` manifest cells
+(`hske-nl-aead-xor-ks`, `hske-nl-aead-tag`, `hske-nl-aead-streams`) are deleted — the
+generator refuses to emit a spec while an acknowledgement describes a gap that no longer
+exists, and the internal-surface census failed on the three new Java methods until they were
+filed. `hske-nl-aead-streams` keeps an acknowledgement, rewritten: Python and Java split the
+derivation into a helper where C and Go inline it, which is a factoring difference between
+two pairs of languages, not a missing capability.
+
 ## [6.5.3] - 2026-09-06
 
 ### TODO #275 (DONE) — the packed-framing malformed-PEM table, and the zero-round forgery it found

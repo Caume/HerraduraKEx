@@ -15882,3 +15882,70 @@ HCRED artifact is readable by all four.  Its fixtures are therefore generated
 per-language — giving up a cross-language claim that, for HCRED, does not exist.
 
 Status: **DONE v6.5.3** — the packed-framing craft helper and its case table, plus the vacuous-round-count forgery in three CLIs that the first run found.
+
+### #273: port HSKE-NL-AEAD to Java (`enc --aead`)
+
+**Split out of TODO #269**, which had carried it as one of "Java's five missing
+flag/subcommand capabilities" on the premise that all five were CLI wiring over
+primitives `bindings/java/` already had.  For `--aead` that premise is wrong, and
+leaving it in #269 is what made that item look cheap: `bindings/java/` has no AEAD
+primitive at all.  TODO #261's manifest already records this, carrying
+`hske-nl-aead-xor-ks`, `hske-nl-aead-tag` and `hske-nl-aead-streams` as
+`acknowledged` for Java.
+
+**Since TODO #274 (v6.5.2) the absence is at least LOUD.**  Java used to accept
+`--aead` and write format tag 1 — plain, unauthenticated HSKE-NL-A1 — with exit 0.  It
+now refuses the flag by name.  Containment, not this item.
+
+**Cost class is TODO #268's, not #269's.**  Three parts, in order: the AEAD
+primitive itself (keystream XOR, the tag, and the two-stream derivation); a codec
+change, since format tag 2 carries a nonce and an auth tag that the Java codec has
+no shape for; and only then the CLI flag on `enc` and `dec`.
+
+**Acceptance.**  All four CLIs encrypt and decrypt the format, cross-checked as a
+4x4 (encryptor x decryptor) matrix rather than each against Python -- the shape
+`test_zkp_hybrid_family.sh` adopted after TODO #261 found a pair that had never
+interoperated because every test compared to Python.  `CliTest/test_aead.sh` is
+the existing 9-way script and grows to 16.  A tag that fails to verify must be
+refused rather than returning plaintext, and that rejection is asserted in every
+language.  On success the `("enc", "--aead")` row in `spec/generate_spec.py`'s
+`CLI_FLAG_PARITY` and #261's three `acknowledged` manifest cells are deleted, and
+`generate_spec.py --check` FAILS until they are.
+
+**Resolution (v6.5.4).**  All three parts landed in the order the item set out, and
+the cost class was indeed #268's rather than #269's: the primitive was the work, the
+flag was an afternoon.
+
+**The primitive could not be borrowed from `.hkx`.**  `Hfscx256.encFile` already had
+the counter-keystream-plus-keyed-MAC shape, which made reuse look tempting, but it
+block-pads its ciphertext and its MAC input carries neither the domain-separation
+string nor associated data.  Both differences are load-bearing for byte
+compatibility, so `HerraduraNl` got its own `hskeNlAeadStreams` / `hskeNlAeadXorKs` /
+`hskeNlAeadTag`.  Checked byte-identical to Python on the same (key, nonce, ad, pt)
+BEFORE any CLI was touched — the cheapest place to catch a transcription error, and
+the same discipline #266 arrived at for KKW.
+
+**An asymmetry avoided, by the tooling rather than by care.**  The first version also
+took `--aead` on `dec`, to reject it when the artifact carried no tag.
+`generate_spec.py` refused to emit a spec: C, Go and Python have no such flag, because
+the format tag is what the artifact IS and decryption never needs telling.  That is
+#267's mechanism catching a NEW gap being opened, not an old one — the direction the
+item did not anticipate.  Java now matches: an authenticated ciphertext takes the AEAD
+path whether or not anything was passed, so verification is never optional.
+
+**Acceptance met.**  `CliTest/test_aead.sh` is a 4x4 matrix (16 pairs, all passing),
+grown from 9, and gained two ARTIFACT-tampering axes — a flipped auth tag and a
+flipped ciphertext — asserted in all four languages, where the pre-existing cases only
+varied the decryptor's inputs.  41 assertions, up from 19.  `SelfTest [33]` covers the
+rejection axes a CLI matrix cannot reach cheaply.  The `("enc", "--aead")`
+`CLI_FLAG_PARITY` row and #261's three `acknowledged` cells are gone; the census failed
+on the three new Java methods until they were filed, and `hske-nl-aead-streams` kept an
+acknowledgement, rewritten to describe what it now is — a factoring difference between
+{Python, Java} and {C, Go}, not a missing capability.
+
+**Filed while here:** this item is a PREREQUISITE of TODO #268, and #268's text does
+not say so.  #268 names only `hmac_hfscx_256` as Java's missing primitive, but its
+envelope encrypts with HSKE-NL-AEAD, so #268 could not have met its own "all four CLIs"
+acceptance until this landed.
+
+Status: **DONE v6.5.4** — the AEAD primitive itself, then the codec's format tag 2, then the flag; `test_aead.sh` 9-way to 16.

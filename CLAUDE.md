@@ -691,7 +691,12 @@ bindings/java/                                       — complete pure-Java port
                                                       empty cell rather than as silence;
                                                       cross-checked against KAT/.  hpks-wots /
                                                       hpks-xmss keep one-time-use/leaf-index state
-                                                      in a <keyfile>.idx sidecar, as Python does
+                                                      in a <keyfile>.idx sidecar, as Python does.
+                                                      HSKE-NL-AEAD (`enc --aead`) landed in TODO #273:
+                                                      the port had no AEAD primitive at all, so it was
+                                                      the last Java capability gap that was not merely
+                                                      argument-parser wiring.  CliTest/test_aead.sh is
+                                                      now a 4x4 matrix rather than 9-way
 herradura/                                            — root-level Go package (herradura.go, codec.go)
                                                       used by the FFI Go binding and its fuzz tests
 benchmarks/                                          — recorded benchmark output/history;
@@ -1016,7 +1021,7 @@ bash CliTest/test_sign.sh
 bash CliTest/test_encrypt.sh
 bash CliTest/test_encfile.sh
 bash CliTest/test_signfile.sh
-bash CliTest/test_aead.sh      # HSKE-NL-AEAD enc/dec --aead, 9-way cross-CLI interop (needs C+Go CLIs built)
+bash CliTest/test_aead.sh      # HSKE-NL-AEAD enc/dec --aead, 16-way cross-CLI interop (needs C+Go built; Java joined in TODO #273)
 
 # C CLI — requires HerraduraCli/herradura_cli (build_c.sh)
 bash CliTest/test_c_keygen.sh

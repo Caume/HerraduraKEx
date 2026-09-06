@@ -808,8 +808,22 @@ public final class HerraduraCli {
         return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
     }
 
-    /** Returns {E, nbits, nonce_or_null} (format tag 0 or 1). Format tag 2
-     * (hske-nla1 AEAD) is out of this Java CLI's scope. */
+    /** Symmetric-ciphertext DER with a nonce and a 32-byte auth tag, format
+     * tag 2 — matches herradura.py's _encode_sym_ct's hske-nla1 AEAD case
+     * (TODO #273).  The auth tag is a fixed 32 bytes regardless of nbits: it
+     * is an HFSCX-256 output, not a key-width-sized field. */
+    private static String encodeSymCtAead(BigInteger e, BigInteger nonce,
+                                          BigInteger authTag, int nbits) {
+        byte[] der = Codec.derSeq(Codec.derInt(BigInteger.valueOf(2), -1),
+                                   Codec.derInt(nonce, nbits / 8),
+                                   Codec.derInt(e, nbits / 8),
+                                   Codec.derInt(authTag, 32),
+                                   Codec.derInt(BigInteger.valueOf(nbits), -1));
+        return Codec.pemWrap(Codec.PEM_CIPHERTEXT, der);
+    }
+
+    /** Returns {E, nbits, nonce_or_null, authTag_or_null} for format tags
+     * 0, 1 and 2 (TODO #273 added 2). */
     private static BigInteger[] decodeSymCt(String pem) {
         Codec.PemBlock b = Codec.pemUnwrap(pem);
         if (!b.label.equals(Codec.PEM_CIPHERTEXT)) {
@@ -818,12 +832,14 @@ public final class HerraduraCli {
         List<BigInteger> ints = Codec.derParseSeq(b.der);
         int formatTag = ints.get(0).intValueExact();
         if (formatTag == 0) {
-            return new BigInteger[] { ints.get(1), ints.get(2), null }; // E, nbits
+            return new BigInteger[] { ints.get(1), ints.get(2), null, null };
         } else if (formatTag == 1) {
-            return new BigInteger[] { ints.get(2), ints.get(3), ints.get(1) }; // E, nbits, nonce
+            return new BigInteger[] { ints.get(2), ints.get(3), ints.get(1), null };
+        } else if (formatTag == 2) {
+            // E, nbits, nonce, authTag
+            return new BigInteger[] { ints.get(2), ints.get(4), ints.get(1), ints.get(3) };
         } else {
-            throw new CliError("hske ciphertext has format tag " + formatTag
-                + " (the AEAD variant is out of this Java CLI's scope)");
+            throw new CliError("hske ciphertext has unknown format tag " + formatTag);
         }
     }
 
@@ -901,10 +917,24 @@ public final class HerraduraCli {
             BigInteger[] key = loadKey(req(opt, "key", "enc"));
             int nbits = key[1].intValueExact();
             int nbytes = nbits / 8;
-            BigInteger p = new BigInteger(1, padTrunc(inBytes, nbytes));
+            byte[] block = padTrunc(inBytes, nbytes);
             BigInteger nonce = new BigInteger(nbits, RNG).and(Herradura.MASK);
-            BigInteger e = HerraduraNl.hskeNlA1Encrypt(p, key[0], nonce);
-            writeString(out, encodeSymCtNonce(e, nonce, nbits));
+            if (opt.containsKey("aead")) {
+                // TODO #273.  --ad is only meaningful with --aead: format tag 1
+                // has nowhere to put associated data, so accepting it there
+                // would silently drop it.
+                byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key[0], nonce, ad, block);
+                writeString(out, encodeSymCtAead(new BigInteger(1, c.ct), nonce,
+                                                 new BigInteger(1, c.tag), nbits));
+            } else {
+                if (opt.containsKey("ad")) {
+                    throw new CliError("enc hske-nla1: --ad requires --aead");
+                }
+                BigInteger p = new BigInteger(1, block);
+                BigInteger e = HerraduraNl.hskeNlA1Encrypt(p, key[0], nonce);
+                writeString(out, encodeSymCtNonce(e, nonce, nbits));
+            }
         } else if (algo.equals("hske-nla2")) {
             BigInteger[] key = loadKey(req(opt, "key", "enc"));
             int nbits = key[1].intValueExact();
@@ -1007,8 +1037,25 @@ public final class HerraduraCli {
             int nbits = key[1].intValueExact();
             BigInteger[] ct = decodeSymCt(readString(req(opt, "in", "dec")));
             if (ct[2] == null) throw new CliError("hske-nla1 ciphertext missing nonce");
-            BigInteger d = HerraduraNl.hskeNlA1Decrypt(ct[0], key[0], ct[2]);
-            writeBytes(out, toFixedBytes(d, nbits / 8));
+            if (ct[3] != null) {
+                // TODO #273.  An authenticated ciphertext is decrypted through
+                // the AEAD path whether or not --aead was passed: the format
+                // tag is what the artifact IS, and verifying is never optional.
+                byte[] ad = opt.getOrDefault("ad", "").getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+                byte[] pt = HerraduraNl.hskeNlAeadDecrypt(
+                    key[0], ct[2], ad, toFixedBytes(ct[0], nbits / 8),
+                    toFixedBytes(ct[3], 32));
+                if (pt == null) {
+                    throw new CliError("dec hske-nla1: authentication tag mismatch — "
+                        + "ciphertext corrupt, wrong key, or wrong --ad");
+                }
+                writeBytes(out, pt);
+            } else {
+                // No --aead on dec, in any of the four CLIs: the format tag is
+                // what the artifact IS, so decryption never needs telling.
+                BigInteger d = HerraduraNl.hskeNlA1Decrypt(ct[0], key[0], ct[2]);
+                writeBytes(out, toFixedBytes(d, nbits / 8));
+            }
         } else if (algo.equals("hske-nla2")) {
             BigInteger[] key = loadKey(req(opt, "key", "dec"));
             int nbits = key[1].intValueExact();

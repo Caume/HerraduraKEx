@@ -994,17 +994,10 @@ CLI_FLAG_PARITY = {
         ("python",), "defect",
         "Selects the passphrase-decrypting read path; moves with pkey --passphrase."),
 
-    # ── Java's remaining missing flag ─────────────────────────────────────
-    # `--digest` and `rand` closed in v6.2.0/v6.3.0 and `kex --kdf` in v6.5.0,
-    # all under TODO #269. `--aead` is the one left, and it is not CLI wiring:
-    # bindings/java/ has no AEAD primitive at all, which is why TODO #269 re-filed
-    # it as its own item rather than closing it in place.
-    ("enc", "--aead"): (
-        ("c", "go", "python"), "defect",
-        "HSKE-NL-AEAD encryption. HerraduraCli.java's class doc already states this "
-        "gap -- in a Javadoc sentence, which is a comment and not a record any check "
-        "reads, which is precisely TODO #267's complaint. CliTest/test_aead.sh's "
-        "9-way interop covers the other three only."),
+    # ── Java's flag gaps under TODO #269 are all closed ───────────────────
+    # `--digest` and `rand` in v6.2.0/v6.3.0, `kex --kdf` in v6.5.0, and
+    # `enc --aead` in v6.5.4 (TODO #273), which needed the AEAD primitive
+    # itself rather than argument-parser wiring.
     ("genpkey", "--bits"): (
         ("go", "java", "python"), "acknowledged",
         "A runtime key-width selector. The C CLI is compiled for a single KEYBITS "

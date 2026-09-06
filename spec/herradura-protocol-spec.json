@@ -1929,7 +1929,7 @@
       "--aead": {
         "c": true,
         "go": true,
-        "java": false,
+        "java": true,
         "python": true
       },
       "--algo": {
@@ -2596,21 +2596,6 @@
       ],
       "status": "acknowledged",
       "reason": "An EXTRA flag rather than a missing one: C and Go let the caller override the round count a proof declares, defaulting to the proof's own. Python and Java always use the proof's. The round count travels in the PEM (TODO #236), so the default is identical in all four and the flag only widens what C and Go will attempt; it cannot make them accept a proof the others reject."
-    },
-    {
-      "kind": "flag",
-      "subcommand": "enc",
-      "flag": "--aead",
-      "present_in": [
-        "c",
-        "go",
-        "python"
-      ],
-      "missing_from": [
-        "java"
-      ],
-      "status": "defect",
-      "reason": "HSKE-NL-AEAD encryption. HerraduraCli.java's class doc already states this gap -- in a Javadoc sentence, which is a comment and not a record any check reads, which is precisely TODO #267's complaint. CliTest/test_aead.sh's 9-way interop covers the other three only."
     },
     {
       "kind": "flag",

@@ -34,7 +34,8 @@ import java.security.SecureRandom;
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
  * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
  * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw
- * [32] qcmdpc_weak_key_screen. New checks append at [33] onward; a check's
+ * [32] qcmdpc_weak_key_screen [33] hske_nl_aead. New checks append at [34]
+ * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
  *
@@ -967,6 +968,47 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS [32] qcmdpc_weak_key_screen");
+            }
+        }
+
+        // [33] HSKE-NL-AEAD round-trip + the three tamper axes (TODO #273).
+        //
+        // This port had no AEAD primitive at all until #273, and `enc --aead`
+        // wrote plain HSKE-NL-A1 with exit 0.  So the check that earns its keep
+        // is not the round-trip: it is that a MODIFIED tag, ciphertext or ad is
+        // refused, which an implementation that merely decrypts would fail.
+        // Byte-compatibility with the other three is covered by
+        // CliTest/test_aead.sh's 4x4 matrix, which a self-test cannot reach.
+        {
+            int okRt = 0, okTag = 0, okCt = 0, okAd = 0, trials = 8;
+            for (int i = 0; i < trials; i++) {
+                BigInteger key = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+                BigInteger nonce = new BigInteger(Herradura.N, rng).and(Herradura.MASK);
+                byte[] ad = ("ad-" + i).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] pt = new byte[40 + i];   // spans two 32-byte keystream blocks
+                rng.nextBytes(pt);
+
+                HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key, nonce, ad, pt);
+                if (c.ct.length != pt.length) continue;    // ct must not be block-padded
+                byte[] back = HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, c.ct, c.tag);
+                if (back != null && java.util.Arrays.equals(back, pt)) okRt++;
+
+                byte[] badTag = c.tag.clone(); badTag[i % badTag.length] ^= 1;
+                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, c.ct, badTag) == null) okTag++;
+
+                byte[] badCt = c.ct.clone(); badCt[i % badCt.length] ^= 1;
+                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, ad, badCt, c.tag) == null) okCt++;
+
+                byte[] badAd = ("ad-" + i + "!").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                if (HerraduraNl.hskeNlAeadDecrypt(key, nonce, badAd, c.ct, c.tag) == null) okAd++;
+            }
+            if (okRt != trials || okTag != trials || okCt != trials || okAd != trials) {
+                System.out.println("FAIL [33] hske_nl_aead (roundtrip=" + okRt
+                        + "/" + trials + " tag_reject=" + okTag + " ct_reject=" + okCt
+                        + " ad_reject=" + okAd + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [33] hske_nl_aead");
             }
         }
 

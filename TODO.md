@@ -141,7 +141,16 @@ the flag by name.  That is containment, not this item: the envelope is still mis
 **Not a thin port.**  It needs PBKDF2-HFSCX-256, which needs `hmac_hfscx_256` in Java
 first — TODO #261's primitive manifest already carries that as `acknowledged` for
 exactly this reason, so closing this closes both the missing primitive and the missing
-flag.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
+flag.
+
+**Correction, found on starting the work (v6.5.4):** `hmac_hfscx_256` was NOT the only
+missing Java prerequisite, and this paragraph named only that one.  The envelope
+encrypts with HSKE-NL-AEAD, which `bindings/java/` did not have either — that was
+TODO #273, a separate open item this text never referenced.  Since the acceptance below
+requires all four CLIs, #273 was a hard blocker, and it was closed first (v6.5.4).
+What remains for Java is now genuinely just `hmac_hfscx_256` plus PBKDF2.  The lesson is
+the one #267 exists for: a prerequisite list written in prose is not checked by anything,
+and this one was incomplete for two releases.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
 in every subcommand that loads a key: an encrypted key reaching a build that does not
 understand the envelope must be refused, never mis-parsed.
 
@@ -192,36 +201,5 @@ making C honest.
 **Worth checking at the same time:** whether any other C list-flag or fixed-size
 argument buffer truncates the same way. `get_arg_multi` was the one this surfaced
 through; nothing has audited the rest.
-
-Status: **OPEN**
-
-### #273: port HSKE-NL-AEAD to Java (`enc --aead`)
-
-**Split out of TODO #269**, which had carried it as one of "Java's five missing
-flag/subcommand capabilities" on the premise that all five were CLI wiring over
-primitives `bindings/java/` already had.  For `--aead` that premise is wrong, and
-leaving it in #269 is what made that item look cheap: `bindings/java/` has no AEAD
-primitive at all.  TODO #261's manifest already records this, carrying
-`hske-nl-aead-xor-ks`, `hske-nl-aead-tag` and `hske-nl-aead-streams` as
-`acknowledged` for Java.
-
-**Since TODO #274 (v6.5.2) the absence is at least LOUD.**  Java used to accept
-`--aead` and write format tag 1 — plain, unauthenticated HSKE-NL-A1 — with exit 0.  It
-now refuses the flag by name.  Containment, not this item.
-
-**Cost class is TODO #268's, not #269's.**  Three parts, in order: the AEAD
-primitive itself (keystream XOR, the tag, and the two-stream derivation); a codec
-change, since format tag 2 carries a nonce and an auth tag that the Java codec has
-no shape for; and only then the CLI flag on `enc` and `dec`.
-
-**Acceptance.**  All four CLIs encrypt and decrypt the format, cross-checked as a
-4x4 (encryptor x decryptor) matrix rather than each against Python -- the shape
-`test_zkp_hybrid_family.sh` adopted after TODO #261 found a pair that had never
-interoperated because every test compared to Python.  `CliTest/test_aead.sh` is
-the existing 9-way script and grows to 16.  A tag that fails to verify must be
-refused rather than returning plaintext, and that rejection is asserted in every
-language.  On success the `("enc", "--aead")` row in `spec/generate_spec.py`'s
-`CLI_FLAG_PARITY` and #261's three `acknowledged` manifest cells are deleted, and
-`generate_spec.py --check` FAILS until they are.
 
 Status: **OPEN**

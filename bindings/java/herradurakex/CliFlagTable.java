@@ -22,7 +22,7 @@ final class CliFlagTable {
         m.put("dec", new HashSet<>(Arrays.asList("ad", "algo", "in", "key", "out")));
         m.put("decfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("dgst", new HashSet<>(Arrays.asList("algo", "in", "out")));
-        m.put("enc", new HashSet<>(Arrays.asList("ad", "algo", "in", "key", "out", "pubkey")));
+        m.put("enc", new HashSet<>(Arrays.asList("ad", "aead", "algo", "in", "key", "out", "pubkey")));
         m.put("encfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
         m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "out", "xmss-height")));
