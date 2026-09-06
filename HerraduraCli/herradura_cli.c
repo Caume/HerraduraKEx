@@ -16,6 +16,7 @@
 
 #include "../herradura.h"
 #include "herradura_codec.h"
+#include "cli_flag_table.h"
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * I/O helpers
@@ -81,6 +82,57 @@ static int has_flag(int argc, char **argv, const char *flag)
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], flag) == 0) return 1;
     return 0;
+}
+
+/* TODO #274: refuse a flag this subcommand does not read.
+ *
+ * get_arg/has_flag SCAN for the flags they want and say nothing about the rest,
+ * so until now every unrecognised flag was accepted silently -- and the damage
+ * was not hypothetical: `enc --aeadx` (one typo) exited 0 and wrote an
+ * UNAUTHENTICATED ciphertext, because the AEAD branch is selected by the flag's
+ * presence.  Fail-open on the weaker branch, the same shape as TODO #269's
+ * `--digest`, one granularity up.
+ *
+ * HKX_FLAG_SETS is GENERATED from the same extractor that builds spec/'s
+ * cli_flag_matrix, so it is definitionally the set this parser reads; adding a
+ * get_arg() call without regenerating fails `generate_spec.py --check`.
+ *
+ * Only tokens starting with "--" are examined, and one that follows a
+ * value-taking flag is treated as that flag's VALUE rather than as a flag. */
+static void check_unknown_flags(const char *cmd, int argc, char **argv)
+{
+    const HkxFlagSet *set = NULL;
+    for (int i = 0; i < HKX_FLAG_SETS_N; i++)
+        if (strcmp(HKX_FLAG_SETS[i].cmd, cmd) == 0) { set = &HKX_FLAG_SETS[i]; break; }
+    if (!set) return;              /* unknown SUBCOMMAND: main() reports that */
+
+    for (int i = 2; i < argc; i++) {
+        const char *a = argv[i];
+        if (a[0] != '-' || a[1] != '-' || a[2] == '\0') continue;
+        if (strcmp(a, "--help") == 0) continue;
+        int known = 0;
+        for (int j = 0; j < set->n; j++)
+            if (strcmp(a, set->flags[j]) == 0) { known = 1; break; }
+        if (known) continue;
+        /* Skip a token that is the VALUE of the flag before it, so a file
+         * literally named "--weird.pem" is not reported as an unknown flag --
+         * Python and Go both accept such a value, so C must too.
+         *
+         * The preceding flag must be one that TAKES a value.  Skipping after any
+         * known flag would reopen the hole on the boolean ones: `enc --aead
+         * --typo` would treat --typo as --aead's value, and --aead consumes
+         * nothing.  hkx_valued_* is generated from the value-taking accessors
+         * (get_arg / get_arg_multi / get_arg_multi2) and excludes has_flag. */
+        if (i > 2) {
+            const char *prev = argv[i - 1];
+            int prev_takes_value = 0;
+            for (int j = 0; j < set->nv; j++)
+                if (strcmp(prev, set->valued[j]) == 0) { prev_takes_value = 1; break; }
+            if (prev_takes_value) continue;
+        }
+        fprintf(stderr, "%s: unrecognised flag %s\n", cmd, a);
+        exit(2);
+    }
 }
 
 /* --digest's value set, validated in one place (TODO #269).
@@ -4692,6 +4744,7 @@ int main(int argc, char **argv)
         usage();
 
     const char *cmd = argv[1];
+    check_unknown_flags(cmd, argc, argv);
     if (strcmp(cmd, "genpkey") == 0) { cmd_genpkey(argc, argv); return 0; }
     if (strcmp(cmd, "pkey")    == 0) { cmd_pkey(argc, argv);    return 0; }
     if (strcmp(cmd, "kex")     == 0) { cmd_kex(argc, argv);     return 0; }

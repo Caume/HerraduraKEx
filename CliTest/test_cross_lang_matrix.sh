@@ -299,9 +299,16 @@ HCRED_ISSUE_ROUNDS=32
 HCRED_PROVE_ROUNDS=4
 for who in "${LANGS[@]}"; do
     # Python's hcred default is n=32 (demo bit-width); the other three CLIs
-    # default to n=256 (HCRED_N == RNL_N). Force --bits 256 everywhere so
-    # the parameter matches (see test_java_hcred_interop.sh's Python side).
-    ${CLI[$who]} genpkey --algo hcred --bits 256 --out "$TMP/hc_u_$who.pem" >/dev/null 2>&1
+    # default to n=256 (HCRED_N == RNL_N). Force --bits 256 so the parameter
+    # matches (see test_java_hcred_interop.sh's Python side) -- but NOT for C,
+    # which has no `genpkey --bits` at all: it is compiled for a single
+    # HCRED_N, so the flag has no runtime width to set (an `acknowledged` gap
+    # in spec/'s cli_surface_gaps).  C used to IGNORE it silently and reach
+    # n=256 by its compiled default, which looked like the flag working; since
+    # TODO #274 an unrecognised flag is refused, so passing it here would fail.
+    bits_arg=(--bits 256)
+    [ "$who" = "c" ] && bits_arg=()
+    ${CLI[$who]} genpkey --algo hcred "${bits_arg[@]}" --out "$TMP/hc_u_$who.pem" >/dev/null 2>&1
     ${CLI[$who]} pkey --in "$TMP/hc_u_$who.pem" --pubout --out "$TMP/hc_u_${who}_pub.pem" >/dev/null 2>&1
     ${CLI[$who]} genpkey --algo hpks-stern --out "$TMP/hc_i_$who.pem" >/dev/null 2>&1
     ${CLI[$who]} pkey --in "$TMP/hc_i_$who.pem" --pubout --out "$TMP/hc_i_${who}_pub.pem" >/dev/null 2>&1
@@ -390,12 +397,16 @@ JEOF
     esac
 }
 for who in "${LANGS[@]}"; do
-    # The Go CLI's pake-register/pake-demo take no --username flag (the
-    # username isn't part of the wire-format record in any language —
-    # "not stored in the PEM for simplicity", per herradura.py — so this
-    # is a CLI-surface gap, not a compatibility one); omit it there.
+    # NEITHER the C nor the Go CLI's pake-register/pake-demo takes a
+    # --username flag (the username isn't part of the wire-format record in
+    # any language — "not stored in the PEM for simplicity", per
+    # herradura.py — so this is a CLI-surface gap, not a compatibility one);
+    # omit it for both.  This comment said "the Go CLI" until v6.5.2: C
+    # lacked the flag too and merely IGNORED it, so passing it there looked
+    # like it worked.  TODO #274 made an unrecognised flag an error, which is
+    # what turned the stale half of this comment into a failing test.
     uarg=(--username "user_$who")
-    [ "$who" = go ] && uarg=()
+    case "$who" in c|go) uarg=() ;; esac
     ${CLI[$who]} genpkey --algo oprf --out "$TMP/pake_k_$who.pem" >/dev/null 2>&1
     ${CLI[$who]} pake-register --key "$TMP/pake_k_$who.pem" "${uarg[@]}" \
         --password "correct horse battery staple $who" --out "$TMP/pake_rec_$who.pem" >/dev/null 2>&1

@@ -15717,3 +15717,56 @@ byte-for-byte across all four writers, and `test_rand.sh` gained exactly that ch
 for `HDRBG STATE` in v6.3.0 (where all four already agreed).
 
 Status: **DONE v6.5.1** — converged all five HPKST labels on the minimal `n` encoding in Python and Java; the byte-for-byte audit that preceded it widened the item from one label to five, settled the fix direction, and filed TODO #274 and #275.
+
+### #274: C and Java accept unknown CLI flags silently, and `enc --aead` fails OPEN in Java
+
+**Found by TODO #271's byte-for-byte PEM audit**, which ran `enc --aead` through all
+four CLIs expecting a Java skip and got a successful exit and a valid-looking
+artifact instead.
+
+Java's CLI has no `--aead` (that is TODO #273). It does not say so. `enc --algo
+hske-nla1 --aead --ad ctx ...` **exits 0** and writes a `HERRADURA CIPHERTEXT` PEM
+carrying format tag 1 — plain, unauthenticated HSKE-NL-A1, four DER fields — where
+C, Go and Python write format tag 2 with five fields, the fifth being the
+authentication tag. `--ad` is dropped just as quietly. The operator asked for
+authenticated encryption, received confidentiality only, and nothing on stdout or
+stderr distinguishes the two outcomes.
+
+**The cause is broader than `--aead`.** Unknown flags are ignored by two of the four
+argument parsers and rejected by the other two:
+
+| probe | C | Go | Java | Python |
+|---|---|---|---|---|
+| `dgst --nosuchflag --in msg` | exit 0 | exit 2 | exit 0 | exit 2 |
+| `genpkey --algo hpks --totallybogus` | — | — | exit 0 | — |
+| `sign --algo hpks ... --zzz` | — | — | exit 0 | — |
+
+So this is not one missing feature, it is the parsers' contract. C is exposed the
+same way for a misspelled flag, with one accidental guard worth knowing about:
+`enc --aeadx` alone exits 0 and writes format tag 1, unauthenticated — but
+`enc --aeadx --ad ctx` is REFUSED, because C separately checks that `--ad` requires
+`--aead`. So the two-flag typo is caught and the one-flag typo is not, by a check
+that was written for a different purpose and covers this one by coincidence.
+
+**This is TODO #269's class, one level up.** #269 found C and Go silently accepting
+an unrecognised `--digest` VALUE as `none` — the weaker branch — so one missing
+hyphen signed the raw message and reported success. The same failure shape at FLAG
+granularity is strictly worse here, because the property it silently drops is
+authentication rather than pre-hashing, and because #269's own instrument cannot see
+it: `spec/`'s `cli_flag_matrix` records that Java does not DEFINE `--aead`, which is
+true and is exactly why the flag falls through.
+
+**It is independent of #273.** Porting AEAD to Java fixes this one command and leaves
+the parser behaviour intact for the next security-relevant flag a user misspells or a
+future port has not reached yet. Neither item subsumes the other, and this one should
+not wait behind a three-part primitive port.
+
+**Acceptance.** An unrecognised flag is a hard error in all four CLIs: non-zero exit
+and a one-line diagnostic naming the flag, never a silent fall-through to a weaker
+default. A `CliTest/` script asserts it per CLI per subcommand, including the
+security-relevant case that motivated the item (a flag that would have selected
+authenticated encryption must never degrade to unauthenticated with exit 0). Check at
+the same time whether any flag already in `cli_flag_matrix` as a Java or C gap has the
+same fail-open shape — `--aead` was found by accident and nothing has swept the rest.
+
+Status: **DONE v6.5.2** — C and Java validate against a GENERATED per-subcommand allow-list emitted by `spec/generate_spec.py` from the same extractors that build `cli_flag_matrix`, so it cannot drift from what the parser reads. Nine flags now refused rather than ignored; the sweep found a second and worse fail-open than the one that motivated the item — `genpkey --passphrase` wrote a CLEARTEXT private key in C and Java. Guarded by `CliTest/test_unknown_flags.sh`.

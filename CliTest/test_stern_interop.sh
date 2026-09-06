@@ -28,7 +28,10 @@ python3 "$PY" genpkey --algo hpks-stern --out "$tmpdir/py_priv.pem" 2>/dev/null
 python3 "$PY" pkey    --in "$tmpdir/py_priv.pem" --pubout --out "$tmpdir/py_pub.pem" 2>/dev/null
 
 "$C_CLI" genpkey --algo hpks-stern --out "$tmpdir/c_priv.pem"
-"$C_CLI" pkey    --algo hpks-stern --in "$tmpdir/c_priv.pem" --pubout --out "$tmpdir/c_pub.pem"
+# No CLI's `pkey` takes --algo -- it reads the algorithm from the PEM label.
+# The C line carried a stray `--algo hpks-stern` that did nothing until TODO
+# #274 made an unrecognised flag an error (the Python line above never had it).
+"$C_CLI" pkey    --in "$tmpdir/c_priv.pem" --pubout --out "$tmpdir/c_pub.pem"
 
 "$GO_CLI" genpkey --algo hpks-stern --out "$tmpdir/go_priv.pem" 2>/dev/null
 "$GO_CLI" pkey    -in "$tmpdir/go_priv.pem" -pubout -out "$tmpdir/go_pub.pem"
