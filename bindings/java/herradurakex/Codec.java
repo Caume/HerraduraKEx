@@ -1855,7 +1855,7 @@ public final class Codec {
 
     public static String encodeHpkstCommit(BigInteger rJ, BigInteger cJ, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(rJ, nb), derInt(cJ, nb), derInt(BigInteger.valueOf(n), 4));
+        byte[] der = derSeq(derInt(rJ, nb), derInt(cJ, nb), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_HPKST_COMMIT, der);
     }
 
@@ -1877,7 +1877,7 @@ public final class Codec {
 
     public static String encodeHpkstNonce(BigInteger kJ, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(kJ, nb), derInt(BigInteger.valueOf(n), 4));
+        byte[] der = derSeq(derInt(kJ, nb), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_HPKST_NONCE, der);
     }
 
@@ -1898,7 +1898,7 @@ public final class Codec {
 
     public static String encodeHpkstAggregate(BigInteger r, BigInteger cAgg, BigInteger e, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(r, nb), derInt(cAgg, nb), derInt(e, nb), derInt(BigInteger.valueOf(n), 4));
+        byte[] der = derSeq(derInt(r, nb), derInt(cAgg, nb), derInt(e, nb), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_HPKST_AGGREGATE, der);
     }
 
@@ -1923,7 +1923,7 @@ public final class Codec {
 
     public static String encodeHpkstPartial(BigInteger sJ, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(sJ, nb), derInt(BigInteger.valueOf(n), 4));
+        byte[] der = derSeq(derInt(sJ, nb), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_HPKST_PARTIAL, der);
     }
 
@@ -1944,7 +1944,7 @@ public final class Codec {
 
     public static String encodeHpkstSig(BigInteger cAgg, BigInteger r, BigInteger s, int n) {
         int nb = n / 8;
-        byte[] der = derSeq(derInt(cAgg, nb), derInt(r, nb), derInt(s, nb), derInt(BigInteger.valueOf(n), 4));
+        byte[] der = derSeq(derInt(cAgg, nb), derInt(r, nb), derInt(s, nb), derInt(BigInteger.valueOf(n), -1));
         return pemWrap(PEM_HPKST_SIG, der);
     }
 

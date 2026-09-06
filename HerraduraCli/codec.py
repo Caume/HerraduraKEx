@@ -700,7 +700,7 @@ _HPKST_SIG_LBL       = "HERRADURA HPKST SIGNATURE"
 
 def encode_hpkst_commit(R_j: int, C_j: int, n: int) -> str:
     nb = n // 8
-    der = der_seq(der_int(R_j, nb), der_int(C_j, nb), der_int(n, 4))
+    der = der_seq(der_int(R_j, nb), der_int(C_j, nb), der_int(n))
     return pem_wrap(_HPKST_COMMIT_LBL, der)
 
 
@@ -715,7 +715,7 @@ def decode_hpkst_commit(pem_text: str) -> tuple:
 
 def encode_hpkst_nonce(k_j: int, n: int) -> str:
     nb = n // 8
-    der = der_seq(der_int(k_j, nb), der_int(n, 4))
+    der = der_seq(der_int(k_j, nb), der_int(n))
     return pem_wrap(_HPKST_NONCE_LBL, der)
 
 
@@ -730,7 +730,7 @@ def decode_hpkst_nonce(pem_text: str) -> tuple:
 
 def encode_hpkst_aggregate(R: int, C_agg: int, e: int, n: int) -> str:
     nb = n // 8
-    der = der_seq(der_int(R, nb), der_int(C_agg, nb), der_int(e, nb), der_int(n, 4))
+    der = der_seq(der_int(R, nb), der_int(C_agg, nb), der_int(e, nb), der_int(n))
     return pem_wrap(_HPKST_AGGREGATE_LBL, der)
 
 
@@ -745,7 +745,7 @@ def decode_hpkst_aggregate(pem_text: str) -> tuple:
 
 def encode_hpkst_partial(s_j: int, n: int) -> str:
     nb = n // 8
-    der = der_seq(der_int(s_j, nb), der_int(n, 4))
+    der = der_seq(der_int(s_j, nb), der_int(n))
     return pem_wrap(_HPKST_PARTIAL_LBL, der)
 
 
@@ -760,7 +760,7 @@ def decode_hpkst_partial(pem_text: str) -> tuple:
 
 def encode_hpkst_sig(C_agg: int, R: int, s: int, n: int) -> str:
     nb = n // 8
-    der = der_seq(der_int(C_agg, nb), der_int(R, nb), der_int(s, nb), der_int(n, 4))
+    der = der_seq(der_int(C_agg, nb), der_int(R, nb), der_int(s, nb), der_int(n))
     return pem_wrap(_HPKST_SIG_LBL, der)
 
 
