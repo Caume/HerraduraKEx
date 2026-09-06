@@ -283,6 +283,12 @@ public final class ZkpNl {
      * nl_fscx_v1(A, B) = y. */
     public static boolean verify(BigInteger b, BigInteger y, int n, int rounds, byte[] msgBytes,
                                   List<ProofRound> proofRounds) {
+        // rounds == 0 makes every loop below run zero times, and the method
+        // then returns true for any message under any key (TODO #275).
+        // n is bounded only below: MAX_N is a WIRE bound, enforced by Codec,
+        // not a limit on a library caller's own width.
+        if (n <= 0 || rounds <= 0 || rounds > MAX_ROUNDS
+                || proofRounds.size() != rounds) return false;
         int nb = (n + 7) / 8;
         byte[][][] comsList = new byte[rounds][][];
         int[] challenges = new int[rounds];
@@ -337,6 +343,12 @@ public final class ZkpNl {
     // -----------------------------------------------------------------
 
     static final int ZKPP_SEED_BYTES = 16;   // 128-bit per-party PRG seed
+
+    /** Bounds on the two ZKP-NL header fields read off the wire (TODO #275).
+     *  MAX_N matches C's ZKP_NL_MAX_N; Go's ZkpNlMaxN is 32 because its shares
+     *  are uint32 where C's are uint64 -- a representation limit, not policy. */
+    public static final int MAX_N      = 64;
+    public static final int MAX_ROUNDS = 4096;
 
     /** One ZKB++ round, as it appears on the wire. */
     public static final class PpRound {
@@ -472,9 +484,11 @@ public final class ZkpNl {
     /** ZKB++ verifier for {@link #provePp} proofs. */
     public static boolean verifyPp(BigInteger b, BigInteger y, int n, int rounds,
                                     byte[] msgBytes, List<PpRound> proofRounds) {
+        // The size check alone was vacuous at rounds == 0 (TODO #275).
+        if (n <= 0 || rounds <= 0 || rounds > MAX_ROUNDS
+                || proofRounds.size() != rounds) return false;
         BigInteger mask = maskOf(n);
         int nb = (n + 7) / 8;
-        if (proofRounds.size() != rounds) return false;
 
         List<byte[]> comParts = new ArrayList<>(rounds * 3);
         List<byte[]> outParts = new ArrayList<>(rounds * 3);

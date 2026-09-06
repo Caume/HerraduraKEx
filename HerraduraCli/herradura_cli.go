@@ -2228,6 +2228,9 @@ func decodeZkpRnlProof(body []byte) (w, c, z []int, n int, err error) {
 		return nil, nil, nil, 0, fmt.Errorf("ZKP-RNL proof too short")
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if n <= 0 || n > RnlN {
+		return nil, nil, nil, 0, fmt.Errorf("ZKP-RNL proof: n out of range (%d)", n)
+	}
 	if len(body) < 4+n*12 {
 		return nil, nil, nil, 0, fmt.Errorf("ZKP-RNL proof truncated (n=%d)", n)
 	}
@@ -2268,6 +2271,9 @@ func decodeZkpNlPriv(body []byte) (A, B, y uint32, n int, err error) {
 		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey too short")
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if n <= 0 || n > ZkpNlMaxN {
+		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey: n out of range (%d)", n)
+	}
 	nb := (n + 7) / 8
 	if len(body) < 4+3*nb {
 		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey truncated")
@@ -2303,6 +2309,9 @@ func decodeZkpNlPub(body []byte) (B, y uint32, n int, err error) {
 		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey too short")
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if n <= 0 || n > ZkpNlMaxN {
+		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey: n out of range (%d)", n)
+	}
 	nb := (n + 7) / 8
 	if len(body) < 4+2*nb {
 		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey truncated")
@@ -2343,10 +2352,21 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
 	R := int(binary.BigEndian.Uint32(body[4:8]))
+	// Both header fields size an allocation, so bound them before allocating.
+	// A zero round count is the dangerous one: the verifier's per-round loop
+	// then runs zero times and reports success (TODO #275).
+	if n <= 0 || n > ZkpNlMaxN {
+		return nil, 0, fmt.Errorf("ZKP-NL proof: n out of range (%d)", n)
+	}
+	if R <= 0 || R > ZkpNlMaxRounds {
+		return nil, 0, fmt.Errorf("ZKP-NL proof: rounds out of range (%d)", R)
+	}
 	off := 8
 	proof = make([]ZkpNlRound, R)
 	for j := 0; j < R; j++ {
-		if off+97 > len(body) {
+		// 96B commitments + 1B e + 2B len_p1 = 99, not 97: the length field
+		// itself has to be in range before it can be read.
+		if off+99 > len(body) {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d truncated", j)
 		}
 		copy(proof[j].Com0[:], body[off:off+32]); off += 32
@@ -2354,11 +2374,17 @@ func decodeZkpNlProof(body []byte) (proof []ZkpNlRound, n int, err error) {
 		copy(proof[j].Com2[:], body[off:off+32]); off += 32
 		proof[j].E = int(body[off]); off++
 		l1 := int(body[off])<<8 | int(body[off+1]); off += 2
+		if l1 > len(body)-off {
+			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view1 truncated", j)
+		}
 		proof[j].ViewP1 = body[off : off+l1]; off += l1
 		if off+2 > len(body) {
 			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
 		}
 		l2 := int(body[off])<<8 | int(body[off+1]); off += 2
+		if l2 > len(body)-off {
+			return nil, 0, fmt.Errorf("ZKP-NL proof round %d view2 truncated", j)
+		}
 		proof[j].ViewP2 = body[off : off+l2]; off += l2
 	}
 	return
@@ -2399,6 +2425,13 @@ func decodeZkpNlPpProof(body []byte) (proof []ZkpNlPpRound, n int, err error) {
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
 	R := int(binary.BigEndian.Uint32(body[4:8]))
+	// Same two sizing fields, same reasons, as decodeZkpNlProof (TODO #275).
+	if n <= 0 || n > ZkpNlMaxN {
+		return nil, 0, fmt.Errorf("ZKP-NL-PP proof: n out of range (%d)", n)
+	}
+	if R <= 0 || R > ZkpNlMaxRounds {
+		return nil, 0, fmt.Errorf("ZKP-NL-PP proof: rounds out of range (%d)", R)
+	}
 	nb := (n + 7) / 8
 	off := 8
 	proof = make([]ZkpNlPpRound, R)
@@ -2470,6 +2503,11 @@ func hcredSer3(vec []int) []byte {
 }
 
 func hcredDeser3(data []byte, off, count int) ([]int, int) {
+	// off < 0 is the "already truncated" sentinel; it propagates through a
+	// chain of these so one check after the chain suffices (TODO #275).
+	if off < 0 || count < 0 || off+3*count > len(data) {
+		return nil, -1
+	}
 	out := make([]int, count)
 	for i := 0; i < count; i++ {
 		out[i] = int(data[off])<<16 | int(data[off+1])<<8 | int(data[off+2])
@@ -2490,6 +2528,11 @@ func hcredSer2(vec []int) []byte {
 }
 
 func hcredDeser2(data []byte, off, count int) ([]int, int) {
+	// off < 0 is the "already truncated" sentinel; it propagates through a
+	// chain of these so one check after the chain suffices (TODO #275).
+	if off < 0 || count < 0 || off+2*count > len(data) {
+		return nil, -1
+	}
 	out := make([]int, count)
 	for i := 0; i < count; i++ {
 		out[i] = int(data[off])<<8 | int(data[off+1])
@@ -2527,6 +2570,9 @@ func hcredOutsFromBytes(data []byte, off, n int) (HcredOuts, int) {
 		outs.Del[j], off = hcredDeser3(data, off, nd)
 		var wv []int
 		wv, off = hcredDeser3(data, off, 1)
+		if off < 0 {
+			return outs, -1 // truncated; the sentinel is checked by the caller
+		}
 		outs.Wsh[j] = wv[0]
 		outs.S[j], off = hcredDeser3(data, off, rows)
 		outs.Y[j], off = hcredDeser3(data, off, rows)
@@ -2555,6 +2601,15 @@ func decodeHcredPriv(body []byte) (sPoly, cPoly, mPoly []int, seedH *BitArray, s
 		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key too short")
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if n <= 0 || n > HcredMaxN {
+		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key: n out of range (%d)", n)
+	}
+	// The layout is fixed, so the body length is EXACTLY what n implies.  A
+	// ">=" test only catches an n too LARGE; an n too small parses a prefix
+	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if len(body) != 4+8*n+n/8+(n/2+7)/8 {
+		return nil, nil, nil, nil, nil, 0, fmt.Errorf("HCRED private key: body length does not match n=%d", n)
+	}
 	off := 4
 	sPoly, off = hcredDeser3(body, off, n)
 	cPoly, off = hcredDeser2(body, off, n)
@@ -2589,6 +2644,15 @@ func decodeHcredPub(body []byte) (cPoly, mPoly []int, seedH *BitArray, syndr *bi
 		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key too short")
 	}
 	n = int(binary.BigEndian.Uint32(body[0:4]))
+	if n <= 0 || n > HcredMaxN {
+		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key: n out of range (%d)", n)
+	}
+	// The layout is fixed, so the body length is EXACTLY what n implies.  A
+	// ">=" test only catches an n too LARGE; an n too small parses a prefix
+	// and succeeds, which is how a poked n=33 passed at n=256 (TODO #275).
+	if len(body) != 4+5*n+n/8+(n/2+7)/8 {
+		return nil, nil, nil, nil, 0, fmt.Errorf("HCRED public key: body length does not match n=%d", n)
+	}
 	off := 4
 	cPoly, off = hcredDeser2(body, off, n)
 	mPoly, off = hcredDeser3(body, off, n)
@@ -2685,6 +2749,17 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 	n := int(binary.BigEndian.Uint32(body[0:4]))
 	W := int(binary.BigEndian.Uint32(body[4:8]))
 	R := int(binary.BigEndian.Uint32(body[8:12]))
+	// All three size allocations below; R == 0 additionally makes the
+	// per-round verification loop vacuous, so it is a forgery (TODO #275).
+	if n <= 0 || n > HcredMaxN {
+		return nil, 0, fmt.Errorf("HCRED proof: n out of range (%d)", n)
+	}
+	if W <= 0 || W > HcredMaxN {
+		return nil, 0, fmt.Errorf("HCRED proof: W out of range (%d)", W)
+	}
+	if R <= 0 || R > ZkpNlMaxRounds {
+		return nil, 0, fmt.Errorf("HCRED proof: rounds out of range (%d)", R)
+	}
 	nb, nd, _ := hcredNbNd(n)
 	off := 12
 	proof := &HcredProof{W: W, Rounds: make([]HcredRound, R)}
@@ -2698,6 +2773,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 			off += 32
 		}
 		rd.Outs, off = hcredOutsFromBytes(body, off, n)
+		if off < 0 {
+			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (outs)", j)
+		}
 		if off+64 > len(body) {
 			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (seeds)", j)
 		}
@@ -2709,6 +2787,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 		rd.B1, off = hcredDeser3(body, off, n)
 		rd.G1, off = hcredDeser3(body, off, nb)
 		rd.H1, off = hcredDeser3(body, off, nd)
+		if off < 0 {
+			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (shares)", j)
+		}
 		if off >= len(body) {
 			return nil, 0, fmt.Errorf("HCRED proof round %d truncated (has_aux)", j)
 		}
@@ -2718,6 +2799,9 @@ func decodeHcredProof(body []byte) (*HcredProof, int, error) {
 			rd.AuxS, off = hcredDeser3(body, off, n)
 			rd.AuxB, off = hcredDeser3(body, off, nb)
 			rd.AuxD, off = hcredDeser3(body, off, nd)
+			if off < 0 {
+				return nil, 0, fmt.Errorf("HCRED proof round %d truncated (aux)", j)
+			}
 		}
 		proof.Rounds[j] = rd
 	}
@@ -3727,9 +3811,14 @@ func cmdVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "verify nl-zkboo: %v\n", perr)
 			os.Exit(1)
 		}
-		proof, _, uerr := decodeZkpNlProof(proofBody)
+		proof, prfN, uerr := decodeZkpNlProof(proofBody)
 		if uerr != nil {
 			die("verify", uerr)
+		}
+		// The proof carries its own n; a proof for a different width is not a
+		// proof about this key.  C has always checked this (TODO #275).
+		if prfN != zkpN {
+			die("verify", fmt.Errorf("proof n mismatch with pubkey n (%d vs %d)", prfN, zkpN))
 		}
 		if ZkpNlVerify(B, y, zkpN, len(proof), msgPad(inBytes, 32), proof) {
 			fmt.Println("Signature OK")
@@ -3788,9 +3877,14 @@ func cmdVerify(args []string) {
 			fmt.Fprintf(os.Stderr, "verify rnl-sigma: %v\n", perr)
 			os.Exit(1)
 		}
-		w, c, z, _, derr := decodeZkpRnlProof(proofBody)
+		w, c, z, prfN, derr := decodeZkpRnlProof(proofBody)
 		if derr != nil {
 			die("verify", derr)
+		}
+		// A proof over a different ring is not a proof about this key; C and
+		// Java both refuse it, and Go reached the verifier instead (TODO #275).
+		if prfN != zkpN {
+			die("verify", fmt.Errorf("ring size mismatch (pubkey n=%d, proof n=%d)", zkpN, prfN))
 		}
 		if RnlSigmaVerify(zkpM, zkpCp, zkpN, msgPad(inBytes, 32), w, c, z) {
 			fmt.Println("Signature OK")

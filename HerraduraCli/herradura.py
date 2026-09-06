@@ -2315,7 +2315,9 @@ def cmd_verify(args):
             sys.exit(f"rnl-sigma verify: expected hkex-rnl pubkey, got {their_algo!r}")
         C_poly, m_poly, n, _ = _decode_rnl_pubkey(their_ints)
         sig_pem = _read_file(sig_path).decode('ascii')
-        w, c, z, _n = decode_zkp_rnl_proof(sig_pem)
+        w, c, z, proof_n = decode_zkp_rnl_proof(sig_pem)
+        if proof_n != n:
+            raise ValueError(f"ring size mismatch (pubkey n={n}, proof n={proof_n})")
         # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261).
         msg = (in_bytes + b'\x00' * 32)[:32]
         ok = rnl_sigma_verify(m_poly, C_poly, n, msg, w, c, z)
@@ -2332,7 +2334,11 @@ def cmd_verify(args):
             sys.exit(f"nl-zkboo verify: expected hpks-zkp-nl pubkey, got {their_algo!r}")
         B, y, n = their_ints
         sig_pem = _read_file(sig_path).decode('ascii')
-        proof_rounds, _n = decode_zkp_nl_proof(sig_pem)
+        proof_rounds, proof_n = decode_zkp_nl_proof(sig_pem)
+        # A proof carries its own width; one for a different n is not a proof
+        # about this key.  C checked this; Python and Go did not (TODO #275).
+        if proof_n != n:
+            raise ValueError(f"proof n mismatch with pubkey n ({proof_n} vs {n})")
         rounds = len(proof_rounds)
         # Pad/truncate to 32 bytes to match C/Go behavior (TODO #261; see the
         # sign branch above for why this was missing).
@@ -3263,7 +3269,16 @@ _DISPATCH = {
 def main():
     parser = build_parser()
     args   = parser.parse_args()
-    _DISPATCH[args.cmd](args)
+    try:
+        _DISPATCH[args.cmd](args)
+    except ValueError as e:
+        # ValueError is the codec's declared "this artifact is malformed"
+        # signal.  A rejection has to reach the user as a one-line diagnostic,
+        # not a traceback (TODO #275 / CliTest/lib_malformed.sh).  Deliberately
+        # narrow: every other exception still surfaces with its traceback, so
+        # this cannot tidy away a genuine bug.
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
