@@ -12,6 +12,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * TODO #198/#199: Java CLI mirroring HerraduraCli/herradura.py /
@@ -115,6 +116,7 @@ public final class HerraduraCli {
         }
         String cmd = args[0];
         Map<String, String> opt = parseOpts(args, 1);
+        checkUnknownFlags(cmd, opt);
         switch (cmd) {
             case "genpkey": cmdGenpkey(opt); break;
             case "pkey":    cmdPkey(opt);    break;
@@ -154,6 +156,31 @@ public final class HerraduraCli {
      *  list, since all four CLIs now accept both. */
     private static final java.util.Set<String> REPEATABLE = new java.util.HashSet<>(
         java.util.Arrays.asList("commits", "commit", "partials", "partial"));
+
+    /** TODO #274: refuse a flag this subcommand does not read.
+     *
+     *  parseOpts accepted ANY {@code --name} and the handlers then asked only for
+     *  the ones they wanted, so an unrecognised flag was dropped in silence.  That
+     *  is not merely untidy: this CLI has no {@code --aead} (TODO #273), so
+     *  {@code enc --algo hske-nla1 --aead} exited 0 and wrote an UNAUTHENTICATED
+     *  ciphertext -- format tag 1 where C, Go and Python write tag 2 with an
+     *  authentication tag.  The caller asked for authenticated encryption and was
+     *  told nothing.
+     *
+     *  {@link CliFlagTable} is GENERATED from the same extractor that builds
+     *  spec/'s cli_flag_matrix, so it is definitionally the set this parser reads;
+     *  adding an opt.get() call without regenerating fails
+     *  {@code generate_spec.py --check}. */
+    private static void checkUnknownFlags(String cmd, Map<String, String> opt) {
+        Set<String> allowed = CliFlagTable.FLAGS.get(cmd);
+        if (allowed == null) return;   // unknown SUBCOMMAND: the switch reports that
+        for (String key : new java.util.TreeSet<>(opt.keySet())) {
+            if (key.equals("help")) continue;
+            if (!allowed.contains(key)) {
+                throw new CliError(cmd + ": unrecognised flag --" + key);
+            }
+        }
+    }
 
     private static Map<String, String> parseOpts(String[] args, int from) {
         Map<String, String> opt = new HashMap<>();

@@ -2,6 +2,80 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.2] - 2026-09-05
+
+### TODO #274 (DONE) — C and Java refuse unrecognised flags, and the second fail-open that found
+
+Filed from TODO #271's PEM audit, which ran `enc --aead` through all four CLIs expecting a
+Java skip and got a successful exit and a valid-looking artifact instead.
+
+**The bug was the parsers' contract, not one missing feature.** C and Java scanned `argv`
+for the flags they wanted and ignored the rest; Go (`flag.FlagSet`) and Python (argparse)
+already refused unknown flags. So every flag C or Java did not implement was accepted with
+exit 0 and no diagnostic.
+
+**Fixing the parser surfaced a worse instance than the one that motivated the item.**
+Both were confirmed against rebuilt pre-fix binaries, not inferred from source:
+
+- `enc --aead` on Java wrote format tag 1 — plain, UNAUTHENTICATED HSKE-NL-A1 — where the
+  other three write tag 2 with an authentication tag; `--ad` was dropped too.
+- `genpkey --passphrase` on **C and Java** wrote a CLEARTEXT `HERRADURA <algo> PRIVATE KEY`
+  where Python writes `HERRADURA ENCRYPTED PRIVATE KEY`. A caller asking for a
+  passphrase-protected key got an unprotected long-lived secret on disk, exit 0. That is
+  the same shape as `--aead` on a longer-lived secret, and nothing had ever probed it.
+
+Nine flags in all are now refused rather than ignored, every one already recorded in
+`spec/`'s `cli_surface_gaps` — which is why the sweep could be exhaustive rather than a
+hunt: the test enumerates that table directly, so a flag that gets ported and has its gap
+row deleted stops being probed automatically.
+
+**The allow-list is GENERATED, because a hand-written one is exactly what drifts** — and
+drift is the failure this item exists to close. `spec/generate_spec.py` now emits
+`HerraduraCli/cli_flag_table.h` and `bindings/java/herradurakex/CliFlagTable.java` from the
+same extractors that build `cli_flag_matrix`, so each table is definitionally "the flags
+this parser actually reads". `--check` re-emits and diffs both, so adding a `get_arg()` or
+`opt.get()` call without regenerating fails CI rather than silently rejecting the new flag
+at runtime. Verified by hand-editing a table and confirming `--check` exits 1.
+
+**The C table carries flag ARITY, not just names**, and that was not the first design.
+The validator has to tell a typo from a flag-shaped VALUE — a file literally named
+`--weird.pem` is legal input, accepted by both Python and Go, so C must accept it too.
+Skipping the token after *any* known flag does that, and reopens the hole on boolean
+flags: `enc --aead --typo` reads `--typo` as `--aead`'s value, and `--aead` takes none.
+Measured, not reasoned about — the first implementation let it through. So the generator
+emits a second per-subcommand array of the value-taking flags, derived from C's
+value-taking accessors (`get_arg` / `get_arg_multi` / `get_arg_multi2`) and excluding the
+boolean `has_flag`. Java needs none of this: its validator runs on `parseOpts`' parsed
+map, which has already resolved arity.
+
+**Regression guard**, `CliTest/test_unknown_flags.sh` (51 assertions, claimed by
+`native-interop`), in five parts: a control that valid invocations still succeed — without
+it a CLI that refused *everything* would sweep the rejection tests; unknown-flag probes
+requiring both a non-zero exit and a diagnostic that NAMES the flag; the two security cases
+asserted on their artifacts (format tag must be 2, or the command must fail; the key must
+say ENCRYPTED, or the command must fail); and the nine recorded gaps, enumerated from
+`spec/`; and both arity directions above. Verified to FAIL on the pre-fix C binary — 11
+failures, including
+`passphrase (c): --passphrase exited 0 but wrote ... PRIVATE KEY — CLEARTEXT`.
+
+The message-naming requirement is load-bearing and was added after the first draft passed
+for the wrong reason: those probes omit other required arguments, so a CLI exits non-zero
+even when it *has* ignored the flag. Python is excluded from that section for the same
+reason — argparse reports missing required arguments before it reaches an unrecognised
+flag — and is covered instead by the complete command lines in part two.
+
+**One in-tree caller was relying on the old behaviour**: `test_cross_lang_matrix.sh` passed
+`genpkey --bits 256` to the C CLI, which has no `--bits` (an `acknowledged` gap — C is
+compiled for a single width) and reached n=256 by its compiled default. Fixed to skip the
+flag for C, with the reason recorded at the call site.
+
+Behaviour change in the C and Java CLIs — see `MIGRATING.md` section 13. Exit codes follow
+each CLI's own convention (C and Go 2, Java 1, Python 2); the contract asserted is non-zero
+plus a diagnostic naming the flag, not a shared number.
+
+**Does not close TODO #268 or #273.** Those port the passphrase envelope and AEAD to the
+CLIs that lack them; this makes their absence loud in the meantime.
+
 ## [6.5.1] - 2026-09-05
 
 ### TODO #271 (DONE) — the HPKST PEM's trailing `n`, and the audit that found it was five labels

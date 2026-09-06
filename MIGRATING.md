@@ -650,3 +650,48 @@ did before, because none of them ever required a particular width. This is the n
 class the v3.3.0 entry (section 7) describes from the other direction: there the bytes
 were unchanged and the derived secret moved; here the bytes moved and everything derived
 from them is unchanged.
+
+## 13. C and Java refuse unrecognised CLI flags (v6.5.2)
+
+**Who is affected:** callers of the C or Java CLI who pass a flag that CLI does not
+implement. Nothing stored on disk changes, and no valid invocation behaves differently.
+Go and Python already refused unknown flags, so they are unchanged.
+
+**What changed.** Both CLIs scanned `argv` for the flags they wanted and said nothing
+about the rest, so an unimplemented flag was accepted with exit 0 and no diagnostic.
+Both now validate against a generated per-subcommand allow-list and fail closed:
+
+```
+enc: unrecognised flag --aead
+```
+
+**Two of these were fail-open on a security property**, both confirmed against pre-6.5.2
+binaries rather than inferred:
+
+- **`enc --aead` on Java** wrote format tag 1 — plain, unauthenticated HSKE-NL-A1 —
+  where C, Go and Python write tag 2 with an authentication tag. Java has no `--aead`
+  (TODO #273). The caller asked for authenticated encryption and got confidentiality
+  only, reported as success. `--ad` was dropped equally quietly.
+- **`genpkey --passphrase` on C and Java** wrote a **cleartext**
+  `HERRADURA <algo> PRIVATE KEY` where Python writes `HERRADURA ENCRYPTED PRIVATE KEY`.
+  Neither implements the envelope (TODO #268). The caller asked for a passphrase-
+  protected key and got an unprotected long-lived secret on disk, exit 0.
+
+Seven further flags were affected without a security consequence, all of them already
+recorded in `spec/`'s `cli_surface_gaps`: `genpkey --bits` and `--kdf-iterations`,
+`pkey --passphrase` and `--decrypt`, `pake-register --username`, `pake-demo --username`,
+and `cred-verify --rounds`.
+
+**What to do.** Remove any flag your scripts pass to a CLI that does not implement it —
+the error names it. If a script passed `--passphrase` or `--aead` to C or Java and
+appeared to work, **it was not doing what it appeared to**: check whether the keys or
+ciphertexts it produced need regenerating. One in-tree caller needed this fix
+(`CliTest/test_cross_lang_matrix.sh` passed `genpkey --bits 256` to C, which reached
+n=256 by its compiled default rather than by the flag).
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, flag name or `--algo`
+behaviour changed, and no stored artifact becomes unreadable. A previously
+accepted-but-meaningless input becoming an error is the same class as section 11
+(v6.5.0) and follows the precedent set there and at v6.4.0. Nothing that ever *worked*
+stops working; only invocations that were silently not doing what they claimed now say
+so.
