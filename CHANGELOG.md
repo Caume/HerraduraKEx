@@ -2,6 +2,86 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.3] - 2026-09-06
+
+### TODO #275 (DONE) — the packed-framing malformed-PEM table, and the zero-round forgery it found
+
+Filed from TODO #271's PEM audit, which could not fingerprint eight labels because they are
+not DER. They frame their fields at fixed offsets sized from a 4-byte big-endian `n` header:
+`ZKP-NL PRIVATE KEY` / `PUBLIC KEY` / `PROOF`, `ZKP-NL-PP SIGNATURE`, `ZKP-RNL PROOF`, and
+`HCRED PRIVATE KEY` / `PUBLIC KEY` / `PROOF`.
+
+**Why they had no coverage.** `CliTest/lib_malformed.sh`'s `hkx_mal_craft` decodes a DER
+SEQUENCE of INTEGERs, rewrites one item, and re-encodes — so it cannot express a single case
+against a body that is not a DER SEQUENCE. TODO #240's four-CLI matrix, which exists because
+"the bounds on the fields that size an allocation are a wire contract", therefore had
+structurally zero coverage of these eight, and nothing noticed: a case that was never written
+is not a case that fails.
+
+**What the first run found was not a robustness gap.** Every ZKP verifier here loops over the
+round count and reports success when no round objected, so at `rounds == 0` the loop runs zero
+times and the function returns true. An 89-byte PEM whose body is eight null bytes was accepted
+as a valid `nl-zkboo` signature **for any message under any public key** by the Go, Python and
+Java CLIs. `nl-zkbpp` and HCRED's `cred-verify` carried the same defect in subsets of those.
+C alone rejected it, because `zkp_nl_unpack_proof` bounded `rounds` where nothing else did —
+and Go's own `ZkpNlVerifypp` already carried exactly the right guard, in the same file, beside
+the function that lacked it.
+
+Fixed at the **suite verifier** in Go, Python and Java rather than at the CLI, so library and
+FFI callers are covered too, with the decoder bound added as well so the artifact is stopped
+before anything is allocated.
+
+**Also fixed, all the same class, all surfaced by the new table:**
+
+- Go panicked rather than rejecting on five inputs — an unbounded `make` at `rounds = 2^32-1`,
+  and unchecked slice reads in `decodeZkpNlProof` and the HCRED deserialisers, which now
+  propagate an `off < 0` sentinel instead of indexing blindly.
+- The proof's own `n` was never compared against the public key's in Go, Python (`nl-zkboo`)
+  or Java, so a proof about a different width verified. C had always checked it.
+- Python reported every malformed artifact as a **traceback**, which the table's contract
+  forbids. `main()` now maps `ValueError` — the codec's declared rejection signal, and nothing
+  else — to a one-line diagnostic; every other exception still surfaces with its traceback, so
+  this cannot tidy away a genuine bug.
+- Java accepted an HCRED key whose `n` was *smaller* than the body holds, which is not a
+  truncation and which a length check alone lets through. It now requires equality with the
+  build's width, as C's `hcred_parse_pubkey` always has.
+- C read two bytes past the declared body when `len_p1` consumed exactly the remainder. The
+  PEM buffer is over-allocated (`cap = raw_len`), so the read stayed inside the allocation and
+  ASan does not flag it — latent, not a memory-safety fault. Fixed regardless.
+
+**Where the width bound lives, and why not in the verifier.** The first version of this fix
+also bounded `n` by each language's `ZKP_NL_MAX_N` inside the verifier, and that broke the Go
+suite's own test [22], which proves ZKBoo at **n = 64** while Go's `ZkpNlMaxN` is 32. The two
+are not in conflict: 32 is a *wire* limit derived from Go's uint32 shares, and the suite runs
+self-consistently above it. So the width bound stays in the decoders, where untrusted input
+arrives, and the verifiers bound `n` only below. The round count is bounded in both, because
+that one is a soundness property rather than a parsing concern.
+
+**Two per-language asymmetries the cases had to be designed around**, both recorded rather
+than papered over:
+
+- `ZKP_NL_MAX_N` is 64 in C and 32 in Go, and that is a **representation** limit (uint64 vs
+  uint32 shares), not policy — widths 33..64 are legitimately read by C, Python and Java and
+  refused by Go. The cases use 0, 65 and 2^32-1, outside every band, so a rejection is a
+  four-way agreement rather than an artefact of which implementation is under test.
+- HCRED is the mirror image: its width is a runtime argument in Python and Go (both demo at
+  n=32) but compile-time 256 in C and Java, so **no single HCRED artifact is readable by all
+  four**. A shared fixture makes the C and Java sections fail their own controls — correctly,
+  but leaving those two with no rejection coverage at all. Its fixtures are therefore generated
+  per-language by the CLI under test, giving up a cross-language claim that, for HCRED, does
+  not exist. Everything else stays Python-generated and shared.
+
+**Decision recorded** (the item asked for one): a second craft helper, not converging the eight
+onto DER. Convergence is a wire-format break across four languages needing a `MIGRATING.md`
+entry, and it buys nothing here — the framing was not what was wrong, the missing bounds were,
+and those had to be written either way. `hkx_mal_poke` is simpler than its DER sibling
+precisely because the framing is positional: an integer written at a byte offset, no re-encode.
+
+**Tests.** `hkx_mal_suite_packed` adds 37 assertions per language to
+`CliTest/test_malformed_pem_matrix.sh` (all four CLIs) and to
+`CliTest/test_weak_key_rejection.sh` (C alone, so they also run under the sanitizers job,
+which is where an unchecked packed read would be visible).
+
 ## [6.5.2] - 2026-09-05
 
 ### TODO #274 (DONE) — C and Java refuse unrecognised flags, and the second fail-open that found

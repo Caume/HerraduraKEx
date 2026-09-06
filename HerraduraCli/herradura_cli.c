@@ -444,7 +444,10 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
     const uint8_t *p = buf + 8;
     int j;
     for (j = 0; j < rounds; j++) {
-        if (p + 97 + 4 > buf + blen) die("truncated ZKP-NL proof");
+        /* 96B commitments + 1B e + 2B len_p1 = 99 must be present before the
+         * first length can be read; len_p2's own 2 bytes are checked below,
+         * after l1 is known, because l1 may consume the rest of the body. */
+        if (p + 99 > buf + blen) die("truncated ZKP-NL proof");
         memcpy(proof[j].com_0, p, 32); p += 32;
         memcpy(proof[j].com_1, p, 32); p += 32;
         memcpy(proof[j].com_2, p, 32); p += 32;
@@ -455,6 +458,11 @@ static ZkpNlRound *zkp_nl_unpack_proof(const uint8_t *buf, size_t blen,
         if (!proof[j].view_p1) die("out of memory");
         memcpy(proof[j].view_p1, p, l1); p += l1;
         proof[j].view_len = l1;
+        /* Without this, l1 == the remaining byte count leaves p exactly at the
+         * end and the two bytes below are read past it (TODO #275).  The PEM
+         * buffer is over-allocated, so this read stale bytes rather than
+         * running off the allocation -- latent, not a memory-safety fault. */
+        if (p + 2 > buf + blen) die("truncated ZKP-NL proof view");
         size_t l2 = ((size_t)p[0] << 8) | p[1]; p += 2;
         if (p + l2 > buf + blen) die("truncated ZKP-NL proof view");
         proof[j].view_p2  = (uint8_t *)malloc(l2);
@@ -957,6 +965,8 @@ static void cmd_pkey(int argc, char **argv)
             if (blen < 4) die("pkey: malformed ZKP-NL private key");
             int nl_n = (int)(((uint32_t)body[0]<<24)|((uint32_t)body[1]<<16)|
                              ((uint32_t)body[2]<<8)|body[3]);
+            if (nl_n <= 0 || nl_n > ZKP_NL_MAX_N)
+                die("ZKP-NL: n out of range");
             int nb = (nl_n+7)/8;
             if ((int)blen < 4+3*nb) die("pkey: malformed ZKP-NL private key (short)");
             uint64_t A=0, B=0, y=0; int k;
@@ -3349,6 +3359,8 @@ static void cmd_sign(int argc, char **argv)
         if (kblen < 4) die("sign: malformed ZKP-NL private key");
         int nl_n = (int)(((uint32_t)kbody[0]<<24)|((uint32_t)kbody[1]<<16)|
                          ((uint32_t)kbody[2]<<8)|kbody[3]);
+        if (nl_n <= 0 || nl_n > ZKP_NL_MAX_N)
+            die("ZKP-NL: n out of range");
         int nb = (nl_n+7)/8;
         if ((int)kblen < 4+3*nb) die("sign: malformed ZKP-NL private key (short)");
         uint64_t zkA=0, zkB=0, zky=0; int ki;
@@ -3377,6 +3389,8 @@ static void cmd_sign(int argc, char **argv)
         if (kblen < 4) die("sign: malformed ZKP-NL private key");
         int nl_n = (int)(((uint32_t)kbody[0]<<24)|((uint32_t)kbody[1]<<16)|
                          ((uint32_t)kbody[2]<<8)|kbody[3]);
+        if (nl_n <= 0 || nl_n > ZKP_NL_MAX_N)
+            die("ZKP-NL: n out of range");
         int nb = (nl_n+7)/8;
         if ((int)kblen < 4+3*nb) die("sign: malformed ZKP-NL private key (short)");
         uint64_t zkA=0, zkB=0, zky=0; int ki;
@@ -3676,6 +3690,8 @@ static void cmd_verify(int argc, char **argv)
         if (pkblen < 4) die("verify: malformed ZKP-NL public key");
         int nl_n = (int)(((uint32_t)pkbody[0]<<24)|((uint32_t)pkbody[1]<<16)|
                          ((uint32_t)pkbody[2]<<8)|pkbody[3]);
+        if (nl_n <= 0 || nl_n > ZKP_NL_MAX_N)
+            die("ZKP-NL: n out of range");
         int nb = (nl_n+7)/8;
         if ((int)pkblen < 4+2*nb) die("verify: malformed ZKP-NL public key (short)");
         uint64_t zkB=0, zky=0; int ki;
@@ -3701,6 +3717,8 @@ static void cmd_verify(int argc, char **argv)
         if (pkblen < 4) die("verify: malformed ZKP-NL public key");
         int nl_n = (int)(((uint32_t)pkbody[0]<<24)|((uint32_t)pkbody[1]<<16)|
                          ((uint32_t)pkbody[2]<<8)|pkbody[3]);
+        if (nl_n <= 0 || nl_n > ZKP_NL_MAX_N)
+            die("ZKP-NL: n out of range");
         int nb = (nl_n+7)/8;
         if ((int)pkblen < 4+2*nb) die("verify: malformed ZKP-NL public key (short)");
         uint64_t zkB=0, zky=0; int ki;

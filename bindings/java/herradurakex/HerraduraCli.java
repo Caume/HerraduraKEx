@@ -1336,10 +1336,18 @@ public final class HerraduraCli {
                 Codec.ZkpNlProof pr = Codec.decodeZkpNlProof(readString(sigPath));
                 // The round count travels in the PEM, as it does for Stern-F
                 // (TODO #236): a verifier accepts whatever the signer used.
+                // The WIDTH is different -- a proof about another n is not a
+                // proof about this key, and nb aliasing hides it (TODO #275).
+                if (pr.n != pub.n)
+                    throw new CliError("verify: proof n mismatch with pubkey n ("
+                                       + pr.n + " vs " + pub.n + ")");
                 ok = ZkpNl.verify(pub.b, pub.y, pub.n, pr.rounds.size(),
                                   padTrunc(msg, 32), pr.rounds);
             } else {
                 Codec.ZkpNlPpProof pr = Codec.decodeZkpNlPpProof(readString(sigPath));
+                if (pr.n != pub.n)
+                    throw new CliError("verify: proof n mismatch with pubkey n ("
+                                       + pr.n + " vs " + pub.n + ")");
                 ok = ZkpNl.verifyPp(pub.b, pub.y, pub.n, pr.rounds.size(),
                                     padTrunc(msg, 32), pr.rounds);
             }

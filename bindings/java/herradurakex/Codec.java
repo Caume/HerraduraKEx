@@ -813,7 +813,8 @@ public final class Codec {
         int off = 0;
         int n = rd4(body, off); off += 4;
         int r = rd4(body, off); off += 4;
-        if (n <= 0 || r < 0 || r > 1 << 16) throw new IllegalArgumentException("ZKP-NL proof: bad header");
+        if (n <= 0 || n > ZkpNl.MAX_N || r <= 0 || r > ZkpNl.MAX_ROUNDS)
+            throw new IllegalArgumentException("ZKP-NL proof: bad header (n=" + n + ", rounds=" + r + ")");
         java.util.List<ZkpNl.ProofRound> rounds = new ArrayList<>(r);
         for (int j = 0; j < r; j++) {
             ZkpNl.ProofRound pr = new ZkpNl.ProofRound();
@@ -869,7 +870,8 @@ public final class Codec {
         int off = 0;
         int n = rd4(body, off); off += 4;
         int r = rd4(body, off); off += 4;
-        if (n <= 0 || r < 0 || r > 1 << 16) throw new IllegalArgumentException("ZKB++ proof: bad header");
+        if (n <= 0 || n > ZkpNl.MAX_N || r <= 0 || r > ZkpNl.MAX_ROUNDS)
+            throw new IllegalArgumentException("ZKB++ proof: bad header (n=" + n + ", rounds=" + r + ")");
         int nb = (n + 7) / 8;
         java.util.List<ZkpNl.PpRound> rounds = new ArrayList<>(r);
         for (int j = 0; j < r; j++) {
@@ -1185,6 +1187,8 @@ public final class Codec {
     }
 
     private static byte[] slice(byte[] src, int off, int len) {
+        if (len < 0 || off < 0 || (long) off + (long) len > src.length)
+            throw new IllegalArgumentException("packed body truncated");
         byte[] out = new byte[len];
         System.arraycopy(src, off, out, 0, len);
         return out;
@@ -1565,6 +1569,12 @@ public final class Codec {
     // -----------------------------------------------------------------
 
     private static final int HCRED_SEED_NB = Herradura.N / 8;                  // 32
+    /** HCRED width is a runtime argument in Python and Go but a compile-time
+     *  constant here and in C.  This build reads exactly this width and no
+     *  other, so the check is equality, as C's hcred_parse_pubkey does it: a
+     *  SMALLER n than the body holds is not a truncation and a length check
+     *  alone lets it through (TODO #275). */
+    static final int HCRED_MAX_N = Herradura.N;
     private static final int HCRED_SYNDR_NB = (Herradura.N / 2 + 7) / 8;       // 16
 
     private static byte[] ser3(int[] vec) {
@@ -1579,6 +1589,10 @@ public final class Codec {
     }
 
     private static int[] deser3(byte[] data, int off, int count) {
+        // Report a truncated packed body as a wire-format error rather than
+        // letting a raw JDK index message escape (TODO #275).
+        if (count < 0 || off < 0 || (long) off + (long) 3 * count > data.length)
+            throw new IllegalArgumentException("packed body truncated");
         int[] out = new int[count];
         for (int i = 0; i < count; i++) {
             out[i] = ((data[off] & 0xff) << 16) | ((data[off + 1] & 0xff) << 8) | (data[off + 2] & 0xff);
@@ -1598,6 +1612,10 @@ public final class Codec {
     }
 
     private static int[] deser2(byte[] data, int off, int count) {
+        // Report a truncated packed body as a wire-format error rather than
+        // letting a raw JDK index message escape (TODO #275).
+        if (count < 0 || off < 0 || (long) off + (long) 2 * count > data.length)
+            throw new IllegalArgumentException("packed body truncated");
         int[] out = new int[count];
         for (int i = 0; i < count; i++) {
             out[i] = ((data[off] & 0xff) << 8) | (data[off + 1] & 0xff);
@@ -1653,6 +1671,11 @@ public final class Codec {
         }
         byte[] body = b.der;
         int n = readBe32(body, 0);
+        // The packed HCRED framings size every field from this one
+        // header, so it is bounded before anything is allocated;
+        // rounds == 0 additionally makes verification vacuous (TODO #275).
+        if (n != HCRED_MAX_N)
+            throw new IllegalArgumentException("HCRED private key: n must be " + HCRED_MAX_N + ", got " + n);
         int off = 4;
         int[] s = deser3(body, off, n); off += n * 3;
         int[] c = deser2(body, off, n); off += n * 2;
@@ -1684,6 +1707,11 @@ public final class Codec {
         }
         byte[] body = b.der;
         int n = readBe32(body, 0);
+        // The packed HCRED framings size every field from this one
+        // header, so it is bounded before anything is allocated;
+        // rounds == 0 additionally makes verification vacuous (TODO #275).
+        if (n != HCRED_MAX_N)
+            throw new IllegalArgumentException("HCRED public key: n must be " + HCRED_MAX_N + ", got " + n);
         int off = 4;
         int[] c = deser2(body, off, n); off += n * 2;
         int[] m = deser3(body, off, n); off += n * 3;
@@ -1783,6 +1811,15 @@ public final class Codec {
         int n = readBe32(body, 0);
         int w = readBe32(body, 4);
         int rounds = readBe32(body, 8);
+        // The packed HCRED framings size every field from this one
+        // header, so it is bounded before anything is allocated;
+        // rounds == 0 additionally makes verification vacuous (TODO #275).
+        if (n != HCRED_MAX_N)
+            throw new IllegalArgumentException("HCRED proof: n must be " + HCRED_MAX_N + ", got " + n);
+        if (w <= 0 || w > HCRED_MAX_N)
+            throw new IllegalArgumentException("HCRED proof: W out of range (" + w + ")");
+        if (rounds <= 0 || rounds > ZkpNl.MAX_ROUNDS)
+            throw new IllegalArgumentException("HCRED proof: rounds out of range (" + rounds + ")");
         int rows = n / 2, rowBits = 9; // matches Hcred.ROW_BITS at n=256
         int off = 12;
         List<Hcred.ProofRound> rds = new ArrayList<>(rounds);

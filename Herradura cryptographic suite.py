@@ -328,6 +328,11 @@ _SIGMA_MAX_ATTEMPTS = 1000   # rejection-sampling attempts before RuntimeError
 # ZKBoo (NL-FSCX MPC-in-the-head) parameters (SecurityProofs-7.md §11.10.3)
 _ZKP_NL_DEFAULT_N   = 8    # default bit-width for CLI (proof ≈35 KB at R=219)
 _ZKP_NL_DEMO_ROUNDS = 4    # illustration only: soundness ≈ (2/3)^4 ≈ 20%
+# Upper bounds on the two ZKP-NL header fields that arrive off the wire.
+# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N; Go's ZkpNlMaxN is 32 because its
+# shares are uint32, so 33..64 is a width only C and Python read (TODO #275).
+_ZKP_NL_MAX_N       = 64
+_ZKP_NL_MAX_ROUNDS  = 4096
 _ZKP_NL_PROD_ROUNDS = 219  # ⌈128 / log₂(3/2)⌉ — required for 128-bit soundness
 
 
@@ -2400,6 +2405,14 @@ def zkp_nl_verify(B, y, n, rounds, msg_bytes, proof_rounds):
 
     Returns True iff all rounds verify.
     """
+    # rounds == 0 would make every loop below run zero times and fall through to
+    # `return True` — accepting any message under any key (TODO #275).
+    #
+    # n is bounded only below: _ZKP_NL_MAX_N is a WIRE bound, enforced by
+    # codec.py's decoders, not a limit on a library caller's own width.
+    if (n <= 0 or rounds <= 0 or rounds > _ZKP_NL_MAX_ROUNDS
+            or len(proof_rounds) != rounds):
+        return False
     mask = (1 << n) - 1
     nb   = (n + 7) // 8
     view_size = nb + 32 + nb + (n - 1)   # share + tape + out + gate bits
@@ -2580,10 +2593,12 @@ def zkp_nl_prove_pp(A, B, y, n, rounds, msg_bytes):
 
 def zkp_nl_verify_pp(B, y, n, rounds, msg_bytes, proof_rounds):
     """ZKB++ verifier for zkp_nl_prove_pp proofs.  Returns True iff valid."""
+    # The length check alone was vacuous at rounds == 0 (TODO #275).
+    if (n <= 0 or rounds <= 0 or rounds > _ZKP_NL_MAX_ROUNDS
+            or len(proof_rounds) != rounds):
+        return False
     mask = (1 << n) - 1
     nb   = (n + 7) // 8
-    if len(proof_rounds) != rounds:
-        return False
 
     com_block = b''
     out_block = b''

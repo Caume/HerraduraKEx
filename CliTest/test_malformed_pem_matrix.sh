@@ -18,6 +18,15 @@
 # test_weak_key_rejection.sh (which runs the same cases against the C CLI alone,
 # and therefore also under the sanitizers job, where TODO #239's stack overflow
 # is visible).
+#
+# TODO #275 added the SECOND table, hkx_mal_suite_packed.  Eight PEM labels are
+# not DER at all — they size their fields from a 4-byte `n` header — so
+# hkx_mal_craft, which rewrites one item of a DER SEQUENCE, could not express a
+# single case against them and this matrix had no coverage of them whatsoever.
+# What that hid was not a robustness gap: at rounds == 0 a ZKP verifier's
+# per-round loop runs zero times and reports success, and three of these four
+# CLIs accepted an 89-byte PEM of eight null bytes as a valid nl-zkboo signature
+# for any message under any key.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -58,6 +67,7 @@ done
 HKX_MAL_ROOT="$ROOT"
 HKX_MAL_DIR="$TMP"
 hkx_mal_fixtures "$TMP"
+hkx_mal_fixtures_packed "$TMP"   # TODO #275; reuses rm1.pem from the DER set
 
 for l in "${LANGS[@]}"; do
     echo ""
@@ -68,6 +78,8 @@ for l in "${LANGS[@]}"; do
     export HKX_MAL_VLIMIT
     # shellcheck disable=SC2086
     hkx_mal_suite "$l" ${CLI[$l]}
+    # shellcheck disable=SC2086
+    hkx_mal_suite_packed "$l" ${CLI[$l]}
 done
 
 echo ""

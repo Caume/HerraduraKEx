@@ -2,6 +2,41 @@
 # No external dependencies; uses only base64 from stdlib.
 import base64
 
+# ---------------------------------------------------------------------------
+# Bounds for the packed (non-DER) wire formats — TODO #275.
+#
+# Eight PEM labels frame their fields at fixed offsets sized from a 4-byte `n`
+# header instead of carrying DER lengths, so nothing in der_parse_seq guards
+# them.  Every field below sizes an allocation or a loop; an unchecked one is
+# either an unbounded allocation or, when it reaches zero, a verification loop
+# that runs no iterations and reports success.
+#
+# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N.  Go's ZkpNlMaxN is 32 because its
+# shares are uint32 where C's are uint64 — a representation limit, not policy,
+# so widths 33..64 are read by C and Python alone.
+# ---------------------------------------------------------------------------
+_ZKP_NL_MAX_N      = 64
+_ZKP_NL_MAX_ROUNDS = 4096
+_ZKP_RNL_MAX_N     = 1024
+_HCRED_MAX_N       = 256
+
+
+def _packed_n(body: bytes, offset: int, limit: int, what: str) -> int:
+    """Read a 4-byte big-endian sizing field and bound it, or raise."""
+    if len(body) < offset + 4:
+        raise ValueError(f"{what}: truncated header")
+    v = int.from_bytes(body[offset:offset + 4], 'big')
+    if v <= 0 or v > limit:
+        raise ValueError(f"{what} out of range ({v})")
+    return v
+
+
+def _packed_take(body: bytes, off: int, size: int, what: str) -> tuple:
+    """Slice `size` bytes at `off`, raising rather than returning a short read."""
+    if size < 0 or off + size > len(body):
+        raise ValueError(f"{what} truncated")
+    return body[off:off + size], off + size
+
 
 # ---------------------------------------------------------------------------
 # DER helpers
@@ -201,7 +236,9 @@ def decode_zkp_rnl_proof(pem_text: str) -> tuple:
     label, body = pem_unwrap(pem_text)
     if label != "HERRADURA ZKP-RNL PROOF":
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    n = int.from_bytes(body[:4], 'big')
+    n = _packed_n(body, 0, _ZKP_RNL_MAX_N, "ZKP-RNL proof: n")
+    if len(body) < 4 + n * 12:
+        raise ValueError(f"ZKP-RNL proof: truncated (n={n})")
     off = 4
     w_poly, off = _s32be_unpack(body, n, off)
     c_poly, off = _u32be_unpack(body, n, off)
@@ -240,8 +277,10 @@ def decode_zkp_nl_privkey(pem_text: str) -> tuple:
     label, body = pem_unwrap(pem_text)
     if label != "HERRADURA ZKP-NL PRIVATE KEY":
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    n  = int.from_bytes(body[:4], 'big')
+    n  = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKP-NL private key: n")
     nb = (n + 7) // 8
+    if len(body) < 4 + 3 * nb:
+        raise ValueError("ZKP-NL private key: truncated")
     A  = int.from_bytes(body[4:4 + nb], 'big')
     B  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
     y  = int.from_bytes(body[4 + 2 * nb:4 + 3 * nb], 'big')
@@ -260,8 +299,10 @@ def decode_zkp_nl_pubkey(pem_text: str) -> tuple:
     label, body = pem_unwrap(pem_text)
     if label != "HERRADURA ZKP-NL PUBLIC KEY":
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    n  = int.from_bytes(body[:4], 'big')
+    n  = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKP-NL public key: n")
     nb = (n + 7) // 8
+    if len(body) < 4 + 2 * nb:
+        raise ValueError("ZKP-NL public key: truncated")
     B  = int.from_bytes(body[4:4 + nb], 'big')
     y  = int.from_bytes(body[4 + nb:4 + 2 * nb], 'big')
     return B, y, n
@@ -288,19 +329,23 @@ def decode_zkp_nl_proof(pem_text: str) -> tuple:
     label, body = pem_unwrap(pem_text)
     if label != "HERRADURA ZKP-NL PROOF":
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    off = 0
-    n   = int.from_bytes(body[off:off + 4], 'big'); off += 4
-    R   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    n   = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKP-NL proof: n")
+    R   = _packed_n(body, 4, _ZKP_NL_MAX_ROUNDS, "ZKP-NL proof: rounds")
+    off = 8
     rounds = []
-    for _ in range(R):
-        com_0 = body[off:off + 32]; off += 32
-        com_1 = body[off:off + 32]; off += 32
-        com_2 = body[off:off + 32]; off += 32
-        e     = body[off];          off += 1
-        l1    = int.from_bytes(body[off:off + 2], 'big'); off += 2
-        vp1   = body[off:off + l1]; off += l1
-        l2    = int.from_bytes(body[off:off + 2], 'big'); off += 2
-        vp2   = body[off:off + l2]; off += l2
+    for j in range(R):
+        w = f"ZKP-NL proof round {j}:"
+        com_0, off = _packed_take(body, off, 32, w)
+        com_1, off = _packed_take(body, off, 32, w)
+        com_2, off = _packed_take(body, off, 32, w)
+        eb, off    = _packed_take(body, off, 1, w)
+        e     = eb[0]
+        lb, off = _packed_take(body, off, 2, w)
+        l1    = int.from_bytes(lb, 'big')
+        vp1, off = _packed_take(body, off, l1, w + " view1")
+        lb, off = _packed_take(body, off, 2, w)
+        l2    = int.from_bytes(lb, 'big')
+        vp2, off = _packed_take(body, off, l2, w + " view2")
         rounds.append({'com_0': com_0, 'com_1': com_1, 'com_2': com_2,
                        'e': e, 'view_p1': vp1, 'view_p2': vp2})
     return rounds, n
@@ -350,22 +395,26 @@ def decode_zkp_nl_pp_proof(pem_text: str) -> tuple:
     label, body = pem_unwrap(pem_text)
     if label != _ZKPP_LABEL:
         raise ValueError(f"Unexpected PEM label: {label!r}")
-    off = 0
-    n   = int.from_bytes(body[off:off + 4], 'big'); off += 4
-    R   = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    n   = _packed_n(body, 0, _ZKP_NL_MAX_N, "ZKB++ proof: n")
+    R   = _packed_n(body, 4, _ZKP_NL_MAX_ROUNDS, "ZKB++ proof: rounds")
+    off = 8
     nb  = (n + 7) // 8
     rounds = []
-    for _ in range(R):
-        com_e   = body[off:off + 32];      off += 32
-        e       = body[off];               off += 1
-        out_e   = body[off:off + nb];      off += nb
-        seed_p1 = body[off:off + _ZKPP_SEED_BYTES]; off += _ZKPP_SEED_BYTES
-        seed_p2 = body[off:off + _ZKPP_SEED_BYTES]; off += _ZKPP_SEED_BYTES
-        gl      = body[off];               off += 1
-        gates_p2 = body[off:off + gl];    off += gl
-        has_s2  = body[off];               off += 1
+    for j in range(R):
+        w = f"ZKB++ proof round {j}:"
+        com_e, off   = _packed_take(body, off, 32, w)
+        eb, off      = _packed_take(body, off, 1, w)
+        e            = eb[0]
+        out_e, off   = _packed_take(body, off, nb, w)
+        seed_p1, off = _packed_take(body, off, _ZKPP_SEED_BYTES, w)
+        seed_p2, off = _packed_take(body, off, _ZKPP_SEED_BYTES, w)
+        gb, off      = _packed_take(body, off, 1, w)
+        gl           = gb[0]
+        gates_p2, off = _packed_take(body, off, gl, w + " gates")
+        hb, off      = _packed_take(body, off, 1, w)
+        has_s2       = hb[0]
         if has_s2:
-            share2 = body[off:off + nb]; off += nb
+            share2, off = _packed_take(body, off, nb, w + " share2")
         else:
             share2 = b''
         rounds.append({'com_e': com_e, 'e': e, 'out_e': out_e,
@@ -411,6 +460,10 @@ def _hcred_ser3(vec):
 
 def _hcred_deser3(data, off, count):
     """Deserialize `count` Z_q values at 3 bytes/coeff from data[off:]."""
+    # A short slice would otherwise yield silent zeros or an IndexError on the
+    # caller's first use; refuse it here instead (TODO #275).
+    if count < 0 or off + 3 * count > len(data):
+        raise ValueError("HCRED: truncated coefficient vector")
     result = []
     for _ in range(count):
         result.append(int.from_bytes(data[off:off + 3], 'big'))
@@ -425,6 +478,10 @@ def _hcred_ser2(vec):
 
 def _hcred_deser2(data, off, count):
     """Deserialize `count` Z_p values at 2 bytes/coeff from data[off:]."""
+    # A short slice would otherwise yield silent zeros or an IndexError on the
+    # caller's first use; refuse it here instead (TODO #275).
+    if count < 0 or off + 2 * count > len(data):
+        raise ValueError("HCRED: truncated coefficient vector")
     result = []
     for _ in range(count):
         result.append(int.from_bytes(data[off:off + 2], 'big'))
@@ -491,10 +548,14 @@ def decode_hcred_privkey(pem_text):
     label, body = pem_unwrap(pem_text)
     if label != _HCRED_PRIV_LBL:
         raise ValueError(f"Expected {_HCRED_PRIV_LBL!r}, got {label!r}")
-    off  = 0
-    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    n    = _packed_n(body, 0, _HCRED_MAX_N, "HCRED private key: n")
+    off  = 4
     seed_nb  = n // 8
     syndr_nb = (n // 2 + 7) // 8
+    # Exact, not ">=": the layout is fixed, so an n SMALLER than the body holds
+    # would otherwise parse a prefix and succeed (TODO #275).
+    if len(body) != 4 + 8 * n + seed_nb + syndr_nb:
+        raise ValueError(f"HCRED private key: body length does not match n={n}")
     s,   off = _hcred_deser3(body, off, n)
     C,   off = _hcred_deser2(body, off, n)
     m,   off = _hcred_deser3(body, off, n)
@@ -521,10 +582,14 @@ def decode_hcred_pubkey(pem_text):
     label, body = pem_unwrap(pem_text)
     if label != _HCRED_PUB_LBL:
         raise ValueError(f"Expected {_HCRED_PUB_LBL!r}, got {label!r}")
-    off  = 0
-    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    n    = _packed_n(body, 0, _HCRED_MAX_N, "HCRED public key: n")
+    off  = 4
     seed_nb  = n // 8
     syndr_nb = (n // 2 + 7) // 8
+    # Exact, not ">=": the layout is fixed, so an n SMALLER than the body holds
+    # would otherwise parse a prefix and succeed (TODO #275).
+    if len(body) != 4 + 5 * n + seed_nb + syndr_nb:
+        raise ValueError(f"HCRED public key: body length does not match n={n}")
     C,   off = _hcred_deser2(body, off, n)
     m,   off = _hcred_deser3(body, off, n)
     seed_H   = int.from_bytes(body[off:off + seed_nb], 'big'); off += seed_nb
@@ -649,10 +714,12 @@ def decode_hcred_proof(pem_text):
     label, body = pem_unwrap(pem_text)
     if label != _HCRED_PROOF_LBL:
         raise ValueError(f"Expected {_HCRED_PROOF_LBL!r}, got {label!r}")
-    off  = 0
-    n    = int.from_bytes(body[off:off + 4], 'big'); off += 4
-    W    = int.from_bytes(body[off:off + 4], 'big'); off += 4
-    R    = int.from_bytes(body[off:off + 4], 'big'); off += 4
+    # n, W and rounds all size allocations below; W additionally indexes into
+    # the statement, so an unbounded one is not merely a large read (TODO #275).
+    n    = _packed_n(body, 0, _HCRED_MAX_N, "HCRED proof: n")
+    W    = _packed_n(body, 4, _HCRED_MAX_N, "HCRED proof: W")
+    R    = _packed_n(body, 8, _ZKP_NL_MAX_ROUNDS, "HCRED proof: rounds")
+    off  = 12
     nb, nd, rows, _ = _hcred_nb_nd(n)
     rounds = []
     for _ in range(R):

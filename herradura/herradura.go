@@ -2355,6 +2355,13 @@ const (
 	ZkpNlDemoRounds = 4
 	ZkpNlProdRounds = 219
 	ZkpNlMaxN       = 32
+	// Upper bound on a ZKP round count read off the wire.  It sizes an
+	// allocation, and a count of zero makes the per-round verification
+	// loop vacuous (TODO #275), so both ends are enforced.
+	ZkpNlMaxRounds  = 4096
+	// HCRED's width is a runtime argument here and in Python but a
+	// compile-time 256 in C and Java, so 256 is the widest any reader takes.
+	HcredMaxN       = 256
 )
 
 // ZkpNlRound holds one round of a ZKBoo proof.
@@ -2613,6 +2620,16 @@ func ZkpNlProve(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 
 // ZkpNlVerify verifies a ZKBoo proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
 func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) bool {
+	// Without this, rounds == 0 makes every loop below run zero times and the
+	// function returns true for any message under any key (TODO #275).
+	//
+	// n is bounded only below.  ZkpNlMaxN is a WIRE bound and belongs in
+	// decodeZkpNlProof, not here: the suite's own test [22] proves ZKBoo at
+	// n = 64 (self-consistently, on 32-bit shares), and imposing the wire
+	// limit on a library caller broke it.
+	if n <= 0 || rounds <= 0 || rounds > ZkpNlMaxRounds || len(proof) != rounds {
+		return false
+	}
 	nb := (n + 7) / 8
 
 	// Reconstruct commitment block and Fiat-Shamir seed
@@ -2908,7 +2925,7 @@ func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, er
 
 // ZkpNlVerifypp verifies a ZKB++ proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
 func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound) bool {
-	if n <= 0 || n > ZkpNlMaxN || rounds <= 0 || rounds > 4096 || len(proof) != rounds {
+	if n <= 0 || n > ZkpNlMaxN || rounds <= 0 || rounds > ZkpNlMaxRounds || len(proof) != rounds {
 		return false
 	}
 	mask := uint32((1 << uint(n)) - 1)
@@ -4260,7 +4277,10 @@ func HcredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int,
 	eb := HcredEpsBits
 	nb, nd := rows*rowBits, n*eb
 
-	if proof.W < 1 || proof.W > wMax || len(proof.Rounds) != rounds {
+	// rounds == 0 satisfies the length check trivially and then skips the
+	// per-round loop entirely, returning true for any statement (TODO #275).
+	if proof.W < 1 || proof.W > wMax || rounds <= 0 || rounds > ZkpNlMaxRounds ||
+		len(proof.Rounds) != rounds {
 		return false
 	}
 	stmt := hcredStmtHash(mPoly, cPoly, seedH, y, n, msg)

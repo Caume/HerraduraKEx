@@ -131,6 +131,11 @@ export HKX_MAL_VLIMIT
 
 hkx_mal_fixtures "$TMP"
 hkx_mal_suite c "$CLI"
+# TODO #275: the eight packed (non-DER) labels, which hkx_mal_craft cannot
+# reach.  Running them here as well as in the four-CLI matrix puts them under
+# the sanitizers job, which is where an unchecked packed read is visible.
+hkx_mal_fixtures_packed "$TMP"
+hkx_mal_suite_packed c "$CLI"
 
 echo ""
 echo "Results: $PASS PASS / $FAIL FAIL"

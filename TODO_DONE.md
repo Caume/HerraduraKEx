@@ -15770,3 +15770,115 @@ the same time whether any flag already in `cli_flag_matrix` as a Java or C gap h
 same fail-open shape — `--aead` was found by accident and nothing has swept the rest.
 
 Status: **DONE v6.5.2** — C and Java validate against a GENERATED per-subcommand allow-list emitted by `spec/generate_spec.py` from the same extractors that build `cli_flag_matrix`, so it cannot drift from what the parser reads. Nine flags now refused rather than ignored; the sweep found a second and worse fail-open than the one that motivated the item — `genpkey --passphrase` wrote a CLEARTEXT private key in C and Java. Guarded by `CliTest/test_unknown_flags.sh`.
+
+### #275: eight PEM labels bypass the DER codec, so TODO #240's malformed-PEM matrix cannot reach them
+
+**Also found by TODO #271's audit**, which could not fingerprint them: the analyzer
+expects a DER SEQUENCE and these are not one.
+
+Eight labels use a hand-rolled fixed-offset binary framing instead — a 4-byte
+big-endian `n` header followed by packed fields whose sizes are DERIVED from `n`
+rather than carried as lengths (see `codec.py`'s `encode_zkp_rnl_proof` and the
+block comment above `encode_zkp_nl_privkey`, which documents the layout):
+
+* `HERRADURA HCRED PRIVATE KEY`, `HCRED PUBLIC KEY`, `HCRED PROOF`
+* `HERRADURA ZKP-NL PRIVATE KEY`, `ZKP-NL PUBLIC KEY`, `ZKP-NL PROOF`
+* `HERRADURA ZKP-NL-PP SIGNATURE`
+* `HERRADURA ZKP-RNL PROOF`
+
+Everything else is DER, `HCRED CREDENTIAL`, `HDRBG STATE` and `HYBRID-RNL-STERN
+RESPONSE` included — so the split is not "the newer protocols", it is the ZKP family
+plus HCRED's key and proof artifacts specifically.
+
+**Why it is worth an item.** `CliTest/lib_malformed.sh` is built on
+`der_parse_seq` / `der_seq`: `hkx_mal_craft` decodes a SEQUENCE of INTEGERs, rewrites
+item `$idx`, and re-encodes. It CANNOT craft a case for a label that is not a DER
+SEQUENCE. So TODO #240's four-CLI malformed-PEM matrix — the test that exists because
+"the bounds on the fields that size an allocation are a wire contract" — has
+structurally zero coverage of these eight, and the coverage guard does not notice,
+because a case that was never written is not a case that fails.
+
+These labels do have a field that sizes an allocation. It is the 4-byte `n` header,
+plus `rounds` and the per-round `len_p1` / `len_p2` in the ZKP-NL proof. That is the
+same hostile-input class #239 and #240 were opened for, in a framing their table
+cannot express.
+
+**Scope note, so this is not read as bigger than it is.** The audit found no
+DISAGREEMENT here: all four CLIs produce byte-identical output for these labels
+wherever the artifact is a deterministic function of its inputs. This item is about
+missing rejection coverage, not about a divergence.
+
+**First step for whoever takes it:** decide whether the fix is a second craft helper
+for the packed framing (cheap, keeps the two wire formats) or converging these eight
+onto DER (a wire-format break needing `MIGRATING.md`, and it would make one codec
+serve every label). Do not start by writing cases — `hkx_mal_craft`'s shape is the
+constraint, and the table is exhaustive-in-both-directions by design, so the helper
+has to exist before a case can be filed against it.
+
+**Resolution (v6.5.3).** The decision the item asked for is the CRAFT HELPER, not
+DER convergence: converging eight labels onto DER is a wire-format break across
+four languages, needs `MIGRATING.md`, and buys nothing here, because the framing
+is not what was wrong — the missing bounds were, and those have to be written
+either way.  `hkx_mal_poke` is the second craft helper, and it is simpler than
+its DER sibling precisely because the framing is positional: an integer written
+at a byte offset, no re-encode.  `hkx_mal_suite_packed` is the case table it
+enables, wired into both consumers (the four-CLI matrix and, for C, the
+sanitizers job).
+
+**The item's scope note is now wrong, and that is the finding.** It said "the
+audit found no DISAGREEMENT here ... this item is about missing rejection
+coverage, not about a divergence."  That was true of WELL-FORMED artifacts,
+which is all the audit could compare.  The first run of the new table found a
+UNIVERSAL FORGERY in three of the four CLIs:
+
+    printf '%s\n' -----BEGIN\ HERRADURA\ ZKP-NL\ PROOF----- \
+        AAAAAAAAAAA= -----END\ HERRADURA\ ZKP-NL\ PROOF-----  > forge.pem
+
+An 89-byte PEM whose body is eight null bytes was accepted as a valid
+`nl-zkboo` signature for ANY message under ANY public key by the Go, Python and
+Java CLIs; `nl-zkbpp` and HCRED's `cred-verify` carried the same defect in
+subsets of those.  C alone rejected it, because `zkp_nl_unpack_proof` bounded
+`rounds` where nothing else did.
+
+The mechanism is one line of shape, not a protocol flaw: every ZKP verifier here
+loops over the round count and returns "verified" when no round objected, so at
+`rounds == 0` the loop runs zero times and the function returns true.  Go's
+`ZkpNlVerifypp` already carried exactly the right guard, in the same file, next
+to the function that lacked it.  Fixed at the SUITE verifier in all three (not
+at the CLI) so library and FFI callers are covered, plus the decoder bound that
+stops the artifact earlier.
+
+Also fixed, all the same class, all found by the table:
+
+* Go panicked (not rejected) on five inputs — an unbounded `make` at
+  `rounds = 2^32-1`, and unchecked slice reads in `decodeZkpNlProof` and the
+  HCRED deserialisers.  Those now propagate an `off < 0` sentinel.
+* The proof's own `n` was never compared with the public key's in Go, Python
+  (`nl-zkboo`) or Java, so a proof about a different width verified.  C had
+  always checked it.
+* Python reported every malformed artifact as a TRACEBACK, which the table's
+  contract forbids; `main()` now maps `ValueError` — the codec's declared
+  rejection signal, and nothing else — to a one-line diagnostic.
+* C read two bytes past the declared body when `len_p1` consumed exactly the
+  remainder.  It stayed inside the over-allocated PEM buffer, so ASan does not
+  flag it and it is latent rather than a memory-safety fault; fixed anyway.
+
+**Where the width bound lives, and why not in the verifier.** The first version of this fix
+also bounded `n` by each language's `ZKP_NL_MAX_N` inside the verifier, and that broke the Go
+suite's own test [22], which proves ZKBoo at **n = 64** while Go's `ZkpNlMaxN` is 32. The two
+are not in conflict: 32 is a *wire* limit derived from Go's uint32 shares, and the suite runs
+self-consistently above it. So the width bound stays in the decoders, where untrusted input
+arrives, and the verifiers bound `n` only below. The round count is bounded in both, because
+that one is a soundness property rather than a parsing concern.
+
+**What the per-language maxima turned out to be.** `ZKP_NL_MAX_N` is 64 in C and
+32 in Go, and that is a REPRESENTATION limit (uint64 vs uint32 shares), not
+policy — so widths 33..64 are legitimately read by C, Python and Java and
+refused by Go.  The table's cases use 0, 65 and 2^32-1, outside every band, so a
+rejection is four-way agreement rather than an artefact of which implementation
+is under test.  HCRED has the mirror-image problem: its width is a runtime
+argument in Python and Go (n=32) but compile-time 256 in C and Java, so no one
+HCRED artifact is readable by all four.  Its fixtures are therefore generated
+per-language — giving up a cross-language claim that, for HCRED, does not exist.
+
+Status: **DONE v6.5.3** — the packed-framing craft helper and its case table, plus the vacuous-round-count forgery in three CLIs that the first run found.
