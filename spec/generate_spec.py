@@ -971,28 +971,12 @@ CROSS_IMPL_GAPS_CURATED = [
 # and counted, and it names the follow-up.  #267 closes on the mechanism, not on
 # the ports, so a defect row is an expected state here, not a failing one.
 CLI_FLAG_PARITY = {
-    # ── TODO #166's envelope, Python-only since v1.9.134 ──────────────────
-    ("genpkey", "--passphrase"): (
-        ("python",), "defect",
-        "Passphrase-encrypted private-key PEM export (TODO #166) exists only in the "
-        "Python CLI, so a key exported this way is unreadable by three of the four. "
-        "#166 scoped it to Python deliberately, matching its own Low priority, and "
-        "that note was the only record until TODO #267. Porting is not thin: it "
-        "needs PBKDF2-HFSCX-256 (hence hmac_hfscx_256 in Java, which TODO #261's "
-        "manifest already carries as acknowledged), the HERRADURA ENCRYPTED PRIVATE "
-        "KEY envelope, and a fail-closed read path in every subcommand that loads a "
-        "key. Filed as a defect, not blessed scope, because it makes an artifact "
-        "one CLI writes unreadable to the others."),
-    ("genpkey", "--kdf-iterations"): (
-        ("python",), "defect",
-        "The PBKDF2 iteration count for --passphrase's envelope; it has no meaning "
-        "without that flag and moves with it."),
-    ("pkey", "--passphrase"): (
-        ("python",), "defect",
-        "The read side of --passphrase's envelope; moves with genpkey --passphrase."),
-    ("pkey", "--decrypt"): (
-        ("python",), "defect",
-        "Selects the passphrase-decrypting read path; moves with pkey --passphrase."),
+    # ── TODO #166's envelope is four-way as of v6.5.5 (TODO #268) ─────────
+    # genpkey --passphrase / --kdf-iterations and pkey --passphrase / --decrypt
+    # were Python-only from v1.9.134.  Closing it needed the primitive chain
+    # first: hmac_hfscx_256 in Java (#261's last acknowledged hash cell), then
+    # PBKDF2-HFSCX-256, and -- unrecorded by #268's own text -- HSKE-NL-AEAD
+    # in Java, which was TODO #273.
 
     # ── Java's flag gaps under TODO #269 are all closed ───────────────────
     # `--digest` and `rand` in v6.2.0/v6.3.0, `kex --kdf` in v6.5.0, and

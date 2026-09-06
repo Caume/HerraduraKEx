@@ -124,45 +124,7 @@ no rating in either direction, and is filed as an outstanding proof obligation b
 figures already published, not as a gate on anything.
 
 Status: **OPEN**
-### #268: port the passphrase-encrypted private-key envelope to C, Go and Java
 
-**Made visible by TODO #267's flag matrix**, where it is `spec/`'s largest single
-`defect` cluster: `genpkey --passphrase`, `genpkey --kdf-iterations`,
-`pkey --passphrase` and `pkey --decrypt` are all Python-only, so a key exported this
-way is unreadable by three of the four CLIs.  TODO #166 (v1.9.134) scoped it to Python
-deliberately, matching its own Low priority; that was a reasonable call then and the
-note lived only in #166's text, which is the drift #267 exists to catch.
-
-**Since TODO #274 (v6.5.2) the absence is at least LOUD.**  C and Java used to accept
-`--passphrase` and silently write a CLEARTEXT private key with exit 0 — a caller asking
-for a protected key got an unprotected long-lived secret on disk.  All three now refuse
-the flag by name.  That is containment, not this item: the envelope is still missing.
-
-**Not a thin port.**  It needs PBKDF2-HFSCX-256, which needs `hmac_hfscx_256` in Java
-first — TODO #261's primitive manifest already carries that as `acknowledged` for
-exactly this reason, so closing this closes both the missing primitive and the missing
-flag.
-
-**Correction, found on starting the work (v6.5.4):** `hmac_hfscx_256` was NOT the only
-missing Java prerequisite, and this paragraph named only that one.  The envelope
-encrypts with HSKE-NL-AEAD, which `bindings/java/` did not have either — that was
-TODO #273, a separate open item this text never referenced.  Since the acceptance below
-requires all four CLIs, #273 was a hard blocker, and it was closed first (v6.5.4).
-What remains for Java is now genuinely just `hmac_hfscx_256` plus PBKDF2.  The lesson is
-the one #267 exists for: a prerequisite list written in prose is not checked by anything,
-and this one was incomplete for two releases.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
-in every subcommand that loads a key: an encrypted key reaching a build that does not
-understand the envelope must be refused, never mis-parsed.
-
-**Acceptance.**  All four CLIs write and read the envelope, cross-checked in
-`CliTest/` as a 4x4 matrix (writer x reader) rather than each against Python — the
-shape `test_zkp_hybrid_family.sh` adopted after #261 found a pair that had never
-interoperated because every test compared to Python.  A KAT/pem/ artifact pins the
-envelope's bytes.  On success the four `defect` rows and #261's `hmac-hfscx-256`
-acknowledgement are deleted, and `generate_spec.py --check` FAILS until they are —
-that is the anchor-lost direction working as designed.
-
-Status: **OPEN**
 
 ### #272: the C CLI's 64-value list-flag limit is arbitrary, undocumented, and unmatched
 

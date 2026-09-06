@@ -66,6 +66,8 @@ public final class Codec {
     public static final String PEM_RNL_RESPONSE = "HERRADURA HKEX-RNL RESPONSE";
     public static final String PEM_SIGNATURE = "HERRADURA SIGNATURE";
     public static final String PEM_CIPHERTEXT = "HERRADURA CIPHERTEXT";
+    /** TODO #166 / #268: passphrase-encrypted private-key envelope. */
+    public static final String PEM_ENC_PRIV = "HERRADURA ENCRYPTED PRIVATE KEY";
     public static final String PEM_DIGEST = "HERRADURA DIGEST";
 
     public static final String PEM_ZKP_RNL_PROOF = "HERRADURA ZKP-RNL PROOF";

@@ -2,6 +2,62 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.5] - 2026-09-06
+
+### TODO #268 (DONE) — the passphrase-encrypted private-key envelope is four-way
+
+`genpkey --passphrase` / `--kdf-iterations` and `pkey --passphrase` / `--decrypt` had been
+Python-only since v1.9.134 (TODO #166), so a key exported that way was unreadable by three of
+the four CLIs. TODO #274 (v6.5.2) made C and Java refuse the flag by name — before that they
+accepted it and wrote a **cleartext private key with exit 0**, which is containment, not a fix.
+This is the fix.
+
+**Its prerequisite list was incomplete, and that is worth recording.** #268 named only
+`hmac_hfscx_256` as Java's missing primitive. The envelope encrypts with HSKE-NL-AEAD, which
+`bindings/java/` did not have either — that was TODO #273, a separate open item #268's text
+never referenced. Since the acceptance is "all four CLIs", #273 was a hard blocker and was
+closed first (v6.5.4). A prerequisite written in prose is checked by nothing, which is the
+same complaint TODO #267 exists over.
+
+**The chain, in dependency order:** `hmacHfscx256` in Java (TODO #261's last acknowledged hash
+cell, and until now C and Go carried the primitive with *no consumer at all* — the
+internal-surface census registers that change on its own), then PBKDF2-HFSCX-256 in C, Go and
+Java, then the envelope, then the flags.
+
+**Cleartext never reaches disk.** `genpkey` writes from ~20 algorithm branches in C and Java,
+so rather than wrapping each one the encryption interposes at the single PEM-write choke point;
+the plaintext PEM exists only as a string in memory. Go builds one PEM string and wraps it
+directly.
+
+**Fail-closed, in every key-loading path.** An envelope *is* a valid DER SEQUENCE, so a reader
+that does not check the label parses it happily and reads salt/iterations/nonce as key material
+— a wrong answer with exit 0, the same shape as the bug #274 found in the flag. All four now
+refuse it **and name the cause**; Go needed the check in two places, since `readRawPEM` and
+`readPEMInts` are separate entry points and only the first was covered at first.
+
+**One bug found by the matrix, worth naming because of its class.** C's `pkey --decrypt`
+failed against every writer including itself, while every other CLI read C's envelopes fine.
+`hske_nl_aead_decrypt` returns **1 on success**, not 0 like most of that file's helpers, and
+the check was written `!= 0` — so it rejected on success and would have accepted on failure.
+An inverted return-value condition is exactly the class KAT/hcred_kkw.json was built to catch
+in Go (TODO #266); here the 4×4 matrix caught it, which is why the acceptance criterion asks
+for a matrix rather than each CLI against Python.
+
+**Tests.** `CliTest/test_passphrase_envelope.sh` (new, 48 assertions): the 4×4
+writer × reader matrix; that every reader recovers *byte-identical* bytes; that no cleartext
+key lands on disk; that a wrong passphrase is refused in every language; that an envelope fed
+to `pkey --pubout` is refused by name; and that the pinned KAT artifact decrypts correctly.
+`KAT/pem/enc_priv.pem` pins the envelope's bytes — and unlike `KAT/hcred_kkw.json` it *is*
+regenerate-and-diff checked, because the salt and nonce are arguments the primitive accepts, so
+fixing them fixes the artifact. Its expected plaintext is `KAT/pem/n1024_alice_priv.pem`, a
+file the directory already contains.
+
+**Bookkeeping forced, not remembered.** All four `CLI_FLAG_PARITY` rows and TODO #261's
+`hmac-hfscx-256` acknowledgement are deleted — `generate_spec.py --check` refused to emit a
+spec until they were. `spec/`'s `cli_surface_gaps` now has **five rows, all `acknowledged` and
+none `defect`**: every inherited asymmetry from TODO #267's original sixteen is closed, so a new
+`defect` row from here on means a fresh one.
+
 ## [6.5.4] - 2026-09-06
 
 ### TODO #273 (DONE) — HSKE-NL-AEAD ported to Java; `enc --aead` is four-way

@@ -105,7 +105,18 @@ KAT/                                                 — fixed Known-Answer-Test
                                hkex_rnl.json does not, at n=1024 and n=64 (TODO #228
                                settled the small-ring session-key width at 256 bits,
                                so all four CLIs now agree there; the C CLI is skipped
-                               at n=64, being compiled for a single RNL_N)
+                               at n=64, being compiled for a single RNL_N).
+                               Since TODO #268 it also holds enc_priv.pem, the
+                               passphrase envelope over n1024_alice_priv.pem:
+                               unlike hcred_kkw.json that one IS
+                               regenerate-and-diff checked, because its two
+                               random inputs (the PBKDF2 salt and the AEAD
+                               nonce) are arguments the primitive accepts, so
+                               pinning them pins the artifact.  Its expected
+                               plaintext is a file this directory already
+                               contains, so the CONSUME direction is checked
+                               against a byte-exact target rather than a
+                               re-derivation
   nl_fscx_v3.json            — the NL-FSCX v3 primitive (chi, one round, the
                                R3_VALUE revolve and its inverse) and all five
                                consumers (TODO #255).  The only KAT coverage of
@@ -628,8 +639,15 @@ spec/                                                — machine-readable protoc
                                                       ten of the original sixteen, each deletion
                                                       FORCED because the generator refuses to emit a
                                                       spec while an acknowledgement describes a gap
-                                                      that no longer exists.  #268 and #273 are the
-                                                      ports that remain.  NOTE for anyone adding a new way to
+                                                      that no longer exists.  #273 (v6.5.4) and
+                                                      #268 (v6.5.5) deleted the last five, so every
+                                                      remaining row is `acknowledged` -- a deliberate
+                                                      per-language scope decision -- and a NEW
+                                                      `defect` row now means a fresh asymmetry rather
+                                                      than an inherited one.  #268 also showed the
+                                                      table catching a gap being CREATED: a Java-only
+                                                      `dec --aead` was refused before it shipped.
+                                                      NOTE for anyone adding a new way to
                                                       READ a flag: the matrix is derived from
                                                       per-language accessor patterns, so a new
                                                       accessor must be taught to the extractor or

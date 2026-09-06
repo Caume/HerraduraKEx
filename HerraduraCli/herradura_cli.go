@@ -236,6 +236,149 @@ func writeBytes(path string, b []byte) error {
 	return os.WriteFile(path, b, 0644)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Passphrase-encrypted private-key envelope (TODO #166, ported by TODO #268)
+//
+// The whole cleartext PEM -- label, base64 and all -- is encrypted as opaque
+// bytes, so this composes with every subcommand: decrypt, then feed the exact
+// original file to anything.  That is why the envelope carries no algorithm
+// field and needs none.
+//
+//	salt     16 random bytes
+//	key      PBKDF2-HFSCX-256(HFSCX-256(passphrase), salt, iterations)
+//	nonce    32 random bytes
+//	ct, tag  HSKE-NL-AEAD(key, nonce, ad = "", pt = the PEM text)
+//	DER      SEQUENCE(salt[16], iterations, nonce[32], ct[pt_len], tag[32], pt_len)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const lblEncPriv = "HERRADURA ENCRYPTED PRIVATE KEY"
+
+const pbkdf2SaltBytes = 16
+
+// The envelope is always 256-bit: its key comes from a 32-byte PRF output, not
+// from any user-selected width, so it does not follow genpkey --bits.
+const envKeyBits = 256
+
+// pbkdf2IterDemo matches Python's default.  SP 800-132 wants >= 200,000; a
+// pure-Python HFSCX-256 runs ~300/sec, so the shared default is low for CLI
+// responsiveness and --kdf-iterations opts into the floor.  The count travels
+// in the PEM, so a reader honours whatever the writer chose regardless of its
+// own default -- the contract Stern-F's round count has had since TODO #236.
+const pbkdf2IterDemo = 1000
+
+// pbkdf2Hfscx256 is RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the
+// PRF: a standard, analysed shape rather than a bespoke construction, and
+// dependency-free.  Only dklen == 32 (the PRF's native width, hence a single
+// block) is ever needed.
+func pbkdf2Hfscx256(password, salt []byte, iterations int) []byte {
+	// HMAC-HFSCX-256 takes an exactly-32-byte key, so an arbitrary-length
+	// password is hashed down first -- standard HMAC over-length-key handling,
+	// and identical in all four languages.
+	key := Hfscx256(password, nil)
+	block := append(append([]byte{}, salt...), 0, 0, 0, 1)
+	u := HmacHfscx256(key, block)
+	t := append([]byte{}, u...)
+	for i := 1; i < iterations; i++ {
+		u = HmacHfscx256(key, u)
+		for j := range t {
+			t[j] ^= u[j]
+		}
+	}
+	return t
+}
+
+func encryptPEMText(pemText, passphrase string, iterations int) (string, error) {
+	saltBA := NewRandBitArray(pbkdf2SaltBytes * 8)
+	salt := saltBA.Bytes()
+	nonce := NewRandBitArray(envKeyBits)
+	key := NewBitArray(envKeyBits, new(big.Int).SetBytes(pbkdf2Hfscx256([]byte(passphrase), salt, iterations)))
+	pt := []byte(pemText)
+	ct, tag := HskeNlAeadEncrypt(key, nonce, nil, pt)
+
+	der, err := DerSeqEnc(
+		mustDerInt(salt),
+		mustDerInt(minimalBE(uint64(iterations))),
+		mustDerInt(nonce.Bytes()),
+		mustDerInt(ct),
+		mustDerInt(tag),
+		mustDerInt(minimalBE(uint64(len(pt)))),
+	)
+	if err != nil {
+		return "", err
+	}
+	return PemWrap(lblEncPriv, der), nil
+}
+
+// minimalBE renders v as the shortest big-endian byte string, matching Python's
+// der_int(x) with no explicit width (TODO #271).
+func minimalBE(v uint64) []byte {
+	if v == 0 {
+		return []byte{0}
+	}
+	var b []byte
+	for v > 0 {
+		b = append([]byte{byte(v & 0xff)}, b...)
+		v >>= 8
+	}
+	return b
+}
+
+func mustDerInt(val []byte) []byte {
+	b, err := DerIntEnc(val)
+	if err != nil {
+		die("der", err)
+	}
+	return b
+}
+
+// decryptPEMFile recovers the cleartext PEM, or fails -- it never returns
+// unverified bytes.
+func decryptPEMFile(path, passphrase string) (string, error) {
+	body, err := readRawPEM(path, lblEncPriv)
+	if err != nil {
+		return "", err
+	}
+	items, err := DerParseSeq(body)
+	if err != nil {
+		return "", err
+	}
+	if len(items) != 6 {
+		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (%d fields, want 6)", len(items))
+	}
+	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
+	if len(salt) != pbkdf2SaltBytes || len(nonceB) != envKeyBits/8 || len(tag) != 32 {
+		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (field width)")
+	}
+	if len(iterB) == 0 || len(iterB) > 4 || len(ptLenB) > 8 {
+		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (header width)")
+	}
+	iterations := 0
+	for _, b := range iterB {
+		iterations = iterations<<8 | int(b)
+	}
+	ptLen := 0
+	for _, b := range ptLenB {
+		ptLen = ptLen<<8 | int(b)
+	}
+	// Both size work below, so both are bounded before use -- the field class
+	// TODO #239/#240/#275 exist over.
+	if iterations < 1 || iterations > 100000000 {
+		return "", fmt.Errorf("iteration count out of range (%d)", iterations)
+	}
+	if ptLen < 1 || ptLen > len(ct) {
+		return "", fmt.Errorf("declared plaintext length does not match ciphertext")
+	}
+	ct = ct[len(ct)-ptLen:]
+
+	key := NewBitArray(envKeyBits, new(big.Int).SetBytes(pbkdf2Hfscx256([]byte(passphrase), salt, iterations)))
+	nonce := NewBitArray(envKeyBits, new(big.Int).SetBytes(nonceB))
+	pt, ok := HskeNlAeadDecrypt(key, nonce, nil, ct, tag)
+	if !ok {
+		return "", fmt.Errorf("wrong passphrase or corrupted/tampered file")
+	}
+	return string(pt), nil
+}
+
 func readPEMInts(path string) (string, [][]byte, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -244,6 +387,14 @@ func readPEMInts(path string) (string, [][]byte, error) {
 	label, der, err := PemUnwrap(string(data))
 	if err != nil {
 		return "", nil, err
+	}
+	// FAIL CLOSED (TODO #268).  An envelope IS a valid DER SEQUENCE, so it
+	// would parse cleanly and its salt/iterations/nonce be read as key
+	// material.  The caller's "unrecognised PEM label" would refuse it, but
+	// sends the reader looking for the wrong problem; naming it is the point.
+	if label == lblEncPriv {
+		return "", nil, fmt.Errorf("%s is a passphrase-encrypted private key; decrypt it "+
+			"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
 	}
 	ints, err := DerParseSeq(der)
 	return label, ints, err
@@ -939,6 +1090,8 @@ func cmdGenpkey(args []string) {
 	bits := fs.Int("bits", 256, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
+	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
+	kdfIterations := fs.Int("kdf-iterations", pbkdf2IterDemo, "PBKDF2-HFSCX256 iterations for --passphrase")
 	fs.Parse(args)
 
 	if *algo == "" {
@@ -1081,6 +1234,17 @@ func cmdGenpkey(args []string) {
 	if err != nil {
 		die("genpkey", err)
 	}
+	// TODO #268.  Wrapping the finished PEM string keeps CLEARTEXT OFF DISK:
+	// the plaintext only ever exists in memory.
+	if *passphrase != "" {
+		if *kdfIterations < 1 || *kdfIterations > 100000000 {
+			die("genpkey", fmt.Errorf("--kdf-iterations out of range (1..100000000)"))
+		}
+		pem, err = encryptPEMText(pem, *passphrase, *kdfIterations)
+		if err != nil {
+			die("genpkey", err)
+		}
+	}
 	if err := writeString(*out, pem); err != nil {
 		die("genpkey", err)
 	}
@@ -1094,10 +1258,34 @@ func cmdPkey(args []string) {
 	pubout := fs.Bool("pubout", false, "Extract public key")
 	text   := fs.Bool("text", false, "Print key fields")
 	out    := fs.String("out", "-", "Output path")
+	decrypt := fs.Bool("decrypt", false, "Decrypt a --passphrase-protected private key PEM (TODO #268)")
+	passphrase := fs.String("passphrase", "", "Passphrase for --decrypt")
 	fs.Parse(args)
 
 	if *in == "" {
 		fmt.Fprintln(os.Stderr, "pkey: --in required")
+		os.Exit(1)
+	}
+	// TODO #268: --decrypt reverses genpkey --passphrase, recovering the PEM
+	// byte-for-byte so it can be fed to any other subcommand unmodified.  It is
+	// its own mode, not a modifier of --pubout/--text, so it is handled before
+	// the "specify --pubout or --text" check.
+	if *decrypt {
+		if *passphrase == "" {
+			fmt.Fprintln(os.Stderr, "pkey --decrypt: --passphrase required")
+			os.Exit(1)
+		}
+		plain, derr := decryptPEMFile(*in, *passphrase)
+		if derr != nil {
+			die("pkey --decrypt", derr)
+		}
+		if werr := writeString(*out, plain); werr != nil {
+			die("pkey", werr)
+		}
+		return
+	}
+	if *passphrase != "" {
+		fmt.Fprintln(os.Stderr, "pkey: --passphrase is only meaningful with --decrypt")
 		os.Exit(1)
 	}
 	if !*pubout && !*text {
@@ -2201,6 +2389,12 @@ func readRawPEM(path, expectLabel string) ([]byte, error) {
 		return nil, err
 	}
 	if label != expectLabel {
+		// Naming the envelope is the point of failing closed: "expected X, got
+		// Y" sends the reader looking for the wrong problem (TODO #268).
+		if label == lblEncPriv && expectLabel != lblEncPriv {
+			return nil, fmt.Errorf("%s is a passphrase-encrypted private key; decrypt it "+
+				"first with `pkey --decrypt --passphrase ... --in %s --out plain.pem`", path, path)
+		}
 		return nil, fmt.Errorf("expected PEM label %q, got %q", expectLabel, label)
 	}
 	return body, nil

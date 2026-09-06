@@ -25,14 +25,14 @@ final class CliFlagTable {
         m.put("enc", new HashSet<>(Arrays.asList("ad", "aead", "algo", "in", "key", "out", "pubkey")));
         m.put("encfile", new HashSet<>(Arrays.asList("algo", "in", "key", "out")));
         m.put("fpe", new HashSet<>(Arrays.asList("context", "decrypt", "encrypt", "in", "key", "out", "v3")));
-        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "out", "xmss-height")));
+        m.put("genpkey", new HashSet<>(Arrays.asList("algo", "bits", "kdf-iterations", "out", "passphrase", "xmss-height")));
         m.put("kex", new HashSet<>(Arrays.asList("algo", "kdf", "our", "our-kem", "out", "their", "their-kem")));
         m.put("oprf-blind", new HashSet<>(Arrays.asList("in", "out")));
         m.put("oprf-eval", new HashSet<>(Arrays.asList("in", "key", "out")));
         m.put("oprf-unblind", new HashSet<>(Arrays.asList("eval", "out", "state")));
         m.put("pake-demo", new HashSet<>(Arrays.asList("key", "password", "username")));
         m.put("pake-register", new HashSet<>(Arrays.asList("key", "out", "password", "username")));
-        m.put("pkey", new HashSet<>(Arrays.asList("in", "out", "pubout", "text")));
+        m.put("pkey", new HashSet<>(Arrays.asList("decrypt", "in", "out", "passphrase", "pubout", "text")));
         m.put("rand", new HashSet<>(Arrays.asList("bytes", "hex", "out", "personalization", "reseed", "seed", "state")));
         m.put("sign", new HashSet<>(Arrays.asList("algo", "digest", "in", "key", "out", "ring", "rounds")));
         m.put("threshold-aggregate", new HashSet<>(Arrays.asList("commit", "commits", "digest", "in", "out")));

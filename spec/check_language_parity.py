@@ -1355,15 +1355,10 @@ PRIMITIVES = {
         "java": r"Ratchet.java::public static BigInteger init\(",
     },
     "hmac-hfscx-256": {
-        "acknowledged":
-            "HMAC-HFSCX-256-DM (SecurityProofs-6.md 11.9.6) is absent from the "
-            "Java port. Its only consumer is the Python CLI's PBKDF2 for "
-            "passphrase-encrypted PEMs (TODO #166), which is itself Python-CLI- "
-            "only -- the CLI-flag asymmetry TODO #267 opens over. C and Go "
-            "carry the primitive with no consumer at all",
         "c": r"static void hmac_hfscx_256\(",
         "go": r"^func HmacHfscx256\(",
         "python": r"^def hmac_hfscx_256\(",
+        "java": r"Hfscx256.java::public static byte\[\] hmacHfscx256\(",
     },
     # ── the FSCX and NL-FSCX primitives themselves (TODO #261, v6.1.0) ────
     # The bottom of the stack, and the last place anyone would look for a gap --

@@ -346,6 +346,19 @@ public final class HerraduraCli {
         String algo = req(opt, "algo", "genpkey");
         String out = opt.getOrDefault("out", "-");
 
+        // TODO #268.  The count travels in the PEM, so this default only
+        // affects what THIS build writes.
+        if (opt.containsKey("passphrase")) {
+            encPassphrase = opt.get("passphrase");
+            encIterations = Integer.parseInt(opt.getOrDefault("kdf-iterations",
+                                                              String.valueOf(PBKDF2_ITER_DEMO)));
+            if (encIterations < 1 || encIterations > 100000000) {
+                throw new CliError("genpkey: --kdf-iterations out of range (1..100000000)");
+            }
+        } else if (opt.containsKey("kdf-iterations")) {
+            throw new CliError("genpkey: --kdf-iterations requires --passphrase");
+        }
+
         if (algo.equals("hpks-stern") || algo.equals("hpke-stern")) {
             sternDemoWarning();
             Stern.SternKeypair kp = Stern.sternFKeygen(RNG);
@@ -450,8 +463,30 @@ public final class HerraduraCli {
     private static void cmdPkey(Map<String, String> opt) throws IOException {
         String in = req(opt, "in", "pkey");
         String out = opt.getOrDefault("out", "-");
+
+        // TODO #268: --decrypt reverses genpkey --passphrase, recovering the
+        // PEM byte-for-byte so it can be fed to any other subcommand
+        // unmodified.  Its own mode, not a modifier of --pubout/--text.
+        if (opt.containsKey("decrypt")) {
+            if (!opt.containsKey("passphrase")) {
+                throw new CliError("pkey --decrypt: --passphrase required");
+            }
+            writeString(out, decryptPemFile(in, opt.get("passphrase")));
+            return;
+        }
+        if (opt.containsKey("passphrase")) {
+            throw new CliError("pkey: --passphrase is only meaningful with --decrypt");
+        }
+
         String pemIn = readString(in);
         Codec.PemBlock block = Codec.pemUnwrap(pemIn);
+        // FAIL CLOSED (TODO #268).  An envelope IS a DER SEQUENCE, so without
+        // this it parses cleanly and its salt/iterations/nonce are read as
+        // though they were key material -- a wrong answer with exit 0.
+        if (block.label.equals(Codec.PEM_ENC_PRIV)) {
+            throw new CliError(in + " is a passphrase-encrypted private key; decrypt it "
+                + "first with `pkey --decrypt --passphrase ... --in " + in + " --out plain.pem`");
+        }
 
         if (block.label.equals(Codec.PEM_HPKS_STERN_PRIV) || block.label.equals(Codec.PEM_HPKE_STERN_PRIV)) {
             sternDemoWarning();
@@ -1129,6 +1164,12 @@ public final class HerraduraCli {
     private static BigInteger[] loadKey(String path) throws IOException {
         String pem = readString(path);
         Codec.PemBlock block = Codec.pemUnwrap(pem);
+        // FAIL CLOSED (TODO #268), as cmdPkey does: an envelope parses as a
+        // valid DER SEQUENCE, so it must be named rather than misread.
+        if (block.label.equals(Codec.PEM_ENC_PRIV)) {
+            throw new CliError(path + " is a passphrase-encrypted private key; decrypt it "
+                + "first with `pkey --decrypt --passphrase ... --in " + path + " --out plain.pem`");
+        }
         // A raw session-key PEM (from `kex`) has no dedicated decode helper
         // distinct from PubKey's shape (value, nbits) — reuse it.
         if (block.label.equals(Codec.PEM_SESSION_KEY)) {
@@ -2015,7 +2056,124 @@ public final class HerraduraCli {
         Files.write(Paths.get(path), data);
     }
 
+    // -----------------------------------------------------------------
+    // Passphrase-encrypted private-key envelope (TODO #166, ported by #268)
+    //
+    // The whole cleartext PEM -- label, base64 and all -- is encrypted as
+    // opaque bytes, so this composes with every subcommand: decrypt, then feed
+    // the exact original file to anything.  That is why the envelope carries no
+    // algorithm field and needs none.
+    //
+    //   salt     16 random bytes
+    //   key      PBKDF2-HFSCX-256(HFSCX-256(passphrase), salt, iterations)
+    //   nonce    32 random bytes
+    //   ct, tag  HSKE-NL-AEAD(key, nonce, ad = "", pt = the PEM text)
+    //   DER      SEQUENCE(salt[16], iterations, nonce[32], ct[pt_len],
+    //                     tag[32], pt_len)
+    // -----------------------------------------------------------------
+
+    private static final int PBKDF2_SALT_BYTES = 16;
+
+    /** Demo default, matching the other three.  SP 800-132 wants >= 200,000;
+     *  a pure-Python HFSCX-256 runs ~300/sec, so the shared default is low for
+     *  CLI responsiveness and --kdf-iterations opts into the floor.  The count
+     *  travels in the PEM, so a reader honours whatever the writer chose --
+     *  the contract Stern-F's round count has had since TODO #236. */
+    private static final int PBKDF2_ITER_DEMO = 1000;
+
+    /** RFC 8018 PBKDF2 with the suite's own HMAC-HFSCX-256 as the PRF: a
+     *  standard, analysed shape rather than a bespoke construction, and
+     *  dependency-free.  Only dklen == 32 (the PRF's native width, hence a
+     *  single block) is ever needed. */
+    private static byte[] pbkdf2Hfscx256(byte[] password, byte[] salt, int iterations) {
+        // HMAC-HFSCX-256 takes an exactly-32-byte key, so an arbitrary-length
+        // password is hashed down first -- standard HMAC over-length-key
+        // handling, and identical in all four languages.
+        byte[] key = Hfscx256.hash(password);
+        byte[] block = new byte[salt.length + 4];
+        System.arraycopy(salt, 0, block, 0, salt.length);
+        block[salt.length + 3] = 1;
+        byte[] u = Hfscx256.hmacHfscx256(key, block);
+        byte[] t = u.clone();
+        for (int i = 1; i < iterations; i++) {
+            u = Hfscx256.hmacHfscx256(key, u);
+            for (int j = 0; j < t.length; j++) t[j] ^= u[j];
+        }
+        return t;
+    }
+
+    private static String encryptPemText(String pemText, String passphrase, int iterations) {
+        byte[] salt = new byte[PBKDF2_SALT_BYTES];
+        RNG.nextBytes(salt);
+        BigInteger nonce = new BigInteger(Herradura.N, RNG).and(Herradura.MASK);
+        BigInteger key = new BigInteger(1, pbkdf2Hfscx256(
+                passphrase.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                salt, iterations)).and(Herradura.MASK);
+        byte[] pt = pemText.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        HerraduraNl.AeadCt c = HerraduraNl.hskeNlAeadEncrypt(key, nonce, new byte[0], pt);
+        byte[] der = Codec.derSeq(
+                Codec.derInt(new BigInteger(1, salt), PBKDF2_SALT_BYTES),
+                Codec.derInt(BigInteger.valueOf(iterations), -1),
+                Codec.derInt(nonce, Herradura.N / 8),
+                Codec.derInt(new BigInteger(1, c.ct), c.ct.length),
+                Codec.derInt(new BigInteger(1, c.tag), 32),
+                Codec.derInt(BigInteger.valueOf(pt.length), -1));
+        return Codec.pemWrap(Codec.PEM_ENC_PRIV, der);
+    }
+
+    /** Recovers the cleartext PEM, or throws -- never returns unverified bytes. */
+    private static String decryptPemFile(String path, String passphrase) throws IOException {
+        Codec.PemBlock b = Codec.pemUnwrap(readString(path));
+        if (!b.label.equals(Codec.PEM_ENC_PRIV)) {
+            throw new CliError("pkey --decrypt: expected " + Codec.PEM_ENC_PRIV
+                + ", got " + b.label);
+        }
+        List<BigInteger> it = Codec.derParseSeq(b.der);
+        if (it.size() != 6) {
+            throw new CliError("pkey --decrypt: malformed envelope ("
+                + it.size() + " fields, want 6)");
+        }
+        int iterations = it.get(1).intValueExact();
+        int ptLen = it.get(5).intValueExact();
+        // Both size work below, so both are bounded before use -- the field
+        // class TODO #239/#240/#275 exist over.
+        if (iterations < 1 || iterations > 100000000) {
+            throw new CliError("pkey --decrypt: iteration count out of range (" + iterations + ")");
+        }
+        if (ptLen < 1 || ptLen > 1 << 24) {
+            throw new CliError("pkey --decrypt: declared plaintext length out of range (" + ptLen + ")");
+        }
+        byte[] salt = toFixedBytes(it.get(0), PBKDF2_SALT_BYTES);
+        BigInteger nonce = it.get(2);
+        byte[] ct = toFixedBytes(it.get(3), ptLen);
+        byte[] tag = toFixedBytes(it.get(4), 32);
+        BigInteger key = new BigInteger(1, pbkdf2Hfscx256(
+                passphrase.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                salt, iterations)).and(Herradura.MASK);
+        byte[] pt = HerraduraNl.hskeNlAeadDecrypt(key, nonce, new byte[0], ct, tag);
+        if (pt == null) {
+            throw new CliError("pkey --decrypt: wrong passphrase or corrupted/tampered file");
+        }
+        return new String(pt, java.nio.charset.StandardCharsets.US_ASCII);
+    }
+
+    /** Set while genpkey holds a --passphrase, so writeString wraps whatever it
+     *  was about to emit in the envelope instead.  Interposing at the single
+     *  write point rather than in each of genpkey's ~20 algo branches is what
+     *  keeps CLEARTEXT OFF DISK: the plaintext PEM only ever exists in memory. */
+    private static String encPassphrase = null;
+    private static int encIterations = PBKDF2_ITER_DEMO;
+
     private static void writeString(String path, String data) throws IOException {
+        if (encPassphrase != null) {
+            String pass = encPassphrase;
+            encPassphrase = null;          // the envelope's own write must not recurse
+            try {
+                data = encryptPemText(data, pass, encIterations);
+            } finally {
+                encPassphrase = pass;
+            }
+        }
         writeBytes(path, data.getBytes(java.nio.charset.StandardCharsets.US_ASCII));
     }
 

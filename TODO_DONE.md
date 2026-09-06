@@ -15949,3 +15949,79 @@ envelope encrypts with HSKE-NL-AEAD, so #268 could not have met its own "all fou
 acceptance until this landed.
 
 Status: **DONE v6.5.4** — the AEAD primitive itself, then the codec's format tag 2, then the flag; `test_aead.sh` 9-way to 16.
+
+### #268: port the passphrase-encrypted private-key envelope to C, Go and Java
+
+**Made visible by TODO #267's flag matrix**, where it is `spec/`'s largest single
+`defect` cluster: `genpkey --passphrase`, `genpkey --kdf-iterations`,
+`pkey --passphrase` and `pkey --decrypt` are all Python-only, so a key exported this
+way is unreadable by three of the four CLIs.  TODO #166 (v1.9.134) scoped it to Python
+deliberately, matching its own Low priority; that was a reasonable call then and the
+note lived only in #166's text, which is the drift #267 exists to catch.
+
+**Since TODO #274 (v6.5.2) the absence is at least LOUD.**  C and Java used to accept
+`--passphrase` and silently write a CLEARTEXT private key with exit 0 — a caller asking
+for a protected key got an unprotected long-lived secret on disk.  All three now refuse
+the flag by name.  That is containment, not this item: the envelope is still missing.
+
+**Not a thin port.**  It needs PBKDF2-HFSCX-256, which needs `hmac_hfscx_256` in Java
+first — TODO #261's primitive manifest already carries that as `acknowledged` for
+exactly this reason, so closing this closes both the missing primitive and the missing
+flag.
+
+**Correction, found on starting the work (v6.5.4):** `hmac_hfscx_256` was NOT the only
+missing Java prerequisite, and this paragraph named only that one.  The envelope
+encrypts with HSKE-NL-AEAD, which `bindings/java/` did not have either — that was
+TODO #273, a separate open item this text never referenced.  Since the acceptance below
+requires all four CLIs, #273 was a hard blocker, and it was closed first (v6.5.4).
+What remains for Java is now genuinely just `hmac_hfscx_256` plus PBKDF2.  The lesson is
+the one #267 exists for: a prerequisite list written in prose is not checked by anything,
+and this one was incomplete for two releases.  Then the `HERRADURA ENCRYPTED PRIVATE KEY` envelope, and a fail-closed read path
+in every subcommand that loads a key: an encrypted key reaching a build that does not
+understand the envelope must be refused, never mis-parsed.
+
+**Acceptance.**  All four CLIs write and read the envelope, cross-checked in
+`CliTest/` as a 4x4 matrix (writer x reader) rather than each against Python — the
+shape `test_zkp_hybrid_family.sh` adopted after #261 found a pair that had never
+interoperated because every test compared to Python.  A KAT/pem/ artifact pins the
+envelope's bytes.  On success the four `defect` rows and #261's `hmac-hfscx-256`
+acknowledgement are deleted, and `generate_spec.py --check` FAILS until they are —
+that is the anchor-lost direction working as designed.
+
+**Resolution (v6.5.5).**  All four CLIs write and read the envelope; the 4x4 matrix,
+the KAT artifact and the fail-closed path are all in
+`CliTest/test_passphrase_envelope.sh` (48 assertions).
+
+**The chain was longer than this entry said**, and the correction above records why:
+#273 was a hard blocker that this text never named.  Order actually needed:
+`hmacHfscx256` in Java, then PBKDF2-HFSCX-256 in three languages, then the envelope,
+then the flags.  A side effect worth knowing: C and Go had carried `hmac_hfscx_256`
+with NO CONSUMER AT ALL, and the internal-surface census registers that change by
+itself -- its per-language "internal" counts drop by one, because the function is now
+reached from a CLI.
+
+**Cleartext never reaches disk.**  `genpkey` writes from ~20 algorithm branches in C
+and Java, so the encryption interposes at the single PEM-write choke point rather than
+wrapping each branch; the plaintext PEM exists only as a string in memory.  Go builds
+one PEM string and wraps it directly.
+
+**The bug the matrix found, and its class.**  C's `pkey --decrypt` failed against every
+writer INCLUDING ITSELF, while all three other CLIs read C's envelopes fine --
+so the encoder was right and the decoder was not.  `hske_nl_aead_decrypt` returns
+**1 on success**, unlike most helpers in that file, and the check was written `!= 0`:
+it rejected on success and would have accepted on failure.  An inverted return-value
+condition is the same class KAT/hcred_kkw.json was built to catch in Go (#266).  Only
+a WRITER x READER matrix surfaces it; each-CLI-against-Python would have shown C's
+envelope being read by Python and called it a pass.
+
+**A gap caught being CREATED rather than inherited.**  While porting #273's `--aead`,
+the first version also added `dec --aead` to Java alone.  `generate_spec.py` refused to
+emit a spec, because C, Go and Python have no such flag -- the format tag is what the
+artifact IS, and decryption never needs telling.  #267's mechanism is usually described
+as recording existing asymmetries; this is it preventing a new one.
+
+**State after this item:** `cli_surface_gaps` has five rows, all `acknowledged`, none
+`defect`.  Every inherited asymmetry from #267's original sixteen is now closed, so a
+`defect` row appearing from here on means a fresh one rather than a backlog entry.
+
+Status: **DONE v6.5.5** — the envelope in C, Go and Java, its PBKDF2/HMAC prerequisites, a pinned KAT, and the inverted-condition bug the 4x4 matrix found in C.
