@@ -1214,22 +1214,16 @@ PRIMITIVES = {
     # counter-mode AEAD; the two acknowledged cells below are that one gap, now
     # tracked as TODO #267 rather than as a Javadoc sentence.
     "hske-nl-aead-xor-ks": {
-        "acknowledged":
-            "HSKE-NL-AEAD is not in the Java port's suite -- "
-            "HerraduraCli.java's class doc records --aead as out of scope, "
-            "which TODO #267 now tracks as a CLI-flag asymmetry rather than a "
-            "comment. The other three are byte-compatible by "
-            "CliTest/test_aead.sh's 9-way matrix",
         "c": r"static void _hske_nl_aead_xor_ks\(",
         "go": r"^func hskeNlAeadXorKs\(",
         "python": r"^def _hske_nl_aead_xor_keystream\(",
+        "java": r"HerraduraNl.java::static byte\[\] hskeNlAeadXorKs\(",
     },
     "hske-nl-aead-tag": {
-        "acknowledged":
-            "see hske-nl-aead-xor-ks (TODO #267)",
         "c": r"static void _hske_nl_aead_tag\(",
         "go": r"^func hskeNlAeadTag\(",
         "python": r"^def _hske_nl_aead_tag\(",
+        "java": r"HerraduraNl.java::static byte\[\] hskeNlAeadTag\(",
     },
     "v2dplex-init": {
         "c": r"static void _v2dplex_init\(",
@@ -1361,15 +1355,10 @@ PRIMITIVES = {
         "java": r"Ratchet.java::public static BigInteger init\(",
     },
     "hmac-hfscx-256": {
-        "acknowledged":
-            "HMAC-HFSCX-256-DM (SecurityProofs-6.md 11.9.6) is absent from the "
-            "Java port. Its only consumer is the Python CLI's PBKDF2 for "
-            "passphrase-encrypted PEMs (TODO #166), which is itself Python-CLI- "
-            "only -- the CLI-flag asymmetry TODO #267 opens over. C and Go "
-            "carry the primitive with no consumer at all",
         "c": r"static void hmac_hfscx_256\(",
         "go": r"^func HmacHfscx256\(",
         "python": r"^def hmac_hfscx_256\(",
+        "java": r"Hfscx256.java::public static byte\[\] hmacHfscx256\(",
     },
     # ── the FSCX and NL-FSCX primitives themselves (TODO #261, v6.1.0) ────
     # The bottom of the stack, and the last place anyone would look for a gap --
@@ -1766,10 +1755,13 @@ PRIMITIVES = {
     },
     "hske-nl-aead-streams": {
         "acknowledged":
-            "Python splits the AEAD's keystream and MAC-key derivation into a "
-            "streams helper; C and Go derive both in hske-nl-aead-xor-ks, and "
-            "Java has no counter-mode AEAD at all (TODO #267)",
+            "Python and Java split the AEAD's keystream and MAC-key derivation "
+            "into a streams helper; C and Go derive both inside "
+            "hske-nl-aead-xor-ks. Java's copy arrived with the primitive in "
+            "TODO #273; what remains is a FACTORING difference between two "
+            "pairs of languages, not a missing capability",
         "python": r"^def _hske_nl_aead_streams\(",
+        "java": r"HerraduraNl.java::static BigInteger\[\] hskeNlAeadStreams\(",
     },
     "rnl-bits-to-bitarray": {
         "acknowledged":

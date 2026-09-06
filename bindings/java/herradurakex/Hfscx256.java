@@ -119,6 +119,36 @@ public final class Hfscx256 {
     /** Package-visible so {@link Ratchet} and other NL-family callers can
      * render a masked BigInteger state to fixed-width bytes without each
      * re-implementing the same left-zero-pad logic. */
+    /**
+     * HMAC-HFSCX-256-DM (SecurityProofs-6.md 11.9.6), the suite's keyed PRF:
+     * {@code HMAC(K, D) = HFSCX-256((K^opad) || HFSCX-256((K^ipad) || D))}
+     * with ipad = 0x36 and opad = 0x5C repeated 32 times.  The key must be
+     * exactly 32 bytes -- an over-length key is the CALLER's to hash down, as
+     * it is in C, Go and Python, so that all four reject the same inputs.
+     *
+     * Ported by TODO #268; TODO #261's manifest carried this as Java's one
+     * acknowledged missing hash primitive.
+     */
+    public static byte[] hmacHfscx256(byte[] key, byte[] data) {
+        if (key.length != 32) {
+            throw new IllegalArgumentException("hmacHfscx256: key must be 32 bytes");
+        }
+        byte[] ipadKey = new byte[32];
+        byte[] opadKey = new byte[32];
+        for (int i = 0; i < 32; i++) {
+            ipadKey[i] = (byte) (key[i] ^ 0x36);
+            opadKey[i] = (byte) (key[i] ^ 0x5C);
+        }
+        byte[] inner = new byte[32 + data.length];
+        System.arraycopy(ipadKey, 0, inner, 0, 32);
+        System.arraycopy(data, 0, inner, 32, data.length);
+        byte[] innerHash = hash(inner);
+        byte[] outer = new byte[64];
+        System.arraycopy(opadKey, 0, outer, 0, 32);
+        System.arraycopy(innerHash, 0, outer, 32, 32);
+        return hash(outer);
+    }
+
     static byte[] toFixedBytes(BigInteger v, int nbytes) {
         byte[] raw = v.and(MASK).toByteArray();
         byte[] out = new byte[nbytes];

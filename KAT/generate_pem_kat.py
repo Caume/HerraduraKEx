@@ -30,6 +30,20 @@ Artifacts per ring size:
     <tag>_alice_session.pem  HERRADURA SESSION KEY  — what Alice must derive
     <tag>_hske_ct.pem        HSKE ciphertext under the key read from the RESPONSE
 
+And, ring-size-independent (TODO #268):
+
+    enc_priv.pem             HERRADURA ENCRYPTED PRIVATE KEY wrapping
+                             n1024_alice_priv.pem under the passphrase below
+
+That one pins the passphrase envelope's bytes.  Unlike KAT/hcred_kkw.json it is
+regenerate-and-diff checkable rather than verify-only, because the two random
+inputs -- the PBKDF2 salt and the AEAD nonce -- are arguments the primitive
+accepts, so fixing them fixes the artifact.  What it pins is the whole chain:
+PBKDF2-HFSCX-256's iteration convention, the AEAD's ad="" case, and the DER
+field widths.  Its expected plaintext is n1024_alice_priv.pem itself, already
+pinned above, so a CLI that decrypts it must reproduce a file this directory
+already contains -- byte-for-byte.
+
 The last one is the direct regression test for the `loadKey` width bug: a CLI that
 reads the RESPONSE PEM's ring dimension as the key width encrypts at the wrong
 width and produces a different ciphertext.
@@ -123,10 +137,38 @@ def build(n: int, tag: str) -> dict:
     }
 
 
+# TODO #268's envelope.  Salt and nonce are the fixed inputs a KAT supplies in
+# place of os.urandom; the iteration count is the demo default, kept low so
+# --check stays fast (the count travels in the PEM, so a reader honours it).
+ENC_PASSPHRASE = "HerraduraKEx TODO #268 KAT passphrase"
+ENC_SALT = bytes(range(0x10, 0x20))            # 16 bytes: 10 11 .. 1f
+ENC_NONCE = bytes(range(0x60, 0x80))           # 32 bytes: 60 61 .. 7f
+ENC_ITERATIONS = 1000
+
+
+def build_envelope(plain_pem: str) -> str:
+    """The passphrase envelope over `plain_pem`, with the randomness pinned."""
+    key_bytes = cli._pbkdf2_hfscx256(
+        ENC_PASSPHRASE.encode("utf-8"), ENC_SALT, ENC_ITERATIONS)
+    key = suite.BitArray(suite.KEYBITS, int.from_bytes(key_bytes, "big"))
+    nonce = suite.BitArray(suite.KEYBITS, int.from_bytes(ENC_NONCE, "big"))
+    pt = plain_pem.encode("utf-8")
+    _n, ct, tag = suite.hske_nl_aead_encrypt(key, pt, b"", nonce)
+    der = cli.der_seq(
+        cli.der_int(int.from_bytes(ENC_SALT, "big"), len(ENC_SALT)),
+        cli.der_int(ENC_ITERATIONS),
+        cli.der_int(nonce.uint, suite.KEYBITS // 8),
+        cli.der_int(int.from_bytes(ct, "big"), max(1, len(ct))),
+        cli.der_int(int.from_bytes(tag, "big"), 32),
+        cli.der_int(len(pt)))
+    return cli.pem_wrap(cli._LABEL_ENC_PRIV, der)
+
+
 def build_all() -> dict:
     out = {}
     out.update(build(suite.RNLN, "n1024"))
     out.update(build(64, "n64"))
+    out["enc_priv.pem"] = build_envelope(out["n1024_alice_priv.pem"])
     # The plaintext the ciphertext decrypts to, as a file the tests can diff.
     # Both plaintexts are session-key-width, i.e. 256 bits at either ring.
     kb = cli._rnl_session_bits(suite.RNLN) // 8

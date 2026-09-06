@@ -50,9 +50,34 @@ static uint8_t *read_binary_file(const char *path, size_t *len_out)
     return buf;
 }
 
+/* When genpkey is given --passphrase these are set, and write_pem_file wraps
+ * whatever it was about to emit in the encrypted envelope instead.  Doing it
+ * at the single write choke point rather than in each of genpkey's ~20 algo
+ * branches is what keeps CLEARTEXT OFF DISK: the plaintext PEM only ever
+ * exists as a string in memory (TODO #268). */
+static const char *g_enc_passphrase = NULL;
+static uint32_t    g_enc_iterations = 0;
+static void encrypt_pem_text_to_file(const char *pem_text, const char *passphrase,
+                                     uint32_t iterations, const char *out_path);
+
 static void write_pem_file(const char *path, const char *label,
                            const uint8_t *der, size_t der_len)
 {
+    if (g_enc_passphrase) {
+        size_t llen = strlen(label);
+        size_t bufsz = PEM_WRAP_LEN(der_len, llen);
+        char *buf = malloc(bufsz);
+        if (!buf) die("out of memory");
+        pem_wrap(label, der, der_len, buf, NULL);
+        const char *pass = g_enc_passphrase;
+        uint32_t iters = g_enc_iterations;
+        g_enc_passphrase = NULL;   /* the envelope's own write must not recurse */
+        encrypt_pem_text_to_file(buf, pass, iters, path);
+        memset(buf, 0, bufsz);
+        free(buf);
+        g_enc_passphrase = pass;
+        return;
+    }
     if (!path || strcmp(path, "-") == 0) {
         size_t llen = strlen(label);
         size_t bufsz = PEM_WRAP_LEN(der_len, llen);
@@ -287,6 +312,172 @@ static void seq_and_write(const uint8_t **it, const size_t *il, int ni,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Passphrase-encrypted private-key envelope (TODO #166, ported by TODO #268)
+ *
+ * The whole cleartext PEM -- label, base64 and all -- is encrypted as opaque
+ * bytes, so this composes with every subcommand: decrypt, then feed the exact
+ * original file to anything.  That is why the envelope has no algorithm field
+ * and needs none.
+ *
+ *   salt      16 random bytes
+ *   key       PBKDF2-HFSCX-256(HFSCX-256(passphrase), salt, iterations)
+ *   nonce     32 random bytes
+ *   ct, tag   HSKE-NL-AEAD(key, nonce, ad = "", pt = the PEM text)
+ *   DER       SEQUENCE(salt[16], iterations, nonce[32], ct[pt_len],
+ *                      tag[32], pt_len)
+ *
+ * PBKDF2 (RFC 8018) with the suite's own HMAC-HFSCX-256 as the PRF: a standard,
+ * analysed shape rather than a bespoke construction, and dependency-free.  Only
+ * dklen == 32 (the PRF's native width, so a single block) is ever needed.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/* Defined below with the other raw-PEM readers; declared here because the
+ * envelope is the first consumer in file order. */
+static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label,
+                                 size_t *olen);
+static void zkp_pem_peek_label(const char *path, char *label_out);
+
+#define PBKDF2_SALT_BYTES 16
+/* Demo default, matching Python's.  SP 800-132 wants >= 200,000; a pure-Python
+ * HFSCX-256 runs ~300/sec, so the shared default is low for CLI responsiveness
+ * and --kdf-iterations opts into the floor.  The count travels in the PEM, so a
+ * reader honours whatever the writer chose regardless of its own default --
+ * the same contract Stern-F's round count has had since TODO #236. */
+#define PBKDF2_ITER_DEMO  1000
+
+static void pbkdf2_hfscx256(const uint8_t *password, size_t pw_len,
+                            const uint8_t salt[PBKDF2_SALT_BYTES],
+                            uint32_t iterations, uint8_t out[32])
+{
+    uint8_t key[32], block[PBKDF2_SALT_BYTES + 4], u[32], t[32];
+    uint32_t i;
+    int j;
+    /* HMAC-HFSCX-256 takes an exactly-32-byte key, so an arbitrary-length
+     * password is hashed down first -- standard HMAC over-length-key handling,
+     * and identical in all four languages. */
+    hfscx_256(password, pw_len, NULL, key);
+    memcpy(block, salt, PBKDF2_SALT_BYTES);
+    block[PBKDF2_SALT_BYTES + 0] = 0; block[PBKDF2_SALT_BYTES + 1] = 0;
+    block[PBKDF2_SALT_BYTES + 2] = 0; block[PBKDF2_SALT_BYTES + 3] = 1;
+    hmac_hfscx_256(key, block, sizeof(block), u);
+    memcpy(t, u, 32);
+    for (i = 1; i < iterations; i++) {
+        hmac_hfscx_256(key, u, 32, u);
+        for (j = 0; j < 32; j++) t[j] ^= u[j];
+    }
+    memcpy(out, t, 32);
+}
+
+/* Encrypt cleartext PEM text under a passphrase and write the envelope. */
+static void encrypt_pem_text_to_file(const char *pem_text, const char *passphrase,
+                                     uint32_t iterations, const char *out_path)
+{
+    size_t pt_len = strlen(pem_text);
+    uint8_t salt[PBKDF2_SALT_BYTES], keyb[32], tag[32];
+    BitArray key, nonce;
+    FILE *urnd = fopen("/dev/urandom", "rb");
+    if (!urnd) die("cannot open /dev/urandom");
+    if (fread(salt, 1, PBKDF2_SALT_BYTES, urnd) != (size_t)PBKDF2_SALT_BYTES)
+        die("cannot read /dev/urandom");
+    ba_rand(&nonce, urnd);
+    fclose(urnd);
+
+    pbkdf2_hfscx256((const uint8_t *)passphrase, strlen(passphrase),
+                    salt, iterations, keyb);
+    memcpy(key.b, keyb, KEYBYTES);
+
+    uint8_t *ct = malloc(pt_len ? pt_len : 1);
+    if (!ct) die("out of memory");
+    hske_nl_aead_encrypt(&key, &nonce, NULL, 0,
+                         (const uint8_t *)pem_text, pt_len, ct, tag);
+
+    uint8_t iter_be[4], len_be[8];
+    iter_be[0] = (uint8_t)(iterations >> 24); iter_be[1] = (uint8_t)(iterations >> 16);
+    iter_be[2] = (uint8_t)(iterations >> 8);  iter_be[3] = (uint8_t)iterations;
+    { int k; for (k = 0; k < 8; k++) len_be[k] = (uint8_t)(((uint64_t)pt_len) >> (8 * (7 - k))); }
+
+    /* iterations and pt_len are MINIMAL DER integers, as Python's der_int(x)
+     * with no width emits them -- see TODO #271 for why a fixed width here is
+     * a byte-level divergence rather than a harmless choice. */
+    size_t io = 0; while (io < 3 && iter_be[io] == 0) io++;
+    size_t lo = 0; while (lo < 7 && len_be[lo] == 0) lo++;
+
+    const uint8_t *it[6];
+    size_t il[6];
+    uint8_t enc[6][512];
+    size_t n;
+    const uint8_t *raw[6];  size_t rawlen[6];
+    raw[0] = salt;            rawlen[0] = PBKDF2_SALT_BYTES;
+    raw[1] = iter_be + io;    rawlen[1] = 4 - io;
+    raw[2] = nonce.b;         rawlen[2] = KEYBYTES;
+    raw[3] = ct;              rawlen[3] = pt_len ? pt_len : 1;
+    raw[4] = tag;             rawlen[4] = 32;
+    raw[5] = len_be + lo;     rawlen[5] = 8 - lo;
+
+    /* The ciphertext item is the only unbounded one, so it is encoded into a
+     * heap buffer while the five small ones use the stack. */
+    uint8_t *ct_item = malloc(DER_SEQ_LEN(rawlen[3]) + 16);
+    if (!ct_item) die("out of memory");
+    int i;
+    for (i = 0; i < 6; i++) {
+        uint8_t *dst = (i == 3) ? ct_item : enc[i];
+        if (der_int_enc(raw[i], rawlen[i], dst, &n) != 0) die("DER encode error");
+        it[i] = dst; il[i] = n;
+    }
+    seq_and_write(it, il, 6, PEM_ENC_PRIV, out_path);
+    free(ct_item);
+    free(ct);
+}
+
+/* Read an envelope and return the recovered cleartext PEM text (heap, NUL-
+ * terminated).  Exits with a one-line diagnostic on a wrong passphrase or a
+ * tampered envelope -- never returns unverified bytes. */
+static char *decrypt_pem_file(const char *in_path, const char *passphrase)
+{
+    size_t blen;
+    uint8_t *body = zkp_raw_pem_read(in_path, PEM_ENC_PRIV, &blen);
+    const uint8_t *vals[6];
+    size_t vlens[6];
+    int n_out = 0;
+    if (der_parse_seq(body, blen, vals, vlens, 6, &n_out) != 0 || n_out != 6)
+        die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
+    if (vlens[0] != PBKDF2_SALT_BYTES || vlens[2] != KEYBYTES || vlens[4] != 32)
+        die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope (field width)");
+
+    uint64_t iterations = 0, pt_len = 0;
+    size_t i;
+    if (vlens[1] == 0 || vlens[1] > 4) die("decrypt: bad iteration count");
+    for (i = 0; i < vlens[1]; i++) iterations = (iterations << 8) | vals[1][i];
+    if (vlens[5] > 8) die("decrypt: bad plaintext length");
+    for (i = 0; i < vlens[5]; i++) pt_len = (pt_len << 8) | vals[5][i];
+    if (iterations < 1 || iterations > 100000000ULL)
+        die("decrypt: iteration count out of range");
+    /* pt_len sizes the allocation below and must agree with the ciphertext
+     * actually present -- the field class TODO #239/#240/#275 exist over. */
+    if (pt_len == 0 || pt_len > vlens[3])
+        die("decrypt: declared plaintext length does not match ciphertext");
+
+    uint8_t keyb[32];
+    BitArray key, nonce;
+    pbkdf2_hfscx256((const uint8_t *)passphrase, strlen(passphrase),
+                    vals[0], (uint32_t)iterations, keyb);
+    memcpy(key.b, keyb, KEYBYTES);
+    memcpy(nonce.b, vals[2], KEYBYTES);
+
+    char *pt = malloc((size_t)pt_len + 1);
+    if (!pt) die("out of memory");
+    /* Returns 1 on SUCCESS, 0 on tag mismatch -- the opposite of the
+     * 0-means-ok convention most of this file uses. */
+    if (!hske_nl_aead_decrypt(&key, &nonce, NULL, 0,
+                              vals[3] + (vlens[3] - (size_t)pt_len), (size_t)pt_len,
+                              vals[4], (uint8_t *)pt))
+        die("decrypt: wrong passphrase or corrupted/tampered file");
+    pt[pt_len] = '\0';
+    free(body);
+    return pt;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * PEM read helpers
  * ───────────────────────────────────────────────────────────────────────────── */
 
@@ -359,6 +550,13 @@ static void pem_key_load(PemKey *k, const char *path)
     if (pem_unwrap((char *)raw, raw_len, k->label, k->der, der_cap, &k->der_len) != 0)
         dief("cannot parse PEM from: %s", path);
     free(raw);
+    /* FAIL CLOSED (TODO #268).  An encrypted envelope IS a DER SEQUENCE, so
+     * without this it parses cleanly and its salt/iterations/nonce are read as
+     * though they were key material -- a wrong answer with exit 0, which is
+     * exactly the failure mode #274 found for the flag itself. */
+    if (strcmp(k->label, PEM_ENC_PRIV) == 0)
+        dief("%s is a passphrase-encrypted private key; decrypt it first with "
+             "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
     if (der_parse_seq(k->der, k->der_len, k->vals, k->vlens, 16, &k->n_items) != 0)
         dief("cannot parse DER from: %s", path);
 }
@@ -367,6 +565,16 @@ static void pem_key_free(PemKey *k) { free(k->der); k->der = NULL; }
 /* Read raw-binary PEM (no DER parse). Returns heap buffer; *olen = byte count. */
 static uint8_t *zkp_raw_pem_read(const char *path, const char *expect_label, size_t *olen)
 {
+    /* The label mismatch below would already refuse an envelope, but it would
+     * say "expected X, got Y", which sends the reader looking for the wrong
+     * problem.  Naming it is the whole point of failing closed (TODO #268). */
+    if (expect_label && strcmp(expect_label, PEM_ENC_PRIV) != 0) {
+        char peek_lbl[80] = {0};
+        zkp_pem_peek_label(path, peek_lbl);
+        if (strcmp(peek_lbl, PEM_ENC_PRIV) == 0)
+            dief("%s is a passphrase-encrypted private key; decrypt it first with "
+                 "`pkey --decrypt --passphrase ... --in <file> --out plain.pem`", path);
+    }
     size_t raw_len;
     uint8_t *raw = read_binary_file(path, &raw_len);
     char label[80] = {0};
@@ -689,6 +897,20 @@ static void cmd_genpkey(int argc, char **argv)
     const char *out  = get_arg(argc, argv, "--out");
     if (!algo) die("genpkey: --algo required");
 
+    /* TODO #268.  The count travels in the PEM, so a reader honours whatever
+     * the writer chose -- this default only affects what THIS build writes. */
+    const char *pass_arg = get_arg(argc, argv, "--passphrase");
+    if (pass_arg) {
+        const char *iter_arg = get_arg(argc, argv, "--kdf-iterations");
+        long iters = iter_arg ? strtol(iter_arg, NULL, 10) : PBKDF2_ITER_DEMO;
+        if (iters < 1 || iters > 100000000L)
+            die("genpkey: --kdf-iterations out of range (1..100000000)");
+        g_enc_passphrase = pass_arg;
+        g_enc_iterations = (uint32_t)iters;
+    } else if (get_arg(argc, argv, "--kdf-iterations")) {
+        die("genpkey: --kdf-iterations requires --passphrase");
+    }
+
     FILE *urnd = fopen("/dev/urandom", "rb");
     if (!urnd) die("cannot open /dev/urandom");
 
@@ -952,7 +1174,30 @@ static void cmd_pkey(int argc, char **argv)
     const char *out_path = get_arg(argc, argv, "--out");
     int pubout = has_flag(argc, argv, "--pubout");
     int text   = has_flag(argc, argv, "--text");
+    int decrypt = has_flag(argc, argv, "--decrypt");
+    const char *passphrase = get_arg(argc, argv, "--passphrase");
     if (!in_path) die("pkey: --in required");
+
+    /* TODO #268: --decrypt reverses genpkey --passphrase, recovering the PEM
+     * byte-for-byte so it can be fed to any other subcommand unmodified.  It is
+     * its own mode, not a modifier of --pubout/--text, which is why the
+     * "specify --pubout or --text" check moved below it. */
+    if (decrypt) {
+        if (!passphrase) die("pkey --decrypt: --passphrase required");
+        char *plain = decrypt_pem_file(in_path, passphrase);
+        if (!out_path || strcmp(out_path, "-") == 0) {
+            fputs(plain, stdout);
+        } else {
+            FILE *f = fopen(out_path, "w");
+            if (!f) dief("cannot write: %s", out_path);
+            fputs(plain, f);
+            fclose(f);
+        }
+        memset(plain, 0, strlen(plain));
+        free(plain);
+        return;
+    }
+    if (passphrase) die("pkey: --passphrase is only meaningful with --decrypt");
     if (!pubout && !text) die("pkey: specify --pubout or --text");
 
     /* ZKP-NL keys use raw binary PEM — handle before DER-based path. */

@@ -560,6 +560,113 @@ public final class HerraduraNl {
     }
 
     // -----------------------------------------------------------------
+    // HSKE-NL-AEAD (TODO #95; ported to Java by TODO #273).
+    //
+    // Encrypt-then-MAC over the HSKE-NL-A1 counter keystream:
+    //   base    = K ^ nonce
+    //   seed    = ROL(base, n/8) ^ RNL_KDF_DC_256
+    //   mac_iv  = nl_fscx_revolve_v1(ROL(seed, n/4), base, n/4) ^ IV_CONST
+    //   ct      = pt ^ ks          (ks block i keyed on base ^ i, truncated)
+    //   tag     = HFSCX-256-MAC(mac_iv,
+    //                 DS || nonce || len(ad) || ad || len(ct) || ct)
+    //
+    // Two details that are load-bearing for cross-language byte compatibility,
+    // and that .hkx (Hfscx256.encFile) does NOT share, so it cannot be reused:
+    // the ciphertext is exactly len(pt) bytes rather than block-padded, and the
+    // MAC input is prefixed by the domain-separation string and carries the
+    // associated data with its own 8-byte length.
+    // -----------------------------------------------------------------
+
+    private static final byte[] AEAD_DS =
+        "HSKE-NL-AEAD-v1".getBytes(StandardCharsets.US_ASCII);
+    private static final int AEAD_BLOCK = N / 8;   // 32
+
+    /** (base, seed, mac_iv) for one (key, nonce) pair. */
+    static BigInteger[] hskeNlAeadStreams(BigInteger key, BigInteger nonce) {
+        BigInteger base = key.xor(nonce).and(MASK);
+        BigInteger seed = Herradura.rol(base, N / 8).xor(Hfscx256.RNL_KDF_DC_256).and(MASK);
+        BigInteger macKey = Hfscx256.nlFscxRevolveV1(Herradura.rol(seed, N / 4), base, N / 4);
+        BigInteger macIv = macKey.xor(Hfscx256.IV_CONST).and(MASK);
+        return new BigInteger[] { base, seed, macIv };
+    }
+
+    /** XOR data with the A1 counter keystream, truncated to data.length. */
+    static byte[] hskeNlAeadXorKs(BigInteger seed, BigInteger base, byte[] data) {
+        byte[] out = new byte[data.length];
+        int nBlocks = (data.length + AEAD_BLOCK - 1) / AEAD_BLOCK;
+        for (int i = 0; i < nBlocks; i++) {
+            BigInteger ks = Hfscx256.nlFscxRevolveV1(
+                seed, base.xor(BigInteger.valueOf(i)).and(MASK), N / 4);
+            byte[] ksBytes = Hfscx256.toFixedBytes(ks, AEAD_BLOCK);
+            int off = i * AEAD_BLOCK;
+            int len = Math.min(AEAD_BLOCK, data.length - off);
+            for (int j = 0; j < len; j++) {
+                out[off + j] = (byte) (data[off + j] ^ ksBytes[j]);
+            }
+        }
+        return out;
+    }
+
+    /** Auth tag over DS || nonce || len(ad) || ad || len(ct) || ct. */
+    static byte[] hskeNlAeadTag(BigInteger macIv, BigInteger nonce, byte[] ad, byte[] ct) {
+        byte[] nonceBytes = Hfscx256.toFixedBytes(nonce, AEAD_BLOCK);
+        byte[] buf = new byte[AEAD_DS.length + nonceBytes.length + 8 + ad.length + 8 + ct.length];
+        int off = 0;
+        System.arraycopy(AEAD_DS, 0, buf, off, AEAD_DS.length);       off += AEAD_DS.length;
+        System.arraycopy(nonceBytes, 0, buf, off, nonceBytes.length); off += nonceBytes.length;
+        writeBe64(buf, off, ad.length);                               off += 8;
+        System.arraycopy(ad, 0, buf, off, ad.length);                 off += ad.length;
+        writeBe64(buf, off, ct.length);                               off += 8;
+        System.arraycopy(ct, 0, buf, off, ct.length);
+        return Hfscx256.hash(buf, macIv);
+    }
+
+    private static void writeBe64(byte[] dst, int off, long v) {
+        for (int i = 0; i < 8; i++) {
+            dst[off + i] = (byte) (v >>> (8 * (7 - i)));
+        }
+    }
+
+    /** One AEAD ciphertext: the nonce it was produced under, the ciphertext
+     *  (exactly plaintext-length) and the 32-byte tag. */
+    public static final class AeadCt {
+        public final BigInteger nonce;
+        public final byte[] ct;
+        public final byte[] tag;
+        AeadCt(BigInteger nonce, byte[] ct, byte[] tag) {
+            this.nonce = nonce; this.ct = ct; this.tag = tag;
+        }
+    }
+
+    /** AEAD-encrypt under a caller-supplied nonce.  Never reuse (key, nonce). */
+    public static AeadCt hskeNlAeadEncrypt(BigInteger key, BigInteger nonce,
+                                           byte[] ad, byte[] pt) {
+        BigInteger[] st = hskeNlAeadStreams(key.and(MASK), nonce.and(MASK));
+        byte[] ct = hskeNlAeadXorKs(st[1], st[0], pt);
+        byte[] tag = hskeNlAeadTag(st[2], nonce.and(MASK), ad, ct);
+        return new AeadCt(nonce.and(MASK), ct, tag);
+    }
+
+    /** AEAD-encrypt under a fresh random nonce. */
+    public static AeadCt hskeNlAeadEncrypt(BigInteger key, byte[] ad, byte[] pt,
+                                           SecureRandom rng) {
+        return hskeNlAeadEncrypt(key, new BigInteger(N, rng).and(MASK), ad, pt);
+    }
+
+    /** Verify-then-decrypt.  Returns null if the tag does not authenticate
+     *  (ct, ad) under (key, nonce) -- never partial or unverified plaintext.
+     *  The comparison is constant-time. */
+    public static byte[] hskeNlAeadDecrypt(BigInteger key, BigInteger nonce,
+                                           byte[] ad, byte[] ct, byte[] tag) {
+        BigInteger[] st = hskeNlAeadStreams(key.and(MASK), nonce.and(MASK));
+        byte[] expected = hskeNlAeadTag(st[2], nonce.and(MASK), ad, ct);
+        if (!java.security.MessageDigest.isEqual(expected, tag)) {
+            return null;
+        }
+        return hskeNlAeadXorKs(st[1], st[0], ct);
+    }
+
+    // -----------------------------------------------------------------
     // HSKE-NL-A2: revolve-mode, bijective NL-FSCX v2.
     // -----------------------------------------------------------------
 
