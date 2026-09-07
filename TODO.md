@@ -19,8 +19,13 @@ literature close the DFR gap without a wire-format change.
 **Precondition, from §11.8.7 itself.**  "At parameters this far from the target the answer
 would not change the classification", and a decoder improvement that leaves `r = 523` in
 place cannot deliver `2^-128` on its own.  So this item is **conditional**: it is worth doing
-alongside a QC-MDPC parameter change, and close to worthless before one.  Filed so the
-question is not lost, explicitly deprioritised until a parameter item exists.
+alongside a QC-MDPC parameter change, and close to worthless before one.
+
+**That parameter item now exists: TODO #276.**  Until it was filed, this entry was gated on
+something nobody had written down, which is its own failure mode -- a conditional item whose
+condition is not itself tracked is indistinguishable from an abandoned one.  #250 stays
+deprioritised behind #276 and should be re-pointed at whatever parameters #276 selects, since
+a decoder comparison at `r = 523` measures the wrong instance.
 
 **If it runs:** measure the candidate variants against the deployed decoder on the same
 harness `qcmdpc_dfr_weak_keys.py` uses, and report DFR at the deployed parameters and along
@@ -145,5 +150,95 @@ in §11.36.8, because in both those modes the attacked input is the round CONSTA
 enters every round at once, so there is no trail to bound.  This item can therefore move
 no rating in either direction, and is filed as an outstanding proof obligation behind
 figures already published, not as a gate on anything.
+
+Status: **OPEN**
+
+### #276: move HPKE-Stern-KEM to a parameter set that reaches a stated security level
+
+**This is the parameter item TODO #250 is explicitly waiting on.**  #250 asks whether the
+near-codeword-aware and failure-recycling BGF variants close the DFR gap, and answers its
+own question about timing: "a decoder improvement that leaves `r = 523` in place cannot
+deliver `2^-128` on its own ... worth doing alongside a parameter change, and close to
+worthless before one."  Nothing has filed that parameter change until now, so #250 has
+been gated on an item that did not exist.
+
+Same shape as TODO #223, which did this job for HKEX-RNL: #216 measured the deployed ring
+at ~32 Core-SVP bits against a 128-bit claim, and #223 then rejected n=768 on a structural
+ground, measured the DFR floor, and landed on n=1024.  `SecurityProofsCode/rnl_parameter_selection.py`
+is the model for what closing this looks like.
+
+**What is already established, so it is not re-derived** (SecurityProofs-5.md §11.8.7,
+`SecurityProofsCode/qcmdpc_dfr_weak_keys.py`):
+
+* Deployed: `r = 523`, `d = 15`, `t = 18`, `NB_ITER = 20`, identical in all four languages.
+  The source itself calls them toy parameters.
+* Measured DFR **0.264% = 2^-8.6** over 120,000 round trips, where IND-CCA2 wants `2^-128`.
+* Holding `d` and `t` fixed, `log2(DFR) = -0.0996r + 43.69` (R^2 = 0.985) puts `r ~ 1723` at
+  `2^-128` -- but that is a **LOWER BOUND**, not an estimate, for two reasons both pointing
+  the same way: the DFR curve is concave (every fitted point is in the waterfall, none in
+  the error floor), and the fit says nothing about whether `r` is the right knob, since
+  BIKE-128 reaches its DFR through `r`, `d` and `t` together.
+* BIKE-128, the closest standardised comparison: `r = 12323`, `w = 142` (`d = 71`),
+  `t = 134`.  §11.8.5 already records that the PRF substitution leaves the QCSD instance
+  unchanged, "so BIKE's production parameters carry over directly".
+
+**THE FIRST QUESTION IS NOT `r`, AND IT HAS NO ANSWER ON RECORD.**  §11.8.7 and SECURITY.md
+both say the underlying QC syndrome-decoding instance at these parameters is "far below any
+usable security level" -- with **no number anywhere**.  The only concrete figure in the
+neighbourhood is a brute-force count, `C(1046,18) ~ 2^124`, which is not an attack cost.
+The repository does carry a concrete ISD estimate -- `2^56`-`2^60` classical, `2^30`-`2^40`
+quantum (§11.8.3, BJMM/Kirshanova) -- but it is for a DIFFERENT instance: the Stern-F
+SIGNATURE at `(N, k, t) = (256, 128, 16)`.  The KEM is `(N, k, t) = (1046, 523, 18)` and has
+none.  Nor can the signature's be scaled to it: §11.8.3's own caveat says the asymptotic
+exponents "apply in the regime where `N` is large and the rate `k/N` and relative distance
+`t/N` are fixed", and the KEM's `t/N` is an order of magnitude smaller (`18/1046` against
+`16/256`), which is the regime where ISD is cheapest per bit.  Naively applying `2^(0.054N)`
+to `N = 1046` gives ~56 bits and is exactly the extrapolation that caveat forbids.  Until a
+real estimate exists, "raise `r` to 1723" is unjustified -- `r` is the DFR knob, and if the binding
+constraint is ISD then `d` and `t` move too, which is exactly how BIKE-128 differs from a
+scaled-up 523.  So the item starts by computing what the deployed instance is actually
+worth, classically and quantumly, against the estimators §11.8.3's table already names
+(Prange/BJMM, Kirshanova).  That number decides whether this is a retune or a wholesale
+adoption of BIKE-128, and it is cheap to produce.
+
+**Cost class: MAJOR, with a `MIGRATING.md` entry.**  `r` sizes the wire format --
+`QCMDPC_RBYTES = (r+7)/8 = 66` today -- so every HPKE-STERN-KEM key and ciphertext, and
+every HYBRID-RNL-STERN artifact that carries one, becomes unreadable.  #223's own migration
+is the precedent for how that is written.  This is not a reason to defer: the row is
+demo-only, so no deployment is being broken, and the artifacts have no compatibility claim
+to keep.
+
+**What moves with the parameters, and is easy to miss:**
+
+* **The weak-key screen's bound.**  `QCMDPC_MAX_MULT = 5` was read off a measured cliff --
+  multiplicity 6 is where DFR first departs from the ordinary rate -- and that cliff was
+  measured at `d = 15`, `r = 523`.  At new parameters the multiplicity distribution and the
+  cliff both move, so the constant must be **re-measured, not carried over**.  It is
+  duplicated in all four languages (`herradura.h`'s `QCMDPC_MAX_MULT`, Go's unexported
+  `qcMdpcMaxMult`, Python's `_QCMDPC_MAX_MULT`, `Stern.java`'s `QCMDPC_MAX_MULT`).  The manifest pins the
+  FUNCTION `qcmdpc-max-multiplicity` in all four, but nothing anywhere compares the
+  CONSTANT'S VALUE across them -- `spec/`'s parameter block reads `herradura.h` alone -- so a
+  partial update would not be caught by any existing check.
+* **Test [51]** pins its distance-spectrum supports at `QCMDPC_D = 15`, with the accept case
+  sitting exactly ON the threshold, and C's `qcmdpc_key_is_strong` takes a fixed-width
+  `QcMdpcPriv`.  New `d` means new pinned supports in four languages plus a C struct change.
+* **`CliTest/lib_dfr.sh`.**  Its retry policy exists because the DFR is high enough to be hit
+  in ordinary testing.  At a DFR near the target the retries become dead code -- which is
+  fine, but the guard in `ci.yml` that requires every decapsulating script to source it
+  should then be re-justified rather than left asserting something vacuous.
+* **`spec/`, `SECURITY.md`.**  The demo-only classification and its stated reasons are
+  checked against each other by `spec/check_security_md.py`, so the row cannot be moved in
+  one place only.
+* **Cost.**  Decapsulation is ~9 ms in Python at `r = 523`; BIKE-128's `r` is 23.6x larger
+  and the decoder is superlinear.  Whether the Python CLI remains usable at the chosen
+  parameters is part of the choice, not a discovery to make afterwards.
+
+**Acceptance.**  A script in `SecurityProofsCode/` following #223's shape: the ISD cost of
+the deployed instance stated with its estimator; a candidate set with its DFR **measured**
+rather than extrapolated where that is affordable, and its extrapolation labelled a bound
+where it is not; the weak-key cliff re-measured at the chosen `d`; and a recorded reason for
+rejecting the alternatives considered, including plain adoption of BIKE-128.  It exits
+non-zero if a finding stops reproducing, as the other analysis scripts do.  On landing,
+#250 becomes worth running and should be re-pointed at the new parameters.
 
 Status: **OPEN**
