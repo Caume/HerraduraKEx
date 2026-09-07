@@ -86,6 +86,22 @@ at the sampler's resolution floor and the limit it selects flips between 6 and 7
 trial count, and a constant that depends on how long the script ran is not a constant. The
 cliff question passes to #250.
 
+**The FSCX layer carries it — with a ceiling one level up.** §11.8.5 records that
+substituting the FSCX-derived PRF for BIKE's leaves the QCSD instance unchanged, "so BIKE's
+production parameters carry over directly". That is a claim about the *instance*, and it had
+never been checked against the sizes. `qcprf_uniform_idx` draws **16-bit** words, and
+**encapsulation samples modulo `2r`, not `r`** — BIKE-128's 24646 is accepted 75% of the
+time, BIKE-192's 49318 is the last multiple that works at all, and BIKE-256's 81946 gives
+`lim = 0` and a **non-terminating** rejection loop (`w >= 0` is vacuously true for a
+`uint16_t`). BIKE-256 would need the PRF widened to 32-bit words. Output volume rises ~6x, 2
+blocks per operation to 10-12, so the counter-mode stream is asked for twelve inputs
+differing only in their low bits where the deployed set needs two — checked, not argued: the
+blocks are pairwise distinct at a mean Hamming distance within 18 of the ideal 128. And the
+**shipped** sampler's supports are not distinguishable from the ideal ones `MAX_MULT` was
+read off, on a two-sample chi2 held to six times its degrees of freedom, so that constant
+transfers rather than needing re-derivation against the FSCX PRF. (These are resampled from
+`os.urandom` every run, so the script asserts the criterion, not a value.)
+
 **Recommendation: adopt BIKE-128 verbatim** (`r = 12323`, `d = 71`, `t = 134`, BIKE's
 threshold rule, `NbIter = 5`). Inventing a set is rejected because the frontier already lands
 on BIKE's `(t, d)` and `r`'s only remaining job is the DFR — the one quantity this repository

@@ -236,6 +236,18 @@ SecurityProofsCode/                                 — standalone Python proof/
                              that needed a measurable DFR, which is what the
                              change exists to remove -- so 6 is recorded on a
                              stated retry budget and the cliff passes to #250.
+                             ALSO CHECKS THE FSCX LAYER, which §11.8.5 had only
+                             ARGUED about (its claim is about the INSTANCE, not
+                             the sampler): qcprf_uniform_idx draws 16-BIT words,
+                             and ENCAPSULATION samples modulo 2r, so BIKE-128
+                             fits at 75% acceptance, BIKE-192 sits on the last
+                             usable multiple, and BIKE-256 gives lim = 0 and a
+                             NON-TERMINATING rejection loop -- a hard ceiling one
+                             level above the recommendation, invisible from the
+                             parameters.  The shipped sampler's supports are
+                             indistinguishable from the ideal ones the MAX_MULT
+                             figure was read off, so that constant transfers
+                             rather than needing re-derivation.
                              Exits non-zero if a finding stops reproducing
   nl_fscx_v3_round_count.py — NL-FSCX v3's round count, DERIVED (TODO #255):
                              R3_VALUE = 5n/8 = 160 at n=256.  Rests on the
@@ -571,7 +583,7 @@ SecurityProofs-1.md                                 — §1: Algebraic Foundatio
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (686 math expressions)
-SecurityProofs-5.md                                 — §11.8.3–§11.8.9: PQ signature options · HPKE-Stern-KEM (662 math expressions)
+SecurityProofs-5.md                                 — §11.8.3–§11.8.9: PQ signature options · HPKE-Stern-KEM (672 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)

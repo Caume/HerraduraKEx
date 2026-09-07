@@ -287,6 +287,18 @@ carry:**
   representation change; C's `qcmdpc_bgf_decode` does grow to ~123 KB of stack work arrays
   from ~7 KB, which is fine but should be a deliberate decision.
 
+**The FSCX layer carries it, with a ceiling one level up.**  §11.8.5's "BIKE's production
+parameters carry over directly" is a claim about the *instance*, not the sampler, and was
+never checked against the sizes.  `qcprf_uniform_idx` draws **16-bit** words, and
+encapsulation samples modulo `2r`, not `r`: BIKE-128's 24646 is accepted 75% of the time,
+BIKE-192's 49318 is the last multiple that works at all, and BIKE-256's 81946 gives
+`lim = 0` and a **non-terminating** rejection loop (`w >= 0` is vacuously true for a
+`uint16_t`).  So BIKE-256 would need the PRF widened to 32-bit words -- not a reason against
+BIKE-128, but a limit invisible from the parameters.  Output volume rises ~6x, 2 blocks per
+operation to 10-12.  And the *shipped* sampler's supports are not distinguishable from the
+ideal ones the `MAX_MULT` figure was read off (two-sample chi2 held to 6x its dof), so that
+constant transfers rather than needing re-derivation against the FSCX PRF.
+
 **One acceptance criterion is NOT met, and cannot be.**  This item asked for "the weak-key
 cliff re-measured at the chosen `d`".  #218 could locate that cliff at `r = 523` precisely
 *because* the DFR was `2^-8.6`; at the new parameters the measurement that justified

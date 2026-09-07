@@ -27,13 +27,15 @@ question and names an inadmissible value:
   §5  Correctness at the candidate -- the waterfall, measured
   §6  The weak-key screen's constant, re-derived at the new d
   §7  Cost, and the one blocker
-  §8  Recommendation, and what the change touches
+  §8  Does the FSCX layer carry it?
+  §9  Recommendation, and what the change touches
 
 Nothing here is extrapolated silently: every DFR statement is either a measured
 count with its trial number, or is labelled a bound and attributed.
 
-Runtime: ~3 min at default settings (§5 and §7 dominate); --quick (~1 min) cuts
-every trial count and is enough for the qualitative picture but not the margins.
+Runtime: ~3.5 min at default settings (§5, §7 and §8 dominate); --quick (~1.5
+min) cuts every trial count and is enough for the qualitative picture but not
+the margins.
 """
 
 import argparse
@@ -709,11 +711,127 @@ def section7(S, Q, dep, quick):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §8  Recommendation
+# §8  Does the FSCX layer carry it?
 # ═══════════════════════════════════════════════════════════════════════════
 
-def section8(cal, worst_dep, match_mult, fast_ms):
-    rule('8  Recommendation')
+def section8(S, quick):
+    rule('8  Does the FSCX layer carry it?')
+    print("""
+  §11.8.5 records that substituting the FSCX-derived PRF for BIKE's leaves the
+  QCSD instance unchanged, "so BIKE's production parameters carry over
+  directly".  That is an argument about the INSTANCE.  It says nothing about
+  whether the sampler can reach the new sizes, and §6's MAX-MULT was computed
+  from ideal supports rather than from the shipped one -- so both are checked
+  here rather than assumed.
+
+  (a) The 16-bit ceiling.  qcprf_uniform_idx draws 16-bit words and rejects
+  above lim = floor(65536/m)*m.  When m > 65536 that floor is 0, lim is 0, and
+  the rejection loop never terminates -- in C `w >= 0` is vacuously true for a
+  uint16_t.  Keygen samples modulo r; ENCAPSULATION samples modulo 2r, which is
+  the binding one:
+""")
+    caps = []
+    for lbl, m in (('deployed keygen   r', 523), ('deployed encap   2r', 1046),
+                   ('BIKE-128 keygen   r', 12323), ('BIKE-128 encap   2r', 24646),
+                   ('BIKE-192 encap   2r', 49318), ('BIKE-256 encap   2r', 81946)):
+        lim = (0x10000 // m) * m
+        caps.append((m, lim))
+        state = 'OK' if lim else '*** lim = 0: NON-TERMINATING ***'
+        print(f"      {lbl} = {m:>6}   lim = {lim:>6}   accept "
+              f"{(lim / 65536 * 100):>6.2f}%   {state}")
+    bike256_ok = caps[-1][1] != 0
+    print("""
+  So BIKE-128 fits with 75% acceptance on the encapsulation draw, BIKE-192 fits
+  at exactly one multiple (lim = 2r, the last value that works at all), and
+  **BIKE-256 is unreachable** without widening the PRF to 32-bit words.  That is
+  not a reason against BIKE-128, but it is a hard ceiling one level above it,
+  and it is invisible from the parameters alone.  r prime keeps lim non-zero for
+  every admissible r below the ceiling, so §4's constraint covers the other
+  degenerate case for free.
+
+  (b) Output volume.  One 256-bit block yields 16 words, and a rejected or
+  duplicate draw costs another:
+""")
+    class Counting(S._QcMdpcPrf):
+        def __init__(self, seed):
+            super().__init__(seed)
+            self.n = 0
+
+        def word16(self):
+            self.n += 1
+            return super().word16()
+
+    vols = {}
+    for r, d, t in ((523, 15, 18), (12323, 71, 134)):
+        a = Counting(0x1234567)
+        a.sparse_support(r, d)
+        a.sparse_support(r, d)
+        b = Counting(0x7654321)
+        b.sparse_support(2 * r, t)
+        vols[r] = (a.n, b.n)
+        print(f"      r = {r:>5}, d = {d:>3}, t = {t:>3}:  keygen {a.n:>4} words "
+              f"({(a.n+15)//16:>2} blocks),  encap {b.n:>4} words "
+              f"({(b.n+15)//16:>2} blocks)")
+    print("""
+  A ~6x increase, from 2 blocks per operation to 10-12.  Absolutely small, but
+  it changes the shape of what is being asked of the PRF: the block stream is
+  nl-fscx-revolve-v1 in counter mode over seed XOR ctr, so 12 blocks means
+  twelve inputs differing only in their low bits, where the deployed set needs
+  two.  Checked directly below rather than argued.
+
+  (c) Are the shipped sampler's supports distributed like the ideal ones §6
+  used?  This is the one that matters for the recommendation, because
+  MAX-MULT = 6 was read off a Mersenne-Twister sample and is applied to an
+  FSCX-PRF sampler.
+""")
+    N = 1500 if quick else 6000
+    rng = random.Random(4242)
+    out = {}
+    for r, d in ((523, 15), (12323, 71)):
+        fs = Counter()
+        idl = Counter()
+        for _ in range(N):
+            seed = int.from_bytes(os.urandom(32), 'big')
+            fs[_spectrum_max(sorted(S._QcMdpcPrf(seed).sparse_support(r, d)), r)] += 1
+            idl[_spectrum_max(sorted(rng.sample(range(r), d)), r)] += 1
+        keys = sorted(set(fs) | set(idl))
+        chi = sum((fs[k] - idl[k]) ** 2 / (fs[k] + idl[k])
+                  for k in keys if fs[k] + idl[k] >= 10)
+        dof = sum(1 for k in keys if fs[k] + idl[k] >= 10) - 1
+        out[r] = (chi, dof)
+        print(f"      r = {r}, d = {d}, {N} draws each:")
+        print(f"        {'mult':>6} {'FSCX PRF':>10} {'ideal':>10}")
+        for k in keys:
+            print(f"        {k:>6} {fs[k]/N*100:9.2f}% {idl[k]/N*100:9.2f}%")
+        print(f"        two-sample chi2 = {chi:.2f} on {dof} dof\n")
+
+    # counter-mode structure: 12 blocks off one seed
+    seed = int.from_bytes(os.urandom(32), 'big') & S._QCMDPC_MASK
+    blocks = [sum(w << (16 * i) for i, w in enumerate(S._qcprf_refill(seed, c)))
+              for c in range(12)]
+    ham = [bin(blocks[i] ^ blocks[j]).count('1')
+           for i in range(12) for j in range(i + 1, 12)]
+    mean_ham = sum(ham) / len(ham)
+    print(f"""      Counter mode, 12 blocks from one seed: {len(set(blocks))}/12 distinct,
+      pairwise Hamming distance over 256 bits min {min(ham)} / mean {mean_ham:.1f} /
+      max {max(ham)}, against an ideal mean of 128.
+
+  The supports the shipped sampler produces are not distinguishable from ideal
+  at either parameter set, and the deeper counter-mode draw shows no structure,
+  so §6's MAX-MULT = 6 transfers to the shipped sampler and does not have to be
+  re-derived against it.  This is a check, not a proof: it bounds the bias the
+  sample can see, and the PRF's own trail behaviour is #254's subject, not this
+  item's.
+""")
+    return bike256_ok, vols, out, mean_ham
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# §9  Recommendation
+# ═══════════════════════════════════════════════════════════════════════════
+
+def section9(cal, worst_dep, match_mult, fast_ms, prf_cap):
+    rule('9  Recommendation')
     r, d, t = BIKE[128]
     I = instance(r, d, t)
     print(f"""
@@ -740,7 +858,9 @@ def section8(cal, worst_dep, match_mult, fast_ms):
                  owning a DFR extrapolation with no data behind it.
     BIKE-192/256 correct but 2x and 3.3x the r for a target nothing else in the
                  suite claims; the classical quartet is a 256-bit-block design
-                 with far weaker guarantees.
+                 with far weaker guarantees.  §8 adds a mechanical reason for
+                 256 specifically: the FSCX PRF's 16-bit draw cannot reach its
+                 encapsulation modulus at all.
     keep 523     the row is demo-only and honestly labelled, so this is a real
                  option.  It is rejected because the label is now the ONLY
                  thing standing between a 2^{worst_dep-cal:.0f} instance and a caller who
@@ -754,6 +874,12 @@ def section8(cal, worst_dep, match_mult, fast_ms):
 
   What the change touches, beyond the four constants:
 
+    the PRF's 16-bit draw  nothing at BIKE-128, which fits with 75% acceptance
+                           on the encapsulation modulus -- but qcprf_uniform_idx
+                           cannot sample above 65536, so BIKE-192 sits on the
+                           last usable multiple and BIKE-256 would need 32-bit
+                           words (§8).  A ceiling one level up, invisible from
+                           the parameters.
     the threshold rule     in all four languages, and it is not a constant --
                            it is a different FUNCTION of a different argument
                            (§5).  NB_ITER 20 -> 5 comes with it.
@@ -828,7 +954,20 @@ def main():
         fail.append(f'§6: retry-budget MAX_MULT is {match}, not 6')
 
     fast_ms = section7(S, Q, dep, args.quick)
-    section8(cal, worst, match, fast_ms)
+
+    bike256_ok, vols, chis, mean_ham = section8(S, args.quick)
+    if bike256_ok:
+        fail.append('§8: the 16-bit PRF ceiling no longer excludes BIKE-256')
+    if vols[12323][1] > 16 * 24:
+        fail.append(f'§8: encap now needs {vols[12323][1]} PRF words')
+    for r, (chi, dof) in chis.items():
+        if dof > 0 and chi > 6.0 * dof:
+            fail.append(f'§8: FSCX supports diverge from ideal at r={r} '
+                        f'(chi2 {chi:.1f} on {dof} dof)')
+    if not 110 <= mean_ham <= 146:
+        fail.append(f'§8: counter-mode blocks correlated (mean Hamming {mean_ham:.1f})')
+
+    section9(cal, worst, match, fast_ms, bike256_ok)
 
     print()
     if fail:

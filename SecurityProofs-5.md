@@ -822,6 +822,30 @@ costing under one keygen retry in 200 — giving $\text{MAX-MULT} = 6$, recorded
 as a retry-budget choice and not as a cliff.  The cliff question passes to TODO
 #250, which owns decoder behaviour.
 
+**Does the FSCX layer carry it?**  §11.8.5 records that substituting the
+FSCX-derived PRF for BIKE's leaves the QCSD instance unchanged, "so BIKE's
+production parameters carry over directly" — an argument about the *instance*,
+which says nothing about whether the sampler reaches the new sizes.  Three
+checks.  (i) `qcprf_uniform_idx` draws **16-bit** words and rejects above
+$\text{lim} = \lfloor 65536/m \rfloor \cdot m$, where keygen samples modulo $r$
+but encapsulation samples modulo $2r$.  At BIKE-128 that is 24646, accepted 75%
+of the time; at BIKE-192 it is 49318, the last multiple that works at all; at
+BIKE-256 it is 81946, where $\text{lim} = 0$ and the rejection loop **never
+terminates** — in C, `w >= 0` is vacuously true for a `uint16_t`.  So there is a
+hard ceiling one level above the recommendation, invisible from the parameters
+alone, and $r$ prime keeps $\text{lim}$ non-zero for every admissible $r$ below
+it.  (ii) Output volume rises about $6\times$, from 2 blocks per operation to
+10–12, so the counter-mode stream is asked for twelve inputs differing only in
+their low bits where the deployed set needs two.  (iii) The supports the
+*shipped* sampler produces are not distinguishable from the ideal ones §11.8.9's
+weak-key analysis used, on a two-sample $\chi^2$ held to six times its degrees of
+freedom, and the twelve counter-mode blocks are pairwise distinct at a mean
+Hamming distance within 18 of the ideal 128.  (The script resamples these from
+`os.urandom` on every run, so it asserts the criterion rather than a value.)  This matters because
+$\text{MAX-MULT} = 6$ was read off a Mersenne-Twister sample and is applied to
+an FSCX-PRF sampler; it transfers.  These are checks bounding what a sample can
+see, not proofs — the PRF's own trail behaviour belongs to TODO #254.
+
 **Recommendation: adopt BIKE-128 verbatim** — $r = 12323$, $d = 71$, $t = 134$,
 with BIKE's threshold rule and 5 iterations.  Inventing a set is rejected
 because the frontier already lands on BIKE's $(t, d)$ and $r$'s only remaining
