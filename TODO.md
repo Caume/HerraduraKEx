@@ -106,14 +106,37 @@ answer is not what any earlier pass assumed.**  See SecurityProofs-9.md §11.38 
   nonzero entries negative.  It brackets to 1-7% instead of closing, and the lower end is
   the conservative one.
 
-**What is left, and it is the whole of what is left.**  (1) The model is an ESTIMATOR:
-annealed, a first moment, which bounds nothing on its own since a first moment can be
-carried by rare graphs, and validated against exact mu only at n <= 13, where it runs
-3-15% BELOW the truth and converging upward.  The cheapest upgrade is named precisely --
-the annealed count over-counts cycles sharing edges, so the gap is a SECOND-MOMENT
-question about the same two inputs, both exactly computable by the machinery now in place.
-(2) The LINEAR HULL, unchanged from §11.36.9: a trail statement is not a hull statement,
-and nothing in this line of work reaches the hull.
+**Item (1) is CLOSED as posed (v6.5.7).**  See SecurityProofs-9.md §11.39 and
+`SecurityProofsCode/pair_correlation_second_moment.py`.  #257 was right that it needed
+no new machinery: the whole pair correlation is one ratio, R(t) = M(2t)/M(t)^2, because
+a shared edge contributes M(2t) to the joint exponential moment where independence
+would give M(t)^2 -- and M(2t) is a higher rung of the SAME A_t ladder (t* = 3
+differential needs A_6; t* = 4-6 linear needs A_8..A_12, both already inside TD/TL).
+
+  * **The ratio that matters is R/E, and it is LINEAR IN n:** log2(R/E) ~ -0.653n
+    differential, -0.917n linear, over n = 10..256 on both axes.  R alone is enormous
+    (2^226 at n = 256) but the edge count grows faster.  L enters only as 2*log2(L), so
+    ANY polynomial cycle length is swamped -- even the absurd L = n^2 only shifts the
+    curve by a constant.
+  * E[N^2]/E[N]^2 = 1 + 2^-151 (differential) and 1 + 2^-219 (linear) at n = 256.
+    Within the annealed ensemble the first moment is NOT carried by rare graphs, which
+    is exactly the objection item (1) raised.
+  * **It also explains the gap it was asked about.**  §11.38 reported the model 3-15%
+    BELOW exact mu at n <= 13 "and converging upward" with no account of why.  The
+    correction crosses 1 at n ~ 11-12 and is O(1) across n = 10..13 -- the entire range
+    where exact mu exists, and nowhere above -- and its SIGN matches: an over-count
+    inflates E[N], moving the E[N] = 1 crossing to a cheaper threshold, so the model
+    runs low.  The discrepancy is a property of the validation range, not of the model.
+  * Validated against a brute-force enumeration of the whole edge set at n = 6..9, four
+    addends each: edge counts exact, every moment and R to 4e-15.
+
+**What is left.**  (1') The residue of item (1): this is CONCENTRATION OF AN ANNEALED
+ENSEMBLE, not a bound on the deterministic object.  It says the ensemble's typical
+member is representative; it does not say one fixed round function is a typical member.
+That is a QUENCHED argument and none is attempted, so §11.38's n = 256 figures remain an
+exactly-evaluated ESTIMATOR -- now with its internal consistency established rather than
+assumed.  (2) The LINEAR HULL, unchanged from §11.36.9: a trail statement is not a hull
+statement, and nothing in this line of work reaches the hull.
 
 **Reach.**  No production-track row.  HSKE-NL-A2 and `twk` are demo-only for reasons on
 other axes (#243, #244, #248), and #254's three production-track rows -- HSKE-NL-A1,

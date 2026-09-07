@@ -347,6 +347,25 @@ SecurityProofsCode/                                 — standalone Python proof/
                              ESTIMATOR: annealed, validated against exact mu
                              only at n<=13.  Exits non-zero if a finding
                              stops reproducing
+  pair_correlation_second_moment.py — TODO #257's SECOND MOMENT, evaluated; closes
+                             that item's part (1).  The whole pair correlation is
+                             ONE RATIO, R(t) = M(2t)/M(t)^2, because a shared edge
+                             contributes M(2t) to the joint exponential moment where
+                             independence gives M(t)^2 -- and M(2t) is a higher rung
+                             of the SAME A_t ladder #257 already built, which is why
+                             it needed no new machinery.  FINDING: R alone is
+                             enormous (2^226 at n=256) but the EDGE COUNT grows
+                             faster, and log2(R/E) is LINEAR IN n (-0.653n
+                             differential, -0.917n linear), so the correction is
+                             2^-151 / 2^-219 at n=256 -- the first moment is not
+                             carried by rare graphs.  Also EXPLAINS the 3-15%
+                             validation gap §11.38 could only report: the correction
+                             is O(1) across n=10..13, exactly the range where exact
+                             mu exists, and its sign matches (an over-count
+                             under-states the threshold).  Still NOT a bound on the
+                             deterministic object -- an annealed ensemble
+                             concentrating is not a fixed round function being
+                             typical of it, which is why #257 stays open
   lin_cycle_mean.py        — the asymptotic LINEAR slope, measured, and the two
                              modes (TODO #254, second pass; only the width
                              extrapolation is still open).  s_lin is the
@@ -511,7 +530,7 @@ SecurityProofs-5.md                                 — §11.8.3–§11.8.8: PQ 
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
-SecurityProofs-9.md                                 — §11.37–§11.38: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 (401 math expressions)
+SecurityProofs-9.md                                 — §11.37–§11.39: the width residue #252 and #254 shared · the annealed threshold, evaluated exactly at n = 256 · the pair correlation, which closes #257's second-moment item (485 math expressions)
 docs/
   TUTORIAL.md               — API usage guide per protocol and language
   INTRODUCTION.md           — lay-audience primer for all core concepts

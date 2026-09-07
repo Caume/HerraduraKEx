@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.7] - 2026-09-06
+
+### TODO #257 (item 1 CLOSED; item 2 remains) — the pair correlation, evaluated
+
+TODO #257 closed its last pass leaving two outstanding items and naming the cheaper one
+precisely: *"the annealed count over-counts cycles that share edges, so the gap between the
+model and mu is a second-moment question about the same two inputs … it needs no new
+machinery, only the pair correlation."* That estimate was exactly right, and this walks it.
+See `SecurityProofs-9.md` §11.39 and `SecurityProofsCode/pair_correlation_second_moment.py`.
+
+**The whole correlation is one ratio.** Two closed walks that share `j` edges break
+independence in exactly one place: a shared edge's weight appears in both walks, so its
+Chernoff factor enters the joint expectation as `M(2t)` where independence would give
+`M(t)^2`. So
+
+```
+E[N^2] / E[N]^2  =  E_pairs[ R(t)^j ],    R(t) = M(2t) / M(t)^2  >= 1
+```
+
+and nothing else about the weight distribution enters. `M(2t)` is a higher rung of the same
+`A_t` ladder the first moment already builds — `t* = 3` differential needs `A_6`, `t* = 4..6`
+linear needs `A_8..A_12`, both already inside the existing `TD = 8` / `TL = 12`.
+
+**The finding: `R/E` is linear in `n`, so the correction dies exponentially.** `R` alone is
+enormous and grows with width (2^226 at n = 256), which invites the opposite conclusion — but
+the edge count grows *faster*, and only the ratio matters:
+
+```
+log2(R / E)  ~  -0.653 n  (differential),   -0.917 n  (linear),   over n = 10..256
+```
+
+`L` enters only as `2*log2(L)`, so any polynomial cycle length is swamped; even an absurd
+`L = n^2` merely shifts the curve. At n = 256 the correction is **2^-151** (differential) and
+**2^-219** (linear): within the annealed ensemble the first moment is **not** carried by rare
+graphs, which is the objection item 1 raised.
+
+**It also explains the validation gap it was asked about.** §11.38 reported the model running
+3–15% *below* exact `mu` at n ≤ 13 "and converging upward", with no account of why. The
+correction crosses 1 at n ≈ 11–12 and is O(1) across n = 10..13 — the entire range where exact
+`mu` exists, and nowhere above it — and its **sign** matches: an over-count inflates `E[N]`,
+moving the `E[N] = 1` crossing to a cheaper threshold, so the model runs low. The discrepancy
+is a property of the validation range rather than of the model.
+
+**Validation.** The edge count, every moment, and their combination into `R` are checked
+against a brute-force enumeration of the whole edge set at n = 6..9 for four addends each:
+edge counts exact, every ratio to 4e-15.
+
+**What this does not settle, and #257 stays open for it.** This is concentration of an
+*annealed* ensemble. It says the ensemble's typical member is representative; it does not say
+one fixed round function is a typical member of it. That is a quenched argument and none is
+attempted, so §11.38's n = 256 figures remain an exactly-evaluated **estimator** — now with
+internal consistency established rather than assumed. Item 2, the linear hull, is untouched
+and out of reach of this line of work. **No rating moves, and none could**: every row this
+analysis touches is demo-only on other axes (#243, #244, #248), and the production-track rows
+left the scope of a trail bound in §11.36.8.
+
+`SecurityProofs-9.md` grows from 401 to 485 math expressions, still well inside
+`validate_katex.js`'s ~700 warning threshold.
+
 ## [6.5.6] - 2026-09-06
 
 ### TODO #272 (DONE) — C's 64-value list-flag limit, and the ring limit the audit found

@@ -12,7 +12,7 @@
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
-> - **Part 9 — §11.37–§11.38** (this file): The Width Residue · The Annealed Threshold at n = 256
+> - **Part 9 — §11.37–§11.39** (this file): The Width Residue · The Annealed Threshold at n = 256 · The Pair Correlation
 
 ---
 
@@ -245,3 +245,68 @@ Over twenty keys at $n = 256$ the per-key range is $43.91$ to $50.86$ (different
 The cheapest thing that would upgrade the first item is now stated precisely, and is the whole of what #257 has left.  The annealed count over-counts cycles sharing edges, so the gap between the model and $\mu$ is a **second-moment** question about the same two inputs — the edge-weight distribution and the out-degree — and both are exactly computable here at any width.  It needs no new machinery, only the pair correlation.
 
 **No rating moves, and none could.**  Every row this touches is demo-only for reasons on other axes (#243, #244, #248), and the three production-track rows left the scope of a trail bound entirely in §11.36.8.
+
+---
+
+## 11.39 The pair correlation: #257's second moment, evaluated
+
+**Reproduced by `SecurityProofsCode/pair_correlation_second_moment.py`, which exits non-zero if any finding here stops holding.**
+
+§11.38.7 closed TODO #257 with two outstanding items and named the cheaper one precisely: the annealed count over-counts cycles that share edges, so the gap between the model and $\mu$ is a *second-moment* question about the same two inputs, and "needs no new machinery, only the pair correlation." That is correct, and this section walks it. The conclusion is that the correction is not merely small at $n = 256$ but **exponentially small in $n$**, and that it is $O(1)$ over exactly the range where exact $\mu$ is computable — which is a quantitative account of §11.38's own validation gap.
+
+### 11.39.1 The entire correlation is one ratio
+
+$E[N]$ counts closed walks whose mean weight falls below a threshold, and bounds the tail by Chernoff: for $L$ **independent** edges, $E[2^{-t \Sigma}] = M(t)^L$. Two walks sharing $j$ edges break that independence in exactly one place. A shared edge's weight appears in *both* walks, so its factor enters the joint expectation as $M(2t)$ where independence would give $M(t)^2$. Hence
+
+$$\frac{E[N^2]}{E[N]^2} = E_{\text{pairs}}\left[R(t)^{ j}\right], \qquad R(t) = \frac{M(2t)}{M(t)^2} \ge 1,$$
+
+with $R \ge 1$ by Cauchy–Schwarz and equality iff the edge weight is almost surely constant. **Nothing else about the weight distribution enters the pair correlation.** Since $M(t) = A_t / (E \cdot 2^{st})$ with $A_t$ the linear DP of §11.38.2 and $s$ the scale, $R$ is one higher rung of the ladder that was already built:
+
+$$\log_2 R(t) = \log_2 A_{2t} + \log_2 E - 2\log_2 A_t .$$
+
+The optimum sits at $t^{*} = 3$ on the differential axis and $t^{*} = 4$ to $6$ on the linear one, so the rungs required are $A_6$ and $A_8$ through $A_{12}$ — all inside the $T_D = 8$ and $T_L = 12$ that §11.38 already computes. #257's estimate of the cost was right.
+
+**Validation.** The edge count, each moment, and their combination into $R$ are checked against a brute-force enumeration of the whole edge set at $n = 6, 7, 8, 9$ for four addends each: the edge count matches exactly and every ratio to $2.5 \times 10^{-15}$.
+
+### 11.39.2 The ratio that matters is $R/E$, and it is linear in $n$
+
+$R$ alone is enormous and grows with width — $2^{234}$ at $n = 256$ — which invites the conclusion that pair correlation dominates. It does not, because the number of *opportunities* to share an edge grows faster. For two walks of length $L$ in a graph with $E$ edges the expected overlap is $O(L^2/E)$, so the correction is governed by $L^2 R / E$, and the measured behaviour of the ratio is
+
+$$\log_2\big(R/E\big) \approx -0.653 n \quad \text{(differential)}, \qquad -0.917 n \quad \text{(linear)},$$
+
+over $n = 10$ to $256$ on both axes. $L$ enters only as $2\log_2 L$, so **any polynomial cycle length is swamped by a linear-in-$n$ exponent.** Taking $L = 0.86n$, the pessimistic end of the dense-cycle range §11.37.4 measured:
+
+| $n$ | 12 | 16 | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|---|---|
+| $\log_2(L^2R/E)$, differential | $-0.62$ | $-1.85$ | $-7.96$ | $-30.5$ | $-68.4$ | $-151.2$ |
+| $\log_2(L^2R/E)$, linear | $-4.15$ | $-6.84$ | $-19.6$ | $-46.8$ | $-103.8$ | $-219.1$ |
+
+(worst case over the sampled odd addends at each width; the script prints the same table)
+
+so at $n = 256$
+
+$$\frac{E[N^2]}{E[N]^2} = 1 + 2^{-151} \text{ (differential)}, \qquad 1 + 2^{-219} \text{ (linear)}.$$
+
+Within the annealed ensemble the first moment is **not** carried by rare graphs, which is the objection §11.38.7's item 1 raised against it.
+
+**$L$ is the one input taken from elsewhere, and it is the one that cannot matter.** Even the absurd choice $L = n^2$ shifts the curve by a constant and delays the crossover to $n \approx 40$; it does not change the sign of the slope, because $\log_2(R/E)$ is linear in $n$ while $2\log_2 L$ is logarithmic.
+
+### 11.39.3 It explains the validation gap it was asked about
+
+§11.38 reported the model running $3$ to $15$% *below* exact $\mu$ at $n \le 13$ "and converging upward", and gave no account of why. This is the account, and it is not a coincidence of the range:
+
+- The correction crosses $1$ at $n \approx 11$ to $12$ and is $O(1)$ across $n = 10$ to $13$ — **exactly the widths where exact $\mu$ exists**, and nowhere above them.
+- Its **sign** matches. An over-count inflates $E[N]$, which moves the crossing of $E[N] = 1$ to a cheaper threshold, so the model *under-states* $\mu$ — and the model runs low.
+
+So the discrepancy visible in the validation range is a property of that range rather than of the model, and the "converging upward" that §11.38 could only observe is the over-count dying at $2^{-0.65n}$.
+
+### 11.39.4 What this settles, and what it does not
+
+**Settled — §11.38.7's item 1 as posed.** The edge-sharing over-count is quantified exactly, at any width, on both axes, from the existing ladder; it is negligible wherever the answer is not already exact; and it accounts for the validation gap in both magnitude and sign.
+
+**Not settled.**
+
+1. **This is not a bound on the deterministic object.** Concentration of an annealed ensemble says that ensemble's typical member is representative. It does not say that one fixed round function is a typical member of it. Closing that is a *quenched* argument and none is attempted here, so the status of §11.38's $n = 256$ figures is unchanged: an exactly-evaluated **estimator**, now with its internal consistency established rather than assumed.
+2. **The linear hull.** Untouched, and out of reach of this line of work — unchanged from §11.36.9 and §11.38.7.
+
+**No rating moves, and none could**, for the reasons §11.38.7 gives: every row this analysis touches is demo-only on other axes (#243, #244, #248), and the production-track rows left the scope of a trail bound in §11.36.8.
