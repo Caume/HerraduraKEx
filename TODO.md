@@ -287,14 +287,16 @@ carry:**
   representation change; C's `qcmdpc_bgf_decode` does grow to ~123 KB of stack work arrays
   from ~7 KB, which is fine but should be a deliberate decision.
 
-**The FSCX layer carries it, with a ceiling one level up.**  §11.8.5's "BIKE's production
+**The FSCX layer carries it, with a ceiling one level up (now TODO #277).**  §11.8.5's "BIKE's production
 parameters carry over directly" is a claim about the *instance*, not the sampler, and was
 never checked against the sizes.  `qcprf_uniform_idx` draws **16-bit** words, and
 encapsulation samples modulo `2r`, not `r`: BIKE-128's 24646 is accepted 75% of the time,
 BIKE-192's 49318 is the last multiple that works at all, and BIKE-256's 81946 gives
 `lim = 0` and a **non-terminating** rejection loop (`w >= 0` is vacuously true for a
 `uint16_t`).  So BIKE-256 would need the PRF widened to 32-bit words -- not a reason against
-BIKE-128, but a limit invisible from the parameters.  Output volume rises ~6x, 2 blocks per
+BIKE-128, but a limit invisible from the parameters, and **TODO #277** owns it -- including
+the guard, which is worth landing whether or not this item's parameter change ever does,
+since today the overflow HANGS rather than erroring.  Output volume rises ~6x, 2 blocks per
 operation to 10-12.  And the *shipped* sampler's supports are not distinguishable from the
 ideal ones the `MAX_MULT` figure was read off (two-sample chi2 held to 6x its dof), so that
 constant transfers rather than needing re-derivation against the FSCX PRF.
@@ -324,5 +326,126 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
   re-justified rather than left asserting nothing;
 * `spec/` and `SECURITY.md`, held to each other by `check_security_md.py`;
 * the `.s`/`.asm`/`.ino` targets stay at `r = 32` and are labelled demo-only, as #223 did.
+
+Status: **OPEN**
+
+### #277: widen the QC-MDPC index draw past 16 bits
+
+TODO #276 §8 found the ceiling: `qcprf_uniform_idx` draws **16-bit** words and rejects above
+`lim = floor(65536/m)*m`.  Keygen samples modulo `r`, but **encapsulation samples modulo
+`2r`**, which is the binding one and the one nobody would think to look at.
+
+| modulus | | 16-bit `lim` | acceptance |
+|---|---|---|---|
+| deployed encap | `2r` = 1046 | 64852 | 98.96% |
+| BIKE-128 encap | `2r` = 24646 | 49292 | 75.21% |
+| BIKE-192 encap | `2r` = 49318 | 49318 | 75.25% — the last multiple that works at all |
+| BIKE-256 encap | `2r` = 81946 | **0** | **0% — non-terminating** |
+
+**The defect is the failure MODE, not the ceiling.**  Above 65536 there is no guard anywhere
+in any of the four languages: `lim` is 0 and the rejection loop spins forever.  In C it is
+`do { w = qcprf_word16(prf); } while (w >= lim);` on a `uint16_t`, where `w >= 0` is
+vacuously true, so the compiler is entitled to assume the loop never exits.  Python's
+`while True: ... if w < lim` is the same shape.  A caller who raises the parameters gets a
+hang with no diagnostic, not an error.
+
+**Two parts, and the first is worth doing on its own.**
+
+1. **Guard it now**, independently of any parameter change and independently of #276
+   landing.  A `lim == 0` check that raises is three lines per language and converts a hang
+   into a message.  The suite already has the right pattern one file over:
+   `_stern_random_weight_t` uses 4-byte rejection and *documents* its domain -- "eliminates
+   modular bias for any n <= 2^32".  The QC-MDPC sampler is the only one of the four
+   sampling sites in the suite with an undocumented ceiling.
+2. **Widen the draw**, which is what actually unblocks BIKE-192 and BIKE-256.
+
+**Widening is not free, and the arithmetic is counter-intuitive.**  A 256-bit PRF block
+yields 16 words at 16 bits but only 8 at 32, while acceptance rises from 75% to 99.9998%.
+Net, at BIKE-128, the blocks per operation go **up**:
+
+| | 16-bit | 32-bit |
+|---|---|---|
+| keygen (142 indices mod `r`) | 151 draws, 10 blocks | 142 draws, **18 blocks** |
+| encap (134 indices mod `2r`) | 178 draws, 12 blocks | 134 draws, **17 blocks** |
+
+So "widen to 32 bits" costs ~50-80% more `nl_fscx_revolve_v1` invocations at the parameters
+#276 recommends, buying headroom that BIKE-128 does not need.  **24-bit draws are the
+natural middle** and already have precedent in this suite -- `_rnl_rand_poly` uses 3-byte
+rejection sampling for `Z_q` -- giving ~100% acceptance to 2^24 = 16.7M (well past
+BIKE-256's 81946) at 10 words per block, so ~14 blocks.  Sizing the draw from the modulus
+(`ceil(log2(m)/8)` bytes) is the general form and costs nothing at the deployed parameters.
+Pick deliberately; do not reach for 32 because it is the round number.
+
+**Scope.**  Four languages (`herradura.h` `qcprf_uniform_idx`, Go, Python `_QcMdpcPrf`,
+`Stern.java`).  Changing the draw width **changes the keystream consumption pattern and
+therefore every key and error vector a given seed produces**, so it is KAT-breaking for any
+pinned QC-MDPC artifact even though it is not wire-format breaking.  Doing it in the same
+release as #276's parameter change costs nothing extra; doing it separately means two
+regenerations of the same vectors.  Note also `uint16_t sup0[QCMDPC_D]` and
+`uint16_t sup_e[QCMDPC_T]` in C, which independently cap `2r` at 65536 and must widen with
+the draw or the ceiling simply moves one line down.
+
+Status: **OPEN**
+
+### #278: the width axis — which primitives cap the security parameter, and do the four languages agree?
+
+#277 is one instance of a general question this repository has never asked: **for each
+primitive, what is the largest security parameter it can express, is that limit deliberate,
+and is it the same in C, Go, Python and Java?**  Every cross-language check in `spec/`
+answers a different question, and there are five of them:
+
+* `check_language_parity.py`'s manifest and census — does the primitive EXIST in each language;
+* `cli_support` — does each CLI DISPATCH the `--algo` tag;
+* `cli_flag_matrix` (#267) — does each CLI DEFINE the flag;
+* `cli_flag_value_gaps` (#269) — which VALUES does each CLI accept for it;
+* `check_docs_consistency.py` (#265) — do the narrative documents restate the sources correctly.
+
+**None of them compares a numeric parameter's VALUE across languages.**  #276 hit this from
+the other side: `QCMDPC_MAX_MULT` is duplicated in all four languages, the manifest pins the
+*function* `qcmdpc-max-multiplicity` in all four, and nothing anywhere compares the constant,
+so a partial update would be invisible.
+
+**A verified anchor for how invisible.**  `spec/generate_spec.py`'s own docstring says
+"Protocol parameter constants: herradura.h (#define) **and herradura/herradura.go** (const
+block), grepped by name."  It is not true: line 1354 assigns `go_src = read(HERRADURA_GO)`
+and never uses it.  Every parameter in `spec/herradura-protocol-spec.json` comes from C
+alone, and the dead read is what makes the docstring assert a cross-language check that does
+not happen.  Deleting the variable or making the claim true is a decision this item should
+make, not leave.
+
+**What is already known to differ, so the audit does not start from zero:**
+
+* **ZKP-NL is capped at 32 in Go and 64 in C, Python and Java** — and it is a *type* limit,
+  not a policy: `ZkpNlVerify(B, y uint32, ...)` and `[3]uint32` shares throughout, against
+  `ZKP_NL_MAX_N = 64` elsewhere.  Both the Python and Java sources carry a comment saying so.
+  Go therefore cannot verify a statement the other three can produce, at a width the suite's
+  own test [22] exercises.
+* **HCRED is a compile-time 256 in C (`HCRED_N`, static-asserted against `RNL_ALT_N`) and
+  Java (`Hcred.N`), and a runtime argument in Python and Go**, which both demo at n = 32.
+  `KAT/hcred_kkw.json` already records that the four "have never proved the same statement
+  size" and ships two vector sets because of it.
+* **`RNL_N` is compile-time in C**, which is why `KAT/pem/` skips the C CLI at n = 64.
+* The four sampling sites use three different draw widths — RNL 24-bit, Stern-F 32-bit
+  (documented to 2^32), QC-MDPC 16-bit (undocumented, #277) — plus one *guarded* limit,
+  `hpke_stern_f_decap`'s refusal above `C(n,t) > 2^32`, which is the only one that fails
+  loudly.
+* `KEYBITS = 256` is structural for the classical quartet, and the assembly/Arduino targets
+  run 32-bit GF and `RNL_N = 32`; both are recorded demo-only positions, not defects.
+
+**What this item should produce.**  A table, one row per primitive, four cells plus a
+maximum and a reason — the same shape `check_language_parity.py`'s manifest already uses,
+which is why it is the natural place to put it.  Then the question each row forces: is the
+narrowest cell deliberate (assembly widths, demo-only rows) or accidental (a `uint32` chosen
+before anyone asked how wide the statement needed to be)?  Only the accidental ones are work;
+the point of the table is that today nobody can tell them apart.
+
+**Make it self-invalidating, like every other table in `spec/`.**  A primitive with no width
+row fails generation, and a row whose four cells have CONVERGED fails until it is deleted --
+the orphan rule #269 uses one level down, which is what stops a fixed asymmetry leaving a
+stale claim behind.  That is the part that keeps this from becoming a document nobody reruns.
+
+**Not in scope:** raising any width.  This item establishes what the widths ARE and which
+disagreements are accidental.  Acting on a row is that row's own item, as #277 is for the
+QC-MDPC draw.
 
 Status: **OPEN**
