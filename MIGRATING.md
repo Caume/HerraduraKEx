@@ -695,3 +695,46 @@ accepted-but-meaningless input becoming an error is the same class as section 11
 (v6.5.0) and follows the precedent set there and at v6.4.0. Nothing that ever *worked*
 stops working; only invocations that were silently not doing what they claimed now say
 so.
+
+---
+
+## 14. The QC-MDPC seed expansion: C's counter placement, and the draw width (v6.6.0)
+
+**Who is affected:** C callers who derive an `hpke-stern-kem` key from a *fixed* seed by
+calling `qcprf_init` + `qcmdpc_keygen` in `herradura.h` directly. Nothing on the CLI
+surface reaches this — no subcommand accepts a QC-MDPC seed, `genpkey` draws one from
+`/dev/urandom` — and no PEM, ciphertext or session key changes format. Keys and
+ciphertexts written by any earlier build remain readable and interoperable.
+
+**What changed, part one: C agreed with nobody.** The PRF that expands a 256-bit seed
+into private supports is `block_i = nl_fscx_revolve_v1(ROL(seed ⊕ i, n/8), seed ⊕ i, n/4)`
+in counter mode. Python, Go and Java XOR the counter `i` into the **low** bits of the
+seed integer; C XORed it into the **top four bytes**. Block 0 therefore agreed — `i` is 0
+there, and the XOR is a no-op — and every block after it did not. One keygen draws two
+blocks, so C's second private support, and every encapsulation error vector, differed
+from the other three languages' for the same seed.
+
+It survived because nothing ever asked: the seed is freshly random at every keygen, only
+the resulting key travels on the wire, and no vector required one language to reproduce
+another's expansion. C is now aligned with the other three (a 3–1 split resolved toward
+the majority), and security test **[52]** — Java's **[34]** — pins the expansion of a
+fixed seed in all four languages so the class cannot recur.
+
+**What changed, part two: the draw is sized from its modulus.** `qcprf_uniform_idx` drew
+16-bit words and rejected above `lim = floor(65536/m)·m`. Above `m = 65536` that floor is
+zero, so `lim` is zero, every draw is rejected and the loop **never exits** — in C
+`w >= 0` is vacuously true for a `uint16_t`, so the compiler is entitled to assume it
+never does. It draws `ceil(log2(m)/8)` bytes instead, which is **2 for every modulus below
+65537**: the deployed `r = 523` / `2r = 1046`, and BIKE-128's and BIKE-192's moduli,
+consume the keystream exactly as before. Only a modulus past 65536 crosses a byte
+boundary.
+
+**What to do.** If you have pinned a QC-MDPC seed anywhere in C — a test fixture, a
+reproducible-build script — regenerate the expected key. If you have not, there is
+nothing to do; a randomly seeded keygen is unaffected in every language.
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, CLI flag or `--algo`
+behaviour changed, and no stored artifact becomes unreadable or non-interoperable. What
+changed is which key a *given seed* produces in one language, on a header API with no
+CLI path to it. It is a MINOR bump because the Go package gains one exported function
+(`QcMdpcPrfDraw`), which its security-test harness needs to reach the sampler at all.

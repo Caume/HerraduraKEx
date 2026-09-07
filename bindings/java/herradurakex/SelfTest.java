@@ -34,7 +34,8 @@ import java.security.SecureRandom;
  * [20] hpake [21] ratchet [22] hdrbg [23] hpks_t [24] fpe_twk [25] duplex
  * [26] hpks_stern_ring [27] rnl_m_blind_guard [28] zkp_nl_zkboo
  * [29] zkp_nl_zkbpp [30] rnl_sigma [31] hcred_kkw
- * [32] qcmdpc_weak_key_screen [33] hske_nl_aead. New checks append at [34]
+ * [32] qcmdpc_weak_key_screen [33] hske_nl_aead
+ * [34] qcprf_seed_expansion. New checks append at [35]
  * onward; a check's
  * number is never reassigned once given, matching TODO.md/TODO_DONE.md's
  * own numbering discipline (TODO #154).
@@ -1009,6 +1010,64 @@ public final class SelfTest {
                 fails++;
             } else {
                 System.out.println("PASS [33] hske_nl_aead");
+            }
+        }
+
+        // [34] The QC-MDPC PRF's seed expansion (TODO #277).
+        //
+        // A four-way PINNED vector, and it exists because the four languages
+        // did not agree.  C XORed the counter into the TOP four bytes of the
+        // seed while Python, Go and Java XORed it into the LOW bits, so the
+        // FIRST 256-bit block agreed -- ctr is 0 there -- and every block after
+        // it did not.  Nothing caught a 3-1 split for the life of the protocol:
+        // the seed is freshly random at every keygen, only the resulting key
+        // travels on the wire, and no vector ever asked one language to
+        // reproduce another's expansion of a given seed.  Hence a vector rather
+        // than a round-trip.
+        //
+        // Case (b) is deliberately the SECOND support drawn from one PRF, not
+        // the first: the first is one block and would have passed throughout.
+        {
+            int[] expA = {4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510};
+            int[] expB = {0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480};
+            int[] expC = {0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
+                          823, 866, 1001, 1033};
+            int[] expD = {15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122};
+            // the draw width is a function of the modulus, not a constant
+            int[][] widths = {{523, 2}, {1046, 2}, {12323, 2}, {24646, 2},
+                              {49318, 2}, {81946, 3}, {1 << 24, 3}, {(1 << 24) + 1, 4}};
+
+            Stern.QcMdpcPrf prf = new Stern.QcMdpcPrf(BigInteger.ONE);
+            int[] gotA = prf.sparseSupport(523, 15);
+            int[] gotB = prf.sparseSupport(523, 15);   // crosses into block ctr=1
+            int[] gotC = new Stern.QcMdpcPrf(BigInteger.ONE).sparseSupport(1046, 18);
+            // past the old 16-bit ceiling: terminates, and agrees with the
+            // others.  The 16-bit-only sampler could not serve this modulus and
+            // did not refuse either -- its acceptance limit was zero, so it
+            // rejected every draw and spun forever.
+            int[] gotD = new Stern.QcMdpcPrf(BigInteger.valueOf(7)).sparseSupport(81946, 10);
+            for (int[] v : new int[][]{gotA, gotB, gotC, gotD}) java.util.Arrays.sort(v);
+
+            int badW = 0;
+            for (int[] w : widths) if (Stern.QcMdpcPrf.idxBytes(w[0]) != w[1]) badW++;
+            boolean guarded = false;
+            try {
+                new Stern.QcMdpcPrf(BigInteger.ONE).uniformIdx(0);
+            } catch (IllegalArgumentException e) {
+                guarded = true;
+            }
+
+            boolean okA = java.util.Arrays.equals(gotA, expA);
+            boolean okB = java.util.Arrays.equals(gotB, expB);
+            boolean okC = java.util.Arrays.equals(gotC, expC);
+            boolean okD = java.util.Arrays.equals(gotD, expD);
+            if (!okA || !okB || !okC || !okD || badW != 0 || !guarded) {
+                System.out.println("FAIL [34] qcprf_seed_expansion (first=" + okA
+                        + " second=" + okB + " 2r=" + okC + " m81946=" + okD
+                        + " widths=" + badW + " guard=" + guarded + ")");
+                fails++;
+            } else {
+                System.out.println("PASS [34] qcprf_seed_expansion");
             }
         }
 

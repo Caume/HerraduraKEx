@@ -16104,3 +16104,116 @@ guard.  `test_ring.sh` gained the writer-side rejection in all four, reading k_m
 `spec/` rather than hardcoding it.
 
 Status: **DONE v6.5.6** — the threshold cap removed (it was never on the wire), and the ring cap enforced at every writer (it always was).
+
+### #277: widen the QC-MDPC index draw past 16 bits
+
+TODO #276 §8 found the ceiling: `qcprf_uniform_idx` draws **16-bit** words and rejects above
+`lim = floor(65536/m)*m`.  Keygen samples modulo `r`, but **encapsulation samples modulo
+`2r`**, which is the binding one and the one nobody would think to look at.
+
+| modulus | | 16-bit `lim` | acceptance |
+|---|---|---|---|
+| deployed encap | `2r` = 1046 | 64852 | 98.96% |
+| BIKE-128 encap | `2r` = 24646 | 49292 | 75.21% |
+| BIKE-192 encap | `2r` = 49318 | 49318 | 75.25% — the last multiple that works at all |
+| BIKE-256 encap | `2r` = 81946 | **0** | **0% — non-terminating** |
+
+**The defect is the failure MODE, not the ceiling.**  Above 65536 there is no guard anywhere
+in any of the four languages: `lim` is 0 and the rejection loop spins forever.  In C it is
+`do { w = qcprf_word16(prf); } while (w >= lim);` on a `uint16_t`, where `w >= 0` is
+vacuously true, so the compiler is entitled to assume the loop never exits.  Python's
+`while True: ... if w < lim` is the same shape.  A caller who raises the parameters gets a
+hang with no diagnostic, not an error.
+
+**Two parts, and the first is worth doing on its own.**
+
+1. **Guard it now**, independently of any parameter change and independently of #276
+   landing.  A `lim == 0` check that raises is three lines per language and converts a hang
+   into a message.  The suite already has the right pattern one file over:
+   `_stern_random_weight_t` uses 4-byte rejection and *documents* its domain -- "eliminates
+   modular bias for any n <= 2^32".  The QC-MDPC sampler is the only one of the four
+   sampling sites in the suite with an undocumented ceiling.
+2. **Widen the draw**, which is what actually unblocks BIKE-192 and BIKE-256.
+
+**Widening is not free, and the arithmetic is counter-intuitive.**  A 256-bit PRF block
+yields 16 words at 16 bits but only 8 at 32, while acceptance rises from 75% to 99.9998%.
+Net, at BIKE-128, the blocks per operation go **up**:
+
+| | 16-bit | 32-bit |
+|---|---|---|
+| keygen (142 indices mod `r`) | 151 draws, 10 blocks | 142 draws, **18 blocks** |
+| encap (134 indices mod `2r`) | 178 draws, 12 blocks | 134 draws, **17 blocks** |
+
+So "widen to 32 bits" costs ~50-80% more `nl_fscx_revolve_v1` invocations at the parameters
+#276 recommends, buying headroom that BIKE-128 does not need.  **24-bit draws are the
+natural middle** and already have precedent in this suite -- `_rnl_rand_poly` uses 3-byte
+rejection sampling for `Z_q` -- giving ~100% acceptance to 2^24 = 16.7M (well past
+BIKE-256's 81946) at 10 words per block, so ~14 blocks.  Sizing the draw from the modulus
+(`ceil(log2(m)/8)` bytes) is the general form and costs nothing at the deployed parameters.
+Pick deliberately; do not reach for 32 because it is the round number.
+
+**Scope.**  Four languages (`herradura.h` `qcprf_uniform_idx`, Go, Python `_QcMdpcPrf`,
+`Stern.java`).  Changing the draw width **changes the keystream consumption pattern and
+therefore every key and error vector a given seed produces**, so it is KAT-breaking for any
+pinned QC-MDPC artifact even though it is not wire-format breaking.  Doing it in the same
+release as #276's parameter change costs nothing extra; doing it separately means two
+regenerations of the same vectors.  Note also `uint16_t sup0[QCMDPC_D]` and
+`uint16_t sup_e[QCMDPC_T]` in C, which independently cap `2r` at 65536 and must widen with
+the draw or the ceiling simply moves one line down.
+
+**RESOLVED (v6.6.0), and by a route the item did not anticipate — plus a defect it
+did not know about.**
+
+**1. The width is now DERIVED, not chosen.**  The item asked which constant to
+pick and argued against 32.  There is no constant: `qcprf_uniform_idx` draws
+`ceil(log2(m)/8)` bytes, the smallest width that can represent the modulus at
+all.  That is 2 for every `m` below 65537, so the deployed `r = 523` / `2r = 1046`
+and BIKE-128's and BIKE-192's moduli consume the keystream **byte-identically to
+the 16-bit-only sampler** — no pinned QC-MDPC artifact moves, and the item's
+KAT-breaking warning does not apply.  Only BIKE-256's `2r = 81946` crosses a
+boundary, to three bytes at 99.64% acceptance.  This reaches the item's own
+"24-bit is the natural middle" conclusion without having to decide it.
+
+**2. The hang is removed, not diagnosed.**  Part 1 proposed a `lim == 0` guard to
+turn the hang into a message.  Sizing from the modulus makes `lim >= m > 0`
+unconditionally below 2^32, so there is no zero-limit state left to guard.  A
+guard remains for `m` past the 4-byte width and for `m < 1`, but it is reachable
+only from Python, where an index is an unbounded int; in C, Go and Java the
+modulus is an `int`/`uint32_t` and cannot exceed the draw width.  C's
+`qcprf_sparse_support` keeps a separate, LOWER cap with its own diagnostic: its
+`uint16_t` output arrays bind at 65536 well before the draw does, which is the
+"the ceiling moves one line down" the item warned about, now stated where it
+lives rather than discovered later.
+
+**3. THE FINDING: C's seed expansion agreed with nobody, and had all along.**
+Verifying the change was a no-op at the deployed parameters is what exposed it.
+Python, Go and Java XOR the PRF counter into the **low** bits of the seed
+integer; C XORed it into the **top four bytes**.  Block 0 agreed — the counter is
+0 there — and every block after it did not, so C's second private support and
+every encapsulation error vector differed from the other three's for the same
+seed.  C is now aligned with the 3-1 majority.
+
+It survived the life of the protocol because nothing ever asked: the seed is
+freshly random at every keygen, only the resulting KEY travels on the wire, and
+no vector required one language to reproduce another's expansion.  Every
+round-trip and interop test passed throughout.  That is precisely the class
+#278 exists to look for, and it is now a worked example rather than a
+hypothesis.
+
+**4. Security test [52]** (Java's **[34]**) pins a fixed seed's expansion in all
+four languages — the check that would have caught it.  Case (b) is deliberately
+the SECOND support drawn from one PRF: the first is one block and would have
+passed throughout.  It also pins the width rule and draws past 65536.  Python
+and Go call the suite rather than keeping a local copy, since a second opinion
+about the byte order in dispute proves nothing; that is why the Go package now
+exports `QcMdpcPrfDraw` (its harness is a separate module and cannot reach the
+unexported sampler, where C's static header, Python's module and Java's
+package-private nested class are all readable in place).
+
+**5. `MIGRATING.md` section 14** records (3) for C callers who derive a key from
+a fixed seed through `herradura.h` directly.  No CLI path reaches it.
+
+Status: **DONE v6.6.0** — the draw is sized from its modulus, which removes the
+ceiling below 2^32 with no change at any already-served width; and C's PRF
+counter placement, which had disagreed with the other three languages since the
+protocol shipped, is fixed and pinned by test [52].

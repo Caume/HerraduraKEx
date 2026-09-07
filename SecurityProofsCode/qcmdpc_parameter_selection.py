@@ -724,42 +724,50 @@ def section8(S, quick):
   from ideal supports rather than from the shipped one -- so both are checked
   here rather than assumed.
 
-  (a) The 16-bit ceiling.  qcprf_uniform_idx draws 16-bit words and rejects
-  above lim = floor(65536/m)*m.  When m > 65536 that floor is 0, lim is 0, and
-  the rejection loop never terminates -- in C `w >= 0` is vacuously true for a
-  uint16_t.  Keygen samples modulo r; ENCAPSULATION samples modulo 2r, which is
-  the binding one:
+  (a) The draw width.  This pass originally found a hard 16-bit ceiling here:
+  qcprf_uniform_idx drew 16-bit words and rejected above lim = floor(65536/m)*m,
+  so at m > 65536 the floor was 0, lim was 0, and the rejection loop never
+  terminated -- in C `w >= 0` is vacuously true for a uint16_t.  Keygen samples
+  modulo r; ENCAPSULATION samples modulo 2r, which is the binding one, and
+  BIKE-256's 2r = 81946 sat above it.  TODO #277 sized the draw from the modulus
+  instead (the smallest w with 256^w >= m), which removes the ceiling below 2^32
+  and is a no-op at every width that was already served -- so this section now
+  checks that the sampler REACHES each level rather than where it stops:
 """)
     caps = []
     for lbl, m in (('deployed keygen   r', 523), ('deployed encap   2r', 1046),
                    ('BIKE-128 keygen   r', 12323), ('BIKE-128 encap   2r', 24646),
                    ('BIKE-192 encap   2r', 49318), ('BIKE-256 encap   2r', 81946)):
-        lim = (0x10000 // m) * m
-        caps.append((m, lim))
-        state = 'OK' if lim else '*** lim = 0: NON-TERMINATING ***'
-        print(f"      {lbl} = {m:>6}   lim = {lim:>6}   accept "
-              f"{(lim / 65536 * 100):>6.2f}%   {state}")
-    bike256_ok = caps[-1][1] != 0
+        nb = S._qcprf_idx_bytes(m)
+        span = 1 << (8 * nb)
+        lim = (span // m) * m
+        old = (0x10000 // m) * m
+        caps.append((m, nb, lim, old))
+        print(f"      {lbl} = {m:>6}   {nb}-byte draw   accept "
+              f"{(lim / span * 100):>6.2f}%   (16-bit-only: "
+              f"{'lim = 0, NON-TERMINATING' if not old else f'{old / 65536 * 100:.2f}%'})")
+    # every level reachable, and unchanged wherever two bytes already sufficed
+    all_reachable = all(lim > 0 for _, _, lim, _ in caps)
+    unchanged     = all(nb == 2 for _, nb, _, old in caps if old)
     print("""
-  So BIKE-128 fits with 75% acceptance on the encapsulation draw, BIKE-192 fits
-  at exactly one multiple (lim = 2r, the last value that works at all), and
-  **BIKE-256 is unreachable** without widening the PRF to 32-bit words.  That is
-  not a reason against BIKE-128, but it is a hard ceiling one level above it,
-  and it is invisible from the parameters alone.  r prime keeps lim non-zero for
-  every admissible r below the ceiling, so §4's constraint covers the other
-  degenerate case for free.
+  Every level is now reachable, and the three that a two-byte draw already
+  served consume the keystream exactly as before -- so no pinned QC-MDPC
+  artifact moves.  Only BIKE-256's encapsulation modulus crosses a byte
+  boundary, to three bytes at 99.64% acceptance.  r prime keeps lim non-zero for
+  every admissible r anyway, so §4's constraint covers the degenerate
+  power-of-two case for free.
 
-  (b) Output volume.  One 256-bit block yields 16 words, and a rejected or
-  duplicate draw costs another:
+  (b) Output volume.  A 256-bit block yields 16 words at the two-byte width
+  every set below uses, and a rejected or duplicate draw costs another:
 """)
     class Counting(S._QcMdpcPrf):
         def __init__(self, seed):
             super().__init__(seed)
             self.n = 0
 
-        def word16(self):
+        def word(self, nbytes):
             self.n += 1
-            return super().word16()
+            return super().word(nbytes)
 
     vols = {}
     for r, d, t in ((523, 15, 18), (12323, 71, 134)):
@@ -807,8 +815,7 @@ def section8(S, quick):
 
     # counter-mode structure: 12 blocks off one seed
     seed = int.from_bytes(os.urandom(32), 'big') & S._QCMDPC_MASK
-    blocks = [sum(w << (16 * i) for i, w in enumerate(S._qcprf_refill(seed, c)))
-              for c in range(12)]
+    blocks = [int.from_bytes(S._qcprf_refill(seed, c), 'big') for c in range(12)]
     ham = [bin(blocks[i] ^ blocks[j]).count('1')
            for i in range(12) for j in range(i + 1, 12)]
     mean_ham = sum(ham) / len(ham)
@@ -823,7 +830,7 @@ def section8(S, quick):
   sample can see, and the PRF's own trail behaviour is #254's subject, not this
   item's.
 """)
-    return bike256_ok, vols, out, mean_ham
+    return (all_reachable, unchanged), vols, out, mean_ham
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -874,12 +881,11 @@ def section9(cal, worst_dep, match_mult, fast_ms, prf_cap):
 
   What the change touches, beyond the four constants:
 
-    the PRF's 16-bit draw  nothing at BIKE-128, which fits with 75% acceptance
-                           on the encapsulation modulus -- but qcprf_uniform_idx
-                           cannot sample above 65536, so BIKE-192 sits on the
-                           last usable multiple and BIKE-256 would need 32-bit
-                           words (§8).  A ceiling one level up, invisible from
-                           the parameters.
+    the PRF's draw width   nothing.  This pass found a 16-bit ceiling that put
+                           BIKE-256 out of reach and hung rather than failing;
+                           TODO #277 sized the draw from the modulus, which
+                           removes it below 2^32 and leaves every already-served
+                           width byte-identical (§8).  Nothing here to do.
     the threshold rule     in all four languages, and it is not a constant --
                            it is a different FUNCTION of a different argument
                            (§5).  NB_ITER 20 -> 5 comes with it.
@@ -955,9 +961,12 @@ def main():
 
     fast_ms = section7(S, Q, dep, args.quick)
 
-    bike256_ok, vols, chis, mean_ham = section8(S, args.quick)
-    if bike256_ok:
-        fail.append('§8: the 16-bit PRF ceiling no longer excludes BIKE-256')
+    (all_reachable, unchanged), vols, chis, mean_ham = section8(S, args.quick)
+    if not all_reachable:
+        fail.append('§8: a BIKE level is unreachable by the index sampler')
+    if not unchanged:
+        fail.append('§8: a modulus a two-byte draw used to serve now takes more, '
+                    'which moves every pinned QC-MDPC artifact')
     if vols[12323][1] > 16 * 24:
         fail.append(f'§8: encap now needs {vols[12323][1]} PRF words')
     for r, (chi, dof) in chis.items():
@@ -967,7 +976,7 @@ def main():
     if not 110 <= mean_ham <= 146:
         fail.append(f'§8: counter-mode blocks correlated (mean Hamming {mean_ham:.1f})')
 
-    section9(cal, worst, match, fast_ms, bike256_ok)
+    section9(cal, worst, match, fast_ms, all_reachable)
 
     print()
     if fail:

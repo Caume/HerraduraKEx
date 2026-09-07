@@ -5360,41 +5360,74 @@ const (
 type qcMdpcPrf struct {
 	seed *big.Int // 256-bit
 	ctr  uint64
-	buf  []int
+	buf  []byte
+	pos  int
 }
+
+// qcprfMaxIdxBytes is the widest uniform draw the sampler serves.  Raising it
+// needs the index types of every consumer widened with it.
+const qcprfMaxIdxBytes = 4
 
 func newQcMdpcPrf(seed *big.Int) *qcMdpcPrf {
 	m := bitArrayMask(256)
 	return &qcMdpcPrf{seed: new(big.Int).And(seed, m)}
 }
 
-func (p *qcMdpcPrf) word16() int {
-	if len(p.buf) == 0 {
+// word returns the next nbytes of keystream, big-endian.  A block that cannot
+// serve a whole word is discarded rather than straddled, so a draw never
+// depends on two blocks.  At the two-byte width every block divides evenly and
+// nothing is discarded at all.
+func (p *qcMdpcPrf) word(nbytes int) uint64 {
+	if p.pos+nbytes > len(p.buf) {
 		x := NewBitArray(256, new(big.Int).Xor(p.seed, new(big.Int).SetUint64(p.ctr)))
-		rolx := x.RotateLeft(256 / 8)              // 32
-		block := NlFscxRevolveV1(rolx, x, 256/4)   // 64
-		bval := &block.Val
-		words := make([]int, 16)
-		for k := 0; k < 16; k++ {
-			w := new(big.Int).Rsh(bval, uint(16*k))
-			words[k] = int(new(big.Int).And(w, big.NewInt(0xFFFF)).Int64())
-		}
-		p.buf = words
+		rolx := x.RotateLeft(256 / 8)            // 32
+		block := NlFscxRevolveV1(rolx, x, 256/4) // 64
+		p.buf = block.Val.FillBytes(make([]byte, 32))
+		p.pos = 0
 		p.ctr++
 	}
-	// pop last (matches Python list.pop())
-	i := len(p.buf) - 1
-	v := p.buf[i]
-	p.buf = p.buf[:i]
-	return v
+	var w uint64
+	for k := 0; k < nbytes; k++ {
+		w = w<<8 | uint64(p.buf[p.pos])
+		p.pos++
+	}
+	return w
 }
 
-func (p *qcMdpcPrf) uniformIdx(r int) int {
-	lim := (0x10000 / r) * r
+// qcprfIdxBytes is the number of bytes one uniform draw below m needs: the
+// smallest w with 256^w >= m.  Sizing the draw from the modulus rather than
+// fixing it at two bytes is what lifts the sampler's ceiling (TODO #277).  It
+// costs nothing where it matters: w is 2 for every modulus below 65537, so the
+// deployed r = 523 / 2r = 1046 and BIKE-128's and BIKE-192's moduli all consume
+// the keystream exactly as the 16-bit-only sampler did, and every pinned
+// QC-MDPC artifact still holds.
+func qcprfIdxBytes(m int) int {
+	w := 1
+	for w < qcprfMaxIdxBytes && uint64(m-1)>>(8*w) != 0 {
+		w++
+	}
+	return w
+}
+
+// uniformIdx returns a uniform index in [0, m) by rejection sampling.  It
+// panics on a modulus it cannot serve instead of looping: above the draw width
+// the acceptance limit is zero and every draw is rejected, so the unguarded
+// form is an infinite loop with no diagnostic rather than an error (TODO #277).
+func (p *qcMdpcPrf) uniformIdx(m int) int {
+	if m < 1 {
+		panic(fmt.Sprintf("qcprf uniformIdx: modulus must be >= 1, got %d", m))
+	}
+	nb := qcprfIdxBytes(m)
+	span := uint64(1) << (8 * nb)
+	if uint64(m) > span {
+		panic(fmt.Sprintf("qcprf uniformIdx: modulus %d exceeds the sampler's "+
+			"%d-bit draw width", m, 8*qcprfMaxIdxBytes))
+	}
+	lim := (span / uint64(m)) * uint64(m)
 	for {
-		w := p.word16()
+		w := p.word(nb)
 		if w < lim {
-			return w % r
+			return int(w % uint64(m))
 		}
 	}
 }
@@ -5411,6 +5444,18 @@ func (p *qcMdpcPrf) sparseSupport(r, d int, exclude map[int]bool) []int {
 		sup = append(sup, i)
 	}
 	return sup
+}
+
+// QcMdpcPrfDraw draws n distinct indices below m from the QC-MDPC seed
+// expansion of seed, and reports the byte width the draw used.
+//
+// Exported only so the security-test harness can reach the PRF: it is a
+// separate module, while C's static header, Python's module and Java's
+// package-private nested class are all readable in place by their own
+// harnesses.  Security test [52]'s vector is the reason it exists (TODO #277).
+func QcMdpcPrfDraw(seed *big.Int, m, n int) ([]int, int) {
+	p := newQcMdpcPrf(seed)
+	return p.sparseSupport(m, n, nil), qcprfIdxBytes(m)
 }
 
 // qcpRotate returns dense * x^j mod (x^r - 1).

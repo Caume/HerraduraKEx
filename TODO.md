@@ -287,16 +287,17 @@ carry:**
   representation change; C's `qcmdpc_bgf_decode` does grow to ~123 KB of stack work arrays
   from ~7 KB, which is fine but should be a deliberate decision.
 
-**The FSCX layer carries it, with a ceiling one level up (now TODO #277).**  §11.8.5's "BIKE's production
-parameters carry over directly" is a claim about the *instance*, not the sampler, and was
-never checked against the sizes.  `qcprf_uniform_idx` draws **16-bit** words, and
-encapsulation samples modulo `2r`, not `r`: BIKE-128's 24646 is accepted 75% of the time,
-BIKE-192's 49318 is the last multiple that works at all, and BIKE-256's 81946 gives
-`lim = 0` and a **non-terminating** rejection loop (`w >= 0` is vacuously true for a
-`uint16_t`).  So BIKE-256 would need the PRF widened to 32-bit words -- not a reason against
-BIKE-128, but a limit invisible from the parameters, and **TODO #277** owns it -- including
-the guard, which is worth landing whether or not this item's parameter change ever does,
-since today the overflow HANGS rather than erroring.  Output volume rises ~6x, 2 blocks per
+**The FSCX layer carries it; the ceiling one level up is GONE (TODO #277, DONE v6.6.0).**
+§11.8.5's "BIKE's production parameters carry over directly" is a claim about the
+*instance*, not the sampler, and was never checked against the sizes.  This pass found a
+hard 16-bit ceiling: `qcprf_uniform_idx` drew **16-bit** words, and encapsulation samples
+modulo `2r`, not `r`, so BIKE-128's 24646 was accepted 75% of the time, BIKE-192's 49318
+was the last multiple that worked at all, and BIKE-256's 81946 gave `lim = 0` and a
+**non-terminating** rejection loop (`w >= 0` is vacuously true for a `uint16_t`) -- a hang,
+not an error.  #277 sized the draw from the modulus instead, which removes the ceiling
+below 2^32 and is byte-identical at every width a two-byte draw already served, so nothing
+here is left to do and no pinned artifact moves.  (#277 also found, and fixed, that C's PRF
+counter placement had disagreed with Python, Go and Java since the protocol shipped.)  Output volume rises ~6x, 2 blocks per
 operation to 10-12.  And the *shipped* sampler's supports are not distinguishable from the
 ideal ones the `MAX_MULT` figure was read off (two-sample chi2 held to 6x its dof), so that
 constant transfers rather than needing re-derivation against the FSCX PRF.
@@ -326,64 +327,6 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
   re-justified rather than left asserting nothing;
 * `spec/` and `SECURITY.md`, held to each other by `check_security_md.py`;
 * the `.s`/`.asm`/`.ino` targets stay at `r = 32` and are labelled demo-only, as #223 did.
-
-Status: **OPEN**
-
-### #277: widen the QC-MDPC index draw past 16 bits
-
-TODO #276 §8 found the ceiling: `qcprf_uniform_idx` draws **16-bit** words and rejects above
-`lim = floor(65536/m)*m`.  Keygen samples modulo `r`, but **encapsulation samples modulo
-`2r`**, which is the binding one and the one nobody would think to look at.
-
-| modulus | | 16-bit `lim` | acceptance |
-|---|---|---|---|
-| deployed encap | `2r` = 1046 | 64852 | 98.96% |
-| BIKE-128 encap | `2r` = 24646 | 49292 | 75.21% |
-| BIKE-192 encap | `2r` = 49318 | 49318 | 75.25% — the last multiple that works at all |
-| BIKE-256 encap | `2r` = 81946 | **0** | **0% — non-terminating** |
-
-**The defect is the failure MODE, not the ceiling.**  Above 65536 there is no guard anywhere
-in any of the four languages: `lim` is 0 and the rejection loop spins forever.  In C it is
-`do { w = qcprf_word16(prf); } while (w >= lim);` on a `uint16_t`, where `w >= 0` is
-vacuously true, so the compiler is entitled to assume the loop never exits.  Python's
-`while True: ... if w < lim` is the same shape.  A caller who raises the parameters gets a
-hang with no diagnostic, not an error.
-
-**Two parts, and the first is worth doing on its own.**
-
-1. **Guard it now**, independently of any parameter change and independently of #276
-   landing.  A `lim == 0` check that raises is three lines per language and converts a hang
-   into a message.  The suite already has the right pattern one file over:
-   `_stern_random_weight_t` uses 4-byte rejection and *documents* its domain -- "eliminates
-   modular bias for any n <= 2^32".  The QC-MDPC sampler is the only one of the four
-   sampling sites in the suite with an undocumented ceiling.
-2. **Widen the draw**, which is what actually unblocks BIKE-192 and BIKE-256.
-
-**Widening is not free, and the arithmetic is counter-intuitive.**  A 256-bit PRF block
-yields 16 words at 16 bits but only 8 at 32, while acceptance rises from 75% to 99.9998%.
-Net, at BIKE-128, the blocks per operation go **up**:
-
-| | 16-bit | 32-bit |
-|---|---|---|
-| keygen (142 indices mod `r`) | 151 draws, 10 blocks | 142 draws, **18 blocks** |
-| encap (134 indices mod `2r`) | 178 draws, 12 blocks | 134 draws, **17 blocks** |
-
-So "widen to 32 bits" costs ~50-80% more `nl_fscx_revolve_v1` invocations at the parameters
-#276 recommends, buying headroom that BIKE-128 does not need.  **24-bit draws are the
-natural middle** and already have precedent in this suite -- `_rnl_rand_poly` uses 3-byte
-rejection sampling for `Z_q` -- giving ~100% acceptance to 2^24 = 16.7M (well past
-BIKE-256's 81946) at 10 words per block, so ~14 blocks.  Sizing the draw from the modulus
-(`ceil(log2(m)/8)` bytes) is the general form and costs nothing at the deployed parameters.
-Pick deliberately; do not reach for 32 because it is the round number.
-
-**Scope.**  Four languages (`herradura.h` `qcprf_uniform_idx`, Go, Python `_QcMdpcPrf`,
-`Stern.java`).  Changing the draw width **changes the keystream consumption pattern and
-therefore every key and error vector a given seed produces**, so it is KAT-breaking for any
-pinned QC-MDPC artifact even though it is not wire-format breaking.  Doing it in the same
-release as #276's parameter change costs nothing extra; doing it separately means two
-regenerations of the same vectors.  Note also `uint16_t sup0[QCMDPC_D]` and
-`uint16_t sup_e[QCMDPC_T]` in C, which independently cap `2r` at 65536 and must widen with
-the draw or the ceiling simply moves one line down.
 
 Status: **OPEN**
 
@@ -425,10 +368,12 @@ make, not leave.
   `KAT/hcred_kkw.json` already records that the four "have never proved the same statement
   size" and ships two vector sets because of it.
 * **`RNL_N` is compile-time in C**, which is why `KAT/pem/` skips the C CLI at n = 64.
-* The four sampling sites use three different draw widths — RNL 24-bit, Stern-F 32-bit
-  (documented to 2^32), QC-MDPC 16-bit (undocumented, #277) — plus one *guarded* limit,
-  `hpke_stern_f_decap`'s refusal above `C(n,t) > 2^32`, which is the only one that fails
-  loudly.
+* The four sampling sites used three different draw widths — RNL 24-bit, Stern-F 32-bit
+  (documented to 2^32), QC-MDPC 16-bit (undocumented) — plus one *guarded* limit,
+  `hpke_stern_f_decap`'s refusal above `C(n,t) > 2^32`, which was the only one that failed
+  loudly.  #277 has since made the QC-MDPC draw a FUNCTION of its modulus rather than a
+  constant, which is the shape this axis should probably prefer wherever a width is
+  derivable: it cannot be wrong, and it needs no documenting.
 * `KEYBITS = 256` is structural for the classical quartet, and the assembly/Arduino targets
   run 32-bit GF and `RNL_N = 32`; both are recorded demo-only positions, not defects.
 
@@ -447,5 +392,30 @@ stale claim behind.  That is the part that keeps this from becoming a document n
 **Not in scope:** raising any width.  This item establishes what the widths ARE and which
 disagreements are accidental.  Acting on a row is that row's own item, as #277 is for the
 QC-MDPC draw.
+
+**A WORKED EXAMPLE, found while #277 was being closed (v6.6.0).**  This item was filed on
+the argument that the five existing axes cannot see a numeric disagreement.  One turned up
+immediately, and it is worse than a numeric one: **C XORed the QC-MDPC PRF counter into the
+top four bytes of the seed where Python, Go and Java XOR it into the low bits**, so block 0
+agreed (the counter is 0 there) and every block after it did not.  A 3-1 split in a shipped
+primitive, undetected for the life of the protocol.
+
+Two things about the shape of it are worth carrying into this item's design:
+
+* **Nothing was wrong at the level the five axes inspect.**  The function exists in all four
+  languages, has a manifest entry, dispatches its `--algo` tag, takes the same flags with the
+  same value sets, and round-trips.  The disagreement lived one level below all of that, in
+  a byte layout that only shows up if two languages are asked to expand the *same* seed --
+  which nothing ever did, because the seed is freshly random at every keygen and only the
+  resulting key travels on the wire.
+* **The fix that catches it is a VECTOR, not a check.**  Security test [52] pins the
+  expansion of a fixed seed in four languages.  No amount of source inspection would have
+  found this; the axis this item builds should say, for each width row, whether a pinned
+  artifact exercises it -- a width nothing pins is a width nothing checks.
+
+So this item should probably widen slightly from "which primitives cap the security
+parameter" to "which primitives have a per-language representation choice that nothing
+pins" -- the QC-MDPC counter is not a width at all, and the census that would have caught
+it is the same census.
 
 Status: **OPEN**

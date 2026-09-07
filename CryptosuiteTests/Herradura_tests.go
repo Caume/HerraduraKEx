@@ -47,6 +47,7 @@ import (
 	"math/bits"
 	mrand "math/rand"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1669,6 +1670,7 @@ func main() {
 	testRnlMBlindGuard()
 	testHcredKkw()
 	testQcmdpcWeakKeyScreen()
+	testQcprfSeedExpansion()
 
 	// Failure gate (TODO #233).  Exit non-zero if any check reported [FAIL],
 	// so that `native-go` can actually fail.  There is no allow-list: the C
@@ -2176,6 +2178,85 @@ var (
 	// cyclic multiplicity 6, non-cyclic 5 -- the fold discriminator
 	qcSupWrap = []int{0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522}
 )
+
+// [52] The QC-MDPC PRF's seed expansion (TODO #277).
+//
+// A four-way PINNED vector, and it exists because the four languages did not
+// agree.  C XORed the counter into the TOP four bytes of the seed while
+// Python, Go and Java XORed it into the LOW bits, so the FIRST 256-bit block
+// agreed -- ctr is 0 there -- and every block after it did not.  Nothing
+// caught a 3-1 split for the life of the protocol: the seed is freshly random
+// at every keygen, only the resulting key travels on the wire, and no vector
+// ever asked one language to reproduce another's expansion of a given seed.
+// Hence a vector rather than a round-trip.
+//
+// Case (b) is deliberately the SECOND support drawn from one PRF, not the
+// first: the first is one block and would have passed throughout.  It is read
+// out of QcMdpcKeygen because that is the real consumer of a two-support draw.
+var (
+	qcprfExpA = []int{4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510}
+	qcprfExpB = []int{0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480}
+	qcprfExpC = []int{0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
+		823, 866, 1001, 1033}
+	qcprfExpD = []int{15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122}
+	// the draw width is a function of the modulus, not a constant
+	qcprfWidths = [][2]int{{523, 2}, {1046, 2}, {12323, 2}, {24646, 2},
+		{49318, 2}, {81946, 3}, {1 << 24, 3}, {(1 << 24) + 1, 4}}
+)
+
+func qcprfPassFail(ok bool) string {
+	if ok {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func qcprfEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func qcprfSorted(v []int) []int {
+	out := append([]int(nil), v...)
+	sort.Ints(out)
+	return out
+}
+
+func testQcprfSeedExpansion() {
+	fmt.Println("[52] QC-MDPC PRF seed expansion (cross-language vector)")
+	seed1 := make([]byte, 32)
+	seed1[31] = 1
+	sup0, sup1, _, _, _ := QcMdpcKeygen(seed1)
+	badA := !qcprfEqual(qcprfSorted(sup0), qcprfExpA)
+	badB := !qcprfEqual(qcprfSorted(sup1), qcprfExpB)
+
+	// (c) the encapsulation modulus, 2r
+	c, _ := QcMdpcPrfDraw(big.NewInt(1), 2*QcMdpcR, QcMdpcT)
+	badC := !qcprfEqual(qcprfSorted(c), qcprfExpC)
+
+	// (d) past the old 16-bit ceiling: terminates, and agrees with the others.
+	// The 16-bit-only sampler could not serve this modulus and did not refuse
+	// either -- its acceptance limit was zero, so it spun forever.
+	d, _ := QcMdpcPrfDraw(big.NewInt(7), 81946, 10)
+	badD := !qcprfEqual(qcprfSorted(d), qcprfExpD)
+
+	badW := 0
+	for _, w := range qcprfWidths {
+		if _, nb := QcMdpcPrfDraw(big.NewInt(3), w[0], 1); nb != w[1] {
+			badW++
+		}
+	}
+	ok := !badA && !badB && !badC && !badD && badW == 0
+	fmt.Printf("    seed-1 first=%v second=%v  2r=%v  widths=%d  m=81946=%v  [%s]\n\n",
+		!badA, !badB, !badC, badW, !badD, qcprfPassFail(ok))
+}
 
 func testQcmdpcWeakKeyScreen() {
 	fmt.Println("[51] QC-MDPC weak-key screen (distance spectrum)  [SECURITY]")
