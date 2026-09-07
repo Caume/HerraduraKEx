@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v6.5.6)
+# Herradura Cryptographic Suite (v6.5.7)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -323,7 +323,7 @@ SecurityProofs-8.md                                 — formal analysis §11.34�
                                                       exact row analysis, weak keys; the
                                                       asymptotic differential and linear
                                                       slopes, measured exactly)
-SecurityProofs-9.md                                 — formal analysis §11.37–§11.38 (the width
+SecurityProofs-9.md                                 — formal analysis §11.37–§11.39 (the width
                                                       residue #252 and #254 shared; the
                                                       annealed threshold evaluated exactly
                                                       at n = 256)
