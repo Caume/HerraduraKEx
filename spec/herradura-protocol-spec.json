@@ -2711,6 +2711,9 @@
     "hkex_rnl": {
       "n": 1024
     },
+    "hpks_ring": {
+      "k_max": 64
+    },
     "_note": "Assembly/Arduino targets use reduced demo parameters: Stern-F N=32 t=2 rounds=4 (vs. the C/Go/Python values above), GF arithmetic on 32-bit operands instead of 256-bit. See CLAUDE.md 'Protocol Stack' and TODO.md #133."
   }
 }

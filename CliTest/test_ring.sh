@@ -100,6 +100,44 @@ for v in $langs; do
     fi
 done
 
+# ── TODO #272: RING_MAX_K is enforced by every WRITER, not just C's ─────────
+# k is on the wire (the signature declares its member count) and every reader
+# has bounded it at 64 since TODO #240, which adopted C's RING_MAX_K.  Only C's
+# WRITER enforced it, so Python, Go and Java each signed rings that every
+# verifier -- including their own -- then refused: an unverifiable signature
+# returned with exit 0, at 452 KB for k=65.
+#
+# The accept-control for this is the whole rest of this file, which signs and
+# verifies small rings in every language; a limit that refused everything would
+# fail those long before reaching here.  Only the rejection needs asserting, and
+# only the writer side, since the readers have agreed since #240.
+echo "--- TODO #272: a ring larger than RING_MAX_K is refused at SIGN time ---"
+K_MAX=$(python3 -c "import json;print(json.load(open('$ROOT/spec/herradura-protocol-spec.json'))['parameters']['hpks_ring']['k_max'])")
+over=$((K_MAX + 1))
+i=1
+while [ $i -le $over ]; do
+    $PY genpkey --algo hpks-stern --out "$TMP/rk$i.pem" 2>/dev/null
+    $PY pkey --in "$TMP/rk$i.pem" --pubout --out "$TMP/rp$i.pem" 2>/dev/null
+    i=$((i + 1))
+done
+big=""
+i=1
+while [ $i -le $over ]; do big="$big$TMP/rp$i.pem,"; i=$((i + 1)); done
+big="${big%,}"
+for v in $langs; do
+    out=$(${CLI[$v]} sign --algo hpks-ring --key "$TMP/rk1.pem" --ring "$big" \
+            --in "$TMP/msg.bin" --out "$TMP/over.pem" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo "FAIL ring $v signed a $over-member ring (max $K_MAX); no verifier accepts it"
+        FAIL=$((FAIL+1))
+    elif echo "$out" | grep -qiE "ring|members"; then
+        echo "PASS ring $v refuses a $over-member ring at sign time"; PASS=$((PASS+1))
+    else
+        echo "FAIL ring $v refused but not for the ring size: $(echo "$out" | tail -1)"
+        FAIL=$((FAIL+1))
+    fi
+done
+
 echo
 echo "test_ring: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

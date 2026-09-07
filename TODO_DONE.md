@@ -16025,3 +16025,82 @@ as recording existing asymmetries; this is it preventing a new one.
 `defect` row appearing from here on means a fresh one rather than a backlog entry.
 
 Status: **DONE v6.5.5** — the envelope in C, Go and Java, its PBKDF2/HMAC prerequisites, a pinned KAT, and the inverted-condition bug the 4x4 matrix found in C.
+
+### #272: the C CLI's 64-value list-flag limit is arbitrary, undocumented, and unmatched
+
+**Found while verifying TODO #270**, by driving `threshold-aggregate` with 70
+commitments in each CLI and comparing each one's result against its own 64-signer
+result.
+
+C collects `--commits`/`--commit` and `--partials`/`--partial` values into a fixed
+64-entry array. Until v6.4.0 it stopped filling that array **silently and returned
+success**, so a ceremony with more than 64 signers produced an aggregate over the
+first 64 in C while Python, Go and Java used every one — the same command line
+yielding a different signature depending on which CLI aggregated it, with no
+diagnostic anywhere. Pre-existing (verified against a rebuilt pre-#270 binary) and
+invisible to every test, because nothing had ever run a ceremony larger than a handful
+of signers.
+
+**v6.4.0 made it fail loudly** (`--commits: at most 64 values supported`), asserted in
+`CliTest/test_threshold_interop.sh` along with the boundary case. **That is the
+containment, not the fix**, and this item is the fix.
+
+**The open question is what the limit should be.** The three facts that shape it:
+
+* Python, Go and Java impose no limit at all, so 64 is not a protocol constant — it is
+  one implementation's buffer size, and nothing in `spec/` or `SPEC.md` mentions it.
+* HPKS-T is an n-of-n scheme, so the signer count is a deployment choice, not a
+  parameter. There is no principled ceiling to point at.
+* C's arrays are stack-allocated in three call sites plus `get_arg_multi2`'s two
+  scratch buffers, so raising the number naively raises stack usage in all of them.
+
+Options: heap-allocate and drop the limit (matching the other three, at the cost of C's
+current allocation-free argument parsing); raise it to a documented constant and put
+that constant in `spec/`; or declare 64 a deliberate protocol-wide maximum and enforce
+it in all four, which is the only option that makes the CLIs agree rather than merely
+making C honest.
+
+**Worth checking at the same time:** whether any other C list-flag or fixed-size
+argument buffer truncates the same way. `get_arg_multi` was the one this surfaced
+through; nothing has audited the rest.
+
+**Resolution (v6.5.6).**  The open question had three options and the answer is
+DIFFERENT FOR THE TWO LIMITS, which only the audit this item asked for revealed.
+
+**Threshold signers: the limit is gone.**  The deciding fact is that the count NEVER
+REACHES THE WIRE -- the HPKST aggregate PEM is (R, C_agg, e, n), with no count field,
+so no reader can observe how many signers contributed.  That rules out option 3
+("declare 64 protocol-wide"): there is nothing to declare it in, and capping the other
+three would impose a C buffer size on them for no protocol reason.  So option 1:
+count first, heap-allocate, no ceiling.  C's "allocation-free argument parsing" was not
+a property worth preserving -- the same file mallocs for every PEM and DER buffer it
+touches.  A 70-signer ceremony now yields a BYTE-IDENTICAL aggregate in all four.
+
+**A second silent truncation, in the same function pair.**  `get_arg_multi2` had
+`if (n > max) n = max;` -- the exact defect #270 fixed one layer down, still present
+one layer up.  Unreachable in practice because every caller passed 64 to match the
+inner buffers, so it would have come back the moment a caller passed anything smaller.
+
+**The audit found a LIVE one, and it is the more serious half.**  `--ring` has its own
+RING_MAX_K = 64, and unlike the signer count **k IS on the wire**: the signature
+declares its member count, and every reader has bounded it since #240, which adopted
+C's constant explicitly.  Only C's WRITER enforced it.  Python, Go and Java each signed
+65-member rings -- a 452 KB artifact that EVERY verifier, including the one that wrote
+it, then refuses.  A producer emitting something its own reader rejects, with exit 0.
+Here option 3 IS right, and for the reason that was missing on the threshold side: the
+readers already agree, so bounding the writers costs no wire change and no
+interoperability.  Raising the limit instead would mean changing four readers; removing
+it would reintroduce the unbounded wire-driven allocation #239/#240 closed, since the
+signature grows linearly in k.
+
+**Recorded where it can't drift.**  `parameters.hpks_ring.k_max` in
+spec/herradura-protocol-spec.json, derived from herradura_cli.c.  Nothing in `spec/` or
+`SPEC.md` named it before, which is how it came to be enforced on one side only.
+
+**A test assertion inverted.**  #270 left `test_threshold_interop.sh` asserting "C
+refuses 70 values"; that was containment and is now wrong, so the block asserts all
+four agree on a 70-signer aggregate instead, keeping the 64 boundary as an off-by-one
+guard.  `test_ring.sh` gained the writer-side rejection in all four, reading k_max from
+`spec/` rather than hardcoding it.
+
+Status: **DONE v6.5.6** — the threshold cap removed (it was never on the wire), and the ring cap enforced at every writer (it always was).

@@ -205,26 +205,50 @@ for i in "${!CLIS[@]}"; do
   esac
 done
 
-# ── TODO #272: C's 64-value cap must REFUSE, never truncate ────────────────
-# C collects list-flag values into a fixed 64-entry array and used to stop
-# filling it silently, returning success: a ceremony with more than 64 signers
-# produced an aggregate over the FIRST 64 while Python, Go and Java used every
-# one, so the same command line gave a DIFFERENT signature depending on which CLI
-# aggregated it, with no diagnostic anywhere.  Found while verifying TODO #270.
-# The limit itself is TODO #272; that it fails loudly is asserted here.
-echo "--- TODO #272: C refuses more list values than it can hold ---"
+# ── TODO #272: a ceremony larger than 64 signers, agreeing across all four ──
+# History, because the assertion here has now been inverted twice and the reason
+# matters.  C collected list-flag values into a fixed 64-entry stack array and
+# used to stop filling it SILENTLY, returning success: a ceremony with more than
+# 64 signers aggregated over the FIRST 64 in C while Python, Go and Java used
+# every one, so the same command line gave a DIFFERENT signature depending on
+# which CLI aggregated it, with no diagnostic anywhere (found while verifying
+# TODO #270).  #270 made it refuse loudly, which was containment.
+#
+# TODO #272 removed the limit instead, and the deciding fact is that the signer
+# count NEVER REACHES THE WIRE: the HPKST aggregate PEM is (R, C_agg, e, n) with
+# no count field, so no reader can observe how many signers contributed and 64
+# was never a protocol constant -- only one implementation's buffer size.  So
+# the assertion is no longer "C refuses" but "all four agree", which is the
+# property that was actually broken.
+echo "--- TODO #272: a 70-signer ceremony, identical in all four CLIs ---"
 many=""
 i=0; while [ $i -lt 70 ]; do many="$many $TMPDIR/sa.pem"; i=$((i+1)); done
-if $C threshold-aggregate --commits $many --in "$MSG" --out "$TMPDIR/over.pem" >/dev/null 2>&1; then
-  fail "over-limit" "C accepted 70 --commits values; it holds 64 and must refuse, not truncate"
+over_ok=1
+for e in "$PY:py" "$C:c" "$GO:go" ${HAVE_JAVA:+${JAVA:+"$JAVA:java"}}; do
+  cli="${e%:*}"; name="${e##*:}"
+  if $cli threshold-aggregate --commits $many --in "$MSG" \
+        --out "$TMPDIR/over_$name.pem" >/dev/null 2>&1; then
+    pass "over-limit: $name aggregates 70 commitments"
+  else
+    fail "over-limit" "$name refused a 70-signer ceremony"
+    over_ok=0
+  fi
+done
+# Agreement is the point: C truncating to 64 while the others used all 70 was
+# invisible precisely because each CLI succeeded on its own.
+if [ "$over_ok" -eq 1 ]; then
+  if [ "$(md5sum "$TMPDIR"/over_*.pem | awk '{print $1}' | sort -u | wc -l)" -eq 1 ]; then
+    pass "over-limit: all CLIs produce the SAME 70-signer aggregate"
+  else
+    fail "over-limit" "CLIs disagree about a 70-signer aggregate"
+  fi
 fi
-pass "over-limit: C refuses 70 --commits values instead of silently using 64"
 
-# The boundary itself must still work, or the guard above is just an off-by-one.
+# The old boundary must still work, or the change above is an off-by-one.
 few=""
 i=0; while [ $i -lt 64 ]; do few="$few $TMPDIR/sa.pem"; i=$((i+1)); done
 $C threshold-aggregate --commits $few --in "$MSG" --out "$TMPDIR/at64.pem" >/dev/null 2>&1 \
-  || fail "over-limit" "C rejected exactly 64 --commits values, which is within its capacity"
+  || fail "over-limit" "C rejected exactly 64 --commits values"
 pass "over-limit: C still accepts exactly 64"
 
 # ── TODO #271: the five HPKST PEMs must be BYTE-IDENTICAL across the CLIs ───

@@ -1234,8 +1234,21 @@ public final class HerraduraCli {
         if (keys.size() < 2) {
             throw new CliError("hpks-ring: --ring needs at least 2 member public keys");
         }
+        // TODO #272.  RING_MAX_K bounds the READER in C, Go and Python (TODO
+        // #240 adopted C's constant), but only C's writer enforced it -- so
+        // this port signed rings that no verifier anywhere would accept, and
+        // has no ring verifier of its own to notice.  Bounding it here is what
+        // makes the four agree about what an hpks-ring signature can be.
+        if (keys.size() > RING_MAX_K) {
+            throw new CliError("hpks-ring: ring has " + keys.size() + " members, at most "
+                + RING_MAX_K + " supported (a larger ring produces a signature no CLI "
+                + "will verify)");
+        }
         return keys;
     }
+
+    /** Matches herradura_cli.c's RING_MAX_K and herradura.py's _RING_MAX_K. */
+    private static final int RING_MAX_K = 64;
 
     private static void cmdSign(Map<String, String> opt) throws IOException {
         String algo = req(opt, "algo", "sign");
