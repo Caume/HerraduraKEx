@@ -16217,3 +16217,174 @@ Status: **DONE v6.6.0** — the draw is sized from its modulus, which removes th
 ceiling below 2^32 with no change at any already-served width; and C's PRF
 counter placement, which had disagreed with the other three languages since the
 protocol shipped, is fixed and pinned by test [52].
+
+### #278: the width axis — which primitives cap the security parameter, and do the four languages agree?
+
+#277 is one instance of a general question this repository has never asked: **for each
+primitive, what is the largest security parameter it can express, is that limit deliberate,
+and is it the same in C, Go, Python and Java?**  Every cross-language check in `spec/`
+answers a different question, and there are five of them:
+
+* `check_language_parity.py`'s manifest and census — does the primitive EXIST in each language;
+* `cli_support` — does each CLI DISPATCH the `--algo` tag;
+* `cli_flag_matrix` (#267) — does each CLI DEFINE the flag;
+* `cli_flag_value_gaps` (#269) — which VALUES does each CLI accept for it;
+* `check_docs_consistency.py` (#265) — do the narrative documents restate the sources correctly.
+
+**None of them compares a numeric parameter's VALUE across languages.**  #276 hit this from
+the other side: `QCMDPC_MAX_MULT` is duplicated in all four languages, the manifest pins the
+*function* `qcmdpc-max-multiplicity` in all four, and nothing anywhere compares the constant,
+so a partial update would be invisible.
+
+**A verified anchor for how invisible.**  `spec/generate_spec.py`'s own docstring says
+"Protocol parameter constants: herradura.h (#define) **and herradura/herradura.go** (const
+block), grepped by name."  It is not true: line 1354 assigns `go_src = read(HERRADURA_GO)`
+and never uses it.  Every parameter in `spec/herradura-protocol-spec.json` comes from C
+alone, and the dead read is what makes the docstring assert a cross-language check that does
+not happen.  Deleting the variable or making the claim true is a decision this item should
+make, not leave.
+
+**What is already known to differ, so the audit does not start from zero:**
+
+* **ZKP-NL is capped at 32 in Go and 64 in C, Python and Java** — and it is a *type* limit,
+  not a policy: `ZkpNlVerify(B, y uint32, ...)` and `[3]uint32` shares throughout, against
+  `ZKP_NL_MAX_N = 64` elsewhere.  Both the Python and Java sources carry a comment saying so.
+  Go therefore cannot verify a statement the other three can produce, at a width the suite's
+  own test [22] exercises.
+* **HCRED is a compile-time 256 in C (`HCRED_N`, static-asserted against `RNL_ALT_N`) and
+  Java (`Hcred.N`), and a runtime argument in Python and Go**, which both demo at n = 32.
+  `KAT/hcred_kkw.json` already records that the four "have never proved the same statement
+  size" and ships two vector sets because of it.
+* **`RNL_N` is compile-time in C**, which is why `KAT/pem/` skips the C CLI at n = 64.
+* The four sampling sites used three different draw widths — RNL 24-bit, Stern-F 32-bit
+  (documented to 2^32), QC-MDPC 16-bit (undocumented) — plus one *guarded* limit,
+  `hpke_stern_f_decap`'s refusal above `C(n,t) > 2^32`, which was the only one that failed
+  loudly.  #277 has since made the QC-MDPC draw a FUNCTION of its modulus rather than a
+  constant, which is the shape this axis should probably prefer wherever a width is
+  derivable: it cannot be wrong, and it needs no documenting.
+* `KEYBITS = 256` is structural for the classical quartet, and the assembly/Arduino targets
+  run 32-bit GF and `RNL_N = 32`; both are recorded demo-only positions, not defects.
+
+**What this item should produce.**  A table, one row per primitive, four cells plus a
+maximum and a reason — the same shape `check_language_parity.py`'s manifest already uses,
+which is why it is the natural place to put it.  Then the question each row forces: is the
+narrowest cell deliberate (assembly widths, demo-only rows) or accidental (a `uint32` chosen
+before anyone asked how wide the statement needed to be)?  Only the accidental ones are work;
+the point of the table is that today nobody can tell them apart.
+
+**Make it self-invalidating, like every other table in `spec/`.**  A primitive with no width
+row fails generation, and a row whose four cells have CONVERGED fails until it is deleted --
+the orphan rule #269 uses one level down, which is what stops a fixed asymmetry leaving a
+stale claim behind.  That is the part that keeps this from becoming a document nobody reruns.
+
+**Not in scope:** raising any width.  This item establishes what the widths ARE and which
+disagreements are accidental.  Acting on a row is that row's own item, as #277 is for the
+QC-MDPC draw.
+
+**A WORKED EXAMPLE, found while #277 was being closed (v6.6.0).**  This item was filed on
+the argument that the five existing axes cannot see a numeric disagreement.  One turned up
+immediately, and it is worse than a numeric one: **C XORed the QC-MDPC PRF counter into the
+top four bytes of the seed where Python, Go and Java XOR it into the low bits**, so block 0
+agreed (the counter is 0 there) and every block after it did not.  A 3-1 split in a shipped
+primitive, undetected for the life of the protocol.
+
+Two things about the shape of it are worth carrying into this item's design:
+
+* **Nothing was wrong at the level the five axes inspect.**  The function exists in all four
+  languages, has a manifest entry, dispatches its `--algo` tag, takes the same flags with the
+  same value sets, and round-trips.  The disagreement lived one level below all of that, in
+  a byte layout that only shows up if two languages are asked to expand the *same* seed --
+  which nothing ever did, because the seed is freshly random at every keygen and only the
+  resulting key travels on the wire.
+* **The fix that catches it is a VECTOR, not a check.**  Security test [52] pins the
+  expansion of a fixed seed in four languages.  No amount of source inspection would have
+  found this; the axis this item builds should say, for each width row, whether a pinned
+  artifact exercises it -- a width nothing pins is a width nothing checks.
+
+So this item should probably widen slightly from "which primitives cap the security
+parameter" to "which primitives have a per-language representation choice that nothing
+pins" -- the QC-MDPC counter is not a width at all, and the census that would have caught
+it is the same census.
+
+**DONE (v6.6.1).  The axis is built, and it found a defect nobody was looking for.**
+
+**The table.**  `spec/check_language_parity.py` gains `PARAMETERS` -- 79 rows, four cells
+each -- plus `PARAM_DIVERGENCE`, `PARAM_JAVA_ALIASES` and `PARAM_CENSUS_EXEMPT`.  A cell
+names the CONSTANT, never its value: the checker reads and evaluates it from each
+language's source, so the table cannot go stale the way a table of quoted numbers would.
+Rows are curated because they have to be -- `RNL_ETA` in C and Go is `RNLB` in Python and
+Java, Java scopes per class, and **only 8 of 116 normalised names appear in all four**, so
+automatic pairing is not available.  Exhaustive in both directions: a suite constant named
+by no row fails the parameter census (72 / 49 / 53 / 76 evaluable constants, all named or
+exempt), an exempt rule matching nothing fails, and a `PARAM_DIVERGENCE` row whose
+languages have CONVERGED fails until deleted.  All five failure modes were verified by
+mutating real sources, not asserted.
+
+**A sixth check, added because the axis nearly shipped with a hole in it.**  A `None` cell
+claims a language has no named constant for that row -- and a cell the EXTRACTOR silently
+dropped looks identical to one that genuinely does not exist.  The census cannot tell them
+apart, because an unseen declaration is not an unfiled one.  This is not hypothetical: the
+first C regex required the macro body to end at "$", and comment stripping leaves trailing
+whitespace, so `#define R3_VALUE (5 * KEYBITS / 8)   /* 160 */` was dropped and the two
+NL-FSCX v3 rows silently compared THREE languages while reporting four cells.  Every `None`
+cell is now cross-checked against the language's own declarations by normalised name, and
+the regex no longer matches on body shape.
+
+**Two things the item asked for that turned out to be the wrong shape, and what replaced
+them.**
+
+* It asked for "four cells plus a MAXIMUM and a reason".  For most parameters there is no
+  maximum -- the value IS the parameter, and only a handful (`ZKP_NL_MAX_N`,
+  `SDF_MAX_ROUNDS`, `QCPRF_MAX_IDX_BYTES`) are bounds at all.  Replaced with `wire` /
+  `local`, which answers the question the item actually cared about.
+* It asked whether "a pinned artifact exercises" each row.  `local` is that field, derived
+  from a rule that can be applied consistently: does this value influence bytes that cross
+  a language boundary?  **28 of 79 rows are `local`**, meaning no round-trip, interop test
+  or KAT vector can see a disagreement there and this axis is their only check.  The two
+  worth naming are `QCMDPC_MAX_MULT` -- the row #276 asked for, a keygen-retry gate, so a
+  partial update changes which keys each language accepts and nothing downstream disagrees
+  -- and `QCMDPC_NB_ITER`, which changes the DFR rather than the ciphertext.
+
+**The known-differences list, confirmed mechanically.**  ZKP-NL 32-vs-64 is now the table's
+one `defect` row and has its own item, **#279**.  HCRED is `acknowledged`, and the table
+sharpens why: four cells, THREE MEANINGS -- a compile-time width in C and Java, a runtime
+maximum in Go, a runtime default in Python -- so pairing the numbers was never the point.
+
+**`spec/generate_spec.py`'s dead `go_src`: DECIDED, and deleted.**  The docstring claimed
+parameters came from `herradura.h` AND `herradura/herradura.go`; `build_parameters()` read
+the Go source into a variable it never used, so every number in `spec/` has always come
+from C alone.  Making the claim true would have built a weaker two-language copy of what
+this item builds for four, so the read and the unused `HERRADURA_GO` are gone and the
+docstring now points here.
+
+**THE FINDING, and it is a limit of the axis as much as a bug.**  The table reads
+DECLARATIONS, so it can compare a bound's value but cannot see whether the bound is
+APPLIED.  `XMSS_MAX_H` is 20 in all four languages -- and only C and Go enforced it at
+`genpkey`.  Python's `_XMSS_MAX_H` and Java's `Codec.XMSS_MAX_H` each carry a comment
+calling the constant "genpkey's --xmss-height cap", and in both, genpkey was the one path
+that never applied it; the decode paths did.
+
+* **Java** wraps: `1 << 32` shifts by `32 & 31 = 0`, so `--xmss-height 32` reported
+  "h=32, 1 leaves", wrote a ONE-leaf tree labelled h = 32, and exited 0.  Nothing could
+  read it back, Java's own decode path included.
+* **Python** does not wrap, so the same input asks for 2^32 leaves and never returns.
+* Python additionally read the height as `... or 10`, making an explicit `0` FALSY and
+  therefore silently mean 10, where the other three refuse it.
+
+All three are fixed, and all four CLIs now emit the same message.  The guard is
+`CliTest/test_param_bounds.sh` (claimed by `cross-lang-compat`), because no source-level
+check can see this class -- the constant exists, at the same value, everywhere -- and only
+running the CLIs does.  Its rejection cases run BEFORE its accept-control deliberately: an
+in-range XMSS keygen costs minutes in Python and Java, and a rejection must be fast by
+definition.  It was verified against the pre-fix binary, where it fails 5 cases.
+
+**What this leaves for a future pass.**  The axis covers the SUITE layer.  `SDF_MAX_ROUNDS`
+lives in C's and Go's suite but in Python's CLI and Java's codec -- all four at 4096, and
+a wire-decode bound arguably belongs there, so C and Go are the outliers rather than the
+other two.  Extending the census to the CLI and codec layers would settle that; it is
+recorded in the `sdf-max-rounds` row rather than left as folklore.
+
+Status: **DONE v6.6.1** -- 79 parameter rows across four languages, exhaustive in both
+directions, with the ZKP-NL cap recorded as a defect (#279); and the XMSS height cap,
+which every language declared and two enforced, fixed in Python and Java and guarded by
+CliTest/test_param_bounds.sh.

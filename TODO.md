@@ -330,92 +330,47 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 
 Status: **OPEN**
 
-### #278: the width axis — which primitives cap the security parameter, and do the four languages agree?
+### #279: ZKP-NL's Go verifier caps at n = 32 where the other three cap at 64
 
-#277 is one instance of a general question this repository has never asked: **for each
-primitive, what is the largest security parameter it can express, is that limit deliberate,
-and is it the same in C, Go, Python and Java?**  Every cross-language check in `spec/`
-answers a different question, and there are five of them:
+`spec/`'s parameter axis (TODO #278) records this as its one `defect` row, and this is
+the item that row forces: acting on a row is that row's own item.
 
-* `check_language_parity.py`'s manifest and census — does the primitive EXIST in each language;
-* `cli_support` — does each CLI DISPATCH the `--algo` tag;
-* `cli_flag_matrix` (#267) — does each CLI DEFINE the flag;
-* `cli_flag_value_gaps` (#269) — which VALUES does each CLI accept for it;
-* `check_docs_consistency.py` (#265) — do the narrative documents restate the sources correctly.
+`ZKP_NL_MAX_N` is 64 in C, Python and Java and **32 in Go** -- and it is a TYPE limit,
+not a policy.  `ZkpNlVerify(B, y uint32, ...)` takes the statement as a `uint32` and
+carries `[3]uint32` shares throughout, so 32 is the widest statement Go's representation
+can hold, where the other three carry big integers and cap at 64 by declaration.  Both the
+Python and Java sources already carry a comment saying so; what nothing did was compare
+the numbers, which is why it took #278's table to surface it as a defect rather than a
+remark.
 
-**None of them compares a numeric parameter's VALUE across languages.**  #276 hit this from
-the other side: `QCMDPC_MAX_MULT` is duplicated in all four languages, the manifest pins the
-*function* `qcmdpc-max-multiplicity` in all four, and nothing anywhere compares the constant,
-so a partial update would be invisible.
+**What it costs.**  Go cannot verify a statement the other three can produce, at a width
+the suite's own test [22] exercises.  It is not a soundness bug -- Go rejects rather than
+accepting something it should not -- but it is an interoperability hole in a
+signature-shaped primitive, and the failure is a rejection, which is easy to read as "the
+proof is bad" rather than "this verifier cannot represent it".
 
-**A verified anchor for how invisible.**  `spec/generate_spec.py`'s own docstring says
-"Protocol parameter constants: herradura.h (#define) **and herradura/herradura.go** (const
-block), grepped by name."  It is not true: line 1354 assigns `go_src = read(HERRADURA_GO)`
-and never uses it.  Every parameter in `spec/herradura-protocol-spec.json` comes from C
-alone, and the dead read is what makes the docstring assert a cross-language check that does
-not happen.  Deleting the variable or making the claim true is a decision this item should
-make, not leave.
+**What the work is.**  Widen Go's share representation from `uint32` to `uint64` (or to
+`*big.Int`, matching the other three) and raise `ZkpNlMaxN` to 64.  Two things to settle
+first, neither obvious:
 
-**What is already known to differ, so the audit does not start from zero:**
+1. **Is the wire format affected?**  A ZKBoo proof serialises shares; if the encoding is
+   width-tagged rather than fixed at four bytes, widening is internal.  If it is fixed,
+   this is wire-breaking for `nl-zkboo` / `nl-zkbpp` and needs a `MIGRATING.md` entry.
+   `KAT/` pins no ZKP-NL vector, so there is nothing to regenerate but also nothing to
+   check against -- see item 3.
+2. **Does 64 buy anything, or should all four move together?**  64 is not a security level
+   anyone derived; it is the widest the C implementation happened to declare.  #278
+   deliberately did not raise widths, and neither should this without a reason for the
+   number.  Settling that may mean the fix is "make Go 64" (parity) rather than "make the
+   family wider" (a security change), and those are different items.
+3. **A vector, not a round-trip.**  #277's lesson applies directly: a ZKP-NL proof at
+   n = 64 produced by C and verified by Go is the check that would have caught this, and
+   `CliTest/test_zkp_hybrid_family.sh`'s 4x4 matrix already has the shape -- it just runs
+   at the default width.  Add the n = 64 row before changing Go, so the fix is verified
+   against a failing test rather than asserted.
 
-* **ZKP-NL is capped at 32 in Go and 64 in C, Python and Java** — and it is a *type* limit,
-  not a policy: `ZkpNlVerify(B, y uint32, ...)` and `[3]uint32` shares throughout, against
-  `ZKP_NL_MAX_N = 64` elsewhere.  Both the Python and Java sources carry a comment saying so.
-  Go therefore cannot verify a statement the other three can produce, at a width the suite's
-  own test [22] exercises.
-* **HCRED is a compile-time 256 in C (`HCRED_N`, static-asserted against `RNL_ALT_N`) and
-  Java (`Hcred.N`), and a runtime argument in Python and Go**, which both demo at n = 32.
-  `KAT/hcred_kkw.json` already records that the four "have never proved the same statement
-  size" and ships two vector sets because of it.
-* **`RNL_N` is compile-time in C**, which is why `KAT/pem/` skips the C CLI at n = 64.
-* The four sampling sites used three different draw widths — RNL 24-bit, Stern-F 32-bit
-  (documented to 2^32), QC-MDPC 16-bit (undocumented) — plus one *guarded* limit,
-  `hpke_stern_f_decap`'s refusal above `C(n,t) > 2^32`, which was the only one that failed
-  loudly.  #277 has since made the QC-MDPC draw a FUNCTION of its modulus rather than a
-  constant, which is the shape this axis should probably prefer wherever a width is
-  derivable: it cannot be wrong, and it needs no documenting.
-* `KEYBITS = 256` is structural for the classical quartet, and the assembly/Arduino targets
-  run 32-bit GF and `RNL_N = 32`; both are recorded demo-only positions, not defects.
-
-**What this item should produce.**  A table, one row per primitive, four cells plus a
-maximum and a reason — the same shape `check_language_parity.py`'s manifest already uses,
-which is why it is the natural place to put it.  Then the question each row forces: is the
-narrowest cell deliberate (assembly widths, demo-only rows) or accidental (a `uint32` chosen
-before anyone asked how wide the statement needed to be)?  Only the accidental ones are work;
-the point of the table is that today nobody can tell them apart.
-
-**Make it self-invalidating, like every other table in `spec/`.**  A primitive with no width
-row fails generation, and a row whose four cells have CONVERGED fails until it is deleted --
-the orphan rule #269 uses one level down, which is what stops a fixed asymmetry leaving a
-stale claim behind.  That is the part that keeps this from becoming a document nobody reruns.
-
-**Not in scope:** raising any width.  This item establishes what the widths ARE and which
-disagreements are accidental.  Acting on a row is that row's own item, as #277 is for the
-QC-MDPC draw.
-
-**A WORKED EXAMPLE, found while #277 was being closed (v6.6.0).**  This item was filed on
-the argument that the five existing axes cannot see a numeric disagreement.  One turned up
-immediately, and it is worse than a numeric one: **C XORed the QC-MDPC PRF counter into the
-top four bytes of the seed where Python, Go and Java XOR it into the low bits**, so block 0
-agreed (the counter is 0 there) and every block after it did not.  A 3-1 split in a shipped
-primitive, undetected for the life of the protocol.
-
-Two things about the shape of it are worth carrying into this item's design:
-
-* **Nothing was wrong at the level the five axes inspect.**  The function exists in all four
-  languages, has a manifest entry, dispatches its `--algo` tag, takes the same flags with the
-  same value sets, and round-trips.  The disagreement lived one level below all of that, in
-  a byte layout that only shows up if two languages are asked to expand the *same* seed --
-  which nothing ever did, because the seed is freshly random at every keygen and only the
-  resulting key travels on the wire.
-* **The fix that catches it is a VECTOR, not a check.**  Security test [52] pins the
-  expansion of a fixed seed in four languages.  No amount of source inspection would have
-  found this; the axis this item builds should say, for each width row, whether a pinned
-  artifact exercises it -- a width nothing pins is a width nothing checks.
-
-So this item should probably widen slightly from "which primitives cap the security
-parameter" to "which primitives have a per-language representation choice that nothing
-pins" -- the QC-MDPC counter is not a width at all, and the census that would have caught
-it is the same census.
+Deleting the `zkp-nl-max-n` row from `PARAM_DIVERGENCE` is part of the work, not an
+afterthought: the orphan rule fails `--check` while the entry describes a disagreement
+that no longer exists.
 
 Status: **OPEN**

@@ -228,6 +228,7 @@ jobs:
             case "$f" in test_malformed_pem_matrix.sh) continue ;; esac # claimed by cross-lang-compat (TODO #240)
             case "$f" in test_digest_matrix.sh) continue ;; esac      # claimed by cross-lang-compat (TODO #269)
             case "$f" in test_kdf_matrix.sh) continue ;; esac         # claimed by cross-lang-compat (TODO #269)
+            case "$f" in test_param_bounds.sh) continue ;; esac       # claimed by cross-lang-compat (TODO #278)
             case "$f" in lib_*.sh) continue ;; esac                   # sourced helpers, not runnable tests (TODO #221)
             claimed=0
             for pattern in $declared; do
@@ -377,6 +378,18 @@ jobs:
       # spec/'s cli_flag_value_gaps records, which the flag matrix cannot reach.
       - name: kex --kdf matrix
         run: bash CliTest/test_kdf_matrix.sh
+
+      # TODO #278: a bound constant is only worth its value if every path that
+      # consumes the parameter applies it. The width axis found XMSS_MAX_H = 20
+      # in all four languages and enforcement in two: Python's and Java's own
+      # comments call the constant "genpkey's --xmss-height cap", and genpkey
+      # was the one path in both that never applied it, so `--xmss-height 32`
+      # wrote a ONE-leaf tree labelled h = 32 in Java (`1 << 32` wraps on an
+      # int) and never returned in Python. No source-level check can see that --
+      # the constant exists, at the same value, everywhere -- so it takes a
+      # script that actually runs the four CLIs.
+      - name: parameter-bound enforcement matrix
+        run: bash CliTest/test_param_bounds.sh
 
   arm-i386:
     name: ARM Thumb-2 / NASM i386 (build + tests)

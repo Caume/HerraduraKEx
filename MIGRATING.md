@@ -738,3 +738,46 @@ behaviour changed, and no stored artifact becomes unreadable or non-interoperabl
 changed is which key a *given seed* produces in one language, on a header API with no
 CLI path to it. It is a MINOR bump because the Go package gains one exported function
 (`QcMdpcPrfDraw`), which its security-test harness needs to reach the sampler at all.
+
+---
+
+## 15. `--xmss-height` out of range is now refused by Python and Java (v6.6.1)
+
+**Who is affected:** callers who passed `genpkey --algo hpks-xmss --xmss-height N` with
+`N` outside `[1, 20]` to the Python or Java CLI. Nothing stored on disk changes for any
+in-range height, and no valid invocation behaves differently. C and Go already refused
+these inputs and are unchanged.
+
+**What changed.** `XMSS_MAX_H = 20` exists in all four languages. Python's `_XMSS_MAX_H`
+and Java's `Codec.XMSS_MAX_H` each carry a comment calling the constant *"genpkey's
+`--xmss-height` cap"* — and in both, `genpkey` was the one path that never applied it.
+The decode paths (`pkey`, `verify`) did. All four now emit the same message:
+
+```
+genpkey: --xmss-height must be in [1,20]
+```
+
+**What the unbounded path actually did**, confirmed against pre-6.6.1 builds rather than
+inferred:
+
+- **Java wrapped.** `1 << 32` shifts by `32 & 31 = 0` on an `int`, so
+  `--xmss-height 32` printed `Generating XMSS tree (h=32, 1 leaves)`, wrote a **one-leaf**
+  Merkle tree labelled `h = 32`, and **exited 0**. The file was unreadable afterwards by
+  every CLI including Java's own, whose decode path bounds `h` to `[1,20]`. Heights in
+  `21..31` instead attempted up to 2^31 leaves.
+- **Python did not wrap**, so the same input asked for 2^32 leaves and the process never
+  returned.
+- **Python also read the height as `... or 10`**, which made an explicit `--xmss-height 0`
+  *falsy* and therefore silently mean 10. The other three refuse `0`.
+
+**What to do.** Nothing, unless a script passed an out-of-range height and treated the
+exit status as success. If one did, **it was not doing what it appeared to**: no usable
+key was produced. Check whether any `hpks-xmss` key file that script wrote is still
+referenced — a Java-written `h = 32` key is one leaf, so a second signature under it would
+reuse the same one-time WOTS key. Both CLIs refuse to load such a file, so this cannot
+have happened silently through the CLI; regenerate the key.
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, CLI flag or `--algo`
+behaviour changed, and no artifact that ever loaded becomes unreadable. A
+previously-accepted input that produced nothing usable now says so, which is the same
+class as sections 11 and 13 and follows the precedent set there.

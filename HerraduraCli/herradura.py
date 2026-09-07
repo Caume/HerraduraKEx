@@ -1371,7 +1371,19 @@ def cmd_genpkey(args):
 
     elif algo == 'hpks-xmss':
         import secrets as _sec
-        h_val = getattr(args, 'xmss_height', None) or 10
+        h_val = getattr(args, 'xmss_height', None)
+        # `or 10` here until TODO #278, which made 0 FALSY and therefore silently
+        # mean 10 -- the other three refuse it.  argparse already defaults to 10.
+        if h_val is None:
+            h_val = 10
+        # _XMSS_MAX_H's own comment calls itself "genpkey's --xmss-height cap",
+        # and until TODO #278 genpkey was the one path that did not apply it --
+        # the decode paths (pkey, verify) did.  Unbounded, --xmss-height 32 asks
+        # for 2^32 leaves and the process simply never returns; C and Go refuse
+        # the same input up front, and Java did not either (it wrapped `1 << h`
+        # on an int and wrote a ONE-leaf tree labelled h = 32, exit 0).
+        if not 1 <= h_val <= _XMSS_MAX_H:
+            sys.exit(f'genpkey: --xmss-height must be in [1,{_XMSS_MAX_H}]')
         master_seed = _sec.token_bytes(32)
         print(f"Generating XMSS tree (h={h_val}, {1<<h_val} leaves) — may take a moment…",
               file=sys.stderr)

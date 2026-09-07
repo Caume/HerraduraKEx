@@ -2,6 +2,79 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.1] - 2026-09-07
+
+### TODO #278 — the width axis: `spec/` compares parameter VALUES, for the first time
+
+Five cross-language checks existed and none compared a number.  `QCMDPC_MAX_MULT` could
+be 5 in three languages and 6 in the fourth with every check green — the function exists
+everywhere, has a manifest entry, dispatches its tag, takes the same flags.
+
+**The table.**  `spec/check_language_parity.py` gains `PARAMETERS`: **79 rows, four cells
+each**, plus `PARAM_DIVERGENCE`, `PARAM_JAVA_ALIASES` and `PARAM_CENSUS_EXEMPT`.  A cell
+names the CONSTANT, never its value — the checker reads and evaluates it from source, so
+the table cannot go stale.  Rows are curated because they must be: `RNL_ETA` in C and Go
+is `RNLB` in Python and Java, Java scopes per class, and only **8 of 116** normalised
+names appear in all four, so automatic pairing is not available.
+
+Exhaustive in both directions like every other table in `spec/`: a suite constant named by
+no row fails the census (72 / 49 / 53 / 76 evaluable constants, all named or exempt), an
+exempt rule matching nothing fails, and a `PARAM_DIVERGENCE` row whose languages have
+CONVERGED fails until deleted.  A `None` cell -- "this language has no such constant" --
+is cross-checked against that language's own declarations, because a cell the extractor
+silently DROPPED looks identical to one that genuinely does not exist, and the census
+cannot tell them apart.  That check earned itself immediately: the first C regex dropped
+`R3_VALUE` and `I3_VALUE`, whose bodies end in a comment, so the two NL-FSCX v3 rows
+compared three languages while reporting four cells.  Java's per-class re-declarations (`Duplex.N`, `Stern.N`, …)
+are not exempt but **checked against the row they copy** — Java has no header, so a drifted
+copy is the defect this looks for.  All five failure modes were verified by mutating real
+sources.
+
+**28 of 79 rows are `local`** — a disagreement there reaches no artifact, so no round-trip,
+interop test or KAT vector can see it and this axis is their only check.  `QCMDPC_MAX_MULT`
+(a keygen-retry gate) and `QCMDPC_NB_ITER` (it changes the DFR, not the ciphertext) are the
+two worth knowing.
+
+**The known divergences, now mechanical.**  ZKP-NL's `MAX_N` is 64 in C/Python/Java and
+**32 in Go** — a *type* limit (`uint32` shares), not a policy — recorded as the table's one
+`defect` row and filed as **TODO #279**.  HCRED is `acknowledged`, and the table sharpens
+why: four cells, **three meanings** (compile-time width in C and Java, runtime maximum in
+Go, runtime default in Python).
+
+### The defect the axis found: a cap every language declared and two enforced
+
+`XMSS_MAX_H = 20` exists in all four.  Python's `_XMSS_MAX_H` and Java's
+`Codec.XMSS_MAX_H` each carry a comment calling the constant *"genpkey's `--xmss-height`
+cap"* — and in both, `genpkey` was the one path that never applied it.  Confirmed against
+pre-fix builds:
+
+- **Java wrapped.**  `1 << 32` shifts by `32 & 31 = 0`, so `--xmss-height 32` reported
+  `h=32, 1 leaves`, wrote a **one-leaf** tree labelled `h = 32`, and **exited 0** — a file
+  nothing could read back, Java included.
+- **Python did not wrap**, so the same input asked for 2^32 leaves and never returned.
+- **Python also read the height as `... or 10`**, making an explicit `0` falsy and
+  therefore silently mean 10; the other three refuse it.
+
+All three are fixed and all four CLIs now emit the same message.  This is a **limit of the
+axis**, not just a bug: the table reads *declarations*, so it can compare a bound's value
+but not whether it is applied.  That class needs `CliTest/test_param_bounds.sh` (new,
+claimed by `cross-lang-compat`), which runs the four CLIs; its rejection cases run before
+its accept-control deliberately, since an in-range XMSS keygen costs minutes in Python and
+Java.  Verified against the pre-fix binary, where it fails 5 cases.
+
+### Also in this release
+
+- `spec/generate_spec.py`'s docstring claimed parameters came from `herradura.h` **and**
+  `herradura/herradura.go`.  It was not true: `build_parameters()` read the Go source into
+  a variable it never used, so every number in `spec/` has always come from C alone.  The
+  dead read and the now-unused `HERRADURA_GO` are gone, and the docstring points at the
+  new axis, which does the job for four languages rather than two.
+- `MIGRATING.md` section 15 records the `--xmss-height` change.
+
+PATCH, following v6.5.2's precedent: a previously-accepted input that produced nothing
+usable now says so.  No wire format, PEM label, flag or `--algo` behaviour changed, and no
+artifact that ever loaded becomes unreadable.
+
 ## [6.6.0] - 2026-09-07
 
 ### TODO #277 — the QC-MDPC index draw, widened; and a 3-1 split it uncovered
