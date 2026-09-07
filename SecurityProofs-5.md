@@ -8,7 +8,7 @@
 > - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
 > - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 5 — §11.8.3–§11.8.8** (this file): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 5 — §11.8.3–§11.8.9** (this file): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
@@ -605,7 +605,7 @@ Three details of that construction are worth stating, because each could have be
 
 *Wire-format impact.*  The ciphertext encoding and both key encodings are unchanged, but the session key derived on the success path is not: it was `HFSCX-256(e0 || e1)` and is now `HFSCX-256-DS(0x10, e0 || e1 || C)`.  A build from before TODO #235 and a build after it therefore derive different shared secrets from the same ciphertext.  See `MIGRATING.md`.
 
-**Assessment.**  These findings compound rather than trade off.  A DFR of `2^-128` would not make this KEM IND-CCA2 while decapsulation reports failure, and implicit rejection would not rescue a `2^-8.6` DFR.  Underneath both, the QC syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is itself far below any usable security level, so DFR is not even the binding constraint — the parameters have to move first, and moving them is what the `r ≈ 1723` lower bound above is about.  `HPKE-Stern-KEM` is therefore reclassified **demo-only** in `SECURITY.md` and in `spec/herradura-protocol-spec.json` (which had carried `status: production`), with the reaction-attack exposure stated explicitly rather than left implicit in a DFR number.  TODO #235 does not change that classification and was explicitly scoped not to: what it changes is that the KEM is no longer weaker than its own parameters require.  Finding 1 alone keeps IND-CCA2 out of reach.
+**Assessment.**  These findings compound rather than trade off.  A DFR of `2^-128` would not make this KEM IND-CCA2 while decapsulation reports failure, and implicit rejection would not rescue a `2^-8.6` DFR.  Underneath both, the QC syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is itself far below any usable security level, so DFR is not even the binding constraint — the parameters have to move first.  §11.8.9 costs that instance at about `2^21` classical operations and finds the `r ≈ 1723` lower bound above to be the wrong knob: with `d` and `t` unchanged it buys four bits, and it is separately inadmissible on ring-structure grounds.  `HPKE-Stern-KEM` is therefore reclassified **demo-only** in `SECURITY.md` and in `spec/herradura-protocol-spec.json` (which had carried `status: production`), with the reaction-attack exposure stated explicitly rather than left implicit in a DFR number.  TODO #235 does not change that classification and was explicitly scoped not to: what it changes is that the KEM is no longer weaker than its own parameters require.  Finding 1 alone keeps IND-CCA2 out of reach.
 
 **Not evaluated.**  TODO #218 also asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the gap without a wire-format change.  That question is left open here: it turns on decoder-design results the analysis in this section does not attempt to reproduce, and at parameters this far from the target the answer would not change the classification.  It is worth revisiting only alongside a parameter change, since a decoder improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.
 
@@ -734,6 +734,111 @@ instance hardness are separate axes, and HPKS-Stern-F's `SECURITY.md`
 classification is unaffected.  All four language targets (C, Go, Python, Java)
 derive challenges identically, so the analysis applies to each; cross-language
 agreement is already enforced by `CliTest/test_cross_lang_matrix.sh`.
+
+---
+
+### 11.8.9 HPKE-Stern-KEM parameter selection — the instance, costed (TODO #276)
+
+§11.8.7 measured the deployed QC-MDPC set at a DFR of $2^{-8.6}$ and fitted
+$\log_2(\text{DFR}) = -0.0996 r + 43.69$, giving $r \approx 1723$ at the
+IND-CCA2 target — explicitly as a **lower bound**, not a proposal.  That fit was
+the only replacement figure this document carried.  TODO #276
+(`SecurityProofsCode/qcmdpc_parameter_selection.py`) finds that it answers the
+wrong question, and that the question it should answer had never been asked.
+
+**The missing number.**  §11.8.7 and `SECURITY.md` both describe the underlying
+syndrome-decoding instance as "far below any usable security level" without one.
+The only concrete ISD figure in this document is §11.8.3's $2^{56}$–$2^{60}$,
+and it is for a **different instance** — the Stern-F *signature* at
+$(N, k, t) = (256, 128, 16)$, not the KEM's $(1046, 523, 18)$.  Costing the KEM
+directly, with Prange and with Dumer minimised over its internal parameters, and
+crediting the attacker the quasi-cyclic speedups ($\sqrt{r}$ for decoding, by
+DOOM; the full $r$ for key recovery):
+
+| attack | Prange | Dumer | with QC | quantum |
+|---|---|---|---|---|
+| message recovery, weight 18 | $2^{45.9}$ | $2^{33.8}$ | $2^{29.3}$ | $2^{32.3}$ |
+| key recovery, weight 30 | $2^{58.3}$ | $2^{40.7}$ | $2^{31.7}$ | $2^{34.0}$ |
+
+Calibrating Dumer against BIKE's three published levels gives a stable
+$+8.0$-bit offset (spread $0.9$ bits across a $3.3\times$ range of $r$), so the
+deployed instance is worth about **$2^{21}$ classical operations** — *below*
+§11.8.3's signature figure despite four times the length, because ISD cost is
+driven by the relative distance $t/N$, and $18/1046$ against $16/256$ is a
+factor of $3.6$ in the direction that makes decoding cheap.  This is exactly the
+regime effect §11.8.3's own caveat warns against extrapolating through.
+
+**Which knob is which.**  Computing, for each $r$, the smallest error weight
+whose message attack reaches 128 bits and the smallest row weight whose key
+attack does:
+
+| $r$ | 2003 | 4801 | 8191 | 12323 | 16001 | 24659 |
+|---|---|---|---|---|---|---|
+| min $t$ | 137 | 137 | 136 | 134 | 133 | 131 |
+| min $d$ | 72 | 72 | 72 | 71 | 71 | 70 |
+
+Over a $12.3\times$ range of $r$ the required $t$ moves by 6 and $d$ by 2: $r$
+enters the ISD cost only through the QC speedups, which are logarithmic in the
+exponent.  So **$t$ and $d$ are fixed by ISD essentially on their own, and $r$
+is then fixed by DFR alone** — the two constraints do not trade against each
+other.  Two consequences.  At $r = 12323$ the frontier lands on
+$(t, d) = (134, 71)$, reproducing BIKE-128's own choice to the unit from an
+independent direction.  And §11.8.7's $r = 1723$ leaves $t = 18$ and $d = 15$ in
+place: it is worth $2^{25}$, so raising $r$ from 523 buys **four bits**.
+
+**A second, independent reason $r = 1723$ is inadmissible.**  $x^r - 1$ over
+$\mathrm{GF}(2)$ must have exactly two irreducible factors, or the ring has
+proper quotients an attacker may project through — the hazard that made TODO
+#223 reject $n = 768$ for HKEX-RNL.  This requires $r$ prime with 2 a primitive
+root mod $r$.  1723 is prime, but $\text{ord}(2) = 574$, a proper divisor of
+1722, so $x^{1723} - 1$ has four factors.  ($8191 = 2^{13} - 1$ fails the same
+way.)  Neither reason was visible from the DFR fit that produced the value.
+
+**Correctness, measured.**  A DFR of $2^{-128}$ is not measurable and is not
+claimed here; the *waterfall onset* is.  At $(r, d) = (12323, 71)$, over 150
+trials per cell, the deployed threshold rule first fails at $t = 150$ and BIKE's
+at $t = 154$, so the chosen $t = 134$ sits about 12% below onset — the operating
+point is on the flat part of the curve, which is the precondition for BIKE's
+published extrapolation to be the applicable claim.  Two findings come out of
+the same table.  BIKE's syndrome-adaptive threshold is better across the whole
+transition (30 failures against 114) at **four times fewer iterations**, because
+the deployed rule's threshold is constant once $d$ is fixed and keeps demanding
+47 of 71 unsatisfied checks as the syndrome thins.  And the constants are
+parameter-set-specific in both directions: BIKE's rule has a hard floor of 36,
+so at the deployed $d = 15$ it demands more unsatisfied checks than a row
+contains and fails 150 times out of 150.  A parameter change must carry the
+threshold rule with it.
+
+**The weak-key screen cannot be re-derived the way it was derived.**
+`QCMDPC_MAX_MULT = 5` was read off a measured DFR cliff at $d = 15$, $r = 523$.
+At $d = 71$, $r = 12323$ the distance-spectrum distribution moves — 2485 pairwise
+distances over 6161 buckets rather than 105 over 261 — and the same constant goes
+from rejecting 0.03% of keys to rejecting 1.6%, with multiplicity 4 as the mode.
+Re-measuring the cliff would require resolving DFR differences at parameters
+whose DFR is below anything measurable: **the measurement that justified the
+constant is the one the parameter change exists to eliminate.**  A surrogate is
+used instead, stated in advance rather than fitted — keep the screen a tail cut
+costing under one keygen retry in 200 — giving $\text{MAX-MULT} = 6$, recorded
+as a retry-budget choice and not as a cliff.  The cliff question passes to TODO
+#250, which owns decoder behaviour.
+
+**Recommendation: adopt BIKE-128 verbatim** — $r = 12323$, $d = 71$, $t = 134$,
+with BIKE's threshold rule and 5 iterations.  Inventing a set is rejected
+because the frontier already lands on BIKE's $(t, d)$ and $r$'s only remaining
+job is the DFR, the one quantity this repository cannot measure and BIKE has
+published.  The change is wire-format breaking ($r$ sizes every key and
+ciphertext), and it carries a prerequisite: the shipped Python decoder computes
+its unsatisfied-parity counts in an interpreter loop over $r \cdot d$ positions
+and takes 5.4 s per decapsulation at these parameters against 16 ms today — the
+bit-sliced representation used throughout this analysis does the same instance
+in 8 ms, so the Python decoder must be rewritten before the constants move.
+
+**A trap recorded for anyone extending the analysis code.**
+`qcmdpc_dfr_weak_keys.py`'s fast decoder holds its unsatisfied-parity counters
+in exactly four bitplanes, saturating at 15.  Above the deployed $d = 15$ it
+does not error — it silently fails to decode, reporting a plausible DFR of 1.0
+at parameters that decode perfectly.  TODO #276 hit this and read 20 failures
+out of 20 at BIKE-128 before finding it; the function now refuses $d > 15$.
 
 ---
 

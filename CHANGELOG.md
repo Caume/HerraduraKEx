@@ -2,6 +2,107 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.8] - 2026-09-07
+
+### TODO #276 (first pass) — HPKE-Stern-KEM's parameters: the instance, costed
+
+TODO #276 was filed one commit ago on a hypothesis: that TODO #218's fitted `r ~ 1723`
+answers the wrong question, because `r` is the DFR knob and the security of the instance had
+never been established. This walks it. See `SecurityProofs-5.md` §11.8.9 and
+`SecurityProofsCode/qcmdpc_parameter_selection.py`. The item stays **OPEN** — the selection is
+settled, the port is not.
+
+**The number nobody had computed.** §11.8.7 and `SECURITY.md` both described the underlying
+QC syndrome-decoding instance as "far below any usable security level" with no figure
+anywhere. The only concrete ISD estimate in the repository, `2^56`-`2^60`, is for a
+*different* instance — the Stern-F **signature** at `(N, k, t) = (256, 128, 16)`, not the
+KEM's `(1046, 523, 18)`. Costing the KEM directly, with Prange and with Dumer minimised over
+its internal parameters, crediting the attacker `sqrt(r)` on decoding (DOOM) and the full `r`
+on key recovery, and calibrating Dumer against BIKE's three published levels — a stable
+**+8.0 bits, spread 0.9 over a 3.3x range of `r`**, which is the check that the model is
+tracking something real:
+
+```
+                    Prange     Dumer    + QC   quantum
+  message (wt 18)   2^45.9    2^33.8  2^29.3    2^32.3
+  key     (wt 30)   2^58.3    2^40.7  2^31.7    2^34.0
+```
+
+**The deployed instance is worth about `2^21` classical operations** — and it is *below*
+§11.8.3's signature figure despite four times the length, because ISD cost tracks the
+relative distance `t/N`, and `18/1046` against `16/256` is 3.6x in the direction that makes
+decoding cheap. (#276's own filing text called that gap "an order of magnitude"; it is 3.6x.
+The conclusion is unchanged and the overstatement is corrected in §11.8.9.)
+
+**The central finding: `t` and `d` are set by ISD essentially independently of `r`.** Over a
+12.3x range of `r`, the minimum `t` reaching 128 bits moves by 6 and the minimum `d` by 2 —
+`r` enters ISD only through the quasi-cyclic speedups, which are logarithmic in the exponent.
+So the two constraints do not trade: **`t` and `d` are fixed by ISD, `r` is then fixed by DFR
+alone.** Two consequences. At `r = 12323` the frontier lands on *exactly* BIKE-128's
+`(t, d) = (134, 71)`, reproducing a standardised choice to the unit from an independent
+direction. And #218's `r = 1723` leaves `t = 18` and `d = 15` in place, so it is worth
+`2^25`: **raising `r` from 523 to 1723 buys four bits.**
+
+**`r = 1723` is separately inadmissible, for a reason no DFR fit could see.** `x^r - 1` over
+GF(2) must have exactly two irreducible factors or the ring has proper quotients to project
+through — the hazard that made TODO #223 reject `n = 768` for HKEX-RNL. That needs `r` prime
+with 2 primitive mod `r`. 1723 is prime, but `ord_2(1723) = 574`, a proper divisor of 1722,
+so `x^1723 - 1` has four factors. (`8191 = 2^13 - 1` fails identically.) Two independent
+reasons, neither visible from the curve that produced the value.
+
+**Correctness, measured rather than extrapolated.** A DFR of `2^-128` is not measurable and
+is not claimed; the waterfall onset is. At `(r, d) = (12323, 71)`, 150 trials per cell, the
+deployed threshold rule first fails at `t = 150` and BIKE's at `t = 154`, so `t = 134` sits
+~12% below onset — the operating point is on the flat part of the curve, which is the
+precondition for BIKE's published extrapolation to be the applicable claim. That
+extrapolation is cited, not reproduced.
+
+**The threshold rule is a FUNCTION, not a constant — and that was not anticipated.** BIKE's
+is affine in the *syndrome weight*; the deployed one is affine in `d` and ignores the
+syndrome entirely. Across the transition the adaptive rule takes **30 failures against 114,
+at four times fewer iterations**, because a constant threshold keeps demanding 47 of 71
+unsatisfied checks as the syndrome thins. And the failure is symmetric: BIKE's rule has a
+hard floor of 36, so at the deployed `d = 15` it demands more unsatisfied checks than a row
+contains and fails **150/150** — measured, not asserted. A parameter change carries the
+threshold rule with it, `NB_ITER` 20 -> 5 included.
+
+**The shipped Python decoder is a blocker, not a cost line.** It computes its
+unsatisfied-parity counts in an interpreter loop over `r * d` positions: **5.4 s per
+decapsulation** at `r = 12323` against 16 ms today, 333x. Not intrinsic — the bit-sliced
+representation this analysis uses (counters as bitplanes over big integers, carry-save
+updated) does the same instance in **8 ms** in the same interpreter — but the rewrite is a
+prerequisite, not a follow-up. C and Go need no representation change.
+
+**One acceptance criterion is not met, and cannot be.** #276 asked for the weak-key cliff
+re-measured at the chosen `d`. #218 could locate that cliff at `r = 523` precisely *because*
+the DFR was `2^-8.6`; at the new parameters, **the measurement that justified
+`QCMDPC_MAX_MULT` is the one the parameter change exists to eliminate.** The same constant 5
+goes from rejecting 0.03% of keys at `d = 15` to 1.6% at `d = 71`, where multiplicity 4 is the
+mode — the screen changes character from "discard a freak" to "discard a common key". A
+surrogate is used instead, stated in advance rather than fitted: keep it a tail cut costing
+under one keygen retry in 200, giving **`QCMDPC_MAX_MULT = 6`**, recorded as a retry-budget
+choice and not as a cliff. An exact quantile match was tried first and discarded — 0.03% sits
+at the sampler's resolution floor and the limit it selects flips between 6 and 7 with the
+trial count, and a constant that depends on how long the script ran is not a constant. The
+cliff question passes to #250.
+
+**Recommendation: adopt BIKE-128 verbatim** (`r = 12323`, `d = 71`, `t = 134`, BIKE's
+threshold rule, `NbIter = 5`). Inventing a set is rejected because the frontier already lands
+on BIKE's `(t, d)` and `r`'s only remaining job is the DFR — the one quantity this repository
+cannot measure and BIKE has published. Doing so would mean owning an extrapolation with no
+data behind it.
+
+**A latent trap in the analysis tooling, found the hard way and now guarded.**
+`qcmdpc_dfr_weak_keys.py`'s fast decoder holds its unsatisfied-parity counters in exactly
+four bitplanes, saturating at 15. Above the deployed `d = 15` it does not error — it silently
+fails to decode, reporting a plausible DFR of 1.0 at parameters that decode perfectly. This
+pass read 20 failures out of 20 at BIKE-128 before finding it, and briefly had a wrong
+conclusion on the strength of it. `bgf_decode_fast` now refuses `d > 15` and names the
+plane-sizing copy to use instead.
+
+`SECURITY.md`, `spec/` and §11.8.7 now carry the number in place of the phrase it was
+standing in for. The classification is unchanged: HPKE-Stern-KEM remains demo-only.
+
 ## [6.5.7] - 2026-09-06
 
 ### TODO #257 (item 1 CLOSED; item 2 remains) — the pair correlation, evaluated

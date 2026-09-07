@@ -241,4 +241,76 @@ rejecting the alternatives considered, including plain adoption of BIKE-128.  It
 non-zero if a finding stops reproducing, as the other analysis scripts do.  On landing,
 #250 becomes worth running and should be re-pointed at the new parameters.
 
+---
+
+**FIRST PASS (v6.5.8): the selection is settled; the port is not.**
+
+`SecurityProofsCode/qcmdpc_parameter_selection.py` and SecurityProofs-5.md §11.8.9 close
+the *analysis* half of this item.  **Adopt BIKE-128 verbatim: `r = 12323`, `d = 71`,
+`t = 134`, with BIKE's threshold rule and `NbIter = 5`.**  What that pass established, so
+the port does not re-litigate it:
+
+* **The deployed instance is worth ~`2^21` classical**, Dumer with the quasi-cyclic
+  speedups, calibrated against BIKE's three published levels (+8.0 bits, spread 0.9 over a
+  3.3x range of `r`).  That is the number this item said had no answer on record.  It is
+  *below* §11.8.3's `2^56`-`2^60` for the Stern-F signature despite four times the length.
+  (This item's own text called the relative-distance gap "an order of magnitude"; it is
+  3.6x.  The conclusion is unchanged and the overstatement is corrected in §11.8.9.)
+* **`t` and `d` are set by ISD essentially independently of `r`; `r` is then set by DFR
+  alone.**  Min `t` moves by 6 and min `d` by 2 over a 12.3x range of `r`.  So the
+  hypothesis in this item's opening -- that `r` alone cannot be the answer -- is now a
+  measurement, and #218's `r = 1723` buys **four bits** with `d` and `t` unchanged.
+* `r = 1723` is **separately inadmissible**: `ord_2(1723) = 574`, not 1722, so `x^r - 1`
+  has four irreducible factors over GF(2) and the ring has proper quotients -- the same
+  class of structural defect that made #223 reject `n = 768`.  Any candidate `r` must be
+  checked there first.  (`8191` fails the same way.)
+* At `r = 12323` the ISD frontier lands on **exactly** BIKE-128's `(t, d) = (134, 71)`,
+  from an independent direction.  There is nothing left to choose, which is why inventing
+  a set is rejected: `r`'s only remaining job is the DFR, the one quantity this repository
+  cannot measure and BIKE has published.
+
+**Two things the analysis found that this item did not anticipate, and which the port must
+carry:**
+
+* **The threshold rule is a FUNCTION, not a constant.**  BIKE's is affine in the *syndrome
+  weight*; the deployed one is affine in `d` and ignores the syndrome entirely.  Each fails
+  outright at the other's `d` -- BIKE's floor of 36 exceeds a `d = 15` row, and the
+  deployed rule stalls at 47-of-71 as the syndrome thins.  Measured at `(12323, 71)`: the
+  adaptive rule takes 30 failures across the transition against 114, at **four times fewer
+  iterations**.  The DFR claim belongs to BIKE's decoder, not to BIKE's `(r, d, t)` under
+  an arbitrary one.  `NB_ITER` 20 -> 5 comes with it.
+* **The shipped Python decoder is a blocker, not a cost line.**  It computes its
+  unsatisfied-parity counts in an interpreter loop over `r * d` positions: 5.4 s per
+  decapsulation at `r = 12323` against 16 ms today.  Not intrinsic -- the bit-sliced
+  representation the analysis uses does the same instance in 8 ms in the same interpreter
+  -- but the rewrite is a **prerequisite**, not a follow-up.  C and Go need no
+  representation change; C's `qcmdpc_bgf_decode` does grow to ~123 KB of stack work arrays
+  from ~7 KB, which is fine but should be a deliberate decision.
+
+**One acceptance criterion is NOT met, and cannot be.**  This item asked for "the weak-key
+cliff re-measured at the chosen `d`".  #218 could locate that cliff at `r = 523` precisely
+*because* the DFR was `2^-8.6`; at the new parameters the measurement that justified
+`QCMDPC_MAX_MULT` is the one the parameter change exists to eliminate.  A surrogate is used
+instead, stated in advance rather than fitted -- keep the screen a tail cut costing under
+one keygen retry in 200 -- giving **`QCMDPC_MAX_MULT = 6`**, recorded as a retry-budget
+choice and not as a cliff.  (An exact quantile match to the deployed 0.03% was tried first
+and discarded: it sits at the sampler's resolution floor and flips between 6 and 7 with the
+trial count.)  The cliff question passes to #250, which owns decoder behaviour.
+
+**What remains, to close this item.**  The port itself, MAJOR, with a `MIGRATING.md` entry:
+
+* the four constants in four languages, plus `QCMDPC_RBYTES`/`RWORDS` following `r`;
+* the threshold rule and `NB_ITER` in four languages;
+* the Python decoder rewritten bit-sliced, first;
+* `QCMDPC_MAX_MULT` 5 -> 6, in four languages that nothing cross-checks (`spec/` reads
+  `herradura.h` alone);
+* test [51]'s pinned distance-spectrum supports, all at `d = 15`, in four languages, plus
+  C's fixed-width `QcMdpcPriv`;
+* `KAT/` for any pinned Stern-KEM artifact;
+* `CliTest/lib_dfr.sh` -- its retries become dead code, which is the desired end state, but
+  `ci.yml`'s guard then mandates sourcing a policy that can never fire and should be
+  re-justified rather than left asserting nothing;
+* `spec/` and `SECURITY.md`, held to each other by `check_security_md.py`;
+* the `.s`/`.asm`/`.ino` targets stay at `r = 32` and are labelled demo-only, as #223 did.
+
 Status: **OPEN**

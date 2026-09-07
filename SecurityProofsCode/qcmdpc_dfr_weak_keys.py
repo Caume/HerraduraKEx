@@ -106,6 +106,16 @@ def _set_bits(x):
 
 def bgf_decode_fast(syn_pub, sup0, sup1, r, d, nb_iter):
     """Returns (e0, e1) or None — bit-exact with the deployed qcmdpc_bgf_decode."""
+    # _counters holds the unsatisfied-parity counts in exactly four bitplanes,
+    # so a counter above 15 wraps and every comparison below it is garbage.
+    # That is invisible: a saturated decoder does not error, it just fails to
+    # decode, so a d > 15 measurement comes back as a plausible-looking DFR of
+    # 1.0 (TODO #276 hit exactly this and read 20/20 failures at parameters
+    # that decode perfectly).  Anything wider needs the plane-sizing decoder in
+    # qcmdpc_parameter_selection.py.
+    if d > 15:
+        raise ValueError(f'bgf_decode_fast: d={d} saturates the 4-bitplane '
+                         'counters (max 15); use qcmdpc_parameter_selection.py')
     full = (1 << r) - 1
     s = 0
     for k in sup0:                                  # s = syn_pub * h0
