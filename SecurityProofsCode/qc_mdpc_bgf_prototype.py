@@ -27,8 +27,15 @@ NL-FSCX PRF seeding layer (work item 2)
 BIKE derives (h0, h1) and e from a SHA-3 XOF.  Here the XOF is replaced by the
 HFSCX-256-DM KDF path:  block_i = F1^{n/4}(ROL(seed ⊕ i, n/8), seed ⊕ i) at
 n = 256, iterated in counter mode; 16-bit words are rejection-sampled to
-uniform indices in [0, r).  §3 tests the per-position uniformity of the
-derived supports (chi-square against the uniform distribution).
+uniform indices in [0, r).  This script keeps that ORIGINAL 16-bit form as a
+record of what TODO #126 prototyped; the shipped sampler no longer has it.
+TODO #277 sizes the draw from the modulus instead, because a fixed 16-bit
+draw has a zero acceptance limit above 65536 and spins forever rather than
+failing -- so do NOT run this script at r above ~32000: it will hang.  Use
+qcmdpc_parameter_selection.py, or the suite, for anything at BIKE sizes.
+
+§3 tests the per-position uniformity of the derived supports (chi-square
+against the uniform distribution).
 
 BGF decoder (work item 1 & 3)
 ─────────────────────────────

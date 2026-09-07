@@ -946,6 +946,22 @@ PRIMITIVES = {
         "python": r"^def _qcprf_refill\(",
         "java": r"Stern.java::private static int\[\] refill\(",
     },
+    "qcprf-idx-bytes": {
+        "c": r"static int qcprf_idx_bytes\(",
+        "go": r"^func qcprfIdxBytes\(",
+        "python": r"^def _qcprf_idx_bytes\(",
+        "java": r"Stern.java::static int idxBytes\(",
+    },
+    "qcprf-draw": {
+        "acknowledged":
+            "Go alone needs a top-level entry point into the QC-MDPC index "
+            "sampler: its security-test harness is a separate module, where C's "
+            "static header, Python's module and Java's package-private nested "
+            "class are all readable in place by their own harnesses. The "
+            "primitive itself is qcprf_sparse_support / sparse_support / "
+            "sparseSupport, a method in three of the four (TODO #277)",
+        "go": r"^func QcMdpcPrfDraw\(",
+    },
     "qcmdpc-max-multiplicity": {
         "c": r"static int qcmdpc_max_multiplicity\(",
         "go": r"^func qcMdpcMaxMultiplicity\(",
@@ -1973,11 +1989,11 @@ CENSUS_EXEMPT = {
         (r"_(alloc|free)$", "manual allocation/release of a proof or signature struct. "
                             "Go, Python and Java are garbage-collected and have no "
                             "counterpart by construction"),
-        (r"^_?(qcp|qcprf|qceuc)_(?!mul_sparse$|inv$|mul$|refill$)",
+        (r"^_?(qcp|qcprf|qceuc)_(?!mul_sparse$|inv$|mul$|refill$|idx_bytes$)",
          "QC-MDPC bit-polynomial and PRF plumbing (get/set/copy/xor/rotate/popcount, "
-         "the xorshift and degree helpers). The four members that ARE protocol steps "
-         "— qcp_mul, qcp_mul_sparse, qcp_inv, qcprf_refill — are excluded from this "
-         "rule and carry manifest entries"),
+         "the xorshift and degree helpers). The five members that ARE protocol steps "
+         "— qcp_mul, qcp_mul_sparse, qcp_inv, qcprf_refill, qcprf_idx_bytes — are "
+         "excluded from this rule and carry manifest entries"),
         (r"_be64$", "big-endian 8-byte packing helper. Go has encoding/binary and "
                     "Python has int.to_bytes; there is nothing to port"),
         (r"^ct_eq", "constant-time comparison helper. Go uses crypto/subtle, Python "

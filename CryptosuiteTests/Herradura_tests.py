@@ -3751,6 +3751,77 @@ def bench_zkp_rnl():
     print()
 
 
+
+# ---------------------------------------------------------------------------
+# Security test [52]: the QC-MDPC PRF's seed expansion (TODO #277).
+#
+# WHY THIS EXISTS.  A four-way PINNED vector, because the four languages did
+# not agree.  C XORed the counter into the TOP four bytes of the seed while
+# Python, Go and Java XORed it into the LOW bits, so the FIRST 256-bit block
+# agreed -- ctr is 0 there -- and every block after it did not.  Nothing caught
+# a 3-1 split for the life of the protocol: the seed is freshly random at every
+# keygen, only the resulting key travels on the wire, and no vector ever asked
+# one language to reproduce another's expansion of a given seed.  Hence a
+# vector rather than a round-trip.
+#
+# Case (b) is deliberately the SECOND support drawn from one PRF, not the
+# first: the first is one block and would have passed throughout.
+#
+# WHY IT IMPORTS THE SUITE INSTEAD OF RE-IMPLEMENTING.  As [50] does: a local
+# copy of the sampler would be a second opinion about the very byte order in
+# dispute, and a vector agreeing with a local copy proves nothing.
+# ---------------------------------------------------------------------------
+
+_QCPRF_EXP_A = [4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510]
+_QCPRF_EXP_B = [0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480]
+_QCPRF_EXP_C = [0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
+                823, 866, 1001, 1033]
+_QCPRF_EXP_D = [15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122]
+# the draw width is a function of the modulus, not a constant
+_QCPRF_WIDTHS = [(523, 2), (1046, 2), (12323, 2), (24646, 2),
+                 (49318, 2), (81946, 3), (1 << 24, 3), ((1 << 24) + 1, 4)]
+
+
+def test_qcprf_seed_expansion():
+    print("[52] QC-MDPC PRF seed expansion (cross-language vector)")
+    suite = None
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "Herradura cryptographic suite.py")
+        _sp = _ilu.spec_from_file_location("_hsuite_qcprf", _p)
+        suite = _ilu.module_from_spec(_sp)
+        _sp.loader.exec_module(suite)
+    except Exception as e:                      # noqa: BLE001 - reported, not raised
+        print(f"    suite not importable: {type(e).__name__}  [FAIL]\n")
+        return
+
+    prf = suite._QcMdpcPrf(1)
+    got_a = sorted(prf.sparse_support(523, 15))
+    # (b) the SECOND support -- the one that crosses into block ctr=1
+    got_b = sorted(prf.sparse_support(523, 15))
+    # (c) the encapsulation modulus, 2r
+    got_c = sorted(suite._QcMdpcPrf(1).sparse_support(1046, 18))
+    # (d) past the old 16-bit ceiling: terminates, and agrees with the others.
+    #     The 16-bit-only sampler could not serve this modulus and did not
+    #     refuse either -- its acceptance limit was zero, so it spun forever.
+    got_d = sorted(suite._QcMdpcPrf(7).sparse_support(81946, 10))
+    bad_w = sum(1 for m, nb in _QCPRF_WIDTHS if suite._qcprf_idx_bytes(m) != nb)
+    # (e) a modulus past the draw width is refused, not looped on
+    guarded = False
+    try:
+        suite._QcMdpcPrf(1).uniform_idx(1 << 33)
+    except ValueError:
+        guarded = True
+
+    ok = (got_a == _QCPRF_EXP_A and got_b == _QCPRF_EXP_B and
+          got_c == _QCPRF_EXP_C and got_d == _QCPRF_EXP_D and
+          bad_w == 0 and guarded)
+    print(f"    seed-1 first={got_a == _QCPRF_EXP_A} second={got_b == _QCPRF_EXP_B}  "
+          f"2r={got_c == _QCPRF_EXP_C}  widths={bad_w}  m=81946={got_d == _QCPRF_EXP_D}  "
+          f"guard={guarded}  [{'PASS' if ok else 'FAIL'}]\n")
+
+
 def bench_zkp_nl():
     n = 32; rounds = 16
     print(f"[43] ZKP-NL prove+verify throughput  (n={n}, rounds={rounds})  [PQC-EXT]")
@@ -3885,6 +3956,7 @@ if __name__ == '__main__':
     test_rnl_m_blind_guard()
     test_hcred_kkw()
     test_qcmdpc_weak_key_screen()
+    test_qcprf_seed_expansion()
 
     # Cap accounting (TODO #225) — say what -t actually did, so a future ring or
     # parameter change can be told from a slower host by reading the log.

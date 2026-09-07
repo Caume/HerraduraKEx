@@ -2,6 +2,72 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.0] - 2026-09-07
+
+### TODO #277 — the QC-MDPC index draw, widened; and a 3-1 split it uncovered
+
+The item was filed to lift the sampler's 16-bit ceiling.  Working it found a
+separate defect underneath: **C's seed expansion disagreed with Python, Go and
+Java**, and had for the life of the protocol.
+
+**The divergence.**  `qcprf_refill` is `nl_fscx_revolve_v1(ROL(seed XOR i, n/8),
+seed XOR i, n/4)` in counter mode.  Python, Go and Java XOR the counter `i` into
+the LOW bits of the seed integer; C XORed it into the TOP four bytes.  Block 0
+therefore agreed — `i` is 0 there and the XOR is a no-op — and every block after
+it did not.  One keygen draws two blocks, so C's *second* private support and
+every encapsulation error vector differed from the other three's for the same
+seed.  C is now aligned with the majority.
+
+It survived because nothing ever asked.  The seed is freshly random at every
+keygen, only the resulting key travels on the wire, and no vector ever required
+one language to reproduce another's expansion of a given seed — so every
+round-trip and interop test passed throughout.  This is the class `spec/`'s five
+cross-language axes cannot see, and the reason TODO #278 exists.
+
+**The ceiling, and what replaced it.**  `qcprf_uniform_idx` drew 16-bit words and
+rejected above `lim = floor(65536/m)*m`.  Above `m = 65536` that floor is zero,
+so `lim` is zero, every draw is rejected, and the loop never exits — in C
+`w >= 0` is vacuously true for a `uint16_t`, so the compiler is entitled to
+assume it never does.  A caller raising the parameters got a **hang with no
+diagnostic**, not an error.
+
+The draw is now sized from its modulus — `ceil(log2(m)/8)` bytes — which removes
+the ceiling below 2^32 rather than converting the hang into a message.  The
+width is **2 for every modulus below 65537**, so the deployed `r = 523` /
+`2r = 1046` and BIKE-128's and BIKE-192's moduli consume the keystream exactly as
+before and no pinned QC-MDPC artifact moves.  Only BIKE-256's `2r = 81946`
+crosses a byte boundary, to three bytes at 99.64% acceptance.
+
+That also settles the item's own open question.  #277 argued 32-bit draws cost
+*more* PRF blocks at BIKE-128 (a 256-bit block yields 8 words instead of 16) and
+recommended 24-bit as the middle.  Sizing from the modulus reaches that answer
+without a constant to choose: it is 16-bit where 16-bit suffices and 24-bit only
+where it does not.
+
+**Security test [52]** — Java's **[34]** — pins the expansion of a fixed seed in
+all four languages, which is what would have caught the divergence.  Case (b) is
+deliberately the *second* support drawn from one PRF: the first is one block and
+would have passed throughout.  It also pins the width rule and draws past 65536.
+Python and Go call the suite rather than keeping a local copy — a second opinion
+about the byte order in dispute would prove nothing — which is why the Go package
+now exports `QcMdpcPrfDraw`, its harness being a separate module.
+
+**Also in this release**
+
+- `spec/check_language_parity.py` gains a `qcprf-idx-bytes` manifest entry (four
+  cells) and a `qcprf-draw` entry acknowledging the Go-only test hook.
+- `SecurityProofsCode/qcmdpc_parameter_selection.py` §8 no longer records the
+  ceiling as live: it now asserts that every BIKE level is *reachable*, and that
+  every width a two-byte draw already served is unchanged — the property that
+  keeps pinned artifacts valid.  §9's touch-list drops the PRF row.
+- `MIGRATING.md` section 14 records the C counter-placement change for callers
+  who derive a key from a fixed seed through `herradura.h` directly.  No CLI
+  path reaches it: no subcommand accepts a QC-MDPC seed.
+
+MINOR rather than PATCH because the Go package gains an exported function.  No
+wire format, PEM label, CLI flag or `--algo` behaviour changed, and no stored
+artifact becomes unreadable or non-interoperable.
+
 ## [6.5.8] - 2026-09-07
 
 ### TODO #276 (first pass) — HPKE-Stern-KEM's parameters: the instance, costed

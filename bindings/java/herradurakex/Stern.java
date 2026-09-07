@@ -380,43 +380,77 @@ public final class Stern {
         return u0;
     }
 
-    /** NL-FSCX-v1-based XOF: 16 x 16-bit words per 256-bit block, consumed
-     * highest-word-first (matches Python's list.pop()-from-end stack). */
+    /** NL-FSCX-v1-based XOF over 256-bit counter-mode blocks, consumed
+     * big-endian.  The draw width is sized from the modulus (TODO #277). */
     static final class QcMdpcPrf {
+        /** Widest uniform draw the sampler serves.  Raising it needs the index
+         * types of every consumer widened with it. */
+        static final int MAX_IDX_BYTES = 4;
+
         private final BigInteger seed;
         private long ctr = 0;
-        private int[] buf = new int[0];
+        private byte[] buf = new byte[0];
         private int pos = 0;
 
         QcMdpcPrf(BigInteger seedInt) { this.seed = seedInt.and(MASK); }
 
-        private static int[] refill(BigInteger seedInt, long ctr) {
+        private static byte[] refill(BigInteger seedInt, long ctr) {
             BigInteger x = seedInt.xor(BigInteger.valueOf(ctr)).and(MASK);
             BigInteger rolx = Herradura.rol(x, N / 8);
             BigInteger block = Hfscx256.nlFscxRevolveV1(rolx, x, N / 4);
-            int[] words = new int[16];
-            for (int k = 0; k < 16; k++) {
-                words[k] = block.shiftRight(16 * k).and(BigInteger.valueOf(0xFFFF)).intValue();
-            }
-            return words;
+            byte[] out = new byte[N / 8];
+            byte[] be = block.toByteArray();           // may carry a sign byte
+            int copy = Math.min(be.length, out.length);
+            System.arraycopy(be, be.length - copy, out, out.length - copy, copy);
+            return out;
         }
 
-        int word16() {
-            if (pos >= buf.length) {
+        /** The next nbytes of keystream, big-endian.  A block that cannot serve
+         * a whole word is discarded rather than straddled, so a draw never
+         * depends on two blocks.  At the two-byte width every block divides
+         * evenly and nothing is discarded at all. */
+        long word(int nbytes) {
+            if (pos + nbytes > buf.length) {
                 buf = refill(seed, ctr);
                 ctr++;
                 pos = 0;
             }
-            int idx = buf.length - 1 - pos; // pop from the end
-            pos++;
-            return buf[idx];
+            long w = 0;
+            for (int k = 0; k < nbytes; k++) w = (w << 8) | (buf[pos++] & 0xFFL);
+            return w;
         }
 
-        int uniformIdx(int r) {
-            int lim = (0x10000 / r) * r;
+        /** Bytes one uniform draw below m needs: the smallest w with
+         * 256^w &gt;= m.  Sizing the draw from the modulus rather than fixing it
+         * at two bytes is what lifts the sampler's ceiling (TODO #277).  It
+         * costs nothing where it matters: w is 2 for every modulus below 65537,
+         * so the deployed r = 523 / 2r = 1046 and BIKE-128's and BIKE-192's
+         * moduli all consume the keystream exactly as the 16-bit-only sampler
+         * did, and every pinned QC-MDPC artifact still holds. */
+        static int idxBytes(int m) {
+            int w = 1;
+            while (w < MAX_IDX_BYTES && ((m - 1L) >>> (8 * w)) != 0) w++;
+            return w;
+        }
+
+        /** A uniform index in [0, m), by rejection sampling.  Throws on a
+         * modulus it cannot serve instead of looping: above the draw width the
+         * acceptance limit is zero and every draw is rejected, so the unguarded
+         * form is an infinite loop with no diagnostic, not an error (#277). */
+        int uniformIdx(int m) {
+            if (m < 1)
+                throw new IllegalArgumentException(
+                    "qcprf uniformIdx: modulus must be >= 1, got " + m);
+            int nb = idxBytes(m);
+            long span = 1L << (8 * nb);
+            if ((long) m > span)
+                throw new IllegalArgumentException(
+                    "qcprf uniformIdx: modulus " + m + " exceeds the sampler's "
+                    + (8 * MAX_IDX_BYTES) + "-bit draw width");
+            long lim = (span / m) * m;
             while (true) {
-                int w = word16();
-                if (w < lim) return w % r;
+                long w = word(nb);
+                if (w < lim) return (int) (w % m);
             }
         }
 

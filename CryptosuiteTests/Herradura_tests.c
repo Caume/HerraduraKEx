@@ -161,6 +161,16 @@ static double hsqrt(double x)
  * which is exactly the failure mode being fixed.  putchar/puts/fputs are left
  * alone: no status marker is ever emitted through them. */
 #define HFAIL_KEEP 32
+/* Insertion sort — the pinned QC-MDPC vectors of [52] are compared as sets. */
+static void hsort_u16(uint16_t *a, int n) {
+    int i, j; uint16_t v;
+    for (i = 1; i < n; i++) { v = a[i]; for (j = i - 1; j >= 0 && a[j] > v; j--) a[j+1] = a[j]; a[j+1] = v; }
+}
+static void hsort_u32(uint32_t *a, int n) {
+    int i, j; uint32_t v;
+    for (i = 1; i < n; i++) { v = a[i]; for (j = i - 1; j >= 0 && a[j] > v; j--) a[j+1] = a[j]; a[j+1] = v; }
+}
+
 static int  g_failures = 0;
 static char g_fail_lines[HFAIL_KEEP][256];
 
@@ -5857,6 +5867,90 @@ int main(int argc, char *argv[])
                N, bad_accept, bad_reject, wrap_missed, keygen_ok,
                (bad_accept == 0 && bad_reject == 0 && wrap_missed == 0 &&
                 keygen_ok == 8) ? "PASS" : "FAIL");
+    }
+
+    /* Security test [52]: the QC-MDPC PRF's seed expansion (TODO #277).
+     *
+     * A four-way PINNED vector, and it exists because the four languages did
+     * not agree.  C XORed the counter into the TOP four bytes of the seed
+     * while Python, Go and Java XORed it into the LOW bits, so the FIRST
+     * 256-bit block agreed -- ctr is 0 there -- and every block after it did
+     * not.  Nothing caught a 3-1 split for the life of the protocol: the seed
+     * is freshly random at every keygen, only the resulting key travels on the
+     * wire, and no vector ever asked one language to reproduce another's
+     * expansion of a given seed.  Hence a vector rather than a round-trip.
+     *
+     * Case (a) is deliberately the SECOND support drawn from one PRF, not the
+     * first: the first is one block and would have passed throughout.
+     *
+     * (c) also pins the modulus-sized draw width #277 introduced, and (d)
+     * exercises a modulus past 65536 -- which the 16-bit-only sampler could
+     * not serve at all, and did not refuse either: its acceptance limit was
+     * zero, so it rejected every draw and spun forever. */
+    {
+        /* All four languages agree on these, and they are pinned in each harness --
+         * the PRF has no CLI surface, so this is the only place it is pinned. */
+        static const uint16_t exp_a[QCMDPC_D] =
+            { 4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510 };
+        static const uint16_t exp_b[QCMDPC_D] =
+            { 0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480 };
+        static const uint16_t exp_c[QCMDPC_T] =
+            { 0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
+              823, 866, 1001, 1033 };
+        static const uint32_t exp_d[10] =
+            { 15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122 };
+        static const struct { uint32_t m; int nb; } widths[] = {
+            { 523, 2 }, { 1046, 2 }, { 12323, 2 }, { 24646, 2 },
+            { 49318, 2 }, { 81946, 3 }, { 16777216u, 3 }, { 16777217u, 4 }
+        };
+        QcMdpcPrf vp;
+        uint8_t   vseed[KEYBYTES];
+        uint16_t  got[QCMDPC_T];
+        uint32_t  wide[10];
+        int i, j, k, bad_a = 0, bad_b = 0, bad_c = 0, bad_d = 0, bad_w = 0;
+
+        printf("[52] QC-MDPC PRF seed expansion (cross-language vector)\n");
+
+        memset(vseed, 0, KEYBYTES);
+        vseed[KEYBYTES - 1] = 1;                       /* seed = 1 */
+        qcprf_init(&vp, vseed);
+        qcprf_sparse_support(&vp, QCMDPC_R, QCMDPC_D, got);
+        hsort_u16(got, QCMDPC_D);
+        for (k = 0; k < QCMDPC_D; k++) if (got[k] != exp_a[k]) bad_a++;
+
+        /* (a) the SECOND support -- the one that crosses into block ctr=1 */
+        qcprf_sparse_support(&vp, QCMDPC_R, QCMDPC_D, got);
+        hsort_u16(got, QCMDPC_D);
+        for (k = 0; k < QCMDPC_D; k++) if (got[k] != exp_b[k]) bad_b++;
+
+        /* (b) the encapsulation modulus, 2r */
+        qcprf_init(&vp, vseed);
+        qcprf_sparse_support(&vp, 2u * QCMDPC_R, QCMDPC_T, got);
+        hsort_u16(got, QCMDPC_T);
+        for (k = 0; k < QCMDPC_T; k++) if (got[k] != exp_c[k]) bad_c++;
+
+        /* (c) the draw width is a function of the modulus */
+        for (i = 0; i < (int)(sizeof widths / sizeof widths[0]); i++)
+            if (qcprf_idx_bytes(widths[i].m) != widths[i].nb) bad_w++;
+
+        /* (d) past the old 16-bit ceiling: terminates, in range, distinct */
+        memset(vseed, 0, KEYBYTES);
+        vseed[KEYBYTES - 1] = 7;                       /* seed = 7 */
+        qcprf_init(&vp, vseed);
+        for (k = 0; k < 10; ) {
+            uint32_t idx = qcprf_uniform_idx(&vp, 81946u);
+            int dup = 0;
+            for (j = 0; j < k; j++) if (wide[j] == idx) { dup = 1; break; }
+            if (!dup) wide[k++] = idx;
+        }
+        hsort_u32(wide, 10);
+        for (k = 0; k < 10; k++) if (wide[k] != exp_d[k]) bad_d++;
+
+        printf("    seed-1 first=%d second=%d  2r=%d  widths=%d  "
+               "m=81946=%d  [%s]\n\n",
+               bad_a, bad_b, bad_c, bad_w, bad_d,
+               (bad_a == 0 && bad_b == 0 && bad_c == 0 && bad_w == 0 &&
+                bad_d == 0) ? "PASS" : "FAIL");
     }
 
     /* Failure gate (TODO #233).  Return non-zero if any check reported

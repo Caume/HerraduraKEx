@@ -1069,7 +1069,24 @@ Whenever a TODO adds or removes a test number or CLI subcommand, re-check this s
 #  copy cross-checked against the suite as [46]-[49] do; C/Go/Java call
 #  theirs directly.  All four also assert that what keygen PRODUCES the
 #  screen ACCEPTS, which no pinned vector can.  Java's counterpart is
-#  SelfTest.java's [32])
+#  SelfTest.java's [32]
+#  [52] is TODO #277's guard for the QC-MDPC PRF's SEED EXPANSION, and it is a
+#  four-way PINNED vector because the four languages did not agree.  C XORed
+#  the counter into the TOP four bytes of the seed where Python, Go and Java
+#  XOR it into the LOW bits, so block 0 agreed -- ctr is 0 there -- and every
+#  block after it did not.  A 3-1 split survived the life of the protocol
+#  because the seed is freshly random at every keygen, only the resulting KEY
+#  travels on the wire, and nothing ever asked one language to reproduce
+#  another's expansion; hence a vector, not a round-trip.  Case (b) is
+#  deliberately the SECOND support drawn from one PRF -- the first is one
+#  block and would have passed throughout.  It also pins the modulus-sized
+#  draw width #277 introduced and exercises a modulus past 65536, which the
+#  16-bit-only sampler could not serve and did not refuse either: its
+#  acceptance limit was zero, so it spun forever.  Python and Go reach the
+#  sampler through the suite rather than keeping a local copy -- a second
+#  opinion about the byte order in dispute would prove nothing -- which is
+#  why the Go package exports QcMdpcPrfDraw at all.  Java's counterpart is
+#  SelfTest.java's [34])
 ./CryptosuiteTests/Herradura_tests_c
 ./CryptosuiteTests/Herradura_tests_c -r 500        # cap each test at 500 iterations
 ./CryptosuiteTests/Herradura_tests_c -t 2.0        # cap wall-clock per test/bench at 2 s

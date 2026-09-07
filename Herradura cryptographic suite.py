@@ -1660,36 +1660,80 @@ _QCMDPC_D = 15
 _QCMDPC_T = 18
 _QCMDPC_NB_ITER = 20
 _QCMDPC_MASK = (1 << KEYBITS) - 1  # convenience alias
+_QCPRF_BLOCK_BYTES = KEYBITS // 8   # one PRF block, 32 bytes
+_QCPRF_MAX_IDX_BYTES = 4            # widest uniform draw the sampler serves
 
 
-def _qcprf_refill(seed_int: int, ctr: int):
+def _qcprf_refill(seed_int: int, ctr: int) -> bytes:
     """block_i = nl_fscx_revolve_v1(ROL(seed⊕ctr, n/8), seed⊕ctr, n/4)  (n=256)."""
     x = BitArray(KEYBITS, (seed_int ^ ctr) & _QCMDPC_MASK)
     rolx = x.rotated(KEYBITS // 8)
     block = nl_fscx_revolve_v1(rolx, x, KEYBITS // 4)
-    bval = block.uint
-    words = [(bval >> (16 * k)) & 0xFFFF for k in range(16)]
-    return words
+    return block.uint.to_bytes(_QCPRF_BLOCK_BYTES, "big")
+
+
+def _qcprf_idx_bytes(m: int) -> int:
+    """Bytes one uniform draw below m needs: the smallest w with 256**w >= m.
+
+    Sizing the draw from the modulus rather than fixing it at two bytes is what
+    lifts the sampler's ceiling (TODO #277).  It costs nothing where it matters:
+    w is 2 for every modulus below 65537, so the deployed r = 523 / 2r = 1046
+    and BIKE-128's and BIKE-192's moduli all consume the keystream exactly as
+    the 16-bit-only sampler did, and every pinned QC-MDPC artifact still holds.
+    """
+    w = 1
+    while w < _QCPRF_MAX_IDX_BYTES and (m - 1) >> (8 * w):
+        w += 1
+    return w
 
 
 class _QcMdpcPrf:
     def __init__(self, seed_int: int):
         self._seed = seed_int & _QCMDPC_MASK
         self._ctr = 0
-        self._buf = []
+        self._buf = b""
+        self._pos = 0
 
-    def word16(self):
-        if not self._buf:
+    def word(self, nbytes: int) -> int:
+        """The next nbytes of keystream, big-endian.
+
+        A block that cannot serve a whole word is discarded rather than
+        straddled, so a draw never depends on two blocks.  At the two-byte width
+        every block divides evenly and nothing is discarded at all.
+        """
+        if self._pos + nbytes > len(self._buf):
             self._buf = _qcprf_refill(self._seed, self._ctr)
             self._ctr += 1
-        return self._buf.pop()
+            self._pos = 0
+        w = int.from_bytes(self._buf[self._pos:self._pos + nbytes], "big")
+        self._pos += nbytes
+        return w
 
-    def uniform_idx(self, r: int):
-        lim = (0x10000 // r) * r
+    def uniform_idx(self, m: int) -> int:
+        """A uniform index in [0, m), by rejection sampling.
+
+        The draw width is sized from m, so the acceptance limit is always at
+        least m and the loop always terminates below the sampler's widest
+        draw.  Past that width it refuses rather than looping: the old
+        fixed-16-bit form had a zero acceptance limit above 65536 and spun
+        forever with no diagnostic, which is the failure this replaces
+        (TODO #277).
+        """
+        if m < 1:
+            raise ValueError(f"qcprf uniform_idx: modulus must be >= 1, got {m}")
+        if m > (1 << (8 * _QCPRF_MAX_IDX_BYTES)):
+            raise ValueError(
+                f"qcprf uniform_idx: modulus {m} exceeds the sampler's "
+                f"{8 * _QCPRF_MAX_IDX_BYTES}-bit draw width; widen "
+                f"_QCPRF_MAX_IDX_BYTES (and the index types of every consumer) "
+                f"before using parameters this large")
+        nb = _qcprf_idx_bytes(m)
+        span = 1 << (8 * nb)
+        lim = (span // m) * m
         while True:
-            w = self.word16()
+            w = self.word(nb)
             if w < lim:
-                return w % r
+                return w % m
 
     def sparse_support(self, r: int, d: int, exclude=()):
         s = set()

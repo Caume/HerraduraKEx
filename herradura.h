@@ -7039,50 +7039,103 @@ static int qcp_inv(QcPoly *inv_out, const QcPoly *h) {
 typedef struct {
     BitArray seed;
     uint32_t ctr;
-    uint16_t buf[16];
+    uint8_t  buf[KEYBYTES];
     int      pos;
 } QcMdpcPrf;
+
+/* Widest uniform draw the sampler serves.  Raising it needs the index types of
+ * every consumer widened with it — see qcprf_sparse_support. */
+#define QCPRF_MAX_IDX_BYTES 4
 
 static void qcprf_init(QcMdpcPrf *prf, const uint8_t seed[KEYBYTES]) {
     memcpy(prf->seed.b, seed, KEYBYTES);
     prf->ctr = 0;
-    prf->pos = 16;
+    prf->pos = KEYBYTES;
 }
 
 static void qcprf_refill(QcMdpcPrf *prf) {
     BitArray x, rolx, block;
-    int k;
-    /* x = seed XOR ctr (ctr in top 4 bytes, big-endian) */
+    /* x = seed XOR ctr, the counter in the LOW four bytes.
+     * This was the top four bytes until TODO #277.  Python, Go and Java all
+     * XOR the counter into the low bits of the seed integer, so C alone
+     * produced a different second and later block from the same seed — the
+     * first block, where ctr is 0, agreed, and no vector or interop test ever
+     * compared a seed's expansion across languages, which is why a 3-1 split
+     * survived.  (Wraparound past 2^32 blocks would still diverge, since the
+     * other three carry into a fifth byte; one keygen draws two.) */
     x = prf->seed;
-    x.b[0] ^= (uint8_t)(prf->ctr >> 24);
-    x.b[1] ^= (uint8_t)(prf->ctr >> 16);
-    x.b[2] ^= (uint8_t)(prf->ctr >>  8);
-    x.b[3] ^= (uint8_t) prf->ctr;
+    x.b[KEYBYTES - 4] ^= (uint8_t)(prf->ctr >> 24);
+    x.b[KEYBYTES - 3] ^= (uint8_t)(prf->ctr >> 16);
+    x.b[KEYBYTES - 2] ^= (uint8_t)(prf->ctr >>  8);
+    x.b[KEYBYTES - 1] ^= (uint8_t) prf->ctr;
     prf->ctr++;
     ba_rol_k(&rolx, &x, KEYBYTES);          /* ROL by n/8 = 32 bits */
     nl_fscx_revolve_v1_ba(&block, &rolx, &x, I_VALUE);  /* n/4 = 64 steps */
-    for (k = 0; k < 16; k++)
-        prf->buf[k] = (uint16_t)(((uint16_t)block.b[k * 2] << 8) | block.b[k * 2 + 1]);
+    memcpy(prf->buf, block.b, KEYBYTES);
     prf->pos = 0;
 }
 
-static uint16_t qcprf_word16(QcMdpcPrf *prf) {
-    if (prf->pos >= 16) qcprf_refill(prf);
-    return prf->buf[prf->pos++];
+/* The next nbytes of keystream, big-endian.  A block that cannot serve a whole
+ * word is discarded rather than straddled, so a draw never depends on two
+ * blocks.  At the two-byte width every block divides evenly and nothing is
+ * discarded at all. */
+static uint32_t qcprf_word(QcMdpcPrf *prf, int nbytes) {
+    uint32_t w = 0;
+    int k;
+    if (prf->pos + nbytes > KEYBYTES) qcprf_refill(prf);
+    for (k = 0; k < nbytes; k++) w = (w << 8) | prf->buf[prf->pos++];
+    return w;
 }
 
-static uint16_t qcprf_uniform_idx(QcMdpcPrf *prf, int r) {
-    uint16_t lim = (uint16_t)(((uint32_t)0x10000 / (uint32_t)r) * (uint32_t)r);
-    uint16_t w;
-    do { w = qcprf_word16(prf); } while (w >= lim);
-    return (uint16_t)(w % (uint16_t)r);
+/* Bytes one uniform draw below m needs: the smallest w with 256^w >= m.
+ * Sizing the draw from the modulus rather than fixing it at two bytes is what
+ * lifts the sampler's ceiling (TODO #277).  It costs nothing where it matters:
+ * w is 2 for every modulus below 65537, so the deployed r = 523 / 2r = 1046
+ * and BIKE-128's and BIKE-192's moduli all consume the keystream exactly as
+ * the 16-bit-only sampler did, and every pinned QC-MDPC artifact still holds. */
+static int qcprf_idx_bytes(uint32_t m) {
+    int w = 1;
+    while (w < QCPRF_MAX_IDX_BYTES && ((m - 1u) >> (8 * w)) != 0) w++;
+    return w;
+}
+
+/* A uniform index in [0, m), by rejection sampling.
+ * lim is computed in 64 bits deliberately: at the old uint16_t width a modulus
+ * dividing 65536 made lim wrap to 0, and `w >= 0` on an unsigned word is
+ * vacuously true, so the loop never exits and the compiler is entitled to
+ * assume it never does — a hang with no diagnostic, not an error (TODO #277). */
+static uint32_t qcprf_uniform_idx(QcMdpcPrf *prf, uint32_t m) {
+    int nb;
+    uint64_t span, lim;
+    uint32_t w;
+    /* m is a uint32_t, so four bytes always represent it and there is no
+     * too-wide case to guard here; Python, whose ints are unbounded, does
+     * carry that guard.  Zero is the only unservable value. */
+    if (m == 0) {
+        fputs("qcprf_uniform_idx: modulus must be >= 1\n", stderr);
+        exit(1);
+    }
+    nb   = qcprf_idx_bytes(m);
+    span = (uint64_t)1 << (8 * nb);
+    lim  = (span / (uint64_t)m) * (uint64_t)m;
+    do { w = qcprf_word(prf, nb); } while ((uint64_t)w >= lim);
+    return (uint32_t)(w % m);
 }
 
 /* Sample d distinct positions in [0, r) — partial rejection sampling. */
-static void qcprf_sparse_support(QcMdpcPrf *prf, int r, int d, uint16_t *out) {
+static void qcprf_sparse_support(QcMdpcPrf *prf, uint32_t r, int d, uint16_t *out) {
     int n = 0, k;
+    /* out is uint16_t here and in QcMdpcPriv/qcmdpc_encap, so this cap is the
+     * binding one — it sits BELOW qcprf_uniform_idx's 32-bit draw width.
+     * Widening the draw alone would just move the ceiling one line down. */
+    if (r > 0x10000u) {
+        fprintf(stderr, "qcprf_sparse_support: r=%lu exceeds the uint16_t index "
+                        "arrays (65536); widen QcMdpcPriv.sup0/sup1 and "
+                        "qcmdpc_encap's sup_e with it\n", (unsigned long)r);
+        exit(1);
+    }
     while (n < d) {
-        uint16_t idx = qcprf_uniform_idx(prf, r);
+        uint16_t idx = (uint16_t)qcprf_uniform_idx(prf, r);
         int dup = 0;
         for (k = 0; k < n; k++) if (out[k] == idx) { dup = 1; break; }
         if (!dup) out[n++] = idx;
@@ -7174,7 +7227,7 @@ static void qcmdpc_encap(QcPoly *syn_out, BitArray *K_out,
     uint16_t sup_e[QCMDPC_T];
     QcPoly e0, e1, e1h;
     int k;
-    qcprf_sparse_support(prf, 2 * QCMDPC_R, QCMDPC_T, sup_e);
+    qcprf_sparse_support(prf, 2u * QCMDPC_R, QCMDPC_T, sup_e);
     qcp_zero(&e0); qcp_zero(&e1);
     for (k = 0; k < QCMDPC_T; k++) {
         if (sup_e[k] < QCMDPC_R) qcp_set(&e0, sup_e[k]);
