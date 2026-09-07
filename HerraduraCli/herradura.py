@@ -1993,6 +1993,14 @@ def cmd_sign(args):
             sys.exit("hpks-ring sign: --ring (comma-separated member public keys) required")
         e_int, seed_int, n = our_ints
         ring_keys, ring_n = _load_ring_pubkeys(args.ring)
+        # TODO #272.  _RING_MAX_K bounds the READER (TODO #240, adopting C's
+        # constant), and every CLI's reader enforces it -- but only C's writer
+        # did, so Python, Go and Java each signed rings this and every other
+        # verifier then refused: an unverifiable signature returned with exit 0.
+        if len(ring_keys) > _RING_MAX_K:
+            sys.exit(f"hpks-ring sign: ring has {len(ring_keys)} members, at most "
+                     f"{_RING_MAX_K} supported (a larger ring produces a signature "
+                     f"no CLI will verify)")
         if ring_n != n:
             sys.exit(f"hpks-ring sign: signer n={n} != ring n={ring_n}")
         # Locate the signer's own index in the ring (matched by seed).

@@ -1381,6 +1381,18 @@ def build_parameters():
     rnl_n = extract_const_int(h_src, "RNL_N")
     if rnl_n:
         params["hkex_rnl"] = {"n": rnl_n}
+
+    # TODO #272.  RING_MAX_K lives in herradura_cli.c rather than herradura.h,
+    # because the ring signature is a CLI-level composition -- but it is a
+    # genuine protocol constant, not one implementation's buffer size: it is on
+    # the wire (the signature declares k), all four readers reject a larger k,
+    # and since #272 all four writers refuse to produce one.  Recording it here
+    # is what the item asked for; nothing in spec/ or SPEC.md named it before,
+    # which is how three of the four CLIs came to sign rings that no verifier
+    # anywhere would accept.
+    ring_max_k = extract_const_int(read(CLI_C), "RING_MAX_K")
+    if ring_max_k:
+        params["hpks_ring"] = {"k_max": ring_max_k}
     params["_note"] = ("Assembly/Arduino targets use reduced demo parameters: Stern-F N=32 t=2 rounds=4 "
                         "(vs. the C/Go/Python values above), GF arithmetic on 32-bit operands instead of 256-bit. "
                         "See CLAUDE.md 'Protocol Stack' and TODO.md #133.")

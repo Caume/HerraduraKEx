@@ -3832,6 +3832,15 @@ func cmdSign(args []string) {
 				"(run pkey --pubout on the signer key and include it)")
 			os.Exit(1)
 		}
+		// TODO #272: ringMaxK bounds the READER in every CLI (TODO #240), but
+		// only C's writer enforced it, so Go signed rings that every verifier
+		// -- Go's included -- then refused.
+		if len(ringKeys) > ringMaxK {
+			fmt.Fprintf(os.Stderr, "hpks-ring sign: ring has %d members, at most %d "+
+				"supported (a larger ring produces a signature no CLI will verify)\n",
+				len(ringKeys), ringMaxK)
+			os.Exit(1)
+		}
 		msg := NewBitArray(n, new(big.Int).SetBytes(msgPad(inBytes, n/8)))
 		sig := HpksSternRingSign(msg, e, j, ringKeys, sternRounds)
 		pem := encodeRingSig(sig, n)

@@ -2,6 +2,65 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.5.6] - 2026-09-06
+
+### TODO #272 (DONE) — C's 64-value list-flag limit, and the ring limit the audit found
+
+The item asked what C's arbitrary 64-entry cap on `--commits`/`--partials` should become, and
+flagged an audit: "whether any other C list-flag or fixed-size argument buffer truncates the
+same way". The audit is what changed the answer, because the two limits turn out to be
+different problems with opposite fixes.
+
+**The signer count never reaches the wire.** The HPKST aggregate PEM is `(R, C_agg, e, n)` —
+there is no count field, so no reader can observe how many signers contributed. 64 was never a
+protocol constant, just one implementation's stack array, while Python, Go and Java had no
+limit at all. So C's three call sites now size their arrays from a counting pass
+(`hkx_count_list_flag`) and heap-allocate; the limit is gone. A 70-signer ceremony now produces
+a **byte-identical aggregate in all four CLIs**, which is the property that was actually broken
+— TODO #270 had made C fail loudly, which was containment, not the fix.
+
+`get_arg_multi2` also carried a **second silent truncation** (`if (n > max) n = max;`) that
+#270 never reached. It was unreachable in practice, because every caller passed 64 to match the
+buffers, but it would have returned the moment one passed anything smaller. Both truncation
+sites are now assertions.
+
+**The audit found a live one, in the opposite direction.** `--ring` has its own
+`RING_MAX_K = 64`, and unlike the signer count **k *is* on the wire** — the signature declares
+its member count, and every reader has bounded it at 64 since TODO #240, which adopted C's
+constant explicitly ("The bounds are C's"). But only C's *writer* enforced it. Python, Go and
+Java each signed 65-member rings happily — a 452 KB signature that **every verifier, including
+the one that wrote it, then refuses**:
+
+```
+$ herradura sign --algo hpks-ring --ring <65 members> ...     # exit 0, 452 KB
+$ herradura verify --algo hpks-ring --ring <65 members> ...
+verify: ring member count is 65 (expected 2..64)
+```
+
+A producer emitting an artifact its own reader rejects. All four writers now refuse it, so the
+writers agree with the readers that already agreed, with no wire-format change: the 64-member
+boundary still signs in every CLI and verifies in every CLI, which is asserted rather than
+assumed.
+
+`RING_MAX_K` is now recorded in `spec/herradura-protocol-spec.json` under
+`parameters.hpks_ring.k_max`, derived from `herradura_cli.c` so it cannot drift. Nothing in
+`spec/` or `SPEC.md` had named it before, which is how three of the four CLIs came to enforce
+it on one side only.
+
+**Why not the reverse for `--ring`.** Raising the limit would mean changing all four readers —
+a wire-contract break — and removing it would reintroduce the unbounded allocation from a wire
+field that TODO #239/#240 deliberately closed; the signature grows linearly in `k`.
+
+**Tests.** `CliTest/test_threshold_interop.sh`'s over-limit block is **inverted**: it asserted
+"C refuses 70 values" (#270's containment) and now asserts all four aggregate 70 commitments to
+identical bytes, with the old 64 boundary kept as an off-by-one guard. `CliTest/test_ring.sh`
+gains the writer-side rejection in all four languages, reading `k_max` from `spec/` rather than
+hardcoding it; the accept-control is the rest of that file, which signs and verifies small rings
+in every language.
+
+No `MIGRATING.md` entry: the threshold change only accepts command lines that used to be
+refused, and the ring change only refuses ones that produced unverifiable artifacts.
+
 ## [6.5.5] - 2026-09-06
 
 ### TODO #268 (DONE) — the passphrase-encrypted private-key envelope is four-way

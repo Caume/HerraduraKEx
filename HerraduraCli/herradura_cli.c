@@ -3119,6 +3119,28 @@ static void cmd_dec(int argc, char **argv)
 /* Collect every occurrence of --flag in argv into paths[0..count-1], taking ALL
  * following non-"--" tokens as values rather than only the first.
  * Returns the count. paths must be large enough (caller provides max). */
+/* Collect every value of a repeatable/multi-value flag.
+ *
+ * TODO #270 made this REFUSE past a fixed 64 rather than truncate silently --
+ * it used to stop filling and return success, so a ceremony with more than 64
+ * signers aggregated over the first 64 in C while Python, Go and Java used
+ * every one: the same command line, a different signature, no diagnostic.
+ *
+ * TODO #272 removes the ceiling instead.  It was never a protocol constant --
+ * the signer count does not appear anywhere in the HPKST wire format, so no
+ * reader can even observe it -- it was one implementation's stack array, while
+ * the other three had no limit at all.  `paths` is now caller-allocated to
+ * exactly the count this function reports, so the only bound is memory. */
+static int count_arg_multi(int argc, char **argv, const char *flag)
+{
+    int n = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], flag) != 0) continue;
+        for (int j = i + 1; j < argc && strncmp(argv[j], "--", 2) != 0; j++) n++;
+    }
+    return n;
+}
+
 static int get_arg_multi(int argc, char **argv, const char *flag,
                          const char **paths, int max)
 {
@@ -3126,15 +3148,11 @@ static int get_arg_multi(int argc, char **argv, const char *flag,
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], flag) != 0) continue;
         for (int j = i + 1; j < argc && strncmp(argv[j], "--", 2) != 0; j++) {
-            /* Refuse rather than truncate.  This capped at `max` silently and
-               returned 0, so a ceremony with more than 64 signers produced an
-               aggregate over the FIRST 64 and exited successfully -- while
-               Python, Go and Java all used every one, so the same command line
-               gave a different signature depending on which CLI aggregated it.
-               A silent wrong signature is the worst available outcome here; the
-               limit itself is left where it is (see TODO #272). */
             if (n >= max) {
-                fprintf(stderr, "%s: at most %d values supported (got more)\n", flag, max);
+                /* Unreachable when the caller sized `paths` from
+                   count_arg_multi, which is the only supported use.  Kept as an
+                   assertion rather than a silent truncation. */
+                fprintf(stderr, "%s: internal error, more values than allocated\n", flag);
                 exit(1);
             }
             paths[n++] = argv[j];
@@ -3157,20 +3175,34 @@ static int get_arg_multi2(int argc, char **argv, const char *cmd,
                           const char *plural, const char *singular,
                           const char **paths, int max)
 {
-    const char *pbuf[64], *sbuf[64];
-    int np = get_arg_multi(argc, argv, plural, pbuf, 64);
-    int ns = get_arg_multi(argc, argv, singular, sbuf, 64);
+    int np = count_arg_multi(argc, argv, plural);
+    int ns = count_arg_multi(argc, argv, singular);
     if (np > 0 && ns > 0) {
         fprintf(stderr, "%s: use %s or %s, not both (they name the same list, and "
                         "mixing them leaves its order undefined)\n",
                 cmd, plural, singular);
         exit(1);
     }
-    const char **src = np > 0 ? pbuf : sbuf;
+    /* `max` is the caller's own allocation, taken from hkx_count_list_flag, so
+     * this cannot truncate.  The old `if (n > max) n = max;` here was a SECOND
+     * silent truncation TODO #270 did not reach -- unreachable in practice
+     * because every caller passed 64 to match the buffers, but it would have
+     * come back the moment a caller passed anything smaller (TODO #272). */
     int n = np > 0 ? np : ns;
-    if (n > max) n = max;
-    for (int i = 0; i < n; i++) paths[i] = src[i];
-    return n;
+    if (n > max) {
+        fprintf(stderr, "%s: internal error, more values than allocated\n", cmd);
+        exit(1);
+    }
+    return get_arg_multi(argc, argv, np > 0 ? plural : singular, paths, max);
+}
+
+/* How many entries a caller must allocate for get_arg_multi2. */
+static int hkx_count_list_flag(int argc, char **argv,
+                               const char *plural, const char *singular)
+{
+    int np = count_arg_multi(argc, argv, plural);
+    int ns = count_arg_multi(argc, argv, singular);
+    return np > 0 ? np : ns;
 }
 
 /* Load hpks or hpks-nl private key; fill priv, pub, return nbits. */
@@ -3237,8 +3269,11 @@ static void cmd_threshold_aggregate(int argc, char **argv)
     if (!in_path)  die("threshold-aggregate: --in required");
     if (!out_path) die("threshold-aggregate: --out required");
 
-    const char *commit_paths[64];
-    int n_signers = get_arg_multi2(argc, argv, "threshold-aggregate", "--commits", "--commit", commit_paths, 64);
+    int n_signers_cap = hkx_count_list_flag(argc, argv, "--commits", "--commit");
+    const char **commit_paths = (const char **)malloc((size_t)(n_signers_cap > 0 ? n_signers_cap : 1)
+                                            * sizeof(*commit_paths));
+    if (!commit_paths) die("out of memory");
+    int n_signers = get_arg_multi2(argc, argv, "threshold-aggregate", "--commits", "--commit", commit_paths, n_signers_cap);
     if (n_signers < 1) die("threshold-aggregate: --commits (or --commit) is required");
 
     /* Load message */
@@ -3267,6 +3302,7 @@ static void cmd_threshold_aggregate(int argc, char **argv)
         ba_from_ra(&pubkeys[j], ck.vals[1], ck.vlens[1]);
         pem_key_free(&ck);
     }
+    free(commit_paths);   /* TODO #272: paths are not referenced past here */
 
     /* R = Π R_j */
     BitArray R;
@@ -3311,8 +3347,11 @@ static void cmd_threshold_respond(int argc, char **argv)
     if (!nonce_path) die("threshold-respond: --nonce required");
     if (!out_path)   die("threshold-respond: --out required");
 
-    const char *commit_paths[64];
-    int n_signers = get_arg_multi2(argc, argv, "threshold-respond", "--commits", "--commit", commit_paths, 64);
+    int n_signers_cap = hkx_count_list_flag(argc, argv, "--commits", "--commit");
+    const char **commit_paths = (const char **)malloc((size_t)(n_signers_cap > 0 ? n_signers_cap : 1)
+                                            * sizeof(*commit_paths));
+    if (!commit_paths) die("out of memory");
+    int n_signers = get_arg_multi2(argc, argv, "threshold-respond", "--commits", "--commit", commit_paths, n_signers_cap);
     if (n_signers < 1) die("threshold-respond: --commits (or --commit) is required");
 
     BitArray priv, our_pub;
@@ -3346,6 +3385,7 @@ static void cmd_threshold_respond(int argc, char **argv)
         ba_from_ra(&pubkeys[j], ck.vals[1], ck.vlens[1]);
         pem_key_free(&ck);
     }
+    free(commit_paths);   /* TODO #272: paths are not referenced past here */
 
     /* Compute mu_j for our signer */
     size_t llen;
@@ -3383,8 +3423,11 @@ static void cmd_threshold_combine(int argc, char **argv)
     if (!agg_path) die("threshold-combine: --aggregate required");
     if (!out_path) die("threshold-combine: --out required");
 
-    const char *partial_paths[64];
-    int n_parts = get_arg_multi2(argc, argv, "threshold-combine", "--partials", "--partial", partial_paths, 64);
+    int n_parts_cap = hkx_count_list_flag(argc, argv, "--partials", "--partial");
+    const char **partial_paths = (const char **)malloc((size_t)(n_parts_cap > 0 ? n_parts_cap : 1)
+                                            * sizeof(*partial_paths));
+    if (!partial_paths) die("out of memory");
+    int n_parts = get_arg_multi2(argc, argv, "threshold-combine", "--partials", "--partial", partial_paths, n_parts_cap);
     if (n_parts < 1) die("threshold-combine: --partials (or --partial) is required");
 
     /* Load aggregate PEM for R and C_agg */
@@ -3406,6 +3449,7 @@ static void cmd_threshold_combine(int argc, char **argv)
         pem_key_free(&pk);
         BitArray tmp; _ba_mod_add_ord(&tmp, &s_acc, &s_j); s_acc = tmp;
     }
+    free(partial_paths);  /* TODO #272: paths are not referenced past here */
 
     /* Write HPKST SIGNATURE: seq(C_agg, R, s, n=256) */
     uint8_t iC[DER_INT_LEN(KEYBYTES)], iR[DER_INT_LEN(KEYBYTES)];
