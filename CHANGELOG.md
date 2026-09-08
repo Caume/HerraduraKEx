@@ -2,6 +2,41 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.4] - 2026-09-08
+
+### TODO #282 — the C demo asserted a probabilistic property as a deterministic one
+
+Found by CI on the PR that closed TODO #279: `native-c` failed on `[FAIL] HPKE-Stern-F key
+agreement failed (N=32)` while the pull_request run of the same job **on the same commit**
+passed — on a commit whose diff contains no C source at all.  Not flaky infrastructure; a
+genuine lottery that one run lost.
+
+**Mechanism.**  The N=32 demo encapsulates with a random weight-2 error vector and
+decapsulates by brute force over all C(32,2) = 496 candidates, returning the *first* whose
+syndrome matches.  A weight-2 code of length 32 with a 16-bit syndrome is **not uniquely
+decodable**, so brute force can legitimately land on a different weight-2 preimage and
+derive a different session key.  The demo compared keys and called any difference `[FAIL]`.
+
+This is exactly the class CLAUDE.md's Testing section warns about, and exactly the defect
+TODO #233 fixed in test [18] — which already reports "*N* ambiguous syndromes, not a
+failure".  The demo never got that treatment because it was not `[FAIL]`-gated at the time;
+#233's gate turned a long-standing wrong assertion into a build failure.
+
+**C only, and that is a finding rather than an assumption.**  Python's demo already draws
+the distinction via `stern_f_first_preimage`, with a comment pointing at test [18].  Go's
+and Java's demos run only the deterministic known-`e'` path at N=256 and cannot reach it.
+Three of the four were already right.
+
+**Measured** at 10 mismatches in 2,400 trials (~0.42%) — about 1 run of the C job in 240.
+Rare enough to survive, frequent enough to be a standing false alarm.
+
+**The fix narrows the assertion, it does not delete it.**  `stern32_first_preimage` mirrors
+Python's helper; a mismatch whose ciphertext has a *different* weight-2 preimage now reports
+"syndrome ambiguous at N=32 (not a failure)", while a ciphertext with **no** weight-2
+preimage at all — a real decoder failure — still reports `[FAIL]`.  Verified against the
+ambiguous branch specifically rather than by a green run: over 2,000 fresh trials every
+mismatch classified as ambiguous and none as a real failure.
+
 ## [6.6.3] - 2026-09-08
 
 ### TODO #279 — ZKP-NL's Go verifier capped at n = 32 where the other three cap at 64

@@ -16509,3 +16509,39 @@ nothing self-consistent could have caught this.  `PARAM_DIVERGENCE`'s `zkp-nl-ma
 is deleted as the orphan rule requires, leaving that axis with zero `defect` rows.  The
 Go CLI's `genpkey` still ignores `--bits` for this algo where Python and Java honour it,
 which is a keygen scope question rather than a cap and is filed as **#281**.
+
+### #282: the C demo asserted a probabilistic property as a deterministic one, and reddened CI at random
+
+Found by CI on the PR that closed TODO #279: the `native-c` job failed on
+`*** FAILED: 1 check(s) reported [FAIL] ***` / `[FAIL] HPKE-Stern-F key agreement failed
+(N=32)`, while the pull_request run of the SAME job on the SAME commit passed.  Not
+flaky infrastructure -- a genuine ~0.45% lottery that one run lost, on a commit whose
+diff contains no C source at all.
+
+**Mechanism.**  `Herradura cryptographic suite.c`'s N=32 demo encapsulates with a random
+weight-2 error vector and decapsulates by brute force over all C(32,2) = 496 candidates,
+returning the FIRST whose syndrome matches.  A weight-2 code of length 32 with a 16-bit
+syndrome is **not uniquely decodable**, so brute force can legitimately land on a
+different weight-2 preimage, derive a different session key, and be right to.  The demo
+compared the two keys and called any difference `[FAIL]`.
+
+This is the class CLAUDE.md's Testing section warns about in as many words -- a
+probabilistic property asserted as a deterministic one -- and it is the SAME defect
+TODO #233 fixed in test [18], which already reports "N ambiguous syndromes, not a
+failure".  The demo never got that treatment because it was not `[FAIL]`-gated at the
+time; TODO #233's gate made a long-standing wrong assertion start failing builds.
+
+**Scope: C only, and that is a finding rather than an assumption.**  Python's demo
+ALREADY draws the distinction, via `stern_f_first_preimage`, with a comment pointing at
+test [18].  Go's and Java's demos run only the deterministic known-e' path at N=256 and
+cannot hit it.  So three of the four were right and the fourth was the one being gated.
+
+**Measured** at 10 mismatches in 2,400 trials (~0.42%), so roughly 1 CI run of the C job
+in 240.  Rare enough to have survived, frequent enough to be a standing false alarm.
+
+Status: **DONE v6.6.4** -- C's demo gained `stern32_first_preimage`, the mirror of
+Python's helper, and reports an ambiguous syndrome as "not a failure" exactly as test
+[18] and the Python demo do.  A genuine decoder failure -- no weight-2 preimage at all --
+still reports `[FAIL]`, so the fix narrows the assertion rather than deleting it.
+Verified against the ambiguous branch specifically, not just a green run: over 2,000
+fresh trials every mismatch classified as ambiguous and none as a real failure.
