@@ -2,6 +2,132 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.2] - 2026-09-07
+
+### TODO #280 — the passphrase envelope lost a leading zero, and two CLIs rejected the result
+
+Found by CI on the PR that closed #278: `native-interop` failed
+`test_passphrase_envelope.sh` on `py-write -> c-read` and `py-write -> go-read`, while the
+sibling run of the same job on the same commit passed.  Not flaky — **a 1-in-64 lottery
+that one run lost.**
+
+**Mechanism.**  The envelope is six DER INTEGERs, four of them fixed-width byte strings:
+salt, nonce, ciphertext, tag.  A minimal DER INTEGER cannot carry a leading `0x00`.  The
+writer is right about this — `der_int(value, nbytes)` emits exactly `nbytes` — so a salt
+beginning `00` goes out as 16 bytes starting `00`.  **The readers were wrong.**  C's and
+Go's `der_parse_seq` strip one leading `0x00` unconditionally (correct for a minimally
+encoded INTEGER, wrong for a fixed-width field) and then assert an exact width, which the
+stripped field fails:
+
+    P(salt[0]==0) + P(nonce[0]==0) + P(tag[0]==0) + P(ct[0]==0) ~ 4/256 = 1/64
+
+Measured at 2 failures in 120 reads, then 1 in 60.  Python and Java read the same file
+back correctly — both recover each field from an integer and restore the width — so it was
+a 2–2 split.  About one passphrase-protected private key in 64 was unreadable by half the
+CLIs.  The key was never lost, but the error said "malformed envelope" about a file that
+was not malformed.
+
+**The fix is in the readers, and it is what the rest of the codebase already does.**  Every
+other fixed-width DER field in the C CLI is read through `ba_from_ra`, which zero-fills and
+RIGHT-ALIGNS; the envelope reader was the one place asserting an exact width.  C and Go now
+bound the length and left-pad, so a short field is a leading zero and only a longer one is
+malformed.  **Nothing on the wire changes**, and every envelope written by any earlier build
+becomes readable — including the ones that were being rejected.
+
+**The guard is two pinned artifacts, because a random one cannot work.**  The existing
+writer×reader matrix generates a fresh key each run, so it fails at random and passes 63
+times in 64 — which is exactly how this survived.  `KAT/pem/enc_priv_zero_ct.pem` and
+`enc_priv_zero_tag.pem` are deterministic and between them put a leading zero in all four
+fields; both were confirmed to FAIL against the pre-fix C and Go binaries.  The original
+`enc_priv.pem` could never have caught it: its pinned salt starts `0x10`, its nonce `0x60`.
+
+**A second defect, found by reviewing the fix rather than the bug.**  Reversing the
+ciphertext comparison removed a bound the old form gave for free: with `pt_len > len(ct)`
+rejected, `pt_len` could never exceed the ciphertext present.  It can now, so it is bounded
+explicitly against the envelope body — and probing that with a declared 2^62 found the
+bound **missing entirely in Python**, where `ct_int.to_bytes(pt_len)` raised MemoryError.
+An allocation sized directly by a wire field is the class TODO #239/#240/#275 exist over,
+on a path they had not reached.  Java was safe but threw a bare
+`BigInteger out of int range` from `intValueExact()` before reaching its own bound, naming
+the stdlib rather than the field.  All four now refuse by name and bound against the
+envelope's own length.  `test_passphrase_envelope.sh` gains that case, and it was confirmed
+to fail against the pre-fix Python.
+
+Checked and does not recur: the exact-width assertion appears nowhere else in either CLI.
+
+## [6.6.1] - 2026-09-07
+
+### TODO #278 — the width axis: `spec/` compares parameter VALUES, for the first time
+
+Five cross-language checks existed and none compared a number.  `QCMDPC_MAX_MULT` could
+be 5 in three languages and 6 in the fourth with every check green — the function exists
+everywhere, has a manifest entry, dispatches its tag, takes the same flags.
+
+**The table.**  `spec/check_language_parity.py` gains `PARAMETERS`: **79 rows, four cells
+each**, plus `PARAM_DIVERGENCE`, `PARAM_JAVA_ALIASES` and `PARAM_CENSUS_EXEMPT`.  A cell
+names the CONSTANT, never its value — the checker reads and evaluates it from source, so
+the table cannot go stale.  Rows are curated because they must be: `RNL_ETA` in C and Go
+is `RNLB` in Python and Java, Java scopes per class, and only **8 of 116** normalised
+names appear in all four, so automatic pairing is not available.
+
+Exhaustive in both directions like every other table in `spec/`: a suite constant named by
+no row fails the census (72 / 49 / 53 / 76 evaluable constants, all named or exempt), an
+exempt rule matching nothing fails, and a `PARAM_DIVERGENCE` row whose languages have
+CONVERGED fails until deleted.  A `None` cell -- "this language has no such constant" --
+is cross-checked against that language's own declarations, because a cell the extractor
+silently DROPPED looks identical to one that genuinely does not exist, and the census
+cannot tell them apart.  That check earned itself immediately: the first C regex dropped
+`R3_VALUE` and `I3_VALUE`, whose bodies end in a comment, so the two NL-FSCX v3 rows
+compared three languages while reporting four cells.  Java's per-class re-declarations (`Duplex.N`, `Stern.N`, …)
+are not exempt but **checked against the row they copy** — Java has no header, so a drifted
+copy is the defect this looks for.  All five failure modes were verified by mutating real
+sources.
+
+**28 of 79 rows are `local`** — a disagreement there reaches no artifact, so no round-trip,
+interop test or KAT vector can see it and this axis is their only check.  `QCMDPC_MAX_MULT`
+(a keygen-retry gate) and `QCMDPC_NB_ITER` (it changes the DFR, not the ciphertext) are the
+two worth knowing.
+
+**The known divergences, now mechanical.**  ZKP-NL's `MAX_N` is 64 in C/Python/Java and
+**32 in Go** — a *type* limit (`uint32` shares), not a policy — recorded as the table's one
+`defect` row and filed as **TODO #279**.  HCRED is `acknowledged`, and the table sharpens
+why: four cells, **three meanings** (compile-time width in C and Java, runtime maximum in
+Go, runtime default in Python).
+
+### The defect the axis found: a cap every language declared and two enforced
+
+`XMSS_MAX_H = 20` exists in all four.  Python's `_XMSS_MAX_H` and Java's
+`Codec.XMSS_MAX_H` each carry a comment calling the constant *"genpkey's `--xmss-height`
+cap"* — and in both, `genpkey` was the one path that never applied it.  Confirmed against
+pre-fix builds:
+
+- **Java wrapped.**  `1 << 32` shifts by `32 & 31 = 0`, so `--xmss-height 32` reported
+  `h=32, 1 leaves`, wrote a **one-leaf** tree labelled `h = 32`, and **exited 0** — a file
+  nothing could read back, Java included.
+- **Python did not wrap**, so the same input asked for 2^32 leaves and never returned.
+- **Python also read the height as `... or 10`**, making an explicit `0` falsy and
+  therefore silently mean 10; the other three refuse it.
+
+All three are fixed and all four CLIs now emit the same message.  This is a **limit of the
+axis**, not just a bug: the table reads *declarations*, so it can compare a bound's value
+but not whether it is applied.  That class needs `CliTest/test_param_bounds.sh` (new,
+claimed by `cross-lang-compat`), which runs the four CLIs; its rejection cases run before
+its accept-control deliberately, since an in-range XMSS keygen costs minutes in Python and
+Java.  Verified against the pre-fix binary, where it fails 5 cases.
+
+### Also in this release
+
+- `spec/generate_spec.py`'s docstring claimed parameters came from `herradura.h` **and**
+  `herradura/herradura.go`.  It was not true: `build_parameters()` read the Go source into
+  a variable it never used, so every number in `spec/` has always come from C alone.  The
+  dead read and the now-unused `HERRADURA_GO` are gone, and the docstring points at the
+  new axis, which does the job for four languages rather than two.
+- `MIGRATING.md` section 15 records the `--xmss-height` change.
+
+PATCH, following v6.5.2's precedent: a previously-accepted input that produced nothing
+usable now says so.  No wire format, PEM label, flag or `--algo` behaviour changed, and no
+artifact that ever loaded becomes unreadable.
+
 ## [6.6.0] - 2026-09-07
 
 ### TODO #277 — the QC-MDPC index draw, widened; and a 3-1 split it uncovered

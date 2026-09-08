@@ -395,6 +395,16 @@ public final class HerraduraCli {
         }
         if (algo.equals("hpks-xmss")) {
             int h = opt.containsKey("xmss-height") ? Integer.parseInt(opt.get("xmss-height")) : Xmss.DEFAULT_H;
+            // Codec.XMSS_MAX_H's own comment calls itself "genpkey's
+            // --xmss-height cap", and until TODO #278 genpkey was the one path
+            // that did not apply it — the decode side did.  Unbounded, `1 << h`
+            // wraps on Java's int: h = 32 shifts by 32 & 31 = 0, so genpkey
+            // reported "h=32, 1 leaves", wrote a ONE-leaf tree labelled h = 32,
+            // and exited 0.  Nothing could read it back, Java included.  C, Go
+            // and Python all refuse the same input up front.
+            if (h < 1 || h > Codec.XMSS_MAX_H)
+                throw new CliError("genpkey: --xmss-height must be in [1,"
+                        + Codec.XMSS_MAX_H + "]");
             System.err.println("Generating XMSS tree (h=" + h + ", " + (1 << h) + " leaves) — may take a moment...");
             byte[] masterSeed = new byte[32];
             RNG.nextBytes(masterSeed);
@@ -2146,16 +2156,25 @@ public final class HerraduraCli {
             throw new CliError("pkey --decrypt: malformed envelope ("
                 + it.size() + " fields, want 6)");
         }
+        // Both size work below, so both are bounded before use -- the field
+        // class TODO #239/#240/#275 exist over.  The bounds are checked on the
+        // BigInteger rather than after intValueExact(), which until TODO #280
+        // threw a bare "BigInteger out of int range" on a declared 2^62: safe,
+        // since nothing was allocated, but it named the stdlib instead of the
+        // field.  The plaintext bound is the envelope's own length -- a
+        // ciphertext cannot be longer than the file carrying it -- which is
+        // what C, Go and Python check too; the old 1 << 24 was merely safe.
+        if (it.get(1).signum() < 1 || it.get(1).compareTo(BigInteger.valueOf(100000000)) > 0) {
+            throw new CliError("pkey --decrypt: iteration count out of range ("
+                + it.get(1) + ")");
+        }
+        if (it.get(5).signum() < 1
+                || it.get(5).compareTo(BigInteger.valueOf(b.der.length)) > 0) {
+            throw new CliError("pkey --decrypt: declared plaintext length out of range ("
+                + it.get(5) + ")");
+        }
         int iterations = it.get(1).intValueExact();
         int ptLen = it.get(5).intValueExact();
-        // Both size work below, so both are bounded before use -- the field
-        // class TODO #239/#240/#275 exist over.
-        if (iterations < 1 || iterations > 100000000) {
-            throw new CliError("pkey --decrypt: iteration count out of range (" + iterations + ")");
-        }
-        if (ptLen < 1 || ptLen > 1 << 24) {
-            throw new CliError("pkey --decrypt: declared plaintext length out of range (" + ptLen + ")");
-        }
         byte[] salt = toFixedBytes(it.get(0), PBKDF2_SALT_BYTES);
         BigInteger nonce = it.get(2);
         byte[] ct = toFixedBytes(it.get(3), ptLen);

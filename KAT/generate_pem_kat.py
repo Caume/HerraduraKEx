@@ -32,6 +32,10 @@ Artifacts per ring size:
 
 And, ring-size-independent (TODO #268):
 
+    enc_priv_zero_{ct,tag}.pem  envelopes with a leading 0x00 in the salt, the
+                             nonce, and the ciphertext / tag respectively --
+                             the case a minimal DER INTEGER cannot carry and
+                             two of the four CLIs rejected (TODO #280)
     enc_priv.pem             HERRADURA ENCRYPTED PRIVATE KEY wrapping
                              n1024_alice_priv.pem under the passphrase below
 
@@ -146,16 +150,39 @@ ENC_NONCE = bytes(range(0x60, 0x80))           # 32 bytes: 60 61 .. 7f
 ENC_ITERATIONS = 1000
 
 
-def build_envelope(plain_pem: str) -> str:
+# TODO #280's leading-zero envelopes.  The four fixed-width fields (salt, nonce,
+# ciphertext, tag) travel as DER INTEGERs, and a field whose first byte is 0x00
+# encodes one significant byte SHORT of its width -- the writer emits it, and a
+# reader that strips a sign byte unconditionally and then asserts an exact width
+# rejects it.  That was C and Go for the life of the envelope, on about one key
+# in 64.  ENC_SALT and ENC_NONCE above both start with a nonzero byte, so the
+# original vector could never have caught it; these two can, and between them
+# they put a leading zero in all FOUR fields:
+#
+#   zero_ct   salt[0] = nonce[0] = ct[0]  = 0x00   -> the plaintext-length branch
+#   zero_tag  salt[0] = nonce[0] = tag[0] = 0x00   -> the field-width branch
+#
+# The salt and nonce are chosen; the two nonce counters are SEARCHED values (the
+# first that make the ciphertext's and the tag's leading byte zero) and are
+# pinned here so regeneration is deterministic.  They wrap the n64 key rather
+# than the n1024 one purely for speed: the search is one AEAD per candidate.
+ENC_ZERO_SALT = bytes([0x00]) + bytes(range(0x11, 0x20))   # 16 bytes: 00 11 .. 1f
+ENC_ZERO_CT_NONCE = bytes([0x00]) + (39).to_bytes(31, "big")
+ENC_ZERO_TAG_NONCE = bytes([0x00]) + (2).to_bytes(31, "big")
+
+
+def build_envelope(plain_pem: str, salt: bytes = None, nonce_b: bytes = None) -> str:
     """The passphrase envelope over `plain_pem`, with the randomness pinned."""
+    salt = ENC_SALT if salt is None else salt
+    nonce_b = ENC_NONCE if nonce_b is None else nonce_b
     key_bytes = cli._pbkdf2_hfscx256(
-        ENC_PASSPHRASE.encode("utf-8"), ENC_SALT, ENC_ITERATIONS)
+        ENC_PASSPHRASE.encode("utf-8"), salt, ENC_ITERATIONS)
     key = suite.BitArray(suite.KEYBITS, int.from_bytes(key_bytes, "big"))
-    nonce = suite.BitArray(suite.KEYBITS, int.from_bytes(ENC_NONCE, "big"))
+    nonce = suite.BitArray(suite.KEYBITS, int.from_bytes(nonce_b, "big"))
     pt = plain_pem.encode("utf-8")
     _n, ct, tag = suite.hske_nl_aead_encrypt(key, pt, b"", nonce)
     der = cli.der_seq(
-        cli.der_int(int.from_bytes(ENC_SALT, "big"), len(ENC_SALT)),
+        cli.der_int(int.from_bytes(salt, "big"), len(salt)),
         cli.der_int(ENC_ITERATIONS),
         cli.der_int(nonce.uint, suite.KEYBITS // 8),
         cli.der_int(int.from_bytes(ct, "big"), max(1, len(ct))),
@@ -169,6 +196,10 @@ def build_all() -> dict:
     out.update(build(suite.RNLN, "n1024"))
     out.update(build(64, "n64"))
     out["enc_priv.pem"] = build_envelope(out["n1024_alice_priv.pem"])
+    out["enc_priv_zero_ct.pem"] = build_envelope(
+        out["n64_alice_priv.pem"], ENC_ZERO_SALT, ENC_ZERO_CT_NONCE)
+    out["enc_priv_zero_tag.pem"] = build_envelope(
+        out["n64_alice_priv.pem"], ENC_ZERO_SALT, ENC_ZERO_TAG_NONCE)
     # The plaintext the ciphertext decrypts to, as a file the tests can diff.
     # Both plaintexts are session-key-width, i.e. 256 bits at either ring.
     kb = cli._rnl_session_bits(suite.RNLN) // 8

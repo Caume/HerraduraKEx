@@ -10,8 +10,14 @@ Mechanically extracted (regex, not hand-copied) from source:
   - Every wire-format PEM_* label: HerraduraCli/herradura_codec.h.
   - Per-subcommand --algo choices: HerraduraCli/herradura.py's argparse
     `choices=[...]` lists (enc/dec/sign/verify/kex/encfile/decfile/dgst).
-  - Protocol parameter constants: herradura.h (#define) and herradura/herradura.go
-    (const block), grepped by name.
+  - Protocol parameter constants: herradura.h (#define), grepped by name.  ONLY
+    herradura.h: this said "and herradura/herradura.go (const block)" until TODO
+    #278, and it was not true -- build_parameters() read the Go source into a
+    variable it never used, so every number here has always come from C alone,
+    and the docstring asserted a cross-language check that did not happen.  The
+    dead read is gone.  Comparing a parameter's VALUE across the four languages
+    is now spec/check_language_parity.py's PARAMETERS table, which does it for
+    all four rather than two, and is exhaustive in both directions.
 
 Curated (cannot be mechanically derived, since it requires judgment about what
 "production" vs "demo-only" means): the security-classification table and the
@@ -37,7 +43,6 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HERRADURA_PY = os.path.join(REPO, "HerraduraCli", "herradura.py")
 CODEC_H = os.path.join(REPO, "HerraduraCli", "herradura_codec.h")
 HERRADURA_H = os.path.join(REPO, "herradura.h")
-HERRADURA_GO = os.path.join(REPO, "herradura", "herradura.go")
 CLI_C = os.path.join(REPO, "HerraduraCli", "herradura_cli.c")
 CLI_GO = os.path.join(REPO, "HerraduraCli", "herradura_cli.go")
 # TODO #261: the fourth CLI.  bindings/java/ carries a complete port of the suite
@@ -1351,7 +1356,6 @@ def _resolve(expr, env):
 
 def build_parameters():
     h_src = read(HERRADURA_H)
-    go_src = read(HERRADURA_GO)
     params = {}
     env = {}
     keybits = extract_const_int(h_src, "KEYBITS")

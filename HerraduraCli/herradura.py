@@ -314,8 +314,17 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
     if label != _LABEL_ENC_PRIV:
         raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
     salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = der_parse_seq(der)
+    # pt_len comes off the wire and sizes the allocation below: `to_bytes` of a
+    # declared 2^62 raised MemoryError before TODO #280, with no bound anywhere
+    # on this path.  The ciphertext cannot be longer than the envelope carrying
+    # it, which is the same bound C and Go apply, and the same field class
+    # TODO #239/#240/#275 exist over.
+    if not 1 <= pt_len <= len(der):
+        raise ValueError("declared plaintext length does not match ciphertext")
+    if ct_int.bit_length() > 8 * pt_len:
+        raise ValueError("declared plaintext length does not match ciphertext")
     salt = salt_int.to_bytes(_PBKDF2_SALT_BYTES, 'big')
-    ct   = ct_int.to_bytes(pt_len, 'big') if pt_len else b''
+    ct   = ct_int.to_bytes(pt_len, 'big')
     tag  = tag_int.to_bytes(32, 'big')
     key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
     key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))
@@ -1371,7 +1380,19 @@ def cmd_genpkey(args):
 
     elif algo == 'hpks-xmss':
         import secrets as _sec
-        h_val = getattr(args, 'xmss_height', None) or 10
+        h_val = getattr(args, 'xmss_height', None)
+        # `or 10` here until TODO #278, which made 0 FALSY and therefore silently
+        # mean 10 -- the other three refuse it.  argparse already defaults to 10.
+        if h_val is None:
+            h_val = 10
+        # _XMSS_MAX_H's own comment calls itself "genpkey's --xmss-height cap",
+        # and until TODO #278 genpkey was the one path that did not apply it --
+        # the decode paths (pkey, verify) did.  Unbounded, --xmss-height 32 asks
+        # for 2^32 leaves and the process simply never returns; C and Go refuse
+        # the same input up front, and Java did not either (it wrapped `1 << h`
+        # on an int and wrote a ONE-leaf tree labelled h = 32, exit 0).
+        if not 1 <= h_val <= _XMSS_MAX_H:
+            sys.exit(f'genpkey: --xmss-height must be in [1,{_XMSS_MAX_H}]')
         master_seed = _sec.token_bytes(32)
         print(f"Generating XMSS tree (h={h_val}, {1<<h_val} leaves) — may take a moment…",
               file=sys.stderr)

@@ -738,3 +738,77 @@ behaviour changed, and no stored artifact becomes unreadable or non-interoperabl
 changed is which key a *given seed* produces in one language, on a header API with no
 CLI path to it. It is a MINOR bump because the Go package gains one exported function
 (`QcMdpcPrfDraw`), which its security-test harness needs to reach the sampler at all.
+
+---
+
+## 15. `--xmss-height` out of range is now refused by Python and Java (v6.6.1)
+
+**Who is affected:** callers who passed `genpkey --algo hpks-xmss --xmss-height N` with
+`N` outside `[1, 20]` to the Python or Java CLI. Nothing stored on disk changes for any
+in-range height, and no valid invocation behaves differently. C and Go already refused
+these inputs and are unchanged.
+
+**What changed.** `XMSS_MAX_H = 20` exists in all four languages. Python's `_XMSS_MAX_H`
+and Java's `Codec.XMSS_MAX_H` each carry a comment calling the constant *"genpkey's
+`--xmss-height` cap"* — and in both, `genpkey` was the one path that never applied it.
+The decode paths (`pkey`, `verify`) did. All four now emit the same message:
+
+```
+genpkey: --xmss-height must be in [1,20]
+```
+
+**What the unbounded path actually did**, confirmed against pre-6.6.1 builds rather than
+inferred:
+
+- **Java wrapped.** `1 << 32` shifts by `32 & 31 = 0` on an `int`, so
+  `--xmss-height 32` printed `Generating XMSS tree (h=32, 1 leaves)`, wrote a **one-leaf**
+  Merkle tree labelled `h = 32`, and **exited 0**. The file was unreadable afterwards by
+  every CLI including Java's own, whose decode path bounds `h` to `[1,20]`. Heights in
+  `21..31` instead attempted up to 2^31 leaves.
+- **Python did not wrap**, so the same input asked for 2^32 leaves and the process never
+  returned.
+- **Python also read the height as `... or 10`**, which made an explicit `--xmss-height 0`
+  *falsy* and therefore silently mean 10. The other three refuse `0`.
+
+**What to do.** Nothing, unless a script passed an out-of-range height and treated the
+exit status as success. If one did, **it was not doing what it appeared to**: no usable
+key was produced. Check whether any `hpks-xmss` key file that script wrote is still
+referenced — a Java-written `h = 32` key is one leaf, so a second signature under it would
+reuse the same one-time WOTS key. Both CLIs refuse to load such a file, so this cannot
+have happened silently through the CLI; regenerate the key.
+
+**Why this is not a MAJOR bump.** No wire format, PEM label, CLI flag or `--algo`
+behaviour changed, and no artifact that ever loaded becomes unreadable. A
+previously-accepted input that produced nothing usable now says so, which is the same
+class as sections 11 and 13 and follows the precedent set there.
+
+---
+
+## 16. Envelopes with a leading-zero field are now readable by C and Go (v6.6.2)
+
+**Who is affected:** anyone holding a `HERRADURA ENCRYPTED PRIVATE KEY` that the C or Go
+CLI refused with `malformed ENCRYPTED PRIVATE KEY envelope (field width)` or
+`declared plaintext length does not match ciphertext`. Roughly **one envelope in 64**,
+whichever CLI wrote it. Nothing on the wire changes and no existing file needs
+regenerating — files that already worked are unaffected.
+
+**What was wrong.** The envelope carries four fixed-width byte strings — the PBKDF2 salt,
+the AEAD nonce, the ciphertext and the tag — as DER INTEGERs. A minimal DER INTEGER cannot
+carry a leading `0x00`, so a field whose first byte is zero is one significant byte short
+of its width on the wire. C and Go stripped a sign byte unconditionally and then asserted
+an exact width, so they rejected it; Python and Java recovered each field from an integer
+and restored the width, so they read it. The chance that at least one of the four random
+fields starts with `0x00` is about `4/256`.
+
+Both readers now bound the length and **left-pad**, which is what every other fixed-width
+DER field in these CLIs already did (C reads them through `ba_from_ra`, which zero-fills
+and right-aligns).
+
+**What to do.** If you set a file aside because C or Go called it malformed, try it again
+with 6.6.2 or later — it was almost certainly valid, and Python and Java could always read
+it. If you need the key before upgrading, decrypt it with the Python or Java CLI.
+
+**Why this is not a MAJOR bump, or even a wire-format change.** No byte written by any
+build changes. This widens what the C and Go readers accept to match what the writers have
+always emitted and what the other two readers have always accepted, so it can only turn a
+previously-failing read into a succeeding one.

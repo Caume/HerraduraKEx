@@ -79,6 +79,27 @@ CliTest/                                             — CLI integration + cross
                                                        had never interoperated between
                                                        {C, Go} and Python, and that is
                                                        why it shipped
+  test_param_bounds.sh                              — the enforcement axis (TODO #278).
+                                                       spec/'s PARAMETERS table compares a
+                                                       bound's VALUE across the four
+                                                       languages; it reads DECLARATIONS, so
+                                                       it cannot see whether the bound is
+                                                       APPLIED.  XMSS_MAX_H was 20 in all
+                                                       four and enforced at genpkey by two:
+                                                       Python's and Java's own comments
+                                                       called the constant "genpkey's
+                                                       --xmss-height cap" and neither applied
+                                                       it there.  Java WRAPPED (1 << 32
+                                                       shifts by 32 & 31 = 0, so it wrote a
+                                                       ONE-leaf tree labelled h = 32 and
+                                                       exited 0); Python did not wrap and so
+                                                       never returned.  Only running the CLIs
+                                                       can see that class.  Claimed by
+                                                       cross-lang-compat.  Its rejections run
+                                                       BEFORE the accept-control on purpose:
+                                                       an in-range XMSS keygen costs minutes
+                                                       in Python and Java, and a rejection
+                                                       must be fast by definition
   lib_malformed.sh                                  — shared malformed-PEM case table (TODO
                                                        #239, #240): every field that sizes an
                                                        allocation, rewritten to a hostile value.
@@ -112,7 +133,16 @@ KAT/                                                 — fixed Known-Answer-Test
                                regenerate-and-diff checked, because its two
                                random inputs (the PBKDF2 salt and the AEAD
                                nonce) are arguments the primitive accepts, so
-                               pinning them pins the artifact.  Its expected
+                               pinning them pins the artifact.  Since TODO #280
+                               it also holds enc_priv_zero_{ct,tag}.pem, whose
+                               salt, nonce and (respectively) ciphertext or tag
+                               START WITH 0x00 -- the case a minimal DER INTEGER
+                               cannot carry, which C and Go rejected on about
+                               one key in 64 while Python and Java read it back.
+                               enc_priv.pem could not have caught that (its salt
+                               starts 0x10, its nonce 0x60) and neither could the
+                               random writer x reader matrix, which passes 63
+                               times in 64.  Its expected
                                plaintext is a file this directory already
                                contains, so the CONSUME direction is checked
                                against a byte-exact target rather than a
@@ -759,7 +789,58 @@ spec/                                                — machine-readable protoc
                                                       {none, hfscx-256}) and `kex --kdf` is present
                                                       (Python alone takes sp800227).  Its executable
                                                       half is CliTest/test_kdf_matrix.sh and
-                                                      test_digest_matrix.sh's value-set block
+                                                      test_digest_matrix.sh's value-set block.
+                                                      PARAMETERS / PARAM_DIVERGENCE (TODO #278),
+                                                      in check_language_parity.py, are the SIXTH
+                                                      axis and the first to compare a numeric
+                                                      parameter's VALUE: 79 rows, four cells each,
+                                                      naming the CONSTANT and never its number, so
+                                                      the checker reads and evaluates it from each
+                                                      language's source and the table cannot go
+                                                      stale.  Curated rows because names do not
+                                                      survive translation -- RNL_ETA in C and Go is
+                                                      RNLB in Python and Java, and only 8 of 116
+                                                      normalised names appear in all four, so
+                                                      automatic pairing is not available.
+                                                      Exhaustive in both directions like every
+                                                      other table here: a suite constant named by
+                                                      no row fails the parameter census, and a
+                                                      PARAM_DIVERGENCE row whose languages have
+                                                      CONVERGED fails until deleted.  Java's
+                                                      per-class re-declarations (Duplex.N,
+                                                      Stern.N, ...) are NOT exempt but CHECKED
+                                                      against the row they copy, via
+                                                      PARAM_JAVA_ALIASES -- Java has no header, so
+                                                      a drifted copy is exactly the defect this
+                                                      looks for, and the evaluator resolves an
+                                                      unqualified name in its OWN class first or
+                                                      one class's constant answers for another's.
+                                                      A `None` cell -- "this language has no
+                                                      such constant" -- is cross-checked
+                                                      against that language's declarations,
+                                                      because a cell the EXTRACTOR dropped
+                                                      looks identical to one that genuinely
+                                                      does not exist and the census cannot
+                                                      tell them apart; the first C regex
+                                                      dropped R3_VALUE and I3_VALUE, whose
+                                                      bodies end in a comment.
+                                                      Each row carries `wire` or `local`: 28 are
+                                                      `local`, meaning a disagreement there reaches
+                                                      no artifact and no round-trip or interop test
+                                                      can see it, so this axis is their only check
+                                                      -- QCMDPC_MAX_MULT (the row #276 asked for,
+                                                      a keygen-retry gate) and QCMDPC_NB_ITER (it
+                                                      changes the DFR, not the ciphertext) are the
+                                                      two worth knowing.  KNOWN LIMIT, and #278
+                                                      found it the hard way: this axis reads
+                                                      DECLARATIONS, so it cannot see whether a
+                                                      bound is ENFORCED.  XMSS_MAX_H = 20 in all
+                                                      four and only C and Go applied it at genpkey;
+                                                      Python's and Java's own comments called the
+                                                      constant "genpkey's --xmss-height cap".  That
+                                                      class needs CliTest/test_param_bounds.sh,
+                                                      which runs the four CLIs, and is claimed by
+                                                      cross-lang-compat
 SPEC.md                                              — human-readable prose companion to
                                                       spec/herradura-protocol-spec.json
 SECURITY.md                                          — security policy: protocol maturity levels,

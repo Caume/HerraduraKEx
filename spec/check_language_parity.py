@@ -60,6 +60,7 @@ this item closed rather than absorbed into it.
 Usage:
     python3 spec/check_language_parity.py     # exit 1 on any inconsistency
 """
+import math
 import os
 import re
 import sys
@@ -2129,12 +2130,563 @@ def check_census(errors):
     return counts
 
 
+# ── Parameter-value parity: the sixth axis (TODO #278) ─────────────────────
+#
+# The five axes above this one answer, in order: does the primitive EXIST in
+# each language; does each CLI DISPATCH the --algo tag; does each CLI DEFINE
+# the flag; which VALUES does it accept for that flag; and do the narrative
+# documents restate the sources correctly.  NONE of them compares a numeric
+# parameter's VALUE.  So `QCMDPC_MAX_MULT` can be 5 in three languages and 6
+# in the fourth with every check green -- the function exists everywhere, has
+# a manifest entry, dispatches its tag, takes the same flags.  TODO #276 hit
+# that from one side and #277 from the other, where C's QC-MDPC PRF counter
+# placement had disagreed with the other three since the protocol shipped.
+#
+# WHY THE ROWS ARE CURATED AND THE VALUES ARE NOT.  Names do not survive
+# translation: `RNL_ETA` (C, Go) is `RNLB` (Python, Java), and Java scopes its
+# constants per class, so `Stern.SDFR` and `SDF_ROUNDS` are the same parameter
+# under two names in two shapes.  Only 8 of 116 normalised names appear in all
+# four languages, so automatic pairing is not available.  What IS automatic is
+# every number: a cell names the CONSTANT, never its value, and the checker
+# reads and evaluates it from source.  A table that quoted values could go
+# stale; this one cannot.
+#
+# EXHAUSTIVE IN BOTH DIRECTIONS, like every other table in spec/.  A suite
+# constant named by no row and matched by no PARAM_CENSUS_EXEMPT rule fails.
+# A PARAM_DIVERGENCE entry whose languages have CONVERGED fails until it is
+# deleted, so closing a gap forces the claim out rather than leaving it stale.
+# An exempt rule matching nothing is itself an error.  And a None cell -- "this
+# language has no such constant" -- is checked rather than trusted, because a
+# cell the EXTRACTOR dropped looks identical to one that genuinely does not
+# exist, and the census cannot tell them apart: an unseen declaration is not an
+# unfiled one.
+#
+# WHAT THIS AXIS CANNOT SEE, learned the hard way.  It reads DECLARATIONS, so it
+# compares a bound's VALUE and never whether that bound is APPLIED.  XMSS_MAX_H
+# is 20 in all four languages and, until TODO #278, was enforced at genpkey by
+# two of them -- Python's and Java's own comments called the constant "genpkey's
+# --xmss-height cap" and neither applied it there.  Nothing here could have
+# found that; CliTest/test_param_bounds.sh runs the four CLIs, which can.
+
+
+_PARAM_VALUE = re.compile(r"[0-9A-Za-z_+\-*/() .,]+$")
+
+
+def _strip_comments(text):
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    return re.sub(r"//[^\n]*", " ", text)
+
+
+def _c_params(src):
+    r"""Object-like #define with an arithmetic body.
+
+    `(?!\()` after the name is what makes it object-like -- a function-like
+    macro has its parenthesis flush against the name.  The body is then taken to
+    end of line and stripped, deliberately NOT matched shape-first: an earlier
+    form of this required the body to be either unparenthesised or a whole
+    parenthesised group anchored at "$", which silently dropped
+    `#define R3_VALUE (5 * KEYBITS / 8)   /* 160 */` -- comment stripping leaves
+    trailing spaces, so the closing paren was no longer at the end of the line.
+    A dropped declaration is invisible to the census (an unseen constant is not
+    an unfiled one), so the absent-cell cross-check below exists to catch the
+    same class a second way."""
+    out = {}
+    src = _strip_comments(src)
+    for m in re.finditer(r"^#define\s+([A-Za-z_]\w*)(?!\()\s+([^\n]*)$", src, re.M):
+        v = m.group(2).strip()
+        if v and _PARAM_VALUE.fullmatch(v):
+            out.setdefault(m.group(1), v)
+    return out
+
+
+def _go_params(src):
+    """Only `const (...)` blocks and `const X = ...` lines -- never a
+    function-local assignment, which is not a parameter."""
+    out = {}
+    src = _strip_comments(src)
+    for m in re.finditer(r"^const\s*\(", src, re.M):
+        end = src.find("\n)", m.end())
+        if end < 0:
+            continue
+        for line in src[m.end():end].split("\n"):
+            mm = re.match(r"\s*([A-Za-z_]\w*)\s*(?:[A-Za-z_]\w*\s*)?=\s*(.+?)\s*$", line)
+            if mm and _PARAM_VALUE.fullmatch(mm.group(2)):
+                out.setdefault(mm.group(1), mm.group(2))
+    for m in re.finditer(r"^const\s+([A-Za-z_]\w*)\s*(?:[A-Za-z_]\w*\s*)?=\s*(.+?)\s*$", src, re.M):
+        if _PARAM_VALUE.fullmatch(m.group(2)):
+            out.setdefault(m.group(1), m.group(2))
+    return out
+
+
+def _py_params(src):
+    """Module scope only -- an indented assignment is a local, not a parameter."""
+    out = {}
+    for m in re.finditer(r"^(_?[A-Z][A-Z0-9_]*)\s*(?::\s*int)?\s*=\s*([^\n#]+)", src, re.M):
+        v = m.group(2).strip()
+        if _PARAM_VALUE.fullmatch(v):
+            out.setdefault(m.group(1), v)
+    return out
+
+
+def _java_params(java_files):
+    """`static final int/long`, keyed Class.NAME because Java scopes per class."""
+    out = {}
+    for fname, text in sorted(java_files.items()):
+        cls = fname[:-5]
+        for m in re.finditer(
+            r"static\s+final\s+(?:int|long)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);",
+            _strip_comments(text),
+        ):
+            v = m.group(2).strip()
+            if _PARAM_VALUE.fullmatch(v):
+                out.setdefault(f"{cls}.{m.group(1)}", v)
+    return out
+
+
+def _param_eval(expr, table, lang, depth=0, cls=None):
+    """Resolve an expression to an int, following references within its own
+    language.  Returns None for anything that is not arithmetic -- a hash IV,
+    a macro alias, a type name -- which the census then has to exempt."""
+    if depth > 12:
+        return None
+    e = expr.strip()
+    e = re.sub(r"\(int\)\s*", "", e)
+    e = (e.replace("Math.sqrt", "__sqrt")
+          .replace("Math.max", "__max")
+          .replace("Math.min", "__min"))
+    e = re.sub(r"(?<![0-9A-Za-z_.])max\(", "__max(", e)
+    e = re.sub(r"(?<![0-9A-Za-z_.])min\(", "__min(", e)
+
+    def resolve(m):
+        name = m.group(0)
+        if name in ("__sqrt", "__max", "__min"):
+            return name
+        for cand in (name, "_" + name):
+            if cand in table:
+                v = _param_eval(table[cand], table, lang, depth + 1, cls)
+                return f"({v})" if v is not None else "None"
+        if lang == "java":
+            # own class first, then any other -- see the docstring
+            order = ([f"{cls}.{name}"] if cls else []) + [
+                k for k in sorted(table) if k.endswith("." + name)]
+            for key in order:
+                if key in table:
+                    owner = key.split(".", 1)[0]
+                    v = _param_eval(table[key], table, lang, depth + 1, owner)
+                    return f"({v})" if v is not None else "None"
+        return "None"
+
+    e = re.sub(r"(?<![0-9A-Za-z_])(?!0[xX])[A-Za-z_]\w*(?:\.\w+)*", resolve, e)
+    if "None" in e:
+        return None
+    if lang != "python":
+        e = re.sub(r"(?<![/])/(?![/])", "//", e)   # C/Go/Java `/` on ints truncates
+    try:
+        return int(eval(e, {"__builtins__": {}},
+                        {"__sqrt": math.sqrt, "__max": max, "__min": min}))
+    except Exception:
+        return None
+
+
+PARAMETERS = {
+    # ── classical core (v1.4.0) ──
+    "keybits": (["KEYBITS", None, "KEYBITS", "Herradura.N"], "wire",
+                "the suite block width"),
+    "fscx-i-steps": (["I_VALUE", None, "I_VALUE", "Herradura.I_STEPS"], "wire",
+                     "i = n/4, the forward FSCX_REVOLVE step count"),
+    "fscx-r-steps": (["R_VALUE", None, "R_VALUE", "Herradura.R_STEPS"], "wire",
+                     "r = 3n/4, the inverse step count"),
+    "block-bytes": (["KEYBYTES", None, "_QCPRF_BLOCK_BYTES", "Hfscx256.BLOCK"], "wire",
+                    "n/8, one block in bytes"),
+    "fscx-closed-form-min": (["FSCX_CLOSED_FORM_MIN_STEPS", None, None, None], "local",
+                             "step count below which the O(log i) closed form is not "
+                             "worth taking (TODO #213); C alone ships the closed form"),
+    # ── NL-FSCX v3 (TODO #255) ──
+    "nl-v3-i-steps": (["I3_VALUE", "I3Value", "I3_VALUE", "Duplex.I3_VALUE"], "wire",
+                      "5n/16, the v3 duplex step count"),
+    "nl-v3-r-steps": (["R3_VALUE", "R3Value", "R3_VALUE", "HerraduraNl.R3_VALUE"], "wire",
+                      "R3_VALUE = 5n/8 = 160, derived in TODO #255"),
+    "duplex-rate": (["_V2DPLEX_RATE", "v2dplexRate", "_V2DPLEX_RATE", "Duplex.RATE"],
+                    "wire", "sponge rate in bytes"),
+    # ── HKEX-RNL ──
+    "rnl-n": (["RNL_N", "RnlN", "RNLN", "HerraduraNl.RNLN"], "wire",
+              "ring dimension, moved 256 -> 1024 by TODO #223"),
+    "rnl-q": (["RNL_Q", "RnlQ", "RNLQ", "HerraduraNl.RNLQ"], "wire", "ring modulus"),
+    "rnl-p": (["RNL_P", "RnlP", "RNLP", "HerraduraNl.RNLP"], "wire",
+              "public-key rounding modulus"),
+    "rnl-pp": (["RNL_PP", "RnlPP", "RNLPP", "HerraduraNl.RNLPP"], "wire",
+               "reconciliation modulus"),
+    "rnl-eta": (["RNL_ETA", "RnlEta", "RNLB", "HerraduraNl.RNLB"], "wire",
+                "CBD eta.  NAMED DIFFERENTLY IN EVERY PAIR -- eta in C and Go, B in "
+                "Python and Java -- which is why these rows are curated"),
+    "rnl-log2n": (["RNL_LOG2N", None, None, None], "local",
+                  "log2 of the ring dimension, for C's fixed-width NTT twiddle tables; "
+                  "the other three compute it"),
+    "rnl-alt-n": (["RNL_ALT_N", None, None, None], "local",
+                  "the second ring dimension C compiles, static-asserted equal to "
+                  "HCRED_N; the other three take a width argument"),
+    "sigma-max-attempts": (["SIGMA_MAX_ATTEMPTS", "sigmaMaxAttempts",
+                            "_SIGMA_MAX_ATTEMPTS", "HerraduraNl.SIGMA_MAX_ATTEMPTS"],
+                           "local", "rejection-sampling retry budget in the Ring-LWR "
+                           "Sigma protocol; exceeding it is an error, not an output"),
+    # ── HPKS-Stern-F ──
+    "sdf-n-rows": (["SDF_N_ROWS", "SdfNRows", "SDFNR", "Stern.SDFNR"], "wire",
+                   "n/2 parity-check rows"),
+    "sdf-t": (["SDF_T", "SdfT", "SDFT", "Stern.SDFT"], "wire", "error weight t"),
+    "sdf-rounds-demo": (["SDF_ROUNDS", "SdfRounds", "SDFR", "Stern.SDFR"], "wire",
+                        "signing default; the count travels in the PEM, so a reader "
+                        "accepts any count in [1, SDF_MAX_ROUNDS] (TODO #236)"),
+    "sdf-rounds-prod": (["SDF_PRODUCTION_ROUNDS", "SdfProductionRounds",
+                         "_STERN_F_PRODUCTION_ROUNDS", "Stern.STERN_F_PRODUCTION_ROUNDS"],
+                        "wire", "219 rounds for 128-bit Fiat-Shamir soundness (#217, #222)"),
+    "sdf-max-rounds": (["SDF_MAX_ROUNDS", "SdfMaxRounds", None, None], "local",
+                       "bound on a round count decoded from a PEM.  Python and Java "
+                       "keep it in their CLI and codec layers respectively "
+                       "(HerraduraCli/herradura.py's _SDF_MAX_ROUNDS, Codec.java's "
+                       "SDF_MAX_ROUNDS), both at 4096; it is a wire-decode bound, so "
+                       "that is arguably its right home and C and Go are the outliers"),
+    "sdf-synbytes": (["SDF_SYNBYTES", None, None, None], "local",
+                     "syndrome length in bytes, for C's fixed-size buffers"),
+    # ── HPKE-Stern-KEM (QC-MDPC) ──
+    "qcmdpc-r": (["QCMDPC_R", "QcMdpcR", "_QCMDPC_R", "Stern.QCMDPC_R"], "wire",
+                 "block size; TODO #276 recommends 12323"),
+    "qcmdpc-d": (["QCMDPC_D", "QcMdpcD", "_QCMDPC_D", "Stern.QCMDPC_D"], "wire",
+                 "row weight"),
+    "qcmdpc-t": (["QCMDPC_T", "QcMdpcT", "_QCMDPC_T", "Stern.QCMDPC_T"], "wire",
+                 "error weight"),
+    "qcmdpc-w": (["QCMDPC_W", None, None, None], "local",
+                 "2d, the full row weight; the other three write 2*d at the call site"),
+    "qcmdpc-nb-iter": (["QCMDPC_NB_ITER", "QcMdpcNbIter", "_QCMDPC_NB_ITER",
+                        "Stern.QCMDPC_NB_ITER"], "local",
+                       "BGF decoder iterations.  LOCAL and it matters: this changes the "
+                       "DFR, not the ciphertext, so a language that lowered it would "
+                       "fail to decapsulate slightly more often and no test would say so"),
+    "qcmdpc-max-mult": (["QCMDPC_MAX_MULT", "qcMdpcMaxMult", "_QCMDPC_MAX_MULT",
+                         "Stern.QCMDPC_MAX_MULT"], "local",
+                        "weak-key screen threshold.  THE ROW TODO #276 ASKED FOR: it "
+                        "gates keygen retries only, so a partial update across the four "
+                        "languages changes which keys each accepts and nothing "
+                        "downstream disagrees.  Test [51] pins the screen's behaviour "
+                        "at this value in all four, but not the value itself"),
+    "qcmdpc-rbytes": (["QCMDPC_RBYTES", "QcMdpcRBytes", None, None], "local",
+                      "ceil(r/8); Python and Java size their buffers from big integers"),
+    "qceuc-bytes": (["_QCEUC_BYTES", None, None, None], "local",
+                    "scratch length for C's fixed-width extended-Euclid over "
+                    "GF(2)[x]/(x^r - 1); the other three carry big integers"),
+    "qcmdpc-rwords": (["QCMDPC_RWORDS", None, None, None], "local",
+                      "ceil(r/64), C's limb count for the fixed-width QcPoly"),
+    "qcmdpc-ds-k": (["QCMDPC_DS_K", "qcMdpcDsK", "_QCMDPC_DS_K", "Stern.QCMDPC_DS_K"],
+                    "wire", "domain separator for the KEM session key"),
+    "qcmdpc-ds-z": (["QCMDPC_DS_Z", "qcMdpcDsZ", "_QCMDPC_DS_Z", "Stern.QCMDPC_DS_Z"],
+                    "wire", "domain separator for the implicit-rejection key"),
+    "qcmdpc-ds-zseed": (["QCMDPC_DS_ZSEED", "qcMdpcDsZSeed", "_QCMDPC_DS_ZSEED",
+                         "Stern.QCMDPC_DS_ZSEED"], "wire",
+                        "domain separator for the z seed derived from the private key"),
+    "qcprf-max-idx-bytes": (["QCPRF_MAX_IDX_BYTES", "qcprfMaxIdxBytes",
+                             "_QCPRF_MAX_IDX_BYTES", "Stern.MAX_IDX_BYTES"], "wire",
+                            "widest uniform index draw (TODO #277); the draw WIDTH is "
+                            "derived from the modulus, so this only bounds it"),
+    # ── HPKS-WOTS-F / HPKS-XMSS-F ──
+    "wots-w": (["WOTS_W", "WotsW", "_WOTS_W", "Wots.W"], "wire", "Winternitz parameter"),
+    "wots-log2w": (["WOTS_LOG2W", "WotsLog2W", "_WOTS_LOG2W", "Wots.LOG2W"], "wire",
+                   "log2(w)"),
+    "wots-l1": (["WOTS_L1", "WotsL1", "_WOTS_L1", "Wots.L1"], "wire", "message chains"),
+    "wots-l2": (["WOTS_L2", "WotsL2", "_WOTS_L2", "Wots.L2"], "wire", "checksum chains"),
+    "wots-l": (["WOTS_L", "WotsL", "_WOTS_L", "Wots.L"], "wire", "total chains"),
+    "xmss-default-h": ([None, None, "_XMSS_H", "Xmss.DEFAULT_H"], "local",
+                       "default Merkle tree height.  C and Go take h as a REQUIRED "
+                       "argument and have no default; all four CLIs supply 10, so the "
+                       "agreement is at the CLI layer, not this one"),
+    # ── ZKP-NL ──
+    "zkp-nl-default-n": (["ZKP_NL_DEFAULT_N", "ZkpNlDefaultN", "_ZKP_NL_DEFAULT_N", None],
+                         "wire", "default statement width; Java takes n per call"),
+    "zkp-nl-demo-rounds": (["ZKP_NL_DEMO_ROUNDS", "ZkpNlDemoRounds", "_ZKP_NL_DEMO_ROUNDS",
+                            None], "wire", "demo round count; Java takes rounds per call"),
+    "zkp-nl-prod-rounds": (["ZKP_NL_PROD_ROUNDS", "ZkpNlProdRounds", "_ZKP_NL_PROD_ROUNDS",
+                            "Hcred.CLI_ROUNDS"], "wire",
+                           "219 rounds for 128-bit soundness; Java names it for the "
+                           "CLI, which is its only caller"),
+    "zkp-nl-max-n": (["ZKP_NL_MAX_N", "ZkpNlMaxN", "_ZKP_NL_MAX_N", "ZkpNl.MAX_N"],
+                     "wire", "largest statement width the verifier accepts"),
+    "zkp-nl-max-rounds": ([None, "ZkpNlMaxRounds", "_ZKP_NL_MAX_ROUNDS", "ZkpNl.MAX_ROUNDS"],
+                          "local", "bound on a round count decoded from a proof; C "
+                          "bounds it in its CLI against SDF_MAX_ROUNDS instead"),
+    "zkpp-seed-bytes": (["ZKPP_SEED_BYTES", "zkppSeedBytes", "_ZKPP_SEED_BYTES",
+                         "ZkpNl.ZKPP_SEED_BYTES"], "wire", "per-round commitment seed"),
+    # ── HCRED ──
+    "hcred-n": (["HCRED_N", "HcredMaxN", "_HCRED_DEFAULT_N", "Hcred.N"], "wire",
+                "the statement width"),
+    "hcred-rows": (["HCRED_ROWS", None, None, "Hcred.ROWS"], "wire",
+                   "n/2 rows; Go and Python derive it from the runtime width"),
+    "hcred-row-bits": (["HCRED_ROW_BITS", None, None, "Hcred.ROW_BITS"], "wire",
+                       "bits per row sum.  A LITERAL 9 in C and Java against Python's "
+                       "n.bit_length(); the same number at n=256 by construction, and "
+                       "the derived form is the one that survives a width change"),
+    "hcred-eps-bits": (["HCRED_EPS_BITS", "HcredEpsBits", "_HCRED_EPS_BITS",
+                        "Hcred.EPS_BITS"], "wire", "bits per epsilon share"),
+    "hcred-eps-off": (["HCRED_EPS_OFF", "HcredEpsOff", "_HCRED_EPS_OFF", "Hcred.EPS_OFF"],
+                      "wire", "epsilon offset"),
+    "hcred-w-max": (["HCRED_W_MAX", None, None, "Hcred.W_MAX"], "wire",
+                    "witness weight bound.  A LITERAL 91 in C against Java's "
+                    "n/4 + 4*sqrt(3n/16); equal at n=256, and only one of them stays "
+                    "right if n moves"),
+    "hcred-demo-rounds": (["HCRED_DEMO_ROUNDS", None, "_HCRED_DEMO_ROUNDS",
+                           "Hcred.DEMO_ROUNDS"], "wire", "demo round count"),
+    "hcred-nb": (["HCRED_NB", None, None, None], "local", "bit-decomposition wire count"),
+    "hcred-nd": (["HCRED_ND", None, None, None], "local", "delta-share wire count"),
+    "hcred-kkw-i": (["HCRED_KKW_I", None, None, None], "local", "KKW input wires"),
+    "hcred-kkw-g": (["HCRED_KKW_G", None, None, None], "local", "KKW gate count"),
+    "hcred-kkw-k": (["HCRED_KKW_K", None, None, None], "local", "KKW output wires"),
+    "hcred-kkw-demo-n": (["HCRED_KKW_DEMO_N", "HcredKkwDemoN", "_HCRED_KKW_DEMO_N",
+                          "Hcred.KKW_DEMO_N"], "wire", "KKW parties, demo"),
+    "hcred-kkw-demo-m": (["HCRED_KKW_DEMO_M", "HcredKkwDemoM", "_HCRED_KKW_DEMO_M",
+                          "Hcred.KKW_DEMO_M"], "wire", "KKW preprocessing emulations, demo"),
+    "hcred-kkw-demo-tau": (["HCRED_KKW_DEMO_TAU", "HcredKkwDemoTau", "_HCRED_KKW_DEMO_TAU",
+                            "Hcred.KKW_DEMO_TAU"], "wire", "KKW online executions, demo"),
+    "hcred-kkw-max-levels": (["HCRED_KKW_MAX_LEVELS", None, None, None], "local",
+                             "Merkle depth bound on a decoded KKW proof, C only"),
+    "hcred-round-outs-ser": (["HCRED_ROUND_OUTS_SER", None, None, None], "local",
+                             "serialized per-round output length, C's fixed buffer"),
+    "hcred-inv2": ([None, None, None, "Hcred.INV2"], "local",
+                   "(q+1)/2 mod q; the other three write the expression inline"),
+    # ── aPAKE ──
+    "hpake-rounds": (["HPAKE_ROUNDS", "HpakeRounds", "_HPAKE_ROUNDS", "Hpake.ROUNDS"],
+                     "wire", "Sigma rounds in the aPAKE transcript"),
+    "hpake-zkp-n": (["HPAKE_ZKP_N", "HpakeZkpN", "_HPAKE_ZKP_N", "Hpake.ZKP_N"], "wire",
+                    "statement width inside the aPAKE proof"),
+    # ── fpe / twk domain separators (TODO #242, #255) ──
+    "fpe-ds": (["FPE_DS", "fpeDS", "_FPE_DS", "FpeTwk.FPE_DS"], "wire",
+               "fpe subkey domain separator"),
+    "twk-ds": (["TWK_DS", "twkDS", "_TWK_DS", "FpeTwk.TWK_DS"], "wire",
+               "twk subkey domain separator; distinct from fpe's since TODO #242"),
+    "fpe-v3-ds": (["FPE_V3_DS", "fpeV3DS", "_FPE_V3_DS", "FpeTwk.FPE_V3_DS"], "wire",
+                  "fpe --v3 subkey domain separator"),
+    "twk-v3-ds": (["TWK_V3_DS", "twkV3DS", "_TWK_V3_DS", "FpeTwk.TWK_V3_DS"], "wire",
+                  "twk --v3 subkey domain separator"),
+    # ── misc ──
+    "gf-generator": ([None, "GfGen", "GF_GEN", None], "wire",
+                     "g = 3, the GF(2^n)* generator.  C holds it as a BitArray literal "
+                     "and Java as a BigInteger, neither of which is an int declaration, "
+                     "so only two of the four are readable here"),
+    "hpkst-n": ([None, "hpkstN", None, "HpksT.N"], "local",
+                "threshold-signature width; C and Python use the suite width directly"),
+    "hybrid-combine-ds": ([None, None, None, "HerraduraNl.HYBRID_COMBINE_DS"], "local",
+                          "hybrid KEX combiner domain separator; the other three write "
+                          "the byte at the call site"),
+    "hkx-algo-nla1": ([None, None, None, "Hfscx256.HKX_ALGO_NLA1"], "wire",
+                      "HSKE-NL-A1 format tag; the other three write it at the call site"),
+    "aead-ds-len": (["_AEAD_DS_LEN", None, None, None], "local",
+                    "length of the AEAD domain-separation string, C's fixed buffer"),
+    "v2dplex-ds-init": (["_V2DPLEX_DS_INIT_L", None, None, None], "local",
+                        "duplex init DS length, C's fixed buffer"),
+    "v2dplex-ds-tag": (["_V2DPLEX_DS_TAG_L", None, None, None], "local",
+                       "duplex tag DS length, C's fixed buffer"),
+    "v2dplex-ds-tweak": (["_V2DPLEX_DS_TWEAK_L", None, None, None], "local",
+                         "duplex tweak DS length, C's fixed buffer"),
+}
+
+# Java has no header, so a class re-declares the width it needs.  These are not
+# exempt from the axis -- they are CHECKED against the row they copy, because a
+# re-declaration that drifted is exactly the defect this table exists to find.
+PARAM_JAVA_ALIASES = {
+    "keybits": ["Duplex.N", "FpeTwk.N", "Hdrbg.N", "HerraduraNl.N", "Hfscx256.N",
+                "Ratchet.N", "Stern.N", "SternRing.N", "Wots.N"],
+    "fscx-i-steps": ["Duplex.I_VALUE", "Hdrbg.I_VALUE", "Hfscx256.NL_V1_SHIFT",
+                     "HpksT.I_STEPS"],
+    "fscx-r-steps": ["FpeTwk.R_VALUE"],
+    "block-bytes": ["Duplex.BLOCK", "Hdrbg.BLOCK", "Hfscx256.HKX_BLOCK",
+                    "HerraduraNl.AEAD_BLOCK"],
+    "rnl-p": ["Hcred.RNLP"],
+    "rnl-q": ["Hcred.RNLQ"],
+}
+
+# A row whose languages legitimately differ.  Values are RECORDED, so a change
+# to any of them fails; and a row whose languages have CONVERGED fails until it
+# is deleted -- the orphan rule, one level down from cli_flag_value_gaps.
+PARAM_DIVERGENCE = {
+    "zkp-nl-max-n": {
+        "status": "defect",
+        "values": {"c": 64, "go": 32, "python": 64, "java": 64},
+        "reason":
+            "Go's cap is a TYPE limit, not a policy: ZkpNlVerify takes `y uint32` and "
+            "carries [3]uint32 shares throughout, so 32 is the widest statement its "
+            "representation can hold, where the other three carry big integers and cap "
+            "at 64 by declaration.  Go therefore cannot verify a statement the other "
+            "three can produce, at a width the suite's own test [22] exercises.  Both "
+            "the Python and Java sources already carry a comment saying so; nothing "
+            "compared the numbers.",
+    },
+    "hcred-n": {
+        "status": "acknowledged",
+        "values": {"c": 256, "go": 256, "python": 32, "java": 256},
+        "reason":
+            "Four cells, three MEANINGS -- which is the finding, not the numbers.  "
+            "HCRED_N and Hcred.N are compile-time WIDTHS (C static-asserts its against "
+            "RNL_ALT_N); HcredMaxN is a runtime MAXIMUM; _HCRED_DEFAULT_N is a runtime "
+            "DEFAULT, and Python demos at 32.  So the four have never proved the same "
+            "statement size, which KAT/hcred_kkw.json already records by shipping two "
+            "vector sets.  Deliberate per-language scope, not a defect.",
+    },
+}
+
+
+PARAM_LANGS = ("c", "go", "python", "java")
+
+
+PARAM_CENSUS_EXEMPT = {
+    "python": [(r"^_RNL_KDF_DC_", "the HFSCX-256 KDF's initialisation constants -- a "
+                                  "hash IV, not a protocol parameter.  C keeps the same "
+                                  "values and Go and Java build them inline")],
+}
+
+
+def _param_tables():
+    file_text, java_files = _suite_text()
+    return {
+        "c": _c_params(file_text["c"]),
+        "go": _go_params(file_text["go"]),
+        "python": _py_params(file_text["python"]),
+        "java": _java_params(java_files),
+    }
+
+
+def _param_norm(name):
+    """A language-independent key for a constant name: drop the Java class
+    prefix and the Python underscore, then case- and underscore-fold.  Exact
+    enough to pair RNL_N / RnlN / RNLN / HerraduraNl.RNLN, and deliberately not
+    clever enough to pair RNL_ETA with RNLB -- that is what the curated rows are
+    for.  Used only by the absent-cell cross-check, never to build a row."""
+    return name.split(".")[-1].lstrip("_").replace("_", "").upper()
+
+
+def _java_cls(lang, name):
+    """The class an unqualified reference inside `name` resolves against."""
+    return name.split(".", 1)[0] if lang == "java" else None
+
+
+def check_parameters(errors):
+    T = _param_tables()
+    claimed = {l: set() for l in PARAM_LANGS}
+    observed = {}
+    for rid, (cells, observable, meaning) in sorted(PARAMETERS.items()):
+        if observable not in ("wire", "local"):
+            errors.append(f"parameter {rid!r}: observable must be 'wire' or 'local'")
+        if not meaning:
+            errors.append(f"parameter {rid!r}: no meaning recorded")
+        vals = {}
+        for lang, name in zip(PARAM_LANGS, cells):
+            if name is None:
+                continue
+            claimed[lang].add(name)
+            if name not in T[lang]:
+                errors.append(f"parameter {rid!r}: {lang} names {name!r}, which is not a "
+                              f"declaration in that language's suite source — renamed, "
+                              f"moved, or deleted")
+                continue
+            v = _param_eval(T[lang][name], T[lang], lang, cls=_java_cls(lang, name))
+            if v is None:
+                errors.append(f"parameter {rid!r}: {lang}'s {name!r} does not evaluate "
+                              f"to an integer ({T[lang][name]!r})")
+                continue
+            vals[lang] = v
+        if not vals:
+            errors.append(f"parameter {rid!r}: names no constant in any language")
+            continue
+        observed[rid] = vals
+        # A None cell claims the language has no named constant for this row.
+        # Check it, rather than trusting it: a cell the EXTRACTOR silently
+        # dropped looks exactly like a language that genuinely lacks the
+        # constant, and the census cannot tell them apart -- an unseen
+        # declaration is not an unfiled one.  (This is not hypothetical: an
+        # earlier C regex dropped R3_VALUE and I3_VALUE, whose bodies end in a
+        # comment, and the nl-v3 rows silently compared three languages instead
+        # of four.)
+        wanted = {_param_norm(n) for n in cells if n}
+        for lang, name in zip(PARAM_LANGS, cells):
+            if name is not None:
+                continue
+            for cand in T[lang]:
+                if _param_norm(cand) in wanted:
+                    errors.append(
+                        f"parameter {rid!r}: {lang} is recorded as having no named "
+                        f"constant, but {cand!r} = "
+                        f"{_param_eval(T[lang][cand], T[lang], lang, cls=_java_cls(lang, cand))} "
+                        f"matches this row's name — fill the cell in, so the value is "
+                        f"actually compared")
+                    break
+        # Java re-declarations must agree with the row they copy
+        for alias in PARAM_JAVA_ALIASES.get(rid, []):
+            claimed["java"].add(alias)
+            if alias not in T["java"]:
+                errors.append(f"parameter {rid!r}: java alias {alias!r} no longer exists")
+                continue
+            av = _param_eval(T["java"][alias], T["java"], "java",
+                             cls=_java_cls("java", alias))
+            if av != vals.get("java", next(iter(vals.values()))):
+                errors.append(f"parameter {rid!r}: java re-declaration {alias!r} is {av}, "
+                              f"not {vals.get('java')}")
+        div = PARAM_DIVERGENCE.get(rid)
+        if div is None:
+            if len(set(vals.values())) > 1:
+                errors.append(f"parameter {rid!r} ({meaning}): languages disagree — "
+                              + ", ".join(f"{l}={v}" for l, v in sorted(vals.items()))
+                              + " — record it in PARAM_DIVERGENCE with a reason, or fix it")
+        else:
+            if len(set(vals.values())) == 1:
+                errors.append(f"PARAM_DIVERGENCE[{rid!r}] describes a disagreement that no "
+                              f"longer exists (every language is {next(iter(vals.values()))}) "
+                              f"— delete the entry")
+            elif div["values"] != vals:
+                errors.append(f"PARAM_DIVERGENCE[{rid!r}] records {div['values']} but the "
+                              f"sources say {vals} — re-check the reason, then update it")
+            if div.get("status") not in ("defect", "acknowledged"):
+                errors.append(f"PARAM_DIVERGENCE[{rid!r}]: status must be 'defect' or "
+                              f"'acknowledged'")
+            if not div.get("reason"):
+                errors.append(f"PARAM_DIVERGENCE[{rid!r}]: no reason recorded")
+    for rid in PARAM_DIVERGENCE:
+        if rid not in PARAMETERS:
+            errors.append(f"PARAM_DIVERGENCE[{rid!r}] names no PARAMETERS row")
+    for rid in PARAM_JAVA_ALIASES:
+        if rid not in PARAMETERS:
+            errors.append(f"PARAM_JAVA_ALIASES[{rid!r}] names no PARAMETERS row")
+    # census
+    counts = {}
+    for lang in PARAM_LANGS:
+        rules = PARAM_CENSUS_EXEMPT.get(lang, [])
+        used = [False] * len(rules)
+        evaluable = {k for k in T[lang]
+                     if _param_eval(T[lang][k], T[lang], lang,
+                                    cls=_java_cls(lang, k)) is not None}
+        unfiled = []
+        for name in sorted(evaluable - claimed[lang]):
+            hit = False
+            for i, (pat, _why) in enumerate(rules):
+                if re.search(pat, name):
+                    used[i] = True
+                    hit = True
+                    break
+            if not hit:
+                unfiled.append(name)
+        for name in unfiled:
+            errors.append(f"{lang}: suite parameter {name!r} = "
+                          f"{_param_eval(T[lang][name], T[lang], lang, cls=_java_cls(lang, name))} is named by no "
+                          f"PARAMETERS row and matched by no PARAM_CENSUS_EXEMPT rule")
+        for i, ok in enumerate(used):
+            if not ok:
+                errors.append(f"{lang}: PARAM_CENSUS_EXEMPT rule {rules[i][0]!r} matches "
+                              f"nothing — delete it")
+        counts[lang] = (len(evaluable), len(evaluable & claimed[lang]))
+    return counts, observed
+
+
 def main():
     errors = []
     numbers = check_numbered_tests(errors)
     check_shared_numbering(errors, numbers)
     checked = check_primitives(errors)
     census = check_census(errors)
+    param_counts, _param_values = check_parameters(errors)
 
     if errors:
         print("Language parity: FAILED")
@@ -2158,6 +2710,18 @@ def main():
             for lang, (declared, internal, named) in census.items()
         )
         + "; every remainder carries a CENSUS_EXEMPT reason."
+    )
+    local_rows = sum(1 for cells, observable, _m in PARAMETERS.values()
+                     if observable == "local")
+    print(
+        f"OK: parameter-value parity — {len(PARAMETERS)} rows over "
+        + ", ".join(f"{lang} {ev}" for lang, (ev, _n) in param_counts.items())
+        + f" evaluable suite parameters, all manifest-named or exempt; "
+        f"{len(PARAM_DIVERGENCE)} recorded divergence(s) "
+        f"({sum(1 for d in PARAM_DIVERGENCE.values() if d['status'] == 'defect')} defect, "
+        f"{sum(1 for d in PARAM_DIVERGENCE.values() if d['status'] == 'acknowledged')} "
+        f"acknowledged); {local_rows} rows are 'local', where a disagreement reaches no "
+        f"artifact and this axis is the only check."
     )
     return 0
 

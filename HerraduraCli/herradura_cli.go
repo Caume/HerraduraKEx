@@ -331,6 +331,18 @@ func mustDerInt(val []byte) []byte {
 	return b
 }
 
+// leftPad restores a fixed-width field that lost leading zero bytes to a
+// minimal DER INTEGER encoding (TODO #280).  A field already at or above the
+// width is returned unchanged; callers bound the length before calling.
+func leftPad(b []byte, width int) []byte {
+	if len(b) >= width {
+		return b
+	}
+	out := make([]byte, width)
+	copy(out[width-len(b):], b)
+	return out
+}
+
 // decryptPEMFile recovers the cleartext PEM, or fails -- it never returns
 // unverified bytes.
 func decryptPEMFile(path, passphrase string) (string, error) {
@@ -346,9 +358,20 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (%d fields, want 6)", len(items))
 	}
 	salt, iterB, nonceB, ct, tag, ptLenB := items[0], items[1], items[2], items[3], items[4], items[5]
-	if len(salt) != pbkdf2SaltBytes || len(nonceB) != envKeyBits/8 || len(tag) != 32 {
+	// The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
+	// as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
+	// whose first byte is 0x00 encodes one significant byte SHORT, and
+	// DerParseSeq's single sign-byte strip cannot put it back.  So a length
+	// here is an upper bound to check and then LEFT-PAD from, never an equality
+	// to assert.  Asserting it rejected roughly one envelope in 64 -- P(any of
+	// four random fields starts with 0x00) -- which Python and Java both read
+	// back correctly, because both restore the width from an integer.  TODO #280.
+	if len(salt) > pbkdf2SaltBytes || len(nonceB) > envKeyBits/8 || len(tag) > 32 {
 		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (field width)")
 	}
+	salt = leftPad(salt, pbkdf2SaltBytes)
+	nonceB = leftPad(nonceB, envKeyBits/8)
+	tag = leftPad(tag, 32)
 	if len(iterB) == 0 || len(iterB) > 4 || len(ptLenB) > 8 {
 		return "", fmt.Errorf("malformed ENCRYPTED PRIVATE KEY envelope (header width)")
 	}
@@ -365,10 +388,20 @@ func decryptPEMFile(path, passphrase string) (string, error) {
 	if iterations < 1 || iterations > 100000000 {
 		return "", fmt.Errorf("iteration count out of range (%d)", iterations)
 	}
-	if ptLen < 1 || ptLen > len(ct) {
+	// The comparison runs the other way from the pre-TODO-#280 form: the
+	// ciphertext is ptLen bytes LEFT-PADDED from len(ct) significant ones, so a
+	// shorter field is a leading zero byte and a LONGER one is malformed.
+	//
+	// That reversal also removes the bound the old form gave for free: with
+	// `ptLen > len(ct)` rejected, ptLen could never exceed the ciphertext
+	// actually present.  It can now, so it is bounded explicitly against the
+	// envelope body -- the ciphertext cannot be longer than the file carrying
+	// it -- or a hostile PEM naming 2^62 bytes sizes the allocation below.
+	// TODO #239/#240 exist over exactly this.
+	if ptLen < 1 || len(ct) > ptLen || ptLen > len(body) {
 		return "", fmt.Errorf("declared plaintext length does not match ciphertext")
 	}
-	ct = ct[len(ct)-ptLen:]
+	ct = leftPad(ct, ptLen)
 
 	key := NewBitArray(envKeyBits, new(big.Int).SetBytes(pbkdf2Hfscx256([]byte(passphrase), salt, iterations)))
 	nonce := NewBitArray(envKeyBits, new(big.Int).SetBytes(nonceB))
