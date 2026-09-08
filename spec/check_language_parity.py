@@ -2018,10 +2018,12 @@ CENSUS_EXEMPT = {
         (r"^(New|new)", "constructors for BitArray/QcMdpcPrf — the receiver surface "
                         "the DECL_PATTERNS comment excludes, reached through a "
                         "top-level func because Go has no constructors"),
-        (r"^(bitArrayMask|bitCount|CountBits|lowestSetBit|putLE|word16|draw|draws|"
-         r"intSlicesEqual|qcpRotate)$",
+        (r"^(bitArrayMask|zkpNlMask|bitCount|CountBits|lowestSetBit|putLE|word16|"
+         r"draw|draws|intSlicesEqual|qcpRotate)$",
          "bit/byte/slice plumbing on Go's own representation; C's counterparts are "
-         "the exempted ba_ and qcp_ families and Python's are built in"),
+         "the exempted ba_ and qcp_ families and Python's are built in.  zkpNlMask "
+         "is the low-n-bit mask ZKP-NL applies: C writes (1ULL << n) - 1 inline, "
+         "Python (1 << n) - 1, and Java factors it out as the exempted maskOf"),
         (r"^(oprfOrd|rnlTwGet)$",
          "accessors for a value the other three keep as a constant or recompute: "
          "the OPRF group order, and one twiddle from the table C's exempted "
@@ -2504,18 +2506,6 @@ PARAM_JAVA_ALIASES = {
 # to any of them fails; and a row whose languages have CONVERGED fails until it
 # is deleted -- the orphan rule, one level down from cli_flag_value_gaps.
 PARAM_DIVERGENCE = {
-    "zkp-nl-max-n": {
-        "status": "defect",
-        "values": {"c": 64, "go": 32, "python": 64, "java": 64},
-        "reason":
-            "Go's cap is a TYPE limit, not a policy: ZkpNlVerify takes `y uint32` and "
-            "carries [3]uint32 shares throughout, so 32 is the widest statement its "
-            "representation can hold, where the other three carry big integers and cap "
-            "at 64 by declaration.  Go therefore cannot verify a statement the other "
-            "three can produce, at a width the suite's own test [22] exercises.  Both "
-            "the Python and Java sources already carry a comment saying so; nothing "
-            "compared the numbers.",
-    },
     "hcred-n": {
         "status": "acknowledged",
         "values": {"c": 256, "go": 256, "python": 32, "java": 256},

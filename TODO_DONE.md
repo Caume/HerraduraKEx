@@ -16451,3 +16451,61 @@ Status: **DONE v6.6.2** -- C and Go left-pad a fixed-width envelope field instea
 asserting its encoded length; two pinned leading-zero envelopes keep it closed; and the
 declared plaintext length, which sizes an allocation, is now bounded in all four (it was
 unbounded in Python).
+
+### #279: ZKP-NL's Go verifier caps at n = 32 where the other three cap at 64
+
+`spec/`'s parameter axis (TODO #278) records this as its one `defect` row, and this is
+the item that row forces: acting on a row is that row's own item.
+
+`ZKP_NL_MAX_N` is 64 in C, Python and Java and **32 in Go** -- and it is a TYPE limit,
+not a policy.  `ZkpNlVerify(B, y uint32, ...)` takes the statement as a `uint32` and
+carries `[3]uint32` shares throughout, so 32 is the widest statement Go's representation
+can hold, where the other three carry big integers and cap at 64 by declaration.  Both the
+Python and Java sources already carry a comment saying so; what nothing did was compare
+the numbers, which is why it took #278's table to surface it as a defect rather than a
+remark.
+
+**What it costs.**  Go cannot verify a statement the other three can produce, at a width
+the suite's own test [22] exercises.  It is not a soundness bug -- Go rejects rather than
+accepting something it should not -- but it is an interoperability hole in a
+signature-shaped primitive, and the failure is a rejection, which is easy to read as "the
+proof is bad" rather than "this verifier cannot represent it".
+
+**What the work is.**  Widen Go's share representation from `uint32` to `uint64` (or to
+`*big.Int`, matching the other three) and raise `ZkpNlMaxN` to 64.  Two things to settle
+first, neither obvious:
+
+1. **Is the wire format affected?**  A ZKBoo proof serialises shares; if the encoding is
+   width-tagged rather than fixed at four bytes, widening is internal.  If it is fixed,
+   this is wire-breaking for `nl-zkboo` / `nl-zkbpp` and needs a `MIGRATING.md` entry.
+   `KAT/` pins no ZKP-NL vector, so there is nothing to regenerate but also nothing to
+   check against -- see item 3.
+2. **Does 64 buy anything, or should all four move together?**  64 is not a security level
+   anyone derived; it is the widest the C implementation happened to declare.  #278
+   deliberately did not raise widths, and neither should this without a reason for the
+   number.  Settling that may mean the fix is "make Go 64" (parity) rather than "make the
+   family wider" (a security change), and those are different items.
+3. **A vector, not a round-trip.**  #277's lesson applies directly: a ZKP-NL proof at
+   n = 64 produced by C and verified by Go is the check that would have caught this, and
+   `CliTest/test_zkp_hybrid_family.sh`'s 4x4 matrix already has the shape -- it just runs
+   at the default width.  Add the n = 64 row before changing Go, so the fix is verified
+   against a failing test rather than asserted.
+
+Deleting the `zkp-nl-max-n` row from `PARAM_DIVERGENCE` is part of the work, not an
+afterthought: the orphan rule fails `--check` while the entry describes a disagreement
+that no longer exists.
+
+Status: **DONE v6.6.3** -- Go's ZKP-NL shares are `uint64` and `ZkpNlMaxN` is 64, so all
+four languages cap at the same width.  Settled the two open questions first: the wire is
+UNAFFECTED (every ZKP-NL field is written nb = ceil(n/8) bytes wide, so the encoding is
+width-tagged by the header's `n` and no artifact changes), and the scope is PARITY at 64
+rather than a wider family, since 64 is C's declaration and not a derived security level.
+The guard is an n = 64 section in `CliTest/test_zkp_hybrid_family.sh` -- the two 4x4
+signature matrices plus four-way `pkey --pubout` -- added BEFORE the fix and confirmed to
+fail 9 cells, all of them Go's, against the pre-fix binary.  Go's own test [22] had
+"proved" ZKBoo at n = 64 throughout: `A` and `B` were truncated into a `uint32` and
+`uint32((1 << 64) - 1)` is all-ones, so both of its widths were 32 significant bits and
+nothing self-consistent could have caught this.  `PARAM_DIVERGENCE`'s `zkp-nl-max-n` row
+is deleted as the orphan rule requires, leaving that axis with zero `defect` rows.  The
+Go CLI's `genpkey` still ignores `--bits` for this algo where Python and Java honour it,
+which is a keygen scope question rather than a cap and is filed as **#281**.

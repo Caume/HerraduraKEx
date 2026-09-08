@@ -2477,7 +2477,7 @@ func decodeZkpRnlProof(body []byte) (w, c, z []int, n int, err error) {
 }
 
 // encodeZkpNlPriv: Wire: 4B n | nb A | nb B | nb y
-func encodeZkpNlPriv(A, B, y uint32, n int) string {
+func encodeZkpNlPriv(A, B, y uint64, n int) string {
 	nb := (n + 7) / 8
 	buf := make([]byte, 4+3*nb)
 	binary.BigEndian.PutUint32(buf[0:], uint32(n))
@@ -2493,7 +2493,7 @@ func encodeZkpNlPriv(A, B, y uint32, n int) string {
 	return PemWrap(lblZkpNlPriv, buf)
 }
 
-func decodeZkpNlPriv(body []byte) (A, B, y uint32, n int, err error) {
+func decodeZkpNlPriv(body []byte) (A, B, y uint64, n int, err error) {
 	if len(body) < 4 {
 		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey too short")
 	}
@@ -2506,19 +2506,19 @@ func decodeZkpNlPriv(body []byte) (A, B, y uint32, n int, err error) {
 		return 0, 0, 0, 0, fmt.Errorf("ZKP-NL privkey truncated")
 	}
 	for i := 0; i < nb; i++ {
-		A = (A << 8) | uint32(body[4+i])
+		A = (A << 8) | uint64(body[4+i])
 	}
 	for i := 0; i < nb; i++ {
-		B = (B << 8) | uint32(body[4+nb+i])
+		B = (B << 8) | uint64(body[4+nb+i])
 	}
 	for i := 0; i < nb; i++ {
-		y = (y << 8) | uint32(body[4+2*nb+i])
+		y = (y << 8) | uint64(body[4+2*nb+i])
 	}
 	return
 }
 
 // encodeZkpNlPub: Wire: 4B n | nb B | nb y
-func encodeZkpNlPub(B, y uint32, n int) string {
+func encodeZkpNlPub(B, y uint64, n int) string {
 	nb := (n + 7) / 8
 	buf := make([]byte, 4+2*nb)
 	binary.BigEndian.PutUint32(buf[0:], uint32(n))
@@ -2531,7 +2531,7 @@ func encodeZkpNlPub(B, y uint32, n int) string {
 	return PemWrap(lblZkpNlPub, buf)
 }
 
-func decodeZkpNlPub(body []byte) (B, y uint32, n int, err error) {
+func decodeZkpNlPub(body []byte) (B, y uint64, n int, err error) {
 	if len(body) < 4 {
 		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey too short")
 	}
@@ -2544,10 +2544,10 @@ func decodeZkpNlPub(body []byte) (B, y uint32, n int, err error) {
 		return 0, 0, 0, fmt.Errorf("ZKP-NL pubkey truncated")
 	}
 	for i := 0; i < nb; i++ {
-		B = (B << 8) | uint32(body[4+i])
+		B = (B << 8) | uint64(body[4+i])
 	}
 	for i := 0; i < nb; i++ {
-		y = (y << 8) | uint32(body[4+nb+i])
+		y = (y << 8) | uint64(body[4+nb+i])
 	}
 	return
 }
