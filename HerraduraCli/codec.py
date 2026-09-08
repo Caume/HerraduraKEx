@@ -11,9 +11,10 @@ import base64
 # either an unbounded allocation or, when it reaches zero, a verification loop
 # that runs no iterations and reports success.
 #
-# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N.  Go's ZkpNlMaxN is 32 because its
-# shares are uint32 where C's are uint64 — a representation limit, not policy,
-# so widths 33..64 are read by C and Python alone.
+# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N, Go's ZkpNlMaxN and Java's ZkpNl.MAX_N.
+# Go's was 32 until TODO #279 — a representation limit, not policy: its shares
+# were uint32 where C's are uint64, so widths 33..64 were read by C, Python and
+# Java alone.  Go's shares are uint64 now and all four agree at 64.
 # ---------------------------------------------------------------------------
 _ZKP_NL_MAX_N      = 64
 _ZKP_NL_MAX_ROUNDS = 4096

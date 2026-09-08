@@ -330,47 +330,41 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 
 Status: **OPEN**
 
-### #279: ZKP-NL's Go verifier caps at n = 32 where the other three cap at 64
+### #281: Go's `genpkey` defines `--bits` but ignores it for `hpks-zkp-nl`
 
-`spec/`'s parameter axis (TODO #278) records this as its one `defect` row, and this is
-the item that row forces: acting on a row is that row's own item.
+Found while closing TODO #279, and left open by it on that item's own reasoning: #279
+settles a WIDTH CAP, and this is a per-language keygen scope decision, which #279 says
+in as many words is a different item.
 
-`ZKP_NL_MAX_N` is 64 in C, Python and Java and **32 in Go** -- and it is a TYPE limit,
-not a policy.  `ZkpNlVerify(B, y uint32, ...)` takes the statement as a `uint32` and
-carries `[3]uint32` shares throughout, so 32 is the widest statement Go's representation
-can hold, where the other three carry big integers and cap at 64 by declaration.  Both the
-Python and Java sources already carry a comment saying so; what nothing did was compare
-the numbers, which is why it took #278's table to surface it as a defect rather than a
-remark.
+`genpkey --algo hpks-zkp-nl --bits 64` produces an **n = 8** key from the Go CLI, silently.
+Python and Java both read `--bits` for this algo (an omitted `--bits`, or `--bits 256` —
+its KEYBITS default — meaning `ZKP_NL_DEFAULT_N`, and Java rejecting an out-of-range
+value by name); Go's branch passes `ZkpNlDefaultN` as a literal and never looks at the
+flag.  C is a separate and already-settled case: its `genpkey` has no `--bits` at all,
+recorded as an `acknowledged` `cli_surface_gaps` row because the C suite is compiled for
+a single KEYBITS.  Go's is not that — it defines the flag, accepts it, and drops it.
 
-**What it costs.**  Go cannot verify a statement the other three can produce, at a width
-the suite's own test [22] exercises.  It is not a soundness bug -- Go rejects rather than
-accepting something it should not -- but it is an interoperability hole in a
-signature-shaped primitive, and the failure is a rejection, which is easy to read as "the
-proof is bad" rather than "this verifier cannot represent it".
+**What it costs.**  Since #279 the Go CLI can READ and VERIFY an n = 64 statement, so the
+asymmetry is now one-directional: Go interoperates on wide statements it cannot itself
+produce.  The failure is silent, which is the part that matters — a caller asking for a
+64-bit statement gets an 8-bit one and no error, where every other width mismatch in this
+family is a loud rejection.  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section
+generates its key with Python for exactly this reason, and says so.
 
-**What the work is.**  Widen Go's share representation from `uint32` to `uint64` (or to
-`*big.Int`, matching the other three) and raise `ZkpNlMaxN` to 64.  Two things to settle
-first, neither obvious:
+**Why this axis could not record it instead of fixing it.**  `cli_flag_value_gaps` (TODO
+#269) is the table for a flag whose accepted VALUES differ between languages, and it
+cannot hold this one: it requires Python's cell to be derivable from argparse `choices=`,
+and `genpkey --bits` is a bare `type=int` with no choices list.  So there is no table
+this can sit in as an acknowledged divergence — it is either fixed or invisible.
 
-1. **Is the wire format affected?**  A ZKBoo proof serialises shares; if the encoding is
-   width-tagged rather than fixed at four bytes, widening is internal.  If it is fixed,
-   this is wire-breaking for `nl-zkboo` / `nl-zkbpp` and needs a `MIGRATING.md` entry.
-   `KAT/` pins no ZKP-NL vector, so there is nothing to regenerate but also nothing to
-   check against -- see item 3.
-2. **Does 64 buy anything, or should all four move together?**  64 is not a security level
-   anyone derived; it is the widest the C implementation happened to declare.  #278
-   deliberately did not raise widths, and neither should this without a reason for the
-   number.  Settling that may mean the fix is "make Go 64" (parity) rather than "make the
-   family wider" (a security change), and those are different items.
-3. **A vector, not a round-trip.**  #277's lesson applies directly: a ZKP-NL proof at
-   n = 64 produced by C and verified by Go is the check that would have caught this, and
-   `CliTest/test_zkp_hybrid_family.sh`'s 4x4 matrix already has the shape -- it just runs
-   at the default width.  Add the n = 64 row before changing Go, so the fix is verified
-   against a failing test rather than asserted.
+**What the work is.**  Mirror Java's block in Go's `case *algo == "hpks-zkp-nl"`: read
+`--bits`, treat the KEYBITS default as "unset", and reject a value that is not a positive
+even integer `<= ZkpNlMaxN` by name rather than clamping.  Then extend the n = 64 section
+of `test_zkp_hybrid_family.sh` to generate per-language rather than from Python alone —
+three cells, since C stays out by its own acknowledged row.
 
-Deleting the `zkp-nl-max-n` row from `PARAM_DIVERGENCE` is part of the work, not an
-afterthought: the orphan rule fails `--check` while the entry describes a disagreement
-that no longer exists.
+Note this makes an existing `--algo` accept an input it previously ignored, so it is a
+MINOR bump, not a PATCH.
 
 Status: **OPEN**
+

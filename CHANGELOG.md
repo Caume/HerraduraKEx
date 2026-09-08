@@ -2,6 +2,103 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.4] - 2026-09-08
+
+### TODO #282 — the C demo asserted a probabilistic property as a deterministic one
+
+Found by CI on the PR that closed TODO #279: `native-c` failed on `[FAIL] HPKE-Stern-F key
+agreement failed (N=32)` while the pull_request run of the same job **on the same commit**
+passed — on a commit whose diff contains no C source at all.  Not flaky infrastructure; a
+genuine lottery that one run lost.
+
+**Mechanism.**  The N=32 demo encapsulates with a random weight-2 error vector and
+decapsulates by brute force over all C(32,2) = 496 candidates, returning the *first* whose
+syndrome matches.  A weight-2 code of length 32 with a 16-bit syndrome is **not uniquely
+decodable**, so brute force can legitimately land on a different weight-2 preimage and
+derive a different session key.  The demo compared keys and called any difference `[FAIL]`.
+
+This is exactly the class CLAUDE.md's Testing section warns about, and exactly the defect
+TODO #233 fixed in test [18] — which already reports "*N* ambiguous syndromes, not a
+failure".  The demo never got that treatment because it was not `[FAIL]`-gated at the time;
+#233's gate turned a long-standing wrong assertion into a build failure.
+
+**C only, and that is a finding rather than an assumption.**  Python's demo already draws
+the distinction via `stern_f_first_preimage`, with a comment pointing at test [18].  Go's
+and Java's demos run only the deterministic known-`e'` path at N=256 and cannot reach it.
+Three of the four were already right.
+
+**Measured** at 10 mismatches in 2,400 trials (~0.42%) — about 1 run of the C job in 240.
+Rare enough to survive, frequent enough to be a standing false alarm.
+
+**The fix narrows the assertion, it does not delete it.**  `stern32_first_preimage` mirrors
+Python's helper; a mismatch whose ciphertext has a *different* weight-2 preimage now reports
+"syndrome ambiguous at N=32 (not a failure)", while a ciphertext with **no** weight-2
+preimage at all — a real decoder failure — still reports `[FAIL]`.  Verified against the
+ambiguous branch specifically rather than by a green run: over 2,000 fresh trials every
+mismatch classified as ambiguous and none as a real failure.
+
+## [6.6.3] - 2026-09-08
+
+### TODO #279 — ZKP-NL's Go verifier capped at n = 32 where the other three cap at 64
+
+The item `spec/`'s parameter axis (TODO #278) forced: acting on a `defect` row is that
+row's own work, and `zkp-nl-max-n` was the only one the axis had.  `ZKP_NL_MAX_N` is 64
+in C, Python and Java and was **32 in Go**.
+
+**Mechanism, and why it is not a policy difference.**  Go carried the ZKBoo statement as
+a `uint32` — `ZkpNlVerify(B, y uint32, ...)`, `[3]uint32` shares, `[3]uint32` carries —
+so 32 was the widest statement its *representation* could hold, where the other three
+carry big integers and cap at 64 by declaration.  Go's decoders rejected a wider key or
+proof before the verifier ever saw it, so a statement C, Python or Java produce came back
+as `n out of range`, which reads as "the proof is bad" rather than "this verifier cannot
+represent it".  Not a soundness bug — Go rejected rather than accepting — but an
+interoperability hole in a signature-shaped primitive.
+
+**The fix is the type, not the cap.**  Every ZKP-NL share, carry, mask and packed field
+in `herradura/herradura.go` is `uint64` now, and `ZkpNlMaxN` is 64.  The aPAKE witness
+(`HpakeRecord.B`/`.Y`, `hpakeDeriveZkpWitness`) moved with it, since it feeds
+`ZkpNlProve` directly.  `zkpNlMask(n)` replaces six copies of `(1 << n) - 1`, with an
+explicit `n >= 64` branch: at exactly the width this change exists to reach, a 64-bit
+shift of a `uint64` is 0 and the mask would have come out right by accident.
+
+**Nothing on the wire moves.**  Every ZKP-NL field — `A`, `B`, `y`, a view's share and
+out-share — is written `nb = ceil(n/8)` bytes wide rather than at a fixed four, so the
+encoding is width-tagged by the header's `n` and widening is internal.  No stored key,
+proof or signature changes, and none becomes unreadable; Go simply stops refusing
+artifacts the other three accept.  **Go library callers do see a signature change**:
+`ZkpNlKeygen`, `ZkpNlProve`, `ZkpNlVerify`, `ZkpNlProvepp` and `ZkpNlVerifypp` take and
+return `uint64` where they took `uint32`.  Untyped constants still compile; a caller
+passing a `uint32` variable needs a conversion.
+
+**The width Go's own test [22] "proved" was hollow.**  That test runs ZKBoo at n = 32
+*and* n = 64 and passed at both throughout — self-consistently, because `A` and `B` were
+truncated into a `uint32` and `uint32((1 << 64) - 1)` happens to be all-ones. Both widths
+were therefore 32 significant bits, and no round-trip could tell them apart.  This is why
+the guard had to be a cross-language one.
+
+**The guard: an n = 64 row in `CliTest/test_zkp_hybrid_family.sh`.**  Sections 1–3 of that
+script run at the CLI default n = 8, and a width every CLI agrees on cannot expose a width
+*disagreement*.  The new section drives the same 4×4 `nl-zkboo` and `nl-zkbpp` matrices,
+plus four-way `pkey --pubout` agreement, over an n = 64 key.  Confirmed to fail 9 of its
+cells against the pre-fix Go binary — every one of them Go's — and to pass after.  Its key
+is generated by Python and not per-language on purpose: C's `genpkey` has no `--bits`
+(already an acknowledged `cli_surface_gaps` row) and Go's ignores it for this algo, so a
+four-way keygen row would test a per-language scope decision rather than the cap.  That
+Go asymmetry is now **TODO #281**.
+
+`sig_matrix` gained a `MATRIX_TAG`, so the two widths' verdict lines and artifacts are
+distinct rather than the same sentence twice.
+
+**Why 64 and not wider.**  64 is not a derived security level; it is what C happened to
+declare, and TODO #278 deliberately raised no widths.  The settled scope is therefore
+parity — make Go match — not "make the family wider", which would be a security change
+with its own reasoning to do.
+
+`PARAM_DIVERGENCE`'s `zkp-nl-max-n` row is deleted, forced by the orphan rule: the entry
+described a disagreement that no longer exists and `--check` fails while it stands.  The
+parameter axis now carries **zero `defect` rows** — one `acknowledged` row (`hcred-n`)
+remains, so a new `defect` there means a fresh divergence rather than an inherited one.
+
 ## [6.6.2] - 2026-09-07
 
 ### TODO #280 — the passphrase envelope lost a leading zero, and two CLIs rejected the result

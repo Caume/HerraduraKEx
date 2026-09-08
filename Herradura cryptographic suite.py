@@ -329,8 +329,9 @@ _SIGMA_MAX_ATTEMPTS = 1000   # rejection-sampling attempts before RuntimeError
 _ZKP_NL_DEFAULT_N   = 8    # default bit-width for CLI (proof ≈35 KB at R=219)
 _ZKP_NL_DEMO_ROUNDS = 4    # illustration only: soundness ≈ (2/3)^4 ≈ 20%
 # Upper bounds on the two ZKP-NL header fields that arrive off the wire.
-# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N; Go's ZkpNlMaxN is 32 because its
-# shares are uint32, so 33..64 is a width only C and Python read (TODO #275).
+# _ZKP_NL_MAX_N matches C's ZKP_NL_MAX_N, Go's ZkpNlMaxN and Java's ZkpNl.MAX_N
+# (TODO #275).  Go's was 32 until TODO #279 — its shares were uint32, so 33..64
+# was a width only C, Python and Java read; they are uint64 now.
 _ZKP_NL_MAX_N       = 64
 _ZKP_NL_MAX_ROUNDS  = 4096
 _ZKP_NL_PROD_ROUNDS = 219  # ⌈128 / log₂(3/2)⌉ — required for 128-bit soundness

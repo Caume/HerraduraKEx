@@ -256,6 +256,26 @@ static uint32_t hpke_stern_f_decap_32(uint32_t seed, uint16_t ct)
     return 0xFFFFFFFFu; /* decode failed */
 }
 
+/* First weight-t preimage of ct, in the order hpke_stern_f_decap_32 scans.
+ * Lets a caller tell "the decoder is wrong" from "this ciphertext has more
+ * than one weight-t preimage and brute force legitimately found a different
+ * one": a weight-2 code of length 32 with a 16-bit syndrome is NOT uniquely
+ * decodable, so the second case is the parameters being ambiguous, not a
+ * failure.  The mirror of Python's stern_f_first_preimage, and the same
+ * distinction test [18] draws in CryptosuiteTests/.  Returns 0 (never a valid
+ * weight-2 vector) when no preimage exists at all, which IS a decoder failure. */
+static uint32_t stern32_first_preimage(uint32_t seed, uint16_t ct)
+{
+    int i, j;
+    for (i = 0; i < SDF32_N; i++)
+        for (j = i + 1; j < SDF32_N; j++) {
+            uint32_t e_p = (1u << i) | (1u << j);
+            if (stern32_syndrome(seed, e_p) == ct)
+                return e_p;
+        }
+    return 0;
+}
+
 int main(void)
 {
     FILE *urnd;
@@ -555,10 +575,23 @@ int main(void)
         sf32_K_dec = hpke_stern_f_decap_32(sf32_seed, sf32_ct);
         printf("K (encap): %08x\n", sf32_K_enc);
         printf("K (decap): %08x\n", sf32_K_dec);
-        if (sf32_K_enc == sf32_K_dec)
+        if (sf32_K_enc == sf32_K_dec) {
             puts("+ HPKE-Stern-F session keys agree (N=32, brute-force)");
-        else
-            printf("[FAIL] HPKE-Stern-F key agreement failed (N=32)\n");
+        } else {
+            /* A weight-2 code of length 32 with a 16-bit syndrome is not
+             * uniquely decodable: brute force can legitimately land on a
+             * different weight-t preimage of the same syndrome.  That is the
+             * parameters being ambiguous, not the decoder being wrong -- the
+             * same distinction test [18] and the Python demo already draw.
+             * Measured at ~0.45% of runs, which is why this reddened CI at
+             * random rather than always (TODO #282). */
+            uint32_t sf32_first = stern32_first_preimage(sf32_seed, sf32_ct);
+            if (sf32_first != 0 && sf32_first != sf32_e_p)
+                puts("+ HPKE-Stern-F syndrome ambiguous at N=32 (not a failure \xe2\x80\x94 "
+                     "brute force found a different weight-2 preimage)");
+            else
+                printf("[FAIL] HPKE-Stern-F key agreement failed (N=32)\n");
+        }
     }
 
     /* --- HPKE-Stern-F N=256 [CODE-BASED PQC -- Niederreiter KEM, known-e'] */

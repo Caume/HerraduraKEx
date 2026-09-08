@@ -2354,7 +2354,14 @@ const (
 	ZkpNlDefaultN   = 8
 	ZkpNlDemoRounds = 4
 	ZkpNlProdRounds = 219
-	ZkpNlMaxN       = 32
+	// 64, matching C's ZKP_NL_MAX_N, Python's _ZKP_NL_MAX_N and Java's
+	// ZkpNl.MAX_N.  It was 32 until TODO #279, and that was a TYPE limit
+	// rather than a policy: the shares below were uint32, so a wider
+	// statement could not be represented and the decoders rejected one the
+	// other three CLIs produce.  Widening them to uint64 removes the limit;
+	// nothing on the wire moves, because every ZKP-NL field is written
+	// nb = ceil(n/8) bytes wide rather than at a fixed four.
+	ZkpNlMaxN       = 64
 	// Upper bound on a ZKP round count read off the wire.  It sizes an
 	// allocation, and a count of zero makes the per-round verification
 	// loop vacuous (TODO #275), so both ends are enforced.
@@ -2371,13 +2378,24 @@ type ZkpNlRound struct {
 	ViewP1, ViewP2   []byte
 }
 
-func zkpNlRol(x uint32, r, n int) uint32 {
+// zkpNlMask is the low-n-bit mask.  Written with an explicit n >= 64 branch
+// rather than as (1 << n) - 1 because n = ZkpNlMaxN = 64 is exactly the width
+// TODO #279 raised the cap to reach, and a 64-bit shift of a uint64 is 0 --
+// the mask would come out right by accident, which is not a property to leave
+// a reader to rediscover.
+func zkpNlMask(n int) uint64 {
+	if n >= 64 {
+		return ^uint64(0)
+	}
+	return (uint64(1) << uint(n)) - 1
+}
+
+func zkpNlRol(x uint64, r, n int) uint64 {
 	r = ((r % n) + n) % n
 	if r == 0 {
 		return x
 	}
-	mask := uint32((1 << uint(n)) - 1)
-	return ((x << uint(r)) | (x >> uint(n-r))) & mask
+	return ((x << uint(r)) | (x >> uint(n-r))) & zkpNlMask(n)
 }
 
 func zkpNlH(parts ...[]byte) []byte {
@@ -2397,9 +2415,9 @@ func zkpNlPrgBit(tape []byte, gateID int) int {
 // zkpNlEvalCircuit evaluates nl_fscx_v1(A, B) in 3-party ZKBoo decomposition.
 // shares: XOR shares of A (A = s0^s1^s2), tapes: 3×32-byte tapes.
 // Returns (outShares[3], gateViews[3][n-1]) where each gate view byte = ai|(ci<<1)|(andOut<<2).
-func zkpNlEvalCircuit(shares [3]uint32, tapes [3][]byte, B uint32, n int) ([3]uint32, [3][]byte) {
-	mask := uint32((1 << uint(n)) - 1)
-	carry := [3]uint32{} // current carry bits per party; starts at 0
+func zkpNlEvalCircuit(shares [3]uint64, tapes [3][]byte, B uint64, n int) ([3]uint64, [3][]byte) {
+	mask := zkpNlMask(n)
+	carry := [3]uint64{} // current carry bits per party; starts at 0
 	gateViews := [3][]byte{
 		make([]byte, n-1),
 		make([]byte, n-1),
@@ -2434,9 +2452,9 @@ func zkpNlEvalCircuit(shares [3]uint32, tapes [3][]byte, B uint32, n int) ([3]ui
 	}
 
 	// Sum shares: bit i of (A+B) mod 2^n = A_i XOR B_i XOR carry_i (linear)
-	var sumShares [3]uint32
+	var sumShares [3]uint64
 	for i := 0; i < n; i++ {
-		Bi := uint32((B >> uint(i)) & 1)
+		Bi := uint64((B >> uint(i)) & 1)
 		for p := 0; p < 3; p++ {
 			bit := ((shares[p] >> uint(i)) & 1) ^ Bi ^ ((carry[p] >> uint(i)) & 1)
 			sumShares[p] ^= bit << uint(i)
@@ -2444,28 +2462,28 @@ func zkpNlEvalCircuit(shares [3]uint32, tapes [3][]byte, B uint32, n int) ([3]ui
 	}
 
 	// ROL_{n/4} (linear — apply identically to each share)
-	var rotShares [3]uint32
+	var rotShares [3]uint64
 	for p := 0; p < 3; p++ {
 		rotShares[p] = zkpNlRol(sumShares[p], n/4, n)
 	}
 
 	// Linear part: fscx(A, B) with B constant
 	Bconst := (B ^ zkpNlRol(B, 1, n) ^ zkpNlRol(B, n-1, n)) & mask
-	var linShares [3]uint32
+	var linShares [3]uint64
 	for p := 0; p < 3; p++ {
 		Aterms := (shares[p] ^ zkpNlRol(shares[p], 1, n) ^ zkpNlRol(shares[p], n-1, n)) & mask
 		linShares[p] = Aterms
 	}
 	linShares[0] ^= Bconst // absorb public constant into party 0 only
 
-	var outShares [3]uint32
+	var outShares [3]uint64
 	for p := 0; p < 3; p++ {
 		outShares[p] = (linShares[p] ^ rotShares[p]) & mask
 	}
 	return outShares, gateViews
 }
 
-func zkpNlPackView(share uint32, tape []byte, outShare uint32, gateBytes []byte, n, nb int) []byte {
+func zkpNlPackView(share uint64, tape []byte, outShare uint64, gateBytes []byte, n, nb int) []byte {
 	buf := make([]byte, nb+32+nb+len(gateBytes))
 	// share (nb bytes big-endian)
 	for i := nb - 1; i >= 0; i-- {
@@ -2483,56 +2501,56 @@ func zkpNlPackView(share uint32, tape []byte, outShare uint32, gateBytes []byte,
 	return buf
 }
 
-func zkpNlUnpackView(buf []byte, n, nb int) (share uint32, tape []byte, outShare uint32, gv []byte) {
+func zkpNlUnpackView(buf []byte, n, nb int) (share uint64, tape []byte, outShare uint64, gv []byte) {
 	share = 0
 	for i := 0; i < nb; i++ {
-		share = (share << 8) | uint32(buf[i])
+		share = (share << 8) | uint64(buf[i])
 	}
 	tape = buf[nb : nb+32]
 	outShare = 0
 	for i := nb + 32; i < nb+32+nb; i++ {
-		outShare = (outShare << 8) | uint32(buf[i])
+		outShare = (outShare << 8) | uint64(buf[i])
 	}
 	gv = buf[nb+32+nb:]
 	return
 }
 
 // ZkpNlKeygen generates (A private, B public, y = nl_fscx_v1(A,B) public).
-func ZkpNlKeygen(n int) (A, B, y uint32, err error) {
+func ZkpNlKeygen(n int) (A, B, y uint64, err error) {
 	nb := (n + 7) / 8
-	mask := uint32((1 << uint(n)) - 1)
+	mask := zkpNlMask(n)
 	buf := make([]byte, nb*2)
 	if _, err = rand.Read(buf); err != nil {
 		return
 	}
 	A = 0
 	for i := 0; i < nb; i++ {
-		A = (A << 8) | uint32(buf[i])
+		A = (A << 8) | uint64(buf[i])
 	}
 	A &= mask
 	B = 0
 	for i := 0; i < nb; i++ {
-		B = (B << 8) | uint32(buf[nb+i])
+		B = (B << 8) | uint64(buf[nb+i])
 	}
 	B &= mask
-	// nl_fscx_v1(A, B) as uint32
-	aBA := NewBitArray(n, new(big.Int).SetUint64(uint64(A)))
-	bBA := NewBitArray(n, new(big.Int).SetUint64(uint64(B)))
+	// nl_fscx_v1(A, B) as uint64
+	aBA := NewBitArray(n, new(big.Int).SetUint64(A))
+	bBA := NewBitArray(n, new(big.Int).SetUint64(B))
 	yBA := NlFscxV1(aBA, bBA)
-	y = uint32(yBA.Val.Uint64()) & mask
+	y = yBA.Val.Uint64() & mask
 	return
 }
 
 // ZkpNlProve produces a ZKBoo proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
-func ZkpNlProve(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlRound, error) {
-	mask := uint32((1 << uint(n)) - 1)
+func ZkpNlProve(A, B, y uint64, n, rounds int, msg []byte) ([]ZkpNlRound, error) {
+	mask := zkpNlMask(n)
 	nb := (n + 7) / 8
 
 	type roundData struct {
 		coms      [3][32]byte
-		shares    [3]uint32
+		shares    [3]uint64
 		tapes     [3][]byte
-		outShares [3]uint32
+		outShares [3]uint64
 		gateViews [3][]byte
 	}
 	allData := make([]roundData, rounds)
@@ -2540,14 +2558,14 @@ func ZkpNlProve(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 
 	buf := make([]byte, nb)
 	for j := 0; j < rounds; j++ {
-		var s [3]uint32
+		var s [3]uint64
 		for k := 0; k < 2; k++ {
 			if _, err := rand.Read(buf); err != nil {
 				return nil, err
 			}
 			s[k] = 0
 			for i := 0; i < nb; i++ {
-				s[k] = (s[k] << 8) | uint32(buf[i])
+				s[k] = (s[k] << 8) | uint64(buf[i])
 			}
 			s[k] &= mask
 		}
@@ -2619,14 +2637,18 @@ func ZkpNlProve(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlRound, error)
 }
 
 // ZkpNlVerify verifies a ZKBoo proof that prover knows A s.t. nl_fscx_v1(A, B) = y.
-func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) bool {
+func ZkpNlVerify(B, y uint64, n, rounds int, msg []byte, proof []ZkpNlRound) bool {
 	// Without this, rounds == 0 makes every loop below run zero times and the
 	// function returns true for any message under any key (TODO #275).
 	//
 	// n is bounded only below.  ZkpNlMaxN is a WIRE bound and belongs in
-	// decodeZkpNlProof, not here: the suite's own test [22] proves ZKBoo at
-	// n = 64 (self-consistently, on 32-bit shares), and imposing the wire
-	// limit on a library caller broke it.
+	// decodeZkpNlProof, not here: imposing the wire limit on a library caller
+	// broke the suite's own test [22], which proves ZKBoo at n = 64.  Until
+	// TODO #279 that test ran on uint32 shares, so its n = 64 pass was
+	// self-consistent and hollow -- A and B carried 32 significant bits at
+	// both widths, and the mask came out all-ones by shift overflow.  The
+	// shares are uint64 now, so n = 64 means 64 bits here as it does in the
+	// other three languages.
 	if n <= 0 || rounds <= 0 || rounds > ZkpNlMaxRounds || len(proof) != rounds {
 		return false
 	}
@@ -2665,7 +2687,7 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 		return true
 	}
 
-	osBuf := func(v uint32) []byte {
+	osBuf := func(v uint64) []byte {
 		b := make([]byte, nb)
 		for i := nb - 1; i >= 0; i-- {
 			b[i] = byte(v)
@@ -2698,7 +2720,7 @@ func ZkpNlVerify(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlRound) boo
 		}
 
 		// Re-evaluate p1's AND gates using both revealed shares
-		var carryP1, carryP2 uint32
+		var carryP1, carryP2 uint64
 		for i := 0; i < n-1; i++ {
 			aiP1 := int((shareP1 >> uint(i)) & 1)
 			aiP2 := int((shareP2 >> uint(i)) & 1)
@@ -2761,18 +2783,18 @@ type ZkpNlPpRound struct {
 	Share2  []byte // party 2's offset share (nil when E == 2)
 }
 
-func zkppDerive(seed []byte, nb int) (share uint32, tape []byte) {
+func zkppDerive(seed []byte, nb int) (share uint64, tape []byte) {
 	h := zkpNlH(seed, []byte("share"))
 	share = 0
 	for i := 0; i < nb; i++ {
-		share = (share << 8) | uint32(h[i])
+		share = (share << 8) | uint64(h[i])
 	}
 	tape = zkpNlH(seed, []byte("tape"))
 	return
 }
 
 func zkppCommit(j, party int, seed []byte, share2Bytes []byte, gateBits []byte,
-	outShare uint32, nb int) []byte {
+	outShare uint64, nb int) []byte {
 	jBuf := []byte{byte(j >> 24), byte(j >> 16), byte(j >> 8), byte(j)}
 	pBuf := []byte{byte(party)}
 	osBuf := make([]byte, nb)
@@ -2784,12 +2806,12 @@ func zkppCommit(j, party int, seed []byte, share2Bytes []byte, gateBits []byte,
 	return zkpNlH(jBuf, pBuf, seed, share2Bytes, gateBits, osBuf)
 }
 
-func zkppOutShare(party int, share uint32, carries []int, B uint32, n int) uint32 {
-	mask := uint32((1 << uint(n)) - 1)
-	sumS := uint32(0)
+func zkppOutShare(party int, share uint64, carries []int, B uint64, n int) uint64 {
+	mask := zkpNlMask(n)
+	sumS := uint64(0)
 	for i := 0; i < n; i++ {
 		bit := int((share>>uint(i))&1) ^ int((B>>uint(i))&1) ^ carries[i]
-		sumS ^= uint32(bit) << uint(i)
+		sumS ^= uint64(bit) << uint(i)
 	}
 	rot := zkpNlRol(sumS, n/4, n)
 	lin := (share ^ zkpNlRol(share, 1, n) ^ zkpNlRol(share, n-1, n)) & mask
@@ -2814,8 +2836,8 @@ func zkppGetGateBit(packed []byte, k int) int {
 }
 
 // ZkpNlProvepp produces a ZKB++ proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
-func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, error) {
-	mask := uint32((1 << uint(n)) - 1)
+func ZkpNlProvepp(A, B, y uint64, n, rounds int, msg []byte) ([]ZkpNlPpRound, error) {
+	mask := zkpNlMask(n)
 	nb := (n + 7) / 8
 	gatesLen := (n - 1 + 7) / 8
 	if n <= 1 {
@@ -2824,9 +2846,9 @@ func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, er
 
 	type roundData struct {
 		seeds     [3][zkppSeedBytes]byte
-		shares    [3]uint32
+		shares    [3]uint64
 		tapes     [3][]byte
-		outShares [3]uint32
+		outShares [3]uint64
 		gateViews [3][]byte
 		gateBits  [3][]byte
 		s2Bytes   []byte
@@ -2848,7 +2870,7 @@ func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, er
 		s0 &= mask; s1 &= mask
 		s2 := (A ^ s0 ^ s1) & mask
 		t2 := zkpNlH(rd.seeds[2][:], []byte("tape"))
-		rd.shares = [3]uint32{s0, s1, s2}
+		rd.shares = [3]uint64{s0, s1, s2}
 		rd.tapes  = [3][]byte{t0, t1, t2}
 
 		outShares, gateViews := zkpNlEvalCircuit(rd.shares, rd.tapes, B, n)
@@ -2924,16 +2946,16 @@ func ZkpNlProvepp(A, B, y uint32, n, rounds int, msg []byte) ([]ZkpNlPpRound, er
 }
 
 // ZkpNlVerifypp verifies a ZKB++ proof that the prover knows A s.t. nl_fscx_v1(A, B) = y.
-func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound) bool {
+func ZkpNlVerifypp(B, y uint64, n, rounds int, msg []byte, proof []ZkpNlPpRound) bool {
 	if n <= 0 || n > ZkpNlMaxN || rounds <= 0 || rounds > ZkpNlMaxRounds || len(proof) != rounds {
 		return false
 	}
-	mask := uint32((1 << uint(n)) - 1)
+	mask := zkpNlMask(n)
 	nb := (n + 7) / 8
 
 	var comBlock, outBlock []byte
 
-	osBufFrom := func(v uint32) []byte {
+	osBufFrom := func(v uint64) []byte {
 		b := make([]byte, nb)
 		for i := nb - 1; i >= 0; i-- { b[i] = byte(v); v >>= 8 }
 		return b
@@ -2947,17 +2969,17 @@ func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound)
 		p1 := (e + 1) % 3
 		p2 := (e + 2) % 3
 
-		var shareP1, shareP2 uint32
+		var shareP1, shareP2 uint64
 		var tapeP1, tapeP2 []byte
 
-		openParty := func(p int, seed []byte) (uint32, []byte) {
+		openParty := func(p int, seed []byte) (uint64, []byte) {
 			if p == 2 {
 				if r.Share2 == nil {
 					return 0, nil
 				}
-				s := uint32(0)
+				s := uint64(0)
 				for _, b := range r.Share2 {
-					s = (s << 8) | uint32(b)
+					s = (s << 8) | uint64(b)
 				}
 				return s & mask, zkpNlH(seed, []byte("tape"))
 			}
@@ -3004,9 +3026,9 @@ func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound)
 
 		outP1 := zkppOutShare(p1, shareP1, carriesP1, B, n)
 		outP2 := zkppOutShare(p2, shareP2, carriesP2, B, n)
-		outEVal := uint32(0)
+		outEVal := uint64(0)
 		for _, b := range r.OutE {
-			outEVal = (outEVal << 8) | uint32(b)
+			outEVal = (outEVal << 8) | uint64(b)
 		}
 		outEVal &= mask
 
@@ -3030,7 +3052,7 @@ func ZkpNlVerifypp(B, y uint32, n, rounds int, msg []byte, proof []ZkpNlPpRound)
 		coms[e] = r.ComE[:]
 		coms[p1] = comP1
 		coms[p2] = comP2
-		outs := [3]uint32{0, 0, 0}
+		outs := [3]uint64{0, 0, 0}
 		outs[e] = outEVal; outs[p1] = outP1; outs[p2] = outP2
 
 		for pp := 0; pp < 3; pp++ {
@@ -3588,17 +3610,17 @@ const (
 // dictionary-attacked without also compromising the OPRF key.
 type HpakeRecord struct {
 	Salt [32]byte
-	B    uint32
-	Y    uint32
+	B    uint64
+	Y    uint64
 }
 
 // hpakeDeriveZkpWitness returns the lower 32 bits of hfscx_256(oprfOut || "ZKP-A").
-func hpakeDeriveZkpWitness(oprfOut []byte) uint32 {
+func hpakeDeriveZkpWitness(oprfOut []byte) uint64 {
 	buf := make([]byte, len(oprfOut)+5)
 	copy(buf, oprfOut)
 	copy(buf[len(oprfOut):], "ZKP-A")
 	h := Hfscx256(buf, nil)
-	return (uint32(h[28]) << 24) | (uint32(h[29]) << 16) | (uint32(h[30]) << 8) | uint32(h[31])
+	return (uint64(h[28]) << 24) | (uint64(h[29]) << 16) | (uint64(h[30]) << 8) | uint64(h[31])
 }
 
 // hpakeRnlKdf applies the HKEX-RNL session KDF to K_raw.
@@ -3633,13 +3655,13 @@ func HpakeRegister(password []byte, oprfKey *big.Int) (*HpakeRecord, error) {
 	if _, err := rand.Read(bBuf); err != nil {
 		return nil, err
 	}
-	B := (uint32(bBuf[0]) << 24) | (uint32(bBuf[1]) << 16) | (uint32(bBuf[2]) << 8) | uint32(bBuf[3])
+	B := (uint64(bBuf[0]) << 24) | (uint64(bBuf[1]) << 16) | (uint64(bBuf[2]) << 8) | uint64(bBuf[3])
 
-	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(zkpA)))
-	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(B)))
-	mask := uint32((1 << uint(HpakeZkpN)) - 1)
+	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(zkpA))
+	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(B))
+	mask := zkpNlMask(HpakeZkpN)
 	rec.B = B
-	rec.Y = uint32(NlFscxV1(aBA, bBA).Val.Uint64()) & mask
+	rec.Y = NlFscxV1(aBA, bBA).Val.Uint64() & mask
 	return rec, nil
 }
 
@@ -3650,10 +3672,10 @@ func HpakeLoginDemo(rec *HpakeRecord, password []byte, oprfKey *big.Int) ([]byte
 	fb := F.FillBytes(make([]byte, 32))
 	zkpA := hpakeDeriveZkpWitness(fb)
 
-	mask := uint32((1 << uint(HpakeZkpN)) - 1)
-	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(zkpA)))
-	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(uint64(rec.B)))
-	if uint32(NlFscxV1(aBA, bBA).Val.Uint64())&mask != rec.Y {
+	mask := zkpNlMask(HpakeZkpN)
+	aBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(zkpA))
+	bBA := NewBitArray(HpakeZkpN, new(big.Int).SetUint64(rec.B))
+	if NlFscxV1(aBA, bBA).Val.Uint64()&mask != rec.Y {
 		return nil, nil // wrong password
 	}
 
