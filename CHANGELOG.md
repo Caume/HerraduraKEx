@@ -2,6 +2,46 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.7.0] - 2026-09-08
+
+### TODO #281 — Go's `genpkey` defined `--bits` but ignored it for `hpks-zkp-nl`
+
+`genpkey --algo hpks-zkp-nl --bits 64` produced an **n = 8** key from the Go CLI, silently:
+the branch passed `ZkpNlDefaultN` as a literal and never read the flag.  Python and Java
+both honour `--bits` for this algo (an omitted `--bits`, or `--bits 256` — genpkey's own
+default — meaning `ZKP_NL_DEFAULT_N`).  C is a separate and already-settled case: its
+`genpkey` has no `--bits` at all, an `acknowledged` `cli_surface_gaps` row, because the C
+suite is compiled for a single KEYBITS.  Go's was not that — it defined the flag, accepted
+it, and dropped it.
+
+**What it cost.**  Since TODO #279 the Go CLI can read and verify an n = 64 statement, so
+the asymmetry was one-directional: Go interoperated on wide statements it could not itself
+produce.  The failure was **silent**, which is the part that mattered — every other width
+mismatch in this family is a loud rejection.
+
+**Fixed** by mirroring Java's block: Go's branch now reads `--bits`, treats the 256
+default as "unset", and rejects a value that is not a positive even integer
+`<= ZkpNlMaxN` **by name** rather than clamping it.  The flag's default is now the named
+`genpkeyDefaultBits` constant, since that value is what the branch compares against.
+
+**Why no table could have recorded it instead.**  `cli_flag_value_gaps` (TODO #269) is the
+axis for a flag whose accepted *values* differ between languages, and it cannot hold this
+one: it requires Python's cell to be derivable from argparse `choices=`, and
+`genpkey --bits` is a bare `type=int`.  There was no table this could sit in as an
+acknowledged divergence — it was either fixed or invisible.
+
+**Test.**  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section generated its key from
+Python alone for exactly this reason, and said so.  It now generates in **three** cells
+(Python, Go, Java; C stays out by its own acknowledged row) and asserts the width of what
+`genpkey` *writes*, read back out of the PEM — a CLI that drops the flag also exits 0, so
+a successful exit proves nothing here.  It also asserts that Go and Java refuse
+`--bits 128` by name.  Consumption stays four-way on one key, which is the direction TODO
+#279's decoder cap broke.  137 PASS / 0 FAIL.
+
+A new `--algo` input that was previously ignored is accepted, so this is a MINOR bump.
+Python's `genpkey` accepting an out-of-range `--bits` here — writing a key its own decoder
+then refuses to load — is a separate, pre-existing wart, filed as **TODO #283**.
+
 ## [6.6.4] - 2026-09-08
 
 ### TODO #282 — the C demo asserted a probabilistic property as a deterministic one

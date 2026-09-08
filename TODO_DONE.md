@@ -16545,3 +16545,45 @@ Python's helper, and reports an ambiguous syndrome as "not a failure" exactly as
 still reports `[FAIL]`, so the fix narrows the assertion rather than deleting it.
 Verified against the ambiguous branch specifically, not just a green run: over 2,000
 fresh trials every mismatch classified as ambiguous and none as a real failure.
+
+### #281: Go's `genpkey` defines `--bits` but ignores it for `hpks-zkp-nl`
+
+Found while closing TODO #279, and left open by it on that item's own reasoning: #279
+settles a WIDTH CAP, and this is a per-language keygen scope decision, which #279 says
+in as many words is a different item.
+
+`genpkey --algo hpks-zkp-nl --bits 64` produces an **n = 8** key from the Go CLI, silently.
+Python and Java both read `--bits` for this algo (an omitted `--bits`, or `--bits 256` —
+its KEYBITS default — meaning `ZKP_NL_DEFAULT_N`, and Java rejecting an out-of-range
+value by name); Go's branch passes `ZkpNlDefaultN` as a literal and never looks at the
+flag.  C is a separate and already-settled case: its `genpkey` has no `--bits` at all,
+recorded as an `acknowledged` `cli_surface_gaps` row because the C suite is compiled for
+a single KEYBITS.  Go's is not that — it defines the flag, accepts it, and drops it.
+
+**What it costs.**  Since #279 the Go CLI can READ and VERIFY an n = 64 statement, so the
+asymmetry is now one-directional: Go interoperates on wide statements it cannot itself
+produce.  The failure is silent, which is the part that matters — a caller asking for a
+64-bit statement gets an 8-bit one and no error, where every other width mismatch in this
+family is a loud rejection.  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section
+generates its key with Python for exactly this reason, and says so.
+
+**Why this axis could not record it instead of fixing it.**  `cli_flag_value_gaps` (TODO
+#269) is the table for a flag whose accepted VALUES differ between languages, and it
+cannot hold this one: it requires Python's cell to be derivable from argparse `choices=`,
+and `genpkey --bits` is a bare `type=int` with no choices list.  So there is no table
+this can sit in as an acknowledged divergence — it is either fixed or invisible.
+
+**What the work is.**  Mirror Java's block in Go's `case *algo == "hpks-zkp-nl"`: read
+`--bits`, treat the KEYBITS default as "unset", and reject a value that is not a positive
+even integer `<= ZkpNlMaxN` by name rather than clamping.  Then extend the n = 64 section
+of `test_zkp_hybrid_family.sh` to generate per-language rather than from Python alone —
+three cells, since C stays out by its own acknowledged row.
+
+Note this makes an existing `--algo` accept an input it previously ignored, so it is a
+MINOR bump, not a PATCH.
+
+Status: **DONE v6.7.0** — Go's `genpkey` now reads `--bits` for `hpks-zkp-nl`, treating
+the 256 default as unset and rejecting a value that is not a positive even integer
+`<= ZkpNlMaxN` by name; `test_zkp_hybrid_family.sh`'s n = 64 section generates in three
+cells (py/go/java) and asserts the width of what genpkey WRITES.  Python's acceptance of
+an out-of-range `--bits` here is filed separately as #283.

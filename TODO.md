@@ -330,41 +330,34 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 
 Status: **OPEN**
 
-### #281: Go's `genpkey` defines `--bits` but ignores it for `hpks-zkp-nl`
 
-Found while closing TODO #279, and left open by it on that item's own reasoning: #279
-settles a WIDTH CAP, and this is a per-language keygen scope decision, which #279 says
-in as many words is a different item.
+### #283: Python's `genpkey` writes an `hpks-zkp-nl` key its own decoder then refuses
 
-`genpkey --algo hpks-zkp-nl --bits 64` produces an **n = 8** key from the Go CLI, silently.
-Python and Java both read `--bits` for this algo (an omitted `--bits`, or `--bits 256` —
-its KEYBITS default — meaning `ZKP_NL_DEFAULT_N`, and Java rejecting an out-of-range
-value by name); Go's branch passes `ZkpNlDefaultN` as a literal and never looks at the
-flag.  C is a separate and already-settled case: its `genpkey` has no `--bits` at all,
-recorded as an `acknowledged` `cli_surface_gaps` row because the C suite is compiled for
-a single KEYBITS.  Go's is not that — it defines the flag, accepts it, and drops it.
+Found while closing TODO #281, and deliberately left out of it: #281 is about a flag Go
+DROPPED, this is about a value Python ACCEPTS.
 
-**What it costs.**  Since #279 the Go CLI can READ and VERIFY an n = 64 statement, so the
-asymmetry is now one-directional: Go interoperates on wide statements it cannot itself
-produce.  The failure is silent, which is the part that matters — a caller asking for a
-64-bit statement gets an 8-bit one and no error, where every other width mismatch in this
-family is a loud rejection.  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section
-generates its key with Python for exactly this reason, and says so.
+`python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --bits 128` exits 0 and
+writes a PEM.  Every subsequent use of that file fails — `pkey --pubout`, `sign`, anything
+that loads it — with `error: ZKP-NL private key: n out of range (128)`, from Python's own
+decoder.  The width cap `_ZKP_NL_MAX_N = 64` is a WIRE bound and is enforced on the way
+IN, never on the way OUT, so genpkey is the one place in the Python CLI that can produce
+an artifact nothing (itself included) can read.  Odd widths behave the same way:
+`--bits 7` is written and then rejected.
 
-**Why this axis could not record it instead of fixing it.**  `cli_flag_value_gaps` (TODO
-#269) is the table for a flag whose accepted VALUES differ between languages, and it
-cannot hold this one: it requires Python's cell to be derivable from argparse `choices=`,
-and `genpkey --bits` is a bare `type=int` with no choices list.  So there is no table
-this can sit in as an acknowledged divergence — it is either fixed or invisible.
+Since v6.7.0 the other two CLIs that define the flag reject the value at genpkey and name
+the bound — Java has since TODO #261, Go since #281 — so Python is now alone.  C is out of
+scope as always here: its `genpkey` has no `--bits`, an acknowledged `cli_surface_gaps`
+row.
 
-**What the work is.**  Mirror Java's block in Go's `case *algo == "hpks-zkp-nl"`: read
-`--bits`, treat the KEYBITS default as "unset", and reject a value that is not a positive
-even integer `<= ZkpNlMaxN` by name rather than clamping.  Then extend the n = 64 section
-of `test_zkp_hybrid_family.sh` to generate per-language rather than from Python alone —
-three cells, since C stays out by its own acknowledged row.
+**Why it is not part of #281.**  #281's defect was silent and one-directional — a caller
+asked for 64 and got 8 with no error.  This one is loud, just late: the caller gets a file
+and the error arrives on next use.  Different failure shape, different fix site, and
+bundling them would have made #281's MINOR bump cover a straight bug fix.
 
-Note this makes an existing `--algo` accept an input it previously ignored, so it is a
-MINOR bump, not a PATCH.
+**What the work is.**  In `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch, reject an `n` that is not
+a positive even integer `<= _ZKP_NL_MAX_N` with the same message shape Go and Java use
+(name the bound and echo the value).  Then drop the exclusion in
+`CliTest/test_zkp_hybrid_family.sh`'s `--bits 128` rejection loop, which currently runs on
+`go|java` only and says why.
 
 Status: **OPEN**
-

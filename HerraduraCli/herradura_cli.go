@@ -1117,10 +1117,15 @@ func decodeRingSig(path string) (*SternRingSig, int) {
 
 // ── genpkey ──────────────────────────────────────────────────────────────────
 
+// genpkeyDefaultBits is genpkey's --bits default, and the value the algorithms
+// that carry their own natural width (hpks-zkp-nl, TODO #281) read as "unset" --
+// matching the Python CLI's KEYBITS comparison and Java's Herradura.N one.
+const genpkeyDefaultBits = 256
+
 func cmdGenpkey(args []string) {
 	fs := flag.NewFlagSet("genpkey", flag.ExitOnError)
 	algo := fs.String("algo", "", "Algorithm (hkex-gf|hkex-rnl|hpks|hpks-nl|hpke|hpke-nl|hpke-nl3|hpks-stern|hpke-stern|hcred|hpks-wots|hpks-xmss)")
-	bits := fs.Int("bits", 256, "Key size in bits")
+	bits := fs.Int("bits", genpkeyDefaultBits, "Key size in bits")
 	out  := fs.String("out", "-", "Output path (- = stdout)")
 	xmssHeight := fs.Int("xmss-height", 10, "hpks-xmss: tree height (2^H leaves)")
 	passphrase := fs.String("passphrase", "", "Encrypt the exported private key under this passphrase (TODO #268)")
@@ -1182,12 +1187,29 @@ func cmdGenpkey(args []string) {
 		pem = encodeHcredPriv(s, C, mBlind, seedH, syndr, n)
 
 	case *algo == "hpks-zkp-nl":
-		A, B, y, kerr := ZkpNlKeygen(ZkpNlDefaultN)
+		// n comes from --bits, exactly as in the Python and Java CLIs (TODO
+		// #281): an omitted --bits -- or --bits 256, the flag's own default --
+		// means ZkpNlDefaultN, because at R = 219 a ZKBoo proof is already
+		// ~35 KB at n = 8, so a wider n is a deliberate choice.  An
+		// out-of-range value is rejected by name rather than clamped: this
+		// branch passed ZkpNlDefaultN as a literal and dropped the flag
+		// silently until v6.7.0, so a caller asking for 64 got 8 and no error.
+		zkpN := ZkpNlDefaultN
+		if n != genpkeyDefaultBits {
+			zkpN = n
+		}
+		if zkpN <= 0 || zkpN%2 != 0 || zkpN > ZkpNlMaxN {
+			fmt.Fprintf(os.Stderr,
+				"genpkey hpks-zkp-nl: --bits must be a positive even integer <= %d, got %d\n",
+				ZkpNlMaxN, zkpN)
+			os.Exit(1)
+		}
+		A, B, y, kerr := ZkpNlKeygen(zkpN)
 		if kerr != nil {
 			fmt.Fprintln(os.Stderr, "genpkey:", kerr)
 			os.Exit(1)
 		}
-		pem = encodeZkpNlPriv(A, B, y, ZkpNlDefaultN)
+		pem = encodeZkpNlPriv(A, B, y, zkpN)
 
 	case *algo == "oprf":
 		k, kerr := OprfKeygen(n)
