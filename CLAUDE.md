@@ -133,7 +133,16 @@ KAT/                                                 — fixed Known-Answer-Test
                                regenerate-and-diff checked, because its two
                                random inputs (the PBKDF2 salt and the AEAD
                                nonce) are arguments the primitive accepts, so
-                               pinning them pins the artifact.  Its expected
+                               pinning them pins the artifact.  Since TODO #280
+                               it also holds enc_priv_zero_{ct,tag}.pem, whose
+                               salt, nonce and (respectively) ciphertext or tag
+                               START WITH 0x00 -- the case a minimal DER INTEGER
+                               cannot carry, which C and Go rejected on about
+                               one key in 64 while Python and Java read it back.
+                               enc_priv.pem could not have caught that (its salt
+                               starts 0x10, its nonce 0x60) and neither could the
+                               random writer x reader matrix, which passes 63
+                               times in 64.  Its expected
                                plaintext is a file this directory already
                                contains, so the CONSUME direction is checked
                                against a byte-exact target rather than a

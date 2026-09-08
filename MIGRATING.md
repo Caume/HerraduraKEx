@@ -781,3 +781,34 @@ have happened silently through the CLI; regenerate the key.
 behaviour changed, and no artifact that ever loaded becomes unreadable. A
 previously-accepted input that produced nothing usable now says so, which is the same
 class as sections 11 and 13 and follows the precedent set there.
+
+---
+
+## 16. Envelopes with a leading-zero field are now readable by C and Go (v6.6.2)
+
+**Who is affected:** anyone holding a `HERRADURA ENCRYPTED PRIVATE KEY` that the C or Go
+CLI refused with `malformed ENCRYPTED PRIVATE KEY envelope (field width)` or
+`declared plaintext length does not match ciphertext`. Roughly **one envelope in 64**,
+whichever CLI wrote it. Nothing on the wire changes and no existing file needs
+regenerating — files that already worked are unaffected.
+
+**What was wrong.** The envelope carries four fixed-width byte strings — the PBKDF2 salt,
+the AEAD nonce, the ciphertext and the tag — as DER INTEGERs. A minimal DER INTEGER cannot
+carry a leading `0x00`, so a field whose first byte is zero is one significant byte short
+of its width on the wire. C and Go stripped a sign byte unconditionally and then asserted
+an exact width, so they rejected it; Python and Java recovered each field from an integer
+and restored the width, so they read it. The chance that at least one of the four random
+fields starts with `0x00` is about `4/256`.
+
+Both readers now bound the length and **left-pad**, which is what every other fixed-width
+DER field in these CLIs already did (C reads them through `ba_from_ra`, which zero-fills
+and right-aligns).
+
+**What to do.** If you set a file aside because C or Go called it malformed, try it again
+with 6.6.2 or later — it was almost certainly valid, and Python and Java could always read
+it. If you need the key before upgrading, decrypt it with the Python or Java CLI.
+
+**Why this is not a MAJOR bump, or even a wire-format change.** No byte written by any
+build changes. This widens what the C and Go readers accept to match what the writers have
+always emitted and what the other two readers have always accepted, so it can only turn a
+previously-failing read into a succeeding one.

@@ -126,6 +126,71 @@ for r in $LANGS; do
     fi
 done
 
+# ── 6: leading-zero fields (TODO #280) ──────────────────────────────────────
+# The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried as
+# DER INTEGERs, and a minimal DER INTEGER cannot carry a leading 0x00: the
+# writer emits the field one significant byte short, and a reader that strips a
+# sign byte unconditionally and then asserts an exact width rejects it.  C and
+# Go did exactly that for the life of the envelope, on about ONE KEY IN 64 --
+# P(any of four random fields starts with 0x00) -- while Python and Java read
+# the same file back correctly, because both restore the width from an integer.
+#
+# Section 2's matrix cannot catch it: it generates a fresh key each run, so it
+# fails at random and passes 63 times out of 64.  These two artifacts are
+# PINNED, and between them they put a leading zero in all four fields --
+# zero_ct's ciphertext and zero_tag's tag, both over a salt and nonce that also
+# start with 0x00.  The original KAT envelope could never have caught this: its
+# salt starts 0x10 and its nonce 0x60.
+for f in zero_ct zero_tag; do
+    for r in $LANGS; do
+        if ${CLI[$r]} pkey --decrypt --passphrase "$KAT_PHRASE" \
+              --in "$ROOT/KAT/pem/enc_priv_$f.pem" --out "$TMP/z_${f}_$r.pem" >/dev/null 2>&1 \
+           && cmp -s "$TMP/z_${f}_$r.pem" "$ROOT/KAT/pem/n64_alice_priv.pem"; then
+            pass "[$r] leading-zero envelope ($f) decrypts to the pinned cleartext"
+        else
+            fail "[$r] leading-zero envelope ($f) not read back — a fixed-width field"
+            fail "     whose first byte is 0x00 must be LEFT-PADDED, not width-asserted"
+        fi
+    done
+done
+
+# ── 7: a declared plaintext length that sizes an allocation (TODO #280) ─────
+# Reversing the ciphertext-length comparison for section 6 removed the bound the
+# old form gave for free: with `pt_len > len(ct)` rejected, pt_len could never
+# exceed the ciphertext present.  It can now, so it is bounded explicitly.  The
+# same probe found the bound MISSING ENTIRELY in Python, where
+# `ct_int.to_bytes(pt_len)` on a declared 2^62 raised MemoryError -- the field
+# class TODO #239/#240/#275 exist over, on a path they had not reached.  Java
+# was safe but named the stdlib ("BigInteger out of int range") rather than the
+# field.  Build the envelope here rather than pinning it: it is a one-field edit
+# of an artifact this repo already ships.
+python3 - "$ROOT" "$TMP" <<'PYEOF'
+import base64, importlib.util, sys
+root, tmp = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("codec", root + "/HerraduraCli/codec.py")
+c = importlib.util.module_from_spec(spec); spec.loader.exec_module(c)
+src = root + "/KAT/pem/enc_priv_zero_tag.pem"
+der = base64.b64decode("".join(l.strip() for l in open(src) if not l.startswith("-----")))
+salt, it, nonce, ct, tag, ptlen = c.der_parse_seq(der)
+hostile = c.der_seq(c.der_int(salt, 16), c.der_int(it), c.der_int(nonce, 32),
+                    c.der_int(ct, ptlen), c.der_int(tag, 32), c.der_int(1 << 62))
+open(tmp + "/hostile_ptlen.pem", "w").write(
+    c.pem_wrap("HERRADURA ENCRYPTED PRIVATE KEY", hostile))
+PYEOF
+for r in $LANGS; do
+    out=$(timeout 30 ${CLI[$r]} pkey --decrypt --passphrase "$KAT_PHRASE" \
+              --in "$TMP/hostile_ptlen.pem" --out "$TMP/never.pem" 2>&1) && rc=0 || rc=$?
+    if [ "$rc" -eq 124 ]; then
+        fail "[$r] a declared 2^62 plaintext length hung — it must be bounded, not attempted"
+    elif [ "$rc" -eq 0 ]; then
+        fail "[$r] a declared 2^62 plaintext length was ACCEPTED"
+    elif printf '%s' "$out" | grep -qi 'plaintext length'; then
+        pass "[$r] refuses a declared 2^62 plaintext length, naming the field"
+    else
+        fail "[$r] refused a 2^62 plaintext length but did not name the field: $(printf '%s' "$out" | tail -1)"
+    fi
+done
+
 echo
 echo "test_passphrase_envelope: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

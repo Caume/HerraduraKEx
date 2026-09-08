@@ -16388,3 +16388,66 @@ Status: **DONE v6.6.1** -- 79 parameter rows across four languages, exhaustive i
 directions, with the ZKP-NL cap recorded as a defect (#279); and the XMSS height cap,
 which every language declared and two enforced, fixed in Python and Java and guarded by
 CliTest/test_param_bounds.sh.
+
+### #280: the passphrase envelope loses a leading zero, and two CLIs reject the result
+
+**Found by CI, on the PR that closed #278** -- the `native-interop` job failed
+`test_passphrase_envelope.sh` on `py-write -> c-read` and `py-write -> go-read` while the
+sibling run of the same job on the same commit passed.  Not flaky: a **1-in-64 lottery**
+that one run lost.
+
+**Mechanism.**  The envelope is six DER INTEGERs, four of which -- salt, nonce, ciphertext,
+tag -- are FIXED-WIDTH byte strings.  A minimal DER INTEGER cannot carry a leading `0x00`,
+and the writer is right about this: `der_int(value, nbytes)` emits exactly `nbytes`, so a
+salt beginning `00` is written as 16 bytes starting `00`.  **The readers are where it
+breaks.**  C's and Go's `der_parse_seq` strip one leading `0x00` unconditionally -- correct
+for a minimally-encoded INTEGER, wrong for a fixed-width field -- and then assert an exact
+width, which the stripped field now fails.
+
+    P(salt[0] == 0) + P(nonce[0] == 0) + P(tag[0] == 0) + P(ct[0] == 0) ~ 4/256 = 1/64
+
+Measured: 2 failures in 120 reads, then 1 in 60.  Python and Java read the same file back
+correctly, because both recover each field from an INTEGER and restore the width
+(`int.to_bytes(N)`, `BigInteger`), so it is a 2-2 split.  The ciphertext lands on a
+different branch (`pt_len > vlens[3]`, "declared plaintext length does not match
+ciphertext"), which is the same defect one line down.
+
+**Consequence.**  About one passphrase-protected private key in 64 was unreadable by half
+the CLIs.  The key is not lost -- Python and Java always recovered it -- but a user who
+generated with Python and read with C saw a "malformed envelope" error on a file that was
+not malformed.
+
+**The fix is in the readers, and it is what the rest of the codebase already does.**  C's
+every other DER field goes through `ba_from_ra`, which zero-fills and RIGHT-ALIGNS; the
+envelope reader was the one place that asserted an exact width instead.  Both readers now
+bound the length and left-pad, so a short field is a leading zero and only a LONGER one is
+malformed.  Nothing on the wire changes, and every envelope written by any earlier build
+becomes readable -- including the ones that were rejected.
+
+**The guard is two PINNED artifacts, because a random one cannot work.**  Section 2 of
+`test_passphrase_envelope.sh` generates a fresh key each run, so it fails at random and
+passes 63 times in 64 -- which is exactly how this survived.  `KAT/pem/enc_priv_zero_ct.pem`
+and `enc_priv_zero_tag.pem` are deterministic and between them put a leading zero in all
+four fields.  The original `enc_priv.pem` could never have caught it: its pinned salt starts
+`0x10` and its nonce `0x60`.  Both new fixtures were confirmed to FAIL against the pre-fix
+C and Go binaries.
+
+**A SECOND DEFECT, found by reviewing the fix rather than the bug.**  Reversing the
+ciphertext comparison removed a bound the old form gave for free: with `pt_len > len(ct)`
+rejected, `pt_len` could never exceed the ciphertext actually present.  It can now, so it
+is bounded explicitly against the envelope body.  Probing that with a declared 2^62 found
+the bound **missing entirely in Python**, where `ct_int.to_bytes(pt_len)` raised
+MemoryError -- an allocation sized directly by a wire field, the class TODO #239/#240/#275
+exist over, on a path they had not reached.  Java was safe (it bounds at 1 << 24) but
+threw a bare "BigInteger out of int range" from `intValueExact()` before reaching its own
+check, naming the stdlib instead of the field.  All four now refuse by name, and all four
+bound against the envelope's own length, which is the tightest correct bound.
+
+**Checked and did not recur:** the exact-width assertion appears nowhere else.  Every other
+fixed-width DER field in the C CLI is read through `ba_from_ra`, and Go's equivalents
+right-align too.
+
+Status: **DONE v6.6.2** -- C and Go left-pad a fixed-width envelope field instead of
+asserting its encoded length; two pinned leading-zero envelopes keep it closed; and the
+declared plaintext length, which sizes an allocation, is now bounded in all four (it was
+unbounded in Python).

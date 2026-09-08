@@ -2,6 +2,59 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.6.2] - 2026-09-07
+
+### TODO #280 — the passphrase envelope lost a leading zero, and two CLIs rejected the result
+
+Found by CI on the PR that closed #278: `native-interop` failed
+`test_passphrase_envelope.sh` on `py-write -> c-read` and `py-write -> go-read`, while the
+sibling run of the same job on the same commit passed.  Not flaky — **a 1-in-64 lottery
+that one run lost.**
+
+**Mechanism.**  The envelope is six DER INTEGERs, four of them fixed-width byte strings:
+salt, nonce, ciphertext, tag.  A minimal DER INTEGER cannot carry a leading `0x00`.  The
+writer is right about this — `der_int(value, nbytes)` emits exactly `nbytes` — so a salt
+beginning `00` goes out as 16 bytes starting `00`.  **The readers were wrong.**  C's and
+Go's `der_parse_seq` strip one leading `0x00` unconditionally (correct for a minimally
+encoded INTEGER, wrong for a fixed-width field) and then assert an exact width, which the
+stripped field fails:
+
+    P(salt[0]==0) + P(nonce[0]==0) + P(tag[0]==0) + P(ct[0]==0) ~ 4/256 = 1/64
+
+Measured at 2 failures in 120 reads, then 1 in 60.  Python and Java read the same file
+back correctly — both recover each field from an integer and restore the width — so it was
+a 2–2 split.  About one passphrase-protected private key in 64 was unreadable by half the
+CLIs.  The key was never lost, but the error said "malformed envelope" about a file that
+was not malformed.
+
+**The fix is in the readers, and it is what the rest of the codebase already does.**  Every
+other fixed-width DER field in the C CLI is read through `ba_from_ra`, which zero-fills and
+RIGHT-ALIGNS; the envelope reader was the one place asserting an exact width.  C and Go now
+bound the length and left-pad, so a short field is a leading zero and only a longer one is
+malformed.  **Nothing on the wire changes**, and every envelope written by any earlier build
+becomes readable — including the ones that were being rejected.
+
+**The guard is two pinned artifacts, because a random one cannot work.**  The existing
+writer×reader matrix generates a fresh key each run, so it fails at random and passes 63
+times in 64 — which is exactly how this survived.  `KAT/pem/enc_priv_zero_ct.pem` and
+`enc_priv_zero_tag.pem` are deterministic and between them put a leading zero in all four
+fields; both were confirmed to FAIL against the pre-fix C and Go binaries.  The original
+`enc_priv.pem` could never have caught it: its pinned salt starts `0x10`, its nonce `0x60`.
+
+**A second defect, found by reviewing the fix rather than the bug.**  Reversing the
+ciphertext comparison removed a bound the old form gave for free: with `pt_len > len(ct)`
+rejected, `pt_len` could never exceed the ciphertext present.  It can now, so it is bounded
+explicitly against the envelope body — and probing that with a declared 2^62 found the
+bound **missing entirely in Python**, where `ct_int.to_bytes(pt_len)` raised MemoryError.
+An allocation sized directly by a wire field is the class TODO #239/#240/#275 exist over,
+on a path they had not reached.  Java was safe but threw a bare
+`BigInteger out of int range` from `intValueExact()` before reaching its own bound, naming
+the stdlib rather than the field.  All four now refuse by name and bound against the
+envelope's own length.  `test_passphrase_envelope.sh` gains that case, and it was confirmed
+to fail against the pre-fix Python.
+
+Checked and does not recur: the exact-width assertion appears nowhere else in either CLI.
+
 ## [6.6.1] - 2026-09-07
 
 ### TODO #278 — the width axis: `spec/` compares parameter VALUES, for the first time

@@ -314,8 +314,17 @@ def _decrypt_pem(enc_pem_text: str, passphrase: str) -> str:
     if label != _LABEL_ENC_PRIV:
         raise ValueError(f"Expected {_LABEL_ENC_PRIV!r} PEM, got {label!r}")
     salt_int, iterations, nonce_int, ct_int, tag_int, pt_len = der_parse_seq(der)
+    # pt_len comes off the wire and sizes the allocation below: `to_bytes` of a
+    # declared 2^62 raised MemoryError before TODO #280, with no bound anywhere
+    # on this path.  The ciphertext cannot be longer than the envelope carrying
+    # it, which is the same bound C and Go apply, and the same field class
+    # TODO #239/#240/#275 exist over.
+    if not 1 <= pt_len <= len(der):
+        raise ValueError("declared plaintext length does not match ciphertext")
+    if ct_int.bit_length() > 8 * pt_len:
+        raise ValueError("declared plaintext length does not match ciphertext")
     salt = salt_int.to_bytes(_PBKDF2_SALT_BYTES, 'big')
-    ct   = ct_int.to_bytes(pt_len, 'big') if pt_len else b''
+    ct   = ct_int.to_bytes(pt_len, 'big')
     tag  = tag_int.to_bytes(32, 'big')
     key_bytes = _pbkdf2_hfscx256(passphrase.encode('utf-8'), salt, iterations)
     key = BitArray(KEYBITS, int.from_bytes(key_bytes, 'big'))

@@ -441,8 +441,24 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     int n_out = 0;
     if (der_parse_seq(body, blen, vals, vlens, 6, &n_out) != 0 || n_out != 6)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope");
-    if (vlens[0] != PBKDF2_SALT_BYTES || vlens[2] != KEYBYTES || vlens[4] != 32)
+    /* The salt, nonce, ciphertext and tag are FIXED-WIDTH byte strings carried
+     * as DER INTEGERs, and a DER INTEGER has no leading zero to carry: a field
+     * whose first byte is 0x00 encodes one significant byte SHORT, and
+     * der_parse_seq's single sign-byte strip cannot put it back.  So a length
+     * here is an upper bound to check and then LEFT-PAD from, never an equality
+     * to assert.  Asserting it rejected roughly one envelope in 64 -- P(any of
+     * four random fields starts with 0x00) -- which Python and Java both read
+     * back correctly, because both restore the width from an integer
+     * (`int.to_bytes(N)` / `BigInteger` left-padding).  TODO #280. */
+    if (vlens[0] > PBKDF2_SALT_BYTES || vlens[2] > KEYBYTES || vlens[4] > 32)
         die("decrypt: malformed ENCRYPTED PRIVATE KEY envelope (field width)");
+    uint8_t salt_b[PBKDF2_SALT_BYTES], nonce_b[KEYBYTES], tag_b[32];
+    memset(salt_b, 0, sizeof salt_b);
+    memset(nonce_b, 0, sizeof nonce_b);
+    memset(tag_b, 0, sizeof tag_b);
+    memcpy(salt_b + (PBKDF2_SALT_BYTES - vlens[0]), vals[0], vlens[0]);
+    memcpy(nonce_b + (KEYBYTES - vlens[2]), vals[2], vlens[2]);
+    memcpy(tag_b + (32 - vlens[4]), vals[4], vlens[4]);
 
     uint64_t iterations = 0, pt_len = 0;
     size_t i;
@@ -453,25 +469,42 @@ static char *decrypt_pem_file(const char *in_path, const char *passphrase)
     if (iterations < 1 || iterations > 100000000ULL)
         die("decrypt: iteration count out of range");
     /* pt_len sizes the allocation below and must agree with the ciphertext
-     * actually present -- the field class TODO #239/#240/#275 exist over. */
-    if (pt_len == 0 || pt_len > vlens[3])
+     * actually present -- the field class TODO #239/#240/#275 exist over.
+     * The comparison runs the other way from the pre-TODO-#280 form: the
+     * ciphertext is pt_len bytes LEFT-PADDED from vlens[3] significant ones, so
+     * a shorter field is a leading zero byte and a LONGER one is malformed.
+     *
+     * That reversal also removes the bound the old form gave for free: with
+     * `pt_len > vlens[3]` rejected, pt_len could never exceed the ciphertext
+     * actually present.  It can now, so it is bounded explicitly against the
+     * envelope body -- the ciphertext cannot be longer than the file carrying
+     * it -- or a hostile PEM naming 2^62 bytes sizes the allocation below.
+     * TODO #239/#240 exist over exactly this. */
+    if (pt_len == 0 || vlens[3] > pt_len || pt_len > blen)
         die("decrypt: declared plaintext length does not match ciphertext");
 
     uint8_t keyb[32];
     BitArray key, nonce;
     pbkdf2_hfscx256((const uint8_t *)passphrase, strlen(passphrase),
-                    vals[0], (uint32_t)iterations, keyb);
+                    salt_b, (uint32_t)iterations, keyb);
     memcpy(key.b, keyb, KEYBYTES);
-    memcpy(nonce.b, vals[2], KEYBYTES);
+    memcpy(nonce.b, nonce_b, KEYBYTES);
+
+    /* pt_len >= 1 and >= vlens[3] by the check above, so the offset is in
+       range and the zero-fill is the leading zero the encoding could not carry. */
+    uint8_t *ct_b = calloc((size_t)pt_len, 1);
+    if (!ct_b) die("out of memory");
+    memcpy(ct_b + ((size_t)pt_len - vlens[3]), vals[3], vlens[3]);
 
     char *pt = malloc((size_t)pt_len + 1);
     if (!pt) die("out of memory");
     /* Returns 1 on SUCCESS, 0 on tag mismatch -- the opposite of the
      * 0-means-ok convention most of this file uses. */
     if (!hske_nl_aead_decrypt(&key, &nonce, NULL, 0,
-                              vals[3] + (vlens[3] - (size_t)pt_len), (size_t)pt_len,
-                              vals[4], (uint8_t *)pt))
+                              ct_b, (size_t)pt_len,
+                              tag_b, (uint8_t *)pt))
         die("decrypt: wrong passphrase or corrupted/tampered file");
+    free(ct_b);
     pt[pt_len] = '\0';
     free(body);
     return pt;
