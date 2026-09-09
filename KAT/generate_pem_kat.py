@@ -30,6 +30,34 @@ Artifacts per ring size:
     <tag>_alice_session.pem  HERRADURA SESSION KEY  — what Alice must derive
     <tag>_hske_ct.pem        HSKE ciphertext under the key read from the RESPONSE
 
+And, ring-size-independent (TODO #284) -- HPKE-Stern-KEM, at the deployed
+BIKE-128 parameters.  ONE WIDTH ONLY: C compiles for a single QCMDPC_R, so
+there is no small-r companion as the ring sizes above have:
+
+    kem_priv.pem             HPKE-STERN-KEM PRIVATE KEY  (sup0, sup1, h0, h1)
+    kem_pub.pem              HPKE-STERN-KEM PUBLIC KEY   (h_pub)
+    kem_ct.pem               a ciphertext that DECODES, plus message_kem.bin
+    kem_reject_ct.pem        a ciphertext this key CANNOT decode, plus
+                             message_kem_reject.bin -- the IMPLICIT-REJECTION
+                             output, and the reason this set exists
+
+Before TODO #284 there was no pinned Stern-KEM artifact anywhere in KAT/, and
+TODO #276 had just rewritten that wire format completely (r 523 -> 12323, so
+every field width moved).  Round-trip and interop tests cannot cover it: they
+pass as long as the four languages change TOGETHER.  TODO #277 is the precedent
+-- C's PRF counter placement disagreed with the other three for the life of the
+protocol, and only a vector found it.
+
+kem_reject_ct.pem is the half that earns the set.  Since TODO #235 a decoding
+failure is SILENT: the FO transform returns HFSCX-256-DS(0x11, z || C), `dec`
+exits 0 and writes a full-width output, and a wrong K is indistinguishable from
+a right one.  CliTest/test_stern_kem.sh checks that the CLIs agree with EACH
+OTHER on that key, which catches a divergence but not a DRIFT -- all four moving
+together is invisible to it by construction.  message_kem_reject.bin pins it to
+a FIXED VALUE instead.  The ciphertext is a well-formed encapsulation to a
+DIFFERENT key (the same construction #235's own tests use), so it exercises the
+rejection path rather than the DER reader.
+
 And, ring-size-independent (TODO #268):
 
     enc_priv_zero_{ct,tag}.pem  envelopes with a leading 0x00 in the salt, the
@@ -191,6 +219,61 @@ def build_envelope(plain_pem: str, salt: bytes = None, nonce_b: bytes = None) ->
     return cli.pem_wrap(cli._LABEL_ENC_PRIV, der)
 
 
+# TODO #284's HPKE-Stern-KEM artifacts.  qcmdpc_keygen and qcmdpc_encap both
+# take a seed, so the randomness here is an ARGUMENT rather than os.urandom --
+# the condition enc_priv.pem satisfies and hcred_kkw.json cannot.  That makes
+# this set regenerate-and-diff checkable at the suite layer, so --check is a
+# real assertion and not merely a re-render.
+KEM_KEY_SEED = 0x5445524E4B454D31    # "TERNKEM1"
+KEM_OTHER_SEED = 0x5445524E4B454D32  # "TERNKEM2" -- the key we do NOT hold
+KEM_ENC_SEED = 0x454E434150534431    # "ENCAPSD1"
+KEM_REJECT_ENC_SEED = 0x454E434150534432
+KEM_MESSAGE = b"HerraduraKEx TODO #284 Stern-KEM KAT!!"
+
+
+def build_kem() -> dict:
+    """One decodable encapsulation and one that must be implicitly rejected."""
+    kb = suite.KEYBITS // 8
+    pt = KEM_MESSAGE[:kb].ljust(kb, b"\0")
+    pt_ba = suite.BitArray(suite.KEYBITS, int.from_bytes(pt, "big"))
+
+    sup0, sup1, h0, h1, h_pub = suite.qcmdpc_keygen(KEM_KEY_SEED)
+    # A second keypair we do NOT hold, purely to address the rejection case to.
+    _o0, _o1, _oh0, _oh1, other_pub = suite.qcmdpc_keygen(KEM_OTHER_SEED)
+
+    # (a) the decodable case.
+    syn, k_int = suite.qcmdpc_encap(h_pub, KEM_ENC_SEED)
+    k_back = suite.qcmdpc_decap_bgf(syn, sup0, sup1, h0)
+    assert k_back == k_int, "TODO #284: the pinned encapsulation does not decode"
+    ct = suite.fscx_revolve(pt_ba, suite.BitArray(suite.KEYBITS, k_int),
+                            suite.I_VALUE)
+
+    # (b) the implicit-rejection case: a well-formed ciphertext addressed to
+    # other_pub, decapsulated with OUR key.  It must not decode, and the key it
+    # yields must be the FO transform's pseudorandom one.
+    rej_syn, rej_k_sender = suite.qcmdpc_encap(other_pub, KEM_REJECT_ENC_SEED)
+    assert suite.qcmdpc_bgf_decode(rej_syn, h0, sup0, sup1) is None or \
+        suite.qcmdpc_decap_bgf(rej_syn, sup0, sup1, h0) != rej_k_sender, \
+        "TODO #284: the rejection ciphertext decoded under the wrong key"
+    rej_k = suite.qcmdpc_decap_bgf(rej_syn, sup0, sup1, h0)
+    assert rej_k != rej_k_sender, "TODO #284: rejection case agreed with the sender"
+    rej_ct = suite.fscx_revolve(pt_ba, suite.BitArray(suite.KEYBITS, rej_k_sender),
+                                suite.I_VALUE)
+    # What `dec` must WRITE for it: the inverse revolve under the rejection key.
+    # Garbage by construction -- that is the point, and it is pinned garbage.
+    rej_out = suite.fscx_revolve(rej_ct, suite.BitArray(suite.KEYBITS, rej_k),
+                                 suite.R_VALUE)
+
+    return {
+        "kem_priv.pem": cli._encode_kem_privkey(sup0, sup1, h0, h1),
+        "kem_pub.pem": cli._encode_kem_pubkey(h_pub),
+        "kem_ct.pem": cli._encode_kem_ct(syn, ct.uint),
+        "kem_reject_ct.pem": cli._encode_kem_ct(rej_syn, rej_ct.uint),
+        "message_kem.bin": pt,
+        "message_kem_reject.bin": rej_out.uint.to_bytes(kb, "big"),
+    }
+
+
 def build_all() -> dict:
     out = {}
     out.update(build(suite.RNLN, "n1024"))
@@ -206,6 +289,7 @@ def build_all() -> dict:
     out["message_n1024.bin"] = MESSAGE[:kb].ljust(kb, b"\0")
     kb64 = cli._rnl_session_bits(64) // 8
     out["message_n64.bin"] = MESSAGE[:kb64].ljust(kb64, b"\0")
+    out.update(build_kem())
     return out
 
 

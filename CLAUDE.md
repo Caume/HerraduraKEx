@@ -146,7 +146,30 @@ KAT/                                                 — fixed Known-Answer-Test
                                plaintext is a file this directory already
                                contains, so the CONSUME direction is checked
                                against a byte-exact target rather than a
-                               re-derivation
+                               re-derivation.  Since TODO #284 it also holds the
+                               HPKE-Stern-KEM set -- kem_priv/kem_pub/kem_ct plus
+                               message_kem.bin -- at the deployed BIKE-128, ONE
+                               WIDTH ONLY because C compiles for a single
+                               QCMDPC_R.  Before #284 no Stern-KEM artifact was
+                               pinned ANYWHERE, and #276 had just moved every
+                               field width.  The half that earns it is
+                               kem_reject_ct.pem + message_kem_reject.bin, the
+                               IMPLICIT-REJECTION output: since #235 a decoding
+                               failure is silent by design, so test_stern_kem.sh
+                               can only check the four CLIs against EACH OTHER --
+                               that catches a divergence but NOT a drift, and a
+                               four-way drift is invisible to every round-trip
+                               test by construction.  Demonstrated, not argued:
+                               moving QCMDPC_DS_Z in all four leaves
+                               test_stern_kem.sh at 18/0 and fails this vector.
+                               Its expected bytes are garbage BY DESIGN -- pinned
+                               garbage is the point.  test_kat_pem.sh is the one
+                               script EXEMPT from ci.yml's DFR guard, and the
+                               exemption is the reasoned kind: a pinned key and a
+                               pinned ciphertext have no randomness to retry
+                               with, and if that pair ever stops decoding it is a
+                               decoder regression, never a DFR event, so a retry
+                               would mask the signal the vector exists to produce
   nl_fscx_v3.json            — the NL-FSCX v3 primitive (chi, one round, the
                                R3_VALUE revolve and its inverse) and all five
                                consumers (TODO #255).  The only KAT coverage of

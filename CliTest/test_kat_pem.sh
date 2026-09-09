@@ -114,6 +114,45 @@ for lang in py c go java; do
             echo "FAIL $lang $tag dec: command failed"; fail=$((fail + 1))
         fi
     done
+
+    # ── HPKE-Stern-KEM (TODO #284) ────────────────────────────────────────────
+    # ONE WIDTH: C compiles for a single QCMDPC_R, so unlike the ring sizes above
+    # there is no small-r companion to skip.  Before #284 no Stern-KEM artifact
+    # was pinned anywhere, and TODO #276 had just moved every field width.
+    if $CLI pkey --in "$K/kem_priv.pem" --pubout \
+            --out "$TMP/${lang}_kem_pub.pem" >/dev/null 2>&1; then
+        check "$lang kem pkey --pubout" "$K/kem_pub.pem" "$TMP/${lang}_kem_pub.pem"
+    else
+        echo "FAIL $lang kem pkey --pubout: command failed"; fail=$((fail + 1))
+    fi
+
+    # The decodable case.  A plain round-trip cannot replace this: it passes
+    # whenever encapsulation and decapsulation agree, including when both have
+    # moved together.
+    if $CLI dec --algo hpke-stern-kem --key "$K/kem_priv.pem" \
+            --in "$K/kem_ct.pem" --out "$TMP/${lang}_kem_pt.bin" >/dev/null 2>&1; then
+        check "$lang kem dec (decodable)" "$K/message_kem.bin" "$TMP/${lang}_kem_pt.bin"
+    else
+        echo "FAIL $lang kem dec: command failed"; fail=$((fail + 1))
+    fi
+
+    # THE IMPLICIT-REJECTION CASE, and the reason this section exists.  Since
+    # TODO #235 a decoding failure is SILENT -- dec exits 0 and writes a
+    # full-width output, and a wrong K is indistinguishable from a right one.
+    # test_stern_kem.sh checks the CLIs against EACH OTHER, which catches a
+    # divergence but not a drift: all four moving together is invisible to it by
+    # construction.  This pins the output to a FIXED VALUE.  The bytes are
+    # garbage by design -- pinned garbage is the whole point.
+    if $CLI dec --algo hpke-stern-kem --key "$K/kem_priv.pem" \
+            --in "$K/kem_reject_ct.pem" \
+            --out "$TMP/${lang}_kem_rej.bin" >/dev/null 2>&1; then
+        check "$lang kem dec (implicit rejection)" \
+              "$K/message_kem_reject.bin" "$TMP/${lang}_kem_rej.bin"
+    else
+        echo "FAIL $lang kem dec (implicit rejection): command failed — a" \
+             "rejection must NOT report; that signal was the GJS oracle"
+        fail=$((fail + 1))
+    fi
 done
 
 echo
