@@ -2,6 +2,108 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.1] - 2026-09-09
+
+### TODO #276 follow-up — the malformed-PEM table's row-weight bound was a literal
+
+CI caught a **fifth** instance of the defect class #276 found four of: a parameter frozen
+into something that does not own it.
+
+`CliTest/lib_malformed.sh`'s QC-MDPC case asserted that row weight `d = 16` is *rejected*.
+16 was chosen as one over the then-deployed `QCMDPC_D = 15`. At `d = 71` it is a perfectly
+valid row weight, so the case inverted: instead of probing a bound it asserted that a
+**good** key must be refused, and every CLI correctly accepted it.
+
+Two jobs failed on the single case — `native-c` and `sanitizers` both run
+`test_weak_key_rejection.sh` — and `cross-lang-compat` would have failed the same way
+through `test_malformed_pem_matrix.sh`, which shares the table.
+
+`hkx_mal_qc_d_over()` now reads `QCMDPC_D` from the shipped suite and returns `d + 1`, so
+the case tracks any future parameter move instead of silently changing meaning underneath
+it. That is the same fix already applied to the other four instances during #276; what
+this adds is that a malformed-**input** table needs it too — the port missed it because
+that table probes *bounds* rather than reproducing *values*, so it did not look like the
+other four.
+
+`test_weak_key_rejection.sh` 72 PASS / 0 FAIL. `test_malformed_pem_matrix.sh` 252 PASS /
+0 FAIL across py/c/go/java, each rejecting `d=72` and accepting the genuine key.
+
+## [7.0.0] - 2026-09-09
+
+### TODO #276 — HPKE-Stern-KEM moves to BIKE-128 parameters (**MAJOR / wire-format breaking**)
+
+**This is the reason the version is 7.0.0.** `r` sizes the wire format, so every
+`hpke-stern-kem` key and ciphertext, and every `hybrid-rnl-stern` artifact carrying one,
+becomes unreadable. See [`MIGRATING.md` §17](MIGRATING.md). The row is demo-only and the
+old parameters were worth about `2^21` classical operations, so nothing with a security
+claim is being broken — but the artifacts do have to be regenerated.
+
+TODO #276's first pass (v6.5.8) settled the *selection*: adopt BIKE-128 verbatim,
+`r = 12323`, `d = 71`, `t = 134`. This is the port, in all four languages at once.
+
+**The decoder moves with the parameters, and cannot be separated from them.** BIKE's
+threshold rule is affine in the **syndrome weight**; the rule that shipped with the toy set
+was affine in `d` and ignored the syndrome entirely. Each fails outright at the other's
+`d` — BIKE's floor of 36 exceeds a `d = 15` row, and the old rule stalls at 47-of-71 as the
+syndrome thins (114 failures across the transition against 30, at four times the
+iterations). The published DFR belongs to BIKE's *decoder*, not to BIKE's `(r, d, t)` under
+an arbitrary one. So `NB_ITER` 20 → 5, the gray band 2 → 3, and the masked-pass floor
+`(d+1)/2 + 2` → `(d+1)/2 + 1` all travel with it, and the threshold rule's three
+coefficients become named constants in all four languages.
+
+`QCMDPC_MAX_MULT` goes 5 → 6, and its *justification* changes with it: 5 was read off a
+measured DFR cliff, and that measurement is not available at these parameters and cannot
+be made, since locating a cliff needs a measurable DFR and removing one is what the change
+is for. 6 is a retry-budget surrogate stated in advance, recorded as such.
+
+**It stays demo-only**, and the reason has changed rather than gone away. The DFR here is
+not measurable — that is precisely what the change bought — so `2^-128` is *inherited*
+from BIKE's published analysis, while what ships is a reimplementation of BIKE's decoder
+over a suite-specific FSCX-based PRF, whose equivalence is established by testing rather
+than proof. Promotion is a separate decision and was not taken here. `SECURITY.md` and
+`spec/` are updated to say that rather than the superseded DFR and ISD numbers.
+
+**Four defects found while porting, none of them on #276's list**, all the same shape — a
+parameter frozen into something that does not own it:
+
+- `CliTest/test_stern_kem.sh` and `CliTest/test_java_stern_interop.sh` hardcoded `r = 523`
+  and the bound `5`. Folding a 12323-bit support's distances modulo 523 collapses them and
+  reported multiplicity 17–22 for keys whose true multiplicity is 4–5 — a loud failure of a
+  screen that was working perfectly. Both now read `r` and the bound from the suite.
+  Python's harness had the same hardcoding.
+- `spec/check_language_parity.py`'s parameter evaluator coerced every result to `int`, so
+  `QCMDPC_TH_SLOPE = 0.0069722` read as `0` in all four languages — an equality that no
+  drift could ever break. It keeps floats now, and reads Java `double`/`float`
+  declarations, which it did not before.
+- That change exposed a **pre-existing bug in the same evaluator**: it strips `(int)` casts,
+  and the outer `int()` had been silently re-applying them. `Hcred.W_MAX` is
+  `(int)(N/4.0 + 4*sqrt(3N/16))` — 91.71 before the cast, 91 after — so C's literal `91` and
+  Java's expression began to disagree the moment non-integral results survived. The cast is
+  now applied rather than merely removed.
+- Java's test [34] and Python's test [52] passed the moduli and weights to the PRF as
+  **literals** (`sparseSupport(523, 15)`), pinning the vector to parameters the test does
+  not own. Both now take them from the deployed constants. Go was already clean here, but
+  reads its supports out of `QcMdpcKeygen`, which retries on the screen and on a
+  non-invertible `h0` — so its case matches only while the first draw is accepted, which is
+  now checked and recorded rather than assumed.
+
+Tests [51] and [52]'s pinned vectors are re-derived at the new parameters in all four
+languages, and `qc_b5`/`qc_b6` are renamed `qc_bound`/`qc_over`: the old names encoded the
+bound's *value*, which is exactly what went stale. The cyclic-fold discriminator still
+discriminates — the new `wrap` support reads multiplicity 7 folded and 6 unfolded, so an
+implementation that loses `min(d, r-d)` accepts it and fails only that case.
+
+`CliTest/lib_dfr.sh` is re-justified rather than deleted, as #276 asked. Its retries are
+expected never to fire at BIKE-128, and the file now says why it stays: the `2^-128` is
+inherited rather than measured, `ci.yml`'s guard is a coverage check on scripts rather than
+a claim about the rate, and — the part that changes behaviour — **a firing retry is now a
+signal rather than noise**, so it reports at `WARN` and says to investigate. The assembly
+and Arduino targets carry no QC-MDPC at all, so #276's bullet about them is a no-op.
+
+**Measured cost.** C: keygen 0.3 s, encapsulation 0.13 s, decapsulation 33 ms. Python:
+decapsulation 170 ms, against 3.8 ms at the old parameters — affordable only because
+v6.7.3 rewrote that decoder bit-sliced; under the per-position decoder it is 5.6 s.
+
 ## [6.7.3] - 2026-09-09
 
 ### TODO #276 (first port step) — the Python QC-MDPC decoder, rewritten bit-sliced

@@ -38,6 +38,19 @@ open(out_path, 'w').write(pem_wrap(label, der_seq(*[der_int(x) for x in items]))
 PYEOF
 }
 
+# hkx_mal_qc_d_over — the smallest QC-MDPC row weight that must be REJECTED,
+# read from the shipped suite rather than written here.  See the row-weight case
+# below for why this is derived: the literal it replaces became valid input when
+# TODO #276 moved QCMDPC_D from 15 to 71.
+hkx_mal_qc_d_over() {
+    python3 -c 'import importlib.util, os, sys
+p = os.path.join(sys.argv[1], "Herradura cryptographic suite.py")
+sp = importlib.util.spec_from_file_location("suite", p)
+m = importlib.util.module_from_spec(sp)
+sp.loader.exec_module(m)
+print(m._QCMDPC_D + 1)' "$HKX_MAL_ROOT"
+}
+
 # hkx_mal_fixtures <dir> — genuine artifacts every language can read.
 hkx_mal_fixtures() {
     local d="$1"
@@ -179,9 +192,17 @@ hkx_mal_suite() {
     fi
 
     # ── HPKE-Stern-KEM: the QC-MDPC row weight d (item 5) ──
+    #
+    # The just-over-the-bound value is DERIVED from the deployed QCMDPC_D, never
+    # written here.  It was a literal 16 — one over the then-deployed d = 15 —
+    # and TODO #276's move to d = 71 made 16 a PERFECTLY VALID row weight, so
+    # the case stopped probing a bound and started asserting that a good key is
+    # refused.  A malformed-input table has to take the bound from the
+    # implementation it is probing, or it silently changes meaning underneath
+    # the next parameter change.
     if _hkx_mal_control "[$lang] kem: genuine private key decodes" \
         "${CLI[@]}" pkey --in "$d/kem.pem" --pubout --out /dev/null; then
-        for val in 16 2147483647; do
+        for val in "$(hkx_mal_qc_d_over)" 2147483647; do
             hkx_mal_craft "$d/kem.pem" "$bad" 5 "$val"
             _hkx_mal_expect "[$lang] kem rejects row weight d=$val" \
                 "${CLI[@]}" pkey --in "$bad" --pubout --out /dev/null

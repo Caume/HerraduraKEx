@@ -42,10 +42,28 @@ public final class Stern {
     public static final int SDFR = 32;              // demo Fiat-Shamir rounds
     public static final int STERN_F_PRODUCTION_ROUNDS = 219;
 
-    public static final int QCMDPC_R = 523;
-    public static final int QCMDPC_D = 15;
-    public static final int QCMDPC_T = 18;
-    public static final int QCMDPC_NB_ITER = 20;
+    // BIKE-128, adopted verbatim (TODO #276).  These replace the toy set
+    // r=523, d=15, t=18 that shipped through v6.7.3 and was worth ~2^21
+    // classical operations.  Adopting the parameters means adopting the
+    // DECODER: BIKE's threshold rule is affine in the SYNDROME WEIGHT where
+    // the old one was affine in d, and each fails outright at the other's d.
+    // SecurityProofs-5.md §11.8.9.
+    public static final int QCMDPC_R = 12323;
+    public static final int QCMDPC_D = 71;
+    public static final int QCMDPC_T = 134;
+    public static final int QCMDPC_NB_ITER = 5;
+
+    // BIKE Level 1's threshold rule (BIKE spec §2.4.2), affine in the weight
+    // of the private syndrome with a floor.  The TRUNCATION is part of the
+    // rule: (int) here, (int) in C, int() in Go and int() in Python all
+    // truncate toward zero on a positive operand, so all four floor it
+    // identically.
+    public static final double QCMDPC_TH_SLOPE = 0.0069722;
+    public static final double QCMDPC_TH_OFFSET = 13.530;
+    public static final int QCMDPC_TH_MIN = 36;
+
+    // Gray band width.  BIKE's is 3; the toy set's decoder used 2.
+    public static final int QCMDPC_TAU = 3;
 
     // -----------------------------------------------------------------
     // Shared helpers: weight-t sampling, domain-separated hash chain,
@@ -424,9 +442,10 @@ public final class Stern {
          * 256^w &gt;= m.  Sizing the draw from the modulus rather than fixing it
          * at two bytes is what lifts the sampler's ceiling (TODO #277).  It
          * costs nothing where it matters: w is 2 for every modulus below 65537,
-         * so the deployed r = 523 / 2r = 1046 and BIKE-128's and BIKE-192's
-         * moduli all consume the keystream exactly as the 16-bit-only sampler
-         * did, and every pinned QC-MDPC artifact still holds. */
+         * so the old r = 523 / 2r = 1046, the deployed r = 12323 / 2r = 24646
+         * and BIKE-192's moduli all consume the keystream exactly as the
+         * 16-bit-only sampler did, and every pinned QC-MDPC artifact still
+         * holds. */
         static int idxBytes(int m) {
             int w = 1;
             while (w < MAX_IDX_BYTES && ((m - 1L) >>> (8 * w)) != 0) w++;
@@ -486,10 +505,14 @@ public final class Stern {
     static final int QCMDPC_DS_Z      = 0x11; // session key, implicit-rejection path
     static final int QCMDPC_DS_ZSEED  = 0x12; // z, derived from the private polynomials
 
-    /** Weak-key screen bound: TODO #218 §4 puts the DFR cliff between
-     * distance-spectrum multiplicity 6 and 7, and honest keygen reaches 6 at
-     * roughly 1 key in 4800. */
-    static final int QCMDPC_MAX_MULT = 5;
+    /** Weak-key screen bound.  5 was read off a MEASURED DFR cliff at the old
+     * r=523, d=15 (TODO #218 §4); that measurement is not available at these
+     * parameters and cannot be made, since locating a cliff needs a measurable
+     * DFR and removing one is what the parameter change is for.  TODO #276
+     * states a surrogate in advance instead — keep the screen a tail cut
+     * costing under one keygen retry in 200 — which gives 6 at d=71.  A
+     * retry-budget choice, not a cliff. */
+    static final int QCMDPC_MAX_MULT = 6;
 
     /** Largest multiplicity in the multiset of cyclic distances within sup. */
     static int qcmdpcMaxMultiplicity(int[] sup, int r) {
@@ -592,28 +615,33 @@ public final class Stern {
         return qcmdpcEncap(hPub, new BigInteger(N, rng).and(MASK));
     }
 
-    /** BGF (Black-Gray-Flip) decoder (Drucker-Gueron-Kostic 2019). Returns
-     * {e0, e1} or null on decoding failure (a legitimate, measured
-     * ~0.225% DFR event per encapsulation — TODO #195 — not necessarily a
-     * bug). */
+    /** BGF (Black-Gray-Flip) decoder (Drucker-Gueron-Kostic 2019), with BIKE
+     * Level 1's syndrome-adaptive threshold rule (TODO #276).  Returns
+     * {e0, e1} or null on decoding failure. */
     static BigInteger[] qcmdpcBgfDecode(BigInteger synPub, int[] sup0, int[] sup1) {
         int r = QCMDPC_R, d = QCMDPC_D, nbIter = QCMDPC_NB_ITER;
         BigInteger s = qcpMulSparse(synPub, sup0, r);
         BigInteger e0 = BigInteger.ZERO, e1 = BigInteger.ZERO;
-        int thFloor = (d + 1) / 2 + 2;
+        int thFloor = (d + 1) / 2 + 1;   // = 37; BIKE's masked-pass floor
 
         for (int it = 0; it < nbIter; it++) {
             if (s.signum() == 0) break;
-            int th = (it < 7) ? Math.max((int) Math.ceil(0.66 * d), thFloor) : Math.max(thFloor - 1, 8);
+            // BIKE L1: th = max(floor(slope*|s| + offset), QCMDPC_TH_MIN).  The
+            // threshold falls as the syndrome thins, which is the whole
+            // difference from the rule this replaced: that one was a constant
+            // in d and stalled once the remaining syndrome could no longer
+            // meet it.
+            int th = Math.max((int) (QCMDPC_TH_SLOPE * s.bitCount() + QCMDPC_TH_OFFSET),
+                              QCMDPC_TH_MIN);
             int[] upc0 = computeUpc(s, sup0, r);
             int[] upc1 = computeUpc(s, sup1, r);
             List<Integer> black0 = new ArrayList<>(), black1 = new ArrayList<>();
             List<Integer> gray0 = new ArrayList<>(), gray1 = new ArrayList<>();
             for (int j = 0; j < r; j++) {
                 if (upc0[j] >= th) black0.add(j);
-                else if (upc0[j] >= th - 2) gray0.add(j);
+                else if (upc0[j] >= th - QCMDPC_TAU) gray0.add(j);
                 if (upc1[j] >= th) black1.add(j);
-                else if (upc1[j] >= th - 2) gray1.add(j);
+                else if (upc1[j] >= th - QCMDPC_TAU) gray1.add(j);
             }
             for (int j : black0) { e0 = e0.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup0, r)); }
             for (int j : black1) { e1 = e1.xor(BigInteger.ONE.shiftLeft(j)); s = s.xor(qcpMulSparse(BigInteger.ONE.shiftLeft(j), sup1, r)); }

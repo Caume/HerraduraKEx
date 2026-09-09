@@ -129,16 +129,24 @@ kem_roundtrip "hpke-stern-kem: Python enc -> Java dec" \
 
 # ── TODO #235: the Java port must agree on both halves ────────────────────────
 # Part 1 — the weak-key screen. Every key the Java CLI emits must have
-# distance-spectrum multiplicity <= 5 in both private polynomials, read back out
-# of the PEM by Python's decoder so the two ports are checked against one
-# contract rather than each against itself.
-java_mult=$(cd "$ROOT/HerraduraCli" && python3 -c '
+# distance-spectrum multiplicity <= the deployed bound in both private
+# polynomials, read back out of the PEM by Python's decoder so the two ports are
+# checked against one contract rather than each against itself.
+#
+# BOTH r AND THE BOUND ARE READ FROM THE SUITE, never written here (TODO #276) —
+# see CliTest/test_stern_kem.sh's note: a hardcoded r=523 folds a 12323-bit
+# support's distances onto each other and reports multiplicity 20 for a key whose
+# true multiplicity is 4.
+read -r java_mult java_bound <<EOF
+$(cd "$ROOT/HerraduraCli" && python3 -c '
 import importlib.util
 spec = importlib.util.spec_from_file_location("hcli", "herradura.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+import primitives as P
 sup0, sup1, _, _ = m._decode_kem_privkey("'"$TMP/kem_j.pem"'")
-def mm(sup, r=523):
+r = P._s._QCMDPC_R
+def mm(sup):
     c = {}
     sl = sorted(sup)
     for i in range(len(sl)):
@@ -147,13 +155,14 @@ def mm(sup, r=523):
             d = min(d, r - d)
             c[d] = c.get(d, 0) + 1
     return max(c.values())
-print(max(mm(sup0), mm(sup1)))
+print(max(mm(sup0), mm(sup1)), P._s._QCMDPC_MAX_MULT)
 ')
-if [ "$java_mult" -le 5 ]; then
-    echo "PASS weak-key screen: Java keygen (max spectrum multiplicity $java_mult <= 5)"
+EOF
+if [ "$java_mult" -le "$java_bound" ]; then
+    echo "PASS weak-key screen: Java keygen (max spectrum multiplicity $java_mult <= $java_bound)"
     PASS=$((PASS+1))
 else
-    echo "FAIL weak-key screen: Java keygen (max spectrum multiplicity $java_mult > 5)"
+    echo "FAIL weak-key screen: Java keygen (max spectrum multiplicity $java_mult > $java_bound)"
     FAIL=$((FAIL+1))
 fi
 

@@ -6856,19 +6856,50 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 /* ═══════════════════════════════════════════════════════════════════════════
  * QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
  *
- * Toy parameters: r=523, d=15 (w=30), t=18.
+ * Parameters:     BIKE-128, r=12323, d=71 (w=142), t=134 (TODO #276).
  * PRF seeding:    NL-FSCX v1 counter-mode XOF (HFSCX-256-DM path).
  * Hardness:       Quasi-cyclic syndrome decoding (QCSD).
- * Production:     BIKE-128 r=12323, w=142, t=134 (scales linearly, C only).
+ *
+ * These replace the toy set r=523, d=15, t=18 that shipped through v6.7.3 and
+ * was worth ~2^21 classical operations -- BELOW the 2^56-2^60 of the Stern-F
+ * SIGNATURE at a quarter the length, because ISD tracks the RELATIVE distance
+ * t/N.  TODO #276 measured that, and found t and d are set by ISD essentially
+ * independently of r while r is then set by the DFR alone: at r=12323 the ISD
+ * frontier lands on exactly BIKE-128's (t, d) = (134, 71) from an independent
+ * direction, so the set is adopted verbatim rather than invented.  r's only
+ * remaining job is the DFR, the one quantity this repository cannot measure and
+ * BIKE has published.
+ *
+ * ADOPTING THE PARAMETERS MEANS ADOPTING THE DECODER.  BIKE's threshold rule is
+ * affine in the SYNDROME WEIGHT; the rule that shipped with the toy set was
+ * affine in d and ignored the syndrome entirely.  Each fails outright at the
+ * other's d -- BIKE's floor of 36 exceeds a d=15 row, and the old rule stalls at
+ * 47-of-71 as the syndrome thins (114 failures across the transition against
+ * 30, at four times the iterations).  The DFR claim belongs to BIKE's decoder,
+ * not to BIKE's (r, d, t) under an arbitrary one.  See SecurityProofs-5.md
+ * §11.8.9.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-#define QCMDPC_R       523
-#define QCMDPC_D       15
-#define QCMDPC_T       18
+#define QCMDPC_R       12323
+#define QCMDPC_D       71
+#define QCMDPC_T       134
 #define QCMDPC_W       (2 * QCMDPC_D)
-#define QCMDPC_RBYTES  ((QCMDPC_R + 7) / 8)       /* 66 */
-#define QCMDPC_RWORDS  ((QCMDPC_R + 63) / 64)     /* 9  */
-#define QCMDPC_NB_ITER 20
+#define QCMDPC_RBYTES  ((QCMDPC_R + 7) / 8)       /* 1541 */
+#define QCMDPC_RWORDS  ((QCMDPC_R + 63) / 64)     /* 193  */
+#define QCMDPC_NB_ITER 5
+
+/* BIKE Level 1's threshold rule (BIKE spec §2.4.2): affine in the weight of the
+ * private syndrome, with a floor.  The TRUNCATION is part of the rule and is the
+ * one cross-language hazard here -- C's (int) cast, Go's int(), Python's int()
+ * and Java's (int) all truncate toward zero and the operand is positive, so all
+ * four floor it identically; anything that rounds instead would shift the
+ * threshold by one over most of the syndrome-weight range. */
+#define QCMDPC_TH_SLOPE   0.0069722
+#define QCMDPC_TH_OFFSET  13.530
+#define QCMDPC_TH_MIN     36
+
+/* Gray band width.  BIKE's is 3; the toy set's decoder used 2. */
+#define QCMDPC_TAU     3
 
 /* ── FO transform with implicit rejection + weak-key screen (TODO #235) ──
  * Remediation of the two blockers TODO #218 §7 listed that are constructions
@@ -6882,11 +6913,19 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 #define QCMDPC_DS_ZSEED  0x12   /* z, derived from the private polynomials */
 
 /* Weak-key screen: reject a private polynomial whose cyclic distance spectrum
- * contains a distance of multiplicity above this bound.  TODO #218 §4 puts the
- * DFR cliff between multiplicity 6 and 7; honest keygen reaches 6 at roughly
- * 1 key in 4800, which is rare but not negligible, so the accepted set is
- * multiplicity <= 5.  Costs ~0.02% extra draws. */
-#define QCMDPC_MAX_MULT  5
+ * contains a distance of multiplicity above this bound.
+ *
+ * 5 was read off a MEASURED DFR cliff at r=523, d=15 (TODO #218 §4).  That
+ * measurement is not available here and cannot be made: locating a cliff needs a
+ * measurable DFR, which is exactly what the parameter change exists to remove.
+ * TODO #276 therefore states a surrogate IN ADVANCE rather than fitting one --
+ * keep the screen a tail cut costing under one keygen retry in 200 -- which
+ * gives 6 at d=71.  This is a RETRY-BUDGET choice, not a cliff, and is recorded
+ * as such; the cliff question belongs to TODO #250, which owns decoder
+ * behaviour.  (An exact quantile match to the old 0.03% was tried first and
+ * discarded: it sits at the sampler's resolution floor and flips between 6 and 7
+ * with the trial count.) */
+#define QCMDPC_MAX_MULT  6
 
 /* r-bit polynomial: QCMDPC_RWORDS uint64_t, little-endian (bit i = word[i>>6] bit i&63) */
 typedef struct { uint64_t w[QCMDPC_RWORDS]; } QcPoly;
@@ -7090,9 +7129,10 @@ static uint32_t qcprf_word(QcMdpcPrf *prf, int nbytes) {
 /* Bytes one uniform draw below m needs: the smallest w with 256^w >= m.
  * Sizing the draw from the modulus rather than fixing it at two bytes is what
  * lifts the sampler's ceiling (TODO #277).  It costs nothing where it matters:
- * w is 2 for every modulus below 65537, so the deployed r = 523 / 2r = 1046
- * and BIKE-128's and BIKE-192's moduli all consume the keystream exactly as
- * the 16-bit-only sampler did, and every pinned QC-MDPC artifact still holds. */
+ * w is 2 for every modulus below 65537, so the old r = 523 / 2r = 1046, the
+ * deployed r = 12323 / 2r = 24646 and BIKE-192's moduli all consume the
+ * keystream exactly as the 16-bit-only sampler did, and every pinned QC-MDPC
+ * artifact still holds. */
 static int qcprf_idx_bytes(uint32_t m) {
     int w = 1;
     while (w < QCPRF_MAX_IDX_BYTES && ((m - 1u) >> (8 * w)) != 0) w++;
@@ -7251,7 +7291,7 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
     uint16_t black0[QCMDPC_R], black1[QCMDPC_R];
     uint16_t gray0[QCMDPC_R],  gray1[QCMDPC_R];
     int nb0, nb1, ng0, ng1, it, bi, j, k;
-    int th_floor = (QCMDPC_D + 1) / 2 + 2;  /* = 10 */
+    int th_floor = (QCMDPC_D + 1) / 2 + 1;  /* = 37; BIKE's masked-pass floor */
 
     /* Private syndrome: s = syn_pub · h0 */
     qcp_mul_sparse(&s, syn_pub, priv->sup0, QCMDPC_D);
@@ -7260,14 +7300,12 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
     for (it = 0; it < QCMDPC_NB_ITER; it++) {
         if (qcp_is_zero(&s)) break;
 
-        int th;
-        if (it < 7) {
-            th = (int)(0.66 * QCMDPC_D + 0.999);
-            if (th < th_floor) th = th_floor;
-        } else {
-            th = th_floor - 1;
-            if (th < 8) th = 8;
-        }
+        /* BIKE L1: th = max(floor(slope·|s| + offset), QCMDPC_TH_MIN).  The
+         * threshold falls as the syndrome thins, which is the whole difference
+         * from the rule this replaced: that one was a constant in d and stalled
+         * once the remaining syndrome could no longer meet it. */
+        int th = (int)(QCMDPC_TH_SLOPE * (double)qcp_popcount(&s) + QCMDPC_TH_OFFSET);
+        if (th < QCMDPC_TH_MIN) th = QCMDPC_TH_MIN;
 
         /* Compute UPC: upc_b[j] = Σ_{k∈sup_b} s[(j+k) % r] */
         memset(upc0, 0, QCMDPC_R); memset(upc1, 0, QCMDPC_R);
@@ -7282,9 +7320,9 @@ static int qcmdpc_bgf_decode(QcPoly *e0_out, QcPoly *e1_out,
         nb0 = nb1 = ng0 = ng1 = 0;
         for (j = 0; j < QCMDPC_R; j++) {
             if      (upc0[j] >= (uint8_t)th)     black0[nb0++] = (uint16_t)j;
-            else if (upc0[j] >= (uint8_t)(th - 2)) gray0[ng0++] = (uint16_t)j;
+            else if (upc0[j] >= (uint8_t)(th - QCMDPC_TAU)) gray0[ng0++] = (uint16_t)j;
             if      (upc1[j] >= (uint8_t)th)     black1[nb1++] = (uint16_t)j;
-            else if (upc1[j] >= (uint8_t)(th - 2)) gray1[ng1++] = (uint16_t)j;
+            else if (upc1[j] >= (uint8_t)(th - QCMDPC_TAU)) gray1[ng1++] = (uint16_t)j;
         }
         /* Apply black flips */
         for (bi = 0; bi < nb0; bi++) {

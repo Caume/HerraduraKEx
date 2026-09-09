@@ -108,24 +108,33 @@ if [ "$GO_AVAILABLE" = true ]; then
 fi
 
 # ── TODO #235 Part 1: the weak-key screen ─────────────────────────────────────
-# Every key each CLI emits must have distance-spectrum multiplicity <= 5 in both
-# private polynomials. TODO #218 §4 puts the DFR cliff between 6 and 7, and
-# honest unscreened keygen reaches 6 at ~1 key in 4800 — rare enough that this
-# check would not have caught the gap by sampling, which is exactly why it reads
-# the emitted key rather than counting rejections.
+# Every key each CLI emits must have distance-spectrum multiplicity <= the
+# deployed bound in both private polynomials.  It reads the EMITTED KEY rather
+# than counting rejections, because at the old parameters honest unscreened
+# keygen reached the bound at ~1 key in 4800 — too rare for sampling to catch.
+#
+# BOTH r AND THE BOUND ARE READ FROM THE SUITE, never written here (TODO #276).
+# They were hardcoded at r=523 and 5, and the r was the worse of the two: folding
+# a 12323-bit support's distances modulo 523 collapses them onto each other and
+# reported multiplicity 19 for keys whose true multiplicity is 4, i.e. a loud
+# failure of a screen that was working.  A test that pins a parameter it does not
+# own fails the moment that parameter legitimately moves.
 CHECK_MULT="$(dirname "$0")/../HerraduraCli"
 screen_check() {
     local label="$1" pem="$2"
-    local mult
-    mult=$(cd "$CHECK_MULT" && python3 -c '
+    local mult bound
+    read -r mult bound <<EOF
+$(cd "$CHECK_MULT" && python3 -c '
 import sys
 sys.argv = ["x"]
 import importlib.util
 spec = importlib.util.spec_from_file_location("hcli", "herradura.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-sup0, sup1, _, _ = m._decode_kem_privkey(sys.argv[1] if False else "'"$pem"'")
-def mm(sup, r=523):
+import primitives as P
+sup0, sup1, _, _ = m._decode_kem_privkey("'"$pem"'")
+r = P._s._QCMDPC_R
+def mm(sup):
     c = {}
     sl = sorted(sup)
     for i in range(len(sl)):
@@ -134,13 +143,14 @@ def mm(sup, r=523):
             d = min(d, r - d)
             c[d] = c.get(d, 0) + 1
     return max(c.values())
-print(max(mm(sup0), mm(sup1)))
+print(max(mm(sup0), mm(sup1)), P._s._QCMDPC_MAX_MULT)
 ')
-    if [ "$mult" -le 5 ]; then
-        echo "PASS $label (max spectrum multiplicity $mult <= 5)"
+EOF
+    if [ "$mult" -le "$bound" ]; then
+        echo "PASS $label (max spectrum multiplicity $mult <= $bound)"
         PASS=$((PASS+1))
     else
-        echo "FAIL $label (max spectrum multiplicity $mult > 5 — weak-key screen not applied)"
+        echo "FAIL $label (max spectrum multiplicity $mult > $bound — weak-key screen not applied)"
         FAIL=$((FAIL+1))
     fi
 }
