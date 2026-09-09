@@ -2,6 +2,32 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.1] - 2026-09-09
+
+### TODO #276 follow-up — the malformed-PEM table's row-weight bound was a literal
+
+CI caught a **fifth** instance of the defect class #276 found four of: a parameter frozen
+into something that does not own it.
+
+`CliTest/lib_malformed.sh`'s QC-MDPC case asserted that row weight `d = 16` is *rejected*.
+16 was chosen as one over the then-deployed `QCMDPC_D = 15`. At `d = 71` it is a perfectly
+valid row weight, so the case inverted: instead of probing a bound it asserted that a
+**good** key must be refused, and every CLI correctly accepted it.
+
+Two jobs failed on the single case — `native-c` and `sanitizers` both run
+`test_weak_key_rejection.sh` — and `cross-lang-compat` would have failed the same way
+through `test_malformed_pem_matrix.sh`, which shares the table.
+
+`hkx_mal_qc_d_over()` now reads `QCMDPC_D` from the shipped suite and returns `d + 1`, so
+the case tracks any future parameter move instead of silently changing meaning underneath
+it. That is the same fix already applied to the other four instances during #276; what
+this adds is that a malformed-**input** table needs it too — the port missed it because
+that table probes *bounds* rather than reproducing *values*, so it did not look like the
+other four.
+
+`test_weak_key_rejection.sh` 72 PASS / 0 FAIL. `test_malformed_pem_matrix.sh` 252 PASS /
+0 FAIL across py/c/go/java, each rejecting `d=72` and accepting the genuine key.
+
 ## [7.0.0] - 2026-09-09
 
 ### TODO #276 — HPKE-Stern-KEM moves to BIKE-128 parameters (**MAJOR / wire-format breaking**)
