@@ -5366,16 +5366,34 @@ func HcredCredVerify(mPoly, cPoly []int, seedH *BitArray, y *big.Int, n int,
 
 // ---------------------------------------------------------------------------
 // QC-MDPC Niederreiter KEM (HPKE-Stern-KEM) — BGF decoder
-// Parameters r=523, d=15, t=18.  Polynomials are big.Int coefficient vectors
-// in GF(2)[x]/(x^r - 1); supports are ascending index slices in [0, r).
+// Parameters r=12323, d=71, t=134 — BIKE-128, adopted verbatim (TODO #276).
+// Polynomials are big.Int coefficient vectors in GF(2)[x]/(x^r - 1); supports
+// are ascending index slices in [0, r).
+//
+// These replace the toy set r=523, d=15, t=18 that shipped through v6.7.3 and
+// was worth ~2^21 classical operations.  Adopting the parameters means adopting
+// the DECODER: BIKE's threshold rule is affine in the SYNDROME WEIGHT where the
+// old one was affine in d, and each fails outright at the other's d.  See
+// SecurityProofs-5.md §11.8.9 and herradura.h's own note.
 // ---------------------------------------------------------------------------
 
 const (
-	QcMdpcR      = 523
-	QcMdpcD      = 15
-	QcMdpcT      = 18
-	QcMdpcNbIter = 20
-	QcMdpcRBytes = (QcMdpcR + 7) / 8 // 66
+	QcMdpcR      = 12323
+	QcMdpcD      = 71
+	QcMdpcT      = 134
+	QcMdpcNbIter = 5
+	QcMdpcRBytes = (QcMdpcR + 7) / 8 // 1541
+
+	// BIKE Level 1's threshold rule (BIKE spec §2.4.2), affine in the weight
+	// of the private syndrome with a floor.  The TRUNCATION is part of the
+	// rule: int() here, (int) in C and Java, int() in Python all truncate
+	// toward zero on a positive operand, so all four floor it identically.
+	QcMdpcThSlope  = 0.0069722
+	QcMdpcThOffset = 13.530
+	QcMdpcThMin    = 36
+
+	// Gray band width.  BIKE's is 3; the toy set's decoder used 2.
+	QcMdpcTau = 3
 )
 
 // qcMdpcPrf is an NL-FSCX-based deterministic bit generator.
@@ -5420,9 +5438,9 @@ func (p *qcMdpcPrf) word(nbytes int) uint64 {
 // smallest w with 256^w >= m.  Sizing the draw from the modulus rather than
 // fixing it at two bytes is what lifts the sampler's ceiling (TODO #277).  It
 // costs nothing where it matters: w is 2 for every modulus below 65537, so the
-// deployed r = 523 / 2r = 1046 and BIKE-128's and BIKE-192's moduli all consume
-// the keystream exactly as the 16-bit-only sampler did, and every pinned
-// QC-MDPC artifact still holds.
+// old r = 523 / 2r = 1046, the deployed r = 12323 / 2r = 24646 and BIKE-192's
+// moduli all consume the keystream exactly as the 16-bit-only sampler did, and
+// every pinned QC-MDPC artifact still holds.
 func qcprfIdxBytes(m int) int {
 	w := 1
 	for w < qcprfMaxIdxBytes && uint64(m-1)>>(8*w) != 0 {
@@ -5562,10 +5580,14 @@ const (
 	qcMdpcDsZ     = 0x11 // session key, implicit-rejection path
 	qcMdpcDsZSeed = 0x12 // z, derived from the private polynomials
 
-	// Weak-key screen bound: TODO #218 §4 puts the DFR cliff between
-	// distance-spectrum multiplicity 6 and 7, and honest keygen reaches 6 at
-	// roughly 1 key in 4800.
-	qcMdpcMaxMult = 5
+	// Weak-key screen bound.  5 was read off a MEASURED DFR cliff at the old
+	// r=523, d=15 (TODO #218 §4); that measurement is not available at these
+	// parameters and cannot be made, since locating a cliff needs a measurable
+	// DFR and removing one is what the parameter change is for.  TODO #276
+	// states a surrogate in advance instead — keep the screen a tail cut
+	// costing under one keygen retry in 200 — which gives 6 at d=71.  A
+	// retry-budget choice, not a cliff.
+	qcMdpcMaxMult = 6
 )
 
 // qcMdpcMaxMultiplicity is the largest multiplicity in the multiset of cyclic
@@ -5709,7 +5731,7 @@ func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, boo
 	s := qcpMulSparse(synPub, sup0, r)
 	e0 := new(big.Int)
 	e1 := new(big.Int)
-	thFloor := (d+1)/2 + 2
+	thFloor := (d+1)/2 + 1 // = 37; BIKE's masked-pass floor
 
 	computeUpc := func(sup []int) []int {
 		upc := make([]int, r)
@@ -5735,17 +5757,17 @@ func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, boo
 		if s.Sign() == 0 {
 			break
 		}
-		var th int
-		if it < 7 {
-			th = int(math.Ceil(0.66 * float64(d)))
-			if thFloor > th {
-				th = thFloor
-			}
-		} else {
-			th = thFloor - 1
-			if th < 8 {
-				th = 8
-			}
+		// BIKE L1: th = max(floor(slope·|s| + offset), QcMdpcThMin).  The
+		// threshold falls as the syndrome thins, which is the whole
+		// difference from the rule this replaced: that one was a constant in
+		// d and stalled once the remaining syndrome could no longer meet it.
+		synWeight := 0
+		for _, w := range s.Bits() {
+			synWeight += bits.OnesCount(uint(w))
+		}
+		th := int(QcMdpcThSlope*float64(synWeight) + QcMdpcThOffset)
+		if th < QcMdpcThMin {
+			th = QcMdpcThMin
 		}
 		upc0 := computeUpc(sup0)
 		upc1 := computeUpc(sup1)
@@ -5753,12 +5775,12 @@ func QcMdpcBgfDecode(synPub *big.Int, sup0, sup1 []int) (*big.Int, *big.Int, boo
 		for j := 0; j < r; j++ {
 			if upc0[j] >= th {
 				black0 = append(black0, j)
-			} else if upc0[j] >= th-2 {
+			} else if upc0[j] >= th-QcMdpcTau {
 				gray0 = append(gray0, j)
 			}
 			if upc1[j] >= th {
 				black1 = append(black1, j)
-			} else if upc1[j] >= th-2 {
+			} else if upc1[j] >= th-QcMdpcTau {
 				gray1 = append(gray1, j)
 			}
 		}

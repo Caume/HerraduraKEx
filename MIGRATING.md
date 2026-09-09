@@ -55,6 +55,7 @@ If you have stored any, decrypt them with a pre-4.0.0 build first. See
 | [`fpe` and `twk` subkey derivation](#8-fpe-and-twk-subkey-derivation-v400) | v4.0.0 | Every `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-4.0.0 build before upgrading.** Old ciphertexts cannot be recovered by 4.0.0+, and the failure is silent |
 | [NL-FSCX v2 round constants](#9-nl-fscx-v2-round-constants-v500) | v5.0.0 | Every `hske-nla2`, `hpke-nl`, `hske-duplex`, `fpe` and `twk` ciphertext written by any earlier build | **Decrypt with a pre-5.0.0 build before upgrading.** Five constructions at once; for `fpe`/`twk` the failure is silent |
 | [`nl-zkboo` and `rnl-sigma` message padding, Python CLI only](#10-nl-zkboo-and-rnl-sigma-message-padding-python-cli-only-v600) | v6.0.0 | `sign --algo nl-zkboo` / `--algo rnl-sigma` signatures produced by the **Python** CLI over a message whose length is not exactly 32 bytes | Re-sign on v6.0.0+. Those signatures never verified under the C or Go CLIs anyway — that was the bug |
+| [HPKE-Stern-KEM moves to BIKE-128 parameters](#17-hpke-stern-kem-moves-to-bike-128-parameters-v700) | v7.0.0 | Every `hpke-stern-kem` key and ciphertext, and every `hybrid-rnl-stern` artifact carrying one | **Regenerate on v7.0.0+.** `r` sizes the wire format, so old artifacts are unreadable — but the row is demo-only and the old parameters were worth ~2^21 operations, so nothing with a security claim is being broken |
 
 ---
 
@@ -812,3 +813,61 @@ it. If you need the key before upgrading, decrypt it with the Python or Java CLI
 build changes. This widens what the C and Go readers accept to match what the writers have
 always emitted and what the other two readers have always accepted, so it can only turn a
 previously-failing read into a succeeding one.
+
+---
+
+## 17. HPKE-Stern-KEM moves to BIKE-128 parameters (v7.0.0)
+
+**This is the reason the version is 7.0.0.** `r` sizes the wire format, so every
+`hpke-stern-kem` private key, public key and ciphertext written by any earlier build is
+unreadable by v7.0.0+, and so is every `hybrid-rnl-stern` artifact that carries one.
+
+**What changed.** The KEM ran at toy parameters — `r = 523`, `d = 15`, `t = 18` — which
+the source itself said were toy. TODO #276 measured what they were actually worth and
+replaced them with BIKE-128, adopted verbatim:
+
+| | through v6.7.3 | v7.0.0+ |
+|---|---|---|
+| `r` (block size) | 523 | 12323 |
+| `d` (row weight) | 15 | 71 |
+| `t` (error weight) | 18 | 134 |
+| decoder iterations | 20 | 5 |
+| threshold rule | affine in `d`, ignores the syndrome | affine in the **syndrome weight**, floor 36 |
+| gray band | 2 | 3 |
+| weak-key screen bound | 5 | 6 |
+| key/ciphertext field width | 66 bytes | 1541 bytes |
+
+**Why the decoder moved with the parameters.** They cannot be separated. BIKE's threshold
+floor of 36 exceeds a `d = 15` row outright, so BIKE's rule decodes nothing at the old
+parameters; and the old rule stalls at 47-of-71 as the syndrome thins, taking 114 failures
+across the transition where BIKE's takes 30, at four times the iterations. The published
+DFR belongs to BIKE's *decoder*, not to BIKE's `(r, d, t)` under an arbitrary one.
+
+**What to do.** Regenerate. There is no conversion: the old and new parameter sets describe
+different codes, and an old private key is not a valid key at the new ones.
+
+```
+herradura genpkey --algo hpke-stern-kem --out kem_priv.pem
+herradura pkey --in kem_priv.pem --pubout --out kem_pub.pem
+```
+
+Anything encrypted under a session key derived from an old KEM ciphertext should be
+re-encrypted while a pre-7.0.0 build is still available, exactly as for section 4.
+
+**How the failure presents.** Loudly, and that is deliberate: a v6 artifact fed to a v7
+build fails to decode at the PEM/DER layer, because the fixed-width fields are the wrong
+size. Unlike sections 8 and 9 there is no silent-garbage path here.
+
+**What this does *not* change.** The KEM stays **demo-only**, and the reason has changed
+rather than gone away — see `SECURITY.md`. The DFR at these parameters is not measurable
+here, which is precisely what the change bought, so `2^-128` is *inherited* from BIKE's
+published analysis while what ships is a reimplementation of BIKE's decoder over a
+suite-specific FSCX-based PRF. Promotion is a separate decision and was not taken here.
+The assembly and Arduino targets keep their own `r = 32` demo parameters and are unaffected,
+as they were at section 4.
+
+**Cost.** Decapsulation is slower, as expected from a 23.6x larger `r`: measured at
+roughly 33 ms in C and 170 ms in Python, against 3.8 ms in Python at the old parameters.
+The Python decoder was rewritten bit-sliced in v6.7.3 specifically so that this change
+would be affordable there; under the per-position decoder that preceded it the same
+decapsulation takes 5.6 seconds.

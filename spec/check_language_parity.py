@@ -2240,12 +2240,15 @@ def _py_params(src):
 
 
 def _java_params(java_files):
-    """`static final int/long`, keyed Class.NAME because Java scopes per class."""
+    """`static final int/long/double/float`, keyed Class.NAME because Java
+    scopes per class.  double/float are read for the same reason the evaluator
+    keeps floats: a threshold-rule coefficient is a parameter like any other,
+    and reading only integer declarations would drop it silently."""
     out = {}
     for fname, text in sorted(java_files.items()):
         cls = fname[:-5]
         for m in re.finditer(
-            r"static\s+final\s+(?:int|long)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);",
+            r"static\s+final\s+(?:int|long|double|float)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);",
             _strip_comments(text),
         ):
             v = m.group(2).strip()
@@ -2255,12 +2258,24 @@ def _java_params(java_files):
 
 
 def _param_eval(expr, table, lang, depth=0, cls=None):
-    """Resolve an expression to an int, following references within its own
+    """Resolve an expression to a number, following references within its own
     language.  Returns None for anything that is not arithmetic -- a hash IV,
-    a macro alias, a type name -- which the census then has to exempt."""
+    a macro alias, a type name -- which the census then has to exempt.
+
+    INTEGRAL RESULTS COME BACK AS int, non-integral ones as float, and the
+    distinction matters: coercing everything to int read QCMDPC_TH_SLOPE
+    (0.0069722) as 0 in all four languages, which is an equality no drift could
+    ever break.  A threshold-rule coefficient is exactly the kind of constant
+    this axis exists to compare, so it has to survive evaluation intact."""
     if depth > 12:
         return None
     e = expr.strip()
+    # A C/Java `(int)` cast TRUNCATES, and the cast has to be applied rather
+    # than merely removed: Hcred's W_MAX is `(int)(n/4.0 + 4*sqrt(3n/16))`,
+    # which is 91.71 before the cast and 91 after.  Coercing every result to
+    # int used to re-apply it by accident; once non-integral results survive,
+    # dropping the cast makes C's literal 91 and Java's expression disagree.
+    cast_int = re.search(r"\(int\)", e) is not None
     e = re.sub(r"\(int\)\s*", "", e)
     e = (e.replace("Math.sqrt", "__sqrt")
           .replace("Math.max", "__max")
@@ -2290,11 +2305,20 @@ def _param_eval(expr, table, lang, depth=0, cls=None):
     e = re.sub(r"(?<![0-9A-Za-z_])(?!0[xX])[A-Za-z_]\w*(?:\.\w+)*", resolve, e)
     if "None" in e:
         return None
-    if lang != "python":
-        e = re.sub(r"(?<![/])/(?![/])", "//", e)   # C/Go/Java `/` on ints truncates
+    if lang != "python" and not re.search(r"\d\.\d|\.\d|\d\.", e):
+        # C/Go/Java `/` on ints truncates -- but only on ints.  An expression
+        # carrying a float literal divides as a float in all four, so the
+        # rewrite is skipped there rather than silently truncating it.
+        e = re.sub(r"(?<![/])/(?![/])", "//", e)
     try:
-        return int(eval(e, {"__builtins__": {}},
-                        {"__sqrt": math.sqrt, "__max": max, "__min": min}))
+        v = eval(e, {"__builtins__": {}},
+                 {"__sqrt": math.sqrt, "__max": max, "__min": min})
+    except Exception:
+        return None
+    try:
+        if cast_int:
+            return int(v)
+        return int(v) if float(v).is_integer() else float(v)
     except Exception:
         return None
 
@@ -2372,6 +2396,27 @@ PARAMETERS = {
                        "BGF decoder iterations.  LOCAL and it matters: this changes the "
                        "DFR, not the ciphertext, so a language that lowered it would "
                        "fail to decapsulate slightly more often and no test would say so"),
+    "qcmdpc-th-slope": (["QCMDPC_TH_SLOPE", "QcMdpcThSlope", "_QCMDPC_TH_SLOPE",
+                         "Stern.QCMDPC_TH_SLOPE"], "local",
+                        "BIKE L1 threshold rule, slope in the syndrome weight "
+                        "(TODO #276).  LOCAL, and the reason is the same as "
+                        "qcmdpc-nb-iter's only sharper: the rule changes the "
+                        "DFR, not the ciphertext, so a language that mistyped a "
+                        "digit here would decapsulate slightly more often and "
+                        "every round-trip and interop test would still pass.  "
+                        "This is also the row that made the evaluator keep "
+                        "floats -- as an int it read 0 in all four"),
+    "qcmdpc-th-offset": (["QCMDPC_TH_OFFSET", "QcMdpcThOffset", "_QCMDPC_TH_OFFSET",
+                          "Stern.QCMDPC_TH_OFFSET"], "local",
+                         "BIKE L1 threshold rule, constant term"),
+    "qcmdpc-th-min": (["QCMDPC_TH_MIN", "QcMdpcThMin", "_QCMDPC_TH_MIN",
+                       "Stern.QCMDPC_TH_MIN"], "local",
+                      "BIKE L1 threshold floor.  At d=15 it exceeds the row "
+                      "weight outright, which is why the rule and the "
+                      "parameters cannot be ported separately"),
+    "qcmdpc-tau": (["QCMDPC_TAU", "QcMdpcTau", "_QCMDPC_TAU", "Stern.QCMDPC_TAU"],
+                   "local",
+                   "gray band width; BIKE's is 3, the toy set's decoder used 2"),
     "qcmdpc-max-mult": (["QCMDPC_MAX_MULT", "qcMdpcMaxMult", "_QCMDPC_MAX_MULT",
                          "Stern.QCMDPC_MAX_MULT"], "local",
                         "weak-key screen threshold.  THE ROW TODO #276 ASKED FOR: it "

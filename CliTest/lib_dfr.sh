@@ -2,13 +2,36 @@
 # TODO #221; the policy itself was established by TODO #195 and rewritten by
 # TODO #235.
 #
-# The QC-MDPC BGF decoder behind `--algo hpke-stern-kem` (and the KEM half of
-# `--algo hybrid-rnl-stern`) has a measured, nonzero decoding failure rate at its
-# current toy parameters: 0.225% per encapsulation, 45/20000 trials, 95% CI
-# [0.159%, 0.291%] — see SecurityProofsCode/qcmdpc_bgf_failure_rate.py. A DFR
-# event is an expected protocol outcome, not a bug, so a CI script that
-# decapsulates must retry a bounded number of times with fresh randomness rather
-# than failing the run.
+# ── WHAT TODO #276 CHANGED, AND WHY THIS POLICY IS STILL HERE ────────────────
+#
+# This file was written when the KEM ran at toy parameters (r=523, d=15, t=18)
+# with a MEASURED decoding failure rate of 0.225%-0.264% per encapsulation —
+# high enough to be hit in ordinary CI, which is the whole reason for a shared
+# retry policy. v7.0.0 moved the KEM to BIKE-128 (r=12323, d=71, t=134) with
+# BIKE's decoder, whose published DFR target is 2^-128. **At these parameters a
+# retry here is expected never to fire.**
+#
+# That makes this policy look like dead code, and TODO #276 asked for it to be
+# re-justified rather than left asserting something vacuous. Three reasons it
+# stays, and the third changes how a firing retry should be read:
+#
+#   1. The 2^-128 is INHERITED, not measured here. What ships is a
+#      reimplementation of BIKE's decoder over a suite-specific FSCX-based PRF;
+#      its equivalence to BIKE's is established by testing, not by proof. A
+#      nonzero rate is not excluded by anything in this repository.
+#   2. ci.yml's guard — every script that decapsulates must source this file —
+#      is a coverage check on SCRIPTS, not a claim about the rate. Dropping it
+#      would let a new script check `dec`'s exit status and call that a test,
+#      which since TODO #235 tests only that the CLI starts.
+#   3. **A retry that fires is now a signal, not noise.** At the toy parameters
+#      a mismatch was overwhelmingly likely to be an expected DFR event; at
+#      BIKE-128 it is overwhelmingly likely to be a BUG — a wire-format
+#      disagreement, a broken language pair, a decoder ported wrong. The retry
+#      still happens (a real DFR event must not turn CI red on one sample), but
+#      dfr_report_retry says so loudly and names #276, so a firing retry is
+#      something to investigate rather than to scroll past.
+#
+# The mechanics below are unchanged; only the reading of a fired retry is.
 #
 # ── What TODO #235 changed, and why this file was rewritten ──────────────────
 #
@@ -38,7 +61,10 @@
 # So the policy is unchanged in shape and in its residual-error math: retry the
 # whole encapsulate-decapsulate step a bounded number of times against FRESH
 # randomness, and treat a mismatch that survives the budget as a real failure.
-# Residual false-red probability is still p^N: 1.1e-8 at N=3, 5.8e-14 at N=5.
+# Residual false-red probability is p^N, where p was 0.00225 at the toy
+# parameters: 1.1e-8 at N=3, 5.8e-14 at N=5.  At BIKE-128 the same arithmetic is
+# vacuous rather than reassuring — p is believed to be 2^-128 — so the budget is
+# kept for the reasons above, not for this bound.
 #
 # What is genuinely lost is the old file's assurance that "the decoder
 # self-detects every failure it hits and never silently accepts a wrong key".
@@ -77,9 +103,15 @@ dfr_retryable() {
     [ "$1" -lt "$MAX_DFR_RETRIES" ]
 }
 
-# dfr_report_retry <label> <attempt> — uniform, greppable INFO line on stderr.
+# dfr_report_retry <label> <attempt> — uniform, greppable line on stderr.
+#
+# WARN, not INFO, since TODO #276: at BIKE-128 the expected DFR is 2^-128, so a
+# mismatch here is far more likely to be a bug than an expected decoding
+# failure.  It still retries — one sample cannot tell the two apart, and a
+# genuine DFR event must not turn CI red — but it should not read as routine.
 dfr_report_retry() {
-    echo "INFO $1: QC-MDPC BGF DFR event (output mismatch) on attempt $2 of" \
-         "$MAX_DFR_RETRIES (expected ~0.225%/encapsulation, TODO #195/#235)" \
-         "— retrying with fresh randomness" >&2
+    echo "WARN $1: QC-MDPC output mismatch on attempt $2 of $MAX_DFR_RETRIES" \
+         "— retrying with fresh randomness. At BIKE-128 (r=12323, TODO #276)" \
+         "the expected DFR is 2^-128, so this is far more likely a BUG than a" \
+         "decoding failure: investigate rather than ignore" >&2
 }

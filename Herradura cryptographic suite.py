@@ -1652,14 +1652,34 @@ def stern_f_first_preimage(ciphertext: int, seed: 'BitArray', n: int = None):
 # ---------------------------------------------------------------------------
 # QC-MDPC Niederreiter KEM + BGF decoder (TODO #126, Batch 2)
 #
-# Toy parameters: r=523, d=15, t=18.  PRF: NL-FSCX v1 counter-mode XOF.
+# Parameters: BIKE-128, r=12323, d=71, t=134 (TODO #276), replacing the toy set
+# r=523, d=15, t=18 that shipped through v6.7.3.  Adopting the parameters means
+# adopting the DECODER -- BIKE's threshold rule is affine in the SYNDROME WEIGHT
+# where the old one was affine in d.  See herradura.h's note and §11.8.9.
+# PRF: NL-FSCX v1 counter-mode XOF.
 # Hardness: quasi-cyclic syndrome decoding (QCSD).
 # ---------------------------------------------------------------------------
 
-_QCMDPC_R = 523
-_QCMDPC_D = 15
-_QCMDPC_T = 18
-_QCMDPC_NB_ITER = 20
+# BIKE-128, adopted verbatim (TODO #276).  These replace the toy set r=523,
+# d=15, t=18 that shipped through v6.7.3 and was worth ~2^21 classical
+# operations.  Adopting the parameters means adopting the DECODER: BIKE's
+# threshold rule is affine in the SYNDROME WEIGHT where the old one was affine
+# in d, and each fails outright at the other's d.  SecurityProofs-5.md §11.8.9.
+_QCMDPC_R = 12323
+_QCMDPC_D = 71
+_QCMDPC_T = 134
+_QCMDPC_NB_ITER = 5
+
+# BIKE Level 1's threshold rule (BIKE spec §2.4.2), affine in the weight of the
+# private syndrome with a floor.  The TRUNCATION is part of the rule: int() here,
+# (int) in C and Java and int() in Go all truncate toward zero on a positive
+# operand, so all four floor it identically.
+_QCMDPC_TH_SLOPE = 0.0069722
+_QCMDPC_TH_OFFSET = 13.530
+_QCMDPC_TH_MIN = 36
+
+# Gray band width.  BIKE's is 3; the toy set's decoder used 2.
+_QCMDPC_TAU = 3
 _QCMDPC_MASK = (1 << KEYBITS) - 1  # convenience alias
 _QCPRF_BLOCK_BYTES = KEYBITS // 8   # one PRF block, 32 bytes
 _QCPRF_MAX_IDX_BYTES = 4            # widest uniform draw the sampler serves
@@ -1678,7 +1698,7 @@ def _qcprf_idx_bytes(m: int) -> int:
 
     Sizing the draw from the modulus rather than fixing it at two bytes is what
     lifts the sampler's ceiling (TODO #277).  It costs nothing where it matters:
-    w is 2 for every modulus below 65537, so the deployed r = 523 / 2r = 1046
+    w is 2 for every modulus below 65537, so the old r = 523 / 2r = 1046, the deployed r = 12323 / 2r = 24646
     and BIKE-128's and BIKE-192's moduli all consume the keystream exactly as
     the 16-bit-only sampler did, and every pinned QC-MDPC artifact still holds.
     """
@@ -1795,9 +1815,13 @@ _QCMDPC_DS_K     = 0x10   # session key, success path
 _QCMDPC_DS_Z     = 0x11   # session key, implicit-rejection path
 _QCMDPC_DS_ZSEED = 0x12   # z, derived from the private polynomials
 
-# Weak-key screen bound: TODO #218 §4 puts the DFR cliff between distance-
-# spectrum multiplicity 6 and 7, and honest keygen reaches 6 at ~1 key in 4800.
-_QCMDPC_MAX_MULT = 5
+# Weak-key screen bound.  5 was read off a MEASURED DFR cliff at the old r=523,
+# d=15 (TODO #218 §4); that measurement is not available at these parameters and
+# cannot be made, since locating a cliff needs a measurable DFR and removing one
+# is what the parameter change is for.  TODO #276 states a surrogate in advance
+# instead — keep the screen a tail cut costing under one keygen retry in 200 —
+# which gives 6 at d=71.  A retry-budget choice, not a cliff.
+_QCMDPC_MAX_MULT = 6
 
 
 def _qcmdpc_max_multiplicity(sup, r: int) -> int:
@@ -1933,7 +1957,7 @@ def qcmdpc_bgf_decode(syn_pub: int, h0: int, sup0: set, sup1: set) -> tuple | No
     live in bitplanes over big integers (_qcmdpc_counters), so an iteration
     costs O(d) big-integer operations instead of O(r*d) interpreted ones.  That
     is what makes the decoder usable at a production r: a decapsulation that
-    measured 14.8 ms at the deployed r = 523 and 5.6 SECONDS at BIKE-128's
+    measured 14.8 ms at the old r = 523 and 5.6 SECONDS at the deployed
     r = 12323 costs 3.8 ms and 72 ms here.
 
     Flips within one group are batched into a single _qcp_mul_sparse rather than
@@ -1946,18 +1970,23 @@ def qcmdpc_bgf_decode(syn_pub: int, h0: int, sup0: set, sup1: set) -> tuple | No
     nb = max(4, d.bit_length())
     s = _qcp_mul_sparse(syn_pub, sup0, r)
     e0 = e1 = 0
-    th_floor = (d + 1) // 2 + 2
+    th_floor = (d + 1) // 2 + 1   # = 37; BIKE's masked-pass floor
 
     for it in range(nb_iter):
         if s == 0:
             break
-        th = max(math.ceil(0.66 * d), th_floor) if it < 7 else max(th_floor - 1, 8)
+        # BIKE L1: th = max(floor(slope*|s| + offset), _QCMDPC_TH_MIN).  The
+        # threshold falls as the syndrome thins, which is the whole difference
+        # from the rule this replaced: that one was a constant in d and stalled
+        # once the remaining syndrome could no longer meet it.
+        th = max(int(_QCMDPC_TH_SLOPE * bin(s).count('1') + _QCMDPC_TH_OFFSET),
+                 _QCMDPC_TH_MIN)
         c0 = _qcmdpc_counters(s, sup0, r, full, nb)
         c1 = _qcmdpc_counters(s, sup1, r, full, nb)
         black = (_qcmdpc_mask_ge(c0, full, th, nb),
                  _qcmdpc_mask_ge(c1, full, th, nb))
-        gray  = (_qcmdpc_mask_ge(c0, full, th - 2, nb) & ~black[0] & full,
-                 _qcmdpc_mask_ge(c1, full, th - 2, nb) & ~black[1] & full)
+        gray  = (_qcmdpc_mask_ge(c0, full, th - _QCMDPC_TAU, nb) & ~black[0] & full,
+                 _qcmdpc_mask_ge(c1, full, th - _QCMDPC_TAU, nb) & ~black[1] & full)
         e0 ^= black[0]
         s  ^= _qcp_mul_sparse(black[0], sup0, r)
         e1 ^= black[1]

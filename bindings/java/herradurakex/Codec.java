@@ -1206,7 +1206,7 @@ public final class Codec {
     // as a big-endian DER integer.
     // -----------------------------------------------------------------
 
-    private static final int QCMDPC_RB = (Stern.QCMDPC_R + 7) / 8; // 66
+    private static final int QCMDPC_RB = (Stern.QCMDPC_R + 7) / 8; // 1541
 
     public static String encodeKemPrivKey(BigInteger h0, BigInteger h1, int[] sup0, int[] sup1) {
         byte[] der = derSeq(

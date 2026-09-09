@@ -3312,36 +3312,88 @@ def test_hcred_kkw():
 # (SecurityProofsCode/qcmdpc_dfr_weak_keys.py section 4).
 #
 # The supports below are PINNED, not sampled, so each case asserts a known
-# answer rather than a probable one.  Every one is exactly QCMDPC_D = 15
-# elements, because C's qcmdpc_key_is_strong takes a QcMdpcPriv whose support
-# arrays are fixed at that width and could not be handed a shorter list.
-#   AP1  : 0..14 -- distance 1 occurs 14 times.  The arithmetic progression the
+# answer rather than a probable one.  Every one is exactly QCMDPC_D elements,
+# because C's qcmdpc_key_is_strong takes a QcMdpcPriv whose support arrays are
+# fixed at that width and could not be handed a shorter list.  They were
+# RE-DERIVED at BIKE-128's r = 12323, d = 71 by TODO #276; the previous set was
+# 15 elements over r = 523 with an accept-control on a bound of 5, and the names
+# no longer carry the number (B5/B6 became BOUND/OVER) so the next parameter
+# move cannot leave them lying.  A run of L consecutive positions gives cyclic
+# distance 1 a multiplicity of L-1, which is how both boundary cases are built.
+#   AP1  : 0..70 -- distance 1 occurs 70 times.  The arithmetic progression the
 #          screen exists to reject.
 #   AP35 : step 35 -- the same multiplicity at a non-unit step, so a screen
 #          keyed on consecutive integers rather than on the spectrum fails here.
-#   B5   : max multiplicity exactly 5 -- ACCEPTED, and the boundary from below.
-#          Its {0..5} run contributes 5 at distance 1; the other nine points are
-#          placed so nothing else reaches 5.
-#   B6   : B5 with 135 replaced by 6 -- the run becomes {0..6}, distance 1 goes
-#          to 6, and it must be REJECTED.  A minimal pair with B5: one element
-#          moved carries it across the threshold.
+#   BOUND: max multiplicity exactly _QC_MAX_MULT_T -- ACCEPTED, and the boundary
+#          from below.  Its {0..6} run contributes 6 at distance 1; the other
+#          points are placed so nothing else reaches that.
+#   OVER : the run is {0..7} instead, so distance 1 goes to _QC_MAX_MULT_T + 1
+#          and it must be REJECTED.  A minimal pair with BOUND: one element
+#          carries it across the threshold.
 #   WRAP : the discriminator for the CYCLIC distance.  Its run straddles zero
-#          (519..522, 0..2), so the true multiplicity is 6 and it must be
-#          rejected -- but computed WITHOUT min(d, r-d) the largest count is 5
-#          and it would be accepted.  An implementation that forgot the cyclic
-#          fold passes every other case here and fails only this one.
+#          (12318..12322, 0..2), so the true multiplicity is _QC_MAX_MULT_T + 1
+#          and it must be rejected -- but computed WITHOUT min(d, r-d) the run
+#          splits in two and the largest count is _QC_MAX_MULT_T, which would be
+#          accepted.  An implementation that forgot the cyclic fold passes every
+#          other case here and fails only this one.
 # As [46]-[49] do, this harness's own copy is cross-checked against the shipped
-# suite, since this file is standalone by design.
+# suite, since this file is standalone by design.  r AND THE BOUND ARE READ FROM
+# THE SUITE rather than written here: they are not this test's to pin, and a
+# hardcoded r=523 folding a 12323-bit support's distances reports multiplicity
+# 19 for a key whose true multiplicity is 4.
 # ---------------------------------------------------------------------------
 
-_QC_R_T        = 523        # _QCMDPC_R
-_QC_MAX_MULT_T = 5          # _QCMDPC_MAX_MULT
+def _qc_suite_const(name, fallback):
+    """Read a QC-MDPC parameter from the shipped suite.
 
-_QC_SUP_AP1  = list(range(15))
-_QC_SUP_AP35 = [(35 * i) % _QC_R_T for i in range(15)]
-_QC_SUP_B5   = [0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515]
-_QC_SUP_B6   = [0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515]
-_QC_SUP_WRAP = [0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522]
+    This harness is standalone by design and keeps its own copy of the
+    multiplicity FUNCTION (cross-checked against the suite below, as [46]-[49]
+    do), but a PARAMETER is not this test's to own: a hardcoded r=523 folds a
+    12323-bit support's distances onto each other and reports multiplicity 19
+    for a key whose true multiplicity is 4 -- a loud failure of a screen that
+    is working.  The fallback keeps the file runnable if the suite cannot be
+    loaded at all; the cross-check below is what catches a stale one."""
+    try:
+        import importlib.util as _ilu
+        _p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          'Herradura cryptographic suite.py')
+        _spec = _ilu.spec_from_file_location('_qcsuite', _p)
+        _m = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_m)
+        return getattr(_m, name)
+    except Exception:
+        return fallback
+
+
+_QC_R_T        = _qc_suite_const('_QCMDPC_R', 12323)
+_QC_MAX_MULT_T = _qc_suite_const('_QCMDPC_MAX_MULT', 6)
+
+_QC_SUP_AP1  = list(range(71))
+_QC_SUP_AP35 = [(35 * i) % _QC_R_T for i in range(71)]
+_QC_SUP_BOUND = [
+    0, 1, 2, 3, 4, 5, 6, 146, 158, 514, 534, 631, 652, 791, 1387, 1404,
+    1645, 1931, 2060, 2180, 2352, 2468, 2549, 2714, 2986, 3365, 3493,
+    3729, 3991, 4338, 4459, 4475, 4850, 5182, 5188, 5197, 5233, 5652,
+    5779, 5952, 6182, 6365, 6374, 6407, 6471, 6475, 6689, 7099, 7276,
+    7666, 7759, 7844, 7980, 8674, 8770, 9162, 9385, 9781, 9835, 10487,
+    10523, 10552, 10743, 10880, 10902, 11159, 11175, 11292, 11309, 11518,
+    12108]
+_QC_SUP_OVER = [
+    0, 1, 2, 3, 4, 5, 6, 7, 40, 565, 1173, 1208, 1337, 1537, 1895, 2017,
+    2588, 2958, 2964, 3057, 3159, 3251, 3514, 3562, 4086, 4143, 4705,
+    4727, 4989, 5010, 5023, 5088, 5200, 5310, 6069, 6161, 6505, 6553,
+    6806, 7189, 7203, 7393, 7464, 7609, 7936, 8006, 8022, 8109, 8278,
+    8325, 8387, 8630, 8780, 8894, 9077, 9805, 10206, 10252, 10591, 10597,
+    10717, 10983, 10988, 11178, 11225, 11417, 11692, 11747, 12066, 12270,
+    12313]
+_QC_SUP_WRAP = [
+    0, 1, 2, 170, 330, 362, 800, 910, 1035, 1379, 1404, 1720, 1968, 2088,
+    2493, 2587, 2677, 3186, 3193, 3213, 3578, 3656, 3720, 3907, 3979,
+    3986, 4033, 4047, 4363, 4424, 4462, 4517, 4639, 5289, 5561, 5691,
+    5804, 5839, 5857, 5978, 6267, 6608, 6821, 6834, 7023, 8356, 8358,
+    8415, 8618, 8883, 8898, 8920, 8946, 9352, 9603, 9721, 9727, 9739,
+    10135, 10467, 10629, 10880, 11490, 11834, 11879, 12182, 12318, 12319,
+    12320, 12321, 12322]
 
 
 def _qc_max_mult_test(sup, r=_QC_R_T):
@@ -3374,25 +3426,25 @@ def test_qcmdpc_weak_key_screen():
         # (a) accept-control.  Without it a screen that rejects EVERYTHING
         #     scores a perfect pass on (b)-(f).  B5 sits exactly on the
         #     threshold, so this is also the boundary from below.
-        if not s(_QC_SUP_B5, _QC_SUP_B5):
+        if not s(_QC_SUP_BOUND, _QC_SUP_BOUND):
             bad_reject += 1
         # (b) the arithmetic progression the screen exists to reject
-        if s(_QC_SUP_AP1, _QC_SUP_B5):
+        if s(_QC_SUP_AP1, _QC_SUP_BOUND):
             bad_accept += 1
         # (c) the same multiplicity at a non-unit step
-        if s(_QC_SUP_AP35, _QC_SUP_B5):
+        if s(_QC_SUP_AP35, _QC_SUP_BOUND):
             bad_accept += 1
         # (d) the boundary from above -- one element moved from (a)
-        if s(_QC_SUP_B6, _QC_SUP_B5):
+        if s(_QC_SUP_OVER, _QC_SUP_BOUND):
             bad_accept += 1
         # (e) BOTH supports must be screened.  A predicate that tested sup0
         #     twice, or sup1 twice, passes (a)-(d) and fails exactly here.
-        if s(_QC_SUP_B5, _QC_SUP_B6):
+        if s(_QC_SUP_BOUND, _QC_SUP_OVER):
             bad_accept += 1
         # (f) the cyclic-distance discriminator: true multiplicity 6, but 5 if
         #     min(d, r-d) is omitted.  Counted separately so a failure names
         #     the cause instead of just incrementing a total.
-        if s(_QC_SUP_WRAP, _QC_SUP_B5):
+        if s(_QC_SUP_WRAP, _QC_SUP_BOUND):
             wrap_missed += 1
 
     # Cross-check this harness's copy against the shipped suite, on the pinned
@@ -3407,8 +3459,8 @@ def test_qcmdpc_weak_key_screen():
         _m = _ilu.module_from_spec(_sp)
         _sp.loader.exec_module(_m)
         mism = 0
-        for a in (_QC_SUP_AP1, _QC_SUP_AP35, _QC_SUP_B5, _QC_SUP_B6, _QC_SUP_WRAP):
-            for b in (_QC_SUP_B5, _QC_SUP_B6):
+        for a in (_QC_SUP_AP1, _QC_SUP_AP35, _QC_SUP_BOUND, _QC_SUP_OVER, _QC_SUP_WRAP):
+            for b in (_QC_SUP_BOUND, _QC_SUP_OVER):
                 if _m.qcmdpc_key_is_strong(a, b) != s(a, b):
                     mism += 1
         sup0, sup1 = _m.qcmdpc_keygen()[:2]
@@ -3772,10 +3824,36 @@ def bench_zkp_rnl():
 # dispute, and a vector agreeing with a local copy proves nothing.
 # ---------------------------------------------------------------------------
 
-_QCPRF_EXP_A = [4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510]
-_QCPRF_EXP_B = [0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480]
-_QCPRF_EXP_C = [0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
-                823, 866, 1001, 1033]
+_QCPRF_EXP_A = [
+    0, 176, 178, 662, 850, 1264, 1593, 1779, 1858, 2350, 2469, 2600, 2987,
+    3186, 3212, 3398, 3666, 3910, 3915, 4648, 4711, 5007, 5061, 5167,
+    5434, 5645, 6096, 6231, 6246, 6461, 6492, 6521, 6844, 7123, 7332,
+    7347, 7360, 7412, 7503, 7820, 7994, 8072, 8745, 8754, 8918, 9159,
+    9297, 9422, 9539, 9546, 9671, 9849, 9887, 10014, 10123, 10258, 10275,
+    10298, 10652, 10799, 10839, 10869, 11002, 11086, 11239, 11289, 11290,
+    11870, 12072, 12192, 12256]
+_QCPRF_EXP_B = [
+    139, 169, 503, 600, 719, 779, 1908, 1924, 2306, 2372, 2400, 2419,
+    2495, 2528, 2590, 3089, 3455, 3788, 3833, 4002, 4122, 4263, 4389,
+    4638, 4859, 4981, 5074, 5135, 5495, 5697, 5761, 5995, 6211, 6373,
+    6413, 6473, 6482, 6651, 6756, 7130, 7258, 7496, 7706, 7889, 8079,
+    8194, 8228, 8269, 8573, 8853, 9275, 9726, 9767, 9827, 9903, 10102,
+    10317, 10335, 10343, 10402, 10742, 10873, 11340, 11557, 11601, 11728,
+    11801, 11960, 11981, 12062, 12236]
+_QCPRF_EXP_C = [
+    0, 688, 1264, 1593, 1908, 2306, 2400, 2528, 2590, 2987, 3099, 3186,
+    3455, 3531, 4263, 4353, 4648, 4711, 4859, 5007, 5061, 5074, 5434,
+    5645, 5975, 6096, 6211, 6231, 6235, 6242, 6335, 6373, 6473, 6651,
+    7332, 7496, 7820, 7994, 8072, 8079, 8754, 8759, 8853, 8918, 9159,
+    9422, 9539, 9726, 9827, 9887, 9903, 10014, 10102, 10275, 10402, 10742,
+    11290, 11340, 11960, 12072, 12118, 12192, 12422, 12462, 12492, 12501,
+    12826, 12923, 12985, 13042, 13102, 13341, 13603, 14247, 14695, 14742,
+    14792, 14818, 14827, 14923, 15198, 15412, 15535, 15702, 15989, 16111,
+    16233, 16238, 16445, 16961, 17304, 17490, 17877, 18318, 18569, 18736,
+    18784, 18815, 18844, 19079, 19446, 19453, 19670, 19683, 19826, 20029,
+    20212, 20517, 20551, 20896, 21068, 21415, 21598, 21994, 22090, 22172,
+    22580, 22581, 22621, 22658, 22975, 23122, 23162, 23196, 23227, 23409,
+    23562, 23612, 23880, 24124, 24145, 24193, 24304, 24385]
 _QCPRF_EXP_D = [15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122]
 # the draw width is a function of the modulus, not a constant
 _QCPRF_WIDTHS = [(523, 2), (1046, 2), (12323, 2), (24646, 2),
@@ -3796,12 +3874,19 @@ def test_qcprf_seed_expansion():
         print(f"    suite not importable: {type(e).__name__}  [FAIL]\n")
         return
 
+    # The moduli and weights come from the SUITE's constants, never from
+    # literals: they were written 523/15 and 1046/18 here, which pinned the
+    # vector to parameters this test does not own and went stale the moment
+    # TODO #276 moved them.  _QCPRF_WIDTHS below keeps its literals on purpose
+    # -- that one tests the draw width as a FUNCTION of the modulus, so its
+    # moduli are the input, not a parameter.
+    _r, _d, _t = suite._QCMDPC_R, suite._QCMDPC_D, suite._QCMDPC_T
     prf = suite._QcMdpcPrf(1)
-    got_a = sorted(prf.sparse_support(523, 15))
+    got_a = sorted(prf.sparse_support(_r, _d))
     # (b) the SECOND support -- the one that crosses into block ctr=1
-    got_b = sorted(prf.sparse_support(523, 15))
+    got_b = sorted(prf.sparse_support(_r, _d))
     # (c) the encapsulation modulus, 2r
-    got_c = sorted(suite._QcMdpcPrf(1).sparse_support(1046, 18))
+    got_c = sorted(suite._QcMdpcPrf(1).sparse_support(2 * _r, _t))
     # (d) past the old 16-bit ceiling: terminates, and agrees with the others.
     #     The 16-bit-only sampler could not serve this modulus and did not
     #     refuse either -- its acceptance limit was zero, so it spun forever.

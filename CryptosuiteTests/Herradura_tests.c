@@ -5784,34 +5784,69 @@ int main(int argc, char *argv[])
      * confidentiality break (SecurityProofsCode/qcmdpc_dfr_weak_keys.py §4).
      *
      * The supports are PINNED, not sampled, so each case asserts a known answer
-     * rather than a probable one.  Each is exactly QCMDPC_D = 15 elements,
-     * which is also what QcMdpcPriv's arrays hold.
-     *   (a) accept-control: qc_b5 has max multiplicity exactly 5, so it is both
-     *       the control (a screen rejecting EVERYTHING fails here) and the
-     *       boundary from below.
-     *   (b) qc_ap1: 0..14, distance 1 occurs 14 times -- the arithmetic
+     * rather than a probable one.  Each is exactly QCMDPC_D elements, which is
+     * also what QcMdpcPriv's arrays hold.  They were RE-DERIVED at BIKE-128's
+     * r = 12323, d = 71 by TODO #276; the previous set was 15 elements over
+     * r = 523 with an accept-control sitting on a bound of 5.  The names no
+     * longer carry the number (qc_b5/qc_b6 became qc_bound/qc_over) precisely
+     * so that the next parameter move cannot leave them lying.
+     *   (a) accept-control: qc_bound has max multiplicity exactly
+     *       QCMDPC_MAX_MULT, so it is both the control (a screen rejecting
+     *       EVERYTHING fails here) and the boundary from below.  Its run is
+     *       {0..6}: a run of L gives cyclic distance 1 a multiplicity of L-1.
+     *   (b) qc_ap1: 0..70, distance 1 occurs 70 times -- the arithmetic
      *       progression the screen exists to reject.
      *   (c) qc_ap35: the same multiplicity at a non-unit step, so a screen
      *       keyed on consecutive integers rather than on the spectrum fails.
-     *   (d) qc_b6: qc_b5 with 135 replaced by 6, making the run {0..6} and the
-     *       multiplicity 6 -- the boundary from above, one element away from (a).
+     *   (d) qc_over: the run is {0..7} instead, multiplicity QCMDPC_MAX_MULT+1
+     *       -- the boundary from above, one element away from (a).
      *   (e) both supports must be screened: a predicate testing sup0 twice
      *       passes (a)-(d) and fails only here.
-     *   (f) qc_wrap: its run straddles zero (519..522, 0..2), so the true
-     *       multiplicity is 6 and it must be rejected -- but computed WITHOUT
-     *       the min(d, r-d) cyclic fold the largest count is 5 and it would be
-     *       accepted.  Counted separately so a failure names the cause. */
+     *   (f) qc_wrap: its run straddles zero (12318..12322, 0..2), so the true
+     *       multiplicity is QCMDPC_MAX_MULT+1 and it must be rejected -- but
+     *       computed WITHOUT the min(d, r-d) cyclic fold the run splits in two
+     *       and the largest count is QCMDPC_MAX_MULT, which would be accepted.
+     *       Counted separately so a failure names the cause. */
     {
-        static const uint16_t qc_ap1[QCMDPC_D] =
-            { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 };
-        static const uint16_t qc_ap35[QCMDPC_D] =
-            { 0, 35, 70, 105, 140, 175, 210, 245, 280, 315, 350, 385, 420, 455, 490 };
-        static const uint16_t qc_b5[QCMDPC_D] =
-            { 0, 1, 2, 3, 4, 5, 122, 135, 203, 252, 254, 287, 406, 500, 515 };
-        static const uint16_t qc_b6[QCMDPC_D] =
-            { 0, 1, 2, 3, 4, 5, 6, 122, 203, 252, 254, 287, 406, 500, 515 };
-        static const uint16_t qc_wrap[QCMDPC_D] =
-            { 0, 1, 2, 41, 265, 310, 394, 414, 430, 488, 497, 519, 520, 521, 522 };
+        static const uint16_t qc_ap1[QCMDPC_D] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+            18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+            48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+            63, 64, 65, 66, 67, 68, 69, 70 };
+        static const uint16_t qc_ap35[QCMDPC_D] = {
+            0, 35, 70, 105, 140, 175, 210, 245, 280, 315, 350, 385, 420,
+            455, 490, 525, 560, 595, 630, 665, 700, 735, 770, 805, 840,
+            875, 910, 945, 980, 1015, 1050, 1085, 1120, 1155, 1190, 1225,
+            1260, 1295, 1330, 1365, 1400, 1435, 1470, 1505, 1540, 1575,
+            1610, 1645, 1680, 1715, 1750, 1785, 1820, 1855, 1890, 1925,
+            1960, 1995, 2030, 2065, 2100, 2135, 2170, 2205, 2240, 2275,
+            2310, 2345, 2380, 2415, 2450 };
+        static const uint16_t qc_bound[QCMDPC_D] = {
+            0, 1, 2, 3, 4, 5, 6, 146, 158, 514, 534, 631, 652, 791, 1387,
+            1404, 1645, 1931, 2060, 2180, 2352, 2468, 2549, 2714, 2986,
+            3365, 3493, 3729, 3991, 4338, 4459, 4475, 4850, 5182, 5188,
+            5197, 5233, 5652, 5779, 5952, 6182, 6365, 6374, 6407, 6471,
+            6475, 6689, 7099, 7276, 7666, 7759, 7844, 7980, 8674, 8770,
+            9162, 9385, 9781, 9835, 10487, 10523, 10552, 10743, 10880,
+            10902, 11159, 11175, 11292, 11309, 11518, 12108 };
+        static const uint16_t qc_over[QCMDPC_D] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 40, 565, 1173, 1208, 1337, 1537, 1895,
+            2017, 2588, 2958, 2964, 3057, 3159, 3251, 3514, 3562, 4086,
+            4143, 4705, 4727, 4989, 5010, 5023, 5088, 5200, 5310, 6069,
+            6161, 6505, 6553, 6806, 7189, 7203, 7393, 7464, 7609, 7936,
+            8006, 8022, 8109, 8278, 8325, 8387, 8630, 8780, 8894, 9077,
+            9805, 10206, 10252, 10591, 10597, 10717, 10983, 10988, 11178,
+            11225, 11417, 11692, 11747, 12066, 12270, 12313 };
+        static const uint16_t qc_wrap[QCMDPC_D] = {
+            0, 1, 2, 170, 330, 362, 800, 910, 1035, 1379, 1404, 1720,
+            1968, 2088, 2493, 2587, 2677, 3186, 3193, 3213, 3578, 3656,
+            3720, 3907, 3979, 3986, 4033, 4047, 4363, 4424, 4462, 4517,
+            4639, 5289, 5561, 5691, 5804, 5839, 5857, 5978, 6267, 6608,
+            6821, 6834, 7023, 8356, 8358, 8415, 8618, 8883, 8898, 8920,
+            8946, 9352, 9603, 9721, 9727, 9739, 10135, 10467, 10629,
+            10880, 11490, 11834, 11879, 12182, 12318, 12319, 12320, 12321,
+            12322 };
         int N = g_rounds > 0 ? g_rounds : 50, i;
         int bad_accept = 0, bad_reject = 0, wrap_missed = 0, keygen_ok = 0;
         static QcMdpcPriv qp;
@@ -5819,8 +5854,8 @@ int main(int argc, char *argv[])
         printf("[51] QC-MDPC weak-key screen (distance spectrum)  [SECURITY]\n");
         for (i = 0; i < N; i++) {
             /* (a) accept-control, and the boundary from below */
-            memcpy(qp.sup0, qc_b5, sizeof qc_b5);
-            memcpy(qp.sup1, qc_b5, sizeof qc_b5);
+            memcpy(qp.sup0, qc_bound, sizeof qc_bound);
+            memcpy(qp.sup1, qc_bound, sizeof qc_bound);
             if (!qcmdpc_key_is_strong(&qp)) bad_reject++;
 
             /* (b) the arithmetic progression */
@@ -5832,17 +5867,17 @@ int main(int argc, char *argv[])
             if (qcmdpc_key_is_strong(&qp)) bad_accept++;
 
             /* (d) the boundary from above */
-            memcpy(qp.sup0, qc_b6, sizeof qc_b6);
+            memcpy(qp.sup0, qc_over, sizeof qc_over);
             if (qcmdpc_key_is_strong(&qp)) bad_accept++;
 
             /* (e) both supports screened, not just sup0 */
-            memcpy(qp.sup0, qc_b5, sizeof qc_b5);
-            memcpy(qp.sup1, qc_b6, sizeof qc_b6);
+            memcpy(qp.sup0, qc_bound, sizeof qc_bound);
+            memcpy(qp.sup1, qc_over, sizeof qc_over);
             if (qcmdpc_key_is_strong(&qp)) bad_accept++;
 
             /* (f) the cyclic-fold discriminator */
             memcpy(qp.sup0, qc_wrap, sizeof qc_wrap);
-            memcpy(qp.sup1, qc_b5,   sizeof qc_b5);
+            memcpy(qp.sup1, qc_bound,   sizeof qc_bound);
             if (qcmdpc_key_is_strong(&qp)) wrap_missed++;
         }
 
@@ -5890,13 +5925,40 @@ int main(int argc, char *argv[])
     {
         /* All four languages agree on these, and they are pinned in each harness --
          * the PRF has no CLI surface, so this is the only place it is pinned. */
-        static const uint16_t exp_a[QCMDPC_D] =
-            { 4, 6, 17, 28, 90, 92, 148, 149, 215, 292, 300, 306, 343, 415, 510 };
-        static const uint16_t exp_b[QCMDPC_D] =
-            { 0, 95, 149, 175, 200, 268, 319, 335, 338, 357, 397, 457, 478, 479, 480 };
-        static const uint16_t exp_c[QCMDPC_T] =
-            { 0, 6, 90, 92, 148, 292, 306, 397, 415, 527, 540, 551, 672, 738,
-              823, 866, 1001, 1033 };
+        static const uint16_t exp_a[QCMDPC_D] = {
+            0, 176, 178, 662, 850, 1264, 1593, 1779, 1858, 2350, 2469,
+            2600, 2987, 3186, 3212, 3398, 3666, 3910, 3915, 4648, 4711,
+            5007, 5061, 5167, 5434, 5645, 6096, 6231, 6246, 6461, 6492,
+            6521, 6844, 7123, 7332, 7347, 7360, 7412, 7503, 7820, 7994,
+            8072, 8745, 8754, 8918, 9159, 9297, 9422, 9539, 9546, 9671,
+            9849, 9887, 10014, 10123, 10258, 10275, 10298, 10652, 10799,
+            10839, 10869, 11002, 11086, 11239, 11289, 11290, 11870, 12072,
+            12192, 12256 };
+        static const uint16_t exp_b[QCMDPC_D] = {
+            139, 169, 503, 600, 719, 779, 1908, 1924, 2306, 2372, 2400,
+            2419, 2495, 2528, 2590, 3089, 3455, 3788, 3833, 4002, 4122,
+            4263, 4389, 4638, 4859, 4981, 5074, 5135, 5495, 5697, 5761,
+            5995, 6211, 6373, 6413, 6473, 6482, 6651, 6756, 7130, 7258,
+            7496, 7706, 7889, 8079, 8194, 8228, 8269, 8573, 8853, 9275,
+            9726, 9767, 9827, 9903, 10102, 10317, 10335, 10343, 10402,
+            10742, 10873, 11340, 11557, 11601, 11728, 11801, 11960, 11981,
+            12062, 12236 };
+        static const uint16_t exp_c[QCMDPC_T] = {
+            0, 688, 1264, 1593, 1908, 2306, 2400, 2528, 2590, 2987, 3099,
+            3186, 3455, 3531, 4263, 4353, 4648, 4711, 4859, 5007, 5061,
+            5074, 5434, 5645, 5975, 6096, 6211, 6231, 6235, 6242, 6335,
+            6373, 6473, 6651, 7332, 7496, 7820, 7994, 8072, 8079, 8754,
+            8759, 8853, 8918, 9159, 9422, 9539, 9726, 9827, 9887, 9903,
+            10014, 10102, 10275, 10402, 10742, 11290, 11340, 11960, 12072,
+            12118, 12192, 12422, 12462, 12492, 12501, 12826, 12923, 12985,
+            13042, 13102, 13341, 13603, 14247, 14695, 14742, 14792, 14818,
+            14827, 14923, 15198, 15412, 15535, 15702, 15989, 16111, 16233,
+            16238, 16445, 16961, 17304, 17490, 17877, 18318, 18569, 18736,
+            18784, 18815, 18844, 19079, 19446, 19453, 19670, 19683, 19826,
+            20029, 20212, 20517, 20551, 20896, 21068, 21415, 21598, 21994,
+            22090, 22172, 22580, 22581, 22621, 22658, 22975, 23122, 23162,
+            23196, 23227, 23409, 23562, 23612, 23880, 24124, 24145, 24193,
+            24304, 24385 };
         static const uint32_t exp_d[10] =
             { 15116, 23126, 24012, 26239, 42936, 55252, 63878, 76470, 76783, 79122 };
         static const struct { uint32_t m; int nb; } widths[] = {
