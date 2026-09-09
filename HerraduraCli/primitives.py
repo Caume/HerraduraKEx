@@ -102,6 +102,7 @@ SDFNR  = _s.SDFNR             # Stern-F parity-check rows
 SDFR   = _s.SDFR              # Stern-F Fiat-Shamir rounds
 _ZKP_NL_DEFAULT_N   = _s._ZKP_NL_DEFAULT_N    # ZKBoo CLI default bit width (8)
 _ZKP_NL_PROD_ROUNDS = _s._ZKP_NL_PROD_ROUNDS  # ZKBoo production rounds (219)
+_ZKP_NL_MAX_N       = _s._ZKP_NL_MAX_N        # ZKP-NL WIRE width cap (64), TODO #283
 
 # ── 78.A FPE / 78.B Tweakable / 78.J Accumulator ───────────────────────────
 fpe_encrypt   = _s.fpe_encrypt

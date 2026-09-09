@@ -10,30 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
-
-`SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not
-answer: whether the near-codeword-aware and failure-recycling BGF variants in the recent
-literature close the DFR gap without a wire-format change.
-
-**Precondition, from §11.8.7 itself.**  "At parameters this far from the target the answer
-would not change the classification", and a decoder improvement that leaves `r = 523` in
-place cannot deliver `2^-128` on its own.  So this item is **conditional**: it is worth doing
-alongside a QC-MDPC parameter change, and close to worthless before one.
-
-**That parameter item now exists: TODO #276.**  Until it was filed, this entry was gated on
-something nobody had written down, which is its own failure mode -- a conditional item whose
-condition is not itself tracked is indistinguishable from an abandoned one.  #250 stays
-deprioritised behind #276 and should be re-pointed at whatever parameters #276 selects, since
-a decoder comparison at `r = 523` measures the wrong instance.
-
-**If it runs:** measure the candidate variants against the deployed decoder on the same
-harness `qcmdpc_dfr_weak_keys.py` uses, and report DFR at the deployed parameters and along
-the `r` curve — the existing DFR(r) fit is a lower bound (waterfall concavity) and any new
-decoder needs its own.
-
-Status: **OPEN**
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been
@@ -316,7 +292,16 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 
 * the four constants in four languages, plus `QCMDPC_RBYTES`/`RWORDS` following `r`;
 * the threshold rule and `NB_ITER` in four languages;
-* the Python decoder rewritten bit-sliced, first;
+* ~~the Python decoder rewritten bit-sliced, first~~ **DONE v6.7.3.**  `qcmdpc_bgf_decode`
+  carries its counters as bitplanes over big integers, sized from `d` rather than fixed at
+  four, and is bit-for-bit the decoder it replaces (verified over 60 instances including
+  failures and random syndromes; the C and Go CLIs still agree on the implicit-rejection
+  key).  Decapsulation at BIKE-128 goes 5557 ms -> 72 ms, and the 5557 ms reproduces this
+  item's recorded 5.4 s independently.  **It also moves the cost line this item asked
+  about**: isolating the decode gives 6.9 ms against 65 ms for the FO re-encryption hash,
+  so the decoder is no longer the cost centre in either parameter set and 90% of a
+  decapsulation is now HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`.  If Python
+  decapsulation needs to get faster after the port, that is where the time is;
 * `QCMDPC_MAX_MULT` 5 -> 6, in four languages that nothing cross-checks (`spec/` reads
   `herradura.h` alone);
 * test [51]'s pinned distance-spectrum supports, all at `d = 15`, in four languages, plus
@@ -329,42 +314,3 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 * the `.s`/`.asm`/`.ino` targets stay at `r = 32` and are labelled demo-only, as #223 did.
 
 Status: **OPEN**
-
-### #281: Go's `genpkey` defines `--bits` but ignores it for `hpks-zkp-nl`
-
-Found while closing TODO #279, and left open by it on that item's own reasoning: #279
-settles a WIDTH CAP, and this is a per-language keygen scope decision, which #279 says
-in as many words is a different item.
-
-`genpkey --algo hpks-zkp-nl --bits 64` produces an **n = 8** key from the Go CLI, silently.
-Python and Java both read `--bits` for this algo (an omitted `--bits`, or `--bits 256` —
-its KEYBITS default — meaning `ZKP_NL_DEFAULT_N`, and Java rejecting an out-of-range
-value by name); Go's branch passes `ZkpNlDefaultN` as a literal and never looks at the
-flag.  C is a separate and already-settled case: its `genpkey` has no `--bits` at all,
-recorded as an `acknowledged` `cli_surface_gaps` row because the C suite is compiled for
-a single KEYBITS.  Go's is not that — it defines the flag, accepts it, and drops it.
-
-**What it costs.**  Since #279 the Go CLI can READ and VERIFY an n = 64 statement, so the
-asymmetry is now one-directional: Go interoperates on wide statements it cannot itself
-produce.  The failure is silent, which is the part that matters — a caller asking for a
-64-bit statement gets an 8-bit one and no error, where every other width mismatch in this
-family is a loud rejection.  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section
-generates its key with Python for exactly this reason, and says so.
-
-**Why this axis could not record it instead of fixing it.**  `cli_flag_value_gaps` (TODO
-#269) is the table for a flag whose accepted VALUES differ between languages, and it
-cannot hold this one: it requires Python's cell to be derivable from argparse `choices=`,
-and `genpkey --bits` is a bare `type=int` with no choices list.  So there is no table
-this can sit in as an acknowledged divergence — it is either fixed or invisible.
-
-**What the work is.**  Mirror Java's block in Go's `case *algo == "hpks-zkp-nl"`: read
-`--bits`, treat the KEYBITS default as "unset", and reject a value that is not a positive
-even integer `<= ZkpNlMaxN` by name rather than clamping.  Then extend the n = 64 section
-of `test_zkp_hybrid_family.sh` to generate per-language rather than from Python alone —
-three cells, since C stays out by its own acknowledged row.
-
-Note this makes an existing `--algo` accept an input it previously ignored, so it is a
-MINOR bump, not a PATCH.
-
-Status: **OPEN**
-

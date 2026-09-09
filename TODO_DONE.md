@@ -16545,3 +16545,122 @@ Python's helper, and reports an ambiguous syndrome as "not a failure" exactly as
 still reports `[FAIL]`, so the fix narrows the assertion rather than deleting it.
 Verified against the ambiguous branch specifically, not just a green run: over 2,000
 fresh trials every mismatch classified as ambiguous and none as a real failure.
+
+### #281: Go's `genpkey` defines `--bits` but ignores it for `hpks-zkp-nl`
+
+Found while closing TODO #279, and left open by it on that item's own reasoning: #279
+settles a WIDTH CAP, and this is a per-language keygen scope decision, which #279 says
+in as many words is a different item.
+
+`genpkey --algo hpks-zkp-nl --bits 64` produces an **n = 8** key from the Go CLI, silently.
+Python and Java both read `--bits` for this algo (an omitted `--bits`, or `--bits 256` —
+its KEYBITS default — meaning `ZKP_NL_DEFAULT_N`, and Java rejecting an out-of-range
+value by name); Go's branch passes `ZkpNlDefaultN` as a literal and never looks at the
+flag.  C is a separate and already-settled case: its `genpkey` has no `--bits` at all,
+recorded as an `acknowledged` `cli_surface_gaps` row because the C suite is compiled for
+a single KEYBITS.  Go's is not that — it defines the flag, accepts it, and drops it.
+
+**What it costs.**  Since #279 the Go CLI can READ and VERIFY an n = 64 statement, so the
+asymmetry is now one-directional: Go interoperates on wide statements it cannot itself
+produce.  The failure is silent, which is the part that matters — a caller asking for a
+64-bit statement gets an 8-bit one and no error, where every other width mismatch in this
+family is a loud rejection.  `CliTest/test_zkp_hybrid_family.sh`'s n = 64 section
+generates its key with Python for exactly this reason, and says so.
+
+**Why this axis could not record it instead of fixing it.**  `cli_flag_value_gaps` (TODO
+#269) is the table for a flag whose accepted VALUES differ between languages, and it
+cannot hold this one: it requires Python's cell to be derivable from argparse `choices=`,
+and `genpkey --bits` is a bare `type=int` with no choices list.  So there is no table
+this can sit in as an acknowledged divergence — it is either fixed or invisible.
+
+**What the work is.**  Mirror Java's block in Go's `case *algo == "hpks-zkp-nl"`: read
+`--bits`, treat the KEYBITS default as "unset", and reject a value that is not a positive
+even integer `<= ZkpNlMaxN` by name rather than clamping.  Then extend the n = 64 section
+of `test_zkp_hybrid_family.sh` to generate per-language rather than from Python alone —
+three cells, since C stays out by its own acknowledged row.
+
+Note this makes an existing `--algo` accept an input it previously ignored, so it is a
+MINOR bump, not a PATCH.
+
+Status: **DONE v6.7.0** — Go's `genpkey` now reads `--bits` for `hpks-zkp-nl`, treating
+the 256 default as unset and rejecting a value that is not a positive even integer
+`<= ZkpNlMaxN` by name; `test_zkp_hybrid_family.sh`'s n = 64 section generates in three
+cells (py/go/java) and asserts the width of what genpkey WRITES.  Python's acceptance of
+an out-of-range `--bits` here is filed separately as #283.
+
+### #283: Python's `genpkey` writes an `hpks-zkp-nl` key its own decoder then refuses
+
+Found while closing TODO #281, and deliberately left out of it: #281 is about a flag Go
+DROPPED, this is about a value Python ACCEPTS.
+
+`python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --bits 128` exits 0 and
+writes a PEM.  Every subsequent use of that file fails — `pkey --pubout`, `sign`, anything
+that loads it — with `error: ZKP-NL private key: n out of range (128)`, from Python's own
+decoder.  The width cap `_ZKP_NL_MAX_N = 64` is a WIRE bound and is enforced on the way
+IN, never on the way OUT, so genpkey is the one place in the Python CLI that can produce
+an artifact nothing (itself included) can read.  Odd widths behave the same way:
+`--bits 7` is written and then rejected.
+
+Since v6.7.0 the other two CLIs that define the flag reject the value at genpkey and name
+the bound — Java has since TODO #261, Go since #281 — so Python is now alone.  C is out of
+scope as always here: its `genpkey` has no `--bits`, an acknowledged `cli_surface_gaps`
+row.
+
+**Why it is not part of #281.**  #281's defect was silent and one-directional — a caller
+asked for 64 and got 8 with no error.  This one is loud, just late: the caller gets a file
+and the error arrives on next use.  Different failure shape, different fix site, and
+bundling them would have made #281's MINOR bump cover a straight bug fix.
+
+**What the work is.**  In `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch, reject an `n` that is not
+a positive even integer `<= _ZKP_NL_MAX_N` with the same message shape Go and Java use
+(name the bound and echo the value).  Then drop the exclusion in
+`CliTest/test_zkp_hybrid_family.sh`'s `--bits 128` rejection loop, which currently runs on
+`go|java` only and says why.
+
+Status: **DONE v6.7.1** — `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch now refuses an `n` that
+is not a positive even integer `<= _ZKP_NL_MAX_N` and names the bound, in Go's and Java's
+message shape; the constant is imported from the suite rather than re-declared, so it
+cannot drift from the one the decoder applies.  `test_zkp_hybrid_family.sh`'s rejection
+loop now runs on every language that defines the flag and covers both axes of the bound
+(128 for the cap, 65 for the parity).  `--bits 0` stays "unset" in Python: `args.bits or
+KEYBITS` is one line shared by every algo, a CLI-wide convention rather than this algo's
+behaviour, and it is recorded in the test's comment rather than changed.
+
+### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
+
+`SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not
+answer: whether the near-codeword-aware and failure-recycling BGF variants in the recent
+literature close the DFR gap without a wire-format change.
+
+**Precondition, from §11.8.7 itself.**  "At parameters this far from the target the answer
+would not change the classification", and a decoder improvement that leaves `r = 523` in
+place cannot deliver `2^-128` on its own.  So this item is **conditional**: it is worth doing
+alongside a QC-MDPC parameter change, and close to worthless before one.
+
+**That parameter item now exists: TODO #276.**  Until it was filed, this entry was gated on
+something nobody had written down, which is its own failure mode -- a conditional item whose
+condition is not itself tracked is indistinguishable from an abandoned one.  #250 stays
+deprioritised behind #276 and should be re-pointed at whatever parameters #276 selects, since
+a decoder comparison at `r = 523` measures the wrong instance.
+
+**If it runs:** measure the candidate variants against the deployed decoder on the same
+harness `qcmdpc_dfr_weak_keys.py` uses, and report DFR at the deployed parameters and along
+the `r` curve — the existing DFR(r) fit is a lower bound (waterfall concavity) and any new
+decoder needs its own.
+
+Status: **DONE v6.7.2** — answered NO, with a number:
+`SecurityProofsCode/qcmdpc_bgf_variants.py` (SecurityProofs-5.md §11.8.10) measures five
+decoder-side variants against the shipped decoder on PAIRED instances, and the best of them
+buys 4.2 bits of a 119.1-bit shortfall (0.2133% -> 0.0117% DFR at r = 523), moving the
+fitted r at 2^-128 from 1752 to 1643 — about 6%.  The precondition this item was gated on is
+confirmed rather than assumed.  Three findings beyond the verdict: the failure mode at
+these parameters is a STALL, not a near-miss and not a near-codeword trap, so both
+mechanism-specific mitigations repair nothing (a genuine completion fires 0 times in 128
+failures; the near-codeword test fires 83 and solves 0) and everything that helps helps by
+leaving the stalled trajectory; only POST-FAILURE variants are monotone, while the tuned
+threshold breaks 26 instances the shipped decoder handles; and the DFR ranking is NOT the
+r ranking — `sw-th` is 2nd by DFR at r = 523 and LAST by r*, which is exactly why this item
+demanded a per-variant fit.  Re-pointed at #276 as required: the ranking and the mechanism
+finding both survive the move to d = 45, t = 70, and §8 gives the measured reason BIKE-128
+itself cannot be sampled.  RECOMMENDATION: ship nothing here — adopt BIKE's decoder with
+BIKE's parameters under #276, since a rule tuned for d = 15 is worth nothing at d = 71.

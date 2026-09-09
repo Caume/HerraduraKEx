@@ -84,7 +84,7 @@ from primitives import (
     KEYBITS, GF_POLY, GF_GEN, ORD,
     RNLN, RNLQ, RNLP, RNLPP, RNLB,
     I_VALUE, R_VALUE, R3_VALUE, I3_VALUE, SDFT, SDFNR, SDFR,
-    _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS,
+    _ZKP_NL_DEFAULT_N, _ZKP_NL_PROD_ROUNDS, _ZKP_NL_MAX_N,
     fpe_encrypt, fpe_decrypt, twk_encrypt, twk_decrypt,
     fpe_v3_encrypt, fpe_v3_decrypt, twk_v3_encrypt, twk_v3_decrypt,
     haccum_leaf, haccum_node, haccum_root, haccum_prove, haccum_verify,
@@ -1370,6 +1370,19 @@ def cmd_genpkey(args):
 
     elif algo in _ZKP_NL_ALGOS:
         n = bits if bits != KEYBITS else _ZKP_NL_DEFAULT_N
+        # TODO #283: _ZKP_NL_MAX_N is a WIRE bound, and until v6.7.1 it was
+        # enforced only on the way IN -- codec.decode_zkp_nl_privkey applies it,
+        # genpkey did not -- so this was the one path in the Python CLI that
+        # could write an artifact nothing, this CLI included, can read back:
+        # `--bits 128` exited 0 and every later use of the file died with
+        # "ZKP-NL private key: n out of range (128)".  Odd widths are refused
+        # for the same reason zkp_nl_keygen's docstring gives (n must be a
+        # positive multiple of 2).  Go and Java refuse the same input up front
+        # and name the bound (TODO #261, #281); the message shape matches
+        # theirs deliberately, so the three read alike in a diff.
+        if n <= 0 or n % 2 != 0 or n > _ZKP_NL_MAX_N:
+            sys.exit(f'genpkey hpks-zkp-nl: --bits must be a positive even '
+                     f'integer <= {_ZKP_NL_MAX_N}, got {n}')
         A, B, y = zkp_nl_keygen(n)
         pem_out = encode_zkp_nl_privkey(A, B, y, n)
 
