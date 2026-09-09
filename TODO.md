@@ -292,7 +292,16 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 
 * the four constants in four languages, plus `QCMDPC_RBYTES`/`RWORDS` following `r`;
 * the threshold rule and `NB_ITER` in four languages;
-* the Python decoder rewritten bit-sliced, first;
+* ~~the Python decoder rewritten bit-sliced, first~~ **DONE v6.7.3.**  `qcmdpc_bgf_decode`
+  carries its counters as bitplanes over big integers, sized from `d` rather than fixed at
+  four, and is bit-for-bit the decoder it replaces (verified over 60 instances including
+  failures and random syndromes; the C and Go CLIs still agree on the implicit-rejection
+  key).  Decapsulation at BIKE-128 goes 5557 ms -> 72 ms, and the 5557 ms reproduces this
+  item's recorded 5.4 s independently.  **It also moves the cost line this item asked
+  about**: isolating the decode gives 6.9 ms against 65 ms for the FO re-encryption hash,
+  so the decoder is no longer the cost centre in either parameter set and 90% of a
+  decapsulation is now HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`.  If Python
+  decapsulation needs to get faster after the port, that is where the time is;
 * `QCMDPC_MAX_MULT` 5 -> 6, in four languages that nothing cross-checks (`spec/` reads
   `herradura.h` alone);
 * test [51]'s pinned distance-spectrum supports, all at `d = 15`, in four languages, plus

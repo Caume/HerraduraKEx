@@ -2,6 +2,56 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.7.3] - 2026-09-09
+
+### TODO #276 (first port step) — the Python QC-MDPC decoder, rewritten bit-sliced
+
+TODO #276's first pass selected BIKE-128 (`r = 12323`, `d = 71`, `t = 134`) and named one
+thing that has to happen **before** the port rather than alongside it: the shipped Python
+BGF decoder computes its unsatisfied-parity counters in an interpreter loop over `r * d`
+positions, which is 9 ms per decapsulation at the deployed `r = 523` and multiple seconds
+at a production `r`.  That is not a cost line to accept, it is a blocker.  This is the
+rewrite, and nothing else: **no parameter, threshold rule or wire format moves here.**
+
+`qcmdpc_bgf_decode` now carries the counters for all `r` positions as `nb` bit-sliced big
+integers and builds them by carry-save addition, one pass per support element
+(`_qcmdpc_counters`), with the threshold applied as an MSB-first comparison across the
+planes (`_qcmdpc_mask_ge`).  The plane count is **sized from `d`**: four planes saturate at
+15, which is exactly the deployed `QCMDPC_D` and silently wrong at any larger one — the
+trap that made `qcmdpc_dfr_weak_keys.py` read 20 failures out of 20 at BIKE-128 parameters
+that decode perfectly.
+
+**It is the same decoder, bit for bit** — same threshold schedule including the
+post-iteration-7 relaxation, same two-wide gray band, same iteration-0 second pass.  Flips
+within a group are batched into one `_qcp_mul_sparse` instead of one per position, which is
+an identity rather than an approximation: every mask is read off the syndrome before any
+flip in its group is applied, and `_qcp_mul_sparse` is linear in its dense argument.
+Verified against the previous implementation over 60 instances at the deployed parameters,
+including decoding failures and random (non-decodable) syndromes, with identical output
+on every one; `CliTest/test_stern_kem.sh` confirms the implicit-rejection key still agrees
+with the C and Go CLIs.
+
+**Measured**, per decapsulation, same interpreter:
+
+| | per-position | bit-sliced | |
+|---|---|---|---|
+| deployed `r = 523`, `d = 15` | 14.8 ms | 3.8 ms | 4x |
+| BIKE-128 `r = 12323`, `d = 71` | 5557 ms | 72 ms | 77x |
+
+The 5557 ms reproduces #276's recorded 5.4 s from an independent direction.  Isolating the
+decoder from the FO transform gives the finding that matters for #276's cost line: at
+BIKE-128 the decode is **6.9 ms** and the FO re-encryption hash is **65 ms**, so after this
+change the decoder is no longer the cost centre in either parameter set — 90% of a
+decapsulation is HFSCX-256 over the ~4.6 KB of `e0 || e1 || syn`.  Whether the Python CLI
+remains usable at the chosen parameters, which #276 asked to settle as part of the choice,
+is answered: 72 ms, and the remaining term is the hash, not the decoder.
+
+C, Go and Java are untouched — they hold ordinary per-position counter arrays and need no
+representation change (#276 §7).  `spec/check_language_parity.py` gains the first entry in
+its previously empty `python` `CENSUS_EXEMPT` list, for the two new helpers: they are a
+representation detail of the manifest-named `qcmdpc-bgf-decode`, not a cross-language
+primitive.  The census caught them unfiled, as designed.
+
 ## [6.7.2] - 2026-09-08
 
 ### TODO #250 — do decoder-side BGF variants close the DFR gap?  No: 4.2 bits of 119.1

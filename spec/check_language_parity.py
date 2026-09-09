@@ -2029,7 +2029,16 @@ CENSUS_EXEMPT = {
          "the OPRF group order, and one twiddle from the table C's exempted "
          "rnl_twiddle_ family builds"),
     ],
-    "python": [],
+    "python": [
+        (r"^_qcmdpc_(counters|mask_ge)$",
+         "the bitplane representation inside qcmdpc-bgf-decode (TODO #276): "
+         "counters for all r positions carried as bit-sliced big integers, and "
+         "the MSB-first >= comparison over them. Python alone needs it — an "
+         "interpreted per-position count is ~900 ms per iteration at a "
+         "production r — while C, Go and Java hold ordinary per-position "
+         "counter arrays and have nothing to port. The decoder they decompose "
+         "is manifest-named as qcmdpc-bgf-decode"),
+    ],
     "java": [
         (r"^(be2|be4|be8|be16|be32|rd4|readBe32|putS32|concat|concatAll|cat|slice|sub|"
          r"join|fixed|fixedBytes|toFixedBytes|toFixedBytesLE|fromLE|leReverseToInt|"
