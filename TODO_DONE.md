@@ -16587,3 +16587,41 @@ the 256 default as unset and rejecting a value that is not a positive even integ
 `<= ZkpNlMaxN` by name; `test_zkp_hybrid_family.sh`'s n = 64 section generates in three
 cells (py/go/java) and asserts the width of what genpkey WRITES.  Python's acceptance of
 an out-of-range `--bits` here is filed separately as #283.
+
+### #283: Python's `genpkey` writes an `hpks-zkp-nl` key its own decoder then refuses
+
+Found while closing TODO #281, and deliberately left out of it: #281 is about a flag Go
+DROPPED, this is about a value Python ACCEPTS.
+
+`python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --bits 128` exits 0 and
+writes a PEM.  Every subsequent use of that file fails — `pkey --pubout`, `sign`, anything
+that loads it — with `error: ZKP-NL private key: n out of range (128)`, from Python's own
+decoder.  The width cap `_ZKP_NL_MAX_N = 64` is a WIRE bound and is enforced on the way
+IN, never on the way OUT, so genpkey is the one place in the Python CLI that can produce
+an artifact nothing (itself included) can read.  Odd widths behave the same way:
+`--bits 7` is written and then rejected.
+
+Since v6.7.0 the other two CLIs that define the flag reject the value at genpkey and name
+the bound — Java has since TODO #261, Go since #281 — so Python is now alone.  C is out of
+scope as always here: its `genpkey` has no `--bits`, an acknowledged `cli_surface_gaps`
+row.
+
+**Why it is not part of #281.**  #281's defect was silent and one-directional — a caller
+asked for 64 and got 8 with no error.  This one is loud, just late: the caller gets a file
+and the error arrives on next use.  Different failure shape, different fix site, and
+bundling them would have made #281's MINOR bump cover a straight bug fix.
+
+**What the work is.**  In `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch, reject an `n` that is not
+a positive even integer `<= _ZKP_NL_MAX_N` with the same message shape Go and Java use
+(name the bound and echo the value).  Then drop the exclusion in
+`CliTest/test_zkp_hybrid_family.sh`'s `--bits 128` rejection loop, which currently runs on
+`go|java` only and says why.
+
+Status: **DONE v6.7.1** — `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch now refuses an `n` that
+is not a positive even integer `<= _ZKP_NL_MAX_N` and names the bound, in Go's and Java's
+message shape; the constant is imported from the suite rather than re-declared, so it
+cannot drift from the one the decoder applies.  `test_zkp_hybrid_family.sh`'s rejection
+loop now runs on every language that defines the flag and covers both axes of the bound
+(128 for the cap, 65 for the parity).  `--bits 0` stays "unset" in Python: `args.bits or
+KEYBITS` is one line shared by every algo, a CLI-wide convention rather than this algo's
+behaviour, and it is recorded in the test's comment rather than changed.

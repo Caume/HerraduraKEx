@@ -291,19 +291,27 @@ if [ -z "$ZK64_PRIV" ]; then
     bad "n = 64: Python produced no key, so the matrices could not run"
 fi
 
-# --bits past ZKP_NL_MAX_N = 64 must be refused BY NAME, not clamped and not
-# accepted.  Go and Java only: Python's genpkey writes an out-of-range key that
-# its OWN decoder then refuses to load ("n out of range") -- a different failure
-# shape (loud but late, rather than silent), filed as TODO #283.  Delete this
-# `case` when #283 lands.
+# A --bits the wire cannot carry must be refused BY NAME at genpkey -- not
+# clamped, and not written out to fail later.  All three languages that define
+# the flag, since TODO #283 put Python alongside Go (#281) and Java (#261):
+# Python enforced _ZKP_NL_MAX_N in its DECODER only, so `--bits 128` exited 0
+# and every subsequent use of that file died with "n out of range (128)".  Both
+# axes of the bound are covered, since 128 alone would pass an implementation
+# that checked the cap and not the parity.
+#
+# `--bits 0` is deliberately NOT tested: Python's genpkey reads its width as
+# `args.bits or KEYBITS`, CLI-wide and for every algo, so 0 means "unset" there
+# while Go rejects it.  That is one shared line's convention, not this algo's.
 for l in $LANGS; do
-    case "$l" in go|java) ;; *) continue ;; esac
+    if [ "$l" = c ]; then continue; fi   # no --bits: an acknowledged scope decision
     CLI=$(cli_for "$l")
-    if $CLI genpkey --algo hpks-zkp-nl --bits 128 --out "$TMP/zk128_$l.pem" >/dev/null 2>&1; then
-        bad "[$l] genpkey --algo hpks-zkp-nl --bits 128 rejected (n > ZKP_NL_MAX_N)"
-    else
-        ok "[$l] genpkey --algo hpks-zkp-nl --bits 128 rejected (n > ZKP_NL_MAX_N)"
-    fi
+    for b in 128 65; do
+        if $CLI genpkey --algo hpks-zkp-nl --bits "$b" --out "$TMP/zkbad_${l}_$b.pem" >/dev/null 2>&1; then
+            bad "[$l] genpkey --algo hpks-zkp-nl --bits $b rejected"
+        else
+            ok "[$l] genpkey --algo hpks-zkp-nl --bits $b rejected"
+        fi
+    done
 done
 
 REF64_PUB=""

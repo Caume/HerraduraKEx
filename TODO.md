@@ -329,35 +329,3 @@ trial count.)  The cliff question passes to #250, which owns decoder behaviour.
 * the `.s`/`.asm`/`.ino` targets stay at `r = 32` and are labelled demo-only, as #223 did.
 
 Status: **OPEN**
-
-
-### #283: Python's `genpkey` writes an `hpks-zkp-nl` key its own decoder then refuses
-
-Found while closing TODO #281, and deliberately left out of it: #281 is about a flag Go
-DROPPED, this is about a value Python ACCEPTS.
-
-`python3 HerraduraCli/herradura.py genpkey --algo hpks-zkp-nl --bits 128` exits 0 and
-writes a PEM.  Every subsequent use of that file fails — `pkey --pubout`, `sign`, anything
-that loads it — with `error: ZKP-NL private key: n out of range (128)`, from Python's own
-decoder.  The width cap `_ZKP_NL_MAX_N = 64` is a WIRE bound and is enforced on the way
-IN, never on the way OUT, so genpkey is the one place in the Python CLI that can produce
-an artifact nothing (itself included) can read.  Odd widths behave the same way:
-`--bits 7` is written and then rejected.
-
-Since v6.7.0 the other two CLIs that define the flag reject the value at genpkey and name
-the bound — Java has since TODO #261, Go since #281 — so Python is now alone.  C is out of
-scope as always here: its `genpkey` has no `--bits`, an acknowledged `cli_surface_gaps`
-row.
-
-**Why it is not part of #281.**  #281's defect was silent and one-directional — a caller
-asked for 64 and got 8 with no error.  This one is loud, just late: the caller gets a file
-and the error arrives on next use.  Different failure shape, different fix site, and
-bundling them would have made #281's MINOR bump cover a straight bug fix.
-
-**What the work is.**  In `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch, reject an `n` that is not
-a positive even integer `<= _ZKP_NL_MAX_N` with the same message shape Go and Java use
-(name the bound and echo the value).  Then drop the exclusion in
-`CliTest/test_zkp_hybrid_family.sh`'s `--bits 128` rejection loop, which currently runs on
-`go|java` only and says why.
-
-Status: **OPEN**

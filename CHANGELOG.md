@@ -2,6 +2,40 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.7.1] - 2026-09-08
+
+### TODO #283 — Python's `genpkey` wrote an `hpks-zkp-nl` key its own decoder then refused
+
+`genpkey --algo hpks-zkp-nl --bits 128` exited 0 and wrote a PEM.  Every subsequent use of
+that file — `pkey --pubout`, `sign`, anything that loads it — failed with
+`ZKP-NL private key: n out of range (128)`, from Python's *own* decoder.
+`_ZKP_NL_MAX_N = 64` is a **wire** bound and was enforced on the way in
+(`codec.decode_zkp_nl_privkey`) and nowhere on the way out, so `genpkey` was the one path
+in the Python CLI that could produce an artifact nothing — itself included — could read.
+Odd widths behaved the same: `--bits 7` was written and then rejected.
+
+**Fixed** in `cmd_genpkey`'s `_ZKP_NL_ALGOS` branch, which now refuses an `n` that is not a
+positive even integer `<= _ZKP_NL_MAX_N` and names the bound.  The message shape matches
+Go's and Java's deliberately, so the three read alike in a diff.  `_ZKP_NL_MAX_N` is
+imported from the suite through `primitives.py` rather than re-declared, so it cannot drift
+from the constant the decoder applies.
+
+**Found while closing TODO #281** and deliberately left out of it: #281 was about a flag Go
+*dropped* — silent, one-directional, a caller asking for 64 and getting 8 — while this is a
+value Python *accepted*, loud but late.  Different failure shape, different fix site, and
+bundling them would have made #281's MINOR bump cover a straight bug fix.
+
+**Test.**  `CliTest/test_zkp_hybrid_family.sh`'s rejection loop ran on `go|java` only and
+said why; it now runs on every language that defines the flag (C stays out under its own
+acknowledged `cli_surface_gaps` row) and covers **both** axes of the bound — 128 for the
+cap and 65 for the parity, since 128 alone would pass an implementation that checked one
+and not the other.
+
+`--bits 0` is deliberately still accepted as "unset" in Python: `cmd_genpkey` reads its
+width as `args.bits or KEYBITS`, one line shared by every algo, so that is a CLI-wide
+convention rather than this algo's behaviour.  It is recorded in the test's comment rather
+than changed.
+
 ## [6.7.0] - 2026-09-08
 
 ### TODO #281 — Go's `genpkey` defined `--bits` but ignored it for `hpks-zkp-nl`
