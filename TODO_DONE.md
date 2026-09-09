@@ -16625,3 +16625,42 @@ loop now runs on every language that defines the flag and covers both axes of th
 (128 for the cap, 65 for the parity).  `--bits 0` stays "unset" in Python: `args.bits or
 KEYBITS` is one line shared by every algo, a CLI-wide convention rather than this algo's
 behaviour, and it is recorded in the test's comment rather than changed.
+
+### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
+
+`SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not
+answer: whether the near-codeword-aware and failure-recycling BGF variants in the recent
+literature close the DFR gap without a wire-format change.
+
+**Precondition, from §11.8.7 itself.**  "At parameters this far from the target the answer
+would not change the classification", and a decoder improvement that leaves `r = 523` in
+place cannot deliver `2^-128` on its own.  So this item is **conditional**: it is worth doing
+alongside a QC-MDPC parameter change, and close to worthless before one.
+
+**That parameter item now exists: TODO #276.**  Until it was filed, this entry was gated on
+something nobody had written down, which is its own failure mode -- a conditional item whose
+condition is not itself tracked is indistinguishable from an abandoned one.  #250 stays
+deprioritised behind #276 and should be re-pointed at whatever parameters #276 selects, since
+a decoder comparison at `r = 523` measures the wrong instance.
+
+**If it runs:** measure the candidate variants against the deployed decoder on the same
+harness `qcmdpc_dfr_weak_keys.py` uses, and report DFR at the deployed parameters and along
+the `r` curve — the existing DFR(r) fit is a lower bound (waterfall concavity) and any new
+decoder needs its own.
+
+Status: **DONE v6.7.2** — answered NO, with a number:
+`SecurityProofsCode/qcmdpc_bgf_variants.py` (SecurityProofs-5.md §11.8.10) measures five
+decoder-side variants against the shipped decoder on PAIRED instances, and the best of them
+buys 4.2 bits of a 119.1-bit shortfall (0.2133% -> 0.0117% DFR at r = 523), moving the
+fitted r at 2^-128 from 1752 to 1643 — about 6%.  The precondition this item was gated on is
+confirmed rather than assumed.  Three findings beyond the verdict: the failure mode at
+these parameters is a STALL, not a near-miss and not a near-codeword trap, so both
+mechanism-specific mitigations repair nothing (a genuine completion fires 0 times in 128
+failures; the near-codeword test fires 83 and solves 0) and everything that helps helps by
+leaving the stalled trajectory; only POST-FAILURE variants are monotone, while the tuned
+threshold breaks 26 instances the shipped decoder handles; and the DFR ranking is NOT the
+r ranking — `sw-th` is 2nd by DFR at r = 523 and LAST by r*, which is exactly why this item
+demanded a per-variant fit.  Re-pointed at #276 as required: the ranking and the mechanism
+finding both survive the move to d = 45, t = 70, and §8 gives the measured reason BIKE-128
+itself cannot be sampled.  RECOMMENDATION: ship nothing here — adopt BIKE's decoder with
+BIKE's parameters under #276, since a rule tuned for d = 15 is worth nothing at d = 71.

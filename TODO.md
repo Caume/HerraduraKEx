@@ -10,30 +10,6 @@ New items go here with `Status: **OPEN**`; see CLAUDE.md.
 
 ---
 
-### #250: re-evaluate the BGF decoder variants for HPKE-Stern-KEM
-
-`SecurityProofs-5.md` §11.8.7 closes with a question TODO #218 asked and explicitly did not
-answer: whether the near-codeword-aware and failure-recycling BGF variants in the recent
-literature close the DFR gap without a wire-format change.
-
-**Precondition, from §11.8.7 itself.**  "At parameters this far from the target the answer
-would not change the classification", and a decoder improvement that leaves `r = 523` in
-place cannot deliver `2^-128` on its own.  So this item is **conditional**: it is worth doing
-alongside a QC-MDPC parameter change, and close to worthless before one.
-
-**That parameter item now exists: TODO #276.**  Until it was filed, this entry was gated on
-something nobody had written down, which is its own failure mode -- a conditional item whose
-condition is not itself tracked is indistinguishable from an abandoned one.  #250 stays
-deprioritised behind #276 and should be re-pointed at whatever parameters #276 selects, since
-a decoder comparison at `r = 523` measures the wrong instance.
-
-**If it runs:** measure the candidate variants against the deployed decoder on the same
-harness `qcmdpc_dfr_weak_keys.py` uses, and report DFR at the deployed parameters and along
-the `r` curve — the existing DFR(r) fit is a lower bound (waterfall concavity) and any new
-decoder needs its own.
-
-Status: **OPEN**
-
 ### #257: the width extrapolation for both trail axes (merges #252 and #254)
 
 **This item is the merger of TODO #252 and TODO #254**, closed in v5.2.4.  Both had been

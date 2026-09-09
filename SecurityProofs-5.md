@@ -8,7 +8,7 @@
 > - **Part 2 — §2–§8** (SecurityProofs-2.md): Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index
 > - **Part 3 — §9–§10** (SecurityProofs-3.md): Non-Linear Proposals · v1.4.0 Migration
 > - **Part 4 — §11–§11.8.2** (SecurityProofs-4.md): Non-linearity and Post-quantum Extensions · NL-FSCX v1/v2 · HKEX-RNL
-> - **Part 5 — §11.8.3–§11.8.9** (this file): PQ Signature Options · HPKE-Stern-KEM
+> - **Part 5 — §11.8.3–§11.8.10** (this file): PQ Signature Options · HPKE-Stern-KEM
 > - **Part 6 — §11.9** (SecurityProofs-6.md): HFSCX-256-DM
 > - **Part 7 — §11.10–§11.13, §11.15–§11.33** (SecurityProofs-7.md): Zero-Knowledge Proof Extensions · Research-Review Sections
 > - **Part 8 — §11.34–§11.36** (SecurityProofs-8.md): NL-FSCX v3 — Exact Row Analysis · Asymptotic Trail Slopes
@@ -607,7 +607,7 @@ Three details of that construction are worth stating, because each could have be
 
 **Assessment.**  These findings compound rather than trade off.  A DFR of `2^-128` would not make this KEM IND-CCA2 while decapsulation reports failure, and implicit rejection would not rescue a `2^-8.6` DFR.  Underneath both, the QC syndrome-decoding instance at `r = 523`, `d = 15`, `t = 18` is itself far below any usable security level, so DFR is not even the binding constraint — the parameters have to move first.  §11.8.9 costs that instance at about `2^21` classical operations and finds the `r ≈ 1723` lower bound above to be the wrong knob: with `d` and `t` unchanged it buys four bits, and it is separately inadmissible on ring-structure grounds.  `HPKE-Stern-KEM` is therefore reclassified **demo-only** in `SECURITY.md` and in `spec/herradura-protocol-spec.json` (which had carried `status: production`), with the reaction-attack exposure stated explicitly rather than left implicit in a DFR number.  TODO #235 does not change that classification and was explicitly scoped not to: what it changes is that the KEM is no longer weaker than its own parameters require.  Finding 1 alone keeps IND-CCA2 out of reach.
 
-**Not evaluated.**  TODO #218 also asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the gap without a wire-format change.  That question is left open here: it turns on decoder-design results the analysis in this section does not attempt to reproduce, and at parameters this far from the target the answer would not change the classification.  It is worth revisiting only alongside a parameter change, since a decoder improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.
+**Not evaluated here — answered in §11.8.10 (TODO #250).**  TODO #218 also asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the gap without a wire-format change.  This section left it open, on the ground that it turns on decoder-design results not reproduced here and that at parameters this far from the target the answer would not change the classification — worth revisiting only alongside a parameter change, since a decoder improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.  §11.8.9 supplied the parameter change and §11.8.10 ran the comparison: the answer is **no**, by `4.2` bits of a `119.1`-bit shortfall, and the precondition stated here is confirmed rather than assumed.  The failure mode at these parameters turns out to be neither of the two the question names — a stall, not a near-miss and not a near-codeword trap — so the two mechanism-specific mitigations repair nothing at all, and what does help (a restart, a perturbed threshold) helps by leaving the stalled trajectory.
 
 ---
 
@@ -863,6 +863,65 @@ in exactly four bitplanes, saturating at 15.  Above the deployed $d = 15$ it
 does not error — it silently fails to decode, reporting a plausible DFR of 1.0
 at parameters that decode perfectly.  TODO #276 hit this and read 20 failures
 out of 20 at BIKE-128 before finding it; the function now refuses $d > 15$.
+
+---
+
+### 11.8.10 HPKE-Stern-KEM decoder variants — the question §11.8.7 left open (TODO #250)
+
+§11.8.7 closes with a *Not evaluated* paragraph: TODO #218 asked whether the near-codeword-aware and failure-recycling BGF variants of the recent literature close the DFR gap "without a wire-format change", and that section declined to answer, on the stated ground that "at parameters this far from the target the answer would not change the classification" and that the question is "worth revisiting only alongside a parameter change".  §11.8.9 supplied the parameter change (TODO #276).  This section answers the question, backed by `SecurityProofsCode/qcmdpc_bgf_variants.py`.  (Code spans throughout, as in §11.8.7 and for the same reason.)
+
+**Answer: no, and the number is `4.2` bits against `119.1`.**  The best decoder-side variant measured here lowers the DFR at the deployed parameters from `0.2133%` to `0.0117%` — a factor of 18 — which is `4.2` bits of a `119.1`-bit shortfall, or **3.5%** of the distance to IND-CCA2.  Read as `r` rather than as DFR it is smaller still: the fitted `r` at `2^-128` falls from `1752` to `1643`, about **6%**.  Nothing here changes `HPKE-Stern-KEM`'s demo-only classification, and §11.8.7's precondition is confirmed rather than merely assumed.
+
+**Scope.**  Every variant is receiver-local: same public key, same ciphertext, same session-key derivation, so a receiver may switch unilaterally and two parties running different variants still agree on the session key whenever both decode.  That is exactly the class #218 asked about.  A variant needing a decoding hint, a second syndrome or an FO-visible retry counter is out of scope by construction and none is implemented.
+
+**The variants are answers to a failure census, not a menu.**  Before comparing anything the script asks what a failure *is*, over 200 failures in 85 298 trials at the deployed parameters:
+
+| observed | value |
+|---|---|
+| residual error weight `wt(e ^ e_hat)` | min 4, **median 16**, max 538 |
+| residual syndrome weight | min 28, **median 92**, max 262 |
+| converged to a wrong codeword (`s = 0`, `e_hat != e`) | **0** of 200 |
+| near-misses (residual error weight `<= 2`) | **0** of 200 |
+| near-codeword-shaped (residual syndrome `<= 2d`) | **2** of 200 |
+
+A failure at these parameters is a **stall**: both the residual error and the residual syndrome are heavy, with the residual error typically *heavier than the `t = 18` the decoder started with*.  It is not a near-miss and not the `N(h0)`/`N(h1)` trap.  Two of the four candidate mitigations are therefore predicted dead on arrival, and both predictions hold: a genuine low-weight completion fires **0** times in 128 failures, and the near-codeword test fires 83 times but solves **0**.
+
+**What the four variants do, and what they measure.**  All are built on one decoder with a policy object, so a comparison changes exactly one thing at a time.
+
+| variant | mechanism | failures / 60 000 | repaired | broke |
+|---|---|---|---|---|
+| `base` (shipped) | — | 128 (`0.2133%`) | — | — |
+| `sw-th` | threshold affine in the syndrome weight, tuned | 26 (`0.0433%`) | 128 | **26** |
+| `ncw` | near-codeword detect-and-correct on failure | 127 (`0.2117%`) | 1 | 0 |
+| `recycle` | restart with a perturbed threshold, 4 extra attempts | **7** (`0.0117%`) | 121 | 0 |
+| `complete` | flip a top-counter candidate, resume | 25 (`0.0417%`) | 103 | 0 |
+| `ncw+recycle` | both | 7 (`0.0117%`) | 121 | 0 |
+
+Instances are **paired** — every variant decodes the identical `(key, error)` stream — so the report is the discordant pairs rather than six rates compared through overlapping intervals.  The baseline's `0.2133%`, 95% CI `[0.1780%, 0.2536%]`, is an independent reproduction of §11.8.7's `0.264%`.
+
+Three things in that table are worth more than the ranking.
+
+*Everything that works, works for the same reason.*  A tuned threshold, a restart with a perturbed threshold, and "flip a candidate and resume" are three ways of writing the same intervention — leave the stalled trajectory — and they land within a bit of each other while the two mechanism-specific mitigations do nothing.  The `complete` row is the clearest case: it repairs 103 of 128 failures and **0** of them are completions.  The repairs come from the resume, and the script counts the two separately for that reason.
+
+*Only post-failure variants are monotone.*  `recycle`, `ncw` and `complete` run after the decoder has failed, so they can only repair; `sw-th` changes the trajectory from the start and **breaks 26 instances the shipped decoder handles** while repairing all 128 it does not.  A net 5x win, with a risk profile a monotone variant does not have.
+
+*The DFR ranking is not the `r` ranking.*  Each variant is fitted in its own waterfall — #250 asks for this explicitly, and it is the reason why:
+
+| variant | DFR at `r = 523` | fitted slope | `r` at `2^-128` |
+|---|---|---|---|
+| `recycle` | `0.0117%` | `-0.1037` | **1643** |
+| `ncw` | `0.2117%` | `-0.0972` | 1751 |
+| `base` | `0.2133%` | `-0.0971` | 1752 |
+| `sw-th` | `0.0433%` | `-0.0926` | **1774** |
+
+`sw-th` is second by DFR and **last** by `r`: it buys an intercept, not a slope, and at the extrapolated target it is slightly *worse* than the decoder it improves on by 5x at `r = 523`.  A variant that borrowed §11.8.7's fitted slope would have reported a benefit it does not have.  The `base` row's `1752` against §11.8.7's `1723` is a re-derivation of that figure by an independent implementation; both remain **lower bounds**, for the concavity reason §11.8.7 gives.
+
+**The threshold rule is not portable, and the tuning says so.**  The rule is not imported: it is searched, ranked by DFR itself on a calibration set drawn in the waterfall, and evaluated out-of-sample at the target `r`.  Two properties keep that honest.  The grid **contains the shipped rule** as its `(slope 0, offset 0)` point — asserted by an identity check, because a first draft dropped the deployed decoder's post-iteration-7 relaxation and scored the baseline at `28.7%` where it measures `10.7%`, i.e. tuned against a third decoder that ships nowhere.  And BIKE's own Level-1 constants, applied at `d = 45`, decode **0 of 12** instances where the shipped rule decodes 12 of 12: an affine threshold rule carries its parameter set with it, so a variant that beat the baseline merely by carrying better-tuned constants would prove nothing about decoder design.
+
+**Re-pointed at #276's parameters, as #250 requires.**  A comparison at `r = 523` measures the wrong instance, and #276 selects BIKE-128 (`r = 12323`, `d = 71`, `t = 134`).  That set cannot be measured directly — §11.8.9's bit-sliced decoder does one decapsulation there in `9 ms` (reproducing its `8 ms`), so a DFR of `1e-5` costs about 2 hours and `2^-128` is out of reach by more than thirty orders of magnitude at any speed.  A decoder comparison at #276's parameters is therefore always a comparison of *fitted curves*; BIKE's own `2^-128` is an extrapolation too.  What is measurable is whether the ranking transfers, so the comparison is repeated at the largest `(d, t)` whose waterfall is reachable — `d = 45`, `t = 70`, waterfall at `r ~ 3700`.  It does: over 1126 paired instances the baseline fails 30 times, `ncw` and `complete` repair **none** of them, and the perturbing variants repair 29 or 30.  The mechanism finding, not just the ordering, survives the move toward #276's set.
+
+**Recommendation, and what not to do with this.**  Do **not** ship the tuned threshold.  It is a hand-tuned rule whose constants come from a grid search at `r = 467` and transfer to `r = 523` by assumption; it breaks instances the shipped decoder handles; and #276 replaces the parameter set wholesale, with BIKE's threshold rule and 5 iterations, at which point a rule tuned for `d = 15` is worth nothing (§3 of the script measures exactly that failure mode).  The decoder question is settled the other way round from how #218 posed it: the decoder is not where the `119` bits are, and adopting BIKE's decoder *with* BIKE's parameters under #276 is the only change worth making.  What #250 removes is the possibility that a decoder improvement was quietly available all along.
+
 
 ---
 

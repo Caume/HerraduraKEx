@@ -231,6 +231,36 @@ SecurityProofsCode/                                 — standalone Python proof/
                              BIKE-128 that way, so the function now refuses
                              d > 15 and points at the plane-sizing copy in
                              qcmdpc_parameter_selection.py
+  qcmdpc_bgf_variants.py   — do DECODER-SIDE BGF variants close the DFR gap?
+                             (TODO #250).  NO, and the number is the point: the
+                             best variant buys ~4 bits of DFR against a
+                             ~120-bit shortfall, i.e. 3% of it, and moves the
+                             fitted r* by ~4%.  #250 was gated on #276 for a
+                             reason -- a comparison at r = 523 measures the
+                             wrong instance -- so §7 re-runs it at the largest
+                             (d, t) whose waterfall is reachable and checks the
+                             RANKING transfers.  Three things worth knowing
+                             before extending it.  (1) The variants are
+                             answers to a measured FAILURE CENSUS (§2), not a
+                             menu: at these parameters a failure is a STALL
+                             (residual error weight ~16, residual syndrome ~96),
+                             never a near-miss, so low-weight completion has
+                             nothing to complete and the near-codeword test
+                             fires but never solves.  (2) Everything that helps
+                             helps for ONE reason -- it perturbs the trajectory
+                             out of the stall -- which is why a tuned threshold,
+                             a restart and a flip-then-resume all land within a
+                             bit of each other, and why an early draft of the
+                             script credited "completion" for repairs the
+                             RESUME had made.  The mechanism attribution in §5
+                             exists to keep that honest.  (3) The threshold grid
+                             CONTAINS the shipped rule as its (slope 0,
+                             offset 0) point, asserted by an identity check --
+                             a first draft did not, because it dropped the
+                             deployed decoder's post-iteration-7 relaxation, and
+                             scored the baseline at 28.7% where it measures
+                             10.7%.  A tuning grid whose null point is not the
+                             baseline measures a third decoder
   qcmdpc_parameter_selection.py — HPKE-Stern-KEM's replacement parameters
                              (TODO #276), on the model of #223's job for
                              HKEX-RNL.  Supplies the number §11.8.7 and
@@ -613,7 +643,7 @@ SecurityProofs-1.md                                 — §1: Algebraic Foundatio
 SecurityProofs-2.md                                 — §2–§8: Protocol Analysis · Security Analysis · Summary Tables · Quantum Attack Analysis · Experimental Code Index (409 math expressions)
 SecurityProofs-3.md                                 — §9–§10: Non-Linear Proposals · v1.4.0 Migration (409 math expressions)
 SecurityProofs-4.md                                 — §11–§11.8.2: Non-linearity/PQC extensions · NL-FSCX v1/v2 · HKEX-RNL (686 math expressions)
-SecurityProofs-5.md                                 — §11.8.3–§11.8.9: PQ signature options · HPKE-Stern-KEM (672 math expressions)
+SecurityProofs-5.md                                 — §11.8.3–§11.8.10: PQ signature options · HPKE-Stern-KEM (672 math expressions)
 SecurityProofs-6.md                                 — §11.9: HFSCX-256-DM (131 math expressions)
 SecurityProofs-7.md                                 — §11.10–§11.13, §11.15–§11.33: ZKP extensions · Ring-LWR Σ-protocol · NL-FSCX ZKBoo · research-review sections (698 math expressions)
 SecurityProofs-8.md                                 — §11.34–§11.36: NL-FSCX v3 exact row analysis · the asymptotic differential and linear slopes, measured (435 math expressions)
@@ -1233,6 +1263,10 @@ python3 SecurityProofsCode/hkex_gf_test.py          # DH correctness + DLP
 python3 SecurityProofsCode/hkex_rnl_failure_rate.py  # HKEX-RNL failure-rate analysis
 python3 SecurityProofsCode/nl_fscx_owf_analysis.py   # NL-FSCX OWF cryptanalysis
 python3 SecurityProofsCode/nl_fscx_rot_analysis.py   # rotational differential analysis
+
+# The two QC-MDPC scripts take minutes to over an hour at full sample sizes and
+# both accept --quick (smaller samples; the findings still gate the exit status):
+python3 SecurityProofsCode/qcmdpc_bgf_variants.py --quick   # ~11 min; --full is ~72 min
 ```
 
 ## Core Cryptographic Architecture

@@ -2,6 +2,64 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [6.7.2] - 2026-09-08
+
+### TODO #250 — do decoder-side BGF variants close the DFR gap?  No: 4.2 bits of 119.1
+
+`SecurityProofs-5.md` §11.8.7 closed with a *Not evaluated* paragraph — TODO #218's question
+of whether the near-codeword-aware and failure-recycling BGF variants close the DFR gap
+"without a wire-format change" — and stated the precondition for answering it: the
+comparison is worth running only alongside a parameter change, because a decoder
+improvement that leaves `r = 523` in place cannot deliver `2^-128` on its own.  TODO #276
+supplied that parameter change.  This closes the question, in new
+`SecurityProofsCode/qcmdpc_bgf_variants.py` and §11.8.10.
+
+**The answer is no, and the shortfall is 28x what the best variant buys.**  The best decoder-side variant lowers the DFR at
+the deployed parameters from `0.2133%` to `0.0117%` over 60 000 paired instances — 18x, or
+**4.2 bits of a 119.1-bit shortfall**.  Read as `r` it is smaller: the fitted `r` at
+`2^-128` moves from 1752 to 1643, about **6%**.  §11.8.7's precondition is now confirmed rather
+than assumed, and `HPKE-Stern-KEM`'s demo-only classification is unaffected.
+
+**Four findings beyond the verdict**, each of which changes how the next such comparison
+should be run:
+
+- *The failure mode is neither of the two the question names.*  A census of 200 failures
+  finds a **stall** — residual error weight median 16 (heavier than the `t = 18` the decoder
+  started with), residual syndrome weight median 92, zero near-misses, zero convergences to
+  a wrong codeword.  So low-weight completion has nothing to complete (0 genuine completions
+  in 128 failures) and the near-codeword test fires 83 times and solves 0.  Everything that
+  *does* help — a restart, a perturbed threshold, a flip-and-resume — helps for one reason:
+  it leaves the stalled trajectory.
+- *Only post-failure variants are monotone.*  `recycle` repairs 121 of 128 failures and
+  breaks nothing, because it runs only after the decoder has failed.  The tuned threshold
+  repairs all 128 and **breaks 26 instances the shipped decoder handles**.
+- *The DFR ranking is not the `r` ranking.*  Each variant is fitted in its own waterfall, as
+  #250 demands, and the tuned threshold comes 2nd by DFR at `r = 523` and **last** by `r*`
+  (1774 against the baseline's 1752): it buys an intercept, not a slope.  A variant that had
+  borrowed §11.8.7's fitted slope would have reported a benefit it does not have.  The
+  baseline's own `r* = 1752` re-derives §11.8.7's 1723 independently.
+- *A threshold rule carries its parameter set with it.*  BIKE's Level-1 constants decode
+  **0 of 12** instances at `d = 45` where the shipped rule decodes 12 of 12.
+
+**Recommendation: ship nothing here.**  The tuned rule's constants come from a grid search at
+`r = 467`, it breaks instances the baseline handles, and #276 replaces the parameter set
+wholesale — a rule tuned for `d = 15` is worth nothing at `d = 71`.  The change worth making
+is BIKE's decoder together with BIKE's parameters, under #276.  What #250 removes is the
+possibility that a decoder-side fix was quietly available all along.
+
+**Methodology, and two bugs found in it.**  Instances are paired across variants, so the
+report is the discordant pairs rather than six rates compared through overlapping intervals.
+The baseline is pinned bit-exact against the shipped `qcmdpc_bgf_decode` before anything is
+measured.  Two errors were caught and are recorded in the script so the next reader does not
+repeat them: the tuning grid's "baseline" point initially was **not** the baseline (it
+dropped the deployed decoder's post-iteration-7 relaxation and scored it at `28.7%` where it
+measures `10.7%`), now asserted by an identity check; and `complete` was initially credited
+with 103 repairs that the **resume**, not the completion, had made — §5 now attributes
+mechanism separately.
+
+Runs in ~11 minutes with `--quick` and ~72 minutes with `--full`; 17 recorded findings, all
+reproducing, and a non-zero exit if any stops.
+
 ## [6.7.1] - 2026-09-08
 
 ### TODO #283 — Python's `genpkey` wrote an `hpks-zkp-nl` key its own decoder then refused
