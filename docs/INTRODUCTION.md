@@ -1048,8 +1048,12 @@ HPKE-Stern-F in the suite uses this construction: the ciphertext is the syndrome
 `--algo hpke-stern-kem` ships a real Black-Gray-Flip (BGF) QC-MDPC decoder
 (`qcmdpc_keygen`/`qcmdpc_encap`/`qcmdpc_decap_bgf`) and needs no plaintext error
 vector at decapsulation.  The KEM tag is still demo-only, for a different reason:
-at its parameters (r = 523, d = 15, t = 18) the decoding-failure rate is ~2^-8.6
-where IND-CCA2 needs 2^-128.  See `SECURITY.md` and SecurityProofs-5.md §11.8.7.
+since v7.0.0 it runs at BIKE-128's parameters (r = 12323, d = 71, t = 134), which
+replaced a toy set whose decoding-failure rate was ~2^-8.6 where IND-CCA2 needs
+2^-128.  At the new parameters the DFR is not measurable here at all, so 2^-128 is
+inherited from BIKE's published analysis rather than established in this repo --
+and what ships is a reimplementation of BIKE's decoder, checked by testing rather
+than proof.  See `SECURITY.md` and SecurityProofs-5.md §11.8.7.
 
 → SP2 §8.2 for the formal Niederreiter description.
 → TUT for HPKE-Stern-F API usage.

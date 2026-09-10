@@ -97,10 +97,11 @@ clopper_pearson = DW.clopper_pearson
 # ═══════════════════════════════════════════════════════════════════════════
 # The decoder substrate
 #
-# One decoder, one policy object.  qcmdpc_dfr_weak_keys.py's copy is bit-exact
-# with the shipped decoder but holds its counters in four bitplanes, so it is
-# correct only at d <= 15 (it now refuses more); qcmdpc_parameter_selection.py's
-# sizes the planes from d but had already dropped the shipped threshold
+# One decoder, one policy object.  qcmdpc_dfr_weak_keys.py used to carry a copy
+# holding its counters in four bitplanes, correct only at d <= 15; TODO #285
+# deleted it, since #276 made the SHIPPED decoder bit-sliced and that copy
+# existed only for speed.  qcmdpc_parameter_selection.py's sizes the planes from
+# d but takes its threshold rule as an argument, having dropped the shipped
 # schedule.  This one does both, so `POL_BASE` reproduces the shipped decoder
 # exactly (§1 pins that) while every parameter set below stays reachable.
 # ═══════════════════════════════════════════════════════════════════════════

@@ -67,7 +67,8 @@ scope for this binding.
   demo Niederreiter KEM sharing the same keypair — `sternFKeygen`,
   `hpksSternFSign`/`Verify`, `hpkeSternFEncapWithE`/`Decap`) and the real
   QC-MDPC/BGF Niederreiter KEM (`qcmdpcKeygen`/`Encap`/`DecapBgf`, at the
-  shipped toy parameters r=523/d=15/t=18 — TODO #183/#195), fixed at
+  shipped BIKE-128 parameters r=12323/d=71/t=134 since TODO #276 — they
+  replaced a toy r=523/d=15/t=18 set), fixed at
   n=256. Reuses `Hfscx256`'s NL-FSCX v1 for every hash/PRF/PRNG in both
   constructions.
 - `herradurakex/Oprf.java` (TODO #201) — the 2HashDH Oblivious PRF over

@@ -1816,11 +1816,19 @@ _QCMDPC_DS_Z     = 0x11   # session key, implicit-rejection path
 _QCMDPC_DS_ZSEED = 0x12   # z, derived from the private polynomials
 
 # Weak-key screen bound.  5 was read off a MEASURED DFR cliff at the old r=523,
-# d=15 (TODO #218 §4); that measurement is not available at these parameters and
-# cannot be made, since locating a cliff needs a measurable DFR and removing one
-# is what the parameter change is for.  TODO #276 states a surrogate in advance
-# instead — keep the screen a tail cut costing under one keygen retry in 200 —
-# which gives 6 at d=71.  A retry-budget choice, not a cliff.
+# d=15 (TODO #218 §4).  TODO #276 believed that measurement could not be
+# repeated at these parameters — locating a cliff needs a measurable DFR and
+# removing one is what the parameter change is for — and stated a surrogate in
+# advance instead: keep the screen a tail cut costing under one keygen retry in
+# 200, which gives 6 at d=71.  A retry-budget choice, not a cliff.
+#
+# TODO #285 measured the cliff anyway and the bound holds with room to spare.
+# What is unmeasurable here is a DFR DIFFERENCE among ORDINARY keys; a weak key
+# fails near 100% of the time, so no such resolution is needed.  The cliff has
+# moved from 6->7 to 31->32, leaving this bound conservative by about
+# 5x, and the tail it cuts decodes indistinguishably from an accepted key at
+# this width (SecurityProofs-5.md §11.8.7, "Re-pointed at the deployed
+# parameters").
 _QCMDPC_MAX_MULT = 6
 
 

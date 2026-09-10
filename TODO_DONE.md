@@ -17000,3 +17000,176 @@ disagree, which is the split #226/#227 drew for HKEX-RNL.
 
 Status: **DONE v7.0.2** — six pinned Stern-KEM artifacts incl. the implicit-rejection
 output; the four-way-drift gap demonstrated by mutation.
+
+---
+
+### #285: the QC-MDPC parameter change left its analysis and documentation layer behind
+
+TODO #276 (v7.0.0) moved HPKE-Stern-KEM from `r = 523`, `d = 15`, `t = 18` to BIKE-128's
+`r = 12323`, `d = 71`, `t = 134`.  It carried the four implementations, the wire format, the
+weak-key screen, `SECURITY.md`'s verdict row, `spec/` and `CliTest/`.  It did not carry the
+analysis script that measured the old set, nor the three narrative documents that quote it,
+and nothing in CI could see either omission.  Three legs, all verified at head (`e3a7337`).
+
+**(1) `SecurityProofsCode/qcmdpc_dfr_weak_keys.py` does not run.**  It is the recorded
+acceptance oracle for #218 *and* for #235 -- that item's own acceptance clause reads "#218's
+script is the oracle: re-run `qcmdpc_dfr_weak_keys.py` and require ...".  At head it exits 1
+inside its own §1, before any measurement:
+
+```
+ValueError: bgf_decode_fast: d=71 saturates the 4-bitplane counters (max 15);
+            use qcmdpc_parameter_selection.py
+```
+
+The script reads `R_DEP` / `D_DEP` / `T_DEP` from the suite, so #276 re-pointed it by moving
+the constants, and #276's own guard-rail -- added because the saturation had silently read
+20/20 failures at parameters that decode perfectly -- now stops it at the first instance.
+Everything it measured is consequently unobtainable at the deployed set: the DFR with a
+Clopper-Pearson interval, the Sendrier-Vasseur `DFR(r)` fit, the distance-spectrum weak-key
+gradient against what keygen emits, and the GJS reaction-attack distinguisher's two disjoint
+intervals.  `QCMDPC_MAX_MULT`, which #276 could only record "on a stated retry budget", is
+precisely the constant that oracle used to derive.
+
+**The fix is a DELETION, not the port this item first proposed.**  Plane-sizing
+`bgf_decode_fast` was the obvious repair and it is the wrong one: the twin existed because
+the SHIPPED decoder was per-position and ~40x too slow for these sample sizes, and #276
+removed that reason by making `qcmdpc_bgf_decode` itself bit-sliced.  Measured at head, one
+decapsulation at the deployed `r` costs about 10 ms through the suite against 6.0 s
+per-position — so the twin now buys nothing, and it had by then diverged from the shipped
+decoder TWICE: four fixed bitplanes, and the pre-#276 threshold schedule, a constant in `d`
+where the deployed rule is affine in the SYNDROME WEIGHT.  A second copy of a decoder is
+exactly the place a divergence hides, which is why §1 had to exist in the first place.  So
+every section calls the suite, and §1 becomes a cross-check of the shipped bit-sliced
+decoder against a per-position REFERENCE written in the script — an independent opinion in
+the representation the suite moved away from, rather than a twin's alibi.
+
+One consequence to know before writing another cross-check here: the retired parameters are
+not a usable instance for this decoder.  BIKE's threshold rule has a floor of 36 unsatisfied
+checks, which a row of weight 15 cannot reach at all — §11.8.9 measures it failing 150 times
+out of 150 at `d = 15` — so both of §1's instances carry the deployed `d`, and the small one
+is §3's waterfall rather than `r = 523`.
+
+**(2) Four documents state the retired set as the deployed one.**  Not framing drift --
+false sentences:
+
+* `README.md`: "at its toy parameters (r = 523, d = 15, t = 18) the measured
+  decoding-failure rate is 0.264% = 2^-8.6"
+* `docs/INTRODUCTION.md`: "at its parameters (r = 523, d = 15, t = 18) the decoding-failure
+  rate is ~2^-8.6"
+* `bindings/java/README.md`: "at the shipped toy parameters r=523/d=15/t=18"
+* `SecurityProofs-5.md` §11.8.7: "**Deployed parameters**, identical in C (`herradura.h`),
+  Go (`herradura/herradura.go`), and Python: `r = 523`, `d = 15`, `t = 18`, `NB_ITER = 20`.
+  The source calls them toy parameters."
+
+`SECURITY.md`'s row was updated by #276 and is correct, so this is the
+disagreement-between-documents class #237 and #238 found five instances of -- with the twist
+that §11.8.7 and §11.8.9 now contradict each other inside a single file, the former calling
+`r = 523` deployed and the latter describing the move off it.
+
+**(3) The mechanism, which is why (2) shipped and what stops it recurring.**
+`spec/check_docs_consistency.py`'s check B exists for exactly this: it reads numeric
+constants out of `herradura.h` and compares them against the sentences quoting them in
+`README.md` and `docs/INTRODUCTION.md`.  Its `DOC_PARAMS` table has eleven rows -- Stern-F,
+HKEX-RNL, `I_VALUE` -- and **no QC-MDPC row at all**.  Unlike every other curated table in
+that file and in `check_language_parity.py`, `DOC_PARAMS` is exhaustive in only one
+direction: the anchor rule fails when a sentence an entry points at is *deleted*, but a
+header constant quoted in prose and named by no row is invisible, so a parameter can move
+under a sentence indefinitely.  Adding `QCMDPC_R` / `QCMDPC_D` / `QCMDPC_T` rows turns
+leg (2) into a CI failure, which is the ordering this item wants: the guard first, so the
+prose fix is forced rather than remembered.  `bindings/java/README.md` is not a document
+check B reads; extending it there or accepting the gap explicitly is part of the item.
+
+Separately, and the reason leg (1) sat broken through two releases: **no CI job runs any of
+the 34 exit-status-gating `SecurityProofsCode` scripts.**  Many advertise "exits non-zero if
+a finding stops reproducing" and nothing collects that status.  A job over all of them is
+out of scope -- runtimes reach ~72 min -- but this one under `--quick` is about 3.5 min, and
+is what would have caught this, so `native-python` now runs it.  `qcmdpc_bgf_variants.py` is
+deliberately NOT added: ~11 min under `--quick` is a job of its own, not a step.
+
+**A fourth finding, recorded rather than scoped.**  `qcmdpc_bgf_failure_rate.py` still runs,
+but its `--trials` default of 2000 is a literal chosen when the DFR was 0.26%.  Measured at
+head: 0 failures in 200 trials at 0.22 s/trial, so it now spends about seven minutes
+establishing `DFR = 0.000000` -- vacuous rather than wrong.  Its docstring's claim to close
+"the DFR never measured gap" of #183/#186 no longer holds, and cannot at these parameters.
+
+**What the honest version of §11.8.7 looks like.**  Several of its measurements do not
+survive re-pointing: a DFR below `2^-128` is not observable at any sample size, so the
+section becomes partly *inherited* from BIKE's published analysis rather than measured
+here.  That is the position `SECURITY.md`'s row already takes ("the DFR at these parameters
+is not measurable here -- that is exactly what the change bought"), so the two documents
+converge rather than one of them retreating.  What re-measures cleanly and should:
+the multiplicity distribution keygen emits at `d = 71`, `r = 12323`; the weak-key DFR
+gradient at the reachable `(d, t)` §11.8.10 already established as the substitute
+instance; and the GJS distinguisher, whose effect size is a property of the spectrum rather
+than of the DFR floor.
+
+**Done in v7.0.3.**  Outcomes, in the order the legs are stated above.
+
+**(1) The script runs, and the fix was a deletion.**  Every section now calls the shipped
+`qcmdpc_bgf_decode`; §1 pins that against a per-position reference (`20/20` at `r = 9600`,
+`6/6` at the deployed `r`, at `7.3 ms` vs `7157 ms` and `5.4 ms` vs `6083 ms`).  The
+findings gate was extended from §1 alone to every section, so the whole run now exits
+non-zero if a claim stops reproducing.  Full run: 926 s, exit 0.
+
+**Re-pointing split the sections, and the split is the finding.**  §2 and §3 measure the
+SIZE of the failure rate; §4 and §5 its SHAPE; only the second survives parameters whose
+DFR is unmeasurable.
+
+* §2: 3000 round trips, ZERO failures, so a 95% bound of `2^-9.7` and nothing sharper at
+  any reachable sample size -- the deployed `2^-128` is INHERITED from BIKE, and the old
+  `2^-8.6` is not superseded as a measurement, it is the measurement that justified moving
+  off the parameters it describes.
+* §3 inverted: hold the deployed `(d, t)`, come DOWN from `r`.  The waterfall is reachable
+  at 78-80% of the deployed `r` -- `75.5%` / `31.7%` / `6.2%` / `0.42%` at
+  `r = 9600 / 9700 / 9800 / 9900` -- fitting `log2(DFR) = -0.02480*r + 238.3` (R² = 0.947,
+  ~40 bits of `r` per bit of DFR) and `2^-67` at the deployed `r`.  The DIRECTION of the
+  error is measured rather than assumed: successive secants `-0.0125`, `-0.0236`, `-0.0387`
+  bend down faster than linear, so the line lies above the curve and `2^-67` bounds the
+  waterfall's continuation.  **That corrects §11.8.7's own reading**, which argued the
+  opposite sign from an error-floor argument.
+* §4 RE-DERIVED the constant #276 recorded on a retry budget.  A weak key fails near 100%
+  of the time, so nothing here needs to resolve a small probability.  The cliff has moved
+  from `6 -> 7` at the retired set to `31 -> 32` here (multiplicity 7, 15 and 31 all
+  `0/200`; 32 at `10.5%`, 33 at `38%`, a full progression at 100%), leaving
+  `QCMDPC_MAX_MULT = 6` conservative by about `5x` rather than tuned to an edge -- and the
+  tail it cuts was never near the cliff, unlike at the retired set.  §11.8.9's "cannot be
+  re-derived the way it was derived" is true of the METHOD and not of the constant; all
+  four language comments, `SECURITY.md` and `spec/` now say so.  A detail the retired-set
+  version could not see: two rows at multiplicity 31 differ, so multiplicity is not the
+  whole statistic at this width and the cliff is a band rather than a threshold.
+* §5: the GJS mechanism survives and its observability does not.  At §3's instance the
+  in/out-spectrum rates are `4.83%` vs `9.92%` over 1200 chosen ciphertexts each, 95%
+  intervals DISJOINT, ratio `2.05x`, same direction as the retired-set measurement.  At the
+  deployed `r` there is no observable failure to sample and, since #235, no signal if there
+  were -- two independent blocks, of different vintages.
+
+**(2) All four documents corrected**, and §11.8.7's measurements relabelled as the record of
+why #276 happened, with a *Re-pointed at the deployed parameters* block carrying what
+re-measures.  Kept as an in-section block rather than a new §11.8.11 deliberately: the
+eight-part index is restated in ~76 places and a new section number would churn all of them
+for a subsection that belongs with the measurements it corrects.
+
+**(3) The mechanism, on both axes.**  Nine `DOC_PARAMS` rows now cover `QCMDPC_R/D/T` across
+README, INTRODUCTION and `bindings/java/README.md` (which the checker had never read), so
+leg (2) would have reddened CI.  And a new CENSUS -- check B' -- closes the direction that
+was open: it scans those documents for parameter assignments and fails on any not captured
+by a `DOC_PARAMS` row or named by a `DOC_PARAM_EXEMPT` reason, with the orphan rule applying
+one level down (an exemption matching nothing is itself a failure, so a sentence cannot
+leave its excuse behind).  It found three uncovered live quotes on its first run -- `SDF_T`
+and `KEYBITS` in README's caveats, `WOTS_W` in the Java README -- now rows of their own.
+Bare `n` is out of scope by decision: it is the suite's universal bit-width symbol and would
+make the table mostly noise.  Verified by injection in all three directions (a drifted
+value, a new uncovered quote, an orphaned exemption).
+
+`native-python` now runs this script under `--quick`, which is the first CI coverage of ANY
+of the ~34 exit-status-gating `SecurityProofsCode` scripts.  `qcmdpc_bgf_variants.py` stays
+out: ~11 min under `--quick` is a job of its own, not a step.
+
+**Not done, and recorded rather than deferred silently:** `qcmdpc_bgf_failure_rate.py`'s
+2000-trial default now proves `DFR = 0.000000` in about seven minutes.  Vacuous rather than
+wrong, and it cannot be fixed at these parameters -- the honest repair is to delete the
+claim, not to raise the trial count, and that is a judgement about a second script this item
+did not open.
+
+Status: **DONE v7.0.3** — the QC-MDPC analysis script runs again at BIKE-128 (twin decoder deleted, sections split by what survives re-pointing, weak-key cliff re-derived at 31->32), four documents corrected, and check_docs_consistency.py gains QC-MDPC rows plus a both-directions census so the class cannot recur.
+

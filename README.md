@@ -1,4 +1,4 @@
-# Herradura Cryptographic Suite (v7.0.2)
+# Herradura Cryptographic Suite (v7.0.3)
 
 [![CI](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml/badge.svg)](https://github.com/Caume/HerraduraKEx/actions/workflows/ci.yml)
 
@@ -359,13 +359,19 @@ visible without having to search `TODO_DONE.md`.
   signing or KEM at their current defaults. This caveat covers the `hpke-stern` CLI algo
   tag specifically (its decap needs the plaintext error vector); the separate
   `hpke-stern-kem` tag uses a real BGF QC-MDPC decoder instead and doesn't share that
-  particular limitation, but is demo-only for its own reasons (TODO #218): at its toy
-  parameters (r = 523, d = 15, t = 18) the measured decoding-failure rate is 0.264%
-  = 2^-8.6 where IND-CCA2 needs 2^-128, and the underlying QC syndrome-decoding instance
-  is itself far below any usable level. Since v3.3.0 (TODO #235) decapsulation applies an
-  FO transform with implicit rejection and key generation screens the weak-key classes, so
-  the GJS reaction attack no longer has an oracle — but those two parameter facts are
-  untouched and remain the binding constraints. One consequence to know: a decoding
+  particular limitation, but is demo-only for its own reasons: since v7.0.0 (TODO #276) it
+  runs at BIKE-128's parameters (r = 12323, d = 71, t = 134), adopted verbatim together
+  with BIKE's decoder, replacing a toy set (r = 523, d = 15, t = 18) whose measured
+  decoding-failure rate was 0.264% = 2^-8.6 where IND-CCA2 needs 2^-128 and whose
+  underlying QC syndrome-decoding instance was worth about 2^21 classical operations. What
+  keeps it demo-only is a reason that changed rather than went away: the DFR at these
+  parameters is not measurable here — that is exactly what the change bought — so 2^-128
+  is *inherited* from BIKE's published analysis, while what ships is a reimplementation of
+  BIKE's decoder whose equivalence rests on testing rather than proof, drawing from a
+  suite-specific FSCX-based PRF rather than BIKE's. Since v3.3.0 (TODO #235) decapsulation
+  applies an FO transform with implicit rejection and key generation screens the weak-key
+  classes, so the GJS reaction attack no longer has an oracle; an *imported* private key is
+  still unscreened. One consequence to know: a decoding
   failure is now silent, surfacing as a shared secret the peer disagrees with rather than
   an error. See `SECURITY.md` and `SecurityProofs-5.md` §11.8.7. The
   round count is a separate, independent axis from N: `sign --algo hpks-stern`/`hpks-ring`
