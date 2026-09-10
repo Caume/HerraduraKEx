@@ -2,6 +2,93 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.4] - 2026-09-10
+
+### TODO #286 — the analysis-script layer restates deployed parameters and security figures, and nothing checks it
+
+TODO #285 (v7.0.3) closed the stale-parameter class for the three *narrative* documents.
+`SecurityProofsCode/` is ~80 more files restating the same parameters and verdicts — in prose
+**and in live constants** — outside every checker, and advertised in CLAUDE.md as things to
+run. Found by surveying all 33 exit-status-gating scripts at head: 17 pass, 15 exceed a 75 s
+probe (documented long-runners, not failures), and **one fails**.
+
+**`qcmdpc_parameter_selection.py` was failing at head, exit 1, three gates at once — and it
+is the script that chose the deployed QC-MDPC parameters.**
+
+```
+§1: deployed instance no longer costs below 2^64
+§5: BIKE L1 threshold no longer fails at d=15 (0 fails)
+§6: rejection rates 0.0200/0.0200 no longer straddle 1%
+```
+
+**The cause is #276 succeeding.** Every "before" measurement — §1's cost of the instance
+under criticism, §5's converse control, §6's rejection-rate comparison — read the set under
+criticism from `_QCMDPC_R/_D/_T`. That worked until #276's recommendation was **adopted**, at
+which point `dep == BIKE[128]`: §1 printed that BIKE-128 is worth `2^136` *and* that "a
+desktop reaches it" in one breath, §5's control ran at `d=71` where the rule it exists to
+break works fine, and §6 compared one instance against itself. A before/after argument cannot
+read "before" from the present tense. Fixed with an explicit `RETIRED = (523, 15, 18)`
+literal, a §0 frame guard that speaks up if the suite ever carries neither set, and gates
+renamed to say which side they mean. Same class as v7.0.1's row-weight literal and #285's own
+leg 1 — a parameter frozen into something that does not own it — **inverted**: here a
+*variable* sat where a literal was needed.
+
+Two further corrections in that file. §7's "one blocker" — multi-second Python decapsulation —
+was closed by v6.7.3's bit-sliced rewrite, so the section says so instead of demanding it, and
+its ladder is re-based on the retired set rather than timing the same instance twice at 1x.
+And §6's premise that the weak-key cliff *could not* be measured at these parameters is
+**withdrawn**: #285 §4 measured it at multiplicity 31→32. The retry-budget route selects the
+same `MAX_MULT = 6`, so the constant stands with two independent justifications instead of one
+and a contradiction.
+
+**`hkex_rnl_failure_rate.py` printed a security table in which every row was wrong in the
+unsafe direction.** Executed at head:
+
+| `n` | the script printed | published (#216, #223) | overstated |
+|---|---|---|---|
+| 256 | 110 / 100, labelled **"Current (deployed)"** | ~32 / ~29 | 3.4x |
+| 512 | 220 / 200, `✓ ≥128 classical+quantum ★` | ~87 | 2.5x |
+| 1024 | 440 / 400, labelled **"(reference)"** | ~206 / ~187 | 2.1x |
+
+`RNL_N` is 1024 since #223/v2.7.19, so the deployed ring was a "reference" while a retired one
+was "deployed"; the `~105–115` anchor was retracted by #216; `_BASELINE_CL = 110` was a live
+constant feeding `cl = _BASELINE_CL * (n / _BASELINE_N)`, not a comment; and `chosen_n = 512`
+starred the set #216 demoted, then fed §7. **The projection is withdrawn, not re-anchored**,
+and that is the judgement this item had to make: re-pointing the same model at ~32 would still
+assert bits proportional to `n`, which #216's own direct figures refute (32 → 206 across
+256 → 1024 is 6.4x for 4x), and #223 separately rejected n=768 on a ring-structure ground —
+`x^768+1` CRT-splits over Z — that no scaling model can see. A surrogate for a computation
+nobody could run has no purpose once it has been run. §7 now verifies reconciliation at the
+deployed ring instead of at the declined candidate.
+
+**`qcmdpc_bgf_failure_rate.py`**, the piece #285 recorded rather than scoped: its docstring
+called `r=523, d=15, t=18, nb_iter=20` "the suite's current toy parameters", and its claim to
+close the *DFR never measured* gap of #183/#186 is now unachievable. Withdrawn rather than
+repaired — no trial count reaches the rate — so it reports a one-sided upper bound, never
+prints `Measured DFR: 0.000000` (which reads as a result and is not one), and its 2000-trial
+default drops to 400.
+
+**`hkex_nl_verification.py`** labelled `n=32` and `n=256` "Deployed params"; both are retired
+for HKEX-RNL, and n=1024 is not added because the check is a negacyclic Gauss-Jordan costing
+~64x the n=256 row.
+
+**The mechanism: check B′′, and a design error worth recording.** A blanket census over
+`SecurityProofsCode/` would be almost all exemptions — retired parameters are several scripts'
+*subject* — so `check_docs_consistency.py` gains a narrower check: a phrase asserting
+**currency** next to a number that must equal the header constant. The first cut resolved bare
+letters globally and **fired 35 times, 33 of them on correct sentences**, because `n = 256` is
+`KEYBITS` in a dozen scripts and `r = 64` is a round count in two more — a letter does not
+identify the protocol. Requiring the window to also name a protocol **family** takes it to one
+finding, and that one was a true positive: `hkex_rnl_lattice_2026.py` still said "SECURITY.md
+*currently* puts HKEX-RNL (n=256) at ~105", stale framing in the very file that corrected it.
+Both directions verified by injection, and exemptions must match or fail.
+
+**CI.** #285 added the first coverage of any self-gating analysis script and covered only one,
+on runtime grounds — which is exactly why the failure above went unseen. `native-python` now
+also runs `qcmdpc_parameter_selection.py --quick` (~58 s measured). `qcmdpc_bgf_variants.py`
+stays out at ~11 min. The 15 long-runners remain uncovered and are recorded as such rather
+than left implied.
+
 ## [7.0.3] - 2026-09-09
 
 ### TODO #285 — the QC-MDPC parameter change left its analysis and documentation layer behind

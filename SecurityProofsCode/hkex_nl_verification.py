@@ -303,12 +303,18 @@ def check_inv_table(n_check, q_list, label=""):
 
 inv_results = check_inv_table(n_lwr, q_vals, "Prior verification (n=16, q ∈ {257…12289})")
 
-# Deployed code uses q=65537 at n=32 (assembly / C tests) and n=256 (suite C/Go/Python).
-# Verify these parameter pairs explicitly.
+# Two widths at the shipped modulus q=65537.  NEITHER is the deployed HKEX-RNL
+# ring: TODO #223 moved RNL_N to 1024 in v2.7.19, and this comment said
+# "deployed" of n=256 until TODO #286 caught it -- the same stale-currency class
+# #285 fixed in the narrative documents, here in a script that prints the claim.
+# n=1024 is not added: the check is a negacyclic Gauss-Jordan, so it costs about
+# (1024/256)^3 = 64x the n=256 row, which is already the slow one.  What the two
+# rows below establish is that invertibility holds at this modulus for the
+# structural reason (q prime, 2n | q-1), which does not depend on the width.
 print()
-inv_results_32  = check_inv_table(32,  [65537], "Deployed params — n=32,  q=65537")
+inv_results_32  = check_inv_table(32,  [65537], "n=32,  q=65537  (assembly / C tests)")
 print()
-inv_results_256 = check_inv_table(256, [65537], "Deployed params — n=256, q=65537  (slow — negacyclic 256×256 GJ)")
+inv_results_256 = check_inv_table(256, [65537], "n=256, q=65537  (RETIRED HKEX-RNL ring, pre-v2.7.19 — slow, negacyclic 256×256 GJ)")
 
 # ── 2.2  Algebraic attack: recover s from C = round_p(m·s mod q) ─────────────
 print(f"\n[2.2]  Algebraic attack: Eve computes s_rec = m⁻¹ · (C · q/p) mod q")

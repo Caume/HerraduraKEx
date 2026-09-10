@@ -308,7 +308,30 @@ SecurityProofsCode/                                 — standalone Python proof/
                              scored the baseline at 28.7% where it measures
                              10.7%.  A tuning grid whose null point is not the
                              baseline measures a third decoder
-  qcmdpc_parameter_selection.py — HPKE-Stern-KEM's replacement parameters
+  qcmdpc_parameter_selection.py — HPKE-Stern-KEM's replacement parameters.
+                             READ THIS FIRST if you touch it: the script is a
+                             BEFORE/AFTER argument, and TODO #286 found it
+                             failing its own findings gate three ways because
+                             it read "before" from the present tense.  §1's
+                             cost, §5's converse control and §6's rejection-rate
+                             comparison all took the set-under-criticism from
+                             _QCMDPC_R/_D/_T, which worked until #276's
+                             recommendation was ADOPTED -- after which §1
+                             printed that BIKE-128 is worth 2^136 and that "a
+                             desktop reaches it" in one breath, §5's control ran
+                             at d=71 where the rule it was meant to break works
+                             fine, and §6 compared one instance against itself
+                             (0.0200/0.0200).  There is now a RETIRED = (523,
+                             15, 18) literal for the "before" side and a §0
+                             frame guard that says so if the suite ever carries
+                             something that is neither set.  #286 also withdrew
+                             §7's "one blocker" (v6.7.3 shipped the bit-sliced
+                             decoder it demanded) and reconciled §6 with #285's
+                             measured cliff -- §6's premise that no cliff could
+                             be measured at these parameters was wrong, and the
+                             sentence is withdrawn rather than left standing,
+                             though the retry-budget route it describes selects
+                             the same constant
                              (TODO #276), on the model of #223's job for
                              HKEX-RNL.  Supplies the number §11.8.7 and
                              SECURITY.md were standing in for with "far below
@@ -679,6 +702,35 @@ SecurityProofsCode/                                 — standalone Python proof/
   nl_fscx_exact_trail_search.py — exact xdp+ trail bounds for NL-FSCX v1/v2
                              via SMT; rotation table; key-averaging gap
                              (TODO #214)
+  hkex_rnl_failure_rate.py — HKEX-RNL reconciliation failure rate, plus §6,
+                             which until TODO #286 printed a SECURITY TABLE in
+                             which every row was wrong in the unsafe direction:
+                             it labelled the retired n=256 "Current (deployed)"
+                             at 110 bits, starred n=512 as ">=128 classical+
+                             quantum" at 220, and called the actually deployed
+                             n=1024 a "(reference)" at 440 -- against the
+                             ~32/~87/~206 TODO #216 computed DIRECTLY.  The
+                             anchor was a live constant, not a comment
+                             (cl = _BASELINE_CL * n/256), and chosen_n = 512 fed
+                             §7.  #286 WITHDREW the projection rather than
+                             re-anchoring it, and the reason is worth keeping:
+                             re-pointing the same model at ~32 would still
+                             assert bits proportional to n, which #216's own
+                             figures refute (32 -> 206 over 256 -> 1024 is 6.4x
+                             for 4x), and #223 separately rejected n=768 on a
+                             ring-structure ground -- x^768+1 CRT-splits over Z
+                             -- that no scaling model can see.  §7 now verifies
+                             reconciliation at the DEPLOYED ring instead of at
+                             the declined candidate
+  qcmdpc_bgf_failure_rate.py — a direct end-to-end DFR count over the shipped
+                             keygen/encap/decode path.  Its claim to close the
+                             "DFR never measured" gap of #183/#186 is WITHDRAWN
+                             by TODO #286, not repaired: at BIKE-128 no trial
+                             count reaches the rate (#285 §2), so the script
+                             reports a one-sided upper bound and never prints
+                             "Measured DFR: 0.000000", which reads as a result
+                             and is not one.  The 2000-trial default -- sized
+                             when the DFR was 0.26% -- is now 400
   hkex_*_analysis.py       — FSCX_N, multi-nonce, and nonce-impossibility analyses
   validate_katex.js         — pipeline simulator for GitHub KaTeX rendering
   check_part_index.py       — asserts every copy of the eight-part index (banners,

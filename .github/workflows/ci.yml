@@ -157,14 +157,23 @@ jobs:
       #
       # Running all 34 is not on the table, and neither is running the whole
       # QC-MDPC family: qcmdpc_bgf_variants.py is ~11 min under --quick and ~72
-      # without, which is a job of its own rather than a step. What runs here is
-      # the one script the parameter change broke, under --quick (~3.5 min), with
-      # its own findings gate deciding the exit status -- so a claim that stops
-      # reproducing reddens CI rather than printing quietly into a log nobody
-      # reads. Add a script here only when its --quick runtime is minutes, not
-      # tens of minutes.
-      - name: SecurityProofsCode — QC-MDPC DFR/weak-key findings still reproduce
-        run: python3 SecurityProofsCode/qcmdpc_dfr_weak_keys.py --quick
+      # without, which is a job of its own rather than a step. What runs here are
+      # the scripts whose findings gates are both meaningful and cheap, each
+      # deciding its own exit status -- so a claim that stops reproducing reddens
+      # CI rather than printing quietly into a log nobody reads. Add a script
+      # here only when its --quick runtime is minutes, not tens of minutes.
+      #
+      # TODO #286 added the second one, and the reason is the argument for this
+      # step existing at all: qcmdpc_parameter_selection.py was ALREADY FAILING
+      # when #285 wired up the first, three gates at once, and covering only one
+      # script meant nothing saw it. It is the script that chose the deployed
+      # QC-MDPC parameters, and it broke because #276's recommendation was
+      # ADOPTED -- its before/after comparisons read "before" from the suite, so
+      # adoption collapsed them onto one instance. ~58 s under --quick.
+      - name: SecurityProofsCode — QC-MDPC findings still reproduce
+        run: |
+          python3 SecurityProofsCode/qcmdpc_dfr_weak_keys.py --quick
+          python3 SecurityProofsCode/qcmdpc_parameter_selection.py --quick
 
       - name: CliTest — Python CLI
         run: |

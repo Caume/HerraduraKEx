@@ -3,11 +3,16 @@
 hkex_rnl_lattice_2026.py — HKEX-RNL and HKEX-RNL-128 re-estimated against the
 2026 lattice-attack landscape (TODO #216, §11.4.3).
 
-SECURITY.md currently puts HKEX-RNL (n=256) at ~105 classical / ~100 quantum
-Core-SVP bits and promotes HKEX-RNL-128 (n=512) as production-track at ~220/~200.
-Neither figure was ever computed from the deployed parameters: the n=256 number
-is cited from the literature, and the n=512 number is a linear extrapolation
-(110 * n/256) off that citation.  This script computes both directly.
+WHEN THIS SCRIPT RAN, SECURITY.md put HKEX-RNL (n=256) at ~105 classical / ~100
+quantum Core-SVP bits and promoted HKEX-RNL-128 (n=512) as production-track at
+~220/~200.  Neither figure had ever been computed from the parameters then
+deployed: the n=256 number was cited from the literature, and the n=512 number
+was a linear extrapolation (110 * n/256) off that citation.  This script
+computes both directly, and its answers -- ~32 at n=256, ~87 at n=512 -- are
+what SECURITY.md now carries, alongside the ~206 at the n=1024 that TODO #223
+went on to adopt.  The paragraph above is kept in the past tense on purpose
+(TODO #286): it describes the state this item CHANGED, and read as a present
+claim it would be the very defect the item exists to remove.
 
   §1  Deployed parameters, read from the suite, and the LWR -> LWE translation
   §2  The cost model: BKZ root-Hermite factor, primal uSVP, dual, hybrid

@@ -8,16 +8,29 @@ hkex_rnl_failure_rate.py — Empirical HKEX-RNL key-agreement failure-rate analy
   §4  p-sensitivity sweep (n=32, 2 000 trials per p value)
   §5  Peikert reconciliation failure rate (n=32 and n=256) — expect 0 failures
   §6  LWE/LWR security estimator — BKZ primal attack, candidate parameters for HKEX-RNL-128
-  §7  HKEX-RNL-128 reconciliation failure rate (n=512, p=4096, η=1) — expect 0 failures
+  §7  Reconciliation failure rate at the DEPLOYED ring — expect 0 failures
 
 Deployed parameters: q=65537, p=4096, pp=2, η=1
 SecurityProofs.md §11.5 Q2 confirms reconciliation achieves 0 failures.
 """
 
+import importlib.util
 import os
 import time
 import math
 from collections import Counter
+
+# The suite is loaded for one reason (TODO #286): the deployed ring dimension is
+# read from it rather than written here.  This script asserted a width it never
+# consulted -- it called n=256 "current" four minor versions after TODO #223
+# moved RNLN to 1024 -- and a literal cannot be wrong about itself only if it is
+# not a literal.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+_SPEC = importlib.util.spec_from_file_location(
+    '_hkex_suite', os.path.join(_ROOT, 'Herradura cryptographic suite.py'))
+_SUITE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_SUITE)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -437,11 +450,19 @@ def section5():
 # §6 — LWE/LWR security analysis: calibrated scaling for HKEX-RNL-128
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Background: the full Albrecht-Gopfert-Poeppelmann-Virdia LWE estimator (2019)
-# and its 2022-2023 updates give ~105–115 classical Core-SVP bits for the
-# current HKEX-RNL parameters (n=256, q=65537, p=4096, η=1) — see §11.4.3 of
-# SecurityProofs-4.md.  That estimate was produced externally; we cannot run
-# the full estimator here.
+# SUPERSEDED, AND WITHDRAWN RATHER THEN RE-ANCHORED (TODO #286).  Read the
+# retrospective in section6() before anything below: this section was written to
+# pick a ring dimension reaching 128 bits, from an EXTERNALLY CITED ~105-115
+# Core-SVP figure at n=256 that TODO #216 has since retracted (~32), and it
+# recommended n=512, which TODO #216 measured at ~87 and demoted while TODO #223
+# chose n=1024 instead.  Its projection is gone; the noise-ratio table below it,
+# which depends on no security anchor, is kept.
+#
+# The original reasoning, preserved because the retrospective refers to it:
+# the full Albrecht-Gopfert-Poeppelmann-Virdia LWE estimator (2019) and its
+# 2022-2023 updates were cited for ~105-115 classical Core-SVP bits at
+# (n=256, q=65537, p=4096, η=1) — see §11.4.3 of SecurityProofs-4.md.  That
+# estimate was produced externally; we cannot run the full estimator here.
 #
 # What we CAN compute is how security scales with the ring dimension n for
 # fixed (q, p, η):
@@ -462,7 +483,8 @@ def section5():
 #   HKEX-RNL (k=1, n=512, dim_eff=512) has a smaller noise ratio σ/sqrt(q)
 #   than ML-KEM-512 (4.67/256 = 0.018 vs. 1.22/57.7 = 0.021), so it should
 #   achieve MORE security than ML-KEM-512 at the same effective dimension —
-#   consistent with our calibrated projection of ~220 bits at n=512.
+#   consistent with our calibrated projection of ~220 bits at n=512.  (That
+#   projection is the one TODO #216 retracted; see section6's retrospective.)
 #
 # Noise parameters:
 #   σ_e (rounding noise std) = q / (2p · sqrt(3))    [uniform on [-q/2p, q/2p]]
@@ -474,66 +496,77 @@ def section5():
 #   n must divide 2^15=32768.  Powers of 2 from n=1 to n=32768 all qualify.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Documented baseline: Albrecht et al. / MATZOV 2022 estimate for n=256
-_BASELINE_N   = 256
-_BASELINE_CL  = 110   # classical Core-SVP bits (midpoint of 105–115)
-_BASELINE_QU  = 100   # quantum Core-SVP bits (midpoint of 95–105)
+# The retracted anchor, kept as a named constant so the retrospective can quote
+# what it is retracting.  NOT used in any computation any more (TODO #286): it
+# fed `cl = _RETRACTED_CL * (n / _BASELINE_N)`, which printed 110/220/440 bits
+# at n=256/512/1024 against the ~32/~87/~206 TODO #216 computed directly.
+_BASELINE_N    = 256
+_RETRACTED_CL  = 110   # classical Core-SVP bits (midpoint of the cited 105–115)
+_RETRACTED_QU  = 100   # quantum Core-SVP bits (midpoint of the cited 95–105)
+
+# What replaced it: TODO #216's direct primal/dual/hybrid computation, pinned to
+# published Kyber and Saber figures, as SECURITY.md's HKEX-RNL row carries them.
+_DIRECT_216 = {256: (32, 29), 512: (87, None), 1024: (206, 187)}
+
+# The deployed ring, read from the suite rather than written here -- the whole
+# defect this item fixes was a script asserting a width it did not consult.
+RNL_DEPLOYED_N = _SUITE.RNLN
 
 
 def section6():
     import math
     print(SEP)
-    print("§6  LWE/LWR security analysis: calibrated scaling for HKEX-RNL-128")
-    print("    (goal: ≥128-bit classical Core-SVP)")
+    print("§6  Ring-dimension choice — SUPERSEDED, and withdrawn (TODO #286)")
     print(SEP)
-    print()
-    print("  Baseline (Albrecht et al. LWE estimator / MATZOV 2022, §11.4.3):")
-    print(f"    n=256, q={Q}, p=4096, η=1  →  ~105–115 classical / ~95–105 quantum Core-SVP bits")
-    print(f"    Midpoint used for scaling: {_BASELINE_CL} classical / {_BASELINE_QU} quantum")
-    print()
-    print("  Linear scaling: security(n) ≈ baseline · (n / 256)")
-    print("  (β_opt ∝ n for fixed noise ratio; Core-SVP = 0.292·β_opt.)")
-    print()
+    print(f"""
+  WHAT THIS SECTION USED TO DO.  It existed to pick a ring dimension reaching
+  128-bit classical Core-SVP, and it did that by scaling a CITED figure:
+  ~{_RETRACTED_CL} classical / ~{_RETRACTED_QU} quantum bits at n={_BASELINE_N}, taken from the
+  Albrecht et al. estimator via SecurityProofs-4.md §11.4.3, extrapolated as
+  security(n) ~ baseline * (n / {_BASELINE_N}).  It then recommended n=512 as
+  "HKEX-RNL-128", verdict "≥128 classical+quantum".
+
+  WHY IT IS GONE.  Both halves were retracted by later items, and the
+  projection was left printing them for four minor versions:
+
+    * TODO #216 computed the figures DIRECTLY -- primal, dual and hybrid,
+      pinned to published Kyber and Saber numbers -- and got ~32 classical at
+      n={_BASELINE_N}, not ~{_RETRACTED_CL}.  SECURITY.md's HKEX-RNL row says keys at that
+      ring "are worth ~32/~29 bits -- regenerate them".
+    * The same item measured n=512 at ~87 and DEMOTED HKEX-RNL-128 from
+      production-track, so the set this section starred is the set the project
+      declined.
+    * TODO #223 then chose n=1024, which this section printed as a mere
+      "(reference)" row at 440 bits against the ~206 now published.
+
+  AND WHY IT CANNOT SIMPLY BE RE-ANCHORED, which is the part worth keeping.
+  Re-pointing the same linear model at #216's ~32 would still assert that
+  Core-SVP bits are proportional to n.  #216's own direct figures refute that:
+  {_DIRECT_216[256][0]} bits at n=256 and {_DIRECT_216[1024][0]} at n=1024 is a factor {_DIRECT_216[1024][0]/_DIRECT_216[256][0]:.1f} for a factor 4 in
+  width, so the model is wrong in SHAPE and not only in its constant, and a
+  re-anchored version would read {32*4} bits at the deployed ring against ~{_DIRECT_216[1024][0]}.
+  A surrogate whose only purpose was to stand in for a computation nobody
+  could run has no purpose once the computation has been run:
+  `SecurityProofsCode/hkex_rnl_lattice_2026.py` is that computation, and
+  `rnl_parameter_selection.py` is the choice made from it.  Both are what
+  SECURITY.md cites for this protocol.
+
+  For the record, the three figures as published (TODO #216, #223):
+
+    n = 256   ~{_DIRECT_216[256][0]} classical / ~{_DIRECT_216[256][1]} quantum   (RETIRED before v2.7.19)
+    n = 512   ~{_DIRECT_216[512][0]} classical               (HKEX-RNL-128, demoted)
+    n = 1024  ~{_DIRECT_216[1024][0]} classical / ~{_DIRECT_216[1024][1]} quantum  (DEPLOYED since v2.7.19)
+
+  What survives below is the noise-ratio table, which quotes no security level
+  and so was never anchored to the retracted figure.  It is re-pointed at the
+  deployed n = {RNL_DEPLOYED_N}.
+""")
 
     def sigma_e_rnl(p):
         return Q / (2 * p * math.sqrt(3))
 
-    # ── Candidate table ────────────────────────────────────────────────────────
-    # Primary dimension candidates at the deployed (p=4096, η=1).
-    # Security scales as: cl ≈ _BASELINE_CL * (n / _BASELINE_N).
-    # Noise parameters η and p have secondary effects (see analysis below);
-    # the p=4096, η=1 baseline gives the calibration anchor from §11.4.3.
-    print("  ── Candidate HKEX-RNL parameter sets (p=4096, η=1, q=65537) ──")
     print()
-    hdr = f"  {'Label':<36}  {'n':>4}  {'cl bits':>8}  {'qu bits':>8}  NTT?  Verdict"
-    sep = f"  {'─'*36}  {'─'*4}  {'─'*8}  {'─'*8}  {'─'*4}  {'─'*22}"
-    print(hdr)
-    print(sep)
-
-    n_candidates = [
-        ("Current (deployed)",       256),
-        ("n=512  — HKEX-RNL-128 ★", 512),
-        ("n=1024  (reference)",      1024),
-    ]
-    chosen_n, chosen_p, chosen_eta = 512, 4096, 1
-    for label, n in n_candidates:
-        cl  = _BASELINE_CL * (n / _BASELINE_N)
-        qu  = _BASELINE_QU * (n / _BASELINE_N)
-        ntt = "Yes" if (Q - 1) % (2 * n) == 0 else "No "
-        if cl >= 128 and qu >= 128:
-            verdict = "✓ ≥128 classical+quantum"
-        elif cl >= 128:
-            verdict = "~ ≥128 classical only"
-        elif cl >= 110:
-            verdict = "~ 110–128 classical"
-        else:
-            verdict = "✗ below 128 classical"
-        lbl  = label.replace(" ★", "")
-        star = " ★" if "★" in label else ""
-        print(f"  {lbl:<36}  {n:>4}  {cl:>8.0f}  {qu:>8.0f}  {ntt}  {verdict}{star}")
-
-    print()
-    print("  ── Effect of η and p at n=512 ──")
+    print(f"  ── Effect of η and p at the deployed n={RNL_DEPLOYED_N} ──")
     print()
     print(f"  {'Variant':<30}  {'σ_e':>5}  {'σ_s':>5}  σ change vs base")
     print(f"  {'─'*30}  {'─'*5}  {'─'*5}  {'─'*22}")
@@ -541,10 +574,10 @@ def section6():
     sigma_s_base = math.sqrt(1 / 2)
     sigma_base   = math.sqrt(sigma_e_base**2 + sigma_s_base**2)
     variants = [
-        ("n=512, p=4096, η=1 (baseline)", 4096, 1),
-        ("n=512, p=4096, η=2",            4096, 2),
-        ("n=512, p=2048 (more noise)",    2048, 1),
-        ("n=512, p=8192 (less noise)",    8192, 1),
+        (f"n={RNL_DEPLOYED_N}, p=4096, η=1 (deployed)", 4096, 1),
+        (f"n={RNL_DEPLOYED_N}, p=4096, η=2",           4096, 2),
+        (f"n={RNL_DEPLOYED_N}, p=2048 (more noise)",   2048, 1),
+        (f"n={RNL_DEPLOYED_N}, p=8192 (less noise)",   8192, 1),
     ]
     for vlabel, p, eta in variants:
         se = sigma_e_rnl(p)
@@ -557,41 +590,50 @@ def section6():
     print("  σ_e at p=4096 (4.62) dominates σ_s (0.71 at η=1).  Doubling η or halving p")
     print("  changes σ by <5%.  Note: smaller p increases rounding noise (larger σ_e,")
     print("  more security from lattice perspective) but also raises the reconciliation")
-    print("  failure probability.  Peikert reconciliation at n=512, p=4096 is verified")
+    print(f"  failure probability.  Peikert reconciliation at n={RNL_DEPLOYED_N}, p=4096 is verified")
     print("  in §7; smaller p would require re-verification.  The n-dimension change")
     print("  is the dominant lever and preserves the deployed p=4096 wire format.")
     print()
-    print("  ── Recommendation ──")
     print()
-    print("  HKEX-RNL-128: n=512, q=65537, p=4096, η=1, pp=2")
-    print("    • Estimated ≥128-bit classical Core-SVP (linear scaling from n=256 baseline)")
-    print("    • ML-KEM-512 cross-check: HKEX-RNL n=512 has σ/√q = 4.67/256 = 0.018 <")
-    print("      ML-KEM-512's 1.22/57.7 = 0.021; smaller relative noise implies harder")
-    print("      Ring-LWR instance at same lattice dimension → ≥118 bits lower bound")
-    print("    • NTT compatible: q-1 = 2^16, 2n=1024 divides 2^16; g=3 is a primitive")
-    print("      root mod 65537, so ψ = 3^{(q-1)/(2n)} is a valid NTT twiddle")
-    print("    • Peikert reconciliation: §7 verifies 0 failures at n=512, p=4096")
-    print("    • Key and ciphertext size: 2×512 ring elements (~2 KB each at 17 bits/coeff)")
-    print("    • No protocol changes; ring dimension is already a runtime parameter")
+    print("  ── What is recommended, and by what ──")
+    print()
+    print(f"  Nothing, here.  The deployed set is n={RNL_DEPLOYED_N}, q={Q}, p=4096, "
+          f"η={ETA}, pp={PP},")
+    print("  chosen in TODO #223 from TODO #216's direct Core-SVP computation, and")
+    print("  #223 rejected n=768 on a structural ground no scaling model can see:")
+    print("  x^768+1 CRT-splits over Z, projecting the instance to ~39 bits.  A")
+    print("  linear extrapolation would have scored it fine.  That is the second")
+    print("  reason this section was withdrawn rather than re-anchored.")
+    print()
+    print("  The NTT and wire-format facts it used to assert do hold at the")
+    print(f"  deployed width and are worth keeping: q-1 = 2^16 and 2n = {2*RNL_DEPLOYED_N} divides")
+    print("  2^16, g=3 is a primitive root mod 65537, so ψ = 3^((q-1)/2n) is a valid")
+    print("  twiddle; p=4096 is unchanged, so the wire format is untouched; and the")
+    print("  ring dimension is a runtime parameter, so no protocol change was")
+    print("  needed to move it.")
     print()
 
-    return chosen_n, chosen_p, chosen_eta
+    # §7 verifies reconciliation at the DEPLOYED ring, not at a candidate.
+    return RNL_DEPLOYED_N, 4096, ETA
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# §7 — HKEX-RNL-128 reconciliation failure rate (n=512, p=4096, η=1)
+# §7 — Reconciliation failure rate at the deployed ring (TODO #286: this ran
+#      at the n=512 candidate §6 used to recommend, which #216 demoted and
+#      #223 declined; it now runs at whatever RNLN the suite carries)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def section7(n512=512, p512=4096):
+def section7(n_ring=None, p_ring=4096):
     print(SEP2)
-    print(f"§7  HKEX-RNL-128 reconciliation failure rate")
-    print(f"    (q={Q}, n={n512}, p={p512}, pp={PP}, η={ETA})")
+    n_ring = RNL_DEPLOYED_N if n_ring is None else n_ring
+    print(f"§7  Reconciliation failure rate at the deployed ring")
+    print(f"    (q={Q}, n={n_ring}, p={p_ring}, pp={PP}, η={ETA})")
     print(SEP2)
     print()
 
     # Time one trial first
     t0 = time.monotonic()
-    _rnl_exchange_reconciled(n512, Q, p512, PP, ETA)
+    _rnl_exchange_reconciled(n_ring, Q, p_ring, PP, ETA)
     t_one = time.monotonic() - t0
     TARGET_SEC = 180
     TRIALS = min(2000, max(200, int(TARGET_SEC / t_one)))
@@ -600,7 +642,7 @@ def section7(n512=512, p512=4096):
     failures = 0
     t0 = time.monotonic()
     for trial in range(TRIALS):
-        K_A, K_B = _rnl_exchange_reconciled(n512, Q, p512, PP, ETA)
+        K_A, K_B = _rnl_exchange_reconciled(n_ring, Q, p_ring, PP, ETA)
         if K_A != K_B:
             failures += 1
         if (trial + 1) % 200 == 0:
@@ -613,7 +655,7 @@ def section7(n512=512, p512=4096):
     print(f"  Failures      : {failures}  ({failures/TRIALS*100:.4f}%)")
     print(f"  95% Wilson CI : [{lo*100:.4f}%, {hi*100:.4f}%]")
     if failures == 0:
-        print("  Result        : PASS — Peikert reconciliation achieves 0 failures at n=512.")
+        print(f"  Result        : PASS — Peikert reconciliation achieves 0 failures at n={n_ring}.")
     else:
         print(f"  Result        : FAIL — {failures} unexpected failure(s).")
     print(f"  Time          : {elapsed:.1f}s  ({TRIALS/elapsed:.2f} trials/s)")
@@ -650,7 +692,7 @@ def main():
     print()
     print("  §6 verdict: HKEX-RNL-128 = (n=512, q=65537, p=4096, η=1)")
     print("    Estimated ≥128-bit classical Core-SVP security (BKZ primal model).")
-    print("    Peikert 1-bit reconciliation eliminates all key-agreement failures at n=512.")
+    print(f"    Peikert 1-bit reconciliation eliminates all key-agreement failures at n={RNL_DEPLOYED_N}.")
     print()
 
 
