@@ -2,6 +2,50 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.2] - 2026-09-09
+
+### TODO #284 — a KAT vector for HPKE-Stern-KEM, including the implicit-rejection path
+
+Before this, `KAT/` held **no Stern-KEM artifact of any kind** — not in `pem/`, not in any
+JSON — and TODO #276 (v7.0.0) had just rewritten that wire format completely, moving every
+field width with `r` 523 → 12323. Every check on those bytes was a round-trip or an interop
+comparison, and both pass as long as the four languages change *together*. That is the hole
+`KAT/pem/` exists to fill elsewhere: #227's own note says it "pins the CLI layer that
+`hkex_rnl.json` does not". The precedent is not hypothetical — TODO #277 found C's QC-MDPC
+PRF counter placement had disagreed with the other three *for the life of the protocol*, and
+only a vector found it.
+
+`KAT/pem/` gains six artifacts at the deployed BIKE-128, **one width only** because C
+compiles for a single `QCMDPC_R`: `kem_priv.pem`, `kem_pub.pem`, `kem_ct.pem` with
+`message_kem.bin`, and `kem_reject_ct.pem` with `message_kem_reject.bin`.
+
+**The rejection pair is what earns the item.** Since TODO #235 a decoding failure is *silent
+by design*: the FO transform returns `HFSCX-256-DS(0x11, z || C)`, `dec` exits 0 and writes a
+full-width output, and a wrong `K` is indistinguishable from a right one.
+`CliTest/test_stern_kem.sh` checks that the CLIs agree with **each other**, which catches a
+divergence but not a **drift** — all four moving together is invisible to it, and to every
+round-trip test, by construction. Nothing anywhere pinned that key to a fixed value.
+
+That gap is **demonstrated rather than argued**. Moving `QCMDPC_DS_Z` from `0x11` to `0x13`
+in all four languages leaves `test_stern_kem.sh` at **18 passed / 0 failed** — the entire
+interop suite blind — while the new vector fails immediately on
+`message_kem_reject.bin is stale`. Mutating Go alone is caught by both, which is the
+already-covered case. The pinned bytes are garbage by construction; pinned garbage is the
+point.
+
+Regenerate-and-diff checkable at the suite layer, unlike `hcred_kkw.json`: `qcmdpc_keygen`
+and `qcmdpc_encap` both take a seed, so the randomness is an *argument*, the condition
+`enc_priv.pem` satisfies. The rejection ciphertext is a well-formed encapsulation to a
+*different* key — the construction #235's own tests use — so it exercises the rejection path
+rather than the DER reader.
+
+`CliTest/test_kat_pem.sh` grows three checks per language (40 PASS / 0 FAIL, from 28) and
+becomes the **one script exempt** from `ci.yml`'s DFR guard. The exemption is the reasoned
+kind rather than a silencing: a pinned key and a pinned ciphertext have no randomness to
+retry with, the generator asserts at build time that the pair decodes, and if it ever stops
+decoding that is a decoder regression and never a DFR event — so retrying would mask exactly
+the signal the vector exists to produce.
+
 ## [7.0.1] - 2026-09-09
 
 ### TODO #276 follow-up — the malformed-PEM table's row-weight bound was a literal

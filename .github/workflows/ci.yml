@@ -277,6 +277,16 @@ jobs:
           missing=0
           for f in *.sh; do
             case "$f" in lib_dfr.sh) continue ;; esac
+            # EXEMPT, with a reason (TODO #284).  test_kat_pem.sh decapsulates a
+            # PINNED ciphertext under a PINNED key -- there is no randomness to
+            # retry with, and KAT/generate_pem_kat.py asserts at generation time
+            # that the pair decodes.  A retry loop there would be dead code by
+            # CONSTRUCTION rather than merely in practice, and worse: if that
+            # ciphertext ever stops decoding, that is a decoder regression and
+            # never a DFR event, so retrying would mask exactly the signal the
+            # vector exists to produce.  An exemption must name a script and say
+            # why; do not add one to silence a genuine exposure.
+            case "$f" in test_kat_pem.sh) continue ;; esac
             # A script is exposed if it decapsulates: `dec --algo hpke-stern-kem`
             # or a hybrid-rnl-stern completion (the step that takes --our-kem).
             if grep -qE 'dec --algo hpke-stern-kem|--our-kem' "$f"; then
