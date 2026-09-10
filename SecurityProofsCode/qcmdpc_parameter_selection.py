@@ -361,12 +361,20 @@ def section4():
 # ═══════════════════════════════════════════════════════════════════════════
 # Bit-sliced BGF decoder, valid at ANY d
 #
-# qcmdpc_dfr_weak_keys.py carries one of these too, but it holds the
-# unsatisfied-parity counters in exactly FOUR bitplanes, so it saturates at 15
-# and is correct only at the deployed d = 15.  That is fine where it is used
-# and silently wrong anywhere else -- at d = 71 the saturated decoder reports
-# 20 failures out of 20 at parameters that in fact decode perfectly.  This one
-# sizes the planes from d, and a guard has been added to that script's copy.
+# This decoder predates the suite's own bit-sliced one and is kept because it
+# takes its threshold rule as an ARGUMENT: §3 and §7 compare BIKE's rule against
+# the one the suite shipped before #276, and neither can be expressed by
+# pointing the deployed decoder at other parameters.  Where a section wants the
+# DEPLOYED rule and nothing else -- which is every section of
+# qcmdpc_dfr_weak_keys.py -- call the suite's qcmdpc_bgf_decode instead.
+#
+# qcmdpc_dfr_weak_keys.py used to carry a THIRD copy, four fixed bitplanes wide
+# and so correct only at d <= 15; TODO #285 deleted it rather than sizing it,
+# because #276 had already made the shipped decoder bit-sliced and the copy's
+# whole purpose was speed.  The saturation is worth remembering anyway, since
+# nb is sized from d here: four planes at d = 71 report 20 failures out of 20
+# at parameters that in fact decode perfectly, and report it SILENTLY -- a
+# saturated decoder does not error, it just stops decoding.
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _counters(s, sup, r, full, nb):

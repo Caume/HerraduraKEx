@@ -90,6 +90,7 @@ SPEC_PATH = _p("spec", "herradura-protocol-spec.json")
 HEADER = _p("herradura.h")
 README = _p("README.md")
 INTRO = _p("docs", "INTRODUCTION.md")
+JAVA_README = _p("bindings", "java", "README.md")
 CHANGELOG = _p("CHANGELOG.md")
 MIGRATING = _p("MIGRATING.md")
 PYPROJECT = _p("pyproject.toml")
@@ -237,7 +238,121 @@ DOC_PARAMS = [
     ("I_VALUE", INTRO,
      r"iterated (\d+) steps \(= n/4\)",
      "HFSCX-256 compression step count, INTRODUCTION"),
+    # QC-MDPC (TODO #285).  These three rows are why this table now has a
+    # census below: TODO #276 moved r/d/t off the toy set and all four prose
+    # copies below kept quoting the retired numbers for two releases, because
+    # DOC_PARAMS named no QC-MDPC constant and a constant no row names is
+    # invisible here.  Anchored on the parameter list itself, so a future move
+    # fails on the VALUE rather than on the anchor.
+    ("QCMDPC_R", README,
+     r"BIKE-128's parameters \(r = (\d+), d = \d+, t = \d+\)",
+     "QC-MDPC block size r, README caveats"),
+    ("QCMDPC_D", README,
+     r"BIKE-128's parameters \(r = \d+, d = (\d+), t = \d+\)",
+     "QC-MDPC row weight d, README caveats"),
+    ("QCMDPC_T", README,
+     r"BIKE-128's parameters \(r = \d+, d = \d+, t = (\d+)\)",
+     "QC-MDPC error weight t, README caveats"),
+    ("QCMDPC_R", INTRO,
+     r"BIKE-128's parameters \(r = (\d+), d = \d+, t = \d+\)",
+     "QC-MDPC block size r, INTRODUCTION Stern section"),
+    ("QCMDPC_D", INTRO,
+     r"BIKE-128's parameters \(r = \d+, d = (\d+), t = \d+\)",
+     "QC-MDPC row weight d, INTRODUCTION Stern section"),
+    ("QCMDPC_T", INTRO,
+     r"BIKE-128's parameters \(r = \d+, d = \d+, t = (\d+)\)",
+     "QC-MDPC error weight t, INTRODUCTION Stern section"),
+    # bindings/java/README.md is not one of the two front doors, but it quotes
+    # the same three constants for the Java port and drifted with the others.
+    ("QCMDPC_R", JAVA_README,
+     r"BIKE-128 parameters r=(\d+)/d=\d+/t=\d+",
+     "QC-MDPC block size r, Java port README"),
+    ("QCMDPC_D", JAVA_README,
+     r"BIKE-128 parameters r=\d+/d=(\d+)/t=\d+",
+     "QC-MDPC row weight d, Java port README"),
+    ("QCMDPC_T", JAVA_README,
+     r"BIKE-128 parameters r=\d+/d=\d+/t=(\d+)",
+     "QC-MDPC error weight t, Java port README"),
+    # Three live quotes the census below exposed as uncovered (TODO #285).
+    ("SDF_T", README,
+     r"default parameters \(N = n =\s+\d+, t = (\d+),",
+     "Stern-F error weight t, README caveats"),
+    ("KEYBITS", README,
+     r"does not fix the N = (\d+) SD-hardness shortfall",
+     "Stern-F code length N, README caveats"),
+    ("WOTS_W", JAVA_README,
+     r"at the shipped w=(\d+)/L=\d+ parameters",
+     "WOTS+ Winternitz parameter w, Java port README"),
 ]
+
+
+# ── B'. The census over the same three documents (TODO #285) ───────────────
+#
+# DOC_PARAMS above is exhaustive in ONE direction only: every regex must match,
+# so deleting the sentence an entry anchors to fails as "anchor lost".  Nothing
+# enforced the other direction, and that is the hole TODO #276 fell through --
+# it moved QCMDPC_R/D/T, four prose copies kept quoting the retired numbers for
+# two releases, and this script passed throughout because a header constant no
+# DOC_PARAMS row NAMES is invisible to it.
+#
+# So: scan the prose for parameter assignments, and require each one to be
+# either captured by a DOC_PARAMS entry on that document or named by an
+# exemption with a stated reason.  An exemption that matches nothing is itself
+# a failure, so a sentence cannot leave its excuse behind for the next thing
+# that lands in the same place.
+#
+# SCOPE, deliberately: single-letter parameter names only, and NOT bare `n`.
+# `n` is the suite's universal bit-width symbol -- it appears in `i = n/4`,
+# `r = 3n/4` and every algebraic sentence in INTRODUCTION -- so censusing it
+# would produce a table that is mostly noise, and the two places it names a
+# deployed width (RNL_N, KEYBITS) already carry DOC_PARAMS rows.  A trailing
+# letter also disqualifies a match, so `r = 3n/4` is not an assignment.
+_CENSUS_RE = re.compile(r"(?<![A-Za-z0-9_$\\])([rdtNqpwL])\s*=\s*(\d[\d,]*)(?![\d,]*[A-Za-z])")
+
+# (document, regex, reason).  Each must match at least once.
+DOC_PARAM_EXEMPT = [
+    (README,
+     r"replacing a toy set \(r = 523, d = 15, t = 18\)",
+     "HISTORICAL -- the retired QC-MDPC set, named as what #276 replaced.  "
+     "Deliberately not a DOC_PARAMS row: these numbers must NOT track the "
+     "header, and if the header ever returned to them the sentence would be "
+     "wrong in a way no value check can see"),
+    (JAVA_README,
+     r"replaced a toy r=523/d=15/t=18 set",
+     "HISTORICAL -- the same retired set, Java port README"),
+]
+
+
+def check_param_census():
+    doc_patterns = {}
+    for name, doc, pattern, _why in DOC_PARAMS:
+        doc_patterns.setdefault(doc, []).append(pattern)
+
+    exempt_spans = {}
+    for doc, pattern, reason in DOC_PARAM_EXEMPT:
+        rel = os.path.relpath(doc, REPO)
+        spans = [m.span() for m in re.finditer(pattern, read(doc))]
+        if not spans:
+            fail("B", "EXEMPTION MATCHES NOTHING -- %s: /%s/ (%s).  Delete the "
+                      "entry, or re-point it at the sentence that replaced it."
+                      % (rel, pattern, reason.split(".")[0]))
+        exempt_spans.setdefault(doc, []).extend(spans)
+
+    for doc in (README, INTRO, JAVA_README):
+        rel = os.path.relpath(doc, REPO)
+        text = read(doc)
+        covered = list(exempt_spans.get(doc, []))
+        for pattern in doc_patterns.get(doc, []):
+            covered += [m.span() for m in re.finditer(pattern, text)]
+        for m in _CENSUS_RE.finditer(text):
+            if any(lo <= m.start() and m.end() <= hi for lo, hi in covered):
+                continue
+            line = text[:m.start()].count("\n") + 1
+            fail("B", "UNCENSUSED PARAMETER -- %s:%d quotes %r and no DOC_PARAMS "
+                      "entry captures it.  Add a row naming the herradura.h "
+                      "constant it repeats, or a DOC_PARAM_EXEMPT entry saying "
+                      "why the number is not a deployed parameter."
+                      % (rel, line, m.group(0)))
 
 # spec/'s `parameters` block quotes the same header constants.  Key path into
 # the JSON -> header constant.
@@ -467,6 +582,7 @@ def main():
 
     check_versions()
     check_parameters(consts)
+    check_param_census()
     check_protocol_coverage(spec)
     check_claims()
 

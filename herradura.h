@@ -6915,16 +6915,28 @@ static int hcred_proof_deserialize(HcredProof *proof, const uint8_t *data, size_
 /* Weak-key screen: reject a private polynomial whose cyclic distance spectrum
  * contains a distance of multiplicity above this bound.
  *
- * 5 was read off a MEASURED DFR cliff at r=523, d=15 (TODO #218 §4).  That
- * measurement is not available here and cannot be made: locating a cliff needs a
- * measurable DFR, which is exactly what the parameter change exists to remove.
- * TODO #276 therefore states a surrogate IN ADVANCE rather than fitting one --
- * keep the screen a tail cut costing under one keygen retry in 200 -- which
- * gives 6 at d=71.  This is a RETRY-BUDGET choice, not a cliff, and is recorded
- * as such; the cliff question belongs to TODO #250, which owns decoder
- * behaviour.  (An exact quantile match to the old 0.03% was tried first and
- * discarded: it sits at the sampler's resolution floor and flips between 6 and 7
- * with the trial count.) */
+ * 5 was read off a MEASURED DFR cliff at r=523, d=15 (TODO #218 §4).  TODO #276
+ * believed that measurement could not be repeated here -- locating a cliff needs
+ * a measurable DFR, which is what the parameter change exists to remove -- and
+ * so stated a surrogate IN ADVANCE rather than fitting one: keep the screen a
+ * tail cut costing under one keygen retry in 200, which gives 6 at d=71.  It
+ * recorded that as a RETRY-BUDGET choice and not a cliff.
+ *
+ * TODO #285 measured the cliff after all, and the bound survives with room to
+ * spare.  What is unmeasurable at these parameters is a DFR DIFFERENCE among
+ * ORDINARY keys; a weak key does not fail rarely, it fails near 100% of the
+ * time, so the cliff needs no such resolution.  It has moved from 6->7 at the
+ * retired parameters to 31->32 here (SecurityProofs-5.md §11.8.7,
+ * "Re-pointed at the deployed parameters"), leaving this bound conservative by
+ * about 5x rather than tuned to an edge -- and the tail it cuts, multiplicity 7
+ * upward, decodes indistinguishably from an accepted key at this width.  The
+ * screen is cheap insurance against a class this decoder tolerates, which is a
+ * change from the retired set where multiplicity 6 was both the highest honest
+ * keygen reached and worth about ten times the average DFR.
+ *
+ * (An exact quantile match to the old 0.03% was tried first and discarded: it
+ * sits at the sampler's resolution floor and flips between 6 and 7 with the
+ * trial count.) */
 #define QCMDPC_MAX_MULT  6
 
 /* r-bit polynomial: QCMDPC_RWORDS uint64_t, little-endian (bit i = word[i>>6] bit i&63) */

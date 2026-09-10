@@ -244,16 +244,40 @@ SecurityProofsCode/                                 — standalone Python proof/
   hfscx_dm_rf_model.py     — HFSCX-256-DM re-derived in the ideal-random-function
                              model; Joux/Kelsey-Schneier demos (TODO #215)
   qcmdpc_dfr_weak_keys.py  — QC-MDPC BGF DFR extrapolation, weak keys, and the
-                             GJS reaction attack (TODO #218).  Its bit-sliced
-                             decoder holds the unsatisfied-parity counters in
-                             exactly FOUR bitplanes and so is valid only at the
-                             deployed d = 15; above that they saturate SILENTLY
-                             -- not an error, just a failure to decode, i.e. a
-                             plausible-looking DFR of 1.0 at parameters that
-                             decode perfectly.  #276 read 20/20 failures at
-                             BIKE-128 that way, so the function now refuses
-                             d > 15 and points at the plane-sizing copy in
-                             qcmdpc_parameter_selection.py
+                             GJS reaction attack (TODO #218), RE-POINTED at
+                             BIKE-128 by #285 -- it had exited 1 in its own §1
+                             since #276 moved the parameters, and it is the
+                             recorded acceptance oracle for both #218 and #235.
+                             It no longer carries its own decoder: #276 made the
+                             SHIPPED one bit-sliced, which was the twin's whole
+                             reason to exist, and the twin had by then diverged
+                             twice (four bitplanes, valid only at d <= 15, plus
+                             the pre-#276 threshold rule).  §1 now pins the
+                             shipped decoder against a PER-POSITION reference,
+                             at the deployed instance and at §3's waterfall --
+                             both at d = 71, because BIKE's threshold floor of
+                             36 unsatisfied checks is unreachable by a row of
+                             weight 15, so the retired parameters are not a
+                             usable cross-check instance for this decoder.
+                             The re-pointing SPLITS the sections by what they
+                             measure, and that split is the finding: §2 and §3
+                             are about the SIZE of the failure rate, which at
+                             BIKE-128 is not observable at any sample size (§2
+                             reports a bound and says the 2^-128 is INHERITED
+                             from BIKE; §3 inverts to come DOWN from r until the
+                             waterfall appears, at ~80% of the deployed r, and
+                             measures the CURVATURE to sign its extrapolation).
+                             §4 and §5 are about its SHAPE and survive intact --
+                             a weak key fails near 100% of the time, so §4
+                             measures the multiplicity cliff at the deployed
+                             parameters directly.  That last one RE-DERIVES the
+                             constant #276 recorded on a retry budget: the cliff
+                             has moved from 6-7 to 31-32, so QCMDPC_MAX_MULT = 6
+                             is conservative by ~5x rather than tuned to an edge,
+                             and §11.8.9's "cannot be re-derived" is true of the
+                             METHOD (resolving DFR differences) and not of the
+                             constant.  Exits non-zero if a finding stops
+                             reproducing
   qcmdpc_bgf_variants.py   — do DECODER-SIDE BGF variants close the DFR gap?
                              (TODO #250).  NO, and the number is the point: the
                              best variant buys ~4 bits of DFR against a

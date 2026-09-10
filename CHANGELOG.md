@@ -2,6 +2,99 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.3] - 2026-09-09
+
+### TODO #285 — the QC-MDPC parameter change left its analysis and documentation layer behind
+
+TODO #276 (v7.0.0) moved HPKE-Stern-KEM from `r = 523`, `d = 15`, `t = 18` to BIKE-128's
+`r = 12323`, `d = 71`, `t = 134`. It carried the four implementations, the wire format, the
+weak-key screen, `SECURITY.md`'s verdict row, `spec/` and `CliTest/`. It did not carry the
+**analysis script** that measured the old set, or the **four narrative documents** that quote
+it, and **nothing in CI could see either omission**.
+
+**`SecurityProofsCode/qcmdpc_dfr_weak_keys.py` did not run.** It is the recorded acceptance
+oracle for TODO #218 *and* TODO #235 — that item's own acceptance clause says so — and at
+head it exited 1 inside its own §1, before any measurement, on the guard-rail #276 added
+after the four-bitplane saturation read 20/20 failures at parameters that decode perfectly.
+
+**The fix is a deletion, not the plane-sizing port the item first proposed.** The twin
+decoder existed because the *shipped* decoder was per-position and ~40x too slow for these
+sample sizes; #276 removed that reason by making `qcmdpc_bgf_decode` bit-sliced. Measured
+here: 5.4 ms through the suite against 6083 ms per-position at the deployed `r`. So the copy
+bought nothing and had diverged **twice** — four fixed bitplanes, *and* the pre-#276
+threshold schedule, a constant in `d` where the deployed rule is affine in the syndrome
+weight. Every section now calls the function that ships, and §1 pins that against a
+**per-position reference** (20/20 and 6/6 identical). The retired parameters turn out not to
+be a usable cross-check instance at all: BIKE's threshold floor of 36 unsatisfied checks is
+unreachable by a row of weight 15, so both instances carry the deployed `d`.
+
+**Re-pointing splits the findings, and the line of the split is the result.** §2 and §3 are
+about the *size* of the failure rate; §4 and §5 about its *shape*; only the second survives.
+
+* **§2 — the DFR is no longer measurable, which is what the change bought.** 3000 round
+  trips, **zero failures**, so a 95% upper bound of `2^-9.7` and nothing sharper at any
+  reachable sample size. The deployed `2^-128` is **inherited** from BIKE, not established
+  here. The old `2^-8.6` is not superseded as a measurement — it is the measurement that
+  justified moving off the parameters it describes.
+* **§3 — inverted, and its error direction now measured.** Hold the deployed `(d, t)` and
+  come *down* from `r` until the waterfall appears: it does, at 78-80% of the deployed `r`.
+  Fit `log2(DFR) = -0.02480·r + 238.3` (R² = 0.947, ~40 bits of `r` per bit of DFR) gives
+  `2^-67` at the deployed `r`, and the successive secants (`-0.0125`, `-0.0236`, `-0.0387`)
+  show the curve bending down *faster* than linear — so the line lies above the true curve
+  and the figure is a conservative bound on the waterfall's continuation. **This corrects
+  §11.8.7's own reading**, which argued the opposite sign from an error-floor argument.
+* **§4 — re-derives the constant #276 said could not be re-derived.** A weak key fails near
+  100% of the time, so nothing here needs to resolve a small probability, and §4 measures at
+  the deployed parameters directly. The multiplicity cliff has moved from **6→7** to roughly
+  **31→32**: multiplicity 7, 15 and 31 decode indistinguishably from an ordinary key (0/200
+  each), 32 fails 10.5% of the time, 33 38%, and a full arithmetic progression always.
+  `QCMDPC_MAX_MULT = 6` is
+  therefore conservative by about **5x** rather than tuned to an edge, and the tail it cuts
+  was never near the cliff. §11.8.9's "cannot be re-derived the way it was derived" is true
+  of the *method* — resolving DFR differences among ordinary keys — and not of the constant.
+  All four language comments, `SECURITY.md` and `spec/` are updated to say so.
+* **§5 — the GJS mechanism survives, its observability does not.** The distinguisher is a
+  *difference* between two failure rates and needs both observable, so it moves to §3's
+  reachable instance (the substitute-instance move §11.8.10 already makes). The direction of
+  the effect is unchanged. At the deployed `r` there is no observable failure to sample and,
+  since #235, no signal if there were — two independent blocks, of different vintages.
+
+**Four documents stated the retired set as deployed.** Not framing drift — false sentences,
+in `README.md`, `docs/INTRODUCTION.md`, `bindings/java/README.md` and `SecurityProofs-5.md`
+§11.8.7, whose opening called `r = 523` the deployed parameters while §11.8.9 in the same
+file described moving off them. All four are corrected, §11.8.7's measurements are relabelled
+as the record of why the change happened, and a *Re-pointed at the deployed parameters* block
+carries what re-measures.
+
+**The mechanism, which is why that shipped.** `spec/check_docs_consistency.py`'s check B
+exists to compare `herradura.h`'s constants against the prose quoting them — and its
+`DOC_PARAMS` table had eleven rows and **no QC-MDPC row at all**. Unlike every other curated
+table in that file, it was exhaustive in one direction only: the anchor rule catches a
+*deleted* sentence, but a constant quoted in prose and named by no row is invisible, so a
+parameter can move under a sentence indefinitely. Fixed on both axes:
+
+* Nine new rows cover `QCMDPC_R/D/T` across all three documents (`bindings/java/README.md`
+  is now read too), so leg 2 would have failed CI.
+* A new **census** (check B′) scans those documents for parameter assignments and fails on
+  any not captured by a `DOC_PARAMS` entry or named by a `DOC_PARAM_EXEMPT` reason — and an
+  exemption matching nothing is itself a failure, so a sentence cannot leave its excuse
+  behind for the next thing that lands in the same place. It immediately exposed three
+  uncovered live quotes (`SDF_T` and `KEYBITS` in README's caveats, `WOTS_W` in the Java
+  README), now rows of their own. Bare `n` is deliberately out of scope: it is the suite's
+  universal bit-width symbol and would make the table mostly noise.
+
+**And why leg 1 sat broken for two releases: no CI job ran any of the 34 exit-status-gating
+`SecurityProofsCode` scripts.** Many advertise "exits non-zero if a finding stops
+reproducing" and nothing collected that status. `native-python` now runs this one under
+`--quick` (~3.5 min), with its own findings gate — extended in this item from §1 alone to
+every section — deciding the exit status. `qcmdpc_bgf_variants.py` is deliberately excluded:
+~11 min under `--quick` is a job of its own, not a step.
+
+Recorded and not scoped: `qcmdpc_bgf_failure_rate.py` still runs, but its `--trials` default
+of 2000 was chosen when the DFR was 0.26%, so it now spends about seven minutes establishing
+`DFR = 0.000000` — vacuous rather than wrong, and its claim to close the "DFR never measured"
+gap of #183/#186 cannot hold at these parameters.
+
 ## [7.0.2] - 2026-09-09
 
 ### TODO #284 — a KAT vector for HPKE-Stern-KEM, including the implicit-rejection path

@@ -147,6 +147,25 @@ jobs:
       - name: cross-document consistency (README / INTRODUCTION / CHANGELOG vs. sources)
         run: python3 spec/check_docs_consistency.py
 
+      # TODO #285. About 34 of the SecurityProofsCode/ scripts advertise "exits
+      # non-zero if a finding stops reproducing" and until now NO job collected
+      # that status, so the promise was untested. That is how
+      # qcmdpc_dfr_weak_keys.py -- the recorded acceptance oracle for both TODO
+      # #218 and TODO #235 -- came to exit 1 in its own first section for two
+      # releases after #276 moved the QC-MDPC parameters out from under it,
+      # with nothing anywhere noticing.
+      #
+      # Running all 34 is not on the table, and neither is running the whole
+      # QC-MDPC family: qcmdpc_bgf_variants.py is ~11 min under --quick and ~72
+      # without, which is a job of its own rather than a step. What runs here is
+      # the one script the parameter change broke, under --quick (~3.5 min), with
+      # its own findings gate deciding the exit status -- so a claim that stops
+      # reproducing reddens CI rather than printing quietly into a log nobody
+      # reads. Add a script here only when its --quick runtime is minutes, not
+      # tens of minutes.
+      - name: SecurityProofsCode — QC-MDPC DFR/weak-key findings still reproduce
+        run: python3 SecurityProofsCode/qcmdpc_dfr_weak_keys.py --quick
+
       - name: CliTest — Python CLI
         run: |
           for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \
