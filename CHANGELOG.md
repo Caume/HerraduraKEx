@@ -63,6 +63,16 @@ hold one outside it. Its first version was **self-defeating**: it grepped `ci.ym
 path, and its own explanatory comment names `Mcp/test_server.py`, so deleting the run step left
 it green. It now strips comments first; verified in both directions.
 
+**CodeQL follow-up.** The new `enc`/`dec` round-trip named its plaintext fixture `SECRET`,
+which raised a high-severity `py/clear-text-storage-sensitive-data` alert on the `f.write`
+that puts it on disk. The alert is a false positive — the value is the literal
+`"mcp enc/dec round-trip payload"`, written into a `TemporaryDirectory` deleted on block exit,
+and written at all only because `herradura_enc` takes `--in <path>` and therefore needs a
+file. The rule classifies a value as sensitive from its identifier *name*. Fixed by renaming
+it `PAYLOAD` rather than dismissing the alert: the alert was wrong and so was the name, the
+repo had no other open alerts, and a standing high-severity false positive is what teaches
+people to stop reading the Security tab.
+
 **Also (TODO #287 leg D):** two stale tool-emitted counts in CLAUDE.md — the suite-internal
 primitive manifest described as "196 entries" where `check_language_parity.py` reports **198**,
 and the PARAMETERS table as "79 rows" where it reports **83**. Corrected, and

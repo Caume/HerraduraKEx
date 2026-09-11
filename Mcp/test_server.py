@@ -158,9 +158,18 @@ def main():
         pt_path = os.path.join(tmp, "plain.txt")
         ct_path = os.path.join(tmp, "cipher.pem")
         rt_path = os.path.join(tmp, "roundtrip.txt")
-        SECRET = "mcp enc/dec round-trip payload\n"
+        # Named PAYLOAD, not SECRET: it is the plaintext INPUT to an enc/dec
+        # round-trip, not a credential.  CodeQL's
+        # py/clear-text-storage-sensitive-data classifies a value as sensitive
+        # from its identifier NAME, so the old name raised a high-severity
+        # clear-text-storage alert on the f.write below -- on a fixed literal
+        # written into a TemporaryDirectory that is deleted on block exit, and
+        # written because herradura_enc takes --in <path> and so needs a file.
+        # Renamed rather than dismissed: the alert was wrong, and so was the
+        # name (TODO #287 follow-up).
+        PAYLOAD = "mcp enc/dec round-trip payload\n"
         with open(pt_path, "w") as f:
-            f.write(SECRET)
+            f.write(PAYLOAD)
 
         client.call_tool("herradura_genpkey", {"algo": "hpke", "out": hpke_priv})
         client.call_tool("herradura_pkey", {"in": hpke_priv, "out": hpke_pub})
@@ -179,8 +188,8 @@ def main():
         # bytes in, 32 out at n=256).  Asserting equality here fails for a
         # reason that has nothing to do with the server.
         ok &= check("enc/dec round-trip recovers the plaintext",
-                    recovered.startswith(SECRET.encode())
-                    and set(recovered[len(SECRET):]) <= {0})
+                    recovered.startswith(PAYLOAD.encode())
+                    and set(recovered[len(PAYLOAD):]) <= {0})
 
         dg_path = os.path.join(tmp, "digest.pem")
         r = client.call_tool("herradura_dgst", {"in": pt_path, "out": dg_path})
@@ -285,7 +294,7 @@ def main():
         stdout_text = "".join(c["text"] for c in r["content"])
         ok &= check('dec with out="-" returns the plaintext in the response '
                     "(documented, not a leak)",
-                    not r["isError"] and SECRET.strip() in stdout_text)
+                    not r["isError"] and PAYLOAD.strip() in stdout_text)
 
         # ── Trust model, claim 2: writes ONLY to the given out path ──────────
         before = set(os.listdir(tmp))
