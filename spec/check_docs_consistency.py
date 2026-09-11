@@ -403,6 +403,69 @@ CURRENCY_EXEMPT = [
 ]
 
 
+# ── E.  CLAUDE.md's tool-emitted counts (TODO #287) ────────────────────────
+#
+# CLAUDE.md describes what each checker COVERS, in prose, with numbers the
+# checkers themselves print: "196 entries, four cells each", "79 rows".  Two of
+# those were stale at the time TODO #287 ran -- the manifest had grown to 198
+# and the parameter table to 83 -- and nothing compared them, so the file that
+# configures every future session understated the coverage it was describing.
+#
+# Held to the TOOL, not re-counted here: each entry names a command, a regex
+# over that command's output, and a regex over CLAUDE.md.  If the tool's wording
+# changes, the entry fails as "cannot read" rather than passing vacuously.
+
+CLAUDE_MD = _p("CLAUDE.md")
+
+# (label, argv, regex over tool output, regex over CLAUDE.md, why)
+DOC_COUNTS = [
+    ("suite-internal primitive manifest",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"(\d+) suite-internal primitive",
+     r"primitives -- (\d+) entries, four cells each",
+     "check_language_parity.py's manifest size, quoted in CLAUDE.md's spec/ entry"),
+    ("PARAMETERS table",
+     ["python3", _p("spec", "check_language_parity.py")],
+     r"parity — (\d+) rows over",
+     r"parameter's VALUE: (\d+) rows, four cells each",
+     "the TODO #278 parameter-value table's size, quoted in the same entry"),
+]
+
+
+def check_doc_counts():
+    import subprocess
+    text = read(CLAUDE_MD)
+    cache = {}
+    for label, argv, out_re, doc_re, why in DOC_COUNTS:
+        key = tuple(argv)
+        if key not in cache:
+            try:
+                cache[key] = subprocess.run(argv, capture_output=True, text=True,
+                                            timeout=300).stdout
+            except Exception as exc:
+                fail("E", "could not run %s (%s)" % (" ".join(argv), exc))
+                cache[key] = ""
+        got = re.search(out_re, cache[key])
+        if not got:
+            fail("E", "CANNOT READ the count for %s -- /%s/ does not match the "
+                      "output of %s any more.  The tool's wording changed; "
+                      "re-point this entry rather than deleting it, or the "
+                      "claim in CLAUDE.md goes unchecked again."
+                      % (label, out_re, os.path.basename(argv[-1])))
+            continue
+        claimed = re.search(doc_re, text)
+        if not claimed:
+            fail("E", "ANCHOR LOST -- CLAUDE.md: /%s/ no longer matches (%s)."
+                      % (doc_re, why))
+            continue
+        if int(claimed.group(1)) != int(got.group(1)):
+            fail("E", "CLAUDE.md says %s for the %s where %s reports %s (%s)."
+                      % (claimed.group(1), label, os.path.basename(argv[-1]),
+                         got.group(1), why))
+    print("  E: %d tool-emitted count(s) in CLAUDE.md checked against the tool"
+          % len(DOC_COUNTS))
+
+
 def check_currency_claims(consts):
     root = _p("SecurityProofsCode")
     if not os.path.isdir(root):
@@ -717,6 +780,7 @@ def main():
     check_parameters(consts)
     check_param_census()
     check_currency_claims(consts)
+    check_doc_counts()
     check_protocol_coverage(spec)
     check_claims()
 
@@ -726,8 +790,9 @@ def main():
         "B''": "currency claims in SecurityProofsCode/ vs. herradura.h",
         "C": "protocol coverage (spec/ vs. README / INTRODUCTION)",
         "D": "claims (corrected statements kept, superseded ones gone)",
+        "E": "CLAUDE.md's tool-emitted coverage counts vs. the tools",
     }
-    for key in ("A", "B", "B''", "C", "D"):
+    for key in ("A", "B", "B''", "C", "D", "E"):
         hits = [m for k, m in FAILURES if k == key]
         print("\n%s. %s" % (key, labels[key]))
         if not hits:

@@ -20,9 +20,16 @@ ping) -- not the full spec (no resources, prompts, sampling, roots).
      location.
   3. Private-key file *contents* are never echoed back in a tool's text
      response. Responses report success/failure, the CLI's stdout/stderr,
-     and the output path -- never file bytes. If an agent needs to inspect
-     key material, that's a deliberate separate step outside this server
-     (e.g. its own file-read tool), not something this server does for you.
+     and the output path. If an agent needs to inspect key material, that's
+     a deliberate separate step outside this server (e.g. its own file-read
+     tool), not something this server does for you. This holds because
+     tool_pkey hard-codes --pubout: the CLI can print a private scalar
+     (`pkey --text`), and no tool here exposes that path.
+     NOT "never file bytes", which is what this said until TODO #287:
+     `out: "-"` sends a tool's output to stdout, and responses carry stdout,
+     so `dgst` returns a hex digest that way by design and `dec` returns
+     PLAINTEXT. The caller chose it; it is pinned by test_server.py so it
+     stays a choice.
   4. This server performs no network I/O and does not "phone home". Every
      tool call is exactly one local subprocess invocation of
      HerraduraCli/herradura.py, already shipped and tested in this repo --
@@ -67,6 +74,57 @@ def run_cli(args):
     except subprocess.TimeoutExpired:
         return False, "", f"timed out after {SUBPROCESS_TIMEOUT}s", -1
     return proc.returncode == 0, proc.stdout, proc.stderr, proc.returncode
+
+
+def validate_arguments(name, arguments):
+    """Check a tool call against the schema this server ADVERTISES.
+
+    TODO #287.  Every tool's input_schema carries "additionalProperties": False
+    and a "required" list, and those go out in tools/list -- they are what an
+    agent reads to decide what to send.  Nothing enforced them: an unknown
+    argument was silently dropped, the call succeeded, and the response did not
+    mention it.
+
+    That is TODO #274's defect at the agent boundary.  #274 found `enc --aead`
+    failing OPEN in Java -- the operator asked for authenticated encryption,
+    got confidentiality only, exit 0, a valid-looking artifact, no signal -- and
+    fixed it by rejecting unknown flags.  Here the same misspelling of `aead`
+    dropped authentication just as quietly, and the caller is an LLM reading a
+    schema that says violations are reported.  A declared constraint that is
+    never checked is worse than no constraint: it invites the assumption it is
+    enforced.
+
+    Returns an error string, or None if the arguments are acceptable.
+    """
+    schema = TOOLS[name]["input_schema"]
+    props = schema.get("properties", {})
+
+    for key in schema.get("required", []):
+        if key not in arguments:
+            return f"missing required argument: {key!r}"
+
+    if schema.get("additionalProperties") is False:
+        unknown = sorted(set(arguments) - set(props))
+        if unknown:
+            known = ", ".join(sorted(props))
+            return (f"unknown argument(s) for {name}: {', '.join(repr(u) for u in unknown)}"
+                    f" -- accepted: {known}.  Rejected rather than ignored: a dropped"
+                    f" argument can silently change what the call does (e.g. 'aead').")
+
+    for key, value in arguments.items():
+        spec = props.get(key)
+        if not spec:
+            continue
+        want = spec.get("type")
+        if want == "string" and not isinstance(value, str):
+            return f"argument {key!r} must be a string, got {type(value).__name__}"
+        if want == "boolean" and not isinstance(value, bool):
+            return f"argument {key!r} must be a boolean, got {type(value).__name__}"
+        if want == "integer" and not isinstance(value, int):
+            return f"argument {key!r} must be an integer, got {type(value).__name__}"
+        if "enum" in spec and value not in spec["enum"]:
+            return (f"argument {key!r} must be one of {spec['enum']}, got {value!r}")
+    return None
 
 
 def cli_result(args, out_path=None):
@@ -320,6 +378,10 @@ def handle_request(msg):
             if is_notification:
                 return None
             return make_error(req_id, -32602, f"unknown tool: {name}")
+        bad = validate_arguments(name, arguments)
+        if bad is not None:
+            result = {"content": [{"type": "text", "text": bad}], "isError": True}
+            return None if is_notification else make_response(req_id, result)
         try:
             result = TOOLS[name]["fn"](arguments)
         except KeyError as e:

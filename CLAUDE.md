@@ -753,7 +753,43 @@ docs/
   examples/{python,c,go}/   — hello_herradura.* integration examples
 Mcp/                                                 — MCP server exposing the CLI (genpkey/pkey/kex/
                                                       enc/dec/sign/verify/dgst) as agent-callable tools
-                                                      over stdio; see Mcp/README.md for the trust model
+                                                      over stdio; see Mcp/README.md for the trust model.
+                                                      Mcp/test_server.py and
+                                                      docs/examples/mcp/hello_herradura_mcp.py both run
+                                                      in native-python since TODO #287 -- they existed,
+                                                      passed, were listed in Mcp/README.md under
+                                                      "Testing", and NO job ran either, which mattered
+                                                      because claim 3 of the trust model ("private-key
+                                                      file contents are never echoed back") names
+                                                      test_server.py as its own enforcement.  #287 also
+                                                      found the harness exercising five of eight tools
+                                                      end to end -- enc/dec/dgst were named in the
+                                                      tools/list assertion and never CALLED, so the one
+                                                      tool that turns a private key plus a ciphertext
+                                                      into plaintext was untested -- and applying the
+                                                      key-echo check to `sign` alone, the tool where a
+                                                      leak matters least.  THE DEFECT IT FOUND: every
+                                                      input_schema declares additionalProperties: false
+                                                      and travels to the agent in tools/list, and the
+                                                      server never validated against it, so an unknown
+                                                      argument was dropped in silence -- exit 0,
+                                                      artifact written, no mention in the response.
+                                                      That is TODO #274's fail-open shape one boundary
+                                                      further out: misspell `aead` and the caller asked
+                                                      for authenticated encryption and got
+                                                      confidentiality only, except the caller here is an
+                                                      LLM that generated its JSON from a schema
+                                                      promising violations are reported.  The server now
+                                                      enforces required keys, unknown keys, declared
+                                                      types and enums, and returns an isError result
+                                                      naming the offender.  One trust-model sentence was
+                                                      also WITHDRAWN as an overstatement: responses do
+                                                      not carry "never file bytes" -- `out: "-"` sends a
+                                                      tool's output to stdout and responses carry
+                                                      stdout, so dgst returns a hex digest that way by
+                                                      design and dec returns PLAINTEXT into the agent's
+                                                      context.  The caller chose it; a test pins it so
+                                                      it stays a choice
 spec/                                                — machine-readable protocol spec (JSON Schema):
                                                       parameters, PEM wire-format labels, CLI --algo
                                                       tags, and security-level classification per
@@ -776,7 +812,7 @@ spec/                                                — machine-readable protoc
                                                       each of C/Go/Python/Java, set-alignment of
                                                       C/Go/Python's shared [1]-[51] numbering, a
                                                       manifest of suite-internal (non-CLI)
-                                                      primitives -- 196 entries, four cells each --
+                                                      primitives -- 198 entries, four cells each --
                                                       so a primitive with no `--algo` tag can still
                                                       be caught missing in a language, and since
                                                       v6.1.0 an INTERNAL-SURFACE CENSUS that closed
@@ -922,7 +958,7 @@ spec/                                                — machine-readable protoc
                                                       PARAMETERS / PARAM_DIVERGENCE (TODO #278),
                                                       in check_language_parity.py, are the SIXTH
                                                       axis and the first to compare a numeric
-                                                      parameter's VALUE: 79 rows, four cells each,
+                                                      parameter's VALUE: 83 rows, four cells each,
                                                       naming the CONSTANT and never its number, so
                                                       the checker reads and evaluates it from each
                                                       language's source and the table cannot go

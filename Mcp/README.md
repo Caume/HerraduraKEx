@@ -21,9 +21,21 @@ prompts, sampling, or roots).
    `out` path given — never silently, never to a server-chosen location.
 3. **Private-key file contents are never echoed back in a tool's text response.**
    Responses report success/failure, the CLI's own stdout/stderr, and the output file
-   path — never file bytes. If an agent needs to inspect key material, that's a
-   deliberate separate step outside this server, not something it does for you.
-   (`Mcp/test_server.py` has a regression check for this.)
+   path. If an agent needs to inspect key material, that's a deliberate separate step
+   outside this server, not something it does for you. This holds because `pkey`
+   hard-codes `--pubout`: the CLI *can* print a private scalar (`pkey --text` writes it
+   in hex to stdout), and the server does not expose that path.
+   (`Mcp/test_server.py` checks this against `sign`, `dec` and `pkey`, in both the
+   base64-PEM and hex shapes — TODO #287.)
+
+   **One thing this does not say, and used to imply.** It previously read "never file
+   bytes", which overstates it: a caller that directs a tool's output to stdout with
+   `out: "-"` receives that output in the response, because responses carry the CLI's
+   stdout. For `herradura_dgst` that is the documented way to get a hex digest back. For
+   `herradura_dec` it means the **decrypted plaintext** lands in the response, and
+   therefore in the agent's context. That is the caller's choice, not a leak — but it is
+   a choice worth making deliberately, so it is pinned by a test rather than left to be
+   discovered.
 4. The server performs no network I/O and does not "phone home." Every tool call is
    exactly one local subprocess invocation of `HerraduraCli/herradura.py` — no new
    cryptographic code lives in the server itself.
