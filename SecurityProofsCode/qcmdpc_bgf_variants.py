@@ -32,11 +32,22 @@ METHODOLOGY, and the two places it departs from §11.8.7 on purpose:
      first — residual error weight, residual syndrome weight, and whether the
      decoder converged to a wrong codeword — and each variant then targets a
      mode that census actually found.  The census is what disqualifies the
-     obvious candidate: at the deployed parameters a failure leaves a residual
+     obvious candidate: at the retired parameters a failure leaves a residual
      error of median weight 15 and a residual syndrome of weight ~95, so
      low-weight completion (try every single position, then every pair among
      the top counters) has almost nothing to work on, and it is reported as a
      measured dead end rather than left out silently.
+
+WHICH INSTANCE THIS MEASURES (TODO #288).  §§2-6 study the RETIRED QC-MDPC set
+-- r = 523, d = 15, t = 18 -- as a literal, and §7 is the argument that carries
+the result to what ships.  That was always the design; what was not always true
+is that the script said so.  It took d and t from the suite while hardcoding r,
+so TODO #276's adoption of BIKE-128 left it measuring (467, 71, 134) and
+(443..523, 71, 134), instances that are not MDPC codes, and six of eighteen
+findings stopped reproducing -- including §1's pinning, the gate the rest is
+explicitly conditioned on.  Re-pointing the whole file at BIKE-128 instead was
+considered and rejected: a decode there costs ~55 ms against ~1 ms here, so the
+run would go from minutes to hours, and §7 already supplies the transfer.
 
 Run: python3 qcmdpc_bgf_variants.py [--quick] [--full]
 Exits non-zero if a recorded finding stops reproducing.
@@ -53,6 +64,40 @@ from collections import Counter
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
+
+# ── The instance this script measures, as a LITERAL (TODO #288) ────────────
+#
+# This is a RETIRED-INSTANCE STUDY and says so up front, because it stopped
+# being one silently.  §§1-6 measure the QC-MDPC set that shipped through
+# v6.7.3 -- r = 523, d = 15, t = 18 -- and §7 is the argument that carries the
+# result to what ships now.
+#
+# It used to take d and t from the suite while hardcoding r, so TODO #276's
+# adoption of BIKE-128 left it building (467, 71, 134) and (443..523, 71, 134):
+# 71 support positions in a 443-bit ring is 16% density, which is not an MDPC
+# code at all.  Six of eighteen findings stopped reproducing, including §1's
+# pinning -- the gate everything else is explicitly conditioned on -- and §6's
+# curve fit returned r* = inf because there was no waterfall left to fit.
+#
+# WHY PINNED RATHER THAN RE-POINTED AT BIKE-128.  The deployed (d, t) has a
+# reachable waterfall, at r ~ 9800 (TODO #285 §3), so re-pointing is possible
+# in principle.  It is not worth it here: a decode at r = 9800 costs ~55 ms
+# against ~1 ms at r ~ 500, so this script's 480 s would become hours, and it
+# would buy nothing #7 does not already provide.  §7 IS the transfer argument
+# -- it re-runs the comparison at the largest (d, t) whose waterfall is
+# reachable and checks that the RANKING and the size of the gaps survive --
+# and #250's four verdict-carrying findings never stopped reproducing.  What
+# broke was the evidence chain, not the verdict.
+#
+# So: every section that measures the retired set names it from here, and any
+# section that means what ships reads the suite and says so.  Do not "fix" this
+# by pointing it back at _QCMDPC_R/_D/_T.
+RETIRED = (523, 15, 18)
+# ...and its iteration count.  The shipped decoder runs 5 now (BIKE L1 converges
+# far faster); the rule POL_BASE models ran 20, and its post-iteration-7
+# relaxation is meaningless at 5.  Taking this from the suite is how §1's
+# pinning came to compare a 20-iteration policy against a 5-iteration function.
+NB_ITER_RETIRED = 20
 
 FINDINGS = []
 
@@ -102,8 +147,15 @@ clopper_pearson = DW.clopper_pearson
 # deleted it, since #276 made the SHIPPED decoder bit-sliced and that copy
 # existed only for speed.  qcmdpc_parameter_selection.py's sizes the planes from
 # d but takes its threshold rule as an argument, having dropped the shipped
-# schedule.  This one does both, so `POL_BASE` reproduces the shipped decoder
-# exactly (§1 pins that) while every parameter set below stays reachable.
+# schedule.  This one does both, so one substrate serves every policy here and
+# every parameter set stays reachable.
+#
+# WHICH DECODER IT REPRODUCES DEPENDS ON THE POLICY (TODO #288).  With POL_BASE
+# it is the decoder that shipped THROUGH v6.7.3; with SwPolicy carrying the
+# suite's QCMDPC_TH_* constants it is the one that ships NOW.  §1 pins the
+# second against the real SUITE.qcmdpc_bgf_decode, which is what validates this
+# substrate; the first is a specification match with no referent left in the
+# tree, and §1 says so rather than asserting it.
 # ═══════════════════════════════════════════════════════════════════════════
 def _counters(s, sup, r, full, nb):
     """Carry-save sum of the rotated syndrome over sup -> nb bitplanes."""
@@ -165,8 +217,14 @@ class Policy:
             setattr(self, k, v)
 
     def threshold(self, it, sw, d, attempt=0):
-        """The shipped rule: affine in d, blind to the syndrome weight, with a
-        loosened schedule after iteration 7 (herradura.h qcmdpc_bgf_decode)."""
+        """The rule that shipped THROUGH v6.7.3: affine in d, blind to the
+        syndrome weight, with a loosened schedule after iteration 7.
+
+        NOT what herradura.h holds today -- TODO #276 replaced it with BIKE
+        Level 1's, which is affine in the SYNDROME WEIGHT at 5 iterations and
+        is expressible here as SwPolicy(QCMDPC_TH_SLOPE, QCMDPC_TH_OFFSET,
+        QCMDPC_TH_MIN, late_shipped=False).  This docstring said "the shipped
+        rule" and named qcmdpc_bgf_decode until TODO #288."""
         th_floor = (d + 1) // 2 + 2
         th = (max(math.ceil(0.66 * d), th_floor) if it < 7
               else max(th_floor - 1, 8))
@@ -253,7 +311,7 @@ def _post(s, e0, e1, sup0, sup1, r, d, nb_iter, pol, ctx):
     LOW-WEIGHT COMPLETION (pol.completion).  Try every single position, then
     every pair among the highest counters, and keep one that lets the iteration
     reach a zero syndrome.  §2 predicts this finds almost nothing at the
-    deployed parameters (a failure's residual error has median weight 15), and
+    retired parameters (a failure's residual error has median weight 15), and
     it is implemented anyway so that prediction is measured rather than
     asserted."""
     full = (1 << r) - 1
@@ -398,28 +456,72 @@ def key_ctx(sup0, sup1, r):
 # §1  The baseline IS the shipped decoder
 # ═══════════════════════════════════════════════════════════════════════════
 def section1(n):
-    rule("§1  Pinning: POL_BASE against the shipped qcmdpc_bgf_decode")
-    print("""  A variant comparison whose baseline is not the deployed decoder measures
-  the wrong thing, so this runs first and everything below is gated on it.
-  Instances are drawn at the DEPLOYED parameters, which is where the shipped
-  decoder is defined -- its r, d and t are module constants, not arguments.""")
-    r, d, t = SUITE._QCMDPC_R, SUITE._QCMDPC_D, SUITE._QCMDPC_T
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    rule("§1  Pinning: the decoder substrate, twice")
+    r0, d0, t0_ = RETIRED
+    rd, dd, td = SUITE._QCMDPC_R, SUITE._QCMDPC_D, SUITE._QCMDPC_T
+    print(f"""  A variant comparison whose baseline is not a real decoder measures the
+  wrong thing, so this runs first and everything below is gated on it.  TODO
+  #288 split it in two, because #276 left the single pinning it used to do
+  with no referent: this script's POL_BASE is the rule that shipped THROUGH
+  v6.7.3 -- constant in d, 20 iterations, the post-iteration-7 relaxation --
+  and what ships now is BIKE Level 1's, affine in the SYNDROME WEIGHT at 5
+  iterations.  Pinning the old policy against the new function compares two
+  different algorithms and fails, which is exactly what it did.
+
+  (a) THE MACHINERY, against what ships TODAY.  The loop, the flip logic, the
+      bitplane counters and the iteration-0 second pass are shared by every
+      policy here, so they are pinned against the real
+      SUITE.qcmdpc_bgf_decode at the DEPLOYED parameters
+      (r = {rd}, d = {dd}, t = {td}) -- with the policy configured to BIKE
+      L1's shipped constants, which SwPolicy can express exactly.  This is a
+      stronger check than the one it replaces: it holds the substrate to a
+      function that exists rather than to a copy of itself.
+
+  (b) THE BASELINE POLICY, at the instance this script studies
+      (r = {r0}, d = {d0}, t = {t0_}).  POL_BASE models a decoder no longer in
+      the tree, so it cannot be pinned against a function -- but it IS pinned,
+      by §5, against the MEASUREMENT that decoder left behind: 0.264%
+      [0.236%, 0.295%] over 120 000 trials in SecurityProofs-5.md §11.8.7.
+      That is the referent, and it is a stronger one than a sample of this
+      size could be, because at a 0.264% DFR sixty trials expect 0.16
+      failures.  So this half only establishes that the retired instance is
+      well-formed and decodes -- a parameter typo would show up here rather
+      than as a mysterious DFR three sections later.""")
+
+    # (a) the shared substrate vs. the function that ships
+    pol_ship = SwPolicy(SUITE._QCMDPC_TH_SLOPE, SUITE._QCMDPC_TH_OFFSET,
+                        SUITE._QCMDPC_TH_MIN, late_shipped=False,
+                        tau=SUITE._QCMDPC_TAU, name="shipped-l1")
+    nb_dep = SUITE._QCMDPC_NB_ITER
     rng = random.Random(20250908)
-    agree = decoded = 0
+    n_a = max(4, n // 8)          # a decode at the deployed r is ~50x a retired one
+    agree_a = 0
+    for _ in range(n_a):
+        sup0, sup1, h0, h1, h_pub = keygen(rng, rd, dd)
+        e0, e1 = random_error(rng, rd, td)
+        syn = syndrome_of(e0, e1, h_pub, rd)
+        want = SUITE.qcmdpc_bgf_decode(syn, h0, set(sup0), set(sup1))
+        got = bgf(syn, sup0, sup1, rd, dd, nb_dep, pol_ship)
+        agree_a += (want == got)
+    check(f"(a) the substrate reproduces the SHIPPED decoder on {n_a} deployed instances",
+          agree_a == n_a, f"agree {agree_a}/{n_a}")
+
+    # (b) the retired instance this script measures
+    r, d, t = RETIRED
+    nb_iter = NB_ITER_RETIRED
+    decoded = 0
     for _ in range(n):
         sup0, sup1, h0, h1, h_pub = keygen(rng, r, d)
         e0, e1 = random_error(rng, r, t)
         syn = syndrome_of(e0, e1, h_pub, r)
-        want = SUITE.qcmdpc_bgf_decode(syn, h0, set(sup0), set(sup1))
         got = bgf(syn, sup0, sup1, r, d, nb_iter, POL_BASE)
-        agree += (want == got)
-        decoded += (want is not None)
-    check(f"POL_BASE reproduces the shipped decoder on {n} instances",
-          agree == n, f"agree {agree}/{n}, of which {decoded} decoded")
-    check("the pinning sample contains both outcomes",
-          0 < decoded < n or n < 40,
-          f"{decoded} decoded, {n - decoded} failed")
+        decoded += (got == (e0, e1))
+    # At a 0.264% DFR this sample is overwhelmingly all-success; anything
+    # below ~95% means the instance is malformed, not that the DFR moved.
+    check("(b) the retired instance is well-formed and decodes",
+          decoded >= int(0.95 * n),
+          f"{decoded}/{n} decoded (expect ~{n} at a 0.264% DFR; "
+          f"§5 is what pins the RATE)")
     return r, d, t, nb_iter
 
 
@@ -451,15 +553,15 @@ def census(rng, r, d, t, nb_iter, want_failures, budget_s):
 
 
 def section2(quick):
-    rule("§2  Failure-mode census at the deployed parameters")
+    rule("§2  Failure-mode census at the retired parameters")
     print("""  The variants below are answers to this table, not a menu.  Three modes are
   distinguishable and each admits a different receiver-local mitigation:
   a near-miss (a residual error of weight 1-2, which low-weight completion
   repairs), a stall on a near-codeword (a LOW residual syndrome weight next to
   a HIGH residual error weight -- the N(h0)/N(h1) trap), and an ordinary stall
   (both high, which only a different trajectory can escape).""")
-    r, d, t = SUITE._QCMDPC_R, SUITE._QCMDPC_D, SUITE._QCMDPC_T
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    r, d, t = RETIRED
+    nb_iter = NB_ITER_RETIRED
     rng = random.Random(4242)
     want = 40 if quick else 200
     trials, nf, res_w, syn_w, wrong_cw = census(rng, r, d, t, nb_iter, want,
@@ -506,7 +608,7 @@ def section3(quick):
   importing BIKE's published affine rule, and why a variant that beat the
   baseline only by carrying better-tuned constants would prove nothing.""")
     r, d, t = 6007, 45, 70
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    nb_iter = NB_ITER_RETIRED     # POL_BASE's budget; see RETIRED (TODO #288)
     n = 12 if quick else 40
     rng = random.Random(99)
     bike = SwPolicy(0.0069722, 13.530, 36, late_shipped=False,
@@ -627,14 +729,19 @@ def section4(quick):
   instances it has never seen (§5, §7).  Tuning at the target r directly is not
   affordable -- a 0.2% DFR needs ~10^5 instances per grid point.
 
-  THE BASELINE IS IN THE GRID.  The shipped constant rule is the grid point
+  THE BASELINE IS IN THE GRID.  POL_BASE's constant rule is the grid point
   (slope 0, offset 0), so a search that finds nothing returns the baseline
-  itself.  A syndrome-adaptive rule that cannot beat a constant one on its own
+  itself.  ("The shipped rule" until TODO #288, which is no longer what that
+  phrase means -- see RETIRED and §1.)  A syndrome-adaptive rule that cannot beat a constant one on its own
   training set is not going to beat it anywhere.""")
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    nb_iter = NB_ITER_RETIRED
     out = {}
     for (r_cal, d, t, tag, n_cal) in [
-            (467, SUITE._QCMDPC_D, SUITE._QCMDPC_T, "deployed", 150 if quick else 700),
+            # r = 467 is a literal chosen against the RETIRED d, so it takes
+            # the retired d and t with it (TODO #288).  Pairing it with the
+            # suite's current d = 71 gave (467, 71, 134) -- 16% density, not an
+            # MDPC code -- and the grid then separated nothing.
+            (467, RETIRED[1], RETIRED[2], "retired", 150 if quick else 700),
             (3607, 45, 70, "mid", 40 if quick else 250),
     ]:
         th_ship = max(math.ceil(0.66 * d), (d + 1) // 2 + 2)
@@ -642,14 +749,14 @@ def section4(quick):
         ident = SwPolicy(0.0, float(th_ship), 2, name="grid-baseline")
         rng = random.Random(9)
         same = n_id = 0
-        for _ in range(30 if d == 15 else 10):
+        for _ in range(30 if d == RETIRED[1] else 10):
             sup0, sup1, h0, h1, h_pub = keygen(rng, r_cal, d)
             e0, e1 = random_error(rng, r_cal, t)
             syn = syndrome_of(e0, e1, h_pub, r_cal)
             same += (bgf(syn, sup0, sup1, r_cal, d, nb_iter, POL_BASE)
                      == bgf(syn, sup0, sup1, r_cal, d, nb_iter, ident))
             n_id += 1
-        check(f"[{tag}] the grid's (slope 0, offset 0) point IS the shipped decoder",
+        check(f"[{tag}] the grid's (slope 0, offset 0) point IS the baseline decoder",
               same == n_id, f"{same}/{n_id} identical outcomes")
         best, table, sw0, floor = tune(r_cal, d, t, nb_iter, n_cal, th_ship, 1234)
         dfr, a, b = best
@@ -676,7 +783,7 @@ def section4(quick):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §5  The paired comparison, at the deployed parameters
+# §5  The paired comparison, at the retired parameters
 # ═══════════════════════════════════════════════════════════════════════════
 def variants_for(tuned):
     a, b, floor = tuned
@@ -720,7 +827,7 @@ def paired(rng, r, d, t, nb_iter, pols, n, budget_s):
 
 
 def section5(tuned, quick):
-    rule("§5  Paired DFR at the deployed parameters (r = 523, d = 15, t = 18)")
+    rule("§5  Paired DFR at the retired parameters (r = 523, d = 15, t = 18)")
     print("""  Every variant decodes the SAME instances as the baseline, so the report is
   the discordant pairs -- how many of the baseline's failures a variant
   repairs, and how many of its successes it breaks -- rather than six rates
@@ -728,9 +835,9 @@ def section5(tuned, quick):
 
   A variant is only interesting here if REPAIRED - BROKE is positive and large
   relative to the baseline's own failure count.""")
-    r, d, t = SUITE._QCMDPC_R, SUITE._QCMDPC_D, SUITE._QCMDPC_T
-    nb_iter = SUITE._QCMDPC_NB_ITER
-    pols = variants_for(tuned["deployed"])
+    r, d, t = RETIRED
+    nb_iter = NB_ITER_RETIRED
+    pols = variants_for(tuned["retired"])
     n = 4000 if quick else 60000
     budget = 240 if quick else 2400
     fails, disc, done, stats = paired(random.Random(20250250), r, d, t, nb_iter,
@@ -746,7 +853,11 @@ def section5(tuned, quick):
         extra = "" if p.name == "base" else f"{rep:>8d} {bro:>6d}"
         print(f"  {p.name:14s} {f:>9d} {f / done:>10.4%}   "
               f"[{lo:.4%}, {hi:.4%}]   {extra}")
-    check("the baseline's DFR at the deployed parameters agrees with "
+    # THIS is what pins POL_BASE (TODO #288).  The decoder it models is no
+    # longer in the tree, so it cannot be pinned against a function -- but the
+    # measurement it left behind is a referent, and a sharper one than any
+    # sample this script can afford: 120 000 trials against our 4 000.
+    check("the baseline's DFR at the RETIRED parameters agrees with "
           "SecurityProofs-5.md §11.8.7 (0.264%, [0.236%, 0.295%])",
           clopper_pearson(base_f, done)[0] <= 0.00295
           and clopper_pearson(base_f, done)[1] >= 0.00236,
@@ -820,8 +931,12 @@ def section6(tuned, quick):
   a QC-MDPC DFR curve is concave (waterfall, then a flatter error floor) and
   every point here is in the waterfall, so every r* below is a LOWER BOUND on
   the r that decoder would really need.""")
-    d, t = SUITE._QCMDPC_D, SUITE._QCMDPC_T
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    # The r windows below are literals around the RETIRED r, so they take the
+    # retired d and t with them (TODO #288).  Read from the suite, they swept
+    # r = 443..523 at d = 71: nothing decodes there, so every curve had fewer
+    # than three usable points and the fit returned r* = inf.
+    d, t = RETIRED[1], RETIRED[2]
+    nb_iter = NB_ITER_RETIRED
     want = 12 if quick else 40
     budget = 25 if quick else 200
     windows = {
@@ -830,7 +945,7 @@ def section6(tuned, quick):
         "recycle": [467, 479, 491, 503],
         "ncw": [479, 491, 503, 523],
     }
-    pols = {p.name: p for p in variants_for(tuned["deployed"])}
+    pols = {p.name: p for p in variants_for(tuned["retired"])}
     out = {}
     for name, rs in windows.items():
         pts = curve(pols[name], rs, d, t, nb_iter, want, budget, 555)
@@ -868,10 +983,13 @@ def section7(tuned, quick):
   section takes the largest (d, t) whose waterfall is reachable -- d = 45,
   t = 70, waterfall at r ~ 3700 -- and asks the one question that transfers:
   is the RANKING of the variants, and the SIZE of the gap between them, the
-  same as at the deployed set?  A conclusion that only holds at d = 15 would
-  be worth nothing to #276.""")
+  same as at the retired set §§2-6 measure?  A conclusion that only holds at
+  d = 15 would be worth nothing to #276.  THIS SECTION IS WHAT CARRIES THE
+  RESULT, and TODO #288 is why that is worth saying twice: §§2-6 study the
+  instance that is gone, deliberately and by literal, so the transfer argument
+  is not a nicety here -- it is the whole link to what ships.""")
     r, d, t = 3701, 45, 70
-    nb_iter = SUITE._QCMDPC_NB_ITER
+    nb_iter = NB_ITER_RETIRED     # POL_BASE's budget; see RETIRED (TODO #288)
     pols = variants_for(tuned["mid"])
     n = 200 if quick else 1200
     budget = 240 if quick else 1800
@@ -949,13 +1067,13 @@ def section8(curves, dep_fails, dep_done, quick):
         best_f = 0.5                      # one-sided: no failure observed
     gain_bits = math.log2(base_dfr / (best_f / dep_done))
     short_bits = 128 - (-math.log2(base_dfr))
-    print(f"\n  at the deployed parameters, the best decoder-side variant "
+    print(f"\n  at the retired parameters, the best decoder-side variant "
           f"({best_name}) buys {gain_bits:.1f} bits of DFR")
     print(f"  the shortfall to IND-CCA2 at these parameters is "
           f"{short_bits:.1f} bits")
     print(f"  so the variant covers {100 * gain_bits / short_bits:.1f}% of it")
     # READ AS r, WHICH IS THE READING THAT COUNTS.  A variant's DFR at the
-    # deployed r is an intercept; what a parameter change would have to buy is
+    # retired r is an intercept; what a parameter change would have to buy is
     # a slope.  These are not the same ranking, and §6 measures them apart.
     if "base" in curves:
         rb = curves["base"][3]

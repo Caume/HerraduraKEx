@@ -279,7 +279,41 @@ SecurityProofsCode/                                 — standalone Python proof/
                              constant.  Exits non-zero if a finding stops
                              reproducing
   qcmdpc_bgf_variants.py   — do DECODER-SIDE BGF variants close the DFR gap?
-                             (TODO #250).  NO, and the number is the point: the
+                             (TODO #250).  READ THIS FIRST if you touch it: it
+                             is a RETIRED-INSTANCE STUDY -- §§2-6 measure
+                             r = 523, d = 15, t = 18 from the RETIRED literal
+                             and §7 is the argument that carries the result to
+                             what ships.  That was always the design; TODO #288
+                             is where it started SAYING so, after #276's
+                             adoption of BIKE-128 left it hardcoding r while
+                             reading d and t from the suite -- building
+                             (467, 71, 134) and sweeping r = 443..523 at d = 71,
+                             instances that are not MDPC codes at 16% density --
+                             and six of eighteen findings stopped reproducing,
+                             §1's pinning among them, which is the gate the rest
+                             is explicitly conditioned on.  §6's fit returned
+                             r* = inf because there was no waterfall left.
+                             Re-pointing the whole file at BIKE-128 was
+                             considered and REJECTED: a decode at r = 9800
+                             (#285 §3's reachable waterfall) costs ~55 ms
+                             against ~1 ms here, minutes would become hours, and
+                             §7 already supplies the transfer.  §1 now pins
+                             TWICE, and the split is the useful part: (a) the
+                             shared substrate against the REAL shipped
+                             qcmdpc_bgf_decode, with SwPolicy carrying the
+                             suite's QCMDPC_TH_* constants -- BIKE L1 is
+                             expressible in this file's policy object, so the
+                             substrate is held to a function that exists rather
+                             than to a copy of itself; and (b) POL_BASE, which
+                             models a decoder no longer in the tree and is
+                             pinned by §5 against the MEASUREMENT that decoder
+                             left behind (§11.8.7's 0.264%, 120 000 trials) --
+                             a sharper referent than a 4 000-trial sample.
+                             NB_ITER_RETIRED = 20 exists for the same reason the
+                             literal does: the shipped decoder runs 5 now, and
+                             pinning a 20-iteration policy against a
+                             5-iteration function was half of why §1 failed.
+                             NO, and the number is the point: the
                              best variant buys ~4 bits of DFR against a
                              ~120-bit shortfall, i.e. 3% of it, and moves the
                              fitted r* by ~4%.  #250 was gated on #276 for a
@@ -849,15 +883,45 @@ spec/                                                — machine-readable protoc
                                                       docs/INTRODUCTION.md and CHANGELOG.md restate
                                                       spec/'s and herradura.h's protocols, parameters
                                                       and verdicts in hand-written prose, and nothing
-                                                      compared them before.  Four checks -- versions
-                                                      (README title / CHANGELOG head / pyproject.toml
-                                                      agree; MAJOR bumps have a MIGRATING.md entry),
-                                                      parameters (herradura.h #defines, resolved
-                                                      transitively, vs. spec/ and vs. the sentences
-                                                      quoting them), protocol coverage (both
-                                                      directions), and a claims table of corrected
-                                                      statements that must stay plus superseded ones
-                                                      that must not return.  Its curated tables are
+                                                      compared them before.  SIX checks now -- it was
+                                                      four until TODO #286 and #287 added two, and this
+                                                      line said "four" until #288 caught it.  A:
+                                                      versions (README title / CHANGELOG head /
+                                                      pyproject.toml agree; MAJOR bumps have a
+                                                      MIGRATING.md entry).  B: parameters (herradura.h
+                                                      #defines, resolved transitively, vs. spec/ and
+                                                      vs. the sentences quoting them), plus a CENSUS
+                                                      that fails on a parameter assignment no DOC_PARAMS
+                                                      row captures -- the direction that was open, and
+                                                      how #276 moved QCMDPC_R/D/T under four documents
+                                                      for two releases.  B'' (TODO #286): currency
+                                                      claims in SecurityProofsCode/ -- a phrase
+                                                      asserting CURRENCY ("current", "deployed",
+                                                      "ships") next to a number that must equal the
+                                                      header constant.  The protocol FAMILY has to be
+                                                      identifiable and comes from the sentence OR, since
+                                                      TODO #288, from the FILENAME: a file entirely
+                                                      about one family never names it in a sentence,
+                                                      which is exactly where the defect hid --
+                                                      qcmdpc_bgf_variants.py titled a section "the
+                                                      deployed parameters (r = 523, d = 15, t = 18)"
+                                                      over code measuring BIKE-128 and B'' could not
+                                                      see it.  Requiring the token is still right (it
+                                                      took that check from 35 findings, 33 of them on
+                                                      CORRECT sentences, to one); the filename default
+                                                      is how it keeps being right without the blind
+                                                      spot, at the price of four exemptions that are
+                                                      all correct sentences and all carry a reason --
+                                                      if that list grows without reasons that specific,
+                                                      revisit the widening rather than the exemptions.
+                                                      C: protocol coverage (both directions).  D: a
+                                                      claims table of corrected statements that must
+                                                      stay plus superseded ones that must not return.
+                                                      E (TODO #287): CLAUDE.md's own tool-emitted
+                                                      counts, held to the tool that prints them rather
+                                                      than to a hand count, so a wording change in the
+                                                      tool fails as "cannot read" instead of passing
+                                                      vacuously.  Its curated tables are
                                                       self-invalidating the way check_security_md.py's
                                                       mapping is: a spec/ protocol with no
                                                       DOC_COVERAGE entry fails, and every regex must
