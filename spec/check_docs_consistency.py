@@ -27,6 +27,19 @@ WHAT IT CHECKS.
      both `spec/`'s `parameters` block and a curated table of the places the
      prose repeats them.
 
+  B''. CURRENCY CLAIMS IN `SecurityProofsCode/` (TODO #286).  The ~80 analysis
+     scripts restate the same parameters, in prose and in live constants, and
+     were outside every checker.  A blanket census over them would be almost
+     all exemptions -- retired parameters are several scripts' SUBJECT -- so
+     this checks the narrow falsifiable class instead: a phrase asserting
+     CURRENCY ("current", "deployed", "ships") that also names a protocol
+     FAMILY, next to a number, which must then equal the header constant.
+     Naming the family is what makes it work: the first cut resolved bare
+     letters globally and fired 35 times, 33 of them on correct sentences,
+     because `n = 256` is KEYBITS in a dozen scripts and `r = 64` is a round
+     count in two more.  A retrospective sentence ("#218 measured r = 523") is
+     history and is not this check's business.
+
   C. PROTOCOL COVERAGE.  Every protocol in `spec/` is accounted for in the two
      intro-level documents, and every protocol-shaped name those documents use
      resolves to something that still exists.
@@ -39,8 +52,9 @@ be derived from a spec file, so B, C and D each rest on a hand-written table --
 the same bargain `check_security_md.py` struck, for the same reason.  What keeps
 one honest is that it fails when either side moves: check C fails when spec/
 gains or loses a protocol that DOC_COVERAGE does not mention, and every regex in
-checks B and D must match at least once, so a doc edit that removes the sentence
-an entry was anchored to is a failure ("anchor lost"), not a silent pass.  A
+checks B, B'' and D must match at least once, so a doc edit that removes the
+sentence an entry was anchored to is a failure ("anchor lost"), not a silent
+pass.  A
 curated table nothing validates is the thing TODO #238 was filed about.
 
 WHAT THE FIRST RUN FOUND (all six fixed in v5.8.6, and each is now pinned by an
@@ -323,6 +337,125 @@ DOC_PARAM_EXEMPT = [
 ]
 
 
+# ── B''.  The currency check over SecurityProofsCode/ (TODO #286) ─────────
+#
+# DOC_PARAMS and its census cover the three NARRATIVE documents.  About 80 more
+# files in SecurityProofsCode/ restate the same parameters -- in prose AND in
+# live constants -- and sit outside every checker.  TODO #286 found four defects
+# there at head, two of them security figures rather than documentation: a
+# script printing that BIKE-128 is worth 2^136 and that "a desktop reaches it"
+# in one breath, and another whose candidate table certified a REJECTED ring
+# dimension as ">=128 classical+quantum" from an anchor TODO #216 retracted.
+#
+# WHY THIS IS NOT THE SAME CENSUS.  These scripts legitimately discuss retired
+# parameters -- for several of them that is the subject -- so scanning for
+# parameter assignments would be almost all exemptions, the trap that kept bare
+# `n` out of B'.  What is falsifiable is narrower: a phrase asserting CURRENCY
+# next to a number.  "the deployed r = 523" is checkable and wrong; "the retired
+# r = 523" is checkable and right; "#218 measured r = 523" is history and is
+# none of this check's business.  So the pattern below requires a currency WORD
+# ("current", "currently", "deployed", "the suite's", "ships", "shipped") within
+# a short window of a parameter assignment, and then holds the number to the
+# header.
+#
+# Both directions, as everywhere else here: a currency claim whose number does
+# not match the header fails, and a CURRENCY_EXEMPT entry matching nothing fails
+# too, so a corrected sentence forces its own exemption out.
+
+_CURRENCY_WORDS = r"(?:currently|current|deployed|deploys|the suite's|ships|shipped)"
+
+# THE LETTER ALONE IS NOT ENOUGH, and the first cut of this check learned it the
+# hard way: it mapped bare letters to constants globally and fired 35 times, of
+# which 33 were correct sentences.  In this layer the letters are overloaded --
+# `n = 256` is KEYBITS, the FSCX block width, in a dozen scripts and is right;
+# `r = 64` is a ROUND COUNT in two more; `p` is a rounding modulus in one file
+# and a polynomial in another.  A letter does not identify the protocol, so the
+# window must also name the FAMILY, and the letter is resolved inside that
+# family.  That is what the two real defects both did -- "the current HKEX-RNL
+# parameters (n=256, ...)" and "the deployed QC-MDPC set (r = 523, ...)" -- and
+# what none of the 33 false positives did.
+_FAMILIES = {
+    'QC-MDPC': {'r': 'QCMDPC_R', 'd': 'QCMDPC_D', 't': 'QCMDPC_T'},
+    'HKEX-RNL': {'n': 'RNL_N', 'q': 'RNL_Q', 'p': 'RNL_P'},
+}
+
+# family token, then a currency word, then an assignment -- in either order for
+# the first two, since "the deployed QC-MDPC set" and "QC-MDPC, as currently
+# deployed," both occur.  The window is deliberately short: a currency claim and
+# the number it claims sit in one clause.
+_CURRENCY_PATTERNS = [
+    re.compile(r"(%s)[^\n]{0,40}?%s[^\n]{0,40}?(?<![A-Za-z0-9_])([rdtnqp])\s*=\s*"
+               r"(\d[\d,]*)(?![\d,]*[A-Za-z])" % (fam, _CURRENCY_WORDS), re.I)
+    for fam in _FAMILIES
+] + [
+    re.compile(r"%s[^\n]{0,40}?(%s)[^\n]{0,40}?(?<![A-Za-z0-9_])([rdtnqp])\s*=\s*"
+               r"(\d[\d,]*)(?![\d,]*[A-Za-z])" % (_CURRENCY_WORDS, fam), re.I)
+    for fam in _FAMILIES
+]
+
+# (path relative to SecurityProofsCode, regex, reason).  Each must match.
+CURRENCY_EXEMPT = [
+    ('qcmdpc_parameter_selection.py',
+     r"the then-deployed QC-MDPC set \(r = 523, d = 15, t = 18\)",
+     "HISTORICAL -- names the set TODO #276 replaced, and marks it with "
+     "'then-'.  The whole script is a before/after argument; see its RETIRED "
+     "constant"),
+]
+
+
+def check_currency_claims(consts):
+    root = _p("SecurityProofsCode")
+    if not os.path.isdir(root):
+        fail("B''", "SecurityProofsCode/ not found")
+        return
+
+    exempt_spans = {}
+    for rel, pattern, reason in CURRENCY_EXEMPT:
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            fail("B''", "EXEMPTION NAMES A MISSING FILE -- SecurityProofsCode/%s "
+                        "(%s)" % (rel, reason.split(".")[0]))
+            continue
+        spans = [m.span() for m in re.finditer(pattern, read(path))]
+        if not spans:
+            fail("B''", "EXEMPTION MATCHES NOTHING -- SecurityProofsCode/%s: "
+                        "/%s/ (%s).  Delete the entry, or re-point it."
+                        % (rel, pattern, reason.split(".")[0]))
+        exempt_spans.setdefault(rel, []).extend(spans)
+
+    checked = 0
+    for name in sorted(os.listdir(root)):
+        if not name.endswith(".py"):
+            continue
+        text = read(os.path.join(root, name))
+        covered = exempt_spans.get(name, [])
+        for pat in _CURRENCY_PATTERNS:
+            for m in pat.finditer(text):
+                if any(lo <= m.start() and m.end() <= hi for lo, hi in covered):
+                    continue
+                groups = [g for g in m.groups() if g is not None]
+                fam = next((g for g in groups if g.upper() in _FAMILIES), None)
+                if fam is None:
+                    continue
+                letter, value = m.group(len(m.groups()) - 1), m.group(len(m.groups()))
+                const = _FAMILIES[fam.upper()].get(letter.lower())
+                checked += 1
+                if const is None or const not in consts:
+                    continue
+                if int(value.rstrip(",")) != consts[const]:
+                    line = text[:m.start()].count("\n") + 1
+                    fail("B''", "STALE CURRENCY CLAIM -- SecurityProofsCode/%s:%d "
+                                "says %r where herradura.h %s = %d.  Either the "
+                                "sentence means a RETIRED value -- say so in the "
+                                "sentence and add a CURRENCY_EXEMPT entry -- or "
+                                "it is out of date."
+                                % (name, line,
+                                   m.group(0).replace("\n", " ")[:70],
+                                   const, consts[const]))
+    print("  B'': %d currency claim(s) naming a protocol family, checked "
+          "against herradura.h" % checked)
+
+
 def check_param_census():
     doc_patterns = {}
     for name, doc, pattern, _why in DOC_PARAMS:
@@ -583,16 +716,18 @@ def main():
     check_versions()
     check_parameters(consts)
     check_param_census()
+    check_currency_claims(consts)
     check_protocol_coverage(spec)
     check_claims()
 
     labels = {
         "A": "versions (README / CHANGELOG / pyproject / MIGRATING)",
         "B": "parameters (herradura.h vs. spec/ vs. prose)",
+        "B''": "currency claims in SecurityProofsCode/ vs. herradura.h",
         "C": "protocol coverage (spec/ vs. README / INTRODUCTION)",
         "D": "claims (corrected statements kept, superseded ones gone)",
     }
-    for key in "ABCD":
+    for key in ("A", "B", "B''", "C", "D"):
         hits = [m for k, m in FAILURES if k == key]
         print("\n%s. %s" % (key, labels[key]))
         if not hits:

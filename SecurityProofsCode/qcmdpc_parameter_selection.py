@@ -3,7 +3,7 @@
 qcmdpc_parameter_selection.py — picking HPKE-Stern-KEM's replacement
 parameters (TODO #276, §11.8.7).
 
-TODO #218 measured the deployed QC-MDPC set (r = 523, d = 15, t = 18) at a DFR
+TODO #218 measured the then-deployed QC-MDPC set (r = 523, d = 15, t = 18) at a DFR
 of 2^-8.6 where IND-CCA2 wants 2^-128, and fitted log2(DFR) = -0.0996r + 43.69
 to land on r ~ 1723.  That fit is the only replacement figure the repository has
 carried, and this script's first two findings are that it answers the wrong
@@ -20,7 +20,7 @@ question and names an inadmissible value:
     of r rescues t = 18.  At r = 1723 with d and t unchanged the instance is
     worth 2^25.
 
-  §1  What the deployed instance is actually worth (the missing number)
+  §1  What the RETIRED instance was actually worth (the missing number)
   §2  Calibrating the estimator against BIKE's three published levels
   §3  The frontier: t and d are the ISD knobs, r is the DFR knob
   §4  The structural constraint on r, and why 1723 is inadmissible twice over
@@ -150,16 +150,27 @@ def instance(r, d, t):
 
 BIKE = {128: (12323, 71, 134), 192: (24659, 103, 199), 256: (40973, 137, 264)}
 
+# The set this script exists to REPLACE, as a literal and deliberately not read
+# from the suite (TODO #286).  Every "before" measurement here -- §1's cost, §5's
+# converse control, §6's rejection-rate comparison -- is about the set under
+# criticism, and until #286 each of them took it from _QCMDPC_R/_D/_T.  That
+# worked exactly until #276's recommendation was ADOPTED, at which point `dep`
+# became the candidate, all three comparisons collapsed onto one instance, and
+# the script failed its own findings gate three ways while printing that
+# BIKE-128 is worth 2^136 and that "a desktop reaches it" in the same sentence.
+# A before/after argument cannot read "before" from the present tense.
+RETIRED = (523, 15, 18)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# §1  What the deployed instance is actually worth
+# §1  What the RETIRED instance was actually worth
 # ═══════════════════════════════════════════════════════════════════════════
 
-def section1(dep):
-    rule('1  The deployed instance, costed')
-    r, d, t = dep
+def section1(retired):
+    rule('1  The instance #276 replaced, costed')
+    r, d, t = retired
     print(f"""
-  Deployed: r = {r}, d = {d}, t = {t}, so the syndrome-decoding instance is
+  The set under criticism: r = {r}, d = {d}, t = {t}, so the syndrome-decoding instance is
   (N, k, t) = ({2*r}, {r}, {t}) over GF(2), quasi-cyclic of order 2.
 
   The brute-force count C({2*r}, {t}) = 2^{lg(comb(2*r, t)):.1f} appears in §11.8.7 and is
@@ -182,7 +193,7 @@ def section1(dep):
     worst = min(I['msg_doom'], I['key_qc'])
     print(f"""
   Before §2's calibration, and taking the WEAKER-attacker reading at every
-  step, the deployed instance is worth about 2^{worst:.0f} classical operations -- and
+  step, that instance is worth about 2^{worst:.0f} classical operations -- and
   §2 takes another 8 bits off that.  A desktop reaches it.  "Far below any
   usable security level" was right; the number it was standing in for is in
   the twenties, not the fifties.
@@ -205,7 +216,7 @@ def section1(dep):
 # §2  Calibration
 # ═══════════════════════════════════════════════════════════════════════════
 
-def section2(dep):
+def section2(retired):
     rule('2  Calibrating the estimator against BIKE')
     print("""
   Dumer is not the best known ISD, so §1's figures are optimistic about the
@@ -234,7 +245,7 @@ def section2(dep):
   accident would not hold to {spread:.1f} bits over that range, so the estimator is
   used below with a flat -{cal:.1f} bit correction and no other adjustment.
 
-  Applied to §1: the deployed instance is worth about 2^{min(instance(*dep)['msg_doom'], instance(*dep)['key_qc']) - cal:.0f}.
+  Applied to §1: the retired instance is worth about 2^{min(instance(*retired)['msg_doom'], instance(*retired)['key_qc']) - cal:.0f}.
 """)
     return cal, spread
 
@@ -512,9 +523,12 @@ def section5(Q, dep, quick):
     dep_tot = sum(v[0] for v in grid.values())
     bike_tot = sum(v[1] for v in grid.values())
 
-    # The converse control, measured rather than asserted: BIKE L1's rule at
-    # the DEPLOYED d, where its floor of 36 exceeds the row weight entirely.
-    dr, dd, dt = dep
+    # The converse control, measured rather than asserted: BIKE L1's rule at the
+    # RETIRED d, where its floor of 36 exceeds the row weight (15) entirely.  It
+    # read `dep` until TODO #286 -- which meant that once #276's candidate was
+    # adopted the control ran at d = 71, where the rule of course works, and the
+    # gate below correctly reported that the control had stopped controlling.
+    dr, dd, dt = RETIRED
     conv = 0
     for _ in range(N):
         key = Q.keygen(rng, dr, dd)
@@ -546,7 +560,7 @@ def section5(Q, dep, quick):
       choice being made on measured margin, not a forced rewrite.
 
   The converse does NOT hold, which is the trap in the other direction.  BIKE
-  L1's rule has a hard floor of 36, so at the deployed d = {dd} it demands more
+  L1's rule has a hard floor of 36, so at the retired d = {dd} it demands more
   unsatisfied checks than a row contains.  Measured at (r, d, t) = ({dr}, {dd}, {dt}):
   {conv}/{N} failures -- it decodes nothing at all.  The constants belong to a
   parameter set, so both halves of the pair move together or neither does.
@@ -571,7 +585,12 @@ def _spectrum_max(sup, r):
 def section6(dep, quick):
     rule('6  The weak-key screen, re-derived')
     N = 2000 if quick else 20000
-    rd, dd, _ = dep
+    # `rd, dd` is the RETIRED pair, not the deployed one: this whole section is a
+    # before/after comparison of the SAME constant at two parameter sets, so the
+    # "before" side has to name the set that is gone (TODO #286).  Reading it
+    # from the suite made both sides identical the moment #276 was adopted, and
+    # a gate asserting they straddle 1% read 0.0200/0.0200 and failed.
+    rd, dd, _ = RETIRED
     br, bd, _ = BIKE[128]
     print(f"""
   QCMDPC_MAX_MULT = 5 rejects a key whose distance spectrum has any multiplicity
@@ -618,11 +637,21 @@ def section6(dep, quick):
   and 5 is barely above the median.  The screen has changed character: from
   "discard a freak" to "discard a common key".
 
-  Setting it again.  The principled route is to re-measure the cliff, and that
-  route is closed: it means locating the multiplicity at which DFR departs, at
-  parameters whose DFR is below anything measurable.  #218 could do it at
-  r = {rd} precisely BECAUSE the DFR was 2^-8.6.  The measurement that justified
-  the constant is the one the parameter change exists to eliminate.
+  Setting it again.  The principled route is to re-measure the cliff, and this
+  script recorded that route as closed: it means locating the multiplicity at
+  which DFR departs, at parameters whose DFR is below anything measurable.
+  #218 could do it at r = {rd} precisely BECAUSE the DFR was 2^-8.6.
+
+  THAT REASONING WAS WRONG, and TODO #285 §4 measured the cliff at the adopted
+  parameters after all.  The step it missed is that a weak key does not have a
+  SMALL failure rate, it has one near 1 -- so locating the cliff never needed
+  the resolution that a 2^-128 DFR denies, only the resolution to tell 0/200
+  from 21/200.  The cliff has moved from 6 -> 7 at the retired set to 31 -> 32
+  at the adopted one, which leaves MAX_MULT = 6 conservative by about 5x.  So
+  the surrogate below is not superseded -- it selects the same constant, from a
+  budget rather than from a cliff -- but its JUSTIFICATION is now the weaker of
+  two available ones, and the sentence claiming no measurement was possible has
+  been withdrawn rather than left standing.
 
   So a surrogate, stated in advance rather than fitted: keep the screen a tail
   cut that costs under one keygen retry in 200, i.e. a rejection rate under
@@ -634,10 +663,10 @@ def section6(dep, quick):
   count.  A constant that depends on how long the script ran is not a
   constant.
 
-  So MAX_MULT = {match} is recorded as a retry-budget choice and NOT as a
-  re-measured cliff -- and the cliff question
-  handed to TODO #250, which is the item that owns decoder behaviour and which
-  now has a reason to look at it.  Note also that BIKE ships no such screen at
+  So MAX_MULT = {match} is selected here as a retry-budget choice and NOT as a
+  re-measured cliff.  #276 handed the cliff question to TODO #250 on the
+  strength of the withdrawn sentence above; #285 answered it directly instead,
+  and the two routes agree on the constant.  Note also that BIKE ships no such screen at
   all: at r = {br} the GJS reaction attack needs a query volume that the
   large r already denies, so the screen is this suite's own belt-and-braces
   and its constant is this suite's to justify.
@@ -657,14 +686,24 @@ def section6(dep, quick):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def section7(S, Q, dep, quick):
-    rule('7  Cost, and the one blocker')
+    rule('7  Cost, and the one blocker -- SINCE REMOVED')
     rng = random.Random(9)
-    print("""
-  Decapsulation in the SHIPPED Python decoder, which computes its unsatisfied-
-  parity counts with a Python-level loop over r * d positions.
+    print(f"""
+  WHAT THIS SECTION MEASURED, AND WHY IT NO LONGER MEASURES IT (TODO #286).
+  When #276 ran, the shipped Python decoder computed its unsatisfied-parity
+  counts with an interpreter loop over r * d positions, and the ladder below
+  showed that costing 5.4 s per decapsulation at BIKE-128 -- the one blocker
+  this item named, and a PREREQUISITE rather than a follow-up.  v6.7.3 did that
+  rewrite, so `qcmdpc_bgf_decode` is itself bit-sliced now and the ladder times
+  the fast decoder at every rung.  The blocker is closed; the ladder is kept
+  because the SHAPE of the curve is still the reason a rewrite was needed.
+
+  The base rung is the RETIRED set, not the deployed one: "vs now" means "vs
+  what we were paying before the change", and reading the base from the suite
+  made the last two rungs the same instance at 1x.
 """)
-    sets = [dep, (2003, 25, 40), BIKE[128]] if quick else \
-           [dep, (2003, 25, 40), (4813, 45, 90), BIKE[128]]
+    sets = [RETIRED, (2003, 25, 40), BIKE[128]] if quick else \
+           [RETIRED, (2003, 25, 40), (4813, 45, 90), BIKE[128]]
     print(f"    {'r':>7} {'d':>5} {'t':>5} {'pk/ct':>8} {'ms/decap':>11} {'vs now':>9}")
     print('    ' + '-' * 50)
     base = None
@@ -701,14 +740,16 @@ def section7(S, Q, dep, quick):
   Keys and ciphertexts grow from 66 to {(r+7)//8} bytes, which is unremarkable --
   BIKE's own sizes, and smaller than most of what this suite already emits.
 
-  The decode time is the blocker.  Multi-second decapsulation would put the
-  Python CLI outside every CliTest script's patience and outside any plausible
-  use, and it is not intrinsic: the same instance under the bit-sliced
-  representation §5 uses -- counters as bitplanes over big integers, carry-save
-  updated -- decodes in {fast_ms:.0f} ms in the same interpreter.
+  The decode time WAS the blocker.  Multi-second decapsulation would have put
+  the Python CLI outside every CliTest script's patience and outside any
+  plausible use, and it was not intrinsic: the same instance under the
+  bit-sliced representation §5 uses -- counters as bitplanes over big integers,
+  carry-save updated -- decodes in {fast_ms:.0f} ms in the same interpreter.
+  That is the rewrite v6.7.3 shipped, so the figure above is now what the suite
+  itself does rather than what an alternative would do.
 
-  So the parameter change carries a REWRITE of the Python decoder with it, and
-  that rewrite is a prerequisite rather than a follow-up.  C and Go compute the
+  So the parameter change carried a REWRITE of the Python decoder with it, and
+  that rewrite was a prerequisite rather than a follow-up.  C and Go compute the
   same counts over uint8 arrays and scale as r * d with a small constant; they
   need no representation change, though C's qcmdpc_bgf_decode holds four
   uint16_t[r] work arrays plus two uint8_t[r] on the stack, which is ~123 KB at
@@ -934,11 +975,26 @@ def main():
     dep = (S._QCMDPC_R, S._QCMDPC_D, S._QCMDPC_T)
 
     fail = []
-    worst, _ = section1(dep)
-    if worst > 64:
-        fail.append('§1: deployed instance no longer costs below 2^64')
 
-    cal, spread = section2(dep)
+    # This script argues BEFORE vs AFTER, so it has to know which it is looking
+    # at (TODO #286).  If the suite still carries the retired set, #276 was
+    # reverted and every "after" claim below is about a candidate rather than
+    # about what ships -- say so instead of quietly reversing the frame.
+    if dep == RETIRED:
+        print("\n  NOTE: the suite still carries the retired set "
+              f"{RETIRED}, so TODO #276 has been reverted in this tree.\n"
+              "  Sections below describe BIKE-128 as a candidate, not as "
+              "deployed.\n")
+    elif dep != BIKE[128]:
+        fail.append(f'§0: the suite carries {dep}, which is neither the '
+                    f'retired set {RETIRED} nor BIKE-128 {BIKE[128]} -- this '
+                    'script has no before/after frame for it')
+
+    worst, _ = section1(RETIRED)
+    if worst > 64:
+        fail.append('§1: the retired instance no longer costs below 2^64')
+
+    cal, spread = section2(RETIRED)
     if spread > 3.0:
         fail.append(f'§2: calibration offset spread {spread:.1f} bits > 3')
 
@@ -959,11 +1015,13 @@ def main():
     elif sum(v[1] for v in grid.values()) > sum(v[0] for v in grid.values()):
         fail.append('§5: BIKE threshold no longer beats the deployed rule')
     if conv < 0.9 * (30 if args.quick else 150):
-        fail.append(f'§5: BIKE L1 threshold no longer fails at d=15 ({conv} fails)')
+        fail.append(f'§5: BIKE L1 threshold no longer fails at the retired '
+                    f'd={RETIRED[1]} ({conv} fails)')
 
     old, new5, match = section6(dep, args.quick)
     if not (old < 0.01 <= new5):
-        fail.append(f'§6: rejection rates {old:.4f}/{new5:.4f} no longer straddle 1%')
+        fail.append(f'§6: rejection rates {old:.4f}/{new5:.4f} at the retired '
+                    f'and adopted sets no longer straddle 1%')
     if match != 6:
         fail.append(f'§6: retry-budget MAX_MULT is {match}, not 6')
 
