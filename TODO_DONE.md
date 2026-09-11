@@ -17326,3 +17326,104 @@ them is not a step, and it is a separate decision.
 
 Status: **DONE v7.0.4** — the survey found qcmdpc_parameter_selection.py failing three gates at head (#276's own adoption collapsed its before/after frame), hkex_rnl_failure_rate.py certifying a rejected ring dimension from a retracted anchor, and two stale-currency scripts; all fixed, with check B'' added so a currency claim next to a protocol family is held to the header.
 
+---
+
+### #287: the MCP server is agent-facing, has a trust-model regression test, and nothing runs it
+
+`Mcp/` exposes the CLI as eight agent-callable tools over stdio, and it ships
+`Mcp/test_server.py` -- a correctly built harness: 11 checks, `return 0 if ok else 1`, 3 s
+runtime, passing at head.  **No CI job runs it.**  `grep` over `ci.yml` and every
+`CliTest/*.sh` finds no reference to `Mcp` at all.
+
+This is TODO #285's CI leg on a different and more exposed surface.  `ci.yml`'s coverage
+guard already enforces the right principle -- every non-Java `CliTest/*.sh` must be claimed
+by exactly one `native-*` job, or the build fails -- but it is scoped by construction to
+`CliTest/`, so a harness living anywhere else has never been in its reach.  That is a scope
+decision rather than a bug in the guard; the consequence is that `Mcp/` was invisible to it.
+
+**(A) The assertion nobody runs is a SECURITY property, and the README points at it.**
+`Mcp/README.md`'s trust model makes five numbered claims to anyone wiring this into an agent.
+Claim 3 is "**Private-key file contents are never echoed back in a tool's text response**",
+and it names its own enforcement in parentheses: "(`Mcp/test_server.py` has a regression
+check for this.)"  So a documented security property of an agent-facing surface rests on
+someone remembering to run a script by hand.
+
+**(B) And that check is applied to the wrong tool.**  The key-echo assertion runs against
+`herradura_sign` alone.  Coverage at head:
+
+| tool | exercised end-to-end | key-echo checked |
+|---|---|---|
+| `genpkey`, `pkey`, `kex`, `sign`, `verify` | yes | `sign` only |
+| `enc`, `dec`, `dgst` | **no** -- named only, inside the `tools/list` assertion | no |
+
+`herradura_dec` is the one tool whose job is to turn a private key plus a ciphertext into
+plaintext: the highest-risk echo path on the whole surface, never called.  `enc` and `dgst`
+are likewise only asserted to EXIST.  `pkey` reads a private key too and is exercised without
+the echo check.  So the three unexercised tools include exactly the one claim 3 matters most
+for, and the check that exists covers the tool where a leak would matter least.
+
+**(C) Two more trust-model claims are mechanically testable and untested.**  Claim 1's "no
+state carried between calls -- no default key directory, no implicit last-generated key" and
+claim 2's "only to the exact `out` path given -- never silently, never to a server-chosen
+location", which a filesystem snapshot taken around a call settles directly.  Claim 4 ("no
+network I/O ... exactly one local subprocess invocation") is partly checkable and worth a
+look.  Claim 5 (no sandboxing) is a disclaimer, not a property, and stays one -- it must not
+acquire a test that pretends otherwise.
+
+**(D) Two stale tool-emitted counts in CLAUDE.md**, folded in here rather than given an item:
+the suite-internal primitive manifest is described as "196 entries" where
+`check_language_parity.py` reports **198**, and the PARAMETERS table as "79 rows" where it
+reports **83**.  Same class as #285 and #286 on a new document, and CLAUDE.md is the file
+that configures every future session, so a wrong coverage count there misinforms the next
+reader about what is actually checked.  Both numbers are produced by a tool that runs in CI,
+so they can be held to it rather than re-counted by hand.
+
+**What this item should NOT do.**  It should not add sandboxing, or any cryptographic code, to
+the server: claim 4's "no new cryptographic code lives in the server itself" is a property
+worth keeping, and claim 5's honesty about blast radius is worth more than a reassuring test.
+The scope is coverage of what is already claimed.
+
+**Done in v7.0.5.**
+
+**(A) Both harnesses now run in `native-python`** -- `Mcp/test_server.py` and
+`docs/examples/mcp/hello_herradura_mcp.py`, the two the README lists under "Testing".  A
+second coverage guard extends the `CliTest/` principle to the directories holding a harness
+outside it.  **That guard's first version was self-defeating** and is worth remembering: it
+grepped `ci.yml` for the path, and its own explanatory comment names
+`Mcp/test_server.py`, so deleting the run step left it green.  Demonstrated, then fixed by
+stripping comments first; both directions verified.
+
+**(B) grew a real defect, and it is the item's centre.**  Every `input_schema` declares
+`additionalProperties: false` plus a `required` list, both of which travel to the agent in
+`tools/list` -- and the server never validated against them.  An unknown argument was dropped
+in silence: exit 0, artifact written, no mention in the response.  That is TODO #274's
+fail-open shape one boundary out, and the `aead` case is literally #274's: misspell it and the
+caller asked for authenticated encryption and received confidentiality only.  The difference
+is who the caller is -- at the CLI a human typed the flag and can re-read it; here an LLM
+generated JSON from a schema promising that violations are reported.  `validate_arguments()`
+now enforces required keys, unknown keys, declared types and enums, returning an `isError`
+naming the offender.  Verified by removing the call: three checks fail, exit 1.
+
+Coverage went from five of eight tools to all eight, and the key-echo check from one tool to
+three.  It also now checks the **hex** shape, not just base64: `pkey --text` prints the
+private scalar in hex, so a later `text` passthrough would leak key material in a form the
+original marker search could not see.  That path is closed only because `tool_pkey`
+hard-codes `--pubout`, which was a property by construction that nothing tested; two checks
+pin it now.
+
+**(C) done, with one correction to the trust model itself.**  Claims 1 and 2 gain tests.
+Claim 3's supporting sentence "never file bytes" is **withdrawn as an overstatement**:
+`out: "-"` sends a tool's output to stdout and responses carry stdout, so `dgst` returns a
+hex digest that way BY DESIGN and `dec` returns PLAINTEXT into the agent's context.  Not a
+leak -- the caller asked for it -- but undocumented and untested, which is how it should not
+have stayed.  Both copies of the trust model now say it, and a test pins it.  Claim 5 (no
+sandboxing) deliberately gets no test: it is a disclaimer about blast radius, and a test
+there would only make it look like a guarantee.
+
+**(D) done**, and the counts are now held to the tool rather than to a hand count:
+`check_docs_consistency.py` gains check E, whose entries name a command and two regexes, so a
+change in the tool's wording fails as "cannot read" instead of passing vacuously.  Verified
+in both directions.
+
+Status: **DONE v7.0.5** — both MCP harnesses now run in CI, the server enforces the schemas it advertises (an unknown argument no longer drops silently, which is TODO #274's fail-open shape at the agent boundary), tool coverage goes five-of-eight to eight-of-eight with the key-echo check on three tools in two shapes, one trust-model overstatement is withdrawn and pinned, and CLAUDE.md's tool-emitted counts are held to the tools by check E.
+

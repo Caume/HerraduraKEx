@@ -175,6 +175,26 @@ jobs:
           python3 SecurityProofsCode/qcmdpc_dfr_weak_keys.py --quick
           python3 SecurityProofsCode/qcmdpc_parameter_selection.py --quick
 
+      # TODO #287. Mcp/ exposes the CLI as eight agent-callable tools over stdio,
+      # and Mcp/test_server.py is a correctly built harness -- 11 checks, exits 1
+      # on any failure, 3 s -- that NO job ran. Its reach matters more than its
+      # size: Mcp/README.md's trust model tells anyone wiring this into an agent
+      # that "private-key file contents are never echoed back in a tool's text
+      # response", and names this script in parentheses as the regression check
+      # for it. A documented security property of an agent-facing surface should
+      # not depend on someone remembering to run a script by hand.
+      #
+      # It needs only python3 (the server shells out to HerraduraCli/herradura.py,
+      # which is what this job already exercises), so it belongs here rather than
+      # in a job of its own.
+      # Both harnesses Mcp/README.md lists under "## Testing". The example is
+      # not decorative: it raises on any tool error, so it fails loudly, and it
+      # covers the stdio handshake end to end from a client's point of view.
+      - name: Mcp — stdio protocol + trust-model regression checks
+        run: |
+          python3 Mcp/test_server.py
+          python3 docs/examples/mcp/hello_herradura_mcp.py
+
       - name: CliTest — Python CLI
         run: |
           for f in CliTest/test_cred.sh CliTest/test_encfile.sh CliTest/test_encrypt.sh \
@@ -264,6 +284,39 @@ jobs:
             done
             if [ "$claimed" -eq 0 ]; then
               echo "UNCLAIMED: $f is not run by any native-* CI job — update .github/workflows/ci.yml (TODO #205)"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      # TODO #287. The guard above is scoped to CliTest/ by construction, which
+      # is how Mcp/test_server.py sat unrun: a correctly built, correctly gated
+      # harness that no job claimed, in a directory nothing swept. The principle
+      # -- a test harness must be claimed by exactly one job -- is not specific
+      # to CliTest/, so this extends it to every OTHER directory that holds one.
+      #
+      # Deliberately a small explicit list rather than a glob over the tree:
+      # SecurityProofsCode/ is ~80 analysis scripts of which CI runs two by
+      # design (see native-python; the rest are minutes to over an hour), and a
+      # blanket sweep there would assert something this repo has decided not to
+      # do. What this catches is the case that actually happened -- a NEW
+      # harness appearing outside CliTest/ with nothing running it.
+      - name: Coverage guard — test harnesses outside CliTest/ must be claimed too
+        run: |
+          # COMMENTS ARE STRIPPED FIRST, and that is not a detail: the first
+          # version of this guard grepped the whole file, and the comment block
+          # above -- which names Mcp/test_server.py while explaining the guard --
+          # satisfied it. Deleting the run step left it green. A guard that its
+          # own rationale can satisfy checks nothing, so only lines that could
+          # actually execute a harness are considered.
+          sed 's/#.*$//' .github/workflows/ci.yml > /tmp/ci_nocomments.yml
+          missing=0
+          for f in Mcp/test_*.py docs/examples/mcp/*.py \
+                   bindings/ffi/test_*.py benchmarks/test_*.py; do
+            [ -e "$f" ] || continue
+            if ! grep -qF "$f" /tmp/ci_nocomments.yml; then
+              echo "UNCLAIMED: $f is a test harness that no CI job runs —" \
+                   "add it to a job or say in this guard why it is exempt (TODO #287)"
               missing=1
             fi
           done

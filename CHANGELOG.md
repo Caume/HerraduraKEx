@@ -2,6 +2,74 @@
 
 All notable changes to the Herradura Cryptographic Suite are documented here.
 
+## [7.0.5] - 2026-09-11
+
+### TODO #287 — the MCP server is agent-facing, has a trust-model regression test, and nothing ran it
+
+`Mcp/` exposes the CLI as eight agent-callable tools over stdio. It ships
+`Mcp/test_server.py` — a correctly built harness, 11 checks, `return 0 if ok else 1`, 3 s —
+and `docs/examples/mcp/hello_herradura_mcp.py`, which raises on any tool error. **Both are
+listed in `Mcp/README.md` under "## Testing". No CI job ran either.**
+
+That mattered more than the usual missing-coverage case, because the trust model **names the
+test as its own enforcement**: claim 3 is "*Private-key file contents are never echoed back in
+a tool's text response*", followed by "(`Mcp/test_server.py` has a regression check for this.)"
+A documented security property of an agent-facing surface depended on someone remembering to
+run a script by hand.
+
+**The defect the coverage was hiding.** Every tool's `input_schema` declares
+`"additionalProperties": false` plus a `required` list, and both travel to the agent in
+`tools/list` — they are what an agent reads to decide what to send. **The server never
+validated against them.** An unknown argument was dropped in silence: exit 0, artifact
+written, nothing in the response mentioning it.
+
+This is TODO #274's fail-open shape one boundary further out. #274 found Java's `enc --aead`
+accepting an unknown flag and producing unauthenticated output — "the operator asked for
+authenticated encryption, received confidentiality only, and nothing on stdout or stderr
+distinguishes the two outcomes" — and fixed it by rejecting unknown flags. Here a misspelled
+`aead` did the same thing, except the caller is an LLM that generated its JSON from a schema
+promising violations are reported. A declared constraint that is never checked is worse than
+no constraint: it invites the assumption that it is enforced.
+
+`validate_arguments()` now enforces what the server advertises — required keys, unknown keys,
+declared `type`s, and `enum` membership — returning an `isError` result that names the
+offending argument. Verified by removing the call: three checks fail and the harness exits 1.
+
+**The harness covered five of eight tools.** `enc`, `dec` and `dgst` appeared only in the
+`tools/list` name assertion and were never *called* — so the untested three included
+`herradura_dec`, the one tool whose job is to turn a private key plus a ciphertext into
+plaintext. And the key-echo check ran against `sign` alone, the tool where a leak would matter
+least. Now: `enc`/`dec` round-trip end to end, `dgst` both to a file and to the response, and
+the key-echo assertion applies to `sign`, `dec` **and** `pkey`, in both the base64-PEM and the
+**hex** shapes — because `pkey --text` prints the private scalar in hex, so a future `text`
+passthrough would leak key material in a form no base64-marker search would catch. That path
+is closed today only because `tool_pkey` hard-codes `--pubout`; two checks now pin it.
+
+**A trust-model sentence is withdrawn as an overstatement.** Claim 3 read "never file bytes".
+`out: "-"` sends a tool's output to stdout, and responses carry stdout — so `herradura_dgst`
+returns a hex digest that way *by design*, and `herradura_dec` returns the **decrypted
+plaintext** into the agent's context. That is the caller's choice, not a leak, but it was
+neither documented nor tested. Both copies of the trust model (README and the server
+docstring) now say so, and a test pins the behaviour so it stays a decision.
+
+Two more trust-model claims gain tests: claim 1's "no state carried between calls" (a `sign`
+with no key must fail rather than reuse the last one) and claim 2's "writes only to the exact
+`out` path given" (a filesystem snapshot around a `genpkey`). Claim 5 (no sandboxing) is a
+disclaimer, not a property, and deliberately gets no test.
+
+**Guards.** `native-python` runs both harnesses. A second coverage guard extends the existing
+`CliTest/` principle — a harness must be claimed by exactly one job — to the directories that
+hold one outside it. Its first version was **self-defeating**: it grepped `ci.yml` for the
+path, and its own explanatory comment names `Mcp/test_server.py`, so deleting the run step left
+it green. It now strips comments first; verified in both directions.
+
+**Also (TODO #287 leg D):** two stale tool-emitted counts in CLAUDE.md — the suite-internal
+primitive manifest described as "196 entries" where `check_language_parity.py` reports **198**,
+and the PARAMETERS table as "79 rows" where it reports **83**. Corrected, and
+`check_docs_consistency.py` gains **check E**, which holds them to the tool's own output rather
+than to a hand count: each entry names a command and two regexes, and a wording change in the
+tool fails as "cannot read" rather than passing vacuously.
+
 ## [7.0.4] - 2026-09-10
 
 ### TODO #286 — the analysis-script layer restates deployed parameters and security figures, and nothing checks it
